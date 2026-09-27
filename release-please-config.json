@@ -21,8 +21,7 @@
           "path": "apps/mobile/package.json",
           "jsonpath": "$.version"
         }
-      ],
-      "release-as": "0.0.1"
+      ]
     }
   }
 }
