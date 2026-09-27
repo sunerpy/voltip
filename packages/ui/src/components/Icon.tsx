@@ -58,6 +58,13 @@ const PATHS = {
   drag: "M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01",
   clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2",
   link: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
+  railCollapse: "M4 4h16v16H4zM9 4v16M16 9l-3 3 3 3",
+  railExpand: "M4 4h16v16H4zM9 4v16M13 9l3 3-3 3",
+  sidebarHide: "M12 7l-5 5 5 5M19 7l-5 5 5 5",
+  pin: "M9 3h6l-1 6 4 4H6l4-4zM12 13v8",
+  sun: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4",
+  moon: "M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z",
+  paper: "M6 3h9l3 3v15H6zM15 3v3h3M9 11h6M9 15h6",
 } as const;
 
 export type IconName = keyof typeof PATHS;

@@ -1,7 +1,8 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
-  ENGINES_ROUTE,
+  AI_ROUTE,
+  SPEECH_ROUTE,
   HOME_ROUTE,
   RouterProvider,
   currentLocationPath,
@@ -19,14 +20,17 @@ describe("parseRoute / routePath", () => {
     expect(parseRoute("/history?filter=today")).toEqual({ name: "history", filter: "today" });
     expect(parseRoute("/dictionary")).toEqual({ name: "dictionary" });
     expect(parseRoute("/rules")).toEqual({ name: "rules" });
-    // regression (2026-09-25): the engines page became the engines group of the settings dialog;
-    // `/engines` and the old `/settings/refine` group both land there.
-    expect(parseRoute("/engines")).toEqual({ name: "settings", section: "engine" });
-    expect(parseRoute("/engines")).toEqual(ENGINES_ROUTE);
-    expect(parseRoute("/settings/refine")).toEqual(ENGINES_ROUTE);
-    expect(parseRoute("/settings/engine")).toEqual(ENGINES_ROUTE);
-    expect(routePath(ENGINES_ROUTE)).toBe("/settings/engine");
+    // regression (2026-09-27): 引擎 became two settings groups, 语音模型 and AI 模型; the old
+    // `/engines` page and `/settings/engine` group land on 语音模型, the old 润色 group on AI 模型.
+    expect(parseRoute("/engines")).toEqual({ name: "settings", section: "speech" });
+    expect(parseRoute("/engines")).toEqual(SPEECH_ROUTE);
+    expect(parseRoute("/settings/engine")).toEqual(SPEECH_ROUTE);
+    expect(parseRoute("/settings/refine")).toEqual(AI_ROUTE);
+    expect(parseRoute("/settings/ai")).toEqual({ name: "settings", section: "ai" });
+    expect(routePath(SPEECH_ROUTE)).toBe("/settings/speech");
+    expect(routePath(AI_ROUTE)).toBe("/settings/ai");
     expect(isSettingsSection("refine")).toBe(false);
+    expect(isSettingsSection("engine")).toBe(false);
     // regression (2026-09-25): the Bridge & MCP page was removed; its old URL is a 404, not a page.
     expect(parseRoute("/bridge")).toEqual({ name: "notfound", path: "/bridge" });
     expect(parseRoute("/devices")).toEqual({ name: "devices" });
@@ -54,7 +58,8 @@ describe("parseRoute / routePath", () => {
       "/rules",
       "/devices",
       "/settings/hotkey",
-      "/settings/engine",
+      "/settings/speech",
+      "/settings/ai",
       "/onboarding",
       "/onboarding?step=2",
       "/overlay",

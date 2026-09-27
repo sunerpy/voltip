@@ -11,7 +11,8 @@ import {
 export type SettingsSection =
   | "general"
   | "hotkey"
-  | "engine"
+  | "speech"
+  | "ai"
   | "scene"
   | "privacy"
   | "appearance"
@@ -19,15 +20,19 @@ export type SettingsSection =
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   "general",
   "hotkey",
-  "engine",
+  "speech",
+  "ai",
   "scene",
   "privacy",
   "appearance",
   "about",
 ];
 
-/** The engines group of the settings dialog: what the old `/engines` page and the 润色 group became. */
-export const ENGINES_ROUTE: Route = { name: "settings", section: "engine" };
+/** The 语音模型 group of the settings dialog (recognition providers, local models, recognition
+ *  options): what the old `/engines` page and the 引擎 group became. */
+export const SPEECH_ROUTE: Route = { name: "settings", section: "speech" };
+/** The AI 模型 group: the LLM providers behind the clean-up and voice edit. */
+export const AI_ROUTE: Route = { name: "settings", section: "ai" };
 
 export type Route =
   | { name: "home" }
@@ -45,9 +50,9 @@ export function isSettingsSection(value: string): value is SettingsSection {
   return (SETTINGS_SECTIONS as readonly string[]).includes(value);
 }
 
-/** `/settings/appearance?x=1` or `#/overlay?state=listening` → Route. `/engines` (the former
- *  engines page) and `/settings/refine` (the former 润色 group) land on the engines group of the
- *  settings dialog, so old links and habits keep working. */
+/** `/settings/appearance?x=1` or `#/overlay?state=listening` → Route. `/engines` and
+ *  `/settings/engine` (the former engines page and group) land on 语音模型, `/settings/refine`
+ *  (the former 润色 group) on AI 模型, so old links and habits keep working. */
 export function parseRoute(path: string): Route {
   const clean = path.startsWith("#") ? path.slice(1) : path;
   const [pathname = "/", query = ""] = clean.split("?");
@@ -66,11 +71,12 @@ export function parseRoute(path: string): Route {
     case "rules":
       return params.get("new") === "1" ? { name: "rules", compose: true } : { name: "rules" };
     case "engines":
-      return ENGINES_ROUTE;
+      return SPEECH_ROUTE;
     case "devices":
       return { name: "devices" };
     case "settings":
-      if (second === "refine") return ENGINES_ROUTE;
+      if (second === "engine") return SPEECH_ROUTE;
+      if (second === "refine") return AI_ROUTE;
       return {
         name: "settings",
         section: second !== undefined && isSettingsSection(second) ? second : "appearance",

@@ -112,7 +112,7 @@ describe("Settings · 外观", () => {
     });
   });
 
-  it("shows real 引擎 / 通用 / 隐私与历史 / 关于 panes without sample footnotes", async () => {
+  it("shows real 语音模型 / AI 模型 / 通用 / 隐私与历史 / 关于 panes without sample footnotes", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({
       path: "/settings/appearance",
@@ -144,22 +144,25 @@ describe("Settings · 外观", () => {
     await user.click(screen.getByRole("button", { name: "源代码" }));
     await user.click(screen.getByRole("button", { name: "反馈问题" }));
     expect(backend.linksOpened).toEqual(["source", "feedback"]);
-    // 引擎 is the full engines pane (the former engines page): the two engine cards read the
-    // core's engines, the local model manager sits underneath; there is no 润色 group any more.
-    await user.click(screen.getByRole("tab", { name: /引擎/ }));
+    // 语音模型 is the recognition half of the former engines pane: the provider cards read the
+    // core's engines, the local model manager sits underneath; the LLM half is AI 模型.
+    await user.click(screen.getByRole("tab", { name: /语音模型/ }));
     const pane = screen.getByTestId("settings-content");
-    expect(within(pane).getByRole("heading", { name: "引擎", level: 2 })).toBeInTheDocument();
+    expect(within(pane).getByRole("heading", { name: "语音模型", level: 2 })).toBeInTheDocument();
     expect(screen.queryByTestId("sample-footnote")).toBeNull();
     expect(screen.queryByRole("tab", { name: /润色/ })).toBeNull();
     expect(within(pane).getByRole("article", { name: "内置服务" })).toBeInTheDocument();
     expect(within(pane).getByRole("article", { name: "本机" })).toBeInTheDocument();
     expect(within(pane).getAllByText("Qwen/Qwen3-ASR-1.7B").length).toBeGreaterThan(0);
     expect(within(pane).getByTestId("providers-asr")).toBeInTheDocument();
-    // The dialog header carries the engine readouts.
+    // The dialog header carries the group's readouts.
     expect(screen.getByTestId("settings-readouts")).toHaveTextContent(
-      "引擎 Qwen3-ASR-1.7B · 润色 开 · qwen3.8-27b · 注入 粘贴",
+      "语音模型 Qwen3-ASR-1.7B · 注入 粘贴",
     );
-    expect(screen.queryByRole("button", { name: "打开「引擎」页配置" })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "AI 模型" }));
+    expect(within(pane).getByRole("heading", { name: "AI 模型", level: 2 })).toBeInTheDocument();
+    expect(within(pane).getByTestId("providers-llm")).toBeInTheDocument();
+    expect(screen.getByTestId("settings-readouts")).toHaveTextContent("润色 开 · qwen3.8-27b");
     expect(document.body.textContent).not.toMatch(/第二阶段|示例数据|计划中/);
   });
 });
@@ -204,18 +207,18 @@ describe("Settings · 对话框", () => {
     expect(screen.getByRole("heading", { name: "首页", level: 1 })).toBeInTheDocument();
 
     // From another page the dialog remembers that page: the sidebar opens it, 关闭 returns.
-    await user.click(screen.getByRole("button", { name: /^手机麦克风$/ }));
+    await user.click(screen.getByRole("button", { name: /^手机$/ }));
     await user.click(screen.getByRole("button", { name: /^设置$/ }));
     expect(screen.getByRole("dialog", { name: "设置" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "关闭" }));
     expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "手机麦克风", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "手机", level: 1 })).toBeInTheDocument();
 
     // The scrim closes too.
     await user.keyboard("{Control>},{/Control}");
     await user.click(screen.getByTestId("settings-scrim"));
     expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "手机麦克风", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "手机", level: 1 })).toBeInTheDocument();
   });
 
   it("regression: a deep link to /settings/hotkey renders home beneath the dialog", async () => {
@@ -611,6 +614,8 @@ describe("Settings · 热键", () => {
     });
     renderApp({ path: "/settings/hotkey", backend });
     await screen.findByTestId("edit-hotkey-recorder");
-    expect(screen.getByText("需要 AI 润色服务：先在「引擎」里配置润色密钥")).toBeInTheDocument();
+    expect(
+      screen.getByText("需要 AI 润色服务：先在「设置 · AI 模型」里配置服务商"),
+    ).toBeInTheDocument();
   });
 });

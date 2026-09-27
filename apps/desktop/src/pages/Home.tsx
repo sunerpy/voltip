@@ -36,7 +36,7 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { useMemo } from "react";
-import { ENGINES_ROUTE, useRouter } from "../app/router";
+import { SPEECH_ROUTE, useRouter } from "../app/router";
 import { serviceTarget } from "./settings/engines/helpers";
 import { levelFraction, useAudioMeter } from "../features/audio/useAudioMeter";
 import { useDictation, useTickingNow } from "../features/dictation/useDictation";
@@ -103,7 +103,7 @@ export function Home() {
   const audioTarget = serviceTarget(engines.asr_provider, engines.asr_host, t);
   const textTarget = serviceTarget(engines.llm_provider, engines.refine_host, t);
   const openEngines = () => {
-    navigate(ENGINES_ROUTE);
+    navigate(SPEECH_ROUTE);
   };
 
   const stats = useMemo(() => historyStats(state.history, now), [state.history, now]);

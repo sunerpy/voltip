@@ -166,7 +166,7 @@ describe("TitleBar", () => {
       "md:flex",
       "truncate",
     );
-    expect(readout).toHaveAttribute("aria-label", "引擎与麦克风");
+    expect(readout).toHaveAttribute("aria-label", "语音模型与麦克风");
     expect(readout).toHaveTextContent("精确 · SenseVoice·Fifine K669");
     expect(screen.queryByText(/运行中/)).toBeNull();
     expect(readout.querySelectorAll("[data-tone='ok']")).toHaveLength(1);

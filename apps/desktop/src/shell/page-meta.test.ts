@@ -33,12 +33,12 @@ describe("pageMeta", () => {
       ] as const) {
         const meta = pageMeta(route, state, extras, background);
         expect(meta).toEqual(pageMeta(background, state, extras));
-        expect(meta.title).not.toMatch(/设置|引擎/);
+        expect(meta.title).not.toMatch(/设置|模型/);
       }
     }
     expect(
-      pageMeta({ name: "settings", section: "engine" }, state, extras, { name: "devices" }).title,
-    ).toBe("手机麦克风");
+      pageMeta({ name: "settings", section: "speech" }, state, extras, { name: "devices" }).title,
+    ).toBe("手机");
   });
 
   it("regression: the hotkey line and the engine readouts come from state, never from a fixture", () => {
@@ -47,7 +47,7 @@ describe("pageMeta", () => {
     expect(home.shortcuts[0]).toEqual(["Ctrl Shift D", "按住听写"]);
     expect(home.shortcuts.flat()).not.toContain("Ctrl Alt Space");
     expect(home.readouts[0]).toEqual({
-      label: "引擎",
+      label: "语音模型",
       value: "Qwen3-ASR-1.7B",
       lamp: "ok",
       title: "内置服务 · Qwen/Qwen3-ASR-1.7B · 就绪",
@@ -59,7 +59,7 @@ describe("pageMeta", () => {
     ]);
     // Before the core reported its engines the readout says so instead of inventing one.
     expect(engineReadout(emptyEngineStatus())).toEqual({
-      label: "引擎",
+      label: "语音模型",
       value: "等待核心…",
       lamp: "idle",
     });
@@ -120,7 +120,7 @@ describe("pageMeta", () => {
       asr_issue: "model_not_installed" as const,
     };
     expect(engineReadout(ready)).toEqual({
-      label: "引擎",
+      label: "语音模型",
       value: "轻量",
       lamp: "ok",
       badge: "本机",
@@ -132,7 +132,7 @@ describe("pageMeta", () => {
       title: "本机 · 轻量 · 模型未下载",
     });
     expect(engineReadout(ready, EN)).toEqual({
-      label: "Engine",
+      label: "Speech model",
       value: "Light",
       lamp: "ok",
       badge: "This device",
@@ -160,7 +160,7 @@ describe("pageMeta", () => {
     expect(dictionary.readouts[1]?.lamp).toBe("idle");
     expect(pageMeta({ name: "rules" }, state, extras).title).toBe("规则");
     const devices = pageMeta({ name: "devices" }, state, extras);
-    expect(devices.title).toBe("手机麦克风");
+    expect(devices.title).toBe("手机");
     const online = state.devices.filter((d) => d.connection.state === "online").length;
     expect(online).toBeGreaterThan(0);
     expect(devices.readouts[0]?.value).toBe(`${state.devices.length} 已配对 · ${online} 在线`);
@@ -204,7 +204,8 @@ describe("pageMeta in English", () => {
       { name: "overlay" },
       { name: "notfound", path: "/x" },
       { name: "settings", section: "about" },
-      { name: "settings", section: "engine" },
+      { name: "settings", section: "speech" },
+      { name: "settings", section: "ai" },
     ];
     for (const route of routes) {
       const meta = pageMeta(route, state, extras, { name: "devices" }, EN);
@@ -213,7 +214,7 @@ describe("pageMeta in English", () => {
     expect(
       JSON.stringify(
         settingsReadouts(
-          "engine",
+          "speech",
           state,
           { resolvedTheme: "warm", density: "compact", fontSizePx: 15 },
           EN,
@@ -224,7 +225,7 @@ describe("pageMeta in English", () => {
     expect(home.title).toBe("Home");
     expect(home.shortcuts[0]).toEqual(["Ctrl Alt Space", "Hold to dictate"]);
     expect(home.readouts[0]).toMatchObject({
-      label: "Engine",
+      label: "Speech model",
       title: "Built-in service · Qwen/Qwen3-ASR-1.7B · Ready",
     });
     expect(engineReadout(emptyEngineStatus(), EN).value).toBe("Waiting for core…");
@@ -292,25 +293,27 @@ describe("settingsReadouts", () => {
 
   it("gives the dialog header the hotkey, appearance and engine readouts and nothing for the brief groups", () => {
     const state = stateWith();
-    // The engines group: the ASR readout (with its token lamp), the polish state, the injection.
-    expect(settingsReadouts("engine", state, appearance)).toEqual([
+    // 语音模型: the ASR readout (with its token lamp) and the injection; AI 模型: the polish state.
+    expect(settingsReadouts("speech", state, appearance)).toEqual([
       {
-        label: "引擎",
+        label: "语音模型",
         value: "Qwen3-ASR-1.7B",
         lamp: "ok",
         title: "内置服务 · Qwen/Qwen3-ASR-1.7B · 就绪",
       },
-      { label: "润色", value: "开 · qwen3.8-27b", lamp: "ok" },
       { label: "注入", value: "粘贴" },
+    ]);
+    expect(settingsReadouts("ai", state, appearance)).toEqual([
+      { label: "润色", value: "开 · qwen3.8-27b", lamp: "ok" },
     ]);
     const off = stateWith({
       engines: { ...state.engines, refine_enabled: false, inject: "clipboard_only" },
     });
-    expect(settingsReadouts("engine", off, appearance).map((r) => r.value)).toEqual([
+    expect(settingsReadouts("speech", off, appearance).map((r) => r.value)).toEqual([
       "Qwen3-ASR-1.7B",
-      "关",
       "仅剪贴板",
     ]);
+    expect(settingsReadouts("ai", off, appearance).map((r) => r.value)).toEqual(["关"]);
     expect(settingsReadouts("hotkey", state, appearance)).toEqual([
       { label: "热键", value: "Ctrl Alt Space" },
       { label: "后端", value: MOCK_HOTKEY_BACKEND.split(" · ").slice(1).join(" · ") },

@@ -25,7 +25,7 @@ import { renderApp } from "../test/render";
  *  `max-w-[1600px]`. */
 const FIXED_SIZE = /(?:^|\s)w-\[\d+px\]|(?:^|\s)h-\[604px\]|grid-cols-\[[^\]]*\d+px_\d+px[^\]]*\]/;
 
-/** Rows the 手机麦克风 card lists before its overflow line (Home.tsx `HOME_DEVICE_ROWS`). */
+/** Rows the 手机 card lists before its overflow line (Home.tsx `HOME_DEVICE_ROWS`). */
 const HOME_DEVICE_ROWS = 3;
 
 function fixedSizeOffenders(root: HTMLElement): string[] {
@@ -51,8 +51,8 @@ describe("Home page", () => {
     );
     expect(screen.getByText("麦克风输入")).toBeInTheDocument();
     expect(screen.getByText("Fifine K669 USB Microphone")).toBeInTheDocument();
-    expect(screen.getByText("识别引擎")).toBeInTheDocument();
-    expect(screen.getByText("手机麦克风 · 设备")).toBeInTheDocument();
+    expect(within(screen.getByTestId("home-engine")).getByText("语音模型")).toBeInTheDocument();
+    expect(screen.getByText("手机 · 设备")).toBeInTheDocument();
     expect(screen.getByText("今日会话")).toBeInTheDocument();
     // The engine card reads state.engines, not a fixture.
     const engine = screen.getByTestId("home-engine");
@@ -343,7 +343,7 @@ describe("Home page", () => {
     await waitFor(() => {
       expect(start).toHaveAttribute(
         "title",
-        "识别服务商还不能用：缺少密钥 · 在「设置 · 引擎」中配置",
+        "识别服务商还不能用：缺少密钥 · 在「设置 · 语音模型」中配置",
       );
     });
     expect(screen.getByTestId("home-phase")).toHaveTextContent("缺少密钥");
@@ -387,7 +387,7 @@ describe("Home page", () => {
     expect(screen.getByText("按住听写")).toBeInTheDocument();
   });
 
-  it("regression: the Bridge & MCP card is gone; the 手机麦克风 card reads the core's devices and relay", async () => {
+  it("regression: the Bridge & MCP card is gone; the 手机 card reads the core's devices and relay", async () => {
     const user = userEvent.setup();
     renderApp();
     const page = await screen.findByTestId("page-home");
@@ -408,11 +408,11 @@ describe("Home page", () => {
     ]);
     expect(within(card).getByText("中继 · 未配置")).toBeInTheDocument();
     expect(within(card).queryByText("还没有配对的手机 · 去配对")).toBeNull();
-    await user.click(within(card).getByRole("button", { name: "打开手机麦克风" }));
-    expect(screen.getByRole("heading", { name: "手机麦克风", level: 1 })).toBeInTheDocument();
+    await user.click(within(card).getByRole("button", { name: "打开「手机」页" }));
+    expect(screen.getByRole("heading", { name: "手机", level: 1 })).toBeInTheDocument();
   });
 
-  it("regression: with no paired phone the 手机麦克风 card shows the inline 去配对 hint and it navigates", async () => {
+  it("regression: with no paired phone the 手机 card shows the inline 去配对 hint and it navigates", async () => {
     const user = userEvent.setup();
     const many = sampleDevices(1_758_700_000);
     renderApp({ backend: new MockBackend({ devices: [] }) });
@@ -421,7 +421,7 @@ describe("Home page", () => {
     expect(within(card).getByText("0 台已配对")).toBeInTheDocument();
     expect(within(card).queryByRole("listitem")).toBeNull();
     await user.click(within(card).getByRole("button", { name: "还没有配对的手机 · 去配对" }));
-    expect(screen.getByRole("heading", { name: "手机麦克风", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "手机", level: 1 })).toBeInTheDocument();
     // More phones than the card lists: the overflow line points at the devices page.
     const extra = many.map((d, i) => ({
       ...d,
@@ -440,7 +440,7 @@ describe("Home page", () => {
     });
     const crowded = (await screen.findAllByTestId("home-devices")).at(-1) as HTMLElement;
     expect(within(crowded).getAllByText("连接中").length).toBeGreaterThan(HOME_DEVICE_ROWS);
-    expect(within(crowded).getByText("还有 1 台 · 在手机麦克风页查看")).toBeInTheDocument();
+    expect(within(crowded).getByText("还有 1 台 · 在「手机」页查看")).toBeInTheDocument();
     expect(within(crowded).getByText("中继 · 重连中 · 第 2 次")).toBeInTheDocument();
     // Paired but nothing online or connecting: the header lamp reads 离线.
     renderApp({
@@ -476,11 +476,13 @@ describe("Home page", () => {
     expect(screen.getByTestId("home-privacy")).toHaveTextContent("音频发送到内置服务");
     expect(screen.getByTestId("home-privacy")).not.toHaveTextContent("文本发送到");
     expect(within(screen.getByTestId("home-engine")).getByText("关")).toBeInTheDocument();
-    // 配置引擎 opens the settings dialog on the engines group over the home page.
-    await user.click(screen.getByRole("button", { name: "配置引擎" }));
+    // 配置语音模型 opens the settings dialog on the 语音模型 group over the home page.
+    await user.click(screen.getByRole("button", { name: "配置语音模型" }));
     const settings = screen.getByRole("dialog", { name: "设置" });
-    expect(within(settings).getByRole("tab", { name: /引擎/, selected: true })).toBeInTheDocument();
-    expect(within(settings).getByTestId("engines-pane")).toBeInTheDocument();
+    expect(
+      within(settings).getByRole("tab", { name: /语音模型/, selected: true }),
+    ).toBeInTheDocument();
+    expect(within(settings).getByTestId("speech-pane")).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "查看全部 →" }));
@@ -513,7 +515,7 @@ describe("Home page", () => {
     await user.click(screen.getByRole("button", { name: "内置服务 · Qwen3-ASR-1.7B" }));
     expect(
       within(screen.getByRole("dialog", { name: "设置" })).getByRole("tab", {
-        name: /引擎/,
+        name: /语音模型/,
         selected: true,
       }),
     ).toBeInTheDocument();

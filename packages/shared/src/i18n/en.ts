@@ -38,10 +38,21 @@ export const en: Messages = {
       maximize: "Maximize",
       restore: "Restore",
       close: "Close",
-      readout: "Engine and microphone",
+      readout: "Speech model and microphone",
     },
     toolbar: { searchPlaceholder: "Search or type a command…" },
-    sidebar: { nav: "Main navigation", coreStatus: "Core status" },
+    sidebar: {
+      nav: "Main navigation",
+      coreStatus: "Core status",
+      layout: "Sidebar layout",
+      collapse: "Collapse to icons",
+      expand: "Expand the sidebar",
+      hide: "Hide the sidebar",
+      show: "Show the sidebar",
+      pin: "Pin the sidebar",
+      edge: "Show the sidebar",
+    },
+    themeSwitch: { label: "Theme", next: "Switch to {theme}" },
     dialog: { escCancel: "Cancel" },
     palette: {
       placeholder: "Type a command or page…",
@@ -258,17 +269,16 @@ export const en: Messages = {
   shell: {
     nav: {
       workbench: "Workspace",
-      config: "Configuration",
+      voice: "Voice input",
       home: "Home",
       history: "History",
       dictionary: "Dictionary",
       rules: "Rules",
-      engines: "Engines",
-      devices: "Phone microphone",
+      speech: "Speech models",
+      ai: "AI models",
+      devices: "Phone",
       settings: "Settings",
-      identity: "This device",
       feedback: "Feedback",
-      about: "About",
     },
     polish: {
       label: "AI Polish",
@@ -288,7 +298,7 @@ export const en: Messages = {
       clearConfirm: "Delete all",
     },
     readout: {
-      engine: "Engine",
+      engine: "Speech model",
       waitingCore: "Waiting for core…",
       providerTitle: "{provider} · {model} · {state}",
       local: "This device",
@@ -301,7 +311,7 @@ export const en: Messages = {
       history: "History",
       dictionary: "Dictionary",
       rules: "Rules",
-      devices: "Phone microphone",
+      devices: "Phone",
       onboarding: "First-run setup / step {n}",
       overlay: "Overlay pill",
       notfound: "Not found",
@@ -363,9 +373,10 @@ export const en: Messages = {
   },
   home: {
     blocked: {
-      waitingCore: "Speech engine not ready · waiting for the core",
-      issue: "The recognition provider cannot run yet: {issue} · set it up under Settings · Engine",
-      noModel: "Local model not downloaded · get it under Settings · Engine",
+      waitingCore: "Speech model not ready · waiting for the core",
+      issue:
+        "The recognition provider cannot run yet: {issue} · set it up under Settings · Speech models",
+      noModel: "Local model not downloaded · get it under Settings · Speech models",
       mic: "Microphone unavailable · {error}",
     },
     status: {
@@ -402,9 +413,9 @@ export const en: Messages = {
       sourceOne: "Level from the Rust capture (cpal), 30 fps · records 16 kHz mono",
     },
     engine: {
-      eyebrow: "Speech engine",
-      configure: "Configure engines",
-      waiting: "Waiting for the core to report engines…",
+      eyebrow: "Speech model",
+      configure: "Configure speech models",
+      waiting: "Waiting for the core to report the speech model…",
       detail: "{provider} · language {language}",
       local: "Local",
       detailLocal: "On-device inference · {state} · language {language}",
@@ -424,14 +435,14 @@ export const en: Messages = {
       liveDegraded: "Live preview stopped · the final text is unaffected",
     },
     devices: {
-      eyebrow: "Phone microphone · devices",
+      eyebrow: "Phone · devices",
       unpaired: "Not paired",
       offline: "Offline",
       paired: "{n} paired",
       none: "No phone paired yet · pair one",
-      more: "{n} more · see the phone microphone page",
+      more: "{n} more · see the Phone page",
       relay: "Relay · {state}",
-      open: "Open phone microphone",
+      open: "Open the Phone page",
     },
     session: {
       eyebrow: "Today's session",
@@ -455,7 +466,7 @@ export const en: Messages = {
     table: {
       time: "Time",
       text: "Text",
-      engine: "Engine",
+      engine: "Model",
       duration: "Length",
       asr: "ASR",
       refine: "Polish",
@@ -741,11 +752,14 @@ export const en: Messages = {
     },
   },
   engines: {
-    title: "Engine",
-    lede: "Which provider recognises speech and which one polishes the text, and with which model. Keys live only in the system keychain; the UI never shows a saved value.",
+    title: "Speech models",
+    lede: "Which provider or local model turns your recording into text. Keys live only in the system keychain; the UI never shows a saved value.",
+    aiTitle: "AI models",
+    aiLede:
+      "Which LLM service polishes the text after recognition; voice edit uses the provider picked here too. Keys live only in the system keychain; the UI never shows a saved value.",
     waiting: "Waiting for the core…",
-    tabsLabel: "Engine groups",
-    tab: { asr: "Speech recognition", llm: "Text polish", options: "Recognition" },
+    tabsLabel: "Speech model groups",
+    tab: { asr: "Providers and models", options: "Recognition" },
     asrSection: {
       title: "Recognition provider",
       note: "Pick the provider that turns your recording into text; expand a card to choose a model and enter a key.",
@@ -879,7 +893,7 @@ export const en: Messages = {
       memory: "{gb} GB memory",
       integrated: "integrated",
       threads: "Inference threads",
-      threadsAuto: "Auto (engine default)",
+      threadsAuto: "Auto (the model decides)",
       threadsHelp: "This computer has {n} logical processors.",
     },
     localModelsNote:
@@ -970,7 +984,7 @@ export const en: Messages = {
       "paraformer-zh":
         "Paraformer, more accurate for Chinese (dialects included), mixed Chinese and English; no punctuation, turn on AI polish to add it; 227 MB",
       "zipformer-stream-zh-en":
-        "Preview model that shows words as you speak (streaming Zipformer, mixed Chinese and English, punctuation built in); the final text still comes from the selected engine; 169 MB",
+        "Preview model that shows words as you speak (streaming Zipformer, mixed Chinese and English, punctuation built in); the final text still comes from the selected speech model; 169 MB",
     },
     languages: "Languages {languages}",
     size: "{size}",
@@ -1146,12 +1160,17 @@ export const en: Messages = {
     relay: "Relay · {state}",
   },
   onboarding: {
-    steps: { permissions: "Permissions", hotkey: "Hotkey", engine: "Engine", trial: "Try it" },
+    steps: {
+      permissions: "Permissions",
+      hotkey: "Hotkey",
+      engine: "Speech model",
+      trial: "Try it",
+    },
     stepsLabel: "Steps",
     eyebrow: {
       permissions: "Permissions · {platform}",
       hotkey: "Hotkey · backend {backend}",
-      engine: "Engine · default",
+      engine: "Speech model · default",
       trial: "Session · try it",
     },
     finished: "First-run setup complete",
@@ -1161,7 +1180,7 @@ export const en: Messages = {
     title: {
       permissions: "System permissions",
       hotkey: "Hotkey",
-      engine: "Choose a speech engine",
+      engine: "Choose a speech model",
       trial: "Say a sentence",
     },
     lede: {
@@ -1169,7 +1188,7 @@ export const en: Messages = {
         "Voltip asks only for what it really needs and shows the system's actual state instead of assuming it was granted.",
       hotkey: "What can be bound depends on the backend this machine runs, not on Voltip.",
       engine:
-        "Every option states its cost first: where audio goes and whether an LLM pass follows. The choice applies at once and can be changed on the Engines page.",
+        "Every option states its cost first: where audio goes and whether an LLM pass follows. The choice applies at once and can be changed under Settings · Speech models.",
       trial: "Put the cursor in the box below, hold the hotkey, say a short sentence, release.",
     },
     permission: {
@@ -1242,10 +1261,10 @@ export const en: Messages = {
       baseUrl: "Endpoint",
       refine: "Polish with an LLM too",
       refineHelp: "Fixes punctuation, typos and filler words; provider: {provider}",
-      refineNone: "This choice has no polish service; set one up later under Settings · Engine.",
+      refineNone: "This choice has no polish service; set one up later under Settings · AI models.",
       localDownload:
         "Dictation works once the download finishes; you can continue now, it downloads in the background.",
-      note: "“Save and continue” writes the settings; change them any time under Settings · Engine.",
+      note: "“Save and continue” writes the settings; change them any time under Settings · Speech models.",
       needKey: "This provider needs an API key",
       needUrl: "A custom endpoint needs an http(s) address",
       needModel: "Enter a model name",
@@ -1325,7 +1344,7 @@ export const en: Messages = {
     captionEngine: "Streaming · Zipformer · local",
     captionCommitted: "Make fetchUser async",
     captionTail: "then add three retries",
-    expanded: "expanded · live caption · 420×88 · streaming engines only",
+    expanded: "expanded · live caption · 420×88 · streaming models only",
     anatomy: "Pill anatomy",
     anatomyBody:
       "Height 40 · fully rounded · bottom centre 24 px above the work area · never takes focus or activation · width morphs between 52 / 260–340 / 420 per state over 240 ms cubic-bezier(.16,1,.3,1). Waveform: 2 px bars · 2 px gaps · round caps · mirrored on the centre line; the newest 45% in the state colour, the older tail in subtle at 55%; frozen to ledOff with shimmer while processing; collapses to one 2 px line once inserted. Status lamp 8 px: accent = recording / inserted, hollow grey = ready, danger = cancel / error / blocked.",
@@ -1359,7 +1378,8 @@ export const en: Messages = {
     group: {
       general: "General",
       hotkey: "Hotkey",
-      engine: "Engine",
+      speech: "Speech models",
+      ai: "AI models",
       scene: "Scenes",
       privacy: "Privacy and history",
       appearance: "Appearance",
@@ -1374,7 +1394,7 @@ export const en: Messages = {
       locale: { system: "Follow system", "zh-cn": "简体中文", en: "English" },
       guide: "First-run guide",
       guideHelp:
-        "Check the permissions, the hotkey and the recognition engine again, then try one dictation.",
+        "Check the permissions, the hotkey and the speech model again, then try one dictation.",
       guideRun: "Run again",
       autoUpdate: "Automatic updates",
       autoUpdateHelp:
@@ -1503,7 +1523,8 @@ export const en: Messages = {
       editCancelLabel: "Cancel recording · Edit selected text",
       editTurnOffLabel: "Turn off · Edit selected text",
       editTurnOnLabel: "Turn on · Edit selected text",
-      editNeedsRefine: "Needs the AI polishing service: set its key under Engines first",
+      editNeedsRefine:
+        "Needs the AI polishing service: set up a provider under Settings · AI models first",
     },
     scenes: {
       title: "Scenes",
@@ -1680,8 +1701,9 @@ export const en: Messages = {
     entriesHint: "{n} entries",
     openHistory: "Open history",
     openAppearance: "Open settings › Appearance",
-    openEngines: "Open settings › Engine",
-    openDevices: "Open phone microphone",
+    openEngines: "Open settings › Speech models",
+    openAi: "Open settings › AI models",
+    openDevices: "Open Phone",
   },
   app: {
     error: "Error · {message}",
@@ -1754,7 +1776,7 @@ export const en: Messages = {
     },
     pair: {
       intro:
-        "Open the Phone microphone page on the computer and scan its QR code, or type the 6-digit code it shows. Both paths only find the session; the key exchange after that is identical.",
+        "Open the Phone page on the computer and scan its QR code, or type the 6-digit code it shows. Both paths only find the session; the key exchange after that is identical.",
       method: "Pairing method",
       scan: "Scan",
       code: "Enter 6-digit code",
@@ -1838,7 +1860,7 @@ export const en: Messages = {
       count: "{paired} paired · {online} online",
       relay: "Relay · {state}",
       emptyTitle: "No computer paired yet",
-      emptyBody: "Open Phone microphone on the computer, then scan or enter the 6-digit code.",
+      emptyBody: "Open the Phone page on the computer, then scan or enter the 6-digit code.",
       pairNew: "Pair a new computer",
     },
   },

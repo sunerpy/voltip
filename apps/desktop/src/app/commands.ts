@@ -1,6 +1,6 @@
 import { THEME_IDS, type ThemeId, type Translator, type UiState, themeName } from "@voltip/shared";
 import type { CommandItem } from "@voltip/ui";
-import { ENGINES_ROUTE, type Route } from "./router";
+import { AI_ROUTE, SPEECH_ROUTE, type Route } from "./router";
 
 export interface CommandDeps {
   state: UiState;
@@ -122,9 +122,18 @@ export function buildCommands(deps: CommandDeps): CommandItem[] {
       id: "nav-engines",
       group: t("commands.group.nav"),
       label: t("commands.openEngines"),
-      icon: "cpu",
+      icon: "wave",
       run: () => {
-        navigate(ENGINES_ROUTE);
+        navigate(SPEECH_ROUTE);
+      },
+    },
+    {
+      id: "nav-ai",
+      group: t("commands.group.nav"),
+      label: t("commands.openAi"),
+      icon: "wand",
+      run: () => {
+        navigate(AI_ROUTE);
       },
     },
     {

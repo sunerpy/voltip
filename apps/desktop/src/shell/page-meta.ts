@@ -67,23 +67,31 @@ export function engineReadout(engines: EngineStatus, i18n: Translator = zhT): To
 }
 
 /** The engines group's readouts: the resolved ASR, the polish state and the injection mode. */
-function engineReadouts(engines: EngineStatus, i18n: Translator): ToolbarReadout[] {
+/** The 语音模型 group's header: the recognition provider and how the text is inserted. */
+function speechReadouts(engines: EngineStatus, i18n: Translator): ToolbarReadout[] {
   const { t } = i18n;
   return [
     engineReadout(engines, i18n),
-    {
-      label: t("page.readout.polish"),
-      value: engines.refine_enabled
-        ? t("page.readout.polishOn", { model: shortModel(engines.refine_model) })
-        : t("page.readout.polishOff"),
-      lamp: engines.refine_enabled ? "ok" : "idle",
-    },
     {
       label: t("page.readout.inject"),
       value:
         engines.inject === "paste"
           ? t("page.readout.injectPaste")
           : t("page.readout.injectClipboard"),
+    },
+  ];
+}
+
+/** The AI 模型 group's header: whether the clean-up runs, and on which model. */
+function aiReadouts(engines: EngineStatus, i18n: Translator): ToolbarReadout[] {
+  const { t } = i18n;
+  return [
+    {
+      label: t("page.readout.polish"),
+      value: engines.refine_enabled
+        ? t("page.readout.polishOn", { model: shortModel(engines.refine_model) })
+        : t("page.readout.polishOff"),
+      lamp: engines.refine_enabled ? "ok" : "idle",
     },
   ];
 }
@@ -134,8 +142,8 @@ function devicesReadouts(
   ];
 }
 
-/** Mono readouts in the settings dialog header (hotkey, appearance and the engines group); the
- *  title bar keeps describing the page beneath. */
+/** Mono readouts in the settings dialog header (hotkey, appearance, scenes and the two model
+ *  groups); the title bar keeps describing the page beneath. */
 export function settingsReadouts(
   section: SettingsSection,
   state: UiState,
@@ -144,8 +152,10 @@ export function settingsReadouts(
 ): ToolbarReadout[] {
   const { t, locale } = i18n;
   switch (section) {
-    case "engine":
-      return engineReadouts(state.engines, i18n);
+    case "speech":
+      return speechReadouts(state.engines, i18n);
+    case "ai":
+      return aiReadouts(state.engines, i18n);
     case "hotkey":
       return [
         {

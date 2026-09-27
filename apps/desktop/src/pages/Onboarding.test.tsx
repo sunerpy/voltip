@@ -280,7 +280,7 @@ describe("Onboarding wizard", () => {
     expect(monitor).toHaveAttribute("data-edges", "passed");
     expect(screen.getByText("边沿 2/2")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "继续" }));
-    expect(screen.getByRole("heading", { name: "选择识别引擎", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "选择语音模型", level: 2 })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /内置服务/ })).toHaveAttribute("aria-checked", "true");
     await user.click(screen.getByRole("button", { name: "上一步" }));
     expect(screen.getByRole("heading", { name: "快捷键", level: 2 })).toBeInTheDocument();
@@ -333,7 +333,7 @@ describe("Onboarding wizard", () => {
   it("step 3 offers the built-in service first, writes the choice and the polish switch through settings_set_engines and moves on", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/onboarding?step=3" });
-    await screen.findByRole("heading", { name: "选择识别引擎", level: 2 });
+    await screen.findByRole("heading", { name: "选择语音模型", level: 2 });
     const group = screen.getByRole("radiogroup", { name: "识别服务" });
     expect(
       within(group)
@@ -368,7 +368,7 @@ describe("Onboarding wizard", () => {
   it("regression: another provider needs its key, which goes to provider_key_set and is never echoed", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/onboarding?step=3" });
-    await screen.findByRole("heading", { name: "选择识别引擎", level: 2 });
+    await screen.findByRole("heading", { name: "选择语音模型", level: 2 });
     await user.click(screen.getByRole("radio", { name: /其他服务商/ }));
     const form = screen.getByTestId("onboarding-provider");
     const provider = within(form).getByLabelText("服务商");
@@ -410,7 +410,7 @@ describe("Onboarding wizard", () => {
   it("a custom endpoint needs an http(s) address; its key is optional", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/onboarding?step=3" });
-    await screen.findByRole("heading", { name: "选择识别引擎", level: 2 });
+    await screen.findByRole("heading", { name: "选择语音模型", level: 2 });
     await user.click(screen.getByRole("radio", { name: /其他服务商/ }));
     const form = screen.getByTestId("onboarding-provider");
     await user.selectOptions(within(form).getByLabelText("服务商"), "custom");
@@ -437,7 +437,7 @@ describe("Onboarding wizard", () => {
   it("regression: a custom endpoint without a model cannot be saved; the core would refuse every take", async () => {
     const user = userEvent.setup();
     renderApp({ path: "/onboarding?step=3" });
-    await screen.findByRole("heading", { name: "选择识别引擎", level: 2 });
+    await screen.findByRole("heading", { name: "选择语音模型", level: 2 });
     await user.click(screen.getByRole("radio", { name: /其他服务商/ }));
     const form = screen.getByTestId("onboarding-provider");
     await user.selectOptions(within(form).getByLabelText("服务商"), "custom");
@@ -464,7 +464,7 @@ describe("Onboarding wizard", () => {
       },
     });
     renderApp({ path: "/onboarding?step=3", backend });
-    await screen.findByRole("heading", { name: "选择识别引擎", level: 2 });
+    await screen.findByRole("heading", { name: "选择语音模型", level: 2 });
     const form = screen.getByTestId("onboarding-provider");
     expect(within(form).getByLabelText("接口地址")).toHaveValue(saved.asr_url);
     expect(within(form).getByLabelText("模型")).toHaveValue(saved.asr_model);
@@ -483,7 +483,7 @@ describe("Onboarding wizard", () => {
   it("the on-device choice shows the recommended model with its download button and writes the local provider", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/onboarding?step=3" });
-    await screen.findByRole("heading", { name: "选择识别引擎", level: 2 });
+    await screen.findByRole("heading", { name: "选择语音模型", level: 2 });
     await user.click(screen.getByRole("radio", { name: /本机识别/ }));
     const local = screen.getByTestId("onboarding-local");
     const card = within(local).getByRole("article", { name: "均衡" });
@@ -670,7 +670,7 @@ describe("Onboarding wizard", () => {
     expect(await screen.findByTestId("nothing-to-grant")).toBeInTheDocument();
     await user.keyboard("{Enter}{Enter}");
     expect(
-      await screen.findByRole("heading", { name: "选择识别引擎", level: 2 }),
+      await screen.findByRole("heading", { name: "选择语音模型", level: 2 }),
     ).toBeInTheDocument();
     // Step 3: Enter is 保存并继续 only while the choice is complete, and never from inside a field.
     const group = screen.getByRole("radiogroup", { name: "识别服务" });
@@ -678,10 +678,10 @@ describe("Onboarding wizard", () => {
     const key = screen.getByLabelText(/API 密钥/);
     await user.click(key);
     await user.keyboard("{Enter}");
-    expect(screen.getByRole("heading", { name: "选择识别引擎", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "选择语音模型", level: 2 })).toBeInTheDocument();
     key.blur();
     await user.keyboard("{Enter}");
-    expect(screen.getByRole("heading", { name: "选择识别引擎", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "选择语音模型", level: 2 })).toBeInTheDocument();
     await user.click(within(group).getByRole("radio", { name: /内置服务/ }));
     (document.activeElement as HTMLElement | null)?.blur();
     await user.keyboard("{Enter}");

@@ -21,8 +21,10 @@ import {
 } from "@voltip/shared";
 import type { BadgeTone } from "@voltip/ui";
 
-export type EngineTab = "asr" | "llm" | "options";
-export const ENGINE_TABS: readonly EngineTab[] = ["asr", "llm", "options"];
+/** The two views of the 语音模型 group: the providers (with the local models) and the options
+ *  that apply whatever the provider. The LLM providers are their own group, AI 模型. */
+export type SpeechTab = "asr" | "options";
+export const SPEECH_TABS: readonly SpeechTab[] = ["asr", "options"];
 
 /** The providers that offer `kind` in this build, in display order. */
 export function providersFor(status: EngineStatus, kind: ServiceKind): ProviderStatus[] {

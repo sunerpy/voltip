@@ -21,9 +21,10 @@ const ROUTES = [
   ["/history", "历史记录", "History"],
   ["/dictionary", "词典", "Dictionary"],
   ["/rules", "规则", "Rules"],
-  ["/devices", "手机麦克风", "Phone microphone"],
+  ["/devices", "手机", "Phone"],
   ["/overlay", "悬浮胶囊", "Overlay"],
-  ["/settings/engine", "首页", "Home"],
+  ["/settings/speech", "首页", "Home"],
+  ["/settings/ai", "首页", "Home"],
   ["/settings/scene", "首页", "Home"],
   ["/settings/general", "首页", "Home"],
   ["/settings/appearance", "首页", "Home"],
@@ -263,7 +264,9 @@ describe("locale", () => {
       if (nav) {
         for (const tab of nav.querySelectorAll('[role="tab"]')) {
           const text = (tab.textContent ?? "").trim();
-          if (/[A-Za-z]/.test(text)) offending.push(`${path} tab: ${text}`);
+          // "AI" is how Chinese UIs say it (the owner named the group AI 模型, 2026-09-27; the
+          // title bar's AI润色 too); any other Latin letter in a tab is an English gloss.
+          if (/[A-Za-z]/.test(text.replace(/\bAI\b/g, ""))) offending.push(`${path} tab: ${text}`);
         }
         for (const mono of nav.querySelectorAll('[class~="mono"]')) {
           const text = (mono.textContent ?? "").trim();
@@ -319,9 +322,9 @@ describe("locale", () => {
   it("regression: the model tiers, the 实时预览 block, the home chip and the live pill render in English under en", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      // Settings › Engine: the core's Chinese tier names become the dictionary's English names.
+      // Settings › Speech models: the core's Chinese tier names become the dictionary's English names.
       const settings = englishBackend(withStreamingModel());
-      const { unmount } = renderApp({ path: "/settings/engine", backend: settings });
+      const { unmount } = renderApp({ path: "/settings/speech", backend: settings });
       const localToggle = (await screen.findByTestId("provider-asr-local")).querySelector(
         "button[aria-expanded]",
       );

@@ -5,8 +5,7 @@ import {
   Icon,
   Keycaps,
   Lamp,
-  Sidebar,
-  type SidebarGroup,
+  type ThemeChoice,
   TitleBar,
   ToastViewport,
   cx,
@@ -14,81 +13,18 @@ import {
   useI18n,
   useUiState,
 } from "@voltip/ui";
-import type { TFunction } from "@voltip/shared";
 import { type ReactNode, useCallback, useEffect, useMemo } from "react";
 import { useAppearance } from "../app/appearance";
 import { buildCommands } from "../app/commands";
-import { ENGINES_ROUTE, type Route, useRouter } from "../app/router";
+import { useRouter } from "../app/router";
 import { copyWithToast, useShell } from "../app/shell-context";
 import { useWindowChrome } from "../app/window";
 import { openProjectLink } from "../app/project-links";
 import { microphoneReadoutValue, useMicrophoneReadout } from "../features/audio/mic-store";
 import { useDictation } from "../features/dictation/useDictation";
 import { engineReadout, microphoneReadout, pageMeta } from "./page-meta";
-
-/** A sidebar count, shown once there is something to count. */
-function count(n: number): { count?: number } {
-  return n > 0 ? { count: n } : {};
-}
-
-/** Sidebar groups; the history, dictionary and rule counts are the core's lists (shown once
- *  there is something to count), never a fixture. */
-function navGroups(
-  counts: { history: number; dictionary: number; rules: number },
-  t: TFunction,
-): SidebarGroup[] {
-  return [
-    {
-      title: t("shell.nav.workbench"),
-      items: [
-        { id: "home", label: t("shell.nav.home"), icon: "home" },
-        { id: "history", label: t("shell.nav.history"), icon: "history", ...count(counts.history) },
-        {
-          id: "dictionary",
-          label: t("shell.nav.dictionary"),
-          icon: "book",
-          ...count(counts.dictionary),
-        },
-        { id: "rules", label: t("shell.nav.rules"), icon: "sparkles", ...count(counts.rules) },
-      ],
-    },
-    {
-      title: t("shell.nav.config"),
-      items: [
-        { id: "engines", label: t("shell.nav.engines"), icon: "cpu" },
-        { id: "devices", label: t("shell.nav.devices"), icon: "phone" },
-        { id: "settings", label: t("shell.nav.settings"), icon: "settings" },
-      ],
-    },
-  ];
-}
-
-const ALL_NAV_IDS = ["home", "history", "dictionary", "rules", "engines", "devices", "settings"];
-
-/** The sidebar entry a route lights up. 引擎 is a shortcut into the settings dialog's engines
- *  group, so that group lights it up instead of 设置. */
-function navIdFor(route: Route): string {
-  if (route.name === "onboarding" || route.name === "overlay" || route.name === "notfound")
-    return "home";
-  if (route.name === "settings") return route.section === "engine" ? "engines" : "settings";
-  return route.name;
-}
-
-function routeForNav(id: string): Route {
-  switch (id) {
-    case "history":
-    case "dictionary":
-    case "rules":
-    case "devices":
-      return { name: id };
-    case "engines":
-      return ENGINES_ROUTE;
-    case "settings":
-      return { name: "settings", section: "appearance" };
-    default:
-      return { name: "home" };
-  }
-}
+import { RevealSidebarButton, ShellSidebar } from "./ShellSidebar";
+import { useSidebarLayout } from "./sidebar-layout";
 
 /** The 润色 switch on the title bar: wand icon + a short text label (`AI润色` / `AI Polish`) +
  *  lamp (user feedback 2026-09-25: the icon alone did not read as a switch). It is the real LLM
@@ -158,6 +94,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const microphone = useMicrophoneReadout();
   const chrome = useWindowChrome(state.identity?.platform);
   const dictation = useDictation();
+  const sidebar = useSidebarLayout();
 
   const meta = useMemo(
     () =>
@@ -255,17 +192,27 @@ export function Shell({ children }: { children: ReactNode }) {
       } else if (key === "h" && !e.shiftKey) {
         e.preventDefault();
         navigate({ name: "history" });
+      } else if (key === "b" && !e.shiftKey) {
+        e.preventDefault();
+        sidebar.toggleHidden();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
     };
-  }, [shell, navigate]);
+  }, [shell, navigate, sidebar]);
 
   const onboarding = route.name === "onboarding";
   // The overlay showcase is a chrome-less spec sheet of the pill.
   const sheet = route.name === "overlay";
+  const pickTheme = useCallback(
+    (choice: ThemeChoice) => {
+      if (choice === "system") setTheme(state.settings.theme, true);
+      else setTheme(choice, false);
+    },
+    [setTheme, state.settings.theme],
+  );
   const closePalette = useCallback(() => {
     shell.setPaletteOpen(false);
     appearance.preview(undefined);
@@ -274,48 +221,16 @@ export function Shell({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-full min-h-0 bg-canvas text-fg">
       {!sheet && (
-        <Sidebar
-          groups={navGroups(
-            {
-              history: state.history.length,
-              dictionary: state.dictionary.length,
-              rules: state.rules.length,
-            },
-            t,
-          )}
-          activeId={navIdFor(route)}
-          disabledIds={onboarding ? ALL_NAV_IDS.filter((id) => id !== "home") : []}
-          statusTone={state.identity ? "ok" : "idle"}
+        <ShellSidebar
+          route={route}
+          navigate={navigate}
+          sidebar={sidebar}
+          onboarding={onboarding}
           trafficLights={chrome.platform === "macos"}
-          onNavigate={(id) => {
-            navigate(routeForNav(id));
+          onTheme={pickTheme}
+          onFeedback={() => {
+            openProjectLink(backend, shell, "feedback");
           }}
-          footer={[
-            {
-              id: "account",
-              icon: "user",
-              label: t("shell.nav.identity"),
-              onClick: () => {
-                navigate({ name: "devices" });
-              },
-            },
-            {
-              id: "feedback",
-              icon: "chat",
-              label: t("shell.nav.feedback"),
-              onClick: () => {
-                openProjectLink(backend, shell, "feedback");
-              },
-            },
-            {
-              id: "about",
-              icon: "info",
-              label: t("shell.nav.about"),
-              onClick: () => {
-                navigate({ name: "settings", section: "about" });
-              },
-            },
-          ]}
         />
       )}
       <div className="flex min-w-0 flex-1 flex-col">
@@ -343,6 +258,10 @@ export function Shell({ children }: { children: ReactNode }) {
           <TitleBar
             title={meta.title}
             readouts={barReadouts}
+            left={
+              sidebar.layout.hidden ? <RevealSidebarButton onReveal={sidebar.reveal} /> : undefined
+            }
+            trafficLights={sidebar.layout.hidden && chrome.platform === "macos"}
             onSearch={() => {
               shell.setPaletteOpen(true);
             }}

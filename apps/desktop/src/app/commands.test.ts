@@ -1,7 +1,7 @@
 import { THEME_IDS, createTranslator, zhT } from "@voltip/shared";
 import { MockBackend, phoneIdentity } from "@voltip/shared/mock";
 import { buildCommands } from "./commands";
-import { ENGINES_ROUTE } from "./router";
+import { AI_ROUTE, SPEECH_ROUTE } from "./router";
 
 function deps(overrides: Partial<Parameters<typeof buildCommands>[0]> = {}) {
   const backend = new MockBackend();
@@ -39,11 +39,16 @@ describe("buildCommands", () => {
     expect(d.navigate).toHaveBeenCalledWith({ name: "history" });
     expect(d.navigate).toHaveBeenCalledWith({ name: "devices" });
     expect(d.navigate).toHaveBeenCalledWith({ name: "settings", section: "appearance" });
-    // The engines entry opens the settings dialog's engines group (the former engines page).
-    expect(d.navigate).toHaveBeenCalledWith(ENGINES_ROUTE);
+    // regression (2026-09-27): 引擎 is two settings groups now, each with its own entry.
+    expect(d.navigate).toHaveBeenCalledWith(SPEECH_ROUTE);
+    expect(d.navigate).toHaveBeenCalledWith(AI_ROUTE);
     expect(items.find((i) => i.id === "nav-engines")).toMatchObject({
-      label: "打开设置 › 引擎",
-      icon: "cpu",
+      label: "打开设置 › 语音模型",
+      icon: "wave",
+    });
+    expect(items.find((i) => i.id === "nav-ai")).toMatchObject({
+      label: "打开设置 › AI 模型",
+      icon: "wand",
     });
     expect(toast).toHaveBeenCalledTimes(THEME_IDS.length + 1);
     for (const [message] of toast.mock.calls) expect(message).toMatch(/^主题已切换/);

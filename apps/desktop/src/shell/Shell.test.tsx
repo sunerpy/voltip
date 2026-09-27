@@ -36,31 +36,145 @@ describe("Shell", () => {
     // regression (2026-09-25): Bridge & MCP was removed — no nav item, no readout, no shortcut.
     expect(screen.queryByRole("button", { name: /Bridge/ })).toBeNull();
     expect(screen.queryByText(/客户端|Bridge|MCP/)).toBeNull();
-    // regression (2026-09-25): 引擎 is a shortcut into the settings dialog's engines group; the
-    // title bar keeps naming the page beneath.
-    await user.click(screen.getByRole("button", { name: /^引擎$/ }));
+    // regression (2026-09-27): 引擎 became 语音模型 and AI 模型 under 语音输入, each a shortcut into
+    // its settings group; the title bar keeps naming the page beneath.
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    expect(within(nav).getByRole("group", { name: "语音输入" })).toBeInTheDocument();
+    expect(within(nav).queryByText("配置")).toBeNull();
+    await user.click(screen.getByRole("button", { name: /^语音模型$/ }));
     let dialog = screen.getByRole("dialog", { name: "设置" });
-    expect(within(dialog).getByRole("tab", { name: /引擎/, selected: true })).toBeInTheDocument();
-    expect(within(dialog).getByRole("heading", { name: "引擎", level: 2 })).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("tab", { name: /语音模型/, selected: true }),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: "语音模型", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^语音模型$/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     expect(screen.getByRole("heading", { name: "首页", level: 1 })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "引擎", level: 1 })).toBeNull();
     await user.keyboard("{Escape}");
-    // Settings open as a modal dialog over the current page; the title bar keeps naming the page.
-    await user.click(screen.getByRole("button", { name: /^设置$/ }));
+    await user.click(screen.getByRole("button", { name: /^AI 模型$/ }));
     dialog = screen.getByRole("dialog", { name: "设置" });
-    expect(within(dialog).getByRole("heading", { name: "外观", level: 2 })).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: "AI 模型", level: 2 })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    // 设置 sits at the bottom and opens the dialog on 通用, over the current page.
+    const settings = screen.getByTestId("sidebar-settings");
+    expect(within(screen.getByTestId("sidebar-footer")).getByRole("button", { name: "设置" })).toBe(
+      settings,
+    );
+    expect(settings).toHaveAttribute("aria-haspopup", "dialog");
+    await user.click(settings);
+    dialog = screen.getByRole("dialog", { name: "设置" });
+    expect(within(dialog).getByRole("heading", { name: "通用", level: 2 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "首页", level: 1 })).toBeInTheDocument();
     await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("button", { name: "关于" }));
-    dialog = screen.getByRole("dialog", { name: "设置" });
-    expect(within(dialog).getByRole("heading", { name: "关于", level: 2 })).toBeInTheDocument();
-    await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("button", { name: "本机身份" }));
-    expect(screen.getByRole("heading", { name: "手机麦克风", level: 1 })).toBeInTheDocument();
+    // regression (2026-09-27): 本机身份 did nothing useful and 关于 lives in settings: both gone.
+    expect(screen.queryByRole("button", { name: "本机身份" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "关于" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /^手机$/ }));
+    expect(screen.getByRole("heading", { name: "手机", level: 1 })).toBeInTheDocument();
     // 反馈 opens the repository's new-issue page through the shell, not a toast that names it.
     await user.click(screen.getByRole("button", { name: "反馈" }));
     expect(backend.linksOpened).toEqual(["feedback"]);
     expect(screen.queryByText(/反馈渠道/)).toBeNull();
+  });
+
+  it("regression: the sidebar collapses to an icon rail and back, and the choice survives a restart", async () => {
+    const user = userEvent.setup();
+    window.localStorage.removeItem("voltip.sidebar");
+    const first = renderApp();
+    await screen.findByRole("heading", { name: "首页", level: 1 });
+    await user.click(screen.getByRole("button", { name: "收起为图标栏" }));
+    let nav = screen.getByRole("navigation", { name: "主导航" });
+    expect(nav).toHaveAttribute("data-collapsed", "true");
+    // Labels are gone from sight, kept as names and tooltips.
+    expect(within(nav).queryByText("历史记录")).toBeNull();
+    const history = within(nav).getByRole("button", { name: /^历史记录 · \d+$/ });
+    expect(history).toHaveAttribute("title", history.getAttribute("aria-label"));
+    expect(within(nav).getByRole("button", { name: "反馈" })).toHaveAttribute("title", "反馈");
+    first.unmount();
+    renderApp();
+    await screen.findByRole("heading", { name: "首页", level: 1 });
+    nav = screen.getByRole("navigation", { name: "主导航" });
+    expect(nav).toHaveAttribute("data-collapsed", "true");
+    await user.click(screen.getByRole("button", { name: "展开侧栏" }));
+    expect(screen.getByRole("navigation", { name: "主导航" })).toHaveAttribute(
+      "data-collapsed",
+      "false",
+    );
+    window.localStorage.removeItem("voltip.sidebar");
+  });
+
+  it("regression: a hidden sidebar comes back from the window edge as a floating preview, pins, and shows again from the title bar or Ctrl B", async () => {
+    const user = userEvent.setup();
+    window.localStorage.removeItem("voltip.sidebar");
+    renderApp();
+    await screen.findByRole("heading", { name: "首页", level: 1 });
+    await user.click(screen.getByRole("button", { name: /^隐藏侧栏/ }));
+    expect(screen.queryByRole("navigation", { name: "主导航" })).toBeNull();
+    // The pointer reaches the edge strip: the sidebar floats over the page.
+    await user.hover(screen.getByTestId("sidebar-edge"));
+    const preview = screen.getByTestId("sidebar-preview");
+    const nav = within(preview).getByRole("navigation", { name: "主导航" });
+    expect(nav).toHaveAttribute("data-floating", "true");
+    // Moving off past its right edge closes it (jsdom lays out nothing, so any x > 8 is past it).
+    act(() => {
+      document.dispatchEvent(new MouseEvent("pointermove", { clientX: 400, bubbles: true }));
+    });
+    expect(screen.queryByTestId("sidebar-preview")).toBeNull();
+    // Navigating from the preview closes it too.
+    await user.unhover(screen.getByTestId("sidebar-edge"));
+    await user.hover(screen.getByTestId("sidebar-edge"));
+    await user.click(
+      within(screen.getByTestId("sidebar-preview")).getByRole("button", { name: "规则" }),
+    );
+    expect(screen.getByRole("heading", { name: "规则", level: 1 })).toBeInTheDocument();
+    expect(screen.queryByTestId("sidebar-preview")).toBeNull();
+    // 固定 docks it again.
+    await user.unhover(screen.getByTestId("sidebar-edge"));
+    await user.hover(screen.getByTestId("sidebar-edge"));
+    await user.click(screen.getByRole("button", { name: "固定侧栏" }));
+    expect(screen.getByRole("navigation", { name: "主导航" })).toHaveAttribute(
+      "data-floating",
+      "false",
+    );
+    expect(screen.queryByTestId("sidebar-edge")).toBeNull();
+    // Ctrl B hides it; the title bar's button (the keyboard's way back) shows it again.
+    await user.keyboard("{Control>}b{/Control}");
+    expect(screen.queryByRole("navigation", { name: "主导航" })).toBeNull();
+    await user.click(
+      within(screen.getByTestId("title-bar")).getByRole("button", { name: /^显示侧栏/ }),
+    );
+    expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("{Control>}b{/Control}");
+    expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
+    // Hidden is never restored: it would read as a sidebar that is gone.
+    expect(JSON.parse(window.localStorage.getItem("voltip.sidebar") ?? "{}")).toEqual({
+      collapsed: false,
+    });
+    window.localStorage.removeItem("voltip.sidebar");
+  });
+
+  it("regression: the footer's theme switch steps through the themes at the glyph and picks one from its menu", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp();
+    await screen.findByRole("heading", { name: "首页", level: 1 });
+    const footer = screen.getByTestId("sidebar-footer");
+    await user.click(within(footer).getByRole("button", { name: "切换到暗黑" }));
+    await waitFor(() => {
+      expect(backend.peek().settings.theme).toBe("dark");
+    });
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    await user.selectOptions(within(footer).getByRole("combobox", { name: "主题" }), "system");
+    await waitFor(() => {
+      expect(backend.peek().settings.follow_system_theme).toBe(true);
+    });
+    expect(backend.peek().settings.theme).toBe("dark");
+    await user.selectOptions(within(footer).getByRole("combobox", { name: "主题" }), "warm");
+    await waitFor(() => {
+      expect(backend.peek().settings).toMatchObject({ theme: "warm", follow_system_theme: false });
+    });
   });
 
   it("opens the command palette with Ctrl K, previews and applies a theme, and navigates", async () => {
@@ -197,7 +311,7 @@ describe("Shell", () => {
 
   it('regression: an {type:"error"} event shows a danger toast; trusted, message and identity events toast too', async () => {
     const { backend } = renderApp({ path: "/devices" });
-    await screen.findByRole("heading", { name: "手机麦克风", level: 1 });
+    await screen.findByRole("heading", { name: "手机", level: 1 });
     act(() => {
       backend.simulateError("relay refused the ticket");
     });
@@ -242,7 +356,7 @@ describe("Shell", () => {
     expect(within(readout).getByText("Qwen3-ASR-1.7B")).toBeInTheDocument();
     expect(await within(readout).findByText("Fifine K669")).toBeInTheDocument();
     expect(readout).toHaveTextContent("Qwen3-ASR-1.7B·Fifine K669");
-    expect(within(readout).queryByText("引擎")).toBeNull();
+    expect(within(readout).queryByText("语音模型")).toBeNull();
     expect(within(readout).queryByText("麦克风")).toBeNull();
     expect(bar.querySelectorAll("[data-tone]")).toHaveLength(2); // engine lamp + polish lamp
     // No second header row: the content follows the bar directly.

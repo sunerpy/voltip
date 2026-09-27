@@ -16,8 +16,8 @@ import { useState } from "react";
 import { shortModel } from "../../../shell/page-meta";
 import { ChineseScript } from "./ChineseScript";
 import {
-  type EngineTab,
-  ENGINE_TABS,
+  type SpeechTab,
+  SPEECH_TABS,
   languageOptions,
   providersFor,
   serviceTarget,
@@ -26,27 +26,37 @@ import { LivePreview } from "./LivePreview";
 import { OutputMode, VadTrim } from "./OutputMode";
 import { ProviderCard } from "./ProviderCard";
 
-/** The 引擎 group of the settings dialog (docs/dictation.md §3): three views — 语音识别 and 文本润色
- *  list the providers that offer each service as expandable cards (the one in use is ringed and
- *  expanded first; 使用 switches, the body configures model, endpoint and key, 本机 holds the model
- *  library), 识别设置 holds what applies whatever the provider (language, script, live preview,
- *  output mode, silence trimming, injection). Everything writes `settings_set_engines` /
- *  `provider_key_set`; everything shown comes from `state.engines`. */
-export function EnginesPane() {
+/** The 语音模型 group of the settings dialog (docs/dictation.md §3), in two views: 服务商与模型
+ *  lists the recognition providers as expandable cards (the one in use is ringed and expanded
+ *  first; 使用 switches, the body configures model, endpoint and key, 本机 holds the model library),
+ *  识别设置 holds what applies whatever the provider (language, script, live preview, output mode,
+ *  silence trimming, injection). Everything writes `settings_set_engines` / `provider_key_set`;
+ *  everything shown comes from `state.engines`. */
+export function SpeechModelsPane() {
   const { t } = useI18n();
-  const [tab, setTab] = useState<EngineTab>("asr");
+  const [tab, setTab] = useState<SpeechTab>("asr");
   return (
-    <SettingsPane title={t("engines.title")} lede={t("engines.lede")} data-testid="engines-pane">
-      <Segmented<EngineTab>
+    <SettingsPane title={t("engines.title")} lede={t("engines.lede")} data-testid="speech-pane">
+      <Segmented<SpeechTab>
         label={t("engines.tabsLabel")}
         value={tab}
         onChange={setTab}
-        options={ENGINE_TABS.map((id) => ({ value: id, label: t(`engines.tab.${id}`) }))}
+        options={SPEECH_TABS.map((id) => ({ value: id, label: t(`engines.tab.${id}`) }))}
         className="self-start"
       />
       {tab === "asr" && <ProviderList kind="asr" />}
-      {tab === "llm" && <ProviderList kind="llm" />}
       {tab === "options" && <RecognitionOptions />}
+    </SettingsPane>
+  );
+}
+
+/** The AI 模型 group: whether the clean-up runs, and the LLM providers behind it and voice edit, as
+ *  the same expandable cards. */
+export function AiModelsPane() {
+  const { t } = useI18n();
+  return (
+    <SettingsPane title={t("engines.aiTitle")} lede={t("engines.aiLede")} data-testid="ai-pane">
+      <ProviderList kind="llm" />
     </SettingsPane>
   );
 }
@@ -119,7 +129,12 @@ function ProviderList({ kind }: { kind: ServiceKind }) {
         {providers.length === 0 ? (
           <p className="text-[12px] text-fg-muted">{t("engines.waiting")}</p>
         ) : (
-          <div className="flex flex-col gap-3" role="list" aria-label={t(`engines.tab.${kind}`)}>
+          <div
+            className="flex flex-col gap-3"
+            role="list"
+            aria-label={t(
+              kind === "asr" ? "engines.asrSection.title" : "engines.llmSection.title",
+            )}>
             {providers.map((p) => (
               <div role="listitem" key={p.id}>
                 <ProviderCard

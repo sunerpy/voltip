@@ -36,6 +36,7 @@ export * from "./components/Dialog";
 export * from "./components/Toast";
 export * from "./components/CommandPalette";
 export * from "./components/Sidebar";
+export * from "./components/ThemeSwitch";
 export * from "./components/Toolbar";
 export * from "./components/TitleBar";
 export * from "./components/OptionCard";
