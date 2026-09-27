@@ -155,7 +155,11 @@ async fn direct_host_pairs_phone_and_desktop_without_a_relay() {
     desk.send(RelayFrame::forward(SessionId::random(), vec![1])).await.unwrap();
     assert!(matches!(next_frame(&mut ed).await, RelayFrame::Error { code: RelayErrorCode::NotJoined, .. }));
     assert_eq!(host.stats().connections, 2);
-    host.shutdown();
+    let addr = host.local_addr();
+    host.shutdown().await;
+    // Regression (Windows native gate, 2026-09-28): the host stops accepting before `shutdown`
+    // returns, so a peer that saw this device go offline gets no answer from its LAN address.
+    assert!(tokio::net::TcpStream::connect(addr).await.is_err(), "the port is closed once shutdown returns");
     // Links notice the host going away.
     next_state(&mut ed, ConnectionState::Reconnecting).await;
     desk.close().await;

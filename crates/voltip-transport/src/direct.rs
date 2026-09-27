@@ -114,14 +114,18 @@ impl DirectHost {
         self.shared.core.lock().stats()
     }
 
-    /// Stop accepting and drop all connections.
-    pub fn shutdown(self) {
+    /// Stop accepting and drop all connections. Returns once the accept loop has ended, so the
+    /// listening socket is closed: an address announced to peers no longer answers.
+    pub async fn shutdown(self) {
         self.accept_task.abort();
         self.tick_task.abort();
         let outbound: Vec<_> = self.shared.outbound.lock().drain().map(|(_, tx)| tx).collect();
         for tx in outbound {
             let _ = tx.try_send(Outbound::Close);
         }
+        // An aborted task ends at its next await; its `JoinError` is the cancellation itself.
+        let _ = self.accept_task.await;
+        let _ = self.tick_task.await;
     }
 }
 

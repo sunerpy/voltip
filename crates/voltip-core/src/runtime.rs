@@ -955,15 +955,17 @@ impl Runtime {
         if let Some(t) = self.activation.grace.take() {
             t.abort();
         }
+        // The LAN host stops first: once a peer sees this device go offline (its relay or direct
+        // link closed), the LAN address it was told about must not answer any more.
+        if let Some(h) = self.host.take() {
+            h.host.shutdown().await;
+            h.link.close().await;
+        }
         if let Some((l, _)) = self.relay.take() {
             l.close().await;
         }
         for (_, d) in self.dials.drain() {
             d.link.close().await;
-        }
-        if let Some(h) = self.host.take() {
-            h.link.close().await;
-            h.host.shutdown();
         }
     }
 
