@@ -173,6 +173,8 @@ pub enum ProjectLink {
     Source,
     /// Where to report a problem or ask for a feature: the repository's new-issue page.
     Feedback,
+    /// The published releases, with their notes and downloads (the update dialog).
+    Releases,
 }
 
 impl ProjectLink {
@@ -182,6 +184,7 @@ impl ProjectLink {
         match self {
             Self::Source => base.to_owned(),
             Self::Feedback => format!("{base}/issues/new/choose"),
+            Self::Releases => format!("{base}/releases"),
         }
     }
 }
@@ -457,6 +460,7 @@ mod tests {
         let repo = "https://github.com/example/voltip";
         assert_eq!(ProjectLink::Source.url(repo), repo);
         assert_eq!(ProjectLink::Feedback.url(&format!("{repo}/")), format!("{repo}/issues/new/choose"));
+        assert_eq!(ProjectLink::Releases.url(repo), format!("{repo}/releases"));
         assert_eq!(serde_json::to_string(&ProjectLink::Feedback).unwrap(), r#""feedback""#);
         assert_eq!(serde_json::from_str::<ProjectLink>(r#""source""#).unwrap(), ProjectLink::Source);
     }

@@ -23,6 +23,7 @@ import { openProjectLink } from "../app/project-links";
 import { microphoneReadoutValue, useMicrophoneReadout } from "../features/audio/mic-store";
 import { useDictation } from "../features/dictation/useDictation";
 import { FeedbackDialog } from "../features/feedback/FeedbackDialog";
+import { UpdateBadge, UpdateDialog } from "../features/update/UpdateDialog";
 import { engineReadout, microphoneReadout, pageMeta } from "./page-meta";
 import { RevealSidebarButton, ShellSidebar } from "./ShellSidebar";
 import { useSidebarLayout } from "./sidebar-layout";
@@ -270,7 +271,16 @@ export function Shell({ children }: { children: ReactNode }) {
             platform={chrome.platform}
             controls={chrome.controls}
             maximized={chrome.maximized}
-            right={<PolishToggle />}
+            right={
+              <>
+                <UpdateBadge
+                  onOpen={() => {
+                    shell.setUpdateOpen(true);
+                  }}
+                />
+                <PolishToggle />
+              </>
+            }
           />
         )}
         <main className="min-h-0 flex-1 overflow-auto">{children}</main>
@@ -313,6 +323,12 @@ export function Shell({ children }: { children: ReactNode }) {
         }>
         {shell.pending?.body}
       </Dialog>
+      <UpdateDialog
+        open={shell.updateOpen}
+        onClose={() => {
+          shell.setUpdateOpen(false);
+        }}
+      />
       <FeedbackDialog
         open={feedbackOpen}
         onClose={() => {

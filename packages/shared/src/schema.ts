@@ -196,7 +196,7 @@ export type LocaleSetting = z.infer<typeof localeSettingSchema>;
  *  them equal). */
 /** Project pages the shell opens (`voltip_core::ui::ProjectLink`): the repository and its
  *  new-issue page. */
-export const PROJECT_LINKS = ["source", "feedback"] as const;
+export const PROJECT_LINKS = ["source", "feedback", "releases"] as const;
 export const projectLinkSchema = z.enum(PROJECT_LINKS);
 export type ProjectLink = z.infer<typeof projectLinkSchema>;
 

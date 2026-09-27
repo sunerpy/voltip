@@ -20,6 +20,9 @@ export interface ShellActions {
   closeConfirm: () => void;
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
+  /** The update dialog (features/update), opened from the title bar and the settings rows. */
+  updateOpen: boolean;
+  setUpdateOpen: (open: boolean) => void;
   /** The mounted locale's translator, so helpers such as `copyWithToast` speak the UI language. */
   t: TFunction;
 }
@@ -31,6 +34,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   const toasts = useToasts();
   const [pending, setPending] = useState<ConfirmSpec | undefined>(undefined);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [updateOpen, setUpdateOpen] = useState(false);
   const closeConfirm = useCallback(() => {
     setPending(undefined);
   }, []);
@@ -43,9 +47,11 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       closeConfirm,
       paletteOpen,
       setPaletteOpen,
+      updateOpen,
+      setUpdateOpen,
       t,
     }),
-    [toasts, pending, closeConfirm, paletteOpen, t],
+    [toasts, pending, closeConfirm, paletteOpen, updateOpen, t],
   );
   return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>;
 }

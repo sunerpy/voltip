@@ -99,11 +99,15 @@ describe("Settings · 通用", () => {
       });
       expect(status()).toHaveTextContent(`有新版本 ${MOCK_AVAILABLE_VERSION} · 当前 0.0.1`);
       expect(screen.queryByRole("button", { name: "检查更新" })).toBeNull();
-      await user.click(screen.getByRole("button", { name: "立即更新" }));
+      // The row opens the update dialog with the notes; its 立即更新 starts the download.
+      await user.click(screen.getByRole("button", { name: "查看新版本" }));
+      const dialog = screen.getByRole("dialog", { name: `发现新版本 ${MOCK_AVAILABLE_VERSION}` });
+      await user.click(within(dialog).getByRole("button", { name: "立即更新" }));
       await waitFor(() => {
         expect(backend.peek().update.state).toBe("downloading");
       });
       expect(status()).toHaveTextContent(`正在下载 ${MOCK_AVAILABLE_VERSION} · 33%`);
+      await user.click(screen.getByRole("button", { name: "后台下载" }));
       expect(screen.queryByRole("button", { name: "立即更新" })).toBeNull();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_UPDATE_TICK_MS * MOCK_UPDATE_TICKS);

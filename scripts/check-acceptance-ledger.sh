@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # the grep patterns match literal backticks
 # Every evidence reference in docs/acceptance.md must point at a real test:
-#   `path/to/file@test_name`  →  file exists AND contains `test_name`
+#   `path/to/file@test name`  →  file exists AND contains the name (any characters but a backtick:
+#   test names carry punctuation and CJK)
 # and every repository path it names must exist (`crates/x/src/{a,b}.rs` and `…/*.json` expand), so
 # a renamed or deleted file cannot leave a row pointing at nothing.
 # Rows without evidence are allowed only when marked [!] (explicitly unverified).
@@ -12,12 +13,12 @@ ledger=${1:-docs/acceptance.md}
 fail=0
 count=0
 while IFS= read -r ref; do
-  file=${ref%@*}
+  file=${ref%%@*}
   name=${ref#*@}
   count=$((count + 1))
   if [ ! -f "$file" ]; then echo "missing file: $file (for $name)"; fail=1; continue; fi
   if ! grep -qF -- "$name" "$file"; then echo "missing test: $name in $file"; fail=1; fi
-done < <(grep -oE '`[A-Za-z0-9_./-]+@[A-Za-z0-9_: -]+`' "$ledger" | tr -d '`' | sort -u)
+done < <(grep -oE '`[A-Za-z0-9_./-]+\.(rs|ts|tsx|sh|py|ps1)@[^`]+`' "$ledger" | tr -d '`' | sort -u)
 
 # `a/{b,c}/d` → a/b/d, a/c/d (one group at a time, so several groups multiply).
 expand() {

@@ -241,6 +241,19 @@ export const MOCK_UPDATE_TICKS = 3;
 export const MOCK_UPDATE_TOTAL_BYTES = 48_000_000;
 export const MOCK_CURRENT_VERSION = "0.0.1";
 export const MOCK_AVAILABLE_VERSION = "0.0.2";
+/** Release notes as release-please writes them into `latest.json`. */
+export const MOCK_UPDATE_NOTES = [
+  "## 0.0.2 (2026-09-25)",
+  "",
+  "",
+  "### Features",
+  "",
+  "* **engines:** a faster recognition path ([a1b2c3d](https://example.test/commit/a1b2c3d))",
+  "",
+  "### Bug Fixes",
+  "",
+  "* the pill keeps its place on a second screen",
+].join("\n");
 
 /** The streaming model the live preview needs (docs/dictation.md §11). */
 export const MOCK_STREAMING_MODEL_ID = "zipformer-stream-zh-en";
@@ -1577,7 +1590,7 @@ export class MockBackend implements Backend {
         state: "available",
         version: MOCK_AVAILABLE_VERSION,
         current: MOCK_CURRENT_VERSION,
-        notes: "Fixes and a faster ASR path.",
+        notes: MOCK_UPDATE_NOTES,
         date: "2026-09-25",
       });
     });

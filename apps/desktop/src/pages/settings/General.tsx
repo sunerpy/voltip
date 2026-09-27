@@ -18,6 +18,7 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { useRouter } from "../../app/router";
+import { useShell } from "../../app/shell-context";
 
 /** `12582912 / 48000000` → `26%`; without a total, the received megabytes. */
 export function downloadProgress(received: number, total: number | undefined): string {
@@ -80,6 +81,7 @@ export function updateStatusLine(
 /** The updater's status line plus the one action its state allows (check / update / restart). */
 export function UpdateControls({ compact = false }: { compact?: boolean }) {
   const { backend } = useBackend();
+  const shell = useShell();
   const { t, locale } = useI18n();
   const { update } = useUiState();
   const line = updateStatusLine(update, t, (secs) =>
@@ -97,15 +99,15 @@ export function UpdateControls({ compact = false }: { compact?: boolean }) {
         pulse={update.state === "checking" || update.state === "downloading"}>
         <span data-testid="update-status">{line.text}</span>
       </LampText>
-      {update.state === "available" && (
+      {(update.state === "available" || update.state === "downloading") && (
         <Button
           size="sm"
           variant="primary"
           icon="download"
           onClick={() => {
-            void backend.invoke("update_install");
+            shell.setUpdateOpen(true);
           }}>
-          {t("settings.general.installNow")}
+          {t("settings.general.viewUpdate")}
         </Button>
       )}
       {update.state === "ready" && (
@@ -119,20 +121,22 @@ export function UpdateControls({ compact = false }: { compact?: boolean }) {
           {t("settings.general.restartInstall")}
         </Button>
       )}
-      {update.state !== "available" && update.state !== "ready" && (
-        <Button
-          size="sm"
-          variant={compact ? "ghost" : "outline"}
-          disabled={busy || disabled}
-          loading={update.state === "checking"}
-          onClick={() => {
-            void backend.invoke("update_check");
-          }}>
-          {update.state === "checking"
-            ? t("settings.general.checking")
-            : t("settings.general.checkUpdate")}
-        </Button>
-      )}
+      {update.state !== "available" &&
+        update.state !== "downloading" &&
+        update.state !== "ready" && (
+          <Button
+            size="sm"
+            variant={compact ? "ghost" : "outline"}
+            disabled={busy || disabled}
+            loading={update.state === "checking"}
+            onClick={() => {
+              void backend.invoke("update_check");
+            }}>
+            {update.state === "checking"
+              ? t("settings.general.checking")
+              : t("settings.general.checkUpdate")}
+          </Button>
+        )}
     </div>
   );
 }
