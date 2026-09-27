@@ -2,6 +2,9 @@ import type {
   AppRef,
   ArgsOf,
   AudioDevice,
+  FeedbackDraft,
+  FeedbackInfo,
+  FeedbackReceipt,
   InjectPreflight,
   LevelFrame,
   MutationCommand,
@@ -58,4 +61,9 @@ export interface Backend {
   /** Open a project page in the browser (`project_link_open`): the repository or its new-issue
    *  page; the shell builds the URL from its own repository. */
   projectLinkOpen(link: ProjectLink): Promise<void>;
+  /** What a 反馈 report would carry and whether this build can send it (`feedback_diagnostics`,
+   *  docs/feedback.md); `locale` is the language the webview resolved. */
+  feedbackDiagnostics(locale: string): Promise<FeedbackInfo>;
+  /** Post a report (`feedback_submit`); rejects with a `FeedbackError` wire name. */
+  feedbackSubmit(draft: FeedbackDraft): Promise<FeedbackReceipt>;
 }

@@ -200,6 +200,62 @@ export const PROJECT_LINKS = ["source", "feedback"] as const;
 export const projectLinkSchema = z.enum(PROJECT_LINKS);
 export type ProjectLink = z.infer<typeof projectLinkSchema>;
 
+// ---- in-app feedback (docs/feedback.md; the shell's src/feedback.rs) -------------------------
+
+export const FEEDBACK_KINDS = ["bug", "idea", "other"] as const;
+export const feedbackKindSchema = z.enum(FEEDBACK_KINDS);
+export type FeedbackKind = z.infer<typeof feedbackKindSchema>;
+/** The endpoint's limits, in UTF-16 code units like `maxLength`. */
+export const FEEDBACK_MESSAGE_MAX = 5000;
+export const FEEDBACK_CONTACT_MAX = 200;
+
+/** What a report carries besides the user's words: versions, platform, which provider kind is in
+ *  use. Never a host, a key or a dictation. */
+export const feedbackDiagnosticsSchema = z.object({
+  app_version: z.string(),
+  os: z.string(),
+  arch: z.string(),
+  session: z.string().optional(),
+  locale: z.string(),
+  asr_provider: z.string(),
+  local_model: z.string().optional(),
+  compute: z.string().optional(),
+  llm_provider: z.string().optional(),
+  output_mode: z.string(),
+});
+export type FeedbackDiagnostics = z.infer<typeof feedbackDiagnosticsSchema>;
+
+/** `feedback_diagnostics`: whether this build has an endpoint, and what a report would carry. */
+export const feedbackInfoSchema = z.object({
+  configured: z.boolean(),
+  diagnostics: feedbackDiagnosticsSchema,
+});
+export type FeedbackInfo = z.infer<typeof feedbackInfoSchema>;
+
+/** `feedback_submit`'s answer. */
+export const feedbackReceiptSchema = z.object({ id: z.string() });
+export type FeedbackReceipt = z.infer<typeof feedbackReceiptSchema>;
+
+/** Why a report did not go out (the shell's `SendError` wire names). */
+export const FEEDBACK_ERRORS = [
+  "not_configured",
+  "invalid",
+  "rate_limited",
+  "unauthorized",
+  "network",
+  "timeout",
+  "server",
+] as const;
+export type FeedbackError = (typeof FEEDBACK_ERRORS)[number];
+
+/** The dialog's report; `locale` is the language the webview resolved. */
+export interface FeedbackDraft {
+  kind: FeedbackKind;
+  message: string;
+  contact: string | null;
+  locale: string;
+}
+
 export const APP_LICENSE = "Apache-2.0";
 
 /** `voltip_core::DEFAULT_EDIT_HOTKEY`: the voice-edit chord (docs/dictation.md §19). */
@@ -1447,6 +1503,10 @@ export interface CommandArgs {
   provider_console_open: { provider: ProviderId };
   /** Open a project page in the browser; the shell builds the URL from its repository. */
   project_link_open: { link: ProjectLink };
+  /** Query (docs/feedback.md): what a report would carry, and whether the build can send one. */
+  feedback_diagnostics: { locale: string };
+  /** Query: post the 反馈 dialog's report; rejects with a `FeedbackError` wire name. */
+  feedback_submit: FeedbackDraft;
   history_delete: { id: string };
   history_clear: undefined;
   history_star: { id: string; starred: boolean };
@@ -1528,7 +1588,9 @@ export type QueryCommand =
   | "permissions_request"
   | "inject_preflight"
   | "provider_console_open"
-  | "project_link_open";
+  | "project_link_open"
+  | "feedback_diagnostics"
+  | "feedback_submit";
 export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "core_state",
   "audio_devices",
@@ -1544,6 +1606,8 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "inject_preflight",
   "provider_console_open",
   "project_link_open",
+  "feedback_diagnostics",
+  "feedback_submit",
 ];
 /** Commands the UI dispatches through `Backend.invoke` (everything except the queries / streams). */
 export type MutationCommand = Exclude<CommandName, QueryCommand>;

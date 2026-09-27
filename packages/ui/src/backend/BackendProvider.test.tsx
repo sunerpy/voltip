@@ -60,6 +60,8 @@ describe("BackendProvider", () => {
       injectPreflight: inner.injectPreflight.bind(inner),
       providerConsoleOpen: inner.providerConsoleOpen.bind(inner),
       projectLinkOpen: inner.projectLinkOpen.bind(inner),
+      feedbackDiagnostics: () => Promise.reject(new Error("no feedback")),
+      feedbackSubmit: () => Promise.reject(new Error("no feedback")),
     };
     render(
       <BackendProvider backend={backend}>
@@ -102,6 +104,8 @@ describe("BackendProvider", () => {
       injectPreflight: () => Promise.resolve(uncheckedPreflight("linux")),
       providerConsoleOpen: () => Promise.resolve(),
       projectLinkOpen: () => Promise.resolve(),
+      feedbackDiagnostics: () => Promise.reject(new Error("no feedback")),
+      feedbackSubmit: () => Promise.reject(new Error("no feedback")),
     };
     render(
       <BackendProvider backend={backend}>

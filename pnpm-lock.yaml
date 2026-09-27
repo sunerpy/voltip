@@ -247,6 +247,21 @@ importers:
         specifier: 3.2.4
         version: 3.2.4(@types/node@24.9.2)(jiti@2.7.0)(jsdom@27.0.0)(lightningcss@1.32.0)
 
+  services/feedback:
+    devDependencies:
+      '@types/node':
+        specifier: 24.9.2
+        version: 24.9.2
+      '@vitest/coverage-v8':
+        specifier: 3.2.4
+        version: 3.2.4(vitest@3.2.4(@types/node@24.9.2)(jiti@2.7.0)(jsdom@27.0.0)(lightningcss@1.32.0))
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.4
+        version: 3.2.4(@types/node@24.9.2)(jiti@2.7.0)(jsdom@27.0.0)(lightningcss@1.32.0)
+
 packages:
 
   '@adobe/css-tools@4.5.0':

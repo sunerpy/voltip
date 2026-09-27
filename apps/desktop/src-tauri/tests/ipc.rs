@@ -695,6 +695,32 @@ fn scene_commands_context_sharing_and_recent_apps_run_through_the_command_layer(
     });
 }
 
+/// In-app feedback (docs/feedback.md) through the command layer: the diagnostics name the
+/// version, the platform and the provider kinds, never a host; a report is checked before anything
+/// is sent, and a build without an endpoint refuses it as `not_configured`.
+#[test]
+fn feedback_commands_show_what_goes_along_and_refuse_without_an_endpoint() {
+    with_running_app(|_, webview, rx| {
+        wait_state(webview, |s| s.identity.is_some());
+        wait_event(rx, "engines", |e| e["type"] == "engines");
+        let info = invoke(webview, "feedback_diagnostics", json!({ "locale": "zh-CN" })).unwrap();
+        assert_eq!(info["configured"], voltip_desktop_lib::feedback::feedback_url().is_some());
+        assert_eq!(info["diagnostics"]["app_version"], voltip_desktop_lib::APP_VERSION);
+        assert_eq!(info["diagnostics"]["os"], std::env::consts::OS);
+        assert_eq!(info["diagnostics"]["locale"], "zh-CN");
+        assert_eq!(info["diagnostics"]["asr_provider"], "custom");
+        assert!(!info.to_string().contains("127.0.0.1"), "{info}");
+        assert!(invoke(webview, "feedback_diagnostics", json!({})).is_err(), "the locale is required");
+        let report = |message: &str| json!({ "kind": "idea", "message": message, "contact": null, "locale": "en" });
+        if voltip_desktop_lib::feedback::feedback_url().is_none() {
+            assert_eq!(invoke(webview, "feedback_submit", report("hi")), Err(Value::String("not_configured".into())));
+        } else {
+            assert_eq!(invoke(webview, "feedback_submit", report("   ")), Err(Value::String("invalid".into())));
+        }
+        assert!(invoke(webview, "feedback_submit", json!({ "kind": "praise", "message": "x", "locale": "en" })).is_err());
+    });
+}
+
 /// Local models (docs/dictation.md §10) through the command layer. The headless app is built on
 /// the core's fakes, which carry no model library: the list is empty, local mode is refused, and the
 /// three model verbs come back as honest `error` events (never "not found", never a panic). The
@@ -1179,6 +1205,8 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "inject_preflight",
             "provider_console_open",
             "project_link_open",
+            "feedback_diagnostics",
+            "feedback_submit",
         ]
         .map(String::from),
     );

@@ -227,6 +227,10 @@ jobs:
       VOLTIP_UPDATE_URL: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' && format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) || '' }}
       VOLTIP_UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
       VOLTIP_MODEL_BASE_URL: ${{ secrets.VOLTIP_MODEL_BASE_URL }}
+      # The 反馈 dialog's endpoint and its app token (docs/feedback.md); unset, the dialog offers the
+      # repository's issue page instead.
+      VOLTIP_FEEDBACK_URL: ${{ secrets.VOLTIP_FEEDBACK_URL }}
+      VOLTIP_FEEDBACK_TOKEN: ${{ secrets.VOLTIP_FEEDBACK_TOKEN }}
     steps:
       - name: Checkout release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -413,6 +417,10 @@ jobs:
       VOLTIP_UPDATE_URL: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' && format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) || '' }}
       VOLTIP_UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
       VOLTIP_MODEL_BASE_URL: ${{ secrets.VOLTIP_MODEL_BASE_URL }}
+      # The 反馈 dialog's endpoint and its app token (docs/feedback.md); unset, the dialog offers the
+      # repository's issue page instead.
+      VOLTIP_FEEDBACK_URL: ${{ secrets.VOLTIP_FEEDBACK_URL }}
+      VOLTIP_FEEDBACK_TOKEN: ${{ secrets.VOLTIP_FEEDBACK_TOKEN }}
     steps:
       - name: Checkout release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

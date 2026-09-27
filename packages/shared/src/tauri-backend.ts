@@ -5,6 +5,7 @@ import { listen as tauriListen } from "@tauri-apps/api/event";
 import type { Backend, EventListener, FrameListener, Unsubscribe } from "./backend";
 import {
   type ArgsOf,
+  type FeedbackDraft,
   type MutationCommand,
   type PreviewDraft,
   type Permission,
@@ -13,6 +14,8 @@ import {
   UI_EVENT_NAME,
   appRefSchema,
   audioDeviceSchema,
+  feedbackInfoSchema,
+  feedbackReceiptSchema,
   injectPreflightSchema,
   levelFrameSchema,
   permissionReportSchema,
@@ -109,6 +112,16 @@ export class TauriBackend implements Backend {
 
   async projectLinkOpen(link: ProjectLink): Promise<void> {
     await this.transport.invoke("project_link_open", { link });
+  }
+
+  async feedbackDiagnostics(locale: string) {
+    const raw = await this.transport.invoke("feedback_diagnostics", { locale });
+    return feedbackInfoSchema.parse(raw);
+  }
+
+  async feedbackSubmit(draft: FeedbackDraft) {
+    const raw = await this.transport.invoke("feedback_submit", { ...draft });
+    return feedbackReceiptSchema.parse(raw);
   }
 
   async injectPreflight() {

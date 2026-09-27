@@ -79,6 +79,13 @@ import {
   type ProbeFailure,
   type ServiceKind,
   type ProjectLink,
+  FEEDBACK_CONTACT_MAX,
+  FEEDBACK_MESSAGE_MAX,
+  type FeedbackDiagnostics,
+  type FeedbackDraft,
+  type FeedbackError,
+  type FeedbackInfo,
+  type FeedbackReceipt,
   type HardwareStatus,
   type PhoneTakeState,
   phoneTakeFinal,
@@ -163,6 +170,10 @@ export interface MockBackendOptions {
   /** What the desktop shell reports about the machine (docs/dictation.md §10.6); defaults to
    *  `MOCK_HARDWARE`, a CPU-only build. */
   hardware?: HardwareStatus;
+  /** How the preview's feedback endpoint answers (docs/feedback.md): `configured` (default) takes
+   *  every report after `MOCK_FEEDBACK_MS`, `not_configured` is a build without one, a
+   *  `FeedbackError` fails every submission with it. */
+  feedback?: "configured" | FeedbackError;
   /** Clock in milliseconds; injectable for deterministic tests. */
   now?: () => number;
   /** Deterministic randomness source in [0, 1). */
@@ -339,6 +350,10 @@ export const MOCK_GPU_HARDWARE: HardwareStatus = {
 export const PHONE_TAKE_UNAVAILABLE = "phone_take: 电脑接收手机的录音，不向其他设备推送";
 /** `voltip_mobile::PROJECT_LINKS_UNAVAILABLE`. */
 export const PROJECT_LINKS_UNAVAILABLE = "project: 手机端不打开项目页面";
+/** `voltip_mobile::FEEDBACK_UNAVAILABLE`. */
+export const FEEDBACK_UNAVAILABLE = "feedback: 请在电脑上反馈";
+/** How long the preview's feedback endpoint takes to answer. */
+export const MOCK_FEEDBACK_MS = 300;
 /** `live_error` of a take whose scene asked for a streaming mode the live preview cannot serve
  *  (the core's `SCENE_MODE_NOT_READY`, §18.4). */
 export const MOCK_SCENE_MODE_NOT_READY =
@@ -624,6 +639,9 @@ export class MockBackend implements Backend {
   readonly consolesOpened: ProviderId[] = [];
   /** `project_link_open` calls, for tests (the phone opens none). */
   readonly linksOpened: ProjectLink[] = [];
+  /** Reports `feedbackSubmit` accepted, in order. */
+  readonly feedbackSent: FeedbackDraft[] = [];
+  private readonly feedback: "configured" | FeedbackError;
   private readonly probeTimers = new Set<ReturnType<typeof setTimeout>>();
   /** Every event emitted, oldest first; handy for asserting ordering in tests. */
   readonly log: UiEvent[] = [];
@@ -647,6 +665,7 @@ export class MockBackend implements Backend {
       if (entry !== undefined) this.userKeys.add(entry);
     }
     this.probeModels = options.probeModels ?? {};
+    this.feedback = options.feedback ?? "configured";
     this.engineOverrides = options.engines ?? {};
     this.foregroundApp = options.foregroundApp ?? null;
     const host = hostOsOf(identity.platform);
@@ -1628,6 +1647,56 @@ export class MockBackend implements Backend {
     if (this.role === "phone") return Promise.reject(new Error(PROJECT_LINKS_UNAVAILABLE));
     this.linksOpened.push(link);
     return Promise.resolve();
+  }
+
+  // ---- feedback (docs/feedback.md) -------------------------------------------------------------
+
+  feedbackDiagnostics(locale: string): Promise<FeedbackInfo> {
+    if (this.role === "phone") return Promise.reject(new Error(FEEDBACK_UNAVAILABLE));
+    const engines = this.state.engines;
+    const onDevice = engines.asr_provider === "local";
+    const host = hostOsOf(this.state.identity?.platform ?? "windows");
+    const diagnostics: FeedbackDiagnostics = {
+      app_version: MOCK_CURRENT_VERSION,
+      os: host === "other" ? "windows" : host,
+      arch: "x86_64",
+      locale,
+      asr_provider: engines.asr_provider,
+      output_mode: engines.effective_output_mode,
+      ...(onDevice && typeof engines.local_model === "string"
+        ? { local_model: engines.local_model }
+        : {}),
+      ...(onDevice ? { compute: this.state.settings.engines.local_device } : {}),
+      ...(engines.refine_enabled && engines.llm_provider !== undefined
+        ? { llm_provider: engines.llm_provider }
+        : {}),
+    };
+    return Promise.resolve({ configured: this.feedback !== "not_configured", diagnostics });
+  }
+
+  feedbackSubmit(draft: FeedbackDraft): Promise<FeedbackReceipt> {
+    if (this.role === "phone") return Promise.reject(new Error(FEEDBACK_UNAVAILABLE));
+    const message = draft.message.trim();
+    const contact = draft.contact?.trim() ?? "";
+    if (
+      message.length === 0 ||
+      message.length > FEEDBACK_MESSAGE_MAX ||
+      contact.length > FEEDBACK_CONTACT_MAX
+    )
+      return Promise.reject(new Error("invalid"));
+    const failure = this.feedback;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.probeTimers.delete(timer);
+        if (failure !== "configured") {
+          reject(new Error(failure));
+          return;
+        }
+        this.feedbackSent.push({ ...draft, message, contact: contact.length > 0 ? contact : null });
+        resolve({ id: `feedback-${this.feedbackSent.length}` });
+      }, MOCK_FEEDBACK_MS);
+      this.probeTimers.add(timer);
+    });
   }
 
   /** `provider_probe`: the same refusals as the core before any request, then the preset list (or

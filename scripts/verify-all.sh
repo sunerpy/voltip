@@ -21,7 +21,7 @@ dirty=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
 mkdir -p apps/desktop/dist apps/mobile/dist
 # Hermetic gates: the core tests assert the "no built-in engine" state, so compile-time defaults
 # from a sourced .env.build or the CI environment must not leak into this run.
-unset VOLTIP_ASR_URL VOLTIP_ASR_TOKEN VOLTIP_ASR_MODEL VOLTIP_REFINE_URL VOLTIP_REFINE_API_KEY VOLTIP_REFINE_MODEL VOLTIP_RELAY_URL VOLTIP_UPDATE_URL VOLTIP_UPDATE_PUBKEY
+unset VOLTIP_ASR_URL VOLTIP_ASR_TOKEN VOLTIP_ASR_MODEL VOLTIP_REFINE_URL VOLTIP_REFINE_API_KEY VOLTIP_REFINE_MODEL VOLTIP_RELAY_URL VOLTIP_UPDATE_URL VOLTIP_UPDATE_PUBKEY VOLTIP_FEEDBACK_URL VOLTIP_FEEDBACK_TOKEN
 
 overall=0
 gate() {

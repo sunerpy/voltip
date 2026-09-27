@@ -25,6 +25,9 @@ gh secret set VOLTIP_UPDATE_PUBKEY --repo "$repo" --body-file ~/.tauri/voltip.ke
 gh secret set TAURI_SIGNING_PRIVATE_KEY --repo "$repo" --body-file ~/.tauri/voltip.key
 gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --repo "$repo"
 gh secret set VOLTIP_MODEL_BASE_URL --repo "$repo"
+# Optional: the feedback endpoint (both or neither).
+gh secret set VOLTIP_FEEDBACK_URL --repo "$repo"
+gh secret set VOLTIP_FEEDBACK_TOKEN --repo "$repo"
 gh secret list --repo "$repo"
 ```
 
@@ -54,6 +57,16 @@ no-built-in state.
 | `VOLTIP_REFINE_MODEL` | Clean-up model name. | your edge |
 | `VOLTIP_REFINE_API_KEY` | Credential for the clean-up endpoint: an application token, never a provider key. The Windows build script and the Linux release leg scan the binary and refuse `gsk_…` / `sk-…` keys. | your edge |
 | `VOLTIP_MODEL_BASE_URL` | Optional first download source for the local models (`<base>/<hf-repo>/<file>`); without it the app uses huggingface.co, then hf-mirror.com. | your mirror |
+
+## Feedback endpoint (release only, optional)
+
+The 反馈 dialog posts to this endpoint (`docs/feedback.md`, the Worker in `services/feedback`). A
+build without it offers the repository's issue page instead.
+
+| Secret | Meaning | Source |
+|---|---|---|
+| `VOLTIP_FEEDBACK_URL` | The endpoint, `https://<feedback-host>/v1/feedback`. | your feedback Worker |
+| `VOLTIP_FEEDBACK_TOKEN` | The application token the Worker checks (its `FEEDBACK_TOKEN` secret); it ships inside the app, so it only keeps casual abuse out, the Worker's rate limit does the rest. | generated, same value as the Worker's |
 
 ## Updater (release only, optional)
 

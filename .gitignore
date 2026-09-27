@@ -30,3 +30,7 @@ apps/desktop/src-tauri/resources/macos/
 # scripts/smoke-native-cli.ps1 output (make smoke-native, CI)
 /smoke-native-*/
 /smoke-native-cli/
+
+# The feedback endpoint's deployment is the owner's local tooling (docs/feedback.md): the account,
+# the domain and the tokens live in .env.build and the GitHub secrets, never in the tree.
+/scripts/deploy-feedback.sh

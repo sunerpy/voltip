@@ -27,7 +27,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 68] = [
+pub const COMMANDS: [&str; 70] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -63,6 +63,8 @@ pub const COMMANDS: [&str; 68] = [
     "provider_probe",
     "provider_console_open",
     "project_link_open",
+    "feedback_diagnostics",
+    "feedback_submit",
     "history_delete",
     "history_clear",
     "history_star",
@@ -359,6 +361,19 @@ fn project_link_open(_link: ProjectLink) -> Result<(), String> {
     Err(PROJECT_LINKS_UNAVAILABLE.into())
 }
 
+/// Feedback is sent from the computer (its 反馈 dialog, docs/feedback.md).
+pub const FEEDBACK_UNAVAILABLE: &str = "feedback: 请在电脑上反馈";
+
+#[tauri::command]
+fn feedback_diagnostics(_locale: String) -> Result<(), String> {
+    Err(FEEDBACK_UNAVAILABLE.into())
+}
+
+#[tauri::command]
+fn feedback_submit(_kind: String, _message: String, _contact: Option<String>, _locale: String) -> Result<(), String> {
+    Err(FEEDBACK_UNAVAILABLE.into())
+}
+
 #[tauri::command]
 fn history_delete(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::HistoryDelete { id })?)
@@ -645,6 +660,8 @@ pub fn build_app<R: Runtime>(
             provider_probe,
             provider_console_open,
             project_link_open,
+            feedback_diagnostics,
+            feedback_submit,
             history_delete,
             history_clear,
             history_star,

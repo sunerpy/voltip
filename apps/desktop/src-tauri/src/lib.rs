@@ -19,6 +19,7 @@ pub mod audio;
 pub mod cli;
 pub mod dictation;
 pub mod exit;
+pub mod feedback;
 pub mod hotkey;
 pub mod overlay;
 pub mod platform;
@@ -40,7 +41,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 68] = [
+pub const COMMANDS: [&str; 70] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -76,6 +77,8 @@ pub const COMMANDS: [&str; 68] = [
     "provider_probe",
     "provider_console_open",
     "project_link_open",
+    "feedback_diagnostics",
+    "feedback_submit",
     "history_delete",
     "history_clear",
     "history_star",
@@ -353,6 +356,31 @@ pub const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 #[tauri::command]
 fn project_link_open(link: ProjectLink) -> Result<(), String> {
     tauri_plugin_opener::open_url(link.url(REPOSITORY), None::<&str>).map_err(|e| e.to_string())
+}
+
+/// What a 反馈 report would carry, and whether this build can send one (docs/feedback.md).
+/// `locale` is the language the webview resolved.
+#[tauri::command]
+fn feedback_diagnostics(bridge: tauri::State<'_, Bridge>, locale: String) -> feedback::FeedbackInfo {
+    let session = hotkey::linux_session().map(|s| s.kind.to_string());
+    feedback::FeedbackInfo { configured: feedback::feedback_url().is_some(), diagnostics: feedback::diagnostics(&bridge.state(), &locale, session) }
+}
+
+/// Post the 反馈 dialog's report with the diagnostics it showed; the error is the reason's wire
+/// name (`not_configured`, `invalid`, `rate_limited`, …), never the endpoint.
+#[tauri::command]
+async fn feedback_submit(
+    bridge: tauri::State<'_, Bridge>,
+    kind: feedback::FeedbackKind,
+    message: String,
+    contact: Option<String>,
+    locale: String,
+) -> Result<feedback::Receipt, String> {
+    let url = feedback::feedback_url().ok_or_else(|| feedback::SendError::NotConfigured.as_str().to_owned())?;
+    let (message, contact) = feedback::check(&message, contact.as_deref()).map_err(|e| e.as_str().to_owned())?;
+    let session = hotkey::linux_session().map(|s| s.kind.to_string());
+    let diagnostics = feedback::diagnostics(&bridge.state(), &locale, session);
+    feedback::send(url, feedback::feedback_token(), kind, &message, contact.as_deref(), &diagnostics).await.map_err(|e| e.as_str().to_owned())
 }
 
 #[tauri::command]
@@ -792,6 +820,8 @@ pub fn build_app<R: Runtime>(
             provider_probe,
             provider_console_open,
             project_link_open,
+            feedback_diagnostics,
+            feedback_submit,
             history_delete,
             history_clear,
             history_star,

@@ -131,6 +131,7 @@ The design documents are in Chinese:
 - [docs/pairing.md](./docs/pairing.md), [docs/protocol.md](./docs/protocol.md) and [docs/threat-model.md](./docs/threat-model.md): pairing and the encrypted channel.
 - [docs/frontend.md](./docs/frontend.md): the UI and its IPC contract.
 - [docs/runbook.md](./docs/runbook.md): building, packaging, the relay and releases.
+- [docs/feedback.md](./docs/feedback.md): what the in-app feedback sends, and the endpoint behind it.
 - [docs/acceptance.md](./docs/acceptance.md): every feature mapped to its code and tests.
 
 ## Contributing

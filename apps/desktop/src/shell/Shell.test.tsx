@@ -73,10 +73,12 @@ describe("Shell", () => {
     expect(screen.queryByRole("button", { name: "关于" })).toBeNull();
     await user.click(screen.getByRole("button", { name: /^手机$/ }));
     expect(screen.getByRole("heading", { name: "手机", level: 1 })).toBeInTheDocument();
-    // 反馈 opens the repository's new-issue page through the shell, not a toast that names it.
+    // 反馈 opens the in-app feedback dialog (the report goes to the feedback endpoint).
     await user.click(screen.getByRole("button", { name: "反馈" }));
-    expect(backend.linksOpened).toEqual(["feedback"]);
-    expect(screen.queryByText(/反馈渠道/)).toBeNull();
+    expect(screen.getByRole("dialog", { name: "反馈" })).toBeInTheDocument();
+    expect(backend.linksOpened).toEqual([]);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "反馈" })).toBeNull();
   });
 
   it("regression: the sidebar collapses to an icon rail and back, and the choice survives a restart", async () => {

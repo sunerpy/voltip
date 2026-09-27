@@ -6652,6 +6652,7 @@ dependencies = [
  "objc2",
  "objc2-app-kit",
  "parking_lot",
+ "reqwest",
  "serde",
  "serde_json",
  "sherpa-onnx-sys",

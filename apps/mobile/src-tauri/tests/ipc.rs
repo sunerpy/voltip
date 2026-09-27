@@ -17,8 +17,8 @@ use voltip_core::ui::{UI_EVENT_NAME, UiState};
 use voltip_core::{CoreConfig, Settings, SettingsStore, ThemeId};
 use voltip_identity::MemorySecretStore;
 use voltip_mobile_lib::{
-    COMMANDS, DICTATION_UNAVAILABLE, KEYSTORE_SERVICE, MODELS_UNAVAILABLE, PROJECT_LINKS_UNAVAILABLE, PROVIDERS_UNAVAILABLE, SCENES_UNAVAILABLE,
-    UPDATE_UNAVAILABLE, VOCABULARY_UNAVAILABLE, build_app, data_dir, platform_label, production_config, secret_store,
+    COMMANDS, DICTATION_UNAVAILABLE, FEEDBACK_UNAVAILABLE, KEYSTORE_SERVICE, MODELS_UNAVAILABLE, PROJECT_LINKS_UNAVAILABLE, PROVIDERS_UNAVAILABLE,
+    SCENES_UNAVAILABLE, UPDATE_UNAVAILABLE, VOCABULARY_UNAVAILABLE, build_app, data_dir, platform_label, production_config, secret_store,
 };
 use voltip_pairing::PairingState;
 use voltip_tauri_bridge::Bridge;
@@ -321,6 +321,10 @@ fn dictation_is_refused_but_engines_secrets_and_history_work() {
         wait_event(rx, "provider_probe", |e| e["type"] == "provider_probe" && e["reason"] == "unsupported");
         assert_eq!(invoke(webview, "provider_console_open", json!({ "provider": "groq" })), Err(Value::String(PROVIDERS_UNAVAILABLE.into())));
         assert_eq!(invoke(webview, "project_link_open", json!({ "link": "feedback" })), Err(Value::String(PROJECT_LINKS_UNAVAILABLE.into())));
+        // Feedback goes from the computer (docs/feedback.md).
+        assert_eq!(invoke(webview, "feedback_diagnostics", json!({ "locale": "zh-CN" })), Err(Value::String(FEEDBACK_UNAVAILABLE.into())));
+        let report = json!({ "kind": "bug", "message": "x", "contact": null, "locale": "zh-CN" });
+        assert_eq!(invoke(webview, "feedback_submit", report), Err(Value::String(FEEDBACK_UNAVAILABLE.into())));
         let engines = json!({ "refine_enabled": false, "inject": "clipboard_only" });
         assert_eq!(invoke(webview, "settings_set_engines", json!({ "engines": engines })), Ok(Value::Null));
         wait_state(webview, |s| !s.engines.refine_enabled);
@@ -423,6 +427,8 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "inject_preflight",
             "provider_console_open",
             "project_link_open",
+            "feedback_diagnostics",
+            "feedback_submit",
         ]
         .map(String::from),
     );

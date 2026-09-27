@@ -97,6 +97,7 @@ VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1 make windows-x64   # 在 Linux 上交叉构建
 - [docs/pairing.md](../pairing.md)、[docs/protocol.md](../protocol.md)、[docs/threat-model.md](../threat-model.md)：配对与加密通道。
 - [docs/frontend.md](../frontend.md)：界面与 IPC 契约。
 - [docs/runbook.md](../runbook.md)：构建、打包、中继与发版。
+- [docs/feedback.md](../feedback.md)：应用内反馈发出哪些内容，以及背后的接口。
 - [docs/acceptance.md](../acceptance.md)：每个功能对应的实现和测试。
 
 ## 参与贡献
