@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Voltip",
+        "width": 1152,
+        "height": 720,
+        "minWidth": 960,
+        "minHeight": 600,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 12, "y": 14 }
+      }
+    ]
+  },
+  "bundle": {
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "frameworks": [
+        "./resources/macos/libsherpa-onnx-c-api.dylib",
+        "./resources/macos/libonnxruntime.dylib"
+      ],
+      "entitlements": "./Entitlements.plist",
+      "signingIdentity": null,
+      "files": {
+        "Resources/en.lproj/InfoPlist.strings": "./macos/en.lproj/InfoPlist.strings",
+        "Resources/zh-Hans.lproj/InfoPlist.strings": "./macos/zh-Hans.lproj/InfoPlist.strings"
+      }
+    }
+  }
+}

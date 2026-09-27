@@ -1,0 +1,146 @@
+# Voltip workspace.
+[workspace]
+resolver = "3"
+members = [
+    "crates/voltip-protocol",
+    "crates/voltip-crypto",
+    "crates/voltip-identity",
+    "crates/voltip-pairing",
+    "crates/voltip-transport",
+    "crates/voltip-relay",
+    "crates/voltip-core",
+    "crates/voltip-tauri-bridge",
+    "crates/voltip-audio",
+    "crates/voltip-asr",
+    "crates/voltip-asr-local",
+    "crates/voltip-refine",
+    "crates/voltip-inject",
+    "crates/voltip-platform",
+    "apps/desktop/src-tauri",
+    "apps/mobile/src-tauri",
+]
+exclude = ["apps/desktop/node_modules", "apps/mobile/node_modules", "packages"]
+
+[workspace.package]
+# Static on purpose. The app version is package.json's: release-please bumps it, tauri.conf.json
+# names it ("version": "../../../package.json"), and the shells report it (VOLTIP_APP_VERSION /
+# package_info). A release commit then never touches Cargo.toml or Cargo.lock.
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+license = "Apache-2.0"
+repository = "https://github.com/sunerpy/voltip"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+
+[workspace.dependencies]
+# Multi-pattern literal matching for the personal dictionary and the literal replacement rules
+# (docs/dictation.md §16); already in the graph through `regex`.
+aho-corasick = "=1.1.5"
+# No `image-data` feature: the injector only moves text through the clipboard.
+# `wayland-data-control` (wl-clipboard-rs, Linux only): the clipboard on a Wayland session goes
+# through wlr-data-control / ext-data-control (KDE, wlroots, …) instead of failing over to XWayland;
+# arboard falls back to X11 by itself where the compositor lacks the protocol (GNOME).
+arboard = { version = "=3.6.1", default-features = false, features = ["wayland-data-control"] }
+async-trait = "=0.1.92"
+axum = { version = "=0.8.9", features = ["ws"] }
+base64 = "=0.22.1"
+bytes = "=1.12.1"
+ciborium = "=0.2.2"
+clap = { version = "=4.6.6", features = ["derive", "env"] }
+# No `jack` / `asio` / `pipewire` / `pulseaudio` features: WASAPI, CoreAudio and ALSA only.
+cpal = "=0.18.2"
+directories = "=6.0.0"
+# Default features: x11rb on Linux, SendInput on Windows, CGEvent on macOS. `wayland` adds the
+# zwp_virtual_keyboard_v1 backend (Linux only) as the in-process tail of the Wayland paste chain
+# (docs/dictation.md §14); voltip-inject picks exactly one of the two Linux connections per call.
+enigo = { version = "=0.6.1", features = ["wayland"] }
+# Traditional ↔ Simplified Chinese for the recogniser's text (docs/dictation.md §17): pure-Rust
+# OpenCC, Apache-2.0, dictionaries compiled at build time and embedded (≈ 2.3 MB). Default features
+# = both directions (`s2t-conversion`, `t2s-conversion`); the Japanese tables stay out.
+ferrous-opencc = "=0.4.0"
+# Free space on the models' file system before a download (docs/dictation.md §10): statvfs through
+# rustix, GetDiskFreeSpaceExW through windows-sys, both already in the graph. No async features.
+fs4 = { version = "=1.1.0", default-features = false }
+futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
+hex = "=0.4.3"
+# WAV decoding for the local recogniser (16-bit PCM in, f32 out).
+hound = "=3.5.1"
+keyring = "=4.1.6"
+parking_lot = "=0.12.5"
+proptest = "=1.11.0"
+rand = "=0.9.5"
+# Regex replacement rules (docs/dictation.md §16): linear-time matching, compiled size capped per rule.
+regex = "=1.13.1"
+# rustls (aws-lc-rs provider + platform verifier) so the Windows cross-build needs no OpenSSL.
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "multipart", "json", "http2"] }
+# Lock-free SPSC ring for the recorder's live tap (docs/dictation.md §11): the audio callback
+# pushes 16 kHz mono frames, the decode thread pops them; no lock and no allocation on the audio thread.
+rtrb = "=0.3.5"
+rubato = "=5.0.0"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_bytes = "=0.11.19"
+serde_json = "=1.0.151"
+sha2 = "=0.10.9"
+# Official k2-fsa sherpa-onnx bindings (docs/dictation.md §10). Its build script downloads the
+# prebuilt v1.13.8 libraries for the target and copies the runtime libraries next to every binary.
+# `shared` only: the `static` archives link espeak-ng (GPL-3.0), which would put the binaries under the GPL.
+sherpa-onnx = { version = "=1.13.8", default-features = false, features = ["shared"] }
+# The same crate's `-sys` half, named only by the desktop shell: see apps/desktop/src-tauri/Cargo.toml.
+sherpa-onnx-sys = { version = "=1.13.8", default-features = false, features = ["shared"] }
+snow = "=0.10.0"
+subtle = "=2.6.1"
+tempfile = "=3.27.0"
+thiserror = "=2.0.19"
+tokio = { version = "=1.53.1", features = [
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "sync",
+    "time",
+    "io-util",
+] }
+tokio-tungstenite = "=0.29.0"
+# TOML import / export of the replacement rules (docs/dictation.md §16); the version Tauri already uses.
+toml = "=1.1.6"
+# transcribe.cpp (ggml) bindings for the Qwen3-ASR GGUF models (docs/dictation.md §10). MIT.
+# `default-features = false` drops the `metal` default here; crates/voltip-asr-local turns Metal on
+# for macOS and Vulkan on behind its `vulkan` feature (§10.6), which the Windows and Linux packages
+# use. Built from source with cmake and linked statically (a Vulkan build links the system's loader
+# dynamically), and it cross-compiles to x86_64-pc-windows-msvc under cargo-xwin.
+transcribe-cpp = { version = "=0.2.3", default-features = false }
+# The WebSocket client's TLS provider. tokio-tungstenite pulls rustls without one, so a binary that
+# does not also link reqwest (the mobile shell, the core test suite) would panic on the first `wss://`
+# dial. aws-lc-rs matches reqwest's choice: exactly one provider in every binary, auto-detected.
+rustls = { version = "=0.23.45", default-features = false, features = ["aws-lc-rs", "std", "tls12"] }
+tower = { version = "=0.5.3", features = ["util"] }
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
+url = { version = "=2.5.8", features = ["serde"] }
+uuid = { version = "=1.24.0", features = ["v4", "serde"] }
+wiremock = "=0.6.5"
+zeroize = { version = "=1.8.2", features = ["derive"] }
+
+voltip-protocol = { path = "crates/voltip-protocol" }
+voltip-crypto = { path = "crates/voltip-crypto" }
+voltip-identity = { path = "crates/voltip-identity" }
+voltip-pairing = { path = "crates/voltip-pairing" }
+voltip-transport = { path = "crates/voltip-transport" }
+voltip-relay = { path = "crates/voltip-relay", default-features = false }
+voltip-core = { path = "crates/voltip-core" }
+voltip-tauri-bridge = { path = "crates/voltip-tauri-bridge" }
+voltip-audio = { path = "crates/voltip-audio" }
+voltip-asr = { path = "crates/voltip-asr" }
+voltip-asr-local = { path = "crates/voltip-asr-local" }
+voltip-refine = { path = "crates/voltip-refine" }
+voltip-inject = { path = "crates/voltip-inject" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

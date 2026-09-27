@@ -1,0 +1,55 @@
+[package]
+name = "voltip-asr-local"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Offline speech-to-text for the dictation pipeline: transcribe.cpp (Qwen3-ASR GGUF) and sherpa-onnx (SenseVoice, Paraformer, streaming Zipformer) recognisers plus the model library that downloads, verifies and stores them."
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+fs4.workspace = true
+hound.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+# Whole-take resampling to 16 kHz for transcribe.cpp (it takes 16 kHz only; sherpa resamples itself).
+rubato.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+# Dynamic sherpa-onnx (official crate, prebuilt v1.13.8 fetched by its build script). Never the
+# `static` feature: those archives link espeak-ng (GPL-3.0).
+sherpa-onnx.workspace = true
+# Named for build order only (Rust code uses `sherpa-onnx`): build.rs copies the Windows runtime
+# that this crate's build script provides, and Cargo runs a dependency's build script first only for
+# an immediate dependency with a `links` key.
+sherpa-onnx-sys.workspace = true
+thiserror.workspace = true
+# transcribe.cpp (ggml, static) for the Qwen3-ASR GGUF tiers; see the workspace manifest. CPU
+# everywhere, plus Metal on macOS below and Vulkan behind the `vulkan` feature (docs/dictation.md §10.6),
+# which the Windows and Linux packages turn on.
+transcribe-cpp.workspace = true
+tokio = { workspace = true, features = ["fs"] }
+tracing.workspace = true
+voltip-core.workspace = true
+
+# Metal on macOS: the Qwen3-ASR tiers run on the Mac's GPU, with the CPU as the fallback. The
+# metallib is embedded in the static library (no sidecar file in the bundle).
+[target.'cfg(target_os = "macos")'.dependencies]
+transcribe-cpp = { workspace = true, features = ["metal"] }
+
+[features]
+# Vulkan for the Qwen3-ASR tiers on Linux / Windows (docs/dictation.md §10.6). The packages turn it
+# on (scripts/build-{linux,windows}-x64.sh, the release workflow) and ship or depend on the loader;
+# it is off by default because building it needs the Vulkan SDK (headers, loader, glslc), which the
+# test and lint gates do not install (scripts/lib/vulkan-sdk.sh fetches it for the packages).
+vulkan = ["transcribe-cpp/vulkan"]
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+wiremock.workspace = true

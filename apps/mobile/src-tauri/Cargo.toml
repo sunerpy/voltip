@@ -1,0 +1,50 @@
+[package]
+name = "voltip-mobile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Voltip mobile shell (Android in phase 1; iOS scaffolding)."
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[lib]
+name = "voltip_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+directories.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "=2.11.5", default-features = false, features = ["wry"] }
+tauri-plugin-barcode-scanner = "=2.4.5"
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+# The phone as the desktop's microphone (docs/dictation.md §20): cpal (AAudio on Android).
+voltip-audio.workspace = true
+voltip-core.workspace = true
+voltip-identity = { workspace = true, features = ["android-keystore"] }
+# Wire types of the platform queries (docs/dictation.md §15); the phone answers `not_applicable`.
+voltip-platform = { path = "../../../crates/voltip-platform" }
+voltip-tauri-bridge.workspace = true
+
+# Desktop dev builds of the mobile shell (cargo check / tests on CI runners) fall back to the
+# OS keychain so the same binary runs on a developer machine.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+voltip-identity = { workspace = true, features = ["android-keystore", "keyring"] }
+
+[dev-dependencies]
+tauri = { version = "=2.11.5", default-features = false, features = ["wry", "test"] }
+tempfile.workspace = true
+voltip-audio = { workspace = true, features = ["test-support"] }
+voltip-pairing.workspace = true
+
+[features]
+# Enabled by `tauri build`: serve the bundled frontend instead of the dev server URL.
+custom-protocol = ["tauri/custom-protocol"]

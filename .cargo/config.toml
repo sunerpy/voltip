@@ -1,0 +1,36 @@
+# Windows: link the MSVC C runtime statically into the whole exe — Rust std and every C/C++ object
+# the build scripts compile. Without it the exe imports MSVCP140.dll / VCRUNTIME140.dll /
+# VCRUNTIME140_1.dll from the Visual C++ Redistributable (the transcribe.cpp objects are C++),
+# which a fresh Windows install does not carry; the sherpa-onnx DLLs already link their CRT
+# statically, so the package stays exactly "exe + the three sherpa-onnx DLLs"
+# (scripts/build-windows-x64.sh). Tauri's own Windows guidance recommends this flag for the same
+# reason. cargo-xwin reads it too and switches its link to the static ucrt.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# The `cmake` crate (transcribe.cpp / ggml) takes the per-target toolchain file from this variable.
+# cmake/x86_64-pc-windows-msvc-toolchain.cmake pins CMAKE_MSVC_RUNTIME_LIBRARY to the static runtime
+# so the C++ objects match `crt-static`, then chains to cargo-xwin's toolchain when cross-compiling.
+# `force`: cargo-xwin exports its own value for build scripts and the wrapper has to win.
+[env]
+CMAKE_TOOLCHAIN_FILE_x86_64_pc_windows_msvc = { value = "cmake/x86_64-pc-windows-msvc-toolchain.cmake", relative = true, force = true }
+
+# transcribe.cpp / ggml CPU baseline for every build (read by transcribe-cpp-sys's build script,
+# applied after its own -D options). Without it ggml picks the build machine's CPU: a native build
+# uses -march=native (a package built on the CI's AVX-512 host would die with an illegal
+# instruction on an older CPU), and a cross build turns every x86 extension off (measured
+# 2026-09-26, Qwen3-ASR-0.6B on 16 s of Chinese: native 1.57 s, this baseline 1.77 s, SSE4.2 only
+# 7.3 s, no SIMD — what the Windows package shipped — 14.4 s, slower than real time). The x86_64
+# baseline below is Haswell (2013+; AVX2 FMA F16C BMI2); the loader refuses a CPU without it
+# instead of crashing (crates/voltip-asr-local/src/gguf.rs). On aarch64 the x86 options are
+# ignored and GGML_NATIVE=OFF keeps the compiler's default target (apple-m1 on macOS).
+TRANSCRIBE_CMAKE_ARGS = "-DGGML_NATIVE=OFF -DGGML_SSE42=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_BMI2=ON"
+
+# Native Windows builds with MSVC: read C/C++ sources as UTF-8. Without `/utf-8` MSVC decodes a
+# BOM-less file in the system code page, and on a Chinese-locale Windows (936) the UTF-8 in
+# transcribe.cpp's comments swallows line ends: `// … = ▁` eats the next line and model.cpp fails
+# with C2065 "sp_space_id: undeclared identifier" (measured 2026-09-26). The `cc` crate reads these
+# per-target variables and the `cmake` crate passes them on as CMAKE_C(XX)_FLAGS. Not forced:
+# cargo-xwin exports its own for this target (clang-cl, UTF-8 already) and those have to win.
+CFLAGS_x86_64_pc_windows_msvc = "/utf-8"
+CXXFLAGS_x86_64_pc_windows_msvc = "/utf-8"

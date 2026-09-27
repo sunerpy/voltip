@@ -1,0 +1,706 @@
+//! Voltip mobile shell: the same command surface as the desktop, with the Android Keystore as
+//! the secret store, the barcode-scanner plugin for QR pairing, and the phone's microphone for the
+//! takes it streams to a paired desktop (docs/dictation.md §20, [`microphone`]).
+//!
+//! Everything except [`run`] is generic over the Tauri runtime so `tests/ipc.rs` drives the real
+//! command layer on `tauri::test::MockRuntime` (desktop host, no keystore, no window).
+
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
+pub mod meter;
+pub mod microphone;
+
+use std::sync::Arc;
+
+use tauri::{AppHandle, Emitter as _, Manager as _, Runtime};
+use voltip_core::ui::{ProjectLink, UI_EVENT_NAME, UiState, UpdateStatus};
+use voltip_core::{
+    Activation, AppRef, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PreviewDraft, ProviderId, RuleDraft,
+    SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
+};
+use voltip_identity::SecretStore;
+use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
+
+/// Keystore service id.
+pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
+
+/// Every command the webview may invoke, in registration order. Must equal the desktop shell's
+/// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
+pub const COMMANDS: [&str; 68] = [
+    "core_state",
+    "pairing_start",
+    "pairing_join_code",
+    "pairing_join_ticket",
+    "pairing_confirm",
+    "pairing_reject",
+    "pairing_cancel",
+    "pairing_reset",
+    "device_forget",
+    "device_rename",
+    "send_text",
+    "phone_take_start",
+    "phone_take_stop",
+    "phone_take_cancel",
+    "settings_set_relay",
+    "settings_set_theme",
+    "settings_set_hotkey",
+    "settings_set_edit_hotkey",
+    "hotkey_capture",
+    "devices_refresh",
+    "connectivity_check",
+    "audio_devices",
+    "audio_meter_start",
+    "audio_meter_stop",
+    "overlay_state",
+    "dictation_start",
+    "dictation_stop",
+    "dictation_cancel",
+    "hotkey_edge",
+    "settings_set_activation",
+    "settings_set_engines",
+    "provider_key_set",
+    "provider_probe",
+    "provider_console_open",
+    "project_link_open",
+    "history_delete",
+    "history_clear",
+    "history_star",
+    "settings_set_locale",
+    "settings_set_auto_update",
+    "settings_set_history",
+    "settings_set_overlay",
+    "update_check",
+    "update_install",
+    "update_status",
+    "model_download",
+    "model_cancel",
+    "model_remove",
+    "dictionary_add",
+    "dictionary_update",
+    "dictionary_remove",
+    "dictionary_reorder",
+    "rules_add",
+    "rules_update",
+    "rules_remove",
+    "rules_reorder",
+    "rules_import",
+    "rules_export",
+    "vocabulary_preview",
+    "scenes_add",
+    "scenes_update",
+    "scenes_remove",
+    "scenes_reorder",
+    "settings_set_context_sharing",
+    "recent_apps",
+    "permissions_status",
+    "permissions_request",
+    "inject_preflight",
+];
+
+/// App data directory.
+pub fn data_dir<R: Runtime>(app: &AppHandle<R>) -> std::path::PathBuf {
+    app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("voltip-mobile"))
+}
+
+/// Core configuration for a real device: platform data dir, `<platform> 手机` as the first name.
+pub fn production_config<R: Runtime>(app: &AppHandle<R>) -> CoreConfig {
+    let mut config = CoreConfig::new(data_dir(app));
+    config.default_device_name = format!("{} 手机", platform_label());
+    // The app version (tauri.conf.json → package.json); the Cargo version is static.
+    config.client_version = format!("voltip/{}", app.package_info().version);
+    config.app_version = app.package_info().version.to_string();
+    // The phone is the microphone; a desktop records its takes, never the other way round.
+    config.accepts_phone_takes = false;
+    config
+}
+
+/// Platform secret store. Android: the Keystore, and nothing less secure; desktop hosts (dev
+/// runs, CI): the OS keychain. Nothing is touched until the first read.
+pub fn secret_store() -> Arc<dyn SecretStore> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        match voltip_identity::AndroidKeystoreSecretStore::new(KEYSTORE_SERVICE, "voltip") {
+            Ok(store) => Arc::new(store),
+            Err(e) => {
+                tracing::error!(error = %e, "Android Keystore unavailable; refusing to fall back to an insecure store");
+                std::process::exit(1);
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let user = std::env::var("USER").unwrap_or_else(|_| "default".into());
+        Arc::new(voltip_identity::KeyringSecretStore::new(KEYSTORE_SERVICE, user))
+    }
+}
+
+#[tauri::command]
+fn core_state(bridge: tauri::State<'_, Bridge>) -> UiState {
+    bridge.state()
+}
+
+#[tauri::command]
+fn pairing_start(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PairingStart)?)
+}
+
+#[tauri::command]
+fn pairing_join_code(bridge: tauri::State<'_, Bridge>, code: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PairingJoinCode { code })?)
+}
+
+#[tauri::command]
+fn pairing_join_ticket(bridge: tauri::State<'_, Bridge>, uri: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PairingJoinTicket { uri })?)
+}
+
+#[tauri::command]
+fn pairing_confirm(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PairingConfirm)?)
+}
+
+#[tauri::command]
+fn pairing_reject(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PairingReject)?)
+}
+
+#[tauri::command]
+fn pairing_cancel(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PairingCancel)?)
+}
+
+#[tauri::command]
+fn pairing_reset(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PairingReset)?)
+}
+
+#[tauri::command]
+fn device_forget(bridge: tauri::State<'_, Bridge>, public_key: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::DeviceForget { public_key })?)
+}
+
+#[tauri::command]
+fn device_rename(bridge: tauri::State<'_, Bridge>, name: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::DeviceRename { name })?)
+}
+
+#[tauri::command]
+fn send_text(bridge: tauri::State<'_, Bridge>, public_key: String, body: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SendText { public_key, body })?)
+}
+
+/// Stream a take to the paired desktop `public_key` (docs/dictation.md §20); on Android the
+/// microphone permission is asked for first.
+#[tauri::command]
+async fn phone_take_start<R: Runtime>(app: AppHandle<R>, public_key: String) -> Result<(), String> {
+    microphone::ensure_permission(&app).await?;
+    let bridge = app.state::<Bridge>();
+    Ok(bridge.dispatch(UiCommand::PhoneTakeStart { public_key })?)
+}
+
+#[tauri::command]
+fn phone_take_stop(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PhoneTakeStop)?)
+}
+
+#[tauri::command]
+fn phone_take_cancel(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PhoneTakeCancel)?)
+}
+
+#[tauri::command]
+fn settings_set_relay(bridge: tauri::State<'_, Bridge>, url: Option<String>, enabled: bool) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetRelay { url, enabled })?)
+}
+
+#[tauri::command]
+fn settings_set_theme(bridge: tauri::State<'_, Bridge>, theme: ThemeId, follow_system: bool) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetTheme { theme, follow_system })?)
+}
+
+#[tauri::command]
+fn settings_set_hotkey(bridge: tauri::State<'_, Bridge>, hotkey: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetHotkey { hotkey })?)
+}
+
+/// The voice-edit hotkey is a shared setting (docs/dictation.md §19): the phone edits it like the
+/// desktop does; only the desktop registers it.
+#[tauri::command]
+fn settings_set_edit_hotkey(bridge: tauri::State<'_, Bridge>, hotkey: Option<String>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetEditHotkey { hotkey })?)
+}
+
+/// Phones register no OS hotkey; the recorder's suspend request is accepted and ignored so the
+/// shared webview code needs no platform branch.
+#[tauri::command]
+fn hotkey_capture(active: bool) -> Result<(), String> {
+    tracing::debug!(active, "hotkey_capture ignored on mobile");
+    Ok(())
+}
+
+#[tauri::command]
+fn devices_refresh(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::DevicesRefresh)?)
+}
+
+/// Start the connectivity self-check; the report arrives as a `connectivity` event.
+#[tauri::command]
+fn connectivity_check(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ConnectivityCheck)?)
+}
+
+/// Nothing to pick: a take records from the system's default input, which AAudio routes (the
+/// headset or Bluetooth microphone when one is connected), so the list is empty.
+#[tauri::command]
+fn audio_devices() -> Result<Vec<serde_json::Value>, String> {
+    Ok(Vec::new())
+}
+
+/// Stream the level of the phone's own takes to `on_frame` ([`meter::Meters`]): frames arrive
+/// while a take records and the meter opens no microphone of its own. `device_id` has no effect
+/// (see [`audio_devices`]).
+#[tauri::command]
+fn audio_meter_start(
+    bridge: tauri::State<'_, Bridge>,
+    meters: tauri::State<'_, meter::Meters>,
+    device_id: Option<String>,
+    on_frame: tauri::ipc::Channel<voltip_core::dictation::LevelFrame>,
+) -> Result<u64, String> {
+    if device_id.is_some() {
+        tracing::debug!(?device_id, "audio_meter_start: the phone records from its default input");
+    }
+    Ok(meters.start(bridge.levels(), move |frame| on_frame.send(frame).is_ok()))
+}
+
+/// End one meter subscription.
+#[tauri::command]
+fn audio_meter_stop(meters: tauri::State<'_, meter::Meters>, id: u64) -> Result<(), String> {
+    meters.stop(id);
+    Ok(())
+}
+
+/// The phone has no pill window; the query answers `blank` so shared code needs no branch.
+#[tauri::command]
+fn overlay_state() -> String {
+    "blank".to_owned()
+}
+
+/// Why the phone refuses the dictation verbs: there is no local pipeline on it (the phone will
+/// stream its microphone to the desktop in a later round). Honest error, not a silent no-op.
+pub const DICTATION_UNAVAILABLE: &str = "dictation: 手机端不做本地听写";
+
+#[tauri::command]
+fn dictation_start() -> Result<(), String> {
+    Err(DICTATION_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn dictation_stop() -> Result<(), String> {
+    Err(DICTATION_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn dictation_cancel() -> Result<(), String> {
+    Err(DICTATION_UNAVAILABLE.to_owned())
+}
+
+/// No hotkey and no local pipeline on the phone: a key edge (dictation or voice edit) is refused
+/// like the dictation verbs.
+#[tauri::command]
+fn hotkey_edge(pressed: bool, at_ms: Option<u64>, source: Option<EdgeSource>, purpose: Option<TakeKind>) -> Result<(), String> {
+    tracing::debug!(pressed, ?at_ms, ?source, ?purpose, "hotkey_edge refused on mobile");
+    Err(DICTATION_UNAVAILABLE.to_owned())
+}
+
+/// The activation mode is a shared setting (docs/dictation.md §13): the phone edits it like the
+/// desktop does; only the desktop's key acts on it.
+#[tauri::command]
+fn settings_set_activation(bridge: tauri::State<'_, Bridge>, activation: Activation, hold_threshold_ms: u32, extra_recording_ms: u32) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetActivation { activation, hold_threshold_ms, extra_recording_ms })?)
+}
+
+/// Engine settings are shared state: the phone edits them like the desktop does.
+#[tauri::command]
+fn settings_set_engines(bridge: tauri::State<'_, Bridge>, engines: EngineSettings) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetEngines { engines })?)
+}
+
+#[tauri::command]
+fn provider_key_set(bridge: tauri::State<'_, Bridge>, provider: ProviderId, kind: ServiceKind, value: Option<String>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ProviderKeySet { provider, kind, value })?)
+}
+
+/// The phone has no HTTP probe: the core answers `unsupported` with a `provider_probe` event.
+#[tauri::command]
+fn provider_probe(
+    bridge: tauri::State<'_, Bridge>,
+    provider: ProviderId,
+    kind: ServiceKind,
+    base_url: Option<String>,
+    key: Option<String>,
+) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ProviderProbe { provider, kind, base_url, key })?)
+}
+
+/// Why the phone opens no vendor key page: it configures no engines (dictation runs on the desktop).
+pub const PROVIDERS_UNAVAILABLE: &str = "providers: 手机端不配置识别与润色服务";
+
+#[tauri::command]
+fn provider_console_open(_provider: ProviderId) -> Result<(), String> {
+    Err(PROVIDERS_UNAVAILABLE.into())
+}
+
+/// Why the phone opens no project page: it has no About pane or feedback entry.
+pub const PROJECT_LINKS_UNAVAILABLE: &str = "project: 手机端不打开项目页面";
+
+#[tauri::command]
+fn project_link_open(_link: ProjectLink) -> Result<(), String> {
+    Err(PROJECT_LINKS_UNAVAILABLE.into())
+}
+
+#[tauri::command]
+fn history_delete(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::HistoryDelete { id })?)
+}
+
+#[tauri::command]
+fn history_clear(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::HistoryClear)?)
+}
+
+#[tauri::command]
+fn history_star(bridge: tauri::State<'_, Bridge>, id: String, starred: bool) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::HistoryStar { id, starred })?)
+}
+
+/// UI language is shared state: the phone edits it like the desktop does.
+#[tauri::command]
+fn settings_set_locale(bridge: tauri::State<'_, Bridge>, locale: Locale) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetLocale { locale })?)
+}
+
+/// The toggle persists on the phone too (it is one settings file per device, so this only matters
+/// for parity of the settings page); the phone itself never runs an updater — the store does.
+#[tauri::command]
+fn settings_set_auto_update(bridge: tauri::State<'_, Bridge>, enabled: bool) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetAutoUpdate { enabled })?)
+}
+
+#[tauri::command]
+fn settings_set_history(bridge: tauri::State<'_, Bridge>, enabled: bool, keep: u32) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetHistory { enabled, keep })?)
+}
+
+#[tauri::command]
+fn settings_set_overlay(bridge: tauri::State<'_, Bridge>, placement: OverlayPlacement) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetOverlay { placement })?)
+}
+
+/// Why the phone refuses the update verbs: app stores deliver phone updates, not the app itself.
+pub const UPDATE_UNAVAILABLE: &str = "updater: 手机端由应用商店更新";
+
+/// Phones carry no local speech models (docs/dictation.md §10): the library verbs refuse honestly
+/// and `UiState.models` stays empty.
+pub const MODELS_UNAVAILABLE: &str = "models: 手机端不支持本地模型";
+
+#[tauri::command]
+fn model_download(_id: String) -> Result<(), String> {
+    Err(MODELS_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn model_cancel(_id: String) -> Result<(), String> {
+    Err(MODELS_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn model_remove(_id: String) -> Result<(), String> {
+    Err(MODELS_UNAVAILABLE.to_owned())
+}
+
+/// The phone has no dictation pipeline, so no personal dictionary or replacement rules
+/// (docs/dictation.md §16.4): every vocabulary verb and query refuses honestly.
+pub const VOCABULARY_UNAVAILABLE: &str = "vocabulary: 手机端不支持个人词典与替换规则";
+
+#[tauri::command]
+fn dictionary_add(entry: DictionaryDraft, history_id: Option<String>) -> Result<(), String> {
+    tracing::debug!(chars = entry.term.chars().count(), from_history = history_id.is_some(), "dictionary_add refused on mobile");
+    Err(VOCABULARY_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn dictionary_update(_id: String, _entry: DictionaryDraft) -> Result<(), String> {
+    Err(VOCABULARY_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn dictionary_remove(_id: String) -> Result<(), String> {
+    Err(VOCABULARY_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn dictionary_reorder(_ids: Vec<String>) -> Result<(), String> {
+    Err(VOCABULARY_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn rules_add(_rule: RuleDraft) -> Result<(), String> {
+    Err(VOCABULARY_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn rules_update(_id: String, _rule: RuleDraft) -> Result<(), String> {
+    Err(VOCABULARY_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn rules_remove(_id: String) -> Result<(), String> {
+    Err(VOCABULARY_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn rules_reorder(_ids: Vec<String>) -> Result<(), String> {
+    Err(VOCABULARY_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn rules_import(_toml: String, _mode: ImportMode) -> Result<(), String> {
+    Err(VOCABULARY_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn rules_export() -> Result<String, String> {
+    Err(VOCABULARY_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn vocabulary_preview(_text: String, _draft: Option<PreviewDraft>) -> Result<VocabularyPreview, String> {
+    Err(VOCABULARY_UNAVAILABLE.to_owned())
+}
+
+/// The phone has no dictation pipeline and no foreground probe, so no scenes and no context for an
+/// LLM (docs/dictation.md §18.6): every scene verb, the context switch and the query refuse honestly.
+pub const SCENES_UNAVAILABLE: &str = "scenes: 手机端不支持场景与上下文";
+
+#[tauri::command]
+fn scenes_add(scene: SceneDraft) -> Result<(), String> {
+    tracing::debug!(apps = scene.matching.apps.len(), "scenes_add refused on mobile");
+    Err(SCENES_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn scenes_update(_id: String, _scene: SceneDraft) -> Result<(), String> {
+    Err(SCENES_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn scenes_remove(_id: String) -> Result<(), String> {
+    Err(SCENES_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn scenes_reorder(_ids: Vec<String>) -> Result<(), String> {
+    Err(SCENES_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn settings_set_context_sharing(_app_name: bool, _window_title: bool) -> Result<(), String> {
+    Err(SCENES_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn recent_apps() -> Result<Vec<AppRef>, String> {
+    Err(SCENES_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn update_check() -> Result<(), String> {
+    Err(UPDATE_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn update_install() -> Result<(), String> {
+    Err(UPDATE_UNAVAILABLE.to_owned())
+}
+
+/// No updater on the phone: always `disabled`, so the shared settings page hides the section.
+#[tauri::command]
+fn update_status() -> UpdateStatus {
+    UpdateStatus::Disabled
+}
+
+/// The phone asks for its permissions through the Android runtime-permission flow, not through
+/// this query (docs/dictation.md §15.1): everything `not_applicable`, so the shared onboarding
+/// code sees "nothing to grant here".
+#[tauri::command]
+fn permissions_status() -> voltip_platform::PermissionReport {
+    voltip_platform::PermissionReport::not_applicable(voltip_platform::HostOs::current())
+}
+
+/// Accepted no-op (see `permissions_status`).
+#[tauri::command]
+fn permissions_request(permission: voltip_platform::Permission) -> Result<(), String> {
+    tracing::debug!(permission = permission.as_str(), "permissions_request ignored on mobile");
+    Ok(())
+}
+
+/// The phone injects nothing: `proceed`, unchecked.
+#[tauri::command]
+fn inject_preflight() -> voltip_platform::InjectPreflight {
+    voltip_platform::InjectPreflight::not_applicable(voltip_platform::HostOs::current())
+}
+
+/// The phone's dictation ports: its microphone (the takes it streams, docs/dictation.md §20) and
+/// nothing else — the phone recognises and delivers nothing itself, so the other ports are the
+/// inert in-memory ones and the dictation commands refuse ([`DICTATION_UNAVAILABLE`]).
+pub fn phone_ports() -> voltip_core::dictation::DictationPorts {
+    voltip_core::dictation::DictationPorts { audio: Arc::new(microphone::PhoneMicrophone::cpal()), ..voltip_core::dictation::fakes::ports() }
+}
+
+/// Start the core, forward every [`voltip_core::ui::UiEvent`] onto the webview event bus and
+/// manage the [`Bridge`] as Tauri state so the commands above can reach it.
+pub fn attach_bridge<R: Runtime>(
+    app: &AppHandle<R>,
+    config: CoreConfig,
+    store: Arc<dyn SecretStore>,
+    ports: voltip_core::dictation::DictationPorts,
+) -> Result<(), BridgeError> {
+    // Tauri runs `setup` on the UI thread, outside any Tokio context; the core spawns its tasks
+    // with `tokio::spawn`, so it has to be started from Tauri's own runtime.
+    // Subscribed before the core starts so the first `state` event reaches the webview bus.
+    let (bridge, mut events) = tauri::async_runtime::block_on(async { Bridge::start_subscribed(config, store, ports) })?;
+    // No updater on the phone: `core_state().update` says so from the first frame.
+    bridge.publish(voltip_core::ui::UiEvent::Update(UpdateStatus::Disabled));
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match events.recv().await {
+                Ok(ev) => {
+                    if let Err(e) = handle.emit(UI_EVENT_NAME, &ev) {
+                        tracing::warn!(error = %e, "emit failed");
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => tracing::warn!(skipped = n, "webview lagged"),
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+    app.manage(bridge);
+    Ok(())
+}
+
+/// Register the plugins, the command handlers and the setup hook that attaches the bridge.
+/// `config` runs inside `setup` because the platform data dir needs a live [`AppHandle`].
+/// [`run`] feeds it `tauri::Builder::default()` and [`phone_ports`]; tests feed it
+/// `tauri::test::mock_builder()` and the in-memory fakes.
+pub fn build_app<R: Runtime>(
+    builder: tauri::Builder<R>,
+    config: impl FnOnce(&AppHandle<R>) -> CoreConfig + Send + 'static,
+    store: Arc<dyn SecretStore>,
+    ports: voltip_core::dictation::DictationPorts,
+) -> tauri::Builder<R> {
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
+    builder
+        .plugin(microphone::init())
+        .manage(meter::Meters::default())
+        .setup(move |app| {
+            let config = config(app.handle());
+            Ok(attach_bridge(app.handle(), config, store, ports).map_err(|e| std::io::Error::other(e.to_string()))?)
+        })
+        .invoke_handler(tauri::generate_handler![
+            core_state,
+            pairing_start,
+            pairing_join_code,
+            pairing_join_ticket,
+            pairing_confirm,
+            pairing_reject,
+            pairing_cancel,
+            pairing_reset,
+            device_forget,
+            device_rename,
+            send_text,
+            phone_take_start,
+            phone_take_stop,
+            phone_take_cancel,
+            settings_set_relay,
+            settings_set_theme,
+            settings_set_hotkey,
+            settings_set_edit_hotkey,
+            hotkey_capture,
+            devices_refresh,
+            connectivity_check,
+            audio_devices,
+            audio_meter_start,
+            audio_meter_stop,
+            overlay_state,
+            dictation_start,
+            dictation_stop,
+            dictation_cancel,
+            hotkey_edge,
+            settings_set_activation,
+            settings_set_engines,
+            provider_key_set,
+            provider_probe,
+            provider_console_open,
+            project_link_open,
+            history_delete,
+            history_clear,
+            history_star,
+            settings_set_locale,
+            settings_set_auto_update,
+            settings_set_history,
+            settings_set_overlay,
+            update_check,
+            update_install,
+            update_status,
+            model_download,
+            model_cancel,
+            model_remove,
+            dictionary_add,
+            dictionary_update,
+            dictionary_remove,
+            dictionary_reorder,
+            rules_add,
+            rules_update,
+            rules_remove,
+            rules_reorder,
+            rules_import,
+            rules_export,
+            vocabulary_preview,
+            scenes_add,
+            scenes_update,
+            scenes_remove,
+            scenes_reorder,
+            settings_set_context_sharing,
+            recent_apps,
+            permissions_status,
+            permissions_request,
+            inject_preflight
+        ])
+}
+
+/// Build and run with the platform data dir and secret store.
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,voltip=debug"));
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+
+    let outcome = build_app(tauri::Builder::default(), production_config, secret_store(), phone_ports()).run(tauri::generate_context!());
+    if let Err(e) = outcome {
+        tracing::error!(error = %e, "tauri exited with error");
+        std::process::exit(1);
+    }
+}
+
+/// Human-readable platform for the default device name.
+pub fn platform_label() -> &'static str {
+    if cfg!(target_os = "android") {
+        "Android"
+    } else if cfg!(target_os = "ios") {
+        "iOS"
+    } else {
+        "Voltip"
+    }
+}

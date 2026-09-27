@@ -1,0 +1,388 @@
+/* Voltip design tokens: four themes share one component set; switching `data-theme` on <html> (or
+ * any subtree) swaps the palette. Components must only ever reference these variables through the Tailwind utilities
+ * declared in `@theme inline` below — no hex literals in TSX. */
+
+/* Self-hosted fonts (fontsource variable builds): the app must look the same offline and behind a
+ * firewall, so nothing is fetched from Google Fonts. Latin comes from Instrument Sans, mono from
+ * JetBrains Mono, CJK from Noto Sans SC (unicode-range split, only the chunks a page uses load). */
+@import "@fontsource-variable/instrument-sans/index.css";
+@import "@fontsource-variable/jetbrains-mono/index.css";
+@import "@fontsource-variable/noto-sans-sc/index.css";
+
+/* 明亮 · 白瓷 */
+:root,
+:root[data-theme="light"],
+[data-theme="light"] {
+  color-scheme: light;
+  --canvas: #f2f3f6;
+  --surface: #ffffff;
+  --inset: #f7f8fa;
+  --inset2: #eef0f3;
+  --border: #e1e4ea;
+  --border-strong: #d6dae1;
+  --fg: #1b1d22;
+  --fg-muted: #5f6570;
+  --fg-subtle: #8a9099;
+  --primary: #1b1d22;
+  --primary-fg: #ffffff;
+  --accent: #2f6beb;
+  --accent-fg: #ffffff;
+  --accent-soft: #e8effd;
+  --accent-text: #2456c9;
+  --ok: #2e9e62;
+  --ok-soft: #e4f4ea;
+  --ok-text: #1f7a4a;
+  --danger: #c93a33;
+  --danger-soft: #f9e7e5;
+  --warning: #b7791f;
+  --warning-soft: #fbf1dc;
+  --info: #3b6fd4;
+  --info-soft: #e7eefb;
+  --nav: #f2f3f6;
+  --nav-active: #e6e9ee;
+  --led-off: #e1e4ea;
+  --led-on: #1b1d22;
+  --led-peak: #2f6beb;
+  --pill-bg: #ffffff;
+  --pill-border: #d6dae1;
+  --pill-fg: #1b1d22;
+  --pill-muted: #5f6570;
+  --wave: #1b1d22;
+  --desktop: #d9dde5;
+  --desktop-field: #ffffff;
+  --keycap-bg: #ffffff;
+  --keycap-border: #d6dae1;
+  --scrim: #1b1d22;
+  --diff-add: #e3f3ec;
+  --diff-del: #f9e7e5;
+  --mark: #fff1b8;
+  --shadow-pop: 0 8px 24px 0 rgb(27 29 34 / 0.08), 0 0 0 1px rgb(27 29 34 / 0.06);
+  --shadow-pill: 0 1px 2px 0 rgb(0 0 0 / 0.12), 0 8px 24px 0 rgb(0 0 0 / 0.14);
+  --shadow-win: 0 24px 64px -20px rgb(27 29 34 / 0.22), 0 0 0 1px rgb(27 29 34 / 0.08);
+}
+
+/* 暗黑 · 夜灯 */
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #0c0d11;
+  --surface: #14161b;
+  --inset: #1c1f26;
+  --inset2: #22252d;
+  --border: #2a2e37;
+  --border-strong: #363b45;
+  --fg: #f1f2f4;
+  --fg-muted: #9aa1ac;
+  --fg-subtle: #6b7280;
+  --primary: #f1f2f4;
+  --primary-fg: #0c0d11;
+  --accent: #6e9bff;
+  --accent-fg: #0c1a3a;
+  --accent-soft: #1b2540;
+  --accent-text: #8ab0ff;
+  --ok: #4ccb93;
+  --ok-soft: #163326;
+  --ok-text: #4ccb93;
+  --danger: #f26d63;
+  --danger-soft: #3a1f1d;
+  --warning: #ffb224;
+  --warning-soft: #2e2716;
+  --info: #8ab4f8;
+  --info-soft: #1b2740;
+  --nav: #14161b;
+  --nav-active: #22252d;
+  --led-off: #2a2e37;
+  --led-on: #f1f2f4;
+  --led-peak: #6e9bff;
+  --pill-bg: #14161b;
+  --pill-border: #2a2e37;
+  --pill-fg: #f1f2f4;
+  --pill-muted: #9aa1ac;
+  --wave: #f1f2f4;
+  --desktop: #1e2027;
+  --desktop-field: #14161b;
+  --keycap-bg: #1c1f26;
+  --keycap-border: #2a2e37;
+  --scrim: #000000;
+  --diff-add: #163326;
+  --diff-del: #3a1f1d;
+  --mark: #3b3418;
+  --shadow-pop: 0 8px 24px 0 rgb(0 0 0 / 0.5);
+  --shadow-pill: 0 8px 24px -6px rgb(0 0 0 / 0.5);
+  --shadow-win: 0 24px 64px -20px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(0 0 0 / 0.08);
+}
+
+/* 暖纸 · 手稿 */
+:root[data-theme="warm"],
+[data-theme="warm"] {
+  color-scheme: light;
+  --canvas: #f5efe4;
+  --surface: #fdfaf4;
+  --inset: #f5efe4;
+  --inset2: #eee6d8;
+  --border: #ded4c4;
+  --border-strong: #c9bfaf;
+  --fg: #2a2521;
+  --fg-muted: #6e645a;
+  --fg-subtle: #8a8078;
+  --primary: #2a2521;
+  --primary-fg: #fdfaf4;
+  --accent: #b85c38;
+  --accent-fg: #ffffff;
+  --accent-soft: #f6e6dc;
+  --accent-text: #9e4a2a;
+  --ok: #4e8a5e;
+  --ok-soft: #e4efe8;
+  --ok-text: #3e7a5a;
+  --danger: #b23a30;
+  --danger-soft: #f6e3df;
+  --warning: #a8701a;
+  --warning-soft: #f6ebd3;
+  --info: #2c4b8f;
+  --info-soft: #e6ebf5;
+  --nav: #f5efe4;
+  --nav-active: #eae2d4;
+  --led-off: #e8dfd0;
+  --led-on: #2a2521;
+  --led-peak: #b85c38;
+  --pill-bg: #fdfaf4;
+  --pill-border: #d9cfc0;
+  --pill-fg: #2a2521;
+  --pill-muted: #6e645a;
+  --wave: #2a2521;
+  --desktop: #e4dbcb;
+  --desktop-field: #fdfaf4;
+  --keycap-bg: #fdfaf4;
+  --keycap-border: #d9cfc0;
+  --scrim: #2a2521;
+  --diff-add: #e4efe8;
+  --diff-del: #f6e3df;
+  --mark: #f6ebb8;
+  --shadow-pop: 0 12px 32px 0 rgb(42 37 33 / 0.12);
+  --shadow-pill: 0 2px 6px 0 rgb(42 37 33 / 0.14);
+  --shadow-win: 0 24px 64px -20px rgb(42 37 33 / 0.18), 0 0 0 1px rgb(42 37 33 / 0.08);
+}
+
+/* 石墨 · 仪表 */
+:root[data-theme="graphite"],
+[data-theme="graphite"] {
+  color-scheme: dark;
+  --canvas: #22252b;
+  --surface: #2a2e35;
+  --inset: #333840;
+  --inset2: #3a4048;
+  --border: #414750;
+  --border-strong: #4c535d;
+  --fg: #eceef1;
+  --fg-muted: #a5acb6;
+  --fg-subtle: #7b838e;
+  --primary: #eceef1;
+  --primary-fg: #22252b;
+  --accent: #56b4f5;
+  --accent-fg: #0b2233;
+  --accent-soft: #21384b;
+  --accent-text: #7cc6fa;
+  --ok: #3eddb2;
+  --ok-soft: #263d3a;
+  --ok-text: #3eddb2;
+  --danger: #f0736a;
+  --danger-soft: #3f2b2a;
+  --warning: #f2c14e;
+  --warning-soft: #3d3826;
+  --info: #7fb7f5;
+  --info-soft: #28364a;
+  --nav: #22252b;
+  --nav-active: #333840;
+  --led-off: #3a4048;
+  --led-on: #eceef1;
+  --led-peak: #56b4f5;
+  --pill-bg: #2a2e35;
+  --pill-border: #414750;
+  --pill-fg: #eceef1;
+  --pill-muted: #a5acb6;
+  --wave: #eceef1;
+  --desktop: #15171b;
+  --desktop-field: #22252b;
+  --keycap-bg: #333840;
+  --keycap-border: #414750;
+  --scrim: #000000;
+  --diff-add: #263d3a;
+  --diff-del: #3f2b2a;
+  --mark: #3d3826;
+  --shadow-pop: 0 8px 24px 0 rgb(0 0 0 / 0.35);
+  --shadow-pill: 0 8px 24px 0 rgb(0 0 0 / 0.35);
+  --shadow-win: 0 24px 64px -20px rgb(0 0 0 / 0.45), 0 0 0 1px rgb(0 0 0 / 0.08);
+}
+
+@theme inline {
+  --color-*: initial;
+
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-inset: var(--inset);
+  --color-inset2: var(--inset2);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-primary: var(--primary);
+  --color-primary-fg: var(--primary-fg);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-text: var(--accent-text);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-ok-text: var(--ok-text);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-nav: var(--nav);
+  --color-nav-active: var(--nav-active);
+  --color-led-off: var(--led-off);
+  --color-led-on: var(--led-on);
+  --color-led-peak: var(--led-peak);
+  --color-pill-bg: var(--pill-bg);
+  --color-pill-border: var(--pill-border);
+  --color-pill-fg: var(--pill-fg);
+  --color-pill-muted: var(--pill-muted);
+  --color-wave: var(--wave);
+  --color-desktop: var(--desktop);
+  --color-desktop-field: var(--desktop-field);
+  --color-keycap-bg: var(--keycap-bg);
+  --color-keycap-border: var(--keycap-border);
+  --color-scrim: var(--scrim);
+  --color-diff-add: var(--diff-add);
+  --color-diff-del: var(--diff-del);
+  --color-mark: var(--mark);
+
+  --font-ui:
+    "Instrument Sans Variable", "Instrument Sans", "Noto Sans SC Variable", "Noto Sans SC",
+    "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+  --font-mono:
+    "JetBrains Mono Variable", "JetBrains Mono", "Noto Sans SC Variable", "Noto Sans SC",
+    "PingFang SC", "Microsoft YaHei UI", ui-monospace, "Cascadia Mono", "SFMono-Regular", Menlo,
+    Consolas, monospace;
+
+  --radius-*: initial;
+  --radius-4: 4px;
+  --radius-6: 6px;
+  --radius-10: 10px;
+  --radius-14: 14px;
+  --radius-20: 20px;
+  --radius-pill: 999px;
+
+  --shadow-*: initial;
+  --shadow-pop: var(--shadow-pop);
+  --shadow-pill: var(--shadow-pill);
+  --shadow-win: var(--shadow-win);
+}
+
+/* Density and type-size knobs written by 设置 › 外观. */
+:root {
+  --ui-font-size: 13px;
+  --row-h: 32px;
+  --card-pad: 16px;
+}
+:root[data-density="compact"] {
+  --row-h: 28px;
+  --card-pad: 12px;
+}
+:root[data-reduce-motion="true"] *,
+:root[data-reduce-motion="true"] *::before,
+:root[data-reduce-motion="true"] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-ui);
+    font-size: var(--ui-font-size);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "kern", "liga", "calt";
+    font-optical-sizing: auto;
+  }
+  body {
+    margin: 0;
+    background: var(--canvas);
+    color: var(--fg);
+  }
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  ::selection {
+    background: var(--accent-soft);
+  }
+}
+
+@utility hairline {
+  border: 1px solid var(--border);
+}
+@utility eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+}
+@utility mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+@utility scrim {
+  background: color-mix(in srgb, var(--scrim) 28%, transparent);
+}
+
+@keyframes vt-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes vt-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.85);
+    opacity: 0.6;
+  }
+}
+@keyframes vt-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+@keyframes vt-drain {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}

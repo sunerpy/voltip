@@ -1,0 +1,2 @@
+/* Shown by macOS in the microphone consent prompt (Info.plist NSMicrophoneUsageDescription). */
+"NSMicrophoneUsageDescription" = "Voltip records only while you dictate, to turn your speech into text.";

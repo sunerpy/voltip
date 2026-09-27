@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Voltip",
+  "version": "../../../package.json",
+  "identifier": "dev.voltip.mobile",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1421",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "label": "main", "title": "Voltip", "width": 390, "height": 844, "resizable": true }],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "icon": ["icons/icon.png"],
+    "category": "Utility",
+    "shortDescription": "Voltip companion: pair your phone with end-to-end encryption",
+    "android": { "minSdkVersion": 26 },
+    "iOS": { "minimumSystemVersion": "15.0" }
+  }
+}

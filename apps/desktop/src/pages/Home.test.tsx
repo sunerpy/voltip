@@ -1,0 +1,533 @@
+import { defaultEngineSettings } from "@voltip/shared";
+import {
+  MOCK_ASR_MS,
+  MOCK_AUDIO_DEVICES,
+  MOCK_COPY_MS,
+  MOCK_DICTATION_DWELL_MS,
+  MOCK_EDIT_TEXT,
+  MOCK_FINALIZE_MS,
+  MOCK_DICTATION_TEXT,
+  MOCK_MIC_READY_MS,
+  MOCK_METER_INTERVAL_MS,
+  MOCK_REFINE_MS,
+  MOCK_STREAMING_MODEL_ID,
+  MockBackend,
+  phoneIdentity,
+  sampleDevices,
+} from "@voltip/shared/mock";
+import { act, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { historyStats } from "../features/history/stats";
+import { renderApp } from "../test/render";
+
+/** Fixed pixel panel sizes and two-fixed-column grids are what broke the 1440 / 1920 px windows
+ *  (Windows test 2026-09-24). `max-w-[…]` / `min-w-[…]` caps stay allowed: the page root itself is
+ *  `max-w-[1600px]`. */
+const FIXED_SIZE = /(?:^|\s)w-\[\d+px\]|(?:^|\s)h-\[604px\]|grid-cols-\[[^\]]*\d+px_\d+px[^\]]*\]/;
+
+/** Rows the 手机麦克风 card lists before its overflow line (Home.tsx `HOME_DEVICE_ROWS`). */
+const HOME_DEVICE_ROWS = 3;
+
+function fixedSizeOffenders(root: HTMLElement): string[] {
+  return [...root.querySelectorAll("*")]
+    .map((el) => el.getAttribute("class") ?? "")
+    .filter((cls) => FIXED_SIZE.test(cls));
+}
+
+/** The home statistics are "today / this week" by the real clock, so the sample history must be
+ *  dated relative to the same clock as the page. */
+function liveClock() {
+  return { now: () => Date.now() };
+}
+
+describe("Home page", () => {
+  it("renders readiness row, four panels, stat strip and the recent table from the core's state", async () => {
+    const { backend } = renderApp({ mock: liveClock() });
+    expect(await screen.findByText("可以开始听写")).toBeInTheDocument();
+    // The meter is live (the regression test below drives it); here it just has to exist.
+    expect(screen.getByRole("meter", { name: "电平" })).toBeInTheDocument();
+    expect(screen.getByTestId("home-phase")).toHaveTextContent(
+      "麦克风、热键和识别服务就位 · Qwen3-ASR-1.7B · 内置服务",
+    );
+    expect(screen.getByText("麦克风输入")).toBeInTheDocument();
+    expect(screen.getByText("Fifine K669 USB Microphone")).toBeInTheDocument();
+    expect(screen.getByText("识别引擎")).toBeInTheDocument();
+    expect(screen.getByText("手机麦克风 · 设备")).toBeInTheDocument();
+    expect(screen.getByText("今日会话")).toBeInTheDocument();
+    // The engine card reads state.engines, not a fixture.
+    const engine = screen.getByTestId("home-engine");
+    expect(within(engine).getByText("Qwen3-ASR-1.7B")).toBeInTheDocument();
+    expect(within(engine).getByText(/内置服务 · 语言 自动/)).toBeInTheDocument();
+    expect(within(engine).getByText("qwen3.8-27b")).toBeInTheDocument();
+    expect(within(engine).getByRole("switch", { name: /LLM 润色 开/ })).toBeChecked();
+    expect(screen.getByTestId("home-privacy")).toHaveTextContent(
+      "音频发送到内置服务 · 文本发送到内置服务",
+    );
+    // Regression (public release, 2026-09-27): the home page never names the built-in host.
+    expect(screen.getByTestId("page-home").textContent).not.toMatch(/voltip\.example|groq\.com/);
+    expect(
+      [...document.querySelectorAll("[title]")].map((e) => e.getAttribute("title")).join(" "),
+    ).not.toMatch(/voltip\.example/);
+
+    // Stats and tiles come from state.history (the sample rows dated relative to now).
+    const stats = historyStats(backend.peek().history, Date.now());
+    expect(stats.today.count).toBe(2);
+    expect(screen.getByRole("button", { name: "今天 2 条" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: `本周 ${stats.week.count} 条` })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: `本月 ${stats.month.count} 条` }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "总计 6 / 500" })).toBeInTheDocument();
+    const session = screen.getByTestId("home-session");
+    expect(within(session).getByText("2")).toBeInTheDocument();
+    expect(within(session).getByText(String(stats.today.latencyMs))).toBeInTheDocument();
+    const table = screen.getByRole("table", { name: "最近的结果" });
+    expect(within(table).getAllByRole("row")).toHaveLength(6 + 1);
+    expect(within(table).getAllByText("Qwen3-ASR-1.7B").length).toBe(6);
+    expect(within(table).getByText(/attach the latency report/)).toBeInTheDocument();
+    expect(within(table).getByText("仅剪贴板 · 目标窗口没有焦点")).toBeInTheDocument();
+    expect(within(table).getByText("失败 · 目标窗口已丢失")).toBeInTheDocument();
+    // Nothing on the page talks about phases or sample data any more.
+    expect(screen.getByTestId("page-home").textContent).not.toMatch(/第二阶段|示例数据/);
+    expect(screen.queryByTestId("deferred-badge")).toBeNull();
+  });
+
+  it("regression: the microphone card streams the native level meter (device, dBFS, peak) and stops when the page unmounts", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { backend, unmount } = renderApp();
+      expect(await screen.findByText("可以开始听写")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByTestId("home-mic-device")).toHaveTextContent(
+          MOCK_AUDIO_DEVICES[0]?.name ?? "",
+        );
+      });
+      await waitFor(() => {
+        expect(backend.activeMeters()).toBe(1);
+      });
+      act(() => {
+        vi.advanceTimersByTime(MOCK_METER_INTERVAL_MS * 2 + 1);
+      });
+      const level = screen.getByTestId("home-mic-level");
+      expect(level).toHaveTextContent(/-\d+\.\d dBFS/);
+      expect(level).toHaveTextContent(/峰值 -\d+\.\d/);
+      const meter = screen.getByRole("meter", { name: "电平" });
+      expect(Number(meter.getAttribute("aria-valuenow"))).toBeGreaterThan(0);
+      expect(screen.getByText(/电平来自 Rust 采集/)).toBeInTheDocument();
+      expect(screen.getByText("48 kHz · mono · f32 · 系统默认")).toBeInTheDocument();
+      unmount();
+      expect(backend.activeMeters()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("regression: 开始听写 starts a real session and shows the phase; 停止 finishes with the inserted text", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    try {
+      const { backend } = renderApp({ mock: liveClock() });
+      await screen.findByText("可以开始听写");
+      const before = backend.peek().history.length;
+      const start = screen.getByRole("button", { name: "开始听写" });
+      expect(start).toBeEnabled();
+      expect(start).not.toHaveAttribute("title");
+      await user.click(start);
+      expect(backend.peek().dictation.phase.phase).toBe("listening");
+      expect(screen.getByText("正在听写")).toBeInTheDocument();
+      expect(screen.getByTestId("home-phase")).toHaveTextContent(/正在听… 00:0\d/);
+      expect(screen.queryByRole("button", { name: "开始听写" })).toBeNull();
+      // The live meter names the recording.
+      await waitFor(() => {
+        expect(within(screen.getByTestId("home-mic")).getByText("录音中")).toBeInTheDocument();
+      });
+      // The timer counts from the device's first samples (150 ms after start), not from the click:
+      // three ticks of the one-second clock read 00:02.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000 + MOCK_MIC_READY_MS);
+      });
+      expect(screen.getByTestId("home-phase")).toHaveTextContent(/正在听… 00:02/);
+      await user.click(screen.getByRole("button", { name: "停止" }));
+      expect(backend.peek().dictation.phase).toMatchObject({
+        phase: "processing",
+        stage: "transcribing",
+      });
+      expect(screen.getByText("正在处理")).toBeInTheDocument();
+      expect(screen.getByTestId("home-phase")).toHaveTextContent("转写中…");
+      expect(screen.getByRole("button", { name: "处理中…" })).toBeDisabled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_ASR_MS);
+      });
+      expect(screen.getByTestId("home-phase")).toHaveTextContent("润色中…");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_REFINE_MS);
+      });
+      expect(screen.getByTestId("home-phase")).toHaveTextContent(
+        `已插入 ${MOCK_DICTATION_TEXT.length} 字 · 粘贴 · 已润色`,
+      );
+      // The result landed in history: the table, the tiles and the sidebar count all moved.
+      expect(backend.peek().history).toHaveLength(before + 1);
+      const table = screen.getByRole("table", { name: "最近的结果" });
+      expect(within(table).getAllByRole("row")[1]).toHaveTextContent(MOCK_DICTATION_TEXT);
+      expect(screen.getByRole("button", { name: "今天 3 条" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: `总计 ${before + 1} / 500` })).toBeInTheDocument();
+      expect(
+        within(screen.getByRole("navigation")).getByText(String(before + 1)),
+      ).toBeInTheDocument();
+      // The core returns to idle after its dwell; the button is 开始听写 again.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS);
+      });
+      expect(screen.getByText("可以开始听写")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "开始听写" })).toBeEnabled();
+      expect(screen.queryByText(/已开始听写/)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("regression: a voice edit reads as one on the home page while listening and rewriting and once replaced and its row is badged in the recent table (section 19)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { backend } = renderApp({ mock: liveClock() });
+      await screen.findByText("可以开始听写");
+      backend.setSelection("大家好，会议改到周四十点哈");
+      const editEdge = async (pressed: boolean) => {
+        await act(async () => {
+          await backend.invoke("hotkey_edge", { pressed, source: "hotkey", purpose: "edit" });
+        });
+      };
+      await editEdge(true);
+      expect(screen.getByTestId("home-phase")).toHaveTextContent(/正在听编辑指令… 00:0\d/);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_COPY_MS + MOCK_MIC_READY_MS + 1000);
+      });
+      await editEdge(false);
+      expect(screen.getByTestId("home-phase")).toHaveTextContent("转写中…");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_ASR_MS);
+      });
+      expect(screen.getByTestId("home-phase")).toHaveTextContent("改写中…");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_REFINE_MS + MOCK_FINALIZE_MS);
+      });
+      expect(screen.getByTestId("home-phase")).toHaveTextContent(
+        `已替换 ${Array.from(MOCK_EDIT_TEXT).length} 字 · 粘贴`,
+      );
+      const table = screen.getByRole("table", { name: "最近的结果" });
+      const newest = within(table).getAllByRole("row")[1] as HTMLElement;
+      expect(newest).toHaveTextContent(MOCK_EDIT_TEXT);
+      expect(within(newest).getByTestId("home-edit-badge")).toHaveTextContent("编辑");
+      expect(within(table).getAllByTestId("home-edit-badge")).toHaveLength(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS);
+      });
+      expect(screen.getByText("可以开始听写")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("取消 during listening discards the recording; a failed run shows the reason", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    try {
+      const { backend } = renderApp({ mock: liveClock() });
+      await screen.findByText("可以开始听写");
+      const before = backend.peek().history.length;
+      await user.click(screen.getByRole("button", { name: "开始听写" }));
+      await user.click(screen.getByRole("button", { name: "取消" }));
+      expect(backend.peek().dictation.phase).toEqual({ phase: "cancelled", injected_chars: 0 });
+      expect(screen.getByTestId("home-phase")).toHaveTextContent("已取消");
+      expect(backend.peek().history).toHaveLength(before);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS);
+      });
+      await user.click(screen.getByRole("button", { name: "开始听写" }));
+      act(() => {
+        backend.simulateDictationFailed("没有听到声音");
+      });
+      expect(screen.getByTestId("home-phase")).toHaveTextContent("失败 · 没有听到声音");
+      expect(screen.getByTestId("home-phase")).toHaveClass("text-danger");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("regression: the engine card shows the 实时预览 chip when live_preview_ready and a one-line note when the live preview degraded; the local model name follows the core", async () => {
+    const backend = new MockBackend({
+      now: () => Date.now(),
+      models: {
+        [MOCK_STREAMING_MODEL_ID]: {
+          kind: "installed",
+          path: `~/.local/share/voltip/models/${MOCK_STREAMING_MODEL_ID}`,
+          installed_at: 1_758_600_000,
+        },
+        "qwen3-asr-0.6b": {
+          kind: "installed",
+          path: "~/.local/share/voltip/models/qwen3-asr-0.6b",
+          installed_at: 1_758_600_000,
+        },
+      },
+    });
+    renderApp({ backend });
+    const engine = await screen.findByTestId("home-engine");
+    expect(backend.peek().engines.live_preview_ready).toBe(true);
+    expect(within(engine).getByTestId("home-live-preview")).toHaveTextContent("实时预览");
+    expect(screen.queryByTestId("home-live-degraded")).toBeNull();
+    // The note appears only while the take is listening with a degraded preview, and names no
+    // error: the final text is unaffected.
+    await act(async () => {
+      await backend.invoke("dictation_start");
+    });
+    expect(screen.queryByTestId("home-live-degraded")).toBeNull();
+    act(() => {
+      backend.simulateLiveDegraded("live tap overrun: the decoder fell behind the microphone");
+    });
+    const note = within(engine).getByTestId("home-live-degraded");
+    expect(note).toHaveTextContent("实时预览已中断 · 最终文本不受影响");
+    expect(note).toHaveAttribute(
+      "title",
+      "live tap overrun: the decoder fell behind the microphone",
+    );
+    expect(screen.queryByText("正在处理")).toBeNull();
+    await act(async () => {
+      await backend.invoke("dictation_cancel");
+    });
+    expect(screen.queryByTestId("home-live-degraded")).toBeNull();
+    // Switching live preview off drops the chip; local mode shows the core's tier name.
+    await act(async () => {
+      await backend.invoke("settings_set_engines", {
+        engines: { ...backend.peek().settings.engines, asr_provider: "local", live_preview: false },
+      });
+    });
+    expect(within(engine).queryByTestId("home-live-preview")).toBeNull();
+    expect(within(engine).getByText("均衡")).toBeInTheDocument();
+    expect(within(engine).getByText("本地")).toBeInTheDocument();
+    // The readiness chip names the tier too (the phase line is still in the cancel dwell here).
+    expect(screen.getByText("本机 · 均衡")).toBeInTheDocument();
+  });
+
+  it("regression: changing the hotkey updates the home readiness row and footer immediately", async () => {
+    const { backend } = renderApp();
+    const row = await screen.findByTestId("home-readiness");
+    expect(within(row).getByLabelText("Ctrl Alt Space")).toBeInTheDocument();
+    const footer = screen.getByText("按住听写").closest("footer") as HTMLElement;
+    expect(within(footer).getByLabelText("Ctrl Alt Space")).toBeInTheDocument();
+    await act(async () => {
+      await backend.invoke("settings_set_hotkey", { hotkey: "Ctrl+Shift+D" });
+    });
+    expect(within(row).getByLabelText("Ctrl Shift D")).toBeInTheDocument();
+    expect(within(row).queryByLabelText("Ctrl Alt Space")).toBeNull();
+    expect(within(footer).getByLabelText("Ctrl Shift D")).toBeInTheDocument();
+    expect(within(footer).queryByLabelText("Ctrl Alt Space")).toBeNull();
+    // Nothing on the page still shows the fixture chord.
+    expect(screen.getByTestId("page-home").textContent).not.toContain("Ctrl Alt Space");
+  });
+
+  it("blocks dictation with a plain reason when the recognition provider has no key, and shows the empty state without history", async () => {
+    renderApp({
+      backend: new MockBackend({
+        history: [],
+        settings: {
+          hotkey: "Ctrl+Alt+Space",
+          engines: { ...defaultEngineSettings(), asr_provider: "groq" },
+        },
+      }),
+    });
+    expect(await screen.findByText("还不能开始听写")).toBeInTheDocument();
+    const start = screen.getByRole("button", { name: "开始听写" });
+    expect(start).toBeDisabled();
+    // The reason follows `state.engines`, which the backend reports asynchronously after the first
+    // paint (until then the button says the core is still being awaited): wait for it explicitly.
+    await waitFor(() => {
+      expect(start).toHaveAttribute(
+        "title",
+        "识别服务商还不能用：缺少密钥 · 在「设置 · 引擎」中配置",
+      );
+    });
+    expect(screen.getByTestId("home-phase")).toHaveTextContent("缺少密钥");
+    expect(screen.getByRole("button", { name: "今天 0 条" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "总计 0 / 500" })).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "最近的结果" })).toBeNull();
+    expect(screen.getByText("还没有听写结果")).toBeInTheDocument();
+    expect(screen.getByText("按住 Ctrl Alt Space 说一句，松开即插入")).toBeInTheDocument();
+    // The microphone card shows its own `—` until the native enumeration lands; wait for the
+    // device so the only remaining `—` is the average-latency readout.
+    expect(await screen.findByText("Fifine K669")).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
+  });
+
+  it("regression: the readiness chip and the empty-state hint follow settings.activation (docs/dictation.md §13)", async () => {
+    const { backend } = renderApp({
+      mock: { history: [], settings: { activation: "toggle" } },
+    });
+    expect(
+      await screen.findByRole("button", { name: "按一下开始 · 再按结束" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("按一下 Ctrl Alt Space 开始，再按一下结束")).toBeInTheDocument();
+    expect(screen.getByText("按一下听写")).toBeInTheDocument();
+    expect(screen.queryByText("按住说话")).toBeNull();
+    // The core switches the mode (settings event): chip, hint and footer follow at once.
+    act(() => {
+      backend.publish({
+        type: "settings",
+        ...backend.peek().settings,
+        activation: "hold_or_toggle",
+      });
+    });
+    expect(await screen.findByRole("button", { name: "按住说话 · 短按锁定" })).toBeInTheDocument();
+    expect(screen.getByText("按住 Ctrl Alt Space 说话，短按锁定")).toBeInTheDocument();
+    expect(screen.getByText("按住或按一下听写")).toBeInTheDocument();
+    act(() => {
+      backend.publish({ type: "settings", ...backend.peek().settings, activation: "hold" });
+    });
+    expect(await screen.findByRole("button", { name: "按住说话" })).toBeInTheDocument();
+    expect(screen.getByText("按住 Ctrl Alt Space 说一句，松开即插入")).toBeInTheDocument();
+    expect(screen.getByText("按住听写")).toBeInTheDocument();
+  });
+
+  it("regression: the Bridge & MCP card is gone; the 手机麦克风 card reads the core's devices and relay", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    const page = await screen.findByTestId("page-home");
+    // Windows test 2026-09-25: Bridge & MCP is being removed, nothing on the page may mention it.
+    expect(page.textContent).not.toMatch(/Bridge|MCP|Claude Code|OpenCode|Hook/);
+    expect(
+      screen.queryByRole("button", { name: /复制 MCP 配置|复制 Hook 命令|待批准/ }),
+    ).toBeNull();
+    const card = screen.getByTestId("home-devices");
+    // renderApp's core: Pixel 8 online over LAN, MacBook Pro offline, relay not configured.
+    // Header lamp (first online phone) and the Pixel 8 row both read the core's connection label.
+    expect(within(card).getAllByText("在线 · 直连")).toHaveLength(2);
+    expect(within(card).getByText("2 台已配对")).toBeInTheDocument();
+    const rows = within(card).getAllByRole("listitem");
+    expect(rows.map((r) => r.textContent)).toEqual([
+      "Pixel 8Android在线 · 直连",
+      "MacBook PromacOS离线",
+    ]);
+    expect(within(card).getByText("中继 · 未配置")).toBeInTheDocument();
+    expect(within(card).queryByText("还没有配对的手机 · 去配对")).toBeNull();
+    await user.click(within(card).getByRole("button", { name: "打开手机麦克风" }));
+    expect(screen.getByRole("heading", { name: "手机麦克风", level: 1 })).toBeInTheDocument();
+  });
+
+  it("regression: with no paired phone the 手机麦克风 card shows the inline 去配对 hint and it navigates", async () => {
+    const user = userEvent.setup();
+    const many = sampleDevices(1_758_700_000);
+    renderApp({ backend: new MockBackend({ devices: [] }) });
+    const card = await screen.findByTestId("home-devices");
+    expect(within(card).getByText("未配对")).toBeInTheDocument();
+    expect(within(card).getByText("0 台已配对")).toBeInTheDocument();
+    expect(within(card).queryByRole("listitem")).toBeNull();
+    await user.click(within(card).getByRole("button", { name: "还没有配对的手机 · 去配对" }));
+    expect(screen.getByRole("heading", { name: "手机麦克风", level: 1 })).toBeInTheDocument();
+    // More phones than the card lists: the overflow line points at the devices page.
+    const extra = many.map((d, i) => ({
+      ...d,
+      device: { ...d.device, public_key: `${d.device.public_key.slice(0, -1)}${i}` },
+    }));
+    renderApp({
+      backend: new MockBackend({
+        devices: [...many, ...extra].map((d) => ({ ...d, connection: { state: "connecting" } })),
+        relay: {
+          state: "reconnecting",
+          attempts: 2,
+          endpoint: "wss://relay.example.test",
+          source: "user",
+        },
+      }),
+    });
+    const crowded = (await screen.findAllByTestId("home-devices")).at(-1) as HTMLElement;
+    expect(within(crowded).getAllByText("连接中").length).toBeGreaterThan(HOME_DEVICE_ROWS);
+    expect(within(crowded).getByText("还有 1 台 · 在手机麦克风页查看")).toBeInTheDocument();
+    expect(within(crowded).getByText("中继 · 重连中 · 第 2 次")).toBeInTheDocument();
+    // Paired but nothing online or connecting: the header lamp reads 离线.
+    renderApp({
+      backend: new MockBackend({
+        devices: many.map((d) => ({ ...d, connection: { state: "offline" } })),
+      }),
+    });
+    const offline = (await screen.findAllByTestId("home-devices")).at(-1) as HTMLElement;
+    expect(within(offline).getAllByText("离线")).toHaveLength(many.length + 1);
+  });
+
+  it("regression: home is fluid (no fixed-width panels)", async () => {
+    renderApp();
+    const page = await screen.findByTestId("page-home");
+    expect(page).toHaveClass("mx-auto", "w-full", "max-w-[1600px]", "p-6");
+    // Allow-list: none on this board (keycaps and the LED meter size themselves with spacing
+    // utilities, the heatmap with inline pixel cells).
+    expect(fixedSizeOffenders(page)).toEqual([]);
+    for (const grid of page.querySelectorAll<HTMLElement>(".grid"))
+      expect(grid.className).not.toMatch(/(?:^|\s)grid-cols-\[[^\]]*\d+px/);
+  });
+
+  it("the LLM 润色 toggle writes settings_set_engines and the card follows the core", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp();
+    await screen.findByText("可以开始听写");
+    await user.click(screen.getByRole("switch", { name: /LLM 润色 开/ }));
+    await waitFor(() => {
+      expect(backend.peek().settings.engines.refine_enabled).toBe(false);
+    });
+    expect(backend.peek().engines.refine_enabled).toBe(false);
+    expect(screen.getByRole("switch", { name: "LLM 润色 关" })).not.toBeChecked();
+    expect(screen.getByTestId("home-privacy")).toHaveTextContent("音频发送到内置服务");
+    expect(screen.getByTestId("home-privacy")).not.toHaveTextContent("文本发送到");
+    expect(within(screen.getByTestId("home-engine")).getByText("关")).toBeInTheDocument();
+    // 配置引擎 opens the settings dialog on the engines group over the home page.
+    await user.click(screen.getByRole("button", { name: "配置引擎" }));
+    const settings = screen.getByRole("dialog", { name: "设置" });
+    expect(within(settings).getByRole("tab", { name: /引擎/, selected: true })).toBeInTheDocument();
+    expect(within(settings).getByTestId("engines-pane")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "查看全部 →" }));
+    expect(screen.getByRole("heading", { name: "历史记录", level: 1 })).toBeInTheDocument();
+  });
+
+  it("stat tiles, chips and recent rows navigate on every platform", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({
+      backend: new MockBackend({
+        identity: { ...phoneIdentity(), platform: "macos" },
+        now: () => Date.now(),
+      }),
+    });
+    await screen.findByText("可以开始听写");
+    expect(screen.getByRole("button", { name: "开始听写" })).toBeEnabled();
+    const stats = historyStats(backend.peek().history, Date.now());
+    await user.click(screen.getByRole("button", { name: `本周 ${stats.week.count} 条` }));
+    expect(screen.getByRole("heading", { name: "历史记录", level: 1 })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /首页/ }));
+    // Settings open as a modal over the page (Shell); 按住说话 lands on the 热键 group.
+    await user.click(screen.getByRole("button", { name: "按住说话" }));
+    const settings = screen.getByRole("dialog", { name: "设置" });
+    expect(within(settings).getByRole("tab", { name: /热键/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "内置服务 · Qwen3-ASR-1.7B" }));
+    expect(
+      within(screen.getByRole("dialog", { name: "设置" })).getByRole("tab", {
+        name: /引擎/,
+        selected: true,
+      }),
+    ).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    const tile = screen.getByRole("button", { name: `本月 ${stats.month.count} 条` });
+    tile.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("heading", { name: "历史记录", level: 1 })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /首页/ }));
+    await user.click(
+      within(screen.getByRole("table", { name: "最近的结果" })).getByText(/latency report/),
+    );
+    expect(screen.getByRole("heading", { name: "历史记录", level: 1 })).toBeInTheDocument();
+    // The recent row's id pre-selects it in the history detail.
+    expect(screen.getByTestId("entry-text")).toHaveTextContent(/attach the latency report/);
+  });
+});

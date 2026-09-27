@@ -1,0 +1,48 @@
+[package]
+name = "voltip-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Application core for Voltip: identity + pairing + transport + trusted devices behind a command/event API."
+
+[lints]
+workspace = true
+
+[features]
+default = []
+keyring = ["voltip-identity/keyring"]
+
+[dependencies]
+aho-corasick.workspace = true
+async-trait.workspace = true
+ferrous-opencc.workspace = true
+hex.workspace = true
+parking_lot.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true
+voltip-crypto.workspace = true
+voltip-identity.workspace = true
+voltip-pairing.workspace = true
+voltip-protocol.workspace = true
+voltip-transport.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+futures-util.workspace = true
+tempfile.workspace = true
+tokio-tungstenite.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+voltip-relay = { workspace = true, features = ["server"] }
+tracing-subscriber.workspace = true
+# The voice edit's terminal table (docs/dictation.md §19.2) for the engine tests; the core itself
+# asks the shell's injector.
+voltip-platform = { path = "../voltip-platform" }

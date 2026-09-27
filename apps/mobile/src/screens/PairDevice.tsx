@@ -1,0 +1,178 @@
+import { failureLabel } from "@voltip/shared";
+import {
+  Button,
+  Card,
+  CodeInput,
+  Input,
+  LampText,
+  Progress,
+  Segmented,
+  useBackend,
+  useI18n,
+  useUiState,
+} from "@voltip/ui";
+import { useState } from "react";
+import { useMobileShell } from "../app/shell";
+
+type Method = "scan" | "code";
+
+export function isPairingLink(value: string): boolean {
+  return value.trim().startsWith("voltip://pair?");
+}
+
+export function PairDevice() {
+  const { backend } = useBackend();
+  const { pairing } = useUiState();
+  const shell = useMobileShell();
+  const { t, locale } = useI18n();
+  const [method, setMethod] = useState<Method>("scan");
+  const [code, setCode] = useState("");
+  const [link, setLink] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const phase = pairing.state.state;
+  const busy = phase === "creating_session" || phase === "key_exchange";
+  const failed =
+    pairing.state.state === "failed"
+      ? failureLabel(pairing.state.reason, locale)
+      : phase === "expired"
+        ? t("mobile.pair.expired")
+        : phase === "rejected"
+          ? t("mobile.pair.rejected")
+          : undefined;
+
+  const joinCode = (digits: string) => {
+    void backend.invoke("pairing_join_code", { code: digits });
+  };
+  const joinLink = (uri: string) => {
+    void backend.invoke("pairing_join_ticket", { uri: uri.trim() });
+  };
+  const scan = async () => {
+    if (!shell.scanner) return;
+    setScanning(true);
+    try {
+      const content = await shell.scanner.scan();
+      if (content === undefined) shell.toast(t("mobile.pair.scanCancelled"), "danger");
+      else joinLink(content);
+    } finally {
+      setScanning(false);
+    }
+  };
+  const retry = () => {
+    void backend.invoke("pairing_reset");
+    setCode("");
+  };
+
+  return (
+    <div className="flex h-full flex-col gap-4 p-4">
+      <p className="text-[13px] leading-5 text-fg-muted">{t("mobile.pair.intro")}</p>
+      <Segmented
+        label={t("mobile.pair.method")}
+        value={method}
+        onChange={setMethod}
+        className="w-full"
+        options={[
+          { value: "scan", label: t("mobile.pair.scan") },
+          { value: "code", label: t("mobile.pair.code") },
+        ]}
+      />
+
+      {method === "scan" && (
+        <Card className="flex flex-col gap-3">
+          {!shell.scannerReady ? (
+            <LampText tone="idle" pulse>
+              {t("mobile.pair.checkingCamera")}
+            </LampText>
+          ) : shell.scanner ? (
+            <>
+              <div className="text-[14px] font-medium text-fg">{t("mobile.pair.aim")}</div>
+              <Button
+                variant="primary"
+                className="h-11 w-full"
+                icon="qr"
+                loading={scanning}
+                disabled={busy}
+                onClick={() => void scan()}>
+                {t("mobile.pair.openCamera")}
+              </Button>
+            </>
+          ) : (
+            <>
+              <div className="text-[14px] font-medium text-fg">{t("mobile.pair.noCamera")}</div>
+              <p className="text-[12px] text-fg-muted">{t("mobile.pair.pasteLink")}</p>
+              <Input
+                label={t("mobile.pair.link")}
+                mono
+                value={link}
+                placeholder="voltip://pair?v=1&s=…&t=…"
+                onChange={(e) => {
+                  setLink(e.target.value);
+                }}
+                error={
+                  link.length > 0 && !isPairingLink(link) ? t("mobile.pair.notLink") : undefined
+                }
+              />
+              <Button
+                variant="primary"
+                className="h-11 w-full"
+                disabled={!isPairingLink(link) || busy}
+                onClick={() => {
+                  joinLink(link);
+                }}>
+                {t("mobile.pair.join")}
+              </Button>
+            </>
+          )}
+        </Card>
+      )}
+
+      {method === "code" && (
+        <Card className="flex flex-col gap-4">
+          <div className="text-center text-[14px] font-medium text-fg">
+            {t("mobile.pair.enterCode")}
+          </div>
+          <CodeInput
+            value={code}
+            onChange={setCode}
+            onComplete={joinCode}
+            disabled={busy}
+            autoFocus
+            error={failed}
+          />
+          <Button
+            variant="primary"
+            className="h-11 w-full"
+            disabled={code.length !== 6 || busy}
+            onClick={() => {
+              joinCode(code);
+            }}>
+            {t("mobile.pair.join")}
+          </Button>
+        </Card>
+      )}
+
+      {busy && (
+        <div className="flex flex-col gap-2" role="status">
+          <LampText tone="accent" pulse>
+            {phase === "creating_session" ? t("mobile.pair.joining") : t("mobile.pair.negotiating")}
+          </LampText>
+          <Progress indeterminate />
+        </div>
+      )}
+      {failed && method === "scan" && (
+        <div
+          className="flex items-center justify-between gap-3 rounded-10 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+          role="alert">
+          <span>{failed}</span>
+          <Button size="sm" onClick={retry}>
+            {t("mobile.pair.retry")}
+          </Button>
+        </div>
+      )}
+      {failed && method === "code" && (
+        <Button size="sm" variant="ghost" className="self-center" onClick={retry}>
+          {t("mobile.pair.clearRetry")}
+        </Button>
+      )}
+    </div>
+  );
+}

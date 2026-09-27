@@ -1,0 +1,116 @@
+# macOS (Apple silicon) build and headless native run on GitHub's macos-15 runner.
+#
+# What it produces: an unsigned `Voltip.app` (no Developer ID yet, see docs/roadmap.md) and the
+# same headless run the Windows and Linux jobs do (scripts/smoke-native-cli.ps1: --version,
+# --list-models, --download-model, --transcribe-file on a public Chinese sample), which proves the
+# bundle's dylibs load (bundle.macOS.frameworks) and the ggml / sherpa-onnx engines run natively.
+# The macOS-only unit tests of voltip-platform and voltip-inject run here too.
+#
+# It runs on every push to main and on demand, not on pull requests (about 20 minutes), and CI
+# Success does not wait for it. Like CI, it bakes in no built-in engine values: the app it builds
+# is engine-less, and the headless run uses the on-device models.
+name: macOS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  NODE_MAJOR: "22"
+  TAURI_CLI_VERSION: 2.11.5
+
+jobs:
+  macos:
+    name: macos-arm64 · build + native run
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Runner facts
+        run: |
+          set -euo pipefail
+          sw_vers; uname -m; sysctl -n machdep.cpu.brand_string; sysctl -n hw.ncpu
+          xcode-select -p; clang --version | head -1; cmake --version | head -1 || true
+
+      - name: Rust toolchain (rust-toolchain.toml) + aarch64-apple-darwin
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install 2>/dev/null || true
+          rustup target add aarch64-apple-darwin
+          rustc --version && cargo --version
+
+      - name: CMake (transcribe.cpp / ggml source build)
+        run: command -v cmake || brew install cmake
+
+      - name: Tauri CLI (pinned)
+        run: cargo install tauri-cli --version "=${TAURI_CLI_VERSION}" --locked
+
+      - name: pnpm (packageManager in package.json)
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: package.json
+
+      - name: Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_MAJOR }}
+          cache: pnpm
+
+      - name: Install web dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # The macOS-only unit tests: the platform tables and the injector, including the live
+      # keyboard-layout read (`mac_layout_id`) that no Linux host can exercise.
+      - name: macOS unit tests (voltip-platform, voltip-inject)
+        run: cargo test -p voltip-platform -p voltip-inject
+
+      - name: Build Voltip.app (unsigned)
+        run: |
+          set -euo pipefail
+          (cd apps/desktop && cargo tauri build --ci --target aarch64-apple-darwin --bundles app)
+          apps=(target/aarch64-apple-darwin/release/bundle/macos/*.app)
+          app=${apps[0]}
+          [ -d "$app" ] || { echo "::error::no .app bundle was produced"; exit 1; }
+          echo "APP=$app" >>"$GITHUB_ENV"
+          ls -la "$app/Contents/MacOS" "$app/Contents/Frameworks" || true
+          otool -L "$app/Contents/MacOS/voltip-desktop"
+
+      - name: Headless native run (download a model, transcribe a public sample)
+        shell: pwsh
+        # Both engines: sherpa-onnx (SenseVoice, the bundled dylibs) and transcribe.cpp (Qwen3-ASR
+        # GGUF, ggml built for Apple silicon), as the Windows job does.
+        run: ./scripts/smoke-native-cli.ps1 -Binary "$env:APP/Contents/MacOS/voltip-desktop" -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-macos
+
+      - name: Archive the app
+        run: ditto -c -k --keepParent "$APP" dist-macos.zip
+
+      - name: Upload the app and the run summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: voltip-macos-arm64
+          path: |
+            dist-macos.zip
+            smoke-native-macos/*.txt
+            smoke-native-macos/*.out
+          if-no-files-found: warn
+          retention-days: 7

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "profile": "tauri",
+  "targets": [
+    {
+      "bundles": ["deb", "appimage"],
+      "cross": false,
+      "platform": "linux",
+      "runner": "ubuntu-22.04",
+      "target": "x86_64-unknown-linux-gnu",
+      "updater_bundle": "appimage",
+      "updater_platform": "linux-x86_64"
+    },
+    {
+      "bundles": ["nsis"],
+      "cross": true,
+      "platform": "windows",
+      "runner": "ubuntu-24.04",
+      "target": "x86_64-pc-windows-msvc",
+      "updater_bundle": "nsis",
+      "updater_platform": "windows-x86_64"
+    }
+  ]
+}

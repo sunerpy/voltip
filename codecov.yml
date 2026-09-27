@@ -1,0 +1,39 @@
+# `ignore:` MUST mirror COVERAGE_EXCLUDE in the Makefile; scripts/check-coverage-parity.sh fails CI when they drift.
+# Reporting only: the floors that block a merge are `make verify`'s own gates (Rust 90 %, web 90 %).
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  status:
+    project:
+      default:
+        target: 90%
+        threshold: 1%
+    patch:
+      default:
+        target: 85%
+        threshold: 0%
+
+ignore:
+  - "**/src/main.rs"
+
+# CI uploads two reports (.github/workflows/ci.yml `codecov`): cargo-llvm-cov and the four vitest runs.
+flags:
+  rust:
+    paths:
+      - crates/
+      - apps/desktop/src-tauri/
+      - apps/mobile/src-tauri/
+    carryforward: true
+  web:
+    paths:
+      - packages/shared/src/
+      - packages/ui/src/
+      - apps/desktop/src/
+      - apps/mobile/src/
+    carryforward: true
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: true

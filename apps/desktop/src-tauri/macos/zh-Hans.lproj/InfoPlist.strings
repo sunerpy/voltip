@@ -1,0 +1,2 @@
+/* macOS 麦克风授权弹窗里的说明（Info.plist NSMicrophoneUsageDescription）。 */
+"NSMicrophoneUsageDescription" = "Voltip 只在你听写时录音，用来把语音转成文字。";

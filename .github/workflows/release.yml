@@ -1,0 +1,727 @@
+# Same-run release for the Voltip desktop app (Tauri v2) on GitHub-hosted runners.
+#
+# Topology (skill github-project-scaffold, references/tauri-release.md):
+#   release-please -> preflight -> bundle-windows + bundle-linux -> updater -> publish-release
+# release-please owns the version, the tag and a DRAFT Release; every job below runs in the same
+# workflow run gated on release_created; the terminal job verifies every remote asset and flips
+# the draft. Nothing listens on `push: tags` or `release:` because events created with
+# GITHUB_TOKEN never start workflows. `workflow_dispatch` rebuilds an EXISTING draft tag only.
+#
+# Deviations from the skill template, all forced by this repository:
+# - Windows is cross-built from Linux with cargo-xwin through the repository's own
+#   `make windows-x64` (which also runs the artefact secret scan). The Linux leg runs on
+#   ubuntu-22.04: its glibc and webkit2gtk-4.1 are the oldest the packages support. macOS is not
+#   released yet (unsigned, see docs/roadmap.md); macos.yml builds and runs it on every push.
+#   `.github/release-targets.json` lists the two legs for the scaffold contract; the jobs are
+#   written out rather than generated from it, because a Windows leg built on Linux is outside
+#   what `tauri-release.py matrix` models.
+# - The built-in engine defaults are repository SECRETS baked in at compile time
+#   (.github/README-secrets.md); a release package must carry them (`preflight-engines`). Job-level
+#   `if:` cannot read secrets, so their presence is checked in `preflight` through `env:`.
+# - The updater is optional. It is on exactly when the VOLTIP_UPDATE_PUBKEY secret is set: the app
+#   is then built with VOLTIP_UPDATE_URL pointing at this repository's
+#   releases/latest/download/latest.json, and latest.json pins every URL to this release's assets.
+#   tauri.conf.json carries no updater block (apps/desktop/src-tauri/src/update.rs injects
+#   plugins.updater at runtime from the two compile-time values), so the signing step alone passes
+#   `bundle.createUpdaterArtifacts` and the pubkey with `--config`. TAURI_SIGNING_PRIVATE_KEY is
+#   present only on that `cargo tauri bundle` step; every .sig is verified against the pubkey
+#   before anything is uploaded. A pre-release is never marked latest, so installed copies see an
+#   update only when a stable release is published.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Existing DRAFT release tag to rebuild, for example v0.0.2"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  TAURI_PROJECT_PATH: apps/desktop/src-tauri
+  WINDOWS_TARGET: x86_64-pc-windows-msvc
+  LINUX_TARGET: x86_64-unknown-linux-gnu
+  CARGO_XWIN_VERSION: 0.20.2
+  CARGO_ABOUT_VERSION: 0.9.2
+  NODE_MAJOR: "22"
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      build_artifacts: ${{ steps.gate.outputs.build_artifacts }}
+      tag_name: ${{ steps.gate.outputs.tag_name }}
+      version: ${{ steps.gate.outputs.version }}
+      prerelease: ${{ steps.gate.outputs.prerelease }}
+      release_sha: ${{ steps.gate.outputs.release_sha }}
+    steps:
+      - name: Run release-please
+        id: release
+        if: github.event_name == 'push'
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      # Tooling comes from the workflow's own commit on the protected default branch, never from
+      # a tag or a dispatched branch.
+      - name: Checkout release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Resolve release gate
+        id: gate
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag_name }}
+          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          RUN_REF: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+          DEFAULT_BRANCH: main
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/resolve-release-gate.sh
+
+  # Fails closed BEFORE any 30-60 minute leg: version model, updater configuration, signing key
+  # and publication secrets. Secrets are compared with '' inside env; values never reach a shell.
+  preflight:
+    name: Preflight
+    needs: release-please
+    if: needs.release-please.outputs.build_artifacts == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      updater_enabled: ${{ steps.config.outputs.updater_enabled }}
+      product_name: ${{ steps.config.outputs.product_name }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+
+      - name: Verify the tag resolves to the released commit
+        env:
+          RELEASE_SHA: ${{ needs.release-please.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          if [ "$head" != "$RELEASE_SHA" ]; then
+            echo "::error::checked-out tag commit $head != release commit $RELEASE_SHA"
+            exit 1
+          fi
+
+      # tauri.conf.json version == package.json version == the release version; productName;
+      # bundle.active; no createUpdaterArtifacts in the file (it would make `make windows-x64`
+      # demand a key). The updater exists exactly when VOLTIP_UPDATE_PUBKEY is set (the URL is
+      # derived from the repository in the bundle jobs). The pubkey is a secret-typed value, so it
+      # is never a job output: downstream steps read secrets.VOLTIP_UPDATE_PUBKEY themselves.
+      - name: Check version model and updater configuration
+        id: config
+        env:
+          VERSION: ${{ needs.release-please.outputs.version }}
+          UPDATE_URL_PRESENT: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' }}
+          UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
+        run: >-
+          python3 scripts/release/updater-json.py check-config
+          --project "$TAURI_PROJECT_PATH"
+          --package-json package.json
+          --expect-version "$VERSION"
+          --update-url-present "$UPDATE_URL_PRESENT"
+          --update-pubkey "$UPDATE_PUBKEY"
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Require the signing key when the updater is enabled
+        env:
+          UPDATER_ENABLED: ${{ steps.config.outputs.updater_enabled }}
+          SIGNING_KEY_PRESENT: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$UPDATER_ENABLED" != true ]; then
+            echo "updater disabled (no VOLTIP_UPDATE_PUBKEY secret): bundles ship unsigned, no latest.json"
+            exit 0
+          fi
+          if [ "$SIGNING_KEY_PRESENT" != true ]; then
+            echo "::error::VOLTIP_UPDATE_PUBKEY is set but TAURI_SIGNING_PRIVATE_KEY is empty (see .github/README-secrets.md)"
+            exit 1
+          fi
+
+      # The tree being released names no production host; the words come from a secret and a hit
+      # prints path:line only.
+      - name: No production hosts in the release tree
+        env:
+          VOLTIP_PRODUCTION_HOSTS: ${{ secrets.VOLTIP_PRODUCTION_HOSTS }}
+        run: .github/scripts/check-no-production-hosts.sh --require
+
+  # (preflight, continued in the job above) A release package must carry the built-in engines:
+  # the same fail-closed rule scripts/lib/require-builtin-engines.sh applies to local packaging.
+  preflight-engines:
+    name: Preflight · built-in engine secrets
+    needs: release-please
+    if: needs.release-please.outputs.build_artifacts == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every built-in engine secret (values compared with '' inside env, never echoed)
+        env:
+          VOLTIP_ASR_URL_PRESENT: ${{ secrets.VOLTIP_ASR_URL != '' }}
+          VOLTIP_ASR_TOKEN_PRESENT: ${{ secrets.VOLTIP_ASR_TOKEN != '' }}
+          VOLTIP_ASR_MODEL_PRESENT: ${{ secrets.VOLTIP_ASR_MODEL != '' }}
+          VOLTIP_REFINE_URL_PRESENT: ${{ secrets.VOLTIP_REFINE_URL != '' }}
+          VOLTIP_REFINE_API_KEY_PRESENT: ${{ secrets.VOLTIP_REFINE_API_KEY != '' }}
+          VOLTIP_REFINE_MODEL_PRESENT: ${{ secrets.VOLTIP_REFINE_MODEL != '' }}
+          VOLTIP_RELAY_URL_PRESENT: ${{ secrets.VOLTIP_RELAY_URL != '' }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in VOLTIP_ASR_URL VOLTIP_ASR_TOKEN VOLTIP_ASR_MODEL VOLTIP_REFINE_URL VOLTIP_REFINE_API_KEY VOLTIP_REFINE_MODEL VOLTIP_RELAY_URL; do
+            present_var="${name}_PRESENT"
+            if [ "${!present_var}" != true ]; then
+              echo "::error::repository secret ${name} is empty; a release package must carry the built-in engines (see .github/README-secrets.md)"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+  # Windows x64: portable zip + NSIS installer, cross-built from Linux with cargo-xwin.
+  bundle-windows:
+    name: Bundle x86_64-pc-windows-msvc (cross)
+    needs: [release-please, preflight, preflight-engines]
+    if: needs.release-please.outputs.build_artifacts == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      # Compile-time defaults baked into the shell (docs/dictation.md §3); the two tokens are the
+      # revocable app tokens, never provider keys (the build script scans the exe and refuses).
+      VOLTIP_RELAY_URL: ${{ secrets.VOLTIP_RELAY_URL }}
+      VOLTIP_ASR_URL: ${{ secrets.VOLTIP_ASR_URL }}
+      VOLTIP_ASR_MODEL: ${{ secrets.VOLTIP_ASR_MODEL }}
+      VOLTIP_ASR_TOKEN: ${{ secrets.VOLTIP_ASR_TOKEN }}
+      VOLTIP_REFINE_URL: ${{ secrets.VOLTIP_REFINE_URL }}
+      VOLTIP_REFINE_MODEL: ${{ secrets.VOLTIP_REFINE_MODEL }}
+      VOLTIP_REFINE_API_KEY: ${{ secrets.VOLTIP_REFINE_API_KEY }}
+      # The updater endpoint follows the repository; empty (no updater) without the pubkey.
+      VOLTIP_UPDATE_URL: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' && format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) || '' }}
+      VOLTIP_UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
+      VOLTIP_MODEL_BASE_URL: ${{ secrets.VOLTIP_MODEL_BASE_URL }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+
+      - name: Verify the tag resolves to the released commit
+        env:
+          RELEASE_SHA: ${{ needs.release-please.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          if [ "$head" != "$RELEASE_SHA" ]; then
+            echo "::error::checked-out tag commit $head != release commit $RELEASE_SHA"
+            exit 1
+          fi
+
+      - name: Windows cross toolchain (nsis, clang, lld, llvm)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # LLVM 19: the MSVC STL headers cargo-xwin downloads (current CRT) refuse older clang
+          # ("STL1000: expected Clang 19.0.0 or newer"); Ubuntu 24.04 ships 19 as clang-19.
+          sudo apt-get install --yes --no-install-recommends nsis clang-19 lld-19 llvm-19 cmake ninja-build zip unzip
+          echo "/usr/lib/llvm-19/bin" >>"$GITHUB_PATH"
+          export PATH="/usr/lib/llvm-19/bin:$PATH"
+          lld-link --version; command -v llvm-rc; clang --version | head -1; makensis -VERSION
+
+      - name: Rust toolchain (rust-toolchain.toml) + Windows target
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install 2>/dev/null || true
+          rustup show
+          rustup target add "$WINDOWS_TARGET"
+          rustc --version && cargo --version
+
+      - name: cargo-xwin (prebuilt, pinned)
+        uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
+        with:
+          tool: cargo-xwin@${{ env.CARGO_XWIN_VERSION }}
+
+      # THIRD-PARTY-NOTICES.txt (scripts/release/third-party-notices.py) for the package.
+      - name: cargo-about (prebuilt, pinned)
+        uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
+        with:
+          tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
+
+      - name: Tauri CLI (`cargo tauri`, pinned tarball + SHA-256)
+        run: .github/scripts/install-cargo-tauri.sh
+
+      # target/ is retained per leg: build scripts and C/C++ dependencies dominate Tauri rebuilds.
+      - name: Cache Cargo registry and target/
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: release-windows-x64
+          cache-on-failure: true
+
+      # The MSVC CRT + SDK cargo-xwin unpacks (~1 GB from download.visualstudio.microsoft.com) is
+      # fetched once per cargo-xwin version and restored afterwards; the download itself is
+      # retried because that host resets connections under load (seen 2026-09-25).
+      - name: Cache the xwin MSVC CRT and SDK
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/cargo-xwin/xwin
+          key: xwin-crt-sdk-${{ runner.os }}-cargo-xwin-${{ env.CARGO_XWIN_VERSION }}
+
+      - name: Fetch the xwin MSVC CRT and SDK (retried)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "$HOME/.cache/cargo-xwin/xwin/DONE" ]; then echo "xwin CRT/SDK restored from cache"; exit 0; fi
+          for attempt in 1 2 3 4 5; do
+            if cargo xwin check --target x86_64-pc-windows-msvc -p voltip-protocol >/dev/null 2>&1 || [ -f "$HOME/.cache/cargo-xwin/xwin/DONE" ]; then
+              echo "xwin CRT/SDK ready (attempt $attempt)"; exit 0
+            fi
+            rm -rf "$HOME/.cache/cargo-xwin/xwin"
+            echo "xwin download failed (attempt $attempt), retrying in $((attempt * 20)) s"; sleep $((attempt * 20))
+          done
+          echo "::error::could not download the MSVC CRT/SDK after 5 attempts"; exit 1
+
+      - name: pnpm (packageManager in package.json)
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: package.json
+
+      - name: Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_MAJOR }}
+          cache: pnpm
+
+      - name: Install web dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # A restored target/ may hold installers of earlier versions; `collect` below takes every
+      # installer in the bundle directory, so it starts empty.
+      - name: Clear old bundles
+        run: rm -rf "target/$WINDOWS_TARGET/release/bundle"
+
+      - name: Cache the Vulkan SDK and runtime downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/voltip-vulkan/*.tar.xz
+            ~/.cache/voltip-vulkan/*.zip
+          key: vulkan-downloads-${{ hashFiles('scripts/lib/vulkan-sdk.sh') }}
+
+      # Phase 1 (no signing material): the repository's own script — frontend build, cargo-xwin
+      # compile with the Vulkan backend, unsigned NSIS bundle, provider-key scan of the exe, the
+      # portable zip, dist/windows-x64.
+      - name: Build and package (make windows-x64, no signing key)
+        run: make windows-x64
+
+      # Phase 2 (real key, bundling only): `tauri bundle` re-packs the already compiled exe into
+      # the NSIS installer and writes the updater .sig. createUpdaterArtifacts and the pubkey the
+      # app trusts arrive through --config on this step only; no frontend toolchain, build script
+      # or dependency lifecycle code runs while the key is present.
+      - name: Re-bundle and sign the NSIS installer for the updater
+        if: needs.preflight.outputs.updater_enabled == 'true'
+        working-directory: apps/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]; then unset TAURI_SIGNING_PRIVATE_KEY_PASSWORD; fi
+          jq -n --arg pubkey "$UPDATE_PUBKEY" \
+            '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pubkey}}}' \
+            >"$RUNNER_TEMP/updater-bundle.json"
+          cargo tauri bundle --ci --target "$WINDOWS_TARGET" --bundles nsis --config src-tauri/tauri.package-windows.conf.json --config "$RUNNER_TEMP/updater-bundle.json"
+          test -s "../../target/$WINDOWS_TARGET/release/bundle/nsis/"*_x64-setup.exe.sig
+
+      # release-assets/dist: <Product>_<version>_x64-setup.exe (+ .sig) and the portable zip the
+      # repository script built (the scanned exe with the DLLs it loads); release-assets/evidence:
+      # name/size/sha256 per file for the updater job. Kept apart from dist/windows-x64, which
+      # `make windows-x64` writes.
+      - name: Collect bundles and evidence
+        env:
+          UPDATER_ENABLED: ${{ needs.preflight.outputs.updater_enabled }}
+          PRODUCT_NAME: ${{ needs.preflight.outputs.product_name }}
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: >-
+          python3 scripts/release/updater-json.py collect
+          --target "$WINDOWS_TARGET"
+          --bundle-dir "target/$WINDOWS_TARGET/release/bundle"
+          --bundles nsis
+          --updater-bundle nsis
+          --updater "$UPDATER_ENABLED"
+          --out release-assets/dist
+          --evidence "release-assets/evidence/$WINDOWS_TARGET.json"
+          --extra "${PRODUCT_NAME}_${VERSION}_x64-portable.zip=dist/windows-x64/${PRODUCT_NAME}_${VERSION}_x64-portable.zip"
+
+      - name: Upload bundles
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tauri-${{ env.WINDOWS_TARGET }}
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Linux x64: .deb + AppImage on the same runner image (its glibc is the compatibility floor).
+  bundle-linux:
+    name: Bundle x86_64-unknown-linux-gnu
+    needs: [release-please, preflight, preflight-engines]
+    if: needs.release-please.outputs.build_artifacts == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      VOLTIP_RELAY_URL: ${{ secrets.VOLTIP_RELAY_URL }}
+      VOLTIP_ASR_URL: ${{ secrets.VOLTIP_ASR_URL }}
+      VOLTIP_ASR_MODEL: ${{ secrets.VOLTIP_ASR_MODEL }}
+      VOLTIP_ASR_TOKEN: ${{ secrets.VOLTIP_ASR_TOKEN }}
+      VOLTIP_REFINE_URL: ${{ secrets.VOLTIP_REFINE_URL }}
+      VOLTIP_REFINE_MODEL: ${{ secrets.VOLTIP_REFINE_MODEL }}
+      VOLTIP_REFINE_API_KEY: ${{ secrets.VOLTIP_REFINE_API_KEY }}
+      # The updater endpoint follows the repository; empty (no updater) without the pubkey.
+      VOLTIP_UPDATE_URL: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' && format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) || '' }}
+      VOLTIP_UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
+      VOLTIP_MODEL_BASE_URL: ${{ secrets.VOLTIP_MODEL_BASE_URL }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+
+      - name: Verify the tag resolves to the released commit
+        env:
+          RELEASE_SHA: ${{ needs.release-please.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          if [ "$head" != "$RELEASE_SHA" ]; then
+            echo "::error::checked-out tag commit $head != release commit $RELEASE_SHA"
+            exit 1
+          fi
+
+      - name: Linux system dependencies (Tauri bundler, webkit2gtk, ALSA, X11)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libdbus-1-dev \
+            libayatana-appindicator3-dev librsvg2-dev libasound2-dev libssl-dev \
+            libx11-dev libxtst-dev libxcb1-dev patchelf pkg-config file xdg-utils binutils cmake \
+            libvulkan1
+
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install 2>/dev/null || true
+          rustup show
+          rustc --version && cargo --version
+
+      - name: Tauri CLI (`cargo tauri`, pinned tarball + SHA-256)
+        run: .github/scripts/install-cargo-tauri.sh
+
+      - name: cargo-about (prebuilt, pinned)
+        uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
+        with:
+          tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
+
+      - name: Cache Cargo registry and target/
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: release-linux-x64
+          cache-on-failure: true
+
+      - name: pnpm (packageManager in package.json)
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: package.json
+
+      - name: Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_MAJOR }}
+          cache: pnpm
+
+      - name: Install web dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # A restored target/ may hold bundles of earlier versions; `collect` takes every bundle in the
+      # directory, so it starts empty.
+      - name: Clear old bundles
+        run: rm -rf target/release/bundle
+
+      - name: Cache the Vulkan SDK download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/voltip-vulkan/*.tar.xz
+          key: vulkan-downloads-linux-${{ hashFiles('scripts/lib/vulkan-sdk.sh') }}
+
+      # The same inputs scripts/build-linux-x64.sh uses: the SDK paths for transcribe.cpp's Vulkan
+      # backend and the loader the AppImage ships (src-tauri/resources/linux/libvulkan.so.1).
+      - name: Vulkan SDK (pinned, SHA-256 verified)
+        run: |
+          set -euo pipefail
+          . scripts/lib/vulkan-sdk.sh
+          voltip_vulkan_env linux
+          {
+            echo "VULKAN_SDK=$VULKAN_SDK"
+            echo "VOLTIP_VULKAN_LIB_DIR=$VOLTIP_VULKAN_LIB_DIR"
+            echo "TRANSCRIBE_CMAKE_ARGS=$TRANSCRIBE_CMAKE_ARGS"
+          } >>"$GITHUB_ENV"
+
+      # The deb and the AppImage carry the licence texts (/usr/share/doc/voltip/THIRD-PARTY-NOTICES.txt).
+      - name: Third-party notices
+        run: python3 scripts/release/third-party-notices.py --out apps/desktop/src-tauri/resources/THIRD-PARTY-NOTICES.txt
+
+      # Phase 1: frontend (build.beforeBuildCommand) and Rust compile with the Vulkan backend, no
+      # signing material.
+      - name: Build (no bundle, no secrets)
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          cargo tauri build --ci --no-bundle --features gpu-vulkan
+          readelf -d ../../target/release/voltip-desktop | grep -q "NEEDED.*\[libvulkan.so.1\]" || { echo "::error::voltip-desktop does not link libvulkan.so.1"; exit 1; }
+
+      # Same rule as scripts/build-windows-x64.sh: the client may carry the revocable app token,
+      # never a provider key.
+      - name: Artefact secret scan (no provider API key inside the binary)
+        run: |
+          set -euo pipefail
+          if strings -n 20 target/release/voltip-desktop | grep -qE "gsk_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}"; then
+            echo "::error::provider API key found inside voltip-desktop — refusing to ship"; exit 1
+          fi
+
+      # Phase 2: bundling and updater signatures; the only step holding the signing key. With the
+      # updater enabled, createUpdaterArtifacts and the pubkey the app trusts arrive through
+      # --config; otherwise the bundles ship unsigned and the key variables are unset.
+      - name: Bundle and sign (deb, AppImage)
+        working-directory: apps/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
+          UPDATER_ENABLED: ${{ needs.preflight.outputs.updater_enabled }}
+        run: |
+          set -euo pipefail
+          for name in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then unset "$name"; fi
+          done
+          if [ "$UPDATER_ENABLED" = true ]; then
+            if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+              echo "::error::updater enabled but TAURI_SIGNING_PRIVATE_KEY is empty"; exit 1
+            fi
+            jq -n --arg pubkey "$UPDATE_PUBKEY" \
+              '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pubkey}}}' \
+              >"$RUNNER_TEMP/updater-bundle.json"
+            cargo tauri bundle --ci --bundles deb,appimage --config "$RUNNER_TEMP/updater-bundle.json"
+            test -s ../../target/release/bundle/appimage/*.AppImage.sig
+          else
+            cargo tauri bundle --ci --bundles deb,appimage
+          fi
+
+      - name: Collect bundles and evidence
+        env:
+          UPDATER_ENABLED: ${{ needs.preflight.outputs.updater_enabled }}
+        run: >-
+          python3 scripts/release/updater-json.py collect
+          --target "$LINUX_TARGET"
+          --bundle-dir target/release/bundle
+          --bundles deb,appimage
+          --updater-bundle appimage
+          --updater "$UPDATER_ENABLED"
+          --out release-assets/dist
+          --evidence "release-assets/evidence/$LINUX_TARGET.json"
+
+      - name: Upload bundles
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tauri-${{ env.LINUX_TARGET }}
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 1
+
+  # No project or dependency code runs here: verify every .sig against the pubkey the shipped
+  # app trusts, write latest.json once, attest and attach everything to the draft, then verify
+  # the remote bytes.
+  updater:
+    name: Updater manifest, attestation, assets
+    needs: [release-please, preflight, bundle-windows, bundle-linux]
+    if: needs.release-please.outputs.build_artifacts == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    environment: release
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download every bundle leg
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: tauri-*
+          path: bundle
+          merge-multiple: true
+
+      - name: Install minisign
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends minisign
+          minisign -v
+
+      # Decodes the base64 pubkey and each base64 .sig exactly as tauri-plugin-updater does, then
+      # verifies with minisign against the pubkey compiled into the app (VOLTIP_UPDATE_PUBKEY). A
+      # signature from a rotated or wrong key stops the release here, not on user devices.
+      - name: Verify every updater signature against the pubkey the app trusts
+        if: needs.preflight.outputs.updater_enabled == 'true'
+        env:
+          PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
+        run: >-
+          python3 .github/scripts/tauri-release.py verify-signatures
+          --dist bundle/dist --pubkey "$PUBKEY" --expect-updater
+
+      - name: Read release notes from the draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release view "$TAG" --repo "$REPO" --json body --jq .body >body.md
+
+      # Single writer, after every leg: URLs are this release's own assets
+      # (github.com/<repo>/releases/download/<tag>/<asset>, never a rolling path), both platforms
+      # required, bytes cross-checked with the evidence.
+      - name: Build latest.json
+        if: needs.preflight.outputs.updater_enabled == 'true'
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: >-
+          python3 scripts/release/updater-json.py write
+          --dist bundle/dist
+          --evidence-dir bundle/evidence
+          --base-url "https://github.com/${REPO}/releases/download"
+          --tag "$TAG"
+          --version "$VERSION"
+          --notes-file body.md
+          --require-platform windows-x86_64
+          --require-platform linux-x86_64
+          --out bundle/dist/latest.json
+
+      - name: Generate SHA256SUMS
+        working-directory: bundle/dist
+        run: |
+          set -euo pipefail
+          files=$(find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort)
+          if [ -z "$files" ]; then
+            echo "::error::no shipped files were downloaded"
+            exit 1
+          fi
+          printf '%s\n' "$files" | xargs sha256sum >"$RUNNER_TEMP/SHA256SUMS"
+          mv "$RUNNER_TEMP/SHA256SUMS" SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest shipped files
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: bundle/dist/*
+
+      - name: Attach assets to the draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" --repo "$REPO" --clobber bundle/dist/*
+
+      - name: Verify remote assets against SHA256SUMS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: >-
+          bash .github/scripts/publish-release-draft.sh --verify-only
+          --checksums bundle/dist/SHA256SUMS --expect-name SHA256SUMS --exact
+
+      - name: Upload checksums for the publish job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: checksums
+          path: bundle/dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-release:
+    name: Publish Release
+    needs: [release-please, updater]
+    if: needs.release-please.outputs.build_artifacts == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    environment: release
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download checksums
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: checksums
+
+      # Re-verifies every remote asset (name, size, sha256 digest), then flips draft=false and
+      # adds --latest unless the release is a prerelease (a pre-release line is never latest).
+      - name: Publish the completed draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: >-
+          bash .github/scripts/publish-release-draft.sh --publish
+          --checksums SHA256SUMS --expect-name SHA256SUMS --exact

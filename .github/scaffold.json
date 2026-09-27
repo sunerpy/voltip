@@ -1,0 +1,19 @@
+{
+  "profile": "tauri",
+  "addons": [],
+  "placeholders": {
+    "CURRENT_VERSION": "0.0.0",
+    "DEFAULT_BRANCH": "main",
+    "PACKAGE_MANAGER": "pnpm",
+    "RUST_TOOLCHAIN": "1.98.0"
+  },
+  "drift_allow": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    "release-please-config.json",
+    ".github/dependabot.yml",
+    ".oxfmtrc.json",
+    ".oxfmtignore",
+    ".github/release-targets.json"
+  ]
+}

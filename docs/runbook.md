@@ -1,0 +1,142 @@
+# 运行手册
+
+## 本地开发
+
+```bash
+make relay                      # 中继：ws://127.0.0.1:47830/ws（debug 构建的默认 Relay）
+pnpm install
+make desktop-dev                # apps/desktop：Vite 1420 + Tauri 窗口
+cd apps/mobile && pnpm tauri android dev   # 需要 Android SDK + NDK
+```
+
+无 Relay 时（设置 › 关闭 Relay，或未配置 `VOLTIP_RELAY_URL` 的 release 构建）：桌面端「配对」会在局域网起一个 `DirectHost`，手机扫码即可；6 位码需要 Relay。
+
+### 无显示器主机上的交互测试（`make desktop-vnc`）
+
+开发机没有显示器时，用浏览器远程操作一个真实桌面来手测 `cargo tauri dev`：
+
+```bash
+sudo apt-get install -y --no-install-recommends tigervnc-standalone-server tigervnc-tools novnc websockify \
+  xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-terminal dbus-x11 pulseaudio pulseaudio-utils
+make desktop-vnc              # 打印 noVNC 地址与密码；会话里的终端自动运行 make desktop-dev（热重载）
+scripts/dev-desktop-vnc.sh speak /path/to/sample.wav   # 按住热键时把样音送进假麦克风
+make desktop-vnc-stop
+```
+
+- `scripts/dev-desktop-vnc.sh` 在 TigerVNC 显示 `:7` 上起 xfce 会话（真实窗口管理器，热键、悬浮胶囊、粘贴都能手测），Xvnc 只监听本机；浏览器入口是 websockify + noVNC，默认监听本机第一个局域网 IPv4 的 6080 端口，每次连接都要 VNC 密码（首次生成在 `~/.config/voltip-dev/`，权限 600）。会话里有终端，拿到密码就等于拿到本用户的 shell：只在内网使用，或设 `VOLTIP_VNC_BIND=127.0.0.1` 后用 `ssh -L 6080:127.0.0.1:6080 <主机>` 访问。
+- 麦克风是私有 PulseAudio 的 null sink 监听（远程浏览器的声音传不进来），用 `speak` 播放样音代替说话。应用用 `make desktop-dev` 启动，所以带 `.env.build` 的内置引擎、`VOLTIP_DEV_SECRET_STORE=memory`（会话里没有 Secret Service，身份每次重建），数据目录是本用户真实的 `~/.local/share/voltip`。
+- 2026-09-26 实测：会话里按住 Ctrl+Alt+Space 并 `speak` 公开中文样音，经云端 Qwen3-ASR-1.7B + 润色后粘贴成功（历史记录 `inserted / paste`，「开放时间：早上九点至下午五点。」）。
+
+## 环境与端点
+
+服务端主机名、令牌与模型名都在构建时注入编译期 `option_env!`（`docs/dictation.md` §3）；源码、TS、文档里只出现占位符。本机构建从 git 忽略的 `.env.build` 读取同名变量（`scripts/lib/build-env.sh`，`cp .env.build.example .env.build` 后填值），CI 从仓库 secrets 读取（清单与含义见 `.github/README-secrets.md`）。
+
+| 变量 | 含义 |
+|---|---|
+| `VOLTIP_RELAY_URL` | 中继 `wss://<relay-host>/ws`；release 构建没有它就没有中继（只剩局域网直连），debug 默认 `ws://127.0.0.1:47830/ws` |
+| `VOLTIP_ASR_URL` / `VOLTIP_ASR_TOKEN` / `VOLTIP_ASR_MODEL` | 内置识别服务：`https://<asr-host>`、应用令牌、模型名 |
+| `VOLTIP_REFINE_URL` / `VOLTIP_REFINE_API_KEY` / `VOLTIP_REFINE_MODEL` | 内置润色服务：OpenAI 兼容基址、应用令牌、模型名 |
+| `VOLTIP_UPDATE_PUBKEY` | 更新器公钥；发布工作流据此打开更新器，更新地址由仓库推出（`docs/dictation.md` §9） |
+| `VOLTIP_MODEL_BASE_URL` | 可选：本地模型的第一下载源 |
+
+打包脚本（`make windows-x64` / `make linux-x64` / `make android-apk`）与 release 的 `preflight-engines` 在任一内置引擎值为空时拒绝出包（`scripts/lib/require-builtin-engines.sh`），显式 `VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1` 才放行，CI 的打包 job 就是这样出无内置服务的包。客户端里唯一的凭据是应用令牌；`scripts/build-windows-x64.sh` 与 release 的 Linux 分支用 `strings` 扫描二进制，出现 `gsk_…` / `sk-…` 即拒绝出包。生产主机名守卫（`.github/scripts/check-no-production-hosts.sh`）从 `VOLTIP_PRODUCTION_HOSTS` 读要找的词，扫描整棵树，命中时只打印 `文件:行号`。
+
+## 自建内置服务
+
+内置服务只需要两个 OpenAI 兼容端点：`POST /v1/audio/transcriptions`（识别）与 `POST …/chat/completions`（润色，基址由 `VOLTIP_REFINE_URL` 决定）。推荐在前面放一个自己的网关：
+
+- 网关校验 `Authorization: Bearer <应用令牌>`，通过后换成真正后端的凭据再转发：识别转给模型服务（例如 vLLM 上的 `Qwen/Qwen3-ASR-1.7B`），润色转给 LLM 服务商。服务商密钥只存在网关上。
+- 上传体积上限至少 32 MB，读超时至少 120 s（长录音）；`GET /v1/models` 要能用应用令牌访问，引擎页的「测试连接」用它。
+- 不要在网关上落盘音频。
+- 轮换令牌：生成新令牌（例如 `openssl rand -hex 24`），网关同时接受新旧两个一段时间，更新 secrets / `.env.build` 后重新打包，旧版本淘汰后再删旧令牌。
+- 健康检查：`curl -H "Authorization: Bearer $VOLTIP_ASR_TOKEN" https://<asr-host>/v1/models`。
+
+已知取舍：应用令牌是所有客户端共享的静态令牌，任何拿到安装包的人都能从二进制里提取出来，然后直接调用网关。它只授予识别和润色两类转发，可以随时在网关吊销；公开分发时应在网关上做限流与用量上限，或者换成按用户签发的短期令牌。令牌**不会**跟随用户自定义的地址发出（`docs/dictation.md` §3）。
+
+## 中继部署
+
+```bash
+# 静态 musl 二进制，任何 glibc 的 Linux 主机都能跑
+cargo build --release -p voltip-relay --target x86_64-unknown-linux-musl
+scp target/x86_64-unknown-linux-musl/release/voltip-relay <host>:/usr/local/bin/voltip-relay
+```
+
+一种部署方式：
+
+- systemd `voltip-relay.service`：`ExecStart=/usr/local/bin/voltip-relay --bind 127.0.0.1:47830`，`Environment=VOLTIP_RELAY_JSON_LOGS=1`，`DynamicUser=yes`，`Restart=always`；`journalctl -u voltip-relay -f` 看 `pairing session created / peer joined` 等结构化日志。
+- nginx vhost `<relay-host>`（Let's Encrypt，acme.sh）：`location /ws` 走 `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade"; proxy_read_timeout 3600s;` 到 `127.0.0.1:47830`；`location /healthz` 直通。中继只监听回环，外网只见 443。
+- 校验：`curl https://<relay-host>/healthz` → `ok`；再用真实客户端过一遍握手、配对与双向 E2EE 消息：
+
+```bash
+VOLTIP_LIVE_RELAY_URL=wss://<relay-host>/ws cargo test -p voltip-core --test e2e live_relay -- --nocapture
+```
+
+该测试未设置变量时自动跳过，离线套件保持封闭。2026-09-25 对一台线上中继实测：TLS + WebSocket 升级 + 会合 + 配对 + 双向消息 0.8 s，nginx 记录两条 `GET /ws … 101`。同一天发现并修复：`voltip-transport` 的 rustls 没有绑定加密 provider，不链接 reqwest 的二进制（移动端、core 测试）拨 `wss://` 会 panic（`crates/voltip-transport/src/endpoint.rs@regression_wss_dial_has_exactly_one_crypto_provider`）。
+
+Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前提是同一对设备落在同一实例（按 `channel` / `session_id` 做粘性路由）。
+
+## 发布
+
+工作流都跑在 GitHub 托管的 runner 上：
+
+- `ci.yml`：push `main` / PR / merge queue → `verify`（`make verify`，外加带 `VOLTIP_PRODUCTION_HOSTS` 的主机名守卫；fork 的 PR 没有 secrets，跳过这一步）、`codecov`（上传覆盖率，只做报告，不阻塞）、`windows-cross`（`make windows-x64`，无内置服务）→ `windows-native`（Windows Server 上无头运行便携包与安装后的 exe）、`smoke-desktop`（Xvfb 与纯 Wayland 冒烟、无头识别）、`ci-success` 聚合（分支保护要求的唯一检查）。CI 不注入任何内置引擎值。
+- `macos.yml`：每次推送 `main` 在 `macos-15` 上构建未签名的 `.app`，跑 macOS 单元测试和无头识别。
+- `release.yml`：release-please 在 `main` 上维护 Release PR（`release-please-config.json`，版本从 `0.0.1` 起）；合并后同一轮 run 内 `preflight`（版本模型、更新器配置、签名密钥、主机名守卫）与 `preflight-engines`（内置引擎 secrets 非空）→ `bundle-windows`（Linux 上交叉构建 NSIS 与便携 exe）+ `bundle-linux`（Ubuntu 22.04 上出 deb 与 AppImage）→ `updater`（校验每个 `.sig`，写 `latest.json`，生成 `SHA256SUMS`，做构建来源证明，上传到草稿 Release）→ `publish-release`（远端资产全部校验通过后把草稿转为正式）。没有 `push: tags` / `release:` 触发；`workflow_dispatch` 只接受已存在的草稿 tag。
+- 更新器是可选的：设置了 `VOLTIP_UPDATE_PUBKEY` 才打开。应用的更新地址是本仓库的 `releases/latest/download/latest.json`，`latest.json` 里的下载地址固定到该次 Release 的资产。预发布不会被标成 latest，所以只有正式版才会推给已安装的用户。
+- 版本模型：release-please（`node` 策略）只改根 `package.json` 与两份应用 `package.json`；两份 `tauri.conf.json` 写 `"version": "../../../package.json"` 指向根文件，安装包、更新器、`voltip --version` 与中继握手里的 `client_version` 读的都是它；Cargo 版本固定为 `0.0.0`，发版提交不改 `Cargo.toml` / `Cargo.lock`。`preflight` 的 `check-config --package-json package.json` 校验这条链。第一个正式版可以用 commit footer `Release-As: 0.1.0` 指定。
+- 仓库设置：默认分支要有分支保护或 ruleset（release gate 只在受保护的默认分支上运行）；打开「Allow GitHub Actions to create and approve pull requests」让 release-please 能开 PR。`GITHUB_TOKEN` 开的 PR 不会自动触发 CI，合并后 `main` 的 push 会跑完整 CI 与 Release。
+- 还没进工作流的：Android 包（`make android-apk` 在本机出 debug APK）、macOS 发布包（未签名 / 未公证，见 `docs/roadmap.md`）。
+
+## 局域网直连
+
+- 每台设备常驻一个 LAN 主机（默认 TCP 47831，被占用退到临时端口）；配对设备优先在这里重逢，Relay 只是回退。首次运行时 Windows / macOS 防火墙会询问是否允许监听，拒绝只会失去直连（回退 Relay），不影响配对。
+- 可信设备的局域网地址持久化在 `trusted-devices.json` 的 `direct_hints`，每次握手成功后由对端在加密通道内刷新；`RUST_LOG=voltip=debug` 可看到 `announcing device info` / `device info from peer`。
+- 关掉 Relay 后同一局域网内仍可用；不同网络之间没有 Relay 就没有连接（没有 NAT 穿透）。
+
+## 无头冒烟（Linux）
+
+`make smoke-desktop`：以 debug 构建的真实 Tauri 桌面程序（`--features custom-protocol`，加载打包好的前端）在 Xvfb 里启动，等窗口出现后用 scrot 截 WebView，再点进「手机麦克风」页截一次。需要 `Xvfb xdotool scrot x11-utils python3-pil`。`VOLTIP_DEV_SECRET_STORE=memory` 让 **debug** 构建使用内存密钥存储（没有 Secret Service 的容器 / CI）；release 构建忽略这个变量，始终用平台安全存储，不会降级。
+
+## Android 构建（本机）
+
+```bash
+export ANDROID_HOME=<sdk> NDK_HOME=<sdk>/ndk/<27+> JAVA_HOME=<jdk17+>
+rustup target add aarch64-linux-android
+make android-apk        # scripts/build-android-debug.sh：arm64 debug APK + aapt badging 写入 dist/android/build-info.txt
+```
+
+Gradle 工程 `apps/mobile/src-tauri/gen/android` 已提交（`cargo tauri android init --ci` 可重建）；`app/build`、`.gradle`、`jniLibs` 符号链接不入库。发布流水线（`release.yml`）目前只出桌面包，签名的 Android release APK / AAB 尚未接入。
+
+## Windows 交叉构建（Linux 主机）
+
+`make windows-x64`：`cargo tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis --features gpu-vulkan`，需要 `cargo-xwin`、`lld-link`、`llvm-rc`、`llvm-readobj`、`llvm-dlltool`、`clang`、`makensis`、`zip`。Vulkan 的构建输入由 `scripts/lib/vulkan-sdk.sh` 下载并校验（Linux 版 SDK 提供头文件和 glslc，Windows 运行时组件提供 `vulkan-1.dll`，导入库从它的导出表生成）。产物：NSIS 安装器与便携 zip（`voltip-desktop.exe` 连同它从自身目录加载的 sherpa-onnx DLL 和 `vulkan-1.dll`；需系统已有 WebView2 运行时，Win10/11 自带），均未做 Authenticode 签名（SmartScreen 会提示「更多信息 → 仍要运行」；代码签名见 `docs/roadmap.md`）。`release.yml` 在 Linux runner 上用同一脚本交叉构建，只给自动更新的 NSIS 包加 Tauri updater 签名（`.sig`），不出 MSI。release 构建没有注入 `VOLTIP_RELAY_URL` 时中继显示「未配置」，局域网直连照常可用。
+
+## 第三方许可声明
+
+`scripts/release/third-party-notices.py` 生成 `THIRD-PARTY-NOTICES.txt`：cargo-about（`about.toml`，许可证允许列表与 `deny.toml` 相同，只算会进二进制的依赖）列出桌面壳链接的每个 crate，`pnpm licenses list --prod` 列出前端依赖并带上各包自己的许可证文件（三款 OFL 字体在内），原生库的文本在 `scripts/release/licenses/`（ONNX Runtime 1.28.2 的 LICENSE 与 ThirdPartyNotices、Khronos Vulkan loader），transcribe.cpp 与 ggml 的取自 transcribe-cpp-sys 的源码。两个打包脚本和 release 工作流都会生成它：Windows 装进安装目录和便携 zip，Linux 放在 `/usr/share/doc/voltip/`。升级 sherpa-onnx（随之 ONNX Runtime）或 Vulkan 运行时后，要同步更新 `scripts/release/licenses/` 里对应的文本。
+
+## Windows 真机（SSH）
+
+交叉构建只证明能链接；原生 MSVC 构建、Windows 上的单元测试和真实 CPU 上的识别要在 Windows 机器上跑。`scripts/windows-remote.sh` 通过 OpenSSH 把当前提交送过去并在那边执行，推到 CI 之前先用它验证：
+
+```bash
+scripts/windows-remote.sh sync            # HEAD 打成 git bundle，scp 过去，在 <dir>\repo 里 detached checkout
+scripts/windows-remote.sh gate test       # 原生 cargo test --workspace --all-targets（MSVC），日志拷回 target/windows-remote/
+scripts/windows-remote.sh gate clippy     # 原生 cargo clippy --workspace --all-targets -D warnings
+scripts/windows-remote.sh gate real       # 真实模型用例（整段 + 流式 + 热词 + VAD）在该机 CPU 上跑；VOLTIP_LOCAL_* 同本机，文件会拷过去
+make windows-x64 && scripts/windows-remote.sh smoke   # 便携包的无头运行：列出计算设备、下载模型、识别公开样音（smoke-native-cli.ps1）
+make windows-remote                       # 以上四步依次执行
+```
+
+- 连接：`VOLTIP_WINDOWS_SSH`（ssh 参数，最后一项是主机，必填），工作目录 `VOLTIP_WINDOWS_DIR`（默认 `C:\voltip-ci`）；两者取环境变量，否则取 git 忽略的 `.env.build`。对端需要 OpenSSH Server、管理员账号、Git、Rust（MSVC 工具链）、Visual Studio 2022 Build Tools（C++ 工作负载，含 CMake）和 PowerShell 7。
+- 远端 shell 会提前展开 `$`，输出又是控制台代码页（中文系统是 GBK），所以脚本一律用 `-EncodedCommand`（UTF-16LE base64）发送，并把输出切到 UTF-8。
+- `gate` 和 `smoke` 都注册成计划任务运行，SSH 断开不影响；脚本每 20 秒查一次日志末尾的 `EXIT=` 行，默认最多等 90 分钟（`VOLTIP_WINDOWS_TIMEOUT`）。`gate` 在已登录用户的会话里跑（用该用户的工具链，没人登录时任务不会启动，脚本会直接报错）；`smoke` 以 SYSTEM 身份跑：应用经 Known Folder API 取数据目录，SYSTEM 的数据目录在系统配置文件下，不会动到真实用户的 Voltip 模型库和设置。
+- 只跑命令行入口，不启动 GUI：对端若装着正在运行的 Voltip，同标识符（`dev.voltip.desktop`）的单实例插件会把第二个实例的参数转发给它。
+- 原生构建踩过的三个坑（2026-09-26，Windows Server 2025 中文版）已修复并有回归测试（`apps/desktop/src-tauri/tests/bundle.rs` 的 `regression_*`）：sherpa-onnx 运行库的构建脚本顺序、手机壳缺 `icons/icon.ico`、MSVC 在代码页 936 下需要 `/utf-8`。
+
+## 排障
+
+- 桌面端日志：`RUST_LOG=voltip=debug`；日志绝不打印私钥、token、明文（`SecretKey`/`PairCode` 的 `Debug` 已脱敏）。
+- 「身份已变化」横幅：对端换了设备身份（重装或攻击）。先在两端「忘记设备」，再重新配对并核对 Safety Code。
+- 配对总是过期：核对两端时钟（票据 `expires_at` 用 Unix 秒）。
+- 设备列表显示 `Relay` 而不是 `直连`：两台设备不在同一网段，或 LAN 主机端口被防火墙拦住；`直连` 需要至少一方能连到另一方的 `direct_hints`。

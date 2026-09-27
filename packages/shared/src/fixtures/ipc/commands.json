@@ -1,0 +1,387 @@
+[
+  {
+    "args": null,
+    "name": "pairing_start"
+  },
+  {
+    "args": {
+      "code": "483 921"
+    },
+    "name": "pairing_join_code"
+  },
+  {
+    "args": {
+      "uri": "voltip://pair?v=1&t=QUJDREVGR0g"
+    },
+    "name": "pairing_join_ticket"
+  },
+  {
+    "args": null,
+    "name": "pairing_confirm"
+  },
+  {
+    "args": null,
+    "name": "pairing_reject"
+  },
+  {
+    "args": null,
+    "name": "pairing_cancel"
+  },
+  {
+    "args": null,
+    "name": "pairing_reset"
+  },
+  {
+    "args": {
+      "publicKey": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "name": "device_forget"
+  },
+  {
+    "args": {
+      "name": "Studio"
+    },
+    "name": "device_rename"
+  },
+  {
+    "args": {
+      "body": "把 fetchUser 改成 async",
+      "publicKey": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "name": "send_text"
+  },
+  {
+    "args": {
+      "enabled": true,
+      "url": "wss://relay.example.test/ws"
+    },
+    "name": "settings_set_relay"
+  },
+  {
+    "args": {
+      "followSystem": true,
+      "theme": "graphite"
+    },
+    "name": "settings_set_theme"
+  },
+  {
+    "args": {
+      "hotkey": "Ctrl+Alt+Space"
+    },
+    "name": "settings_set_hotkey"
+  },
+  {
+    "args": {
+      "hotkey": "Ctrl+Alt+Shift+E"
+    },
+    "name": "settings_set_edit_hotkey"
+  },
+  {
+    "args": {
+      "locale": "en"
+    },
+    "name": "settings_set_locale"
+  },
+  {
+    "args": {
+      "enabled": true
+    },
+    "name": "settings_set_auto_update"
+  },
+  {
+    "args": {
+      "enabled": false,
+      "keep": 100
+    },
+    "name": "settings_set_history"
+  },
+  {
+    "args": {
+      "placement": "top"
+    },
+    "name": "settings_set_overlay"
+  },
+  {
+    "args": {
+      "publicKey": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "name": "phone_take_start"
+  },
+  {
+    "args": null,
+    "name": "phone_take_stop"
+  },
+  {
+    "args": null,
+    "name": "phone_take_cancel"
+  },
+  {
+    "args": null,
+    "name": "devices_refresh"
+  },
+  {
+    "args": null,
+    "name": "connectivity_check"
+  },
+  {
+    "args": null,
+    "name": "dictation_start"
+  },
+  {
+    "args": null,
+    "name": "dictation_stop"
+  },
+  {
+    "args": null,
+    "name": "dictation_cancel"
+  },
+  {
+    "args": {
+      "atMs": 1758700600000,
+      "pressed": true,
+      "purpose": "edit",
+      "source": "cli"
+    },
+    "name": "hotkey_edge"
+  },
+  {
+    "args": {
+      "activation": "hold_or_toggle",
+      "extraRecordingMs": 150,
+      "holdThresholdMs": 300
+    },
+    "name": "settings_set_activation"
+  },
+  {
+    "args": {
+      "engines": {
+        "asr_provider": "local",
+        "chinese_script": "traditional",
+        "inject": "paste",
+        "language": "zh",
+        "live_preview": true,
+        "llm_provider": "groq",
+        "local_device": "gpu",
+        "local_gpu": "Vulkan0",
+        "local_model": "paraformer-zh",
+        "local_threads": 4,
+        "output_mode": "streaming_final",
+        "providers": {
+          "custom": {
+            "asr_model": "Qwen/Qwen3-ASR-1.7B",
+            "asr_url": "https://asr.example.test"
+          },
+          "groq": {
+            "llm_model": "openai/gpt-oss-20b"
+          }
+        },
+        "refine_enabled": true,
+        "vad_trim": true
+      }
+    },
+    "name": "settings_set_engines"
+  },
+  {
+    "args": {
+      "kind": "llm",
+      "provider": "groq",
+      "value": "gsk_example_not_a_real_key"
+    },
+    "name": "provider_key_set"
+  },
+  {
+    "args": {
+      "baseUrl": "http://192.168.1.20:8000/v1",
+      "key": null,
+      "kind": "asr",
+      "provider": "custom"
+    },
+    "name": "provider_probe"
+  },
+  {
+    "args": {
+      "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+    },
+    "name": "history_delete"
+  },
+  {
+    "args": null,
+    "name": "history_clear"
+  },
+  {
+    "args": {
+      "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      "starred": true
+    },
+    "name": "history_star"
+  },
+  {
+    "args": {
+      "id": "sense-voice-small"
+    },
+    "name": "model_download"
+  },
+  {
+    "args": {
+      "id": "sense-voice-small"
+    },
+    "name": "model_cancel"
+  },
+  {
+    "args": {
+      "id": "paraformer-zh"
+    },
+    "name": "model_remove"
+  },
+  {
+    "args": {
+      "entry": {
+        "enabled": true,
+        "heard_as": ["谷歌IDR"],
+        "term": "good idea"
+      },
+      "historyId": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+    },
+    "name": "dictionary_add"
+  },
+  {
+    "args": {
+      "entry": {
+        "enabled": false,
+        "heard_as": ["fetch user"],
+        "term": "fetchUser"
+      },
+      "id": "3b241101-e2bb-4255-8caf-4136c566a962"
+    },
+    "name": "dictionary_update"
+  },
+  {
+    "args": {
+      "id": "6f1c2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f"
+    },
+    "name": "dictionary_remove"
+  },
+  {
+    "args": {
+      "ids": ["6f1c2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f", "3b241101-e2bb-4255-8caf-4136c566a962"]
+    },
+    "name": "dictionary_reorder"
+  },
+  {
+    "args": {
+      "rule": {
+        "case_sensitive": false,
+        "enabled": true,
+        "kind": "regex",
+        "name": "PR 编号",
+        "pattern": "\\bpr (\\d+)",
+        "replacement": "PR #$1"
+      }
+    },
+    "name": "rules_add"
+  },
+  {
+    "args": {
+      "id": "8d7e6f5a-4b3c-4d2e-9f1a-0b9c8d7e6f5a",
+      "rule": {
+        "case_sensitive": true,
+        "enabled": false,
+        "kind": "literal",
+        "name": "git push",
+        "pattern": "给他push",
+        "replacement": "git push"
+      }
+    },
+    "name": "rules_update"
+  },
+  {
+    "args": {
+      "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+    },
+    "name": "rules_remove"
+  },
+  {
+    "args": {
+      "ids": ["a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", "8d7e6f5a-4b3c-4d2e-9f1a-0b9c8d7e6f5a"]
+    },
+    "name": "rules_reorder"
+  },
+  {
+    "args": {
+      "mode": "merge",
+      "toml": "version = 1\n\n[[rule]]\nname = \"git push\"\npattern = \"给他push\"\nreplacement = \"git push\"\n"
+    },
+    "name": "rules_import"
+  },
+  {
+    "args": {
+      "scene": {
+        "enabled": true,
+        "match": {
+          "apps": ["chrome", "code"],
+          "title_contains": ["Pull request"]
+        },
+        "name": "代码评审",
+        "overrides": {
+          "chinese_script": "as_is",
+          "language": "en",
+          "output_mode": "streaming_final",
+          "prompt": "这是代码评审意见：保留代码标识符原样。",
+          "refine_enabled": true,
+          "refine_style": "formal"
+        }
+      }
+    },
+    "name": "scenes_add"
+  },
+  {
+    "args": {
+      "id": "e0e1e2e3-e4e5-4e6e-8e7e-8e9eaebecede",
+      "scene": {
+        "enabled": false,
+        "match": {
+          "apps": ["slack", "wechat"],
+          "title_contains": []
+        },
+        "name": "聊天",
+        "overrides": {
+          "refine_style": "punctuation"
+        }
+      }
+    },
+    "name": "scenes_update"
+  },
+  {
+    "args": {
+      "id": "e0e1e2e3-e4e5-4e6e-8e7e-8e9eaebecede"
+    },
+    "name": "scenes_remove"
+  },
+  {
+    "args": {
+      "ids": ["e0e1e2e3-e4e5-4e6e-8e7e-8e9eaebecede", "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f"]
+    },
+    "name": "scenes_reorder"
+  },
+  {
+    "args": {
+      "appName": true,
+      "windowTitle": false
+    },
+    "name": "settings_set_context_sharing"
+  },
+  {
+    "args": {
+      "active": true
+    },
+    "name": "hotkey_capture"
+  },
+  {
+    "args": null,
+    "name": "update_check"
+  },
+  {
+    "args": null,
+    "name": "update_install"
+  }
+]

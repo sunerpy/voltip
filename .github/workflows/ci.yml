@@ -1,0 +1,514 @@
+# Voltip continuous integration on GitHub-hosted runners.
+#
+# The gates live in the repository (Makefile, scripts/verify-all.sh): CI installs the toolchain and
+# runs `make verify`, `make windows-x64`, `make smoke-desktop` / `make smoke-wayland` and the
+# headless native run, so a shell and CI run the same thing and verify-all.log binds every result
+# to the exact commit. Windows packages are cross-built from Linux exactly as `make windows-x64`
+# does locally (cargo-xwin + lld-link + llvm-rc + clang + makensis), then run on a real Windows
+# runner by `windows-native`. macOS builds and runs in macos.yml.
+#
+# No job here receives the built-in engine values (docs/dictation.md §3): the gates are hermetic,
+# the CI package is engine-less on purpose (VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1) and the smokes use a
+# mock recogniser, so a pull request from a fork runs what the default branch runs. The one
+# secret is the production-host guard's word list, read by a single step that forks skip; the
+# guard prints path:line only. Coverage goes to Codecov from a separate job that CI Success does
+# not wait for: the numeric floors are `make verify`'s own gates.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: "1"
+  # Toolchain pins. The Rust toolchain itself comes from rust-toolchain.toml (rustup reads it);
+  # these are the cargo subcommands `make verify` / `make windows-x64` need.
+  CARGO_LLVM_COV_VERSION: 0.8.7
+  CARGO_DENY_VERSION: 0.19.9
+  CARGO_XWIN_VERSION: 0.20.2
+  CARGO_ABOUT_VERSION: 0.9.2
+  NODE_MAJOR: "22"
+
+jobs:
+  # Every repository gate (scripts/verify-all.sh) through one entry point, bound to the SHA.
+  verify:
+    name: verify · make verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The workspace build, the instrumented coverage build and two cross checks do not fit the
+      # image's free space; drop preinstalled SDKs nothing here uses.
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h / | tail -1
+
+      - name: Runner facts
+        run: |
+          set -euo pipefail
+          uname -srm; nproc; free -g | head -2
+          node --version || true; python3 --version; rustup --version
+
+      # Tauri Linux shell (webkit2gtk, gtk, soup, dbus, appindicator, rsvg), cpal (ALSA),
+      # x11/xcb headers for the injector and hotkey plugin.
+      - name: Linux system dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libdbus-1-dev \
+            libayatana-appindicator3-dev librsvg2-dev libasound2-dev libssl-dev \
+            libx11-dev libxtst-dev libxcb1-dev patchelf pkg-config cmake
+
+      # rust-toolchain.toml pins the channel plus clippy / rustfmt / llvm-tools-preview; rustup
+      # installs exactly that.
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          rustup show
+          # verify-all.sh cross-check-darwin / cross-check-windows (docs/dictation.md §15.6): std
+          # only, nothing is linked, so no Apple SDK or MSVC CRT is needed.
+          rustup target add aarch64-apple-darwin x86_64-pc-windows-msvc
+          rustc --version && cargo --version && cargo clippy --version && cargo fmt --version
+
+      - name: cargo-llvm-cov and cargo-deny (prebuilt, pinned)
+        uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
+        with:
+          tool: cargo-llvm-cov@${{ env.CARGO_LLVM_COV_VERSION }},cargo-deny@${{ env.CARGO_DENY_VERSION }}
+
+      - name: Cache Cargo registry and target/
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-verify
+          cache-on-failure: true
+
+      - name: pnpm (packageManager in package.json)
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: package.json
+
+      - name: Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_MAJOR }}
+          cache: pnpm
+
+      - name: Install web dependencies (frozen lockfile)
+        run: |
+          set -euo pipefail
+          node --version; pnpm --version
+          pnpm install --frozen-lockfile
+
+      - name: make verify (fmt, clippy, tests, coverage floors, cargo-deny, web gates, IPC e2e, ledger)
+        run: make verify
+
+      # The same guard `make verify` runs, with the word list it cannot see there. Pull requests
+      # from forks get no secrets and skip it; everything else must have the list configured.
+      - name: No production hosts anywhere in the tree
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          VOLTIP_PRODUCTION_HOSTS: ${{ secrets.VOLTIP_PRODUCTION_HOSTS }}
+        run: .github/scripts/check-no-production-hosts.sh --require
+
+      # lcov from the runs `make verify` already made: the Rust report re-reads the coverage-gate
+      # profile data (no second test run), the web reports were written by `test:coverage`.
+      - name: Coverage reports for Codecov
+        run: make coverage-lcov
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-lcov
+          path: |
+            lcov.info
+            apps/desktop/coverage/lcov.info
+            apps/mobile/coverage/lcov.info
+            packages/shared/coverage/lcov.info
+            packages/ui/coverage/lcov.info
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload verify-all.log (bound to the commit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verify-all-log
+          path: verify-all.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  # Reporting only: the floors are enforced by `make verify`. Pull requests from forks upload
+  # without a token (Codecov accepts that for public repositories); everything else uses
+  # CODECOV_TOKEN. Without the secret (a fork, or a repository not yet connected to Codecov) an
+  # upload failure is a warning, not a red build.
+  codecov:
+    name: coverage · Codecov upload
+    needs: [verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      CODECOV_TOKEN_SET: ${{ secrets.CODECOV_TOKEN != '' }}
+    steps:
+      - name: Checkout (paths in the reports resolve against the tree)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download coverage reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-lcov
+
+      - name: Upload Rust coverage
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          files: ./lcov.info
+          flags: rust
+          disable_search: true
+          fail_ci_if_error: ${{ env.CODECOV_TOKEN_SET == 'true' }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload web coverage
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          files: ./apps/desktop/coverage/lcov.info,./apps/mobile/coverage/lcov.info,./packages/shared/coverage/lcov.info,./packages/ui/coverage/lcov.info
+          flags: web
+          disable_search: true
+          fail_ci_if_error: ${{ env.CODECOV_TOKEN_SET == 'true' }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Cross-built Windows x64 package (portable zip + NSIS installer) via the repository script.
+  windows-cross:
+    name: windows-x64 · cross-build (cargo-xwin)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      # An engine-less package on purpose: CI proves the build, the release bakes the defaults in.
+      VOLTIP_ALLOW_NO_BUILTIN_ENGINES: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h / | tail -1
+
+      # scripts/build-windows-x64.sh requires cargo-xwin, lld-link, llvm-rc, llvm-readobj,
+      # llvm-dlltool, clang, makensis, zip and unzip.
+      - name: Windows cross toolchain (nsis, clang, lld, llvm)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # LLVM 19: the MSVC STL headers cargo-xwin downloads (current CRT) refuse older clang
+          # ("STL1000: expected Clang 19.0.0 or newer"); Ubuntu 24.04 ships 19 as clang-19.
+          sudo apt-get install --yes --no-install-recommends nsis clang-19 lld-19 llvm-19 cmake ninja-build zip unzip
+          echo "/usr/lib/llvm-19/bin" >>"$GITHUB_PATH"
+          export PATH="/usr/lib/llvm-19/bin:$PATH"
+          lld-link --version; command -v llvm-rc; clang --version | head -1; makensis -VERSION
+
+      - name: Rust toolchain (rust-toolchain.toml) + Windows target
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          rustup show
+          rustup target add x86_64-pc-windows-msvc
+          rustc --version && cargo --version
+
+      - name: cargo-xwin (prebuilt, pinned)
+        uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
+        with:
+          tool: cargo-xwin@${{ env.CARGO_XWIN_VERSION }}
+
+      # THIRD-PARTY-NOTICES.txt (scripts/release/third-party-notices.py) for the package.
+      - name: cargo-about (prebuilt, pinned)
+        uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
+        with:
+          tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
+
+      - name: Tauri CLI (`cargo tauri`, pinned tarball + SHA-256)
+        run: .github/scripts/install-cargo-tauri.sh
+
+      - name: Cache Cargo registry and target/
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-windows-cross
+          cache-on-failure: true
+
+      # The MSVC CRT + SDK cargo-xwin unpacks (~1 GB from download.visualstudio.microsoft.com) is
+      # fetched once per cargo-xwin version and restored afterwards; the download itself is
+      # retried because that host resets connections under load.
+      - name: Cache the xwin MSVC CRT and SDK
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/cargo-xwin/xwin
+          key: xwin-crt-sdk-${{ runner.os }}-cargo-xwin-${{ env.CARGO_XWIN_VERSION }}
+
+      - name: Fetch the xwin MSVC CRT and SDK (retried)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "$HOME/.cache/cargo-xwin/xwin/DONE" ]; then echo "xwin CRT/SDK restored from cache"; exit 0; fi
+          for attempt in 1 2 3 4 5; do
+            if cargo xwin check --target x86_64-pc-windows-msvc -p voltip-protocol >/dev/null 2>&1 || [ -f "$HOME/.cache/cargo-xwin/xwin/DONE" ]; then
+              echo "xwin CRT/SDK ready (attempt $attempt)"; exit 0
+            fi
+            rm -rf "$HOME/.cache/cargo-xwin/xwin"
+            echo "xwin download failed (attempt $attempt), retrying in $((attempt * 20)) s"; sleep $((attempt * 20))
+          done
+          echo "::error::could not download the MSVC CRT/SDK after 5 attempts"; exit 1
+
+      - name: pnpm (packageManager in package.json)
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: package.json
+
+      - name: Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_MAJOR }}
+          cache: pnpm
+
+      - name: Install web dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # The Vulkan SDK and runtime downloads scripts/lib/vulkan-sdk.sh pins (by SHA-256); the
+      # script extracts them on every run.
+      - name: Cache the Vulkan SDK and runtime downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/voltip-vulkan/*.tar.xz
+            ~/.cache/voltip-vulkan/*.zip
+          key: vulkan-downloads-${{ hashFiles('scripts/lib/vulkan-sdk.sh') }}
+
+      # Unsigned by design: tauri.conf.json never sets bundle.createUpdaterArtifacts (the release
+      # workflow enables it with --config on its signing step), so no key is needed here.
+      - name: make windows-x64 (portable zip + NSIS installer, Vulkan, artefact secret scan)
+        run: make windows-x64
+
+      - name: Upload dist/windows-x64
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: voltip-windows-x64
+          path: dist/windows-x64
+          if-no-files-found: error
+          retention-days: 7
+
+  # The cross-built package on real Windows: the unpacked portable zip's headless entry points
+  # through scripts/smoke-native-cli.ps1 (the exe starts, so its imports — static CRT, the bundled
+  # sherpa-onnx DLLs and Vulkan loader — resolve; with no GPU driver on the runner it lists no GPU
+  # and runs on the CPU; it downloads a model with its own downloader and transcribes a public
+  # Chinese sample), then the NSIS installer installs silently and the installed copy runs the same
+  # check.
+  # No window: the GUI, hotkey, microphone and paste stay verified on a user's desktop
+  # (docs/acceptance.md).
+  windows-native:
+    name: windows-x64 · native run (Windows Server)
+    needs: [windows-cross]
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout (the smoke script)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Runner facts
+        run: |
+          $PSVersionTable.PSVersion.ToString()
+          (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber | Format-List | Out-String).Trim()
+          (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+
+      - name: Download dist/windows-x64
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: voltip-windows-x64
+          path: dist-windows
+
+      - name: Portable zip — unpack, headless native run
+        run: |
+          $zip = Get-ChildItem dist-windows -Filter '*_x64-portable.zip' | Select-Object -First 1
+          if (-not $zip) { throw 'no portable zip in the artifact' }
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath portable
+          $exe = Get-ChildItem portable -Recurse -Filter 'voltip-desktop.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'no voltip-desktop.exe in the portable zip' }
+          Get-ChildItem $exe.DirectoryName | ForEach-Object { "  $($_.Name) $($_.Length)" }
+          ./scripts/smoke-native-cli.ps1 -Binary $exe.FullName -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-windows
+
+      - name: NSIS installer — silent install, then the installed exe
+        run: |
+          $setup = Get-ChildItem dist-windows -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'no NSIS installer in the artifact' }
+          # WebView2 before / after: the installer's WebView2 section is the step that can abort.
+          $wv2 = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          "WebView2 before: $((Get-ItemProperty -Path $wv2 -Name pv -ErrorAction SilentlyContinue).pv)"
+          $install = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -PassThru
+          if (-not $install.WaitForExit(900000)) { $install.Kill($true); throw 'installer did not finish within 15 minutes' }
+          "installer exit code: $($install.ExitCode)"
+          "WebView2 after: $((Get-ItemProperty -Path $wv2 -Name pv -ErrorAction SilentlyContinue).pv)"
+          if ($install.ExitCode -ne 0) {
+            $log = 'C:\ProgramData\Microsoft\EdgeUpdate\Log\MicrosoftEdgeUpdate.log'
+            if (Test-Path $log) { 'EdgeUpdate log (tail):'; Get-Content $log -Tail 40 }
+            throw "installer failed with exit code $($install.ExitCode)"
+          }
+          # Where it went: the per-user uninstall key names InstallLocation. A runner that executes
+          # as SYSTEM gets the 32-bit NSIS stub's WOW64 file-system redirection, so the SYSTEM
+          # profile's `system32\config\systemprofile` lands in `SysWOW64\...`; a normal user
+          # install under C:\Users is not redirected. Both are looked up.
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltip'
+          $location = ((Get-ItemProperty -Path $key -Name InstallLocation -ErrorAction SilentlyContinue).InstallLocation) -replace '"', ''
+          "InstallLocation (registry): $location"
+          $candidates = @($location, ($location -replace '(?i)\\system32\\', '\SysWOW64\'), (Join-Path $env:LOCALAPPDATA 'Voltip')) | Where-Object { $_ } | Select-Object -Unique
+          $exe = $candidates | ForEach-Object { Join-Path $_ 'voltip-desktop.exe' } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1 | ForEach-Object { Get-Item -LiteralPath $_ }
+          if (-not $exe) { throw "installed voltip-desktop.exe not found in: $($candidates -join '; ')" }
+          "installed at: $($exe.DirectoryName)"
+          Get-ChildItem $exe.DirectoryName -Filter '*.dll' | ForEach-Object { "  $($_.Name) $($_.Length)" }
+          ./scripts/smoke-native-cli.ps1 -Binary $exe.FullName -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-windows-installed
+
+      - name: Upload the run summaries
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-native-run
+          path: |
+            smoke-native-windows/*.txt
+            smoke-native-windows/*.out
+            smoke-native-windows/*.err
+            smoke-native-windows-installed/*.txt
+            smoke-native-windows-installed/*.out
+            smoke-native-windows-installed/*.err
+          if-no-files-found: warn
+          retention-days: 7
+
+  # The real Tauri desktop app started under Xvfb with the debug-only in-memory secret store;
+  # the WebView screenshots are the evidence that the shell builds, starts the core and renders.
+  smoke-desktop:
+    name: smoke · desktop under Xvfb
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h / | tail -1
+
+      # X11 (Xvfb) and pure Wayland (headless weston + sway) smokes: a private PulseAudio null sink is
+      # the microphone, xclip / wl-clipboard check the clipboard restore, wtype is the Wayland paste.
+      - name: Linux system dependencies + Xvfb / Wayland tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libdbus-1-dev \
+            libayatana-appindicator3-dev librsvg2-dev libasound2-dev libssl-dev \
+            libx11-dev libxtst-dev libxcb1-dev patchelf pkg-config cmake \
+            xvfb xdotool scrot x11-utils python3-pil \
+            xclip pulseaudio pulseaudio-utils libasound2-plugins \
+            weston sway wtype wl-clipboard grim dbus
+          command -v Xvfb xdotool scrot xclip pulseaudio pactl paplay weston sway wtype wl-copy grim dbus-daemon
+          /usr/bin/python3 -c 'import PIL; print("PIL", PIL.__version__)'
+
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          rustup show
+          rustc --version && cargo --version
+
+      - name: Cache Cargo registry and target/
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-smoke-desktop
+          cache-on-failure: true
+
+      - name: pnpm (packageManager in package.json)
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: package.json
+
+      - name: Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_MAJOR }}
+          cache: pnpm
+
+      - name: Install web dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: make smoke-desktop (build, start under Xvfb, hotkey → overlay → outcome, screenshots)
+        run: make smoke-desktop
+
+      # Pure Wayland on headless compositors: session detection, the refused-hotkey hint for
+      # --toggle, a take pasted through wtype and the clipboard restored.
+      - name: make smoke-wayland (headless weston + sway, --toggle, wtype paste, clipboard restore)
+        run: make smoke-wayland
+
+      # Same headless check the Windows job runs, on the binary the smoke just built.
+      - name: Headless native run (download a model, transcribe a public sample)
+        run: |
+          set -euo pipefail
+          command -v pwsh >/dev/null || { echo "::error::pwsh (PowerShell 7) is not on this runner image"; exit 1; }
+          pwsh -NoProfile -File scripts/smoke-native-cli.ps1 -Binary target/debug/voltip-desktop -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-linux
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-linux-smoke
+          path: |
+            docs/acceptance/screens/tauri/*.png
+            docs/acceptance/screens/tauri/*-app.log
+            docs/acceptance/screens/tauri/desktop-linux-wayland-summary.txt
+            smoke-native-linux/*.txt
+            smoke-native-linux/*.out
+          if-no-files-found: warn
+          retention-days: 7
+
+  # Stable branch-protection check: every job above except the Codecov upload must report success
+  # (skipped / cancelled fail).
+  ci-success:
+    name: CI Success
+    needs: [verify, windows-cross, windows-native, smoke-desktop]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every CI job to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS_JSON" | jq .
+          jq -e 'all(.[]; .result == "success")' <<<"$NEEDS_JSON"

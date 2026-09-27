@@ -1,0 +1,16 @@
+[package]
+name = "voltip-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Platform policy tables for the Voltip shells (docs/dictation.md §15): permissions gate and poll plan, macOS activation policy and paste keycode, Windows integrity-level preflight and microphone consent store. Pure Rust, no OS calls."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

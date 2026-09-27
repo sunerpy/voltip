@@ -1,0 +1,27 @@
+{
+  "printWidth": 100,
+  "tabWidth": 2,
+  "useTabs": false,
+  "bracketSameLine": true,
+  "singleQuote": false,
+  "trailingComma": "all",
+  "ignorePatterns": [
+    "**/*.md",
+    "**/*.toml",
+    "**/*.yaml",
+    "**/*.yml",
+    "**/coverage/**",
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/src-tauri/**",
+    "**/src-tauri/gen/**",
+    "*.lock",
+    ".github/**",
+    "crates/**",
+    "deploy/**",
+    "docs/**",
+    "pnpm-lock.yaml",
+    "scripts/**",
+    "target/**"
+  ]
+}

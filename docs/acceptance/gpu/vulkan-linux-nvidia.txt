@@ -1,0 +1,29 @@
+Local model on the GPU through Vulkan, packaged Linux build (docs/dictation.md §10.6), 2026-09-27.
+
+Package: a pre-release build of Voltip 0.0.1 (then numbered 0.1.0-alpha.0), AppImage from scripts/build-linux-x64.sh (Ubuntu 22.04 build host,
+Vulkan SDK 1.4.357.1, no built-in engines), run with APPIMAGE_EXTRACT_AND_RUN=1 and the loader the
+AppImage carries (usr/lib/libvulkan.so.1); the host has no libvulkan1 package.
+Host: Linux x86_64, Ubuntu 22.04 (glibc 2.35), 8 logical CPUs, NVIDIA L40S (driver 580.126.09).
+Model: qwen3-asr-0.6b (Qwen3-ASR-0.6B Q6_K GGUF), downloaded with --download-model; sample: 16 s of
+Mandarin, 16 kHz mono.
+
+$ voltip-desktop --list-compute                                          exit 0
+cpu	8
+gpu	Vulkan0	NVIDIA L40S	vulkan	46068
+
+$ voltip-desktop --transcribe-file sample.wav --model qwen3-asr-0.6b --json   (device auto)   exit 0
+{"text":"我想创建一个谷歌IDR吧，比如说就是通过创建这样的一个谷歌C V谷歌IDR的这样的一个APP，集成在Teams里面，然后借助AI的话，让大家更方便的去提交。","model":"qwen3-asr-0.6b","latency_ms":751,"backend":"Vulkan0"}
+  log: backend=Vulkan0 load_ms=584 infer_ms=162
+
+$ voltip-desktop --transcribe-file sample.wav --model qwen3-asr-0.6b --device cpu --json      exit 0
+{"text":"我想创建一个谷歌IDR吧，比如说就是通过创建这样的一个谷歌C V谷歌IDR的这样的一个APP，集成在Teams里面，然后借助AI的话，让大家更方便的去提交。","model":"qwen3-asr-0.6b","latency_ms":3735,"backend":"CPU"}
+  log: backend=CPU load_ms=857 infer_ms=2873
+
+Reading: `auto` picks the GPU, and the warm GPU run infers 18x faster than the 8-thread CPU run with
+the same text. The first GPU run on this host took 12.9 s in total: Vulkan pipeline compilation,
+which the driver caches for later runs.
+
+Exit: before src/exit.rs every run that initialised the Vulkan backend without loading a model
+(`--list-compute`) ended in SIGABRT after its output ("double free or corruption" inside
+libGLX_nvidia.so.0 → eglReleaseThread, the driver's own teardown; the same with Ubuntu's 1.3.204
+loader). The shell now leaves through _exit on Linux; every command above exits 0.

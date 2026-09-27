@@ -1,0 +1,35 @@
+[package]
+name = "voltip-inject"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Puts dictated text into the foreground application: clipboard plus paste chord, with clipboard restore."
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# `FakeInjector`, a recording test double for shells and the core. Always compiled for this
+# crate's own tests.
+test-support = []
+
+[dependencies]
+arboard.workspace = true
+enigo.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# The macOS Cmd+V keycode fallback and modifier hold (docs/dictation.md §15.2): pure tables, no OS calls.
+voltip-platform = { path = "../voltip-platform" }
+
+# macOS: the current keyboard layout's input source id, read per keystroke from the HIToolbox
+# preference domain (`mac_layout_id`). NSUserDefaults is thread-safe, unlike the TIS calls behind
+# UCKeyTranslate. The versions tray-icon / muda already pull.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.4"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSUserDefaults"] }
+
+[dev-dependencies]
+# Fake paste tools on a private PATH directory (src/process.rs, src/linux.rs tests).
+tempfile.workspace = true

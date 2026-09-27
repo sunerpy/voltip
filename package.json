@@ -1,0 +1,30 @@
+{
+  "name": "voltip-workspace",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "description": "Voltip web workspace: UI kit, IPC contract, desktop and mobile webviews.",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @voltip/desktop dev",
+    "dev:mobile": "pnpm --filter @voltip/mobile dev",
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "test:coverage": "pnpm -r run test:coverage",
+    "format": "pnpm -r run format",
+    "format:check": "pnpm -r run format:check"
+  },
+  "devDependencies": {
+    "oxfmt": "0.70.0",
+    "oxlint": "1.85.0",
+    "oxlint-tsgolint": "7.0.2002",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=20.19.0",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.15.9"
+}
