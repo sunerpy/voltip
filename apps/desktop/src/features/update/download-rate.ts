@@ -1,5 +1,5 @@
-import type { TFunction, UpdateStatus } from "@voltip/shared";
-import { useEffect, useRef, useState } from "react";
+import type { Backend, TFunction } from "@voltip/shared";
+import { useEffect, useState } from "react";
 
 /** One reading of a download: when (ms, monotonic) and how many bytes had arrived. */
 export interface RateSample {
@@ -44,26 +44,30 @@ export function etaText(
 
 const monotonic = () => performance.now();
 
-/** The speed of the download `update` describes, from the readings the UI saw in the last
- *  `RATE_WINDOW_MS`; forgotten as soon as it is not downloading. */
+/** The speed of the download, from the `update` events of the last `RATE_WINDOW_MS` (their arrival
+ *  times); forgotten as soon as the updater is not downloading. The dialog stays mounted while it is
+ *  closed, so the readings start with the download. */
 export function useDownloadRate(
-  update: UpdateStatus,
+  backend: Pick<Backend, "on">,
   now: () => number = monotonic,
 ): number | undefined {
-  const samples = useRef<RateSample[]>([]);
   const [rate, setRate] = useState<number | undefined>(undefined);
-  const received = update.state === "downloading" ? update.received : undefined;
   useEffect(() => {
-    if (received === undefined) {
-      samples.current = [];
-      setRate(undefined);
-      return;
-    }
-    const at = now();
-    const kept = samples.current.filter((s) => at - s.at <= RATE_WINDOW_MS);
-    kept.push({ at, received });
-    samples.current = kept;
-    setRate(rateFrom(kept));
-  }, [received, now]);
+    let samples: RateSample[] = [];
+    return backend.on((event) => {
+      if (event.type !== "update") return;
+      if (event.state !== "downloading") {
+        samples = [];
+        setRate(undefined);
+        return;
+      }
+      const at = now();
+      samples = [
+        ...samples.filter((sample) => at - sample.at <= RATE_WINDOW_MS),
+        { at, received: event.received },
+      ];
+      setRate(rateFrom(samples));
+    });
+  }, [backend, now]);
   return rate;
 }

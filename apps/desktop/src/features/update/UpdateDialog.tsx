@@ -32,7 +32,7 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
   const { backend } = useBackend();
   const { t, locale } = useI18n();
   const { update, app_version: current } = useUiState();
-  const rate = useDownloadRate(update);
+  const rate = useDownloadRate(backend);
   const version = statusVersion(update);
 
   const title =
