@@ -42,7 +42,7 @@
 - `VOLTIP_FEEDBACK_URL`：完整地址，比如 `https://<feedback-host>/v1/feedback`
 - `VOLTIP_FEEDBACK_TOKEN`：应用令牌，以 `Authorization: Bearer` 发送
 
-发布构建从同名的 GitHub Secrets 读取（`.github/workflows/release.yml`），本地打包从 `.env.build` 读取。仓库和界面里都不出现这个地址；出错时的提示只写原因（`rate_limited`、`network`…），不写地址。没有配置地址的构建，对话框会改为提供仓库的 Issue 页面。
+发布构建从同名的 GitHub Secrets 读取（`.github/workflows/release-candidate.yml`），本地打包从 `.env.build` 读取。仓库和界面里都不出现这个地址；出错时的提示只写原因（`rate_limited`、`network`…），不写地址。没有配置地址的构建，对话框会改为提供仓库的 Issue 页面。
 
 应用令牌就在发出去的安装包里，所以它只能挡住随手的滥用，防不住有心人。限流由接口负责。
 

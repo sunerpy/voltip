@@ -1,34 +1,25 @@
-# Same-run release for the Voltip desktop app (Tauri v2) on GitHub-hosted runners.
+# Release controller for the Voltip desktop app: build once on the release PR, promote the exact
+# bytes after the merge (skill github-project-scaffold, references/release-candidate-promotion.md).
 #
-# Topology (skill github-project-scaffold, references/tauri-release.md):
-#   release-please -> preflight -> bundle-windows + bundle-linux + bundle-macos -> updater
-#   -> publish-release
-# release-please owns the version, the tag and a DRAFT Release; every job below runs in the same
-# workflow run gated on release_created; the terminal job verifies every remote asset and flips
-# the draft. Nothing listens on `push: tags` or `release:` because events created with
-# GITHUB_TOKEN never start workflows. `workflow_dispatch` rebuilds an EXISTING draft tag only.
+#   push to main -> release-please -> dispatch_candidate: release-candidate.yml builds, signs,
+#                   attests and seals every package for the release PR head and writes the
+#                   `Release candidate` status the main ruleset requires before that PR can merge
+#   the merge    -> release-please tags it and opens a DRAFT Release -> resolve_release finds the
+#                   one successful candidate for the merged head -> promote verifies it, writes
+#                   latest.json and SHA256SUMS, uploads, checks the remote bytes and publishes
 #
-# Deviations from the skill template, all forced by this repository:
-# - Windows is cross-built from Linux with cargo-xwin through the repository's own
-#   `make windows-x64` (which also runs the artefact secret scan). The Linux leg runs on
-#   ubuntu-22.04: its glibc and webkit2gtk-4.1 are the oldest the packages support. The macOS legs
-#   build natively, Apple silicon on macos-15 and Intel on macos-15-intel, and each ships a .dmg
-#   plus, with the updater, the .app.tar.gz the updater downloads; the bundles are signed ad hoc
-#   (no Developer ID, no notarization, docs/roadmap.md). `.github/release-targets.json` lists the
-#   four legs for the scaffold contract; the jobs are written out rather than generated from it,
-#   because a Windows leg built on Linux is outside what `tauri-release.py matrix` models.
-# - The built-in engine defaults are repository SECRETS baked in at compile time
-#   (.github/README-secrets.md); a release package must carry them (`preflight-engines`). Job-level
-#   `if:` cannot read secrets, so their presence is checked in `preflight` through `env:`.
-# - The updater is optional. It is on exactly when the VOLTIP_UPDATE_PUBKEY secret is set: the app
-#   is then built with VOLTIP_UPDATE_URL pointing at this repository's
-#   releases/latest/download/latest.json, and latest.json pins every URL to this release's assets.
-#   tauri.conf.json carries no updater block (apps/desktop/src-tauri/src/update.rs injects
-#   plugins.updater at runtime from the two compile-time values), so the signing step alone passes
-#   `bundle.createUpdaterArtifacts` and the pubkey with `--config`. TAURI_SIGNING_PRIVATE_KEY is
-#   present only on that `cargo tauri bundle` step; every .sig is verified against the pubkey
-#   before anything is uploaded. A pre-release is never marked latest, so installed copies see an
-#   update only when a stable release is published.
+# Nothing compiles here: promote downloads, verifies, uploads and publishes (contract-tested,
+# scripts/release/test_release_workflows.py). Nothing listens on `push: tags` or `release:`,
+# because events created with GITHUB_TOKEN start no workflows; the candidate is started with
+# `gh workflow run`, which they do start. Recovery (docs/runbook.md): `mode=orchestrate` re-runs
+# release-please and the dispatch; `mode=promote` with a candidate run, or after a backfill run of
+# release-candidate.yml, promotes an existing draft.
+#
+# Voltip's seams in the scaffold template: the version is package.json's (tauri.conf.json reads it,
+# the crates stay at 0.0.0); the candidate is the per-leg evidence updater-json.py collect writes,
+# sealed by scripts/release/candidate.py; the updater is optional (on exactly when the
+# VOLTIP_UPDATE_PUBKEY secret is set), and promote writes latest.json from the release's own asset
+# URLs once every .sig verifies against that pubkey. A pre-release is never marked latest.
 name: Release
 
 on:
@@ -36,789 +27,444 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      tag_name:
-        description: "Existing DRAFT release tag to rebuild, for example v0.0.2"
+      mode:
+        description: "orchestrate re-runs release-please and the candidate dispatch; promote publishes an existing draft"
         required: true
+        default: orchestrate
+        type: choice
+        options:
+          - orchestrate
+          - promote
+      candidate_run_id:
+        description: "promote: the successful release-candidate.yml run (default: the one the gate status names)"
+        required: false
+        type: string
+      release_pr_number:
+        description: "promote: the merged release PR the candidate certified"
+        required: false
+        type: string
+      candidate_head_sha:
+        description: "promote: the exact commit the candidate built"
+        required: false
+        type: string
+      release_tag:
+        description: "promote: the draft's tag, for example v0.0.4"
+        required: false
         type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-controller
   cancel-in-progress: false
 
 env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0
-  TAURI_PROJECT_PATH: apps/desktop/src-tauri
-  WINDOWS_TARGET: x86_64-pc-windows-msvc
-  LINUX_TARGET: x86_64-unknown-linux-gnu
-  CARGO_XWIN_VERSION: 0.20.2
-  CARGO_ABOUT_VERSION: 0.9.2
-  NODE_MAJOR: "22"
+  GATE_CONTEXT: Release candidate
 
 jobs:
-  release-please:
+  trust:
+    name: Validate controller identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the workflow of protected main
+        env:
+          REF_PROTECTED: ${{ github.ref_protected }}
+          RUN_REF: ${{ github.ref }}
+          RUN_SHA: ${{ github.sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_PROTECTED" != true ] || [ "$RUN_REF" != refs/heads/main ] || [ "$WORKFLOW_SHA" != "$RUN_SHA" ]; then
+            echo "::error title=Release controller::run this workflow only from protected main"
+            exit 1
+          fi
+
+  release_please:
     name: Release Please
+    needs: trust
+    if: github.event_name == 'push' || inputs.mode == 'orchestrate'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write
     outputs:
-      build_artifacts: ${{ steps.gate.outputs.build_artifacts }}
-      tag_name: ${{ steps.gate.outputs.tag_name }}
-      version: ${{ steps.gate.outputs.version }}
-      prerelease: ${{ steps.gate.outputs.prerelease }}
-      release_sha: ${{ steps.gate.outputs.release_sha }}
+      pr: ${{ steps.release.outputs.pr }}
+      release_created: ${{ steps.release.outputs.release_created }}
+      sha: ${{ steps.release.outputs.sha }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - name: Run release-please
         id: release
-        if: github.event_name == 'push'
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      # Tooling comes from the workflow's own commit on the protected default branch, never from
-      # a tag or a dispatched branch.
-      - name: Checkout release tooling
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - name: Resolve release gate
-        id: gate
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_TAG: ${{ inputs.tag_name }}
-          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
-          RELEASE_VERSION: ${{ steps.release.outputs.version }}
-          RELEASE_SHA: ${{ steps.release.outputs.sha }}
-          RUN_REF: ${{ github.ref }}
-          REF_PROTECTED: ${{ github.ref_protected }}
-          DEFAULT_BRANCH: main
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-        run: bash .github/scripts/resolve-release-gate.sh
-
-  # Fails closed BEFORE any 30-60 minute leg: version model, updater configuration, signing key
-  # and publication secrets. Secrets are compared with '' inside env; values never reach a shell.
-  preflight:
-    name: Preflight
-    needs: release-please
-    if: needs.release-please.outputs.build_artifacts == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    outputs:
-      updater_enabled: ${{ steps.config.outputs.updater_enabled }}
-      product_name: ${{ steps.config.outputs.product_name }}
-    steps:
-      - name: Checkout release tag
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
-          persist-credentials: false
-
-      - name: Verify the tag resolves to the released commit
-        env:
-          RELEASE_SHA: ${{ needs.release-please.outputs.release_sha }}
-        run: |
-          set -euo pipefail
-          head=$(git rev-parse HEAD)
-          if [ "$head" != "$RELEASE_SHA" ]; then
-            echo "::error::checked-out tag commit $head != release commit $RELEASE_SHA"
-            exit 1
-          fi
-
-      # tauri.conf.json version == package.json version == the release version; productName;
-      # bundle.active; no createUpdaterArtifacts in the file (it would make `make windows-x64`
-      # demand a key). The updater exists exactly when VOLTIP_UPDATE_PUBKEY is set (the URL is
-      # derived from the repository in the bundle jobs). The pubkey is a secret-typed value, so it
-      # is never a job output: downstream steps read secrets.VOLTIP_UPDATE_PUBKEY themselves.
-      - name: Check version model and updater configuration
-        id: config
-        env:
-          VERSION: ${{ needs.release-please.outputs.version }}
-          UPDATE_URL_PRESENT: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' }}
-          UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
-        run: >-
-          python3 scripts/release/updater-json.py check-config
-          --project "$TAURI_PROJECT_PATH"
-          --package-json package.json
-          --expect-version "$VERSION"
-          --update-url-present "$UPDATE_URL_PRESENT"
-          --update-pubkey "$UPDATE_PUBKEY"
-          --github-output "$GITHUB_OUTPUT"
-
-      - name: Require the signing key when the updater is enabled
-        env:
-          UPDATER_ENABLED: ${{ steps.config.outputs.updater_enabled }}
-          SIGNING_KEY_PRESENT: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
-        run: |
-          set -euo pipefail
-          if [ "$UPDATER_ENABLED" != true ]; then
-            echo "updater disabled (no VOLTIP_UPDATE_PUBKEY secret): bundles ship unsigned, no latest.json"
-            exit 0
-          fi
-          if [ "$SIGNING_KEY_PRESENT" != true ]; then
-            echo "::error::VOLTIP_UPDATE_PUBKEY is set but TAURI_SIGNING_PRIVATE_KEY is empty (see .github/README-secrets.md)"
-            exit 1
-          fi
-
-      # The tree being released names no production host; the words come from a secret and a hit
-      # prints path:line only.
-      - name: No production hosts in the release tree
-        env:
-          VOLTIP_PRODUCTION_HOSTS: ${{ secrets.VOLTIP_PRODUCTION_HOSTS }}
-        run: .github/scripts/check-no-production-hosts.sh --require
-
-  # (preflight, continued in the job above) A release package must carry the built-in engines:
-  # the same fail-closed rule scripts/lib/require-builtin-engines.sh applies to local packaging.
-  preflight-engines:
-    name: Preflight · built-in engine secrets
-    needs: release-please
-    if: needs.release-please.outputs.build_artifacts == 'true'
+  dispatch_candidate:
+    name: Dispatch release candidate
+    needs: [trust, release_please]
+    if: needs.release_please.result == 'success' && needs.release_please.outputs.release_created != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
     steps:
-      - name: Require every built-in engine secret (values compared with '' inside env, never echoed)
+      - name: Resolve the one open release PR and check it sits on main
+        id: release_pr
         env:
-          VOLTIP_ASR_URL_PRESENT: ${{ secrets.VOLTIP_ASR_URL != '' }}
-          VOLTIP_ASR_TOKEN_PRESENT: ${{ secrets.VOLTIP_ASR_TOKEN != '' }}
-          VOLTIP_ASR_MODEL_PRESENT: ${{ secrets.VOLTIP_ASR_MODEL != '' }}
-          VOLTIP_REFINE_URL_PRESENT: ${{ secrets.VOLTIP_REFINE_URL != '' }}
-          VOLTIP_REFINE_API_KEY_PRESENT: ${{ secrets.VOLTIP_REFINE_API_KEY != '' }}
-          VOLTIP_REFINE_MODEL_PRESENT: ${{ secrets.VOLTIP_REFINE_MODEL != '' }}
-          VOLTIP_RELAY_URL_PRESENT: ${{ secrets.VOLTIP_RELAY_URL != '' }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR_JSON: ${{ needs.release_please.outputs.pr }}
+          RUN_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          missing=0
-          for name in VOLTIP_ASR_URL VOLTIP_ASR_TOKEN VOLTIP_ASR_MODEL VOLTIP_REFINE_URL VOLTIP_REFINE_API_KEY VOLTIP_REFINE_MODEL VOLTIP_RELAY_URL; do
-            present_var="${name}_PRESENT"
-            if [ "${!present_var}" != true ]; then
-              echo "::error::repository secret ${name} is empty; a release package must carry the built-in engines (see .github/README-secrets.md)"
-              missing=1
+          # release-please reports the PR it created or updated; when the PR body did not change it
+          # reports nothing and the open-PR search below finds the existing one.
+          number=""
+          if [ -n "$RELEASE_PR_JSON" ]; then
+            number=$(jq -r '.number // empty' <<<"$RELEASE_PR_JSON")
+          fi
+          if [ -z "$number" ]; then
+            prs=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=main&per_page=100")
+            mapfile -t rows < <(jq -r '.[]
+              | select(.head.repo.full_name == env.GITHUB_REPOSITORY)
+              | select(.head.ref | startswith("release-please--branches--main--"))
+              | select([.labels[].name] | index("autorelease: pending") != null)
+              | .number' <<<"$prs")
+            if [ "${#rows[@]}" -eq 0 ]; then
+              echo "::notice title=Release controller::no release PR needs a candidate"
+              echo "dispatch=false" >>"$GITHUB_OUTPUT"
+              exit 0
             fi
-          done
-          exit "$missing"
+            if [ "${#rows[@]}" -ne 1 ]; then
+              echo "::error title=Release controller::expected one open release PR, found ${#rows[@]}"
+              exit 1
+            fi
+            number=${rows[0]}
+          fi
+          [[ "$number" =~ ^[1-9][0-9]*$ ]] || { echo "::error title=Release controller::release PR number is invalid"; exit 1; }
 
-  # Windows x64: portable zip + NSIS installer, cross-built from Linux with cargo-xwin.
-  bundle-windows:
-    name: Bundle x86_64-pc-windows-msvc (cross)
-    needs: [release-please, preflight, preflight-engines]
-    if: needs.release-please.outputs.build_artifacts == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    env:
-      # Compile-time defaults baked into the shell (docs/dictation.md §3); the two tokens are the
-      # revocable app tokens, never provider keys (the build script scans the exe and refuses).
-      VOLTIP_RELAY_URL: ${{ secrets.VOLTIP_RELAY_URL }}
-      VOLTIP_ASR_URL: ${{ secrets.VOLTIP_ASR_URL }}
-      VOLTIP_ASR_MODEL: ${{ secrets.VOLTIP_ASR_MODEL }}
-      VOLTIP_ASR_TOKEN: ${{ secrets.VOLTIP_ASR_TOKEN }}
-      VOLTIP_REFINE_URL: ${{ secrets.VOLTIP_REFINE_URL }}
-      VOLTIP_REFINE_MODEL: ${{ secrets.VOLTIP_REFINE_MODEL }}
-      VOLTIP_REFINE_API_KEY: ${{ secrets.VOLTIP_REFINE_API_KEY }}
-      # The updater endpoint follows the repository; empty (no updater) without the pubkey.
-      VOLTIP_UPDATE_URL: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' && format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) || '' }}
-      VOLTIP_UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
-      VOLTIP_MODEL_BASE_URL: ${{ secrets.VOLTIP_MODEL_BASE_URL }}
-      # The 反馈 dialog's endpoint and its app token (docs/feedback.md); unset, the dialog offers the
-      # repository's issue page instead.
-      VOLTIP_FEEDBACK_URL: ${{ secrets.VOLTIP_FEEDBACK_URL }}
-      VOLTIP_FEEDBACK_TOKEN: ${{ secrets.VOLTIP_FEEDBACK_TOKEN }}
-    steps:
-      - name: Checkout release tag
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
-          persist-credentials: false
-
-      - name: Verify the tag resolves to the released commit
-        env:
-          RELEASE_SHA: ${{ needs.release-please.outputs.release_sha }}
-        run: |
-          set -euo pipefail
-          head=$(git rev-parse HEAD)
-          if [ "$head" != "$RELEASE_SHA" ]; then
-            echo "::error::checked-out tag commit $head != release commit $RELEASE_SHA"
+          pr=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${number}")
+          head_sha=$(jq -r '.head.sha' <<<"$pr")
+          if [ "$(jq -r '.state' <<<"$pr")" != open ] || [ "$(jq -r '.base.ref' <<<"$pr")" != main ] ||
+            [ "$(jq -r '.head.repo.full_name' <<<"$pr")" != "$GITHUB_REPOSITORY" ] ||
+            [ "$(jq -r '.user.login' <<<"$pr")" != "github-actions[bot]" ] ||
+            [[ "$(jq -r '.head.ref' <<<"$pr")" != release-please--branches--main--* ]] ||
+            [ "$(jq -r '[.labels[].name] | index("autorelease: pending") != null' <<<"$pr")" != true ] ||
+            ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Release controller::release PR #${number} identity is invalid"
             exit 1
           fi
 
-      - name: Windows cross toolchain (nsis, clang, lld, llvm)
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          # LLVM 19: the MSVC STL headers cargo-xwin downloads (current CRT) refuse older clang
-          # ("STL1000: expected Clang 19.0.0 or newer"); Ubuntu 24.04 ships 19 as clang-19.
-          sudo apt-get install --yes --no-install-recommends nsis clang-19 lld-19 llvm-19 cmake ninja-build zip unzip
-          echo "/usr/lib/llvm-19/bin" >>"$GITHUB_PATH"
-          export PATH="/usr/lib/llvm-19/bin:$PATH"
-          lld-link --version; command -v llvm-rc; clang --version | head -1; makensis -VERSION
-
-      - name: Rust toolchain (rust-toolchain.toml) + Windows target
-        run: |
-          set -euo pipefail
-          if ! command -v rustup >/dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
-            echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
-            export PATH="$HOME/.cargo/bin:$PATH"
+          # A candidate is promotable only when the squash-merged tree equals the head's tree, so
+          # the head must sit on the current main. release-please leaves the PR alone when its body
+          # would not change (a ci: or docs: push), and the head is then behind.
+          compare=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${RUN_SHA}...${head_sha}")
+          behind_by=$(jq -r '.behind_by' <<<"$compare")
+          ahead_by=$(jq -r '.ahead_by' <<<"$compare")
+          if [ "$behind_by" != 0 ] || [ "$ahead_by" -lt 1 ]; then
+            echo "::notice title=Release controller::release PR #${number} head ${head_sha} is behind main by ${behind_by}; no candidate dispatched"
+            {
+              echo "### Release PR head is stale"
+              echo
+              echo "Release PR #${number} at \`${head_sha}\` does not sit on main \`${RUN_SHA}\`"
+              echo "(behind by ${behind_by} commit(s)); a candidate built from it could never be promoted."
+              echo
+              echo "Press **Update branch** on the pull request (or \`gh api -X PUT repos/${GITHUB_REPOSITORY}/pulls/${number}/update-branch\`),"
+              echo "then run this workflow with mode \`orchestrate\`, or wait for the next push that changes the release notes."
+            } >>"$GITHUB_STEP_SUMMARY"
+            echo "dispatch=false" >>"$GITHUB_OUTPUT"
+            exit 0
           fi
-          rustup toolchain install 2>/dev/null || true
-          rustup show
-          rustup target add "$WINDOWS_TARGET"
-          rustc --version && cargo --version
-
-      - name: cargo-xwin (prebuilt, pinned)
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
-        with:
-          tool: cargo-xwin@${{ env.CARGO_XWIN_VERSION }}
-
-      # THIRD-PARTY-NOTICES.txt (scripts/release/third-party-notices.py) for the package.
-      - name: cargo-about (prebuilt, pinned)
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
-        with:
-          tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
-
-      - name: Tauri CLI (`cargo tauri`, pinned tarball + SHA-256)
-        run: .github/scripts/install-cargo-tauri.sh
-
-      # target/ is retained per leg: build scripts and C/C++ dependencies dominate Tauri rebuilds.
-      - name: Cache Cargo registry and target/
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: release-windows-x64
-          cache-on-failure: true
-
-      # rust-cache prunes the runtime sherpa-onnx-sys's build script downloaded and copied, but
-      # keeps its fingerprint: make cargo run it again (the script says why).
-      - name: Re-run sherpa-onnx-sys's build script
-        run: .github/scripts/forget-sherpa-onnx-build.sh
-
-      # The MSVC CRT + SDK cargo-xwin unpacks (~1 GB from download.visualstudio.microsoft.com) is
-      # fetched once per cargo-xwin version and restored afterwards; the download itself is
-      # retried because that host resets connections under load (seen 2026-09-25).
-      - name: Cache the xwin MSVC CRT and SDK
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/cargo-xwin/xwin
-          key: xwin-crt-sdk-${{ runner.os }}-cargo-xwin-${{ env.CARGO_XWIN_VERSION }}
-
-      - name: Fetch the xwin MSVC CRT and SDK (retried)
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f "$HOME/.cache/cargo-xwin/xwin/DONE" ]; then echo "xwin CRT/SDK restored from cache"; exit 0; fi
-          for attempt in 1 2 3 4 5; do
-            if cargo xwin check --target x86_64-pc-windows-msvc -p voltip-protocol >/dev/null 2>&1 || [ -f "$HOME/.cache/cargo-xwin/xwin/DONE" ]; then
-              echo "xwin CRT/SDK ready (attempt $attempt)"; exit 0
-            fi
-            rm -rf "$HOME/.cache/cargo-xwin/xwin"
-            echo "xwin download failed (attempt $attempt), retrying in $((attempt * 20)) s"; sleep $((attempt * 20))
-          done
-          echo "::error::could not download the MSVC CRT/SDK after 5 attempts"; exit 1
-
-      - name: pnpm (packageManager in package.json)
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          package_json_file: package.json
-
-      - name: Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_MAJOR }}
-          cache: pnpm
-
-      - name: Install web dependencies (frozen lockfile)
-        run: pnpm install --frozen-lockfile
-
-      # A restored target/ may hold installers of earlier versions; `collect` below takes every
-      # installer in the bundle directory, so it starts empty.
-      - name: Clear old bundles
-        run: rm -rf "target/$WINDOWS_TARGET/release/bundle"
-
-      - name: Cache the Vulkan SDK and runtime downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cache/voltip-vulkan/*.tar.xz
-            ~/.cache/voltip-vulkan/*.zip
-          key: vulkan-downloads-${{ hashFiles('scripts/lib/vulkan-sdk.sh') }}
-
-      # Phase 1 (no signing material): the repository's own script — frontend build, cargo-xwin
-      # compile with the Vulkan backend, unsigned NSIS bundle, provider-key scan of the exe, the
-      # portable zip, dist/windows-x64.
-      - name: Build and package (make windows-x64, no signing key)
-        run: make windows-x64
-
-      # Phase 2 (real key, bundling only): `tauri bundle` re-packs the already compiled exe into
-      # the NSIS installer and writes the updater .sig. createUpdaterArtifacts and the pubkey the
-      # app trusts arrive through --config on this step only; no frontend toolchain, build script
-      # or dependency lifecycle code runs while the key is present.
-      - name: Re-bundle and sign the NSIS installer for the updater
-        if: needs.preflight.outputs.updater_enabled == 'true'
-        working-directory: apps/desktop
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]; then unset TAURI_SIGNING_PRIVATE_KEY_PASSWORD; fi
-          jq -n --arg pubkey "$UPDATE_PUBKEY" \
-            '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pubkey}}}' \
-            >"$RUNNER_TEMP/updater-bundle.json"
-          cargo tauri bundle --ci --target "$WINDOWS_TARGET" --bundles nsis --config src-tauri/tauri.package-windows.conf.json --config "$RUNNER_TEMP/updater-bundle.json"
-          test -s "../../target/$WINDOWS_TARGET/release/bundle/nsis/"*_x64-setup.exe.sig
-
-      # release-assets/dist: <Product>_<version>_x64-setup.exe (+ .sig) and the portable zip the
-      # repository script built (the scanned exe with the DLLs it loads); release-assets/evidence:
-      # name/size/sha256 per file for the updater job. Kept apart from dist/windows-x64, which
-      # `make windows-x64` writes.
-      - name: Collect bundles and evidence
-        env:
-          UPDATER_ENABLED: ${{ needs.preflight.outputs.updater_enabled }}
-          PRODUCT_NAME: ${{ needs.preflight.outputs.product_name }}
-          VERSION: ${{ needs.release-please.outputs.version }}
-        run: >-
-          python3 scripts/release/updater-json.py collect
-          --target "$WINDOWS_TARGET"
-          --bundle-dir "target/$WINDOWS_TARGET/release/bundle"
-          --bundles nsis
-          --updater-bundle nsis
-          --updater "$UPDATER_ENABLED"
-          --out release-assets/dist
-          --evidence "release-assets/evidence/$WINDOWS_TARGET.json"
-          --extra "${PRODUCT_NAME}_${VERSION}_x64-portable.zip=dist/windows-x64/${PRODUCT_NAME}_${VERSION}_x64-portable.zip"
-
-      - name: Upload bundles
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: tauri-${{ env.WINDOWS_TARGET }}
-          path: release-assets/
-          if-no-files-found: error
-          retention-days: 1
-
-  # Linux x64: .deb + AppImage on the same runner image (its glibc is the compatibility floor).
-  bundle-linux:
-    name: Bundle x86_64-unknown-linux-gnu
-    needs: [release-please, preflight, preflight-engines]
-    if: needs.release-please.outputs.build_artifacts == 'true'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 90
-    env:
-      VOLTIP_RELAY_URL: ${{ secrets.VOLTIP_RELAY_URL }}
-      VOLTIP_ASR_URL: ${{ secrets.VOLTIP_ASR_URL }}
-      VOLTIP_ASR_MODEL: ${{ secrets.VOLTIP_ASR_MODEL }}
-      VOLTIP_ASR_TOKEN: ${{ secrets.VOLTIP_ASR_TOKEN }}
-      VOLTIP_REFINE_URL: ${{ secrets.VOLTIP_REFINE_URL }}
-      VOLTIP_REFINE_MODEL: ${{ secrets.VOLTIP_REFINE_MODEL }}
-      VOLTIP_REFINE_API_KEY: ${{ secrets.VOLTIP_REFINE_API_KEY }}
-      # The updater endpoint follows the repository; empty (no updater) without the pubkey.
-      VOLTIP_UPDATE_URL: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' && format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) || '' }}
-      VOLTIP_UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
-      VOLTIP_MODEL_BASE_URL: ${{ secrets.VOLTIP_MODEL_BASE_URL }}
-      # The 反馈 dialog's endpoint and its app token (docs/feedback.md); unset, the dialog offers the
-      # repository's issue page instead.
-      VOLTIP_FEEDBACK_URL: ${{ secrets.VOLTIP_FEEDBACK_URL }}
-      VOLTIP_FEEDBACK_TOKEN: ${{ secrets.VOLTIP_FEEDBACK_TOKEN }}
-    steps:
-      - name: Checkout release tag
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
-          persist-credentials: false
-
-      - name: Verify the tag resolves to the released commit
-        env:
-          RELEASE_SHA: ${{ needs.release-please.outputs.release_sha }}
-        run: |
-          set -euo pipefail
-          head=$(git rev-parse HEAD)
-          if [ "$head" != "$RELEASE_SHA" ]; then
-            echo "::error::checked-out tag commit $head != release commit $RELEASE_SHA"
-            exit 1
-          fi
-
-      - name: Linux system dependencies (Tauri bundler, webkit2gtk, ALSA, X11)
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libdbus-1-dev \
-            libayatana-appindicator3-dev librsvg2-dev libasound2-dev libssl-dev \
-            libx11-dev libxtst-dev libxcb1-dev patchelf pkg-config file xdg-utils binutils cmake \
-            libvulkan1
-
-      - name: Rust toolchain (rust-toolchain.toml)
-        run: |
-          set -euo pipefail
-          if ! command -v rustup >/dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
-            echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
-            export PATH="$HOME/.cargo/bin:$PATH"
-          fi
-          rustup toolchain install 2>/dev/null || true
-          rustup show
-          rustc --version && cargo --version
-
-      - name: Tauri CLI (`cargo tauri`, pinned tarball + SHA-256)
-        run: .github/scripts/install-cargo-tauri.sh
-
-      - name: cargo-about (prebuilt, pinned)
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
-        with:
-          tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
-
-      - name: Cache Cargo registry and target/
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: release-linux-x64
-          cache-on-failure: true
-
-      # rust-cache prunes the runtime sherpa-onnx-sys's build script downloaded and copied, but
-      # keeps its fingerprint: make cargo run it again (the script says why).
-      - name: Re-run sherpa-onnx-sys's build script
-        run: .github/scripts/forget-sherpa-onnx-build.sh
-
-      - name: pnpm (packageManager in package.json)
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          package_json_file: package.json
-
-      - name: Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_MAJOR }}
-          cache: pnpm
-
-      - name: Install web dependencies (frozen lockfile)
-        run: pnpm install --frozen-lockfile
-
-      # A restored target/ may hold bundles of earlier versions; `collect` takes every bundle in the
-      # directory, so it starts empty.
-      - name: Clear old bundles
-        run: rm -rf target/release/bundle
-
-      - name: Cache the Vulkan SDK download
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/voltip-vulkan/*.tar.xz
-          key: vulkan-downloads-linux-${{ hashFiles('scripts/lib/vulkan-sdk.sh') }}
-
-      # The same inputs scripts/build-linux-x64.sh uses: the SDK paths for transcribe.cpp's Vulkan
-      # backend and the loader the AppImage ships (src-tauri/resources/linux/libvulkan.so.1).
-      - name: Vulkan SDK (pinned, SHA-256 verified)
-        run: |
-          set -euo pipefail
-          . scripts/lib/vulkan-sdk.sh
-          voltip_vulkan_env linux
           {
-            echo "VULKAN_SDK=$VULKAN_SDK"
-            echo "VOLTIP_VULKAN_LIB_DIR=$VOLTIP_VULKAN_LIB_DIR"
-            echo "TRANSCRIBE_CMAKE_ARGS=$TRANSCRIBE_CMAKE_ARGS"
-          } >>"$GITHUB_ENV"
+            echo "dispatch=true"
+            echo "number=${number}"
+            echo "head_sha=${head_sha}"
+          } >>"$GITHUB_OUTPUT"
 
-      # The deb and the AppImage carry the licence texts (/usr/share/doc/voltip/THIRD-PARTY-NOTICES.txt).
-      - name: Third-party notices
-        run: python3 scripts/release/third-party-notices.py --out apps/desktop/src-tauri/resources/THIRD-PARTY-NOTICES.txt
-
-      # Phase 1: frontend (build.beforeBuildCommand) and Rust compile with the Vulkan backend, no
-      # signing material.
-      - name: Build (no bundle, no secrets)
-        working-directory: apps/desktop
-        run: |
-          set -euo pipefail
-          cargo tauri build --ci --no-bundle --features gpu-vulkan
-          . ../../scripts/lib/artefact-checks.sh
-          voltip_output_has 'NEEDED.*\[libvulkan\.so\.1\]' readelf -d ../../target/release/voltip-desktop || { echo "::error::voltip-desktop does not link libvulkan.so.1"; exit 1; }
-
-      # Same rule as scripts/build-windows-x64.sh: the client may carry the revocable app token,
-      # never a provider key.
-      - name: Artefact secret scan (no provider API key inside the binary)
-        run: |
-          set -euo pipefail
-          . scripts/lib/artefact-checks.sh
-          voltip_scan_provider_keys target/release/voltip-desktop release || { echo "::error::provider API key found inside voltip-desktop — refusing to ship"; exit 1; }
-
-      # Phase 2: bundling and updater signatures; the only step holding the signing key. With the
-      # updater enabled, createUpdaterArtifacts and the pubkey the app trusts arrive through
-      # --config; otherwise the bundles ship unsigned and the key variables are unset.
-      - name: Bundle and sign (deb, AppImage)
-        working-directory: apps/desktop
+      - name: Dispatch the candidate for the exact head
+        if: steps.release_pr.outputs.dispatch == 'true'
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
-          UPDATER_ENABLED: ${{ needs.preflight.outputs.updater_enabled }}
-        run: |
-          set -euo pipefail
-          for name in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
-            if [ -z "${!name:-}" ]; then unset "$name"; fi
-          done
-          if [ "$UPDATER_ENABLED" = true ]; then
-            if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-              echo "::error::updater enabled but TAURI_SIGNING_PRIVATE_KEY is empty"; exit 1
-            fi
-            jq -n --arg pubkey "$UPDATE_PUBKEY" \
-              '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pubkey}}}' \
-              >"$RUNNER_TEMP/updater-bundle.json"
-            cargo tauri bundle --ci --bundles deb,appimage --config "$RUNNER_TEMP/updater-bundle.json"
-            test -s ../../target/release/bundle/appimage/*.AppImage.sig
-          else
-            cargo tauri bundle --ci --bundles deb,appimage
-          fi
-
-      - name: Collect bundles and evidence
-        env:
-          UPDATER_ENABLED: ${{ needs.preflight.outputs.updater_enabled }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.release_pr.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.release_pr.outputs.number }}
+          RUN_SHA: ${{ github.sha }}
         run: >-
-          python3 scripts/release/updater-json.py collect
-          --target "$LINUX_TARGET"
-          --bundle-dir target/release/bundle
-          --bundles deb,appimage
-          --updater-bundle appimage
-          --updater "$UPDATER_ENABLED"
-          --out release-assets/dist
-          --evidence "release-assets/evidence/$LINUX_TARGET.json"
+          gh workflow run release-candidate.yml --repo "$GITHUB_REPOSITORY" --ref main
+          -f release_pr_number="$PR_NUMBER" -f expected_head_sha="$HEAD_SHA"
+          -f expected_base_sha="$RUN_SHA" -f mode=automatic
 
-      - name: Upload bundles
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: tauri-${{ env.LINUX_TARGET }}
-          path: release-assets/
-          if-no-files-found: error
-          retention-days: 1
+      - name: Record the merge boundary
+        if: steps.release_pr.outputs.dispatch == 'true'
+        env:
+          HEAD_SHA: ${{ steps.release_pr.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.release_pr.outputs.number }}
+        run: |
+          {
+            echo "### Release candidate dispatched"
+            echo
+            echo "Release PR #${PR_NUMBER} is being built and certified at \`${HEAD_SHA}\`."
+            echo "Merge it (squash) once \`${GATE_CONTEXT}\` is green on that exact head; the merge"
+            echo "then publishes these bytes without another build."
+          } >>"$GITHUB_STEP_SUMMARY"
 
-  # macOS, built natively for both processors (Tauri names the Intel dmg `x64`):
-  # Voltip_<version>_<aarch64|x64>.dmg to install from and, with the updater,
-  # Voltip_<version>_<aarch64|x64>.app.tar.gz (+ .sig) for the updater (Tauri writes it as
-  # Voltip.app.tar.gz; `collect --rename` gives it the release name). tauri.macos.conf.json signs
-  # the bundle ad hoc; the checks below prove the seal, the architecture, the macOS 11 floor and
-  # the dmg's contents. macos-15-intel is GitHub's last x86_64 image (available until 2027-08).
-  bundle-macos:
-    name: Bundle ${{ matrix.target }}
-    needs: [release-please, preflight, preflight-engines]
-    if: needs.release-please.outputs.build_artifacts == 'true'
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            runner: macos-15
-            arch: aarch64
-          - target: x86_64-apple-darwin
-            runner: macos-15-intel
-            arch: x64
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
-    env:
-      MACOS_TARGET: ${{ matrix.target }}
-      MACOS_ARCH: ${{ matrix.arch }}
-      VOLTIP_RELAY_URL: ${{ secrets.VOLTIP_RELAY_URL }}
-      VOLTIP_ASR_URL: ${{ secrets.VOLTIP_ASR_URL }}
-      VOLTIP_ASR_MODEL: ${{ secrets.VOLTIP_ASR_MODEL }}
-      VOLTIP_ASR_TOKEN: ${{ secrets.VOLTIP_ASR_TOKEN }}
-      VOLTIP_REFINE_URL: ${{ secrets.VOLTIP_REFINE_URL }}
-      VOLTIP_REFINE_MODEL: ${{ secrets.VOLTIP_REFINE_MODEL }}
-      VOLTIP_REFINE_API_KEY: ${{ secrets.VOLTIP_REFINE_API_KEY }}
-      # The updater endpoint follows the repository; empty (no updater) without the pubkey.
-      VOLTIP_UPDATE_URL: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' && format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) || '' }}
-      VOLTIP_UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
-      VOLTIP_MODEL_BASE_URL: ${{ secrets.VOLTIP_MODEL_BASE_URL }}
-      # The 反馈 page's endpoint and its app token (docs/feedback.md).
-      VOLTIP_FEEDBACK_URL: ${{ secrets.VOLTIP_FEEDBACK_URL }}
-      VOLTIP_FEEDBACK_TOKEN: ${{ secrets.VOLTIP_FEEDBACK_TOKEN }}
+  resolve_release:
+    name: Resolve release and candidate
+    needs: [trust, release_please]
+    if: >-
+      always() && !cancelled() && needs.trust.result == 'success' &&
+      ((needs.release_please.result == 'success' && needs.release_please.outputs.release_created == 'true') ||
+       (github.event_name == 'workflow_dispatch' && inputs.mode == 'promote'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      # Drafts are invisible to a read-only contents token. This job inspects the draft and
+      # mutates nothing; `gh release view` resolves drafts through GraphQL (REST releases/tags/TAG
+      # returns published releases only).
+      contents: write
+      pull-requests: read
+      statuses: read
+    outputs:
+      candidate_head_sha: ${{ steps.candidate.outputs.head_sha }}
+      candidate_run_attempt: ${{ steps.candidate.outputs.run_attempt }}
+      candidate_run_id: ${{ steps.candidate.outputs.run_id }}
+      candidate_workflow_sha: ${{ steps.candidate.outputs.workflow_sha }}
+      release_pr_head_sha: ${{ steps.candidate.outputs.pr_head_sha }}
+      release_pr_number: ${{ steps.candidate.outputs.pr_number }}
+      tag: ${{ steps.identity.outputs.tag }}
+      tree_sha: ${{ steps.identity.outputs.tree_sha }}
+      version: ${{ steps.identity.outputs.version }}
     steps:
-      - name: Checkout release tag
+      - name: Checkout trusted release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ github.workflow_sha }}
+          path: .release-tooling
           persist-credentials: false
 
-      - name: Verify the tag resolves to the released commit
+      - name: Resolve the tag
+        id: release_input
         env:
-          RELEASE_SHA: ${{ needs.release-please.outputs.release_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RECOVERY_TAG: ${{ inputs.release_tag }}
+          RELEASE_CREATED: ${{ needs.release_please.outputs.release_created }}
+          RELEASE_SHA: ${{ needs.release_please.outputs.sha }}
+          RELEASE_TAG: ${{ needs.release_please.outputs.tag_name }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          head=$(git rev-parse HEAD)
-          if [ "$head" != "$RELEASE_SHA" ]; then
-            echo "::error::checked-out tag commit $head != release commit $RELEASE_SHA"
+          if [ "$RELEASE_CREATED" = true ]; then tag=$RELEASE_TAG; else tag=$RECOVERY_TAG; fi
+          sha=$(bash .release-tooling/.github/scripts/resolve-release-gate.sh --peel-tag "$tag")
+          if [ "$RELEASE_CREATED" = true ] && [ "$RELEASE_SHA" != "$sha" ]; then
+            echo "::error title=Release identity::release-please sha ${RELEASE_SHA} differs from the peeled tag ${sha}"
             exit 1
           fi
+          {
+            echo "tag=${tag}"
+            echo "sha=${sha}"
+          } >>"$GITHUB_OUTPUT"
 
-      - name: Rust toolchain (rust-toolchain.toml) + ${{ matrix.target }}
-        run: |
-          set -euo pipefail
-          if ! command -v rustup >/dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
-            echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
-            export PATH="$HOME/.cargo/bin:$PATH"
-          fi
-          rustup toolchain install 2>/dev/null || true
-          rustup target add "$MACOS_TARGET"
-          rustc --version && cargo --version
-
-      - name: Tauri CLI (`cargo tauri`, pinned zip + SHA-256)
-        run: .github/scripts/install-cargo-tauri.sh
-
-      - name: Cache Cargo registry and target/
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Checkout the exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          shared-key: release-macos-${{ matrix.arch }}
-          cache-on-failure: true
+          ref: ${{ steps.release_input.outputs.tag }}
+          path: source
+          persist-credentials: false
 
-      # install-action has no prebuilt cargo-about for every macOS runner and falls back to
-      # cargo-binstall, which builds it without its `cli` feature and so without the binary (the
-      # 0.0.4 run, x86_64). Build the pinned version with the feature; rust-cache keeps
-      # ~/.cargo/bin for the next release.
-      - name: cargo-about (pinned, built with its cli feature)
-        run: |
-          set -euo pipefail
-          if [ "$(cargo about --version 2>/dev/null || true)" != "cargo-about ${CARGO_ABOUT_VERSION}" ]; then
-            cargo install cargo-about --version "=${CARGO_ABOUT_VERSION}" --locked --features cli
-          fi
-          cargo about --version
-
-      # rust-cache prunes the runtime sherpa-onnx-sys's build script downloaded and copied, but
-      # keeps its fingerprint: make cargo run it again (the script says why).
-      - name: Re-run sherpa-onnx-sys's build script
-        run: .github/scripts/forget-sherpa-onnx-build.sh
-
-      - name: CMake (transcribe.cpp / ggml source build)
-        run: command -v cmake || brew install cmake
-
-      - name: pnpm (packageManager in package.json)
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          package_json_file: package.json
-
-      - name: Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_MAJOR }}
-          cache: pnpm
-
-      - name: Install web dependencies (frozen lockfile)
-        run: pnpm install --frozen-lockfile
-
-      # A restored target/ may hold bundles of earlier versions; `collect` takes every bundle in the
-      # directory, so it starts empty.
-      - name: Clear old bundles
-        run: rm -rf "target/$MACOS_TARGET/release/bundle"
-
-      # The .app carries the licence texts (Contents/Resources/THIRD-PARTY-NOTICES.txt) through
-      # tauri.package-macos.conf.json.
-      - name: Third-party notices
-        run: python3 scripts/release/third-party-notices.py --out apps/desktop/src-tauri/resources/THIRD-PARTY-NOTICES.txt
-
-      # Phase 1: frontend (build.beforeBuildCommand) and Rust compile (Metal is the macOS GPU
-      # backend), no signing material.
-      - name: Build (no bundle, no secrets)
-        working-directory: apps/desktop
-        run: cargo tauri build --ci --target "$MACOS_TARGET" --no-bundle --config src-tauri/tauri.package-macos.conf.json
-
-      # Same rule as the other legs: the client may carry the revocable app token, never a
-      # provider key.
-      - name: Artefact secret scan (no provider API key inside the binary)
-        run: |
-          set -euo pipefail
-          . scripts/lib/artefact-checks.sh
-          voltip_scan_provider_keys "target/$MACOS_TARGET/release/voltip-desktop" release || { echo "::error::provider API key found inside voltip-desktop — refusing to ship"; exit 1; }
-
-      # Phase 2: the .app (signed ad hoc), the .dmg and, with the updater, the signed updater
-      # archive; the only step holding the signing key.
-      - name: Bundle and sign (app, dmg)
-        working-directory: apps/desktop
+      - name: Cross-check tag, package version, tree and draft
+        id: identity
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
-          UPDATER_ENABLED: ${{ needs.preflight.outputs.updater_enabled }}
+          EXPECTED_RELEASE_SHA: ${{ steps.release_input.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release_input.outputs.tag }}
         run: |
           set -euo pipefail
-          for name in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
-            if [ -z "${!name:-}" ]; then unset "$name"; fi
-          done
-          args=(--ci --target "$MACOS_TARGET" --bundles "app,dmg" --config src-tauri/tauri.package-macos.conf.json)
-          if [ "$UPDATER_ENABLED" = true ]; then
-            if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-              echo "::error::updater enabled but TAURI_SIGNING_PRIVATE_KEY is empty"; exit 1
+          release_sha=$(git -C source rev-parse HEAD)
+          if [ "$release_sha" != "$EXPECTED_RELEASE_SHA" ]; then
+            echo "::error title=Release identity::the tag resolved to an unexpected commit"
+            exit 1
+          fi
+          version=$(jq -r '.version' source/package.json)
+          if [ "v${version}" != "$TAG" ]; then
+            echo "::error title=Release identity::tag ${TAG} and package.json version ${version} disagree"
+            exit 1
+          fi
+          release=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,tagName)
+          if [ "$(jq -r '.isDraft' <<<"$release")" != true ] || [ "$(jq -r '.tagName' <<<"$release")" != "$TAG" ]; then
+            echo "::error title=Release identity::${TAG} does not own a draft Release"
+            exit 1
+          fi
+          {
+            echo "tag=${TAG}"
+            echo "version=${version}"
+            echo "release_sha=${release_sha}"
+            echo "tree_sha=$(git -C source rev-parse 'HEAD^{tree}')"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Resolve and validate the exact candidate run
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_HEAD_SHA: ${{ inputs.candidate_head_sha }}
+          INPUT_PR_NUMBER: ${{ inputs.release_pr_number }}
+          INPUT_RUN_ID: ${{ inputs.candidate_run_id }}
+          RELEASE_SHA: ${{ steps.identity.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=Candidate resolution::$*"; exit 1; }
+          run_id=$INPUT_RUN_ID
+          pr_number=$INPUT_PR_NUMBER
+          head_sha=$INPUT_HEAD_SHA
+          if [ -z "$pr_number" ] || [ -z "$head_sha" ]; then
+            prs=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}/pulls")
+            mapfile -t candidates < <(jq -r '.[]
+              | select(.merged_at != null and .base.ref == "main")
+              | select(.head.ref | startswith("release-please--branches--main--"))
+              | "\(.number)\t\(.head.sha)"' <<<"$prs")
+            [ "${#candidates[@]}" -eq 1 ] || fail "expected one merged release PR for ${RELEASE_SHA}, found ${#candidates[@]}"
+            pr_number=${candidates[0]%%$'\t'*}
+            head_sha=${candidates[0]#*$'\t'}
+          fi
+
+          pr=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")
+          pr_head_sha=$(jq -r '.head.sha' <<<"$pr")
+          if [ "$(jq -r '.merged' <<<"$pr")" != true ] || [ "$(jq -r '.base.ref' <<<"$pr")" != main ] ||
+            [ "$(jq -r '.head.repo.full_name' <<<"$pr")" != "$GITHUB_REPOSITORY" ] ||
+            [[ "$(jq -r '.head.ref' <<<"$pr")" != release-please--branches--main--* ]]; then
+            fail "pull request #${pr_number} is not the merged release PR"
+          fi
+
+          if [ -z "$run_id" ]; then
+            # Any writer can post a status with this context: only the GitHub Actions bot's count,
+            # and only one that names a run (checked below to be a release-candidate.yml run).
+            statuses=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/commits/${head_sha}/statuses?per_page=100" | jq -s 'add')
+            target_url=$(jq -r --arg context "$GATE_CONTEXT" '
+              map(select(.context == $context and .creator.login == "github-actions[bot]" and .creator.type == "Bot"))
+              | sort_by(.created_at) | last
+              | if . != null and .state == "success" then .target_url else "" end' <<<"$statuses")
+            run_prefix="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/"
+            run_id=${target_url#"$run_prefix"}
+            if [ -z "$target_url" ] || [ "$run_id" = "$target_url" ] || ! [[ "$run_id" =~ ^[1-9][0-9]*$ ]]; then
+              fail "no successful ${GATE_CONTEXT} status from github-actions[bot] names a run for ${head_sha}"
             fi
-            jq -n --arg pubkey "$UPDATE_PUBKEY" \
-              '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pubkey}}}' \
-              >"$RUNNER_TEMP/updater-bundle.json"
-            args+=(--config "$RUNNER_TEMP/updater-bundle.json")
           fi
-          # hdiutil on GitHub's macOS images fails now and then; the script retries the bundling.
-          ../../.github/scripts/tauri-bundle-retry.sh "../../target/$MACOS_TARGET/release/bundle" -- "${args[@]}"
-          if [ "$UPDATER_ENABLED" = true ]; then
-            test -s "../../target/$MACOS_TARGET/release/bundle/macos/Voltip.app.tar.gz.sig"
+          if ! [[ "$run_id" =~ ^[1-9][0-9]*$ ]] || ! [[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            fail "candidate identifiers are invalid"
           fi
 
-      # What a Mac that downloads the dmg meets: the ad-hoc seal, the macOS 11 floor, the notices,
-      # this release's version, and a dmg that mounts with the app and the Applications link.
-      - name: Check the app and the dmg
-        env:
-          VERSION: ${{ needs.release-please.outputs.version }}
-        run: .github/scripts/check-macos-bundle.sh "target/$MACOS_TARGET/release/bundle" "$VERSION" "$MACOS_ARCH" --notices
+          run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")
+          run_attempt=$(jq -r '.run_attempt' <<<"$run")
+          workflow_sha=$(jq -r '.head_sha' <<<"$run")
+          if [ "$(jq -r '.path' <<<"$run")" != .github/workflows/release-candidate.yml ] ||
+            [ "$(jq -r '.event' <<<"$run")" != workflow_dispatch ] ||
+            [ "$(jq -r '.head_branch' <<<"$run")" != main ] ||
+            [ "$(jq -r '.head_repository.full_name' <<<"$run")" != "$GITHUB_REPOSITORY" ] ||
+            [ "$(jq -r '.status' <<<"$run")" != completed ] || [ "$(jq -r '.conclusion' <<<"$run")" != success ] ||
+            ! [[ "$run_attempt" =~ ^[1-9][0-9]*$ ]] || ! [[ "$workflow_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            fail "run ${run_id} is not a successful release-candidate.yml run of main"
+          fi
+          {
+            echo "run_id=${run_id}"
+            echo "run_attempt=${run_attempt}"
+            echo "pr_number=${pr_number}"
+            echo "head_sha=${head_sha}"
+            echo "pr_head_sha=${pr_head_sha}"
+            echo "workflow_sha=${workflow_sha}"
+          } >>"$GITHUB_OUTPUT"
 
-      - name: Collect bundles and evidence
-        env:
-          UPDATER_ENABLED: ${{ needs.preflight.outputs.updater_enabled }}
-          VERSION: ${{ needs.release-please.outputs.version }}
-        run: >-
-          python3 scripts/release/updater-json.py collect
-          --target "$MACOS_TARGET"
-          --bundle-dir "target/$MACOS_TARGET/release/bundle"
-          --bundles dmg,app
-          --updater-bundle app
-          --updater "$UPDATER_ENABLED"
-          --rename "Voltip.app.tar.gz=Voltip_${VERSION}_${MACOS_ARCH}.app.tar.gz"
-          --out release-assets/dist
-          --evidence "release-assets/evidence/$MACOS_TARGET.json"
-
-      - name: Upload bundles
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: tauri-${{ env.MACOS_TARGET }}
-          path: release-assets/
-          if-no-files-found: error
-          retention-days: 1
-
-  # No project or dependency code runs here: verify every .sig against the pubkey the shipped
-  # app trusts, write latest.json once, attest and attach everything to the draft, then verify
-  # the remote bytes.
-  updater:
-    name: Updater manifest, attestation, assets
-    needs: [release-please, preflight, bundle-windows, bundle-linux, bundle-macos]
-    if: needs.release-please.outputs.build_artifacts == 'true'
+  promote:
+    name: Promote sealed candidate
+    needs: [trust, release_please, resolve_release]
+    if: always() && !cancelled() && needs.trust.result == 'success' && needs.resolve_release.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    environment: release
+    # Downloads, verifies, uploads, publishes: no compiler, no package manager, no project code
+    # (contract-tested). id-token is for the two files written here, latest.json and SHA256SUMS.
     permissions:
+      actions: read
+      attestations: write
       contents: write
       id-token: write
-      attestations: write
-    environment: release
     steps:
-      - name: Checkout release tooling
+      - name: Checkout trusted release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.workflow_sha }}
+          path: .release-tooling
           persist-credentials: false
 
-      - name: Download every bundle leg
+      - name: Download the candidate by its run id
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: tauri-*
-          path: bundle
-          merge-multiple: true
+          name: release-candidate
+          path: candidate
+          run-id: ${{ needs.resolve_release.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+
+      # Every identity, target, size and digest; then the promotable files, from the verified
+      # manifest only (nothing below globs the downloaded directory).
+      - name: Verify the candidate against the release
+        id: verify
+        env:
+          CANDIDATE_HEAD_SHA: ${{ needs.resolve_release.outputs.candidate_head_sha }}
+          CANDIDATE_RUN_ATTEMPT: ${{ needs.resolve_release.outputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ needs.resolve_release.outputs.candidate_run_id }}
+          CANDIDATE_WORKFLOW_SHA: ${{ needs.resolve_release.outputs.candidate_workflow_sha }}
+          RELEASE_PR_HEAD_SHA: ${{ needs.resolve_release.outputs.release_pr_head_sha }}
+          RELEASE_PR_NUMBER: ${{ needs.resolve_release.outputs.release_pr_number }}
+          TAG: ${{ needs.resolve_release.outputs.tag }}
+          TREE_SHA: ${{ needs.resolve_release.outputs.tree_sha }}
+          UPDATER_EXPECTED: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' }}
+          VERSION: ${{ needs.resolve_release.outputs.version }}
+        run: |
+          set -euo pipefail
+          verify=(
+            python3 .release-tooling/scripts/release/candidate.py verify
+            --candidate-root candidate
+            --targets-file .release-tooling/.github/release-targets.json
+            --expected-repository "$GITHUB_REPOSITORY"
+            --expected-workflow-path .github/workflows/release-candidate.yml
+            --expected-workflow-ref refs/heads/main
+            --expected-workflow-sha "$CANDIDATE_WORKFLOW_SHA"
+            --expected-run-id "$CANDIDATE_RUN_ID"
+            --expected-run-attempt "$CANDIDATE_RUN_ATTEMPT"
+            --expected-pr-number "$RELEASE_PR_NUMBER"
+            --expected-head-sha "$CANDIDATE_HEAD_SHA"
+            --expected-pr-head-sha "$RELEASE_PR_HEAD_SHA"
+            --expected-tree-sha "$TREE_SHA"
+            --expected-version "$VERSION"
+            --expected-tag "$TAG"
+            --expected-updater "$UPDATER_EXPECTED"
+          )
+          "${verify[@]}"
+          "${verify[@]}" --print-files >"$RUNNER_TEMP/candidate-files.txt"
+          cat "$RUNNER_TEMP/candidate-files.txt"
+          # The candidate and the release agree on the updater (verified above); the steps below
+          # cannot read secrets in `if:`.
+          echo "updater_enabled=${UPDATER_EXPECTED}" >>"$GITHUB_OUTPUT"
+
+      - name: Verify the provenance of every candidate file
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_SHA: ${{ needs.resolve_release.outputs.candidate_workflow_sha }}
+        run: |
+          set -euo pipefail
+          signer="${GITHUB_REPOSITORY}/.github/workflows/release-candidate.yml"
+          mapfile -t subjects <"$RUNNER_TEMP/candidate-files.txt"
+          [ "${#subjects[@]}" -ge 2 ] || { echo "::error title=Provenance::no candidate files listed"; exit 1; }
+          for subject in "${subjects[@]}"; do
+            gh attestation verify "candidate/${subject}" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$signer" --signer-digest "$WORKFLOW_SHA" --source-digest "$WORKFLOW_SHA" \
+              --deny-self-hosted-runners >/dev/null
+            echo "attested: ${subject}"
+          done
 
       - name: Install minisign
         run: |
@@ -831,115 +477,79 @@ jobs:
       # verifies with minisign against the pubkey compiled into the app (VOLTIP_UPDATE_PUBKEY). A
       # signature from a rotated or wrong key stops the release here, not on user devices.
       - name: Verify every updater signature against the pubkey the app trusts
-        if: needs.preflight.outputs.updater_enabled == 'true'
+        if: steps.verify.outputs.updater_enabled == 'true'
         env:
           PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
         run: >-
-          python3 .github/scripts/tauri-release.py verify-signatures
-          --dist bundle/dist --pubkey "$PUBKEY" --expect-updater
+          python3 .release-tooling/.github/scripts/tauri-release.py verify-signatures
+          --dist candidate/dist --pubkey "$PUBKEY" --expect-updater
 
-      - name: Read release notes from the draft
+      - name: Read the release notes from the draft
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
-        run: gh release view "$TAG" --repo "$REPO" --json body --jq .body >body.md
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve_release.outputs.tag }}
+        run: gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body >"$RUNNER_TEMP/notes.md"
 
-      # Single writer, after every leg: URLs are this release's own assets
-      # (github.com/<repo>/releases/download/<tag>/<asset>, never a rolling path), all four
-      # platforms required, bytes cross-checked with the evidence.
-      - name: Build latest.json
-        if: needs.preflight.outputs.updater_enabled == 'true'
+      # publish/: the verified candidate files, latest.json (single writer; every URL an asset of
+      # this release, all four platforms required, bytes cross-checked with the evidence) and
+      # SHA256SUMS over all of them.
+      - name: Stage the release assets
         env:
-          REPO: ${{ github.repository }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
-          VERSION: ${{ needs.release-please.outputs.version }}
-        run: >-
-          python3 scripts/release/updater-json.py write
-          --dist bundle/dist
-          --evidence-dir bundle/evidence
-          --base-url "https://github.com/${REPO}/releases/download"
-          --tag "$TAG"
-          --version "$VERSION"
-          --notes-file body.md
-          --require-platform windows-x86_64
-          --require-platform linux-x86_64
-          --require-platform darwin-aarch64
-          --require-platform darwin-x86_64
-          --out bundle/dist/latest.json
-
-      - name: Generate SHA256SUMS
-        working-directory: bundle/dist
+          TAG: ${{ needs.resolve_release.outputs.tag }}
+          UPDATER_ENABLED: ${{ steps.verify.outputs.updater_enabled }}
+          VERSION: ${{ needs.resolve_release.outputs.version }}
         run: |
           set -euo pipefail
-          files=$(find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort)
-          if [ -z "$files" ]; then
-            echo "::error::no shipped files were downloaded"
-            exit 1
+          mkdir publish
+          while IFS= read -r path; do
+            cp "candidate/${path}" publish/
+          done <"$RUNNER_TEMP/candidate-files.txt"
+          if [ "$UPDATER_ENABLED" = true ]; then
+            python3 .release-tooling/scripts/release/updater-json.py write \
+              --dist candidate/dist --evidence-dir candidate/evidence \
+              --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download" \
+              --tag "$TAG" --version "$VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
+              --require-platform windows-x86_64 --require-platform linux-x86_64 \
+              --require-platform darwin-aarch64 --require-platform darwin-x86_64 \
+              --out publish/latest.json
           fi
-          printf '%s\n' "$files" | xargs sha256sum >"$RUNNER_TEMP/SHA256SUMS"
-          mv "$RUNNER_TEMP/SHA256SUMS" SHA256SUMS
-          cat SHA256SUMS
+          (cd publish && find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort | xargs sha256sum >"$RUNNER_TEMP/SHA256SUMS")
+          mv "$RUNNER_TEMP/SHA256SUMS" publish/SHA256SUMS
+          cat publish/SHA256SUMS
 
-      - name: Attest shipped files
+      - name: Attest latest.json
+        if: steps.verify.outputs.updater_enabled == 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: bundle/dist/*
+          subject-path: publish/latest.json
 
-      - name: Attach assets to the draft
+      - name: Attest SHA256SUMS
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: publish/SHA256SUMS
+
+      - name: Upload the assets while the release is a draft
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve_release.outputs.tag }}
         run: |
           set -euo pipefail
-          gh release upload "$TAG" --repo "$REPO" --clobber bundle/dist/*
+          # The staged set: the candidate files by name, then latest.json (with the updater) and SHA256SUMS.
+          uploads=()
+          while IFS= read -r path; do
+            uploads+=("publish/${path##*/}")
+          done <"$RUNNER_TEMP/candidate-files.txt"
+          if [ -f publish/latest.json ]; then uploads+=(publish/latest.json); fi
+          uploads+=(publish/SHA256SUMS)
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${uploads[@]}"
 
-      - name: Verify remote assets against SHA256SUMS
+      # Re-verifies every remote asset (name, size, sha256 digest), exactly the staged set, then
+      # flips draft=false and adds --latest unless the release is a prerelease.
+      - name: Verify the remote bytes and publish the draft
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          TAG: ${{ needs.resolve_release.outputs.tag }}
         run: >-
-          bash .github/scripts/publish-release-draft.sh --verify-only
-          --checksums bundle/dist/SHA256SUMS --expect-name SHA256SUMS --exact
-
-      - name: Upload checksums for the publish job
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: checksums
-          path: bundle/dist/SHA256SUMS
-          if-no-files-found: error
-          retention-days: 1
-
-  publish-release:
-    name: Publish Release
-    needs: [release-please, updater]
-    if: needs.release-please.outputs.build_artifacts == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    environment: release
-    steps:
-      - name: Checkout release tooling
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - name: Download checksums
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: checksums
-
-      # Re-verifies every remote asset (name, size, sha256 digest), then flips draft=false and
-      # adds --latest unless the release is a prerelease (a pre-release line is never latest).
-      - name: Publish the completed draft
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
-        run: >-
-          bash .github/scripts/publish-release-draft.sh --publish
-          --checksums SHA256SUMS --expect-name SHA256SUMS --exact
+          bash .release-tooling/.github/scripts/publish-release-draft.sh --publish
+          --checksums publish/SHA256SUMS --expect-name SHA256SUMS --exact

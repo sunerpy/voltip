@@ -33,6 +33,15 @@ RELEASE_FILES = [
 ]
 
 
+# The four marks of release-please's own pull request, as ci.yml passes them from the event.
+RELEASE_PR = {
+    "PR_AUTHOR": "github-actions[bot]",
+    "PR_HEAD_REPO": "example/voltip",
+    "PR_HEAD_REF": "release-please--branches--main--components--voltip-workspace",
+    "PR_LABELS": '["autorelease: pending"]',
+}
+
+
 class ChangedCode(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -78,8 +87,26 @@ class ChangedCode(unittest.TestCase):
     def test_the_pushed_release_commit_runs_no_build(self) -> None:
         self.assertEqual(self.run_script("push", RELEASE_FILES), "code=false")
 
-    def test_the_release_pull_request_still_runs_the_full_ci(self) -> None:
+    def test_release_pleases_pull_request_runs_no_build(self) -> None:
+        # The release candidate builds and checks every package from this exact head.
+        self.assertEqual(self.run_script("pull_request", RELEASE_FILES, **RELEASE_PR), "code=false")
+
+    def test_the_same_diff_from_anyone_else_runs_the_full_ci(self) -> None:
+        for name, change in (
+            ("a person", {"PR_AUTHOR": "sunerpy"}),
+            ("a fork", {"PR_HEAD_REPO": "someone/voltip"}),
+            ("another branch", {"PR_HEAD_REF": "release-please-lookalike"}),
+            ("no label", {"PR_LABELS": "[]"}),
+            ("a tagged label", {"PR_LABELS": '["autorelease: tagged"]'}),
+        ):
+            with self.subTest(name):
+                env = {**RELEASE_PR, **change}
+                self.assertEqual(self.run_script("pull_request", RELEASE_FILES, **env), "code=true")
         self.assertEqual(self.run_script("pull_request", RELEASE_FILES), "code=true")
+
+    def test_release_pleases_pull_request_with_code_runs_the_full_ci(self) -> None:
+        code = [*RELEASE_FILES, {"filename": "apps/desktop/src/App.tsx", "patch": "@@\n+x"}]
+        self.assertEqual(self.run_script("pull_request", code, **RELEASE_PR), "code=true")
 
     def test_a_package_json_that_changes_more_than_the_version_is_code(self) -> None:
         files = [

@@ -107,7 +107,7 @@ To check a download yourself, compare it with its line in `SHA256SUMS` (`sha256s
 
 ```bash
 gh attestation verify Voltip_0.0.4_amd64.deb --repo sunerpy/voltip \
-  --signer-workflow sunerpy/voltip/.github/workflows/release.yml
+  --signer-workflow sunerpy/voltip/.github/workflows/release-candidate.yml
 ```
 
 ## Quick start

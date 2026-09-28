@@ -7,8 +7,9 @@ meanings and where each value comes from, never a value.
 
 CI (`ci.yml`) needs almost none of them: its packages are built without the built-in
 engines on purpose, so pull requests from forks run the same jobs as the default branch. The
-release workflow (`release.yml`) needs the engine secrets and, when the updater is on, the signing
-key.
+release candidate workflow (`release-candidate.yml`, which builds every package once) needs the
+engine secrets and, when the updater is on, the signing key; the release controller (`release.yml`)
+needs only the updater pubkey, to verify the signatures before it publishes.
 
 ## Setup
 
@@ -35,13 +36,13 @@ gh secret list --repo "$repo"
 
 | Secret | Meaning | Source |
 |---|---|---|
-| `VOLTIP_PRODUCTION_HOSTS` | Words the production-host guard looks for: the real host names, or their distinctive labels, space- or comma-separated, at least 4 characters each. CI's `verify` job and the release `preflight` run the guard with `--require`; a hit prints `path:line` only. Pull requests from forks skip that step (they get no secrets); `make verify` runs the guard with the local `.env.build`. | your deployment |
+| `VOLTIP_PRODUCTION_HOSTS` | Words the production-host guard looks for: the real host names, or their distinctive labels, space- or comma-separated, at least 4 characters each. CI's `verify` job and the release candidate's `prepare` job run the guard with `--require`; a hit prints `path:line` only. Pull requests from forks skip that step (they get no secrets); `make verify` runs the guard with the local `.env.build`. | your deployment |
 | `CODECOV_TOKEN` | Codecov upload token (the `codecov` job in `ci.yml`). Forks upload without it, which Codecov accepts for public repositories. Reporting only: the merge-blocking floors are `make verify`'s. | Codecov → repository settings |
 
 ## Built-in engine defaults (release only)
 
-`option_env!` reads these when the shells compile (`docs/dictation.md` §3). `release.yml`'s
-`preflight-engines` fails the release before any build when one of the required ones is empty;
+`option_env!` reads these when the shells compile (`docs/dictation.md` §3). The `prepare` job of
+`release-candidate.yml` fails the release before any build when one of the required ones is empty;
 `scripts/lib/require-builtin-engines.sh` applies the same rule to local packaging, unless
 `VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1` asks for an engine-less package on purpose (CI does). The
 `verify` job never receives them: `scripts/verify-all.sh` unsets them because its tests assert the
@@ -83,7 +84,7 @@ latest, so installed copies are offered an update only when a stable release is 
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Its password; an empty string when it has none. | same command |
 
 Do not put `bundle.createUpdaterArtifacts` in `tauri.conf.json`: local `make windows-x64` would
-then demand the private key. The release `preflight` refuses such a configuration.
+then demand the private key. The release candidate's `prepare` job refuses such a configuration.
 
 ## Repository settings the release relies on
 

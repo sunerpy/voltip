@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # Decide whether a CI run needs the build, test and platform jobs: writes code=true|false to
 # $GITHUB_OUTPUT. false only when every changed file is documentation (docs/**, *.md, LICENSE*),
-# or, on a push, when the rest only bumps a version: the commit release-please's pull request
-# lands on main (`chore: release x.y.z`) changes CHANGELOG.md, the "version" of the package.json
-# files and .release-please-manifest.json. That pull request already ran the full CI on the same
-# tree, and the release run builds and checks every package from it, so the push runs verify-web
-# only. Anything else (a merge queue, a new branch, an API failure, 300 or more files in a push)
-# counts as code, so the full CI runs.
+# or when the rest only bumps a version and the change is release-please's own: the pull request
+# release-please opens (author github-actions[bot], branch release-please--branches--main--*,
+# label "autorelease: pending") and the commit it lands on main (`chore: release x.y.z`) change
+# CHANGELOG.md, the "version" of the package.json files and .release-please-manifest.json. The
+# release candidate (release-candidate.yml) builds and checks every package from that exact head
+# after proving the same delta, and the head's base already passed CI, so those runs take
+# verify-web only. The same diff from anyone else, or without the label, runs everything, as does
+# a new branch, an API failure, or 300 or more files in a push.
 #
 # Environment: EVENT (github.event_name), REPO, PR (pull request number), BEFORE / AFTER (push),
-# GH_TOKEN for the REST API.
+# PR_AUTHOR / PR_HEAD_REPO / PR_HEAD_REF / PR_LABELS (pull request; labels as a JSON array of
+# names), GH_TOKEN for the REST API.
 set -euo pipefail
 out=${GITHUB_OUTPUT:-/dev/stdout}
 decide() {
@@ -25,6 +28,13 @@ version_only() {
   [ -n "$changed" ] || return 1
   ! grep -Eqv '^[+-][[:space:]]*"(version|\.)"[[:space:]]*:[[:space:]]*"[0-9A-Za-z.+-]+",?[[:space:]]*$' <<<"$changed"
 }
+# release-please's pull request, recognised by all four marks (a fork cannot be github-actions[bot]).
+release_pr=0
+if [ "${EVENT:?}" = pull_request ] && [ "${PR_AUTHOR:-}" = "github-actions[bot]" ] &&
+  [ "${PR_HEAD_REPO:-}" = "${REPO:?}" ] && [[ ${PR_HEAD_REF:-} == release-please--branches--main--* ]] &&
+  jq -e 'index("autorelease: pending") != null' <<<"${PR_LABELS:-[]}" >/dev/null 2>&1; then
+  release_pr=1
+fi
 case "${EVENT:?}" in
   pull_request)
     entries=$(gh api "repos/${REPO:?}/pulls/${PR:?}/files" --paginate --jq '.[] | {filename, patch}' | jq -sc .) || decide true "could not list the pull request's files"
@@ -45,8 +55,8 @@ while IFS= read -r file; do
     docs/* | *.md | LICENSE | LICENSE.*) ;;
     package.json | */package.json | .release-please-manifest.json)
       patch=$(jq -r --arg f "$file" '.[] | select(.filename == $f) | .patch // ""' <<<"$entries")
-      if [ "$EVENT" != push ] || ! version_only "$patch"; then
-        decide true "$file changes more than a pushed version"
+      if { [ "$EVENT" != push ] && [ "$release_pr" != 1 ]; } || ! version_only "$patch"; then
+        decide true "$file changes more than a released version"
       fi
       bumped=1
       ;;

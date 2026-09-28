@@ -11,9 +11,14 @@
 # host guard, formatting) and skips the builds, which CI Success accepts only in that case. Windows packages are cross-built from Linux exactly as `make windows-x64`
 # does locally (cargo-xwin + lld-link + llvm-rc + clang + makensis), then run on a real Windows
 # runner by `windows-native`. macOS builds and runs on both processors in `macos` (pushes to main
-# and on demand). The commit a release pull request lands on main only bumps versions: it runs
-# verify-web, since its pull request ran the full CI on the same tree and the release run builds
-# every package from it.
+# and on demand). release-please's pull request and the commit it lands on main only bump
+# versions: they run verify-web, since the release candidate (release-candidate.yml) builds and
+# checks every package from that exact head, whose base passed this CI.
+#
+# The main ruleset requires the `Release candidate` commit status on a pull request's head:
+# release-candidate.yml writes it for release-please's pull request, `candidate-status` writes
+# "not a release PR" for every other one. There is no merge queue (the ruleset has no merge_queue
+# rule, and nothing would write that status for a merge group), so there is no merge_group trigger.
 #
 # No job here receives the built-in engine values (docs/dictation.md §3): the gates are hermetic,
 # the CI package is engine-less on purpose (VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1) and the smokes use a
@@ -27,7 +32,6 @@ on:
   push:
     branches: [main]
   pull_request:
-  merge_group:
   # A full run on any branch, the macOS jobs included (they skip pull requests).
   workflow_dispatch:
 
@@ -57,8 +61,8 @@ env:
   NODE_MAJOR: "22"
 
 jobs:
-  # Documentation-only changes skip the build, test and platform jobs (scripts: changed-code.sh);
-  # a merge queue, a new branch or any doubt runs everything.
+  # Documentation-only changes and release-please's version bumps skip the build, test and
+  # platform jobs (scripts: changed-code.sh); a new branch or any doubt runs everything.
   changes:
     name: changes · code or documentation only
     runs-on: ubuntu-24.04
@@ -82,9 +86,40 @@ jobs:
           EVENT: ${{ github.event_name }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
         run: .github/scripts/changed-code.sh
+
+  # The `Release candidate` status the main ruleset requires, for a pull request that is not
+  # release-please's: release-candidate.yml writes it for that one, after building its head.
+  # release-please's pull request is recognised by author and branch, not by its label, which
+  # arrives after the `opened` event. A fork's or Dependabot's read-only token cannot write a
+  # status: the job warns, and the owner merges such a pull request past the rule.
+  candidate-status:
+    name: Release candidate · not a release PR
+    if: >-
+      github.event_name == 'pull_request' &&
+      !(github.event.pull_request.user.login == 'github-actions[bot]' &&
+        startsWith(github.event.pull_request.head.ref, 'release-please--branches--main--'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      - name: Mark the head as not a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if ! gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f state=success -f context='Release candidate' -f description='not a release PR' \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" >/dev/null; then
+            echo "::warning title=Release candidate::this token cannot write commit statuses (a fork or Dependabot); merging needs the owner's bypass"
+          fi
 
   # The Rust half of scripts/verify-all.sh: formatting, features, clippy, the cross-checks, the test
   # suite under coverage (the one test run), cargo-deny and the IPC e2e.

@@ -76,7 +76,7 @@ release 里的安装包内置了默认的识别和润色服务，装好就能直
 
 ```bash
 gh attestation verify Voltip_0.0.4_amd64.deb --repo sunerpy/voltip \
-  --signer-workflow sunerpy/voltip/.github/workflows/release.yml
+  --signer-workflow sunerpy/voltip/.github/workflows/release-candidate.yml
 ```
 
 ## 快速开始
