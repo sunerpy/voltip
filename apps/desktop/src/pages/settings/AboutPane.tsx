@@ -10,17 +10,20 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { openProjectLink } from "../../app/project-links";
+import { useRouter } from "../../app/router";
 import { useShell } from "../../app/shell-context";
 import { UpdateControls } from "./General";
 
 /** Settings · 关于: the version the core reports (`state.app_version`, the shells' package
  *  version), the license, where the catalogue's local models come from, the updater, and the
- *  project's repository and issue tracker (opened by the shell, `project_link_open`). */
+ *  project's repository (opened by the shell, `project_link_open`), and the way to the in-app 反馈
+ *  page. */
 export function AboutPane() {
   const { t } = useI18n();
   const state = useUiState();
   const { backend } = useBackend();
   const shell = useShell();
+  const { navigate } = useRouter();
   const open = (link: ProjectLink) => {
     openProjectLink(backend, shell, link);
   };
@@ -82,17 +85,19 @@ export function AboutPane() {
             {t("settings.brief.about.open")}
           </Button>
         </StatusRow>
+        {/* The same in-app 反馈 page the sidebar opens (user feedback 2026-09-28: this row used to
+            send people to GitHub instead). */}
         <StatusRow
           label={t("settings.brief.about.feedback")}
           help={t("settings.brief.about.feedbackHelp")}>
           <Button
             size="sm"
-            icon="external"
-            aria-label={t("settings.brief.about.feedback")}
+            icon="chat"
+            data-testid="about-feedback"
             onClick={() => {
-              open("feedback");
+              navigate({ name: "feedback" });
             }}>
-            {t("settings.brief.about.open")}
+            {t("settings.brief.about.writeFeedback")}
           </Button>
         </StatusRow>
       </SettingsRows>

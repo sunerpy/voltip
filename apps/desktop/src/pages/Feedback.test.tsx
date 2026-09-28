@@ -1,9 +1,20 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MOCK_FEEDBACK_MS, MockBackend, sampleDevices } from "@voltip/shared/mock";
-import { zhT } from "@voltip/shared";
+import { FEEDBACK_MAX_VIDEO_BYTES, zhT } from "@voltip/shared";
 import { renderApp } from "../test/render";
-import { diagnosticValue, feedbackError } from "./Feedback";
+import {
+  attachmentError,
+  attachmentType,
+  diagnosticValue,
+  feedbackError,
+  precheckAttachment,
+} from "./Feedback";
+
+/** A file of `size` bytes; the bytes are only read when the page stages it. */
+function file(name: string, type: string, size = 4): File {
+  return new File([new Uint8Array(size)], name, { type });
+}
 
 function backend(options: ConstructorParameters<typeof MockBackend>[0] = {}) {
   return new MockBackend({
@@ -110,6 +121,138 @@ describe("the 反馈 page", () => {
     expect(within(page).queryByTestId("feedback-send")).toBeNull();
     await user.click(within(page).getByRole("button", { name: "在 GitHub 上反馈" }));
     expect(core.linksOpened).toEqual(["feedback"]);
+  });
+
+  it("regression: screenshots and recordings go along with the report, picked or pasted, and each can be removed (user feedback 2026-09-28)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const core = backend();
+    renderApp({ backend: core });
+    const { user, page } = await openFeedback();
+    const input = within(page).getByTestId("feedback-attach-input");
+    expect(input).toHaveAttribute("accept", expect.stringContaining("video/quicktime"));
+    expect(within(page).getByTestId("feedback-attachments")).toHaveTextContent(
+      "最多 3 个：图片（PNG、JPEG、GIF、WebP）不超过 5 MB，视频（MP4、WebM、MOV）不超过 20 MB，合计不超过 25 MB。也可以直接粘贴截图。",
+    );
+    await user.upload(input, [
+      file("设置页.png", "image/png", 2048),
+      file("录屏.mp4", "video/mp4"),
+    ]);
+    await waitFor(() => {
+      expect(within(page).getAllByTestId("feedback-attachment")).toHaveLength(2);
+    });
+    const rows = within(page).getAllByTestId("feedback-attachment");
+    expect(rows[0]).toHaveTextContent("设置页.png");
+    expect(rows[0]).toHaveTextContent("2 KB");
+    expect(within(rows[0] as HTMLElement).getByRole("img", { name: "图片" })).toBeInTheDocument();
+    expect(within(rows[1] as HTMLElement).getByRole("img", { name: "视频" })).toBeInTheDocument();
+    // A pasted screenshot is staged like a picked one.
+    fireEvent.paste(within(page).getByRole("textbox", { name: "描述" }), {
+      clipboardData: { files: [file("image.png", "image/png")] },
+    });
+    await waitFor(() => {
+      expect(within(page).getAllByTestId("feedback-attachment")).toHaveLength(3);
+    });
+    expect(within(page).getByTestId("feedback-attach")).toBeDisabled();
+    await user.click(within(page).getByRole("button", { name: "移除 录屏.mp4" }));
+    expect(within(page).getAllByTestId("feedback-attachment")).toHaveLength(2);
+    expect(core.feedbackStaged.map((a) => a.name)).toEqual(["设置页.png", "image.png"]);
+    await user.type(within(page).getByRole("textbox", { name: "描述" }), "设置页错位");
+    await user.click(within(page).getByTestId("feedback-send"));
+    act(() => {
+      vi.advanceTimersByTime(MOCK_FEEDBACK_MS);
+    });
+    expect(await screen.findByText("反馈已发送，谢谢")).toBeInTheDocument();
+    expect(core.feedbackSent).toEqual([
+      {
+        kind: "bug",
+        message: "设置页错位",
+        contact: null,
+        locale: "zh-CN",
+        attachments: ["attachment-1", "attachment-3"],
+      },
+    ]);
+    expect(within(page).queryByTestId("feedback-attachment")).toBeNull();
+    expect(core.feedbackStaged).toEqual([]);
+  });
+
+  it("regression: a file over the limit is refused before it is read, a wrong type says what is taken, and leaving the page drops what was staged", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const core = backend();
+    const add = vi.spyOn(core, "feedbackAttachmentAdd");
+    renderApp({ backend: core });
+    const { user, page } = await openFeedback();
+    const input = within(page).getByTestId("feedback-attach-input");
+    const big = file("会议.mov", "video/quicktime", 8);
+    Object.defineProperty(big, "size", { value: FEEDBACK_MAX_VIDEO_BYTES + 1 });
+    const read = vi.spyOn(big, "arrayBuffer");
+    await user.upload(input, big);
+    expect(await within(page).findByTestId("feedback-attach-error")).toHaveTextContent(
+      "「会议.mov」不能附上：图片不超过 5 MB，视频不超过 20 MB，也不能是空文件。",
+    );
+    expect(read).not.toHaveBeenCalled();
+    expect(add).not.toHaveBeenCalled();
+    // `accept` is a hint the picker may ignore; a document is still turned away.
+    const lax = userEvent.setup({
+      applyAccept: false,
+      advanceTimers: (ms) => vi.advanceTimersByTime(ms),
+    });
+    await lax.upload(input, file("日志.txt", "text/plain"));
+    expect(within(page).getByTestId("feedback-attach-error")).toHaveTextContent(
+      "「日志.txt」不能附上：只支持 PNG、JPEG、GIF、WebP 图片和 MP4、WebM、MOV 视频。",
+    );
+    await user.upload(input, file("ok.webp", "image/webp"));
+    await waitFor(() => {
+      expect(core.feedbackStaged).toHaveLength(1);
+    });
+    expect(within(page).queryByTestId("feedback-attach-error")).toBeNull();
+    await user.click(within(screen.getByRole("navigation", { name: "主导航" })).getByText("首页"));
+    await waitFor(() => {
+      expect(core.feedbackStaged).toEqual([]);
+    });
+  });
+
+  it("regression: when the report went out but a file did not follow, the page says so and does not offer to send it twice", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const core = backend({ feedback: "attachments" });
+    renderApp({ backend: core });
+    const { user, page } = await openFeedback();
+    await user.upload(
+      within(page).getByTestId("feedback-attach-input"),
+      file("a.gif", "image/gif"),
+    );
+    await waitFor(() => {
+      expect(within(page).getAllByTestId("feedback-attachment")).toHaveLength(1);
+    });
+    await user.type(within(page).getByRole("textbox", { name: "描述" }), "动图里是问题");
+    await user.click(within(page).getByTestId("feedback-send"));
+    act(() => {
+      vi.advanceTimersByTime(MOCK_FEEDBACK_MS);
+    });
+    expect(await within(page).findByTestId("feedback-error")).toHaveTextContent(
+      "反馈已发送，但附件没有传完整。",
+    );
+    expect(within(page).getByRole("textbox", { name: "描述" })).toHaveValue("");
+    expect(within(page).queryByTestId("feedback-attachment")).toBeNull();
+    expect(core.feedbackSent).toHaveLength(1);
+  });
+
+  it("types a file without one by its extension and checks the limits before reading it", () => {
+    expect(attachmentType({ name: "a.PNG", type: "" })).toBe("image/png");
+    expect(attachmentType({ name: "clip.mov", type: "" })).toBe("video/quicktime");
+    expect(attachmentType({ name: "noext", type: "" })).toBe("");
+    expect(attachmentType({ name: "a.png", type: "image/x-icon" })).toBe("image/x-icon");
+    const staged = [{ id: "1", name: "a.mp4", type: "video/mp4", size: FEEDBACK_MAX_VIDEO_BYTES }];
+    expect(precheckAttachment("image/png", 1, [])).toBeUndefined();
+    expect(precheckAttachment("image/heic", 1, [])).toBe("attachment_type");
+    expect(precheckAttachment("video/webm", FEEDBACK_MAX_VIDEO_BYTES, staged)).toBe(
+      "attachment_total",
+    );
+    expect(precheckAttachment("image/png", 1, [...staged, ...staged, ...staged])).toBe(
+      "attachment_too_many",
+    );
+    expect(attachmentError(new Error("attachment_total"))).toBe("attachment_total");
+    expect(attachmentError(new Error("feedback: 请在电脑上反馈"))).toBe("attachment_type");
+    expect(feedbackError(new Error("storage_full"))).toBe("storage_full");
   });
 
   it("words the diagnostics and maps the shell's refusals", () => {

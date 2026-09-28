@@ -43,7 +43,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 78] = [
+pub const COMMANDS: [&str; 81] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -89,6 +89,9 @@ pub const COMMANDS: [&str; 78] = [
     "project_link_open",
     "feedback_diagnostics",
     "feedback_submit",
+    "feedback_attachment_add",
+    "feedback_attachment_remove",
+    "feedback_attachments_clear",
     "history_delete",
     "history_clear",
     "history_star",
@@ -429,21 +432,59 @@ fn feedback_diagnostics(bridge: tauri::State<'_, Bridge>, locale: String) -> fee
     feedback::FeedbackInfo { configured: feedback::feedback_url().is_some(), diagnostics: feedback::diagnostics(&bridge.state(), &locale, session) }
 }
 
-/// Post the 反馈 dialog's report with the diagnostics it showed; the error is the reason's wire
-/// name (`not_configured`, `invalid`, `rate_limited`, …), never the endpoint.
+/// Post the 反馈 page's report with the diagnostics it showed and the attachments it staged; the
+/// error is the reason's wire name (`not_configured`, `invalid`, `rate_limited`, …), never the
+/// endpoint. The staged files are forgotten once the report went out (`attachments`: it did, but
+/// a file's bytes did not all follow).
 #[tauri::command]
 async fn feedback_submit(
     bridge: tauri::State<'_, Bridge>,
+    staged: tauri::State<'_, feedback::Attachments>,
     kind: feedback::FeedbackKind,
     message: String,
     contact: Option<String>,
     locale: String,
+    attachments: Option<Vec<String>>,
 ) -> Result<feedback::Receipt, String> {
     let url = feedback::feedback_url().ok_or_else(|| feedback::SendError::NotConfigured.as_str().to_owned())?;
     let (message, contact) = feedback::check(&message, contact.as_deref()).map_err(|e| e.as_str().to_owned())?;
+    let ids = attachments.unwrap_or_default();
+    let files = staged.pick(&ids).map_err(|e| e.as_str().to_owned())?;
     let session = hotkey::linux_session().map(|s| s.kind.to_string());
     let diagnostics = feedback::diagnostics(&bridge.state(), &locale, session);
-    feedback::send(url, feedback::feedback_token(), kind, &message, contact.as_deref(), &diagnostics).await.map_err(|e| e.as_str().to_owned())
+    let sent = feedback::send(url, feedback::feedback_token(), kind, &message, contact.as_deref(), &diagnostics, &files).await;
+    // `Attachments`: the report itself went out, so its files are done with too.
+    if matches!(sent, Ok(_) | Err(feedback::SendError::Attachments)) {
+        staged.forget(&ids);
+    }
+    sent.map_err(|e| e.as_str().to_owned())
+}
+
+/// Stage a screenshot or a screen recording for the next report (docs/feedback.md): the raw bytes
+/// as the IPC body, the file name (`x-voltip-name`, percent-encoded) and the MIME type
+/// (`x-voltip-type`) as headers. The error is the refusal's wire name (`attachment_type`,
+/// `attachment_too_large`, …).
+#[tauri::command]
+fn feedback_attachment_add(request: tauri::ipc::Request<'_>, staged: tauri::State<'_, feedback::Attachments>) -> Result<feedback::StagedAttachment, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err(feedback::AttachError::Type.as_str().to_owned());
+    };
+    let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok()).unwrap_or_default();
+    let name = feedback::percent_decode(header("x-voltip-name"));
+    staged.add(&name, header("x-voltip-type"), bytes.clone()).map_err(|e| e.as_str().to_owned())
+}
+
+/// Drop a staged attachment (the page's ×).
+#[tauri::command]
+fn feedback_attachment_remove(staged: tauri::State<'_, feedback::Attachments>, id: String) {
+    staged.remove(&id);
+}
+
+/// Drop every staged attachment: the 反馈 page opens with none and takes its files along when
+/// it is left, so a reloaded page cannot leave files behind that count against the limits.
+#[tauri::command]
+fn feedback_attachments_clear(staged: tauri::State<'_, feedback::Attachments>) {
+    staged.clear();
 }
 
 #[tauri::command]
@@ -825,6 +866,7 @@ pub fn attach_bridge<R: Runtime>(
     app.manage(options);
     app.manage(hub);
     app.manage(overlay::OverlaySlot::default());
+    app.manage(feedback::Attachments::default());
     Ok(())
 }
 
@@ -901,6 +943,9 @@ pub fn build_app<R: Runtime>(
             project_link_open,
             feedback_diagnostics,
             feedback_submit,
+            feedback_attachment_add,
+            feedback_attachment_remove,
+            feedback_attachments_clear,
             history_delete,
             history_clear,
             history_star,

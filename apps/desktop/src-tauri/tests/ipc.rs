@@ -786,6 +786,43 @@ fn feedback_commands_show_what_goes_along_and_refuse_without_an_endpoint() {
     });
 }
 
+/// The 反馈 page's screenshots and recordings (docs/feedback.md) through the command layer: the
+/// bytes are the raw IPC body with the name (percent-encoded) and the type in headers, the shell's
+/// limits refuse by wire name, remove and clear drop what was staged, and a report naming a file
+/// that is not staged goes nowhere.
+#[test]
+fn feedback_attachments_are_staged_from_a_raw_body_and_refused_by_name() {
+    with_running_app(|_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        let add = |name: &str, mime: &str, bytes: Vec<u8>| {
+            let mut req = request("feedback_attachment_add", json!({}));
+            req.body = InvokeBody::Raw(bytes);
+            req.headers.insert("x-voltip-name", name.parse().unwrap());
+            req.headers.insert("x-voltip-type", mime.parse().unwrap());
+            get_ipc_response(webview, req).map(|body| body.deserialize::<Value>().unwrap())
+        };
+        let refused = |reason: &str| Err(Value::String(reason.into()));
+        let shot = add("C%3A%5Cshots%5C%E6%88%AA%E5%9B%BE.png", "image/png", vec![1, 2, 3]).unwrap();
+        assert_eq!((&shot["name"], &shot["type"], &shot["size"]), (&json!("截图.png"), &json!("image/png"), &json!(3)));
+        assert_eq!(add("notes.txt", "text/plain", vec![1]), refused("attachment_type"));
+        assert_eq!(add("big.png", "image/png", vec![0; 5 * 1024 * 1024 + 1]), refused("attachment_too_large"));
+        assert_eq!(add("empty.mp4", "video/mp4", Vec::new()), refused("attachment_too_large"));
+        assert_eq!(add("%20", "image/png", vec![1]), refused("attachment_name"));
+        // A JSON body carries no file.
+        assert_eq!(invoke(webview, "feedback_attachment_add", json!({})), refused("attachment_type"));
+        assert_eq!(invoke(webview, "feedback_attachment_remove", json!({ "id": shot["id"] })), Ok(Value::Null));
+        for i in 0..3 {
+            add(&format!("{i}.png"), "image/png", vec![1]).unwrap();
+        }
+        assert_eq!(add("3.png", "image/png", vec![1]), refused("attachment_too_many"), "the removed one no longer counts");
+        assert_eq!(invoke(webview, "feedback_attachments_clear", json!({})), Ok(Value::Null));
+        add("again.png", "image/png", vec![1]).unwrap();
+        let report = json!({ "kind": "bug", "message": "hi", "contact": null, "locale": "en", "attachments": ["not-staged"] });
+        let expected = if voltip_desktop_lib::feedback::feedback_url().is_none() { "not_configured" } else { "invalid" };
+        assert_eq!(invoke(webview, "feedback_submit", report), refused(expected));
+    });
+}
+
 /// Local models (docs/dictation.md §10) through the command layer. The headless app is built on
 /// the core's fakes, which carry no model library: the list is empty, local mode is refused, and the
 /// three model verbs come back as honest `error` events (never "not found", never a panic). The
@@ -1272,6 +1309,9 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "project_link_open",
             "feedback_diagnostics",
             "feedback_submit",
+            "feedback_attachment_add",
+            "feedback_attachment_remove",
+            "feedback_attachments_clear",
             "phone_clipboard_read",
         ]
         .map(String::from),

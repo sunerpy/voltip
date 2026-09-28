@@ -62,6 +62,9 @@ describe("BackendProvider", () => {
       projectLinkOpen: inner.projectLinkOpen.bind(inner),
       feedbackDiagnostics: () => Promise.reject(new Error("no feedback")),
       feedbackSubmit: () => Promise.reject(new Error("no feedback")),
+      feedbackAttachmentAdd: () => Promise.reject(new Error("no feedback")),
+      feedbackAttachmentRemove: () => Promise.resolve(),
+      feedbackAttachmentsClear: () => Promise.resolve(),
       phoneClipboardRead: () => Promise.resolve(null),
     };
     render(
@@ -107,6 +110,9 @@ describe("BackendProvider", () => {
       projectLinkOpen: () => Promise.resolve(),
       feedbackDiagnostics: () => Promise.reject(new Error("no feedback")),
       feedbackSubmit: () => Promise.reject(new Error("no feedback")),
+      feedbackAttachmentAdd: () => Promise.reject(new Error("no feedback")),
+      feedbackAttachmentRemove: () => Promise.resolve(),
+      feedbackAttachmentsClear: () => Promise.resolve(),
       phoneClipboardRead: () => Promise.resolve(null),
     };
     render(

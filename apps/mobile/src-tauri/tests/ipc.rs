@@ -478,6 +478,9 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "project_link_open",
             "feedback_diagnostics",
             "feedback_submit",
+            "feedback_attachment_add",
+            "feedback_attachment_remove",
+            "feedback_attachments_clear",
             "phone_clipboard_read",
         ]
         .map(String::from),

@@ -5,6 +5,7 @@ import { listen as tauriListen } from "@tauri-apps/api/event";
 import type { Backend, EventListener, FrameListener, Unsubscribe } from "./backend";
 import {
   type ArgsOf,
+  type AttachmentFile,
   type FeedbackDraft,
   type MutationCommand,
   type PreviewDraft,
@@ -19,6 +20,7 @@ import {
   injectPreflightSchema,
   levelFrameSchema,
   permissionReportSchema,
+  stagedAttachmentSchema,
   uiEventSchema,
   uiStateSchema,
   updateStatusSchema,
@@ -32,6 +34,12 @@ export interface ChannelLike {
 }
 
 type InvokeFn = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+/** A command whose argument is the raw IPC body (bytes), with its metadata in headers. */
+type InvokeRawFn = (
+  command: string,
+  bytes: Uint8Array,
+  headers: Record<string, string>,
+) => Promise<unknown>;
 type ListenFn = (
   event: string,
   handler: (event: { payload: unknown }) => void,
@@ -39,6 +47,8 @@ type ListenFn = (
 
 export interface TauriTransport {
   invoke: InvokeFn;
+  /** Raw-body commands (`feedback_attachment_add`): the bytes are the body, the rest headers. */
+  invokeRaw: InvokeRawFn;
   listen: ListenFn;
   /** Creates the streaming channel handed to `audio_meter_start`; defaults to Tauri's `Channel`. */
   channel?: () => ChannelLike;
@@ -50,6 +60,7 @@ const newChannel = (): ChannelLike => new Channel();
 
 const defaultTransport: TauriTransport = {
   invoke: (command, args) => tauriInvoke(command, args),
+  invokeRaw: (command, bytes, headers) => tauriInvoke(command, bytes, { headers }),
   listen: (event, handler) => tauriListen<unknown>(event, handler),
   channel: newChannel,
 };
@@ -122,6 +133,22 @@ export class TauriBackend implements Backend {
   async feedbackSubmit(draft: FeedbackDraft) {
     const raw = await this.transport.invoke("feedback_submit", { ...draft });
     return feedbackReceiptSchema.parse(raw);
+  }
+
+  async feedbackAttachmentAdd(file: AttachmentFile) {
+    const raw = await this.transport.invokeRaw("feedback_attachment_add", file.bytes, {
+      "x-voltip-name": encodeURIComponent(file.name),
+      "x-voltip-type": file.type,
+    });
+    return stagedAttachmentSchema.parse(raw);
+  }
+
+  async feedbackAttachmentRemove(id: string) {
+    await this.transport.invoke("feedback_attachment_remove", { id });
+  }
+
+  async feedbackAttachmentsClear() {
+    await this.transport.invoke("feedback_attachments_clear");
   }
 
   async phoneClipboardRead() {

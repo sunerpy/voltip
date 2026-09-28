@@ -152,10 +152,15 @@ describe("Settings · 外观", () => {
     );
     expect(screen.queryByText(/私有|All rights reserved|AGPL/)).toBeNull();
     expect(screen.getByTestId("update-status")).toHaveTextContent("尚未检查更新");
-    // The repository and its issue tracker open through the shell (the webview names the page).
+    // The repository opens through the shell (the webview names the page); 反馈 is the in-app
+    // page the sidebar opens, never the issue tracker (user feedback 2026-09-28).
     await user.click(screen.getByRole("button", { name: "源代码" }));
-    await user.click(screen.getByRole("button", { name: "反馈问题" }));
-    expect(backend.linksOpened).toEqual(["source", "feedback"]);
+    expect(backend.linksOpened).toEqual(["source"]);
+    await user.click(screen.getByTestId("about-feedback"));
+    expect(await screen.findByTestId("page-feedback")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
+    expect(backend.linksOpened).toEqual(["source"]);
+    await user.click(screen.getByTestId("sidebar-settings"));
     // 语音模型 and AI 模型 are pages since 2026-09-28: no group of the dialog names them.
     expect(screen.queryByRole("tab", { name: /语音模型|AI 模型|润色/ })).toBeNull();
     await user.keyboard("{Escape}");

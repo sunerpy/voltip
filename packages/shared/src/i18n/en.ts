@@ -1715,8 +1715,10 @@ export const en: Messages = {
         updateHelp: "The update source and the automatic update switch are under General.",
         source: "Source code",
         sourceHelp: "Open the project repository in the browser.",
-        feedback: "Report a problem",
-        feedbackHelp: "Open a new issue in the project repository: a problem or a suggestion.",
+        feedback: "Feedback",
+        feedbackHelp:
+          "Write feedback in the app, with screenshots or a screen recording if you like; the same page as Feedback in the sidebar.",
+        writeFeedback: "Write feedback",
         open: "Open",
       },
     },
@@ -1808,7 +1810,23 @@ export const en: Messages = {
     contactPlaceholder: "An email or other way to reach you, if you want a reply",
     attached: "Sent along",
     attachedHelp:
-      "Only these facts and what you wrote are sent: no host name, no key, no dictation.",
+      "Only these facts, what you wrote and the files you added are sent: no host name, no key, no dictation.",
+    attachLabel: "Attachments (optional)",
+    attachAdd: "Add a screenshot or recording",
+    attachAdding: "Adding…",
+    attachHelp:
+      "Up to {count}: images (PNG, JPEG, GIF, WebP) up to {image}, videos (MP4, WebM, MOV) up to {video}, {total} in all. You can also paste a screenshot.",
+    attachRemove: "Remove {name}",
+    attachKind: { image: "Image", video: "Video" },
+    attachError: {
+      attachment_type:
+        "“{name}” cannot be attached: only PNG, JPEG, GIF and WebP images and MP4, WebM and MOV videos.",
+      attachment_too_large:
+        "“{name}” cannot be attached: images up to {image}, videos up to {video}, and not empty.",
+      attachment_too_many: "At most {count} files.",
+      attachment_total: "The attachments cannot add up to more than {total}.",
+      attachment_name: "The name of “{name}” cannot be used; rename the file and try again.",
+    },
     diag: {
       app_version: "Version",
       os: "System",
@@ -1835,6 +1853,9 @@ export const en: Messages = {
       network: "Cannot reach the feedback service; check the connection and retry.",
       timeout: "The feedback service did not answer in time; retry later.",
       server: "The feedback service failed; retry later.",
+      storage_full:
+        "The feedback service cannot take more attachments right now; send without them.",
+      attachments: "The feedback was sent, but an attachment did not finish uploading.",
     },
   },
   commands: {

@@ -32,6 +32,11 @@ tauri-build = { version = "=2.6.3", features = [] }
 [dependencies]
 async-trait.workspace = true
 directories.workspace = true
+# The 反馈 page's attachments (src/feedback.rs): their SHA-256 and staging ids; the versions the
+# core already builds.
+hex.workspace = true
+sha2.workspace = true
+uuid.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # `macos-private-api`: the pill window (src/overlay.rs) is transparent, which on macOS needs the

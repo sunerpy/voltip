@@ -252,6 +252,9 @@ describe("Mobile app flow", () => {
       projectLinkOpen: inner.projectLinkOpen.bind(inner),
       feedbackDiagnostics: inner.feedbackDiagnostics.bind(inner),
       feedbackSubmit: inner.feedbackSubmit.bind(inner),
+      feedbackAttachmentAdd: inner.feedbackAttachmentAdd.bind(inner),
+      feedbackAttachmentRemove: inner.feedbackAttachmentRemove.bind(inner),
+      feedbackAttachmentsClear: inner.feedbackAttachmentsClear.bind(inner),
       phoneClipboardRead: inner.phoneClipboardRead.bind(inner),
     };
     const first = render(<TestApp backend={backend} />);
@@ -279,6 +282,9 @@ describe("Mobile app flow", () => {
       projectLinkOpen: identityless.projectLinkOpen.bind(identityless),
       feedbackDiagnostics: identityless.feedbackDiagnostics.bind(identityless),
       feedbackSubmit: identityless.feedbackSubmit.bind(identityless),
+      feedbackAttachmentAdd: identityless.feedbackAttachmentAdd.bind(identityless),
+      feedbackAttachmentRemove: identityless.feedbackAttachmentRemove.bind(identityless),
+      feedbackAttachmentsClear: identityless.feedbackAttachmentsClear.bind(identityless),
       phoneClipboardRead: identityless.phoneClipboardRead.bind(identityless),
     };
     render(<TestApp backend={noIdentity} />);

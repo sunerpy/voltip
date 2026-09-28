@@ -75,6 +75,10 @@ class HarnessTransport implements TauriTransport {
     });
   };
 
+  /** The harness speaks JSON lines: no raw bodies (the attachments are the shell's own tests). */
+  readonly invokeRaw = (): Promise<unknown> =>
+    Promise.reject(new Error("the harness carries no raw IPC bodies"));
+
   readonly listen = (
     _event: string,
     handler: (event: { payload: unknown }) => void,

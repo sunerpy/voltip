@@ -1640,8 +1640,9 @@ export const zhCN = {
         updateHelp: "更新源与自动更新开关在「通用」分组。",
         source: "源代码",
         sourceHelp: "在浏览器打开项目仓库。",
-        feedback: "反馈问题",
-        feedbackHelp: "在项目仓库新建 Issue：报告问题或提出建议。",
+        feedback: "反馈",
+        feedbackHelp: "在应用里写反馈，可以附上截图或录屏；和侧栏的「反馈」是同一个页面。",
+        writeFeedback: "写反馈",
         open: "打开",
       },
     },
@@ -1730,7 +1731,23 @@ export const zhCN = {
     contactLabel: "联系方式（可选）",
     contactPlaceholder: "邮箱或其他方式，需要回复时用",
     attached: "随反馈附带",
-    attachedHelp: "只有这些信息和你写的内容会发出；不含主机名、密钥和听写内容。",
+    attachedHelp: "只有这些信息、你写的内容和你添加的附件会发出；不含主机名、密钥和听写内容。",
+    attachLabel: "附件（可选）",
+    attachAdd: "添加截图或录屏",
+    attachAdding: "正在添加…",
+    attachHelp:
+      "最多 {count} 个：图片（PNG、JPEG、GIF、WebP）不超过 {image}，视频（MP4、WebM、MOV）不超过 {video}，合计不超过 {total}。也可以直接粘贴截图。",
+    attachRemove: "移除 {name}",
+    attachKind: { image: "图片", video: "视频" },
+    attachError: {
+      attachment_type:
+        "「{name}」不能附上：只支持 PNG、JPEG、GIF、WebP 图片和 MP4、WebM、MOV 视频。",
+      attachment_too_large:
+        "「{name}」不能附上：图片不超过 {image}，视频不超过 {video}，也不能是空文件。",
+      attachment_too_many: "最多附 {count} 个文件。",
+      attachment_total: "附件合计不能超过 {total}。",
+      attachment_name: "「{name}」的文件名无法使用，改名后再试。",
+    },
     diag: {
       app_version: "版本",
       os: "系统",
@@ -1757,6 +1774,8 @@ export const zhCN = {
       network: "连不上反馈服务，请检查网络后重试。",
       timeout: "反馈服务没有及时回应，请稍后重试。",
       server: "反馈服务出错了，请稍后重试。",
+      storage_full: "反馈服务暂时存不下更多附件，去掉附件后再发送。",
+      attachments: "反馈已发送，但附件没有传完整。",
     },
   },
   commands: {

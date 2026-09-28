@@ -1,8 +1,15 @@
 import {
+  FEEDBACK_ATTACHMENT_ERRORS,
+  FEEDBACK_ATTACHMENT_TYPES,
   FEEDBACK_CONTACT_MAX,
   FEEDBACK_ERRORS,
   FEEDBACK_KINDS,
+  FEEDBACK_MAX_ATTACHMENTS,
+  FEEDBACK_MAX_ATTACHMENT_TOTAL_BYTES,
+  FEEDBACK_MAX_IMAGE_BYTES,
+  FEEDBACK_MAX_VIDEO_BYTES,
   FEEDBACK_MESSAGE_MAX,
+  type FeedbackAttachmentError,
   type FeedbackDiagnostics,
   type FeedbackError,
   type FeedbackInfo,
@@ -10,13 +17,25 @@ import {
   type Locale,
   PROVIDER_IDS,
   type ProviderId,
+  type StagedAttachment,
   type TFunction,
   outputModeLabel,
 } from "@voltip/shared";
-import { Button, Input, Panel, Segmented, Textarea, useBackend, useI18n } from "@voltip/ui";
-import { useEffect, useState } from "react";
+import {
+  Button,
+  Icon,
+  IconButton,
+  Input,
+  Panel,
+  Segmented,
+  Textarea,
+  useBackend,
+  useI18n,
+} from "@voltip/ui";
+import { type ClipboardEvent, useEffect, useRef, useState } from "react";
 import { openProjectLink } from "../app/project-links";
 import { useShell } from "../app/shell-context";
+import { formatBytes } from "../features/update/download-rate";
 
 const OS_NAMES: Record<string, string> = { windows: "Windows", linux: "Linux", macos: "macOS" };
 const DIAGNOSTIC_ORDER = [
@@ -70,11 +89,61 @@ export function feedbackError(error: unknown): FeedbackError {
   return FEEDBACK_ERRORS.find((e) => e === text) ?? "server";
 }
 
+/** The wire name of a refused attachment; anything else the shell said reads as a wrong type. */
+export function attachmentError(error: unknown): FeedbackAttachmentError {
+  const text = error instanceof Error ? error.message : String(error);
+  return FEEDBACK_ATTACHMENT_ERRORS.find((e) => e === text) ?? "attachment_type";
+}
+
+/** The types a file with no type from the webview is taken for, by its extension. */
+const EXTENSION_TYPES: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+};
+
+/** A picked or pasted file's MIME type: the webview's, else the extension's, else none. */
+export function attachmentType(file: { name: string; type: string }): string {
+  if (file.type.length > 0) return file.type;
+  const dot = file.name.lastIndexOf(".");
+  return dot < 0 ? "" : (EXTENSION_TYPES[file.name.slice(dot + 1).toLowerCase()] ?? "");
+}
+
+/** The refusal the shell would give, told from the type and the size before the bytes are read
+ *  (a large video is never loaded to be turned away); the shell checks again. */
+export function precheckAttachment(
+  type: string,
+  size: number,
+  staged: readonly StagedAttachment[],
+): FeedbackAttachmentError | undefined {
+  if (!(FEEDBACK_ATTACHMENT_TYPES as readonly string[]).includes(type)) return "attachment_type";
+  const limit = type.startsWith("video/") ? FEEDBACK_MAX_VIDEO_BYTES : FEEDBACK_MAX_IMAGE_BYTES;
+  if (size === 0 || size > limit) return "attachment_too_large";
+  if (staged.length >= FEEDBACK_MAX_ATTACHMENTS) return "attachment_too_many";
+  const total = staged.reduce((n, a) => n + a.size, 0) + size;
+  return total > FEEDBACK_MAX_ATTACHMENT_TOTAL_BYTES ? "attachment_total" : undefined;
+}
+
+/** A limit in whole megabytes (`5 MB`), as the help line and the refusals word them. */
+const megabytes = (bytes: number) => `${Math.round(bytes / 1_048_576)} MB`;
+const LIMITS = {
+  count: FEEDBACK_MAX_ATTACHMENTS,
+  image: megabytes(FEEDBACK_MAX_IMAGE_BYTES),
+  video: megabytes(FEEDBACK_MAX_VIDEO_BYTES),
+  total: megabytes(FEEDBACK_MAX_ATTACHMENT_TOTAL_BYTES),
+};
+
 /** The 反馈 page (docs/feedback.md; a dialog until 2026-09-28, when every sidebar entry but 设置
- *  became a page of the main layout): a kind, the user's words and an optional contact on the left,
- *  the exact diagnostics that go along on the right, shown before anything is sent. The shell
- *  posts the report; the webview never learns where to. Once sent, a toast says so and the form
- *  clears. A build without an endpoint offers the repository's issue page instead. */
+ *  became a page of the main layout): a kind, the user's words, an optional contact and up to three
+ *  screenshots or recordings on the left, the exact diagnostics that go along on the right, shown
+ *  before anything is sent. The shell stages the files and posts the report; the webview never
+ *  learns where to. Once sent, a toast says so and the form clears. A build without an endpoint
+ *  offers the repository's issue page instead. */
 export function Feedback() {
   const { backend } = useBackend();
   const shell = useShell();
@@ -85,6 +154,21 @@ export function Feedback() {
   const [info, setInfo] = useState<FeedbackInfo | undefined>(undefined);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<FeedbackError | undefined>(undefined);
+  const [files, setFiles] = useState<readonly StagedAttachment[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [refusal, setRefusal] = useState<
+    { reason: FeedbackAttachmentError; name: string } | undefined
+  >(undefined);
+  const picker = useRef<HTMLInputElement>(null);
+
+  // The page opens with nothing staged and takes its files along when it is left, so a reloaded
+  // page never leaves files in the shell that count against the limits.
+  useEffect(() => {
+    void backend.feedbackAttachmentsClear().catch(() => undefined);
+    return () => {
+      void backend.feedbackAttachmentsClear().catch(() => undefined);
+    };
+  }, [backend]);
 
   useEffect(() => {
     let live = true;
@@ -103,10 +187,16 @@ export function Feedback() {
 
   const configured = info?.configured ?? true;
   const empty = message.trim().length === 0;
+  const clear = () => {
+    setMessage("");
+    setContact("");
+    setFiles([]);
+  };
   const submit = async () => {
-    if (empty || sending || !configured) return;
+    if (empty || sending || adding || !configured) return;
     setSending(true);
     setError(undefined);
+    setRefusal(undefined);
     const trimmed = contact.trim();
     try {
       await backend.feedbackSubmit({
@@ -114,16 +204,59 @@ export function Feedback() {
         message,
         contact: trimmed.length > 0 ? trimmed : null,
         locale,
+        ...(files.length > 0 ? { attachments: files.map((f) => f.id) } : {}),
       });
     } catch (e: unknown) {
+      const reason = feedbackError(e);
       setSending(false);
-      setError(feedbackError(e));
+      setError(reason);
+      // The report went out; only a file did not follow. Starting over would send it twice.
+      if (reason === "attachments") clear();
       return;
     }
     setSending(false);
-    setMessage("");
-    setContact("");
+    clear();
     shell.toast({ message: t("feedback.sent"), duration: 4000 });
+  };
+
+  /** Stage `picked` in order, stopping at the first refusal, which is worded under the list. */
+  const attach = async (picked: readonly File[]) => {
+    if (picked.length === 0 || adding || sending) return;
+    setAdding(true);
+    setRefusal(undefined);
+    let staged = files;
+    // One at a time, in order: each file's limits depend on the ones staged before it.
+    for (const file of picked) {
+      const type = attachmentType(file);
+      const early = precheckAttachment(type, file.size, staged);
+      if (early !== undefined) {
+        setRefusal({ reason: early, name: file.name });
+        break;
+      }
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- sequential by design, see above
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        // oxlint-disable-next-line no-await-in-loop -- sequential by design, see above
+        const entry = await backend.feedbackAttachmentAdd({ name: file.name, type, bytes });
+        staged = [...staged, entry];
+        setFiles(staged);
+      } catch (e: unknown) {
+        setRefusal({ reason: attachmentError(e), name: file.name });
+        break;
+      }
+    }
+    setAdding(false);
+  };
+  const detach = (id: string) => {
+    setFiles((current) => current.filter((f) => f.id !== id));
+    setRefusal(undefined);
+    void backend.feedbackAttachmentRemove(id).catch(() => undefined);
+  };
+  const pasted = (e: ClipboardEvent) => {
+    const list = [...e.clipboardData.files];
+    if (list.length === 0) return;
+    e.preventDefault();
+    void attach(list);
   };
 
   return (
@@ -138,6 +271,7 @@ export function Feedback() {
         <Panel
           eyebrow={t("feedback.formTitle")}
           bodyClassName="flex flex-col gap-4"
+          onPaste={configured ? pasted : undefined}
           data-testid="feedback-form">
           <Segmented<FeedbackKind>
             label={t("feedback.kindLabel")}
@@ -170,6 +304,83 @@ export function Feedback() {
               setContact(e.target.value);
             }}
           />
+          {configured && (
+            <div className="flex flex-col gap-2" data-testid="feedback-attachments">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[12px] font-medium text-fg">{t("feedback.attachLabel")}</span>
+                <Button
+                  size="sm"
+                  icon="plus"
+                  disabled={adding || sending || files.length >= FEEDBACK_MAX_ATTACHMENTS}
+                  onClick={() => {
+                    picker.current?.click();
+                  }}
+                  data-testid="feedback-attach">
+                  {adding ? t("feedback.attachAdding") : t("feedback.attachAdd")}
+                </Button>
+                <input
+                  ref={picker}
+                  type="file"
+                  multiple
+                  hidden
+                  accept={FEEDBACK_ATTACHMENT_TYPES.join(",")}
+                  data-testid="feedback-attach-input"
+                  onChange={(e) => {
+                    const list = [...(e.target.files ?? [])];
+                    // The same file picked again is a new change.
+                    e.target.value = "";
+                    void attach(list);
+                  }}
+                />
+              </div>
+              {files.length > 0 && (
+                <ul className="flex flex-col gap-1" aria-label={t("feedback.attachLabel")}>
+                  {files.map((file) => {
+                    const video = file.type.startsWith("video/");
+                    return (
+                      <li
+                        key={file.id}
+                        className="flex items-center gap-2 rounded-6 bg-inset px-2 py-1.5 text-[12px]"
+                        data-testid="feedback-attachment">
+                        <Icon
+                          name={video ? "video" : "image"}
+                          size={14}
+                          className="shrink-0 text-fg-muted"
+                          role="img"
+                          aria-label={t(`feedback.attachKind.${video ? "video" : "image"}`)}
+                        />
+                        <span className="min-w-0 flex-1 truncate text-fg" title={file.name}>
+                          {file.name}
+                        </span>
+                        <span className="mono shrink-0 text-fg-subtle">
+                          {formatBytes(file.size)}
+                        </span>
+                        <IconButton
+                          icon="x"
+                          label={t("feedback.attachRemove", { name: file.name })}
+                          disabled={sending}
+                          onClick={() => {
+                            detach(file.id);
+                          }}
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {refusal !== undefined && (
+                <p
+                  role="alert"
+                  className="text-[12px] text-danger"
+                  data-testid="feedback-attach-error">
+                  {t(`feedback.attachError.${refusal.reason}`, { ...LIMITS, name: refusal.name })}
+                </p>
+              )}
+              <p className="text-[11px] leading-4 text-fg-subtle">
+                {t("feedback.attachHelp", LIMITS)}
+              </p>
+            </div>
+          )}
           {!configured && (
             <p className="text-[12px] text-fg-muted" data-testid="feedback-not-configured">
               {t("feedback.notConfigured")}
@@ -184,7 +395,7 @@ export function Feedback() {
             {configured ? (
               <Button
                 variant="primary"
-                disabled={empty || sending || info === undefined}
+                disabled={empty || sending || adding || info === undefined}
                 onClick={() => {
                   void submit();
                 }}

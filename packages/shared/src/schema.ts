@@ -236,7 +236,8 @@ export type FeedbackInfo = z.infer<typeof feedbackInfoSchema>;
 export const feedbackReceiptSchema = z.object({ id: z.string() });
 export type FeedbackReceipt = z.infer<typeof feedbackReceiptSchema>;
 
-/** Why a report did not go out (the shell's `SendError` wire names). */
+/** Why a report did not go out (the shell's `SendError` wire names). `attachments`: the report
+ *  went out, but an attachment did not finish uploading. */
 export const FEEDBACK_ERRORS = [
   "not_configured",
   "invalid",
@@ -245,15 +246,60 @@ export const FEEDBACK_ERRORS = [
   "network",
   "timeout",
   "server",
+  "storage_full",
+  "attachments",
 ] as const;
 export type FeedbackError = (typeof FEEDBACK_ERRORS)[number];
 
-/** The dialog's report; `locale` is the language the webview resolved. */
+/** Screenshots and screen recordings a report may carry (the shell's and the endpoint's limits,
+ *  `apps/desktop/src-tauri/src/feedback.rs`, `services/feedback/src/validate.ts`). */
+export const FEEDBACK_ATTACHMENT_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+] as const;
+export const FEEDBACK_MAX_ATTACHMENTS = 3;
+export const FEEDBACK_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const FEEDBACK_MAX_VIDEO_BYTES = 20 * 1024 * 1024;
+export const FEEDBACK_MAX_ATTACHMENT_TOTAL_BYTES = 25 * 1024 * 1024;
+/** Why the shell did not stage an attachment (its `AttachError` wire names). */
+export const FEEDBACK_ATTACHMENT_ERRORS = [
+  "attachment_type",
+  "attachment_too_large",
+  "attachment_too_many",
+  "attachment_total",
+  "attachment_name",
+] as const;
+export type FeedbackAttachmentError = (typeof FEEDBACK_ATTACHMENT_ERRORS)[number];
+
+/** A file the shell staged for the next report (`feedback_attachment_add`'s answer). */
+export const stagedAttachmentSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: z.string(),
+  size: z.number().int().nonnegative(),
+});
+export type StagedAttachment = z.infer<typeof stagedAttachmentSchema>;
+
+/** A file the page hands the shell to stage. */
+export interface AttachmentFile {
+  name: string;
+  type: string;
+  bytes: Uint8Array;
+}
+
+/** The page's report; `locale` is the language the webview resolved, `attachments` the ids of
+ *  the files it staged. */
 export interface FeedbackDraft {
   kind: FeedbackKind;
   message: string;
   contact: string | null;
   locale: string;
+  attachments?: string[];
 }
 
 export const APP_LICENSE = "Apache-2.0";
@@ -1616,6 +1662,13 @@ export interface CommandArgs {
   feedback_diagnostics: { locale: string };
   /** Query: post the 反馈 dialog's report; rejects with a `FeedbackError` wire name. */
   feedback_submit: FeedbackDraft;
+  /** Query: stage a file for the next report (`Backend.feedbackAttachmentAdd`); the bytes travel as
+   *  the raw IPC body, the name and type as headers. */
+  feedback_attachment_add: undefined;
+  /** Query: drop a staged file (`Backend.feedbackAttachmentRemove`). */
+  feedback_attachment_remove: { id: string };
+  /** Query: drop every staged file (`Backend.feedbackAttachmentsClear`). */
+  feedback_attachments_clear: undefined;
   /** Phone (docs/dictation.md §20.6): send text for the desktop to insert at its cursor. */
   phone_text_send: { publicKey: string; body: string; source: PhoneTextSource };
   /** Phone: forget the list of sent texts. */
@@ -1712,6 +1765,9 @@ export type QueryCommand =
   | "project_link_open"
   | "feedback_diagnostics"
   | "feedback_submit"
+  | "feedback_attachment_add"
+  | "feedback_attachment_remove"
+  | "feedback_attachments_clear"
   | "phone_clipboard_read";
 export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "core_state",
@@ -1730,6 +1786,9 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "project_link_open",
   "feedback_diagnostics",
   "feedback_submit",
+  "feedback_attachment_add",
+  "feedback_attachment_remove",
+  "feedback_attachments_clear",
   "phone_clipboard_read",
 ];
 /** Commands the UI dispatches through `Backend.invoke` (everything except the queries / streams). */

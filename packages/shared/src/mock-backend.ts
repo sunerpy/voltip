@@ -84,8 +84,16 @@ import {
   type ProbeFailure,
   type ServiceKind,
   type ProjectLink,
+  FEEDBACK_ATTACHMENT_TYPES,
   FEEDBACK_CONTACT_MAX,
+  FEEDBACK_MAX_ATTACHMENTS,
+  FEEDBACK_MAX_ATTACHMENT_TOTAL_BYTES,
+  FEEDBACK_MAX_IMAGE_BYTES,
+  FEEDBACK_MAX_VIDEO_BYTES,
   FEEDBACK_MESSAGE_MAX,
+  type AttachmentFile,
+  type FeedbackAttachmentError,
+  type StagedAttachment,
   type FeedbackDiagnostics,
   type FeedbackDraft,
   type FeedbackError,
@@ -177,7 +185,8 @@ export interface MockBackendOptions {
   hardware?: HardwareStatus;
   /** How the preview's feedback endpoint answers (docs/feedback.md): `configured` (default) takes
    *  every report after `MOCK_FEEDBACK_MS`, `not_configured` is a build without one, a
-   *  `FeedbackError` fails every submission with it. */
+   *  `FeedbackError` fails every submission with it (`storage_full` and `attachments` only a
+   *  report that carries files, as the endpoint does; `attachments` still takes the report). */
   feedback?: "configured" | FeedbackError;
   /** The phone's clipboard (docs/dictation.md §20.6); `null` = empty. Defaults to
    *  `MOCK_PHONE_CLIPBOARD`. */
@@ -371,6 +380,29 @@ export const MOCK_GPU_HARDWARE: HardwareStatus = {
 export const PHONE_TAKE_UNAVAILABLE = "phone_take: 电脑接收手机的录音，不向其他设备推送";
 /** `voltip_mobile::PROJECT_LINKS_UNAVAILABLE`. */
 export const PROJECT_LINKS_UNAVAILABLE = "project: 手机端不打开项目页面";
+/** `feedback::clean_name` in the desktop shell: the last path component, trimmed, control
+ *  characters and quotes replaced, at most 120 characters (a longer one keeps its extension);
+ *  `undefined` when nothing is left. */
+export function cleanAttachmentName(name: string): string | undefined {
+  const base = (name.split(/[/\\]/u).pop() ?? "").trim();
+  // Characters as Rust counts them (`chars()`): code points.
+  // oxlint-disable-next-line no-control-regex -- control characters are what is replaced
+  const cleaned = Array.from(base, (c) => (/[\u0000-\u001f\u007f-\u009f"]/u.test(c) ? "_" : c));
+  if (cleaned.length === 0) return undefined;
+  if (cleaned.length <= 120) return cleaned.join("");
+  const text = cleaned.join("");
+  const dot = text.lastIndexOf(".");
+  const ext = dot >= 0 && Array.from(text.slice(dot)).length <= 10 ? text.slice(dot) : "";
+  let stem = cleaned.slice(0, 120 - Array.from(ext).length).join("");
+  while (ext.length > 0 && stem.endsWith(ext)) stem = stem.slice(0, -ext.length);
+  return `${stem}${ext}`;
+}
+
+/** A refused `feedback_attachment_add`, as the shell rejects it. */
+function refuseAttachment(reason: FeedbackAttachmentError): Promise<never> {
+  return Promise.reject(new Error(reason));
+}
+
 /** `voltip_mobile::FEEDBACK_UNAVAILABLE`. */
 export const FEEDBACK_UNAVAILABLE = "feedback: 请在电脑上反馈";
 /** How long the preview's feedback endpoint takes to answer. */
@@ -702,6 +734,10 @@ export class MockBackend implements Backend {
   readonly linksOpened: ProjectLink[] = [];
   /** Reports `feedbackSubmit` accepted, in order. */
   readonly feedbackSent: FeedbackDraft[] = [];
+  /** The files staged for the next report (`feedback_attachment_add`), in order. */
+  readonly feedbackStaged: StagedAttachment[] = [];
+  /** The last staged file's number. */
+  private lastAttachment = 0;
   /** The phone's clipboard (`phone_clipboard_read`). */
   phoneClipboard: string | null;
   /** The last id a phone text took (`SentTexts::next_id` in the core). */
@@ -1873,19 +1909,68 @@ export class MockBackend implements Backend {
       contact.length > FEEDBACK_CONTACT_MAX
     )
       return Promise.reject(new Error("invalid"));
-    const failure = this.feedback;
+    const ids = draft.attachments ?? [];
+    if (!ids.every((id) => this.feedbackStaged.some((a) => a.id === id)))
+      return Promise.reject(new Error("invalid"));
+    // What only a report with files can meet (the endpoint's 507, an unfinished upload).
+    const onlyWithFiles = this.feedback === "storage_full" || this.feedback === "attachments";
+    const failure = onlyWithFiles && ids.length === 0 ? "configured" : this.feedback;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.probeTimers.delete(timer);
-        if (failure !== "configured") {
+        if (failure !== "configured" && failure !== "attachments") {
           reject(new Error(failure));
           return;
         }
         this.feedbackSent.push({ ...draft, message, contact: contact.length > 0 ? contact : null });
-        resolve({ id: `feedback-${this.feedbackSent.length}` });
+        // The report went out: the shell forgets its files, uploaded or not.
+        for (const id of ids) void this.feedbackAttachmentRemove(id);
+        if (failure === "attachments") reject(new Error(failure));
+        else resolve({ id: `feedback-${this.feedbackSent.length}` });
       }, MOCK_FEEDBACK_MS);
       this.probeTimers.add(timer);
     });
+  }
+
+  /** `feedback_attachment_add`: the shell's checks, in its order (`feedback::Attachments::add`). */
+  feedbackAttachmentAdd(file: AttachmentFile): Promise<StagedAttachment> {
+    if (this.role === "phone") return Promise.reject(new Error(FEEDBACK_UNAVAILABLE));
+    const name = cleanAttachmentName(file.name);
+    if (name === undefined) return refuseAttachment("attachment_name");
+    if (!(FEEDBACK_ATTACHMENT_TYPES as readonly string[]).includes(file.type))
+      return refuseAttachment("attachment_type");
+    const limit = file.type.startsWith("video/")
+      ? FEEDBACK_MAX_VIDEO_BYTES
+      : FEEDBACK_MAX_IMAGE_BYTES;
+    if (file.bytes.length === 0 || file.bytes.length > limit)
+      return refuseAttachment("attachment_too_large");
+    if (this.feedbackStaged.length >= FEEDBACK_MAX_ATTACHMENTS)
+      return refuseAttachment("attachment_too_many");
+    const staged = this.feedbackStaged.reduce((n, a) => n + a.size, 0);
+    if (staged + file.bytes.length > FEEDBACK_MAX_ATTACHMENT_TOTAL_BYTES)
+      return refuseAttachment("attachment_total");
+    this.lastAttachment += 1;
+    const entry = {
+      id: `attachment-${this.lastAttachment}`,
+      name,
+      type: file.type,
+      size: file.bytes.length,
+    };
+    this.feedbackStaged.push(entry);
+    return Promise.resolve({ ...entry });
+  }
+
+  /** `feedback_attachment_remove`: an id that is not staged is no error. */
+  feedbackAttachmentRemove(id: string): Promise<void> {
+    const at = this.feedbackStaged.findIndex((a) => a.id === id);
+    if (at >= 0) this.feedbackStaged.splice(at, 1);
+    return Promise.resolve();
+  }
+
+  /** `feedback_attachments_clear`. */
+  feedbackAttachmentsClear(): Promise<void> {
+    this.feedbackStaged.length = 0;
+    return Promise.resolve();
   }
 
   phoneClipboardRead(): Promise<string | null> {

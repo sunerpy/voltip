@@ -1,6 +1,7 @@
 import type {
   AppRef,
   ArgsOf,
+  AttachmentFile,
   AudioDevice,
   FeedbackDraft,
   FeedbackInfo,
@@ -13,6 +14,7 @@ import type {
   PermissionReport,
   ProjectLink,
   ProviderId,
+  StagedAttachment,
   UiEvent,
   UiState,
   UpdateStatus,
@@ -66,6 +68,13 @@ export interface Backend {
   feedbackDiagnostics(locale: string): Promise<FeedbackInfo>;
   /** Post a report (`feedback_submit`); rejects with a `FeedbackError` wire name. */
   feedbackSubmit(draft: FeedbackDraft): Promise<FeedbackReceipt>;
+  /** Stage a screenshot or a screen recording for the next report (`feedback_attachment_add`);
+   *  rejects with a `FeedbackAttachmentError` wire name. */
+  feedbackAttachmentAdd(file: AttachmentFile): Promise<StagedAttachment>;
+  /** Drop a staged file (`feedback_attachment_remove`). */
+  feedbackAttachmentRemove(id: string): Promise<void>;
+  /** Drop every staged file (`feedback_attachments_clear`). */
+  feedbackAttachmentsClear(): Promise<void>;
   /** The phone's clipboard text (`phone_clipboard_read`, docs/dictation.md §20.6), `null` when it
    *  holds none; rejects on a shell that has no phone clipboard. */
   phoneClipboardRead(): Promise<string | null>;

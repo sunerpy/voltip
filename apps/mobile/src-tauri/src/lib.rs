@@ -29,7 +29,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 78] = [
+pub const COMMANDS: [&str; 81] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -75,6 +75,9 @@ pub const COMMANDS: [&str; 78] = [
     "project_link_open",
     "feedback_diagnostics",
     "feedback_submit",
+    "feedback_attachment_add",
+    "feedback_attachment_remove",
+    "feedback_attachments_clear",
     "history_delete",
     "history_clear",
     "history_star",
@@ -446,7 +449,25 @@ fn feedback_diagnostics(_locale: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn feedback_submit(_kind: String, _message: String, _contact: Option<String>, _locale: String) -> Result<(), String> {
+fn feedback_submit(_kind: String, _message: String, _contact: Option<String>, _locale: String, _attachments: Option<Vec<String>>) -> Result<(), String> {
+    Err(FEEDBACK_UNAVAILABLE.into())
+}
+
+/// Same answer as `feedback_submit`: the phone stages no attachments.
+#[tauri::command]
+fn feedback_attachment_add() -> Result<(), String> {
+    Err(FEEDBACK_UNAVAILABLE.into())
+}
+
+/// Same answer as `feedback_submit`.
+#[tauri::command]
+fn feedback_attachment_remove(_id: String) -> Result<(), String> {
+    Err(FEEDBACK_UNAVAILABLE.into())
+}
+
+/// Same answer as `feedback_submit`.
+#[tauri::command]
+fn feedback_attachments_clear() -> Result<(), String> {
     Err(FEEDBACK_UNAVAILABLE.into())
 }
 
@@ -748,6 +769,9 @@ pub fn build_app<R: Runtime>(
             project_link_open,
             feedback_diagnostics,
             feedback_submit,
+            feedback_attachment_add,
+            feedback_attachment_remove,
+            feedback_attachments_clear,
             history_delete,
             history_clear,
             history_star,

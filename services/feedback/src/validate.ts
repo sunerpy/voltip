@@ -25,17 +25,94 @@ export const DIAGNOSTIC_KEYS = [
 export type DiagnosticKey = (typeof DIAGNOSTIC_KEYS)[number];
 export type Diagnostics = Partial<Record<DiagnosticKey, string>>;
 
+/** Attachments (screenshots and screen recordings, docs/feedback.md): what the report declares.
+ *  The bytes follow in chunks (`PUT …/attachments/<index>/<seq>`); the limits are the app's
+ *  (`apps/desktop/src-tauri/src/feedback.rs`, `packages/shared/src/schema.ts`). */
+export const ATTACHMENT_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+] as const;
+export type AttachmentType = (typeof ATTACHMENT_TYPES)[number];
+export const MAX_ATTACHMENTS = 3;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_VIDEO_BYTES = 20 * 1024 * 1024;
+export const MAX_ATTACHMENT_TOTAL_BYTES = 25 * 1024 * 1024;
+export const MAX_ATTACHMENT_NAME_CHARS = 120;
+/** One upload request carries one chunk of this size (the last one the rest): a small request
+ *  keeps every step well inside a Worker's limits, and a failed chunk is retried on its own. */
+export const ATTACHMENT_CHUNK_BYTES = 1024 * 1024;
+
+export interface Attachment {
+  name: string;
+  type: AttachmentType;
+  size: number;
+  /** Hex SHA-256 of the bytes, as the app computed it; kept for the reader to check. */
+  sha256: string;
+}
+
+/** The limit for one attachment of `type`. */
+export function maxBytesFor(type: AttachmentType): number {
+  return type.startsWith("video/") ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+}
+
+/** How many chunks an attachment of `size` bytes arrives in. */
+export function chunkCount(size: number): number {
+  return Math.ceil(size / ATTACHMENT_CHUNK_BYTES);
+}
+
 export interface Feedback {
   kind: Kind;
   message: string;
   contact: string | null;
   diagnostics: Diagnostics;
+  attachments: Attachment[];
 }
 
 export type Validation = { ok: true; feedback: Feedback } | { ok: false; field: string };
 
 /** A diagnostics value: short, printable, no markup. */
 const DIAGNOSTIC_VALUE = /^[\w.+\- :/()]+$/u;
+const SHA256 = /^[0-9a-f]{64}$/u;
+/** Control characters and the characters a file name must not carry (path separators, quotes). */
+// oxlint-disable-next-line no-control-regex -- control characters are exactly what is refused
+const BAD_NAME = /[\u0000-\u001f\u007f"/\\]/u;
+
+function isAttachmentType(value: unknown): value is AttachmentType {
+  return typeof value === "string" && (ATTACHMENT_TYPES as readonly string[]).includes(value);
+}
+
+/** The declared attachments, or the first bad field. */
+function attachments(value: unknown): Attachment[] | string {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > MAX_ATTACHMENTS) return "attachments";
+  const out: Attachment[] = [];
+  let total = 0;
+  for (const [i, entry] of value.entries()) {
+    if (!isRecord(entry)) return `attachments.${i}`;
+    const name = typeof entry.name === "string" ? entry.name.trim() : "";
+    if (name.length === 0 || name.length > MAX_ATTACHMENT_NAME_CHARS || BAD_NAME.test(name))
+      return `attachments.${i}.name`;
+    if (!isAttachmentType(entry.type)) return `attachments.${i}.type`;
+    const size = entry.size;
+    if (
+      typeof size !== "number" ||
+      !Number.isInteger(size) ||
+      size < 1 ||
+      size > maxBytesFor(entry.type)
+    )
+      return `attachments.${i}.size`;
+    if (typeof entry.sha256 !== "string" || !SHA256.test(entry.sha256))
+      return `attachments.${i}.sha256`;
+    total += size;
+    out.push({ name, type: entry.type, size, sha256: entry.sha256 });
+  }
+  return total > MAX_ATTACHMENT_TOTAL_BYTES ? "attachments" : out;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -74,5 +151,10 @@ export function validate(body: unknown): Validation {
       diagnostics[key] = value;
     }
   }
-  return { ok: true, feedback: { kind: body.kind, message, contact, diagnostics } };
+  const declared = attachments(body.attachments);
+  if (typeof declared === "string") return { ok: false, field: declared };
+  return {
+    ok: true,
+    feedback: { kind: body.kind, message, contact, diagnostics, attachments: declared },
+  };
 }
