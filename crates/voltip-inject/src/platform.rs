@@ -558,10 +558,12 @@ mod tests {
         assert!(keys.mac_layout_live());
         assert!(!keys.with_mac_v_keycode(47).mac_layout_live() && !keys.with_mac_c_keycode(34).mac_layout_live());
         assert_eq!(keys.with_mac_v_keycode(47).mac_keycodes().0, 47);
-        // Off macOS nothing is read; on a Mac the preference names the layout.
+        // Off macOS nothing is read. On a Mac the preference names the layout once the input menu
+        // has recorded one; an account that never chose a layout has none (GitHub's macos-15-intel
+        // image, 2026-09-28), and the paste keeps the ANSI keys (`mac_keycodes_for(None)` above).
         if cfg!(target_os = "macos") {
             let id = mac_layout_id();
-            assert!(id.as_deref().is_some_and(|id| id.starts_with("com.apple.") || id.contains('.')), "{id:?}");
+            assert!(id.as_deref().is_none_or(|id| id.starts_with("com.apple.") || id.contains('.')), "{id:?}");
         } else {
             assert_eq!(mac_layout_id(), None);
         }
