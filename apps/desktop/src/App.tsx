@@ -7,10 +7,12 @@ import { ShellProvider, useShell } from "./app/shell-context";
 import type { TrayRequestSource } from "./app/tray-requests";
 import { Devices } from "./pages/Devices";
 import { Dictionary } from "./pages/Dictionary";
+import { Feedback } from "./pages/Feedback";
 import { History } from "./pages/History";
 import { Home } from "./pages/Home";
 import { NotFound } from "./pages/NotFound";
 import { Onboarding } from "./pages/Onboarding";
+import { AiModels, SpeechModels } from "./pages/Models";
 import { LIVE_STATE, BLANK_STATE, Overlay, isOverlayWindowState } from "./pages/Overlay";
 import { Rules } from "./pages/Rules";
 import { SettingsDialog } from "./pages/settings/SettingsDialog";
@@ -72,6 +74,12 @@ function Page({ route }: { route: Exclude<Route, { name: "settings" }> }) {
       return <Rules compose={route.compose === true} />;
     case "devices":
       return <Devices />;
+    case "speech":
+      return <SpeechModels />;
+    case "ai":
+      return <AiModels />;
+    case "feedback":
+      return <Feedback />;
     case "onboarding":
       return <Onboarding step={route.step} />;
     case "overlay":

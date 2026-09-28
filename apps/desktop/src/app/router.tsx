@@ -8,31 +8,21 @@ import {
   useState,
 } from "react";
 
-export type SettingsSection =
-  | "general"
-  | "hotkey"
-  | "speech"
-  | "ai"
-  | "scene"
-  | "privacy"
-  | "appearance"
-  | "about";
+export type SettingsSection = "general" | "hotkey" | "scene" | "privacy" | "appearance" | "about";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   "general",
   "hotkey",
-  "speech",
-  "ai",
   "scene",
   "privacy",
   "appearance",
   "about",
 ];
 
-/** The 语音模型 group of the settings dialog (recognition providers, local models, recognition
- *  options): what the old `/engines` page and the 引擎 group became. */
-export const SPEECH_ROUTE: Route = { name: "settings", section: "speech" };
-/** The AI 模型 group: the LLM providers behind the clean-up and voice edit. */
-export const AI_ROUTE: Route = { name: "settings", section: "ai" };
+/** The 语音模型 page (recognition providers, local models, recognition options). It was a group of
+ *  the settings dialog until 2026-09-28: every sidebar entry but 设置 is a page of the main layout. */
+export const SPEECH_ROUTE: Route = { name: "speech" };
+/** The AI 模型 page: the LLM providers behind the clean-up and voice edit. */
+export const AI_ROUTE: Route = { name: "ai" };
 
 export type Route =
   | { name: "home" }
@@ -41,6 +31,9 @@ export type Route =
   /** `compose`: open the editor on a new rule (the palette's 新建规则), then drop the flag. */
   | { name: "rules"; compose?: true }
   | { name: "devices" }
+  | { name: "speech" }
+  | { name: "ai" }
+  | { name: "feedback" }
   | { name: "settings"; section: SettingsSection }
   | { name: "onboarding"; step: number }
   | { name: "overlay"; state?: string }
@@ -50,9 +43,9 @@ export function isSettingsSection(value: string): value is SettingsSection {
   return (SETTINGS_SECTIONS as readonly string[]).includes(value);
 }
 
-/** `/settings/appearance?x=1` or `#/overlay?state=listening` → Route. `/engines` and
- *  `/settings/engine` (the former engines page and group) land on 语音模型, `/settings/refine`
- *  (the former 润色 group) on AI 模型, so old links and habits keep working. */
+/** `/settings/appearance?x=1` or `#/overlay?state=listening` → Route. `/engines`,
+ *  `/settings/engine` and `/settings/speech` (the former engines page and settings groups) land on
+ *  the 语音模型 page, `/settings/refine` and `/settings/ai` on AI 模型, so old links keep working. */
 export function parseRoute(path: string): Route {
   const clean = path.startsWith("#") ? path.slice(1) : path;
   const [pathname = "/", query = ""] = clean.split("?");
@@ -71,12 +64,17 @@ export function parseRoute(path: string): Route {
     case "rules":
       return params.get("new") === "1" ? { name: "rules", compose: true } : { name: "rules" };
     case "engines":
+    case "speech":
       return SPEECH_ROUTE;
+    case "ai":
+      return AI_ROUTE;
+    case "feedback":
+      return { name: "feedback" };
     case "devices":
       return { name: "devices" };
     case "settings":
-      if (second === "engine") return SPEECH_ROUTE;
-      if (second === "refine") return AI_ROUTE;
+      if (second === "engine" || second === "speech") return SPEECH_ROUTE;
+      if (second === "refine" || second === "ai") return AI_ROUTE;
       return {
         name: "settings",
         section: second !== undefined && isSettingsSection(second) ? second : "appearance",
@@ -119,6 +117,9 @@ export function routePath(route: Route): string {
       return route.compose === true ? "/rules?new=1" : "/rules";
     case "dictionary":
     case "devices":
+    case "speech":
+    case "ai":
+    case "feedback":
       return `/${route.name}`;
   }
 }

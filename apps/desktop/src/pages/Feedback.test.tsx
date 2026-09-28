@@ -2,8 +2,8 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MOCK_FEEDBACK_MS, MockBackend, sampleDevices } from "@voltip/shared/mock";
 import { zhT } from "@voltip/shared";
-import { renderApp } from "../../test/render";
-import { diagnosticValue, feedbackError } from "./FeedbackDialog";
+import { renderApp } from "../test/render";
+import { diagnosticValue, feedbackError } from "./Feedback";
 
 function backend(options: ConstructorParameters<typeof MockBackend>[0] = {}) {
   return new MockBackend({
@@ -13,15 +13,16 @@ function backend(options: ConstructorParameters<typeof MockBackend>[0] = {}) {
   });
 }
 
+/** 反馈 from the sidebar: a page of the main layout since 2026-09-28, no longer a dialog. */
 async function openFeedback() {
   const user = userEvent.setup({ advanceTimers: (ms) => vi.advanceTimersByTime(ms) });
   await screen.findByRole("heading", { name: "首页", level: 1 });
   await user.click(screen.getByTestId("sidebar-feedback"));
-  const dialog = await screen.findByRole("dialog", { name: "反馈" });
-  return { user, dialog };
+  const page = await screen.findByTestId("page-feedback");
+  return { user, page };
 }
 
-describe("FeedbackDialog", () => {
+describe("the 反馈 page", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -30,8 +31,8 @@ describe("FeedbackDialog", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const core = backend();
     renderApp({ backend: core });
-    const { user, dialog } = await openFeedback();
-    const attached = within(dialog).getByTestId("feedback-attached");
+    const { user, page } = await openFeedback();
+    const attached = within(page).getByTestId("feedback-attached");
     await waitFor(() => {
       expect(within(attached).queryByText("正在读取要附带的信息…")).toBeNull();
     });
@@ -48,15 +49,15 @@ describe("FeedbackDialog", () => {
     expect(attached.querySelector('[data-diagnostic="output_mode"]')).toHaveTextContent("整段输出");
     expect(attached.querySelector('[data-diagnostic="local_model"]')).toBeNull();
     expect(attached).toHaveTextContent("不含主机名、密钥和听写内容");
-    expect(dialog.textContent).not.toMatch(/https?:|example|\.app\b/);
+    expect(page.textContent).not.toMatch(/https?:|example|\.app\b/);
     // Nothing to send until there are words.
-    const send = within(dialog).getByTestId("feedback-send");
+    const send = within(page).getByTestId("feedback-send");
     expect(send).toBeDisabled();
-    await user.click(within(dialog).getByRole("radio", { name: "建议" }));
-    await user.type(within(dialog).getByRole("textbox", { name: "描述" }), "希望支持鼠标侧键说话");
-    expect(within(dialog).getByTestId("feedback-count")).toHaveTextContent("10 / 5000");
+    await user.click(within(page).getByRole("radio", { name: "建议" }));
+    await user.type(within(page).getByRole("textbox", { name: "描述" }), "希望支持鼠标侧键说话");
+    expect(within(page).getByTestId("feedback-count")).toHaveTextContent("10 / 5000");
     await user.type(
-      within(dialog).getByRole("textbox", { name: "联系方式（可选）" }),
+      within(page).getByRole("textbox", { name: "联系方式（可选）" }),
       " me@example.test ",
     );
     await user.click(send);
@@ -65,7 +66,11 @@ describe("FeedbackDialog", () => {
       vi.advanceTimersByTime(MOCK_FEEDBACK_MS);
     });
     expect(await screen.findByText("反馈已发送，谢谢")).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "反馈" })).toBeNull();
+    // The page stays, with an empty form ready for the next report.
+    expect(within(page).getByRole("textbox", { name: "描述" })).toHaveValue("");
+    expect(within(page).getByRole("textbox", { name: "联系方式（可选）" })).toHaveValue("");
+    expect(screen.getByTestId("sidebar-feedback")).toHaveAttribute("aria-current", "page");
+    expect(screen.getAllByRole("heading", { name: "反馈", level: 1 }).length).toBeGreaterThan(0);
     expect(core.feedbackSent).toEqual([
       {
         kind: "idea",
@@ -82,19 +87,15 @@ describe("FeedbackDialog", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const core = backend({ feedback: "rate_limited" });
     renderApp({ backend: core });
-    const { user, dialog } = await openFeedback();
-    await user.type(within(dialog).getByRole("textbox", { name: "描述" }), "粘贴没有生效");
-    await user.click(within(dialog).getByTestId("feedback-send"));
+    const { user, page } = await openFeedback();
+    await user.type(within(page).getByRole("textbox", { name: "描述" }), "粘贴没有生效");
+    await user.click(within(page).getByTestId("feedback-send"));
     act(() => {
       vi.advanceTimersByTime(MOCK_FEEDBACK_MS);
     });
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "发送太频繁了，请稍后再试。",
-    );
-    expect(within(dialog).getByRole("textbox", { name: "描述" })).toHaveValue("粘贴没有生效");
-    expect(within(dialog).getByTestId("feedback-send")).toBeEnabled();
-    await user.click(within(dialog).getByRole("button", { name: "取消" }));
-    expect(screen.queryByRole("dialog", { name: "反馈" })).toBeNull();
+    expect(await within(page).findByRole("alert")).toHaveTextContent("发送太频繁了，请稍后再试。");
+    expect(within(page).getByRole("textbox", { name: "描述" })).toHaveValue("粘贴没有生效");
+    expect(within(page).getByTestId("feedback-send")).toBeEnabled();
     expect(core.feedbackSent).toEqual([]);
   });
 
@@ -102,14 +103,13 @@ describe("FeedbackDialog", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const core = backend({ feedback: "not_configured" });
     renderApp({ backend: core });
-    const { user, dialog } = await openFeedback();
-    expect(await within(dialog).findByTestId("feedback-not-configured")).toHaveTextContent(
+    const { user, page } = await openFeedback();
+    expect(await within(page).findByTestId("feedback-not-configured")).toHaveTextContent(
       "这个构建没有配置反馈地址",
     );
-    expect(within(dialog).queryByTestId("feedback-send")).toBeNull();
-    await user.click(within(dialog).getByRole("button", { name: "在 GitHub 上反馈" }));
+    expect(within(page).queryByTestId("feedback-send")).toBeNull();
+    await user.click(within(page).getByRole("button", { name: "在 GitHub 上反馈" }));
     expect(core.linksOpened).toEqual(["feedback"]);
-    expect(screen.queryByRole("dialog", { name: "反馈" })).toBeNull();
   });
 
   it("words the diagnostics and maps the shell's refusals", () => {

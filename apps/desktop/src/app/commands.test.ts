@@ -39,16 +39,21 @@ describe("buildCommands", () => {
     expect(d.navigate).toHaveBeenCalledWith({ name: "history" });
     expect(d.navigate).toHaveBeenCalledWith({ name: "devices" });
     expect(d.navigate).toHaveBeenCalledWith({ name: "settings", section: "appearance" });
-    // regression (2026-09-27): 引擎 is two settings groups now, each with its own entry.
+    // regression (2026-09-28): 语音模型, AI 模型 and 反馈 are pages, each with its own entry.
     expect(d.navigate).toHaveBeenCalledWith(SPEECH_ROUTE);
     expect(d.navigate).toHaveBeenCalledWith(AI_ROUTE);
+    expect(d.navigate).toHaveBeenCalledWith({ name: "feedback" });
     expect(items.find((i) => i.id === "nav-engines")).toMatchObject({
-      label: "打开设置 › 语音模型",
+      label: "打开语音模型",
       icon: "wave",
     });
     expect(items.find((i) => i.id === "nav-ai")).toMatchObject({
-      label: "打开设置 › AI 模型",
+      label: "打开 AI 模型",
       icon: "wand",
+    });
+    expect(items.find((i) => i.id === "nav-feedback")).toMatchObject({
+      label: "打开反馈",
+      icon: "chat",
     });
     expect(toast).toHaveBeenCalledTimes(THEME_IDS.length + 1);
     for (const [message] of toast.mock.calls) expect(message).toMatch(/^主题已切换/);

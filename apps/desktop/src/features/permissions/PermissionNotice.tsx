@@ -1,6 +1,6 @@
-import { onboardingGate } from "@voltip/shared";
+import { type PermissionReport, onboardingGate } from "@voltip/shared";
 import { Banner, Button, useBackend, useI18n } from "@voltip/ui";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "../../app/router";
 import { usePermissions } from "./usePermissions";
 
@@ -13,14 +13,13 @@ export function PermissionNotice() {
   const { backend } = useBackend();
   const { t } = useI18n();
   const { navigate } = useRouter();
-  const [watching, setWatching] = useState(true);
-  const permissions = usePermissions(backend, watching);
-  const report = permissions.report;
+  // Poll until the first answer, then only while something blocks: the read that shows the grant
+  // arrived is the last one.
+  const [report, setReport] = useState<PermissionReport | undefined>(undefined);
   const blocking = report === undefined ? [] : onboardingGate(report);
+  const permissions = usePermissions(backend, report === undefined || blocking.length > 0);
+  if (permissions.report !== report) setReport(permissions.report);
   const first = blocking[0];
-  useEffect(() => {
-    if (report !== undefined && first === undefined) setWatching(false);
-  }, [report, first]);
   if (first === undefined) return null;
   return (
     <Banner

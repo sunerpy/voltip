@@ -36,28 +36,44 @@ describe("Shell", () => {
     // regression (2026-09-25): Bridge & MCP was removed — no nav item, no readout, no shortcut.
     expect(screen.queryByRole("button", { name: /Bridge/ })).toBeNull();
     expect(screen.queryByText(/客户端|Bridge|MCP/)).toBeNull();
-    // regression (2026-09-27): 引擎 became 语音模型 and AI 模型 under 语音输入, each a shortcut into
-    // its settings group; the title bar keeps naming the page beneath.
+    // regression (2026-09-28): every sidebar entry but 设置 is a page of the main layout. 语音模型
+    // and AI 模型 (under 语音输入) open their pages, lit and titled; no dialog floats over them.
     const nav = screen.getByRole("navigation", { name: "主导航" });
     expect(within(nav).getByRole("group", { name: "语音输入" })).toBeInTheDocument();
     expect(within(nav).queryByText("配置")).toBeNull();
     await user.click(screen.getByRole("button", { name: /^语音模型$/ }));
-    let dialog = screen.getByRole("dialog", { name: "设置" });
-    expect(
-      within(dialog).getByRole("tab", { name: /语音模型/, selected: true }),
-    ).toBeInTheDocument();
-    expect(within(dialog).getByRole("heading", { name: "语音模型", level: 2 })).toBeInTheDocument();
+    expect(await screen.findByTestId("page-speech")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "语音模型", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "语音模型", level: 2 })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^语音模型$/ })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    expect(screen.getByRole("heading", { name: "首页", level: 1 })).toBeInTheDocument();
-    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: /^AI 模型$/ }));
-    dialog = screen.getByRole("dialog", { name: "设置" });
-    expect(within(dialog).getByRole("heading", { name: "AI 模型", level: 2 })).toBeInTheDocument();
+    expect(await screen.findByTestId("page-ai")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "AI 模型", level: 1 })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
+    // The settings dialog has no model groups left.
+    await user.click(screen.getByTestId("sidebar-settings"));
+    const groups = within(screen.getByRole("dialog", { name: "设置" })).getAllByRole("tab");
+    expect(groups.map((g) => g.textContent)).toEqual([
+      "通用",
+      "热键",
+      "场景",
+      "隐私与历史",
+      "外观",
+      "关于",
+    ]);
+    // It floats over the model page, whose entry stays lit.
+    expect(screen.getByRole("button", { name: /^AI 模型$/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: /^首页$/ }));
     // 设置 sits at the bottom and opens the dialog on 通用, over the current page.
+    let dialog: HTMLElement;
     const settings = screen.getByTestId("sidebar-settings");
     expect(within(screen.getByTestId("sidebar-footer")).getByRole("button", { name: "设置" })).toBe(
       settings,
@@ -73,12 +89,15 @@ describe("Shell", () => {
     expect(screen.queryByRole("button", { name: "关于" })).toBeNull();
     await user.click(screen.getByRole("button", { name: /^手机$/ }));
     expect(screen.getByRole("heading", { name: "手机", level: 1 })).toBeInTheDocument();
-    // 反馈 opens the in-app feedback dialog (the report goes to the feedback endpoint).
+    // 反馈 opens the in-app feedback page (the report goes to the feedback endpoint), lit like a
+    // page entry and without a dialog.
     await user.click(screen.getByRole("button", { name: "反馈" }));
-    expect(screen.getByRole("dialog", { name: "反馈" })).toBeInTheDocument();
-    expect(backend.linksOpened).toEqual([]);
-    await user.keyboard("{Escape}");
+    expect(await screen.findByTestId("page-feedback")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "反馈", level: 1 })).toBeInTheDocument();
+    expect(screen.getByTestId("sidebar-feedback")).toHaveAttribute("aria-current", "page");
+    expect(screen.getByTestId("sidebar-feedback")).not.toHaveAttribute("aria-haspopup");
     expect(screen.queryByRole("dialog", { name: "反馈" })).toBeNull();
+    expect(backend.linksOpened).toEqual([]);
   });
 
   it("regression: the sidebar collapses to an icon rail and back, and the choice survives a restart", async () => {

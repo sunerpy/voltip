@@ -312,6 +312,9 @@ export const en: Messages = {
       dictionary: "Dictionary",
       rules: "Rules",
       devices: "Phone",
+      speech: "Speech models",
+      ai: "AI models",
+      feedback: "Feedback",
       onboarding: "Setup guide / step {n}",
       overlay: "Overlay pill",
       notfound: "Not found",
@@ -384,8 +387,8 @@ export const en: Messages = {
     blocked: {
       waitingCore: "Speech model not ready · waiting for the core",
       issue:
-        "The recognition provider cannot run yet: {issue} · set it up under Settings · Speech models",
-      noModel: "Local model not downloaded · get it under Settings · Speech models",
+        "The recognition provider cannot run yet: {issue} · set it up on the Speech models page",
+      noModel: "Local model not downloaded · get it on the Speech models page",
       mic: "Microphone unavailable · {error}",
     },
     status: {
@@ -1213,7 +1216,7 @@ export const en: Messages = {
         "Voltip asks only for what it really needs and shows the system's actual state instead of assuming it was granted.",
       hotkey: "What can be bound depends on the backend this machine runs, not on Voltip.",
       engine:
-        "Every option states its cost first: where audio goes and whether an LLM pass follows. The choice applies at once and can be changed under Settings · Speech models.",
+        "Every option states its cost first: where audio goes and whether an LLM pass follows. The choice applies at once and can be changed on the Speech models page.",
       trial: "Put the cursor in the box below, hold the hotkey, say a short sentence, release.",
     },
     permission: {
@@ -1286,10 +1289,10 @@ export const en: Messages = {
       baseUrl: "Endpoint",
       refine: "Polish with an LLM too",
       refineHelp: "Fixes punctuation, typos and filler words; provider: {provider}",
-      refineNone: "This choice has no polish service; set one up later under Settings · AI models.",
+      refineNone: "This choice has no polish service; set one up later on the AI models page.",
       localDownload:
         "Dictation works once the download finishes; you can continue now, it downloads in the background.",
-      note: "“Save and continue” writes the settings; change them any time under Settings · Speech models.",
+      note: "“Save and continue” writes the settings; change them any time on the Speech models page.",
       needKey: "This provider needs an API key",
       needUrl: "A custom endpoint needs an http(s) address",
       needModel: "Enter a model name",
@@ -1403,8 +1406,6 @@ export const en: Messages = {
     group: {
       general: "General",
       hotkey: "Hotkey",
-      speech: "Speech models",
-      ai: "AI models",
       scene: "Scenes",
       privacy: "Privacy and history",
       appearance: "Appearance",
@@ -1550,7 +1551,7 @@ export const en: Messages = {
       editTurnOffLabel: "Turn off · Edit selected text",
       editTurnOnLabel: "Turn on · Edit selected text",
       editNeedsRefine:
-        "Needs the AI polishing service: set up a provider under Settings · AI models first",
+        "Needs the AI polishing service: set up a provider on the AI models page first",
       solo: {
         label: "Single-key trigger",
         help: "Hold one key or mouse button to talk, no chord needed. It works alongside the hotkey above and follows the activation mode. Pressing another key while holding it (Right Ctrl + C, say) is an ordinary shortcut, and that take is cancelled.",
@@ -1771,6 +1772,8 @@ export const en: Messages = {
   },
   feedback: {
     title: "Feedback",
+    lede: "Tell us what does not work, or how you would like it to. Everything that goes along with it is listed next to the form before you send.",
+    formTitle: "Your report",
     kindLabel: "Type",
     kind: { bug: "Problem", idea: "Suggestion", other: "Other" },
     messageLabel: "Description",
@@ -1831,8 +1834,9 @@ export const en: Messages = {
     entriesHint: "{n} entries",
     openHistory: "Open history",
     openAppearance: "Open settings › Appearance",
-    openEngines: "Open settings › Speech models",
-    openAi: "Open settings › AI models",
+    openEngines: "Open speech models",
+    openAi: "Open AI models",
+    openFeedback: "Open feedback",
     openDevices: "Open Phone",
   },
   app: {

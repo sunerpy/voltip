@@ -13,8 +13,10 @@ import {
   type TFunction,
   outputModeLabel,
 } from "@voltip/shared";
-import { Button, Dialog, Input, Segmented, Textarea, useBackend, useI18n } from "@voltip/ui";
+import { Button, Input, Panel, Segmented, Textarea, useBackend, useI18n } from "@voltip/ui";
 import { useEffect, useState } from "react";
+import { openProjectLink } from "../app/project-links";
+import { useShell } from "../app/shell-context";
 
 const OS_NAMES: Record<string, string> = { windows: "Windows", linux: "Linux", macos: "macOS" };
 const DIAGNOSTIC_ORDER = [
@@ -38,7 +40,7 @@ function isOutputMode(value: string): value is Parameters<typeof outputModeLabel
   return value === "whole_take" || value === "streaming_final" || value === "live_inject";
 }
 
-/** One diagnostics value as the dialog words it: provider and mode names, not wire ids. */
+/** One diagnostics value as the page words it: provider and mode names, not wire ids. */
 export function diagnosticValue(
   key: (typeof DIAGNOSTIC_ORDER)[number],
   value: string,
@@ -68,20 +70,14 @@ export function feedbackError(error: unknown): FeedbackError {
   return FEEDBACK_ERRORS.find((e) => e === text) ?? "server";
 }
 
-export interface FeedbackDialogProps {
-  open: boolean;
-  onClose: () => void;
-  /** After the endpoint stored the report (the shell toasts). */
-  onSent: () => void;
-  /** A build without an endpoint: the repository's new-issue page instead. */
-  onOpenIssue: () => void;
-}
-
-/** The 反馈 dialog (docs/feedback.md): a kind, the user's words, an optional contact, and the
- *  exact diagnostics that go along, shown before anything is sent. The shell posts the report;
- *  the webview never learns where to. */
-export function FeedbackDialog({ open, onClose, onSent, onOpenIssue }: FeedbackDialogProps) {
+/** The 反馈 page (docs/feedback.md; a dialog until 2026-09-28, when every sidebar entry but 设置
+ *  became a page of the main layout): a kind, the user's words and an optional contact on the left,
+ *  the exact diagnostics that go along on the right, shown before anything is sent. The shell
+ *  posts the report; the webview never learns where to. Once sent, a toast says so and the form
+ *  clears. A build without an endpoint offers the repository's issue page instead. */
+export function Feedback() {
   const { backend } = useBackend();
+  const shell = useShell();
   const { t, locale } = useI18n();
   const [kind, setKind] = useState<FeedbackKind>("bug");
   const [message, setMessage] = useState("");
@@ -91,7 +87,6 @@ export function FeedbackDialog({ open, onClose, onSent, onOpenIssue }: FeedbackD
   const [error, setError] = useState<FeedbackError | undefined>(undefined);
 
   useEffect(() => {
-    if (!open) return;
     let live = true;
     void backend
       .feedbackDiagnostics(locale)
@@ -104,7 +99,7 @@ export function FeedbackDialog({ open, onClose, onSent, onOpenIssue }: FeedbackD
     return () => {
       live = false;
     };
-  }, [open, backend, locale]);
+  }, [backend, locale]);
 
   const configured = info?.configured ?? true;
   const empty = message.trim().length === 0;
@@ -128,76 +123,92 @@ export function FeedbackDialog({ open, onClose, onSent, onOpenIssue }: FeedbackD
     setSending(false);
     setMessage("");
     setContact("");
-    onSent();
+    shell.toast({ message: t("feedback.sent"), duration: 4000 });
   };
 
   return (
-    <Dialog
-      open={open}
-      title={t("feedback.title")}
-      width={560}
-      onClose={onClose}
-      actions={
-        <>
-          <Button size="sm" variant="ghost" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          {configured ? (
-            <Button
-              size="sm"
-              variant="primary"
-              disabled={empty || sending || info === undefined}
-              onClick={() => {
-                void submit();
+    <div
+      className="mx-auto flex w-full max-w-[1100px] flex-col gap-4 p-6"
+      data-testid="page-feedback">
+      <header>
+        <h2 className="text-[18px] font-semibold text-fg">{t("feedback.title")}</h2>
+        <p className="mt-1 text-[13px] text-fg-muted">{t("feedback.lede")}</p>
+      </header>
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,340px)]">
+        <Panel
+          eyebrow={t("feedback.formTitle")}
+          bodyClassName="flex flex-col gap-4"
+          data-testid="feedback-form">
+          <Segmented<FeedbackKind>
+            label={t("feedback.kindLabel")}
+            value={kind}
+            onChange={setKind}
+            options={FEEDBACK_KINDS.map((k) => ({ value: k, label: t(`feedback.kind.${k}`) }))}
+            className="self-start"
+          />
+          <div className="flex flex-col gap-1">
+            <Textarea
+              label={t("feedback.messageLabel")}
+              placeholder={t("feedback.messagePlaceholder")}
+              value={message}
+              maxLength={FEEDBACK_MESSAGE_MAX}
+              rows={8}
+              onChange={(e) => {
+                setMessage(e.target.value);
               }}
-              data-testid="feedback-send">
-              {sending ? t("feedback.sending") : t("feedback.send")}
-            </Button>
-          ) : (
-            <Button size="sm" variant="primary" icon="external" onClick={onOpenIssue}>
-              {t("feedback.openIssue")}
-            </Button>
-          )}
-        </>
-      }>
-      <div className="flex flex-col gap-4" data-testid="feedback-dialog">
-        <Segmented<FeedbackKind>
-          label={t("feedback.kindLabel")}
-          value={kind}
-          onChange={setKind}
-          options={FEEDBACK_KINDS.map((k) => ({ value: k, label: t(`feedback.kind.${k}`) }))}
-          className="self-start"
-        />
-        <div className="flex flex-col gap-1">
-          <Textarea
-            label={t("feedback.messageLabel")}
-            placeholder={t("feedback.messagePlaceholder")}
-            value={message}
-            maxLength={FEEDBACK_MESSAGE_MAX}
-            rows={6}
-            data-autofocus
+            />
+            <span className="mono self-end text-[11px] text-fg-subtle" data-testid="feedback-count">
+              {t("feedback.count", { n: message.length, max: FEEDBACK_MESSAGE_MAX })}
+            </span>
+          </div>
+          <Input
+            label={t("feedback.contactLabel")}
+            placeholder={t("feedback.contactPlaceholder")}
+            value={contact}
+            maxLength={FEEDBACK_CONTACT_MAX}
             onChange={(e) => {
-              setMessage(e.target.value);
+              setContact(e.target.value);
             }}
           />
-          <span className="mono self-end text-[11px] text-fg-subtle" data-testid="feedback-count">
-            {t("feedback.count", { n: message.length, max: FEEDBACK_MESSAGE_MAX })}
-          </span>
-        </div>
-        <Input
-          label={t("feedback.contactLabel")}
-          placeholder={t("feedback.contactPlaceholder")}
-          value={contact}
-          maxLength={FEEDBACK_CONTACT_MAX}
-          onChange={(e) => {
-            setContact(e.target.value);
-          }}
-        />
-        <section
+          {!configured && (
+            <p className="text-[12px] text-fg-muted" data-testid="feedback-not-configured">
+              {t("feedback.notConfigured")}
+            </p>
+          )}
+          {error !== undefined && (
+            <p role="alert" className="text-[12px] text-danger" data-testid="feedback-error">
+              {t(`feedback.error.${error}`, { max: FEEDBACK_MESSAGE_MAX })}
+            </p>
+          )}
+          <div className="flex justify-end">
+            {configured ? (
+              <Button
+                variant="primary"
+                disabled={empty || sending || info === undefined}
+                onClick={() => {
+                  void submit();
+                }}
+                data-testid="feedback-send">
+                {sending ? t("feedback.sending") : t("feedback.send")}
+              </Button>
+            ) : (
+              <Button
+                variant="primary"
+                icon="external"
+                onClick={() => {
+                  openProjectLink(backend, shell, "feedback");
+                }}>
+                {t("feedback.openIssue")}
+              </Button>
+            )}
+          </div>
+        </Panel>
+        <Panel
+          eyebrow={t("feedback.attached")}
           aria-label={t("feedback.attached")}
-          className="flex flex-col gap-2 rounded-10 bg-inset p-3 hairline"
+          role="region"
+          bodyClassName="flex flex-col gap-2"
           data-testid="feedback-attached">
-          <h3 className="text-[12px] font-medium text-fg">{t("feedback.attached")}</h3>
           {info === undefined ? (
             <p className="text-[12px] text-fg-muted">{t("feedback.loading")}</p>
           ) : (
@@ -217,18 +228,8 @@ export function FeedbackDialog({ open, onClose, onSent, onOpenIssue }: FeedbackD
             </dl>
           )}
           <p className="text-[11px] leading-4 text-fg-subtle">{t("feedback.attachedHelp")}</p>
-        </section>
-        {!configured && (
-          <p className="text-[12px] text-fg-muted" data-testid="feedback-not-configured">
-            {t("feedback.notConfigured")}
-          </p>
-        )}
-        {error !== undefined && (
-          <p role="alert" className="text-[12px] text-danger" data-testid="feedback-error">
-            {t(`feedback.error.${error}`, { max: FEEDBACK_MESSAGE_MAX })}
-          </p>
-        )}
+        </Panel>
       </div>
-    </Dialog>
+    </div>
   );
 }

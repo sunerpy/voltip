@@ -341,10 +341,7 @@ describe("Home page", () => {
     // The reason follows `state.engines`, which the backend reports asynchronously after the first
     // paint (until then the button says the core is still being awaited): wait for it explicitly.
     await waitFor(() => {
-      expect(start).toHaveAttribute(
-        "title",
-        "识别服务商还不能用：缺少密钥 · 在「设置 · 语音模型」中配置",
-      );
+      expect(start).toHaveAttribute("title", "识别服务商还不能用：缺少密钥 · 在「语音模型」页配置");
     });
     expect(screen.getByTestId("home-phase")).toHaveTextContent("缺少密钥");
     expect(screen.getByRole("button", { name: "今天 0 条" })).toBeInTheDocument();
@@ -476,15 +473,12 @@ describe("Home page", () => {
     expect(screen.getByTestId("home-privacy")).toHaveTextContent("音频发送到内置服务");
     expect(screen.getByTestId("home-privacy")).not.toHaveTextContent("文本发送到");
     expect(within(screen.getByTestId("home-engine")).getByText("关")).toBeInTheDocument();
-    // 配置语音模型 opens the settings dialog on the 语音模型 group over the home page.
+    // 配置语音模型 opens the 语音模型 page (a page of the main layout since 2026-09-28).
     await user.click(screen.getByRole("button", { name: "配置语音模型" }));
-    const settings = screen.getByRole("dialog", { name: "设置" });
-    expect(
-      within(settings).getByRole("tab", { name: /语音模型/, selected: true }),
-    ).toBeInTheDocument();
-    expect(within(settings).getByTestId("speech-pane")).toBeInTheDocument();
-    await user.keyboard("{Escape}");
+    expect(await screen.findByTestId("page-speech")).toBeInTheDocument();
+    expect(screen.getByTestId("speech-pane")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /^首页$/ }));
     await user.click(screen.getByRole("button", { name: "查看全部 →" }));
     expect(screen.getByRole("heading", { name: "历史记录", level: 1 })).toBeInTheDocument();
   });
@@ -513,13 +507,8 @@ describe("Home page", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "内置服务 · Qwen3-ASR-1.7B" }));
-    expect(
-      within(screen.getByRole("dialog", { name: "设置" })).getByRole("tab", {
-        name: /语音模型/,
-        selected: true,
-      }),
-    ).toBeInTheDocument();
-    await user.keyboard("{Escape}");
+    expect(await screen.findByTestId("page-speech")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^首页$/ }));
     const tile = screen.getByRole("button", { name: `本月 ${stats.month.count} 条` });
     tile.focus();
     await user.keyboard("{Enter}");

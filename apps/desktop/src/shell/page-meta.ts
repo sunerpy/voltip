@@ -66,8 +66,7 @@ export function engineReadout(engines: EngineStatus, i18n: Translator = zhT): To
   };
 }
 
-/** The engines group's readouts: the resolved ASR, the polish state and the injection mode. */
-/** The 语音模型 group's header: the recognition provider and how the text is inserted. */
+/** The 语音模型 page's readouts: the recognition provider and how the text is inserted. */
 function speechReadouts(engines: EngineStatus, i18n: Translator): ToolbarReadout[] {
   const { t } = i18n;
   return [
@@ -82,7 +81,7 @@ function speechReadouts(engines: EngineStatus, i18n: Translator): ToolbarReadout
   ];
 }
 
-/** The AI 模型 group's header: whether the clean-up runs, and on which model. */
+/** The AI 模型 page's readouts: whether the clean-up runs, and on which model. */
 function aiReadouts(engines: EngineStatus, i18n: Translator): ToolbarReadout[] {
   const { t } = i18n;
   return [
@@ -142,8 +141,8 @@ function devicesReadouts(
   ];
 }
 
-/** Mono readouts in the settings dialog header (hotkey, appearance, scenes and the two model
- *  groups); the title bar keeps describing the page beneath. */
+/** Mono readouts in the settings dialog header (hotkey, appearance, scenes); the title bar keeps
+ *  describing the page beneath. */
 export function settingsReadouts(
   section: SettingsSection,
   state: UiState,
@@ -152,10 +151,6 @@ export function settingsReadouts(
 ): ToolbarReadout[] {
   const { t, locale } = i18n;
   switch (section) {
-    case "speech":
-      return speechReadouts(state.engines, i18n);
-    case "ai":
-      return aiReadouts(state.engines, i18n);
     case "hotkey":
       return [
         {
@@ -304,6 +299,30 @@ export function pageMeta(
           ["Ctrl R", sc("page.shortcut.regenerateQr")],
           ["Ctrl ,", sc("page.shortcut.settings")],
         ],
+      };
+    case "speech":
+      return {
+        title: t("page.title.speech"),
+        readouts: speechReadouts(state.engines, i18n),
+        shortcuts: [
+          hotkeyShortcut(state.settings.hotkey, state.settings.activation, i18n),
+          ["Ctrl ,", sc("page.shortcut.settings")],
+        ],
+      };
+    case "ai":
+      return {
+        title: t("page.title.ai"),
+        readouts: aiReadouts(state.engines, i18n),
+        shortcuts: [
+          hotkeyShortcut(state.settings.hotkey, state.settings.activation, i18n),
+          ["Ctrl ,", sc("page.shortcut.settings")],
+        ],
+      };
+    case "feedback":
+      return {
+        title: t("page.title.feedback"),
+        readouts: [],
+        shortcuts: [["Ctrl ,", sc("page.shortcut.settings")]],
       };
     case "settings":
       return pageMeta(background, state, extras, HOME_ROUTE, i18n);

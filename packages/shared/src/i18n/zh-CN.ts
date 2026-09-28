@@ -303,6 +303,9 @@ export const zhCN = {
       dictionary: "词典",
       rules: "规则",
       devices: "手机",
+      speech: "语音模型",
+      ai: "AI 模型",
+      feedback: "反馈",
       onboarding: "设置向导 / 第 {n} 步",
       overlay: "悬浮胶囊",
       notfound: "未找到",
@@ -374,8 +377,8 @@ export const zhCN = {
     },
     blocked: {
       waitingCore: "语音模型尚未就绪 · 等待核心报告",
-      issue: "识别服务商还不能用：{issue} · 在「设置 · 语音模型」中配置",
-      noModel: "本地模型未下载 · 在「设置 · 语音模型」中下载",
+      issue: "识别服务商还不能用：{issue} · 在「语音模型」页配置",
+      noModel: "本地模型未下载 · 在「语音模型」页下载",
       mic: "麦克风不可用 · {error}",
     },
     status: {
@@ -1173,7 +1176,7 @@ export const zhCN = {
       permissions: "Voltip 只请求它真正需要的东西，并显示系统当前的真实状态，而不是假定已经放行。",
       hotkey: "能绑定什么取决于这台机器运行的后端，而不取决于 Voltip。",
       engine:
-        "每个选项都先说明代价：音频发到哪里、是否再经一次 LLM。选择即生效，随时可在「设置 · 语音模型」里改。",
+        "每个选项都先说明代价：音频发到哪里、是否再经一次 LLM。选择即生效，随时可在「语音模型」页改。",
       trial: "把光标放进下面的输入框，按住快捷键说一句短话，松开。",
     },
     permission: {
@@ -1240,9 +1243,9 @@ export const zhCN = {
       baseUrl: "接口地址",
       refine: "同时用大模型润色",
       refineHelp: "修正标点、错字和口语冗余；服务商：{provider}",
-      refineNone: "这个选择没有可用的润色服务，之后可在「设置 · AI 模型」里配置。",
+      refineNone: "这个选择没有可用的润色服务，之后可在「AI 模型」页配置。",
       localDownload: "下载完成后才能听写；可以先继续，下载会在后台进行。",
-      note: "「保存并继续」会写入设置；之后可在「设置 · 语音模型」里随时更改。",
+      note: "「保存并继续」会写入设置；之后可在「语音模型」页随时更改。",
       needKey: "这个服务商需要 API 密钥",
       needUrl: "自定义接口需要 http(s) 地址",
       needModel: "请填写模型名称",
@@ -1348,8 +1351,6 @@ export const zhCN = {
     group: {
       general: "通用",
       hotkey: "热键",
-      speech: "语音模型",
-      ai: "AI 模型",
       scene: "场景",
       privacy: "隐私与历史",
       appearance: "外观",
@@ -1487,7 +1488,7 @@ export const zhCN = {
       editCancelLabel: "取消录制 · 编辑选中文本",
       editTurnOffLabel: "关闭 · 编辑选中文本",
       editTurnOnLabel: "启用 · 编辑选中文本",
-      editNeedsRefine: "需要 AI 润色服务：先在「设置 · AI 模型」里配置服务商",
+      editNeedsRefine: "需要 AI 润色服务：先在「AI 模型」页配置服务商",
       solo: {
         label: "单键触发",
         help: "按住一个键或鼠标键就能说话，不用按组合键。与上面的热键同时有效，也遵循激活方式。按着它再按别的键（例如右 Ctrl + C）算普通快捷键，这次录音会被取消。",
@@ -1697,6 +1698,8 @@ export const zhCN = {
   },
   feedback: {
     title: "反馈",
+    lede: "说说哪里不好用，或者你希望它怎样工作。随反馈附带的信息都列在旁边，发送前就能看到。",
+    formTitle: "反馈内容",
     kindLabel: "类型",
     kind: { bug: "问题", idea: "建议", other: "其他" },
     messageLabel: "描述",
@@ -1756,8 +1759,9 @@ export const zhCN = {
     entriesHint: "{n} 条",
     openHistory: "打开历史记录",
     openAppearance: "打开设置 › 外观",
-    openEngines: "打开设置 › 语音模型",
-    openAi: "打开设置 › AI 模型",
+    openEngines: "打开语音模型",
+    openAi: "打开 AI 模型",
+    openFeedback: "打开反馈",
     openDevices: "打开手机",
   },
   app: {

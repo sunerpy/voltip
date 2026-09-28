@@ -6,7 +6,6 @@ import { type SettingsSection, isSettingsSection, useRouter } from "../../app/ro
 import { settingsReadouts } from "../../shell/page-meta";
 import { Appearance } from "./Appearance";
 import { AboutPane } from "./AboutPane";
-import { AiModelsPane, SpeechModelsPane } from "./engines/EnginesPane";
 import { General } from "./General";
 import { Hotkey } from "./Hotkey";
 import { PrivacyPane } from "./PrivacyPane";
@@ -21,12 +20,11 @@ function tabId(section: string): string {
 /** Settings as a modal over the page beneath: 200 px group nav on the left, a header with the
  *  group title, its readouts and 关闭 on the right, and a fluid scrolling form (max 720 px). The
  *  nav and the panes carry no English eyebrows or key suffixes: one language per locale (user
- *  2026-09-25, docs/frontend.md §6.4). 通用, 热键, 语音模型 (recognition providers, the local model
- *  library and the recognition options), AI 模型 (the LLM providers for the clean-up and voice
- *  edit), 场景 (the scenes and the context switches, docs/dictation.md §18), 隐私 (what leaves the
- *  computer, the history switch and retention), 外观 and 关于 (version, license, model sources,
- *  updates) are all backed by the core. Esc and the scrim
- *  close back to the router's `background`; ↑/↓ move between groups. */
+ *  2026-09-25, docs/frontend.md §6.4). 通用, 热键, 场景 (the scenes and the context switches,
+ *  docs/dictation.md §18), 隐私 (what leaves the computer, the history switch and retention), 外观
+ *  and 关于 (version, license, model sources, updates) are all backed by the core. 语音模型 and AI
+ *  模型 are pages of the main layout (user feedback 2026-09-28). Esc and the scrim close back to
+ *  the router's `background`; ↑/↓ move between groups. */
 export function SettingsDialog({ section }: { section: SettingsSection }) {
   const { navigate, background } = useRouter();
   const state = useUiState();
@@ -160,8 +158,6 @@ export function SettingsDialog({ section }: { section: SettingsSection }) {
               {section === "general" && <General />}
               {section === "appearance" && <Appearance />}
               {section === "hotkey" && <Hotkey />}
-              {section === "speech" && <SpeechModelsPane />}
-              {section === "ai" && <AiModelsPane />}
               {section === "scene" && <ScenesPane />}
               {section === "privacy" && <PrivacyPane />}
               {section === "about" && <AboutPane />}

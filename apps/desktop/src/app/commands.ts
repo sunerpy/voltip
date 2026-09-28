@@ -145,5 +145,14 @@ export function buildCommands(deps: CommandDeps): CommandItem[] {
         navigate({ name: "devices" });
       },
     },
+    {
+      id: "nav-feedback",
+      group: t("commands.group.nav"),
+      label: t("commands.openFeedback"),
+      icon: "chat",
+      run: () => {
+        navigate({ name: "feedback" });
+      },
+    },
   ];
 }

@@ -52,13 +52,12 @@ export function navGroups(
 
 export const ALL_NAV_IDS = ["home", "history", "dictionary", "rules", "speech", "ai", "devices"];
 
-/** The sidebar entry a route lights up. 语音模型 and AI 模型 are shortcuts into their settings
- *  groups, so those groups light them up; the other groups light up nothing (设置 opens a dialog). */
+/** The sidebar entry a route lights up: every entry but 设置 is a page of the main layout (user
+ *  feedback 2026-09-28), so a page lights up its own entry; 设置 is a dialog over the page beneath,
+ *  which keeps its entry lit. */
 export function navIdFor(route: Route): string {
   if (route.name === "onboarding" || route.name === "overlay" || route.name === "notfound")
     return "home";
-  if (route.name === "settings")
-    return route.section === "speech" ? "speech" : route.section === "ai" ? "ai" : "";
   return route.name;
 }
 
@@ -73,6 +72,8 @@ export function routeForNav(id: string): Route {
       return SPEECH_ROUTE;
     case "ai":
       return AI_ROUTE;
+    case "feedback":
+      return { name: "feedback" };
     default:
       return { name: "home" };
   }
@@ -80,9 +81,10 @@ export function routeForNav(id: string): Route {
 
 export interface ShellSidebarProps {
   route: Route;
+  /** The page a settings route floats over. */
+  background: Route;
   navigate: (route: Route) => void;
   sidebar: SidebarLayoutControls;
-  onFeedback: () => void;
   onTheme: (choice: ThemeChoice) => void;
   /** The setup guide: only 首页 stays live. */
   onboarding: boolean;
@@ -95,9 +97,9 @@ export interface ShellSidebarProps {
  *  it, since the panel appears under a pointer that has not moved and no `mouseenter` ever fired. */
 export function ShellSidebar({
   route,
+  background,
   navigate,
   sidebar,
-  onFeedback,
   onTheme,
   onboarding,
   trafficLights,
@@ -138,6 +140,8 @@ export function ShellSidebar({
     />
   );
   const settings = state.settings;
+  // A settings route floats over the page beneath (`background`), whose entry stays lit.
+  const activeId = navIdFor(route.name === "settings" ? background : route);
   const rail = (floating: boolean): ReactNode => (
     <Sidebar
       groups={navGroups(
@@ -148,7 +152,7 @@ export function ShellSidebar({
         },
         t,
       )}
-      activeId={navIdFor(route)}
+      activeId={activeId}
       disabledIds={onboarding ? ALL_NAV_IDS.filter((id) => id !== "home") : []}
       statusTone={state.identity ? "ok" : "idle"}
       trafficLights={trafficLights}
@@ -189,9 +193,13 @@ export function ShellSidebar({
             icon="chat"
             label={t("shell.nav.feedback")}
             collapsed={collapsed}
-            opensDialog
+            current={activeId === "feedback"}
+            disabled={onboarding}
             data-testid="sidebar-feedback"
-            onClick={onFeedback}
+            onClick={() => {
+              navigate({ name: "feedback" });
+              setPreview(false);
+            }}
           />
           <ThemeSwitch
             value={settings.follow_system_theme ? "system" : settings.theme}

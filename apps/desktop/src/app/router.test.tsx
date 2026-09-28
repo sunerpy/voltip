@@ -20,17 +20,25 @@ describe("parseRoute / routePath", () => {
     expect(parseRoute("/history?filter=today")).toEqual({ name: "history", filter: "today" });
     expect(parseRoute("/dictionary")).toEqual({ name: "dictionary" });
     expect(parseRoute("/rules")).toEqual({ name: "rules" });
-    // regression (2026-09-27): 引擎 became two settings groups, 语音模型 and AI 模型; the old
-    // `/engines` page and `/settings/engine` group land on 语音模型, the old 润色 group on AI 模型.
-    expect(parseRoute("/engines")).toEqual({ name: "settings", section: "speech" });
-    expect(parseRoute("/engines")).toEqual(SPEECH_ROUTE);
-    expect(parseRoute("/settings/engine")).toEqual(SPEECH_ROUTE);
-    expect(parseRoute("/settings/refine")).toEqual(AI_ROUTE);
-    expect(parseRoute("/settings/ai")).toEqual({ name: "settings", section: "ai" });
-    expect(routePath(SPEECH_ROUTE)).toBe("/settings/speech");
-    expect(routePath(AI_ROUTE)).toBe("/settings/ai");
-    expect(isSettingsSection("refine")).toBe(false);
-    expect(isSettingsSection("engine")).toBe(false);
+    // regression (2026-09-28): 语音模型, AI 模型 and 反馈 are pages of the main layout, no longer
+    // settings groups or a dialog; every older link (the `/engines` page, the `/settings/engine`,
+    // `/settings/speech`, `/settings/refine` and `/settings/ai` groups) lands on its page.
+    expect(parseRoute("/speech")).toEqual({ name: "speech" });
+    expect(parseRoute("/ai")).toEqual({ name: "ai" });
+    expect(parseRoute("/feedback")).toEqual({ name: "feedback" });
+    expect(SPEECH_ROUTE).toEqual({ name: "speech" });
+    expect(AI_ROUTE).toEqual({ name: "ai" });
+    for (const legacy of ["/engines", "/settings/engine", "/settings/speech"])
+      expect(parseRoute(legacy)).toEqual(SPEECH_ROUTE);
+    for (const legacy of ["/settings/refine", "/settings/ai"])
+      expect(parseRoute(legacy)).toEqual(AI_ROUTE);
+    expect(routePath(SPEECH_ROUTE)).toBe("/speech");
+    expect(routePath(AI_ROUTE)).toBe("/ai");
+    expect(routePath({ name: "feedback" })).toBe("/feedback");
+    for (const section of ["refine", "engine", "speech", "ai"])
+      expect(isSettingsSection(section)).toBe(false);
+    expect(isBackgroundRoute(SPEECH_ROUTE)).toBe(true);
+    expect(isBackgroundRoute({ name: "feedback" })).toBe(true);
     // regression (2026-09-25): the Bridge & MCP page was removed; its old URL is a 404, not a page.
     expect(parseRoute("/bridge")).toEqual({ name: "notfound", path: "/bridge" });
     expect(parseRoute("/devices")).toEqual({ name: "devices" });
@@ -58,8 +66,9 @@ describe("parseRoute / routePath", () => {
       "/rules",
       "/devices",
       "/settings/hotkey",
-      "/settings/speech",
-      "/settings/ai",
+      "/speech",
+      "/ai",
+      "/feedback",
       "/onboarding",
       "/onboarding?step=2",
       "/overlay",
@@ -206,7 +215,7 @@ describe("RouterProvider", () => {
     expect(isBackgroundRoute({ name: "notfound", path: "/x" })).toBe(false);
   });
 
-  it("regression: /engines opens the settings dialog's engines group and keeps the page beneath as background", async () => {
+  it("regression: /engines opens the 语音模型 page, which becomes the background a settings dialog floats over", async () => {
     const user = userEvent.setup();
     function Engines() {
       const { navigate } = useRouter();
@@ -225,13 +234,17 @@ describe("RouterProvider", () => {
         <Engines />
       </RouterProvider>,
     );
-    expect(screen.getByTestId("route")).toHaveTextContent("settings");
-    expect(screen.getByTestId("background")).toHaveTextContent(/^\/$/);
+    expect(screen.getByTestId("route")).toHaveTextContent("speech");
+    expect(screen.getByTestId("background")).toHaveTextContent(/^\/speech$/);
     await user.click(screen.getByText("go"));
     expect(screen.getByTestId("route")).toHaveTextContent("history");
     await user.click(screen.getByRole("button", { name: "engines" }));
+    expect(screen.getByTestId("route")).toHaveTextContent("speech");
+    expect(screen.getByTestId("background")).toHaveTextContent(/^\/speech$/);
+    // Settings float over the model page like over any other page.
+    await user.click(screen.getByRole("button", { name: "settings" }));
     expect(screen.getByTestId("route")).toHaveTextContent("settings");
-    expect(screen.getByTestId("background")).toHaveTextContent(/^\/history$/);
+    expect(screen.getByTestId("background")).toHaveTextContent(/^\/speech$/);
   });
 
   it("guards hook usage", () => {

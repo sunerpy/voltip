@@ -23,8 +23,9 @@ const ROUTES = [
   ["/rules", "规则", "Rules"],
   ["/devices", "手机", "Phone"],
   ["/overlay", "悬浮胶囊", "Overlay"],
-  ["/settings/speech", "首页", "Home"],
-  ["/settings/ai", "首页", "Home"],
+  ["/speech", "语音模型", "Speech models"],
+  ["/ai", "AI 模型", "AI models"],
+  ["/feedback", "反馈", "Feedback"],
   ["/settings/scene", "首页", "Home"],
   ["/settings/general", "首页", "Home"],
   ["/settings/appearance", "首页", "Home"],
@@ -322,9 +323,9 @@ describe("locale", () => {
   it("regression: the model tiers, the 实时预览 block, the home chip and the live pill render in English under en", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      // Settings › Speech models: the core's Chinese tier names become the dictionary's English names.
+      // The Speech models page: the core's Chinese tier names become the dictionary's English names.
       const settings = englishBackend(withStreamingModel());
-      const { unmount } = renderApp({ path: "/settings/speech", backend: settings });
+      const { unmount } = renderApp({ path: "/speech", backend: settings });
       const localToggle = (await screen.findByTestId("provider-asr-local")).querySelector(
         "button[aria-expanded]",
       );

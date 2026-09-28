@@ -48,8 +48,10 @@ const SENSE_VOICE_BYTES = 239_549_735;
 
 type User = ReturnType<typeof userEvent.setup>;
 
-function enginesDialog() {
-  return screen.getByRole("dialog", { name: "设置" });
+/** The page the model panes live on (语音模型 or AI 模型, pages of the main layout since
+ *  2026-09-28). */
+function modelsPage() {
+  return screen.getByRole("main");
 }
 
 function modelCard(name: string) {
@@ -68,15 +70,18 @@ function cardToggle(kind: ServiceKind, id: ProviderId) {
   return toggle;
 }
 
-/** The views these tests move between: the 语音模型 group's two tabs (by their names in either
- *  locale), and the AI 模型 group. */
+/** The views these tests move between: the 语音模型 page's two tabs (by their names in either
+ *  locale), and the AI 模型 page, reached from the sidebar like a user would. */
 async function openTab(user: User, name: string) {
   if (name === "AI 模型" || name === "AI models") {
-    await user.click(await screen.findByRole("tab", { name }));
+    await user.click(await screen.findByRole("button", { name: /^(AI 模型|AI models)$/ }));
+    await screen.findByTestId("page-ai");
     return;
   }
-  const speech = await screen.findByRole("tab", { name: /^(语音模型|Speech models)$/ });
-  if (speech.getAttribute("aria-selected") !== "true") await user.click(speech);
+  if (screen.queryByTestId("page-speech") === null) {
+    await user.click(await screen.findByRole("button", { name: /^(语音模型|Speech models)$/ }));
+    await screen.findByTestId("page-speech");
+  }
   await user.click(await screen.findByRole("radio", { name }));
 }
 
@@ -95,7 +100,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
   it("regression: the local card's 运行设备 writes device, GPU and threads through settings_set_engines, and offers a GPU only when the build has one (docs/dictation.md section 10.6)", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend({ hardware: MOCK_GPU_HARDWARE });
-    renderApp({ path: "/settings/speech", backend });
+    renderApp({ path: "/speech", backend });
     await openLocalCard(user);
     const compute = await screen.findByTestId("local-compute");
     expect(compute).toHaveAttribute("data-device", "auto");
@@ -142,7 +147,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
 
   it("regression: a CPU-only build says the models run on the CPU and never offers the GPU", async () => {
     const user = userEvent.setup();
-    renderApp({ path: "/settings/speech" });
+    renderApp({ path: "/speech" });
     await openLocalCard(user);
     const compute = await screen.findByTestId("local-compute");
     expect(
@@ -166,31 +171,32 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     ).toBe("Metal · metal");
   });
 
-  it("regression: /engines redirects into the settings dialog's 语音模型 group over the home page", async () => {
-    renderApp({ path: "/engines" });
-    const dialog = await screen.findByRole("dialog", { name: "设置" });
-    expect(
-      within(dialog).getByRole("tab", { name: /语音模型/, selected: true }),
-    ).toBeInTheDocument();
-    expect(within(dialog).getByRole("heading", { name: "语音模型", level: 2 })).toBeInTheDocument();
-    expect(within(dialog).getByTestId("speech-pane")).toBeInTheDocument();
-    expect(screen.getByTestId("page-background")).not.toBeEmptyDOMElement();
-    expect(screen.getByRole("heading", { name: "首页", level: 1 })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "语音模型", level: 1 })).toBeNull();
-    expect(within(dialog).queryByRole("tab", { name: /润色/ })).toBeNull();
+  it("regression: /engines and the old settings groups open the 语音模型 page, no dialog", async () => {
+    for (const path of ["/engines", "/settings/speech", "/settings/engine"]) {
+      const { unmount } = renderApp({ path });
+      const page = await screen.findByTestId("page-speech");
+      expect(within(page).getByRole("heading", { name: "语音模型", level: 2 })).toBeInTheDocument();
+      expect(within(page).getByTestId("speech-pane")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "语音模型", level: 1 })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
+      expect(screen.queryByTestId("page-background")).toBeNull();
+      unmount();
+    }
   });
 
-  it("regression: the old /settings/refine deep link lands on the AI 模型 group", async () => {
-    renderApp({ path: "/settings/refine" });
-    const dialog = await screen.findByRole("dialog", { name: "设置" });
-    expect(
-      within(dialog).getByRole("tab", { name: "AI 模型", selected: true }),
-    ).toBeInTheDocument();
-    expect(within(dialog).getByTestId("ai-pane")).toBeInTheDocument();
+  it("regression: the old /settings/refine and /settings/ai deep links land on the AI 模型 page", async () => {
+    for (const path of ["/settings/refine", "/settings/ai", "/ai"]) {
+      const { unmount } = renderApp({ path });
+      const page = await screen.findByTestId("page-ai");
+      expect(within(page).getByTestId("ai-pane")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "AI 模型", level: 1 })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
+      unmount();
+    }
   });
 
   it("lists the recognition providers as cards in catalogue order, the one in use ringed, open and marked 使用中", async () => {
-    renderApp({ path: "/settings/speech" });
+    renderApp({ path: "/speech" });
     const list = await screen.findByRole("list", { name: "语音识别服务商" });
     const cards = within(list).getAllByRole("article");
     expect(cards.map((c) => c.getAttribute("aria-label"))).toEqual([
@@ -219,12 +225,12 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     // No provider card for services a provider does not offer.
     expect(screen.queryByTestId("provider-asr-deepseek")).toBeNull();
     expect(screen.queryByTestId("provider-asr-ollama")).toBeNull();
-    expect(enginesDialog().textContent).not.toMatch(/计划中|尚未接入|示例/);
+    expect(modelsPage().textContent).not.toMatch(/计划中|尚未接入|示例/);
   });
 
   it("regression: the built-in service's host is never shown, in the pane, the title bar or the state", async () => {
     const user = userEvent.setup();
-    const { backend } = renderApp({ path: "/settings/speech" });
+    const { backend } = renderApp({ path: "/speech" });
     await screen.findByTestId("providers-asr");
     await openTab(user, "AI 模型");
     await screen.findByTestId("providers-llm");
@@ -241,7 +247,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
 
   it("使用 switches the recognition provider; a vendor needs its key, which goes to provider_key_set and is never echoed", async () => {
     const user = userEvent.setup();
-    const { backend } = renderApp({ path: "/settings/speech" });
+    const { backend } = renderApp({ path: "/speech" });
     await screen.findByTestId("provider-asr-groq");
     await user.click(within(providerCard("asr", "groq")).getByRole("button", { name: "使用" }));
     await waitFor(() => {
@@ -299,7 +305,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     try {
       const { backend } = renderApp({
-        path: "/settings/speech",
+        path: "/speech",
         mock: { probeModels: { openai: ["whisper-2", "gpt-transcribe"] } },
       });
       await openCard(user, "asr", "openai");
@@ -361,7 +367,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
 
   it("regression: a custom endpoint needs an http(s) address and takes an optional key; the built-in key never follows it", async () => {
     const user = userEvent.setup();
-    const { backend } = renderApp({ path: "/settings/speech" });
+    const { backend } = renderApp({ path: "/speech" });
     await openCard(user, "asr", "custom");
     const card = providerCard("asr", "custom");
     expect(within(card).getByText("缺少接口地址")).toBeInTheDocument();
@@ -403,7 +409,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
 
   it("文本润色 lists the polish providers with the refine switch; switching provider and toggling write settings_set_engines", async () => {
     const user = userEvent.setup();
-    const { backend } = renderApp({ path: "/settings/speech" });
+    const { backend } = renderApp({ path: "/speech" });
     await openTab(user, "AI 模型");
     const list = await screen.findByRole("list", { name: "润色服务商" });
     expect(
@@ -430,13 +436,13 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       expect(backend.peek().settings.engines.llm_provider).toBe("deepseek");
     });
     expect(backend.peek().engines.refine_issue).toBe("key_missing");
-    // The dialog header readouts follow the polish state.
-    expect(screen.getByTestId("settings-readouts")).toHaveTextContent("润色 关");
+    // The title bar's AI润色 switch follows the same core state.
+    expect(screen.getByTestId("polish-toggle")).toHaveAttribute("aria-pressed", "false");
   });
 
   it("识别设置 writes the language and the injection mode with the rest of the block unchanged", async () => {
     const user = userEvent.setup();
-    const { backend } = renderApp({ path: "/settings/speech" });
+    const { backend } = renderApp({ path: "/speech" });
     await openTab(user, "识别设置");
     await user.selectOptions(await screen.findByLabelText("识别语言"), "zh");
     await waitFor(() => {
@@ -453,13 +459,13 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     await waitFor(() => {
       expect(backend.peek().settings.engines.inject).toBe("clipboard_only");
     });
-    expect(screen.getByTestId("settings-readouts")).toHaveTextContent("注入 仅剪贴板");
+    expect(screen.getByRole("radio", { name: "仅剪贴板" })).toBeChecked();
   });
 
-  it("regression: on-device readiness follows the library — the card, the title bar and the dialog header agree", async () => {
+  it("regression: on-device readiness follows the library — the card and the title bar agree", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({
-      path: "/settings/speech",
+      path: "/speech",
       backend: new MockBackend({
         settings: {
           engines: {
@@ -480,7 +486,6 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(within(readout).getByTestId("title-bar-readout-badge")).toHaveTextContent("本机");
     expect(within(readout).getByTitle("本机 · 轻量 · 中文 · 模型未下载")).toBeInTheDocument();
     expect(readout.querySelector("[data-tone='danger']")).not.toBeNull();
-    expect(screen.getByTestId("settings-readouts")).toHaveTextContent("语音模型 轻量 · 中文");
     act(() => {
       backend.publish({
         type: "engines",
@@ -501,7 +506,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
   it("regression: activating a local model is settings_set_engines with the on-device provider and that model", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({
-      path: "/settings/speech",
+      path: "/speech",
       backend: new MockBackend({
         models: {
           "qwen3-asr-0.6b": {
@@ -538,7 +543,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     try {
-      const { backend } = renderApp({ path: "/settings/speech" });
+      const { backend } = renderApp({ path: "/speech" });
       await openLocalCard(user);
       const sense = modelCard("轻量");
       await user.click(within(sense).getByRole("button", { name: "下载" }));
@@ -647,7 +652,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
   it("regression: the library lists recognition models by tier (均衡 → 高精度 → 轻量 → 轻量 · 中文) and the streaming model only in the 实时预览 block, without 使用此模型", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({
-      path: "/settings/speech",
+      path: "/speech",
       backend: new MockBackend({
         models: {
           [MOCK_STREAMING_MODEL_ID]: {
@@ -721,7 +726,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
 
   it("regression: the 实时预览 toggle writes live_preview through settings_set_engines and the state line follows live_preview_ready", async () => {
     const user = userEvent.setup();
-    const { backend } = renderApp({ path: "/settings/speech" });
+    const { backend } = renderApp({ path: "/speech" });
     await openTab(user, "识别设置");
     const live = await screen.findByTestId("live-preview");
     // Default: on, but the streaming model is not downloaded.
@@ -769,13 +774,13 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("已就绪");
     expect(backend.peek().settings.engines).toEqual(defaultEngineSettings());
     expect(backend.log.filter((e) => e.type === "settings")).toHaveLength(2);
-    // No words about the streaming path being a recognition engine anywhere in the dialog.
-    expect(enginesDialog().textContent).not.toMatch(/计划中|尚未接入|示例/);
+    // No words about the streaming path being a recognition engine anywhere on the page.
+    expect(modelsPage().textContent).not.toMatch(/计划中|尚未接入|示例/);
   });
 
   it("regression: the output mode cards (输出方式) write output_mode through settings_set_engines; a streaming mode without the model stays selected but runs as 整段输出 (status line, card note, 当前生效 badge follow effective_output_mode); live_inject with polish on shows the no-polish note; 静音裁剪 is disabled under cloud and writes vad_trim under local (docs/dictation.md §12)", async () => {
     const user = userEvent.setup();
-    const { backend } = renderApp({ path: "/settings/speech" });
+    const { backend } = renderApp({ path: "/speech" });
     await openTab(user, "识别设置");
     await screen.findByTestId("output-mode");
     const block = () => screen.getByTestId("output-mode");
@@ -925,12 +930,12 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(vad).toHaveAttribute("data-state", "on");
     expect(within(vad).getByTestId("vad-trim-state")).toHaveTextContent("开");
     // Nothing on the pane pretends to be unwired or English-labelled.
-    expect(enginesDialog().textContent).not.toMatch(/尚未接入|示例|whole_take|live_inject/);
+    expect(modelsPage().textContent).not.toMatch(/尚未接入|示例|whole_take|live_inject/);
   });
 
-  it("regression: the engines pane is fluid and scrolls inside the dialog — no fixed-width panels", async () => {
+  it("regression: the engines pane is fluid and scrolls inside the page — no fixed-width panels", async () => {
     const user = userEvent.setup();
-    renderApp({ path: "/settings/speech" });
+    renderApp({ path: "/speech" });
     await openLocalCard(user);
     const pane = screen.getByTestId("speech-pane");
     const isControl = (el: Element) =>
@@ -947,7 +952,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(screen.getByRole("list", { name: "本地模型库" }).style.gridTemplateColumns).toBe(
       "repeat(auto-fill, minmax(260px, 1fr))",
     );
-    const content = screen.getByTestId("settings-content");
+    const content = screen.getByRole("main");
     expect(content.className).toMatch(/min-h-0 flex-1 overflow-auto/);
     expect(content.contains(pane)).toBe(true);
   });
@@ -963,7 +968,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(languageSummary(["zh", "en"])).toEqual({ text: "zh · en", title: undefined });
     expect(languageSummary(ten.slice(0, 5)).text).toBe("zh · en · ja · ko · yue");
     const user = userEvent.setup();
-    renderApp({ path: "/settings/speech" });
+    renderApp({ path: "/speech" });
     await openLocalCard(user);
     const library = await screen.findByRole("list", { name: "本地模型库" });
     const balanced = within(library)
@@ -1119,7 +1124,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
 
   it("regression: the Chinese script choice writes chinese_script through settings_set_engines with the three single-language options", async () => {
     const user = userEvent.setup();
-    const { backend } = renderApp({ path: "/settings/speech" });
+    const { backend } = renderApp({ path: "/speech" });
     await openTab(user, "识别设置");
     const section = await screen.findByTestId("chinese-script");
     expect(section).toHaveAttribute("data-script", "simplified");
@@ -1156,7 +1161,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
 
   it("regression: the Chinese script options are single-language in English too", async () => {
     const user = userEvent.setup();
-    renderApp({ path: "/settings/speech", mock: { settings: { locale: "en" } } });
+    renderApp({ path: "/speech", mock: { settings: { locale: "en" } } });
     await openTab(user, "Recognition");
     const section = await screen.findByTestId("chinese-script");
     const group = within(section).getByRole("radiogroup", { name: "Chinese script" });

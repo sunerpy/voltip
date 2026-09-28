@@ -37,7 +37,7 @@ describe("pageMeta", () => {
       }
     }
     expect(
-      pageMeta({ name: "settings", section: "speech" }, state, extras, { name: "devices" }).title,
+      pageMeta({ name: "settings", section: "hotkey" }, state, extras, { name: "devices" }).title,
     ).toBe("手机");
   });
 
@@ -204,8 +204,9 @@ describe("pageMeta in English", () => {
       { name: "overlay" },
       { name: "notfound", path: "/x" },
       { name: "settings", section: "about" },
-      { name: "settings", section: "speech" },
-      { name: "settings", section: "ai" },
+      { name: "speech" },
+      { name: "ai" },
+      { name: "feedback" },
     ];
     for (const route of routes) {
       const meta = pageMeta(route, state, extras, { name: "devices" }, EN);
@@ -214,13 +215,16 @@ describe("pageMeta in English", () => {
     expect(
       JSON.stringify(
         settingsReadouts(
-          "speech",
+          "hotkey",
           state,
           { resolvedTheme: "warm", density: "compact", fontSizePx: 15 },
           EN,
         ),
       ),
     ).not.toMatch(/[一-鿿]/);
+    expect(pageMeta({ name: "speech" }, state, extras, undefined, EN).title).toBe("Speech models");
+    expect(pageMeta({ name: "ai" }, state, extras, undefined, EN).title).toBe("AI models");
+    expect(pageMeta({ name: "feedback" }, state, extras, undefined, EN).title).toBe("Feedback");
     const home = pageMeta({ name: "home" }, state, extras, undefined, EN);
     expect(home.title).toBe("Home");
     expect(home.shortcuts[0]).toEqual(["Ctrl Alt Space", "Hold to dictate"]);
@@ -291,10 +295,11 @@ describe("hotkeyBackendReadout", () => {
 describe("settingsReadouts", () => {
   const appearance = { resolvedTheme: "warm" as const, density: "compact", fontSizePx: 15 };
 
-  it("gives the dialog header the hotkey, appearance and engine readouts and nothing for the brief groups", () => {
+  it("gives the dialog header the hotkey and appearance readouts and nothing for the brief groups", () => {
     const state = stateWith();
-    // 语音模型: the ASR readout (with its token lamp) and the injection; AI 模型: the polish state.
-    expect(settingsReadouts("speech", state, appearance)).toEqual([
+    // 语音模型 / AI 模型 are pages now: their readouts describe the page (the ASR with its token
+    // lamp and the injection; the polish state).
+    expect(pageMeta({ name: "speech" }, state, extras).readouts).toEqual([
       {
         label: "语音模型",
         value: "Qwen3-ASR-1.7B",
@@ -303,17 +308,18 @@ describe("settingsReadouts", () => {
       },
       { label: "注入", value: "粘贴" },
     ]);
-    expect(settingsReadouts("ai", state, appearance)).toEqual([
+    expect(pageMeta({ name: "ai" }, state, extras).readouts).toEqual([
       { label: "润色", value: "开 · qwen3.8-27b", lamp: "ok" },
     ]);
     const off = stateWith({
       engines: { ...state.engines, refine_enabled: false, inject: "clipboard_only" },
     });
-    expect(settingsReadouts("speech", off, appearance).map((r) => r.value)).toEqual([
+    expect(pageMeta({ name: "speech" }, off, extras).readouts.map((r) => r.value)).toEqual([
       "Qwen3-ASR-1.7B",
       "仅剪贴板",
     ]);
-    expect(settingsReadouts("ai", off, appearance).map((r) => r.value)).toEqual(["关"]);
+    expect(pageMeta({ name: "ai" }, off, extras).readouts.map((r) => r.value)).toEqual(["关"]);
+    expect(pageMeta({ name: "feedback" }, state, extras).title).toBe("反馈");
     expect(settingsReadouts("hotkey", state, appearance)).toEqual([
       { label: "热键", value: "Ctrl Alt Space" },
       { label: "后端", value: MOCK_HOTKEY_BACKEND.split(" · ").slice(1).join(" · ") },

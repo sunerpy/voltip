@@ -13,17 +13,15 @@ import {
   useI18n,
   useUiState,
 } from "@voltip/ui";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo } from "react";
 import { useAppearance } from "../app/appearance";
 import { buildCommands } from "../app/commands";
 import { useRouter } from "../app/router";
 import { copyWithToast, useShell } from "../app/shell-context";
 import { type TrayRequest, type TrayRequestSource, useTrayRequests } from "../app/tray-requests";
 import { useWindowChrome } from "../app/window";
-import { openProjectLink } from "../app/project-links";
 import { microphoneReadoutValue, useMicrophoneReadout } from "../features/audio/mic-store";
 import { useDictation } from "../features/dictation/useDictation";
-import { FeedbackDialog } from "../features/feedback/FeedbackDialog";
 import { UpdateBadge, UpdateDialog } from "../features/update/UpdateDialog";
 import { engineReadout, microphoneReadout, pageMeta } from "./page-meta";
 import { RevealSidebarButton, ShellSidebar } from "./ShellSidebar";
@@ -105,7 +103,6 @@ export function Shell({
   const chrome = useWindowChrome(state.identity?.platform);
   const dictation = useDictation();
   const sidebar = useSidebarLayout();
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const meta = useMemo(
     () =>
@@ -250,14 +247,12 @@ export function Shell({
       {!sheet && (
         <ShellSidebar
           route={route}
+          background={background}
           navigate={navigate}
           sidebar={sidebar}
           onboarding={onboarding}
           trafficLights={chrome.platform === "macos"}
           onTheme={pickTheme}
-          onFeedback={() => {
-            setFeedbackOpen(true);
-          }}
         />
       )}
       <div className="flex min-w-0 flex-1 flex-col">
@@ -351,20 +346,6 @@ export function Shell({
         open={shell.updateOpen}
         onClose={() => {
           shell.setUpdateOpen(false);
-        }}
-      />
-      <FeedbackDialog
-        open={feedbackOpen}
-        onClose={() => {
-          setFeedbackOpen(false);
-        }}
-        onSent={() => {
-          setFeedbackOpen(false);
-          shell.toast({ message: t("feedback.sent"), duration: 4000 });
-        }}
-        onOpenIssue={() => {
-          setFeedbackOpen(false);
-          openProjectLink(backend, shell, "feedback");
         }}
       />
       <ToastViewport toasts={shell.toasts.toasts} onDismiss={shell.toasts.dismiss} />
