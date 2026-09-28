@@ -2,12 +2,13 @@ import { type Backend, type UiEvent, resolveLocale } from "@voltip/shared";
 import { BackendProvider, I18nProvider, useT, useUiState } from "@voltip/ui";
 import { type ReactNode, Suspense, lazy, useCallback, useEffect, useRef } from "react";
 import { AppearanceProvider } from "./app/appearance";
-import { type Route, RouterProvider, routePath, useRouter } from "./app/router";
+import { FeedbackDraftProvider } from "./app/feedback-draft";
+import { type Route, RouterProvider, isDialogRoute, routePath, useRouter } from "./app/router";
 import { ShellProvider, useShell } from "./app/shell-context";
 import type { TrayRequestSource } from "./app/tray-requests";
 import { Devices } from "./pages/Devices";
 import { Dictionary } from "./pages/Dictionary";
-import { Feedback } from "./pages/Feedback";
+import { FeedbackDialog } from "./pages/Feedback";
 import { History } from "./pages/History";
 import { Home } from "./pages/Home";
 import { NotFound } from "./pages/NotFound";
@@ -47,22 +48,23 @@ export interface AppProps {
   traySource?: TrayRequestSource;
 }
 
-/** `/settings/:section` is a modal over the last non-settings page (`background`), so the page
- *  beneath stays mounted; it is inert and hidden from assistive tech while the dialog is open. */
+/** `/settings/:section` and `/feedback` are modals over the last page that was not a dialog
+ *  (`background`), so the page beneath stays mounted; it is inert and hidden from assistive tech
+ *  while the dialog is open. */
 function Routes() {
   const { route, background } = useRouter();
-  if (route.name !== "settings") return <Page route={route} />;
+  if (!isDialogRoute(route)) return <Page route={route} />;
   return (
     <>
       <div inert aria-hidden="true" data-testid="page-background">
         <Page route={background} />
       </div>
-      <SettingsDialog section={route.section} />
+      {route.name === "settings" ? <SettingsDialog section={route.section} /> : <FeedbackDialog />}
     </>
   );
 }
 
-function Page({ route }: { route: Exclude<Route, { name: "settings" }> }) {
+function Page({ route }: { route: Exclude<Route, { name: "settings" | "feedback" }> }) {
   switch (route.name) {
     case "home":
       return <Home />;
@@ -78,8 +80,6 @@ function Page({ route }: { route: Exclude<Route, { name: "settings" }> }) {
       return <SpeechModels />;
     case "ai":
       return <AiModels />;
-    case "feedback":
-      return <Feedback />;
     case "onboarding":
       return <Onboarding step={route.step} />;
     case "overlay":
@@ -211,9 +211,12 @@ function Frame({ traySource }: { traySource?: TrayRequestSource }) {
       <OverlayPreview state={route.state} />
     );
   }
+  // The 反馈 draft belongs to the main window: the overlay window never stages files.
   return (
-    <Shell traySource={traySource}>
-      <Routes />
-    </Shell>
+    <FeedbackDraftProvider>
+      <Shell traySource={traySource}>
+        <Routes />
+      </Shell>
+    </FeedbackDraftProvider>
   );
 }

@@ -7,6 +7,7 @@ import {
   RouterProvider,
   currentLocationPath,
   isBackgroundRoute,
+  isDialogRoute,
   isSettingsSection,
   parseRoute,
   routePath,
@@ -20,9 +21,10 @@ describe("parseRoute / routePath", () => {
     expect(parseRoute("/history?filter=today")).toEqual({ name: "history", filter: "today" });
     expect(parseRoute("/dictionary")).toEqual({ name: "dictionary" });
     expect(parseRoute("/rules")).toEqual({ name: "rules" });
-    // regression (2026-09-28): 语音模型, AI 模型 and 反馈 are pages of the main layout, no longer
-    // settings groups or a dialog; every older link (the `/engines` page, the `/settings/engine`,
-    // `/settings/speech`, `/settings/refine` and `/settings/ai` groups) lands on its page.
+    // regression (2026-09-28): 语音模型 and AI 模型 are pages of the main layout, no longer settings
+    // groups; every older link (the `/engines` page, the `/settings/engine`, `/settings/speech`,
+    // `/settings/refine` and `/settings/ai` groups) lands on its page. 反馈 is a dialog like 设置
+    // (user decision 2026-09-28), floating over the page it was opened from.
     expect(parseRoute("/speech")).toEqual({ name: "speech" });
     expect(parseRoute("/ai")).toEqual({ name: "ai" });
     expect(parseRoute("/feedback")).toEqual({ name: "feedback" });
@@ -38,7 +40,10 @@ describe("parseRoute / routePath", () => {
     for (const section of ["refine", "engine", "speech", "ai"])
       expect(isSettingsSection(section)).toBe(false);
     expect(isBackgroundRoute(SPEECH_ROUTE)).toBe(true);
-    expect(isBackgroundRoute({ name: "feedback" })).toBe(true);
+    expect(isBackgroundRoute({ name: "feedback" })).toBe(false);
+    expect(isDialogRoute({ name: "feedback" })).toBe(true);
+    expect(isDialogRoute({ name: "settings", section: "about" })).toBe(true);
+    expect(isDialogRoute(SPEECH_ROUTE)).toBe(false);
     // regression (2026-09-25): the Bridge & MCP page was removed; its old URL is a 404, not a page.
     expect(parseRoute("/bridge")).toEqual({ name: "notfound", path: "/bridge" });
     expect(parseRoute("/devices")).toEqual({ name: "devices" });

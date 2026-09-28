@@ -10,7 +10,7 @@ import {
 } from "@voltip/ui";
 import type { TFunction } from "@voltip/shared";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { AI_ROUTE, type Route, SPEECH_ROUTE } from "../app/router";
+import { AI_ROUTE, type Route, SPEECH_ROUTE, isDialogRoute } from "../app/router";
 import type { SidebarLayoutControls } from "./sidebar-layout";
 
 /** A sidebar count, shown once there is something to count. */
@@ -52,9 +52,9 @@ export function navGroups(
 
 export const ALL_NAV_IDS = ["home", "history", "dictionary", "rules", "speech", "ai", "devices"];
 
-/** The sidebar entry a route lights up: every entry but 设置 is a page of the main layout (user
- *  feedback 2026-09-28), so a page lights up its own entry; 设置 is a dialog over the page beneath,
- *  which keeps its entry lit. */
+/** The sidebar entry a route lights up: every entry but 设置 and 反馈 is a page of the main layout
+ *  (user feedback and decision 2026-09-28), so a page lights up its own entry; 设置 and 反馈 are
+ *  dialogs over the page beneath, which keeps its entry lit. */
 export function navIdFor(route: Route): string {
   if (route.name === "onboarding" || route.name === "overlay" || route.name === "notfound")
     return "home";
@@ -72,8 +72,6 @@ export function routeForNav(id: string): Route {
       return SPEECH_ROUTE;
     case "ai":
       return AI_ROUTE;
-    case "feedback":
-      return { name: "feedback" };
     default:
       return { name: "home" };
   }
@@ -140,8 +138,8 @@ export function ShellSidebar({
     />
   );
   const settings = state.settings;
-  // A settings route floats over the page beneath (`background`), whose entry stays lit.
-  const activeId = navIdFor(route.name === "settings" ? background : route);
+  // A dialog route floats over the page beneath (`background`), whose entry stays lit.
+  const activeId = navIdFor(isDialogRoute(route) ? background : route);
   const rail = (floating: boolean): ReactNode => (
     <Sidebar
       groups={navGroups(
@@ -193,7 +191,7 @@ export function ShellSidebar({
             icon="chat"
             label={t("shell.nav.feedback")}
             collapsed={collapsed}
-            current={activeId === "feedback"}
+            opensDialog
             disabled={onboarding}
             data-testid="sidebar-feedback"
             onClick={() => {

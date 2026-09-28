@@ -1763,6 +1763,7 @@ export const zhCN = {
     loading: "正在读取要附带的信息…",
     send: "发送反馈",
     sending: "发送中…",
+    discard: "清空",
     sent: "反馈已发送，谢谢",
     notConfigured: "这个构建没有配置反馈地址，可以在 GitHub 上提交 Issue。",
     openIssue: "在 GitHub 上反馈",

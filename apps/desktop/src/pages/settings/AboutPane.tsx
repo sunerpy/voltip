@@ -16,8 +16,8 @@ import { UpdateControls } from "./General";
 
 /** Settings · 关于: the version the core reports (`state.app_version`, the shells' package
  *  version), the license, where the catalogue's local models come from, the updater, and the
- *  project's repository (opened by the shell, `project_link_open`), and the way to the in-app 反馈
- *  page. */
+ *  project's repository (opened by the shell, `project_link_open`), and the way to the 反馈
+ *  dialog. */
 export function AboutPane() {
   const { t } = useI18n();
   const state = useUiState();
@@ -85,8 +85,8 @@ export function AboutPane() {
             {t("settings.brief.about.open")}
           </Button>
         </StatusRow>
-        {/* The same in-app 反馈 page the sidebar opens (user feedback 2026-09-28: this row used to
-            send people to GitHub instead). */}
+        {/* The same 反馈 dialog the sidebar opens, in this dialog's place (user feedback and
+            decision 2026-09-28: this row used to send people to GitHub instead). */}
         <StatusRow
           label={t("settings.brief.about.feedback")}
           help={t("settings.brief.about.feedbackHelp")}>

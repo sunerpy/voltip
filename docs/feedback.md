@@ -1,6 +1,8 @@
 # 应用内反馈
 
-侧栏底部的「反馈」和「设置 · 关于」里的「反馈」打开同一个页面：选类型（问题 / 建议 / 其他），写描述，可选留联系方式，可选附上截图或录屏。发送前，页面会列出随反馈附带的全部信息，桌面壳再把报告和附件发到反馈接口。
+侧栏底部的「反馈」和「设置 · 关于」里的「反馈」打开同一个对话框（2026-09-28 用户选定；从设置进入时它取代设置对话框），浮在当前页面上：选类型（问题 / 建议 / 其他），写描述，可选留联系方式，可选附上截图或录屏。发送前，对话框会列出随反馈附带的全部信息，桌面壳再把报告和附件发到反馈接口。
+
+草稿放在对话框之外（`apps/desktop/src/app/feedback-draft.tsx`）：按 Esc、点遮罩或 × 关掉对话框，再打开时文字、类型、联系方式和已添加的附件都还在，直到发送成功或点「清空」。发送成功后弹出提示、清空草稿并关闭对话框。
 
 ## 发出去的内容
 
@@ -29,7 +31,7 @@
 - 每份反馈最多 3 个；图片每个不超过 5 MiB，视频每个不超过 20 MiB，合计不超过 25 MiB
 - 文件名只取最后一段路径，去掉控制字符和引号，最多 120 个字符（过长时保留扩展名）
 
-页面先按类型和大小判断，超限的文件不会被读进内存；通过的文件以原始字节作为 IPC 请求体交给桌面壳（`feedback_attachment_add`，文件名百分号编码后放在 `x-voltip-name` 头，类型放在 `x-voltip-type` 头），桌面壳再检查一遍并暂存在内存里，返回一个 id。`feedback_attachment_remove` 删掉一个，`feedback_attachments_clear` 全部清空：页面打开和离开时各清一次，所以刷新过的页面不会留下占着名额的文件。`feedback_submit` 带上这些 id；报告发出后，暂存的文件就被丢弃。
+页面先按类型和大小判断，超限的文件不会被读进内存；通过的文件以原始字节作为 IPC 请求体交给桌面壳（`feedback_attachment_add`，文件名百分号编码后放在 `x-voltip-name` 头，类型放在 `x-voltip-type` 头），桌面壳再检查一遍并暂存在内存里，返回一个 id。`feedback_attachment_remove` 删掉一个，`feedback_attachments_clear` 全部清空：主窗口启动时清一次（刷新过的 webview 不会留下占着名额的文件），「清空」草稿时再清一次；关掉对话框不清。`feedback_submit` 带上这些 id；报告发出后，暂存的文件就被丢弃。
 
 拒绝原因以线上名返回，页面据此给出提示：`attachment_type`、`attachment_too_large`（也包括空文件）、`attachment_too_many`、`attachment_total`、`attachment_name`。发送时多两个原因：`storage_full`（接口的附件存储满了，报告没有发出）和 `attachments`（报告已经发出，但有附件没传完；页面照常清空表单，避免重复发送）。
 
@@ -40,7 +42,7 @@
 - `VOLTIP_FEEDBACK_URL`：完整地址，比如 `https://<feedback-host>/v1/feedback`
 - `VOLTIP_FEEDBACK_TOKEN`：应用令牌，以 `Authorization: Bearer` 发送
 
-发布构建从同名的 GitHub Secrets 读取（`.github/workflows/release.yml`），本地打包从 `.env.build` 读取。仓库和界面里都不出现这个地址；出错时的提示只写原因（`rate_limited`、`network`…），不写地址。没有配置地址的构建，页面会改为提供仓库的 Issue 页面。
+发布构建从同名的 GitHub Secrets 读取（`.github/workflows/release.yml`），本地打包从 `.env.build` 读取。仓库和界面里都不出现这个地址；出错时的提示只写原因（`rate_limited`、`network`…），不写地址。没有配置地址的构建，对话框会改为提供仓库的 Issue 页面。
 
 应用令牌就在发出去的安装包里，所以它只能挡住随手的滥用，防不住有心人。限流由接口负责。
 

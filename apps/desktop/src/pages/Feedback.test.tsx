@@ -24,21 +24,21 @@ function backend(options: ConstructorParameters<typeof MockBackend>[0] = {}) {
   });
 }
 
-/** 反馈 from the sidebar: a page of the main layout since 2026-09-28, no longer a dialog. */
+/** 反馈 from the sidebar: a dialog over the page it was opened from (user decision 2026-09-28). */
 async function openFeedback() {
   const user = userEvent.setup({ advanceTimers: (ms) => vi.advanceTimersByTime(ms) });
   await screen.findByRole("heading", { name: "首页", level: 1 });
   await user.click(screen.getByTestId("sidebar-feedback"));
-  const page = await screen.findByTestId("page-feedback");
+  const page = await screen.findByRole("dialog", { name: "反馈" });
   return { user, page };
 }
 
-describe("the 反馈 page", () => {
+describe("the 反馈 dialog", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("regression: 反馈 shows exactly what goes along, sends the report through the shell and says so", async () => {
+  it("regression: 反馈 opens over the page it came from, shows exactly what goes along, sends the report through the shell and says so", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const core = backend();
     renderApp({ backend: core });
@@ -77,11 +77,15 @@ describe("the 反馈 page", () => {
       vi.advanceTimersByTime(MOCK_FEEDBACK_MS);
     });
     expect(await screen.findByText("反馈已发送，谢谢")).toBeInTheDocument();
-    // The page stays, with an empty form ready for the next report.
-    expect(within(page).getByRole("textbox", { name: "描述" })).toHaveValue("");
-    expect(within(page).getByRole("textbox", { name: "联系方式（可选）" })).toHaveValue("");
-    expect(screen.getByTestId("sidebar-feedback")).toHaveAttribute("aria-current", "page");
-    expect(screen.getAllByRole("heading", { name: "反馈", level: 1 }).length).toBeGreaterThan(0);
+    // Sent: the dialog closes back to the page beneath, and the next report starts empty.
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "反馈" })).toBeNull();
+    });
+    expect(screen.getByRole("heading", { name: "首页", level: 1 })).toBeInTheDocument();
+    await user.click(screen.getByTestId("sidebar-feedback"));
+    const again = await screen.findByRole("dialog", { name: "反馈" });
+    expect(within(again).getByRole("textbox", { name: "描述" })).toHaveValue("");
+    expect(within(again).getByRole("textbox", { name: "联系方式（可选）" })).toHaveValue("");
     expect(core.feedbackSent).toEqual([
       {
         kind: "idea",
@@ -171,11 +175,17 @@ describe("the 反馈 page", () => {
         attachments: ["attachment-1", "attachment-3"],
       },
     ]);
-    expect(within(page).queryByTestId("feedback-attachment")).toBeNull();
+    // Sent: the dialog closed, and the next one starts without the files.
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "反馈" })).toBeNull();
+    });
     expect(core.feedbackStaged).toEqual([]);
+    await user.click(screen.getByTestId("sidebar-feedback"));
+    const next = await screen.findByRole("dialog", { name: "反馈" });
+    expect(within(next).queryByTestId("feedback-attachment")).toBeNull();
   });
 
-  it("regression: a file over the limit is refused before it is read, a wrong type says what is taken, and leaving the page drops what was staged", async () => {
+  it("regression: a file over the limit is refused before it is read, and a wrong type says what is taken", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const core = backend();
     const add = vi.spyOn(core, "feedbackAttachmentAdd");
@@ -205,13 +215,63 @@ describe("the 反馈 page", () => {
       expect(core.feedbackStaged).toHaveLength(1);
     });
     expect(within(page).queryByTestId("feedback-attach-error")).toBeNull();
-    await user.click(within(screen.getByRole("navigation", { name: "主导航" })).getByText("首页"));
+  });
+
+  it("regression: closing the dialog keeps the draft and its files until they are sent or cleared, and the window starts with nothing staged (user decision 2026-09-28)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const core = backend();
+    // A file a previous life of the window staged: the window starts by dropping it.
+    await core.feedbackAttachmentAdd({
+      name: "stale.png",
+      type: "image/png",
+      bytes: new Uint8Array(1),
+    });
+    renderApp({ backend: core });
+    const { user, page } = await openFeedback();
     await waitFor(() => {
       expect(core.feedbackStaged).toEqual([]);
     });
+    // The description has the focus: typing starts the report.
+    expect(within(page).getByRole("textbox", { name: "描述" })).toHaveFocus();
+    await user.click(within(page).getByRole("radio", { name: "建议" }));
+    await user.type(within(page).getByRole("textbox", { name: "描述" }), "希望支持侧键");
+    await user.upload(
+      within(page).getByTestId("feedback-attach-input"),
+      file("a.png", "image/png"),
+    );
+    await waitFor(() => {
+      expect(within(page).getAllByTestId("feedback-attachment")).toHaveLength(1);
+    });
+    // Esc closes; the scrim closes too; neither loses a thing.
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "反馈" })).toBeNull();
+    expect(core.feedbackStaged).toHaveLength(1);
+    await user.click(screen.getByTestId("sidebar-feedback"));
+    let reopened = await screen.findByRole("dialog", { name: "反馈" });
+    expect(within(reopened).getByRole("textbox", { name: "描述" })).toHaveValue("希望支持侧键");
+    expect(within(reopened).getByRole("radio", { name: "建议" })).toBeChecked();
+    expect(within(reopened).getAllByTestId("feedback-attachment")).toHaveLength(1);
+    await user.click(screen.getByTestId("feedback-scrim"));
+    expect(screen.queryByRole("dialog", { name: "反馈" })).toBeNull();
+    // Another page in between changes nothing either.
+    await user.click(within(screen.getByRole("navigation", { name: "主导航" })).getByText("词典"));
+    await user.click(screen.getByTestId("sidebar-feedback"));
+    reopened = await screen.findByRole("dialog", { name: "反馈" });
+    expect(screen.getByRole("heading", { name: "词典", level: 1 })).toBeInTheDocument();
+    expect(within(reopened).getByRole("textbox", { name: "描述" })).toHaveValue("希望支持侧键");
+    // 清空 starts over, the staged file included.
+    await user.click(within(reopened).getByTestId("feedback-discard"));
+    expect(within(reopened).getByRole("textbox", { name: "描述" })).toHaveValue("");
+    expect(within(reopened).getByRole("radio", { name: "问题" })).toBeChecked();
+    expect(within(reopened).queryByTestId("feedback-attachment")).toBeNull();
+    await waitFor(() => {
+      expect(core.feedbackStaged).toEqual([]);
+    });
+    expect(within(reopened).getByTestId("feedback-discard")).toBeDisabled();
+    expect(core.feedbackSent).toEqual([]);
   });
 
-  it("regression: when the report went out but a file did not follow, the page says so and does not offer to send it twice", async () => {
+  it("regression: when the report went out but a file did not follow, the dialog says so and does not offer to send it twice", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const core = backend({ feedback: "attachments" });
     renderApp({ backend: core });

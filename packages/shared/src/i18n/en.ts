@@ -1842,6 +1842,7 @@ export const en: Messages = {
     loading: "Reading what goes along…",
     send: "Send feedback",
     sending: "Sending…",
+    discard: "Clear",
     sent: "Feedback sent, thank you",
     notConfigured: "This build has no feedback address; you can open an issue on GitHub instead.",
     openIssue: "Give feedback on GitHub",

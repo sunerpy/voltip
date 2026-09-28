@@ -206,8 +206,8 @@ export interface PageMetaExtras {
   microphone: string;
 }
 
-/** Title, human-readable readouts and footer shortcuts for each route. The settings dialog floats
- *  over `background`, so a settings route describes that page, not itself. The title bar itself
+/** Title, human-readable readouts and footer shortcuts for each route. The settings and feedback
+ *  dialogs float over `background`, so a dialog route describes that page, not itself. The title bar itself
  *  shows only the compact engine · microphone pair (`engineReadout` + `microphoneReadout`); the
  *  page readouts here feed the settings header and tests. */
 export function pageMeta(
@@ -319,11 +319,6 @@ export function pageMeta(
         ],
       };
     case "feedback":
-      return {
-        title: t("page.title.feedback"),
-        readouts: [],
-        shortcuts: [["Ctrl ,", sc("page.shortcut.settings")]],
-      };
     case "settings":
       return pageMeta(background, state, extras, HOME_ROUTE, i18n);
     case "onboarding": {

@@ -90,15 +90,18 @@ describe("Shell", () => {
     expect(screen.queryByRole("button", { name: "关于" })).toBeNull();
     await user.click(screen.getByRole("button", { name: /^手机$/ }));
     expect(screen.getByRole("heading", { name: "手机", level: 1 })).toBeInTheDocument();
-    // 反馈 opens the in-app feedback page (the report goes to the feedback endpoint), lit like a
-    // page entry and without a dialog.
+    // 反馈 opens the in-app feedback dialog over the page it was opened from (the report goes to
+    // the feedback endpoint): the page beneath keeps its title and its lit entry (user decision
+    // 2026-09-28).
     await user.click(screen.getByRole("button", { name: "反馈" }));
-    expect(await screen.findByTestId("page-feedback")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "反馈", level: 1 })).toBeInTheDocument();
-    expect(screen.getByTestId("sidebar-feedback")).toHaveAttribute("aria-current", "page");
-    expect(screen.getByTestId("sidebar-feedback")).not.toHaveAttribute("aria-haspopup");
-    expect(screen.queryByRole("dialog", { name: "反馈" })).toBeNull();
+    expect(await screen.findByRole("dialog", { name: "反馈" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "手机", level: 1 })).toBeInTheDocument();
+    expect(screen.getByTestId("sidebar-feedback")).toHaveAttribute("aria-haspopup", "dialog");
+    expect(screen.getByTestId("sidebar-feedback")).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("button", { name: /^手机$/ })).toHaveAttribute("aria-current", "page");
     expect(backend.linksOpened).toEqual([]);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "反馈" })).toBeNull();
   });
 
   it("regression: the sidebar collapses to an icon rail and back, and the choice survives a restart", async () => {

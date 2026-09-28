@@ -25,7 +25,7 @@ const ROUTES = [
   ["/overlay", "悬浮胶囊", "Overlay"],
   ["/speech", "语音模型", "Speech models"],
   ["/ai", "AI 模型", "AI models"],
-  ["/feedback", "反馈", "Feedback"],
+  ["/feedback", "首页", "Home"],
   ["/settings/scene", "首页", "Home"],
   ["/settings/general", "首页", "Home"],
   ["/settings/appearance", "首页", "Home"],

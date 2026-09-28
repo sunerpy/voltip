@@ -132,17 +132,26 @@ export function routePath(route: Route): string {
   }
 }
 
-/** A page the settings dialog can float over: never settings itself, nor a chrome-less route. */
+/** A page the settings and feedback dialogs can float over: never a dialog itself, nor a
+ *  chrome-less route. */
 export type BackgroundRoute = Exclude<
   Route,
-  { name: "settings" | "onboarding" | "overlay" | "notfound" }
+  { name: "settings" | "feedback" | "onboarding" | "overlay" | "notfound" }
 >;
+
+/** The routes that are modal dialogs over `background` (user decision 2026-09-28: 设置 and 反馈
+ *  stay dialogs; every other sidebar entry is a page). */
+export type DialogRoute = Extract<Route, { name: "settings" | "feedback" }>;
+
+export function isDialogRoute(route: Route): route is DialogRoute {
+  return route.name === "settings" || route.name === "feedback";
+}
 
 export const HOME_ROUTE: BackgroundRoute = { name: "home" };
 
 export function isBackgroundRoute(route: Route): route is BackgroundRoute {
   return (
-    route.name !== "settings" &&
+    !isDialogRoute(route) &&
     route.name !== "onboarding" &&
     route.name !== "overlay" &&
     route.name !== "notfound"
@@ -152,7 +161,7 @@ export function isBackgroundRoute(route: Route): route is BackgroundRoute {
 export interface RouterValue {
   path: string;
   route: Route;
-  /** The last page that was not the settings dialog; `home` until one has been visited. */
+  /** The last page that was not a dialog; `home` until one has been visited. */
   background: BackgroundRoute;
   /** `replace` swaps the current history entry instead of pushing one (a one-shot flag). */
   navigate: (to: string | Route, options?: { replace?: boolean }) => void;

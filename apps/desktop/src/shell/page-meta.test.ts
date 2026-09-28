@@ -224,7 +224,10 @@ describe("pageMeta in English", () => {
     ).not.toMatch(/[一-鿿]/);
     expect(pageMeta({ name: "speech" }, state, extras, undefined, EN).title).toBe("Speech models");
     expect(pageMeta({ name: "ai" }, state, extras, undefined, EN).title).toBe("AI models");
-    expect(pageMeta({ name: "feedback" }, state, extras, undefined, EN).title).toBe("Feedback");
+    // The 反馈 dialog, like 设置, describes the page beneath it.
+    expect(pageMeta({ name: "feedback" }, state, extras, { name: "devices" }, EN).title).toBe(
+      "Phone",
+    );
     const home = pageMeta({ name: "home" }, state, extras, undefined, EN);
     expect(home.title).toBe("Home");
     expect(home.shortcuts[0]).toEqual(["Ctrl Alt Space", "Hold to dictate"]);
@@ -319,7 +322,7 @@ describe("settingsReadouts", () => {
       "仅剪贴板",
     ]);
     expect(pageMeta({ name: "ai" }, off, extras).readouts.map((r) => r.value)).toEqual(["关"]);
-    expect(pageMeta({ name: "feedback" }, state, extras).title).toBe("反馈");
+    expect(pageMeta({ name: "feedback" }, state, extras).title).toBe("首页");
     expect(settingsReadouts("hotkey", state, appearance)).toEqual([
       { label: "热键", value: "Ctrl Alt Space" },
       { label: "后端", value: MOCK_HOTKEY_BACKEND.split(" · ").slice(1).join(" · ") },
