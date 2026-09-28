@@ -176,7 +176,7 @@ impl Runtime {
         if !self.peer_online(&to) {
             return Err(CoreError::Invalid("device is not online".into()));
         }
-        let id = self.sent_texts.last_id().wrapping_add(1).max(1);
+        let id = self.sent_texts.next_id();
         self.take_outbox.push((to, AppMessage::PhoneText { version: ProtocolVersion::CURRENT, id, body: body.clone(), source }));
         self.sent_texts.push(SentText { id, device: to.to_hex(), device_name: device.name, body, source, sent_at: now_ms(), state: SentTextState::Sending });
         self.emit_sent_texts();
