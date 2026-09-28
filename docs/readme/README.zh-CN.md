@@ -21,11 +21,11 @@
 
 Voltip 是 Windows、Linux 和 macOS 上的语音输入工具。按住热键时录音，松开后交给云端或本机模型识别，可选用 LLM 润色，再粘贴到当前有焦点的应用里。配对好的 Android 手机也可以当麦克风用。
 
-![Voltip 首页：就绪状态、麦克风电平、识别引擎、已配对手机和最近的结果](../acceptance/screens/desktop/home-1440-light.png)
+![Voltip 首页：就绪状态、麦克风与测试、识别引擎、已配对手机和最近的结果](../acceptance/screens/desktop/home-1440-light.png)
 
 ## 功能
 
-- 全局热键按住说话（默认 `Ctrl+Alt+Space`），也可以只用一个键，比如右 Ctrl 或鼠标侧键：按住说、松开出字；也可以按一下开始、再按一下结束，或者轻点一下锁定，适合长段口述。录音时屏幕上的悬浮胶囊显示电平、实时文字和结果。
+- 全局热键按住说话（默认 `Ctrl+Alt+Space`），也可以只用一个键，比如右 Ctrl 或鼠标侧键：按住说、松开出字；也可以按一下开始、再按一下结束，或者轻点一下锁定，适合长段口述。录音时屏幕上的悬浮胶囊显示输入强度、实时文字和结果。
 - 识别可以走云端服务商（OpenAI、Groq、硅基流动，或任意 OpenAI 兼容接口），也可以在本机跑：Qwen3-ASR 0.6B / 1.7B（transcribe.cpp），SenseVoice、Paraformer（sherpa-onnx）。Qwen3-ASR 有 GPU 时在 GPU 上跑（Windows 和 Linux 用 Vulkan，在 NVIDIA 显卡上实测过；macOS 用 Metal），没有 GPU 时用 CPU。
 - 边说边出字的实时预览（流式 Zipformer 模型）；输出方式可以是整段输出、流式定稿或逐句实时插入。
 - 可选的 LLM 润色（同样这些服务商，外加 DeepSeek 和本机的 Ollama）；个人词典专门纠正识别器总听错的词；字面和正则两种替换规则；中文统一成简体或繁体。
@@ -35,24 +35,57 @@ Voltip 是 Windows、Linux 和 macOS 上的语音输入工具。按住热键时�
 
 ## 安装
 
-每个 [release](https://github.com/sunerpy/voltip/releases) 都附带安装包：
+### 一行命令安装
+
+Windows 10/11，在 PowerShell 里执行：
+
+```powershell
+irm https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install.ps1 | iex
+```
+
+Linux（x86_64）和 macOS（Apple 芯片或 Intel 芯片），在终端里执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install.sh | sh
+```
+
+脚本会挑出适合这台电脑的安装包，连同 release 里的 `SHA256SUMS` 一起下载，校验不通过就什么都不装：
+
+- Windows：静默运行按用户安装的安装器（不弹管理员授权），装完自动启动 Voltip。
+- Linux：有 apt 的系统用 `apt` 装 `.deb`（会请你输入密码），否则把 AppImage 放到 `~/.local/bin`，并加进应用菜单。
+- macOS：自动识别芯片（在 Rosetta 终端里也一样），下载对应的 dmg，把应用放进「应用程序」（没有写权限时放进 `~/Applications`）。这样装的应用打开时不会被 Gatekeeper 拦下。
+
+选项写在管道后面的 `sh` 前：`curl -fsSL … | VOLTIP_VERSION=0.0.4 sh` 安装指定版本而不是最新版，`VOLTIP_PACKAGE=appimage` 在 Debian 系的系统上也用 AppImage，`VOLTIP_INSTALL_DIR` 改变 AppImage 或 Mac 应用的位置。PowerShell 里先执行 `$env:VOLTIP_VERSION = "0.0.4"`。上面的命令从 `main` 读取脚本；想用某个版本随附的那一份，把 `main` 换成它的标签，比如 `v0.0.4`。
+
+### 安装包
+
+每个 [release](https://github.com/sunerpy/voltip/releases) 都附带安装包、`SHA256SUMS` 和构建证明：
 
 | 平台 | 安装包 | 说明 |
 |---|---|---|
 | Windows 10/11 x64 | `*_x64-setup.exe`（按用户安装）、`*_x64-portable.zip`（解压后运行 `voltip-desktop.exe`，旁边的 DLL 不能删） | 还没有代码签名，首次启动时 SmartScreen 会提示。 |
-| Linux x64 | `.deb`、`.AppImage` | 在 Ubuntu 22.04 上构建，要求 glibc 2.34 及以上；`.deb` 依赖 `libwebkit2gtk-4.1-0` 和 `libvulkan1`。支持 X11 和 Wayland。 |
-| macOS 11+（Apple silicon） | 暂未发布 | CI 里能构建，见[从源码构建](#从源码构建)。 |
+| Linux x64 | `.deb`、`.AppImage` | 在 Ubuntu 22.04 上构建，要求 glibc 2.34 及以上；`.deb` 依赖 `libwebkit2gtk-4.1-0` 和 `libvulkan1`，AppImage 需要 FUSE 2（`libfuse2`）。支持 X11 和 Wayland。 |
+| macOS 11+ | `*_aarch64.dmg`（Apple 芯片，M1 及更新）、`*_x64.dmg`（Intel 芯片） | ad-hoc 签名，未经公证，见下文。 |
 | Android | 暂未发布 | `make android-apk` 可以构建 debug APK。 |
+
+在 Mac 上手动安装：打开 dmg，把 Voltip 拖到「应用程序」。应用没有公证，第一次打开会被拦下：macOS 15 起到「系统设置 → 隐私与安全性」里点「仍要打开」；macOS 11 到 14 在「应用程序」里按住 Control 点 Voltip，选「打开」。也可以在终端执行 `xattr -dr com.apple.quarantine /Applications/Voltip.app`。之后的更新在应用里完成；更新后 macOS 可能会再次要求授予辅助功能权限。
 
 release 里的安装包内置了默认的识别和润色服务，装好就能直接听写，不用先配置。随时可以换成别的服务商或本机模型。
 
+想自己核对下载的文件：拿它和 `SHA256SUMS` 里对应的那一行比对（`sha256sum`，Mac 上用 `shasum -a 256`），再确认它出自这个仓库的发布流程：
+
+```bash
+gh attestation verify Voltip_0.0.4_amd64.deb --repo sunerpy/voltip \
+  --signer-workflow sunerpy/voltip/.github/workflows/release.yml
+```
+
 ## 快速开始
 
-1. 启动 Voltip。首次设置会检查麦克风权限（macOS 上还有辅助功能），展示热键，让你选识别引擎，最后试听写一次。
+1. 启动 Voltip。它直接打开首页，用默认服务就能听写。缺少的权限（麦克风，macOS 上还有辅助功能）会显示在首页，点一下就能去授权；想一步步设置热键、引擎并试听写一次，可以在「设置 → 通用 → 设置向导」打开向导。
 2. 把光标放进任意输入框，按住 `Ctrl+Alt+Space` 说话，松开。
 3. 纯 Wayland 会话里没有全局热键：在合成器里给 `voltip-desktop --toggle` 绑一个快捷键（语音编辑用 `--edit-toggle`）。
 
-想完全在本机识别，打开「设置 → 引擎 → 本机」下载一个模型：推荐 Qwen3-ASR 0.6B（690 MB），最轻的是 SenseVoice-small（240 MB）。下载完之后，音频不再离开这台电脑。
+想完全在本机识别，打开侧栏的「语音模型」，选「本机」，下载一个模型：推荐 Qwen3-ASR 0.6B（690 MB），最轻的是 SenseVoice-small（240 MB）。下载完之后，音频不再离开这台电脑。
 
 程序还带一套无界面的命令行，适合脚本和服务器：
 

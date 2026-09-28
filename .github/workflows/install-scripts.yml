@@ -1,0 +1,130 @@
+# The one-line installers (scripts/install.sh, scripts/install.ps1) against a published release, on
+# every computer they serve: Linux with the .deb and with the AppImage, macOS on Apple silicon and
+# on Intel, and Windows in Windows PowerShell 5.1 (what `irm | iex` runs in). Each job runs the
+# script the way the README says, then proves the installed app answers `--version`, and on a Mac
+# that the app is the right architecture, sealed, and not quarantined.
+#
+# Run by hand after a release is published (a release published with GITHUB_TOKEN starts no
+# workflow): `gh workflow run install-scripts.yml -f version=<version>`. The refusals (checksum
+# mismatch, missing asset, unknown release, malformed version) need a fake release and are
+# checked locally.
+name: Install scripts
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release to install, for example 0.0.4 (empty: the latest)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: linux · ${{ matrix.package }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [deb, appimage]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install with scripts/install.sh
+        env:
+          VOLTIP_VERSION: ${{ inputs.version }}
+          VOLTIP_PACKAGE: ${{ matrix.package }}
+        run: sh scripts/install.sh
+
+      - name: The installed app answers
+        env:
+          PACKAGE: ${{ matrix.package }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$PACKAGE" = deb ]; then
+            out=$(voltip-desktop --version)
+          else
+            test -s "$HOME/.local/share/applications/voltip.desktop"
+            cat "$HOME/.local/share/applications/voltip.desktop"
+            # The runner has no FUSE 2; the AppImage runtime can run from an extracted copy.
+            out=$(APPIMAGE_EXTRACT_AND_RUN=1 "$HOME/.local/bin/Voltip.AppImage" --version)
+          fi
+          echo "$out"
+          case "$out" in "voltip ${VERSION#v}"*) ;; *) echo "::error::unexpected --version: $out"; exit 1 ;; esac
+
+  macos:
+    name: macos · ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install with scripts/install.sh
+        env:
+          VOLTIP_VERSION: ${{ inputs.version }}
+        run: sh scripts/install.sh
+
+      - name: The installed app is this Mac's, sealed, not quarantined, and answers
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          app=/Applications/Voltip.app
+          [ "$(lipo -archs "$app/Contents/MacOS/voltip-desktop")" = "$ARCH" ]
+          codesign --verify --deep --strict "$app"
+          if xattr -p com.apple.quarantine "$app" >/dev/null 2>&1; then echo "::error::the app is quarantined"; exit 1; fi
+          out=$("$app/Contents/MacOS/voltip-desktop" --version)
+          echo "$out"
+          case "$out" in "voltip ${VERSION#v}"*) ;; *) echo "::error::unexpected --version: $out"; exit 1 ;; esac
+
+  windows:
+    name: windows · PowerShell 5.1
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # `irm <url> | iex` evaluates the script text in the current session; so does this.
+      - name: Install with scripts/install.ps1
+        shell: powershell
+        env:
+          VOLTIP_VERSION: ${{ inputs.version }}
+        run: Get-Content -Raw scripts/install.ps1 | Invoke-Expression
+
+      - name: The installed app answers, and the installer started it
+        shell: powershell
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = Join-Path $env:LOCALAPPDATA "Voltip\voltip-desktop.exe"
+          if (-not (Test-Path $exe)) { throw "no $exe" }
+          $running = Get-Process -Name "voltip-desktop" -ErrorAction SilentlyContinue
+          if (-not $running) { throw "the installer did not start Voltip" }
+          $running | Stop-Process -Force
+          $out = (& $exe --version | Out-String).Trim()
+          Write-Output $out
+          $want = "voltip " + ($env:VERSION -replace '^v', '')
+          if (-not $out.StartsWith($want)) { throw "unexpected --version: $out" }

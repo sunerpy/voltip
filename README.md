@@ -23,13 +23,13 @@ Voltip is a dictation app for Windows, Linux and macOS. It records while you hol
 recognises the speech in the cloud or on your own machine, optionally cleans the text up with an
 LLM, and pastes it into whatever app has the focus. A paired Android phone can be the microphone.
 
-![Voltip's home screen: readiness, microphone level, speech engine, paired phones and recent results](./docs/acceptance/screens/desktop/home-1440-light-en.png)
+![Voltip's home screen: readiness, the microphone and its test, speech engine, paired phones and recent results](./docs/acceptance/screens/desktop/home-1440-light-en.png)
 
 ## Features
 
 - Push-to-talk on a global hotkey (`Ctrl+Alt+Space` by default) or on a single key such as Right
   Ctrl or a mouse side button: hold to talk, press to start and press again to stop, or tap to lock
-  a long take. A floating pill shows the level, the live transcript and the result.
+  a long take. A floating pill shows the input strength, the live transcript and the result.
 - Recognition from a cloud provider (OpenAI, Groq, SiliconFlow, or any OpenAI-compatible endpoint)
   or on-device: Qwen3-ASR 0.6B / 1.7B through transcribe.cpp, SenseVoice and Paraformer through
   sherpa-onnx. Qwen3-ASR runs on the GPU when there is one (Vulkan on Windows and Linux, measured
@@ -50,29 +50,78 @@ LLM, and pastes it into whatever app has the focus. A paired Android phone can b
 
 ## Install
 
-Packages are attached to each [release](https://github.com/sunerpy/voltip/releases):
+### One line
+
+Windows 10/11, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install.ps1 | iex
+```
+
+Linux (x86_64) and macOS (Apple silicon or Intel), in a terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install.sh | sh
+```
+
+The scripts pick the package for the computer, download it with the release's `SHA256SUMS`, and
+install nothing unless the checksum matches:
+
+- Windows: the per-user installer, run silently (no administrator prompt); Voltip starts when it
+  is done.
+- Linux: the `.deb` through `apt` where apt is (it asks for your password), otherwise the AppImage
+  in `~/.local/bin` with an entry in the applications menu.
+- macOS: the dmg for the Mac's processor, detected automatically (also from a Rosetta terminal);
+  the app goes to `/Applications`, or `~/Applications` when that is not writable. Installed this
+  way it opens without the Gatekeeper prompt.
+
+Options go to `sh`, after the pipe: `curl -fsSL … | VOLTIP_VERSION=0.0.4 sh` installs a given
+release instead of the latest, `VOLTIP_PACKAGE=appimage` takes the AppImage on a Debian-based
+system, and `VOLTIP_INSTALL_DIR` moves the AppImage or the Mac app. In PowerShell, run
+`$env:VOLTIP_VERSION = "0.0.4"` first. The commands read the scripts from `main`; to run the copy
+a release shipped with, put its tag (for example `v0.0.4`) in place of `main`.
+
+### Packages
+
+Every [release](https://github.com/sunerpy/voltip/releases) carries the packages, `SHA256SUMS` and
+build attestations:
 
 | Platform | Package | Notes |
 |---|---|---|
 | Windows 10/11 x64 | `*_x64-setup.exe` (per-user installer), `*_x64-portable.zip` (unpack and run `voltip-desktop.exe`; keep the DLLs beside it) | Not code-signed yet: SmartScreen warns on the first start. |
-| Linux x64 | `.deb`, `.AppImage` | Built on Ubuntu 22.04, needs glibc 2.34 or newer; the `.deb` depends on `libwebkit2gtk-4.1-0` and `libvulkan1`. X11 and Wayland. |
-| macOS 11+ (Apple silicon) | not released yet | Builds in CI; see [Build from source](#build-from-source). |
+| Linux x64 | `.deb`, `.AppImage` | Built on Ubuntu 22.04, needs glibc 2.34 or newer; the `.deb` depends on `libwebkit2gtk-4.1-0` and `libvulkan1`, the AppImage needs FUSE 2 (`libfuse2`). X11 and Wayland. |
+| macOS 11+ | `*_aarch64.dmg` (Apple silicon, M1 or newer), `*_x64.dmg` (Intel) | Signed ad hoc, not notarized: see below. |
 | Android | not released yet | `make android-apk` builds a debug APK. |
+
+On a Mac, open the dmg and drag Voltip onto Applications. The first start is blocked because the
+app is not notarized: on macOS 15 and later open System Settings → Privacy & Security and click
+Open Anyway; on macOS 11 to 14 Control-click Voltip in Applications and choose Open. From a
+terminal, `xattr -dr com.apple.quarantine /Applications/Voltip.app` does the same. Updates install
+from inside the app; after one, macOS may ask for the Accessibility permission again.
 
 Release packages come with a default recognition and clean-up service, so dictation works before
 you configure anything. You can switch to another provider or to an on-device model at any time.
 
+To check a download yourself, compare it with its line in `SHA256SUMS` (`sha256sum`, or
+`shasum -a 256` on a Mac) and verify where it was built:
+
+```bash
+gh attestation verify Voltip_0.0.4_amd64.deb --repo sunerpy/voltip \
+  --signer-workflow sunerpy/voltip/.github/workflows/release.yml
+```
+
 ## Quick start
 
-1. Start Voltip. The first-run guide checks the microphone permission (and Accessibility on
-   macOS), shows the hotkey, lets you pick the speech engine and runs a test take.
+1. Start Voltip. It opens on the home page, ready to dictate with the default service. A missing
+   permission (the microphone, and Accessibility on macOS) shows there with a button to grant it;
+   Settings → General → Setup guide walks through the hotkey, the engine and a test take.
 2. Put the cursor in any text field, hold `Ctrl+Alt+Space`, speak, let go.
 3. On a pure Wayland session there is no global hotkey. Bind a compositor shortcut to
    `voltip-desktop --toggle` (and `--edit-toggle` for voice edit).
 
-For on-device recognition, open Settings → Engines → This device and download a model: Qwen3-ASR
-0.6B (690 MB) is the recommended one, SenseVoice-small (240 MB) the lightest. After that no audio
-leaves the machine.
+For on-device recognition, open Speech models in the sidebar, choose This device and download a
+model: Qwen3-ASR 0.6B (690 MB) is the recommended one, SenseVoice-small (240 MB) the lightest.
+After that no audio leaves the machine.
 
 The binary also has a headless command line, handy for scripts and servers:
 
