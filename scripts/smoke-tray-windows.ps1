@@ -16,8 +16,10 @@
     4. Open shows the main window; Settings shows it with the Settings dialog open (found in the
        webview's accessibility tree, settings.png); Check for Updates asks the update source and
        gets an answer (update.png); Quit ends the process with exit code 0.
-  Mouse input is real (SetCursorPos + mouse_event). Each step has a timeout and the first failure
-  stops the run. <OutDir> receives summary.txt, app.log and the screenshots.
+  Mouse input is real (SetCursorPos + mouse_event). The popup menu is read through Win32
+  (MN_GETHMENU, GetMenuStringW, GetMenuItemRect): UI Automation does not list the entries of the
+  app's menu, which the screen shows. Each step has a timeout and the first failure stops the run.
+  <OutDir> receives summary.txt, app.log and the screenshots.
 
 .PARAMETER Binary
   Path to the installed voltip-desktop.exe.
@@ -46,9 +48,51 @@ function Note([string] $line) { $summary.Add($line); Write-Host "smoke-tray-wind
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing
 Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
+public class VoltipMenuEntry { public string Name; public int X; public int Y; }
+public class VoltipMenu {
+  public IntPtr Hwnd;
+  public int Left, Top, Right, Bottom;
+  public List<VoltipMenuEntry> Entries = new List<VoltipMenuEntry>();
+}
 public static class VoltipTray {
+  [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassNameW(IntPtr hwnd, StringBuilder name, int max);
+  [DllImport("user32.dll")] static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] static extern int GetMenuItemCount(IntPtr menu);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetMenuStringW(IntPtr menu, uint item, StringBuilder text, int max, uint flags);
+  [DllImport("user32.dll")] static extern bool GetMenuItemRect(IntPtr hwnd, IntPtr menu, uint item, out RECT rect);
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+  const uint MN_GETHMENU = 0x01E1, MF_BYPOSITION = 0x0400;
+  // The visible popup menu (window class #32768) and its entries with their centres on screen;
+  // separators have no text and are left out. null while no such menu is up.
+  public static VoltipMenu FindOpenMenu() {
+    VoltipMenu found = null;
+    EnumWindows((hwnd, _) => {
+      var cls = new StringBuilder(64);
+      GetClassNameW(hwnd, cls, cls.Capacity);
+      if (cls.ToString() != "#32768" || !IsWindowVisible(hwnd)) return true;
+      IntPtr menu = SendMessageW(hwnd, MN_GETHMENU, IntPtr.Zero, IntPtr.Zero);
+      if (menu == IntPtr.Zero) return true;
+      RECT frame;
+      GetWindowRect(hwnd, out frame);
+      var open = new VoltipMenu { Hwnd = hwnd, Left = frame.Left, Top = frame.Top, Right = frame.Right, Bottom = frame.Bottom };
+      int count = GetMenuItemCount(menu);
+      for (uint i = 0; i < count; i++) {
+        var text = new StringBuilder(256);
+        if (GetMenuStringW(menu, i, text, text.Capacity, MF_BYPOSITION) <= 0) continue;
+        RECT r;
+        if (!GetMenuItemRect(IntPtr.Zero, menu, i, out r)) continue;
+        open.Entries.Add(new VoltipMenuEntry { Name = text.ToString(), X = (r.Left + r.Right) / 2, Y = (r.Top + r.Bottom) / 2 });
+      }
+      if (open.Entries.Count == 0) return true;
+      found = open;
+      return false;
+    }, IntPtr.Zero);
+    return found;
+  }
   delegate bool EnumProc(IntPtr hwnd, IntPtr lparam);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc proc, IntPtr lparam);
@@ -110,17 +154,19 @@ function Center($element) {
   return @([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
 }
 
-function Save-Shot($element, [string] $name) {
-  $r = $element.Current.BoundingRectangle
-  $w = [int][Math]::Ceiling($r.Width); $h = [int][Math]::Ceiling($r.Height)
+function Save-Rect([int] $x, [int] $y, [int] $w, [int] $h, [string] $name) {
   if ($w -le 0 -or $h -le 0) { throw "smoke-tray-windows: $name has an empty rectangle" }
   $bitmap = New-Object System.Drawing.Bitmap($w, $h)
   $g = [System.Drawing.Graphics]::FromImage($bitmap)
-  $g.CopyFromScreen([int]$r.X, [int]$r.Y, 0, 0, $bitmap.Size)
+  $g.CopyFromScreen($x, $y, 0, 0, $bitmap.Size)
   $g.Dispose()
-  $path = Join-Path $OutDir $name
-  $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+  $bitmap.Save((Join-Path $OutDir $name), [System.Drawing.Imaging.ImageFormat]::Png)
   return $bitmap
+}
+
+function Save-Shot($element, [string] $name) {
+  $r = $element.Current.BoundingRectangle
+  return (Save-Rect ([int]$r.X) ([int]$r.Y) ([int][Math]::Ceiling($r.Width)) ([int][Math]::Ceiling($r.Height)) $name)
 }
 
 # The tray button: named after the tooltip ("Voltip" while idle), in the taskbar's notification
@@ -147,34 +193,22 @@ function Find-TrayButton {
   return $null
 }
 
-# The popup menu on screen (class #32768) with its entries. The desktop always holds a hidden,
-# empty #32768 window too, so the visible one with items is the one that counts.
-function Find-OpenMenu {
-  foreach ($menu in $A::RootElement.FindAll($TS::Children, (Cond $A::ClassNameProperty '#32768'))) {
-    if ($menu.Current.IsOffscreen) { continue }
-    $items = @($menu.FindAll($TS::Descendants, (Cond $A::ControlTypeProperty $CT::MenuItem)))
-    if ($items.Count -gt 0) { return New-Object psobject -Property @{ Menu = $menu; Items = $items } }
-  }
-  return $null
-}
-
-# Right-click the tray button and return the menu it opens.
+# Right-click the tray button and return the menu it opens (VoltipMenu: its frame and entries).
 function Open-TrayMenu {
   $tray = Wait-For { Find-TrayButton } $StepTimeoutSec 'the tray button'
   $xy = Center $tray[0]
   [VoltipTray]::Click($xy[0], $xy[1], $true)
-  return (Wait-For { Find-OpenMenu } $StepTimeoutSec 'the tray menu and its entries')
+  return (Wait-For { [VoltipTray]::FindOpenMenu() } $StepTimeoutSec 'the tray menu and its entries')
 }
 
-function Click-MenuItem($items, [string] $name) {
-  foreach ($item in $items) {
-    if ($item.Current.Name -eq $name) {
-      $xy = Center $item
-      [VoltipTray]::Click($xy[0], $xy[1], $false)
+function Click-MenuItem($menu, [string] $name) {
+  foreach ($entry in $menu.Entries) {
+    if ($entry.Name -eq $name) {
+      [VoltipTray]::Click($entry.X, $entry.Y, $false)
       return
     }
   }
-  throw "smoke-tray-windows: no menu item '$name'"
+  throw "smoke-tray-windows: no menu entry '$name'"
 }
 
 function Count-Near($bitmap, [int[]] $rgb, [int] $tolerance) {
@@ -228,13 +262,13 @@ try {
 
   # 3. The menu.
   $opened = Open-TrayMenu
-  $names = @($opened.Items | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
-  (Save-Shot $opened.Menu 'tray-menu.png').Dispose()
+  $names = @($opened.Entries | ForEach-Object { $_.Name })
+  (Save-Rect $opened.Left $opened.Top ($opened.Right - $opened.Left) ($opened.Bottom - $opened.Top) 'tray-menu.png').Dispose()
   Note "menu: $($names -join ' | ')"
   if (($names -join "`n") -ne ($expected -join "`n")) { throw "smoke-tray-windows: menu is '$($names -join ' | ')', expected '$($expected -join ' | ')'" }
 
   # 4a. Open.
-  Click-MenuItem $opened.Items $expected[0]
+  Click-MenuItem $opened $expected[0]
   Wait-For { (Log-Text) -match 'tray menu action=Open' } $StepTimeoutSec 'the Open entry in the log' | Out-Null
   Wait-For { [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'Open to show the window' | Out-Null
   Note 'Open: main window shown'
@@ -243,7 +277,7 @@ try {
 
   # 4b. Settings: the window with the Settings dialog (the webview's role=dialog, named by its title).
   $opened = Open-TrayMenu
-  Click-MenuItem $opened.Items $expected[1]
+  Click-MenuItem $opened $expected[1]
   Wait-For { (Log-Text) -match 'tray menu action=Settings' } $StepTimeoutSec 'the Settings entry in the log' | Out-Null
   Wait-For { [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'Settings to show the window' | Out-Null
   $window = $A::FromHandle($hwnd)
@@ -259,7 +293,7 @@ try {
   # 4c. Check for Updates: the webview asks the update source and gets an answer.
   if ($updater) {
     $opened = Open-TrayMenu
-    Click-MenuItem $opened.Items $expected[2]
+    Click-MenuItem $opened $expected[2]
     Wait-For { (Log-Text) -match 'tray menu action=CheckUpdate' } $StepTimeoutSec 'the Check for Updates entry in the log' | Out-Null
     $answer = Wait-For { if ((Log-Text) -match '(no update available|update available)[^\r\n]*') { $Matches[0] } } 60 'the update check to answer'
     Wait-For { [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'Check for Updates to show the window' | Out-Null
@@ -269,7 +303,7 @@ try {
 
   # 4d. Quit.
   $opened = Open-TrayMenu
-  Click-MenuItem $opened.Items $expected[-1]
+  Click-MenuItem $opened $expected[-1]
   if (-not $app.WaitForExit($StepTimeoutSec * 1000)) { throw 'smoke-tray-windows: Quit did not end the process' }
   if (-not ((Log-Text) -match 'tray menu action=Quit')) { throw 'smoke-tray-windows: the process ended without the Quit entry in the log' }
   Note "Quit: process exited with $($app.ExitCode)"
