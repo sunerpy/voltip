@@ -65,9 +65,9 @@ describe("History page keys and retention", () => {
     expect(await screen.findByText(/已复制/)).toBeInTheDocument();
     // …unless text is selected: then the copy is the selection's (the browser's own).
     writeText.mockClear();
-    const range = document.createRange();
-    range.selectNodeContents(screen.getByTestId("entry-text"));
-    window.getSelection()?.addRange(range);
+    // selectAllChildren replaces the selection; addRange is ignored while one exists (jsdom 30
+    // keeps the caret the search field left behind, as browsers do).
+    window.getSelection()?.selectAllChildren(screen.getByTestId("entry-text"));
     await user.keyboard("{Control>}c{/Control}");
     expect(writeText).not.toHaveBeenCalled();
     window.getSelection()?.removeAllRanges();

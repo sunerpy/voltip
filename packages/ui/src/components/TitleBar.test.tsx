@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { Mock } from "vitest";
 import { I18nProvider } from "../i18n/I18nProvider";
 import {
   TITLE_BAR_HEIGHT,
@@ -10,13 +11,13 @@ import {
 } from "./TitleBar";
 
 function controls(): TitleBarControls & {
-  [K in keyof TitleBarControls]-?: ReturnType<typeof vi.fn>;
+  [K in keyof TitleBarControls]-?: Mock<() => void>;
 } {
   return {
-    minimize: vi.fn(),
-    toggleMaximize: vi.fn(),
-    close: vi.fn(),
-    startDragging: vi.fn(),
+    minimize: vi.fn<() => void>(),
+    toggleMaximize: vi.fn<() => void>(),
+    close: vi.fn<() => void>(),
+    startDragging: vi.fn<() => void>(),
   };
 }
 
