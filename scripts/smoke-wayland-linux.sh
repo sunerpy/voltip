@@ -55,11 +55,9 @@ done
 bin=$snap/$(basename "$bin")
 cleanup() {
   set +e
-  [ -n "$app_pid" ] && kill "$app_pid" 2>/dev/null
-  [ -n "$compositor_pid" ] && kill "$compositor_pid" 2>/dev/null
-  [ -n "${VOLTIP_SMOKE_ASR_PID:-}" ] && kill "$VOLTIP_SMOKE_ASR_PID" 2>/dev/null
+  voltip_smoke_stop "$app_pid" "$compositor_pid" "${VOLTIP_SMOKE_ASR_PID:-}"
   voltip_smoke_pulse_mic_stop
-  [ -n "$bus_pid" ] && kill "$bus_pid" 2>/dev/null
+  voltip_smoke_stop "$bus_pid"
   rm -rf "$work" "$snap"
 }
 trap cleanup EXIT
