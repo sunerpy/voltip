@@ -369,7 +369,7 @@ export const zhCN = {
     permission: {
       title: "还差一个系统权限",
       accessibility:
-        "Voltip 需要「辅助功能」权限，才能把识别结果写进其他应用；授予后需重启 Voltip。",
+        "Voltip 需要「辅助功能」权限，才能把识别结果写进其他应用。在系统设置里打开后立即生效，不用重启 Voltip。",
       microphone:
         "麦克风权限已被拒绝，听写无法录音。请在系统设置的隐私页面里允许 Voltip 使用麦克风。",
       request: "去授权",
@@ -1206,7 +1206,7 @@ export const zhCN = {
         microphone: { name: "麦克风", purpose: "用于听到你说话" },
         accessibility: {
           name: "辅助功能",
-          purpose: "必需 · 定位光标输入框并投递文本；授予后需重启",
+          purpose: "必需 · 定位光标输入框并投递文本；打开后立即生效",
         },
       },
       micDenied: "麦克风未授权，无法录音；点「请求授权」没有弹窗时，到系统设置的隐私页面里打开。",

@@ -1,4 +1,4 @@
-import { type PermissionReport } from "@voltip/shared";
+import { type PermissionReport, translate } from "@voltip/shared";
 import { MockBackend, desktopIdentity, sampleDevices } from "@voltip/shared/mock";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -28,6 +28,25 @@ describe("the home page's permission notice", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("permission-notice")).not.toBeInTheDocument();
     });
+  });
+
+  it("regression: the Accessibility notice says the grant works at once, without a restart", async () => {
+    // User feedback 2026-09-29: the notice said to restart Voltip after granting Accessibility,
+    // yet it worked without one: the paste and the focused-field lookup ask the system on every
+    // use, the notice leaves on the next poll, and a lone-key trigger that failed for the
+    // permission is watched again once it is granted.
+    renderApp({ mock: { identity: mac(), permissions: macReport({ accessibility: "denied" }) } });
+    const notice = await screen.findByTestId("permission-notice");
+    expect(notice).toHaveTextContent("打开后立即生效，不用重启 Voltip");
+    expect(notice).not.toHaveTextContent("授予后需重启");
+    const en = translate("en", "home.permission.accessibility");
+    expect(en).toContain("no need to restart Voltip");
+    expect(en).not.toMatch(/restart Voltip after/);
+    // The setup guide's permission table says the same.
+    for (const locale of ["zh-CN", "en"] as const) {
+      const purpose = translate(locale, "onboarding.permission.row.accessibility.purpose");
+      expect(purpose).not.toMatch(/重启|restart/);
+    }
   });
 
   it("names a denied microphone first and opens the setup guide on request", async () => {

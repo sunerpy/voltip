@@ -704,11 +704,17 @@ fn overlay_state(slot: tauri::State<'_, overlay::OverlaySlot>) -> String {
     slot.current()
 }
 
-/// Query (docs/dictation.md §15.1): what the OS currently grants. The onboarding step polls it
-/// every second while on screen. Linux answers `not_applicable` for everything.
+/// Query (docs/dictation.md §15.1): what the OS currently grants. The onboarding step and the home
+/// page's notice poll it every second while on screen. Linux answers `not_applicable` for
+/// everything. A newly granted Accessibility also brings a lone-key trigger that failed without
+/// it back (`hotkey::after_permission_read`): granting needs no restart.
 #[tauri::command]
-async fn permissions_status() -> platform::PermissionReport {
-    platform::permissions_status().await
+async fn permissions_status<R: Runtime>(app: tauri::AppHandle<R>) -> platform::PermissionReport {
+    let report = platform::permissions_status().await;
+    if let (Some(bridge), Some(registry)) = (app.try_state::<Bridge>(), app.try_state::<Arc<hotkey::HotkeyRegistry>>()) {
+        hotkey::after_permission_read(bridge.inner(), registry.inner(), report.accessibility);
+    }
+    report
 }
 
 /// Ask the OS for one permission (macOS: the system prompt / System Settings pane). A no-op that

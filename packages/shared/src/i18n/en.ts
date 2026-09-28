@@ -378,7 +378,7 @@ export const en: Messages = {
     permission: {
       title: "One system permission is missing",
       accessibility:
-        "Voltip needs the Accessibility permission to type the result into other apps; restart Voltip after granting it.",
+        "Voltip needs the Accessibility permission to type the result into other apps. It works as soon as you turn it on in System Settings; there is no need to restart Voltip.",
       microphone:
         "The microphone permission was denied, so dictation cannot record. Allow Voltip to use the microphone in the system's privacy settings.",
       request: "Grant access",
@@ -1248,7 +1248,7 @@ export const en: Messages = {
         microphone: { name: "Microphone", purpose: "To hear you speak" },
         accessibility: {
           name: "Accessibility",
-          purpose: "Required · finds the focused field and delivers text; restart after granting",
+          purpose: "Required · finds the focused field and delivers text; works as soon as it is on",
         },
       },
       micDenied:

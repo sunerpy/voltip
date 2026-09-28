@@ -32,6 +32,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
 use voltip_core::ui::{HotkeyCapabilities, HotkeyStatus, UiEvent};
 use voltip_core::{DictationPhase, EdgeSource, Hotkey, Modifier, SelectionTiming, Settings, SoloKey, TakeKind, now_ms};
 use voltip_inject::{Session, SessionKind, X11Grab};
+use voltip_platform::PermissionState;
 use voltip_platform::solo_key::SoloEdge;
 use voltip_tauri_bridge::{Bridge, UiCommand};
 
@@ -267,6 +268,8 @@ pub struct HotkeyRegistry {
     cancel_registered: Mutex<Vec<String>>,
     /// The lone-key trigger's input hook while one is installed.
     solo: Mutex<Option<SoloHook>>,
+    /// The Accessibility state the last permission read saw ([`after_permission_read`]).
+    accessibility: Mutex<Option<PermissionState>>,
 }
 
 impl HotkeyRegistry {
@@ -373,6 +376,32 @@ fn sync_solo(bridge: &Bridge, registry: &Arc<HotkeyRegistry>, key: Option<SoloKe
         }
     }
     status.solo_registered = slot.as_ref().map(SoloHook::key);
+}
+
+/// Whether a permission read should try the lone-key trigger again: Accessibility (which the macOS
+/// event tap needs) has just turned granted, a key is set, no hook watches it, and the recorder does
+/// not own the keys. Granting the permission then needs no restart and no settings change; an
+/// unchanged grant is not retried on every read.
+pub fn solo_retry_wanted(previous: Option<PermissionState>, now: PermissionState, key: Option<SoloKey>, watching: bool, capturing: bool) -> bool {
+    now == PermissionState::Granted && previous != Some(PermissionState::Granted) && key.is_some() && !watching && !capturing
+}
+
+/// Every `permissions_status` read (the home page's notice and the setup guide poll it): once
+/// Accessibility is newly granted, watch a lone-key trigger that could not be watched without it,
+/// and publish the status either way it goes.
+pub fn after_permission_read(bridge: &Bridge, registry: &Arc<HotkeyRegistry>, accessibility: PermissionState) {
+    let previous = registry.accessibility.lock().replace(accessibility);
+    let key = bridge.state().settings.solo_key;
+    let watching = registry.solo.lock().is_some();
+    if !solo_retry_wanted(previous, accessibility, key, watching, registry.capturing()) {
+        return;
+    }
+    tracing::info!(?key, "Accessibility granted: watching the lone-key trigger again");
+    let mut status = registry.status();
+    status.solo_error = None;
+    sync_solo(bridge, registry, key, linux_session().map(|s| s.kind), &mut status);
+    *registry.status.lock() = status.clone();
+    bridge.publish(UiEvent::Hotkey(status));
 }
 
 /// Where the hook's edges go: the settings page's `solo_pressed`, then the core as dictation
@@ -558,6 +587,25 @@ pub fn follow_settings<R: Runtime>(app: AppHandle<R>, bridge: Bridge, registry: 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    /// User feedback 2026-09-29: granting Accessibility needs no restart, so a lone-key trigger that
+    /// could not be watched without it (macOS: an active event tap) is tried again the moment a
+    /// permission read first sees the grant; never while its hook runs, while the recorder owns the
+    /// keys, or again on every later read of an unchanged grant.
+    #[test]
+    fn regression_a_lone_key_that_failed_for_the_permission_is_watched_once_it_is_granted() {
+        use voltip_platform::PermissionState::{Denied, Granted, NotApplicable, NotDetermined};
+        let key = Some(SoloKey::RightCtrl);
+        assert!(solo_retry_wanted(Some(Denied), Granted, key, false, false));
+        assert!(solo_retry_wanted(Some(NotDetermined), Granted, key, false, false));
+        assert!(solo_retry_wanted(None, Granted, key, false, false), "the first read after launch");
+        assert!(!solo_retry_wanted(Some(Granted), Granted, key, false, false), "an unchanged grant");
+        assert!(!solo_retry_wanted(Some(Denied), Denied, key, false, false));
+        assert!(!solo_retry_wanted(Some(Denied), Granted, None, false, false), "no lone key set");
+        assert!(!solo_retry_wanted(Some(Denied), Granted, key, true, false), "its hook runs");
+        assert!(!solo_retry_wanted(Some(Denied), Granted, key, false, true), "the recorder owns the keys");
+        assert!(!solo_retry_wanted(None, NotApplicable, key, false, false), "Windows / Linux: no such permission");
+    }
 
     /// docs/dictation.md §5: Esc cancels at any moment of a take, and only then is it taken from
     /// the other applications.
