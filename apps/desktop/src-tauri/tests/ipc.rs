@@ -379,6 +379,15 @@ fn phone_take_commands_are_refused_on_the_desktop() {
             assert_eq!(invoke(webview, cmd, args), Err(Value::String(voltip_desktop_lib::PHONE_TAKE_UNAVAILABLE.into())), "{cmd}");
         }
         assert!(core_state(webview).phone_take.is_none());
+        // docs/dictation.md §20.6: the desktop inserts phones' texts; it sends none itself.
+        for (cmd, args) in [
+            ("phone_text_send", json!({ "publicKey": "11".repeat(32), "body": "x", "source": "typed" })),
+            ("sent_texts_clear", json!({})),
+            ("phone_clipboard_read", json!({})),
+        ] {
+            assert_eq!(invoke(webview, cmd, args), Err(Value::String(voltip_desktop_lib::PHONE_TEXT_UNAVAILABLE.into())), "{cmd}");
+        }
+        assert!(core_state(webview).sent_texts.is_empty());
     });
 }
 
@@ -1230,6 +1239,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "project_link_open",
             "feedback_diagnostics",
             "feedback_submit",
+            "phone_clipboard_read",
         ]
         .map(String::from),
     );

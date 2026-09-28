@@ -722,6 +722,91 @@ async fn a_phone_streams_a_take_the_desktop_delivers() {
     desk.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 
+/// The phone's list of sent texts, from the latest `SentTexts` event.
+fn sent_texts(e: &CoreEvent) -> Option<Vec<voltip_core::phone::SentText>> {
+    match e {
+        CoreEvent::SentTexts(texts) => Some(texts.clone()),
+        _ => None,
+    }
+}
+
+/// docs/dictation.md §20.6: the phone sends text for the desktop to insert. It goes in at once
+/// when the desktop is idle, waits (`queued`) while the desktop records, lands in the desktop's
+/// history as the phone's, and the phone's list follows every answer. A phone take's history entry
+/// is the phone's too.
+#[tokio::test]
+async fn a_phone_sends_text_the_desktop_inserts_now_or_after_its_take() {
+    use voltip_core::dictation::DictationPhase;
+    use voltip_core::phone::{PhoneTextSource, SentTextState};
+    use voltip_core::{OriginKind, Outcome};
+    let (url, _stop, _relay) = relay().await;
+    let mut desk = desktop_ready("Studio", &url);
+    let mut phone = node_opts(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 8", Some(&url), false);
+    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    let (_, desktop) = pair_by_code(&mut desk, &mut phone).await;
+    wait_online(&mut desk).await;
+    wait_online(&mut phone).await;
+
+    // Idle desktop: inserted at once, pasted, recorded as the phone's typed text.
+    phone.handle.send(CoreCommand::PhoneTextSend { to: desktop.public_key, body: "会议改到三点".into(), source: PhoneTextSource::Typed }).await.unwrap();
+    let delivered = wait(&mut phone, |e| sent_texts(e).filter(|t| t.first().is_some_and(|t| t.state.is_final()))).await;
+    assert_eq!(delivered[0].state, SentTextState::Delivered { pasted: true });
+    assert_eq!((delivered[0].body.as_str(), delivered[0].device_name.as_str()), ("会议改到三点", "Studio"));
+    let history = wait(&mut desk, |e| match e {
+        CoreEvent::History(entries) if entries.iter().any(|h| h.text == "会议改到三点") => Some(entries.clone()),
+        _ => None,
+    })
+    .await;
+    let entry = history.iter().find(|h| h.text == "会议改到三点").unwrap();
+    let origin = entry.origin.clone().unwrap();
+    assert_eq!((origin.device.as_str(), origin.kind), ("Pixel 8", OriginKind::Typed));
+    assert!(matches!(entry.outcome, Outcome::Inserted { .. }), "{:?}", entry.outcome);
+
+    // The desktop records: the clipboard text waits, then goes in once the take is over.
+    desk.handle.send(CoreCommand::DictationStart).await.unwrap();
+    wait(&mut desk, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { .. })).then_some(())).await;
+    phone.handle.send(CoreCommand::PhoneTextSend { to: desktop.public_key, body: "剪贴板里的地址".into(), source: PhoneTextSource::Clipboard }).await.unwrap();
+    wait(&mut phone, |e| sent_texts(e).filter(|t| t.first().is_some_and(|t| t.state == SentTextState::Queued))).await;
+    desk.handle.send(CoreCommand::DictationCancel).await.unwrap();
+    let after = wait(&mut phone, |e| sent_texts(e).filter(|t| t.first().is_some_and(|t| t.state.is_final()))).await;
+    assert_eq!(after[0].state, SentTextState::Delivered { pasted: true });
+    assert_eq!(after.len(), 2, "newest first, both kept");
+    wait(&mut desk, |e| match e {
+        CoreEvent::History(entries) => {
+            entries.iter().find(|h| h.text == "剪贴板里的地址").and_then(|h| h.origin.clone()).filter(|o| o.kind == OriginKind::Clipboard)
+        }
+        _ => None,
+    })
+    .await;
+
+    // Refused before anything is sent: nothing, or more than the limit.
+    for body in ["   ".to_owned(), "字".repeat(voltip_core::phone::MAX_PHONE_TEXT_CHARS + 1)] {
+        phone.handle.send(CoreCommand::PhoneTextSend { to: desktop.public_key, body, source: PhoneTextSource::Typed }).await.unwrap();
+        let message = wait(&mut phone, |e| if let CoreEvent::Error(m) = e { Some(m.clone()) } else { None }).await;
+        assert!(message.contains("phone text"), "{message}");
+    }
+
+    // A phone take lands in the history as the phone's.
+    wait(&mut desk, |e| matches!(e, CoreEvent::Dictation(s) if s.phase == DictationPhase::Idle).then_some(())).await;
+    phone.handle.send(CoreCommand::PhoneTakeStart { to: desktop.public_key }).await.unwrap();
+    wait(&mut phone, |e| (phone_take(e) == Some(voltip_core::phone::PhoneTakeState::Listening)).then_some(())).await;
+    wait(&mut desk, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { ready: true, .. })).then_some(())).await;
+    phone.handle.send(CoreCommand::PhoneTakeStop).await.unwrap();
+    wait(&mut desk, |e| match e {
+        CoreEvent::History(entries) => entries.first().and_then(|h| h.origin.clone()).filter(|o| o.kind == OriginKind::Take && o.device == "Pixel 8"),
+        _ => None,
+    })
+    .await;
+
+    // The list is the phone's, and it can forget it.
+    phone.handle.send(CoreCommand::SentTextsClear).await.unwrap();
+    wait(&mut phone, |e| sent_texts(e).filter(Vec::is_empty)).await;
+
+    phone.handle.send(CoreCommand::Shutdown).await.unwrap();
+    desk.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
 /// Opt-in check against a **deployed** relay: `VOLTIP_LIVE_RELAY_URL=wss://host/ws cargo test -p
 /// voltip-core --test e2e live_relay`. Two cores with the LAN side disabled pair by code through
 /// that relay (TLS handshake, WebSocket upgrade through the reverse proxy, rendezvous, E2EE

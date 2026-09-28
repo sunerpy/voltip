@@ -252,6 +252,7 @@ describe("Mobile app flow", () => {
       projectLinkOpen: inner.projectLinkOpen.bind(inner),
       feedbackDiagnostics: inner.feedbackDiagnostics.bind(inner),
       feedbackSubmit: inner.feedbackSubmit.bind(inner),
+      phoneClipboardRead: inner.phoneClipboardRead.bind(inner),
     };
     const first = render(<TestApp backend={backend} />);
     expect(await screen.findByText("正在连接核心…")).toBeInTheDocument();
@@ -278,6 +279,7 @@ describe("Mobile app flow", () => {
       projectLinkOpen: identityless.projectLinkOpen.bind(identityless),
       feedbackDiagnostics: identityless.feedbackDiagnostics.bind(identityless),
       feedbackSubmit: identityless.feedbackSubmit.bind(identityless),
+      phoneClipboardRead: identityless.phoneClipboardRead.bind(identityless),
     };
     render(<TestApp backend={noIdentity} />);
     expect(await screen.findByText("正在生成设备身份…")).toBeInTheDocument();

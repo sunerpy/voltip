@@ -137,6 +137,46 @@ describe("History page", () => {
     expect(screen.queryByTestId("deferred-badge")).toBeNull();
   });
 
+  it("regression: section 20.6 a phone's text and a phone's take are badged with the phone, and a text shows no model or timings", async () => {
+    const now = Date.now();
+    const base = new MockBackend({ now: () => now }).peek().history[0];
+    if (!base) throw new Error("fixture");
+    const text: HistoryEntry = {
+      ...base,
+      id: "00000000-0000-4000-8000-0000000000a1",
+      at_ms: now - 1_000,
+      raw_text: "会议改到三点",
+      text: "会议改到三点",
+      refined: false,
+      asr_model: "",
+      refine_model: undefined,
+      asr_ms: 0,
+      refine_ms: undefined,
+      duration_ms: 0,
+      vocabulary: undefined,
+      app: undefined,
+      scene: undefined,
+      origin: { device: "Pixel 8", kind: "typed" },
+    };
+    const take: HistoryEntry = {
+      ...base,
+      id: "00000000-0000-4000-8000-0000000000a2",
+      at_ms: now - 2_000,
+      origin: { device: "Pixel 8", kind: "take" },
+    };
+    renderApp({ path: "/history", mock: { now: () => now, history: [text, take] } });
+    const log = await screen.findByRole("list", { name: "会话日志" });
+    const origins = within(log).getAllByTestId("history-origin");
+    expect(origins.map((o) => [o.dataset.origin, o.textContent])).toEqual([
+      ["typed", "手机输入 · Pixel 8"],
+      ["take", "手机 · Pixel 8"],
+    ]);
+    // The newest (the text) is selected: its detail names the phone and draws no timing bar.
+    expect(screen.getByTestId("history-detail-origin")).toHaveTextContent("手机输入 · Pixel 8");
+    expect(screen.queryByRole("img", { name: "耗时拆解" })).toBeNull();
+    expect(within(log).getAllByRole("button")[0]).not.toHaveTextContent(/ms ·/);
+  });
+
   it("filters by search and range, switches text views with diff, and copies the real text", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn(() => Promise.resolve());

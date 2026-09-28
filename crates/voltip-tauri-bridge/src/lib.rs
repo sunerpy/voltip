@@ -76,6 +76,17 @@ pub enum UiCommand {
     PhoneTakeStop,
     /// Phone: discard the take.
     PhoneTakeCancel,
+    /// Phone: send text for the desktop to insert at its cursor (docs/dictation.md §20.6).
+    PhoneTextSend {
+        /// Hex public key of the desktop.
+        public_key: String,
+        /// The text.
+        body: String,
+        /// `typed` | `clipboard`.
+        source: voltip_core::phone::PhoneTextSource,
+    },
+    /// Phone: forget the list of sent texts.
+    SentTextsClear,
     /// Relay settings.
     SettingsSetRelay {
         /// URL or null.
@@ -328,6 +339,8 @@ impl UiCommand {
             Self::PhoneTakeStart { public_key } => CoreCommand::PhoneTakeStart { to: parse_key(&public_key)? },
             Self::PhoneTakeStop => CoreCommand::PhoneTakeStop,
             Self::PhoneTakeCancel => CoreCommand::PhoneTakeCancel,
+            Self::PhoneTextSend { public_key, body, source } => CoreCommand::PhoneTextSend { to: parse_key(&public_key)?, body, source },
+            Self::SentTextsClear => CoreCommand::SentTextsClear,
             Self::SettingsSetRelay { url, enabled } => CoreCommand::SetRelay { url, enabled },
             Self::SettingsSetTheme { theme, follow_system } => CoreCommand::SetTheme { theme, follow_system },
             Self::SettingsSetHotkey { hotkey } => CoreCommand::SetHotkey(hotkey),

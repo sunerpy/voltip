@@ -48,6 +48,9 @@ Tauri command 名与参数（`invoke(name, args)`），返回值 JSON：
 | `hotkey_edge` | `{ pressed: boolean, atMs?: number, source?: "hotkey" \| "cli" \| "ui", purpose?: "dictation" \| "edit", chorded?: boolean }` | `null`（一个热键边沿进核心的激活状态机，`docs/dictation.md` §13；界面只传 `pressed`，壳层补 now / `ui` / `dictation`；`purpose: "edit"` 是语音编辑键，§19） |
 | `settings_set_edit_hotkey` | `{ hotkey: string \| null }` | `null`（§19：语音编辑热键；与听写键同样校验、不得与听写键相同，`null` 关闭；持久化 `Settings.edit_hotkey` 并回发 `settings`，拒绝为 `error` 事件） |
 | `settings_set_solo_key` | `{ key: SoloKey \| null }` | `null`（§13.1：单键触发，`right_ctrl` … `mouse_forward`，`null` 关闭；持久化 `Settings.solo_key` 并回发 `settings`，桌面壳随即安装或卸下输入钩子，结果在 `hotkey` 事件的 `solo_registered` / `solo_error`） |
+| `phone_text_send` | `{ publicKey: string, body: string, source: "typed" \| "clipboard" }` | `null`（§20.6：手机把文字发给在线的可信电脑插入光标处；`sent_texts` 事件跟随每个回音；桌面壳返回 `PHONE_TEXT_UNAVAILABLE`） |
+| `sent_texts_clear` | — | `null`（手机清空已发送列表） |
+| `phone_clipboard_read` | — | 查询：`{ text: string \| null }`，手机剪贴板里的文字（Android 插件；其他构建报错） |
 | `settings_set_activation` | `{ activation: "hold" \| "toggle" \| "hold_or_toggle", holdThresholdMs: number, extraRecordingMs: number }` | `null`（三值一起下发；> 5000 ms 核心以 `error` 事件拒绝，设置不变；成功则回发 `settings`） |
 | `update_check` / `update_install` | — | `null`（进度以 `update` 事件回报，§7） |
 | `update_status` | — | `UpdateStatus`（查询，`Backend.updateStatus()`） |

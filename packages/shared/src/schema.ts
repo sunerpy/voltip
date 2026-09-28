@@ -678,6 +678,12 @@ export const editRecordSchema = z.object({
 export type EditRecord = z.infer<typeof editRecordSchema>;
 
 /** One finished dictation as persisted in `history.json` (`voltip_core::history::HistoryEntry`). */
+/** What a phone sent (`voltip_core::OriginKind`, docs/dictation.md §20). */
+export const ORIGIN_KINDS = ["take", "typed", "clipboard"] as const;
+/** Which phone a history entry came from, and how (`voltip_core::EntryOrigin`). */
+export const entryOriginSchema = z.object({ device: z.string(), kind: z.enum(ORIGIN_KINDS) });
+export type EntryOrigin = z.infer<typeof entryOriginSchema>;
+
 export const historyEntrySchema = z.object({
   id: z.string(),
   at_ms: z.number().nonnegative(),
@@ -706,6 +712,8 @@ export const historyEntrySchema = z.object({
    *  probe did not answer (or on the phone), and in rows written before scenes. */
   app: appRefSchema.optional(),
   scene: sceneRefSchema.optional(),
+  /** A phone's take or text rather than this device's own (docs/dictation.md §20.6). */
+  origin: entryOriginSchema.optional(),
 });
 export type HistoryEntry = z.infer<typeof historyEntrySchema>;
 
@@ -1273,6 +1281,45 @@ export const phoneTakeViewSchema = z.object({
 });
 export type PhoneTakeView = z.infer<typeof phoneTakeViewSchema>;
 
+/** Where a phone's text came from (`voltip_protocol::app::PhoneTextSource`, §20.6). */
+export const PHONE_TEXT_SOURCES = ["typed", "clipboard"] as const;
+export type PhoneTextSource = (typeof PHONE_TEXT_SOURCES)[number];
+/** `voltip_core::phone::MAX_PHONE_TEXT_CHARS`. */
+export const MAX_PHONE_TEXT_CHARS = 10_000;
+/** Why a sent text did not arrive (`SentTextFailure`); the last two are the phone's own. */
+export const SENT_TEXT_FAILURES = [
+  "busy",
+  "unavailable",
+  "failed",
+  "offline",
+  "no_answer",
+] as const;
+export const sentTextStateSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("sending") }),
+  z.object({ state: z.literal("queued") }),
+  z.object({ state: z.literal("delivered"), pasted: z.boolean() }),
+  z.object({ state: z.literal("failed"), code: z.enum(SENT_TEXT_FAILURES), message: z.string() }),
+]);
+export type SentTextState = z.infer<typeof sentTextStateSchema>;
+/** A text the phone sent to a desktop (`voltip_core::phone::SentText`, docs/dictation.md §20.6). */
+export const sentTextSchema = z.object({
+  id: z.number().int().nonnegative(),
+  /** The desktop (hex public key). */
+  device: z.string(),
+  device_name: z.string(),
+  body: z.string(),
+  source: z.enum(PHONE_TEXT_SOURCES),
+  /** Unix ms. */
+  sent_at: z.number().int().nonnegative(),
+  state: sentTextStateSchema,
+});
+export type SentText = z.infer<typeof sentTextSchema>;
+
+/** No further answer is expected for this text. */
+export function sentTextFinal(state: SentTextState): boolean {
+  return state.state === "delivered" || state.state === "failed";
+}
+
 /** The take is over (delivered, refused, cancelled). */
 export function phoneTakeFinal(state: PhoneTakeState): boolean {
   return state.state === "done" || state.state === "failed" || state.state === "cancelled";
@@ -1365,6 +1412,8 @@ export const uiStateSchema = z.object({
   scenes: z.array(sceneSchema).default(() => []),
   /** The phone's current or last take streamed to a desktop (§20); absent on the desktop. */
   phone_take: phoneTakeViewSchema.optional(),
+  /** The texts this phone sent (§20.6), newest first; always empty on the desktop. */
+  sent_texts: z.array(sentTextSchema).default(() => []),
   /** What the local models can run on (§10.6); empty until the desktop shell reports. */
   hardware: hardwareStatusSchema.default(() => ({ cpu_threads: 0, gpus: [] })),
   /** The connectivity self-check: running, and the last report. */
@@ -1408,6 +1457,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("scenes"), scenes: z.array(sceneSchema) }),
   /** The phone's take to a desktop moved (§20); `null` before the first. */
   z.object({ type: z.literal("phone_take"), take: phoneTakeViewSchema.nullable() }),
+  /** The phone's list of sent texts, whole (§20.6). */
+  z.object({ type: z.literal("sent_texts"), texts: z.array(sentTextSchema) }),
   /** What the local models can run on (§10.6), reported once by the desktop shell. */
   hardwareStatusSchema.extend({ type: z.literal("hardware") }),
 ]);
@@ -1539,6 +1590,12 @@ export interface CommandArgs {
   feedback_diagnostics: { locale: string };
   /** Query: post the 反馈 dialog's report; rejects with a `FeedbackError` wire name. */
   feedback_submit: FeedbackDraft;
+  /** Phone (docs/dictation.md §20.6): send text for the desktop to insert at its cursor. */
+  phone_text_send: { publicKey: string; body: string; source: PhoneTextSource };
+  /** Phone: forget the list of sent texts. */
+  sent_texts_clear: undefined;
+  /** Query (phone): the phone's clipboard text, `null` when it holds none. */
+  phone_clipboard_read: undefined;
   history_delete: { id: string };
   history_clear: undefined;
   history_star: { id: string; starred: boolean };
@@ -1622,7 +1679,8 @@ export type QueryCommand =
   | "provider_console_open"
   | "project_link_open"
   | "feedback_diagnostics"
-  | "feedback_submit";
+  | "feedback_submit"
+  | "phone_clipboard_read";
 export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "core_state",
   "audio_devices",
@@ -1640,6 +1698,7 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "project_link_open",
   "feedback_diagnostics",
   "feedback_submit",
+  "phone_clipboard_read",
 ];
 /** Commands the UI dispatches through `Backend.invoke` (everything except the queries / streams). */
 export type MutationCommand = Exclude<CommandName, QueryCommand>;
@@ -1740,6 +1799,8 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
       }
       return { ...state, phone_take: event.take };
     }
+    case "sent_texts":
+      return { ...state, sent_texts: event.texts };
     case "trusted":
     case "unpaired":
     case "identity_changed":

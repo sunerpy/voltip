@@ -43,7 +43,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 71] = [
+pub const COMMANDS: [&str; 74] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -58,6 +58,9 @@ pub const COMMANDS: [&str; 71] = [
     "phone_take_start",
     "phone_take_stop",
     "phone_take_cancel",
+    "phone_text_send",
+    "sent_texts_clear",
+    "phone_clipboard_read",
     "settings_set_relay",
     "settings_set_theme",
     "settings_set_hotkey",
@@ -218,6 +221,24 @@ fn phone_take_stop() -> Result<(), String> {
 #[tauri::command]
 fn phone_take_cancel() -> Result<(), String> {
     Err(PHONE_TAKE_UNAVAILABLE.into())
+}
+
+/// The desktop inserts a phone's text (docs/dictation.md §20.6); it has no phone side of its own.
+pub const PHONE_TEXT_UNAVAILABLE: &str = "phone_text: 电脑接收手机发来的文字，不向其他设备发送";
+
+#[tauri::command]
+fn phone_text_send(_public_key: String, _body: String, _source: voltip_core::phone::PhoneTextSource) -> Result<(), String> {
+    Err(PHONE_TEXT_UNAVAILABLE.into())
+}
+
+#[tauri::command]
+fn sent_texts_clear() -> Result<(), String> {
+    Err(PHONE_TEXT_UNAVAILABLE.into())
+}
+
+#[tauri::command]
+fn phone_clipboard_read() -> Result<serde_json::Value, String> {
+    Err(PHONE_TEXT_UNAVAILABLE.into())
 }
 
 #[tauri::command]
@@ -811,6 +832,9 @@ pub fn build_app<R: Runtime>(
             phone_take_start,
             phone_take_stop,
             phone_take_cancel,
+            phone_text_send,
+            sent_texts_clear,
+            phone_clipboard_read,
             settings_set_relay,
             settings_set_theme,
             settings_set_hotkey,

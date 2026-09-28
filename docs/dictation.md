@@ -1155,6 +1155,8 @@ Rust：`voltip-platform` `cmd_c_keycode` 表与终端表（`terminal_ids_are_per
 | `take_opus` | 手机 → 电脑 | `take`、`seq`（与 `take_audio` 共用计数）、`packets`（1–50 个 20 ms Opus 包，16 kHz 单声道，每个 1–1275 字节） |
 | `take_stop` / `take_cancel` | 手机 → 电脑 | `take` |
 | `take_status` | 电脑 → 手机 | `take`、`state`：`listening` / `processing` / `done{text ≤ 2000 字, pasted}` / `failed{code: busy｜unavailable｜no_speech｜failed, message ≤ 200 字}` / `cancelled`；`opus`（这台电脑解码 Opus，缺省为假） |
+| `phone_text` | 手机 → 电脑 | `id`（手机自增）、`body`（1–10 000 字）、`source`：`typed` / `clipboard`（§20.6） |
+| `phone_text_status` | 电脑 → 手机 | `id`、`state`：`queued` / `delivered{pasted}` / `failed{code: busy｜unavailable｜failed, message ≤ 200 字}` |
 
 解码时校验采样率、PCM 长度、Opus 包数与包长、文字长度；超限的消息整条拒收。旧 `seq`（第二条路径上的重复块）丢弃，缺块照常接着拼。
 
@@ -1179,4 +1181,12 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 
 ### 20.5 未验证
 
-真机：Android 麦克风采集与权限弹窗、蓝牙耳机、后台切换时的采集行为，只能在手机上验证；`cargo check` / `clippy --target aarch64-linux-android` 通过，APK 构建见 `scripts/build-android-debug.sh`。
+真机：Android 麦克风采集与权限弹窗、蓝牙耳机、后台切换时的采集行为，以及 `PhoneClipboardPlugin.kt` 读剪贴板，只能在手机上验证；`cargo check` / `clippy --target aarch64-linux-android` 通过，APK 构建见 `scripts/build-android-debug.sh`。
+
+### 20.6 手机发文字到电脑（2026-09-28）
+
+手机上输入（或粘贴）一段文字发给电脑，或一键发送手机剪贴板；电脑把它当成一次听写的结果插入光标处，不识别、不润色、不套词典与规则。
+
+- **手机**：`CoreCommand::PhoneTextSend { to, body, source }`（`phone_text_send { publicKey, body, source }`）要求对端是在线的可信电脑、文字非空白且不超过 10 000 字（按字符计）。每条文字进 `UiState.sent_texts`（最新在前，最多 50 条，存 `sent-texts.json`，id 跨重启递增），状态 `sending` → `queued` / `delivered{pasted}` / `failed`；15 秒没有回音记为 `no_answer`（旧版电脑会丢掉不认识的消息），排队超过 10 分钟同样放弃。`sent_texts_clear` 清空列表。「发送剪贴板」经 `phone_clipboard_read` 读系统剪贴板（Android：`PhoneClipboardPlugin.kt`，系统只回答前台应用，按下按钮时 Voltip 就在前台；其他构建返回 `CLIPBOARD_UNAVAILABLE`）。界面在「已配对设备」页的「用手机说话」下面：文本框、字数、「发送剪贴板」「发送到 {电脑}」和已发送列表。
+- **电脑**：可信手机的 `phone_text` 经听写同一个注入器插入（粘贴，不行就留在剪贴板）；同一时间只插一条，电脑自己在录音或处理时先排队（最多 10 条，满了回 `busy`），手机看到 `queued`，这次听写结束（回到空闲或终态停留）后依次插入。同一条文字从第二条路径再到按 `(手机, id)` 丢弃（记最近 64 条）。每条插入都进历史，`HistoryEntry.origin = { device: 手机名, kind: typed｜clipboard }`；手机的听写（§20.1）也记成 `origin.kind = take`。历史页给这些条目加「手机输入 · {名称}」「手机剪贴板 · {名称}」「手机 · {名称}」徽标，文字条目不显示模型和耗时。`CoreConfig.accepts_phone_takes` 为假（手机）时回 `unavailable`；桌面壳的 `phone_text_send` / `sent_texts_clear` / `phone_clipboard_read` 返回 `PHONE_TEXT_UNAVAILABLE`。
+- 实现：`crates/voltip-protocol/src/app.rs`（`PhoneText` / `PhoneTextStatus`）、`crates/voltip-core/src/runtime/texts.rs`、`crates/voltip-core/src/phone.rs`（`SentText` / `SentTexts`）、`apps/mobile/src/screens/SendText.tsx`、`apps/mobile/src-tauri/src/clipboard.rs`。

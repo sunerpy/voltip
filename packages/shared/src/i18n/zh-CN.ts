@@ -469,6 +469,11 @@ export const zhCN = {
     },
   },
   history: {
+    origin: {
+      take: "手机 · {device}",
+      typed: "手机输入 · {device}",
+      clipboard: "手机剪贴板 · {device}",
+    },
     filter: {
       all: "全部",
       today: "今天",
@@ -1855,6 +1860,35 @@ export const zhCN = {
         failed: "没有送出：{message}",
         microphone: "麦克风打不开：{message}",
         offline: "电脑已离线",
+      },
+    },
+    send: {
+      title: "发送文字到电脑",
+      body: "输入或粘贴一段文字，电脑会把它插入光标处；也可以直接发送剪贴板。电脑正在听写时，文字排队等听写结束。",
+      noDesktop: "已配对的电脑上线后，可以在这里把文字发过去。",
+      target: "发送到",
+      draft: "要发送的文字",
+      placeholder: "在这里输入或粘贴",
+      count: "{n}/{max} 字",
+      clipboard: "发送剪贴板",
+      clipboardEmpty: "剪贴板里没有文字",
+      send: "发送到 {name}",
+      sent: "已发送 {n} 条",
+      sentLabel: "已发送的文字",
+      clear: "清空",
+      source: { typed: "输入", clipboard: "剪贴板" },
+      state: {
+        sending: "发送中…",
+        queued: "{name} 正在听写，结束后插入",
+        pasted: "已插入 {name}",
+        clipboard: "已放到 {name} 的剪贴板",
+        failed: {
+          busy: "电脑上排队的文字太多：{message}",
+          unavailable: "对方不接收文字：{message}",
+          failed: "插入失败：{message}",
+          offline: "电脑不在线：{message}",
+          no_answer: "{message}",
+        },
       },
     },
     devices: {

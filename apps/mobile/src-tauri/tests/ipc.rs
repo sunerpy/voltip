@@ -227,6 +227,21 @@ fn phone_take_commands_reach_the_core() {
     });
 }
 
+/// docs/dictation.md §20.6: the phone's texts go through the core (an unknown desktop is the
+/// core's error), the list can be cleared, and a build without a phone clipboard says so.
+#[test]
+fn phone_text_commands_reach_the_core() {
+    with_running_app(|_, webview, rx| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert!(invoke(webview, "phone_text_send", json!({ "publicKey": "11".repeat(32), "body": "x", "source": "voice" })).is_err(), "unknown source");
+        assert_eq!(invoke(webview, "phone_text_send", json!({ "publicKey": "11".repeat(32), "body": "会议改到三点", "source": "typed" })), Ok(Value::Null));
+        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("unknown device")));
+        assert_eq!(invoke(webview, "sent_texts_clear", json!({})), Ok(Value::Null));
+        wait_event(rx, "sent_texts", |e| e["type"] == "sent_texts" && e["texts"].as_array().is_some_and(Vec::is_empty));
+        assert_eq!(invoke(webview, "phone_clipboard_read", json!({})), Err(Value::String(voltip_mobile_lib::clipboard::CLIPBOARD_UNAVAILABLE.into())));
+    });
+}
+
 #[test]
 fn dictation_is_refused_but_engines_secrets_and_history_work() {
     with_running_app(|_, webview, rx| {
@@ -433,6 +448,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "project_link_open",
             "feedback_diagnostics",
             "feedback_submit",
+            "phone_clipboard_read",
         ]
         .map(String::from),
     );

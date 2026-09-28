@@ -49,6 +49,8 @@ pub(super) enum PhoneEvent {
     Chunk { take: u32, pcm: Vec<u8> },
     /// The capture stopped and the tap is empty: every chunk went out.
     Drained { take: u32 },
+    /// Desktop: the injector is done with a phone's text (docs/dictation.md §20.6).
+    TextDelivered { text: Box<super::texts::IncomingText>, result: Result<crate::dictation::Injection, DictationError> },
 }
 
 /// Desktop: the take a paired phone streams.
@@ -171,7 +173,7 @@ impl Runtime {
         self.send_on(link, RelayFrame::forward(sid, bytes)).await
     }
 
-    fn peer_online(&mut self, key: &PublicKey) -> bool {
+    pub(super) fn peer_online(&mut self, key: &PublicKey) -> bool {
         self.peers.get_mut(key).is_some_and(|st| st.best_secure_path().is_some())
     }
 
@@ -237,6 +239,11 @@ impl Runtime {
             Err(DictationError::Busy) => self.queue_status(peer, take, TakeState::failed(TakeFailure::Busy, "电脑正在听写")),
             Err(e) => self.queue_status(peer, take, TakeState::failed(TakeFailure::Failed, &e.to_string())),
         }
+    }
+
+    /// The phone streaming the current take, if one is (its history entry is the phone's).
+    pub(super) fn remote_take_name(&self) -> Option<String> {
+        self.remote_take.as_ref().map(|rt| rt.name.clone())
     }
 
     fn remote_take_of(&self, peer: PublicKey, take: u32) -> Option<&RemoteTake> {
@@ -375,6 +382,7 @@ impl Runtime {
 
     pub(super) fn on_phone_event(&mut self, event: PhoneEvent) {
         match event {
+            PhoneEvent::TextDelivered { text, result } => self.on_text_delivered(*text, result),
             PhoneEvent::Opened { take, result } => self.on_phone_opened(take, result),
             PhoneEvent::Chunk { take, pcm } => {
                 let Some(t) = self.phone_take.as_mut().filter(|t| t.take() == take && t.running()) else { return };

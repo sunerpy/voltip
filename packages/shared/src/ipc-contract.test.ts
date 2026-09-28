@@ -26,6 +26,7 @@ import {
   providerIdSchema,
   serviceKindSchema,
   soloKeySchema,
+  PHONE_TEXT_SOURCES,
   themeIdSchema,
   uiEventSchema,
   uiStateSchema,
@@ -63,6 +64,7 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   scenes: null,
   provider_probe: null,
   phone_take: null,
+  sent_texts: null,
   hardware: null,
   connectivity: null,
 };
@@ -83,6 +85,8 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   phone_take_start: null,
   phone_take_stop: null,
   phone_take_cancel: null,
+  phone_text_send: null,
+  sent_texts_clear: null,
   settings_set_relay: null,
   settings_set_theme: null,
   settings_set_hotkey: null,
@@ -146,6 +150,9 @@ const argSchemas = {
   device_rename: z.object({ name: z.string() }),
   send_text: z.object({ publicKey: hexKeySchema, body: z.string() }),
   phone_take_start: z.object({ publicKey: hexKeySchema }).strict(),
+  phone_text_send: z
+    .object({ publicKey: hexKeySchema, body: z.string(), source: z.enum(PHONE_TEXT_SOURCES) })
+    .strict(),
   settings_set_relay: z.object({ url: z.string().nullable(), enabled: z.boolean() }),
   settings_set_theme: z.object({ theme: themeIdSchema, followSystem: z.boolean() }),
   settings_set_hotkey: z.object({ hotkey: z.string() }),
@@ -238,8 +245,11 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.send_text.parse(args));
     case "phone_take_start":
       return backend.invoke(name, argSchemas.phone_take_start.parse(args));
+    case "phone_text_send":
+      return backend.invoke(name, argSchemas.phone_text_send.parse(args));
     case "phone_take_stop":
     case "phone_take_cancel":
+    case "sent_texts_clear":
       return backend.invoke(name);
     case "settings_set_relay":
       return backend.invoke(name, argSchemas.settings_set_relay.parse(args));
@@ -622,6 +632,39 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     );
   });
 
+  it("regression: section 20.6 the phone's sent texts and a history entry's origin survive parsing", () => {
+    const parsedState = uiStateSchema.parse(state);
+    expect(parsedState.sent_texts.map((t) => [t.id, t.source, t.state.state])).toEqual([
+      [5, "clipboard", "sending"],
+      [4, "typed", "queued"],
+      [3, "typed", "delivered"],
+      [2, "clipboard", "delivered"],
+      [1, "typed", "failed"],
+    ]);
+    const failed = parsedState.sent_texts.at(-1)?.state;
+    expect(failed?.state === "failed" ? failed.code : undefined).toBe("no_answer");
+    expect(parsedState.history.at(-1)?.origin).toEqual({ device: "Pixel 8", kind: "typed" });
+    expect(parsedState.history[0]?.origin).toBeUndefined();
+    const lists = events.flatMap((raw) => {
+      const r = uiEventSchema.safeParse(raw);
+      return r.success && r.data.type === "sent_texts" ? [r.data.texts.length] : [];
+    });
+    expect(lists).toEqual([0, 5]);
+    // A state without the list (the desktop, an older phone) reads as empty.
+    const { sent_texts: _gone, ...older } = z.record(z.string(), z.unknown()).parse(state);
+    expect(uiStateSchema.parse(older).sent_texts).toEqual([]);
+    const raw = events.find(
+      (e) =>
+        uiEventSchema.safeParse(e).data?.type === "sent_texts" &&
+        JSON.stringify(e).includes("no_answer"),
+    );
+    expect(uiEventSchema.safeParse(mutate(raw, ["texts", "0", "source"], "voice")).success).toBe(
+      false,
+    );
+    const send = commands.find((c) => c.name === "phone_text_send");
+    expect(argSchemas.phone_text_send.parse(send?.args).source).toBe("typed");
+  });
+
   it("regression: section 13.1 the lone-key trigger survives parsing: the setting, what the hook watches and why not, and the session's keys", () => {
     const hotkeys = events.flatMap((raw) => {
       const r = uiEventSchema.safeParse(raw);
@@ -717,7 +760,12 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     const parsedState = uiStateSchema.parse(state);
     expect(parsedState.dictation.kind).toBe("dictation");
     expect(parsedState.hotkey.edit_registered).toBe("Ctrl+Alt+E");
-    expect(parsedState.history.map((r) => r.kind)).toEqual(["dictation", "dictation", "edit"]);
+    expect(parsedState.history.map((r) => r.kind)).toEqual([
+      "dictation",
+      "dictation",
+      "edit",
+      "dictation",
+    ]);
     const hotkeys = parsed.flatMap((e) => (e.type === "hotkey" ? [e] : []));
     expect(hotkeys.map((h) => h.edit_registered ?? h.edit_error)).toEqual([
       "Ctrl+Alt+E",

@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod clipboard;
 pub mod meter;
 pub mod microphone;
 
@@ -27,7 +28,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 71] = [
+pub const COMMANDS: [&str; 74] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -42,6 +43,9 @@ pub const COMMANDS: [&str; 71] = [
     "phone_take_start",
     "phone_take_stop",
     "phone_take_cancel",
+    "phone_text_send",
+    "sent_texts_clear",
+    "phone_clipboard_read",
     "settings_set_relay",
     "settings_set_theme",
     "settings_set_hotkey",
@@ -210,6 +214,25 @@ fn phone_take_stop(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
 #[tauri::command]
 fn phone_take_cancel(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::PhoneTakeCancel)?)
+}
+
+/// Send text for the paired desktop `public_key` to insert at its cursor (docs/dictation.md §20.6).
+#[tauri::command]
+fn phone_text_send(bridge: tauri::State<'_, Bridge>, public_key: String, body: String, source: voltip_core::phone::PhoneTextSource) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PhoneTextSend { public_key, body, source })?)
+}
+
+/// Forget the list of sent texts.
+#[tauri::command]
+fn sent_texts_clear(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SentTextsClear)?)
+}
+
+/// The phone's clipboard text, `null` when it holds none (`PhoneClipboardPlugin.kt` on Android).
+#[tauri::command]
+async fn phone_clipboard_read<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String> {
+    let text = clipboard::read_text(&app).await?;
+    Ok(serde_json::json!({ "text": text }))
 }
 
 #[tauri::command]
@@ -627,6 +650,7 @@ pub fn build_app<R: Runtime>(
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
     builder
         .plugin(microphone::init())
+        .plugin(clipboard::init())
         .manage(meter::Meters::default())
         .setup(move |app| {
             let config = config(app.handle());
@@ -647,6 +671,9 @@ pub fn build_app<R: Runtime>(
             phone_take_start,
             phone_take_stop,
             phone_take_cancel,
+            phone_text_send,
+            sent_texts_clear,
+            phone_clipboard_read,
             settings_set_relay,
             settings_set_theme,
             settings_set_hotkey,

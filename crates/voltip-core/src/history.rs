@@ -111,6 +111,31 @@ pub struct HistoryEntry {
     /// The scene the take ran with, by id and its name at the time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene: Option<SceneRef>,
+    /// A phone's take or text rather than this device's own (docs/dictation.md §20.6); absent for
+    /// the device's own takes and in entries written before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<EntryOrigin>,
+}
+
+/// Which phone an entry came from, and how.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct EntryOrigin {
+    /// The phone's name at the time.
+    pub device: String,
+    /// What the phone sent.
+    pub kind: OriginKind,
+}
+
+/// What a phone sent (docs/dictation.md §20).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OriginKind {
+    /// Its audio, recognised here (the phone as microphone, §20.1).
+    Take,
+    /// Text typed into the phone (§20.6).
+    Typed,
+    /// The phone's clipboard (§20.6).
+    Clipboard,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -249,6 +274,7 @@ mod tests {
             edit: None,
             app: None,
             scene: None,
+            origin: None,
         }
     }
 

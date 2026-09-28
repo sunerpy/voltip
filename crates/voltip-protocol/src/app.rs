@@ -34,6 +34,62 @@ pub const TAKE_OPUS_FRAME_SAMPLES: usize = 320;
 pub const MAX_TAKE_OPUS_PACKETS: usize = 50;
 /// Largest Opus packet (RFC 6716 §3.2.1).
 pub const MAX_OPUS_PACKET_BYTES: usize = 1275;
+/// Longest text a phone sends for the desktop to insert ([`AppMessage::PhoneText`], characters).
+pub const MAX_PHONE_TEXT_CHARS: usize = 10_000;
+
+/// Where a phone's text came from (docs/dictation.md §20.6).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhoneTextSource {
+    /// Typed (or pasted) into the phone's text box.
+    Typed,
+    /// The phone's clipboard, sent as it was.
+    Clipboard,
+}
+
+/// Why a phone's text was not delivered (desktop → phone).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhoneTextFailure {
+    /// Too many texts are already waiting for the desktop's take to end.
+    Busy,
+    /// This device does not insert texts from a phone.
+    Unavailable,
+    /// The insertion failed (see the message).
+    Failed,
+}
+
+/// What became of a phone's text on the desktop ([`AppMessage::PhoneTextStatus`]).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum PhoneTextState {
+    /// Waiting: the desktop is in the middle of a take, the text goes in once it is over.
+    Queued,
+    /// Inserted at the cursor (`pasted`) or left on the desktop's clipboard.
+    Delivered {
+        /// Pasted rather than left on the clipboard.
+        pasted: bool,
+    },
+    /// Not delivered.
+    Failed {
+        /// Why.
+        code: PhoneTextFailure,
+        /// The desktop's explanation (at most [`MAX_TAKE_MESSAGE_CHARS`]).
+        message: String,
+    },
+}
+
+impl PhoneTextState {
+    /// `Failed`, with the message cut to [`MAX_TAKE_MESSAGE_CHARS`].
+    pub fn failed(code: PhoneTextFailure, message: &str) -> Self {
+        Self::Failed { code, message: clip(message, MAX_TAKE_MESSAGE_CHARS) }
+    }
+
+    /// No further status follows.
+    pub fn is_final(&self) -> bool {
+        !matches!(self, Self::Queued)
+    }
+}
 
 /// Why a phone's take did not deliver (desktop → phone).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -213,6 +269,28 @@ pub enum AppMessage {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         opus: bool,
     },
+    /// Phone → desktop: insert this text at the cursor, like a dictation's result (docs/dictation.md
+    /// §20.6). Nothing is recognised or cleaned up; the desktop answers with
+    /// [`AppMessage::PhoneTextStatus`].
+    PhoneText {
+        /// Protocol version.
+        version: ProtocolVersion,
+        /// The phone's id for this text; the status names it.
+        id: u32,
+        /// 1..=[`MAX_PHONE_TEXT_CHARS`] characters.
+        body: String,
+        /// Typed or the clipboard.
+        source: PhoneTextSource,
+    },
+    /// Desktop → phone: what became of a [`AppMessage::PhoneText`].
+    PhoneTextStatus {
+        /// Protocol version.
+        version: ProtocolVersion,
+        /// The text.
+        id: u32,
+        /// Its state.
+        state: PhoneTextState,
+    },
     /// Sent right before the sender forgets this peer (docs/pairing.md): the receiver forgets the
     /// sender too, so neither side keeps a record the other one no longer honours.
     Unpair {
@@ -240,6 +318,8 @@ impl AppMessage {
             | Self::TakeStop { version, .. }
             | Self::TakeCancel { version, .. }
             | Self::TakeStatus { version, .. }
+            | Self::PhoneText { version, .. }
+            | Self::PhoneTextStatus { version, .. }
             | Self::Unpair { version } => *version,
         }
     }
@@ -287,6 +367,12 @@ impl AppMessage {
             Self::TakeStatus { state: TakeState::Failed { message, .. }, .. } if message.chars().count() > MAX_TAKE_MESSAGE_CHARS => {
                 return Err(CodecError::InvalidField { field: "message", reason: format!("more than {MAX_TAKE_MESSAGE_CHARS} characters") });
             }
+            Self::PhoneText { body, .. } if body.is_empty() || body.chars().count() > MAX_PHONE_TEXT_CHARS => {
+                return Err(CodecError::InvalidField { field: "body", reason: format!("expected 1..={MAX_PHONE_TEXT_CHARS} characters") });
+            }
+            Self::PhoneTextStatus { state: PhoneTextState::Failed { message, .. }, .. } if message.chars().count() > MAX_TAKE_MESSAGE_CHARS => {
+                return Err(CodecError::InvalidField { field: "message", reason: format!("more than {MAX_TAKE_MESSAGE_CHARS} characters") });
+            }
             _ => {}
         }
         Ok(msg)
@@ -310,6 +396,11 @@ impl AppMessage {
     /// Convenience: a take's status from this build's desktop, which decodes Opus.
     pub fn take_status(take: u32, state: TakeState) -> Self {
         Self::TakeStatus { version: ProtocolVersion::CURRENT, take, state, opus: true }
+    }
+
+    /// Convenience: a phone text's status.
+    pub fn phone_text_status(id: u32, state: PhoneTextState) -> Self {
+        Self::PhoneTextStatus { version: ProtocolVersion::CURRENT, id, state }
     }
 
     /// Convenience: unpair.
@@ -398,6 +489,40 @@ mod tests {
         let with_flag = AppMessage::take_status(1, TakeState::Listening).encode().unwrap();
         assert!(with_flag.len() > pcm_only.len(), "the flag is left out when false");
         assert_eq!(serde_json::to_string(&TakeFailure::NoSpeech).unwrap(), r#""no_speech""#);
+    }
+
+    /// docs/dictation.md §20.6: a phone's text and its status round-trip; an empty or oversized
+    /// text and an oversized failure message are refused on decode.
+    #[test]
+    fn phone_text_messages_roundtrip_and_are_validated() {
+        let v = ProtocolVersion::CURRENT;
+        for m in [
+            AppMessage::PhoneText { version: v, id: 1, body: "把 fetchUser 改成 async".into(), source: PhoneTextSource::Typed },
+            AppMessage::PhoneText { version: v, id: 2, body: "字".repeat(MAX_PHONE_TEXT_CHARS), source: PhoneTextSource::Clipboard },
+            AppMessage::phone_text_status(1, PhoneTextState::Queued),
+            AppMessage::phone_text_status(1, PhoneTextState::Delivered { pasted: true }),
+            AppMessage::phone_text_status(2, PhoneTextState::failed(PhoneTextFailure::Busy, "排队的文字太多")),
+        ] {
+            let bytes = m.encode().unwrap();
+            assert_eq!(AppMessage::decode(&bytes).unwrap(), m);
+        }
+        for (m, field) in [
+            (AppMessage::PhoneText { version: v, id: 1, body: String::new(), source: PhoneTextSource::Typed }, "body"),
+            (AppMessage::PhoneText { version: v, id: 1, body: "x".repeat(MAX_PHONE_TEXT_CHARS + 1), source: PhoneTextSource::Typed }, "body"),
+            (
+                AppMessage::PhoneTextStatus {
+                    version: v,
+                    id: 1,
+                    state: PhoneTextState::Failed { code: PhoneTextFailure::Failed, message: "x".repeat(MAX_TAKE_MESSAGE_CHARS + 1) },
+                },
+                "message",
+            ),
+        ] {
+            let bytes = m.encode().unwrap();
+            assert!(matches!(AppMessage::decode(&bytes).unwrap_err(), CodecError::InvalidField { field: f, .. } if f == field), "{field}");
+        }
+        assert!(!PhoneTextState::Queued.is_final() && PhoneTextState::Delivered { pasted: false }.is_final());
+        assert_eq!(serde_json::to_string(&PhoneTextSource::Clipboard).unwrap(), r#""clipboard""#);
     }
 
     #[test]

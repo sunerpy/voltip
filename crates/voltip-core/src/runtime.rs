@@ -42,6 +42,7 @@ use crate::{CoreError, is_initiator, rendezvous_channel};
 mod check;
 mod take_codec;
 mod takes;
+mod texts;
 
 /// Default TCP port of the LAN host. A fixed port keeps stored LAN hints valid across restarts;
 /// when it is taken the host falls back to an ephemeral port and peers learn the new one.
@@ -199,6 +200,18 @@ pub enum CoreCommand {
     PhoneTakeStop,
     /// Phone: discard the take on both ends.
     PhoneTakeCancel,
+    /// Phone: send `body` to the online trusted desktop `to`, to be inserted at its cursor
+    /// (docs/dictation.md §20.6); listed in `UiState.sent_texts` until the desktop answers.
+    PhoneTextSend {
+        /// The desktop.
+        to: PublicKey,
+        /// 1..=`MAX_PHONE_TEXT_CHARS` characters, not only whitespace.
+        body: String,
+        /// Typed or the clipboard.
+        source: crate::phone::PhoneTextSource,
+    },
+    /// Phone: forget the list of sent texts.
+    SentTextsClear,
     /// Send text to an online trusted device.
     SendText {
         /// Recipient.
@@ -408,6 +421,9 @@ pub enum CoreEvent {
     Scenes(Vec<Scene>),
     /// The phone's take streamed to a desktop (docs/dictation.md §20); `None` before the first.
     PhoneTake(Option<crate::phone::PhoneTakeView>),
+    /// The phone's list of texts sent to a desktop (docs/dictation.md §20.6), newest first; on
+    /// `Ready` and after every change.
+    SentTexts(Vec<crate::phone::SentText>),
     /// The connectivity self-check started or finished ([`crate::connectivity`]).
     Connectivity(crate::connectivity::ConnectivityStatus),
     /// Non-fatal error for the UI.
@@ -469,6 +485,7 @@ impl AppCore {
             tracing::warn!(%reason, "settings.json could not be read; starting with the defaults");
         }
         let history = HistoryStore::open(&config.data_dir);
+        let sent_texts = crate::phone::SentTexts::open(&config.data_dir);
         let (dictionary, dictionary_notice) = DictionaryStore::open(&config.data_dir);
         let (rules, rules_notice) = RuleStore::open(&config.data_dir);
         let (scenes, scenes_notice) = SceneStore::open(&config.data_dir);
@@ -535,6 +552,8 @@ impl AppCore {
             next_phone_take: 0,
             phone_tx,
             take_outbox: Vec::new(),
+            texts: texts::TextInbox::default(),
+            sent_texts,
             check: None,
             next_check: 0,
             last_check: None,
@@ -757,8 +776,12 @@ struct Runtime {
     next_phone_take: u32,
     /// Phone: the microphone open and the pump report here.
     phone_tx: mpsc::Sender<takes::PhoneEvent>,
-    /// Take messages to seal and send once the current event is handled.
+    /// Take and text messages to seal and send once the current event is handled.
     take_outbox: Vec<(PublicKey, AppMessage)>,
+    /// Desktop: phones' texts waiting for the injector (docs/dictation.md §20.6).
+    texts: texts::TextInbox,
+    /// Phone: the texts it sent, newest first.
+    sent_texts: crate::phone::SentTexts,
     /// The connectivity self-check in flight.
     check: Option<check::Pending>,
     /// The id of the last check started.
@@ -924,6 +947,7 @@ impl Runtime {
         self.emit(CoreEvent::Dictionary(self.dictionary.entries().to_vec()));
         self.emit(CoreEvent::Rules(self.rules.rules().to_vec()));
         self.emit(CoreEvent::Scenes(self.scenes.scenes().to_vec()));
+        self.emit_sent_texts();
         for notice in std::mem::take(&mut self.startup_notices) {
             self.emit(CoreEvent::Error(notice));
         }
@@ -1013,6 +1037,11 @@ impl Runtime {
             }
             CoreCommand::SendText { to, body } => self.send_text(to, body).await,
             CoreCommand::PhoneTakeStart { to } => self.phone_take_start(to),
+            CoreCommand::PhoneTextSend { to, body, source } => self.phone_text_send(to, body, source),
+            CoreCommand::SentTextsClear => {
+                self.sent_texts_clear();
+                Ok(())
+            }
             CoreCommand::PhoneTakeStop => self.phone_take_stop(),
             CoreCommand::PhoneTakeCancel => self.phone_take_cancel(),
             CoreCommand::RefreshDevices => {
@@ -1717,6 +1746,10 @@ impl Runtime {
                     let hint = if self.activation.deferred_stop.is_some() { PhaseHint::Processing } else { PhaseHint::from(&status.phase) };
                     let kind = status.kind;
                     self.emit(CoreEvent::Dictation(status));
+                    // A phone's text waits for the take to end (docs/dictation.md §20.6).
+                    if hint == PhaseHint::Idle {
+                        self.deliver_next_text();
+                    }
                     // A press remembered during processing starts once the phase is idle again. The
                     // machine of the kind that is not running sees `Processing` (docs/dictation.md §19).
                     for purpose in [TakeKind::Dictation, TakeKind::Edit] {
@@ -1728,15 +1761,27 @@ impl Runtime {
                         }
                     }
                 }
-                // History off: nothing new is kept (docs/dictation.md §4).
-                Effect::Record(_) if !self.settings.history.enabled => {}
-                Effect::Record(entry) => match self.history.push(entry, self.settings.history.keep as usize) {
-                    Ok(()) => self.emit_history(),
-                    Err(e) => {
-                        tracing::warn!(error = %e, "history append failed");
-                        self.emit(CoreEvent::Error(e.to_string()));
+                Effect::Record(mut entry) => {
+                    // A phone's take is recorded as the phone's (docs/dictation.md §20.6).
+                    if let Some(name) = self.remote_take_name() {
+                        entry.origin = Some(crate::history::EntryOrigin { device: name, kind: crate::history::OriginKind::Take });
                     }
-                },
+                    self.record_history(entry);
+                }
+            }
+        }
+    }
+
+    /// Keep `entry` in the history, unless history is off (docs/dictation.md §4).
+    fn record_history(&mut self, entry: crate::history::HistoryEntry) {
+        if !self.settings.history.enabled {
+            return;
+        }
+        match self.history.push(entry, self.settings.history.keep as usize) {
+            Ok(()) => self.emit_history(),
+            Err(e) => {
+                tracing::warn!(error = %e, "history append failed");
+                self.emit(CoreEvent::Error(e.to_string()));
             }
         }
     }
@@ -2346,6 +2391,9 @@ impl Runtime {
                 Ok(AppMessage::TakeStop { take, .. }) => self.on_take_stop(key, take),
                 Ok(AppMessage::TakeCancel { take, .. }) => self.on_take_cancel(key, take),
                 Ok(AppMessage::TakeStatus { take, state, opus, .. }) => self.on_take_status(key, take, state, opus),
+                // Text from the phone (docs/dictation.md §20.6).
+                Ok(AppMessage::PhoneText { id, body, source, .. }) => self.on_phone_text(key, id, body, source),
+                Ok(AppMessage::PhoneTextStatus { id, state, .. }) => self.on_phone_text_status(key, id, state),
                 Ok(AppMessage::Unpair { .. }) => self.on_unpaired(key).await,
                 Ok(AppMessage::Pong { seq, .. }) => self.on_pong(key, seq),
                 Ok(_) => {}
@@ -2441,6 +2489,7 @@ impl Runtime {
         }
         self.maintain_direct(now);
         self.check_takes();
+        self.check_texts();
         self.check_deadline();
         if matches!(self.pairing, Pairing::None) {
             return;

@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use voltip_core::connectivity::{AddressCheck, ConnectivityReport, ConnectivityStatus, LanHostCheck, PeerCheck, ProbeResult, RelayCheck};
 use voltip_core::dictation::{FailureCode, ProcessingStage, Via};
 use voltip_core::phone::{PhoneTakeFailure, PhoneTakeState, PhoneTakeView};
+use voltip_core::phone::{PhoneTextSource, SentText, SentTextFailure, SentTextState};
 use voltip_core::ui::{GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, UiEvent, UiState, UpdateStatus};
 use voltip_core::{
     Activation, AppRef, BuiltIn, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ContextSharing, DeviceConnection, DeviceView, DictationPhase,
@@ -25,6 +26,7 @@ use voltip_core::{
     RefineStyle, RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef,
     Segment, ServiceKind, Settings, SoloKey, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
 };
+use voltip_core::{EntryOrigin, OriginKind};
 use voltip_crypto::{PublicKey, SafetyCode};
 use voltip_identity::{ConnectionKind, DeviceIdentityPublic, TrustedDevice};
 use voltip_pairing::{FailureReason, PairingState, Snapshot};
@@ -75,6 +77,7 @@ const DICT_ID_2: &str = "6f1c2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f";
 const RULE_ID: &str = "8d7e6f5a-4b3c-4d2e-9f1a-0b9c8d7e6f5a";
 const RULE_ID_2: &str = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
 const HISTORY_ID_3: &str = "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a";
+const HISTORY_ID_4: &str = "6a0c1f5e-2b7d-4c3a-9e8f-0d1c2b3a4f56";
 /// A voice edit (docs/dictation.md §19): the selection, the spoken instruction, the rewrite.
 const EDIT_SELECTION: &str = "大家好，会议改到周四十点哈";
 const EDIT_INSTRUCTION: &str = "改得更正式";
@@ -398,6 +401,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             edit: None,
             app: Some(AppRef { id: "code".into(), name: "Code".into() }),
             scene: Some(SceneRef { id: uuid(SCENE_ID), name: "代码评审".into() }),
+            origin: None,
         },
         HistoryEntry {
             id: uuid(HISTORY_ID_2),
@@ -420,6 +424,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             edit: None,
             app: None,
             scene: None,
+            origin: None,
         },
         // docs/dictation.md §19: the instruction is the raw text, the rewrite the text.
         HistoryEntry {
@@ -444,6 +449,31 @@ fn history_entries() -> Vec<HistoryEntry> {
             // An edit carries the app it ran in, never a scene (docs/dictation.md §19).
             app: Some(AppRef { id: "slack".into(), name: "Slack".into() }),
             scene: None,
+            origin: None,
+        },
+        // docs/dictation.md §20.6: text a phone sent, inserted as it was.
+        HistoryEntry {
+            id: uuid(HISTORY_ID_4),
+            at_ms: AT_MS - 180_000,
+            raw_text: "会议改到三点".into(),
+            text: "会议改到三点".into(),
+            refined: false,
+            asr_model: String::new(),
+            refine_model: None,
+            duration_ms: 0,
+            asr_ms: 0,
+            refine_ms: None,
+            outcome: Outcome::Inserted { via: Via::Paste },
+            starred: false,
+            mode: OutputMode::WholeTake,
+            segments: None,
+            live_error: None,
+            vocabulary: None,
+            kind: TakeKind::Dictation,
+            edit: None,
+            app: None,
+            scene: None,
+            origin: Some(EntryOrigin { device: "Pixel 8".into(), kind: OriginKind::Typed }),
         },
     ]
 }
@@ -702,6 +732,7 @@ fn full_state() -> UiState {
             // docs/dictation.md §20.1: the take went out as Opus.
             opus: true,
         }),
+        sent_texts: sent_texts(),
         hardware: hardware_status(),
         connectivity: ConnectivityStatus { running: false, report: Some(connectivity_report()) },
     }
@@ -743,6 +774,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::Scenes { .. } => "scenes",
         UiEvent::ProviderProbe(_) => "provider_probe",
         UiEvent::PhoneTake { .. } => "phone_take",
+        UiEvent::SentTexts { .. } => "sent_texts",
         UiEvent::Hardware(_) => "hardware",
         UiEvent::Connectivity(_) => "connectivity",
     }
@@ -772,6 +804,26 @@ const ALL_EVENT_TAGS: [&str; 22] = [
     "phone_take",
     "hardware",
 ];
+
+/// The phone's list (docs/dictation.md §20.6): one text in every state.
+fn sent_texts() -> Vec<SentText> {
+    let text = |id: u32, body: &str, source, state| SentText {
+        id,
+        device: DESKTOP_KEY.to_hex(),
+        device_name: "MacBook Pro".into(),
+        body: body.into(),
+        source,
+        sent_at: TRUSTED_AT * 1000 + u64::from(id),
+        state,
+    };
+    vec![
+        text(5, "https://example.test/a", PhoneTextSource::Clipboard, SentTextState::Sending),
+        text(4, "会议改到三点", PhoneTextSource::Typed, SentTextState::Queued),
+        text(3, "收到", PhoneTextSource::Typed, SentTextState::Delivered { pasted: true }),
+        text(2, "地址在群里", PhoneTextSource::Clipboard, SentTextState::Delivered { pasted: false }),
+        text(1, "晚点回电", PhoneTextSource::Typed, SentTextState::Failed { code: SentTextFailure::NoAnswer, message: "电脑没有回应".into() }),
+    ]
+}
 
 /// A phone take to the desktop in `state`, through the fold.
 fn phone_take_event(state: PhoneTakeState) -> UiEvent {
@@ -1078,6 +1130,9 @@ fn all_events() -> Vec<UiEvent> {
         phone_take_event(PhoneTakeState::Failed { code: PhoneTakeFailure::Busy, message: "正在听写".into() }),
         phone_take_event(PhoneTakeState::Failed { code: PhoneTakeFailure::Microphone, message: "microphone: 权限被拒绝".into() }),
         phone_take_event(PhoneTakeState::Cancelled),
+        // Text the phone sent (§20.6): the list, empty and full.
+        UiEvent::SentTexts { texts: Vec::new() },
+        UiEvent::SentTexts { texts: sent_texts() },
         // The connectivity self-check (docs/pairing.md): running, then a report with every probe outcome.
         UiEvent::Connectivity(ConnectivityStatus { running: true, report: None }),
         UiEvent::Connectivity(ConnectivityStatus { running: false, report: Some(connectivity_report()) }),
@@ -1228,6 +1283,8 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::PhoneTakeStart { .. } => "PhoneTakeStart",
         UiCommand::PhoneTakeStop => "PhoneTakeStop",
         UiCommand::PhoneTakeCancel => "PhoneTakeCancel",
+        UiCommand::PhoneTextSend { .. } => "PhoneTextSend",
+        UiCommand::SentTextsClear => "SentTextsClear",
         UiCommand::DevicesRefresh => "DevicesRefresh",
         UiCommand::ConnectivityCheck => "ConnectivityCheck",
         UiCommand::DictationStart => "DictationStart",
@@ -1288,6 +1345,9 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("phone_take_start", json!({ "publicKey": DESKTOP_KEY.to_hex() }), "PhoneTakeStart"),
         ("phone_take_stop", Value::Null, "PhoneTakeStop"),
         ("phone_take_cancel", Value::Null, "PhoneTakeCancel"),
+        // docs/dictation.md §20.6: text from the phone, and forgetting the list.
+        ("phone_text_send", json!({ "publicKey": DESKTOP_KEY.to_hex(), "body": "会议改到三点", "source": "typed" }), "PhoneTextSend"),
+        ("sent_texts_clear", Value::Null, "SentTextsClear"),
         ("devices_refresh", Value::Null, "DevicesRefresh"),
         ("connectivity_check", Value::Null, "ConnectivityCheck"),
         ("dictation_start", Value::Null, "DictationStart"),
@@ -1708,6 +1768,8 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "PhoneTakeStart",
         "PhoneTakeStop",
         "PhoneTakeCancel",
+        "PhoneTextSend",
+        "SentTextsClear",
         "DevicesRefresh",
         "ConnectivityCheck",
         "DictationStart",

@@ -21,6 +21,7 @@ import {
 } from "@voltip/ui";
 import { useMobileShell } from "../app/shell";
 import { PhoneMic } from "./PhoneMic";
+import { SendText } from "./SendText";
 
 /** Detail rows of a device card; the labels come from `mobile.devices.column.*`. */
 const COLUMNS = ["device", "platform", "online", "lastSeen", "trusted", "connection"] as const;
@@ -132,6 +133,7 @@ export function Devices() {
       ) : (
         <>
           <PhoneMic desktops={devices} />
+          <SendText desktops={devices} />
           {devices.map((d) => (
             <DeviceRow key={d.device.public_key} view={d} now={now} />
           ))}

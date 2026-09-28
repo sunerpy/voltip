@@ -124,6 +124,11 @@ export class TauriBackend implements Backend {
     return feedbackReceiptSchema.parse(raw);
   }
 
+  async phoneClipboardRead() {
+    const raw = await this.transport.invoke("phone_clipboard_read");
+    return z.object({ text: z.string().nullable() }).parse(raw).text;
+  }
+
   async injectPreflight() {
     const raw = await this.transport.invoke("inject_preflight");
     return injectPreflightSchema.parse(raw);

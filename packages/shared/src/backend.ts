@@ -66,4 +66,7 @@ export interface Backend {
   feedbackDiagnostics(locale: string): Promise<FeedbackInfo>;
   /** Post a report (`feedback_submit`); rejects with a `FeedbackError` wire name. */
   feedbackSubmit(draft: FeedbackDraft): Promise<FeedbackReceipt>;
+  /** The phone's clipboard text (`phone_clipboard_read`, docs/dictation.md §20.6), `null` when it
+   *  holds none; rejects on a shell that has no phone clipboard. */
+  phoneClipboardRead(): Promise<string | null>;
 }

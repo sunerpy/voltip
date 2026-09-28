@@ -523,6 +523,11 @@ fn release(capture: Box<dyn Capture>) {
 }
 
 impl DictationEngine {
+    /// The injector the takes deliver through; a phone's text uses it too (docs/dictation.md §20.6).
+    pub fn injector(&self) -> Arc<dyn Injector> {
+        self.injector.clone()
+    }
+
     /// Build the engine; `levels` receives every level frame while a capture runs. The returned
     /// receiver must be polled by the owner and fed back through [`DictationEngine::on_internal`].
     pub fn new(ports: DictationPorts, engines: &ResolvedEngines, levels: broadcast::Sender<LevelFrame>) -> (Self, mpsc::Receiver<Internal>) {
@@ -1726,6 +1731,7 @@ impl DictationEngine {
             edit: edit.map(|e| *e),
             app: self.take.app.as_ref().map(|a| AppRef { id: a.app_id.clone(), name: a.name.clone() }),
             scene: self.take.scene.as_ref().map(Scene::to_ref),
+            origin: None,
         };
         match injection {
             Ok(Injection { via, note }) => {

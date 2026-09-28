@@ -35,7 +35,7 @@ pub use engines::{
     BuiltIn, ChineseScript, EngineIssue, EngineSettings, EngineStatus, InjectMode, LocalDevice, LocalModelRef, MAX_LOCAL_THREADS, OutputMode, ProviderSettings,
     ProviderStatus, RefineStyle, RemoteService, ResolvedEngines, SecretSource, SecretState, ServiceStatus, UserSecrets,
 };
-pub use history::{EditRecord, HistoryEntry, HistoryStore, Outcome};
+pub use history::{EditRecord, EntryOrigin, HistoryEntry, HistoryStore, OriginKind, Outcome};
 pub use hotkey::{DEFAULT_EDIT_HOTKEY, DEFAULT_HOTKEY, Hotkey, HotkeyError, Modifier, SoloKey};
 pub use models::{
     CAPABILITY_OFFLINE, CAPABILITY_STREAMING, CAPABILITY_VAD, CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelInstallState, ModelManager, ModelState, ProgressSink,

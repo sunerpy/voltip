@@ -61,6 +61,8 @@ import {
   type HotkeyStatus,
   SOLO_KEYS,
   type SoloKey,
+  MAX_PHONE_TEXT_CHARS,
+  type SentText,
   applyEvent,
   DEFAULT_HOTKEY,
   defaultSettings,
@@ -176,6 +178,9 @@ export interface MockBackendOptions {
    *  every report after `MOCK_FEEDBACK_MS`, `not_configured` is a build without one, a
    *  `FeedbackError` fails every submission with it. */
   feedback?: "configured" | FeedbackError;
+  /** The phone's clipboard (docs/dictation.md §20.6); `null` = empty. Defaults to
+   *  `MOCK_PHONE_CLIPBOARD`. */
+  phoneClipboard?: string | null;
   /** Clock in milliseconds; injectable for deterministic tests. */
   now?: () => number;
   /** Deterministic randomness source in [0, 1). */
@@ -369,6 +374,12 @@ export const PROJECT_LINKS_UNAVAILABLE = "project: 手机端不打开项目页�
 export const FEEDBACK_UNAVAILABLE = "feedback: 请在电脑上反馈";
 /** How long the preview's feedback endpoint takes to answer. */
 export const MOCK_FEEDBACK_MS = 300;
+/** How long the preview's desktop takes to insert a phone's text (docs/dictation.md §20.6). */
+export const MOCK_TEXT_MS = 200;
+/** What the preview phone's clipboard holds. */
+export const MOCK_PHONE_CLIPBOARD = "https://example.test/voltip";
+/** `voltip_desktop_lib::PHONE_TEXT_UNAVAILABLE`: the desktop inserts phones' texts, it sends none. */
+export const PHONE_TEXT_UNAVAILABLE = "phone_text: 电脑接收手机发来的文字，不向其他设备发送";
 /** `live_error` of a take whose scene asked for a streaming mode the live preview cannot serve
  *  (the core's `SCENE_MODE_NOT_READY`, §18.4). */
 export const MOCK_SCENE_MODE_NOT_READY =
@@ -671,6 +682,8 @@ export class MockBackend implements Backend {
   readonly linksOpened: ProjectLink[] = [];
   /** Reports `feedbackSubmit` accepted, in order. */
   readonly feedbackSent: FeedbackDraft[] = [];
+  /** The phone's clipboard (`phone_clipboard_read`). */
+  phoneClipboard: string | null;
   private readonly feedback: "configured" | FeedbackError;
   private readonly probeTimers = new Set<ReturnType<typeof setTimeout>>();
   /** Every event emitted, oldest first; handy for asserting ordering in tests. */
@@ -696,6 +709,8 @@ export class MockBackend implements Backend {
     }
     this.probeModels = options.probeModels ?? {};
     this.feedback = options.feedback ?? "configured";
+    this.phoneClipboard =
+      options.phoneClipboard === undefined ? MOCK_PHONE_CLIPBOARD : options.phoneClipboard;
     this.engineOverrides = options.engines ?? {};
     this.foregroundApp = options.foregroundApp ?? null;
     const host = hostOsOf(identity.platform);
@@ -728,6 +743,7 @@ export class MockBackend implements Backend {
         ...(this.role === "phone" ? {} : { capabilities: { ...MOCK_HOTKEY_CAPABILITIES } }),
       },
       dictation: idleDictation(),
+      sent_texts: [],
       history: options.history ?? sampleHistory(this.now()),
       engines: emptyEngineStatus(),
       update: options.update ?? idleUpdate(),
@@ -986,6 +1002,56 @@ export class MockBackend implements Backend {
       this.later(MOCK_CONNECTIVITY_MS, () => {
         this.emit({ type: "connectivity", running: false, report: this.connectivityReport() });
       });
+    },
+    phone_text_send: (args) => {
+      // Mirrors `PhoneTextSend` (docs/dictation.md §20.6): the phone lists it as sending, the
+      // desktop inserts it after `MOCK_TEXT_MS`.
+      if (this.role !== "phone") {
+        this.emit({ type: "error", message: PHONE_TEXT_UNAVAILABLE });
+        return;
+      }
+      const { publicKey, body, source } = required(args);
+      if (body.trim().length === 0) {
+        this.emit({ type: "error", message: "phone text: 没有要发送的文字" });
+        return;
+      }
+      // Characters as Rust counts them (code points), not UTF-16 units.
+      if (Array.from(body).length > MAX_PHONE_TEXT_CHARS) {
+        this.emit({
+          type: "error",
+          message: `phone text: 文字太长（最多 ${MAX_PHONE_TEXT_CHARS} 字）`,
+        });
+        return;
+      }
+      const target = this.state.devices.find((d) => d.device.public_key === publicKey);
+      if (target?.connection.state !== "online") {
+        this.emit({ type: "error", message: "device is not online" });
+        return;
+      }
+      const id = Math.max(0, ...this.state.sent_texts.map((t) => t.id)) + 1;
+      const text: SentText = {
+        id,
+        device: publicKey,
+        device_name: target.device.name,
+        body,
+        source,
+        sent_at: this.now(),
+        state: { state: "sending" },
+      };
+      this.emit({ type: "sent_texts", texts: [text, ...this.state.sent_texts].slice(0, 50) });
+      this.later(MOCK_TEXT_MS, () => {
+        this.emit({
+          type: "sent_texts",
+          texts: this.state.sent_texts.map((t) =>
+            t.id === id && t.device === publicKey
+              ? { ...t, state: { state: "delivered", pasted: true } }
+              : t,
+          ),
+        });
+      });
+    },
+    sent_texts_clear: () => {
+      this.emit({ type: "sent_texts", texts: [] });
     },
     phone_take_start: (args) => {
       const { publicKey } = required(args);
@@ -1736,6 +1802,11 @@ export class MockBackend implements Backend {
       }, MOCK_FEEDBACK_MS);
       this.probeTimers.add(timer);
     });
+  }
+
+  phoneClipboardRead(): Promise<string | null> {
+    if (this.role !== "phone") return Promise.reject(new Error(PHONE_TEXT_UNAVAILABLE));
+    return Promise.resolve(this.phoneClipboard);
   }
 
   /** `provider_probe`: the same refusals as the core before any request, then the preset list (or

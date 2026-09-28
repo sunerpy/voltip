@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use voltip_identity::{DeviceIdentityPublic, TrustedDevice};
 use voltip_pairing::{PairingState, Snapshot};
 
-use crate::phone::PhoneTakeView;
+use crate::phone::{PhoneTakeView, SentText};
 use crate::{
     CoreEvent, DeviceView, DictationStatus, DictionaryEntry, EngineStatus, HistoryEntry, ModelState, ProbeReport, RelayStatus, ReplacementRule, Scene, Settings,
 };
@@ -100,6 +100,11 @@ pub enum UiEvent {
     PhoneTake {
         /// `None` before the first take.
         take: Option<PhoneTakeView>,
+    },
+    /// The phone's texts sent to a desktop (docs/dictation.md §20.6), newest first.
+    SentTexts {
+        /// The whole list.
+        texts: Vec<SentText>,
     },
     /// The connectivity self-check started or finished.
     Connectivity(crate::connectivity::ConnectivityStatus),
@@ -325,6 +330,10 @@ pub struct UiState {
     /// `None` on the desktop.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phone_take: Option<PhoneTakeView>,
+    /// The texts this phone sent to a desktop (docs/dictation.md §20.6), newest first; always empty
+    /// on the desktop.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sent_texts: Vec<SentText>,
     /// The machine as the local engines see it (shell-owned; empty until reported).
     #[serde(default)]
     pub hardware: HardwareStatus,
@@ -353,6 +362,7 @@ impl Default for UiState {
             rules: Vec::new(),
             scenes: Vec::new(),
             phone_take: None,
+            sent_texts: Vec::new(),
             hardware: HardwareStatus::default(),
             connectivity: crate::connectivity::ConnectivityStatus::default(),
         }
@@ -445,6 +455,10 @@ impl UiState {
             CoreEvent::PhoneTake(take) => {
                 self.phone_take = take.clone();
                 UiEvent::PhoneTake { take }
+            }
+            CoreEvent::SentTexts(texts) => {
+                self.sent_texts = texts.clone();
+                UiEvent::SentTexts { texts }
             }
             CoreEvent::Error(message) => UiEvent::Error { message },
         }
@@ -565,6 +579,7 @@ mod tests {
             edit: None,
             app: None,
             scene: None,
+            origin: None,
         };
         let ev = st.apply(CoreEvent::History(vec![entry.clone()]));
         assert_eq!(st.history, vec![entry]);

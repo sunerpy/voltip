@@ -479,6 +479,11 @@ export const en: Messages = {
     },
   },
   history: {
+    origin: {
+      take: "Phone · {device}",
+      typed: "Typed on {device}",
+      clipboard: "Clipboard of {device}",
+    },
     filter: {
       all: "All",
       today: "Today",
@@ -1941,6 +1946,35 @@ export const en: Messages = {
         failed: "Not delivered: {message}",
         microphone: "The microphone did not open: {message}",
         offline: "The computer went offline",
+      },
+    },
+    send: {
+      title: "Send text to the computer",
+      body: "Type or paste some text and the computer inserts it at its cursor, or send the clipboard as it is. While the computer is dictating, the text waits for the take to end.",
+      noDesktop: "Once a paired computer is online you can send it text from here.",
+      target: "Send to",
+      draft: "Text to send",
+      placeholder: "Type or paste here",
+      count: "{n}/{max} characters",
+      clipboard: "Send clipboard",
+      clipboardEmpty: "There is no text on the clipboard",
+      send: "Send to {name}",
+      sent: "{n} sent",
+      sentLabel: "Sent texts",
+      clear: "Clear",
+      source: { typed: "Typed", clipboard: "Clipboard" },
+      state: {
+        sending: "Sending…",
+        queued: "{name} is dictating; it goes in once the take ends",
+        pasted: "Inserted on {name}",
+        clipboard: "Left on {name}'s clipboard",
+        failed: {
+          busy: "Too many texts are waiting on the computer: {message}",
+          unavailable: "That device takes no text: {message}",
+          failed: "Could not insert: {message}",
+          offline: "The computer is offline: {message}",
+          no_answer: "{message}",
+        },
       },
     },
     devices: {

@@ -162,6 +162,7 @@ fn entry(app: Option<(&str, &str)>) -> HistoryEntry {
         edit: None,
         app: app.map(|(id, name)| AppRef { id: id.into(), name: name.into() }),
         scene: None,
+        origin: None,
     }
 }
 

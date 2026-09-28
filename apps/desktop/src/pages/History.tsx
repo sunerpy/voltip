@@ -56,13 +56,20 @@ export interface HistoryProps {
   initialFilter?: string;
 }
 
+/** A phone's text rather than a recognised take (docs/dictation.md §20.6): no model, no timings. */
+function sentAsText(entry: HistoryEntry): boolean {
+  return entry.origin?.kind === "typed" || entry.origin?.kind === "clipboard";
+}
+
 /** History: the store is the core's `history.json` (`state.history`, newest first, capped
  *  at 500). Filters, search, star, delete, clear, copy and the raw-vs-refined diff are all real;
  *  the detail names the dictionary corrections and rules that fired (`HistoryEntry.vocabulary`)
  *  and 加入词典 sends `dictionary_add` with the row's id (docs/dictation.md §16). A take with a
  *  context shows its app and scene in the row and the detail (§18.6); search matches them too. A
  *  voice edit (§19.5) is badged 编辑, reads 「指令 → 结果」 in the row, and its detail shows the
- *  instruction, the rewrite and the original selection (expandable) instead of the diff views. */
+ *  instruction, the rewrite and the original selection (expandable) instead of the diff views.
+ *  What a phone sent (§20.6) carries its origin: its takes are badged with the phone, its texts
+ *  too, without the model and timings a text does not have. */
 export function History({ initialFilter }: HistoryProps) {
   const shell = useShell();
   const { backend } = useBackend();
@@ -308,6 +315,18 @@ export function History({ initialFilter }: HistoryProps) {
                                   <Badge tone="accent">{t("history.edit.badge")}</Badge>
                                 </span>
                               )}
+                              {e.origin !== undefined && (
+                                // docs/dictation.md §20.6: a phone's take or text.
+                                <span data-testid="history-origin" data-origin={e.origin.kind}>
+                                  <Badge>
+                                    <span data-user-text>
+                                      {t(`history.origin.${e.origin.kind}`, {
+                                        device: e.origin.device,
+                                      })}
+                                    </span>
+                                  </Badge>
+                                </span>
+                              )}
                               {e.mode !== "whole_take" && (
                                 // docs/dictation.md §12: only the streaming modes get a badge; the
                                 // whole take is the default and stays quiet.
@@ -333,8 +352,9 @@ export function History({ initialFilter }: HistoryProps) {
                                 </span>
                               )}
                               <span className="truncate">
-                                {shortModel(e.asr_model)} ·{" "}
-                                {formatMs(e.asr_ms + (e.refine_ms ?? 0))} · {outcome.text}
+                                {sentAsText(e)
+                                  ? outcome.text
+                                  : `${shortModel(e.asr_model)} · ${formatMs(e.asr_ms + (e.refine_ms ?? 0))} · ${outcome.text}`}
                               </span>
                             </span>
                           </span>
@@ -383,6 +403,17 @@ export function History({ initialFilter }: HistoryProps) {
                 {selected.kind === "edit" && (
                   <span data-testid="history-detail-kind" data-kind={selected.kind}>
                     <Badge tone="accent">{t("history.edit.badge")}</Badge>
+                  </span>
+                )}
+                {selected.origin !== undefined && (
+                  <span data-testid="history-detail-origin" data-origin={selected.origin.kind}>
+                    <Badge>
+                      <span data-user-text>
+                        {t(`history.origin.${selected.origin.kind}`, {
+                          device: selected.origin.device,
+                        })}
+                      </span>
+                    </Badge>
                   </span>
                 )}
                 {selected.mode !== "whole_take" && (
@@ -473,7 +504,7 @@ export function History({ initialFilter }: HistoryProps) {
               {selected.vocabulary !== undefined && (
                 <VocabularyHits hits={selected.vocabulary} t={t} />
               )}
-              <TimingBar entry={selected} t={t} />
+              {!sentAsText(selected) && <TimingBar entry={selected} t={t} />}
               <div className="grid grid-cols-2 gap-x-6 gap-y-2 border-t border-border pt-3">
                 <Readout
                   label={t("history.detail.asrModel")}

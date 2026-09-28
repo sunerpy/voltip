@@ -815,6 +815,27 @@
           "id": "slack",
           "name": "Slack"
         }
+      },
+      {
+        "id": "6a0c1f5e-2b7d-4c3a-9e8f-0d1c2b3a4f56",
+        "at_ms": 1758700420000,
+        "raw_text": "会议改到三点",
+        "text": "会议改到三点",
+        "refined": false,
+        "asr_model": "",
+        "duration_ms": 0,
+        "asr_ms": 0,
+        "outcome": {
+          "kind": "inserted",
+          "via": "paste"
+        },
+        "starred": false,
+        "mode": "whole_take",
+        "kind": "dictation",
+        "origin": {
+          "device": "Pixel 8",
+          "kind": "typed"
+        }
       }
     ]
   },
@@ -2119,6 +2140,74 @@
       },
       "opus": false
     }
+  },
+  {
+    "type": "sent_texts",
+    "texts": []
+  },
+  {
+    "type": "sent_texts",
+    "texts": [
+      {
+        "id": 5,
+        "device": "1111111111111111111111111111111111111111111111111111111111111111",
+        "device_name": "MacBook Pro",
+        "body": "https://example.test/a",
+        "source": "clipboard",
+        "sent_at": 1758700000005,
+        "state": {
+          "state": "sending"
+        }
+      },
+      {
+        "id": 4,
+        "device": "1111111111111111111111111111111111111111111111111111111111111111",
+        "device_name": "MacBook Pro",
+        "body": "会议改到三点",
+        "source": "typed",
+        "sent_at": 1758700000004,
+        "state": {
+          "state": "queued"
+        }
+      },
+      {
+        "id": 3,
+        "device": "1111111111111111111111111111111111111111111111111111111111111111",
+        "device_name": "MacBook Pro",
+        "body": "收到",
+        "source": "typed",
+        "sent_at": 1758700000003,
+        "state": {
+          "state": "delivered",
+          "pasted": true
+        }
+      },
+      {
+        "id": 2,
+        "device": "1111111111111111111111111111111111111111111111111111111111111111",
+        "device_name": "MacBook Pro",
+        "body": "地址在群里",
+        "source": "clipboard",
+        "sent_at": 1758700000002,
+        "state": {
+          "state": "delivered",
+          "pasted": false
+        }
+      },
+      {
+        "id": 1,
+        "device": "1111111111111111111111111111111111111111111111111111111111111111",
+        "device_name": "MacBook Pro",
+        "body": "晚点回电",
+        "source": "typed",
+        "sent_at": 1758700000001,
+        "state": {
+          "state": "failed",
+          "code": "no_answer",
+          "message": "电脑没有回应"
+        }
+      }
+    ]
   },
   {
     "type": "connectivity",

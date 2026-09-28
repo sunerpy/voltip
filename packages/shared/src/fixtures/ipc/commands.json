@@ -122,6 +122,18 @@
     "name": "phone_take_cancel"
   },
   {
+    "args": {
+      "body": "会议改到三点",
+      "publicKey": "1111111111111111111111111111111111111111111111111111111111111111",
+      "source": "typed"
+    },
+    "name": "phone_text_send"
+  },
+  {
+    "args": null,
+    "name": "sent_texts_clear"
+  },
+  {
     "args": null,
     "name": "devices_refresh"
   },

@@ -62,6 +62,7 @@ describe("BackendProvider", () => {
       projectLinkOpen: inner.projectLinkOpen.bind(inner),
       feedbackDiagnostics: () => Promise.reject(new Error("no feedback")),
       feedbackSubmit: () => Promise.reject(new Error("no feedback")),
+      phoneClipboardRead: () => Promise.resolve(null),
     };
     render(
       <BackendProvider backend={backend}>
@@ -106,6 +107,7 @@ describe("BackendProvider", () => {
       projectLinkOpen: () => Promise.resolve(),
       feedbackDiagnostics: () => Promise.reject(new Error("no feedback")),
       feedbackSubmit: () => Promise.reject(new Error("no feedback")),
+      phoneClipboardRead: () => Promise.resolve(null),
     };
     render(
       <BackendProvider backend={backend}>
