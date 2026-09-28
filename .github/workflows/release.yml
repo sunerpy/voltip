@@ -746,6 +746,7 @@ jobs:
           for name in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
             if [ -z "${!name:-}" ]; then unset "$name"; fi
           done
+          args=(--ci --target "$MACOS_TARGET" --bundles "app,dmg" --config src-tauri/tauri.package-macos.conf.json)
           if [ "$UPDATER_ENABLED" = true ]; then
             if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
               echo "::error::updater enabled but TAURI_SIGNING_PRIVATE_KEY is empty"; exit 1
@@ -753,10 +754,12 @@ jobs:
             jq -n --arg pubkey "$UPDATE_PUBKEY" \
               '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pubkey}}}' \
               >"$RUNNER_TEMP/updater-bundle.json"
-            cargo tauri bundle --ci --target "$MACOS_TARGET" --bundles app,dmg --config src-tauri/tauri.package-macos.conf.json --config "$RUNNER_TEMP/updater-bundle.json"
+            args+=(--config "$RUNNER_TEMP/updater-bundle.json")
+          fi
+          # hdiutil on GitHub's macOS images fails now and then; the script retries the bundling.
+          ../../.github/scripts/tauri-bundle-retry.sh "../../target/$MACOS_TARGET/release/bundle" -- "${args[@]}"
+          if [ "$UPDATER_ENABLED" = true ]; then
             test -s "../../target/$MACOS_TARGET/release/bundle/macos/Voltip.app.tar.gz.sig"
-          else
-            cargo tauri bundle --ci --target "$MACOS_TARGET" --bundles app,dmg --config src-tauri/tauri.package-macos.conf.json
           fi
 
       # What a Mac that downloads the dmg meets: the ad-hoc seal, the macOS 11 floor, the notices,

@@ -806,7 +806,9 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "target/$MACOS_TARGET/release/bundle"
-          (cd apps/desktop && cargo tauri build --ci --target "$MACOS_TARGET" --bundles app,dmg)
+          # Compile once, then bundle with the release's retry (hdiutil fails now and then).
+          (cd apps/desktop && cargo tauri build --ci --target "$MACOS_TARGET" --no-bundle && \
+            ../../.github/scripts/tauri-bundle-retry.sh "../../target/$MACOS_TARGET/release/bundle" -- --ci --target "$MACOS_TARGET" --bundles app,dmg)
           app="target/$MACOS_TARGET/release/bundle/macos/Voltip.app"
           [ -d "$app" ] || { echo "::error::no .app bundle was produced"; exit 1; }
           echo "APP=$app" >>"$GITHUB_ENV"
