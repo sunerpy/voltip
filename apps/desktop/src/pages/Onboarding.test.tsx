@@ -18,7 +18,6 @@ import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ONBOARDING_DONE_KEY } from "../app/first-run";
 import { MACOS_BUNDLE_ID, MACOS_TCC_RESET } from "./Onboarding";
 import { engineSettingsFor, initialChoice, vendorsFor } from "./OnboardingEngine";
 
@@ -70,7 +69,7 @@ describe("Onboarding wizard", () => {
     // The identity arrives with core_state, after the first paint of the step.
     expect(await screen.findByText("权限 · macOS")).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "首次设置 / 第 1 步", level: 1 }),
+      screen.getByRole("heading", { name: "设置向导 / 第 1 步", level: 1 }),
     ).toBeInTheDocument();
     expect(await permissionCell("accessibility", "denied")).toHaveTextContent("已拒绝");
     const table = screen.getByRole("table", { name: "系统权限" });
@@ -591,8 +590,7 @@ describe("Onboarding wizard", () => {
       expect(box).toHaveValue(MOCK_DICTATION_TEXT);
       expect(screen.getByRole("button", { name: "再说一句" })).toBeEnabled();
       await user.click(screen.getByRole("button", { name: "完成设置" }));
-      expect(window.localStorage.getItem(ONBOARDING_DONE_KEY)).toBe("1");
-      expect(await screen.findByText("首次设置已完成")).toBeInTheDocument();
+      expect(await screen.findByText("设置向导已完成")).toBeInTheDocument();
       expect(screen.getAllByRole("heading", { name: "首页", level: 1 }).length).toBeGreaterThan(0);
     } finally {
       vi.useRealTimers();

@@ -589,7 +589,7 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
 
 叶子 crate `crates/voltip-platform`（纯 Rust、`#![forbid(unsafe_code)]`、只依赖 `serde`，不依赖 `voltip-core`）只放决策表：权限判定、轮询计划、激活策略时机、Cmd+V 键码回退、完整性级别比较、麦克风同意存储优先级、托盘字形；在所有主机编译与单测。操作系统查询在 `apps/desktop/src-tauri/src/platform/`（`mod.rs` 跨平台；`macos.rs` / `windows.rs` / `tray.rs` 按 `cfg`），把原始事实喂给这些表。
 
-### 15.1 权限查询与首次设置第 1 步
+### 15.1 权限查询、首页提示与设置向导第 1 步
 
 三条查询命令（`QUERY_COMMANDS`，不是 `UiCommand`：不进 bridge、不进 IPC 夹具；手机壳同名桩一律 `not_applicable` / `proceed`）：
 
@@ -604,6 +604,8 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
 - Linux / 手机：全部 `not_applicable`，请求为 no-op。
 
 判定（`onboarding_gate`，TS `onboardingGate` 逐行镜像）：麦克风只在 `denied` 时阻塞（`not_determined` 时系统会在首次录音时询问）；辅助功能 `denied` / `not_determined` 都阻塞（macOS 不会自己弹）。轮询（`PollPlan::DEFAULT`，TS `PERMISSION_POLL_INTERVAL_MS = 1000` / `PERMISSION_POLL_MAX_ERRORS = 3`）：第 1 步在屏时每秒一读；成功清零计数；连续 3 次失败停止并显示错误横幅；「重新检查」或一次成功的「请求授权」立即再读并恢复轮询；离开该步即停；读数不变时不重绘。界面：两行表格，`denied` / `not_determined` 行有「请求授权」；阻塞集合非空时「继续」禁用，提示先说麦克风再说辅助功能；全 `not_applicable` 时显示「{平台} 上没有需要授权的项目」且可继续；「稍后设置」始终可用。
+
+首页提示（`features/permissions/PermissionNotice.tsx`，2026-09-28）：默认设置开箱即用，首次启动不再自动打开设置向导，向导放在「设置 · 通用」。缺权限时由首页提示：挂载时读一次，阻塞集合非空就显示提示条（先说麦克风再说辅助功能），并按同样的节奏每秒再读，授予后提示条自行消失；阻塞集合为空时只读这一次。「去授权」发出 `permissions_request`，「打开设置向导」进入第 1 步。
 
 ### 15.2 macOS
 

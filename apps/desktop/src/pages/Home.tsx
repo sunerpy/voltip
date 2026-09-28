@@ -40,6 +40,7 @@ import { SPEECH_ROUTE, useRouter } from "../app/router";
 import { serviceTarget } from "./settings/engines/helpers";
 import { levelFraction, useAudioMeter } from "../features/audio/useAudioMeter";
 import { useDictation, useTickingNow } from "../features/dictation/useDictation";
+import { PermissionNotice } from "../features/permissions/PermissionNotice";
 import {
   type HistoryFilter,
   historyStats,
@@ -312,6 +313,8 @@ export function Home() {
           </Button>
         )}
       </Card>
+
+      <PermissionNotice />
 
       {/* The 2×2 dashboard: one column below `lg`, two fluid columns above; each panel keeps
           its 144 px minimum height while the width follows the window. */}

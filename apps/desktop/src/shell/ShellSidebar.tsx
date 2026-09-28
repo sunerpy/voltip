@@ -84,7 +84,7 @@ export interface ShellSidebarProps {
   sidebar: SidebarLayoutControls;
   onFeedback: () => void;
   onTheme: (choice: ThemeChoice) => void;
-  /** The first-run guide: only 首页 stays live. */
+  /** The setup guide: only 首页 stays live. */
   onboarding: boolean;
   trafficLights: boolean;
 }

@@ -303,7 +303,7 @@ export const zhCN = {
       dictionary: "词典",
       rules: "规则",
       devices: "手机",
-      onboarding: "首次设置 / 第 {n} 步",
+      onboarding: "设置向导 / 第 {n} 步",
       overlay: "悬浮胶囊",
       notfound: "未找到",
     },
@@ -363,6 +363,15 @@ export const zhCN = {
     },
   },
   home: {
+    permission: {
+      title: "还差一个系统权限",
+      accessibility:
+        "Voltip 需要「辅助功能」权限，才能把识别结果写进其他应用；授予后需重启 Voltip。",
+      microphone:
+        "麦克风权限已被拒绝，听写无法录音。请在系统设置的隐私页面里允许 Voltip 使用麦克风。",
+      request: "去授权",
+      guide: "打开设置向导",
+    },
     blocked: {
       waitingCore: "语音模型尚未就绪 · 等待核心报告",
       issue: "识别服务商还不能用：{issue} · 在「设置 · 语音模型」中配置",
@@ -1150,7 +1159,7 @@ export const zhCN = {
       engine: "语音模型 · 默认",
       trial: "会话 · 试说",
     },
-    finished: "首次设置已完成",
+    finished: "设置向导已完成",
     platformUnknown: "平台未知",
     backendNotReported: "尚未报告",
     backendNotReportedLong: "热键后端尚未报告",
@@ -1348,14 +1357,15 @@ export const zhCN = {
     },
     general: {
       title: "通用",
-      lede: "界面语言、首次设置与自动更新。语言和更新设置由核心保存，主窗口、悬浮胶囊和手机端共用。",
+      lede: "界面语言、设置向导与自动更新。语言和更新设置由核心保存，主窗口、悬浮胶囊和手机端共用。",
       language: "语言",
       languageHelp:
         "「跟随系统」按操作系统 / WebView 的语言选择：中文环境用简体中文，其他环境用英文。",
       locale: { system: "跟随系统", "zh-cn": "简体中文", en: "English" },
-      guide: "首次设置",
-      guideHelp: "重新检查权限、热键和语音模型，再试说一次。",
-      guideRun: "重新运行",
+      guide: "设置向导",
+      guideHelp:
+        "逐步检查权限、热键和语音模型，再试说一句。默认设置开箱即用，首次启动不再自动打开。",
+      guideRun: "打开向导",
       autoUpdate: "自动更新",
       autoUpdateHelp: "启动时检查更新并在后台下载；关闭后只在你点「检查更新」时联网。",
       checkUpdate: "检查更新",

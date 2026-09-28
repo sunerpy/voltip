@@ -30,7 +30,6 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { useEffect, useState } from "react";
-import { ONBOARDING_DONE_KEY } from "../app/first-run";
 import { inTextField, onControl, usePageShortcuts, withCommand } from "../app/page-shortcuts";
 import { useRouter } from "../app/router";
 import { copyWithToast, useShell } from "../app/shell-context";
@@ -72,7 +71,7 @@ function permissionTone(state: PermissionState): "ok" | "danger" | "neutral" {
   return "neutral";
 }
 
-/** The first-run guide: a 560-wide wizard card with a shared stepper and footer. Step 1
+/** The setup guide (设置 › 通用; it no longer opens by itself on the first launch): a 560-wide wizard card with a shared stepper and footer. Step 1
  *  polls `permissions_status` every second (docs/dictation.md §15.1) and blocks "continue" on a
  *  denied required permission; step 2 reads the core's hotkey and the shell's registration; step 3
  *  writes the recognition provider (`settings_set_engines`, plus `provider_key_set` for a key); step 4
@@ -127,7 +126,6 @@ export function Onboarding({ step }: OnboardingProps) {
     navigate({ name: "onboarding", step: next });
   };
   const finish = () => {
-    window.localStorage.setItem(ONBOARDING_DONE_KEY, "1");
     shell.toast({ message: t("onboarding.finished"), duration: 3000 });
     navigate({ name: "home" });
   };

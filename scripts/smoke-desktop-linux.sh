@@ -76,18 +76,12 @@ w, h, x, y = map(int, re.match(r"(\d+)x(\d+)\+(\d+)\+(\d+)", geo).groups())
 Image.open(path).crop((x, y, x + w, y + h)).save(path)
 PYCROP
 }
-# A fresh profile opens the first-run guide by itself (apps/desktop/src/app/first-run.ts). Record
-# it, then leave it the way a user would (Esc = 稍后设置) after a click on an empty spot of the card
-# gives the WebView the keyboard; the home page follows. Same paint wait as above: the WebView
-# reports no event for it.
-shoot "${out%.png}-first-run.png"
-DISPLAY=$display xdotool mousemove --window "$win" 600 450 click 1
-DISPLAY=$display xdotool key Escape
-sleep 2
+# A fresh profile opens on the home page (the setup guide no longer opens by itself, 2026-09-28).
 shoot "$out"
 # Devices page: identity fingerprint and the (empty) trusted list come from the real core over IPC.
-# (Sidebar row 6 since Bridge & MCP was removed: 引擎 · 手机麦克风 · 设置.)
-DISPLAY=$display xdotool mousemove --window "$win" 85 293 click 1
+# The sidebar's rows are 36 px with 2 px gaps under the 40 px brand row: 工作台 (首页 … 规则), then
+# 语音输入 (语音模型, AI 模型, 手机); 手机 is the third row of the second group, centred at y = 326.
+DISPLAY=$display xdotool mousemove --window "$win" 85 326 click 1
 sleep 2
 shoot "${out%.png}-devices.png"
 # Global hotkey → prewarmed overlay pill: hold Ctrl+Alt+Space (XTEST goes through the X server, so
@@ -182,4 +176,18 @@ fi
 echo "smoke-desktop-linux: window $geometry"
 grep -E "identity|error" "$data/app.log" | sed -E 's/\x1b\[[0-9;]*m//g' | head -3 || true
 grep -iE "global hotkey registered|overlay window prewarmed" "$data/app.log" | sed -E 's/\x1b\[[0-9;]*m//g' | head -2 || true
-echo "smoke-desktop-linux: OK → ${out%.png}-first-run.png, $out, ${out%.png}-devices.png, ${out%.png}-hotkey-overlay.png, ${out%.png}-dictation-outcome.png"
+# The title bar's × quits on Linux (no tray, docs/dictation.md §15.4). Before 2026-09-28 it destroyed
+# the window while the prewarmed pill window kept the process running with nothing left to show.
+# The close button is the right-most 46 px of the 40 px title bar. `ps` sees an exited child as a
+# zombie (stat Z) until it is reaped, so the wait ends on either.
+win_width=${geometry%%x*}
+DISPLAY=$display xdotool mousemove --window "$win" $((win_width - 20)) 20 click 1
+if ! timeout 20 sh -c 'while ps -o stat= -p "$1" | grep -qv "^Z"; do sleep 0.2; done' _ "$app_pid"; then
+  echo "smoke-desktop-linux: the window's close button did not quit the app"; voltip_smoke_plain "$data/app.log" | tail -5; exit 1
+fi
+close_status=0
+wait "$app_pid" || close_status=$?
+app_pid=""
+[ "$close_status" = 0 ] || { echo "smoke-desktop-linux: closing the window exited with $close_status"; exit 1; }
+echo "smoke-desktop-linux: the close button quit the app (exit 0)"
+echo "smoke-desktop-linux: OK → $out, ${out%.png}-devices.png, ${out%.png}-hotkey-overlay.png, ${out%.png}-dictation-outcome.png"

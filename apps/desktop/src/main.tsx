@@ -5,8 +5,6 @@ import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
 import { installContextMenuPolicy } from "./app/context-menu";
-import { firstRunPath } from "./app/first-run";
-import { currentLocationPath } from "./app/router";
 import "./index.css";
 
 async function createBackend(): Promise<Backend> {
@@ -26,10 +24,9 @@ async function createBackend(): Promise<Backend> {
 // the `pnpm dev` browser preview is left alone.
 installContextMenuPolicy(document, { enabled: isTauri() });
 
-// The first launch opens the first-run guide; finishing or skipping it sets the flag.
-const firstRun = firstRunPath(currentLocationPath(), window.localStorage);
-if (firstRun !== undefined) window.history.replaceState(null, "", firstRun);
-
+// Every launch opens where the window points (the home page): the defaults work out of the box, so
+// the setup guide waits in 设置 › 通用 and a missing permission shows on the home page
+// (user feedback 2026-09-28).
 const container = document.getElementById("root");
 if (!container) throw new Error("#root missing");
 const backend = await createBackend();

@@ -312,7 +312,7 @@ export const en: Messages = {
       dictionary: "Dictionary",
       rules: "Rules",
       devices: "Phone",
-      onboarding: "First-run setup / step {n}",
+      onboarding: "Setup guide / step {n}",
       overlay: "Overlay pill",
       notfound: "Not found",
     },
@@ -372,6 +372,15 @@ export const en: Messages = {
     },
   },
   home: {
+    permission: {
+      title: "One system permission is missing",
+      accessibility:
+        "Voltip needs the Accessibility permission to type the result into other apps; restart Voltip after granting it.",
+      microphone:
+        "The microphone permission was denied, so dictation cannot record. Allow Voltip to use the microphone in the system's privacy settings.",
+      request: "Grant access",
+      guide: "Open the setup guide",
+    },
     blocked: {
       waitingCore: "Speech model not ready · waiting for the core",
       issue:
@@ -1189,7 +1198,7 @@ export const en: Messages = {
       engine: "Speech model · default",
       trial: "Session · try it",
     },
-    finished: "First-run setup complete",
+    finished: "Setup guide complete",
     platformUnknown: "unknown platform",
     backendNotReported: "not reported yet",
     backendNotReportedLong: "hotkey backend not reported yet",
@@ -1403,15 +1412,15 @@ export const en: Messages = {
     },
     general: {
       title: "General",
-      lede: "Interface language, the first-run guide and automatic updates. Language and updates are stored by the core and shared by the main window, the overlay pill and the phone.",
+      lede: "Interface language, the setup guide and automatic updates. Language and updates are stored by the core and shared by the main window, the overlay pill and the phone.",
       language: "Language",
       languageHelp:
         "“Follow system” picks by the OS / WebView language: Simplified Chinese in a Chinese environment, English elsewhere.",
       locale: { system: "Follow system", "zh-cn": "简体中文", en: "English" },
-      guide: "First-run guide",
+      guide: "Setup guide",
       guideHelp:
-        "Check the permissions, the hotkey and the speech model again, then try one dictation.",
-      guideRun: "Run again",
+        "Step through the permissions, the hotkey and the speech model, then try one dictation. The defaults work out of the box, so it no longer opens on the first launch.",
+      guideRun: "Open the guide",
       autoUpdate: "Automatic updates",
       autoUpdateHelp:
         "Check for updates at launch and download in the background; when off, the app only goes online when you press “Check for updates”.",

@@ -12,12 +12,12 @@ import { renderApp } from "../../test/render";
 import { downloadProgress, updateStatusLine } from "./General";
 
 describe("Settings · 通用", () => {
-  it("regression: the first-run guide can be run again from here", async () => {
+  it("regression: the setup guide opens from here (the first launch no longer opens it)", async () => {
     const user = userEvent.setup();
     renderApp({ path: "/settings/general" });
     const dialog = await screen.findByRole("dialog", { name: "设置" });
-    expect(within(dialog).getByText("首次设置")).toBeInTheDocument();
-    await user.click(within(dialog).getByRole("button", { name: "重新运行" }));
+    expect(within(dialog).getByText("设置向导")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "打开向导" }));
     expect(await screen.findByRole("heading", { name: "系统权限", level: 2 })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "设置" })).not.toBeInTheDocument();
   });

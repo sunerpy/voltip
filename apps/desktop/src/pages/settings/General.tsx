@@ -142,7 +142,7 @@ export function UpdateControls({ compact = false }: { compact?: boolean }) {
 }
 
 /** Settings · 通用: the UI language (`settings_set_locale`, shared by every window and the phone),
- *  the first-run guide again, and automatic updates (`settings_set_auto_update`, `update_check`,
+ *  the setup guide, and automatic updates (`settings_set_auto_update`, `update_check`,
  *  `update_install`). */
 export function General() {
   const { backend } = useBackend();

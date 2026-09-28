@@ -175,7 +175,7 @@ describe("pageMeta", () => {
     expect(offlineMeta.readouts[0]?.value).toBe(`${state.devices.length} 已配对 · 0 在线`);
     expect(offlineMeta.readouts[0]?.lamp).toBe("idle");
     const onboarding = pageMeta({ name: "onboarding", step: 2 }, state, extras);
-    expect(onboarding.title).toBe("首次设置 / 第 2 步");
+    expect(onboarding.title).toBe("设置向导 / 第 2 步");
     expect(onboarding.readouts[0]?.value).toBe("2 / 4 · 热键");
     expect(onboarding.readouts[1]?.value).toBe("Windows");
     expect(

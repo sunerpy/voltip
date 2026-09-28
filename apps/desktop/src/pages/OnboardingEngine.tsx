@@ -127,7 +127,7 @@ export interface OnboardingEngineStepProps {
   onDraft: (draft: EngineDraft) => void;
 }
 
-/** Step 3 of the first-run guide: three radio cards, the chosen one's details underneath (the recommended local
+/** Step 3 of the setup guide: three radio cards, the chosen one's details underneath (the recommended local
  *  model with its download button; the vendor, model, endpoint and key), and the polish switch. */
 export function OnboardingEngineStep({
   choice,

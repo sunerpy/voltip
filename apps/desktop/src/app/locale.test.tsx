@@ -31,10 +31,10 @@ const ROUTES = [
   ["/settings/hotkey", "首页", "Home"],
   ["/settings/privacy", "首页", "Home"],
   ["/settings/about", "首页", "Home"],
-  ["/onboarding?step=1", "首次设置 / 第 1 步", "First-run setup / step 1"],
-  ["/onboarding?step=2", "首次设置 / 第 2 步", "First-run setup / step 2"],
-  ["/onboarding?step=3", "首次设置 / 第 3 步", "First-run setup / step 3"],
-  ["/onboarding?step=4", "首次设置 / 第 4 步", "First-run setup / step 4"],
+  ["/onboarding?step=1", "设置向导 / 第 1 步", "Setup guide / step 1"],
+  ["/onboarding?step=2", "设置向导 / 第 2 步", "Setup guide / step 2"],
+  ["/onboarding?step=3", "设置向导 / 第 3 步", "Setup guide / step 3"],
+  ["/onboarding?step=4", "设置向导 / 第 4 步", "Setup guide / step 4"],
 ] as const;
 
 /** The English sweep renders every route but the overlay spec sheet (a `pnpm dev` view whose
