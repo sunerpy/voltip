@@ -4,13 +4,13 @@
   right-click menu lists its entries, and each entry does what it says.
 
 .DESCRIPTION
-  What it proves (docs/dictation.md §15.4), on a machine with an interactive desktop and a shell
+  What it proves (docs/dictation.md, section 15.4), on a machine with an interactive desktop and a shell
   taskbar (GitHub's windows-2025 image: install-scripts.yml runs it on the published release):
     1. the GUI starts, the tray is installed (the app's log names the menu's language and whether
        the build has an update source), and the main window hides on WM_CLOSE;
     2. the notification area (or its overflow flyout) holds a button named after the tray tooltip,
        and its pixels are the colour mark: the navy square with the pale and the orange arm
-       (saved as tray-icon.png) — not a blank or foreign icon;
+       (saved as tray-icon.png), not a blank or foreign icon;
     3. a right click opens the native menu with exactly the build's entries in the UI's language
        (tray-menu.png);
     4. Open shows the main window; Settings shows it with the Settings dialog open (found in the
@@ -147,6 +147,9 @@ function Wait-For([scriptblock] $probe, [int] $seconds, [string] $what) {
   throw "smoke-tray-windows: timed out after ${seconds}s waiting for $what"
 }
 
+# A string from code points: U 0x8BBE 0x7F6E.
+function U { -join ($args | ForEach-Object { [char][int]$_ }) }
+
 function Log-Text { if (Test-Path -LiteralPath $log) { (Get-Content -LiteralPath $log -Raw) -replace "$([char]27)\[[0-9;]*m", '' } else { '' } }
 
 function Center($element) {
@@ -244,7 +247,15 @@ try {
   $zh = $installed -match 'locale=ZhCn'
   $updater = $installed -match 'updater=true'
   if ($updater -eq [bool]$NoUpdater) { throw "smoke-tray-windows: updater=$updater, expected $(-not $NoUpdater)" }
-  $labels = if ($zh) { @('打开 Voltip', '设置…', '检查更新…', '退出 Voltip') } else { @('Open Voltip', 'Settings…', 'Check for Updates…', 'Quit Voltip') }
+  # Windows PowerShell 5.1 reads a BOM-less script as ANSI, so the labels' non-ASCII characters
+  # are spelled as code points: the ellipsis U+2026 and the Chinese labels.
+  $dots = [string][char]0x2026
+  $settingsZh = U 0x8BBE 0x7F6E
+  $labels = if ($zh) {
+    @("$(U 0x6253 0x5F00) Voltip", "$settingsZh$dots", "$(U 0x68C0 0x67E5 0x66F4 0x65B0)$dots", "$(U 0x9000 0x51FA) Voltip")
+  } else {
+    @('Open Voltip', "Settings$dots", "Check for Updates$dots", 'Quit Voltip')
+  }
   $expected = @($labels | Where-Object { $updater -or $_ -ne $labels[2] })
   [void][VoltipTray]::PostMessageW($hwnd, [VoltipTray]::WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero)
   Wait-For { -not [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'the window to hide' | Out-Null
@@ -281,7 +292,7 @@ try {
   Wait-For { (Log-Text) -match 'tray menu action=Settings' } $StepTimeoutSec 'the Settings entry in the log' | Out-Null
   Wait-For { [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'Settings to show the window' | Out-Null
   $window = $A::FromHandle($hwnd)
-  $title = if ($zh) { '设置' } else { 'Settings' }
+  $title = if ($zh) { $settingsZh } else { 'Settings' }
   $dialog = Wait-For {
     $window.FindFirst($TS::Descendants, (And-Cond (Cond $A::NameProperty $title) (Cond $A::LocalizedControlTypeProperty 'dialog')))
   } $StepTimeoutSec "the '$title' dialog in the webview"
