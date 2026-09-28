@@ -43,7 +43,7 @@ impl ReconnectPolicy {
         if self.jitter <= 0.0 {
             return d;
         }
-        use rand::Rng as _;
+        use rand::RngExt as _;
         let factor = 1.0 + rand::rng().random_range(-self.jitter..=self.jitter);
         d.mul_f64(factor.max(0.0))
     }
