@@ -1834,6 +1834,7 @@ export const zhCN = {
     },
     mic: {
       level: "输入电平",
+      codecOpus: "Opus 压缩传输 · 约 24 kbit/s",
       title: "用手机说话",
       body: "按住按钮说话，松开后文字出现在电脑的光标处。手指滑出按钮再松开则取消。",
       target: "发送到",

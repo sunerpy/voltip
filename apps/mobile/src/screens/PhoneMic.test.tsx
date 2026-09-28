@@ -71,6 +71,8 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
     expect(within(card).getByTestId("phone-mic-state")).toHaveAttribute("data-state", "starting");
     await advance(MOCK_MIC_READY_MS);
     expect(within(card).getByTestId("phone-mic-state")).toHaveTextContent(/正在收音 · 00:0\d/);
+    // docs/dictation.md §20.1: the computer decodes Opus, so the rest of the take is compressed.
+    expect(within(card).getByTestId("phone-mic-codec")).toHaveTextContent("Opus 压缩传输");
     fireEvent.pointerUp(hold, { pointerId: 1, clientX: 10, clientY: 10 });
     await advance(0);
     expect(within(card).getByTestId("phone-mic-state")).toHaveTextContent("电脑正在识别…");
@@ -78,6 +80,7 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
     expect(within(card).getByTestId("phone-mic-state")).toHaveTextContent(
       `已插入电脑：${MOCK_DICTATION_TEXT}`,
     );
+    expect(within(card).queryByTestId("phone-mic-codec")).toBeNull();
     expect(backend.peek().phone_take?.device).toBe(desktops("online")[0]?.device.public_key);
   });
 

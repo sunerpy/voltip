@@ -1152,10 +1152,13 @@ Rust：`voltip-platform` `cmd_c_keycode` 表与终端表（`terminal_ids_are_per
 |---|---|---|
 | `take_start` | 手机 → 电脑 | `take`（手机自增的编号）、`sample_rate_hz`（只接受 16000） |
 | `take_audio` | 手机 → 电脑 | `take`、`seq`（从 0 起）、`pcm`（PCM16 LE 单声道，CBOR 字节串，偶数字节，≤ 32 000 = 1 秒） |
+| `take_opus` | 手机 → 电脑 | `take`、`seq`（与 `take_audio` 共用计数）、`packets`（1–50 个 20 ms Opus 包，16 kHz 单声道，每个 1–1275 字节） |
 | `take_stop` / `take_cancel` | 手机 → 电脑 | `take` |
-| `take_status` | 电脑 → 手机 | `take`、`state`：`listening` / `processing` / `done{text ≤ 2000 字, pasted}` / `failed{code: busy｜unavailable｜no_speech｜failed, message ≤ 200 字}` / `cancelled` |
+| `take_status` | 电脑 → 手机 | `take`、`state`：`listening` / `processing` / `done{text ≤ 2000 字, pasted}` / `failed{code: busy｜unavailable｜no_speech｜failed, message ≤ 200 字}` / `cancelled`；`opus`（这台电脑解码 Opus，缺省为假） |
 
-解码时校验采样率、PCM 长度与文字长度；超限的消息整条拒收。旧 `seq`（第二条路径上的重复块）丢弃，缺块照常接着拼。
+解码时校验采样率、PCM 长度、Opus 包数与包长、文字长度；超限的消息整条拒收。旧 `seq`（第二条路径上的重复块）丢弃，缺块照常接着拼。
+
+**Opus（2026-09-28）**：手机先发 PCM；电脑的第一条 `take_status` 带着 `opus: true`，手机从下一块起把 16 kHz 录音按 20 ms 一帧编成 Opus（VoIP、24 kbit/s VBR，约为 PCM 的十分之一），最后不满一帧的尾巴补静音；电脑按 `seq` 把解码出的 PCM 接进同一个 `RemoteFeed`。旧版电脑不带这个字段，手机就一直发 PCM；旧版手机只发 PCM，新版电脑照收，两个方向都兼容。两端都用 `opus-rs`（libopus 1.6 的纯 Rust 移植，BSD-3-Clause），手机端不需要 C 工具链；编码器出错时这次录音剩下的部分退回 PCM，解不出的包跳过。`PhoneTakeView.opus` 告诉手机界面音频正以 Opus 传输（`crates/voltip-core/src/runtime/take_codec.rs`）。
 
 ### 20.2 电脑端（`crates/voltip-core/src/runtime/takes.rs`、`dictation/remote.rs`）
 
@@ -1172,7 +1175,7 @@ Rust：`voltip-platform` `cmd_c_keycode` 表与终端表（`terminal_ids_are_per
 
 ### 20.4 门禁
 
-Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`；`dictation::remote` 三个单测（早到的块补放、上限、丢弃即关闭）；`phone::desktop_phases_become_the_phones_take_states`；`crates/voltip-core/tests/e2e.rs@a_phone_streams_a_take_the_desktop_delivers`（真中继：送达、取消、忙碌）；桌面 `audio::only_a_recording_phone_take_is_forwarded_to_the_meters`、`tests/ipc.rs@phone_take_commands_are_refused_on_the_desktop`；手机 `microphone::the_phone_microphone_opens_a_live_tap`、`tests/ipc.rs@phone_take_commands_reach_the_core`。TS：IPC 夹具覆盖每个 `phone_take` 状态与 `dictation.remote`；手机 `PhoneMic.test.tsx`；桌面 `Devices.test.tsx`（手机麦克风面板）与 `Overlay.test.tsx`（胶囊标签）。
+Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take_opus` 的上限与 `opus` 缺省为假）；`runtime::take_codec` 两个单测（一秒 50 个包、解码后等长、尾帧补齐、坏包跳过）；`dictation::remote` 三个单测（早到的块补放、上限、丢弃即关闭）；`phone::desktop_phases_become_the_phones_take_states`；`crates/voltip-core/tests/e2e.rs@a_phone_streams_a_take_the_desktop_delivers`（真中继：先 PCM 后 Opus 送达、取消、忙碌）；桌面 `audio::only_a_recording_phone_take_is_forwarded_to_the_meters`、`tests/ipc.rs@phone_take_commands_are_refused_on_the_desktop`；手机 `microphone::the_phone_microphone_opens_a_live_tap`、`tests/ipc.rs@phone_take_commands_reach_the_core`。TS：IPC 夹具覆盖每个 `phone_take` 状态与 `dictation.remote`；手机 `PhoneMic.test.tsx`；桌面 `Devices.test.tsx`（手机麦克风面板）与 `Overlay.test.tsx`（胶囊标签）。
 
 ### 20.5 未验证
 

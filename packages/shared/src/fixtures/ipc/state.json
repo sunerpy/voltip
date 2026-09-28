@@ -631,7 +631,8 @@
       "state": "done",
       "text": "把 fetchUser 改成 async",
       "pasted": true
-    }
+    },
+    "opus": true
   },
   "hardware": {
     "cpu_threads": 16,

@@ -27,6 +27,13 @@ pub const MAX_TAKE_AUDIO_BYTES: usize = 32_000;
 pub const MAX_TAKE_TEXT_CHARS: usize = 2_000;
 /// Longest failure explanation a [`TakeState::Failed`] carries (characters).
 pub const MAX_TAKE_MESSAGE_CHARS: usize = 200;
+/// Length of one Opus packet of a phone take ([`AppMessage::TakeOpus`]): 20 ms, 320 samples at
+/// [`TAKE_SAMPLE_RATE_HZ`].
+pub const TAKE_OPUS_FRAME_SAMPLES: usize = 320;
+/// Most Opus packets one [`AppMessage::TakeOpus`] carries: one second of audio.
+pub const MAX_TAKE_OPUS_PACKETS: usize = 50;
+/// Largest Opus packet (RFC 6716 §3.2.1).
+pub const MAX_OPUS_PACKET_BYTES: usize = 1275;
 
 /// Why a phone's take did not deliver (desktop → phone).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -165,6 +172,20 @@ pub enum AppMessage {
         #[serde(with = "serde_bytes")]
         pcm: Vec<u8>,
     },
+    /// Phone → desktop: the next chunk of the take's audio as 20 ms Opus packets (16 kHz mono),
+    /// sent once the desktop's [`AppMessage::TakeStatus`] said it decodes them (`opus`); it shares
+    /// the `seq` counter with [`AppMessage::TakeAudio`].
+    TakeOpus {
+        /// Protocol version.
+        version: ProtocolVersion,
+        /// The take.
+        take: u32,
+        /// Chunk counter, continuing the take's [`AppMessage::TakeAudio`] ones.
+        seq: u32,
+        /// 1..=[`MAX_TAKE_OPUS_PACKETS`] packets of [`TAKE_OPUS_FRAME_SAMPLES`] samples each, every one
+        /// 1..=[`MAX_OPUS_PACKET_BYTES`] bytes.
+        packets: Vec<serde_bytes::ByteBuf>,
+    },
     /// Phone → desktop: the speaker let go; recognise and deliver what was streamed.
     TakeStop {
         /// Protocol version.
@@ -187,6 +208,10 @@ pub enum AppMessage {
         take: u32,
         /// Its state.
         state: TakeState,
+        /// The desktop decodes [`AppMessage::TakeOpus`]: the phone may switch from PCM for the rest
+        /// of the take. Absent from desktops that only take PCM, which a phone then keeps sending.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        opus: bool,
     },
     /// Sent right before the sender forgets this peer (docs/pairing.md): the receiver forgets the
     /// sender too, so neither side keeps a record the other one no longer honours.
@@ -211,6 +236,7 @@ impl AppMessage {
             | Self::DeviceInfoUpdate { version, .. }
             | Self::TakeStart { version, .. }
             | Self::TakeAudio { version, .. }
+            | Self::TakeOpus { version, .. }
             | Self::TakeStop { version, .. }
             | Self::TakeCancel { version, .. }
             | Self::TakeStatus { version, .. }
@@ -247,6 +273,14 @@ impl AppMessage {
             Self::TakeAudio { pcm, .. } if pcm.len() > MAX_TAKE_AUDIO_BYTES || !pcm.len().is_multiple_of(2) => {
                 return Err(CodecError::InvalidField { field: "pcm", reason: format!("{} bytes (even, at most {MAX_TAKE_AUDIO_BYTES})", pcm.len()) });
             }
+            Self::TakeOpus { packets, .. }
+                if packets.is_empty() || packets.len() > MAX_TAKE_OPUS_PACKETS || packets.iter().any(|p| p.is_empty() || p.len() > MAX_OPUS_PACKET_BYTES) =>
+            {
+                return Err(CodecError::InvalidField {
+                    field: "packets",
+                    reason: format!("{} packets (1..={MAX_TAKE_OPUS_PACKETS}, each 1..={MAX_OPUS_PACKET_BYTES} bytes)", packets.len()),
+                });
+            }
             Self::TakeStatus { state: TakeState::Done { text, .. }, .. } if text.chars().count() > MAX_TAKE_TEXT_CHARS => {
                 return Err(CodecError::InvalidField { field: "text", reason: format!("more than {MAX_TAKE_TEXT_CHARS} characters") });
             }
@@ -273,9 +307,9 @@ impl AppMessage {
         Self::Text { version: ProtocolVersion::CURRENT, body: body.into() }
     }
 
-    /// Convenience: a take's status.
+    /// Convenience: a take's status from this build's desktop, which decodes Opus.
     pub fn take_status(take: u32, state: TakeState) -> Self {
-        Self::TakeStatus { version: ProtocolVersion::CURRENT, take, state }
+        Self::TakeStatus { version: ProtocolVersion::CURRENT, take, state, opus: true }
     }
 
     /// Convenience: unpair.
@@ -321,6 +355,7 @@ mod tests {
         for m in [
             AppMessage::TakeStart { version: v, take: 7, sample_rate_hz: TAKE_SAMPLE_RATE_HZ },
             AppMessage::TakeAudio { version: v, take: 7, seq: 0, pcm: pcm.clone() },
+            AppMessage::TakeOpus { version: v, take: 7, seq: 1, packets: vec![serde_bytes::ByteBuf::from(vec![0x08, 1, 2]); 5] },
             AppMessage::TakeStop { version: v, take: 7 },
             AppMessage::TakeCancel { version: v, take: 7 },
             AppMessage::take_status(7, TakeState::Listening),
@@ -339,6 +374,10 @@ mod tests {
             (AppMessage::TakeStart { version: v, take: 1, sample_rate_hz: 48_000 }, "sample_rate_hz"),
             (AppMessage::TakeAudio { version: v, take: 1, seq: 0, pcm: vec![0; 3] }, "pcm"),
             (AppMessage::TakeAudio { version: v, take: 1, seq: 0, pcm: vec![0; MAX_TAKE_AUDIO_BYTES + 2] }, "pcm"),
+            (AppMessage::TakeOpus { version: v, take: 1, seq: 0, packets: Vec::new() }, "packets"),
+            (AppMessage::TakeOpus { version: v, take: 1, seq: 0, packets: vec![serde_bytes::ByteBuf::from(vec![8]); MAX_TAKE_OPUS_PACKETS + 1] }, "packets"),
+            (AppMessage::TakeOpus { version: v, take: 1, seq: 0, packets: vec![serde_bytes::ByteBuf::new()] }, "packets"),
+            (AppMessage::TakeOpus { version: v, take: 1, seq: 0, packets: vec![serde_bytes::ByteBuf::from(vec![8; MAX_OPUS_PACKET_BYTES + 1])] }, "packets"),
             (AppMessage::take_status(1, TakeState::Done { text: "x".repeat(MAX_TAKE_TEXT_CHARS + 1), pasted: true }), "text"),
             (AppMessage::take_status(1, TakeState::Failed { code: TakeFailure::Failed, message: "x".repeat(MAX_TAKE_MESSAGE_CHARS + 1) }), "message"),
         ];
@@ -351,6 +390,13 @@ mod tests {
         assert_eq!(text.chars().count(), MAX_TAKE_TEXT_CHARS);
         assert!(text.ends_with('…'));
         assert!(TakeState::Cancelled.is_final() && !TakeState::Listening.is_final() && !TakeState::Processing.is_final());
+        // docs/dictation.md §20.1: this build's desktop says it decodes Opus; a status without the
+        // flag (a desktop that only takes PCM) reads as `false`, so the phone keeps sending PCM.
+        assert!(matches!(AppMessage::take_status(1, TakeState::Listening), AppMessage::TakeStatus { opus: true, .. }));
+        let pcm_only = AppMessage::TakeStatus { version: v, take: 1, state: TakeState::Listening, opus: false }.encode().unwrap();
+        assert!(matches!(AppMessage::decode(&pcm_only).unwrap(), AppMessage::TakeStatus { opus: false, .. }));
+        let with_flag = AppMessage::take_status(1, TakeState::Listening).encode().unwrap();
+        assert!(with_flag.len() > pcm_only.len(), "the flag is left out when false");
         assert_eq!(serde_json::to_string(&TakeFailure::NoSpeech).unwrap(), r#""no_speech""#);
     }
 

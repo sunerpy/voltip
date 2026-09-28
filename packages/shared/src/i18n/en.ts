@@ -1920,6 +1920,7 @@ export const en: Messages = {
     },
     mic: {
       level: "Input level",
+      codecOpus: "Sent as Opus · about 24 kbit/s",
       title: "Talk through your phone",
       body: "Hold the button and speak; let go and the text lands at the computer's cursor. Slide off the button before letting go to cancel.",
       target: "Send to",

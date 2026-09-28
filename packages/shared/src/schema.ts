@@ -1268,6 +1268,8 @@ export const phoneTakeViewSchema = z.object({
   /** When the phone started it (Unix ms). */
   started_at: z.number().int().nonnegative(),
   state: phoneTakeStateSchema,
+  /** The audio goes out as Opus (docs/dictation.md §20.1); absent before it = PCM. */
+  opus: z.boolean().optional(),
 });
 export type PhoneTakeView = z.infer<typeof phoneTakeViewSchema>;
 

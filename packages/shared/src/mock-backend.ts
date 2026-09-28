@@ -1010,7 +1010,8 @@ export class MockBackend implements Backend {
           this.state.phone_take?.take === take &&
           this.state.phone_take.state.state === "starting"
         )
-          this.emitPhoneTake({ state: "listening" });
+          // The desktop's first status says it decodes Opus (docs/dictation.md §20.1).
+          this.emitPhoneTake({ state: "listening" }, true);
       });
     },
     phone_take_stop: () => {
@@ -1827,10 +1828,13 @@ export class MockBackend implements Backend {
     this.stopDictation();
   }
 
-  private emitPhoneTake(state: PhoneTakeState) {
+  private emitPhoneTake(state: PhoneTakeState, opus?: boolean) {
     const current = this.state.phone_take;
     if (current === undefined) return;
-    this.emit({ type: "phone_take", take: { ...current, state } });
+    this.emit({
+      type: "phone_take",
+      take: { ...current, state, ...(opus === undefined ? {} : { opus }) },
+    });
   }
 
   /** What the desktop shell reports after (re)registering both chords: the dictation chord, and the

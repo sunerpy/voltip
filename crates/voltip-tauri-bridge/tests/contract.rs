@@ -699,6 +699,8 @@ fn full_state() -> UiState {
             take: 3,
             started_at: TRUSTED_AT * 1000,
             state: PhoneTakeState::Done { text: "把 fetchUser 改成 async".into(), pasted: true },
+            // docs/dictation.md §20.1: the take went out as Opus.
+            opus: true,
         }),
         hardware: hardware_status(),
         connectivity: ConnectivityStatus { running: false, report: Some(connectivity_report()) },
@@ -777,6 +779,7 @@ fn phone_take_event(state: PhoneTakeState) -> UiEvent {
         device: DESKTOP_KEY.to_hex(),
         take: 3,
         started_at: TRUSTED_AT * 1000,
+        opus: matches!(state, PhoneTakeState::Listening | PhoneTakeState::Processing),
         state,
     })))
 }

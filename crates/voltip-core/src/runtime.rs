@@ -40,6 +40,7 @@ use crate::vocabulary::{DictionaryDraft, DictionaryEntry, DictionaryStore, Entry
 use crate::{CoreError, is_initiator, rendezvous_channel};
 
 mod check;
+mod take_codec;
 mod takes;
 
 /// Default TCP port of the LAN host. A fixed port keeps stored LAN hints valid across restarts;
@@ -2341,9 +2342,10 @@ impl Runtime {
                 // The phone as microphone (docs/dictation.md §20).
                 Ok(AppMessage::TakeStart { take, .. }) => self.on_take_start(key, take),
                 Ok(AppMessage::TakeAudio { take, seq, pcm, .. }) => self.on_take_audio(key, take, seq, &pcm),
+                Ok(AppMessage::TakeOpus { take, seq, packets, .. }) => self.on_take_opus(key, take, seq, &packets),
                 Ok(AppMessage::TakeStop { take, .. }) => self.on_take_stop(key, take),
                 Ok(AppMessage::TakeCancel { take, .. }) => self.on_take_cancel(key, take),
-                Ok(AppMessage::TakeStatus { take, state, .. }) => self.on_take_status(key, take, state),
+                Ok(AppMessage::TakeStatus { take, state, opus, .. }) => self.on_take_status(key, take, state, opus),
                 Ok(AppMessage::Unpair { .. }) => self.on_unpaired(key).await,
                 Ok(AppMessage::Pong { seq, .. }) => self.on_pong(key, seq),
                 Ok(_) => {}

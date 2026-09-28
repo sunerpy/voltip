@@ -244,6 +244,13 @@ export function PhoneMic({ desktops }: { desktops: readonly DeviceView[] }) {
           <LampText tone={tone(take.state)} pulse={take.state.state === "listening"}>
             {phoneTakeLine(take.state, now - take.started_at, t)}
           </LampText>
+          {take.opus === true && !phoneTakeFinal(take.state) && (
+            <span
+              className="mono mt-1 block text-[11px] text-fg-subtle"
+              data-testid="phone-mic-codec">
+              {t("mobile.mic.codecOpus")}
+            </span>
+          )}
           {take.state.state === "listening" && (
             <LedMeter
               className="mt-2"

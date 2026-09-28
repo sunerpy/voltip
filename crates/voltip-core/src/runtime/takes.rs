@@ -19,12 +19,14 @@
 use std::time::Duration;
 
 use parking_lot::Mutex;
+use serde_bytes::ByteBuf;
 use tokio::sync::mpsc;
 use voltip_crypto::PublicKey;
 use voltip_protocol::ProtocolVersion;
 use voltip_protocol::app::{AppMessage, MAX_TAKE_AUDIO_BYTES, TAKE_SAMPLE_RATE_HZ, TakeFailure, TakeState};
 use voltip_protocol::relay::RelayFrame;
 
+use super::take_codec::{TakeDecoder, TakeEncoder};
 use super::{CoreEvent, Runtime, now_ms};
 use crate::CoreError;
 use crate::dictation::remote::RemoteFeed;
@@ -60,6 +62,8 @@ pub(super) struct RemoteTake {
     name: String,
     /// The last state sent, so repeated `Listening` statuses (live text, `ready`) go out once.
     reported: Option<TakeState>,
+    /// Decodes the phone's `take_opus` chunks, from the first one on.
+    opus: Option<TakeDecoder>,
 }
 
 /// Phone: the take this phone streams to a desktop.
@@ -72,6 +76,9 @@ pub(super) struct PhoneTake {
     seq: u32,
     /// Stop was asked while the microphone was still opening.
     stop_wanted: bool,
+    /// Encodes the chunks as Opus once the desktop said it decodes them (docs/dictation.md §20.1);
+    /// until then, and for a desktop that never says so, the chunks go out as PCM.
+    opus: Option<TakeEncoder>,
 }
 
 impl PhoneTake {
@@ -224,7 +231,7 @@ impl Runtime {
             Ok(effects) => {
                 let name = self.trusted.get_by_key(&peer).map_or_else(|| peer.fingerprint(), |d| d.name);
                 tracing::info!(phone = %name, take, "phone take started");
-                self.remote_take = Some(RemoteTake { peer, take, session: self.dictation.status().session, feed, name, reported: None });
+                self.remote_take = Some(RemoteTake { peer, take, session: self.dictation.status().session, feed, name, reported: None, opus: None });
                 self.apply_dictation(effects);
             }
             Err(DictationError::Busy) => self.queue_status(peer, take, TakeState::failed(TakeFailure::Busy, "电脑正在听写")),
@@ -239,6 +246,24 @@ impl Runtime {
     pub(super) fn on_take_audio(&mut self, peer: PublicKey, take: u32, seq: u32, pcm: &[u8]) {
         if let Some(rt) = self.remote_take_of(peer, take) {
             rt.feed.push(seq, pcm);
+        }
+    }
+
+    /// Opus chunks (docs/dictation.md §20.1): decoded into the same feed, under the same `seq`.
+    pub(super) fn on_take_opus(&mut self, peer: PublicKey, take: u32, seq: u32, packets: &[ByteBuf]) {
+        let Some(rt) = self.remote_take.as_mut().filter(|rt| rt.peer == peer && rt.take == take) else { return };
+        if rt.opus.is_none() {
+            match TakeDecoder::new() {
+                Ok(decoder) => rt.opus = Some(decoder),
+                Err(e) => {
+                    tracing::warn!(error = %e, "phone take: no Opus decoder");
+                    return;
+                }
+            }
+        }
+        if let Some(decoder) = rt.opus.as_mut() {
+            let pcm = decoder.decode(packets);
+            rt.feed.push(seq, &pcm);
         }
     }
 
@@ -315,12 +340,13 @@ impl Runtime {
             let _ = tx.send(PhoneEvent::Opened { take, result }).await;
         });
         self.phone_take = Some(PhoneTake {
-            view: PhoneTakeView { device: to.to_hex(), take, started_at: now_ms(), state: PhoneTakeState::Starting },
+            view: PhoneTakeView { device: to.to_hex(), take, started_at: now_ms(), state: PhoneTakeState::Starting, opus: false },
             to,
             capture: Mutex::new(None),
             pump: None,
             seq: 0,
             stop_wanted: false,
+            opus: None,
         });
         self.emit_phone_take();
         Ok(())
@@ -352,15 +378,38 @@ impl Runtime {
             PhoneEvent::Opened { take, result } => self.on_phone_opened(take, result),
             PhoneEvent::Chunk { take, pcm } => {
                 let Some(t) = self.phone_take.as_mut().filter(|t| t.take() == take && t.running()) else { return };
-                let seq = t.seq;
-                t.seq += 1;
                 let to = t.to;
-                self.take_outbox.push((to, AppMessage::TakeAudio { version: ProtocolVersion::CURRENT, take, seq, pcm }));
+                let msg = match t.opus.as_mut().map(|encoder| encoder.push(&pcm)) {
+                    None => Some(AppMessage::TakeAudio { version: ProtocolVersion::CURRENT, take, seq: t.seq, pcm }),
+                    // Less than a frame so far: it goes out with the next chunk.
+                    Some(Ok(packets)) if packets.is_empty() => None,
+                    Some(Ok(packets)) => Some(AppMessage::TakeOpus { version: ProtocolVersion::CURRENT, take, seq: t.seq, packets }),
+                    Some(Err(e)) => {
+                        // The encoder broke: the rest of the take goes out as PCM.
+                        tracing::warn!(error = %e, "phone take: Opus encoding failed; sending PCM");
+                        t.opus = None;
+                        t.view.opus = false;
+                        Some(AppMessage::TakeAudio { version: ProtocolVersion::CURRENT, take, seq: t.seq, pcm })
+                    }
+                };
+                if let Some(msg) = msg {
+                    t.seq += 1;
+                    self.take_outbox.push((to, msg));
+                }
             }
             PhoneEvent::Drained { take } => {
                 let Some(t) = self.phone_take.as_mut().filter(|t| t.take() == take && t.running()) else { return };
                 t.pump = None;
                 let to = t.to;
+                // The encoder's last partial frame goes out before the stop.
+                match t.opus.as_mut().map(TakeEncoder::finish) {
+                    Some(Ok(packets)) if !packets.is_empty() => {
+                        self.take_outbox.push((to, AppMessage::TakeOpus { version: ProtocolVersion::CURRENT, take, seq: t.seq, packets }));
+                        t.seq += 1;
+                    }
+                    Some(Err(e)) => tracing::warn!(error = %e, "phone take: the last Opus frame was lost"),
+                    _ => {}
+                }
                 self.take_outbox.push((to, AppMessage::TakeStop { version: ProtocolVersion::CURRENT, take }));
             }
         }
@@ -402,9 +451,20 @@ impl Runtime {
         tracing::info!(take, "phone take streaming");
     }
 
-    /// The desktop reported where our take is.
-    pub(super) fn on_take_status(&mut self, from: PublicKey, take: u32, state: TakeState) {
+    /// The desktop reported where our take is; `opus` = it decodes Opus, so the rest of the take
+    /// goes out as Opus packets (docs/dictation.md §20.1).
+    pub(super) fn on_take_status(&mut self, from: PublicKey, take: u32, state: TakeState, opus: bool) {
         let Some(t) = self.phone_take.as_mut().filter(|t| t.to == from && t.take() == take) else { return };
+        if opus && t.opus.is_none() && t.running() {
+            match TakeEncoder::new() {
+                Ok(encoder) => {
+                    tracing::info!(take, "phone take: the desktop decodes Opus; switching from PCM");
+                    t.opus = Some(encoder);
+                    t.view.opus = true;
+                }
+                Err(e) => tracing::warn!(error = %e, "phone take: no Opus encoder; staying on PCM"),
+            }
+        }
         let state = PhoneTakeState::from(state);
         if state.is_final() {
             // The desktop is done with it (delivered, refused, cancelled): nothing more to stream.

@@ -95,6 +95,10 @@ pub struct PhoneTakeView {
     pub started_at: u64,
     /// Where it is.
     pub state: PhoneTakeState,
+    /// The audio goes out as Opus (the desktop said it decodes it, docs/dictation.md §20.1)
+    /// rather than PCM. Absent in payloads from before it (= PCM).
+    #[serde(default)]
+    pub opus: bool,
 }
 
 /// What the desktop reports to the phone for one of its dictation phases; `None` for `Idle`

@@ -668,7 +668,13 @@ async fn a_phone_streams_a_take_the_desktop_delivers() {
     })
     .await;
     assert_eq!(remote.as_deref(), Some("Pixel 8"), "the desktop's take names the phone");
-    wait(&mut phone, |e| (phone_take(e) == Some(PhoneTakeState::Listening)).then_some(())).await;
+    // docs/dictation.md §20.1: the desktop's first status says it decodes Opus, so the phone
+    // switches from PCM for the rest of the take (and its view says so).
+    wait(&mut phone, |e| match e {
+        CoreEvent::PhoneTake(Some(view)) if view.state == PhoneTakeState::Listening && view.opus => Some(()),
+        _ => None,
+    })
+    .await;
     // The desktop's take is ready once the phone's audio arrived (the ready mark rides on it).
     wait(&mut desk, |e| match e {
         CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { ready: true, .. }) => Some(()),
@@ -685,6 +691,7 @@ async fn a_phone_streams_a_take_the_desktop_delivers() {
     })
     .await;
     assert_eq!(text, FAKE_TRANSCRIPT);
+    // PCM first, Opus after: the decoded packets join the same feed, nothing is lost or doubled.
     assert!(duration_ms >= 1000, "the streamed 1.5 s of audio is the take: {duration_ms} ms");
     let done = wait(&mut phone, |e| phone_take(e).filter(PhoneTakeState::is_final)).await;
     assert_eq!(done, PhoneTakeState::Done { text: FAKE_TRANSCRIPT.into(), pasted: true });

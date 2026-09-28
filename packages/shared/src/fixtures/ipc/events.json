@@ -2038,7 +2038,8 @@
       "started_at": 1758700000000,
       "state": {
         "state": "starting"
-      }
+      },
+      "opus": false
     }
   },
   {
@@ -2049,7 +2050,8 @@
       "started_at": 1758700000000,
       "state": {
         "state": "listening"
-      }
+      },
+      "opus": true
     }
   },
   {
@@ -2060,7 +2062,8 @@
       "started_at": 1758700000000,
       "state": {
         "state": "processing"
-      }
+      },
+      "opus": true
     }
   },
   {
@@ -2073,7 +2076,8 @@
         "state": "done",
         "text": "把 fetchUser 改成 async",
         "pasted": true
-      }
+      },
+      "opus": false
     }
   },
   {
@@ -2086,7 +2090,8 @@
         "state": "failed",
         "code": "busy",
         "message": "正在听写"
-      }
+      },
+      "opus": false
     }
   },
   {
@@ -2099,7 +2104,8 @@
         "state": "failed",
         "code": "microphone",
         "message": "microphone: 权限被拒绝"
-      }
+      },
+      "opus": false
     }
   },
   {
@@ -2110,7 +2116,8 @@
       "started_at": 1758700000000,
       "state": {
         "state": "cancelled"
-      }
+      },
+      "opus": false
     }
   },
   {
