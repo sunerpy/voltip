@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.0.4](https://github.com/sunerpy/voltip/compare/v0.0.3...v0.0.4) (2026-09-28)
+
+
+### Features
+
+* **desktop:** open on the home page, with a notice for a missing permission ([f88d229](https://github.com/sunerpy/voltip/commit/f88d229868d306c560bfeedd022a6aff4dcd02de))
+* **desktop:** 反馈 is a dialog, and its draft survives closing it ([ef25d34](https://github.com/sunerpy/voltip/commit/ef25d3456aebf06af38bb96c895478b53b205eb5))
+* **desktop:** 语音模型, AI 模型 and 反馈 are pages of the main layout ([1d8df32](https://github.com/sunerpy/voltip/commit/1d8df32d4acc0e1a6152101166c6457069d1e3d3))
+* **feedback:** screenshots and recordings, and 设置's 反馈 is the same page ([5d2ac68](https://github.com/sunerpy/voltip/commit/5d2ac681458b4d53ca8288f7f29918157a49f3f1))
+* no idle metering, a microphone test, and a device choice ([ce3c437](https://github.com/sunerpy/voltip/commit/ce3c437f4273d7308f90cb059a6bfd593649f81f))
+* one-line installers for Windows, Linux and both kinds of Mac ([35d2e87](https://github.com/sunerpy/voltip/commit/35d2e870828f05c28f2e0becbeaef778805ed68c))
+* **release:** a macOS leg, with the dmg and the updater archive ([52d45fb](https://github.com/sunerpy/voltip/commit/52d45fb9190f3b7698d6d5ebc8306d9806eaafac))
+* **release:** Intel Macs too, next to Apple silicon ([8c6ce4c](https://github.com/sunerpy/voltip/commit/8c6ce4c79e02b70ba5e65a014935217164f9c8a7))
+* **tray:** the logo with a phase badge, a menu, and closing to the tray ([bbe498b](https://github.com/sunerpy/voltip/commit/bbe498b6d6fe6b012594b247beef16e38535b458))
+
+
+### Bug Fixes
+
+* **ui:** a select in a settings row is named once, and the device name fits ([c4a8c24](https://github.com/sunerpy/voltip/commit/c4a8c248a3bbf553e3c44e3868a122ab5984e9f6))
+* **ui:** the hand cursor on every control, and the theme row lines up ([ebca843](https://github.com/sunerpy/voltip/commit/ebca8431d67ded23e28bfcedbc2e81ce93144f59))
+
 ## [0.0.3](https://github.com/sunerpy/voltip/compare/v0.0.2...v0.0.3) (2026-09-28)
 
 
