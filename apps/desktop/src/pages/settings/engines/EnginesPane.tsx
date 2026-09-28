@@ -192,7 +192,7 @@ function RecognitionOptions() {
       <SettingsRows>
         <StatusRow label={t("engines.languageLabel")} help={t("engines.languageHelp")}>
           <Select
-            label={t("engines.languageLabel")}
+            aria-label={t("engines.languageLabel")}
             size="sm"
             value={settings.language ?? ""}
             onChange={(language) => {

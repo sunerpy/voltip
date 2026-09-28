@@ -124,6 +124,8 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       expect(backend.peek().settings.engines.local_gpu).toBe("Vulkan1");
     });
     const threads = within(compute).getByRole("combobox", { name: "推理线程" });
+    expect(within(compute).getAllByText("推理线程")).toHaveLength(1);
+    expect(within(compute).getAllByText("使用的 GPU")).toHaveLength(1);
     expect(
       within(threads)
         .getAllByRole("option")
@@ -444,7 +446,10 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/speech" });
     await openTab(user, "识别设置");
-    await user.selectOptions(await screen.findByLabelText("识别语言"), "zh");
+    // The row names the select once: no second 识别语言 caption above it (screenshots 2026-09-28).
+    await screen.findByLabelText("识别语言");
+    expect(screen.getAllByText("识别语言")).toHaveLength(1);
+    await user.selectOptions(screen.getByLabelText("识别语言"), "zh");
     await waitFor(() => {
       expect(backend.peek().settings.engines).toEqual({
         ...defaultEngineSettings(),

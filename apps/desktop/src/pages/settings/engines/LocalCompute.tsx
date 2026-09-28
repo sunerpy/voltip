@@ -88,7 +88,7 @@ export function LocalCompute() {
         {device === "gpu" && gpu !== undefined && (
           <StatusRow label={t("engines.compute.whichGpu")} help={t("engines.compute.gpuFirstLoad")}>
             <Select
-              label={t("engines.compute.whichGpu")}
+              aria-label={t("engines.compute.whichGpu")}
               value={gpu.name}
               onChange={(name) => {
                 write({ local_gpu: name });
@@ -105,7 +105,7 @@ export function LocalCompute() {
               : undefined
           }>
           <Select
-            label={t("engines.compute.threads")}
+            aria-label={t("engines.compute.threads")}
             value={threads === undefined ? AUTO_THREADS : String(threads)}
             onChange={(value) => {
               write({ local_threads: value === AUTO_THREADS ? null : Number(value) });
