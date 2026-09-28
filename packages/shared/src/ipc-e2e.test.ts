@@ -263,7 +263,11 @@ describe("TypeScript ↔ Rust core over the bridge harness and a local relay", (
         "voltip-tauri-bridge",
         "--bin",
         "voltip-bridge-harness",
+        // Named too: `--bin` narrows every -p to the bins listed, so without it only the relay's
+        // library was built and the test ran whatever relay an earlier `cargo test` had left.
         "-p",
+        "voltip-relay",
+        "--bin",
         "voltip-relay",
       ],
       BUILD_TIMEOUT_MS,
