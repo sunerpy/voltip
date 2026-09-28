@@ -313,10 +313,6 @@ jobs:
     env:
       # An engine-less package on purpose: CI proves the build, the release bakes the defaults in.
       VOLTIP_ALLOW_NO_BUILTIN_ENGINES: "1"
-      # The CI package proves the cross build, the installer and the native run; the release keeps
-      # the full profile (thin LTO, one codegen unit). Sixteen units compile the app crate in
-      # parallel.
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -424,7 +420,17 @@ jobs:
 
       # Unsigned by design: tauri.conf.json never sets bundle.createUpdaterArtifacts (the release
       # workflow enables it with --config on its signing step), so no key is needed here.
+      # cargo-about takes about two minutes here; the notices depend only on these inputs.
+      - name: Cache the third-party notices
+        id: notices
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: apps/desktop/src-tauri/resources/THIRD-PARTY-NOTICES.txt
+          key: notices-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'pnpm-lock.yaml', 'package.json', 'about.toml', 'scripts/release/third-party-notices.py', 'scripts/release/licenses/**') }}
+
       - name: make windows-x64 (portable zip + NSIS installer, Vulkan, artefact secret scan)
+        env:
+          VOLTIP_NOTICES_CACHED: ${{ steps.notices.outputs.cache-hit == 'true' && '1' || '0' }}
         run: make windows-x64
 
       - name: Upload dist/windows-x64

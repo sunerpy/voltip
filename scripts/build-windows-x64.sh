@@ -26,7 +26,14 @@ rustup target list --installed | grep -q '^x86_64-pc-windows-msvc$' || { echo "b
 # overlay: tauri-build checks every listed resource on every build, so a plain native
 # `cargo build` (no SDK, nothing staged) must not list them.
 . scripts/lib/vulkan-sdk.sh && voltip_vulkan_env windows
-python3 scripts/release/third-party-notices.py --out apps/desktop/src-tauri/resources/THIRD-PARTY-NOTICES.txt
+# VOLTIP_NOTICES_CACHED=1: CI restored the file from a cache keyed on every input of the
+# generator (the lockfiles, manifests, about.toml, the script and its licence texts); cargo-about
+# takes about two minutes on a runner. The release always regenerates it.
+if [ "${VOLTIP_NOTICES_CACHED:-0}" = 1 ] && [ -s apps/desktop/src-tauri/resources/THIRD-PARTY-NOTICES.txt ]; then
+  echo "build-windows-x64: THIRD-PARTY-NOTICES.txt from the CI cache"
+else
+  python3 scripts/release/third-party-notices.py --out apps/desktop/src-tauri/resources/THIRD-PARTY-NOTICES.txt
+fi
 out=${1:-dist/windows-x64}
 # The version being built (package.json, which tauri.conf.json points at). The bundle directory
 # keeps installers from earlier builds; only this version's is shipped.
