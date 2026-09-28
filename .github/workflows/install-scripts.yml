@@ -2,7 +2,10 @@
 # every computer they serve: Linux with the .deb and with the AppImage, macOS on Apple silicon and
 # on Intel, and Windows in Windows PowerShell 5.1 (what `irm | iex` runs in). Each job runs the
 # script the way the README says, then proves the installed app answers `--version`, and on a Mac
-# that the app is the right architecture, sealed, and not quarantined.
+# that the app is the right architecture, sealed, and not quarantined. On Windows and on both Macs
+# it then drives the release's tray on the desktop: the icon is the mark, the menu lists the
+# build's entries, and each one works (scripts/smoke-tray-{windows.ps1,macos.sh}; the screenshots
+# are kept as artifacts).
 #
 # Run by hand after a release is published (a release published with GITHUB_TOKEN starts no
 # workflow): `gh workflow run install-scripts.yml -f version=<version>`. The refusals (checksum
@@ -109,6 +112,20 @@ jobs:
           echo "$out"
           case "$out" in "voltip ${VERSION#v}"*) ;; *) echo "::error::unexpected --version: $out"; exit 1 ;; esac
 
+      # The release's menu bar item on this Mac's desktop: the V, the menu, and every entry
+      # (scripts/smoke-tray-macos.sh).
+      - name: The menu bar item shows the mark, and every menu entry works
+        run: scripts/smoke-tray-macos.sh /Applications/Voltip.app smoke-tray-macos
+
+      - name: Keep the menu bar evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tray-macos-${{ matrix.arch }}
+          path: smoke-tray-macos/
+          if-no-files-found: warn
+          retention-days: 30
+
   windows:
     name: windows · PowerShell 5.1
     runs-on: windows-2025
@@ -141,3 +158,18 @@ jobs:
           Write-Output $out
           $want = "voltip " + ($env:VERSION -replace '^v', '')
           if (-not $out.StartsWith($want)) { throw "unexpected --version: $out" }
+
+      # The release's tray on this desktop: the mark in the notification area, the right-click
+      # menu, and every entry (scripts/smoke-tray-windows.ps1).
+      - name: The tray icon shows the mark, and every menu entry works
+        shell: powershell
+        run: ./scripts/smoke-tray-windows.ps1 -Binary (Join-Path $env:LOCALAPPDATA 'Voltip\voltip-desktop.exe') -OutDir smoke-tray-windows
+
+      - name: Keep the tray evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tray-windows
+          path: smoke-tray-windows/
+          if-no-files-found: warn
+          retention-days: 30
