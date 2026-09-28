@@ -1106,6 +1106,12 @@ export const zhCN = {
     fingerprintWhat: "指纹",
     scanNote: "手机扫码后直接拿到会话票据，不需要手动输入。",
     lanNote: "同一局域网里的手机也可以在配对页的「附近的电脑」里直接点选这台电脑。",
+    alwaysOn: "常开配对",
+    alwaysOnHelp:
+      "打开后这台电脑一直等待手机配对：二维码到期前自动更新，配好一台接着等下一台，直到关掉。每次配对仍要在这里核对安全码并确认。",
+    alwaysOnOpen: "常开 · 本码剩余 {remaining}",
+    alwaysOnIdle: "常开配对已打开，连上中继或局域网后自动开始。",
+    alwaysOnNext: "常开配对：稍后自动开始下一次配对。",
     validity: "有效期",
     warning: "不要截图或在共享屏幕上展示此二维码。",
     regenerate: "重新生成",

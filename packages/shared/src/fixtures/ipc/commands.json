@@ -146,6 +146,12 @@
     "name": "pairing_join_nearby"
   },
   {
+    "args": {
+      "enabled": true
+    },
+    "name": "settings_set_pairing_always_on"
+  },
+  {
     "args": null,
     "name": "devices_refresh"
   },

@@ -386,6 +386,14 @@ export const MOCK_NEARBY: readonly NearbyDevice[] = [
   },
 ];
 
+/** Always-on pairing in the preview (docs/pairing.md 「常开配对」, the core's `RENEW_BEFORE_SECS`
+ *  and `FINISHED_PAUSE`): a waiting session this close to its end is renewed, and a finished one
+ *  is followed by the next after this pause. */
+export const MOCK_ALWAYS_ON_RENEW_SECS = 10;
+export const MOCK_ALWAYS_ON_PAUSE_MS = 4000;
+/** The core's refusal on a phone. */
+export const ALWAYS_ON_DESKTOP_ONLY = "pairing: 常开配对只在电脑上可用";
+
 /** How long the preview's desktop takes to insert a phone's text (docs/dictation.md §20.6). */
 export const MOCK_TEXT_MS = 200;
 /** What the preview phone's clipboard holds. */
@@ -920,6 +928,22 @@ export class MockBackend implements Backend {
       }
       this.joinSession();
     },
+    settings_set_pairing_always_on: (args) => {
+      const { enabled } = required(args);
+      if (this.role === "phone") {
+        this.emit({ type: "error", message: ALWAYS_ON_DESKTOP_ONLY });
+        return;
+      }
+      this.emit({ type: "settings", ...this.state.settings, pairing_always_on: enabled });
+      const phase = this.state.pairing.state.state;
+      if (enabled && (phase === "idle" || phase === "expired")) {
+        this.startPairing();
+      } else if (!enabled && (phase === "creating_session" || phase === "waiting_for_peer")) {
+        // Nobody joined yet: the window closes. A pairing under way runs to its end.
+        this.clearTimers();
+        this.emit({ type: "pairing", ...idleSnapshot() });
+      }
+    },
     settings_set_lan_discovery: (args) => {
       const { enabled } = required(args);
       this.emit({ type: "settings", ...this.state.settings, lan_discovery: enabled });
@@ -940,6 +964,12 @@ export class MockBackend implements Backend {
     pairing_reset: () => {
       this.clearTimers();
       this.emit({ type: "pairing", ...idleSnapshot() });
+      // Always on, the core opens the next session on its next tick.
+      if (this.alwaysOn()) {
+        this.later(0, () => {
+          this.startPairing();
+        });
+      }
     },
     device_forget: (args) => {
       const { publicKey } = required(args);
@@ -2567,6 +2597,7 @@ export class MockBackend implements Backend {
       last_connection: "direct",
     };
     this.emitPairing({ state: { state: "trusted" } });
+    this.openNextIfAlwaysOn();
     this.emit({ type: "trusted", ...device });
     const others = this.state.devices.filter((d) => d.device.public_key !== publicKey);
     this.emit({
@@ -2578,12 +2609,29 @@ export class MockBackend implements Backend {
   private finish(state: Snapshot["state"]) {
     this.clearTimers();
     this.emitPairing({ state, remaining_secs: state.state === "expired" ? 0 : undefined });
+    this.openNextIfAlwaysOn();
+  }
+
+  private alwaysOn(): boolean {
+    return this.role !== "phone" && this.state.settings.pairing_always_on;
+  }
+
+  /** Always-on pairing: the next session after the outcome has been on screen for a moment. */
+  private openNextIfAlwaysOn() {
+    if (!this.alwaysOn()) return;
+    this.later(MOCK_ALWAYS_ON_PAUSE_MS, () => {
+      if (this.alwaysOn()) this.startPairing();
+    });
   }
 
   private startCountdown() {
     this.stopCountdown();
     this.countdown = setInterval(() => {
       const remaining = Math.max(0, (this.state.pairing.remaining_secs ?? 0) - 1);
+      if (this.alwaysOn() && remaining <= MOCK_ALWAYS_ON_RENEW_SECS) {
+        this.startPairing();
+        return;
+      }
       if (remaining === 0) {
         this.finish({ state: "expired" });
         return;

@@ -62,6 +62,14 @@ fn node_config(
     direct_enabled: bool,
     discovery: Option<Arc<dyn voltip_core::discovery::Discovery>>,
 ) -> Node {
+    node_tuned(dir, store, name, settings, |cfg| {
+        cfg.direct_enabled = direct_enabled;
+        cfg.discovery = discovery;
+    })
+}
+
+/// A node with the test timings, `settings` saved first, and `tune` applied last.
+fn node_tuned(dir: tempfile::TempDir, store: Arc<MemorySecretStore>, name: &str, settings: &Settings, tune: impl FnOnce(&mut CoreConfig)) -> Node {
     trace_init();
     let dir_path = dir.path().to_path_buf();
     SettingsStore::new(&dir_path).save(settings).unwrap();
@@ -69,12 +77,11 @@ fn node_config(
     cfg.default_device_name = name.into();
     cfg.tick = Duration::from_millis(50);
     cfg.direct_bind = "127.0.0.1:0".parse().unwrap();
-    cfg.direct_enabled = direct_enabled;
     cfg.direct_retry = Duration::from_millis(100);
     cfg.direct_retry_max = Duration::from_millis(400);
     cfg.direct_connect_timeout = Duration::from_secs(2);
     cfg.peer_handshake_timeout = Duration::from_millis(600);
-    cfg.discovery = discovery;
+    tune(&mut cfg);
     let (handle, events) = AppCore::start(cfg, store.clone()).unwrap();
     Node { handle, events, _dir: dir, store, dir_path }
 }
@@ -496,6 +503,92 @@ async fn regression_lan_discovery_pairs_by_tap_and_finds_a_trusted_device_on_its
     wait(&mut phone, |e| matches!(e, CoreEvent::Nearby(list) if list.is_empty()).then_some(())).await;
     desk.handle.send(CoreCommand::Shutdown).await.unwrap();
     phone.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// The next pairing snapshot other than `Idle` within `within`, if any.
+async fn next_pairing_within(node: &mut Node, within: Duration) -> Option<Snapshot> {
+    tokio::time::timeout(within, async {
+        loop {
+            match node.events.recv().await {
+                Some(CoreEvent::Pairing(s)) if s.state != PairingState::Idle => return s,
+                Some(_) => {}
+                None => panic!("core gone"),
+            }
+        }
+    })
+    .await
+    .ok()
+}
+
+/// docs/pairing.md 「常开配对」: with always-on pairing a desktop keeps a session waiting (from the
+/// switch, and on its own at start), renews it before it lapses (it never shows expired), opens
+/// the next one shortly after a phone paired, and closes the waiting one when switched off. A
+/// session opened before the relay was there moves onto it. A phone cannot turn it on.
+#[tokio::test]
+async fn always_on_pairing_keeps_a_session_waiting_until_switched_off() {
+    use voltip_protocol::ticket::PairingTicket;
+    let (url, _stop, _relay) = relay().await;
+    let settings = Settings { relay_url: Some(url.clone()), relay_enabled: true, ..Settings::default() };
+    // A 12 s session is renewed with 10 s left, about 2 s after it opens.
+    let short = |cfg: &mut CoreConfig| cfg.pairing_timeouts.session_ttl = Duration::from_secs(12);
+    let mut desk = node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Desk", &settings, short);
+    let mut phone = node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Phone", &settings, |cfg| cfg.accepts_phone_takes = false);
+    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    phone.handle.send(CoreCommand::SetPairingAlwaysOn(true)).await.unwrap();
+    wait(&mut phone, |e| matches!(e, CoreEvent::Error(m) if m.contains("只在电脑上")).then_some(())).await;
+
+    desk.handle.send(CoreCommand::SetPairingAlwaysOn(true)).await.unwrap();
+    wait(&mut desk, |e| matches!(e, CoreEvent::Settings(s) if s.pairing_always_on).then_some(())).await;
+    assert!(std::fs::read_to_string(desk.dir_path.join("settings.json")).unwrap().contains(r#""pairing_always_on": true"#));
+    let first = wait_pairing(&mut desk, PairingState::WaitingForPeer).await;
+    let renewed = wait(&mut desk, |e| match e {
+        CoreEvent::Pairing(s) if s.state == PairingState::Expired => panic!("an always-on session must not lapse"),
+        CoreEvent::Pairing(s) if s.state == PairingState::WaitingForPeer && s.session_id != first.session_id => Some(s.clone()),
+        _ => None,
+    })
+    .await;
+    // A phone pairs; the next session opens shortly after.
+    phone.handle.send(CoreCommand::JoinWithCode(renewed.code.clone().unwrap())).await.unwrap();
+    wait_pairing(&mut desk, PairingState::AwaitingVerification).await;
+    wait_pairing(&mut phone, PairingState::AwaitingVerification).await;
+    desk.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
+    phone.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
+    wait_pairing(&mut desk, PairingState::Trusted).await;
+    let next = wait_pairing(&mut desk, PairingState::WaitingForPeer).await;
+    assert_ne!(next.session_id, renewed.session_id);
+    // Off: the waiting session closes and no other opens.
+    desk.handle.send(CoreCommand::SetPairingAlwaysOn(false)).await.unwrap();
+    wait_pairing(&mut desk, PairingState::Idle).await;
+    assert!(next_pairing_within(&mut desk, Duration::from_secs(3)).await.is_none(), "nothing opens once it is off");
+    desk.handle.send(CoreCommand::Shutdown).await.unwrap();
+    phone.handle.send(CoreCommand::Shutdown).await.unwrap();
+
+    // On at start, before the relay is there: a LAN session at once, moved onto the relay once it
+    // connects.
+    let spare = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = spare.local_addr().unwrap().port();
+    drop(spare);
+    let later = Settings { relay_url: Some(format!("ws://127.0.0.1:{port}/ws")), relay_enabled: true, pairing_always_on: true, ..Settings::default() };
+    let fast = |cfg: &mut CoreConfig| cfg.reconnect.max = Duration::from_millis(500);
+    let mut desk = node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Desk", &later, fast);
+    let lan = wait_pairing(&mut desk, PairingState::WaitingForPeer).await;
+    assert!(PairingTicket::from_uri(lan.ticket_uri.as_deref().unwrap()).unwrap().relay_hint.is_none(), "opened on the LAN host");
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let (_addr, _task) = RelayHandle::new(RelayConfig::default())
+        .serve(format!("127.0.0.1:{port}").parse().unwrap(), async move {
+            let _ = stop_rx.await;
+        })
+        .await
+        .unwrap();
+    let relayed = wait(&mut desk, |e| match e {
+        CoreEvent::Pairing(s) if s.state == PairingState::WaitingForPeer && s.session_id != lan.session_id => Some(s.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(PairingTicket::from_uri(relayed.ticket_uri.as_deref().unwrap()).unwrap().relay_hint.is_some(), "moved onto the relay");
+    desk.handle.send(CoreCommand::Shutdown).await.unwrap();
+    drop(stop_tx);
 }
 
 /// Regression: 再配一台, 重新开始 and Ctrl R send `pairing_start` straight from a finished session

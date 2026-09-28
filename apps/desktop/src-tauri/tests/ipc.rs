@@ -213,6 +213,22 @@ fn settings_and_identity_commands_change_state() {
     });
 }
 
+/// docs/pairing.md 「常开配对」: the switch persists, a session opens on its own (on the LAN host
+/// here, there is no relay), and switching it off closes the waiting one.
+#[test]
+fn always_on_pairing_opens_a_session_and_closes_it_when_off() {
+    with_running_app(|_, webview, rx| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert!(invoke(webview, "settings_set_pairing_always_on", json!({})).is_err(), "enabled is required");
+        assert_eq!(invoke(webview, "settings_set_pairing_always_on", json!({ "enabled": true })), Ok(Value::Null));
+        wait_event(rx, "settings", |e| e["type"] == "settings" && e["pairing_always_on"] == true);
+        let waiting = wait_state(webview, |s| s.pairing.state == PairingState::WaitingForPeer);
+        assert!(waiting.settings.pairing_always_on && waiting.pairing.code.is_some());
+        assert_eq!(invoke(webview, "settings_set_pairing_always_on", json!({ "enabled": false })), Ok(Value::Null));
+        wait_state(webview, |s| s.pairing.state == PairingState::Idle && !s.settings.pairing_always_on);
+    });
+}
+
 /// docs/pairing.md 「局域网发现」: the switch persists and comes back in `settings`; joining a
 /// device the LAN browse has not seen is the core's error; both need their argument.
 #[test]

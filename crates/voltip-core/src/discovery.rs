@@ -417,19 +417,26 @@ mod tests {
         a.announce(&ours).unwrap();
         let (tx, mut rx) = mpsc::channel(32);
         b.browse(tx).unwrap();
-        let seen = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            loop {
-                match rx.recv().await {
-                    Some(DiscoveryEvent::Seen(s)) if s.fingerprint == ours.fingerprint => return s,
-                    Some(_) => {}
-                    None => panic!("browse ended"),
+        async fn next(rx: &mut mpsc::Receiver<DiscoveryEvent>, pick: impl Fn(&Sighting) -> bool) -> Sighting {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                loop {
+                    match rx.recv().await {
+                        Some(DiscoveryEvent::Seen(s)) if pick(&s) => return s,
+                        Some(_) => {}
+                        None => panic!("browse ended"),
+                    }
                 }
-            }
-        })
-        .await
-        .expect("the other daemon's record within 10 s");
+            })
+            .await
+            .expect("the other daemon's record within 10 s")
+        }
+        let seen = next(&mut rx, |s| s.fingerprint == "0123456789ABCDEF").await;
         assert_eq!((seen.name.as_str(), seen.platform, seen.ticket.as_deref(), seen.on_relay), ("测试机", Platform::Linux, Some("voltip://pair?t=x"), true));
         assert!(seen.addrs.iter().all(|addr| addr.port() == 47999) && !seen.addrs.is_empty(), "{:?}", seen.addrs);
+        // A renewed pairing (always-on, docs/pairing.md 「常开配对」) reaches the browser as a new sighting.
+        a.announce(&Announcement { ticket: Some("voltip://pair?t=y".into()), ..ours.clone() }).unwrap();
+        let renewed = next(&mut rx, |s| s.ticket.as_deref() == Some("voltip://pair?t=y")).await;
+        assert_eq!(renewed.fingerprint, ours.fingerprint);
         a.withdraw();
         b.stop_browsing();
     }

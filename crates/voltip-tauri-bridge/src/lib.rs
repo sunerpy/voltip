@@ -92,6 +92,11 @@ pub enum UiCommand {
         /// On / off.
         enabled: bool,
     },
+    /// Keep a pairing open until turned off (docs/pairing.md 「常开配对」; desktop only).
+    SettingsSetPairingAlwaysOn {
+        /// On / off.
+        enabled: bool,
+    },
     /// Join the pairing a nearby device waits for (its LAN tag from `nearby`).
     PairingJoinNearby {
         /// `NearbyDevice.fingerprint`.
@@ -352,6 +357,7 @@ impl UiCommand {
             Self::PhoneTextSend { public_key, body, source } => CoreCommand::PhoneTextSend { to: parse_key(&public_key)?, body, source },
             Self::SentTextsClear => CoreCommand::SentTextsClear,
             Self::SettingsSetLanDiscovery { enabled } => CoreCommand::SetLanDiscovery(enabled),
+            Self::SettingsSetPairingAlwaysOn { enabled } => CoreCommand::SetPairingAlwaysOn(enabled),
             Self::PairingJoinNearby { fingerprint } => CoreCommand::PairingJoinNearby(fingerprint),
             Self::SettingsSetRelay { url, enabled } => CoreCommand::SetRelay { url, enabled },
             Self::SettingsSetTheme { theme, follow_system } => CoreCommand::SetTheme { theme, follow_system },

@@ -259,6 +259,10 @@ export function Devices() {
           relay={state.relay}
           ttlSecs={PAIRING_TTL_SECS}
           lanDiscovery={state.settings.lan_discovery}
+          alwaysOn={state.settings.pairing_always_on}
+          onAlwaysOn={(enabled) => {
+            invoke("settings_set_pairing_always_on", { enabled });
+          }}
           onStart={startPairing}
           onCancel={() => {
             invoke("pairing_cancel");

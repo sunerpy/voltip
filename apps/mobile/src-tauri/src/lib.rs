@@ -29,7 +29,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 76] = [
+pub const COMMANDS: [&str; 77] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -48,6 +48,7 @@ pub const COMMANDS: [&str; 76] = [
     "sent_texts_clear",
     "phone_clipboard_read",
     "settings_set_lan_discovery",
+    "settings_set_pairing_always_on",
     "pairing_join_nearby",
     "settings_set_relay",
     "settings_set_theme",
@@ -243,6 +244,13 @@ fn settings_set_lan_discovery<R: Runtime>(app: AppHandle<R>, bridge: tauri::Stat
     bridge.dispatch(UiCommand::SettingsSetLanDiscovery { enabled })?;
     multicast::hold_in_background(&app, enabled);
     Ok(())
+}
+
+/// Always-on pairing (docs/pairing.md 「常开配对」): keep a session waiting for a phone until
+/// turned off. The phone's core refuses it.
+#[tauri::command]
+fn settings_set_pairing_always_on(bridge: tauri::State<'_, Bridge>, enabled: bool) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetPairingAlwaysOn { enabled })?)
 }
 
 /// Join the pairing the nearby device `fingerprint` waits for (a tap under 「附近的电脑」).
@@ -705,6 +713,7 @@ pub fn build_app<R: Runtime>(
             sent_texts_clear,
             phone_clipboard_read,
             settings_set_lan_discovery,
+            settings_set_pairing_always_on,
             pairing_join_nearby,
             settings_set_relay,
             settings_set_theme,

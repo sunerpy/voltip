@@ -130,6 +130,10 @@ pub struct Settings {
     /// on by default, and in files written before it.
     #[serde(default = "default_true")]
     pub lan_discovery: bool,
+    /// Keep a pairing open on this desktop until turned off (docs/pairing.md 「常开配对」): a
+    /// session always waits for a phone and is renewed before it lapses. Off by default.
+    #[serde(default)]
+    pub pairing_always_on: bool,
     /// History recording and retention.
     #[serde(default)]
     pub history: HistorySettings,
@@ -173,6 +177,7 @@ impl Default for Settings {
             edit_hotkey: default_edit_hotkey(),
             solo_key: None,
             lan_discovery: true,
+            pairing_always_on: false,
             history: HistorySettings::default(),
             overlay: OverlayPlacement::Bottom,
         }
@@ -447,6 +452,13 @@ mod tests {
 
     /// docs/dictation.md §13.1: files written before the lone-key trigger read with it off; a
     /// chosen key round-trips under its wire name, an unknown one is refused.
+    #[test]
+    fn settings_written_before_always_on_pairing_read_it_off() {
+        let old: Settings = serde_json::from_str(r#"{"schema":1,"theme":"light","follow_system_theme":false,"relay_enabled":true}"#).unwrap();
+        assert!(!old.pairing_always_on && old.lan_discovery);
+        assert!(!Settings::default().pairing_always_on);
+    }
+
     #[test]
     fn settings_without_solo_key_read_it_off_and_a_chosen_key_round_trips() {
         let dir = tempfile::tempdir().unwrap();

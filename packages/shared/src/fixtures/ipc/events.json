@@ -31,6 +31,7 @@
       "edit_hotkey": "Ctrl+Alt+E",
       "solo_key": null,
       "lan_discovery": true,
+      "pairing_always_on": false,
       "history": {
         "enabled": true,
         "keep": 500
@@ -154,6 +155,7 @@
     "edit_hotkey": "Ctrl+Alt+E",
     "solo_key": "right_ctrl",
     "lan_discovery": true,
+    "pairing_always_on": true,
     "history": {
       "enabled": true,
       "keep": 200
@@ -2667,6 +2669,7 @@
     "edit_hotkey": null,
     "solo_key": "right_ctrl",
     "lan_discovery": true,
+    "pairing_always_on": true,
     "history": {
       "enabled": true,
       "keep": 200

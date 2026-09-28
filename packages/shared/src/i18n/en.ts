@@ -1138,6 +1138,12 @@ export const en: Messages = {
     scanNote: "Scanning hands the phone the session ticket; nothing to type.",
     lanNote:
       "Phones on this network can also pick this computer under “Computers nearby” on their pairing screen.",
+    alwaysOn: "Always-on pairing",
+    alwaysOnHelp:
+      "While on, this computer keeps waiting for a phone: the QR code renews before it expires and the next pairing opens after each one, until you turn it off. Every pairing still needs the safety code checked and confirmed here.",
+    alwaysOnOpen: "Always on · this code {remaining}",
+    alwaysOnIdle: "Always-on pairing is on; it starts once the relay or the LAN is available.",
+    alwaysOnNext: "Always-on pairing: the next pairing opens in a moment.",
     validity: "Valid for",
     warning: "Do not screenshot this QR code or show it on a shared screen.",
     regenerate: "Regenerate",

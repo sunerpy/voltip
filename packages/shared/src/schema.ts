@@ -323,6 +323,9 @@ export const settingsSchema = z.object({
   /** Announce this device on the LAN and browse for the others (docs/pairing.md 「局域网发现」);
    *  on by default and in an older `settings.json`. */
   lan_discovery: z.boolean().default(true),
+  /** Keep a pairing open on this desktop until turned off (docs/pairing.md 「常开配对」); off by
+   *  default and in an older `settings.json`. */
+  pairing_always_on: z.boolean().default(false),
   history: historySettingsSchema.default(() => ({ enabled: true, keep: 500 })),
   overlay: overlayPlacementSchema.default("bottom"),
 });
@@ -1616,6 +1619,8 @@ export interface CommandArgs {
   sent_texts_clear: undefined;
   /** LAN discovery (docs/pairing.md 「局域网发现」): announce this device and browse for others. */
   settings_set_lan_discovery: { enabled: boolean };
+  /** Always-on pairing (docs/pairing.md 「常开配对」; desktop only, the phone's core refuses). */
+  settings_set_pairing_always_on: { enabled: boolean };
   /** Join the pairing a nearby device waits for (`NearbyDevice.fingerprint`). */
   pairing_join_nearby: { fingerprint: string };
   /** Query (phone): the phone's clipboard text, `null` when it holds none. */
@@ -1753,6 +1758,7 @@ export function defaultSettings(): Settings {
     edit_hotkey: DEFAULT_EDIT_HOTKEY,
     solo_key: null,
     lan_discovery: true,
+    pairing_always_on: false,
     history: { enabled: true, keep: 500 },
     overlay: "bottom",
   };

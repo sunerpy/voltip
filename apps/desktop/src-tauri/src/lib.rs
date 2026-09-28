@@ -43,7 +43,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 76] = [
+pub const COMMANDS: [&str; 77] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -62,6 +62,7 @@ pub const COMMANDS: [&str; 76] = [
     "sent_texts_clear",
     "phone_clipboard_read",
     "settings_set_lan_discovery",
+    "settings_set_pairing_always_on",
     "pairing_join_nearby",
     "settings_set_relay",
     "settings_set_theme",
@@ -237,6 +238,13 @@ fn phone_text_send(_public_key: String, _body: String, _source: voltip_core::pho
 #[tauri::command]
 fn settings_set_lan_discovery(bridge: tauri::State<'_, Bridge>, enabled: bool) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::SettingsSetLanDiscovery { enabled })?)
+}
+
+/// Always-on pairing (docs/pairing.md 「常开配对」): keep a session waiting for a phone until
+/// turned off. The phone's core refuses it.
+#[tauri::command]
+fn settings_set_pairing_always_on(bridge: tauri::State<'_, Bridge>, enabled: bool) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetPairingAlwaysOn { enabled })?)
 }
 
 /// Join the pairing the nearby device `fingerprint` waits for (a tap under 「附近的电脑」).
@@ -850,6 +858,7 @@ pub fn build_app<R: Runtime>(
             sent_texts_clear,
             phone_clipboard_read,
             settings_set_lan_discovery,
+            settings_set_pairing_always_on,
             pairing_join_nearby,
             settings_set_relay,
             settings_set_theme,

@@ -19,6 +19,7 @@ import {
   Progress,
   QrCode,
   SafetyCodeView,
+  Toggle,
   useI18n,
 } from "@voltip/ui";
 import { copyText } from "../../app/shell-context";
@@ -31,6 +32,10 @@ export interface PairingPanelProps {
   ttlSecs: number;
   /** `Settings.lan_discovery`: phones on the LAN see the waiting session under 「附近的电脑」. */
   lanDiscovery?: boolean;
+  /** `Settings.pairing_always_on` (docs/pairing.md 「常开配对」): the core keeps a session waiting. */
+  alwaysOn?: boolean;
+  /** The always-on switch; no switch without it. */
+  onAlwaysOn?: (enabled: boolean) => void;
   onStart: () => void;
   onCancel: () => void;
   /** Reset the session and immediately start a new one (regenerate the QR code). */
@@ -50,6 +55,8 @@ export function PairingPanel({
   relay: relayStatus,
   ttlSecs,
   lanDiscovery = false,
+  alwaysOn = false,
+  onAlwaysOn,
   onStart,
   onCancel,
   onRegenerate,
@@ -65,7 +72,9 @@ export function PairingPanel({
   const headerRight =
     phase === "waiting_for_peer" ? (
       <LampText tone="ok" mono>
-        {t("pairing.windowOpen", { remaining: formatRemaining(remaining) })}
+        {alwaysOn
+          ? t("pairing.alwaysOnOpen", { remaining: formatRemaining(remaining) })
+          : t("pairing.windowOpen", { remaining: formatRemaining(remaining) })}
       </LampText>
     ) : (
       <LampText tone={label.tone === "neutral" ? "idle" : label.tone} mono>
@@ -91,6 +100,11 @@ export function PairingPanel({
           <p className="text-[13px] leading-5 text-fg-muted">
             {t("pairing.intro", { ttl: ttlSecs })}
           </p>
+          {alwaysOn && (
+            <LampText tone="idle" pulse>
+              {t("pairing.alwaysOnIdle")}
+            </LampText>
+          )}
           <Button variant="primary" onClick={onStart} icon="qr">
             {t("pairing.start")}
           </Button>
@@ -176,9 +190,12 @@ export function PairingPanel({
                     onClick={() => void copy(t("pairing.linkWhat"), pairing.ticket_uri ?? "")}>
                     {t("pairing.copyLink")}
                   </Button>
-                  <Button variant="ghost" onClick={onCancel}>
-                    {t("pairing.cancel")}
-                  </Button>
+                  {/* Always on, the switch below closes the window. */}
+                  {!alwaysOn && (
+                    <Button variant="ghost" onClick={onCancel}>
+                      {t("pairing.cancel")}
+                    </Button>
+                  )}
                 </>
               )}
               {phase === "expired" && (
@@ -242,6 +259,7 @@ export function PairingPanel({
             {t("pairing.trusted", { name: pairing.peer?.name ?? t("pairing.newDevice") })}
           </LampText>
           <p className="text-[13px] text-fg-muted">{t("pairing.trustedNote")}</p>
+          {alwaysOn && <p className="text-[12px] text-fg-muted">{t("pairing.alwaysOnNext")}</p>}
           <div className="flex gap-2">
             <Button variant="primary" onClick={onDone}>
               {t("pairing.done")}
@@ -263,9 +281,22 @@ export function PairingPanel({
                   ),
                 })}
           </LampText>
+          {alwaysOn && <p className="text-[12px] text-fg-muted">{t("pairing.alwaysOnNext")}</p>}
           <Button variant="primary" onClick={onStart} icon="refresh">
             {t("pairing.restart")}
           </Button>
+        </div>
+      )}
+
+      {onAlwaysOn !== undefined && (
+        <div
+          className="mt-4 flex items-start justify-between gap-3 border-t border-border pt-3"
+          data-testid="pairing-always-on">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-[13px] text-fg">{t("pairing.alwaysOn")}</span>
+            <span className="text-[11px] leading-4 text-fg-muted">{t("pairing.alwaysOnHelp")}</span>
+          </div>
+          <Toggle checked={alwaysOn} ariaLabel={t("pairing.alwaysOn")} onChange={onAlwaysOn} />
         </div>
       )}
 

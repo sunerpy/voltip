@@ -387,6 +387,56 @@ describe("Devices page", () => {
     expect(screen.queryByTestId("pairing-lan-note")).toBeNull();
   });
 
+  it("regression: always-on pairing keeps the window open: the switch drives settings, the code renews before it lapses, the switch replaces 取消, and turning it off closes the window", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    const { backend } = mount();
+    const panel = await screen.findByTestId("pairing-panel");
+    expect(panel).toHaveAttribute("data-phase", "idle");
+    await user.click(within(panel).getByRole("switch", { name: "常开配对" }));
+    await waitFor(() => {
+      expect(backend.peek().settings.pairing_always_on).toBe(true);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(panel).toHaveAttribute("data-phase", "waiting_for_peer");
+    expect(within(panel).getByText(/^常开 · 本码剩余 /)).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "取消" })).toBeNull();
+    const first = backend.peek().pairing.session_id;
+    // 120 s session, renewed with 10 s left: a new code, never the expired screen.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(110_000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(panel).toHaveAttribute("data-phase", "waiting_for_peer");
+    expect(backend.peek().pairing.session_id).not.toBe(first);
+    // A phone pairs; the safety code is still confirmed here, then the next window opens.
+    act(() => {
+      backend.simulatePeerJoined();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    await user.click(within(panel).getByRole("button", { name: "确认配对" }));
+    act(() => {
+      backend.simulatePeerConfirmed();
+    });
+    expect(panel).toHaveAttribute("data-phase", "trusted");
+    expect(within(panel).getByText("常开配对：稍后自动开始下一次配对。")).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_300);
+    });
+    expect(panel).toHaveAttribute("data-phase", "waiting_for_peer");
+    await user.click(within(panel).getByRole("switch", { name: "常开配对" }));
+    await waitFor(() => {
+      expect(panel).toHaveAttribute("data-phase", "idle");
+    });
+    expect(backend.peek().settings.pairing_always_on).toBe(false);
+    expect(within(panel).queryByText("常开配对已打开，连上中继或局域网后自动开始。")).toBeNull();
+  });
+
   it("sends a test message to an online device and forgets through the confirm dialog", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     const { backend } = mount();

@@ -274,6 +274,8 @@ fn settings() -> Settings {
         context_sharing: ContextSharing { app_name: false, window_title: true },
         // docs/dictation.md §13.1: a lone-key trigger next to the chord.
         solo_key: Some(SoloKey::RightCtrl),
+        // docs/pairing.md 「常开配对」: on, away from its default.
+        pairing_always_on: true,
         ..Settings::default()
     }
 }
@@ -1312,6 +1314,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::PhoneTextSend { .. } => "PhoneTextSend",
         UiCommand::SentTextsClear => "SentTextsClear",
         UiCommand::SettingsSetLanDiscovery { .. } => "SettingsSetLanDiscovery",
+        UiCommand::SettingsSetPairingAlwaysOn { .. } => "SettingsSetPairingAlwaysOn",
         UiCommand::PairingJoinNearby { .. } => "PairingJoinNearby",
         UiCommand::DevicesRefresh => "DevicesRefresh",
         UiCommand::ConnectivityCheck => "ConnectivityCheck",
@@ -1379,6 +1382,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         // LAN discovery (docs/pairing.md): the switch, and a tap on a nearby pairing desktop.
         ("settings_set_lan_discovery", json!({ "enabled": false }), "SettingsSetLanDiscovery"),
         ("pairing_join_nearby", json!({ "fingerprint": "A7C4198E3DF26109" }), "PairingJoinNearby"),
+        // Always-on pairing (docs/pairing.md 「常开配对」).
+        ("settings_set_pairing_always_on", json!({ "enabled": true }), "SettingsSetPairingAlwaysOn"),
         ("devices_refresh", Value::Null, "DevicesRefresh"),
         ("connectivity_check", Value::Null, "ConnectivityCheck"),
         ("dictation_start", Value::Null, "DictationStart"),
@@ -1802,6 +1807,7 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "PhoneTextSend",
         "SentTextsClear",
         "SettingsSetLanDiscovery",
+        "SettingsSetPairingAlwaysOn",
         "PairingJoinNearby",
         "DevicesRefresh",
         "ConnectivityCheck",

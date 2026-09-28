@@ -28,12 +28,14 @@ const POLL: Duration = Duration::from_millis(20);
 const DEVICE_NAME: &str = "Phone Test";
 const NOT_FOUND: &str = "not found";
 
-/// Offline core: relay disabled, LAN host on an ephemeral loopback port.
+/// Offline core: relay disabled, LAN host on an ephemeral loopback port, a phone as in
+/// `production_config`.
 fn offline_config(dir: &Path) -> CoreConfig {
     SettingsStore::new(dir).save(&Settings { relay_enabled: false, ..Settings::default() }).unwrap();
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = DEVICE_NAME.into();
     cfg.direct_bind = "127.0.0.1:0".parse().unwrap();
+    cfg.accepts_phone_takes = false;
     cfg
 }
 
@@ -190,6 +192,17 @@ fn settings_and_identity_commands_change_state() {
         for cmd in ["pairing_confirm", "pairing_reject"] {
             assert_eq!(invoke(webview, cmd, json!({})), Ok(Value::Null), "{cmd}");
         }
+    });
+}
+
+/// docs/pairing.md 「常开配对」: only a desktop keeps a pairing open; the phone's core says so.
+#[test]
+fn always_on_pairing_is_refused_on_the_phone() {
+    with_running_app(|_, webview, rx| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(invoke(webview, "settings_set_pairing_always_on", json!({ "enabled": true })), Ok(Value::Null));
+        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("常开配对只在电脑上可用")));
+        assert!(!core_state(webview).settings.pairing_always_on);
     });
 }
 

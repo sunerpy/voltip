@@ -25,6 +25,7 @@ import {
   sceneDraftSchema,
   providerIdSchema,
   serviceKindSchema,
+  settingsSchema,
   soloKeySchema,
   PHONE_TEXT_SOURCES,
   themeIdSchema,
@@ -89,6 +90,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   phone_text_send: null,
   sent_texts_clear: null,
   settings_set_lan_discovery: null,
+  settings_set_pairing_always_on: null,
   pairing_join_nearby: null,
   settings_set_relay: null,
   settings_set_theme: null,
@@ -157,6 +159,7 @@ const argSchemas = {
     .object({ publicKey: hexKeySchema, body: z.string(), source: z.enum(PHONE_TEXT_SOURCES) })
     .strict(),
   settings_set_lan_discovery: z.object({ enabled: z.boolean() }).strict(),
+  settings_set_pairing_always_on: z.object({ enabled: z.boolean() }).strict(),
   pairing_join_nearby: z.object({ fingerprint: z.string() }).strict(),
   settings_set_relay: z.object({ url: z.string().nullable(), enabled: z.boolean() }),
   settings_set_theme: z.object({ theme: themeIdSchema, followSystem: z.boolean() }),
@@ -254,6 +257,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.phone_text_send.parse(args));
     case "settings_set_lan_discovery":
       return backend.invoke(name, argSchemas.settings_set_lan_discovery.parse(args));
+    case "settings_set_pairing_always_on":
+      return backend.invoke(name, argSchemas.settings_set_pairing_always_on.parse(args));
     case "pairing_join_nearby":
       return backend.invoke(name, argSchemas.pairing_join_nearby.parse(args));
     case "phone_take_stop":
@@ -373,6 +378,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       edit_hotkey: "Ctrl+Alt+E",
       solo_key: "right_ctrl",
       lan_discovery: true,
+      pairing_always_on: true,
       context_sharing: { app_name: false, window_title: true },
       history: { enabled: true, keep: 200 },
       overlay: "top",
@@ -660,6 +666,15 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(argSchemas.pairing_join_nearby.parse(join?.args).fingerprint).toBe("A7C4198E3DF26109");
     const off = commands.find((c) => c.name === "settings_set_lan_discovery");
     expect(argSchemas.settings_set_lan_discovery.parse(off?.args).enabled).toBe(false);
+  });
+
+  it("regression: always-on pairing survives parsing, and an older settings file reads it off", () => {
+    expect(uiStateSchema.parse(state).settings.pairing_always_on).toBe(true);
+    const settings = z.record(z.string(), z.unknown()).parse(uiStateSchema.parse(state).settings);
+    const { pairing_always_on: _gone, ...older } = settings;
+    expect(settingsSchema.parse(older).pairing_always_on).toBe(false);
+    const on = commands.find((c) => c.name === "settings_set_pairing_always_on");
+    expect(argSchemas.settings_set_pairing_always_on.parse(on?.args).enabled).toBe(true);
   });
 
   it("regression: section 20.6 the phone's sent texts and a history entry's origin survive parsing", () => {

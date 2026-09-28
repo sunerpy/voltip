@@ -46,6 +46,7 @@
     "edit_hotkey": "Ctrl+Alt+E",
     "solo_key": "right_ctrl",
     "lan_discovery": true,
+    "pairing_always_on": true,
     "history": {
       "enabled": true,
       "keep": 200

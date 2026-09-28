@@ -21,6 +21,7 @@ Idle → CreatingSession → WaitingForPeer → KeyExchange → AwaitingVerifica
 - 状态机是 **sans-IO**：`step(event) -> Vec<Action>`，Action 包括 `SendRelay(frame)`、`SendPeer(bytes)`、`ShowSafetyCode`、`StoreTrusted`、`Emit(ui_event)`；所有网络/时间由调用方注入（`now: Instant`），因此可以在单测里穷举路径。
 - 一次性：`session_id`、`code`、`nonce` 在进入 `KeyExchange` 时从 `WaitingForPeer` 的可接受集合中移除；重复 `PeerJoined` → `Failed(replay)`。
 - 过期：`Tick(now)` 驱动；过期后收到任何对端消息一律忽略并回 `error{session_expired}`。
+- 从终态直接重来：`pairing_start`（电脑的「再配一台」「重新开始」、Ctrl R）和手机的加入遇到已结束的会话（Trusted / Expired / Rejected / Failed）时，核心先替它 `Reset`，不用界面先发 `pairing_reset`。
 
 ## 手机端（Responder）
 
@@ -45,6 +46,16 @@ LAN 主机在跑、「局域网发现」开着（`Settings.lan_discovery`，默�
 - **点一下配对**：手机配对页的「附近的电脑」列出还没配对的电脑，等待配对的排在前面。点「配对」（`pairing_join_nearby { fingerprint }`）后，会话在中继上等（`r=1`）就经手机自己的中继加入，和扫码一样；否则直连它被看到的 IPv4 地址。之后照常核对安全码：同一局域网里谁都能看到并加入这个会话，就像谁都能看到屏幕上的二维码，决定信任谁的是安全码。
 - **找回已配对的设备**：看到已配对设备时，它此刻的地址排在存下的地址之前拨号，退避重置。地址只是提示：Noise 握手照样验证身份密钥，只有认证过的对方自己发来的 `device_info_update` 才会写进记录。
 - **记录里没有的**：票据不带中继地址，所以记录总能放进一条 TXT 字符串（250 字节），中继地址也不在局域网里广播。公布的只有名称、平台和指纹。关掉开关就撤回公布、停止浏览，`UiState.nearby` 清空，只能扫码或输码配对。
+
+## 常开配对
+
+电脑「手机」页配对面板里的「常开配对」开着时（`Settings.pairing_always_on`，默认关，命令 `settings_set_pairing_always_on`；只在电脑上可用，手机的核心拒绝），这台电脑一直有一个配对会话在等手机（`voltip_core` 的 `runtime/always_on.rs`，每个 tick 检查一次）：
+
+- 打开开关或开着启动时马上开一个会话。中继还没连上就先开在 LAN 主机上，中继连上后换成中继上的会话，不在同一局域网的手机也能扫码或输码加入。
+- 等待中的会话剩 10 秒时换成新的，界面上不会出现「已过期」，手机拿到的码至少还有 10 秒。
+- 一次配对结束（已信任、被拒绝、失败）后，结果在屏幕上停 4 秒，再开下一个会话；开不了（没有中继也没有 LAN 主机）就每 5 秒再试一次，不弹错误。
+- 每次配对照样要在电脑上核对安全码并确认：常开只是让窗口一直开着，不会自动信任谁。面板上没有「取消」，由开关关闭窗口。
+- 关掉开关时，还没人加入的会话随即关闭；已经有手机加入的配对照常走完。
 
 ## Relay 侧防护
 

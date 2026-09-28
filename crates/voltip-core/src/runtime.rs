@@ -39,6 +39,7 @@ use crate::view::{DeviceConnection, DeviceView, RelaySource, RelayStatus};
 use crate::vocabulary::{DictionaryDraft, DictionaryEntry, DictionaryStore, EntrySource, ImportMode, ReplacementRule, RuleDraft, RuleStore, Vocabulary};
 use crate::{CoreError, is_initiator, rendezvous_channel};
 
+mod always_on;
 mod check;
 mod nearby;
 mod take_codec;
@@ -220,6 +221,8 @@ pub enum CoreCommand {
     /// Announce this device on the LAN and browse for the others (persisted,
     /// `Settings.lan_discovery`).
     SetLanDiscovery(bool),
+    /// Keep a pairing open until turned off (persisted, `Settings.pairing_always_on`; desktop only).
+    SetPairingAlwaysOn(bool),
     /// Join the pairing the nearby device `fingerprint` (its LAN tag) waits for.
     PairingJoinNearby(String),
     /// Send text to an online trusted device.
@@ -574,6 +577,7 @@ impl AppCore {
             check_tx,
             disc_tx,
             lan: nearby::Lan::default(),
+            always_on_at: None,
         };
         rt.connect_relay()?;
         let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, disc_rx };
@@ -810,6 +814,8 @@ struct Runtime {
     disc_tx: mpsc::Sender<crate::discovery::DiscoveryEvent>,
     /// What the LAN browse sees, and what this device announces.
     lan: nearby::Lan,
+    /// Always-on pairing (docs/pairing.md 「常开配对」): when the next session opens.
+    always_on_at: Option<Instant>,
 }
 
 impl Runtime {
@@ -1072,6 +1078,7 @@ impl Runtime {
                 Ok(())
             }
             CoreCommand::SetLanDiscovery(enabled) => self.set_lan_discovery(enabled),
+            CoreCommand::SetPairingAlwaysOn(enabled) => self.set_pairing_always_on(enabled).await,
             CoreCommand::PairingJoinNearby(fingerprint) => self.join_nearby(&fingerprint).await,
             CoreCommand::PhoneTakeStop => self.phone_take_stop(),
             CoreCommand::PhoneTakeCancel => self.phone_take_cancel(),
@@ -1820,14 +1827,19 @@ impl Runtime {
 
     // ---------------- pairing ----------------
 
-    /// The state of the pairing this device runs, if any.
-    fn pairing_state(&self) -> Option<PairingState> {
+    /// The pairing this device runs, if any.
+    fn pairing_snapshot(&self) -> Option<Snapshot> {
         let now = Self::now();
         match &self.pairing {
             Pairing::None => None,
-            Pairing::Initiator(i) => Some(i.snapshot(now).state),
-            Pairing::Responder(r) => Some(r.snapshot(now).state),
+            Pairing::Initiator(i) => Some(i.snapshot(now)),
+            Pairing::Responder(r) => Some(r.snapshot(now)),
         }
+    }
+
+    /// The state of the pairing this device runs, if any.
+    fn pairing_state(&self) -> Option<PairingState> {
+        self.pairing_snapshot().map(|s| s.state)
     }
 
     /// A finished pairing (trusted, expired, rejected, failed) is cleared before a new one starts:
@@ -2547,14 +2559,14 @@ impl Runtime {
         self.check_takes();
         self.check_texts();
         self.check_deadline();
-        if matches!(self.pairing, Pairing::None) {
-            return;
+        if !matches!(self.pairing, Pairing::None) {
+            match self.step_pairing(Event::Tick).await {
+                Ok(()) => {}
+                Err(CoreError::Pairing(voltip_pairing::PairingError::InvalidTransition { .. })) => {}
+                Err(e) => self.emit(CoreEvent::Error(e.to_string())),
+            }
         }
-        match self.step_pairing(Event::Tick).await {
-            Ok(()) => {}
-            Err(CoreError::Pairing(voltip_pairing::PairingError::InvalidTransition { .. })) => {}
-            Err(e) => self.emit(CoreEvent::Error(e.to_string())),
-        }
+        self.keep_pairing_open().await;
     }
 
     /// Direct first: for every trusted device with known LAN endpoints and no live LAN path,
