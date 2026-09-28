@@ -594,15 +594,15 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
 
 | 命令 | 参数 | 返回 |
 |---|---|---|
-| `permissions_status` | — | `{ platform: "macos"\|"windows"\|"linux"\|"other", microphone, accessibility, input_monitoring }`，每项 `"granted"\|"denied"\|"not_determined"\|"not_applicable"` |
-| `permissions_request` | `{ permission: "microphone"\|"accessibility"\|"input_monitoring" }` | `null`（结果看下一次 `permissions_status`） |
+| `permissions_status` | — | `{ platform: "macos"\|"windows"\|"linux"\|"other", microphone, accessibility }`，每项 `"granted"\|"denied"\|"not_determined"\|"not_applicable"` |
+| `permissions_request` | `{ permission: "microphone"\|"accessibility" }` | `null`（结果看下一次 `permissions_status`） |
 | `inject_preflight` | — | §15.3 |
 
-- macOS：由 Rust 直接调用 `tauri-plugin-macos-permissions` 2.3.0 的函数（插件的 webview 命令不注册、不授予 capability）。麦克风看 `AVCaptureDevice authorizationStatus == authorized`，辅助功能看 `AXIsProcessTrusted`，输入监控看 `IOHIDCheckAccess`。三者都只有布尔值，`false` 报 `denied`：无法区分「从未询问」，宁可请求也不假定。请求：麦克风调 `requestAccessForMediaType:`（从未询问才弹窗，已拒绝时系统不再弹，需去系统设置）；辅助功能调 `AXIsProcessTrustedWithOptions(prompt)`；输入监控打开 `Privacy_ListenEvent` 面板。
+- macOS：由 Rust 直接调用 `tauri-plugin-macos-permissions` 2.3.0 的函数（插件的 webview 命令不注册、不授予 capability）。麦克风看 `AVCaptureDevice authorizationStatus == authorized`，辅助功能看 `AXIsProcessTrusted`。两者都只有布尔值，`false` 报 `denied`：无法区分「从未询问」，宁可请求也不假定。请求：麦克风调 `requestAccessForMediaType:`（从未询问才弹窗，已拒绝时系统不再弹，需去系统设置）；辅助功能调 `AXIsProcessTrustedWithOptions(prompt)`。不查也不请求「输入监控」：组合键热键是注册的 Carbon 热键，单键触发（§13.1）用主动 `CGEventTap`，靠的是同一个辅助功能权限；只监听的 tap 才需要输入监控，而它拦不住鼠标侧键。
 - Windows：只有麦克风受控，读 CapabilityAccessManager ConsentStore（优先级见 §15.3）；请求打开 `ms-settings:privacy-microphone`（Windows 不向桌面应用弹同意框）。另外两项 `not_applicable`。
 - Linux / 手机：全部 `not_applicable`，请求为 no-op。
 
-判定（`onboarding_gate`，TS `onboardingGate` 逐行镜像）：麦克风只在 `denied` 时阻塞（`not_determined` 时系统会在首次录音时询问）；辅助功能 `denied` / `not_determined` 都阻塞（macOS 不会自己弹）；输入监控从不阻塞（只影响「单独按住修饰键」）。轮询（`PollPlan::DEFAULT`，TS `PERMISSION_POLL_INTERVAL_MS = 1000` / `PERMISSION_POLL_MAX_ERRORS = 3`）：第 1 步在屏时每秒一读；成功清零计数；连续 3 次失败停止并显示错误横幅；「重新检查」或一次成功的「请求授权」立即再读并恢复轮询；离开该步即停；读数不变时不重绘。界面：三行表格，`denied` / `not_determined` 行有「请求授权」；阻塞集合非空时「继续」禁用，提示先说麦克风再说辅助功能；全 `not_applicable` 时显示「{平台} 上没有需要授权的项目」且可继续；「稍后设置」始终可用。
+判定（`onboarding_gate`，TS `onboardingGate` 逐行镜像）：麦克风只在 `denied` 时阻塞（`not_determined` 时系统会在首次录音时询问）；辅助功能 `denied` / `not_determined` 都阻塞（macOS 不会自己弹）。轮询（`PollPlan::DEFAULT`，TS `PERMISSION_POLL_INTERVAL_MS = 1000` / `PERMISSION_POLL_MAX_ERRORS = 3`）：第 1 步在屏时每秒一读；成功清零计数；连续 3 次失败停止并显示错误横幅；「重新检查」或一次成功的「请求授权」立即再读并恢复轮询；离开该步即停；读数不变时不重绘。界面：两行表格，`denied` / `not_determined` 行有「请求授权」；阻塞集合非空时「继续」禁用，提示先说麦克风再说辅助功能；全 `not_applicable` 时显示「{平台} 上没有需要授权的项目」且可继续；「稍后设置」始终可用。
 
 ### 15.2 macOS
 
