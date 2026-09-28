@@ -1820,7 +1820,27 @@ impl Runtime {
 
     // ---------------- pairing ----------------
 
+    /// The state of the pairing this device runs, if any.
+    fn pairing_state(&self) -> Option<PairingState> {
+        let now = Self::now();
+        match &self.pairing {
+            Pairing::None => None,
+            Pairing::Initiator(i) => Some(i.snapshot(now).state),
+            Pairing::Responder(r) => Some(r.snapshot(now).state),
+        }
+    }
+
+    /// A finished pairing (trusted, expired, rejected, failed) is cleared before a new one starts:
+    /// 再配一台, 重新开始 and a code typed over a failed one come straight from its end screen.
+    async fn clear_finished_pairing(&mut self) -> Result<(), CoreError> {
+        if self.pairing_state().is_some_and(PairingState::is_terminal) {
+            self.reset_pairing().await?;
+        }
+        Ok(())
+    }
+
     async fn start_pairing(&mut self) -> Result<(), CoreError> {
+        self.clear_finished_pairing().await?;
         if !matches!(self.pairing, Pairing::None) {
             return Err(CoreError::Invalid("pairing already in progress; reset first".into()));
         }
@@ -1857,6 +1877,7 @@ impl Runtime {
     }
 
     async fn join(&mut self, spec: JoinSpec) -> Result<(), CoreError> {
+        self.clear_finished_pairing().await?;
         if !matches!(self.pairing, Pairing::None) {
             return Err(CoreError::Invalid("pairing already in progress; reset first".into()));
         }

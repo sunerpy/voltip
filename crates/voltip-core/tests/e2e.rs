@@ -498,6 +498,33 @@ async fn regression_lan_discovery_pairs_by_tap_and_finds_a_trusted_device_on_its
     phone.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 
+/// Regression: 再配一台, 重新开始 and Ctrl R send `pairing_start` straight from a finished session
+/// (trusted, rejected), and the phone may join over a finished one; the core used to refuse with
+/// "pairing already in progress; reset first".
+#[tokio::test]
+async fn regression_a_new_pairing_starts_straight_from_a_finished_one() {
+    let (url, _stop, _relay) = relay().await;
+    let mut desk = node("Desk", Some(&url));
+    let mut phone = node("Phone", Some(&url));
+    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    pair_by_code(&mut desk, &mut phone).await;
+    // 再配一台 on the trusted screen.
+    desk.handle.send(CoreCommand::StartPairing).await.unwrap();
+    let code = wait_pairing(&mut desk, PairingState::WaitingForPeer).await.code.unwrap();
+    // The phone still shows its trusted screen and joins over it.
+    phone.handle.send(CoreCommand::JoinWithCode(code)).await.unwrap();
+    wait_pairing(&mut desk, PairingState::AwaitingVerification).await;
+    wait_pairing(&mut phone, PairingState::AwaitingVerification).await;
+    desk.handle.send(CoreCommand::RejectPairing).await.unwrap();
+    wait_pairing(&mut desk, PairingState::Rejected).await;
+    // 重新开始 on the rejected screen.
+    desk.handle.send(CoreCommand::StartPairing).await.unwrap();
+    wait_pairing(&mut desk, PairingState::WaitingForPeer).await;
+    desk.handle.send(CoreCommand::Shutdown).await.unwrap();
+    phone.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
 /// Regression (docs/pairing.md 「局域网发现」): with a relay on both sides, as shipped, the pairing
 /// desktop still shows under 「附近的电脑」 and a tap pairs it (on the relay, where its session
 /// waits, as after a scan). The announced ticket leaves the relay out, so the record fits one TXT
