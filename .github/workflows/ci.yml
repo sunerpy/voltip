@@ -865,6 +865,14 @@ jobs:
         # GGUF, ggml built for Apple silicon), as the Windows job does.
         run: ./scripts/smoke-native-cli.ps1 -Binary "$env:APP/Contents/MacOS/voltip-desktop" -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-macos-${{ matrix.arch }}
 
+      # The desktop around the app (scripts/smoke-tray-macos.sh): the title bar's left end keeps
+      # the brand clear of the traffic lights (user feedback 2026-09-29), and the menu bar item, its
+      # menu and every entry work. A CI build has no update source, so no Check for Updates.
+      - name: The traffic lights, the menu bar item and its entries on the desktop
+        env:
+          VOLTIP_NO_UPDATER: "1"
+        run: scripts/smoke-tray-macos.sh "$APP" "smoke-tray-macos-${{ matrix.arch }}"
+
       - name: Archive the app
         run: ditto -c -k --keepParent "$APP" "dist-macos-${{ matrix.arch }}.zip"
 
@@ -878,6 +886,9 @@ jobs:
             Voltip_*_${{ matrix.arch }}.dmg
             smoke-native-macos-${{ matrix.arch }}/*.txt
             smoke-native-macos-${{ matrix.arch }}/*.out
+            smoke-tray-macos-${{ matrix.arch }}/*.png
+            smoke-tray-macos-${{ matrix.arch }}/*.txt
+            smoke-tray-macos-${{ matrix.arch }}/*.log
           if-no-files-found: warn
           retention-days: 7
 

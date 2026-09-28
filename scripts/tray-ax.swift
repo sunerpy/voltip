@@ -9,8 +9,13 @@
 //   tray-ax <pid> close <title>      press the close button of the window titled <title>
 //   tray-ax <pid> dialog <name>      exit 0 when a window holds a dialog named <name>
 //                                    (a webview's role=dialog: AXApplicationDialog)
+//   tray-ax <pid> chrome <title>     "x y width height zoom-right" of the window titled <title>:
+//                                    its frame and where its green (zoom) button ends (points)
 //   tray-ax ink <png>                "ink=<share> blue=<share>": the pixels that stand out from
 //                                    the image's median brightness, and the saturated blue ones
+//   tray-ax gap <png> <x>            "gap=<px>": from column <x> of a picture of the title bar's
+//                                    left end, how far right the first drawn pixel of the
+//                                    window's content is (the traffic lights end at <x>)
 import ApplicationServices
 import Foundation
 import ImageIO
@@ -50,18 +55,57 @@ func wait<T>(_ seconds: Double, _ what: String, _ probe: () -> T?) -> T {
 
 let args = CommandLine.arguments
 
-// A template status item is drawn in one colour (white on a dark menu bar, black on a light one):
-// its strokes are the pixels far from the median brightness. A foreign colour icon shows as blue.
-if args.count == 3 && args[1] == "ink" {
-    guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: args[2]) as CFURL, nil),
+/// The RGBA pixels of a PNG, row-major from the top.
+func rgba(_ file: String) -> (pixels: [UInt8], width: Int, height: Int) {
+    guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
           let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
-    else { fail("cannot read \(args[2])") }
+    else { fail("cannot read \(file)") }
     let width = image.width, height = image.height
     var pixels = [UInt8](repeating: 0, count: width * height * 4)
     guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
                                   space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-    else { fail("cannot draw \(args[2])") }
+    else { fail("cannot draw \(file)") }
     context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    return (pixels, width, height)
+}
+
+// Past the traffic lights, the first column in the strip's middle band (a quarter to three
+// quarters of its height) that holds a pixel unlike the bar's background, taken from the four
+// columns right after <x>, where nothing is drawn in either layout.
+if args.count == 4 && args[1] == "gap", let from = Int(args[3]) {
+    let (pixels, width, height) = rgba(args[2])
+    guard from + 4 < width else { fail("column \(from) is past the picture (\(width) px)") }
+    let rows = (height / 4)..<(height * 3 / 4)
+    func px(_ x: Int, _ y: Int) -> (Double, Double, Double) {
+        let i = (y * width + x) * 4
+        return (Double(pixels[i]), Double(pixels[i + 1]), Double(pixels[i + 2]))
+    }
+    var background = (0.0, 0.0, 0.0)
+    var samples = 0.0
+    for x in (from + 1)...(from + 4) {
+        for y in rows {
+            let p = px(x, y)
+            background = (background.0 + p.0, background.1 + p.1, background.2 + p.2)
+            samples += 1
+        }
+    }
+    background = (background.0 / samples, background.1 / samples, background.2 / samples)
+    for x in (from + 1)..<width {
+        for y in rows {
+            let p = px(x, y)
+            if abs(p.0 - background.0) + abs(p.1 - background.1) + abs(p.2 - background.2) > 60 {
+                print("gap=\(x - from)")
+                exit(0)
+            }
+        }
+    }
+    fail("nothing drawn after column \(from)")
+}
+
+// A template status item is drawn in one colour (white on a dark menu bar, black on a light one):
+// its strokes are the pixels far from the median brightness. A foreign colour icon shows as blue.
+if args.count == 3 && args[1] == "ink" {
+    let (pixels, width, height) = rgba(args[2])
     var luma = [Double]()
     var blue = 0
     for i in stride(from: 0, to: pixels.count, by: 4) {
@@ -77,7 +121,7 @@ if args.count == 3 && args[1] == "ink" {
 }
 
 guard args.count >= 3, let pid = pid_t(args[1]) else {
-    fail("usage: tray-ax <pid> frame|menu|press <title>|windows|close <title>|dialog <name>")
+    fail("usage: tray-ax <pid> frame|menu|press <title>|windows|close <title>|chrome <title>|dialog <name>")
 }
 guard AXIsProcessTrusted() else { fail("this binary has no Accessibility permission") }
 let app = AXUIElementCreateApplication(pid)
@@ -110,6 +154,16 @@ func windows() -> [AXUIElement] {
     (value(app, kAXWindowsAttribute) as? [AXUIElement]) ?? []
 }
 
+/// An element's frame in whole points, top-left origin.
+func frame(_ of: AXUIElement) -> (Int, Int, Int, Int) {
+    var point = CGPoint.zero
+    var size = CGSize.zero
+    guard let position = value(of, kAXPositionAttribute), let extent = value(of, kAXSizeAttribute),
+          AXValueGetValue(position as! AXValue, .cgPoint, &point), AXValueGetValue(extent as! AXValue, .cgSize, &size)
+    else { fail("the element has no frame") }
+    return (Int(point.x), Int(point.y), Int(size.width), Int(size.height))
+}
+
 /// Breadth-first through `root`'s tree (bounded) for an element `match` accepts.
 func find(_ root: AXUIElement, _ match: (AXUIElement) -> Bool) -> AXUIElement? {
     var queue = [root]
@@ -125,13 +179,8 @@ func find(_ root: AXUIElement, _ match: (AXUIElement) -> Bool) -> AXUIElement? {
 
 switch args[2] {
 case "frame":
-    let item = statusItem()
-    var point = CGPoint.zero
-    var size = CGSize.zero
-    guard let position = value(item, kAXPositionAttribute), let extent = value(item, kAXSizeAttribute),
-          AXValueGetValue(position as! AXValue, .cgPoint, &point), AXValueGetValue(extent as! AXValue, .cgSize, &size)
-    else { fail("the status item has no frame") }
-    print("\(Int(point.x)) \(Int(point.y)) \(Int(size.width)) \(Int(size.height))")
+    let (x, y, w, h) = frame(statusItem())
+    print("\(x) \(y) \(w) \(h)")
 case "menu":
     let entries = openMenu()
     for entry in entries { print(text(entry, kAXTitleAttribute)) }
@@ -148,6 +197,14 @@ case "press":
     guard chosen == .success else { fail("choosing '\(args[3])' failed (\(chosen.rawValue))") }
 case "windows":
     for window in windows() { print(text(window, kAXTitleAttribute)) }
+case "chrome":
+    guard args.count == 4 else { fail("chrome needs a title") }
+    guard let window = windows().first(where: { text($0, kAXTitleAttribute) == args[3] }),
+          let zoom = element(window, kAXZoomButtonAttribute)
+    else { fail("no window '\(args[3])' with a zoom button") }
+    let (wx, wy, ww, wh) = frame(window)
+    let (zx, _, zw, _) = frame(zoom)
+    print("\(wx) \(wy) \(ww) \(wh) \(zx + zw)")
 case "close":
     guard args.count == 4 else { fail("close needs a title") }
     guard let window = windows().first(where: { text($0, kAXTitleAttribute) == args[3] }),
