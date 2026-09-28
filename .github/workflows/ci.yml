@@ -451,7 +451,13 @@ jobs:
           shared-key: ci-hooks-windows
           cache-on-failure: true
 
+      # Built first and on its own, so a hang in the real test is told apart from a slow build, and
+      # the test step has a timeout short enough to leave its log readable.
+      - name: Build the hook tests
+        run: cargo test -p voltip-hooks --lib --no-run
+
       - name: Real hooks (cargo test -p voltip-hooks -- --ignored)
+        timeout-minutes: 5
         run: cargo test -p voltip-hooks --lib -- --ignored --test-threads=1 --nocapture
 
   smoke-desktop:

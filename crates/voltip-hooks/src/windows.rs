@@ -206,8 +206,8 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
 }
 
 /// Real hook tests (`#[ignore]`d: they need an interactive desktop session, where SendInput
-/// reaches the low-level hooks). Run them on the Windows machine with
-/// `cargo test -p voltip-desktop --lib solo_key -- --ignored`.
+/// reaches the low-level hooks). CI runs them in the `hooks-windows` job; by hand:
+/// `cargo test -p voltip-hooks --lib -- --ignored --nocapture`.
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
@@ -246,6 +246,10 @@ mod tests {
         assert_eq!(sent as usize, inputs.len(), "SendInput needs an unlocked interactive desktop");
     }
 
+    /// VK_F13: a key nothing on the runner's desktop reacts to. Ctrl + C would reach the focused
+    /// console, which may be the one running this test.
+    const CHORD_VK: u16 = 0x7C;
+
     fn next(rx: &mpsc::Receiver<SoloEdge>) -> Option<SoloEdge> {
         rx.recv_timeout(Duration::from_secs(3)).ok()
     }
@@ -255,17 +259,21 @@ mod tests {
     fn real_hooks_report_a_lone_modifier_its_chord_and_a_side_button() {
         let (tx, rx) = mpsc::channel();
         let backend = start(SoloKey::RightCtrl, tx, true).expect("hooks");
+        eprintln!("hooks installed; Right Ctrl alone");
         send(&[key(0xA3, false)]);
         assert_eq!(next(&rx), Some(SoloEdge::Press));
         send(&[key(0xA3, true)]);
         assert_eq!(next(&rx), Some(SoloEdge::Release));
-        // Right Ctrl + C: pressed, then chorded; the mask key tapped at the press is not a chord.
-        send(&[key(0xA3, false), key(u16::from(b'C'), false), key(u16::from(b'C'), true), key(0xA3, true)]);
+        eprintln!("Right Ctrl + F13");
+        // Right Ctrl + another key: pressed, then chorded; the mask key tapped at the press is not
+        // a chord.
+        send(&[key(0xA3, false), key(CHORD_VK, false), key(CHORD_VK, true), key(0xA3, true)]);
         assert_eq!(next(&rx), Some(SoloEdge::Press));
         assert_eq!(next(&rx), Some(SoloEdge::Chorded));
         assert_eq!(rx.recv_timeout(Duration::from_millis(300)).ok(), None);
         backend.stop();
 
+        eprintln!("the back button");
         let (tx, rx) = mpsc::channel();
         let backend = start(SoloKey::MouseBack, tx, true).expect("hooks");
         send(&[xbutton(XBUTTON1, false), xbutton(XBUTTON1, true)]);
@@ -273,6 +281,7 @@ mod tests {
         assert_eq!(next(&rx), Some(SoloEdge::Release));
         backend.stop();
 
+        eprintln!("injected input without synthetic");
         // Injected input does not count without `synthetic`.
         let (tx, rx) = mpsc::channel();
         let backend = start(SoloKey::RightCtrl, tx, false).expect("hooks");

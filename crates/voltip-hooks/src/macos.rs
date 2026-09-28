@@ -169,10 +169,11 @@ mod tests {
         event.post(CGEventTapLocation::HID);
     }
 
-    /// `kVK_ANSI_C` down and up.
-    fn key_c() {
+    /// `kVK_F13` down and up: a key nothing on the runner reacts to (Control + C would interrupt
+    /// the process in a focused terminal).
+    fn other_key() {
         for down in [true, false] {
-            CGEvent::new_keyboard_event(source(), 8, down).expect("event").post(CGEventTapLocation::HID);
+            CGEvent::new_keyboard_event(source(), 0x69, down).expect("event").post(CGEventTapLocation::HID);
         }
     }
 
@@ -197,9 +198,9 @@ mod tests {
         assert_eq!(next(&rx), Some(SoloEdge::Press));
         right_ctrl(false);
         assert_eq!(next(&rx), Some(SoloEdge::Release));
-        // Right Control + C: pressed, then chorded; its release is not reported.
+        // Right Control + another key: pressed, then chorded; its release is not reported.
         right_ctrl(true);
-        key_c();
+        other_key();
         right_ctrl(false);
         assert_eq!(next(&rx), Some(SoloEdge::Press));
         assert_eq!(next(&rx), Some(SoloEdge::Chorded));
