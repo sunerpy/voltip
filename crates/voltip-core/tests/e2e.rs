@@ -1039,6 +1039,16 @@ async fn a_phone_sends_text_the_desktop_inserts_now_or_after_its_take() {
     // The list is the phone's, and it can forget it.
     phone.handle.send(CoreCommand::SentTextsClear).await.unwrap();
     wait(&mut phone, |e| sent_texts(e).filter(Vec::is_empty)).await;
+    // Regression: the next text after a clear is still inserted. Its id used to restart at 1,
+    // which the desktop had already seen, so it was dropped as a duplicate without an answer.
+    phone.handle.send(CoreCommand::PhoneTextSend { to: desktop.public_key, body: "清空后再发一条".into(), source: PhoneTextSource::Typed }).await.unwrap();
+    let again = wait(&mut phone, |e| sent_texts(e).filter(|t| t.first().is_some_and(|t| t.state.is_final()))).await;
+    assert_eq!(again[0].state, SentTextState::Delivered { pasted: true });
+    wait(&mut desk, |e| match e {
+        CoreEvent::History(entries) => entries.iter().any(|h| h.text == "清空后再发一条").then_some(()),
+        _ => None,
+    })
+    .await;
 
     phone.handle.send(CoreCommand::Shutdown).await.unwrap();
     desk.handle.send(CoreCommand::Shutdown).await.unwrap();

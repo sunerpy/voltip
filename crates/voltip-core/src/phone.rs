@@ -198,36 +198,48 @@ const SENT_TEXTS_SCHEMA: u16 = 1;
 #[derive(Serialize, Deserialize)]
 struct SentTextsFile {
     schema: u16,
+    /// The last id handed out; kept when the list is cleared.
+    #[serde(default)]
+    last_id: u32,
     texts: Vec<SentText>,
 }
 
 /// The phone's list of sent texts, newest first, persisted to [`SENT_TEXTS_FILE_NAME`]. A missing,
 /// corrupt or unknown-schema file reads as empty (the list is a convenience, never a reason to fail).
+///
+/// Ids never repeat towards a desktop, which drops an id it has seen as the same text on a second
+/// path: the counter is saved with the list and outlives a clear, and without a readable file it
+/// starts at a random point rather than at 1.
 #[derive(Debug)]
 pub struct SentTexts {
     path: PathBuf,
     texts: Vec<SentText>,
+    last_id: u32,
 }
 
 impl SentTexts {
     /// Open `dir/sent-texts.json`.
     pub fn open(dir: &Path) -> Self {
         let path = dir.join(SENT_TEXTS_FILE_NAME);
-        let texts = std::fs::read(&path)
-            .ok()
-            .and_then(|bytes| match serde_json::from_slice::<SentTextsFile>(&bytes) {
-                Ok(file) if file.schema == SENT_TEXTS_SCHEMA => Some(file.texts),
-                Ok(file) => {
-                    tracing::warn!(schema = file.schema, "sent texts: unknown schema; starting empty");
-                    None
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "sent texts: unreadable file; starting empty");
-                    None
-                }
-            })
-            .unwrap_or_default();
-        Self { path, texts }
+        let file = std::fs::read(&path).ok().and_then(|bytes| match serde_json::from_slice::<SentTextsFile>(&bytes) {
+            Ok(file) if file.schema == SENT_TEXTS_SCHEMA => Some(file),
+            Ok(file) => {
+                tracing::warn!(schema = file.schema, "sent texts: unknown schema; starting empty");
+                None
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "sent texts: unreadable file; starting empty");
+                None
+            }
+        });
+        match file {
+            Some(file) => {
+                let last_id = file.texts.iter().map(|t| t.id).fold(file.last_id, u32::max);
+                Self { path, texts: file.texts, last_id }
+            }
+            // Low 32 bits of a v4 UUID: random, so a lost file does not replay ids a desktop saw.
+            None => Self { path, texts: Vec::new(), last_id: uuid::Uuid::new_v4().as_u128() as u32 },
+        }
     }
 
     /// Newest first.
@@ -235,9 +247,10 @@ impl SentTexts {
         &self.texts
     }
 
-    /// The highest id in the list (the next text takes a higher one).
-    pub fn last_id(&self) -> u32 {
-        self.texts.iter().map(|t| t.id).max().unwrap_or(0)
+    /// The id for the next text (never 0); saved with the next [`SentTexts::push`].
+    pub fn next_id(&mut self) -> u32 {
+        self.last_id = self.last_id.wrapping_add(1).max(1);
+        self.last_id
     }
 
     /// Put `text` first, drop what falls past [`MAX_SENT_TEXTS`], save.
@@ -284,7 +297,7 @@ impl SentTexts {
             if let Some(dir) = self.path.parent() {
                 std::fs::create_dir_all(dir)?;
             }
-            let file = SentTextsFile { schema: SENT_TEXTS_SCHEMA, texts: self.texts.clone() };
+            let file = SentTextsFile { schema: SENT_TEXTS_SCHEMA, last_id: self.last_id, texts: self.texts.clone() };
             let bytes = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
             let tmp = self.path.with_extension("json.tmp");
             std::fs::write(&tmp, bytes)?;
@@ -324,13 +337,45 @@ mod tests {
         SentText { id, device: "ab".repeat(32), device_name: "Studio".into(), body: format!("第 {id} 段"), source: PhoneTextSource::Typed, sent_at: 1, state }
     }
 
+    /// Regression (goal review 2026-09-28): after 清空 the next text took id 1 again, which the
+    /// desktop had seen and dropped as a duplicate without answering.
+    #[test]
+    fn regression_ids_keep_counting_after_a_clear_and_a_restart_and_a_lost_file_starts_at_random() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut list = SentTexts::open(dir.path());
+        let mut handed = Vec::new();
+        for _ in 0..3 {
+            let id = list.next_id();
+            handed.push(id);
+            list.push(sent(id, SentTextState::Sending));
+        }
+        list.clear();
+        let after_clear = list.next_id();
+        assert!(after_clear != 0 && !handed.contains(&after_clear), "a cleared list must not reuse an id a desktop saw");
+        handed.push(after_clear);
+        list.push(sent(after_clear, SentTextState::Sending));
+        list.clear();
+        let next = SentTexts::open(dir.path()).next_id();
+        assert!(!handed.contains(&next), "the counter is saved with the empty list");
+        // A file from before the counter: it continues after the highest id listed.
+        std::fs::write(
+            dir.path().join(SENT_TEXTS_FILE_NAME),
+            serde_json::to_vec(&serde_json::json!({ "schema": 1, "texts": [sent(41, SentTextState::Queued)] })).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(SentTexts::open(dir.path()).next_id(), 42);
+        // Without a readable file the count starts somewhere random, not at 1.
+        let starts: Vec<u32> = (0..4).map(|_| SentTexts::open(tempfile::tempdir().unwrap().path()).next_id()).collect();
+        assert!(starts.windows(2).any(|w| w[0] != w[1]), "{starts:?}");
+    }
+
     /// docs/dictation.md §20.6: the phone's list is newest first, capped, persisted, and a broken
     /// file only means an empty list.
     #[test]
     fn the_sent_list_is_newest_first_capped_and_survives_a_restart() {
         let dir = tempfile::tempdir().unwrap();
         let mut list = SentTexts::open(dir.path());
-        assert!(list.texts().is_empty() && list.last_id() == 0);
+        assert!(list.texts().is_empty());
         for id in 1..=(MAX_SENT_TEXTS as u32 + 3) {
             list.push(sent(id, SentTextState::Sending));
         }
@@ -349,7 +394,9 @@ mod tests {
         assert_eq!(offered, MAX_SENT_TEXTS - 1);
         let again = SentTexts::open(dir.path());
         assert_eq!(again.texts(), list.texts());
-        assert_eq!(again.last_id(), MAX_SENT_TEXTS as u32 + 3);
+        let mut again = again;
+        let next = again.next_id();
+        assert!(next != 0 && !again.texts().iter().any(|t| t.id == next), "{next}");
         assert!(matches!(again.texts()[1].state, SentTextState::Failed { code: SentTextFailure::NoAnswer, .. }));
         std::fs::write(dir.path().join(SENT_TEXTS_FILE_NAME), b"{not json").unwrap();
         assert!(SentTexts::open(dir.path()).texts().is_empty());

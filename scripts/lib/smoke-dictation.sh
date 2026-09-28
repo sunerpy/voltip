@@ -103,9 +103,25 @@ voltip_smoke_pulse_mic_start() {
   VOLTIP_SMOKE_SINK=$sink
 }
 
+# Stop processes and wait until they are gone (10 s each, then SIGKILL), so the directory they
+# write into can be removed after: voltip_smoke_stop <pid>... Empty arguments are skipped; never
+# fails. A bare `kill` followed by `rm -rf` raced the app's last writes ("Directory not empty").
+voltip_smoke_stop() {
+  local pid
+  for pid in "$@"; do
+    [ -n "$pid" ] || continue
+    kill "$pid" 2>/dev/null || continue
+    if ! timeout 10 tail --pid="$pid" -f /dev/null 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null
+      timeout 5 tail --pid="$pid" -f /dev/null 2>/dev/null
+    fi
+  done
+  return 0
+}
+
 # Stop the private PulseAudio (safe to call twice, never fails).
 voltip_smoke_pulse_mic_stop() {
-  [ -n "${VOLTIP_SMOKE_PULSE_PID:-}" ] && kill "$VOLTIP_SMOKE_PULSE_PID" 2>/dev/null
+  voltip_smoke_stop "${VOLTIP_SMOKE_PULSE_PID:-}"
   VOLTIP_SMOKE_PULSE_PID=""
   return 0
 }

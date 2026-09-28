@@ -1140,8 +1140,7 @@ export function nothingToGrant(report: PermissionReport): boolean {
 
 /** Mirror of `voltip_platform::onboarding_gate`: the permissions that block "continue".
  *  Microphone blocks only when denied (the OS prompts on first use otherwise); Accessibility
- *  blocks when denied or never asked (macOS never prompts by itself); Input Monitoring never
- *  blocks (it only unlocks the "hold a modifier alone" trigger). */
+ *  blocks when denied or never asked (macOS never prompts by itself). */
 export function onboardingGate(report: PermissionReport): Permission[] {
   return PERMISSIONS.filter((p) => {
     const state = report[p];

@@ -34,9 +34,7 @@ data=$(mktemp -d)
 app_pid=""
 xvfb_pid=""
 cleanup() {
-  [ -n "$app_pid" ] && kill "$app_pid" 2>/dev/null || true
-  [ -n "$xvfb_pid" ] && kill "$xvfb_pid" 2>/dev/null || true
-  [ -n "${VOLTIP_SMOKE_ASR_PID:-}" ] && kill "$VOLTIP_SMOKE_ASR_PID" 2>/dev/null || true
+  voltip_smoke_stop "$app_pid" "$xvfb_pid" "${VOLTIP_SMOKE_ASR_PID:-}"
   voltip_smoke_pulse_mic_stop
   # Keep the app log next to the screenshots (CI uploads it; git ignores it).
   [ -f "$data/app.log" ] && sed -E 's/\x1b\[[0-9;]*m//g' "$data/app.log" > "${out%.png}-app.log" 2>/dev/null || true
