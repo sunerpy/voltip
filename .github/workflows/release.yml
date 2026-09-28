@@ -534,16 +534,16 @@ jobs:
         run: |
           set -euo pipefail
           cargo tauri build --ci --no-bundle --features gpu-vulkan
-          readelf -d ../../target/release/voltip-desktop | grep -q "NEEDED.*\[libvulkan.so.1\]" || { echo "::error::voltip-desktop does not link libvulkan.so.1"; exit 1; }
+          . ../../scripts/lib/artefact-checks.sh
+          voltip_output_has 'NEEDED.*\[libvulkan\.so\.1\]' readelf -d ../../target/release/voltip-desktop || { echo "::error::voltip-desktop does not link libvulkan.so.1"; exit 1; }
 
       # Same rule as scripts/build-windows-x64.sh: the client may carry the revocable app token,
       # never a provider key.
       - name: Artefact secret scan (no provider API key inside the binary)
         run: |
           set -euo pipefail
-          if strings -n 20 target/release/voltip-desktop | grep -qE "gsk_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}"; then
-            echo "::error::provider API key found inside voltip-desktop — refusing to ship"; exit 1
-          fi
+          . scripts/lib/artefact-checks.sh
+          voltip_scan_provider_keys target/release/voltip-desktop release || { echo "::error::provider API key found inside voltip-desktop — refusing to ship"; exit 1; }
 
       # Phase 2: bundling and updater signatures; the only step holding the signing key. With the
       # updater enabled, createUpdaterArtifacts and the pubkey the app trusts arrive through

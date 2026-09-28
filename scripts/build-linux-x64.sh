@@ -35,12 +35,10 @@ appimage=$bundle/appimage/Voltip_${version}_amd64.AppImage
 for f in "$deb" "$rpm" "$appimage"; do
   [ -f "$f" ] || { echo "build-linux-x64: $f was not produced"; exit 1; }
 done
-# Artefact secret scan: the client may carry the revocable app token for the built-in edge, but
-# never a provider key (Groq `gsk_…`, OpenAI `sk-…`) — those live on the edge hosts.
-if strings -n 20 target/release/voltip-desktop | grep -qE "gsk_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}"; then
-  echo "build-linux-x64: provider API key found inside voltip-desktop — refusing to ship"; exit 1
-fi
-readelf -d target/release/voltip-desktop | grep -q "NEEDED.*\[libvulkan.so.1\]" || { echo "build-linux-x64: voltip-desktop does not link libvulkan.so.1 (built without the Vulkan backend)"; exit 1; }
+# Artefact secret scan and the Vulkan linkage (scripts/lib/artefact-checks.sh).
+. scripts/lib/artefact-checks.sh
+voltip_scan_provider_keys target/release/voltip-desktop build-linux-x64
+voltip_output_has 'NEEDED.*\[libvulkan\.so\.1\]' readelf -d target/release/voltip-desktop || { echo "build-linux-x64: voltip-desktop does not link libvulkan.so.1 (built without the Vulkan backend)"; exit 1; }
 rm -rf "$out"
 mkdir -p "$out" "$(dirname "$info")"
 cp "$deb" "$rpm" "$appimage" "$out"/

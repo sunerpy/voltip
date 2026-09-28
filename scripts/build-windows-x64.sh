@@ -39,12 +39,10 @@ setup=$release/bundle/nsis/${product}_${version}_x64-setup.exe
 [ -f "$setup" ] || { echo "build-windows-x64: $setup was not produced"; exit 1; }
 rm -rf "$out"
 mkdir -p "$out"
-# Artefact secret scan: the client may carry the revocable app token for the built-in edge, but
-# never a provider key (Groq `gsk_…`, OpenAI `sk-…`) or the vLLM key — those live on the edge hosts.
-if strings -n 20 "$exe" | grep -qE "gsk_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}"; then
-  echo "build-windows-x64: provider API key found inside voltip-desktop.exe — refusing to ship"; exit 1
-fi
-llvm-readobj --coff-imports "$exe" | grep -q "Name: vulkan-1.dll" || { echo "build-windows-x64: voltip-desktop.exe does not import vulkan-1.dll (built without the Vulkan backend)"; exit 1; }
+# Artefact secret scan and the Vulkan import (scripts/lib/artefact-checks.sh).
+. scripts/lib/artefact-checks.sh
+voltip_scan_provider_keys "$exe" build-windows-x64
+voltip_output_has 'Name: vulkan-1\.dll' llvm-readobj --coff-imports "$exe" || { echo "build-windows-x64: voltip-desktop.exe does not import vulkan-1.dll (built without the Vulkan backend)"; exit 1; }
 # The DLLs the exe loads from its own directory: the dynamic sherpa-onnx of the offline recogniser
 # (its build script drops them next to the exe in the target dir) and the Vulkan loader. The NSIS
 # bundle ships them through `bundle.resources` (tauri.windows.conf.json and the Vulkan overlay); the
