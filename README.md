@@ -27,9 +27,9 @@ LLM, and pastes it into whatever app has the focus. A paired Android phone can b
 
 ## Features
 
-- Push-to-talk on a global hotkey (`Ctrl+Alt+Space` by default): hold to talk, press to start and
-  press again to stop, or tap to lock a long take. A floating pill shows the level, the live
-  transcript and the result.
+- Push-to-talk on a global hotkey (`Ctrl+Alt+Space` by default) or on a single key such as Right
+  Ctrl or a mouse side button: hold to talk, press to start and press again to stop, or tap to lock
+  a long take. A floating pill shows the level, the live transcript and the result.
 - Recognition from a cloud provider (OpenAI, Groq, SiliconFlow, or any OpenAI-compatible endpoint)
   or on-device: Qwen3-ASR 0.6B / 1.7B through transcribe.cpp, SenseVoice and Paraformer through
   sherpa-onnx. Qwen3-ASR runs on the GPU when there is one (Vulkan on Windows and Linux, measured
@@ -43,8 +43,10 @@ LLM, and pastes it into whatever app has the focus. A paired Android phone can b
   and the rewrite replaces the selection.
 - Scenes: the app in focus when you start picks the polish style, output mode, language and extra
   instructions for that take.
-- Phone as microphone: pair an Android phone by QR code or a 6-digit code, then hold to talk on the
-  phone and the text appears on the computer.
+- Phone as microphone and keyboard: pair an Android phone by QR code, a 6-digit code, or a tap on
+  the computer it finds on the same network. Hold to talk on the phone (the audio goes end-to-end
+  encrypted, compressed with Opus), or type or send the clipboard, and the text appears at the
+  computer's cursor. The computer can keep pairing open for the next phone.
 
 ## Install
 
