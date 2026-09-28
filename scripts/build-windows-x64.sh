@@ -6,7 +6,8 @@
 # llvm-rc, llvm-readobj, llvm-dlltool, clang, makensis, zip and the Rust target
 # x86_64-pc-windows-msvc. Output is copied to dist/windows-x64 with SHA256SUMS.txt.
 # The result is not Authenticode-signed (SmartScreen will warn). The release workflow re-bundles the
-# installer with the updater key to add its .sig when the updater is on (.github/workflows/release.yml).
+# installer with the updater key to add its .sig when the updater is on
+# (.github/workflows/release-candidate.yml).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # The MSVC STL headers cargo-xwin downloads (current CRT) refuse clang older than 19

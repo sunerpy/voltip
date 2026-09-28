@@ -1,5 +1,5 @@
 """scripts/lib/artefact-checks.sh: the provider-key scan and the linkage check, run through bash
-with `set -euo pipefail` the way the build scripts and release.yml run them."""
+with `set -euo pipefail` the way the build scripts and release-candidate.yml run them."""
 
 import os
 import subprocess

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check a macOS build the way a Mac that downloads it meets it (release.yml bundle-macos and the
+# Check a macOS build the way a Mac that downloads it meets it (release-candidate.yml bundle-macos and the
 # macos jobs of ci.yml): a sealed ad-hoc signature, so Gatekeeper offers "Open Anyway" instead of calling the
 # app damaged; every Mach-O built for the architecture the dmg is named for and for no macOS newer
 # than the documented 11; the version the build names; and a dmg that mounts with the app and the

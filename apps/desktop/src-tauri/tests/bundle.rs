@@ -143,7 +143,8 @@ fn regression_a_plain_windows_build_needs_no_vulkan_file_the_package_overlay_add
     }
     let script = read(&tauri_dir().join("../../../scripts/build-windows-x64.sh"));
     assert!(script.contains("--config src-tauri/tauri.package-windows.conf.json"), "the package script merges the overlay");
-    let release = read(&tauri_dir().join("../../../.github/workflows/release.yml"));
+    // The release packages are built once, by the candidate workflow (release.yml only promotes).
+    let release = read(&tauri_dir().join("../../../.github/workflows/release-candidate.yml"));
     assert!(release.contains("--config src-tauri/tauri.package-windows.conf.json"), "the release re-bundle merges it too");
 }
 
@@ -161,7 +162,7 @@ fn the_macos_release_bundle_carries_the_notices_through_its_package_overlay() {
     let resources = serde_json::to_value(&packaged.bundle.resources).unwrap();
     assert_eq!(resources["resources/THIRD-PARTY-NOTICES.txt"], "THIRD-PARTY-NOTICES.txt", "{resources}");
     assert_eq!(packaged.bundle.macos.signing_identity.as_deref(), Some("-"), "the overlay keeps the ad-hoc signature");
-    let release = read(&tauri_dir().join("../../../.github/workflows/release.yml"));
+    let release = read(&tauri_dir().join("../../../.github/workflows/release-candidate.yml"));
     assert!(release.contains("--config src-tauri/tauri.package-macos.conf.json"), "the release macOS leg merges it");
 }
 
@@ -232,7 +233,7 @@ fn regression_the_app_version_is_package_json_s_and_the_cargo_version_is_static(
     let version = json(root.join("package.json"))["version"].as_str().unwrap().to_owned();
     for app in ["desktop", "mobile"] {
         let dir = root.join("apps").join(app);
-        // The root file, which release.yml's preflight checks (`check-config --package-json package.json`).
+        // The root file, which the release candidate's prepare job checks (`check-config --package-json package.json`).
         assert_eq!(json(dir.join("src-tauri/tauri.conf.json"))["version"], "../../../package.json", "{app}");
         assert_eq!(json(dir.join("package.json"))["version"], version.as_str(), "{app}/package.json moves with the root");
     }

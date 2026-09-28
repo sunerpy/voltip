@@ -1,6 +1,7 @@
 # shellcheck shell=bash
-# Checks on a built binary, shared by scripts/build-{linux,windows}-x64.sh and release.yml (the
-# macOS leg too: `strings -a` makes Apple's strings read the whole Mach-O, not just __TEXT).
+# Checks on a built binary, shared by scripts/build-{linux,windows}-x64.sh and
+# release-candidate.yml (the macOS leg too: `strings -a` makes Apple's strings read the whole
+# Mach-O, not just __TEXT).
 #
 # `grep` reads the whole stream here on purpose: under `set -o pipefail`, `grep -q` stops at the
 # first match, the producer (`strings`, `readelf`) dies of SIGPIPE, and the pipeline counts as
