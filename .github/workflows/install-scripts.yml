@@ -105,6 +105,22 @@ jobs:
         run: |
           set -euo pipefail
           app=/Applications/Voltip.app
+          # Nothing has started it yet, and LaunchServices already lists it, so Launchpad and
+          # Spotlight find it (user feedback 2026-09-29: only after `open -a Voltip` before).
+          lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+          "$lsregister" -dump >"$RUNNER_TEMP/launchservices.txt"
+          grep -m1 -E "^path: +$app( |$)" "$RUNNER_TEMP/launchservices.txt" ||
+            { echo "::error::LaunchServices does not list $app after the install"; exit 1; }
+          if mdutil -s / 2>/dev/null | grep -q 'Indexing enabled'; then
+            deadline=$((SECONDS + 60))
+            until mdfind "kMDItemCFBundleIdentifier == 'dev.voltip.desktop'" | grep -qx "$app"; do
+              [ "$SECONDS" -lt "$deadline" ] || { echo "::error::Spotlight does not find $app after the install"; exit 1; }
+              sleep 2
+            done
+            echo "Spotlight finds $app"
+          else
+            echo "::notice::Spotlight indexing is off on this runner; only the LaunchServices registration is checked"
+          fi
           [ "$(lipo -archs "$app/Contents/MacOS/voltip-desktop")" = "$ARCH" ]
           codesign --verify --deep --strict "$app"
           if xattr -p com.apple.quarantine "$app" >/dev/null 2>&1; then echo "::error::the app is quarantined"; exit 1; fi

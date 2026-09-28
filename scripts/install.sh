@@ -185,6 +185,15 @@ dmg)
 	# Downloaded here rather than by a browser, so the app carries no quarantine flag and opens
 	# without the Gatekeeper prompt; clear one anyway in case an older copy left it.
 	xattr -dr com.apple.quarantine "$dir/Voltip.app" 2>/dev/null || true
+	# Launchpad and Spotlight list the apps LaunchServices knows. Finder registers what it copies;
+	# a copy made here would only be registered at its first launch, so register it now (and hand
+	# it to Spotlight, a no-op where indexing is off).
+	lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+	if command -v lsregister >/dev/null 2>&1; then lsregister=$(command -v lsregister); fi
+	if [ -x "$lsregister" ]; then
+		"$lsregister" -f "$dir/Voltip.app" || info "LaunchServices did not take the app; it appears in Launchpad after its first start"
+	fi
+	mdimport "$dir/Voltip.app" 2>/dev/null || true
 	info "installed Voltip ${version} to $dir/Voltip.app; open it from Launchpad or with: open -a Voltip"
 	;;
 esac
