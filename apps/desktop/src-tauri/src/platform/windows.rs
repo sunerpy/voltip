@@ -20,6 +20,7 @@ use voltip_platform::windows::{
     ConsentValue, ForegroundFacts, InjectPreflight, IntegrityLevel, MicrophoneConsent, MicrophonePolicy, consent_store_app_key, microphone_consent,
 };
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, HWND};
+use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
 use windows_sys::Win32::Security::{GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenIntegrityLevel};
 use windows_sys::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, REG_DWORD, REG_EXPAND_SZ, REG_SZ, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
@@ -28,7 +29,27 @@ use windows_sys::Win32::System::StationsAndDesktops::{CloseDesktop, DESKTOP_READ
 use windows_sys::Win32::System::Threading::{
     GetCurrentProcess, GetCurrentProcessId, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId};
+use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetSystemMetricsForDpi};
+use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, SM_CXSMICON};
+
+/// `PRIMARYLANGID` of a Chinese `LANGID` (`LANG_CHINESE`).
+const LANG_CHINESE: u16 = 0x04;
+
+/// Whether the display language is Chinese (`GetUserDefaultUILanguage`), which is what WebView2
+/// reports as `navigator.language` and so what `settings.locale = "system"` resolves with.
+pub fn ui_language_is_chinese() -> bool {
+    // SAFETY: no arguments; returns the calling user's UI language id.
+    let langid = unsafe { GetUserDefaultUILanguage() };
+    langid & 0x3ff == LANG_CHINESE
+}
+
+/// The small-icon size (`SM_CXSMICON`) at the system DPI: what the notification area draws a tray
+/// icon at. `None` when the call fails (it returns 0).
+pub fn small_icon_size() -> Option<u32> {
+    // SAFETY: plain metric queries without pointers.
+    let size = unsafe { GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem()) };
+    u32::try_from(size).ok().filter(|&size| size > 0)
+}
 
 /// `HKCU` subkey of the microphone consent store.
 const CONSENT_MICROPHONE: &str = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";

@@ -5,10 +5,18 @@
 
 use objc2::runtime::{AnyObject, NSObjectProtocol as _};
 use objc2_app_kit::{NSRunningApplication, NSWorkspace};
+use objc2_foundation::NSLocale;
 use tauri_plugin_macos_permissions as tcc;
 use voltip_core::ForegroundApp;
 use voltip_platform::foreground::from_bundle;
 use voltip_platform::{Permission, PermissionReport, PermissionState};
+
+/// The first of the user's preferred languages (`NSLocale.preferredLanguages`, e.g. `zh-Hans-CN`):
+/// what WKWebView reports as `navigator.language`, so what `settings.locale = "system"` resolves
+/// with.
+pub fn preferred_language() -> Option<String> {
+    NSLocale::preferredLanguages().firstObject().map(|language| language.to_string())
+}
 
 /// The frontmost application when a take starts (docs/dictation.md §18.2): its bundle identifier
 /// (the id) and localised name. Voltip itself, or an application without a bundle id, is no

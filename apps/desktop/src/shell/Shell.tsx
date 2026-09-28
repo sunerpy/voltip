@@ -18,6 +18,7 @@ import { useAppearance } from "../app/appearance";
 import { buildCommands } from "../app/commands";
 import { useRouter } from "../app/router";
 import { copyWithToast, useShell } from "../app/shell-context";
+import { type TrayRequest, type TrayRequestSource, useTrayRequests } from "../app/tray-requests";
 import { useWindowChrome } from "../app/window";
 import { openProjectLink } from "../app/project-links";
 import { microphoneReadoutValue, useMicrophoneReadout } from "../features/audio/mic-store";
@@ -85,7 +86,14 @@ export function FooterShortcuts({ items }: { items: readonly (readonly [string, 
  *  bar *is* the window title bar: one continuous drag region with the window controls at the far
  *  right on Windows / Linux. The title bar carries the title, the compact engine · microphone
  *  readout right after it, the search icon and the AI润色 toggle; there is no second header row. */
-export function Shell({ children }: { children: ReactNode }) {
+export function Shell({
+  children,
+  traySource,
+}: {
+  children: ReactNode;
+  /** The tray's requests (tests inject one; the real app listens to the shell's event). */
+  traySource?: TrayRequestSource;
+}) {
   const { route, background, navigate } = useRouter();
   const state = useUiState();
   const { backend } = useBackend();
@@ -205,6 +213,22 @@ export function Shell({ children }: { children: ReactNode }) {
       window.removeEventListener("keydown", onKey);
     };
   }, [shell, navigate, sidebar]);
+
+  // The tray's 设置… and 检查更新… (the shell has already brought the window up).
+  const updateState = state.update.state;
+  const onTray = useCallback(
+    (request: TrayRequest) => {
+      if (request === "settings") {
+        navigate({ name: "settings", section: "general" });
+        return;
+      }
+      shell.setUpdateOpen(true);
+      if (updateState === "idle" || updateState === "up_to_date" || updateState === "failed")
+        void backend.invoke("update_check");
+    },
+    [navigate, shell, updateState, backend],
+  );
+  useTrayRequests(onTray, traySource);
 
   const onboarding = route.name === "onboarding";
   // The overlay showcase is a chrome-less spec sheet of the pill.

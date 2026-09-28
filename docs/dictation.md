@@ -458,6 +458,7 @@ CLI（桌面 `apps/desktop/src-tauri/src/cli.rs`，`clap` 4.6.6；手机端无 C
 | `--toggle` | 经 `tauri-plugin-single-instance` 2.4.3 转发到运行实例 → `HotkeyEdge { pressed: true, source: cli }`；无运行实例时正常启动 GUI（记日志，参数丢弃）。Wayland 无全局热键时绑定到合成器快捷键 | 第二实例由插件退出 |
 | `--cancel` | 同上 → `DictationCancel` | 同上 |
 | `--start-hidden` | 启动但不显示主窗口（`tauri.conf.json` 的 `main` 声明 `visible: false`，setup 钩子在核心就绪后才 `show()`，无此参数时亦如此，避免闪窗）；无参数的第二次启动把主窗口带到前台 | — |
+| `--quit` | 让运行实例退出（与托盘的「退出 Voltip」相同），与其他参数互斥；应用照常构建，好让插件把参数转给运行实例，构建完仍在说明没有运行实例，直接退出，不起 GUI | 0 |
 | `--list-devices` | `voltip_audio::list_input_devices()`，每行 `id<TAB>name[<TAB>(default)]` | 0 / 1（枚举失败） |
 | `--list-models` | `ModelStore::scan()`，每行 `id<TAB>state<TAB>name`（`installed` / `not_installed` / …） | 0 |
 | `--transcribe-file <wav16k> [--model <id>] [--json]` | headless：不起窗口 / 托盘 / 热键 / 麦克风；`LocalTranscriber::new(<data_dir>/models).select(model)` 识别文件（其他采样率会重采样）；`--model` 缺省取 `settings.json` 本地模式所选模型，否则目录默认；语言取 `engines.language`。stdout 输出文本，或 `{ "text", "model", "latency_ms" }` 一行 JSON | 0；模型未下载 / 识别失败 1、文件读不到 2，非零时 stdout 为空，原因在 stderr |
@@ -635,9 +636,12 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
 ### 15.4 托盘
 
 - 仅 macOS / Windows 有托盘（`tray-icon` feature 按目标开启）；Linux 本增量没有。
-- 三态字形运行时渲染为 44 px RGBA：圆环表示空闲（含 done / failed / cancelled 停留）、实心圆表示录音、圆环加中心点表示处理中；跟随 `UiEvent::Dictation`（`platform::glyph_for`）。
-- macOS 用模板图，换图走 `set_icon_with_as_template`（单用 `set_icon` 会丢模板标记）；Windows 用强调色 `#2F6FED`。
-- 左键显示主窗，无菜单。
+- 图标就是应用标志：按 `Logo.tsx` 的几何（圆角方块、左浅右橙的 V）运行时渲染为 RGBA（`voltip_platform::tray::render_tray_icon`，每像素 4×4 超采样抗锯齿），不随包附带图标文件。Windows 画彩色标志，尺寸取系统小图标尺寸 `GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem())`（限定 16–64 px，读不到时 32 px），通知区不必再缩放。macOS 画模板图：只有 V，放大到填满 36 px（菜单栏 18 pt 的 Retina 尺寸），明暗由菜单栏着色；换图走 `set_icon_with_as_template`，单用 `set_icon` 会丢掉模板标记。
+- 听写状态用右下角的角标表示（跟随 `UiEvent::Dictation`，`platform::glyph_for`）：空闲时没有角标（done / failed / cancelled 的停留也算空闲），录音时是红点（macOS 为实心圆点），处理中是蓝点（macOS 为圆环）。角标外有一圈白色间隔（macOS 为镂空）。提示文字同步变化：`Voltip`、`Voltip · 正在听写`、`Voltip · 正在处理`。
+- 菜单依次为：打开 Voltip、设置…、检查更新…（仅在构建带更新源时出现）、分隔线、退出 Voltip。语言跟随 `settings.locale`。设为 `system` 时按系统显示语言解析：Windows 用 `GetUserDefaultUILanguage`，macOS 用 `NSLocale.preferredLanguages` 首项，与 webview 的 `navigator.language` 同源；读不到时用中文。
+- 「设置…」和「检查更新…」先显示主窗，再向主窗发 `voltip://tray`（`{ action: "settings" | "update" }`），由界面打开设置对话框或更新对话框；更新状态为空闲、已是最新或失败时，顺带检查一次。
+- Windows 左键单击显示主窗，右键弹出菜单。macOS 单击弹出菜单，与菜单栏惯例一致。
+- 关闭主窗口（标题栏 ×、Alt+F4、红色交通灯）的行为由 `main_window_close` 决定：macOS 总是隐藏，Dock 与托盘都能找回；Windows 有托盘时隐藏，没有托盘时退出；Linux 退出。此前关闭会销毁主窗口，而预热的悬浮窗仍让进程存活，托盘和二次启动都找不到窗口，也没有退出入口（2026-09-28 用户反馈）。
 
 ### 15.5 打包矩阵
 

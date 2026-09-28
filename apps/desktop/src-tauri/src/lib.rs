@@ -713,10 +713,15 @@ pub fn show_main_window<R: Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
-/// Apply a second invocation's arguments to this (running) instance: `--toggle` /
+/// Apply a second invocation's arguments to this (running) instance: `--quit` exits, `--toggle` /
 /// `--edit-toggle` / `--cancel` reach the core as a CLI edge of the dictation or the edit key / a
 /// cancel; anything else brings the main window to the front.
 pub fn on_second_instance<R: Runtime>(app: &tauri::AppHandle<R>, args: &[String]) {
+    if cli::quit_from_args(args) {
+        tracing::info!("quit requested by a second invocation");
+        app.exit(0);
+        return;
+    }
     match cli::remote_from_args(args) {
         Some(remote) => match app.try_state::<Bridge>() {
             Some(bridge) => {
@@ -791,7 +796,7 @@ pub fn attach_bridge<R: Runtime>(
         overlay::follow_dictation(app.clone(), bridge.clone());
         hotkey::follow_settings(app.clone(), bridge.clone(), registry.clone());
         audio::follow_phone_takes(bridge.clone(), hub.clone());
-        platform::install_tray(app, &bridge, options.start_hidden);
+        platform::install_tray(app, &bridge, options.start_hidden, updater.enabled());
     }
     // The main window is declared invisible so `--start-hidden` never flashes it; every other start
     // shows it now that the core is up.
@@ -838,6 +843,9 @@ pub fn build_app<R: Runtime>(
     } else {
         builder
     };
+    // Closing the main window hides it where the tray or the Dock brings it back and quits
+    // elsewhere (`platform::on_window_event`).
+    let builder = builder.on_window_event(platform::on_window_event);
     builder.setup(move |app| Ok(attach_bridge(app.handle(), config, store, options, ports).map_err(|e| std::io::Error::other(e.to_string()))?)).invoke_handler(
         tauri::generate_handler![
             core_state,
@@ -939,6 +947,7 @@ pub fn run() {
         Err(e) => e.exit(),
     };
     let action = args.action();
+    let quit = action == cli::Action::Quit;
     let start_hidden = match &action {
         cli::Action::Gui { start_hidden, remote } => {
             if let Some(remote) = remote {
@@ -946,6 +955,9 @@ pub fn run() {
             }
             *start_hidden
         }
+        // Built like the GUI below so the single-instance plugin can hand `--quit` to a running
+        // instance (and end this process); getting past `build` means there is none.
+        cli::Action::Quit => true,
         headless => {
             tracing::debug!(?headless, "headless action");
             // Unlocked handles: each write takes the lock briefly. Holding `stdout().lock()` across
@@ -981,6 +993,10 @@ pub fn run() {
             std::process::exit(1);
         }
     };
+    if quit {
+        tracing::info!("--quit: no running instance");
+        exit::exit_process(0);
+    }
     // macOS: the activation policy goes in between `build` and `run` (docs/dictation.md §15.2).
     platform::before_run(&mut app, start_hidden);
     // Linux leaves through `exit::exit_process` once Tauri has cleaned up (a restart after an

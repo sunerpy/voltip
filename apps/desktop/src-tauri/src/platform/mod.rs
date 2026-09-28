@@ -15,9 +15,9 @@ pub mod tray;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
-use tauri::{AppHandle, Runtime};
-use voltip_core::{DictationPhase, ForegroundApp, ForegroundProbe};
-use voltip_platform::tray::TrayGlyph;
+use tauri::{AppHandle, Manager as _, Runtime};
+use voltip_core::{DictationPhase, ForegroundApp, ForegroundProbe, Locale};
+use voltip_platform::tray::{CloseAction, TrayGlyph, TrayLocale, main_window_close};
 use voltip_tauri_bridge::Bridge;
 
 pub use voltip_platform::{HostOs, InjectDecision, InjectPreflight, Permission, PermissionReport, PermissionState};
@@ -37,6 +37,77 @@ pub const fn glyph_for(phase: &DictationPhase) -> TrayGlyph {
 /// Whether this build carries a tray icon (macOS menu bar, Windows notification area). Linux ships
 /// none in this increment, so its `--start-hidden` still relies on the hotkey and a second launch.
 pub const TRAY_AVAILABLE: bool = cfg!(any(target_os = "macos", target_os = "windows"));
+
+/// The tray menu's language: `settings.locale`, with `system` resolved the way the webview
+/// resolves `navigator.language` (the OS display language: `GetUserDefaultUILanguage` on Windows,
+/// the first preferred language on macOS). Chinese when the OS cannot say.
+pub fn tray_locale(locale: Locale) -> TrayLocale {
+    match locale {
+        Locale::ZhCn => TrayLocale::ZhCn,
+        Locale::En => TrayLocale::En,
+        Locale::System => system_tray_locale().unwrap_or_default(),
+    }
+}
+
+fn system_tray_locale() -> Option<TrayLocale> {
+    #[cfg(target_os = "windows")]
+    {
+        Some(if windows::ui_language_is_chinese() { TrayLocale::ZhCn } else { TrayLocale::En })
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos::preferred_language().map(|language| TrayLocale::for_language(&language))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        None
+    }
+}
+
+/// The notification area's small-icon size at the system DPI (Windows); `None` elsewhere.
+pub fn small_icon_size() -> Option<u32> {
+    #[cfg(target_os = "windows")]
+    {
+        windows::small_icon_size()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
+/// The main window's close button (the title bar's ×, Alt+F4, the red traffic light): hidden
+/// where the tray or the Dock brings it back, otherwise the app quits
+/// (`voltip_platform::tray::main_window_close`). Without the explicit quit the prewarmed pill
+/// window would keep the process alive with no window left to show (user report 2026-09-28).
+pub fn on_window_event<R: Runtime>(window: &tauri::Window<R>, event: &tauri::WindowEvent) {
+    let tauri::WindowEvent::CloseRequested { api, .. } = event else { return };
+    if window.label() != crate::MAIN_WINDOW {
+        return;
+    }
+    let app = window.app_handle();
+    match main_window_close(voltip_platform::HostOs::current(), tray_installed(app)) {
+        CloseAction::Hide => {
+            api.prevent_close();
+            if let Err(e) = window.hide() {
+                tracing::warn!(error = %e, "main window hide failed");
+            }
+        }
+        CloseAction::Quit => app.exit(0),
+    }
+}
+
+fn tray_installed<R: Runtime>(app: &AppHandle<R>) -> bool {
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        app.tray_by_id(tray::TRAY_ID).is_some()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = app;
+        false
+    }
+}
 
 /// One state per permission for the compiled host. Linux / other: everything `not_applicable`.
 /// macOS: TCC through `tauri-plugin-macos-permissions`. Windows: the microphone consent store; the
@@ -132,8 +203,8 @@ impl ForegroundProbe for PlatformProbe {
 /// Dock icon is gone too under the `Accessory` policy, applied before the event loop started), so
 /// that case restores the `Regular` policy and shows the window instead.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-pub fn install_tray<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, start_hidden: bool) {
-    match tray::install(app) {
+pub fn install_tray<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, start_hidden: bool, updater: bool) {
+    match tray::install(app, tray_locale(bridge.state().settings.locale), updater) {
         Ok(()) => tray::follow_dictation(app.clone(), bridge.clone()),
         Err(e) => {
             tracing::warn!(error = %e, "tray icon not installed");
@@ -151,7 +222,7 @@ pub fn install_tray<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, start_hidde
 /// No tray on this platform in this increment: `--start-hidden` relies on the hotkey and a second
 /// launch (which shows the window).
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub fn install_tray<R: Runtime>(_app: &AppHandle<R>, _bridge: &Bridge, start_hidden: bool) {
+pub fn install_tray<R: Runtime>(_app: &AppHandle<R>, _bridge: &Bridge, start_hidden: bool, _updater: bool) {
     if start_hidden {
         tracing::info!("no tray on this platform: --start-hidden relies on the hotkey and a second launch");
     }
@@ -217,6 +288,18 @@ mod tests {
             assert_eq!(glyph_for(&phase(json.clone())), glyph, "{json}");
         }
         assert_eq!(TRAY_AVAILABLE, cfg!(any(target_os = "macos", target_os = "windows")));
+    }
+
+    #[test]
+    fn the_tray_menu_follows_the_locale_setting() {
+        assert_eq!(tray_locale(Locale::ZhCn), TrayLocale::ZhCn);
+        assert_eq!(tray_locale(Locale::En), TrayLocale::En);
+        // `system`: the OS display language where the shell can read it; hosts without a tray
+        // (Linux) fall back to Chinese.
+        if cfg!(not(any(target_os = "macos", target_os = "windows"))) {
+            assert_eq!(tray_locale(Locale::System), TrayLocale::ZhCn);
+            assert_eq!(small_icon_size(), None);
+        }
     }
 
     #[tokio::test]

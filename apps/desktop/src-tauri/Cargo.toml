@@ -93,6 +93,9 @@ tauri-plugin-macos-permissions = "=2.3.0"
 # The exact versions tray-icon / muda already pull; only the two AppKit classes the probe touches.
 objc2 = "=0.6.4"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSRunningApplication", "NSWorkspace"] }
+# The tray menu's language when `settings.locale` is `system` (`NSLocale.preferredLanguages`); the
+# version objc2-app-kit already pulls.
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSLocale", "NSString"] }
 
 # The foreground application on X11 / XWayland (docs/dictation.md §18.2, `src/platform/linux.rs`);
 # the version enigo already pulls.
@@ -105,13 +108,16 @@ libc = "=0.2.189"
 tauri = { version = "=2.11.6", default-features = false, features = ["wry", "tray-icon"] }
 # Same version tokio / tempfile / mio already pull, so the cross-build compiles it once. Feature
 # set = exactly what src/platform/windows.rs calls: foreground window → process → token integrity
-# level, the input desktop name, and the CapabilityAccessManager consent store in the registry.
+# level, the input desktop name, the CapabilityAccessManager consent store in the registry, and
+# for the tray the display language and the small-icon size at the system DPI.
 windows-sys = { version = "=0.61.2", features = [
     "Win32_Foundation",
+    "Win32_Globalization",
     "Win32_Security",
     "Win32_System_Registry",
     "Win32_System_StationsAndDesktops",
     "Win32_System_Threading",
+    "Win32_UI_HiDpi",
     "Win32_UI_WindowsAndMessaging",
 ] }
 

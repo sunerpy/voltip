@@ -1,9 +1,9 @@
 //! Command line of the desktop binary (docs/dictation.md §13).
 //!
 //! Two kinds of flags: remote controls for a running instance (`--toggle`, `--edit-toggle`,
-//! `--cancel`), which the single-instance plugin forwards as `HotkeyEdge { source: cli }` (with
-//! `purpose: edit` for the voice edit of docs/dictation.md §19) / `DictationCancel` and which
-//! Wayland users bind to a compositor shortcut in place of a global hotkey; and headless
+//! `--cancel`, `--quit`), which the single-instance plugin forwards as `HotkeyEdge { source: cli }`
+//! (with `purpose: edit` for the voice edit of docs/dictation.md §19) / `DictationCancel` / an app
+//! exit, and which Wayland users bind to a compositor shortcut in place of a global hotkey; and headless
 //! utilities (`--list-devices`, `--list-compute`, `--list-models`, `--download-model`,
 //! `--transcribe-file`) that run
 //! without a window, tray, hotkey or microphone and exit. `--start-hidden` starts the GUI without
@@ -42,6 +42,9 @@ pub struct Cli {
     /// Start without showing the main window (tray and hotkey only).
     #[arg(long, conflicts_with_all = ["list_devices", "list_models", "transcribe_file"])]
     pub start_hidden: bool,
+    /// Quit the running instance (what the tray's 退出 Voltip does); nothing happens when none runs.
+    #[arg(long, conflicts_with_all = ["toggle", "edit_toggle", "cancel", "start_hidden", "list_devices", "list_compute", "list_models", "download_model", "transcribe_file"])]
+    pub quit: bool,
     /// Print the input devices (`id<TAB>name`, default first) and exit.
     #[arg(long, conflicts_with_all = ["list_models", "transcribe_file"])]
     pub list_devices: bool,
@@ -127,6 +130,9 @@ pub enum Action {
         /// `--toggle` / `--edit-toggle` / `--cancel`.
         remote: Option<Remote>,
     },
+    /// `--quit`: reach the running instance through the single-instance plugin (while the app is
+    /// built), and exit either way without starting a GUI.
+    Quit,
     /// `--list-devices`.
     ListDevices,
     /// `--list-compute`.
@@ -203,6 +209,9 @@ impl Cli {
         if let Some(id) = &self.download_model {
             return Action::DownloadModel { id: id.clone() };
         }
+        if self.quit {
+            return Action::Quit;
+        }
         Action::Gui { start_hidden: self.start_hidden, remote: self.remote() }
     }
 }
@@ -211,6 +220,11 @@ impl Cli {
 /// carry nothing to apply (a plain second launch just focuses the running instance).
 pub fn remote_from_args(args: &[String]) -> Option<Remote> {
     Cli::parse_args(args).ok().and_then(|cli| cli.remote())
+}
+
+/// Whether a second instance's arguments ask this one to quit (`--quit`).
+pub fn quit_from_args(args: &[String]) -> bool {
+    Cli::parse_args(args).is_ok_and(|cli| cli.quit)
 }
 
 /// Exit code of a headless action.
@@ -441,6 +455,6 @@ pub fn run_headless(action: &Action, data_dir: &Path, out: &mut dyn Write, err: 
             let transcriber = LocalTranscriber::new(models_root).select(&model).with_compute(compute);
             transcribe_file(&transcriber, path, *json, settings.engines.language.as_deref(), settings.engines.chinese_script, out, err)
         }
-        Action::Gui { .. } => ExitCode::Ok,
+        Action::Gui { .. } | Action::Quit => ExitCode::Ok,
     }
 }

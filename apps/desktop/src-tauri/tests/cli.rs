@@ -14,8 +14,8 @@ use voltip_asr_local::{
 use voltip_core::dictation::fakes::speech_recording;
 use voltip_core::{ChineseScript, DEFAULT_LOCAL_MODEL_ID, EdgeSource, EngineSettings, ProviderId, Settings, SettingsStore, TakeKind};
 use voltip_desktop_lib::cli::{
-    Action, Cli, ExitCode, Remote, TranscribeOutput, compute_for, default_model, download_model, list_compute, list_devices, list_models, remote_from_args,
-    run_headless, transcribe_file,
+    Action, Cli, ExitCode, Remote, TranscribeOutput, compute_for, default_model, download_model, list_compute, list_devices, list_models, quit_from_args,
+    remote_from_args, run_headless, transcribe_file,
 };
 use voltip_tauri_bridge::UiCommand;
 use wiremock::matchers::{method, path};
@@ -129,6 +129,34 @@ fn edit_toggle_flag_parses_into_an_edit_edge_and_conflicts_with_the_other_action
     assert!(matches!(Remote::EditToggle.command(), UiCommand::HotkeyEdge { pressed: true, source: EdgeSource::Cli, purpose: TakeKind::Edit, .. }));
     let help = parse(&["--help"]).unwrap_err().to_string();
     assert!(help.contains("--edit-toggle"), "{help}");
+}
+
+/// `--quit` asks the running instance to exit (the tray's 退出 Voltip, for scripts and the Windows
+/// real-window smoke); it never starts a GUI and conflicts with every other action.
+#[test]
+fn quit_flag_reaches_the_running_instance_and_conflicts_with_the_other_actions() {
+    assert_eq!(parse(&["--quit"]).unwrap().action(), Action::Quit);
+    for bad in [
+        &["--quit", "--toggle"][..],
+        &["--quit", "--edit-toggle"],
+        &["--quit", "--cancel"],
+        &["--quit", "--start-hidden"],
+        &["--quit", "--list-models"],
+        &["--quit", "--list-devices"],
+        &["--quit", "--list-compute"],
+        &["--quit", "--download-model", "x"],
+        &["--quit", "--transcribe-file", "a.wav"],
+    ] {
+        assert!(parse(bad).is_err(), "{bad:?}");
+    }
+    let argv = |a: &[&str]| std::iter::once("voltip").chain(a.iter().copied()).map(str::to_owned).collect::<Vec<_>>();
+    assert!(quit_from_args(&argv(&["--quit"])));
+    assert!(!quit_from_args(&argv(&[])), "a plain second launch focuses the window");
+    assert!(!quit_from_args(&argv(&["--toggle"])));
+    assert!(!quit_from_args(&argv(&["--quit", "--toggle"])), "a usage error quits nothing");
+    assert_eq!(remote_from_args(&argv(&["--quit"])), None, "not a core command");
+    let help = parse(&["--help"]).unwrap_err().to_string();
+    assert!(help.contains("--quit"), "{help}");
 }
 
 /// Echoes the model id and the sample count; fails on silence like a real engine would on garbage.

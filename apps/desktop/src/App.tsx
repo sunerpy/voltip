@@ -4,6 +4,7 @@ import { type ReactNode, Suspense, lazy, useCallback, useEffect, useRef } from "
 import { AppearanceProvider } from "./app/appearance";
 import { type Route, RouterProvider, routePath, useRouter } from "./app/router";
 import { ShellProvider, useShell } from "./app/shell-context";
+import type { TrayRequestSource } from "./app/tray-requests";
 import { Devices } from "./pages/Devices";
 import { Dictionary } from "./pages/Dictionary";
 import { History } from "./pages/History";
@@ -40,6 +41,8 @@ export interface AppProps {
   initialPath?: string;
   /** The OS / webview language `settings.locale = "system"` follows; defaults to `navigator.language`. */
   systemLanguage?: string;
+  /** The tray menu's requests; defaults to the desktop shell's `voltip://tray` event. */
+  traySource?: TrayRequestSource;
 }
 
 /** `/settings/:section` is a modal over the last non-settings page (`background`), so the page
@@ -156,7 +159,7 @@ function LocaleProvider({
   );
 }
 
-export function App({ backend, initialPath, systemLanguage }: AppProps) {
+export function App({ backend, initialPath, systemLanguage, traySource }: AppProps) {
   const handler = useRef<((e: UiEvent) => void) | undefined>(undefined);
   const onEvent = useCallback((event: UiEvent) => {
     handler.current?.(event);
@@ -171,7 +174,7 @@ export function App({ backend, initialPath, systemLanguage }: AppProps) {
           <ShellProvider>
             <AppearanceProvider>
               <EventToasts onEvent={register} />
-              <Frame />
+              <Frame traySource={traySource} />
             </AppearanceProvider>
           </ShellProvider>
         </RouterProvider>
@@ -181,7 +184,7 @@ export function App({ backend, initialPath, systemLanguage }: AppProps) {
 }
 
 /** The overlay window has no chrome; every other route lives inside the shell. */
-function Frame() {
+function Frame({ traySource }: { traySource?: TrayRequestSource }) {
   const { route } = useRouter();
   const overlayWindow =
     route.name === "overlay" && route.state !== undefined && isOverlayWindowState(route.state);
@@ -201,7 +204,7 @@ function Frame() {
     );
   }
   return (
-    <Shell>
+    <Shell traySource={traySource}>
       <Routes />
     </Shell>
   );
