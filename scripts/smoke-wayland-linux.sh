@@ -74,7 +74,9 @@ check() { # <description> <command…>: record PASS / FAIL, keep going
   local what=$1; shift
   if "$@"; then note "  PASS  $what"; else note "  FAIL  $what"; failures=$((failures + 1)); fi
 }
-log_has() { voltip_smoke_plain "$1" | grep -qE -- "$2"; }
+# grep reads to the end: `grep -q` under pipefail let sed die of SIGPIPE on an early match and
+# the check fail ("sed: couldn't flush stdout: Broken pipe").
+log_has() { voltip_smoke_plain "$1" | grep -E -- "$2" >/dev/null; }
 # Condition wait on the app log with a deadline; fails early when the app died.
 wait_log() { # <log> <regex> <seconds>
   local deadline=$(($(date +%s) + $3))
@@ -133,7 +135,7 @@ note "smoke-wayland-linux @ $(voltip_head_commit) (+ uncommitted changes, if any
 note "tools: $(weston --version 2>&1 | head -1); sway $(sway --version | awk '{print $3}'); wtype $(dpkg-query -W -f='${Version}' wtype 2>/dev/null || echo '?')"
 # A build without `custom-protocol` loads the dev server instead of the bundled pages; the checks
 # below do not depend on the page, the screenshot does.
-if strings -n 8 "$bin" | grep -qE '/assets/index-[A-Za-z0-9_-]+\.js'; then frontend=bundled; else frontend="dev server (no custom-protocol: the screenshot shows an error page)"; fi
+if strings -n 8 "$bin" | grep -E '/assets/index-[A-Za-z0-9_-]+\.js' >/dev/null; then frontend=bundled; else frontend="dev server (no custom-protocol: the screenshot shows an error page)"; fi
 note "binary: $(stat -c %s "$bin") bytes, frontend $frontend"
 voltip_smoke_tone_wav "$work/tone.wav" 8
 voltip_smoke_mock_asr_start "$work" "$spoken"
