@@ -122,7 +122,7 @@ async fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
 }
 
 async fn send_edge(node: &Node, pressed: bool, source: EdgeSource, purpose: TakeKind) {
-    node.handle.send(CoreCommand::HotkeyEdge { pressed, at_ms: now_ms(), source, purpose }).await.unwrap();
+    node.handle.send(CoreCommand::HotkeyEdge { pressed, at_ms: now_ms(), source, purpose, chorded: false }).await.unwrap();
 }
 
 async fn edge(node: &Node, pressed: bool, purpose: TakeKind) {

@@ -3,7 +3,8 @@
 //! consent store, and the foreground application (image name + window title) scenes match on.
 //! Every decision is made by `voltip_platform`; this file only asks Win32.
 //!
-//! This is the one module of the shell that contains `unsafe`: `windows-sys` is raw FFI. Each
+//! One of the shell's two Win32 modules that contain `unsafe` (with `solo_key/windows.rs`):
+//! `windows-sys` is raw FFI. Each
 //! block has a SAFETY comment; every handle is wrapped so it is closed exactly once; no pointer
 //! outlives the buffer it points into.
 

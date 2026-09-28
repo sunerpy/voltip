@@ -226,6 +226,29 @@ impl ActivationMachine {
         if pressed { self.press(at_ms, phase) } else { self.release(at_ms, phase) }
     }
 
+    /// Another key or button joined the held key (the lone-key trigger, docs/dictation.md §13.1):
+    /// the press began a shortcut such as Right Ctrl + C, not a take. The run this very press
+    /// started is cancelled and a start it left pending is dropped; a run that began otherwise (an
+    /// earlier press in `toggle`, the UI button, the CLI) goes on. The key counts as up from here:
+    /// the shell does not report its physical release.
+    pub fn chorded(&mut self, phase: PhaseHint) -> Vec<Intent> {
+        self.sync(phase);
+        let own = if self.key_down { self.last_press_ms } else { None };
+        self.key_down = false;
+        let Some(own) = own else { return vec![Intent::Ignore] };
+        if phase == PhaseHint::Processing {
+            if self.pending_start.is_some_and(|p| !p.cli && p.at_ms == own) {
+                self.pending_start = None;
+            }
+            return vec![Intent::Ignore];
+        }
+        if self.active && self.pressed_at == Some(own) {
+            self.end();
+            return vec![Intent::Cancel];
+        }
+        vec![Intent::Ignore]
+    }
+
     /// Resolve a release whose grace window has passed (`now_ms >= deadline_ms`). Nothing happens
     /// before the deadline or when no release is pending.
     pub fn poll(&mut self, now_ms: u64, phase: PhaseHint) -> Vec<Intent> {
@@ -415,6 +438,7 @@ mod tests {
         Edge(bool, u64, EdgeSource, PhaseHint, Vec<Intent>),
         Poll(u64, PhaseHint, Vec<Intent>),
         Phase(PhaseHint, Vec<Intent>),
+        Chord(PhaseHint, Vec<Intent>),
     }
 
     fn press(at_ms: u64, phase: PhaseHint, expect: Vec<Intent>) -> Step {
@@ -433,6 +457,14 @@ mod tests {
         Step::Phase(phase, expect)
     }
 
+    fn chord(phase: PhaseHint, expect: Vec<Intent>) -> Step {
+        Step::Chord(phase, expect)
+    }
+
+    fn cli(pressed: bool, at_ms: u64, phase: PhaseHint, expect: Vec<Intent>) -> Step {
+        Step::Edge(pressed, at_ms, EdgeSource::Cli, phase, expect)
+    }
+
     fn run(mode: Activation, script: Vec<Step>) -> ActivationMachine {
         let mut m = ActivationMachine::new(ActivationConfig { mode, ..ActivationConfig::default() });
         for (i, step) in script.into_iter().enumerate() {
@@ -442,6 +474,7 @@ mod tests {
                 }
                 Step::Poll(at_ms, phase, want) => (m.poll(at_ms, phase), want, format!("poll at={at_ms} {phase:?}")),
                 Step::Phase(phase, want) => (m.on_phase(phase), want, format!("phase {phase:?}")),
+                Step::Chord(phase, want) => (m.chorded(phase), want, format!("chord {phase:?}")),
             };
             assert_eq!(got, want, "{mode:?} step {i}: {what}\n{m:?}");
         }
@@ -710,6 +743,48 @@ mod tests {
         // hold: a press whose key went up again before Idle is dropped, a key still down starts.
         run(Hold, vec![phase(Processing, vec![]), press(100, Processing, vec![Ignore]), release(300, Processing, vec![Ignore]), phase(Idle, vec![])]);
         run(Hold, vec![phase(Processing, vec![]), press(100, Processing, vec![Ignore]), phase(Idle, vec![Start])]);
+    }
+
+    /// docs/dictation.md §13.1: a lone-key trigger that turns into a chord (Right Ctrl + C)
+    /// cancels only the run its own press started.
+    #[test]
+    fn regression_a_chorded_trigger_cancels_the_take_its_press_started_and_nothing_else() {
+        for mode in [Hold, Toggle, HoldOrToggle] {
+            let m = run(mode, vec![press(1_000, Idle, vec![Start]), phase(Listening, vec![]), chord(Listening, vec![Cancel]), phase(Idle, vec![])]);
+            assert!(!m.is_active() && m.deadline_ms().is_none(), "{mode:?}");
+        }
+        // toggle: the press that stopped a run is not taken back; the result goes on to processing.
+        run(
+            Toggle,
+            vec![
+                press(1_000, Idle, vec![Start]),
+                phase(Listening, vec![]),
+                release(1_100, Listening, vec![Ignore]),
+                press(5_000, Listening, vec![Stop]),
+                chord(Processing, vec![Ignore]),
+            ],
+        );
+        // A run the CLI started survives a chord of the (held, ignored) hotkey press.
+        run(Hold, vec![cli(true, 500, Idle, vec![Start]), phase(Listening, vec![]), press(1_000, Listening, vec![Ignore]), chord(Listening, vec![Ignore])]);
+        // A press remembered during processing is dropped, so nothing starts once idle.
+        let m = run(Toggle, vec![phase(Processing, vec![]), press(100, Processing, vec![Ignore]), chord(Processing, vec![Ignore]), phase(Idle, vec![])]);
+        assert!(!m.has_pending_start() && !m.is_active());
+        // A chord with no key down (the shell reports each chord once) changes nothing.
+        run(Hold, vec![chord(Idle, vec![Ignore]), press(1_000, Idle, vec![Start]), phase(Listening, vec![])]);
+        // After a chord the next lone press starts again.
+        run(
+            Hold,
+            vec![
+                press(1_000, Idle, vec![Start]),
+                phase(Listening, vec![]),
+                chord(Listening, vec![Cancel]),
+                phase(Idle, vec![]),
+                press(3_000, Idle, vec![Start]),
+                phase(Listening, vec![]),
+                release(4_000, Listening, vec![Ignore]),
+                poll(4_050, Listening, vec![Stop]),
+            ],
+        );
     }
 
     #[test]

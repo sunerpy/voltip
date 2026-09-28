@@ -59,6 +59,8 @@ import {
   type ConnectivityReport,
   type HotkeyCapabilities,
   type HotkeyStatus,
+  SOLO_KEYS,
+  type SoloKey,
   applyEvent,
   DEFAULT_HOTKEY,
   defaultSettings,
@@ -514,7 +516,22 @@ export const MOCK_HOTKEY_CAPABILITIES: HotkeyCapabilities = {
   hold: true,
   toggle_command: "voltip-desktop --toggle",
   edit_toggle_command: "voltip-desktop --edit-toggle",
+  // A Windows session's lone keys (docs/dictation.md §13.1): no Fn, which only macOS has.
+  solo_keys: SOLO_KEYS.filter((key) => key !== "fn"),
 };
+
+/** The lone-key half of the mock's hotkey status: watched when the session offers the key. */
+function mockSoloStatus(key: SoloKey | null): Pick<HotkeyStatus, "solo_registered" | "solo_error"> {
+  if (key === null) return {};
+  return MOCK_HOTKEY_CAPABILITIES.solo_keys.includes(key)
+    ? { solo_registered: key }
+    : { solo_error: mockSoloKeyError(key) };
+}
+
+/** `HotkeyStatus.solo_error` for a lone key this session cannot watch (the desktop shell's text). */
+export function mockSoloKeyError(key: SoloKey): string {
+  return `${key}: 这台电脑上没有这个键`;
+}
 
 /** Microphones the browser preview pretends to have (the sample device first). */
 export const MOCK_AUDIO_DEVICES: readonly AudioDevice[] = [
@@ -706,6 +723,7 @@ export class MockBackend implements Backend {
         ...emptyHotkeyStatus(),
         registered: options.settings?.hotkey ?? DEFAULT_HOTKEY,
         ...(settings.edit_hotkey === null ? {} : { edit_registered: settings.edit_hotkey }),
+        ...(this.role === "phone" ? {} : mockSoloStatus(settings.solo_key)),
         backend: MOCK_HOTKEY_BACKEND,
         ...(this.role === "phone" ? {} : { capabilities: { ...MOCK_HOTKEY_CAPABILITIES } }),
       },
@@ -924,6 +942,13 @@ export class MockBackend implements Backend {
         return;
       }
       this.emit({ type: "settings", ...this.state.settings, hotkey });
+      this.emit({ type: "hotkey", ...this.hotkeyStatus(false) });
+    },
+    settings_set_solo_key: (args) => {
+      // Mirrors `SetSoloKey` (docs/dictation.md §13.1): any key is stored; the shell then says
+      // whether this session can watch it.
+      const { key } = required(args);
+      this.emit({ type: "settings", ...this.state.settings, solo_key: key });
       this.emit({ type: "hotkey", ...this.hotkeyStatus(false) });
     },
     settings_set_edit_hotkey: (args) => {
@@ -1811,14 +1836,16 @@ export class MockBackend implements Backend {
   /** What the desktop shell reports after (re)registering both chords: the dictation chord, and the
    *  edit chord while it is on; nothing while the recorder holds the keyboard. */
   private hotkeyStatus(capturing: boolean): HotkeyStatus {
-    const { hotkey, edit_hotkey } = this.state.settings;
+    const { hotkey, edit_hotkey, solo_key } = this.state.settings;
     return {
       ...(capturing ? {} : { registered: hotkey }),
       ...(capturing || edit_hotkey === null ? {} : { edit_registered: edit_hotkey }),
+      ...(capturing ? {} : mockSoloStatus(solo_key)),
       pressed: false,
       capturing,
       backend: MOCK_HOTKEY_BACKEND,
       capabilities: { ...MOCK_HOTKEY_CAPABILITIES },
+      solo_pressed: false,
     };
   }
 

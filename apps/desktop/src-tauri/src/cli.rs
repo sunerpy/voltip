@@ -106,8 +106,12 @@ impl Remote {
     /// The bridge command for this remote control.
     pub fn command(self) -> UiCommand {
         match self {
-            Self::Toggle => UiCommand::HotkeyEdge { pressed: true, at_ms: voltip_core::now_ms(), source: EdgeSource::Cli, purpose: TakeKind::Dictation },
-            Self::EditToggle => UiCommand::HotkeyEdge { pressed: true, at_ms: voltip_core::now_ms(), source: EdgeSource::Cli, purpose: TakeKind::Edit },
+            Self::Toggle => {
+                UiCommand::HotkeyEdge { pressed: true, at_ms: voltip_core::now_ms(), source: EdgeSource::Cli, purpose: TakeKind::Dictation, chorded: false }
+            }
+            Self::EditToggle => {
+                UiCommand::HotkeyEdge { pressed: true, at_ms: voltip_core::now_ms(), source: EdgeSource::Cli, purpose: TakeKind::Edit, chorded: false }
+            }
             Self::Cancel => UiCommand::DictationCancel,
         }
     }

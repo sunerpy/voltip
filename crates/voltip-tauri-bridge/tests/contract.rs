@@ -23,7 +23,7 @@ use voltip_core::{
     DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, HistoryEntry, ImportMode, InjectMode, LiveText,
     LocalDevice, Locale, ModelInstallState, ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSettings,
     RefineStyle, RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef,
-    Segment, ServiceKind, Settings, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
+    Segment, ServiceKind, Settings, SoloKey, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
 };
 use voltip_crypto::{PublicKey, SafetyCode};
 use voltip_identity::{ConnectionKind, DeviceIdentityPublic, TrustedDevice};
@@ -120,6 +120,20 @@ fn capabilities(global: bool, everywhere: bool) -> HotkeyCapabilities {
         hold: global,
         toggle_command: "voltip-desktop --toggle".into(),
         edit_toggle_command: "voltip-desktop --edit-toggle".into(),
+        // A registering session watches lone keys too (docs/dictation.md §13.1); pure Wayland none.
+        solo_keys: if global {
+            vec![
+                SoloKey::RightCtrl,
+                SoloKey::RightAlt,
+                SoloKey::RightShift,
+                SoloKey::RightMeta,
+                SoloKey::MouseMiddle,
+                SoloKey::MouseBack,
+                SoloKey::MouseForward,
+            ]
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -255,6 +269,8 @@ fn settings() -> Settings {
         extra_recording_ms: 150,
         // docs/dictation.md §18.5: both switches away from their defaults, so the sample shows each.
         context_sharing: ContextSharing { app_name: false, window_title: true },
+        // docs/dictation.md §13.1: a lone-key trigger next to the chord.
+        solo_key: Some(SoloKey::RightCtrl),
         ..Settings::default()
     }
 }
@@ -655,6 +671,9 @@ fn full_state() -> UiState {
             edit_registered: Some("Ctrl+Alt+E".into()),
             edit_error: None,
             capabilities: capabilities(true, true),
+            solo_registered: Some(SoloKey::RightCtrl),
+            solo_error: None,
+            solo_pressed: false,
         },
         dictation: DictationStatus {
             phase: done_phase(),
@@ -831,6 +850,9 @@ fn all_events() -> Vec<UiEvent> {
             edit_registered: Some("Ctrl+Alt+E".into()),
             edit_error: None,
             capabilities: capabilities(true, true),
+            solo_registered: Some(SoloKey::MouseBack),
+            solo_error: None,
+            solo_pressed: true,
         }),
         UiEvent::Hotkey(HotkeyStatus {
             registered: None,
@@ -841,6 +863,9 @@ fn all_events() -> Vec<UiEvent> {
             edit_registered: None,
             edit_error: Some("Ctrl+Alt+E 注册失败：already registered".into()),
             capabilities: capabilities(true, false),
+            solo_registered: Some(SoloKey::RightAlt),
+            solo_error: None,
+            solo_pressed: false,
         }),
         UiEvent::Hotkey(HotkeyStatus {
             registered: None,
@@ -851,6 +876,9 @@ fn all_events() -> Vec<UiEvent> {
             edit_registered: None,
             edit_error: None,
             capabilities: capabilities(false, false),
+            solo_registered: None,
+            solo_error: Some("右 Ctrl 无法单独触发：纯 Wayland 会话不允许应用监听全局按键".into()),
+            solo_pressed: false,
         }),
         // Every dictation phase the pill and the home page discriminate on. `listening` in its three
         // shapes (device opening; ready with the live preview; preview degraded), `processing` with
@@ -1189,6 +1217,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::SettingsSetTheme { .. } => "SettingsSetTheme",
         UiCommand::SettingsSetHotkey { .. } => "SettingsSetHotkey",
         UiCommand::SettingsSetEditHotkey { .. } => "SettingsSetEditHotkey",
+        UiCommand::SettingsSetSoloKey { .. } => "SettingsSetSoloKey",
         UiCommand::SettingsSetLocale { .. } => "SettingsSetLocale",
         UiCommand::SettingsSetAutoUpdate { .. } => "SettingsSetAutoUpdate",
         UiCommand::SettingsSetHistory { .. } => "SettingsSetHistory",
@@ -1247,6 +1276,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("settings_set_hotkey", json!({ "hotkey": "Ctrl+Alt+Space" }), "SettingsSetHotkey"),
         // docs/dictation.md §19: the voice-edit hotkey (`null` switches it off).
         ("settings_set_edit_hotkey", json!({ "hotkey": "Ctrl+Alt+Shift+E" }), "SettingsSetEditHotkey"),
+        // docs/dictation.md §13.1: the lone-key trigger (`null` switches it off).
+        ("settings_set_solo_key", json!({ "key": "mouse_back" }), "SettingsSetSoloKey"),
         ("settings_set_locale", json!({ "locale": "en" }), "SettingsSetLocale"),
         ("settings_set_auto_update", json!({ "enabled": true }), "SettingsSetAutoUpdate"),
         ("settings_set_history", json!({ "enabled": false, "keep": 100 }), "SettingsSetHistory"),
@@ -1666,6 +1697,7 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "SettingsSetTheme",
         "SettingsSetHotkey",
         "SettingsSetEditHotkey",
+        "SettingsSetSoloKey",
         "SettingsSetLocale",
         "SettingsSetAutoUpdate",
         "SettingsSetHistory",

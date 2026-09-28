@@ -6646,6 +6646,8 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "clap",
+ "core-foundation 0.10.1",
+ "core-graphics",
  "directories",
  "json-patch",
  "libc",

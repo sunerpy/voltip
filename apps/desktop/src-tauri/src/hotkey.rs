@@ -13,39 +13,63 @@
 //! `RegisterHotKey`, Carbon), and a `hold` take is cancelled with the chord still down, so Esc is
 //! also registered under each chord's modifiers (`Control+Alt+Escape` for `Ctrl+Alt+Space`).
 //!
+//! The lone-key trigger (`Settings.solo_key`, docs/dictation.md §13.1) is watched by
+//! [`crate::solo_key`] next to the chords, with the same lifecycle: installed by [`apply`],
+//! suspended while the recorder is open, reported as `solo_registered` / `solo_error` /
+//! `solo_pressed`. Its edges are dictation `HotkeyEdge`s; a chord made with it (Right Ctrl + C)
+//! goes to the core as `chorded`, which cancels the take that press started.
+//!
 //! Linux (docs/dictation.md §14): the plugin grabs keys through X11 (`XGrabKey`). The session kind
 //! goes into `HotkeyStatus.backend` (`global-shortcut · Linux · XWayland`). On a pure Wayland
 //! session nothing is registered and `HotkeyStatus.error` tells the user to bind `--toggle` in the
 //! compositor; under XWayland the grab only fires while an X11 window has focus, which is logged.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use parking_lot::Mutex;
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
 use voltip_core::ui::{HotkeyCapabilities, HotkeyStatus, UiEvent};
-use voltip_core::{DictationPhase, EdgeSource, Hotkey, Modifier, SelectionTiming, Settings, TakeKind, now_ms};
+use voltip_core::{DictationPhase, EdgeSource, Hotkey, Modifier, SelectionTiming, Settings, SoloKey, TakeKind, now_ms};
 use voltip_inject::{Session, SessionKind, X11Grab};
+use voltip_platform::solo_key::SoloEdge;
 use voltip_tauri_bridge::{Bridge, UiCommand};
+
+use crate::solo_key::{self, SoloHook};
 
 /// The core command for a key transition of the `purpose` key: a `HotkeyEdge` stamped with the
 /// core's clock. The activation machine (`Settings.activation`) turns it into start / stop / lock.
 pub fn edge_command(pressed: bool, source: EdgeSource, purpose: TakeKind) -> UiCommand {
-    UiCommand::HotkeyEdge { pressed, at_ms: now_ms(), source, purpose }
+    UiCommand::HotkeyEdge { pressed, at_ms: now_ms(), source, purpose, chorded: false }
 }
 
-/// The chords the shell registers: the dictation hotkey and the voice-edit hotkey (`None` = off).
+/// What the shell registers: the dictation hotkey, the voice-edit hotkey (`None` = off) and the
+/// lone-key trigger (`None` = off).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chords {
     /// `Settings.hotkey`.
     pub hotkey: String,
     /// `Settings.edit_hotkey`.
     pub edit_hotkey: Option<String>,
+    /// `Settings.solo_key`.
+    pub solo_key: Option<SoloKey>,
 }
 
 impl From<&Settings> for Chords {
     fn from(settings: &Settings) -> Self {
-        Self { hotkey: settings.hotkey.clone(), edit_hotkey: settings.edit_hotkey.clone() }
+        Self { hotkey: settings.hotkey.clone(), edit_hotkey: settings.edit_hotkey.clone(), solo_key: settings.solo_key }
+    }
+}
+
+/// The chord modifier a lone modifier key stands for: what a `hold` take keeps down, so the
+/// cancel key is registered under it too. Fn and the mouse buttons have none.
+pub fn solo_modifier(key: SoloKey) -> Option<Modifier> {
+    match key {
+        SoloKey::RightCtrl => Some(Modifier::Ctrl),
+        SoloKey::RightAlt => Some(Modifier::Alt),
+        SoloKey::RightShift => Some(Modifier::Shift),
+        SoloKey::RightMeta => Some(Modifier::Meta),
+        SoloKey::Fn | SoloKey::MouseMiddle | SoloKey::MouseBack | SoloKey::MouseForward => None,
     }
 }
 
@@ -96,7 +120,7 @@ pub fn capabilities_for(os: &str, session: Option<SessionKind>, toggle_command: 
         Some(X11Grab::X11WindowsOnly) => (true, false),
         Some(X11Grab::Everywhere) | None => (true, true),
     };
-    HotkeyCapabilities { global, everywhere, hold: global, toggle_command, edit_toggle_command }
+    HotkeyCapabilities { global, everywhere, hold: global, toggle_command, edit_toggle_command, solo_keys: solo_key::available(os, session) }
 }
 
 /// The graphical session on Linux (`None` on other platforms and without a display).
@@ -159,16 +183,20 @@ fn reserved_cancel(modifiers: &[Modifier]) -> bool {
     set(&[Modifier::Ctrl, Modifier::Shift]) || set(&[Modifier::Meta, Modifier::Alt])
 }
 
-/// The shortcuts the cancel key is registered as: bare, and under the modifiers of each chord (the
-/// ones a `hold` take keeps down). Chords that do not parse, and reserved combinations, add nothing.
+/// The shortcuts the cancel key is registered as: bare, and under the modifiers of each chord and
+/// of a lone modifier key (the ones a `hold` take keeps down). Chords that do not parse, and
+/// reserved combinations, add nothing.
 pub fn cancel_shortcuts(chords: &Chords) -> Vec<String> {
     let mut out = vec![CANCEL_KEY.to_owned()];
-    for chord in std::iter::once(&chords.hotkey).chain(chords.edit_hotkey.as_ref()) {
-        let Ok(hotkey) = Hotkey::parse(chord) else { continue };
-        if reserved_cancel(&hotkey.modifiers) {
+    let held = std::iter::once(&chords.hotkey)
+        .chain(chords.edit_hotkey.as_ref())
+        .filter_map(|chord| Hotkey::parse(chord).ok().map(|hotkey| hotkey.modifiers))
+        .chain(chords.solo_key.and_then(solo_modifier).map(|m| vec![m]));
+    for modifiers in held {
+        if reserved_cancel(&modifiers) {
             continue;
         }
-        let shortcut = Hotkey { modifiers: hotkey.modifiers, key: CANCEL_KEY.to_owned() }.to_tauri_shortcut();
+        let shortcut = Hotkey { modifiers, key: CANCEL_KEY.to_owned() }.to_tauri_shortcut();
         if !out.contains(&shortcut) {
             out.push(shortcut);
         }
@@ -237,6 +265,8 @@ pub struct HotkeyRegistry {
     cancel: Mutex<CancelKey>,
     /// The cancel shortcuts the OS accepted for the running take (what `Unregister` releases).
     cancel_registered: Mutex<Vec<String>>,
+    /// The lone-key trigger's input hook while one is installed.
+    solo: Mutex<Option<SoloHook>>,
 }
 
 impl HotkeyRegistry {
@@ -271,6 +301,8 @@ pub fn set_capture<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, registry: &A
         if let Err(e) = app.global_shortcut().unregister_all() {
             tracing::warn!(error = %e, "unregister_all failed");
         }
+        // The recorder types chords, Right Ctrl + K among them: no lone-key edges meanwhile.
+        drop(registry.solo.lock().take());
         registry.cancel.lock().dropped();
         registry.cancel_registered.lock().clear();
         let status = HotkeyStatus { backend: backend_name(), capabilities: capabilities(), capturing: true, ..HotkeyStatus::default() };
@@ -313,10 +345,65 @@ pub fn apply<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, registry: &Arc<Hot
             }
         }
     }
+    sync_solo(bridge, registry, chords.solo_key, session, &mut status);
     *registry.status.lock() = status.clone();
     bridge.publish(UiEvent::Hotkey(status));
     // A take running across a settings change keeps its cancel key.
     sync_cancel_key(app, bridge, registry);
+}
+
+/// Install, keep or remove the lone-key hook for `key` and say so in `status`. A running hook for
+/// the same key stays; a different key replaces it (the old hook goes first: the Windows hook
+/// procedures share one state); a key that failed is tried again.
+fn sync_solo(bridge: &Bridge, registry: &Arc<HotkeyRegistry>, key: Option<SoloKey>, session: Option<SessionKind>, status: &mut HotkeyStatus) {
+    let mut slot = registry.solo.lock();
+    if slot.as_ref().map(SoloHook::key) != key {
+        drop(slot.take());
+        if let Some(key) = key {
+            match solo_key::watch(key, session, false, solo_sink(bridge.clone(), Arc::downgrade(registry))) {
+                Ok(hook) => {
+                    tracing::info!(key = %key, "lone-key trigger watched");
+                    *slot = Some(hook);
+                }
+                Err(e) => {
+                    tracing::warn!(key = %key, error = %e, "lone-key trigger not watched");
+                    status.solo_error = Some(e);
+                }
+            }
+        }
+    }
+    status.solo_registered = slot.as_ref().map(SoloHook::key);
+}
+
+/// Where the hook's edges go: the settings page's `solo_pressed`, then the core as dictation
+/// `HotkeyEdge`s (a chord as `chorded`). Holds the registry weakly: the hook lives inside it.
+fn solo_sink(bridge: Bridge, registry: Weak<HotkeyRegistry>) -> impl Fn(SoloEdge) + Send + 'static {
+    move |edge| {
+        let Some(registry) = registry.upgrade() else { return };
+        if registry.capturing() {
+            return;
+        }
+        {
+            let mut st = registry.status.lock();
+            st.solo_pressed = edge == SoloEdge::Press;
+            let snapshot = st.clone();
+            drop(st);
+            bridge.publish(UiEvent::Hotkey(snapshot));
+        }
+        let command = match edge {
+            SoloEdge::Press => edge_command(true, EdgeSource::Hotkey, TakeKind::Dictation),
+            SoloEdge::Release => edge_command(false, EdgeSource::Hotkey, TakeKind::Dictation),
+            SoloEdge::Chorded => chorded_command(),
+        };
+        if let Err(e) = bridge.dispatch(command) {
+            tracing::warn!(error = %e, ?edge, "lone-key edge not accepted");
+        }
+    }
+}
+
+/// The core command for "another key joined the held lone-key trigger" (docs/dictation.md §13.1).
+pub fn chorded_command() -> UiCommand {
+    UiCommand::HotkeyEdge { pressed: false, at_ms: now_ms(), source: EdgeSource::Hotkey, purpose: TakeKind::Dictation, chorded: true }
 }
 
 /// Arm the cancel key for a take in `phase`, or release it once the take can no longer be cancelled.
@@ -485,15 +572,21 @@ mod tests {
         assert!(!cancel_key_wanted(&DictationPhase::Cancelled { injected_chars: 0 }));
 
         // Bare, and under each chord's modifiers: a `hold` take is cancelled with the chord down.
-        let chords = Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: Some("Ctrl+Alt+E".into()) };
+        let chords = Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: Some("Ctrl+Alt+E".into()), solo_key: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape", "Control+Alt+Escape"]);
-        let chords = Chords { hotkey: "Alt+Shift+Z".into(), edit_hotkey: Some("Meta+E".into()) };
+        let chords = Chords { hotkey: "Alt+Shift+Z".into(), edit_hotkey: Some("Meta+E".into()), solo_key: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape", "Alt+Shift+Escape", "Super+Escape"]);
-        let chords = Chords { hotkey: "not a chord".into(), edit_hotkey: None };
+        let chords = Chords { hotkey: "not a chord".into(), edit_hotkey: None, solo_key: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape"]);
         // Task Manager and Force Quit stay the system's.
-        let chords = Chords { hotkey: "Shift+Ctrl+D".into(), edit_hotkey: Some("Alt+Meta+E".into()) };
+        let chords = Chords { hotkey: "Shift+Ctrl+D".into(), edit_hotkey: Some("Alt+Meta+E".into()), solo_key: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape"]);
+        // docs/dictation.md §13.1: a lone modifier held in `hold` adds its own; a mouse button none.
+        let chords = Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::RightShift) };
+        assert_eq!(cancel_shortcuts(&chords), ["Escape", "Control+Alt+Escape", "Shift+Escape"]);
+        let chords = Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::MouseBack) };
+        assert_eq!(cancel_shortcuts(&chords), ["Escape", "Control+Alt+Escape"]);
+        assert_eq!(SoloKey::ALL.into_iter().filter_map(solo_modifier).count(), 4, "the four right-hand modifiers");
 
         let mut key = CancelKey::default();
         assert_eq!(key.step(false), None, "idle: nothing to do");
@@ -534,6 +627,11 @@ mod tests {
         assert!(xwayland.global && xwayland.hold && !xwayland.everywhere, "{xwayland:?}");
         let wayland = caps("linux", Some(SessionKind::Wayland));
         assert!(!wayland.global && !wayland.everywhere && !wayland.hold, "{wayland:?}");
+        // docs/dictation.md §13.1: no input hook on a pure Wayland session, Fn only on macOS.
+        assert!(wayland.solo_keys.is_empty());
+        assert!(caps("macos", None).solo_keys.contains(&SoloKey::Fn));
+        assert!(!caps("windows", None).solo_keys.contains(&SoloKey::Fn) && caps("windows", None).solo_keys.contains(&SoloKey::MouseBack));
+        assert_eq!(caps("linux", Some(SessionKind::XWayland)).solo_keys, caps("windows", None).solo_keys);
         assert_eq!((wayland.toggle_command.as_str(), wayland.edit_toggle_command.as_str()), ("voltip-desktop --toggle", "voltip-desktop --edit-toggle"));
         assert!(capabilities().toggle_command.ends_with("--toggle"));
     }
@@ -588,8 +686,12 @@ mod tests {
         assert_eq!(selection_timing_for(Some(SessionKind::XWayland)), SelectionTiming::AfterKeyUp);
         assert_eq!(selection_timing_for(Some(SessionKind::Wayland)), SelectionTiming::AtPress, "the compositor shortcut runs --edit-toggle");
         assert_eq!(selection_timing_for(None), SelectionTiming::AtPress, "Windows / macOS");
-        let settings = Settings { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, ..Settings::default() };
-        assert_eq!(Chords::from(&settings), Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None });
+        let settings = Settings { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::RightCtrl), ..Settings::default() };
+        assert_eq!(Chords::from(&settings), Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::RightCtrl) });
+        assert!(matches!(
+            chorded_command(),
+            UiCommand::HotkeyEdge { pressed: false, chorded: true, purpose: TakeKind::Dictation, source: EdgeSource::Hotkey, .. }
+        ));
         for (pressed, purpose) in [(true, TakeKind::Edit), (false, TakeKind::Dictation)] {
             assert!(
                 matches!(edge_command(pressed, EdgeSource::Hotkey, purpose), UiCommand::HotkeyEdge { pressed: p, purpose: q, .. } if p == pressed && q == purpose)

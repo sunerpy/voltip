@@ -243,6 +243,16 @@ pub struct HotkeyStatus {
     /// What the hotkey can do in the session the shell runs in (all `false` until it reports).
     #[serde(default)]
     pub capabilities: HotkeyCapabilities,
+    /// The lone-key trigger the shell's input hook watches (docs/dictation.md §13.1), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solo_registered: Option<crate::SoloKey>,
+    /// Why the chosen lone key is not watched (no hook on this session, a permission, a key this
+    /// platform has not got).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solo_error: Option<String>,
+    /// The lone key is currently held down on its own.
+    #[serde(default)]
+    pub solo_pressed: bool,
 }
 
 /// What the global hotkey can do in the session the desktop runs in (docs/dictation.md §13, §14),
@@ -260,6 +270,10 @@ pub struct HotkeyCapabilities {
     pub toggle_command: String,
     /// The same for voice edit (`… --edit-toggle`).
     pub edit_toggle_command: String,
+    /// The lone keys the shell can watch here (docs/dictation.md §13.1); empty where no input hook
+    /// exists (a pure Wayland session, the phone).
+    #[serde(default)]
+    pub solo_keys: Vec<crate::SoloKey>,
 }
 
 /// Snapshot of everything the UI renders.

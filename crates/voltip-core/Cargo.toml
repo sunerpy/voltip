@@ -34,6 +34,10 @@ voltip-identity.workspace = true
 voltip-pairing.workspace = true
 voltip-protocol.workspace = true
 voltip-transport.workspace = true
+# `SoloKey`, the lone-key trigger of `Settings.solo_key` (docs/dictation.md §13.1): the platform
+# crate owns the key tables the shell's input hooks need (pure, serde only). The engine tests also
+# use its voice-edit terminal table (§19.2).
+voltip-platform = { path = "../voltip-platform" }
 
 [dev-dependencies]
 base64.workspace = true
@@ -43,6 +47,3 @@ tokio-tungstenite.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 voltip-relay = { workspace = true, features = ["server"] }
 tracing-subscriber.workspace = true
-# The voice edit's terminal table (docs/dictation.md §19.2) for the engine tests; the core itself
-# asks the shell's injector.
-voltip-platform = { path = "../voltip-platform" }

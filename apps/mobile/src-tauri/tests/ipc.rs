@@ -245,6 +245,10 @@ fn dictation_is_refused_but_engines_secrets_and_history_work() {
         wait_state(webview, |s| s.settings.edit_hotkey.as_deref() == Some("Ctrl+Alt+Shift+E"));
         assert_eq!(invoke(webview, "settings_set_edit_hotkey", json!({ "hotkey": null })), Ok(Value::Null));
         wait_state(webview, |s| s.settings.edit_hotkey.is_none());
+        // The lone-key trigger (§13.1) is a shared setting too; only the desktop watches the key.
+        assert_eq!(invoke(webview, "settings_set_solo_key", json!({ "key": "mouse_back" })), Ok(Value::Null));
+        wait_state(webview, |s| s.settings.solo_key == Some(voltip_core::SoloKey::MouseBack));
+        assert_eq!(invoke(webview, "hotkey_edge", json!({ "pressed": false, "chorded": true })), Err(Value::String(DICTATION_UNAVAILABLE.into())));
         assert_eq!(
             invoke(webview, "settings_set_activation", json!({ "activation": "toggle", "holdThresholdMs": 300, "extraRecordingMs": 0 })),
             Ok(Value::Null)

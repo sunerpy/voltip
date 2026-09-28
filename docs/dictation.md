@@ -468,6 +468,30 @@ Windows 发行版是 GUI 子系统（`windows_subsystem = "windows"`）：headle
 
 TS 侧已接（2026-09-26）：`schema.ts` `CommandArgs` 有 `hotkey_edge: { pressed; atMs?; source? }`（类型 `HotkeyEdgeArgs`）与 `settings_set_activation: { activation; holdThresholdMs; extraRecordingMs }`（`SetActivationArgs`），`settingsSchema` 收 `activation / hold_threshold_ms / extra_recording_ms`（`.default("hold")` / 300 / 0，与 serde 对齐；夹具证明 Rust 总是序列化），`listening` 收 `locked`（`.default(false)`），§12 的 `output_mode` / `vad_trim` / `effective_output_mode` / `finalizing` / `live.injected` / `done.{mode,segments,live_error}` / `cancelled.injected_chars` / `HistoryEntry.{mode,segments,live_error}` 同批收下；`MODEL_TIERS` / `MODEL_ENGINES` / `MODEL_CAPABILITIES` 加 `auxiliary` / `silero_vad` / `vad`（wire 完整；`isRecognitionModel` / `isStreamingModel` 都为假，永不成卡片）。`ipc-contract.test.ts` 的 `MUTATION_COMMANDS` / `argSchemas` / `replay` 加了两条，`apps/{desktop,mobile}/src-tauri/tests/ipc.rs` 的 `PENDING_TYPESCRIPT` 已清空（双向断言通过）。设置 · 热键页有「激活方式」三卡 + 「短按判定阈值」（仅 `hold_or_toggle`，50–5000 ms）+ 「松开后继续录音」（0–5000 ms，0 = 立即停止），改动即整份 `settings_set_activation`；设置 · 引擎页有「输出方式」三卡（`effective_output_mode` 驱动「当前生效」徽标与回落说明）与「静音裁剪」开关（仅本地）；胶囊 `locked` 锁标、`live.injected` 已粘贴句更淡、`finalizing` 标签、取消保留字数；历史条目模式徽标与 `live_error` 说明；首页 chip / 页脚 / 空态提示随激活方式。`MockBackend` 以简化的激活机（无去抖 / 宽限 / pending）与三种输出模式的阶段序列驱动浏览器预览与测试（`docs/frontend.md` §3）。
 
+### 13.1 单键触发（2026-09-28）
+
+按住一个键或鼠标键就开始听写，不用组合键。`Settings.solo_key: Option<SoloKey>`（`#[serde(default)]`，缺省为关闭），与 `Settings.hotkey` 同时有效，边沿同样进激活状态机，所以 `hold` / `toggle` / `hold_or_toggle` 都适用。可选的键（`voltip_platform::solo_key::SoloKey`，wire 为 snake_case）：`right_ctrl`、`right_alt`、`right_shift`、`right_meta`（Win / Command / Super）、`fn`（只有 macOS）、`mouse_middle`、`mouse_back`、`mouse_forward`。只提供右手侧的修饰键：左侧的修饰键在日常快捷键里太常用。
+
+- **命令**：`CoreCommand::SetSoloKey(Option<SoloKey>)` / `settings_set_solo_key { key }`（`null` 关闭），持久化后回发 `Settings`；任何键都是合法数据，这台电脑能不能监听由壳层报告。
+- **状态**：`HotkeyStatus.solo_registered`（钩子正在监听的键）、`solo_error`（为什么没有监听）、`solo_pressed`；`HotkeyCapabilities.solo_keys` 是这个会话能监听的键（纯 Wayland 为空）。
+- **组合即取消**：按住触发键时又按下别的键或鼠标键（右 Ctrl + C、右 Ctrl + 点击），壳层发 `HotkeyEdge { chorded: true }`，不再报告它的松开。`ActivationMachine::chorded` 只取消由这一次按下开始的录音（或丢掉它留下的 pending start）；`toggle` 下按下时已经在停止上一段录音、或录音是 CLI / 界面按钮开始的，都不受影响。触发键是鼠标键时，按住期间打字不算组合。
+- **只认硬件输入**：Voltip 自己的粘贴、复制组合键和其他注入的输入都不算（Windows `LLKHF_INJECTED` / `LLMHF_INJECTED`，macOS enigo 的 `EVENT_SOURCE_USER_DATA` 标记，X11 的 XTEST 设备），所以粘贴永远不会被当成组合。
+- **取消键**：`hold` 下按着右侧修饰键时 Esc 带着这个修饰键，`cancel_shortcuts` 因此也注册「修饰键 + Escape」（右 Shift → `Shift+Escape`）；按 Esc 本身也是组合，同样会取消。
+- **录制器打开时**：钩子卸下，录制器里按右 Ctrl + K 不会开始录音；关闭后按设置重新安装。
+
+各平台（`apps/desktop/src-tauri/src/solo_key.rs` 与 `solo_key/{windows,macos,x11}.rs`；纯规则与状态机在 `crates/voltip-platform/src/solo_key.rs`，每个主机都测）：
+
+| 平台 | 钩子 | 修饰键 | 鼠标键 |
+|---|---|---|---|
+| Windows | 独立线程上的 `WH_KEYBOARD_LL` + `WH_MOUSE_LL` | 照常传给前台应用；单独按下时注入一次未分配的 `VK 0xE8`，系统就不再把它当成「单独的 Alt」（菜单栏）、「单独的 Win」（开始菜单）或「单独的 Shift」（输入法中英文切换） | 钩子吞掉，浏览器不会因此后退 |
+| macOS | 独立线程上 run loop 里的主动 `CGEventTap`（会话级），需要「辅助功能」权限（粘贴本来就要），不需要「输入监控」 | 照常传递；按下与否看事件的设备相关标志位（`NX_DEVICER*KEYMASK`、Fn 的 `kCGEventFlagMaskSecondaryFn`） | 事件被丢弃；系统停用事件监听（回调超时、安全输入）后自动重新安装 |
+| Linux X11 / XWayland | 根窗口上的 XInput 2 原始事件（任何窗口有焦点都收得到，别人的抓取也抢不走） | 只观察 | 另在根窗口上 `XGrabButton`（任意修饰键），这个键只交给 Voltip；被别的程序占用时报 `solo_error` |
+| 纯 Wayland | 没有 | — | — |
+
+XWayland 下 X 服务器只在 X11 窗口有焦点时看得到输入，与组合键的 `XGrabKey` 相同。欧洲键盘布局的右 Alt 多半是 AltGr，右 Shift 常用来输入大写字母；macOS 的 Fn 要在「系统设置 › 键盘」把「按下 🌐 键时」设为「不执行任何操作」。设置页在选中这些键时给出同样的提示。
+
+测试：`voltip-platform` 的 `solo_key` 单测（按下 / 松开 / 自动重复 / 组合 / 鼠标键不组合 / 各平台键码表）；`activation.rs@regression_a_chorded_trigger_cancels_the_take_its_press_started_and_nothing_else`；`crates/voltip-core/tests/activation.rs@regression_a_chorded_trigger_cancels_its_take_through_the_core`；桌面 `tests/ipc.rs@settings_set_solo_key_persists_and_a_chorded_edge_cancels_its_take`、`hotkey.rs` 的取消键与能力表；真实输入测试是 `#[ignore]`：X11 在 Xvfb 里用 xdotool 跑（`xvfb-run -a cargo test -p voltip-desktop --lib solo_key -- --ignored`），Windows 在交互桌面里用 `SendInput` 跑（`scripts/windows-remote.sh ps` 里同一条命令）；TS：`Settings.test.tsx` 的单键触发行、`ipc-contract.test.ts` 的 §13.1 字段。
+
 ## 14. Linux 原生（2026-09-26）
 
 `voltip-inject` 在 Linux 上的行为契约，以及热键、打包与冒烟的 Linux 约定。本增量不改 wire：会话类型只进 `HotkeyStatus.backend` 字符串与 tracing 日志（建议字段见 §14.7）。

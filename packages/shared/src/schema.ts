@@ -278,6 +278,21 @@ export const OVERLAY_PLACEMENTS = ["bottom", "top", "off"] as const;
 export const overlayPlacementSchema = z.enum(OVERLAY_PLACEMENTS);
 export type OverlayPlacement = z.infer<typeof overlayPlacementSchema>;
 
+/** The lone-key trigger's keys (`voltip_platform::solo_key::SoloKey`, docs/dictation.md §13.1), in
+ *  the order the settings page lists them. `fn` exists only on macOS. */
+export const SOLO_KEYS = [
+  "right_ctrl",
+  "right_alt",
+  "right_shift",
+  "right_meta",
+  "fn",
+  "mouse_middle",
+  "mouse_back",
+  "mouse_forward",
+] as const;
+export const soloKeySchema = z.enum(SOLO_KEYS);
+export type SoloKey = z.infer<typeof soloKeySchema>;
+
 export const settingsSchema = z.object({
   schema: z.literal(1),
   theme: themeIdSchema,
@@ -302,6 +317,9 @@ export const settingsSchema = z.object({
   /** Voice edit (docs/dictation.md §19): the chord that rewrites the selected text by a spoken
    *  instruction; `null` = off. Always serialised; an older `settings.json` reads as the default. */
   edit_hotkey: z.string().nullable().default(DEFAULT_EDIT_HOTKEY),
+  /** The lone-key trigger (docs/dictation.md §13.1), next to `hotkey`; `null` = off. Always
+   *  serialised; an older `settings.json` or core reads as off. */
+  solo_key: soloKeySchema.nullable().default(null),
   history: historySettingsSchema.default(() => ({ enabled: true, keep: 500 })),
   overlay: overlayPlacementSchema.default("bottom"),
 });
@@ -1033,6 +1051,8 @@ export const hotkeyCapabilitiesSchema = z.object({
   toggle_command: z.string(),
   /** The same for voice edit. */
   edit_toggle_command: z.string(),
+  /** The lone keys the shell can watch here (§13.1); empty without an input hook (pure Wayland). */
+  solo_keys: z.array(soloKeySchema).default(() => []),
 });
 export type HotkeyCapabilities = z.infer<typeof hotkeyCapabilitiesSchema>;
 
@@ -1050,6 +1070,12 @@ export const hotkeyStatusSchema = z.object({
   edit_error: z.string().optional(),
   /** Rust always sends it (all `false` and empty until the shell reports); absent in old payloads. */
   capabilities: hotkeyCapabilitiesSchema.optional(),
+  /** The lone-key trigger (docs/dictation.md §13.1): the key the input hook watches, or why the
+   *  chosen one is not watched; both absent while it is off. */
+  solo_registered: soloKeySchema.optional(),
+  solo_error: z.string().optional(),
+  /** The lone key is held down on its own (Rust always sends it; absent in old payloads). */
+  solo_pressed: z.boolean().optional(),
 });
 export type HotkeyStatus = z.infer<typeof hotkeyStatusSchema>;
 
@@ -1416,14 +1442,16 @@ export const EDGE_SOURCES = ["hotkey", "cli", "ui"] as const;
 export type EdgeSource = (typeof EDGE_SOURCES)[number];
 
 /** `hotkey_edge` arguments: `atMs` is Unix milliseconds (`voltip_core::now_ms()`); the optional
- *  fields default on the Rust side (now / `ui` / `dictation`); `purpose: "edit"` is the voice-edit
- *  key (docs/dictation.md §19). Declared apart from `CommandArgs` so the Rust contract test, which
- *  reads that interface line by line, sees one key per line. */
+ *  fields default on the Rust side (now / `ui` / `dictation` / not chorded); `purpose: "edit"` is
+ *  the voice-edit key (docs/dictation.md §19); `chorded` is the desktop input hook's report that
+ *  another key joined the held lone-key trigger (§13.1). Declared apart from `CommandArgs` so the
+ *  Rust contract test, which reads that interface line by line, sees one key per line. */
 export type HotkeyEdgeArgs = {
   pressed: boolean;
   atMs?: number;
   source?: EdgeSource;
   purpose?: TakeKind;
+  chorded?: boolean;
 };
 
 /** `settings_set_activation` arguments (docs/dictation.md §13). */
@@ -1469,6 +1497,8 @@ export interface CommandArgs {
   settings_set_hotkey: { hotkey: string };
   /** Voice edit (docs/dictation.md §19): the edit chord, or `null` to switch the key off. */
   settings_set_edit_hotkey: { hotkey: string | null };
+  /** The lone-key trigger (docs/dictation.md §13.1), or `null` to switch it off. */
+  settings_set_solo_key: { key: SoloKey | null };
   /** Recorder open (`true`): the shell suspends the OS hotkey so the chord reaches the webview. */
   hotkey_capture: { active: boolean };
   devices_refresh: undefined;
@@ -1636,6 +1666,7 @@ export function defaultSettings(): Settings {
     extra_recording_ms: 0,
     context_sharing: defaultContextSharing(),
     edit_hotkey: DEFAULT_EDIT_HOTKEY,
+    solo_key: null,
     history: { enabled: true, keep: 500 },
     overlay: "bottom",
   };

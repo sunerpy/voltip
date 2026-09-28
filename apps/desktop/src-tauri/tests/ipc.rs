@@ -318,6 +318,29 @@ fn settings_set_edit_hotkey_persists_validates_and_switches_off() {
     });
 }
 
+/// The lone-key trigger (docs/dictation.md §13.1) through the command layer: off by default, a
+/// key persists under its wire name and comes back as `settings`, `null` switches it off, an
+/// unknown key is refused at the IPC layer. `hotkey_edge` takes the `chorded` flag: a chorded
+/// edge after a press cancels that press's take.
+#[test]
+fn settings_set_solo_key_persists_and_a_chorded_edge_cancels_its_take() {
+    with_running_app(|_, webview, rx| {
+        let st = wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(st.settings.solo_key, None);
+        assert_eq!(invoke(webview, "settings_set_solo_key", json!({ "key": "right_ctrl" })), Ok(Value::Null));
+        wait_state(webview, |s| s.settings.solo_key == Some(voltip_core::SoloKey::RightCtrl));
+        wait_event(rx, "settings", |e| e["type"] == "settings" && e["solo_key"] == "right_ctrl");
+        assert!(invoke(webview, "settings_set_solo_key", json!({ "key": "caps_lock" })).is_err());
+        assert_eq!(invoke(webview, "settings_set_solo_key", json!({ "key": null })), Ok(Value::Null));
+        wait_event(rx, "settings (off)", |e| e["type"] == "settings" && e["solo_key"].is_null());
+
+        assert_eq!(invoke(webview, "hotkey_edge", json!({ "pressed": true, "source": "hotkey" })), Ok(Value::Null));
+        wait_event(rx, "listening", |e| e["type"] == "dictation" && e["phase"]["phase"] == "listening");
+        assert_eq!(invoke(webview, "hotkey_edge", json!({ "pressed": false, "source": "hotkey", "chorded": true })), Ok(Value::Null));
+        wait_event(rx, "cancelled", |e| e["type"] == "dictation" && e["phase"]["phase"] == "cancelled");
+    });
+}
+
 /// The settings page suspends the OS registration while it records (otherwise the bound chord is
 /// swallowed by `RegisterHotKey` and never reaches the webview). Headless shells only track the
 /// flag, but the command must exist, accept both edges and reject a missing argument.
@@ -932,7 +955,7 @@ fn overlay_pill_and_hotkey_edges_follow_the_dictation_contract() {
     let before = voltip_core::now_ms();
     for (pressed, purpose) in [(true, TakeKind::Dictation), (false, TakeKind::Edit)] {
         match voltip_desktop_lib::hotkey::edge_command(pressed, EdgeSource::Hotkey, purpose) {
-            voltip_tauri_bridge::UiCommand::HotkeyEdge { pressed: p, at_ms, source: EdgeSource::Hotkey, purpose: q } => {
+            voltip_tauri_bridge::UiCommand::HotkeyEdge { pressed: p, at_ms, source: EdgeSource::Hotkey, purpose: q, chorded: false } => {
                 assert_eq!((p, q), (pressed, purpose));
                 assert!(at_ms >= before && at_ms <= voltip_core::now_ms(), "stamped with the core's clock: {at_ms}");
             }

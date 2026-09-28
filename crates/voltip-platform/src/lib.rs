@@ -17,6 +17,8 @@
 //! - [`tray`]: the three-state tray glyph, rendered to RGBA so no icon asset is needed.
 //! - [`foreground`]: the focused application's raw facts (Windows image path, X11 `WM_CLASS`,
 //!   macOS bundle id) → the normalised app id scenes match on (docs/dictation.md §18).
+//! - [`solo_key`]: the lone-key trigger (docs/dictation.md §13.1): the keys each platform offers,
+//!   the codes its input hook reports them with, and raw input → press / release / chorded.
 //! - [`HostOs`]: which platform this binary was compiled for; [`PermissionReport::for_host`] is
 //!   the `not_applicable` skeleton the shell starts from.
 
@@ -27,6 +29,7 @@
 pub mod foreground;
 pub mod macos;
 pub mod permissions;
+pub mod solo_key;
 pub mod tray;
 pub mod windows;
 

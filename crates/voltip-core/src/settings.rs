@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::CoreError;
 use crate::dictation::activation::{Activation, DEFAULT_HOLD_THRESHOLD_MS};
 use crate::engines::EngineSettings;
+use crate::hotkey::SoloKey;
 use crate::scenes::ContextSharing;
 
 /// File name inside the app data directory.
@@ -120,6 +121,11 @@ pub struct Settings {
     /// serialised, so a switched-off hotkey stays off (`null`) instead of the default coming back.
     #[serde(default = "default_edit_hotkey")]
     pub edit_hotkey: Option<String>,
+    /// The lone-key trigger (docs/dictation.md §13.1): a right-hand modifier, Fn or a mouse button
+    /// that drives a take on its own, next to [`Settings::hotkey`]; `None` (the default, and files
+    /// written before it) = off.
+    #[serde(default)]
+    pub solo_key: Option<SoloKey>,
     /// History recording and retention.
     #[serde(default)]
     pub history: HistorySettings,
@@ -157,6 +163,7 @@ impl Default for Settings {
             extra_recording_ms: 0,
             context_sharing: ContextSharing::default(),
             edit_hotkey: default_edit_hotkey(),
+            solo_key: None,
             history: HistorySettings::default(),
             overlay: OverlayPlacement::Bottom,
         }
@@ -427,5 +434,23 @@ mod tests {
         let chosen = Settings { edit_hotkey: Some("Ctrl+Shift+E".into()), ..Settings::default() };
         store.save(&chosen).unwrap();
         assert_eq!(store.load().unwrap(), chosen);
+    }
+
+    /// docs/dictation.md §13.1: files written before the lone-key trigger read with it off; a
+    /// chosen key round-trips under its wire name, an unknown one is refused.
+    #[test]
+    fn settings_without_solo_key_read_it_off_and_a_chosen_key_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore::new(dir.path());
+        std::fs::write(dir.path().join(SETTINGS_FILE_NAME), br#"{"schema":1,"theme":"light","follow_system_theme":false,"relay_enabled":true}"#).unwrap();
+        assert_eq!(store.load().unwrap().solo_key, None);
+        let chosen = Settings { solo_key: Some(SoloKey::MouseBack), ..Settings::default() };
+        store.save(&chosen).unwrap();
+        assert!(std::fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME)).unwrap().contains(r#""solo_key": "mouse_back""#));
+        assert_eq!(store.load().unwrap(), chosen);
+        assert!(
+            serde_json::from_str::<Settings>(r#"{"schema":1,"theme":"light","follow_system_theme":false,"relay_enabled":true,"solo_key":"caps_lock"}"#)
+                .is_err()
+        );
     }
 }

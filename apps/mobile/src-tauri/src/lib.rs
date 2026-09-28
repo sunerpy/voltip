@@ -27,7 +27,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 70] = [
+pub const COMMANDS: [&str; 71] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -46,6 +46,7 @@ pub const COMMANDS: [&str; 70] = [
     "settings_set_theme",
     "settings_set_hotkey",
     "settings_set_edit_hotkey",
+    "settings_set_solo_key",
     "hotkey_capture",
     "devices_refresh",
     "connectivity_check",
@@ -233,6 +234,13 @@ fn settings_set_edit_hotkey(bridge: tauri::State<'_, Bridge>, hotkey: Option<Str
     Ok(bridge.dispatch(UiCommand::SettingsSetEditHotkey { hotkey })?)
 }
 
+/// The lone-key trigger (docs/dictation.md §13.1) is a shared setting: the phone stores it like
+/// the desktop does; only the desktop's input hook watches the key.
+#[tauri::command]
+fn settings_set_solo_key(bridge: tauri::State<'_, Bridge>, key: Option<voltip_core::SoloKey>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetSoloKey { key })?)
+}
+
 /// Phones register no OS hotkey; the recorder's suspend request is accepted and ignored so the
 /// shared webview code needs no platform branch.
 #[tauri::command]
@@ -310,8 +318,8 @@ fn dictation_cancel() -> Result<(), String> {
 /// No hotkey and no local pipeline on the phone: a key edge (dictation or voice edit) is refused
 /// like the dictation verbs.
 #[tauri::command]
-fn hotkey_edge(pressed: bool, at_ms: Option<u64>, source: Option<EdgeSource>, purpose: Option<TakeKind>) -> Result<(), String> {
-    tracing::debug!(pressed, ?at_ms, ?source, ?purpose, "hotkey_edge refused on mobile");
+fn hotkey_edge(pressed: bool, at_ms: Option<u64>, source: Option<EdgeSource>, purpose: Option<TakeKind>, chorded: Option<bool>) -> Result<(), String> {
+    tracing::debug!(pressed, ?at_ms, ?source, ?purpose, ?chorded, "hotkey_edge refused on mobile");
     Err(DICTATION_UNAVAILABLE.to_owned())
 }
 
@@ -643,6 +651,7 @@ pub fn build_app<R: Runtime>(
             settings_set_theme,
             settings_set_hotkey,
             settings_set_edit_hotkey,
+            settings_set_solo_key,
             hotkey_capture,
             devices_refresh,
             connectivity_check,

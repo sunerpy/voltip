@@ -169,6 +169,9 @@ pub enum CoreCommand {
     /// Change (`Some`) or switch off (`None`) the voice-edit hotkey (docs/dictation.md §19);
     /// validated like the dictation hotkey and refused when it is the same chord.
     SetEditHotkey(Option<String>),
+    /// Choose (`Some`) or switch off (`None`) the lone-key trigger (docs/dictation.md §13.1);
+    /// persisted, the desktop shell (un)installs its input hook on `Settings`.
+    SetSoloKey(Option<crate::SoloKey>),
     /// Change theme.
     SetTheme {
         /// Theme.
@@ -224,6 +227,10 @@ pub enum CoreCommand {
         source: EdgeSource,
         /// Which key: the dictation hotkey or the voice-edit hotkey (docs/dictation.md §19).
         purpose: TakeKind,
+        /// Another key or button joined the held lone-key trigger (docs/dictation.md §13.1): the
+        /// press began a shortcut, so the take it started is cancelled ([`ActivationMachine::chorded`]).
+        /// `pressed` is not read then.
+        chorded: bool,
     },
     /// Change how the hotkey drives a dictation (persisted; the machine follows at once).
     SetActivation {
@@ -984,6 +991,7 @@ impl Runtime {
             CoreCommand::SetRelay { url, enabled } => self.set_relay(url, enabled),
             CoreCommand::SetHotkey(text) => self.set_hotkey(&text),
             CoreCommand::SetEditHotkey(text) => self.set_edit_hotkey(text.as_deref()),
+            CoreCommand::SetSoloKey(key) => self.set_solo_key(key),
             CoreCommand::SetTheme { theme, follow_system } => {
                 self.settings.theme = theme;
                 self.settings.follow_system_theme = follow_system;
@@ -1013,7 +1021,7 @@ impl Runtime {
             CoreCommand::DictationStart => self.dictation_start(),
             CoreCommand::DictationStop => self.dictation_stop(),
             CoreCommand::DictationCancel => self.dictation_cancel(),
-            CoreCommand::HotkeyEdge { pressed, at_ms, source, purpose } => self.hotkey_edge(Edge { pressed, at_ms, source }, purpose),
+            CoreCommand::HotkeyEdge { pressed, at_ms, source, purpose, chorded } => self.hotkey_edge(Edge { pressed, at_ms, source }, purpose, chorded),
             CoreCommand::SetActivation { activation, hold_threshold_ms, extra_recording_ms } => {
                 self.set_activation(activation, hold_threshold_ms, extra_recording_ms)
             }
@@ -1254,11 +1262,16 @@ impl Runtime {
         (hint == PhaseHint::Idle || self.dictation.status().kind == purpose).then_some(hint)
     }
 
-    fn hotkey_edge(&mut self, edge: Edge, purpose: TakeKind) -> Result<(), CoreError> {
+    fn hotkey_edge(&mut self, edge: Edge, purpose: TakeKind, chorded: bool) -> Result<(), CoreError> {
         let Some(phase) = self.phase_hint_for(purpose) else {
             tracing::info!(purpose = purpose.as_str(), pressed = edge.pressed, "hotkey edge dropped: a take of the other kind is running");
             return Ok(());
         };
+        if chorded {
+            let intents = self.activation.machine(purpose).chorded(phase);
+            tracing::info!(purpose = purpose.as_str(), ?intents, "the trigger key became a chord");
+            return self.apply_intents(intents, purpose, edge.source);
+        }
         let intents = self.activation.machine(purpose).feed(edge, phase);
         self.arm_grace();
         let result = self.apply_intents(intents, purpose, edge.source);
@@ -2031,6 +2044,13 @@ impl Runtime {
             }
         };
         self.settings.edit_hotkey = chord;
+        self.save_settings()
+    }
+
+    /// `SetSoloKey` (docs/dictation.md §13.1): every key is valid data; whether this machine can
+    /// watch it is the shell's report (`HotkeyStatus.solo_error`).
+    fn set_solo_key(&mut self, key: Option<crate::SoloKey>) -> Result<(), CoreError> {
+        self.settings.solo_key = key;
         self.save_settings()
     }
 

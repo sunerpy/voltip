@@ -4,8 +4,12 @@ import {
   DEFAULT_EDIT_HOTKEY,
   DEFAULT_HOTKEY,
   type HotkeyCapabilities,
+  type HotkeyStatus,
   MAX_ACTIVATION_MS,
+  type Platform,
   type Settings,
+  type SoloKey,
+  type TFunction,
   activationDescription,
   activationHint,
   activationLabel,
@@ -21,6 +25,7 @@ import {
   Keycaps,
   LampText,
   OptionCard,
+  Select,
   SettingsPane,
   SettingsRows,
   SettingsSection,
@@ -132,6 +137,123 @@ function SessionCapabilities({ capabilities }: { capabilities: HotkeyCapabilitie
         </StatusRow>
       </SettingsRows>
     </SettingsSection>
+  );
+}
+
+/** How the settings page names a lone key on `platform` (the modifiers carry their platform's
+ *  name: Option and Command on macOS, Win on Windows, Super elsewhere). */
+export function soloKeyLabel(key: SoloKey, platform: Platform | undefined, t: TFunction): string {
+  switch (key) {
+    case "right_alt":
+      return t(
+        platform === "macos"
+          ? "settings.hotkey.solo.key.right_alt_mac"
+          : "settings.hotkey.solo.key.right_alt",
+      );
+    case "right_meta":
+      return t(
+        platform === "macos"
+          ? "settings.hotkey.solo.key.right_meta_mac"
+          : platform === "windows"
+            ? "settings.hotkey.solo.key.right_meta_windows"
+            : "settings.hotkey.solo.key.right_meta_linux",
+      );
+    default:
+      return t(`settings.hotkey.solo.key.${key}`);
+  }
+}
+
+/** What to know about `key` before relying on it (docs/dictation.md §13.1). */
+export function soloKeyNotes(
+  key: SoloKey | null,
+  platform: Platform | undefined,
+  everywhere: boolean,
+  t: TFunction,
+): string[] {
+  if (key === null) return [];
+  const notes: string[] = [];
+  if (key === "right_alt" && platform !== "macos") notes.push(t("settings.hotkey.solo.note.alt"));
+  if (key === "right_shift") notes.push(t("settings.hotkey.solo.note.shift"));
+  if (key === "fn") notes.push(t("settings.hotkey.solo.note.fn"));
+  if (key.startsWith("mouse_")) notes.push(t("settings.hotkey.solo.note.mouse"));
+  if (platform === "macos") notes.push(t("settings.hotkey.solo.note.macPermission"));
+  if (!everywhere && platform === "linux") notes.push(t("settings.hotkey.solo.note.x11Only"));
+  return notes;
+}
+
+/** The lone-key trigger (docs/dictation.md §13.1): `settings.solo_key`, saved through
+ *  `settings_set_solo_key`; the keys come from the shell (`capabilities.solo_keys`), and so does
+ *  what its input hook watches (`solo_registered`, `solo_error`, `solo_pressed`). */
+function SoloKeyRow({
+  status,
+  soloKey,
+  platform,
+}: {
+  status: HotkeyStatus;
+  soloKey: SoloKey | null;
+  platform: Platform | undefined;
+}) {
+  const { backend } = useBackend();
+  const { t } = useI18n();
+  const offered = status.capabilities?.solo_keys ?? [];
+  // A key the session cannot watch (Fn on Windows) stays visible while it is the setting.
+  const keys = soloKey !== null && !offered.includes(soloKey) ? [...offered, soloKey] : offered;
+  const options = [
+    { value: "off" as const, label: t("settings.hotkey.solo.off") },
+    ...keys.map((key) => ({ value: key, label: soloKeyLabel(key, platform, t) })),
+  ];
+  const watching = soloKey !== null && status.solo_registered === soloKey;
+  const lamp =
+    soloKey === null
+      ? undefined
+      : status.solo_error !== undefined
+        ? { tone: "danger" as const, text: t("settings.hotkey.solo.failed") }
+        : watching
+          ? status.solo_pressed === true
+            ? { tone: "ok" as const, text: t("settings.hotkey.solo.pressed") }
+            : { tone: "ok" as const, text: t("settings.hotkey.solo.watching") }
+          : { tone: "idle" as const, text: t("settings.hotkey.solo.waiting") };
+  const notes = soloKeyNotes(soloKey, platform, status.capabilities?.everywhere ?? true, t);
+  return (
+    <StatusRow
+      label={t("settings.hotkey.solo.label")}
+      help={t("settings.hotkey.solo.help")}
+      data-testid="solo-key"
+      note={
+        offered.length === 0 ? (
+          t("settings.hotkey.solo.unavailable")
+        ) : status.solo_error !== undefined || notes.length > 0 ? (
+          <span className="flex max-w-[360px] flex-col gap-1" data-testid="solo-key-notes">
+            {status.solo_error !== undefined && (
+              <span role="alert" className="text-danger">
+                {status.solo_error}
+              </span>
+            )}
+            {notes.map((note) => (
+              <span key={note}>{note}</span>
+            ))}
+          </span>
+        ) : undefined
+      }>
+      <div className="flex items-center gap-3">
+        {lamp !== undefined && (
+          <LampText tone={lamp.tone} pulse={status.solo_pressed === true} size="sm">
+            <span data-testid="solo-key-status">{lamp.text}</span>
+          </LampText>
+        )}
+        <Select
+          size="sm"
+          className="w-48"
+          aria-label={t("settings.hotkey.solo.select")}
+          options={options}
+          value={soloKey ?? "off"}
+          disabled={offered.length === 0 && soloKey === null}
+          onChange={(value) => {
+            void backend.invoke("settings_set_solo_key", { key: value === "off" ? null : value });
+          }}
+        />
+      </div>
+    </StatusRow>
   );
 }
 
@@ -348,6 +470,7 @@ export function Hotkey() {
             </Button>
           </div>
         </StatusRow>
+        <SoloKeyRow status={status} soloKey={state.settings.solo_key} platform={platform} />
       </SettingsRows>
 
       <SettingsSection

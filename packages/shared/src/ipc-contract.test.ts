@@ -25,6 +25,7 @@ import {
   sceneDraftSchema,
   providerIdSchema,
   serviceKindSchema,
+  soloKeySchema,
   themeIdSchema,
   uiEventSchema,
   uiStateSchema,
@@ -86,6 +87,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   settings_set_theme: null,
   settings_set_hotkey: null,
   settings_set_edit_hotkey: null,
+  settings_set_solo_key: null,
   hotkey_capture: null,
   devices_refresh: null,
   connectivity_check: null,
@@ -148,6 +150,7 @@ const argSchemas = {
   settings_set_theme: z.object({ theme: themeIdSchema, followSystem: z.boolean() }),
   settings_set_hotkey: z.object({ hotkey: z.string() }),
   settings_set_edit_hotkey: z.object({ hotkey: z.string().nullable() }).strict(),
+  settings_set_solo_key: z.object({ key: soloKeySchema.nullable() }).strict(),
   hotkey_capture: z.object({ active: z.boolean() }),
   settings_set_engines: z.object({ engines: engineSettingsSchema }),
   provider_key_set: z
@@ -172,6 +175,7 @@ const argSchemas = {
     atMs: z.number().int().nonnegative().optional(),
     source: z.enum(EDGE_SOURCES).optional(),
     purpose: z.enum(TAKE_KINDS).optional(),
+    chorded: z.boolean().optional(),
   }),
   settings_set_activation: z.object({
     activation: activationSchema,
@@ -245,6 +249,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.settings_set_hotkey.parse(args));
     case "settings_set_edit_hotkey":
       return backend.invoke(name, argSchemas.settings_set_edit_hotkey.parse(args));
+    case "settings_set_solo_key":
+      return backend.invoke(name, argSchemas.settings_set_solo_key.parse(args));
     case "hotkey_capture":
       return backend.invoke(name, argSchemas.hotkey_capture.parse(args));
     case "settings_set_engines":
@@ -346,6 +352,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       hold_threshold_ms: 300,
       extra_recording_ms: 150,
       edit_hotkey: "Ctrl+Alt+E",
+      solo_key: "right_ctrl",
       context_sharing: { app_name: false, window_title: true },
       history: { enabled: true, keep: 200 },
       overlay: "top",
@@ -613,6 +620,45 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(uiEventSchema.safeParse(mutate(raw, ["capabilities", "hold"], "yes")).success).toBe(
       false,
     );
+  });
+
+  it("regression: section 13.1 the lone-key trigger survives parsing: the setting, what the hook watches and why not, and the session's keys", () => {
+    const hotkeys = events.flatMap((raw) => {
+      const r = uiEventSchema.safeParse(raw);
+      return r.success && r.data.type === "hotkey" ? [r.data] : [];
+    });
+    expect(
+      hotkeys.map((h) => [
+        h.solo_registered,
+        h.solo_error !== undefined,
+        h.solo_pressed,
+        h.capabilities?.solo_keys.length,
+      ]),
+    ).toEqual([
+      ["mouse_back", false, true, 7],
+      ["right_alt", false, false, 7],
+      [undefined, true, false, 0],
+    ]);
+    const parsedState = uiStateSchema.parse(state);
+    expect(parsedState.settings.solo_key).toBe("right_ctrl");
+    expect(parsedState.hotkey.solo_registered).toBe("right_ctrl");
+    expect(parsedState.hotkey.capabilities?.solo_keys).not.toContain("fn");
+    // An older core sends neither the setting nor the status fields: off, nothing watched.
+    const { solo_key: _dropped, ...olderSettings } = z
+      .record(z.string(), z.unknown())
+      .parse(z.record(z.string(), z.unknown()).parse(state).settings);
+    const older = uiStateSchema.parse({
+      ...z.record(z.string(), z.unknown()).parse(state),
+      settings: olderSettings,
+    });
+    expect(older.settings.solo_key).toBeNull();
+    const raw = events.find((e) => uiEventSchema.safeParse(e).data?.type === "hotkey");
+    expect(uiEventSchema.safeParse(mutate(raw, ["solo_registered"], "caps_lock")).success).toBe(
+      false,
+    );
+    const setSolo = commands.find((c) => c.name === "settings_set_solo_key");
+    expect(argSchemas.settings_set_solo_key.parse(setSolo?.args)).toEqual({ key: "mouse_back" });
+    expect(argSchemas.hotkey_edge.parse({ pressed: false, chorded: true }).chorded).toBe(true);
   });
 
   it("regression: section 19 voice edit fields survive parsing: the edit hotkey and the take kind and the edit record and the four failure codes and the edit registration and the edge purpose", () => {

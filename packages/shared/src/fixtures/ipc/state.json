@@ -44,6 +44,7 @@
       "window_title": true
     },
     "edit_hotkey": "Ctrl+Alt+E",
+    "solo_key": "right_ctrl",
     "history": {
       "enabled": true,
       "keep": 200
@@ -123,8 +124,19 @@
       "everywhere": true,
       "hold": true,
       "toggle_command": "voltip-desktop --toggle",
-      "edit_toggle_command": "voltip-desktop --edit-toggle"
-    }
+      "edit_toggle_command": "voltip-desktop --edit-toggle",
+      "solo_keys": [
+        "right_ctrl",
+        "right_alt",
+        "right_shift",
+        "right_meta",
+        "mouse_middle",
+        "mouse_back",
+        "mouse_forward"
+      ]
+    },
+    "solo_registered": "right_ctrl",
+    "solo_pressed": false
   },
   "dictation": {
     "phase": {

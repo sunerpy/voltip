@@ -102,6 +102,12 @@ pub enum UiCommand {
         /// Chord text or `null`.
         hotkey: Option<String>,
     },
+    /// Lone-key trigger (docs/dictation.md §13.1): `right_ctrl` … `mouse_forward`, or `null` to
+    /// switch it off; persisted, the desktop shell watches the key when the `settings` event arrives.
+    SettingsSetSoloKey {
+        /// Key or `null`.
+        key: Option<voltip_core::SoloKey>,
+    },
     /// UI language (`system` | `zh-cn` | `en`); persisted, every window follows `settings`.
     SettingsSetLocale {
         /// Language.
@@ -146,6 +152,10 @@ pub enum UiCommand {
         /// `dictation` (default: shells and fixtures from before voice edit) | `edit`.
         #[serde(default)]
         purpose: TakeKind,
+        /// Another key joined the held lone-key trigger (docs/dictation.md §13.1); only the desktop
+        /// shell's input hook sets it.
+        #[serde(default)]
+        chorded: bool,
     },
     /// How the hotkey drives a dictation (`hold` | `toggle` | `hold_or_toggle`) plus its timings.
     SettingsSetActivation {
@@ -322,6 +332,7 @@ impl UiCommand {
             Self::SettingsSetTheme { theme, follow_system } => CoreCommand::SetTheme { theme, follow_system },
             Self::SettingsSetHotkey { hotkey } => CoreCommand::SetHotkey(hotkey),
             Self::SettingsSetEditHotkey { hotkey } => CoreCommand::SetEditHotkey(hotkey),
+            Self::SettingsSetSoloKey { key } => CoreCommand::SetSoloKey(key),
             Self::SettingsSetLocale { locale } => CoreCommand::SetLocale(locale),
             Self::SettingsSetAutoUpdate { enabled } => CoreCommand::SetAutoUpdate(enabled),
             Self::SettingsSetHistory { enabled, keep } => CoreCommand::SetHistory(voltip_core::HistorySettings { enabled, keep }),
@@ -331,7 +342,7 @@ impl UiCommand {
             Self::DictationStart => CoreCommand::DictationStart,
             Self::DictationStop => CoreCommand::DictationStop,
             Self::DictationCancel => CoreCommand::DictationCancel,
-            Self::HotkeyEdge { pressed, at_ms, source, purpose } => CoreCommand::HotkeyEdge { pressed, at_ms, source, purpose },
+            Self::HotkeyEdge { pressed, at_ms, source, purpose, chorded } => CoreCommand::HotkeyEdge { pressed, at_ms, source, purpose, chorded },
             Self::SettingsSetActivation { activation, hold_threshold_ms, extra_recording_ms } => {
                 CoreCommand::SetActivation { activation, hold_threshold_ms, extra_recording_ms }
             }
@@ -557,7 +568,7 @@ mod tests {
         let c: UiCommand = serde_json::from_str(r#"{"command":"hotkey_edge","pressed":true,"atMs":1758700600000,"source":"cli"}"#).unwrap();
         assert!(matches!(
             c.into_core().unwrap(),
-            CoreCommand::HotkeyEdge { pressed: true, at_ms: 1_758_700_600_000, source: EdgeSource::Cli, purpose: TakeKind::Dictation }
+            CoreCommand::HotkeyEdge { pressed: true, at_ms: 1_758_700_600_000, source: EdgeSource::Cli, purpose: TakeKind::Dictation, chorded: false }
         ));
         // docs/dictation.md §19: the edit key says so; the purpose defaults to dictation.
         let c: UiCommand = serde_json::from_str(r#"{"command":"hotkey_edge","pressed":false,"atMs":1,"source":"hotkey","purpose":"edit"}"#).unwrap();
@@ -567,6 +578,13 @@ mod tests {
         assert!(matches!(c.into_core().unwrap(), CoreCommand::SetEditHotkey(Some(h)) if h == "Ctrl+Shift+E"));
         let c: UiCommand = serde_json::from_str(r#"{"command":"settings_set_edit_hotkey","hotkey":null}"#).unwrap();
         assert!(matches!(c.into_core().unwrap(), CoreCommand::SetEditHotkey(None)));
+        let c: UiCommand = serde_json::from_str(r#"{"command":"settings_set_solo_key","key":"mouse_back"}"#).unwrap();
+        assert!(matches!(c.into_core().unwrap(), CoreCommand::SetSoloKey(Some(voltip_core::SoloKey::MouseBack))));
+        let c: UiCommand = serde_json::from_str(r#"{"command":"settings_set_solo_key","key":null}"#).unwrap();
+        assert!(matches!(c.into_core().unwrap(), CoreCommand::SetSoloKey(None)));
+        assert!(serde_json::from_str::<UiCommand>(r#"{"command":"settings_set_solo_key","key":"caps_lock"}"#).is_err());
+        let c: UiCommand = serde_json::from_str(r#"{"command":"hotkey_edge","pressed":false,"atMs":5,"source":"hotkey","chorded":true}"#).unwrap();
+        assert!(matches!(c.into_core().unwrap(), CoreCommand::HotkeyEdge { chorded: true, purpose: TakeKind::Dictation, .. }));
         assert!(
             serde_json::from_str::<UiCommand>(r#"{"command":"hotkey_edge","pressed":true,"atMs":1,"source":"mouse"}"#).is_err(),
             "unknown sources are refused"

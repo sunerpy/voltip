@@ -1,4 +1,10 @@
-import { DEFAULT_HOTKEY, MAX_ACTIVATION_MS, defaultEngineSettings } from "@voltip/shared";
+import {
+  DEFAULT_HOTKEY,
+  MAX_ACTIVATION_MS,
+  createTranslator,
+  defaultEngineSettings,
+  zhT,
+} from "@voltip/shared";
 import {
   MOCK_HOTKEY_BACKEND,
   MockBackend,
@@ -8,7 +14,13 @@ import {
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../../test/render";
-import { EXTRA_RECORDING_RANGE, HOLD_THRESHOLD_RANGE, clampActivationMs } from "./Hotkey";
+import {
+  EXTRA_RECORDING_RANGE,
+  HOLD_THRESHOLD_RANGE,
+  clampActivationMs,
+  soloKeyLabel,
+  soloKeyNotes,
+} from "./Hotkey";
 
 describe("Settings · 外观", () => {
   it("regression: picking a tile calls settings_set_theme and repaints <html>; follow-system disables tiles", async () => {
@@ -473,6 +485,7 @@ describe("Settings · 热键", () => {
           hold: false,
           toggle_command: "/usr/bin/voltip-desktop --toggle",
           edit_toggle_command: "/usr/bin/voltip-desktop --edit-toggle",
+          solo_keys: [],
         },
       });
     });
@@ -481,6 +494,10 @@ describe("Settings · 热键", () => {
         "这个会话不允许应用注册全局热键",
       );
     });
+    // No input hook on pure Wayland: the single-key row says so and offers nothing.
+    const solo = screen.getByTestId("solo-key");
+    expect(solo).toHaveTextContent("这个会话不能单独监听按键");
+    expect(within(solo).getByRole("combobox", { name: "单键触发的按键" })).toBeDisabled();
     expect(within(caps).getByTestId("capability-hold")).toHaveTextContent("不支持");
     expect(within(caps).getByTestId("capability-command")).toHaveTextContent(
       "/usr/bin/voltip-desktop --toggle",
@@ -493,6 +510,72 @@ describe("Settings · 热键", () => {
     ]);
     // Still no fixture matrix: rows about this session only.
     expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("names each lone key for its platform and says what to know before using it", () => {
+    const { t } = zhT;
+    expect(soloKeyLabel("right_meta", "macos", t)).toBe("右 Command");
+    expect(soloKeyLabel("right_meta", "windows", t)).toBe("右 Win");
+    expect(soloKeyLabel("right_meta", "linux", t)).toBe("右 Super");
+    expect(soloKeyLabel("right_alt", "macos", t)).toBe("右 Option");
+    expect(soloKeyLabel("fn", "macos", t)).toBe("Fn（🌐）");
+    expect(soloKeyLabel("right_ctrl", "windows", createTranslator("en").t)).toBe("Right Ctrl");
+    expect(soloKeyNotes(null, "windows", true, t)).toEqual([]);
+    expect(soloKeyNotes("right_ctrl", "windows", true, t)).toEqual([]);
+    expect(soloKeyNotes("right_alt", "windows", true, t).join()).toContain("AltGr");
+    expect(soloKeyNotes("right_alt", "macos", true, t).join()).not.toContain("AltGr");
+    expect(soloKeyNotes("fn", "macos", true, t).join()).toContain("不执行任何操作");
+    expect(soloKeyNotes("mouse_forward", "linux", false, t).join()).toContain("XWayland");
+  });
+
+  it("regression: section 13.1 the single-key trigger saves through settings_set_solo_key and shows what the shell watches, presses and refuses", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/hotkey" });
+    const row = await screen.findByTestId("solo-key");
+    const select = within(row).getByRole("combobox", { name: "单键触发的按键" });
+    expect(select).toHaveValue("off");
+    // The session's keys, named for the platform (the mock is a Windows session: no Fn).
+    const labels = within(select)
+      .getAllByRole("option")
+      .map((o) => o.textContent);
+    expect(labels).toEqual([
+      "关闭",
+      "右 Ctrl",
+      "右 Alt",
+      "右 Shift",
+      "右 Win",
+      "鼠标中键",
+      "鼠标侧键 · 后退",
+      "鼠标侧键 · 前进",
+    ]);
+    await user.selectOptions(select, "mouse_back");
+    await waitFor(() => {
+      expect(backend.peek().settings.solo_key).toBe("mouse_back");
+    });
+    expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("监听中");
+    expect(within(row).getByTestId("solo-key-notes")).toHaveTextContent("由 Voltip 独占");
+    // The shell reports the key held down on its own.
+    act(() => {
+      backend.publish({ type: "hotkey", ...backend.peek().hotkey, solo_pressed: true });
+    });
+    expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("按下中");
+    // A key the hook could not watch: the shell's reason, as an alert.
+    act(() => {
+      backend.publish({
+        type: "hotkey",
+        ...backend.peek().hotkey,
+        solo_registered: undefined,
+        solo_pressed: false,
+        solo_error: "鼠标后退键 无法单独触发：另一个程序已经占用了这个鼠标键",
+      });
+    });
+    expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("无法监听");
+    expect(within(row).getByRole("alert")).toHaveTextContent("另一个程序已经占用了这个鼠标键");
+    await user.selectOptions(select, "off");
+    await waitFor(() => {
+      expect(backend.peek().settings.solo_key).toBeNull();
+    });
+    expect(within(row).queryByTestId("solo-key-status")).toBeNull();
   });
 
   it("regression: the conflict banner comes from the shell's registration error and its action starts recording", async () => {

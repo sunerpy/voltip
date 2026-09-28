@@ -95,7 +95,16 @@ const EDGE_GAP: Duration = Duration::from_millis(60);
 
 async fn edge(node: &Node, pressed: bool, source: EdgeSource) {
     tokio::time::sleep(EDGE_GAP).await;
-    node.handle.send(CoreCommand::HotkeyEdge { pressed, at_ms: now_ms(), source, purpose: TakeKind::Dictation }).await.unwrap();
+    node.handle.send(CoreCommand::HotkeyEdge { pressed, at_ms: now_ms(), source, purpose: TakeKind::Dictation, chorded: false }).await.unwrap();
+}
+
+/// The shell's report that another key joined the held lone-key trigger (docs/dictation.md §13.1).
+async fn chord(node: &Node) {
+    tokio::time::sleep(EDGE_GAP).await;
+    node.handle
+        .send(CoreCommand::HotkeyEdge { pressed: false, at_ms: now_ms(), source: EdgeSource::Hotkey, purpose: TakeKind::Dictation, chorded: true })
+        .await
+        .unwrap();
 }
 
 async fn set_activation(node: &mut Node, activation: Activation, hold_threshold_ms: u32, extra_recording_ms: u32) {
@@ -288,4 +297,29 @@ async fn a_press_while_processing_starts_the_next_run_and_a_failed_start_rolls_b
     edge(&node, true, EdgeSource::Hotkey).await;
     wait_phase(&mut node, |p| matches!(p, DictationPhase::Listening { .. })).await;
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// docs/dictation.md §13.1: Right Ctrl + C with Right Ctrl as the trigger. The press starts a take,
+/// the chord cancels it before anything is recognised, and the next lone press dictates normally.
+#[tokio::test]
+async fn regression_a_chorded_trigger_cancels_its_take_through_the_core() {
+    let audio = Arc::new(FakeAudio::speech());
+    let transcriber = Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT));
+    let mut node = start(audio.clone(), transcriber.clone());
+    wait(&mut node, |e| matches!(e, CoreEvent::Ready { .. }).then_some(())).await;
+
+    edge(&node, true, EdgeSource::Hotkey).await;
+    wait_phase(&mut node, |p| matches!(p, DictationPhase::Listening { .. })).await;
+    chord(&node).await;
+    let end = wait_phase(&mut node, DictationPhase::is_terminal).await;
+    assert!(matches!(end, DictationPhase::Cancelled { .. }), "{end:?}");
+    assert_eq!(transcriber.calls(), 0, "a chord is never recognised");
+    dismiss(&mut node).await;
+
+    edge(&node, true, EdgeSource::Hotkey).await;
+    wait_phase(&mut node, |p| matches!(p, DictationPhase::Listening { .. })).await;
+    edge(&node, false, EdgeSource::Hotkey).await;
+    let done = wait_phase(&mut node, DictationPhase::is_terminal).await;
+    assert!(matches!(&done, DictationPhase::Done { text, .. } if text == FAKE_TRANSCRIPT), "{done:?}");
+    assert_eq!(transcriber.calls(), 1);
 }

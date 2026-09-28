@@ -5,6 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The lone-key trigger (`Settings.solo_key`, docs/dictation.md §13.1); the platform crate owns
+/// the key tables its hooks need.
+pub use voltip_platform::solo_key::SoloKey;
+
 /// Chord the app ships with.
 pub const DEFAULT_HOTKEY: &str = "Ctrl+Alt+Space";
 /// Chord of the voice edit (docs/dictation.md §19): the dictation modifiers with `E` for edit.

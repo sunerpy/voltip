@@ -6,9 +6,10 @@
 //! `tauri::test::MockRuntime` without a window.
 
 // `unsafe` is forbidden everywhere except `platform/windows.rs` (Win32 FFI for the injection
-// preflight and the microphone consent store) and `exit.rs` (`_exit` on Linux): on those platforms
-// the crate-level lint is `deny`, which that single module relaxes with `#![allow(unsafe_code)]`
-// and a SAFETY comment on every block.
+// preflight and the microphone consent store), `solo_key/windows.rs` (the low-level input hooks of
+// the lone-key trigger) and `exit.rs` (`_exit` on Linux): on those platforms the crate-level lint
+// is `deny`, which each of those modules relaxes with `#![allow(unsafe_code)]` and a SAFETY
+// comment on every block.
 #![cfg_attr(not(any(target_os = "windows", target_os = "linux")), forbid(unsafe_code))]
 #![cfg_attr(any(target_os = "windows", target_os = "linux"), deny(unsafe_code))]
 #![warn(missing_docs)]
@@ -23,6 +24,7 @@ pub mod feedback;
 pub mod hotkey;
 pub mod overlay;
 pub mod platform;
+pub mod solo_key;
 pub mod update;
 
 use tauri::{Emitter as _, Manager as _, Runtime};
@@ -41,7 +43,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 70] = [
+pub const COMMANDS: [&str; 71] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -60,6 +62,7 @@ pub const COMMANDS: [&str; 70] = [
     "settings_set_theme",
     "settings_set_hotkey",
     "settings_set_edit_hotkey",
+    "settings_set_solo_key",
     "hotkey_capture",
     "devices_refresh",
     "connectivity_check",
@@ -240,6 +243,13 @@ fn settings_set_edit_hotkey(bridge: tauri::State<'_, Bridge>, hotkey: Option<Str
     Ok(bridge.dispatch(UiCommand::SettingsSetEditHotkey { hotkey })?)
 }
 
+/// The lone-key trigger (docs/dictation.md §13.1): a key, or `null` to switch it off. The core
+/// persists it; `hotkey::follow_settings` (un)installs the input hook when `settings` arrives.
+#[tauri::command]
+fn settings_set_solo_key(bridge: tauri::State<'_, Bridge>, key: Option<voltip_core::SoloKey>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetSoloKey { key })?)
+}
+
 /// The settings page is recording a chord (`active = true`): suspend the OS registration so the
 /// keys reach the webview; `false` registers the saved chord again. Without the plugin (headless
 /// tests) this only records the flag.
@@ -299,12 +309,14 @@ fn hotkey_edge(
     at_ms: Option<u64>,
     source: Option<EdgeSource>,
     purpose: Option<TakeKind>,
+    chorded: Option<bool>,
 ) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::HotkeyEdge {
         pressed,
         at_ms: at_ms.unwrap_or_else(voltip_core::now_ms),
         source: source.unwrap_or(EdgeSource::Ui),
         purpose: purpose.unwrap_or_default(),
+        chorded: chorded.unwrap_or(false),
     })?)
 }
 
@@ -803,6 +815,7 @@ pub fn build_app<R: Runtime>(
             settings_set_theme,
             settings_set_hotkey,
             settings_set_edit_hotkey,
+            settings_set_solo_key,
             hotkey_capture,
             devices_refresh,
             connectivity_check,

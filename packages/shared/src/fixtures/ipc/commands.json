@@ -78,6 +78,12 @@
   },
   {
     "args": {
+      "key": "mouse_back"
+    },
+    "name": "settings_set_solo_key"
+  },
+  {
+    "args": {
       "locale": "en"
     },
     "name": "settings_set_locale"
