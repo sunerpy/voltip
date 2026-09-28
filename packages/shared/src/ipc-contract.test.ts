@@ -97,6 +97,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   settings_set_hotkey: null,
   settings_set_edit_hotkey: null,
   settings_set_solo_key: null,
+  settings_set_microphone: null,
   hotkey_capture: null,
   devices_refresh: null,
   connectivity_check: null,
@@ -166,6 +167,7 @@ const argSchemas = {
   settings_set_hotkey: z.object({ hotkey: z.string() }),
   settings_set_edit_hotkey: z.object({ hotkey: z.string().nullable() }).strict(),
   settings_set_solo_key: z.object({ key: soloKeySchema.nullable() }).strict(),
+  settings_set_microphone: z.object({ device: z.string().nullable() }).strict(),
   hotkey_capture: z.object({ active: z.boolean() }),
   settings_set_engines: z.object({ engines: engineSettingsSchema }),
   provider_key_set: z
@@ -275,6 +277,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.settings_set_edit_hotkey.parse(args));
     case "settings_set_solo_key":
       return backend.invoke(name, argSchemas.settings_set_solo_key.parse(args));
+    case "settings_set_microphone":
+      return backend.invoke(name, argSchemas.settings_set_microphone.parse(args));
     case "hotkey_capture":
       return backend.invoke(name, argSchemas.hotkey_capture.parse(args));
     case "settings_set_engines":
@@ -382,6 +386,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       context_sharing: { app_name: false, window_title: true },
       history: { enabled: true, keep: 200 },
       overlay: "top",
+      microphone: "wasapi:{0.0.1.00000000}.{c2}",
     });
     expect(parsed.app_version).toBe("0.3.0");
     // docs/dictation.md §10.6: what the local models can run on, a discrete and an integrated GPU.

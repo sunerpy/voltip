@@ -19,6 +19,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { historyStats } from "../features/history/stats";
 import { renderApp } from "../test/render";
+import { MIC_TEST_MS } from "../features/audio/useMicrophoneTest";
 
 /** Fixed pixel panel sizes and two-fixed-column grids are what broke the 1440 / 1920 px windows
  *  (Windows test 2026-09-24). `max-w-[…]` / `min-w-[…]` caps stay allowed: the page root itself is
@@ -44,8 +45,8 @@ describe("Home page", () => {
   it("renders readiness row, four panels, stat strip and the recent table from the core's state", async () => {
     const { backend } = renderApp({ mock: liveClock() });
     expect(await screen.findByText("可以开始听写")).toBeInTheDocument();
-    // The meter is live (the regression test below drives it); here it just has to exist.
-    expect(screen.getByRole("meter", { name: "电平" })).toBeInTheDocument();
+    // The strength bar exists but stays silent while idle (the regression test below drives it).
+    expect(screen.getByRole("meter", { name: "强度" })).toBeInTheDocument();
     expect(screen.getByTestId("home-phase")).toHaveTextContent(
       "麦克风、热键和识别服务就位 · Qwen3-ASR-1.7B · 内置服务",
     );
@@ -92,8 +93,9 @@ describe("Home page", () => {
     expect(screen.queryByTestId("deferred-badge")).toBeNull();
   });
 
-  it("regression: the microphone card streams the native level meter (device, dBFS, peak) and stops when the page unmounts", async () => {
+  it("regression: the microphone stays closed while idle; 测试麦克风 meters it for 15 s, a take meters its own recording (user feedback 2026-09-28)", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     try {
       const { backend, unmount } = renderApp();
       expect(await screen.findByText("可以开始听写")).toBeInTheDocument();
@@ -102,6 +104,19 @@ describe("Home page", () => {
           MOCK_AUDIO_DEVICES[0]?.name ?? "",
         );
       });
+      // Idle: nothing opens the microphone, the bar is silent and says why.
+      act(() => {
+        vi.advanceTimersByTime(MOCK_METER_INTERVAL_MS * 5);
+      });
+      expect(backend.activeMeters()).toBe(0);
+      expect(screen.getByTestId("home-mic-state")).toHaveTextContent("空闲 · 未打开麦克风");
+      expect(screen.getByTestId("home-mic-level")).toHaveTextContent("— dBFS");
+      expect(screen.getByTestId("home-mic-hint")).toHaveTextContent("空闲时不打开麦克风");
+      expect(screen.getByText("48 kHz · 单声道 · 系统默认")).toBeInTheDocument();
+      // No 电平 anywhere: the bar is 强度.
+      expect(screen.getByTestId("page-home").textContent).not.toMatch(/电平/);
+      // 测试麦克风: the meter runs, the bar moves, and it closes by itself after 15 s.
+      await user.click(screen.getByTestId("home-mic-test"));
       await waitFor(() => {
         expect(backend.activeMeters()).toBe(1);
       });
@@ -111,15 +126,57 @@ describe("Home page", () => {
       const level = screen.getByTestId("home-mic-level");
       expect(level).toHaveTextContent(/-\d+\.\d dBFS/);
       expect(level).toHaveTextContent(/峰值 -\d+\.\d/);
-      const meter = screen.getByRole("meter", { name: "电平" });
+      const meter = screen.getByRole("meter", { name: "强度" });
       expect(Number(meter.getAttribute("aria-valuenow"))).toBeGreaterThan(0);
-      expect(screen.getByText(/电平来自 Rust 采集/)).toBeInTheDocument();
-      expect(screen.getByText("48 kHz · mono · f32 · 系统默认")).toBeInTheDocument();
+      expect(screen.getByTestId("home-mic-state")).toHaveTextContent(/测试中 · 1[45] 秒/);
+      expect(screen.getByTestId("home-mic-test")).toHaveTextContent("停止测试");
+      act(() => {
+        vi.advanceTimersByTime(MIC_TEST_MS + 500);
+      });
+      await waitFor(() => {
+        expect(backend.activeMeters()).toBe(0);
+      });
+      expect(screen.getByTestId("home-mic-state")).toHaveTextContent("空闲 · 未打开麦克风");
+      // 停止测试 ends a run early.
+      await user.click(screen.getByTestId("home-mic-test"));
+      await waitFor(() => {
+        expect(backend.activeMeters()).toBe(1);
+      });
+      await user.click(screen.getByTestId("home-mic-test"));
+      await waitFor(() => {
+        expect(backend.activeMeters()).toBe(0);
+      });
+      // A take meters its own recording, and the meter closes with it.
+      await user.click(screen.getByRole("button", { name: "开始听写" }));
+      await waitFor(() => {
+        expect(screen.getByTestId("home-mic-state")).toHaveTextContent("录音中");
+      });
+      expect(backend.activeMeters()).toBe(1);
+      expect(screen.queryByTestId("home-mic-test")).toBeNull();
+      await user.click(screen.getByRole("button", { name: "取消" }));
+      await waitFor(() => {
+        expect(backend.activeMeters()).toBe(0);
+      });
       unmount();
       expect(backend.activeMeters()).toBe(0);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("regression: 切换麦克风 opens 设置 › 麦克风, and an unplugged choice is named as such", async () => {
+    const user = userEvent.setup();
+    renderApp({ mock: { settings: { microphone: "Blue Yeti" } } });
+    expect(await screen.findByTestId("home-mic-missing")).toHaveTextContent(
+      "所选麦克风未连接 · 使用系统默认",
+    );
+    expect(screen.getByTestId("home-mic-device")).toHaveTextContent(
+      MOCK_AUDIO_DEVICES[0]?.name ?? "",
+    );
+    await user.click(screen.getByTestId("home-mic-switch"));
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    expect(within(dialog).getByRole("tab", { name: "麦克风", selected: true })).toBeInTheDocument();
+    expect(within(dialog).getByTestId("microphone-pane")).toBeInTheDocument();
   });
 
   it("regression: 开始听写 starts a real session and shows the phase; 停止 finishes with the inserted text", async () => {

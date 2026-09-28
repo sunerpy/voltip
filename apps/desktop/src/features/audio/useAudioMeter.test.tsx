@@ -10,6 +10,7 @@ function Probe({ active, deviceId }: { active: boolean; deviceId?: string }) {
       data-testid="probe"
       data-devices={meter.devices?.length ?? "pending"}
       data-device={meter.device?.name ?? ""}
+      data-missing={String(meter.missing)}
       data-seq={meter.frame?.seq ?? ""}
       data-error={meter.error ?? ""}
     />
@@ -52,17 +53,44 @@ describe("useAudioMeter", () => {
 
   it("regression: a device the backend cannot open surfaces as the shell's error, never as a silent meter", async () => {
     const backend = new MockBackend();
+    backend.meter = () =>
+      Promise.reject(new Error("audio: device busy: Fifine K669 USB Microphone"));
     render(
       <BackendProvider backend={backend}>
-        <Probe active deviceId="Blue Yeti" />
+        <Probe active deviceId="Fifine K669 USB Microphone" />
       </BackendProvider>,
     );
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screen.getByTestId("probe").dataset.error).toMatch(/device not found/);
-    expect(screen.getByTestId("probe").dataset.device).toBe("");
+    expect(screen.getByTestId("probe").dataset.error).toMatch(/device busy/);
+  });
+
+  it("regression: a chosen microphone that is unplugged meters the default input and says so", async () => {
+    vi.useFakeTimers();
+    try {
+      const backend = new MockBackend();
+      render(
+        <BackendProvider backend={backend}>
+          <Probe active deviceId="Blue Yeti" />
+        </BackendProvider>,
+      );
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const probe = screen.getByTestId("probe");
+      expect(probe.dataset.missing).toBe("true");
+      expect(probe.dataset.device).toBe(MOCK_AUDIO_DEVICES[0]?.name);
+      expect(probe.dataset.error).toBe("");
+      act(() => {
+        vi.advanceTimersByTime(MOCK_METER_INTERVAL_MS + 1);
+      });
+      expect(probe.dataset.seq).toBe("1");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports an empty device list as 没有可用的麦克风 and enumeration failures verbatim", async () => {

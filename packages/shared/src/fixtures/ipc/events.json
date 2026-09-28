@@ -36,7 +36,8 @@
         "enabled": true,
         "keep": 500
       },
-      "overlay": "bottom"
+      "overlay": "bottom",
+      "microphone": null
     },
     "secret_backend": "",
     "app_version": "",
@@ -160,7 +161,8 @@
       "enabled": true,
       "keep": 200
     },
-    "overlay": "top"
+    "overlay": "top",
+    "microphone": "wasapi:{0.0.1.00000000}.{c2}"
   },
   {
     "type": "relay",
@@ -2674,7 +2676,8 @@
       "enabled": true,
       "keep": 200
     },
-    "overlay": "top"
+    "overlay": "top",
+    "microphone": "wasapi:{0.0.1.00000000}.{c2}"
   },
   {
     "type": "dictation",

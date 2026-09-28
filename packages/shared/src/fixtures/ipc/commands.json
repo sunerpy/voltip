@@ -84,6 +84,12 @@
   },
   {
     "args": {
+      "device": "wasapi:{0.0.1.00000000}.{c2}"
+    },
+    "name": "settings_set_microphone"
+  },
+  {
+    "args": {
       "locale": "en"
     },
     "name": "settings_set_locale"

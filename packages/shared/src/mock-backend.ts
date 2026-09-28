@@ -804,17 +804,15 @@ export class MockBackend implements Backend {
     return Promise.resolve(MOCK_AUDIO_DEVICES.map((d) => ({ ...d })));
   }
 
-  /** Synthetic meter: a breathing level on the requested (or default) device, 30 frames a second.
-   *  The phone's shell opens no microphone to meter: its frames are those of its own take, so the
-   *  phone role only sends them while a take is listening. */
+  /** Synthetic meter: a breathing level on the requested device, 30 frames a second. A device
+   *  that is not connected meters the default input, as the desktop shell does (2026-09-28: the
+   *  chosen microphone may be unplugged). The phone's shell opens no microphone to meter: its
+   *  frames are those of its own take, so the phone role only sends them while a take listens. */
   meter(deviceId: string | undefined, onFrame: FrameListener): Promise<Unsubscribe> {
     const phone = this.role === "phone";
     const device =
       MOCK_AUDIO_DEVICES.find((d) => d.id === deviceId) ??
       MOCK_AUDIO_DEVICES.find((d) => d.is_default);
-    if (!phone && deviceId !== undefined && device?.id !== deviceId) {
-      return Promise.reject(new Error(`audio: device not found: ${deviceId}`));
-    }
     let seq = 0;
     const timer = setInterval(() => {
       if (phone && this.state.phone_take?.state.state !== "listening") return;
@@ -1034,6 +1032,22 @@ export class MockBackend implements Backend {
       const { key } = required(args);
       this.emit({ type: "settings", ...this.state.settings, solo_key: key });
       this.emit({ type: "hotkey", ...this.hotkeyStatus(false) });
+    },
+    settings_set_microphone: (args) => {
+      // Mirrors `SetMicrophone`: a device id of 1–1024 bytes or `null` (the default input); the
+      // core refuses anything else with an `error` event and keeps the choice.
+      const { device } = required(args);
+      if (
+        device !== null &&
+        (device.trim().length === 0 || new TextEncoder().encode(device).length > 1024)
+      ) {
+        this.emit({
+          type: "error",
+          message: "microphone: a device id of 1–1024 bytes, or none for the default",
+        });
+        return;
+      }
+      this.emit({ type: "settings", ...this.state.settings, microphone: device });
     },
     settings_set_edit_hotkey: (args) => {
       // Mirrors `SetEditHotkey` (docs/dictation.md §19): the same validation, never the dictation

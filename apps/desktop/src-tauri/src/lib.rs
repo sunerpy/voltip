@@ -43,7 +43,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 77] = [
+pub const COMMANDS: [&str; 78] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -69,6 +69,7 @@ pub const COMMANDS: [&str; 77] = [
     "settings_set_hotkey",
     "settings_set_edit_hotkey",
     "settings_set_solo_key",
+    "settings_set_microphone",
     "hotkey_capture",
     "devices_refresh",
     "connectivity_check",
@@ -291,6 +292,13 @@ fn settings_set_edit_hotkey(bridge: tauri::State<'_, Bridge>, hotkey: Option<Str
 #[tauri::command]
 fn settings_set_solo_key(bridge: tauri::State<'_, Bridge>, key: Option<voltip_core::SoloKey>) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::SettingsSetSoloKey { key })?)
+}
+
+/// The microphone takes record from: a device id of `audio_devices`, or `null` for the system
+/// default. The core validates and persists it.
+#[tauri::command]
+fn settings_set_microphone(bridge: tauri::State<'_, Bridge>, device: Option<String>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetMicrophone { device })?)
 }
 
 /// The settings page is recording a chord (`active = true`): suspend the OS registration so the
@@ -873,6 +881,7 @@ pub fn build_app<R: Runtime>(
             settings_set_hotkey,
             settings_set_edit_hotkey,
             settings_set_solo_key,
+            settings_set_microphone,
             hotkey_capture,
             devices_refresh,
             connectivity_check,

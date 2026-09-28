@@ -25,7 +25,6 @@ import {
   Keycaps,
   Lamp,
   LampText,
-  LedMeter,
   Panel,
   Readout,
   Table,
@@ -38,7 +37,9 @@ import {
 import { useMemo } from "react";
 import { SPEECH_ROUTE, useRouter } from "../app/router";
 import { serviceTarget } from "./settings/engines/helpers";
-import { levelFraction, useAudioMeter } from "../features/audio/useAudioMeter";
+import { MicrophoneStrength } from "../features/audio/MicrophoneStrength";
+import { useAudioMeter } from "../features/audio/useAudioMeter";
+import { useChosenMicrophone, useMicrophoneTest } from "../features/audio/useMicrophoneTest";
 import { useDictation, useTickingNow } from "../features/dictation/useDictation";
 import { PermissionNotice } from "../features/permissions/PermissionNotice";
 import {
@@ -60,14 +61,16 @@ const RECENT_ROWS = 6;
  *  line, `state.engines` the engine card, `state.history` the session panel, the tiles and the
  *  table, the native meter the microphone card, `state.devices` / `state.relay` the phone card. */
 export function Home() {
-  // The microphone card is live: devices and level frames come from the Rust audio backend.
-  const meter = useAudioMeter(true);
   const { navigate } = useRouter();
   const state = useUiState();
   const { backend } = useBackend();
   const { t, locale } = useI18n();
   const dictation = useDictation();
   const now = useTickingNow(dictation.listening);
+  // The microphone stays closed while idle (user feedback 2026-09-28): the card meters only during
+  // a take (the recorder's own frames) or a 测试麦克风 run, on the device the settings choose.
+  const micTest = useMicrophoneTest();
+  const meter = useAudioMeter(micTest.testing || dictation.listening, useChosenMicrophone());
   const engines = state.engines;
   const hotkey = state.settings.hotkey;
   // docs/dictation.md §13: the chip and the empty-state hint say how the chord drives a take.
@@ -323,16 +326,26 @@ export function Home() {
           eyebrow={t("home.mic.eyebrow")}
           right={
             <LampText
-              tone={meter.error ? "danger" : meter.frame ? "ok" : "idle"}
+              tone={
+                meter.error
+                  ? "danger"
+                  : dictation.listening || micTest.testing
+                    ? meter.frame
+                      ? "ok"
+                      : "idle"
+                    : "idle"
+              }
               mono
               pulse={meter.frame !== undefined}>
-              {meter.error
-                ? t("home.mic.unavailable")
-                : meter.frame
-                  ? dictation.listening
+              <span data-testid="home-mic-state">
+                {meter.error
+                  ? t("home.mic.unavailable")
+                  : dictation.listening
                     ? t("home.mic.recording")
-                    : t("home.mic.monitoring")
-                  : t("home.mic.opening")}
+                    : micTest.testing
+                      ? t("home.mic.testing", { n: micTest.remaining })
+                      : t("home.mic.idle")}
+              </span>
             </LampText>
           }
           className="min-h-[144px]"
@@ -341,33 +354,60 @@ export function Home() {
             {meter.device?.name ?? meter.error ?? t("home.mic.enumerating")}
           </div>
           <div className="mono mt-0.5 text-[11px] text-fg-muted">
-            {meter.frame
-              ? `${meter.frame.sample_rate_hz / 1000} kHz · ${meter.frame.channels === 1 ? "mono" : `${meter.frame.channels} ch`} · f32 · ${meter.device?.is_default ? t("home.mic.systemDefault") : t("home.mic.selected")}`
-              : meter.device
-                ? `${meter.device.sample_rate_hz ? `${meter.device.sample_rate_hz / 1000} kHz · ` : ""}${meter.device.channels === 1 ? "mono" : meter.device.channels ? `${meter.device.channels} ch` : ""}`
-                : "—"}
+            {meter.device
+              ? [
+                  meter.device.sample_rate_hz ? `${meter.device.sample_rate_hz / 1000} kHz` : "",
+                  meter.device.channels === 1
+                    ? t("settings.microphone.mono")
+                    : meter.device.channels
+                      ? t("settings.microphone.channels", { n: meter.device.channels })
+                      : "",
+                  meter.device.is_default ? t("home.mic.systemDefault") : t("home.mic.selected"),
+                ]
+                  .filter((part) => part.length > 0)
+                  .join(" · ")
+              : "—"}
           </div>
-          <div className="mt-3 flex items-end justify-between gap-4">
-            <LedMeter
-              level={meter.frame ? levelFraction(meter.frame.rms_dbfs) : 0}
-              peak={meter.frame ? levelFraction(meter.frame.peak_dbfs) : undefined}
-              disabled={meter.error !== undefined}
-            />
-            <div
-              className="mono text-right text-[12px] leading-tight text-fg"
-              data-testid="home-mic-level">
-              <div>{meter.frame ? `${meter.frame.rms_dbfs.toFixed(1)} dBFS` : "— dBFS"}</div>
-              <div className={meter.frame?.clipping ? "text-danger" : "text-fg-muted"}>
-                {t("home.mic.peak", {
-                  value: meter.frame ? meter.frame.peak_dbfs.toFixed(1) : "—",
-                })}
-              </div>
+          {meter.missing && (
+            <div className="mt-0.5 text-[11px] text-warning" data-testid="home-mic-missing">
+              {t("home.mic.missing")}
             </div>
-          </div>
-          <div className="mono mt-3 text-[11px] text-fg-muted">
-            {meter.devices && meter.devices.length > 1
-              ? t("home.mic.sourceMany", { n: meter.devices.length })
-              : t("home.mic.sourceOne")}
+          )}
+          <MicrophoneStrength
+            frame={meter.frame}
+            disabled={meter.error !== undefined}
+            className="mt-3"
+            data-testid="home-mic-level"
+          />
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+            {!dictation.listening && (
+              <Button
+                size="sm"
+                variant={micTest.testing ? "outline" : "primary"}
+                icon={micTest.testing ? "stop" : "mic"}
+                disabled={meter.error !== undefined || dictation.processing}
+                data-testid="home-mic-test"
+                onClick={micTest.testing ? micTest.stop : micTest.start}>
+                {micTest.testing ? t("home.mic.stopTest") : t("home.mic.test")}
+              </Button>
+            )}
+            <span className="min-w-0 flex-1 text-[11px] text-fg-muted" data-testid="home-mic-hint">
+              {dictation.listening
+                ? t("home.mic.recordingHint")
+                : micTest.testing
+                  ? t("home.mic.testingHint", { n: micTest.remaining })
+                  : t("home.mic.idleHint")}
+            </span>
+            <Button
+              size="sm"
+              variant="text"
+              data-testid="home-mic-switch"
+              title={meter.devices ? t("home.mic.devices", { n: meter.devices.length }) : undefined}
+              onClick={() => {
+                navigate({ name: "settings", section: "microphone" });
+              }}>
+              {t("home.mic.switch")}
+            </Button>
           </div>
         </Panel>
 

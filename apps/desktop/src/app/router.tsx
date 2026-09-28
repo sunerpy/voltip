@@ -8,10 +8,18 @@ import {
   useState,
 } from "react";
 
-export type SettingsSection = "general" | "hotkey" | "scene" | "privacy" | "appearance" | "about";
+export type SettingsSection =
+  | "general"
+  | "hotkey"
+  | "microphone"
+  | "scene"
+  | "privacy"
+  | "appearance"
+  | "about";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   "general",
   "hotkey",
+  "microphone",
   "scene",
   "privacy",
   "appearance",

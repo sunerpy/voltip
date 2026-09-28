@@ -480,6 +480,8 @@ pub struct DictationEngine {
     scenes: Arc<Vec<Scene>>,
     /// `Settings.context_sharing` for the next run.
     context_sharing: ContextSharing,
+    /// `Settings.microphone`: the device the microphone port opens (`None` = the default).
+    microphone: Option<String>,
 }
 
 /// Why a scene's streaming output mode could not be honoured (docs/dictation.md §18.4); the take
@@ -559,6 +561,7 @@ impl DictationEngine {
             probe: ports.probe,
             scenes: Arc::new(Vec::new()),
             context_sharing: ContextSharing::default(),
+            microphone: None,
         };
         engine.warm_streaming();
         engine.warm_transcriber();
@@ -580,6 +583,12 @@ impl DictationEngine {
     /// `Settings.context_sharing` for the runs that start from now on (docs/dictation.md §18.5).
     pub fn set_context_sharing(&mut self, sharing: ContextSharing) {
         self.context_sharing = sharing;
+    }
+
+    /// `Settings.microphone` for the takes that start from now on: the device id handed to the
+    /// microphone port (`None` = the system default).
+    pub fn set_microphone(&mut self, device: Option<String>) {
+        self.microphone = device;
     }
 
     /// Rebuild the clients for a changed configuration. A pipeline already running keeps the
@@ -816,10 +825,15 @@ impl DictationEngine {
             let _ = ready_tx.try_send(Internal::CaptureReady { session });
         });
         let options = CaptureOptions { live: self.live_enabled(), max_duration: max_recording(mode) };
-        let audio = self.take.source.clone().unwrap_or_else(|| self.audio.clone());
+        // A phone's take streams from its own source; the microphone port records from the
+        // device the settings name (the system default without one).
+        let (audio, device) = match self.take.source.clone() {
+            Some(source) => (source, None),
+            None => (self.audio.clone(), self.microphone.clone()),
+        };
         let tx = self.internal.clone();
         tokio::spawn(async move {
-            let result = match tokio::task::spawn_blocking(move || audio.start(None, on_level, on_ready, options)).await {
+            let result = match tokio::task::spawn_blocking(move || audio.start(device.as_deref(), on_level, on_ready, options)).await {
                 Ok(result) => result,
                 Err(e) => Err(DictationError::Audio(format!("capture task failed: {e}"))),
             };

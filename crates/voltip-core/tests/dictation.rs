@@ -311,3 +311,46 @@ async fn history_can_be_switched_off_and_trimmed() {
     assert_eq!(SettingsStore::new(dir.path()).load().unwrap().history, voltip_core::HistorySettings { enabled: true, keep: 10 });
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
+
+/// Regression (user feedback 2026-09-28): 设置 › 麦克风 chooses the device takes record from. The
+/// choice is validated, persisted, and handed to the microphone port from the next take on;
+/// `None` goes back to the system default.
+#[tokio::test]
+async fn the_chosen_microphone_reaches_the_recorder_and_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = Arc::new(FakeAudio::speech());
+    let mut ports = ports(Arc::new(AtomicUsize::new(0)), Arc::new(FakeInjector::paste()));
+    ports.audio = audio.clone();
+    let (handle, events) = AppCore::start_with(config(dir.path()), Arc::new(MemorySecretStore::new()), ports).unwrap();
+    let mut node = Node { handle, events };
+    let take = async |node: &mut Node| {
+        node.handle.send(CoreCommand::DictationStart).await.unwrap();
+        wait_phase(node, |p| matches!(p, DictationPhase::Listening { .. })).await;
+        node.handle.send(CoreCommand::DictationStop).await.unwrap();
+        wait_phase(node, |p| matches!(p, DictationPhase::Done { .. } | DictationPhase::Failed { .. })).await;
+        wait_phase(node, |p| matches!(p, DictationPhase::Idle)).await;
+    };
+    take(&mut node).await;
+    node.handle.send(CoreCommand::SetMicrophone(Some("fake:usb-mic".into()))).await.unwrap();
+    let settings = wait(&mut node, |e| match e {
+        CoreEvent::Settings(s) => Some(s.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(settings.microphone.as_deref(), Some("fake:usb-mic"));
+    assert_eq!(SettingsStore::new(dir.path()).load().unwrap().microphone.as_deref(), Some("fake:usb-mic"));
+    take(&mut node).await;
+    // Nothing that is not a device id: an empty id is refused and the choice stays.
+    node.handle.send(CoreCommand::SetMicrophone(Some("  ".into()))).await.unwrap();
+    let refused = wait(&mut node, |e| match e {
+        CoreEvent::Error(m) => Some(m.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(refused.contains("microphone"), "{refused}");
+    node.handle.send(CoreCommand::SetMicrophone(None)).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::Settings(s) if s.microphone.is_none()).then_some(())).await;
+    take(&mut node).await;
+    assert_eq!(audio.devices(), vec![None, Some("fake:usb-mic".to_owned()), None]);
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}

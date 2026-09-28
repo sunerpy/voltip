@@ -80,7 +80,7 @@ describe("Devices page", () => {
     const { backend } = mount();
     const panel = await screen.findByTestId("live-panel");
     await within(panel).findByText("Pixel 8 在线 · 在手机上按住「按住说话」");
-    const meter = within(panel).getByRole("meter", { name: "来自手机的电平" });
+    const meter = within(panel).getByRole("meter", { name: "来自手机的声音强度" });
     expect(meter).toHaveAttribute("aria-valuenow", "0");
     expect(within(panel).getByText("Opus · 16 kHz 单声道")).toBeInTheDocument();
     expect(within(panel).getByText("直连")).toBeInTheDocument();

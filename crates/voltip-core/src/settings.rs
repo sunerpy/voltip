@@ -140,7 +140,17 @@ pub struct Settings {
     /// Where the dictation pill appears.
     #[serde(default)]
     pub overlay: OverlayPlacement,
+    /// The microphone takes record from: a device id of `audio_devices` (the stable
+    /// `host:identifier` the audio backend hands out); `None` (the default, and files written
+    /// before it) follows the system's default input. A chosen device that is not connected falls
+    /// back to the default for that take (the desktop shell's recorder).
+    #[serde(default)]
+    pub microphone: Option<String>,
 }
+
+/// Longest device id `SetMicrophone` accepts (cpal ids are a host name and an endpoint id: well
+/// under this).
+pub const MAX_MICROPHONE_ID_BYTES: usize = 1024;
 
 fn default_hotkey() -> String {
     crate::hotkey::DEFAULT_HOTKEY.to_string()
@@ -180,6 +190,7 @@ impl Default for Settings {
             pairing_always_on: false,
             history: HistorySettings::default(),
             overlay: OverlayPlacement::Bottom,
+            microphone: None,
         }
     }
 }
@@ -457,6 +468,20 @@ mod tests {
         let old: Settings = serde_json::from_str(r#"{"schema":1,"theme":"light","follow_system_theme":false,"relay_enabled":true}"#).unwrap();
         assert!(!old.pairing_always_on && old.lan_discovery);
         assert!(!Settings::default().pairing_always_on);
+    }
+
+    #[test]
+    fn regression_settings_without_a_microphone_follow_the_default_and_a_chosen_one_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore::new(dir.path());
+        store.save(&Settings::default()).unwrap();
+        assert_eq!(store.load().unwrap().microphone, None);
+        let chosen = Settings { microphone: Some("wasapi:{0.0.1.00000000}.{c2}".into()), ..Settings::default() };
+        store.save(&chosen).unwrap();
+        assert_eq!(store.load().unwrap().microphone.as_deref(), Some("wasapi:{0.0.1.00000000}.{c2}"));
+        // A file written before the setting reads as the default input.
+        let old: Settings = serde_json::from_str(r#"{"schema":1,"theme":"light","follow_system_theme":false,"relay_enabled":true}"#).unwrap();
+        assert_eq!(old.microphone, None);
     }
 
     #[test]

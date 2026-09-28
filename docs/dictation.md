@@ -202,12 +202,13 @@ pub struct HistoryEntry {
 | `HistoryEntry` | `vocabulary?: { corrections: [{ id, count }], rules: [{ id, count }] }` | 本次触发的纠正与规则（§16.3）；都没触发时不上 wire |
 | `EngineSettings` | `chinese_script: "simplified" \| "traditional" \| "as_is"`（默认 `simplified`，总是序列化） | 识别结果的中文字形（§17） |
 
-桌面 shell：热键的每个 press / release 都作为 `HotkeyEdge { source: "hotkey" }` 送核心（§13；UI 按钮仍走 `dictation_start/stop/cancel`）；悬浮胶囊状态映射 `Listening→listening`、`Processing→processing`、`Done→inserted`、`Failed→error`、`Cancelled→cancelled`，`Idle` → 隐藏。录音期间 `audio_meter_start` 订阅核心的电平广播（`CoreHandle::levels()`），不再第二次打开设备。
+桌面 shell：热键的每个 press / release 都作为 `HotkeyEdge { source: "hotkey" }` 送核心（§13；UI 按钮仍走 `dictation_start/stop/cancel`）；悬浮胶囊状态映射 `Listening→listening`、`Processing→processing`、`Done→inserted`、`Failed→error`、`Cancelled→cancelled`，`Idle` → 隐藏。录音期间 `audio_meter_start` 订阅核心的电平广播（`CoreHandle::levels()`），不再第二次打开设备。`settings_set_microphone { device: string | null }` 选择录音设备（§6「麦克风」）。
 
 ## 6. 前端
 
 - **标题栏只留**：页标题（拖拽区）+ 紧凑读数（识别模型 + 就绪灯 · 麦克风短名，mono 11 px，最多两项，`md` 以下隐藏）、`Ctrl K` 搜索图标按钮、「AI润色」文字开关（图标 + 灯）、窗口控制；没有第二行读数条，也没有示例数据。词典与规则页是核心的真实列表（§16.6）。
-- **首页**：就绪行的组合键与页脚快捷键读 `state.settings.hotkey`；「开始听写」= `dictation_start` / 听写中变「停止」= `dictation_stop`；识别引擎卡读 `state.engines`；最近结果 / 统计条 / 今日会话由 `state.history` 计算；麦克风卡为真实电平。
+- **首页**：就绪行的组合键与页脚快捷键读 `state.settings.hotkey`；「开始听写」= `dictation_start` / 听写中变「停止」= `dictation_stop`；识别引擎卡读 `state.engines`；最近结果 / 统计条 / 今日会话由 `state.history` 计算。
+- **麦克风（2026-09-28 用户反馈）**：空闲时不打开麦克风。首页麦克风卡只在两种情况下测强度：一次录音进行中（用录音自己的帧，不再二次打开设备），或点了「测试麦克风」（15 秒后自动停止，也可以提前停）。其余时间强度条保持静止，并写明空闲时不打开麦克风。界面用词是「强度」，不再叫「电平」。设置对话框新增「麦克风」组：输入设备下拉写 `settings_set_microphone { device }`（`null` 表示跟随系统默认），旁边是同样的「测试麦克风」。核心的 `Settings.microphone`（`Option<String>`，旧文件读作 `None`）经 `DictationEngine::set_microphone` 在下一次录音时交给麦克风端口，设备 id 超过 1024 字节或为空时拒绝。所选设备没接上时，本次录音和测试都退回系统默认输入（桌面壳 `connected_or_default` 与电平 hub 的打开逻辑）；界面上这项选择保留，标成「未连接」，并说明听写会先用系统默认输入。手机录音不受影响。
 - **历史页**：`state.history`，删除 / 清空 / 星标 / 筛选 / 原文-润色 diff 全部真实。
 - **设置 › 引擎**（引擎与设置合并为一个对话框）：「语音识别」「文本润色」两组服务商卡片（§3；展开卡片选模型、填接口地址与密钥、测试连接，「使用」写 `settings_set_engines`，密钥走 `provider_key_set`）；「本机」卡片里是按档位排序的本地模型卡（下载 / 取消 / 删除 / 使用此模型）与运行设备（§10.6）、独立的「实时预览」块（开关 + 流式模型卡）、「输出方式」三卡（§12，`effective_output_mode` 驱动「当前生效」徽标与回落说明；`live_inject` 下润色卡注明不润色）与「静音裁剪」开关（仅本地）；见 `docs/frontend.md` §4、§6。
 - **设置 › 热键**：录制组合键 + 「激活方式」三卡（§13）+ 「短按判定阈值」（仅 `hold_or_toggle`）+ 「松开后继续录音」，任一改动整份 `settings_set_activation`；首页 chip、页脚说明、空态提示随激活方式变化。

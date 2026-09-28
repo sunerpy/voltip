@@ -180,6 +180,9 @@ pub enum CoreCommand {
     /// Choose (`Some`) or switch off (`None`) the lone-key trigger (docs/dictation.md §13.1);
     /// persisted, the desktop shell (un)installs its input hook on `Settings`.
     SetSoloKey(Option<crate::SoloKey>),
+    /// The microphone takes record from (`Some` device id) or the system default (`None`);
+    /// persisted, used from the next take on.
+    SetMicrophone(Option<String>),
     /// Change theme.
     SetTheme {
         /// Theme.
@@ -516,6 +519,7 @@ impl AppCore {
         dictation.set_vocabulary(Arc::new(Vocabulary::compile(dictionary.entries(), rules.rules())));
         dictation.set_scenes(Arc::new(scenes.scenes().to_vec()));
         dictation.set_context_sharing(settings.context_sharing);
+        dictation.set_microphone(settings.microphone.clone());
         let (cmd_tx, cmd_rx) = mpsc::channel(64);
         let (evt_tx, evt_rx) = mpsc::channel(512);
         let (link_tx, link_rx) = mpsc::channel(1024);
@@ -1052,6 +1056,7 @@ impl Runtime {
             CoreCommand::SetHotkey(text) => self.set_hotkey(&text),
             CoreCommand::SetEditHotkey(text) => self.set_edit_hotkey(text.as_deref()),
             CoreCommand::SetSoloKey(key) => self.set_solo_key(key),
+            CoreCommand::SetMicrophone(device) => self.set_microphone(device),
             CoreCommand::SetTheme { theme, follow_system } => {
                 self.settings.theme = theme;
                 self.settings.follow_system_theme = follow_system;
@@ -2165,6 +2170,23 @@ impl Runtime {
     /// watch it is the shell's report (`HotkeyStatus.solo_error`).
     fn set_solo_key(&mut self, key: Option<crate::SoloKey>) -> Result<(), CoreError> {
         self.settings.solo_key = key;
+        self.save_settings()
+    }
+
+    /// `SetMicrophone`: any non-empty id up to [`crate::settings::MAX_MICROPHONE_ID_BYTES`]
+    /// (whether it is connected is the recorder's business at the next take; a missing device
+    /// falls back to the default there). The engine records from it from the next take on.
+    fn set_microphone(&mut self, device: Option<String>) -> Result<(), CoreError> {
+        if let Some(id) = &device
+            && (id.trim().is_empty() || id.len() > crate::settings::MAX_MICROPHONE_ID_BYTES)
+        {
+            return Err(CoreError::Invalid(format!(
+                "microphone: a device id of 1–{} bytes, or none for the default",
+                crate::settings::MAX_MICROPHONE_ID_BYTES
+            )));
+        }
+        self.settings.microphone = device;
+        self.dictation.set_microphone(self.settings.microphone.clone());
         self.save_settings()
     }
 

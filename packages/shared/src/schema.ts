@@ -328,6 +328,9 @@ export const settingsSchema = z.object({
   pairing_always_on: z.boolean().default(false),
   history: historySettingsSchema.default(() => ({ enabled: true, keep: 500 })),
   overlay: overlayPlacementSchema.default("bottom"),
+  /** The microphone takes record from: an `audio_devices` id, or `null` for the system default.
+   *  Always serialised; an older `settings.json` or core reads as the default. */
+  microphone: z.string().nullable().default(null),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -1573,6 +1576,8 @@ export interface CommandArgs {
   settings_set_edit_hotkey: { hotkey: string | null };
   /** The lone-key trigger (docs/dictation.md §13.1), or `null` to switch it off. */
   settings_set_solo_key: { key: SoloKey | null };
+  /** The microphone takes record from (an `audio_devices` id), or `null` for the system default. */
+  settings_set_microphone: { device: string | null };
   /** Recorder open (`true`): the shell suspends the OS hotkey so the chord reaches the webview. */
   hotkey_capture: { active: boolean };
   devices_refresh: undefined;
@@ -1759,6 +1764,7 @@ export function defaultSettings(): Settings {
     pairing_always_on: false,
     history: { enabled: true, keep: 500 },
     overlay: "bottom",
+    microphone: null,
   };
 }
 

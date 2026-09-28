@@ -558,7 +558,7 @@ describe("Onboarding wizard", () => {
       expect(screen.queryByRole("button", { name: /跳过/ })).toBeNull();
       expect(screen.queryByTestId("deferred-badge")).toBeNull();
       expect(document.body.textContent).not.toMatch(/第二阶段|示例数据/);
-      expect(screen.getByRole("meter", { name: "电平" })).toHaveAttribute("aria-valuenow", "0");
+      expect(screen.getByRole("meter", { name: "强度" })).toHaveAttribute("aria-valuenow", "0");
       expect(screen.getByText("待命")).toBeInTheDocument();
       const box = screen.getByRole("textbox", { name: "在这里试说" });
       expect(box).toHaveValue("");

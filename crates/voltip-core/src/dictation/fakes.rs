@@ -64,6 +64,8 @@ pub struct FakeAudio {
     tap_overrun: bool,
     /// `max_duration` of every successful start, in order.
     max_durations: Mutex<Vec<Duration>>,
+    /// The device id of every start, in order (`None` = the default input).
+    devices: Mutex<Vec<Option<String>>>,
 }
 
 impl FakeAudio {
@@ -116,6 +118,7 @@ impl FakeAudio {
             never_ready: false,
             tap_overrun: false,
             max_durations: Mutex::new(Vec::new()),
+            devices: Mutex::new(Vec::new()),
         }
     }
 
@@ -137,6 +140,11 @@ impl FakeAudio {
     /// The recording cap every successful `start` was asked for, in order.
     pub fn max_durations(&self) -> Vec<Duration> {
         self.max_durations.lock().clone()
+    }
+
+    /// The device id every start asked for, in order (`None` = the default input).
+    pub fn devices(&self) -> Vec<Option<String>> {
+        self.devices.lock().clone()
     }
 }
 
@@ -206,11 +214,12 @@ impl LivePcm for FakeLivePcm {
 impl AudioSource for FakeAudio {
     fn start(
         &self,
-        _device_id: Option<&str>,
+        device_id: Option<&str>,
         on_level: Box<dyn Fn(LevelFrame) + Send>,
         on_ready: Box<dyn FnOnce() + Send>,
         options: CaptureOptions,
     ) -> Result<Box<dyn Capture>, DictationError> {
+        self.devices.lock().push(device_id.map(str::to_owned));
         let result = match &self.mode {
             AudioMode::FailStart(m) => return Err(DictationError::Audio(m.clone())),
             AudioMode::FailStop(m) => Err(DictationError::Audio(m.clone())),

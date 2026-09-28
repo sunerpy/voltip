@@ -80,7 +80,7 @@ impl AudioSource for RecorderAudioSource {
     ) -> Result<Box<dyn Capture>, DictationError> {
         let live = options.live;
         let config = RecorderConfig {
-            device_id: device_id.map(str::to_owned),
+            device_id: connected_or_default(self.backend.as_ref(), device_id),
             live_tap: live.then(LiveTapConfig::default),
             max_duration: options.max_duration,
             ..RecorderConfig::default()
@@ -107,6 +107,20 @@ impl AudioSource for RecorderAudioSource {
         };
         tracing::info!(device = %recorder.device().name, live, max_duration = ?options.max_duration, "dictation capture started");
         Ok(Box::new(RecorderCapture { recorder, hub: self.hub.clone() }))
+    }
+}
+
+/// The device a take records from: the chosen one while it is connected, the system default once
+/// it is not (unplugged, or a settings file from another machine). An enumeration that fails
+/// leaves the choice to the recorder, which reports the real error.
+pub fn connected_or_default(backend: &dyn Backend, device_id: Option<&str>) -> Option<String> {
+    let id = device_id?;
+    match backend.input_devices() {
+        Ok(devices) if !devices.iter().any(|d| d.id == id) => {
+            tracing::warn!(device = %id, "the chosen microphone is not connected; recording from the default input");
+            None
+        }
+        _ => Some(id.to_owned()),
     }
 }
 
@@ -540,6 +554,16 @@ pub fn ports_with_backend(backend: Arc<dyn Backend + Send + Sync>, hub: Arc<Audi
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    /// Regression (2026-09-28): a chosen microphone that is gone (unplugged, a settings file from
+    /// another machine) must not break dictation; the take records from the default input.
+    #[test]
+    fn a_chosen_microphone_that_is_gone_falls_back_to_the_default_input() {
+        let backend = voltip_audio::FakeBackend::new();
+        assert_eq!(connected_or_default(&backend, None), None);
+        assert_eq!(connected_or_default(&backend, Some(voltip_audio::FAKE_USB_ID)).as_deref(), Some(voltip_audio::FAKE_USB_ID));
+        assert_eq!(connected_or_default(&backend, Some("fake:unplugged")), None);
+    }
 
     fn preflight(decision: InjectDecision, target: Option<&str>) -> InjectPreflight {
         InjectPreflight { decision, target_process: target.map(str::to_owned), checked: true, ..InjectPreflight::not_applicable(HostOs::Windows) }

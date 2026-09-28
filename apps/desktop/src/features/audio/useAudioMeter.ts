@@ -6,8 +6,11 @@ import { publishMicrophone } from "./mic-store";
 export interface AudioMeterState {
   /** Microphones the native backend enumerated, default first; `undefined` until the query resolved. */
   devices: AudioDevice[] | undefined;
-  /** The device the meter is streaming from (the default one unless `deviceId` was given). */
+  /** The device the meter streams from: `deviceId`'s while it is connected, the default input
+   *  otherwise (the shell falls back the same way, for the meter and for a take). */
   device: AudioDevice | undefined;
+  /** `deviceId` was given but is not among the enumerated devices (unplugged). */
+  missing: boolean;
   /** Latest level frame; `undefined` until the first one arrives. */
   frame: LevelFrame | undefined;
   /** Why enumeration or metering failed (the shell's message), if it did. */
@@ -66,15 +69,15 @@ export function useAudioMeter(active: boolean, deviceId?: string): AudioMeterSta
     };
   }, [backend, active, deviceId]);
 
-  const device =
-    deviceId === undefined
-      ? (devices?.find((d) => d.is_default) ?? devices?.[0])
-      : devices?.find((d) => d.id === deviceId);
+  const fallback = devices?.find((d) => d.is_default) ?? devices?.[0];
+  const chosen = deviceId === undefined ? undefined : devices?.find((d) => d.id === deviceId);
+  const missing = deviceId !== undefined && devices !== undefined && chosen === undefined;
+  const device = chosen ?? fallback;
   // Share the device with the title bar's microphone readout (an external store, so no prop drilling).
   useEffect(() => {
     publishMicrophone({ device, error });
   }, [device, error]);
-  return { devices, device, frame, error };
+  return { devices, device, missing, frame, error };
 }
 
 /** dBFS → 0…1 for a bar meter (−60 dBFS is silence, 0 dBFS full scale). */

@@ -134,6 +134,12 @@ pub enum UiCommand {
         /// Key or `null`.
         key: Option<voltip_core::SoloKey>,
     },
+    /// The microphone takes record from: a device id of `audio_devices`, or `null` for the system
+    /// default; persisted, used from the next take on.
+    SettingsSetMicrophone {
+        /// Device id or `null`.
+        device: Option<String>,
+    },
     /// UI language (`system` | `zh-cn` | `en`); persisted, every window follows `settings`.
     SettingsSetLocale {
         /// Language.
@@ -364,6 +370,7 @@ impl UiCommand {
             Self::SettingsSetHotkey { hotkey } => CoreCommand::SetHotkey(hotkey),
             Self::SettingsSetEditHotkey { hotkey } => CoreCommand::SetEditHotkey(hotkey),
             Self::SettingsSetSoloKey { key } => CoreCommand::SetSoloKey(key),
+            Self::SettingsSetMicrophone { device } => CoreCommand::SetMicrophone(device),
             Self::SettingsSetLocale { locale } => CoreCommand::SetLocale(locale),
             Self::SettingsSetAutoUpdate { enabled } => CoreCommand::SetAutoUpdate(enabled),
             Self::SettingsSetHistory { enabled, keep } => CoreCommand::SetHistory(voltip_core::HistorySettings { enabled, keep }),

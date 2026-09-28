@@ -58,8 +58,19 @@ pub struct AudioHub {
 impl Default for AudioHub {
     fn default() -> Self {
         Self::with_opener(Box::new(|device_id, sink| {
-            let config = voltip_audio::MeterConfig { device_id, ..voltip_audio::MeterConfig::default() };
-            voltip_audio::Meter::start(config, move |frame| sink(frame)).map_err(|e| e.to_string())
+            let open = |device_id: Option<String>| {
+                let sink = sink.clone();
+                let config = voltip_audio::MeterConfig { device_id, ..voltip_audio::MeterConfig::default() };
+                voltip_audio::Meter::start(config, move |frame| sink(frame))
+            };
+            // The chosen microphone is gone (unplugged): meter the default input, as a take would.
+            match open(device_id.clone()) {
+                Err(voltip_audio::AudioError::DeviceNotFound(id)) if device_id.is_some() => {
+                    tracing::warn!(device = %id, "the chosen microphone is not connected; metering the default input");
+                    open(None).map_err(|e| e.to_string())
+                }
+                other => other.map_err(|e| e.to_string()),
+            }
         }))
     }
 }

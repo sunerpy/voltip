@@ -1,9 +1,11 @@
 // Settings navigation: the group ids and their mono keys. The labels live in the i18n dictionary
 // (`settings.group.<id>`). Every pane reads the core; 场景 holds the scenes and the context switches
-// (docs/dictation.md §18). 语音模型 and AI 模型 are pages of the main layout since 2026-09-28.
+// (docs/dictation.md §18); 麦克风 the input device and its test. 语音模型 and AI 模型 are pages of the
+// main layout since 2026-09-28.
 export const SETTINGS_GROUP_IDS = [
   "general",
   "hotkey",
+  "microphone",
   "scene",
   "privacy",
   "appearance",

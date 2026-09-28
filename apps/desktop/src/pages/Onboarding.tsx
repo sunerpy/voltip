@@ -34,6 +34,7 @@ import { inTextField, onControl, usePageShortcuts, withCommand } from "../app/pa
 import { useRouter } from "../app/router";
 import { copyWithToast, useShell } from "../app/shell-context";
 import { levelFraction, useAudioMeter } from "../features/audio/useAudioMeter";
+import { useChosenMicrophone } from "../features/audio/useMicrophoneTest";
 import { useDictation, useTickingNow } from "../features/dictation/useDictation";
 import { usePermissions } from "../features/permissions/usePermissions";
 import { shortModel } from "../shell/page-meta";
@@ -102,7 +103,7 @@ export function Onboarding({ step }: OnboardingProps) {
   const engineDraft = draftEdit ?? initialDraft(state.settings.engines, engines);
   // The trial step: the meter only runs while the recorder is open; the last finished result stays
   // in the box after the core's phase has returned to idle.
-  const trialMeter = useAudioMeter(current === 4 && dictation.listening);
+  const trialMeter = useAudioMeter(current === 4 && dictation.listening, useChosenMicrophone());
   const now = useTickingNow(current === 4 && dictation.listening);
   const trialPhase = dictation.phase;
   const latestDone =

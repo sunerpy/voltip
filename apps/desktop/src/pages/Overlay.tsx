@@ -17,6 +17,7 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { useAudioMeter } from "../features/audio/useAudioMeter";
+import { useChosenMicrophone } from "../features/audio/useMicrophoneTest";
 import { useLevelHistory, useTickingNow } from "../features/dictation/useDictation";
 import { useOverlayWindowState } from "../features/overlay/useOverlayWindowState";
 import { copyWithToast, useShell } from "../app/shell-context";
@@ -96,7 +97,7 @@ export function Overlay({ state }: OverlayProps) {
   const pill = current === LIVE_STATE ? pillStateFor(dictation.phase) : undefined;
   const listening = pill !== undefined && dictation.phase.phase === "listening";
   // While the recorder is open the core broadcasts its levels through the same meter channel.
-  const meter = useAudioMeter(listening);
+  const meter = useAudioMeter(listening, useChosenMicrophone());
   const levels = useLevelHistory(listening ? meter.frame : undefined, LIVE_BARS);
   const now = useTickingNow(listening);
 
