@@ -214,6 +214,20 @@ function waitForPort(port: number): Promise<void> {
   });
 }
 
+/** Run `command` to completion without blocking the event loop: a synchronous build would keep
+ *  the vitest worker from answering its runner for as long as cargo takes, and the runner gives up
+ *  after 60 s ("Timeout calling onTaskUpdate", CI 2026-09-27) even though every test passed. */
+function run(command: string, args: string[], timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd: REPO_ROOT, stdio: "inherit", timeout: timeoutMs });
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${command} ${args.join(" ")} exited with ${code ?? signal}`));
+    });
+  });
+}
+
 function binaryPath(name: string): string {
   const metadata = z.object({ target_directory: z.string() }).parse(
     JSON.parse(
@@ -240,7 +254,7 @@ describe("TypeScript ↔ Rust core over the bridge harness and a local relay", (
   let phone: Device | undefined;
 
   beforeAll(async () => {
-    execFileSync(
+    await run(
       "cargo",
       [
         "build",
@@ -252,7 +266,7 @@ describe("TypeScript ↔ Rust core over the bridge harness and a local relay", (
         "-p",
         "voltip-relay",
       ],
-      { cwd: REPO_ROOT, stdio: "inherit", timeout: BUILD_TIMEOUT_MS },
+      BUILD_TIMEOUT_MS,
     );
     const port = await freePort();
     relay = spawn(binaryPath("voltip-relay"), ["--bind", `127.0.0.1:${port}`], { stdio: "pipe" });
