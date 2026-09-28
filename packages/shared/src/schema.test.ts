@@ -14,6 +14,8 @@ import {
   MODEL_TIERS,
   OUTPUT_MODES,
   applyEvent,
+  phoneTakeFinal,
+  sentTextFinal,
   defaultEngineSettings,
   defaultSettings,
   dictationPhaseSchema,
@@ -198,6 +200,52 @@ describe("applyEvent", () => {
         .state,
     ).toEqual({ state: "expired" });
     expect(applyEvent(state, { type: "devices", devices: [] }).devices).toEqual([]);
+  });
+
+  it("folds the hardware, connectivity, phone take, sent texts and nearby events; a null take clears it", () => {
+    const hardware = applyEvent(state, { type: "hardware", cpu_threads: 16, gpus: [] });
+    expect(hardware.hardware).toEqual({ cpu_threads: 16, gpus: [] });
+    expect(applyEvent(state, { type: "connectivity", running: true }).connectivity.running).toBe(
+      true,
+    );
+    const take = {
+      device: "ab".repeat(32),
+      take: 3,
+      started_at: 1,
+      state: { state: "listening" as const },
+    };
+    const taking = applyEvent(state, { type: "phone_take", take });
+    expect(taking.phone_take?.take).toBe(3);
+    expect(applyEvent(taking, { type: "phone_take", take: null }).phone_take).toBeUndefined();
+    const text = {
+      id: 7,
+      device: "ab".repeat(32),
+      device_name: "Studio",
+      body: "x",
+      source: "typed" as const,
+      sent_at: 1,
+      state: { state: "sending" as const },
+    };
+    expect(applyEvent(state, { type: "sent_texts", texts: [text] }).sent_texts).toEqual([text]);
+    const nearby = {
+      fingerprint: "AB",
+      name: "Studio",
+      platform: "macos" as const,
+      pairing: true,
+      trusted: false,
+    };
+    expect(applyEvent(state, { type: "nearby", devices: [nearby] }).nearby).toEqual([nearby]);
+  });
+
+  it("a sent text and a phone take know when no further answer comes", () => {
+    expect(sentTextFinal({ state: "sending" })).toBe(false);
+    expect(sentTextFinal({ state: "queued" })).toBe(false);
+    expect(sentTextFinal({ state: "delivered", pasted: true })).toBe(true);
+    expect(sentTextFinal({ state: "failed", code: "busy", message: "x" })).toBe(true);
+    expect(phoneTakeFinal({ state: "starting" })).toBe(false);
+    expect(phoneTakeFinal({ state: "done", text: "x", pasted: true })).toBe(true);
+    expect(phoneTakeFinal({ state: "failed", code: "unavailable", message: "x" })).toBe(true);
+    expect(phoneTakeFinal({ state: "cancelled" })).toBe(true);
   });
 
   it("leaves state untouched for notification-only events", () => {

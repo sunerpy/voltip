@@ -704,6 +704,8 @@ export class MockBackend implements Backend {
   readonly feedbackSent: FeedbackDraft[] = [];
   /** The phone's clipboard (`phone_clipboard_read`). */
   phoneClipboard: string | null;
+  /** The last id a phone text took (`SentTexts::next_id` in the core). */
+  private lastTextId = 0;
   private readonly feedback: "configured" | FeedbackError;
   private readonly probeTimers = new Set<ReturnType<typeof setTimeout>>();
   /** Every event emitted, oldest first; handy for asserting ordering in tests. */
@@ -1094,7 +1096,9 @@ export class MockBackend implements Backend {
         this.emit({ type: "error", message: "device is not online" });
         return;
       }
-      const id = Math.max(0, ...this.state.sent_texts.map((t) => t.id)) + 1;
+      // Like the core's counter: it outlives 清空, so the desktop never sees an id twice.
+      this.lastTextId = Math.max(this.lastTextId, ...this.state.sent_texts.map((t) => t.id)) + 1;
+      const id = this.lastTextId;
       const text: SentText = {
         id,
         device: publicKey,
