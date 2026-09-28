@@ -79,4 +79,17 @@ make help                        # everything else
   decides the release-please bump; `feat!:` or a `BREAKING CHANGE:` footer marks a breaking change.
 - release-please owns the version (root `package.json`, read by `tauri.conf.json`; the Cargo crates
   stay at `0.0.0`), `CHANGELOG.md` and the tags. Do not bump versions by hand.
-- The required check is `CI Success`. The `macos` jobs of `ci.yml` (Apple silicon and Intel) run on pushes to `main` and on demand, not on pull requests.
+- Merge every pull request with squash (`gh pr merge --squash`), release PRs included: one commit
+  per pull request keeps the history of `main` short. The exception is a very large change or a
+  refactor whose step-by-step history is worth keeping. The repository allows squash merges only,
+  so for that merge the owner turns on rebase merging (Settings → General → Pull Requests) and
+  merges with `--rebase`.
+- Merging needs an up-to-date branch and the `Release candidate` status on its head (the
+  `release-candidate` ruleset): `ci.yml`'s `candidate-status` writes it for an ordinary pull request,
+  `release-candidate.yml` for release-please's once the packages are built. `CI Success` is CI's
+  verdict; wait for it too. The owner may push to `main` directly (the ruleset lets admins bypass).
+  The `macos` jobs of `ci.yml` (Apple silicon and Intel) run on pushes to `main` and on demand, not
+  on pull requests.
+- Releases build once: `release-candidate.yml` builds, signs and seals every package for the
+  release PR head, and `release.yml` promotes those exact bytes after the squash merge, without
+  compiling. `docs/runbook.md` (发布) has the recovery steps.
