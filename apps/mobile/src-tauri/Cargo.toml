@@ -21,7 +21,7 @@ tauri-build = { version = "=2.6.3", features = [] }
 directories.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tauri = { version = "=2.11.5", default-features = false, features = ["wry"] }
+tauri = { version = "=2.11.6", default-features = false, features = ["wry"] }
 tauri-plugin-barcode-scanner = "=2.4.5"
 tokio.workspace = true
 tracing.workspace = true
@@ -40,7 +40,7 @@ voltip-tauri-bridge.workspace = true
 voltip-identity = { workspace = true, features = ["android-keystore", "keyring"] }
 
 [dev-dependencies]
-tauri = { version = "=2.11.5", default-features = false, features = ["wry", "test"] }
+tauri = { version = "=2.11.6", default-features = false, features = ["wry", "test"] }
 tempfile.workspace = true
 voltip-audio = { workspace = true, features = ["test-support"] }
 voltip-pairing.workspace = true
