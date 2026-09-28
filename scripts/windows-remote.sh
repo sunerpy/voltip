@@ -9,6 +9,7 @@
 #                                                crates/voltip-asr-local/tests/real.rs; the files are copied over)
 #   scripts/windows-remote.sh gate hooks         the lone-key trigger's input hooks, fed with SendInput (the
 #                                                logged-on user's session must be unlocked)
+#   scripts/windows-remote.sh gate mdns          two real mDNS daemons on the machine see each other (LAN discovery)
 #   scripts/windows-remote.sh smoke [dist]       scripts/smoke-native-cli.ps1 on a package (default dist/windows-x64)
 #   scripts/windows-remote.sh wait test|clippy|real|smoke   re-attach to a run that is still going
 #   scripts/windows-remote.sh ps                 run the PowerShell on stdin there (UTF-8 both ways)
@@ -159,7 +160,9 @@ gate() {
     # The lone-key trigger's low-level hooks (docs/dictation.md §13.1), fed with SendInput: they need
     # the interactive session the scheduled task runs in, never an SSH one.
     hooks) args='test -p voltip-desktop --lib solo_key -- --ignored --nocapture --test-threads=1' ;;
-    *) echo "usage: $0 gate test|clippy|real|hooks [test-name filter]" >&2; exit 2 ;;
+    # LAN discovery (docs/pairing.md 「局域网发现」): real multicast DNS through Windows' own stack.
+    mdns) args='test -p voltip-core --lib discovery -- --ignored --nocapture --test-threads=1' ;;
+    *) echo "usage: $0 gate test|clippy|real|hooks|mdns [test-name filter]" >&2; exit 2 ;;
   esac
   if [ "$name" = real ]; then stage_real_models; fi
   put '' scripts/windows-remote-gate.ps1
@@ -220,8 +223,8 @@ case "${1:-}" in
     case "${2:-}" in
       test | clippy | real) wait_log "$2" "voltip-gate-$2" ;;
       smoke) wait_log smoke voltip-smoke-native ;;
-      hooks) wait_log hooks voltip-gate-hooks ;;
-      *) echo "usage: $0 wait test|clippy|real|hooks|smoke" >&2; exit 2 ;;
+      hooks | mdns) wait_log "$2" "voltip-gate-$2" ;;
+      *) echo "usage: $0 wait test|clippy|real|hooks|mdns|smoke" >&2; exit 2 ;;
     esac
     ;;
   ps) remote_ps ;;
