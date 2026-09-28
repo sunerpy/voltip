@@ -213,6 +213,23 @@ fn settings_and_identity_commands_change_state() {
     });
 }
 
+/// docs/pairing.md 「局域网发现」: the switch persists and comes back in `settings`; joining a
+/// device the LAN browse has not seen is the core's error; both need their argument.
+#[test]
+fn lan_discovery_commands_reach_the_core() {
+    with_running_app(|_, webview, rx| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert!(core_state(webview).settings.lan_discovery, "on by default");
+        assert!(invoke(webview, "settings_set_lan_discovery", json!({})).is_err(), "enabled is required");
+        assert_eq!(invoke(webview, "settings_set_lan_discovery", json!({ "enabled": false })), Ok(Value::Null));
+        wait_event(rx, "settings", |e| e["type"] == "settings" && e["lan_discovery"] == false);
+        assert!(!wait_state(webview, |s| !s.settings.lan_discovery).settings.lan_discovery);
+        assert!(invoke(webview, "pairing_join_nearby", json!({})).is_err(), "fingerprint is required");
+        assert_eq!(invoke(webview, "pairing_join_nearby", json!({ "fingerprint": "0000000000000000" })), Ok(Value::Null));
+        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("附近没有这台设备")));
+    });
+}
+
 /// 「需要支持完整的中英文语言切换」: the locale is one persisted setting every window reads. The
 /// command takes the kebab-case wire form, the core echoes it as `settings`, an unknown locale is
 /// refused before the core sees it, and the other settings are untouched.

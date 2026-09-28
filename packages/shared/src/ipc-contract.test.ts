@@ -65,6 +65,7 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   provider_probe: null,
   phone_take: null,
   sent_texts: null,
+  nearby: null,
   hardware: null,
   connectivity: null,
 };
@@ -87,6 +88,8 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   phone_take_cancel: null,
   phone_text_send: null,
   sent_texts_clear: null,
+  settings_set_lan_discovery: null,
+  pairing_join_nearby: null,
   settings_set_relay: null,
   settings_set_theme: null,
   settings_set_hotkey: null,
@@ -153,6 +156,8 @@ const argSchemas = {
   phone_text_send: z
     .object({ publicKey: hexKeySchema, body: z.string(), source: z.enum(PHONE_TEXT_SOURCES) })
     .strict(),
+  settings_set_lan_discovery: z.object({ enabled: z.boolean() }).strict(),
+  pairing_join_nearby: z.object({ fingerprint: z.string() }).strict(),
   settings_set_relay: z.object({ url: z.string().nullable(), enabled: z.boolean() }),
   settings_set_theme: z.object({ theme: themeIdSchema, followSystem: z.boolean() }),
   settings_set_hotkey: z.object({ hotkey: z.string() }),
@@ -247,6 +252,10 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.phone_take_start.parse(args));
     case "phone_text_send":
       return backend.invoke(name, argSchemas.phone_text_send.parse(args));
+    case "settings_set_lan_discovery":
+      return backend.invoke(name, argSchemas.settings_set_lan_discovery.parse(args));
+    case "pairing_join_nearby":
+      return backend.invoke(name, argSchemas.pairing_join_nearby.parse(args));
     case "phone_take_stop":
     case "phone_take_cancel":
     case "sent_texts_clear":
@@ -363,6 +372,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       extra_recording_ms: 150,
       edit_hotkey: "Ctrl+Alt+E",
       solo_key: "right_ctrl",
+      lan_discovery: true,
       context_sharing: { app_name: false, window_title: true },
       history: { enabled: true, keep: 200 },
       overlay: "top",
@@ -630,6 +640,26 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(uiEventSchema.safeParse(mutate(raw, ["capabilities", "hold"], "yes")).success).toBe(
       false,
     );
+  });
+
+  it("regression: LAN discovery survives parsing: the nearby list, the switch, and a tap on a pairing desktop", () => {
+    const parsedState = uiStateSchema.parse(state);
+    expect(parsedState.nearby.map((d) => [d.name, d.pairing, d.trusted])).toEqual([
+      ["Studio", true, false],
+      ["MacBook Pro", false, true],
+    ]);
+    const lists = events.flatMap((raw) => {
+      const r = uiEventSchema.safeParse(raw);
+      return r.success && r.data.type === "nearby" ? [r.data.devices.length] : [];
+    });
+    expect(lists).toEqual([0, 2]);
+    // A state without it (an older core) lists nothing and has discovery on.
+    const { nearby: _gone, ...older } = z.record(z.string(), z.unknown()).parse(state);
+    expect(uiStateSchema.parse(older).nearby).toEqual([]);
+    const join = commands.find((c) => c.name === "pairing_join_nearby");
+    expect(argSchemas.pairing_join_nearby.parse(join?.args).fingerprint).toBe("A7C4198E3DF26109");
+    const off = commands.find((c) => c.name === "settings_set_lan_discovery");
+    expect(argSchemas.settings_set_lan_discovery.parse(off?.args).enabled).toBe(false);
   });
 
   it("regression: section 20.6 the phone's sent texts and a history entry's origin survive parsing", () => {

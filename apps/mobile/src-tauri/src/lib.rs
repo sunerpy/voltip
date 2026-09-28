@@ -11,6 +11,7 @@
 pub mod clipboard;
 pub mod meter;
 pub mod microphone;
+pub mod multicast;
 
 use std::sync::Arc;
 
@@ -28,7 +29,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 74] = [
+pub const COMMANDS: [&str; 76] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -46,6 +47,8 @@ pub const COMMANDS: [&str; 74] = [
     "phone_text_send",
     "sent_texts_clear",
     "phone_clipboard_read",
+    "settings_set_lan_discovery",
+    "pairing_join_nearby",
     "settings_set_relay",
     "settings_set_theme",
     "settings_set_hotkey",
@@ -119,6 +122,17 @@ pub fn production_config<R: Runtime>(app: &AppHandle<R>) -> CoreConfig {
     config.app_version = app.package_info().version.to_string();
     // The phone is the microphone; a desktop records its takes, never the other way round.
     config.accepts_phone_takes = false;
+    // LAN discovery (docs/pairing.md 「局域网发现」): Android drops multicast without the lock,
+    // held while the switch is on.
+    let discovering = voltip_core::SettingsStore::new(&config.data_dir).load().map_or(true, |s| s.lan_discovery);
+    multicast::hold_in_background(app, discovering);
+    config.discovery = match voltip_core::discovery::MdnsDiscovery::new() {
+        Ok(mdns) => Some(mdns),
+        Err(e) => {
+            tracing::warn!(error = %e, "LAN discovery unavailable");
+            None
+        }
+    };
     config
 }
 
@@ -220,6 +234,21 @@ fn phone_take_cancel(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
 #[tauri::command]
 fn phone_text_send(bridge: tauri::State<'_, Bridge>, public_key: String, body: String, source: voltip_core::phone::PhoneTextSource) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::PhoneTextSend { public_key, body, source })?)
+}
+
+/// LAN discovery (docs/pairing.md 「局域网发现」): announce this device and browse for the others;
+/// the multicast lock follows the switch.
+#[tauri::command]
+fn settings_set_lan_discovery<R: Runtime>(app: AppHandle<R>, bridge: tauri::State<'_, Bridge>, enabled: bool) -> Result<(), String> {
+    bridge.dispatch(UiCommand::SettingsSetLanDiscovery { enabled })?;
+    multicast::hold_in_background(&app, enabled);
+    Ok(())
+}
+
+/// Join the pairing the nearby device `fingerprint` waits for (a tap under 「附近的电脑」).
+#[tauri::command]
+fn pairing_join_nearby(bridge: tauri::State<'_, Bridge>, fingerprint: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PairingJoinNearby { fingerprint })?)
 }
 
 /// Forget the list of sent texts.
@@ -651,6 +680,7 @@ pub fn build_app<R: Runtime>(
     builder
         .plugin(microphone::init())
         .plugin(clipboard::init())
+        .plugin(multicast::init())
         .manage(meter::Meters::default())
         .setup(move |app| {
             let config = config(app.handle());
@@ -674,6 +704,8 @@ pub fn build_app<R: Runtime>(
             phone_text_send,
             sent_texts_clear,
             phone_clipboard_read,
+            settings_set_lan_discovery,
+            pairing_join_nearby,
             settings_set_relay,
             settings_set_theme,
             settings_set_hotkey,

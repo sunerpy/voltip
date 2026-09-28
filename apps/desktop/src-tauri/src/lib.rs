@@ -43,7 +43,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 74] = [
+pub const COMMANDS: [&str; 76] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -61,6 +61,8 @@ pub const COMMANDS: [&str; 74] = [
     "phone_text_send",
     "sent_texts_clear",
     "phone_clipboard_read",
+    "settings_set_lan_discovery",
+    "pairing_join_nearby",
     "settings_set_relay",
     "settings_set_theme",
     "settings_set_hotkey",
@@ -229,6 +231,18 @@ pub const PHONE_TEXT_UNAVAILABLE: &str = "phone_text: 电脑接收手机发来�
 #[tauri::command]
 fn phone_text_send(_public_key: String, _body: String, _source: voltip_core::phone::PhoneTextSource) -> Result<(), String> {
     Err(PHONE_TEXT_UNAVAILABLE.into())
+}
+
+/// LAN discovery (docs/pairing.md 「局域网发现」): announce this device and browse for the others.
+#[tauri::command]
+fn settings_set_lan_discovery(bridge: tauri::State<'_, Bridge>, enabled: bool) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetLanDiscovery { enabled })?)
+}
+
+/// Join the pairing the nearby device `fingerprint` waits for (a tap under 「附近的电脑」).
+#[tauri::command]
+fn pairing_join_nearby(bridge: tauri::State<'_, Bridge>, fingerprint: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PairingJoinNearby { fingerprint })?)
 }
 
 #[tauri::command]
@@ -835,6 +849,8 @@ pub fn build_app<R: Runtime>(
             phone_text_send,
             sent_texts_clear,
             phone_clipboard_read,
+            settings_set_lan_discovery,
+            pairing_join_nearby,
             settings_set_relay,
             settings_set_theme,
             settings_set_hotkey,
@@ -939,6 +955,15 @@ pub fn run() {
     let mut config = CoreConfig::new(data_dir());
     config.client_version = format!("voltip/{APP_VERSION}");
     config.app_version = APP_VERSION.to_owned();
+    // LAN discovery (docs/pairing.md 「局域网发现」): phones find this desktop, and each other's
+    // address after it changed, without a relay.
+    config.discovery = match voltip_core::discovery::MdnsDiscovery::new() {
+        Ok(mdns) => Some(mdns),
+        Err(e) => {
+            tracing::warn!(error = %e, "LAN discovery unavailable");
+            None
+        }
+    };
     let ports = dictation::production_ports(config.models_root.clone());
     let mut app = match build_app(tauri::Builder::default(), config, secret_store(), ShellOptions::PRODUCTION.hidden(start_hidden), ports).build(context) {
         Ok(app) => app,

@@ -1012,7 +1012,7 @@ export const en: Messages = {
       textHow: "E2EE · Noise",
       audio: "Phone audio",
       audioDir: "phone → desktop",
-      audioHow: "PCM 16 kHz · E2EE",
+      audioHow: "Opus 16 kHz · E2EE",
       result: "Recognised text",
       resultDir: "desktop → phone",
       resultHow: "E2EE · Noise",
@@ -1058,12 +1058,15 @@ export const en: Messages = {
     panel: {
       paired: "Paired devices",
       allowRelay: "Allow relay connections",
+      lanDiscovery: "LAN discovery",
       noRelay: "No relay configured",
       builtinRelay: "Built-in relay",
       count: "{paired} paired · {online} online",
       emptyTitle: "No phone paired yet",
       emptyBody: "Start with the QR code above.",
       note: "A forgotten device has to scan again and compare the safety code; a device whose identity key changed is marked red here until you deal with it.",
+      lanNote:
+        "LAN discovery announces this computer's name on the local network: a phone pairs with one tap, and paired devices find it again after its address changes. With it off, pair by QR code or code only.",
     },
     live: {
       title: "Phone microphone",
@@ -1076,7 +1079,7 @@ export const en: Messages = {
       cancelled: "{name} · cancelled",
       meter: "Level from the phone",
       audio: "Audio",
-      audioValue: "PCM 16 kHz mono",
+      audioValue: "Opus · 16 kHz mono",
       phone: "Phone",
       link: "Link",
       note: "Hold to talk on the phone: the audio reaches this computer live over the end-to-end encrypted channel, this computer's recognition transcribes it, the text lands at its cursor, and the result goes back to the phone.",
@@ -1133,6 +1136,8 @@ export const en: Messages = {
     copyFingerprint: "Copy fingerprint",
     fingerprintWhat: "fingerprint",
     scanNote: "Scanning hands the phone the session ticket; nothing to type.",
+    lanNote:
+      "Phones on this network can also pick this computer under “Computers nearby” on their pairing screen.",
     validity: "Valid for",
     warning: "Do not screenshot this QR code or show it on a shared screen.",
     regenerate: "Regenerate",
@@ -1883,10 +1888,13 @@ export const en: Messages = {
       note: "The private key lives only in this phone's system keystore; it never enters config files, logs or the relay. The peer sees this fingerprint while pairing.",
       pair: "Pair a computer",
       viewDevices: "View paired devices",
+      lan: "LAN discovery",
+      lanHelp:
+        "Announces this phone's name on the local network and looks for computers: pairing takes one tap, and a paired computer is found again after its address changes.",
     },
     pair: {
       intro:
-        "Open the Phone page on the computer and scan its QR code, or type the 6-digit code it shows. Both paths only find the session; the key exchange after that is identical.",
+        "Open the Phone page on the computer and start pairing, then pick it under Computers nearby, scan its QR code, or type the 6-digit code it shows. Each way only finds the session; the key exchange and the safety-code check after that are identical.",
       method: "Pairing method",
       scan: "Scan",
       code: "Enter 6-digit code",
@@ -1906,6 +1914,15 @@ export const en: Messages = {
       scanCancelled: "Scan cancelled or camera permission not granted",
       retry: "Retry",
       clearRetry: "Clear and retry",
+      nearby: {
+        title: "Computers nearby",
+        searching: "Looking for computers on this network…",
+        empty: "Open the Phone page on the computer and click Start pairing; it appears here.",
+        off: "LAN discovery is off. Turn it on under This device, and computers waiting to pair on this network appear here.",
+        join: "Pair",
+        joinLabel: "Pair with {name}",
+        idle: "Not pairing yet",
+      },
     },
     verify: {
       rejected: "Pairing was rejected; the session is destroyed.",

@@ -82,7 +82,7 @@ describe("Devices page", () => {
     await within(panel).findByText("Pixel 8 在线 · 在手机上按住「按住说话」");
     const meter = within(panel).getByRole("meter", { name: "来自手机的电平" });
     expect(meter).toHaveAttribute("aria-valuenow", "0");
-    expect(within(panel).getByText("PCM 16 kHz 单声道")).toBeInTheDocument();
+    expect(within(panel).getByText("Opus · 16 kHz 单声道")).toBeInTheDocument();
     expect(within(panel).getByText("直连")).toBeInTheDocument();
     act(() => {
       backend.simulatePhoneTake("Pixel 8");
@@ -102,7 +102,9 @@ describe("Devices page", () => {
     expect(
       await within(panel).findByText(/^Pixel 8 · 已插入 \d+ 字$/, {}, { timeout: 5000 }),
     ).toBeInTheDocument();
-    expect(document.body.textContent).not.toMatch(/尚未接入|计划|第二阶段|Opus/);
+    // Opus used to be promised for a later phase; the phone streams it now (docs/dictation.md §20),
+    // so the readout above names it and only the placeholder wording is banned.
+    expect(document.body.textContent).not.toMatch(/尚未接入|计划|第二阶段/);
     expect(screen.queryByTestId("deferred-badge")).toBeNull();
     // The channel carries exactly text, the phone's audio and the recognised text.
     expect(screen.getByText("手机录音")).toBeInTheDocument();
@@ -358,6 +360,31 @@ describe("Devices page", () => {
       expect(backend.peek().settings.relay_enabled).toBe(false);
     });
     expect(screen.getAllByText("中继 · 未配置").length).toBeGreaterThan(0);
+  });
+
+  it("regression: the LAN discovery switch drives settings, and while it is on a waiting pairing says phones nearby can pick this computer", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    const { backend } = mount();
+    await screen.findByRole("table", { name: "已配对设备" });
+    expect(screen.getByRole("switch", { name: /局域网发现/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByText(/局域网发现在同一局域网里公布这台电脑的名称/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "开始配对" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(screen.getByTestId("pairing-lan-note")).toHaveTextContent("「附近的电脑」");
+    await user.click(screen.getByRole("switch", { name: /局域网发现/ }));
+    await waitFor(() => {
+      expect(backend.peek().settings.lan_discovery).toBe(false);
+    });
+    expect(screen.getByRole("switch", { name: /局域网发现/ })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    expect(screen.queryByTestId("pairing-lan-note")).toBeNull();
   });
 
   it("sends a test message to an online device and forgets through the confirm dialog", async () => {

@@ -29,6 +29,23 @@ Idle → Joining(code|ticket) → KeyExchange → AwaitingVerification → Trust
                          ↘ Failed(invalid_code|expired|rate_limited)
 ```
 
+## 局域网发现
+
+LAN 主机在跑、「局域网发现」开着（`Settings.lan_discovery`，默认开；电脑在「手机」页、手机在「本机」页切换，命令 `settings_set_lan_discovery`）时，每台设备用 mDNS 把自己公布成 `_voltip._tcp.local.` 服务，端口就是 LAN 主机的端口，同时浏览别人的公布（`voltip_core::discovery`，mdns-sd；Android 先拿 `WifiManager.MulticastLock`）。TXT 记录：
+
+| 键 | 值 |
+|---|---|
+| `v` | `1`，记录格式；别的版本不认 |
+| `fp` | 公钥 SHA-256 的前 8 字节，16 位大写十六进制（设备列表里的指纹去掉分隔符） |
+| `n` | 设备名，截到 250 字节以内 |
+| `pl` | 平台：`windows` / `macos` / `linux` / `android` / `ios` / `other` |
+| `t` | 等待配对时的配对票据，去掉了中继地址和局域网地址 |
+| `r` | `1`：这个配对会话在中继上等待 |
+
+- **点一下配对**：手机配对页的「附近的电脑」列出还没配对的电脑，等待配对的排在前面。点「配对」（`pairing_join_nearby { fingerprint }`）后，会话在中继上等（`r=1`）就经手机自己的中继加入，和扫码一样；否则直连它被看到的 IPv4 地址。之后照常核对安全码：同一局域网里谁都能看到并加入这个会话，就像谁都能看到屏幕上的二维码，决定信任谁的是安全码。
+- **找回已配对的设备**：看到已配对设备时，它此刻的地址排在存下的地址之前拨号，退避重置。地址只是提示：Noise 握手照样验证身份密钥，只有认证过的对方自己发来的 `device_info_update` 才会写进记录。
+- **记录里没有的**：票据不带中继地址，所以记录总能放进一条 TXT 字符串（250 字节），中继地址也不在局域网里广播。公布的只有名称、平台和指纹。关掉开关就撤回公布、停止浏览，`UiState.nearby` 清空，只能扫码或输码配对。
+
 ## Relay 侧防护
 
 - 短码空间 10^6；每连接对 `join_by_code` 失败上限 5 次后断开，每 IP 每分钟 20 次；每会话失败尝试上限 10 次后会话作废（发起方收到 `error{session_expired}`，UI 提示重新生成）。

@@ -38,6 +38,8 @@ voltip-protocol.workspace = true
 voltip-transport.workspace = true
 # Encodes (phone) and decodes (desktop) a phone take's 20 ms Opus packets (docs/dictation.md §20.1).
 opus-rs.workspace = true
+# `_voltip._tcp` announcements and browsing (`discovery.rs`).
+mdns-sd.workspace = true
 # `SoloKey`, the lone-key trigger of `Settings.solo_key` (docs/dictation.md §13.1): the platform
 # crate owns the key tables the shell's input hooks need (pure, serde only). The engine tests also
 # use its voice-edit terminal table (§19.2).

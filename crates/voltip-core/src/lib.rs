@@ -9,6 +9,7 @@
 mod channel;
 pub mod connectivity;
 pub mod dictation;
+pub mod discovery;
 pub mod engines;
 pub mod history;
 pub mod hotkey;

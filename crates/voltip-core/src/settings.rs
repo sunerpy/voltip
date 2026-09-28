@@ -126,6 +126,10 @@ pub struct Settings {
     /// written before it) = off.
     #[serde(default)]
     pub solo_key: Option<SoloKey>,
+    /// Announce this device on the LAN and browse for the others (docs/pairing.md 「局域网发现」);
+    /// on by default, and in files written before it.
+    #[serde(default = "default_true")]
+    pub lan_discovery: bool,
     /// History recording and retention.
     #[serde(default)]
     pub history: HistorySettings,
@@ -140,6 +144,10 @@ fn default_hotkey() -> String {
 
 fn default_edit_hotkey() -> Option<String> {
     Some(crate::hotkey::DEFAULT_EDIT_HOTKEY.to_string())
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_hold_threshold_ms() -> u32 {
@@ -164,6 +172,7 @@ impl Default for Settings {
             context_sharing: ContextSharing::default(),
             edit_hotkey: default_edit_hotkey(),
             solo_key: None,
+            lan_discovery: true,
             history: HistorySettings::default(),
             overlay: OverlayPlacement::Bottom,
         }

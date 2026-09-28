@@ -30,6 +30,7 @@
       },
       "edit_hotkey": "Ctrl+Alt+E",
       "solo_key": null,
+      "lan_discovery": true,
       "history": {
         "enabled": true,
         "keep": 500
@@ -95,6 +96,7 @@
     "dictionary": [],
     "rules": [],
     "scenes": [],
+    "nearby": [],
     "hardware": {
       "cpu_threads": 0,
       "gpus": []
@@ -151,6 +153,7 @@
     },
     "edit_hotkey": "Ctrl+Alt+E",
     "solo_key": "right_ctrl",
+    "lan_discovery": true,
     "history": {
       "enabled": true,
       "keep": 200
@@ -2210,6 +2213,29 @@
     ]
   },
   {
+    "type": "nearby",
+    "devices": []
+  },
+  {
+    "type": "nearby",
+    "devices": [
+      {
+        "fingerprint": "A7C4198E3DF26109",
+        "name": "Studio",
+        "platform": "macos",
+        "pairing": true,
+        "trusted": false
+      },
+      {
+        "fingerprint": "0B1C2D3E4F506172",
+        "name": "MacBook Pro",
+        "platform": "macos",
+        "pairing": false,
+        "trusted": true
+      }
+    ]
+  },
+  {
     "type": "connectivity",
     "running": true
   },
@@ -2640,6 +2666,7 @@
     },
     "edit_hotkey": null,
     "solo_key": "right_ctrl",
+    "lan_discovery": true,
     "history": {
       "enabled": true,
       "keep": 200

@@ -320,6 +320,9 @@ export const settingsSchema = z.object({
   /** The lone-key trigger (docs/dictation.md §13.1), next to `hotkey`; `null` = off. Always
    *  serialised; an older `settings.json` or core reads as off. */
   solo_key: soloKeySchema.nullable().default(null),
+  /** Announce this device on the LAN and browse for the others (docs/pairing.md 「局域网发现」);
+   *  on by default and in an older `settings.json`. */
+  lan_discovery: z.boolean().default(true),
   history: historySettingsSchema.default(() => ({ enabled: true, keep: 500 })),
   overlay: overlayPlacementSchema.default("bottom"),
 });
@@ -1315,6 +1318,19 @@ export const sentTextSchema = z.object({
 });
 export type SentText = z.infer<typeof sentTextSchema>;
 
+/** A device the LAN browse sees (`voltip_core::discovery::NearbyDevice`, docs/pairing.md). */
+export const nearbyDeviceSchema = z.object({
+  /** Its LAN tag; `pairing_join_nearby` names it. */
+  fingerprint: z.string(),
+  name: z.string(),
+  platform: platformSchema,
+  /** It waits for a peer to pair: a tap joins it. */
+  pairing: z.boolean(),
+  /** It is one of this device's trusted devices. */
+  trusted: z.boolean(),
+});
+export type NearbyDevice = z.infer<typeof nearbyDeviceSchema>;
+
 /** No further answer is expected for this text. */
 export function sentTextFinal(state: SentTextState): boolean {
   return state.state === "delivered" || state.state === "failed";
@@ -1414,6 +1430,8 @@ export const uiStateSchema = z.object({
   phone_take: phoneTakeViewSchema.optional(),
   /** The texts this phone sent (§20.6), newest first; always empty on the desktop. */
   sent_texts: z.array(sentTextSchema).default(() => []),
+  /** Devices the LAN browse sees (docs/pairing.md 「局域网发现」). */
+  nearby: z.array(nearbyDeviceSchema).default(() => []),
   /** What the local models can run on (§10.6); empty until the desktop shell reports. */
   hardware: hardwareStatusSchema.default(() => ({ cpu_threads: 0, gpus: [] })),
   /** The connectivity self-check: running, and the last report. */
@@ -1459,6 +1477,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("phone_take"), take: phoneTakeViewSchema.nullable() }),
   /** The phone's list of sent texts, whole (§20.6). */
   z.object({ type: z.literal("sent_texts"), texts: z.array(sentTextSchema) }),
+  /** What the LAN browse sees, whole (docs/pairing.md). */
+  z.object({ type: z.literal("nearby"), devices: z.array(nearbyDeviceSchema) }),
   /** What the local models can run on (§10.6), reported once by the desktop shell. */
   hardwareStatusSchema.extend({ type: z.literal("hardware") }),
 ]);
@@ -1594,6 +1614,10 @@ export interface CommandArgs {
   phone_text_send: { publicKey: string; body: string; source: PhoneTextSource };
   /** Phone: forget the list of sent texts. */
   sent_texts_clear: undefined;
+  /** LAN discovery (docs/pairing.md 「局域网发现」): announce this device and browse for others. */
+  settings_set_lan_discovery: { enabled: boolean };
+  /** Join the pairing a nearby device waits for (`NearbyDevice.fingerprint`). */
+  pairing_join_nearby: { fingerprint: string };
   /** Query (phone): the phone's clipboard text, `null` when it holds none. */
   phone_clipboard_read: undefined;
   history_delete: { id: string };
@@ -1728,6 +1752,7 @@ export function defaultSettings(): Settings {
     context_sharing: defaultContextSharing(),
     edit_hotkey: DEFAULT_EDIT_HOTKEY,
     solo_key: null,
+    lan_discovery: true,
     history: { enabled: true, keep: 500 },
     overlay: "bottom",
   };
@@ -1801,6 +1826,8 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
     }
     case "sent_texts":
       return { ...state, sent_texts: event.texts };
+    case "nearby":
+      return { ...state, nearby: event.devices };
     case "trusted":
     case "unpaired":
     case "identity_changed":

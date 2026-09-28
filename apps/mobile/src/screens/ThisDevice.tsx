@@ -1,11 +1,21 @@
 import { platformLabel, shortKey } from "@voltip/shared";
-import { Button, Card, Input, Lamp, Readout, useBackend, useI18n, useUiState } from "@voltip/ui";
+import {
+  Button,
+  Card,
+  Input,
+  Lamp,
+  Readout,
+  Toggle,
+  useBackend,
+  useI18n,
+  useUiState,
+} from "@voltip/ui";
 import { useState } from "react";
 import { useMobileShell } from "../app/shell";
 
 export function ThisDevice() {
   const { backend } = useBackend();
-  const { identity, secret_backend } = useUiState();
+  const { identity, secret_backend, settings } = useUiState();
   const shell = useMobileShell();
   const { t, locale } = useI18n();
   const [name, setName] = useState(identity?.name ?? "");
@@ -94,6 +104,20 @@ export function ThisDevice() {
         )}
       </Card>
       <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.device.note")}</p>
+      <Card className="flex items-start justify-between gap-3" data-testid="lan-discovery">
+        <div className="flex flex-col gap-1">
+          <span className="text-[14px] font-medium text-fg">{t("mobile.device.lan")}</span>
+          <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.device.lanHelp")}</p>
+        </div>
+        <Toggle
+          checked={settings.lan_discovery}
+          ariaLabel={t("mobile.device.lan")}
+          className="mt-0.5"
+          onChange={(enabled) => {
+            void backend.invoke("settings_set_lan_discovery", { enabled });
+          }}
+        />
+      </Card>
       <div className="mt-auto flex flex-col gap-2">
         <Button
           variant="primary"

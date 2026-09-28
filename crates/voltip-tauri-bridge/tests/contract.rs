@@ -733,6 +733,7 @@ fn full_state() -> UiState {
             opus: true,
         }),
         sent_texts: sent_texts(),
+        nearby: nearby(),
         hardware: hardware_status(),
         connectivity: ConnectivityStatus { running: false, report: Some(connectivity_report()) },
     }
@@ -775,6 +776,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::ProviderProbe(_) => "provider_probe",
         UiEvent::PhoneTake { .. } => "phone_take",
         UiEvent::SentTexts { .. } => "sent_texts",
+        UiEvent::Nearby { .. } => "nearby",
         UiEvent::Hardware(_) => "hardware",
         UiEvent::Connectivity(_) => "connectivity",
     }
@@ -822,6 +824,27 @@ fn sent_texts() -> Vec<SentText> {
         text(3, "收到", PhoneTextSource::Typed, SentTextState::Delivered { pasted: true }),
         text(2, "地址在群里", PhoneTextSource::Clipboard, SentTextState::Delivered { pasted: false }),
         text(1, "晚点回电", PhoneTextSource::Typed, SentTextState::Failed { code: SentTextFailure::NoAnswer, message: "电脑没有回应".into() }),
+    ]
+}
+
+/// What the LAN browse sees (docs/pairing.md 「局域网发现」): a desktop waiting for a pairing and a
+/// trusted one.
+fn nearby() -> Vec<voltip_core::discovery::NearbyDevice> {
+    vec![
+        voltip_core::discovery::NearbyDevice {
+            fingerprint: "A7C4198E3DF26109".into(),
+            name: "Studio".into(),
+            platform: Platform::Macos,
+            pairing: true,
+            trusted: false,
+        },
+        voltip_core::discovery::NearbyDevice {
+            fingerprint: "0B1C2D3E4F506172".into(),
+            name: "MacBook Pro".into(),
+            platform: Platform::Macos,
+            pairing: false,
+            trusted: true,
+        },
     ]
 }
 
@@ -1133,6 +1156,9 @@ fn all_events() -> Vec<UiEvent> {
         // Text the phone sent (§20.6): the list, empty and full.
         UiEvent::SentTexts { texts: Vec::new() },
         UiEvent::SentTexts { texts: sent_texts() },
+        // LAN discovery (docs/pairing.md): nothing seen, then a pairing desktop and a trusted one.
+        UiEvent::Nearby { devices: Vec::new() },
+        UiEvent::Nearby { devices: nearby() },
         // The connectivity self-check (docs/pairing.md): running, then a report with every probe outcome.
         UiEvent::Connectivity(ConnectivityStatus { running: true, report: None }),
         UiEvent::Connectivity(ConnectivityStatus { running: false, report: Some(connectivity_report()) }),
@@ -1285,6 +1311,8 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::PhoneTakeCancel => "PhoneTakeCancel",
         UiCommand::PhoneTextSend { .. } => "PhoneTextSend",
         UiCommand::SentTextsClear => "SentTextsClear",
+        UiCommand::SettingsSetLanDiscovery { .. } => "SettingsSetLanDiscovery",
+        UiCommand::PairingJoinNearby { .. } => "PairingJoinNearby",
         UiCommand::DevicesRefresh => "DevicesRefresh",
         UiCommand::ConnectivityCheck => "ConnectivityCheck",
         UiCommand::DictationStart => "DictationStart",
@@ -1348,6 +1376,9 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         // docs/dictation.md §20.6: text from the phone, and forgetting the list.
         ("phone_text_send", json!({ "publicKey": DESKTOP_KEY.to_hex(), "body": "会议改到三点", "source": "typed" }), "PhoneTextSend"),
         ("sent_texts_clear", Value::Null, "SentTextsClear"),
+        // LAN discovery (docs/pairing.md): the switch, and a tap on a nearby pairing desktop.
+        ("settings_set_lan_discovery", json!({ "enabled": false }), "SettingsSetLanDiscovery"),
+        ("pairing_join_nearby", json!({ "fingerprint": "A7C4198E3DF26109" }), "PairingJoinNearby"),
         ("devices_refresh", Value::Null, "DevicesRefresh"),
         ("connectivity_check", Value::Null, "ConnectivityCheck"),
         ("dictation_start", Value::Null, "DictationStart"),
@@ -1770,6 +1801,8 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "PhoneTakeCancel",
         "PhoneTextSend",
         "SentTextsClear",
+        "SettingsSetLanDiscovery",
+        "PairingJoinNearby",
         "DevicesRefresh",
         "ConnectivityCheck",
         "DictationStart",

@@ -87,6 +87,16 @@ pub enum UiCommand {
     },
     /// Phone: forget the list of sent texts.
     SentTextsClear,
+    /// Announce this device on the LAN and browse for the others (docs/pairing.md 「局域网发现」).
+    SettingsSetLanDiscovery {
+        /// On / off.
+        enabled: bool,
+    },
+    /// Join the pairing a nearby device waits for (its LAN tag from `nearby`).
+    PairingJoinNearby {
+        /// `NearbyDevice.fingerprint`.
+        fingerprint: String,
+    },
     /// Relay settings.
     SettingsSetRelay {
         /// URL or null.
@@ -341,6 +351,8 @@ impl UiCommand {
             Self::PhoneTakeCancel => CoreCommand::PhoneTakeCancel,
             Self::PhoneTextSend { public_key, body, source } => CoreCommand::PhoneTextSend { to: parse_key(&public_key)?, body, source },
             Self::SentTextsClear => CoreCommand::SentTextsClear,
+            Self::SettingsSetLanDiscovery { enabled } => CoreCommand::SetLanDiscovery(enabled),
+            Self::PairingJoinNearby { fingerprint } => CoreCommand::PairingJoinNearby(fingerprint),
             Self::SettingsSetRelay { url, enabled } => CoreCommand::SetRelay { url, enabled },
             Self::SettingsSetTheme { theme, follow_system } => CoreCommand::SetTheme { theme, follow_system },
             Self::SettingsSetHotkey { hotkey } => CoreCommand::SetHotkey(hotkey),

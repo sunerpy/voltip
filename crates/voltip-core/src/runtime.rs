@@ -40,6 +40,7 @@ use crate::vocabulary::{DictionaryDraft, DictionaryEntry, DictionaryStore, Entry
 use crate::{CoreError, is_initiator, rendezvous_channel};
 
 mod check;
+mod nearby;
 mod take_codec;
 mod takes;
 mod texts;
@@ -105,6 +106,9 @@ pub struct CoreConfig {
     /// Run takes whose audio a trusted phone streams (docs/dictation.md §20): the desktop yes,
     /// the phone no (it answers `unavailable`).
     pub accepts_phone_takes: bool,
+    /// LAN discovery (docs/pairing.md 「局域网发现」): the shells pass [`crate::discovery::MdnsDiscovery`],
+    /// the tests an in-memory LAN; `None` announces and browses nothing.
+    pub discovery: Option<Arc<dyn crate::discovery::Discovery>>,
 }
 
 impl CoreConfig {
@@ -126,6 +130,7 @@ impl CoreConfig {
             direct_connect_timeout: Duration::from_secs(3),
             peer_handshake_timeout: Duration::from_secs(15),
             accepts_phone_takes: true,
+            discovery: None,
         }
     }
 }
@@ -212,6 +217,11 @@ pub enum CoreCommand {
     },
     /// Phone: forget the list of sent texts.
     SentTextsClear,
+    /// Announce this device on the LAN and browse for the others (persisted,
+    /// `Settings.lan_discovery`).
+    SetLanDiscovery(bool),
+    /// Join the pairing the nearby device `fingerprint` (its LAN tag) waits for.
+    PairingJoinNearby(String),
     /// Send text to an online trusted device.
     SendText {
         /// Recipient.
@@ -357,6 +367,7 @@ struct Inbox {
     act_rx: mpsc::Receiver<ActivationTimer>,
     phone_rx: mpsc::Receiver<takes::PhoneEvent>,
     check_rx: mpsc::Receiver<check::Probed>,
+    disc_rx: mpsc::Receiver<crate::discovery::DiscoveryEvent>,
 }
 
 /// Events to the UI.
@@ -424,6 +435,8 @@ pub enum CoreEvent {
     /// The phone's list of texts sent to a desktop (docs/dictation.md §20.6), newest first; on
     /// `Ready` and after every change.
     SentTexts(Vec<crate::phone::SentText>),
+    /// What the LAN browse sees (docs/pairing.md 「局域网发现」), whole; after every change.
+    Nearby(Vec<crate::discovery::NearbyDevice>),
     /// The connectivity self-check started or finished ([`crate::connectivity`]).
     Connectivity(crate::connectivity::ConnectivityStatus),
     /// Non-fatal error for the UI.
@@ -507,6 +520,7 @@ impl AppCore {
         let (act_tx, act_rx) = mpsc::channel(16);
         let (phone_tx, phone_rx) = mpsc::channel(64);
         let (check_tx, check_rx) = mpsc::channel(4);
+        let (disc_tx, disc_rx) = mpsc::channel(64);
         let activation = ActivationState::new(ActivationConfig::from(&settings));
         let mut rt = Runtime {
             config,
@@ -558,9 +572,11 @@ impl AppCore {
             next_check: 0,
             last_check: None,
             check_tx,
+            disc_tx,
+            lan: nearby::Lan::default(),
         };
         rt.connect_relay()?;
-        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx };
+        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, disc_rx };
         tokio::spawn(async move { rt.run(inbox).await });
         Ok((CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
@@ -790,6 +806,10 @@ struct Runtime {
     last_check: Option<crate::connectivity::ConnectivityReport>,
     /// The probe task reports here.
     check_tx: mpsc::Sender<check::Probed>,
+    /// The LAN browse reports here (docs/pairing.md 「局域网发现」).
+    disc_tx: mpsc::Sender<crate::discovery::DiscoveryEvent>,
+    /// What the LAN browse sees, and what this device announces.
+    lan: nearby::Lan,
 }
 
 impl Runtime {
@@ -934,7 +954,7 @@ impl Runtime {
     // ---------------- main loop ----------------
 
     async fn run(mut self, inbox: Inbox) {
-        let Inbox { mut cmd_rx, mut link_rx, mut dict_rx, mut model_rx, mut act_rx, mut phone_rx, mut check_rx } = inbox;
+        let Inbox { mut cmd_rx, mut link_rx, mut dict_rx, mut model_rx, mut act_rx, mut phone_rx, mut check_rx, mut disc_rx } = inbox;
         self.emit(CoreEvent::Ready {
             identity: self.identity.public(),
             settings: self.settings.clone(),
@@ -953,6 +973,7 @@ impl Runtime {
         }
         self.emit_devices();
         self.start_host().await;
+        self.start_discovery();
         let mut ticker = tokio::time::interval(self.config.tick);
         loop {
             tokio::select! {
@@ -971,7 +992,14 @@ impl Runtime {
                 Some(timer) = act_rx.recv() => self.on_activation_timer(timer),
                 Some(event) = phone_rx.recv() => self.on_phone_event(event),
                 Some(probed) = check_rx.recv() => self.on_probed(probed),
+                Some(seen) = disc_rx.recv() => self.on_discovery(seen),
                 _ = ticker.tick() => self.tick().await,
+            }
+            // A rename or a pairing that started or ended changes what the LAN hears; a device
+            // trusted or forgotten changes the nearby list.
+            self.refresh_announcement();
+            if self.lan_running() {
+                self.emit_nearby();
             }
             // Take messages queued by the handler above (docs/dictation.md §20).
             if !self.take_outbox.is_empty() {
@@ -987,6 +1015,7 @@ impl Runtime {
         if let Some(t) = self.activation.grace.take() {
             t.abort();
         }
+        self.stop_discovery();
         // The LAN host stops first: once a peer sees this device go offline (its relay or direct
         // link closed), the LAN address it was told about must not answer any more.
         if let Some(h) = self.host.take() {
@@ -1042,10 +1071,13 @@ impl Runtime {
                 self.sent_texts_clear();
                 Ok(())
             }
+            CoreCommand::SetLanDiscovery(enabled) => self.set_lan_discovery(enabled),
+            CoreCommand::PairingJoinNearby(fingerprint) => self.join_nearby(&fingerprint).await,
             CoreCommand::PhoneTakeStop => self.phone_take_stop(),
             CoreCommand::PhoneTakeCancel => self.phone_take_cancel(),
             CoreCommand::RefreshDevices => {
                 self.emit_devices();
+                self.resend_nearby();
                 Ok(())
             }
             CoreCommand::DictationStart => self.dictation_start(),
@@ -1836,7 +1868,10 @@ impl Runtime {
             JoinMethod::Ticket(t) => t.direct_hints.clone(),
             JoinMethod::Code(_) => Vec::new(),
         };
-        if self.relay_connected() {
+        // A ticket without a relay hint names a session on the initiator's LAN host (it had no
+        // relay): only a direct connection reaches it, whatever relay this device has.
+        let lan_only = matches!(&method, JoinMethod::Ticket(t) if t.relay_hint.is_none() && !t.direct_hints.is_empty());
+        if self.relay_connected() && !lan_only {
             self.pairing_link = Some(LinkId::Relay);
             self.pairing_peer_hints = ticket_hints;
             return self.begin_responder(method).await;
@@ -2508,7 +2543,14 @@ impl Runtime {
             return;
         }
         for d in self.trusted.list() {
-            if d.direct_hints.is_empty() {
+            // Where the LAN browse saw it first (docs/pairing.md 「局域网发现」), then what it told us.
+            let mut hints = self.lan.hints.get(&d.public_key).cloned().unwrap_or_default();
+            for h in &d.direct_hints {
+                if !hints.contains(h) {
+                    hints.push(h.clone());
+                }
+            }
+            if hints.is_empty() {
                 continue;
             }
             let backoff = self.config.direct_retry;
@@ -2519,7 +2561,7 @@ impl Runtime {
             if st.next_dial_at.is_some_and(|t| now < t) {
                 continue;
             }
-            let hint = d.direct_hints[st.hint_cursor % d.direct_hints.len()].clone();
+            let hint = hints[st.hint_cursor % hints.len()].clone();
             st.hint_cursor = st.hint_cursor.wrapping_add(1);
             st.next_dial_at = Some(now + st.dial_backoff);
             st.dial_backoff = (st.dial_backoff * 2).min(self.config.direct_retry_max);

@@ -134,6 +134,18 @@
     "name": "sent_texts_clear"
   },
   {
+    "args": {
+      "enabled": false
+    },
+    "name": "settings_set_lan_discovery"
+  },
+  {
+    "args": {
+      "fingerprint": "A7C4198E3DF26109"
+    },
+    "name": "pairing_join_nearby"
+  },
+  {
     "args": null,
     "name": "devices_refresh"
   },

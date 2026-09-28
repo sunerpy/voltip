@@ -45,6 +45,7 @@
     },
     "edit_hotkey": "Ctrl+Alt+E",
     "solo_key": "right_ctrl",
+    "lan_discovery": true,
     "history": {
       "enabled": true,
       "keep": 200
@@ -714,6 +715,22 @@
         "code": "no_answer",
         "message": "电脑没有回应"
       }
+    }
+  ],
+  "nearby": [
+    {
+      "fingerprint": "A7C4198E3DF26109",
+      "name": "Studio",
+      "platform": "macos",
+      "pairing": true,
+      "trusted": false
+    },
+    {
+      "fingerprint": "0B1C2D3E4F506172",
+      "name": "MacBook Pro",
+      "platform": "macos",
+      "pairing": false,
+      "trusted": true
     }
   ],
   "hardware": {

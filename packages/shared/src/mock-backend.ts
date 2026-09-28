@@ -63,6 +63,7 @@ import {
   type SoloKey,
   MAX_PHONE_TEXT_CHARS,
   type SentText,
+  type NearbyDevice,
   applyEvent,
   DEFAULT_HOTKEY,
   defaultSettings,
@@ -374,6 +375,17 @@ export const PROJECT_LINKS_UNAVAILABLE = "project: 手机端不打开项目页�
 export const FEEDBACK_UNAVAILABLE = "feedback: 请在电脑上反馈";
 /** How long the preview's feedback endpoint takes to answer. */
 export const MOCK_FEEDBACK_MS = 300;
+/** What the preview phone's LAN browse sees (docs/pairing.md 「局域网发现」). */
+export const MOCK_NEARBY: readonly NearbyDevice[] = [
+  {
+    fingerprint: "A7C4198E3DF26109",
+    name: "Studio",
+    platform: "macos",
+    pairing: true,
+    trusted: false,
+  },
+];
+
 /** How long the preview's desktop takes to insert a phone's text (docs/dictation.md §20.6). */
 export const MOCK_TEXT_MS = 200;
 /** What the preview phone's clipboard holds. */
@@ -744,6 +756,8 @@ export class MockBackend implements Backend {
       },
       dictation: idleDictation(),
       sent_texts: [],
+      // A desktop on the LAN waiting for a pairing (docs/pairing.md 「局域网发现」): the phone lists it.
+      nearby: this.role === "phone" ? [...MOCK_NEARBY] : [],
       history: options.history ?? sampleHistory(this.now()),
       engines: emptyEngineStatus(),
       update: options.update ?? idleUpdate(),
@@ -891,6 +905,28 @@ export class MockBackend implements Backend {
     },
     pairing_join_ticket: (args) => {
       this.joinWithTicket(required(args).uri);
+    },
+    pairing_join_nearby: (args) => {
+      // Mirrors `PairingJoinNearby`: only a nearby device that waits for a pairing can be joined.
+      const { fingerprint } = required(args);
+      const device = this.state.nearby.find((d) => d.fingerprint === fingerprint);
+      if (device === undefined) {
+        this.emit({ type: "error", message: "pairing: 附近没有这台设备" });
+        return;
+      }
+      if (!device.pairing) {
+        this.emit({ type: "error", message: "pairing: 这台设备现在不在配对" });
+        return;
+      }
+      this.joinSession();
+    },
+    settings_set_lan_discovery: (args) => {
+      const { enabled } = required(args);
+      this.emit({ type: "settings", ...this.state.settings, lan_discovery: enabled });
+      this.emit({
+        type: "nearby",
+        devices: enabled && this.role === "phone" ? [...MOCK_NEARBY] : [],
+      });
     },
     pairing_confirm: () => {
       this.confirmLocal();

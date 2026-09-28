@@ -78,6 +78,7 @@ const EMPTY: UiState = {
   hotkey: emptyHotkeyStatus(),
   dictation: idleDictation(),
   sent_texts: [],
+  nearby: [],
   history: [],
   engines: emptyEngineStatus(),
   update: idleUpdate(),

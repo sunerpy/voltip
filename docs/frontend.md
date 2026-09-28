@@ -29,11 +29,13 @@ Tauri command 名与参数（`invoke(name, args)`），返回值 JSON：
 | `pairing_start` | — | `null` |
 | `pairing_join_code` | `{ code: string }` | `null` |
 | `pairing_join_ticket` | `{ uri: string }` | `null` |
+| `pairing_join_nearby` | `{ fingerprint: string }` | `null`（`docs/pairing.md`「局域网发现」：加入 `UiState.nearby` 里这台设备等待的配对；没看到它或它不在配对为 `error` 事件） |
 | `pairing_confirm` / `pairing_reject` / `pairing_cancel` / `pairing_reset` | — | `null` |
 | `device_forget` | `{ publicKey: hex }` | `null` |
 | `device_rename` | `{ name: string }` | `null` |
 | `send_text` | `{ publicKey: hex, body: string }` | `null` |
 | `settings_set_relay` | `{ url: string \| null, enabled: boolean }` | `null` |
+| `settings_set_lan_discovery` | `{ enabled: boolean }` | `null`（持久化 `Settings.lan_discovery` 并回发 `settings`，随即开始或停止公布与浏览） |
 | `settings_set_theme` | `{ theme: ThemeId, followSystem: boolean }` | `null` |
 | `devices_refresh` | — | `null` |
 | `dictation_start` / `dictation_stop` / `dictation_cancel` | — | `null`（`docs/dictation.md` §5） |
@@ -77,7 +79,7 @@ type OutputMode = "whole_take" | "streaming_final" | "live_inject"; // docs/dict
 type Activation = "hold" | "toggle" | "hold_or_toggle";               // docs/dictation.md §13
 type ProviderId = "builtin" | "local" | "openai" | "groq" | "siliconflow" | "deepseek" | "ollama" | "custom"; // docs/dictation.md §3
 interface EngineSettings { asr_provider: ProviderId /* default "builtin" */; llm_provider: ProviderId /* default "builtin" */; refine_enabled: boolean; providers: Partial<Record<ProviderId, { asr_model?: string; asr_url?: string; llm_model?: string; llm_url?: string }>>; local_model?: string | null; local_device: "auto" | "cpu" | "gpu"; local_gpu?: string | null; local_threads?: number | null /* §10.6 */; language?: string; live_preview: boolean /* default true, §11 */; output_mode: OutputMode /* default "whole_take" */; vad_trim: boolean /* default false */; chinese_script: "simplified" | "traditional" | "as_is" /* default "simplified", §17 */; inject: "paste" | "clipboard_only" }
-interface Settings { schema: 1; theme: ThemeId; follow_system_theme: boolean; relay_url?: string; relay_enabled: boolean; hotkey: string; engines: EngineSettings; locale: "system" | "zh-cn" | "en" /* default "system" */; auto_update: boolean /* default false */; activation: Activation /* default "hold" */; hold_threshold_ms: number /* default 300 */; extra_recording_ms: number /* default 0 */; edit_hotkey: string | null /* §19，default "Ctrl+Alt+E"，null = 关闭 */; solo_key: SoloKey | null /* §13.1，default null = 关闭 */ }
+interface Settings { schema: 1; theme: ThemeId; follow_system_theme: boolean; relay_url?: string; relay_enabled: boolean; hotkey: string; engines: EngineSettings; locale: "system" | "zh-cn" | "en" /* default "system" */; auto_update: boolean /* default false */; activation: Activation /* default "hold" */; hold_threshold_ms: number /* default 300 */; extra_recording_ms: number /* default 0 */; edit_hotkey: string | null /* §19，default "Ctrl+Alt+E"，null = 关闭 */; solo_key: SoloKey | null /* §13.1，default null = 关闭 */; lan_discovery: boolean /* docs/pairing.md，default true */ }
 interface DeviceIdentityPublic { device_id: string; name: string; platform: Platform; public_key: string /* 64 hex */; fingerprint: string /* "A7:C4:19:8E · 3D:F2:61:09" */ }
 interface RelayStatus { endpoint?: string; state: ConnectionState; attempts: number }
 type PairingState = { state: "idle" | "creating_session" | "waiting_for_peer" | "key_exchange" | "awaiting_verification" | "trusted" | "expired" | "rejected" }
@@ -107,13 +109,14 @@ interface Scene { id: string; name: string; enabled: boolean; match: { apps: str
 interface AppRef { id: string; name: string }
 interface TakeContext { app: AppRef; scene?: { id: string; name: string } } // DictationStatus.context?、HistoryEntry.app? / scene?
 interface ContextSharing { app_name: boolean /* default true */; window_title: boolean /* default false */ } // Settings.context_sharing
-interface UiState { identity: DeviceIdentityPublic | null; settings: Settings; secret_backend: string; relay: RelayStatus; pairing: Snapshot; devices: DeviceView[]; hotkey: HotkeyStatus; dictation: DictationStatus; history: HistoryEntry[] /* 每行可带 vocabulary?: { corrections, rules }（命中的 id 与次数） */; engines: EngineStatus; update: UpdateStatus; models: ModelState[]; dictionary: DictionaryEntry[]; rules: ReplacementRule[] }
+interface NearbyDevice { fingerprint: string /* 16 位十六进制 */; name: string; platform: Platform; pairing: boolean; trusted: boolean } // docs/pairing.md「局域网发现」
+interface UiState { identity: DeviceIdentityPublic | null; settings: Settings; secret_backend: string; relay: RelayStatus; pairing: Snapshot; devices: DeviceView[]; hotkey: HotkeyStatus; dictation: DictationStatus; history: HistoryEntry[] /* 每行可带 vocabulary?: { corrections, rules }（命中的 id 与次数） */; engines: EngineStatus; update: UpdateStatus; models: ModelState[]; dictionary: DictionaryEntry[]; rules: ReplacementRule[]; nearby: NearbyDevice[] /* 局域网浏览看到的设备，default [] */ }
 type UiEvent = { type: "state" } & UiState | { type: "identity" } & DeviceIdentityPublic | { type: "settings" } & Settings | { type: "relay" } & RelayStatus
   | { type: "pairing" } & Snapshot | { type: "devices"; 0?: never } /* payload is the array: see below */ | { type: "trusted" } & TrustedDevice
   | { type: "identity_changed"; previous: TrustedDevice; presented_fingerprint: string } | { type: "message"; from: string; body: string } | { type: "error"; message: string }
   | { type: "hotkey" } & HotkeyStatus | { type: "dictation" } & DictationStatus | { type: "history"; entries: HistoryEntry[] } | { type: "engines" } & EngineStatus | { type: "update" } & UpdateStatus
   | { type: "models"; models: ModelState[] } | { type: "dictionary"; entries: DictionaryEntry[] } | { type: "rules"; rules: ReplacementRule[] }
-  | { type: "scenes"; scenes: Scene[] } /* UiState.scenes，整份替换 */;
+  | { type: "scenes"; scenes: Scene[] } /* UiState.scenes，整份替换 */ | { type: "nearby"; devices: NearbyDevice[] } /* UiState.nearby，整份替换 */;
 ```
 
 注意 serde 内部标签的细节：`UiEvent::Devices(Vec<DeviceView>)` 与 `UiEvent::State(UiState)` 等 newtype 变体在 JSON 中是 `{"type":"devices", ...}`？**不是**——serde 对 tagged newtype 变体的规则：结构体内容被展平（`state`、`identity`、`settings`、`relay`、`pairing`、`trusted` 都是结构体，会展平成 `{type, ...fields}`），而 `devices` 的内容是数组，serde 无法展平，Rust 侧已改为 `{"type":"devices","devices":[...]}`。用 zod 按上述形状校验，校验失败记录并忽略该事件。

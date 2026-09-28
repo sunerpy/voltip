@@ -258,6 +258,7 @@ export function Devices() {
           identity={state.identity}
           relay={state.relay}
           ttlSecs={PAIRING_TTL_SECS}
+          lanDiscovery={state.settings.lan_discovery}
           onStart={startPairing}
           onCancel={() => {
             invoke("pairing_cancel");
@@ -319,6 +320,13 @@ export function Devices() {
           right={
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Toggle
+                checked={state.settings.lan_discovery}
+                onChange={(enabled) => {
+                  invoke("settings_set_lan_discovery", { enabled });
+                }}
+                label={t("devices.panel.lanDiscovery")}
+              />
+              <Toggle
                 checked={state.settings.relay_enabled}
                 onChange={(enabled) => {
                   invoke("settings_set_relay", { url: state.settings.relay_url ?? null, enabled });
@@ -352,6 +360,7 @@ export function Devices() {
             }
           />
           <p className="mt-2 text-[11px] text-fg-subtle">{t("devices.panel.note")}</p>
+          <p className="mt-1 text-[11px] text-fg-subtle">{t("devices.panel.lanNote")}</p>
         </Panel>
       </div>
 

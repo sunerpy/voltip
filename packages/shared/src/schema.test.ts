@@ -48,6 +48,7 @@ import type { EngineStatus, HistoryEntry, UiState } from "./schema";
 function baseState(): UiState {
   return {
     sent_texts: [],
+    nearby: [],
     identity: desktopIdentity(),
     settings: defaultSettings(),
     secret_backend: "memory",

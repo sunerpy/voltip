@@ -106,6 +106,11 @@ pub enum UiEvent {
         /// The whole list.
         texts: Vec<SentText>,
     },
+    /// What the LAN browse sees (docs/pairing.md 「局域网发现」).
+    Nearby {
+        /// The whole list.
+        devices: Vec<crate::discovery::NearbyDevice>,
+    },
     /// The connectivity self-check started or finished.
     Connectivity(crate::connectivity::ConnectivityStatus),
 }
@@ -334,6 +339,9 @@ pub struct UiState {
     /// on the desktop.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sent_texts: Vec<SentText>,
+    /// Devices the LAN browse sees (docs/pairing.md 「局域网发现」).
+    #[serde(default)]
+    pub nearby: Vec<crate::discovery::NearbyDevice>,
     /// The machine as the local engines see it (shell-owned; empty until reported).
     #[serde(default)]
     pub hardware: HardwareStatus,
@@ -363,6 +371,7 @@ impl Default for UiState {
             scenes: Vec::new(),
             phone_take: None,
             sent_texts: Vec::new(),
+            nearby: Vec::new(),
             hardware: HardwareStatus::default(),
             connectivity: crate::connectivity::ConnectivityStatus::default(),
         }
@@ -459,6 +468,10 @@ impl UiState {
             CoreEvent::SentTexts(texts) => {
                 self.sent_texts = texts.clone();
                 UiEvent::SentTexts { texts }
+            }
+            CoreEvent::Nearby(devices) => {
+                self.nearby = devices.clone();
+                UiEvent::Nearby { devices }
             }
             CoreEvent::Error(message) => UiEvent::Error { message },
         }

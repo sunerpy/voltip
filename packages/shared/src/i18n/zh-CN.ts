@@ -989,7 +989,7 @@ export const zhCN = {
       textHow: "E2EE · Noise",
       audio: "手机录音",
       audioDir: "手机 → 电脑",
-      audioHow: "PCM 16 kHz · E2EE",
+      audioHow: "Opus 16 kHz · E2EE",
       result: "识别结果",
       resultDir: "电脑 → 手机",
       resultHow: "E2EE · Noise",
@@ -1029,12 +1029,15 @@ export const zhCN = {
     panel: {
       paired: "已配对设备",
       allowRelay: "允许经中继连接",
+      lanDiscovery: "局域网发现",
       noRelay: "未配置中继",
       builtinRelay: "内置中继",
       count: "{paired} 台已配对 · {online} 在线",
       emptyTitle: "还没有配对的手机",
       emptyBody: "用上方二维码开始配对。",
       note: "忘记后这部设备需要重新扫码并核对安全码；身份密钥变化的设备会在这里被标红，直到你处理。",
+      lanNote:
+        "局域网发现在同一局域网里公布这台电脑的名称：手机点一下就能配对，已配对的设备换了地址也能找到它。关掉后只能扫码或输码配对。",
     },
     live: {
       title: "手机麦克风",
@@ -1047,7 +1050,7 @@ export const zhCN = {
       cancelled: "{name} · 已取消",
       meter: "来自手机的电平",
       audio: "音频",
-      audioValue: "PCM 16 kHz 单声道",
+      audioValue: "Opus · 16 kHz 单声道",
       phone: "手机",
       link: "链路",
       note: "在手机上按住说话：音频经端到端加密通道实时传到这台电脑，由这台电脑的语音模型转写，文字插入这台电脑的光标处，结果同时回传给手机。",
@@ -1102,6 +1105,7 @@ export const zhCN = {
     copyFingerprint: "复制指纹",
     fingerprintWhat: "指纹",
     scanNote: "手机扫码后直接拿到会话票据，不需要手动输入。",
+    lanNote: "同一局域网里的手机也可以在配对页的「附近的电脑」里直接点选这台电脑。",
     validity: "有效期",
     warning: "不要截图或在共享屏幕上展示此二维码。",
     regenerate: "重新生成",
@@ -1797,10 +1801,13 @@ export const zhCN = {
       note: "私钥只存在这部手机的系统密钥库里，不会进入配置文件、日志或中继。对端在配对时看到的就是这串指纹。",
       pair: "配对电脑",
       viewDevices: "查看已配对设备",
+      lan: "局域网发现",
+      lanHelp:
+        "在同一局域网里公布这部手机的名称并查找电脑：配对时点一下即可，已配对的电脑换了地址也能找到。",
     },
     pair: {
       intro:
-        "在电脑上打开「手机」页，扫它的二维码，或输入它显示的 6 位验证码。两条路都只是找到会话；之后的密钥协商完全一样。",
+        "在电脑上打开「手机」页并开始配对，然后在「附近的电脑」里点选它，或扫它的二维码、输入它显示的 6 位验证码。几种方式都只是找到会话；之后的密钥协商和安全码核对完全一样。",
       method: "配对方式",
       scan: "扫码",
       code: "输入 6 位码",
@@ -1820,6 +1827,15 @@ export const zhCN = {
       scanCancelled: "已取消扫码或未授予相机权限",
       retry: "重试",
       clearRetry: "清除并重试",
+      nearby: {
+        title: "附近的电脑",
+        searching: "正在查找同一局域网里的电脑…",
+        empty: "在电脑上打开「手机」页并点「开始配对」，它就会出现在这里。",
+        off: "局域网发现已关闭。在「本机」页打开后，同一局域网里等待配对的电脑会出现在这里。",
+        join: "配对",
+        joinLabel: "与 {name} 配对",
+        idle: "还没开始配对",
+      },
     },
     verify: {
       rejected: "配对已被拒绝，会话已销毁。",
