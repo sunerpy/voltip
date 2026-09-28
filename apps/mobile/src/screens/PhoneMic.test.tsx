@@ -94,7 +94,7 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
     fireEvent.pointerDown(hold, { pointerId: 1, clientX: 10, clientY: 10 });
     await advance(MOCK_MIC_READY_MS);
     await advance(200);
-    const meter = within(card).getByRole("meter", { name: "输入电平" });
+    const meter = within(card).getByRole("meter", { name: "输入强度" });
     expect(Number(meter.getAttribute("aria-valuenow"))).toBeGreaterThan(0);
     expect(backend.activeMeters()).toBe(1);
     fireEvent.pointerUp(hold, { pointerId: 1, clientX: 10, clientY: 10 });

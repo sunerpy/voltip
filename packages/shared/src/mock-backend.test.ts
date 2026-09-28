@@ -412,7 +412,12 @@ describe("MockBackend devices, relay, identity and messages", () => {
       vi.advanceTimersByTime(MOCK_METER_INTERVAL_MS + 1);
       expect(frames.at(-1)?.channels).toBe(2);
       stopSecond();
-      await expect(backend.meter("Blue Yeti", () => undefined)).rejects.toThrow(/device not found/);
+      // A choice that is not connected meters the default input until it is back, as takes do
+      // (the shell's `connected_or_default`).
+      const stopUnplugged = await backend.meter("Blue Yeti", (f) => frames.push(f));
+      vi.advanceTimersByTime(MOCK_METER_INTERVAL_MS + 1);
+      expect(frames.at(-1)?.channels).toBe(devices[0]?.channels);
+      stopUnplugged();
     } finally {
       vi.useRealTimers();
     }
