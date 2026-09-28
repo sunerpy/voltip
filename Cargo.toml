@@ -16,6 +16,7 @@ members = [
     "crates/voltip-refine",
     "crates/voltip-inject",
     "crates/voltip-platform",
+    "crates/voltip-hooks",
     "apps/desktop/src-tauri",
     "apps/mobile/src-tauri",
 ]

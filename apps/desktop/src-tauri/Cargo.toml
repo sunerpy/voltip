@@ -68,6 +68,8 @@ voltip-inject.workspace = true
 # src/platform/. Path dependency: the leaf crate is checked for the darwin and Windows targets on
 # its own, so it is deliberately not part of the shared workspace table.
 voltip-platform = { path = "../../../crates/voltip-platform" }
+# The lone-key trigger's low-level input hooks (docs/dictation.md §13.1).
+voltip-hooks = { path = "../../../crates/voltip-hooks" }
 voltip-refine.workspace = true
 voltip-tauri-bridge.workspace = true
 # Not used from Rust (voltip-asr-local → sherpa-onnx links it): named here for build order only.
@@ -83,22 +85,17 @@ sherpa-onnx-sys.workspace = true
 # shell has no tray.
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri = { version = "=2.11.6", default-features = false, features = ["wry", "tray-icon"] }
-# TCC checks / requests for the microphone, Accessibility and Input Monitoring (docs/dictation.md
-# §15.1). Called from Rust (`src/platform/macos.rs`); the plugin's own webview commands are not
+# TCC checks / requests for the microphone and Accessibility (docs/dictation.md §15.1). Called
+# from Rust (`src/platform/macos.rs`); the plugin's own webview commands are not
 # registered, so no capability grants them.
 tauri-plugin-macos-permissions = "=2.3.0"
 # The frontmost application for scenes (docs/dictation.md §18.2): `NSWorkspace.frontmostApplication`.
 # The exact versions tray-icon / muda already pull; only the two AppKit classes the probe touches.
 objc2 = "=0.6.4"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSRunningApplication", "NSWorkspace"] }
-# The lone-key trigger's event tap and its run loop (docs/dictation.md §13.1, `src/solo_key/macos.rs`):
-# the versions tao and enigo already pull.
-core-foundation = "=0.10.1"
-core-graphics = "=0.25.0"
 
-# The foreground application on X11 / XWayland (docs/dictation.md §18.2, `src/platform/linux.rs`)
-# and the lone-key trigger's XInput 2 raw events (§13.1, `src/solo_key/x11.rs`); the version enigo
-# already pulls.
+# The foreground application on X11 / XWayland (docs/dictation.md §18.2, `src/platform/linux.rs`);
+# the version enigo already pulls.
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "=0.14.0", features = ["xinput"] }
 # `_exit` (src/exit.rs); the version the graph already has.
@@ -108,16 +105,13 @@ libc = "=0.2.189"
 tauri = { version = "=2.11.6", default-features = false, features = ["wry", "tray-icon"] }
 # Same version tokio / tempfile / mio already pull, so the cross-build compiles it once. Feature
 # set = exactly what src/platform/windows.rs calls: foreground window → process → token integrity
-# level, the input desktop name, and the CapabilityAccessManager consent store in the registry; and
-# what src/solo_key/windows.rs calls: the low-level keyboard / mouse hooks and SendInput.
+# level, the input desktop name, and the CapabilityAccessManager consent store in the registry.
 windows-sys = { version = "=0.61.2", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_System_Registry",
     "Win32_System_StationsAndDesktops",
-    "Win32_System_LibraryLoader",
     "Win32_System_Threading",
-    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
 

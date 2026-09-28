@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
 
-use voltip_core::SoloKey;
+use voltip_platform::solo_key::SoloKey;
 use voltip_platform::solo_key::{SoloEdge, SoloInput, SoloTracker, x11_button, x11_keycode};
 use x11rb::connection::Connection as _;
 use x11rb::protocol::Event;

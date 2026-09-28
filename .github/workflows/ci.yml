@@ -424,6 +424,36 @@ jobs:
 
   # The real Tauri desktop app started under Xvfb with the debug-only in-memory secret store;
   # the WebView screenshots are the evidence that the shell builds, starts the core and renders.
+  # The lone-key trigger's real low-level hooks (docs/dictation.md §13.1) on a Windows desktop:
+  # WH_KEYBOARD_LL / WH_MOUSE_LL installed, fed with SendInput, edges asserted. Only the small
+  # voltip-hooks crate is built, natively.
+  hooks-windows:
+    name: windows · lone-key hooks on a real desktop
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust toolchain (rust-toolchain.toml)
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          rustup show
+          rustc --version && cargo --version
+
+      - name: Cache Cargo registry and target/
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-hooks-windows
+          cache-on-failure: true
+
+      - name: Real hooks (cargo test -p voltip-hooks -- --ignored)
+        run: cargo test -p voltip-hooks --lib -- --ignored --test-threads=1 --nocapture
+
   smoke-desktop:
     name: smoke · desktop under Xvfb
     runs-on: ubuntu-24.04
@@ -488,6 +518,11 @@ jobs:
       - name: Install web dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
+      # The lone-key trigger's XInput 2 hook on a real X server (docs/dictation.md §13.1), fed with
+      # xdotool through XTEST.
+      - name: Real X11 hook (cargo test -p voltip-hooks -- --ignored, under Xvfb)
+        run: xvfb-run -a cargo test -p voltip-hooks --lib -- --ignored --test-threads=1 --nocapture
+
       - name: make smoke-desktop (build, start under Xvfb, hotkey → overlay → outcome, screenshots)
         run: make smoke-desktop
 
@@ -521,7 +556,7 @@ jobs:
   # (skipped / cancelled fail).
   ci-success:
     name: CI Success
-    needs: [verify, windows-cross, windows-native, smoke-desktop]
+    needs: [verify, windows-cross, windows-native, hooks-windows, smoke-desktop]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

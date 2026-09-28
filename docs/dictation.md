@@ -479,7 +479,7 @@ TS 侧已接（2026-09-26）：`schema.ts` `CommandArgs` 有 `hotkey_edge: { pre
 - **取消键**：`hold` 下按着右侧修饰键时 Esc 带着这个修饰键，`cancel_shortcuts` 因此也注册「修饰键 + Escape」（右 Shift → `Shift+Escape`）；按 Esc 本身也是组合，同样会取消。
 - **录制器打开时**：钩子卸下，录制器里按右 Ctrl + K 不会开始录音；关闭后按设置重新安装。
 
-各平台（`apps/desktop/src-tauri/src/solo_key.rs` 与 `solo_key/{windows,macos,x11}.rs`；纯规则与状态机在 `crates/voltip-platform/src/solo_key.rs`，每个主机都测）：
+各平台（钩子在 `crates/voltip-hooks/src/{windows,macos,x11}.rs`，桌面壳的 `apps/desktop/src-tauri/src/solo_key.rs` 决定哪些键可用并转发边沿；纯规则与状态机在 `crates/voltip-platform/src/solo_key.rs`，每个主机都测。三个钩子各有一个 `#[ignore]` 的真机测试：CI 在 Windows Server 桌面（`hooks-windows`）、macOS（`macos.yml`，先在 TCC 里给测试程序授予辅助功能）和 Xvfb（`smoke-desktop`）上跑）：
 
 | 平台 | 钩子 | 修饰键 | 鼠标键 |
 |---|---|---|---|

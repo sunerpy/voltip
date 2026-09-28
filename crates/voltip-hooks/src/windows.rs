@@ -9,7 +9,7 @@
 //!   carries) is not counted; the mask key is injected too, so it never counts as a chord.
 //!
 //! The hook procedures are plain functions, so the state they need lives in one static: one hook
-//! at a time, which [`super::SoloHook`]'s lifecycle guarantees (the old one is dropped first).
+//! at a time: a caller stops the running [`Backend`] before it starts the next.
 //! The procedures only lock it, feed the tracker and send on a channel: the system removes a
 //! low-level hook whose procedure is slow.
 
@@ -20,7 +20,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 
-use voltip_core::SoloKey;
+use voltip_platform::solo_key::SoloKey;
 use voltip_platform::solo_key::{SoloEdge, SoloInput, SoloTracker, WINDOWS_MASK_VK, WindowsButton, windows_button, windows_vk};
 use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;

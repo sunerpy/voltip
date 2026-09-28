@@ -83,6 +83,25 @@ jobs:
       - name: macOS unit tests (voltip-platform, voltip-inject)
         run: cargo test -p voltip-platform -p voltip-inject
 
+      # The lone-key trigger's real event tap (docs/dictation.md §13.1). An active CGEventTap and
+      # CGEventPost both need the Accessibility permission; the runner's TCC database grants it to
+      # the test binary (the runner image allows writing it), then the ignored test installs the
+      # tap, posts Right Control, Right Control + C and the back button, and asserts the edges.
+      - name: Real event tap (Accessibility granted to the test binary)
+        run: |
+          set -euo pipefail
+          csrutil status || true
+          bin=$(cargo test -p voltip-hooks --lib --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .profile.test == true and .target.name == "voltip_hooks") | .executable' | tail -1)
+          [ -x "$bin" ] || { echo "::error::no test binary for voltip-hooks"; exit 1; }
+          echo "test binary: $bin"
+          db="/Library/Application Support/com.apple.TCC/TCC.db"
+          for service in kTCCServiceAccessibility kTCCServicePostEvent; do
+            sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier, flags, last_modified) VALUES ('$service', '$bin', 1, 2, 4, 1, 'UNUSED', 0, $(date +%s));"
+          done
+          sudo sqlite3 "$db" "SELECT service, client, auth_value FROM access WHERE client = '$bin';"
+          "$bin" --ignored --test-threads=1 --nocapture
+
       - name: Build Voltip.app (unsigned)
         run: |
           set -euo pipefail

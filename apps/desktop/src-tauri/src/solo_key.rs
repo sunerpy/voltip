@@ -1,8 +1,8 @@
 //! The lone-key trigger (docs/dictation.md §13.1): `Settings.solo_key` names a right-hand
 //! modifier, Fn or a mouse button that drives a take on its own, next to the chord. The
 //! global-shortcut plugin registers chords only, so this module watches the key through the
-//! platform's low-level input hook and turns what it sees into press / release / chorded edges
-//! with a [`SoloTracker`] (voltip-platform):
+//! platform's low-level input hook (the `voltip-hooks` crate, whose real-hook tests CI runs on
+//! Windows, macOS and Xvfb) and forwards its press / release / chorded edges:
 //!
 //! - Windows: `WH_KEYBOARD_LL` and `WH_MOUSE_LL` on a thread of their own. A mouse trigger is
 //!   swallowed (a held back button would navigate the browser back); a modifier is passed on, and
@@ -22,20 +22,6 @@ use std::thread::JoinHandle;
 use voltip_core::SoloKey;
 use voltip_inject::{SessionKind, X11Grab};
 use voltip_platform::solo_key::SoloEdge;
-
-#[cfg(target_os = "macos")]
-#[path = "solo_key/macos.rs"]
-mod backend;
-#[cfg(target_os = "windows")]
-#[path = "solo_key/windows.rs"]
-mod backend;
-#[cfg(target_os = "linux")]
-#[path = "solo_key/x11.rs"]
-mod backend;
-
-/// How long a hook may take to install before the attempt counts as failed.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// How the settings page and the log name a key (the core stores the wire name).
 pub fn label(key: SoloKey, os: &str) -> &'static str {
@@ -83,7 +69,7 @@ pub fn unavailable(key: SoloKey, os: &str, session: Option<SessionKind>) -> Opti
 pub struct SoloHook {
     key: SoloKey,
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-    backend: Option<backend::Backend>,
+    backend: Option<voltip_hooks::Backend>,
     forwarder: Option<JoinHandle<()>>,
 }
 
@@ -116,7 +102,7 @@ pub fn watch(key: SoloKey, session: Option<SessionKind>, synthetic: bool, sink: 
     }
     let (tx, rx) = mpsc::channel::<SoloEdge>();
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-    let backend = backend::start(key, tx, synthetic).map_err(|e| format!("{} 无法单独触发：{e}", label(key, std::env::consts::OS)))?;
+    let backend = voltip_hooks::start(key, tx, synthetic).map_err(|e| format!("{} 无法单独触发：{e}", label(key, std::env::consts::OS)))?;
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (tx, synthetic);

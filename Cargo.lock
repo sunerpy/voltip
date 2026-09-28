@@ -6770,8 +6770,6 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "clap",
- "core-foundation 0.10.1",
- "core-graphics",
  "directories",
  "json-patch 4.2.0",
  "libc",
@@ -6798,6 +6796,7 @@ dependencies = [
  "voltip-asr-local",
  "voltip-audio",
  "voltip-core",
+ "voltip-hooks",
  "voltip-identity",
  "voltip-inject",
  "voltip-pairing",
@@ -6806,6 +6805,18 @@ dependencies = [
  "voltip-tauri-bridge",
  "windows-sys 0.61.2",
  "wiremock",
+ "x11rb 0.14.0",
+]
+
+[[package]]
+name = "voltip-hooks"
+version = "0.0.0"
+dependencies = [
+ "core-foundation 0.10.1",
+ "core-graphics",
+ "tracing",
+ "voltip-platform",
+ "windows-sys 0.61.2",
  "x11rb 0.14.0",
 ]
 

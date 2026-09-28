@@ -17,7 +17,7 @@ use std::thread::JoinHandle;
 
 use core_foundation::runloop::CFRunLoop;
 use core_graphics::event::{CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType, CallbackResult, EventField};
-use voltip_core::SoloKey;
+use voltip_platform::solo_key::SoloKey;
 use voltip_platform::solo_key::{SoloEdge, SoloInput, SoloTracker, macos_button, macos_modifier};
 
 /// The `EVENT_SOURCE_USER_DATA` enigo stamps on everything it posts (`enigo::EVENT_MARKER`):
@@ -141,5 +141,77 @@ fn classify(kind: CGEventType, event: &CGEvent, modifier: Option<(u16, u64)>, bu
         CGEventType::OtherMouseUp if is_trigger_button() => (Some(SoloInput::TriggerUp), true),
         CGEventType::OtherMouseDragged if is_trigger_button() => (None, true),
         _ => (None, false),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use core_graphics::event::{CGEventFlags, CGMouseButton};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    use core_graphics::geometry::CGPoint;
+
+    use super::*;
+
+    fn source() -> CGEventSource {
+        CGEventSource::new(CGEventSourceStateID::HIDSystemState).expect("event source")
+    }
+
+    /// Right Control going down or up the way the window server reports a modifier: a
+    /// `flagsChanged` event with the key code and, while it is down, its device-dependent flag.
+    fn right_ctrl(down: bool) {
+        let event = CGEvent::new_keyboard_event(source(), 0x3E, down).expect("event");
+        event.set_type(CGEventType::FlagsChanged);
+        event.set_flags(if down { CGEventFlags::CGEventFlagControl | CGEventFlags::from_bits_retain(0x2000) } else { CGEventFlags::CGEventFlagNull });
+        event.post(CGEventTapLocation::HID);
+    }
+
+    /// `kVK_ANSI_C` down and up.
+    fn key_c() {
+        for down in [true, false] {
+            CGEvent::new_keyboard_event(source(), 8, down).expect("event").post(CGEventTapLocation::HID);
+        }
+    }
+
+    /// The back button (button number 3) down or up.
+    fn back_button(down: bool) {
+        let kind = if down { CGEventType::OtherMouseDown } else { CGEventType::OtherMouseUp };
+        let event = CGEvent::new_mouse_event(source(), kind, CGPoint::new(10.0, 10.0), CGMouseButton::Center).expect("event");
+        event.set_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER, 3);
+        event.post(CGEventTapLocation::HID);
+    }
+
+    fn next(rx: &mpsc::Receiver<SoloEdge>) -> Option<SoloEdge> {
+        rx.recv_timeout(Duration::from_secs(3)).ok()
+    }
+
+    #[test]
+    #[ignore = "needs a macOS login session where this test binary has the Accessibility permission"]
+    fn real_tap_reports_a_lone_modifier_its_chord_and_a_side_button() {
+        let (tx, rx) = mpsc::channel();
+        let backend = start(SoloKey::RightCtrl, tx, true).expect("event tap (Accessibility)");
+        right_ctrl(true);
+        assert_eq!(next(&rx), Some(SoloEdge::Press));
+        right_ctrl(false);
+        assert_eq!(next(&rx), Some(SoloEdge::Release));
+        // Right Control + C: pressed, then chorded; its release is not reported.
+        right_ctrl(true);
+        key_c();
+        right_ctrl(false);
+        assert_eq!(next(&rx), Some(SoloEdge::Press));
+        assert_eq!(next(&rx), Some(SoloEdge::Chorded));
+        assert_eq!(rx.recv_timeout(Duration::from_millis(300)).ok(), None);
+        backend.stop();
+
+        let (tx, rx) = mpsc::channel();
+        let backend = start(SoloKey::MouseBack, tx, true).expect("event tap");
+        back_button(true);
+        assert_eq!(next(&rx), Some(SoloEdge::Press));
+        back_button(false);
+        assert_eq!(next(&rx), Some(SoloEdge::Release));
+        backend.stop();
     }
 }

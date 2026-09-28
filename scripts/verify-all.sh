@@ -38,8 +38,8 @@ gate rust-fmt        cargo fmt --all -- --check
 . scripts/lib/rust-features.sh
 gate rust-features   ./scripts/check-rust-features.sh
 gate rust-clippy     cargo clippy --workspace --all-targets --features "$RUST_FEATURES" -- -D warnings
-gate cross-check-darwin  cargo check -p voltip-platform -p voltip-inject --target aarch64-apple-darwin
-gate cross-check-windows cargo check -p voltip-platform -p voltip-inject --target x86_64-pc-windows-msvc
+gate cross-check-darwin  cargo check -p voltip-platform -p voltip-inject -p voltip-hooks --target aarch64-apple-darwin
+gate cross-check-windows cargo check -p voltip-platform -p voltip-inject -p voltip-hooks --target x86_64-pc-windows-msvc
 gate rust-test       cargo test --workspace --features "$RUST_FEATURES"
 gate rust-coverage   make coverage-gate
 gate coverage-parity ./scripts/check-coverage-parity.sh

@@ -159,7 +159,7 @@ gate() {
     real) args="test -p voltip-asr-local --test real -- --ignored --nocapture --test-threads=1${2:+ $2}" ;;
     # The lone-key trigger's low-level hooks (docs/dictation.md §13.1), fed with SendInput: they need
     # the interactive session the scheduled task runs in, never an SSH one.
-    hooks) args='test -p voltip-desktop --lib solo_key -- --ignored --nocapture --test-threads=1' ;;
+    hooks) args='test -p voltip-hooks --lib -- --ignored --nocapture --test-threads=1' ;;
     # LAN discovery (docs/pairing.md 「局域网发现」): real multicast DNS through Windows' own stack.
     mdns) args='test -p voltip-core --lib discovery -- --ignored --nocapture --test-threads=1' ;;
     *) echo "usage: $0 gate test|clippy|real|hooks|mdns [test-name filter]" >&2; exit 2 ;;
