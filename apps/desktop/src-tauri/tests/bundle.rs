@@ -295,3 +295,20 @@ fn regression_native_msvc_builds_read_c_and_cpp_sources_as_utf8() {
         assert!(config.lines().any(|l| l.trim() == format!(r#"{var} = "/utf-8""#)), "{var} missing from .cargo/config.toml");
     }
 }
+
+/// The deb and the rpm name every library the Linux binary takes from the system. 0.0.4's deb did
+/// not name the BLAS transcribe.cpp links on Linux (its host decoder's `cblas_sgemv`, found on the
+/// build machine): apt installed the package and `voltip-desktop` then failed with
+/// `libblas.so.3: cannot open shared object file` (install-scripts.yml, 2026-09-29). The release
+/// leg now refuses a binary that links a soname outside `VOLTIP_LINUX_SONAMES`
+/// (scripts/lib/artefact-checks.sh); this pins the package side.
+#[test]
+fn regression_the_linux_packages_depend_on_the_blas_the_binary_links() {
+    let linux = merged(Target::Linux);
+    let deb = linux.bundle.linux.deb.depends.unwrap_or_default();
+    assert!(deb.iter().any(|d| d == "libblas3 | libblas.so.3"), "{deb:?}");
+    let rpm = linux.bundle.linux.rpm.depends.unwrap_or_default();
+    assert!(rpm.iter().any(|d| d == "libblas.so.3()(64bit)"), "{rpm:?}");
+    let checks = read(&tauri_dir().join("../../../scripts/lib/artefact-checks.sh"));
+    assert!(checks.contains(" libblas.so.3"), "VOLTIP_LINUX_SONAMES lists libblas.so.3");
+}

@@ -133,6 +133,9 @@ class CandidateBuild(unittest.TestCase):
                 self.assertIn("path: .release-tooling", body[tooling:])
                 self.assertIn(".release-tooling/scripts/release/updater-json.py collect", body)
 
+    def test_the_linux_leg_refuses_a_library_its_packages_do_not_depend_on(self) -> None:
+        self.assertIn("voltip_linux_sonames_accounted ../../target/release/voltip-desktop", self.jobs["bundle-linux"])
+
     def test_the_sherpa_fingerprint_is_cleared_in_the_source_target(self) -> None:
         # forget-sherpa-onnx-build.sh cds to the checkout it sits in and clears that target/.
         for leg in self.LEGS:

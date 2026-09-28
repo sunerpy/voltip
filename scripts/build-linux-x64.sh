@@ -39,6 +39,8 @@ done
 . scripts/lib/artefact-checks.sh
 voltip_scan_provider_keys target/release/voltip-desktop build-linux-x64
 voltip_output_has 'NEEDED.*\[libvulkan\.so\.1\]' readelf -d target/release/voltip-desktop || { echo "build-linux-x64: voltip-desktop does not link libvulkan.so.1 (built without the Vulkan backend)"; exit 1; }
+# Every library it takes from the system is one the deb and rpm depend on.
+voltip_linux_sonames_accounted target/release/voltip-desktop build-linux-x64 || exit 1
 rm -rf "$out"
 mkdir -p "$out" "$(dirname "$info")"
 cp "$deb" "$rpm" "$appimage" "$out"/

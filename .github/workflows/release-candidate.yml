@@ -676,6 +676,8 @@ jobs:
           cargo tauri build --ci --no-bundle --features gpu-vulkan
           . ../../.release-tooling/scripts/lib/artefact-checks.sh
           voltip_output_has 'NEEDED.*\[libvulkan\.so\.1\]' readelf -d ../../target/release/voltip-desktop || { echo "::error::voltip-desktop does not link libvulkan.so.1"; exit 1; }
+          # Every library it takes from the system is one the deb and rpm depend on.
+          voltip_linux_sonames_accounted ../../target/release/voltip-desktop release || { echo "::error::voltip-desktop links a library the Linux packages do not depend on"; exit 1; }
 
       # Same rule as scripts/build-windows-x64.sh: the client may carry the revocable app token,
       # never a provider key.

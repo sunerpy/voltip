@@ -57,5 +57,48 @@ class OutputHas(unittest.TestCase):
         self.assertEqual(run("voltip_output_has '^nothing$' seq 1 2000").returncode, 1)
 
 
+# What 0.0.4's Linux voltip-desktop links (readelf -d of the released deb's binary).
+NEEDED_0_0_4 = [
+    "libgobject-2.0.so.0", "libwebkit2gtk-4.1.so.0", "libgtk-3.so.0", "libgdk-3.so.0", "libcairo.so.2",
+    "libgdk_pixbuf-2.0.so.0", "libsoup-3.0.so.0", "libgio-2.0.so.0", "libjavascriptcoregtk-4.1.so.0",
+    "libglib-2.0.so.0", "libxkbcommon.so.0", "libasound.so.2", "libsherpa-onnx-c-api.so", "libblas.so.3",
+    "libstdc++.so.6", "libm.so.6", "libvulkan.so.1", "libgcc_s.so.1", "libc.so.6", "ld-linux-x86-64.so.2",
+]
+
+
+class LinuxSonames(unittest.TestCase):
+    """voltip_linux_sonames_accounted, with a fake readelf that prints the dynamic section."""
+
+    def check(self, needed: list[str]) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as d:
+            exe = os.path.join(d, "voltip-desktop")
+            open(exe, "wb").close()
+            readelf = os.path.join(d, "readelf")
+            lines = "".join(f" 0x0000000000000001 (NEEDED)             Shared library: [{n}]\\n" for n in needed)
+            with open(readelf, "w", encoding="utf-8") as f:
+                f.write(f"#!/bin/sh\nprintf '{lines}'\n")
+            os.chmod(readelf, 0o755)
+            return subprocess.run(
+                ["bash", "-c", f"set -euo pipefail; . {LIB}; voltip_linux_sonames_accounted {exe} test"],
+                capture_output=True, text=True, check=False, env={**os.environ, "PATH": f"{d}:{os.environ['PATH']}"},
+            )
+
+    def test_regression_what_0_0_4_links_is_accounted_for(self):
+        # 0.0.4's deb did not depend on the BLAS its binary links; libblas.so.3 is on the list now,
+        # next to the depends that name it.
+        result = self.check(NEEDED_0_0_4)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_new_library_stops_the_build(self):
+        result = self.check([*NEEDED_0_0_4, "libopenblas.so.0"])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("links libopenblas.so.0, which no Linux package depends on", result.stderr)
+
+    def test_a_binary_without_a_dynamic_section_is_not_accounted_for(self):
+        result = self.check([])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("names no shared library", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
