@@ -57,7 +57,8 @@ fn recorder_audio_source_records_through_the_fake_backend() {
     let meter_frames = Arc::new(Mutex::new(0usize));
     let mf = meter_frames.clone();
     let _ = hub.subscribe(None, Arc::new(move |_| *mf.lock() += 1));
-    let source = RecorderAudioSource::with_backend(Arc::new(FakeBackend::new().with_signal(Signal::Sine { frequency_hz: 440.0, amplitude: 0.5 })), hub.clone());
+    let backend = Arc::new(FakeBackend::new().with_signal(Signal::Sine { frequency_hz: 440.0, amplitude: 0.5 }));
+    let source = RecorderAudioSource::with_backend(backend.clone(), hub.clone());
     let frames = Arc::new(Mutex::new(Vec::<LevelFrame>::new()));
     let sink = frames.clone();
     let ready = Arc::new(AtomicBool::new(false));
@@ -79,10 +80,12 @@ fn recorder_audio_source_records_through_the_fake_backend() {
     assert!(!frames.lock().is_empty(), "levels reached the core-side callback");
     let f = frames.lock()[0];
     assert_eq!(f.sample_rate_hz, 48_000);
-    // A named device that exists is honoured; an unknown one is an audio error.
+    // A named device that is connected is honoured; one that is not records from the default
+    // input instead, and the choice stays in the settings until it is back (2026-09-28).
     assert!(source.start(Some(voltip_audio::FAKE_USB_ID), Box::new(|_| {}), Box::new(|| {}), CaptureOptions::default()).is_ok());
-    let err = source.start(Some("fake:missing"), Box::new(|_| {}), Box::new(|| {}), CaptureOptions::default()).err().unwrap();
-    assert!(matches!(&err, DictationError::Audio(m) if m.contains("fake:missing")), "{err}");
+    assert_eq!(backend.opened_with().last(), Some(&Some(voltip_audio::FAKE_USB_ID.to_owned())));
+    assert!(source.start(Some("fake:missing"), Box::new(|_| {}), Box::new(|| {}), CaptureOptions::default()).is_ok());
+    assert_eq!(backend.opened_with().last(), Some(&None), "an unplugged choice opens the default input");
     // No device at all.
     let none = RecorderAudioSource::with_backend(Arc::new(FakeBackend::new().without_devices()), hub.clone());
     assert!(matches!(none.start(None, Box::new(|_| {}), Box::new(|| {}), CaptureOptions::default()).err().unwrap(), DictationError::Audio(_)));
