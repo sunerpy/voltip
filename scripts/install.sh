@@ -131,6 +131,11 @@ deb)
 	chmod 755 "$tmp"
 	chmod 644 "$tmp/$asset"
 	info "installing with apt (it asks for your password when it needs to)"
+	# The dependencies come from the distribution's mirror. With package lists older than the
+	# mirror (a computer that has not updated for a while, a fresh cloud image) apt asks for
+	# versions the mirror no longer has and fails with 404, so refresh the lists first; if that
+	# fails, the install still tries with the lists as they are.
+	as_root apt-get update -qq || info "apt-get update failed; installing with the package lists as they are"
 	as_root apt-get install -y "$tmp/$asset"
 	info "installed Voltip ${version}; start it from the applications menu or run voltip-desktop"
 	;;
