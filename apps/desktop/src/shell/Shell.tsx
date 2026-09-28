@@ -261,6 +261,7 @@ export function Shell({
           // but the strip is still the window's title bar (drag region + window controls).
           <TitleBar
             title={meta.title}
+            trafficLights={chrome.platform === "macos"}
             platform={chrome.platform}
             controls={chrome.controls}
             maximized={chrome.maximized}

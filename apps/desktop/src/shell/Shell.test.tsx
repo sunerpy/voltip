@@ -1,7 +1,7 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MOCK_ASR_MS, MOCK_REFINE_MS, MockBackend } from "@voltip/shared/mock";
-import { TITLE_BAR_SEARCH_LABEL } from "@voltip/ui";
+import { TITLE_BAR_SEARCH_LABEL, TRAFFIC_LIGHTS_BRAND_INSET } from "@voltip/ui";
 import { renderApp } from "../test/render";
 
 function paletteInput() {
@@ -394,7 +394,7 @@ describe("Shell", () => {
     // no macOS traffic-light inset, and the identity hint ("windows") does not override the UA.
     expect(screen.queryByTestId("window-controls")).toBeNull();
     expect(bar).toHaveAttribute("data-platform", "linux");
-    expect(brand).not.toHaveClass("pl-15");
+    expect(brand).not.toHaveClass(TRAFFIC_LIGHTS_BRAND_INSET);
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
 
     // The 润色 toggle is icon + short label + lamp and really toggles the LLM pass through the core.

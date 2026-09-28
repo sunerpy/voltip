@@ -1,11 +1,15 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   SIDEBAR_GLYPH_SLOT_CLASS,
+  SIDEBAR_RAIL_WIDTH,
+  SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS,
   SIDEBAR_ROW_CLASS,
   SIDEBAR_ROW_EXPANDED_CLASS,
   Sidebar,
   SidebarEntry,
+  TRAFFIC_LIGHTS_BRAND_INSET,
+  TRAFFIC_LIGHTS_CLEARANCE,
 } from "./Sidebar";
 import { ThemeSwitch, nextThemeChoice } from "./ThemeSwitch";
 import { Toolbar } from "./Toolbar";
@@ -92,16 +96,48 @@ describe("Sidebar", () => {
     const brand = screen.getByTestId("sidebar-brand");
     expect(brand).toHaveAttribute("data-tauri-drag-region", "deep");
     expect(brand).toHaveClass("h-10", "px-2");
-    expect(brand).not.toHaveClass("pl-15");
+    expect(brand).not.toHaveClass(TRAFFIC_LIGHTS_BRAND_INSET);
     // The lamp is a status, not a control.
     expect(brand.querySelector("button")).toBeNull();
     rerender(<Sidebar {...props} trafficLights />);
-    expect(screen.getByTestId("sidebar-brand")).toHaveClass("h-10", "pl-15", "pr-2");
+    expect(screen.getByTestId("sidebar-brand")).toHaveClass("h-10", TRAFFIC_LIGHTS_BRAND_INSET, "pr-2");
     expect(screen.getByTestId("sidebar-brand")).not.toHaveClass("px-2");
     // Floating (the hover preview of a hidden sidebar): a shadow, no border.
     rerender(<Sidebar {...props} floating />);
     expect(screen.getByRole("navigation", { name: "主导航" })).toHaveClass("shadow-win");
     expect(screen.getByRole("navigation", { name: "主导航" })).not.toHaveClass("border-r");
+  });
+});
+
+describe("Sidebar on macOS", () => {
+  const props = { activeId: "home", onNavigate: vi.fn(), groups: [] };
+
+  it("regression: the traffic lights get a slot of their own, clear of the brand", () => {
+    // User feedback 2026-09-29: on macOS the red, yellow and green buttons crowded the app mark
+    // at the left of the title bar. The brand row starts 80 px from the window's left edge (the
+    // lights end at 64 px; 16 px of air), in px so the 字号 setting cannot shrink it, and draws the
+    // wordmark without the mark (the Dock, the menu bar and the tray already show it).
+    const { rerender } = render(<Sidebar {...props} trafficLights />);
+    const brand = screen.getByTestId("sidebar-brand");
+    expect(brand).toHaveClass(TRAFFIC_LIGHTS_BRAND_INSET);
+    expect(TRAFFIC_LIGHTS_BRAND_INSET).toBe(`pl-[calc(${TRAFFIC_LIGHTS_CLEARANCE}px_-_0.75rem)]`);
+    expect(within(brand).queryByTestId("app-logo")).toBeNull();
+    expect(within(brand).getByText("Voltip")).toBeInTheDocument();
+    // Elsewhere the mark stays.
+    rerender(<Sidebar {...props} />);
+    expect(within(screen.getByTestId("sidebar-brand")).getByTestId("app-logo")).toBeInTheDocument();
+  });
+
+  it("regression: the collapsed rail holds the traffic lights instead of cutting through them", () => {
+    // 56 px was narrower than the lights (they end at 64 px), so the rail's border crossed the
+    // green button; on macOS the rail is 76 px: the lights with 12 px on either side.
+    const { rerender } = render(<Sidebar {...props} collapsed trafficLights />);
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    expect(nav.style.width).toBe(`${SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS}px`);
+    expect(SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS).toBe(76);
+    expect(screen.getByTestId("sidebar-brand")).toHaveClass("invisible");
+    rerender(<Sidebar {...props} collapsed />);
+    expect(screen.getByRole("navigation", { name: "主导航" }).style.width).toBe(`${SIDEBAR_RAIL_WIDTH}px`);
   });
 });
 

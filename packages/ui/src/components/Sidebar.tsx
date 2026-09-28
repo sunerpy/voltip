@@ -21,6 +21,18 @@ export interface SidebarGroup {
 export const SIDEBAR_WIDTH = 224;
 export const SIDEBAR_RAIL_WIDTH = 56;
 
+/** macOS draws its native traffic lights over the window's top-left corner (`titleBarStyle:
+ *  "Overlay"`, `trafficLightPosition` x 12, y 14 in tauri.macos.conf.json): three 12 px buttons
+ *  20 px apart, ending 64 px from the left edge. Whatever sits next to them starts 16 px later, in
+ *  px so the 字号 setting (which scales rem) cannot slide it back under them (user feedback
+ *  2026-09-29: with 8 px of air the lights crowded the app mark). */
+export const TRAFFIC_LIGHTS_CLEARANCE = 80;
+/** The brand row's left padding beside the traffic lights: the clearance less the nav's `px-3`. */
+export const TRAFFIC_LIGHTS_BRAND_INSET = "pl-[calc(80px_-_0.75rem)]";
+/** The collapsed rail on macOS holds the lights with 12 px on either side; the 56 px rail is
+ *  narrower than they are, and its border cut through the green button. */
+export const SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS = 76;
+
 /** One 36 px sidebar row, shared by the nav items, the footer entries and the theme switch so
  *  their glyphs and labels line up (user feedback 2026-09-28: the theme row's glyph sat 2 px and
  *  its name 10 px right of the others, with two separate hover patches). */
@@ -51,9 +63,11 @@ export interface SidebarProps {
   /** Drawn over the page (the edge preview of a hidden sidebar): a shadow instead of the border. */
   floating?: boolean;
   brand?: string;
-  /** macOS keeps its native traffic lights over the top-left corner (`titleBarStyle: "Overlay"`);
-   *  reserve their 72 px (x 12 + 2 × 20 pitch + 12 button + 8 breathing) so the brand does not
-   *  sit under them. Keep in sync with `trafficLightPosition` in tauri.macos.conf.json. */
+  /** macOS keeps its native traffic lights over the top-left corner (`titleBarStyle: "Overlay"`):
+   *  the brand row starts {@link TRAFFIC_LIGHTS_CLEARANCE} px from the window's edge and shows the
+   *  wordmark without the mark (the Dock, the menu bar and the tray already show it), and the
+   *  collapsed rail widens to {@link SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS} px. Keep in sync with
+   *  `trafficLightPosition` in tauri.macos.conf.json. */
   trafficLights?: boolean;
   className?: string;
 }
@@ -135,7 +149,8 @@ export function Sidebar({
   className,
 }: SidebarProps) {
   const t = useT();
-  const width = collapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH;
+  const rail = trafficLights ? SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS : SIDEBAR_RAIL_WIDTH;
+  const width = collapsed ? rail : SIDEBAR_WIDTH;
   return (
     <nav
       aria-label={t("ui.sidebar.nav")}
@@ -158,10 +173,10 @@ export function Sidebar({
         data-testid="sidebar-brand"
         className={cx(
           "flex h-10 shrink-0 items-center gap-2.5 select-none",
-          collapsed ? "justify-center" : trafficLights ? "pl-15 pr-2" : "px-2",
+          collapsed ? "justify-center" : trafficLights ? cx(TRAFFIC_LIGHTS_BRAND_INSET, "pr-2") : "px-2",
           collapsed && trafficLights && "invisible",
         )}>
-        <Logo size={24} className="shrink-0" />
+        {!trafficLights && <Logo size={24} className="shrink-0" />}
         {!collapsed && (
           <>
             <span className="text-[15px] font-semibold text-fg">{brand}</span>

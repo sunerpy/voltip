@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Mock } from "vitest";
 import { I18nProvider } from "../i18n/I18nProvider";
+import { TRAFFIC_LIGHTS_CLEARANCE } from "./Sidebar";
 import {
   TITLE_BAR_HEIGHT,
   TITLE_BAR_READOUT_MAX,
@@ -95,6 +96,16 @@ describe("TitleBar", () => {
     expect(screen.queryByTestId("window-controls")).toBeNull();
     expect(screen.getByRole("heading", { name: "首页" })).toBeInTheDocument();
     expect(screen.getByTestId("title-bar")).toHaveAttribute("data-platform", "macos");
+  });
+
+  it("regression: at the window's left edge on macOS the title starts clear of the traffic lights", () => {
+    // User feedback 2026-09-29 (the lights crowded what sat next to them): the same 80 px, in px,
+    // as the sidebar brand row, whatever the 字号 setting makes a rem.
+    const { rerender } = render(<TitleBar title="首页" platform="macos" trafficLights />);
+    const row = screen.getByRole("heading", { name: "首页" }).parentElement;
+    expect(row).toHaveClass(`pl-[${TRAFFIC_LIGHTS_CLEARANCE}px]`);
+    rerender(<TitleBar title="首页" platform="macos" />);
+    expect(screen.getByRole("heading", { name: "首页" }).parentElement).toHaveClass("pl-6");
   });
 
   it.each(["windows", "linux", "unknown"] as const)(

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS, TRAFFIC_LIGHTS_CLEARANCE } from "@voltip/ui";
 
 /** Reads the real Tauri config off disk: the cheapest guard against the RFC 7396 array trap
  *  (the macOS override replaces `app.windows` wholesale) and against permission drift.
@@ -53,10 +54,16 @@ describe("tauri window configuration", () => {
     expect(macos.hiddenTitle).toBe(true);
   });
 
-  it("positions the traffic lights where the sidebar's 72 px inset expects them", () => {
-    // Sidebar `pl-15` (60 px) + nav `px-3` (12 px) = 72 px = x 12 + 2 × 20 pitch + 12 button + 8.
-    // y 14 centres the 12 px buttons in the 40 px strip.
+  it("positions the traffic lights where the sidebar and title bar leave their slot", () => {
+    // y 14 centres the 12 px buttons in the 40 px strip; from x 12 the three of them (20 px apart)
+    // end at 64 px. The brand row and the title bar start 16 px after that (user feedback
+    // 2026-09-29: at 8 px the lights crowded the mark), and the collapsed rail holds them with
+    // 12 px on either side.
     expect(macos.trafficLightPosition).toEqual({ x: 12, y: 14 });
+    const { x } = macos.trafficLightPosition as { x: number; y: number };
+    const end = x + 2 * 20 + 12;
+    expect(TRAFFIC_LIGHTS_CLEARANCE).toBe(end + 16);
+    expect(SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS).toBe(end + x);
   });
 
   it("regression: restates the shared geometry identically, because RFC 7396 replaces the array", () => {

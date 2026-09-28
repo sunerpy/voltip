@@ -40,8 +40,9 @@ export interface TitleBarProps {
   right?: ReactNode;
   /** Before the title: the button that brings a hidden sidebar back. */
   left?: ReactNode;
-  /** The bar starts at the window's left edge on macOS (the sidebar is hidden): reserve the
-   *  traffic lights' 72 px, as the sidebar brand row does. */
+  /** The bar starts at the window's left edge on macOS (no sidebar beside it): its content starts
+   *  `TRAFFIC_LIGHTS_CLEARANCE` (80) px in, clear of the traffic lights, as the sidebar brand
+   *  row does. */
   trafficLights?: boolean;
   platform?: TitleBarPlatform;
   /** Window controls bound to the Tauri window. `null` / omitted (a plain browser: Vite dev,
@@ -104,7 +105,7 @@ export function TitleBar({
       <div
         className={cx(
           "flex min-w-0 flex-1 items-center gap-3 pr-6",
-          trafficLights ? "pl-18" : left !== undefined ? "pl-3" : "pl-6",
+          trafficLights ? "pl-[80px]" : left !== undefined ? "pl-3" : "pl-6",
         )}>
         {left}
         <h1 className="shrink-0 truncate text-[14px] font-semibold text-fg">{title}</h1>
