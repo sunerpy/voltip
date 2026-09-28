@@ -55,13 +55,13 @@ impl From<snow::Error> for CryptoError {
 
 /// Generate a fresh six-digit pairing code from the OS CSPRNG (uniform in `0..1_000_000`).
 pub fn random_pair_code() -> u32 {
-    use rand::Rng as _;
+    use rand::RngExt as _;
     rand::rng().random_range(0..1_000_000)
 }
 
 /// Generate a fresh random nonce.
 pub fn random_nonce<const N: usize>() -> [u8; N] {
-    use rand::RngCore as _;
+    use rand::Rng as _;
     let mut out = [0u8; N];
     rand::rng().fill_bytes(&mut out);
     out

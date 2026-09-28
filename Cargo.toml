@@ -49,7 +49,7 @@ aho-corasick = "=1.1.5"
 arboard = { version = "=3.6.1", default-features = false, features = ["wayland-data-control"] }
 async-trait = "=0.1.92"
 axum = { version = "=0.8.9", features = ["ws"] }
-base64 = "=0.22.1"
+base64 = "=0.23.1"
 bytes = "=1.12.1"
 ciborium = "=0.2.2"
 clap = { version = "=4.6.7", features = ["derive", "env"] }
@@ -74,19 +74,19 @@ hound = "=3.5.1"
 keyring = "=4.2.0"
 parking_lot = "=0.12.5"
 proptest = "=1.11.0"
-rand = "=0.9.5"
+rand = "=0.10.2"
 # Regex replacement rules (docs/dictation.md §16): linear-time matching, compiled size capped per rule.
 regex = "=1.13.1"
 # rustls (aws-lc-rs provider + platform verifier) so the Windows cross-build needs no OpenSSL.
 reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "multipart", "json", "http2"] }
 # Lock-free SPSC ring for the recorder's live tap (docs/dictation.md §11): the audio callback
 # pushes 16 kHz mono frames, the decode thread pops them; no lock and no allocation on the audio thread.
-rtrb = "=0.3.5"
+rtrb = "=0.4.0"
 rubato = "=5.0.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_bytes = "=0.11.19"
 serde_json = "=1.0.151"
-sha2 = "=0.10.9"
+sha2 = "=0.11.0"
 # Official k2-fsa sherpa-onnx bindings (docs/dictation.md §10). Its build script downloads the
 # prebuilt v1.13.8 libraries for the target and copies the runtime libraries next to every binary.
 # `shared` only: the `static` archives link espeak-ng (GPL-3.0), which would put the binaries under the GPL.
@@ -111,7 +111,7 @@ tokio = { version = "=1.53.1", features = [
     "time",
     "io-util",
 ] }
-tokio-tungstenite = "=0.29.0"
+tokio-tungstenite = "=0.30.0"
 # TOML import / export of the replacement rules (docs/dictation.md §16); the version Tauri already uses.
 toml = "=1.1.6"
 # transcribe.cpp (ggml) bindings for the Qwen3-ASR GGUF models (docs/dictation.md §10). MIT.

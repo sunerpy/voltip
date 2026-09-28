@@ -306,7 +306,7 @@ impl RelayCore {
     }
 
     fn mint_code(&self) -> PairCode {
-        use rand::Rng as _;
+        use rand::RngExt as _;
         // Avoid handing out a code that is live for another session; the space is 10^6 so a
         // handful of retries is always enough.
         for _ in 0..32 {
