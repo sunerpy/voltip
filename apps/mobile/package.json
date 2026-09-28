@@ -1,6 +1,6 @@
 {
   "name": "@voltip/mobile",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "Voltip mobile companion webview (Android).",
   "license": "Apache-2.0",
