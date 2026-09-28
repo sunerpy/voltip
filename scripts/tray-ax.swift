@@ -90,11 +90,15 @@ func statusItem() -> AXUIElement {
     }
 }
 
-/// Press the status item and return its menu's entries (separators left out).
+/// Press the status item and return its menu's entries (separators left out). The press returns
+/// only when the menu closes (AppKit tracks it in a modal loop), so the call times out with
+/// kAXErrorCannotComplete while the menu is open: that answer counts as opened, and the menu is
+/// then read like any other element.
 func openMenu() -> [AXUIElement] {
     let item = statusItem()
+    _ = AXUIElementSetMessagingTimeout(item, 1)
     let pressed = AXUIElementPerformAction(item, kAXPressAction as CFString)
-    guard pressed == .success else { fail("pressing the status item failed (\(pressed.rawValue))") }
+    guard pressed == .success || pressed == .cannotComplete else { fail("pressing the status item failed (\(pressed.rawValue))") }
     return wait(5, "the status item's menu") { () -> [AXUIElement]? in
         guard let menu = children(item).first(where: { text($0, kAXRoleAttribute) == kAXMenuRole }) else { return nil }
         let entries = children(menu).filter { text($0, kAXRoleAttribute) == kAXMenuItemRole && !text($0, kAXTitleAttribute).isEmpty }

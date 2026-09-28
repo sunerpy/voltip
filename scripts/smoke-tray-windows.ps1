@@ -147,17 +147,23 @@ function Find-TrayButton {
   return $null
 }
 
-# Right-click the tray button and return the native popup menu (class #32768) with its item names.
+# The popup menu on screen (class #32768) with its entries. The desktop always holds a hidden,
+# empty #32768 window too, so the visible one with items is the one that counts.
+function Find-OpenMenu {
+  foreach ($menu in $A::RootElement.FindAll($TS::Children, (Cond $A::ClassNameProperty '#32768'))) {
+    if ($menu.Current.IsOffscreen) { continue }
+    $items = @($menu.FindAll($TS::Descendants, (Cond $A::ControlTypeProperty $CT::MenuItem)))
+    if ($items.Count -gt 0) { return New-Object psobject -Property @{ Menu = $menu; Items = $items } }
+  }
+  return $null
+}
+
+# Right-click the tray button and return the menu it opens.
 function Open-TrayMenu {
   $tray = Wait-For { Find-TrayButton } $StepTimeoutSec 'the tray button'
   $xy = Center $tray[0]
   [VoltipTray]::Click($xy[0], $xy[1], $true)
-  $menu = Wait-For { $A::RootElement.FindFirst($TS::Children, (Cond $A::ClassNameProperty '#32768')) } $StepTimeoutSec 'the tray menu'
-  $items = @(Wait-For {
-      $all = $menu.FindAll($TS::Descendants, (Cond $A::ControlTypeProperty $CT::MenuItem))
-      if ($all.Count -gt 0) { , $all }
-    } $StepTimeoutSec 'the tray menu items')
-  return @($menu, $items)
+  return (Wait-For { Find-OpenMenu } $StepTimeoutSec 'the tray menu and its entries')
 }
 
 function Click-MenuItem($items, [string] $name) {
@@ -222,13 +228,13 @@ try {
 
   # 3. The menu.
   $opened = Open-TrayMenu
-  $names = @($opened[1] | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
-  (Save-Shot $opened[0] 'tray-menu.png').Dispose()
+  $names = @($opened.Items | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
+  (Save-Shot $opened.Menu 'tray-menu.png').Dispose()
   Note "menu: $($names -join ' | ')"
   if (($names -join "`n") -ne ($expected -join "`n")) { throw "smoke-tray-windows: menu is '$($names -join ' | ')', expected '$($expected -join ' | ')'" }
 
   # 4a. Open.
-  Click-MenuItem $opened[1] $expected[0]
+  Click-MenuItem $opened.Items $expected[0]
   Wait-For { (Log-Text) -match 'tray menu action=Open' } $StepTimeoutSec 'the Open entry in the log' | Out-Null
   Wait-For { [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'Open to show the window' | Out-Null
   Note 'Open: main window shown'
@@ -237,7 +243,7 @@ try {
 
   # 4b. Settings: the window with the Settings dialog (the webview's role=dialog, named by its title).
   $opened = Open-TrayMenu
-  Click-MenuItem $opened[1] $expected[1]
+  Click-MenuItem $opened.Items $expected[1]
   Wait-For { (Log-Text) -match 'tray menu action=Settings' } $StepTimeoutSec 'the Settings entry in the log' | Out-Null
   Wait-For { [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'Settings to show the window' | Out-Null
   $window = $A::FromHandle($hwnd)
@@ -253,7 +259,7 @@ try {
   # 4c. Check for Updates: the webview asks the update source and gets an answer.
   if ($updater) {
     $opened = Open-TrayMenu
-    Click-MenuItem $opened[1] $expected[2]
+    Click-MenuItem $opened.Items $expected[2]
     Wait-For { (Log-Text) -match 'tray menu action=CheckUpdate' } $StepTimeoutSec 'the Check for Updates entry in the log' | Out-Null
     $answer = Wait-For { if ((Log-Text) -match '(no update available|update available)[^\r\n]*') { $Matches[0] } } 60 'the update check to answer'
     Wait-For { [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'Check for Updates to show the window' | Out-Null
@@ -263,13 +269,17 @@ try {
 
   # 4d. Quit.
   $opened = Open-TrayMenu
-  Click-MenuItem $opened[1] $expected[-1]
+  Click-MenuItem $opened.Items $expected[-1]
   if (-not $app.WaitForExit($StepTimeoutSec * 1000)) { throw 'smoke-tray-windows: Quit did not end the process' }
   if (-not ((Log-Text) -match 'tray menu action=Quit')) { throw 'smoke-tray-windows: the process ended without the Quit entry in the log' }
   Note "Quit: process exited with $($app.ExitCode)"
   if ($app.ExitCode -ne 0) { throw "smoke-tray-windows: exit code $($app.ExitCode)" }
   $app = $null
   Note 'OK'
+} catch {
+  Note "FAIL: $($_.Exception.Message)"
+  try { (Save-Shot $A::RootElement 'failure-screen.png').Dispose() } catch { Note "no failure screenshot: $($_.Exception.Message)" }
+  throw
 } finally {
   if ($null -ne $app -and -not $app.HasExited) { Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue }
   $summary | Set-Content -LiteralPath (Join-Path $OutDir 'summary.txt') -Encoding utf8
