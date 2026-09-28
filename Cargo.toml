@@ -52,7 +52,7 @@ axum = { version = "=0.8.9", features = ["ws"] }
 base64 = "=0.22.1"
 bytes = "=1.12.1"
 ciborium = "=0.2.2"
-clap = { version = "=4.6.6", features = ["derive", "env"] }
+clap = { version = "=4.6.7", features = ["derive", "env"] }
 # No `jack` / `asio` / `pipewire` / `pulseaudio` features: WASAPI, CoreAudio and ALSA only.
 cpal = "=0.18.2"
 directories = "=6.0.0"
@@ -71,7 +71,7 @@ futures-util = { version = "=0.3.34", default-features = false, features = ["sin
 hex = "=0.4.3"
 # WAV decoding for the local recogniser (16-bit PCM in, f32 out).
 hound = "=3.5.1"
-keyring = "=4.1.6"
+keyring = "=4.2.0"
 parking_lot = "=0.12.5"
 proptest = "=1.11.0"
 rand = "=0.9.5"
@@ -102,7 +102,7 @@ sherpa-onnx-sys = { version = "=1.13.8", default-features = false, features = ["
 snow = "=0.10.0"
 subtle = "=2.6.1"
 tempfile = "=3.27.0"
-thiserror = "=2.0.19"
+thiserror = "=2.0.21"
 tokio = { version = "=1.53.1", features = [
     "macros",
     "net",
@@ -128,9 +128,9 @@ tower = { version = "=0.5.3", features = ["util"] }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
 url = { version = "=2.5.8", features = ["serde"] }
-uuid = { version = "=1.24.0", features = ["v4", "serde"] }
+uuid = { version = "=1.26.1", features = ["v4", "serde"] }
 wiremock = "=0.6.5"
-zeroize = { version = "=1.8.2", features = ["derive"] }
+zeroize = { version = "=1.9.0", features = ["derive"] }
 
 voltip-protocol = { path = "crates/voltip-protocol" }
 voltip-crypto = { path = "crates/voltip-crypto" }
