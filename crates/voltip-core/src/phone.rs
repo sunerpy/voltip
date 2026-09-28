@@ -358,7 +358,11 @@ mod tests {
         let next = SentTexts::open(dir.path()).next_id();
         assert!(!handed.contains(&next), "the counter is saved with the empty list");
         // A file from before the counter: it continues after the highest id listed.
-        std::fs::write(dir.path().join(SENT_TEXTS_FILE_NAME), serde_json::to_vec(&serde_json::json!({ "schema": 1, "texts": [sent(41, SentTextState::Queued)] })).unwrap()).unwrap();
+        std::fs::write(
+            dir.path().join(SENT_TEXTS_FILE_NAME),
+            serde_json::to_vec(&serde_json::json!({ "schema": 1, "texts": [sent(41, SentTextState::Queued)] })).unwrap(),
+        )
+        .unwrap();
         assert_eq!(SentTexts::open(dir.path()).next_id(), 42);
         // Without a readable file the count starts somewhere random, not at 1.
         let starts: Vec<u32> = (0..4).map(|_| SentTexts::open(tempfile::tempdir().unwrap().path()).next_id()).collect();
