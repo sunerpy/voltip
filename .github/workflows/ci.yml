@@ -10,7 +10,10 @@
 # 10 GB cap was evicting main's); a change that touches documentation only runs verify-web (ledger,
 # host guard, formatting) and skips the builds, which CI Success accepts only in that case. Windows packages are cross-built from Linux exactly as `make windows-x64`
 # does locally (cargo-xwin + lld-link + llvm-rc + clang + makensis), then run on a real Windows
-# runner by `windows-native`. macOS builds and runs in macos.yml.
+# runner by `windows-native`. macOS builds and runs on both processors in `macos` (pushes to main
+# and on demand). The commit a release pull request lands on main only bumps versions: it runs
+# verify-web, since its pull request ran the full CI on the same tree and the release run builds
+# every package from it.
 #
 # No job here receives the built-in engine values (docs/dictation.md §3): the gates are hermetic,
 # the CI package is engine-less on purpose (VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1) and the smokes use a
@@ -25,6 +28,8 @@ on:
     branches: [main]
   pull_request:
   merge_group:
+  # A full run on any branch, the macOS jobs included (they skip pull requests).
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -687,6 +692,158 @@ jobs:
   # Stable branch-protection check: every job above except the Codecov upload must report success.
   # The build, test and platform jobs may be skipped only when `changes` found documentation alone;
   # any other skip, and every failure or cancellation, fails.
+  # macOS on both processors (moved here from macos.yml, 2026-09-28): the app and the dmg, signed
+  # ad hoc as the release signs them and checked the same way (.github/scripts/
+  # check-macos-bundle.sh), the macOS-only unit tests, the real event tap on Apple silicon, and the
+  # same headless run the Windows and Linux jobs do (scripts/smoke-native-cli.ps1), which proves the
+  # bundle's dylibs load and the ggml / sherpa-onnx engines run natively. About 20 minutes on
+  # macos-15 and more on macos-15-intel (GitHub's last x86_64 image, until 2027-08), so it runs on
+  # pushes to main and on demand, not on pull requests, and CI Success does not wait for it. The
+  # release commit skips it with the rest (changed-code.sh): the release run builds both Macs.
+  macos:
+    name: macos-${{ matrix.arch }} · build + native run
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            arch: aarch64
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      MACOS_TARGET: ${{ matrix.target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Runner facts
+        run: |
+          set -euo pipefail
+          sw_vers; uname -m; sysctl -n machdep.cpu.brand_string; sysctl -n hw.ncpu
+          xcode-select -p; clang --version | head -1; cmake --version | head -1 || true
+
+      - name: Rust toolchain (rust-toolchain.toml) + ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install 2>/dev/null || true
+          rustup target add "$MACOS_TARGET"
+          rustc --version && cargo --version
+
+      # Saved from main only (this workflow runs on main and on demand): the next push starts warm.
+      - name: Cache Cargo registry and target/
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: macos-${{ matrix.arch }}
+          cache-on-failure: true
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # rust-cache prunes the runtime sherpa-onnx-sys's build script downloaded and copied, but
+      # keeps its fingerprint: make cargo run it again (the script says why).
+      - name: Re-run sherpa-onnx-sys's build script
+        run: .github/scripts/forget-sherpa-onnx-build.sh
+
+      - name: CMake (transcribe.cpp / ggml source build)
+        run: command -v cmake || brew install cmake
+
+      - name: Tauri CLI (`cargo tauri`, pinned zip + SHA-256)
+        run: .github/scripts/install-cargo-tauri.sh
+
+      - name: pnpm (packageManager in package.json)
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: package.json
+
+      - name: Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_MAJOR }}
+          cache: pnpm
+
+      - name: Install web dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # The macOS-only unit tests: the platform tables and the injector, including the live
+      # keyboard-layout read (`mac_layout_id`) that no Linux host can exercise.
+      - name: macOS unit tests (voltip-platform, voltip-inject)
+        run: cargo test -p voltip-platform -p voltip-inject
+
+      # The lone-key trigger's real event tap (docs/dictation.md §13.1). An active CGEventTap and
+      # CGEventPost both need the Accessibility permission; the runner's TCC database grants it to
+      # the test binary (the runner image allows writing it), then the ignored test installs the
+      # tap, posts Right Control, Right Control + C and the back button, and asserts the edges.
+      - name: Real event tap (Accessibility granted to the test binary)
+        if: matrix.arch == 'aarch64'
+        run: |
+          set -euo pipefail
+          csrutil status || true
+          bin=$(cargo test -p voltip-hooks --lib --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .profile.test == true and .target.name == "voltip_hooks") | .executable' | tail -1)
+          [ -x "$bin" ] || { echo "::error::no test binary for voltip-hooks"; exit 1; }
+          echo "test binary: $bin"
+          db="/Library/Application Support/com.apple.TCC/TCC.db"
+          for service in kTCCServiceAccessibility kTCCServicePostEvent; do
+            sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier, flags, last_modified) VALUES ('$service', '$bin', 1, 2, 4, 1, 'UNUSED', 0, $(date +%s));"
+          done
+          sudo sqlite3 "$db" "SELECT service, client, auth_value FROM access WHERE client = '$bin';"
+          "$bin" --ignored --test-threads=1 --nocapture
+
+      # A restored target/ may hold the dmg of an earlier version.
+      - name: Build Voltip.app and the dmg (signed ad hoc)
+        run: |
+          set -euo pipefail
+          rm -rf "target/$MACOS_TARGET/release/bundle"
+          (cd apps/desktop && cargo tauri build --ci --target "$MACOS_TARGET" --bundles app,dmg)
+          app="target/$MACOS_TARGET/release/bundle/macos/Voltip.app"
+          [ -d "$app" ] || { echo "::error::no .app bundle was produced"; exit 1; }
+          echo "APP=$app" >>"$GITHUB_ENV"
+          ls -la "$app/Contents/MacOS" "$app/Contents/Frameworks" || true
+          otool -L "$app/Contents/MacOS/voltip-desktop"
+
+      - name: Check the app and the dmg (as release.yml does)
+        env:
+          MACOS_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
+          .github/scripts/check-macos-bundle.sh "target/$MACOS_TARGET/release/bundle" "$version" "$MACOS_ARCH"
+          cp "target/$MACOS_TARGET/release/bundle/dmg/"*.dmg .
+
+      - name: Headless native run (download a model, transcribe a public sample)
+        shell: pwsh
+        # Both engines: sherpa-onnx (SenseVoice, the bundled dylibs) and transcribe.cpp (Qwen3-ASR
+        # GGUF, ggml built for Apple silicon), as the Windows job does.
+        run: ./scripts/smoke-native-cli.ps1 -Binary "$env:APP/Contents/MacOS/voltip-desktop" -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-macos-${{ matrix.arch }}
+
+      - name: Archive the app
+        run: ditto -c -k --keepParent "$APP" "dist-macos-${{ matrix.arch }}.zip"
+
+      - name: Upload the app and the run summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: voltip-macos-${{ matrix.arch }}
+          path: |
+            dist-macos-${{ matrix.arch }}.zip
+            Voltip_*_${{ matrix.arch }}.dmg
+            smoke-native-macos-${{ matrix.arch }}/*.txt
+            smoke-native-macos-${{ matrix.arch }}/*.out
+          if-no-files-found: warn
+          retention-days: 7
+
   ci-success:
     name: CI Success
     needs: [changes, verify-rust, verify-web, windows-cross, windows-native, hooks-windows, smoke-desktop]

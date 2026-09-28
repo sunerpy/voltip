@@ -481,7 +481,7 @@ TS 侧已接（2026-09-26）：`schema.ts` `CommandArgs` 有 `hotkey_edge: { pre
 - **取消键**：`hold` 下按着右侧修饰键时 Esc 带着这个修饰键，`cancel_shortcuts` 因此也注册「修饰键 + Escape」（右 Shift → `Shift+Escape`）；按 Esc 本身也是组合，同样会取消。
 - **录制器打开时**：钩子卸下，录制器里按右 Ctrl + K 不会开始录音；关闭后按设置重新安装。
 
-各平台（钩子在 `crates/voltip-hooks/src/{windows,macos,x11}.rs`，桌面壳的 `apps/desktop/src-tauri/src/solo_key.rs` 决定哪些键可用并转发边沿；纯规则与状态机在 `crates/voltip-platform/src/solo_key.rs`，每个主机都测。三个钩子各有一个 `#[ignore]` 的真机测试：CI 在 Windows Server 桌面（`hooks-windows`）、macOS（`macos.yml`，先在 TCC 里给测试程序授予辅助功能）和 Xvfb（`smoke-desktop`）上跑）：
+各平台（钩子在 `crates/voltip-hooks/src/{windows,macos,x11}.rs`，桌面壳的 `apps/desktop/src-tauri/src/solo_key.rs` 决定哪些键可用并转发边沿；纯规则与状态机在 `crates/voltip-platform/src/solo_key.rs`，每个主机都测。三个钩子各有一个 `#[ignore]` 的真机测试：CI 在 Windows Server 桌面（`hooks-windows`）、macOS（CI 的 `macos` job，先在 TCC 里给测试程序授予辅助功能）和 Xvfb（`smoke-desktop`）上跑）：
 
 | 平台 | 钩子 | 修饰键 | 鼠标键 |
 |---|---|---|---|
@@ -662,8 +662,8 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
 ### 15.6 跨目标检查门与真机运行
 
 - verify-all 新增 `cross-check-darwin` / `cross-check-windows`。本地先执行 `rustup target add aarch64-apple-darwin x86_64-pc-windows-msvc`。darwin 只能 check 不含 C 代码的叶子 crate；Windows 的 `windows-sys` 是纯 Rust，`cargo check` 不链接，无需 MSVC CRT。
-- 真机：`scripts/smoke-native-cli.ps1`（PowerShell 7，三平台同一脚本）对发布的二进制跑 `--version`、`--list-models`、`--download-model sense-voice-small`（应用自己的下载器）、下载固定修订与 sha256 的公开中文样音、`--transcribe-file --json`、再 `--list-models`，写 `summary.txt`。CI 的 `windows-native` job 在 Windows Server runner 上对便携 exe 和 NSIS 静默安装后的 exe 各跑一次；`smoke-desktop` job 在 Linux 上对 debug 二进制跑同一脚本。macOS 构建与同一脚本在 `.github/workflows/macos.yml`（GitHub 托管的 `macos-15` 与 `macos-15-intel`，Apple 芯片与 Intel 各一份，每次推送 `main` 时运行，跑 sense-voice-small 与 qwen3-asr-0.6b 两个模型）。
-- 桌面 crate 的 macOS 代码在 Linux 上无法编译，当时用一次性外部工程做过类型检查，不作为门禁；现在由 `macos.yml` 在 Mac 上编译。
+- 真机：`scripts/smoke-native-cli.ps1`（PowerShell 7，三平台同一脚本）对发布的二进制跑 `--version`、`--list-models`、`--download-model sense-voice-small`（应用自己的下载器）、下载固定修订与 sha256 的公开中文样音、`--transcribe-file --json`、再 `--list-models`，写 `summary.txt`。CI 的 `windows-native` job 在 Windows Server runner 上对便携 exe 和 NSIS 静默安装后的 exe 各跑一次；`smoke-desktop` job 在 Linux 上对 debug 二进制跑同一脚本。macOS 构建与同一脚本在 `.github/workflows/ci.yml` 的 `macos` job（GitHub 托管的 `macos-15` 与 `macos-15-intel`，Apple 芯片与 Intel 各一份，推送 `main` 或手动运行，跑 sense-voice-small 与 qwen3-asr-0.6b 两个模型）。
+- 桌面 crate 的 macOS 代码在 Linux 上无法编译，当时用一次性外部工程做过类型检查，不作为门禁；现在由 CI 的 `macos` job 在 Mac 上编译。
 - 原生 Windows（MSVC）构建：交叉构建证明不了 Windows 上的原生编译与单元测试。`scripts/windows-remote.sh`（`make windows-remote`，`docs/runbook.md`「Windows 真机（SSH）」）经 SSH 在真机上跑 `cargo test --workspace --all-targets`、`cargo clippy --workspace --all-targets -D warnings` 与上面的无头运行。2026-09-26 在 Windows Server 2025 中文版（代码页 936、VS 2022 17.14、Rust 1.98 MSVC）上首跑暴露前三个只有原生构建才会遇到的问题，再按 Git for Windows 的默认设置（`core.autocrlf=true`）重新检出又暴露第四个，真实模型用例（`gate real`）暴露第五个，均已修复并各有回归测试：
   1. sherpa-onnx 运行库暂存与下载竞态：Cargo 只对**直接**依赖且带 `links` 的包保证其构建脚本先跑，sherpa-onnx-sys 原本只是传递依赖；下载慢时（该主机访问 GitHub 约 25 KB/s）`build.rs` 先跑、`tauri_build` 报 `resources\windows\*.dll` 不存在。桌面壳现在直接依赖 sherpa-onnx-sys（同样 `shared`、`=1.13.8`）。
   2. 手机壳缺 `icons/icon.ico`：tauri-build 生成 Windows 资源文件必须有 `.ico`。
@@ -675,7 +675,7 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
 ### 15.7 未做与待接入
 
 - 签名 / 公证：还没做（`docs/roadmap.md`）。
-- macOS `.app`：2026-09-26 起在 GitHub 托管的 macos-15（Apple M1 虚拟机）上构建，包内二进制通过同一套无头运行（下载模型、识别公开样音；摘要是 `macos.yml` 的产物）；首次构建暴露透明胶囊窗口需要 Tauri 的 `macos-private-api`（`app.macOSPrivateApi`，已开启，不上 Mac App Store）。
+- macOS `.app`：2026-09-26 起在 GitHub 托管的 macos-15（Apple M1 虚拟机）上构建，包内二进制通过同一套无头运行（下载模型、识别公开样音；摘要是 CI `macos` job 的产物）；首次构建暴露透明胶囊窗口需要 Tauri 的 `macos-private-api`（`app.macOSPrivateApi`，已开启，不上 Mac App Store）。
 - macOS 键码按当前布局取：每次按键前从 HIToolbox 偏好（`AppleCurrentKeyboardLayoutInputSourceID`，NSUserDefaults，任何线程都安全）读出当前输入源 id，再查 `voltip_platform::macos` 的表（Dvorak → 47 / 34，其余 ANSI 9 / 8；`voltip_inject::mac_layout_id` / `mac_keycodes_for`）。逐键 `UCKeyTranslate` 反查仍未做：TIS 调用要在主线程，注入跑在后台线程；表外把 V / C 挪了位置的第三方布局（如 Workman）会按错键。macOS runner 上的单元测试读到了真实的布局 id。手测清单：`docs/acceptance/macos/manual-checklist.md`。
 - 真机交互验证：TCC 弹窗、注册表 / UIPI、托盘、Reopen、GUI 热键 / 麦克风 / 粘贴（CI runner 没有交互式桌面）。
 

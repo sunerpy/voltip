@@ -1,6 +1,6 @@
 # macOS 桌面手测清单
 
-CI 能构建、签名（ad-hoc）并检查 `.app` 与 `.dmg`，跑无头入口（`macos.yml` 的运行摘要）。下面这些要在一台登录了桌面的 Mac 上人工确认，每项记下「通过 / 不通过 + 现象」。Apple 芯片（M 系列）的 Mac 用 GitHub Release 里的 `Voltip_<版本>_aarch64.dmg`，Intel 芯片的 Mac 用 `Voltip_<版本>_x64.dmg`；也可以取 `macos.yml` 最近一次运行的 `voltip-macos-aarch64` / `voltip-macos-x64` 产物里的同名文件。一键安装脚本（README 的「Install」）会按芯片自动选。
+CI 能构建、签名（ad-hoc）并检查 `.app` 与 `.dmg`，跑无头入口（CI `macos` job 的运行摘要）。下面这些要在一台登录了桌面的 Mac 上人工确认，每项记下「通过 / 不通过 + 现象」。Apple 芯片（M 系列）的 Mac 用 GitHub Release 里的 `Voltip_<版本>_aarch64.dmg`，Intel 芯片的 Mac 用 `Voltip_<版本>_x64.dmg`；也可以取 CI `macos` job 最近一次运行的 `voltip-macos-aarch64` / `voltip-macos-x64` 产物里的同名文件。一键安装脚本（README 的「Install」）会按芯片自动选。
 
 ## 准备
 

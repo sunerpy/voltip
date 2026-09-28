@@ -79,4 +79,4 @@ make help                        # everything else
   decides the release-please bump; `feat!:` or a `BREAKING CHANGE:` footer marks a breaking change.
 - release-please owns the version (root `package.json`, read by `tauri.conf.json`; the Cargo crates
   stay at `0.0.0`), `CHANGELOG.md` and the tags. Do not bump versions by hand.
-- The required check is `CI Success`. `macos.yml` runs on every push to `main`.
+- The required check is `CI Success`. The `macos` jobs of `ci.yml` (Apple silicon and Intel) run on pushes to `main` and on demand, not on pull requests.

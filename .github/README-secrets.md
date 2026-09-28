@@ -5,7 +5,7 @@ repository **secret**, baked in at build time. Source, docs and configuration ho
 only; `.github/scripts/check-no-production-hosts.sh` guards the tree. This file lists names,
 meanings and where each value comes from, never a value.
 
-CI (`ci.yml`, `macos.yml`) needs almost none of them: its packages are built without the built-in
+CI (`ci.yml`) needs almost none of them: its packages are built without the built-in
 engines on purpose, so pull requests from forks run the same jobs as the default branch. The
 release workflow (`release.yml`) needs the engine secrets and, when the updater is on, the signing
 key.
