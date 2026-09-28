@@ -14,6 +14,8 @@ COVERAGE_MIN := 90
 # The Tauri shells (apps/*/src-tauri) are measured: their command layer runs on tauri's mock
 # runtime in apps/*/src-tauri/tests/ipc.rs; only the thin `run()` needs a real webview.
 COVERAGE_EXCLUDE := (src/main\.rs)
+# The features the gates build with (scripts/lib/rust-features.sh): every one but the GPU backends.
+RUST_FEATURES := $(shell . scripts/lib/rust-features.sh && printf '%s' "$$RUST_FEATURES")
 
 .PHONY: help
 help: ## List targets
@@ -48,9 +50,9 @@ frontend-dist-dirs:
 	@mkdir -p apps/desktop/dist apps/mobile/dist
 
 .PHONY: coverage-gate
-coverage-gate: frontend-dist-dirs ## Enforce the Rust filtered line-coverage floor (COVERAGE_MIN)
+coverage-gate: frontend-dist-dirs ## Run the Rust tests once, instrumented, and enforce the line-coverage floor (COVERAGE_MIN)
 	@command -v cargo-llvm-cov >/dev/null 2>&1 || { echo "cargo-llvm-cov not found — cargo install cargo-llvm-cov"; exit 2; }
-	@$(CARGO) llvm-cov --workspace --all-targets --summary-only \
+	@$(CARGO) llvm-cov --workspace --all-targets --features "$(RUST_FEATURES)" --summary-only \
 	    --ignore-filename-regex '$(COVERAGE_EXCLUDE)' \
 	  | tee -a /dev/stderr \
 	  | awk -v min='$(COVERAGE_MIN)' '\
