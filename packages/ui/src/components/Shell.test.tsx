@@ -1,6 +1,12 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Sidebar, SidebarEntry } from "./Sidebar";
+import {
+  SIDEBAR_GLYPH_SLOT_CLASS,
+  SIDEBAR_ROW_CLASS,
+  SIDEBAR_ROW_EXPANDED_CLASS,
+  Sidebar,
+  SidebarEntry,
+} from "./Sidebar";
 import { ThemeSwitch, nextThemeChoice } from "./ThemeSwitch";
 import { Toolbar } from "./Toolbar";
 
@@ -121,11 +127,45 @@ describe("ThemeSwitch", () => {
     await user.selectOptions(menu, "warm");
     expect(onChange).toHaveBeenLastCalledWith("warm");
     rerender(<ThemeSwitch value="graphite" onChange={onChange} collapsed />);
+    expect(screen.getByTestId("theme-switch")).toHaveClass("justify-center");
     expect(screen.queryByRole("combobox")).toBeNull();
     expect(screen.getByRole("button", { name: "切换到跟随系统" })).toHaveAttribute(
       "title",
       "切换到跟随系统",
     );
+  });
+});
+
+describe("the sidebar's rows line up", () => {
+  it("regression: the theme row has the box of the other entries, its glyph fills the glyph slot and its menu text starts where a label does, with one hover surface", () => {
+    render(
+      <div>
+        <SidebarEntry icon="chat" label="反馈" onClick={() => undefined} />
+        <ThemeSwitch value="light" onChange={() => undefined} />
+        <SidebarEntry icon="settings" label="设置" onClick={() => undefined} />
+      </div>,
+    );
+    const entry = screen.getByRole("button", { name: "设置" });
+    const row = screen.getByTestId("theme-switch");
+    // The same 36 px row box as every entry.
+    for (const cls of SIDEBAR_ROW_CLASS.split(" ")) {
+      expect(entry).toHaveClass(cls);
+      expect(row).toHaveClass(cls);
+    }
+    // An entry puts its glyph 0.5 rem in and its label 0.625 rem after the 16 px glyph; the theme
+    // row's glyph button is exactly that slot, and the menu text starts with no padding of its own.
+    for (const cls of SIDEBAR_ROW_EXPANDED_CLASS.split(" ")) expect(entry).toHaveClass(cls);
+    const step = screen.getByTestId("theme-switch-step");
+    for (const cls of SIDEBAR_GLYPH_SLOT_CLASS.split(" ")) expect(step).toHaveClass(cls);
+    // 0.5 rem + 0.625 rem (the row's inset and gap) + the 16 px glyph.
+    expect(SIDEBAR_GLYPH_SLOT_CLASS).toBe("w-[calc(1.125rem_+_16px)] pl-2");
+    const menu = screen.getByRole("combobox", { name: "主题" });
+    expect(menu).toHaveClass("pl-0");
+    // One hover surface for the whole row, like an entry; neither half paints its own.
+    expect(row).toHaveClass("hover:bg-nav-active");
+    expect(entry.className).toMatch(/hover:bg-nav-active/);
+    expect(step.className).not.toMatch(/hover:bg-/);
+    expect(menu.className).not.toMatch(/hover:bg-/);
   });
 });
 

@@ -149,3 +149,31 @@ describe("theme helpers", () => {
     expect(typeof systemPrefersReducedMotion()).toBe("boolean");
   });
 });
+
+describe("cursor", () => {
+  const base = tokens.slice(tokens.indexOf("@layer base"));
+  const rule = (cursor: string) =>
+    new RegExp(`:where\\(([^{}]*)\\)\\s*\\{\\s*cursor:\\s*${cursor};`, "s").exec(base)?.[1] ?? "";
+
+  it("regression: every control shows the hand cursor and a disabled one the not-allowed cursor, since Tailwind v4 leaves buttons on the arrow (user feedback 2026-09-28)", () => {
+    const pointer = rule("pointer");
+    for (const selector of [
+      "button",
+      "select",
+      "summary",
+      "a[href]",
+      "label[for]",
+      '[role="button"]',
+      '[role="tab"]',
+      '[role="option"]',
+      '[role="radio"]',
+      '[role="switch"]',
+      '[role="checkbox"]',
+      '[role="menuitem"]',
+    ])
+      expect(pointer).toContain(selector);
+    expect(base).toMatch(
+      /:where\(button, select, input, textarea\):disabled,\s*:where\(\[aria-disabled="true"\]\)\s*\{\s*cursor:\s*not-allowed;/,
+    );
+  });
+});

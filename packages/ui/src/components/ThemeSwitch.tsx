@@ -3,6 +3,7 @@ import { useId } from "react";
 import { cx } from "../cx";
 import { useT } from "../i18n/I18nProvider";
 import { Icon, type IconName } from "./Icon";
+import { SIDEBAR_GLYPH_SLOT_CLASS, SIDEBAR_ROW_CLASS } from "./Sidebar";
 
 /** A theme, or following the system's light / dark preference. */
 export type ThemeChoice = ThemeId | "system";
@@ -30,9 +31,12 @@ export interface ThemeSwitchProps {
   collapsed?: boolean;
 }
 
-/** The sidebar's theme entry: two controls in one row. The glyph steps to the next theme at a
- *  click (its name says which one comes next); the name next to it is a menu of all five. They
- *  stay two elements because one element with two gestures would open the menu at every step. */
+/** The sidebar's theme entry: two controls in one sidebar row. The glyph steps to the next theme
+ *  at a click (its name says which one comes next); the name next to it is a menu of all five.
+ *  They stay two elements because one element with two gestures would open the menu at every
+ *  step. The row has the box of every other entry (`SIDEBAR_ROW_CLASS`) and one hover surface;
+ *  the glyph button covers exactly the glyph slot, so the glyph and the name line up with 反馈 and
+ *  设置 (user feedback 2026-09-28). */
 export function ThemeSwitch({ value, onChange, collapsed = false }: ThemeSwitchProps) {
   const t = useT();
   const menuId = useId();
@@ -44,22 +48,27 @@ export function ThemeSwitch({ value, onChange, collapsed = false }: ThemeSwitchP
     <div
       data-testid="theme-switch"
       data-theme-choice={value}
-      className={cx("flex h-9 items-center rounded-6", collapsed ? "justify-center" : "gap-1")}>
+      className={cx(
+        SIDEBAR_ROW_CLASS,
+        "group text-fg-muted hover:bg-nav-active hover:text-fg",
+        collapsed && "justify-center",
+      )}>
       <button
         type="button"
         aria-label={stepLabel}
         title={stepLabel}
+        data-testid="theme-switch-step"
         onClick={() => {
           onChange(next);
         }}
         className={cx(
-          "flex h-9 shrink-0 items-center justify-center rounded-6 text-fg-subtle transition-colors hover:bg-nav-active hover:text-fg",
-          collapsed ? "w-full" : "w-9",
+          "flex h-9 shrink-0 items-center rounded-6 text-fg-subtle outline-none group-hover:text-fg focus-visible:bg-nav-active",
+          collapsed ? "w-full justify-center" : SIDEBAR_GLYPH_SLOT_CLASS,
         )}>
         <Icon name={GLYPH[value]} size={16} />
       </button>
       {!collapsed && (
-        <div className="relative min-w-0 flex-1">
+        <div className="relative flex h-9 min-w-0 flex-1 items-center">
           <label htmlFor={menuId} className="sr-only">
             {t("ui.themeSwitch.label")}
           </label>
@@ -70,7 +79,7 @@ export function ThemeSwitch({ value, onChange, collapsed = false }: ThemeSwitchP
               const choice = THEME_CHOICES.find((c) => c === e.target.value);
               if (choice !== undefined) onChange(choice);
             }}
-            className="h-9 w-full cursor-pointer appearance-none truncate rounded-6 bg-transparent pr-6 pl-1 text-[13px] text-fg-muted outline-none hover:bg-nav-active hover:text-fg focus-visible:bg-nav-active">
+            className="h-9 w-full appearance-none truncate rounded-6 bg-transparent pr-8 pl-0 text-[13px] text-inherit outline-none focus-visible:bg-nav-active">
             {THEME_CHOICES.map((c) => (
               <option key={c} value={c}>
                 {name(c)}
@@ -80,7 +89,7 @@ export function ThemeSwitch({ value, onChange, collapsed = false }: ThemeSwitchP
           <Icon
             name="chevronDown"
             size={14}
-            className="pointer-events-none absolute top-1/2 right-1.5 -translate-y-1/2 text-fg-subtle"
+            className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-fg-subtle"
           />
         </div>
       )}

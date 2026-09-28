@@ -323,6 +323,31 @@
     font: inherit;
     color: inherit;
   }
+  /* Tailwind v4's preflight leaves every control on the arrow cursor. Anything that reacts to a
+     click shows the hand, anything disabled says it will not (user feedback 2026-09-28: an arrow
+     that never changed over the menus read as a frozen app). Zero specificity: a component's own
+     cursor utility still wins. */
+  :where(
+    button,
+    select,
+    summary,
+    a[href],
+    label[for],
+    [role="button"],
+    [role="tab"],
+    [role="option"],
+    [role="radio"],
+    [role="switch"],
+    [role="checkbox"],
+    [role="menuitem"],
+    input:is([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"])
+  ) {
+    cursor: pointer;
+  }
+  :where(button, select, input, textarea):disabled,
+  :where([aria-disabled="true"]) {
+    cursor: not-allowed;
+  }
   :focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 1px;

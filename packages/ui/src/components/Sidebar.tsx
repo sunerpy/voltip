@@ -21,6 +21,18 @@ export interface SidebarGroup {
 export const SIDEBAR_WIDTH = 224;
 export const SIDEBAR_RAIL_WIDTH = 56;
 
+/** One 36 px sidebar row, shared by the nav items, the footer entries and the theme switch so
+ *  their glyphs and labels line up (user feedback 2026-09-28: the theme row's glyph sat 2 px and
+ *  its name 10 px right of the others, with two separate hover patches). */
+export const SIDEBAR_ROW_CLASS =
+  "flex h-9 w-full items-center rounded-6 text-[13px] transition-colors";
+/** An expanded row: the glyph 8 px from the edge, the label 10 px after the 16 px glyph. */
+export const SIDEBAR_ROW_EXPANDED_CLASS = "gap-2.5 px-2";
+/** A control that covers exactly the glyph's slot of an expanded row: the row's `px-2` inset
+ *  (0.5 rem), the 16 px glyph and the `gap-2.5` (0.625 rem), so whatever follows it starts where a
+ *  row's label does. Spacing is in rem (it follows 设置 › 外观 › 字号), the glyph in px. */
+export const SIDEBAR_GLYPH_SLOT_CLASS = "w-[calc(1.125rem_+_16px)] pl-2";
+
 export interface SidebarProps {
   groups: readonly SidebarGroup[];
   activeId: string;
@@ -85,8 +97,8 @@ export function SidebarEntry({
       onClick={onClick}
       data-testid={testId}
       className={cx(
-        "flex h-9 w-full items-center rounded-6 text-[13px] transition-colors",
-        collapsed ? "justify-center" : "gap-2.5 px-2",
+        SIDEBAR_ROW_CLASS,
+        collapsed ? "justify-center" : SIDEBAR_ROW_EXPANDED_CLASS,
         current
           ? "bg-nav-active font-medium text-fg"
           : "text-fg-muted hover:bg-nav-active hover:text-fg",

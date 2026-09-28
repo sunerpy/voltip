@@ -50,7 +50,7 @@ export function Select<V extends string>({
             if (next) onChange(next.value);
           }}
           className={cx(
-            "w-full appearance-none rounded-6 bg-surface pr-7 pl-2.5 hairline outline-none focus:border-fg",
+            "w-full appearance-none rounded-6 bg-surface pr-7 pl-2.5 hairline outline-none transition-colors hover:border-fg-subtle focus:border-fg disabled:opacity-50 disabled:hover:border-border",
             size === "sm" ? "h-7 text-[12px]" : "h-8 text-[13px]",
             mono && "mono",
           )}

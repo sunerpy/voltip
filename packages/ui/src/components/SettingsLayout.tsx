@@ -172,7 +172,7 @@ export function DisclosureCard({
           onClick={() => {
             onToggle(!open);
           }}
-          className="flex min-w-0 flex-1 items-center gap-3 rounded-10 p-4 text-left outline-none focus-visible:bg-nav-active">
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-10 p-4 text-left outline-none transition-colors hover:bg-fg/5 focus-visible:bg-nav-active">
           {icon !== undefined && (
             <span
               className={cx(

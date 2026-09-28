@@ -45,7 +45,11 @@ export function Toggle({
         className={cx(
           "relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-pill border transition-colors",
           checked ? "border-primary bg-primary" : "border-border-strong bg-surface",
-          disabled ? "cursor-not-allowed" : "cursor-pointer",
+          disabled
+            ? "cursor-not-allowed"
+            : checked
+              ? "cursor-pointer hover:opacity-90"
+              : "cursor-pointer hover:border-fg-subtle",
         )}>
         <span
           className={cx(

@@ -375,7 +375,7 @@ export function History({ initialFilter }: HistoryProps) {
                             className={
                               e.starred
                                 ? "text-fg"
-                                : "text-fg-subtle opacity-0 group-hover:opacity-100"
+                                : "text-fg-subtle opacity-0 group-hover:opacity-100 hover:text-fg"
                             }>
                             ★
                           </span>
