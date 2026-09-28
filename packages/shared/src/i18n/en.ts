@@ -1248,7 +1248,8 @@ export const en: Messages = {
         microphone: { name: "Microphone", purpose: "To hear you speak" },
         accessibility: {
           name: "Accessibility",
-          purpose: "Required · finds the focused field and delivers text; works as soon as it is on",
+          purpose:
+            "Required · finds the focused field and delivers text; works as soon as it is on",
         },
       },
       micDenied:

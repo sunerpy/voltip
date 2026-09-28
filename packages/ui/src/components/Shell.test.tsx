@@ -100,7 +100,11 @@ describe("Sidebar", () => {
     // The lamp is a status, not a control.
     expect(brand.querySelector("button")).toBeNull();
     rerender(<Sidebar {...props} trafficLights />);
-    expect(screen.getByTestId("sidebar-brand")).toHaveClass("h-10", TRAFFIC_LIGHTS_BRAND_INSET, "pr-2");
+    expect(screen.getByTestId("sidebar-brand")).toHaveClass(
+      "h-10",
+      TRAFFIC_LIGHTS_BRAND_INSET,
+      "pr-2",
+    );
     expect(screen.getByTestId("sidebar-brand")).not.toHaveClass("px-2");
     // Floating (the hover preview of a hidden sidebar): a shadow, no border.
     rerender(<Sidebar {...props} floating />);
@@ -137,7 +141,9 @@ describe("Sidebar on macOS", () => {
     expect(SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS).toBe(76);
     expect(screen.getByTestId("sidebar-brand")).toHaveClass("invisible");
     rerender(<Sidebar {...props} collapsed />);
-    expect(screen.getByRole("navigation", { name: "主导航" }).style.width).toBe(`${SIDEBAR_RAIL_WIDTH}px`);
+    expect(screen.getByRole("navigation", { name: "主导航" }).style.width).toBe(
+      `${SIDEBAR_RAIL_WIDTH}px`,
+    );
   });
 });
 

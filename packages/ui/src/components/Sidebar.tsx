@@ -173,7 +173,11 @@ export function Sidebar({
         data-testid="sidebar-brand"
         className={cx(
           "flex h-10 shrink-0 items-center gap-2.5 select-none",
-          collapsed ? "justify-center" : trafficLights ? cx(TRAFFIC_LIGHTS_BRAND_INSET, "pr-2") : "px-2",
+          collapsed
+            ? "justify-center"
+            : trafficLights
+              ? cx(TRAFFIC_LIGHTS_BRAND_INSET, "pr-2")
+              : "px-2",
           collapsed && trafficLights && "invisible",
         )}>
         {!trafficLights && <Logo size={24} className="shrink-0" />}
