@@ -127,9 +127,14 @@ jobs:
         run: make verify
 
       # The same guard `make verify` runs, with the word list it cannot see there. Pull requests
-      # from forks get no secrets and skip it; everything else must have the list configured.
+      # from forks and from Dependabot get no repository secrets and skip it (a Dependabot update
+      # only touches manifests and lockfiles; `main` runs the guard again once it is merged);
+      # everything else must have the list configured.
       - name: No production hosts anywhere in the tree
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: >-
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository &&
+          github.event.pull_request.user.login != 'dependabot[bot]')
         env:
           VOLTIP_PRODUCTION_HOSTS: ${{ secrets.VOLTIP_PRODUCTION_HOSTS }}
         run: .github/scripts/check-no-production-hosts.sh --require
