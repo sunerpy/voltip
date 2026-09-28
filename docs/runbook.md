@@ -83,8 +83,16 @@ Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前�
 - `macos.yml`：每次推送 `main` 在 `macos-15` 上构建未签名的 `.app`，跑 macOS 单元测试和无头识别。
 - `release.yml`：release-please 在 `main` 上维护 Release PR（`release-please-config.json`，版本从 `0.0.1` 起）；合并后同一轮 run 内 `preflight`（版本模型、更新器配置、签名密钥、主机名守卫）与 `preflight-engines`（内置引擎 secrets 非空）→ `bundle-windows`（Linux 上交叉构建 NSIS 与便携 exe）+ `bundle-linux`（Ubuntu 22.04 上出 deb 与 AppImage）→ `updater`（校验每个 `.sig`，写 `latest.json`，生成 `SHA256SUMS`，做构建来源证明，上传到草稿 Release）→ `publish-release`（远端资产全部校验通过后把草稿转为正式）。没有 `push: tags` / `release:` 触发；`workflow_dispatch` 只接受已存在的草稿 tag。
 - 更新器是可选的：设置了 `VOLTIP_UPDATE_PUBKEY` 才打开。应用的更新地址是本仓库的 `releases/latest/download/latest.json`，`latest.json` 里的下载地址固定到该次 Release 的资产。预发布不会被标成 latest，所以只有正式版才会推给已安装的用户。
-- 版本模型：release-please（`node` 策略）只改根 `package.json` 与两份应用 `package.json`；两份 `tauri.conf.json` 写 `"version": "../../../package.json"` 指向根文件，安装包、更新器、`voltip --version` 与中继握手里的 `client_version` 读的都是它；Cargo 版本固定为 `0.0.0`，发版提交不改 `Cargo.toml` / `Cargo.lock`。`preflight` 的 `check-config --package-json package.json` 校验这条链。第一个正式版可以用 commit footer `Release-As: 0.1.0` 指定。
-- 仓库设置：默认分支要有分支保护或 ruleset（release gate 只在受保护的默认分支上运行）；打开「Allow GitHub Actions to create and approve pull requests」让 release-please 能开 PR。`GITHUB_TOKEN` 开的 PR 不会自动触发 CI，合并后 `main` 的 push 会跑完整 CI 与 Release。
+- 版本模型：release-please（`node` 策略）只改根 `package.json` 与两份应用 `package.json`；两份 `tauri.conf.json` 写 `"version": "../../../package.json"` 指向根文件，安装包、更新器、`voltip --version` 与中继握手里的 `client_version` 读的都是它；Cargo 版本固定为 `0.0.0`，发版提交不改 `Cargo.toml` / `Cargo.lock`。`preflight` 的 `check-config --package-json package.json` 校验这条链。1.0 之前 `feat` 和 `fix` 都只加补丁号（`0.0.1` → `0.0.2`，`bump-patch-for-minor-pre-major`），破坏性变更（`feat!` / `BREAKING CHANGE`）才加次版本号（`bump-minor-pre-major`）；要跳到别的版本，在提交的 footer 写 `Release-As: <版本>`。
+- 仓库设置：默认分支要有分支保护或 ruleset（release gate 只在受保护的默认分支上运行）；打开「Allow GitHub Actions to create and approve pull requests」让 release-please 能开 PR。release-please 用 `GITHUB_TOKEN` 开的 PR 由 `github-actions[bot]` 提交，GitHub 把它的 CI 停在 `action_required`，要有写权限的人批准才会跑：
+
+  ```bash
+  gh run list -R <owner>/voltip --workflow CI --branch release-please--branches--main--components--voltip-workspace \
+    --json databaseId,conclusion --jq '.[] | select(.conclusion == "action_required") | .databaseId' |
+    xargs -r -I{} gh api -X POST repos/<owner>/voltip/actions/runs/{}/approve
+  ```
+
+  批准后等 `CI Success` 变绿再合并；合并后 `main` 的 push 会跑完整 CI 与 Release。
 - 还没进工作流的：Android 包（`make android-apk` 在本机出 debug APK）、macOS 发布包（未签名 / 未公证，见 `docs/roadmap.md`）。
 
 ## 局域网直连
@@ -139,4 +147,5 @@ make windows-remote                       # 以上四步依次执行
 - 桌面端日志：`RUST_LOG=voltip=debug`；日志绝不打印私钥、token、明文（`SecretKey`/`PairCode` 的 `Debug` 已脱敏）。
 - 「身份已变化」横幅：对端换了设备身份（重装或攻击）。先在两端「忘记设备」，再重新配对并核对 Safety Code。
 - 配对总是过期：核对两端时钟（票据 `expires_at` 用 Unix 秒）。
+- CI / Release 的 Windows 包报 ``resource path `resources/windows/onnxruntime_providers_shared.dll` doesn't exist``、Linux 包缺 `libsherpa-onnx-c-api.so`：rust-cache 恢复 `target/` 时保留了 sherpa-onnx-sys 的指纹，却删掉了它的构建脚本下载的运行时（`target/sherpa-onnx-prebuilt/`）和拷到二进制旁边的副本，cargo 认为构建脚本不用再跑。每个 rust-cache 步骤后的 `.github/scripts/forget-sherpa-onnx-build.sh` 删掉它的指纹与下载目录，让它重新下载（约 10 MB）。
 - 设备列表显示 `Relay` 而不是 `直连`：两台设备不在同一网段，或 LAN 主机端口被防火墙拦住；`直连` 需要至少一方能连到另一方的 `direct_hints`。
