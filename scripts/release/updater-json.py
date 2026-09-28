@@ -3,7 +3,7 @@
 collection, and the single-writer ``latest.json``.
 
 Why this exists next to ``.github/scripts/tauri-release.py`` (the scaffold skill's asset): the
-release has no runner matrix (Windows is cross-built from Linux, macOS is not released yet), the
+release has no runner matrix (Windows is cross-built from Linux, macOS has a leg of its own), the
 updater is optional (on only when the pubkey secret is set) and ``tauri.conf.json`` carries no
 updater block, which that script's ``check-config`` expects. The release passes
 ``--base-url https://github.com/<repo>/releases/download``, so every URL in ``latest.json`` is an
@@ -42,16 +42,29 @@ SEMVER = re.compile(
 SAFE_ATOM = re.compile(r"^[A-Za-z0-9_.+-]+$")
 SAFE_ASSET_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 
-# Bundle kind -> directory under <bundle-dir> -> file suffixes (tauri-bundler layout).
-KIND_DIRS = {"deb": "deb", "rpm": "rpm", "appimage": "appimage", "nsis": "nsis", "msi": "msi"}
+# Bundle kind -> directory under <bundle-dir> -> file suffixes (tauri-bundler layout). `app` is
+# the macOS updater archive (`macos/Voltip.app.tar.gz`), not the .app directory beside it.
+KIND_DIRS = {
+    "deb": "deb",
+    "rpm": "rpm",
+    "appimage": "appimage",
+    "nsis": "nsis",
+    "msi": "msi",
+    "dmg": "dmg",
+    "app": "macos",
+}
 KIND_SUFFIXES = {
     "deb": (".deb",),
     "rpm": (".rpm",),
     "appimage": (".AppImage",),
     "nsis": ("-setup.exe",),
     "msi": (".msi",),
+    "dmg": (".dmg",),
+    "app": (".app.tar.gz",),
 }
-UPDATER_BUNDLES = {"appimage", "nsis", "msi"}
+UPDATER_BUNDLES = {"appimage", "nsis", "msi", "app"}
+# Written only with bundle.createUpdaterArtifacts, so absent (and not shipped) without the updater.
+UPDATER_ONLY = {"app"}
 ARCHES = {"x86_64", "aarch64", "i686", "armv7"}
 
 
@@ -315,6 +328,19 @@ def parse_extra(value: str) -> tuple[str, Path]:
     return safe_asset_name(name), Path(path)
 
 
+def parse_renames(values: list[str]) -> dict[str, str]:
+    """`--rename BUNDLE=ASSET`: ship the bundle file BUNDLE as ASSET (its .sig as ASSET.sig)."""
+    renames: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise Failure(f"--rename expects BUNDLE=ASSET, got {value!r}")
+        source, _, target = value.partition("=")
+        if not source or source in renames:
+            raise Failure(f"--rename {value!r}: empty or repeated bundle name")
+        renames[source] = safe_asset_name(target)
+    return renames
+
+
 def cmd_collect(args: argparse.Namespace) -> None:
     if not SAFE_ATOM.fullmatch(args.target):
         raise Failure(f"--target contains unsafe characters: {args.target!r}")
@@ -330,6 +356,9 @@ def cmd_collect(args: argparse.Namespace) -> None:
             f"--updater-bundle must be one of {sorted(UPDATER_BUNDLES)} and listed in --bundles"
         )
     enabled = args.updater == "true"
+    renames = parse_renames(args.rename)
+    renamed: set[str] = set()
+    skipped: list[str] = []
     root = args.bundle_dir
     if not root.is_dir():
         raise Failure(f"bundle directory not found: {root}")
@@ -359,11 +388,16 @@ def cmd_collect(args: argparse.Namespace) -> None:
 
     for kind in kinds:
         found = find_bundle_files(root, kind)
+        if not found and kind in UPDATER_ONLY and not enabled:
+            skipped.append(kind)
+            continue
         if not found:
             raise Failure(f"{args.target}: no {kind} bundle under {root / KIND_DIRS[kind]}")
         signed: list[dict] = []
         for source in found:
-            name = safe_asset_name(source.name)
+            if source.name in renames:
+                renamed.add(source.name)
+            name = renames.get(source.name) or safe_asset_name(source.name)
             copied = place(source, name)
             entry = record(copied, kind, signature=False)
             signature = source.with_name(source.name + ".sig")
@@ -387,6 +421,16 @@ def cmd_collect(args: argparse.Namespace) -> None:
                 "name": signed[0]["name"],
                 "signature": f"{signed[0]['name']}.sig",
             }
+
+    # A rename of a bundle kind that is only written with the updater may go unused without it.
+    unused = {
+        name
+        for name in renames
+        if any(name.endswith(suffix) for kind in skipped for suffix in KIND_SUFFIXES[kind])
+    }
+    unmatched = sorted(set(renames) - renamed - unused)
+    if unmatched:
+        raise Failure(f"--rename {unmatched[0]} matched no bundle of {args.target}")
 
     for value in args.extra:
         name, source = parse_extra(value)
@@ -530,6 +574,12 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--evidence", required=True, type=Path)
     collect.add_argument(
         "--extra", action="append", default=[], help="NAME=PATH of a non-bundle file to ship"
+    )
+    collect.add_argument(
+        "--rename",
+        action="append",
+        default=[],
+        help="BUNDLE=ASSET: ship the bundle file BUNDLE (and its .sig) under the name ASSET",
     )
     collect.set_defaults(func=cmd_collect)
 

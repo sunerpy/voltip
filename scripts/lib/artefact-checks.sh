@@ -1,5 +1,6 @@
 # shellcheck shell=bash
-# Checks on a built binary, shared by scripts/build-{linux,windows}-x64.sh and release.yml.
+# Checks on a built binary, shared by scripts/build-{linux,windows}-x64.sh and release.yml (the
+# macOS leg too: `strings -a` makes Apple's strings read the whole Mach-O, not just __TEXT).
 #
 # `grep` reads the whole stream here on purpose: under `set -o pipefail`, `grep -q` stops at the
 # first match, the producer (`strings`, `readelf`) dies of SIGPIPE, and the pipeline counts as
@@ -14,7 +15,7 @@ voltip_scan_provider_keys() {
     echo "$2: $1 is missing or unreadable — nothing to scan" >&2
     return 1
   }
-  if strings -n 20 "$1" | grep -E "gsk_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}" >/dev/null; then
+  if strings -a -n 20 "$1" | grep -E "gsk_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}" >/dev/null; then
     echo "$2: provider API key found inside $1 — refusing to ship" >&2
     return 1
   fi

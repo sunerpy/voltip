@@ -51,8 +51,12 @@ fn macos_bundle_carries_the_dylibs_entitlements_minimum_version_and_microphone_s
     let config = merged(Target::MacOS);
     let mac = &config.bundle.macos;
     assert_eq!(mac.minimum_system_version.as_deref(), Some("11.0"), "the sherpa-onnx dylibs are built for minos 11.0");
-    assert!(mac.hardened_runtime);
-    assert_eq!(mac.signing_identity, None, "Developer ID signing is not set up yet (docs/roadmap.md); a CI secret would set it");
+    // No Developer ID yet (docs/roadmap.md): the bundle is signed ad hoc (`-`), which Apple
+    // silicon requires of anything downloaded and which gives Gatekeeper a sealed bundle to offer
+    // "Open Anyway" for instead of calling it damaged. The hardened runtime stays off with it: it
+    // buys nothing without notarization, and its library validation refuses ad-hoc dylibs.
+    assert_eq!(mac.signing_identity.as_deref(), Some("-"));
+    assert!(!mac.hardened_runtime);
     // Exactly the two dylibs build.rs stages (MACOS_RUNTIME_DYLIBS), from the staging directory.
     let frameworks = mac.frameworks.clone().unwrap_or_default();
     assert_eq!(frameworks, ["./resources/macos/libsherpa-onnx-c-api.dylib", "./resources/macos/libonnxruntime.dylib"]);
@@ -60,7 +64,8 @@ fn macos_bundle_carries_the_dylibs_entitlements_minimum_version_and_microphone_s
     assert!(build_rs.contains(r#"const MACOS_RUNTIME_DYLIBS: [&str; 2] = ["libsherpa-onnx-c-api.dylib", "libonnxruntime.dylib"];"#));
     assert!(build_rs.contains(r#""macos" => stage_runtime_libs("macos", &MACOS_RUNTIME_DYLIBS)"#));
 
-    // Hardened runtime needs the audio-input entitlement to open the microphone. Nothing JITs in
+    // A hardened runtime (with a Developer ID) needs the audio-input entitlement to open the
+    // microphone; it is kept for that day and is harmless without one. Nothing JITs in
     // this process (ggml / ONNX Runtime CPU kernels are precompiled, WebKit JITs in its own
     // WebContent process) and the bundler signs the dylibs with the app's identity, so none of the
     // weakening exceptions is present, and the app is not sandboxed.
@@ -140,6 +145,24 @@ fn regression_a_plain_windows_build_needs_no_vulkan_file_the_package_overlay_add
     assert!(script.contains("--config src-tauri/tauri.package-windows.conf.json"), "the package script merges the overlay");
     let release = read(&tauri_dir().join("../../../.github/workflows/release.yml"));
     assert!(release.contains("--config src-tauri/tauri.package-windows.conf.json"), "the release re-bundle merges it too");
+}
+
+/// The macOS release leg (2026-09-28) merges tauri.package-macos.conf.json the same way, so the
+/// .app carries the third-party licence texts while a plain `cargo tauri build` needs no notices
+/// file.
+#[test]
+fn the_macos_release_bundle_carries_the_notices_through_its_package_overlay() {
+    let plain = serde_json::to_value(&merged(Target::MacOS).bundle.resources).unwrap();
+    assert!(plain.get("resources/THIRD-PARTY-NOTICES.txt").is_none(), "{plain}");
+    let (mut value, _) = tauri_utils::config::parse::read_from(Target::MacOS, &tauri_dir()).unwrap();
+    let overlay: serde_json::Value = serde_json::from_str(&read(&tauri_dir().join("tauri.package-macos.conf.json"))).unwrap();
+    json_patch::merge(&mut value, &overlay);
+    let packaged: Config = serde_json::from_value(value).unwrap();
+    let resources = serde_json::to_value(&packaged.bundle.resources).unwrap();
+    assert_eq!(resources["resources/THIRD-PARTY-NOTICES.txt"], "THIRD-PARTY-NOTICES.txt", "{resources}");
+    assert_eq!(packaged.bundle.macos.signing_identity.as_deref(), Some("-"), "the overlay keeps the ad-hoc signature");
+    let release = read(&tauri_dir().join("../../../.github/workflows/release.yml"));
+    assert!(release.contains("--config src-tauri/tauri.package-macos.conf.json"), "the release macOS leg merges it");
 }
 
 #[test]

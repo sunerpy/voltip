@@ -1,7 +1,9 @@
 # macOS (Apple silicon) build and headless native run on GitHub's macos-15 runner.
 #
-# What it produces: an unsigned `Voltip.app` (no Developer ID yet, see docs/roadmap.md) and the
-# same headless run the Windows and Linux jobs do (scripts/smoke-native-cli.ps1: --version,
+# What it produces: `Voltip.app` and the `.dmg`, signed ad hoc as the release signs them (no
+# Developer ID yet, see docs/roadmap.md) and checked the same way (.github/scripts/
+# check-macos-bundle.sh), so a signing or dmg problem shows up here before a release; and the same
+# headless run the Windows and Linux jobs do (scripts/smoke-native-cli.ps1: --version,
 # --list-models, --download-model, --transcribe-file on a public Chinese sample), which proves the
 # bundle's dylibs load (bundle.macOS.frameworks) and the ggml / sherpa-onnx engines run natively.
 # The macOS-only unit tests of voltip-platform and voltip-inject run here too.
@@ -32,7 +34,6 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   NODE_MAJOR: "22"
-  TAURI_CLI_VERSION: 2.11.5
 
 jobs:
   macos:
@@ -80,8 +81,8 @@ jobs:
       - name: CMake (transcribe.cpp / ggml source build)
         run: command -v cmake || brew install cmake
 
-      - name: Tauri CLI (pinned)
-        run: cargo install tauri-cli --version "=${TAURI_CLI_VERSION}" --locked
+      - name: Tauri CLI (`cargo tauri`, pinned zip + SHA-256)
+        run: .github/scripts/install-cargo-tauri.sh
 
       - name: pnpm (packageManager in package.json)
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -121,16 +122,24 @@ jobs:
           sudo sqlite3 "$db" "SELECT service, client, auth_value FROM access WHERE client = '$bin';"
           "$bin" --ignored --test-threads=1 --nocapture
 
-      - name: Build Voltip.app (unsigned)
+      # A restored target/ may hold the dmg of an earlier version.
+      - name: Build Voltip.app and the dmg (signed ad hoc)
         run: |
           set -euo pipefail
-          (cd apps/desktop && cargo tauri build --ci --target aarch64-apple-darwin --bundles app)
-          apps=(target/aarch64-apple-darwin/release/bundle/macos/*.app)
-          app=${apps[0]}
+          rm -rf target/aarch64-apple-darwin/release/bundle
+          (cd apps/desktop && cargo tauri build --ci --target aarch64-apple-darwin --bundles app,dmg)
+          app=target/aarch64-apple-darwin/release/bundle/macos/Voltip.app
           [ -d "$app" ] || { echo "::error::no .app bundle was produced"; exit 1; }
           echo "APP=$app" >>"$GITHUB_ENV"
           ls -la "$app/Contents/MacOS" "$app/Contents/Frameworks" || true
           otool -L "$app/Contents/MacOS/voltip-desktop"
+
+      - name: Check the app and the dmg (as release.yml does)
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
+          .github/scripts/check-macos-bundle.sh target/aarch64-apple-darwin/release/bundle "$version"
+          cp target/aarch64-apple-darwin/release/bundle/dmg/*.dmg .
 
       - name: Headless native run (download a model, transcribe a public sample)
         shell: pwsh
@@ -148,6 +157,7 @@ jobs:
           name: voltip-macos-arm64
           path: |
             dist-macos.zip
+            Voltip_*_aarch64.dmg
             smoke-native-macos/*.txt
             smoke-native-macos/*.out
           if-no-files-found: warn

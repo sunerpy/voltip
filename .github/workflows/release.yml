@@ -1,7 +1,8 @@
 # Same-run release for the Voltip desktop app (Tauri v2) on GitHub-hosted runners.
 #
 # Topology (skill github-project-scaffold, references/tauri-release.md):
-#   release-please -> preflight -> bundle-windows + bundle-linux -> updater -> publish-release
+#   release-please -> preflight -> bundle-windows + bundle-linux + bundle-macos -> updater
+#   -> publish-release
 # release-please owns the version, the tag and a DRAFT Release; every job below runs in the same
 # workflow run gated on release_created; the terminal job verifies every remote asset and flips
 # the draft. Nothing listens on `push: tags` or `release:` because events created with
@@ -10,11 +11,12 @@
 # Deviations from the skill template, all forced by this repository:
 # - Windows is cross-built from Linux with cargo-xwin through the repository's own
 #   `make windows-x64` (which also runs the artefact secret scan). The Linux leg runs on
-#   ubuntu-22.04: its glibc and webkit2gtk-4.1 are the oldest the packages support. macOS is not
-#   released yet (unsigned, see docs/roadmap.md); macos.yml builds and runs it on every push.
-#   `.github/release-targets.json` lists the two legs for the scaffold contract; the jobs are
-#   written out rather than generated from it, because a Windows leg built on Linux is outside
-#   what `tauri-release.py matrix` models.
+#   ubuntu-22.04: its glibc and webkit2gtk-4.1 are the oldest the packages support. The macOS leg
+#   builds Apple silicon natively on macos-15 and ships a .dmg plus, with the updater, the
+#   .app.tar.gz the updater downloads; the bundle is signed ad hoc (no Developer ID, no
+#   notarization, docs/roadmap.md). `.github/release-targets.json` lists the three legs for the
+#   scaffold contract; the jobs are written out rather than generated from it, because a Windows
+#   leg built on Linux is outside what `tauri-release.py matrix` models.
 # - The built-in engine defaults are repository SECRETS baked in at compile time
 #   (.github/README-secrets.md); a release package must carry them (`preflight-engines`). Job-level
 #   `if:` cannot read secrets, so their presence is checked in `preflight` through `env:`.
@@ -52,6 +54,7 @@ env:
   TAURI_PROJECT_PATH: apps/desktop/src-tauri
   WINDOWS_TARGET: x86_64-pc-windows-msvc
   LINUX_TARGET: x86_64-unknown-linux-gnu
+  MACOS_TARGET: aarch64-apple-darwin
   CARGO_XWIN_VERSION: 0.20.2
   CARGO_ABOUT_VERSION: 0.9.2
   NODE_MAJOR: "22"
@@ -594,12 +597,184 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # macOS Apple silicon, built natively: Voltip_<version>_aarch64.dmg to install from and, with the
+  # updater, Voltip_<version>_aarch64.app.tar.gz (+ .sig) for the updater (Tauri writes it as
+  # Voltip.app.tar.gz; `collect --rename` gives it the release name). tauri.macos.conf.json signs
+  # the bundle ad hoc; the checks below prove the seal, the macOS 11 floor and the dmg's contents.
+  bundle-macos:
+    name: Bundle aarch64-apple-darwin
+    needs: [release-please, preflight, preflight-engines]
+    if: needs.release-please.outputs.build_artifacts == 'true'
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      VOLTIP_RELAY_URL: ${{ secrets.VOLTIP_RELAY_URL }}
+      VOLTIP_ASR_URL: ${{ secrets.VOLTIP_ASR_URL }}
+      VOLTIP_ASR_MODEL: ${{ secrets.VOLTIP_ASR_MODEL }}
+      VOLTIP_ASR_TOKEN: ${{ secrets.VOLTIP_ASR_TOKEN }}
+      VOLTIP_REFINE_URL: ${{ secrets.VOLTIP_REFINE_URL }}
+      VOLTIP_REFINE_MODEL: ${{ secrets.VOLTIP_REFINE_MODEL }}
+      VOLTIP_REFINE_API_KEY: ${{ secrets.VOLTIP_REFINE_API_KEY }}
+      # The updater endpoint follows the repository; empty (no updater) without the pubkey.
+      VOLTIP_UPDATE_URL: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' && format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) || '' }}
+      VOLTIP_UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
+      VOLTIP_MODEL_BASE_URL: ${{ secrets.VOLTIP_MODEL_BASE_URL }}
+      # The 反馈 page's endpoint and its app token (docs/feedback.md).
+      VOLTIP_FEEDBACK_URL: ${{ secrets.VOLTIP_FEEDBACK_URL }}
+      VOLTIP_FEEDBACK_TOKEN: ${{ secrets.VOLTIP_FEEDBACK_TOKEN }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+
+      - name: Verify the tag resolves to the released commit
+        env:
+          RELEASE_SHA: ${{ needs.release-please.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          if [ "$head" != "$RELEASE_SHA" ]; then
+            echo "::error::checked-out tag commit $head != release commit $RELEASE_SHA"
+            exit 1
+          fi
+
+      - name: Rust toolchain (rust-toolchain.toml) + aarch64-apple-darwin
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install 2>/dev/null || true
+          rustup target add "$MACOS_TARGET"
+          rustc --version && cargo --version
+
+      - name: Tauri CLI (`cargo tauri`, pinned zip + SHA-256)
+        run: .github/scripts/install-cargo-tauri.sh
+
+      - name: cargo-about (prebuilt, pinned)
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        with:
+          tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
+
+      - name: Cache Cargo registry and target/
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: release-macos-arm64
+          cache-on-failure: true
+
+      # rust-cache prunes the runtime sherpa-onnx-sys's build script downloaded and copied, but
+      # keeps its fingerprint: make cargo run it again (the script says why).
+      - name: Re-run sherpa-onnx-sys's build script
+        run: .github/scripts/forget-sherpa-onnx-build.sh
+
+      - name: CMake (transcribe.cpp / ggml source build)
+        run: command -v cmake || brew install cmake
+
+      - name: pnpm (packageManager in package.json)
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: package.json
+
+      - name: Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_MAJOR }}
+          cache: pnpm
+
+      - name: Install web dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # A restored target/ may hold bundles of earlier versions; `collect` takes every bundle in the
+      # directory, so it starts empty.
+      - name: Clear old bundles
+        run: rm -rf "target/$MACOS_TARGET/release/bundle"
+
+      # The .app carries the licence texts (Contents/Resources/THIRD-PARTY-NOTICES.txt) through
+      # tauri.package-macos.conf.json.
+      - name: Third-party notices
+        run: python3 scripts/release/third-party-notices.py --out apps/desktop/src-tauri/resources/THIRD-PARTY-NOTICES.txt
+
+      # Phase 1: frontend (build.beforeBuildCommand) and Rust compile (Metal is the macOS GPU
+      # backend), no signing material.
+      - name: Build (no bundle, no secrets)
+        working-directory: apps/desktop
+        run: cargo tauri build --ci --target "$MACOS_TARGET" --no-bundle --config src-tauri/tauri.package-macos.conf.json
+
+      # Same rule as the other legs: the client may carry the revocable app token, never a
+      # provider key.
+      - name: Artefact secret scan (no provider API key inside the binary)
+        run: |
+          set -euo pipefail
+          . scripts/lib/artefact-checks.sh
+          voltip_scan_provider_keys "target/$MACOS_TARGET/release/voltip-desktop" release || { echo "::error::provider API key found inside voltip-desktop — refusing to ship"; exit 1; }
+
+      # Phase 2: the .app (signed ad hoc), the .dmg and, with the updater, the signed updater
+      # archive; the only step holding the signing key.
+      - name: Bundle and sign (app, dmg)
+        working-directory: apps/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
+          UPDATER_ENABLED: ${{ needs.preflight.outputs.updater_enabled }}
+        run: |
+          set -euo pipefail
+          for name in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then unset "$name"; fi
+          done
+          if [ "$UPDATER_ENABLED" = true ]; then
+            if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+              echo "::error::updater enabled but TAURI_SIGNING_PRIVATE_KEY is empty"; exit 1
+            fi
+            jq -n --arg pubkey "$UPDATE_PUBKEY" \
+              '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pubkey}}}' \
+              >"$RUNNER_TEMP/updater-bundle.json"
+            cargo tauri bundle --ci --target "$MACOS_TARGET" --bundles app,dmg --config src-tauri/tauri.package-macos.conf.json --config "$RUNNER_TEMP/updater-bundle.json"
+            test -s "../../target/$MACOS_TARGET/release/bundle/macos/Voltip.app.tar.gz.sig"
+          else
+            cargo tauri bundle --ci --target "$MACOS_TARGET" --bundles app,dmg --config src-tauri/tauri.package-macos.conf.json
+          fi
+
+      # What a Mac that downloads the dmg meets: the ad-hoc seal, the macOS 11 floor, the notices,
+      # this release's version, and a dmg that mounts with the app and the Applications link.
+      - name: Check the app and the dmg
+        env:
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: .github/scripts/check-macos-bundle.sh "target/$MACOS_TARGET/release/bundle" "$VERSION" --notices
+
+      - name: Collect bundles and evidence
+        env:
+          UPDATER_ENABLED: ${{ needs.preflight.outputs.updater_enabled }}
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: >-
+          python3 scripts/release/updater-json.py collect
+          --target "$MACOS_TARGET"
+          --bundle-dir "target/$MACOS_TARGET/release/bundle"
+          --bundles dmg,app
+          --updater-bundle app
+          --updater "$UPDATER_ENABLED"
+          --rename "Voltip.app.tar.gz=Voltip_${VERSION}_aarch64.app.tar.gz"
+          --out release-assets/dist
+          --evidence "release-assets/evidence/$MACOS_TARGET.json"
+
+      - name: Upload bundles
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tauri-${{ env.MACOS_TARGET }}
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 1
+
   # No project or dependency code runs here: verify every .sig against the pubkey the shipped
   # app trusts, write latest.json once, attest and attach everything to the draft, then verify
   # the remote bytes.
   updater:
     name: Updater manifest, attestation, assets
-    needs: [release-please, preflight, bundle-windows, bundle-linux]
+    needs: [release-please, preflight, bundle-windows, bundle-linux, bundle-macos]
     if: needs.release-please.outputs.build_artifacts == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -648,8 +823,8 @@ jobs:
         run: gh release view "$TAG" --repo "$REPO" --json body --jq .body >body.md
 
       # Single writer, after every leg: URLs are this release's own assets
-      # (github.com/<repo>/releases/download/<tag>/<asset>, never a rolling path), both platforms
-      # required, bytes cross-checked with the evidence.
+      # (github.com/<repo>/releases/download/<tag>/<asset>, never a rolling path), all three
+      # platforms required, bytes cross-checked with the evidence.
       - name: Build latest.json
         if: needs.preflight.outputs.updater_enabled == 'true'
         env:
@@ -666,6 +841,7 @@ jobs:
           --notes-file body.md
           --require-platform windows-x86_64
           --require-platform linux-x86_64
+          --require-platform darwin-aarch64
           --out bundle/dist/latest.json
 
       - name: Generate SHA256SUMS

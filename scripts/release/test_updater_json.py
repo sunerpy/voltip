@@ -280,6 +280,87 @@ class Collect(Workspace):
         )
 
 
+class CollectMacos(Workspace):
+    """The macOS leg: the .dmg to install from and, with the updater, the .app.tar.gz the
+    updater downloads, renamed from Tauri's `Voltip.app.tar.gz` to a versioned release name."""
+
+    BUNDLE = "target/aarch64-apple-darwin/release/bundle"
+    TARBALL = "Voltip_2.0.0-alpha.2_aarch64.app.tar.gz"
+
+    def make(self, *, updater: bool = True) -> None:
+        self.write(f"{self.BUNDLE}/dmg/Voltip_2.0.0-alpha.2_aarch64.dmg", b"dmg-bytes")
+        # The .app directory itself is not an asset.
+        self.write(f"{self.BUNDLE}/macos/Voltip.app/Contents/Info.plist", b"plist")
+        if updater:
+            self.write(f"{self.BUNDLE}/macos/Voltip.app.tar.gz", b"tarball-bytes")
+            self.write(f"{self.BUNDLE}/macos/Voltip.app.tar.gz.sig", SIG_B64)
+
+    def args(self, updater: str, *extra: str) -> tuple[str, ...]:
+        return (
+            "collect",
+            "--target",
+            "aarch64-apple-darwin",
+            "--bundle-dir",
+            str(self.root / self.BUNDLE),
+            "--bundles",
+            "dmg,app",
+            "--updater-bundle",
+            "app",
+            "--updater",
+            updater,
+            "--rename",
+            f"Voltip.app.tar.gz={self.TARBALL}",
+            "--out",
+            str(self.root / "dist"),
+            "--evidence",
+            str(self.root / "evidence/aarch64-apple-darwin.json"),
+            *extra,
+        )
+
+    def evidence(self) -> dict:
+        return json.loads((self.root / "evidence/aarch64-apple-darwin.json").read_text())
+
+    def test_collects_the_dmg_and_the_renamed_updater_tarball(self) -> None:
+        self.make()
+        run(*self.args("true"))
+        dist = sorted(p.name for p in (self.root / "dist").iterdir())
+        self.assertEqual(
+            dist, [self.TARBALL, f"{self.TARBALL}.sig", "Voltip_2.0.0-alpha.2_aarch64.dmg"]
+        )
+        evidence = self.evidence()
+        self.assertEqual(evidence["platform"], "macos")
+        self.assertEqual(evidence["updater_platform"], "darwin-aarch64")
+        self.assertEqual(
+            evidence["updater"],
+            {"kind": "app", "name": self.TARBALL, "signature": f"{self.TARBALL}.sig"},
+        )
+        kinds = {item["name"]: item["kind"] for item in evidence["files"]}
+        self.assertEqual(kinds["Voltip_2.0.0-alpha.2_aarch64.dmg"], "dmg")
+        self.assertEqual(kinds[self.TARBALL], "app")
+        self.assertEqual((self.root / "dist" / self.TARBALL).read_bytes(), b"tarball-bytes")
+
+    def test_without_the_updater_only_the_dmg_ships(self) -> None:
+        # Tauri writes the tarball only with createUpdaterArtifacts, which needs the signing key.
+        self.make(updater=False)
+        run(*self.args("false"))
+        self.assertEqual(
+            [p.name for p in (self.root / "dist").iterdir()], ["Voltip_2.0.0-alpha.2_aarch64.dmg"]
+        )
+        self.assertIsNone(self.evidence()["updater"])
+
+    def test_the_updater_tarball_is_required_when_the_updater_is_on(self) -> None:
+        self.make(updater=False)
+        self.assertFails("no app bundle", *self.args("true"))
+
+    def test_a_rename_must_match_a_bundle_and_name_a_safe_asset(self) -> None:
+        self.make()
+        self.assertFails("matched no bundle", *self.args("true", "--rename", "Nope.tar.gz=x.tar.gz"))
+        self.assertFails(
+            "not a safe release asset name",
+            *self.args("true", "--rename", "Voltip_2.0.0-alpha.2_aarch64.dmg=../x.dmg"),
+        )
+
+
 class Write(Workspace):
     def seed(self, *, linux: bool = True, tamper: bool = False) -> None:
         dist = self.root / "dist"
@@ -385,6 +466,36 @@ class Write(Workspace):
         self.assertEqual(win["signature"], SIG_B64)
         # Pinned to this release's assets, never the rolling `releases/latest` pointer.
         self.assertNotIn("/releases/latest/", json.dumps(manifest))
+
+    def test_the_mac_updater_url_is_the_renamed_tarball(self) -> None:
+        self.seed(linux=False)
+        dist = self.root / "dist"
+        tarball = "Voltip_2.0.0-alpha.2_aarch64.app.tar.gz"
+        (dist / tarball).write_bytes(b"tarball")
+        (dist / f"{tarball}.sig").write_text(SIG_B64)
+        (dist / "Voltip_2.0.0-alpha.2_aarch64.dmg").write_bytes(b"dmg")
+        self.write_json(
+            "evidence/aarch64-apple-darwin.json",
+            {
+                "schema_version": 1,
+                "target": "aarch64-apple-darwin",
+                "platform": "macos",
+                "updater_platform": "darwin-aarch64",
+                "updater_enabled": True,
+                "updater": {"kind": "app", "name": tarball, "signature": f"{tarball}.sig"},
+                "files": [
+                    self.record(dist / tarball, "app", True),
+                    self.record(dist / f"{tarball}.sig", "signature", False),
+                    self.record(dist / "Voltip_2.0.0-alpha.2_aarch64.dmg", "dmg", False),
+                ],
+            },
+        )
+        run(*self.write_args("--require-platform", "darwin-aarch64"))
+        manifest = json.loads((dist / "latest.json").read_text())
+        self.assertEqual(
+            manifest["platforms"]["darwin-aarch64"]["url"],
+            f"https://github.com/example/voltip/releases/download/v2.0.0-alpha.2/{tarball}",
+        )
 
     def test_missing_required_platform_fails(self) -> None:
         self.seed(linux=False)
