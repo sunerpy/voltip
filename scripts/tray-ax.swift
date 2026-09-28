@@ -9,6 +9,8 @@
 //   tray-ax <pid> close <title>      press the close button of the window titled <title>
 //   tray-ax <pid> dialog <name>      exit 0 when a window holds a dialog named <name>
 //                                    (a webview's role=dialog: AXApplicationDialog)
+//   tray-ax <pid> wait-text <title> <text>  wait until the window titled <title> shows <text>
+//                                    (a static text or heading of its webview): it has drawn
 //   tray-ax <pid> chrome <title>     "x y width height zoom-right" of the window titled <title>:
 //                                    its frame and where its green (zoom) button ends (points)
 //   tray-ax ink <png>                "ink=<share> blue=<share>": the pixels that stand out from
@@ -197,6 +199,19 @@ case "press":
     guard chosen == .success else { fail("choosing '\(args[3])' failed (\(chosen.rawValue))") }
 case "windows":
     for window in windows() { print(text(window, kAXTitleAttribute)) }
+case "wait-text":
+    guard args.count == 5 else { fail("wait-text needs a window title and a text") }
+    let (title, wanted) = (args[3], args[4])
+    let found = wait(30, "'\(wanted)' in the window '\(title)'") { () -> AXUIElement? in
+        guard let window = windows().first(where: { text($0, kAXTitleAttribute) == title }) else { return nil }
+        return find(window) { node in
+            let role = text(node, kAXRoleAttribute)
+            return (role == kAXStaticTextRole || role == "AXHeading")
+                && (text(node, kAXValueAttribute) == wanted || text(node, kAXTitleAttribute) == wanted)
+        }
+    }
+    let (x, y, w, h) = frame(found)
+    print("\(x) \(y) \(w) \(h)")
 case "chrome":
     guard args.count == 4 else { fail("chrome needs a title") }
     guard let window = windows().first(where: { text($0, kAXTitleAttribute) == args[3] }),

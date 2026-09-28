@@ -177,7 +177,8 @@ function Save-Shot($element, [string] $name) {
 function Find-TrayButton {
   $button = And-Cond (Cond $A::ControlTypeProperty $CT::Button) (Cond $A::NameProperty 'Voltip')
   $taskbar = $A::RootElement.FindFirst($TS::Children, (Cond $A::ClassNameProperty 'Shell_TrayWnd'))
-  if ($null -eq $taskbar) { throw 'smoke-tray-windows: no taskbar (Shell_TrayWnd) on this desktop' }
+  # UI Automation now and then misses the taskbar among the desktop's children: ask again.
+  if ($null -eq $taskbar) { return $null }
   $found = $taskbar.FindFirst($TS::Descendants, $button)
   if ($null -ne $found) { return @($found, 'notification area') }
   $overflow = $A::RootElement.FindFirst($TS::Children, (Cond $A::ClassNameProperty 'TopLevelWindowForOverflowXamlIsland'))

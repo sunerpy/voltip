@@ -871,6 +871,7 @@ jobs:
       - name: The traffic lights, the menu bar item and its entries on the desktop
         env:
           VOLTIP_NO_UPDATER: "1"
+          VOLTIP_CHECK_CHROME: "1"
         run: scripts/smoke-tray-macos.sh "$APP" "smoke-tray-macos-${{ matrix.arch }}"
 
       - name: Archive the app
