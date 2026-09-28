@@ -132,8 +132,10 @@ describe("Table", () => {
       },
     ];
     render(<Table label="t" columns={columns} rows={rows} rowKey={(r) => r.id} />);
-    // jsdom's computed style drops min/max-width, so read the inline declaration React wrote.
-    const style = (el: HTMLElement | undefined) => el?.getAttribute("style") ?? "";
+    // jsdom's computed style drops min/max-width, so read the inline declaration React wrote
+    // (jsdom 30 writes React's unitless `0` back as `0px`; both are the same length).
+    const style = (el: HTMLElement | undefined) =>
+      (el?.getAttribute("style") ?? "").replaceAll(/\b0px\b/g, "0");
     const headers = screen.getAllByRole("columnheader");
     expect(style(headers[0])).toBe("width: 50%; max-width: 0; min-width: 120px;");
     expect(style(headers[1])).toBe("width: 50%; max-width: 0;");

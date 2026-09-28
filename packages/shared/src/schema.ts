@@ -1145,9 +1145,8 @@ export function onboardingGate(report: PermissionReport): Permission[] {
   return PERMISSIONS.filter((p) => {
     const state = report[p];
     if (state === "granted" || state === "not_applicable") return false;
-    if (p === "microphone") return state === "denied";
-    if (p === "accessibility") return true;
-    return false;
+    // Accessibility blocks while denied or never asked; the microphone only while denied.
+    return p === "accessibility" || state === "denied";
   });
 }
 

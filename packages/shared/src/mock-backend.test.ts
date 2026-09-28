@@ -1,7 +1,12 @@
 import { historyEntries } from "./fixtures/history";
 import {
+  ALWAYS_ON_DESKTOP_ONLY,
+  MOCK_ALWAYS_ON_PAUSE_MS,
   MOCK_ASR_MS,
   MOCK_AUDIO_DEVICES,
+  MOCK_NEARBY,
+  MOCK_TEXT_MS,
+  PHONE_TEXT_UNAVAILABLE,
   MOCK_AVAILABLE_VERSION,
   MOCK_CURRENT_VERSION,
   MOCK_UPDATE_CHECK_MS,
@@ -53,6 +58,7 @@ import {
 import {
   HISTORY_LIMIT,
   MAX_EDIT_SELECTION_CHARS,
+  MAX_PHONE_TEXT_CHARS,
   type DictionaryDraft,
   type HistoryEntry,
   NIL_ID,
@@ -2572,5 +2578,160 @@ describe("MockBackend voice edit (section 19)", () => {
     expect(mockSameChord("Cmd+E", "Meta+e")).toBe(true);
     seeded.destroy();
     backend.destroy();
+  });
+});
+
+describe("MockBackend LAN pairing, always-on pairing and the phone's commands", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** The desktops a phone has paired, the second one online. */
+  function onlineDesktop(now: number) {
+    const desktop = sampleDevices(now)[1];
+    if (!desktop) throw new Error("fixture");
+    return { ...desktop, connection: { state: "online" as const, via: "direct" as const } };
+  }
+
+  it("regression: a nearby desktop is joined only while it waits; discovery off lists nothing, and the desktop lists none", async () => {
+    const phone = new MockBackend({ role: "phone" });
+    const events = collect(phone);
+    expect(phone.peek().nearby).toEqual([...MOCK_NEARBY]);
+    await phone.invoke("pairing_join_nearby", { fingerprint: "0000000000000000" });
+    expect(events.at(-1)).toEqual({ type: "error", message: "pairing: 附近没有这台设备" });
+    const waiting = MOCK_NEARBY[0];
+    if (!waiting) throw new Error("fixture");
+    phone.publish({ type: "nearby", devices: [{ ...waiting, pairing: false }] });
+    await phone.invoke("pairing_join_nearby", { fingerprint: waiting.fingerprint });
+    expect(events.at(-1)).toEqual({ type: "error", message: "pairing: 这台设备现在不在配对" });
+    phone.publish({ type: "nearby", devices: [...MOCK_NEARBY] });
+    await phone.invoke("pairing_join_nearby", { fingerprint: waiting.fingerprint });
+    expect(phone.peek().pairing.state).toEqual({ state: "creating_session" });
+    await phone.invoke("settings_set_lan_discovery", { enabled: false });
+    expect(phone.peek().settings.lan_discovery).toBe(false);
+    expect(phone.peek().nearby).toEqual([]);
+    phone.destroy();
+    const desktop = new MockBackend();
+    await desktop.invoke("settings_set_lan_discovery", { enabled: true });
+    expect(desktop.peek().nearby).toEqual([]);
+    desktop.destroy();
+  });
+
+  it("regression: always-on pairing renews before the code lapses, opens the next window after a pairing or a cancel, and closes the waiting one when off; the phone refuses it", async () => {
+    const phone = new MockBackend({ role: "phone" });
+    const phoneEvents = collect(phone);
+    await phone.invoke("settings_set_pairing_always_on", { enabled: true });
+    expect(phoneEvents.at(-1)).toEqual({ type: "error", message: ALWAYS_ON_DESKTOP_ONLY });
+    expect(phone.peek().settings.pairing_always_on).toBe(false);
+    phone.destroy();
+
+    const desktop = new MockBackend({ ttlSecs: 12 });
+    await desktop.invoke("settings_set_pairing_always_on", { enabled: true });
+    expect(desktop.peek().settings.pairing_always_on).toBe(true);
+    vi.advanceTimersByTime(300);
+    expect(desktop.peek().pairing.state).toEqual({ state: "waiting_for_peer" });
+    const first = desktop.peek().pairing.session_id;
+    // Switching it on again while a window is open changes nothing.
+    await desktop.invoke("settings_set_pairing_always_on", { enabled: true });
+    expect(desktop.peek().pairing.session_id).toBe(first);
+    // 12 s code, renewed with 10 s left: a new session, never the expired screen.
+    vi.advanceTimersByTime(2000);
+    vi.advanceTimersByTime(300);
+    expect(desktop.peek().pairing.state).toEqual({ state: "waiting_for_peer" });
+    expect(desktop.peek().pairing.session_id).not.toBe(first);
+    // A pairing, then the next window after the pause.
+    desktop.simulatePeerJoined();
+    vi.advanceTimersByTime(400);
+    await desktop.invoke("pairing_confirm");
+    desktop.simulatePeerConfirmed();
+    expect(desktop.peek().pairing.state).toEqual({ state: "trusted" });
+    vi.advanceTimersByTime(MOCK_ALWAYS_ON_PAUSE_MS + 300);
+    expect(desktop.peek().pairing.state).toEqual({ state: "waiting_for_peer" });
+    // A cancel is followed by the next window too, and 完成 (reset) opens one straight away.
+    await desktop.invoke("pairing_cancel");
+    expect(desktop.peek().pairing.state.state).toBe("failed");
+    vi.advanceTimersByTime(MOCK_ALWAYS_ON_PAUSE_MS + 300);
+    expect(desktop.peek().pairing.state).toEqual({ state: "waiting_for_peer" });
+    await desktop.invoke("pairing_reset");
+    expect(desktop.peek().pairing.state).toEqual({ state: "idle" });
+    vi.advanceTimersByTime(300);
+    expect(desktop.peek().pairing.state).toEqual({ state: "waiting_for_peer" });
+    // Off: the waiting window closes, and nothing opens after.
+    await desktop.invoke("settings_set_pairing_always_on", { enabled: false });
+    expect(desktop.peek().pairing.state).toEqual({ state: "idle" });
+    vi.advanceTimersByTime(MOCK_ALWAYS_ON_PAUSE_MS + 20_000);
+    expect(desktop.peek().pairing.state).toEqual({ state: "idle" });
+    // Off during a pairing under way: it runs to its end.
+    await desktop.invoke("pairing_start");
+    vi.advanceTimersByTime(300);
+    desktop.simulatePeerJoined();
+    await desktop.invoke("settings_set_pairing_always_on", { enabled: false });
+    expect(desktop.peek().pairing.state.state).not.toBe("idle");
+    desktop.destroy();
+  });
+
+  it("regression: the phone's texts are refused on the desktop, when empty, too long or to an offline computer; ids keep counting after 清空", async () => {
+    const desktop = new MockBackend();
+    const desktopEvents = collect(desktop);
+    await desktop.invoke("phone_text_send", {
+      publicKey: MOCK_PUBLIC_KEYS.desktop,
+      body: "x",
+      source: "typed",
+    });
+    expect(desktopEvents.at(-1)).toEqual({ type: "error", message: PHONE_TEXT_UNAVAILABLE });
+    desktop.destroy();
+
+    const now = Date.now();
+    const target = onlineDesktop(now);
+    const offline = { ...target, connection: { state: "offline" as const } };
+    const phone = new MockBackend({ role: "phone", devices: [target] });
+    const events = collect(phone);
+    const send = (body: string, publicKey = target.device.public_key) =>
+      phone.invoke("phone_text_send", { publicKey, body, source: "typed" });
+    await send("   ");
+    expect(events.at(-1)).toEqual({ type: "error", message: "phone text: 没有要发送的文字" });
+    await send("字".repeat(MAX_PHONE_TEXT_CHARS + 1));
+    expect(events.at(-1)).toMatchObject({ type: "error" });
+    await send("x", MOCK_PUBLIC_KEYS.phone);
+    expect(events.at(-1)).toEqual({ type: "error", message: "device is not online" });
+    await send("第一条");
+    vi.advanceTimersByTime(MOCK_TEXT_MS);
+    expect(phone.peek().sent_texts[0]).toMatchObject({
+      id: 1,
+      state: { state: "delivered", pasted: true },
+    });
+    await phone.invoke("sent_texts_clear");
+    expect(phone.peek().sent_texts).toEqual([]);
+    await send("清空后");
+    expect(phone.peek().sent_texts[0]?.id).toBe(2);
+    phone.publish({ type: "devices", devices: [offline] });
+    await send("离线");
+    expect(events.at(-1)).toEqual({ type: "error", message: "device is not online" });
+    phone.destroy();
+  });
+
+  it("a phone take needs an online computer and one at a time; stop and cancel without one are errors; a second connection check waits for the first", async () => {
+    const now = Date.now();
+    const target = onlineDesktop(now);
+    const phone = new MockBackend({ role: "phone", devices: [target] });
+    const events = collect(phone);
+    await phone.invoke("phone_take_stop");
+    expect(events.at(-1)).toEqual({ type: "error", message: "phone take: 没有进行中的录音" });
+    await phone.invoke("phone_take_cancel");
+    expect(events.at(-1)).toEqual({ type: "error", message: "phone take: 没有进行中的录音" });
+    await phone.invoke("phone_take_start", { publicKey: MOCK_PUBLIC_KEYS.phone });
+    expect(events.at(-1)).toEqual({ type: "error", message: "device is not online" });
+    await phone.invoke("phone_take_start", { publicKey: target.device.public_key });
+    await phone.invoke("phone_take_start", { publicKey: target.device.public_key });
+    expect(events.at(-1)).toEqual({ type: "error", message: "phone take: 已有一次录音在进行" });
+    vi.advanceTimersByTime(MOCK_MIC_READY_MS);
+    expect(phone.peek().phone_take?.state.state).toBe("listening");
+    await phone.invoke("connectivity_check");
+    await phone.invoke("connectivity_check");
+    expect(events.at(-1)).toEqual({ type: "error", message: "connectivity: 自检正在进行" });
+    phone.destroy();
   });
 });
