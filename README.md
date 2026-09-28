@@ -90,11 +90,13 @@ build attestations:
 |---|---|---|
 | Windows 10/11 x64 | `*_x64-setup.exe` (per-user installer), `*_x64-portable.zip` (unpack and run `voltip-desktop.exe`; keep the DLLs beside it) | Not code-signed yet: SmartScreen warns on the first start. |
 | Linux x64 | `.deb`, `.AppImage` | Built on Ubuntu 22.04, needs glibc 2.34 or newer; the `.deb` depends on `libwebkit2gtk-4.1-0`, `libvulkan1` and a BLAS (`libblas3`, from 0.0.5), the AppImage needs FUSE 2 (`libfuse2`). X11 and Wayland. |
-| macOS 11+ | `*_aarch64.dmg` (Apple silicon, M1 or newer), `*_x64.dmg` (Intel) | Signed ad hoc, not notarized: see below. |
+| macOS 11+ (Apple silicon) | .dmg | M1 or newer |
+| macOS 11+ (Intel) | .dmg | Intel Macs |
 | Android | not released yet | `make android-apk` builds a debug APK. |
 
-On a Mac, open the dmg and drag Voltip onto Applications. The first start is blocked because the
-app is not notarized: on macOS 15 and later open System Settings → Privacy & Security and click
+The Mac packages are `*_aarch64.dmg` (Apple silicon) and `*_x64.dmg` (Intel), signed ad hoc and not
+notarized. On a Mac, open the dmg and drag Voltip onto Applications. The first start is blocked
+because the app is not notarized: on macOS 15 and later open System Settings → Privacy & Security and click
 Open Anyway; on macOS 11 to 14 Control-click Voltip in Applications and choose Open. From a
 terminal, `xattr -dr com.apple.quarantine /Applications/Voltip.app` does the same. Updates install
 from inside the app; after one, macOS may ask for the Accessibility permission again.

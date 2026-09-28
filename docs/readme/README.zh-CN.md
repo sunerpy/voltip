@@ -65,10 +65,11 @@ curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install
 |---|---|---|
 | Windows 10/11 x64 | `*_x64-setup.exe`（按用户安装）、`*_x64-portable.zip`（解压后运行 `voltip-desktop.exe`，旁边的 DLL 不能删） | 还没有代码签名，首次启动时 SmartScreen 会提示。 |
 | Linux x64 | `.deb`、`.AppImage` | 在 Ubuntu 22.04 上构建，要求 glibc 2.34 及以上；`.deb` 依赖 `libwebkit2gtk-4.1-0`、`libvulkan1` 和 BLAS（`libblas3`，0.0.5 起），AppImage 需要 FUSE 2（`libfuse2`）。支持 X11 和 Wayland。 |
-| macOS 11+ | `*_aarch64.dmg`（Apple 芯片，M1 及更新）、`*_x64.dmg`（Intel 芯片） | ad-hoc 签名，未经公证，见下文。 |
+| macOS 11+（Apple 芯片） | .dmg | M1 及更新 |
+| macOS 11+（Intel 芯片） | .dmg | Intel 芯片的 Mac |
 | Android | 暂未发布 | `make android-apk` 可以构建 debug APK。 |
 
-在 Mac 上手动安装：打开 dmg，把 Voltip 拖到「应用程序」。应用没有公证，第一次打开会被拦下：macOS 15 起到「系统设置 → 隐私与安全性」里点「仍要打开」；macOS 11 到 14 在「应用程序」里按住 Control 点 Voltip，选「打开」。也可以在终端执行 `xattr -dr com.apple.quarantine /Applications/Voltip.app`。之后的更新在应用里完成；更新后 macOS 可能会再次要求授予辅助功能权限。
+Mac 的安装包是 `*_aarch64.dmg`（Apple 芯片）和 `*_x64.dmg`（Intel 芯片），都只做了 ad-hoc 签名、没有公证。在 Mac 上手动安装：打开 dmg，把 Voltip 拖到「应用程序」。应用没有公证，第一次打开会被拦下：macOS 15 起到「系统设置 → 隐私与安全性」里点「仍要打开」；macOS 11 到 14 在「应用程序」里按住 Control 点 Voltip，选「打开」。也可以在终端执行 `xattr -dr com.apple.quarantine /Applications/Voltip.app`。之后的更新在应用里完成；更新后 macOS 可能会再次要求授予辅助功能权限。
 
 release 里的安装包内置了默认的识别和润色服务，装好就能直接听写，不用先配置。随时可以换成别的服务商或本机模型。
 
