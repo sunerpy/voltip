@@ -540,6 +540,8 @@ class Helpers(unittest.TestCase):
         self.assertEqual(uj.updater_platform_for("x86_64-pc-windows-msvc"), "windows-x86_64")
         self.assertEqual(uj.updater_platform_for("x86_64-unknown-linux-gnu"), "linux-x86_64")
         self.assertEqual(uj.updater_platform_for("aarch64-apple-darwin"), "darwin-aarch64")
+        self.assertEqual(uj.updater_platform_for("x86_64-apple-darwin"), "darwin-x86_64")
+        self.assertEqual(uj.platform_for("x86_64-apple-darwin"), "macos")
         with self.assertRaises(SystemExit):
             uj.updater_platform_for("wasm32-unknown-unknown")
 

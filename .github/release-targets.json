@@ -28,6 +28,15 @@
       "target": "aarch64-apple-darwin",
       "updater_bundle": "app",
       "updater_platform": "darwin-aarch64"
+    },
+    {
+      "bundles": ["dmg", "app"],
+      "cross": false,
+      "platform": "macos",
+      "runner": "macos-15-intel",
+      "target": "x86_64-apple-darwin",
+      "updater_bundle": "app",
+      "updater_platform": "darwin-x86_64"
     }
   ]
 }

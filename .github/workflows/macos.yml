@@ -1,4 +1,5 @@
-# macOS (Apple silicon) build and headless native run on GitHub's macos-15 runner.
+# macOS build and headless native run, on GitHub's macos-15 (Apple silicon) and macos-15-intel
+# (Intel, GitHub's last x86_64 image, available until 2027-08) runners.
 #
 # What it produces: `Voltip.app` and the `.dmg`, signed ad hoc as the release signs them (no
 # Developer ID yet, see docs/roadmap.md) and checked the same way (.github/scripts/
@@ -6,7 +7,8 @@
 # headless run the Windows and Linux jobs do (scripts/smoke-native-cli.ps1: --version,
 # --list-models, --download-model, --transcribe-file on a public Chinese sample), which proves the
 # bundle's dylibs load (bundle.macOS.frameworks) and the ggml / sherpa-onnx engines run natively.
-# The macOS-only unit tests of voltip-platform and voltip-inject run here too.
+# The macOS-only unit tests of voltip-platform and voltip-inject run here too, and on Apple
+# silicon the real event tap.
 #
 # It runs on every push to main and on demand, not on pull requests (about 20 minutes), and CI
 # Success does not wait for it. Like CI, it bakes in no built-in engine values: the app it builds
@@ -37,9 +39,21 @@ env:
 
 jobs:
   macos:
-    name: macos-arm64 · build + native run
-    runs-on: macos-15
+    name: macos-${{ matrix.arch }} · build + native run
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            arch: aarch64
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+    env:
+      MACOS_TARGET: ${{ matrix.target }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,7 +66,7 @@ jobs:
           sw_vers; uname -m; sysctl -n machdep.cpu.brand_string; sysctl -n hw.ncpu
           xcode-select -p; clang --version | head -1; cmake --version | head -1 || true
 
-      - name: Rust toolchain (rust-toolchain.toml) + aarch64-apple-darwin
+      - name: Rust toolchain (rust-toolchain.toml) + ${{ matrix.target }}
         run: |
           set -euo pipefail
           if ! command -v rustup >/dev/null 2>&1; then
@@ -61,14 +75,14 @@ jobs:
             export PATH="$HOME/.cargo/bin:$PATH"
           fi
           rustup toolchain install 2>/dev/null || true
-          rustup target add aarch64-apple-darwin
+          rustup target add "$MACOS_TARGET"
           rustc --version && cargo --version
 
       # Saved from main only (this workflow runs on main and on demand): the next push starts warm.
       - name: Cache Cargo registry and target/
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: macos-arm64
+          shared-key: macos-${{ matrix.arch }}
           cache-on-failure: true
           cache-bin: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -108,6 +122,7 @@ jobs:
       # the test binary (the runner image allows writing it), then the ignored test installs the
       # tap, posts Right Control, Right Control + C and the back button, and asserts the edges.
       - name: Real event tap (Accessibility granted to the test binary)
+        if: matrix.arch == 'aarch64'
         run: |
           set -euo pipefail
           csrutil status || true
@@ -126,39 +141,41 @@ jobs:
       - name: Build Voltip.app and the dmg (signed ad hoc)
         run: |
           set -euo pipefail
-          rm -rf target/aarch64-apple-darwin/release/bundle
-          (cd apps/desktop && cargo tauri build --ci --target aarch64-apple-darwin --bundles app,dmg)
-          app=target/aarch64-apple-darwin/release/bundle/macos/Voltip.app
+          rm -rf "target/$MACOS_TARGET/release/bundle"
+          (cd apps/desktop && cargo tauri build --ci --target "$MACOS_TARGET" --bundles app,dmg)
+          app="target/$MACOS_TARGET/release/bundle/macos/Voltip.app"
           [ -d "$app" ] || { echo "::error::no .app bundle was produced"; exit 1; }
           echo "APP=$app" >>"$GITHUB_ENV"
           ls -la "$app/Contents/MacOS" "$app/Contents/Frameworks" || true
           otool -L "$app/Contents/MacOS/voltip-desktop"
 
       - name: Check the app and the dmg (as release.yml does)
+        env:
+          MACOS_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           version=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
-          .github/scripts/check-macos-bundle.sh target/aarch64-apple-darwin/release/bundle "$version"
-          cp target/aarch64-apple-darwin/release/bundle/dmg/*.dmg .
+          .github/scripts/check-macos-bundle.sh "target/$MACOS_TARGET/release/bundle" "$version" "$MACOS_ARCH"
+          cp "target/$MACOS_TARGET/release/bundle/dmg/"*.dmg .
 
       - name: Headless native run (download a model, transcribe a public sample)
         shell: pwsh
         # Both engines: sherpa-onnx (SenseVoice, the bundled dylibs) and transcribe.cpp (Qwen3-ASR
         # GGUF, ggml built for Apple silicon), as the Windows job does.
-        run: ./scripts/smoke-native-cli.ps1 -Binary "$env:APP/Contents/MacOS/voltip-desktop" -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-macos
+        run: ./scripts/smoke-native-cli.ps1 -Binary "$env:APP/Contents/MacOS/voltip-desktop" -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-macos-${{ matrix.arch }}
 
       - name: Archive the app
-        run: ditto -c -k --keepParent "$APP" dist-macos.zip
+        run: ditto -c -k --keepParent "$APP" "dist-macos-${{ matrix.arch }}.zip"
 
       - name: Upload the app and the run summary
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: voltip-macos-arm64
+          name: voltip-macos-${{ matrix.arch }}
           path: |
-            dist-macos.zip
-            Voltip_*_aarch64.dmg
-            smoke-native-macos/*.txt
-            smoke-native-macos/*.out
+            dist-macos-${{ matrix.arch }}.zip
+            Voltip_*_${{ matrix.arch }}.dmg
+            smoke-native-macos-${{ matrix.arch }}/*.txt
+            smoke-native-macos-${{ matrix.arch }}/*.out
           if-no-files-found: warn
           retention-days: 7

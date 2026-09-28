@@ -11,7 +11,8 @@ set -euo pipefail
 TAURI_CLI_VERSION="2.11.5"
 # SHA-256 of the release assets at
 # https://github.com/tauri-apps/tauri/releases/tag/tauri-cli-v2.11.5: the x86_64 Linux tarball
-# (recorded 2026-09-25) and the Apple silicon zip the macOS legs use (recorded 2026-09-28).
+# (recorded 2026-09-25) and the Apple silicon and Intel zips the macOS legs use (recorded
+# 2026-09-28).
 case "$(uname -s)-$(uname -m)" in
 Linux-x86_64)
 	asset="cargo-tauri-x86_64-unknown-linux-gnu.tgz"
@@ -21,8 +22,12 @@ Darwin-arm64)
 	asset="cargo-tauri-aarch64-apple-darwin.zip"
 	TAURI_CLI_SHA256="7734f1d942dbe6e5fea91c1575452f4bf2cc942e6902f2d9d78513baa8527b24"
 	;;
+Darwin-x86_64)
+	asset="cargo-tauri-x86_64-apple-darwin.zip"
+	TAURI_CLI_SHA256="535b790c9d1995f67fdb21296a2abbf8026c7846b206cff9b93984eb740eab8b"
+	;;
 *)
-	echo "install-cargo-tauri: only x86_64 Linux and Apple silicon macOS are pinned (got $(uname -s) $(uname -m))" >&2
+	echo "install-cargo-tauri: only x86_64 Linux and macOS (Apple silicon, Intel) are pinned (got $(uname -s) $(uname -m))" >&2
 	exit 2
 	;;
 esac
@@ -38,12 +43,14 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 url="https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v${TAURI_CLI_VERSION}/${asset}"
 curl --fail --silent --show-error --location --retry 3 --output "$tmp/$asset" "$url"
-# macOS has shasum, not sha256sum.
-if command -v sha256sum >/dev/null 2>&1; then
-	echo "${TAURI_CLI_SHA256}  $tmp/$asset" | sha256sum --check --strict --quiet
+# The digest is compared here rather than with `--check`: macOS 15's BSD sha256sum takes none of
+# GNU's flags, and older macOS has only shasum.
+if command -v shasum >/dev/null 2>&1; then
+	actual=$(shasum -a 256 "$tmp/$asset" | awk '{print $1}')
 else
-	echo "${TAURI_CLI_SHA256}  $tmp/$asset" | shasum -a 256 --check --strict --quiet
+	actual=$(sha256sum "$tmp/$asset" | awk '{print $1}')
 fi
+[[ "$actual" == "$TAURI_CLI_SHA256" ]] || { echo "install-cargo-tauri: $asset has SHA-256 $actual, expected $TAURI_CLI_SHA256" >&2; exit 1; }
 case "$asset" in
 *.zip) unzip -q -o "$tmp/$asset" cargo-tauri -d "$tmp" ;;
 *) tar -xzf "$tmp/$asset" -C "$tmp" cargo-tauri ;;
