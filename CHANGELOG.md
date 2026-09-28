@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.5](https://github.com/sunerpy/voltip/compare/v0.0.4...v0.0.5) (2026-09-28)
+
+
+### Bug Fixes
+
+* **desktop:** the Linux packages depend on the BLAS the binary links ([06334e6](https://github.com/sunerpy/voltip/commit/06334e6e3242cde81dc842dc8d7b3843390b1e2c))
+* **install:** refresh apt's package lists before installing the deb ([158503c](https://github.com/sunerpy/voltip/commit/158503c01ee6c5991554c5b59b20f4eea936f8b3))
+
 ## [0.0.4](https://github.com/sunerpy/voltip/compare/v0.0.3...v0.0.4) (2026-09-28)
 
 
