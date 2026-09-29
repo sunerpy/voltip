@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.0.7](https://github.com/sunerpy/voltip/compare/v0.0.6...v0.0.7) (2026-09-29)
+
+
+### Features
+
+* **desktop:** choose how text is inserted under Settings › Dictation ([7369468](https://github.com/sunerpy/voltip/commit/73694684b3b42c8ad45cd2b4a89d7e71c90da7ff))
+* **desktop:** copy or paste a result from the home and history pages ([7369468](https://github.com/sunerpy/voltip/commit/73694684b3b42c8ad45cd2b4a89d7e71c90da7ff))
+* **desktop:** say in words why a paste stayed on the clipboard ([7369468](https://github.com/sunerpy/voltip/commit/73694684b3b42c8ad45cd2b4a89d7e71c90da7ff))
+* **overlay:** time each processing step and show that Esc cancels ([7369468](https://github.com/sunerpy/voltip/commit/73694684b3b42c8ad45cd2b4a89d7e71c90da7ff))
+* **release:** sign the macOS release with one fixed certificate ([7369468](https://github.com/sunerpy/voltip/commit/73694684b3b42c8ad45cd2b4a89d7e71c90da7ff))
+* standard interface copy, paste from the results, accent colours ([#14](https://github.com/sunerpy/voltip/issues/14)) ([7369468](https://github.com/sunerpy/voltip/commit/73694684b3b42c8ad45cd2b4a89d7e71c90da7ff))
+* **ui:** Codex's blue, and an accent colour choice under Settings › Appearance ([7369468](https://github.com/sunerpy/voltip/commit/73694684b3b42c8ad45cd2b4a89d7e71c90da7ff))
+
+
+### Bug Fixes
+
+* **desktop:** free the updater before it reports the end of a run ([#16](https://github.com/sunerpy/voltip/issues/16)) ([c4a39b8](https://github.com/sunerpy/voltip/commit/c4a39b898eef9f59e46e046f5cae06ebf9d2b319))
+* **release:** never wait on the macOS keychain clean-up ([c4a39b8](https://github.com/sunerpy/voltip/commit/c4a39b898eef9f59e46e046f5cae06ebf9d2b319))
+* **ui:** keep text on one line when the window has room, in both languages ([7369468](https://github.com/sunerpy/voltip/commit/73694684b3b42c8ad45cd2b4a89d7e71c90da7ff))
+
 ## [0.0.6](https://github.com/sunerpy/voltip/compare/v0.0.5...v0.0.6) (2026-09-29)
 
 
