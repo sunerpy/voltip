@@ -17,8 +17,8 @@ use voltip_core::ForegroundApp;
 use voltip_platform::foreground::from_exe_path;
 use voltip_platform::permissions::{Permission, PermissionReport};
 use voltip_platform::windows::{
-    ConsentValue, ForegroundFacts, InjectPreflight, IntegrityLevel, MicrophoneConsent, MicrophonePolicy, StackedWindow, consent_store_app_key, is_paste_target,
-    microphone_consent,
+    ConsentValue, ForegroundFacts, InjectPreflight, IntegrityLevel, MicrophoneConsent, MicrophonePolicy, StackedWindow, WEBVIEW_PROCESS, consent_store_app_key,
+    is_paste_target, microphone_consent,
 };
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, HWND, RECT, S_OK};
 use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
@@ -142,7 +142,9 @@ pub fn paste_return() -> Option<PasteReturn> {
         if hwnd.is_null() {
             return None;
         }
-        if is_paste_target(&StackedWindow { class: &class_name(hwnd), ..stacked_facts(hwnd, own) }) {
+        let class = class_name(hwnd);
+        if is_paste_target(&StackedWindow { class: &class, ..stacked_facts(hwnd, own) }) {
+            tracing::debug!(class, image = ?owner_image(hwnd), "paste: the window below Voltip");
             return Some(PasteReturn { voltip: front as isize, target: hwnd as isize });
         }
         // SAFETY: as above, `hwnd` came from `GetWindow` a moment ago.
@@ -194,8 +196,29 @@ fn stacked_facts(hwnd: HWND, own: u32) -> StackedWindow<'static> {
         let tool = ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) != 0;
         let size = u32::try_from(size_of::<u32>()).unwrap_or(4);
         let cloaked = DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED.cast_unsigned(), (&raw mut cloak).cast(), size) == S_OK && cloak != 0;
-        StackedWindow { visible, minimized, empty, tool, cloaked, own_process: process_of(hwnd) == Some(own), class: "" }
+        let own_process = process_of(hwnd) == Some(own);
+        // Only a window every other check lets through is worth opening its process for.
+        let webview = visible
+            && !minimized
+            && !empty
+            && !tool
+            && !cloaked
+            && !own_process
+            && owner_image(hwnd).is_some_and(|name| name.eq_ignore_ascii_case(WEBVIEW_PROCESS));
+        StackedWindow { visible, minimized, empty, tool, cloaked, own_process, webview, class: "" }
     }
+}
+
+/// The image name of the process that owns `hwnd` (`notepad.exe`); `None` when it cannot be read.
+fn owner_image(hwnd: HWND) -> Option<String> {
+    let pid = process_of(hwnd)?;
+    // SAFETY: plain call with a valid access mask; a null handle (access refused) is checked.
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if process.is_null() {
+        return None;
+    }
+    let process = OwnedHandle(process);
+    image_name(process.0)
 }
 
 /// The window class of `hwnd` (`""` when it cannot be read).

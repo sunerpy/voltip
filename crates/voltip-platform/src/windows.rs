@@ -244,9 +244,16 @@ pub struct StackedWindow<'a> {
     pub cloaked: bool,
     /// One of Voltip's own windows.
     pub own_process: bool,
+    /// Owned by a WebView2 process (`msedgewebview2.exe`, [`WEBVIEW_PROCESS`]): part of some
+    /// application's web view (Voltip's included), never a window of its own the user worked in;
+    /// the application's windows belong to the application's process.
+    pub webview: bool,
     /// The window class.
     pub class: &'a str,
 }
+
+/// The image name of the WebView2 runtime's processes.
+pub const WEBVIEW_PROCESS: &str = "msedgewebview2.exe";
 
 /// The desktop and the taskbar: in the Z order, but not a window anyone pastes into.
 const SHELL_CLASSES: [&str; 4] = ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"];
@@ -255,7 +262,14 @@ const SHELL_CLASSES: [&str; 4] = ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_
 /// others, so the first ordinary application window below Voltip's is the one that was active
 /// before Voltip.
 pub fn is_paste_target(window: &StackedWindow<'_>) -> bool {
-    window.visible && !window.minimized && !window.empty && !window.tool && !window.cloaked && !window.own_process && !SHELL_CLASSES.contains(&window.class)
+    window.visible
+        && !window.minimized
+        && !window.empty
+        && !window.tool
+        && !window.cloaked
+        && !window.own_process
+        && !window.webview
+        && !SHELL_CLASSES.contains(&window.class)
 }
 
 #[cfg(test)]
@@ -276,11 +290,23 @@ mod tests {
             (StackedWindow { tool: true, ..notepad }, "tool window"),
             (StackedWindow { cloaked: true, ..notepad }, "cloaked"),
             (StackedWindow { own_process: true, ..notepad }, "Voltip's own"),
+            (StackedWindow { webview: true, ..notepad }, "a WebView2 process's"),
             (StackedWindow { class: "Progman", ..notepad }, "the desktop"),
             (StackedWindow { class: "Shell_TrayWnd", ..notepad }, "the taskbar"),
         ] {
             assert!(!is_paste_target(&skipped), "{why}");
         }
+    }
+
+    #[test]
+    fn regression_a_webview2_window_below_voltip_is_not_the_paste_target() {
+        // CI 2026-09-29 (main, smoke-windows-paste): after 「粘贴到上一个窗口」 the window in front
+        // was one of msedgewebview2.exe's, not Notepad, and the text went nowhere. A visible,
+        // activatable window of the WebView2 runtime passed every other check.
+        let popup = StackedWindow { visible: true, webview: true, class: "Chrome_WidgetWin_1", ..StackedWindow::default() };
+        assert!(!is_paste_target(&popup));
+        assert!(is_paste_target(&StackedWindow { webview: false, ..popup }), "the same window of an application's own process qualifies");
+        assert_eq!(WEBVIEW_PROCESS, "msedgewebview2.exe");
     }
 
     #[test]

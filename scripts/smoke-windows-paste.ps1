@@ -58,7 +58,7 @@ public static class VoltipPaste {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   const uint WM_GETTEXT = 0x000D, WM_GETTEXTLENGTH = 0x000E;
 
-  static string ClassOf(IntPtr hwnd) { var name = new StringBuilder(256); GetClassNameW(hwnd, name, name.Capacity); return name.ToString(); }
+  public static string ClassOf(IntPtr hwnd) { var name = new StringBuilder(256); GetClassNameW(hwnd, name, name.Capacity); return name.ToString(); }
 
   // The top-level window of `pid` titled exactly `title`; IntPtr.Zero when none.
   public static IntPtr FindByTitle(uint pid, string title) {
@@ -133,7 +133,7 @@ function Front-Text {
   $front = [VoltipPaste]::GetForegroundWindow()
   $owner = 'none'
   if ($front -ne [IntPtr]::Zero) { $owner = (Get-Process -Id ([VoltipPaste]::Owner($front)) -ErrorAction SilentlyContinue).ProcessName }
-  "0x$($front.ToString('x')) ($owner)"
+  "0x$($front.ToString('x')) ($owner, $([VoltipPaste]::ClassOf($front)))"
 }
 
 # The text to paste: ASCII and CJK ("paste test" in Chinese), so the clipboard path carries both.
