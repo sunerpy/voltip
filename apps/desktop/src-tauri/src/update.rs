@@ -204,20 +204,40 @@ impl UpdateSlot {
         self.status.lock().clone()
     }
 
-    /// Record `status` and broadcast it like a core event.
+    /// Record `status` and broadcast it like a core event. The broadcast happens under the status
+    /// lock, so the events go out in the order the statuses were recorded.
     pub fn publish(&self, bridge: &Bridge, status: UpdateStatus) {
-        *self.status.lock() = status.clone();
+        let mut current = self.status.lock();
+        *current = status.clone();
         bridge.publish(UiEvent::Update(status));
+    }
+
+    /// End a run: release the slot, then broadcast the run's final status (if it has one). Whoever
+    /// reacts to that status may start the next run at once (CI 2026-09-29: 「安装」 right after
+    /// 「已是最新」 was refused as busy); a run that starts in between waits for the lock, so its
+    /// `checking` still goes out after this status.
+    pub fn finish(&self, bridge: &Bridge, last: Option<UpdateStatus>) {
+        self.finish_with(last, |status| bridge.publish(UiEvent::Update(status)));
+    }
+
+    /// [`Self::finish`] with the broadcast handed in.
+    fn finish_with(&self, last: Option<UpdateStatus>, broadcast: impl FnOnce(UpdateStatus)) {
+        let mut current = self.status.lock();
+        self.end();
+        if let Some(status) = last {
+            *current = status.clone();
+            broadcast(status);
+        }
+    }
+
+    /// Release the slot (a run that ends goes through [`Self::finish`]).
+    pub fn end(&self) {
+        self.busy.store(false, Ordering::Release);
     }
 
     /// Claim the slot for one run; `false` while another run is in flight.
     pub fn try_begin(&self) -> bool {
         self.busy.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok()
-    }
-
-    /// Release the slot after a run.
-    pub fn end(&self) {
-        self.busy.store(false, Ordering::Release);
     }
 
     /// Version remembered as `Ready`, if the marker file exists and parses.
@@ -271,22 +291,29 @@ pub fn request<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<Updat
     Ok(())
 }
 
-/// One run against the plugin; failures become `Failed`, the slot is released at the end.
+/// One run against the plugin; failures become `Failed`. The slot is released before the run's
+/// final status goes out ([`UpdateSlot::finish`]).
 async fn drive<R: Runtime>(app: AppHandle<R>, bridge: Bridge, slot: Arc<UpdateSlot>, intent: Intent) {
-    if let Err(message) = run(&app, &bridge, &slot, &intent).await {
-        tracing::warn!(error = %message, ?intent, "updater run failed");
-        slot.publish(&bridge, UpdateStatus::Failed { message });
-    }
-    slot.end();
+    let last = match run(&app, &bridge, &slot, &intent).await {
+        Ok(last) => last,
+        Err(message) => {
+            tracing::warn!(error = %message, ?intent, "updater run failed");
+            Some(UpdateStatus::Failed { message })
+        }
+    };
+    slot.finish(&bridge, last);
 }
 
-async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateSlot>, intent: &Intent) -> Result<(), String> {
+/// The run itself: the statuses along the way are published here, the final one (`up_to_date`,
+/// `available`, `ready`) is returned for [`drive`] to publish once the slot is free. `None`: the
+/// last published status stands, or the app is restarting.
+async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateSlot>, intent: &Intent) -> Result<Option<UpdateStatus>, String> {
     let Some(config) = slot.config.clone() else { return Err(NOT_CONFIGURED.to_owned()) };
     // An explicit check always asks the manifest (and forgets what the last one found); the other
     // intents reuse the pending update.
     let reuse = slot.take_pending().filter(|_| *intent != Intent::Check);
-    let mut pending = match reuse {
-        Some(pending) => pending,
+    let (mut pending, found) = match reuse {
+        Some(pending) => (pending, None),
         None => {
             slot.publish(bridge, UpdateStatus::Checking);
             let updater =
@@ -296,21 +323,17 @@ async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateS
                     slot.clear_marker();
                     let version = app.package_info().version.to_string();
                     tracing::info!(version, "no update available");
-                    slot.publish(bridge, UpdateStatus::UpToDate { version, checked_at: now_secs() });
-                    return Ok(());
+                    return Ok(Some(UpdateStatus::UpToDate { version, checked_at: now_secs() }));
                 }
                 Some(update) => {
                     tracing::info!(version = %update.version, current = %update.current_version, "update available");
-                    slot.publish(
-                        bridge,
-                        UpdateStatus::Available {
-                            version: update.version.clone(),
-                            current: update.current_version.clone(),
-                            notes: update.body.clone(),
-                            date: pub_date(&update.raw_json),
-                        },
-                    );
-                    Pending { update, bytes: None }
+                    let available = UpdateStatus::Available {
+                        version: update.version.clone(),
+                        current: update.current_version.clone(),
+                        notes: update.body.clone(),
+                        date: pub_date(&update.raw_json),
+                    };
+                    (Pending { update, bytes: None }, Some(available))
                 }
             }
         }
@@ -318,8 +341,12 @@ async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateS
     let version = pending.update.version.clone();
     if !intent.downloads() {
         slot.set_pending(pending);
-        return Ok(());
+        return Ok(found);
     }
+    if let Some(available) = found {
+        slot.publish(bridge, available);
+    }
+    let mut downloaded = false;
     if pending.bytes.is_none() {
         slot.publish(bridge, UpdateStatus::Downloading { version: version.clone(), received: 0, total: None });
         let mut gate = ProgressGate::default();
@@ -340,11 +367,15 @@ async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateS
         tracing::info!(version, bytes = bytes.len(), "update downloaded and verified");
         pending.bytes = Some(bytes);
         slot.write_marker(&version);
-        slot.publish(bridge, UpdateStatus::Ready { version: version.clone() });
+        downloaded = true;
     }
+    let ready = downloaded.then(|| UpdateStatus::Ready { version: version.clone() });
     if !intent.installs(&version) {
         slot.set_pending(pending);
-        return Ok(());
+        return Ok(ready);
+    }
+    if let Some(ready) = ready {
+        slot.publish(bridge, ready);
     }
     slot.publish(bridge, UpdateStatus::Installing { version: version.clone() });
     let Pending { update, bytes } = pending;
@@ -355,7 +386,7 @@ async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateS
     slot.clear_marker();
     tracing::info!(version, "update installed; restarting");
     app.request_restart();
-    Ok(())
+    Ok(None)
 }
 
 /// Follow `Settings.auto_update`: on at startup → check after [`AUTO_CHECK_DELAY`] (installing only
@@ -462,6 +493,28 @@ mod tests {
         assert_eq!(pub_date(&serde_json::json!({ "pub_date": "2026-09-25T08:00:00Z" })), Some("2026-09-25T08:00:00Z".into()));
         assert_eq!(pub_date(&serde_json::json!({ "version": "2.1.0" })), None);
         assert_eq!(pub_date(&serde_json::json!({ "pub_date": 7 })), None);
+    }
+
+    #[test]
+    fn regression_the_slot_is_free_before_the_final_status_goes_out() {
+        // CI 2026-09-29 (main, tests/update.rs check_against_a_204_manifest_reports_up_to_date):
+        // 「安装」 right after 「已是最新」 was refused as busy, because the run published its last
+        // status and only then released the slot.
+        let dir = tempfile::tempdir().unwrap();
+        let slot = UpdateSlot::new(UpdaterConfig::from_values(Some("https://x.example/latest.json"), Some("k")), dir.path());
+        assert!(slot.try_begin());
+        let status = UpdateStatus::UpToDate { version: "1.0.0".into(), checked_at: 1 };
+        let mut free_when_sent = None;
+        slot.finish_with(Some(status.clone()), |sent| {
+            assert_eq!(sent, status);
+            free_when_sent = Some(!slot.busy.load(Ordering::Acquire));
+        });
+        assert_eq!(free_when_sent, Some(true), "whoever reacts to the status can start the next run");
+        assert_eq!(slot.status(), status);
+        // No final status (the last one stands): the slot is released all the same.
+        assert!(slot.try_begin());
+        slot.finish_with(None, |_| panic!("nothing to send"));
+        assert!(slot.try_begin());
     }
 
     #[test]
