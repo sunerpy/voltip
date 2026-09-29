@@ -108,6 +108,9 @@ pub struct CoreConfig {
     /// Run takes whose audio a trusted phone streams (docs/dictation.md §20): the desktop yes,
     /// the phone no (it answers `unavailable`).
     pub accepts_phone_takes: bool,
+    /// Keep the built-in scenes in the scene list (docs/dictation.md §18.10): the desktop yes, with
+    /// this host's default applications; the phone, which has no scenes, no.
+    pub builtin_scenes: bool,
     /// LAN discovery (docs/pairing.md 「局域网发现」): the shells pass [`crate::discovery::MdnsDiscovery`],
     /// the tests an in-memory LAN; `None` announces and browses nothing.
     pub discovery: Option<Arc<dyn crate::discovery::Discovery>>,
@@ -132,6 +135,7 @@ impl CoreConfig {
             direct_connect_timeout: Duration::from_secs(3),
             peer_handshake_timeout: Duration::from_secs(15),
             accepts_phone_takes: true,
+            builtin_scenes: true,
             discovery: None,
         }
     }
@@ -366,10 +370,12 @@ pub enum CoreCommand {
         /// New content.
         draft: SceneDraft,
     },
-    /// Delete a scene.
+    /// Delete a scene (a built-in one is refused: it can only be switched off).
     SceneRemove(Uuid),
     /// Reorder the scenes (a permutation of the current ids; order = matching order).
     SceneReorder(Vec<Uuid>),
+    /// Put a built-in scene's applications and overrides back to its defaults (§18.10).
+    SceneRestore(Uuid),
     /// Append a custom preset (docs/dictation.md §21).
     PresetAdd(PresetDraft),
     /// Replace a custom preset's name and instruction.
@@ -559,7 +565,8 @@ impl AppCore {
         let sent_texts = crate::phone::SentTexts::open(&config.data_dir);
         let (dictionary, dictionary_notice) = DictionaryStore::open(&config.data_dir);
         let (rules, rules_notice) = RuleStore::open(&config.data_dir);
-        let (scenes, scenes_notice) = SceneStore::open(&config.data_dir);
+        let scene_host = if config.builtin_scenes { voltip_protocol::Platform::current() } else { voltip_protocol::Platform::Other };
+        let (scenes, scenes_notice) = SceneStore::open_on(&config.data_dir, scene_host, now_ms());
         let (presets, presets_notice) = PresetStore::open(&config.data_dir);
         let built_in = BuiltIn::from_build();
         let user_secrets = load_user_secrets(secrets.as_ref());
@@ -1219,6 +1226,10 @@ impl Runtime {
             }
             CoreCommand::SceneReorder(ids) => {
                 let result = self.scenes.reorder(&ids);
+                self.scenes_changed(result)
+            }
+            CoreCommand::SceneRestore(id) => {
+                let result = self.scenes.restore(id, now_ms());
                 self.scenes_changed(result)
             }
             CoreCommand::PresetAdd(draft) => {

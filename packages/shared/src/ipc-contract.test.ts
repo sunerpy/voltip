@@ -139,6 +139,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   scenes_update: null,
   scenes_remove: null,
   scenes_reorder: null,
+  scenes_restore: null,
   presets_add: null,
   presets_update: null,
   presets_remove: null,
@@ -226,6 +227,7 @@ const argSchemas = {
   scenes_update: z.object({ id: z.string(), scene: sceneDraftSchema.strict() }).strict(),
   scenes_remove: z.object({ id: z.string() }).strict(),
   scenes_reorder: z.object({ ids: z.array(z.string()) }).strict(),
+  scenes_restore: z.object({ id: z.string() }).strict(),
   presets_add: z.object({ preset: presetDraftSchema.strict() }).strict(),
   presets_update: z.object({ id: z.string(), preset: presetDraftSchema.strict() }).strict(),
   presets_remove: z.object({ id: z.string() }).strict(),
@@ -355,6 +357,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.scenes_remove.parse(args));
     case "scenes_reorder":
       return backend.invoke(name, argSchemas.scenes_reorder.parse(args));
+    case "scenes_restore":
+      return backend.invoke(name, argSchemas.scenes_restore.parse(args));
     case "presets_add":
       return backend.invoke(name, argSchemas.presets_add.parse(args));
     case "presets_update":
@@ -879,8 +883,13 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
 
   it("regression: the scenes events, the take context, the history app and scene and the context switches survive parsing from the Rust fixtures", () => {
     const parsedState = uiStateSchema.parse(state);
-    expect(parsedState.scenes.map((s) => s.name)).toEqual(["代码评审", "聊天"]);
-    const [review, chat] = parsedState.scenes;
+    expect(parsedState.scenes.map((s) => s.name)).toEqual(["代码评审", "聊天", "legal"]);
+    const [review, chat, legal] = parsedState.scenes;
+    // docs/dictation.md §18.10: a built-in scene carries its category and may list no application.
+    expect(legal?.builtin).toBe("legal");
+    expect(legal?.match).toEqual({ apps: [], title_contains: [] });
+    expect(legal?.overrides.refine_preset).toBe("proofread");
+    expect(review?.builtin).toBeUndefined();
     expect(review?.match).toEqual({ apps: ["chrome", "code"], title_contains: ["Pull request"] });
     expect(review?.overrides).toEqual({
       refine_enabled: true,
@@ -906,7 +915,13 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       return r.success ? [r.data] : [];
     });
     const lists = parsed.flatMap((e) => (e.type === "scenes" ? [e.scenes] : []));
-    expect(lists.map((l) => l.length)).toEqual([2, 0]);
+    expect(lists.map((l) => l.length)).toEqual([3, 0]);
+    const builtinRefs = parsed.flatMap((e) =>
+      e.type === "history"
+        ? e.entries.flatMap((h) => (h.scene?.builtin === undefined ? [] : [h.scene]))
+        : [],
+    );
+    expect(builtinRefs).toContainEqual({ id: legal?.id, name: "legal", builtin: "legal" });
     const contexts = parsed.flatMap((e) =>
       e.type === "dictation" && e.context !== undefined ? [e.context] : [],
     );

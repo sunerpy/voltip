@@ -7,6 +7,7 @@ import { isBuiltinPreset } from "./schema";
 import type {
   Activation,
   BuiltinPreset,
+  BuiltinScene,
   ConnectionState,
   CustomPreset,
   DeviceConnection,
@@ -410,6 +411,17 @@ export function presetLabel(
  *  custom one by the name it had then. */
 export function presetRefLabel(ref: PresetRef, locale: Locale = DEFAULT_LOCALE): string {
   return isBuiltinPreset(ref.id) ? translate(locale, `presets.${ref.id}.name`) : ref.name;
+}
+
+/** A scene's name (a `Scene` or a `SceneRef`): a built-in one in the interface's language
+ *  (docs/dictation.md §18.10), the user's by its own name. */
+export function sceneLabel(
+  scene: { name: string; builtin?: BuiltinScene },
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  return scene.builtin === undefined
+    ? scene.name
+    : translate(locale, `builtinScenes.${scene.builtin}.name`);
 }
 
 /** One sentence on what a built-in preset does. */

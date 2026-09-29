@@ -11,9 +11,11 @@
 // (`./presets`: the same validation; every take refines with the preset of its start, which the
 // status and the history name). Used by `pnpm dev` without Tauri and by every functional test.
 // Timers are plain `setTimeout`/`setInterval` so fake timers drive it.
+import { z } from "zod";
 import type { Backend, EventListener, FrameListener, Unsubscribe } from "./backend";
 import { type SampleHistoryRow, historyEntries } from "./fixtures/history";
 import builtinPresetTexts from "./fixtures/ipc/presets-builtin.json";
+import builtinSceneRows from "./fixtures/ipc/scenes-builtin.json";
 import { joinLiveText, livePreviewText } from "./labels";
 import { type BuiltInService, keyEntry, providerSpec, resolveEngineStatus } from "./providers";
 import {
@@ -117,6 +119,10 @@ import {
   type PresetTryOutcome,
   builtinPresetTextSchema,
   isBuiltinPreset,
+  type BuiltinScene,
+  type BuiltinSceneTerms,
+  builtinSceneSchema,
+  sceneDraftSchema,
 } from "./schema";
 import {
   PresetError,
@@ -391,6 +397,22 @@ export const PRESET_TRY_UNCONFIGURED = "尚未配置 AI 润色服务，无法试
 export const MOCK_BUILTIN_PRESET_TEXTS: readonly BuiltinPresetText[] = builtinPresetTextSchema
   .array()
   .parse(builtinPresetTexts);
+/** The built-in scenes (docs/dictation.md §18.10) as the core fills them in: each category's defaults
+ *  on the three desktops and its term pack (the Rust side keeps the fixture equal to the core). */
+export const MOCK_BUILTIN_SCENES = z
+  .array(
+    z.object({
+      id: builtinSceneSchema,
+      templates: z.object({
+        windows: sceneDraftSchema,
+        macos: sceneDraftSchema,
+        linux: sceneDraftSchema,
+      }),
+      terms: z.array(z.string()),
+    }),
+  )
+  .parse(builtinSceneRows);
+
 /** What the preview's clean-up answers 试一试 with for the examples of docs/dictation.md §21. */
 export const MOCK_PRESET_SAMPLES: Readonly<
   Partial<Record<BuiltinPreset, { input: string; output: string }>>
@@ -871,6 +893,7 @@ export class MockBackend implements Backend {
       models,
       dictionary: this.role === "phone" ? [] : [...(options.dictionary ?? [])],
       rules: this.role === "phone" ? [] : [...(options.rules ?? [])],
+      // The desktop's list always holds the built-in scenes, appended off after the user's (§18.10).
       scenes: this.role === "phone" ? [] : [...(options.scenes ?? [])],
       presets: this.role === "phone" ? [] : [...(options.presets ?? [])],
       // What the desktop shell reports about the machine (§10.6); nothing on the phone.
@@ -880,6 +903,7 @@ export class MockBackend implements Backend {
     };
     this.state.engines = this.resolveEngines(settings.engines);
     this.state.models = this.modelsFor(settings.engines);
+    if (this.role !== "phone") this.state.scenes = this.withBuiltinScenes(this.state.scenes);
   }
 
   getState(): Promise<UiState> {
@@ -1526,21 +1550,34 @@ export class MockBackend implements Backend {
       this.refuseScenesOnPhone();
       const draft = validateSceneDraft(scene);
       const now = this.now();
-      this.commitScenes([...this.state.scenes, this.sceneFrom(draft, this.uuid(), now)]);
+      // Before the first built-in scene: the user's scenes match first unless moved.
+      const scenes = [...this.state.scenes];
+      const at = scenes.findIndex((s) => s.builtin !== undefined);
+      scenes.splice(at < 0 ? scenes.length : at, 0, this.sceneFrom(draft, this.uuid(), now));
+      this.commitScenes(scenes);
     },
     scenes_update: (args) => {
       const { id, scene } = required(args);
       this.refuseScenesOnPhone();
       uuidArg(id);
-      const draft = validateSceneDraft(scene);
+      // The bridge lets an update list no application; the core knows which scenes may.
+      const draft = validateSceneDraft(scene, false);
       const current = this.state.scenes.find((s) => s.id === id);
       if (current === undefined) {
         this.emit({ type: "error", message: `scenes: 没有 id 为 ${id} 的场景` });
         return;
       }
+      if (current.builtin !== undefined && draft.name !== current.name) {
+        this.emit({ type: "error", message: "scenes: 内置场景不能改名" });
+        return;
+      }
+      if (current.builtin === undefined && draft.match.apps.length === 0) {
+        this.emit({ type: "error", message: `scenes: 场景「${draft.name}」至少要有一个应用` });
+        return;
+      }
       this.commitScenes(
         this.state.scenes.map((s) =>
-          s.id === id ? this.sceneFrom(draft, id, s.created_at_ms) : s,
+          s.id === id ? this.sceneFrom(draft, id, s.created_at_ms, s.builtin) : s,
         ),
       );
     },
@@ -1548,11 +1585,45 @@ export class MockBackend implements Backend {
       const { id } = required(args);
       this.refuseScenesOnPhone();
       uuidArg(id);
-      if (!this.state.scenes.some((s) => s.id === id)) {
+      const current = this.state.scenes.find((s) => s.id === id);
+      if (current === undefined) {
         this.emit({ type: "error", message: `scenes: 没有 id 为 ${id} 的场景` });
         return;
       }
+      if (current.builtin !== undefined) {
+        this.emit({ type: "error", message: "scenes: 内置场景不能删除，可以关闭" });
+        return;
+      }
       this.commitScenes(this.state.scenes.filter((s) => s.id !== id));
+    },
+    scenes_restore: (args) => {
+      const { id } = required(args);
+      this.refuseScenesOnPhone();
+      uuidArg(id);
+      const current = this.state.scenes.find((s) => s.id === id);
+      if (current === undefined) {
+        this.emit({ type: "error", message: `scenes: 没有 id 为 ${id} 的场景` });
+        return;
+      }
+      const platform = this.builtinPlatform();
+      const row = MOCK_BUILTIN_SCENES.find((r) => r.id === current.builtin);
+      if (row === undefined || platform === undefined) {
+        this.emit({ type: "error", message: "scenes: 只有内置场景可以恢复默认" });
+        return;
+      }
+      const template = structuredClone(row.templates[platform]);
+      this.commitScenes(
+        this.state.scenes.map((s) =>
+          s.id === id
+            ? {
+                ...s,
+                match: template.match,
+                overrides: template.overrides,
+                updated_at_ms: this.now(),
+              }
+            : s,
+        ),
+      );
     },
     scenes_reorder: (args) => {
       const { ids } = required(args);
@@ -1617,6 +1688,41 @@ export class MockBackend implements Backend {
 
   // ---- scenes (docs/dictation.md §18) ------------------------------------------------------------
 
+  /** Which desktop's default applications the built-in scenes get (the identity's). */
+  private builtinPlatform(): "windows" | "macos" | "linux" | undefined {
+    const platform = this.state.identity?.platform;
+    return platform === "windows" || platform === "macos" || platform === "linux"
+      ? platform
+      : undefined;
+  }
+
+  /** `SceneStore::fill_builtin`: the categories `scenes` lacks, appended switched off (§18.10). The
+   *  preview's ids are fixed per category (the core's are random and kept in `scenes.json`). */
+  private withBuiltinScenes(scenes: Scene[]): Scene[] {
+    const platform = this.builtinPlatform();
+    if (platform === undefined) return scenes;
+    const out = [...scenes];
+    MOCK_BUILTIN_SCENES.forEach((row, i) => {
+      if (out.some((s) => s.builtin === row.id)) return;
+      const now = this.now();
+      out.push({
+        id: builtinSceneId(i),
+        ...structuredClone(row.templates[platform]),
+        created_at_ms: now,
+        updated_at_ms: now,
+        builtin: row.id,
+      });
+    });
+    return out;
+  }
+
+  /** `scenes_builtin`: every built-in scene's term pack (the phone has no scenes). */
+  async scenesBuiltin(): Promise<BuiltinSceneTerms[]> {
+    await Promise.resolve();
+    this.refuseScenesOnPhone();
+    return MOCK_BUILTIN_SCENES.map((row) => ({ id: row.id, terms: [...row.terms] }));
+  }
+
   private refuseScenesOnPhone() {
     if (this.role === "phone") throw new SceneError(SCENES_UNAVAILABLE);
   }
@@ -1631,8 +1737,19 @@ export class MockBackend implements Backend {
     this.emit({ type: "scenes", scenes });
   }
 
-  private sceneFrom(draft: SceneDraft, id: string, createdAtMs: number): Scene {
-    return { id, ...draft, created_at_ms: createdAtMs, updated_at_ms: this.now() };
+  private sceneFrom(
+    draft: SceneDraft,
+    id: string,
+    createdAtMs: number,
+    builtin?: BuiltinScene,
+  ): Scene {
+    return {
+      id,
+      ...draft,
+      created_at_ms: createdAtMs,
+      updated_at_ms: this.now(),
+      ...(builtin === undefined ? {} : { builtin }),
+    };
   }
 
   // ---- presets (docs/dictation.md §21) -----------------------------------------------------------
@@ -3046,6 +3163,11 @@ function mockPresetOutput(preset: PresetId | undefined, text: string): string {
   const cleaned = text.replace(/嗯|啊|呃|那个/g, "").trim();
   const body = cleaned.length > 0 ? cleaned : text;
   return /[。！？.!?]$/.test(body) ? body : `${body}。`;
+}
+
+/** The preview's fixed id of the built-in scene at `index` of `MOCK_BUILTIN_SCENES`. */
+export function builtinSceneId(index: number): string {
+  return `b0117e1e-5ce0-4000-8000-${String(index + 1).padStart(12, "0")}`;
 }
 
 function required<T>(args: T | undefined): T {

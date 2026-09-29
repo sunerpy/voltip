@@ -910,16 +910,13 @@
         },
         "kind": "dictation",
         "app": {
-          "id": "code",
-          "name": "Code"
+          "id": "winword",
+          "name": "Word"
         },
         "scene": {
-          "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
-          "name": "代码评审"
-        },
-        "preset": {
-          "id": "formal",
-          "name": "书面语"
+          "id": "b0117e1e-5ce0-4e5e-8a1e-000000000003",
+          "name": "legal",
+          "builtin": "legal"
         }
       }
     ]
@@ -2864,6 +2861,22 @@
         },
         "created_at_ms": 1758700600000,
         "updated_at_ms": 1758700600000
+      },
+      {
+        "id": "b0117e1e-5ce0-4e5e-8a1e-000000000003",
+        "name": "legal",
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "overrides": {
+          "refine_preset": "proofread",
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是法律文本：法条、案号和当事人名称照原样保留。"
+        },
+        "created_at_ms": 1758700600000,
+        "updated_at_ms": 1758700600000,
+        "builtin": "legal"
       }
     ]
   },

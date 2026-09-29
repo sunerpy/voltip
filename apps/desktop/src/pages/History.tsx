@@ -12,6 +12,7 @@ import {
   outcomeLabel,
   outputModeLabel,
   presetRefLabel,
+  sceneLabel,
 } from "@voltip/shared";
 import {
   Badge,
@@ -356,7 +357,12 @@ export function History({ initialFilter }: HistoryProps) {
                                   </span>
                                   {e.scene !== undefined && (
                                     <Badge>
-                                      <span data-user-text>{e.scene.name}</span>
+                                      <span
+                                        {...(e.scene.builtin === undefined
+                                          ? { "data-user-text": "" }
+                                          : {})}>
+                                        {sceneLabel(e.scene, locale)}
+                                      </span>
                                     </Badge>
                                   )}
                                 </span>
@@ -590,8 +596,12 @@ export function History({ initialFilter }: HistoryProps) {
                         selected.scene === undefined ? (
                           t("history.context.noScene")
                         ) : (
-                          <span data-user-text data-testid="history-detail-scene">
-                            {selected.scene.name}
+                          <span
+                            data-testid="history-detail-scene"
+                            {...(selected.scene.builtin === undefined
+                              ? { "data-user-text": "" }
+                              : {})}>
+                            {sceneLabel(selected.scene, locale)}
                           </span>
                         )
                       }

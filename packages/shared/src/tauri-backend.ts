@@ -16,6 +16,7 @@ import {
   appRefSchema,
   audioDeviceSchema,
   builtinPresetTextSchema,
+  builtinSceneTermsSchema,
   feedbackInfoSchema,
   feedbackReceiptSchema,
   injectPreflightSchema,
@@ -161,6 +162,11 @@ export class TauriBackend implements Backend {
   async presetsBuiltin() {
     const raw = await this.transport.invoke("presets_builtin");
     return builtinPresetTextSchema.array().parse(raw);
+  }
+
+  async scenesBuiltin() {
+    const raw = await this.transport.invoke("scenes_builtin");
+    return builtinSceneTermsSchema.array().parse(raw);
   }
 
   async injectPreflight() {

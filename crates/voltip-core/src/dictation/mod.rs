@@ -448,8 +448,10 @@ mod tests {
     #[test]
     fn the_take_context_is_optional_on_the_status() {
         use crate::scenes::{AppRef, SceneRef};
-        let context =
-            TakeContext { app: AppRef { id: "slack".into(), name: "Slack".into() }, scene: Some(SceneRef { id: uuid::Uuid::nil(), name: "聊天".into() }) };
+        let context = TakeContext {
+            app: AppRef { id: "slack".into(), name: "Slack".into() },
+            scene: Some(SceneRef { id: uuid::Uuid::nil(), name: "聊天".into(), builtin: None }),
+        };
         let st = DictationStatus {
             context: Some(context),
             ..DictationStatus::dictation(DictationPhase::Listening { started_at: 5, ready: true, live: None, locked: false }, 3)

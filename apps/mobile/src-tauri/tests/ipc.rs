@@ -37,6 +37,7 @@ fn offline_config(dir: &Path) -> CoreConfig {
     cfg.default_device_name = DEVICE_NAME.into();
     cfg.direct_bind = "127.0.0.1:0".parse().unwrap();
     cfg.accepts_phone_takes = false;
+    cfg.builtin_scenes = false;
     cfg
 }
 
@@ -352,6 +353,8 @@ fn dictation_is_refused_but_engines_secrets_and_history_work() {
             ("scenes_update", json!({ "id": id, "scene": scene })),
             ("scenes_remove", json!({ "id": id })),
             ("scenes_reorder", json!({ "ids": [id] })),
+            ("scenes_restore", json!({ "id": id })),
+            ("scenes_builtin", json!({})),
             ("settings_set_context_sharing", json!({ "appName": true, "windowTitle": false })),
             ("recent_apps", json!({})),
         ] {
@@ -499,6 +502,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "feedback_attachments_clear",
             "phone_clipboard_read",
             "presets_builtin",
+            "scenes_builtin",
         ]
         .map(String::from),
     );

@@ -719,6 +719,7 @@ mod tests {
             overrides: crate::SceneOverrides::default(),
             created_at_ms: 1,
             updated_at_ms: 1,
+            builtin: None,
         };
         let ev = st.apply(CoreEvent::Scenes(vec![scene.clone()]));
         assert_eq!(st.scenes, vec![scene]);

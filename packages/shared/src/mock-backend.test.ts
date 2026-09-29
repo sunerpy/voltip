@@ -38,6 +38,7 @@ import {
   MOCK_MODELS_ROOT,
   MOCK_PROBE_MS,
   MOCK_PRESET_SAMPLES,
+  MOCK_BUILTIN_SCENES,
   MOCK_PUBLIC_KEYS,
   MOCK_REFINE_MS,
   MOCK_NO_SPEECH,
@@ -60,6 +61,7 @@ import {
 } from "./mock-backend";
 import {
   BUILTIN_PRESETS,
+  BUILTIN_SCENES,
   HISTORY_LIMIT,
   MAX_EDIT_SELECTION_CHARS,
   MAX_PRESETS,
@@ -2209,14 +2211,18 @@ describe("MockBackend scenes and context (docs/dictation.md section 18)", () => 
 
   it("regression: scene commands behave like the core: drafts wrong on their own reject the call and list clashes are error events with the list kept", async () => {
     const backend = new MockBackend({ now: () => clock, history: [] });
-    expect(backend.peek().scenes).toEqual([]);
+    // The desktop's list always holds the built-in scenes (§18.10); the user's come before them.
+    const mine = () => backend.peek().scenes.filter((s) => s.builtin === undefined);
+    const builtinIds = () =>
+      backend.peek().scenes.flatMap((s) => (s.builtin === undefined ? [] : [s.id]));
+    expect(mine()).toEqual([]);
     const events = collect(backend);
     await backend.invoke("scenes_add", { scene: scene(" 聊天 ", ["Slack.exe", "slack"]) });
     tick(1000);
     await backend.invoke("scenes_add", {
       scene: scene("代码", ["code"], { refine_enabled: false }),
     });
-    const [chat, code] = backend.peek().scenes;
+    const [chat, code] = mine();
     if (!chat || !code) throw new Error("two scenes");
     expect(chat).toMatchObject({ name: "聊天", match: { apps: ["slack"] }, created_at_ms: T0 });
     expect(code.overrides).toEqual({ refine_enabled: false });
@@ -2233,7 +2239,7 @@ describe("MockBackend scenes and context (docs/dictation.md section 18)", () => 
       id: chat.id,
       scene: { ...scene("聊天", ["slack"]), enabled: false },
     });
-    expect(backend.peek().scenes[0]).toMatchObject({
+    expect(mine()[0]).toMatchObject({
       id: chat.id,
       enabled: false,
       created_at_ms: T0,
@@ -2243,15 +2249,15 @@ describe("MockBackend scenes and context (docs/dictation.md section 18)", () => 
     await backend.invoke("scenes_update", { id: unknown, scene: scene("z", ["z"]) });
     await backend.invoke("scenes_remove", { id: unknown });
     await backend.invoke("scenes_reorder", { ids: [code.id] });
-    await backend.invoke("scenes_reorder", { ids: [code.id, chat.id] });
-    expect(backend.peek().scenes.map((s) => s.name)).toEqual(["代码", "聊天"]);
+    await backend.invoke("scenes_reorder", { ids: [code.id, chat.id, ...builtinIds()] });
+    expect(mine().map((s) => s.name)).toEqual(["代码", "聊天"]);
     expect(errors(events).slice(1)).toEqual([
       `scenes: 没有 id 为 ${unknown} 的场景`,
       `scenes: 没有 id 为 ${unknown} 的场景`,
       "scenes: 新的顺序必须恰好包含现有的全部场景",
     ]);
     await backend.invoke("scenes_remove", { id: code.id });
-    expect(backend.peek().scenes.map((s) => s.name)).toEqual(["聊天"]);
+    expect(mine().map((s) => s.name)).toEqual(["聊天"]);
     await backend.invoke("settings_set_context_sharing", { appName: false, windowTitle: true });
     expect(backend.peek().settings.context_sharing).toEqual({
       app_name: false,
@@ -2334,6 +2340,86 @@ describe("MockBackend scenes and context (docs/dictation.md section 18)", () => 
     backend.destroy();
   });
 
+  it("the desktop's list holds the built-in scenes like the core: off after the user's, not deleted or renamed, restored, with their term packs (section 18.10)", async () => {
+    const mac = new MockBackend({
+      now: () => clock,
+      history: [],
+      identity: { ...desktopIdentity(), platform: "macos" },
+      scenes: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          name: "聊天",
+          enabled: true,
+          match: { apps: ["slack"], title_contains: [] },
+          overrides: {},
+          created_at_ms: 1,
+          updated_at_ms: 1,
+        },
+      ],
+    });
+    const scenes = mac.peek().scenes;
+    expect(scenes.map((s) => s.builtin ?? s.name)).toEqual(["聊天", ...BUILTIN_SCENES]);
+    expect(scenes.slice(1).every((s) => !s.enabled && s.name === s.builtin)).toBe(true);
+    expect(scenes[1]?.match.apps).toContain("com.microsoft.vscode");
+    mac.destroy();
+
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    const events = collect(backend);
+    const legal = backend.peek().scenes.find((s) => s.builtin === "legal");
+    if (!legal) throw new Error("the 法律 scene");
+    expect(legal.match.apps).toEqual([]);
+    // A built-in scene may list no application; a scene of the user's may not.
+    await backend.invoke("scenes_update", {
+      id: legal.id,
+      scene: {
+        name: "legal",
+        enabled: true,
+        match: { apps: [], title_contains: [] },
+        overrides: {},
+      },
+    });
+    expect(backend.peek().scenes.find((s) => s.id === legal.id)).toMatchObject({
+      enabled: true,
+      overrides: {},
+      builtin: "legal",
+    });
+    await backend.invoke("scenes_update", {
+      id: legal.id,
+      scene: {
+        name: "法律",
+        enabled: true,
+        match: { apps: [], title_contains: [] },
+        overrides: {},
+      },
+    });
+    await backend.invoke("scenes_remove", { id: legal.id });
+    await backend.invoke("scenes_add", { scene: scene("我的", ["code"]) });
+    const mine = backend.peek().scenes[0];
+    if (!mine) throw new Error("the user's scene");
+    expect(mine.name).toBe("我的");
+    await backend.invoke("scenes_update", { id: mine.id, scene: scene("我的", [" "]) });
+    await backend.invoke("scenes_restore", { id: mine.id });
+    expect(errors(events)).toEqual([
+      "scenes: 内置场景不能改名",
+      "scenes: 内置场景不能删除，可以关闭",
+      "scenes: 场景「我的」至少要有一个应用",
+      "scenes: 只有内置场景可以恢复默认",
+    ]);
+    // 恢复默认: the defaults back, the switch as it is.
+    await backend.invoke("scenes_restore", { id: legal.id });
+    const template = MOCK_BUILTIN_SCENES.find((r) => r.id === "legal")?.templates.windows;
+    expect(backend.peek().scenes.find((s) => s.id === legal.id)).toMatchObject({
+      enabled: true,
+      match: template?.match,
+      overrides: template?.overrides,
+    });
+    const packs = await backend.scenesBuiltin();
+    expect(packs.map((p) => p.id)).toEqual([...BUILTIN_SCENES]);
+    expect(packs.find((p) => p.id === "chat")?.terms).toEqual([]);
+    expect(packs.find((p) => p.id === "coding")?.terms).toContain("Kubernetes");
+    backend.destroy();
+  });
+
   it("regression: the phone refuses every scene command and the query", async () => {
     const phone = new MockBackend({ role: "phone", scenes: [] });
     expect(phone.peek().scenes).toEqual([]);
@@ -2344,6 +2430,7 @@ describe("MockBackend scenes and context (docs/dictation.md section 18)", () => 
       phone.invoke("settings_set_context_sharing", { appName: true, windowTitle: false }),
     ).rejects.toThrow(SCENES_UNAVAILABLE);
     await expect(phone.recentApps()).rejects.toThrow(SCENES_UNAVAILABLE);
+    await expect(phone.scenesBuiltin()).rejects.toThrow(SCENES_UNAVAILABLE);
     phone.destroy();
   });
 });

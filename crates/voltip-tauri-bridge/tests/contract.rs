@@ -22,11 +22,11 @@ use voltip_core::phone::{PhoneTextSource, SentText, SentTextFailure, SentTextSta
 use voltip_core::presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetId, PresetRef, PresetTryOutcome};
 use voltip_core::ui::{GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, UiEvent, UiState, UpdateStatus};
 use voltip_core::{
-    Activation, AppRef, BuiltIn, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ContextSharing, DeviceConnection, DeviceView, DictationPhase,
-    DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, HistoryEntry, ImportMode, InjectMode, LiveText,
-    LocalDevice, Locale, ModelInstallState, ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSettings,
-    RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef, Segment,
-    ServiceKind, Settings, SoloKey, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
+    Activation, AppRef, BuiltIn, BuiltinScene, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ContextSharing, DeviceConnection, DeviceView,
+    DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, HistoryEntry, ImportMode,
+    InjectMode, LiveText, LocalDevice, Locale, ModelInstallState, ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId,
+    ProviderSettings, RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef,
+    Segment, ServiceKind, Settings, SoloKey, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
 };
 use voltip_core::{EntryOrigin, OriginKind};
 use voltip_crypto::{PublicKey, SafetyCode};
@@ -41,6 +41,7 @@ const UPDATE_ENV: &str = "UPDATE_IPC_FIXTURES";
 const STATE_FILE: &str = "state.json";
 const EVENTS_FILE: &str = "events.json";
 const COMMANDS_FILE: &str = "commands.json";
+const BUILTIN_SCENES_FILE: &str = "scenes-builtin.json";
 
 const DESKTOP_KEY: PublicKey = PublicKey([0x11; 32]);
 const PHONE_KEY: PublicKey = PublicKey([0x22; 32]);
@@ -86,6 +87,7 @@ const EDIT_INSTRUCTION: &str = "改得更正式";
 const EDIT_REWRITE: &str = "各位同事：会议改至周四上午十点。";
 const SCENE_ID: &str = "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f";
 const SCENE_ID_2: &str = "e0e1e2e3-e4e5-4e6e-8e7e-8e9eaebecede";
+const SCENE_ID_3: &str = "b0117e1e-5ce0-4e5e-8a1e-000000000003";
 const PRESET_ID: &str = "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e";
 
 fn fixtures_dir() -> PathBuf {
@@ -287,8 +289,9 @@ fn settings() -> Settings {
 }
 
 /// The scenes (docs/dictation.md §18.1): one with every override and a title keyword, one plain
-/// and switched off.
+/// and switched off, and a built-in one (§18.10) that lists no application yet.
 fn scenes() -> Vec<Scene> {
+    let legal = BuiltinScene::Legal.template(Platform::Windows);
     vec![
         Scene {
             id: uuid(SCENE_ID),
@@ -305,6 +308,7 @@ fn scenes() -> Vec<Scene> {
             },
             created_at_ms: AT_MS - 86_400_000,
             updated_at_ms: AT_MS - 3_600_000,
+            builtin: None,
         },
         Scene {
             id: uuid(SCENE_ID_2),
@@ -314,6 +318,17 @@ fn scenes() -> Vec<Scene> {
             overrides: SceneOverrides { refine_preset: Some(PresetId::Builtin(BuiltinPreset::Punctuation)), ..SceneOverrides::default() },
             created_at_ms: AT_MS,
             updated_at_ms: AT_MS,
+            builtin: None,
+        },
+        Scene {
+            id: uuid(SCENE_ID_3),
+            name: legal.name,
+            enabled: legal.enabled,
+            matching: legal.matching,
+            overrides: legal.overrides,
+            created_at_ms: AT_MS,
+            updated_at_ms: AT_MS,
+            builtin: Some(BuiltinScene::Legal),
         },
     ]
 }
@@ -331,7 +346,9 @@ fn custom_presets() -> Vec<CustomPreset> {
 
 /// The take's context (docs/dictation.md §18.6): the app in front and the scene that matched.
 fn take_context() -> TakeContext {
-    TakeContext { app: AppRef { id: "code".into(), name: "Code".into() }, scene: Some(SceneRef { id: uuid(SCENE_ID), name: "代码评审".into() }) }
+    TakeContext {
+        app: AppRef { id: "code".into(), name: "Code".into() }, scene: Some(SceneRef { id: uuid(SCENE_ID), name: "代码评审".into(), builtin: None })
+    }
 }
 
 fn done_phase() -> DictationPhase {
@@ -419,7 +436,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             kind: TakeKind::Dictation,
             edit: None,
             app: Some(AppRef { id: "code".into(), name: "Code".into() }),
-            scene: Some(SceneRef { id: uuid(SCENE_ID), name: "代码评审".into() }),
+            scene: Some(SceneRef { id: uuid(SCENE_ID), name: "代码评审".into(), builtin: None }),
             preset: Some(PresetRef { id: PresetId::Builtin(BuiltinPreset::Formal), name: "书面语".into() }),
             origin: None,
         },
@@ -572,6 +589,10 @@ fn live_inject_history_entry() -> HistoryEntry {
         mode: OutputMode::LiveInject,
         segments: Some(stream_segments()),
         live_error: Some("live tap overrun: the decoder fell behind the microphone".into()),
+        // A built-in scene (§18.10) is named by its category; the interface shows its own name.
+        app: Some(AppRef { id: "winword".into(), name: "Word".into() }),
+        scene: Some(SceneRef { id: uuid(SCENE_ID_3), name: "legal".into(), builtin: Some(BuiltinScene::Legal) }),
+        preset: None,
         ..history_entries().remove(0)
     }
 }
@@ -1475,6 +1496,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::ScenesUpdate { .. } => "ScenesUpdate",
         UiCommand::ScenesRemove { .. } => "ScenesRemove",
         UiCommand::ScenesReorder { .. } => "ScenesReorder",
+        UiCommand::ScenesRestore { .. } => "ScenesRestore",
         UiCommand::PresetsAdd { .. } => "PresetsAdd",
         UiCommand::PresetsUpdate { .. } => "PresetsUpdate",
         UiCommand::PresetsRemove { .. } => "PresetsRemove",
@@ -1588,7 +1610,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("scenes_add", json!({ "scene": SceneDraft::from(&scenes()[0]) }), "ScenesAdd"),
         ("scenes_update", json!({ "id": SCENE_ID_2, "scene": SceneDraft::from(&scenes()[1]) }), "ScenesUpdate"),
         ("scenes_remove", json!({ "id": SCENE_ID_2 }), "ScenesRemove"),
-        ("scenes_reorder", json!({ "ids": [SCENE_ID_2, SCENE_ID] }), "ScenesReorder"),
+        ("scenes_reorder", json!({ "ids": [SCENE_ID_2, SCENE_ID, SCENE_ID_3] }), "ScenesReorder"),
+        ("scenes_restore", json!({ "id": SCENE_ID_3 }), "ScenesRestore"),
         // Presets (docs/dictation.md §21): 试一试 on a saved preset and on the instruction being edited.
         ("presets_add", json!({ "preset": PresetDraft::from(&custom_presets()[0]) }), "PresetsAdd"),
         ("presets_update", json!({ "id": PRESET_ID, "preset": PresetDraft { name: "周报（短）".into(), prompt: "三句话以内。".into() } }), "PresetsUpdate"),
@@ -1658,7 +1681,7 @@ fn regression_text_files_check_out_with_lf_on_every_os() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.gitattributes");
     let attributes = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     assert!(attributes.lines().any(|l| l.split_whitespace().eq(["*", "text=auto", "eol=lf"])), "{attributes}");
-    for name in [STATE_FILE, EVENTS_FILE, COMMANDS_FILE] {
+    for name in [STATE_FILE, EVENTS_FILE, COMMANDS_FILE, BUILTIN_SCENES_FILE] {
         let fixture = std::fs::read_to_string(fixtures_dir().join(name)).unwrap();
         assert!(!fixture.contains('\r'), "{name} has CRLF line endings");
     }
@@ -1993,6 +2016,27 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
     let secret = "gsk_example_not_a_real_key";
     assert!(!pretty(&full_state()).contains(secret));
     assert!(!pretty(&all_events()).contains(secret));
+}
+
+/// The built-in scenes (§18.10) as the preview's in-memory backend fills them in: each category's
+/// defaults on the three desktops and its term pack (`@voltip/shared/mock` reads this file).
+#[test]
+fn builtin_scenes_fixture_matches_the_core() {
+    let rows: Vec<Value> = BuiltinScene::ALL
+        .into_iter()
+        .map(|scene| {
+            json!({
+                "id": scene,
+                "templates": {
+                    "windows": scene.template(Platform::Windows),
+                    "macos": scene.template(Platform::Macos),
+                    "linux": scene.template(Platform::Linux),
+                },
+                "terms": voltip_core::vocabulary::packs::terms(scene),
+            })
+        })
+        .collect();
+    check_fixture(BUILTIN_SCENES_FILE, &pretty(&rows));
 }
 
 /// Regression (public release, 2026-09-27): the build's own service and relay never reach the

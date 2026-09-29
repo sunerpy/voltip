@@ -474,7 +474,7 @@ mod tests {
         assert!(!json.contains("\"preset\""), "no clean-up, no preset: {json}");
         let with = HistoryEntry {
             app: Some(AppRef { id: "slack".into(), name: "Slack".into() }),
-            scene: Some(SceneRef { id: Uuid::nil(), name: "聊天".into() }),
+            scene: Some(SceneRef { id: Uuid::nil(), name: "聊天".into(), builtin: None }),
             preset: Some(PresetRef { id: crate::presets::PresetId::Builtin(crate::presets::BuiltinPreset::Chat), name: "口语聊天".into() }),
             ..plain
         };

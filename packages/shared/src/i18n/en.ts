@@ -1716,7 +1716,15 @@ export const en: Messages = {
         title: "Delete the scene “{name}”?",
         body: "Dictation in these apps follows the global settings from then on; scene names in History stay.",
       },
-      footnote: "Up to {limit} · matched top to bottom",
+      footnote: "Up to {limit} of your own · matched top to bottom",
+      builtinBadge: "Built-in",
+      terms: "Terms: {n}",
+      viewTerms: "View the terms of {name}",
+      viewTermsShort: "View terms",
+      termsTitle: "{name} · terms",
+      termsNote:
+        "When this scene matches, these terms join your personal dictionary as hints for recognition and AI polish; they do not count toward the dictionary's limit.",
+      needsApps: "Applies once you add an app",
     },
     brief: {
       privacy: {
@@ -1886,9 +1894,43 @@ export const en: Messages = {
       },
     },
   },
+  builtinScenes: {
+    coding: {
+      name: "Coding",
+      description: "Code editors and terminals: code, commands and identifiers stay as they are.",
+    },
+    office: {
+      name: "Office writing",
+      description: "Mail and documents: complete, formal sentences.",
+    },
+    chat: { name: "Chat", description: "Chat apps: short conversational sentences." },
+    legal: {
+      name: "Legal",
+      description: "Strict proofreading; legal terms, statutes and case numbers stay as they are.",
+    },
+    medical: {
+      name: "Medical",
+      description: "Strict proofreading; drug names, doses and tests stay as they are.",
+    },
+    finance: {
+      name: "Finance",
+      description: "Strict proofreading; amounts, ratios and security codes stay as they are.",
+    },
+    academic: {
+      name: "Academic",
+      description: "Strict proofreading; citations and proper names stay as they are.",
+    },
+  },
   sceneEditor: {
     titleNew: "New scene",
     titleEdit: "Edit scene",
+    builtinName: "A built-in scene keeps its name.",
+    builtinApps: "A built-in scene may list no app for now; it applies once you add one.",
+    restore: "Restore defaults",
+    restoreTitle: "Restore the defaults of “{name}”?",
+    restoreBody:
+      "The app list, the AI preset and the extra instruction return to their defaults; the switch stays as it is.",
+    restored: "Defaults restored · {name}",
     name: "Name",
     namePlaceholder: "For example: Chat",
     apps: "Apps",

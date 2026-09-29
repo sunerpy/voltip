@@ -258,6 +258,7 @@ describe("Mobile app flow", () => {
       feedbackAttachmentsClear: inner.feedbackAttachmentsClear.bind(inner),
       phoneClipboardRead: inner.phoneClipboardRead.bind(inner),
       presetsBuiltin: inner.presetsBuiltin.bind(inner),
+      scenesBuiltin: inner.scenesBuiltin.bind(inner),
     };
     const first = render(<TestApp backend={backend} />);
     expect(await screen.findByText("正在启动…")).toBeInTheDocument();
@@ -290,6 +291,7 @@ describe("Mobile app flow", () => {
       feedbackAttachmentsClear: identityless.feedbackAttachmentsClear.bind(identityless),
       phoneClipboardRead: identityless.phoneClipboardRead.bind(identityless),
       presetsBuiltin: identityless.presetsBuiltin.bind(identityless),
+      scenesBuiltin: identityless.scenesBuiltin.bind(identityless),
     };
     render(<TestApp backend={noIdentity} />);
     expect(await screen.findByText("正在生成设备身份…")).toBeInTheDocument();

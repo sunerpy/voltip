@@ -25,7 +25,13 @@ struct Node {
     events: mpsc::Receiver<CoreEvent>,
 }
 
+/// A core whose list holds the user's scenes alone (these tests are about theirs; the built-in
+/// ones, docs/dictation.md §18.10, have their own test below).
 fn start(dir: &std::path::Path, probe: Arc<FakeProbe>, refiner: Arc<FakeRefiner>) -> Node {
+    start_with(dir, probe, refiner, false)
+}
+
+fn start_with(dir: &std::path::Path, probe: Arc<FakeProbe>, refiner: Arc<FakeRefiner>, builtin_scenes: bool) -> Node {
     if !dir.join(voltip_core::SETTINGS_FILE_NAME).exists() {
         SettingsStore::new(dir)
             .save(&Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Settings::default() })
@@ -34,6 +40,7 @@ fn start(dir: &std::path::Path, probe: Arc<FakeProbe>, refiner: Arc<FakeRefiner>
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = "Scenes Test".into();
     cfg.direct_enabled = false;
+    cfg.builtin_scenes = builtin_scenes;
     let ports = DictationPorts {
         audio: Arc::new(FakeAudio::speech()),
         injector: Arc::new(FakeInjector::paste()),
@@ -190,5 +197,46 @@ async fn regression_a_corrupt_scenes_file_is_set_aside_and_reported_after_ready(
     assert!(matches!(done.phase, DictationPhase::Done { refined: true, .. }), "the globals: {done:?}");
     assert_eq!(history[0].scene, None);
     assert_eq!(history[0].app.as_ref().map(|a| a.id.as_str()), Some("slack"));
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// §18.10 through the core: a desktop's list starts with the seven built-in scenes, switched off;
+/// deleting one is refused with an `error` event, a take in one that is on names it in the status
+/// and the history, 恢复默认 puts its defaults back, and a restart finds the same ids.
+#[tokio::test]
+async fn builtin_scenes_through_the_core() {
+    use voltip_core::BuiltinScene;
+    let dir = tempfile::tempdir().unwrap();
+    let probe = Arc::new(FakeProbe::app("nothing", "Nothing", None));
+    let refiner = Arc::new(FakeRefiner::ok("润色后的文本"));
+    let mut node = start_with(dir.path(), probe.clone(), refiner.clone(), true);
+    let list = scenes(&mut node).await;
+    assert_eq!(list.iter().map(|s| s.builtin).collect::<Vec<_>>(), BuiltinScene::ALL.map(Some));
+    assert!(list.iter().all(|s| !s.enabled));
+    let coding = list[0].clone();
+    let Some(app) = coding.matching.apps.first().cloned() else {
+        // A host with no default applications for 编程开发 (not a desktop): nothing more to see.
+        return;
+    };
+    node.handle.send(CoreCommand::SceneRemove(coding.id)).await.unwrap();
+    assert_eq!(error(&mut node).await, "scenes: 内置场景不能删除，可以关闭");
+    let mut on = SceneDraft::from(&coding);
+    on.enabled = true;
+    on.matching.apps = vec![app.clone()];
+    node.handle.send(CoreCommand::SceneUpdate { id: coding.id, draft: on }).await.unwrap();
+    let list = scenes(&mut node).await;
+    assert_eq!(list[0].matching.apps, std::slice::from_ref(&app));
+    probe.set_app(&app, "Editor", None);
+    let (done, history) = take(&mut node).await;
+    assert_eq!(done.context.and_then(|c| c.scene).map(|s| s.builtin), Some(Some(BuiltinScene::Coding)));
+    assert_eq!(history[0].scene.as_ref().map(|s| (s.name.as_str(), s.builtin)), Some(("coding", Some(BuiltinScene::Coding))));
+    node.handle.send(CoreCommand::SceneRestore(coding.id)).await.unwrap();
+    let restored = scenes(&mut node).await;
+    assert_eq!((restored[0].enabled, &restored[0].matching), (true, &coding.matching));
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+    drop(node);
+    let mut node = start_with(dir.path(), probe, refiner, true);
+    let again = scenes(&mut node).await;
+    assert_eq!(again.iter().map(|s| s.id).collect::<Vec<_>>(), restored.iter().map(|s| s.id).collect::<Vec<_>>());
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }

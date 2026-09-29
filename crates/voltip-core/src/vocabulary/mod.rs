@@ -11,6 +11,7 @@
 //! back in [`Step::error`] together with the unchanged input.
 
 mod matcher;
+pub mod packs;
 mod store;
 mod toml_io;
 
@@ -429,11 +430,13 @@ fn guarded(text: &str, f: impl FnOnce() -> Result<Step, String>) -> Step {
     }
 }
 
+#[derive(Clone)]
 enum RuleMatcher {
     Literal(LiteralMatcher),
     Regex(regex::Regex),
 }
 
+#[derive(Clone)]
 struct CompiledRule {
     id: Uuid,
     name: String,
@@ -443,6 +446,7 @@ struct CompiledRule {
 
 /// The compiled dictionary and rules the pipeline runs (one snapshot per change, shared behind an
 /// `Arc`): the correction matcher, the rules in order, and the glossary.
+#[derive(Clone)]
 pub struct Vocabulary {
     corrections: Option<LiteralMatcher>,
     /// Matcher target → (entry id, term).
@@ -519,6 +523,30 @@ impl Vocabulary {
     /// The enabled terms for the recogniser prompt and the refiner (capped, dictionary order).
     pub fn glossary(&self) -> &[String] {
         &self.glossary
+    }
+
+    /// The same vocabulary with `terms` (a built-in scene's pack, §18.10) after the dictionary's in
+    /// the glossary, inside the same limits: a term already there (ignoring ASCII case) is skipped,
+    /// the list stops at the first term that would pass [`MAX_GLOSSARY_TERMS`] or
+    /// [`MAX_GLOSSARY_CHARS`]. Corrections and rules are unchanged.
+    pub fn with_terms(&self, terms: &[&str]) -> Self {
+        let mut next = self.clone();
+        let mut chars = glossary_chars(&next.glossary);
+        for term in terms {
+            if next.glossary.len() == MAX_GLOSSARY_TERMS {
+                break;
+            }
+            if next.glossary.iter().any(|t| t.eq_ignore_ascii_case(term)) {
+                continue;
+            }
+            let cost = term.chars().count() + if next.glossary.is_empty() { 0 } else { GLOSSARY_SEPARATOR.chars().count() };
+            if chars + cost > MAX_GLOSSARY_CHARS {
+                break;
+            }
+            chars += cost;
+            next.glossary.push((*term).to_owned());
+        }
+        next
     }
 
     /// Dictionary corrections: every mis-hearing of every enabled entry in one left-to-right pass,
@@ -610,6 +638,11 @@ impl CompiledRule {
 
 /// Enabled terms in dictionary order, deduplicated ignoring ASCII case, capped at
 /// [`MAX_GLOSSARY_TERMS`] and [`MAX_GLOSSARY_CHARS`] (separators included).
+/// Characters of `glossary` joined by [`GLOSSARY_SEPARATOR`].
+fn glossary_chars(glossary: &[String]) -> usize {
+    glossary.iter().map(|t| t.chars().count()).sum::<usize>() + GLOSSARY_SEPARATOR.chars().count() * glossary.len().saturating_sub(1)
+}
+
 fn build_glossary(dictionary: &[DictionaryEntry]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut chars = 0usize;

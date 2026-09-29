@@ -184,6 +184,25 @@ describe("TauriBackend", () => {
     await expect(broken.recentApps()).rejects.toThrow(/invalid|expected/i);
   });
 
+  it("scenesBuiltin queries scenes_builtin without arguments and validates the packs", async () => {
+    const calls: { command: string; args: unknown }[] = [];
+    const packs = [{ id: "coding", terms: ["API"] }];
+    const backend = new TauriBackend({
+      ...fakeTransport().transport,
+      invoke: (command, args) => {
+        calls.push({ command, args });
+        return Promise.resolve(packs);
+      },
+    });
+    expect(await backend.scenesBuiltin()).toEqual(packs);
+    expect(calls).toStrictEqual([{ command: "scenes_builtin", args: undefined }]);
+    const broken = new TauriBackend({
+      ...fakeTransport().transport,
+      invoke: () => Promise.resolve([{ id: "cooking", terms: [] }]),
+    });
+    await expect(broken.scenesBuiltin()).rejects.toThrow(/invalid|expected/i);
+  });
+
   it("presetsBuiltin queries presets_builtin without arguments and validates the texts", async () => {
     const calls: { command: string; args: unknown }[] = [];
     const texts = [{ id: "proofread", prompt: "你是语音听写的校对。" }];

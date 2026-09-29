@@ -402,9 +402,19 @@
   },
   {
     "args": {
-      "ids": ["e0e1e2e3-e4e5-4e6e-8e7e-8e9eaebecede", "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f"]
+      "ids": [
+        "e0e1e2e3-e4e5-4e6e-8e7e-8e9eaebecede",
+        "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+        "b0117e1e-5ce0-4e5e-8a1e-000000000003"
+      ]
     },
     "name": "scenes_reorder"
+  },
+  {
+    "args": {
+      "id": "b0117e1e-5ce0-4e5e-8a1e-000000000003"
+    },
+    "name": "scenes_restore"
   },
   {
     "args": {

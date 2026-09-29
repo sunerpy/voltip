@@ -120,18 +120,24 @@ export interface EditorProblems {
   prompt?: { text: string; missing: boolean };
 }
 
+/** `builtin`: the draft is a built-in scene's (docs/dictation.md §18.10), which keeps its name and
+ *  may list no application; names are unique among the user's scenes only. */
 export function editorProblems(
   d: EditorDraft,
   others: readonly Scene[],
   t: TFunction = zhT.t,
+  builtin = false,
 ): EditorProblems {
   const out: EditorProblems = {};
   const name = d.name.trim();
-  const clash = others.find((s) => asciiFold(s.name) === asciiFold(name));
+  const clash = builtin
+    ? undefined
+    : others.find((s) => s.builtin === undefined && asciiFold(s.name) === asciiFold(name));
   if (name.length === 0) out.name = { text: t("sceneEditor.error.name"), missing: true };
   else if (clash !== undefined)
     out.name = { text: t("sceneEditor.error.duplicate", { name: clash.name }), missing: false };
-  if (d.apps.length === 0) out.apps = { text: t("sceneEditor.error.noApps"), missing: true };
+  if (d.apps.length === 0 && !builtin)
+    out.apps = { text: t("sceneEditor.error.noApps"), missing: true };
   else if (d.apps.length > MAX_SCENE_APPS)
     out.apps = {
       text: t("sceneEditor.error.tooManyApps", { max: MAX_SCENE_APPS }),

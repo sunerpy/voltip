@@ -589,6 +589,27 @@ export const MAX_CONTEXT_TITLE_CHARS = 200;
 /** `SceneOverrides.language` meaning "no language hint for this take" (auto-detect). */
 export const LANGUAGE_AUTO = "auto";
 
+/** The built-in scene categories (`voltip_core::scenes::BuiltinScene`, docs/dictation.md §18.10),
+ *  in the order the desktop's list appends them. A built-in scene's `name` is its category. */
+export const BUILTIN_SCENES = [
+  "coding",
+  "office",
+  "chat",
+  "legal",
+  "medical",
+  "finance",
+  "academic",
+] as const;
+export const builtinSceneSchema = z.enum(BUILTIN_SCENES);
+export type BuiltinScene = z.infer<typeof builtinSceneSchema>;
+
+/** A built-in scene's term pack (`scenes_builtin`), what 查看术语 lists. */
+export const builtinSceneTermsSchema = z.object({
+  id: builtinSceneSchema,
+  terms: z.array(z.string()),
+});
+export type BuiltinSceneTerms = z.infer<typeof builtinSceneTermsSchema>;
+
 /** Which applications (normalised ids) and, optionally, which window titles a scene applies to. */
 export const sceneMatchSchema = z.object({
   apps: z.array(z.string()),
@@ -620,6 +641,9 @@ export const sceneSchema = z.object({
   overrides: sceneOverridesSchema.default(() => ({})),
   created_at_ms: z.number().nonnegative(),
   updated_at_ms: z.number().nonnegative(),
+  /** A built-in scene's category (§18.10): it may list no application, cannot be deleted or
+   *  renamed, and 恢复默认 (`scenes_restore`) puts its defaults back. */
+  builtin: builtinSceneSchema.optional(),
 });
 export type Scene = z.infer<typeof sceneSchema>;
 
@@ -636,8 +660,13 @@ export type SceneDraft = z.infer<typeof sceneDraftSchema>;
 export const appRefSchema = z.object({ id: z.string(), name: z.string() });
 export type AppRef = z.infer<typeof appRefSchema>;
 
-/** A scene as the status and the history name it (`SceneRef`; its name at the time). */
-export const sceneRefSchema = z.object({ id: z.string(), name: z.string() });
+/** A scene as the status and the history name it (`SceneRef`; its name at the time, a built-in
+ *  scene's category, which the interface names in its own language). */
+export const sceneRefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  builtin: builtinSceneSchema.optional(),
+});
 export type SceneRef = z.infer<typeof sceneRefSchema>;
 
 /** The take's context (`TakeContext`): the app in front when it started and the matched scene. */
@@ -1880,6 +1909,10 @@ export interface CommandArgs {
   scenes_update: ScenesUpdateArgs;
   scenes_remove: { id: string };
   scenes_reorder: { ids: string[] };
+  /** 恢复默认 on a built-in scene (§18.10): its applications and overrides back to the defaults. */
+  scenes_restore: { id: string };
+  /** Query: every built-in scene's term pack (`Backend.scenesBuiltin`, 查看术语). */
+  scenes_builtin: undefined;
   /** Custom presets (§21); the core re-emits `presets`. */
   presets_add: { preset: PresetDraft };
   presets_update: PresetsUpdateArgs;
@@ -1930,7 +1963,8 @@ export type QueryCommand =
   | "feedback_attachment_remove"
   | "feedback_attachments_clear"
   | "phone_clipboard_read"
-  | "presets_builtin";
+  | "presets_builtin"
+  | "scenes_builtin";
 export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "core_state",
   "audio_devices",
@@ -1954,6 +1988,7 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "feedback_attachments_clear",
   "phone_clipboard_read",
   "presets_builtin",
+  "scenes_builtin",
 ];
 /** Commands the UI dispatches through `Backend.invoke` (everything except the queries / streams). */
 export type MutationCommand = Exclude<CommandName, QueryCommand>;

@@ -1,7 +1,13 @@
 import { type AppRef, type HistoryEntry, MAX_SCENES, type Scene } from "@voltip/shared";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { desktopIdentity } from "@voltip/shared/mock";
 import { renderApp } from "../../../test/render";
+
+/** A desktop whose list holds only the user's scenes: these tests are about theirs; the built-in
+ *  scenes (docs/dictation.md §18.10), which a Windows, macOS or Linux desktop always lists, are
+ *  tested on their own below. */
+const NO_BUILTIN = { identity: { ...desktopIdentity(), platform: "other" as const } };
 
 const NOW = 1_758_700_000_000;
 const CHAT_ID = "00000000-0000-4000-a000-000000000001";
@@ -72,7 +78,10 @@ function names(pane: HTMLElement): (string | null)[] {
 describe("Settings · 场景 (docs/dictation.md section 18)", () => {
   it("regression: the 场景 group lists the scenes in matching order with what they match and override; the switch, the order buttons and delete run the scene commands", async () => {
     const user = userEvent.setup();
-    const { backend } = renderApp({ path: "/settings/scene", mock: { scenes: [CHAT, GITHUB] } });
+    const { backend } = renderApp({
+      path: "/settings/scene",
+      mock: { ...NO_BUILTIN, scenes: [CHAT, GITHUB] },
+    });
     const { dialog, pane } = await scenesPane();
     expect(within(dialog).getByRole("tab", { name: /场景/, selected: true })).toBeInTheDocument();
     expect(within(pane).getByRole("heading", { name: "场景", level: 2 })).toBeInTheDocument();
@@ -147,7 +156,7 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
 
   it("regression: the context switches start at app name on and window title off and write settings_set_context_sharing; an empty list shows its empty state", async () => {
     const user = userEvent.setup();
-    const { backend } = renderApp({ path: "/settings/scene" });
+    const { backend } = renderApp({ path: "/settings/scene", mock: NO_BUILTIN });
     const { dialog, pane } = await scenesPane();
     const context = within(pane).getByTestId("context-sharing");
     expect(context).toHaveTextContent("发送给 AI 润色的上下文");
@@ -179,7 +188,7 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
 
     expect(within(pane).queryByRole("list", { name: "场景列表" })).toBeNull();
     expect(within(pane).getByText("暂无场景")).toBeInTheDocument();
-    expect(within(pane).getByText("上限 50 个 · 从上到下匹配")).toBeInTheDocument();
+    expect(within(pane).getByText("自建场景最多 50 个 · 从上到下匹配")).toBeInTheDocument();
   });
 
   it("regression: 新建场景 builds a scene from a typed id and a recent app, title keywords and overrides that start at 跟随全局, and saves it through scenes_add", async () => {
@@ -190,7 +199,7 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
       take(3, { id: "slack", name: "Slack" }),
       take(4, { id: "code", name: "Code" }),
     ];
-    const { backend } = renderApp({ path: "/settings/scene", mock: { history } });
+    const { backend } = renderApp({ path: "/settings/scene", mock: { ...NO_BUILTIN, history } });
     const { pane } = await scenesPane();
     const invoke = vi.spyOn(backend, "invoke");
     await user.click(within(pane).getByRole("button", { name: "新建场景" }));
@@ -312,7 +321,10 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
 
   it("regression: the editor refuses a duplicate name and a long prompt before sending, shows the core's refusal and stays open; editing sends scenes_update with the id and the untouched overrides; Esc closes only the editor", async () => {
     const user = userEvent.setup();
-    const { backend } = renderApp({ path: "/settings/scene", mock: { scenes: [CHAT, GITHUB] } });
+    const { backend } = renderApp({
+      path: "/settings/scene",
+      mock: { ...NO_BUILTIN, scenes: [CHAT, GITHUB] },
+    });
     const { pane } = await scenesPane();
     const invoke = vi.spyOn(backend, "invoke");
     await user.click(within(pane).getByRole("button", { name: "新建场景" }));
@@ -411,12 +423,125 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
     const many = Array.from({ length: MAX_SCENES }, (_, i) =>
       scene(`00000000-0000-4000-a000-${String(i + 1).padStart(12, "0")}`, `s${i}`),
     );
-    const { backend } = renderApp({ path: "/settings/scene", mock: { scenes: many } });
+    const { backend } = renderApp({
+      path: "/settings/scene",
+      mock: { ...NO_BUILTIN, scenes: many },
+    });
     const { pane } = await scenesPane();
     expect(within(pane).getByRole("button", { name: "新建场景" })).toBeDisabled();
     expect(cards(pane)).toHaveLength(MAX_SCENES);
     vi.spyOn(backend, "invoke").mockRejectedValueOnce(new Error("scenes: 暂时不能保存"));
     await user.click(within(card(pane, 0)).getByRole("switch", { name: "启用 s0" }));
     expect(await screen.findByText("出错了 · 暂时不能保存")).toBeInTheDocument();
+  });
+});
+
+describe("Settings · 场景 · built-in scenes (docs/dictation.md section 18.10)", () => {
+  it("lists the built-in scenes after the user's with a 内置 badge, a description and the term count; no delete; a domain scene says it waits for an app; 查看术语 lists the pack", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/scene", mock: { scenes: [CHAT] } });
+    const { pane } = await scenesPane();
+    expect(names(pane)).toEqual([
+      "聊天",
+      "编程开发",
+      "办公写作",
+      "即时聊天",
+      "法律",
+      "医疗",
+      "金融",
+      "学术",
+    ]);
+    const coding = within(pane).getByRole("article", { name: "编程开发" });
+    expect(within(coding).getByText("内置")).toBeInTheDocument();
+    expect(within(coding).getByTestId("scene-builtin-description")).toHaveTextContent(
+      "代码编辑器与终端",
+    );
+    expect(coding).toHaveAttribute("data-enabled", "false");
+    expect(within(coding).getByText("code")).toBeInTheDocument();
+    expect(within(coding).queryByRole("button", { name: "删除 编程开发" })).toBeNull();
+    expect(within(card(pane, 0)).getByRole("button", { name: "删除 聊天" })).toBeInTheDocument();
+    const legal = within(pane).getByRole("article", { name: "法律" });
+    expect(within(legal).getByTestId("scene-needs-apps")).toHaveTextContent("添加应用后生效");
+    expect(within(legal).getByTestId("scene-summary")).toHaveTextContent(
+      "AI 预设：校对 · 有补充要求",
+    );
+    // 即时聊天 has no pack, so no term line.
+    const chat = within(pane).getByRole("article", { name: "即时聊天" });
+    expect(within(chat).queryByTestId("scene-terms")).toBeNull();
+    const packs = await backend.scenesBuiltin();
+    const codingTerms = packs.find((p) => p.id === "coding")?.terms ?? [];
+    await waitFor(() => {
+      expect(within(coding).getByTestId("scene-terms")).toHaveTextContent(
+        `术语 ${codingTerms.length} 个`,
+      );
+    });
+    await user.click(within(coding).getByRole("button", { name: "查看 编程开发 的术语" }));
+    const terms = await screen.findByRole("dialog", { name: "编程开发 · 术语" });
+    expect(within(terms).getByText("Kubernetes")).toBeInTheDocument();
+    expect(within(terms).getAllByRole("listitem")).toHaveLength(codingTerms.length);
+    await user.click(within(terms).getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("dialog", { name: "编程开发 · 术语" })).toBeNull();
+    // The switch sends the category as the name.
+    const invoke = vi.spyOn(backend, "invoke");
+    await user.click(within(legal).getByRole("switch", { name: "启用 法律" }));
+    expect(invoke).toHaveBeenLastCalledWith("scenes_update", {
+      id: backend.peek().scenes.find((s) => s.builtin === "legal")?.id,
+      scene: expect.objectContaining({
+        name: "legal",
+        enabled: true,
+        match: { apps: [], title_contains: [] },
+      }),
+    });
+  });
+
+  it("the editor of a built-in scene keeps its name, saves without an app and restores the defaults after a confirmation", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/scene" });
+    const { pane } = await scenesPane();
+    const invoke = vi.spyOn(backend, "invoke");
+    await user.click(within(pane).getByRole("button", { name: "编辑 法律" }));
+    let editor = await screen.findByRole("dialog", { name: "编辑场景" });
+    expect(within(editor).getByTestId("scene-builtin-name")).toHaveValue("法律");
+    expect(within(editor).getByTestId("scene-builtin-name")).toHaveAttribute("readonly");
+    await user.click(within(editor).getByRole("button", { name: /保存/ }));
+    const legal = backend.peek().scenes.find((s) => s.builtin === "legal");
+    expect(invoke).toHaveBeenLastCalledWith("scenes_update", {
+      id: legal?.id,
+      scene: expect.objectContaining({ name: "legal", match: { apps: [], title_contains: [] } }),
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "编辑场景" })).toBeNull();
+    });
+
+    // Change 编程开发's apps, then 恢复默认.
+    const coding = backend.peek().scenes.find((s) => s.builtin === "coding");
+    if (!coding) throw new Error("the 编程开发 scene");
+    await user.click(within(pane).getByRole("button", { name: "编辑 编程开发" }));
+    editor = await screen.findByRole("dialog", { name: "编辑场景" });
+    await user.click(within(editor).getByRole("button", { name: "移除 code" }));
+    await user.click(within(editor).getByRole("button", { name: /保存/ }));
+    await waitFor(() => {
+      expect(backend.peek().scenes.find((s) => s.id === coding.id)?.match.apps).not.toContain(
+        "code",
+      );
+    });
+    await user.click(within(pane).getByRole("button", { name: "编辑 编程开发" }));
+    editor = await screen.findByRole("dialog", { name: "编辑场景" });
+    await user.click(within(editor).getByTestId("scene-restore"));
+    const confirm = await screen.findByRole("dialog", { name: "恢复「编程开发」的默认设置？" });
+    expect(confirm).toHaveTextContent("开关状态不变");
+    await user.click(within(confirm).getByRole("button", { name: "恢复默认" }));
+    expect(invoke).toHaveBeenLastCalledWith("scenes_restore", { id: coding.id });
+    expect(await screen.findByText("已恢复默认 · 编程开发")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(backend.peek().scenes.find((s) => s.id === coding.id)?.match.apps).toEqual(
+        coding.match.apps,
+      );
+    });
+    // A scene of the user's has neither a fixed name nor 恢复默认.
+    await user.click(within(pane).getByRole("button", { name: "新建场景" }));
+    editor = await screen.findByRole("dialog", { name: "新建场景" });
+    expect(within(editor).queryByTestId("scene-restore")).toBeNull();
+    expect(within(editor).queryByTestId("scene-builtin-name")).toBeNull();
   });
 });

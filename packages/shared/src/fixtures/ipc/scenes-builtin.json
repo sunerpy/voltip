@@ -1,0 +1,738 @@
+[
+  {
+    "id": "coding",
+    "templates": {
+      "linux": {
+        "enabled": false,
+        "match": {
+          "apps": [
+            "code",
+            "cursor",
+            "kiro",
+            "jetbrains-idea",
+            "jetbrains-idea-ce",
+            "jetbrains-pycharm",
+            "jetbrains-pycharm-ce",
+            "jetbrains-webstorm",
+            "jetbrains-goland",
+            "jetbrains-clion",
+            "jetbrains-rustrover",
+            "gnome-terminal-server",
+            "konsole",
+            "xfce4-terminal",
+            "alacritty",
+            "kitty",
+            "org.wezfurlong.wezterm",
+            "tilix",
+            "xterm"
+          ],
+          "title_contains": []
+        },
+        "name": "coding",
+        "overrides": {
+          "prompt": "保留代码、命令、路径、英文标识符和 Markdown，不把技术词翻译成中文。",
+          "refine_preset": "proofread"
+        }
+      },
+      "macos": {
+        "enabled": false,
+        "match": {
+          "apps": [
+            "com.microsoft.vscode",
+            "com.todesktop.230313mzl4w4u92",
+            "dev.kiro.desktop",
+            "com.jetbrains.intellij",
+            "com.jetbrains.intellij.ce",
+            "com.jetbrains.pycharm",
+            "com.jetbrains.pycharm.ce",
+            "com.jetbrains.webstorm",
+            "com.jetbrains.goland",
+            "com.jetbrains.clion",
+            "com.jetbrains.rustrover",
+            "com.apple.terminal",
+            "com.googlecode.iterm2",
+            "com.mitchellh.ghostty",
+            "dev.warp.warp-stable",
+            "net.kovidgoyal.kitty",
+            "org.alacritty",
+            "com.github.wez.wezterm"
+          ],
+          "title_contains": []
+        },
+        "name": "coding",
+        "overrides": {
+          "prompt": "保留代码、命令、路径、英文标识符和 Markdown，不把技术词翻译成中文。",
+          "refine_preset": "proofread"
+        }
+      },
+      "windows": {
+        "enabled": false,
+        "match": {
+          "apps": [
+            "code",
+            "cursor",
+            "kiro",
+            "idea64",
+            "pycharm64",
+            "webstorm64",
+            "goland64",
+            "clion64",
+            "rider64",
+            "rustrover64",
+            "windowsterminal",
+            "powershell",
+            "pwsh",
+            "cmd",
+            "wezterm-gui",
+            "alacritty"
+          ],
+          "title_contains": []
+        },
+        "name": "coding",
+        "overrides": {
+          "prompt": "保留代码、命令、路径、英文标识符和 Markdown，不把技术词翻译成中文。",
+          "refine_preset": "proofread"
+        }
+      }
+    },
+    "terms": [
+      "API",
+      "SDK",
+      "CLI",
+      "IDE",
+      "JSON",
+      "YAML",
+      "TOML",
+      "Markdown",
+      "Git",
+      "GitHub",
+      "GitLab",
+      "commit",
+      "rebase",
+      "cherry-pick",
+      "pull request",
+      "merge request",
+      "Docker",
+      "Kubernetes",
+      "Helm",
+      "CI/CD",
+      "Rust",
+      "Cargo",
+      "TypeScript",
+      "JavaScript",
+      "Python",
+      "Golang",
+      "Java",
+      "Kotlin",
+      "Swift",
+      "C++",
+      "React",
+      "Vue",
+      "Node.js",
+      "npm",
+      "pnpm",
+      "Vite",
+      "Webpack",
+      "PostgreSQL",
+      "MySQL",
+      "Redis",
+      "SQLite",
+      "MongoDB",
+      "Kafka",
+      "gRPC",
+      "REST",
+      "GraphQL",
+      "WebSocket",
+      "OAuth",
+      "JWT",
+      "TLS",
+      "HTTP",
+      "DNS",
+      "Nginx",
+      "Linux",
+      "macOS",
+      "WSL",
+      "SSH",
+      "Bash",
+      "PowerShell",
+      "VS Code",
+      "JetBrains",
+      "Cursor",
+      "Kiro",
+      "LLM",
+      "prompt",
+      "token",
+      "embedding",
+      "refactor",
+      "debug",
+      "deploy",
+      "rollback",
+      "hotfix",
+      "async",
+      "await",
+      "mutex",
+      "struct",
+      "enum",
+      "trait",
+      "regex",
+      "localhost"
+    ]
+  },
+  {
+    "id": "office",
+    "templates": {
+      "linux": {
+        "enabled": false,
+        "match": {
+          "apps": ["thunderbird", "libreoffice-writer", "wps", "evolution", "obsidian", "typora"],
+          "title_contains": []
+        },
+        "name": "office",
+        "overrides": {
+          "prompt": "邮件和文档：句子完整，自然分段，不编造称呼和事实。",
+          "refine_preset": "formal"
+        }
+      },
+      "macos": {
+        "enabled": false,
+        "match": {
+          "apps": [
+            "com.microsoft.outlook",
+            "com.microsoft.word",
+            "com.kingsoft.wpsoffice.mac",
+            "com.apple.mail",
+            "com.apple.iwork.pages",
+            "notion.id",
+            "md.obsidian",
+            "abnerworks.typora"
+          ],
+          "title_contains": []
+        },
+        "name": "office",
+        "overrides": {
+          "prompt": "邮件和文档：句子完整，自然分段，不编造称呼和事实。",
+          "refine_preset": "formal"
+        }
+      },
+      "windows": {
+        "enabled": false,
+        "match": {
+          "apps": ["outlook", "olk", "winword", "wps", "onenote", "notion", "obsidian", "typora"],
+          "title_contains": []
+        },
+        "name": "office",
+        "overrides": {
+          "prompt": "邮件和文档：句子完整，自然分段，不编造称呼和事实。",
+          "refine_preset": "formal"
+        }
+      }
+    },
+    "terms": [
+      "OKR",
+      "KPI",
+      "ROI",
+      "PPT",
+      "Excel",
+      "Word",
+      "Outlook",
+      "Teams",
+      "WPS",
+      "PDF",
+      "周报",
+      "月报",
+      "日报",
+      "会议纪要",
+      "复盘",
+      "对齐",
+      "闭环",
+      "排期",
+      "立项",
+      "结项",
+      "验收",
+      "交付",
+      "里程碑",
+      "甘特图",
+      "预算",
+      "报销",
+      "发票",
+      "合同",
+      "甲方",
+      "乙方",
+      "供应商",
+      "招标",
+      "投标",
+      "采购",
+      "审批",
+      "考勤",
+      "绩效",
+      "述职",
+      "汇报",
+      "抄送",
+      "附件",
+      "日程",
+      "待办",
+      "截止日期",
+      "Q1",
+      "Q2",
+      "Q3",
+      "Q4",
+      "同比",
+      "环比"
+    ]
+  },
+  {
+    "id": "chat",
+    "templates": {
+      "linux": {
+        "enabled": false,
+        "match": {
+          "apps": [
+            "wechat",
+            "qq",
+            "slack",
+            "teams-for-linux",
+            "dingtalk",
+            "feishu",
+            "lark",
+            "telegramdesktop",
+            "discord"
+          ],
+          "title_contains": []
+        },
+        "name": "chat",
+        "overrides": {
+          "refine_preset": "chat"
+        }
+      },
+      "macos": {
+        "enabled": false,
+        "match": {
+          "apps": [
+            "com.tencent.xinwechat",
+            "com.tencent.weworkmac",
+            "com.tencent.qq",
+            "com.tinyspeck.slackmacgap",
+            "com.microsoft.teams2",
+            "com.alibaba.dingtalkmac",
+            "com.bytedance.macos.feishu",
+            "com.electron.lark",
+            "ru.keepcoder.telegram",
+            "com.tdesktop.telegram",
+            "com.hnc.discord",
+            "com.apple.mobilesms"
+          ],
+          "title_contains": []
+        },
+        "name": "chat",
+        "overrides": {
+          "refine_preset": "chat"
+        }
+      },
+      "windows": {
+        "enabled": false,
+        "match": {
+          "apps": [
+            "weixin",
+            "wechat",
+            "wxwork",
+            "qq",
+            "slack",
+            "ms-teams",
+            "teams",
+            "dingtalk",
+            "feishu",
+            "lark",
+            "telegram",
+            "discord"
+          ],
+          "title_contains": []
+        },
+        "name": "chat",
+        "overrides": {
+          "refine_preset": "chat"
+        }
+      }
+    },
+    "terms": []
+  },
+  {
+    "id": "legal",
+    "templates": {
+      "linux": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "legal",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是法律文本：法条、案号和当事人名称照原样保留。",
+          "refine_preset": "proofread"
+        }
+      },
+      "macos": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "legal",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是法律文本：法条、案号和当事人名称照原样保留。",
+          "refine_preset": "proofread"
+        }
+      },
+      "windows": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "legal",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是法律文本：法条、案号和当事人名称照原样保留。",
+          "refine_preset": "proofread"
+        }
+      }
+    },
+    "terms": [
+      "民法典",
+      "刑法",
+      "劳动合同法",
+      "公司法",
+      "诉讼",
+      "仲裁",
+      "调解",
+      "上诉",
+      "再审",
+      "起诉状",
+      "答辩状",
+      "判决书",
+      "裁定书",
+      "调解书",
+      "质证",
+      "举证责任",
+      "诉讼时效",
+      "管辖权",
+      "不可抗力",
+      "违约金",
+      "定金",
+      "保证金",
+      "担保",
+      "抵押",
+      "质押",
+      "留置权",
+      "连带责任",
+      "侵权责任",
+      "善意第三人",
+      "当事人",
+      "原告",
+      "被告",
+      "诉讼代理人",
+      "律师函",
+      "知识产权",
+      "著作权",
+      "商标权",
+      "专利权",
+      "竞业限制",
+      "保密协议",
+      "股权转让",
+      "尽职调查",
+      "法定代表人",
+      "债权",
+      "债务",
+      "强制执行",
+      "财产保全",
+      "案号",
+      "司法解释",
+      "合议庭"
+    ]
+  },
+  {
+    "id": "medical",
+    "templates": {
+      "linux": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "medical",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是医疗文本：药名、剂量和检查项目照原样保留，不改动医学含义。",
+          "refine_preset": "proofread"
+        }
+      },
+      "macos": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "medical",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是医疗文本：药名、剂量和检查项目照原样保留，不改动医学含义。",
+          "refine_preset": "proofread"
+        }
+      },
+      "windows": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "medical",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是医疗文本：药名、剂量和检查项目照原样保留，不改动医学含义。",
+          "refine_preset": "proofread"
+        }
+      }
+    },
+    "terms": [
+      "CT",
+      "MRI",
+      "核磁共振",
+      "B超",
+      "心电图",
+      "血常规",
+      "尿常规",
+      "肝功能",
+      "肾功能",
+      "血糖",
+      "糖化血红蛋白",
+      "血压",
+      "心率",
+      "血氧饱和度",
+      "胆固醇",
+      "甘油三酯",
+      "白细胞",
+      "红细胞",
+      "血小板",
+      "血红蛋白",
+      "C反应蛋白",
+      "病理",
+      "活检",
+      "化疗",
+      "放疗",
+      "靶向治疗",
+      "免疫治疗",
+      "抗生素",
+      "阿莫西林",
+      "头孢",
+      "布洛芬",
+      "对乙酰氨基酚",
+      "阿司匹林",
+      "二甲双胍",
+      "胰岛素",
+      "他汀",
+      "高血压",
+      "糖尿病",
+      "冠心病",
+      "心肌梗死",
+      "脑卒中",
+      "肺炎",
+      "哮喘",
+      "慢阻肺",
+      "术后",
+      "随访",
+      "门诊",
+      "住院",
+      "医嘱",
+      "处方",
+      "静脉滴注",
+      "皮下注射",
+      "mg",
+      "ml"
+    ]
+  },
+  {
+    "id": "finance",
+    "templates": {
+      "linux": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "finance",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是金融文本：金额、百分比、证券代码和机构名称照原样保留。",
+          "refine_preset": "proofread"
+        }
+      },
+      "macos": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "finance",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是金融文本：金额、百分比、证券代码和机构名称照原样保留。",
+          "refine_preset": "proofread"
+        }
+      },
+      "windows": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "finance",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是金融文本：金额、百分比、证券代码和机构名称照原样保留。",
+          "refine_preset": "proofread"
+        }
+      }
+    },
+    "terms": [
+      "市盈率",
+      "市净率",
+      "市值",
+      "净资产",
+      "净利润",
+      "营业收入",
+      "毛利率",
+      "净利率",
+      "ROE",
+      "EPS",
+      "EBITDA",
+      "现金流",
+      "资产负债表",
+      "利润表",
+      "现金流量表",
+      "应收账款",
+      "应付账款",
+      "存货",
+      "折旧",
+      "摊销",
+      "同比",
+      "环比",
+      "年化收益率",
+      "夏普比率",
+      "最大回撤",
+      "波动率",
+      "ETF",
+      "LOF",
+      "债券",
+      "国债",
+      "可转债",
+      "期货",
+      "期权",
+      "杠杆",
+      "做多",
+      "做空",
+      "IPO",
+      "并购",
+      "估值",
+      "贴现",
+      "汇率",
+      "通胀",
+      "CPI",
+      "PPI",
+      "GDP",
+      "LPR",
+      "美联储",
+      "降准",
+      "降息",
+      "基点",
+      "A股",
+      "港股",
+      "美股",
+      "纳斯达克",
+      "沪深300"
+    ]
+  },
+  {
+    "id": "academic",
+    "templates": {
+      "linux": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "academic",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是学术文本：引用、公式符号和专有名词照原样保留。",
+          "refine_preset": "proofread"
+        }
+      },
+      "macos": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "academic",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是学术文本：引用、公式符号和专有名词照原样保留。",
+          "refine_preset": "proofread"
+        }
+      },
+      "windows": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "academic",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是学术文本：引用、公式符号和专有名词照原样保留。",
+          "refine_preset": "proofread"
+        }
+      }
+    },
+    "terms": [
+      "摘要",
+      "关键词",
+      "引言",
+      "文献综述",
+      "研究方法",
+      "参考文献",
+      "致谢",
+      "附录",
+      "研究假设",
+      "自变量",
+      "因变量",
+      "控制变量",
+      "样本量",
+      "显著性",
+      "p值",
+      "置信区间",
+      "标准差",
+      "方差",
+      "回归分析",
+      "相关系数",
+      "对照组",
+      "实验组",
+      "双盲",
+      "定性研究",
+      "定量研究",
+      "问卷",
+      "半结构化访谈",
+      "田野调查",
+      "期刊",
+      "会议论文",
+      "学位论文",
+      "开题报告",
+      "答辩",
+      "课题",
+      "基金项目",
+      "同行评审",
+      "影响因子",
+      "SCI",
+      "SSCI",
+      "EI",
+      "CSSCI",
+      "DOI",
+      "arXiv",
+      "LaTeX",
+      "Zotero",
+      "EndNote",
+      "APA",
+      "MLA",
+      "GB/T 7714"
+    ]
+  }
+]

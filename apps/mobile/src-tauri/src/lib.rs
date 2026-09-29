@@ -29,7 +29,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 87] = [
+pub const COMMANDS: [&str; 89] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -106,6 +106,8 @@ pub const COMMANDS: [&str; 87] = [
     "scenes_update",
     "scenes_remove",
     "scenes_reorder",
+    "scenes_restore",
+    "scenes_builtin",
     "presets_add",
     "presets_update",
     "presets_remove",
@@ -133,6 +135,7 @@ pub fn production_config<R: Runtime>(app: &AppHandle<R>) -> CoreConfig {
     config.app_version = app.package_info().version.to_string();
     // The phone is the microphone; a desktop records its takes, never the other way round.
     config.accepts_phone_takes = false;
+    config.builtin_scenes = false;
     // LAN discovery (docs/pairing.md 「局域网发现」): Android drops multicast without the lock,
     // held while the switch is on.
     let discovering = voltip_core::SettingsStore::new(&config.data_dir).load().map_or(true, |s| s.lan_discovery);
@@ -623,6 +626,16 @@ fn scenes_reorder(_ids: Vec<String>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn scenes_restore(_id: String) -> Result<(), String> {
+    Err(SCENES_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn scenes_builtin() -> Result<Vec<()>, String> {
+    Err(SCENES_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
 fn settings_set_context_sharing(_app_name: bool, _window_title: bool) -> Result<(), String> {
     Err(SCENES_UNAVAILABLE.to_owned())
 }
@@ -848,6 +861,8 @@ pub fn build_app<R: Runtime>(
             scenes_update,
             scenes_remove,
             scenes_reorder,
+            scenes_restore,
+            scenes_builtin,
             settings_set_context_sharing,
             recent_apps,
             permissions_status,

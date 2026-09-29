@@ -6,6 +6,7 @@ import {
   joinLiveText,
   liveCaptionParts,
   presetRefLabel,
+  sceneLabel,
   takeFailureText,
   takePhaseLabel,
   viaLabel,
@@ -200,7 +201,11 @@ export function Overlay({ state }: OverlayProps) {
               : undefined
         }
         // docs/dictation.md §18.6: the scene the take runs under, next to the mode tag.
-        scene={dictation.context?.scene?.name}
+        scene={
+          dictation.context?.scene === undefined
+            ? undefined
+            : sceneLabel(dictation.context.scene, locale)
+        }
         tag={
           edit
             ? t("overlay.live.editTag")

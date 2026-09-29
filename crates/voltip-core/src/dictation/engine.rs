@@ -950,6 +950,13 @@ impl DictationEngine {
             self.take.live_error = reason.map(|_| if self.live_ready { SCENE_MODE_NO_STREAMING } else { SCENE_MODE_NOT_READY }.to_owned());
             tracing::info!(session, requested = requested.as_str(), mode = mode.as_str(), "scene output mode");
         }
+        // §18.10: a built-in scene's term pack joins this take's glossary after the dictionary's.
+        if let Some(category) = scene.as_ref().and_then(|s| s.builtin) {
+            let pack = crate::vocabulary::packs::terms(category);
+            if !pack.is_empty() {
+                self.take.vocabulary = Arc::new(self.take.vocabulary.with_terms(pack));
+            }
+        }
         self.status.context = Some(TakeContext { app: AppRef { id: app.app_id.clone(), name: app.name.clone() }, scene: scene.as_ref().map(Scene::to_ref) });
         self.take.app = Some(app);
         self.take.scene = scene;
@@ -4340,7 +4347,16 @@ mod tests {
             overrides,
         };
         let d = crate::scenes::validate_scene_draft(&draft).unwrap();
-        Scene { id: Uuid::new_v4(), name: d.name, enabled: d.enabled, matching: d.matching, overrides: d.overrides, created_at_ms: 1, updated_at_ms: 1 }
+        Scene {
+            id: Uuid::new_v4(),
+            name: d.name,
+            enabled: d.enabled,
+            matching: d.matching,
+            overrides: d.overrides,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            builtin: None,
+        }
     }
 
     /// A rig with `probe` plugged in (and optionally a streaming recogniser), on `engines`.
@@ -4628,6 +4644,43 @@ mod tests {
             assert_eq!(phase(&r.next().await), &DictationPhase::Idle);
         }
         assert_eq!(r.transcriber.languages(), vec![Some("yue".to_owned()), None, Some("zh".to_owned())]);
+    }
+
+    /// §18.10: a take in a built-in scene gives the recogniser the dictionary's terms, then the
+    /// scene's pack; the next take in an application no scene names gets the dictionary's alone.
+    #[tokio::test(start_paused = true)]
+    async fn a_builtin_scene_adds_its_term_pack_after_the_dictionary() {
+        use crate::scenes::BuiltinScene;
+        let probe = Arc::new(FakeProbe::app("code", "Code", None));
+        let mut r = rig_probed(probe.clone(), FakeTranscriber::ok("好"), None, None, &resolved(false, None));
+        r.engine.set_vocabulary(Arc::new(Vocabulary::compile(&[dict_entry("Voltip", &[]), dict_entry("docker", &[])], &[])));
+        let template = BuiltinScene::Coding.template(voltip_protocol::Platform::Windows);
+        let coding = Scene {
+            id: Uuid::new_v4(),
+            name: template.name,
+            enabled: true,
+            matching: template.matching,
+            overrides: template.overrides,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            builtin: Some(BuiltinScene::Coding),
+        };
+        r.engine.set_scenes(Arc::new(vec![coding]));
+        for app in ["code", "mail"] {
+            probe.set_app(app, app, None);
+            r.start_probed().await;
+            r.engine.stop().unwrap();
+            let fx = r.run_to_terminal().await;
+            assert!(matches!(phase(&fx), DictationPhase::Done { .. }), "{app}: {fx:?}");
+            tokio::time::advance(DWELL).await;
+            assert_eq!(phase(&r.next().await), &DictationPhase::Idle);
+        }
+        let glossaries = r.transcriber.glossaries();
+        let pack = crate::vocabulary::packs::terms(BuiltinScene::Coding);
+        assert_eq!(&glossaries[0][..3], ["Voltip", "docker", "API"], "the dictionary first, then the pack");
+        assert!(!glossaries[0].iter().any(|t| t == "Docker"), "a term already there is not repeated");
+        assert_eq!(glossaries[0].len(), 2 + pack.len() - 1);
+        assert_eq!(glossaries[1], ["Voltip", "docker"], "no scene, no pack");
     }
 
     /// §18.4: no answer means no scene — the probe failing, finding nothing, panicking or not

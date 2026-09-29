@@ -18,6 +18,7 @@ import {
   MAX_SCENES,
   MAX_TITLE_KEYWORD_CHARS,
   MAX_TITLE_KEYWORDS,
+  type BuiltinScene,
   type Scene,
   type SceneDraft,
   type SceneOverrides,
@@ -140,9 +141,10 @@ function setOverrides(overrides: SceneOverrides): SceneOverrides {
   return out;
 }
 
-/** A draft on its own, normalised as `voltip_core::scenes::validate_scene_draft` does, or a
- *  `scenes: …` refusal with the core's text. */
-export function validateSceneDraft(draft: SceneDraft): SceneDraft {
+/** A draft on its own, normalised as `voltip_core::scenes::validate_scene_draft_with` does, or a
+ *  `scenes: …` refusal with the core's text. `requireApps` off: a built-in scene, which may list no
+ *  application (docs/dictation.md §18.10). */
+export function validateSceneDraft(draft: SceneDraft, requireApps = true): SceneDraft {
   const name = cleanLine(draft.name, "场景名称", MAX_SCENE_NAME_CHARS);
   const apps: string[] = [];
   for (const raw of draft.match.apps) {
@@ -152,7 +154,7 @@ export function validateSceneDraft(draft: SceneDraft): SceneDraft {
     const id = cleanLine(normalized, "应用 id", MAX_APP_ID_CHARS);
     if (!apps.includes(id)) apps.push(id);
   }
-  if (apps.length === 0) throw sceneErr(`场景「${name}」至少要有一个应用`);
+  if (apps.length === 0 && requireApps) throw sceneErr(`场景「${name}」至少要有一个应用`);
   if (apps.length > MAX_SCENE_APPS)
     throw sceneErr(`一个场景最多 ${MAX_SCENE_APPS} 个应用（当前 ${apps.length}）`);
   const keywords: string[] = [];
@@ -202,14 +204,34 @@ function asciiLower(text: string): string {
   return text.replace(/[A-Z]/g, (c) => c.toLowerCase());
 }
 
-/** The whole list: at most `MAX_SCENES`, names unique ignoring ASCII case. */
+/** The whole list: at most `MAX_SCENES` of the user's scenes, their names unique ignoring ASCII
+ *  case; each built-in category at most once, named by its category (§18.10). */
 export function checkScenes(scenes: readonly Scene[]): void {
-  if (scenes.length > MAX_SCENES) throw sceneErr(`场景最多 ${MAX_SCENES} 个`);
-  scenes.forEach((a, i) => {
-    const earlier = scenes.slice(0, i).find((b) => asciiLower(b.name) === asciiLower(a.name));
+  const user = scenes.filter((s) => s.builtin === undefined);
+  if (user.length > MAX_SCENES) throw sceneErr(`场景最多 ${MAX_SCENES} 个`);
+  user.forEach((a, i) => {
+    const earlier = user.slice(0, i).find((b) => asciiLower(b.name) === asciiLower(a.name));
     if (earlier !== undefined) throw sceneErr(`已有名为「${earlier.name}」的场景`);
   });
+  scenes.forEach((a, i) => {
+    if (a.builtin === undefined) return;
+    if (a.name !== a.builtin) throw sceneErr(`内置场景「${a.name}」的名称必须是 ${a.builtin}`);
+    if (scenes.slice(0, i).some((b) => b.builtin === a.builtin))
+      throw sceneErr(`内置场景「${BUILTIN_SCENE_NAMES[a.builtin]}」出现了两次`);
+  });
 }
+
+/** `BuiltinScene::display_name`: the Chinese name of a built-in scene (the interface names it by
+ *  its category in its own language, `scenes.builtin.<id>.name`). */
+export const BUILTIN_SCENE_NAMES: Readonly<Record<BuiltinScene, string>> = {
+  coding: "编程开发",
+  office: "办公写作",
+  chat: "即时聊天",
+  legal: "法律",
+  medical: "医疗",
+  finance: "金融",
+  academic: "学术",
+};
 
 /** The application in front, as the probe names it. */
 export interface ForegroundApp {

@@ -4,6 +4,7 @@ import type {
   AttachmentFile,
   AudioDevice,
   BuiltinPresetText,
+  BuiltinSceneTerms,
   FeedbackDraft,
   FeedbackInfo,
   FeedbackReceipt,
@@ -86,4 +87,7 @@ export interface Backend {
   /** Every built-in preset's text (`presets_builtin`, docs/dictation.md §21): what 复制为自定义
    *  starts from; rejects on the phone, which has no presets. */
   presetsBuiltin(): Promise<BuiltinPresetText[]>;
+  /** Every built-in scene's term pack (`scenes_builtin`, docs/dictation.md §18.10): what 查看术语
+   *  lists; rejects on the phone, which has no scenes. */
+  scenesBuiltin(): Promise<BuiltinSceneTerms[]>;
 }

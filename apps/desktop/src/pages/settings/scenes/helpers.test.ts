@@ -1,4 +1,11 @@
-import { MAX_SCENE_APPS, MAX_TITLE_KEYWORDS, type Scene, createTranslator } from "@voltip/shared";
+import {
+  MAX_SCENE_APPS,
+  MAX_TITLE_KEYWORDS,
+  type Scene,
+  createTranslator,
+  sceneLabel,
+  zhT,
+} from "@voltip/shared";
 import {
   addApp,
   addKeyword,
@@ -169,6 +176,24 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
     expect(languageName("auto")).toBe("自动检测");
     expect(languageName("ja")).toBe("日本語 · ja");
     expect(languageName("fr")).toBe("fr");
+  });
+
+  it("a built-in scene's draft may list no app, and names clash only among the user's scenes (section 18.10)", () => {
+    const legal: Scene = {
+      ...SCENE,
+      id: "b0117e1e-5ce0-4000-8000-000000000004",
+      name: "legal",
+      builtin: "legal",
+    };
+    const form = { ...editorDraftFrom(legal), apps: [] };
+    expect(editorProblems(form, [SCENE], zhT.t, true)).toEqual({});
+    expect(editorProblems(form, [SCENE]).apps).toEqual({ text: "至少添加一个应用", missing: true });
+    // A user scene may take a category's name: the built-in one keeps its own.
+    const mine = { ...editorDraftFrom(SCENE), name: "legal" };
+    expect(editorProblems(mine, [legal]).name).toBeUndefined();
+    expect(sceneLabel(legal)).toBe("法律");
+    expect(sceneLabel(legal, "en")).toBe("Legal");
+    expect(sceneLabel(SCENE, "en")).toBe("Docs");
   });
 
   it("summarises the overrides a scene sets, in the editor's order and the UI language", () => {

@@ -19,7 +19,7 @@ use uuid::Uuid;
 use voltip_core::dictation::LevelFrame;
 use voltip_core::paste::{PasteFailure, PasteOutcome, PasteTarget};
 use voltip_core::presets::{MAX_PRESET_TRY_CHARS, PresetDraft, PresetId, PresetTrial, clean_preset_prompt, validate_preset_draft};
-use voltip_core::scenes::{MAX_RECENT_APPS, recent_apps, validate_scene_draft};
+use voltip_core::scenes::{MAX_RECENT_APPS, recent_apps, validate_scene_draft, validate_scene_draft_with};
 use voltip_core::ui::{UiEvent, UiState};
 use voltip_core::vocabulary::{export_rules_toml, parse_rules_toml, preview, validate_dictionary_draft, validate_rule_draft};
 use voltip_core::{
@@ -320,7 +320,8 @@ pub enum UiCommand {
         /// Name, flag, match and overrides (snake_case inside; `match` on the wire).
         scene: SceneDraft,
     },
-    /// Replace a scene's name, flag, match and overrides.
+    /// Replace a scene's name, flag, match and overrides. A built-in scene may list no application,
+    /// so the core, which knows which scene it is, decides that rule (§18.10).
     ScenesUpdate {
         /// UUID.
         id: String,
@@ -336,6 +337,11 @@ pub enum UiCommand {
     ScenesReorder {
         /// UUIDs.
         ids: Vec<String>,
+    },
+    /// 恢复默认 on a built-in scene: its applications and overrides back to the defaults.
+    ScenesRestore {
+        /// UUID.
+        id: String,
     },
     /// Append a custom preset (docs/dictation.md §21); the draft is validated here as well.
     PresetsAdd {
@@ -449,9 +455,12 @@ impl UiCommand {
             // Same split as the vocabulary: a draft wrong on its own is the command's error; list-level
             // refusals (duplicate name, cap, unknown id) arrive as `error` events.
             Self::ScenesAdd { scene } => CoreCommand::SceneAdd(validate_scene_draft(&scene).map_err(bad_scene)?),
-            Self::ScenesUpdate { id, scene } => CoreCommand::SceneUpdate { id: parse_id(&id)?, draft: validate_scene_draft(&scene).map_err(bad_scene)? },
+            Self::ScenesUpdate { id, scene } => {
+                CoreCommand::SceneUpdate { id: parse_id(&id)?, draft: validate_scene_draft_with(&scene, false).map_err(bad_scene)? }
+            }
             Self::ScenesRemove { id } => CoreCommand::SceneRemove(parse_id(&id)?),
             Self::ScenesReorder { ids } => CoreCommand::SceneReorder(parse_ids(&ids)?),
+            Self::ScenesRestore { id } => CoreCommand::SceneRestore(parse_id(&id)?),
             // Same split again: a draft wrong on its own is the command's error; a clash with the
             // list (duplicate name, cap, unknown id) arrives as an `error` event.
             Self::PresetsAdd { preset } => CoreCommand::PresetAdd(validate_preset_draft(&preset).map_err(bad_preset)?),
@@ -837,6 +846,12 @@ mod tests {
             serde_json::from_str(&format!(r#"{{"command":"scenes_update","id":"{hid}","scene":{{"name":"y","enabled":false,"match":{{"apps":["code"]}}}}}}"#))
                 .unwrap();
         assert!(matches!(c.into_core().unwrap(), CoreCommand::SceneUpdate { draft, .. } if !draft.enabled));
+        // An update may list no application (a built-in scene may, §18.10): the core decides.
+        let c: UiCommand =
+            serde_json::from_str(&format!(r#"{{"command":"scenes_update","id":"{hid}","scene":{{"name":"legal","match":{{"apps":[]}}}}}}"#)).unwrap();
+        assert!(matches!(c.into_core().unwrap(), CoreCommand::SceneUpdate { draft, .. } if draft.matching.apps.is_empty()));
+        let c: UiCommand = serde_json::from_str(&format!(r#"{{"command":"scenes_restore","id":"{hid}"}}"#)).unwrap();
+        assert!(matches!(c.into_core().unwrap(), CoreCommand::SceneRestore(_)));
         let c: UiCommand = serde_json::from_str(r#"{"command":"scenes_update","id":"nope","scene":{"name":"y","match":{"apps":["code"]}}}"#).unwrap();
         assert!(String::from(c.into_core().unwrap_err()).contains("UUID"));
         let c: UiCommand = serde_json::from_str(&format!(r#"{{"command":"scenes_remove","id":"{hid}"}}"#)).unwrap();

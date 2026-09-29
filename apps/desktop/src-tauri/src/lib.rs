@@ -44,7 +44,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 87] = [
+pub const COMMANDS: [&str; 89] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -121,6 +121,8 @@ pub const COMMANDS: [&str; 87] = [
     "scenes_update",
     "scenes_remove",
     "scenes_reorder",
+    "scenes_restore",
+    "scenes_builtin",
     "presets_add",
     "presets_update",
     "presets_remove",
@@ -668,6 +670,26 @@ fn scenes_reorder(bridge: tauri::State<'_, Bridge>, ids: Vec<String>) -> Result<
     Ok(bridge.dispatch(UiCommand::ScenesReorder { ids })?)
 }
 
+/// 恢复默认 on a built-in scene (docs/dictation.md §18.10): its applications and overrides back to
+/// the defaults; the core re-emits `scenes` (a scene of the user's is refused).
+#[tauri::command]
+fn scenes_restore(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ScenesRestore { id })?)
+}
+
+/// One built-in scene's term pack, what 查看术语 lists.
+#[derive(serde::Serialize)]
+struct BuiltinSceneTerms {
+    id: voltip_core::BuiltinScene,
+    terms: &'static [&'static str],
+}
+
+/// Query: every built-in scene's term pack (§18.10), in the order the scene list appends them.
+#[tauri::command]
+fn scenes_builtin() -> Vec<BuiltinSceneTerms> {
+    voltip_core::BuiltinScene::ALL.into_iter().map(|id| BuiltinSceneTerms { id, terms: voltip_core::vocabulary::packs::terms(id) }).collect()
+}
+
 /// Append a custom preset (docs/dictation.md §21). A draft that is wrong on its own is refused
 /// here; a clash with the list (a duplicate name, the cap) comes back as an `error` event.
 #[tauri::command]
@@ -1033,6 +1055,8 @@ pub fn build_app<R: Runtime>(
             scenes_update,
             scenes_remove,
             scenes_reorder,
+            scenes_restore,
+            scenes_builtin,
             presets_add,
             presets_update,
             presets_remove,

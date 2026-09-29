@@ -5,9 +5,11 @@
 import {
   DEFAULT_LOCALE,
   type HistoryEntry,
+  LOCALES,
   type Locale,
   type TFunction,
   formatDateTime,
+  sceneLabel,
   translate,
   zhT,
 } from "@voltip/shared";
@@ -164,12 +166,18 @@ export function filterHistory(
 }
 
 /** Case-insensitive search over the inserted text, the raw ASR text, the model ids, — for a take
- *  with a context (docs/dictation.md §18.6) — the app's name and id and the scene's name, and — for
- *  a voice edit (§19.5) — its instruction and original selection. */
+ *  with a context (docs/dictation.md §18.6) — the app's name and id and the scene's name (a
+ *  built-in scene's in both languages, §18.10), and — for a voice edit (§19.5) — its instruction and
+ *  original selection. */
 export function matchesHistoryQuery(entry: HistoryEntry, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (q.length === 0) return true;
+  const builtinNames =
+    entry.scene?.builtin === undefined
+      ? []
+      : LOCALES.map((locale) => sceneLabel({ name: "", builtin: entry.scene?.builtin }, locale));
   return [
+    ...builtinNames,
     entry.text,
     entry.raw_text,
     entry.asr_model,

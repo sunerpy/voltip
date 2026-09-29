@@ -1649,7 +1649,16 @@ export const zhCN = {
         title: "删除场景「{name}」？",
         body: "之后在这些应用里的听写按全局设置处理，历史记录里的场景名保留。",
       },
-      footnote: "上限 {limit} 个 · 从上到下匹配",
+      footnote: "自建场景最多 {limit} 个 · 从上到下匹配",
+      /** docs/dictation.md §18.10: the built-in scenes. */
+      builtinBadge: "内置",
+      terms: "术语 {n} 个",
+      viewTerms: "查看 {name} 的术语",
+      viewTermsShort: "查看术语",
+      termsTitle: "{name} · 术语",
+      termsNote:
+        "该场景匹配时，这些术语与个人词典一同提示给语音识别和 AI 润色，不占个人词典的名额。",
+      needsApps: "添加应用后生效",
     },
     brief: {
       privacy: {
@@ -1792,9 +1801,25 @@ export const zhCN = {
       },
     },
   },
+  /** The built-in scenes by category (docs/dictation.md §18.10). */
+  builtinScenes: {
+    coding: { name: "编程开发", description: "代码编辑器与终端：保留代码、命令和英文标识符。" },
+    office: { name: "办公写作", description: "邮件与文档：书面表达，句子完整。" },
+    chat: { name: "即时聊天", description: "聊天软件：口语化的短句。" },
+    legal: { name: "法律", description: "严格校对，法律术语、法条和案号照原样保留。" },
+    medical: { name: "医疗", description: "严格校对，药名、剂量和检查项目照原样保留。" },
+    finance: { name: "金融", description: "严格校对，金额、比例和证券代码照原样保留。" },
+    academic: { name: "学术", description: "严格校对，引用和专有名词照原样保留。" },
+  },
   sceneEditor: {
     titleNew: "新建场景",
     titleEdit: "编辑场景",
+    builtinName: "内置场景的名称不能修改。",
+    builtinApps: "内置场景可以暂不添加应用，添加后才生效。",
+    restore: "恢复默认",
+    restoreTitle: "恢复「{name}」的默认设置？",
+    restoreBody: "应用列表、AI 预设和补充要求将恢复为默认值，开关状态不变。",
+    restored: "已恢复默认 · {name}",
     name: "名称",
     namePlaceholder: "例如：聊天",
     apps: "应用",

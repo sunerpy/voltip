@@ -716,17 +716,22 @@ fn scene_commands_context_sharing_and_recent_apps_run_through_the_command_layer(
         assert!(invoke(webview, "scenes_add", json!({ "scene": { "name": "x", "match": { "apps": ["a"], "urls": [] } } })).is_err(), "unknown fields");
         let code = json!({ "name": "代码", "match": { "apps": ["Code.exe"], "title_contains": [] }, "overrides": { "refine_enabled": false, "prompt": "保留标识符" } });
         assert_eq!(invoke(webview, "scenes_add", json!({ "scene": code })), Ok(Value::Null));
-        let st = wait_state(webview, |s| s.scenes.len() == 1);
+        // The list also holds the seven built-in scenes (docs/dictation.md §18.10), after the user's.
+        let user = |s: &voltip_core::ui::UiState| s.scenes.iter().filter(|x| x.builtin.is_none()).count();
+        let st = wait_state(webview, |s| user(s) == 1);
+        assert_eq!(st.scenes.iter().filter(|x| x.builtin.is_some()).count(), voltip_core::BuiltinScene::ALL.len());
         assert_eq!(st.scenes[0].matching.apps, ["code"], "stored normalised");
         wait_event(rx, "scenes", |e| e["type"] == "scenes" && e["scenes"][0]["name"] == "代码" && e["scenes"][0]["match"]["apps"][0] == "code");
         assert_eq!(invoke(webview, "scenes_add", json!({ "scene": { "name": "代码", "match": { "apps": ["slack"] } } })), Ok(Value::Null));
         wait_event(rx, "error (duplicate name)", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.starts_with("scenes: 已有名为")));
         assert_eq!(invoke(webview, "scenes_add", json!({ "scene": { "name": "聊天", "match": { "apps": ["slack"] } } })), Ok(Value::Null));
-        let st = wait_state(webview, |s| s.scenes.len() == 2);
-        let ids: Vec<String> = st.scenes.iter().rev().map(|s| s.id.to_string()).collect();
+        let st = wait_state(webview, |s| user(s) == 2);
+        // The user's two scenes come before the built-in ones; swap them.
+        let mut ids: Vec<String> = st.scenes.iter().map(|s| s.id.to_string()).collect();
+        ids.swap(0, 1);
         assert_eq!(invoke(webview, "scenes_reorder", json!({ "ids": ids })), Ok(Value::Null));
         wait_state(webview, |s| s.scenes.first().is_some_and(|x| x.name == "聊天"));
-        let chat = st.scenes[1].id.to_string();
+        let chat = st.scenes.iter().find(|s| s.name == "聊天").unwrap().id.to_string();
         assert_eq!(
             invoke(webview, "scenes_update", json!({ "id": chat, "scene": { "name": "聊天", "enabled": false, "match": { "apps": ["slack"] } } })),
             Ok(Value::Null)
@@ -754,9 +759,25 @@ fn scene_commands_context_sharing_and_recent_apps_run_through_the_command_layer(
             st.dictation.phase
         );
         assert_eq!(invoke(webview, "recent_apps", json!({})).unwrap(), json!([{ "id": "code", "name": "Code" }]));
-        let removed = st.scenes[0].id.to_string();
+        let removed = st.scenes.iter().find(|s| s.name == "代码").unwrap().id.to_string();
         assert_eq!(invoke(webview, "scenes_remove", json!({ "id": removed })), Ok(Value::Null));
-        wait_state(webview, |s| s.scenes.len() == 1);
+        wait_state(webview, |s| user(s) == 1);
+        // A built-in scene: its update may list no application; it is not deleted; 恢复默认
+        // puts its defaults back; the pack answers `scenes_builtin`.
+        let legal = st.scenes.iter().find(|s| s.builtin == Some(voltip_core::BuiltinScene::Legal)).unwrap().clone();
+        assert_eq!(
+            invoke(webview, "scenes_update", json!({ "id": legal.id.to_string(), "scene": { "name": "legal", "enabled": true, "match": { "apps": [] } } })),
+            Ok(Value::Null)
+        );
+        wait_state(webview, |s| s.scenes.iter().any(|x| x.id == legal.id && x.enabled && x.overrides.prompt.is_none()));
+        assert_eq!(invoke(webview, "scenes_remove", json!({ "id": legal.id.to_string() })), Ok(Value::Null));
+        wait_event(rx, "error (built-in scene)", |e| e["type"] == "error" && e["message"] == "scenes: 内置场景不能删除，可以关闭");
+        assert_eq!(invoke(webview, "scenes_restore", json!({ "id": legal.id.to_string() })), Ok(Value::Null));
+        wait_state(webview, |s| s.scenes.iter().any(|x| x.id == legal.id && x.enabled && x.overrides == legal.overrides));
+        let packs = invoke(webview, "scenes_builtin", json!({})).unwrap();
+        assert_eq!(packs[0]["id"], "coding");
+        assert_eq!(packs[0]["terms"][0], "API");
+        assert_eq!(packs[2], json!({ "id": "chat", "terms": [] }));
     });
 }
 
@@ -1337,6 +1358,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "feedback_attachments_clear",
             "phone_clipboard_read",
             "presets_builtin",
+            "scenes_builtin",
         ]
         .map(String::from),
     );
