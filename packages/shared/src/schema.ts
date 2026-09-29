@@ -384,6 +384,29 @@ export const historySettingsSchema = z.object({
 });
 export type HistorySettings = z.infer<typeof historySettingsSchema>;
 
+/** Where a dictation take's audio comes from (`voltip_core::RecordingSource`, docs/dictation.md
+ *  §22): the microphone, what the computer plays, or both mixed. */
+export const RECORDING_SOURCES = ["microphone", "system", "mixed"] as const;
+export const recordingSourceSchema = z.enum(RECORDING_SOURCES);
+export type RecordingSource = z.infer<typeof recordingSourceSchema>;
+/** `voltip_core::MAX_MINUTES_CHOICES`: the lengths a take may be limited to, in minutes. */
+export const MAX_MINUTES_CHOICES = [1, 2, 5, 10, 30, 60, 120] as const;
+/** `voltip_core::DEFAULT_MAX_MINUTES`. */
+export const DEFAULT_MAX_MINUTES = 10;
+/** A dictation take's source, output device and longest length (`voltip_core::RecordingSettings`,
+ *  docs/dictation.md §22). */
+export const recordingSettingsSchema = z.object({
+  source: recordingSourceSchema.default("microphone"),
+  /** An `audio_outputs` id, or `null` for the system's default output. */
+  output_device: z.string().nullable().default(null),
+  /** One of `MAX_MINUTES_CHOICES`. */
+  max_minutes: z.number().int().positive().default(DEFAULT_MAX_MINUTES),
+});
+export type RecordingSettings = z.infer<typeof recordingSettingsSchema>;
+export function defaultRecordingSettings(): RecordingSettings {
+  return { source: "microphone", output_device: null, max_minutes: DEFAULT_MAX_MINUTES };
+}
+
 /** Where the dictation pill appears (`voltip_core::OverlayPlacement`); the desktop shell places the
  *  window, `off` shows none. */
 export const OVERLAY_PLACEMENTS = ["bottom", "top", "off"] as const;
@@ -443,6 +466,8 @@ export const settingsSchema = z.object({
   /** The microphone takes record from: an `audio_devices` id, or `null` for the system default.
    *  Always serialised; an older `settings.json` or core reads as the default. */
   microphone: z.string().nullable().default(null),
+  /** docs/dictation.md §22; an older `settings.json` or core reads as the microphone, 10 minutes. */
+  recording: recordingSettingsSchema.default(defaultRecordingSettings),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -1865,6 +1890,8 @@ export interface CommandArgs {
   settings_set_solo_key: { key: SoloKey | null };
   /** The microphone takes record from (an `audio_devices` id), or `null` for the system default. */
   settings_set_microphone: { device: string | null };
+  /** A dictation take's source, output device and longest length (docs/dictation.md §22). */
+  settings_set_recording: { recording: RecordingSettings };
   /** Recorder open (`true`): the shell suspends the OS hotkey so the chord reaches the webview. */
   hotkey_capture: { active: boolean };
   devices_refresh: undefined;
@@ -2103,6 +2130,7 @@ export function defaultSettings(): Settings {
     history: { enabled: true, keep: 20_000 },
     overlay: "bottom",
     microphone: null,
+    recording: defaultRecordingSettings(),
   };
 }
 

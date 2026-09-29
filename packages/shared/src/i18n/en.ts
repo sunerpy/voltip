@@ -1482,7 +1482,13 @@ export const en: Messages = {
     },
     dictation: {
       title: "Dictation",
-      lede: "Sets how the recognised text is inserted into the app you are using.",
+      lede: "Sets how the recognised text is inserted into the app you are using, and how long one recording can last.",
+      /** docs/dictation.md §22: `settings.recording.max_minutes`. */
+      maxLabel: "Longest recording",
+      maxHelp:
+        "A recording stops by itself at this length. Recordings longer than 2 minutes are recognised in segments while you record.",
+      minutes: { one: "{n} minute", other: "{n} minutes" },
+      hours: { one: "{n} hour", other: "{n} hours" },
     },
     microphone: {
       title: "Microphone",

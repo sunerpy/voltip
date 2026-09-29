@@ -1428,7 +1428,12 @@ export const zhCN = {
     },
     dictation: {
       title: "听写",
-      lede: "设置识别结果如何插入正在使用的应用。",
+      lede: "设置识别结果如何插入正在使用的应用，以及单次录音的最长时长。",
+      /** docs/dictation.md §22: `settings.recording.max_minutes`. */
+      maxLabel: "最长录音时长",
+      maxHelp: "录音到达这个时长后自动停止。超过 2 分钟的录音在录制过程中分段识别。",
+      minutes: { one: "{n} 分钟", other: "{n} 分钟" },
+      hours: { one: "{n} 小时", other: "{n} 小时" },
     },
     microphone: {
       title: "麦克风",

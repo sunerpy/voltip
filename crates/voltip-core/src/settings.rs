@@ -1,6 +1,7 @@
 //! Persisted user settings (JSON, app data dir). No secrets live here.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -71,6 +72,72 @@ pub struct HistorySettings {
 impl Default for HistorySettings {
     fn default() -> Self {
         Self { enabled: true, keep: crate::history::MAX_ENTRIES as u32 }
+    }
+}
+
+/// Where a dictation take's audio comes from (docs/dictation.md §22).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordingSource {
+    /// The microphone ([`Settings::microphone`]); the default.
+    #[default]
+    Microphone,
+    /// What the computer plays: the output device's sound.
+    System,
+    /// The microphone and the computer's sound, mixed.
+    Mixed,
+}
+
+impl RecordingSource {
+    /// Wire / log name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Microphone => "microphone",
+            Self::System => "system",
+            Self::Mixed => "mixed",
+        }
+    }
+
+    /// Whether the microphone is part of it.
+    pub const fn uses_microphone(self) -> bool {
+        matches!(self, Self::Microphone | Self::Mixed)
+    }
+
+    /// Whether the computer's sound is part of it.
+    pub const fn uses_output(self) -> bool {
+        matches!(self, Self::System | Self::Mixed)
+    }
+}
+
+/// The lengths a take may be limited to, in minutes ([`RecordingSettings::max_minutes`]).
+pub const MAX_MINUTES_CHOICES: [u16; 7] = [1, 2, 5, 10, 30, 60, 120];
+/// Default [`RecordingSettings::max_minutes`].
+pub const DEFAULT_MAX_MINUTES: u16 = 10;
+
+/// What a dictation take records and for how long (docs/dictation.md §22).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RecordingSettings {
+    /// The microphone, the computer's sound, or both.
+    pub source: RecordingSource,
+    /// The output device the computer's sound is recorded from (`system` / `mixed`): an id of
+    /// `audio_outputs`; `None` follows the system's default output. A device that is not
+    /// connected falls back to the default for that take, like the microphone.
+    pub output_device: Option<String>,
+    /// A take stops by itself after this many minutes: one of [`MAX_MINUTES_CHOICES`].
+    pub max_minutes: u16,
+}
+
+impl Default for RecordingSettings {
+    fn default() -> Self {
+        Self { source: RecordingSource::Microphone, output_device: None, max_minutes: DEFAULT_MAX_MINUTES }
+    }
+}
+
+impl RecordingSettings {
+    /// How long a take records at most.
+    pub fn max_duration(&self) -> Duration {
+        Duration::from_secs(u64::from(self.max_minutes) * 60)
     }
 }
 
@@ -146,6 +213,10 @@ pub struct Settings {
     /// back to the default for that take (the desktop shell's recorder).
     #[serde(default)]
     pub microphone: Option<String>,
+    /// The source and the longest length of a dictation take (docs/dictation.md §22); absent in
+    /// files written before it (the microphone, 10 minutes).
+    #[serde(default)]
+    pub recording: RecordingSettings,
 }
 
 /// Longest device id `SetMicrophone` accepts (cpal ids are a host name and an endpoint id: well
@@ -191,6 +262,7 @@ impl Default for Settings {
             history: HistorySettings::default(),
             overlay: OverlayPlacement::Bottom,
             microphone: None,
+            recording: RecordingSettings::default(),
         }
     }
 }

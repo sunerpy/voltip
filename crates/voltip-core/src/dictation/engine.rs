@@ -63,6 +63,7 @@ use crate::models::ModelManager;
 use crate::presets::{CustomPreset, PresetId, TakePreset, resolve};
 use crate::scenes::{AppRef, ContextSharing, LANGUAGE_AUTO, Scene, TakeContext, match_scene};
 use crate::script::normalized;
+use crate::settings::RecordingSettings;
 use crate::vocabulary::{Step, Vocabulary, VocabularyHits};
 
 /// Builds the network clients for a resolved configuration. Called at startup and again whenever
@@ -504,6 +505,8 @@ pub struct DictationEngine {
     context_sharing: ContextSharing,
     /// `Settings.microphone`: the device the microphone port opens (`None` = the default).
     microphone: Option<String>,
+    /// `Settings.recording` (docs/dictation.md §22): a dictation take's source and length.
+    recording: RecordingSettings,
 }
 
 /// Why a scene's streaming output mode could not be honoured (docs/dictation.md §18.4); the take
@@ -592,6 +595,7 @@ impl DictationEngine {
             presets: Arc::new(Vec::new()),
             context_sharing: ContextSharing::default(),
             microphone: None,
+            recording: RecordingSettings::default(),
         };
         engine.warm_streaming();
         engine.warm_transcriber();
@@ -631,6 +635,12 @@ impl DictationEngine {
     /// microphone port (`None` = the system default).
     pub fn set_microphone(&mut self, device: Option<String>) {
         self.microphone = device;
+    }
+
+    /// `Settings.recording` for the takes that start from now on (docs/dictation.md §22): the
+    /// source and the longest length of a dictation take on this computer.
+    pub fn set_recording(&mut self, recording: RecordingSettings) {
+        self.recording = recording;
     }
 
     /// Rebuild the clients for a changed configuration. A pipeline already running keeps the
@@ -854,11 +864,22 @@ impl DictationEngine {
         });
     }
 
+    /// What the current take records and for how long: a dictation take on this computer follows
+    /// `Settings.recording` (docs/dictation.md §22); a voice edit's instruction is spoken into the
+    /// microphone and short; a phone's take keeps the cap of its output mode (§20).
+    fn capture_options(&self) -> CaptureOptions {
+        let live = self.live_enabled();
+        match (self.status.kind, self.take.source.is_some()) {
+            (_, true) => CaptureOptions { live, max_duration: max_recording(self.take.mode), ..CaptureOptions::default() },
+            (TakeKind::Edit, false) => CaptureOptions { live, ..CaptureOptions::default() },
+            (TakeKind::Dictation, false) => CaptureOptions::dictation(&self.recording, live),
+        }
+    }
+
     /// Open the device for the current session on a blocking thread ([`Internal::CaptureStarted`]
-    /// follows), with the cap of the take's output mode, and arm the auto-stop while listening.
+    /// follows), with the take's capture options, and arm the auto-stop while listening.
     fn open_capture(&mut self) {
         let session = self.status.session;
-        let mode = self.take.mode;
         let levels = self.levels.clone();
         let on_level: Box<dyn Fn(LevelFrame) + Send> = Box::new(move |frame| {
             let _ = levels.send(frame);
@@ -868,7 +889,9 @@ impl DictationEngine {
         let on_ready: Box<dyn FnOnce() + Send> = Box::new(move || {
             let _ = ready_tx.try_send(Internal::CaptureReady { session });
         });
-        let options = CaptureOptions { live: self.live_enabled(), max_duration: max_recording(mode) };
+        let options = self.capture_options();
+        let max_duration = options.max_duration;
+        tracing::info!(session, source = options.source.as_str(), max_s = max_duration.as_secs(), long = options.long, "capture options");
         // A phone's take streams from its own source; the microphone port records from the
         // device the settings name (the system default without one).
         let (audio, device) = match self.take.source.clone() {
@@ -884,7 +907,7 @@ impl DictationEngine {
             let _ = tx.send(Internal::CaptureStarted { session, result }).await;
         });
         if matches!(self.status.phase, DictationPhase::Listening { .. }) {
-            self.arm(max_recording(mode), |session| Internal::AutoStop { session });
+            self.arm(max_duration, |session| Internal::AutoStop { session });
         }
     }
 
@@ -2227,6 +2250,7 @@ mod tests {
     };
     use crate::engines::{BuiltIn, EngineSettings, UserSecrets};
     use crate::history::EditRecord;
+    use crate::settings::RecordingSource;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct Rig {
@@ -2819,9 +2843,11 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn recording_auto_stops_at_the_maximum_length() {
+        // docs/dictation.md §22: the length is `Settings.recording.max_minutes`.
         let mut r = happy();
+        r.engine.set_recording(RecordingSettings { max_minutes: 1, ..RecordingSettings::default() });
         r.start_open().await;
-        tokio::time::advance(MAX_RECORDING - Duration::from_millis(1)).await;
+        tokio::time::advance(Duration::from_secs(60) - Duration::from_millis(1)).await;
         r.settle().await;
         assert!(r.nothing_pending());
         tokio::time::advance(Duration::from_millis(1)).await;
@@ -2831,6 +2857,43 @@ mod tests {
         assert!(matches!(phase(&fx), DictationPhase::Done { .. }));
         assert_eq!(r.audio.stops(), 1);
         assert_eq!(r.transcriber.calls(), 1);
+        // The default, 10 minutes: past the whole take's former 120 s the take keeps listening.
+        r.engine.set_recording(RecordingSettings::default());
+        r.start_open().await;
+        tokio::time::advance(MAX_RECORDING).await;
+        r.settle().await;
+        assert!(r.nothing_pending(), "still listening at 120 s");
+        tokio::time::advance(Duration::from_secs(600) - MAX_RECORDING).await;
+        let fx = r.next().await;
+        assert!(matches!(phase(&fx), DictationPhase::Processing { .. }), "{fx:?}");
+        assert_eq!(r.audio.max_durations(), vec![Duration::from_secs(60), Duration::from_secs(600)]);
+    }
+
+    /// docs/dictation.md §22: a take on this computer records from the settings' source; a voice
+    /// edit's instruction is spoken into the microphone and lasts at most 120 s, whatever the source.
+    #[tokio::test(start_paused = true)]
+    async fn a_take_records_from_the_settings_source_and_a_voice_edit_from_the_microphone() {
+        let mut r = happy();
+        let system = RecordingSettings { source: RecordingSource::System, output_device: Some("wasapi:out".into()), max_minutes: 30 };
+        r.engine.set_recording(system);
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        r.run_to_terminal().await;
+        let options = r.audio.options();
+        assert_eq!(
+            options[0],
+            CaptureOptions {
+                live: false,
+                max_duration: Duration::from_secs(1800),
+                long: true,
+                source: RecordingSource::System,
+                output_device: Some("wasapi:out".into()),
+            }
+        );
+        let mut edit = edit_rig(FakeInjector::paste().with_selection(SELECTION), Some(FakeRefiner::ok(REWRITE)));
+        edit.engine.set_recording(RecordingSettings { source: RecordingSource::Mixed, output_device: None, max_minutes: 120 });
+        edit.start_edit_open(Vec::new()).await;
+        assert_eq!(edit.audio.options(), vec![CaptureOptions::default()], "the microphone, 120 s, no recording file");
     }
 
     #[tokio::test(start_paused = true)]
@@ -3671,7 +3734,8 @@ mod tests {
             );
             r.start_open().await;
             assert_eq!(r.engine.current_mode(), OutputMode::WholeTake);
-            assert_eq!(r.audio.max_durations(), vec![MAX_RECORDING], "a whole take keeps the 120 s cap");
+            // docs/dictation.md §22: the length is the settings' (10 minutes by default), in every mode.
+            assert_eq!(r.audio.max_durations(), vec![RecordingSettings::default().max_duration()]);
             assert_eq!(r.audio.live_requests(), 0);
             let fx = r.engine.stop().unwrap();
             assert!(matches!(phase(&fx), DictationPhase::Processing { stage: ProcessingStage::Transcribing, .. }));
@@ -3689,7 +3753,9 @@ mod tests {
             assert_eq!(phase(&r.next().await), &DictationPhase::Idle);
             r.start_open().await;
             assert_eq!(r.engine.current_mode(), mode);
-            assert_eq!(r.audio.max_durations(), vec![MAX_RECORDING, MAX_RECORDING_STREAMING]);
+            // docs/dictation.md §22: whole take or streaming, the settings' length.
+            let ten_minutes = RecordingSettings::default().max_duration();
+            assert_eq!(r.audio.max_durations(), vec![ten_minutes, ten_minutes]);
             r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(_), .. })).await;
             r.engine.cancel().unwrap();
             r.wait_stops(2).await;
@@ -3699,7 +3765,7 @@ mod tests {
             r.engine.configure(&resolved_mode(mode, true, false));
             assert_eq!(r.engine.effective_output_mode(), (OutputMode::WholeTake, Some("this shell has no streaming recogniser")));
             r.start_open().await;
-            assert_eq!(r.audio.max_durations(), vec![MAX_RECORDING]);
+            assert_eq!(r.audio.max_durations(), vec![RecordingSettings::default().max_duration()], "the settings' length (§22)");
             r.engine.stop().unwrap();
             let fx = r.run_to_terminal().await;
             assert!(matches!(phase(&fx), DictationPhase::Done { mode: OutputMode::WholeTake, live_error: None, .. }), "{fx:?}");
@@ -4606,7 +4672,9 @@ mod tests {
         let fx = r.start_probed().await;
         assert_eq!(status_of(&fx).context, Some(TakeContext { app: app_ref("winword", "WINWORD"), scene: None }));
         assert_eq!(r.engine.current_mode(), OutputMode::WholeTake);
-        assert_eq!(r.audio.max_durations(), vec![MAX_RECORDING_STREAMING, MAX_RECORDING]);
+        // docs/dictation.md §22: both takes record for the settings' length, whatever their mode.
+        let ten_minutes = RecordingSettings::default().max_duration();
+        assert_eq!(r.audio.max_durations(), vec![ten_minutes, ten_minutes]);
         r.engine.stop().unwrap();
         let fx = r.run_to_terminal().await;
         assert!(matches!(phase(&fx), DictationPhase::Done { mode: OutputMode::WholeTake, refined: true, .. }), "{fx:?}");
@@ -4766,7 +4834,7 @@ mod tests {
         )]));
         r.start_probed().await;
         assert_eq!(r.engine.current_mode(), OutputMode::WholeTake);
-        assert_eq!(r.audio.max_durations(), vec![MAX_RECORDING]);
+        assert_eq!(r.audio.max_durations(), vec![RecordingSettings::default().max_duration()], "the settings' length (§22)");
         r.engine.stop().unwrap();
         let fx = r.run_to_terminal().await;
         assert!(

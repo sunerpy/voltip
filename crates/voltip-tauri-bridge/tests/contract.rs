@@ -287,6 +287,12 @@ fn settings() -> Settings {
         // docs/pairing.md 「常开配对」: on, away from its default.
         pairing_always_on: true,
         microphone: Some("wasapi:{0.0.1.00000000}.{c2}".into()),
+        // docs/dictation.md §22: the microphone and the computer's sound, an hour at most.
+        recording: voltip_core::RecordingSettings {
+            source: voltip_core::RecordingSource::Mixed,
+            output_device: Some("wasapi:{0.0.0.00000000}.{a1}".into()),
+            max_minutes: 60,
+        },
         ..Settings::default()
     }
 }
@@ -1461,6 +1467,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::SettingsSetEditHotkey { .. } => "SettingsSetEditHotkey",
         UiCommand::SettingsSetSoloKey { .. } => "SettingsSetSoloKey",
         UiCommand::SettingsSetMicrophone { .. } => "SettingsSetMicrophone",
+        UiCommand::SettingsSetRecording { .. } => "SettingsSetRecording",
         UiCommand::SettingsSetLocale { .. } => "SettingsSetLocale",
         UiCommand::SettingsSetAutoUpdate { .. } => "SettingsSetAutoUpdate",
         UiCommand::SettingsSetHistory { .. } => "SettingsSetHistory",
@@ -1532,6 +1539,12 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         // docs/dictation.md §13.1: the lone-key trigger (`null` switches it off).
         ("settings_set_solo_key", json!({ "key": "mouse_back" }), "SettingsSetSoloKey"),
         ("settings_set_microphone", json!({ "device": "wasapi:{0.0.1.00000000}.{c2}" }), "SettingsSetMicrophone"),
+        // docs/dictation.md §22: the source, the output device and the longest length of a take.
+        (
+            "settings_set_recording",
+            json!({ "recording": { "source": "mixed", "output_device": "wasapi:{0.0.0.00000000}.{a1}", "max_minutes": 60 } }),
+            "SettingsSetRecording",
+        ),
         ("settings_set_locale", json!({ "locale": "en" }), "SettingsSetLocale"),
         ("settings_set_auto_update", json!({ "enabled": true }), "SettingsSetAutoUpdate"),
         ("settings_set_history", json!({ "enabled": false, "keep": 100 }), "SettingsSetHistory"),
@@ -1973,6 +1986,7 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "SettingsSetEditHotkey",
         "SettingsSetSoloKey",
         "SettingsSetMicrophone",
+        "SettingsSetRecording",
         "SettingsSetLocale",
         "SettingsSetAutoUpdate",
         "SettingsSetHistory",

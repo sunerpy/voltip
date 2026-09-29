@@ -38,7 +38,12 @@
         "keep": 20000
       },
       "overlay": "bottom",
-      "microphone": null
+      "microphone": null,
+      "recording": {
+        "source": "microphone",
+        "output_device": null,
+        "max_minutes": 10
+      }
     },
     "secret_backend": "",
     "app_version": "",
@@ -166,7 +171,12 @@
       "keep": 200
     },
     "overlay": "top",
-    "microphone": "wasapi:{0.0.1.00000000}.{c2}"
+    "microphone": "wasapi:{0.0.1.00000000}.{c2}",
+    "recording": {
+      "source": "mixed",
+      "output_device": "wasapi:{0.0.0.00000000}.{a1}",
+      "max_minutes": 60
+    }
   },
   {
     "type": "relay",
@@ -2729,7 +2739,12 @@
       "keep": 200
     },
     "overlay": "top",
-    "microphone": "wasapi:{0.0.1.00000000}.{c2}"
+    "microphone": "wasapi:{0.0.1.00000000}.{c2}",
+    "recording": {
+      "source": "mixed",
+      "output_device": "wasapi:{0.0.0.00000000}.{a1}",
+      "max_minutes": 60
+    }
   },
   {
     "type": "dictation",

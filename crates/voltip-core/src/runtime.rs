@@ -188,6 +188,9 @@ pub enum CoreCommand {
     /// The microphone takes record from (`Some` device id) or the system default (`None`);
     /// persisted, used from the next take on.
     SetMicrophone(Option<String>),
+    /// A dictation take's source and longest length (docs/dictation.md §22); validated,
+    /// persisted, used from the next take on.
+    SetRecording(crate::settings::RecordingSettings),
     /// Change theme.
     SetTheme {
         /// Theme.
@@ -587,6 +590,7 @@ impl AppCore {
         dictation.set_presets(Arc::new(presets.presets().to_vec()));
         dictation.set_context_sharing(settings.context_sharing);
         dictation.set_microphone(settings.microphone.clone());
+        dictation.set_recording(settings.recording.clone());
         let (cmd_tx, cmd_rx) = mpsc::channel(64);
         let (evt_tx, evt_rx) = mpsc::channel(512);
         let (link_tx, link_rx) = mpsc::channel(1024);
@@ -1127,6 +1131,7 @@ impl Runtime {
             CoreCommand::SetEditHotkey(text) => self.set_edit_hotkey(text.as_deref()),
             CoreCommand::SetSoloKey(key) => self.set_solo_key(key),
             CoreCommand::SetMicrophone(device) => self.set_microphone(device),
+            CoreCommand::SetRecording(recording) => self.set_recording(recording),
             CoreCommand::SetTheme { theme, follow_system } => {
                 self.settings.theme = theme;
                 self.settings.follow_system_theme = follow_system;
@@ -2312,6 +2317,27 @@ impl Runtime {
         }
         self.settings.microphone = device;
         self.dictation.set_microphone(self.settings.microphone.clone());
+        self.save_settings()
+    }
+
+    /// `SetRecording`: the length must be one of [`crate::settings::MAX_MINUTES_CHOICES`] and an
+    /// output device id is checked like a microphone id (whether it is connected is the
+    /// recorder's business at the next take). The engine uses it from the next take on.
+    fn set_recording(&mut self, recording: crate::settings::RecordingSettings) -> Result<(), CoreError> {
+        if !crate::settings::MAX_MINUTES_CHOICES.contains(&recording.max_minutes) {
+            let choices = crate::settings::MAX_MINUTES_CHOICES.map(|m| m.to_string()).join(" / ");
+            return Err(CoreError::Invalid(format!("recording.max_minutes: 最长录音时长须为 {choices} 分钟之一")));
+        }
+        if let Some(id) = &recording.output_device
+            && (id.trim().is_empty() || id.len() > crate::settings::MAX_MICROPHONE_ID_BYTES)
+        {
+            return Err(CoreError::Invalid(format!(
+                "recording.output_device: 输出设备标识须为 1–{} 字节，留空则使用系统默认输出",
+                crate::settings::MAX_MICROPHONE_ID_BYTES
+            )));
+        }
+        self.settings.recording = recording;
+        self.dictation.set_recording(self.settings.recording.clone());
         self.save_settings()
     }
 

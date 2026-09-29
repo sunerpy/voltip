@@ -144,6 +144,12 @@ pub enum UiCommand {
         /// Device id or `null`.
         device: Option<String>,
     },
+    /// A dictation take's source (the microphone, the computer's sound, both), the output device
+    /// and the longest length (docs/dictation.md §22); persisted, used from the next take on.
+    SettingsSetRecording {
+        /// The whole setting.
+        recording: voltip_core::RecordingSettings,
+    },
     /// UI language (`system` | `zh-cn` | `en`); persisted, every window follows `settings`.
     SettingsSetLocale {
         /// Language.
@@ -410,6 +416,7 @@ impl UiCommand {
             Self::SettingsSetEditHotkey { hotkey } => CoreCommand::SetEditHotkey(hotkey),
             Self::SettingsSetSoloKey { key } => CoreCommand::SetSoloKey(key),
             Self::SettingsSetMicrophone { device } => CoreCommand::SetMicrophone(device),
+            Self::SettingsSetRecording { recording } => CoreCommand::SetRecording(recording),
             Self::SettingsSetLocale { locale } => CoreCommand::SetLocale(locale),
             Self::SettingsSetAutoUpdate { enabled } => CoreCommand::SetAutoUpdate(enabled),
             Self::SettingsSetHistory { enabled, keep } => CoreCommand::SetHistory(voltip_core::HistorySettings { enabled, keep }),

@@ -60,6 +60,7 @@ import {
   startOfLocalDay,
 } from "./mock-backend";
 import {
+  DEFAULT_MAX_MINUTES,
   BUILTIN_PRESETS,
   BUILTIN_SCENES,
   HISTORY_LIMIT,
@@ -1361,6 +1362,28 @@ describe("MockBackend locale, auto-update and updater (docs/frontend.md §7)", (
     expect(backend.log.filter((e) => e.type === "settings")).toHaveLength(2);
     // A seeded locale survives construction.
     expect(new MockBackend({ settings: { locale: "zh-cn" } }).peek().settings.locale).toBe("zh-cn");
+  });
+
+  it("settings_set_recording folds into settings and refuses what the core refuses (docs/dictation.md section 22)", async () => {
+    const backend = new MockBackend();
+    expect(backend.peek().settings.recording).toEqual({
+      source: "microphone",
+      output_device: null,
+      max_minutes: DEFAULT_MAX_MINUTES,
+    });
+    const mixed = { source: "mixed" as const, output_device: "fake:speakers", max_minutes: 60 };
+    await backend.invoke("settings_set_recording", { recording: mixed });
+    expect(backend.peek().settings.recording).toEqual(mixed);
+    for (const bad of [
+      { ...mixed, max_minutes: 15 },
+      { ...mixed, output_device: " " },
+      { ...mixed, output_device: "x".repeat(1025) },
+    ]) {
+      await backend.invoke("settings_set_recording", { recording: bad });
+      const last = backend.log.at(-1);
+      expect(last?.type === "error" && last.message.startsWith("recording.")).toBe(true);
+    }
+    expect(backend.peek().settings.recording).toEqual(mixed);
   });
 
   it("update_check answers checking → available and update_install streams download → ready → installing", async () => {

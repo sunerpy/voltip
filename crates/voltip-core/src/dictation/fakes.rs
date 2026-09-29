@@ -64,6 +64,8 @@ pub struct FakeAudio {
     tap_overrun: bool,
     /// `max_duration` of every successful start, in order.
     max_durations: Mutex<Vec<Duration>>,
+    /// Every start's options, in order (docs/dictation.md §22: source, length, `long`).
+    options: Mutex<Vec<CaptureOptions>>,
     /// The device id of every start, in order (`None` = the default input).
     devices: Mutex<Vec<Option<String>>>,
 }
@@ -118,6 +120,7 @@ impl FakeAudio {
             never_ready: false,
             tap_overrun: false,
             max_durations: Mutex::new(Vec::new()),
+            options: Mutex::new(Vec::new()),
             devices: Mutex::new(Vec::new()),
         }
     }
@@ -140,6 +143,11 @@ impl FakeAudio {
     /// The recording cap every successful `start` was asked for, in order.
     pub fn max_durations(&self) -> Vec<Duration> {
         self.max_durations.lock().clone()
+    }
+
+    /// The options of every start, in order.
+    pub fn options(&self) -> Vec<CaptureOptions> {
+        self.options.lock().clone()
     }
 
     /// The device id every start asked for, in order (`None` = the default input).
@@ -227,6 +235,7 @@ impl AudioSource for FakeAudio {
         };
         self.starts.fetch_add(1, Ordering::SeqCst);
         self.max_durations.lock().push(options.max_duration);
+        self.options.lock().push(options.clone());
         let live = options.live;
         for seq in 0..3 {
             on_level(LevelFrame { rms_dbfs: -20.0 - seq as f32, peak_dbfs: -6.0, clipping: false, sample_rate_hz: SAMPLE_RATE_HZ, channels: 1, seq });

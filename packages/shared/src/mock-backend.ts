@@ -78,6 +78,7 @@ import {
   emptyHotkeyStatus,
   HISTORY_LIMIT,
   HISTORY_MIN_KEEP,
+  MAX_MINUTES_CHOICES,
   HISTORY_RECENT,
   type HistoryHits,
   type HistoryPage,
@@ -1237,6 +1238,30 @@ export class MockBackend implements Backend {
         return;
       }
       this.emit({ type: "settings", ...this.state.settings, microphone: device });
+    },
+    settings_set_recording: (args) => {
+      // Mirrors `SetRecording` (docs/dictation.md §22): a length outside the choices or an output
+      // device id that is not 1–1024 bytes is refused with an `error` event, the setting kept.
+      const { recording } = required(args);
+      if (!(MAX_MINUTES_CHOICES as readonly number[]).includes(recording.max_minutes)) {
+        this.emit({
+          type: "error",
+          message: `recording.max_minutes: 最长录音时长须为 ${MAX_MINUTES_CHOICES.join(" / ")} 分钟之一`,
+        });
+        return;
+      }
+      const device = recording.output_device;
+      if (
+        device !== null &&
+        (device.trim().length === 0 || new TextEncoder().encode(device).length > 1024)
+      ) {
+        this.emit({
+          type: "error",
+          message: "recording.output_device: 输出设备标识须为 1–1024 字节，留空则使用系统默认输出",
+        });
+        return;
+      }
+      this.emit({ type: "settings", ...this.state.settings, recording: { ...recording } });
     },
     settings_set_edit_hotkey: (args) => {
       // Mirrors `SetEditHotkey` (docs/dictation.md §19): the same validation, never the dictation

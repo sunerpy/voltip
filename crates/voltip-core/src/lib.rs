@@ -50,7 +50,10 @@ pub use presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetError, PresetI
 pub use providers::{KeyPolicy, PROVIDERS, ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSpec, ServiceKind, ServicePreset};
 pub use runtime::{AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED, now_ms};
 pub use scenes::{AppRef, BuiltinScene, ContextSharing, Scene, SceneDraft, SceneError, SceneMatch, SceneOverrides, SceneRef, TakeContext};
-pub use settings::{HistorySettings, Locale, OverlayPlacement, SETTINGS_FILE_NAME, Settings, SettingsStore, ThemeId};
+pub use settings::{
+    DEFAULT_MAX_MINUTES, HistorySettings, Locale, MAX_MINUTES_CHOICES, OverlayPlacement, RecordingSettings, RecordingSource, SETTINGS_FILE_NAME, Settings,
+    SettingsStore, ThemeId,
+};
 pub use view::{DeviceConnection, DeviceView, RelaySource, RelayStatus};
 pub use vocabulary::{
     DictionaryDraft, DictionaryEntry, EntrySource, ImportMode, PreviewDraft, ReplacementRule, RuleDraft, RuleKind, Vocabulary, VocabularyError, VocabularyHit,

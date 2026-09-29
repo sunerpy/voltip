@@ -12,7 +12,7 @@ use voltip_core::dictation::fakes::{FAKE_TRANSCRIPT, FakeAudio, FakeInjector, Fa
 use voltip_core::dictation::{DictationPorts, Refiner, Transcriber};
 use voltip_core::{
     AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DictationPhase, EngineSettings, EngineStatus, InjectMode, Outcome, ProviderId, ProviderSettings,
-    ResolvedEngines, SecretSource, ServiceKind, Settings, SettingsStore,
+    RecordingSettings, RecordingSource, ResolvedEngines, SecretSource, ServiceKind, Settings, SettingsStore,
 };
 use voltip_identity::{MemorySecretStore, SecretStore as _};
 
@@ -309,6 +309,46 @@ async fn history_can_be_switched_off_and_trimmed() {
     node.handle.send(CoreCommand::SetHistory(voltip_core::HistorySettings { enabled: true, keep: 10 })).await.unwrap();
     wait(&mut node, |e| if let CoreEvent::Settings(s) = e { (s.history.keep == 10).then_some(()) } else { None }).await;
     assert_eq!(SettingsStore::new(dir.path()).load().unwrap().history, voltip_core::HistorySettings { enabled: true, keep: 10 });
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// docs/dictation.md §22: 设置 › 录音来源 and 最长录音时长 go to the microphone port from the next
+/// take on, are persisted, and a length or an output device id outside the choices is refused
+/// with the setting left as it was.
+#[tokio::test]
+async fn the_recording_settings_reach_the_capture_and_persist() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = Arc::new(FakeAudio::speech());
+    let mut ports = ports(Arc::new(AtomicUsize::new(0)), Arc::new(FakeInjector::paste()));
+    ports.audio = audio.clone();
+    let (handle, events) = AppCore::start_with(config(dir.path()), Arc::new(MemorySecretStore::new()), ports).unwrap();
+    let mut node = Node { handle, events };
+    let recording = RecordingSettings { source: RecordingSource::Mixed, output_device: Some("fake:speakers".into()), max_minutes: 30 };
+    node.handle.send(CoreCommand::SetRecording(recording.clone())).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::Settings(s) if s.recording == recording).then_some(())).await;
+    assert_eq!(SettingsStore::new(dir.path()).load().unwrap().recording, recording);
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    wait_phase(&mut node, |p| matches!(p, DictationPhase::Listening { .. })).await;
+    node.handle.send(CoreCommand::DictationStop).await.unwrap();
+    wait_phase(&mut node, |p| matches!(p, DictationPhase::Done { .. } | DictationPhase::Failed { .. })).await;
+    let options = audio.options();
+    assert_eq!((options[0].source, options[0].output_device.as_deref()), (RecordingSource::Mixed, Some("fake:speakers")));
+    assert_eq!((options[0].max_duration, options[0].long), (Duration::from_secs(1800), true));
+    for bad in [
+        RecordingSettings { max_minutes: 15, ..recording.clone() },
+        RecordingSettings { max_minutes: 0, ..recording.clone() },
+        RecordingSettings { output_device: Some(" ".into()), ..recording.clone() },
+        RecordingSettings { output_device: Some("x".repeat(1025)), ..recording.clone() },
+    ] {
+        node.handle.send(CoreCommand::SetRecording(bad)).await.unwrap();
+        let refused = wait(&mut node, |e| match e {
+            CoreEvent::Error(m) => Some(m.clone()),
+            _ => None,
+        })
+        .await;
+        assert!(refused.starts_with("recording."), "{refused}");
+    }
+    assert_eq!(SettingsStore::new(dir.path()).load().unwrap().recording, recording, "a refused value changes nothing");
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 

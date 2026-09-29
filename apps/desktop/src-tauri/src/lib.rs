@@ -44,7 +44,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 93] = [
+pub const COMMANDS: [&str; 94] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -71,6 +71,7 @@ pub const COMMANDS: [&str; 93] = [
     "settings_set_edit_hotkey",
     "settings_set_solo_key",
     "settings_set_microphone",
+    "settings_set_recording",
     "hotkey_capture",
     "devices_refresh",
     "connectivity_check",
@@ -315,6 +316,13 @@ fn settings_set_solo_key(bridge: tauri::State<'_, Bridge>, key: Option<voltip_co
 #[tauri::command]
 fn settings_set_microphone(bridge: tauri::State<'_, Bridge>, device: Option<String>) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::SettingsSetMicrophone { device })?)
+}
+
+/// `settings_set_recording { recording }` (docs/dictation.md §22): a dictation take's source, the
+/// output device and the longest length. The core validates and persists it.
+#[tauri::command]
+fn settings_set_recording(bridge: tauri::State<'_, Bridge>, recording: voltip_core::RecordingSettings) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetRecording { recording })?)
 }
 
 /// The settings page is recording a chord (`active = true`): suspend the OS registration so the
@@ -1063,6 +1071,7 @@ pub fn build_app<R: Runtime>(
             settings_set_edit_hotkey,
             settings_set_solo_key,
             settings_set_microphone,
+            settings_set_recording,
             hotkey_capture,
             devices_refresh,
             connectivity_check,

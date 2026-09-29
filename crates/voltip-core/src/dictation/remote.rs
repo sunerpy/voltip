@@ -336,8 +336,8 @@ mod tests {
     fn a_feed_keeps_at_most_the_captures_cap_and_opens_once() {
         let feed = RemoteFeed::new();
         let source = feed.source();
-        let options = CaptureOptions { live: false, max_duration: Duration::from_millis(100) };
-        let capture = source.start(None, Box::new(|_| {}), Box::new(|| {}), options).unwrap();
+        let options = CaptureOptions { live: false, max_duration: Duration::from_millis(100), ..CaptureOptions::default() };
+        let capture = source.start(None, Box::new(|_| {}), Box::new(|| {}), options.clone()).unwrap();
         assert!(matches!(source.start(None, Box::new(|_| {}), Box::new(|| {}), options), Err(DictationError::Audio(_))));
         assert!(feed.push(0, &pcm(&tone(3200, 100))));
         assert_eq!(feed.received(), Duration::from_millis(100), "cut at max_duration");

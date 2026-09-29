@@ -384,6 +384,32 @@ describe("Settings · 听写", () => {
   });
 });
 
+describe("Settings · 听写 · 最长录音时长 (docs/dictation.md section 22)", () => {
+  it("lists 1 minute to 2 hours, shows the saved length and writes settings_set_recording with the rest unchanged", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/dictation" });
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    const menu = within(within(dialog).getByTestId("dictation-pane")).getByRole("combobox", {
+      name: "最长录音时长",
+    });
+    expect(
+      within(menu)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["1 分钟", "2 分钟", "5 分钟", "10 分钟", "30 分钟", "1 小时", "2 小时"]);
+    expect(menu).toHaveValue("10");
+    await user.selectOptions(menu, "60");
+    await waitFor(() => {
+      expect(backend.peek().settings.recording).toEqual({
+        source: "microphone",
+        output_device: null,
+        max_minutes: 60,
+      });
+    });
+    expect(menu).toHaveValue("60");
+  });
+});
+
 describe("Settings · 热键", () => {
   it("regression: recording a chord saves it through settings_set_hotkey and shows the shell's registration; single keys are refused; Esc cancels; defaults restore", async () => {
     const user = userEvent.setup();
