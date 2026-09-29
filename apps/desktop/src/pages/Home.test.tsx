@@ -140,6 +140,16 @@ describe("Home page", () => {
     ).toBeInTheDocument();
   });
 
+  it("regression: a stat tile's note reads whole on hover when the default window cuts it", async () => {
+    // The 1152 px check (the default window, plan 1.2): 「Keeps the newest 500」 was cut with no way
+    // to read it.
+    renderApp({ mock: liveClock() });
+    const notes = await screen.findAllByTestId("home-tile-note");
+    expect(notes).toHaveLength(4);
+    for (const note of notes) expect(note).toHaveAttribute("title", note.textContent);
+    expect(notes[3]).toHaveTextContent("保留最近 500 条");
+  });
+
   it("regression: the recent table's timing columns are as wide as their headers", async () => {
     // The 1440 px English check (plan 1.2): 「Transcription」 ran past its 84 px column.
     renderApp({ mock: liveClock() });

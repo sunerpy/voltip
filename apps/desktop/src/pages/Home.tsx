@@ -621,7 +621,12 @@ export function Home() {
             <span className="text-[10px] text-fg-subtle">{tile.eyebrow}</span>
             <span className="flex items-baseline justify-between">
               <span className="mono text-[16px] whitespace-nowrap text-fg">{tile.value}</span>
-              <span className="mono truncate pl-2 text-[11px] text-fg-muted">{tile.secondary}</span>
+              <span
+                className="mono truncate pl-2 text-[11px] text-fg-muted"
+                title={tile.secondary}
+                data-testid="home-tile-note">
+                {tile.secondary}
+              </span>
             </span>
           </Card>
         ))}
