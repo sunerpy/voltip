@@ -18,6 +18,7 @@ use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 use voltip_core::dictation::LevelFrame;
 use voltip_core::paste::{PasteFailure, PasteOutcome, PasteTarget};
+use voltip_core::presets::{MAX_PRESET_TRY_CHARS, PresetDraft, PresetId, PresetTrial, clean_preset_prompt, validate_preset_draft};
 use voltip_core::scenes::{MAX_RECENT_APPS, recent_apps, validate_scene_draft};
 use voltip_core::ui::{UiEvent, UiState};
 use voltip_core::vocabulary::{export_rules_toml, parse_rules_toml, preview, validate_dictionary_draft, validate_rule_draft};
@@ -336,6 +337,35 @@ pub enum UiCommand {
         /// UUIDs.
         ids: Vec<String>,
     },
+    /// Append a custom preset (docs/dictation.md §21); the draft is validated here as well.
+    PresetsAdd {
+        /// Name and instruction.
+        preset: PresetDraft,
+    },
+    /// Replace a custom preset's name and instruction.
+    PresetsUpdate {
+        /// UUID.
+        id: String,
+        /// New content.
+        preset: PresetDraft,
+    },
+    /// Delete a custom preset.
+    PresetsRemove {
+        /// UUID.
+        id: String,
+    },
+    /// 试一试: run `text` through the current clean-up with a saved preset (`preset`) or an unsaved
+    /// instruction (`prompt`), exactly one of them; the answer is a `preset_try` event with `id`.
+    PresetsTry {
+        /// Echoed in the answer.
+        id: u64,
+        /// A built-in name or a custom preset's UUID.
+        preset: Option<String>,
+        /// The instruction being edited.
+        prompt: Option<String>,
+        /// Sample text.
+        text: String,
+    },
     /// What of a take's context may go to the LLM (docs/dictation.md §18.5); persisted, the core
     /// re-emits `settings`.
     SettingsSetContextSharing {
@@ -422,6 +452,12 @@ impl UiCommand {
             Self::ScenesUpdate { id, scene } => CoreCommand::SceneUpdate { id: parse_id(&id)?, draft: validate_scene_draft(&scene).map_err(bad_scene)? },
             Self::ScenesRemove { id } => CoreCommand::SceneRemove(parse_id(&id)?),
             Self::ScenesReorder { ids } => CoreCommand::SceneReorder(parse_ids(&ids)?),
+            // Same split again: a draft wrong on its own is the command's error; a clash with the
+            // list (duplicate name, cap, unknown id) arrives as an `error` event.
+            Self::PresetsAdd { preset } => CoreCommand::PresetAdd(validate_preset_draft(&preset).map_err(bad_preset)?),
+            Self::PresetsUpdate { id, preset } => CoreCommand::PresetUpdate { id: parse_id(&id)?, draft: validate_preset_draft(&preset).map_err(bad_preset)? },
+            Self::PresetsRemove { id } => CoreCommand::PresetRemove(parse_id(&id)?),
+            Self::PresetsTry { id, preset, prompt, text } => CoreCommand::PresetTry { id, trial: preset_trial(preset, prompt)?, text: preset_try_text(&text)? },
             Self::SettingsSetContextSharing { app_name, window_title } => CoreCommand::SetContextSharing(ContextSharing { app_name, window_title }),
         })
     }
@@ -433,6 +469,32 @@ fn bad(e: voltip_core::VocabularyError) -> BridgeError {
 
 fn bad_scene(e: voltip_core::SceneError) -> BridgeError {
     BridgeError::BadArgument(e.to_string())
+}
+
+fn bad_preset(e: voltip_core::PresetError) -> BridgeError {
+    BridgeError::BadArgument(e.to_string())
+}
+
+/// What `presets_try` runs: exactly one of a preset id and an instruction.
+fn preset_trial(preset: Option<String>, prompt: Option<String>) -> Result<PresetTrial, BridgeError> {
+    match (preset, prompt) {
+        (Some(id), None) => PresetId::parse(&id).map(PresetTrial::Preset).ok_or_else(|| BridgeError::BadArgument(format!("presets: 没有名为「{id}」的预设"))),
+        (None, Some(prompt)) => clean_preset_prompt(&prompt).map(PresetTrial::Prompt).map_err(bad_preset),
+        _ => Err(BridgeError::BadArgument("presets: 试一试需要一个预设或一段预设内容".into())),
+    }
+}
+
+/// The sample text of `presets_try`, trimmed, 1–[`MAX_PRESET_TRY_CHARS`] characters.
+fn preset_try_text(text: &str) -> Result<String, BridgeError> {
+    let text = text.trim();
+    let chars = text.chars().count();
+    if chars == 0 {
+        return Err(BridgeError::BadArgument("presets: 请输入要试运行的文字".into()));
+    }
+    if chars > MAX_PRESET_TRY_CHARS {
+        return Err(BridgeError::BadArgument(format!("presets: 试运行的文字最多 {MAX_PRESET_TRY_CHARS} 个字符（当前 {chars}）")));
+    }
+    Ok(text.to_owned())
 }
 
 fn parse_ids(texts: &[String]) -> Result<Vec<Uuid>, BridgeError> {
@@ -781,6 +843,40 @@ mod tests {
         assert!(matches!(c.into_core().unwrap(), CoreCommand::SceneRemove(_)));
         let c: UiCommand = serde_json::from_str(&format!(r#"{{"command":"scenes_reorder","ids":["{hid}"]}}"#)).unwrap();
         assert!(matches!(c.into_core().unwrap(), CoreCommand::SceneReorder(ids) if ids.len() == 1));
+        // Presets (docs/dictation.md §21): drafts validated here, 试一试 takes exactly one source.
+        let c: UiCommand = serde_json::from_str(r#"{"command":"presets_add","preset":{"name":" 周报 ","prompt":" 整理成周报 "}}"#).unwrap();
+        assert!(matches!(c.into_core().unwrap(), CoreCommand::PresetAdd(d) if d.name == "周报" && d.prompt == "整理成周报"));
+        let c: UiCommand = serde_json::from_str(r#"{"command":"presets_add","preset":{"name":"","prompt":"x"}}"#).unwrap();
+        assert_eq!(String::from(c.into_core().unwrap_err()), "presets: 预设名称不能为空");
+        assert!(serde_json::from_str::<UiCommand>(r#"{"command":"presets_add","preset":{"name":"a","prompt":"b","model":"m"}}"#).is_err(), "unknown fields");
+        let c: UiCommand = serde_json::from_str(&format!(r#"{{"command":"presets_update","id":"{hid}","preset":{{"name":"b","prompt":"c"}}}}"#)).unwrap();
+        assert!(matches!(c.into_core().unwrap(), CoreCommand::PresetUpdate { draft, .. } if draft.name == "b"));
+        let c: UiCommand = serde_json::from_str(&format!(r#"{{"command":"presets_remove","id":"{hid}"}}"#)).unwrap();
+        assert!(matches!(c.into_core().unwrap(), CoreCommand::PresetRemove(_)));
+        let c: UiCommand = serde_json::from_str(r#"{"command":"presets_try","id":7,"preset":"translate","text":" 你好 "}"#).unwrap();
+        assert!(matches!(
+            c.into_core().unwrap(),
+            CoreCommand::PresetTry { id: 7, trial: PresetTrial::Preset(PresetId::Builtin(voltip_core::BuiltinPreset::Translate)), text } if text == "你好"
+        ));
+        let c: UiCommand = serde_json::from_str(
+            r#"{"command":"presets_try","id":8,"prompt":" 改写成邮件 
+","text":"x"}"#,
+        )
+        .unwrap();
+        assert!(matches!(c.into_core().unwrap(), CoreCommand::PresetTry { trial: PresetTrial::Prompt(p), .. } if p == "改写成邮件"));
+        for (json, want) in [
+            (r#"{"command":"presets_try","id":1,"text":"x"}"#.to_owned(), "presets: 试一试需要一个预设或一段预设内容"),
+            (r#"{"command":"presets_try","id":1,"preset":"notes","prompt":"x","text":"x"}"#.to_owned(), "presets: 试一试需要一个预设或一段预设内容"),
+            (r#"{"command":"presets_try","id":1,"preset":"casual","text":"x"}"#.to_owned(), "presets: 没有名为「casual」的预设"),
+            (r#"{"command":"presets_try","id":1,"preset":"notes","text":"  "}"#.to_owned(), "presets: 请输入要试运行的文字"),
+            (
+                format!(r#"{{"command":"presets_try","id":1,"preset":"notes","text":"{}"}}"#, "字".repeat(MAX_PRESET_TRY_CHARS + 1)),
+                "presets: 试运行的文字最多 2000 个字符（当前 2001）",
+            ),
+        ] {
+            let c: UiCommand = serde_json::from_str(&json).unwrap();
+            assert_eq!(String::from(c.into_core().unwrap_err()), want, "{json}");
+        }
         let c: UiCommand = serde_json::from_str(r#"{"command":"settings_set_context_sharing","appName":false,"windowTitle":true}"#).unwrap();
         assert!(matches!(c.into_core().unwrap(), CoreCommand::SetContextSharing(ContextSharing { app_name: false, window_title: true })));
         assert!(serde_json::from_str::<UiCommand>(r#"{"command":"settings_set_context_sharing","appName":true}"#).is_err(), "both switches are required");

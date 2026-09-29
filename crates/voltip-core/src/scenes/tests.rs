@@ -1,6 +1,7 @@
 use super::*;
 use crate::dictation::Via;
 use crate::history::Outcome;
+use crate::presets::{BuiltinPreset, PresetId};
 
 fn draft(name: &str, apps: &[&str], keywords: &[&str]) -> SceneDraft {
     SceneDraft {
@@ -32,7 +33,7 @@ fn drafts_are_normalised() {
     let mut d = draft(" 聊天 ", &[" Slack.EXE", "slack", "  ", "WeChat.exe", "com.Tinyspeck.SlackMacGap"], &[" GitHub ", "github", "", "拉取请求"]);
     d.overrides = SceneOverrides {
         refine_enabled: Some(true),
-        refine_style: Some(RefineStyle::Punctuation),
+        refine_preset: Some(PresetId::Builtin(BuiltinPreset::Punctuation)),
         output_mode: Some(OutputMode::StreamingFinal),
         language: Some(" ZH-Hans ".into()),
         chinese_script: Some(ChineseScript::Traditional),
@@ -45,8 +46,8 @@ fn drafts_are_normalised() {
     assert_eq!(v.overrides.language.as_deref(), Some("zh-hans"));
     assert_eq!(v.overrides.prompt.as_deref(), Some("第一行\n第二行\n第三行\t。"));
     assert_eq!(
-        (v.overrides.refine_enabled, v.overrides.refine_style, v.overrides.output_mode),
-        (Some(true), Some(RefineStyle::Punctuation), Some(OutputMode::StreamingFinal))
+        (v.overrides.refine_enabled, v.overrides.refine_preset, v.overrides.output_mode),
+        (Some(true), Some(PresetId::Builtin(BuiltinPreset::Punctuation)), Some(OutputMode::StreamingFinal))
     );
     assert_eq!(v.overrides.chinese_script, Some(ChineseScript::Traditional));
     assert_eq!(validate_scene_draft(&v).unwrap(), v, "the normalised form is a fixed point");
@@ -162,6 +163,7 @@ fn entry(app: Option<(&str, &str)>) -> HistoryEntry {
         edit: None,
         app: app.map(|(id, name)| AppRef { id: id.into(), name: name.into() }),
         scene: None,
+        preset: None,
         origin: None,
     }
 }
@@ -192,11 +194,11 @@ fn recent_apps_are_the_newest_distinct_ones() {
 fn wire_shapes() {
     let mut s = scene("聊天", &["slack"], &[]);
     s.id = Uuid::nil();
-    s.overrides.refine_style = Some(RefineStyle::Punctuation);
+    s.overrides.refine_preset = Some(PresetId::Builtin(BuiltinPreset::Punctuation));
     let json = serde_json::to_string(&s).unwrap();
     assert_eq!(
         json,
-        r#"{"id":"00000000-0000-0000-0000-000000000000","name":"聊天","enabled":true,"match":{"apps":["slack"],"title_contains":[]},"overrides":{"refine_style":"punctuation"},"created_at_ms":1,"updated_at_ms":1}"#
+        r#"{"id":"00000000-0000-0000-0000-000000000000","name":"聊天","enabled":true,"match":{"apps":["slack"],"title_contains":[]},"overrides":{"refine_preset":"punctuation"},"created_at_ms":1,"updated_at_ms":1}"#
     );
     assert_eq!(serde_json::from_str::<Scene>(&json).unwrap(), s);
     let d: SceneDraft = serde_json::from_str(r#"{"name":"a","match":{"apps":["x"]}}"#).unwrap();
@@ -208,6 +210,7 @@ fn wire_shapes() {
         r#"{"name":"a","match":{"apps":["x"],"urls":["github.com"]}}"#,
         r#"{"name":"a","match":{"apps":["x"]},"overrides":{"model":"m"}}"#,
         r#"{"name":"a","match":{"apps":["x"]},"overrides":{"refine_style":"casual"}}"#,
+        r#"{"name":"a","match":{"apps":["x"]},"overrides":{"refine_preset":"casual"}}"#,
         r#"{"name":"a"}"#,
     ] {
         assert!(serde_json::from_str::<SceneDraft>(bad).is_err(), "{bad}");
@@ -220,7 +223,43 @@ fn wire_shapes() {
     assert_eq!(serde_json::to_string(&ctx).unwrap(), r#"{"app":{"id":"slack","name":"Slack"}}"#);
     let with = TakeContext { scene: Some(s.to_ref()), ..ctx };
     assert!(serde_json::to_string(&with).unwrap().ends_with(r#""scene":{"id":"00000000-0000-0000-0000-000000000000","name":"聊天"}}"#));
-    assert_eq!(SceneDraft::from(&s).overrides.refine_style, Some(RefineStyle::Punctuation));
+    assert_eq!(SceneDraft::from(&s).overrides.refine_preset, Some(PresetId::Builtin(BuiltinPreset::Punctuation)));
+}
+
+/// docs/dictation.md §21: `scenes.json` written before presets stored a refine style under
+/// `refine_style` (`default` / `punctuation` / `formal`). Those files still load — as 校对, 只加标点
+/// and 书面语 — instead of being set aside as unusable, and the next save writes `refine_preset`.
+#[test]
+fn regression_scenes_written_before_presets_still_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = r#"{"schema":1,"scenes":[
+        {"id":"00000000-0000-4000-8000-000000000001","name":"聊天","enabled":true,"match":{"apps":["slack"],"title_contains":[]},"overrides":{"refine_style":"default"},"created_at_ms":1,"updated_at_ms":1},
+        {"id":"00000000-0000-4000-8000-000000000002","name":"代码","enabled":true,"match":{"apps":["code"],"title_contains":[]},"overrides":{"refine_style":"punctuation"},"created_at_ms":1,"updated_at_ms":1},
+        {"id":"00000000-0000-4000-8000-000000000003","name":"邮件","enabled":false,"match":{"apps":["outlook"],"title_contains":[]},"overrides":{"refine_style":"formal","prompt":"正式"},"created_at_ms":1,"updated_at_ms":1}
+    ]}"#;
+    std::fs::write(dir.path().join(SCENES_FILE_NAME), old).unwrap();
+    let (mut store, notice) = SceneStore::open(dir.path());
+    assert!(notice.is_none(), "not set aside: {notice:?}");
+    assert!(corrupt_files(dir.path()).is_empty());
+    let presets: Vec<_> = store.scenes().iter().map(|s| s.overrides.refine_preset).collect();
+    assert_eq!(
+        presets,
+        [
+            Some(PresetId::Builtin(BuiltinPreset::Proofread)),
+            Some(PresetId::Builtin(BuiltinPreset::Punctuation)),
+            Some(PresetId::Builtin(BuiltinPreset::Formal))
+        ]
+    );
+    // The next save writes the preset under its own name; a restart reads the same list.
+    let id = store.scenes()[0].id;
+    let mut draft = SceneDraft::from(&store.scenes()[0]);
+    draft.enabled = false;
+    store.update(id, &draft, 2).unwrap();
+    let written = std::fs::read_to_string(dir.path().join(SCENES_FILE_NAME)).unwrap();
+    assert!(written.contains(r#""refine_preset": "proofread""#) && !written.contains("refine_style"), "{written}");
+    let (again, notice) = SceneStore::open(dir.path());
+    assert!(notice.is_none());
+    assert_eq!(again.scenes().iter().map(|s| s.overrides.refine_preset).collect::<Vec<_>>(), presets);
 }
 
 fn corrupt_files(dir: &std::path::Path) -> Vec<String> {

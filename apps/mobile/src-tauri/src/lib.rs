@@ -18,8 +18,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter as _, Manager as _, Runtime};
 use voltip_core::ui::{ProjectLink, UI_EVENT_NAME, UiState, UpdateStatus};
 use voltip_core::{
-    Activation, AppRef, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PreviewDraft, ProviderId, RuleDraft,
-    SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
+    Activation, AppRef, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PresetDraft, PreviewDraft, ProviderId,
+    RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
 };
 use voltip_identity::SecretStore;
 use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
@@ -29,7 +29,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 82] = [
+pub const COMMANDS: [&str; 87] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -106,6 +106,11 @@ pub const COMMANDS: [&str; 82] = [
     "scenes_update",
     "scenes_remove",
     "scenes_reorder",
+    "presets_add",
+    "presets_update",
+    "presets_remove",
+    "presets_try",
+    "presets_builtin",
     "settings_set_context_sharing",
     "recent_apps",
     "permissions_status",
@@ -627,6 +632,35 @@ fn recent_apps() -> Result<Vec<AppRef>, String> {
     Err(SCENES_UNAVAILABLE.to_owned())
 }
 
+/// The phone has no dictation pipeline, so no clean-up to shape (docs/dictation.md §21): every
+/// preset verb and the query refuse honestly.
+pub const PRESETS_UNAVAILABLE: &str = "presets: 手机端不支持 AI 预设";
+
+#[tauri::command]
+fn presets_add(_preset: PresetDraft) -> Result<(), String> {
+    Err(PRESETS_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn presets_update(_id: String, _preset: PresetDraft) -> Result<(), String> {
+    Err(PRESETS_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn presets_remove(_id: String) -> Result<(), String> {
+    Err(PRESETS_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn presets_try(_id: u64, _preset: Option<String>, _prompt: Option<String>, _text: String) -> Result<(), String> {
+    Err(PRESETS_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn presets_builtin() -> Result<Vec<serde_json::Value>, String> {
+    Err(PRESETS_UNAVAILABLE.to_owned())
+}
+
 #[tauri::command]
 fn update_check() -> Result<(), String> {
     Err(UPDATE_UNAVAILABLE.to_owned())
@@ -805,6 +839,11 @@ pub fn build_app<R: Runtime>(
             rules_import,
             rules_export,
             vocabulary_preview,
+            presets_add,
+            presets_update,
+            presets_remove,
+            presets_try,
+            presets_builtin,
             scenes_add,
             scenes_update,
             scenes_remove,

@@ -86,6 +86,7 @@ const EMPTY: UiState = {
   dictionary: [],
   rules: [],
   scenes: [],
+  presets: [],
   hardware: { cpu_threads: 0, gpus: [] },
   connectivity: { running: false },
 };

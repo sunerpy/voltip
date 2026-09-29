@@ -35,8 +35,9 @@ interface SceneCardProps {
  *  its title keywords; the overrides it sets (or 全部跟随全局设置). */
 function SceneCard({ scene, index, count, onToggle, onMove, onEdit, onRemove }: SceneCardProps) {
   const { t, locale } = useI18n();
+  const presets = useUiState().presets;
   const name = scene.name;
-  const summary = overrideSummary(scene.overrides, t, locale);
+  const summary = overrideSummary(scene.overrides, t, locale, presets);
   return (
     <Card
       padding="sm"

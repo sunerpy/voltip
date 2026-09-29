@@ -60,6 +60,7 @@ use crate::engines::{ChineseScript, ResolvedEngines};
 use crate::history::{EditRecord, HistoryEntry, Outcome};
 use crate::hotkey::Modifier;
 use crate::models::ModelManager;
+use crate::presets::{CustomPreset, PresetId, TakePreset, resolve};
 use crate::scenes::{AppRef, ContextSharing, LANGUAGE_AUTO, Scene, TakeContext, match_scene};
 use crate::script::normalized;
 use crate::vocabulary::{Step, Vocabulary, VocabularyHits};
@@ -402,6 +403,10 @@ struct Take {
     vocabulary: Arc<Vocabulary>,
     /// The scene list this run matches against (docs/dictation.md §18), taken at `start`.
     scenes: Arc<Vec<Scene>>,
+    /// The engines' preset and the custom presets (docs/dictation.md §21), taken at `start`: a
+    /// preset switched or edited mid-take applies from the next one.
+    preset: PresetId,
+    presets: Arc<Vec<CustomPreset>>,
     /// What of the context may go to the refiner, taken at `start`.
     sharing: ContextSharing,
     /// The application in front when the run started, once the probe answered.
@@ -417,6 +422,16 @@ struct Take {
 
 impl Take {
     fn new(requested: OutputMode, vocabulary: Arc<Vocabulary>, scenes: Arc<Vec<Scene>>, sharing: ContextSharing) -> Self {
+        Self::with_presets(requested, vocabulary, scenes, (PresetId::default(), Arc::new(Vec::new())), sharing)
+    }
+
+    fn with_presets(
+        requested: OutputMode,
+        vocabulary: Arc<Vocabulary>,
+        scenes: Arc<Vec<Scene>>,
+        (preset, presets): (PresetId, Arc<Vec<CustomPreset>>),
+        sharing: ContextSharing,
+    ) -> Self {
         Self {
             requested,
             mode: requested,
@@ -429,6 +444,8 @@ impl Take {
             inject: LiveInject::default(),
             vocabulary,
             scenes,
+            preset,
+            presets,
             sharing,
             app: None,
             scene: None,
@@ -468,6 +485,8 @@ pub struct DictationEngine {
     /// `EngineSettings.chinese_script` of the last configuration (docs/dictation.md §17).
     chinese_script: ChineseScript,
     refine_enabled: bool,
+    /// `EngineSettings.refine_preset` of the last configuration (docs/dictation.md §21).
+    refine_preset: PresetId,
     asr_model: String,
     refine_model: String,
     recording_ms: u64,
@@ -478,6 +497,9 @@ pub struct DictationEngine {
     probe: Option<Arc<dyn ForegroundProbe>>,
     /// The scenes the next run matches against (replaced by the runtime on every change).
     scenes: Arc<Vec<Scene>>,
+    /// The custom presets the next run resolves its preset against (replaced by the runtime on
+    /// every change).
+    presets: Arc<Vec<CustomPreset>>,
     /// `Settings.context_sharing` for the next run.
     context_sharing: ContextSharing,
     /// `Settings.microphone`: the device the microphone port opens (`None` = the default).
@@ -559,6 +581,7 @@ impl DictationEngine {
             language: engines.language.clone(),
             chinese_script: engines.chinese_script,
             refine_enabled: engines.refine_enabled,
+            refine_preset: engines.refine_preset,
             asr_model: engines.asr_model.clone(),
             refine_model: engines.refine_model.clone(),
             recording_ms: 0,
@@ -566,6 +589,7 @@ impl DictationEngine {
             vocabulary: Arc::new(Vocabulary::empty()),
             probe: ports.probe,
             scenes: Arc::new(Vec::new()),
+            presets: Arc::new(Vec::new()),
             context_sharing: ContextSharing::default(),
             microphone: None,
         };
@@ -584,6 +608,18 @@ impl DictationEngine {
     /// already going keeps the list it started with.
     pub fn set_scenes(&mut self, scenes: Arc<Vec<Scene>>) {
         self.scenes = scenes;
+    }
+
+    /// The custom presets the runs that start from now on resolve against (docs/dictation.md §21);
+    /// a run already going keeps the list it started with.
+    pub fn set_presets(&mut self, presets: Arc<Vec<CustomPreset>>) {
+        self.presets = presets;
+    }
+
+    /// The clean-up the current configuration builds, if any: 试一试 on a preset runs through it
+    /// (docs/dictation.md §21).
+    pub fn refiner(&self) -> Option<Arc<dyn Refiner>> {
+        self.refiner.clone()
     }
 
     /// `Settings.context_sharing` for the runs that start from now on (docs/dictation.md §18.5).
@@ -607,6 +643,7 @@ impl DictationEngine {
         self.language = engines.language.clone();
         self.chinese_script = engines.chinese_script;
         self.refine_enabled = engines.refine_enabled;
+        self.refine_preset = engines.refine_preset;
         self.asr_model = engines.asr_model.clone();
         self.refine_model = engines.refine_model.clone();
         self.live_ready = engines.live_preview_ready();
@@ -763,9 +800,10 @@ impl DictationEngine {
                 OutputMode::WholeTake
             }
         };
-        self.take = Take::new(mode, self.vocabulary.clone(), self.scenes.clone(), self.context_sharing);
+        self.take = Take::with_presets(mode, self.vocabulary.clone(), self.scenes.clone(), (self.refine_preset, self.presets.clone()), self.context_sharing);
         self.take.source = source;
         self.status.context = None;
+        self.status.preset = None;
         if kind == TakeKind::Edit {
             if self.refiner.is_none() {
                 tracing::warn!(session, "edit take refused: no LLM is configured");
@@ -937,15 +975,31 @@ impl DictationEngine {
         self.take.scene.as_ref().and_then(|s| s.overrides.refine_enabled).unwrap_or(self.refine_enabled)
     }
 
-    /// What the refiner is told besides the text (docs/dictation.md §18.5): the glossary, the
-    /// take's language and style, and the context the privacy switches allow.
+    /// The take's preset (docs/dictation.md §21): the scene's, else the engines' as of `start`,
+    /// resolved against the custom presets of `start`; a custom preset that is gone is 校对.
+    fn take_preset(&self) -> TakePreset {
+        let id = self.take.scene.as_ref().and_then(|s| s.overrides.refine_preset).unwrap_or(self.take.preset);
+        let (preset, missing) = resolve(id, &self.take.presets);
+        if missing {
+            tracing::info!(session = self.status.session, "the take's custom preset no longer exists; refining with 校对");
+        }
+        preset
+    }
+
+    /// Before a clean-up starts: the status names its preset, so the pill can show it while refining.
+    fn announce_preset(&mut self, refine: bool) {
+        self.status.preset = refine.then(|| self.take_preset().to_ref());
+    }
+
+    /// What the refiner is told besides the text (docs/dictation.md §18.5, §21): the glossary, the
+    /// take's language and preset, and the context the privacy switches allow.
     fn refine_hints(&self) -> RefineHints {
         let overrides = self.take.scene.as_ref().map(|s| &s.overrides);
         let (sharing, app) = (self.take.sharing, self.take.app.as_ref());
         RefineHints {
             glossary: self.take.vocabulary.glossary().to_vec(),
             language: self.take_language(),
-            style: overrides.and_then(|o| o.refine_style).unwrap_or_default(),
+            preset: self.take_preset(),
             context: RefineContext {
                 app_name: app.filter(|_| sharing.app_name).map(|a| a.name.clone()),
                 window_title: app.filter(|_| sharing.window_title).and_then(|a| a.title.clone()),
@@ -1269,6 +1323,7 @@ impl DictationEngine {
         self.take.asr_ms = self.take.finalize_ms();
         self.take.recording = None;
         let refine = self.take_refine_enabled();
+        self.announce_preset(refine);
         let job = PipelineJob {
             session: self.status.session,
             input: PipelineInput::Text { raw_text, asr_ms: self.take.asr_ms },
@@ -1702,8 +1757,9 @@ impl DictationEngine {
 
     /// The whole take goes to the transcriber (docs/dictation.md §2).
     fn run_whole_take(&mut self, recording: Recording) -> Vec<Effect> {
-        let effects = self.stage(ProcessingStage::Transcribing);
         let refine = self.take_refine_enabled();
+        self.announce_preset(refine);
+        let effects = self.stage(ProcessingStage::Transcribing);
         let job = PipelineJob {
             session: self.status.session,
             input: PipelineInput::Wav(recording.wav),
@@ -1754,6 +1810,8 @@ impl DictationEngine {
             edit: edit.map(|e| *e),
             app: self.take.app.as_ref().map(|a| AppRef { id: a.app_id.clone(), name: a.name.clone() }),
             scene: self.take.scene.as_ref().map(Scene::to_ref),
+            // A voice edit rewrites with its own instruction (§19), never a preset.
+            preset: (refined && self.status.kind == TakeKind::Dictation).then(|| self.take_preset().to_ref()),
             origin: None,
         };
         match injection {
@@ -1816,8 +1874,9 @@ impl DictationEngine {
         };
         tracing::info!(session = self.status.session, phase = name, kind = self.status.kind.as_str(), "dictation phase");
         if phase == DictationPhase::Idle {
-            // The take is over: its context goes with it (the next start probes afresh).
+            // The take is over: its context and preset go with it (the next start probes afresh).
             self.status.context = None;
+            self.status.preset = None;
         }
         self.status.phase = phase;
         Effect::Status(self.status.clone())
@@ -2446,6 +2505,73 @@ mod tests {
         assert!(r.injector.injected().is_empty());
         tokio::time::advance(DWELL).await;
         assert_eq!(phase(&r.next().await), &DictationPhase::Idle);
+    }
+
+    /// docs/dictation.md §21: a take refines with the engines' preset as of its start (switching it
+    /// mid-take applies to the next take), and a custom preset that is gone refines with 校对. The
+    /// status names the preset while the take is processed, the history records it, and a take the
+    /// clean-up skipped names none.
+    #[tokio::test(start_paused = true)]
+    async fn the_take_refines_with_the_preset_of_its_start_and_records_it() {
+        use crate::presets::{BuiltinPreset, PresetRef};
+        let engines = |preset: PresetId, refine_enabled: bool| {
+            ResolvedEngines::resolve(
+                &EngineSettings { refine_preset: preset, refine_enabled, ..EngineSettings::default() },
+                &UserSecrets::default(),
+                &TEST_BUILT_IN,
+            )
+        };
+        let weekly = CustomPreset { id: Uuid::new_v4(), name: "周报".into(), prompt: "整理成周报".into(), created_at_ms: 1, updated_at_ms: 1 };
+        let mut r = happy();
+        r.engine.set_presets(Arc::new(vec![weekly.clone()]));
+        r.engine.configure(&engines(PresetId::Custom(weekly.id), true));
+        let take = |r: &mut Rig| r.engine.start().map(drop);
+        take(&mut r).unwrap();
+        r.engine.configure(&engines(PresetId::Builtin(BuiltinPreset::Notes), true));
+        r.engine.set_presets(Arc::new(Vec::new()));
+        assert!(r.next().await.iter().any(|e| matches!(e, Effect::Status(_))));
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        let weekly_ref = PresetRef { id: PresetId::Custom(weekly.id), name: "周报".into() };
+        assert_eq!(status_of(&fx).preset.as_ref(), Some(&weekly_ref), "done still names the preset");
+        assert_eq!(record(&fx).unwrap().preset.as_ref(), Some(&weekly_ref));
+        let refiner = r.refiner.clone().unwrap();
+        assert_eq!(
+            refiner.hints()[0].preset,
+            TakePreset::Custom { id: weekly.id, name: "周报".into(), prompt: "整理成周报".into() },
+            "the preset of the start"
+        );
+        tokio::time::advance(DWELL).await;
+        let fx = r.next().await;
+        assert!(status_of(&fx).preset.is_none(), "idle clears it");
+        // The next take: the preset switched mid-take.
+        take(&mut r).unwrap();
+        assert!(r.engine.status().preset.is_none(), "a new take starts without one");
+        assert!(r.next().await.iter().any(|e| matches!(e, Effect::Status(_))));
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert_eq!(record(&fx).unwrap().preset, Some(PresetRef { id: PresetId::Builtin(BuiltinPreset::Notes), name: "要点纪要".into() }));
+        assert_eq!(refiner.hints()[1].preset, TakePreset::Builtin(BuiltinPreset::Notes));
+        tokio::time::advance(DWELL).await;
+        r.next().await;
+        // A custom preset that is gone: 校对, and the history says 校对.
+        r.engine.configure(&engines(PresetId::Custom(weekly.id), true));
+        take(&mut r).unwrap();
+        assert!(r.next().await.iter().any(|e| matches!(e, Effect::Status(_))));
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert_eq!(record(&fx).unwrap().preset, Some(PresetRef { id: PresetId::Builtin(BuiltinPreset::Proofread), name: "校对".into() }));
+        assert_eq!(refiner.hints()[2].preset, TakePreset::default());
+        tokio::time::advance(DWELL).await;
+        r.next().await;
+        // The clean-up switched off: no preset anywhere.
+        r.engine.configure(&engines(PresetId::Builtin(BuiltinPreset::Chat), false));
+        take(&mut r).unwrap();
+        assert!(r.next().await.iter().any(|e| matches!(e, Effect::Status(_))));
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(status_of(&fx).preset.is_none() && record(&fx).unwrap().preset.is_none(), "{fx:?}");
+        assert_eq!(refiner.hints().len(), 3, "no clean-up ran");
     }
 
     #[tokio::test(start_paused = true)]
@@ -3927,6 +4053,8 @@ mod tests {
         assert_eq!(entry.edit, Some(EditRecord { instruction: "改得更正式".into(), selection: SELECTION.into() }));
         assert_eq!((entry.text.as_str(), entry.raw_text.as_str()), (REWRITE, INSTRUCTION));
         assert!(entry.refined && entry.refine_model.as_deref() == Some(FAKE_REFINE_MODEL));
+        assert_eq!(entry.preset, None, "an edit runs its instruction, not a preset (§21)");
+        assert_eq!(r.engine.status().preset, None);
         assert_eq!(entry.outcome, Outcome::Inserted { via: Via::Paste });
         assert_eq!(
             entry.vocabulary,
@@ -4367,7 +4495,7 @@ mod tests {
             &[],
             crate::scenes::SceneOverrides {
                 output_mode: Some(OutputMode::StreamingFinal),
-                refine_style: Some(crate::engines::RefineStyle::Formal),
+                refine_preset: Some(crate::presets::PresetId::Builtin(crate::presets::BuiltinPreset::Formal)),
                 language: Some("en".into()),
                 prompt: Some("口语化".into()),
                 ..Default::default()
@@ -4390,7 +4518,7 @@ mod tests {
         let refiner = r.refiner.clone().unwrap();
         let hints = refiner.edit_hints();
         assert_eq!(hints.len(), 1);
-        assert_eq!((hints[0].style, hints[0].language.as_deref()), (crate::engines::RefineStyle::Default, None));
+        assert_eq!((hints[0].preset.clone(), hints[0].language.as_deref()), (TakePreset::default(), None));
         assert_eq!(
             hints[0].context,
             RefineContext { app_name: Some("Slack".into()), window_title: None, instruction: None },
@@ -4419,7 +4547,7 @@ mod tests {
             &[],
             crate::scenes::SceneOverrides {
                 output_mode: Some(OutputMode::StreamingFinal),
-                refine_style: Some(crate::engines::RefineStyle::Formal),
+                refine_preset: Some(crate::presets::PresetId::Builtin(crate::presets::BuiltinPreset::Formal)),
                 language: Some("en".into()),
                 prompt: Some("保留代码标识符原样".into()),
                 ..Default::default()
@@ -4447,7 +4575,7 @@ mod tests {
         let refiner = r.refiner.clone().unwrap();
         let hints = refiner.hints();
         assert_eq!(hints.len(), 1);
-        assert_eq!((hints[0].style, hints[0].language.as_deref()), (crate::engines::RefineStyle::Formal, Some("en")));
+        assert_eq!((hints[0].preset.clone(), hints[0].language.as_deref()), (TakePreset::Builtin(crate::presets::BuiltinPreset::Formal), Some("en")));
         assert_eq!(
             hints[0].context,
             RefineContext { app_name: Some("Code".into()), window_title: None, instruction: Some("保留代码标识符原样".into()) },
@@ -4470,7 +4598,7 @@ mod tests {
         assert_eq!((entry.app.clone(), entry.scene.clone()), (Some(app_ref("winword", "WINWORD")), None));
         assert_eq!(r.transcriber.languages(), vec![None], "the global language hint (none)");
         let hints = refiner.hints();
-        assert_eq!((hints[1].style, hints[1].language.as_deref()), (crate::engines::RefineStyle::Default, None));
+        assert_eq!((hints[1].preset.clone(), hints[1].language.as_deref()), (TakePreset::default(), None));
         assert_eq!(hints[1].context, RefineContext { app_name: Some("WINWORD".into()), window_title: None, instruction: None });
     }
 

@@ -37,6 +37,7 @@ import {
   MOCK_MODEL_TICKS,
   MOCK_MODELS_ROOT,
   MOCK_PROBE_MS,
+  MOCK_PRESET_SAMPLES,
   MOCK_PUBLIC_KEYS,
   MOCK_REFINE_MS,
   MOCK_NO_SPEECH,
@@ -45,6 +46,8 @@ import {
   MockBackend,
   mockSameChord,
   SCENES_UNAVAILABLE,
+  PRESETS_UNAVAILABLE,
+  PRESET_TRY_UNCONFIGURED,
   VOCABULARY_UNAVAILABLE,
   mockLevel,
   desktopIdentity,
@@ -56,8 +59,11 @@ import {
   startOfLocalDay,
 } from "./mock-backend";
 import {
+  BUILTIN_PRESETS,
   HISTORY_LIMIT,
   MAX_EDIT_SELECTION_CHARS,
+  MAX_PRESETS,
+  type PresetsTryArgs,
   MAX_PHONE_TEXT_CHARS,
   type DictionaryDraft,
   type HistoryEntry,
@@ -2338,6 +2344,249 @@ describe("MockBackend scenes and context (docs/dictation.md section 18)", () => 
       phone.invoke("settings_set_context_sharing", { appName: true, windowTitle: false }),
     ).rejects.toThrow(SCENES_UNAVAILABLE);
     await expect(phone.recentApps()).rejects.toThrow(SCENES_UNAVAILABLE);
+    phone.destroy();
+  });
+});
+
+describe("MockBackend presets (docs/dictation.md section 21)", () => {
+  const T0 = 1_758_700_000_000;
+  let clock = T0;
+  beforeEach(() => {
+    clock = T0;
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const tick = (ms: number) => {
+    clock += ms;
+    vi.advanceTimersByTime(ms);
+  };
+  const draft = (name: string, prompt = "整理成周报") => ({ name, prompt });
+  const errors = (events: UiEvent[]) =>
+    events.flatMap((e) => (e.type === "error" ? [e.message] : []));
+  const take = async (backend: MockBackend) => {
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS);
+    tick(1000);
+    await backend.invoke("dictation_stop");
+    tick(MOCK_ASR_MS);
+    tick(MOCK_REFINE_MS);
+  };
+  const setPreset = (backend: MockBackend, refine_preset: string) =>
+    backend.invoke("settings_set_engines", {
+      engines: { ...backend.peek().settings.engines, refine_preset },
+    });
+
+  it("regression: preset commands behave like the core: drafts wrong on their own reject the call and list clashes are error events with the list kept", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    expect(backend.peek().presets).toEqual([]);
+    const events = collect(backend);
+    await backend.invoke("presets_add", { preset: draft(" 周报 ", " 整理成周报\r\n按项目分组 ") });
+    const [weekly] = backend.peek().presets;
+    if (!weekly) throw new Error("one preset");
+    expect(weekly).toMatchObject({
+      name: "周报",
+      prompt: "整理成周报\n按项目分组",
+      created_at_ms: T0,
+      updated_at_ms: T0,
+    });
+    const refusals: [{ name: string; prompt: string }, string][] = [
+      [draft(""), "presets: 预设名称不能为空"],
+      [draft("a", "  "), "presets: 预设内容不能为空"],
+      [draft("字".repeat(25)), "presets: 预设名称最多 24 个字符（当前 25）"],
+      [draft("a", "x".repeat(4001)), "presets: 预设内容最多 4000 个字符（当前 4001）"],
+      [draft("a\nb"), "presets: 预设名称不能包含换行或控制字符"],
+      [draft("a", "x\u0007"), "presets: 预设内容不能包含控制字符"],
+    ];
+    for (const [preset, message] of refusals)
+      await expect(backend.invoke("presets_add", { preset })).rejects.toThrow(message);
+    await expect(backend.invoke("presets_remove", { id: "nope" })).rejects.toThrow(
+      "id must be a UUID",
+    );
+    // Names are unique ignoring ASCII case, as the core compares them.
+    await backend.invoke("presets_add", { preset: draft("Mail") });
+    await backend.invoke("presets_add", { preset: draft("mail") });
+    await backend.invoke("presets_add", { preset: draft("周报", "y") });
+    expect(errors(events)).toEqual([
+      "presets: 已有名为「Mail」的预设",
+      "presets: 已有名为「周报」的预设",
+    ]);
+    tick(10);
+    await backend.invoke("presets_update", { id: weekly.id, preset: draft("周报", "新的内容") });
+    expect(backend.peek().presets[0]).toMatchObject({
+      id: weekly.id,
+      prompt: "新的内容",
+      created_at_ms: T0,
+      updated_at_ms: T0 + 10,
+    });
+    const unknown = "11111111-1111-4111-8111-111111111111";
+    await backend.invoke("presets_update", { id: unknown, preset: draft("z") });
+    await backend.invoke("presets_remove", { id: unknown });
+    expect(errors(events).slice(2)).toEqual([
+      `presets: 没有 id 为 ${unknown} 的预设`,
+      `presets: 没有 id 为 ${unknown} 的预设`,
+    ]);
+    await backend.invoke("presets_remove", { id: weekly.id });
+    expect(backend.peek().presets.map((p) => p.name)).toEqual(["Mail"]);
+    for (let n = backend.peek().presets.length; n < MAX_PRESETS; n += 1)
+      await backend.invoke("presets_add", { preset: draft(`预设 ${n}`) });
+    await backend.invoke("presets_add", { preset: draft("再多一个") });
+    expect(backend.peek().presets).toHaveLength(MAX_PRESETS);
+    expect(errors(events).at(-1)).toBe(`presets: 自定义预设最多 ${MAX_PRESETS} 个`);
+    backend.destroy();
+  });
+
+  it("regression: a take refines with the preset of its start: the status names it from processing to idle, the history records it, a custom preset that is gone is 校对, a scene's preset wins", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    await backend.invoke("presets_add", { preset: draft("周报") });
+    const [weekly] = backend.peek().presets;
+    if (!weekly) throw new Error("one preset");
+    await setPreset(backend, weekly.id);
+    await backend.invoke("dictation_start");
+    expect(backend.peek().dictation.preset).toBeUndefined();
+    tick(MOCK_MIC_READY_MS + 1000);
+    // Switched mid-take: the next take refines with it, this one keeps the preset of its start.
+    await setPreset(backend, "notes");
+    await backend.invoke("dictation_stop");
+    const named = { id: weekly.id, name: "周报" };
+    expect(backend.peek().dictation.preset).toEqual(named);
+    tick(MOCK_ASR_MS);
+    expect(backend.peek().dictation.phase).toMatchObject({
+      phase: "processing",
+      stage: "refining",
+    });
+    tick(MOCK_REFINE_MS);
+    expect(backend.peek().dictation.preset).toEqual(named);
+    expect(backend.peek().history[0]?.preset).toEqual(named);
+    tick(MOCK_DICTATION_DWELL_MS);
+    expect(backend.peek().dictation.preset).toBeUndefined();
+    await take(backend);
+    expect(backend.peek().history[0]?.preset).toEqual({ id: "notes", name: "要点纪要" });
+    tick(MOCK_DICTATION_DWELL_MS);
+    // A custom preset that is gone refines with 校对, and the history says so.
+    await setPreset(backend, weekly.id);
+    await backend.invoke("presets_remove", { id: weekly.id });
+    await take(backend);
+    expect(backend.peek().history[0]?.preset).toEqual({ id: "proofread", name: "校对" });
+    tick(MOCK_DICTATION_DWELL_MS);
+    // A scene's preset wins over the engines'; a take the scene does not refine names none.
+    await backend.invoke("scenes_add", {
+      scene: {
+        name: "代码",
+        enabled: true,
+        match: { apps: ["code"], title_contains: [] },
+        overrides: { refine_preset: "formal" },
+      },
+    });
+    await backend.invoke("scenes_add", {
+      scene: {
+        name: "聊天",
+        enabled: true,
+        match: { apps: ["slack"], title_contains: [] },
+        overrides: { refine_enabled: false, refine_preset: "chat" },
+      },
+    });
+    backend.setForegroundApp({ id: "code", name: "Code" });
+    await take(backend);
+    expect(backend.peek().history[0]?.preset).toEqual({ id: "formal", name: "书面语" });
+    tick(MOCK_DICTATION_DWELL_MS);
+    backend.setForegroundApp({ id: "slack", name: "Slack" });
+    await take(backend);
+    expect(backend.peek().history[0]).toMatchObject({ refined: false });
+    expect(backend.peek().history[0]?.preset).toBeUndefined();
+    expect(backend.peek().dictation.preset).toBeUndefined();
+    backend.destroy();
+  });
+
+  it("试一试 answers by id with the canned clean-up, refuses arguments the bridge refuses, and fails at once without a clean-up", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    const events = collect(backend);
+    const answers = () => events.flatMap((e) => (e.type === "preset_try" ? [e] : []));
+    const sample = MOCK_PRESET_SAMPLES.proofread;
+    if (!sample) throw new Error("the 校对 example");
+    await backend.invoke("presets_try", {
+      id: 1,
+      preset: "proofread",
+      prompt: null,
+      text: ` ${sample.input} `,
+    });
+    expect(answers()).toEqual([]);
+    tick(MOCK_REFINE_MS);
+    expect(answers()).toEqual([
+      {
+        type: "preset_try",
+        id: 1,
+        outcome: {
+          status: "ok",
+          text: sample.output,
+          latency_ms: MOCK_REFINE_MS,
+          model: MOCK_ENGINE_BUILTIN.refine_model,
+        },
+      },
+    ]);
+    await backend.invoke("presets_try", {
+      id: 2,
+      preset: null,
+      prompt: "整理一下",
+      text: "嗯今天下午开会",
+    });
+    tick(MOCK_REFINE_MS);
+    expect(answers()[1]).toMatchObject({
+      id: 2,
+      outcome: { status: "ok", text: "今天下午开会。" },
+    });
+    expect(backend.peek().history).toEqual([]);
+    const refusals: [PresetsTryArgs, string][] = [
+      [
+        { id: 3, preset: null, prompt: null, text: "x" },
+        "presets: 试一试需要一个预设或一段预设内容",
+      ],
+      [
+        { id: 3, preset: "notes", prompt: "x", text: "x" },
+        "presets: 试一试需要一个预设或一段预设内容",
+      ],
+      [{ id: 3, preset: "casual", prompt: null, text: "x" }, "presets: 没有名为「casual」的预设"],
+      [{ id: 3, preset: null, prompt: " ", text: "x" }, "presets: 预设内容不能为空"],
+      [{ id: 3, preset: "notes", prompt: null, text: "  " }, "presets: 请输入要试运行的文字"],
+      [
+        { id: 3, preset: "notes", prompt: null, text: "字".repeat(2001) },
+        "presets: 试运行的文字最多 2000 个字符（当前 2001）",
+      ],
+    ];
+    for (const [args, message] of refusals)
+      await expect(backend.invoke("presets_try", args)).rejects.toThrow(message);
+    backend.destroy();
+    const bare = new MockBackend({ now: () => clock, history: [], builtIn: {} });
+    const bareEvents = collect(bare);
+    await bare.invoke("presets_try", { id: 9, preset: "chat", prompt: null, text: "你好" });
+    expect(bareEvents).toContainEqual({
+      type: "preset_try",
+      id: 9,
+      outcome: { status: "failed", reason: PRESET_TRY_UNCONFIGURED },
+    });
+    bare.destroy();
+  });
+
+  it("presetsBuiltin answers the shell's texts in the interface's order; the phone refuses every preset command", async () => {
+    const backend = new MockBackend();
+    const texts = await backend.presetsBuiltin();
+    expect(texts.map((t) => t.id)).toEqual([...BUILTIN_PRESETS]);
+    // The confirmed examples of docs/dictation.md §21 are the bodies' own.
+    for (const [id, sample] of Object.entries(MOCK_PRESET_SAMPLES)) {
+      const body = texts.find((t) => t.id === id)?.prompt ?? "";
+      expect(body).toContain(`输入：${sample.input}\n输出：${sample.output}`);
+    }
+    backend.destroy();
+    const phone = new MockBackend({ role: "phone", presets: [] });
+    expect(phone.peek().presets).toEqual([]);
+    await expect(phone.invoke("presets_add", { preset: draft("a") })).rejects.toThrow(
+      PRESETS_UNAVAILABLE,
+    );
+    await expect(
+      phone.invoke("presets_try", { id: 1, preset: "chat", prompt: null, text: "x" }),
+    ).rejects.toThrow(PRESETS_UNAVAILABLE);
+    await expect(phone.presetsBuiltin()).rejects.toThrow(PRESETS_UNAVAILABLE);
     phone.destroy();
   });
 });

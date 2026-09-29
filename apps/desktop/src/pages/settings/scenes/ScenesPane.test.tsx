@@ -23,7 +23,7 @@ function scene(id: string, name: string, extra: Partial<Scene> = {}): Scene {
 /** Chat apps: refine off, punctuation only, an instruction. */
 const CHAT = scene(CHAT_ID, "聊天", {
   match: { apps: ["slack", "wechat"], title_contains: [] },
-  overrides: { refine_enabled: false, refine_style: "punctuation", prompt: "口语化" },
+  overrides: { refine_enabled: false, refine_preset: "punctuation", prompt: "口语化" },
 });
 /** GitHub in the browser, switched off: streaming, English, Traditional. */
 const GITHUB = scene(GITHUB_ID, "GitHub", {
@@ -86,7 +86,7 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
     expect(within(chat).getByText("wechat")).toBeInTheDocument();
     expect(within(chat).getByTestId("scene-match")).toHaveTextContent("任何窗口");
     expect(within(chat).getByTestId("scene-summary")).toHaveTextContent(
-      "AI 润色 关 · 润色：只加标点 · 有补充要求",
+      "AI 润色 关 · AI 预设：只加标点 · 有补充要求",
     );
     expect(chat).toHaveAttribute("data-enabled", "true");
     expect(within(github).getByTestId("scene-match")).toHaveTextContent(
@@ -264,7 +264,7 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
 
     // Every override starts at 跟随全局.
     const overrides = within(editor).getByTestId("scene-editor-overrides");
-    for (const label of ["AI 润色", "润色风格", "输出方式", "语言", "中文字形"]) {
+    for (const label of ["AI 润色", "AI 预设", "输出方式", "语言", "中文字形"]) {
       expect(within(overrides).getByRole("combobox", { name: label })).toHaveDisplayValue(
         "跟随全局",
       );

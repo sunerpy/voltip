@@ -12,6 +12,7 @@
         "asr_provider": "builtin",
         "llm_provider": "builtin",
         "refine_enabled": true,
+        "refine_preset": "proofread",
         "local_device": "auto",
         "live_preview": true,
         "output_mode": "whole_take",
@@ -98,6 +99,7 @@
     "dictionary": [],
     "rules": [],
     "scenes": [],
+    "presets": [],
     "nearby": [],
     "hardware": {
       "cpu_threads": 0,
@@ -127,6 +129,7 @@
       "asr_provider": "builtin",
       "llm_provider": "groq",
       "refine_enabled": true,
+      "refine_preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
       "providers": {
         "groq": {
           "llm_model": "openai/gpt-oss-20b"
@@ -550,7 +553,11 @@
       "preview": "把 fetchUser 改成 async，然后加上错误"
     },
     "session": 7,
-    "kind": "dictation"
+    "kind": "dictation",
+    "preset": {
+      "id": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+      "name": "周报"
+    }
   },
   {
     "type": "dictation",
@@ -783,6 +790,10 @@
         "scene": {
           "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
           "name": "代码评审"
+        },
+        "preset": {
+          "id": "formal",
+          "name": "书面语"
         }
       },
       {
@@ -905,6 +916,10 @@
         "scene": {
           "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
           "name": "代码评审"
+        },
+        "preset": {
+          "id": "formal",
+          "name": "书面语"
         }
       }
     ]
@@ -951,6 +966,10 @@
         "scene": {
           "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
           "name": "代码评审"
+        },
+        "preset": {
+          "id": "formal",
+          "name": "书面语"
         }
       }
     ]
@@ -2671,6 +2690,7 @@
       "asr_provider": "builtin",
       "llm_provider": "groq",
       "refine_enabled": true,
+      "refine_preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
       "providers": {
         "groq": {
           "llm_model": "openai/gpt-oss-20b"
@@ -2822,7 +2842,7 @@
         },
         "overrides": {
           "refine_enabled": true,
-          "refine_style": "formal",
+          "refine_preset": "formal",
           "output_mode": "streaming_final",
           "language": "en",
           "chinese_script": "as_is",
@@ -2840,7 +2860,7 @@
           "title_contains": []
         },
         "overrides": {
-          "refine_style": "punctuation"
+          "refine_preset": "punctuation"
         },
         "created_at_ms": 1758700600000,
         "updated_at_ms": 1758700600000
@@ -2850,6 +2870,40 @@
   {
     "type": "scenes",
     "scenes": []
+  },
+  {
+    "type": "presets",
+    "presets": [
+      {
+        "id": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+        "name": "周报",
+        "prompt": "把正文整理成周报：本周完成、下周计划、风险三部分。",
+        "created_at_ms": 1758614200000,
+        "updated_at_ms": 1758700600000
+      }
+    ]
+  },
+  {
+    "type": "presets",
+    "presets": []
+  },
+  {
+    "type": "preset_try",
+    "id": 3,
+    "outcome": {
+      "status": "ok",
+      "text": "Meeting at 10 a.m. tomorrow.",
+      "latency_ms": 820,
+      "model": "qwen/qwen3.8-27b"
+    }
+  },
+  {
+    "type": "preset_try",
+    "id": 4,
+    "outcome": {
+      "status": "failed",
+      "reason": "尚未配置 AI 润色服务，无法试运行预设"
+    }
   },
   {
     "type": "paste_result",

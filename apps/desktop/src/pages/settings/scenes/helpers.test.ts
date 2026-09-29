@@ -12,8 +12,8 @@ import {
   promptChars,
   refineChoices,
   sceneDraftOf,
+  presetChoices,
   scriptChoices,
-  styleChoices,
   withEnabled,
 } from "./helpers";
 
@@ -26,7 +26,7 @@ const SCENE: Scene = {
   match: { apps: ["winword"], title_contains: ["Report"] },
   overrides: {
     refine_enabled: true,
-    refine_style: "formal",
+    refine_preset: "formal",
     output_mode: "whole_take",
     language: "auto",
     chinese_script: "as_is",
@@ -45,7 +45,7 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
       apps: ["winword"],
       keywords: ["Report"],
       refine: "on",
-      style: "formal",
+      preset: "formal",
       outputMode: "whole_take",
       language: "auto",
       script: "as_is",
@@ -113,13 +113,39 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
   });
 
   it("offers 跟随全局 first in every select and names languages like the engines dialog", () => {
-    for (const choices of [refineChoices(), styleChoices(), outputModeChoices(), scriptChoices()])
+    for (const choices of [
+      refineChoices(),
+      presetChoices([], ""),
+      outputModeChoices(),
+      scriptChoices(),
+    ])
       expect(choices[0]).toEqual({ value: "", label: "跟随全局" });
-    expect(styleChoices(en).map((c) => c.label)).toEqual([
+    expect(presetChoices([], "", en).map((c) => c.label)).toEqual([
       "Follow global",
-      "Standard",
+      "Proofread",
+      "Prompt optimizer",
+      "Clarify intent",
+      "Casual chat",
+      "Chinese ⇄ English",
+      "Key points",
       "Punctuation only",
       "Formal",
+    ]);
+    // Custom presets follow the built-in ones; one that was deleted stays selectable, named so.
+    const weekly = {
+      id: "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+      name: "周报",
+      prompt: "整理成周报",
+      created_at_ms: 1,
+      updated_at_ms: 1,
+    };
+    expect(presetChoices([weekly], weekly.id).slice(-1)).toEqual([
+      { value: weekly.id, label: "周报" },
+    ]);
+    const gone = "11111111-1111-4111-8111-111111111111";
+    expect(presetChoices([weekly], gone).slice(-2)).toEqual([
+      { value: weekly.id, label: "周报" },
+      { value: gone, label: "已删除的预设（按校对处理）" },
     ]);
     expect(outputModeChoices(en, "en").map((c) => c.value)).toEqual([
       "",
@@ -148,7 +174,7 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
   it("summarises the overrides a scene sets, in the editor's order and the UI language", () => {
     expect(overrideSummary(SCENE.overrides)).toEqual([
       "AI 润色 开",
-      "润色：书面语",
+      "AI 预设：书面语",
       "输出：整段输出",
       "语言：自动检测",
       "字形：保持原样",

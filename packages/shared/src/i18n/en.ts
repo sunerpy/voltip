@@ -1704,7 +1704,7 @@ export const en: Messages = {
       summary: {
         refineOn: "AI polish on",
         refineOff: "AI polish off",
-        style: "Polish: {style}",
+        preset: "AI preset: {preset}",
         output: "Output: {mode}",
         language: "Language: {language}",
         script: "Script: {script}",
@@ -1788,6 +1788,39 @@ export const en: Messages = {
       },
     },
   },
+  presets: {
+    proofread: {
+      name: "Proofread",
+      description:
+        "Fixes typos, punctuation and sentence breaks and removes filler words; everything else stays as spoken.",
+    },
+    prompt: {
+      name: "Prompt optimizer",
+      description: "Rewrites a spoken request as a clear prompt for an AI.",
+    },
+    intent: {
+      name: "Clarify intent",
+      description: "Keeps the corrected wording, removes repetition and lists multiple points.",
+    },
+    chat: {
+      name: "Casual chat",
+      description: "Short conversational sentences without a closing full stop.",
+    },
+    translate: {
+      name: "Chinese ⇄ English",
+      description: "Corrects recognition errors, then translates between Chinese and English.",
+    },
+    notes: { name: "Key points", description: "Organizes the text into key points and to-dos." },
+    punctuation: {
+      name: "Punctuation only",
+      description: "Adds punctuation and sentence breaks without changing the words.",
+    },
+    formal: {
+      name: "Formal",
+      description: "Rewrites the text as complete, fluent written language.",
+    },
+    missing: "Deleted preset (Proofread is used)",
+  },
   sceneEditor: {
     titleNew: "New scene",
     titleEdit: "Edit scene",
@@ -1811,8 +1844,7 @@ export const en: Messages = {
     refine: "AI polish",
     refineOn: "On",
     refineOff: "Off",
-    style: "Polish style",
-    styleName: { default: "Standard", punctuation: "Punctuation only", formal: "Formal" },
+    preset: "AI preset",
     outputMode: "Output mode",
     language: "Language",
     script: "Chinese script",

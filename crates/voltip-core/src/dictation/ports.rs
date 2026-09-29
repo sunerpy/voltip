@@ -13,8 +13,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::wav;
-use crate::engines::{OutputMode, RefineStyle};
+use crate::engines::OutputMode;
 use crate::hotkey::Modifier;
+use crate::presets::TakePreset;
 use crate::scenes::{MAX_CONTEXT_NAME_CHARS, MAX_CONTEXT_TITLE_CHARS, clean_context_line, normalize_app_id};
 
 /// One input-level reading (≈ 30 Hz while a capture runs). Same wire shape as the meter frame the
@@ -306,16 +307,17 @@ impl RefineContext {
     }
 }
 
-/// Everything the refiner is told besides the text (docs/dictation.md §16.3, §18.5): one struct,
-/// so the glossary, the take's language and style and its context travel the same way.
+/// Everything the refiner is told besides the text (docs/dictation.md §16.3, §18.5, §21): one
+/// struct, so the glossary, the take's language and preset and its context travel the same way.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RefineHints {
     /// The user's enabled dictionary terms (spelling authority); empty = no glossary block.
     pub glossary: Vec<String>,
     /// The take's language hint (a scene's override or the engines' language); `None` = unknown.
     pub language: Option<String>,
-    /// How far the model may rewrite (a scene's override; `Default` otherwise).
-    pub style: RefineStyle,
+    /// What the clean-up does: the scene's preset, else the engines' (校对 when a custom preset
+    /// is gone).
+    pub preset: TakePreset,
     /// Where the text is going and what the scene asks for.
     pub context: RefineContext,
 }
@@ -324,14 +326,14 @@ pub struct RefineHints {
 #[async_trait]
 pub trait Refiner: Send + Sync {
     /// Refine `text` (already corrected by the dictionary) with `hints`: every glossary term kept
-    /// exactly as spelled (docs/dictation.md §16.3), the take's language and style, and its context
+    /// exactly as spelled (docs/dictation.md §16.3), the take's language and preset, and its context
     /// (§18.5). Empty hints leave the prompt as it was before §16.
     async fn refine(&self, text: &str, hints: &RefineHints) -> Result<Refined, DictationError>;
 
     /// Rewrite `selection` according to the spoken `instruction` (docs/dictation.md §19; the
     /// instruction is already corrected by the dictionary). The same `hints` as a dictation: the
     /// glossary terms are the spelling authority and the application in front is reference
-    /// context; the style, the language hint and the scene instruction are dictation-only (the
+    /// context; the preset, the language hint and the scene instruction are dictation-only (the
     /// spoken instruction decides how the selection changes). The answer replaces the selection as
     /// it is: an empty or cut-off answer must be an error, never an empty `text`.
     async fn edit(&self, selection: &str, instruction: &str, hints: &RefineHints) -> Result<Refined, DictationError>;

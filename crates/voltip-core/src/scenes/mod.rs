@@ -1,7 +1,7 @@
 //! Scenes and context (docs/dictation.md §18).
 //!
 //! A scene names applications (and, optionally, window-title keywords) and says how a take that
-//! starts in one of them is processed: output mode, refine on / off and style, language, Chinese
+//! starts in one of them is processed: output mode, refine on / off and preset, language, Chinese
 //! script, and an extra instruction for the LLM. The engine probes the foreground application when
 //! a take starts, takes the first enabled scene that matches ([`match_scene`]) and applies its
 //! overrides to that take only. This module owns the wire types, the validation, the matching, the
@@ -16,8 +16,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::dictation::ports::ForegroundApp;
-use crate::engines::{ChineseScript, OutputMode, RefineStyle};
+use crate::engines::{ChineseScript, OutputMode};
 use crate::history::HistoryEntry;
+use crate::presets::PresetId;
 
 pub use store::{SCENES_FILE_NAME, SCENES_SCHEMA, SceneStore};
 
@@ -65,9 +66,10 @@ pub struct SceneOverrides {
     /// Run the LLM clean-up (or not).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refine_enabled: Option<bool>,
-    /// How far the clean-up may rewrite.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refine_style: Option<RefineStyle>,
+    /// What the clean-up does (docs/dictation.md §21). Scenes written before presets stored a
+    /// refine style under `refine_style`; it still reads (`default` = 校对).
+    #[serde(default, alias = "refine_style", skip_serializing_if = "Option::is_none")]
+    pub refine_preset: Option<PresetId>,
     /// Output mode (docs/dictation.md §12); a streaming mode needs the live preview like the
     /// global setting does.
     #[serde(default, skip_serializing_if = "Option::is_none")]

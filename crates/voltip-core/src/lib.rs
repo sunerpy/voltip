@@ -18,6 +18,7 @@ pub mod models;
 pub mod paste;
 mod peer;
 pub mod phone;
+pub mod presets;
 pub mod providers;
 mod runtime;
 pub mod scenes;
@@ -35,15 +36,16 @@ pub use dictation::{
 };
 pub use engines::{
     BuiltIn, ChineseScript, EngineIssue, EngineSettings, EngineStatus, InjectMode, LocalDevice, LocalModelRef, MAX_LOCAL_THREADS, OutputMode, ProviderSettings,
-    ProviderStatus, RefineStyle, RemoteService, ResolvedEngines, SecretSource, SecretState, ServiceStatus, UserSecrets,
+    ProviderStatus, RemoteService, ResolvedEngines, SecretSource, SecretState, ServiceStatus, UserSecrets,
 };
 pub use history::{EditRecord, EntryOrigin, HistoryEntry, HistoryStore, OriginKind, Outcome};
 pub use hotkey::{DEFAULT_EDIT_HOTKEY, DEFAULT_HOTKEY, Hotkey, HotkeyError, Modifier, SoloKey};
 pub use models::{
     CAPABILITY_OFFLINE, CAPABILITY_STREAMING, CAPABILITY_VAD, CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelInstallState, ModelManager, ModelState, ProgressSink,
 };
+pub use presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetError, PresetId, PresetRef, PresetTrial, PresetTryOutcome, TakePreset};
 pub use providers::{KeyPolicy, PROVIDERS, ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSpec, ServiceKind, ServicePreset};
-pub use runtime::{AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, now_ms};
+pub use runtime::{AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED, now_ms};
 pub use scenes::{AppRef, ContextSharing, Scene, SceneDraft, SceneError, SceneMatch, SceneOverrides, SceneRef, TakeContext};
 pub use settings::{HistorySettings, Locale, OverlayPlacement, SETTINGS_FILE_NAME, Settings, SettingsStore, ThemeId};
 pub use view::{DeviceConnection, DeviceView, RelaySource, RelayStatus};
@@ -82,6 +84,9 @@ pub enum CoreError {
     /// A scene command or the scene store was refused (docs/dictation.md §18).
     #[error(transparent)]
     Scenes(#[from] scenes::SceneError),
+    /// A preset command or the preset store was refused (docs/dictation.md §21).
+    #[error(transparent)]
+    Presets(#[from] presets::PresetError),
     /// A hotkey text the user typed or recorded is not a usable chord.
     #[error("hotkey: {0}")]
     Hotkey(#[from] hotkey::HotkeyError),

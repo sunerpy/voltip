@@ -1255,6 +1255,25 @@ fn typescript_literal_invokes() -> Vec<String> {
     src.match_indices("invoke(\"").map(|(i, pat)| src[i + pat.len()..].split('"').next().unwrap().to_owned()).collect()
 }
 
+/// The preview (`@voltip/shared/mock`) serves the built-in presets' texts from
+/// `fixtures/ipc/presets-builtin.json`; this keeps that file equal to what `presets_builtin`
+/// answers.
+#[test]
+fn builtin_preset_texts_match_the_fixture_the_preview_serves() {
+    let path = repo_root().join("packages/shared/src/fixtures/ipc/presets-builtin.json");
+    let expected = format!("{}\n", serde_json::to_string_pretty(&voltip_desktop_lib::dictation::builtin_preset_texts()).unwrap());
+    if std::env::var_os("UPDATE_IPC_FIXTURES").is_some() {
+        std::fs::write(&path, &expected).unwrap();
+        return;
+    }
+    let actual = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    assert!(
+        actual.replace("\r\n", "\n") == expected,
+        "{} is stale: run UPDATE_IPC_FIXTURES=1 cargo test -p voltip-desktop --test ipc and commit the result",
+        path.display()
+    );
+}
+
 /// `name` fields of `packages/shared/src/fixtures/ipc/commands.json`.
 fn fixture_command_names() -> Vec<String> {
     let text = std::fs::read_to_string(repo_root().join("packages/shared/src/fixtures/ipc/commands.json")).unwrap();
@@ -1317,6 +1336,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "feedback_attachment_remove",
             "feedback_attachments_clear",
             "phone_clipboard_read",
+            "presets_builtin",
         ]
         .map(String::from),
     );

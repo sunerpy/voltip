@@ -17,6 +17,7 @@
       "asr_provider": "builtin",
       "llm_provider": "groq",
       "refine_enabled": true,
+      "refine_preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
       "providers": {
         "groq": {
           "llm_model": "openai/gpt-oss-20b"
@@ -208,6 +209,10 @@
       "scene": {
         "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
         "name": "代码评审"
+      },
+      "preset": {
+        "id": "formal",
+        "name": "书面语"
       }
     },
     {
@@ -623,7 +628,7 @@
       },
       "overrides": {
         "refine_enabled": true,
-        "refine_style": "formal",
+        "refine_preset": "formal",
         "output_mode": "streaming_final",
         "language": "en",
         "chinese_script": "as_is",
@@ -641,9 +646,18 @@
         "title_contains": []
       },
       "overrides": {
-        "refine_style": "punctuation"
+        "refine_preset": "punctuation"
       },
       "created_at_ms": 1758700600000,
+      "updated_at_ms": 1758700600000
+    }
+  ],
+  "presets": [
+    {
+      "id": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+      "name": "周报",
+      "prompt": "把正文整理成周报：本周完成、下周计划、风险三部分。",
+      "created_at_ms": 1758614200000,
       "updated_at_ms": 1758700600000
     }
   ],

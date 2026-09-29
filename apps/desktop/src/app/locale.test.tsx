@@ -168,7 +168,7 @@ const ENGLISH_VOCABULARY: Pick<MockBackendOptions, "dictionary" | "rules" | "sce
       match: { apps: ["slack"], title_contains: ["standup"] },
       overrides: {
         refine_enabled: true,
-        refine_style: "punctuation",
+        refine_preset: "punctuation",
         output_mode: "streaming_final",
         language: "en",
         chinese_script: "as_is",

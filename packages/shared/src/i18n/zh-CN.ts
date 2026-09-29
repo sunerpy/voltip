@@ -1637,7 +1637,7 @@ export const zhCN = {
       summary: {
         refineOn: "AI 润色 开",
         refineOff: "AI 润色 关",
-        style: "润色：{style}",
+        preset: "AI 预设：{preset}",
         output: "输出：{mode}",
         language: "语言：{language}",
         script: "字形：{script}",
@@ -1714,6 +1714,19 @@ export const zhCN = {
       },
     },
   },
+  /** The AI presets (docs/dictation.md §21): the built-in ones by id, a custom one by its own name. */
+  presets: {
+    proofread: { name: "校对", description: "修正错字、标点和断句，删去口头禅，其余保持原样。" },
+    prompt: { name: "提示词优化", description: "把口述的需求改写成清晰的 AI 提示词。" },
+    intent: { name: "意图整理", description: "采纳改口，去掉重复，把多个要点整理成列表。" },
+    chat: { name: "口语聊天", description: "整理成口语化的短句，句末不加句号。" },
+    translate: { name: "中英互译", description: "修正识别错误后，在中文和英文之间互译。" },
+    notes: { name: "要点纪要", description: "整理成「要点」和「待办」两组列表。" },
+    punctuation: { name: "只加标点", description: "只补标点和断句，不改动文字。" },
+    formal: { name: "书面语", description: "改写成通顺、完整的书面表达。" },
+    /** A custom preset the settings or a scene name that was deleted since: takes use 校对. */
+    missing: "已删除的预设（按校对处理）",
+  },
   sceneEditor: {
     titleNew: "新建场景",
     titleEdit: "编辑场景",
@@ -1736,8 +1749,7 @@ export const zhCN = {
     refine: "AI 润色",
     refineOn: "开",
     refineOff: "关",
-    style: "润色风格",
-    styleName: { default: "标准", punctuation: "只加标点", formal: "书面语" },
+    preset: "AI 预设",
     outputMode: "输出方式",
     language: "语言",
     script: "中文字形",

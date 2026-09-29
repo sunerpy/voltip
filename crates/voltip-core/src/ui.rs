@@ -6,6 +6,7 @@ use voltip_identity::{DeviceIdentityPublic, TrustedDevice};
 use voltip_pairing::{PairingState, Snapshot};
 
 use crate::phone::{PhoneTakeView, SentText};
+use crate::presets::{CustomPreset, PresetTryOutcome};
 use crate::{
     CoreEvent, DeviceView, DictationStatus, DictionaryEntry, EngineStatus, HistoryEntry, ModelState, ProbeReport, RelayStatus, ReplacementRule, Scene, Settings,
 };
@@ -89,6 +90,18 @@ pub enum UiEvent {
     Scenes {
         /// Scenes in order.
         scenes: Vec<Scene>,
+    },
+    /// Custom presets, full replacement (docs/dictation.md §21).
+    Presets {
+        /// In the order they were made.
+        presets: Vec<CustomPreset>,
+    },
+    /// The answer to one `presets_try`, tagged with the id the request carried (not cached).
+    PresetTry {
+        /// The request's id.
+        id: u64,
+        /// The text, or why there is none.
+        outcome: PresetTryOutcome,
     },
     /// Updater progress. Produced by the desktop shell (which owns the updater plugin) and folded
     /// into the same state as core events, like [`UiEvent::Hotkey`].
@@ -339,6 +352,9 @@ pub struct UiState {
     /// Scenes in matching order (docs/dictation.md §18).
     #[serde(default)]
     pub scenes: Vec<Scene>,
+    /// Custom presets (docs/dictation.md §21); the built-in ones are the interface's own.
+    #[serde(default)]
+    pub presets: Vec<CustomPreset>,
     /// The phone's current or last take streamed to a desktop (docs/dictation.md §20); always
     /// `None` on the desktop.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -377,6 +393,7 @@ impl Default for UiState {
             dictionary: Vec::new(),
             rules: Vec::new(),
             scenes: Vec::new(),
+            presets: Vec::new(),
             phone_take: None,
             sent_texts: Vec::new(),
             nearby: Vec::new(),
@@ -464,6 +481,11 @@ impl UiState {
                 self.scenes = scenes.clone();
                 UiEvent::Scenes { scenes }
             }
+            CoreEvent::Presets(presets) => {
+                self.presets = presets.clone();
+                UiEvent::Presets { presets }
+            }
+            CoreEvent::PresetTry { id, outcome } => UiEvent::PresetTry { id, outcome },
             CoreEvent::ProviderProbe(report) => UiEvent::ProviderProbe(report),
             CoreEvent::Connectivity(status) => {
                 self.connectivity = status.clone();
@@ -601,6 +623,7 @@ mod tests {
             edit: None,
             app: None,
             scene: None,
+            preset: None,
             origin: None,
         };
         let ev = st.apply(CoreEvent::History(vec![entry.clone()]));

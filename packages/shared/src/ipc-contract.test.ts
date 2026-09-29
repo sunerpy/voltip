@@ -22,6 +22,8 @@ import {
   ruleDraftSchema,
   localeSettingSchema,
   overlayPlacementSchema,
+  presetDraftSchema,
+  presetIdSchema,
   sceneDraftSchema,
   providerIdSchema,
   serviceKindSchema,
@@ -63,6 +65,8 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   dictionary: null,
   rules: null,
   scenes: null,
+  presets: null,
+  preset_try: null,
   provider_probe: null,
   phone_take: null,
   sent_texts: null,
@@ -135,6 +139,10 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   scenes_update: null,
   scenes_remove: null,
   scenes_reorder: null,
+  presets_add: null,
+  presets_update: null,
+  presets_remove: null,
+  presets_try: null,
   settings_set_context_sharing: null,
 };
 const MUTATION_COMMANDS = Object.keys(MUTATION_COMMAND_SET);
@@ -218,6 +226,17 @@ const argSchemas = {
   scenes_update: z.object({ id: z.string(), scene: sceneDraftSchema.strict() }).strict(),
   scenes_remove: z.object({ id: z.string() }).strict(),
   scenes_reorder: z.object({ ids: z.array(z.string()) }).strict(),
+  presets_add: z.object({ preset: presetDraftSchema.strict() }).strict(),
+  presets_update: z.object({ id: z.string(), preset: presetDraftSchema.strict() }).strict(),
+  presets_remove: z.object({ id: z.string() }).strict(),
+  presets_try: z
+    .object({
+      id: z.number().int().nonnegative(),
+      preset: presetIdSchema.nullable(),
+      prompt: z.string().nullable(),
+      text: z.string(),
+    })
+    .strict(),
   settings_set_context_sharing: z
     .object({ appName: z.boolean(), windowTitle: z.boolean() })
     .strict(),
@@ -336,6 +355,14 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.scenes_remove.parse(args));
     case "scenes_reorder":
       return backend.invoke(name, argSchemas.scenes_reorder.parse(args));
+    case "presets_add":
+      return backend.invoke(name, argSchemas.presets_add.parse(args));
+    case "presets_update":
+      return backend.invoke(name, argSchemas.presets_update.parse(args));
+    case "presets_remove":
+      return backend.invoke(name, argSchemas.presets_remove.parse(args));
+    case "presets_try":
+      return backend.invoke(name, argSchemas.presets_try.parse(args));
     case "settings_set_context_sharing":
       return backend.invoke(name, argSchemas.settings_set_context_sharing.parse(args));
   }
@@ -857,14 +884,14 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(review?.match).toEqual({ apps: ["chrome", "code"], title_contains: ["Pull request"] });
     expect(review?.overrides).toEqual({
       refine_enabled: true,
-      refine_style: "formal",
+      refine_preset: "formal",
       output_mode: "streaming_final",
       language: "en",
       chinese_script: "as_is",
       prompt: "这是代码评审意见：保留代码标识符原样。",
     });
     // Unset overrides are absent on the wire (the core skips them), not `null`.
-    expect(chat?.overrides).toEqual({ refine_style: "punctuation" });
+    expect(chat?.overrides).toEqual({ refine_preset: "punctuation" });
     expect(chat?.enabled).toBe(false);
     expect(parsedState.settings.context_sharing).toEqual({ app_name: false, window_title: true });
     expect(parsedState.dictation.context).toEqual({
@@ -898,7 +925,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       "output_mode",
       "prompt",
       "refine_enabled",
-      "refine_style",
+      "refine_preset",
     ]);
     const sharing = commands.find((c) => c.name === "settings_set_context_sharing");
     expect(argSchemas.settings_set_context_sharing.parse(sharing?.args)).toEqual({
@@ -909,7 +936,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     const scenesRaw = events.find((raw) => uiEventSchema.safeParse(raw).data?.type === "scenes");
     expect(
       uiEventSchema.safeParse(
-        mutate(scenesRaw, ["scenes", "0", "overrides", "refine_style"], "casual"),
+        mutate(scenesRaw, ["scenes", "0", "overrides", "refine_preset"], "casual"),
       ).success,
     ).toBe(false);
     expect(

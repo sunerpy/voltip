@@ -6,23 +6,12 @@ use std::time::Duration;
 use url::Url;
 
 use crate::RefineError;
+use crate::presets::BUILTIN_OUTPUT_CAP;
 
 /// Default [`RefineConfig::timeout`]. Refinement is short text in, short text out.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Longest error body kept in [`RefineError::Server`].
 pub const MAX_ERROR_BODY_CHARS: usize = 200;
-
-/// How aggressively the model may rewrite.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RefineStyle {
-    /// Punctuation, obvious mis-recognitions and spoken fillers. The everyday setting.
-    #[default]
-    Default,
-    /// Punctuation and sentence breaks only; every word stays as dictated.
-    Punctuation,
-    /// Default plus a light shift towards written register (no slang, complete sentences).
-    Formal,
-}
 
 /// How to reach the chat-completions service.
 #[derive(Clone, PartialEq, Eq)]
@@ -36,14 +25,15 @@ pub struct RefineConfig {
     pub model: String,
     /// Whole-request timeout.
     pub timeout: Duration,
-    /// Rewrite style.
-    pub style: RefineStyle,
+    /// Ceiling of `max_tokens` ([`crate::output_token_budget`]): [`BUILTIN_OUTPUT_CAP`] for the
+    /// built-in service (the default), [`crate::USER_OUTPUT_CAP`] for a service the user configured.
+    pub output_cap: u32,
 }
 
 impl RefineConfig {
-    /// A configuration without a key, default timeout and [`RefineStyle::Default`].
+    /// A configuration without a key, the default timeout and the built-in service's output ceiling.
     pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Self {
-        Self { base_url: base_url.into(), api_key: None, model: model.into(), timeout: DEFAULT_TIMEOUT, style: RefineStyle::Default }
+        Self { base_url: base_url.into(), api_key: None, model: model.into(), timeout: DEFAULT_TIMEOUT, output_cap: BUILTIN_OUTPUT_CAP }
     }
 
     /// Set the bearer key.
@@ -58,9 +48,9 @@ impl RefineConfig {
         self
     }
 
-    /// Set the rewrite style.
-    pub fn with_style(mut self, style: RefineStyle) -> Self {
-        self.style = style;
+    /// Set the ceiling of `max_tokens`.
+    pub fn with_output_cap(mut self, output_cap: u32) -> Self {
+        self.output_cap = output_cap;
         self
     }
 }
@@ -72,7 +62,7 @@ impl fmt::Debug for RefineConfig {
             .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
             .field("model", &self.model)
             .field("timeout", &self.timeout)
-            .field("style", &self.style)
+            .field("output_cap", &self.output_cap)
             .finish()
     }
 }
@@ -128,16 +118,15 @@ mod tests {
     #[test]
     fn config_builder_and_redacted_debug() {
         let config = RefineConfig::new("https://host", "llama-3.3-70b-versatile");
-        assert_eq!((config.api_key.as_deref(), config.timeout, config.style), (None, DEFAULT_TIMEOUT, RefineStyle::Default));
-        let config = config.with_api_key(Some("gsk_secret_key".into())).with_timeout(Duration::from_secs(3)).with_style(RefineStyle::Formal);
-        assert_eq!(config.style, RefineStyle::Formal);
+        assert_eq!((config.api_key.as_deref(), config.timeout, config.output_cap), (None, DEFAULT_TIMEOUT, BUILTIN_OUTPUT_CAP));
+        let config = config.with_api_key(Some("gsk_secret_key".into())).with_timeout(Duration::from_secs(3)).with_output_cap(crate::USER_OUTPUT_CAP);
+        assert_eq!(config.output_cap, crate::USER_OUTPUT_CAP);
         assert_eq!(config.timeout, Duration::from_secs(3));
         let debug = format!("{config:?}");
         assert!(!debug.contains("gsk_secret_key"), "{debug}");
         assert!(debug.contains("api_key: Some(\"<redacted>\")"), "{debug}");
-        assert!(debug.contains("style: Formal"), "{debug}");
+        assert!(debug.contains("output_cap: 4096"), "{debug}");
         assert!(format!("{:?}", RefineConfig::new("https://host", "m")).contains("api_key: None"));
-        assert_eq!(RefineStyle::default(), RefineStyle::Default);
         assert_eq!(config.clone(), config);
     }
 }

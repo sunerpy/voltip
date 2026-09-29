@@ -30,11 +30,11 @@ import {
   hasProblems,
   languageChoices,
   outputModeChoices,
+  presetChoices,
   promptChars,
   refineChoices,
   sceneDraftOf,
   scriptChoices,
-  styleChoices,
 } from "./helpers";
 
 export interface SceneEditorProps {
@@ -84,6 +84,7 @@ export function SceneEditor({ scene, onClose }: SceneEditorProps) {
   const shell = useShell();
   const { t, locale } = useI18n();
   const state = useUiState();
+  const presets = state.presets;
   const promptId = useId();
   const [draft, setDraft] = useState<EditorDraft>(() => editorDraftFrom(scene));
   const [appInput, setAppInput] = useState("");
@@ -314,13 +315,16 @@ export function SceneEditor({ scene, onClose }: SceneEditorProps) {
               }}
             />
             <Select
-              label={t("sceneEditor.style")}
+              label={t("sceneEditor.preset")}
               size="sm"
-              value={draft.style}
-              options={styleChoices(t)}
-              onChange={(style) => {
-                update({ style });
+              value={draft.preset}
+              options={presetChoices(presets, draft.preset, t)}
+              onChange={(preset) => {
+                update({ preset });
               }}
+              data-testid="scene-preset"
+              // Custom presets are named by the user.
+              {...(presets.length > 0 ? { "data-user-text": "" } : {})}
             />
             <div className="flex flex-col gap-1">
               <Select

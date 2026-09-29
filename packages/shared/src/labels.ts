@@ -3,9 +3,12 @@
 // helper takes the locale last, defaulting to Simplified Chinese so callers without a provider (and
 // the existing tests) keep their wording.
 import { type Locale, DEFAULT_LOCALE, type MessageKey, translate } from "./i18n";
+import { isBuiltinPreset } from "./schema";
 import type {
   Activation,
+  BuiltinPreset,
   ConnectionState,
+  CustomPreset,
   DeviceConnection,
   DictationPhase,
   DictationStatus,
@@ -16,6 +19,8 @@ import type {
   OutputMode,
   PairingState,
   Platform,
+  PresetId,
+  PresetRef,
   ProcessingStage,
   RelayStatus,
   SecretState,
@@ -386,6 +391,30 @@ export function outputModeLabel(mode: OutputMode, locale: Locale = DEFAULT_LOCAL
 /** One sentence on what the mode does (the settings card body). */
 export function outputModeDescription(mode: OutputMode, locale: Locale = DEFAULT_LOCALE): string {
   return translate(locale, `outputMode.description.${mode}`);
+}
+
+// ---- AI presets (docs/dictation.md §21) ----------------------------------------------------------
+
+/** A preset's name: a built-in one in the interface's language, a custom one by its own name, and a
+ *  custom one that was deleted since as 已删除的预设 (its takes use 校对). */
+export function presetLabel(
+  id: PresetId,
+  presets: readonly CustomPreset[],
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  if (isBuiltinPreset(id)) return translate(locale, `presets.${id}.name`);
+  return presets.find((p) => p.id === id)?.name ?? translate(locale, "presets.missing");
+}
+
+/** The preset a status or a history row names: a built-in one in the interface's language, a
+ *  custom one by the name it had then. */
+export function presetRefLabel(ref: PresetRef, locale: Locale = DEFAULT_LOCALE): string {
+  return isBuiltinPreset(ref.id) ? translate(locale, `presets.${ref.id}.name`) : ref.name;
+}
+
+/** One sentence on what a built-in preset does. */
+export function presetDescription(id: BuiltinPreset, locale: Locale = DEFAULT_LOCALE): string {
+  return translate(locale, `presets.${id}.description`);
 }
 
 /** `hold` → 按住说话 / Hold to talk (the settings card title). */

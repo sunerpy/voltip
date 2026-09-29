@@ -132,7 +132,7 @@ function cleanLine(value: string, what: string, max: number): string {
 function setOverrides(overrides: SceneOverrides): SceneOverrides {
   const out: SceneOverrides = {};
   if (overrides.refine_enabled != null) out.refine_enabled = overrides.refine_enabled;
-  if (overrides.refine_style != null) out.refine_style = overrides.refine_style;
+  if (overrides.refine_preset != null) out.refine_preset = overrides.refine_preset;
   if (overrides.output_mode != null) out.output_mode = overrides.output_mode;
   if (overrides.language != null) out.language = overrides.language;
   if (overrides.chinese_script != null) out.chinese_script = overrides.chinese_script;

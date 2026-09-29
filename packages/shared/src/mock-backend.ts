@@ -7,11 +7,13 @@
 // refusals, matching, TOML format; the dictionary corrects the transcript and the rules the final
 // text of every mock take), and the scenes (`./scenes`: the same validation and first-match rule; a
 // fake foreground probe, `setForegroundApp`, picks the scene of every take, which switches its
-// output mode and refine switch and lands in the status and the history). Used by `pnpm dev` without
-// Tauri and by every functional test. Timers are plain `setTimeout`/`setInterval` so fake timers
-// drive it.
+// output mode and refine switch and lands in the status and the history), and the custom presets
+// (`./presets`: the same validation; every take refines with the preset of its start, which the
+// status and the history name). Used by `pnpm dev` without Tauri and by every functional test.
+// Timers are plain `setTimeout`/`setInterval` so fake timers drive it.
 import type { Backend, EventListener, FrameListener, Unsubscribe } from "./backend";
 import { type SampleHistoryRow, historyEntries } from "./fixtures/history";
+import builtinPresetTexts from "./fixtures/ipc/presets-builtin.json";
 import { joinLiveText, livePreviewText } from "./labels";
 import { type BuiltInService, keyEntry, providerSpec, resolveEngineStatus } from "./providers";
 import {
@@ -106,7 +108,25 @@ import {
   type PhoneTakeState,
   phoneTakeFinal,
   type ProviderId,
+  type BuiltinPreset,
+  type BuiltinPresetText,
+  type CustomPreset,
+  type PresetDraft,
+  type PresetId,
+  type PresetRef,
+  type PresetTryOutcome,
+  builtinPresetTextSchema,
+  isBuiltinPreset,
 } from "./schema";
+import {
+  PresetError,
+  type PresetTrial,
+  checkPresets,
+  presetTrial,
+  presetTryText,
+  resolvePreset,
+  validatePresetDraft,
+} from "./presets";
 import {
   type ForegroundApp,
   SceneError,
@@ -171,6 +191,9 @@ export interface MockBackendOptions {
   rules?: ReplacementRule[];
   /** Initial scenes (docs/dictation.md §18); empty like a first run. Ignored by the phone role. */
   scenes?: Scene[];
+  /** Initial custom presets (docs/dictation.md §21); empty like a first run. Ignored by the phone
+   *  role. */
+  presets?: CustomPreset[];
   /** What the fake foreground probe answers when a take starts (`setForegroundApp` changes it);
    *  `null` (default) = no answer, so no take has a context or a scene. */
   foregroundApp?: ForegroundApp | null;
@@ -359,6 +382,29 @@ export const MOCK_MODEL_FILE = "model.int8.onnx";
 export const VOCABULARY_UNAVAILABLE = "vocabulary: 手机端不支持个人词典与替换规则";
 /** What the phone answers to every scene command and to `recent_apps` (docs/dictation.md §18.6). */
 export const SCENES_UNAVAILABLE = "scenes: 手机端不支持场景与上下文";
+/** What the phone shell answers to every preset command (docs/dictation.md §21). */
+export const PRESETS_UNAVAILABLE = "presets: 手机端不支持 AI 预设";
+/** `voltip_core::PRESET_TRY_UNCONFIGURED`: a 试一试 while no clean-up is configured. */
+export const PRESET_TRY_UNCONFIGURED = "尚未配置 AI 润色服务，无法试运行预设";
+/** The built-in presets' texts (`presets_builtin`), the bytes the desktop shell answers with (the
+ *  Rust side keeps the fixture equal to them). */
+export const MOCK_BUILTIN_PRESET_TEXTS: readonly BuiltinPresetText[] = builtinPresetTextSchema
+  .array()
+  .parse(builtinPresetTexts);
+/** What the preview's clean-up answers 试一试 with for the examples of docs/dictation.md §21. */
+export const MOCK_PRESET_SAMPLES: Readonly<
+  Partial<Record<BuiltinPreset, { input: string; output: string }>>
+> = {
+  proofread: {
+    input: "嗯那个明天上午十点我们开个会吧然后把上周的数据带过来啊不对是上上周的",
+    output: "明天上午十点我们开个会吧，然后把上上周的数据带过来。",
+  },
+  prompt: {
+    input: "帮我写个脚本就是把那个日志目录里面超过七天的文件删掉然后每天跑一次对了要能在linux上跑",
+    output:
+      "请写一个在 Linux 上运行的脚本：\n1. 删除日志目录中超过 7 天的文件；\n2. 每天自动运行一次。",
+  },
+};
 /** A CPU-only build on an 8-thread machine: what the desktop shell reports by default. */
 export const MOCK_HARDWARE: HardwareStatus = { cpu_threads: 8, gpus: [] };
 /** A build with a GPU backend on a machine with a discrete and an integrated GPU. */
@@ -722,6 +768,11 @@ export class MockBackend implements Backend {
   /** The paired phone the current take's audio comes from (docs/dictation.md §20). */
   private takeRemote: string | undefined;
   private takeScene: Scene | undefined;
+  /** The engines' preset and the custom presets as of the take's start (docs/dictation.md §21), and
+   *  the preset the status names once the clean-up is under way. */
+  private takePresetId: PresetId = "proofread";
+  private takePresets: readonly CustomPreset[] = [];
+  private takePreset: PresetRef | undefined;
   /** `live_error` of a scene's streaming mode the take cannot serve. */
   private takeModeError: string | undefined;
   private meters = new Set<ReturnType<typeof setInterval>>();
@@ -821,6 +872,7 @@ export class MockBackend implements Backend {
       dictionary: this.role === "phone" ? [] : [...(options.dictionary ?? [])],
       rules: this.role === "phone" ? [] : [...(options.rules ?? [])],
       scenes: this.role === "phone" ? [] : [...(options.scenes ?? [])],
+      presets: this.role === "phone" ? [] : [...(options.presets ?? [])],
       // What the desktop shell reports about the machine (§10.6); nothing on the phone.
       hardware:
         this.role === "phone" ? { cpu_threads: 0, gpus: [] } : (options.hardware ?? MOCK_HARDWARE),
@@ -964,6 +1016,13 @@ export class MockBackend implements Backend {
   /** What the next valid paste ends with (tests: the window changed, the paste fell back). */
   setPasteOutcome(outcome: PasteOutcome): void {
     this.pasteOutcome = outcome;
+  }
+
+  /** `presets_builtin`: the built-in presets' texts (the phone has no presets). */
+  async presetsBuiltin(): Promise<BuiltinPresetText[]> {
+    await Promise.resolve();
+    this.refusePresetsOnPhone();
+    return MOCK_BUILTIN_PRESET_TEXTS.map((text) => ({ ...text }));
   }
 
   private readonly handlers: {
@@ -1505,6 +1564,46 @@ export class MockBackend implements Backend {
       }
       this.commitScenes(next);
     },
+    // docs/dictation.md §21: the bridge refuses a draft wrong on its own (the invoke throws), the
+    // core a clash with the list (name, cap, unknown id) with an `error` event.
+    presets_add: (args) => {
+      const { preset } = required(args);
+      this.refusePresetsOnPhone();
+      const draft = validatePresetDraft(preset);
+      const now = this.now();
+      this.commitPresets([...this.state.presets, this.presetFrom(draft, this.uuid(), now)]);
+    },
+    presets_update: (args) => {
+      const { id, preset } = required(args);
+      this.refusePresetsOnPhone();
+      uuidArg(id);
+      const draft = validatePresetDraft(preset);
+      const current = this.state.presets.find((p) => p.id === id);
+      if (current === undefined) {
+        this.emit({ type: "error", message: `presets: 没有 id 为 ${id} 的预设` });
+        return;
+      }
+      this.commitPresets(
+        this.state.presets.map((p) =>
+          p.id === id ? this.presetFrom(draft, id, p.created_at_ms) : p,
+        ),
+      );
+    },
+    presets_remove: (args) => {
+      const { id } = required(args);
+      this.refusePresetsOnPhone();
+      uuidArg(id);
+      if (!this.state.presets.some((p) => p.id === id)) {
+        this.emit({ type: "error", message: `presets: 没有 id 为 ${id} 的预设` });
+        return;
+      }
+      this.commitPresets(this.state.presets.filter((p) => p.id !== id));
+    },
+    presets_try: (args) => {
+      const { id, preset, prompt, text } = required(args);
+      this.refusePresetsOnPhone();
+      this.tryPreset(id, presetTrial(preset, prompt), presetTryText(text));
+    },
     settings_set_context_sharing: (args) => {
       const { appName, windowTitle } = required(args);
       this.refuseScenesOnPhone();
@@ -1534,6 +1633,60 @@ export class MockBackend implements Backend {
 
   private sceneFrom(draft: SceneDraft, id: string, createdAtMs: number): Scene {
     return { id, ...draft, created_at_ms: createdAtMs, updated_at_ms: this.now() };
+  }
+
+  // ---- presets (docs/dictation.md §21) -----------------------------------------------------------
+
+  private refusePresetsOnPhone() {
+    if (this.role === "phone") throw new PresetError(PRESETS_UNAVAILABLE);
+  }
+
+  private commitPresets(presets: CustomPreset[]) {
+    try {
+      checkPresets(presets);
+    } catch (e) {
+      this.emit({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+    this.emit({ type: "presets", presets });
+  }
+
+  private presetFrom(draft: PresetDraft, id: string, createdAtMs: number): CustomPreset {
+    return { id, ...draft, created_at_ms: createdAtMs, updated_at_ms: this.now() };
+  }
+
+  /** 试一试 (`presets_try`): refused at once without a clean-up, like the core; otherwise the
+   *  canned clean-up answers after `MOCK_REFINE_MS`. Nothing is saved or recorded. */
+  private tryPreset(id: number, trial: PresetTrial, text: string) {
+    const engines = this.state.engines;
+    if (!engines.refine_ready) {
+      this.emit({
+        type: "preset_try",
+        id,
+        outcome: { status: "failed", reason: PRESET_TRY_UNCONFIGURED },
+      });
+      return;
+    }
+    const builtin =
+      "preset" in trial ? resolvePreset(trial.preset, this.state.presets).preset.id : undefined;
+    const handle = setTimeout(() => {
+      this.probeTimers.delete(handle);
+      const outcome: PresetTryOutcome = {
+        status: "ok",
+        text: mockPresetOutput(builtin, text),
+        latency_ms: MOCK_REFINE_MS,
+        model: engines.refine_model,
+      };
+      this.emit({ type: "preset_try", id, outcome });
+    }, MOCK_REFINE_MS);
+    this.probeTimers.add(handle);
+  }
+
+  /** The take's preset as the status and the history name it (the core's `take_preset`): the
+   *  scene's, else the engines' as of the start, resolved against the presets of the start. */
+  private resolveTakePreset(): PresetRef {
+    const id = this.takeScene?.overrides.refine_preset ?? this.takePresetId;
+    return resolvePreset(id, this.takePresets).preset;
   }
 
   // ---- personal dictionary and replacement rules (docs/dictation.md §16) -------------------------
@@ -2074,10 +2227,20 @@ export class MockBackend implements Backend {
     if (phase.phase === "idle") {
       this.takeContext = undefined;
       this.takeRemote = undefined;
+      this.takePreset = undefined;
     }
     const context = this.takeContext === undefined ? {} : { context: this.takeContext };
     const remote = this.takeRemote === undefined ? {} : { remote: this.takeRemote };
-    this.emit({ type: "dictation", session, phase, ...context, kind: this.takeKind, ...remote });
+    const preset = this.takePreset === undefined ? {} : { preset: this.takePreset };
+    this.emit({
+      type: "dictation",
+      session,
+      phase,
+      ...context,
+      kind: this.takeKind,
+      ...remote,
+      ...preset,
+    });
   }
 
   // ---- phone as microphone (docs/dictation.md §20) ---------------------------------------------
@@ -2180,6 +2343,10 @@ export class MockBackend implements Backend {
     this.takeContext = undefined;
     this.takeScene = undefined;
     this.takeModeError = undefined;
+    // §21: the preset of the start; switching or editing one mid-take applies to the next take.
+    this.takePresetId = this.state.settings.engines.refine_preset;
+    this.takePresets = this.state.presets;
+    this.takePreset = undefined;
     if (kind === "edit" && !this.state.engines.refine_ready) {
       // §19.4: no LLM, no edit — refused at the press, the microphone never opens.
       this.emitPhase(
@@ -2412,6 +2579,9 @@ export class MockBackend implements Backend {
     const raw = streaming ? preview : MOCK_DICTATION_RAW;
     const durationMs = Math.max(0, stoppedAt - startedAt);
     const segments = streaming && live !== undefined ? streamSegments(live, durationMs) : undefined;
+    // The status names the clean-up's preset from the start of processing (§21).
+    const preset = refine ? this.resolveTakePreset() : undefined;
+    this.takePreset = preset;
     this.emitPhase({
       phase: "processing",
       stage: streaming ? "finalizing" : "transcribing",
@@ -2470,6 +2640,7 @@ export class MockBackend implements Backend {
         ...(hits.corrections.length + hits.rules.length > 0 ? { vocabulary: hits } : {}),
         ...(context === undefined ? {} : { app: context.app }),
         ...(context?.scene === undefined ? {} : { scene: context.scene }),
+        ...(preset === undefined ? {} : { preset }),
         kind: "dictation",
       };
       this.recordHistory(entry);
@@ -2861,6 +3032,22 @@ function pasteFailed(reason: PasteFailure): Promise<PasteOutcome> {
   return Promise.resolve({ kind: "failed", reason });
 }
 
+/** The canned clean-up of 试一试: the examples of the built-in presets give their outputs, any other
+ *  text comes back without its fillers and with a closing full stop. */
+function mockPresetOutput(preset: PresetId | undefined, text: string): string {
+  // An unsaved instruction (`preset` undefined) answers any example with its output.
+  const sample =
+    preset === undefined
+      ? Object.values(MOCK_PRESET_SAMPLES).find((s) => s.input === text)
+      : isBuiltinPreset(preset)
+        ? MOCK_PRESET_SAMPLES[preset]
+        : undefined;
+  if (sample?.input === text) return sample.output;
+  const cleaned = text.replace(/嗯|啊|呃|那个/g, "").trim();
+  const body = cleaned.length > 0 ? cleaned : text;
+  return /[。！？.!?]$/.test(body) ? body : `${body}。`;
+}
+
 function required<T>(args: T | undefined): T {
   if (args === undefined) throw new Error("missing command arguments");
   return args;
@@ -2991,7 +3178,11 @@ export function sampleHistory(nowMs: number): HistoryEntry[] {
         refined,
         asr_model: MOCK_ENGINE_BUILTIN.asr_model,
         ...(refined
-          ? { refine_model: MOCK_ENGINE_BUILTIN.refine_model, refine_ms: row.timing.polish ?? 0 }
+          ? {
+              refine_model: MOCK_ENGINE_BUILTIN.refine_model,
+              refine_ms: row.timing.polish ?? 0,
+              preset: { id: "proofread" as const, name: "校对" },
+            }
           : {}),
         duration_ms: Math.round(row.audioSecs * 1000),
         asr_ms: row.timing.asr,
