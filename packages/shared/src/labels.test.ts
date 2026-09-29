@@ -450,7 +450,7 @@ describe("output modes and activation labels (docs/dictation.md §12–§13)", (
     expect(activationHint("hold", "Ctrl+Alt+Space", "en")).toBe(
       "Hold Ctrl Alt Space, say a sentence, release to insert",
     );
-    expect(activationLabel("toggle", "en")).toBe("Press to start, press again to stop");
+    expect(activationLabel("toggle", "en")).toBe("Press to start, again to stop");
     expect(activationShortcut("hold_or_toggle", "en")).toBe("Hold or press to dictate");
     expect(processingStageLabel("finalizing")).toBe("补齐最后一句…");
     expect(processingStageLabel("finalizing", "en")).toBe("Finishing the last sentence…");

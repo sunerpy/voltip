@@ -221,6 +221,7 @@ export function Onboarding({ step }: OnboardingProps) {
   const method =
     hotkeyStatus.backend.length > 0 ? hotkeyMethodText(hotkeyStatus.backend) : undefined;
   const backendText = method ?? t("onboarding.backendNotReported");
+  const footerPlatform = withMethod(platformText, method ?? t("onboarding.backendNotReportedLong"));
 
   const permissionRows: PermissionRow[] = PERMISSIONS.map((id) => ({
     id,
@@ -235,12 +236,13 @@ export function Onboarding({ step }: OnboardingProps) {
         type: "two",
         primary: t(`onboarding.permission.row.${r.id}.name`),
         secondary: t(`onboarding.permission.row.${r.id}.purpose`),
+        wrapSecondary: true,
       }),
     },
     {
       id: "status",
       header: t("onboarding.permission.column.status"),
-      width: 112,
+      fit: true,
       mono: false,
       cell: (r) => {
         if (r.state === undefined)
@@ -323,7 +325,8 @@ export function Onboarding({ step }: OnboardingProps) {
 
   return (
     <div className="flex justify-center p-6">
-      <Card padding="none" radius={14} className="flex w-[560px] flex-col">
+      {/* 640 px (designed at 560): room for the English header and table on one line each. */}
+      <Card padding="none" radius={14} className="flex w-full max-w-[640px] flex-col">
         <div className="p-6 pb-0">
           <ol className="flex gap-4" aria-label={t("onboarding.stepsLabel")}>
             {STEPS.map((key, i) => {
@@ -355,8 +358,8 @@ export function Onboarding({ step }: OnboardingProps) {
             })}
           </ol>
 
-          <div className="mt-5 flex items-start justify-between">
-            <div>
+          <div className="mt-5 flex items-start justify-between gap-4">
+            <div className="min-w-0">
               <div className="eyebrow">
                 {current === 1 && t("onboarding.eyebrow.permissions", { platform: platformText })}
                 {current === 2 && t("onboarding.eyebrow.hotkey", { backend: backendText })}
@@ -377,9 +380,9 @@ export function Onboarding({ step }: OnboardingProps) {
               </p>
             </div>
             {current === 1 && (
-              <span className="flex items-center gap-2">
+              <span className="flex shrink-0 items-center gap-2">
                 <span
-                  className="mono text-[11px] text-fg-subtle"
+                  className="mono text-[11px] whitespace-nowrap text-fg-subtle"
                   data-testid="permission-poll"
                   data-stopped={permissions.stopped}>
                   {permissions.stopped
@@ -647,8 +650,11 @@ export function Onboarding({ step }: OnboardingProps) {
         </div>
 
         <div className="mt-6 flex items-center justify-between gap-4 border-t border-border px-6 py-4">
-          <span className="mono min-w-0 truncate text-[11px] text-fg-subtle">
-            {withMethod(platformText, method ?? t("onboarding.backendNotReportedLong"))}
+          <span
+            className="mono min-w-0 truncate text-[11px] text-fg-subtle"
+            title={footerPlatform}
+            data-testid="onboarding-footer-platform">
+            {footerPlatform}
           </span>
           <div className="flex min-w-0 items-center gap-3">
             {current === 1 && permissionHint !== undefined && (

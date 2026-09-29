@@ -58,6 +58,23 @@ describe("Devices page", () => {
     expect(fixedSizeOffenders(page)).toEqual([]);
   });
 
+  it("regression: last seen and state are as wide as their text, and a cut device name reads whole on hover", async () => {
+    // The 1440 px English check (plan 1.2): 「14 minutes ago」 and 「Online · direct」 were cut in
+    // 76 and 92 px columns; 「在线 · 经中继」 did not fit either.
+    mount();
+    const table = await screen.findByRole("table", { name: "已配对设备" });
+    const header = (name: string) =>
+      within(table)
+        .getAllByRole("columnheader")
+        .find((h) => h.textContent === name);
+    expect(header("最近在线")).toHaveAttribute("style", "width: 1%;");
+    expect(header("状态")).toHaveAttribute("style", "width: 1%;");
+    expect(await within(table).findByText("Pixel 8 · Android")).toHaveAttribute(
+      "title",
+      "Pixel 8 · Android",
+    );
+  });
+
   it("renders the device table with the design's columns and readouts", async () => {
     mount();
     const table = await screen.findByRole("table", { name: "已配对设备" });

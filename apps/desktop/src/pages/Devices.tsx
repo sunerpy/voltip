@@ -159,7 +159,7 @@ export function Devices() {
     {
       id: "seen",
       header: t("devices.column.lastSeen"),
-      width: 76,
+      fit: true,
       align: "right",
       cell: (r) => ({
         type: "mono",
@@ -170,7 +170,7 @@ export function Devices() {
     {
       id: "state",
       header: t("devices.column.state"),
-      width: 92,
+      fit: true,
       mono: false,
       cell: (r) => {
         const l = connectionLabel(r.connection, locale);

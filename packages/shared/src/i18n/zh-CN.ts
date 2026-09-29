@@ -390,8 +390,8 @@ export const zhCN = {
       listening: "正在听写",
       processing: "正在处理",
       ready: "可以开始听写",
-      readyDetail: "麦克风、快捷键和识别服务已就绪 · {model} · {provider}",
-      readyDetailLocal: "麦克风、快捷键和本地模型已就绪 · {model} · 本地",
+      readyDetail: "麦克风、快捷键和识别服务已就绪",
+      readyDetailLocal: "麦克风、快捷键和本地模型已就绪",
     },
     chip: {
       provider: "{provider} · {model}",
@@ -1225,7 +1225,7 @@ export const zhCN = {
       trial: "试说一句",
     },
     lede: {
-      permissions: "Voltip 只请求必需的权限，并显示系统中的实际授权状态，而不是假定已经授权。",
+      permissions: "Voltip 只请求必需的权限，并显示系统中的实际授权状态。",
       hotkey: "可以设置哪些快捷键取决于这台电脑的系统，而不取决于 Voltip。",
       engine:
         "每个选项都先说明代价：音频发送到哪里、是否再经过一次大模型处理。选择即生效，之后可随时在「语音模型」页修改。",

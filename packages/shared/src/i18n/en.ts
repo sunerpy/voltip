@@ -243,7 +243,7 @@ export const en: Messages = {
   activation: {
     name: {
       hold: "Hold to talk",
-      toggle: "Press to start, press again to stop",
+      toggle: "Press to start, again to stop",
       hold_or_toggle: "Hold or press",
     },
     description: {
@@ -399,8 +399,8 @@ export const en: Messages = {
       listening: "Dictating",
       processing: "Processing",
       ready: "Ready to dictate",
-      readyDetail: "Microphone, shortcut and recognition ready · {model} · {provider}",
-      readyDetailLocal: "Microphone, shortcut and local model ready · {model} · local",
+      readyDetail: "Microphone, shortcut and recognition ready",
+      readyDetailLocal: "Microphone, shortcut and local model ready",
     },
     chip: {
       provider: "{provider} · {model}",
@@ -1266,7 +1266,7 @@ export const en: Messages = {
     },
     lede: {
       permissions:
-        "Voltip asks only for the permissions it needs and shows their actual state in the system instead of assuming they were granted.",
+        "Voltip asks only for the permissions it needs and shows their actual state in the system.",
       hotkey: "Which shortcuts can be set depends on this computer's system, not on Voltip.",
       engine:
         "Every option states its cost first: where audio goes and whether a large language model processes the text too. The choice applies at once and can be changed on the Speech models page.",

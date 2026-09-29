@@ -336,6 +336,29 @@ describe("Onboarding wizard", () => {
     expect(monitor).toHaveAttribute("data-edges", "passed");
   });
 
+  it("regression: step 1 keeps the recheck note on one line, sizes the status to its text and wraps a permission's purpose", async () => {
+    // The 1440 px English check (plan 1.2): the 560 px card broke 「Re-checked every second」 into
+    // four lines and cut 「Not applicable here」 and the Accessibility purpose.
+    renderApp({ path: "/onboarding?step=1" });
+    const table = await screen.findByRole("table", { name: "系统权限" });
+    expect(screen.getByTestId("permission-poll")).toHaveClass("whitespace-nowrap");
+    const status = within(table)
+      .getAllByRole("columnheader")
+      .find((h) => h.textContent === "状态");
+    expect(status).toHaveAttribute("style", "width: 1%;");
+    expect(
+      within(table).getByText("必需 · 定位光标所在的输入框并插入文本；开启后立即生效"),
+    ).toHaveClass("whitespace-normal");
+    expect(table.closest(".max-w-\\[640px\\]")).not.toBeNull();
+  });
+
+  it("regression: the footer's platform and shortcut method read whole on hover when the footer cuts them", async () => {
+    renderApp({ path: "/onboarding?step=2" });
+    const footer = await screen.findByTestId("onboarding-footer-platform");
+    expect(footer).toHaveTextContent(MOCK_HOTKEY_BACKEND);
+    expect(footer).toHaveAttribute("title", footer.textContent);
+  });
+
   it("step 3 offers the built-in service first, writes the choice and the polish switch through settings_set_engines and moves on", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/onboarding?step=3" });

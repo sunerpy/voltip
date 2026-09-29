@@ -190,7 +190,21 @@ describe("History page", () => {
     expect(fixedSizeOffenders(page)).toEqual([]);
     const split = page.querySelector(".grid");
     expect(split?.className).toContain("grid-cols-1");
-    expect(split?.className).toMatch(/lg:grid-cols-\[minmax\(280px,360px\)_minmax\(0,1fr\)\]/);
+    expect(split?.className).toMatch(/lg:grid-cols-\[minmax\(280px,2fr\)_minmax\(0,3fr\)\]/);
+  });
+
+  it("regression: the log grows with the window instead of stopping at 360 px, and a row's model, time and result read whole on hover", async () => {
+    // User feedback 2026-09-29 (plan 1.6): at 1440 px the 360 px log cut 「Qwen3-ASR-1.7B · 622 ms ·
+    // 已插入 · 粘贴」 to 「Qwen3-ASR-1.7B · 622 ms · 已…」 with the detail pane half empty.
+    renderApp({ path: "/history" });
+    const page = await screen.findByTestId("page-history");
+    expect(page.querySelector(".grid")?.className).not.toContain("360px");
+    const metas = screen.getAllByTestId("history-row-meta");
+    expect(metas.length).toBeGreaterThan(0);
+    for (const meta of metas) {
+      expect(meta.textContent).toMatch(/ · /);
+      expect(meta).toHaveAttribute("title", meta.textContent);
+    }
   });
 
   it("renders the factual retention banner, the day-grouped log from state.history and the newest entry's detail", async () => {

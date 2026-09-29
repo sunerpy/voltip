@@ -11,7 +11,15 @@ import { Toggle } from "./Toggle";
 export type CellSpec =
   | { type: "text"; text: ReactNode; muted?: boolean; strike?: boolean }
   | { type: "mono"; text: ReactNode; muted?: boolean }
-  | { type: "two"; primary: ReactNode; secondary: ReactNode; strikeSecondary?: boolean }
+  | {
+      type: "two";
+      primary: ReactNode;
+      secondary: ReactNode;
+      strikeSecondary?: boolean;
+      /** The secondary line wraps instead of running past the cell (a sentence that must be read
+       *  whole, such as why a permission is needed). */
+      wrapSecondary?: boolean;
+    }
   | { type: "chip"; text: string; lamp?: LampTone }
   | { type: "badge"; text: string; tone: BadgeTone; mono?: boolean }
   | { type: "lamp"; tone: LampTone; text: ReactNode; mono?: boolean; pulse?: boolean }
@@ -47,6 +55,10 @@ export interface TableColumn<Row> {
   id: string;
   header: ReactNode;
   width?: number | string;
+  /** Instead of a fixed `width`: as wide as the column's widest cell or header. For short values
+   *  whose length depends on the language (a status, a time, a number under its header); the
+   *  flexible columns give way. */
+  fit?: boolean;
   /** Lower bound for a flexible (no `width`) column, so truncation never eats the whole cell. */
   minWidth?: number;
   align?: "left" | "right" | "center";
@@ -81,6 +93,11 @@ function isSpec(value: CellSpec | ReactNode): value is CellSpec {
   );
 }
 
+/** A cell's text as its hover title; elements have none. */
+function textTitle(node: ReactNode): string | undefined {
+  return typeof node === "string" || typeof node === "number" ? String(node) : undefined;
+}
+
 export function renderCell(spec: CellSpec): ReactNode {
   switch (spec.type) {
     case "text":
@@ -92,14 +109,19 @@ export function renderCell(spec: CellSpec): ReactNode {
     case "mono":
       return <span className={cx("mono", spec.muted && "text-fg-muted")}>{spec.text}</span>;
     case "two":
+      // A narrow column cuts either line with an ellipsis; the title reads it whole.
       return (
         <span className="flex flex-col leading-tight">
-          <span className="truncate text-fg">{spec.primary}</span>
+          <span className="truncate text-fg" title={textTitle(spec.primary)}>
+            {spec.primary}
+          </span>
           <span
             className={cx(
               "mono text-[11px] text-fg-subtle",
               spec.strikeSecondary && "line-through",
-            )}>
+              spec.wrapSecondary ? "whitespace-normal" : "truncate",
+            )}
+            title={spec.wrapSecondary ? undefined : textTitle(spec.secondary)}>
             {spec.secondary}
           </span>
         </span>
@@ -220,18 +242,23 @@ export function Table<Row>({
   // Columns without a fixed width share the leftover space evenly and truncate their cells (the
   // boards render every table as single, truncated lines). `max-width: 0` is what lets a table
   // cell shrink below its content in auto layout; the percentage keeps the share even.
-  const flexible = columns.filter((c) => c.width === undefined).length;
+  const flexible = columns.filter((c) => c.width === undefined && c.fit !== true).length;
   // Fixed columns are capped at their declared width too, so a long value truncates instead of
-  // pushing the table past its card.
+  // pushing the table past its card. A fit column asks for 1 % and gets its widest single line.
   const flexStyle = (c: TableColumn<Row>) =>
-    c.width === undefined
-      ? { width: `${100 / flexible}%`, maxWidth: 0, minWidth: c.minWidth }
-      : { width: c.width, maxWidth: c.width };
+    c.fit === true
+      ? { width: "1%" }
+      : c.width === undefined
+        ? { width: `${100 / flexible}%`, maxWidth: 0, minWidth: c.minWidth }
+        : { width: c.width, maxWidth: c.width };
   return (
     <table aria-label={label} className={cx("w-full border-collapse text-[13px]", className)}>
       <colgroup>
         {columns.map((c) => (
-          <col key={c.id} style={c.width === undefined ? undefined : { width: c.width }} />
+          <col
+            key={c.id}
+            style={c.width === undefined || c.fit === true ? undefined : { width: c.width }}
+          />
         ))}
       </colgroup>
       <thead>

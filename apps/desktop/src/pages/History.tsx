@@ -207,9 +207,10 @@ export function History({ initialFilter }: HistoryProps) {
         </Button>
       </Card>
 
-      {/* session log left, entry detail right. The log column follows the window between
-          280 and 360 px (designed at 320) and the detail takes the rest; below `lg` they stack. */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)]">
+      {/* session log left, entry detail right, two parts to three: at 1440 px the log is wide
+          enough for a row's model, time and result on one line (user feedback 2026-09-29, plan
+          1.6), and never narrower than 280 px; below `lg` they stack. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,2fr)_minmax(0,3fr)]">
         <Panel
           eyebrow={t("history.eyebrow.log")}
           title={String(visible.length)}
@@ -280,6 +281,9 @@ export function History({ initialFilter }: HistoryProps) {
                   {g.items.map((e) => {
                     const active = e.id === selected?.id;
                     const outcome = outcomeLabel(e.outcome, locale);
+                    const meta = sentAsText(e)
+                      ? outcome.text
+                      : `${shortModel(e.asr_model)} · ${formatMs(e.asr_ms + (e.refine_ms ?? 0))} · ${outcome.text}`;
                     return (
                       <li
                         key={e.id}
@@ -355,10 +359,11 @@ export function History({ initialFilter }: HistoryProps) {
                                   )}
                                 </span>
                               )}
-                              <span className="truncate">
-                                {sentAsText(e)
-                                  ? outcome.text
-                                  : `${shortModel(e.asr_model)} · ${formatMs(e.asr_ms + (e.refine_ms ?? 0))} · ${outcome.text}`}
+                              <span
+                                className="truncate"
+                                title={meta}
+                                data-testid="history-row-meta">
+                                {meta}
                               </span>
                             </span>
                           </span>

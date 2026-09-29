@@ -127,14 +127,37 @@ describe("Home page", () => {
     expect(backend.pastes).toEqual([]);
   });
 
+  it("regression: the ready line leaves the model and the provider to the chip beside it and reads whole on hover", async () => {
+    // The 1280 px English check (plan 1.2) found 「Microphone, shortcut and recognition ready ·
+    // Qwen3-ASR-1.7B · Built-in…」 cut, next to a chip that already said 「Built-in service ·
+    // Qwen3-ASR-1.7B」.
+    renderApp({ mock: liveClock() });
+    const phase = await screen.findByTestId("home-phase");
+    expect(phase).toHaveTextContent(/^麦克风、快捷键和识别服务已就绪$/);
+    expect(phase).toHaveAttribute("title", "麦克风、快捷键和识别服务已就绪");
+    expect(
+      within(screen.getByTestId("home-readiness")).getByText("内置服务 · Qwen3-ASR-1.7B"),
+    ).toBeInTheDocument();
+  });
+
+  it("regression: the recent table's timing columns are as wide as their headers", async () => {
+    // The 1440 px English check (plan 1.2): 「Transcription」 ran past its 84 px column.
+    renderApp({ mock: liveClock() });
+    const table = await screen.findByRole("table", { name: "最近的结果" });
+    const header = (name: string) =>
+      within(table)
+        .getAllByRole("columnheader")
+        .find((h) => h.textContent === name);
+    expect(header("识别")).toHaveAttribute("style", "width: 1%;");
+    expect(header("润色")).toHaveAttribute("style", "width: 1%;");
+  });
+
   it("renders readiness row, four panels, stat strip and the recent table from the core's state", async () => {
     const { backend } = renderApp({ mock: liveClock() });
     expect(await screen.findByText("可以开始听写")).toBeInTheDocument();
     // The strength bar exists but stays silent while idle (the regression test below drives it).
     expect(screen.getByRole("meter", { name: "强度" })).toBeInTheDocument();
-    expect(screen.getByTestId("home-phase")).toHaveTextContent(
-      "麦克风、快捷键和识别服务已就绪 · Qwen3-ASR-1.7B · 内置服务",
-    );
+    expect(screen.getByTestId("home-phase")).toHaveTextContent(/^麦克风、快捷键和识别服务已就绪$/);
     expect(screen.getByText("麦克风输入")).toBeInTheDocument();
     expect(screen.getByText("Fifine K669 USB Microphone")).toBeInTheDocument();
     expect(within(screen.getByTestId("home-engine")).getByText("语音模型")).toBeInTheDocument();
