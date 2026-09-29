@@ -476,6 +476,7 @@ export const zhCN = {
       recordingOff: "历史记录已关闭",
     },
     table: {
+      actions: "操作",
       time: "时间",
       text: "文本",
       engine: "模型",
@@ -597,6 +598,27 @@ export const zhCN = {
       clearTitle: "清空 {n} 条历史记录？",
       clearBody: "本机保存的全部历史记录将被清空，此操作无法撤销。",
       clear: "清空",
+    },
+  },
+  paste: {
+    copy: "复制这条结果",
+    paste: "粘贴到上一个窗口",
+    outcome: {
+      pasted: "已粘贴到上一个窗口",
+      copied: {
+        no_probe: "无法获取前台窗口 · 已复制到剪贴板",
+        timeout: "未找到上一个窗口 · 已复制到剪贴板",
+        target_changed: "前台窗口已变化 · 仅复制到剪贴板",
+        clipboard_only: "已复制到剪贴板 · 输出方式为仅复制",
+        paste_failed: "无法直接粘贴 · 已复制到剪贴板",
+      },
+      failed: {
+        busy: "正在听写 · 请结束后再粘贴",
+        invalid: "文字为空或过长 · 无法粘贴",
+        timeout: "粘贴未完成 · 请稍后重试",
+        inject: "无法粘贴，也无法复制",
+        unsupported: "此设备不支持粘贴到其他窗口",
+      },
     },
   },
   dictionary: {

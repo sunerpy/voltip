@@ -105,7 +105,7 @@ pub fn foreground_app() -> Result<Option<ForegroundApp>, String> {
     }
     let process = OwnedHandle(process);
     let Some(identity) = image_name(process.0).as_deref().and_then(from_exe_path) else { return Ok(None) };
-    Ok(Some(ForegroundApp { app_id: identity.app_id, name: identity.name, title: window_title(hwnd) }))
+    Ok(Some(ForegroundApp { app_id: identity.app_id, name: identity.name, title: window_title(hwnd), window: Some(hwnd as usize as u64) }))
 }
 
 /// The caption of `hwnd`. For a window of another process `GetWindowTextW` reads the cached

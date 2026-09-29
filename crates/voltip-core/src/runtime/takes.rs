@@ -51,6 +51,8 @@ pub(super) enum PhoneEvent {
     Drained { take: u32 },
     /// Desktop: the injector is done with a phone's text (docs/dictation.md §20.6).
     TextDelivered { text: Box<super::texts::IncomingText>, result: Result<crate::dictation::Injection, DictationError> },
+    /// Desktop: a paste from the history is done (`crate::paste`).
+    Pasted { request_id: u64, outcome: crate::paste::PasteOutcome },
 }
 
 /// Desktop: the take a paired phone streams.
@@ -383,6 +385,7 @@ impl Runtime {
     pub(super) fn on_phone_event(&mut self, event: PhoneEvent) {
         match event {
             PhoneEvent::TextDelivered { text, result } => self.on_text_delivered(*text, result),
+            PhoneEvent::Pasted { request_id, outcome } => self.on_pasted(request_id, outcome),
             PhoneEvent::Opened { take, result } => self.on_phone_opened(take, result),
             PhoneEvent::Chunk { take, pcm } => {
                 let Some(t) = self.phone_take.as_mut().filter(|t| t.take() == take && t.running()) else { return };

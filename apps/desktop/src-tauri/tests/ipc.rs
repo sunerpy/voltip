@@ -1308,6 +1308,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "permissions_status",
             "permissions_request",
             "inject_preflight",
+            "paste_text",
             "provider_console_open",
             "project_link_open",
             "feedback_diagnostics",
@@ -1337,6 +1338,40 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
 /// docs/dictation.md §15: the three platform queries answer on every host. On the Linux test host
 /// nothing is gated (`not_applicable` throughout, `nothing_to_grant`), a request is an accepted
 /// no-op, and the injection preflight is `proceed` with `checked: false`; the wire is the
+/// 「粘贴到上一个窗口」 through the command layer (`paste_text`): with a probe the text goes into
+/// the window that came up, an empty text and a running take are refused, and none of it writes
+/// the history; without a probe (the headless wiring) the text is only copied.
+#[test]
+fn paste_text_pastes_into_the_window_in_front_and_refuses_while_a_take_runs() {
+    let probe = Arc::new(fakes::FakeProbe::app("notepad.exe", "Notepad", None));
+    let injector = Arc::new(fakes::FakeInjector::paste());
+    let ports = DictationPorts { probe: Some(probe), injector: injector.clone(), ..fakes::ports() };
+    // A pure Wayland session cannot name the window in front: the shell copies without waiting.
+    let pure_wayland = voltip_desktop_lib::hotkey::linux_session().is_some_and(|s| s.kind == voltip_inject::SessionKind::Wayland);
+    with_running_app_on(ports, move |_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        let answer = invoke(webview, "paste_text", json!({ "text": "你好" }));
+        if pure_wayland {
+            assert_eq!(answer, Ok(json!({ "kind": "copied", "reason": "no_probe" })));
+        } else {
+            assert_eq!(answer, Ok(json!({ "kind": "pasted" })));
+            assert_eq!(injector.injected(), vec!["你好".to_owned()]);
+        }
+        assert_eq!(invoke(webview, "paste_text", json!({ "text": " \n" })), Ok(json!({ "kind": "failed", "reason": "invalid" })));
+        assert!(invoke(webview, "paste_text", json!({})).is_err(), "text is required");
+        assert!(core_state(webview).history.is_empty(), "a paste writes no history");
+        assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
+        wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { .. }));
+        assert_eq!(invoke(webview, "paste_text", json!({ "text": "你好" })), Ok(json!({ "kind": "failed", "reason": "busy" })));
+        assert_eq!(invoke(webview, "dictation_cancel", json!({})), Ok(Value::Null));
+        assert!(injector.injected().len() <= 1, "nothing more was pasted: {:?}", injector.injected());
+    });
+    with_running_app(|_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(invoke(webview, "paste_text", json!({ "text": "你好" })), Ok(json!({ "kind": "copied", "reason": "no_probe" })));
+    });
+}
+
 /// `voltip_platform` snake_case contract the TypeScript schema mirrors.
 #[test]
 fn platform_queries_answer_not_applicable_on_a_host_without_gates() {

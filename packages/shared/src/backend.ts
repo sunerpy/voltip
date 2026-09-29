@@ -9,6 +9,7 @@ import type {
   InjectPreflight,
   LevelFrame,
   MutationCommand,
+  PasteOutcome,
   PreviewDraft,
   Permission,
   PermissionReport,
@@ -57,6 +58,9 @@ export interface Backend {
   permissionsRequest(permission: Permission): Promise<void>;
   /** Would an injection into the current foreground window land (`inject_preflight`, §15.3). */
   injectPreflight(): Promise<InjectPreflight>;
+  /** 「粘贴到上一个窗口」 (`paste_text`): paste `text` into the window the user came from, or copy
+   *  it; resolves with what became of it (a refusal is an outcome, not a rejection). */
+  pasteText(text: string): Promise<PasteOutcome>;
   /** Open the vendor's API-key page in the browser (`provider_console_open`); the shell only opens
    *  catalogue URLs, so the webview names the provider, never a URL. */
   providerConsoleOpen(provider: ProviderId): Promise<void>;

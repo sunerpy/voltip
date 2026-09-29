@@ -69,6 +69,7 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   nearby: null,
   hardware: null,
   connectivity: null,
+  paste_result: null,
 };
 const EVENT_TYPES = Object.keys(EVENT_TYPE_SET);
 

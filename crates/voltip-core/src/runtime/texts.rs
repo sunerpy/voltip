@@ -24,6 +24,7 @@ use super::{CoreEvent, Runtime, now_ms};
 use crate::CoreError;
 use crate::dictation::{DictationError, DictationPhase, Injection, OutputMode, TakeKind, Via};
 use crate::history::{EntryOrigin, HistoryEntry, OriginKind, Outcome};
+use crate::paste::{PasteFailure, PasteOutcome, PasteTarget, paste_blocking, valid_paste_text};
 use crate::phone::{SentText, SentTextFailure, SentTextState};
 
 /// Most texts a desktop holds while its own take runs.
@@ -91,13 +92,18 @@ impl Runtime {
         }
     }
 
+    /// No take is running (a finished one may still be on screen).
+    fn take_idle(&self) -> bool {
+        matches!(
+            self.dictation.status().phase,
+            DictationPhase::Idle | DictationPhase::Done { .. } | DictationPhase::Failed { .. } | DictationPhase::Cancelled { .. }
+        )
+    }
+
     /// Hand the oldest waiting text to the injector if none is there and no take is running;
     /// whether one went.
     pub(super) fn deliver_next_text(&mut self) -> bool {
-        let idle = matches!(
-            self.dictation.status().phase,
-            DictationPhase::Idle | DictationPhase::Done { .. } | DictationPhase::Failed { .. } | DictationPhase::Cancelled { .. }
-        );
+        let idle = self.take_idle();
         if self.texts.busy || !idle {
             return false;
         }
@@ -154,6 +160,40 @@ impl Runtime {
             origin: Some(EntryOrigin { device: text.name, kind: origin_kind(text.source) }),
         };
         self.record_history(entry);
+        self.deliver_next_text();
+    }
+
+    /// `PasteText`: a result from the history into the window the user came from
+    /// ([`crate::paste`]), on a blocking thread; refused while a take or another text runs. The
+    /// injector is the dictation's, so the insert setting applies; nothing goes into the history.
+    pub(super) fn paste_text(&mut self, request_id: u64, text: String, target: PasteTarget) {
+        let refused = if !valid_paste_text(&text) {
+            Some(PasteFailure::Invalid)
+        } else if self.texts.busy || !self.take_idle() {
+            Some(PasteFailure::Busy)
+        } else {
+            None
+        };
+        if let Some(reason) = refused {
+            self.emit(CoreEvent::PasteResult { request_id, outcome: PasteOutcome::Failed { reason } });
+            return;
+        }
+        self.texts.busy = true;
+        let (injector, probe, tx) = (self.dictation.injector(), self.dictation.probe(), self.phone_tx.clone());
+        tokio::spawn(async move {
+            let outcome = tokio::task::spawn_blocking(move || paste_blocking(&*injector, probe.as_deref(), &text, target)).await.unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "paste task failed");
+                PasteOutcome::Failed { reason: PasteFailure::Inject }
+            });
+            let _ = tx.send(PhoneEvent::Pasted { request_id, outcome }).await;
+        });
+    }
+
+    /// The paste is done: answer the shell, and let the texts that waited go.
+    pub(super) fn on_pasted(&mut self, request_id: u64, outcome: PasteOutcome) {
+        self.texts.busy = false;
+        tracing::info!(request_id, ?outcome, "paste from the history handled");
+        self.emit(CoreEvent::PasteResult { request_id, outcome });
         self.deliver_next_text();
     }
 

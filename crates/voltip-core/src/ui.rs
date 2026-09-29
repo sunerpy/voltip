@@ -113,6 +113,14 @@ pub enum UiEvent {
     },
     /// The connectivity self-check started or finished.
     Connectivity(crate::connectivity::ConnectivityStatus),
+    /// The answer to a paste from the history (`crate::paste`): the desktop shell waits for it; the
+    /// webview reads the `paste_text` command's answer instead and ignores the event.
+    PasteResult {
+        /// The command's id.
+        request_id: u64,
+        /// What became of the text.
+        outcome: crate::paste::PasteOutcome,
+    },
 }
 
 /// Where the in-app updater is (`UiState.update`, `packages/shared/src/schema.ts`
@@ -473,6 +481,7 @@ impl UiState {
                 self.nearby = devices.clone();
                 UiEvent::Nearby { devices }
             }
+            CoreEvent::PasteResult { request_id, outcome } => UiEvent::PasteResult { request_id, outcome },
             CoreEvent::Error(message) => UiEvent::Error { message },
         }
     }

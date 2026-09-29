@@ -456,7 +456,7 @@ impl FakeProbe {
 
     /// Always `app_id` / `name` with `title`.
     pub fn app(app_id: &str, name: &str, title: Option<&str>) -> Self {
-        Self::with(ProbeReply::App(ForegroundApp { app_id: app_id.to_owned(), name: name.to_owned(), title: title.map(str::to_owned) }))
+        Self::with(ProbeReply::App(ForegroundApp { app_id: app_id.to_owned(), name: name.to_owned(), title: title.map(str::to_owned), window: None }))
     }
 
     /// No nameable application (pure Wayland, the desktop, Voltip itself).
@@ -481,7 +481,14 @@ impl FakeProbe {
 
     /// Answer `app_id` / `name` / `title` from the next call on.
     pub fn set_app(&self, app_id: &str, name: &str, title: Option<&str>) {
-        *self.reply.lock() = ProbeReply::App(ForegroundApp { app_id: app_id.to_owned(), name: name.to_owned(), title: title.map(str::to_owned) });
+        *self.reply.lock() = ProbeReply::App(ForegroundApp { app_id: app_id.to_owned(), name: name.to_owned(), title: title.map(str::to_owned), window: None });
+    }
+
+    /// The answered application's window from the next call on (nothing when no app is answered).
+    pub fn set_window(&self, window: Option<u64>) {
+        if let ProbeReply::App(app) = &mut *self.reply.lock() {
+            app.window = window;
+        }
     }
 
     /// Answer nothing from the next call on.
@@ -572,6 +579,8 @@ pub struct FakeInjector {
     timing: SelectionTiming,
     copies: Mutex<Vec<Vec<Modifier>>>,
     copy_gate: Option<Arc<Gate>>,
+    /// Texts put on the clipboard alone (`Injector::copy`).
+    clipboard: Mutex<Vec<String>>,
     /// Which application ids are terminals (docs/dictation.md §19.2).
     terminals: Arc<dyn Fn(&str) -> bool + Send + Sync>,
 }
@@ -603,6 +612,7 @@ impl FakeInjector {
             timing: SelectionTiming::AtPress,
             copies: Mutex::new(Vec::new()),
             copy_gate: None,
+            clipboard: Mutex::new(Vec::new()),
             terminals: Arc::new(|_: &str| false),
         }
     }
@@ -662,7 +672,7 @@ impl FakeInjector {
         self
     }
 
-    /// Every `inject` blocks until [`FakeInjector::release`] grants it a permit.
+    /// Every `inject` and `copy` blocks until [`FakeInjector::release`] grants it a permit.
     pub fn gated(self) -> Self {
         Self { gate: Some(Arc::new(Gate::default())), ..self }
     }
@@ -683,6 +693,11 @@ impl FakeInjector {
     pub fn injected(&self) -> Vec<String> {
         self.injected.lock().clone()
     }
+
+    /// Texts put on the clipboard alone (`Injector::copy`), in order.
+    pub fn clipboard_copies(&self) -> Vec<String> {
+        self.clipboard.lock().clone()
+    }
 }
 
 impl Injector for FakeInjector {
@@ -697,6 +712,14 @@ impl Injector for FakeInjector {
             InjectReply::Clipboard(note) => Ok(Injection { via: Via::Clipboard, note }),
             InjectReply::Err(m) => Err(DictationError::Inject(m)),
         }
+    }
+
+    fn copy(&self, text: &str) -> Result<(), DictationError> {
+        if let Some(gate) = &self.gate {
+            gate.pass();
+        }
+        self.clipboard.lock().push(text.to_owned());
+        Ok(())
     }
 
     fn copy_selection(&self, held: &[Modifier]) -> Result<Option<String>, DictationError> {

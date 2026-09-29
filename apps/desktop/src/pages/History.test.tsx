@@ -43,6 +43,27 @@ describe("History page keys and retention", () => {
     ).toBeInTheDocument();
   });
 
+  it("regression: a row's copy and paste buttons act on that row without selecting it", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const { backend } = renderApp({ path: "/history", mock: liveClock() });
+    const log = await screen.findByRole("list", { name: "听写记录" });
+    const [newest, second] = backend.peek().history;
+    if (!newest || !second) throw new Error("fixture");
+    const actions = within(log).getAllByTestId("result-actions");
+    expect(actions).toHaveLength(backend.peek().history.length);
+    const secondRow = actions[1];
+    if (!secondRow) throw new Error("row");
+    await user.click(within(secondRow).getByRole("button", { name: "粘贴到上一个窗口" }));
+    expect(backend.pastes).toEqual([second.text]);
+    expect(await screen.findByText("已粘贴到上一个窗口")).toBeInTheDocument();
+    await user.click(within(secondRow).getByRole("button", { name: "复制这条结果" }));
+    expect(writeText).toHaveBeenCalledWith(second.text);
+    // The selection stayed on the newest row.
+    expect(within(log).getByRole("button", { pressed: true })).toHaveTextContent(newest.text);
+  });
+
   it("regression: the footer's Ctrl F, Ctrl C and Del are real; they stand down in a field, over a selection and under the settings dialog", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn(() => Promise.resolve());

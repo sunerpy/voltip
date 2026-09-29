@@ -315,6 +315,8 @@ fn dictation_is_refused_but_engines_secrets_and_history_work() {
         assert!(invoke(webview, "permissions_request", json!({ "permission": "camera" })).is_err());
         let preflight = invoke(webview, "inject_preflight", json!({})).unwrap();
         assert_eq!((preflight["checked"].as_bool(), preflight["decision"].as_str()), (Some(false), Some("proceed")));
+        // The history's paste button is the desktop's: the phone answers that it cannot paste.
+        assert_eq!(invoke(webview, "paste_text", json!({ "text": "你好" })), Ok(json!({ "kind": "failed", "reason": "unsupported" })));
         assert_eq!(wait_state(webview, |_| true).update, voltip_core::ui::UpdateStatus::Disabled);
         // No local models on a phone: the library verbs refuse and the state carries an empty list.
         for cmd in ["model_download", "model_cancel", "model_remove"] {
@@ -474,6 +476,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "permissions_status",
             "permissions_request",
             "inject_preflight",
+            "paste_text",
             "provider_console_open",
             "project_link_open",
             "feedback_diagnostics",

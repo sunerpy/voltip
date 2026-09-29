@@ -486,6 +486,7 @@ export const en: Messages = {
       recordingOff: "History off",
     },
     table: {
+      actions: "Actions",
       time: "Time",
       text: "Text",
       engine: "Model",
@@ -607,6 +608,27 @@ export const en: Messages = {
       clearTitle: "Clear {n} history entries?",
       clearBody: "All history saved on this computer will be cleared. This cannot be undone.",
       clear: "Clear",
+    },
+  },
+  paste: {
+    copy: "Copy this result",
+    paste: "Paste into the previous window",
+    outcome: {
+      pasted: "Pasted into the previous window",
+      copied: {
+        no_probe: "Cannot detect the front window · Copied",
+        timeout: "Previous window not found · Copied",
+        target_changed: "The front window changed · Copied only",
+        clipboard_only: "Copied · Output is set to clipboard only",
+        paste_failed: "Could not paste · Copied to clipboard",
+      },
+      failed: {
+        busy: "Dictation in progress · Paste after it ends",
+        invalid: "The text is empty or too long to paste",
+        timeout: "The paste did not finish · Try again later",
+        inject: "Could not paste or copy the text",
+        unsupported: "This device cannot paste into other windows",
+      },
     },
   },
   dictionary: {

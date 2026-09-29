@@ -221,6 +221,17 @@ pub enum CoreCommand {
     },
     /// Phone: forget the list of sent texts.
     SentTextsClear,
+    /// Desktop: paste a result from the history into the window the user came from
+    /// ([`crate::paste`]); [`CoreEvent::PasteResult`] answers with the same `request_id`. Refused
+    /// while a take runs; never recorded in the history.
+    PasteText {
+        /// Picked by the shell to find the answer.
+        request_id: u64,
+        /// The text.
+        text: String,
+        /// The window the shell found, or why there is none.
+        target: crate::paste::PasteTarget,
+    },
     /// Announce this device on the LAN and browse for the others (persisted,
     /// `Settings.lan_discovery`).
     SetLanDiscovery(bool),
@@ -441,6 +452,13 @@ pub enum CoreEvent {
     /// The phone's list of texts sent to a desktop (docs/dictation.md §20.6), newest first; on
     /// `Ready` and after every change.
     SentTexts(Vec<crate::phone::SentText>),
+    /// The answer to [`CoreCommand::PasteText`].
+    PasteResult {
+        /// The command's id.
+        request_id: u64,
+        /// What became of the text.
+        outcome: crate::paste::PasteOutcome,
+    },
     /// What the LAN browse sees (docs/pairing.md 「局域网发现」), whole; after every change.
     Nearby(Vec<crate::discovery::NearbyDevice>),
     /// The connectivity self-check started or finished ([`crate::connectivity`]).
@@ -1080,6 +1098,10 @@ impl Runtime {
             CoreCommand::PhoneTextSend { to, body, source } => self.phone_text_send(to, body, source),
             CoreCommand::SentTextsClear => {
                 self.sent_texts_clear();
+                Ok(())
+            }
+            CoreCommand::PasteText { request_id, text, target } => {
+                self.paste_text(request_id, text, target);
                 Ok(())
             }
             CoreCommand::SetLanDiscovery(enabled) => self.set_lan_discovery(enabled),

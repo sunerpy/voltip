@@ -347,6 +347,11 @@ pub struct ForegroundApp {
     pub name: String,
     /// Window title, where the platform tells (not on macOS).
     pub title: Option<String>,
+    /// The focused window, where the platform tells: the HWND on Windows, the window id on X11, the
+    /// front process id on macOS (which cannot tell two windows of one application apart). Only
+    /// used to check that a paste from the history still goes where the user left off
+    /// ([`crate::paste`]); never shown, stored, logged or printed by `Debug`.
+    pub window: Option<u64>,
 }
 
 impl std::fmt::Debug for ForegroundApp {
@@ -366,7 +371,7 @@ impl ForegroundApp {
         }
         let name = clean_context_line(&self.name, MAX_CONTEXT_NAME_CHARS).unwrap_or_else(|| app_id.clone());
         let title = self.title.as_deref().and_then(|t| clean_context_line(t, MAX_CONTEXT_TITLE_CHARS));
-        Some(Self { app_id, name, title })
+        Some(Self { app_id, name, title, window: self.window })
     }
 }
 
@@ -425,6 +430,14 @@ pub trait Injector: Send + Sync {
     /// Inject `text`. Blocking (clipboard + synthetic key events + a short restore delay); the
     /// core calls it from a blocking task.
     fn inject(&self, text: &str) -> Result<Injection, DictationError>;
+
+    /// Put `text` on the clipboard and nothing else, whatever `EngineSettings.inject` says: a paste
+    /// from the history whose window is gone ([`crate::paste`]). Blocking, like `inject`. The
+    /// default belongs to shells without a clipboard of their own (the phone).
+    fn copy(&self, text: &str) -> Result<(), DictationError> {
+        let _ = text;
+        Err(DictationError::Inject("this shell has no clipboard".to_owned()))
+    }
 
     /// The foreground application's selection (docs/dictation.md §19): clipboard saved, copy
     /// chord pressed after releasing `held` (the edit hotkey's modifiers the user may still
@@ -534,14 +547,15 @@ mod tests {
     /// it; `Debug` of the app and of the refine context never shows the title or the texts.
     #[test]
     fn foreground_answers_are_sanitised_and_never_debug_print_the_title() {
-        let raw = ForegroundApp { app_id: " Slack.EXE ".into(), name: " Slack\n".into(), title: Some("  #dev\u{7}chat  ".into()) };
+        let raw = ForegroundApp { app_id: " Slack.EXE ".into(), name: " Slack\n".into(), title: Some("  #dev\u{7}chat  ".into()), window: Some(42) };
         let app = raw.sanitized().unwrap();
-        assert_eq!(app, ForegroundApp { app_id: "slack".into(), name: "Slack".into(), title: Some("#dev chat".into()) });
+        assert_eq!(app, ForegroundApp { app_id: "slack".into(), name: "Slack".into(), title: Some("#dev chat".into()), window: Some(42) });
+        // Neither the title nor the window id is printed.
         assert_eq!(format!("{app:?}"), r#"ForegroundApp { app_id: "slack", name: "Slack", title: true }"#);
-        let nameless = ForegroundApp { app_id: "code".into(), name: "  ".into(), title: Some("\u{7}".into()) }.sanitized().unwrap();
+        let nameless = ForegroundApp { app_id: "code".into(), name: "  ".into(), title: Some("\u{7}".into()), window: None }.sanitized().unwrap();
         assert_eq!((nameless.name.as_str(), nameless.title), ("code", None), "the id stands in for an empty name");
-        assert_eq!(ForegroundApp { app_id: ".exe".into(), name: "x".into(), title: None }.sanitized(), None);
-        let long = ForegroundApp { app_id: "a".into(), name: "名".repeat(100), title: Some("t".repeat(500)) }.sanitized().unwrap();
+        assert_eq!(ForegroundApp { app_id: ".exe".into(), name: "x".into(), title: None, window: None }.sanitized(), None);
+        let long = ForegroundApp { app_id: "a".into(), name: "名".repeat(100), title: Some("t".repeat(500)), window: None }.sanitized().unwrap();
         assert_eq!((long.name.chars().count(), long.title.map(|t| t.chars().count())), (MAX_CONTEXT_NAME_CHARS, Some(MAX_CONTEXT_TITLE_CHARS)));
         let context = RefineContext { app_name: Some("Slack".into()), window_title: Some("secret title".into()), instruction: None };
         assert_eq!(format!("{context:?}"), "RefineContext { app_name: true, window_title: true, instruction: false }");

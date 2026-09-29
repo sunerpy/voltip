@@ -112,7 +112,7 @@ impl X11Probe {
         let title_bytes =
             if net_name.value.is_empty() { Self::property(display, window, AtomEnum::WM_NAME, AtomEnum::ANY, TITLE_UNITS)?.value } else { net_name.value };
         let title = Some(decode_x11_text(&title_bytes)).filter(|t| !t.trim().is_empty());
-        Ok(Some(ForegroundApp { app_id: identity.app_id, name: identity.name, title }))
+        Ok(Some(ForegroundApp { app_id: identity.app_id, name: identity.name, title, window: Some(u64::from(window)) }))
     }
 }
 

@@ -31,7 +31,9 @@ pub fn foreground_app() -> Result<Option<ForegroundApp>, String> {
     }
     let bundle = front.bundleIdentifier().map(|s| s.to_string());
     let name = front.localizedName().map(|s| s.to_string());
-    Ok(from_bundle(bundle.as_deref(), name.as_deref()).map(|id| ForegroundApp { app_id: id.app_id, name: id.name, title: None }))
+    // macOS names no window here; the front process stands in for it.
+    let window = u64::try_from(front.processIdentifier()).ok();
+    Ok(from_bundle(bundle.as_deref(), name.as_deref()).map(|id| ForegroundApp { app_id: id.app_id, name: id.name, title: None, window }))
 }
 
 /// Both TCC states. The APIs are boolean (`AXIsProcessTrusted`,

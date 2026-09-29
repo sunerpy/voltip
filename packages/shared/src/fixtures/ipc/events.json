@@ -2827,5 +2827,92 @@
   {
     "type": "scenes",
     "scenes": []
+  },
+  {
+    "type": "paste_result",
+    "request_id": 1,
+    "outcome": {
+      "kind": "pasted"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 2,
+    "outcome": {
+      "kind": "copied",
+      "reason": "no_probe"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 3,
+    "outcome": {
+      "kind": "copied",
+      "reason": "timeout"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 4,
+    "outcome": {
+      "kind": "copied",
+      "reason": "target_changed"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 5,
+    "outcome": {
+      "kind": "copied",
+      "reason": "clipboard_only"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 6,
+    "outcome": {
+      "kind": "copied",
+      "reason": "paste_failed"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 7,
+    "outcome": {
+      "kind": "failed",
+      "reason": "busy"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 8,
+    "outcome": {
+      "kind": "failed",
+      "reason": "invalid"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 9,
+    "outcome": {
+      "kind": "failed",
+      "reason": "timeout"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 10,
+    "outcome": {
+      "kind": "failed",
+      "reason": "inject"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 11,
+    "outcome": {
+      "kind": "failed",
+      "reason": "unsupported"
+    }
   }
 ]

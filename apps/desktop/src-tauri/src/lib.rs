@@ -23,6 +23,7 @@ pub mod exit;
 pub mod feedback;
 pub mod hotkey;
 pub mod overlay;
+pub mod paste;
 pub mod platform;
 pub mod solo_key;
 pub mod update;
@@ -43,7 +44,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 81] = [
+pub const COMMANDS: [&str; 82] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -125,6 +126,7 @@ pub const COMMANDS: [&str; 81] = [
     "permissions_status",
     "permissions_request",
     "inject_preflight",
+    "paste_text",
 ];
 
 /// The app version: `package.json`'s, which release-please bumps and `tauri.conf.json` names
@@ -731,6 +733,15 @@ fn inject_preflight() -> platform::InjectPreflight {
     platform::inject_preflight()
 }
 
+/// 「粘贴到上一个窗口」 on the home and history pages (`paste::paste_text`): refused while a take
+/// runs; otherwise Voltip gets out of the way and the core pastes into the window that came to the
+/// front, or copies. Answers what became of the text; the main window comes back unless it went
+/// into the other window.
+#[tauri::command]
+async fn paste_text<R: Runtime>(app: tauri::AppHandle<R>, text: String) -> voltip_core::paste::PasteOutcome {
+    paste::paste_text(&app, text).await
+}
+
 /// What the shell wires besides the core.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ShellOptions {
@@ -803,6 +814,8 @@ pub fn attach_bridge<R: Runtime>(
     ports: dictation::ShellPorts,
 ) -> Result<(), BridgeError> {
     let dictation::ShellPorts { dictation: ports, hub } = ports;
+    // The paste button asks the same probe the core does (`paste::PasteProbe`).
+    let paste_probe = paste::PasteProbe(ports.probe.clone());
     // The updater exists only in the production wiring and only when the build carries a source; a
     // config managed on the builder before `setup` wins (tests point it at a local manifest server
     // and register the plugin themselves).
@@ -873,6 +886,7 @@ pub fn attach_bridge<R: Runtime>(
     app.manage(hub);
     app.manage(overlay::OverlaySlot::default());
     app.manage(feedback::Attachments::default());
+    app.manage(paste_probe);
     Ok(())
 }
 
@@ -984,7 +998,8 @@ pub fn build_app<R: Runtime>(
             recent_apps,
             permissions_status,
             permissions_request,
-            inject_preflight
+            inject_preflight,
+            paste_text
         ],
     )
 }

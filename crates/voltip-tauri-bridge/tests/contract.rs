@@ -16,6 +16,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use voltip_core::connectivity::{AddressCheck, ConnectivityReport, ConnectivityStatus, LanHostCheck, PeerCheck, ProbeResult, RelayCheck};
 use voltip_core::dictation::{FailureCode, ProcessingStage, Via};
+use voltip_core::paste::{CopyReason, PasteFailure, PasteOutcome};
 use voltip_core::phone::{PhoneTakeFailure, PhoneTakeState, PhoneTakeView};
 use voltip_core::phone::{PhoneTextSource, SentText, SentTextFailure, SentTextState};
 use voltip_core::ui::{GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, UiEvent, UiState, UpdateStatus};
@@ -782,10 +783,11 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::Nearby { .. } => "nearby",
         UiEvent::Hardware(_) => "hardware",
         UiEvent::Connectivity(_) => "connectivity",
+        UiEvent::PasteResult { .. } => "paste_result",
     }
 }
 
-const ALL_EVENT_TAGS: [&str; 22] = [
+const ALL_EVENT_TAGS: [&str; 23] = [
     "state",
     "identity",
     "settings",
@@ -808,6 +810,7 @@ const ALL_EVENT_TAGS: [&str; 22] = [
     "provider_probe",
     "phone_take",
     "hardware",
+    "paste_result",
 ];
 
 /// The phone's list (docs/dictation.md §20.6): one text in every state.
@@ -895,7 +898,7 @@ fn scenes_event(list: Vec<Scene>) -> UiEvent {
 /// One value per `UiEvent` variant, plus the shapes the TypeScript union has to discriminate
 /// (`devices` with every connection kind, a failed pairing, a minimal default state).
 fn all_events() -> Vec<UiEvent> {
-    vec![
+    let mut events = vec![
         UiEvent::State(Box::default()),
         UiEvent::Identity(desktop_identity()),
         UiEvent::Settings(settings()),
@@ -1304,7 +1307,24 @@ fn all_events() -> Vec<UiEvent> {
         // The scenes (docs/dictation.md §18.6), full and empty.
         scenes_event(scenes()),
         scenes_event(Vec::new()),
-    ]
+    ];
+    events.extend(paste_results());
+    events
+}
+
+/// The history's paste button (`voltip_core::paste`): every outcome with every reason, so the
+/// TypeScript enums are checked against all the Rust names.
+fn paste_results() -> Vec<UiEvent> {
+    let copied = [CopyReason::NoProbe, CopyReason::Timeout, CopyReason::TargetChanged, CopyReason::ClipboardOnly, CopyReason::PasteFailed]
+        .map(|reason| PasteOutcome::Copied { reason });
+    let failed = [PasteFailure::Busy, PasteFailure::Invalid, PasteFailure::Timeout, PasteFailure::Inject, PasteFailure::Unsupported]
+        .map(|reason| PasteOutcome::Failed { reason });
+    std::iter::once(PasteOutcome::Pasted)
+        .chain(copied)
+        .chain(failed)
+        .zip(1..)
+        .map(|(outcome, request_id)| UiEvent::PasteResult { request_id, outcome })
+        .collect()
 }
 
 /// Variant name for a parsed command; exhaustive so a new variant must be added to the fixture.

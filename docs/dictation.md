@@ -158,6 +158,22 @@ pub struct HistoryEntry {
 
 `app_data_dir/history.json`，最多 500 条（旧的丢弃），写入原子（临时文件 + rename）。命令 `HistoryDelete(Uuid)`、`HistoryClear`、`HistoryStar(Uuid, bool)`；事件 `CoreEvent::History(Vec<HistoryEntry>)`（全量替换）。
 
+### 4.1 复制与粘贴到上一个窗口（2026-09-29）
+
+首页「最近的结果」和历史页的每一行末尾有两个按钮：「复制这条结果」和「粘贴到上一个窗口」。点按钮不会打开这一行，两个按钮都能用 Tab 聚焦、回车或空格触发；语音编辑的一行交出改写结果（`entry.text`）。
+
+粘贴走桌面命令 `paste_text { text } → PasteOutcome`（`QUERY_COMMANDS`；`pasted`、`copied { reason }`、`failed { reason }`，类型在 `crates/voltip-core/src/paste.rs`），由壳层 `apps/desktop/src-tauri/src/paste.rs` 负责全程：
+
+1. 文字为空或超过 50 000 字，答 `failed { invalid }`；正在录音或处理，答 `failed { busy }`，不排队。
+2. 纯 Wayland 会话无法得知前台窗口：立即只复制，答 `copied { no_probe }`。
+3. 其他情况把主窗口最小化（macOS 隐藏整个应用），每 50 ms 查一次前台，最多 1.5 s。探针对 Voltip 自己的窗口不作答，所以第一个答复就是另一个应用的窗口；等不到则只复制，答 `copied { timeout }`。
+4. 核心（`runtime/texts.rs`）粘贴前再查一次前台：应用不同，或两边都有窗口标识而标识不同，只复制（`copied { target_changed }`）；一致才经注入器粘贴，遵守输出方式（仅复制时答 `clipboard_only`，粘贴失败留在剪贴板时答 `paste_failed`）。这次粘贴不写历史，和手机文字（§20.6）一样同一时间只插一条。
+5. 壳层按 `request_id` 等核心的 `PasteResult`，最多 5 s，超时答 `failed { timeout }`；结果不是 `pasted` 时恢复并聚焦主窗口。页面把结果显示为一条提示。
+
+窗口标识 `ForegroundApp.window`：Windows 为 HWND，X11 为窗口 id，macOS 为前台进程的 pid。macOS 分不出同一应用的两个窗口：用户换到同一应用的另一个窗口时仍会粘贴。这个字段不序列化，不进状态、历史和日志。手机壳注册同名命令，答 `failed { unsupported }`。
+
+门禁：`crates/voltip-core/src/paste.rs` 单测与 `crates/voltip-core/tests/paste.rs`（前台变了只复制、忙时拒绝、同一个 `request_id`、不写历史）；bridge `a_paste_waits_for_its_own_answer_and_gives_up_in_time`；壳层 `paste.rs` 的步骤判断单测与 `tests/ipc.rs@paste_text_pastes_into_the_window_in_front_and_refuses_while_a_take_runs`；前端 `Home.test.tsx`、`History.test.tsx`；Windows 真机为 CI `windows-native` 的 `scripts/smoke-windows-paste.ps1`（记事本在后、Voltip 在前，按下按钮后文字进入记事本）。
+
 ## 5. IPC（bridge 与 TS 契约）
 
 | wire 名 | `UiCommand` | 参数 |

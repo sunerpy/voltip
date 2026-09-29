@@ -530,6 +530,12 @@ impl DictationEngine {
         self.injector.clone()
     }
 
+    /// The foreground probe the shell plugged in, if any (a paste from the history checks the
+    /// front window with it, `crate::paste`).
+    pub fn probe(&self) -> Option<Arc<dyn ForegroundProbe>> {
+        self.probe.clone()
+    }
+
     /// Build the engine; `levels` receives every level frame while a capture runs. The returned
     /// receiver must be polled by the owner and fed back through [`DictationEngine::on_internal`].
     pub fn new(ports: DictationPorts, engines: &ResolvedEngines, levels: broadcast::Sender<LevelFrame>) -> (Self, mpsc::Receiver<Internal>) {

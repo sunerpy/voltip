@@ -41,6 +41,7 @@ import { MicrophoneStrength } from "../features/audio/MicrophoneStrength";
 import { useAudioMeter } from "../features/audio/useAudioMeter";
 import { useChosenMicrophone, useMicrophoneTest } from "../features/audio/useMicrophoneTest";
 import { useDictation, useTickingNow } from "../features/dictation/useDictation";
+import { ResultActions } from "../features/history/ResultActions";
 import { PermissionNotice } from "../features/permissions/PermissionNotice";
 import {
   type HistoryFilter,
@@ -235,6 +236,15 @@ export function Home() {
         text: formatMs(r.refine_ms),
         muted: r.refine_ms === undefined,
       }),
+    },
+    {
+      // Copy / paste into the previous window without opening the row (plan 1.4).
+      id: "actions",
+      header: <span className="sr-only">{t("home.table.actions")}</span>,
+      width: 64,
+      align: "right",
+      mono: false,
+      cell: (r) => <ResultActions entry={r} />,
     },
   ];
 

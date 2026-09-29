@@ -120,6 +120,34 @@ describe("Table", () => {
     expect(renderCell({ type: "text", text: "x" })).toBeTruthy();
   });
 
+  it("regression: Enter and Space on a button inside a selectable row press the button, not the row", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const onAction = vi.fn();
+    const columns: TableColumn<Row>[] = [
+      { id: "name", header: "名称", cell: (r) => ({ type: "text", text: r.name }) },
+      {
+        id: "actions",
+        header: "操作",
+        cell: () => ({ type: "actions", actions: [{ label: "复制", onClick: onAction }] }),
+      },
+    ];
+    render(
+      <Table label="t" columns={columns} rows={rows} rowKey={(r) => r.id} onSelect={onSelect} />,
+    );
+    const button = screen.getAllByRole("button", { name: "复制" })[0];
+    if (button === undefined) throw new Error("no action button");
+    button.focus();
+    await user.keyboard("{Enter}");
+    await user.keyboard(" ");
+    expect(onAction).toHaveBeenCalledTimes(2);
+    expect(onSelect).not.toHaveBeenCalled();
+    // The row itself still answers its keys.
+    button.closest("tr")?.focus();
+    await user.keyboard("{Enter}");
+    expect(onSelect).toHaveBeenCalledWith(rows[0]);
+  });
+
   it("regression: cells are single truncated lines; flexible columns share width, fixed ones are capped", () => {
     const columns: TableColumn<Row>[] = [
       { id: "name", header: "名称", minWidth: 120, cell: (r) => ({ type: "text", text: r.name }) },

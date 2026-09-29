@@ -279,6 +279,9 @@ export function Table<Row>({
                 onKeyDown={
                   onSelect
                     ? (e) => {
+                        // Only the row's own keys: Enter / Space on a button inside the row
+                        // press that button, not the row.
+                        if (e.target !== e.currentTarget) return;
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
                           onSelect(row);

@@ -36,6 +36,8 @@ import {
   type HistoryEntry,
   type HotkeyEdgeArgs,
   type InjectPreflight,
+  type PasteFailure,
+  type PasteOutcome,
   type LiveSegment,
   type LiveText,
   type ModelInstallState,
@@ -62,6 +64,7 @@ import {
   SOLO_KEYS,
   type SoloKey,
   MAX_PHONE_TEXT_CHARS,
+  MAX_PASTE_TEXT_CHARS,
   type SentText,
   type NearbyDevice,
   applyEvent,
@@ -178,6 +181,9 @@ export interface MockBackendOptions {
   permissions?: PermissionReport | (() => PermissionReport);
   /** What `injectPreflight` answers (§15.3); defaults to the unchecked `proceed` of the host. */
   injectPreflight?: InjectPreflight;
+  /** What a valid `pasteText` ends with while no take runs (`setPasteOutcome` changes it);
+   *  defaults to `pasted`. */
+  pasteOutcome?: PasteOutcome;
   /** Only this code joins successfully (phone role); any well-formed code otherwise. */
   expectedCode?: string;
   /** What the desktop shell reports about the machine (docs/dictation.md §10.6); defaults to
@@ -721,6 +727,9 @@ export class MockBackend implements Backend {
   private meters = new Set<ReturnType<typeof setInterval>>();
   private permissions: PermissionReport | (() => PermissionReport);
   private readonly preflight: InjectPreflight;
+  private pasteOutcome: PasteOutcome;
+  /** Every text a `pasteText` handed on, in order (tests). */
+  readonly pastes: string[] = [];
   /** Every `permissionsRequest` made, in order (tests). */
   readonly permissionRequests: Permission[] = [];
   /** Secret-store entries holding a user key (`keyEntry`). */
@@ -774,6 +783,7 @@ export class MockBackend implements Backend {
     const host = hostOsOf(identity.platform);
     this.permissions = options.permissions ?? mockPermissions(host);
     this.preflight = options.injectPreflight ?? uncheckedPreflight(host);
+    this.pasteOutcome = options.pasteOutcome ?? { kind: "pasted" };
     const settings: Settings = { ...defaultSettings(), ...options.settings };
     // The phone has no local models (docs/dictation.md §10): an empty catalogue, commands refused.
     const models: ModelState[] =
@@ -936,6 +946,24 @@ export class MockBackend implements Backend {
 
   injectPreflight(): Promise<InjectPreflight> {
     return Promise.resolve(structuredClone(this.preflight));
+  }
+
+  /** `paste_text`: the refusals of the shell and the core (the phone cannot paste; empty or too
+   *  long text; a take under way, not queued), then the seeded outcome. Writes no history. */
+  pasteText(text: string): Promise<PasteOutcome> {
+    if (this.role === "phone") return pasteFailed("unsupported");
+    if (text.trim().length === 0 || Array.from(text).length > MAX_PASTE_TEXT_CHARS) {
+      return pasteFailed("invalid");
+    }
+    const phase = this.state.dictation.phase.phase;
+    if (phase === "listening" || phase === "processing") return pasteFailed("busy");
+    this.pastes.push(text);
+    return Promise.resolve(structuredClone(this.pasteOutcome));
+  }
+
+  /** What the next valid paste ends with (tests: the window changed, the paste fell back). */
+  setPasteOutcome(outcome: PasteOutcome): void {
+    this.pasteOutcome = outcome;
   }
 
   private readonly handlers: {
@@ -2828,6 +2856,11 @@ export class MockBackend implements Backend {
     this.log.push(event);
     for (const listener of this.listeners) listener(event);
   }
+}
+
+/** A paste that neither pasted nor copied (`paste_text`'s `failed { reason }`). */
+function pasteFailed(reason: PasteFailure): Promise<PasteOutcome> {
+  return Promise.resolve({ kind: "failed", reason });
 }
 
 function required<T>(args: T | undefined): T {

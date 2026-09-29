@@ -47,6 +47,7 @@ import {
   matchesHistoryQuery,
   textChars,
 } from "../features/history/stats";
+import { ResultActions } from "../features/history/ResultActions";
 import { shortModel } from "../shell/page-meta";
 
 type View = "raw" | "polished" | "diff";
@@ -279,14 +280,16 @@ export function History({ initialFilter }: HistoryProps) {
                     const active = e.id === selected?.id;
                     const outcome = outcomeLabel(e.outcome, locale);
                     return (
-                      <li key={e.id}>
+                      <li
+                        key={e.id}
+                        className={`group flex items-start rounded-6 hover:bg-canvas ${active ? "bg-canvas shadow-[inset_2px_0_0_var(--primary)]" : ""}`}>
                         <button
                           type="button"
                           aria-pressed={active}
                           onClick={() => {
                             setSelectedId(e.id);
                           }}
-                          className={`group flex w-full items-start gap-2 rounded-6 px-2 py-2 text-left hover:bg-canvas ${active ? "bg-canvas shadow-[inset_2px_0_0_var(--primary)]" : ""}`}>
+                          className="flex min-w-0 flex-1 items-start gap-2 rounded-6 px-2 py-2 text-left">
                           <span className="mono pt-0.5 text-[12px] text-fg-subtle">
                             {clockLabel(e.at_ms).slice(0, 5)}
                           </span>
@@ -380,6 +383,12 @@ export function History({ initialFilter }: HistoryProps) {
                             ★
                           </span>
                         </button>
+                        {/* Copy / paste into the previous window (plan 1.4): shown on the chosen row,
+                            and on the others while hovered or focused. */}
+                        <ResultActions
+                          entry={e}
+                          className={`pt-1.5 pr-1 ${active ? "" : "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"}`}
+                        />
                       </li>
                     );
                   })}

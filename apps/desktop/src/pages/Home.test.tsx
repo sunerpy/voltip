@@ -42,6 +42,80 @@ function liveClock() {
 }
 
 describe("Home page", () => {
+  it("regression: the recent table copies and pastes a row without opening it, by mouse and by keyboard", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const { backend } = renderApp({ mock: liveClock() });
+    const table = await screen.findByRole("table", { name: "最近的结果" });
+    const newest = backend.peek().history[0];
+    if (!newest) throw new Error("fixture");
+    const row = within(table).getAllByRole("row")[1] as HTMLElement;
+    // Copy: the row's text, the usual toast, and the page stays.
+    await user.click(within(row).getByRole("button", { name: "复制这条结果" }));
+    expect(writeText).toHaveBeenCalledWith(newest.text);
+    expect(
+      await screen.findByText(`已复制到剪贴板 · ${Array.from(newest.text).length} 字`),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("page-home")).toBeInTheDocument();
+    // Paste into the previous window: the text goes to paste_text, the answer becomes a toast.
+    await user.click(within(row).getByRole("button", { name: "粘贴到上一个窗口" }));
+    expect(backend.pastes).toEqual([newest.text]);
+    expect(await screen.findByText("已粘贴到上一个窗口")).toBeInTheDocument();
+    expect(screen.getByTestId("page-home")).toBeInTheDocument();
+    // The keyboard reaches the button, not the row; a copy instead says why.
+    backend.setPasteOutcome({ kind: "copied", reason: "target_changed" });
+    within(row).getByRole("button", { name: "粘贴到上一个窗口" }).focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("前台窗口已变化 · 仅复制到剪贴板")).toBeInTheDocument();
+    expect(backend.pastes).toHaveLength(2);
+    expect(screen.getByTestId("page-home")).toBeInTheDocument();
+    // The row itself still opens the entry.
+    await user.click(within(row).getByText(newest.text));
+    expect(await screen.findByTestId("page-history")).toBeInTheDocument();
+  });
+
+  it("a paste refused while a take runs says so, and a voice edit's row hands on its rewrite", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const now = Date.now();
+    const base = {
+      at_ms: now - 60_000,
+      asr_model: "whisper-large-v3-turbo",
+      duration_ms: 1400,
+      asr_ms: 380,
+      refined: true,
+      outcome: { kind: "inserted", via: "paste" },
+      starred: false,
+      mode: "whole_take",
+    } as const;
+    const { backend } = renderApp({
+      backend: new MockBackend({
+        now: () => Date.now(),
+        history: [
+          {
+            ...base,
+            id: "edit",
+            raw_text: "改得更正式",
+            text: "各位同事：会议改至周四上午十点。",
+            kind: "edit",
+            edit: { instruction: "改得更正式", selection: "大家好，会议改到周四十点哈" },
+          },
+        ],
+      }),
+    });
+    const table = await screen.findByRole("table", { name: "最近的结果" });
+    await user.click(within(table).getByRole("button", { name: "复制这条结果" }));
+    expect(writeText).toHaveBeenCalledWith("各位同事：会议改至周四上午十点。");
+    await act(async () => {
+      await backend.invoke("dictation_start");
+    });
+    await user.click(within(table).getByRole("button", { name: "粘贴到上一个窗口" }));
+    expect(await screen.findByText("正在听写 · 请结束后再粘贴")).toBeInTheDocument();
+    expect(backend.pastes).toEqual([]);
+  });
+
   it("renders readiness row, four panels, stat strip and the recent table from the core's state", async () => {
     const { backend } = renderApp({ mock: liveClock() });
     expect(await screen.findByText("可以开始听写")).toBeInTheDocument();

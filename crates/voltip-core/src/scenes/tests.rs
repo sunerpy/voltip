@@ -17,7 +17,7 @@ fn scene(name: &str, apps: &[&str], keywords: &[&str]) -> Scene {
 }
 
 fn app(id: &str, title: Option<&str>) -> ForegroundApp {
-    ForegroundApp { app_id: id.into(), name: id.into(), title: title.map(str::to_owned) }
+    ForegroundApp { app_id: id.into(), name: id.into(), title: title.map(str::to_owned), window: None }
 }
 
 fn err(d: &SceneDraft) -> String {
