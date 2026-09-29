@@ -8,7 +8,10 @@
 #            codesign, trust the certificate for code signing (passwordless sudo on GitHub's macOS
 #            runners), and check that the identity is the one MACOS_SIGNING_IDENTITY (SHA-1) and
 #            --expect-sha1 name. Tauri then signs with APPLE_SIGNING_IDENTITY.
-#   remove   delete that keychain (and the trust setting) again.
+#   remove   delete that keychain again, and with it the private key. The trust setting stays:
+#            removing an admin trust setting waits for an authorisation dialog nobody answers on a
+#            runner (candidate 36550741255 hung there, 2026-09-29), and GitHub discards the
+#            runner with the job.
 #
 # Usage: .github/scripts/macos-signing-keychain.sh import --expect-sha1 <SHA-1>
 #        .github/scripts/macos-signing-keychain.sh remove
@@ -60,10 +63,7 @@ import)
 	echo "macos-signing-keychain: Voltip Code Signing ($expected) ready in $keychain"
 	;;
 remove)
-	if [ -s "$certificate" ]; then
-		sudo security remove-trusted-cert -d "$certificate" 2>/dev/null || true
-		rm -f "$certificate"
-	fi
+	rm -f "$certificate"
 	security delete-keychain "$keychain" 2>/dev/null || true
 	echo "macos-signing-keychain: removed"
 	;;

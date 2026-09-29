@@ -160,6 +160,13 @@ class CandidateBuild(unittest.TestCase):
         removal = body.index("- name: Remove the release signing keychain")
         self.assertIn("if: always()", body[removal:])
         self.assertIn("macos-signing-keychain.sh remove", body[removal:])
+        # Regression (candidate 36550741255, 2026-09-29): removing the admin trust setting waited
+        # for a dialog and hung the leg. The clean-up is bounded and never fails the leg, and the
+        # script no longer touches the trust setting on the way out.
+        self.assertIn("timeout-minutes: 2", body[removal:])
+        self.assertIn("continue-on-error: true", body[removal:])
+        script = (ROOT / ".github/scripts/macos-signing-keychain.sh").read_text(encoding="utf-8")
+        self.assertNotIn("remove-trusted-cert", script)
         self.assertIn("MACOS_CERTIFICATE_PRESENT", self.jobs["prepare"])
         # Local and ordinary CI builds stay ad hoc; the hardened runtime stays off (a certificate
         # without a Team ID would make library validation refuse the embedded dylibs).

@@ -986,8 +986,11 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # Clean-up on a runner GitHub discards anyway: never a reason to hang or fail the leg.
       - name: Remove the release signing keychain
         if: always()
+        timeout-minutes: 2
+        continue-on-error: true
         run: .release-tooling/.github/scripts/macos-signing-keychain.sh remove
 
   # Downloads, checks, seals and attests; runs no project or dependency code, so it is the only
