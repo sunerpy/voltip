@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.9](https://github.com/sunerpy/voltip/compare/v0.0.8...v0.0.9) (2026-09-29)
+
+
+### Features
+
+* history of 20,000 entries and statistics ([#21](https://github.com/sunerpy/voltip/issues/21)) ([0a6762c](https://github.com/sunerpy/voltip/commit/0a6762c34f20e1d3e2b272da582e045d2ff1074f))
+* **history:** keep up to 20,000 entries in a database, imported once from the old file ([0a6762c](https://github.com/sunerpy/voltip/commit/0a6762c34f20e1d3e2b272da582e045d2ff1074f))
+* **history:** the history page loads 100 entries at a time and searches the whole history ([0a6762c](https://github.com/sunerpy/voltip/commit/0a6762c34f20e1d3e2b272da582e045d2ff1074f))
+* **home:** characters transcribed and corrected, speaking time and time saved, with the basis of the estimate ([0a6762c](https://github.com/sunerpy/voltip/commit/0a6762c34f20e1d3e2b272da582e045d2ff1074f))
+
 ## [0.0.8](https://github.com/sunerpy/voltip/compare/v0.0.7...v0.0.8) (2026-09-29)
 
 
