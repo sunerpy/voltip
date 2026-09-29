@@ -11,7 +11,7 @@
 [![codecov](https://codecov.io/gh/sunerpy/voltip/branch/main/graph/badge.svg)](https://codecov.io/gh/sunerpy/voltip)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](../../LICENSE)
 
-[功能](#功能) · [安装](#安装) · [快速开始](#快速开始) · [隐私](#隐私) · [从源码构建](#从源码构建) · [文档](#文档)
+[网站](https://voltip.firlab.app/zh/) · [功能](#功能) · [安装](#安装) · [快速开始](#快速开始) · [隐私](#隐私) · [从源码构建](#从源码构建) · [文档](#文档)
 
 [English](../../README.md) · [**简体中文**](./README.zh-CN.md)
 
@@ -125,6 +125,10 @@ VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1 make windows-x64   # 在 Linux 上交叉构建
 每个安装包都带 `THIRD-PARTY-NOTICES.txt`，列出它包含的 Rust crate、前端依赖、字体和原生库（sherpa-onnx、ONNX Runtime、transcribe.cpp / ggml、Vulkan loader）的许可证全文。它由 `scripts/release/third-party-notices.py` 生成，打包脚本为此需要 `cargo-about`（`cargo install cargo-about --locked --features cli`）。
 
 ## 文档
+
+使用指南见 [voltip.firlab.app](https://voltip.firlab.app/zh/)，提供中文和英文版本，页面写在 [docs/site](../site/README.md) 中。
+
+设计文档：
 
 - [docs/architecture.md](../architecture.md)：Rust 核心、两个 Tauri 壳，以及它们之间怎么通信。
 - [docs/dictation.md](../dictation.md)：听写流水线、引擎、模型、热键与文字插入。

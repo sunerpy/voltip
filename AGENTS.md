@@ -12,6 +12,8 @@ How to work in this repository, for coding agents and people alike. `CONTRIBUTIN
 - `packages/shared` (IPC contract, i18n, labels, mock backend), `packages/ui` (design system).
 - `docs/` — `architecture.md` first. `dictation.md` is the pipeline's contract; the `§N` references
   in code comments point into it.
+- `docs/site/` — the pages of voltip.firlab.app, English with Chinese under `zh/`; the site itself
+  lives in `sunerpy/firlab` (`voltip/`). `docs/site/README.md` has the writing rules.
 
 ## Commands
 
@@ -49,6 +51,9 @@ make help                        # everything else
 - Every user-visible string goes through the typed dictionaries in `packages/shared/src/i18n/`
   (`zh-CN.ts` defines the keys, `en.ts` must match). The UI never shows a feature as "coming soon":
   it works, or it is not there.
+- A change a user can see updates the matching `docs/site` pages, in both languages, in the same
+  pull request; a change to the interface's text or layout retakes the screenshots that show it
+  (`docs/site/README.md`).
 - The mock backend (`@voltip/shared/mock`) and the dev-only pages load under `import.meta.env.DEV`
   only; `scripts/check-web-bundle.sh` fails a release bundle that contains them.
 

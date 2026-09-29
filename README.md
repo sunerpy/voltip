@@ -11,7 +11,7 @@
 [![codecov](https://codecov.io/gh/sunerpy/voltip/branch/main/graph/badge.svg)](https://codecov.io/gh/sunerpy/voltip)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
 
-[Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Privacy](#privacy) · [Build from source](#build-from-source) · [Documentation](#documentation)
+[Website](https://voltip.firlab.app) · [Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Privacy](#privacy) · [Build from source](#build-from-source) · [Documentation](#documentation)
 
 [**English**](./README.md) · [简体中文](./docs/readme/README.zh-CN.md)
 
@@ -179,6 +179,9 @@ Vulkan loader) it includes. `scripts/release/third-party-notices.py` writes it; 
 need `cargo-about` for that (`cargo install cargo-about --locked --features cli`).
 
 ## Documentation
+
+The user guide is at [voltip.firlab.app](https://voltip.firlab.app), in English and
+[Chinese](https://voltip.firlab.app/zh/); its pages live in [docs/site](./docs/site/README.md).
 
 The design documents are in Chinese:
 

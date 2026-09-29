@@ -1,0 +1,84 @@
+# Builds voltip.firlab.app from a pull request's pages against firlab's public main, so a dead
+# link, an unknown component, a page missing in one language, a banned word or a malformed home
+# page fails before the merge rather than in publish-site.yml after it. Nothing is published and
+# no secret is read, so a fork's pull request runs it the same way. Advisory: not a required
+# status.
+name: Docs site
+
+on:
+  pull_request:
+    paths:
+      - "docs/site/**"
+      - "docs/architecture.md"
+      - "docs/dictation.md"
+      - "docs/frontend.md"
+      - "docs/pairing.md"
+      - "docs/protocol.md"
+      - "docs/threat-model.md"
+      - "docs/state-machines.md"
+      - "docs/feedback.md"
+      - ".github/workflows/docs-site.yml"
+      - ".github/workflows/publish-site.yml"
+
+concurrency:
+  group: docs-site-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Docs site · build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Voltip
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: voltip
+          persist-credentials: false
+
+      - name: Checkout firlab
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: sunerpy/firlab
+          path: firlab
+          persist-credentials: false
+
+      # The site installs on its own (its package.json pins pnpm); pnpm before setup-node so the
+      # pnpm cache resolves.
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: firlab/voltip/package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: firlab/.node-version
+          cache: pnpm
+          cache-dependency-path: firlab/voltip/pnpm-lock.yaml
+
+      - name: Sync the pages
+        run: ./firlab/voltip/scripts/sync-voltip-docs.sh "$GITHUB_WORKSPACE/voltip"
+
+      - name: Install the site's dependencies
+        working-directory: firlab/voltip
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: firlab/voltip
+        run: pnpm build
+
+      # A misconfigured locale emits only the root one, which still looks like a green build.
+      - name: Check both languages were emitted
+        working-directory: firlab/voltip
+        run: |
+          set -euo pipefail
+          test -f dist/index.html || { echo "::error::the English home page is missing"; exit 1; }
+          test -f dist/zh/index.html || { echo "::error::the Chinese home page is missing"; exit 1; }
+          en=$(find dist -name '*.html' -not -path 'dist/zh/*' | wc -l)
+          zh=$(find dist/zh -name '*.html' | wc -l)
+          echo "emitted ${en} English and ${zh} Chinese pages"
+          test "${zh}" -ge 20 || { echo "::error::only ${zh} Chinese pages were emitted"; exit 1; }
