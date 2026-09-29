@@ -30,7 +30,8 @@ import { ProviderCard } from "./ProviderCard";
  *  lists the recognition providers as expandable cards (the one in use is ringed and expanded
  *  first; 使用 switches, the body configures model, endpoint and key, 本机 holds the model library),
  *  识别设置 holds what applies whatever the provider (language, script, live preview, output mode,
- *  silence trimming, injection). Everything writes `settings_set_engines` / `provider_key_set`;
+ *  silence trimming; how the text is inserted moved to 设置 › 听写 on 2026-09-29). Everything writes
+ *  `settings_set_engines` / `provider_key_set`;
  *  everything shown comes from `state.engines`. */
 export function SpeechModelsPane() {
   const { t } = useI18n();
@@ -184,9 +185,6 @@ function RecognitionOptions() {
   const { t } = useI18n();
   const state = useUiState();
   const settings = state.settings.engines;
-  const setEngines = (patch: Partial<typeof settings>) => {
-    void backend.invoke("settings_set_engines", { engines: { ...settings, ...patch } });
-  };
   return (
     <>
       <SettingsRows>
@@ -205,20 +203,6 @@ function RecognitionOptions() {
             className="w-44"
             // Language names are endonyms (中文 · zh, 日本語 · ja) in every locale.
             data-endonyms=""
-          />
-        </StatusRow>
-        <StatusRow label={t("engines.injectLabel")} help={t("engines.injectHelp")}>
-          <Segmented
-            size="sm"
-            label={t("engines.injectLabel")}
-            value={settings.inject}
-            onChange={(inject) => {
-              setEngines({ inject });
-            }}
-            options={[
-              { value: "paste", label: t("engines.inject.paste") },
-              { value: "clipboard_only", label: t("engines.inject.clipboard") },
-            ]}
           />
         </StatusRow>
       </SettingsRows>

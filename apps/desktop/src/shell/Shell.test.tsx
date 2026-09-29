@@ -60,6 +60,7 @@ describe("Shell", () => {
     expect(groups.map((g) => g.textContent)).toEqual([
       "通用",
       "快捷键",
+      "听写",
       "麦克风",
       "场景",
       "隐私与历史",

@@ -291,6 +291,32 @@ describe("Settings · 对话框", () => {
   });
 });
 
+describe("Settings · 听写", () => {
+  it("the insert setting writes settings_set_engines { inject } with the rest of the block unchanged", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/dictation" });
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    expect(within(dialog).getByRole("tab", { name: /听写/, selected: true })).toBeInTheDocument();
+    const pane = within(dialog).getByTestId("dictation-pane");
+    expect(within(pane).getByRole("radio", { name: "粘贴到光标处" })).toBeChecked();
+    await user.click(within(pane).getByRole("radio", { name: "仅复制到剪贴板" }));
+    await waitFor(() => {
+      expect(backend.peek().settings.engines).toEqual({
+        ...defaultEngineSettings(),
+        inject: "clipboard_only",
+      });
+    });
+    expect(within(pane).getByRole("radio", { name: "仅复制到剪贴板" })).toBeChecked();
+    // It sits right after 快捷键 in the group list.
+    const tabs = within(dialog)
+      .getAllByRole("tab")
+      .map((tab) => tab.textContent ?? "");
+    expect(tabs.findIndex((name) => name.includes("听写"))).toBe(
+      tabs.findIndex((name) => name.includes("快捷键")) + 1,
+    );
+  });
+});
+
 describe("Settings · 热键", () => {
   it("regression: recording a chord saves it through settings_set_hotkey and shows the shell's registration; single keys are refused; Esc cancels; defaults restore", async () => {
     const user = userEvent.setup();

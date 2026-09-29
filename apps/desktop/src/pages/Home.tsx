@@ -472,9 +472,19 @@ export function Home() {
             <Readout
               label={t("home.engine.inject")}
               value={
-                engines.inject === "paste"
-                  ? t("home.engine.injectPaste")
-                  : t("home.engine.injectClipboard")
+                // The one place that sets it is 设置 › 听写 (plan 1.5).
+                <button
+                  type="button"
+                  className="text-accent-text hover:underline"
+                  title={t("home.engine.injectChange")}
+                  data-testid="home-inject-link"
+                  onClick={() => {
+                    navigate({ name: "settings", section: "dictation" });
+                  }}>
+                  {engines.inject === "paste"
+                    ? t("home.engine.injectPaste")
+                    : t("home.engine.injectClipboard")}
+                </button>
               }
               size="sm"
             />

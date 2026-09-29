@@ -438,6 +438,7 @@ export const zhCN = {
       inject: "插入方式",
       injectPaste: "粘贴到光标处",
       injectClipboard: "仅复制到剪贴板",
+      injectChange: "在「设置 › 听写」中更改",
       refineOn: "AI 润色 开 · {model}",
       refineOff: "AI 润色 关",
       privacyAudio: "音频发送到{target}",
@@ -1406,11 +1407,16 @@ export const zhCN = {
     group: {
       general: "通用",
       hotkey: "快捷键",
+      dictation: "听写",
       microphone: "麦克风",
       scene: "场景",
       privacy: "隐私与历史",
       appearance: "外观",
       about: "关于",
+    },
+    dictation: {
+      title: "听写",
+      lede: "设置识别结果如何插入正在使用的应用。",
     },
     microphone: {
       title: "麦克风",

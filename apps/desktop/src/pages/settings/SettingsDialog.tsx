@@ -7,6 +7,7 @@ import { settingsReadouts } from "../../shell/page-meta";
 import { Appearance } from "./Appearance";
 import { AboutPane } from "./AboutPane";
 import { General } from "./General";
+import { Dictation } from "./Dictation";
 import { Hotkey } from "./Hotkey";
 import { Microphone } from "./Microphone";
 import { PrivacyPane } from "./PrivacyPane";
@@ -160,6 +161,7 @@ export function SettingsDialog({ section }: { section: SettingsSection }) {
               {section === "general" && <General />}
               {section === "appearance" && <Appearance />}
               {section === "hotkey" && <Hotkey />}
+              {section === "dictation" && <Dictation />}
               {section === "microphone" && <Microphone />}
               {section === "scene" && <ScenesPane />}
               {section === "privacy" && <PrivacyPane />}

@@ -448,6 +448,7 @@ export const en: Messages = {
       inject: "Insert method",
       injectPaste: "Paste at the cursor",
       injectClipboard: "Copy to clipboard only",
+      injectChange: "Change it in Settings › Dictation",
       refineOn: "AI polish on · {model}",
       refineOff: "AI polish off",
       privacyAudio: "Audio goes to {target}",
@@ -1460,11 +1461,16 @@ export const en: Messages = {
     group: {
       general: "General",
       hotkey: "Shortcuts",
+      dictation: "Dictation",
       microphone: "Microphone",
       scene: "Scenes",
       privacy: "Privacy and history",
       appearance: "Appearance",
       about: "About",
+    },
+    dictation: {
+      title: "Dictation",
+      lede: "Sets how the recognised text is inserted into the app you are using.",
     },
     microphone: {
       title: "Microphone",

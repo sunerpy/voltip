@@ -11,6 +11,7 @@ import {
 export type SettingsSection =
   | "general"
   | "hotkey"
+  | "dictation"
   | "microphone"
   | "scene"
   | "privacy"
@@ -19,6 +20,7 @@ export type SettingsSection =
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   "general",
   "hotkey",
+  "dictation",
   "microphone",
   "scene",
   "privacy",

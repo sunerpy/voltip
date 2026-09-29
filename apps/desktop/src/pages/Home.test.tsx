@@ -75,6 +75,17 @@ describe("Home page", () => {
     expect(await screen.findByTestId("page-history")).toBeInTheDocument();
   });
 
+  it("the engine card's insert readout opens Settings › Dictation", async () => {
+    const user = userEvent.setup();
+    renderApp({ mock: liveClock() });
+    const link = await screen.findByTestId("home-inject-link");
+    expect(link).toHaveTextContent("粘贴到光标处");
+    expect(link).toHaveAttribute("title", "在「设置 › 听写」中更改");
+    await user.click(link);
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    expect(within(dialog).getByRole("tab", { name: /听写/, selected: true })).toBeInTheDocument();
+  });
+
   it("a paste refused while a take runs says so, and a voice edit's row hands on its rewrite", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn(() => Promise.resolve());

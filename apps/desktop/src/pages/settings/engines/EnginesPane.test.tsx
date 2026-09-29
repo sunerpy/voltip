@@ -442,7 +442,17 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(screen.getByTestId("polish-toggle")).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("识别设置 writes the language and the injection mode with the rest of the block unchanged", async () => {
+  it("regression: the insert setting lives only in Settings › Dictation, not among the recognition options", async () => {
+    const user = userEvent.setup();
+    renderApp({ path: "/speech" });
+    await openTab(user, "识别设置");
+    await screen.findByLabelText("识别语言");
+    expect(screen.queryByText("插入方式")).toBeNull();
+    expect(screen.queryByRole("radio", { name: "仅复制到剪贴板" })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "粘贴到光标处" })).toBeNull();
+  });
+
+  it("识别设置 writes the language with the rest of the block unchanged", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/speech" });
     await openTab(user, "识别设置");
@@ -460,11 +470,6 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     await waitFor(() => {
       expect(backend.peek().settings.engines).toEqual(defaultEngineSettings());
     });
-    await user.click(screen.getByRole("radio", { name: "仅复制到剪贴板" }));
-    await waitFor(() => {
-      expect(backend.peek().settings.engines.inject).toBe("clipboard_only");
-    });
-    expect(screen.getByRole("radio", { name: "仅复制到剪贴板" })).toBeChecked();
   });
 
   it("regression: on-device readiness follows the library — the card and the title bar agree", async () => {
