@@ -133,6 +133,10 @@ jobs:
       # The release's menu bar item on this Mac's desktop: the V, the menu, and every entry
       # (scripts/smoke-tray-macos.sh).
       - name: The menu bar item shows the mark, and every menu entry works
+        env:
+          # The title bar keeps its content 12 pt clear of the traffic lights from 0.0.6 on;
+          # releases before it fail here by design.
+          VOLTIP_CHECK_CHROME: "1"
         run: scripts/smoke-tray-macos.sh /Applications/Voltip.app smoke-tray-macos
 
       - name: Keep the menu bar evidence
