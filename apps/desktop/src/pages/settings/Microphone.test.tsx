@@ -78,7 +78,7 @@ describe("Settings · 麦克风", () => {
     const menu = within(pane).getByRole("combobox", { name: "输入设备" });
     expect(menu).toHaveValue("Blue Yeti");
     expect(within(menu).getByRole("option", { name: "Blue Yeti · 未连接" })).toBeInTheDocument();
-    expect(pane).toHaveTextContent("所选的麦克风没有连接，听写会先用系统默认的输入设备");
+    expect(pane).toHaveTextContent("所选麦克风未连接，听写会先用系统默认输入");
   });
 
   it("an empty device id is refused like the core does and the choice stays", async () => {
@@ -89,6 +89,6 @@ describe("Settings · 麦克风", () => {
       await backend.invoke("settings_set_microphone", { device: " " });
     });
     expect(backend.peek().settings.microphone).toBe("Realtek(R) Audio");
-    expect(await screen.findByText(/出错了 · a device id of 1–1024 bytes/)).toBeInTheDocument();
+    expect(await screen.findByText(/出错了 · 麦克风标识须为 1–1024 字节/)).toBeInTheDocument();
   });
 });

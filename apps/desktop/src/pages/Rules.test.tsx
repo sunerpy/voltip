@@ -115,7 +115,7 @@ describe("Rules page", () => {
       ["2", "PR 编号", "正则", "\\bpr (\\d+)Aa", "PR #$1", "1"],
       ["3", "filler", "字面", "嗯，", "（删除）", "—"],
     ]);
-    expect(screen.getByText("3 / 200 条 · 按这个顺序执行")).toBeInTheDocument();
+    expect(screen.getByText("3 / 200 条 · 按此顺序执行")).toBeInTheDocument();
     for (const name of ["导入 TOML", "导出 TOML"])
       expect(screen.getByRole("button", { name })).toBeEnabled();
     expect(screen.queryByTestId("sample-footnote")).toBeNull();
@@ -219,10 +219,10 @@ describe("Rules page", () => {
     await screen.findByRole("table", { name: "规则" });
     expect(screen.getByText("运行后在这里看到前后差异")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "用最近一次听写" }));
-    expect(screen.getByLabelText("识别出的原文")).toHaveValue("给他push 然后看 pr 7");
-    await user.clear(screen.getByLabelText("识别出的原文"));
+    expect(screen.getByLabelText("识别原文")).toHaveValue("给他push 然后看 pr 7");
+    await user.clear(screen.getByLabelText("识别原文"));
     await user.type(
-      screen.getByLabelText("识别出的原文"),
+      screen.getByLabelText("识别原文"),
       "嗯，给它push 看 PR 12{Control>}{Enter}{/Control}",
     );
     expect(await screen.findByTestId("dry-run-corrected")).toHaveTextContent(
@@ -257,8 +257,8 @@ describe("Rules page", () => {
       expect(screen.getByTestId("dry-run-after")).toHaveTextContent("嗯，git push 看 PR #12");
     });
     // Nothing to change: the summary says so.
-    await user.clear(screen.getByLabelText("识别出的原文"));
-    await user.type(screen.getByLabelText("识别出的原文"), "无关的句子");
+    await user.clear(screen.getByLabelText("识别原文"));
+    await user.type(screen.getByLabelText("识别原文"), "无关的句子");
     await user.click(screen.getByRole("button", { name: /^运行/ }));
     expect(await screen.findByText("没有规则命中 · 文本未改变")).toBeInTheDocument();
   });
@@ -323,7 +323,7 @@ describe("Rules page", () => {
     const backend = new MockBackend({ now: () => NOW, history: [] });
     vi.spyOn(backend, "rulesExport").mockRejectedValueOnce("rules: 无法导出 TOML");
     renderApp({ path: "/rules", backend });
-    expect(await screen.findByText("还没有规则")).toBeInTheDocument();
+    expect(await screen.findByText("暂无规则")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "用最近一次听写" })).toBeDisabled();
     await user.keyboard("{Control>}n{/Control}");
     expect(screen.getByTestId("rule-editor")).toBeInTheDocument();

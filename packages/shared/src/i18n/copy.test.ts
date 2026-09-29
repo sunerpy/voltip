@@ -1,8 +1,9 @@
-// Plain-language guard (docs/frontend.md §8「界面文案」): no leaf of either dictionary uses the
-// internal words the interface used to leak (「核心」「热键后端」「边沿」「注入」「LLM」…). Two kinds of
-// keys are allowed to: the overlay spec sheet's (`/overlay`, loaded in dev builds only; this test
-// checks that no release module reads them) and the technical-details lines, which alone may name
-// the cryptography.
+// Interface copy guard (docs/frontend.md §8「界面文案」): no leaf of either dictionary uses the
+// internal words the interface used to leak (「核心」「热键后端」「边沿」「注入」「LLM」…), and none
+// slips into colloquial wording (「还没」「没能」, "just"): the register is standard, readable product
+// text. Two kinds of keys are exempt: the overlay spec sheet's (`/overlay`, loaded in dev builds
+// only; this test checks that no release module reads them) and the technical-details lines, which
+// alone may name the cryptography.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { LOCALES, MESSAGES, type MessageTree, leafPaths, lookup } from "./index";
@@ -49,6 +50,20 @@ const EN_JARGON: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bhotkeys?\b/i, "shortcut"],
   [/\bchords?\b/i, "shortcut / key combination"],
   [/\.json\b/, "on this computer"],
+];
+
+/** Colloquial wording the standard register avoids (user decision 2026-09-29: 规范、易读，不用
+ *  大白话), with the written form to use instead. */
+const ZH_COLLOQUIAL: ReadonlyArray<readonly [RegExp, string]> = [
+  [/还没/, "尚未 / 未"],
+  [/没能/, "未能 / 无法"],
+  [/免得/, "以免"],
+  [/搭的|咋|啥/, "（书面说法）"],
+];
+const EN_COLLOQUIAL: ReadonlyArray<readonly [RegExp, string]> = [
+  // "Just now" is the standard relative-time label.
+  [/\bjust\b(?! now)/i, "(cut it)"],
+  [/\bgonna\b|\bstuff\b/i, "(written form)"],
 ];
 
 /** Cipher and protocol names: only in a technical-details line. */
@@ -114,11 +129,12 @@ function releaseSources(): string[] {
 }
 
 describe("interface copy", () => {
-  it("regression: user-facing strings use plain words, not internal jargon", () => {
+  it("regression: user-facing strings use standard, readable words, not internal jargon or colloquial speech", () => {
     const offenders: string[] = [];
     for (const locale of LOCALES) {
       const tree: MessageTree = MESSAGES[locale];
-      const words = locale === "zh-CN" ? ZH_JARGON : EN_JARGON;
+      const words =
+        locale === "zh-CN" ? [...ZH_JARGON, ...ZH_COLLOQUIAL] : [...EN_JARGON, ...EN_COLLOQUIAL];
       for (const path of leafPaths(tree)) {
         if (specSheetOnly(path)) continue;
         const text = shownWords(leafText(tree, path));

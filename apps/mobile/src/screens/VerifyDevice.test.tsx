@@ -26,11 +26,11 @@ describe("Verify screen (docs/pairing.md)", () => {
     act(() => {
       backend.publish({ type: "pairing", ...idleSnapshot(), state: { state: "rejected" } });
     });
-    expect(screen.getByText("配对被拒绝了，这次配对已作废。")).toBeInTheDocument();
+    expect(screen.getByText("配对已被拒绝，本次配对已取消。")).toBeInTheDocument();
     act(() => {
       backend.publish({ type: "pairing", ...idleSnapshot(), state: { state: "expired" } });
     });
-    expect(screen.getByText("配对失败，这次配对已作废。")).toBeInTheDocument();
+    expect(screen.getByText("配对失败，本次配对已取消。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "重新配对" }));
     expect(invoke).toHaveBeenCalledWith("pairing_reset");
     expect(await screen.findByRole("heading", { name: "配对电脑" })).toBeInTheDocument();

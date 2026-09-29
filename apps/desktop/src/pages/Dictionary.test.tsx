@@ -236,7 +236,7 @@ describe("Dictionary page", () => {
     renderApp({ path: "/dictionary", backend: seeded([rule]) });
     await screen.findByRole("table", { name: "词条表" });
     await user.click(screen.getByRole("button", { name: "用最近一次听写" }));
-    expect(screen.getByLabelText("识别出的文字")).toHaveValue("用沃提普写一个谷歌IDR");
+    expect(screen.getByLabelText("识别文本")).toHaveValue("用沃提普写一个谷歌IDR");
     expect(await screen.findByTestId("corrected")).toHaveTextContent("用Voltip写一个good idea");
     expect(screen.getByTestId("dictionary-test-summary")).toHaveTextContent("命中 2 处");
     const hits = screen.getByRole("list", { name: "命中列表" });
@@ -247,7 +247,7 @@ describe("Dictionary page", () => {
     ).toEqual(["Voltip×1", "good idea×1"]);
     expect(screen.getByTestId("corrected-rules")).toHaveTextContent("用Voltip写一个好主意");
     await user.click(screen.getByRole("button", { name: "清空" }));
-    await user.type(screen.getByLabelText("识别出的文字"), "没有要改的");
+    await user.type(screen.getByLabelText("识别文本"), "没有要改的");
     expect(await screen.findByText("没有命中任何曾听成。")).toBeInTheDocument();
     expect(screen.queryByTestId("corrected-rules")).toBeNull();
   });
@@ -255,7 +255,7 @@ describe("Dictionary page", () => {
   it("regression: an empty dictionary shows its empty state and Ctrl N opens a new entry", async () => {
     const user = userEvent.setup();
     renderApp({ path: "/dictionary", mock: { history: [] } });
-    expect(await screen.findByText("还没有词条。")).toBeInTheDocument();
+    expect(await screen.findByText("暂无词条。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "用最近一次听写" })).toBeDisabled();
     expect(screen.queryByTestId("dictionary-hits")).toBeNull();
     await user.keyboard("{Control>}n{/Control}");
@@ -277,7 +277,7 @@ describe("Dictionary page", () => {
       .mockRejectedValue("rules: 试写文本最多 64 KiB");
     renderApp({ path: "/dictionary", backend });
     await screen.findByRole("table", { name: "词条表" });
-    await user.type(screen.getByLabelText("识别出的文字"), "x");
+    await user.type(screen.getByLabelText("识别文本"), "x");
     expect(await screen.findByTestId("dictionary-test-error")).toHaveTextContent(
       "试运行失败：试写文本最多 64 KiB",
     );
@@ -288,6 +288,6 @@ describe("Dictionary page", () => {
     act(() => {
       backend.publish({ type: "dictionary", entries: [] });
     });
-    expect(await screen.findByText("还没有词条。")).toBeInTheDocument();
+    expect(await screen.findByText("暂无词条。")).toBeInTheDocument();
   });
 });

@@ -279,7 +279,7 @@ async fn build_clients_local_mode_selects_the_model_and_needs_no_endpoint() {
     assert!(matches!(t.transcribe(&wav, None, &[]).await.unwrap_err(), DictationError::Asr(m) if m.contains("均衡")));
     // The streaming port is wired over the same library: nothing installed → the documented refusal.
     let streaming = ports.dictation.streaming.as_ref().expect("the desktop wires the streaming preview");
-    assert_eq!(streaming.open(None).err(), Some(DictationError::Asr("流式模型未下载：实时预览".into())));
+    assert_eq!(streaming.open(None).err(), Some(DictationError::Asr("实时识别模型未下载：实时预览".into())));
     streaming.warm();
 }
 

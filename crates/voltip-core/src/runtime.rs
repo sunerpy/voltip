@@ -858,7 +858,7 @@ impl Runtime {
     }
 
     async fn send_on(&self, id: LinkId, frame: RelayFrame) -> Result<(), CoreError> {
-        let Some(link) = self.link(id) else { return Err(CoreError::Invalid("link is gone".into())) };
+        let Some(link) = self.link(id) else { return Err(CoreError::Invalid("连接已断开".into())) };
         Ok(link.send(frame).await?)
     }
 
@@ -1196,7 +1196,7 @@ impl Runtime {
             return Err(CoreError::Invalid(format!("asr_provider: {} 不提供语音识别", engines.asr_provider.as_str())));
         }
         if !engines.llm_provider.spec().offers(ServiceKind::Llm) {
-            return Err(CoreError::Invalid(format!("llm_provider: {} 不提供文本润色", engines.llm_provider.as_str())));
+            return Err(CoreError::Invalid(format!("llm_provider: {} 不提供 AI 润色", engines.llm_provider.as_str())));
         }
         for (provider, choice) in &engines.providers {
             for kind in [ServiceKind::Asr, ServiceKind::Llm] {
@@ -1384,7 +1384,7 @@ impl Runtime {
 
     fn set_activation(&mut self, activation: Activation, hold_threshold_ms: u32, extra_recording_ms: u32) -> Result<(), CoreError> {
         if hold_threshold_ms > MAX_ACTIVATION_MS || extra_recording_ms > MAX_ACTIVATION_MS {
-            return Err(CoreError::Invalid(format!("activation: hold_threshold_ms / extra_recording_ms must be ≤ {MAX_ACTIVATION_MS}")));
+            return Err(CoreError::Invalid(format!("activation: 时长不能超过 {MAX_ACTIVATION_MS}")));
         }
         self.settings.activation = activation;
         self.settings.hold_threshold_ms = hold_threshold_ms;
@@ -1859,14 +1859,14 @@ impl Runtime {
     async fn start_pairing(&mut self) -> Result<(), CoreError> {
         self.clear_finished_pairing().await?;
         if !matches!(self.pairing, Pairing::None) {
-            return Err(CoreError::Invalid("pairing already in progress; reset first".into()));
+            return Err(CoreError::Invalid("pairing: 已有配对正在进行，请先取消".into()));
         }
         if self.relay_connected() {
             self.pairing_link = Some(LinkId::Relay);
             return self.begin_initiator().await;
         }
         if self.host.is_none() {
-            return Err(CoreError::Invalid("no relay is connected and no LAN host is running".into()));
+            return Err(CoreError::Invalid("pairing: 未连接中继，局域网服务也未开启".into()));
         }
         self.pairing_link = Some(LinkId::Host);
         if self.link_connected(LinkId::Host) {
@@ -1896,7 +1896,7 @@ impl Runtime {
     async fn join(&mut self, spec: JoinSpec) -> Result<(), CoreError> {
         self.clear_finished_pairing().await?;
         if !matches!(self.pairing, Pairing::None) {
-            return Err(CoreError::Invalid("pairing already in progress; reset first".into()));
+            return Err(CoreError::Invalid("pairing: 已有配对正在进行，请先取消".into()));
         }
         let method = match spec {
             JoinSpec::Code(text) => JoinMethod::Code(PairCode::parse_user_input(&text)?),
@@ -1916,10 +1916,10 @@ impl Runtime {
         }
         // No relay: a ticket may carry LAN hints; a code alone cannot be used.
         if matches!(method, JoinMethod::Code(_)) {
-            return Err(CoreError::Invalid("a pairing code needs a relay; scan the QR code instead".into()));
+            return Err(CoreError::Invalid("pairing: 使用验证码配对需要连接中继，请改用扫码".into()));
         }
         let Some(hint) = ticket_hints.first().cloned() else {
-            return Err(CoreError::Invalid("this ticket needs a relay and none is configured".into()));
+            return Err(CoreError::Invalid("pairing: 此配对信息需要经过中继，但未配置中继".into()));
         };
         let link = self.dial(&hint, None)?;
         self.pairing_link = Some(link);
@@ -1962,7 +1962,7 @@ impl Runtime {
     async fn step_pairing(&mut self, event: Event) -> Result<(), CoreError> {
         let now = Self::now();
         let actions = match &mut self.pairing {
-            Pairing::None => return Err(CoreError::Invalid("no pairing in progress".into())),
+            Pairing::None => return Err(CoreError::Invalid("pairing: 当前没有进行中的配对".into())),
             Pairing::Initiator(i) => i.step(event, now)?,
             Pairing::Responder(r) => r.step(event, now)?,
         };
@@ -2022,7 +2022,7 @@ impl Runtime {
     }
 
     async fn pairing_link_send(&self, frame: RelayFrame) -> Result<(), CoreError> {
-        let Some(link) = self.pairing_link else { return Err(CoreError::Invalid("no link for pairing".into())) };
+        let Some(link) = self.pairing_link else { return Err(CoreError::Invalid("pairing: 配对连接已断开".into())) };
         self.send_on(link, frame).await
     }
 
@@ -2032,7 +2032,7 @@ impl Runtime {
                 Action::SendRelay(frame) => self.pairing_link_send(frame).await,
                 Action::SendPeer(bytes) => match self.pairing_session_id() {
                     Some(sid) => self.pairing_link_send(RelayFrame::forward(sid, bytes)).await,
-                    None => Err(CoreError::Invalid("no pairing session for peer bytes".into())),
+                    None => Err(CoreError::Invalid("pairing: 当前没有进行中的配对".into())),
                 },
                 Action::Emit(snapshot) => {
                     if snapshot.session_id.is_some() {
@@ -2143,7 +2143,7 @@ impl Runtime {
         if let Some(edit) = self.settings.edit_hotkey.as_deref()
             && crate::Hotkey::same_chord(&hotkey.display(), edit)
         {
-            return Err(CoreError::Invalid(format!("hotkey: {} 已用作编辑选中文本的热键", hotkey.display())));
+            return Err(CoreError::Invalid(format!("hotkey: {} 已用作「编辑选中文本」的快捷键", hotkey.display())));
         }
         self.settings.hotkey = hotkey.display();
         self.save_settings()
@@ -2157,7 +2157,7 @@ impl Runtime {
             Some(text) => {
                 let hotkey = crate::Hotkey::parse(text)?;
                 if crate::Hotkey::same_chord(&hotkey.display(), &self.settings.hotkey) {
-                    return Err(CoreError::Invalid(format!("edit_hotkey: {} 已用作听写热键", hotkey.display())));
+                    return Err(CoreError::Invalid(format!("edit_hotkey: {} 已用作听写快捷键", hotkey.display())));
                 }
                 Some(hotkey.display())
             }
@@ -2180,10 +2180,7 @@ impl Runtime {
         if let Some(id) = &device
             && (id.trim().is_empty() || id.len() > crate::settings::MAX_MICROPHONE_ID_BYTES)
         {
-            return Err(CoreError::Invalid(format!(
-                "microphone: a device id of 1–{} bytes, or none for the default",
-                crate::settings::MAX_MICROPHONE_ID_BYTES
-            )));
+            return Err(CoreError::Invalid(format!("microphone: 麦克风标识须为 1–{} 字节，留空则使用系统默认输入", crate::settings::MAX_MICROPHONE_ID_BYTES)));
         }
         self.settings.microphone = device;
         self.dictation.set_microphone(self.settings.microphone.clone());

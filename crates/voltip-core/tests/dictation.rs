@@ -111,7 +111,7 @@ async fn pipeline_history_secrets_and_engines_through_the_core() {
     // Stop with nothing running is reported, not ignored.
     node.handle.send(CoreCommand::DictationStop).await.unwrap();
     let err = wait(&mut node, |e| if let CoreEvent::Error(m) = e { Some(m.clone()) } else { None }).await;
-    assert!(err.contains("no dictation"), "{err}");
+    assert!(err.contains("没有进行中的听写"), "{err}");
 
     // Start → Listening (levels flow), Stop → Processing → Done (raw text: no refine key yet).
     let mut levels = node.handle.levels();

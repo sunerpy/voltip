@@ -313,7 +313,7 @@ describe("Shell", () => {
       expect(within(palette).queryByText(/第二阶段|尚未接入/)).toBeNull();
       await user.keyboard("{Enter}");
       const confirm = screen.getByRole("dialog", { name: /删除全部 \d+ 条历史记录/ });
-      expect(confirm).toHaveTextContent("全部历史记录都会删除");
+      expect(confirm).toHaveTextContent("全部历史记录将被删除");
       await user.click(within(confirm).getByRole("button", { name: "删除全部" }));
       await waitFor(() => {
         expect(backend.peek().history).toEqual([]);
@@ -402,13 +402,13 @@ describe("Shell", () => {
     expect(toggle.querySelector("svg[data-icon='wand']")).toBeInTheDocument();
     expect(toggle.textContent).toBe("AI 润色");
     expect(toggle).toHaveAttribute("aria-pressed", "true");
-    expect(toggle).toHaveAttribute("title", "AI 润色已打开 · 点一下关闭");
+    expect(toggle).toHaveAttribute("title", "AI 润色 · 已开启 · 点击关闭");
     await user.click(toggle);
     await waitFor(() => {
       expect(backend.peek().settings.engines.refine_enabled).toBe(false);
     });
     expect(toggle).toHaveAttribute("aria-pressed", "false");
-    expect(toggle).toHaveAttribute("title", "AI 润色已关闭 · 点一下打开");
+    expect(toggle).toHaveAttribute("title", "AI 润色 · 已关闭 · 点击开启");
     expect(toggle.querySelector("[data-tone='idle']")).toBeInTheDocument();
     expect(backend.peek().engines.refine_enabled).toBe(false);
     await user.click(toggle);

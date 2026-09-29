@@ -170,7 +170,7 @@ fn pairing_start_leaves_idle_and_cancel_reset_returns_to_it() {
         // Without a relay a bare code cannot be joined: the command is accepted, the core reports.
         assert_eq!(invoke(webview, "pairing_join_code", json!({ "code": "483 921" })), Ok(Value::Null));
         let err = wait_event(rx, "error", |e| e["type"] == "error");
-        assert!(err["message"].as_str().unwrap().contains("relay"), "{err}");
+        assert!(err["message"].as_str().unwrap().contains("中继"), "{err}");
         // A ticket is accepted by the IPC layer too; a malformed one is reported by the core.
         assert_eq!(invoke(webview, "pairing_join_ticket", json!({ "uri": "voltip://pair?v=1&t=AA" })), Ok(Value::Null));
         wait_event(rx, "error (bad ticket)", |e| e["type"] == "error" && e["message"] != err["message"]);
@@ -242,7 +242,7 @@ fn lan_discovery_commands_reach_the_core() {
         assert!(!wait_state(webview, |s| !s.settings.lan_discovery).settings.lan_discovery);
         assert!(invoke(webview, "pairing_join_nearby", json!({})).is_err(), "fingerprint is required");
         assert_eq!(invoke(webview, "pairing_join_nearby", json!({ "fingerprint": "0000000000000000" })), Ok(Value::Null));
-        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("附近没有这台设备")));
+        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("附近没有找到此设备")));
     });
 }
 
@@ -333,7 +333,7 @@ fn settings_set_edit_hotkey_persists_validates_and_switches_off() {
         assert_eq!(invoke(webview, "settings_set_edit_hotkey", json!({ "hotkey": "control + alt + shift + e" })), Ok(Value::Null));
         wait_state(webview, |s| s.settings.edit_hotkey.as_deref() == Some("Ctrl+Alt+Shift+E"));
         wait_event(rx, "settings", |e| e["type"] == "settings" && e["edit_hotkey"] == "Ctrl+Alt+Shift+E");
-        for (bad, needle) in [("E", "modifier"), ("Ctrl+Alt+Space", "已用作听写热键")] {
+        for (bad, needle) in [("E", "至少需要一个修饰键"), ("Ctrl+Alt+Space", "已用作听写快捷键")] {
             assert_eq!(invoke(webview, "settings_set_edit_hotkey", json!({ "hotkey": bad })), Ok(Value::Null), "{bad}");
             let ev = wait_event(rx, "error", |e| e["type"] == "error");
             assert!(ev["message"].as_str().is_some_and(|m| m.contains(needle)), "{bad}: {ev}");
@@ -342,7 +342,7 @@ fn settings_set_edit_hotkey_persists_validates_and_switches_off() {
         // The dictation hotkey may not take the edit chord either.
         assert_eq!(invoke(webview, "settings_set_hotkey", json!({ "hotkey": "Ctrl+Shift+Alt+E" })), Ok(Value::Null));
         let ev = wait_event(rx, "error (dictation = edit)", |e| e["type"] == "error");
-        assert!(ev["message"].as_str().is_some_and(|m| m.contains("已用作编辑选中文本的热键")), "{ev}");
+        assert!(ev["message"].as_str().is_some_and(|m| m.contains("已用作「编辑选中文本」的快捷键")), "{ev}");
         assert_eq!(invoke(webview, "settings_set_edit_hotkey", json!({ "hotkey": null })), Ok(Value::Null));
         let st = wait_state(webview, |s| s.settings.edit_hotkey.is_none());
         assert_eq!(st.settings.hotkey, voltip_core::DEFAULT_HOTKEY, "the refused dictation change did not land");
@@ -498,7 +498,7 @@ fn dictation_start_stop_runs_the_pipeline_and_records_history() {
         assert!(st.history.is_empty());
         // Stop with nothing running is refused by the core, as an `error` event, not a panic.
         assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
-        wait_event(rx, "error (idle stop)", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("no dictation")));
+        wait_event(rx, "error (idle stop)", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("没有进行中的听写")));
         assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
         let st = wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { .. }));
         assert_eq!(st.dictation.session, 1);

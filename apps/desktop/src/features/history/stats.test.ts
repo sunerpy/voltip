@@ -153,7 +153,7 @@ describe("history stats", () => {
     expect(groupByDay([], NOW, "en")).toEqual([]);
     expect(historyFilterLabel("starred")).toBe("已收藏");
     expect(historyFilterLabel("starred", createTranslator("en").t)).toBe("Starred");
-    expect(HISTORY_FILTER_LABELS.failed).toBe("没有送出");
+    expect(HISTORY_FILTER_LABELS.failed).toBe("未插入");
     expect(recentTimeLabel(NOW - HOUR, NOW)).toBe("11:00:00");
     expect(recentTimeLabel(NOW - DAY, NOW)).toBe("昨天 12:00");
     expect(recentTimeLabel(NOW - 2 * DAY, NOW)).toBe("9-22 12:00");

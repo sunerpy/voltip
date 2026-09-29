@@ -72,13 +72,13 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
     await advance(MOCK_MIC_READY_MS);
     expect(within(card).getByTestId("phone-mic-state")).toHaveTextContent(/正在录音 · 00:0\d/);
     // docs/dictation.md §20.1: the computer decodes Opus, so the rest of the take is compressed.
-    expect(within(card).getByTestId("phone-mic-codec")).toHaveTextContent("用 Opus 压缩后传输");
+    expect(within(card).getByTestId("phone-mic-codec")).toHaveTextContent("Opus 压缩传输");
     fireEvent.pointerUp(hold, { pointerId: 1, clientX: 10, clientY: 10 });
     await advance(0);
     expect(within(card).getByTestId("phone-mic-state")).toHaveTextContent("电脑正在识别…");
     await advance(MOCK_ASR_MS + MOCK_REFINE_MS);
     expect(within(card).getByTestId("phone-mic-state")).toHaveTextContent(
-      `已送到电脑：${MOCK_DICTATION_TEXT}`,
+      `已插入电脑：${MOCK_DICTATION_TEXT}`,
     );
     expect(within(card).queryByTestId("phone-mic-codec")).toBeNull();
     expect(backend.peek().phone_take?.device).toBe(desktops("online")[0]?.device.public_key);
@@ -110,11 +110,11 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
     fireEvent.click(within(check).getByRole("button", { name: "开始自检" }));
     await advance(MOCK_CONNECTIVITY_MS);
     expect(within(check).getByTestId("connectivity-lan")).toHaveTextContent(
-      "这台电脑在局域网上等待连接 · 192.168.1.52:47831",
+      "本机局域网服务 · 192.168.1.52:47831",
     );
     const peers = within(check).getAllByTestId("connectivity-peer");
     expect(peers).toHaveLength(1);
-    expect(peers[0]).toHaveTextContent("MacBook Pro · 直连 · 加密连接来回 6 ms");
+    expect(peers[0]).toHaveTextContent("MacBook Pro · 直连 · 加密往返 6 ms");
   });
 
   it("slide off the button before letting go cancels; a quick tap still stops what it started", async () => {

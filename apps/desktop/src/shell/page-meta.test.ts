@@ -65,7 +65,7 @@ describe("pageMeta", () => {
     });
     expect(
       engineReadout({ ...state.engines, asr_ready: false, asr_issue: "key_missing" }),
-    ).toMatchObject({ lamp: "danger", title: "内置服务 · Qwen/Qwen3-ASR-1.7B · 还没填密钥" });
+    ).toMatchObject({ lamp: "danger", title: "内置服务 · Qwen/Qwen3-ASR-1.7B · 缺少密钥" });
     // Regression (public release, 2026-09-27): no readout names the built-in service's host.
     expect(JSON.stringify(engineReadout(state.engines))).not.toMatch(/https?:|\.example/);
     expect(hotkeyShortcut("Ctrl+Alt+Space")).toEqual(["Ctrl Alt Space", "按住听写"]);
@@ -129,7 +129,7 @@ describe("pageMeta", () => {
     expect(engineReadout(missing)).toMatchObject({
       lamp: "danger",
       badge: "本机",
-      title: "本机 · 轻量 · 模型还没下载",
+      title: "本机 · 轻量 · 模型未下载",
     });
     expect(engineReadout(ready, EN)).toEqual({
       label: "Speech model",
@@ -263,7 +263,7 @@ describe("pageMeta in English", () => {
       { label: "Density", value: "Compact · 15 px" },
     ]);
     expect(hotkeyBackendReadout({ pressed: false, capturing: false, backend: "" }, EN)).toBe(
-      "Checking…",
+      "Detecting…",
     );
   });
 });
@@ -295,9 +295,7 @@ describe("hotkeyBackendReadout", () => {
     expect(hotkeyBackendReadout({ pressed: false, capturing: false, backend: "mock" })).toBe(
       "mock",
     );
-    expect(hotkeyBackendReadout({ pressed: false, capturing: false, backend: "" })).toBe(
-      "正在检测…",
-    );
+    expect(hotkeyBackendReadout({ pressed: false, capturing: false, backend: "" })).toBe("检测中…");
     expect(
       hotkeyBackendReadout({
         pressed: false,
@@ -305,7 +303,7 @@ describe("hotkeyBackendReadout", () => {
         backend: "global-shortcut · Linux · X11",
         error: "已被占用",
       }),
-    ).toBe("没能生效");
+    ).toBe("未能生效");
   });
 });
 
@@ -323,7 +321,7 @@ describe("settingsReadouts", () => {
         lamp: "ok",
         title: "内置服务 · Qwen/Qwen3-ASR-1.7B · 就绪",
       },
-      { label: "送出方式", value: "粘贴到光标处" },
+      { label: "插入方式", value: "粘贴到光标处" },
     ]);
     expect(pageMeta({ name: "ai" }, state, extras).readouts).toEqual([
       { label: "润色", value: "开 · qwen3.8-27b", lamp: "ok" },
@@ -333,7 +331,7 @@ describe("settingsReadouts", () => {
     });
     expect(pageMeta({ name: "speech" }, off, extras).readouts.map((r) => r.value)).toEqual([
       "Qwen3-ASR-1.7B",
-      "只复制到剪贴板",
+      "仅剪贴板",
     ]);
     expect(pageMeta({ name: "ai" }, off, extras).readouts.map((r) => r.value)).toEqual(["关"]);
     expect(pageMeta({ name: "feedback" }, state, extras).title).toBe("首页");

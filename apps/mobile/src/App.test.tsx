@@ -41,7 +41,7 @@ describe("Mobile app flow", () => {
     expect(screen.getByText("Android")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "配对电脑" }));
     expect(screen.getByRole("heading", { name: "配对电脑" })).toBeInTheDocument();
-    await user.click(screen.getByRole("radio", { name: "输入 6 位配对码" }));
+    await user.click(screen.getByRole("radio", { name: "输入 6 位验证码" }));
     await user.type(screen.getByLabelText("六位配对码"), "483921");
     expect(await screen.findByText("正在加入配对…")).toBeInTheDocument();
     await act(async () => {
@@ -75,9 +75,9 @@ describe("Mobile app flow", () => {
   it("regression: a wrong code shows the relay error under the cells and can be retried", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     renderApp({ mock: { role: "phone", expectedCode: "111222" }, initialScreen: "pair" });
-    await user.click(await screen.findByRole("radio", { name: "输入 6 位配对码" }));
+    await user.click(await screen.findByRole("radio", { name: "输入 6 位验证码" }));
     await user.type(screen.getByLabelText("六位配对码"), "999999");
-    expect(await screen.findByRole("alert")).toHaveTextContent("配对码不对");
+    expect(await screen.findByRole("alert")).toHaveTextContent("验证码不正确");
     await user.click(screen.getByRole("button", { name: "清除并重试" }));
     expect(screen.queryByRole("alert")).toBeNull();
     await user.type(screen.getByLabelText("六位配对码"), "11122");
@@ -89,7 +89,7 @@ describe("Mobile app flow", () => {
   it("scan tab falls back to pasting a link without a scanner and validates it", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     renderApp({ initialScreen: "pair", scanner: undefined });
-    expect(await screen.findByText("这里没有可用的相机")).toBeInTheDocument();
+    expect(await screen.findByText("当前设备没有可用的相机")).toBeInTheDocument();
     const input = screen.getByLabelText("配对链接");
     await user.type(input, "https://evil.example");
     expect(screen.getByText("不是 Voltip 配对链接")).toBeInTheDocument();
@@ -115,9 +115,9 @@ describe("Mobile app flow", () => {
     renderApp({ initialScreen: "pair", scanner: { scan } });
     const button = await screen.findByRole("button", { name: "打开相机扫码" });
     await user.click(button);
-    expect(await screen.findByText("扫码已取消，或者没有相机权限")).toBeInTheDocument();
+    expect(await screen.findByText("已取消扫码或未授予相机权限")).toBeInTheDocument();
     await user.click(button);
-    expect(await screen.findByText("对方设备发来的数据无法识别")).toBeInTheDocument();
+    expect(await screen.findByText("通信数据无效")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "重试" }));
     await user.click(screen.getByRole("button", { name: "打开相机扫码" }));
     await act(async () => {
@@ -136,7 +136,7 @@ describe("Mobile app flow", () => {
     });
     expect(await screen.findByRole("heading", { name: "核对安全码" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "拒绝" }));
-    expect(screen.getByText("配对被拒绝了，这次配对已作废。")).toBeInTheDocument();
+    expect(screen.getByText("配对已被拒绝，本次配对已取消。")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "重新配对" }));
     expect(screen.getByRole("heading", { name: "配对电脑" })).toBeInTheDocument();
     expect(backend.peek().pairing.state).toEqual({ state: "idle" });
@@ -167,7 +167,7 @@ describe("Mobile app flow", () => {
     expect(await screen.findByRole("heading", { name: "已配对设备" })).toBeInTheDocument();
     expect(screen.getAllByText("MacBook Pro").length).toBeGreaterThan(0);
     expect(screen.getAllByText("在线 · 经中继")).toHaveLength(2);
-    await user.click(screen.getByRole("button", { name: "发一条测试消息" }));
+    await user.click(screen.getByRole("button", { name: "发测试消息" }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(200);
     });
@@ -175,13 +175,15 @@ describe("Mobile app flow", () => {
     act(() => {
       backend.simulateIdentityChanged(MOCK_PUBLIC_KEYS.laptop, "00:11:22:33 · 44:55:66:77");
     });
-    expect(await screen.findByText(/的身份变了（00:11:22:33 · 44:55:66:77）/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/出示了不同的身份密钥（00:11:22:33 · 44:55:66:77）/),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("身份已变化")).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "忘记 MacBook Pro" }));
     await user.click(screen.getByRole("button", { name: "取消" }));
     await user.click(screen.getByRole("button", { name: "忘记 MacBook Pro" }));
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "忘记" }));
-    expect(await screen.findByText("还没有配对的电脑")).toBeInTheDocument();
+    expect(await screen.findByText("尚未配对电脑")).toBeInTheDocument();
     expect(await screen.findByText("已忘记 MacBook Pro")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "配对新电脑" }));
     expect(screen.getByRole("heading", { name: "配对电脑" })).toBeInTheDocument();
@@ -286,7 +288,7 @@ describe("Mobile app flow", () => {
       phoneClipboardRead: identityless.phoneClipboardRead.bind(identityless),
     };
     render(<TestApp backend={noIdentity} />);
-    expect(await screen.findByText("正在创建这台设备的身份…")).toBeInTheDocument();
+    expect(await screen.findByText("正在生成设备身份…")).toBeInTheDocument();
     const Probe = () => {
       useMobileShell();
       return null;

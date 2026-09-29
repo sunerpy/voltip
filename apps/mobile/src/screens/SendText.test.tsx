@@ -57,7 +57,7 @@ describe("Send text to the computer (docs/dictation.md §20.6)", () => {
     expect(item).toHaveTextContent("输入 · MacBook Pro");
     expect(item).toHaveAttribute("data-state", "sending");
     await advance(MOCK_TEXT_MS);
-    expect(within(card).getByTestId("sent-text")).toHaveTextContent("已送到 MacBook Pro");
+    expect(within(card).getByTestId("sent-text")).toHaveTextContent("已插入 MacBook Pro");
     expect(backend.peek().sent_texts[0]?.source).toBe("typed");
   });
 
@@ -106,7 +106,7 @@ describe("Send text to the computer (docs/dictation.md §20.6)", () => {
       state,
     });
     expect(sentTextLine(text({ state: "sending" }), t)).toBe("发送中…");
-    expect(sentTextLine(text({ state: "queued" }), t)).toBe("Studio 正在听写，结束后送出");
+    expect(sentTextLine(text({ state: "queued" }), t)).toBe("Studio 正在听写，结束后插入");
     expect(sentTextLine(text({ state: "delivered", pasted: false }), t)).toBe(
       "已放到 Studio 的剪贴板",
     );

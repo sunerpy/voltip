@@ -152,7 +152,7 @@ fn pairing_start_leaves_idle_and_cancel_reset_returns_to_it() {
         // Without a relay a bare code cannot be joined: the command is accepted, the core reports.
         assert_eq!(invoke(webview, "pairing_join_code", json!({ "code": "483 921" })), Ok(Value::Null));
         let err = wait_event(rx, "error", |e| e["type"] == "error");
-        assert!(err["message"].as_str().unwrap().contains("relay"), "{err}");
+        assert!(err["message"].as_str().unwrap().contains("中继"), "{err}");
         // A ticket is accepted by the IPC layer too; a malformed one is reported by the core.
         assert_eq!(invoke(webview, "pairing_join_ticket", json!({ "uri": "voltip://pair?v=1&t=AA" })), Ok(Value::Null));
         wait_event(rx, "error (bad ticket)", |e| e["type"] == "error" && e["message"] != err["message"]);
@@ -219,7 +219,7 @@ fn lan_discovery_commands_reach_the_core() {
         assert!(!wait_state(webview, |s| !s.settings.lan_discovery).settings.lan_discovery);
         assert!(invoke(webview, "pairing_join_nearby", json!({})).is_err(), "fingerprint is required");
         assert_eq!(invoke(webview, "pairing_join_nearby", json!({ "fingerprint": "0000000000000000" })), Ok(Value::Null));
-        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("附近没有这台设备")));
+        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("附近没有找到此设备")));
     });
 }
 
@@ -248,7 +248,7 @@ fn phone_take_commands_reach_the_core() {
         assert!(invoke(webview, "phone_take_start", json!({ "publicKey": "zz" })).is_err());
         assert!(invoke(webview, "phone_take_start", json!({})).is_err(), "publicKey is required");
         assert_eq!(invoke(webview, "phone_take_start", json!({ "publicKey": "11".repeat(32) })), Ok(Value::Null));
-        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("unknown device")));
+        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("未知设备")));
         for cmd in ["phone_take_stop", "phone_take_cancel"] {
             assert_eq!(invoke(webview, cmd, json!({})), Ok(Value::Null), "{cmd}");
             wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("没有进行中的录音")));
@@ -265,7 +265,7 @@ fn phone_text_commands_reach_the_core() {
         wait_state(webview, |s| s.identity.is_some());
         assert!(invoke(webview, "phone_text_send", json!({ "publicKey": "11".repeat(32), "body": "x", "source": "voice" })).is_err(), "unknown source");
         assert_eq!(invoke(webview, "phone_text_send", json!({ "publicKey": "11".repeat(32), "body": "会议改到三点", "source": "typed" })), Ok(Value::Null));
-        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("unknown device")));
+        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("未知设备")));
         assert_eq!(invoke(webview, "sent_texts_clear", json!({})), Ok(Value::Null));
         wait_event(rx, "sent_texts", |e| e["type"] == "sent_texts" && e["texts"].as_array().is_some_and(Vec::is_empty));
         assert_eq!(invoke(webview, "phone_clipboard_read", json!({})), Err(Value::String(voltip_mobile_lib::clipboard::CLIPBOARD_UNAVAILABLE.into())));

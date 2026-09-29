@@ -370,7 +370,7 @@ fn fallen_back_done_phase() -> DictationPhase {
             refine_error,
             mode: OutputMode::WholeTake,
             segments: None,
-            live_error: Some("open: asr: 流式模型未下载：实时预览".into()),
+            live_error: Some("open: asr: 实时识别模型未下载：实时预览".into()),
         },
         other => other,
     }
@@ -950,7 +950,7 @@ fn all_events() -> Vec<UiEvent> {
         }),
         UiEvent::Hotkey(HotkeyStatus {
             registered: None,
-            error: Some("Ctrl+Alt+Space 注册失败：纯 Wayland 会话不允许应用注册全局热键".into()),
+            error: Some("Ctrl+Alt+Space 未能生效：纯 Wayland 会话不允许应用设置全局快捷键".into()),
             pressed: false,
             capturing: false,
             backend: "global-shortcut · Linux · Wayland".into(),

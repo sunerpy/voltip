@@ -63,12 +63,12 @@ describe("附近的电脑 (docs/pairing.md 「局域网发现」)", () => {
     act(() => {
       backend.publish({ type: "nearby", devices: [device({ name: "Office PC" })] });
     });
-    expect(await within(card).findByText(/还没开始配对/)).toBeInTheDocument();
+    expect(await within(card).findByText(/尚未开始配对/)).toBeInTheDocument();
     expect(within(card).queryByRole("button")).toBeNull();
     act(() => {
       backend.publish({ type: "nearby", devices: [] });
     });
-    expect(await within(card).findByText("正在查找同一网络里的电脑…")).toBeInTheDocument();
+    expect(await within(card).findByText("正在查找同一局域网里的电脑…")).toBeInTheDocument();
     expect(card).toHaveTextContent("点「开始配对」");
   });
 
@@ -76,7 +76,7 @@ describe("附近的电脑 (docs/pairing.md 「局域网发现」)", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     const backend = new MockBackend({ role: "phone" });
     renderApp({ backend, initialScreen: "device" });
-    const toggle = await screen.findByRole("switch", { name: "在同一网络里查找电脑" });
+    const toggle = await screen.findByRole("switch", { name: "局域网发现" });
     expect(toggle).toHaveAttribute("aria-checked", "true");
     await user.click(toggle);
     await waitFor(() => {
@@ -85,7 +85,7 @@ describe("附近的电脑 (docs/pairing.md 「局域网发现」)", () => {
     expect(backend.peek().nearby).toEqual([]);
     await user.click(screen.getByRole("button", { name: "配对电脑" }));
     const card = await screen.findByTestId("nearby");
-    expect(card).toHaveTextContent("「在同一网络里查找电脑」已关闭");
+    expect(card).toHaveTextContent("局域网发现已关闭");
     expect(within(card).queryByTestId("nearby-computer")).toBeNull();
   });
 });

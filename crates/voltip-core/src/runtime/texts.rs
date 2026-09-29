@@ -172,9 +172,9 @@ impl Runtime {
         if body.chars().count() > MAX_PHONE_TEXT_CHARS {
             return Err(CoreError::Invalid(format!("phone text: 文字太长（最多 {MAX_PHONE_TEXT_CHARS} 字）")));
         }
-        let Some(device) = self.trusted.get_by_key(&to) else { return Err(CoreError::Invalid("unknown device".into())) };
+        let Some(device) = self.trusted.get_by_key(&to) else { return Err(CoreError::Invalid("未知设备".into())) };
         if !self.peer_online(&to) {
-            return Err(CoreError::Invalid("device is not online".into()));
+            return Err(CoreError::Invalid("设备不在线".into()));
         }
         let id = self.sent_texts.next_id();
         self.take_outbox.push((to, AppMessage::PhoneText { version: ProtocolVersion::CURRENT, id, body: body.clone(), source }));

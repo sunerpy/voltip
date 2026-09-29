@@ -71,10 +71,10 @@ pub enum DictationError {
     #[error("终端里不支持语音编辑：终端里的选区不能被替换")]
     EditInTerminal,
     /// A start arrived while a recording or a pipeline run is in progress.
-    #[error("dictation already in progress")]
+    #[error("已有听写正在进行")]
     Busy,
     /// A stop / cancel arrived with nothing running.
-    #[error("no dictation in progress")]
+    #[error("当前没有进行中的听写")]
     Idle,
 }
 
@@ -497,8 +497,8 @@ mod tests {
         assert_eq!(DictationError::Selection("no copy tool".into()).to_string(), "selection: no copy tool");
         assert_eq!(DictationError::EditUnavailable("no key".into()).to_string(), "edit: no key");
         assert_eq!(SelectionTiming::default(), SelectionTiming::AtPress);
-        assert!(DictationError::Busy.to_string().contains("in progress"));
-        assert!(DictationError::Idle.to_string().contains("no dictation"));
+        assert!(DictationError::Busy.to_string().contains("正在进行"));
+        assert!(DictationError::Idle.to_string().contains("没有进行中的听写"));
         assert_eq!(serde_json::to_string(&Via::Clipboard).unwrap(), r#""clipboard""#);
         assert_eq!(serde_json::from_str::<Via>(r#""paste""#).unwrap(), Via::Paste);
         assert!(MIN_RECORDING < DWELL && DWELL < DWELL_WITH_TEXT && DWELL_WITH_TEXT < MAX_RECORDING);

@@ -486,9 +486,9 @@ pub struct DictationEngine {
 
 /// Why a scene's streaming output mode could not be honoured (docs/dictation.md §18.4); the take
 /// runs as a whole take and `Done.live_error` says so.
-const SCENE_MODE_NOT_READY: &str = "场景要求的流式输出暂不可用：实时预览未就绪（已关闭或流式模型未下载），本次按整段输出";
+const SCENE_MODE_NOT_READY: &str = "场景要求边说边识别，但实时预览未就绪（已关闭或实时识别模型未下载），本次按整段输出处理";
 /// The same, on a shell without a streaming recogniser.
-const SCENE_MODE_NO_STREAMING: &str = "场景要求的流式输出暂不可用：此设备没有流式识别器，本次按整段输出";
+const SCENE_MODE_NO_STREAMING: &str = "场景要求边说边识别，但此设备不支持实时识别，本次按整段输出处理";
 
 impl std::fmt::Debug for DictationEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1248,7 +1248,7 @@ impl DictationEngine {
         let Some(fin) = self.take.flushed.take() else { return Vec::new() };
         let raw_text = LiveText { committed: fin.committed.clone(), current: fin.tail.clone(), ..LiveText::default() }.preview();
         if raw_text.is_empty() {
-            return self.degrade("流式终稿为空".to_owned());
+            return self.degrade("实时识别未得到文本".to_owned());
         }
         let mut segments = fin.committed;
         let tail = fin.tail.trim();
@@ -1303,7 +1303,7 @@ impl DictationEngine {
             }
             if self.take.inject.segments.is_empty() {
                 // The stream produced no text at all: the whole take is the safety net.
-                return self.degrade("流式终稿为空".to_owned());
+                return self.degrade("实时识别未得到文本".to_owned());
             }
             return self.close_live_inject();
         }

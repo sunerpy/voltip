@@ -314,7 +314,7 @@ describe("locale", () => {
           phase: { phase: "failed", message: "raw core message", code: "unknown", text: "kept" },
         });
       });
-      expect(screen.getByTestId("home-phase")).toHaveTextContent("Not sent · raw core message");
+      expect(screen.getByTestId("home-phase")).toHaveTextContent("Not inserted · raw core message");
     } finally {
       vi.useRealTimers();
     }
@@ -374,7 +374,7 @@ describe("locale", () => {
         });
       });
       expect(screen.getByTestId("home-live-degraded")).toHaveTextContent(
-        "Live preview stopped · the final text is not affected",
+        "Live preview stopped · the final text is unaffected",
       );
       expect(uiText(document.body)).not.toMatch(CJK);
       homeView.unmount();
@@ -389,7 +389,7 @@ describe("locale", () => {
       await act(async () => {
         await pillBackend.invoke("dictation_start");
       });
-      expect(screen.getByTestId("pill-waiting")).toHaveTextContent("Waiting for the microphone");
+      expect(screen.getByTestId("pill-waiting")).toHaveTextContent("Waiting for mic");
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS + 10);
       });

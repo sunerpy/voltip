@@ -157,9 +157,9 @@ async fn edit_hotkey_is_validated_persisted_and_never_the_dictation_chord() {
     assert_eq!(s.edit_hotkey.as_deref(), Some("Ctrl+Alt+Shift+E"), "canonical form");
 
     for (cmd, needle) in [
-        (CoreCommand::SetEditHotkey(Some("Space+Alt+Ctrl".into())), "已用作听写热键"),
-        (CoreCommand::SetEditHotkey(Some("E".into())), "modifier"),
-        (CoreCommand::SetHotkey("Ctrl+Shift+Alt+E".into()), "已用作编辑选中文本的热键"),
+        (CoreCommand::SetEditHotkey(Some("Space+Alt+Ctrl".into())), "已用作听写快捷键"),
+        (CoreCommand::SetEditHotkey(Some("E".into())), "至少需要一个修饰键"),
+        (CoreCommand::SetHotkey("Ctrl+Shift+Alt+E".into()), "已用作「编辑选中文本」的快捷键"),
     ] {
         node.handle.send(cmd).await.unwrap();
         let message = wait(&mut node, |e| if let CoreEvent::Error(m) = e { Some(m.clone()) } else { None }).await;

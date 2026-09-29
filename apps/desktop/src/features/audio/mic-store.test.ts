@@ -15,7 +15,7 @@ describe("microphone readout store", () => {
 
   it("regression: the title bar names the metered device, never a fixture — pending, then device, then failure", () => {
     const { result } = renderHook(() => useMicrophoneReadout());
-    expect(microphoneReadoutValue(result.current)).toBe("正在查找…");
+    expect(microphoneReadoutValue(result.current)).toBe("检测中…");
     act(() => {
       publishMicrophone({
         device: { id: "x", name: "Fifine K669 USB Microphone", is_default: true },

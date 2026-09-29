@@ -79,19 +79,17 @@ describe("useChordRecorder", () => {
     key("keydown", "ControlLeft");
     key("keydown", "ControlLeft", { repeat: true });
     key("keyup", "ControlLeft");
-    expect(onReject).toHaveBeenLastCalledWith("只按了 Ctrl、Alt 这类键，还需要再加一个普通键");
+    expect(onReject).toHaveBeenLastCalledWith("只按了修饰键，还需要一个按键");
     fireEvent.click(button);
     key("keydown", "ControlLeft");
     key("keydown", "KeyA");
     key("keydown", "KeyB");
     key("keyup", "KeyA");
-    expect(onReject).toHaveBeenLastCalledWith("一次只能设一个普通键");
+    expect(onReject).toHaveBeenLastCalledWith("一次只能绑定一个按键");
     fireEvent.click(button);
     key("keydown", "KeyX");
     key("keyup", "KeyX");
-    expect(onReject).toHaveBeenLastCalledWith(
-      "这个系统不允许只用一个键，请再加一个 Ctrl、Alt 之类的键",
-    );
+    expect(onReject).toHaveBeenLastCalledWith("当前系统不允许单个按键作为快捷键，请加一个修饰键");
     fireEvent.click(button);
     key("keydown", "ControlLeft");
     key("keydown", "Escape", { key: "Escape" });
@@ -140,6 +138,6 @@ describe("useChordRecorder", () => {
     );
     expect(chordFromCodes(["ControlLeft", "ControlRight"])).toBe("Ctrl");
     expect(chordProblem("Ctrl+Alt+Space")).toBeUndefined();
-    expect(chordProblem("")).toBe("只按了 Ctrl、Alt 这类键，还需要再加一个普通键");
+    expect(chordProblem("")).toBe("只按了修饰键，还需要一个按键");
   });
 });

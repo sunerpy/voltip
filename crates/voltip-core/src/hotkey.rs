@@ -64,19 +64,19 @@ pub struct Hotkey {
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum HotkeyError {
     /// Empty or too long.
-    #[error("hotkey must be 1..={MAX_HOTKEY_CHARS} characters")]
+    #[error("快捷键最多 {MAX_HOTKEY_CHARS} 个字符")]
     Length,
     /// No modifier at all (`Space`) — a bare key would swallow normal typing.
-    #[error("hotkey needs at least one modifier (Ctrl / Alt / Shift / Meta)")]
+    #[error("快捷键至少需要一个修饰键（Ctrl、Alt、Shift 或 Win / ⌘）")]
     NoModifier,
     /// Only modifiers (`Ctrl+Alt`) — nothing to press.
-    #[error("hotkey needs a key after the modifiers")]
+    #[error("修饰键之后还需要一个普通按键")]
     NoKey,
     /// More than one non-modifier key.
-    #[error("hotkey may contain only one key")]
+    #[error("快捷键只能包含一个普通按键")]
     TooManyKeys,
     /// A part between the `+` signs is empty.
-    #[error("hotkey has an empty part")]
+    #[error("快捷键中有空白部分")]
     EmptyPart,
 }
 

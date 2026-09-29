@@ -272,7 +272,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       });
       const done = screen.getByRole("status");
       expect(done).toHaveAttribute("data-state", "inserted");
-      expect(done).toHaveTextContent(`已送出 ${MOCK_DICTATION_TEXT.length} 字`);
+      expect(done).toHaveTextContent(`已插入 ${MOCK_DICTATION_TEXT.length} 字`);
       expect(done).toHaveTextContent("粘贴");
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS);
@@ -296,7 +296,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
     });
     const pill = await screen.findByRole("status");
     expect(pill).toHaveAttribute("data-state", "error");
-    expect(pill).toHaveTextContent("没有送出 · 粘贴超时");
+    expect(pill).toHaveTextContent("未插入 · 粘贴超时");
     // The pill window has no toast viewport (chrome-less); the clipboard write is the evidence.
     await user.click(screen.getByRole("button", { name: "复制文本" }));
     expect(writeText).toHaveBeenCalledWith("kept text");
@@ -304,7 +304,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
     act(() => {
       backend.simulateDictationFailed("没有听到声音");
     });
-    expect(screen.getByRole("status")).toHaveTextContent("没有送出 · 没有听到声音");
+    expect(screen.getByRole("status")).toHaveTextContent("未插入 · 没有听到声音");
     expect(screen.queryByRole("button", { name: "复制文本" })).toBeNull();
     expect(writeText).toHaveBeenCalledTimes(1);
     await act(async () => {
@@ -312,7 +312,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       await backend.invoke("dictation_cancel");
     });
     expect(screen.getByRole("status")).toHaveAttribute("data-state", "cancel-armed");
-    expect(screen.getByRole("status")).toHaveTextContent("已取消 · 录音没有保留");
+    expect(screen.getByRole("status")).toHaveTextContent("已取消 · 录音已丢弃");
   });
 
   it("regression: with live preview ready the pill shows the two-tone caption and the 预览 chip while listening, the preview in place of 转写中… while processing, and nothing extra when degraded", async () => {
@@ -391,7 +391,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       expect(screen.getByRole("status")).toHaveAttribute("data-state", "inserted");
       expect(screen.queryByTestId("pill-preview")).toBeNull();
       expect(screen.getByRole("status")).toHaveTextContent(
-        `已送出 ${MOCK_DICTATION_TEXT.length} 字`,
+        `已插入 ${MOCK_DICTATION_TEXT.length} 字`,
       );
       // The pure mapping: no text yet → no caption; committed and current are joined per the CJK rule.
       expect(pillLiveCaption(undefined)).toBeUndefined();
@@ -439,7 +439,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       expect(pill).toHaveAttribute("data-state", "listening");
       expect(screen.getByTestId("pill-lock")).toHaveAttribute(
         "aria-label",
-        "已锁定录音 · 再按一次结束",
+        "已锁定 · 再按一次结束",
       );
       // The first endpoint commits a sentence and live_inject pastes it: the caption shows it in
       // the fainter tone, the lock stays.
@@ -458,7 +458,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       expect(screen.getByTestId("pill-live-injected")).toHaveTextContent(
         new RegExp(`^…${committed.slice(1)}$`),
       );
-      expect(screen.getByTestId("pill-live-injected")).toHaveAttribute("title", "已经打进当前窗口");
+      expect(screen.getByTestId("pill-live-injected")).toHaveAttribute("title", "已输入到当前窗口");
       expect(screen.getByTestId("pill-live-committed")).toBeEmptyDOMElement();
       expect(screen.getByTestId("pill-live-current")).toHaveTextContent(current);
       expect(screen.getByTestId("pill-lock")).toBeInTheDocument();
@@ -627,7 +627,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
         await vi.advanceTimersByTimeAsync(MOCK_COPY_MS);
       });
       expect(screen.getByRole("status")).toHaveAttribute("data-state", "error");
-      expect(screen.getByRole("status")).toHaveTextContent("没有送出 · 没有选中文本");
+      expect(screen.getByRole("status")).toHaveTextContent("未插入 · 没有选中文本");
       expect(screen.getByTestId("pill-tag")).toHaveTextContent("编辑");
       await editEdge(false);
       // A dictation afterwards carries no tag.

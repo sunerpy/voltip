@@ -216,39 +216,37 @@ type UiEvent = { type: "state" } & UiState | { type: "identity" } & DeviceIdenti
 
 ## 8. 界面文案
 
-界面上的每句话都说用户做什么、看到什么、得到什么，不讲实现：不出现进程、后端、状态机、文件名、协议。
+界面上的每句话都说明用户能做什么、看到什么、得到什么，不讲实现细节：不出现进程、后端、状态机、文件名和协议名。
 
-- 一个概念只用一个词，用下表的写法。中文界面不夹英文术语，产品名、模型名、按键名和平台名除外（Voltip、Qwen3-ASR、Ctrl、Windows）。
+- 语体（用户 2026-09-29 决定）：规范、易读的书面语，减少 AI 腔，参照 macOS 和 Windows 中文界面的写法，如「未设置」「尚未下载」「无法连接」「请稍后重试」「仅保存在本机」。不用口语化说法（还没、没能、免得），不层层解释，不用拟人化的保证。英文同样使用标准界面用语，不写口语。
+- 原文没有内部术语、本来就规范的句子保持原样；改动以替换术语和理顺语句为主。
+- 一个概念只用一个词，用下表的写法。「本地」指在这台电脑上处理（本地模型、本地识别），「本机」指这台设备本身（本机指纹、仅保存在本机）。中文界面不夹英文术语，产品名、模型名、按键名和平台名除外（Voltip、Qwen3-ASR、Ctrl、Windows）。
 - 密码学名称（X25519、ChaCha20-Poly1305、Noise XX）只出现在以「技术细节：」开头的一行里（`devices.syncPanel.crypto`）。
-- 核心和壳层的报错原文带着 `scenes:`、`phone text:` 这类机器前缀，界面显示前由 `coreMessageText`（`packages/shared/src/labels.ts`）去掉。
-- 守卫：`packages/shared/src/i18n/copy.test.ts` 用下表左栏扫两种语言的全部叶子。只有胶囊规格页（`/overlay`，只在开发构建里加载）读的键豁免，同一个测试确认发行代码不读这些键。
+- 核心和壳层的报错原文带有 `scenes:`、`phone text:` 这类机器前缀，界面显示前由 `coreMessageText`（`packages/shared/src/labels.ts`）去掉。
+- 守卫：`packages/shared/src/i18n/copy.test.ts` 用下表左栏和一张口语词表扫描两种语言的全部叶子。只有胶囊规格页（`/overlay`，只在开发构建里加载）读取的键豁免，同一测试确认发行代码不读取这些键。
 
 | 内部词 | 中文界面 | English UI |
 |---|---|---|
 | 核心 | 不出现；等待时写「正在启动…」 | nothing; "Starting…" |
-| 热键、组合键 | 快捷键 | shortcut |
+| 热键、组合键 | 快捷键（组合方式仍称组合键、修饰键） | shortcut, key combination, modifier |
 | 热键后端 | 快捷键方式（`hotkeyMethodText`：`Windows`、`Linux · Wayland`） | shortcut method |
 | 边沿 | 按下 / 松开 | press / release |
-| 激活方式 | 录音方式 | how recording works |
-| 注入、投递、插入 | 送出、粘贴到光标处 | send, paste at the cursor |
-| 输出方式：整段输出 / 流式定稿 / 实时注入 | 出字方式：说完再出字 / 边说边识别 / 边说边打字 | when the text appears: After you finish / While you speak / Type as you speak |
+| 激活方式 | 录音方式 | recording mode |
+| 注入、投递、送出 | 插入、粘贴到光标处 | insert, paste at cursor |
+| 输出方式：整段输出 / 流式定稿 / 实时注入 | 输出方式：整段输出 / 边说边识别 / 边说边输入 | output mode: All at once / While you speak / Type as you speak |
 | 流式模型 | 实时识别模型 | live transcription model |
-| LLM、大模型 | AI | AI |
-| ASR、转写 | 语音识别、识别 | speech recognition, transcribe |
-| 本地 | 本机 | local, this computer |
-| 接口地址、自定义接口 | 服务地址、自定义服务 | server address, custom server |
-| 握手、密钥协商 | 建立加密连接 | set up the encrypted connection |
+| LLM | AI、大模型 | AI, large language model |
+| ASR | 语音识别、识别 | speech recognition, transcription |
+| 握手、密钥协商 | 建立加密连接 | establish the encrypted connection |
 | 对端 | 对方设备 | the other device |
-| 票据、会话（配对） | 配对信息、这次配对 | pairing info, this pairing |
-| 验证码（6 位） | 配对码 | pairing code |
-| 枚举 | 查找 | look for |
+| 票据、会话（配对） | 配对信息、配对 | pairing info, pairing |
+| 枚举 | 检测 | detect |
 | 持久化 | 保存 | save |
 | TTL | 有效期 | valid for |
-| VAD、静音裁剪 | 静音检测、去掉首尾静音 | silence detection, trim silence |
+| VAD | 静音检测（功能名仍为「静音裁剪」） | silence detection |
 | UIPI、提权窗口 | 以管理员身份运行的窗口 | a window that runs as administrator |
-| `*.json` 文件名 | 这台电脑上 | on this computer |
+| `*.json` 文件名 | 本机 | on this computer |
 | 收音 | 录音 | recording |
 | 悬浮胶囊 | 悬浮窗 | overlay |
-| 局域网发现 | 让同一网络的手机找到这台电脑（手机上：在同一网络里查找电脑） | let phones on the same network find this computer |
 
 前面各节引用的界面文字可能是改写前的旧说法；逐字以两份字典为准（§0）。

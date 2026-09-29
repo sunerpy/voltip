@@ -20,7 +20,7 @@ describe("the home page's permission notice", () => {
       mock: { identity: mac(), permissions: macReport({ accessibility: "not_determined" }) },
     });
     expect(await screen.findByTestId("permission-notice")).toHaveTextContent(
-      "Voltip 需要「辅助功能」权限，才能把识别结果写进其他应用",
+      "Voltip 需要「辅助功能」权限，才能把识别结果写入其他应用",
     );
     expect(screen.getByText("还差一个系统权限")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "去授权" }));
@@ -37,7 +37,7 @@ describe("the home page's permission notice", () => {
     // permission is watched again once it is granted.
     renderApp({ mock: { identity: mac(), permissions: macReport({ accessibility: "denied" }) } });
     const notice = await screen.findByTestId("permission-notice");
-    expect(notice).toHaveTextContent("打开后立即生效，不用重启 Voltip");
+    expect(notice).toHaveTextContent("开启后立即生效，无需重启 Voltip");
     expect(notice).not.toHaveTextContent("授予后需重启");
     const en = translate("en", "home.permission.accessibility");
     expect(en).toContain("no need to restart Voltip");

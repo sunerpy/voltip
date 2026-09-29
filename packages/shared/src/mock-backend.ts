@@ -238,7 +238,7 @@ export const MOCK_DICTATION_FAILED_DWELL_MS = 6000;
  *  beat of the same length (`inserting`). */
 export const MOCK_FINALIZE_MS = 120;
 /** `live_error` the mock records when a streaming take ends without any text (§12). */
-export const MOCK_EMPTY_STREAM_ERROR = "流式终稿为空";
+export const MOCK_EMPTY_STREAM_ERROR = "实时识别未得到文本";
 
 /** The built-in service the browser preview pretends was compiled in: its models only (its host
  *  never reaches the UI, like in the real app). */
@@ -435,7 +435,7 @@ export const PHONE_TEXT_UNAVAILABLE = "phone_text: 电脑接收手机发来的�
 /** `live_error` of a take whose scene asked for a streaming mode the live preview cannot serve
  *  (the core's `SCENE_MODE_NOT_READY`, §18.4). */
 export const MOCK_SCENE_MODE_NOT_READY =
-  "场景要求的流式输出暂不可用：实时预览未就绪（已关闭或流式模型未下载），本次按整段输出";
+  "场景要求边说边识别，但实时预览未就绪（已关闭或实时识别模型未下载），本次按整段输出处理";
 
 /** The core's text for a take with nothing left to insert (`FailureCode::NoSpeech`). */
 export const MOCK_NO_SPEECH = "没有听到声音";
@@ -955,11 +955,11 @@ export class MockBackend implements Backend {
       const { fingerprint } = required(args);
       const device = this.state.nearby.find((d) => d.fingerprint === fingerprint);
       if (device === undefined) {
-        this.emit({ type: "error", message: "pairing: 附近没有这台设备" });
+        this.emit({ type: "error", message: "pairing: 附近没有找到此设备" });
         return;
       }
       if (!device.pairing) {
-        this.emit({ type: "error", message: "pairing: 这台设备现在不在配对" });
+        this.emit({ type: "error", message: "pairing: 此设备当前没有等待配对" });
         return;
       }
       this.joinSession();
@@ -1056,7 +1056,7 @@ export class MockBackend implements Backend {
       }
       const edit = this.state.settings.edit_hotkey;
       if (edit !== null && mockSameChord(hotkey, edit)) {
-        this.emit({ type: "error", message: `hotkey: ${hotkey} 已用作编辑选中文本的热键` });
+        this.emit({ type: "error", message: `hotkey: ${hotkey} 已用作「编辑选中文本」的快捷键` });
         return;
       }
       this.emit({ type: "settings", ...this.state.settings, hotkey });
@@ -1079,7 +1079,7 @@ export class MockBackend implements Backend {
       ) {
         this.emit({
           type: "error",
-          message: "microphone: a device id of 1–1024 bytes, or none for the default",
+          message: "microphone: 麦克风标识须为 1–1024 字节，留空则使用系统默认输入",
         });
         return;
       }
@@ -1096,7 +1096,7 @@ export class MockBackend implements Backend {
           return;
         }
         if (mockSameChord(hotkey, this.state.settings.hotkey)) {
-          this.emit({ type: "error", message: `edit_hotkey: ${hotkey} 已用作听写热键` });
+          this.emit({ type: "error", message: `edit_hotkey: ${hotkey} 已用作听写快捷键` });
           return;
         }
       }
@@ -1143,7 +1143,7 @@ export class MockBackend implements Backend {
       }
       const target = this.state.devices.find((d) => d.device.public_key === publicKey);
       if (target?.connection.state !== "online") {
-        this.emit({ type: "error", message: "device is not online" });
+        this.emit({ type: "error", message: "设备不在线" });
         return;
       }
       // Like the core's counter: it outlives 清空, so the desktop never sees an id twice.
@@ -1183,7 +1183,7 @@ export class MockBackend implements Backend {
       }
       const target = this.state.devices.find((d) => d.device.public_key === publicKey);
       if (target?.connection.state !== "online") {
-        this.emit({ type: "error", message: "device is not online" });
+        this.emit({ type: "error", message: "设备不在线" });
         return;
       }
       const take = (running?.take ?? 0) + 1;

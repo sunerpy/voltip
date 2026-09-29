@@ -149,7 +149,7 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
     expect(overrideSummary(SCENE.overrides)).toEqual([
       "AI 润色 开",
       "润色：书面语",
-      "出字方式：说完再出字",
+      "输出：整段输出",
       "语言：自动检测",
       "字形：保持原样",
       "有补充要求",

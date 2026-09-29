@@ -195,16 +195,16 @@ impl Runtime {
     /// carries no hints: the addresses it was seen at stand in for the LAN ones, and a session
     /// that waits on the relay is met on this device's relay, as after a scan.
     pub(super) async fn join_nearby(&mut self, fingerprint: &str) -> Result<(), CoreError> {
-        let Some(s) = self.lan.seen.get(fingerprint) else { return Err(CoreError::Invalid("pairing: 附近没有这台设备".into())) };
-        let Some(uri) = &s.ticket else { return Err(CoreError::Invalid("pairing: 这台设备现在不在配对".into())) };
+        let Some(s) = self.lan.seen.get(fingerprint) else { return Err(CoreError::Invalid("pairing: 附近没有找到此设备".into())) };
+        let Some(uri) = &s.ticket else { return Err(CoreError::Invalid("pairing: 此设备当前没有等待配对".into())) };
         let mut ticket = PairingTicket::from_uri(uri)?;
         ticket.direct_hints = s.addrs.iter().filter(|a| a.is_ipv4()).take(MAX_DIRECT_HINTS).map(ToString::to_string).collect();
         if s.on_relay {
             let relay = self.relay.as_ref().filter(|_| self.relay_connected()).map(|(_, endpoint)| endpoint.url().clone());
-            let Some(url) = relay else { return Err(CoreError::Invalid("pairing: 这台电脑在中继上等待配对，本机还没有连上中继".into())) };
+            let Some(url) = relay else { return Err(CoreError::Invalid("pairing: 此电脑正通过中继等待配对，但本机尚未连接中继".into())) };
             ticket.relay_hint = Some(url);
         } else if ticket.direct_hints.is_empty() {
-            return Err(CoreError::Invalid("pairing: 附近的这台设备没有可用的 IPv4 地址".into()));
+            return Err(CoreError::Invalid("pairing: 此设备没有可用的 IPv4 地址".into()));
         }
         let uri = ticket.to_uri()?;
         self.join(JoinSpec::Ticket(uri)).await

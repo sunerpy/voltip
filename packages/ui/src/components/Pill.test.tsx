@@ -43,7 +43,7 @@ describe("Pill", () => {
     const user = userEvent.setup();
     const onCopy = vi.fn();
     const onStop = vi.fn();
-    render(<Pill state="error" label="没有送出 · 目标窗口没有焦点" onCopy={onCopy} />);
+    render(<Pill state="error" label="未插入 · 目标窗口没有焦点" onCopy={onCopy} />);
     await user.click(screen.getByRole("button", { name: "复制文本" }));
     expect(onCopy).toHaveBeenCalled();
     render(<Pill state="locked" readout="01:24" onStop={onStop} mode="云端 openai" />);
@@ -52,7 +52,7 @@ describe("Pill", () => {
     expect(screen.getByText("01:24")).toBeInTheDocument();
     expect(screen.getByText("云端 openai")).toBeInTheDocument();
     render(
-      <Pill state="inserted" label="已送出 · 42 字" via="VS Code" readout="0.8 s · WM_PASTE" />,
+      <Pill state="inserted" label="已插入 · 42 字" via="VS Code" readout="0.8 s · WM_PASTE" />,
     );
     expect(screen.getByText("→ VS Code")).toBeInTheDocument();
     render(<Pill state="cancel-armed" readout="Esc 已按下 · 00:07" />);
@@ -91,7 +91,7 @@ describe("Pill live preview (docs/dictation.md §11)", () => {
     expect(line).not.toHaveAttribute("data-clipped");
     // The waveform row is still there beneath, with the timer counting.
     expect(pill).toHaveTextContent("00:03");
-    expect(pill).toHaveTextContent("本机");
+    expect(pill).toHaveTextContent("本地");
     // Latin boundary: one space between committed and current.
     rerender(<Pill state="listening" live={{ committed: "Hello.", current: "How are" }} />);
     expect(screen.getByTestId("pill-live")).toHaveTextContent(/^Hello\. How are/);
@@ -145,7 +145,7 @@ describe("Pill live preview (docs/dictation.md §11)", () => {
   it("regression: a locked take shows the lock mark in place of the lamp and keeps the caption; pasted sentences are drawn fainter and are the first to be clipped (docs/dictation.md §12–§13)", () => {
     const { rerender } = render(<Pill state="listening" readout="00:09" locked />);
     const lock = screen.getByTestId("pill-lock");
-    expect(lock).toHaveAttribute("aria-label", "已锁定录音 · 再按一次结束");
+    expect(lock).toHaveAttribute("aria-label", "已锁定 · 再按一次结束");
     expect(lock.querySelector('[data-icon="lock"]')).not.toBeNull();
     expect(screen.getByRole("status")).toHaveTextContent("00:09");
     expect(screen.getByRole("status")).toHaveAttribute("data-state", "listening");
@@ -164,7 +164,7 @@ describe("Pill live preview (docs/dictation.md §11)", () => {
     const injected = screen.getByTestId("pill-live-injected");
     expect(injected).toHaveTextContent("把这段逻辑抽成一个 helper，");
     expect(injected).toHaveClass("text-pill-muted", "opacity-60");
-    expect(injected).toHaveAttribute("title", "已经打进当前窗口");
+    expect(injected).toHaveAttribute("title", "已输入到当前窗口");
     expect(screen.getByTestId("pill-live-committed")).toHaveTextContent("然后复用。");
     expect(screen.getByTestId("pill-live-committed")).not.toHaveClass("text-pill-muted");
     expect(screen.getByTestId("pill-live")).toHaveTextContent(
@@ -225,7 +225,7 @@ describe("Pill live preview (docs/dictation.md §11)", () => {
     rerender(<Pill state="processing" label="识别中…" preview="" />);
     expect(screen.getByText("识别中…")).toBeInTheDocument();
     expect(screen.queryByTestId("pill-preview")).toBeNull();
-    rerender(<Pill state="inserted" label="已送出 3 字" preview="ignored" />);
+    rerender(<Pill state="inserted" label="已插入 3 字" preview="ignored" />);
     expect(screen.queryByTestId("pill-preview")).toBeNull();
   });
 

@@ -393,7 +393,7 @@
   },
   {
     "type": "hotkey",
-    "error": "Ctrl+Alt+Space 注册失败：纯 Wayland 会话不允许应用注册全局热键",
+    "error": "Ctrl+Alt+Space 未能生效：纯 Wayland 会话不允许应用设置全局快捷键",
     "pressed": false,
     "capturing": false,
     "backend": "global-shortcut · Linux · Wayland",
@@ -634,7 +634,7 @@
       "asr_ms": 640,
       "refine_ms": 2400,
       "mode": "whole_take",
-      "live_error": "open: asr: 流式模型未下载：实时预览"
+      "live_error": "open: asr: 实时识别模型未下载：实时预览"
     },
     "session": 15,
     "kind": "dictation"

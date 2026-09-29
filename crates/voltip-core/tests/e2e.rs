@@ -185,7 +185,7 @@ async fn pair_by_code_message_presence_reconnect_forget() {
     assert!(waiting.remaining_secs.unwrap() > 100);
     // A second StartPairing while one is running is refused.
     desk.handle.send(CoreCommand::StartPairing).await.unwrap();
-    wait(&mut desk, |e| matches!(e, CoreEvent::Error(m) if m.contains("already")).then_some(())).await;
+    wait(&mut desk, |e| matches!(e, CoreEvent::Error(m) if m.contains("已有配对正在进行")).then_some(())).await;
 
     phone.handle.send(CoreCommand::JoinWithCode(code)).await.unwrap();
     let vd = wait_pairing(&mut desk, PairingState::AwaitingVerification).await;
@@ -229,7 +229,7 @@ async fn pair_by_code_message_presence_reconnect_forget() {
     phone.handle.send(CoreCommand::SetRelay { url: Some(url.clone()), enabled: false }).await.unwrap();
     wait_offline(&mut desk).await;
     desk.handle.send(CoreCommand::SendText { to: td.public_key, body: "lost".into() }).await.unwrap();
-    wait(&mut desk, |e| matches!(e, CoreEvent::Error(m) if m.contains("not online")).then_some(())).await;
+    wait(&mut desk, |e| matches!(e, CoreEvent::Error(m) if m.contains("不在线")).then_some(())).await;
     phone.handle.send(CoreCommand::SetRelay { url: Some(url.clone()), enabled: true }).await.unwrap();
     wait_online(&mut desk).await;
     wait_online(&mut phone).await;
@@ -300,7 +300,7 @@ async fn pair_by_ticket_then_reject_and_replay() {
     phone.handle.send(CoreCommand::JoinWithCode("12".into())).await.unwrap();
     wait(&mut phone, |e| matches!(e, CoreEvent::Error(m) if m.contains("code")).then_some(())).await;
     phone.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
-    wait(&mut phone, |e| matches!(e, CoreEvent::Error(m) if m.contains("no pairing")).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Error(m) if m.contains("没有进行中的配对")).then_some(())).await;
     // Cancel from the desktop side.
     desk.handle.send(CoreCommand::ResetPairing).await.unwrap();
     desk.handle.send(CoreCommand::StartPairing).await.unwrap();
@@ -382,7 +382,7 @@ async fn regression_relay_compromise_impostor_on_channel_is_flagged_not_trusted(
     assert!(matches!(list[0].connection, DeviceConnection::IdentityChanged { .. }));
     // The impostor never gets a message: SendText is refused.
     desk.handle.send(CoreCommand::SendText { to: phone_record.public_key, body: "secret".into() }).await.unwrap();
-    wait(&mut desk, |e| matches!(e, CoreEvent::Error(m) if m.contains("not online")).then_some(())).await;
+    wait(&mut desk, |e| matches!(e, CoreEvent::Error(m) if m.contains("不在线")).then_some(())).await;
 }
 
 #[tokio::test]
@@ -394,7 +394,7 @@ async fn pair_over_lan_without_any_relay() {
     assert!(r.endpoint.is_none());
     // A code cannot be used without a relay.
     phone.handle.send(CoreCommand::JoinWithCode("483921".into())).await.unwrap();
-    wait(&mut phone, |e| matches!(e, CoreEvent::Error(m) if m.contains("relay")).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Error(m) if m.contains("中继")).then_some(())).await;
     desk.handle.send(CoreCommand::StartPairing).await.unwrap();
     let waiting = wait_pairing(&mut desk, PairingState::WaitingForPeer).await;
     let ticket = voltip_protocol::ticket::PairingTicket::from_uri(waiting.ticket_uri.as_deref().unwrap()).unwrap();
@@ -593,7 +593,7 @@ async fn always_on_pairing_keeps_a_session_waiting_until_switched_off() {
 
 /// Regression: 再配一台, 重新开始 and Ctrl R send `pairing_start` straight from a finished session
 /// (trusted, rejected), and the phone may join over a finished one; the core used to refuse with
-/// "pairing already in progress; reset first".
+/// "pairing: 已有配对正在进行，请先取消".
 #[tokio::test]
 async fn regression_a_new_pairing_starts_straight_from_a_finished_one() {
     let (url, _stop, _relay) = relay().await;
