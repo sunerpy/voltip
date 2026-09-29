@@ -272,7 +272,8 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
         await vi.advanceTimersByTimeAsync(MOCK_ASR_MS);
       });
       expect(screen.getByRole("status")).toHaveTextContent("润色中…");
-      expect(screen.getByRole("status")).toHaveTextContent("AI 润色");
+      // docs/dictation.md §21: the tag names the preset the clean-up runs with.
+      expect(screen.getByRole("status")).toHaveTextContent("校对");
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_REFINE_MS);
       });
@@ -435,7 +436,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
         await vi.advanceTimersByTimeAsync(MOCK_ASR_MS);
       });
       expect(screen.getByTestId("pill-preview")).toBeInTheDocument();
-      expect(screen.getByRole("status")).toHaveTextContent("AI 润色");
+      expect(screen.getByRole("status")).toHaveTextContent("校对");
       expect(screen.queryByText("润色中…")).toBeNull();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_REFINE_MS);

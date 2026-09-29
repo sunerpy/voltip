@@ -42,7 +42,8 @@ export type Route =
   | { name: "rules"; compose?: true }
   | { name: "devices" }
   | { name: "speech" }
-  | { name: "ai" }
+  /** `section`: scroll to that part of the page (the preset menus' 管理预设…). */
+  | { name: "ai"; section?: "presets" }
   | { name: "feedback" }
   | { name: "settings"; section: SettingsSection }
   | { name: "onboarding"; step: number }
@@ -77,7 +78,7 @@ export function parseRoute(path: string): Route {
     case "speech":
       return SPEECH_ROUTE;
     case "ai":
-      return AI_ROUTE;
+      return second === "presets" ? { name: "ai", section: "presets" } : AI_ROUTE;
     case "feedback":
       return { name: "feedback" };
     case "devices":
@@ -125,10 +126,11 @@ export function routePath(route: Route): string {
       return route.path;
     case "rules":
       return route.compose === true ? "/rules?new=1" : "/rules";
+    case "ai":
+      return route.section === undefined ? "/ai" : `/ai/${route.section}`;
     case "dictionary":
     case "devices":
     case "speech":
-    case "ai":
     case "feedback":
       return `/${route.name}`;
   }

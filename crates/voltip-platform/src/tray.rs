@@ -311,6 +311,138 @@ impl TrayAction {
     }
 }
 
+/// The AI 润色 submenu (docs/dictation.md §21): the switch, then every preset (the built-in ones
+/// in the menu's language, the custom ones by their own names), the one the settings name checked.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TrayPolish {
+    /// Whether the clean-up runs.
+    pub enabled: bool,
+    /// The presets, in the interface's order.
+    pub presets: Vec<TrayPreset>,
+}
+
+/// One preset of [`TrayPolish`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrayPreset {
+    /// The preset's wire id: a built-in name or a custom preset's UUID.
+    pub id: String,
+    /// What the entry says.
+    pub label: String,
+    /// The preset the settings name.
+    pub checked: bool,
+}
+
+/// The AI 润色 submenu's id.
+pub const TRAY_POLISH_ID: &str = "tray-polish";
+/// Its switch's id.
+pub const TRAY_POLISH_TOGGLE_ID: &str = "tray-polish-toggle";
+const TRAY_PRESET_PREFIX: &str = "tray-preset:";
+
+/// The menu item id of the preset `id` names.
+pub fn tray_preset_id(id: &str) -> String {
+    format!("{TRAY_PRESET_PREFIX}{id}")
+}
+
+/// An entry of the AI 润色 submenu, as a menu event names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrayPolishAction<'a> {
+    /// The switch.
+    Toggle,
+    /// A preset, by its wire id.
+    Preset(&'a str),
+}
+
+impl<'a> TrayPolishAction<'a> {
+    /// The entry a menu event names; `None` for ids that are not the submenu's.
+    pub fn from_id(id: &'a str) -> Option<Self> {
+        if id == TRAY_POLISH_TOGGLE_ID {
+            return Some(Self::Toggle);
+        }
+        id.strip_prefix(TRAY_PRESET_PREFIX).filter(|preset| !preset.is_empty()).map(Self::Preset)
+    }
+}
+
+/// The submenu's label.
+pub const fn polish_menu_label(locale: TrayLocale) -> &'static str {
+    match locale {
+        TrayLocale::ZhCn => "AI 润色",
+        TrayLocale::En => "AI Polish",
+    }
+}
+
+/// The switch's label (checked while the clean-up runs).
+pub const fn polish_toggle_label(locale: TrayLocale) -> &'static str {
+    match locale {
+        TrayLocale::ZhCn => "启用 AI 润色",
+        TrayLocale::En => "Enable AI Polish",
+    }
+}
+
+/// A built-in preset's name in the menu's language, worded like the interface (`presets.<id>.name`
+/// of `packages/shared/src/i18n`); `None` for a name that is no built-in preset's.
+pub fn builtin_preset_label(id: &str, locale: TrayLocale) -> Option<&'static str> {
+    let zh = locale == TrayLocale::ZhCn;
+    Some(match id {
+        "proofread" => {
+            if zh {
+                "校对"
+            } else {
+                "Proofread"
+            }
+        }
+        "prompt" => {
+            if zh {
+                "提示词优化"
+            } else {
+                "Prompt optimizer"
+            }
+        }
+        "intent" => {
+            if zh {
+                "意图整理"
+            } else {
+                "Clarify intent"
+            }
+        }
+        "chat" => {
+            if zh {
+                "口语聊天"
+            } else {
+                "Casual chat"
+            }
+        }
+        "translate" => {
+            if zh {
+                "中英互译"
+            } else {
+                "Chinese ⇄ English"
+            }
+        }
+        "notes" => {
+            if zh {
+                "要点纪要"
+            } else {
+                "Key points"
+            }
+        }
+        "punctuation" => {
+            if zh {
+                "只加标点"
+            } else {
+                "Punctuation only"
+            }
+        }
+        "formal" => {
+            if zh {
+                "书面语"
+            } else {
+                "Formal"
+            }
+        }
+        _ => return None,
+    })
+}
+
 /// The tray tooltip: the product name, plus the phase while one is in flight.
 pub const fn tray_tooltip(glyph: TrayGlyph, locale: TrayLocale) -> &'static str {
     match (glyph, locale) {
@@ -535,6 +667,26 @@ mod tests {
 
     /// Regression (user report 2026-09-28): closing the window destroyed it while the prewarmed
     /// pill window kept the process alive, so the tray (and a second launch) had nothing to show.
+    #[test]
+    fn the_polish_submenu_names_its_entries_and_reads_them_back() {
+        assert_eq!(TrayPolishAction::from_id(TRAY_POLISH_TOGGLE_ID), Some(TrayPolishAction::Toggle));
+        assert_eq!(TrayPolishAction::from_id(&tray_preset_id("notes")), Some(TrayPolishAction::Preset("notes")));
+        let custom = "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e";
+        assert_eq!(TrayPolishAction::from_id(&tray_preset_id(custom)), Some(TrayPolishAction::Preset(custom)));
+        for other in ["tray-preset:", "tray-quit", TRAY_POLISH_ID, "preset:notes"] {
+            assert_eq!(TrayPolishAction::from_id(other), None, "{other}");
+        }
+        assert_eq!((polish_menu_label(TrayLocale::ZhCn), polish_menu_label(TrayLocale::En)), ("AI 润色", "AI Polish"));
+        assert_eq!(polish_toggle_label(TrayLocale::En), "Enable AI Polish");
+        for id in ["proofread", "prompt", "intent", "chat", "translate", "notes", "punctuation", "formal"] {
+            let zh = builtin_preset_label(id, TrayLocale::ZhCn).unwrap();
+            let en = builtin_preset_label(id, TrayLocale::En).unwrap();
+            assert!(zh.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)), "{id}: {zh}");
+            assert!(!en.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)), "{id}: no CJK in English");
+        }
+        assert_eq!(builtin_preset_label("default", TrayLocale::ZhCn), None);
+    }
+
     #[test]
     fn closing_the_main_window_hides_it_where_something_brings_it_back() {
         let table = [

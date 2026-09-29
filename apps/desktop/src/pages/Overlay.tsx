@@ -5,6 +5,7 @@ import {
   formatSeconds,
   joinLiveText,
   liveCaptionParts,
+  presetRefLabel,
   takeFailureText,
   takePhaseLabel,
   viaLabel,
@@ -182,12 +183,15 @@ export function Overlay({ state }: OverlayProps) {
                     : t("overlay.live.cancelled")
                   : undefined
         }
-        // The tag names where the audio goes; while refining it is the AI polish, while a streaming
-        // mode waits for its final text (§12 `finalizing`) it is that stage, next to the preview.
+        // The tag names where the audio goes; while refining it is the preset the clean-up runs
+        // with (§21; AI 润色 when the status names none), while a streaming mode waits for its
+        // final text (§12 `finalizing`) it is that stage, next to the preview.
         mode={
           phase.phase === "processing"
             ? phase.stage === "refining"
-              ? t("overlay.live.refineTag")
+              ? dictation.preset === undefined
+                ? t("overlay.live.refineTag")
+                : presetRefLabel(dictation.preset, locale)
               : phase.stage === "finalizing"
                 ? label.text
                 : asrMode

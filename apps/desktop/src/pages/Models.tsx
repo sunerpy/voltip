@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { AiModelsPane, SpeechModelsPane } from "./settings/engines/EnginesPane";
 
 /** 语音模型 as a page of the main layout (user feedback 2026-09-28: every sidebar entry but 设置 is
@@ -11,10 +12,20 @@ export function SpeechModels() {
   );
 }
 
-/** AI 模型 as a page: whether the clean-up runs, and the LLM providers behind it and voice edit. */
-export function AiModels() {
+/** AI 模型 as a page: whether the clean-up runs, its presets, and the LLM providers behind it and
+ *  voice edit. `section="presets"` (the preset menus' 管理预设…) scrolls the 预设 section into view. */
+export function AiModels({ section }: { section?: "presets" }) {
+  const page = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (section !== "presets") return;
+    const target = page.current?.querySelector('[data-testid="presets-section"]');
+    target?.scrollIntoView?.({ block: "start" });
+  }, [section]);
   return (
-    <div className="mx-auto flex w-full max-w-[1100px] flex-col p-6" data-testid="page-ai">
+    <div
+      ref={page}
+      className="mx-auto flex w-full max-w-[1100px] flex-col p-6"
+      data-testid="page-ai">
       <AiModelsPane />
     </div>
   );

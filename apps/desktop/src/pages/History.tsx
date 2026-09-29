@@ -8,8 +8,10 @@ import {
   activationHint,
   formatMs,
   formatSeconds,
+  isBuiltinPreset,
   outcomeLabel,
   outputModeLabel,
+  presetRefLabel,
 } from "@voltip/shared";
 import {
   Badge,
@@ -541,6 +543,20 @@ export function History({ initialFilter }: HistoryProps) {
                   size="sm"
                   muted={!selected.refined}
                 />
+                {selected.preset !== undefined && (
+                  // docs/dictation.md §21: the preset the clean-up ran with, by the name it had.
+                  <Readout
+                    label={t("history.detail.preset")}
+                    value={
+                      <span
+                        data-testid="history-detail-preset"
+                        {...(isBuiltinPreset(selected.preset.id) ? {} : { "data-user-text": "" })}>
+                        {presetRefLabel(selected.preset, locale)}
+                      </span>
+                    }
+                    size="sm"
+                  />
+                )}
                 <Readout
                   label={t("history.detail.outcome")}
                   value={outcomeLabel(selected.outcome, locale).text}

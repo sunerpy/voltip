@@ -373,7 +373,7 @@ describe("Shell", () => {
       within(bar)
         .getAllByRole("button")
         .map((b) => b.getAttribute("aria-label")),
-    ).toEqual([TITLE_BAR_SEARCH_LABEL, "AI 润色 · 开/关"]);
+    ).toEqual([TITLE_BAR_SEARCH_LABEL, "AI 润色 · 开/关", "AI 预设：校对"]);
     expect(within(bar).queryByText("Ctrl K")).toBeNull();
     expect(within(bar).queryByText(/SenseVoice|示例/)).toBeNull();
     expect(screen.queryByTestId("sample-data-notice")).toBeNull();
@@ -474,6 +474,35 @@ describe("Shell", () => {
     await screen.findByRole("heading", { name: "Home", level: 1 });
     expect(screen.getByTestId("polish-toggle-label")).toHaveTextContent("AI Polish");
     expect(screen.getByTestId("polish-toggle")).toHaveAttribute("aria-label", "AI polish · on/off");
+  });
+
+  it("the title bar names the current preset beside the switch; its menu switches the preset or opens the presets of AI 模型 (docs/dictation.md section 21)", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp();
+    await screen.findByRole("heading", { name: "首页", level: 1 });
+    const bar = screen.getByTestId("title-bar");
+    const trigger = within(bar).getByRole("button", { name: "AI 预设：校对" });
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await user.click(trigger);
+    const menu = within(bar).getByRole("menu", { name: "AI 预设" });
+    // A press inside the menu must not start dragging the window.
+    expect(menu).toHaveAttribute("data-tauri-drag-region", "false");
+    const proofread = within(menu).getByRole("menuitemradio", { name: "校对" });
+    expect(proofread).toHaveAttribute("aria-checked", "true");
+    expect(proofread).toHaveFocus();
+    await user.click(within(menu).getByRole("menuitemradio", { name: "提示词优化" }));
+    await waitFor(() => {
+      expect(backend.peek().settings.engines.refine_preset).toBe("prompt");
+    });
+    expect(within(bar).queryByRole("menu")).toBeNull();
+    expect(within(bar).getByTestId("polish-preset-name")).toHaveTextContent("提示词优化");
+    // The switch itself still only turns the clean-up on and off.
+    expect(backend.peek().settings.engines.refine_enabled).toBe(true);
+    await user.click(within(bar).getByRole("button", { name: "AI 预设：提示词优化" }));
+    await user.click(within(bar).getByRole("menuitem", { name: "管理预设…" }));
+    expect(await screen.findByRole("heading", { name: "AI 模型", level: 1 })).toBeInTheDocument();
+    expect(screen.getByTestId("presets-section")).toBeInTheDocument();
   });
 
   it("regression: the title-bar readout stays on every page and the footer hotkey follows settings", async () => {
