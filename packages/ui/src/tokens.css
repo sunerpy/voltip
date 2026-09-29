@@ -25,10 +25,12 @@
   --fg-subtle: #8a9099;
   --primary: #1b1d22;
   --primary-fg: #ffffff;
-  --accent: #2f6beb;
-  --accent-fg: #ffffff;
-  --accent-soft: #e8effd;
-  --accent-text: #2456c9;
+  --accent: #339cff;
+  --accent-fg: #000000;
+  --accent-soft: #e7f3ff;
+  --accent-text: #036dc0;
+  --accent-text-hover: #05599e;
+  --thumb: #ffffff;
   --ok: #2e9e62;
   --ok-soft: #e4f4ea;
   --ok-text: #1f7a4a;
@@ -36,13 +38,13 @@
   --danger-soft: #f9e7e5;
   --warning: #b7791f;
   --warning-soft: #fbf1dc;
-  --info: #3b6fd4;
-  --info-soft: #e7eefb;
+  --info: #0968c8;
+  --info-soft: #e1edf9;
   --nav: #f2f3f6;
   --nav-active: #e6e9ee;
   --led-off: #e1e4ea;
   --led-on: #1b1d22;
-  --led-peak: #2f6beb;
+  --led-peak: #339cff;
   --pill-bg: #ffffff;
   --pill-border: #d6dae1;
   --pill-fg: #1b1d22;
@@ -76,10 +78,12 @@
   --fg-subtle: #6b7280;
   --primary: #f1f2f4;
   --primary-fg: #0c0d11;
-  --accent: #6e9bff;
-  --accent-fg: #0c1a3a;
-  --accent-soft: #1b2540;
-  --accent-text: #8ab0ff;
+  --accent: #339cff;
+  --accent-fg: #000000;
+  --accent-soft: #1c3956;
+  --accent-text: #4fa6fd;
+  --accent-text-hover: #80bdfd;
+  --thumb: #ffffff;
   --ok: #4ccb93;
   --ok-soft: #163326;
   --ok-text: #4ccb93;
@@ -87,13 +91,13 @@
   --danger-soft: #3a1f1d;
   --warning: #ffb224;
   --warning-soft: #2e2716;
-  --info: #8ab4f8;
-  --info-soft: #1b2740;
+  --info: #48a3fd;
+  --info-soft: #1b3652;
   --nav: #14161b;
   --nav-active: #22252d;
   --led-off: #2a2e37;
   --led-on: #f1f2f4;
-  --led-peak: #6e9bff;
+  --led-peak: #339cff;
   --pill-bg: #14161b;
   --pill-border: #2a2e37;
   --pill-fg: #f1f2f4;
@@ -131,6 +135,8 @@
   --accent-fg: #ffffff;
   --accent-soft: #f6e6dc;
   --accent-text: #9e4a2a;
+  --accent-text-hover: #873514;
+  --thumb: #ffffff;
   --ok: #4e8a5e;
   --ok-soft: #e4efe8;
   --ok-text: #3e7a5a;
@@ -138,8 +144,8 @@
   --danger-soft: #f6e3df;
   --warning: #a8701a;
   --warning-soft: #f6ebd3;
-  --info: #2c4b8f;
-  --info-soft: #e6ebf5;
+  --info: #0165c4;
+  --info-soft: #dfe9ef;
   --nav: #f5efe4;
   --nav-active: #eae2d4;
   --led-off: #e8dfd0;
@@ -178,10 +184,12 @@
   --fg-subtle: #7b838e;
   --primary: #eceef1;
   --primary-fg: #22252b;
-  --accent: #56b4f5;
-  --accent-fg: #0b2233;
-  --accent-soft: #21384b;
-  --accent-text: #7cc6fa;
+  --accent: #339cff;
+  --accent-fg: #000000;
+  --accent-soft: #2c4b6a;
+  --accent-text: #83befe;
+  --accent-text-hover: #add4fe;
+  --thumb: #ffffff;
   --ok: #3eddb2;
   --ok-soft: #263d3a;
   --ok-text: #3eddb2;
@@ -189,13 +197,13 @@
   --danger-soft: #3f2b2a;
   --warning: #f2c14e;
   --warning-soft: #3d3826;
-  --info: #7fb7f5;
-  --info-soft: #28364a;
+  --info: #7bbafe;
+  --info-soft: #2c4865;
   --nav: #22252b;
   --nav-active: #333840;
   --led-off: #3a4048;
   --led-on: #eceef1;
-  --led-peak: #56b4f5;
+  --led-peak: #339cff;
   --pill-bg: #2a2e35;
   --pill-border: #414750;
   --pill-fg: #eceef1;
@@ -212,6 +220,265 @@
   --shadow-pop: 0 8px 24px 0 rgb(0 0 0 / 0.35);
   --shadow-pill: 0 8px 24px 0 rgb(0 0 0 / 0.35);
   --shadow-win: 0 24px 64px -20px rgb(0 0 0 / 0.45), 0 0 0 1px rgb(0 0 0 / 0.08);
+}
+
+/* 强调色（设置 › 外观，本机）：ChatGPT / Codex 的强调色，浅色主题取浅档、深色主题取深档；
+ * `ink` 用主题的墨迹色。`default` 没有这里的规则：用主题自己的强调色（明亮、暗黑、石墨为
+ * Codex 的 #339cff，暖纸保留赭色）。`accent-fg` 取与强调色对比度更高的黑或白（≥ 4.5:1），
+ * `accent-soft` 为强调色与表面色的混合，`accent-text` / `accent-text-hover` 在各自主题的表面、
+ * 画布、嵌入色和 `accent-soft` 上都 ≥ 4.5:1（theme.test.ts 逐一检查）。选择器同时覆盖根元素
+ * 和主题色块里嵌套的 `data-theme` 子树；自带 `data-accent` 的元素（外观页的色块）只按自己的取值。 */
+[data-accent="blue"][data-theme="light"],
+[data-accent="blue"] [data-theme="light"]:not([data-accent]) {
+  --accent: #0285ff;
+  --accent-fg: #000000;
+  --accent-soft: #e1f0ff;
+  --accent-text: #076acb;
+  --accent-text-hover: #0056a9;
+  --led-peak: #0285ff;
+}
+[data-accent="blue"][data-theme="dark"],
+[data-accent="blue"] [data-theme="dark"]:not([data-accent]) {
+  --accent: #339cff;
+  --accent-fg: #000000;
+  --accent-soft: #1c3956;
+  --accent-text: #4fa6fd;
+  --accent-text-hover: #80bdfd;
+  --led-peak: #339cff;
+}
+[data-accent="blue"][data-theme="warm"],
+[data-accent="blue"] [data-theme="warm"]:not([data-accent]) {
+  --accent: #0285ff;
+  --accent-fg: #000000;
+  --accent-soft: #dfecf5;
+  --accent-text: #0665c3;
+  --accent-text-hover: #0552a0;
+  --led-peak: #0285ff;
+}
+[data-accent="blue"][data-theme="graphite"],
+[data-accent="blue"] [data-theme="graphite"]:not([data-accent]) {
+  --accent: #339cff;
+  --accent-fg: #000000;
+  --accent-soft: #2c4b6a;
+  --accent-text: #83befe;
+  --accent-text-hover: #add4fe;
+  --led-peak: #339cff;
+}
+[data-accent="green"][data-theme="light"],
+[data-accent="green"] [data-theme="light"]:not([data-accent]) {
+  --accent: #04b84c;
+  --accent-fg: #000000;
+  --accent-soft: #e1f6ea;
+  --accent-text: #0b7d33;
+  --accent-text-hover: #016627;
+  --led-peak: #04b84c;
+}
+[data-accent="green"][data-theme="dark"],
+[data-accent="green"] [data-theme="dark"]:not([data-accent]) {
+  --accent: #40c977;
+  --accent-fg: #000000;
+  --accent-soft: #1f4533;
+  --accent-text: #40c977;
+  --accent-text-hover: #5be08d;
+  --led-peak: #40c977;
+}
+[data-accent="green"][data-theme="warm"],
+[data-accent="green"] [data-theme="warm"]:not([data-accent]) {
+  --accent: #04b84c;
+  --accent-fg: #000000;
+  --accent-soft: #dff2e0;
+  --accent-text: #06762f;
+  --accent-text-hover: #045f24;
+  --led-peak: #04b84c;
+}
+[data-accent="green"][data-theme="graphite"],
+[data-accent="green"] [data-theme="graphite"]:not([data-accent]) {
+  --accent: #40c977;
+  --accent-fg: #000000;
+  --accent-soft: #305646;
+  --accent-text: #55da87;
+  --accent-text-hover: #6ff19d;
+  --led-peak: #40c977;
+}
+[data-accent="yellow"][data-theme="light"],
+[data-accent="yellow"] [data-theme="light"]:not([data-accent]) {
+  --accent: #ffc300;
+  --accent-fg: #000000;
+  --accent-soft: #fff8e0;
+  --accent-text: #886707;
+  --accent-text-hover: #705400;
+  --led-peak: #ffc300;
+}
+[data-accent="yellow"][data-theme="dark"],
+[data-accent="yellow"] [data-theme="dark"]:not([data-accent]) {
+  --accent: #ffd240;
+  --accent-fg: #000000;
+  --accent-soft: #514725;
+  --accent-text: #ffd240;
+  --accent-text-hover: #ffedbc;
+  --led-peak: #ffd240;
+}
+[data-accent="yellow"][data-theme="warm"],
+[data-accent="yellow"] [data-theme="warm"]:not([data-accent]) {
+  --accent: #ffc300;
+  --accent-fg: #000000;
+  --accent-soft: #fdf3d7;
+  --accent-text: #816104;
+  --accent-text-hover: #694e04;
+  --led-peak: #ffc300;
+}
+[data-accent="yellow"][data-theme="graphite"],
+[data-accent="yellow"] [data-theme="graphite"]:not([data-accent]) {
+  --accent: #ffd240;
+  --accent-fg: #000000;
+  --accent-soft: #615938;
+  --accent-text: #ffd240;
+  --accent-text-hover: #ffedbc;
+  --led-peak: #ffd240;
+}
+[data-accent="pink"][data-theme="light"],
+[data-accent="pink"] [data-theme="light"]:not([data-accent]) {
+  --accent: #ff66ad;
+  --accent-fg: #000000;
+  --accent-soft: #ffedf5;
+  --accent-text: #c32b7a;
+  --accent-text-hover: #aa0366;
+  --led-peak: #ff66ad;
+}
+[data-accent="pink"][data-theme="dark"],
+[data-accent="pink"] [data-theme="dark"]:not([data-accent]) {
+  --accent: #ff8cc1;
+  --accent-fg: #000000;
+  --accent-soft: #513546;
+  --accent-text: #ff8cc1;
+  --accent-text-hover: #ffb4d4;
+  --led-peak: #ff8cc1;
+}
+[data-accent="pink"][data-theme="warm"],
+[data-accent="pink"] [data-theme="warm"]:not([data-accent]) {
+  --accent: #ff66ad;
+  --accent-fg: #000000;
+  --accent-soft: #fde8eb;
+  --accent-text: #bd2475;
+  --accent-text-hover: #a30161;
+  --led-peak: #ff66ad;
+}
+[data-accent="pink"][data-theme="graphite"],
+[data-accent="pink"] [data-theme="graphite"]:not([data-accent]) {
+  --accent: #ff8cc1;
+  --accent-fg: #000000;
+  --accent-soft: #614659;
+  --accent-text: #ffa8ce;
+  --accent-text-hover: #fecde1;
+  --led-peak: #ff8cc1;
+}
+[data-accent="orange"][data-theme="light"],
+[data-accent="orange"] [data-theme="light"]:not([data-accent]) {
+  --accent: #fb6a22;
+  --accent-fg: #000000;
+  --accent-soft: #ffede4;
+  --accent-text: #ba4705;
+  --accent-text-hover: #9b3900;
+  --led-peak: #fb6a22;
+}
+[data-accent="orange"][data-theme="dark"],
+[data-accent="orange"] [data-theme="dark"]:not([data-accent]) {
+  --accent: #ff8549;
+  --accent-fg: #000000;
+  --accent-soft: #513327;
+  --accent-text: #ff8549;
+  --accent-text-hover: #feab85;
+  --led-peak: #ff8549;
+}
+[data-accent="orange"][data-theme="warm"],
+[data-accent="orange"] [data-theme="warm"]:not([data-accent]) {
+  --accent: #fb6a22;
+  --accent-fg: #000000;
+  --accent-soft: #fde9db;
+  --accent-text: #b14303;
+  --accent-text-hover: #913604;
+  --led-peak: #fb6a22;
+}
+[data-accent="orange"][data-theme="graphite"],
+[data-accent="orange"] [data-theme="graphite"]:not([data-accent]) {
+  --accent: #ff8549;
+  --accent-fg: #000000;
+  --accent-soft: #61453a;
+  --accent-text: #feaa84;
+  --accent-text-hover: #ffcbb4;
+  --led-peak: #ff8549;
+}
+[data-accent="purple"][data-theme="light"],
+[data-accent="purple"] [data-theme="light"]:not([data-accent]) {
+  --accent: #924ff7;
+  --accent-fg: #000000;
+  --accent-soft: #f2eafe;
+  --accent-text: #853fe8;
+  --accent-text-hover: #7122d0;
+  --led-peak: #924ff7;
+}
+[data-accent="purple"][data-theme="dark"],
+[data-accent="purple"] [data-theme="dark"]:not([data-accent]) {
+  --accent: #ad7bf9;
+  --accent-fg: #000000;
+  --accent-soft: #3c3055;
+  --accent-text: #b68afd;
+  --accent-text-hover: #c7a9fe;
+  --led-peak: #ad7bf9;
+}
+[data-accent="purple"][data-theme="warm"],
+[data-accent="purple"] [data-theme="warm"]:not([data-accent]) {
+  --accent: #924ff7;
+  --accent-fg: #000000;
+  --accent-soft: #f0e5f4;
+  --accent-text: #8139e2;
+  --accent-text-hover: #6e19ca;
+  --led-peak: #924ff7;
+}
+[data-accent="purple"][data-theme="graphite"],
+[data-accent="purple"] [data-theme="graphite"]:not([data-accent]) {
+  --accent: #ad7bf9;
+  --accent-fg: #000000;
+  --accent-soft: #4c4268;
+  --accent-text: #c8aafe;
+  --accent-text-hover: #dac8fe;
+  --led-peak: #ad7bf9;
+}
+[data-accent="ink"][data-theme="light"],
+[data-accent="ink"] [data-theme="light"]:not([data-accent]) {
+  --accent: #1b1d22;
+  --accent-fg: #ffffff;
+  --accent-soft: #ededed;
+  --accent-text: #1b1d22;
+  --accent-text-hover: #5f6570;
+  --led-peak: #1b1d22;
+}
+[data-accent="ink"][data-theme="dark"],
+[data-accent="ink"] [data-theme="dark"]:not([data-accent]) {
+  --accent: #f1f2f4;
+  --accent-fg: #14161b;
+  --accent-soft: #333539;
+  --accent-text: #f1f2f4;
+  --accent-text-hover: #9aa1ac;
+  --led-peak: #f1f2f4;
+}
+[data-accent="ink"][data-theme="warm"],
+[data-accent="ink"] [data-theme="warm"]:not([data-accent]) {
+  --accent: #2a2521;
+  --accent-fg: #fdfaf4;
+  --accent-soft: #ece9e3;
+  --accent-text: #2a2521;
+  --accent-text-hover: #6e645a;
+  --led-peak: #2a2521;
+}
+[data-accent="ink"][data-theme="graphite"],
+[data-accent="ink"] [data-theme="graphite"]:not([data-accent]) {
+  --accent: #eceef1;
+  --accent-fg: #2a2e35;
+  --accent-soft: #45494f;
+  --accent-text: #eceef1;
+  --accent-text-hover: #eceef1;
+  --led-peak: #eceef1;
 }
 
 @theme inline {
@@ -232,6 +499,8 @@
   --color-accent-fg: var(--accent-fg);
   --color-accent-soft: var(--accent-soft);
   --color-accent-text: var(--accent-text);
+  --color-accent-text-hover: var(--accent-text-hover);
+  --color-thumb: var(--thumb);
   --color-ok: var(--ok);
   --color-ok-soft: var(--ok-soft);
   --color-ok-text: var(--ok-text);
@@ -281,6 +550,8 @@
   --shadow-pop: var(--shadow-pop);
   --shadow-pill: var(--shadow-pill);
   --shadow-win: var(--shadow-win);
+  /* The switch thumb (Codex's), the same in every theme. */
+  --shadow-thumb: 0 1px 2px 0 rgb(0 0 0 / 0.2);
 }
 
 /* Density and type-size knobs written by 设置 › 外观. */
@@ -349,7 +620,7 @@
     cursor: not-allowed;
   }
   :focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--accent-text);
     outline-offset: 1px;
   }
   ::selection {

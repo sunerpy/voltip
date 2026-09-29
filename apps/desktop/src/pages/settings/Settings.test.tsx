@@ -50,6 +50,44 @@ describe("Settings · 外观", () => {
     expect(screen.getByText("prefers-color-scheme: light")).toBeInTheDocument();
   });
 
+  it("the accent colour is a local choice painted on <html>; each swatch shows its own colour", async () => {
+    const user = userEvent.setup();
+    window.localStorage.removeItem("voltip.appearance");
+    renderApp({ path: "/settings/appearance" });
+    const group = await screen.findByRole("radiogroup", { name: "强调色" });
+    const swatches = within(group).getAllByRole("radio");
+    expect(swatches.map((s) => s.getAttribute("aria-label"))).toEqual([
+      "默认",
+      "蓝色",
+      "绿色",
+      "黄色",
+      "粉色",
+      "橙色",
+      "紫色",
+      "墨色",
+    ]);
+    expect(within(group).getByRole("radio", { name: "默认" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    // Each swatch names its accent and the painted theme, so the tokens give it its colour.
+    for (const swatch of swatches) {
+      expect(swatch).toHaveAttribute("data-theme", document.documentElement.dataset.theme);
+      expect(swatch.dataset.accent).toBeDefined();
+    }
+    await user.click(within(group).getByRole("radio", { name: "绿色" }));
+    expect(document.documentElement.dataset.accent).toBe("green");
+    expect(within(group).getByRole("radio", { name: "绿色" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(JSON.parse(window.localStorage.getItem("voltip.appearance") ?? "{}")).toMatchObject({
+      accent: "green",
+    });
+    await user.click(within(group).getByRole("radio", { name: "默认" }));
+    expect(document.documentElement.dataset.accent).toBe("default");
+  });
+
   it("density, font size, overlay position and reduce motion write local appearance", async () => {
     const user = userEvent.setup();
     renderApp({ path: "/settings/appearance" });

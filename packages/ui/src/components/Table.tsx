@@ -149,7 +149,7 @@ export function renderCell(spec: CellSpec): ReactNode {
       return (
         <button
           type="button"
-          className="text-accent-text hover:underline"
+          className="text-accent-text hover:text-accent-text-hover"
           onClick={(e) => {
             e.stopPropagation();
             spec.onClick();
@@ -181,11 +181,15 @@ export function renderCell(spec: CellSpec): ReactNode {
               <Button
                 key={a.label}
                 size="sm"
-                variant={a.tone === "primary" ? "primary" : "text"}
-                className={cx(
-                  a.tone === "danger" && "text-danger",
-                  a.tone === "default" && "text-fg-muted hover:text-fg",
-                )}
+                variant={
+                  a.tone === "primary"
+                    ? "primary"
+                    : a.tone === "danger"
+                      ? "text-danger"
+                      : a.tone === "default"
+                        ? "text-muted"
+                        : "text"
+                }
                 onClick={(e) => {
                   e.stopPropagation();
                   a.onClick();

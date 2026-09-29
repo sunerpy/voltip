@@ -310,8 +310,8 @@ export function Dictionary() {
             <span className="text-fg-muted">{t("dictionary.row.deleteAsk", { term: e.term })}</span>
             <Button
               size="sm"
-              variant="text"
-              className="text-danger"
+              variant="text-danger"
+
               onClick={() => {
                 setDeleting(undefined);
                 run(backend.invoke("dictionary_remove", { id: e.id }));

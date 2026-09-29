@@ -1,5 +1,6 @@
 import { type OverlayPlacement, THEME_IDS, themeName } from "@voltip/shared";
 import {
+  ACCENT_IDS,
   Button,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
@@ -103,6 +104,39 @@ export function Appearance() {
             }}
             label={settings.follow_system_theme ? t("settings.appearance.followingNow") : undefined}
           />
+        </StatusRow>
+        <StatusRow
+          label={t("settings.appearance.accent")}
+          help={t("settings.appearance.accentHelp")}
+          data-testid="accent-row">
+          {/* ChatGPT's accent design (user decision 2026-09-29): each swatch paints the accent
+              that choice gives the current theme, through the tokens (no colour literals here). */}
+          <div
+            role="radiogroup"
+            aria-label={t("settings.appearance.accentGroup")}
+            className="flex flex-wrap justify-end gap-1.5">
+            {ACCENT_IDS.map((id) => {
+              const chosen = appearance.local.accent === id;
+              const name = t(`settings.appearance.accentName.${id}`);
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="radio"
+                  aria-checked={chosen}
+                  aria-label={name}
+                  title={name}
+                  data-accent={id}
+                  data-theme={appearance.resolvedTheme}
+                  onClick={() => {
+                    appearance.setLocal({ accent: id });
+                  }}
+                  className={`flex h-7 w-7 items-center justify-center rounded-full bg-transparent ${chosen ? "hairline border-fg" : ""}`}>
+                  <span className="h-[18px] w-[18px] rounded-full bg-accent" aria-hidden />
+                </button>
+              );
+            })}
+          </div>
         </StatusRow>
         <StatusRow
           label={t("settings.appearance.density")}

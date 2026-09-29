@@ -165,7 +165,7 @@ export function ModelCard({ model }: ModelCardProps) {
         <>
           {primary}
           {model.state.kind === "installed" && (
-            <Button size="sm" variant="text" className="text-danger" icon="trash" onClick={remove}>
+            <Button size="sm" variant="text-danger" icon="trash" onClick={remove}>
               {t("model.action.remove")}
             </Button>
           )}

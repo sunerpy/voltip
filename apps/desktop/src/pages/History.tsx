@@ -199,8 +199,8 @@ export function History({ initialFilter }: HistoryProps) {
         </Button>
         <Button
           size="sm"
-          variant="text"
-          className="text-danger"
+          variant="text-danger"
+
           onClick={clearAll}
           disabled={entries.length === 0}>
           {t("history.banner.clearAll")}
@@ -611,8 +611,8 @@ export function History({ initialFilter }: HistoryProps) {
                 </Button>
                 <Button
                   size="sm"
-                  variant="text"
-                  className="ml-auto text-danger"
+                  variant="text-danger"
+                  className="ml-auto"
                   onClick={() => {
                     remove(selected);
                   }}>

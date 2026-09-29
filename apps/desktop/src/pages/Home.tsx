@@ -475,7 +475,7 @@ export function Home() {
                 // The one place that sets it is 设置 › 听写 (plan 1.5).
                 <button
                   type="button"
-                  className="text-accent-text hover:underline"
+                  className="text-accent-text hover:text-accent-text-hover"
                   title={t("home.engine.injectChange")}
                   data-testid="home-inject-link"
                   onClick={() => {

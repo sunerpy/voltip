@@ -24,7 +24,8 @@ export function StatusRow({ label, help, children, note, className, ...rest }: S
         className,
       )}>
       <div className="min-w-0 flex-1">
-        <div className="text-[14px] text-fg">{label}</div>
+        {/* Codex's setting labels: 14 px, medium; the help under them 12 px, regular. */}
+        <div className="text-[14px] font-medium text-fg">{label}</div>
         {help !== undefined && (
           <div className="mt-0.5 text-[12px] leading-4 text-fg-muted">{help}</div>
         )}

@@ -1548,6 +1548,20 @@ export const en: Messages = {
       overlayOff: "Off",
       overlayTop: "Top",
       overlayBottom: "Bottom",
+      accent: "Accent colour",
+      accentHelp:
+        "The colour of switches, links, focus rings and selected states; “Default” follows the theme. This computer only.",
+      accentGroup: "Accent colour",
+      accentName: {
+        default: "Default",
+        blue: "Blue",
+        green: "Green",
+        yellow: "Yellow",
+        pink: "Pink",
+        orange: "Orange",
+        purple: "Purple",
+        ink: "Ink",
+      },
       reduceMotion: "Reduce motion",
       reduceMotionHelp:
         "Turns off meter fades, panel slides and lamp breathing. Applies automatically when the system has “reduce motion” on.",

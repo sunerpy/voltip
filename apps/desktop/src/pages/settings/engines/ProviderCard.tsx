@@ -365,7 +365,7 @@ function ProviderForm({
       )}
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
         {takesKey && service.key.source === "user" && (
-          <Button size="sm" variant="text" className="text-danger" icon="trash" onClick={deleteKey}>
+          <Button size="sm" variant="text-danger" icon="trash" onClick={deleteKey}>
             {t("engines.deleteKey")}
           </Button>
         )}

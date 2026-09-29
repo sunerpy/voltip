@@ -42,19 +42,21 @@ export function Toggle({
         onClick={() => {
           onChange(!checked);
         }}
+        // Codex's switch (user request 2026-09-29): 32 × 19, the accent when on, a faint ink
+        // track when off, the same white thumb in both.
         className={cx(
-          "relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-pill border transition-colors",
-          checked ? "border-primary bg-primary" : "border-border-strong bg-surface",
+          "relative inline-flex h-[19px] w-8 shrink-0 items-center rounded-pill transition-colors",
+          checked ? "bg-accent" : "bg-fg/10",
           disabled
             ? "cursor-not-allowed"
             : checked
               ? "cursor-pointer hover:opacity-90"
-              : "cursor-pointer hover:border-fg-subtle",
+              : "cursor-pointer hover:bg-fg/15",
         )}>
         <span
           className={cx(
-            "absolute top-[2px] h-3 w-3 rounded-full transition-transform",
-            checked ? "translate-x-[16px] bg-primary-fg" : "translate-x-[2px] bg-fg-subtle",
+            "absolute top-[3px] size-[13px] rounded-full bg-thumb shadow-thumb transition-transform",
+            checked ? "translate-x-4" : "translate-x-[3px]",
           )}
         />
       </button>

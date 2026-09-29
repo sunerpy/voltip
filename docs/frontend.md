@@ -9,9 +9,10 @@
 
 ## 1. 令牌（CSS 变量）
 
-四套主题 `light | dark | warm | graphite`，角色：`canvas surface inset inset2 border borderStrong fg fgMuted fgSubtle primary primaryFg accent accentFg accentSoft accentText ok okSoft okText danger dangerSoft warning warningSoft info infoSoft nav navActive ledOff ledOn ledPeak pillBg pillBorder pillFg pillMuted wave desktop desktopField keycapBg keycapBorder scrim diffAdd diffDel mark` + 三组阴影 `shadowPop shadowPill shadowWin`。
+四套主题 `light | dark | warm | graphite`，角色：`canvas surface inset inset2 border borderStrong fg fgMuted fgSubtle primary primaryFg accent accentFg accentSoft accentText accentTextHover thumb ok okSoft okText danger dangerSoft warning warningSoft info infoSoft nav navActive ledOff ledOn ledPeak pillBg pillBorder pillFg pillMuted wave desktop desktopField keycapBg keycapBorder scrim diffAdd diffDel mark` + 三组阴影 `shadowPop shadowPill shadowWin`。
 
 - 实现为 `packages/ui/src/tokens.css`：`:root[data-theme="light"] { --canvas: #F2F3F6; … }` 四段；Tailwind 4 用 `@theme inline { --color-canvas: var(--canvas); … }` 暴露为 `bg-canvas text-fg border-border` 等工具类。
+- 蓝色系与强调色（2026-09-29，用户选定）：明亮、暗黑、石墨三套主题的默认强调色是 Codex 桌面应用的 `#339cff`，暖纸保留赭色；`info` 一律是 Codex 的蓝。设置 › 外观的「强调色」是本机选项（`LocalAppearance.accent`，写进 `<html data-accent>`，其他窗口经 `storage` 事件跟随）：默认、蓝、绿、黄、粉、橙、紫、墨色，取 ChatGPT / Codex 的色板，浅色主题用浅档、深色主题用深档。每个主题 × 强调色的 `accent / accent-fg / accent-soft / accent-text / accent-text-hover / led-peak` 事先算好写进 `tokens.css`：`accent-fg` 取对比度更高的黑或白，`accent-text` 与悬停色在表面、画布、嵌入色和 `accent-soft` 上都 ≥ 4.5:1，焦点框用 `accent-text`（`theme.test.ts` 逐一检查）。开关照 Codex：32 × 19，开为强调色、关为淡墨色，白色滑块（`--thumb`、`shadow-thumb`）；文字链接用 `accent-text`，无下划线，悬停换 `accent-text-hover`；设置项标签 14 px 中等字重，说明 12 px。浅色主题里 `#339cff`、黄、绿、粉等填充色与白底的对比度低于 3:1，这是 Codex / ChatGPT 的原样设计：开关的状态同时由滑块位置表示，文字和焦点框都用加深后的颜色。
 - 字体：UI `Instrument Sans`，等宽 `JetBrains Mono`，中文 `Noto Sans SC`（`font-ui / font-mono`；CJK 自动回退到 PingFang SC / Microsoft YaHei UI）。**三族字体随包自带**（`@fontsource-variable/*` 可变字体，`packages/ui/src/tokens.css` 顶部 `@import`），不从 Google Fonts 拉取（离线 / 受限网络下远程字体会回退成系统字体）；CSP 不放行任何远程 font / style 源（`apps/desktop/src/offline-assets.test.ts`）。圆角：4 / 6 / 10 / 14 / 20 / 999。卡片无阴影、1 px hairline；阴影只用于弹出层与胶囊。
 - **绿色只做 8 px 状态点**（`ok`），强调色 `accent` 用于链接 / 波形 / 电平 / 热力图 / 进度 / 选中态。
 
