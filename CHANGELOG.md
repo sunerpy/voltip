@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.0.8](https://github.com/sunerpy/voltip/compare/v0.0.7...v0.0.8) (2026-09-29)
+
+
+### Features
+
+* AI presets and built-in scenes ([#17](https://github.com/sunerpy/voltip/issues/17)) ([1411760](https://github.com/sunerpy/voltip/commit/1411760a8b8b5650975659b9a7b3581dab402485))
+* **presets:** built-in and custom AI presets, chosen from the home page, the title bar and the tray ([1411760](https://github.com/sunerpy/voltip/commit/1411760a8b8b5650975659b9a7b3581dab402485))
+* **scenes:** seven built-in scenes with presets, instructions and term packs ([1411760](https://github.com/sunerpy/voltip/commit/1411760a8b8b5650975659b9a7b3581dab402485))
+
+
+### Bug Fixes
+
+* **desktop:** every settings group opens at its top ([1411760](https://github.com/sunerpy/voltip/commit/1411760a8b8b5650975659b9a7b3581dab402485))
+* **desktop:** the history paste never goes to a window of the WebView2 runtime ([1411760](https://github.com/sunerpy/voltip/commit/1411760a8b8b5650975659b9a7b3581dab402485))
+* **desktop:** the tray menu shows the newest state after a quick choice ([1411760](https://github.com/sunerpy/voltip/commit/1411760a8b8b5650975659b9a7b3581dab402485))
+* **desktop:** the updater gives up on a silent host and says why a request failed ([1411760](https://github.com/sunerpy/voltip/commit/1411760a8b8b5650975659b9a7b3581dab402485))
+* **ui:** a dialog over another one keeps its name, and Esc closes only the one on top ([1411760](https://github.com/sunerpy/voltip/commit/1411760a8b8b5650975659b9a7b3581dab402485))
+
 ## [0.0.7](https://github.com/sunerpy/voltip/compare/v0.0.6...v0.0.7) (2026-09-29)
 
 
