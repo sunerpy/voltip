@@ -29,6 +29,8 @@ gh secret set VOLTIP_MODEL_BASE_URL --repo "$repo"
 # Optional: the feedback endpoint (both or neither).
 gh secret set VOLTIP_FEEDBACK_URL --repo "$repo"
 gh secret set VOLTIP_FEEDBACK_TOKEN --repo "$repo"
+# The documentation site: a fine-grained token for sunerpy/firlab (see below).
+gh secret set FIRLAB_DOCS_TOKEN --repo "$repo"
 gh secret list --repo "$repo"
 ```
 
@@ -38,6 +40,12 @@ gh secret list --repo "$repo"
 |---|---|---|
 | `VOLTIP_PRODUCTION_HOSTS` | Words the production-host guard looks for: the real host names, or their distinctive labels, space- or comma-separated, at least 4 characters each. CI's `verify` job and the release candidate's `prepare` job run the guard with `--require`; a hit prints `path:line` only. Pull requests from forks skip that step (they get no secrets); `make verify` runs the guard with the local `.env.build`. | your deployment |
 | `CODECOV_TOKEN` | Codecov upload token (the `codecov` job in `ci.yml`). Forks upload without it, which Codecov accepts for public repositories. Reporting only: the merge-blocking floors are `make verify`'s. | Codecov → repository settings |
+
+## Documentation site (`publish-site.yml`)
+
+| Secret | Meaning | Source |
+|---|---|---|
+| `FIRLAB_DOCS_TOKEN` | Pushes the synced pages of voltip.firlab.app into `sunerpy/firlab`, which builds and deploys the site. A fine-grained personal access token for `sunerpy/firlab` only, with **Contents: read and write** and nothing else. GitHub has no API that creates one, so the owner makes it by hand and replaces it before it expires; an expired token shows up as a failed checkout in `publish-site`. `docs-site.yml` (pull requests) reads the public repository and needs no secret. | GitHub → Settings → Developer settings → Fine-grained tokens |
 
 ## Built-in engine defaults (release only)
 

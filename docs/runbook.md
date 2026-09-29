@@ -131,6 +131,14 @@ Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前�
   - 从 ad-hoc 签名升级到第一个固定签名的版本（0.0.7）时还会最后问一次：钥匙串对每个条目点「始终允许」；辅助功能在系统设置里把 Voltip 关掉再打开，不行就 `tccutil reset Accessibility dev.voltip.desktop` 后重新授权；麦克风同样关掉再打开，没有再弹授权时 `tccutil reset Microphone dev.voltip.desktop`。发布说明要写这三项。固定签名版本之间的升级（0.0.7 → 0.0.8）在 `docs/acceptance/macos/manual-checklist.md` 第 15 项验证。
 - 还没进工作流的：Android 包（`make android-apk` 在本机出 debug APK）；macOS 包没有公证（见 `docs/roadmap.md`）。
 
+## 文档站
+
+`voltip.firlab.app` 的页面写在 `docs/site/`（英文；中文在 `zh/`），站点本身（VitePress 配置、主题、部署）在 `sunerpy/firlab` 的 `voltip/`。写作规则、本地预览和截图流程见 `docs/site/README.md`。
+
+- PR 改到 `docs/site/**` 或上站的 8 份设计文档时，`docs-site.yml` 签出公开的 firlab `main`，同步后构建一次，只做检查，不用 secret。
+- 合并到 `main` 后，`publish-site.yml` 用 `FIRLAB_DOCS_TOKEN` 签出 firlab，运行 `voltip/scripts/sync-voltip-docs.sh`，把 `voltip/src` 的变化提交为 `docs(voltip): sync from voltip@<sha>` 并推送；firlab 的 `deploy-voltip.yml` 接着构建并部署到 Cloudflare Pages（项目 `voltip-docs`）。页脚写着内容来自哪个提交。
+- `publish-site` 签出 firlab 失败（401 / 403）：token 过期或权限不对，按 `.github/README-secrets.md` 重建。同步脚本报错时，信息会指出哪一页哪一行（缺另一种语言的页面、未注册的组件、禁用词），在本仓库修正。同步成功但站点没变：看 firlab 的 `deploy-voltip` 运行记录。
+
 ## 局域网直连
 
 - 每台设备常驻一个 LAN 主机（默认 TCP 47831，被占用退到临时端口）；配对设备优先在这里重逢，Relay 只是回退。首次运行时 Windows / macOS 防火墙会询问是否允许监听，拒绝只会失去直连（回退 Relay），不影响配对。
