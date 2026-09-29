@@ -22,7 +22,16 @@ describe("Select", () => {
     expect([...sizer.children].map((line) => line.textContent)).toEqual(
       OPTIONS.map((o) => o.label),
     );
-    for (const cls of ["whitespace-nowrap", "col-start-1", "row-start-1", "invisible", "h-0"]) {
+    // `min-w-max`: the copy is a scroll container (overflow hidden), which would otherwise give it
+    // no automatic minimum width, and the column would not grow (browser check 2026-09-29).
+    for (const cls of [
+      "whitespace-nowrap",
+      "col-start-1",
+      "row-start-1",
+      "invisible",
+      "h-0",
+      "min-w-max",
+    ]) {
       expect(sizer.className).toContain(cls);
     }
     expect(sizer).toHaveAttribute("aria-hidden", "true");

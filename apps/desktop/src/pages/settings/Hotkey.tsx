@@ -480,7 +480,9 @@ export function Hotkey() {
         title={t("settings.hotkey.activation")}
         description={t("settings.hotkey.activationHelp")}
         data-testid="activation">
-        <CardGrid min={200} role="listbox" aria-label={t("settings.hotkey.activation")}>
+        {/* Three cards: 240 px keeps a fourth, empty column from narrowing them (their longest
+            name is 「按一下开始，再按一下结束」). */}
+        <CardGrid min={240} role="listbox" aria-label={t("settings.hotkey.activation")}>
           {ACTIVATIONS.map((mode) => (
             <OptionCard
               key={mode}

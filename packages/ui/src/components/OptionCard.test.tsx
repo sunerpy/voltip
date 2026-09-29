@@ -29,6 +29,14 @@ describe("OptionCard", () => {
     expect(screen.queryByRole("option")).toBeNull();
   });
 
+  it("regression: a title cut by a narrow card shows whole on hover", () => {
+    // Browser check 2026-09-29: 「按一下开始，再按一下结束」 was cut with no way to read it.
+    render(<OptionCard icon="keyboard" title="按一下开始，再按一下结束" aria-label="toggle" />);
+    const title = screen.getByText("按一下开始，再按一下结束");
+    expect(title).toHaveClass("truncate");
+    expect(title).toHaveAttribute("title", "按一下开始，再按一下结束");
+  });
+
   it("an unselected article has no data-selected and a neutral icon tile", () => {
     render(<OptionCard icon="cloud" title="OpenAI" aria-label="openai" />);
     const card = screen.getByRole("article", { name: "openai" });

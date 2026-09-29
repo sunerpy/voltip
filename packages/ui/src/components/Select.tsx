@@ -56,7 +56,7 @@ export function Select<V extends string>({
           data-select-sizer=""
           {...markers}
           className={cx(
-            "invisible col-start-1 row-start-1 flex h-0 flex-col overflow-hidden border border-transparent pr-7 pl-2.5 whitespace-nowrap",
+            "invisible col-start-1 row-start-1 flex h-0 min-w-max flex-col overflow-hidden border border-transparent pr-7 pl-2.5 whitespace-nowrap",
             size === "sm" ? "text-[12px]" : "text-[13px]",
             mono && "mono",
           )}>

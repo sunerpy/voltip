@@ -344,7 +344,7 @@ describe("Pill width", () => {
         />,
       );
       const pill = container.querySelector('[role="status"]');
-      expect(pill?.className, state).toContain("max-w-[464px]");
+      expect(pill?.className, `${state} pill`).toContain("max-w-[464px]");
       const wave = container.querySelector('[role="img"][data-state]');
       for (const cls of ["min-w-0", "shrink", "justify-end", "overflow-hidden"]) {
         expect(wave?.className, `${state} waveform`).toContain(cls);
