@@ -195,6 +195,11 @@ function KindTag({ label }: { label: string }) {
   );
 }
 
+/** The pill never grows past the overlay window (480 px, `overlay.rs` `OVERLAY_WIDTH`) less its
+ *  margins; when a scene tag, the waiting hint and the Esc hint all show, the waveform gives way
+ *  and loses its oldest bars (the newest stay, at the right end). */
+const YIELDING_WAVE = "min-w-0 shrink justify-end overflow-hidden";
+
 /** The overlay capsule (height 40, radius 999). Never focusable: it must not steal the target window. */
 export function Pill({
   state,
@@ -236,7 +241,7 @@ export function Pill({
       ) : (
         <Lamp tone="accent" />
       )}
-      <Waveform levels={levels} height={16} bars={36} />
+      <Waveform levels={levels} height={16} bars={36} className={YIELDING_WAVE} />
       <span className="mono text-[11px] text-pill-muted">
         {waiting ? "00:00" : (readout ?? "00:00")}
       </span>
@@ -257,7 +262,7 @@ export function Pill({
       data-state={state}
       tabIndex={-1}
       className={cx(
-        "inline-flex min-w-[52px] items-center gap-2.5 rounded-pill border bg-pill-bg pr-3.5 pl-3.5 text-[13px] font-medium whitespace-nowrap text-pill-fg shadow-pill select-none",
+        "inline-flex min-w-[52px] max-w-[464px] items-center gap-2.5 rounded-pill border bg-pill-bg pr-3.5 pl-3.5 text-[13px] font-medium whitespace-nowrap text-pill-fg shadow-pill select-none",
         caption ? "h-14" : "h-10",
         danger ? "border-danger" : accentRing ? "border-accent" : "border-pill-border",
         className,
@@ -323,7 +328,7 @@ export function Pill({
       {state === "locked" && (
         <>
           <Icon name="lock" size={13} className="text-pill-muted" />
-          <Waveform levels={levels} height={16} bars={36} />
+          <Waveform levels={levels} height={16} bars={36} className={YIELDING_WAVE} />
           <span className="mono text-[11px] text-pill-muted">{readout ?? "00:00"}</span>
           <ModeTag>{local}</ModeTag>
           <SceneTag name={scene} />
@@ -340,7 +345,13 @@ export function Pill({
       {state === "processing" && (
         <>
           <Lamp tone="accent" pulse />
-          <Waveform levels={levels} state="frozen" height={14} bars={20} />
+          <Waveform
+            levels={levels}
+            state="frozen"
+            height={14}
+            bars={20}
+            className={YIELDING_WAVE}
+          />
           <span className="flex min-w-0 flex-col gap-1">
             {preview !== undefined && preview.length > 0 ? (
               <span className="max-w-[300px] truncate text-pill-muted" data-testid="pill-preview">

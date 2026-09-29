@@ -329,3 +329,27 @@ describe("LiveCaption", () => {
     expect(screen.getByText("x")).toHaveClass("text-fg-subtle");
   });
 });
+
+describe("Pill width", () => {
+  it("regression: the widest pill stays inside the 480 px overlay window; the waveform gives way", () => {
+    // Browser measurement 2026-09-29: a long scene name, the waiting hint and the Esc hint made the
+    // listening pill 533 px wide, and the 480 px overlay window cut it off.
+    for (const state of ["listening", "locked", "processing"] as const) {
+      const { container, unmount } = render(
+        <Pill
+          state={state}
+          waiting={state === "listening"}
+          scene="代码评审与重构场景名称很长"
+          mode="云端"
+        />,
+      );
+      const pill = container.querySelector('[role="status"]');
+      expect(pill?.className, state).toContain("max-w-[464px]");
+      const wave = container.querySelector('[role="img"][data-state]');
+      for (const cls of ["min-w-0", "shrink", "justify-end", "overflow-hidden"]) {
+        expect(wave?.className, `${state} waveform`).toContain(cls);
+      }
+      unmount();
+    }
+  });
+});
