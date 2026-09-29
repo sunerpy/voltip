@@ -86,6 +86,21 @@ latest, so installed copies are offered an update only when a stable release is 
 Do not put `bundle.createUpdaterArtifacts` in `tauri.conf.json`: local `make windows-x64` would
 then demand the private key. The release candidate's `prepare` job refuses such a configuration.
 
+## macOS release certificate (release only, required)
+
+The macOS packages are signed with one self-signed code signing certificate, "Voltip Code Signing"
+(100 years), so a Mac sees every update as the same app and keeps its microphone and Accessibility
+grants and its keychain access. `release-candidate.yml` imports it into a keychain of the job
+(`.github/scripts/macos-signing-keychain.sh`) and checks the app and every Mach-O in it against
+`macos_signing` in `.github/release-targets.json` (`scripts/release/macos-signature.py`). Local and
+ordinary CI builds stay ad hoc. Rotation and recovery: `docs/runbook.md` (发布 · macOS 签名).
+
+| Secret | Meaning | Source |
+|---|---|---|
+| `MACOS_CERTIFICATE` | The certificate and its private key: the `.p12`, base64 on one line. | kept in the owner's password manager |
+| `MACOS_CERTIFICATE_PASSWORD` | The `.p12` password. | same place |
+| `MACOS_SIGNING_IDENTITY` | The certificate's SHA-1 (upper case, no colons); must equal `macos_signing.certificate_sha1`. | `openssl x509 -noout -fingerprint -sha1` |
+
 ## Repository settings the release relies on
 
 - Protect the default branch (ruleset or branch protection) before the first release:

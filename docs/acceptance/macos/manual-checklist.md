@@ -1,10 +1,10 @@
 # macOS 桌面手测清单
 
-CI 能构建、签名（ad-hoc）并检查 `.app` 与 `.dmg`，跑无头入口（CI `macos` job 的运行摘要）。下面这些要在一台登录了桌面的 Mac 上人工确认，每项记下「通过 / 不通过 + 现象」。Apple 芯片（M 系列）的 Mac 用 GitHub Release 里的 `Voltip_<版本>_aarch64.dmg`，Intel 芯片的 Mac 用 `Voltip_<版本>_x64.dmg`；也可以取 CI `macos` job 最近一次运行的 `voltip-macos-aarch64` / `voltip-macos-x64` 产物里的同名文件。一键安装脚本（README 的「Install」）会按芯片自动选。
+CI 能构建、签名（普通 CI 为 ad-hoc，发布候选为项目的固定证书）并检查 `.app` 与 `.dmg`，跑无头入口（CI `macos` job 的运行摘要）。下面这些要在一台登录了桌面的 Mac 上人工确认，每项记下「通过 / 不通过 + 现象」。Apple 芯片（M 系列）的 Mac 用 GitHub Release 里的 `Voltip_<版本>_aarch64.dmg`，Intel 芯片的 Mac 用 `Voltip_<版本>_x64.dmg`；也可以取 CI `macos` job 最近一次运行的 `voltip-macos-aarch64` / `voltip-macos-x64` 产物里的同名文件。一键安装脚本（README 的「Install」）会按芯片自动选。
 
 ## 准备
 
-1. 打开 `.dmg`，把 `Voltip.app` 拖到「应用程序」。应用只做了 ad-hoc 签名、没有公证，第一次打开会被拦下：macOS 15 起在「系统设置 → 隐私与安全性」底部点「仍要打开」；macOS 11–14 在「应用程序」里按住 Control 点 Voltip，选「打开」。也可以执行 `xattr -dr com.apple.quarantine /Applications/Voltip.app` 后再打开。
+1. 打开 `.dmg`，把 `Voltip.app` 拖到「应用程序」。应用用项目自己的自签名证书签名、没有公证，第一次打开会被拦下：macOS 15 起在「系统设置 → 隐私与安全性」底部点「仍要打开」；macOS 11–14 在「应用程序」里按住 Control 点 Voltip，选「打开」。也可以执行 `xattr -dr com.apple.quarantine /Applications/Voltip.app` 后再打开。
 2. 「系统设置 → 键盘 → 输入法」里先留一个英文布局（ABC 或 U.S.）。
 
 ## 清单
@@ -25,6 +25,7 @@ CI 能构建、签名（ad-hoc）并检查 `.app` 与 `.dmg`，跑无头入口�
 | 12 | 终端里执行 `/Applications/Voltip.app/Contents/MacOS/voltip-desktop --list-compute`；装好「均衡」模型后执行 `… --transcribe-file <16 kHz wav> --model qwen3-asr-0.6b --json` 两次 | `--list-compute` 列出一行 `gpu`（Metal）；两次输出的 `backend` 都是 `Metal`；记下两次的 `latency_ms`（每次都是新进程，都含 Metal 初始化） |
 
 | 13 | 双击 `.dmg` | 挂载出的窗口里有 `Voltip.app` 和「应用程序」的替身；拖入后能按「准备」第 1 步打开，不会提示「已损坏」 |
-| 14 | 装着旧版本时，在「设置 → 关于」里检查更新并安装（需要 GitHub 上已有更新的正式版本） | 下载本机芯片对应的 `Voltip_<新版本>_<aarch64 或 x64>.app.tar.gz`、校验签名后替换应用并重启，「关于」显示新版本；更新后若听写或插入无反应，到「隐私与安全性」重新勾选辅助功能（ad-hoc 签名每个版本都不同，系统可能不再认旧的授权），记下是否需要 |
+| 14 | 装着 0.0.6 或更早的版本（ad-hoc 签名）时，在「设置 → 关于」里检查更新并安装第一个固定证书的版本（0.0.7） | 下载本机芯片对应的 `Voltip_<新版本>_<aarch64 或 x64>.app.tar.gz`、校验签名后替换应用并重启，「关于」显示新版本；这一次钥匙串会为每个条目弹窗（点「始终允许」），辅助功能与麦克风可能要在系统设置里关掉再打开（仍无效时 `tccutil reset Accessibility dev.voltip.desktop` / `tccutil reset Microphone dev.voltip.desktop`），记下实际需要哪几步 |
+| 15 | 装着 0.0.7 时更新到 0.0.8（两版都用固定证书）——**待验证**（0.0.8 发布时做） | 更新后启动不弹钥匙串；不用重新授权，麦克风和辅助功能都还有效，听写直接插入 |
 
 结果回填到 `docs/acceptance.md` 对应的 B6 行，或直接告诉维护者。

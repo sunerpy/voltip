@@ -18,7 +18,7 @@ import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MACOS_BUNDLE_ID, MACOS_TCC_RESET } from "./Onboarding";
+import { MACOS_BUNDLE_ID, MACOS_TCC_RESET, MACOS_TCC_RESET_MICROPHONE } from "./Onboarding";
 import { engineSettingsFor, initialChoice, vendorsFor } from "./OnboardingEngine";
 
 const mac = () => ({ ...desktopIdentity(), platform: "macos" as const, name: "MacBook Pro" });
@@ -83,11 +83,17 @@ describe("Onboarding wizard", () => {
     expect(within(table).getAllByRole("button", { name: "请求授权" })).toHaveLength(2);
     expect(screen.getByRole("button", { name: /历史记录/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /首页/ })).toBeEnabled();
+    // Both grants the last ad-hoc → fixed-certificate update may lose (plan 1.7), each with its copy.
+    const commands = screen.getByTestId("tcc-reset-commands");
     expect(
-      screen.getByText(/tccutil reset Accessibility dev\.voltip\.desktop/),
+      within(commands).getByText("tccutil reset Accessibility dev.voltip.desktop"),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "复制命令" }));
+    expect(
+      within(commands).getByText("tccutil reset Microphone dev.voltip.desktop"),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "复制辅助功能的重置命令" }));
     expect(await screen.findByText("已复制修复命令")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "复制麦克风的重置命令" })).toBeInTheDocument();
     expect(screen.getByTestId("permission-hint")).toHaveTextContent(
       "未授予辅助功能权限，文本无法插入到光标处，只会保存在历史记录中。",
     );
@@ -724,5 +730,6 @@ describe("onboarding constants", () => {
         : undefined;
     expect(MACOS_BUNDLE_ID).toBe(identifier);
     expect(MACOS_TCC_RESET).toBe(`tccutil reset Accessibility ${MACOS_BUNDLE_ID}`);
+    expect(MACOS_TCC_RESET_MICROPHONE).toBe(`tccutil reset Microphone ${MACOS_BUNDLE_ID}`);
   });
 });

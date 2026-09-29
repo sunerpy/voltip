@@ -244,6 +244,25 @@ jobs:
           done
           exit "$missing"
 
+      # The macOS packages are signed with the project's fixed certificate (docs/runbook.md 发布 ·
+      # macOS 签名), never ad hoc: without it an update would lose the Mac's permissions again.
+      - name: Require the macOS release certificate (values compared with '' inside env, never echoed)
+        env:
+          MACOS_CERTIFICATE_PRESENT: ${{ secrets.MACOS_CERTIFICATE != '' }}
+          MACOS_CERTIFICATE_PASSWORD_PRESENT: ${{ secrets.MACOS_CERTIFICATE_PASSWORD != '' }}
+          MACOS_SIGNING_IDENTITY_PRESENT: ${{ secrets.MACOS_SIGNING_IDENTITY != '' }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in MACOS_CERTIFICATE MACOS_CERTIFICATE_PASSWORD MACOS_SIGNING_IDENTITY; do
+            present_var="${name}_PRESENT"
+            if [ "${!present_var}" != true ]; then
+              echo "::error::repository secret ${name} is empty; the macOS packages must be signed with the release certificate (see .github/README-secrets.md)"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       # The tree being released names no production host; the words come from a secret and a hit
       # prints path:line only. The guard scans the Git toplevel of its working directory.
       - name: No production hosts in the source tree
@@ -789,6 +808,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             /.github/scripts/
+            /.github/release-targets.json
             /scripts/release/
             /scripts/lib/
           sparse-checkout-cone-mode: false
@@ -886,11 +906,26 @@ jobs:
           . .release-tooling/scripts/lib/artefact-checks.sh
           voltip_scan_provider_keys "target/$MACOS_TARGET/release/voltip-desktop" release || { echo "::error::provider API key found inside voltip-desktop — refusing to ship"; exit 1; }
 
-      # Phase 2: the .app (signed ad hoc), the .dmg and, with the updater, the signed updater
-      # archive; the only step holding the signing key.
+      # The release certificate (docs/runbook.md 发布 · macOS 签名): the same self-signed identity for
+      # every release, so a Mac keeps the app's microphone and Accessibility grants and its keychain
+      # access across updates. In a keychain of this job only; hardened runtime stays off (without a
+      # Team ID, library validation would refuse the embedded sherpa dylibs).
+      - name: Import the release signing certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          sha1=$(jq -r .macos_signing.certificate_sha1 .release-tooling/.github/release-targets.json)
+          .release-tooling/.github/scripts/macos-signing-keychain.sh import --expect-sha1 "$sha1"
+
+      # Phase 2: the .app (signed with the release certificate), the .dmg and, with the updater,
+      # the signed updater archive; the only step holding the updater signing key.
       - name: Bundle and sign (app, dmg)
         working-directory: apps/desktop
         env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
@@ -916,12 +951,17 @@ jobs:
             test -s "../../target/$MACOS_TARGET/release/bundle/macos/Voltip.app.tar.gz.sig"
           fi
 
-      # What a Mac that downloads the dmg meets: the ad-hoc seal, the macOS 11 floor, the notices,
-      # this release's version, and a dmg that mounts with the app and the Applications link.
+      # What a Mac that downloads the dmg meets: the release certificate's seal on the app and on
+      # every Mach-O inside it (one canonical requirement for both legs, release-targets.json), the
+      # macOS 11 floor, the notices, this release's version, and a dmg that mounts with the app and
+      # the Applications link.
       - name: Check the app and the dmg
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: .release-tooling/.github/scripts/check-macos-bundle.sh "target/$MACOS_TARGET/release/bundle" "$VERSION" "$MACOS_ARCH" --notices
+        run: |
+          set -euo pipefail
+          requirement=$(jq -r .macos_signing.designated_requirement .release-tooling/.github/release-targets.json)
+          .release-tooling/.github/scripts/check-macos-bundle.sh "target/$MACOS_TARGET/release/bundle" "$VERSION" "$MACOS_ARCH" --notices --expect-requirement "$requirement"
 
       - name: Collect bundles and evidence
         env:
@@ -945,6 +985,10 @@ jobs:
           path: candidate-leg/
           if-no-files-found: error
           retention-days: 1
+
+      - name: Remove the release signing keychain
+        if: always()
+        run: .release-tooling/.github/scripts/macos-signing-keychain.sh remove
 
   # Downloads, checks, seals and attests; runs no project or dependency code, so it is the only
   # job holding id-token: write.

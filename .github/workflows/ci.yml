@@ -870,6 +870,22 @@ jobs:
           .github/scripts/check-macos-bundle.sh "target/$MACOS_TARGET/release/bundle" "$version" "$MACOS_ARCH"
           cp "target/$MACOS_TARGET/release/bundle/dmg/"*.dmg .
 
+      # The release guard's negative case (docs/runbook.md 发布 · macOS 签名): this build is signed ad
+      # hoc, so the check a release candidate runs must refuse it, and for that reason.
+      - name: The release guard refuses an ad-hoc app
+        env:
+          MACOS_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
+          requirement=$(jq -r .macos_signing.designated_requirement .github/release-targets.json)
+          if .github/scripts/check-macos-bundle.sh "target/$MACOS_TARGET/release/bundle" "$version" "$MACOS_ARCH" --expect-requirement "$requirement" >guard.log 2>&1; then
+            cat guard.log
+            echo "::error::the release guard accepted an ad-hoc app"
+            exit 1
+          fi
+          grep -F "signed ad hoc, not with the release certificate" guard.log
+
       - name: Headless native run (download a model, transcribe a public sample)
         shell: pwsh
         # Both engines: sherpa-onnx (SenseVoice, the bundled dylibs) and transcribe.cpp (Qwen3-ASR

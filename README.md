@@ -94,12 +94,15 @@ build attestations:
 | macOS 11+ (Intel) | .dmg | Intel Macs |
 | Android | not released yet | `make android-apk` builds a debug APK. |
 
-The Mac packages are `*_aarch64.dmg` (Apple silicon) and `*_x64.dmg` (Intel), signed ad hoc and not
-notarized. On a Mac, open the dmg and drag Voltip onto Applications. The first start is blocked
-because the app is not notarized: on macOS 15 and later open System Settings → Privacy & Security and click
-Open Anyway; on macOS 11 to 14 Control-click Voltip in Applications and choose Open. From a
-terminal, `xattr -dr com.apple.quarantine /Applications/Voltip.app` does the same. Updates install
-from inside the app; after one, macOS may ask for the Accessibility permission again.
+The Mac packages are `*_aarch64.dmg` (Apple silicon) and `*_x64.dmg` (Intel), signed with the
+project's own self-signed certificate and not notarized. On a Mac, open the dmg and drag Voltip onto
+Applications. The first start is blocked because the app is not notarized: on macOS 15 and later
+open System Settings → Privacy & Security and click Open Anyway; on macOS 11 to 14 Control-click
+Voltip in Applications and choose Open. From a terminal,
+`xattr -dr com.apple.quarantine /Applications/Voltip.app` does the same. Updates install from inside
+the app and keep the microphone and Accessibility permissions; only the update from 0.0.6 or earlier
+asks once more (click Always Allow for the keychain, and turn Voltip off and on again under
+Accessibility and Microphone if dictation does not work).
 
 Release packages come with a default recognition and clean-up service, so dictation works before
 you configure anything. You can switch to another provider or to an on-device model at any time.

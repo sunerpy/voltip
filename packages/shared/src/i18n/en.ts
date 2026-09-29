@@ -381,9 +381,9 @@ export const en: Messages = {
     permission: {
       title: "One system permission is missing",
       accessibility:
-        "Voltip needs the Accessibility permission to type the result into other apps. It works as soon as you turn it on in System Settings; there is no need to restart Voltip.",
+        "Voltip needs the Accessibility permission to type the result into other apps. It works as soon as you turn it on in System Settings; there is no need to restart Voltip. If it already shows as on there, turn it off and on again.",
       microphone:
-        "The microphone permission was denied, so dictation cannot record. Allow Voltip to use the microphone in the system's privacy settings.",
+        "The microphone permission was denied, so dictation cannot record. Allow Voltip to use the microphone in the system's privacy settings; if it already shows as allowed there, turn it off and on again.",
       request: "Grant access",
       guide: "Open the setup guide",
     },
@@ -1301,9 +1301,9 @@ export const en: Messages = {
       micDenied:
         "Microphone not granted, so nothing can be recorded; if “Request access” shows no prompt, turn it on in the system privacy settings.",
       unsignedBody:
-        "Still shows as not allowed after granting? An unsigned or reinstalled build can make macOS forget the earlier grant. Run",
-      unsignedAfter: ", then grant it again.",
-      copyCommand: "Copy command",
+        "Still shows as not allowed after granting? After an upgrade from an early version or a reinstall, macOS may not recognise the earlier grant. Turn it off and on again in System Settings first; if that does not help, run the matching command below and grant it again. Later updates keep these grants.",
+      copyAccessibilityCommand: "Copy the Accessibility reset command",
+      copyMicrophoneCommand: "Copy the microphone reset command",
       copiedCommand: "Copied the fix command",
       unsignedTitle: "When a grant does not take",
       axMissing:

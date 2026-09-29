@@ -19,6 +19,7 @@ import {
   Button,
   Card,
   Icon,
+  IconButton,
   Keycaps,
   Lamp,
   LampText,
@@ -52,8 +53,10 @@ import {
 /** The bundle identifier of `src-tauri/tauri.conf.json` (a test keeps them equal). */
 export const MACOS_BUNDLE_ID = "dev.voltip.desktop";
 /** Forget this app's Accessibility grant so macOS asks again (the remedy for a grant that does not
- *  stick after an unsigned or re-installed build). */
+ *  stick after an upgrade from an ad-hoc signed build, or a re-install). */
 export const MACOS_TCC_RESET = `tccutil reset Accessibility ${MACOS_BUNDLE_ID}`;
+/** The same for the microphone grant (plan 1.7: the last ad-hoc → fixed-certificate update). */
+export const MACOS_TCC_RESET_MICROPHONE = `tccutil reset Microphone ${MACOS_BUNDLE_ID}`;
 const STEPS = ["permissions", "hotkey", "engine", "trial"] as const;
 const TRIAL_METER_SEGMENTS = 24;
 
@@ -437,25 +440,34 @@ export function Onboarding({ step }: OnboardingProps) {
                       <span className="eyebrow text-warning">
                         {t("onboarding.permission.unsignedTitle")}
                       </span>
-                    }
-                    actions={
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        icon="copy"
-                        onClick={() => {
-                          void copyWithToast(
-                            shell,
-                            MACOS_TCC_RESET,
-                            t("onboarding.permission.copiedCommand"),
-                          );
-                        }}>
-                        {t("onboarding.permission.copyCommand")}
-                      </Button>
                     }>
                     {t("onboarding.permission.unsignedBody")}
-                    <span className="mono"> {MACOS_TCC_RESET}</span>
-                    {t("onboarding.permission.unsignedAfter")}
+                    <span className="mt-1.5 flex flex-col gap-1" data-testid="tcc-reset-commands">
+                      {(
+                        [
+                          [MACOS_TCC_RESET, t("onboarding.permission.copyAccessibilityCommand")],
+                          [
+                            MACOS_TCC_RESET_MICROPHONE,
+                            t("onboarding.permission.copyMicrophoneCommand"),
+                          ],
+                        ] as const
+                      ).map(([command, label]) => (
+                        <span key={command} className="flex items-center gap-2">
+                          <code className="mono">{command}</code>
+                          <IconButton
+                            icon="copy"
+                            label={label}
+                            onClick={() => {
+                              void copyWithToast(
+                                shell,
+                                command,
+                                t("onboarding.permission.copiedCommand"),
+                              );
+                            }}
+                          />
+                        </span>
+                      ))}
+                    </span>
                   </Banner>
                 )}
               </>
