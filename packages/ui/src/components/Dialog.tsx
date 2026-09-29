@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useId, useRef } from "react";
 import { cx } from "../cx";
 import { useT } from "../i18n/I18nProvider";
 import { Keycap } from "./Keycap";
@@ -16,7 +16,12 @@ export interface DialogProps {
   width?: number;
 }
 
-/** Modal over a 28 % scrim; Esc and scrim click close. Focuses `[data-autofocus]` or the dialog. */
+/** The open dialogs, the most recent last: Esc closes only that one (a confirmation over an editor
+ *  closes, the editor stays). */
+const openDialogs: symbol[] = [];
+
+/** Modal over a 28 % scrim; Esc and scrim click close. Focuses `[data-autofocus]` or the dialog.
+ *  Its title names it (an id of its own, so a dialog over another one keeps its name). */
 export function Dialog({
   open,
   title,
@@ -29,28 +34,38 @@ export function Dialog({
 }: DialogProps) {
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  // The latest close handler, so a new one (a re-render) neither re-focuses the dialog nor moves
+  // it on top of one opened after it.
+  const close = useRef(onClose);
+  useEffect(() => {
+    close.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
+    const token = Symbol("dialog");
+    openDialogs.push(token);
     const node = ref.current;
     const target = node?.querySelector<HTMLElement>("[data-autofocus]") ?? node;
     target?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) {
-        // Every dialog listens on `document`, so stopPropagation cannot order them; the nested
-        // dialog marks the key consumed and outer ones (the settings dialog) check the flag.
-        e.preventDefault();
-        e.stopPropagation();
-        onClose();
-      }
+      if (e.key !== "Escape" || e.defaultPrevented || openDialogs.at(-1) !== token) return;
+      // Every dialog listens on `document`, so stopPropagation cannot order them; the dialog on
+      // top marks the key consumed and outer listeners (the settings dialog) check the flag.
+      e.preventDefault();
+      e.stopPropagation();
+      close.current();
     };
     // Capture phase: it runs before every bubble-phase document listener regardless of the order
-    // they were registered in, so the innermost open dialog is the one that consumes Escape.
+    // they were registered in.
     document.addEventListener("keydown", onKey, true);
     return () => {
       document.removeEventListener("keydown", onKey, true);
+      const at = openDialogs.indexOf(token);
+      if (at >= 0) openDialogs.splice(at, 1);
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   return (
@@ -62,7 +77,7 @@ export function Dialog({
         ref={ref}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="vt-dialog-title"
+        aria-labelledby={titleId}
         tabIndex={-1}
         onClick={(e) => {
           e.stopPropagation();
@@ -71,7 +86,7 @@ export function Dialog({
           "flex flex-col gap-4 rounded-14 bg-surface p-6 outline-none hairline shadow-pop",
         )}
         style={{ width }}>
-        <h2 id="vt-dialog-title" className="text-[16px] font-semibold text-fg">
+        <h2 id={titleId} className="text-[16px] font-semibold text-fg">
           {title}
         </h2>
         {children !== undefined && (

@@ -46,6 +46,68 @@ describe("Dialog", () => {
     expect(screen.getByText("自定义")).toBeInTheDocument();
   });
 
+  // Found 2026-09-29 (built-in scenes, 恢复默认): a confirmation over the scene editor was named
+  // after the editor (both used one fixed title id), and Esc closed the editor under it.
+  it("regression: a dialog over another one has its own name, and Esc closes only the one on top", () => {
+    const closeOuter = vi.fn();
+    const closeInner = vi.fn();
+    const { rerender } = render(
+      <>
+        <Dialog
+          open
+          title="编辑场景"
+          onClose={closeOuter}
+          actions={<button type="button">a</button>}
+        />
+        <Dialog
+          open
+          title="恢复默认？"
+          onClose={closeInner}
+          actions={<button type="button">b</button>}
+        />
+      </>,
+    );
+    expect(screen.getByRole("dialog", { name: "编辑场景" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "恢复默认？" })).toBeInTheDocument();
+    // A new close handler for the one underneath (a re-render) does not put it on top.
+    rerender(
+      <>
+        <Dialog
+          open
+          title="编辑场景"
+          onClose={() => closeOuter()}
+          actions={<button type="button">a</button>}
+        />
+        <Dialog
+          open
+          title="恢复默认？"
+          onClose={closeInner}
+          actions={<button type="button">b</button>}
+        />
+      </>,
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect([closeInner.mock.calls.length, closeOuter.mock.calls.length]).toEqual([1, 0]);
+    rerender(
+      <>
+        <Dialog
+          open
+          title="编辑场景"
+          onClose={closeOuter}
+          actions={<button type="button">a</button>}
+        />
+        <Dialog
+          open={false}
+          title="恢复默认？"
+          onClose={closeInner}
+          actions={<button type="button">b</button>}
+        />
+      </>,
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect([closeInner.mock.calls.length, closeOuter.mock.calls.length]).toEqual([1, 1]);
+  });
+
   it("regression: Escape is marked consumed so an enclosing document listener does not also close", () => {
     const onClose = vi.fn();
     let outerWouldClose = 0;
