@@ -174,35 +174,46 @@ function Save-Shot($element, [string] $name) {
 
 # The tray button: named after the tooltip ("Voltip" while idle), in the taskbar's notification
 # area or, for an icon the shell has not promoted, in the overflow flyout behind "Show Hidden Icons".
+# A closed flyout can still list its buttons (off screen): then the chevron opens it and the next
+# call finds the button on screen.
 function Find-TrayButton {
   $button = And-Cond (Cond $A::ControlTypeProperty $CT::Button) (Cond $A::NameProperty 'Voltip')
   $taskbar = $A::RootElement.FindFirst($TS::Children, (Cond $A::ClassNameProperty 'Shell_TrayWnd'))
   # UI Automation now and then misses the taskbar among the desktop's children: ask again.
   if ($null -eq $taskbar) { return $null }
   $found = $taskbar.FindFirst($TS::Descendants, $button)
-  if ($null -ne $found) { return @($found, 'notification area') }
+  if ($null -ne $found -and -not $found.Current.IsOffscreen) { return @($found, 'notification area') }
   $overflow = $A::RootElement.FindFirst($TS::Children, (Cond $A::ClassNameProperty 'TopLevelWindowForOverflowXamlIsland'))
-  if ($null -eq $overflow -or $overflow.Current.IsOffscreen) {
-    $chevron = $taskbar.FindFirst($TS::Descendants, (Cond $A::AutomationIdProperty 'SystemTrayIcon'))
-    if ($null -eq $chevron) { $chevron = $taskbar.FindFirst($TS::Descendants, (Cond $A::NameProperty 'Show Hidden Icons')) }
-    if ($null -eq $chevron) { return $null }
+  if ($null -ne $overflow -and -not $overflow.Current.IsOffscreen) {
+    $found = $overflow.FindFirst($TS::Descendants, $button)
+    if ($null -ne $found -and -not $found.Current.IsOffscreen) { return @($found, 'overflow flyout') }
+  }
+  $chevron = $taskbar.FindFirst($TS::Descendants, (Cond $A::AutomationIdProperty 'SystemTrayIcon'))
+  if ($null -eq $chevron) { $chevron = $taskbar.FindFirst($TS::Descendants, (Cond $A::NameProperty 'Show Hidden Icons')) }
+  if ($null -ne $chevron) {
     $xy = Center $chevron
     [VoltipTray]::Click($xy[0], $xy[1], $false)
     Start-Sleep -Milliseconds 700
-    $overflow = $A::RootElement.FindFirst($TS::Children, (Cond $A::ClassNameProperty 'TopLevelWindowForOverflowXamlIsland'))
   }
-  if ($null -eq $overflow) { return $null }
-  $found = $overflow.FindFirst($TS::Descendants, $button)
-  if ($null -ne $found) { return @($found, 'overflow flyout') }
   return $null
 }
 
-# Right-click the tray button and return the menu it opens (VoltipMenu: its frame and entries).
+# Right-click the tray button and return the menu it opens (VoltipMenu: its frame and entries). A
+# click that lands while the flyout closes opens nothing: the button is looked up and clicked again.
 function Open-TrayMenu {
-  $tray = Wait-For { Find-TrayButton } $StepTimeoutSec 'the tray button'
-  $xy = Center $tray[0]
-  [VoltipTray]::Click($xy[0], $xy[1], $true)
-  return (Wait-For { [VoltipTray]::FindOpenMenu() } $StepTimeoutSec 'the tray menu and its entries')
+  for ($attempt = 1; $attempt -le 4; $attempt++) {
+    $tray = Wait-For { Find-TrayButton } $StepTimeoutSec 'the tray button'
+    $xy = Center $tray[0]
+    [VoltipTray]::Click($xy[0], $xy[1], $true)
+    $deadline = (Get-Date).AddSeconds(5)
+    while ((Get-Date) -lt $deadline) {
+      $menu = [VoltipTray]::FindOpenMenu()
+      if ($null -ne $menu) { return $menu }
+      Start-Sleep -Milliseconds 250
+    }
+    Note "right click $attempt on the tray button opened no menu; looking for the button again"
+  }
+  throw 'smoke-tray-windows: four right clicks on the tray button opened no menu'
 }
 
 function Click-MenuItem($menu, [string] $name) {
