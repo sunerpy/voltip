@@ -32,7 +32,7 @@ import {
   useI18n,
   useUiState,
 } from "@voltip/ui";
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { inTextField, usePageShortcuts, withCommand } from "../app/page-shortcuts";
 import { useRouter } from "../app/router";
 import { copyWithToast, useShell } from "../app/shell-context";
@@ -43,13 +43,17 @@ import {
   type HistoryFilter,
   clockLabel,
   dayLabel,
-  filterHistory,
   groupByDay,
   historyFilterLabel,
   isHistoryFilter,
-  matchesHistoryQuery,
   textChars,
 } from "../features/history/stats";
+import {
+  SEARCH_DEBOUNCE_MS,
+  useDebounced,
+  useHistoryEntry,
+  useHistoryList,
+} from "../features/history/useHistoryList";
 import { ClipboardNote } from "../features/history/ClipboardNote";
 import { ResultActions } from "../features/history/ResultActions";
 import { shortModel } from "../shell/page-meta";
@@ -61,13 +65,32 @@ export interface HistoryProps {
   initialFilter?: string;
 }
 
+/** `onSeen` whenever the returned element scrolls into view while `active` (where the webview has
+ *  an `IntersectionObserver`; the element's button covers the rest). */
+function useLoadMoreWhenSeen(active: boolean, onSeen: () => void) {
+  const [element, setElement] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!active || element === null || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((seen) => {
+      if (seen.some((e) => e.isIntersecting)) onSeen();
+    });
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+    };
+  }, [active, element, onSeen]);
+  return setElement;
+}
+
 /** A phone's text rather than a recognised take (docs/dictation.md §20.6): no model, no timings. */
 function sentAsText(entry: HistoryEntry): boolean {
   return entry.origin?.kind === "typed" || entry.origin?.kind === "clipboard";
 }
 
-/** History: the store is the core's `history.json` (`state.history`, newest first, capped
- *  at 500). Filters, search, star, delete, clear, copy and the raw-vs-refined diff are all real;
+/** History: the core's database (docs/dictation.md §4.4, up to 20 000 entries), read a page of
+ *  100 at a time through `history_query` — the filters and the search run in the core, more
+ *  entries load as the list scrolls, the detail comes from the list or `history_entry`. Star,
+ *  delete, clear, copy and the raw-vs-refined diff are all real;
  *  the detail names the dictionary corrections and rules that fired (`HistoryEntry.vocabulary`)
  *  and 加入词典 sends `dictionary_add` with the row's id (docs/dictation.md §16). A take with a
  *  context shows its app and scene in the row and the detail (§18.6); search matches them too. A
@@ -81,7 +104,7 @@ export function History({ initialFilter }: HistoryProps) {
   const { navigate } = useRouter();
   const { t, locale } = useI18n();
   const state = useUiState();
-  const entries = state.history;
+  const total = state.history_total;
   // Settings › 隐私与历史: whether takes are recorded and how many are kept.
   const retention = state.settings.history;
   const now = useTickingNow(false);
@@ -96,14 +119,14 @@ export function History({ initialFilter }: HistoryProps) {
   const [view, setView] = useState<View>("polished");
   const [adding, setAdding] = useState<{ entryId: string; heard: string } | undefined>(undefined);
 
-  const visible = useMemo(
-    () => filterHistory(entries, filter, now).filter((e) => matchesHistoryQuery(e, query)),
-    [entries, filter, query, now],
-  );
+  const search = useDebounced(query, SEARCH_DEBOUNCE_MS);
+  const list = useHistoryList(filter, search, now);
+  const visible = list.entries;
   const groups = useMemo(() => groupByDay(visible, now, locale), [visible, now, locale]);
   // Nothing picked yet, or the pick was deleted: the newest row is the detail, so the pane is never
   // stale and a fresh dictation shows up on the right as soon as the core appends it.
-  const selected = entries.find((e) => e.id === selectedId) ?? entries[0];
+  const selected = useHistoryEntry(selectedId, visible) ?? visible[0];
+  const moreRef = useLoadMoreWhenSeen(list.more, list.loadMore);
 
   const star = (entry: HistoryEntry) => {
     void backend.invoke("history_star", { id: entry.id, starred: !entry.starred });
@@ -127,7 +150,7 @@ export function History({ initialFilter }: HistoryProps) {
   };
   const clearAll = () => {
     shell.confirm({
-      title: t("history.confirm.clearTitle", { n: entries.length }),
+      title: t("history.confirm.clearTitle", { n: total }),
       body: t("history.confirm.clearBody"),
       confirmLabel: t("history.confirm.clear"),
       tone: "danger",
@@ -150,9 +173,9 @@ export function History({ initialFilter }: HistoryProps) {
   const searchId = useId();
   usePageShortcuts((e) => {
     if (withCommand(e) && e.key.toLowerCase() === "f") {
-      const search = document.getElementById(searchId);
-      search?.focus();
-      if (search instanceof HTMLInputElement) search.select();
+      const box = document.getElementById(searchId);
+      box?.focus();
+      if (box instanceof HTMLInputElement) box.select();
       return true;
     }
     if (selected === undefined || inTextField(e.target)) return false;
@@ -175,7 +198,7 @@ export function History({ initialFilter }: HistoryProps) {
       <Card
         padding="none"
         className="flex min-h-16 flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
-        <Lamp tone={retention.enabled && entries.length > 0 ? "ok" : "idle"} />
+        <Lamp tone={retention.enabled && total > 0 ? "ok" : "idle"} />
         <div className="min-w-0 flex-1">
           <div className="text-[14px] font-medium text-fg">{t("history.banner.title")}</div>
           <div
@@ -183,13 +206,13 @@ export function History({ initialFilter }: HistoryProps) {
             data-testid="history-retention"
             data-enabled={retention.enabled}>
             {retention.enabled
-              ? t("history.banner.retention", { keep: retention.keep })
-              : t("history.banner.off", { n: entries.length })}
+              ? t("history.banner.retention", { keep: formatCount(retention.keep) })
+              : t("history.banner.off", { n: formatCount(total) })}
           </div>
         </div>
         <Readout
           label={t("history.banner.saved")}
-          value={`${entries.length} / ${retention.keep}`}
+          value={`${formatCount(total)} / ${formatCount(retention.keep)}`}
           size="sm"
         />
         <Button
@@ -205,7 +228,7 @@ export function History({ initialFilter }: HistoryProps) {
           variant="text-danger"
 
           onClick={clearAll}
-          disabled={entries.length === 0}>
+          disabled={total === 0}>
           {t("history.banner.clearAll")}
         </Button>
       </Card>
@@ -216,7 +239,7 @@ export function History({ initialFilter }: HistoryProps) {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,2fr)_minmax(0,3fr)]">
         <Panel
           eyebrow={t("history.eyebrow.log")}
-          title={String(visible.length)}
+          title={formatCount(list.matching)}
           className="min-h-[552px]"
           bodyClassName="flex flex-col gap-3">
           <Input
@@ -239,23 +262,25 @@ export function History({ initialFilter }: HistoryProps) {
             onChange={setFilter}
             options={HISTORY_FILTERS.map((f) => ({ value: f, label: historyFilterLabel(f, t) }))}
           />
-          {entries.length === 0 && (
+          {total === 0 && (
             <EmptyState compact title={t("history.empty.none")}>
               {t("history.empty.noneBody", {
                 hint: activationHint(state.settings.activation, state.settings.hotkey, locale),
               })}
             </EmptyState>
           )}
-          {entries.length > 0 && visible.length === 0 && (
+          {/* Only for an answer to the current filter and search, and in the words of that search
+              (the box may already hold newer text): no flash before the first answer. */}
+          {total > 0 && list.settled && list.matching === 0 && (
             <EmptyState
               compact
               title={
-                query
-                  ? t("history.empty.noMatch", { query })
+                search
+                  ? t("history.empty.noMatch", { query: search })
                   : t("history.empty.noneInFilter", { filter: historyFilterLabel(filter, t) })
               }
               actions={
-                query ? (
+                search ? (
                   <Button
                     size="sm"
                     variant="text"
@@ -266,8 +291,8 @@ export function History({ initialFilter }: HistoryProps) {
                   </Button>
                 ) : undefined
               }>
-              {query
-                ? t("history.empty.noMatchBody", { n: entries.length })
+              {search
+                ? t("history.empty.noMatchBody", { n: formatCount(total) })
                 : filter === "starred"
                   ? t("history.empty.starHint")
                   : t("history.empty.rangeHint")}
@@ -410,6 +435,21 @@ export function History({ initialFilter }: HistoryProps) {
               </li>
             ))}
           </ul>
+          {list.more && (
+            // docs/dictation.md §4.4: the next page loads when this comes into view; the button is
+            // the same for the keyboard.
+            <div ref={moreRef} className="flex items-center justify-between gap-2 pt-1">
+              <span className="mono text-[11px] text-fg-subtle" data-testid="history-loaded">
+                {t("history.loaded", {
+                  shown: formatCount(visible.length),
+                  n: formatCount(list.matching),
+                })}
+              </span>
+              <Button size="sm" variant="text" onClick={list.loadMore} data-testid="history-more">
+                {t("history.loadMore")}
+              </Button>
+            </div>
+          )}
         </Panel>
 
         <Panel

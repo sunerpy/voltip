@@ -176,6 +176,8 @@ export const en: Messages = {
     minutesAgo: { one: "{n} minute ago", other: "{n} minutes ago" },
     hoursAgo: { one: "{n} hour ago", other: "{n} hours ago" },
     daysAgo: { one: "{n} day ago", other: "{n} days ago" },
+    /** The units of a span of time in the statistics (`durationParts`): "3 min 47 s". */
+    duration: { hours: "h", minutes: "min", seconds: "s" },
     today: "Today",
     yesterday: "Yesterday",
     yesterdayCompact: "",
@@ -470,13 +472,18 @@ export const en: Messages = {
     },
     session: {
       eyebrow: "Today",
-      sentences: "Dictations",
-      sentencesUnit: "",
-      chars: "Characters",
+      raw: "Characters transcribed",
+      corrected: "Characters corrected",
       charsUnit: "",
       spoken: "Speaking time",
-      spokenUnit: "min",
-      latency: "Average latency",
+      saved: "Time saved",
+      /** The session panel's secondary line, two parts that each stay on one line. */
+      count: "Dictations: {n}",
+      latency: "average latency {latency}",
+      basis: "Basis",
+      basisLabel: "How time saved is estimated",
+      basisText:
+        "Time saved = speaking time × 1.9. Basis: in the experiments of Ruan et al. 2016 (arXiv:1608.07323), speaking was about 2.9 times as fast as typing on a phone (English 153 vs 52 words per minute, Chinese 123 vs 43). Only dictations kept in the history are counted.",
       heatmap: "Last 6 weeks · by day",
     },
     tiles: {
@@ -484,7 +491,7 @@ export const en: Messages = {
       week: "This week",
       month: "This month",
       total: "Total",
-      limit: "Keeps the newest {n}",
+      saved: "{time} saved",
       recordingOff: "History off",
     },
     table: {
@@ -504,6 +511,9 @@ export const en: Messages = {
     },
   },
   history: {
+    /** Below a list with more entries than loaded (docs/dictation.md §4.4). */
+    loadMore: "Load more",
+    loaded: "Showing {shown} of {n}",
     origin: {
       take: "Phone · {device}",
       typed: "Typed on {device}",

@@ -1,6 +1,4 @@
 use super::*;
-use crate::dictation::Via;
-use crate::history::Outcome;
 use crate::presets::{BuiltinPreset, PresetId};
 use voltip_protocol::Platform;
 
@@ -155,52 +153,6 @@ fn matching_takes_the_first_enabled_scene_by_app_and_title() {
     let reordered = vec![browser, github, chat];
     assert_eq!(match_scene(&reordered, &app("chrome", Some("GitHub"))).map(|s| s.name.as_str()), Some("浏览器"));
     assert!(match_scene(&[], &app("chrome", None)).is_none());
-}
-
-fn entry(app: Option<(&str, &str)>) -> HistoryEntry {
-    HistoryEntry {
-        id: Uuid::new_v4(),
-        at_ms: 1,
-        raw_text: "x".into(),
-        text: "x".into(),
-        refined: false,
-        asr_model: "m".into(),
-        refine_model: None,
-        duration_ms: 1,
-        asr_ms: 1,
-        refine_ms: None,
-        outcome: Outcome::Inserted { via: Via::Paste },
-        starred: false,
-        mode: OutputMode::WholeTake,
-        segments: None,
-        live_error: None,
-        vocabulary: None,
-        kind: crate::TakeKind::Dictation,
-        edit: None,
-        app: app.map(|(id, name)| AppRef { id: id.into(), name: name.into() }),
-        scene: None,
-        preset: None,
-        origin: None,
-    }
-}
-
-/// `recent_apps`: newest first (the history is newest first), one per id with the newest name,
-/// rows without an app skipped, capped.
-#[test]
-fn recent_apps_are_the_newest_distinct_ones() {
-    let history = vec![
-        entry(Some(("slack", "Slack 4"))),
-        entry(None),
-        entry(Some(("code", "Code"))),
-        entry(Some(("slack", "Slack 3"))),
-        entry(Some(("winword", "WINWORD"))),
-    ];
-    let ids: Vec<(String, String)> = recent_apps(&history, MAX_RECENT_APPS).into_iter().map(|a| (a.id, a.name)).collect();
-    assert_eq!(ids, [("slack".to_owned(), "Slack 4".to_owned()), ("code".into(), "Code".into()), ("winword".into(), "WINWORD".into())]);
-    assert_eq!(recent_apps(&history, 2).len(), 2);
-    assert!(recent_apps(&[], 20).is_empty());
-    let many: Vec<HistoryEntry> = (0..30).map(|i| entry(Some((&format!("app{i}"), "n")))).collect();
-    assert_eq!(recent_apps(&many, MAX_RECENT_APPS).len(), MAX_RECENT_APPS);
 }
 
 /// Wire shapes: `match` (a Rust keyword) on the wire, unset overrides absent, drafts default to on

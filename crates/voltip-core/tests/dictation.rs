@@ -104,7 +104,7 @@ async fn pipeline_history_secrets_and_engines_through_the_core() {
     assert_eq!(engines.refine_issue, Some(voltip_core::EngineIssue::KeyMissing));
     assert!(engines.refine_enabled && engines.asr_ready);
     assert_eq!(engines.asr_host, "asr.example.test");
-    let history = wait(&mut node, |e| if let CoreEvent::History(h) = e { Some(h.clone()) } else { None }).await;
+    let history = wait(&mut node, |e| if let CoreEvent::History { recent: h, .. } = e { Some(h.clone()) } else { None }).await;
     assert!(history.is_empty());
     assert_eq!(factory_calls.load(Ordering::SeqCst), 1);
 
@@ -129,7 +129,7 @@ async fn pipeline_history_secrets_and_engines_through_the_core() {
         }
         other => panic!("{other:?}"),
     }
-    let history = wait(&mut node, |e| if let CoreEvent::History(h) = e { (!h.is_empty()).then(|| h.clone()) } else { None }).await;
+    let history = wait(&mut node, |e| if let CoreEvent::History { recent: h, .. } = e { (!h.is_empty()).then(|| h.clone()) } else { None }).await;
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].outcome, Outcome::Inserted { via: voltip_core::dictation::Via::Paste });
     assert_eq!(injector.injected(), vec![FAKE_TRANSCRIPT.to_owned()]);
@@ -137,7 +137,7 @@ async fn pipeline_history_secrets_and_engines_through_the_core() {
 
     // Star / unstar / delete round-trip and re-emit the list each time.
     node.handle.send(CoreCommand::HistoryStar(id, true)).await.unwrap();
-    let h = wait(&mut node, |e| if let CoreEvent::History(h) = e { Some(h.clone()) } else { None }).await;
+    let h = wait(&mut node, |e| if let CoreEvent::History { recent: h, .. } = e { Some(h.clone()) } else { None }).await;
     assert!(h[0].starred);
 
     // A provider key: stored, reported as set-by-user, never echoed, and the clients are rebuilt.
@@ -160,7 +160,7 @@ async fn pipeline_history_secrets_and_engines_through_the_core() {
     node.handle.send(CoreCommand::DictationStop).await.unwrap();
     let done = wait_phase(&mut node, DictationPhase::is_terminal).await;
     assert!(matches!(&done, DictationPhase::Done { text, refined: true, .. } if text == "你好，世界。"), "{done:?}");
-    let h = wait(&mut node, |e| if let CoreEvent::History(h) = e { (h.len() == 2).then(|| h.clone()) } else { None }).await;
+    let h = wait(&mut node, |e| if let CoreEvent::History { recent: h, .. } = e { (h.len() == 2).then(|| h.clone()) } else { None }).await;
     assert_eq!(h[0].text, "你好，世界。", "newest first");
 
     // Engine settings: a bad URL, a provider without the service or a thread count out of range is
@@ -203,11 +203,11 @@ async fn pipeline_history_secrets_and_engines_through_the_core() {
 
     // Delete one, clear the rest.
     node.handle.send(CoreCommand::HistoryDelete(id)).await.unwrap();
-    let h = wait(&mut node, |e| if let CoreEvent::History(h) = e { Some(h.clone()) } else { None }).await;
+    let h = wait(&mut node, |e| if let CoreEvent::History { recent: h, .. } = e { Some(h.clone()) } else { None }).await;
     assert_eq!(h.len(), 1);
     assert_ne!(h[0].id, id);
     node.handle.send(CoreCommand::HistoryClear).await.unwrap();
-    let h = wait(&mut node, |e| if let CoreEvent::History(h) = e { Some(h.clone()) } else { None }).await;
+    let h = wait(&mut node, |e| if let CoreEvent::History { recent: h, .. } = e { Some(h.clone()) } else { None }).await;
     assert!(h.is_empty());
 
     // Deleting a key goes back to "none".
@@ -244,7 +244,7 @@ async fn history_and_secret_survive_a_restart() {
     node.handle.send(CoreCommand::DictationStop).await.unwrap();
     let done = wait_phase(&mut node, DictationPhase::is_terminal).await;
     assert!(matches!(done, DictationPhase::Done { via: voltip_core::dictation::Via::Clipboard, .. }), "{done:?}");
-    wait(&mut node, |e| if let CoreEvent::History(h) = e { (!h.is_empty()).then_some(()) } else { None }).await;
+    wait(&mut node, |e| if let CoreEvent::History { recent: h, .. } = e { (!h.is_empty()).then_some(()) } else { None }).await;
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
     // Let the task drain.
     while tokio::time::timeout(Duration::from_millis(200), node.events.recv()).await.ok().flatten().is_some() {}
@@ -253,7 +253,7 @@ async fn history_and_secret_survive_a_restart() {
     wait(&mut again, |e| matches!(e, CoreEvent::Ready { .. }).then_some(())).await;
     let engines = wait(&mut again, |e| if let CoreEvent::Engines(s) = e { Some(s.clone()) } else { None }).await;
     assert_eq!(custom_asr(&engines).key.source, SecretSource::User, "key reloaded from the store");
-    let history = wait(&mut again, |e| if let CoreEvent::History(h) = e { Some(h.clone()) } else { None }).await;
+    let history = wait(&mut again, |e| if let CoreEvent::History { recent: h, .. } = e { Some(h.clone()) } else { None }).await;
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].outcome, Outcome::Clipboard { reason: "paste blocked".into(), code: Some(voltip_core::dictation::ClipboardCode::Other) });
     again.handle.send(CoreCommand::Shutdown).await.unwrap();
@@ -292,7 +292,7 @@ async fn history_can_be_switched_off_and_trimmed() {
     for _ in 0..3 {
         take(&mut node).await;
     }
-    let h = wait(&mut node, |e| if let CoreEvent::History(h) = e { (h.len() == 3).then(|| h.clone()) } else { None }).await;
+    let h = wait(&mut node, |e| if let CoreEvent::History { recent: h, .. } = e { (h.len() == 3).then(|| h.clone()) } else { None }).await;
     assert_eq!(h.len(), 3);
     // Out of range: refused, nothing changes.
     node.handle.send(CoreCommand::SetHistory(voltip_core::HistorySettings { enabled: true, keep: 1 })).await.unwrap();
@@ -304,7 +304,7 @@ async fn history_can_be_switched_off_and_trimmed() {
     assert!(!settings.history.enabled);
     take(&mut node).await;
     let stored = voltip_core::HistoryStore::open(dir.path());
-    assert_eq!(stored.entries().len(), 3, "history off keeps nothing new");
+    assert_eq!(stored.total(), 3, "history off keeps nothing new");
     // Keep 10 with 3 entries: nothing to trim; the setting persists.
     node.handle.send(CoreCommand::SetHistory(voltip_core::HistorySettings { enabled: true, keep: 10 })).await.unwrap();
     wait(&mut node, |e| if let CoreEvent::Settings(s) = e { (s.history.keep == 10).then_some(()) } else { None }).await;

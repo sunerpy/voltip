@@ -8,6 +8,11 @@ import type {
   FeedbackDraft,
   FeedbackInfo,
   FeedbackReceipt,
+  HistoryEntry,
+  HistoryHits,
+  HistoryPage,
+  HistoryQueryArgs,
+  HistoryStats,
   InjectPreflight,
   LevelFrame,
   MutationCommand,
@@ -53,6 +58,16 @@ export interface Backend {
   /** The applications the history saw, newest first, one per id (`recent_apps`,
    *  docs/dictation.md §18.6): what the scene editor offers to pick from. */
   recentApps(): Promise<AppRef[]>;
+  /** A page of the history, filtered, searched and paged by the core (`history_query`,
+   *  docs/dictation.md §4.4). Rejects when `limit` is outside 1–`HISTORY_QUERY_LIMIT`. */
+  historyQuery(args: HistoryQueryArgs): Promise<HistoryPage>;
+  /** One history entry, `null` once it is gone (`history_entry`). */
+  historyEntry(id: string): Promise<HistoryEntry | null>;
+  /** The dictations between each two of `boundaries` (local midnights, increasing, 2–43) and
+   *  over the whole history (`history_stats`, §4.5). */
+  historyStats(boundaries: readonly number[]): Promise<HistoryStats>;
+  /** How often each dictionary entry and rule fired in the history (`history_hits`, §16.3). */
+  historyHits(): Promise<HistoryHits>;
   /** What the OS grants right now (`permissions_status`, docs/dictation.md §15.1). */
   permissionsStatus(): Promise<PermissionReport>;
   /** Ask the OS for one permission (`permissions_request`); resolves once the request was issued

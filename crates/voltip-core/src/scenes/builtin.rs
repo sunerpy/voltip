@@ -72,6 +72,21 @@ impl BuiltinScene {
         }
     }
 
+    /// The English name, as `packages/shared/src/i18n/en.ts` has it: the history's search finds a
+    /// built-in scene by its name in either language (docs/dictation.md §4.4). The IPC fixture
+    /// `scenes-builtin.json` carries both names, and the dictionaries are checked against it.
+    pub const fn english_name(self) -> &'static str {
+        match self {
+            Self::Coding => "Coding",
+            Self::Office => "Office writing",
+            Self::Chat => "Chat",
+            Self::Legal => "Legal",
+            Self::Medical => "Medical",
+            Self::Finance => "Finance",
+            Self::Academic => "Academic",
+        }
+    }
+
     /// The preset the category's takes refine with.
     pub const fn preset(self) -> BuiltinPreset {
         match self {

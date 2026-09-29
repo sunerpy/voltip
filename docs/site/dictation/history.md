@@ -1,5 +1,5 @@
 ---
-description: The dictation history on your computer, what each entry shows, how much is kept, and the statistics in development.
+description: The dictation history on your computer, what each entry shows, how much is kept, and the statistics on the home page.
 ---
 
 # History
@@ -21,23 +21,25 @@ From an entry you can:
 - add a misheard word to the [dictionary](/recognition/dictionary) with **Add to dictionary**;
 - delete it.
 
-The search box finds text, apps, scenes and models. Filters narrow the list to today, this week or this month, to starred entries, or entries whose text was not inserted.
+The search box finds text, apps, scenes and models. Filters narrow the list to today, this week or this month, to starred entries, or entries whose text was not inserted. The list shows 100 entries at a time; scroll to the end, or select **Load more**, to see the next ones.
 
 ## How much is kept
 
 Under **Settings → Privacy and history**:
 
-- **Keep the latest** sets how many entries are kept: 50, 100, 200 or 500, which is the default and the current maximum. Older entries are removed.
+- **Keep the latest** sets how many entries are kept: 500, 2,000, 5,000, 10,000 or 20,000. A new installation keeps 20,000, which is also the maximum. Older entries are removed.
+- Updating does not change this setting: if it was 500, it stays 500 until you choose a larger number.
 - History can be turned off. Nothing new is recorded; what is already there stays until you clear it.
 - **Clear history** deletes all entries, after a confirmation.
 
 ## Statistics
 
-<StatusTag status="building" />
+The home page adds up the dictations in the history for today, this week, this month and in total:
 
-In development: up to 20,000 entries, and statistics on the home page for today, this week, this month and in total:
+- **Characters transcribed**: the characters the speech model recognised.
+- **Characters corrected**: how many characters differ between the recognised text and the text inserted, spaces not counted.
+- **Speaking time** and **Time saved**.
 
-- characters transcribed and characters corrected;
-- speaking time and time saved, calculated as speaking time × 1.9. The factor comes from Ruan et al., 2016 (arXiv:1608.07323), where speaking was about 2.9 times as fast as typing on a phone, in English and in Chinese.
+Time saved is speaking time × 1.9. The factor comes from Ruan et al., 2016 (arXiv:1608.07323): in their experiments, speaking was about 2.9 times as fast as typing on a phone, in English (153 against 52 words per minute) and in Chinese (123 against 43 characters per minute). Typing the same text takes about 2.9 times as long as saying it, which saves 1.9 times the speaking time. **Basis**, next to **Time saved** on the home page, shows the same explanation.
 
-Only dictations count towards the statistics; voice edits and text from the phone do not.
+Only dictations kept in the history count. Voice edits, and text or clipboard content sent from the phone, do not; a recording made on the phone and recognised on this computer does.

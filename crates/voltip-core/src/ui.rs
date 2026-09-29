@@ -61,10 +61,12 @@ pub enum UiEvent {
     Hotkey(HotkeyStatus),
     /// Dictation state machine moved.
     Dictation(DictationStatus),
-    /// History list, full replacement.
+    /// The newest history entries and how many there are (docs/dictation.md §4.4).
     History {
-        /// Newest first.
-        entries: Vec<HistoryEntry>,
+        /// The newest [`crate::history::RECENT_ENTRIES`], newest first.
+        recent: Vec<HistoryEntry>,
+        /// Entries in the history.
+        total: u32,
     },
     /// Resolved engine configuration (providers, models, user-entered hosts, key presence; never a
     /// key and never the built-in host).
@@ -331,9 +333,13 @@ pub struct UiState {
     /// Dictation state machine.
     #[serde(default)]
     pub dictation: DictationStatus,
-    /// Dictation history, newest first.
+    /// The newest history entries, newest first ([`crate::history::RECENT_ENTRIES`] at most); the
+    /// rest is read through the history queries (docs/dictation.md §4.4).
     #[serde(default)]
-    pub history: Vec<HistoryEntry>,
+    pub history_recent: Vec<HistoryEntry>,
+    /// Entries in the history.
+    #[serde(default)]
+    pub history_total: u32,
     /// Resolved ASR / refine / inject configuration.
     #[serde(default)]
     pub engines: EngineStatus,
@@ -386,7 +392,8 @@ impl Default for UiState {
             devices: Vec::new(),
             hotkey: HotkeyStatus::default(),
             dictation: DictationStatus::default(),
-            history: Vec::new(),
+            history_recent: Vec::new(),
+            history_total: 0,
             engines: EngineStatus::default(),
             update: UpdateStatus::default(),
             models: Vec::new(),
@@ -457,9 +464,10 @@ impl UiState {
                 self.dictation = status.clone();
                 UiEvent::Dictation(status)
             }
-            CoreEvent::History(entries) => {
-                self.history = entries.clone();
-                UiEvent::History { entries }
+            CoreEvent::History { recent, total } => {
+                self.history_recent = recent.clone();
+                self.history_total = total;
+                UiEvent::History { recent, total }
             }
             CoreEvent::Engines(status) => {
                 self.engines = status.clone();
@@ -626,9 +634,10 @@ mod tests {
             preset: None,
             origin: None,
         };
-        let ev = st.apply(CoreEvent::History(vec![entry.clone()]));
-        assert_eq!(st.history, vec![entry]);
-        assert!(serde_json::to_string(&ev).unwrap().starts_with(r#"{"type":"history","entries":[{"id":"00000000-"#));
+        let ev = st.apply(CoreEvent::History { recent: vec![entry.clone()], total: 7 });
+        assert_eq!((st.history_recent.clone(), st.history_total), (vec![entry], 7));
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.starts_with(r#"{"type":"history","recent":[{"id":"00000000-"#) && json.ends_with(r#""total":7}"#), "{json}");
         let engines = EngineStatus { asr_host: "asr.example.test".into(), ..EngineStatus::default() };
         let ev = st.apply(CoreEvent::Engines(engines.clone()));
         assert_eq!(st.engines, engines);

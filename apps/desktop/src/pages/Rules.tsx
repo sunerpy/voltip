@@ -32,7 +32,8 @@ import { usePageShortcuts, withCommand } from "../app/page-shortcuts";
 import { useRouter } from "../app/router";
 import { copyWithToast, useShell } from "../app/shell-context";
 import { useVocabularyPreview } from "../features/vocabulary/usePreview";
-import { errorText, hitTotals, moved, ruleDraftProblem } from "../features/vocabulary/vocabulary";
+import { useHitTotals } from "../features/vocabulary/useHitTotals";
+import { errorText, moved, ruleDraftProblem } from "../features/vocabulary/vocabulary";
 
 type Kind = "all" | "literal" | "regex";
 
@@ -100,7 +101,7 @@ export function Rules({ compose = false }: RulesProps) {
   const [importing, setImporting] = useState(false);
   const [exported, setExported] = useState<string | undefined>(undefined);
 
-  const hits = useMemo(() => hitTotals(state.history, "rules"), [state.history]);
+  const hits = useHitTotals("rules");
   const enabled = rules.filter((r) => r.enabled).length;
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -581,9 +582,9 @@ export function Rules({ compose = false }: RulesProps) {
             <Button
               size="sm"
               variant="ghost"
-              disabled={state.history[0] === undefined}
+              disabled={state.history_recent[0] === undefined}
               onClick={() => {
-                setInput(state.history[0]?.raw_text ?? "");
+                setInput(state.history_recent[0]?.raw_text ?? "");
               }}>
               {t("rules.dryRun.lastDictation")}
             </Button>

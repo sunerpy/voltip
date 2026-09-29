@@ -136,7 +136,7 @@ async fn ready(node: &mut Node) -> Settings {
 
 async fn history(node: &mut Node) -> Vec<HistoryEntry> {
     wait(node, |e| match e {
-        CoreEvent::History(entries) if !entries.is_empty() => Some(entries.clone()),
+        CoreEvent::History { recent: entries, .. } if !entries.is_empty() => Some(entries.clone()),
         _ => None,
     })
     .await

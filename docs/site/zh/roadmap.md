@@ -8,10 +8,6 @@ description: Voltip 接下来要开发的功能、计划中的功能，以及刻
 
 ## 正在开发
 
-### 2 万条历史记录与统计 <StatusTag status="building" />
-
-历史记录上限从 500 条提高到 2 万条，首页显示今天、本周、本月和累计的转录字数、修正字数、说话时长和节省的时间。见[历史记录](/zh/dictation/history#统计)。
-
 ### 长录音与电脑声音 <StatusTag status="building" />
 
 - 单次录音最长 2 小时，时长上限可以在设置中调整。

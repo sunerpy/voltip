@@ -84,6 +84,9 @@ reqwest = { version = "=0.13.5", default-features = false, features = ["rustls",
 # pushes 16 kHz mono frames, the decode thread pops them; no lock and no allocation on the audio thread.
 rtrb = "=0.4.0"
 rubato = "=5.0.0"
+# The history database (docs/dictation.md §4): `bundled` compiles SQLite itself from C for every
+# target (the Windows cross-build, Android), so no system library is needed anywhere.
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_bytes = "=0.11.19"
 serde_json = "=1.0.151"
@@ -101,6 +104,9 @@ mdns-sd = { version = "=0.21.4", default-features = false }
 # The same crate's `-sys` half, named only by the desktop shell: see apps/desktop/src-tauri/Cargo.toml.
 sherpa-onnx-sys = { version = "=1.13.8", default-features = false, features = ["shared"] }
 snow = "=0.10.0"
+# Levenshtein distance for the history's corrected-character count (docs/dictation.md §4); already
+# in the graph through clap.
+strsim = "=0.11.1"
 subtle = "=2.6.1"
 tempfile = "=3.27.0"
 thiserror = "=2.0.21"
@@ -146,6 +152,11 @@ voltip-asr = { path = "crates/voltip-asr" }
 voltip-asr-local = { path = "crates/voltip-asr-local" }
 voltip-refine = { path = "crates/voltip-refine" }
 voltip-inject = { path = "crates/voltip-inject" }
+
+# The bundled SQLite (the history, docs/dictation.md §4) is C code that is not debugged here:
+# optimised even in dev builds, so tests and `make desktop-dev` see a realistic database.
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
 
 [profile.release]
 lto = "thin"

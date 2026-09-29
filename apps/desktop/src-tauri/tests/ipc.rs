@@ -495,7 +495,7 @@ fn dictation_start_stop_runs_the_pipeline_and_records_history() {
     with_running_app(|_, webview, rx| {
         let st = wait_state(webview, |s| s.identity.is_some());
         assert_eq!(st.dictation.phase, DictationPhase::Idle);
-        assert!(st.history.is_empty());
+        assert!(st.history_recent.is_empty());
         // Stop with nothing running is refused by the core, as an `error` event, not a panic.
         assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
         wait_event(rx, "error (idle stop)", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("没有进行中的听写")));
@@ -509,10 +509,22 @@ fn dictation_start_stop_runs_the_pipeline_and_records_history() {
         let ev = wait_event(rx, "dictation/done", |e| e["type"] == "dictation" && e["phase"]["phase"] == "done");
         assert_eq!(ev["phase"]["via"], "paste");
         assert_eq!(ev["session"], 1);
-        let st = wait_state(webview, |s| s.history.len() == 1);
-        assert_eq!(st.history[0].text, fakes::FAKE_TRANSCRIPT);
-        let ev = wait_event(rx, "history", |e| e["type"] == "history" && e["entries"].as_array().is_some_and(|a| a.len() == 1));
-        assert_eq!(ev["entries"][0]["outcome"]["kind"], "inserted");
+        let st = wait_state(webview, |s| s.history_recent.len() == 1);
+        assert_eq!(st.history_recent[0].text, fakes::FAKE_TRANSCRIPT);
+        let ev = wait_event(rx, "history", |e| e["type"] == "history" && e["recent"].as_array().is_some_and(|a| a.len() == 1));
+        assert_eq!((ev["recent"][0]["outcome"]["kind"].as_str(), ev["total"].as_u64()), (Some("inserted"), Some(1)));
+        // The same take through the history queries (docs/dictation.md §4.4).
+        let page = invoke(webview, "history_query", json!({ "limit": 10, "query": "  " })).unwrap();
+        assert_eq!((page["matching"].as_u64(), page["total"].as_u64()), (Some(1), Some(1)));
+        let id = page["entries"][0]["id"].as_str().unwrap().to_owned();
+        assert_eq!(invoke(webview, "history_entry", json!({ "id": id })).unwrap()["text"], fakes::FAKE_TRANSCRIPT);
+        assert_eq!(invoke(webview, "history_entry", json!({ "id": "00000000-0000-4000-8000-000000000000" })), Ok(Value::Null));
+        let at = page["entries"][0]["at_ms"].as_u64().unwrap();
+        let stats = invoke(webview, "history_stats", json!({ "boundaries": [at, at + 1] })).unwrap();
+        assert_eq!((stats["buckets"][0]["count"].as_u64(), stats["total"]["count"].as_u64()), (Some(1), Some(1)));
+        assert!(invoke(webview, "history_stats", json!({ "boundaries": [at] })).is_err(), "one boundary is no span");
+        assert!(invoke(webview, "history_query", json!({ "limit": 0 })).is_err(), "a page needs a size");
+        assert_eq!(invoke(webview, "history_hits", json!({})).unwrap(), json!({ "dictionary": {}, "rules": {} }));
         // Cancel in the terminal dwell dismisses the pill state straight away.
         assert_eq!(invoke(webview, "dictation_cancel", json!({})), Ok(Value::Null));
         wait_state(webview, |s| s.dictation.phase == DictationPhase::Idle);
@@ -613,19 +625,19 @@ fn engine_settings_and_history_commands_change_state() {
         assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
         wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { .. }));
         assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
-        let st = wait_state(webview, |s| s.history.len() == 1);
-        let id = st.history[0].id.to_string();
+        let st = wait_state(webview, |s| s.history_recent.len() == 1);
+        let id = st.history_recent[0].id.to_string();
         assert_eq!(invoke(webview, "history_star", json!({ "id": id, "starred": true })), Ok(Value::Null));
-        wait_state(webview, |s| s.history.first().is_some_and(|h| h.starred));
+        wait_state(webview, |s| s.history_recent.first().is_some_and(|h| h.starred));
         assert_eq!(invoke(webview, "history_delete", json!({ "id": id })), Ok(Value::Null));
-        wait_state(webview, |s| s.history.is_empty());
+        wait_state(webview, |s| s.history_recent.is_empty());
         assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
         wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { .. }));
         assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
-        wait_state(webview, |s| s.history.len() == 1);
+        wait_state(webview, |s| s.history_recent.len() == 1);
         assert_eq!(invoke(webview, "history_clear", json!({})), Ok(Value::Null));
-        wait_state(webview, |s| s.history.is_empty());
-        wait_event(rx, "history (cleared)", |e| e["type"] == "history" && e["entries"].as_array().is_some_and(Vec::is_empty));
+        wait_state(webview, |s| s.history_recent.is_empty());
+        wait_event(rx, "history (cleared)", |e| e["type"] == "history" && e["recent"].as_array().is_some_and(Vec::is_empty));
     });
 }
 
@@ -688,10 +700,10 @@ fn vocabulary_commands_and_queries_run_through_the_command_layer() {
         assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
         wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { .. }));
         assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
-        let st = wait_state(webview, |s| s.history.len() == 1);
-        assert_eq!(st.history[0].text, "您好，World!");
-        assert_eq!(st.history[0].raw_text, fakes::FAKE_TRANSCRIPT);
-        let hits = st.history[0].vocabulary.clone().expect("the history records what fired");
+        let st = wait_state(webview, |s| s.history_recent.len() == 1);
+        assert_eq!(st.history_recent[0].text, "您好，World!");
+        assert_eq!(st.history_recent[0].raw_text, fakes::FAKE_TRANSCRIPT);
+        let hits = st.history_recent[0].vocabulary.clone().expect("the history records what fired");
         assert_eq!((hits.corrections.len(), hits.rules.len()), (1, 2));
 
         assert_eq!(invoke(webview, "rules_remove", json!({ "id": st.rules[0].id })), Ok(Value::Null));
@@ -751,8 +763,8 @@ fn scene_commands_context_sharing_and_recent_apps_run_through_the_command_layer(
         });
         wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { ready: true, .. }));
         assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
-        let st = wait_state(webview, |s| s.history.len() == 1);
-        assert_eq!(st.history[0].scene.as_ref().map(|s| s.name.as_str()), Some("代码"));
+        let st = wait_state(webview, |s| s.history_recent.len() == 1);
+        assert_eq!(st.history_recent[0].scene.as_ref().map(|s| s.name.as_str()), Some("代码"));
         assert!(
             matches!(st.dictation.phase, DictationPhase::Done { refined: false, refine_error: None, .. }),
             "the scene switched refining off: {:?}",
@@ -1132,7 +1144,7 @@ fn hotkey_edges_run_hold_toggle_and_lock_flows_through_the_command_layer() {
         assert_eq!(ev["session"], 3);
         assert_eq!(invoke(webview, "hotkey_edge", edge(true, "cli")), Ok(Value::Null), "a CLI press stops the locked run");
         wait_state(webview, |s| s.dictation.phase.is_terminal());
-        wait_state(webview, |s| s.history.len() == 3);
+        wait_state(webview, |s| s.history_recent.len() == 3);
 
         // Refusals: IPC-level for shapes, core-level for ranges (and the saved mode is untouched).
         for bad in [json!({}), json!({ "pressed": "yes" }), json!({ "pressed": true, "source": "mouse" })] {
@@ -1177,10 +1189,10 @@ fn an_edit_edge_rewrites_the_selection_through_the_command_layer() {
         let st = wait_state(webview, |s| s.dictation.phase.is_terminal());
         assert!(matches!(&st.dictation.phase, DictationPhase::Done { text, .. } if text == REWRITE), "{:?}", st.dictation.phase);
         assert_eq!(st.dictation.kind, TakeKind::Edit);
-        let ev = wait_event(rx, "history (edit)", |e| e["type"] == "history" && e["entries"].as_array().is_some_and(|a| a.len() == 1));
-        assert_eq!(ev["entries"][0]["kind"], "edit");
-        assert_eq!(ev["entries"][0]["edit"], json!({ "instruction": INSTRUCTION, "selection": SELECTION }));
-        assert_eq!(ev["entries"][0]["text"], REWRITE);
+        let ev = wait_event(rx, "history (edit)", |e| e["type"] == "history" && e["recent"].as_array().is_some_and(|a| a.len() == 1));
+        assert_eq!(ev["recent"][0]["kind"], "edit");
+        assert_eq!(ev["recent"][0]["edit"], json!({ "instruction": INSTRUCTION, "selection": SELECTION }));
+        assert_eq!(ev["recent"][0]["text"], REWRITE);
         assert_eq!(injector.copies(), vec![vec![voltip_core::Modifier::Ctrl, voltip_core::Modifier::Alt]], "Ctrl+Alt+E's held modifiers");
         assert_eq!(injector.injected(), vec![REWRITE.to_owned()]);
         assert_eq!(refiner.edits(), vec![(SELECTION.to_owned(), INSTRUCTION.to_owned(), Vec::new())]);
@@ -1193,7 +1205,7 @@ fn an_edit_edge_rewrites_the_selection_through_the_command_layer() {
         wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { ready: true, .. }) && s.dictation.session == 2);
         assert_eq!(core_state(webview).dictation.kind, TakeKind::Edit);
         voltip_desktop_lib::on_second_instance(app, &argv(&["--edit-toggle"]));
-        let st = wait_state(webview, |s| s.dictation.phase.is_terminal() && s.history.len() == 2);
+        let st = wait_state(webview, |s| s.dictation.phase.is_terminal() && s.history_recent.len() == 2);
         assert!(matches!(&st.dictation.phase, DictationPhase::Done { text, .. } if text == REWRITE), "{:?}", st.dictation.phase);
         assert_eq!(injector.copies().last(), Some(&Vec::new()));
         assert_eq!(invoke(webview, "dictation_cancel", json!({})), Ok(Value::Null));
@@ -1345,6 +1357,10 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "rules_export",
             "vocabulary_preview",
             "recent_apps",
+            "history_query",
+            "history_entry",
+            "history_stats",
+            "history_hits",
             "permissions_status",
             "permissions_request",
             "inject_preflight",
@@ -1401,7 +1417,7 @@ fn paste_text_pastes_into_the_window_in_front_and_refuses_while_a_take_runs() {
         }
         assert_eq!(invoke(webview, "paste_text", json!({ "text": " \n" })), Ok(json!({ "kind": "failed", "reason": "invalid" })));
         assert!(invoke(webview, "paste_text", json!({})).is_err(), "text is required");
-        assert!(core_state(webview).history.is_empty(), "a paste writes no history");
+        assert!(core_state(webview).history_recent.is_empty(), "a paste writes no history");
         assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
         wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { .. }));
         assert_eq!(invoke(webview, "paste_text", json!({ "text": "你好" })), Ok(json!({ "kind": "failed", "reason": "busy" })));

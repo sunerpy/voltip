@@ -9,6 +9,7 @@ import {
   type UiState,
   activationShortcut,
   engineReady,
+  formatCount,
   enginesReported,
   hotkeyMethodText,
   modelDisplayName,
@@ -236,12 +237,12 @@ export function pageMeta(
           {
             label: t("page.readout.history"),
             value: t("page.readout.historyValue", {
-              n: state.history.length,
-              limit: state.settings.history.keep,
+              n: formatCount(state.history_total),
+              limit: formatCount(state.settings.history.keep),
             }),
-            lamp: state.history.length > 0 ? "ok" : "idle",
+            lamp: state.history_total > 0 ? "ok" : "idle",
           },
-          { label: t("page.readout.storage"), value: "history.json", mono: true },
+          { label: t("page.readout.storage"), value: "history.sqlite3", mono: true },
         ],
         shortcuts: [
           ["Ctrl F", sc("page.shortcut.search")],

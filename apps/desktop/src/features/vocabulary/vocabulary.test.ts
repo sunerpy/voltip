@@ -4,6 +4,7 @@ import {
   type ReplacementRule,
   createTranslator,
 } from "@voltip/shared";
+import { MockBackend } from "@voltip/shared/mock";
 import {
   dictionaryDraftProblem,
   errorText,
@@ -56,7 +57,7 @@ const rule: ReplacementRule = {
 };
 
 describe("vocabulary page helpers", () => {
-  it("sums the hits of the retained history per id and kind", () => {
+  it("sums the hits of the history per id and kind (the core's history_hits)", async () => {
     const history = [
       row({ corrections: [{ id: "e1", count: 2 }], rules: [{ id: "r1", count: 1 }] }),
       row(),
@@ -68,12 +69,15 @@ describe("vocabulary page helpers", () => {
         rules: [],
       }),
     ];
-    expect([...hitTotals(history, "corrections")]).toEqual([
+    const backend = new MockBackend({ history });
+    const hits = await backend.historyHits();
+    expect([...hitTotals(hits, "corrections")]).toEqual([
       ["e1", 3],
       ["e2", 4],
     ]);
-    expect([...hitTotals(history, "rules")]).toEqual([["r1", 1]]);
-    expect(hitTotals([], "rules").size).toBe(0);
+    expect([...hitTotals(hits, "rules")]).toEqual([["r1", 1]]);
+    expect(hitTotals(undefined, "rules").size).toBe(0);
+    backend.destroy();
   });
 
   it("splits the heard-as field on every documented separator", () => {

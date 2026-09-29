@@ -44,7 +44,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 89] = [
+pub const COMMANDS: [&str; 93] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -130,6 +130,10 @@ pub const COMMANDS: [&str; 89] = [
     "presets_builtin",
     "settings_set_context_sharing",
     "recent_apps",
+    "history_query",
+    "history_entry",
+    "history_stats",
+    "history_hits",
     "permissions_status",
     "permissions_request",
     "inject_preflight",
@@ -731,9 +735,63 @@ fn settings_set_context_sharing(bridge: tauri::State<'_, Bridge>, app_name: bool
 }
 
 /// Query: the applications the history saw, newest first (the scene editor's picker, §18.6).
+/// Run a history read off the main thread: SQLite blocks (docs/dictation.md §4.4).
+async fn history_read<T: Send + 'static>(
+    bridge: &Bridge,
+    read: impl FnOnce(&Bridge) -> Result<T, voltip_tauri_bridge::BridgeError> + Send + 'static,
+) -> Result<T, String> {
+    let bridge = bridge.clone();
+    Ok(tauri::async_runtime::spawn_blocking(move || read(&bridge)).await.map_err(|e| e.to_string())??)
+}
+
+/// The applications the history saw, newest first (docs/dictation.md §18.6): what the scene
+/// editor offers to pick from.
 #[tauri::command]
-fn recent_apps(bridge: tauri::State<'_, Bridge>) -> Vec<AppRef> {
-    bridge.recent_apps()
+async fn recent_apps(bridge: tauri::State<'_, Bridge>) -> Result<Vec<AppRef>, String> {
+    history_read(&bridge, Bridge::recent_apps).await
+}
+
+/// A page of the history (docs/dictation.md §4.4), filtered, searched and paged in the database:
+/// the entries at or after `since_ms` (a local midnight), starred ones, ones not inserted, ones
+/// containing `query`; `limit` ≤ 200.
+#[tauri::command]
+async fn history_query(
+    bridge: tauri::State<'_, Bridge>,
+    since_ms: Option<u64>,
+    starred: Option<bool>,
+    failed: Option<bool>,
+    query: Option<String>,
+    offset: Option<u32>,
+    limit: u32,
+) -> Result<voltip_core::HistoryPage, String> {
+    let query = voltip_core::HistoryQuery {
+        since_ms,
+        starred: starred.unwrap_or(false),
+        failed: failed.unwrap_or(false),
+        query: query.unwrap_or_default(),
+        offset: offset.unwrap_or(0),
+        limit,
+    };
+    history_read(&bridge, move |b| b.history_query(&query)).await
+}
+
+/// One history entry by id; `null` once it is gone.
+#[tauri::command]
+async fn history_entry(bridge: tauri::State<'_, Bridge>, id: uuid::Uuid) -> Result<Option<voltip_core::HistoryEntry>, String> {
+    history_read(&bridge, move |b| b.history_entry(id)).await
+}
+
+/// The home page's statistics (docs/dictation.md §4.5): the dictations between each two of the
+/// local midnights in `boundaries`, and over the whole history.
+#[tauri::command]
+async fn history_stats(bridge: tauri::State<'_, Bridge>, boundaries: Vec<u64>) -> Result<voltip_core::HistoryStats, String> {
+    history_read(&bridge, move |b| b.history_stats(&boundaries)).await
+}
+
+/// How often each dictionary entry and rule fired in the history (docs/dictation.md §16.3).
+#[tauri::command]
+async fn history_hits(bridge: tauri::State<'_, Bridge>) -> Result<voltip_core::HistoryHits, String> {
+    history_read(&bridge, Bridge::history_hits).await
 }
 
 /// Microphones the native audio backend can open (`voltip-audio`), default first.
@@ -1064,6 +1122,10 @@ pub fn build_app<R: Runtime>(
             presets_builtin,
             settings_set_context_sharing,
             recent_apps,
+            history_query,
+            history_entry,
+            history_stats,
+            history_hits,
             permissions_status,
             permissions_request,
             inject_preflight,

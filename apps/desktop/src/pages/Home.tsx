@@ -6,6 +6,8 @@ import {
   engineReady as engineReadiness,
   enginesReported,
   formatCount,
+  durationParts,
+  formatDuration,
   formatMs,
   formatSeconds,
   isBuiltinPreset,
@@ -29,6 +31,7 @@ import {
   Lamp,
   LampText,
   Panel,
+  Popover,
   Readout,
   Table,
   type TableColumn,
@@ -37,7 +40,6 @@ import {
   useI18n,
   useUiState,
 } from "@voltip/ui";
-import { useMemo } from "react";
 import { SPEECH_ROUTE, useRouter } from "../app/router";
 import { serviceTarget } from "./settings/engines/helpers";
 import { MicrophoneStrength } from "../features/audio/MicrophoneStrength";
@@ -47,13 +49,8 @@ import { useDictation, useTickingNow } from "../features/dictation/useDictation"
 import { ResultActions } from "../features/history/ResultActions";
 import { PermissionNotice } from "../features/permissions/PermissionNotice";
 import { PresetMenu } from "../features/presets/PresetMenu";
-import {
-  type HistoryFilter,
-  historyStats,
-  recentTimeLabel,
-  spokenLabel,
-  todayLabel,
-} from "../features/history/stats";
+import { type HistoryFilter, recentTimeLabel, todayLabel } from "../features/history/stats";
+import { useHomeStats } from "../features/history/useHomeStats";
 import { shortModel } from "../shell/page-meta";
 
 /** How many paired phones the phone-microphone card lists before pointing at the devices page. */
@@ -61,10 +58,41 @@ const HOME_DEVICE_ROWS = 3;
 /** Rows of the recent-results table. */
 const RECENT_ROWS = 6;
 
+/** A span of time in the session panel: each number with its unit smaller, as the character
+ *  counts beside it show theirs (docs/dictation.md §4.5). */
+function Duration({ ms }: { ms: number }) {
+  const { locale } = useI18n();
+  return (
+    <span data-testid="home-duration">
+      {durationParts(ms, locale).map((part, i) => (
+        <span key={part.unit} className={i > 0 ? "ml-1.5" : undefined}>
+          {part.value}
+          <span className="ml-1 text-[11px] text-fg-muted">{part.unit}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** 「节省 {time}」 of a stat tile with the time drawn as a [`Duration`]: the words around it stay
+ *  small, before or after it as the language puts them (`{time} saved`). */
+function SavedTime({ ms }: { ms: number }) {
+  const { t } = useI18n();
+  const [before = "", after = ""] = t("home.tiles.saved", { time: "\u0000" }).split("\u0000");
+  return (
+    <>
+      {before.trim() && <span className="mr-1 text-[11px] text-fg-muted">{before.trim()}</span>}
+      <Duration ms={ms} />
+      {after.trim() && <span className="ml-1 text-[11px] text-fg-muted">{after.trim()}</span>}
+    </>
+  );
+}
+
 /** Home: readiness row, four dashboard panels, stat strip and the recent table, every
  *  number from the core: `state.dictation` drives the start / stop button and the live phase
- *  line, `state.engines` the engine card, `state.history` the session panel, the tiles and the
- *  table, the native meter the microphone card, `state.devices` / `state.relay` the phone card. */
+ *  line, `state.engines` the engine card, `state.history_recent` the table, `history_stats`
+ *  (docs/dictation.md §4.5) the session panel and the tiles, the native meter the microphone
+ *  card, `state.devices` / `state.relay` the phone card. */
 export function Home() {
   const { navigate } = useRouter();
   const state = useUiState();
@@ -128,8 +156,8 @@ export function Home() {
     navigate(SPEECH_ROUTE);
   };
 
-  const stats = useMemo(() => historyStats(state.history, now), [state.history, now]);
-  const recent = state.history.slice(0, RECENT_ROWS);
+  const stats = useHomeStats(now);
+  const recent = state.history_recent.slice(0, RECENT_ROWS);
 
   // Phone link summary: the first online phone names the card's lamp, otherwise a connecting one,
   // otherwise offline (or "no device" when nothing is paired).
@@ -155,30 +183,40 @@ export function Home() {
     });
   };
 
-  const tiles: { eyebrow: string; value: string; secondary: string; filter: HistoryFilter }[] = [
+  const tiles: {
+    eyebrow: string;
+    savedMs: number;
+    value: string;
+    secondary: string;
+    filter: HistoryFilter;
+  }[] = [
     {
       eyebrow: t("home.tiles.today"),
-      value: t("count.entries", { n: stats.today.count }),
-      secondary: t("count.chars", { n: formatCount(stats.today.chars) }),
+      savedMs: stats.today.savedMs,
+      value: t("home.tiles.saved", { time: formatDuration(stats.today.savedMs, locale) }),
+      secondary: t("count.chars", { n: formatCount(stats.today.rawChars) }),
       filter: "today",
     },
     {
       eyebrow: t("home.tiles.week"),
-      value: t("count.entries", { n: stats.week.count }),
-      secondary: t("count.chars", { n: formatCount(stats.week.chars) }),
+      savedMs: stats.week.savedMs,
+      value: t("home.tiles.saved", { time: formatDuration(stats.week.savedMs, locale) }),
+      secondary: t("count.chars", { n: formatCount(stats.week.rawChars) }),
       filter: "week",
     },
     {
       eyebrow: t("home.tiles.month"),
-      value: t("count.entries", { n: stats.month.count }),
-      secondary: t("count.chars", { n: formatCount(stats.month.chars) }),
+      savedMs: stats.month.savedMs,
+      value: t("home.tiles.saved", { time: formatDuration(stats.month.savedMs, locale) }),
+      secondary: t("count.chars", { n: formatCount(stats.month.rawChars) }),
       filter: "month",
     },
     {
       eyebrow: t("home.tiles.total"),
-      value: `${stats.total.count} / ${state.settings.history.keep}`,
+      savedMs: stats.total.savedMs,
+      value: t("home.tiles.saved", { time: formatDuration(stats.total.savedMs, locale) }),
       secondary: state.settings.history.enabled
-        ? t("home.tiles.limit", { n: state.settings.history.keep })
+        ? t("count.chars", { n: formatCount(stats.total.rawChars) })
         : t("home.tiles.recordingOff"),
       filter: "all",
     },
@@ -605,32 +643,53 @@ export function Home() {
           className="min-h-[144px]"
           data-testid="home-session">
           <div className="flex justify-between gap-4">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-3">
-              <Readout
-                label={t("home.session.sentences")}
-                value={stats.today.count}
-                unit={t("home.session.sentencesUnit") || undefined}
-                size="lg"
-              />
-              <Readout
-                label={t("home.session.chars")}
-                value={formatCount(stats.today.chars)}
-                unit={t("home.session.charsUnit") || undefined}
-                size="lg"
-              />
-              <Readout
-                label={t("home.session.spoken")}
-                value={spokenLabel(stats.today.spokenMs)}
-                unit={t("home.session.spokenUnit")}
-                size="lg"
-              />
-              <Readout
-                label={t("home.session.latency")}
-                value={stats.today.latencyMs ?? "—"}
-                unit="ms"
-                size="lg"
-                muted={stats.today.latencyMs === undefined}
-              />
+            <div className="flex flex-col gap-3">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+                <Readout
+                  label={t("home.session.raw")}
+                  value={formatCount(stats.today.rawChars)}
+                  unit={t("home.session.charsUnit") || undefined}
+                  size="lg"
+                />
+                <Readout
+                  label={t("home.session.corrected")}
+                  value={formatCount(stats.today.correctedChars)}
+                  unit={t("home.session.charsUnit") || undefined}
+                  size="lg"
+                />
+                <Readout
+                  label={t("home.session.spoken")}
+                  value={<Duration ms={stats.today.spokenMs} />}
+                  size="lg"
+                />
+                <Readout
+                  label={
+                    // 依据 beside the number it explains.
+                    <span className="inline-flex items-baseline gap-1.5">
+                      {t("home.session.saved")}
+                      <Popover
+                        trigger={t("home.session.basis")}
+                        label={t("home.session.basisLabel")}
+                        data-testid="home-saved-basis"
+                        triggerClassName="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent">
+                        {t("home.session.basisText")}
+                      </Popover>
+                    </span>
+                  }
+                  value={<Duration ms={stats.today.savedMs} />}
+                  size="lg"
+                />
+              </div>
+              {/* Count and latency each on one line: a narrow window breaks between them. */}
+              <span className="mono text-[11px] text-fg-muted" data-testid="home-session-summary">
+                <span className="whitespace-nowrap">
+                  {t("home.session.count", { n: stats.today.count })}
+                </span>
+                {" · "}
+                <span className="whitespace-nowrap">
+                  {t("home.session.latency", { latency: formatMs(stats.today.latencyMs) })}
+                </span>
+              </span>
             </div>
             <div className="flex flex-col items-end gap-1">
               <Heatmap values={stats.heatmap} legend={false} />
@@ -656,15 +715,21 @@ export function Home() {
               if (e.key === "Enter") openHistory(tile.filter);
             }}
             className="flex h-[52px] cursor-pointer flex-col justify-center px-3">
-            <span className="text-[10px] text-fg-subtle">{tile.eyebrow}</span>
-            <span className="flex items-baseline justify-between">
-              <span className="mono text-[16px] whitespace-nowrap text-fg">{tile.value}</span>
+            {/* The note (characters) sits beside the span's name, so the time saved has the whole
+                second line: a long history saves hours (「节省 79 小时 10 分」). */}
+            <span className="flex items-baseline justify-between gap-2">
+              <span className="text-[10px] text-fg-subtle">{tile.eyebrow}</span>
               <span
-                className="mono truncate pl-2 text-[11px] text-fg-muted"
+                className="mono truncate text-[11px] text-fg-muted"
                 title={tile.secondary}
                 data-testid="home-tile-note">
                 {tile.secondary}
               </span>
+            </span>
+            <span
+              className="mono text-[16px] whitespace-nowrap text-fg"
+              data-testid="home-tile-value">
+              <SavedTime ms={tile.savedMs} />
             </span>
           </Card>
         ))}

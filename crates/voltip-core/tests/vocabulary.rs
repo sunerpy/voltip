@@ -138,7 +138,7 @@ async fn dictionary_and_rules_through_the_core() {
     .await;
     assert!(matches!(&done, DictationPhase::Done { text, raw_text, .. } if text == "你好呀，World!" && raw_text == FAKE_TRANSCRIPT), "{done:?}");
     assert_eq!(injector.injected(), vec!["你好呀，World!".to_owned()]);
-    let history = wait(&mut node, |e| if let CoreEvent::History(h) = e { (!h.is_empty()).then(|| h.clone()) } else { None }).await;
+    let history = wait(&mut node, |e| if let CoreEvent::History { recent: h, .. } = e { (!h.is_empty()).then(|| h.clone()) } else { None }).await;
     let world = dictionary_file(dir.path()).into_iter().find(|e| e.term == "World").unwrap();
     assert_eq!(
         history[0].vocabulary,

@@ -67,7 +67,7 @@ async fn paste(node: &mut Node, request_id: u64, text: &str, target: PasteTarget
     node.handle.send(CoreCommand::PasteText { request_id, text: text.into(), target }).await.unwrap();
     wait(node, |e| match e {
         CoreEvent::PasteResult { request_id: id, outcome } if *id == request_id => Some(*outcome),
-        CoreEvent::History(entries) if !entries.is_empty() => panic!("a paste wrote the history: {entries:?}"),
+        CoreEvent::History { recent: entries, .. } if !entries.is_empty() => panic!("a paste wrote the history: {entries:?}"),
         _ => None,
     })
     .await

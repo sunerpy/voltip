@@ -22,7 +22,6 @@ use uuid::Uuid;
 
 use crate::dictation::ports::ForegroundApp;
 use crate::engines::{ChineseScript, OutputMode};
-use crate::history::HistoryEntry;
 use crate::presets::PresetId;
 
 pub use builtin::{BuiltinScene, has_builtin_scenes};
@@ -48,7 +47,7 @@ pub const MAX_LANGUAGE_CHARS: usize = 16;
 pub const MAX_CONTEXT_NAME_CHARS: usize = 64;
 /// Longest window title the core keeps and sends (characters).
 pub const MAX_CONTEXT_TITLE_CHARS: usize = 200;
-/// Most entries [`recent_apps`] answers with.
+/// Most entries `recent_apps` answers with (`HistoryReader::recent_apps`, docs/dictation.md §18.6).
 pub const MAX_RECENT_APPS: usize = 20;
 /// `SceneOverrides.language` value meaning "no language hint for this take" (auto-detect).
 pub const LANGUAGE_AUTO: &str = "auto";
@@ -395,21 +394,6 @@ pub fn match_scene<'a>(scenes: &'a [Scene], app: &ForegroundApp) -> Option<&'a S
             && (s.matching.title_contains.is_empty()
                 || title.as_deref().is_some_and(|t| s.matching.title_contains.iter().any(|k| !k.is_empty() && t.contains(&k.to_lowercase()))))
     })
-}
-
-/// `recent_apps` (docs/dictation.md §18.6): the applications the history saw, newest first, one
-/// per id (the newest name wins), at most `limit`.
-pub fn recent_apps(history: &[HistoryEntry], limit: usize) -> Vec<AppRef> {
-    let mut out: Vec<AppRef> = Vec::new();
-    for app in history.iter().filter_map(|e| e.app.as_ref()) {
-        if out.len() == limit {
-            break;
-        }
-        if !out.iter().any(|a| a.id == app.id) {
-            out.push(app.clone());
-        }
-    }
-    out
 }
 
 #[cfg(test)]

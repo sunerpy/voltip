@@ -19,13 +19,13 @@ use uuid::Uuid;
 use voltip_core::dictation::LevelFrame;
 use voltip_core::paste::{PasteFailure, PasteOutcome, PasteTarget};
 use voltip_core::presets::{MAX_PRESET_TRY_CHARS, PresetDraft, PresetId, PresetTrial, clean_preset_prompt, validate_preset_draft};
-use voltip_core::scenes::{MAX_RECENT_APPS, recent_apps, validate_scene_draft, validate_scene_draft_with};
+use voltip_core::scenes::{MAX_RECENT_APPS, validate_scene_draft, validate_scene_draft_with};
 use voltip_core::ui::{UiEvent, UiState};
 use voltip_core::vocabulary::{export_rules_toml, parse_rules_toml, preview, validate_dictionary_draft, validate_rule_draft};
 use voltip_core::{
     Activation, AppCore, AppRef, ContextSharing, CoreCommand, CoreConfig, CoreError, CoreEvent, CoreHandle, DictationPorts, DictionaryDraft, EdgeSource,
-    EngineSettings, EntrySource, ImportMode, Locale, OverlayPlacement, PreviewDraft, ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId,
-    VocabularyPreview,
+    EngineSettings, EntrySource, HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryReader, HistoryStats, ImportMode, Locale, OverlayPlacement,
+    PreviewDraft, ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
 };
 use voltip_crypto::PublicKey;
 use voltip_identity::SecretStore;
@@ -543,6 +543,8 @@ pub struct Bridge {
     events: broadcast::Sender<UiEvent>,
     /// The last id [`Bridge::paste`] gave out: each answer finds the call that asked.
     paste_ids: Arc<AtomicU64>,
+    /// The history queries' own read-only connection (docs/dictation.md §4.4).
+    history: Arc<HistoryReader>,
 }
 
 impl std::fmt::Debug for Bridge {
@@ -579,8 +581,9 @@ impl Bridge {
     ) -> Result<(Self, broadcast::Receiver<UiEvent>), BridgeError> {
         let (tx, first) = broadcast::channel(256);
         let state = Arc::new(Mutex::new(UiState::default()));
+        let history = Arc::new(HistoryReader::new(&config.data_dir));
         let (handle, core_events) = AppCore::start_with(config, secret_store, ports)?;
-        let bridge = Self { handle, state: state.clone(), events: tx.clone(), paste_ids: Arc::new(AtomicU64::new(0)) };
+        let bridge = Self { handle, state: state.clone(), events: tx.clone(), paste_ids: Arc::new(AtomicU64::new(0)), history };
         tokio::spawn(pump(core_events, state, tx));
         Ok((bridge, first))
     }
@@ -661,10 +664,32 @@ impl Bridge {
         export_rules_toml(&rules).map_err(bad)
     }
 
-    /// `recent_apps` (docs/dictation.md §18.6): the applications the cached history saw, newest
-    /// first, one per id, at most [`MAX_RECENT_APPS`] — what the scene editor offers to pick from.
-    pub fn recent_apps(&self) -> Vec<AppRef> {
-        recent_apps(&self.state.lock().history, MAX_RECENT_APPS)
+    /// `recent_apps` (docs/dictation.md §18.6): the applications the history saw, newest first,
+    /// one per id, at most [`MAX_RECENT_APPS`] — what the scene editor offers to pick from.
+    pub fn recent_apps(&self) -> Result<Vec<AppRef>, BridgeError> {
+        Ok(self.history.recent_apps(MAX_RECENT_APPS)?)
+    }
+
+    /// `history_query` (docs/dictation.md §4.4): a page of the history, filtered and searched in
+    /// the database. Blocks on SQLite: the shells call it off the main thread.
+    pub fn history_query(&self, query: &HistoryQuery) -> Result<HistoryPage, BridgeError> {
+        Ok(self.history.query(query)?)
+    }
+
+    /// `history_entry`: one entry by id, `None` once it is gone.
+    pub fn history_entry(&self, id: uuid::Uuid) -> Result<Option<HistoryEntry>, BridgeError> {
+        Ok(self.history.entry(id)?)
+    }
+
+    /// `history_stats` (docs/dictation.md §4.5): the dictations between each two of the local
+    /// midnights the page sends, and over the whole history.
+    pub fn history_stats(&self, boundaries: &[u64]) -> Result<HistoryStats, BridgeError> {
+        Ok(self.history.stats(boundaries)?)
+    }
+
+    /// `history_hits` (docs/dictation.md §16.3): how often each dictionary entry and rule fired.
+    pub fn history_hits(&self) -> Result<HistoryHits, BridgeError> {
+        Ok(self.history.hits()?)
     }
 
     /// Stop the core.
@@ -965,7 +990,7 @@ mod tests {
     /// docs/dictation.md §18.6: `recent_apps` answers from the cached history — a take on the fakes
     /// with a probe records its app, and the query names it.
     #[tokio::test]
-    async fn recent_apps_come_from_the_cached_history() {
+    async fn recent_apps_and_the_history_queries_read_the_database() {
         let dir = tempfile::tempdir().unwrap();
         voltip_core::SettingsStore::new(dir.path())
             .save(&voltip_core::Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Default::default() })
@@ -974,7 +999,8 @@ mod tests {
         let ports = DictationPorts { probe: Some(probe), ..voltip_core::dictation::fakes::ports() };
         let bridge = Bridge::start_with(CoreConfig::new(dir.path().to_path_buf()), Arc::new(MemorySecretStore::new()), ports).unwrap();
         let mut rx = bridge.events();
-        assert!(bridge.recent_apps().is_empty());
+        assert!(bridge.recent_apps().unwrap().is_empty());
+        assert_eq!(bridge.history_query(&HistoryQuery { limit: 10, ..Default::default() }).unwrap(), HistoryPage::default(), "nothing yet");
         bridge.dispatch(UiCommand::DictationStart).unwrap();
         for _ in 0..40 {
             if matches!(bridge.state().dictation.phase, voltip_core::DictationPhase::Listening { ready: true, .. }) {
@@ -984,12 +1010,25 @@ mod tests {
         }
         bridge.dispatch(UiCommand::DictationStop).unwrap();
         for _ in 0..60 {
-            if !bridge.state().history.is_empty() {
+            if !bridge.state().history_recent.is_empty() {
                 break;
             }
             let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
         }
-        assert_eq!(bridge.recent_apps(), vec![AppRef { id: "code".into(), name: "Code".into() }]);
+        assert_eq!(bridge.recent_apps().unwrap(), vec![AppRef { id: "code".into(), name: "Code".into() }]);
+        // The take is in the database the queries read, as the core's event said.
+        let state = bridge.state();
+        assert_eq!(state.history_total, 1);
+        let page = bridge.history_query(&HistoryQuery { query: "code".into(), limit: 10, ..Default::default() }).unwrap();
+        assert_eq!((page.entries.clone(), page.matching, page.total), (state.history_recent.clone(), 1, 1));
+        let id = page.entries[0].id;
+        assert_eq!(bridge.history_entry(id).unwrap().map(|e| e.id), Some(id));
+        let at = page.entries[0].at_ms;
+        let stats = bridge.history_stats(&[at, at + 1]).unwrap();
+        assert_eq!((stats.buckets[0].count, stats.total.count), (1, 1));
+        assert!(bridge.history_stats(&[at]).is_err(), "one boundary is no span");
+        assert!(bridge.history_query(&HistoryQuery::default()).is_err(), "a page needs a size");
+        assert_eq!(bridge.history_hits().unwrap(), HistoryHits::default(), "the fakes' take fires no dictionary entry");
         bridge.shutdown();
     }
 
@@ -1076,14 +1115,14 @@ mod tests {
         let mut done = false;
         for _ in 0..40 {
             let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
-            if matches!(ev, UiEvent::History { ref entries } if !entries.is_empty()) {
+            if matches!(ev, UiEvent::History { ref recent, .. } if !recent.is_empty()) {
                 done = true;
                 break;
             }
         }
         assert!(done, "history received the finished dictation");
         tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(bridge.state().history.len(), 1);
+        assert_eq!((bridge.state().history_recent.len(), bridge.state().history_total), (1, 1));
         // The fakes carry no model library: the list is empty and a model command is answered
         // with an `error` event rather than a panic or a silent drop.
         assert!(bridge.state().models.is_empty());
