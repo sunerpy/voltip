@@ -4,6 +4,8 @@ description: Your first dictation with Voltip, the permissions it needs, and how
 
 # Quick start
 
+These steps take you from a fresh install to text at your cursor, and then to recognition that keeps the audio on your computer.
+
 ## Your first dictation
 
 1. **Start Voltip.** It opens on the home page, ready to dictate with the default service.

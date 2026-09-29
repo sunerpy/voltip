@@ -52,7 +52,7 @@ home:
 
   index:
     title: What Voltip does
-    intro: Every feature at a glance. Features marked "In development" are being built and are not in a release yet.
+    intro: All of Voltip's features. Those marked "In development" are being built and are not in a release yet.
     groups:
       - name: Dictation wherever you type
         items:
@@ -110,6 +110,10 @@ home:
             body: Pair an Android phone by QR code, a 6-digit code or a tap on the same network. Hold to talk or type on the phone, and the text appears at the computer's cursor.
             status: building
             link: /phone/
+          - title: An iOS app
+            body: The phone as a microphone and keyboard on iOS as well. Development has not started.
+            status: planned
+            link: /roadmap
           - title: History with copy and paste
             body: Every result is kept on your computer. Search it, copy a result, or paste it into the window you used before.
             status: available
@@ -256,6 +260,9 @@ home:
       - title: More local models
         status: planned
         body: Whisper among others, and measurements on AMD and Intel graphics cards.
+      - title: An iOS app
+        status: planned
+        body: The phone as a microphone and keyboard on iOS as well. Development has not started.
     notPlanned:
       title: Deliberately left out
       items:
