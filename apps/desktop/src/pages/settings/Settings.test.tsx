@@ -308,6 +308,33 @@ describe("Settings · 对话框", () => {
     expect(content.firstElementChild?.className ?? "").not.toMatch(/max-w-\[/);
   });
 
+  // User report 2026-09-29: switching groups sometimes left the panel white until another group
+  // was opened and this one again. The scroll area was one element for every group, so a group
+  // opened at the offset the previous one was read to: partly scrolled (快捷键 read to its end
+  // opened 外观 with its heading cut off), and on WebKit's scrolling an empty panel.
+  it("regression: every group opens at its top in a scroll area of its own", async () => {
+    const user = userEvent.setup();
+    renderApp({ path: "/settings/hotkey" });
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    const hotkey = within(dialog).getByTestId("settings-content");
+    hotkey.scrollTop = 420;
+    for (const [tab, heading] of [
+      ["听写", "听写"],
+      ["外观", "外观"],
+      ["快捷键", "快捷键"],
+    ] as const) {
+      await user.click(within(dialog).getByRole("tab", { name: tab }));
+      expect(within(dialog).getByRole("heading", { name: heading, level: 2 })).toBeInTheDocument();
+      const panel = within(dialog).getByTestId("settings-content");
+      expect(panel.scrollTop).toBe(0);
+      expect(panel).toHaveAttribute("aria-labelledby", `vt-settings-tab-${panel.dataset.section}`);
+      panel.scrollTop = 420;
+    }
+    // Esc still closes from any group.
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
+  });
+
   it("regression: Esc while recording cancels the recording without closing the dialog", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/settings/hotkey" });
