@@ -123,8 +123,8 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     await waitFor(() => {
       expect(backend.peek().settings.engines.local_gpu).toBe("Vulkan1");
     });
-    const threads = within(compute).getByRole("combobox", { name: "推理线程" });
-    expect(within(compute).getAllByText("推理线程")).toHaveLength(1);
+    const threads = within(compute).getByRole("combobox", { name: "CPU 线程数" });
+    expect(within(compute).getAllByText("CPU 线程数")).toHaveLength(1);
     expect(within(compute).getAllByText("使用的 GPU")).toHaveLength(1);
     expect(
       within(threads)
@@ -154,7 +154,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     const compute = await screen.findByTestId("local-compute");
     expect(
       within(compute).getByText(
-        "没有找到本机模型能用的 GPU（Windows 和 Linux 需要支持 Vulkan 的显卡驱动），模型在 CPU 上运行。",
+        "没有找到本机模型能用的 GPU（Windows 和 Linux 需要支持 Vulkan 的显卡驱动），模型会在 CPU 上运行。",
       ),
     ).toBeInTheDocument();
     expect(within(compute).getByRole("radio", { name: "GPU" })).toBeDisabled();
@@ -207,7 +207,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       "OpenAI",
       "Groq",
       "硅基流动",
-      "自定义接口",
+      "自定义服务",
     ]);
     const builtin = providerCard("asr", "builtin");
     expect(builtin).toHaveAttribute("data-selected", "true");
@@ -215,13 +215,13 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(within(builtin).getByText("使用中")).toBeInTheDocument();
     expect(within(builtin).getByText("就绪")).toBeInTheDocument();
     expect(within(builtin).queryByRole("button", { name: "使用" })).toBeNull();
-    expect(within(builtin).getByText(/内置服务的地址和密钥在构建时写进应用/)).toBeInTheDocument();
+    expect(within(builtin).getByText(/内置服务的地址和密钥已经包含在应用里/)).toBeInTheDocument();
     // Vendors without a key say so; nothing but the built-in card is open.
     const groq = providerCard("asr", "groq");
-    expect(within(groq).getByText("缺少密钥")).toBeInTheDocument();
+    expect(within(groq).getByText("还没填密钥")).toBeInTheDocument();
     expect(within(groq).getByText("whisper-large-v3-turbo")).toBeInTheDocument();
     expect(groq).not.toHaveAttribute("data-open");
-    expect(within(providerCard("asr", "local")).getByText("本机运行")).toBeInTheDocument();
+    expect(within(providerCard("asr", "local")).getByText("在本机运行")).toBeInTheDocument();
     expect(screen.getByTestId("current-asr")).toHaveTextContent("当前：内置服务 · Qwen3-ASR-1.7B");
     expect(screen.getByTestId("privacy-asr")).toHaveTextContent("音频发送到内置服务");
     // No provider card for services a provider does not offer.
@@ -271,8 +271,8 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     const key = within(form).getByLabelText("API 密钥");
     expect(key).toHaveValue("");
     expect(key).toHaveAttribute("type", "password");
-    expect(key).toHaveAttribute("placeholder", "尚未设置");
-    expect(within(form).getByText("Groq的语音识别与润色共用这把密钥。")).toBeInTheDocument();
+    expect(key).toHaveAttribute("placeholder", "还没设置");
+    expect(within(form).getByText("Groq的语音识别和 AI 润色共用这把密钥。")).toBeInTheDocument();
     await user.click(within(form).getByRole("button", { name: "保存" }));
     expect(within(form).getByTestId("provider-problem")).toHaveTextContent("请填写 API 密钥");
     await user.type(key, "gsk_secret_value_1234");
@@ -282,11 +282,11 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     await waitFor(() => {
       expect(engineReady(backend.peek().engines)).toBe(true);
     });
-    expect(await screen.findByText(/已保存 · Groq · 密钥已写入系统钥匙串/)).toBeInTheDocument();
+    expect(await screen.findByText(/已保存 · Groq · 密钥已存进系统钥匙串/)).toBeInTheDocument();
     expect(within(groq).getByText("就绪")).toBeInTheDocument();
     expect(within(form).getByTestId("provider-key-state")).toHaveTextContent("已设置");
     expect(key).toHaveValue("");
-    expect(key).toHaveAttribute("placeholder", "已保存 · 留空则不改");
+    expect(key).toHaveAttribute("placeholder", "已保存 · 留空就不修改");
     expect(screen.getByTestId("privacy-asr")).toHaveTextContent("音频发送到api.groq.com");
     // The key went only to provider_key_set; nothing in the UI or the state carries it.
     expect(JSON.stringify(backend.peek())).not.toContain("gsk_secret_value_1234");
@@ -296,7 +296,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     await waitFor(() => {
       expect(engineReady(backend.peek().engines)).toBe(false);
     });
-    expect(within(groq).getByText("缺少密钥")).toBeInTheDocument();
+    expect(within(groq).getByText("还没填密钥")).toBeInTheDocument();
     // 获取密钥 opens the vendor's page through the shell (the webview names the provider only).
     await user.click(within(form).getByRole("button", { name: "获取密钥" }));
     expect(backend.consolesOpened).toEqual(["groq"]);
@@ -348,7 +348,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       await user.selectOptions(select, "whisper-2");
       // 其他模型… opens a free field.
       await user.selectOptions(select, "__other__");
-      const custom = within(form).getByLabelText("模型 ID");
+      const custom = within(form).getByLabelText("模型名称");
       await user.type(custom, "my-asr");
       await user.click(within(form).getByRole("button", { name: "保存" }));
       await waitFor(() => {
@@ -372,20 +372,20 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     const { backend } = renderApp({ path: "/speech" });
     await openCard(user, "asr", "custom");
     const card = providerCard("asr", "custom");
-    expect(within(card).getByText("缺少接口地址")).toBeInTheDocument();
+    expect(within(card).getByText("还没填服务地址")).toBeInTheDocument();
     const form = within(card).getByTestId("provider-form");
     expect(within(form).getByLabelText("API 密钥（可选）")).toBeInTheDocument();
     expect(within(form).queryByRole("button", { name: "获取密钥" })).toBeNull();
     // No presets: the model is a free field right away.
-    const model = within(form).getByLabelText("模型 ID");
+    const model = within(form).getByLabelText("模型名称");
     await user.type(model, "whisper-large-v3");
     await user.click(within(form).getByRole("button", { name: "保存" }));
-    expect(within(form).getByTestId("provider-problem")).toHaveTextContent("请填写接口地址");
-    const url = within(form).getByLabelText("接口地址");
+    expect(within(form).getByTestId("provider-problem")).toHaveTextContent("请填写服务地址");
+    const url = within(form).getByLabelText("服务地址");
     await user.type(url, "asr.corp.local");
     await user.click(within(form).getByRole("button", { name: "保存" }));
     expect(within(form).getByTestId("provider-problem")).toHaveTextContent(
-      "接口地址要以 http:// 或 https:// 开头",
+      "服务地址要以 http:// 或 https:// 开头",
     );
     await user.clear(url);
     await user.type(url, "http://192.168.1.20:8000/v1");
@@ -413,21 +413,21 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/speech" });
     await openTab(user, "AI 模型");
-    const list = await screen.findByRole("list", { name: "润色服务商" });
+    const list = await screen.findByRole("list", { name: "AI 润色服务商" });
     expect(
       within(list)
         .getAllByRole("article")
         .map((c) => c.getAttribute("aria-label")),
-    ).toEqual(["内置服务", "OpenAI", "Groq", "硅基流动", "DeepSeek", "Ollama", "自定义接口"]);
+    ).toEqual(["内置服务", "OpenAI", "Groq", "硅基流动", "DeepSeek", "Ollama", "自定义服务"]);
     expect(within(providerCard("llm", "builtin")).getByText("使用中")).toBeInTheDocument();
     expect(screen.getByTestId("current-llm")).toHaveTextContent("当前：内置服务 · qwen3.8-27b");
-    expect(screen.getByTestId("privacy-llm")).toHaveTextContent("文本发送到内置服务");
+    expect(screen.getByTestId("privacy-llm")).toHaveTextContent("文字发送到内置服务");
     // Ollama: no key at all, but a model must be chosen.
     await openCard(user, "llm", "ollama");
     const ollama = providerCard("llm", "ollama");
-    expect(within(ollama).getByText("未选择模型")).toBeInTheDocument();
+    expect(within(ollama).getByText("还没选模型")).toBeInTheDocument();
     expect(within(ollama).queryByLabelText(/API 密钥/)).toBeNull();
-    const toggle = screen.getByRole("switch", { name: /启用/ });
+    const toggle = screen.getByRole("switch", { name: /已打开/ });
     await user.click(toggle);
     await waitFor(() => {
       expect(backend.peek().settings.engines.refine_enabled).toBe(false);
@@ -438,7 +438,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       expect(backend.peek().settings.engines.llm_provider).toBe("deepseek");
     });
     expect(backend.peek().engines.refine_issue).toBe("key_missing");
-    // The title bar's AI润色 switch follows the same core state.
+    // The title bar's AI 润色 switch follows the same core state.
     expect(screen.getByTestId("polish-toggle")).toHaveAttribute("aria-pressed", "false");
   });
 
@@ -460,11 +460,11 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     await waitFor(() => {
       expect(backend.peek().settings.engines).toEqual(defaultEngineSettings());
     });
-    await user.click(screen.getByRole("radio", { name: "仅剪贴板" }));
+    await user.click(screen.getByRole("radio", { name: "只复制到剪贴板" }));
     await waitFor(() => {
       expect(backend.peek().settings.engines.inject).toBe("clipboard_only");
     });
-    expect(screen.getByRole("radio", { name: "仅剪贴板" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "只复制到剪贴板" })).toBeChecked();
   });
 
   it("regression: on-device readiness follows the library — the card and the title bar agree", async () => {
@@ -483,13 +483,13 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     });
     const card = await screen.findByTestId("provider-asr-local");
     expect(engineReady(backend.peek().engines)).toBe(false);
-    expect(within(card).getByText("模型未下载")).toBeInTheDocument();
+    expect(within(card).getByText("模型还没下载")).toBeInTheDocument();
     expect(card).toHaveAttribute("data-open", "true");
     await screen.findByTestId("local-models");
     const readout = screen.getByTestId("title-bar-readout");
     expect(within(readout).getByText("轻量 · 中文")).toBeInTheDocument();
     expect(within(readout).getByTestId("title-bar-readout-badge")).toHaveTextContent("本机");
-    expect(within(readout).getByTitle("本机 · 轻量 · 中文 · 模型未下载")).toBeInTheDocument();
+    expect(within(readout).getByTitle("本机 · 轻量 · 中文 · 模型还没下载")).toBeInTheDocument();
     expect(readout.querySelector("[data-tone='danger']")).not.toBeNull();
     act(() => {
       backend.publish({
@@ -538,7 +538,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       local_ready: true,
       asr_host: "",
     });
-    expect(await screen.findByText("已切换 · 本地识别 · 均衡")).toBeInTheDocument();
+    expect(await screen.findByText("已切换到本机识别 · 均衡")).toBeInTheDocument();
     expect(within(providerCard("asr", "local")).getByText("使用中")).toBeInTheDocument();
     expect(within(balanced).getByRole("button", { name: "当前使用" })).toBeDisabled();
     expect(within(balanced).getByTestId("model-installed")).toHaveTextContent(/已安装 · 2026/);
@@ -578,8 +578,8 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       await waitFor(() => {
         expect(within(sense).getByTestId("verifying-row")).toBeInTheDocument();
       });
-      expect(within(sense).getByText("校验中")).toBeInTheDocument();
-      expect(within(sense).getByText("正在校验 sha256…")).toBeInTheDocument();
+      expect(within(sense).getByText("正在检查文件")).toBeInTheDocument();
+      expect(within(sense).getByText("正在检查下载的文件是否完整…")).toBeInTheDocument();
       act(() => {
         vi.advanceTimersByTime(MOCK_MODEL_TICK_MS);
       });
@@ -669,7 +669,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       }),
     });
     await openLocalCard(user);
-    const library = await screen.findByRole("list", { name: "本地模型库" });
+    const library = await screen.findByRole("list", { name: "本机模型库" });
     const items = within(library).getAllByRole("listitem");
     expect(items.map((li) => li.getAttribute("data-tier"))).toEqual([
       "balanced",
@@ -720,7 +720,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       expect(backend.peek().engines.live_preview_ready).toBe(false);
     });
     expect(live).toHaveAttribute("data-state", "missing");
-    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("模型未下载");
+    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("模型还没下载");
     expect(within(card).getByRole("button", { name: "下载" })).toBeInTheDocument();
     expect(within(card).queryByRole("button", { name: "使用此模型" })).toBeNull();
     // The engines pane is still fluid: the block uses the same auto-fill grid.
@@ -737,7 +737,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     // Default: on, but the streaming model is not downloaded.
     expect(backend.peek().settings.engines.live_preview).toBe(true);
     expect(live).toHaveAttribute("data-state", "missing");
-    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("模型未下载");
+    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("模型还没下载");
     const toggle = within(live).getByRole("switch", { name: "实时预览" });
     expect(toggle).toBeChecked();
     await user.click(toggle);
@@ -783,7 +783,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(modelsPage().textContent).not.toMatch(/计划中|尚未接入|示例/);
   });
 
-  it("regression: the output mode cards (输出方式) write output_mode through settings_set_engines; a streaming mode without the model stays selected but runs as 整段输出 (status line, card note, 当前生效 badge follow effective_output_mode); live_inject with polish on shows the no-polish note; 静音裁剪 is disabled under cloud and writes vad_trim under local (docs/dictation.md §12)", async () => {
+  it("regression: the output mode cards (出字方式) write output_mode through settings_set_engines; a streaming mode without the model stays selected but runs as 整段输出 (status line, card note, 当前生效 badge follow effective_output_mode); live_inject with polish on shows the no-polish note; 静音裁剪 is disabled under cloud and writes vad_trim under local (docs/dictation.md §12)", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/speech" });
     await openTab(user, "识别设置");
@@ -791,28 +791,32 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     const block = () => screen.getByTestId("output-mode");
     expect(block()).toHaveAttribute("data-mode", "whole_take");
     expect(block()).toHaveAttribute("data-effective", "whole_take");
-    const modes = () => within(block()).getByRole("listbox", { name: "输出方式" });
+    const modes = () => within(block()).getByRole("listbox", { name: "出字方式" });
     const options = within(modes()).getAllByRole("option");
     expect(options.map((o) => o.getAttribute("aria-label"))).toEqual([
-      "整段输出",
-      "流式定稿",
-      "实时注入",
+      "说完再出字",
+      "边说边识别",
+      "边说边打字",
     ]);
-    expect(within(modes()).getByRole("option", { name: "整段输出" })).toHaveAttribute(
+    expect(within(modes()).getByRole("option", { name: "说完再出字" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
-    expect(within(block()).getByTestId("output-mode-state")).toHaveTextContent("整段输出");
-    expect(within(block()).getAllByText("当前生效")).toHaveLength(1);
-    expect(within(modes()).getByText("松开后一次性识别、润色、注入。")).toBeInTheDocument();
-    expect(within(modes()).getByText(/润色不可用，取消时已打进去的字不会撤回/)).toBeInTheDocument();
+    expect(within(block()).getByTestId("output-mode-state")).toHaveTextContent("说完再出字");
+    expect(within(block()).getAllByText("正在使用")).toHaveLength(1);
+    expect(
+      within(modes()).getByText("松开快捷键后识别整段话，润色后送到光标处。"),
+    ).toBeInTheDocument();
+    expect(
+      within(modes()).getByText(/不做润色；取消时，已经打进去的字不会撤回/),
+    ).toBeInTheDocument();
     // No streaming model yet: both streaming cards carry the missing-model badge.
-    expect(within(modes()).getAllByText("模型未下载")).toHaveLength(2);
+    expect(within(modes()).getAllByText("模型还没下载")).toHaveLength(2);
     expect(screen.queryByTestId("output-mode-fallback")).toBeNull();
     expect(screen.queryByTestId("refine-live-inject")).toBeNull();
     // Pick 实时注入: the whole engines block goes out with output_mode flipped; the model is
     // missing, so the card is selected but the take runs as a whole take, and says so.
-    await user.click(within(modes()).getByRole("option", { name: "实时注入" }));
+    await user.click(within(modes()).getByRole("option", { name: "边说边打字" }));
     await waitFor(() => {
       expect(backend.peek().settings.engines).toEqual({
         ...defaultEngineSettings(),
@@ -822,28 +826,30 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(backend.peek().engines.effective_output_mode).toBe("whole_take");
     expect(block()).toHaveAttribute("data-mode", "live_inject");
     expect(block()).toHaveAttribute("data-effective", "whole_take");
-    expect(within(modes()).getByRole("option", { name: "实时注入" })).toHaveAttribute(
+    expect(within(modes()).getByRole("option", { name: "边说边打字" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
     expect(within(block()).getByTestId("output-mode-state")).toHaveTextContent(
-      "流式模型未下载，当前按整段输出运行",
+      "实时识别模型还没下载，现在按「说完再出字」运行",
     );
     expect(within(block()).getByTestId("output-mode-fallback")).toHaveTextContent(
-      "流式模型未下载，当前按整段输出运行",
+      "实时识别模型还没下载，现在按「说完再出字」运行",
     );
     // The 当前生效 badge stays on 整段输出 (what really runs).
     expect(
-      within(within(modes()).getByRole("option", { name: "整段输出" })).getByText("当前生效"),
+      within(within(modes()).getByRole("option", { name: "说完再出字" })).getByText("正在使用"),
     ).toBeInTheDocument();
     // Polish is on: the polish view explains live_inject never refines.
     await openTab(user, "AI 模型");
-    expect(screen.getByTestId("refine-live-inject")).toHaveTextContent("实时注入下不润色");
+    expect(screen.getByTestId("refine-live-inject")).toHaveTextContent(
+      "「边说边打字」时不做 AI 润色",
+    );
     await openTab(user, "识别设置");
     // Re-selecting the current card writes nothing.
     const writes = () => backend.log.filter((e) => e.type === "settings").length;
     const before = writes();
-    await user.click(within(modes()).getByRole("option", { name: "实时注入" }));
+    await user.click(within(modes()).getByRole("option", { name: "边说边打字" }));
     expect(writes()).toBe(before);
     // The streaming model lands: the mode takes effect, the notes disappear, the badge moves.
     act(() => {
@@ -872,23 +878,23 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     await waitFor(() => {
       expect(block()).toHaveAttribute("data-effective", "live_inject");
     });
-    expect(within(block()).getByTestId("output-mode-state")).toHaveTextContent("实时注入");
+    expect(within(block()).getByTestId("output-mode-state")).toHaveTextContent("边说边打字");
     expect(screen.queryByTestId("output-mode-fallback")).toBeNull();
-    expect(within(modes()).queryByText("模型未下载")).toBeNull();
+    expect(within(modes()).queryByText("模型还没下载")).toBeNull();
     expect(
-      within(within(modes()).getByRole("option", { name: "实时注入" })).getByText("当前生效"),
+      within(within(modes()).getByRole("option", { name: "边说边打字" })).getByText("正在使用"),
     ).toBeInTheDocument();
     // Turning polish off removes the note; 流式定稿 keeps polish available (no note).
     await openTab(user, "AI 模型");
-    await user.click(screen.getByRole("switch", { name: /启用/ }));
+    await user.click(screen.getByRole("switch", { name: /已打开/ }));
     await waitFor(() => {
       expect(backend.peek().settings.engines.refine_enabled).toBe(false);
     });
     expect(screen.queryByTestId("refine-live-inject")).toBeNull();
     await openTab(user, "识别设置");
     await user.click(
-      within(screen.getByRole("listbox", { name: "输出方式" })).getByRole("option", {
-        name: "流式定稿",
+      within(screen.getByRole("listbox", { name: "出字方式" })).getByRole("option", {
+        name: "边说边识别",
       }),
     );
     await waitFor(() => {
@@ -906,11 +912,11 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     // 静音裁剪: a remote provider → disabled with the reason; on-device → the switch writes vad_trim.
     let vad = screen.getByTestId("vad-trim");
     expect(vad).toHaveAttribute("data-state", "cloud");
-    expect(within(vad).getByRole("switch", { name: "静音裁剪" })).toBeDisabled();
+    expect(within(vad).getByRole("switch", { name: "去掉首尾静音" })).toBeDisabled();
     expect(within(vad).getByTestId("vad-trim-cloud")).toHaveTextContent(
-      "仅本机识别可用；其他服务商不裁剪。",
+      "只在本机识别时可用；用其他服务商时不裁剪。",
     );
-    expect(within(vad).getByText(/Silero VAD 去掉首尾静音/)).toBeInTheDocument();
+    expect(within(vad).getByText(/本机识别前自动去掉录音开头和结尾的静音/)).toBeInTheDocument();
     await openTab(user, "服务商与模型");
     await user.click(within(providerCard("asr", "local")).getByRole("button", { name: "使用" }));
     await waitFor(() => {
@@ -920,7 +926,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     vad = screen.getByTestId("vad-trim");
     expect(vad).toHaveAttribute("data-state", "off");
     expect(within(vad).queryByTestId("vad-trim-cloud")).toBeNull();
-    const toggle = within(vad).getByRole("switch", { name: "静音裁剪" });
+    const toggle = within(vad).getByRole("switch", { name: "去掉首尾静音" });
     expect(toggle).toBeEnabled();
     await user.click(toggle);
     await waitFor(() => {
@@ -954,7 +960,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       expect(cls).not.toMatch(FIXED_HEIGHT);
       expect(cls).not.toMatch(PX_GRID_COLUMN);
     }
-    expect(screen.getByRole("list", { name: "本地模型库" }).style.gridTemplateColumns).toBe(
+    expect(screen.getByRole("list", { name: "本机模型库" }).style.gridTemplateColumns).toBe(
       "repeat(auto-fill, minmax(260px, 1fr))",
     );
     const content = screen.getByRole("main");
@@ -975,7 +981,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     const user = userEvent.setup();
     renderApp({ path: "/speech" });
     await openLocalCard(user);
-    const library = await screen.findByRole("list", { name: "本地模型库" });
+    const library = await screen.findByRole("list", { name: "本机模型库" });
     const balanced = within(library)
       .getAllByRole("listitem")
       .find((li) => li.getAttribute("data-tier") === "balanced");
@@ -1018,12 +1024,12 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     );
     expect(checkProviderDraft({ model: "", baseUrl: "", key: "k" }, groq, "asr")).toBeUndefined();
     expect(checkProviderDraft({ model: "", baseUrl: "api", key: "k" }, groq, "asr")).toBe(
-      "接口地址要以 http:// 或 https:// 开头",
+      "服务地址要以 http:// 或 https:// 开头",
     );
     const custom = providerStatus(status, "custom");
     if (custom === undefined) throw new Error("custom card");
     expect(checkProviderDraft({ model: "m", baseUrl: "", key: "" }, custom, "asr")).toBe(
-      "请填写接口地址",
+      "请填写服务地址",
     );
     expect(checkProviderDraft({ model: "", baseUrl: "http://h", key: "" }, custom, "asr")).toBe(
       "请选择或填写模型",
@@ -1039,7 +1045,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
         reason: "http_status",
         status: 502,
       }).text,
-    ).toBe("服务返回 HTTP 502");
+    ).toBe("服务返回了错误（HTTP 502）");
     expect(serviceTarget("builtin", "")).toBe("内置服务");
     expect(serviceTarget("local", "")).toBeUndefined();
     expect(serviceTarget("ollama", "127.0.0.1")).toBeUndefined();
@@ -1066,7 +1072,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       tone: "warn",
       text: "下载中 25%",
     });
-    expect(modelStateCell({ kind: "verifying" })).toEqual({ tone: "accent", text: "校验中" });
+    expect(modelStateCell({ kind: "verifying" })).toEqual({ tone: "accent", text: "正在检查文件" });
     expect(modelStateCell({ kind: "not_installed" })).toEqual({ tone: "idle", text: "未安装" });
     expect(modelStateCell({ kind: "failed", message: "x" })).toEqual({
       tone: "danger",
@@ -1174,6 +1180,6 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       within(group)
         .getAllByRole("radio")
         .map((r) => r.textContent),
-    ).toEqual(["Simplified", "Traditional", "As recognised"]);
+    ).toEqual(["Simplified", "Traditional", "As transcribed"]);
   });
 });

@@ -78,7 +78,7 @@ describe("I18nProvider", () => {
       </I18nProvider>,
     );
     expect(screen.getByRole("navigation", { name: "Main navigation" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Core status")).toBeInTheDocument();
+    expect(screen.getByLabelText("Status")).toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "Delete?" })).toHaveTextContent("Cancel");
     expect(screen.getByRole("dialog", { name: "Command menu" })).toHaveTextContent(
       "No matching command",
@@ -86,7 +86,9 @@ describe("I18nProvider", () => {
     expect(screen.getByPlaceholderText("Type a command or page…")).toBeInTheDocument();
     expect(screen.getByText("0 results")).toBeInTheDocument();
     expect(
-      screen.getByRole("img", { name: /Ready · hold to talk · Ctrl Alt Space · Local/ }),
+      screen.getByRole("img", {
+        name: /Ready · hold the shortcut to talk · Ctrl Alt Space · Local/,
+      }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop recording" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy text" })).toBeInTheDocument();
@@ -98,7 +100,7 @@ describe("I18nProvider", () => {
     expect(screen.getByText("Search or type a command…")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(CJK);
     // The default-locale constants keep the Chinese wording for callers that never mount a provider.
-    expect(PILL_DEFAULT_LABEL.armed).toBe("待命 · 按住说话");
+    expect(PILL_DEFAULT_LABEL.armed).toBe("准备就绪 · 按住快捷键说话");
     expect(PILL_CAPTIONS.blocked).toMatch(/^blocked · /);
     expect(pillCaption("armed", (key) => key)).toBe("ui.pill.caption.armed");
   });

@@ -7,6 +7,7 @@ import {
   type Permission,
   type PermissionState,
   dictationPhaseLabel,
+  hotkeyMethodText,
   nothingToGrant,
   onboardingGate,
   platformLabel,
@@ -64,6 +65,14 @@ export interface OnboardingProps {
 interface PermissionRow {
   id: Permission;
   state: PermissionState | undefined;
+}
+
+/** The system named once: `Windows` with the method `Windows` is `Windows`, `Linux` with
+ *  `Linux · Wayland` is `Linux · Wayland`; anything else is both, joined. */
+function withMethod(platform: string, method: string): string {
+  return method === platform || method.startsWith(`${platform} · `)
+    ? method
+    : `${platform} · ${method}`;
 }
 
 function permissionTone(state: PermissionState): "ok" | "danger" | "neutral" {
@@ -206,8 +215,9 @@ export function Onboarding({ step }: OnboardingProps) {
   };
   const trialLabel = dictationPhaseLabel(trialPhase, now, locale);
   const platformText = platform ? platformLabel(platform, locale) : t("onboarding.platformUnknown");
-  const backendText =
-    hotkeyStatus.backend.length > 0 ? hotkeyStatus.backend : t("onboarding.backendNotReported");
+  const method =
+    hotkeyStatus.backend.length > 0 ? hotkeyMethodText(hotkeyStatus.backend) : undefined;
+  const backendText = method ?? t("onboarding.backendNotReported");
 
   const permissionRows: PermissionRow[] = PERMISSIONS.map((id) => ({
     id,
@@ -472,10 +482,10 @@ export function Onboarding({ step }: OnboardingProps) {
                   <span
                     className="mono text-[11px] text-fg-subtle"
                     data-testid="onboarding-hotkey-backend">
-                    {platform ? platformLabel(platform, locale) : "—"} ·{" "}
-                    {hotkeyStatus.backend.length > 0
-                      ? hotkeyStatus.backend
-                      : t("onboarding.hotkey.backendPending")}
+                    {withMethod(
+                      platform ? platformLabel(platform, locale) : "—",
+                      method ?? t("onboarding.hotkey.backendPending"),
+                    )}
                   </span>
                 </Card>
                 <div>
@@ -626,10 +636,7 @@ export function Onboarding({ step }: OnboardingProps) {
 
         <div className="mt-6 flex items-center justify-between gap-4 border-t border-border px-6 py-4">
           <span className="mono min-w-0 truncate text-[11px] text-fg-subtle">
-            {platformText} ·{" "}
-            {hotkeyStatus.backend.length > 0
-              ? hotkeyStatus.backend
-              : t("onboarding.backendNotReportedLong")}
+            {withMethod(platformText, method ?? t("onboarding.backendNotReportedLong"))}
           </span>
           <div className="flex shrink-0 items-center gap-3">
             {current === 1 && permissionHint !== undefined && (

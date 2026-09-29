@@ -140,7 +140,7 @@ describe("UpdateDialog", () => {
     await waitFor(() => {
       expect(screen.getByTestId("update-dialog")).toHaveAttribute("data-state", "ready");
     });
-    expect(screen.getByRole("dialog")).toHaveTextContent("已下载并校验");
+    expect(screen.getByRole("dialog")).toHaveTextContent("已下载并检查完毕");
     expect(screen.getByTestId("update-badge")).toHaveTextContent("重启以更新");
     await user.click(screen.getByRole("button", { name: "重启并更新" }));
     await waitFor(() => {

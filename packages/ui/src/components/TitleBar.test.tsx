@@ -42,7 +42,7 @@ describe("TitleBar", () => {
       <TitleBar
         title="首页"
         onSearch={onSearch}
-        right={<button type="button" aria-label="润色 · 开/关" />}
+        right={<button type="button" aria-label="AI 润色 · 开/关" />}
         platform="windows"
         controls={controls()}
         className="extra"
@@ -66,7 +66,7 @@ describe("TitleBar", () => {
     // Exactly: search · polish · minimize · maximize · close.
     expect([...bar.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual([
       TITLE_BAR_SEARCH_LABEL,
-      "润色 · 开/关",
+      "AI 润色 · 开/关",
       "最小化",
       "最大化",
       "关闭",

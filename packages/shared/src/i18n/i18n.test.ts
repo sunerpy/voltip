@@ -130,7 +130,7 @@ describe("dictation failure codes", () => {
     expect(dictationFailureText(failed, "en")).toBe("No speech detected");
     expect(dictationPhaseLabel(failed, 0, "en").text).toBe("Failed · No speech detected");
     expect(dictationPhaseLabel({ ...failed, text: "kept" }, 0, "zh-CN").text).toBe(
-      "未插入 · 没有听到声音",
+      "没有送出 · 没有听到声音",
     );
     for (const code of ["audio", "asr", "refine", "inject"] as const) {
       expect(dictationFailureText({ ...failed, code }, "en")).not.toMatch(CJK);

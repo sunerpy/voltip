@@ -13,6 +13,7 @@ import {
   activationDescription,
   activationHint,
   activationLabel,
+  hotkeyMethodText,
   platformLabel,
 } from "@voltip/shared";
 import {
@@ -328,6 +329,8 @@ export function Hotkey() {
     editRecorder.start();
   };
 
+  const platformText = platform ? platformLabel(platform, locale) : "—";
+  const method = status.backend.length > 0 ? hotkeyMethodText(status.backend) : undefined;
   return (
     <SettingsPane title={t("settings.hotkey.title")} lede={t("settings.hotkey.lede")}>
       <SettingsSection title={t("settings.hotkey.backendTitle")}>
@@ -336,14 +339,15 @@ export function Hotkey() {
           data-testid="hotkey-backend">
           <span>
             <span className="text-fg-subtle">{t("settings.hotkey.platform")} </span>
-            <span className="mono text-fg">{platform ? platformLabel(platform, locale) : "—"}</span>
+            <span className="mono text-fg">{platformText}</span>
           </span>
-          <span>
-            <span className="text-fg-subtle">{t("settings.hotkey.backend")} </span>
-            <span className="mono text-fg">
-              {status.backend.length > 0 ? status.backend : t("settings.hotkey.notReported")}
+          {/* The method row only when it says more than the platform: the Linux session. */}
+          {method !== platformText && (
+            <span>
+              <span className="text-fg-subtle">{t("settings.hotkey.backend")} </span>
+              <span className="mono text-fg">{method ?? t("settings.hotkey.notReported")}</span>
             </span>
-          </span>
+          )}
           <span className="flex items-center gap-2">
             <span className="text-fg-subtle">{t("settings.hotkey.registration")}</span>
             <LampText

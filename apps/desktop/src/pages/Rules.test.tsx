@@ -115,7 +115,7 @@ describe("Rules page", () => {
       ["2", "PR 编号", "正则", "\\bpr (\\d+)Aa", "PR #$1", "1"],
       ["3", "filler", "字面", "嗯，", "（删除）", "—"],
     ]);
-    expect(screen.getByText("rules.json · 3 / 200 条 · 按此顺序执行")).toBeInTheDocument();
+    expect(screen.getByText("3 / 200 条 · 按这个顺序执行")).toBeInTheDocument();
     for (const name of ["导入 TOML", "导出 TOML"])
       expect(screen.getByRole("button", { name })).toBeEnabled();
     expect(screen.queryByTestId("sample-footnote")).toBeNull();
@@ -219,10 +219,10 @@ describe("Rules page", () => {
     await screen.findByRole("table", { name: "规则" });
     expect(screen.getByText("运行后在这里看到前后差异")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "用最近一次听写" }));
-    expect(screen.getByLabelText("识别原文")).toHaveValue("给他push 然后看 pr 7");
-    await user.clear(screen.getByLabelText("识别原文"));
+    expect(screen.getByLabelText("识别出的原文")).toHaveValue("给他push 然后看 pr 7");
+    await user.clear(screen.getByLabelText("识别出的原文"));
     await user.type(
-      screen.getByLabelText("识别原文"),
+      screen.getByLabelText("识别出的原文"),
       "嗯，给它push 看 PR 12{Control>}{Enter}{/Control}",
     );
     expect(await screen.findByTestId("dry-run-corrected")).toHaveTextContent(
@@ -257,8 +257,8 @@ describe("Rules page", () => {
       expect(screen.getByTestId("dry-run-after")).toHaveTextContent("嗯，git push 看 PR #12");
     });
     // Nothing to change: the summary says so.
-    await user.clear(screen.getByLabelText("识别原文"));
-    await user.type(screen.getByLabelText("识别原文"), "无关的句子");
+    await user.clear(screen.getByLabelText("识别出的原文"));
+    await user.type(screen.getByLabelText("识别出的原文"), "无关的句子");
     await user.click(screen.getByRole("button", { name: /^运行/ }));
     expect(await screen.findByText("没有规则命中 · 文本未改变")).toBeInTheDocument();
   });
@@ -331,13 +331,13 @@ describe("Rules page", () => {
     await user.click(screen.getByRole("button", { name: "新建规则" }));
     expect(screen.getByTestId("rule-editor")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "导出 TOML" }));
-    expect(await screen.findByText("导出失败：rules: 无法导出 TOML")).toBeInTheDocument();
+    expect(await screen.findByText("导出失败：无法导出 TOML")).toBeInTheDocument();
     vi.spyOn(backend, "vocabularyPreview").mockRejectedValueOnce(
       new Error("rules: 试写文本最多 64 KiB"),
     );
     await user.click(screen.getByRole("button", { name: /^运行/ }));
     expect(await screen.findByTestId("dry-run-error")).toHaveTextContent(
-      "试运行失败：rules: 试写文本最多 64 KiB",
+      "试运行失败：试写文本最多 64 KiB",
     );
   });
 });

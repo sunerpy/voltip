@@ -1,4 +1,4 @@
-import { type Backend, type UiEvent, resolveLocale } from "@voltip/shared";
+import { type Backend, type UiEvent, coreMessageText, resolveLocale } from "@voltip/shared";
 import {
   BackendProvider,
   Button,
@@ -160,7 +160,7 @@ function Frame({
   useEffect(() => {
     register((event) => {
       if (event.type === "error")
-        toast(t("mobile.toast.error", { message: event.message }), "danger");
+        toast(t("mobile.toast.error", { message: coreMessageText(event.message) }), "danger");
       else if (event.type === "trusted") toast(t("mobile.toast.trusted", { name: event.name }));
       else if (event.type === "unpaired") toast(t("mobile.toast.unpaired", { name: event.name }));
       else if (event.type === "message") toast(t("mobile.toast.message", { body: event.body }));

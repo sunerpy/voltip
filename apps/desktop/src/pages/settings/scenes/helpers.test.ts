@@ -104,7 +104,7 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
     expect(many).toEqual({
       apps: { text: "At most 20 apps", missing: false },
       keywords: { text: "At most 10 keywords", missing: false },
-      prompt: { text: "At most 500 characters", missing: false },
+      prompt: { text: "Extra instructions can be at most 500 characters", missing: false },
     });
     expect(editorProblems({ ...ok, name: "DOCS" }, [SCENE]).name).toEqual({
       text: "已有名为「Docs」的场景",
@@ -149,7 +149,7 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
     expect(overrideSummary(SCENE.overrides)).toEqual([
       "AI 润色 开",
       "润色：书面语",
-      "输出：整段输出",
+      "出字方式：说完再出字",
       "语言：自动检测",
       "字形：保持原样",
       "有补充要求",

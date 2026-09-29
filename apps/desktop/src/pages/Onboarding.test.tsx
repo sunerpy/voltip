@@ -74,7 +74,7 @@ describe("Onboarding wizard", () => {
     expect(await permissionCell("accessibility", "denied")).toHaveTextContent("已拒绝");
     const table = screen.getByRole("table", { name: "系统权限" });
     expect(within(table).getByText("辅助功能")).toBeInTheDocument();
-    expect(within(table).getByTestId("permission-microphone")).toHaveTextContent("尚未询问");
+    expect(within(table).getByTestId("permission-microphone")).toHaveTextContent("还没问过");
     // A header row plus exactly the two permissions the platform crate reports; no Input
     // Monitoring (regression, public release 2026-09-27: no trigger needs it).
     expect(within(table).getAllByRole("row")).toHaveLength(3);
@@ -87,9 +87,9 @@ describe("Onboarding wizard", () => {
       screen.getByText(/tccutil reset Accessibility dev\.voltip\.desktop/),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "复制命令" }));
-    expect(await screen.findByText("已复制修复命令")).toBeInTheDocument();
+    expect(await screen.findByText("已复制命令")).toBeInTheDocument();
     expect(screen.getByTestId("permission-hint")).toHaveTextContent(
-      "辅助功能未授予，投递会停在历史记录里。",
+      "没有「辅助功能」权限，文字没法送到光标处，只会留在历史记录里。",
     );
     expect(screen.getByRole("button", { name: "继续" })).toBeDisabled();
   });
@@ -113,7 +113,9 @@ describe("Onboarding wizard", () => {
     expect(await permissionCell("microphone", "granted")).toHaveTextContent("已授权");
     const table = screen.getByRole("table", { name: "系统权限" });
     expect(within(table).getAllByRole("row")).toHaveLength(3);
-    expect(within(table).getByTestId("permission-accessibility")).toHaveTextContent("本平台不适用");
+    expect(within(table).getByTestId("permission-accessibility")).toHaveTextContent(
+      "这个系统不需要",
+    );
     expect(within(table).queryByRole("button", { name: "打开系统设置" })).toBeNull();
     expect(within(table).queryByRole("button", { name: "请求授权" })).toBeNull();
     const recheck = screen.getByRole("button", { name: "重新检查" });
@@ -146,7 +148,7 @@ describe("Onboarding wizard", () => {
         "data-state",
         "not_applicable",
       );
-      expect(within(table).getByTestId(`permission-${id}`)).toHaveTextContent("本平台不适用");
+      expect(within(table).getByTestId(`permission-${id}`)).toHaveTextContent("这个系统不需要");
     }
     expect(within(table).queryByRole("button")).toBeNull();
     expect(screen.queryByTestId("permission-hint")).toBeNull();
@@ -170,8 +172,8 @@ describe("Onboarding wizard", () => {
     const next = screen.getByRole("button", { name: "继续" });
     expect(next).toBeDisabled();
     // The microphone is named first: without it nothing can be recorded at all.
-    expect(screen.getByTestId("permission-hint")).toHaveTextContent("麦克风未授权，无法录音");
-    expect(next).toHaveAttribute("title", expect.stringContaining("麦克风未授权"));
+    expect(screen.getByTestId("permission-hint")).toHaveTextContent("麦克风没有授权，无法录音");
+    expect(next).toHaveAttribute("title", expect.stringContaining("麦克风没有授权"));
     const table = screen.getByRole("table", { name: "系统权限" });
     const micRequest = within(
       within(table).getByTestId("permission-microphone").closest("tr") ?? table,
@@ -179,7 +181,7 @@ describe("Onboarding wizard", () => {
     await user.click(micRequest);
     await permissionCell("microphone", "granted");
     expect(screen.getByTestId("permission-hint")).toHaveTextContent(
-      "辅助功能未授予，投递会停在历史记录里。",
+      "没有「辅助功能」权限，文字没法送到光标处，只会留在历史记录里。",
     );
     expect(screen.getByRole("button", { name: "继续" })).toBeDisabled();
     await user.click(within(table).getByRole("button", { name: "请求授权" }));
@@ -219,7 +221,7 @@ describe("Onboarding wizard", () => {
         await Promise.resolve();
       });
       expect(poll).toHaveAttribute("data-stopped", "true");
-      expect(poll).toHaveTextContent("连续 3 次读取失败 · 已停止自动检查");
+      expect(poll).toHaveTextContent("连续 3 次没读到权限状态 · 已停止自动检查");
       expect(screen.getByText("无法读取权限状态")).toBeInTheDocument();
       expect(screen.getByText(/系统查询失败：TCC 查询超时/)).toBeInTheDocument();
       // Stopped means stopped: no read however long the step stays open.
@@ -277,7 +279,7 @@ describe("Onboarding wizard", () => {
       window.dispatchEvent(new KeyboardEvent("keyup", { key: " ", code: "Space" }));
     });
     expect(monitor).toHaveAttribute("data-edges", "passed");
-    expect(screen.getByText("边沿 2/2")).toBeInTheDocument();
+    expect(screen.getByText("已收到 2/2")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "继续" }));
     expect(screen.getByRole("heading", { name: "选择语音模型", level: 2 })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /内置服务/ })).toHaveAttribute("aria-checked", "true");
@@ -294,7 +296,7 @@ describe("Onboarding wizard", () => {
     expect(screen.getByTestId("onboarding-hotkey-backend")).toHaveTextContent(MOCK_HOTKEY_BACKEND);
     expect(screen.queryByText(/carbon/)).toBeNull();
     expect(screen.queryByText(/macOS 15/)).toBeNull();
-    expect(screen.getByTestId("onboarding-hotkey-status")).toHaveTextContent("已向系统注册");
+    expect(screen.getByTestId("onboarding-hotkey-status")).toHaveTextContent("已经在系统里生效");
     // A real registration failure replaces the reassurance.
     act(() => {
       backend.publish({
@@ -307,7 +309,8 @@ describe("Onboarding wizard", () => {
     expect(screen.getByTestId("onboarding-hotkey-status")).toHaveTextContent(
       "HotKey already registered",
     );
-    expect(screen.getByTestId("onboarding-hotkey-backend")).toHaveTextContent("RegisterHotKey");
+    // The system is named once, without the library or the system call behind it.
+    expect(screen.getByTestId("onboarding-hotkey-backend")).toHaveTextContent(/^Windows$/);
     // Press and release reported by the OS-level hotkey, not by this window.
     act(() => {
       backend.publish({
@@ -333,21 +336,21 @@ describe("Onboarding wizard", () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/onboarding?step=3" });
     await screen.findByRole("heading", { name: "选择语音模型", level: 2 });
-    const group = screen.getByRole("radiogroup", { name: "识别服务" });
+    const group = screen.getByRole("radiogroup", { name: "语音识别" });
     expect(
       within(group)
         .getAllByRole("radio")
         .map((r) => r.querySelector("span span")?.firstChild?.textContent),
-    ).toEqual(["内置服务", "本机识别（离线）", "其他服务商"]);
+    ).toEqual(["内置服务", "本机识别（不联网）", "其他服务商"]);
     const builtin = within(group).getByRole("radio", { name: /内置服务/ });
     expect(builtin).toHaveAttribute("aria-checked", "true");
-    expect(builtin).toHaveTextContent("Qwen3-ASR-1.7B · 开箱即用，无需密钥");
+    expect(builtin).toHaveTextContent("Qwen3-ASR-1.7B · 不用密钥就能用");
     expect(builtin).toHaveTextContent("推荐");
     // No host anywhere on the step, no skip link, no phase talk.
     expect(document.body.textContent).not.toMatch(/voltip\.example|第二阶段|示例数据|下载并继续/);
     expect(screen.queryByRole("button", { name: /跳过/ })).toBeNull();
     // Polish is on and done by the built-in service; switch it off and save.
-    const refine = screen.getByRole("switch", { name: "同时用大模型润色" });
+    const refine = screen.getByRole("switch", { name: "同时用 AI 润色" });
     expect(refine).toBeChecked();
     expect(screen.getByText(/服务商：内置服务/)).toBeInTheDocument();
     await user.click(refine);
@@ -375,7 +378,7 @@ describe("Onboarding wizard", () => {
       within(provider)
         .getAllByRole("option")
         .map((o) => o.textContent),
-    ).toEqual(["OpenAI", "Groq", "硅基流动", "自定义接口"]);
+    ).toEqual(["OpenAI", "Groq", "硅基流动", "自定义服务"]);
     await user.selectOptions(provider, "groq");
     const next = screen.getByRole("button", { name: "保存并继续" });
     expect(next).toBeDisabled();
@@ -415,11 +418,13 @@ describe("Onboarding wizard", () => {
     await user.selectOptions(within(form).getByLabelText("服务商"), "custom");
     const next = screen.getByRole("button", { name: "保存并继续" });
     expect(next).toBeDisabled();
-    expect(screen.getByText("自定义接口需要 http(s) 地址")).toBeInTheDocument();
-    await user.type(within(form).getByLabelText("接口地址"), "asr.corp.local");
+    expect(
+      screen.getByText("自定义服务需要填写 http:// 或 https:// 开头的地址"),
+    ).toBeInTheDocument();
+    await user.type(within(form).getByLabelText("服务地址"), "asr.corp.local");
     expect(next).toBeDisabled();
-    await user.clear(within(form).getByLabelText("接口地址"));
-    await user.type(within(form).getByLabelText("接口地址"), "https://asr.corp.local/v1");
+    await user.clear(within(form).getByLabelText("服务地址"));
+    await user.type(within(form).getByLabelText("服务地址"), "https://asr.corp.local/v1");
     await user.type(within(form).getByLabelText("模型"), "whisper-large-v3");
     expect(next).toBeEnabled();
     await user.click(next);
@@ -440,7 +445,7 @@ describe("Onboarding wizard", () => {
     await user.click(screen.getByRole("radio", { name: /其他服务商/ }));
     const form = screen.getByTestId("onboarding-provider");
     await user.selectOptions(within(form).getByLabelText("服务商"), "custom");
-    await user.type(within(form).getByLabelText("接口地址"), "https://asr.corp.local/v1");
+    await user.type(within(form).getByLabelText("服务地址"), "https://asr.corp.local/v1");
     const next = screen.getByRole("button", { name: "保存并继续" });
     expect(next).toBeDisabled();
     expect(screen.getByText("请填写模型名称")).toBeInTheDocument();
@@ -465,7 +470,7 @@ describe("Onboarding wizard", () => {
     renderApp({ path: "/onboarding?step=3", backend });
     await screen.findByRole("heading", { name: "选择语音模型", level: 2 });
     const form = screen.getByTestId("onboarding-provider");
-    expect(within(form).getByLabelText("接口地址")).toHaveValue(saved.asr_url);
+    expect(within(form).getByLabelText("服务地址")).toHaveValue(saved.asr_url);
     expect(within(form).getByLabelText("模型")).toHaveValue(saved.asr_model);
     // An emptied model field would drop the saved one: the custom endpoint has no default.
     await user.clear(within(form).getByLabelText("模型"));
@@ -559,34 +564,34 @@ describe("Onboarding wizard", () => {
       expect(screen.queryByTestId("deferred-badge")).toBeNull();
       expect(document.body.textContent).not.toMatch(/第二阶段|示例数据/);
       expect(screen.getByRole("meter", { name: "强度" })).toHaveAttribute("aria-valuenow", "0");
-      expect(screen.getByText("待命")).toBeInTheDocument();
+      expect(screen.getByText("就绪")).toBeInTheDocument();
       const box = screen.getByRole("textbox", { name: "在这里试说" });
       expect(box).toHaveValue("");
       await user.click(screen.getByRole("button", { name: "试说一句" }));
       expect(backend.peek().dictation.phase.phase).toBe("listening");
       expect(screen.getByTestId("trial-status")).toHaveAttribute("data-phase", "listening");
-      expect(screen.getByText(/正在听… 00:0\d/)).toBeInTheDocument();
+      expect(screen.getByText(/正在录音… 00:0\d/)).toBeInTheDocument();
       // The meter is on while the recorder is open.
       await waitFor(() => {
         expect(backend.activeMeters()).toBe(1);
       });
       await user.click(screen.getByRole("button", { name: "停止" }));
-      expect(screen.getByText("转写中…")).toBeInTheDocument();
+      expect(screen.getByText("识别中…")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "处理中…" })).toBeDisabled();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_ASR_MS + MOCK_REFINE_MS);
       });
       expect(box).toHaveValue(MOCK_DICTATION_TEXT);
       expect(screen.getByTestId("trial-note")).toHaveTextContent(
-        "听到了 · 已润色 · 文本也已按「粘贴」送到当时光标所在的位置。",
+        "听到了 · 已润色 · 文字也已按「粘贴」送到当时光标所在的位置。",
       );
-      expect(screen.getByText(/已插入 \d+ 字 · 粘贴 · 已润色/)).toBeInTheDocument();
+      expect(screen.getByText(/已送出 \d+ 字 · 粘贴 · 已润色/)).toBeInTheDocument();
       expect(backend.activeMeters()).toBe(0);
       // The core goes idle after its dwell; the result stays in the box and the button offers another go.
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS);
       });
-      expect(screen.getByText("待命")).toBeInTheDocument();
+      expect(screen.getByText("就绪")).toBeInTheDocument();
       expect(box).toHaveValue(MOCK_DICTATION_TEXT);
       expect(screen.getByRole("button", { name: "再说一句" })).toBeEnabled();
       await user.click(screen.getByRole("button", { name: "完成设置" }));
@@ -622,11 +627,11 @@ describe("Onboarding wizard", () => {
     const table: [InjectPreflight, string][] = [
       [
         checked("elevated_target", "regedit.exe"),
-        "目标窗口 regedit.exe 以更高权限运行 · 投递会停在剪贴板",
+        "当前窗口 regedit.exe 以管理员身份运行 · 文字只能放进剪贴板",
       ],
-      [checked("secure_desktop", null), "当前是安全桌面（UAC / 锁屏）· 无法投递"],
-      [checked("proceed", "notepad.exe"), "目标窗口 notepad.exe · 可投递"],
-      [checked("unknown", null), "目标窗口未知 · 将直接尝试投递"],
+      [checked("secure_desktop", null), "现在是系统安全界面（UAC 提示或锁屏）· 没法送出文字"],
+      [checked("proceed", "notepad.exe"), "当前窗口 notepad.exe · 可以送出"],
+      [checked("unknown", null), "不知道当前窗口是什么 · 会直接尝试送出"],
     ];
     for (const [preflight, text] of table) {
       const view = renderApp({ path: "/onboarding?step=4", mock: { injectPreflight: preflight } });
@@ -671,7 +676,7 @@ describe("Onboarding wizard", () => {
       await screen.findByRole("heading", { name: "选择语音模型", level: 2 }),
     ).toBeInTheDocument();
     // Step 3: Enter is 保存并继续 only while the choice is complete, and never from inside a field.
-    const group = screen.getByRole("radiogroup", { name: "识别服务" });
+    const group = screen.getByRole("radiogroup", { name: "语音识别" });
     await user.click(within(group).getByRole("radio", { name: /其他服务商/ }));
     const key = screen.getByLabelText(/API 密钥/);
     await user.click(key);

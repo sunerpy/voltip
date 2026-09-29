@@ -57,9 +57,11 @@ describe("the 反馈 dialog", () => {
     expect(attached.querySelector('[data-diagnostic="llm_provider"]')).toHaveTextContent(
       "内置服务",
     );
-    expect(attached.querySelector('[data-diagnostic="output_mode"]')).toHaveTextContent("整段输出");
+    expect(attached.querySelector('[data-diagnostic="output_mode"]')).toHaveTextContent(
+      "说完再出字",
+    );
     expect(attached.querySelector('[data-diagnostic="local_model"]')).toBeNull();
-    expect(attached).toHaveTextContent("不含主机名、密钥和听写内容");
+    expect(attached).toHaveTextContent("不包含服务器地址、密钥和听写内容");
     expect(page.textContent).not.toMatch(/https?:|example|\.app\b/);
     // Nothing to send until there are words.
     const send = within(page).getByTestId("feedback-send");
@@ -120,7 +122,7 @@ describe("the 反馈 dialog", () => {
     renderApp({ backend: core });
     const { user, page } = await openFeedback();
     expect(await within(page).findByTestId("feedback-not-configured")).toHaveTextContent(
-      "这个构建没有配置反馈地址",
+      "这个版本没有设置反馈地址",
     );
     expect(within(page).queryByTestId("feedback-send")).toBeNull();
     await user.click(within(page).getByRole("button", { name: "在 GitHub 上反馈" }));
@@ -323,7 +325,7 @@ describe("the 反馈 dialog", () => {
     expect(diagnosticValue("llm_provider", "someone", t, "zh-CN")).toBe("someone");
     expect(diagnosticValue("compute", "gpu", t, "zh-CN")).toBe("GPU");
     expect(diagnosticValue("compute", "npu", t, "zh-CN")).toBe("npu");
-    expect(diagnosticValue("output_mode", "live_inject", t, "zh-CN")).toBe("实时注入");
+    expect(diagnosticValue("output_mode", "live_inject", t, "zh-CN")).toBe("边说边打字");
     expect(diagnosticValue("output_mode", "odd", t, "zh-CN")).toBe("odd");
     expect(diagnosticValue("arch", "aarch64", t, "zh-CN")).toBe("aarch64");
     expect(feedbackError(new Error("timeout"))).toBe("timeout");

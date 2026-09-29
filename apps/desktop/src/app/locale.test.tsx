@@ -22,7 +22,7 @@ const ROUTES = [
   ["/dictionary", "词典", "Dictionary"],
   ["/rules", "规则", "Rules"],
   ["/devices", "手机", "Phone"],
-  ["/overlay", "悬浮胶囊", "Overlay"],
+  ["/overlay", "悬浮窗", "Overlay"],
   ["/speech", "语音模型", "Speech models"],
   ["/ai", "AI 模型", "AI models"],
   ["/feedback", "首页", "Home"],
@@ -266,7 +266,7 @@ describe("locale", () => {
         for (const tab of nav.querySelectorAll('[role="tab"]')) {
           const text = (tab.textContent ?? "").trim();
           // "AI" is how Chinese UIs say it (the owner named the group AI 模型, 2026-09-27; the
-          // title bar's AI润色 too); any other Latin letter in a tab is an English gloss.
+          // title bar's AI 润色 too); any other Latin letter in a tab is an English gloss.
           if (/[A-Za-z]/.test(text.replace(/\bAI\b/g, ""))) offending.push(`${path} tab: ${text}`);
         }
         for (const mono of nav.querySelectorAll('[class~="mono"]')) {
@@ -314,7 +314,7 @@ describe("locale", () => {
           phase: { phase: "failed", message: "raw core message", code: "unknown", text: "kept" },
         });
       });
-      expect(screen.getByTestId("home-phase")).toHaveTextContent("Not inserted · raw core message");
+      expect(screen.getByTestId("home-phase")).toHaveTextContent("Not sent · raw core message");
     } finally {
       vi.useRealTimers();
     }
@@ -374,7 +374,7 @@ describe("locale", () => {
         });
       });
       expect(screen.getByTestId("home-live-degraded")).toHaveTextContent(
-        "Live preview stopped · the final text is unaffected",
+        "Live preview stopped · the final text is not affected",
       );
       expect(uiText(document.body)).not.toMatch(CJK);
       homeView.unmount();
@@ -389,7 +389,7 @@ describe("locale", () => {
       await act(async () => {
         await pillBackend.invoke("dictation_start");
       });
-      expect(screen.getByTestId("pill-waiting")).toHaveTextContent("Waiting for mic");
+      expect(screen.getByTestId("pill-waiting")).toHaveTextContent("Waiting for the microphone");
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS + 10);
       });

@@ -22,7 +22,7 @@ describe("Settings · 隐私与历史", () => {
       engines: { ...defaultEngineSettings(), asr_provider: "local", refine_enabled: false },
     });
     await waitFor(() => {
-      expect(screen.getByTestId("privacy-audio")).toHaveTextContent("不离开本机");
+      expect(screen.getByTestId("privacy-audio")).toHaveTextContent("不离开这台电脑");
     });
     expect(screen.getByTestId("privacy-text")).toHaveTextContent("不发送");
     expect(screen.getByTestId("privacy-context")).toHaveTextContent("不发送");

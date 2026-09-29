@@ -28,14 +28,14 @@ describe("History page keys and retention", () => {
     await backend.invoke("settings_set_history", { enabled: true, keep: 50 });
     expect(await screen.findByText(`${saved} / 50`)).toBeInTheDocument();
     expect(screen.getByTestId("history-retention")).toHaveTextContent(
-      "history.json · 保留最近 50 条，超出后丢弃最旧的。",
+      "保留最近 50 条，更早的会自动删除。",
     );
     await backend.invoke("settings_set_history", { enabled: false, keep: 50 });
     await waitFor(() => {
       expect(screen.getByTestId("history-retention")).toHaveAttribute("data-enabled", "false");
     });
     expect(screen.getByTestId("history-retention")).toHaveTextContent(
-      `记录已关闭 · 新的听写不再保存，已保存的 ${saved} 条保留到你清空。`,
+      `历史记录已关闭 · 新的听写不再保存，已保存的 ${saved} 条会一直保留到你清空。`,
     );
     await user.click(screen.getByRole("button", { name: "保留设置" }));
     expect(
@@ -110,13 +110,13 @@ describe("History page", () => {
 
   it("renders the factual retention banner, the day-grouped log from state.history and the newest entry's detail", async () => {
     const { backend } = renderApp({ path: "/history", mock: liveClock() });
-    expect(await screen.findByText("历史记录 · 只保存在这台机器上")).toBeInTheDocument();
+    expect(await screen.findByText("历史记录只保存在这台电脑上")).toBeInTheDocument();
     expect(screen.getByTestId("history-retention")).toHaveTextContent(
-      `history.json · 保留最近 ${HISTORY_LIMIT} 条，超出后丢弃最旧的。`,
+      `保留最近 ${HISTORY_LIMIT} 条，更早的会自动删除。`,
     );
     const history = backend.peek().history;
     expect(await screen.findByText(`${history.length} / ${HISTORY_LIMIT}`)).toBeInTheDocument();
-    const log = screen.getByRole("list", { name: "会话日志" });
+    const log = screen.getByRole("list", { name: "听写记录" });
     expect(within(log).getByText(/^今天 · /)).toBeInTheDocument();
     expect(within(log).getByText(/^昨天 · /)).toBeInTheDocument();
     expect(within(log).getAllByRole("button", { pressed: true })).toHaveLength(1);
@@ -127,7 +127,7 @@ describe("History page", () => {
     expect(screen.getByText(/总计 622 ms/)).toBeInTheDocument();
     expect(screen.getByText("Qwen/Qwen3-ASR-1.7B")).toBeInTheDocument();
     expect(screen.getByText("qwen/qwen3.8-27b")).toBeInTheDocument();
-    expect(screen.getAllByText("已插入 · 粘贴").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("已送出 · 粘贴").length).toBeGreaterThan(0);
     // No sample chips, no phase talk, no controls that pretend.
     const page = screen.getByTestId("page-history");
     expect(page.textContent).not.toMatch(/第二阶段|示例|sqlite/);
@@ -165,7 +165,7 @@ describe("History page", () => {
       origin: { device: "Pixel 8", kind: "take" },
     };
     renderApp({ path: "/history", mock: { now: () => now, history: [text, take] } });
-    const log = await screen.findByRole("list", { name: "会话日志" });
+    const log = await screen.findByRole("list", { name: "听写记录" });
     const origins = within(log).getAllByTestId("history-origin");
     expect(origins.map((o) => [o.dataset.origin, o.textContent])).toEqual([
       ["typed", "手机输入 · Pixel 8"],
@@ -190,10 +190,10 @@ describe("History page", () => {
     await user.click(screen.getByRole("button", { name: "清除搜索" }));
     await user.click(screen.getByRole("radio", { name: "今天" }));
     expect(
-      within(screen.getByRole("list", { name: "会话日志" })).getAllByRole("listitem"),
+      within(screen.getByRole("list", { name: "听写记录" })).getAllByRole("listitem"),
     ).toHaveLength(1 + 2);
-    await user.click(screen.getByRole("radio", { name: "未插入" }));
-    expect(screen.getByText(/仅剪贴板 · 目标窗口没有焦点/)).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "没有送出" }));
+    expect(screen.getByText(/已放进剪贴板 · 目标窗口没有焦点/)).toBeInTheDocument();
     expect(screen.getByText(/失败 · 目标窗口已丢失/)).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "已收藏" }));
     await user.click(screen.getByText(/返回值类型改成/));
@@ -219,7 +219,7 @@ describe("History page", () => {
     // An unrefined entry offers 插入文本 instead of 润色后 and its timing bar says so.
     await user.click(screen.getByRole("radio", { name: "全部" }));
     await user.click(screen.getByText(/attach the latency report/));
-    expect(screen.getByRole("radio", { name: "插入文本" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "送出的文字" })).toBeInTheDocument();
     expect(screen.getByText(/润色 — · 未启用/)).toBeInTheDocument();
     expect(screen.getByText("未润色")).toBeInTheDocument();
   });
@@ -240,7 +240,7 @@ describe("History page", () => {
       expect(backend.peek().history[0]?.starred).toBe(!first.starred);
     });
     // Star from the row, by keyboard.
-    const rowStar = within(screen.getByRole("list", { name: "会话日志" })).getAllByRole("button", {
+    const rowStar = within(screen.getByRole("list", { name: "听写记录" })).getAllByRole("button", {
       name: /收藏/,
     })[0];
     if (!rowStar) throw new Error("no row star");
@@ -269,7 +269,7 @@ describe("History page", () => {
     // Clear everything.
     await user.click(screen.getByRole("button", { name: "全部清空" }));
     const clear = screen.getByRole("dialog");
-    expect(clear).toHaveTextContent("history.json 会被清空");
+    expect(clear).toHaveTextContent("全部历史记录都会清空");
     expect(clear.textContent).not.toMatch(/示例|sqlite/);
     await user.click(within(clear).getByRole("button", { name: "清空" }));
     await waitFor(() => {
@@ -320,10 +320,10 @@ describe("History page", () => {
     expect(screen.getAllByText("在任意一条上点 ★ 收藏。").length).toBeGreaterThan(0);
     await user.click(screen.getAllByRole("radio", { name: "全部" }).at(-1) as HTMLElement);
     expect(screen.getAllByText("未记录耗时").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("已插入 · 剪贴板").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("已送出 · 剪贴板").length).toBeGreaterThan(0);
   });
 
-  it("regression: streaming rows carry a mode badge (流式定稿 / 实时注入) while whole takes stay quiet, and the detail shows the streaming fallback reason (docs/dictation.md §12)", async () => {
+  it("regression: streaming rows carry a mode badge (边说边识别 / 边说边打字) while whole takes stay quiet, and the detail shows the streaming fallback reason (docs/dictation.md §12)", async () => {
     const user = userEvent.setup();
     const now = Date.now();
     const base: Omit<HistoryEntry, "id" | "at_ms" | "text" | "raw_text" | "mode"> = {
@@ -367,27 +367,27 @@ describe("History page", () => {
       path: "/history",
       backend: new MockBackend({ now: () => Date.now(), history: rows }),
     });
-    const log = await screen.findByRole("list", { name: "会话日志" });
+    const log = await screen.findByRole("list", { name: "听写记录" });
     const badges = within(log).getAllByTestId("history-mode");
     expect(badges.map((b) => b.getAttribute("data-mode"))).toEqual([
       "live_inject",
       "streaming_final",
     ]);
-    expect(badges.map((b) => b.textContent)).toEqual(["实时注入", "流式定稿"]);
+    expect(badges.map((b) => b.textContent)).toEqual(["边说边打字", "边说边识别"]);
     // The newest row (live_inject) is the detail: badge in the header, the reason under the text.
-    expect(screen.getByTestId("history-detail-mode")).toHaveTextContent("实时注入");
+    expect(screen.getByTestId("history-detail-mode")).toHaveTextContent("边说边打字");
     expect(screen.getByTestId("history-live-error")).toHaveTextContent(
-      "流式回退：live tap overrun: the decoder fell behind the microphone",
+      "实时识别中断，改为整段识别：live tap overrun: the decoder fell behind the microphone",
     );
     // A streaming take without a fallback: badge, no reason.
     await user.click(within(log).getByRole("button", { name: /流式定稿的一段/ }));
-    expect(screen.getByTestId("history-detail-mode")).toHaveTextContent("流式定稿");
+    expect(screen.getByTestId("history-detail-mode")).toHaveTextContent("边说边识别");
     expect(screen.queryByTestId("history-live-error")).toBeNull();
     // The whole take: no badge anywhere.
     await user.click(within(log).getByRole("button", { name: /整段识别的一段/ }));
     expect(screen.queryByTestId("history-detail-mode")).toBeNull();
     expect(screen.queryByTestId("history-live-error")).toBeNull();
-    expect(screen.queryByText("整段输出")).toBeNull();
+    expect(screen.queryByText("说完再出字")).toBeNull();
   });
 
   it("regression: a take with a context shows its app and scene in the row and the detail, search finds them, and a take without one shows neither (docs/dictation.md section 18.6)", async () => {
@@ -427,7 +427,7 @@ describe("History page", () => {
       path: "/history",
       backend: new MockBackend({ now: () => Date.now(), history: rows }),
     });
-    const log = await screen.findByRole("list", { name: "会话日志" });
+    const log = await screen.findByRole("list", { name: "听写记录" });
     const contexts = within(log).getAllByTestId("history-context");
     expect(contexts.map((c) => c.textContent)).toEqual(["Slack聊天", "Code"]);
     expect(contexts[0]).toHaveAttribute("title", "应用与场景");
@@ -438,11 +438,11 @@ describe("History page", () => {
     await user.click(within(log).getByRole("button", { name: /加一个重试/ }));
     expect(screen.getByTestId("history-detail-app")).toHaveTextContent("Code · code");
     expect(screen.queryByTestId("history-detail-scene")).toBeNull();
-    expect(screen.getByText("未匹配场景")).toBeInTheDocument();
+    expect(screen.getByText("没有匹配的场景")).toBeInTheDocument();
     // No context at all: neither line.
     await user.click(within(log).getByRole("button", { name: /没有上下文/ }));
     expect(screen.queryByTestId("history-detail-app")).toBeNull();
-    expect(screen.queryByText("未匹配场景")).toBeNull();
+    expect(screen.queryByText("没有匹配的场景")).toBeNull();
     // Search matches the app and the scene.
     await user.type(screen.getByRole("textbox", { name: "搜索历史" }), "聊天");
     expect(within(log).getByRole("button", { name: /今晚开会/ })).toBeInTheDocument();
@@ -497,7 +497,7 @@ describe("History page", () => {
       path: "/history",
       backend: new MockBackend({ now: () => Date.now(), history: rows }),
     });
-    const log = await screen.findByRole("list", { name: "会话日志" });
+    const log = await screen.findByRole("list", { name: "听写记录" });
     // The row: badge, instruction → rewrite; the dictation row has neither.
     expect(
       within(log)
@@ -513,8 +513,8 @@ describe("History page", () => {
     expect(screen.getByTestId("entry-text")).toHaveTextContent("各位同事：会议改至周四上午十点。");
     const disclosure = screen.getByTestId("history-edit-selection");
     expect(disclosure).not.toHaveAttribute("open");
-    expect(within(disclosure).getByText("原选区 · 13 字")).toBeInTheDocument();
-    await user.click(within(disclosure).getByText("原选区 · 13 字"));
+    expect(within(disclosure).getByText("原来选中的文字 · 13 字")).toBeInTheDocument();
+    await user.click(within(disclosure).getByText("原来选中的文字 · 13 字"));
     expect(disclosure).toHaveAttribute("open");
     expect(within(disclosure).getByText("大家好，会议改到周四十点哈")).toBeVisible();
     // No raw / polished / diff switch for an edit; the app context still shows.
@@ -601,7 +601,7 @@ describe("History page", () => {
     await user.type(within(dialog).getByLabelText("正确写法"), "谷歌IDR");
     await user.click(within(dialog).getByRole("button", { name: "加入" }));
     expect(
-      await within(dialog).findByText("dictionary: 误识别写法「谷歌IDR」和正确写法相同"),
+      await within(dialog).findByText("误识别写法「谷歌IDR」和正确写法相同"),
     ).toBeInTheDocument();
     await user.clear(within(dialog).getByLabelText("正确写法"));
     await user.type(within(dialog).getByLabelText("正确写法"), "good idea{Enter}");
@@ -618,7 +618,7 @@ describe("History page", () => {
     const other = vi.spyOn(window, "getSelection").mockReturnValue({
       toString: () => "somewhere else",
     } as unknown as Selection);
-    const rows = within(screen.getByRole("list", { name: "会话日志" })).getAllByRole("button", {
+    const rows = within(screen.getByRole("list", { name: "听写记录" })).getAllByRole("button", {
       pressed: false,
     });
     await user.click(rows[0] ?? document.body);
