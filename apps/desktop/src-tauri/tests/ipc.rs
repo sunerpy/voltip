@@ -1350,6 +1350,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
         [
             "core_state",
             "audio_devices",
+            "audio_outputs",
             "audio_meter_start",
             "audio_meter_stop",
             "overlay_state",

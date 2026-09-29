@@ -98,6 +98,21 @@ fn macos_bundle_carries_the_dylibs_entitlements_minimum_version_and_microphone_s
     }
 }
 
+/// docs/dictation.md §22: recording the computer's sound on macOS goes through a Core Audio process
+/// tap, which TCC allows only with a usage string; like the microphone's it is in `Info.plist` and
+/// localised in both prompt languages.
+#[test]
+fn macos_bundle_asks_before_recording_the_computers_sound() {
+    let mac = merged(Target::MacOS).bundle.macos;
+    let info = read(&tauri_dir().join("Info.plist"));
+    let usage = plist_value(&info, "NSAudioCaptureUsageDescription").expect("NSAudioCaptureUsageDescription");
+    assert!(usage.contains("computer"), "{usage}");
+    for src in mac.files.values() {
+        let strings = read(&tauri_dir().join(src));
+        assert!(strings.contains(r#""NSAudioCaptureUsageDescription" = ""#), "{src:?}");
+    }
+}
+
 #[test]
 fn windows_bundle_installs_per_user_refuses_downgrades_and_names_the_webview_mode() {
     let config = merged(Target::Windows);

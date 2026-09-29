@@ -44,7 +44,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 94] = [
+pub const COMMANDS: [&str; 95] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -76,6 +76,7 @@ pub const COMMANDS: [&str; 94] = [
     "devices_refresh",
     "connectivity_check",
     "audio_devices",
+    "audio_outputs",
     "audio_meter_start",
     "audio_meter_stop",
     "overlay_state",
@@ -808,6 +809,13 @@ async fn audio_devices() -> Result<Vec<audio::Device>, String> {
     audio::devices().await
 }
 
+/// The output devices a take can record the computer's sound from, default first, and whether that
+/// works here (docs/dictation.md §22).
+#[tauri::command]
+async fn audio_outputs() -> Result<audio::Outputs, String> {
+    audio::outputs().await
+}
+
 /// Subscribe to the input level stream for `device_id` (default device when `None`); frames arrive
 /// on `on_frame`. Returns the subscription id for `audio_meter_stop`. The hub owns the microphone:
 /// while a dictation records, frames come from the recorder instead of a second device open.
@@ -1076,6 +1084,7 @@ pub fn build_app<R: Runtime>(
             devices_refresh,
             connectivity_check,
             audio_devices,
+            audio_outputs,
             audio_meter_start,
             audio_meter_stop,
             overlay_state,

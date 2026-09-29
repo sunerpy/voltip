@@ -92,6 +92,7 @@ import {
   notApplicablePermissions,
   uncheckedPreflight,
   type AudioDevice,
+  type AudioOutputs,
   type HostOs,
   type LevelFrame,
   type ProbeFailure,
@@ -235,6 +236,9 @@ export interface MockBackendOptions {
   /** The phone's clipboard (docs/dictation.md §20.6); `null` = empty. Defaults to
    *  `MOCK_PHONE_CLIPBOARD`. */
   phoneClipboard?: string | null;
+  /** What `audioOutputs` answers (docs/dictation.md §22); defaults to the computer's sound
+   *  available on `MOCK_AUDIO_OUTPUTS` (the phone role: unsupported, no devices). */
+  audioOutputs?: AudioOutputs;
   /** Clock in milliseconds; injectable for deterministic tests. */
   now?: () => number;
   /** Deterministic randomness source in [0, 1). */
@@ -696,6 +700,23 @@ export const MOCK_AUDIO_DEVICES: readonly AudioDevice[] = [
     channels: 2,
   },
 ];
+/** Output devices the browser preview pretends to have (docs/dictation.md §22), default first. */
+export const MOCK_AUDIO_OUTPUTS: readonly AudioDevice[] = [
+  {
+    id: "Realtek(R) Audio Speakers",
+    name: "扬声器 (Realtek(R) Audio)",
+    is_default: true,
+    sample_rate_hz: 48_000,
+    channels: 2,
+  },
+  {
+    id: "Sony WH-1000XM5",
+    name: "Sony WH-1000XM5",
+    is_default: false,
+    sample_rate_hz: 48_000,
+    channels: 2,
+  },
+];
 /** Frame cadence of the synthetic meter (the native meter runs at 30 Hz too). */
 export const MOCK_METER_INTERVAL_MS = 1000 / 30;
 
@@ -798,6 +819,8 @@ export class MockBackend implements Backend {
   private takeContext: TakeContext | undefined;
   /** The paired phone the current take's audio comes from (docs/dictation.md §20). */
   private takeRemote: string | undefined;
+  /** What `audioOutputs` answers. */
+  private outputs: AudioOutputs;
   /** What a take on this computer records (docs/dictation.md §22), and a long take's recognition
    *  (`simulateLongTakeProgress`); both cleared at idle, the count already when the take ends. */
   private takeSource: RecordingSource | undefined;
@@ -867,6 +890,14 @@ export class MockBackend implements Backend {
     this.feedback = options.feedback ?? "configured";
     this.phoneClipboard =
       options.phoneClipboard === undefined ? MOCK_PHONE_CLIPBOARD : options.phoneClipboard;
+    this.outputs =
+      options.audioOutputs ??
+      (this.role === "phone"
+        ? { system_audio: { state: "unsupported" }, devices: [] }
+        : {
+            system_audio: { state: "available" },
+            devices: MOCK_AUDIO_OUTPUTS.map((d) => ({ ...d })),
+          });
     this.engineOverrides = options.engines ?? {};
     this.foregroundApp = options.foregroundApp ?? null;
     const host = hostOsOf(identity.platform);
@@ -942,6 +973,10 @@ export class MockBackend implements Backend {
 
   audioDevices(): Promise<AudioDevice[]> {
     return Promise.resolve(MOCK_AUDIO_DEVICES.map((d) => ({ ...d })));
+  }
+
+  audioOutputs(): Promise<AudioOutputs> {
+    return Promise.resolve(structuredClone(this.outputs));
   }
 
   /** Synthetic meter: a breathing level on the requested device, 30 frames a second. A device

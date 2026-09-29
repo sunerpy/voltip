@@ -3,6 +3,7 @@ import {
   ALWAYS_ON_DESKTOP_ONLY,
   MOCK_ALWAYS_ON_PAUSE_MS,
   MOCK_ASR_MS,
+  MOCK_AUDIO_OUTPUTS,
   MOCK_AUDIO_DEVICES,
   MOCK_NEARBY,
   MOCK_TEXT_MS,
@@ -601,6 +602,22 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     expect(backend.peek().dictation.remote).toBe("Pixel 8");
     expect(backend.peek().dictation.source).toBeUndefined();
     backend.destroy();
+  });
+
+  it("answers audio_outputs like the shells: the computer's sound on two outputs here, none on the phone, or what a test sets (docs/dictation.md §22)", async () => {
+    const desktop = await new MockBackend().audioOutputs();
+    expect(desktop).toEqual({
+      system_audio: { state: "available" },
+      devices: [...MOCK_AUDIO_OUTPUTS],
+    });
+    desktop.devices.pop();
+    expect((await new MockBackend().audioOutputs()).devices).toHaveLength(2);
+    expect(await new MockBackend({ role: "phone" }).audioOutputs()).toEqual({
+      system_audio: { state: "unsupported" },
+      devices: [],
+    });
+    const old = { system_audio: { state: "macos_too_old" as const, version: "14.5" }, devices: [] };
+    expect(await new MockBackend({ audioOutputs: old }).audioOutputs()).toEqual(old);
   });
 
   it("skips the refine stage and pastes the raw text when refine is off; clipboard_only reports via clipboard", async () => {

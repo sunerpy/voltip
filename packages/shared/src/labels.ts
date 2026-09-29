@@ -27,6 +27,7 @@ import type {
   RelayStatus,
   SecretState,
   SegmentProgress,
+  SystemAudio,
   TakeKind,
   ThemeId,
   Via,
@@ -323,16 +324,24 @@ export function dictationFailureText(phase: FailedPhase, locale: Locale = DEFAUL
 /** [`dictationFailureText`] for a take of either kind: a failed rewrite says the selection was left
  *  alone (docs/dictation.md §19.4). */
 export function takeFailureText(
-  status: { phase: FailedPhase; kind: TakeKind },
+  status: { phase: FailedPhase; kind: TakeKind; source?: RecordingSource },
   locale: Locale = DEFAULT_LOCALE,
 ): string {
-  return failureText(status.phase, status.kind, locale);
+  return failureText(status.phase, status.kind, locale, status.source);
 }
 
-function failureText(phase: FailedPhase, kind: TakeKind, locale: Locale): string {
+function failureText(
+  phase: FailedPhase,
+  kind: TakeKind,
+  locale: Locale,
+  source?: RecordingSource,
+): string {
   const code = phase.code;
   if (code === undefined || code === "unknown") return phase.message;
   if (kind === "edit" && code === "refine") return translate(locale, "dictation.edit.refineFailed");
+  // docs/dictation.md §22: what failed to record is not always the microphone.
+  if (code === "audio" && (source === "system" || source === "mixed"))
+    return translate(locale, `dictation.audioFailure.${source}`);
   const prefix = `${code}: `;
   const reason = phase.message.startsWith(prefix)
     ? phase.message.slice(prefix.length)
@@ -353,11 +362,11 @@ export function dictationPhaseLabel(
  *  (docs/dictation.md §19, `kind: "edit"`) listens for an instruction, rewrites instead of
  *  polishing and reports the replaced text. */
 export function takePhaseLabel(
-  status: Pick<DictationStatus, "phase" | "kind" | "segments">,
+  status: Pick<DictationStatus, "phase" | "kind" | "segments" | "source">,
   now: number,
   locale: Locale = DEFAULT_LOCALE,
 ): Labelled {
-  return phaseLabel(status.phase, status.kind, now, locale, status.segments);
+  return phaseLabel(status.phase, status.kind, now, locale, status.segments, status.source);
 }
 
 /** A long take's recognition while it records (`已识别 12 段`, docs/dictation.md §22). */
@@ -366,6 +375,24 @@ export function segmentsDoneLabel(
   locale: Locale = DEFAULT_LOCALE,
 ): string {
   return translate(locale, "dictation.segments.listening", { n: segments.done });
+}
+
+/** Why the computer's sound cannot be recorded here (docs/dictation.md §22); `undefined` when it can. */
+export function systemAudioNote(
+  systemAudio: SystemAudio,
+  locale: Locale = DEFAULT_LOCALE,
+): string | undefined {
+  switch (systemAudio.state) {
+    case "available":
+      return undefined;
+    case "macos_too_old":
+      return translate(locale, "settings.microphone.unavailable.macos_too_old", {
+        version: systemAudio.version,
+      });
+    case "no_sound_server":
+    case "unsupported":
+      return translate(locale, `settings.microphone.unavailable.${systemAudio.state}`);
+  }
 }
 
 /** `mixed` → 混合 / Mixed: what a take records (docs/dictation.md §22). */
@@ -382,6 +409,7 @@ function phaseLabel(
   now: number,
   locale: Locale,
   segments?: SegmentProgress,
+  source?: RecordingSource,
 ): Labelled {
   const edit = kind === "edit";
   switch (phase.phase) {
@@ -436,7 +464,7 @@ function phaseLabel(
         text: translate(
           locale,
           phase.text === undefined ? "dictation.failed" : "dictation.notInserted",
-          { reason: failureText(phase, kind, locale) },
+          { reason: failureText(phase, kind, locale, source) },
         ),
         tone: "danger",
       };

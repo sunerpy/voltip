@@ -42,6 +42,7 @@ import {
   relayLabel,
   secretStateLabel,
   segmentsDoneLabel,
+  systemAudioNote,
   shortFingerprint,
   shortKey,
   themeName,
@@ -537,6 +538,35 @@ describe("long take labels (section 22)", () => {
     expect(recordingSourceLabel("microphone")).toBe("麦克风");
     expect(recordingSourceLabel("mixed")).toBe("混合");
     expect(recordingSourceLabel("system", "en")).toBe("Computer audio");
+  });
+
+  it("says why the computer's sound cannot be recorded, and an audio failure names what failed to record", () => {
+    expect(systemAudioNote({ state: "available" })).toBeUndefined();
+    expect(systemAudioNote({ state: "macos_too_old", version: "14.5" })).toBe(
+      "录制电脑声音需要 macOS 14.6 或更高版本，当前为 14.5。",
+    );
+    expect(systemAudioNote({ state: "no_sound_server" }, "en")).toBe(
+      "Recording computer audio needs a PulseAudio or PipeWire sound server, and none was found.",
+    );
+    expect(systemAudioNote({ state: "unsupported" })).toBe("此设备不支持录制电脑声音。");
+    const failed = {
+      phase: "failed",
+      code: "audio",
+      message: "audio: system audio capture unavailable: macOS 14.5",
+    } as const;
+    expect(takeFailureText({ phase: failed, kind: "dictation" })).toBe("麦克风采集失败");
+    expect(takeFailureText({ phase: failed, kind: "dictation", source: "microphone" })).toBe(
+      "麦克风采集失败",
+    );
+    expect(takeFailureText({ phase: failed, kind: "dictation", source: "system" })).toBe(
+      "电脑声音录制失败",
+    );
+    expect(takeFailureText({ phase: failed, kind: "dictation", source: "mixed" }, "en")).toBe(
+      "Recording failed",
+    );
+    expect(takePhaseLabel({ phase: failed, kind: "dictation", source: "system" }, 0).text).toBe(
+      "失败 · 电脑声音录制失败",
+    );
   });
 });
 

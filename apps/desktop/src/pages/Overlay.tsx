@@ -177,7 +177,10 @@ export function Overlay({ state }: OverlayProps) {
                 )
               : phase.phase === "failed"
                 ? t("overlay.live.failed", {
-                    reason: takeFailureText({ phase, kind: dictation.kind }, locale),
+                    reason: takeFailureText(
+                      { phase, kind: dictation.kind, source: dictation.source },
+                      locale,
+                    ),
                   })
                 : phase.phase === "cancelled"
                   ? phase.injected_chars > 0

@@ -29,7 +29,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 94] = [
+pub const COMMANDS: [&str; 95] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -61,6 +61,7 @@ pub const COMMANDS: [&str; 94] = [
     "devices_refresh",
     "connectivity_check",
     "audio_devices",
+    "audio_outputs",
     "audio_meter_start",
     "audio_meter_stop",
     "overlay_state",
@@ -357,6 +358,13 @@ fn connectivity_check(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
 #[tauri::command]
 fn audio_devices() -> Result<Vec<serde_json::Value>, String> {
     Ok(Vec::new())
+}
+
+/// The phone records its own microphone (docs/dictation.md §22): the computer's sound is a desktop
+/// source.
+#[tauri::command]
+fn audio_outputs() -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({ "system_audio": { "state": "unsupported" }, "devices": [] }))
 }
 
 /// Stream the level of the phone's own takes to `on_frame` ([`meter::Meters`]): frames arrive
@@ -855,6 +863,7 @@ pub fn build_app<R: Runtime>(
             devices_refresh,
             connectivity_check,
             audio_devices,
+            audio_outputs,
             audio_meter_start,
             audio_meter_stop,
             overlay_state,

@@ -218,6 +218,10 @@ export const en: Messages = {
       doneClipboard: "Rewrite copied, {n} chars · {via}",
       refineFailed: "Rewrite failed; the selection is unchanged",
     },
+    audioFailure: {
+      system: "Computer audio could not be recorded",
+      mixed: "Recording failed",
+    },
     segments: {
       listening: { one: "{n} segment recognised", other: "{n} segments recognised" },
       processing: "{done} of {total} segments recognised",
@@ -424,7 +428,16 @@ export const en: Messages = {
       processingTitle: "The previous recording is still being processed",
     },
     mic: {
-      eyebrow: "Microphone input",
+      eyebrow: "Recording source",
+      source: "Record",
+      systemDevice: "Computer audio · {name}",
+      systemDefaultDevice: "Computer audio · system default output",
+      systemFacts: "microphone not used",
+      alsoSystem: "Also recording computer audio · {name}",
+      systemHint:
+        "Dictation records the sound your computer plays; nothing is recorded while idle.",
+      mixedHint:
+        "Wear headphones if you use speakers, so the microphone does not pick them up again.",
       unavailable: "Unavailable",
       recording: "Recording",
       testing: "Testing · {n} s",
@@ -440,7 +453,7 @@ export const en: Messages = {
       testingHint: "Say a few words; the strength bar should move · stops automatically in {n} s",
       recordingHint: "Strength of this dictation's recording",
       devices: { one: "{n} input device", other: "{n} input devices" },
-      switch: "Switch microphone",
+      switch: "Choose devices",
       peak: "Peak {value}",
     },
     engine: {
@@ -1483,7 +1496,7 @@ export const en: Messages = {
       general: "General",
       hotkey: "Shortcuts",
       dictation: "Dictation",
-      microphone: "Microphone",
+      microphone: "Recording source",
       scene: "Scenes",
       privacy: "Privacy and history",
       appearance: "Appearance",
@@ -1500,8 +1513,27 @@ export const en: Messages = {
       hours: { one: "{n} hour", other: "{n} hours" },
     },
     microphone: {
-      title: "Microphone",
-      lede: "Dictation records from the microphone chosen here, or from the system's default input without a choice. Voltip keeps the microphone closed while idle and only uses it to dictate and to test.",
+      title: "Recording source",
+      lede: "Choose what dictation records: the microphone, the sound your computer plays, or both mixed. While idle, Voltip keeps the microphone closed and records no computer audio.",
+      source: "Record",
+      sourceHelp:
+        "Computer audio is for transcribing meetings, videos and anything else your computer plays.",
+      unavailable: {
+        macos_too_old:
+          "Recording computer audio needs macOS 14.6 or later; this Mac runs {version}.",
+        no_sound_server:
+          "Recording computer audio needs a PulseAudio or PipeWire sound server, and none was found.",
+        unsupported: "This device cannot record computer audio.",
+      },
+      mixedHint:
+        "Wear headphones when mixing; otherwise the microphone picks up the speakers and the recording echoes.",
+      output: "Output device",
+      outputHelp: "The sound this device plays is recorded.",
+      outputDefault: "System default ({name})",
+      outputDefaultNone: "System default",
+      outputDisconnected: "{name} · not connected",
+      outputMissingNote:
+        "The chosen output device is not connected, so dictation records the system default output for now and goes back to it once it is plugged in.",
       device: "Input device",
       deviceHelp: "Dictation, the test and the home page's strength bar all use this device.",
       followDefault: "System default ({name})",

@@ -43,6 +43,7 @@ import {
 import { SPEECH_ROUTE, useRouter } from "../app/router";
 import { serviceTarget } from "./settings/engines/helpers";
 import { MicrophoneStrength } from "../features/audio/MicrophoneStrength";
+import { SourceSwitch, useRecordingSource } from "../features/audio/RecordingSource";
 import { useAudioMeter } from "../features/audio/useAudioMeter";
 import { useChosenMicrophone, useMicrophoneTest } from "../features/audio/useMicrophoneTest";
 import { useDictation, useTickingNow } from "../features/dictation/useDictation";
@@ -104,6 +105,10 @@ export function Home() {
   // a take (the recorder's own frames) or a 测试麦克风 run, on the device the settings choose.
   const micTest = useMicrophoneTest();
   const meter = useAudioMeter(micTest.testing || dictation.listening, useChosenMicrophone());
+  // docs/dictation.md §22: what a take records; the card switches it and names the output.
+  const source = useRecordingSource();
+  const systemOnly = source.recording.source === "system";
+  const outputName = source.output?.name;
   const engines = state.engines;
   const hotkey = state.settings.hotkey;
   // docs/dictation.md §13: the chip and the empty-state hint say how the chord drives a take.
@@ -426,27 +431,43 @@ export function Home() {
           }
           className="min-h-[144px]"
           data-testid="home-mic">
-          <div className="text-[13px] font-medium text-fg" data-testid="home-mic-device">
-            {meter.device?.name ?? meter.error ?? t("home.mic.enumerating")}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0 text-[13px] font-medium text-fg" data-testid="home-mic-device">
+              {systemOnly
+                ? outputName === undefined
+                  ? t("home.mic.systemDefaultDevice")
+                  : t("home.mic.systemDevice", { name: outputName })
+                : (meter.device?.name ?? meter.error ?? t("home.mic.enumerating"))}
+            </div>
+            <SourceSwitch state={source} testId="home-mic-source" />
           </div>
           <div className="mono mt-0.5 text-[11px] text-fg-muted">
-            {meter.device
-              ? [
-                  meter.device.sample_rate_hz ? `${meter.device.sample_rate_hz / 1000} kHz` : "",
-                  meter.device.channels === 1
-                    ? t("settings.microphone.mono")
-                    : meter.device.channels
-                      ? t("settings.microphone.channels", { n: meter.device.channels })
-                      : "",
-                  meter.device.is_default ? t("home.mic.systemDefault") : t("home.mic.selected"),
-                ]
-                  .filter((part) => part.length > 0)
-                  .join(" · ")
-              : "—"}
+            {systemOnly
+              ? t("home.mic.systemFacts")
+              : meter.device
+                ? [
+                    meter.device.sample_rate_hz ? `${meter.device.sample_rate_hz / 1000} kHz` : "",
+                    meter.device.channels === 1
+                      ? t("settings.microphone.mono")
+                      : meter.device.channels
+                        ? t("settings.microphone.channels", { n: meter.device.channels })
+                        : "",
+                    meter.device.is_default ? t("home.mic.systemDefault") : t("home.mic.selected"),
+                  ]
+                    .filter((part) => part.length > 0)
+                    .join(" · ")
+                : "—"}
           </div>
-          {meter.missing && (
+          {meter.missing && !systemOnly && (
             <div className="mt-0.5 text-[11px] text-warning" data-testid="home-mic-missing">
               {t("home.mic.missing")}
+            </div>
+          )}
+          {source.recording.source === "mixed" && (
+            <div className="mt-0.5 text-[11px] text-fg-muted" data-testid="home-mic-also">
+              {t("home.mic.alsoSystem", {
+                name: outputName ?? t("settings.microphone.outputDefaultNone"),
+              })}
             </div>
           )}
           <MicrophoneStrength
@@ -456,7 +477,7 @@ export function Home() {
             data-testid="home-mic-level"
           />
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-            {!dictation.listening && (
+            {!dictation.listening && !systemOnly && (
               <Button
                 size="sm"
                 variant={micTest.testing ? "outline" : "primary"}
@@ -472,7 +493,11 @@ export function Home() {
                 ? t("home.mic.recordingHint")
                 : micTest.testing
                   ? t("home.mic.testingHint", { n: micTest.remaining })
-                  : t("home.mic.idleHint")}
+                  : systemOnly
+                    ? t("home.mic.systemHint")
+                    : source.recording.source === "mixed"
+                      ? t("home.mic.mixedHint")
+                      : t("home.mic.idleHint")}
             </span>
             <Button
               size="sm"

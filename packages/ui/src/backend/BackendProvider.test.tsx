@@ -50,6 +50,7 @@ describe("BackendProvider", () => {
       invoke: inner.invoke.bind(inner),
       on: inner.on.bind(inner),
       audioDevices: inner.audioDevices.bind(inner),
+      audioOutputs: inner.audioOutputs.bind(inner),
       meter: inner.meter.bind(inner),
       updateStatus: inner.updateStatus.bind(inner),
       vocabularyPreview: inner.vocabularyPreview.bind(inner),
@@ -104,6 +105,8 @@ describe("BackendProvider", () => {
       invoke: () => Promise.resolve(),
       on: () => () => undefined,
       audioDevices: () => Promise.resolve([]),
+      audioOutputs: () =>
+        Promise.resolve({ system_audio: { state: "unsupported" as const }, devices: [] }),
       meter: () => Promise.resolve(() => undefined),
       updateStatus: () => Promise.resolve({ state: "idle" as const }),
       vocabularyPreview: () =>

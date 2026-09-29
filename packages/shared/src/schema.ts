@@ -1820,6 +1820,25 @@ export const audioDeviceSchema = z.object({
 });
 export type AudioDevice = z.infer<typeof audioDeviceSchema>;
 
+/** `voltip_audio::SystemAudio`: whether this computer can record what it plays (docs/dictation.md
+ *  §22), and why not — macOS before 14.6, Linux without a PulseAudio server, or a platform
+ *  without it (the phone). */
+export const systemAudioSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("available") }),
+  z.object({ state: z.literal("macos_too_old"), version: z.string() }),
+  z.object({ state: z.literal("no_sound_server") }),
+  z.object({ state: z.literal("unsupported") }),
+]);
+export type SystemAudio = z.infer<typeof systemAudioSchema>;
+
+/** `audio_outputs`: whether the computer's sound can be recorded, and the output devices it can be
+ *  recorded from, default first (empty when the list could not be read). */
+export const audioOutputsSchema = z.object({
+  system_audio: systemAudioSchema,
+  devices: audioDeviceSchema.array(),
+});
+export type AudioOutputs = z.infer<typeof audioOutputsSchema>;
+
 /** One level-meter frame streamed from Rust through a Tauri `Channel` (≈ 30 Hz). */
 export const levelFrameSchema = z.object({
   rms_dbfs: z.number(),
@@ -1912,6 +1931,9 @@ export interface CommandArgs {
   connectivity_check: undefined;
   /** Query: microphones known to the native audio backend (`Backend.audioDevices`). */
   audio_devices: undefined;
+  /** Query: the output devices a take can record the computer's sound from, and whether that
+   *  works here (`Backend.audioOutputs`, docs/dictation.md §22). */
+  audio_outputs: undefined;
   /** Stream: subscribe to the native level meter; frames arrive on the `onFrame` Channel, the
    *  command returns the subscription id (`Backend.meter`). */
   audio_meter_start: { deviceId: string | null };
@@ -2057,6 +2079,7 @@ export type CommandName = keyof CommandArgs;
 export type QueryCommand =
   | "core_state"
   | "audio_devices"
+  | "audio_outputs"
   | "audio_meter_start"
   | "audio_meter_stop"
   | "overlay_state"
@@ -2085,6 +2108,7 @@ export type QueryCommand =
 export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "core_state",
   "audio_devices",
+  "audio_outputs",
   "audio_meter_start",
   "audio_meter_stop",
   "overlay_state",

@@ -16,6 +16,7 @@ import {
   UI_EVENT_NAME,
   appRefSchema,
   audioDeviceSchema,
+  audioOutputsSchema,
   builtinPresetTextSchema,
   builtinSceneTermsSchema,
   feedbackInfoSchema,
@@ -94,6 +95,11 @@ export class TauriBackend implements Backend {
   async audioDevices() {
     const raw = await this.transport.invoke("audio_devices");
     return audioDeviceSchema.array().parse(raw);
+  }
+
+  async audioOutputs() {
+    const raw = await this.transport.invoke("audio_outputs");
+    return audioOutputsSchema.parse(raw);
   }
 
   async updateStatus() {

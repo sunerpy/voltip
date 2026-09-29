@@ -20,7 +20,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use voltip_asr::{AsrClient, AsrConfig};
-use voltip_asr_local::{LocalStreamingTranscriber, LocalTranscriber, ModelStore};
+use voltip_asr_local::{LocalStreamingTranscriber, LocalTranscriber, ModelStore, VadSegmenterFactory};
 use voltip_audio::{Backend, CaptureSource, CpalBackend, LiveConsumer, LiveTapConfig, PcmConsumer, PcmStreamConfig, Recorder, RecorderConfig};
 use voltip_core::dictation::{
     AudioSource, Capture, CaptureOptions, ClipboardCode, DictationError, DictationPorts, EngineFactory, InjectNote, Injection, Injector, LevelFrame, LivePcm,
@@ -645,7 +645,8 @@ pub fn production_ports(models_root: PathBuf) -> ShellPorts {
 /// Wiring over any audio backend and hub (tests use `voltip_audio::FakeBackend`); the model
 /// library lives under `models_root`. The streaming transcriber is always plugged in: the core
 /// only opens it when `live_preview` is on and the streaming model is installed (docs/dictation.md
-/// §11), and it loads nothing until then.
+/// §11), and it loads nothing until then. A long take is cut where the Silero VAD hears a pause
+/// (§22); the first long take without the model fetches it.
 pub fn ports_with_backend(backend: Arc<dyn Backend + Send + Sync>, hub: Arc<AudioHub>, models_root: PathBuf) -> ShellPorts {
     let mode = Arc::new(Mutex::new(InjectMode::default()));
     let store = ModelStore::new(models_root.clone());
@@ -653,11 +654,11 @@ pub fn ports_with_backend(backend: Arc<dyn Backend + Send + Sync>, hub: Arc<Audi
         audio: Arc::new(RecorderAudioSource::with_backend(backend, hub.clone())),
         injector: Arc::new(NativeInjector::system(mode.clone())),
         factory: engine_factory(mode, LocalTranscriber::new(models_root.clone()), Some(store.clone())),
+        segmenter: Some(Arc::new(VadSegmenterFactory::new(models_root.clone(), Some(store.clone())))),
         models: Some(Arc::new(store)),
         streaming: Some(Arc::new(LocalStreamingTranscriber::new(models_root))),
         probe: Some(Arc::new(crate::platform::PlatformProbe::new())),
         service_probe: Some(Arc::new(HttpServiceProbe)),
-        segmenter: None,
     };
     ShellPorts { dictation, hub }
 }

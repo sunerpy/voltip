@@ -28,6 +28,7 @@
 pub mod catalogue;
 pub mod compute;
 mod gguf;
+pub mod segmenter;
 mod sherpa;
 pub mod store;
 pub mod streaming;
@@ -38,6 +39,7 @@ pub use catalogue::{
     CATALOGUE, Capability, DEFAULT_MODEL_ID, Engine, ModelEntry, ModelFile, STREAMING_MODEL_ID, Tier, VAD_MODEL_ID, entry, streaming_entry, vad_entry,
 };
 pub use compute::{Compute, GpuInfo, HardwareInfo, LocalDevice, hardware};
+pub use segmenter::{VadSegmenter, VadSegmenterFactory};
 pub use store::{CATALOGUE_VERSION, DISK_HEADROOM, FreeSpace, MANIFEST_FILE, Manifest, ModelStore, SlowSourcePolicy, Source, StoreError, bytes_to_fetch};
 pub use streaming::{LocalStreamingTranscriber, StreamingLoader, StreamingRecognizer};
 pub use transcriber::{DefaultLoader, LocalTranscriber, MIN_INPUT, Recognizer, RecognizerLoader, decode_wav};

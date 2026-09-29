@@ -187,7 +187,7 @@ describe("Home page", () => {
     // The strength bar exists but stays silent while idle (the regression test below drives it).
     expect(screen.getByRole("meter", { name: "强度" })).toBeInTheDocument();
     expect(screen.getByTestId("home-phase")).toHaveTextContent(/^麦克风、快捷键和识别服务已就绪$/);
-    expect(screen.getByText("麦克风输入")).toBeInTheDocument();
+    expect(screen.getByText("录音来源")).toBeInTheDocument();
     expect(screen.getByText("Fifine K669 USB Microphone")).toBeInTheDocument();
     expect(within(screen.getByTestId("home-engine")).getByText("语音模型")).toBeInTheDocument();
     expect(within(screen.getByTestId("home-devices")).getByText("手机 · 设备")).toBeInTheDocument();
@@ -313,7 +313,7 @@ describe("Home page", () => {
     }
   });
 
-  it("regression: 切换麦克风 opens 设置 › 麦克风, and an unplugged choice is named as such", async () => {
+  it("regression: 选择设备 (was 切换麦克风) opens 设置 › 录音来源 (was 麦克风), and an unplugged choice is named as such", async () => {
     const user = userEvent.setup();
     renderApp({ mock: { settings: { microphone: "Blue Yeti" } } });
     expect(await screen.findByTestId("home-mic-missing")).toHaveTextContent(
@@ -324,8 +324,61 @@ describe("Home page", () => {
     );
     await user.click(screen.getByTestId("home-mic-switch"));
     const dialog = await screen.findByRole("dialog", { name: "设置" });
-    expect(within(dialog).getByRole("tab", { name: "麦克风", selected: true })).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("tab", { name: "录音来源", selected: true }),
+    ).toBeInTheDocument();
     expect(within(dialog).getByTestId("microphone-pane")).toBeInTheDocument();
+  });
+
+  it("the card switches what a take records: the computer's sound names its output and opens no microphone test, mixing adds the output and the headphones hint, and an unavailable source says why (docs/dictation.md section 22)", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp();
+    const card = await screen.findByTestId("home-mic");
+    const switcher = await within(card).findByTestId("home-mic-source");
+    expect(within(switcher).getByRole("radio", { name: "麦克风" })).toBeChecked();
+    expect(within(card).getByTestId("home-mic-test")).toBeInTheDocument();
+    await user.click(within(switcher).getByRole("radio", { name: "电脑声音" }));
+    expect(backend.peek().settings.recording.source).toBe("system");
+    expect(within(card).getByTestId("home-mic-device")).toHaveTextContent(
+      "电脑声音 · 扬声器 (Realtek(R) Audio)",
+    );
+    expect(card).toHaveTextContent("不使用麦克风");
+    expect(within(card).queryByTestId("home-mic-test")).toBeNull();
+    expect(within(card).getByTestId("home-mic-hint")).toHaveTextContent(
+      "听写录制电脑播放的声音；空闲时不录制。",
+    );
+    await user.click(within(switcher).getByRole("radio", { name: "混合" }));
+    expect(backend.peek().settings.recording).toMatchObject({
+      source: "mixed",
+      output_device: null,
+    });
+    expect(within(card).getByTestId("home-mic-device")).toHaveTextContent(
+      MOCK_AUDIO_DEVICES[0]?.name ?? "",
+    );
+    expect(within(card).getByTestId("home-mic-also")).toHaveTextContent(
+      "同时录制电脑声音 · 扬声器 (Realtek(R) Audio)",
+    );
+    expect(within(card).getByTestId("home-mic-hint")).toHaveTextContent("外放时请佩戴耳机");
+    expect(within(card).getByTestId("home-mic-test")).toBeInTheDocument();
+  });
+
+  it("the computer's sound is offered only where it can be recorded, with the reason on the choice", async () => {
+    renderApp({
+      mock: {
+        audioOutputs: { system_audio: { state: "macos_too_old", version: "14.5" }, devices: [] },
+      },
+    });
+    const switcher = await screen.findByTestId("home-mic-source");
+    const system = within(switcher).getByRole("radio", { name: "电脑声音" });
+    await waitFor(() => {
+      expect(system).toBeDisabled();
+    });
+    expect(system).toHaveAttribute(
+      "title",
+      "录制电脑声音需要 macOS 14.6 或更高版本，当前为 14.5。",
+    );
+    expect(within(switcher).getByRole("radio", { name: "混合" })).toBeDisabled();
+    expect(within(switcher).getByRole("radio", { name: "麦克风" })).toBeEnabled();
   });
 
   it("regression: 开始听写 starts a real session and shows the phase; 停止 finishes with the inserted text", async () => {

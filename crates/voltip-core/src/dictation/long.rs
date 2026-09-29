@@ -45,8 +45,12 @@ const WRITER_IDLE: Duration = Duration::from_millis(20);
 /// The core's own cutter (docs/dictation.md §22), used when the shell has none or it cannot run
 /// (its model is missing): once a segment reaches 30 s it is cut in the middle of the quietest
 /// 200 ms of its last 5 s, so segments run 25–30 s and are cut where the speech pauses if it does.
-#[derive(Debug, Default)]
+/// With another length ([`EnergySegmenter::cutting_after`]) it is the forced cut of a cutter that
+/// looks for pauses itself and says where it cut ([`EnergySegmenter::cut_at`]).
+#[derive(Debug)]
 pub struct EnergySegmenter {
+    /// A segment this long is cut.
+    cut_after: u64,
     /// Where the current segment starts.
     start: u64,
     /// Samples pushed so far.
@@ -58,10 +62,31 @@ pub struct EnergySegmenter {
     filled: u64,
 }
 
+impl Default for EnergySegmenter {
+    fn default() -> Self {
+        Self::cutting_after(FALLBACK_CUT_AFTER)
+    }
+}
+
 impl EnergySegmenter {
     /// A cutter for one take.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A cutter that cuts segments once they are `samples` long (at least 5 s) instead of 30 s.
+    pub fn cutting_after(samples: u64) -> Self {
+        Self { cut_after: samples.max(FALLBACK_SEARCH), start: 0, pos: 0, blocks: VecDeque::new(), sum: 0.0, filled: 0 }
+    }
+
+    /// The take was cut at `at` by someone else (a pause found there): the current segment starts
+    /// there. A position ahead of what was pushed, or behind the current start, changes nothing.
+    pub fn cut_at(&mut self, at: u64) {
+        if at <= self.start || at > self.pos {
+            return;
+        }
+        self.start = at;
+        self.blocks.retain(|&(block, _)| block >= at);
     }
 }
 
@@ -80,7 +105,7 @@ impl Segmenter for EnergySegmenter {
             while self.blocks.front().is_some_and(|&(at, _)| at + FALLBACK_SEARCH < self.pos) {
                 self.blocks.pop_front();
             }
-            if self.pos - self.start < FALLBACK_CUT_AFTER {
+            if self.pos - self.start < self.cut_after {
                 continue;
             }
             let quietest = self.blocks.iter().filter(|&&(at, _)| at >= self.start).min_by(|a, b| a.1.total_cmp(&b.1));
@@ -328,6 +353,22 @@ mod tests {
         }
         assert_eq!(segmenter.finish(), Some(95 * RATE), "the rest ends the take");
         assert_eq!(segmenter.finish(), Some(95 * RATE));
+    }
+
+    /// Another length: a cut after 45 s, and a cut someone else made restarts the count.
+    #[test]
+    fn a_longer_cutter_restarts_where_it_was_told() {
+        let mut segmenter = EnergySegmenter::cutting_after(45 * RATE);
+        assert!(segmenter.push(&paced(40)).is_empty(), "nothing before 45 s");
+        segmenter.cut_at(35 * RATE);
+        segmenter.cut_at(50 * RATE);
+        segmenter.cut_at(10 * RATE);
+        // 45 s after the cut at 35 s the cutter looks at 75–80 s, where the signal is even (the
+        // second slice pauses at 69.7 s): it cuts inside that window.
+        let cuts = segmenter.push(&paced(60)[..(45 * RATE) as usize]);
+        assert_eq!(cuts.len(), 1, "{cuts:?}");
+        assert!((75 * RATE..=80 * RATE).contains(&cuts[0]), "{}", cuts[0] as f64 / RATE as f64);
+        assert_eq!(EnergySegmenter::cutting_after(1).cut_after, FALLBACK_SEARCH, "at least the search window");
     }
 
     /// Without any pause the cut still comes within the last 5 s of 30.
