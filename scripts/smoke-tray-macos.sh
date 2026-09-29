@@ -50,6 +50,17 @@ wait_for() {
 }
 log_text() { sed $'s/\x1b\\[[0-9;]*m//g' "$log" 2>/dev/null || true; }
 log_has() { log_text | grep -E -- "$1" >/dev/null; }
+log_count() { log_text | grep -E -c -- "$1" || true; }
+log_count_above() { [ "$(log_count "$1")" -gt "$2" ]; }
+# settles <seconds> <command…>: whether the condition holds within the time (no failure).
+settles() {
+  local deadline=$((SECONDS + $1))
+  shift
+  until "$@"; do
+    [ "$SECONDS" -lt "$deadline" ] || return 1
+    sleep 0.25
+  done
+}
 
 helper=$out/tray-ax
 swiftc -O -o "$helper" "$here/tray-ax.swift"
@@ -168,22 +179,36 @@ polish_menu() { # <entries that must carry the ✓, in order>
   printf '%s\n' "${lines[@]}"
 }
 polish_shows() { [ "$(ax submenu "$polish_label")" = "$(polish_menu "$@")" ]; }
+# press_polish <entry> <the log line the app writes for it>: choose the entry and wait for that line
+# to appear once more. An accessibility press on a menu entry can report success and still never
+# reach the app (CI 2026-09-29: the switch, pressed right after a read of the submenu, left no
+# `tray menu polish` line, while the next press did); a press the app did not log within 10 s is
+# made once more, and the summary says so.
+press_polish() {
+  local entry=$1 line=$2 before
+  before=$(log_count "$line")
+  ax press-sub "$polish_label" "$entry"
+  if ! settles 10 log_count_above "$line" "$before"; then
+    note "AI Polish: the press on $entry did not reach the app; pressed again"
+    ax press-sub "$polish_label" "$entry"
+  fi
+  wait_for 30 "$entry in the log" log_count_above "$line" "$before"
+}
 note "AI Polish: $(ax submenu "$polish_label" | tr '\t\n' ' |' | sed 's/|$//; s/|/ | /g')"
 polish_shows "$toggle" "${presets[0]}" || fail "the AI Polish submenu differs from: $(polish_menu "$toggle" "${presets[0]}" | tr '\t\n' ' |')"
-ax press-sub "$polish_label" "${presets[1]}"
-wait_for 30 'the preset entry in the log' log_has 'tray menu polish action=Preset\("prompt"\)'
+press_polish "${presets[1]}" 'tray menu polish action=Preset\("prompt"\)'
 wait_for 30 'the second preset checked' polish_shows "$toggle" "${presets[1]}"
 note "AI Polish: chose ${presets[1]}"
 # The preset in use again: the menu must still show it checked.
-ax press-sub "$polish_label" "${presets[1]}"
+press_polish "${presets[1]}" 'tray menu polish action=Preset\("prompt"\)'
 wait_for 30 'the preset in use still checked' polish_shows "$toggle" "${presets[1]}"
-ax press-sub "$polish_label" "$toggle"
-wait_for 30 'the switch in the log' log_has 'tray menu polish action=Toggle'
+press_polish "$toggle" 'tray menu polish action=Toggle'
 wait_for 30 'the switch off' polish_shows "${presets[1]}"
 note 'AI Polish: switched off'
 # Leave the profile as it was found: the switch on, the first preset.
-ax press-sub "$polish_label" "$toggle"
-ax press-sub "$polish_label" "${presets[0]}"
+press_polish "$toggle" 'tray menu polish action=Toggle'
+wait_for 30 'the switch on again' polish_shows "$toggle" "${presets[1]}"
+press_polish "${presets[0]}" 'tray menu polish action=Preset\("proofread"\)'
 wait_for 30 'the defaults back' polish_shows "$toggle" "${presets[0]}"
 
 # 4e. Quit.

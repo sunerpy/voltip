@@ -112,6 +112,8 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, locale: TrayLocale, updater: bool
                 run(app, action);
             } else if let Some(action) = TrayPolishAction::from_id(id) {
                 run_polish(app, action);
+            } else {
+                tracing::warn!(id, "tray menu event for no entry");
             }
         })
         .on_tray_icon_event(|tray, event| {
