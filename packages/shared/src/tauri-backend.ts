@@ -15,6 +15,8 @@ import {
   UI_EVENT_NAME,
   appRefSchema,
   audioDeviceSchema,
+  builtinPresetTextSchema,
+  builtinSceneTermsSchema,
   feedbackInfoSchema,
   feedbackReceiptSchema,
   injectPreflightSchema,
@@ -155,6 +157,16 @@ export class TauriBackend implements Backend {
   async phoneClipboardRead() {
     const raw = await this.transport.invoke("phone_clipboard_read");
     return z.object({ text: z.string().nullable() }).parse(raw).text;
+  }
+
+  async presetsBuiltin() {
+    const raw = await this.transport.invoke("presets_builtin");
+    return builtinPresetTextSchema.array().parse(raw);
+  }
+
+  async scenesBuiltin() {
+    const raw = await this.transport.invoke("scenes_builtin");
+    return builtinSceneTermsSchema.array().parse(raw);
   }
 
   async injectPreflight() {

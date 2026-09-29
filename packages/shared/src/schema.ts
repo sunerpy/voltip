@@ -93,11 +93,74 @@ export const CHINESE_SCRIPTS = ["simplified", "traditional", "as_is"] as const;
 export const chineseScriptSchema = z.enum(CHINESE_SCRIPTS);
 export type ChineseScript = z.infer<typeof chineseScriptSchema>;
 
-/** How far the LLM clean-up may rewrite (`voltip_core::engines::RefineStyle`, docs/dictation.md
- *  §18.1): only a scene overrides it; the global setting is always `default`. */
-export const REFINE_STYLES = ["default", "punctuation", "formal"] as const;
-export const refineStyleSchema = z.enum(REFINE_STYLES);
-export type RefineStyle = z.infer<typeof refineStyleSchema>;
+/** The built-in AI presets (`voltip_core::presets::BuiltinPreset`, docs/dictation.md §21), in
+ *  the order the interface lists them; 校对 (`proofread`) is the default. */
+export const BUILTIN_PRESETS = [
+  "proofread",
+  "prompt",
+  "intent",
+  "chat",
+  "translate",
+  "notes",
+  "punctuation",
+  "formal",
+] as const;
+export const builtinPresetSchema = z.enum(BUILTIN_PRESETS);
+export type BuiltinPreset = z.infer<typeof builtinPresetSchema>;
+
+/** A preset as the engine settings, a scene or the history name it (`PresetId`): a built-in
+ *  name, or a custom preset's UUID. */
+export const presetIdSchema = z.union([builtinPresetSchema, z.guid()]);
+export type PresetId = z.infer<typeof presetIdSchema>;
+
+/** The default preset (`PresetId::default()`). */
+export const DEFAULT_PRESET: BuiltinPreset = "proofread";
+
+/** Whether `id` names a built-in preset (otherwise it is a custom preset's UUID). */
+export function isBuiltinPreset(id: string): id is BuiltinPreset {
+  return (BUILTIN_PRESETS as readonly string[]).includes(id);
+}
+
+/** `voltip_core::presets::{MAX_PRESETS, MAX_PRESET_NAME_CHARS, MAX_PRESET_PROMPT_CHARS,
+ *  MAX_PRESET_TRY_CHARS}`. */
+export const MAX_PRESETS = 30;
+export const MAX_PRESET_NAME_CHARS = 24;
+export const MAX_PRESET_PROMPT_CHARS = 4000;
+export const MAX_PRESET_TRY_CHARS = 2000;
+
+/** One of the user's presets (`CustomPreset`, `UiState.presets`). */
+export const customPresetSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  prompt: z.string(),
+  created_at_ms: z.number().nonnegative(),
+  updated_at_ms: z.number().nonnegative(),
+});
+export type CustomPreset = z.infer<typeof customPresetSchema>;
+
+/** What `presets_add` / `presets_update` send (`PresetDraft`). */
+export const presetDraftSchema = z.object({ name: z.string(), prompt: z.string() });
+export type PresetDraft = z.infer<typeof presetDraftSchema>;
+
+/** A preset as the history and the status name it (`PresetRef`; its name at the time). */
+export const presetRefSchema = z.object({ id: presetIdSchema, name: z.string() });
+export type PresetRef = z.infer<typeof presetRefSchema>;
+
+/** A built-in preset's own text (`presets_builtin`): what 复制为自定义 starts from. */
+export const builtinPresetTextSchema = z.object({ id: builtinPresetSchema, prompt: z.string() });
+export type BuiltinPresetText = z.infer<typeof builtinPresetTextSchema>;
+
+/** The answer to one `presets_try` (`PresetTryOutcome`). */
+export const presetTryOutcomeSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("ok"),
+    text: z.string(),
+    latency_ms: z.number().nonnegative(),
+    model: z.string(),
+  }),
+  z.object({ status: z.literal("failed"), reason: z.string() }),
+]);
+export type PresetTryOutcome = z.infer<typeof presetTryOutcomeSchema>;
 
 /** One provider's choices (`voltip_core::engines::ProviderSettings`): absent = the preset. */
 export const providerSettingsSchema = z.object({
@@ -117,6 +180,8 @@ export const engineSettingsSchema = z.object({
   /** Clean-up provider; `builtin` means none in a build without the built-in. */
   llm_provider: providerIdSchema.default("builtin"),
   refine_enabled: z.boolean().default(true),
+  /** What the clean-up does (docs/dictation.md §21); a custom preset that is gone refines with 校对. */
+  refine_preset: presetIdSchema.default(DEFAULT_PRESET),
   /** Per-provider choices; Rust omits the map when empty. */
   providers: z.partialRecord(providerIdSchema, providerSettingsSchema).optional(),
   /** Catalogue id of the local model (`qwen3-asr-0.6b`); absent / `null` = the catalogue default. */
@@ -151,6 +216,7 @@ export function defaultEngineSettings(): EngineSettings {
     asr_provider: "builtin",
     llm_provider: "builtin",
     refine_enabled: true,
+    refine_preset: DEFAULT_PRESET,
     local_device: "auto",
     live_preview: true,
     output_mode: "whole_take",
@@ -523,6 +589,27 @@ export const MAX_CONTEXT_TITLE_CHARS = 200;
 /** `SceneOverrides.language` meaning "no language hint for this take" (auto-detect). */
 export const LANGUAGE_AUTO = "auto";
 
+/** The built-in scene categories (`voltip_core::scenes::BuiltinScene`, docs/dictation.md §18.10),
+ *  in the order the desktop's list appends them. A built-in scene's `name` is its category. */
+export const BUILTIN_SCENES = [
+  "coding",
+  "office",
+  "chat",
+  "legal",
+  "medical",
+  "finance",
+  "academic",
+] as const;
+export const builtinSceneSchema = z.enum(BUILTIN_SCENES);
+export type BuiltinScene = z.infer<typeof builtinSceneSchema>;
+
+/** A built-in scene's term pack (`scenes_builtin`), what 查看术语 lists. */
+export const builtinSceneTermsSchema = z.object({
+  id: builtinSceneSchema,
+  terms: z.array(z.string()),
+});
+export type BuiltinSceneTerms = z.infer<typeof builtinSceneTermsSchema>;
+
 /** Which applications (normalised ids) and, optionally, which window titles a scene applies to. */
 export const sceneMatchSchema = z.object({
   apps: z.array(z.string()),
@@ -534,7 +621,8 @@ export type SceneMatch = z.infer<typeof sceneMatchSchema>;
  *  setting. The core omits unset ones (`skip_serializing_if`); drafts may send `null`. */
 export const sceneOverridesSchema = z.object({
   refine_enabled: z.boolean().nullable().optional(),
-  refine_style: refineStyleSchema.nullable().optional(),
+  /** The preset of this scene's takes (docs/dictation.md §21). */
+  refine_preset: presetIdSchema.nullable().optional(),
   output_mode: outputModeSchema.nullable().optional(),
   /** `auto` (no hint) or a language code (`zh`, `en`, `yue`). */
   language: z.string().nullable().optional(),
@@ -553,6 +641,9 @@ export const sceneSchema = z.object({
   overrides: sceneOverridesSchema.default(() => ({})),
   created_at_ms: z.number().nonnegative(),
   updated_at_ms: z.number().nonnegative(),
+  /** A built-in scene's category (§18.10): it may list no application, cannot be deleted or
+   *  renamed, and 恢复默认 (`scenes_restore`) puts its defaults back. */
+  builtin: builtinSceneSchema.optional(),
 });
 export type Scene = z.infer<typeof sceneSchema>;
 
@@ -569,8 +660,13 @@ export type SceneDraft = z.infer<typeof sceneDraftSchema>;
 export const appRefSchema = z.object({ id: z.string(), name: z.string() });
 export type AppRef = z.infer<typeof appRefSchema>;
 
-/** A scene as the status and the history name it (`SceneRef`; its name at the time). */
-export const sceneRefSchema = z.object({ id: z.string(), name: z.string() });
+/** A scene as the status and the history name it (`SceneRef`; its name at the time, a built-in
+ *  scene's category, which the interface names in its own language). */
+export const sceneRefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  builtin: builtinSceneSchema.optional(),
+});
 export type SceneRef = z.infer<typeof sceneRefSchema>;
 
 /** The take's context (`TakeContext`): the app in front when it started and the matched scene. */
@@ -591,6 +687,9 @@ export const dictationStatusSchema = z.object({
   kind: takeKindSchema.default("dictation"),
   /** The paired phone the take's audio comes from (docs/dictation.md §20), by name. */
   remote: z.string().optional(),
+  /** The preset the take's clean-up runs with (docs/dictation.md §21): the pill names it while
+   *  refining; absent when the clean-up is off. */
+  preset: presetRefSchema.optional(),
 });
 export type DictationStatus = z.infer<typeof dictationStatusSchema>;
 
@@ -788,6 +887,9 @@ export const historyEntrySchema = z.object({
    *  probe did not answer (or on the phone), and in rows written before scenes. */
   app: appRefSchema.optional(),
   scene: sceneRefSchema.optional(),
+  /** The preset the clean-up ran with (docs/dictation.md §21); absent when the text was not
+   *  cleaned up, and in rows written before presets. */
+  preset: presetRefSchema.optional(),
   /** A phone's take or text rather than this device's own (docs/dictation.md §20.6). */
   origin: entryOriginSchema.optional(),
 });
@@ -1524,6 +1626,9 @@ export const uiStateSchema = z.object({
   rules: z.array(replacementRuleSchema).default(() => []),
   /** The scenes (§18), in matching order; `[]` on the phone. */
   scenes: z.array(sceneSchema).default(() => []),
+  /** The custom presets (§21), in the order they were made; `[]` on the phone. The built-in
+   *  presets are the interface's own. */
+  presets: z.array(customPresetSchema).default(() => []),
   /** The phone's current or last take streamed to a desktop (§20); absent on the desktop. */
   phone_take: phoneTakeViewSchema.optional(),
   /** The texts this phone sent (§20.6), newest first; always empty on the desktop. */
@@ -1571,6 +1676,14 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("rules"), rules: z.array(replacementRuleSchema) }),
   /** The whole scene list after every change (§18). */
   z.object({ type: z.literal("scenes"), scenes: z.array(sceneSchema) }),
+  /** The custom presets, whole (§21). */
+  z.object({ type: z.literal("presets"), presets: z.array(customPresetSchema) }),
+  /** The answer to one `presets_try`, by the id the request carried (not folded into the state). */
+  z.object({
+    type: z.literal("preset_try"),
+    id: z.number().int().nonnegative(),
+    outcome: presetTryOutcomeSchema,
+  }),
   /** The phone's take to a desktop moved (§20); `null` before the first. */
   z.object({ type: z.literal("phone_take"), take: phoneTakeViewSchema.nullable() }),
   /** The phone's list of sent texts, whole (§20.6). */
@@ -1647,6 +1760,15 @@ export type VocabularyPreviewArgs = { text: string; draft?: PreviewDraft | null 
 
 /** `scenes_update` arguments (docs/dictation.md §18.6). */
 export type ScenesUpdateArgs = { id: string; scene: SceneDraft };
+export type PresetsUpdateArgs = { id: string; preset: PresetDraft };
+/** `presets_try`: exactly one of `preset` (a saved preset) and `prompt` (the instruction being
+ *  edited); the answer is a `preset_try` event with `id`. */
+export type PresetsTryArgs = {
+  id: number;
+  preset: PresetId | null;
+  prompt: string | null;
+  text: string;
+};
 
 /** `settings_set_context_sharing` arguments: both switches together. */
 export type SetContextSharingArgs = { appName: boolean; windowTitle: boolean };
@@ -1787,6 +1909,18 @@ export interface CommandArgs {
   scenes_update: ScenesUpdateArgs;
   scenes_remove: { id: string };
   scenes_reorder: { ids: string[] };
+  /** 恢复默认 on a built-in scene (§18.10): its applications and overrides back to the defaults. */
+  scenes_restore: { id: string };
+  /** Query: every built-in scene's term pack (`Backend.scenesBuiltin`, 查看术语). */
+  scenes_builtin: undefined;
+  /** Custom presets (§21); the core re-emits `presets`. */
+  presets_add: { preset: PresetDraft };
+  presets_update: PresetsUpdateArgs;
+  presets_remove: { id: string };
+  /** 试一试 on a preset: nothing is saved; the answer is a `preset_try` event. */
+  presets_try: PresetsTryArgs;
+  /** Query: every built-in preset's text (`Backend.presetsBuiltin`, 复制为自定义). */
+  presets_builtin: undefined;
   /** Which parts of a take's context may go to the LLM (§18.5); the core re-emits `settings`. */
   settings_set_context_sharing: SetContextSharingArgs;
   /** Query: the apps the history saw, newest first (`Backend.recentApps`, the scene editor). */
@@ -1828,7 +1962,9 @@ export type QueryCommand =
   | "feedback_attachment_add"
   | "feedback_attachment_remove"
   | "feedback_attachments_clear"
-  | "phone_clipboard_read";
+  | "phone_clipboard_read"
+  | "presets_builtin"
+  | "scenes_builtin";
 export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "core_state",
   "audio_devices",
@@ -1851,6 +1987,8 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "feedback_attachment_remove",
   "feedback_attachments_clear",
   "phone_clipboard_read",
+  "presets_builtin",
+  "scenes_builtin",
 ];
 /** Commands the UI dispatches through `Backend.invoke` (everything except the queries / streams). */
 export type MutationCommand = Exclude<CommandName, QueryCommand>;
@@ -1939,6 +2077,8 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
       return { ...state, rules: event.rules };
     case "scenes":
       return { ...state, scenes: event.scenes };
+    case "presets":
+      return { ...state, presets: event.presets };
     case "hardware": {
       const { type: _type, ...hardware } = event;
       return { ...state, hardware };
@@ -1965,6 +2105,7 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
     case "error":
     case "provider_probe":
     case "paste_result":
+    case "preset_try":
       return state;
   }
 }

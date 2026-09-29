@@ -67,6 +67,8 @@ describe("BackendProvider", () => {
       feedbackAttachmentRemove: () => Promise.resolve(),
       feedbackAttachmentsClear: () => Promise.resolve(),
       phoneClipboardRead: () => Promise.resolve(null),
+      presetsBuiltin: () => Promise.resolve([]),
+      scenesBuiltin: () => Promise.resolve([]),
     };
     render(
       <BackendProvider backend={backend}>
@@ -116,6 +118,8 @@ describe("BackendProvider", () => {
       feedbackAttachmentRemove: () => Promise.resolve(),
       feedbackAttachmentsClear: () => Promise.resolve(),
       phoneClipboardRead: () => Promise.resolve(null),
+      presetsBuiltin: () => Promise.resolve([]),
+      scenesBuiltin: () => Promise.resolve([]),
     };
     render(
       <BackendProvider backend={backend}>

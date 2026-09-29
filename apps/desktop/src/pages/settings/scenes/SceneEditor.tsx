@@ -4,6 +4,7 @@ import {
   type Scene,
   isStreamingOutputMode,
   normalizeAppId,
+  sceneLabel,
 } from "@voltip/shared";
 import {
   Button,
@@ -30,11 +31,11 @@ import {
   hasProblems,
   languageChoices,
   outputModeChoices,
+  presetChoices,
   promptChars,
   refineChoices,
   sceneDraftOf,
   scriptChoices,
-  styleChoices,
 } from "./helpers";
 
 export interface SceneEditorProps {
@@ -84,6 +85,7 @@ export function SceneEditor({ scene, onClose }: SceneEditorProps) {
   const shell = useShell();
   const { t, locale } = useI18n();
   const state = useUiState();
+  const presets = state.presets;
   const promptId = useId();
   const [draft, setDraft] = useState<EditorDraft>(() => editorDraftFrom(scene));
   const [appInput, setAppInput] = useState("");
@@ -107,10 +109,13 @@ export function SceneEditor({ scene, onClose }: SceneEditorProps) {
     };
   }, [backend]);
 
+  // A built-in scene (§18.10) keeps its name and may list no application.
+  const builtin = scene?.builtin !== undefined;
   const problems = editorProblems(
     draft,
     state.scenes.filter((s) => s.id !== scene?.id),
     t,
+    builtin,
   );
   const shown = (p: EditorProblems[keyof EditorProblems]) =>
     p !== undefined && (attempted || !p.missing) ? p.text : undefined;
@@ -147,6 +152,27 @@ export function SceneEditor({ scene, onClose }: SceneEditorProps) {
       setSaveError(errorText(e));
     }
   };
+  const restore = () => {
+    if (scene === undefined) return;
+    const name = sceneLabel(scene, locale);
+    shell.confirm({
+      title: t("sceneEditor.restoreTitle", { name }),
+      body: t("sceneEditor.restoreBody"),
+      confirmLabel: t("sceneEditor.restore"),
+      tone: "primary",
+      onConfirm: () => {
+        backend.invoke("scenes_restore", { id: scene.id }).then(
+          () => {
+            shell.toast({ message: t("sceneEditor.restored", { name }), duration: 3000 });
+            onClose();
+          },
+          (e: unknown) => {
+            setSaveError(errorText(e));
+          },
+        );
+      },
+    });
+  };
   const streamingNotReady =
     draft.outputMode !== "" &&
     isStreamingOutputMode(draft.outputMode) &&
@@ -161,6 +187,17 @@ export function SceneEditor({ scene, onClose }: SceneEditorProps) {
       onClose={onClose}
       actions={
         <>
+          {builtin && (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon="refresh"
+              className="mr-auto"
+              data-testid="scene-restore"
+              onClick={restore}>
+              {t("sceneEditor.restore")}
+            </Button>
+          )}
           <Button size="sm" variant="ghost" onClick={onClose}>
             {t("common.cancel")}
           </Button>
@@ -184,17 +221,29 @@ export function SceneEditor({ scene, onClose }: SceneEditorProps) {
             void save();
           }
         }}>
-        <Input
-          label={t("sceneEditor.name")}
-          size="sm"
-          value={draft.name}
-          placeholder={t("sceneEditor.namePlaceholder")}
-          error={shown(problems.name)}
-          data-autofocus
-          onChange={(e) => {
-            update({ name: e.target.value });
-          }}
-        />
+        {builtin && scene !== undefined ? (
+          // The stored name is the category; the interface names it in its own language.
+          <Input
+            label={t("sceneEditor.name")}
+            size="sm"
+            value={sceneLabel(scene, locale)}
+            readOnly
+            help={t("sceneEditor.builtinName")}
+            data-testid="scene-builtin-name"
+          />
+        ) : (
+          <Input
+            label={t("sceneEditor.name")}
+            size="sm"
+            value={draft.name}
+            placeholder={t("sceneEditor.namePlaceholder")}
+            error={shown(problems.name)}
+            data-autofocus
+            onChange={(e) => {
+              update({ name: e.target.value });
+            }}
+          />
+        )}
 
         <div className="flex flex-col gap-2" data-testid="scene-editor-apps">
           <div className="flex items-start gap-2">
@@ -206,7 +255,11 @@ export function SceneEditor({ scene, onClose }: SceneEditorProps) {
               value={appInput}
               placeholder={t("sceneEditor.appPlaceholder")}
               error={shown(problems.apps)}
-              help={t("sceneEditor.appsHelp")}
+              help={
+                builtin
+                  ? `${t("sceneEditor.appsHelp")} ${t("sceneEditor.builtinApps")}`
+                  : t("sceneEditor.appsHelp")
+              }
               onChange={(e) => {
                 setAppInput(e.target.value);
               }}
@@ -314,13 +367,16 @@ export function SceneEditor({ scene, onClose }: SceneEditorProps) {
               }}
             />
             <Select
-              label={t("sceneEditor.style")}
+              label={t("sceneEditor.preset")}
               size="sm"
-              value={draft.style}
-              options={styleChoices(t)}
-              onChange={(style) => {
-                update({ style });
+              value={draft.preset}
+              options={presetChoices(presets, draft.preset, t)}
+              onChange={(preset) => {
+                update({ preset });
               }}
+              data-testid="scene-preset"
+              // Custom presets are named by the user.
+              {...(presets.length > 0 ? { "data-user-text": "" } : {})}
             />
             <div className="flex flex-col gap-1">
               <Select

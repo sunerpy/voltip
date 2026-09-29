@@ -43,7 +43,7 @@ home:
         dark: /screens/overlay-processing-en-dark.webp
         width: 784
         height: 70
-        alt: The overlay during AI polish, showing the time the step has taken.
+        alt: The overlay during AI polish, showing the preset in use and the time the step has taken.
       - light: /screens/overlay-inserted-en-light.webp
         dark: /screens/overlay-inserted-en-dark.webp
         width: 784
@@ -97,12 +97,12 @@ home:
             status: available
             link: /recognition/dictionary
           - title: Scenes by app
-            body: The app you speak into can choose the polish style, the output mode, the language and extra instructions for the AI.
+            body: The app you speak into can choose the AI preset, the output mode, the language and extra instructions for the AI.
             status: available
             link: /recognition/scenes
           - title: AI presets and built-in scenes
-            body: Proofread, prompt, intent, chat, translation and notes presets, switched from the home page, the title bar or the tray, plus ready-made scenes for coding, office writing, chat and professional fields.
-            status: building
+            body: Proofread, prompt, intent, chat, translation and notes presets and presets of your own, switched from the home page, the title bar or the tray, plus ready-made scenes for coding, office writing, chat and professional fields.
+            status: available
             link: /recognition/polish#presets
       - name: Phone, history and long recordings
         items:
@@ -242,9 +242,6 @@ home:
     title: What comes next
     intro: The next releases, in the expected order. No dates are promised; each feature is described on this site once it ships.
     items:
-      - title: AI presets and built-in scenes
-        status: building
-        body: The default Proofread preset fixes typos and punctuation, removes filler words, and keeps only the corrected wording when you correct yourself. Further presets cover prompts, intent, chat, translation between Chinese and English, and notes; you can also write your own.
       - title: 20,000 history entries and statistics
         status: building
         body: The history limit rises from 500 to 20,000 entries, and the home page shows words dictated, words corrected and time saved by day, week and month. Time saved is speaking time × 1.9, based on Ruan et al. 2016.
@@ -294,7 +291,7 @@ Release packages also include a default cloud service, so dictation works before
 
 Recognition gets the words; the next steps make them read right. The dictionary corrects the names and terms a recogniser tends to mishear. AI polish removes filler words and fixes the punctuation. Replacement rules rewrite phrases exactly as you specify, and scenes adjust all of this to the app you are writing in.
 
-Presets are in development <StatusTag status="building" />: choose between proofreading, prompt writing, intent, chat, translation and notes from the home page, the title bar or the tray.
+Presets decide what AI polish does: proofreading by default, or a prompt, intent, chat, translation or notes, chosen from the home page, the title bar or the tray, and presets you write yourself.
 
 [AI polish](/recognition/polish) · [Dictionary and rules](/recognition/dictionary) · [Scenes](/recognition/scenes)
 

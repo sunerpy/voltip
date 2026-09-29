@@ -315,6 +315,8 @@ describe("History page", () => {
     expect(screen.getByTestId("entry-text")).toHaveTextContent(
       "这个函数的返回值类型改成 option string",
     );
+    // docs/dictation.md §21: a cleaned-up row names the preset it ran with.
+    expect(screen.getByTestId("history-detail-preset")).toHaveTextContent("校对");
     await user.click(screen.getByRole("button", { name: "复制" }));
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("option string"));
     expect(await screen.findByText(/已复制到剪贴板 · \d+ 字/)).toBeInTheDocument();
@@ -324,6 +326,7 @@ describe("History page", () => {
     expect(screen.getByRole("radio", { name: "插入文本" })).toBeInTheDocument();
     expect(screen.getByText(/润色 — · 未启用/)).toBeInTheDocument();
     expect(screen.getByText("未润色")).toBeInTheDocument();
+    expect(screen.queryByTestId("history-detail-preset")).toBeNull();
   });
 
   it("regression: star, delete and clear are real core commands; deleting selects the neighbour and there is no fake success toast", async () => {

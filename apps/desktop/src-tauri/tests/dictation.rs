@@ -147,17 +147,17 @@ async fn http_refiner_maps_results_and_errors() {
     let system = body["messages"][0]["content"].as_str().unwrap();
     assert!(system.ends_with("\n- 世界") && system.contains("语言代码：zh"), "{body}");
     assert!(!system.contains("听写场景") && !system.contains("场景要求"), "no context, no scene blocks: {system}");
-    // docs/dictation.md §18.5: the take's style and context reach the system message, the user
-    // message stays the text; a title the core did not pass never appears.
+    // docs/dictation.md §18.5, §21: the take's preset and context reach the system message, the
+    // user message stays the text; a title the core did not pass never appears.
     let hints = RefineHints {
-        style: voltip_core::RefineStyle::Punctuation,
+        preset: voltip_core::TakePreset::Builtin(voltip_core::BuiltinPreset::Punctuation),
         context: RefineContext { app_name: Some("Slack".into()), window_title: None, instruction: Some("口语化，句末不加句号".into()) },
         ..RefineHints::default()
     };
     r.refine("好的呀", &hints).await.unwrap();
     let body: serde_json::Value = serde_json::from_slice(&server.received_requests().await.unwrap()[1].body).unwrap();
     let system = body["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains("只处理标点") && system.contains("\n当前应用：Slack") && !system.contains("窗口标题"), "{system}");
+    assert!(system.contains("标点校对") && system.contains("\n当前应用：Slack") && !system.contains("窗口标题"), "{system}");
     assert!(system.ends_with("\n口语化，句末不加句号"), "{system}");
     assert_eq!(body["messages"][1]["content"], "好的呀");
     server.reset().await;

@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::models::{DEFAULT_LOCAL_MODEL_ID, ModelState};
+use crate::presets::PresetId;
 pub use crate::providers::{KeyPolicy, ProviderId, ServiceKind};
 use crate::providers::{PROVIDERS, key_entry};
 
@@ -86,32 +87,6 @@ impl ChineseScript {
     }
 }
 
-/// How far the LLM clean-up may rewrite (mirrors `voltip_refine::RefineStyle`). The global settings
-/// have no such field — a take refines with `Default` — only a scene overrides it
-/// (docs/dictation.md §18.1).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RefineStyle {
-    /// Punctuation, obvious mis-recognitions and spoken fillers (标准).
-    #[default]
-    Default,
-    /// Punctuation and sentence breaks only; every word stays (只加标点).
-    Punctuation,
-    /// Default plus a light shift towards written register (书面语).
-    Formal,
-}
-
-impl RefineStyle {
-    /// Wire name (`default` | `punctuation` | `formal`).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Default => "default",
-            Self::Punctuation => "punctuation",
-            Self::Formal => "formal",
-        }
-    }
-}
-
 /// Where on-device models run (docs/dictation.md §10.4).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -182,6 +157,9 @@ pub struct EngineSettings {
     pub llm_provider: ProviderId,
     /// Run the clean-up after recognition (a scene may override it per take).
     pub refine_enabled: bool,
+    /// What the clean-up does (docs/dictation.md §21; a scene may override it per take). A custom
+    /// preset that no longer exists refines with 校对.
+    pub refine_preset: PresetId,
     /// Per-provider model and endpoint choices; providers without an entry use their presets.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub providers: BTreeMap<ProviderId, ProviderSettings>,
@@ -221,6 +199,7 @@ impl Default for EngineSettings {
             asr_provider: ProviderId::Builtin,
             llm_provider: ProviderId::Builtin,
             refine_enabled: true,
+            refine_preset: PresetId::default(),
             providers: BTreeMap::new(),
             local_model: None,
             local_device: LocalDevice::Auto,
@@ -465,6 +444,8 @@ pub struct ResolvedEngines {
     pub language: Option<String>,
     /// `EngineSettings.refine_enabled` (a scene may override it per take).
     pub refine_enabled: bool,
+    /// `EngineSettings.refine_preset` (a scene may override it per take).
+    pub refine_preset: PresetId,
     /// The clean-up provider chosen (`None`: none in this build).
     pub llm_provider: Option<ProviderId>,
     /// The clean-up service, whenever its provider is ready (also with `refine_enabled` off: voice
@@ -549,6 +530,7 @@ impl ResolvedEngines {
             asr_model,
             language: trimmed(settings.language.as_deref()).map(str::to_owned),
             refine_enabled: settings.refine_enabled,
+            refine_preset: settings.refine_preset,
             llm_provider,
             refine,
             refine_issue,
@@ -893,7 +875,7 @@ mod tests {
         assert_eq!(s.inject, InjectMode::Paste);
         assert_eq!(
             serde_json::to_string(&s).unwrap(),
-            r#"{"asr_provider":"builtin","llm_provider":"builtin","refine_enabled":true,"local_device":"auto","live_preview":true,"output_mode":"whole_take","vad_trim":false,"chinese_script":"simplified","inject":"paste"}"#
+            r#"{"asr_provider":"builtin","llm_provider":"builtin","refine_enabled":true,"refine_preset":"proofread","local_device":"auto","live_preview":true,"output_mode":"whole_take","vad_trim":false,"chinese_script":"simplified","inject":"paste"}"#
         );
         let parsed: EngineSettings = serde_json::from_str(
             r#"{"asr_provider":"groq","providers":{"groq":{"asr_model":"whisper-large-v3"},"custom":{"llm_url":"http://10.0.0.2:8000/v1"}},"local_threads":6,"local_device":"gpu","local_gpu":"Vulkan0"}"#,
@@ -903,6 +885,11 @@ mod tests {
         assert_eq!(parsed.llm_provider, ProviderId::Builtin, "missing keys take the defaults");
         assert_eq!(parsed.provider(ProviderId::Groq).model(ServiceKind::Asr), Some("whisper-large-v3"));
         assert_eq!(parsed.provider(ProviderId::Custom).url(ServiceKind::Llm), Some("http://10.0.0.2:8000/v1"));
+        assert_eq!(parsed.refine_preset, PresetId::default(), "settings from before presets refine with 校对");
+        let custom = uuid::Uuid::new_v4();
+        let chosen: EngineSettings = serde_json::from_str(&format!(r#"{{"refine_preset":"{custom}"}}"#)).unwrap();
+        assert_eq!(chosen.refine_preset, PresetId::Custom(custom));
+        assert!(serde_json::from_str::<EngineSettings>(r#"{"refine_preset":"casual"}"#).is_err(), "unknown presets are refused");
         assert_eq!(parsed.provider(ProviderId::Openai), ProviderSettings::default());
         assert_eq!((parsed.local_device, parsed.local_gpu.as_deref(), parsed.local_threads), (LocalDevice::Gpu, Some("Vulkan0"), Some(6)));
         let round = serde_json::to_string(&parsed).unwrap();
@@ -1232,18 +1219,6 @@ mod tests {
             assert_eq!(ResolvedEngines::resolve(&settings, &UserSecrets::default(), &BUILT).chinese_script, script);
         }
         assert!(serde_json::from_str::<EngineSettings>(r#"{"chinese_script":"hk"}"#).is_err(), "unknown scripts are refused");
-    }
-
-    /// docs/dictation.md §18.1: the refine style only exists as a scene override.
-    #[test]
-    fn refine_styles_serialize_snake_case() {
-        for (style, wire) in [(RefineStyle::Default, "default"), (RefineStyle::Punctuation, "punctuation"), (RefineStyle::Formal, "formal")] {
-            assert_eq!(serde_json::to_string(&style).unwrap(), format!("\"{wire}\""));
-            assert_eq!(serde_json::from_str::<RefineStyle>(&format!("\"{wire}\"")).unwrap(), style);
-            assert_eq!(style.as_str(), wire);
-        }
-        assert_eq!(RefineStyle::default(), RefineStyle::Default);
-        assert!(serde_json::from_str::<RefineStyle>(r#""casual""#).is_err());
     }
 
     #[test]

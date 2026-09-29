@@ -19,6 +19,12 @@ On Windows the installer finishes the update and restarts the app. On macOS and 
 
 On a Mac, updating from 0.0.6 or earlier asks for the permissions once more; see [Install](/guide/install#macos). From version 0.0.7 every release is signed with the same certificate so that later updates keep the microphone and Accessibility permissions. The first such update, from 0.0.7 to 0.0.8, has not been checked on a real Mac yet.
 
+### If a check fails
+
+The text after **Update failed** names the cause, for example that the connection timed out, was refused or could not be secured. Voltip gives up when a connection to the update server takes longer than 15 seconds to open, or when the server sends nothing for 30 seconds.
+
+Updates are downloaded from GitHub. Voltip does not use the proxy set in the Windows or macOS settings. If you reach GitHub through a proxy tool, use its TUN mode, or set the `HTTPS_PROXY` environment variable and start Voltip again.
+
 ## Where your data is kept
 
 Settings, the history, the dictionary, the rules, the scenes and the downloaded models are stored in one folder per user:

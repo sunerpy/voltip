@@ -91,6 +91,31 @@ fn glossary_is_ordered_deduplicated_and_capped() {
     assert_eq!(glossary[0], long[0].term, "dictionary order is priority");
 }
 
+/// §18.10: a built-in scene's pack joins the glossary after the dictionary's terms, skipping the
+/// ones already there (ASCII case), inside the same term and character caps; corrections and
+/// rules are unchanged, and the dictionary's own vocabulary is not touched.
+#[test]
+fn pack_terms_follow_the_dictionary_inside_the_same_caps() {
+    let entries = vec![entry("Kubernetes", &["酷伯内提斯"]), entry("Voltip", &[])];
+    let vocab = Vocabulary::compile(&entries, &[]);
+    let with = vocab.with_terms(&["kubernetes", "Docker", "Voltip", "gRPC"]);
+    assert_eq!(with.glossary(), ["Kubernetes", "Voltip", "Docker", "gRPC"]);
+    assert_eq!(vocab.glossary(), ["Kubernetes", "Voltip"], "the take's copy only");
+    assert_eq!(with.correct("酷伯内提斯").text, "Kubernetes");
+    // A full dictionary leaves no room: nothing is added past the caps.
+    let many: Vec<DictionaryEntry> = (0..MAX_DICTIONARY_ENTRIES).map(|i| entry(&format!("{i:03}"), &[])).collect();
+    let full = Vocabulary::compile(&many, &[]);
+    assert_eq!(full.with_terms(&["Docker"]).glossary().len(), MAX_GLOSSARY_TERMS);
+    let wider: Vec<DictionaryEntry> = (0..166).map(|i| entry(&format!("t{i:03}"), &[])).collect();
+    let near = Vocabulary::compile(&wider, &[]);
+    // 4 + 165 × 6 = 994 characters: ", Go" fits (998); ", Docker" would not (1006) and ends the list.
+    assert_eq!(near.with_terms(&["Go", "Docker", "C"]).glossary().len(), 167);
+    assert_eq!(near.with_terms(&["Docker", "Go"]).glossary().len(), 166, "the first term that does not fit ends the pack");
+    let prompt = glossary_prompt(near.with_terms(&["Go"]).glossary()).unwrap();
+    assert!(prompt.chars().count() <= MAX_GLOSSARY_CHARS);
+    assert_eq!(Vocabulary::empty().with_terms(&["API", "SDK"]).glossary(), ["API", "SDK"]);
+}
+
 /// Rules run in list order, each on the previous output (chaining); literal and regex; case.
 #[test]
 fn rules_run_in_order_and_chain() {

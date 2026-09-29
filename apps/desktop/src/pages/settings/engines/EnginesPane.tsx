@@ -24,6 +24,7 @@ import {
 } from "./helpers";
 import { LivePreview } from "./LivePreview";
 import { OutputMode, VadTrim } from "./OutputMode";
+import { PresetsSection } from "./PresetsSection";
 import { ProviderCard } from "./ProviderCard";
 
 /** The 语音模型 group of the settings dialog (docs/dictation.md §3), in two views: 服务商与模型
@@ -111,6 +112,7 @@ function ProviderList({ kind }: { kind: ServiceKind }) {
           {t("engines.refineLiveInject")}
         </p>
       )}
+      {kind === "llm" && <PresetsSection />}
       <SettingsSection
         title={t(kind === "asr" ? "engines.asrSection.title" : "engines.llmSection.title")}
         description={t(kind === "asr" ? "engines.asrSection.note" : "engines.llmSection.note")}

@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::CoreError;
 use crate::dictation::{ClipboardCode, InjectNote, OutputMode, Segment, TakeKind, Via};
+use crate::presets::PresetRef;
 use crate::scenes::{AppRef, SceneRef};
 use crate::vocabulary::VocabularyHits;
 
@@ -122,6 +123,10 @@ pub struct HistoryEntry {
     /// The scene the take ran with, by id and its name at the time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene: Option<SceneRef>,
+    /// The preset the clean-up ran with (docs/dictation.md §21), by id and its name at the time;
+    /// absent when the text was not cleaned up, and in entries written before presets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<PresetRef>,
     /// A phone's take or text rather than this device's own (docs/dictation.md §20.6); absent for
     /// the device's own takes and in entries written before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -285,6 +290,7 @@ mod tests {
             edit: None,
             app: None,
             scene: None,
+            preset: None,
             origin: None,
         }
     }
@@ -465,13 +471,18 @@ mod tests {
         let plain = entry("你好");
         let json = serde_json::to_string(&plain).unwrap();
         assert!(!json.contains("\"app\"") && !json.contains("\"scene\""), "{json}");
+        assert!(!json.contains("\"preset\""), "no clean-up, no preset: {json}");
         let with = HistoryEntry {
             app: Some(AppRef { id: "slack".into(), name: "Slack".into() }),
-            scene: Some(SceneRef { id: Uuid::nil(), name: "聊天".into() }),
+            scene: Some(SceneRef { id: Uuid::nil(), name: "聊天".into(), builtin: None }),
+            preset: Some(PresetRef { id: crate::presets::PresetId::Builtin(crate::presets::BuiltinPreset::Chat), name: "口语聊天".into() }),
             ..plain
         };
         let json = serde_json::to_string(&with).unwrap();
-        assert!(json.ends_with(r#""app":{"id":"slack","name":"Slack"},"scene":{"id":"00000000-0000-0000-0000-000000000000","name":"聊天"}}"#), "{json}");
+        assert!(
+            json.ends_with(r#""app":{"id":"slack","name":"Slack"},"scene":{"id":"00000000-0000-0000-0000-000000000000","name":"聊天"},"preset":{"id":"chat","name":"口语聊天"}}"#),
+            "{json}"
+        );
         assert_eq!(serde_json::from_str::<HistoryEntry>(&json).unwrap(), with);
         let dir = tempfile::tempdir().unwrap();
         let mut store = HistoryStore::open(dir.path());

@@ -303,12 +303,17 @@ pub struct DictationStatus {
     /// for the local microphone. Stamped by the runtime.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote: Option<String>,
+    /// The preset the take's clean-up runs with (docs/dictation.md §21): set when processing
+    /// starts with the clean-up on (the pill names it while refining), cleared by the next start
+    /// and by `Idle`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<crate::presets::PresetRef>,
 }
 
 impl DictationStatus {
     /// A dictation take's status without a context (the pre-§18 / §19 shape).
     pub fn dictation(phase: DictationPhase, session: u64) -> Self {
-        Self { phase, session, context: None, kind: TakeKind::Dictation, remote: None }
+        Self { phase, session, context: None, kind: TakeKind::Dictation, remote: None, preset: None }
     }
 }
 
@@ -443,8 +448,10 @@ mod tests {
     #[test]
     fn the_take_context_is_optional_on_the_status() {
         use crate::scenes::{AppRef, SceneRef};
-        let context =
-            TakeContext { app: AppRef { id: "slack".into(), name: "Slack".into() }, scene: Some(SceneRef { id: uuid::Uuid::nil(), name: "聊天".into() }) };
+        let context = TakeContext {
+            app: AppRef { id: "slack".into(), name: "Slack".into() },
+            scene: Some(SceneRef { id: uuid::Uuid::nil(), name: "聊天".into(), builtin: None }),
+        };
         let st = DictationStatus {
             context: Some(context),
             ..DictationStatus::dictation(DictationPhase::Listening { started_at: 5, ready: true, live: None, locked: false }, 3)

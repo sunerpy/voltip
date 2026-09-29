@@ -39,6 +39,7 @@ fn is_unspaced_script(c: char) -> bool {
 }
 
 /// Many literal patterns, each mapped to a target (a dictionary entry, or the one rule).
+#[derive(Clone)]
 pub(crate) struct LiteralMatcher {
     ac: AhoCorasick,
     /// Per pattern: (needs a boundary before, needs one after).

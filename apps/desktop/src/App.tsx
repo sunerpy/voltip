@@ -79,7 +79,7 @@ function Page({ route }: { route: Exclude<Route, { name: "settings" | "feedback"
     case "speech":
       return <SpeechModels />;
     case "ai":
-      return <AiModels />;
+      return <AiModels section={route.section} />;
     case "onboarding":
       return <Onboarding step={route.step} />;
     case "overlay":

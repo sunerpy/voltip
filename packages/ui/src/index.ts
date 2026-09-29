@@ -17,6 +17,7 @@ export * from "./components/Toggle";
 export * from "./components/Segmented";
 export * from "./components/Input";
 export * from "./components/Select";
+export * from "./components/Menu";
 export * from "./components/Keycap";
 export * from "./components/Banner";
 export * from "./components/LampText";

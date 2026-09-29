@@ -12,7 +12,7 @@ Scenes are set up under **Settings → Scenes**.
 
 - **Apps**: the apps it applies to, picked from the apps in your history or entered by name. Optionally, **window title keywords** narrow it to windows whose title contains one of them.
 - **Overrides**, each of which can also follow the global setting:
-  - AI polish on or off, and its [style](/recognition/polish#styles);
+  - AI polish on or off, and its [preset](/recognition/polish#presets);
   - the [output mode](/dictation/output#output-modes);
   - the language;
   - the Chinese script.
@@ -34,19 +34,19 @@ On a Mac, window titles are not read, so title keywords have no effect. A pure W
 
 ## Limits
 
-Up to 50 scenes, each with up to 20 apps and 10 title keywords.
+Up to 50 scenes of your own, each with up to 20 apps and 10 title keywords. The built-in scenes do not count towards the 50.
 
 ## Built-in scenes
 
-<StatusTag status="building" />
+Voltip comes with ready-made scenes for common kinds of writing. Each has an [AI preset](/recognition/polish#presets), extra instructions, a list of specialist terms and a list of apps for Windows, macOS and Linux.
 
-In development: ready-made scenes that you can switch on, adjust and reset, each with an [AI preset](/recognition/polish#presets), extra instructions, a list of specialist terms and a list of apps.
+| Scene | For | Preset |
+| --- | --- | --- |
+| Coding | Editors and terminals such as VS Code, Cursor, Kiro and the JetBrains IDEs. Keeps code, commands, paths and identifiers as they are | Proofread |
+| Office writing | Mail and documents in apps such as Outlook, Word, WPS, OneNote and Notion | Formal |
+| Chat | Messaging apps such as WeChat, QQ, Slack, Teams, DingTalk, Feishu, Telegram and Discord | Casual chat |
+| Legal, Medical, Finance, Academic | Strict proofreading that keeps specialist terms as they are and writes numbers, units and dates correctly. They apply once you add the apps you use | Proofread |
 
-| Scene | For |
-| --- | --- |
-| Coding | Editors and terminals such as VS Code, Cursor and the JetBrains IDEs. Keeps code, commands, paths and identifiers as they are |
-| Office writing | Mail and documents in apps such as Outlook, Word and WPS |
-| Chat | Messaging apps such as WeChat, QQ, Slack, Teams, DingTalk, Feishu, Telegram and Discord |
-| Legal, medical, finance, academic | Strict proofreading that keeps specialist terms, numbers, units and dates exact. They apply once you add the apps you use |
+Built-in scenes are off until you turn them on. They are listed after your own scenes and marked **Built-in**, so your own scenes take precedence. You can change a built-in scene's apps, preset and instructions, but not its name, and it cannot be deleted. **Restore default** puts back its apps, preset and instructions and leaves it on or off.
 
-Built-in scenes are off until you turn them on, and your own scenes take precedence over them.
+When a built-in scene applies, its terms are given to recognition and AI polish together with your dictionary, and they do not count towards the dictionary's limits. The scene shows how many terms it has; Chat has none.

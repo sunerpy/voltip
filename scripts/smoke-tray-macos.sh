@@ -13,7 +13,10 @@
 #   3. its menu holds exactly the build's entries in the UI's language;
 #   4. Open shows the main window; Settings shows it with the Settings dialog open (the webview's
 #      role=dialog in the accessibility tree); Check for Updates asks the update source and gets
-#      an answer; Quit ends the process with exit code 0.
+#      an answer; the AI Polish submenu lists its switch and every preset with the ones in use
+#      checked, a preset and the switch reach the core, the menu is rebuilt from what it saved,
+#      and choosing the preset in use keeps it checked (docs/dictation.md §21); Quit ends the
+#      process with exit code 0.
 # The Accessibility API does the clicking (scripts/tray-ax.swift, compiled here and granted the
 # permission in the runner's writable TCC database, as ci.yml does for the event tap test).
 #
@@ -47,6 +50,17 @@ wait_for() {
 }
 log_text() { sed $'s/\x1b\\[[0-9;]*m//g' "$log" 2>/dev/null || true; }
 log_has() { log_text | grep -E -- "$1" >/dev/null; }
+log_count() { log_text | grep -E -c -- "$1" || true; }
+log_count_above() { [ "$(log_count "$1")" -gt "$2" ]; }
+# settles <seconds> <command…>: whether the condition holds within the time (no failure).
+settles() {
+  local deadline=$((SECONDS + $1))
+  shift
+  until "$@"; do
+    [ "$SECONDS" -lt "$deadline" ] || return 1
+    sleep 0.25
+  done
+}
 
 helper=$out/tray-ax
 swiftc -O -o "$helper" "$here/tray-ax.swift"
@@ -75,15 +89,20 @@ case $installed in *updater=true*) updater=1 ;; *) updater=0 ;; esac
 if [ "${VOLTIP_NO_UPDATER:-0}" = 1 ]; then want_updater=0; else want_updater=1; fi
 [ "$updater" = "$want_updater" ] || fail "updater=$updater, expected $want_updater"
 if [ "$zh" = 1 ]; then
-  labels=("打开 Voltip" "设置…" "检查更新…" "退出 Voltip")
+  labels=("打开 Voltip" "AI 润色" "设置…" "检查更新…" "退出 Voltip")
   title="设置"
+  toggle="启用 AI 润色"
+  presets=("校对" "提示词优化" "意图整理" "口语聊天" "中英互译" "要点纪要" "只加标点" "书面语")
 else
-  labels=("Open Voltip" "Settings…" "Check for Updates…" "Quit Voltip")
+  labels=("Open Voltip" "AI Polish" "Settings…" "Check for Updates…" "Quit Voltip")
   title="Settings"
+  toggle="Enable AI Polish"
+  presets=("Proofread" "Prompt optimizer" "Clarify intent" "Casual chat" "Chinese ⇄ English" "Key points" "Punctuation only" "Formal")
 fi
-expected=("${labels[0]}" "${labels[1]}")
-[ "$updater" = 1 ] && expected+=("${labels[2]}")
-expected+=("${labels[3]}")
+open_label=${labels[0]} polish_label=${labels[1]} settings_label=${labels[2]} update_label=${labels[3]} quit_label=${labels[4]}
+expected=("$open_label" "$polish_label" "$settings_label")
+[ "$updater" = 1 ] && expected+=("$update_label")
+expected+=("$quit_label")
 wait_for 60 'the main window' window_shown
 # The window is mapped before its webview draws: wait for the brand's text, then for pixels.
 ax wait-text Voltip Voltip >/dev/null
@@ -121,7 +140,7 @@ note "menu: $(tr '\n' '|' <<<"$menu" | sed 's/|$//; s/|/ | /g')"
 [ "$menu" = "$(printf '%s\n' "${expected[@]}")" ] || fail "menu differs from: ${expected[*]}"
 
 # 4a. Open.
-ax press "${expected[0]}"
+ax press "$open_label"
 wait_for 30 'the Open entry in the log' log_has 'tray menu action=Open'
 wait_for 30 'Open to show the window' window_shown
 note 'Open: main window shown'
@@ -129,7 +148,7 @@ ax close Voltip
 wait_for 30 'the window to hide' window_hidden
 
 # 4b. Settings: the window with the Settings dialog.
-ax press "${expected[1]}"
+ax press "$settings_label"
 wait_for 30 'the Settings entry in the log' log_has 'tray menu action=Settings'
 wait_for 30 'Settings to show the window' window_shown
 note "Settings: window shown with $(ax dialog "$title")"
@@ -139,7 +158,7 @@ wait_for 30 'the window to hide' window_hidden
 
 # 4c. Check for Updates: the webview asks the update source and gets an answer.
 if [ "$updater" = 1 ]; then
-  ax press "${expected[2]}"
+  ax press "$update_label"
   wait_for 30 'the Check for Updates entry in the log' log_has 'tray menu action=CheckUpdate'
   wait_for 60 'the update check to answer' log_has '(no update available|update available)'
   wait_for 30 'Check for Updates to show the window' window_shown
@@ -147,8 +166,53 @@ if [ "$updater" = 1 ]; then
   note "Check for Updates: $(log_text | grep -E -o '(no update available|update available)[^[:cntrl:]]*' | head -1)"
 fi
 
-# 4d. Quit.
-ax press "${expected[${#expected[@]} - 1]}"
+# 4d. AI Polish (docs/dictation.md §21): the switch and every preset (a fresh profile has no
+# custom one), the ones in use checked; each choice goes through the core and the menu is rebuilt
+# from what it saved.
+polish_menu() { # <entries that must carry the ✓, in order>
+  local want=("$@") entry line checked lines=()
+  for entry in "$toggle" "${presets[@]}"; do
+    line=$entry
+    for checked in "${want[@]}"; do [ "$checked" = "$entry" ] && line="$entry"$'\t'"✓"; done
+    lines+=("$line")
+  done
+  printf '%s\n' "${lines[@]}"
+}
+polish_shows() { [ "$(ax submenu "$polish_label")" = "$(polish_menu "$@")" ]; }
+# press_polish <entry> <the log line the app writes for it>: choose the entry and wait for that line
+# to appear once more. An accessibility press on a menu entry can report success and still never
+# reach the app (CI 2026-09-29: the switch, pressed right after a read of the submenu, left no
+# `tray menu polish` line, while the next press did); a press the app did not log within 10 s is
+# made once more, and the summary says so.
+press_polish() {
+  local entry=$1 line=$2 before
+  before=$(log_count "$line")
+  ax press-sub "$polish_label" "$entry"
+  if ! settles 10 log_count_above "$line" "$before"; then
+    note "AI Polish: the press on $entry did not reach the app; pressed again"
+    ax press-sub "$polish_label" "$entry"
+  fi
+  wait_for 30 "$entry in the log" log_count_above "$line" "$before"
+}
+note "AI Polish: $(ax submenu "$polish_label" | tr '\t\n' ' |' | sed 's/|$//; s/|/ | /g')"
+polish_shows "$toggle" "${presets[0]}" || fail "the AI Polish submenu differs from: $(polish_menu "$toggle" "${presets[0]}" | tr '\t\n' ' |')"
+press_polish "${presets[1]}" 'tray menu polish action=Preset\("prompt"\)'
+wait_for 30 'the second preset checked' polish_shows "$toggle" "${presets[1]}"
+note "AI Polish: chose ${presets[1]}"
+# The preset in use again: the menu must still show it checked.
+press_polish "${presets[1]}" 'tray menu polish action=Preset\("prompt"\)'
+wait_for 30 'the preset in use still checked' polish_shows "$toggle" "${presets[1]}"
+press_polish "$toggle" 'tray menu polish action=Toggle'
+wait_for 30 'the switch off' polish_shows "${presets[1]}"
+note 'AI Polish: switched off'
+# Leave the profile as it was found: the switch on, the first preset.
+press_polish "$toggle" 'tray menu polish action=Toggle'
+wait_for 30 'the switch on again' polish_shows "$toggle" "${presets[1]}"
+press_polish "${presets[0]}" 'tray menu polish action=Preset\("proofread"\)'
+wait_for 30 'the defaults back' polish_shows "$toggle" "${presets[0]}"
+
+# 4e. Quit.
+ax press "$quit_label"
 # Gone, or a zombie waiting to be reaped (kill -0 still answers for one).
 process_gone() {
   local stat

@@ -8,10 +8,6 @@ The next releases, in the expected order. No dates are promised. Each feature is
 
 ## In development
 
-### AI presets and built-in scenes <StatusTag status="building" />
-
-Several built-in AI presets — Proofread (the default), Prompt, Intent, Chat, Translate between Chinese and English, and Notes — switched from the home page, the title bar or the tray, and your own presets. Built-in scenes for coding, office writing, chat and professional fields, each with a preset, instructions, specialist terms and a list of apps. See [AI polish and presets](/recognition/polish#presets) and [Scenes](/recognition/scenes#built-in-scenes).
-
 ### 20,000 history entries and statistics <StatusTag status="building" />
 
 The history limit rises from 500 to 20,000 entries, and the home page shows characters transcribed, characters corrected, speaking time and time saved for today, this week, this month and in total. See [History](/dictation/history#statistics).

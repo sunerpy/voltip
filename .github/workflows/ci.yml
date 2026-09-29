@@ -543,6 +543,16 @@ jobs:
           $exe = Get-ChildItem portable -Recurse -Filter 'voltip-desktop.exe' | Select-Object -First 1
           ./scripts/smoke-windows-paste.ps1 -Binary $exe.FullName -OutDir smoke-windows-paste
 
+      # The tray on the same desktop (scripts/smoke-tray-windows.ps1): the mark, the menu's entries,
+      # each entry, and the AI 润色 submenu (docs/dictation.md §21). A CI build has no update
+      # source. Windows PowerShell, like install-scripts.yml runs it on a release.
+      - name: Portable exe — tray menu and the AI 润色 submenu
+        timeout-minutes: 8
+        shell: powershell
+        run: |
+          $exe = Get-ChildItem portable -Recurse -Filter 'voltip-desktop.exe' | Select-Object -First 1
+          ./scripts/smoke-tray-windows.ps1 -Binary $exe.FullName -OutDir smoke-tray-windows -NoUpdater
+
       - name: NSIS installer — silent install, then the installed exe
         run: |
           $setup = Get-ChildItem dist-windows -Filter '*-setup.exe' | Select-Object -First 1
@@ -589,6 +599,9 @@ jobs:
             smoke-windows-gui/*.log
             smoke-windows-paste/*.txt
             smoke-windows-paste/*.log
+            smoke-tray-windows/*.txt
+            smoke-tray-windows/*.log
+            smoke-tray-windows/*.png
           if-no-files-found: warn
           retention-days: 7
 

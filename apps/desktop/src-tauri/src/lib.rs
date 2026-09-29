@@ -31,8 +31,8 @@ pub mod update;
 use tauri::{Emitter as _, Manager as _, Runtime};
 use voltip_core::ui::{ProjectLink, UI_EVENT_NAME, UiEvent, UiState, UpdateStatus};
 use voltip_core::{
-    Activation, AppRef, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PreviewDraft, ProviderId, RuleDraft,
-    SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
+    Activation, AppRef, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PresetDraft, PreviewDraft, ProviderId,
+    RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
 };
 use voltip_identity::{KeyringSecretStore, SecretStore};
 use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
@@ -44,7 +44,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 82] = [
+pub const COMMANDS: [&str; 89] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -121,6 +121,13 @@ pub const COMMANDS: [&str; 82] = [
     "scenes_update",
     "scenes_remove",
     "scenes_reorder",
+    "scenes_restore",
+    "scenes_builtin",
+    "presets_add",
+    "presets_update",
+    "presets_remove",
+    "presets_try",
+    "presets_builtin",
     "settings_set_context_sharing",
     "recent_apps",
     "permissions_status",
@@ -663,6 +670,60 @@ fn scenes_reorder(bridge: tauri::State<'_, Bridge>, ids: Vec<String>) -> Result<
     Ok(bridge.dispatch(UiCommand::ScenesReorder { ids })?)
 }
 
+/// 恢复默认 on a built-in scene (docs/dictation.md §18.10): its applications and overrides back to
+/// the defaults; the core re-emits `scenes` (a scene of the user's is refused).
+#[tauri::command]
+fn scenes_restore(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ScenesRestore { id })?)
+}
+
+/// One built-in scene's term pack, what 查看术语 lists.
+#[derive(serde::Serialize)]
+struct BuiltinSceneTerms {
+    id: voltip_core::BuiltinScene,
+    terms: &'static [&'static str],
+}
+
+/// Query: every built-in scene's term pack (§18.10), in the order the scene list appends them.
+#[tauri::command]
+fn scenes_builtin() -> Vec<BuiltinSceneTerms> {
+    voltip_core::BuiltinScene::ALL.into_iter().map(|id| BuiltinSceneTerms { id, terms: voltip_core::vocabulary::packs::terms(id) }).collect()
+}
+
+/// Append a custom preset (docs/dictation.md §21). A draft that is wrong on its own is refused
+/// here; a clash with the list (a duplicate name, the cap) comes back as an `error` event.
+#[tauri::command]
+fn presets_add(bridge: tauri::State<'_, Bridge>, preset: PresetDraft) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PresetsAdd { preset })?)
+}
+
+/// Replace a custom preset's name and instruction.
+#[tauri::command]
+fn presets_update(bridge: tauri::State<'_, Bridge>, id: String, preset: PresetDraft) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PresetsUpdate { id, preset })?)
+}
+
+/// Delete a custom preset.
+#[tauri::command]
+fn presets_remove(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PresetsRemove { id })?)
+}
+
+/// 试一试: `text` through the current clean-up with a saved preset or the instruction being
+/// edited; the answer arrives as a `preset_try` event carrying `id`.
+#[tauri::command]
+fn presets_try(bridge: tauri::State<'_, Bridge>, id: u64, preset: Option<String>, prompt: Option<String>, text: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PresetsTry { id, preset, prompt, text })?)
+}
+
+/// Query: every built-in preset's text (task, rules, examples; the output contract is added to
+/// every preset and is not part of it), in the order the interface lists them: what 复制为自定义
+/// starts from.
+#[tauri::command]
+fn presets_builtin() -> Vec<dictation::BuiltinPresetText> {
+    dictation::builtin_preset_texts()
+}
+
 /// What of a take's context may go to the LLM (§18.5); the core persists and re-emits `settings`.
 #[tauri::command]
 fn settings_set_context_sharing(bridge: tauri::State<'_, Bridge>, app_name: bool, window_title: bool) -> Result<(), String> {
@@ -994,6 +1055,13 @@ pub fn build_app<R: Runtime>(
             scenes_update,
             scenes_remove,
             scenes_reorder,
+            scenes_restore,
+            scenes_builtin,
+            presets_add,
+            presets_update,
+            presets_remove,
+            presets_try,
+            presets_builtin,
             settings_set_context_sharing,
             recent_apps,
             permissions_status,

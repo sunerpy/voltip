@@ -19,12 +19,13 @@ use voltip_core::dictation::{ClipboardCode, FailureCode, ProcessingStage, Via};
 use voltip_core::paste::{CopyReason, PasteFailure, PasteOutcome};
 use voltip_core::phone::{PhoneTakeFailure, PhoneTakeState, PhoneTakeView};
 use voltip_core::phone::{PhoneTextSource, SentText, SentTextFailure, SentTextState};
+use voltip_core::presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetId, PresetRef, PresetTryOutcome};
 use voltip_core::ui::{GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, UiEvent, UiState, UpdateStatus};
 use voltip_core::{
-    Activation, AppRef, BuiltIn, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ContextSharing, DeviceConnection, DeviceView, DictationPhase,
-    DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, HistoryEntry, ImportMode, InjectMode, LiveText,
-    LocalDevice, Locale, ModelInstallState, ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSettings,
-    RefineStyle, RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef,
+    Activation, AppRef, BuiltIn, BuiltinScene, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ContextSharing, DeviceConnection, DeviceView,
+    DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, HistoryEntry, ImportMode,
+    InjectMode, LiveText, LocalDevice, Locale, ModelInstallState, ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId,
+    ProviderSettings, RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef,
     Segment, ServiceKind, Settings, SoloKey, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
 };
 use voltip_core::{EntryOrigin, OriginKind};
@@ -40,6 +41,7 @@ const UPDATE_ENV: &str = "UPDATE_IPC_FIXTURES";
 const STATE_FILE: &str = "state.json";
 const EVENTS_FILE: &str = "events.json";
 const COMMANDS_FILE: &str = "commands.json";
+const BUILTIN_SCENES_FILE: &str = "scenes-builtin.json";
 
 const DESKTOP_KEY: PublicKey = PublicKey([0x11; 32]);
 const PHONE_KEY: PublicKey = PublicKey([0x22; 32]);
@@ -85,6 +87,8 @@ const EDIT_INSTRUCTION: &str = "改得更正式";
 const EDIT_REWRITE: &str = "各位同事：会议改至周四上午十点。";
 const SCENE_ID: &str = "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f";
 const SCENE_ID_2: &str = "e0e1e2e3-e4e5-4e6e-8e7e-8e9eaebecede";
+const SCENE_ID_3: &str = "b0117e1e-5ce0-4e5e-8a1e-000000000003";
+const PRESET_ID: &str = "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e";
 
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/shared/src/fixtures/ipc")
@@ -231,6 +235,8 @@ fn engine_settings() -> EngineSettings {
         asr_provider: ProviderId::Builtin,
         llm_provider: ProviderId::Groq,
         refine_enabled: true,
+        // docs/dictation.md §21: a custom preset, so the sample shows the UUID form.
+        refine_preset: PresetId::Custom(uuid(PRESET_ID)),
         providers: [
             (ProviderId::Groq, ProviderSettings { llm_model: Some("openai/gpt-oss-20b".into()), ..Default::default() }),
             (
@@ -283,8 +289,9 @@ fn settings() -> Settings {
 }
 
 /// The scenes (docs/dictation.md §18.1): one with every override and a title keyword, one plain
-/// and switched off.
+/// and switched off, and a built-in one (§18.10) that lists no application yet.
 fn scenes() -> Vec<Scene> {
+    let legal = BuiltinScene::Legal.template(Platform::Windows);
     vec![
         Scene {
             id: uuid(SCENE_ID),
@@ -293,7 +300,7 @@ fn scenes() -> Vec<Scene> {
             matching: SceneMatch { apps: vec!["chrome".into(), "code".into()], title_contains: vec!["Pull request".into()] },
             overrides: SceneOverrides {
                 refine_enabled: Some(true),
-                refine_style: Some(RefineStyle::Formal),
+                refine_preset: Some(PresetId::Builtin(BuiltinPreset::Formal)),
                 output_mode: Some(OutputMode::StreamingFinal),
                 language: Some("en".into()),
                 chinese_script: Some(ChineseScript::AsIs),
@@ -301,22 +308,47 @@ fn scenes() -> Vec<Scene> {
             },
             created_at_ms: AT_MS - 86_400_000,
             updated_at_ms: AT_MS - 3_600_000,
+            builtin: None,
         },
         Scene {
             id: uuid(SCENE_ID_2),
             name: "聊天".into(),
             enabled: false,
             matching: SceneMatch { apps: vec!["slack".into(), "wechat".into()], title_contains: Vec::new() },
-            overrides: SceneOverrides { refine_style: Some(RefineStyle::Punctuation), ..SceneOverrides::default() },
+            overrides: SceneOverrides { refine_preset: Some(PresetId::Builtin(BuiltinPreset::Punctuation)), ..SceneOverrides::default() },
             created_at_ms: AT_MS,
             updated_at_ms: AT_MS,
+            builtin: None,
+        },
+        Scene {
+            id: uuid(SCENE_ID_3),
+            name: legal.name,
+            enabled: legal.enabled,
+            matching: legal.matching,
+            overrides: legal.overrides,
+            created_at_ms: AT_MS,
+            updated_at_ms: AT_MS,
+            builtin: Some(BuiltinScene::Legal),
         },
     ]
 }
 
+/// The custom presets (docs/dictation.md §21): one, the one the engine settings name.
+fn custom_presets() -> Vec<CustomPreset> {
+    vec![CustomPreset {
+        id: uuid(PRESET_ID),
+        name: "周报".into(),
+        prompt: "把正文整理成周报：本周完成、下周计划、风险三部分。".into(),
+        created_at_ms: AT_MS - 86_400_000,
+        updated_at_ms: AT_MS,
+    }]
+}
+
 /// The take's context (docs/dictation.md §18.6): the app in front and the scene that matched.
 fn take_context() -> TakeContext {
-    TakeContext { app: AppRef { id: "code".into(), name: "Code".into() }, scene: Some(SceneRef { id: uuid(SCENE_ID), name: "代码评审".into() }) }
+    TakeContext {
+        app: AppRef { id: "code".into(), name: "Code".into() }, scene: Some(SceneRef { id: uuid(SCENE_ID), name: "代码评审".into(), builtin: None })
+    }
 }
 
 fn done_phase() -> DictationPhase {
@@ -404,7 +436,8 @@ fn history_entries() -> Vec<HistoryEntry> {
             kind: TakeKind::Dictation,
             edit: None,
             app: Some(AppRef { id: "code".into(), name: "Code".into() }),
-            scene: Some(SceneRef { id: uuid(SCENE_ID), name: "代码评审".into() }),
+            scene: Some(SceneRef { id: uuid(SCENE_ID), name: "代码评审".into(), builtin: None }),
+            preset: Some(PresetRef { id: PresetId::Builtin(BuiltinPreset::Formal), name: "书面语".into() }),
             origin: None,
         },
         HistoryEntry {
@@ -429,6 +462,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             edit: None,
             app: None,
             scene: None,
+            preset: None,
             origin: None,
         },
         // docs/dictation.md §19: the instruction is the raw text, the rewrite the text.
@@ -454,6 +488,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             // An edit carries the app it ran in, never a scene (docs/dictation.md §19).
             app: Some(AppRef { id: "slack".into(), name: "Slack".into() }),
             scene: None,
+            preset: None,
             origin: None,
         },
         // docs/dictation.md §20.6: text a phone sent, inserted as it was.
@@ -478,6 +513,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             edit: None,
             app: None,
             scene: None,
+            preset: None,
             origin: Some(EntryOrigin { device: "Pixel 8".into(), kind: OriginKind::Typed }),
         },
     ]
@@ -553,6 +589,10 @@ fn live_inject_history_entry() -> HistoryEntry {
         mode: OutputMode::LiveInject,
         segments: Some(stream_segments()),
         live_error: Some("live tap overrun: the decoder fell behind the microphone".into()),
+        // A built-in scene (§18.10) is named by its category; the interface shows its own name.
+        app: Some(AppRef { id: "winword".into(), name: "Word".into() }),
+        scene: Some(SceneRef { id: uuid(SCENE_ID_3), name: "legal".into(), builtin: Some(BuiltinScene::Legal) }),
+        preset: None,
         ..history_entries().remove(0)
     }
 }
@@ -710,12 +750,14 @@ fn full_state() -> UiState {
             solo_error: None,
             solo_pressed: false,
         },
+        presets: custom_presets(),
         dictation: DictationStatus {
             phase: done_phase(),
             session: 7,
             context: Some(take_context()),
             kind: TakeKind::Dictation,
             remote: Some("Pixel 8".into()),
+            preset: None,
         },
         history: history_entries(),
         engines: engine_status(),
@@ -778,6 +820,8 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::Dictionary { .. } => "dictionary",
         UiEvent::Rules { .. } => "rules",
         UiEvent::Scenes { .. } => "scenes",
+        UiEvent::Presets { .. } => "presets",
+        UiEvent::PresetTry { .. } => "preset_try",
         UiEvent::ProviderProbe(_) => "provider_probe",
         UiEvent::PhoneTake { .. } => "phone_take",
         UiEvent::SentTexts { .. } => "sent_texts",
@@ -788,7 +832,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
     }
 }
 
-const ALL_EVENT_TAGS: [&str; 23] = [
+const ALL_EVENT_TAGS: [&str; 25] = [
     "state",
     "identity",
     "settings",
@@ -808,6 +852,8 @@ const ALL_EVENT_TAGS: [&str; 23] = [
     "dictionary",
     "rules",
     "scenes",
+    "presets",
+    "preset_try",
     "provider_probe",
     "phone_take",
     "hardware",
@@ -896,6 +942,11 @@ fn scenes_event(list: Vec<Scene>) -> UiEvent {
     UiState::default().apply(voltip_core::CoreEvent::Scenes(list))
 }
 
+/// Same for the custom presets (docs/dictation.md §21).
+fn presets_event(list: Vec<CustomPreset>) -> UiEvent {
+    UiState::default().apply(voltip_core::CoreEvent::Presets(list))
+}
+
 /// One value per `UiEvent` variant, plus the shapes the TypeScript union has to discriminate
 /// (`devices` with every connection kind, a failed pairing, a minimal default state).
 fn all_events() -> Vec<UiEvent> {
@@ -968,13 +1019,14 @@ fn all_events() -> Vec<UiEvent> {
         // Every dictation phase the pill and the home page discriminate on. `listening` in its three
         // shapes (device opening; ready with the live preview; preview degraded), `processing` with
         // and without the carried-over preview (docs/dictation.md §11).
-        UiEvent::Dictation(DictationStatus { phase: DictationPhase::Idle, session: 6, context: None, kind: TakeKind::Dictation, remote: None }),
+        UiEvent::Dictation(DictationStatus { phase: DictationPhase::Idle, session: 6, context: None, kind: TakeKind::Dictation, remote: None, preset: None }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Listening { started_at: AT_MS, ready: false, live: None, locked: false },
             session: 7,
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Listening { started_at: AT_MS + 180, ready: true, live: Some(live_text()), locked: false },
@@ -982,6 +1034,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Listening {
@@ -994,6 +1047,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         // `hold_or_toggle` locked by a short press (docs/dictation.md §13): the pill shows a lock.
         UiEvent::Dictation(DictationStatus {
@@ -1002,6 +1056,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         // `live_inject` (docs/dictation.md §12): the first committed sentence is already pasted.
         UiEvent::Dictation(DictationStatus {
@@ -1010,6 +1065,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         // The streaming modes wait for the flush first (§12 `finalizing`).
         UiEvent::Dictation(DictationStatus {
@@ -1023,6 +1079,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing {
@@ -1035,6 +1092,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
@@ -1042,6 +1100,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing {
@@ -1054,6 +1113,8 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            // docs/dictation.md §21: the pill names the preset while refining.
+            preset: Some(PresetRef { id: PresetId::Custom(uuid(PRESET_ID)), name: "周报".into() }),
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing { stage: ProcessingStage::Inserting, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
@@ -1061,8 +1122,9 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
-        UiEvent::Dictation(DictationStatus { phase: done_phase(), session: 7, context: None, kind: TakeKind::Dictation, remote: None }),
+        UiEvent::Dictation(DictationStatus { phase: done_phase(), session: 7, context: None, kind: TakeKind::Dictation, remote: None, preset: None }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Done {
                 text: RAW_TEXT.into(),
@@ -1082,17 +1144,26 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         // `streaming_final`: the stream's sentences are the text; a streaming mode that fell back to
         // the whole take says why in `live_error` (docs/dictation.md §12).
-        UiEvent::Dictation(DictationStatus { phase: streamed_done_phase(), session: 14, context: None, kind: TakeKind::Dictation, remote: None }),
-        UiEvent::Dictation(DictationStatus { phase: fallen_back_done_phase(), session: 15, context: None, kind: TakeKind::Dictation, remote: None }),
+        UiEvent::Dictation(DictationStatus { phase: streamed_done_phase(), session: 14, context: None, kind: TakeKind::Dictation, remote: None, preset: None }),
+        UiEvent::Dictation(DictationStatus {
+            phase: fallen_back_done_phase(),
+            session: 15,
+            context: None,
+            kind: TakeKind::Dictation,
+            remote: None,
+            preset: None,
+        }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::NoSpeech, message: "没有听到声音".into(), text: None },
             session: 9,
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::Inject, message: "inject: 前台窗口拒绝了粘贴".into(), text: Some(REFINED_TEXT.into()) },
@@ -1100,6 +1171,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::Asr, message: "asr: 401 unauthorized".into(), text: None },
@@ -1107,6 +1179,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::Audio, message: "audio: no input device".into(), text: None },
@@ -1114,8 +1187,16 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
-        UiEvent::Dictation(DictationStatus { phase: DictationPhase::CANCELLED, session: 11, context: None, kind: TakeKind::Dictation, remote: None }),
+        UiEvent::Dictation(DictationStatus {
+            phase: DictationPhase::CANCELLED,
+            session: 11,
+            context: None,
+            kind: TakeKind::Dictation,
+            remote: None,
+            preset: None,
+        }),
         // `live_inject` cancelled after one sentence was pasted: it stays pasted (§12).
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Cancelled { injected_chars: LIVE_COMMITTED.chars().count() },
@@ -1123,6 +1204,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         // docs/dictation.md §18.6: the probe named the app and a scene matched (the pill shows it);
         // an app no scene names carries no `scene`.
@@ -1132,6 +1214,7 @@ fn all_events() -> Vec<UiEvent> {
             context: Some(take_context()),
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
@@ -1139,6 +1222,7 @@ fn all_events() -> Vec<UiEvent> {
             context: Some(TakeContext { app: AppRef { id: "winword".into(), name: "WINWORD".into() }, scene: None }),
             kind: TakeKind::Dictation,
             remote: None,
+            preset: None,
         }),
         history_event(history_entries()),
         history_event(vec![live_inject_history_entry()]),
@@ -1234,6 +1318,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Edit,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing {
@@ -1246,6 +1331,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Edit,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Done {
@@ -1266,6 +1352,7 @@ fn all_events() -> Vec<UiEvent> {
             context: Some(TakeContext { app: AppRef { id: "slack".into(), name: "Slack".into() }, scene: None }),
             kind: TakeKind::Edit,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::NoSelection, message: "没有选中文本".into(), text: None },
@@ -1273,6 +1360,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Edit,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed {
@@ -1282,6 +1370,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Edit,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed {
@@ -1291,6 +1380,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Edit,
             remote: None,
+            preset: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed {
@@ -1302,6 +1392,7 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Edit,
             remote: None,
+            preset: None,
         }),
         // §19.2: a terminal in front — refused before the copy chord and the microphone.
         UiEvent::Dictation(DictationStatus {
@@ -1312,10 +1403,19 @@ fn all_events() -> Vec<UiEvent> {
             context: None,
             kind: TakeKind::Edit,
             remote: None,
+            preset: None,
         }),
         // The scenes (docs/dictation.md §18.6), full and empty.
         scenes_event(scenes()),
         scenes_event(Vec::new()),
+        presets_event(custom_presets()),
+        presets_event(Vec::new()),
+        // 试一试 (docs/dictation.md §21): a text, and a refusal without an AI service.
+        UiEvent::PresetTry {
+            id: 3,
+            outcome: PresetTryOutcome::Ok { text: "Meeting at 10 a.m. tomorrow.".into(), latency_ms: 820, model: REFINE_MODEL.into() },
+        },
+        UiEvent::PresetTry { id: 4, outcome: PresetTryOutcome::Failed { reason: voltip_core::PRESET_TRY_UNCONFIGURED.into() } },
     ];
     events.extend(paste_results());
     events
@@ -1396,6 +1496,11 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::ScenesUpdate { .. } => "ScenesUpdate",
         UiCommand::ScenesRemove { .. } => "ScenesRemove",
         UiCommand::ScenesReorder { .. } => "ScenesReorder",
+        UiCommand::ScenesRestore { .. } => "ScenesRestore",
+        UiCommand::PresetsAdd { .. } => "PresetsAdd",
+        UiCommand::PresetsUpdate { .. } => "PresetsUpdate",
+        UiCommand::PresetsRemove { .. } => "PresetsRemove",
+        UiCommand::PresetsTry { .. } => "PresetsTry",
         UiCommand::SettingsSetContextSharing { .. } => "SettingsSetContextSharing",
     }
 }
@@ -1505,7 +1610,13 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("scenes_add", json!({ "scene": SceneDraft::from(&scenes()[0]) }), "ScenesAdd"),
         ("scenes_update", json!({ "id": SCENE_ID_2, "scene": SceneDraft::from(&scenes()[1]) }), "ScenesUpdate"),
         ("scenes_remove", json!({ "id": SCENE_ID_2 }), "ScenesRemove"),
-        ("scenes_reorder", json!({ "ids": [SCENE_ID_2, SCENE_ID] }), "ScenesReorder"),
+        ("scenes_reorder", json!({ "ids": [SCENE_ID_2, SCENE_ID, SCENE_ID_3] }), "ScenesReorder"),
+        ("scenes_restore", json!({ "id": SCENE_ID_3 }), "ScenesRestore"),
+        // Presets (docs/dictation.md §21): 试一试 on a saved preset and on the instruction being edited.
+        ("presets_add", json!({ "preset": PresetDraft::from(&custom_presets()[0]) }), "PresetsAdd"),
+        ("presets_update", json!({ "id": PRESET_ID, "preset": PresetDraft { name: "周报（短）".into(), prompt: "三句话以内。".into() } }), "PresetsUpdate"),
+        ("presets_remove", json!({ "id": PRESET_ID }), "PresetsRemove"),
+        ("presets_try", json!({ "id": 3, "preset": "translate", "prompt": null, "text": "明天上午十点开会" }), "PresetsTry"),
         ("settings_set_context_sharing", json!({ "appName": true, "windowTitle": false }), "SettingsSetContextSharing"),
     ]
 }
@@ -1570,7 +1681,7 @@ fn regression_text_files_check_out_with_lf_on_every_os() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.gitattributes");
     let attributes = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     assert!(attributes.lines().any(|l| l.split_whitespace().eq(["*", "text=auto", "eol=lf"])), "{attributes}");
-    for name in [STATE_FILE, EVENTS_FILE, COMMANDS_FILE] {
+    for name in [STATE_FILE, EVENTS_FILE, COMMANDS_FILE, BUILTIN_SCENES_FILE] {
         let fixture = std::fs::read_to_string(fixtures_dir().join(name)).unwrap();
         assert!(!fixture.contains('\r'), "{name} has CRLF line endings");
     }
@@ -1668,11 +1779,17 @@ fn state_fixture_matches_serde_output() {
     // docs/dictation.md §18.
     assert_eq!(json["settings"]["context_sharing"], json!({ "app_name": false, "window_title": true }));
     assert_eq!(json["scenes"][0]["match"]["title_contains"], json!(["Pull request"]));
-    assert_eq!(json["scenes"][0]["overrides"]["refine_style"], "formal");
-    assert_eq!(json["scenes"][1]["overrides"], json!({ "refine_style": "punctuation" }), "unset overrides are absent");
+    assert_eq!(json["scenes"][0]["overrides"]["refine_preset"], "formal");
+    assert_eq!(json["scenes"][1]["overrides"], json!({ "refine_preset": "punctuation" }), "unset overrides are absent");
     assert_eq!(json["dictation"]["context"]["scene"]["name"], "代码评审");
     assert_eq!(json["history"][0]["app"], json!({ "id": "code", "name": "Code" }));
     assert!(json["history"][1].get("app").is_none() && json["history"][1].get("scene").is_none(), "None is omitted");
+    // docs/dictation.md §21: presets are strings (a built-in name or a UUID) wherever they appear.
+    assert_eq!(json["settings"]["engines"]["refine_preset"], PRESET_ID);
+    assert_eq!(json["presets"][0]["id"], PRESET_ID);
+    assert_eq!(json["presets"][0]["name"], "周报");
+    assert_eq!(json["history"][0]["preset"], json!({ "id": "formal", "name": "书面语" }));
+    assert!(json["history"][1].get("preset").is_none() && json["dictation"].get("preset").is_none(), "None is omitted");
 }
 
 #[test]
@@ -1899,6 +2016,27 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
     let secret = "gsk_example_not_a_real_key";
     assert!(!pretty(&full_state()).contains(secret));
     assert!(!pretty(&all_events()).contains(secret));
+}
+
+/// The built-in scenes (§18.10) as the preview's in-memory backend fills them in: each category's
+/// defaults on the three desktops and its term pack (`@voltip/shared/mock` reads this file).
+#[test]
+fn builtin_scenes_fixture_matches_the_core() {
+    let rows: Vec<Value> = BuiltinScene::ALL
+        .into_iter()
+        .map(|scene| {
+            json!({
+                "id": scene,
+                "templates": {
+                    "windows": scene.template(Platform::Windows),
+                    "macos": scene.template(Platform::Macos),
+                    "linux": scene.template(Platform::Linux),
+                },
+                "terms": voltip_core::vocabulary::packs::terms(scene),
+            })
+        })
+        .collect();
+    check_fixture(BUILTIN_SCENES_FILE, &pretty(&rows));
 }
 
 /// Regression (public release, 2026-09-27): the build's own service and relay never reach the

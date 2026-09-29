@@ -218,6 +218,7 @@
           }
         },
         "refine_enabled": true,
+        "refine_preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
         "vad_trim": true
       }
     },
@@ -370,7 +371,7 @@
           "output_mode": "streaming_final",
           "prompt": "这是代码评审意见：保留代码标识符原样。",
           "refine_enabled": true,
-          "refine_style": "formal"
+          "refine_preset": "formal"
         }
       }
     },
@@ -387,7 +388,7 @@
         },
         "name": "聊天",
         "overrides": {
-          "refine_style": "punctuation"
+          "refine_preset": "punctuation"
         }
       }
     },
@@ -401,9 +402,53 @@
   },
   {
     "args": {
-      "ids": ["e0e1e2e3-e4e5-4e6e-8e7e-8e9eaebecede", "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f"]
+      "ids": [
+        "e0e1e2e3-e4e5-4e6e-8e7e-8e9eaebecede",
+        "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+        "b0117e1e-5ce0-4e5e-8a1e-000000000003"
+      ]
     },
     "name": "scenes_reorder"
+  },
+  {
+    "args": {
+      "id": "b0117e1e-5ce0-4e5e-8a1e-000000000003"
+    },
+    "name": "scenes_restore"
+  },
+  {
+    "args": {
+      "preset": {
+        "name": "周报",
+        "prompt": "把正文整理成周报：本周完成、下周计划、风险三部分。"
+      }
+    },
+    "name": "presets_add"
+  },
+  {
+    "args": {
+      "id": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+      "preset": {
+        "name": "周报（短）",
+        "prompt": "三句话以内。"
+      }
+    },
+    "name": "presets_update"
+  },
+  {
+    "args": {
+      "id": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e"
+    },
+    "name": "presets_remove"
+  },
+  {
+    "args": {
+      "id": 3,
+      "preset": "translate",
+      "prompt": null,
+      "text": "明天上午十点开会"
+    },
+    "name": "presets_try"
   },
   {
     "args": {

@@ -12,7 +12,7 @@
 |---|---|---|---|
 | `voltip-audio` | `Recorder`：打开输入设备，采集 → 单声道 16 kHz i16，同时产出 30 Hz `LevelFrame`；`Recording::to_wav()`；上限 120 s 自动停止；`RecorderConfig.live_tap` 时另出一路实时 16 kHz 单声道 f32（`live.rs`：rubato 异步 sinc 按块重采样 → `rtrb` 无锁环，满环置 `overrun`），`on_ready` 在首块样本到达时回调一次 | cpal、rubato（重采样）、rtrb（SPSC 环） | `FakeBackend` 播放合成信号，DSP 纯函数；分块 vs 整段重采样差 < 1e-3 RMS |
 | `voltip-asr` | `AsrClient::transcribe(wav, language) -> Transcript`：OpenAI 兼容 `POST {base}/v1/audio/transcriptions` multipart（`file`, `model`, `language?`），Bearer token；错误分类 `Unauthorized / RateLimited / Server / Network / Timeout / BadAudio` | reqwest 0.13（rustls，multipart，json） | wiremock |
-| `voltip-refine` | `RefineClient::refine(text, RefineStyle) -> Refined`：OpenAI 兼容 `POST {base}/chat/completions`，系统提示词 = 「只修标点、错别字、口语冗余，不改意思、不翻译、不加内容，原样返回纯文本」；`temperature 0.2`；结果去掉包裹引号/代码块 | reqwest | wiremock |
+| `voltip-refine` | `RefineClient::refine_with(text, PromptHints) -> Refined`：OpenAI 兼容 `POST {base}/chat/completions`，系统提示词 = 这一次的预设（§21，默认「校对」）+ 语言 + 应用上下文 + 场景要求 + 术语表；`temperature 0.2`；结果去掉包裹引号/代码块 | reqwest | wiremock |
 | `voltip-inject` | `inject(text) -> Injection`：备份剪贴板 → 写入文本 → 发 `Ctrl+V`（macOS `Cmd+V`）→ 600 ms 后恢复剪贴板；任何一步失败都把文本留在剪贴板并返回 `Via::Clipboard` + 原因；`Injector` trait + `FakeInjector` | arboard 3.6、enigo 0.6（x11rb / SendInput / CGEvent） | trait 假实现；真实实现只在有显示器时冒烟 |
 | `voltip-asr-local` | 本地引擎（§10）：`catalogue`（6 条目录，含隐藏的 `silero-vad`）、`store`（下载 / 校验 / 安装，§12 辅助条目随首个模型下载）、`transcriber`（`LocalTranscriber`，按条目引擎分派：`gguf.rs` transcribe.cpp、`sherpa.rs` sherpa-onnx；`vad_trim` 时先经 `vad.rs` 裁剪）、`streaming`（`LocalStreamingTranscriber`，§11 实时预览）、`vad`（`VadTrimmer`，§12 Silero VAD 首尾裁剪） | transcribe-cpp 0.2.3（静态，CPU）、sherpa-onnx 1.13.8（动态）、rubato | 假加载器 / 假 VAD 单测；`tests/real.rs` 四条 `#[ignore]` 真模型测试 |
 | `voltip-core` | `dictation` 模块：状态机 + 编排（含 §11 的解码线程 `run_live` 与 `Listening.live` / `Processing.preview`）；`history` 模块：`history.json` 落盘（上限 500）；`engines` 模块：默认值解析（`option_env!`）与 `EngineSettings`；`models` 模块：模型库端口；秘密经 `SecretStore` | 只依赖 trait（`AudioSource` / `Capture` / `LivePcm` / `Transcriber` / `StreamingTranscriber` / `Refiner` / `Injector` / `ModelManager`），不依赖 cpal / rtrb / reqwest / enigo / sherpa | 假实现驱动完整状态机（`fakes.rs`：`FakeAudio` 带假 tap、`FakeStreaming` 脚本会话、`FakeModels`） |
@@ -49,7 +49,7 @@ pub struct Transcript { pub text: String, pub latency_ms: u64 }
     /// 与场景要求（§18.5，已按隐私开关过滤）；`hints.language` / `hints.style` 是本次（场景覆盖后）的值。
     async fn refine(&self, text: &str, hints: &RefineHints) -> Result<Refined, DictationError>;
 }
-pub struct RefineHints { pub glossary: Vec<String>, pub language: Option<String>, pub style: RefineStyle, pub context: RefineContext }
+pub struct RefineHints { pub glossary: Vec<String>, pub language: Option<String>, pub preset: TakePreset, pub context: RefineContext }   // preset：§21
 pub struct Refined { pub text: String, pub latency_ms: u64, pub model: String }
 
 pub trait ForegroundProbe: Send + Sync {
@@ -262,6 +262,7 @@ pub struct HistoryEntry {
 - **状态**（`UiEvent::Update` / `UiState.update`，`#[serde(tag = "state")]`）：`idle` → `checking` → `up_to_date { version, checked_at }` | `available { version, current, notes?, date? }` → `downloading { version, received, total? }` → `ready { version }` → `installing { version }`；任一步失败 → `failed { message }`；未配置 → `disabled`。由 shell 产生，经 `Bridge::publish` 折叠进状态（同热键状态）。
 - **手动路径**：`update_check` 只问清单；`update_install`（「立即重启更新」）下载（带进度）→ 验签 → `ready` → `installing` → 安装：Windows 由 NSIS 安装器接管并自行重启应用；macOS / Linux 原地替换后 shell 请求 Tauri 重启进程。没有待安装包时 `update_install` 先检查一次。
 - **自动路径**（开关打开且构建带更新源）：启动 10 s 后检查，有新版本则后台下载到 `ready`，**不**安装；设置页显示「立即重启更新」。到达 `ready` 的版本记在 app data 目录的 `update-ready.json`；用户若直接退出再启动，下次启动检查到**同一版本**时立刻下载安装并重启（这就是「重启应用即可更新」）；比记录更新的版本仍先走 `ready`，从不悄悄安装用户没见过的包。运行中把开关打开会立即检查一次（只下载）。下载好的包不跨进程保留，所以第二次启动会重新下载。
+- **网络与失败原因**（用户报告 2026-09-29）：清单请求与安装包下载都设了连接超时 `CONNECT_TIMEOUT`（15 s，含 TCP 与 TLS）和读取超时 `READ_TIMEOUT`（30 s，任一次读取停顿超过即失败）；插件本身不设，原先要等操作系统放弃（Windows 约 20 s，其他系统更久），连接无响应时会一直停在「正在检查更新…」。`failed` 的 `message` 是完整的原因链（`update::describe`），例如 `error sending request for url (…): client error (Connect): tcp connect error: Connection refused (os error 111)`；原先只有第一段，看不出是 DNS、连接、TLS 还是超时。服务器返回非 2xx 时插件只报 `Could not fetch a valid release JSON from the remote`，不带状态码。代理：reqwest 未开 `system-proxy`，只认 `HTTP(S)_PROXY` 环境变量和 TUN，不读 Windows / macOS 的系统代理设置。
 - **发布侧**（本轮未做，记录在此）：产出 `.sig` 与 `latest.json` 需要 `bundle.createUpdaterArtifacts: true` 与 CI 上的 `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`；清单托管地址即 `VOLTIP_UPDATE_URL`。
 
 
@@ -891,7 +892,7 @@ Rust：`vocabulary` 单测（上限、校验、字面 vs 正则、大小写、�
 
 ## 18. 场景与上下文（2026-09-26）
 
-**目标**：用户正在往哪个应用里说话，决定这一次怎么处理文本。开始录音那一刻探测前台应用（按下热键时有焦点的窗口就是注入目标）；按顺序匹配到的第一个「场景」只为这一次覆盖输出方式、润色开关与风格、语言、中文字形，并可给 LLM 一段补充要求；AI 润色可以知道「当前应用」（隐私开关控制）。探测、匹配、覆盖任一环节失败都退回全局设置，**绝不阻塞一次听写**。
+**目标**：用户正在往哪个应用里说话，决定这一次怎么处理文本。开始录音那一刻探测前台应用（按下热键时有焦点的窗口就是注入目标）；按顺序匹配到的第一个「场景」只为这一次覆盖输出方式、润色开关与预设（§21）、语言、中文字形，并可给 LLM 一段补充要求；AI 润色可以知道「当前应用」（隐私开关控制）。探测、匹配、覆盖任一环节失败都退回全局设置，**绝不阻塞一次听写**。
 
 几条刻意的取舍：场景只在这一次听写里生效，不改持久设置；上下文不采集剪贴板和截图；应用按稳定的进程名 / bundle id 识别，不用会随系统语言变化的显示名。
 
@@ -900,19 +901,20 @@ Rust：`vocabulary` 单测（上限、校验、字面 vs 正则、大小写、�
 ```rust
 pub struct Scene {                          // <data dir>/scenes.json → { "schema": 1, "scenes": [...] }，数组顺序即匹配顺序
     pub id: Uuid,
-    pub name: String,                       // 去首尾空白后 1–32 字符，不含控制字符；全表唯一（忽略 ASCII 大小写）
+    pub name: String,                       // 去首尾空白后 1–32 字符，不含控制字符；用户场景之间唯一（忽略 ASCII 大小写）；内置场景存分类名（18.10）
     pub enabled: bool,
     #[serde(rename = "match")] pub matching: SceneMatch,
     pub overrides: SceneOverrides,
     pub created_at_ms: u64, pub updated_at_ms: u64,
+    pub builtin: Option<BuiltinScene>,      // 内置场景的分类（18.10）；None 不上 wire，草稿不能设置或清除
 }
 pub struct SceneMatch {
-    pub apps: Vec<String>,                  // 1–20 个应用 id（按 18.3 规范化后存储），各 1–128 字符，互不重复
+    pub apps: Vec<String>,                  // 1–20 个应用 id（按 18.3 规范化后存储），各 1–128 字符，互不重复；内置场景可以为空（18.10）
     pub title_contains: Vec<String>,        // 0–10 个窗口标题关键词（去首尾空白），各 1–64 字符；空 = 该应用的任何窗口
 }
 pub struct SceneOverrides {                 // 每项 None = 跟随全局；None 不上 wire
     pub refine_enabled: Option<bool>,
-    pub refine_style: Option<RefineStyle>,  // "default"（标准）| "punctuation"（只加标点）| "formal"（书面语）
+    pub refine_preset: Option<PresetId>,    // §21：内置预设名或自定义预设的 UUID；读旧文件时也接受 refine_style（"default" = 校对）
     pub output_mode: Option<OutputMode>,    // §12 三种
     pub language: Option<String>,           // "auto"（本次不给语言提示）或语言代码：1–16 个 ASCII 字母、数字或 `-`，存小写
     pub chinese_script: Option<ChineseScript>,   // §17 三种
@@ -924,12 +926,11 @@ pub struct SceneDraft {                     // scenes_add / scenes_update 的参
     #[serde(rename = "match")] pub matching: SceneMatch,
     pub overrides: SceneOverrides,          // 缺省全空
 }
-pub enum RefineStyle { Default, Punctuation, Formal }   // voltip_core::engines，wire snake_case；全局设置没有这一项（全局永远是 default）
 ```
 
 | 上限 | 值 | 超出时 |
 |---|---|---|
-| 场景数 `MAX_SCENES` | 50 | 新增被拒，列表不变 |
+| 用户场景数 `MAX_SCENES`（内置场景不计） | 50 | 新增被拒，列表不变 |
 | 名称 `MAX_SCENE_NAME_CHARS` | 32 字符 | 保存被拒 |
 | 每个场景的应用 `MAX_SCENE_APPS` / 每个 id `MAX_APP_ID_CHARS` | 20 个 / 128 字符 | 同上 |
 | 标题关键词 `MAX_TITLE_KEYWORDS` / 每个 `MAX_TITLE_KEYWORD_CHARS` | 10 个 / 64 字符 | 同上 |
@@ -946,7 +947,7 @@ pub enum RefineStyle { Default, Punctuation, Formal }   // voltip_core::engines�
 ```json
 { "id": "5c0ffee0-…", "name": "聊天", "enabled": true,
   "match": { "apps": ["slack", "wechat"], "title_contains": [] },
-  "overrides": { "refine_style": "punctuation", "prompt": "这是聊天消息：口语化，句末不加句号。" },
+  "overrides": { "refine_preset": "punctuation", "prompt": "这是聊天消息：口语化，句末不加句号。" },
   "created_at_ms": 1758700000000, "updated_at_ms": 1758700000000 }
 ```
 
@@ -996,7 +997,7 @@ DictationStart ─▶ Listening（立即上报，胶囊跟手）
 - 探针先于设备打开：`Internal::Context` 总在该 session 的 `CaptureStarted` 之前到达，所以解码线程（§11 的 `open(language)` 与字形）和录音上限都用覆盖后的值。代价是设备晚开探针那点时间（Windows / macOS 微秒级、本机 X11 约 1 ms、最坏 100 ms）；胶囊的 `Listening` 不等探针。
 - 探针超时、报错、panic 或返回 `None`：没有 context，没有场景，按全局设置。探针返回前就松开（比探针还快的点按）：这一次没有场景（Context 到达时已不在 `Listening`；设备照旧打开再立即关闭，与今天的快速点按相同）。探针返回前取消：设备不再打开。
 - 覆盖只作用于这一次，从不写进设置；下一次重新探测。每次运行在 `start` 时取场景列表与隐私开关的快照（与 §16 词典快照相同），运行中的修改从下一次起生效。
-- 覆盖的解析：`refine_enabled` / `refine_style` / `language`（`auto` = 不给提示）/ `chinese_script` 直接替换全局值；`output_mode` 与全局设置同一套规则——流式两种要 `live_preview_ready`，否则本次按 `whole_take` 运行，并在 `Done.live_error` 与历史里写明原因（全局设置的同类回落不写 `live_error`，因为设置页一直显示「当前生效」；场景的回落没有别处可看）；运行中的降级照 §12。`live_inject` 永不润色（§12）。
+- 覆盖的解析：`refine_enabled` / `refine_preset`（§21）/ `language`（`auto` = 不给提示）/ `chinese_script` 直接替换全局值；`output_mode` 与全局设置同一套规则——流式两种要 `live_preview_ready`，否则本次按 `whole_take` 运行，并在 `Done.live_error` 与历史里写明原因（全局设置的同类回落不写 `live_error`，因为设置页一直显示「当前生效」；场景的回落没有别处可看）；运行中的降级照 §12。`live_inject` 永不润色（§12）。
 - 覆盖用到的地方：云端 / 本地识别的语言提示、解码线程的语言与字形、整段与 remainder 的字形、润色的开关 / 风格 / 语言提示 / 上下文块。**ASR 永远收不到上下文**：语言覆盖只是普通的语言提示。
 
 ### 18.5 发给 LLM 的上下文与隐私
@@ -1057,6 +1058,31 @@ Rust：`scenes` 单测（校验与规范形式、上限、应用 id 规范化、
 ### 18.9 未做
 
 浏览器 URL 匹配（macOS 要 AppleScript 与自动化授权，Windows 要 UIA，Linux 无通用办法）；选中文本 / 剪贴板 / 截图 OCR 作为上下文；口令切换场景；默认场景；按场景切换识别引擎或模型、按场景的替换规则集；macOS 窗口标题（辅助功能权限）；Windows 用 exe 的 `FileDescription` 作显示名；纯 Wayland 探测；手机端。
+
+### 18.10 内置场景（2026-09-29）
+
+桌面的场景表里始终有七个内置场景（`voltip_core::scenes::BuiltinScene`，wire 为分类名）：
+
+| 分类 | 界面名称 | 预设 | 补充要求 | 默认应用 |
+|---|---|---|---|---|
+| `coding` | 编程开发 | 校对 | 保留代码、命令、路径、英文标识符和 Markdown，不把技术词翻译成中文 | VS Code、Cursor、Kiro、JetBrains 系列、各平台终端 |
+| `office` | 办公写作 | 书面语 | 邮件和文档：句子完整，自然分段，不编造称呼和事实 | Outlook、Word、WPS、OneNote / Pages、Notion、Obsidian、Typora 等 |
+| `chat` | 即时聊天 | 口语聊天 | 无 | 微信、企业微信、QQ、Slack、Teams、钉钉、飞书、Telegram、Discord 等 |
+| `legal` `medical` `finance` `academic` | 法律 / 医疗 / 金融 / 学术 | 校对 | 严格校对，保持专业术语原样；数字、单位、日期写规范，另加一句该领域的说明 | 无，用户添加自己用的软件后才生效 |
+
+- 默认应用按平台列出（`scenes/builtin.rs`：Windows 的 exe 名、macOS 的 bundle id、Linux 的 X11 `WM_CLASS`），经 `normalize_app_id` 规范化；取哪一套由核心所在的主机决定（`Platform::current()`）。
+- **补齐**：`SceneStore` 打开时，缺哪个分类就在表尾补上（关闭状态），再写回文件，所以 id 在重启之间不变；已存在的分类不重复补，旧字段一个不改，旧 `scenes.json` 照常读。手机端的核心不补（`CoreConfig.builtin_scenes = false`）。
+- **顺序**：补上的内置场景排在用户场景之后；之后用户新建的场景插在第一个内置场景之前，所以默认用户场景先匹配；用户可以用上移 / 下移调整。关闭的、或应用列表为空的内置场景永不匹配。
+- **规则**（核心与 bridge）：
+  - 内置场景可以关闭、修改应用 / 预设 / 补充要求，也可以恢复默认（`scenes_restore { id }`：应用和覆盖项恢复为模板，开关、位置、id 不变；对用户场景返回「只有内置场景可以恢复默认」）；
+  - 不能删除（`scenes_remove` 返回「内置场景不能删除，可以关闭」）、不能改名（草稿名称必须是分类名，否则「内置场景不能改名」）；
+  - 只有内置场景允许应用列表为空：bridge 对 `scenes_update` 的同步校验不要求应用（`validate_scene_draft_with(draft, false)`），由核心按场景判断；`scenes_add` 仍然要求至少一个应用；
+  - `MAX_SCENES` 和名称唯一只算用户场景；同一分类最多一个、内置场景的 `name` 必须是分类名，否则整个文件按「无法使用」处理。
+- `SceneRef.builtin`：状态与历史里的场景引用带上分类，界面据此显示本地化名称（`sceneLabel`，历史搜索两种语言的名称都能搜到）。
+- **术语包**（`voltip_core::vocabulary::packs`）：coding、office、legal、medical、finance、academic 各 40–80 个手工整理的术语（即时聊天没有）。某个内置场景匹配时，它的术语排在个人词典之后并入这一次的术语表（`Vocabulary::with_terms`）：与已有术语重复（忽略 ASCII 大小写）的跳过，仍受 200 个 / 1000 字符的上限约束（第一个放不下的术语结束本次追加），不占个人词典的 500 条名额。查询 `scenes_builtin` 返回 `[{ id, terms }]`（查看术语用）；手机端拒绝。
+- **界面**：设置 › 场景的卡片里，内置场景显示本地化名称、「内置」标记、一句说明、「术语 N 个 · 查看术语」（对话框列出全部术语），没有删除按钮；领域场景没有应用时显示「添加应用后生效」。编辑器里名称只读，应用可以为空，多一个「恢复默认」（确认后发 `scenes_restore`）。页脚写「自建场景最多 50 个」。
+- `MockBackend`：从 `packages/shared/src/fixtures/ipc/scenes-builtin.json` 读模板和术语（`crates/voltip-tauri-bridge/tests/contract.rs` 让它与核心一致，`UPDATE_IPC_FIXTURES=1` 再生），按身份的平台补齐，id 按分类固定；同样的拒绝文本与插入位置。
+- 测试：补齐（缺失时补上且关闭、已存在不重复、旧文件能读、写回后 id 不变）、重启回归（应用为空的内置场景与同名用户场景都原样保留，不隔离）、删除和改名被拒、更新保留分类、恢复默认、用户场景优先、关闭或无应用的内置场景不匹配、术语表拼接与上限（`vocabulary/tests.rs`、`engine.rs`）、经 runtime 的整条链路（`tests/scenes.rs`）、IPC 命令（`apps/desktop/src-tauri/tests/ipc.rs`）、界面的开关与恢复默认（`ScenesPane.test.tsx`）。
 
 ## 19. 语音编辑选中文本（2026-09-26）
 
@@ -1228,3 +1254,49 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 - **手机**：`CoreCommand::PhoneTextSend { to, body, source }`（`phone_text_send { publicKey, body, source }`）要求对端是在线的可信电脑、文字非空白且不超过 10 000 字（按字符计）。每条文字进 `UiState.sent_texts`（最新在前，最多 50 条，存 `sent-texts.json`；id 跨重启、跨「清空」递增，计数跟列表一起保存，没有可读的文件时从随机值开始，所以电脑按 `(手机, id)` 去重时不会把新文字当成见过的），状态 `sending` → `queued` / `delivered{pasted}` / `failed`；15 秒没有回音记为 `no_answer`（旧版电脑会丢掉不认识的消息），排队超过 10 分钟同样放弃。`sent_texts_clear` 清空列表。「发送剪贴板」经 `phone_clipboard_read` 读系统剪贴板（Android：`PhoneClipboardPlugin.kt`，系统只回答前台应用，按下按钮时 Voltip 就在前台；其他构建返回 `CLIPBOARD_UNAVAILABLE`）。界面在「已配对设备」页的「用手机说话」下面：文本框、字数、「发送剪贴板」「发送到 {电脑}」和已发送列表。
 - **电脑**：可信手机的 `phone_text` 经听写同一个注入器插入（粘贴，不行就留在剪贴板）；同一时间只插一条，电脑自己在录音或处理时先排队（最多 10 条，满了回 `busy`），手机看到 `queued`，这次听写结束（回到空闲或终态停留）后依次插入。同一条文字从第二条路径再到按 `(手机, id)` 丢弃（记最近 64 条）。每条插入都进历史，`HistoryEntry.origin = { device: 手机名, kind: typed｜clipboard }`；手机的听写（§20.1）也记成 `origin.kind = take`。历史页给这些条目加「手机输入 · {名称}」「手机剪贴板 · {名称}」「手机 · {名称}」徽标，文字条目不显示模型和耗时。`CoreConfig.accepts_phone_takes` 为假（手机）时回 `unavailable`；桌面壳的 `phone_text_send` / `sent_texts_clear` / `phone_clipboard_read` 返回 `PHONE_TEXT_UNAVAILABLE`。
 - 实现：`crates/voltip-protocol/src/app.rs`（`PhoneText` / `PhoneTextStatus`）、`crates/voltip-core/src/runtime/texts.rs`、`crates/voltip-core/src/phone.rs`（`SentText` / `SentTexts`）、`apps/mobile/src/screens/SendText.tsx`、`apps/mobile/src-tauri/src/clipboard.rs`。
+
+## 21. AI 预设（2026-09-29）
+
+**目标**：AI 润色按「预设」处理识别出的文字。内置八个预设，默认「校对」；用户可以复制内置预设或自己写，最多 30 个自定义预设；首页、标题栏、托盘都能切换，场景可以指定自己的预设。
+
+### 21.1 数据（`voltip_core::presets`）
+
+- `BuiltinPreset`：`proofread`（校对，默认）· `prompt`（提示词优化）· `intent`（意图整理）· `chat`（口语聊天）· `translate`（中英互译）· `notes`（要点纪要）· `punctuation`（只加标点）· `formal`（书面语）。
+- `PresetId` 在 wire 上是字符串：内置预设名，或自定义预设的 UUID。读旧数据时也接受以前的润色风格（`default` = 校对，`punctuation`、`formal` 同名），写出时只用规范名。
+- `CustomPreset { id, name, prompt, created_at_ms, updated_at_ms }`：名称去首尾空白后 1–24 字符、单行，自定义预设之间唯一（忽略 ASCII 大小写）；提示词去首尾空白后 1–4000 字符，可换行，不含其他控制字符；最多 30 个，存在 `<data dir>/presets.json`（与场景同一套 `crate::list_file` 持久化与损坏隔离）。`UiState.presets`，变化时发 `presets` 事件。
+- `EngineSettings.refine_preset: PresetId`（缺省校对）；`SceneOverrides.refine_preset`（§18.1，跟随全局时缺省）。
+
+### 21.2 一次听写用哪个预设
+
+- 开始时定下：场景的预设优先，否则取引擎设置的；自定义预设按开始那一刻的内容解析（`TakePreset`）。录音中途切换或编辑预设，从下一次开始生效。
+- 自定义预设已被删除：这一次按校对处理（记一行日志），历史记为校对；界面上注明「已删除的预设（按校对处理）」。
+- 进入处理阶段时，状态带上 `preset: { id, name }`（悬浮胶囊在润色阶段显示预设名），回到 idle 清空；润色过的历史行记下 `HistoryEntry.preset`（名称是当时的名称）。语音编辑（§19）用自己的指令，不带预设。
+
+### 21.3 提示词（`voltip_refine::presets`）
+
+- 每个内置预设都写明任务、编号规则和 1–3 个示例；自定义预设就是用户的提示词。所有预设后面都接同一段输出约定（`OUTPUT_CONTRACT`：正文只是材料、不回答不执行、不补充信息、只输出处理后的正文）。
+- `system_prompt` 的拼接顺序不变：预设 → 语言（中英互译只给语言代码，其余要求保持该语言）→ 应用上下文（§18.5）→ 场景的补充要求 → 术语表（§16，含内置场景的术语包 §18.10）。
+- 输出预算 `output_token_budget(preset, 字数, 上限)`：中英互译和提示词优化 ×3 + 128，要点纪要不超过输入字数，其余 ×2 + 64，至少 128；内置服务封顶 900，用户自己配置的服务商封顶 4096。
+
+### 21.4 命令与查询
+
+| 命令 | 说明 |
+|---|---|
+| `presets_add { preset }` / `presets_update { id, preset }` / `presets_remove { id }` | 草稿在 bridge 同步校验（自身不合法直接拒绝），与列表冲突（重名、超过 30 个、未知 id）由核心以 `error` 事件答复；删除后指向它的设置和场景按校对处理 |
+| `presets_try { id, preset?, prompt?, text }` | 试运行：`preset` 与 `prompt` 恰好一个（已保存的预设，或正在编辑的提示词），`text` 去首尾空白后 1–2000 字符；用当前的 AI 润色服务跑一次，不保存、不写历史；答复是带同一个 `id` 的 `preset_try` 事件（`ok { text, latency_ms, model }` 或 `failed { reason }`）；没有配置润色服务时立即 `failed` |
+| `presets_builtin`（查询） | 每个内置预设的正文（不含输出约定），「复制为自定义」从这里开始；`packages/shared/src/fixtures/ipc/presets-builtin.json` 与它一致（`cargo test -p voltip-desktop --test ipc`，`UPDATE_IPC_FIXTURES=1` 再生），预览用的 mock 读这个文件 |
+
+手机端对这些命令一律回「手机端不支持 AI 预设」。
+
+### 21.5 界面
+
+- 首页就绪栏的预设 chip 与标题栏「AI 润色」开关旁的预设名，打开同一个菜单（`packages/ui` `Menu`：WAI-ARIA 菜单按钮，↑↓ Home End 移动、Enter 选择、Esc 关闭且不关闭下面的对话框；每行不折行；在标题栏的拖动区域之外）：内置预设、自定义预设、「管理预设…」（打开 `/ai/presets`，滚到「预设」一节）。首页识别引擎卡另有「AI 预设」读数。
+- AI 模型页「预设」一节：内置预设卡片（名称、一句话说明、使用中标记、「复制为自定义」），自定义预设卡片（使用、编辑、删除需确认），「新建预设」；编辑对话框有名称、带字数的提示词、「试运行」面板（示例文字默认是校对的示例，结果标出模型与用时；没有润色服务时说明原因并禁用）。
+- 场景编辑器的「AI 预设」下拉：跟随全局、内置预设、自定义预设，指向已删除预设时保留为「已删除的预设（按校对处理）」。
+- 托盘「AI 润色」子菜单：「启用 AI 润色」开关和全部预设（勾选当前的）；语言、引擎设置或自定义预设变化时重建菜单；点已勾选的预设也会重建，保持勾选。Windows 与 macOS 的托盘冒烟脚本覆盖这个子菜单。
+- 历史详情显示「AI 预设」。
+
+### 21.6 门禁
+
+Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、解析与缺失回落）、refine 的预设正文 / 输出约定 / 预算表 / 请求体、engine 里一次听写的预设快照与历史记录、语音编辑不记预设、bridge 同步校验、桌面托盘子菜单的模型与设置变更（`platform::tests`）、IPC 夹具。TS：schema 与契约回放、`MockBackend` 的预设命令与试运行、`Menu` 组件、首页 / 标题栏 / AI 模型页 / 场景编辑器 / 胶囊 / 历史详情。
+

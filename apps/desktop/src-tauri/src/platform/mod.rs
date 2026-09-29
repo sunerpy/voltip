@@ -16,8 +16,9 @@ pub mod tray;
 pub mod windows;
 
 use tauri::{AppHandle, Manager as _, Runtime};
-use voltip_core::{DictationPhase, ForegroundApp, ForegroundProbe, Locale};
-use voltip_platform::tray::{CloseAction, TrayGlyph, TrayLocale, main_window_close};
+use voltip_core::ui::UiState;
+use voltip_core::{BuiltinPreset, DictationPhase, EngineSettings, ForegroundApp, ForegroundProbe, Locale, PresetId};
+use voltip_platform::tray::{CloseAction, TrayGlyph, TrayLocale, TrayPolish, TrayPolishAction, TrayPreset, builtin_preset_label, main_window_close};
 use voltip_tauri_bridge::Bridge;
 
 pub use voltip_platform::{HostOs, InjectDecision, InjectPreflight, Permission, PermissionReport, PermissionState};
@@ -62,6 +63,35 @@ fn system_tray_locale() -> Option<TrayLocale> {
     {
         None
     }
+}
+
+/// The tray's AI 润色 submenu for `state` (docs/dictation.md §21): the settings' switch and every
+/// preset, the built-in ones in the menu's language, then the custom ones by their names.
+pub fn tray_polish(state: &UiState, locale: TrayLocale) -> TrayPolish {
+    let engines = &state.settings.engines;
+    let current = engines.refine_preset;
+    let builtin = BuiltinPreset::ALL.into_iter().map(|preset| TrayPreset {
+        id: preset.as_str().to_owned(),
+        label: builtin_preset_label(preset.as_str(), locale).unwrap_or(preset.display_name()).to_owned(),
+        checked: current == PresetId::Builtin(preset),
+    });
+    let custom = state.presets.iter().map(|preset| TrayPreset {
+        id: preset.id.to_string(),
+        label: preset.name.clone(),
+        checked: current == PresetId::Custom(preset.id),
+    });
+    TrayPolish { enabled: engines.refine_enabled, presets: builtin.chain(custom).collect() }
+}
+
+/// The engine settings an AI 润色 entry asks for: the switch flipped, or the preset it names; the
+/// rest as they are. `None` when the entry names no preset.
+pub fn tray_polish_engines(engines: &EngineSettings, action: TrayPolishAction<'_>) -> Option<EngineSettings> {
+    let mut next = engines.clone();
+    match action {
+        TrayPolishAction::Toggle => next.refine_enabled = !next.refine_enabled,
+        TrayPolishAction::Preset(id) => next.refine_preset = PresetId::parse(id)?,
+    }
+    Some(next)
 }
 
 /// The notification area's small-icon size at the system DPI (Windows); `None` elsewhere.
@@ -204,7 +234,9 @@ impl ForegroundProbe for PlatformProbe {
 /// that case restores the `Regular` policy and shows the window instead.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub fn install_tray<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, start_hidden: bool, updater: bool) {
-    match tray::install(app, tray_locale(bridge.state().settings.locale), updater) {
+    let state = bridge.state();
+    let locale = tray_locale(state.settings.locale);
+    match tray::install(app, locale, updater, tray_polish(&state, locale)) {
         Ok(()) => tray::follow_dictation(app.clone(), bridge.clone()),
         Err(e) => {
             tracing::warn!(error = %e, "tray icon not installed");
@@ -288,6 +320,44 @@ mod tests {
             assert_eq!(glyph_for(&phase(json.clone())), glyph, "{json}");
         }
         assert_eq!(TRAY_AVAILABLE, cfg!(any(target_os = "macos", target_os = "windows")));
+    }
+
+    /// docs/dictation.md §21: the tray's AI 润色 submenu lists every preset with the one in use
+    /// checked, and its entries ask for the engine settings with only that one field changed.
+    #[test]
+    fn the_tray_polish_submenu_follows_the_settings_and_the_presets() {
+        let weekly = voltip_core::CustomPreset {
+            id: uuid::Uuid::parse_str("7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e").unwrap(),
+            name: "周报".into(),
+            prompt: "整理成周报".into(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+        let mut state = UiState { presets: vec![weekly.clone()], ..UiState::default() };
+        state.settings.engines.refine_preset = PresetId::Builtin(BuiltinPreset::Notes);
+        let menu = tray_polish(&state, TrayLocale::ZhCn);
+        assert!(menu.enabled);
+        let labels: Vec<&str> = menu.presets.iter().map(|p| p.label.as_str()).collect();
+        assert_eq!(labels, ["校对", "提示词优化", "意图整理", "口语聊天", "中英互译", "要点纪要", "只加标点", "书面语", "周报"]);
+        let checked: Vec<&str> = menu.presets.iter().filter(|p| p.checked).map(|p| p.id.as_str()).collect();
+        assert_eq!(checked, ["notes"]);
+        // The built-in names in the menu's language are the core's names in Chinese.
+        for preset in BuiltinPreset::ALL {
+            assert_eq!(builtin_preset_label(preset.as_str(), TrayLocale::ZhCn), Some(preset.display_name()));
+        }
+        assert_eq!(tray_polish(&state, TrayLocale::En).presets[0].label, "Proofread");
+        state.settings.engines.refine_preset = PresetId::Custom(weekly.id);
+        state.settings.engines.refine_enabled = false;
+        let menu = tray_polish(&state, TrayLocale::En);
+        assert!(!menu.enabled);
+        assert_eq!(menu.presets.iter().filter(|p| p.checked).map(|p| p.label.as_str()).collect::<Vec<_>>(), ["周报"]);
+
+        let engines = state.settings.engines.clone();
+        let toggled = tray_polish_engines(&engines, TrayPolishAction::Toggle).unwrap();
+        assert_eq!(toggled, EngineSettings { refine_enabled: true, ..engines.clone() });
+        let chosen = tray_polish_engines(&engines, TrayPolishAction::Preset("translate")).unwrap();
+        assert_eq!(chosen, EngineSettings { refine_preset: PresetId::Builtin(BuiltinPreset::Translate), ..engines.clone() });
+        assert_eq!(tray_polish_engines(&engines, TrayPolishAction::Preset("casual")), None);
     }
 
     #[test]

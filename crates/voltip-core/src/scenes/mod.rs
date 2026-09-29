@@ -1,7 +1,7 @@
 //! Scenes and context (docs/dictation.md §18).
 //!
 //! A scene names applications (and, optionally, window-title keywords) and says how a take that
-//! starts in one of them is processed: output mode, refine on / off and style, language, Chinese
+//! starts in one of them is processed: output mode, refine on / off and preset, language, Chinese
 //! script, and an extra instruction for the LLM. The engine probes the foreground application when
 //! a take starts, takes the first enabled scene that matches ([`match_scene`]) and applies its
 //! overrides to that take only. This module owns the wire types, the validation, the matching, the
@@ -9,19 +9,26 @@
 //!
 //! Nothing in here may stop a take: no probe answer, no match or an override the take cannot
 //! honour all mean "the global settings".
+//!
+//! The desktop's list also holds the built-in scenes ([`BuiltinScene`], §18.10): they carry their
+//! category, may list no application, cannot be deleted or renamed, and count toward neither
+//! [`MAX_SCENES`] nor the name rule of the user's scenes.
 
+mod builtin;
 mod store;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::dictation::ports::ForegroundApp;
-use crate::engines::{ChineseScript, OutputMode, RefineStyle};
+use crate::engines::{ChineseScript, OutputMode};
 use crate::history::HistoryEntry;
+use crate::presets::PresetId;
 
+pub use builtin::{BuiltinScene, has_builtin_scenes};
 pub use store::{SCENES_FILE_NAME, SCENES_SCHEMA, SceneStore};
 
-/// Most scenes kept.
+/// Most scenes the user makes (the built-in ones come on top).
 pub const MAX_SCENES: usize = 50;
 /// Longest scene name, in characters (the pill shows it).
 pub const MAX_SCENE_NAME_CHARS: usize = 32;
@@ -50,7 +57,8 @@ pub const LANGUAGE_AUTO: &str = "auto";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SceneMatch {
-    /// Normalised application ids ([`normalize_app_id`]), 1–[`MAX_SCENE_APPS`], no duplicates.
+    /// Normalised application ids ([`normalize_app_id`]), 1–[`MAX_SCENE_APPS`], no duplicates; a
+    /// built-in scene may list none (it then never matches).
     pub apps: Vec<String>,
     /// Window-title keywords, 0–[`MAX_TITLE_KEYWORDS`]; empty = any window of those apps. Compared
     /// case-insensitively, as substrings, on this machine only.
@@ -65,9 +73,10 @@ pub struct SceneOverrides {
     /// Run the LLM clean-up (or not).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refine_enabled: Option<bool>,
-    /// How far the clean-up may rewrite.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refine_style: Option<RefineStyle>,
+    /// What the clean-up does (docs/dictation.md §21). Scenes written before presets stored a
+    /// refine style under `refine_style`; it still reads (`default` = 校对).
+    #[serde(default, alias = "refine_style", skip_serializing_if = "Option::is_none")]
+    pub refine_preset: Option<PresetId>,
     /// Output mode (docs/dictation.md §12); a streaming mode needs the live preview like the
     /// global setting does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -95,7 +104,8 @@ impl SceneOverrides {
 pub struct Scene {
     /// Stable id.
     pub id: Uuid,
-    /// Display name, unique in the list ignoring ASCII case (1–[`MAX_SCENE_NAME_CHARS`] characters).
+    /// Display name, unique among the user's scenes ignoring ASCII case (1–[`MAX_SCENE_NAME_CHARS`]
+    /// characters); a built-in scene's is its category's wire name.
     pub name: String,
     /// Off: never matches.
     pub enabled: bool,
@@ -109,12 +119,16 @@ pub struct Scene {
     pub created_at_ms: u64,
     /// Unix milliseconds of the last change.
     pub updated_at_ms: u64,
+    /// The built-in category, for a built-in scene (§18.10). Kept by the store: a draft never sets
+    /// or clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin: Option<BuiltinScene>,
 }
 
 impl Scene {
     /// The id and name the status and the history carry.
     pub fn to_ref(&self) -> SceneRef {
-        SceneRef { id: self.id, name: self.name.clone() }
+        SceneRef { id: self.id, name: self.name.clone(), builtin: self.builtin }
     }
 }
 
@@ -161,6 +175,9 @@ pub struct SceneRef {
     pub id: Uuid,
     /// Scene name.
     pub name: String,
+    /// A built-in scene's category: the interface names it in its own language.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin: Option<BuiltinScene>,
 }
 
 /// The take's context (`DictationStatus.context`): the application in front when it started and
@@ -261,6 +278,12 @@ fn clean_line(value: &str, what: &str, max: usize) -> Result<String, SceneError>
 /// prompt's line endings normalised and its ends trimmed (blank = none). Cross-scene checks happen
 /// in the store.
 pub fn validate_scene_draft(draft: &SceneDraft) -> Result<SceneDraft, SceneError> {
+    validate_scene_draft_with(draft, true)
+}
+
+/// [`validate_scene_draft`], with `require_apps` off for a built-in scene, which may list no
+/// application (the store decides which rule a scene gets; the bridge checks an update without it).
+pub fn validate_scene_draft_with(draft: &SceneDraft, require_apps: bool) -> Result<SceneDraft, SceneError> {
     let name = clean_line(&draft.name, "场景名称", MAX_SCENE_NAME_CHARS)?;
     let mut apps: Vec<String> = Vec::new();
     for raw in &draft.matching.apps {
@@ -276,7 +299,7 @@ pub fn validate_scene_draft(draft: &SceneDraft) -> Result<SceneDraft, SceneError
             apps.push(id);
         }
     }
-    if apps.is_empty() {
+    if apps.is_empty() && require_apps {
         return Err(invalid(format!("场景「{name}」至少要有一个应用")));
     }
     if apps.len() > MAX_SCENE_APPS {
@@ -333,15 +356,26 @@ pub fn validate_scene_draft(draft: &SceneDraft) -> Result<SceneDraft, SceneError
     })
 }
 
-/// Rules of the whole list (docs/dictation.md §18.1): at most [`MAX_SCENES`], names unique
-/// ignoring ASCII case. The same application may appear in several scenes (order decides).
+/// Rules of the whole list (docs/dictation.md §18.1): at most [`MAX_SCENES`] of the user's scenes,
+/// their names unique ignoring ASCII case; each built-in category at most once, named by its wire
+/// name. The same application may appear in several scenes (order decides).
 pub fn check_scenes(scenes: &[Scene]) -> Result<(), SceneError> {
-    if scenes.len() > MAX_SCENES {
+    let user: Vec<&Scene> = scenes.iter().filter(|s| s.builtin.is_none()).collect();
+    if user.len() > MAX_SCENES {
         return Err(invalid(format!("场景最多 {MAX_SCENES} 个")));
     }
-    for (i, a) in scenes.iter().enumerate() {
-        if let Some(b) = scenes[..i].iter().find(|b| b.name.eq_ignore_ascii_case(&a.name)) {
+    for (i, a) in user.iter().enumerate() {
+        if let Some(b) = user[..i].iter().find(|b| b.name.eq_ignore_ascii_case(&a.name)) {
             return Err(invalid(format!("已有名为「{}」的场景", b.name)));
+        }
+    }
+    for (i, a) in scenes.iter().enumerate() {
+        let Some(category) = a.builtin else { continue };
+        if a.name != category.as_str() {
+            return Err(invalid(format!("内置场景「{}」的名称必须是 {}", a.name, category.as_str())));
+        }
+        if scenes[..i].iter().any(|b| b.builtin == Some(category)) {
+            return Err(invalid(format!("内置场景「{}」出现了两次", category.display_name())));
         }
     }
     Ok(())

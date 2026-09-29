@@ -445,6 +445,7 @@ export const en: Messages = {
       localMissing: "model not downloaded",
       auto: "auto",
       refineModel: "Polish model",
+      preset: "AI preset",
       inject: "Insert method",
       injectPaste: "Paste at the cursor",
       injectClipboard: "Copy to clipboard only",
@@ -602,6 +603,7 @@ export const en: Messages = {
     detail: {
       asrModel: "Transcription model",
       refineModel: "Polish model",
+      preset: "AI preset",
       notRefined: "Not polished",
       outcome: "Result",
       duration: "Audio length",
@@ -831,7 +833,7 @@ export const en: Messages = {
     },
     llmSection: {
       title: "AI polish provider",
-      note: "After transcription, AI fixes punctuation, typos and filler words; voice edit uses the provider picked here too.",
+      note: "After transcription, AI processes the text with the chosen preset; voice edit uses the provider picked here too.",
     },
     current: "Now: {provider} · {model}",
     currentNone: "Now: none",
@@ -923,7 +925,7 @@ export const en: Messages = {
     refineToggle: "AI polish",
     refineToggleHelp:
       "Off inserts the transcription as is; a scene can turn polish on or off for itself.",
-    refineOn: "On · fixes punctuation and filler words only",
+    refineOn: "On · processes the text with the chosen preset",
     refineOff: "Off · inserts the transcription as is",
     refineNotReady: "AI polish provider unavailable: {issue}",
     refineLiveInject: "No polish in “Type as you speak” mode",
@@ -1341,7 +1343,7 @@ export const en: Messages = {
       keyPlaceholder: "Stored only in the system keychain",
       baseUrl: "Endpoint",
       refine: "Polish with AI too",
-      refineHelp: "Fixes punctuation, typos and filler words; provider: {provider}",
+      refineHelp: "Proofreads punctuation, typos and filler words by default; provider: {provider}",
       refineNone: "This choice has no polish service; set one up later on the AI models page.",
       localDownload:
         "Dictation works once the download finishes; you can continue now, it downloads in the background.",
@@ -1704,7 +1706,7 @@ export const en: Messages = {
       summary: {
         refineOn: "AI polish on",
         refineOff: "AI polish off",
-        style: "Polish: {style}",
+        preset: "AI preset: {preset}",
         output: "Output: {mode}",
         language: "Language: {language}",
         script: "Script: {script}",
@@ -1714,7 +1716,15 @@ export const en: Messages = {
         title: "Delete the scene “{name}”?",
         body: "Dictation in these apps follows the global settings from then on; scene names in History stay.",
       },
-      footnote: "Up to {limit} · matched top to bottom",
+      footnote: "Up to {limit} of your own · matched top to bottom",
+      builtinBadge: "Built-in",
+      terms: "Terms: {n}",
+      viewTerms: "View the terms of {name}",
+      viewTermsShort: "View terms",
+      termsTitle: "{name} · terms",
+      termsNote:
+        "When this scene matches, these terms join your personal dictionary as hints for recognition and AI polish; they do not count toward the dictionary's limit.",
+      needsApps: "Applies once you add an app",
     },
     brief: {
       privacy: {
@@ -1788,9 +1798,139 @@ export const en: Messages = {
       },
     },
   },
+  presets: {
+    proofread: {
+      name: "Proofread",
+      description:
+        "Fixes typos, punctuation and sentence breaks and removes filler words; everything else stays as spoken.",
+    },
+    prompt: {
+      name: "Prompt optimizer",
+      description: "Rewrites a spoken request as a clear prompt for an AI.",
+    },
+    intent: {
+      name: "Clarify intent",
+      description: "Keeps the corrected wording, removes repetition and lists multiple points.",
+    },
+    chat: {
+      name: "Casual chat",
+      description: "Short conversational sentences without a closing full stop.",
+    },
+    translate: {
+      name: "Chinese ⇄ English",
+      description: "Corrects recognition errors, then translates between Chinese and English.",
+    },
+    notes: { name: "Key points", description: "Organizes the text into key points and to-dos." },
+    punctuation: {
+      name: "Punctuation only",
+      description: "Adds punctuation and sentence breaks without changing the words.",
+    },
+    formal: {
+      name: "Formal",
+      description: "Rewrites the text as complete, fluent written language.",
+    },
+    missing: "Deleted preset (Proofread is used)",
+    menu: {
+      label: "AI preset",
+      trigger: "AI preset: {name}",
+      builtin: "Built-in presets",
+      custom: "Custom presets",
+      manage: "Manage presets…",
+    },
+    section: {
+      title: "Presets",
+      note: "AI polish processes the recognised text with the chosen preset. Built-in presets cannot be changed; copy one to a custom preset to edit it.",
+      current: "Current: {name}",
+      builtin: "Built-in presets",
+      custom: "Custom presets",
+      customEmpty:
+        "No custom presets yet. Create one, or copy a built-in preset and edit the copy.",
+      add: "New preset",
+      use: "Use",
+      inUse: "In use",
+      copy: "Copy to custom",
+      copyOf: "{name} (copy)",
+      edit: "Edit {name}",
+      remove: "Delete {name}",
+      footnote: "Up to {max} custom presets",
+      removed: "Preset deleted · {name}",
+      confirmRemove: {
+        title: "Delete the preset “{name}”?",
+        body: "Settings and scenes that use this preset switch to Proofread.",
+      },
+    },
+    editor: {
+      titleNew: "New preset",
+      titleEdit: "Edit preset",
+      name: "Name",
+      namePlaceholder: "For example: Weekly report",
+      prompt: "Prompt",
+      promptHelp:
+        "Describe how the AI should process the recognised text. Voltip sets the output format for every preset; there is no need to describe it here.",
+      count: "{n} / {max}",
+      save: "Save",
+      saved: "Preset saved · {name}",
+      trial: {
+        title: "Trial run",
+        help: "Processes a sample text with the current AI service; nothing is saved.",
+        sample: "Sample text",
+        sampleText:
+          "so um I think we should uh ship the fix on friday and then then monitor the logs over the weekend",
+        run: "Run",
+        running: "Processing…",
+        result: "Result · {model} · {time}",
+        failed: "Trial run failed: {reason}",
+        unavailable: "No AI polish service is set up, so the trial run is not available.",
+        timeout: "No answer in time. Try again later.",
+      },
+      error: {
+        name: "Enter a name",
+        nameTooLong: "Names can be at most {max} characters",
+        duplicate: "A preset named “{name}” already exists",
+        prompt: "Enter a prompt",
+        promptTooLong: "Prompts can be at most {max} characters",
+        sample: "Enter a sample text",
+        sampleTooLong: "Sample texts can be at most {max} characters",
+      },
+    },
+  },
+  builtinScenes: {
+    coding: {
+      name: "Coding",
+      description: "Code editors and terminals: code, commands and identifiers stay as they are.",
+    },
+    office: {
+      name: "Office writing",
+      description: "Mail and documents: complete, formal sentences.",
+    },
+    chat: { name: "Chat", description: "Chat apps: short conversational sentences." },
+    legal: {
+      name: "Legal",
+      description: "Strict proofreading; legal terms, statutes and case numbers stay as they are.",
+    },
+    medical: {
+      name: "Medical",
+      description: "Strict proofreading; drug names, doses and tests stay as they are.",
+    },
+    finance: {
+      name: "Finance",
+      description: "Strict proofreading; amounts, ratios and security codes stay as they are.",
+    },
+    academic: {
+      name: "Academic",
+      description: "Strict proofreading; citations and proper names stay as they are.",
+    },
+  },
   sceneEditor: {
     titleNew: "New scene",
     titleEdit: "Edit scene",
+    builtinName: "A built-in scene keeps its name.",
+    builtinApps: "A built-in scene may list no app for now; it applies once you add one.",
+    restore: "Restore defaults",
+    restoreTitle: "Restore the defaults of “{name}”?",
+    restoreBody:
+      "The app list, the AI preset and the extra instruction return to their defaults; the switch stays as it is.",
+    restored: "Defaults restored · {name}",
     name: "Name",
     namePlaceholder: "For example: Chat",
     apps: "Apps",
@@ -1811,8 +1951,7 @@ export const en: Messages = {
     refine: "AI polish",
     refineOn: "On",
     refineOff: "Off",
-    style: "Polish style",
-    styleName: { default: "Standard", punctuation: "Punctuation only", formal: "Formal" },
+    preset: "AI preset",
     outputMode: "Output mode",
     language: "Language",
     script: "Chinese script",

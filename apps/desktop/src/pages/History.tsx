@@ -8,8 +8,11 @@ import {
   activationHint,
   formatMs,
   formatSeconds,
+  isBuiltinPreset,
   outcomeLabel,
   outputModeLabel,
+  presetRefLabel,
+  sceneLabel,
 } from "@voltip/shared";
 import {
   Badge,
@@ -354,7 +357,12 @@ export function History({ initialFilter }: HistoryProps) {
                                   </span>
                                   {e.scene !== undefined && (
                                     <Badge>
-                                      <span data-user-text>{e.scene.name}</span>
+                                      <span
+                                        {...(e.scene.builtin === undefined
+                                          ? { "data-user-text": "" }
+                                          : {})}>
+                                        {sceneLabel(e.scene, locale)}
+                                      </span>
                                     </Badge>
                                   )}
                                 </span>
@@ -541,6 +549,20 @@ export function History({ initialFilter }: HistoryProps) {
                   size="sm"
                   muted={!selected.refined}
                 />
+                {selected.preset !== undefined && (
+                  // docs/dictation.md §21: the preset the clean-up ran with, by the name it had.
+                  <Readout
+                    label={t("history.detail.preset")}
+                    value={
+                      <span
+                        data-testid="history-detail-preset"
+                        {...(isBuiltinPreset(selected.preset.id) ? {} : { "data-user-text": "" })}>
+                        {presetRefLabel(selected.preset, locale)}
+                      </span>
+                    }
+                    size="sm"
+                  />
+                )}
                 <Readout
                   label={t("history.detail.outcome")}
                   value={outcomeLabel(selected.outcome, locale).text}
@@ -574,8 +596,12 @@ export function History({ initialFilter }: HistoryProps) {
                         selected.scene === undefined ? (
                           t("history.context.noScene")
                         ) : (
-                          <span data-user-text data-testid="history-detail-scene">
-                            {selected.scene.name}
+                          <span
+                            data-testid="history-detail-scene"
+                            {...(selected.scene.builtin === undefined
+                              ? { "data-user-text": "" }
+                              : {})}>
+                            {sceneLabel(selected.scene, locale)}
                           </span>
                         )
                       }

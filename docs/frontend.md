@@ -18,7 +18,7 @@
 
 ## 2. 组件（`packages/ui`，每个都有 Vitest 测试）
 
-`Card Panel(eyebrow) Eyebrow Badge(tone: neutral|ok|accent|danger|warn|info|ink，ok = 中性底 + 绿点) Chip Button(primary|outline|ghost|danger, disabled) IconButton Toggle Segmented Input(icon, keys, focus) Select Keycap/Keycaps LedMeter Waveform(2px 条 2px 间距圆头镜像，近端 accent 尾迹 subtle 55%) Heatmap Sparkline Progress Table(列类型 text|mono|chip|badge|toggle|progress|lamp|actions|keys|link|radio|two) LampText Readout Pill(胶囊八态) Toast Dialog EmptyState CommandPalette ThemeTile Sidebar Toolbar(读数：中文标签 + 可读值 + 状态点) StatusRow`
+`Card Panel(eyebrow) Eyebrow Badge(tone: neutral|ok|accent|danger|warn|info|ink，ok = 中性底 + 绿点) Chip Button(primary|outline|ghost|danger, disabled) IconButton Toggle Segmented Input(icon, keys, focus) Select Keycap/Keycaps LedMeter Waveform(2px 条 2px 间距圆头镜像，近端 accent 尾迹 subtle 55%) Heatmap Sparkline Progress Table(列类型 text|mono|chip|badge|toggle|progress|lamp|actions|keys|link|radio|two) LampText Readout Pill(胶囊八态) Toast Dialog(叠加时各有名称，Esc 只关最上面的) Menu(菜单按钮：单选行 / 命令行 / 分组，键盘可用，每行不折行) EmptyState CommandPalette ThemeTile Sidebar Toolbar(读数：中文标签 + 可读值 + 状态点) StatusRow`
 
 ## 3. IPC 契约（`packages/shared`）
 
@@ -106,7 +106,7 @@ type UpdateStatus = { state: "idle" } | { state: "checking" } | { state: "up_to_
   | { state: "downloading"; version: string; received: number; total?: number } | { state: "ready"; version: string } | { state: "installing"; version: string } | { state: "failed"; message: string } | { state: "disabled" };
 interface DictionaryEntry { id: string; term: string; heard_as: string[]; enabled: boolean; source: { kind: "manual" } | { kind: "history"; history_id: string }; created_at_ms: number; updated_at_ms: number } // docs/dictation.md §16
 interface ReplacementRule { id: string; name: string; kind: "literal" | "regex"; pattern: string; replacement: string; case_sensitive: boolean; enabled: boolean; created_at_ms: number; updated_at_ms: number }
-interface SceneOverrides { refine_enabled?: boolean; refine_style?: "default" | "punctuation" | "formal"; output_mode?: OutputMode; language?: string /* "auto" = 不带语言提示 */; chinese_script?: "simplified" | "traditional" | "as_is"; prompt?: string /* ≤ 500 */ } // 缺省 = 跟随全局，docs/dictation.md §18
+interface SceneOverrides { refine_enabled?: boolean; refine_preset?: PresetId /* 内置预设名或自定义预设 UUID，docs/dictation.md §21 */; output_mode?: OutputMode; language?: string /* "auto" = 不带语言提示 */; chinese_script?: "simplified" | "traditional" | "as_is"; prompt?: string /* ≤ 500 */ } // 缺省 = 跟随全局，docs/dictation.md §18
 interface Scene { id: string; name: string; enabled: boolean; match: { apps: string[] /* 规范化 id */; title_contains: string[] }; overrides: SceneOverrides; created_at_ms: number; updated_at_ms: number }
 interface AppRef { id: string; name: string }
 interface TakeContext { app: AppRef; scene?: { id: string; name: string } } // DictationStatus.context?、HistoryEntry.app? / scene?

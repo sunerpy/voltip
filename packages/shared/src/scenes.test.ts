@@ -59,7 +59,7 @@ describe("scenes as the core runs them (docs/dictation.md section 18)", () => {
       },
       overrides: {
         refine_enabled: null,
-        refine_style: "punctuation",
+        refine_preset: "punctuation",
         language: " ZH-Hans ",
         prompt: "  第一行\r\n第二行\r第三行\t。 \n",
       },
@@ -69,7 +69,7 @@ describe("scenes as the core runs them (docs/dictation.md section 18)", () => {
       enabled: false,
       match: { apps: ["slack", "wechat"], title_contains: ["GitHub"] },
       overrides: {
-        refine_style: "punctuation",
+        refine_preset: "punctuation",
         language: "zh-hans",
         prompt: "第一行\n第二行\n第三行\t。",
       },

@@ -35,7 +35,9 @@ import {
   idleSnapshot,
   idleUpdate,
   pairingStateSchema,
-  REFINE_STYLES,
+  BUILTIN_PRESETS,
+  presetIdSchema,
+  presetTryOutcomeSchema,
   dictationStatusSchema,
   sceneDraftSchema,
   sceneSchema,
@@ -67,6 +69,7 @@ function baseState(): UiState {
     dictionary: [],
     rules: [],
     scenes: [],
+    presets: [],
     hardware: { cpu_threads: 0, gpus: [] },
     connectivity: { running: false },
   };
@@ -482,6 +485,7 @@ describe("dictation contract (docs/dictation.md)", () => {
       vad_trim: false,
       chinese_script: "simplified",
       inject: "paste",
+      refine_preset: "proofread",
     });
     // `#[serde(default)]` everywhere: an empty block is the defaults, an empty status the empty one.
     expect(engineSettingsSchema.parse({})).toEqual(defaultEngineSettings());
@@ -902,7 +906,7 @@ describe("scenes and context (docs/dictation.md section 18)", () => {
     name: "聊天",
     enabled: true,
     match: { apps: ["slack"], title_contains: [] },
-    overrides: { refine_style: "punctuation", prompt: "口语化" },
+    overrides: { refine_preset: "punctuation", prompt: "口语化" },
     created_at_ms: 1,
     updated_at_ms: 1,
   };
@@ -929,9 +933,8 @@ describe("scenes and context (docs/dictation.md section 18)", () => {
     const minimal = sceneSchema.parse({ ...bare, match: { apps: ["x"] } });
     expect(minimal.overrides).toEqual({});
     expect(minimal.match.title_contains).toEqual([]);
-    expect(REFINE_STYLES).toEqual(["default", "punctuation", "formal"]);
     for (const bad of [
-      { type: "scenes", scenes: [{ ...scene, overrides: { refine_style: "casual" } }] },
+      { type: "scenes", scenes: [{ ...scene, overrides: { refine_preset: "casual" } }] },
       { type: "scenes", scenes: [{ ...scene, match: { apps: "slack" } }] },
       { type: "scenes", scenes: [{ ...scene, enabled: "yes" }] },
       { type: "scenes", scenes: "none" },
@@ -983,6 +986,90 @@ describe("scenes and context (docs/dictation.md section 18)", () => {
     const named = historyEntrySchema.parse({ ...row, app: context.app, scene: context.scene });
     expect([named.app?.name, named.scene?.name]).toEqual(["Code", "聊天"]);
     expect(QUERY_COMMANDS).toContain("recent_apps");
+  });
+});
+
+describe("presets (docs/dictation.md section 21)", () => {
+  const custom = {
+    id: "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+    name: "周报",
+    prompt: "整理成周报",
+    created_at_ms: 1,
+    updated_at_ms: 2,
+  };
+
+  it("names a preset by its built-in name or a custom preset's UUID, 校对 by default", () => {
+    expect(BUILTIN_PRESETS).toEqual([
+      "proofread",
+      "prompt",
+      "intent",
+      "chat",
+      "translate",
+      "notes",
+      "punctuation",
+      "formal",
+    ]);
+    for (const id of [...BUILTIN_PRESETS, custom.id]) expect(presetIdSchema.parse(id)).toBe(id);
+    // The core writes the canonical name only; `default` of the refine styles of old never
+    // reaches the interface.
+    for (const bad of ["default", "casual", "", "7e57ab1e"])
+      expect(presetIdSchema.safeParse(bad).success).toBe(false);
+    const { refine_preset: _p, ...old } = defaultEngineSettings();
+    expect(engineSettingsSchema.parse(old).refine_preset).toBe("proofread");
+  });
+
+  it("carries the custom presets in the state and as an event, and 试一试 answers by id", () => {
+    const { presets: _p, ...old } = baseState();
+    expect(uiStateSchema.parse(old).presets).toEqual([]);
+    const state = uiStateSchema.parse({ ...baseState(), presets: [custom] });
+    const next = applyEvent(state, uiEventSchema.parse({ type: "presets", presets: [] }));
+    expect(next.presets).toEqual([]);
+    expect(next.scenes).toEqual(state.scenes);
+    const answer = uiEventSchema.parse({
+      type: "preset_try",
+      id: 4,
+      outcome: { status: "ok", text: "好", latency_ms: 10, model: "m" },
+    });
+    expect(applyEvent(state, answer)).toEqual(state);
+    expect(
+      presetTryOutcomeSchema.parse({
+        status: "failed",
+        reason: "尚未配置 AI 润色服务，无法试运行预设",
+      }).status,
+    ).toBe("failed");
+    for (const bad of [
+      { type: "presets", presets: [{ ...custom, prompt: 1 }] },
+      { type: "preset_try", id: -1, outcome: { status: "failed", reason: "x" } },
+      { type: "preset_try", id: 1, outcome: { status: "maybe" } },
+    ])
+      expect(uiEventSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("names the preset on the status while refining and on the history row", () => {
+    const preset = { id: custom.id, name: "周报" };
+    const status = dictationStatusSchema.parse({
+      session: 1,
+      phase: { phase: "idle" },
+      preset,
+    });
+    expect(status.preset).toEqual(preset);
+    const row = historyEntrySchema.parse({
+      id: "h1",
+      at_ms: 1,
+      raw_text: "a",
+      text: "b",
+      refined: true,
+      refine_model: "m",
+      asr_model: "a",
+      duration_ms: 1,
+      asr_ms: 1,
+      outcome: { kind: "inserted", via: "paste" },
+      starred: false,
+      preset: { id: "formal", name: "书面语" },
+    });
+    expect(row.preset).toEqual({ id: "formal", name: "书面语" });
+    const { preset: _p, ...older } = row;
+    expect(historyEntrySchema.parse(older).preset).toBeUndefined();
   });
 });
 

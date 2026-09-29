@@ -26,7 +26,7 @@ use voltip_core::dictation::{
     AudioSource, Capture, CaptureOptions, ClipboardCode, DictationError, DictationPorts, EngineFactory, InjectNote, Injection, Injector, LevelFrame, LivePcm,
     Recording, RefineHints, Refined, Refiner, SelectionTiming, ServiceProbe, Transcriber, Transcript, Via,
 };
-use voltip_core::{InjectMode, Modifier, ProbeError, ProbeFailure, RefineStyle, ResolvedEngines, ServiceKind};
+use voltip_core::{BuiltinPreset, InjectMode, Modifier, ProbeError, ProbeFailure, ProviderId, ResolvedEngines, ServiceKind, TakePreset};
 use voltip_inject::{ClipboardOnlyInjector, CopyOptions, FallbackCode, PasteOptions, SelectionSource};
 use voltip_platform::{HostOs, InjectDecision, InjectPreflight};
 use voltip_refine::{PromptContext, PromptHints, RefineClient, RefineConfig};
@@ -195,20 +195,50 @@ impl HttpRefiner {
     }
 }
 
-/// The core's refine style as the refine crate names it.
-pub fn refine_style(style: RefineStyle) -> voltip_refine::RefineStyle {
-    match style {
-        RefineStyle::Default => voltip_refine::RefineStyle::Default,
-        RefineStyle::Punctuation => voltip_refine::RefineStyle::Punctuation,
-        RefineStyle::Formal => voltip_refine::RefineStyle::Formal,
+/// The take's preset as the refine crate names it (docs/dictation.md §21).
+pub fn refine_preset(preset: &TakePreset) -> voltip_refine::Preset<'_> {
+    use voltip_refine::Preset;
+    match preset {
+        TakePreset::Builtin(builtin) => match builtin {
+            BuiltinPreset::Proofread => Preset::Proofread,
+            BuiltinPreset::Prompt => Preset::Prompt,
+            BuiltinPreset::Intent => Preset::Intent,
+            BuiltinPreset::Chat => Preset::Chat,
+            BuiltinPreset::Translate => Preset::Translate,
+            BuiltinPreset::Notes => Preset::Notes,
+            BuiltinPreset::Punctuation => Preset::Punctuation,
+            BuiltinPreset::Formal => Preset::Formal,
+        },
+        TakePreset::Custom { prompt, .. } => Preset::Custom(prompt),
     }
+}
+
+/// The built-in preset's own text (task, rules, examples; the output contract is added to every
+/// preset): what 复制为自定义 starts from.
+pub fn builtin_preset_body(preset: BuiltinPreset) -> &'static str {
+    refine_preset(&TakePreset::Builtin(preset)).builtin_body().unwrap_or_default()
+}
+
+/// One built-in preset's own text as `presets_builtin` answers it.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct BuiltinPresetText {
+    /// Which preset.
+    pub id: BuiltinPreset,
+    /// Its task, rules and examples ([`builtin_preset_body`]).
+    pub prompt: &'static str,
+}
+
+/// Every built-in preset's text, in the order the interface lists them (`presets_builtin`; the
+/// preview serves the same list from `packages/shared/src/fixtures/ipc/presets-builtin.json`).
+pub fn builtin_preset_texts() -> Vec<BuiltinPresetText> {
+    BuiltinPreset::ALL.into_iter().map(|id| BuiltinPresetText { id, prompt: builtin_preset_body(id) }).collect()
 }
 
 /// The core's hints as the refine crate's prompt input, one-to-one (the core already filtered the
 /// context by the privacy switches, docs/dictation.md §18.5).
 pub fn prompt_hints(hints: &RefineHints) -> PromptHints<'_> {
     PromptHints {
-        style: refine_style(hints.style),
+        preset: refine_preset(&hints.preset),
         language: hints.language.as_deref(),
         glossary: &hints.glossary,
         context: PromptContext {
@@ -449,7 +479,10 @@ pub fn build_clients(engines: &ResolvedEngines, local: &LocalTranscriber) -> (Ar
         }
     };
     let refiner: Option<Arc<dyn Refiner>> = engines.refine.as_ref().map(|remote| {
-        let config = RefineConfig::new(&remote.url, &remote.model).with_api_key(remote.key.clone()).with_timeout(REFINE_TIMEOUT);
+        // The built-in service stays under its free tier's output limit; a service the user
+        // configured may answer a long translation or notes in full (docs/dictation.md §21).
+        let cap = if engines.llm_provider == Some(ProviderId::Builtin) { voltip_refine::BUILTIN_OUTPUT_CAP } else { voltip_refine::USER_OUTPUT_CAP };
+        let config = RefineConfig::new(&remote.url, &remote.model).with_api_key(remote.key.clone()).with_timeout(REFINE_TIMEOUT).with_output_cap(cap);
         match HttpRefiner::new(config) {
             Ok(r) => Arc::new(r) as Arc<dyn Refiner>,
             Err(e) => {

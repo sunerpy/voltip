@@ -156,6 +156,7 @@ impl Runtime {
             edit: None,
             app: None,
             scene: None,
+            preset: None,
             origin: Some(EntryOrigin { device: text.name, kind: origin_kind(text.source) }),
         };
         self.record_history(entry);

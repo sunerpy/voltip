@@ -8,9 +8,11 @@ import {
   formatCount,
   formatMs,
   formatSeconds,
+  isBuiltinPreset,
   modelDisplayName,
   outcomeLabel,
   platformLabel,
+  presetLabel,
   relayLabel,
   takePhaseLabel,
 } from "@voltip/shared";
@@ -22,6 +24,7 @@ import {
   EmptyState,
   Eyebrow,
   Heatmap,
+  Icon,
   Keycaps,
   Lamp,
   LampText,
@@ -43,6 +46,7 @@ import { useChosenMicrophone, useMicrophoneTest } from "../features/audio/useMic
 import { useDictation, useTickingNow } from "../features/dictation/useDictation";
 import { ResultActions } from "../features/history/ResultActions";
 import { PermissionNotice } from "../features/permissions/PermissionNotice";
+import { PresetMenu } from "../features/presets/PresetMenu";
 import {
   type HistoryFilter,
   historyStats,
@@ -79,6 +83,11 @@ export function Home() {
   const local = engines.asr_provider === "local";
   const reported = enginesReported(engines);
   const providerName = t(`engines.provider.${engines.asr_provider}`);
+  // docs/dictation.md §21: the preset the next take's clean-up runs with (a custom one's name is
+  // the user's text).
+  const presetId = state.settings.engines.refine_preset;
+  const presetName = presetLabel(presetId, state.presets, locale);
+  const presetText = isBuiltinPreset(presetId) ? {} : { "data-user-text": "" };
 
   // docs/dictation.md §3 / §10: the core says whether recognition can run (a local model installed,
   // a provider with its key and endpoint).
@@ -269,8 +278,10 @@ export function Home() {
           size={10}
           pulse={dictation.listening || dictation.processing}
         />
-        <div className="flex min-w-0 flex-1 items-baseline gap-2">
-          <span className="text-[15px] font-medium whitespace-nowrap text-fg">
+        {/* At least the title's width: a narrow window wraps the chips instead of drawing them over
+            the title (960 px with the preset chip, 2026-09-29). */}
+        <div className="flex min-w-[10rem] flex-1 items-baseline gap-2">
+          <span className="shrink-0 text-[15px] font-medium whitespace-nowrap text-fg">
             {!ready
               ? t("home.status.notReady")
               : dictation.listening
@@ -300,6 +311,23 @@ export function Home() {
               ? t("home.chip.local", { model: asrModel })
               : t("home.chip.provider", { provider: providerName, model: asrModel })}
         </Chip>
+        <PresetMenu
+          align="end"
+          data-testid="home-preset"
+          title={engines.refine_enabled ? undefined : t("home.engine.refineOff")}
+          triggerClassName={`inline-flex h-7 items-center gap-1.5 rounded-6 bg-surface px-2.5 text-[12px] whitespace-nowrap hairline hover:border-fg-subtle ${engines.refine_enabled ? "text-fg" : "text-fg-muted"}`}
+          trigger={
+            <>
+              <Icon
+                name="wand"
+                size={14}
+                className={engines.refine_enabled ? "text-accent-text" : "text-fg-subtle"}
+              />
+              <span {...presetText}>{presetName}</span>
+              <Icon name="chevronDown" size={12} className="text-fg-subtle" />
+            </>
+          }
+        />
         {dictation.listening && (
           <Button variant="text" size="sm" onClick={dictation.cancel}>
             {t("home.button.cancel")}
@@ -462,10 +490,20 @@ export function Home() {
               {t("home.engine.liveDegraded")}
             </div>
           )}
-          <div className="mt-3 grid grid-cols-2 gap-3">
+          <div className="mt-3 grid grid-cols-3 gap-3">
             <Readout
               label={t("home.engine.refineModel")}
               value={engines.refine_enabled ? shortModel(engines.refine_model) : t("common.off")}
+              size="sm"
+              muted={!engines.refine_enabled}
+            />
+            <Readout
+              label={t("home.engine.preset")}
+              value={
+                <span data-testid="home-engine-preset" {...presetText}>
+                  {presetName}
+                </span>
+              }
               size="sm"
               muted={!engines.refine_enabled}
             />

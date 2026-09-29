@@ -42,7 +42,9 @@ fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 url="https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v${TAURI_CLI_VERSION}/${asset}"
-curl --fail --silent --show-error --location --retry 3 --output "$tmp/$asset" "$url"
+# GitHub's release downloads answer 500 now and then for several seconds in a row (CI 2026-09-29,
+# the macOS x64 leg: four attempts within 8 s all failed): retry for about half a minute.
+curl --fail --silent --show-error --location --retry 6 --retry-delay 5 --output "$tmp/$asset" "$url"
 # The digest is compared here rather than with `--check`: macOS 15's BSD sha256sum takes none of
 # GNU's flags, and older macOS has only shasum.
 if command -v shasum >/dev/null 2>&1; then

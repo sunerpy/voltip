@@ -140,6 +140,18 @@ describe("Home page", () => {
     ).toBeInTheDocument();
   });
 
+  // Layout check 2026-09-29 (plan 2.3, 960 px): with the preset chip the ready bar drew its chips
+  // over the title (「可以开」); the title keeps its width and the chips wrap instead.
+  it("regression: the ready title never shrinks under the chips; a narrow window wraps them", async () => {
+    renderApp();
+    await screen.findByText("可以开始听写");
+    const title = screen.getByText("可以开始听写");
+    expect(title).toHaveClass("shrink-0", "whitespace-nowrap");
+    expect(title.parentElement).toHaveClass("min-w-[10rem]", "flex-1");
+    expect(title.parentElement).not.toHaveClass("min-w-0");
+    expect(screen.getByTestId("home-readiness")).toHaveClass("flex-wrap");
+  });
+
   it("regression: a stat tile's note reads whole on hover when the default window cuts it", async () => {
     // The 1152 px check (the default window, plan 1.2): 「Keeps the newest 500」 was cut with no way
     // to read it.
@@ -661,6 +673,58 @@ describe("Home page", () => {
     await user.click(screen.getByRole("button", { name: /^首页$/ }));
     await user.click(screen.getByRole("button", { name: "查看全部 →" }));
     expect(screen.getByRole("heading", { name: "历史记录", level: 1 })).toBeInTheDocument();
+  });
+
+  it("the ready bar names the AI preset and its menu switches it; the engine card shows it (docs/dictation.md section 21)", async () => {
+    const user = userEvent.setup();
+    const weekly = {
+      id: "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+      name: "周报",
+      prompt: "整理成周报",
+      created_at_ms: 1,
+      updated_at_ms: 1,
+    };
+    const { backend } = renderApp({ mock: { presets: [weekly] } });
+    await screen.findByText("可以开始听写");
+    const bar = screen.getByTestId("home-readiness");
+    expect(screen.getByTestId("home-engine-preset")).toHaveTextContent("校对");
+    await user.click(within(bar).getByRole("button", { name: "AI 预设：校对" }));
+    const menu = within(bar).getByRole("menu", { name: "AI 预设" });
+    expect(
+      within(menu)
+        .getAllByRole("menuitemradio")
+        .map((i) => i.textContent),
+    ).toEqual([
+      "校对",
+      "提示词优化",
+      "意图整理",
+      "口语聊天",
+      "中英互译",
+      "要点纪要",
+      "只加标点",
+      "书面语",
+      "周报",
+    ]);
+    await user.click(within(menu).getByRole("menuitemradio", { name: "周报" }));
+    await waitFor(() => {
+      expect(backend.peek().settings.engines.refine_preset).toBe(weekly.id);
+    });
+    expect(within(bar).getByRole("button", { name: "AI 预设：周报" })).toBeInTheDocument();
+    expect(screen.getByTestId("home-engine-preset")).toHaveTextContent("周报");
+    expect(screen.getByTestId("home-engine-preset")).toHaveAttribute("data-user-text");
+    // With AI polish off the chip stays and says so on hover.
+    await user.click(screen.getByRole("switch", { name: /AI 润色 开/ }));
+    await waitFor(() => {
+      expect(backend.peek().engines.refine_enabled).toBe(false);
+    });
+    expect(within(bar).getByRole("button", { name: "AI 预设：周报" })).toHaveAttribute(
+      "title",
+      "AI 润色 关",
+    );
+    // 管理预设… opens the presets of the AI 模型 page.
+    await user.click(within(bar).getByRole("button", { name: "AI 预设：周报" }));
+    await user.click(within(bar).getByRole("menuitem", { name: "管理预设…" }));
+    expect(await screen.findByTestId("presets-section")).toBeInTheDocument();
   });
 
   it("stat tiles, chips and recent rows navigate on every platform", async () => {

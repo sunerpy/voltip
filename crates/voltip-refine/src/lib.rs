@@ -2,10 +2,13 @@
 //! vLLM, any gateway that speaks `POST {base}/chat/completions`).
 //!
 //! * [`RefineConfig`] — base URL (normalised to end in `/v1`), optional API key, model, timeout,
-//!   [`RefineStyle`].
-//! * [`RefineClient`] — one reqwest client; [`RefineClient::refine`] sends [`SYSTEM_PROMPT`] plus
+//!   the ceiling of `max_tokens`.
+//! * [`Preset`] — what the clean-up does (docs/dictation.md §21): eight built-in presets, each a
+//!   task, rules, examples and the shared [`OUTPUT_CONTRACT`], or the user's own instruction;
+//!   [`output_token_budget`] sizes the answer by preset.
+//! * [`RefineClient`] — one reqwest client; [`RefineClient::refine`] sends the 校对 prompt plus
 //!   the raw transcript at `temperature 0.2` and returns a cleaned [`Refined`];
-//!   [`RefineClient::refine_with`] takes the whole [`PromptHints`]: the take's style and language,
+//!   [`RefineClient::refine_with`] takes the whole [`PromptHints`]: the take's preset and language,
 //!   the user's dictionary terms ([`GLOSSARY_CLAUSE`]) and the take's context — app, window title,
 //!   scene instruction ([`CONTEXT_CLAUSE`], [`INSTRUCTION_CLAUSE`], docs/dictation.md §18.5).
 //! * [`RefineClient::edit`] — the voice edit (docs/dictation.md §19): [`EDIT_SYSTEM_PROMPT`] plus
@@ -25,13 +28,15 @@
 mod client;
 mod config;
 mod error;
+mod presets;
 mod prompt;
 
-pub use client::{RefineClient, Refined, clean_answer, clean_edit_answer, edit_token_budget, list_models, output_token_budget};
-pub use config::{DEFAULT_TIMEOUT, MAX_ERROR_BODY_CHARS, RefineConfig, RefineStyle, normalize_base_url};
+pub use client::{RefineClient, Refined, clean_answer, clean_edit_answer, edit_token_budget, list_models};
+pub use config::{DEFAULT_TIMEOUT, MAX_ERROR_BODY_CHARS, RefineConfig, normalize_base_url};
 pub use error::RefineError;
+pub use presets::{BUILTIN_OUTPUT_CAP, MIN_OUTPUT_TOKENS, OUTPUT_CONTRACT, Preset, USER_OUTPUT_CAP, output_token_budget};
 pub use prompt::{
     CONTEXT_CLAUSE, EDIT_CONTEXT_CLAUSE, EDIT_GLOSSARY_CLAUSE, EDIT_REMINDER, EDIT_SYSTEM_PROMPT, GLOSSARY_CLAUSE, INSTRUCTION_CLAUSE, MAX_CONTEXT_NAME_CHARS,
-    MAX_CONTEXT_TITLE_CHARS, MAX_INSTRUCTION_CHARS, PromptContext, PromptHints, SYSTEM_PROMPT, TEMPERATURE, clean_context_line, edit_nonce, edit_system_prompt,
+    MAX_CONTEXT_TITLE_CHARS, MAX_INSTRUCTION_CHARS, PromptContext, PromptHints, TEMPERATURE, clean_context_line, edit_nonce, edit_system_prompt,
     edit_user_message, system_prompt,
 };

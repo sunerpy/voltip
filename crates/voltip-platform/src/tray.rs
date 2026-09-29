@@ -311,6 +311,138 @@ impl TrayAction {
     }
 }
 
+/// The AI 润色 submenu (docs/dictation.md §21): the switch, then every preset (the built-in ones
+/// in the menu's language, the custom ones by their own names), the one the settings name checked.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TrayPolish {
+    /// Whether the clean-up runs.
+    pub enabled: bool,
+    /// The presets, in the interface's order.
+    pub presets: Vec<TrayPreset>,
+}
+
+/// One preset of [`TrayPolish`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrayPreset {
+    /// The preset's wire id: a built-in name or a custom preset's UUID.
+    pub id: String,
+    /// What the entry says.
+    pub label: String,
+    /// The preset the settings name.
+    pub checked: bool,
+}
+
+/// The AI 润色 submenu's id.
+pub const TRAY_POLISH_ID: &str = "tray-polish";
+/// Its switch's id.
+pub const TRAY_POLISH_TOGGLE_ID: &str = "tray-polish-toggle";
+const TRAY_PRESET_PREFIX: &str = "tray-preset:";
+
+/// The menu item id of the preset `id` names.
+pub fn tray_preset_id(id: &str) -> String {
+    format!("{TRAY_PRESET_PREFIX}{id}")
+}
+
+/// An entry of the AI 润色 submenu, as a menu event names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrayPolishAction<'a> {
+    /// The switch.
+    Toggle,
+    /// A preset, by its wire id.
+    Preset(&'a str),
+}
+
+impl<'a> TrayPolishAction<'a> {
+    /// The entry a menu event names; `None` for ids that are not the submenu's.
+    pub fn from_id(id: &'a str) -> Option<Self> {
+        if id == TRAY_POLISH_TOGGLE_ID {
+            return Some(Self::Toggle);
+        }
+        id.strip_prefix(TRAY_PRESET_PREFIX).filter(|preset| !preset.is_empty()).map(Self::Preset)
+    }
+}
+
+/// The submenu's label.
+pub const fn polish_menu_label(locale: TrayLocale) -> &'static str {
+    match locale {
+        TrayLocale::ZhCn => "AI 润色",
+        TrayLocale::En => "AI Polish",
+    }
+}
+
+/// The switch's label (checked while the clean-up runs).
+pub const fn polish_toggle_label(locale: TrayLocale) -> &'static str {
+    match locale {
+        TrayLocale::ZhCn => "启用 AI 润色",
+        TrayLocale::En => "Enable AI Polish",
+    }
+}
+
+/// A built-in preset's name in the menu's language, worded like the interface (`presets.<id>.name`
+/// of `packages/shared/src/i18n`); `None` for a name that is no built-in preset's.
+pub fn builtin_preset_label(id: &str, locale: TrayLocale) -> Option<&'static str> {
+    let zh = locale == TrayLocale::ZhCn;
+    Some(match id {
+        "proofread" => {
+            if zh {
+                "校对"
+            } else {
+                "Proofread"
+            }
+        }
+        "prompt" => {
+            if zh {
+                "提示词优化"
+            } else {
+                "Prompt optimizer"
+            }
+        }
+        "intent" => {
+            if zh {
+                "意图整理"
+            } else {
+                "Clarify intent"
+            }
+        }
+        "chat" => {
+            if zh {
+                "口语聊天"
+            } else {
+                "Casual chat"
+            }
+        }
+        "translate" => {
+            if zh {
+                "中英互译"
+            } else {
+                "Chinese ⇄ English"
+            }
+        }
+        "notes" => {
+            if zh {
+                "要点纪要"
+            } else {
+                "Key points"
+            }
+        }
+        "punctuation" => {
+            if zh {
+                "只加标点"
+            } else {
+                "Punctuation only"
+            }
+        }
+        "formal" => {
+            if zh {
+                "书面语"
+            } else {
+                "Formal"
+            }
+        }
+        _ => return None,
+    })
+}
+
 /// The tray tooltip: the product name, plus the phase while one is in flight.
 pub const fn tray_tooltip(glyph: TrayGlyph, locale: TrayLocale) -> &'static str {
     match (glyph, locale) {
@@ -343,11 +475,117 @@ pub const fn main_window_close(os: HostOs, tray_installed: bool) -> CloseAction 
     }
 }
 
+/// Rebuilds a tray menu in the order the rebuilds read their state. A menu choice forces a rebuild
+/// (a clicked check item toggles itself, and the menu must show what was saved), and the settings
+/// event the choice causes triggers another; the two run at the same time. Reading the state,
+/// comparing it with the menu shown, building and installing the new menu all happen under one
+/// lock, so the menu installed last is built from the newest state. (CI 2026-09-29, the macOS tray
+/// smoke: the forced rebuild had read the state before AI 润色 was switched back on and installed
+/// its menu 37 µs after the one built from the new state; the menu showed the switch off.)
+#[derive(Debug)]
+pub struct MenuSync<M> {
+    shown: std::sync::Mutex<M>,
+}
+
+impl<M: Clone + PartialEq> MenuSync<M> {
+    /// `initial`: the model of the menu the tray was created with.
+    pub fn new(initial: M) -> Self {
+        Self { shown: std::sync::Mutex::new(initial) }
+    }
+
+    /// Rebuild when the model `read` returns differs from the one shown, or always with `force`.
+    /// `read` gets the model shown (for what it does not read itself); `install` builds and installs
+    /// the menu. Both run under the lock. `Ok(true)`: a menu was installed. After an error the model
+    /// shown stays as it was, so the next rebuild tries again.
+    pub fn sync<E>(&self, force: bool, read: impl FnOnce(&M) -> M, install: impl FnOnce(&M) -> Result<(), E>) -> Result<bool, E> {
+        let mut shown = self.shown.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let next = read(&shown);
+        if !force && *shown == next {
+            return Ok(false);
+        }
+        install(&next)?;
+        *shown = next;
+        Ok(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const SIZES: [u32; 5] = [16, 20, 24, 32, 36];
+
+    #[test]
+    fn regression_a_rebuild_that_read_the_state_earlier_never_installs_over_a_newer_one() {
+        // CI 2026-09-29 (run 36601783515, the macOS tray smoke): AI 润色 switched back on, the
+        // rebuild the choice forced had read the state before the change and installed its menu
+        // after the one the settings event built from the new state.
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::{Arc, Mutex, mpsc};
+        use std::time::Duration;
+        let menu = Arc::new(MenuSync::new(0u32));
+        let state = Arc::new(AtomicU32::new(1));
+        let installed = Arc::new(Mutex::new(Vec::new()));
+        let (read_tx, read_rx) = mpsc::channel();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        // The forced rebuild reads the state before the change, then is slow to install: it waits
+        // for the event's rebuild, or 500 ms when that one is (rightly) held back by the lock.
+        let forced = {
+            let (menu, state, installed) = (menu.clone(), state.clone(), installed.clone());
+            std::thread::spawn(move || {
+                menu.sync(
+                    true,
+                    |_| {
+                        let read = state.load(Ordering::SeqCst);
+                        read_tx.send(()).unwrap();
+                        read
+                    },
+                    |next| {
+                        let _ = go_rx.recv_timeout(Duration::from_millis(500));
+                        installed.lock().unwrap().push(*next);
+                        Ok::<(), ()>(())
+                    },
+                )
+            })
+        };
+        read_rx.recv().unwrap();
+        state.store(2, Ordering::SeqCst);
+        let event = {
+            let (menu, state, installed) = (menu.clone(), state.clone(), installed.clone());
+            std::thread::spawn(move || {
+                menu.sync(
+                    false,
+                    |_| state.load(Ordering::SeqCst),
+                    |next| {
+                        installed.lock().unwrap().push(*next);
+                        Ok::<(), ()>(())
+                    },
+                )
+            })
+        };
+        assert_eq!(event.join().unwrap(), Ok(true));
+        go_tx.send(()).ok();
+        assert_eq!(forced.join().unwrap(), Ok(true));
+        assert_eq!(*installed.lock().unwrap(), vec![1, 2], "the menu installed last shows the newest state");
+    }
+
+    #[test]
+    fn menu_sync_rebuilds_on_change_or_when_forced_and_retries_after_an_error() {
+        let menu = MenuSync::new(1u32);
+        let mut installs = 0;
+        let mut count = |_: &u32| {
+            installs += 1;
+            Ok::<(), ()>(())
+        };
+        assert_eq!(menu.sync(false, |_| 1, &mut count), Ok(false), "unchanged: nothing to do");
+        assert_eq!(menu.sync(true, |_| 1, &mut count), Ok(true), "forced");
+        assert_eq!(menu.sync(false, |shown| shown + 1, &mut count), Ok(true), "changed");
+        assert_eq!(installs, 2);
+        // A failed install keeps the old model, so the same state is tried again.
+        assert_eq!(menu.sync(false, |_| 3, |_| Err("no menu")), Err("no menu"));
+        assert_eq!(menu.sync(false, |_| 3, |_| Ok::<(), &str>(())), Ok(true));
+        assert_eq!(menu.sync(false, |shown| *shown, |_| Ok::<(), ()>(())), Ok(false));
+    }
 
     fn pixel(buf: &[u8], size: u32, x: u32, y: u32) -> [u8; 4] {
         let i = ((y * size + x) * 4) as usize;
@@ -535,6 +773,26 @@ mod tests {
 
     /// Regression (user report 2026-09-28): closing the window destroyed it while the prewarmed
     /// pill window kept the process alive, so the tray (and a second launch) had nothing to show.
+    #[test]
+    fn the_polish_submenu_names_its_entries_and_reads_them_back() {
+        assert_eq!(TrayPolishAction::from_id(TRAY_POLISH_TOGGLE_ID), Some(TrayPolishAction::Toggle));
+        assert_eq!(TrayPolishAction::from_id(&tray_preset_id("notes")), Some(TrayPolishAction::Preset("notes")));
+        let custom = "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e";
+        assert_eq!(TrayPolishAction::from_id(&tray_preset_id(custom)), Some(TrayPolishAction::Preset(custom)));
+        for other in ["tray-preset:", "tray-quit", TRAY_POLISH_ID, "preset:notes"] {
+            assert_eq!(TrayPolishAction::from_id(other), None, "{other}");
+        }
+        assert_eq!((polish_menu_label(TrayLocale::ZhCn), polish_menu_label(TrayLocale::En)), ("AI 润色", "AI Polish"));
+        assert_eq!(polish_toggle_label(TrayLocale::En), "Enable AI Polish");
+        for id in ["proofread", "prompt", "intent", "chat", "translate", "notes", "punctuation", "formal"] {
+            let zh = builtin_preset_label(id, TrayLocale::ZhCn).unwrap();
+            let en = builtin_preset_label(id, TrayLocale::En).unwrap();
+            assert!(zh.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)), "{id}: {zh}");
+            assert!(!en.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)), "{id}: no CJK in English");
+        }
+        assert_eq!(builtin_preset_label("default", TrayLocale::ZhCn), None);
+    }
+
     #[test]
     fn closing_the_main_window_hides_it_where_something_brings_it_back() {
         let table = [

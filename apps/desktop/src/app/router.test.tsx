@@ -36,6 +36,10 @@ describe("parseRoute / routePath", () => {
       expect(parseRoute(legacy)).toEqual(AI_ROUTE);
     expect(routePath(SPEECH_ROUTE)).toBe("/speech");
     expect(routePath(AI_ROUTE)).toBe("/ai");
+    // The preset menus' 管理预设… (docs/dictation.md §21); an unknown part is the page itself.
+    expect(parseRoute("/ai/presets")).toEqual({ name: "ai", section: "presets" });
+    expect(parseRoute("/ai/other")).toEqual(AI_ROUTE);
+    expect(routePath({ name: "ai", section: "presets" })).toBe("/ai/presets");
     expect(routePath({ name: "feedback" })).toBe("/feedback");
     for (const section of ["refine", "engine", "speech", "ai"])
       expect(isSettingsSection(section)).toBe(false);
@@ -73,6 +77,7 @@ describe("parseRoute / routePath", () => {
       "/settings/hotkey",
       "/speech",
       "/ai",
+      "/ai/presets",
       "/feedback",
       "/onboarding",
       "/onboarding?step=2",

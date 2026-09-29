@@ -4,8 +4,10 @@
 // validates the draft again (its refusal comes back as the command's rejection) and checks the
 // list (a clash is an `error` event).
 import {
+  BUILTIN_PRESETS,
   CHINESE_SCRIPTS,
   type ChineseScript,
+  type CustomPreset,
   LANGUAGE_AUTO,
   type Locale,
   MAX_SCENE_APPS,
@@ -13,14 +15,14 @@ import {
   MAX_TITLE_KEYWORDS,
   OUTPUT_MODES,
   type OutputMode,
-  REFINE_STYLES,
-  type RefineStyle,
+  type PresetId,
   type Scene,
   type SceneDraft,
   type SceneOverrides,
   type TFunction,
   normalizeAppId,
   outputModeLabel,
+  presetLabel,
   zhT,
 } from "@voltip/shared";
 import { LANGUAGE_CODES } from "../engines/helpers";
@@ -36,7 +38,9 @@ export interface EditorDraft {
   apps: string[];
   keywords: string[];
   refine: Switch;
-  style: "" | RefineStyle;
+  /** `""` = follow, otherwise a built-in preset's name or a custom preset's id (possibly deleted
+   *  since). */
+  preset: PresetId;
   outputMode: "" | OutputMode;
   /** `""` = follow, `auto` = auto-detect, otherwise a language code. */
   language: string;
@@ -53,7 +57,7 @@ export function editorDraftFrom(scene?: Scene): EditorDraft {
     apps: [...(scene?.match.apps ?? [])],
     keywords: [...(scene?.match.title_contains ?? [])],
     refine: o.refine_enabled == null ? "" : o.refine_enabled ? "on" : "off",
-    style: o.refine_style ?? "",
+    preset: o.refine_preset ?? "",
     outputMode: o.output_mode ?? "",
     language: o.language ?? "",
     script: o.chinese_script ?? "",
@@ -65,7 +69,7 @@ export function editorDraftFrom(scene?: Scene): EditorDraft {
 export function sceneDraftOf(d: EditorDraft): SceneDraft {
   const overrides: SceneOverrides = {};
   if (d.refine !== "") overrides.refine_enabled = d.refine === "on";
-  if (d.style !== "") overrides.refine_style = d.style;
+  if (d.preset !== "") overrides.refine_preset = d.preset;
   if (d.outputMode !== "") overrides.output_mode = d.outputMode;
   if (d.language.trim().length > 0) overrides.language = d.language.trim();
   if (d.script !== "") overrides.chinese_script = d.script;
@@ -116,18 +120,24 @@ export interface EditorProblems {
   prompt?: { text: string; missing: boolean };
 }
 
+/** `builtin`: the draft is a built-in scene's (docs/dictation.md §18.10), which keeps its name and
+ *  may list no application; names are unique among the user's scenes only. */
 export function editorProblems(
   d: EditorDraft,
   others: readonly Scene[],
   t: TFunction = zhT.t,
+  builtin = false,
 ): EditorProblems {
   const out: EditorProblems = {};
   const name = d.name.trim();
-  const clash = others.find((s) => asciiFold(s.name) === asciiFold(name));
+  const clash = builtin
+    ? undefined
+    : others.find((s) => s.builtin === undefined && asciiFold(s.name) === asciiFold(name));
   if (name.length === 0) out.name = { text: t("sceneEditor.error.name"), missing: true };
   else if (clash !== undefined)
     out.name = { text: t("sceneEditor.error.duplicate", { name: clash.name }), missing: false };
-  if (d.apps.length === 0) out.apps = { text: t("sceneEditor.error.noApps"), missing: true };
+  if (d.apps.length === 0 && !builtin)
+    out.apps = { text: t("sceneEditor.error.noApps"), missing: true };
   else if (d.apps.length > MAX_SCENE_APPS)
     out.apps = {
       text: t("sceneEditor.error.tooManyApps", { max: MAX_SCENE_APPS }),
@@ -169,11 +179,21 @@ export function refineChoices(t: TFunction = zhT.t): Choice<Switch>[] {
   ];
 }
 
-export function styleChoices(t: TFunction = zhT.t): Choice<"" | RefineStyle>[] {
-  return [
+/** 跟随全局, the built-in presets, the custom ones, and `current` when it names a custom preset that
+ *  was deleted since (it stays selectable, labelled as such). */
+export function presetChoices(
+  presets: readonly CustomPreset[],
+  current: string,
+  t: TFunction = zhT.t,
+): Choice<string>[] {
+  const out: Choice<string>[] = [
     { value: "", label: t("sceneEditor.follow") },
-    ...REFINE_STYLES.map((style) => ({ value: style, label: t(`sceneEditor.styleName.${style}`) })),
+    ...BUILTIN_PRESETS.map((id) => ({ value: id, label: t(`presets.${id}.name`) })),
+    ...presets.map((p) => ({ value: p.id, label: p.name })),
   ];
+  if (current !== "" && !out.some((o) => o.value === current))
+    out.push({ value: current, label: t("presets.missing") });
+  return out;
 }
 
 export function outputModeChoices(
@@ -225,6 +245,7 @@ export function overrideSummary(
   o: SceneOverrides,
   t: TFunction = zhT.t,
   locale: Locale = "zh-CN",
+  presets: readonly CustomPreset[] = [],
 ): string[] {
   const out: string[] = [];
   if (o.refine_enabled != null)
@@ -233,9 +254,11 @@ export function overrideSummary(
         o.refine_enabled ? "settings.scenes.summary.refineOn" : "settings.scenes.summary.refineOff",
       ),
     );
-  if (o.refine_style != null)
+  if (o.refine_preset != null)
     out.push(
-      t("settings.scenes.summary.style", { style: t(`sceneEditor.styleName.${o.refine_style}`) }),
+      t("settings.scenes.summary.preset", {
+        preset: presetLabel(o.refine_preset, presets, locale),
+      }),
     );
   if (o.output_mode != null)
     out.push(t("settings.scenes.summary.output", { mode: outputModeLabel(o.output_mode, locale) }));

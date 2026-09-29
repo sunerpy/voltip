@@ -5,6 +5,9 @@
 //   tray-ax <pid> frame              x y width height of the status item (points)
 //   tray-ax <pid> menu               open the item's menu, print its entries, close it
 //   tray-ax <pid> press <title>      open the menu and choose the entry titled <title>
+//   tray-ax <pid> submenu <title>    open the submenu of the entry <title>, print its entries
+//                                    (a checked one as "<entry><TAB>✓"), close the menu
+//   tray-ax <pid> press-sub <title> <entry>  open that submenu and choose <entry>
 //   tray-ax <pid> windows            the titles of the process's windows, one per line
 //   tray-ax <pid> close <title>      press the close button of the window titled <title>
 //   tray-ax <pid> dialog <name>      exit 0 when a window holds a dialog named <name>
@@ -123,7 +126,7 @@ if args.count == 3 && args[1] == "ink" {
 }
 
 guard args.count >= 3, let pid = pid_t(args[1]) else {
-    fail("usage: tray-ax <pid> frame|menu|press <title>|windows|close <title>|chrome <title>|dialog <name>")
+    fail("usage: tray-ax <pid> frame|menu|press <title>|submenu <title>|press-sub <title> <entry>|windows|close <title>|chrome <title>|dialog <name>")
 }
 guard AXIsProcessTrusted() else { fail("this binary has no Accessibility permission") }
 let app = AXUIElementCreateApplication(pid)
@@ -149,6 +152,30 @@ func openMenu() -> [AXUIElement] {
         guard let menu = children(item).first(where: { text($0, kAXRoleAttribute) == kAXMenuRole }) else { return nil }
         let entries = children(menu).filter { text($0, kAXRoleAttribute) == kAXMenuItemRole && !text($0, kAXTitleAttribute).isEmpty }
         return entries.isEmpty ? nil : entries
+    }
+}
+
+/// Open the status item's menu, then the submenu of its entry `title`, and return the submenu's
+/// entries (separators left out). Pressing an entry that has a submenu opens it.
+func openSubmenu(_ title: String) -> [AXUIElement] {
+    let entries = openMenu()
+    guard let parent = entries.first(where: { text($0, kAXTitleAttribute) == title }) else {
+        fail("no entry '\(title)' among \(entries.map { text($0, kAXTitleAttribute) })")
+    }
+    _ = AXUIElementSetMessagingTimeout(parent, 1)
+    let pressed = AXUIElementPerformAction(parent, kAXPressAction as CFString)
+    guard pressed == .success || pressed == .cannotComplete else { fail("opening '\(title)' failed (\(pressed.rawValue))") }
+    return wait(5, "the submenu '\(title)'") { () -> [AXUIElement]? in
+        guard let menu = children(parent).first(where: { text($0, kAXRoleAttribute) == kAXMenuRole }) else { return nil }
+        let items = children(menu).filter { text($0, kAXRoleAttribute) == kAXMenuItemRole && !text($0, kAXTitleAttribute).isEmpty }
+        return items.isEmpty ? nil : items
+    }
+}
+
+/// Close whatever menu the status item has open (a submenu closes with it).
+func cancelMenu() {
+    if let menu = children(statusItem()).first(where: { text($0, kAXRoleAttribute) == kAXMenuRole }) {
+        _ = AXUIElementPerformAction(menu, kAXCancelAction as CFString)
     }
 }
 
@@ -197,6 +224,22 @@ case "press":
     }
     let chosen = AXUIElementPerformAction(entry, kAXPressAction as CFString)
     guard chosen == .success else { fail("choosing '\(args[3])' failed (\(chosen.rawValue))") }
+case "submenu":
+    // One line per entry; a checked one ends in a tab and its mark (✓).
+    guard args.count == 4 else { fail("submenu needs the parent entry's title") }
+    for entry in openSubmenu(args[3]) {
+        let mark = text(entry, kAXMenuItemMarkCharAttribute)
+        print(mark.isEmpty ? text(entry, kAXTitleAttribute) : "\(text(entry, kAXTitleAttribute))\t\(mark)")
+    }
+    cancelMenu()
+case "press-sub":
+    guard args.count == 5 else { fail("press-sub needs the parent entry's title and the entry's") }
+    let entries = openSubmenu(args[3])
+    guard let entry = entries.first(where: { text($0, kAXTitleAttribute) == args[4] }) else {
+        fail("no entry '\(args[4])' among \(entries.map { text($0, kAXTitleAttribute) })")
+    }
+    let chosen = AXUIElementPerformAction(entry, kAXPressAction as CFString)
+    guard chosen == .success else { fail("choosing '\(args[4])' failed (\(chosen.rawValue))") }
 case "windows":
     for window in windows() { print(text(window, kAXTitleAttribute)) }
 case "wait-text":

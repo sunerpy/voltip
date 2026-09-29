@@ -1,3 +1,4 @@
+import { isBuiltinPreset, presetLabel } from "@voltip/shared";
 import {
   Button,
   CommandPalette,
@@ -22,6 +23,7 @@ import { type TrayRequest, type TrayRequestSource, useTrayRequests } from "../ap
 import { useWindowChrome } from "../app/window";
 import { microphoneReadoutValue, useMicrophoneReadout } from "../features/audio/mic-store";
 import { useDictation } from "../features/dictation/useDictation";
+import { PresetMenu } from "../features/presets/PresetMenu";
 import { UpdateBadge, UpdateDialog } from "../features/update/UpdateDialog";
 import { engineReadout, microphoneReadout, pageMeta } from "./page-meta";
 import { RevealSidebarButton, ShellSidebar } from "./ShellSidebar";
@@ -30,37 +32,56 @@ import { useSidebarLayout } from "./sidebar-layout";
 /** The 润色 switch on the title bar: wand icon + a short text label (`AI 润色` / `AI Polish`) +
  *  lamp (user feedback 2026-09-25: the icon alone did not read as a switch). It is the real LLM
  *  pass: a click writes `settings_set_engines { refine_enabled }` with the rest of the current
- *  engine settings, and `aria-pressed` follows what the core reports back. */
+ *  engine settings, and `aria-pressed` follows what the core reports back. Next to it, the current
+ *  preset opens the same preset menu as the home page (docs/dictation.md §21). */
 export function PolishToggle({ className }: { className?: string }) {
   const { backend } = useBackend();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const state = useUiState();
   const on = state.engines.refine_enabled;
   const tooltip = on ? t("shell.polish.tooltipOn") : t("shell.polish.tooltipOff");
+  const preset = state.settings.engines.refine_preset;
   return (
-    <button
-      type="button"
-      data-testid="polish-toggle"
-      aria-label={t("shell.polish.aria")}
-      aria-pressed={on}
-      title={tooltip}
-      onClick={() => {
-        void backend.invoke("settings_set_engines", {
-          engines: { ...state.settings.engines, refine_enabled: !on },
-        });
-      }}
-      className={cx(
-        "inline-flex h-7 items-center gap-1.5 rounded-6 px-1.5 text-fg-muted transition-colors hover:bg-inset hover:text-fg",
-        className,
-      )}>
-      <Icon name="wand" size={16} className={on ? "text-accent-text" : "text-fg-subtle"} />
-      <span
-        data-testid="polish-toggle-label"
-        className={cx("text-[12px] whitespace-nowrap", on ? "text-fg" : "text-fg-muted")}>
-        {t("shell.polish.label")}
-      </span>
-      <Lamp tone={on ? "ok" : "idle"} size={6} />
-    </button>
+    <div className={cx("inline-flex items-center", className)}>
+      <button
+        type="button"
+        data-testid="polish-toggle"
+        aria-label={t("shell.polish.aria")}
+        aria-pressed={on}
+        title={tooltip}
+        onClick={() => {
+          void backend.invoke("settings_set_engines", {
+            engines: { ...state.settings.engines, refine_enabled: !on },
+          });
+        }}
+        className="inline-flex h-7 items-center gap-1.5 rounded-6 px-1.5 text-fg-muted transition-colors hover:bg-inset hover:text-fg">
+        <Icon name="wand" size={16} className={on ? "text-accent-text" : "text-fg-subtle"} />
+        <span
+          data-testid="polish-toggle-label"
+          className={cx("text-[12px] whitespace-nowrap", on ? "text-fg" : "text-fg-muted")}>
+          {t("shell.polish.label")}
+        </span>
+        <Lamp tone={on ? "ok" : "idle"} size={6} />
+      </button>
+      <PresetMenu
+        align="end"
+        data-testid="polish-preset"
+        triggerClassName={cx(
+          "inline-flex h-7 items-center gap-1 rounded-6 px-1.5 text-[12px] whitespace-nowrap transition-colors hover:bg-inset hover:text-fg",
+          on ? "text-fg" : "text-fg-muted",
+        )}
+        trigger={
+          <>
+            <span
+              data-testid="polish-preset-name"
+              {...(isBuiltinPreset(preset) ? {} : { "data-user-text": "" })}>
+              {presetLabel(preset, state.presets, locale)}
+            </span>
+            <Icon name="chevronDown" size={12} className="text-fg-subtle" />
+          </>
+        }
+      />
+    </div>
   );
 }
 

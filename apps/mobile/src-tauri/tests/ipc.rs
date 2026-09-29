@@ -17,8 +17,9 @@ use voltip_core::ui::{UI_EVENT_NAME, UiState};
 use voltip_core::{CoreConfig, Settings, SettingsStore, ThemeId};
 use voltip_identity::MemorySecretStore;
 use voltip_mobile_lib::{
-    COMMANDS, DICTATION_UNAVAILABLE, FEEDBACK_UNAVAILABLE, KEYSTORE_SERVICE, MODELS_UNAVAILABLE, PROJECT_LINKS_UNAVAILABLE, PROVIDERS_UNAVAILABLE,
-    SCENES_UNAVAILABLE, UPDATE_UNAVAILABLE, VOCABULARY_UNAVAILABLE, build_app, data_dir, platform_label, production_config, secret_store,
+    COMMANDS, DICTATION_UNAVAILABLE, FEEDBACK_UNAVAILABLE, KEYSTORE_SERVICE, MODELS_UNAVAILABLE, PRESETS_UNAVAILABLE, PROJECT_LINKS_UNAVAILABLE,
+    PROVIDERS_UNAVAILABLE, SCENES_UNAVAILABLE, UPDATE_UNAVAILABLE, VOCABULARY_UNAVAILABLE, build_app, data_dir, platform_label, production_config,
+    secret_store,
 };
 use voltip_pairing::PairingState;
 use voltip_tauri_bridge::Bridge;
@@ -36,6 +37,7 @@ fn offline_config(dir: &Path) -> CoreConfig {
     cfg.default_device_name = DEVICE_NAME.into();
     cfg.direct_bind = "127.0.0.1:0".parse().unwrap();
     cfg.accepts_phone_takes = false;
+    cfg.builtin_scenes = false;
     cfg
 }
 
@@ -351,12 +353,26 @@ fn dictation_is_refused_but_engines_secrets_and_history_work() {
             ("scenes_update", json!({ "id": id, "scene": scene })),
             ("scenes_remove", json!({ "id": id })),
             ("scenes_reorder", json!({ "ids": [id] })),
+            ("scenes_restore", json!({ "id": id })),
+            ("scenes_builtin", json!({})),
             ("settings_set_context_sharing", json!({ "appName": true, "windowTitle": false })),
             ("recent_apps", json!({})),
         ] {
             assert_eq!(invoke(webview, cmd, args), Err(Value::String(SCENES_UNAVAILABLE.into())), "{cmd}");
         }
         assert!(wait_state(webview, |_| true).scenes.is_empty());
+        // No pipeline: no clean-up to shape, so the presets refuse as well (docs/dictation.md §21).
+        let preset = json!({ "name": "周报", "prompt": "整理成周报" });
+        for (cmd, args) in [
+            ("presets_add", json!({ "preset": preset })),
+            ("presets_update", json!({ "id": id, "preset": preset })),
+            ("presets_remove", json!({ "id": id })),
+            ("presets_try", json!({ "id": 1, "preset": "proofread", "prompt": null, "text": "你好" })),
+            ("presets_builtin", json!({})),
+        ] {
+            assert_eq!(invoke(webview, cmd, args), Err(Value::String(PRESETS_UNAVAILABLE.into())), "{cmd}");
+        }
+        assert!(wait_state(webview, |_| true).presets.is_empty());
         assert_eq!(invoke(webview, "settings_set_locale", json!({ "locale": "en" })), Ok(Value::Null));
         wait_state(webview, |s| s.settings.locale == voltip_core::Locale::En);
         assert!(invoke(webview, "settings_set_locale", json!({ "locale": "fr" })).is_err());
@@ -485,6 +501,8 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "feedback_attachment_remove",
             "feedback_attachments_clear",
             "phone_clipboard_read",
+            "presets_builtin",
+            "scenes_builtin",
         ]
         .map(String::from),
     );

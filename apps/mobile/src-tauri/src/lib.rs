@@ -18,8 +18,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter as _, Manager as _, Runtime};
 use voltip_core::ui::{ProjectLink, UI_EVENT_NAME, UiState, UpdateStatus};
 use voltip_core::{
-    Activation, AppRef, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PreviewDraft, ProviderId, RuleDraft,
-    SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
+    Activation, AppRef, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PresetDraft, PreviewDraft, ProviderId,
+    RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
 };
 use voltip_identity::SecretStore;
 use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
@@ -29,7 +29,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 82] = [
+pub const COMMANDS: [&str; 89] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -106,6 +106,13 @@ pub const COMMANDS: [&str; 82] = [
     "scenes_update",
     "scenes_remove",
     "scenes_reorder",
+    "scenes_restore",
+    "scenes_builtin",
+    "presets_add",
+    "presets_update",
+    "presets_remove",
+    "presets_try",
+    "presets_builtin",
     "settings_set_context_sharing",
     "recent_apps",
     "permissions_status",
@@ -128,6 +135,7 @@ pub fn production_config<R: Runtime>(app: &AppHandle<R>) -> CoreConfig {
     config.app_version = app.package_info().version.to_string();
     // The phone is the microphone; a desktop records its takes, never the other way round.
     config.accepts_phone_takes = false;
+    config.builtin_scenes = false;
     // LAN discovery (docs/pairing.md 「局域网发现」): Android drops multicast without the lock,
     // held while the switch is on.
     let discovering = voltip_core::SettingsStore::new(&config.data_dir).load().map_or(true, |s| s.lan_discovery);
@@ -618,6 +626,16 @@ fn scenes_reorder(_ids: Vec<String>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn scenes_restore(_id: String) -> Result<(), String> {
+    Err(SCENES_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn scenes_builtin() -> Result<Vec<()>, String> {
+    Err(SCENES_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
 fn settings_set_context_sharing(_app_name: bool, _window_title: bool) -> Result<(), String> {
     Err(SCENES_UNAVAILABLE.to_owned())
 }
@@ -625,6 +643,35 @@ fn settings_set_context_sharing(_app_name: bool, _window_title: bool) -> Result<
 #[tauri::command]
 fn recent_apps() -> Result<Vec<AppRef>, String> {
     Err(SCENES_UNAVAILABLE.to_owned())
+}
+
+/// The phone has no dictation pipeline, so no clean-up to shape (docs/dictation.md §21): every
+/// preset verb and the query refuse honestly.
+pub const PRESETS_UNAVAILABLE: &str = "presets: 手机端不支持 AI 预设";
+
+#[tauri::command]
+fn presets_add(_preset: PresetDraft) -> Result<(), String> {
+    Err(PRESETS_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn presets_update(_id: String, _preset: PresetDraft) -> Result<(), String> {
+    Err(PRESETS_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn presets_remove(_id: String) -> Result<(), String> {
+    Err(PRESETS_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn presets_try(_id: u64, _preset: Option<String>, _prompt: Option<String>, _text: String) -> Result<(), String> {
+    Err(PRESETS_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn presets_builtin() -> Result<Vec<serde_json::Value>, String> {
+    Err(PRESETS_UNAVAILABLE.to_owned())
 }
 
 #[tauri::command]
@@ -805,10 +852,17 @@ pub fn build_app<R: Runtime>(
             rules_import,
             rules_export,
             vocabulary_preview,
+            presets_add,
+            presets_update,
+            presets_remove,
+            presets_try,
+            presets_builtin,
             scenes_add,
             scenes_update,
             scenes_remove,
             scenes_reorder,
+            scenes_restore,
+            scenes_builtin,
             settings_set_context_sharing,
             recent_apps,
             permissions_status,

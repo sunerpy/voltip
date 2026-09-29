@@ -152,11 +152,16 @@ export function SettingsDialog({ section }: { section: SettingsSection }) {
             </span>
             <IconButton icon="close" label={t("settings.close")} onClick={close} />
           </header>
+          {/* One scroll area per group (the key): a group always opens at its top. A shared one
+              kept the offset the previous group was read to, and WebKit could leave the panel
+              empty after the content under that offset got shorter (user report 2026-09-29). */}
           <div
+            key={section}
             role="tabpanel"
             aria-labelledby={tabId(section)}
             className="min-h-0 flex-1 overflow-auto p-6"
-            data-testid="settings-content">
+            data-testid="settings-content"
+            data-section={section}>
             <div>
               {section === "general" && <General />}
               {section === "appearance" && <Appearance />}

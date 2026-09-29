@@ -27,11 +27,12 @@ use voltip_transport::{ConnectionState, DirectHost, LinkConfig, LinkEvent, Recon
 
 use crate::dictation::activation::{Activation, ActivationConfig, ActivationMachine, Edge, EdgeSource, Intent, PhaseHint};
 use crate::dictation::engine::{Effect, Internal};
-use crate::dictation::{DictationEngine, DictationError, DictationPhase, DictationPorts, DictationStatus, LevelFrame, SelectionTiming, TakeKind};
+use crate::dictation::{DictationEngine, DictationError, DictationPhase, DictationPorts, DictationStatus, LevelFrame, RefineHints, SelectionTiming, TakeKind};
 use crate::engines::{BuiltIn, EngineSettings, EngineStatus, MAX_LOCAL_THREADS, ProviderId, ResolvedEngines, ServiceKind, UserSecrets};
 use crate::history::{HistoryEntry, HistoryStore};
 use crate::models::{CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelInstallState, ModelManager, ModelState};
 use crate::peer::{LinkId, PeerPath, PeerPhase, PeerState};
+use crate::presets::{CustomPreset, PresetDraft, PresetStore, PresetTrial, PresetTryOutcome};
 use crate::providers::{ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, key_entries, key_entry};
 use crate::scenes::{ContextSharing, Scene, SceneDraft, SceneStore};
 use crate::settings::{Locale, Settings, SettingsStore, ThemeId};
@@ -107,6 +108,9 @@ pub struct CoreConfig {
     /// Run takes whose audio a trusted phone streams (docs/dictation.md §20): the desktop yes,
     /// the phone no (it answers `unavailable`).
     pub accepts_phone_takes: bool,
+    /// Keep the built-in scenes in the scene list (docs/dictation.md §18.10): the desktop yes, with
+    /// this host's default applications; the phone, which has no scenes, no.
+    pub builtin_scenes: bool,
     /// LAN discovery (docs/pairing.md 「局域网发现」): the shells pass [`crate::discovery::MdnsDiscovery`],
     /// the tests an in-memory LAN; `None` announces and browses nothing.
     pub discovery: Option<Arc<dyn crate::discovery::Discovery>>,
@@ -131,6 +135,7 @@ impl CoreConfig {
             direct_connect_timeout: Duration::from_secs(3),
             peer_handshake_timeout: Duration::from_secs(15),
             accepts_phone_takes: true,
+            builtin_scenes: true,
             discovery: None,
         }
     }
@@ -365,15 +370,41 @@ pub enum CoreCommand {
         /// New content.
         draft: SceneDraft,
     },
-    /// Delete a scene.
+    /// Delete a scene (a built-in one is refused: it can only be switched off).
     SceneRemove(Uuid),
     /// Reorder the scenes (a permutation of the current ids; order = matching order).
     SceneReorder(Vec<Uuid>),
+    /// Put a built-in scene's applications and overrides back to its defaults (§18.10).
+    SceneRestore(Uuid),
+    /// Append a custom preset (docs/dictation.md §21).
+    PresetAdd(PresetDraft),
+    /// Replace a custom preset's name and instruction.
+    PresetUpdate {
+        /// Which preset.
+        id: Uuid,
+        /// New content.
+        draft: PresetDraft,
+    },
+    /// Delete a custom preset (settings and scenes that name it refine with 校对 from then on).
+    PresetRemove(Uuid),
+    /// 试一试: run `text` through the current clean-up with a preset, save nothing, answer with
+    /// [`CoreEvent::PresetTry`] carrying `id`.
+    PresetTry {
+        /// The request's id, echoed in the answer.
+        id: u64,
+        /// What to run.
+        trial: PresetTrial,
+        /// Sample text.
+        text: String,
+    },
     /// Which parts of a take's context may go to the LLM (persisted; the next take follows).
     SetContextSharing(ContextSharing),
     /// Stop the core.
     Shutdown,
 }
+
+/// 试一试 without an AI service (docs/dictation.md §21).
+pub const PRESET_TRY_UNCONFIGURED: &str = "尚未配置 AI 润色服务，无法试运行预设";
 
 /// Everything the actor loop listens to.
 struct Inbox {
@@ -447,6 +478,15 @@ pub enum CoreEvent {
     Rules(Vec<ReplacementRule>),
     /// Scenes in matching order (full replacement); on `Ready` and after every change.
     Scenes(Vec<Scene>),
+    /// Custom presets, full replacement (docs/dictation.md §21).
+    Presets(Vec<CustomPreset>),
+    /// The answer to one [`CoreCommand::PresetTry`].
+    PresetTry {
+        /// The request's id.
+        id: u64,
+        /// The text, or why there is none.
+        outcome: PresetTryOutcome,
+    },
     /// The phone's take streamed to a desktop (docs/dictation.md §20); `None` before the first.
     PhoneTake(Option<crate::phone::PhoneTakeView>),
     /// The phone's list of texts sent to a desktop (docs/dictation.md §20.6), newest first; on
@@ -525,7 +565,9 @@ impl AppCore {
         let sent_texts = crate::phone::SentTexts::open(&config.data_dir);
         let (dictionary, dictionary_notice) = DictionaryStore::open(&config.data_dir);
         let (rules, rules_notice) = RuleStore::open(&config.data_dir);
-        let (scenes, scenes_notice) = SceneStore::open(&config.data_dir);
+        let scene_host = if config.builtin_scenes { voltip_protocol::Platform::current() } else { voltip_protocol::Platform::Other };
+        let (scenes, scenes_notice) = SceneStore::open_on(&config.data_dir, scene_host, now_ms());
+        let (presets, presets_notice) = PresetStore::open(&config.data_dir);
         let built_in = BuiltIn::from_build();
         let user_secrets = load_user_secrets(secrets.as_ref());
         let models = ports.models.clone();
@@ -536,6 +578,7 @@ impl AppCore {
         let (mut dictation, dict_rx) = DictationEngine::new(ports, &resolved, levels_tx.clone());
         dictation.set_vocabulary(Arc::new(Vocabulary::compile(dictionary.entries(), rules.rules())));
         dictation.set_scenes(Arc::new(scenes.scenes().to_vec()));
+        dictation.set_presets(Arc::new(presets.presets().to_vec()));
         dictation.set_context_sharing(settings.context_sharing);
         dictation.set_microphone(settings.microphone.clone());
         let (cmd_tx, cmd_rx) = mpsc::channel(64);
@@ -563,7 +606,8 @@ impl AppCore {
             dictionary,
             rules,
             scenes,
-            startup_notices: [dictionary_notice, rules_notice, scenes_notice].into_iter().flatten().collect(),
+            presets,
+            startup_notices: [dictionary_notice, rules_notice, scenes_notice, presets_notice].into_iter().flatten().collect(),
             models,
             library,
             downloads: HashMap::new(),
@@ -776,6 +820,7 @@ struct Runtime {
     rules: RuleStore,
     /// `scenes.json` (docs/dictation.md §18).
     scenes: SceneStore,
+    presets: PresetStore,
     /// Why a vocabulary or scene file could not be used at startup; told to the UI after `Ready`.
     startup_notices: Vec<String>,
     /// The model library port (`None`: no local models on this shell).
@@ -995,6 +1040,7 @@ impl Runtime {
         self.emit(CoreEvent::Dictionary(self.dictionary.entries().to_vec()));
         self.emit(CoreEvent::Rules(self.rules.rules().to_vec()));
         self.emit(CoreEvent::Scenes(self.scenes.scenes().to_vec()));
+        self.emit(CoreEvent::Presets(self.presets.presets().to_vec()));
         self.emit_sent_texts();
         for notice in std::mem::take(&mut self.startup_notices) {
             self.emit(CoreEvent::Error(notice));
@@ -1181,6 +1227,26 @@ impl Runtime {
             CoreCommand::SceneReorder(ids) => {
                 let result = self.scenes.reorder(&ids);
                 self.scenes_changed(result)
+            }
+            CoreCommand::SceneRestore(id) => {
+                let result = self.scenes.restore(id, now_ms());
+                self.scenes_changed(result)
+            }
+            CoreCommand::PresetAdd(draft) => {
+                let result = self.presets.add(&draft, now_ms()).map(drop);
+                self.presets_changed(result)
+            }
+            CoreCommand::PresetUpdate { id, draft } => {
+                let result = self.presets.update(id, &draft, now_ms());
+                self.presets_changed(result)
+            }
+            CoreCommand::PresetRemove(id) => {
+                let result = self.presets.remove(id);
+                self.presets_changed(result)
+            }
+            CoreCommand::PresetTry { id, trial, text } => {
+                self.try_preset(id, &trial, text);
+                Ok(())
             }
             CoreCommand::SetContextSharing(sharing) => {
                 self.settings.context_sharing = sharing;
@@ -1797,6 +1863,39 @@ impl Runtime {
         self.dictation.set_scenes(Arc::new(scenes.clone()));
         self.emit(CoreEvent::Scenes(scenes));
         Ok(())
+    }
+
+    // ---------------- presets (docs/dictation.md §21) ----------------
+
+    /// After a preset command: on success tell the UI and hand the engine the new list (the running
+    /// take keeps its snapshot); a refusal changed nothing.
+    fn presets_changed(&mut self, result: Result<(), crate::presets::PresetError>) -> Result<(), CoreError> {
+        result?;
+        let presets = self.presets.presets().to_vec();
+        self.dictation.set_presets(Arc::new(presets.clone()));
+        self.emit(CoreEvent::Presets(presets));
+        Ok(())
+    }
+
+    /// 试一试: `text` through the current clean-up with the trial's preset and the engines'
+    /// language, on a task; the answer is [`CoreEvent::PresetTry`] with `id`. Nothing is saved, and
+    /// no history entry is written.
+    fn try_preset(&mut self, id: u64, trial: &PresetTrial, text: String) {
+        let Some(refiner) = self.dictation.refiner() else {
+            self.emit(CoreEvent::PresetTry { id, outcome: PresetTryOutcome::Failed { reason: PRESET_TRY_UNCONFIGURED.to_owned() } });
+            return;
+        };
+        let hints = RefineHints { preset: trial.resolve(self.presets.presets()), language: self.resolved_engines().language.clone(), ..RefineHints::default() };
+        let evt = self.evt.clone();
+        tokio::spawn(async move {
+            let outcome = match refiner.refine(&text, &hints).await {
+                Ok(out) => PresetTryOutcome::Ok { text: out.text, latency_ms: out.latency_ms, model: out.model },
+                Err(e) => PresetTryOutcome::Failed { reason: e.to_string() },
+            };
+            if evt.send(CoreEvent::PresetTry { id, outcome }).await.is_err() {
+                tracing::debug!("preset trial answered after the UI went away");
+            }
+        });
     }
 
     fn apply_dictation(&mut self, effects: Vec<Effect>) {
