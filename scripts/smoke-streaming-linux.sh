@@ -5,7 +5,7 @@
 # What it proves (docs/dictation.md §11–§12): with the streaming Zipformer and a local whole-take
 # model installed, `output_mode = streaming_final` shows partial text on the pill while a real
 # 16 kHz Chinese sample plays into the microphone, and the finished take is recorded in
-# history.json with `mode = streaming_final` and the recogniser's sentence segments.
+# the history database with `mode = streaming_final` and the recogniser's sentence segments.
 #
 # The microphone is a PulseAudio null sink's monitor (the host has no sound card): the sample is
 # played into the sink with paplay while the hotkey is held with xdotool. Nothing here talks to a
@@ -163,15 +163,16 @@ fi
 sleep 1
 
 # Evidence: the history entry (mode, segments, text) and the engine's mode decision lines.
-history=$app_data/history.json
-[ -f "$history" ] || { echo "smoke-streaming-linux: no history.json written" >&2; tail -30 "$data/app.log" >&2; exit 1; }
+history=$app_data/history.sqlite3
+[ -f "$history" ] || { echo "smoke-streaming-linux: no history.sqlite3 written" >&2; tail -30 "$data/app.log" >&2; exit 1; }
 status=0
 "$py" - "$history" "$data/app.log" "$summary" "$(git rev-parse --short HEAD)" <<'EOF' || status=$?
-import json, re, sys
+import json, pathlib, re, sqlite3, sys
 history, log, out, commit = sys.argv[1:5]
-data = json.load(open(history))
-entries = data["entries"] if isinstance(data, dict) else data
-entry = entries[-1] if entries else None
+# The newest entry of the app's database, read without writing to it (docs/dictation.md §4.3).
+conn = sqlite3.connect(f"{pathlib.Path(history).resolve().as_uri()}?mode=ro", uri=True)
+row = conn.execute("SELECT json FROM entries ORDER BY at_ms DESC, rowid DESC LIMIT 1").fetchone()
+entry = json.loads(row[0]) if row else None
 ansi = re.compile(r"\x1b\[[0-9;]*m")
 lines = [ansi.sub("", l.rstrip()) for l in open(log, encoding="utf-8", errors="replace")]
 keep = [l for l in lines if any(k in l for k in ("output mode", "dictation phase", "live preview", "capture stopped", "streaming", "segments", "local model loaded"))]

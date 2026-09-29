@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! The dictation pipeline through the real core task: commands in, `CoreEvent`s out, fakes for
 //! the microphone / ASR / refine / inject, a `MemorySecretStore` for the secrets and a temp dir
-//! for `settings.json` + `history.json`.
+//! for `settings.json` + `history.sqlite3`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
