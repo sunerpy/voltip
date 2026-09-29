@@ -8,7 +8,7 @@ Voltip 的程序 `voltip-desktop`（Windows 上为 `voltip-desktop.exe`）接受
 
 ## 控制正在运行的应用
 
-这些选项会转交给已经在运行的 Voltip；没有运行中的 Voltip 时，程序正常启动。
+这些选项会转交给已经在运行的 Voltip。没有运行中的 Voltip 时，`--quit` 直接退出，其他选项会正常启动程序。
 
 | 选项 | 作用 |
 | --- | --- |

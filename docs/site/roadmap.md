@@ -34,6 +34,7 @@ Using the phone as a microphone and keyboard is built and tested; the app is bei
 - More local models, such as Whisper, and measurements on AMD and Intel graphics cards.
 - Exporting and importing all data, and a diagnostics bundle.
 - Code signing for the Windows packages.
+- An iOS app, with the phone as a microphone and keyboard as on Android. Development has not started.
 
 ## Deliberately left out
 

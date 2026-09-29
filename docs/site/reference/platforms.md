@@ -21,7 +21,7 @@ Voltip is the same app on every desktop system. This page lists what differs bet
 
 - **Versions**: macOS 11 or later, as one package for Apple silicon and one for Intel.
 - **First start**: the app is signed with the project's own certificate but is not notarized by Apple. See [Install](/guide/install#macos) for opening it the first time.
-- **Permissions**: the microphone, and Accessibility, which Voltip needs to paste and to use a single key as the trigger. Voltip does not need Input Monitoring. From version 0.0.7 on, the permissions stay granted across updates.
+- **Permissions**: the microphone, and Accessibility, which Voltip needs to paste and to use a single key as the trigger. Voltip does not need Input Monitoring. From version 0.0.7 on, releases share one signing certificate so that updates keep the permissions; the first such update has not been checked on a real Mac yet.
 - **Fn as the trigger**: set **When pressing the 🌐 key** to **Do Nothing** under System Settings → Keyboard.
 - **Scenes** recognise the app but not the window title.
 - **Tray**: clicking the menu bar icon opens the menu. Closing the window keeps Voltip running; it can be reopened from the Dock or the menu bar.

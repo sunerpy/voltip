@@ -55,7 +55,7 @@ Qwen3-ASR 0.6B recognising 16 seconds of Chinese speech, after the first run:
 | Linux, same computer | CPU, 8 threads | — | 2.87 s |
 | Windows, NVIDIA Tesla T4 | GPU (Vulkan) | 1.6 s | 0.28 s |
 
-SenseVoice Small recognised the same recording in 0.2 to 0.34 seconds on a server processor.
+SenseVoice Small (int8) recognised the same recording in 0.20 to 0.34 seconds on a 32-core server processor using 4 threads.
 
 Voltip loads the selected model in the background when it starts and after each settings change, so the first dictation does not wait for it.
 

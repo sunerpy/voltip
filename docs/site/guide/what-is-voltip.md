@@ -22,11 +22,11 @@ Press Esc at any point during a dictation to cancel it.
 - **How the text is written**: AI polish, a personal dictionary, replacement rules and scenes for particular apps. See [AI polish](/recognition/polish), [Dictionary and rules](/recognition/dictionary) and [Scenes](/recognition/scenes).
 - **How the text is inserted**: pasted at the cursor or only copied to the clipboard, all at once or while you speak. See [Where the text goes](/dictation/output).
 
-## What Voltip is not
+## What Voltip does not do
 
-- **Not a voice assistant.** There is no wake word, and Voltip does not carry out what you say. It turns speech into text; voice edit rewrites a selection only when you ask it to.
-- **Not always listening.** The microphone is open only while you record, or while you test it on the home page.
-- **Not an input method.** Voltip does not replace your keyboard or your input method. It inserts text by pasting it, as any app can. A few places refuse pasted text; [Where the text goes](/dictation/output#when-the-text-cannot-be-pasted) explains them.
+Voltip turns speech into text and does nothing else with it: there is no wake word, and it does not carry out what you say. Voice edit rewrites a selection only when you ask it to. The microphone is open only while you record, or while you test it on the home page.
+
+Your keyboard and input method keep working as before, because Voltip inserts text by pasting it, as any app can. A few places refuse pasted text; [Where the text goes](/dictation/output#when-the-text-cannot-be-pasted) explains them.
 
 ## Next steps
 

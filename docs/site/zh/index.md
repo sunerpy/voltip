@@ -110,6 +110,10 @@ home:
             body: 通过二维码、6 位验证码，或在同一局域网内点选，即可与 Android 手机配对。在手机上按住说话或输入文字，内容会出现在电脑的光标处。
             status: building
             link: /zh/phone/
+          - title: iOS 应用
+            body: 在 iOS 上同样把手机当作麦克风和键盘，尚未开始开发。
+            status: planned
+            link: /zh/roadmap
           - title: 历史记录，一键复制粘贴
             body: 每条结果都保存在本机，可以搜索，也可以复制或粘贴到之前使用的窗口。
             status: available
@@ -256,6 +260,9 @@ home:
       - title: 更多本地模型
         status: planned
         body: 包括 Whisper 等模型，以及在 AMD 和 Intel 显卡上的实测。
+      - title: iOS 应用
+        status: planned
+        body: 在 iOS 上同样把手机当作麦克风和键盘，尚未开始开发。
     notPlanned:
       title: 刻意不做的功能
       items:

@@ -8,7 +8,7 @@ The Voltip program, `voltip-desktop` (`voltip-desktop.exe` on Windows), accepts 
 
 ## Controlling the running app
 
-These options are passed to the Voltip that is already running. Without a running Voltip, the program starts normally.
+These options are passed to the Voltip that is already running. Without a running Voltip, `--quit` exits at once and the others start the program normally.
 
 | Option | Effect |
 | --- | --- |

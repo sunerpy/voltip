@@ -64,7 +64,7 @@ The dmg packages are signed with the project's own certificate but are not notar
 - On macOS 11 to 14, Control-click Voltip in Applications and choose **Open**.
 - In a terminal, `xattr -dr com.apple.quarantine /Applications/Voltip.app` has the same effect.
 
-Updates install from inside the app, and the microphone and Accessibility permissions stay granted across them. Updating from version 0.0.6 or earlier asks once more: choose **Always Allow** in the keychain prompts, and if dictation does not work afterwards, turn Voltip off and on again under Accessibility and under Microphone in System Settings.
+Updates install from inside the app. Updating from version 0.0.6 or earlier asks for the permissions once more: choose **Always Allow** in the keychain prompts, and if dictation does not work afterwards, turn Voltip off and on again under Accessibility and under Microphone in System Settings.
 
 ### Linux
 

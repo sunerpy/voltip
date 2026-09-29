@@ -133,3 +133,19 @@ pnpm -C apps/desktop dev --host 127.0.0.1 --port 1430
 4. Look at every image before committing it. The host guard does not read images.
 
 Capture again when the interface's text or layout changes.
+
+## Reviews
+
+- **2026-09-29, copy (Sepia refactor: professional pass and style pass).** Author and executor:
+  Claude, release not in Sepia's tables, so its Claude prose layers applied as priors. Venue
+  corpus: the app's own interface copy (`packages/shared/src/i18n/`) and this file's rules. The
+  vocabulary scan over every user page found two technical uses (a silent install, UAC
+  elevation), no cluster. The checklist failed three things, all fixed: a "Not X / Not Y / Not Z"
+  list on *What is Voltip* (now two plain paragraphs), an idiom on the home page ("at a glance"),
+  and three pages without an opening sentence that says what they help with (quick start,
+  updates, FAQ). Two measured timings were missing their hardware (SenseVoice's CPU timing, the
+  first run on a graphics card in the FAQ); both now name it. The same review also stopped the
+  pages from presenting two unfinished things as done: permissions kept across macOS updates
+  between fixed-certificate releases (not yet checked on a real Mac, see
+  `docs/acceptance/macos/manual-checklist.md` item 15) and iOS, which is now listed as planned.
+
