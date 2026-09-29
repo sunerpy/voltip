@@ -375,6 +375,14 @@ impl Injector for NativeInjector {
         Ok(Injection { via, note })
     }
 
+    /// The history paste's copy (`voltip_core::paste`): the clipboard backend, whatever the mode;
+    /// never the paste chord.
+    fn copy(&self, text: &str) -> Result<(), DictationError> {
+        let out = self.clipboard.inject(text).map_err(|e| DictationError::Inject(e.to_string()))?;
+        tracing::info!(chars = out.chars, injector = self.clipboard.describe(), "text copied for a paste from the history");
+        Ok(())
+    }
+
     /// docs/dictation.md §19: the copy chord after releasing the edit hotkey's modifiers. Sent even
     /// with `inject = clipboard_only` (the rewrite then stays on the clipboard for a manual paste).
     fn copy_selection(&self, held: &[Modifier]) -> Result<Option<String>, DictationError> {
@@ -658,6 +666,23 @@ mod tests {
         assert_eq!(broken.is_terminal_app("windowsterminal"), cfg!(target_os = "windows"));
         assert!(!broken.is_terminal_app("com.apple.terminal"), "Cmd+C copies in macOS terminals");
         assert!(!broken.is_terminal_app("code"));
+    }
+
+    /// Regression (history paste, 2026-09-29): the paste button's copy-only answers (no window came
+    /// up, the window changed, pure Wayland) go through `Injector::copy`; the native injector had no
+    /// copy of its own, so every one of them failed instead of leaving the text on the clipboard.
+    /// The copy uses the clipboard backend whatever the mode, and never the paste chord.
+    #[test]
+    fn regression_the_native_injector_copies_for_the_history_paste() {
+        let mode = Arc::new(Mutex::new(InjectMode::Paste));
+        let (paste, pasted) = Recording::boxed(voltip_inject::Via::Paste);
+        let (clipboard, copied) = Recording::boxed(voltip_inject::Via::Clipboard);
+        let injector = NativeInjector::with(mode.clone(), paste, clipboard);
+        assert_eq!(injector.copy("只复制"), Ok(()));
+        *mode.lock() = InjectMode::ClipboardOnly;
+        assert_eq!(injector.copy("仍然只复制"), Ok(()));
+        assert!(pasted.lock().is_empty(), "a copy never presses the paste chord");
+        assert_eq!(*copied.lock(), vec!["只复制".to_string(), "仍然只复制".to_string()]);
     }
 
     #[test]
