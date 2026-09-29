@@ -43,7 +43,7 @@ home:
         dark: /screens/overlay-processing-en-dark.webp
         width: 784
         height: 70
-        alt: The overlay during AI polish, showing the time the step has taken.
+        alt: The overlay during AI polish, showing the preset in use and the time the step has taken.
       - light: /screens/overlay-inserted-en-light.webp
         dark: /screens/overlay-inserted-en-dark.webp
         width: 784

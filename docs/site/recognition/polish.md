@@ -14,10 +14,6 @@ AI polish uses the service chosen on the **AI models** page: the built-in servic
 
 If the service does not answer, the recognised text is inserted without polish, and the dictation is not lost.
 
-<ScreenFigure src="/screens/ai-en-light.webp" width="1440" height="900"
-  alt="The AI models page with AI polish on and the built-in service in use, followed by the other services."
-  caption="The AI models page." />
-
 ## Presets
 
 A preset tells AI polish what to do with the recognised text. Choose the one in use from the **AI preset** menu on the home page or in the title bar, from **AI Polish** in the tray menu, or under **Presets** on the **AI models** page. While AI polish runs, the overlay shows the name of the preset, and each history entry records it.
@@ -32,6 +28,10 @@ A preset tells AI polish what to do with the recognised text. Choose the one in 
 | **Key points** | Key points and to-dos as two lists, without adding facts |
 | **Punctuation only** | Adds punctuation and sentence breaks and changes no words |
 | **Formal** | Rewrites spoken phrasing into complete, formal written language |
+
+<ScreenFigure src="/screens/ai-en-light.webp" width="1440" height="900"
+  alt="The AI models page: AI polish is on, and below it the eight built-in presets with Proofread in use, then the custom presets."
+  caption="The presets on the AI models page." />
 
 ### Your own presets
 

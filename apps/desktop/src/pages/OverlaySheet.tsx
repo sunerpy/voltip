@@ -76,6 +76,8 @@ export default function OverlaySheet({ state }: OverlaySheetProps) {
   const levels = fakeLevels(tick);
 
   const fallbackText = t("overlay.fallbackText");
+  // While AI polish runs the pill names the preset in use (docs/dictation.md §21), the default one here.
+  const refineTag = t("presets.proofread.name");
   const sampleLabels: Partial<Record<PillState, string>> = {
     processing: t("overlay.label.processing"),
     inserted: t("overlay.label.inserted"),
@@ -96,7 +98,7 @@ export default function OverlaySheet({ state }: OverlaySheetProps) {
           readout={READOUTS[single]}
           label={sampleLabels[single]}
           via={single === "inserted" ? "VS Code" : undefined}
-          mode={single === "processing" ? t("overlay.live.refineTag") : undefined}
+          mode={single === "processing" ? refineTag : undefined}
           onCopy={copyFallback}
         />
       </div>
@@ -126,7 +128,7 @@ export default function OverlaySheet({ state }: OverlaySheetProps) {
                 readout={READOUTS[s]}
                 label={sampleLabels[s]}
                 via={s === "inserted" ? "VS Code" : undefined}
-                mode={s === "processing" ? t("overlay.live.refineTag") : undefined}
+                mode={s === "processing" ? refineTag : undefined}
                 onCopy={copyFallback}
                 onStop={() => {
                   void backend.invoke("dictation_stop");

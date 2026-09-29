@@ -58,6 +58,10 @@ describe("Overlay page", () => {
     expect(screen.getByText("预览").closest('[role="status"]')).toHaveClass("w-[420px]");
     // Bridge & MCP is being removed: nothing on the sheet names it.
     expect(page.textContent).not.toMatch(/Bridge|MCP/);
+    // The processing pill names the preset, as the overlay does while AI polish runs (§21).
+    const processing = page.querySelector<HTMLElement>('[data-state="processing"].rounded-pill');
+    expect(processing?.textContent).toContain("校对");
+    expect(processing?.textContent).not.toContain("AI 润色");
   });
 
   it("regression: the single-pill overlay window render is untouched by the sheet layout", async () => {

@@ -43,7 +43,7 @@ home:
         dark: /screens/overlay-processing-zh-dark.webp
         width: 784
         height: 70
-        alt: AI 润色时的悬浮窗：显示这一步已用的时间。
+        alt: AI 润色时的悬浮窗：显示所用的预设和这一步已用的时间。
       - light: /screens/overlay-inserted-zh-light.webp
         dark: /screens/overlay-inserted-zh-dark.webp
         width: 784
