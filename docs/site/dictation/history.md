@@ -10,6 +10,7 @@ Every dictation, voice edit and text sent from a paired phone is listed on the *
 
 - The text that was inserted and the text that was recognised, with a view of what changed between them.
 - Which dictionary corrections and replacement rules applied, and the app and [scene](/recognition/scenes) the dictation was for.
+- The [AI preset](/recognition/polish#presets) that AI polish used, when it ran.
 - The models used and how long each step took.
 - Where the text went: pasted at the cursor, or left on the clipboard, with the reason.
 

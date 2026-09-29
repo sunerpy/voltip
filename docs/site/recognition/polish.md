@@ -1,12 +1,12 @@
 ---
-description: What AI polish changes in the recognised text, how to turn it on or off, which services it can use, and the presets in development.
+description: What AI polish changes in the recognised text, how to turn it on or off, which services it can use, and how presets decide what it does.
 ---
 
 # AI polish and presets
 
-AI polish tidies the recognised text before it is inserted: it fixes punctuation and typos and removes filler words and repetitions. It does not change what you said, translate it or add to it.
+AI polish tidies the recognised text before it is inserted. What it does depends on the [preset](#presets) in use. The default preset, **Proofread**, fixes punctuation and typos and removes filler words and repetitions; it does not change what you said, translate it or add to it.
 
-Turn it on or off with the **AI polish** switch in the title bar. A [scene](/recognition/scenes) can turn it on or off for a particular app.
+Turn it on or off with the **AI Polish** switch in the title bar, and choose the preset from the menu next to it. A [scene](/recognition/scenes) can turn it on or off, and choose a preset, for a particular app.
 
 ## Services
 
@@ -18,42 +18,38 @@ If the service does not answer, the recognised text is inserted without polish, 
   alt="The AI models page with AI polish on and the built-in service in use, followed by the other services."
   caption="The AI models page." />
 
-## Styles
-
-A scene can choose one of three styles for the apps it covers:
-
-| Style | Effect |
-| --- | --- |
-| **Standard** | Punctuation, typos and filler words, as described above |
-| **Punctuation only** | Adds punctuation and changes nothing else |
-| **Formal** | Rewrites spoken phrasing into written language |
-
-## What the AI service receives
-
-- The recognised text, after the dictionary corrections. Never audio.
-- The name of the app you are dictating into. You can turn this off.
-- The window title, only if you turn it on.
-- The extra instructions of the scene that applies, if any.
-- The correct spellings from your dictionary, so that the service keeps them as written.
-
-The two switches are under **Settings → Scenes**, in **Context sent to AI polish**. They apply only while AI polish is on; the recognition service never receives this context.
-
-With the **Type as you speak** output mode, sentences are inserted as they are recognised, so AI polish does not run.
-
 ## Presets
 
-<StatusTag status="building" />
-
-In development: several built-in presets, switched from the home page, from a menu next to the AI polish switch, or from the tray.
+A preset tells AI polish what to do with the recognised text. Choose the one in use from the **AI preset** menu on the home page or in the title bar, from **AI Polish** in the tray menu, or under **Presets** on the **AI models** page. While AI polish runs, the overlay shows the name of the preset, and each history entry records it.
 
 | Preset | What it does |
 | --- | --- |
 | **Proofread** (default) | Fixes typos, homophones and punctuation, splits paragraphs, removes filler words and stutters. When you correct yourself ("no, I mean…"), only the corrected wording is kept |
-| **Prompt** | Rewrites a spoken request into a clear prompt for another AI: one precise instruction for a simple request, a numbered list when there are several points |
-| **Intent** | Keeps the corrections, removes repetition and turns several points into a list |
-| **Chat** | Short, conversational sentences without a closing full stop |
-| **Translate** | Fixes recognition errors, then translates between Chinese and English |
-| **Notes** | Key points and to-dos as two lists, without adding facts |
-| **Punctuation only** and **Formal** | The two styles above, as presets |
+| **Prompt optimizer** | Rewrites a spoken request into a clear prompt for another AI: one precise instruction for a simple request, a numbered list when there are several points |
+| **Clarify intent** | Keeps the corrections, removes repetition and turns several points into a list |
+| **Casual chat** | Short, conversational sentences without a closing full stop |
+| **Chinese ⇄ English** | Fixes recognition errors, then translates between Chinese and English |
+| **Key points** | Key points and to-dos as two lists, without adding facts |
+| **Punctuation only** | Adds punctuation and sentence breaks and changes no words |
+| **Formal** | Rewrites spoken phrasing into complete, formal written language |
 
-You will also be able to write your own presets, try them on a sample text before saving, and choose a preset per scene.
+### Your own presets
+
+Under **Presets** on the **AI models** page, **New preset** creates a preset of your own, and **Copy to custom** starts one from a built-in preset, which cannot be changed itself. A preset has a name of up to 24 characters and a prompt of up to 4,000 characters that says how to handle the text. Voltip adds the output format, so the prompt does not need to describe it. You can keep up to 30 presets of your own.
+
+**Trial run** processes a sample text with the current AI service before you save; the result is not kept.
+
+When you delete a preset, the settings and scenes that used it switch to **Proofread**.
+
+## What the AI service receives
+
+- The recognised text, after the dictionary corrections. Never audio.
+- The instructions of the preset in use.
+- The name of the app you are dictating into. You can turn this off.
+- The window title, only if you turn it on.
+- The extra instructions of the scene that applies, if any.
+- The correct spellings from your dictionary, and the specialist terms of a [built-in scene](/recognition/scenes#built-in-scenes) that applies, so that the service keeps them as written.
+
+The two switches are under **Settings → Scenes**, in **Context sent to AI polish**. They apply only while AI polish is on; the recognition service never receives this context.
+
+With the **Type as you speak** output mode, sentences are inserted as they are recognised, so AI polish does not run.
