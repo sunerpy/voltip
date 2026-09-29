@@ -232,7 +232,9 @@ pub fn consent_store_app_key(exe_path: &str) -> String {
 /// the history paste goes to (apps/desktop/src-tauri/src/paste.rs).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StackedWindow<'a> {
+    /// `IsWindowVisible`.
     pub visible: bool,
+    /// `IsIconic`.
     pub minimized: bool,
     /// Width or height 0.
     pub empty: bool,
