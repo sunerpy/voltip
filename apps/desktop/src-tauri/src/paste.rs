@@ -21,6 +21,11 @@ pub const FIND_TARGET_WITHIN: Duration = Duration::from_millis(1500);
 /// How long the shell waits for the core's answer.
 pub const ANSWER_WITHIN: Duration = Duration::from_secs(5);
 
+/// Called after each "Voltip is still in front" answer while the shell waits, until it returns
+/// `true`: on Windows it brings the window the user came from to the front once Voltip's window is
+/// minimised ([`came_from`]).
+pub type Nudge = Box<dyn FnMut() -> bool + Send>;
+
 /// The foreground probe the core was given (the same `Arc`), managed as Tauri state; `None` on
 /// the headless wiring.
 pub struct PasteProbe(pub Option<Arc<dyn ForegroundProbe>>);
@@ -67,14 +72,18 @@ pub fn bring_back(outcome: PasteOutcome) -> bool {
 
 /// Ask `probe` every `every` until it names a window, for at most `within`. The probes answer
 /// `None` while one of Voltip's own windows is in front, so the first answer is another
-/// application's window.
-pub async fn wait_for_target(probe: Arc<dyn ForegroundProbe>, every: Duration, within: Duration) -> Option<ForegroundApp> {
+/// application's window. After each `None`, `nudge` runs until it reports that it acted.
+pub async fn wait_for_target(probe: Arc<dyn ForegroundProbe>, every: Duration, within: Duration, mut nudge: Option<Nudge>) -> Option<ForegroundApp> {
     let deadline = tokio::time::Instant::now() + within;
     loop {
         let asked = probe.clone();
         match tokio::task::spawn_blocking(move || asked.foreground()).await {
             Ok(Ok(Some(app))) => return Some(app),
-            Ok(Ok(None)) => {}
+            Ok(Ok(None)) => {
+                if nudge.as_mut().is_some_and(|act| act()) {
+                    nudge = None;
+                }
+            }
             Ok(Err(e)) => tracing::debug!(error = %e, "foreground probe failed while waiting for the paste target"),
             Err(e) => {
                 tracing::warn!(error = %e, "foreground probe task failed");
@@ -104,6 +113,20 @@ fn step_aside<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+/// The window the user came from, remembered before Voltip steps aside. On Windows, minimising
+/// Voltip usually activates it; when Windows leaves nothing in front (CI 2026-09-29, Notepad never
+/// came back), the nudge brings it to the front. macOS activates the previous application when
+/// Voltip hides, and the X11 window manager the next window when Voltip is minimised.
+fn came_from() -> Option<Nudge> {
+    #[cfg(target_os = "windows")]
+    {
+        let back = crate::platform::windows::paste_return()?;
+        Some(Box::new(move || crate::platform::windows::return_to(back)))
+    }
+    #[cfg(not(target_os = "windows"))]
+    None
+}
+
 /// Bring Voltip back to the front after a paste that did not go into the other window.
 fn come_back<R: Runtime>(app: &AppHandle<R>) {
     #[cfg(target_os = "macos")]
@@ -125,8 +148,9 @@ pub async fn paste_text<R: Runtime>(app: &AppHandle<R>, text: String) -> PasteOu
         (FirstStep::CopyOnly(reason), _) => (PasteTarget::CopyOnly(reason), false),
         (FirstStep::FindTarget, None) => (PasteTarget::CopyOnly(CopyReason::NoProbe), false),
         (FirstStep::FindTarget, Some(probe)) => {
+            let nudge = came_from();
             step_aside(app);
-            (target_after(wait_for_target(probe, PROBE_EVERY, FIND_TARGET_WITHIN).await), true)
+            (target_after(wait_for_target(probe, PROBE_EVERY, FIND_TARGET_WITHIN, nudge).await), true)
         }
     };
     let outcome = bridge.paste(text, target, ANSWER_WITHIN).await;
@@ -203,12 +227,43 @@ mod tests {
         let every = Duration::from_millis(5);
         let within = Duration::from_millis(200);
         let found = probe(3, Ok(Some(app("notepad"))));
-        assert_eq!(wait_for_target(found.clone(), every, within).await, Some(app("notepad")));
+        assert_eq!(wait_for_target(found.clone(), every, within, None).await, Some(app("notepad")));
         assert_eq!(found.calls.load(Ordering::SeqCst), 4, "asked until the window came up, not after");
         // Voltip stays in front, or the probe keeps failing: nothing in time.
         let never = probe(usize::MAX, Ok(None));
-        assert_eq!(wait_for_target(never.clone(), every, within).await, None);
+        assert_eq!(wait_for_target(never.clone(), every, within, None).await, None);
         assert!(never.calls.load(Ordering::SeqCst) >= 2, "asked more than once");
-        assert_eq!(wait_for_target(probe(0, Err("no display".into())), every, within).await, None);
+        assert_eq!(wait_for_target(probe(0, Err("no display".into())), every, within, None).await, None);
+    }
+
+    /// Answers `None` until the nudge has brought the window up.
+    struct NudgedProbe(Arc<std::sync::atomic::AtomicBool>);
+
+    impl ForegroundProbe for NudgedProbe {
+        fn foreground(&self) -> Result<Option<ForegroundApp>, String> {
+            Ok(self.0.load(Ordering::SeqCst).then(|| app("notepad")))
+        }
+    }
+
+    #[tokio::test]
+    async fn regression_the_nudge_brings_the_window_up_when_windows_leaves_nothing_in_front() {
+        // CI 2026-09-29: after Voltip minimised, Notepad never came to the front, and the paste only
+        // copied. The nudge runs after each miss until it acts (the first call finds Voltip not
+        // minimised yet), then never again.
+        let up = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let nudge: Nudge = {
+            let (up, calls) = (up.clone(), calls.clone());
+            Box::new(move || {
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    return false;
+                }
+                up.store(true, Ordering::SeqCst);
+                true
+            })
+        };
+        let found = wait_for_target(Arc::new(NudgedProbe(up)), Duration::from_millis(5), Duration::from_millis(500), Some(nudge)).await;
+        assert_eq!(found, Some(app("notepad")));
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "asked again after the first miss, not after acting");
     }
 }

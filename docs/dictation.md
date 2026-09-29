@@ -166,7 +166,7 @@ pub struct HistoryEntry {
 
 1. 文字为空或超过 50 000 字，答 `failed { invalid }`；正在录音或处理，答 `failed { busy }`，不排队。
 2. 纯 Wayland 会话无法得知前台窗口：立即只复制，答 `copied { no_probe }`。
-3. 其他情况把主窗口最小化（macOS 隐藏整个应用），每 50 ms 查一次前台，最多 1.5 s。探针对 Voltip 自己的窗口不作答，所以第一个答复就是另一个应用的窗口；等不到则只复制，答 `copied { timeout }`。
+3. 其他情况把主窗口最小化（macOS 隐藏整个应用），每 50 ms 查一次前台，最多 1.5 s。探针对 Voltip 自己的窗口不作答，所以第一个答复就是另一个应用的窗口；等不到则只复制，答 `copied { timeout }`。Windows 上，最小化之前先记下 Z 序里 Voltip 窗口下方的第一个普通应用窗口（可见、未最小化、不是工具窗口或被 DWM 隐藏的窗口、不是桌面或任务栏，`voltip_platform::windows::is_paste_target`）：激活窗口会把它放到最上面，所以紧挨在 Voltip 下面的就是用户之前用的那个。最小化后如果前台为空或仍是 Voltip 自己，壳层把它放到前台（`SetForegroundWindow`，此时允许调用）；已有别的应用在前台时不去抢（CI 2026-09-29：Windows 最小化后没有激活记事本，粘贴只复制了）。
 4. 核心（`runtime/texts.rs`）粘贴前再查一次前台：应用不同，或两边都有窗口标识而标识不同，只复制（`copied { target_changed }`）；一致才经注入器粘贴，遵守输出方式（仅复制时答 `clipboard_only`，粘贴失败留在剪贴板时答 `paste_failed`）。这次粘贴不写历史，和手机文字（§20.6）一样同一时间只插一条。
 5. 壳层按 `request_id` 等核心的 `PasteResult`，最多 5 s，超时答 `failed { timeout }`；结果不是 `pasted` 时恢复并聚焦主窗口。页面把结果显示为一条提示。
 

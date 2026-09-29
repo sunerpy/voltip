@@ -8,7 +8,9 @@
   interactive desktop (CI `windows-native`: GitHub's windows-2025 image has one):
     1. with one entry seeded in the history, the home page's recent table offers the button;
     2. pressing it (UI Automation Invoke) moves Voltip out of the way, Notepad comes back to the
-       front and receives the entry's text, CJK included (read back from its edit control);
+       front and receives the entry's text, CJK included (read back from its edit control). The
+       script never activates Notepad itself (a background script may not): Voltip brings back the
+       window below its own when Windows leaves nothing in front;
     3. Voltip stays minimised after a paste that landed (it comes back only when it did not).
   The entry goes into the runner user's real history file (Windows resolves the data directory
   through the Known Folder API, which no environment variable redirects); a history file that is
@@ -195,6 +197,16 @@ try {
   } $StepTimeoutSec 'the paste button in the recent table'
   Note "button '$($button.Current.Name)'"
   $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+  # What is in front while Voltip steps aside, change by change (the diagnosis when the paste does
+  # not land: Voltip minimised or not, and which window Windows activated).
+  $seen = New-Object System.Collections.Generic.List[string]
+  $until = (Get-Date).AddSeconds(3)
+  while ((Get-Date) -lt $until) {
+    $now = "$(Front-Text) voltip-minimised=$([VoltipPaste]::IsIconic($hwnd))"
+    if ($seen.Count -eq 0 -or $seen[$seen.Count - 1] -ne $now) { $seen.Add($now) }
+    Start-Sleep -Milliseconds 50
+  }
+  Note "in front after the click: $($seen -join ' > ')"
 
   # 4. Notepad receives the text; Voltip stays out of the way.
   try {
