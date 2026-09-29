@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.6](https://github.com/sunerpy/voltip/compare/v0.0.5...v0.0.6) (2026-09-29)
+
+
+### Bug Fixes
+
+* **desktop:** give the macOS traffic lights a slot of their own ([609f59f](https://github.com/sunerpy/voltip/commit/609f59fb1443bf6b82068354f769a6143d72bf82))
+* **desktop:** granting Accessibility needs no restart, and the notice says so ([7b74d44](https://github.com/sunerpy/voltip/commit/7b74d441a30c542ddcab8525175341672c85867d))
+* **install:** register the Mac app with LaunchServices after copying it ([7196951](https://github.com/sunerpy/voltip/commit/71969519d085cae44190c0923c40e4b46ad82da2))
+
 ## [0.0.5](https://github.com/sunerpy/voltip/compare/v0.0.4...v0.0.5) (2026-09-28)
 
 
