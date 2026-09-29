@@ -78,6 +78,11 @@ import {
   emptyHotkeyStatus,
   HISTORY_LIMIT,
   HISTORY_MIN_KEEP,
+  HISTORY_RECENT,
+  type HistoryHits,
+  type HistoryPage,
+  type HistoryQueryArgs,
+  type HistoryStats,
   idleDictation,
   idleSnapshot,
   idleUpdate,
@@ -143,6 +148,7 @@ import {
   recentApps as recentAppsOf,
   validateSceneDraft,
 } from "./scenes";
+import { historyHitsOf, historyPageOf, historyStatsOf } from "./history-queries";
 import {
   Vocabulary,
   VocabularyError,
@@ -828,6 +834,9 @@ export class MockBackend implements Backend {
   private readonly probeTimers = new Set<ReturnType<typeof setTimeout>>();
   /** Every event emitted, oldest first; handy for asserting ordering in tests. */
   readonly log: UiEvent[] = [];
+  /** The whole history, newest first: what the core keeps in `history.sqlite3`. The state holds
+   *  its newest `HISTORY_RECENT` and the total, as `UiState` does (docs/dictation.md §4.4). */
+  private history: HistoryEntry[] = [];
 
   constructor(options: MockBackendOptions = {}) {
     this.ttlSecs = options.ttlSecs ?? 120;
@@ -857,6 +866,7 @@ export class MockBackend implements Backend {
     this.permissions = options.permissions ?? mockPermissions(host);
     this.preflight = options.injectPreflight ?? uncheckedPreflight(host);
     this.pasteOutcome = options.pasteOutcome ?? { kind: "pasted" };
+    this.history = options.history ?? sampleHistory(this.now());
     const settings: Settings = { ...defaultSettings(), ...options.settings };
     // The phone has no local models (docs/dictation.md §10): an empty catalogue, commands refused.
     const models: ModelState[] =
@@ -887,7 +897,8 @@ export class MockBackend implements Backend {
       sent_texts: [],
       // A desktop on the LAN waiting for a pairing (docs/pairing.md 「局域网发现」): the phone lists it.
       nearby: this.role === "phone" ? [...MOCK_NEARBY] : [],
-      history: options.history ?? sampleHistory(this.now()),
+      history_recent: this.history.slice(0, HISTORY_RECENT),
+      history_total: this.history.length,
       engines: emptyEngineStatus(),
       update: options.update ?? idleUpdate(),
       models,
@@ -979,7 +990,38 @@ export class MockBackend implements Backend {
   async recentApps(): Promise<AppRef[]> {
     await Promise.resolve();
     this.refuseScenesOnPhone();
-    return recentAppsOf(this.state.history);
+    return recentAppsOf(this.history);
+  }
+
+  /** `history_query`: the core's filters, search and order over the whole list (the phone keeps
+   *  no dictation history and answers empty, after the same check). */
+  async historyQuery(args: HistoryQueryArgs): Promise<HistoryPage> {
+    await Promise.resolve();
+    return historyPageOf(this.role === "phone" ? [] : this.history, args);
+  }
+
+  /** `history_entry`: one entry, `null` once it is gone. */
+  async historyEntry(id: string): Promise<HistoryEntry | null> {
+    await Promise.resolve();
+    return this.role === "phone" ? null : (this.history.find((e) => e.id === id) ?? null);
+  }
+
+  /** `history_stats`: the dictations between the page's local midnights, and in total. */
+  async historyStats(boundaries: readonly number[]): Promise<HistoryStats> {
+    await Promise.resolve();
+    return historyStatsOf(this.role === "phone" ? [] : this.history, boundaries);
+  }
+
+  /** `history_hits`: hits per dictionary entry and rule over the whole history. */
+  async historyHits(): Promise<HistoryHits> {
+    await Promise.resolve();
+    return historyHitsOf(this.role === "phone" ? [] : this.history);
+  }
+
+  /** Replace the whole history and tell the UI its newest entries and the total. */
+  private setHistory(entries: HistoryEntry[]) {
+    this.history = entries;
+    this.emit({ type: "history", recent: entries.slice(0, HISTORY_RECENT), total: entries.length });
   }
 
   /** The fake foreground probe (docs/dictation.md §18.2): what the next take finds in front
@@ -1384,17 +1426,14 @@ export class MockBackend implements Backend {
     },
     history_delete: (args) => {
       const { id } = required(args);
-      this.emit({ type: "history", entries: this.state.history.filter((e) => e.id !== id) });
+      this.setHistory(this.history.filter((e) => e.id !== id));
     },
     history_clear: () => {
-      this.emit({ type: "history", entries: [] });
+      this.setHistory([]);
     },
     history_star: (args) => {
       const { id, starred } = required(args);
-      this.emit({
-        type: "history",
-        entries: this.state.history.map((e) => (e.id === id ? { ...e, starred } : e)),
-      });
+      this.setHistory(this.history.map((e) => (e.id === id ? { ...e, starred } : e)));
     },
     settings_set_locale: (args) => {
       const { locale } = required(args);
@@ -1412,8 +1451,7 @@ export class MockBackend implements Backend {
         return;
       }
       this.emit({ type: "settings", ...this.state.settings, history: { enabled, keep } });
-      if (this.state.history.length > keep)
-        this.emit({ type: "history", entries: this.state.history.slice(0, keep) });
+      if (this.history.length > keep) this.setHistory(this.history.slice(0, keep));
     },
     settings_set_overlay: (args) => {
       const { placement } = required(args);
@@ -2152,7 +2190,7 @@ export class MockBackend implements Backend {
   private recordHistory(entry: HistoryEntry) {
     const { enabled, keep } = this.state.settings.history;
     if (!enabled) return;
-    this.emit({ type: "history", entries: [entry, ...this.state.history].slice(0, keep) });
+    this.setHistory([entry, ...this.history].slice(0, keep));
   }
 
   // ---- providers (docs/dictation.md §3.3) ----------------------------------------------------------

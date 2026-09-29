@@ -7,6 +7,7 @@ import {
   type ArgsOf,
   type AttachmentFile,
   type FeedbackDraft,
+  type HistoryQueryArgs,
   type MutationCommand,
   type PreviewDraft,
   type Permission,
@@ -19,6 +20,10 @@ import {
   builtinSceneTermsSchema,
   feedbackInfoSchema,
   feedbackReceiptSchema,
+  historyEntrySchema,
+  historyHitsSchema,
+  historyPageSchema,
+  historyStatsSchema,
   injectPreflightSchema,
   levelFrameSchema,
   pasteOutcomeSchema,
@@ -109,6 +114,26 @@ export class TauriBackend implements Backend {
   async recentApps() {
     const raw = await this.transport.invoke("recent_apps");
     return appRefSchema.array().parse(raw);
+  }
+
+  async historyQuery(args: HistoryQueryArgs) {
+    const raw = await this.transport.invoke("history_query", { ...args });
+    return historyPageSchema.parse(raw);
+  }
+
+  async historyEntry(id: string) {
+    const raw = await this.transport.invoke("history_entry", { id });
+    return historyEntrySchema.nullable().parse(raw);
+  }
+
+  async historyStats(boundaries: readonly number[]) {
+    const raw = await this.transport.invoke("history_stats", { boundaries: [...boundaries] });
+    return historyStatsSchema.parse(raw);
+  }
+
+  async historyHits() {
+    const raw = await this.transport.invoke("history_hits");
+    return historyHitsSchema.parse(raw);
   }
 
   async permissionsStatus() {

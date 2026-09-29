@@ -85,7 +85,7 @@ describe("buildCommands", () => {
     expect(copy?.disabled).toBe(false);
     expect(copy?.hint).toMatch(/^\d+ 字$/);
     const clear = items.find((i) => i.id === "clear-history");
-    expect(clear?.hint).toBe(`${backend.peek().history.length} 条`);
+    expect(clear?.hint).toBe(`${backend.peek().history_recent.length} 条`);
     for (const item of items)
       expect(`${item.hint ?? ""} ${item.disabledHint ?? ""}`).not.toMatch(/第二阶段|尚未接入/);
     expect(d.toast).not.toHaveBeenCalled();
@@ -120,7 +120,9 @@ describe("buildCommands", () => {
     expect(processing?.disabled).toBe(true);
     expect(processing?.disabledHint).toBe("上一段录音仍在识别或插入，请稍候");
     // With no history both history actions are disabled with a plain reason.
-    const empty = buildCommands(deps({ state: { ...backend.peek(), history: [] } }));
+    const empty = buildCommands(
+      deps({ state: { ...backend.peek(), history_recent: [], history_total: 0 } }),
+    );
     for (const id of ["copy-last", "clear-history"]) {
       const item = empty.find((i) => i.id === id);
       expect(item?.disabled).toBe(true);

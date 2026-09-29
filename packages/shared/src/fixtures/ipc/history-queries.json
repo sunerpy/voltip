@@ -1,0 +1,140 @@
+{
+  "entry": {
+    "app": {
+      "id": "code",
+      "name": "Code"
+    },
+    "asr_model": "Qwen/Qwen3-ASR-1.7B",
+    "asr_ms": 640,
+    "at_ms": 1758700600000,
+    "duration_ms": 3200,
+    "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "kind": "dictation",
+    "mode": "whole_take",
+    "outcome": {
+      "kind": "inserted",
+      "via": "paste"
+    },
+    "preset": {
+      "id": "formal",
+      "name": "书面语"
+    },
+    "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+    "refine_model": "qwen/qwen3.8-27b",
+    "refine_ms": 2400,
+    "refined": true,
+    "scene": {
+      "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+      "name": "代码评审"
+    },
+    "starred": true,
+    "text": "把 fetchUser 改成 async，然后加上错误处理。",
+    "vocabulary": {
+      "corrections": [
+        {
+          "count": 1,
+          "id": "3b241101-e2bb-4255-8caf-4136c566a962"
+        }
+      ],
+      "rules": [
+        {
+          "count": 2,
+          "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+        }
+      ]
+    }
+  },
+  "hits": {
+    "dictionary": {
+      "3b241101-e2bb-4255-8caf-4136c566a962": 3
+    },
+    "rules": {
+      "8d7e6f5a-4b3c-4d2e-9f1a-0b9c8d7e6f5a": 1
+    }
+  },
+  "missing": null,
+  "page": {
+    "entries": [
+      {
+        "app": {
+          "id": "code",
+          "name": "Code"
+        },
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "asr_ms": 640,
+        "at_ms": 1758700600000,
+        "duration_ms": 3200,
+        "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+        "kind": "dictation",
+        "mode": "whole_take",
+        "outcome": {
+          "kind": "inserted",
+          "via": "paste"
+        },
+        "preset": {
+          "id": "formal",
+          "name": "书面语"
+        },
+        "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+        "refine_model": "qwen/qwen3.8-27b",
+        "refine_ms": 2400,
+        "refined": true,
+        "scene": {
+          "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+          "name": "代码评审"
+        },
+        "starred": true,
+        "text": "把 fetchUser 改成 async，然后加上错误处理。",
+        "vocabulary": {
+          "corrections": [
+            {
+              "count": 1,
+              "id": "3b241101-e2bb-4255-8caf-4136c566a962"
+            }
+          ],
+          "rules": [
+            {
+              "count": 2,
+              "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+            }
+          ]
+        }
+      }
+    ],
+    "matching": 12,
+    "total": 312
+  },
+  "query": {
+    "failed": true,
+    "limit": 100,
+    "offset": 100,
+    "query": "会议",
+    "since_ms": 1758697000000,
+    "starred": false
+  },
+  "stats": {
+    "buckets": [
+      {
+        "corrected_chars": 0,
+        "count": 0,
+        "latency_ms": 0,
+        "raw_chars": 0,
+        "spoken_ms": 0
+      },
+      {
+        "corrected_chars": 14,
+        "count": 2,
+        "latency_ms": 2462,
+        "raw_chars": 116,
+        "spoken_ms": 22000
+      }
+    ],
+    "total": {
+      "corrected_chars": 42,
+      "count": 6,
+      "latency_ms": 7386,
+      "raw_chars": 348,
+      "spoken_ms": 66000
+    }
+  }
+}

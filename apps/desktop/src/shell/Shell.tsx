@@ -155,7 +155,7 @@ export function Shell({
     [backend],
   );
 
-  const lastText = state.history[0]?.text;
+  const lastText = state.history_recent[0]?.text;
   const copyLast = useCallback(() => {
     if (lastText === undefined) {
       shell.toast({ message: t("shell.toast.historyEmpty"), duration: 3000, tone: "danger" });
@@ -167,7 +167,7 @@ export function Shell({
       t("shell.toast.copiedLast", { n: Array.from(lastText).length }),
     );
   }, [lastText, shell, t]);
-  const historyCount = state.history.length;
+  const historyCount = state.history_total;
   const clearHistory = useCallback(() => {
     shell.confirm({
       title: t("shell.confirm.clearTitle", { n: historyCount }),

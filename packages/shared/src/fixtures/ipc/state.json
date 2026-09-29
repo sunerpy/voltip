@@ -169,7 +169,7 @@
     "kind": "dictation",
     "remote": "Pixel 8"
   },
-  "history": [
+  "history_recent": [
     {
       "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
       "at_ms": 1758700600000,
@@ -281,6 +281,7 @@
       }
     }
   ],
+  "history_total": 312,
   "engines": {
     "asr_provider": "builtin",
     "asr_ready": true,

@@ -25,7 +25,7 @@ import { entryLatencyMs } from "../../features/history/stats";
 /** Settings · Appearance: four theme tiles, follow-system, density, font size, overlay position, motion, preview. */
 export function Appearance() {
   const { backend } = useBackend();
-  const { settings, engines, history } = useUiState();
+  const { settings, engines, history_recent: history } = useUiState();
   // The preview strip draws the theme over live values: readiness, the hotkey, the last latency.
   const last = history[0];
   const appearance = useAppearance();

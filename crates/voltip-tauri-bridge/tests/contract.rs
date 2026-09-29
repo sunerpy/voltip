@@ -23,10 +23,11 @@ use voltip_core::presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetId, P
 use voltip_core::ui::{GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, UiEvent, UiState, UpdateStatus};
 use voltip_core::{
     Activation, AppRef, BuiltIn, BuiltinScene, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ContextSharing, DeviceConnection, DeviceView,
-    DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, HistoryEntry, ImportMode,
-    InjectMode, LiveText, LocalDevice, Locale, ModelInstallState, ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId,
-    ProviderSettings, RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef,
-    Segment, ServiceKind, Settings, SoloKey, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
+    DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, HistoryEntry, HistoryHits,
+    HistoryPage, HistoryQuery, HistoryStats, HistoryStatsBucket, ImportMode, InjectMode, LiveText, LocalDevice, Locale, ModelInstallState, ModelState, Outcome,
+    OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSettings, RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft,
+    RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef, Segment, ServiceKind, Settings, SoloKey, TakeContext, TakeKind, ThemeId, UserSecrets,
+    VocabularyHit, VocabularyHits,
 };
 use voltip_core::{EntryOrigin, OriginKind};
 use voltip_crypto::{PublicKey, SafetyCode};
@@ -42,6 +43,8 @@ const STATE_FILE: &str = "state.json";
 const EVENTS_FILE: &str = "events.json";
 const COMMANDS_FILE: &str = "commands.json";
 const BUILTIN_SCENES_FILE: &str = "scenes-builtin.json";
+/// The answers of the history queries (docs/dictation.md §4.4).
+const HISTORY_QUERIES_FILE: &str = "history-queries.json";
 
 const DESKTOP_KEY: PublicKey = PublicKey([0x11; 32]);
 const PHONE_KEY: PublicKey = PublicKey([0x22; 32]);
@@ -759,7 +762,9 @@ fn full_state() -> UiState {
             remote: Some("Pixel 8".into()),
             preset: None,
         },
-        history: history_entries(),
+        history_recent: history_entries(),
+        // More entries than the recent ones: the rest are read through the queries.
+        history_total: 312,
         engines: engine_status(),
         update: UpdateStatus::Available {
             version: "2.1.0".into(),
@@ -914,7 +919,8 @@ fn phone_take_event(state: PhoneTakeState) -> UiEvent {
 
 /// Built through the fold, like `devices_event`.
 fn history_event(entries: Vec<HistoryEntry>) -> UiEvent {
-    UiState::default().apply(voltip_core::CoreEvent::History(entries))
+    let total = u32::try_from(entries.len()).unwrap();
+    UiState::default().apply(voltip_core::CoreEvent::History { recent: entries, total })
 }
 
 /// Built through the fold so this test does not name the variant's shape (`UiEvent::Devices` must
@@ -1728,7 +1734,7 @@ fn state_fixture_matches_serde_output() {
     assert_eq!(json["devices"][0]["connection"], json!({ "state": "online", "via": "relay" }));
     assert_eq!(json["dictation"]["phase"]["phase"], "done");
     assert_eq!(json["dictation"]["session"], 7);
-    assert_eq!(json["history"][1]["outcome"]["kind"], "clipboard");
+    assert_eq!(json["history_recent"][1]["outcome"]["kind"], "clipboard");
     // Recognition on the built-in service (no host on the wire), clean-up on Groq with the user's key.
     assert_eq!(json["engines"]["asr_provider"], "builtin");
     assert_eq!(json["engines"]["asr_host"], "", "the built-in host is never shown");
@@ -1765,31 +1771,31 @@ fn state_fixture_matches_serde_output() {
     assert_eq!(json["dictionary"][0]["heard_as"], json!(["fetch user", "费驰优瑟"]));
     assert_eq!(json["rules"][1]["kind"], "regex");
     assert_eq!(json["rules"][1]["case_sensitive"], false);
-    assert_eq!(json["history"][0]["vocabulary"]["rules"][0], json!({ "id": RULE_ID_2, "count": 2 }));
-    assert!(json["history"][1].get("vocabulary").is_none(), "None is omitted");
+    assert_eq!(json["history_recent"][0]["vocabulary"]["rules"][0], json!({ "id": RULE_ID_2, "count": 2 }));
+    assert!(json["history_recent"][1].get("vocabulary").is_none(), "None is omitted");
     assert_eq!(json["settings"]["engines"]["chinese_script"], "simplified");
     // docs/dictation.md §19.
     assert_eq!(json["settings"]["edit_hotkey"], "Ctrl+Alt+E");
     assert_eq!(json["dictation"]["kind"], "dictation");
     assert_eq!(json["hotkey"]["edit_registered"], "Ctrl+Alt+E");
-    assert_eq!(json["history"][2]["kind"], "edit");
-    assert_eq!(json["history"][2]["edit"], json!({ "instruction": EDIT_INSTRUCTION, "selection": EDIT_SELECTION }));
-    assert!(json["history"][0].get("edit").is_none(), "None is omitted");
-    assert_eq!(json["history"][0]["kind"], "dictation");
+    assert_eq!(json["history_recent"][2]["kind"], "edit");
+    assert_eq!(json["history_recent"][2]["edit"], json!({ "instruction": EDIT_INSTRUCTION, "selection": EDIT_SELECTION }));
+    assert!(json["history_recent"][0].get("edit").is_none(), "None is omitted");
+    assert_eq!(json["history_recent"][0]["kind"], "dictation");
     // docs/dictation.md §18.
     assert_eq!(json["settings"]["context_sharing"], json!({ "app_name": false, "window_title": true }));
     assert_eq!(json["scenes"][0]["match"]["title_contains"], json!(["Pull request"]));
     assert_eq!(json["scenes"][0]["overrides"]["refine_preset"], "formal");
     assert_eq!(json["scenes"][1]["overrides"], json!({ "refine_preset": "punctuation" }), "unset overrides are absent");
     assert_eq!(json["dictation"]["context"]["scene"]["name"], "代码评审");
-    assert_eq!(json["history"][0]["app"], json!({ "id": "code", "name": "Code" }));
-    assert!(json["history"][1].get("app").is_none() && json["history"][1].get("scene").is_none(), "None is omitted");
+    assert_eq!(json["history_recent"][0]["app"], json!({ "id": "code", "name": "Code" }));
+    assert!(json["history_recent"][1].get("app").is_none() && json["history_recent"][1].get("scene").is_none(), "None is omitted");
     // docs/dictation.md §21: presets are strings (a built-in name or a UUID) wherever they appear.
     assert_eq!(json["settings"]["engines"]["refine_preset"], PRESET_ID);
     assert_eq!(json["presets"][0]["id"], PRESET_ID);
     assert_eq!(json["presets"][0]["name"], "周报");
-    assert_eq!(json["history"][0]["preset"], json!({ "id": "formal", "name": "书面语" }));
-    assert!(json["history"][1].get("preset").is_none() && json["dictation"].get("preset").is_none(), "None is omitted");
+    assert_eq!(json["history_recent"][0]["preset"], json!({ "id": "formal", "name": "书面语" }));
+    assert!(json["history_recent"][1].get("preset").is_none() && json["dictation"].get("preset").is_none(), "None is omitted");
 }
 
 #[test]
@@ -1892,7 +1898,7 @@ fn events_fixture_covers_every_variant_and_matches_serde_output() {
         events.iter().filter_map(|e| if let UiEvent::Engines(s) = e { Some(s.effective_output_mode.as_str()) } else { None }).collect();
     assert_eq!(modes, ["whole_take", "streaming_final", "live_inject"].into_iter().collect());
     let history_modes: Vec<&str> =
-        events.iter().filter_map(|e| if let UiEvent::History { entries } = e { Some(entries) } else { None }).flatten().map(|h| h.mode.as_str()).collect();
+        events.iter().filter_map(|e| if let UiEvent::History { recent, .. } = e { Some(recent) } else { None }).flatten().map(|h| h.mode.as_str()).collect();
     assert!(history_modes.contains(&"live_inject") && history_modes.contains(&"whole_take"), "{history_modes:?}");
     let processing_json = serde_json::to_value(
         &events[events
@@ -2033,10 +2039,38 @@ fn builtin_scenes_fixture_matches_the_core() {
                     "linux": scene.template(Platform::Linux),
                 },
                 "terms": voltip_core::vocabulary::packs::terms(scene),
+                // The names the history's search finds it by; the dictionaries must say the same.
+                "names": { "zh-CN": scene.display_name(), "en": scene.english_name() },
             })
         })
         .collect();
     check_fixture(BUILTIN_SCENES_FILE, &pretty(&rows));
+}
+
+/// docs/dictation.md §4.4: the answers of the history queries, and the arguments of
+/// `history_query`, in the shapes `packages/shared/src/schema.ts` parses.
+#[test]
+fn history_queries_fixture_matches_serde_output() {
+    let entry = history_entries().remove(0);
+    let bucket = |count: u32| HistoryStatsBucket {
+        count,
+        raw_chars: 58 * u64::from(count),
+        corrected_chars: 7 * u64::from(count),
+        spoken_ms: 11_000 * u64::from(count),
+        latency_ms: 1231 * u64::from(count),
+    };
+    let answers = json!({
+        "query": HistoryQuery { since_ms: Some(AT_MS - 3_600_000), starred: false, failed: true, query: "会议".into(), offset: 100, limit: 100 },
+        "page": HistoryPage { entries: vec![entry.clone()], matching: 12, total: 312 },
+        "entry": entry,
+        "missing": Option::<HistoryEntry>::None,
+        "stats": HistoryStats { buckets: vec![bucket(0), bucket(2)], total: bucket(6) },
+        "hits": HistoryHits {
+            dictionary: [(uuid(DICT_ID), 3)].into_iter().collect(),
+            rules: [(uuid(RULE_ID), 1)].into_iter().collect(),
+        },
+    });
+    check_fixture(HISTORY_QUERIES_FILE, &pretty(&answers));
 }
 
 /// Regression (public release, 2026-09-27): the build's own service and relay never reach the

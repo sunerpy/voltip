@@ -1,6 +1,10 @@
 [
   {
     "id": "coding",
+    "names": {
+      "en": "Coding",
+      "zh-CN": "编程开发"
+    },
     "templates": {
       "linux": {
         "enabled": false,
@@ -180,6 +184,10 @@
   },
   {
     "id": "office",
+    "names": {
+      "en": "Office writing",
+      "zh-CN": "办公写作"
+    },
     "templates": {
       "linux": {
         "enabled": false,
@@ -282,6 +290,10 @@
   },
   {
     "id": "chat",
+    "names": {
+      "en": "Chat",
+      "zh-CN": "即时聊天"
+    },
     "templates": {
       "linux": {
         "enabled": false,
@@ -357,6 +369,10 @@
   },
   {
     "id": "legal",
+    "names": {
+      "en": "Legal",
+      "zh-CN": "法律"
+    },
     "templates": {
       "linux": {
         "enabled": false,
@@ -450,6 +466,10 @@
   },
   {
     "id": "medical",
+    "names": {
+      "en": "Medical",
+      "zh-CN": "医疗"
+    },
     "templates": {
       "linux": {
         "enabled": false,
@@ -547,6 +567,10 @@
   },
   {
     "id": "finance",
+    "names": {
+      "en": "Finance",
+      "zh-CN": "金融"
+    },
     "templates": {
       "linux": {
         "enabled": false,
@@ -645,6 +669,10 @@
   },
   {
     "id": "academic",
+    "names": {
+      "en": "Academic",
+      "zh-CN": "学术"
+    },
     "templates": {
       "linux": {
         "enabled": false,

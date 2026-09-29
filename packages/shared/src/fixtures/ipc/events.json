@@ -35,7 +35,7 @@
       "pairing_always_on": false,
       "history": {
         "enabled": true,
-        "keep": 500
+        "keep": 20000
       },
       "overlay": "bottom",
       "microphone": null
@@ -76,7 +76,8 @@
       "session": 0,
       "kind": "dictation"
     },
-    "history": [],
+    "history_recent": [],
+    "history_total": 0,
     "engines": {
       "asr_provider": "builtin",
       "asr_ready": false,
@@ -750,7 +751,7 @@
   },
   {
     "type": "history",
-    "entries": [
+    "recent": [
       {
         "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
         "at_ms": 1758700600000,
@@ -861,11 +862,12 @@
           "kind": "typed"
         }
       }
-    ]
+    ],
+    "total": 4
   },
   {
     "type": "history",
-    "entries": [
+    "recent": [
       {
         "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
         "at_ms": 1758700600000,
@@ -919,11 +921,12 @@
           "builtin": "legal"
         }
       }
-    ]
+    ],
+    "total": 1
   },
   {
     "type": "history",
-    "entries": [
+    "recent": [
       {
         "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
         "at_ms": 1758700600000,
@@ -969,11 +972,12 @@
           "name": "书面语"
         }
       }
-    ]
+    ],
+    "total": 1
   },
   {
     "type": "history",
-    "entries": [
+    "recent": [
       {
         "id": "1c2d3e4f-5a6b-4c8e-9f7a-0f3f1a1e8d4b",
         "at_ms": 1758700540000,
@@ -992,11 +996,13 @@
         "mode": "whole_take",
         "kind": "dictation"
       }
-    ]
+    ],
+    "total": 1
   },
   {
     "type": "history",
-    "entries": []
+    "recent": [],
+    "total": 0
   },
   {
     "type": "engines",

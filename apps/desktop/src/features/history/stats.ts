@@ -1,30 +1,43 @@
-// Pure helpers over `UiState.history` (`HistoryEntry[]`, newest first): the home statistics,
-// the 6-week heatmap, the day grouping of the history page and the list filters. Every calendar
-// boundary is the local one, computed with `Date` so the numbers match what the user sees on the
-// clock; `now` is injected so tests stay deterministic.
+// Pure helpers of the history and home pages: the home statistics from the core's
+// `history_stats` (docs/dictation.md §4.5), the 6-week heatmap, the list filters as
+// `history_query` arguments, the day grouping and the labels. Every calendar boundary is the local
+// one, computed with `Date` so the numbers match what the user sees on the clock; `now` is
+// injected so tests stay deterministic.
 import {
   DEFAULT_LOCALE,
   type HistoryEntry,
-  LOCALES,
+  type HistoryQueryArgs,
+  type HistoryStats,
+  type HistoryStatsBucket,
   type Locale,
   type TFunction,
   formatDateTime,
-  sceneLabel,
   translate,
   zhT,
 } from "@voltip/shared";
 
+/** Saved time = speaking time × this (docs/dictation.md §4.5): in Ruan et al. 2016
+ *  (arXiv:1608.07323) speech input was about 2.9 times as fast as typing on a phone (English 153
+ *  vs 52 words per minute, Chinese 123 vs 43). */
+export const SAVED_TIME_FACTOR = 1.9;
+
 export interface HistoryBucket {
   count: number;
-  /** Code points of the inserted text (what landed in the target app). */
-  chars: number;
+  /** Characters recognised (the transcript). */
+  rawChars: number;
+  /** Characters the clean-up changed. */
+  correctedChars: number;
   /** Total recording time in this bucket. */
   spokenMs: number;
+  /** `spokenMs × SAVED_TIME_FACTOR`, rounded. */
+  savedMs: number;
   /** Mean ASR + refine latency, rounded; `undefined` when the bucket is empty. */
   latencyMs: number | undefined;
 }
 
-export interface HistoryStats {
+/** What the home page shows: dictations only (the core leaves out voice edits and what a phone
+ *  typed or sent from its clipboard). */
+export interface HomeStats {
   today: HistoryBucket;
   /** Since local Monday 00:00. */
   week: HistoryBucket;
@@ -99,95 +112,87 @@ export function entryLatencyMs(entry: HistoryEntry): number {
   return entry.asr_ms + (entry.refine_ms ?? 0);
 }
 
-function bucket(entries: readonly HistoryEntry[]): HistoryBucket {
-  let chars = 0;
-  let spokenMs = 0;
-  let latency = 0;
-  for (const e of entries) {
-    chars += textChars(e.text);
-    spokenMs += e.duration_ms;
-    latency += entryLatencyMs(e);
+/** The local midnights `history_stats` is asked for: from the Monday five weeks before this
+ *  week's to tomorrow's (37 to 43 of them: one bucket per day, today's last). */
+export function statsBoundaries(now: number): number[] {
+  const out: number[] = [];
+  const day = new Date(startOfWeek(now));
+  day.setDate(day.getDate() - 7 * (HEATMAP_WEEKS - 1));
+  const tomorrow = new Date(startOfDay(now));
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  while (day.getTime() <= tomorrow.getTime()) {
+    out.push(day.getTime());
+    day.setDate(day.getDate() + 1);
   }
+  return out;
+}
+
+function toBucket(parts: readonly HistoryStatsBucket[]): HistoryBucket {
+  const sum = (key: keyof HistoryStatsBucket) => parts.reduce((n, p) => n + p[key], 0);
+  const count = sum("count");
+  const spokenMs = sum("spoken_ms");
   return {
-    count: entries.length,
-    chars,
+    count,
+    rawChars: sum("raw_chars"),
+    correctedChars: sum("corrected_chars"),
     spokenMs,
-    latencyMs: entries.length === 0 ? undefined : Math.round(latency / entries.length),
+    savedMs: Math.round(spokenMs * SAVED_TIME_FACTOR),
+    latencyMs: count === 0 ? undefined : Math.round(sum("latency_ms") / count),
   };
 }
 
-/** Counts per weekday over the last six weeks, quantised to the heatmap's four levels. */
-export function heatmapOf(entries: readonly HistoryEntry[], now: number): number[][] {
-  const thisWeek = startOfWeek(now);
-  const grid = Array.from({ length: HEATMAP_WEEKS }, () => Array.from({ length: 7 }, () => 0));
-  for (const e of entries) {
-    const weeksAgo = Math.round(dayDiff(thisWeek, startOfWeek(e.at_ms)) / 7);
-    if (weeksAgo < 0 || weeksAgo >= HEATMAP_WEEKS) continue;
-    const column = grid[HEATMAP_WEEKS - 1 - weeksAgo];
-    const weekday = (new Date(e.at_ms).getDay() + 6) % 7;
-    if (column) column[weekday] = (column[weekday] ?? 0) + 1;
-  }
-  return grid.map((col) => col.map((n) => Math.min(3, n)));
-}
-
-export function historyStats(entries: readonly HistoryEntry[], now: number): HistoryStats {
-  const today = startOfDay(now);
-  const week = startOfWeek(now);
-  const month = startOfMonth(now);
-  return {
-    today: bucket(entries.filter((e) => e.at_ms >= today)),
-    week: bucket(entries.filter((e) => e.at_ms >= week)),
-    month: bucket(entries.filter((e) => e.at_ms >= month)),
-    total: bucket(entries),
-    heatmap: heatmapOf(entries, now),
-  };
-}
-
-/** Rows matching a home tile / sidebar filter. */
-export function filterHistory(
-  entries: readonly HistoryEntry[],
-  filter: HistoryFilter,
+/** The home page's numbers from the core's answer for `boundaries = statsBoundaries(now)`:
+ *  today, this week and this month are sums of daily buckets, the heatmap is one cell per day. */
+export function homeStats(
+  stats: HistoryStats,
+  boundaries: readonly number[],
   now: number,
-): HistoryEntry[] {
+): HomeStats {
+  const since = (from: number) => stats.buckets.filter((_, i) => (boundaries[i] ?? 0) >= from);
+  const heatmap = Array.from({ length: HEATMAP_WEEKS }, () => Array.from({ length: 7 }, () => 0));
+  stats.buckets.forEach((bucket, i) => {
+    const column = heatmap[Math.floor(i / 7)];
+    if (column) column[i % 7] = Math.min(3, bucket.count);
+  });
+  return {
+    today: toBucket(since(startOfDay(now))),
+    week: toBucket(since(startOfWeek(now))),
+    month: toBucket(since(startOfMonth(now))),
+    total: toBucket([stats.total]),
+    heatmap,
+  };
+}
+
+/** Nothing counted yet (before the first answer, or on an empty history). */
+export function emptyHomeStats(): HomeStats {
+  return homeStats({ buckets: [], total: toBucketPart() }, [], 0);
+}
+
+function toBucketPart(): HistoryStatsBucket {
+  return { count: 0, raw_chars: 0, corrected_chars: 0, spoken_ms: 0, latency_ms: 0 };
+}
+
+/** A home tile or sidebar filter, and the search text, as `history_query` arguments. */
+export function historyQueryArgs(
+  filter: HistoryFilter,
+  query: string,
+  now: number,
+): Omit<HistoryQueryArgs, "offset" | "limit"> {
+  const q = query.trim() === "" ? {} : { query };
   switch (filter) {
     case "all":
-      return [...entries];
+      return q;
     case "today":
-      return entries.filter((e) => e.at_ms >= startOfDay(now));
+      return { ...q, sinceMs: startOfDay(now) };
     case "week":
-      return entries.filter((e) => e.at_ms >= startOfWeek(now));
+      return { ...q, sinceMs: startOfWeek(now) };
     case "month":
-      return entries.filter((e) => e.at_ms >= startOfMonth(now));
+      return { ...q, sinceMs: startOfMonth(now) };
     case "starred":
-      return entries.filter((e) => e.starred);
+      return { ...q, starred: true };
     case "failed":
-      return entries.filter((e) => e.outcome.kind !== "inserted");
+      return { ...q, failed: true };
   }
-}
-
-/** Case-insensitive search over the inserted text, the raw ASR text, the model ids, — for a take
- *  with a context (docs/dictation.md §18.6) — the app's name and id and the scene's name (a
- *  built-in scene's in both languages, §18.10), and — for a voice edit (§19.5) — its instruction and
- *  original selection. */
-export function matchesHistoryQuery(entry: HistoryEntry, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (q.length === 0) return true;
-  const builtinNames =
-    entry.scene?.builtin === undefined
-      ? []
-      : LOCALES.map((locale) => sceneLabel({ name: "", builtin: entry.scene?.builtin }, locale));
-  return [
-    ...builtinNames,
-    entry.text,
-    entry.raw_text,
-    entry.asr_model,
-    entry.refine_model ?? "",
-    entry.app?.name ?? "",
-    entry.app?.id ?? "",
-    entry.scene?.name ?? "",
-    entry.edit?.instruction ?? "",
-    entry.edit?.selection ?? "",
-  ].some((s) => s.toLowerCase().includes(q));
 }
 
 /** `14:32:07` in local time. */
@@ -236,12 +241,6 @@ export function recentTimeLabel(ms: number, now: number, locale: Locale = DEFAUL
   if (diff === 1 && yesterday !== "") return `${yesterday} ${shortClockLabel(ms)}`;
   const d = new Date(ms);
   return `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, "0")} ${shortClockLabel(ms)}`;
-}
-
-/** `3:47` minutes:seconds for spoken time (the 今日会话 panel). */
-export function spokenLabel(ms: number): string {
-  const total = Math.round(Math.max(0, ms) / 1000);
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
 /** Newest-first groups by local day for the history list. */

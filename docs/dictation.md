@@ -156,7 +156,7 @@ pub struct HistoryEntry {
 }
 ```
 
-`app_data_dir/history.json`，最多 500 条（旧的丢弃），写入原子（临时文件 + rename）。命令 `HistoryDelete(Uuid)`、`HistoryClear`、`HistoryStar(Uuid, bool)`；事件 `CoreEvent::History(Vec<HistoryEntry>)`（全量替换）。
+`app_data_dir/history.sqlite3`（SQLite，§4.3），最多 `MAX_ENTRIES = 20 000` 条，超出时丢弃最旧的。命令 `HistoryDelete(Uuid)`、`HistoryClear`、`HistoryStar(Uuid, bool)`；事件 `CoreEvent::History { recent, total }` 只带最新 `RECENT_ENTRIES = 20` 条和总条数，其余由界面查询（§4.4）。2026-09-30 之前是 `history.json`：最多 500 条，每次变化推送全量。
 
 ### 4.1 复制与粘贴到上一个窗口（2026-09-29）
 
@@ -189,6 +189,45 @@ pub struct HistoryEntry {
 
 链路：`voltip-inject` 的 `DeliveryError::Unavailable(InjectNote { code, detail })` → `Injection.note` → 桌面壳 `core_note` 换成核心的 `ClipboardCode` → `Outcome::clipboard(note)`。界面上，首页表格、历史列表和详情标题栏只显示短标签「已复制到剪贴板」；详情正文下方一张提示卡按 `code` 给出一句说明和本机的粘贴键（macOS ⌘V，其余 Ctrl+V），原文收在可展开的「技术细节」里（等宽、任意位置断行）。
 
+### 4.3 存储与导入（2026-09-30）
+
+- **连接**：`history.sqlite3` 用 WAL，`synchronous = NORMAL`，`foreign_keys = ON`，忙等 5 s。核心的 `HistoryStore`（由 `Runtime` 打开）持有唯一的写连接；bridge 的 `HistoryReader` 在第一次查询时打开只读连接（`SQLITE_OPEN_READ_ONLY`），WAL 下读写可以并发。库还没建好时查询返回空结果。
+- **表**：`entries` 整条存 `HistoryEntry` 的 JSON（`json` 列），另有索引列 `at_ms`、`starred`、`kind`、`outcome`、`app_id`、`scene_id`，统计列 `spoken_ms`、`raw_chars`、`corrected_chars`、`latency_ms`、`counts_for_stats`（§4.5），以及搜索列 `search`（§4.4）。这些列在写入时从条目算出，JSON 仍是记录本身。`hits` 存每条触发的词典条目与规则次数（§16.3），随条目级联删除；`meta` 存导入摘要。`PRAGMA user_version` 为表结构版本。顺序一律是 `at_ms DESC, rowid DESC`。
+- **保留**：`Settings.history.keep` 新安装默认 20 000，选项为 500 / 2 000 / 5 000 / 10 000 / 20 000（`PrivacyPane.tsx` `KEEP_OPTIONS`，`schema.ts` `HISTORY_LIMIT`），下限 `MIN_KEEP = 10`。已保存的 `keep` 不改（不做设置迁移），用户在隐私设置里改选即可；调小时立即裁剪。
+- **一次性导入**：这是数据导入，不是设置迁移；每一步都可以中断后重来。
+  1. 启动时如果有 `history.sqlite3.importing`，说明上次导入没做完，直接删掉。
+  2. 有 `history.json`、没有 `history.sqlite3`：在 `history.sqlite3.importing` 里用一个事务按从旧到新写入全部条目，并写一行 `meta(imported_json_sha256)`；提交并关闭后原子改名为 `history.sqlite3`。
+  3. 把 `history.json` 改名为 `history.json.imported-<unix 秒>`，永不删除。
+  4. `history.sqlite3` 与 `history.json` 同时存在（上次停在第 2、3 步之间）：JSON 的 SHA-256 与 `meta` 一致时只补做第 3 步；不一致时把 JSON 移到 `history.json.corrupt`，不重复导入。
+- **损坏**：JSON 无法解析或表结构版本不认识时移到 `history.json.corrupt`；`history.sqlite3` 不是可用的数据库时连同 `-wal` / `-shm` 移到 `history.sqlite3.corrupt*`，从空库开始。两者都不会让应用启动失败。
+- **降级**：旧版本读不到 `history.sqlite3`，历史页是空的。把 `history.json.imported-<秒>` 改回 `history.json` 即可恢复导入前的记录；之后的新记录只在 `history.sqlite3` 里。发布说明写明这一点。
+- **实测**（本机，2 万条，`history/tests.rs` 的计时测试，门槛为打开 < 500 ms、查询 < 50 ms、统计 < 100 ms）：打开 11 ms，搜索 9 ms，取一页 1 ms，统计 13 ms。
+
+### 4.4 查询（2026-09-30）
+
+查询不经过核心的命令通道：桌面 Tauri 命令在 `spawn_blocking` 里调用 `Bridge` 的方法，直接返回结果。它们登记在 `schema.ts` 的 `QUERY_COMMANDS`；手机端注册同名命令，做同样的参数检查，返回空结果（手机不存听写历史）。`MockBackend` 在内存里实现同样的语义（`packages/shared/src/history-queries.ts`，只有 mock 引用）。
+
+| 命令 | 参数 | 结果 |
+|---|---|---|
+| `history_query` | `sinceMs?`、`starred`、`failed`、`query`、`offset`、`limit`（1–`HISTORY_QUERY_LIMIT = 200`） | `{ entries, matching, total }`：按时间倒序的一页、符合条件的条数、全部条数 |
+| `history_entry` | `id` | 条目，或不存在时 `null` |
+| `history_stats` | `boundaries: number[]`（严格递增，2–43 个） | `{ buckets, total }`（§4.5） |
+| `history_hits` | — | `{ dictionary: { id: n }, rules: { id: n } }`：全部历史里每个词典条目与规则的触发次数（§16.3） |
+| `recent_apps` | — | 历史里出现过的应用（§18.6），同样读库 |
+
+- **筛选**：`sinceMs`（页面按本地时间算好的零点）、收藏、失败（留在剪贴板或失败，即 `outcome` 不是 `inserted`）都用 SQL 过滤。
+- **搜索**：关键词去掉首尾空白、转小写后，在 `search` 列里做子串匹配。`search` 列在写入时拼成：内置场景的中英文名、`text`、`raw_text`、两个模型、应用名和 id、场景名、编辑指令、选区，各自 `to_lowercase` 后以 U+001F 分隔，所以一次匹配不会跨两个字段。
+- **状态与事件**：`UiState.history_recent`（最新 20 条）与 `history_total` 取代原来的 `UiState.history`；`UiEvent::History { recent, total }`。复制上一条、侧栏计数、规则与词典页的「用最近一次听写」读 `history_recent`。
+- **历史页**：每页 `HISTORY_PAGE = 100` 条，列表底部进入视野时加载下一页（也可以点「加载更多」）；搜索在停止输入 200 ms 后发出；新结果回来之前保留原来的行，第一次结果回来之前不显示空状态。收到历史事件时重新加载已加载的条数。首页表格点开的条目不在已加载的页里时，详情用 `history_entry` 取。
+
+### 4.5 统计（2026-09-30）
+
+- **计入范围**：只算听写（`kind = dictation`）。手机发来的录音在本机识别，计入；手机发来的打字和剪贴板文字不计入；语音编辑不计入。
+- **每条的数字**：说话时长 = `duration_ms`；转录字数 = `raw_text` 的 Unicode 标量数；修正字数 = 去掉空白后 `raw_text` → `text` 的 Levenshtein 距离，按 Unicode 标量计（`strsim::generic_levenshtein`），超过 `CORRECTION_PIECE_CHARS = 2 000` 字时两边按相同比例切成同样多段，逐段相加；延迟 = `asr_ms + refine_ms`。
+- **分桶**：页面用 `statsBoundaries` 按本地时间算出零点，从本周一往前 5 周到明天零点，共 37–43 个；夏令时 23 或 25 小时的日子也按本地零点算。核心按 `[bᵢ, bᵢ₊₁)` 分桶，每个区间和总计都给出次数、转录字数、修正字数、说话时长和延迟合计。页面用这些区间拼出今天、本周、本月和 6 周热力图（本月的开头总在这 6 周里）。
+- **节省时间** = 说话时长 × 1.9（`SAVED_TIME_FACTOR`）。依据：Ruan 等 2016（arXiv:1608.07323）的实验里，说话输入比手机打字快约 2.9 倍（英文 153 vs 52 词/分，中文 123 vs 43），打出同样的字要多花约 1.9 倍的说话时长。首页的「依据」弹层写的是同一段说明。
+- **首页**：今日面板显示转录字数、修正字数、说话时长、节省时间，次数和平均延迟放在下面一行（窄窗口在两者之间换行），「依据」在「节省时间」旁；今天 / 本周 / 本月 / 总计四张卡第一行是范围和字数，第二行是节省时间。时长按大小换单位（`durationParts`：「21 秒」「3 分 47 秒」「79 小时 10 分」），数字大、单位小；侧栏的历史计数与页面上的计数一样加千位分隔。
+
 ## 5. IPC（bridge 与 TS 契约）
 
 | wire 名 | `UiCommand` | 参数 |
@@ -209,7 +248,7 @@ pub struct HistoryEntry {
 | `update_check` / `update_install` | —（桌面 shell 自己处理，见 §9） | 无参数 |
 | `update_status` | —（查询，返回 `UpdateStatus`） | 无参数 |
 
-事件：`UiEvent::Dictation(DictationStatus)`、`UiEvent::History { entries }`、`UiEvent::Engines(EngineStatus)`、`UiEvent::Models { models }`；`UiState` 新增 `dictation`、`history`、`engines`、`models`。契约夹具 `packages/shared/src/fixtures/ipc/*.json` 由 Rust 契约测试再生成。个人词典与替换规则的 9 条命令、2 个查询与 `dictionary` / `rules` 事件见 §16.4。
+事件：`UiEvent::Dictation(DictationStatus)`、`UiEvent::History { recent, total }`（2026-09-30 之前为 `{ entries }` 全量，§4.4）、`UiEvent::Engines(EngineStatus)`、`UiEvent::Models { models }`；`UiState` 新增 `dictation`、`history_recent` 与 `history_total`（原 `history`）、`engines`、`models`。历史查询见 §4.4。契约夹具 `packages/shared/src/fixtures/ipc/*.json` 由 Rust 契约测试再生成。个人词典与替换规则的 9 条命令、2 个查询与 `dictionary` / `rules` 事件见 §16.4。
 
 2026-09-25 起 wire 上新增（均向后兼容：缺省可解析）：
 
@@ -238,9 +277,9 @@ pub struct HistoryEntry {
 ## 6. 前端
 
 - **标题栏只留**：页标题（拖拽区）+ 紧凑读数（识别模型 + 就绪灯 · 麦克风短名，mono 11 px，最多两项，`md` 以下隐藏）、`Ctrl K` 搜索图标按钮、「AI 润色」文字开关（图标 + 灯）、窗口控制；没有第二行读数条，也没有示例数据。词典与规则页是核心的真实列表（§16.6）。
-- **首页**：就绪行的组合键与页脚快捷键读 `state.settings.hotkey`；「开始听写」= `dictation_start` / 听写中变「停止」= `dictation_stop`；识别引擎卡读 `state.engines`；最近结果 / 统计条 / 今日会话由 `state.history` 计算。
+- **首页**：就绪行的组合键与页脚快捷键读 `state.settings.hotkey`；「开始听写」= `dictation_start` / 听写中变「停止」= `dictation_stop`；识别引擎卡读 `state.engines`；最近结果读 `state.history_recent`，统计条与今日会话来自 `history_stats`（§4.5）。
 - **麦克风（2026-09-28 用户反馈）**：空闲时不打开麦克风。首页麦克风卡只在两种情况下测强度：一次录音进行中（用录音自己的帧，不再二次打开设备），或点了「测试麦克风」（15 秒后自动停止，也可以提前停）。其余时间强度条保持静止，并写明空闲时不打开麦克风。界面用词是「强度」，不再叫「电平」。设置对话框新增「麦克风」组：输入设备下拉写 `settings_set_microphone { device }`（`null` 表示跟随系统默认），旁边是同样的「测试麦克风」。核心的 `Settings.microphone`（`Option<String>`，旧文件读作 `None`）经 `DictationEngine::set_microphone` 在下一次录音时交给麦克风端口，设备 id 超过 1024 字节或为空时拒绝。所选设备没接上时，本次录音和测试都退回系统默认输入（桌面壳 `connected_or_default` 与电平 hub 的打开逻辑）；界面上这项选择保留，标成「未连接」，并说明听写会先用系统默认输入。手机录音不受影响。
-- **历史页**：`state.history`，删除 / 清空 / 星标 / 筛选 / 原文-润色 diff 全部真实。
+- **历史页**：`history_query` 分页读库（§4.4），删除 / 清空 / 星标 / 筛选 / 搜索 / 原文-润色 diff 全部真实。
 - **设置 › 引擎**（引擎与设置合并为一个对话框）：「语音识别」「文本润色」两组服务商卡片（§3；展开卡片选模型、填接口地址与密钥、测试连接，「使用」写 `settings_set_engines`，密钥走 `provider_key_set`）；「本机」卡片里是按档位排序的本地模型卡（下载 / 取消 / 删除 / 使用此模型）与运行设备（§10.6）、独立的「实时预览」块（开关 + 流式模型卡）、「输出方式」三卡（§12，`effective_output_mode` 驱动「当前生效」徽标与回落说明；`live_inject` 下润色卡注明不润色）与「静音裁剪」开关（仅本地）；见 `docs/frontend.md` §4、§6。
 - **设置 › 热键**：录制组合键 + 「激活方式」三卡（§13）+ 「短按判定阈值」（仅 `hold_or_toggle`）+ 「松开后继续录音」，任一改动整份 `settings_set_activation`；首页 chip、页脚说明、空态提示随激活方式变化。
 - **悬浮胶囊**：`listening` 的波形来自 `audio_meter_start`（录音期间由核心广播喂给）；`locked` 时锁标替代状态灯（§13）；`live.injected` 已粘贴的句子更淡（§12）；`finalizing` 时模式 tag 为「补齐最后一句…」且预览继续；`inserted` 显示字数与 `via`；`error` 显示原因并提供「复制」；`cancelled.injected_chars > 0` 时「已取消，之前打进去的 N 字保留」。
@@ -829,7 +868,7 @@ case_sensitive = false
 
 ### 16.6 前端
 
-- **词典页**（`/dictionary`）：读写 `state.dictionary`，按匹配顺序列出；新建（表上方一行）/ 行内编辑（正确写法 + 曾听成，多个写法用逗号、`·`、`、`、分号或换行分隔；Enter 保存、Esc 取消）/ 启用开关 / 上移下移 / 删除（行内确认）全部是 `dictionary_*` 命令。输入时本地先查空、超长、重复正确写法、写法过多（本地化文案）；其余由核心判定：草稿本身不合法时命令被拒、编辑器保持打开并显示核心原文，与其他词条冲突时核心发 `error` 事件（toast），列表不变。「命中」列与「历史记录里的命中」chip 由 `state.history[*].vocabulary.corrections` 汇总。右侧「试一试」对输入调用 `vocabulary_preview`（200 ms 防抖，列表变化时重问），列出命中的词条与次数、纠正后的文本，规则会进一步改动时另起一行显示；「用最近一次听写」取 `state.history[0].raw_text`，「用剪贴板文本」读剪贴板。说明卡如实写明：词典在识别后立即纠正、启用词条的正确写法作为术语表发给云端识别和 AI 润色、本地识别模型不接收术语表。`Ctrl N` 新建。
+- **词典页**（`/dictionary`）：读写 `state.dictionary`，按匹配顺序列出；新建（表上方一行）/ 行内编辑（正确写法 + 曾听成，多个写法用逗号、`·`、`、`、分号或换行分隔；Enter 保存、Esc 取消）/ 启用开关 / 上移下移 / 删除（行内确认）全部是 `dictionary_*` 命令。输入时本地先查空、超长、重复正确写法、写法过多（本地化文案）；其余由核心判定：草稿本身不合法时命令被拒、编辑器保持打开并显示核心原文，与其他词条冲突时核心发 `error` 事件（toast），列表不变。「命中」列与「历史记录里的命中」chip 来自 `history_hits` 对全部历史的汇总（§4.4）。右侧「试一试」对输入调用 `vocabulary_preview`（200 ms 防抖，列表变化时重问），列出命中的词条与次数、纠正后的文本，规则会进一步改动时另起一行显示；「用最近一次听写」取 `state.history_recent[0].raw_text`，「用剪贴板文本」读剪贴板。说明卡如实写明：词典在识别后立即纠正、启用词条的正确写法作为术语表发给云端识别和 AI 润色、本地识别模型不接收术语表。`Ctrl N` 新建。
 - **规则页**（`/rules`）：读写 `state.rules`，一张表按执行顺序（序号、名称、类型、匹配 + 不区分大小写标记 `Aa`、替换或「（删除）」、命中、启用）；新建 / 编辑（名称、字面 / 正则、匹配、替换、区分大小写）/ 上移下移 / 删除（确认对话框）；编辑器本地查空名称、重名、空匹配，其余交给核心：对草稿调用 `vocabulary_preview("", draft)`，正则按流水线同一个 Rust `regex` 编译，失败原文显示在状态行并禁用保存；`Ctrl S` 保存、`Esc` 取消、`Ctrl N` 新建。「试运行」对输入调用 `vocabulary_preview`（`Ctrl ↵`），显示词典纠正后与规则替换后的文本、命中的规则与次数；编辑器打开时「包含正在编辑的规则」开关把草稿一起带上（显示为「名称（未保存）」）。「导入 TOML」是文本对话框（粘贴 + 合并 / 替换），核心整份校验，拒绝时原文（含行号）显示在对话框里；「导出 TOML」对话框显示 `rules_export` 的文本并可复制（没有文件对话框插件）。
 - **历史页**：详情显示本次触发的词典纠正与规则（按当前列表取名称，已删除的显示「已删除的词条 / 规则」）；「加入词典」打开对话框（曾听成用条目原文或终稿里的当前选区预填，正确写法手填），提交 `dictionary_add { historyId }`；核心拒绝时对话框保持打开并显示原因。
 - **侧栏**：历史、词典、规则的计数都来自核心列表，为 0 时不显示。
@@ -1038,7 +1077,7 @@ UiEvent::Scenes { scenes }                                                   // 
 | `recent_apps` | —（查询） | 无 | `AppRef[]`：历史里出现过的应用，最新在前，按 id 去重，≤ 20 |
 
 - 草稿本身不合法（空 / 超长 / 控制字符 / 应用 id 无效、重复或过多 / 语言代码无效 / 未知字段）在 bridge 的 `into_core` 里同步拒绝，webview 的 `invoke` 直接收到错误；依赖现有列表的校验（重名、上限、未知 id、排列不完整）由核心执行，失败以 `error` 事件报告、列表不变。错误前缀 `scenes:`，细节中文。
-- `recent_apps` 由 shell 用 bridge 缓存的 `UiState.history` 调用核心纯函数 `scenes::recent_apps`。
+- `recent_apps` 由 bridge 的只读连接直接读库（`HistoryReader::recent_apps`，§4.4）；2026-09-30 之前用缓存的 `UiState.history` 计算。
 - 手机端：6 条命令 / 查询全部返回 `Err("scenes: 手机端不支持场景与上下文")`，没有探针；核心照常加载（空）`scenes.json`，`UiState.scenes = []`。
 
 ### 18.7 前端

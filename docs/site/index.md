@@ -119,8 +119,8 @@ home:
             status: available
             link: /dictation/history
           - title: 20,000 entries and daily statistics
-            body: Words dictated, words corrected and time saved, by day, week and month.
-            status: building
+            body: Characters transcribed, characters corrected and time saved, by day, week and month.
+            status: available
             link: /dictation/history#statistics
           - title: Long recordings and computer audio
             body: Up to two hours per recording, from the microphone, the computer's own audio or both, with export to SRT subtitles.
@@ -242,9 +242,6 @@ home:
     title: What comes next
     intro: The next releases, in the expected order. No dates are promised; each feature is described on this site once it ships.
     items:
-      - title: 20,000 history entries and statistics
-        status: building
-        body: The history limit rises from 500 to 20,000 entries, and the home page shows words dictated, words corrected and time saved by day, week and month. Time saved is speaking time × 1.9, based on Ruan et al. 2016.
       - title: Long recordings and computer audio
         status: building
         body: Recordings of up to two hours from the microphone, the computer's own audio or both. Long recordings are recognised in segments and can be exported as SRT subtitles.

@@ -121,7 +121,7 @@ fi
 DISPLAY=$display scrot --overwrite "${out%.png}-dictation-outcome.png"
 # Injection: the take is recorded as pasted with the ASR text, and after the restore delay the
 # clipboard holds the sentinel again (the injector saved it, pasted ours, put it back).
-outcome=$(voltip_smoke_last_history "$data/data/voltip/history.json")
+outcome=$(voltip_smoke_last_history "$data/data/voltip/history.sqlite3")
 echo "smoke-desktop-linux: history → ${outcome:-<none>}; $(voltip_smoke_plain "$data/app.log" | grep -oE 'text injection backend backend=[^=]*' | head -1)"
 if [ "$outcome" != "$(printf 'inserted\tpaste\t%s' "$spoken")" ]; then
   echo "smoke-desktop-linux: the take was not pasted (mock ASR requests: $(wc -l <"$data/asr.log" 2>/dev/null || echo 0))"

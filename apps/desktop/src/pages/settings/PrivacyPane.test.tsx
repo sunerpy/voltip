@@ -1,4 +1,4 @@
-import { defaultEngineSettings } from "@voltip/shared";
+import { type HistoryEntry, defaultEngineSettings } from "@voltip/shared";
 import { MockBackend, sampleHistory } from "@voltip/shared/mock";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -31,28 +31,52 @@ describe("Settings · 隐私与历史", () => {
 
   it("the history switch and retention write settings_set_history; a smaller retention trims at once", async () => {
     const user = userEvent.setup();
+    // More entries than the smallest choice keeps (500), so choosing it trims.
+    const rows = Array.from({ length: 600 }, (_, i) => ({
+      ...(sampleHistory(NOW)[0] as HistoryEntry),
+      id: `id-${i}`,
+      at_ms: NOW - i * 60_000,
+    }));
     const { backend } = renderApp({
       path: "/settings/privacy",
-      backend: new MockBackend({ now: () => NOW, history: sampleHistory(NOW) }),
+      backend: new MockBackend({ now: () => NOW, history: rows }),
     });
     const section = await screen.findByTestId("privacy-history");
-    const total = backend.peek().history.length;
-    expect(within(section).getByTestId("history-count")).toHaveTextContent(`${total} / 500 条`);
+    expect(within(section).getByTestId("history-count")).toHaveTextContent("600 / 20,000 条");
     const keep = within(section).getByLabelText("保留最近");
     expect(
       within(keep)
         .getAllByRole("option")
         .map((o) => o.textContent),
-    ).toEqual(KEEP_OPTIONS.map((n) => `${n} 条`));
+    ).toEqual(["500 条", "2,000 条", "5,000 条", "10,000 条", "20,000 条"]);
+    expect(KEEP_OPTIONS).toEqual([500, 2000, 5000, 10_000, 20_000]);
     await user.click(within(section).getByRole("switch", { name: "保存听写历史" }));
+    await waitFor(() => {
+      expect(backend.peek().settings.history).toEqual({ enabled: false, keep: 20_000 });
+    });
+    await user.selectOptions(keep, "500");
     await waitFor(() => {
       expect(backend.peek().settings.history).toEqual({ enabled: false, keep: 500 });
     });
-    await user.selectOptions(keep, "50");
-    await waitFor(() => {
-      expect(backend.peek().settings.history).toEqual({ enabled: false, keep: 50 });
+    expect(backend.peek().history_total).toBe(500);
+    expect(within(section).getByTestId("history-count")).toHaveTextContent("500 / 500 条");
+  });
+
+  it("an install that saved another retention (plan 3.1: no settings migration) keeps it on offer", async () => {
+    renderApp({
+      path: "/settings/privacy",
+      backend: new MockBackend({
+        now: () => NOW,
+        settings: { history: { enabled: true, keep: 200 } },
+      }),
     });
-    expect(backend.peek().history).toHaveLength(Math.min(total, 50));
+    const keep = within(await screen.findByTestId("privacy-history")).getByLabelText("保留最近");
+    expect(keep).toHaveValue("200");
+    expect(
+      within(keep)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["200 条", "500 条", "2,000 条", "5,000 条", "10,000 条", "20,000 条"]);
   });
 
   it("清空历史 asks first, then clears every entry", async () => {
@@ -62,14 +86,14 @@ describe("Settings · 隐私与历史", () => {
       backend: new MockBackend({ now: () => NOW, history: sampleHistory(NOW) }),
     });
     await screen.findByTestId("privacy-history");
-    const n = backend.peek().history.length;
+    const n = backend.peek().history_recent.length;
     expect(n).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "清空历史" }));
     const confirm = screen.getByRole("dialog", { name: "清空全部听写历史？" });
     expect(confirm).toHaveTextContent(`${n} 条记录会被删除`);
     await user.click(within(confirm).getByRole("button", { name: "清空" }));
     await waitFor(() => {
-      expect(backend.peek().history).toEqual([]);
+      expect(backend.peek().history_recent).toEqual([]);
     });
     expect(await screen.findByText("已清空听写历史")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "清空历史" })).toBeDisabled();

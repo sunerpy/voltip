@@ -278,7 +278,7 @@ describe("Shell", () => {
     try {
       const { backend } = renderApp({ mock: { now: () => Date.now() } });
       await screen.findByRole("heading", { name: "首页", level: 1 });
-      const count = backend.peek().history.length;
+      const count = backend.peek().history_recent.length;
       // 开始听写 starts a session; the entry turns into 停止听写 while listening.
       await user.keyboard("{Control>}k{/Control}");
       await user.type(paletteInput(), "开始听写");
@@ -297,12 +297,12 @@ describe("Shell", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_ASR_MS + MOCK_REFINE_MS);
       });
-      expect(backend.peek().history).toHaveLength(count + 1);
+      expect(backend.peek().history_recent).toHaveLength(count + 1);
       // 复制上一条结果 copies the newest history text.
       await user.keyboard("{Control>}k{/Control}");
       await user.type(paletteInput(), "复制上一条");
       await user.keyboard("{Enter}");
-      expect(writeText).toHaveBeenCalledWith(backend.peek().history[0]?.text);
+      expect(writeText).toHaveBeenCalledWith(backend.peek().history_recent[0]?.text);
       expect(await screen.findByText(/已复制上一条结果 · \d+ 字/)).toBeInTheDocument();
       // 删除全部历史 asks first, then clears the core's list.
       await user.keyboard("{Control>}k{/Control}");
@@ -317,7 +317,7 @@ describe("Shell", () => {
       expect(confirm).toHaveTextContent("全部历史记录将被删除");
       await user.click(within(confirm).getByRole("button", { name: "删除全部" }));
       await waitFor(() => {
-        expect(backend.peek().history).toEqual([]);
+        expect(backend.peek().history_recent).toEqual([]);
       });
       // With nothing left both history entries are disabled with a plain reason.
       await user.keyboard("{Control>}k{/Control}");
@@ -568,5 +568,10 @@ describe("Shell", () => {
     });
     expect(item("规则")).toHaveTextContent(/^规则1$/);
     expect(item("词典")).toHaveTextContent(/^词典$/);
+    // The history's count is the core's total, grouped like the counts on the pages.
+    act(() => {
+      backend.publish({ type: "history", recent: [], total: 20_000 });
+    });
+    expect(item("历史记录")).toHaveTextContent(/^历史记录20,000$/);
   });
 });

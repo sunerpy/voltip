@@ -63,6 +63,7 @@ import {
   BUILTIN_PRESETS,
   BUILTIN_SCENES,
   HISTORY_LIMIT,
+  HISTORY_RECENT,
   MAX_EDIT_SELECTION_CHARS,
   MAX_PRESETS,
   type PresetsTryArgs,
@@ -528,7 +529,7 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       mode: "whole_take",
     });
     // The history row lands before the done phase so a UI reading both sees them together.
-    const history = backend.peek().history;
+    const history = backend.peek().history_recent;
     expect(history).toHaveLength(1);
     expect(history[0]).toMatchObject({
       text: MOCK_DICTATION_TEXT,
@@ -579,11 +580,11 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       asr_ms: MOCK_ASR_MS,
       mode: "whole_take",
     });
-    expect(backend.peek().history[0]).toMatchObject({
+    expect(backend.peek().history_recent[0]).toMatchObject({
       refined: false,
       outcome: { kind: "inserted", via: "clipboard" },
     });
-    expect(backend.peek().history[0]?.refine_model).toBeUndefined();
+    expect(backend.peek().history_recent[0]?.refine_model).toBeUndefined();
     backend.destroy();
   });
 
@@ -600,7 +601,7 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       phase: { phase: "cancelled", injected_chars: 0 },
       kind: "dictation",
     });
-    expect(backend.peek().history).toEqual([]);
+    expect(backend.peek().history_recent).toEqual([]);
     tick(1000);
     // Starting again mid-dwell moves straight to listening on a new session.
     await backend.invoke("dictation_start");
@@ -624,7 +625,7 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     await backend.invoke("dictation_cancel");
     expect(backend.peek().dictation.phase).toEqual({ phase: "cancelled", injected_chars: 0 });
     tick(MOCK_ASR_MS + MOCK_REFINE_MS + MOCK_DICTATION_DWELL_MS);
-    expect(backend.peek().history).toEqual([]);
+    expect(backend.peek().history_recent).toEqual([]);
     expect(backend.peek().dictation.phase).toEqual({ phase: "idle" });
     backend.destroy();
   });
@@ -672,9 +673,12 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     await backend.invoke("dictation_start");
     await backend.invoke("dictation_stop");
     tick(MOCK_ASR_MS);
-    expect(backend.peek().history).toHaveLength(HISTORY_LIMIT);
-    expect(backend.peek().history[0]?.text).toBe(MOCK_DICTATION_RAW);
-    expect(backend.peek().history.at(-1)?.id).toBe(`id-${HISTORY_LIMIT - 2}`);
+    expect(backend.peek().history_total).toBe(HISTORY_LIMIT);
+    expect(backend.peek().history_recent).toHaveLength(HISTORY_RECENT);
+    expect(backend.peek().history_recent[0]?.text).toBe(MOCK_DICTATION_RAW);
+    // The oldest entry went: the last one kept is the one before it.
+    const oldest = await backend.historyQuery({ offset: HISTORY_LIMIT - 1, limit: 1 });
+    expect(oldest.entries[0]?.id).toBe(`id-${HISTORY_LIMIT - 2}`);
     backend.destroy();
   });
 
@@ -845,7 +849,7 @@ describe("MockBackend history, engines and secrets", () => {
 
   it("seeds the sample rows as real HistoryEntry records dated by local calendar day, newest first", () => {
     const backend = new MockBackend({ now: () => NOW });
-    const history = backend.peek().history;
+    const history = backend.peek().history_recent;
     expect(history).toEqual(sampleHistory(NOW));
     // The protected-field placeholder (no text) is not a history entry.
     expect(history).toHaveLength(historyEntries.filter((r) => r.text.length > 0).length);
@@ -880,17 +884,17 @@ describe("MockBackend history, engines and secrets", () => {
   it("history_star, history_delete and history_clear are real on the in-memory list", async () => {
     const backend = new MockBackend({ now: () => NOW });
     const events = collect(backend);
-    const first = backend.peek().history[0];
+    const first = backend.peek().history_recent[0];
     if (!first) throw new Error("fixture");
     await backend.invoke("history_star", { id: first.id, starred: !first.starred });
-    expect(backend.peek().history[0]?.starred).toBe(!first.starred);
+    expect(backend.peek().history_recent[0]?.starred).toBe(!first.starred);
     await backend.invoke("history_delete", { id: first.id });
-    expect(backend.peek().history.find((e) => e.id === first.id)).toBeUndefined();
-    const remaining = backend.peek().history.length;
+    expect(backend.peek().history_recent.find((e) => e.id === first.id)).toBeUndefined();
+    const remaining = backend.peek().history_recent.length;
     await backend.invoke("history_delete", { id: "nope" });
-    expect(backend.peek().history).toHaveLength(remaining);
+    expect(backend.peek().history_recent).toHaveLength(remaining);
     await backend.invoke("history_clear");
-    expect(backend.peek().history).toEqual([]);
+    expect(backend.peek().history_recent).toEqual([]);
     expect(events.every((e) => e.type === "history")).toBe(true);
     expect(events).toHaveLength(4);
   });
@@ -1649,7 +1653,7 @@ describe("MockBackend activation (docs/dictation.md §13)", () => {
     expect(backend.peek().dictation.phase).toEqual({ phase: "cancelled", injected_chars: 0 });
     tick(600);
     expect(backend.peek().dictation.phase.phase).toBe("cancelled");
-    expect(backend.peek().history).toHaveLength(2);
+    expect(backend.peek().history_recent).toHaveLength(2);
     backend.destroy();
   });
 });
@@ -1763,13 +1767,13 @@ describe("MockBackend output modes (docs/dictation.md §12)", () => {
       mode: "streaming_final",
       segments: [committed, { text: last.current, start_ms: committed.end_ms, end_ms: duration }],
     });
-    expect(backend.peek().history[0]).toMatchObject({
+    expect(backend.peek().history_recent[0]).toMatchObject({
       mode: "streaming_final",
       raw_text: preview,
       refined: true,
       segments: [committed, { text: last.current, start_ms: committed.end_ms, end_ms: duration }],
     });
-    expect(backend.peek().history[0]?.live_error).toBeUndefined();
+    expect(backend.peek().history_recent[0]?.live_error).toBeUndefined();
     backend.destroy();
   });
 
@@ -1809,8 +1813,8 @@ describe("MockBackend output modes (docs/dictation.md §12)", () => {
       asr_ms: MOCK_FINALIZE_MS,
     });
     expect(backend.peek().dictation.phase).not.toHaveProperty("refine_ms");
-    expect(backend.peek().history[0]).toMatchObject({ mode: "live_inject", refined: false });
-    expect(backend.peek().history[0]?.refine_model).toBeUndefined();
+    expect(backend.peek().history_recent[0]).toMatchObject({ mode: "live_inject", refined: false });
+    expect(backend.peek().history_recent[0]?.refine_model).toBeUndefined();
     tick(MOCK_DICTATION_DWELL_MS);
     // Cancel after the first paste: the pasted characters stay and are reported.
     await backend.invoke("dictation_start");
@@ -1867,7 +1871,7 @@ describe("MockBackend output modes (docs/dictation.md §12)", () => {
       live_error: MOCK_EMPTY_STREAM_ERROR,
       text: MOCK_DICTATION_RAW,
     });
-    expect(empty.peek().history[0]).toMatchObject({
+    expect(empty.peek().history_recent[0]).toMatchObject({
       mode: "whole_take",
       live_error: MOCK_EMPTY_STREAM_ERROR,
     });
@@ -2100,7 +2104,7 @@ describe("MockBackend personal dictionary and replacement rules (docs/dictation.
       MOCK_DICTATION_RAW,
       "把这段代码抽成一个 Helper，然后在 session_assembly 里复用。",
     ]);
-    expect(backend.peek().history[0]?.vocabulary).toEqual({
+    expect(backend.peek().history_recent[0]?.vocabulary).toEqual({
       corrections: [{ id: helper?.id, count: 1 }],
       rules: [{ id: code?.id, count: 1 }],
     });
@@ -2117,14 +2121,14 @@ describe("MockBackend personal dictionary and replacement rules (docs/dictation.
     tick(MOCK_DICTATION_DWELL_MS);
     // A rule that deletes everything: nothing to insert, no history row.
     await backend.invoke("rules_add", { rule: rule("all", ".+", "", { kind: "regex" }) });
-    const rows = backend.peek().history.length;
+    const rows = backend.peek().history_recent.length;
     await run();
     expect(backend.peek().dictation.phase).toEqual({
       phase: "failed",
       message: MOCK_NO_SPEECH,
       code: "no_speech",
     });
-    expect(backend.peek().history).toHaveLength(rows);
+    expect(backend.peek().history_recent).toHaveLength(rows);
     tick(MOCK_DICTATION_DWELL_MS);
     expect(backend.peek().dictation.phase).toEqual({ phase: "idle" });
     // Nothing fired: the row has no vocabulary key.
@@ -2133,7 +2137,7 @@ describe("MockBackend personal dictionary and replacement rules (docs/dictation.
     tick(MOCK_MIC_READY_MS + 500);
     await plain.invoke("dictation_stop");
     tick(MOCK_ASR_MS + MOCK_REFINE_MS);
-    const row = plain.peek().history[0];
+    const row = plain.peek().history_recent[0];
     expect(row?.text).toBe(MOCK_DICTATION_TEXT);
     expect(Object.hasOwn(row ?? {}, "vocabulary")).toBe(false);
     plain.destroy();
@@ -2280,7 +2284,7 @@ describe("MockBackend scenes and context (docs/dictation.md section 18)", () => 
     let done = backend.peek().dictation;
     expect(done.context).toBeUndefined();
     expect(done.phase.phase === "done" && done.phase.refined).toBe(true);
-    expect(backend.peek().history[0]?.app).toBeUndefined();
+    expect(backend.peek().history_recent[0]?.app).toBeUndefined();
     tick(MOCK_DICTATION_DWELL_MS);
     // In Code: the scene switches refining off; the listening status already names it.
     // The probe's id is kept normalised, like the core's `ForegroundApp::sanitized`.
@@ -2301,7 +2305,7 @@ describe("MockBackend scenes and context (docs/dictation.md section 18)", () => 
       MOCK_DICTATION_RAW,
     ]);
     expect(done.context?.scene?.name).toBe("代码");
-    expect(backend.peek().history[0]).toMatchObject({
+    expect(backend.peek().history_recent[0]).toMatchObject({
       app: { id: "code", name: "Code" },
       scene: { id: code?.id, name: "代码" },
       refined: false,
@@ -2545,17 +2549,17 @@ describe("MockBackend presets (docs/dictation.md section 21)", () => {
     });
     tick(MOCK_REFINE_MS);
     expect(backend.peek().dictation.preset).toEqual(named);
-    expect(backend.peek().history[0]?.preset).toEqual(named);
+    expect(backend.peek().history_recent[0]?.preset).toEqual(named);
     tick(MOCK_DICTATION_DWELL_MS);
     expect(backend.peek().dictation.preset).toBeUndefined();
     await take(backend);
-    expect(backend.peek().history[0]?.preset).toEqual({ id: "notes", name: "要点纪要" });
+    expect(backend.peek().history_recent[0]?.preset).toEqual({ id: "notes", name: "要点纪要" });
     tick(MOCK_DICTATION_DWELL_MS);
     // A custom preset that is gone refines with 校对, and the history says so.
     await setPreset(backend, weekly.id);
     await backend.invoke("presets_remove", { id: weekly.id });
     await take(backend);
-    expect(backend.peek().history[0]?.preset).toEqual({ id: "proofread", name: "校对" });
+    expect(backend.peek().history_recent[0]?.preset).toEqual({ id: "proofread", name: "校对" });
     tick(MOCK_DICTATION_DWELL_MS);
     // A scene's preset wins over the engines'; a take the scene does not refine names none.
     await backend.invoke("scenes_add", {
@@ -2576,12 +2580,12 @@ describe("MockBackend presets (docs/dictation.md section 21)", () => {
     });
     backend.setForegroundApp({ id: "code", name: "Code" });
     await take(backend);
-    expect(backend.peek().history[0]?.preset).toEqual({ id: "formal", name: "书面语" });
+    expect(backend.peek().history_recent[0]?.preset).toEqual({ id: "formal", name: "书面语" });
     tick(MOCK_DICTATION_DWELL_MS);
     backend.setForegroundApp({ id: "slack", name: "Slack" });
     await take(backend);
-    expect(backend.peek().history[0]).toMatchObject({ refined: false });
-    expect(backend.peek().history[0]?.preset).toBeUndefined();
+    expect(backend.peek().history_recent[0]).toMatchObject({ refined: false });
+    expect(backend.peek().history_recent[0]?.preset).toBeUndefined();
     expect(backend.peek().dictation.preset).toBeUndefined();
     backend.destroy();
   });
@@ -2623,7 +2627,7 @@ describe("MockBackend presets (docs/dictation.md section 21)", () => {
       id: 2,
       outcome: { status: "ok", text: "今天下午开会。" },
     });
-    expect(backend.peek().history).toEqual([]);
+    expect(backend.peek().history_recent).toEqual([]);
     const refusals: [PresetsTryArgs, string][] = [
       [
         { id: 3, preset: null, prompt: null, text: "x" },
@@ -2751,7 +2755,7 @@ describe("MockBackend voice edit (section 19)", () => {
       refined: true,
       mode: "whole_take",
     });
-    const [row] = backend.peek().history;
+    const [row] = backend.peek().history_recent;
     expect(row).toMatchObject({
       kind: "edit",
       edit: { instruction: MOCK_EDIT_INSTRUCTION, selection: SELECTION },
@@ -2807,7 +2811,7 @@ describe("MockBackend voice edit (section 19)", () => {
     await backend.invoke("dictation_cancel");
     expect(backend.peek().dictation.phase.phase).toBe("cancelled");
     tick(MOCK_ASR_MS + MOCK_REFINE_MS + MOCK_FINALIZE_MS);
-    expect(backend.peek().history).toEqual([]);
+    expect(backend.peek().history_recent).toEqual([]);
     backend.destroy();
     // No clean-up provider ready: refused at the press, the microphone never opens.
     const keyless = new MockBackend({
@@ -2850,7 +2854,7 @@ describe("MockBackend voice edit (section 19)", () => {
       await editEdge(backend, false);
       tick(MOCK_COPY_MS + MOCK_MIC_READY_MS + MOCK_ASR_MS + MOCK_REFINE_MS + MOCK_FINALIZE_MS);
       expect(phases(events)).toEqual(["edit:listening", "edit:failed"]);
-      expect(backend.peek().history).toEqual([]);
+      expect(backend.peek().history_recent).toEqual([]);
       backend.destroy();
     }
     // macOS copies with Cmd+C: Terminal is no hazard there, and an editor anywhere goes through.
@@ -3101,6 +3105,63 @@ describe("MockBackend LAN pairing, always-on pairing and the phone's commands", 
     await phone.invoke("connectivity_check");
     await phone.invoke("connectivity_check");
     expect(events.at(-1)).toEqual({ type: "error", message: "connectivity: 自检正在进行" });
+    phone.destroy();
+  });
+});
+
+describe("MockBackend history queries (docs/dictation.md section 4.4)", () => {
+  const T = 1_758_700_000_000;
+  const row = (i: number): HistoryEntry => ({
+    id: `id-${i}`,
+    at_ms: T - i * 60_000,
+    raw_text: `第${i}句`,
+    text: `第${i}句。`,
+    refined: true,
+    asr_model: "m",
+    duration_ms: 1000,
+    asr_ms: 100,
+    refine_ms: 50,
+    outcome: { kind: "inserted", via: "paste" },
+    starred: false,
+    mode: "whole_take",
+    kind: "dictation",
+  });
+
+  it("keeps the whole history for the queries and tells the UI the newest entries and the total", async () => {
+    const rows = Array.from({ length: 30 }, (_, i) => row(i));
+    const backend = new MockBackend({ now: () => T, history: rows });
+    expect(backend.peek().history_recent).toEqual(rows.slice(0, HISTORY_RECENT));
+    expect(backend.peek().history_total).toBe(30);
+    const tail = await backend.historyQuery({ offset: 25, limit: 10 });
+    expect(tail.entries.map((e) => e.id)).toEqual(["id-25", "id-26", "id-27", "id-28", "id-29"]);
+    expect([tail.matching, tail.total]).toEqual([30, 30]);
+    expect(await backend.historyEntry("id-29")).toEqual(rows[29]);
+    expect(await backend.historyEntry("gone")).toBeNull();
+    expect((await backend.historyQuery({ query: "第29句", limit: 5 })).entries).toEqual([rows[29]]);
+    await backend.invoke("history_star", { id: "id-29", starred: true });
+    expect((await backend.historyQuery({ starred: true, limit: 5 })).entries[0]?.id).toBe("id-29");
+    await backend.invoke("history_delete", { id: "id-0" });
+    expect(backend.log.at(-1)).toMatchObject({ type: "history", total: 29 });
+    expect(backend.peek().history_recent[0]?.id).toBe("id-1");
+    const stats = await backend.historyStats([T - 3 * 60_000, T + 1]);
+    // id-1 to id-3: id-0 was deleted.
+    expect(stats.buckets[0]?.count).toBe(3);
+    expect(stats.total.count).toBe(29);
+    await expect(backend.historyQuery({ limit: 0 })).rejects.toThrow(/limit/);
+    await expect(backend.historyStats([5])).rejects.toThrow(/boundaries/);
+    await backend.invoke("history_clear");
+    expect(backend.peek().history_total).toBe(0);
+    expect((await backend.historyHits()).dictionary).toEqual({});
+    backend.destroy();
+  });
+
+  it("the phone keeps no dictation history: the queries answer empty", async () => {
+    const phone = new MockBackend({ role: "phone", history: [row(0)] });
+    expect(await phone.historyQuery({ limit: 10 })).toEqual({ entries: [], matching: 0, total: 0 });
+    expect(await phone.historyEntry("id-0")).toBeNull();
+    expect((await phone.historyStats([0, 1, 2])).buckets).toHaveLength(2);
+    expect(await phone.historyHits()).toEqual({ dictionary: {}, rules: {} });
+    await expect(phone.historyQuery({ limit: 0 })).rejects.toThrow(/limit/);
     phone.destroy();
   });
 });

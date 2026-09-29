@@ -1,4 +1,9 @@
-import { type DictionaryEntry, HISTORY_LIMIT, type HistoryEntry } from "@voltip/shared";
+import {
+  type DictionaryEntry,
+  HISTORY_LIMIT,
+  type HistoryEntry,
+  formatCount,
+} from "@voltip/shared";
 import { MockBackend, desktopIdentity } from "@voltip/shared/mock";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -24,7 +29,7 @@ describe("History page keys and retention", () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/history", mock: liveClock() });
     await screen.findByTestId("page-history");
-    const saved = backend.peek().history.length;
+    const saved = backend.peek().history_recent.length;
     await backend.invoke("settings_set_history", { enabled: true, keep: 50 });
     expect(await screen.findByText(`${saved} / 50`)).toBeInTheDocument();
     expect(screen.getByTestId("history-retention")).toHaveTextContent(
@@ -111,10 +116,10 @@ describe("History page keys and retention", () => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const { backend } = renderApp({ path: "/history", mock: liveClock() });
     const log = await screen.findByRole("list", { name: "听写记录" });
-    const [newest, second] = backend.peek().history;
+    const [newest, second] = backend.peek().history_recent;
     if (!newest || !second) throw new Error("fixture");
     const actions = within(log).getAllByTestId("result-actions");
-    expect(actions).toHaveLength(backend.peek().history.length);
+    expect(actions).toHaveLength(backend.peek().history_recent.length);
     const secondRow = actions[1];
     if (!secondRow) throw new Error("row");
     await user.click(within(secondRow).getByRole("button", { name: "粘贴到上一个窗口" }));
@@ -132,7 +137,7 @@ describe("History page keys and retention", () => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const { backend } = renderApp({ path: "/history", mock: liveClock() });
     await screen.findByTestId("page-history");
-    const newest = backend.peek().history[0];
+    const newest = backend.peek().history_recent[0];
     if (!newest) throw new Error("fixture");
     // Ctrl F focuses the search field; typing there never copies or deletes.
     await user.keyboard("{Control>}f{/Control}");
@@ -161,7 +166,7 @@ describe("History page keys and retention", () => {
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "删除" }));
     await waitFor(() => {
-      expect(backend.peek().history.some((e) => e.id === newest.id)).toBe(false);
+      expect(backend.peek().history_recent.some((e) => e.id === newest.id)).toBe(false);
     });
   });
 
@@ -171,14 +176,14 @@ describe("History page keys and retention", () => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const { backend } = renderApp({ path: "/history", mock: liveClock() });
     await screen.findByTestId("page-history");
-    const before = backend.peek().history.length;
+    const before = backend.peek().history_recent.length;
     await user.keyboard("{Control>},{/Control}");
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     (document.activeElement as HTMLElement | null)?.blur();
     await user.keyboard("{Delete}{Control>}c{/Control}");
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
     expect(writeText).not.toHaveBeenCalled();
-    expect(backend.peek().history).toHaveLength(before);
+    expect(backend.peek().history_recent).toHaveLength(before);
   });
 });
 
@@ -207,14 +212,16 @@ describe("History page", () => {
     }
   });
 
-  it("renders the factual retention banner, the day-grouped log from state.history and the newest entry's detail", async () => {
+  it("renders the factual retention banner, the day-grouped log from state.history_recent and the newest entry's detail", async () => {
     const { backend } = renderApp({ path: "/history", mock: liveClock() });
     expect(await screen.findByText("历史记录 · 仅保存在本机")).toBeInTheDocument();
     expect(screen.getByTestId("history-retention")).toHaveTextContent(
-      `保留最近 ${HISTORY_LIMIT} 条，超出后自动删除最早的记录。`,
+      `保留最近 ${formatCount(HISTORY_LIMIT)} 条，超出后自动删除最早的记录。`,
     );
-    const history = backend.peek().history;
-    expect(await screen.findByText(`${history.length} / ${HISTORY_LIMIT}`)).toBeInTheDocument();
+    const history = backend.peek().history_recent;
+    expect(
+      await screen.findByText(`${history.length} / ${formatCount(HISTORY_LIMIT)}`),
+    ).toBeInTheDocument();
     const log = screen.getByRole("list", { name: "听写记录" });
     expect(within(log).getByText(/^今天 · /)).toBeInTheDocument();
     expect(within(log).getByText(/^昨天 · /)).toBeInTheDocument();
@@ -238,7 +245,7 @@ describe("History page", () => {
 
   it("regression: section 20.6 a phone's text and a phone's take are badged with the phone, and a text shows no model or timings", async () => {
     const now = Date.now();
-    const base = new MockBackend({ now: () => now }).peek().history[0];
+    const base = new MockBackend({ now: () => now }).peek().history_recent[0];
     if (!base) throw new Error("fixture");
     const text: HistoryEntry = {
       ...base,
@@ -285,20 +292,23 @@ describe("History page", () => {
     await user.type(screen.getByLabelText("搜索历史"), "latency");
     expect(screen.getByText(/attach the latency report/)).toBeInTheDocument();
     await user.type(screen.getByLabelText("搜索历史"), "zzz");
-    expect(screen.getByText("没有结果匹配「latencyzzz」")).toBeInTheDocument();
+    // The search goes to the core once the typing pauses (docs/dictation.md §4.4).
+    expect(await screen.findByText("没有结果匹配「latencyzzz」")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "清除搜索" }));
     await user.click(screen.getByRole("radio", { name: "今天" }));
-    expect(
-      within(screen.getByRole("list", { name: "听写记录" })).getAllByRole("listitem"),
-    ).toHaveLength(1 + 2);
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("list", { name: "听写记录" })).getAllByRole("listitem"),
+      ).toHaveLength(1 + 2);
+    });
     await user.click(screen.getByRole("radio", { name: "未插入" }));
     // The clipboard row says so in two words; its reason is only in the entry's note.
     const unsent = screen.getByRole("list", { name: "听写记录" });
-    expect(within(unsent).getByText(/· 已复制到剪贴板$/)).toBeInTheDocument();
+    expect(await within(unsent).findByText(/· 已复制到剪贴板$/)).toBeInTheDocument();
     expect(within(unsent).queryByText(/目标窗口没有焦点/)).toBeNull();
     expect(screen.getByText(/失败 · 目标窗口已丢失/)).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "已收藏" }));
-    await user.click(screen.getByText(/返回值类型改成/));
+    await user.click(await screen.findByText(/返回值类型改成/));
     expect(screen.getByRole("radio", { name: "润色后" })).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "对比" }));
     expect(
@@ -333,7 +343,7 @@ describe("History page", () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/history", mock: liveClock() });
     await screen.findByTestId("entry-text");
-    const first = backend.peek().history[0];
+    const first = backend.peek().history_recent[0];
     if (!first) throw new Error("fixture");
     // Star from the detail pane.
     const detailStar = screen
@@ -342,7 +352,7 @@ describe("History page", () => {
     if (!detailStar) throw new Error("no star");
     await user.click(detailStar);
     await waitFor(() => {
-      expect(backend.peek().history[0]?.starred).toBe(!first.starred);
+      expect(backend.peek().history_recent[0]?.starred).toBe(!first.starred);
     });
     // Star from the row, by keyboard.
     const rowStar = within(screen.getByRole("list", { name: "听写记录" })).getAllByRole("button", {
@@ -352,7 +362,7 @@ describe("History page", () => {
     rowStar.focus();
     await user.keyboard("{Enter}");
     await waitFor(() => {
-      expect(backend.peek().history[0]?.starred).toBe(first.starred);
+      expect(backend.peek().history_recent[0]?.starred).toBe(first.starred);
     });
     // Delete asks first, then the core drops the row and the next one is selected.
     await user.click(screen.getByRole("button", { name: "删除" }));
@@ -361,15 +371,15 @@ describe("History page", () => {
     expect(dialog).toHaveTextContent("此操作无法撤销");
     await user.click(within(dialog).getByRole("button", { name: "删除" }));
     await waitFor(() => {
-      expect(backend.peek().history.find((e) => e.id === first.id)).toBeUndefined();
+      expect(backend.peek().history_recent.find((e) => e.id === first.id)).toBeUndefined();
     });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByText(/已删除/)).toBeNull();
-    const second = backend.peek().history[0];
+    const second = backend.peek().history_recent[0];
     if (!second) throw new Error("fixture");
     expect(screen.getByTestId("entry-text")).toHaveTextContent(second.text);
     expect(
-      screen.getByText(`${backend.peek().history.length} / ${HISTORY_LIMIT}`),
+      await screen.findByText(`${backend.peek().history_total} / ${formatCount(HISTORY_LIMIT)}`),
     ).toBeInTheDocument();
     // Clear everything.
     await user.click(screen.getByRole("button", { name: "全部清空" }));
@@ -378,7 +388,7 @@ describe("History page", () => {
     expect(clear.textContent).not.toMatch(/示例|sqlite/);
     await user.click(within(clear).getByRole("button", { name: "清空" }));
     await waitFor(() => {
-      expect(backend.peek().history).toEqual([]);
+      expect(backend.peek().history_recent).toEqual([]);
     });
     expect(screen.getByText("暂无记录。")).toBeInTheDocument();
     expect(screen.getByText(/按住 Ctrl Alt Space 说一句/)).toBeInTheDocument();
@@ -390,7 +400,7 @@ describe("History page", () => {
   it("opens with a home tile filter or a selected entry id, and says when a range is empty", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend({ now: () => Date.now() });
-    const target = backend.peek().history.at(-1);
+    const target = backend.peek().history_recent.at(-1);
     if (!target) throw new Error("fixture");
     renderApp({ path: `/history?filter=${target.id}`, backend });
     expect(await screen.findByTestId("entry-text")).toHaveTextContent(target.text);
@@ -550,8 +560,10 @@ describe("History page", () => {
     expect(screen.queryByText("未匹配场景")).toBeNull();
     // Search matches the app and the scene.
     await user.type(screen.getByRole("textbox", { name: "搜索历史" }), "聊天");
+    await waitFor(() => {
+      expect(within(log).queryByRole("button", { name: /加一个重试/ })).toBeNull();
+    });
     expect(within(log).getByRole("button", { name: /今晚开会/ })).toBeInTheDocument();
-    expect(within(log).queryByRole("button", { name: /加一个重试/ })).toBeNull();
   });
 
   it("regression: a voice edit is badged and reads instruction then rewrite in the row and its detail shows the instruction and the rewrite and the original selection behind a disclosure and copies the rewrite and search finds it by instruction and selection (section 19)", async () => {
@@ -638,10 +650,15 @@ describe("History page", () => {
     // Search finds an edit by its instruction and by its original selection.
     const search = screen.getByRole("textbox", { name: "搜索历史" });
     await user.type(search, "周四十点哈");
+    await waitFor(() => {
+      expect(within(log).queryByRole("button", { name: /今晚开会/ })).toBeNull();
+    });
     expect(within(log).getByTestId("history-edit-row")).toBeInTheDocument();
-    expect(within(log).queryByRole("button", { name: /今晚开会/ })).toBeNull();
     await user.clear(search);
     await user.type(search, "改得更正式");
+    await waitFor(() => {
+      expect(within(log).queryByRole("button", { name: /今晚开会/ })).toBeNull();
+    });
     expect(within(log).getByTestId("history-edit-row")).toBeInTheDocument();
   });
 
@@ -734,5 +751,93 @@ describe("History page", () => {
     expect(within(second).getByLabelText("曾听成")).toHaveValue("");
     await user.click(within(second).getByRole("button", { name: "取消" }));
     expect(screen.queryByRole("dialog", { name: "加入词典" })).toBeNull();
+  });
+});
+
+describe("History page with a long history (docs/dictation.md section 4.4)", () => {
+  const T = Date.now();
+  const rows = (n: number): HistoryEntry[] =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      at_ms: T - i * 60_000,
+      raw_text: `第${i}句`,
+      text: `第${i}句。`,
+      refined: false,
+      asr_model: "Qwen/Qwen3-ASR-1.7B",
+      duration_ms: 1000,
+      asr_ms: 100,
+      outcome: { kind: "inserted", via: "paste" },
+      starred: false,
+      mode: "whole_take",
+      kind: "dictation",
+    }));
+
+  it("loads a page of 100 at a time and the next one on demand, and counts what matches", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({ history: rows(250) });
+    renderApp({ path: "/history", backend });
+    const log = await screen.findByRole("list", { name: "听写记录" });
+    await waitFor(() => {
+      expect(within(log).getAllByRole("button", { pressed: false }).length).toBeGreaterThan(90);
+    });
+    expect(screen.getByTestId("history-loaded")).toHaveTextContent("已显示 100 / 250 条");
+    await user.click(screen.getByTestId("history-more"));
+    await waitFor(() => {
+      expect(screen.getByTestId("history-loaded")).toHaveTextContent("已显示 200 / 250 条");
+    });
+    await user.click(screen.getByTestId("history-more"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("history-more")).toBeNull();
+    });
+    expect(within(log).getByRole("button", { name: /第249句。/ })).toBeInTheDocument();
+    backend.destroy();
+  });
+
+  it("regression: says nothing before the first answer and keeps the rows on screen while a new search is answered", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({ history: rows(3) });
+    const answer = backend.historyQuery.bind(backend);
+    // Every query waits until the test lets it through.
+    const waiting: (() => void)[] = [];
+    vi.spyOn(backend, "historyQuery").mockImplementation(
+      (args) =>
+        new Promise((resolve, reject) => {
+          waiting.push(() => {
+            answer(args).then(resolve, reject);
+          });
+        }),
+    );
+    const releaseAll = () => {
+      for (const release of waiting.splice(0)) release();
+    };
+    renderApp({ path: "/history", backend });
+    const log = await screen.findByRole("list", { name: "听写记录" });
+    await waitFor(() => {
+      expect(waiting.length).toBeGreaterThan(0);
+    });
+    // Nothing is known yet: no rows and no 「暂无结果」.
+    expect(screen.queryByText("全部暂无结果。")).toBeNull();
+    expect(within(log).queryAllByRole("button", { name: /第\d句。/ })).toHaveLength(0);
+    releaseAll();
+    expect(await within(log).findByRole("button", { name: /第0句。/ })).toBeInTheDocument();
+    // A search that matches nothing: the old rows stay until its answer, then the empty state
+    // names the search.
+    await user.type(screen.getByRole("textbox", { name: "搜索历史" }), "zzz");
+    await waitFor(() => {
+      expect(waiting.length).toBeGreaterThan(0);
+    });
+    expect(within(log).getByRole("button", { name: /第0句。/ })).toBeInTheDocument();
+    expect(screen.queryByText("没有结果匹配「zzz」")).toBeNull();
+    releaseAll();
+    expect(await screen.findByText("没有结果匹配「zzz」")).toBeInTheDocument();
+    expect(within(log).queryAllByRole("button", { name: /第\d句。/ })).toHaveLength(0);
+    backend.destroy();
+  });
+
+  it("opens an entry past the loaded page by its id (the home table's row link)", async () => {
+    const backend = new MockBackend({ history: rows(150) });
+    renderApp({ path: `/history?filter=${rows(150)[140]?.id ?? ""}`, backend });
+    expect(await screen.findByTestId("entry-text")).toHaveTextContent("第140句。");
+    backend.destroy();
   });
 });

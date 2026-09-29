@@ -25,7 +25,7 @@ describe("paste_text", () => {
 
   it("the mock refuses what the shell and the core refuse, and records the rest", async () => {
     const backend = new MockBackend({ now: () => 1_758_700_000_000 });
-    const history = backend.peek().history;
+    const history = backend.peek().history_recent;
     expect(await backend.pasteText("你好")).toEqual({ kind: "pasted" });
     expect(await backend.pasteText(" \n")).toEqual({ kind: "failed", reason: "invalid" });
     expect(await backend.pasteText("字".repeat(MAX_PASTE_TEXT_CHARS + 1))).toEqual({
@@ -39,7 +39,7 @@ describe("paste_text", () => {
     expect(await backend.pasteText("听写中")).toEqual({ kind: "failed", reason: "busy" });
     await backend.invoke("dictation_cancel");
     expect(backend.pastes).toEqual(["你好", "字".repeat(MAX_PASTE_TEXT_CHARS), "再来"]);
-    expect(backend.peek().history).toEqual(history);
+    expect(backend.peek().history_recent).toEqual(history);
     expect(await new MockBackend({ role: "phone" }).pasteText("你好")).toEqual({
       kind: "failed",
       reason: "unsupported",

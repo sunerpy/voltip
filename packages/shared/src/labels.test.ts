@@ -11,7 +11,9 @@ import {
   failureLabel,
   formatCode,
   formatCount,
+  durationParts,
   formatDate,
+  formatDuration,
   formatElapsed,
   formatMs,
   formatRemaining,
@@ -273,6 +275,24 @@ describe("labels", () => {
     expect(formatMs(1384)).toBe("1,384 ms");
     expect(formatMs(undefined)).toBe("—");
     expect(formatSeconds(6800)).toBe("6.8 s");
+    // The statistics' spans read in words at every size: a 20 000-entry history saves hours, which
+    // `m:ss 分` wrote as 「3780:00 分」.
+    expect(formatDuration(0)).toBe("0 秒");
+    expect(formatDuration(-5)).toBe("0 秒");
+    expect(formatDuration(21_400)).toBe("21 秒");
+    expect(formatDuration(59_600)).toBe("1 分");
+    expect(formatDuration(227_000)).toBe("3 分 47 秒");
+    expect(formatDuration(3_600_000)).toBe("1 小时");
+    expect(formatDuration(63 * 3_600_000 + 12 * 60_000 + 30_000)).toBe("63 小时 12 分");
+    expect(formatDuration(1_234 * 3_600_000)).toBe("1,234 小时");
+    expect(formatDuration(227_000, "en")).toBe("3 min 47 s");
+    expect(formatDuration(63 * 3_600_000 + 12 * 60_000, "en")).toBe("63 h 12 min");
+    // The home page draws each number with its unit smaller, like the character counts.
+    expect(durationParts(227_000)).toEqual([
+      { value: "3", unit: "分" },
+      { value: "47", unit: "秒" },
+    ]);
+    expect(durationParts(3_600_000, "en")).toEqual([{ value: "1", unit: "h" }]);
     expect(hostOf("https://api.example.com/openai/v1")).toBe("api.example.com");
     expect(hostOf("voltip.example")).toBe("voltip.example");
     expect(hostOf("ftp://x.y/z")).toBe("x.y");
@@ -312,6 +332,11 @@ describe("labels in English", () => {
       relativeTime(now - 7200, now, "en"),
       relativeTime(now - 86_400 * 3, now, "en"),
       viaLabel("clipboard", "en"),
+      formatDuration(21_000, "en"),
+      formatDuration(227_000, "en"),
+      formatDuration(3_600_000, "en"),
+      formatDuration(3_720_000, "en"),
+      formatDuration(120_000, "en"),
       modelDisplayName("qwen3-asr-0.6b", "均衡", "en"),
       modelDisplayName("paraformer-zh", "轻量 · 中文", "en"),
       modelDisplayName("zipformer-stream-zh-en", "实时预览", "en"),

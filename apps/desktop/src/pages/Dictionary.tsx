@@ -26,12 +26,12 @@ import {
 import { type KeyboardEvent, useCallback, useMemo, useState } from "react";
 import { usePageShortcuts, withCommand } from "../app/page-shortcuts";
 import { copyWithToast, useShell } from "../app/shell-context";
+import { useHitTotals } from "../features/vocabulary/useHitTotals";
 import { useVocabularyPreview } from "../features/vocabulary/usePreview";
 import {
   HEARD_AS_JOINER,
   dictionaryDraftProblem,
   errorText,
-  hitTotals,
   moved,
   splitHeardAs,
 } from "../features/vocabulary/vocabulary";
@@ -66,7 +66,7 @@ export function Dictionary() {
   const [sample, setSample] = useState("");
   const preview = useVocabularyPreview(sample);
 
-  const hits = useMemo(() => hitTotals(state.history, "corrections"), [state.history]);
+  const hits = useHitTotals("corrections");
   const enabled = entries.filter((e) => e.enabled).length;
   const top = useMemo(() => {
     const fired = entries.filter((e) => (hits.get(e.id) ?? 0) > 0);
@@ -366,7 +366,7 @@ export function Dictionary() {
     },
   ];
 
-  const lastRaw = state.history[0]?.raw_text;
+  const lastRaw = state.history_recent[0]?.raw_text;
   const termOf = (hit: VocabularyHit) => entries.find((e) => e.id === hit.id)?.term ?? hit.id;
 
   return (

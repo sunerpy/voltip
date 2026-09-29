@@ -8,10 +8,6 @@ The next releases, in the expected order. No dates are promised. Each feature is
 
 ## In development
 
-### 20,000 history entries and statistics <StatusTag status="building" />
-
-The history limit rises from 500 to 20,000 entries, and the home page shows characters transcribed, characters corrected, speaking time and time saved for today, this week, this month and in total. See [History](/dictation/history#statistics).
-
 ### Long recordings and computer audio <StatusTag status="building" />
 
 - Recordings of up to two hours, with the limit set under Settings.

@@ -15,9 +15,15 @@ import {
   TAKE_KINDS,
   type UiEventType,
   activationSchema,
+  builtinSceneSchema,
   dictionaryDraftSchema,
   engineSettingsSchema,
   hexKeySchema,
+  historyEntrySchema,
+  historyHitsSchema,
+  historyPageSchema,
+  historyStatsBucketSchema,
+  historyStatsSchema,
   importModeSchema,
   ruleDraftSchema,
   localeSettingSchema,
@@ -34,6 +40,7 @@ import {
   uiEventSchema,
   uiStateSchema,
 } from "./schema";
+import { translate } from "./i18n";
 import { PROVIDER_CATALOGUE, resolveEngineStatus } from "./providers";
 import { TauriBackend } from "./tauri-backend";
 
@@ -456,7 +463,9 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       .parse(Reflect.get(Object(state), "engines"));
     expect(Object.hasOwn(rawStatus, "effective_output_mode")).toBe(true);
     // Every history row names its output mode (§12); the fixture's are whole takes.
-    expect(parsed.history.map((e) => e.mode)).toEqual(parsed.history.map(() => "whole_take"));
+    expect(parsed.history_recent.map((e) => e.mode)).toEqual(
+      parsed.history_recent.map(() => "whole_take"),
+    );
     expect(parsed.dictation.phase.phase === "done" && parsed.dictation.phase.mode).toBe(
       "whole_take",
     );
@@ -566,7 +575,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     const cancelled = dictation.flatMap((p) => (p.phase === "cancelled" ? [p.injected_chars] : []));
     expect(cancelled).toEqual([0, 21]);
     // History rows carry the same three fields.
-    const rows = parsed.flatMap((e) => (e.type === "history" ? e.entries : []));
+    const rows = parsed.flatMap((e) => (e.type === "history" ? e.recent : []));
     const live = rows.find((r) => r.mode === "live_inject");
     expect(live?.segments).toHaveLength(2);
     expect(live?.live_error).toBe("live tap overrun: the decoder fell behind the microphone");
@@ -625,16 +634,16 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     ]);
     expect(ruleLists[0]?.[1]?.pattern).toBe("\\bpr (\\d+)");
     // History rows name what fired; a row where nothing fired has no key at all.
-    const rows = parsed.flatMap((e) => (e.type === "history" ? e.entries : []));
+    const rows = parsed.flatMap((e) => (e.type === "history" ? e.recent : []));
     expect(rows.find((r) => r.vocabulary !== undefined)?.vocabulary).toEqual({
       corrections: [{ id: "3b241101-e2bb-4255-8caf-4136c566a962", count: 1 }],
       rules: [{ id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", count: 2 }],
     });
     const rawRows = events.flatMap((raw) => {
       const r = z
-        .object({ type: z.literal("history"), entries: z.array(z.record(z.string(), z.unknown())) })
+        .object({ type: z.literal("history"), recent: z.array(z.record(z.string(), z.unknown())) })
         .safeParse(raw);
-      return r.success ? r.data.entries : [];
+      return r.success ? r.data.recent : [];
     });
     expect(rawRows.some((r) => !Object.hasOwn(r, "vocabulary"))).toBe(true);
     // `chinese_script` is always serialised in settings (§17).
@@ -725,8 +734,8 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     ]);
     const failed = parsedState.sent_texts.at(-1)?.state;
     expect(failed?.state === "failed" ? failed.code : undefined).toBe("no_answer");
-    expect(parsedState.history.at(-1)?.origin).toEqual({ device: "Pixel 8", kind: "typed" });
-    expect(parsedState.history[0]?.origin).toBeUndefined();
+    expect(parsedState.history_recent.at(-1)?.origin).toEqual({ device: "Pixel 8", kind: "typed" });
+    expect(parsedState.history_recent[0]?.origin).toBeUndefined();
     const lists = events.flatMap((raw) => {
       const r = uiEventSchema.safeParse(raw);
       return r.success && r.data.type === "sent_texts" ? [r.data.texts.length] : [];
@@ -828,7 +837,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       "edit_in_terminal",
     ]);
     // History: an edit row carries the instruction and the original; the other rows are dictations.
-    const rows = parsed.flatMap((e) => (e.type === "history" ? e.entries : []));
+    const rows = parsed.flatMap((e) => (e.type === "history" ? e.recent : []));
     const edit = rows.find((r) => r.kind === "edit");
     expect(edit?.edit).toEqual({
       instruction: "改得更正式",
@@ -842,7 +851,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     const parsedState = uiStateSchema.parse(state);
     expect(parsedState.dictation.kind).toBe("dictation");
     expect(parsedState.hotkey.edit_registered).toBe("Ctrl+Alt+E");
-    expect(parsedState.history.map((r) => r.kind)).toEqual([
+    expect(parsedState.history_recent.map((r) => r.kind)).toEqual([
       "dictation",
       "dictation",
       "edit",
@@ -872,9 +881,8 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     const historyRaw = events.find((raw) => JSON.stringify(raw).includes('"kind":"edit","edit"'));
     expect(historyRaw).toBeDefined();
     expect(
-      uiEventSchema.safeParse(
-        mutate(historyRaw, ["entries", "2", "edit", "instruction"], undefined),
-      ).success,
+      uiEventSchema.safeParse(mutate(historyRaw, ["recent", "2", "edit", "instruction"], undefined))
+        .success,
     ).toBe(false);
     expect(argSchemas.hotkey_edge.safeParse({ pressed: true, purpose: "rewrite" }).success).toBe(
       false,
@@ -907,9 +915,9 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       app: { id: "code", name: "Code" },
       scene: { id: review?.id, name: "代码评审" },
     });
-    expect(parsedState.history[0]?.app).toEqual({ id: "code", name: "Code" });
-    expect(parsedState.history[0]?.scene?.name).toBe("代码评审");
-    expect(parsedState.history[1]?.app).toBeUndefined();
+    expect(parsedState.history_recent[0]?.app).toEqual({ id: "code", name: "Code" });
+    expect(parsedState.history_recent[0]?.scene?.name).toBe("代码评审");
+    expect(parsedState.history_recent[1]?.app).toBeUndefined();
     const parsed = events.flatMap((raw) => {
       const r = uiEventSchema.safeParse(raw);
       return r.success ? [r.data] : [];
@@ -918,7 +926,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(lists.map((l) => l.length)).toEqual([3, 0]);
     const builtinRefs = parsed.flatMap((e) =>
       e.type === "history"
-        ? e.entries.flatMap((h) => (h.scene?.builtin === undefined ? [] : [h.scene]))
+        ? e.recent.flatMap((h) => (h.scene?.builtin === undefined ? [] : [h.scene]))
         : [],
     );
     expect(builtinRefs).toContainEqual({ id: legal?.id, name: "legal", builtin: "legal" });
@@ -1051,5 +1059,78 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     const viaBackend = await backend.getState();
     expect(viaBackend).toEqual(uiStateSchema.parse(state));
     expect(recorded.at(-1)).toStrictEqual({ command: "core_state", args: undefined });
+  });
+});
+
+describe("history queries (docs/dictation.md section 4.4)", () => {
+  it("the answers the Rust side writes parse with the schemas", () => {
+    const fixture = z.record(z.string(), z.unknown()).parse(loadFixture("history-queries.json"));
+    const page = historyPageSchema.parse(fixture.page);
+    expect([page.entries.length, page.matching, page.total]).toEqual([1, 12, 312]);
+    expect(historyEntrySchema.parse(fixture.entry).id).toBe(page.entries[0]?.id);
+    expect(historyEntrySchema.nullable().parse(fixture.missing)).toBeNull();
+    const stats = historyStatsSchema.parse(fixture.stats);
+    expect(stats.buckets.map((b) => b.count)).toEqual([0, 2]);
+    expect(stats.total).toEqual({
+      count: 6,
+      raw_chars: 348,
+      corrected_chars: 42,
+      spoken_ms: 66_000,
+      latency_ms: 7386,
+    });
+    const hits = historyHitsSchema.parse(fixture.hits);
+    expect(Object.values(hits.dictionary)).toEqual([3]);
+    expect(Object.values(hits.rules)).toEqual([1]);
+    // A bucket without a field, or a negative count, is refused rather than drawn.
+    expect(historyStatsBucketSchema.safeParse({ count: -1 }).success).toBe(false);
+  });
+
+  it("TauriBackend sends the four queries with the arguments the shell's commands take", async () => {
+    const fixture = z.record(z.string(), z.unknown()).parse(loadFixture("history-queries.json"));
+    const answers: Record<string, unknown> = {
+      history_query: fixture.page,
+      history_entry: fixture.missing,
+      history_stats: fixture.stats,
+      history_hits: fixture.hits,
+    };
+    const calls: { command: string; args: unknown }[] = [];
+    const backend = new TauriBackend({
+      invoke: (command, args) => {
+        calls.push({ command, args });
+        return Promise.resolve(answers[command]);
+      },
+      listen: () => Promise.resolve(() => undefined),
+    });
+    expect(
+      (await backend.historyQuery({ sinceMs: 5, failed: true, query: "会议", limit: 100 })).total,
+    ).toBe(312);
+    expect(await backend.historyEntry("9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d")).toBeNull();
+    expect((await backend.historyStats([1, 2, 3])).buckets).toHaveLength(2);
+    expect((await backend.historyHits()).rules).toEqual(hits(fixture.hits).rules);
+    expect(calls).toStrictEqual([
+      { command: "history_query", args: { sinceMs: 5, failed: true, query: "会议", limit: 100 } },
+      { command: "history_entry", args: { id: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d" } },
+      { command: "history_stats", args: { boundaries: [1, 2, 3] } },
+      { command: "history_hits", args: undefined },
+    ]);
+    function hits(raw: unknown) {
+      return historyHitsSchema.parse(raw);
+    }
+  });
+
+  it("the built-in scenes' names in both dictionaries are the ones the core's search finds", () => {
+    const rows = z
+      .array(
+        z.object({
+          id: builtinSceneSchema,
+          names: z.object({ "zh-CN": z.string(), en: z.string() }),
+        }),
+      )
+      .parse(loadFixture("scenes-builtin.json"));
+    expect(rows).toHaveLength(7);
+    for (const row of rows) {
+      expect(translate("zh-CN", `builtinScenes.${row.id}.name`)).toBe(row.names["zh-CN"]);
+      expect(translate("en", `builtinScenes.${row.id}.name`)).toBe(row.names.en);
+    }
   });
 });

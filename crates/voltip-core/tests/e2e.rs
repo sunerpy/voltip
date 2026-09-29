@@ -991,7 +991,7 @@ async fn a_phone_sends_text_the_desktop_inserts_now_or_after_its_take() {
     assert_eq!(delivered[0].state, SentTextState::Delivered { pasted: true });
     assert_eq!((delivered[0].body.as_str(), delivered[0].device_name.as_str()), ("会议改到三点", "Studio"));
     let history = wait(&mut desk, |e| match e {
-        CoreEvent::History(entries) if entries.iter().any(|h| h.text == "会议改到三点") => Some(entries.clone()),
+        CoreEvent::History { recent: entries, .. } if entries.iter().any(|h| h.text == "会议改到三点") => Some(entries.clone()),
         _ => None,
     })
     .await;
@@ -1010,7 +1010,7 @@ async fn a_phone_sends_text_the_desktop_inserts_now_or_after_its_take() {
     assert_eq!(after[0].state, SentTextState::Delivered { pasted: true });
     assert_eq!(after.len(), 2, "newest first, both kept");
     wait(&mut desk, |e| match e {
-        CoreEvent::History(entries) => {
+        CoreEvent::History { recent: entries, .. } => {
             entries.iter().find(|h| h.text == "剪贴板里的地址").and_then(|h| h.origin.clone()).filter(|o| o.kind == OriginKind::Clipboard)
         }
         _ => None,
@@ -1031,7 +1031,9 @@ async fn a_phone_sends_text_the_desktop_inserts_now_or_after_its_take() {
     wait(&mut desk, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { ready: true, .. })).then_some(())).await;
     phone.handle.send(CoreCommand::PhoneTakeStop).await.unwrap();
     wait(&mut desk, |e| match e {
-        CoreEvent::History(entries) => entries.first().and_then(|h| h.origin.clone()).filter(|o| o.kind == OriginKind::Take && o.device == "Pixel 8"),
+        CoreEvent::History { recent: entries, .. } => {
+            entries.first().and_then(|h| h.origin.clone()).filter(|o| o.kind == OriginKind::Take && o.device == "Pixel 8")
+        }
         _ => None,
     })
     .await;
@@ -1045,7 +1047,7 @@ async fn a_phone_sends_text_the_desktop_inserts_now_or_after_its_take() {
     let again = wait(&mut phone, |e| sent_texts(e).filter(|t| t.first().is_some_and(|t| t.state.is_final()))).await;
     assert_eq!(again[0].state, SentTextState::Delivered { pasted: true });
     wait(&mut desk, |e| match e {
-        CoreEvent::History(entries) => entries.iter().any(|h| h.text == "清空后再发一条").then_some(()),
+        CoreEvent::History { recent: entries, .. } => entries.iter().any(|h| h.text == "清空后再发一条").then_some(()),
         _ => None,
     })
     .await;

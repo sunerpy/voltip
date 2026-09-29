@@ -1,23 +1,24 @@
-import { type HistoryEntry, createTranslator } from "@voltip/shared";
+import { type HistoryEntry, createTranslator, formatDuration } from "@voltip/shared";
+import { MockBackend } from "@voltip/shared/mock";
 import {
   HISTORY_FILTER_LABELS,
   type HistoryFilter,
+  SAVED_TIME_FACTOR,
   clockLabel,
   dayDiff,
   dayLabel,
+  emptyHomeStats,
   entryLatencyMs,
-  filterHistory,
   groupByDay,
-  heatmapOf,
   historyFilterLabel,
-  historyStats,
+  historyQueryArgs,
+  homeStats,
   isHistoryFilter,
-  matchesHistoryQuery,
   recentTimeLabel,
-  spokenLabel,
   startOfDay,
   startOfMonth,
   startOfWeek,
+  statsBoundaries,
   textChars,
   todayLabel,
 } from "./stats";
@@ -61,27 +62,46 @@ const ENTRIES: HistoryEntry[] = [
 ];
 
 describe("history stats", () => {
-  it("buckets today / this week / this month / total by the local calendar", () => {
-    const stats = historyStats(ENTRIES, NOW);
+  /** What the home page shows for `ENTRIES`: the core's answer (the mock has its semantics). */
+  async function statsOf(entries: HistoryEntry[]) {
+    const backend = new MockBackend({ history: entries });
+    const boundaries = statsBoundaries(NOW);
+    const stats = homeStats(await backend.historyStats(boundaries), boundaries, NOW);
+    backend.destroy();
+    return stats;
+  }
+
+  it("buckets today / this week / this month / total by the local calendar", async () => {
+    const stats = await statsOf(ENTRIES);
     expect(stats.today.count).toBe(2);
-    expect(stats.today.chars).toBe(10 + 3);
+    expect(stats.today.rawChars).toBe(3 + 3);
     expect(stats.today.spokenMs).toBe(12_000);
+    expect(stats.today.savedMs).toBe(Math.round(12_000 * SAVED_TIME_FACTOR));
     // (400 + 300 + 800) / 2 = 750
     expect(stats.today.latencyMs).toBe(750);
     expect(stats.week.count).toBe(4);
     expect(stats.month.count).toBe(5);
     expect(stats.total.count).toBe(7);
-    expect(stats.total.chars).toBe(10 * 6 + 3);
-    expect(historyStats([], NOW).today).toEqual({
+    expect(stats.total.rawChars).toBe(3 * 7);
+    // "raw" → the ten-character text: every character changed, and seven more added.
+    expect(stats.today.correctedChars).toBe(10 + 3);
+    expect(emptyHomeStats().today).toEqual({
       count: 0,
-      chars: 0,
+      rawChars: 0,
+      correctedChars: 0,
       spokenMs: 0,
+      savedMs: 0,
       latencyMs: undefined,
     });
+    // Monday five weeks back to tomorrow, local midnights (a Thursday: 35 + 3 + 1 days).
+    const boundaries = statsBoundaries(NOW);
+    expect(boundaries).toHaveLength(40);
+    expect(new Date(boundaries[0] ?? 0).getDay()).toBe(1);
+    expect(boundaries.at(-1)).toBe(startOfDay(NOW) + 24 * HOUR);
   });
 
-  it("builds the 6-week × 7-day heatmap from at_ms, quantised to four levels", () => {
-    const grid = heatmapOf(ENTRIES, NOW);
+  it("builds the 6-week × 7-day heatmap from the daily buckets, quantised to four levels", async () => {
+    const grid = (await statsOf(ENTRIES)).heatmap;
     expect(grid).toHaveLength(6);
     for (const col of grid) expect(col).toHaveLength(7);
     const thisWeek = grid[5];
@@ -94,45 +114,30 @@ describe("history stats", () => {
     expect(grid[1]?.[6]).toBe(1);
     expect(grid.flat().reduce((a, b) => a + b, 0)).toBe(6);
     const busy = Array.from({ length: 5 }, (_, i) => entry({ at_ms: NOW - i * 60_000 }));
-    expect(heatmapOf(busy, NOW)[5]?.[3]).toBe(3);
+    expect((await statsOf(busy)).heatmap[5]?.[3]).toBe(3);
   });
 
-  it("filters by tile, star and outcome; recognises filter names", () => {
-    const ids = (f: HistoryFilter) => filterHistory(ENTRIES, f, NOW).map((e) => e.id);
-    expect(ids("all")).toHaveLength(7);
-    expect(ids("today")).toHaveLength(2);
-    expect(ids("week")).toHaveLength(4);
-    expect(ids("month")).toHaveLength(5);
-    expect(ids("starred")).toEqual([`id-${NOW - HOUR}`]);
-    expect(ids("failed")).toHaveLength(2);
+  it("filters by tile, star and outcome; recognises filter names", async () => {
+    const backend = new MockBackend({ history: ENTRIES });
+    const ids = async (f: HistoryFilter) =>
+      (await backend.historyQuery({ ...historyQueryArgs(f, "", NOW), limit: 100 })).entries.map(
+        (e) => e.id,
+      );
+    expect(await ids("all")).toHaveLength(7);
+    expect(await ids("today")).toHaveLength(2);
+    expect(await ids("week")).toHaveLength(4);
+    expect(await ids("month")).toHaveLength(5);
+    expect(await ids("starred")).toEqual([`id-${NOW - HOUR}`]);
+    expect(await ids("failed")).toHaveLength(2);
+    expect(historyQueryArgs("today", " abc ", NOW)).toEqual({
+      query: " abc ",
+      sinceMs: startOfDay(NOW),
+    });
+    expect(historyQueryArgs("all", "  ", NOW)).toEqual({});
     expect(isHistoryFilter("today")).toBe(true);
     expect(isHistoryFilter("r1")).toBe(false);
     expect(isHistoryFilter(undefined)).toBe(false);
-  });
-
-  it("searches text, raw text and model ids case-insensitively", () => {
-    const e = entry({ at_ms: NOW, text: "把 fetchUser 改成 async", raw_text: "fetch user" });
-    expect(matchesHistoryQuery(e, "")).toBe(true);
-    expect(matchesHistoryQuery(e, "FETCHUSER")).toBe(true);
-    expect(matchesHistoryQuery(e, "fetch user")).toBe(true);
-    expect(matchesHistoryQuery(e, "qwen3-asr")).toBe(true);
-    expect(matchesHistoryQuery(e, "qwen3.8")).toBe(true);
-    expect(matchesHistoryQuery(e, "zzz")).toBe(false);
-    expect(matchesHistoryQuery({ ...e, refine_model: undefined }, "qwen3.8")).toBe(false);
-  });
-
-  it("regression: searches the app and the scene of a take with a context (docs/dictation.md section 18.6)", () => {
-    const e = entry({ at_ms: NOW, text: "好的", raw_text: "好的" });
-    const inSlack = {
-      ...e,
-      app: { id: "com.tinyspeck.slackmacgap", name: "Slack" },
-      scene: { id: "00000000-0000-4000-a000-000000000001", name: "聊天" },
-    };
-    expect(matchesHistoryQuery(inSlack, "slack")).toBe(true);
-    expect(matchesHistoryQuery(inSlack, "tinyspeck")).toBe(true);
-    expect(matchesHistoryQuery(inSlack, "聊天")).toBe(true);
-    expect(matchesHistoryQuery(e, "slack")).toBe(false);
-    expect(matchesHistoryQuery({ ...inSlack, scene: undefined }, "聊天")).toBe(false);
+    backend.destroy();
   });
 
   it("labels days, clocks and spoken time in local time", () => {
@@ -157,8 +162,8 @@ describe("history stats", () => {
     expect(recentTimeLabel(NOW - HOUR, NOW)).toBe("11:00:00");
     expect(recentTimeLabel(NOW - DAY, NOW)).toBe("昨天 12:00");
     expect(recentTimeLabel(NOW - 2 * DAY, NOW)).toBe("9-22 12:00");
-    expect(spokenLabel(227_000)).toBe("3:47");
-    expect(spokenLabel(0)).toBe("0:00");
+    expect(formatDuration(227_000)).toBe("3 分 47 秒");
+    expect(formatDuration(0)).toBe("0 秒");
     expect(textChars("👍a中")).toBe(3);
     expect(entryLatencyMs(entry({ at_ms: NOW, refine_ms: undefined }))).toBe(400);
   });

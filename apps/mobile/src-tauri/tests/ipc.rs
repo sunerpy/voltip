@@ -400,7 +400,15 @@ fn dictation_is_refused_but_engines_secrets_and_history_work() {
         wait_event(rx, "history", |e| e["type"] == "history");
         assert!(invoke(webview, "history_delete", json!({ "id": "nope" })).unwrap_err().as_str().unwrap().contains("UUID"));
         assert_eq!(invoke(webview, "history_star", json!({ "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d", "starred": true })), Ok(Value::Null));
-        assert!(wait_state(webview, |_| true).history.is_empty());
+        assert!(wait_state(webview, |_| true).history_recent.is_empty());
+        // The phone keeps no dictation history: the queries answer empty, with the desktop's checks.
+        assert_eq!(invoke(webview, "history_query", json!({ "limit": 50 })), Ok(json!({ "entries": [], "matching": 0, "total": 0 })));
+        assert!(invoke(webview, "history_query", json!({ "limit": 0 })).is_err());
+        assert_eq!(invoke(webview, "history_entry", json!({ "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d" })), Ok(Value::Null));
+        let stats = invoke(webview, "history_stats", json!({ "boundaries": [0, 10, 20] })).unwrap();
+        assert_eq!((stats["buckets"].as_array().map(Vec::len), stats["total"]["count"].as_u64()), (Some(2), Some(0)));
+        assert!(invoke(webview, "history_stats", json!({ "boundaries": [5, 5] })).is_err());
+        assert_eq!(invoke(webview, "history_hits", json!({})), Ok(json!({ "dictionary": {}, "rules": {} })));
     });
 }
 
@@ -489,6 +497,10 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "rules_export",
             "vocabulary_preview",
             "recent_apps",
+            "history_query",
+            "history_entry",
+            "history_stats",
+            "history_hits",
             "permissions_status",
             "permissions_request",
             "inject_preflight",

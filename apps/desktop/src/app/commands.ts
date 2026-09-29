@@ -11,7 +11,7 @@ export interface CommandDeps {
   toast: (message: string) => void;
   /** Start dictation, or stop it while listening (`dictation_start` / `dictation_stop`). */
   dictate: () => void;
-  /** Copy `state.history[0].text` to the clipboard (with the honest copy toast). */
+  /** Copy `state.history_recent[0].text` to the clipboard (with the honest copy toast). */
   copyLast: () => void;
   /** Ask, then `history_clear`. */
   clearHistory: () => void;
@@ -41,7 +41,7 @@ export function buildCommands(deps: CommandDeps): CommandItem[] {
       toast(t("commands.themeSwitched", { theme: themeName(id, locale) }));
     },
   }));
-  const historyEmpty = state.history.length === 0;
+  const historyEmpty = state.history_total === 0;
   return [
     ...themes,
     {
@@ -81,8 +81,8 @@ export function buildCommands(deps: CommandDeps): CommandItem[] {
       group: t("commands.group.action"),
       label: t("commands.copyLast"),
       icon: "copy",
-      hint: state.history[0]
-        ? t("commands.charsHint", { n: Array.from(state.history[0].text).length })
+      hint: state.history_recent[0]
+        ? t("commands.charsHint", { n: Array.from(state.history_recent[0].text).length })
         : t("commands.historyEmptyShort"),
       disabled: historyEmpty,
       disabledHint: historyEmpty ? t("commands.historyEmpty") : undefined,
@@ -93,7 +93,7 @@ export function buildCommands(deps: CommandDeps): CommandItem[] {
       group: t("commands.group.action"),
       label: t("commands.clearHistory"),
       icon: "trash",
-      hint: t("commands.entriesHint", { n: state.history.length }),
+      hint: t("commands.entriesHint", { n: state.history_total }),
       disabled: historyEmpty,
       disabledHint: historyEmpty ? t("commands.historyEmpty") : undefined,
       run: clearHistory,

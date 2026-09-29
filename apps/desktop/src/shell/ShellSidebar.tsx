@@ -8,14 +8,15 @@ import {
   useI18n,
   useUiState,
 } from "@voltip/ui";
-import type { TFunction } from "@voltip/shared";
+import { type TFunction, formatCount } from "@voltip/shared";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { AI_ROUTE, type Route, SPEECH_ROUTE, isDialogRoute } from "../app/router";
 import type { SidebarLayoutControls } from "./sidebar-layout";
 
-/** A sidebar count, shown once there is something to count. */
-function count(n: number): { count?: number } {
-  return n > 0 ? { count: n } : {};
+/** A sidebar count, shown once there is something to count, grouped like every other count
+ *  (a history of 20 000 entries reads 「20,000」). */
+function count(n: number): { count?: string } {
+  return n > 0 ? { count: formatCount(n) } : {};
 }
 
 /** Sidebar groups: 工作台 (the content) and 语音输入 (where the voice comes from and what turns it
@@ -144,7 +145,7 @@ export function ShellSidebar({
     <Sidebar
       groups={navGroups(
         {
-          history: state.history.length,
+          history: state.history_total,
           dictionary: state.dictionary.length,
           rules: state.rules.length,
         },

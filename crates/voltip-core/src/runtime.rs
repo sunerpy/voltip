@@ -462,8 +462,14 @@ pub enum CoreEvent {
     },
     /// Dictation state machine moved.
     Dictation(DictationStatus),
-    /// History list (full replacement); on `Ready` and after every change.
-    History(Vec<HistoryEntry>),
+    /// The newest history entries and how many there are; on `Ready` and after every change. The
+    /// rest is read through the bridge's queries (docs/dictation.md §4.4).
+    History {
+        /// The newest [`crate::history::RECENT_ENTRIES`], newest first.
+        recent: Vec<HistoryEntry>,
+        /// Entries in the history.
+        total: u32,
+    },
     /// Resolved engine configuration (providers, models, user-entered hosts, key presence); on
     /// `Ready` and after changes.
     Engines(EngineStatus),
@@ -1825,7 +1831,8 @@ impl Runtime {
     }
 
     fn emit_history(&self) {
-        self.emit(CoreEvent::History(self.history.entries().to_vec()));
+        let total = u32::try_from(self.history.total()).unwrap_or(u32::MAX);
+        self.emit(CoreEvent::History { recent: self.history.recent(crate::history::RECENT_ENTRIES), total });
     }
 
     // ---------------- dictionary and rules (docs/dictation.md §16) ----------------

@@ -62,7 +62,8 @@ function baseState(): UiState {
     devices: sampleDevices(1_700_000_000),
     hotkey: emptyHotkeyStatus(),
     dictation: idleDictation(),
-    history: [],
+    history_recent: [],
+    history_total: 0,
     engines: emptyEngineStatus(),
     update: idleUpdate(),
     models: [],
@@ -274,9 +275,11 @@ describe("applyEvent", () => {
     };
     const next = applyEvent(state, { type: "dictation", ...listening });
     expect(next.dictation).toEqual(listening);
-    expect(next.history).toBe(state.history);
+    expect(next.history_recent).toBe(state.history_recent);
     const entries = sampleHistory(1_758_700_000_000);
-    expect(applyEvent(state, { type: "history", entries }).history).toBe(entries);
+    const folded = applyEvent(state, { type: "history", recent: entries, total: 312 });
+    expect(folded.history_recent).toBe(entries);
+    expect(folded.history_total).toBe(312);
     const engines = applyEvent(state, { type: "engines", ...ENGINES }).engines;
     expect(engines).toEqual(ENGINES);
     expect("type" in engines).toBe(false);
@@ -467,11 +470,19 @@ describe("dictation contract (docs/dictation.md)", () => {
     expect(engineStatusSchema.safeParse({ ...ENGINES, refine_issue: "broken" }).success).toBe(
       false,
     );
-    const { dictation: _d, history: _h, engines: _e, models: _m, ...partial } = baseState();
+    const {
+      dictation: _d,
+      history_recent: _h,
+      history_total: _t,
+      engines: _e,
+      models: _m,
+      ...partial
+    } = baseState();
     const { engines: _se, ...partialSettings } = partial.settings;
     const parsed = uiStateSchema.parse({ ...partial, settings: partialSettings });
     expect(parsed.dictation).toEqual(idleDictation());
-    expect(parsed.history).toEqual([]);
+    expect(parsed.history_recent).toEqual([]);
+    expect(parsed.history_total).toBe(0);
     expect(parsed.engines).toEqual(emptyEngineStatus());
     expect(parsed.models).toEqual([]);
     expect(parsed.settings.engines).toEqual(defaultEngineSettings());

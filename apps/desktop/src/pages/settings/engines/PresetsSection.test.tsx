@@ -148,7 +148,7 @@ describe("AI 模型 · 预设 (docs/dictation.md section 21)", () => {
     );
     // Nothing was saved or recorded by the trial runs.
     expect(backend.peek().presets).toHaveLength(1);
-    expect(backend.peek().history.every((h) => h.text !== "今天下午开会。")).toBe(true);
+    expect(backend.peek().history_recent.every((h) => h.text !== "今天下午开会。")).toBe(true);
 
     await user.clear(within(dialog).getByRole("textbox", { name: "名称" }));
     await user.type(within(dialog).getByRole("textbox", { name: "名称" }), "会议纪要");

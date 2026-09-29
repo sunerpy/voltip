@@ -1,10 +1,10 @@
 // Pure helpers the dictionary, rules and history pages share (docs/dictation.md §16): hit totals
-// over the retained history, the heard-as field's separators, the core's rejection text, and the
-// instant localised checks shown while typing. The core validates everything again on save; its
+// from the core's `history_hits`, the heard-as field's separators, the core's rejection text, and
+// the instant localised checks shown while typing. The core validates everything again on save; its
 // refusals come back as the command's rejection or as an `error` event.
 import {
   type DictionaryEntry,
-  type HistoryEntry,
+  type HistoryHits,
   MAX_HEARD_AS,
   MAX_TERM_CHARS,
   type ReplacementRule,
@@ -13,18 +13,13 @@ import {
   zhT,
 } from "@voltip/shared";
 
-/** How often each entry (`corrections`) or rule (`rules`) fired across the retained history. */
+/** How often each entry (`corrections`) or rule (`rules`) fired across the history, from the
+ *  core's `history_hits` answer (`undefined` until it arrives: nothing counted yet). */
 export function hitTotals(
-  history: readonly HistoryEntry[],
+  hits: HistoryHits | undefined,
   kind: "corrections" | "rules",
 ): Map<string, number> {
-  const totals = new Map<string, number>();
-  for (const entry of history) {
-    for (const hit of entry.vocabulary?.[kind] ?? []) {
-      totals.set(hit.id, (totals.get(hit.id) ?? 0) + hit.count);
-    }
-  }
-  return totals;
+  return new Map(Object.entries((kind === "corrections" ? hits?.dictionary : hits?.rules) ?? {}));
 }
 
 /** Separators of the heard-as field: `·`, commas (both widths), `、`, semicolons, new lines. */

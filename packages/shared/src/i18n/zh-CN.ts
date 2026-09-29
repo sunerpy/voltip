@@ -180,6 +180,8 @@ export const zhCN = {
     minutesAgo: { one: "{n} 分钟前", other: "{n} 分钟前" },
     hoursAgo: { one: "{n} 小时前", other: "{n} 小时前" },
     daysAgo: { one: "{n} 天前", other: "{n} 天前" },
+    /** The units of a span of time in the statistics (`durationParts`): 「3 分 47 秒」. */
+    duration: { hours: "小时", minutes: "分", seconds: "秒" },
     today: "今天",
     yesterday: "昨天",
     /** Recent-table time column (104 px mono): empty = no word fits, use the date form instead. */
@@ -460,13 +462,18 @@ export const zhCN = {
     },
     session: {
       eyebrow: "今日听写",
-      sentences: "次数",
-      sentencesUnit: "次",
-      chars: "字数",
+      raw: "转录字数",
+      corrected: "修正字数",
       charsUnit: "字",
       spoken: "说话时长",
-      spokenUnit: "分",
-      latency: "平均延迟",
+      saved: "节省时间",
+      /** The session panel's secondary line, two parts that each stay on one line. */
+      count: "听写 {n} 次",
+      latency: "平均延迟 {latency}",
+      basis: "依据",
+      basisLabel: "节省时间的依据",
+      basisText:
+        "节省时间 = 说话时长 × 1.9。依据：Ruan 等 2016（arXiv:1608.07323）的实验里，说话输入比手机打字快约 2.9 倍（英文 153 vs 52 词/分，中文 123 vs 43）。只统计保存在历史记录里的听写。",
       heatmap: "近 6 周 · 按日",
     },
     tiles: {
@@ -474,7 +481,7 @@ export const zhCN = {
       week: "本周",
       month: "本月",
       total: "总计",
-      limit: "保留最近 {n} 条",
+      saved: "节省 {time}",
       recordingOff: "历史记录已关闭",
     },
     table: {
@@ -494,6 +501,9 @@ export const zhCN = {
     },
   },
   history: {
+    /** Below a list with more entries than loaded (docs/dictation.md §4.4). */
+    loadMore: "加载更多",
+    loaded: "已显示 {shown} / {n} 条",
     origin: {
       take: "手机 · {device}",
       typed: "手机输入 · {device}",

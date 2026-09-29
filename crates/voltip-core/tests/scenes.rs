@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use voltip_core::dictation::fakes::{FAKE_TRANSCRIPT, FakeAudio, FakeInjector, FakeProbe, FakeRefiner, FakeTranscriber};
 use voltip_core::dictation::{DictationPorts, Refiner, Transcriber};
-use voltip_core::scenes::{SCENES_FILE_NAME, recent_apps};
+use voltip_core::scenes::{MAX_RECENT_APPS, SCENES_FILE_NAME};
 use voltip_core::{
     AppCore, AppRef, ContextSharing, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DictationPhase, DictationStatus, HistoryEntry, Scene, SceneDraft,
     SceneMatch, SceneOverrides, Settings, SettingsStore,
@@ -91,7 +91,7 @@ async fn take(node: &mut Node) -> (DictationStatus, Vec<HistoryEntry>) {
         _ => None,
     })
     .await;
-    let history = wait(node, |e| if let CoreEvent::History(h) = e { (!h.is_empty()).then(|| h.clone()) } else { None }).await;
+    let history = wait(node, |e| if let CoreEvent::History { recent: h, .. } = e { (!h.is_empty()).then(|| h.clone()) } else { None }).await;
     // Dismiss the dwell so the next start is not busy.
     node.handle.send(CoreCommand::DictationCancel).await.unwrap();
     wait(node, |e| matches!(e, CoreEvent::Dictation(s) if s.phase == DictationPhase::Idle).then_some(())).await;
@@ -159,11 +159,13 @@ async fn scenes_and_context_through_the_core() {
         (None, Some("#dev · Voltip"), Some("口语化"))
     );
 
-    // Another app: no scene; the history knows both apps, newest first.
+    // Another app: no scene; the history database knows both apps, newest first (what the
+    // bridge's reader answers the scene editor with).
     probe.set_app("code", "Code", None);
-    let (done, history) = take(&mut node).await;
+    let (done, _) = take(&mut node).await;
     assert_eq!(done.context.as_ref().map(|c| (c.app.id.as_str(), c.scene.is_none())), Some(("code", true)));
-    let apps: Vec<String> = recent_apps(&history, 20).into_iter().map(|a| a.id).collect();
+    let reader = voltip_core::HistoryReader::new(dir.path());
+    let apps: Vec<String> = reader.recent_apps(MAX_RECENT_APPS).unwrap().into_iter().map(|a| a.id).collect();
     assert_eq!(apps, ["code", "slack"]);
 
     // Everything is on disk; a restarted core reads the scenes and the switch back.

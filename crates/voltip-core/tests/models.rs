@@ -177,7 +177,7 @@ async fn download_progress_install_active_and_readiness_through_the_core() {
     })
     .await;
     assert!(matches!(&done, DictationPhase::Done { text, .. } if text == "本地"), "{done:?}");
-    let history = wait(&mut node, |e| if let CoreEvent::History(h) = e { (!h.is_empty()).then(|| h.clone()) } else { None }).await;
+    let history = wait(&mut node, |e| if let CoreEvent::History { recent: h, .. } = e { (!h.is_empty()).then(|| h.clone()) } else { None }).await;
     assert_eq!(history[0].asr_model, "均衡", "the history records the model's display name");
 
     // Selecting the other model: `active` moves, readiness drops (it is not installed).

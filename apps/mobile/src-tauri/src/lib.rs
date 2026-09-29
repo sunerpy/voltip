@@ -29,7 +29,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 89] = [
+pub const COMMANDS: [&str; 93] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -115,6 +115,10 @@ pub const COMMANDS: [&str; 89] = [
     "presets_builtin",
     "settings_set_context_sharing",
     "recent_apps",
+    "history_query",
+    "history_entry",
+    "history_stats",
+    "history_hits",
     "permissions_status",
     "permissions_request",
     "inject_preflight",
@@ -645,6 +649,38 @@ fn recent_apps() -> Result<Vec<AppRef>, String> {
     Err(SCENES_UNAVAILABLE.to_owned())
 }
 
+/// The phone keeps no dictation history (its takes are recognised on the computer): the history
+/// queries answer empty, after the same argument checks as the desktop's (docs/dictation.md §4.4).
+#[tauri::command]
+fn history_query(limit: u32) -> Result<voltip_core::HistoryPage, String> {
+    if !(1..=voltip_core::history::MAX_QUERY_LIMIT).contains(&limit) {
+        return Err(format!("history_query: limit 1–{}", voltip_core::history::MAX_QUERY_LIMIT));
+    }
+    Ok(voltip_core::HistoryPage::default())
+}
+
+#[tauri::command]
+fn history_entry(id: String) -> Option<voltip_core::HistoryEntry> {
+    let _ = id;
+    None
+}
+
+#[tauri::command]
+fn history_stats(boundaries: Vec<u64>) -> Result<voltip_core::HistoryStats, String> {
+    if boundaries.len() < 2 || boundaries.len() > voltip_core::history::MAX_STATS_BOUNDARIES || boundaries.windows(2).any(|w| w[0] >= w[1]) {
+        return Err(format!("history_stats: 2–{} increasing boundaries", voltip_core::history::MAX_STATS_BOUNDARIES));
+    }
+    Ok(voltip_core::HistoryStats {
+        buckets: vec![voltip_core::HistoryStatsBucket::default(); boundaries.len() - 1],
+        total: voltip_core::HistoryStatsBucket::default(),
+    })
+}
+
+#[tauri::command]
+fn history_hits() -> voltip_core::HistoryHits {
+    voltip_core::HistoryHits::default()
+}
+
 /// The phone has no dictation pipeline, so no clean-up to shape (docs/dictation.md §21): every
 /// preset verb and the query refuse honestly.
 pub const PRESETS_UNAVAILABLE: &str = "presets: 手机端不支持 AI 预设";
@@ -865,6 +901,10 @@ pub fn build_app<R: Runtime>(
             scenes_builtin,
             settings_set_context_sharing,
             recent_apps,
+            history_query,
+            history_entry,
+            history_stats,
+            history_hits,
             permissions_status,
             permissions_request,
             inject_preflight,

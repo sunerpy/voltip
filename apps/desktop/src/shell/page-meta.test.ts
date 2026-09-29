@@ -82,24 +82,31 @@ describe("pageMeta", () => {
     const history = pageMeta({ name: "history" }, state, extras);
     expect(history.readouts[0]).toEqual({
       label: "历史记录",
-      value: `${state.history.length} / 500 条`,
+      // New installs keep 20 000 (docs/dictation.md §4.3).
+      value: `${state.history_total} / 20,000 条`,
       lamp: "ok",
     });
-    expect(history.readouts[1]?.value).toBe("history.json");
+    expect(history.readouts[1]?.value).toBe("history.sqlite3");
     expect(
-      pageMeta({ name: "history" }, stateWith({ history: [] }), extras).readouts[0]?.lamp,
+      pageMeta({ name: "history" }, stateWith({ history_recent: [], history_total: 0 }), extras)
+        .readouts[0]?.lamp,
     ).toBe("idle");
     for (const route of [{ name: "dictionary" }, { name: "rules" }] as const)
       expect(pageMeta(route, state, extras).readouts.map((r) => r.value)).not.toContain(
         "精确 · SenseVoice",
       );
-    for (const route of [
+    const routes = [
       { name: "home" },
       { name: "history" },
       { name: "dictionary" },
       { name: "rules" },
-    ] as const)
-      expect(JSON.stringify(pageMeta(route, state, extras))).not.toMatch(/第二阶段|示例|sqlite/);
+    ] as const;
+    for (const route of routes)
+      expect(JSON.stringify(pageMeta(route, state, extras))).not.toMatch(/第二阶段|示例/);
+    // The history page names its real file (checked above, docs/dictation.md §4.3); no other
+    // page talks about a database.
+    for (const route of routes.filter((r) => r.name !== "history"))
+      expect(JSON.stringify(pageMeta(route, state, extras))).not.toMatch(/sqlite/);
   });
 
   it("regression: on-device the engine readout names the model with a 本机 tag and a lamp that follows asr_ready", () => {
@@ -249,7 +256,7 @@ describe("pageMeta in English", () => {
       ).readouts.map((r) => r.value),
     ).toEqual(["9 / 4 · ", "Unknown"]);
     expect(pageMeta({ name: "history" }, state, extras, undefined, EN).readouts[0]?.value).toBe(
-      `${state.history.length} / 500 entries`,
+      `${state.history_total} / 20,000 entries`,
     );
     expect(
       settingsReadouts(
@@ -416,7 +423,7 @@ describe("pageMeta for the dictionary and rules pages", () => {
         { ...base, settings: { ...base.settings, history: { enabled: true, keep: 50 } } },
         extras,
       ).readouts[0]?.value,
-    ).toBe(`${base.history.length} / 50 条`);
+    ).toBe(`${base.history_recent.length} / 50 条`);
     expect(pageMeta({ name: "rules" }, state, extras, undefined, EN).readouts[0]).toEqual({
       label: "Rules",
       value: "2 / 3 enabled",

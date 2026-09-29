@@ -129,9 +129,9 @@ describe("Settings · 外观", () => {
       await backend.invoke("dictation_stop");
     });
     await waitFor(() => {
-      expect(backend.peek().history).toHaveLength(1);
+      expect(backend.peek().history_recent).toHaveLength(1);
     });
-    const entry = backend.peek().history[0];
+    const entry = backend.peek().history_recent[0];
     if (!entry) throw new Error("take");
     expect(within(strip).getByTestId("preview-latency")).toHaveTextContent(
       `上次延迟 ${entry.asr_ms + (entry.refine_ms ?? 0)} ms`,

@@ -164,7 +164,7 @@ if wait_log "$log" 'no global hotkey on this session.* purpose="edit"' 90; then
   # No screenshot here: weston-screenshooter 13 aborts on the headless output
   # (`screenshot_create_shm_buffer: Assertion width > 0`); the sway phase captures with grim.
   if take weston; then
-    outcome=$(voltip_smoke_last_history "$work/weston/data/voltip/history.json")
+    outcome=$(voltip_smoke_last_history "$work/weston/data/voltip/history.sqlite3")
     note "  info  take on seatless weston → history: ${outcome:-<none>}"
     check "a take on a seatless compositor ends typed, not as a fake paste" test "$(printf '%s' "$outcome" | cut -f1-2)" != "$(printf 'inserted\tpaste')"
   else
@@ -197,7 +197,7 @@ if wait_log "$log" 'no global hotkey on this session' 90; then
   check "HotkeyStatus.backend = global-shortcut · Linux · Wayland" log_has "$log" 'no global hotkey on this session.* backend=global-shortcut · Linux · Wayland'
   check "injector picks wtype first (text injection backend … → wtype)" log_has "$log" 'text injection backend backend=Wayland · wlroots → wtype'
   if take sway XDG_CURRENT_DESKTOP=sway; then
-    outcome=$(voltip_smoke_last_history "$work/sway/data/voltip/history.json")
+    outcome=$(voltip_smoke_last_history "$work/sway/data/voltip/history.sqlite3")
     note "  info  history: ${outcome:-<none>}"
     check "the take is recorded as inserted via paste with the ASR text" test "$outcome" = "$(printf 'inserted\tpaste\t%s' "$spoken")"
     check "the paste went through wtype (tool=wtype in the injector log)" log_has "$log" 'pasted .*tool=wtype'

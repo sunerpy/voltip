@@ -119,8 +119,8 @@ home:
             status: available
             link: /zh/dictation/history
           - title: 2 万条历史与每日统计
-            body: 按日、周、月统计听写字数、修正字数和节省的时间。
-            status: building
+            body: 按日、周、月统计转录字数、修正字数和节省的时间。
+            status: available
             link: /zh/dictation/history#统计
           - title: 长录音与电脑声音
             body: 单次录音最长 2 小时，可以录制麦克风、电脑声音或两者混合，并导出 SRT 字幕。
@@ -242,9 +242,6 @@ home:
     title: 接下来的计划
     intro: 按预计顺序列出，不承诺日期；每项功能发布后，本站会随之更新。
     items:
-      - title: 2 万条历史记录与统计
-        status: building
-        body: 历史记录上限从 500 条提高到 2 万条，首页按日、周、月显示听写字数、修正字数和节省的时间。节省时间按说话时长 × 1.9 计算，依据 Ruan 等人 2016 年的研究。
       - title: 长录音与电脑声音
         status: building
         body: 单次录音最长 2 小时，可选择麦克风、电脑声音或两者混合。长录音分段识别，并可导出 SRT 字幕。

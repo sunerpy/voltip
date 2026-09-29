@@ -133,17 +133,21 @@ voltip_smoke_speak() {
   VOLTIP_SMOKE_PLAY_PID=$!
 }
 
-# The last history entry as `outcome<TAB>via<TAB>text` (empty when none): voltip_smoke_last_history <history.json>
+# The newest history entry as `outcome<TAB>via<TAB>text` (empty when none), read from the app's
+# database without writing to it (docs/dictation.md §4.3): voltip_smoke_last_history <history.sqlite3>
 voltip_smoke_last_history() {
   python3 - "$1" <<'PY'
-import json, sys
-try:
-    data = json.load(open(sys.argv[1], encoding="utf-8"))
-except (OSError, ValueError):
+import json, pathlib, sqlite3, sys
+path = pathlib.Path(sys.argv[1])
+if not path.is_file():
     sys.exit(0)
-entries = data["entries"] if isinstance(data, dict) else data
-if entries:
-    e = entries[-1]
+try:
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    row = conn.execute("SELECT json FROM entries ORDER BY at_ms DESC, rowid DESC LIMIT 1").fetchone()
+except sqlite3.Error:
+    sys.exit(0)
+if row:
+    e = json.loads(row[0])
     o = e.get("outcome") or {}
     print(f"{o.get('kind', '')}\t{o.get('via', '')}\t{e.get('text', '')}")
 PY

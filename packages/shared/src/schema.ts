@@ -379,8 +379,8 @@ export const HISTORY_MIN_KEEP = 10;
 export const historySettingsSchema = z.object({
   /** Record takes; off keeps nothing new. */
   enabled: z.boolean().default(true),
-  /** Newest entries kept (10–500). */
-  keep: z.number().int().min(10).max(500).default(500),
+  /** Newest entries kept (10–20 000). An install from before keeps the value it saved. */
+  keep: z.number().int().min(10).max(20_000).default(20_000),
 });
 export type HistorySettings = z.infer<typeof historySettingsSchema>;
 
@@ -438,7 +438,7 @@ export const settingsSchema = z.object({
   /** Keep a pairing open on this desktop until turned off (docs/pairing.md 「常开配对」); off by
    *  default and in an older `settings.json`. */
   pairing_always_on: z.boolean().default(false),
-  history: historySettingsSchema.default(() => ({ enabled: true, keep: 500 })),
+  history: historySettingsSchema.default(() => ({ enabled: true, keep: 20_000 })),
   overlay: overlayPlacementSchema.default("bottom"),
   /** The microphone takes record from: an `audio_devices` id, or `null` for the system default.
    *  Always serialised; an older `settings.json` or core reads as the default. */
@@ -896,7 +896,64 @@ export const historyEntrySchema = z.object({
 export type HistoryEntry = z.infer<typeof historyEntrySchema>;
 
 /** `voltip_core::history::MAX_ENTRIES`: older rows are dropped past this. */
-export const HISTORY_LIMIT = 500;
+export const HISTORY_LIMIT = 20_000;
+/** `voltip_core::history::RECENT_ENTRIES`: the newest entries `UiState.history_recent` carries. */
+export const HISTORY_RECENT = 20;
+/** `voltip_core::history::MAX_QUERY_LIMIT`: the most entries one `history_query` returns. */
+export const HISTORY_QUERY_LIMIT = 200;
+/** `voltip_core::history::MAX_STATS_BOUNDARIES`: the most boundaries one `history_stats` takes. */
+export const HISTORY_STATS_BOUNDARIES = 43;
+
+/** `history_query`'s answer (`voltip_core::HistoryPage`, docs/dictation.md §4.4). */
+export const historyPageSchema = z.object({
+  /** The page, newest first. */
+  entries: z.array(historyEntrySchema),
+  /** Entries matching the query, on every page. */
+  matching: z.number().int().nonnegative(),
+  /** Entries in the history. */
+  total: z.number().int().nonnegative(),
+});
+export type HistoryPage = z.infer<typeof historyPageSchema>;
+
+/** The dictations of one span (`voltip_core::HistoryStatsBucket`, docs/dictation.md §4.5). */
+export const historyStatsBucketSchema = z.object({
+  count: z.number().int().nonnegative(),
+  /** Characters recognised. */
+  raw_chars: z.number().int().nonnegative(),
+  /** Characters the clean-up changed. */
+  corrected_chars: z.number().int().nonnegative(),
+  /** Recording time. */
+  spoken_ms: z.number().int().nonnegative(),
+  /** Recognition plus clean-up, summed. */
+  latency_ms: z.number().int().nonnegative(),
+});
+export type HistoryStatsBucket = z.infer<typeof historyStatsBucketSchema>;
+
+/** `history_stats`'s answer: one bucket per span between two boundaries, and the whole history. */
+export const historyStatsSchema = z.object({
+  buckets: z.array(historyStatsBucketSchema),
+  total: historyStatsBucketSchema,
+});
+export type HistoryStats = z.infer<typeof historyStatsSchema>;
+
+/** `history_hits`'s answer: dictionary entry and rule id → times it fired in the history. */
+export const historyHitsSchema = z.object({
+  dictionary: z.record(z.string(), z.number().int().nonnegative()),
+  rules: z.record(z.string(), z.number().int().nonnegative()),
+});
+export type HistoryHits = z.infer<typeof historyHitsSchema>;
+
+/** `history_query` arguments (docs/dictation.md §4.4): entries at or after `sinceMs` (a local
+ *  midnight), starred ones, ones whose text was not inserted, ones containing `query`; newest
+ *  first, `limit` (≤ `HISTORY_QUERY_LIMIT`) of them after `offset`. */
+export type HistoryQueryArgs = {
+  sinceMs?: number | null;
+  starred?: boolean;
+  failed?: boolean;
+  query?: string;
+  offset?: number;
+  limit: number;
+};
 
 /** What the UI may know about a stored secret: whether one is set and who set it. The value
  *  itself never crosses the IPC boundary. */
@@ -1616,7 +1673,10 @@ export const uiStateSchema = z.object({
   devices: z.array(deviceViewSchema),
   hotkey: hotkeyStatusSchema.default(emptyHotkeyStatus),
   dictation: dictationStatusSchema.default(idleDictation),
-  history: z.array(historyEntrySchema).default(() => []),
+  /** The newest `HISTORY_RECENT` entries, newest first; the rest through the history queries. */
+  history_recent: z.array(historyEntrySchema).default(() => []),
+  /** Entries in the history. */
+  history_total: z.number().int().nonnegative().default(0),
   engines: engineStatusSchema.default(emptyEngineStatus),
   update: updateStatusSchema.default(idleUpdate),
   /** The local model catalogue with install states; `[]` on the phone (no local models there). */
@@ -1665,7 +1725,11 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("error"), message: z.string() }),
   hotkeyStatusSchema.extend({ type: z.literal("hotkey") }),
   dictationStatusSchema.extend({ type: z.literal("dictation") }),
-  z.object({ type: z.literal("history"), entries: z.array(historyEntrySchema) }),
+  z.object({
+    type: z.literal("history"),
+    recent: z.array(historyEntrySchema),
+    total: z.number().int().nonnegative(),
+  }),
   engineStatusSchema.extend({ type: z.literal("engines") }),
   probeReportSchema.extend({ type: z.literal("provider_probe") }),
   updateEventSchema,
@@ -1925,6 +1989,14 @@ export interface CommandArgs {
   settings_set_context_sharing: SetContextSharingArgs;
   /** Query: the apps the history saw, newest first (`Backend.recentApps`, the scene editor). */
   recent_apps: undefined;
+  /** Query (docs/dictation.md §4.4): a page of the history (`Backend.historyQuery`). */
+  history_query: HistoryQueryArgs;
+  /** Query: one history entry, `null` once it is gone (`Backend.historyEntry`). */
+  history_entry: { id: string };
+  /** Query (§4.5): the dictations between local midnights (`Backend.historyStats`, the home page). */
+  history_stats: { boundaries: number[] };
+  /** Query (§16.3): hits per dictionary entry and rule (`Backend.historyHits`). */
+  history_hits: undefined;
   /** Query (docs/dictation.md §15.1): what the OS grants right now (`Backend.permissionsStatus`);
    *  the onboarding step polls it every second while on screen. */
   permissions_status: undefined;
@@ -1951,6 +2023,10 @@ export type QueryCommand =
   | "rules_export"
   | "vocabulary_preview"
   | "recent_apps"
+  | "history_query"
+  | "history_entry"
+  | "history_stats"
+  | "history_hits"
   | "permissions_status"
   | "permissions_request"
   | "inject_preflight"
@@ -1975,6 +2051,10 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "rules_export",
   "vocabulary_preview",
   "recent_apps",
+  "history_query",
+  "history_entry",
+  "history_stats",
+  "history_hits",
   "permissions_status",
   "permissions_request",
   "inject_preflight",
@@ -2020,7 +2100,7 @@ export function defaultSettings(): Settings {
     solo_key: null,
     lan_discovery: true,
     pairing_always_on: false,
-    history: { enabled: true, keep: 500 },
+    history: { enabled: true, keep: 20_000 },
     overlay: "bottom",
     microphone: null,
   };
@@ -2060,7 +2140,7 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
       return { ...state, dictation };
     }
     case "history":
-      return { ...state, history: event.entries };
+      return { ...state, history_recent: event.recent, history_total: event.total };
     case "engines": {
       const { type: _type, ...engines } = event;
       return { ...state, engines };

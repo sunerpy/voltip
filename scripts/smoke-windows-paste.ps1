@@ -12,9 +12,11 @@
        script never activates Notepad itself (a background script may not): Voltip brings back the
        window below its own when Windows leaves nothing in front;
     3. Voltip stays minimised after a paste that landed (it comes back only when it did not).
-  The entry goes into the runner user's real history file (Windows resolves the data directory
-  through the Known Folder API, which no environment variable redirects); a history file that is
-  already there is set aside first and put back at the end. Each step has a timeout and the first
+  The entry goes into the runner user's real data directory (Windows resolves it through the
+  Known Folder API, which no environment variable redirects) as a history.json that the app
+  imports into a new history.sqlite3 at start-up (docs/dictation.md section 4.3); a database or a
+  history.json that is already there is set aside first and put back at the end, and what the run
+  wrote is removed. Each step has a timeout and the first
   failure stops the run. <OutDir> receives summary.txt and app.log.
   Windows PowerShell 5.1 reads a BOM-less script as ANSI, so every non-ASCII string below is built
   from code points.
@@ -144,15 +146,24 @@ $buttonNames = @('Paste into the previous window', (-join ([char[]](0x7C98, 0x8D
 
 $dataDir = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'voltip\Voltip\data'
 $history = Join-Path $dataDir 'history.json'
-$backup = "$history.smoke-backup"
+$database = Join-Path $dataDir 'history.sqlite3'
+# The history's files: the database with its WAL files, and the file of before it.
+$historyFiles = @($database, "$database-wal", "$database-shm", $history)
+# The import renames the file history.json.imported-<seconds>: only the ones this run adds go.
+function Imported { @(Get-ChildItem -LiteralPath $dataDir -Filter 'history.json.imported-*' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) }
+$importedBefore = @()
 $env:RUST_LOG = 'voltip=info'
 $env:NO_COLOR = '1'
 $app = $null
 $notepad = $null
 try {
-  # 1. One entry in the history (UTF-8 without a BOM: the app's JSON reader takes no BOM).
+  # 1. One entry in the history (UTF-8 without a BOM: the app's JSON reader takes no BOM), in a
+  #    history.json the app imports because no database is there.
   New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-  if (Test-Path -LiteralPath $history) { Move-Item -LiteralPath $history -Destination $backup -Force; Note 'existing history set aside' }
+  $importedBefore = Imported
+  foreach ($file in $historyFiles) {
+    if (Test-Path -LiteralPath $file) { Move-Item -LiteralPath $file -Destination "$file.smoke-backup" -Force; Note "existing $(Split-Path -Leaf $file) set aside" }
+  }
   $entry = [ordered]@{
     id = '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b'
     at_ms = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -234,7 +245,10 @@ try {
   if ($null -ne $app -and -not $app.HasExited) { Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue }
   $pads = Get-Process -Name notepad -ErrorAction SilentlyContinue
   if ($null -ne $pads) { $pads | Stop-Process -Force -ErrorAction SilentlyContinue }
-  if (Test-Path -LiteralPath $backup) { Move-Item -LiteralPath $backup -Destination $history -Force }
-  elseif (Test-Path -LiteralPath $history) { Remove-Item -LiteralPath $history -Force }
+  # What the run wrote goes (the database the seed was imported into and the renamed seed), then
+  # what was set aside comes back.
+  foreach ($file in $historyFiles) { if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force } }
+  foreach ($name in (Imported)) { if ($importedBefore -notcontains $name) { Remove-Item -LiteralPath (Join-Path $dataDir $name) -Force } }
+  foreach ($file in $historyFiles) { if (Test-Path -LiteralPath "$file.smoke-backup") { Move-Item -LiteralPath "$file.smoke-backup" -Destination $file -Force } }
   $summary | Set-Content -LiteralPath (Join-Path $OutDir 'summary.txt') -Encoding utf8
 }

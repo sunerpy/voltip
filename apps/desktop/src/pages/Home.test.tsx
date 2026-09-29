@@ -1,4 +1,4 @@
-import { defaultEngineSettings } from "@voltip/shared";
+import { defaultEngineSettings, formatCount, formatDuration, formatMs } from "@voltip/shared";
 import {
   MOCK_ASR_MS,
   MOCK_AUDIO_DEVICES,
@@ -17,7 +17,7 @@ import {
 } from "@voltip/shared/mock";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { historyStats } from "../features/history/stats";
+import { homeStats, statsBoundaries } from "../features/history/stats";
 import { renderApp } from "../test/render";
 import { MIC_TEST_MS } from "../features/audio/useMicrophoneTest";
 
@@ -41,6 +41,12 @@ function liveClock() {
   return { now: () => Date.now() };
 }
 
+/** What the home page shows for the backend's history: the core's answer, turned into tiles. */
+async function homeStatsOf(backend: MockBackend) {
+  const boundaries = statsBoundaries(Date.now());
+  return homeStats(await backend.historyStats(boundaries), boundaries, Date.now());
+}
+
 describe("Home page", () => {
   it("regression: the recent table copies and pastes a row without opening it, by mouse and by keyboard", async () => {
     const user = userEvent.setup();
@@ -48,7 +54,7 @@ describe("Home page", () => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const { backend } = renderApp({ mock: liveClock() });
     const table = await screen.findByRole("table", { name: "最近的结果" });
-    const newest = backend.peek().history[0];
+    const newest = backend.peek().history_recent[0];
     if (!newest) throw new Error("fixture");
     const row = within(table).getAllByRole("row")[1] as HTMLElement;
     // Copy: the row's text, the usual toast, and the page stays.
@@ -159,7 +165,8 @@ describe("Home page", () => {
     const notes = await screen.findAllByTestId("home-tile-note");
     expect(notes).toHaveLength(4);
     for (const note of notes) expect(note).toHaveAttribute("title", note.textContent);
-    expect(notes[3]).toHaveTextContent("保留最近 500 条");
+    // The total tile's note is its character count now (docs/dictation.md §4.5).
+    expect(notes[3]).toHaveTextContent(/^[\d,]+ 字$/);
   });
 
   it("regression: the recent table's timing columns are as wide as their headers", async () => {
@@ -200,18 +207,28 @@ describe("Home page", () => {
       [...document.querySelectorAll("[title]")].map((e) => e.getAttribute("title")).join(" "),
     ).not.toMatch(/voltip\.example/);
 
-    // Stats and tiles come from state.history (the sample rows dated relative to now).
-    const stats = historyStats(backend.peek().history, Date.now());
+    // Stats and tiles come from the core's history_stats (the sample rows dated relative to now):
+    // each tile names the time saved, speaking time × 1.9 (docs/dictation.md §4.5).
+    const stats = await homeStatsOf(backend);
     expect(stats.today.count).toBe(2);
-    expect(screen.getByRole("button", { name: "今天 2 条" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: `本周 ${stats.week.count} 条` })).toBeInTheDocument();
+    const saved = (ms: number) => `节省 ${formatDuration(ms)}`;
     expect(
-      screen.getByRole("button", { name: `本月 ${stats.month.count} 条` }),
+      await screen.findByRole("button", { name: `今天 ${saved(stats.today.savedMs)}` }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "总计 6 / 500" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: `本周 ${saved(stats.week.savedMs)}` }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: `本月 ${saved(stats.month.savedMs)}` }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: `总计 ${saved(stats.total.savedMs)}` }),
+    ).toBeInTheDocument();
     const session = screen.getByTestId("home-session");
-    expect(within(session).getByText("2")).toBeInTheDocument();
-    expect(within(session).getByText(String(stats.today.latencyMs))).toBeInTheDocument();
+    expect(within(session).getByText(formatCount(stats.today.rawChars))).toBeInTheDocument();
+    expect(within(session).getByTestId("home-session-summary")).toHaveTextContent(
+      `听写 2 次 · 平均延迟 ${formatMs(stats.today.latencyMs)}`,
+    );
     const table = screen.getByRole("table", { name: "最近的结果" });
     expect(within(table).getAllByRole("row")).toHaveLength(6 + 1);
     expect(within(table).getAllByText("Qwen3-ASR-1.7B").length).toBe(6);
@@ -317,7 +334,7 @@ describe("Home page", () => {
     try {
       const { backend } = renderApp({ mock: liveClock() });
       await screen.findByText("可以开始听写");
-      const before = backend.peek().history.length;
+      const before = backend.peek().history_recent.length;
       const start = screen.getByRole("button", { name: "开始听写" });
       expect(start).toBeEnabled();
       expect(start).not.toHaveAttribute("title");
@@ -355,11 +372,19 @@ describe("Home page", () => {
         `已插入 ${MOCK_DICTATION_TEXT.length} 字 · 粘贴 · 已润色`,
       );
       // The result landed in history: the table, the tiles and the sidebar count all moved.
-      expect(backend.peek().history).toHaveLength(before + 1);
+      expect(backend.peek().history_recent).toHaveLength(before + 1);
       const table = screen.getByRole("table", { name: "最近的结果" });
       expect(within(table).getAllByRole("row")[1]).toHaveTextContent(MOCK_DICTATION_TEXT);
-      expect(screen.getByRole("button", { name: "今天 3 条" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: `总计 ${before + 1} / 500` })).toBeInTheDocument();
+      const after = await homeStatsOf(backend);
+      expect([after.today.count, after.total.count]).toEqual([3, before + 1]);
+      expect(
+        await screen.findByRole("button", {
+          name: `今天 节省 ${formatDuration(after.today.savedMs)}`,
+        }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: `总计 节省 ${formatDuration(after.total.savedMs)}` }),
+      ).toBeInTheDocument();
       expect(
         within(screen.getByRole("navigation")).getByText(String(before + 1)),
       ).toBeInTheDocument();
@@ -423,12 +448,12 @@ describe("Home page", () => {
     try {
       const { backend } = renderApp({ mock: liveClock() });
       await screen.findByText("可以开始听写");
-      const before = backend.peek().history.length;
+      const before = backend.peek().history_recent.length;
       await user.click(screen.getByRole("button", { name: "开始听写" }));
       await user.click(screen.getByRole("button", { name: "取消" }));
       expect(backend.peek().dictation.phase).toEqual({ phase: "cancelled", injected_chars: 0 });
       expect(screen.getByTestId("home-phase")).toHaveTextContent("已取消");
-      expect(backend.peek().history).toHaveLength(before);
+      expect(backend.peek().history_recent).toHaveLength(before);
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS);
       });
@@ -536,15 +561,15 @@ describe("Home page", () => {
       );
     });
     expect(screen.getByTestId("home-phase")).toHaveTextContent("缺少密钥");
-    expect(screen.getByRole("button", { name: "今天 0 条" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "总计 0 / 500" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "今天 节省 0 秒" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "总计 节省 0 秒" })).toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "最近的结果" })).toBeNull();
     expect(screen.getByText("暂无听写结果")).toBeInTheDocument();
     expect(screen.getByText("按住 Ctrl Alt Space 说一句，松开即插入")).toBeInTheDocument();
     // The microphone card shows its own `—` until the native enumeration lands; wait for the
-    // device so the only remaining `—` is the average-latency readout.
+    // device, then the average latency reads `—` in the summary line: nothing to average.
     expect(await screen.findByText("Fifine K669")).toBeInTheDocument();
-    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.getByTestId("home-session-summary")).toHaveTextContent("听写 0 次 · 平均延迟 —");
   });
 
   it("regression: the readiness chip and the empty-state hint follow settings.activation (docs/dictation.md §13)", async () => {
@@ -737,8 +762,11 @@ describe("Home page", () => {
     });
     await screen.findByText("可以开始听写");
     expect(screen.getByRole("button", { name: "开始听写" })).toBeEnabled();
-    const stats = historyStats(backend.peek().history, Date.now());
-    await user.click(screen.getByRole("button", { name: `本周 ${stats.week.count} 条` }));
+    const stats = await homeStatsOf(backend);
+    const saved = (ms: number) => `节省 ${formatDuration(ms)}`;
+    await user.click(
+      await screen.findByRole("button", { name: `本周 ${saved(stats.week.savedMs)}` }),
+    );
     expect(screen.getByRole("heading", { name: "历史记录", level: 1 })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /首页/ }));
     // Settings open as a modal over the page (Shell); 按住说话 lands on the 热键 group.
@@ -753,7 +781,7 @@ describe("Home page", () => {
     await user.click(screen.getByRole("button", { name: "内置服务 · Qwen3-ASR-1.7B" }));
     expect(await screen.findByTestId("page-speech")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^首页$/ }));
-    const tile = screen.getByRole("button", { name: `本月 ${stats.month.count} 条` });
+    const tile = await screen.findByRole("button", { name: `本月 ${saved(stats.month.savedMs)}` });
     tile.focus();
     await user.keyboard("{Enter}");
     expect(screen.getByRole("heading", { name: "历史记录", level: 1 })).toBeInTheDocument();
@@ -764,5 +792,22 @@ describe("Home page", () => {
     expect(screen.getByRole("heading", { name: "历史记录", level: 1 })).toBeInTheDocument();
     // The recent row's id pre-selects it in the history detail.
     expect(screen.getByTestId("entry-text")).toHaveTextContent(/attach the latency report/);
+  });
+});
+
+describe("Home page · time saved (docs/dictation.md section 4.5)", () => {
+  it("explains the 1.9 factor and its source in the 依据 popover", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByText("可以开始听写");
+    const basis = screen.getByRole("button", { name: "节省时间的依据" });
+    await user.click(basis);
+    const panel = screen.getByRole("dialog", { name: "节省时间的依据" });
+    expect(panel).toHaveTextContent(
+      "节省时间 = 说话时长 × 1.9。依据：Ruan 等 2016（arXiv:1608.07323）的实验里，说话输入比手机打字快约 2.9 倍（英文 153 vs 52 词/分，中文 123 vs 43）。只统计保存在历史记录里的听写。",
+    );
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "节省时间的依据" })).toBeNull();
+    expect(basis).toHaveFocus();
   });
 });

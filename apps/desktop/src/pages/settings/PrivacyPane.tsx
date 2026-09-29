@@ -1,4 +1,4 @@
-import { HISTORY_LIMIT, HISTORY_MIN_KEEP, type MessageKey } from "@voltip/shared";
+import { HISTORY_LIMIT, HISTORY_MIN_KEEP, type MessageKey, formatCount } from "@voltip/shared";
 import {
   Button,
   LampText,
@@ -17,7 +17,7 @@ import { useShell } from "../../app/shell-context";
 import { serviceTarget } from "./engines/helpers";
 
 /** The retention choices the select offers (all inside `HISTORY_MIN_KEEP..=HISTORY_LIMIT`). */
-export const KEEP_OPTIONS = [50, 100, 200, HISTORY_LIMIT] as const;
+export const KEEP_OPTIONS = [500, 2000, 5000, 10_000, HISTORY_LIMIT] as const;
 
 /** A secret-store backend name (`SecretStore::backend_name`) as the user knows it. */
 const BACKEND_KEYS: ReadonlyMap<string, MessageKey> = new Map<string, MessageKey>([
@@ -67,7 +67,7 @@ export function PrivacyPane() {
   const clear = () => {
     shell.confirm({
       title: t("settings.brief.privacy.clearConfirmTitle"),
-      body: t("settings.brief.privacy.clearConfirmBody", { n: state.history.length }),
+      body: t("settings.brief.privacy.clearConfirmBody", { n: formatCount(state.history_total) }),
       confirmLabel: t("settings.brief.privacy.clearConfirm"),
       tone: "danger",
       onConfirm: () => {
@@ -135,7 +135,10 @@ export function PrivacyPane() {
         data-testid="privacy-history"
         aside={
           <span className="mono text-[11px] text-fg-muted" data-testid="history-count">
-            {t("settings.brief.privacy.historyCount", { n: state.history.length, keep })}
+            {t("settings.brief.privacy.historyCount", {
+              n: formatCount(state.history_total),
+              keep: formatCount(keep),
+            })}
           </span>
         }>
         <SettingsRows>
@@ -162,7 +165,7 @@ export function PrivacyPane() {
               }}
               options={keepOptions.map((n) => ({
                 value: String(n),
-                label: t("settings.brief.privacy.keepOption", { n }),
+                label: t("settings.brief.privacy.keepOption", { n: formatCount(n) }),
               }))}
             />
           </StatusRow>
@@ -174,7 +177,7 @@ export function PrivacyPane() {
               variant="outline"
               icon="trash"
               className="text-danger"
-              disabled={state.history.length === 0}
+              disabled={state.history_total === 0}
               onClick={clear}>
               {t("settings.brief.privacy.clear")}
             </Button>

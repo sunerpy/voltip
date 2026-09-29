@@ -277,6 +277,34 @@ export function formatSeconds(ms: number): string {
   return `${(Math.max(0, ms) / 1000).toFixed(1)} s`;
 }
 
+/** A span of time for the statistics, from seconds up to thousands of hours, as numbers and
+ *  their units, largest first: seconds alone under a minute, no seconds from an hour on, and a
+ *  part that is zero left out (`3 分 47 秒`, `1 小时`, `63 小时 12 分`). */
+export function durationParts(
+  ms: number,
+  locale: Locale = DEFAULT_LOCALE,
+): { value: string; unit: string }[] {
+  const total = Math.round(Math.max(0, ms) / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const part = (value: number, unit: "hours" | "minutes" | "seconds") => ({
+    value: formatCount(value),
+    unit: translate(locale, `time.duration.${unit}`),
+  });
+  if (h > 0) return m > 0 ? [part(h, "hours"), part(m, "minutes")] : [part(h, "hours")];
+  if (m > 0) return s > 0 ? [part(m, "minutes"), part(s, "seconds")] : [part(m, "minutes")];
+  return [part(s, "seconds")];
+}
+
+/** [`durationParts`] as text: `21 秒`, `3 分 47 秒`, `63 小时 12 分` (`21 s`, `3 min 47 s`,
+ *  `63 h 12 min`). */
+export function formatDuration(ms: number, locale: Locale = DEFAULT_LOCALE): string {
+  return durationParts(ms, locale)
+    .map((p) => `${p.value} ${p.unit}`)
+    .join(" ");
+}
+
 type FailedPhase = Extract<DictationPhase, { phase: "failed" }>;
 
 /** The reason line of a failed dictation: the localized failure `code` when the core sent one,
