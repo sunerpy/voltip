@@ -173,6 +173,29 @@ pub trait Capture: Send {
     fn live_pcm(&mut self) -> Option<Box<dyn LivePcm>> {
         None
     }
+
+    /// The whole take at 16 kHz requested with `long` (docs/dictation.md §22; take-once, `None`
+    /// on the second call, when `long` was `false`, or when the shell has none — the take then
+    /// ends at its in-memory part). Closes when the capture stops.
+    fn pcm_stream(&mut self) -> Option<Box<dyn PcmStream>> {
+        None
+    }
+}
+
+/// Sample rate of [`PcmStream`]: what the recognisers expect.
+pub const PCM_SAMPLE_RATE_HZ: u32 = 16_000;
+
+/// The consumer end of a long take's stream (docs/dictation.md §22): the whole take as mono `f32`
+/// at [`PCM_SAMPLE_RATE_HZ`], produced on the audio thread and read by the core's recording
+/// thread. Never blocks.
+pub trait PcmStream: Send {
+    /// Copy up to `out.len()` samples, in order and never past a gap; returns how many.
+    fn read(&mut self, out: &mut [f32]) -> usize;
+    /// How many samples are missing at the current position (the shell's buffer overflowed
+    /// because the reader fell behind), once; `None` while the next sample follows the last one.
+    fn gap(&mut self) -> Option<u64>;
+    /// The capture stopped: once `read` returns `0` and `gap` `None`, nothing more will come.
+    fn is_closed(&self) -> bool;
 }
 
 /// The consumer end of the recorder's live tap (docs/dictation.md §11): mono `f32` at 16 kHz,

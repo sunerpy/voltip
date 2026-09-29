@@ -42,7 +42,7 @@ pub use fake::{FAKE_DEFAULT_ID, FAKE_SPEAKERS_ID, FAKE_USB_ID, FakeBackend, Fake
 pub use live::{DEFAULT_LIVE_BUFFER_MS, DEFAULT_LIVE_RATE_HZ, LiveConsumer, LiveTapConfig, StreamResampler};
 pub use meter::{DEFAULT_FRAMES_PER_SECOND, DEFAULT_PEAK_HOLD_MS, LevelFrame, Meter, MeterConfig};
 pub use pcm::{DEFAULT_PCM_BUFFER_MS, DEFAULT_PCM_RATE_HZ, PcmConsumer, PcmStreamConfig};
-pub use recorder::{DEFAULT_MAX_DURATION, DEFAULT_TARGET_RATE_HZ, Recorder, RecorderConfig};
+pub use recorder::{CaptureSource, DEFAULT_MAX_DURATION, DEFAULT_TARGET_RATE_HZ, MIX_RATE_HZ, Recorder, RecorderConfig};
 pub use recording::{MIN_SPEECH_MS, Recording, SILENCE_PEAK_DBFS};
 
 /// Errors from the audio layer.

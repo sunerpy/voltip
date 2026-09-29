@@ -19,8 +19,8 @@ pub use engine::{DictationEngine, DictationPorts, EngineFactory};
 pub use ports::{
     AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection,
     Injector, LIVE_CHUNK_SAMPLES, LIVE_SAMPLE_RATE_HZ, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MAX_RECORDING_STREAMING, MIN_RECORDING,
-    PARTIAL_THROTTLE, PROBE_DEADLINE, Recording, RefineContext, RefineHints, Refined, Refiner, Segment, SelectionTiming, ServiceProbe, StreamEvent,
-    StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
+    PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineContext, RefineHints, Refined, Refiner, Segment, SelectionTiming,
+    ServiceProbe, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
 };
 
 /// What a take is for (docs/dictation.md §19): dictating text, or rewriting the text selected in
