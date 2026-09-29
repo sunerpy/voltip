@@ -858,11 +858,7 @@ mod tests {
             c.into_core().unwrap(),
             CoreCommand::PresetTry { id: 7, trial: PresetTrial::Preset(PresetId::Builtin(voltip_core::BuiltinPreset::Translate)), text } if text == "你好"
         ));
-        let c: UiCommand = serde_json::from_str(
-            r#"{"command":"presets_try","id":8,"prompt":" 改写成邮件 
-","text":"x"}"#,
-        )
-        .unwrap();
+        let c: UiCommand = serde_json::from_str(r#"{"command":"presets_try","id":8,"prompt":" 改写成邮件 \r\n","text":"x"}"#).unwrap();
         assert!(matches!(c.into_core().unwrap(), CoreCommand::PresetTry { trial: PresetTrial::Prompt(p), .. } if p == "改写成邮件"));
         for (json, want) in [
             (r#"{"command":"presets_try","id":1,"text":"x"}"#.to_owned(), "presets: 试一试需要一个预设或一段预设内容"),
