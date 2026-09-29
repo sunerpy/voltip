@@ -225,7 +225,9 @@ export function ModelCard({ model }: ModelCardProps) {
               }),
             })}
           </span>
-          <span className="truncate text-fg-subtle">{model.state.path}</span>
+          <span className="truncate text-fg-subtle" title={model.state.path}>
+            {model.state.path}
+          </span>
         </div>
       )}
     </OptionCard>

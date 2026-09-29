@@ -74,7 +74,11 @@ export function OptionCard({
             {title}
           </div>
           {subtitle !== undefined && (
-            <div className="mono truncate text-[11px] leading-4 text-fg-muted">{subtitle}</div>
+            <div
+              className="mono truncate text-[11px] leading-4 text-fg-muted"
+              title={typeof subtitle === "string" ? subtitle : undefined}>
+              {subtitle}
+            </div>
           )}
         </div>
         {badge !== undefined && (

@@ -59,6 +59,8 @@ const ZH_COLLOQUIAL: ReadonlyArray<readonly [RegExp, string]> = [
   [/没能/, "未能 / 无法"],
   [/免得/, "以免"],
   [/搭的|咋|啥/, "（书面说法）"],
+  // Screenshot check 2026-09-29: 「说说哪里不好用」「换一个范围试试」「试试 主题 / …」.
+  [/说说|试试|看看/, "（书面说法：请描述 / 可选择 / 例如）"],
 ];
 const EN_COLLOQUIAL: ReadonlyArray<readonly [RegExp, string]> = [
   // "Just now" is the standard relative-time label.

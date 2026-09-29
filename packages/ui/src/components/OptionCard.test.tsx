@@ -37,6 +37,22 @@ describe("OptionCard", () => {
     expect(title).toHaveAttribute("title", "按一下开始，再按一下结束");
   });
 
+  it("regression: a subtitle cut by a narrow card shows whole on hover", () => {
+    // Screenshot check 2026-09-29: 「qwen3-asr-0.6b · transcribe.cpp」 under 均衡 was cut beside
+    // its 推荐 and 未安装 badges with no way to read it.
+    render(
+      <OptionCard
+        icon="cpu"
+        title="均衡"
+        subtitle="qwen3-asr-0.6b · transcribe.cpp"
+        aria-label="balanced"
+      />,
+    );
+    const subtitle = screen.getByText("qwen3-asr-0.6b · transcribe.cpp");
+    expect(subtitle).toHaveClass("truncate");
+    expect(subtitle).toHaveAttribute("title", "qwen3-asr-0.6b · transcribe.cpp");
+  });
+
   it("an unselected article has no data-selected and a neutral icon tile", () => {
     render(<OptionCard icon="cloud" title="OpenAI" aria-label="openai" />);
     const card = screen.getByRole("article", { name: "openai" });

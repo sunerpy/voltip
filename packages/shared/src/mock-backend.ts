@@ -1723,13 +1723,11 @@ export class MockBackend implements Backend {
   private setModelState(id: string, state: ModelInstallState) {
     const models = this.state.models.map((m) => (m.id === id ? { ...m, state } : m));
     this.emit({ type: "models", models });
-    // Readiness follows the install state of the selected model and of the streaming model.
+    // Readiness and the on-device card follow the install state of the selected model and of the
+    // streaming model, whichever provider is in use (the core's rescan re-reports the engines);
+    // progress ticks change neither.
     const engines = this.resolveEngines(this.state.settings.engines);
-    if (
-      engines.local_ready !== this.state.engines.local_ready ||
-      engines.live_preview_ready !== this.state.engines.live_preview_ready ||
-      engines.effective_output_mode !== this.state.engines.effective_output_mode
-    )
+    if (JSON.stringify(engines) !== JSON.stringify(this.state.engines))
       this.emit({ type: "engines", ...engines });
   }
 

@@ -1144,6 +1144,25 @@ describe("MockBackend local models (docs/dictation.md §10)", () => {
     backend.destroy();
   });
 
+  it("regression: installing the on-device model clears 模型未下载 on its card while the built-in service is in use", async () => {
+    // Screenshot check 2026-09-29: after 均衡 finished downloading, the 本机 card still said
+    // 模型未下载 until something else re-reported the engines.
+    const backend = new MockBackend({ now: () => clock });
+    const localIssue = () =>
+      backend.peek().engines.providers.find((p) => p.id === "local")?.asr?.issue;
+    expect(backend.peek().engines.asr_provider).toBe("builtin");
+    expect(localIssue()).toBe("model_not_installed");
+    const events = collect(backend);
+    const id = backend.peek().models[0]?.id ?? "";
+    await backend.invoke("model_download", { id });
+    for (let n = 0; n <= MOCK_MODEL_TICKS + 1; n += 1) tick(MOCK_MODEL_TICK_MS);
+    expect(backend.peek().models[0]?.state.kind).toBe("installed");
+    expect(localIssue()).toBeUndefined();
+    expect(backend.peek().engines.asr_provider).toBe("builtin");
+    expect(events.filter((e) => e.type === "engines")).toHaveLength(1);
+    backend.destroy();
+  });
+
   it("regression: cancel returns to not_installed, simulateModelFailed keeps the failure until a retry succeeds", async () => {
     const backend = new MockBackend({ now: () => clock });
     const state = () => backend.peek().models[3]?.state;
