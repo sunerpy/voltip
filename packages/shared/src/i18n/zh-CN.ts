@@ -111,6 +111,10 @@ export const zhCN = {
       queued: { one: "{n} 条排队中", other: "{n} 条排队中" },
       /** docs/dictation.md §18.6: the scene the take runs with, next to the mode tag. */
       scene: "场景：{name}",
+      /** Next to the Esc keycap of a running take (user feedback 2026-09-29: Esc cancels, and the
+       *  bare key did not say so). */
+      escCancel: "取消",
+      escCancelLabel: "按 Esc 取消这次录音",
     },
   },
   theme: {
@@ -1326,6 +1330,8 @@ export const zhCN = {
       cloud: "云端",
       local: "本地",
       editTag: "编辑",
+      /** The mode tag while the take is being polished. */
+      refineTag: "AI 润色",
       /** docs/dictation.md §20: a take whose audio a paired phone streams. */
       phoneTag: "手机 · {name}",
       editDonePaste: "已替换 {n} 字",

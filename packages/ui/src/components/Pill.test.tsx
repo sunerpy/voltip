@@ -67,6 +67,33 @@ describe("Pill", () => {
   });
 });
 
+describe("Pill cancel hint and step time (user feedback 2026-09-29)", () => {
+  it("regression: the Esc hint reads as cancel in the danger colour", () => {
+    // A running take cancels on Esc; the bare keycap did not say so.
+    for (const state of ["listening", "locked", "processing"] as const) {
+      const { unmount } = render(<Pill state={state} />);
+      const hint = screen.getByRole("img", { name: "按 Esc 取消这次录音" });
+      expect(hint).toHaveTextContent("Esc取消");
+      expect(hint).toHaveClass("text-danger");
+      expect(hint.querySelector("kbd")).toHaveClass("border-danger", "text-danger");
+      unmount();
+    }
+    for (const state of ["armed", "inserted", "error", "cancel-armed", "blocked"] as const) {
+      const { unmount } = render(<Pill state={state} />);
+      expect(screen.queryByTestId("pill-esc-cancel")).toBeNull();
+      unmount();
+    }
+  });
+
+  it("regression: a processing pill shows the step time it is given and no fixed 0.0 s", () => {
+    const { rerender } = render(<Pill state="processing" />);
+    expect(screen.queryByTestId("pill-stage-time")).toBeNull();
+    expect(screen.getByRole("status")).not.toHaveTextContent("0.0 s");
+    rerender(<Pill state="processing" readout="1.4 s" />);
+    expect(screen.getByTestId("pill-stage-time")).toHaveTextContent("1.4 s");
+  });
+});
+
 describe("Pill live preview (docs/dictation.md §11)", () => {
   it("regression: listening draws a two-tone live caption above the waveform with a 预览 chip; the capsule grows to two rows", () => {
     const { rerender } = render(

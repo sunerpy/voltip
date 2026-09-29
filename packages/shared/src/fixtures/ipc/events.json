@@ -511,6 +511,7 @@
       "phase": "processing",
       "stage": "finalizing",
       "started_at": 1758700603200,
+      "stage_started_at": 1758700603200,
       "preview": "把 fetchUser 改成 async，然后加上错误"
     },
     "session": 7,
@@ -522,6 +523,7 @@
       "phase": "processing",
       "stage": "transcribing",
       "started_at": 1758700603200,
+      "stage_started_at": 1758700603200,
       "preview": "把 fetchUser 改成 async，然后加上错误"
     },
     "session": 7,
@@ -532,7 +534,8 @@
     "phase": {
       "phase": "processing",
       "stage": "transcribing",
-      "started_at": 1758700603200
+      "started_at": 1758700603200,
+      "stage_started_at": 1758700603200
     },
     "session": 7,
     "kind": "dictation"
@@ -543,6 +546,7 @@
       "phase": "processing",
       "stage": "refining",
       "started_at": 1758700603200,
+      "stage_started_at": 1758700604100,
       "preview": "把 fetchUser 改成 async，然后加上错误"
     },
     "session": 7,
@@ -553,7 +557,8 @@
     "phase": {
       "phase": "processing",
       "stage": "inserting",
-      "started_at": 1758700603200
+      "started_at": 1758700603200,
+      "stage_started_at": 1758700603200
     },
     "session": 7,
     "kind": "dictation"
@@ -724,7 +729,8 @@
     "phase": {
       "phase": "processing",
       "stage": "transcribing",
-      "started_at": 1758700603200
+      "started_at": 1758700603200,
+      "stage_started_at": 1758700603200
     },
     "session": 18,
     "context": {
@@ -2701,6 +2707,7 @@
       "phase": "processing",
       "stage": "refining",
       "started_at": 1758700601400,
+      "stage_started_at": 1758700601400,
       "preview": "改得更正式"
     },
     "session": 20,

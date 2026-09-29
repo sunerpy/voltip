@@ -1009,35 +1009,50 @@ fn all_events() -> Vec<UiEvent> {
         }),
         // The streaming modes wait for the flush first (§12 `finalizing`).
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Processing { stage: ProcessingStage::Finalizing, started_at: AT_MS + 3200, preview: Some(live_text().preview()) },
+            phase: DictationPhase::Processing {
+                stage: ProcessingStage::Finalizing,
+                started_at: AT_MS + 3200,
+                stage_started_at: AT_MS + 3200,
+                preview: Some(live_text().preview()),
+            },
             session: 7,
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
         }),
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, preview: Some(live_text().preview()) },
+            phase: DictationPhase::Processing {
+                stage: ProcessingStage::Transcribing,
+                started_at: AT_MS + 3200,
+                stage_started_at: AT_MS + 3200,
+                preview: Some(live_text().preview()),
+            },
             session: 7,
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
         }),
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, preview: None },
+            phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
             session: 7,
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
         }),
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Processing { stage: ProcessingStage::Refining, started_at: AT_MS + 3200, preview: Some(live_text().preview()) },
+            phase: DictationPhase::Processing {
+                stage: ProcessingStage::Refining,
+                started_at: AT_MS + 3200,
+                stage_started_at: AT_MS + 4100,
+                preview: Some(live_text().preview()),
+            },
             session: 7,
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
         }),
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Processing { stage: ProcessingStage::Inserting, started_at: AT_MS + 3200, preview: None },
+            phase: DictationPhase::Processing { stage: ProcessingStage::Inserting, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
             session: 7,
             context: None,
             kind: TakeKind::Dictation,
@@ -1115,7 +1130,7 @@ fn all_events() -> Vec<UiEvent> {
             remote: None,
         }),
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, preview: None },
+            phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
             session: 18,
             context: Some(TakeContext { app: AppRef { id: "winword".into(), name: "WINWORD".into() }, scene: None }),
             kind: TakeKind::Dictation,
@@ -1209,7 +1224,12 @@ fn all_events() -> Vec<UiEvent> {
             remote: None,
         }),
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Processing { stage: ProcessingStage::Refining, started_at: AT_MS + 1400, preview: Some(EDIT_INSTRUCTION.into()) },
+            phase: DictationPhase::Processing {
+                stage: ProcessingStage::Refining,
+                started_at: AT_MS + 1400,
+                stage_started_at: AT_MS + 1400,
+                preview: Some(EDIT_INSTRUCTION.into()),
+            },
             session: 20,
             context: None,
             kind: TakeKind::Edit,

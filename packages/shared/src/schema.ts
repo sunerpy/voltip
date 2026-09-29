@@ -455,6 +455,9 @@ export const dictationPhaseSchema = z.discriminatedUnion("phase", [
     phase: z.literal("processing"),
     stage: processingStageSchema,
     started_at: z.number(),
+    /** When the current `stage` began: the pill counts the step from here (user feedback
+     *  2026-09-29). Absent or `0` from a core that did not send it; fall back to `started_at`. */
+    stage_started_at: z.number().optional(),
     /** `committed + current` carried over from listening, shown until the final text arrives. */
     preview: z.string().optional(),
   }),

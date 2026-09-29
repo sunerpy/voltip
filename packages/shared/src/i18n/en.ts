@@ -109,6 +109,8 @@ export const en: Messages = {
       caption_listening: "Recording",
       queued: { one: "{n} queued", other: "{n} queued" },
       scene: "Scene: {name}",
+      escCancel: "Cancel",
+      escCancelLabel: "Press Esc to cancel this recording",
     },
   },
   theme: {
@@ -1376,6 +1378,7 @@ export const en: Messages = {
       cloud: "Cloud",
       local: "Local",
       editTag: "Edit",
+      refineTag: "AI polish",
       /** docs/dictation.md §20: a take whose audio a paired phone streams. */
       phoneTag: "Phone · {name}",
       editDonePaste: "Replaced with {n} chars",

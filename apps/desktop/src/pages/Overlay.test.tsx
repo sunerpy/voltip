@@ -18,7 +18,13 @@ import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
 import { clipTail } from "@voltip/ui";
-import { isOverlayWindowState, isPillState, pillLiveCaption, pillStateFor } from "./Overlay";
+import {
+  isOverlayWindowState,
+  isPillState,
+  pillLiveCaption,
+  pillStateFor,
+  stageStart,
+} from "./Overlay";
 import { fakeLevels } from "./OverlaySheet";
 
 /** Fixed pixel panel sizes and two-fixed-column grids broke the 1440 / 1920 px windows (Windows
@@ -266,7 +272,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
         await vi.advanceTimersByTimeAsync(MOCK_ASR_MS);
       });
       expect(screen.getByRole("status")).toHaveTextContent("润色中…");
-      expect(screen.getByRole("status")).toHaveTextContent("LLM");
+      expect(screen.getByRole("status")).toHaveTextContent("AI 润色");
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_REFINE_MS);
       });
@@ -278,6 +284,52 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
         await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS);
       });
       expect(screen.getByTestId("overlay-window")).toHaveAttribute("data-state", "blank");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("counts the step from stage_started_at, or from the run's start when a core sent none", () => {
+    const processing = { phase: "processing", stage: "refining", started_at: 5 } as const;
+    expect(stageStart(processing)).toBe(5);
+    expect(stageStart({ ...processing, stage_started_at: 0 })).toBe(5);
+    expect(stageStart({ ...processing, stage_started_at: 9 })).toBe(9);
+  });
+
+  it("regression: the processing pill counts the stage time instead of a fixed 0.0 s", async () => {
+    // User feedback 2026-09-29: while transcribing and polishing the pill's timer stood at 0.0 s.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const backend = new MockBackend({ now: () => Date.now() });
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      await act(async () => {
+        await backend.invoke("dictation_start");
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_MIC_READY_MS + 1000);
+      });
+      await act(async () => {
+        await backend.invoke("dictation_stop");
+      });
+      const seconds = () => Number.parseFloat(screen.getByTestId("pill-stage-time").textContent);
+      expect(screen.getByRole("status")).toHaveTextContent("识别中…");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+      });
+      const transcribing = seconds();
+      expect(transcribing).toBeGreaterThanOrEqual(0.3);
+      // The next step starts its own clock.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_ASR_MS - 300);
+      });
+      expect(screen.getByRole("status")).toHaveTextContent("润色中…");
+      expect(seconds()).toBeLessThan(transcribing);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200);
+      });
+      expect(seconds()).toBeGreaterThanOrEqual(0.2);
+      expect(seconds()).toBeLessThan(MOCK_ASR_MS / 1000);
     } finally {
       vi.useRealTimers();
     }
@@ -383,7 +435,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
         await vi.advanceTimersByTimeAsync(MOCK_ASR_MS);
       });
       expect(screen.getByTestId("pill-preview")).toBeInTheDocument();
-      expect(screen.getByRole("status")).toHaveTextContent("LLM");
+      expect(screen.getByRole("status")).toHaveTextContent("AI 润色");
       expect(screen.queryByText("润色中…")).toBeNull();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_REFINE_MS);

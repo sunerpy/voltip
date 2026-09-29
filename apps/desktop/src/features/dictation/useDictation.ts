@@ -44,49 +44,69 @@ export function useDictation(): DictationControls {
   return { status, phase, listening, processing, start, stop, cancel, toggle };
 }
 
-// A one-second clock as an external store (the same shape as `useNow`): pure during render,
-// ticking only while something is subscribed.
-export const TICK_MS = 1000;
-const tickListeners = new Set<() => void>();
-let tickCached = Date.now();
-let tickTimer: ReturnType<typeof setInterval> | undefined;
+interface ClockStore {
+  subscribe: (listener: () => void) => () => void;
+  snapshot: () => number;
+}
 
-function subscribeTick(listener: () => void): () => void {
-  tickListeners.add(listener);
-  if (tickTimer === undefined) {
-    tickCached = Date.now();
-    tickTimer = setInterval(() => {
-      tickCached = Date.now();
-      for (const l of tickListeners) l();
-    }, TICK_MS);
-  }
-  return () => {
-    tickListeners.delete(listener);
-    if (tickListeners.size === 0 && tickTimer !== undefined) {
-      clearInterval(tickTimer);
-      tickTimer = undefined;
-    }
+/** A clock as an external store (the same shape as `useNow`): pure during render, ticking every
+ *  `intervalMs` only while something is subscribed. */
+function clockStore(intervalMs: number): ClockStore {
+  const listeners = new Set<() => void>();
+  let cached = Date.now();
+  let timer: ReturnType<typeof setInterval> | undefined;
+  return {
+    subscribe(listener) {
+      listeners.add(listener);
+      if (timer === undefined) {
+        cached = Date.now();
+        timer = setInterval(() => {
+          cached = Date.now();
+          for (const l of listeners) l();
+        }, intervalMs);
+      }
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0 && timer !== undefined) {
+          clearInterval(timer);
+          timer = undefined;
+        }
+      };
+    },
+    snapshot: () => cached,
   };
 }
 
-function tickSnapshot(): number {
-  return tickCached;
-}
+export const TICK_MS = 1000;
+/** The processing pill's step time (`0.4 s`) moves ten times a second. */
+export const STAGE_TICK_MS = 100;
+const secondClock = clockStore(TICK_MS);
+const stageClock = clockStore(STAGE_TICK_MS);
 
 function subscribeNothing(): () => void {
   return () => undefined;
 }
 
-/** Milliseconds now: a one-second clock while `active` (the `正在听… 00:03` readout), the shared
+/** Milliseconds now: a one-second clock while `active` (the `正在录音… 00:03` readout), the shared
  *  30-second clock otherwise (day grouping, statistics). */
 export function useTickingNow(active: boolean): number {
   const coarse = useNow() * 1000;
   const fine = useSyncExternalStore(
-    active ? subscribeTick : subscribeNothing,
-    tickSnapshot,
-    tickSnapshot,
+    active ? secondClock.subscribe : subscribeNothing,
+    secondClock.snapshot,
+    secondClock.snapshot,
   );
   return active ? fine : coarse;
+}
+
+/** Milliseconds now, ten times a second while `active`: the processing pill counts the current
+ *  step with it (user feedback 2026-09-29: the step time stood at 0.0 s). */
+export function useStageNow(active: boolean): number {
+  return useSyncExternalStore(
+    active ? stageClock.subscribe : subscribeNothing,
+    stageClock.snapshot,
+    stageClock.snapshot,
+  );
 }
 
 /** Keeps the last `bars` level fractions (0..1) so the pill's waveform scrolls with the live

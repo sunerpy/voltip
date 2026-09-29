@@ -2390,6 +2390,7 @@ export class MockBackend implements Backend {
       phase: "processing",
       stage: streaming ? "finalizing" : "transcribing",
       started_at: stoppedAt,
+      stage_started_at: stoppedAt,
       ...carried,
     });
     const finish = () => {
@@ -2453,7 +2454,12 @@ export class MockBackend implements Backend {
       if (this.state.dictation.session !== session) return;
       if (mode === "live_inject") {
         // The tail is the last paste; nothing is refined (§12).
-        this.emitPhase({ phase: "processing", stage: "inserting", started_at: this.now() });
+        this.emitPhase({
+          phase: "processing",
+          stage: "inserting",
+          started_at: stoppedAt,
+          stage_started_at: this.now(),
+        });
         this.laterDictation(MOCK_FINALIZE_MS, finish);
         return;
       }
@@ -2464,7 +2470,8 @@ export class MockBackend implements Backend {
       this.emitPhase({
         phase: "processing",
         stage: "refining",
-        started_at: this.now(),
+        started_at: stoppedAt,
+        stage_started_at: this.now(),
         ...carried,
       });
       this.laterDictation(MOCK_REFINE_MS, finish);
@@ -2482,7 +2489,12 @@ export class MockBackend implements Backend {
     const context = this.takeContext;
     const stoppedAt = this.now();
     const durationMs = Math.max(0, stoppedAt - startedAt);
-    this.emitPhase({ phase: "processing", stage: "transcribing", started_at: stoppedAt });
+    this.emitPhase({
+      phase: "processing",
+      stage: "transcribing",
+      started_at: stoppedAt,
+      stage_started_at: stoppedAt,
+    });
     this.laterDictation(MOCK_ASR_MS, () => {
       if (this.state.dictation.session !== session) return;
       const selection = this.copiedSelection;
@@ -2494,10 +2506,20 @@ export class MockBackend implements Backend {
         this.dwell(MOCK_DICTATION_DWELL_MS, session);
         return;
       }
-      this.emitPhase({ phase: "processing", stage: "refining", started_at: this.now() });
+      this.emitPhase({
+        phase: "processing",
+        stage: "refining",
+        started_at: stoppedAt,
+        stage_started_at: this.now(),
+      });
       this.laterDictation(MOCK_REFINE_MS, () => {
         if (this.state.dictation.session !== session) return;
-        this.emitPhase({ phase: "processing", stage: "inserting", started_at: this.now() });
+        this.emitPhase({
+          phase: "processing",
+          stage: "inserting",
+          started_at: stoppedAt,
+          stage_started_at: this.now(),
+        });
         this.laterDictation(MOCK_FINALIZE_MS, () => {
           if (this.state.dictation.session !== session) return;
           const via = engines.inject === "clipboard_only" ? "clipboard" : "paste";

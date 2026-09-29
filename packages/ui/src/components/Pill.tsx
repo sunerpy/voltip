@@ -3,7 +3,7 @@ import { cx } from "../cx";
 import { useT } from "../i18n/I18nProvider";
 import { Button } from "./Button";
 import { Icon } from "./Icon";
-import { Keycaps } from "./Keycap";
+import { Keycap, Keycaps } from "./Keycap";
 import { Lamp } from "./Lamp";
 import { Progress } from "./Progress";
 import { Waveform } from "./Waveform";
@@ -101,7 +101,8 @@ export interface PillProps {
   /** What the take does when it is not a plain dictation — `编辑` for a voice edit
    *  (docs/dictation.md §19): a leading tag in every state of a running or finished take. */
   tag?: string;
-  /** Keycap hint (`Ctrl Alt Space`, `Esc`). */
+  /** The hotkey shown by the resting and blocked pills (`Ctrl Alt Space`); a running take always
+   *  shows the Esc cancel hint instead. */
   keys?: string;
   /** Target app shown after `→` in the inserted state. */
   via?: string;
@@ -152,6 +153,23 @@ function SceneTag({ name }: { name: string | undefined }) {
       data-testid="pill-scene"
       title={t("ui.pill.scene", { name })}>
       {name}
+    </span>
+  );
+}
+
+/** The cancel hint of a running take: Esc outlined in the danger colour and the word for what it
+ *  does (user feedback 2026-09-29: the bare Esc keycap did not say it cancels). */
+function EscCancel() {
+  const t = useT();
+  return (
+    <span
+      role="img"
+      aria-label={t("ui.pill.escCancelLabel")}
+      title={t("ui.pill.escCancelLabel")}
+      className="inline-flex shrink-0 items-center gap-1 text-[11px] text-danger"
+      data-testid="pill-esc-cancel">
+      <Keycap tone="danger">Esc</Keycap>
+      <span aria-hidden>{t("ui.pill.escCancel")}</span>
     </span>
   );
 }
@@ -229,7 +247,7 @@ export function Pill({
       )}
       <ModeTag>{local}</ModeTag>
       <SceneTag name={scene} />
-      <Keycaps keys={keys ?? "Esc"} />
+      <EscCancel />
     </>
   );
   return (
@@ -309,6 +327,7 @@ export function Pill({
           <span className="mono text-[11px] text-pill-muted">{readout ?? "00:00"}</span>
           <ModeTag>{local}</ModeTag>
           <SceneTag name={scene} />
+          <EscCancel />
           <button
             type="button"
             aria-label={t("ui.pill.stop")}
@@ -334,7 +353,13 @@ export function Pill({
           </span>
           <ModeTag>{local}</ModeTag>
           <SceneTag name={scene} />
-          <span className="mono text-[11px] text-pill-muted">{readout ?? "0.0 s"}</span>
+          {/* The current step's time; nothing when the caller has none to give (no fixed 0.0 s). */}
+          {readout !== undefined && (
+            <span className="mono text-[11px] text-pill-muted" data-testid="pill-stage-time">
+              {readout}
+            </span>
+          )}
+          <EscCancel />
         </>
       )}
       {state === "inserted" && (

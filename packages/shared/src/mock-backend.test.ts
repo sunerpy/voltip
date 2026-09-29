@@ -493,8 +493,14 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       phase: "processing",
       stage: "transcribing",
       started_at: T0 + MOCK_MIC_READY_MS + 3200,
+      stage_started_at: T0 + MOCK_MIC_READY_MS + 3200,
     });
     tick(MOCK_ASR_MS);
+    // Like the core: the run keeps its start, the step clock restarts (user feedback 2026-09-29).
+    expect(backend.peek().dictation.phase).toMatchObject({
+      started_at: T0 + MOCK_MIC_READY_MS + 3200,
+      stage_started_at: T0 + MOCK_MIC_READY_MS + 3200 + MOCK_ASR_MS,
+    });
     expect(backend.peek().dictation.phase).toMatchObject({
       phase: "processing",
       stage: "refining",
@@ -727,6 +733,7 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       phase: "processing",
       stage: "transcribing",
       started_at: T0 + MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * (MOCK_LIVE_SCRIPT.length + 3),
+      stage_started_at: T0 + MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * (MOCK_LIVE_SCRIPT.length + 3),
       preview,
     });
     tick(MOCK_ASR_MS);
@@ -1706,6 +1713,7 @@ describe("MockBackend output modes (docs/dictation.md §12)", () => {
       phase: "processing",
       stage: "finalizing",
       started_at: clock,
+      stage_started_at: clock,
       preview,
     });
     tick(MOCK_FINALIZE_MS);
@@ -1761,7 +1769,8 @@ describe("MockBackend output modes (docs/dictation.md §12)", () => {
     expect(backend.peek().dictation.phase).toEqual({
       phase: "processing",
       stage: "inserting",
-      started_at: clock,
+      started_at: clock - MOCK_FINALIZE_MS,
+      stage_started_at: clock,
     });
     tick(MOCK_FINALIZE_MS);
     expect(backend.peek().dictation.phase).toMatchObject({

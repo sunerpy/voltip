@@ -982,7 +982,8 @@ impl DictationEngine {
         self.take.finalize_started = Some(Instant::now());
         // The streaming modes wait for the flush first (§12); the whole take goes to the transcriber.
         let stage = if self.take.mode.is_streaming() { ProcessingStage::Finalizing } else { ProcessingStage::Transcribing };
-        Ok(vec![self.set_phase(DictationPhase::Processing { stage, started_at: now_ms(), preview })])
+        let started_at = now_ms();
+        Ok(vec![self.set_phase(DictationPhase::Processing { stage, started_at, stage_started_at: started_at, preview })])
     }
 
     /// Start the live decode worker for this session on a blocking thread (docs/dictation.md §11).
@@ -1094,12 +1095,12 @@ impl DictationEngine {
         }
     }
 
-    /// Move `Processing` to `stage` (nothing outside `Processing`).
+    /// Move `Processing` to `stage` (nothing outside `Processing`); the stage clock restarts.
     fn stage(&mut self, stage: ProcessingStage) -> Vec<Effect> {
         match &self.status.phase {
-            DictationPhase::Processing { stage: current, started_at, preview } if *current != stage => {
+            DictationPhase::Processing { stage: current, started_at, preview, .. } if *current != stage => {
                 let (started_at, preview) = (*started_at, preview.clone());
-                vec![self.set_phase(DictationPhase::Processing { stage, started_at, preview })]
+                vec![self.set_phase(DictationPhase::Processing { stage, started_at, stage_started_at: now_ms(), preview })]
             }
             _ => Vec::new(),
         }
@@ -1219,9 +1220,11 @@ impl DictationEngine {
         };
         let final_text = LiveText { committed: fin.committed.clone(), current: fin.tail.clone(), ..LiveText::default() }.preview();
         let mut effects = match &self.status.phase {
-            DictationPhase::Processing { stage, started_at, preview } if !final_text.is_empty() && preview.as_deref() != Some(final_text.as_str()) => {
-                let (stage, started_at) = (*stage, *started_at);
-                vec![self.set_phase(DictationPhase::Processing { stage, started_at, preview: Some(final_text) })]
+            DictationPhase::Processing { stage, started_at, stage_started_at, preview }
+                if !final_text.is_empty() && preview.as_deref() != Some(final_text.as_str()) =>
+            {
+                let (stage, started_at, stage_started_at) = (*stage, *started_at, *stage_started_at);
+                vec![self.set_phase(DictationPhase::Processing { stage, started_at, stage_started_at, preview: Some(final_text) })]
             }
             _ => Vec::new(),
         };
@@ -2307,6 +2310,29 @@ mod tests {
                 self.engine.on_internal(ev);
             }
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stage_change_restarts_the_stage_clock() {
+        // User feedback 2026-09-29: the pill's timer stood at 0.0 s while transcribing and
+        // polishing. The first step starts with the run; every new step restarts the step clock.
+        let mut r = happy();
+        r.engine.start().unwrap();
+        r.next().await;
+        let fx = r.engine.stop().unwrap();
+        let DictationPhase::Processing { started_at, stage_started_at, .. } = phase(&fx).clone() else { panic!("{fx:?}") };
+        assert_eq!(stage_started_at, started_at, "the first step starts with the run");
+        // Let the first step have begun a second ago, then move on.
+        if let DictationPhase::Processing { started_at, stage_started_at, .. } = &mut r.engine.status.phase {
+            *started_at -= 1000;
+            *stage_started_at -= 1000;
+        }
+        let fx = r.engine.stage(ProcessingStage::Refining);
+        let DictationPhase::Processing { stage, started_at: run, stage_started_at: step, .. } = phase(&fx).clone() else { panic!("{fx:?}") };
+        assert_eq!(stage, ProcessingStage::Refining);
+        assert_eq!(run, started_at - 1000, "the run keeps its start");
+        assert!(step >= started_at, "the new step's clock restarted: {step} < {started_at}");
+        assert!(r.engine.stage(ProcessingStage::Refining).is_empty(), "the same step changes nothing");
     }
 
     #[tokio::test(start_paused = true)]

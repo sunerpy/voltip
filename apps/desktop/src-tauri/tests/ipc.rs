@@ -1013,7 +1013,10 @@ fn overlay_pill_and_hotkey_edges_follow_the_dictation_contract() {
     assert_eq!(pill_for(&DictationPhase::Idle), None);
     assert_eq!(pill_for(&DictationPhase::Listening { started_at: 1, ready: true, live: None, locked: false }), Some("listening"));
     assert_eq!(pill_for(&DictationPhase::Listening { started_at: 1, ready: true, live: None, locked: true }), Some("listening"), "locked is still listening");
-    assert_eq!(pill_for(&DictationPhase::Processing { stage: voltip_core::ProcessingStage::Refining, started_at: 1, preview: None }), Some("processing"));
+    assert_eq!(
+        pill_for(&DictationPhase::Processing { stage: voltip_core::ProcessingStage::Refining, started_at: 1, stage_started_at: 1, preview: None }),
+        Some("processing")
+    );
     assert_eq!(pill_for(&DictationPhase::CANCELLED), Some("cancelled"));
     assert_eq!(pill_for(&DictationPhase::Failed { code: FailureCode::Unknown, message: "x".into(), text: None }), Some("error"));
     let done = DictationPhase::Done {

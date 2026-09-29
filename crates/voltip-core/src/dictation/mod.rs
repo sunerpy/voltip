@@ -208,6 +208,11 @@ pub enum DictationPhase {
         stage: ProcessingStage,
         /// Unix time in milliseconds when processing started.
         started_at: u64,
+        /// Unix time in milliseconds when `stage` began: the pill counts the current step from here
+        /// (user feedback 2026-09-29: its timer stood at 0.0 s while transcribing and polishing).
+        /// Equal to `started_at` for the first step; `0` from a core that did not send it.
+        #[serde(default)]
+        stage_started_at: u64,
         /// The live preview's text (`committed` + `current`) carried over from `Listening`, shown
         /// in place of「转写中…」until the final transcript arrives.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -404,15 +409,23 @@ mod tests {
         let json = serde_json::to_string(&streamed).unwrap();
         assert!(json.contains(r#""mode":"streaming_final","segments":[{"text":"你好。","start_ms":0,"end_ms":900}],"live_error":"flush: asr: x""#), "{json}");
         assert_eq!(serde_json::from_str::<DictationPhase>(&json).unwrap(), streamed);
-        let processing = DictationPhase::Processing { stage: ProcessingStage::Refining, started_at: 9, preview: None };
-        assert_eq!(serde_json::to_string(&processing).unwrap(), r#"{"phase":"processing","stage":"refining","started_at":9}"#);
-        let finalizing = DictationPhase::Processing { stage: ProcessingStage::Finalizing, started_at: 9, preview: Some("你好".into()) };
-        assert_eq!(serde_json::to_string(&finalizing).unwrap(), r#"{"phase":"processing","stage":"finalizing","started_at":9,"preview":"你好"}"#);
+        let processing = DictationPhase::Processing { stage: ProcessingStage::Refining, started_at: 9, stage_started_at: 9, preview: None };
+        assert_eq!(serde_json::to_string(&processing).unwrap(), r#"{"phase":"processing","stage":"refining","started_at":9,"stage_started_at":9}"#);
+        let finalizing = DictationPhase::Processing { stage: ProcessingStage::Finalizing, started_at: 9, stage_started_at: 9, preview: Some("你好".into()) };
+        assert_eq!(
+            serde_json::to_string(&finalizing).unwrap(),
+            r#"{"phase":"processing","stage":"finalizing","started_at":9,"stage_started_at":9,"preview":"你好"}"#
+        );
         assert_eq!(serde_json::from_str::<ProcessingStage>(r#""finalizing""#).unwrap(), ProcessingStage::Finalizing);
+        // A core that did not send the step's start: 0, and the webview falls back to `started_at`.
         let legacy: DictationPhase = serde_json::from_str(r#"{"phase":"processing","stage":"refining","started_at":9}"#).unwrap();
-        assert_eq!(legacy, processing);
-        let previewing = DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: 9, preview: Some("你好。今天".into()) };
-        assert_eq!(serde_json::to_string(&previewing).unwrap(), r#"{"phase":"processing","stage":"transcribing","started_at":9,"preview":"你好。今天"}"#);
+        assert_eq!(legacy, DictationPhase::Processing { stage: ProcessingStage::Refining, started_at: 9, stage_started_at: 0, preview: None });
+        let previewing =
+            DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: 9, stage_started_at: 9, preview: Some("你好。今天".into()) };
+        assert_eq!(
+            serde_json::to_string(&previewing).unwrap(),
+            r#"{"phase":"processing","stage":"transcribing","started_at":9,"stage_started_at":9,"preview":"你好。今天"}"#
+        );
         assert_eq!(serde_json::from_str::<DictationPhase>(&serde_json::to_string(&previewing).unwrap()).unwrap(), previewing);
         let failed = DictationPhase::Failed { code: FailureCode::Asr, message: "x".into(), text: None };
         assert!(failed.is_terminal());

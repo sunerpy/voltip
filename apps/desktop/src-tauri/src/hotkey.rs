@@ -613,7 +613,7 @@ mod tests {
     fn the_cancel_key_is_held_only_while_a_take_can_be_cancelled() {
         use voltip_core::ProcessingStage;
         let listening = DictationPhase::Listening { started_at: 0, ready: true, locked: false, live: None };
-        let processing = DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: 0, preview: None };
+        let processing = DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: 0, stage_started_at: 0, preview: None };
         assert!(cancel_key_wanted(&listening));
         assert!(cancel_key_wanted(&processing));
         assert!(!cancel_key_wanted(&DictationPhase::Idle));
