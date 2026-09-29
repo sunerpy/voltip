@@ -30,15 +30,18 @@ pub mod dsp;
 mod fake;
 pub mod live;
 mod meter;
+pub mod mix;
+pub mod pcm;
 mod recorder;
 pub mod recording;
 
-pub use backend::{AudioDevice, Backend, CpalBackend, SampleCallback, StreamHandle};
+pub use backend::{AudioDevice, Backend, CpalBackend, SampleCallback, StreamHandle, SystemAudio};
 pub use dsp::SampleChunk;
 #[cfg(any(test, feature = "test-support"))]
-pub use fake::{FAKE_DEFAULT_ID, FAKE_USB_ID, FakeBackend, FakeFormat, Signal};
+pub use fake::{FAKE_DEFAULT_ID, FAKE_SPEAKERS_ID, FAKE_USB_ID, FakeBackend, FakeFormat, Signal};
 pub use live::{DEFAULT_LIVE_BUFFER_MS, DEFAULT_LIVE_RATE_HZ, LiveConsumer, LiveTapConfig, StreamResampler};
 pub use meter::{DEFAULT_FRAMES_PER_SECOND, DEFAULT_PEAK_HOLD_MS, LevelFrame, Meter, MeterConfig};
+pub use pcm::{DEFAULT_PCM_BUFFER_MS, DEFAULT_PCM_RATE_HZ, PcmConsumer, PcmStreamConfig};
 pub use recorder::{DEFAULT_MAX_DURATION, DEFAULT_TARGET_RATE_HZ, Recorder, RecorderConfig};
 pub use recording::{MIN_SPEECH_MS, Recording, SILENCE_PEAK_DBFS};
 
@@ -60,12 +63,22 @@ pub enum AudioError {
     /// The recorder could not convert the device's rate to the requested one.
     #[error("resample: {0}")]
     Resample(String),
+    /// The computer's sound cannot be recorded here (docs/dictation.md §22); the reason.
+    #[error("system audio capture unavailable: {0}")]
+    SystemAudioUnavailable(String),
 }
 
 /// Capture devices as the settings page lists them: the default device first, then the rest in
 /// the host's enumeration order. A host without any capture device yields `Ok(vec![])`.
 pub fn list_input_devices() -> Result<Vec<AudioDevice>, AudioError> {
     CpalBackend::new().input_devices()
+}
+
+/// Output devices whose sound can be recorded (docs/dictation.md §22), default first, and whether
+/// the computer's sound can be recorded here at all.
+pub fn list_output_devices() -> (SystemAudio, Result<Vec<AudioDevice>, AudioError>) {
+    let backend = CpalBackend::new();
+    (backend.system_audio(), backend.output_devices())
 }
 
 #[cfg(test)]

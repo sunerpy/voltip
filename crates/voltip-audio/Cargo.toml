@@ -24,5 +24,10 @@ serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
+# Linux: the computer's sound is recorded from the PulseAudio (or PipeWire's PulseAudio server)
+# monitor source of an output device (docs/dictation.md §22). The microphone stays on ALSA.
+[target.'cfg(target_os = "linux")'.dependencies]
+cpal = { workspace = true, features = ["pulseaudio"] }
+
 [dev-dependencies]
 serde_json.workspace = true

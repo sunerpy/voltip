@@ -8,13 +8,15 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use crate::AudioError;
-use crate::backend::{AudioDevice, Backend, SampleCallback, StreamHandle};
+use crate::backend::{AudioDevice, Backend, SampleCallback, StreamHandle, SystemAudio};
 use crate::dsp::SampleChunk;
 
 /// Id of the fake default device.
 pub const FAKE_DEFAULT_ID: &str = "fake:default";
 /// Id of the fake secondary device.
 pub const FAKE_USB_ID: &str = "fake:usb-mic";
+/// Id of the fake output device (docs/dictation.md §22: the computer's sound).
+pub const FAKE_SPEAKERS_ID: &str = "fake:speakers";
 
 /// Sample format the fake stream delivers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,6 +74,14 @@ pub struct FakeBackend {
     enumeration_error: Option<AudioError>,
     opened: Mutex<Vec<Option<String>>>,
     active: Arc<AtomicUsize>,
+    /// The computer's sound (docs/dictation.md §22): its output devices, whether it can be
+    /// recorded, what it plays and how.
+    outputs: Vec<AudioDevice>,
+    system: SystemAudio,
+    output_signal: Signal,
+    output_rate_hz: u32,
+    output_channels: u16,
+    opened_outputs: Mutex<Vec<Option<String>>>,
 }
 
 impl Default for FakeBackend {
@@ -106,7 +116,37 @@ impl FakeBackend {
             enumeration_error: None,
             opened: Mutex::new(Vec::new()),
             active: Arc::new(AtomicUsize::new(0)),
+            outputs: vec![AudioDevice {
+                id: FAKE_SPEAKERS_ID.into(),
+                name: "Fake Speakers".into(),
+                is_default: true,
+                sample_rate_hz: Some(44_100),
+                channels: Some(2),
+            }],
+            system: SystemAudio::Available,
+            output_signal: Signal::Sine { frequency_hz: 440.0, amplitude: 0.4 },
+            output_rate_hz: 44_100,
+            output_channels: 2,
+            opened_outputs: Mutex::new(Vec::new()),
         }
+    }
+
+    /// What the fake output device plays (the computer's sound).
+    pub fn with_output_signal(mut self, signal: Signal) -> Self {
+        self.output_signal = signal;
+        self
+    }
+
+    /// The computer's sound cannot be recorded here, for `why`: no output devices either.
+    pub fn without_system_audio(mut self, why: SystemAudio) -> Self {
+        self.system = why;
+        self.outputs.clear();
+        self
+    }
+
+    /// The `id` argument of every successful `open_output_capture`, in order.
+    pub fn opened_outputs(&self) -> Vec<Option<String>> {
+        self.opened_outputs.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
     /// Replace the device list (the default flag is taken from the entries).
@@ -192,7 +232,7 @@ impl Backend for FakeBackend {
         self.default_id.clone()
     }
 
-    fn open_input(&self, id: Option<&str>, mut on_samples: SampleCallback) -> Result<Box<dyn StreamHandle>, AudioError> {
+    fn open_input(&self, id: Option<&str>, on_samples: SampleCallback) -> Result<Box<dyn StreamHandle>, AudioError> {
         if let Some(err) = &self.open_error {
             return Err(err.clone());
         }
@@ -202,11 +242,42 @@ impl Backend for FakeBackend {
             _ => {}
         }
         self.opened.lock().unwrap_or_else(PoisonError::into_inner).push(id.map(str::to_string));
+        Ok(Box::new(self.play((self.sample_rate_hz, self.channels), self.signal, on_samples)))
+    }
 
+    fn output_devices(&self) -> Result<Vec<AudioDevice>, AudioError> {
+        Ok(self.outputs.clone())
+    }
+
+    fn default_output(&self) -> Option<String> {
+        self.outputs.iter().find(|d| d.is_default).map(|d| d.id.clone())
+    }
+
+    fn system_audio(&self) -> SystemAudio {
+        self.system.clone()
+    }
+
+    fn open_output_capture(&self, id: Option<&str>, on_samples: SampleCallback) -> Result<Box<dyn StreamHandle>, AudioError> {
+        if !self.system.is_available() {
+            return Err(AudioError::SystemAudioUnavailable(self.system.describe()));
+        }
+        match id {
+            Some(id) if !self.outputs.iter().any(|d| d.id == id) => return Err(AudioError::DeviceNotFound(id.to_string())),
+            None if self.outputs.is_empty() => return Err(AudioError::NoDevice),
+            _ => {}
+        }
+        self.opened_outputs.lock().unwrap_or_else(PoisonError::into_inner).push(id.map(str::to_string));
+        Ok(Box::new(self.play((self.output_rate_hz, self.output_channels), self.output_signal, on_samples)))
+    }
+}
+
+impl FakeBackend {
+    /// A thread delivering `signal` at `(rate, channels)` in the configured format and chunk size.
+    fn play(&self, (rate, channels): (u32, u16), signal: Signal, mut on_samples: SampleCallback) -> FakeStream {
         let stop = Arc::new(AtomicBool::new(false));
         let active = Arc::clone(&self.active);
         active.fetch_add(1, Ordering::SeqCst);
-        let (rate, channels, format, signal) = (self.sample_rate_hz, self.channels, self.format, self.signal);
+        let format = self.format;
         let samples_per_chunk = self.chunk_frames * usize::from(channels.max(1));
         // Chunks are paced at a fixed short interval: a throttle so the test thread does not spin,
         // not a wait for anything.
@@ -249,7 +320,7 @@ impl Backend for FakeBackend {
             }
             active.fetch_sub(1, Ordering::SeqCst);
         });
-        Ok(Box::new(FakeStream { stop, thread: Some(thread) }))
+        FakeStream { stop, thread: Some(thread) }
     }
 }
 
@@ -350,6 +421,34 @@ mod tests {
             drop(handle);
             assert!(!backend.is_running(), "{format:?}: drop joins the generator thread");
         }
+    }
+
+    /// docs/dictation.md §22: the fake speakers play their own signal at their own rate, and a
+    /// machine that cannot record its output says why.
+    #[test]
+    fn the_output_capture_plays_the_output_signal_or_says_why_not() {
+        let backend = FakeBackend::new().with_output_signal(Signal::Constant(0.25)).with_format(FakeFormat::F32);
+        assert_eq!(backend.default_output().as_deref(), Some(FAKE_SPEAKERS_ID));
+        assert_eq!(backend.output_devices().unwrap().len(), 1);
+        let (tx, rx) = mpsc::channel::<(f32, u32, u16)>();
+        let handle = backend
+            .open_output_capture(
+                None,
+                Box::new(move |chunk, rate, channels| {
+                    if let SampleChunk::F32(s) = chunk {
+                        let _ = tx.send((s[0], rate, channels));
+                    }
+                }),
+            )
+            .unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), (0.25, 44_100, 2));
+        drop(handle);
+        assert_eq!(backend.opened_outputs(), vec![None]);
+        assert!(matches!(backend.open_output_capture(Some("fake:none"), Box::new(|_, _, _| {})).map(drop), Err(AudioError::DeviceNotFound(_))));
+        let old = FakeBackend::new().without_system_audio(SystemAudio::MacosTooOld { version: "14.5".into() });
+        assert!(old.output_devices().unwrap().is_empty());
+        let refused = old.open_output_capture(None, Box::new(|_, _, _| {})).map(drop).unwrap_err();
+        assert!(matches!(refused, AudioError::SystemAudioUnavailable(ref why) if why.contains("14.5")), "{refused:?}");
     }
 
     #[test]
