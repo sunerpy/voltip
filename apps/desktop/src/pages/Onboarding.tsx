@@ -638,14 +638,14 @@ export function Onboarding({ step }: OnboardingProps) {
           <span className="mono min-w-0 truncate text-[11px] text-fg-subtle">
             {withMethod(platformText, method ?? t("onboarding.backendNotReportedLong"))}
           </span>
-          <div className="flex shrink-0 items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             {current === 1 && permissionHint !== undefined && (
               <span className="text-[12px] text-fg-muted" data-testid="permission-hint">
                 {permissionHint}
               </span>
             )}
             {current === 3 && engineProblem !== undefined && (
-              <span className="max-w-[240px] truncate text-[11px] text-fg-muted">
+              <span className="min-w-0 truncate text-[11px] text-fg-muted" title={engineProblem}>
                 {engineProblem}
               </span>
             )}

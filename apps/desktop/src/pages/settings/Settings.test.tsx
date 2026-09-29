@@ -255,7 +255,8 @@ describe("Settings · 对话框", () => {
   it("regression: the settings dialog is fluid (no fixed 640 px column)", async () => {
     renderApp({ path: "/settings/appearance" });
     const dialog = await screen.findByRole("dialog", { name: "设置" });
-    expect(dialog.className).toMatch(/w-\[min\(960px,calc\(100vw-48px\)\)\]/);
+    // Plan 1.6 (user feedback 2026-09-29): wider, so help text fits on one line.
+    expect(dialog.className).toMatch(/w-\[min\(1120px,calc\(100vw-48px\)\)\]/);
     expect(dialog.className).toMatch(/h-\[min\(660px,calc\(100vh-48px\)\)\]/);
     const nav = within(dialog).getByRole("tablist", { name: "设置分组" }).closest("nav");
     expect(nav?.className).toMatch(/w-\[200px\]/);
@@ -265,7 +266,8 @@ describe("Settings · 对话框", () => {
       /w-\[640px\]|w-\[200px\]/.test(el.className),
     );
     expect(fixed).toHaveLength(0);
-    expect(content.firstElementChild?.className).toMatch(/max-w-\[720px\]/);
+    // The content takes the dialog's width: no 720 px column inside it.
+    expect(content.firstElementChild?.className ?? "").not.toMatch(/max-w-\[/);
   });
 
   it("regression: Esc while recording cancels the recording without closing the dialog", async () => {

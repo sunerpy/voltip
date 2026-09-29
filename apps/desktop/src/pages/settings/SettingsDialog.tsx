@@ -85,7 +85,7 @@ export function SettingsDialog({ section }: { section: SettingsSection }) {
         onClick={(e) => {
           e.stopPropagation();
         }}
-        className="flex h-[min(660px,calc(100vh-48px))] w-[min(960px,calc(100vw-48px))] overflow-hidden rounded-14 bg-surface hairline shadow-win">
+        className="flex h-[min(660px,calc(100vh-48px))] w-[min(1120px,calc(100vw-48px))] overflow-hidden rounded-14 bg-surface hairline shadow-win">
         <nav className="flex w-[200px] shrink-0 flex-col border-r border-border bg-nav py-3">
           <div className="px-4 pb-3">
             <h2 id={TITLE_ID} className="text-[14px] font-semibold text-fg">
@@ -157,7 +157,7 @@ export function SettingsDialog({ section }: { section: SettingsSection }) {
             aria-labelledby={tabId(section)}
             className="min-h-0 flex-1 overflow-auto p-6"
             data-testid="settings-content">
-            <div className="max-w-[720px]">
+            <div>
               {section === "general" && <General />}
               {section === "appearance" && <Appearance />}
               {section === "hotkey" && <Hotkey />}

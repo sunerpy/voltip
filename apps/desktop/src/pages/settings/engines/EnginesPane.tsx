@@ -200,7 +200,6 @@ function RecognitionOptions() {
               });
             }}
             options={languageOptions(t)}
-            className="w-44"
             // Language names are endonyms (中文 · zh, 日本語 · ja) in every locale.
             data-endonyms=""
           />

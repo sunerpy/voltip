@@ -106,7 +106,7 @@ function SessionCapabilities({ capabilities }: { capabilities: HotkeyCapabilitie
           label={t("settings.hotkey.capabilities.command")}
           help={t("settings.hotkey.capabilities.commandHelp")}
           data-testid="capability-command">
-          <div className="flex max-w-[360px] items-center gap-2">
+          <div className="flex max-w-full min-w-0 items-center gap-2">
             <code className="mono truncate text-[12px] text-fg" title={capabilities.toggle_command}>
               {capabilities.toggle_command}
             </code>
@@ -118,8 +118,8 @@ function SessionCapabilities({ capabilities }: { capabilities: HotkeyCapabilitie
               }}
             />
           </div>
-          <div className="flex max-w-[360px] items-center gap-2">
-            <span className="text-[11px] text-fg-subtle">
+          <div className="flex max-w-full min-w-0 items-center gap-2">
+            <span className="shrink-0 text-[11px] text-fg-subtle">
               {t("settings.hotkey.capabilities.editCommand")}
             </span>
             <code
@@ -224,7 +224,7 @@ function SoloKeyRow({
         offered.length === 0 ? (
           t("settings.hotkey.solo.unavailable")
         ) : status.solo_error !== undefined || notes.length > 0 ? (
-          <span className="flex max-w-[360px] flex-col gap-1" data-testid="solo-key-notes">
+          <span className="flex flex-col gap-1" data-testid="solo-key-notes">
             {status.solo_error !== undefined && (
               <span role="alert" className="text-danger">
                 {status.solo_error}
@@ -244,7 +244,6 @@ function SoloKeyRow({
         )}
         <Select
           size="sm"
-          className="w-48"
           aria-label={t("settings.hotkey.solo.select")}
           options={options}
           value={soloKey ?? "off"}
