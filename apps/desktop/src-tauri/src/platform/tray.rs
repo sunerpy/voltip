@@ -111,7 +111,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, locale: TrayLocale, updater: bool
             if let Some(action) = TrayAction::from_id(id) {
                 run(app, action);
             } else if let Some(action) = TrayPolishAction::from_id(id) {
-                polish(app, action);
+                run_polish(app, action);
             }
         })
         .on_tray_icon_event(|tray, event| {
@@ -131,7 +131,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, locale: TrayLocale, updater: bool
 /// bridge like the webview's own `settings_set_engines`; the core's `settings` event redraws the
 /// menu. The OS flips a check item on its own when clicked, so the menu is also redrawn from the
 /// settings as they are (choosing the preset in use changes nothing, and nothing else redraws it).
-fn polish<R: Runtime>(app: &AppHandle<R>, action: TrayPolishAction<'_>) {
+fn run_polish<R: Runtime>(app: &AppHandle<R>, action: TrayPolishAction<'_>) {
     let Some(bridge) = app.try_state::<Bridge>() else { return };
     let bridge = bridge.inner().clone();
     let state = bridge.state();
@@ -229,11 +229,10 @@ fn sync<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, force: bool) {
         next
     };
     match build_menu(app, &next) {
-        Ok(menu) => {
-            if let Err(e) = tray.set_menu(Some(menu)) {
-                tracing::warn!(error = %e, "tray menu update failed");
-            }
-        }
+        Ok(menu) => match tray.set_menu(Some(menu)) {
+            Ok(()) => tracing::info!(?locale, polish = next.polish.enabled, "tray menu rebuilt"),
+            Err(e) => tracing::warn!(error = %e, "tray menu update failed"),
+        },
         Err(e) => tracing::warn!(error = %e, "tray menu rebuild failed"),
     }
 }

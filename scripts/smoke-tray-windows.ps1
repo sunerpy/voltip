@@ -15,7 +15,10 @@
        (tray-menu.png);
     4. Open shows the main window; Settings shows it with the Settings dialog open (found in the
        webview's accessibility tree, settings.png); Check for Updates asks the update source and
-       gets an answer (update.png); Quit ends the process with exit code 0.
+       gets an answer (update.png); the AI Polish submenu lists its switch and every preset with
+       the ones in use checked, choosing a preset or the switch reaches the core and the menu is
+       rebuilt from what it saved, and choosing the preset in use keeps it checked
+       (tray-polish.png, docs/dictation.md section 21); Quit ends the process with exit code 0.
   Mouse input is real (SetCursorPos + mouse_event). The popup menu is read through Win32
   (MN_GETHMENU, GetMenuStringW, GetMenuItemRect): UI Automation does not list the entries of the
   app's menu, which the screen shows. Each step has a timeout and the first failure stops the run.
@@ -51,7 +54,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
-public class VoltipMenuEntry { public string Name; public int X; public int Y; }
+public class VoltipMenuEntry { public string Name; public int X; public int Y; public bool Checked; }
 public class VoltipMenu {
   public IntPtr Hwnd;
   public int Left, Top, Right, Bottom;
@@ -65,11 +68,18 @@ public static class VoltipTray {
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetMenuStringW(IntPtr menu, uint item, StringBuilder text, int max, uint flags);
   [DllImport("user32.dll")] static extern bool GetMenuItemRect(IntPtr hwnd, IntPtr menu, uint item, out RECT rect);
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
-  const uint MN_GETHMENU = 0x01E1, MF_BYPOSITION = 0x0400;
+  [DllImport("user32.dll")] static extern uint GetMenuState(IntPtr menu, uint item, uint flags);
+  [DllImport("user32.dll")] static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
+  const uint MN_GETHMENU = 0x01E1, MF_BYPOSITION = 0x0400, MF_CHECKED = 0x0008, KEYUP = 0x0002;
   // The visible popup menu (window class #32768) and its entries with their centres on screen;
   // separators have no text and are left out. null while no such menu is up.
   public static VoltipMenu FindOpenMenu() {
-    VoltipMenu found = null;
+    var all = FindOpenMenus();
+    return all.Count == 0 ? null : all[0];
+  }
+  // Every visible popup menu, topmost first (an open submenu is its own #32768 window).
+  public static List<VoltipMenu> FindOpenMenus() {
+    var found = new List<VoltipMenu>();
     EnumWindows((hwnd, _) => {
       var cls = new StringBuilder(64);
       GetClassNameW(hwnd, cls, cls.Capacity);
@@ -85,13 +95,22 @@ public static class VoltipTray {
         if (GetMenuStringW(menu, i, text, text.Capacity, MF_BYPOSITION) <= 0) continue;
         RECT r;
         if (!GetMenuItemRect(IntPtr.Zero, menu, i, out r)) continue;
-        open.Entries.Add(new VoltipMenuEntry { Name = text.ToString(), X = (r.Left + r.Right) / 2, Y = (r.Top + r.Bottom) / 2 });
+        bool on = (GetMenuState(menu, i, MF_BYPOSITION) & MF_CHECKED) != 0;
+        open.Entries.Add(new VoltipMenuEntry { Name = text.ToString(), X = (r.Left + r.Right) / 2, Y = (r.Top + r.Bottom) / 2, Checked = on });
       }
-      if (open.Entries.Count == 0) return true;
-      found = open;
-      return false;
+      if (open.Entries.Count > 0) found.Add(open);
+      return true;
     }, IntPtr.Zero);
     return found;
+  }
+  // Esc twice: closes a submenu and the menu under it.
+  public static void Escape() {
+    for (int i = 0; i < 2; i++) {
+      keybd_event(0x1B, 0, 0, UIntPtr.Zero);
+      System.Threading.Thread.Sleep(40);
+      keybd_event(0x1B, 0, KEYUP, UIntPtr.Zero);
+      System.Threading.Thread.Sleep(120);
+    }
   }
   delegate bool EnumProc(IntPtr hwnd, IntPtr lparam);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
@@ -226,6 +245,28 @@ function Click-MenuItem($menu, [string] $name) {
   throw "smoke-tray-windows: no menu entry '$name'"
 }
 
+# The AI Polish submenu: its entry clicked in the tray menu, then the popup that lists the switch.
+function Open-PolishMenu {
+  $opened = Open-TrayMenu
+  Click-MenuItem $opened $polishLabel
+  return Wait-For {
+    foreach ($m in [VoltipTray]::FindOpenMenus()) {
+      if (@($m.Entries | Where-Object { $_.Name -eq $toggleLabel }).Count -gt 0) { return $m }
+    }
+  } $StepTimeoutSec 'the AI Polish submenu'
+}
+
+# The checked entries of the submenu once the menu shows `$want` (rebuilt from the core's settings
+# after a choice): the submenu is opened, read and closed until it does.
+function Wait-PolishChecked([string[]] $want, [string] $what) {
+  return Wait-For {
+    $sub = Open-PolishMenu
+    $checked = @($sub.Entries | Where-Object { $_.Checked } | ForEach-Object { $_.Name })
+    [VoltipTray]::Escape()
+    if (($checked -join "`n") -eq ($want -join "`n")) { return ,$checked }
+  } $StepTimeoutSec $what
+}
+
 function Count-Near($bitmap, [int[]] $rgb, [int] $tolerance) {
   $n = 0
   for ($y = 0; $y -lt $bitmap.Height; $y++) {
@@ -264,11 +305,19 @@ try {
   $dots = [string][char]0x2026
   $settingsZh = U 0x8BBE 0x7F6E
   $labels = if ($zh) {
-    @("$(U 0x6253 0x5F00) Voltip", "$settingsZh$dots", "$(U 0x68C0 0x67E5 0x66F4 0x65B0)$dots", "$(U 0x9000 0x51FA) Voltip")
+    @("$(U 0x6253 0x5F00) Voltip", "AI $(U 0x6DA6 0x8272)", "$settingsZh$dots", "$(U 0x68C0 0x67E5 0x66F4 0x65B0)$dots", "$(U 0x9000 0x51FA) Voltip")
   } else {
-    @('Open Voltip', "Settings$dots", "Check for Updates$dots", 'Quit Voltip')
+    @('Open Voltip', 'AI Polish', "Settings$dots", "Check for Updates$dots", 'Quit Voltip')
   }
-  $expected = @($labels | Where-Object { $updater -or $_ -ne $labels[2] })
+  $openLabel, $polishLabel, $settingsLabel, $updateLabel, $quitLabel = $labels
+  $expected = @($labels | Where-Object { $updater -or $_ -ne $updateLabel })
+  # The AI Polish submenu: the switch, then the built-in presets (a fresh profile has no custom one).
+  $toggleLabel = if ($zh) { "$(U 0x542F 0x7528) AI $(U 0x6DA6 0x8272)" } else { 'Enable AI Polish' }
+  $presetLabels = if ($zh) {
+    @("$(U 0x6821 0x5BF9)", "$(U 0x63D0 0x793A 0x8BCD 0x4F18 0x5316)", "$(U 0x610F 0x56FE 0x6574 0x7406)", "$(U 0x53E3 0x8BED 0x804A 0x5929)", "$(U 0x4E2D 0x82F1 0x4E92 0x8BD1)", "$(U 0x8981 0x70B9 0x7EAA 0x8981)", "$(U 0x53EA 0x52A0 0x6807 0x70B9)", "$(U 0x4E66 0x9762 0x8BED)")
+  } else {
+    @('Proofread', 'Prompt optimizer', 'Clarify intent', 'Casual chat', "Chinese $(U 0x21C4) English", 'Key points', 'Punctuation only', 'Formal')
+  }
   [void][VoltipTray]::PostMessageW($hwnd, [VoltipTray]::WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero)
   Wait-For { -not [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'the window to hide' | Out-Null
   Note 'main window hidden to the tray'
@@ -291,7 +340,7 @@ try {
   if (($names -join "`n") -ne ($expected -join "`n")) { throw "smoke-tray-windows: menu is '$($names -join ' | ')', expected '$($expected -join ' | ')'" }
 
   # 4a. Open.
-  Click-MenuItem $opened $expected[0]
+  Click-MenuItem $opened $openLabel
   Wait-For { (Log-Text) -match 'tray menu action=Open' } $StepTimeoutSec 'the Open entry in the log' | Out-Null
   Wait-For { [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'Open to show the window' | Out-Null
   Note 'Open: main window shown'
@@ -300,7 +349,7 @@ try {
 
   # 4b. Settings: the window with the Settings dialog (the webview's role=dialog, named by its title).
   $opened = Open-TrayMenu
-  Click-MenuItem $opened $expected[1]
+  Click-MenuItem $opened $settingsLabel
   Wait-For { (Log-Text) -match 'tray menu action=Settings' } $StepTimeoutSec 'the Settings entry in the log' | Out-Null
   Wait-For { [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'Settings to show the window' | Out-Null
   $window = $A::FromHandle($hwnd)
@@ -316,7 +365,7 @@ try {
   # 4c. Check for Updates: the webview asks the update source and gets an answer.
   if ($updater) {
     $opened = Open-TrayMenu
-    Click-MenuItem $opened $expected[2]
+    Click-MenuItem $opened $updateLabel
     Wait-For { (Log-Text) -match 'tray menu action=CheckUpdate' } $StepTimeoutSec 'the Check for Updates entry in the log' | Out-Null
     $answer = Wait-For { if ((Log-Text) -match '(no update available|update available)[^\r\n]*') { $Matches[0] } } 60 'the update check to answer'
     Wait-For { [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'Check for Updates to show the window' | Out-Null
@@ -324,9 +373,40 @@ try {
     Note "Check for Updates: $answer"
   }
 
-  # 4d. Quit.
+  # 4d. AI Polish (docs/dictation.md section 21): the switch and every preset, the ones in use
+  # checked; each choice goes through the core, and the menu is rebuilt from what it saved.
+  $sub = Open-PolishMenu
+  (Save-Rect $sub.Left $sub.Top ($sub.Right - $sub.Left) ($sub.Bottom - $sub.Top) 'tray-polish.png').Dispose()
+  $names = @($sub.Entries | ForEach-Object { $_.Name })
+  $want = @($toggleLabel) + $presetLabels
+  Note "AI Polish: $($names -join ' | ')"
+  if (($names -join "`n") -ne ($want -join "`n")) { throw "smoke-tray-windows: the AI Polish submenu is '$($names -join ' | ')', expected '$($want -join ' | ')'" }
+  $checked = @($sub.Entries | Where-Object { $_.Checked } | ForEach-Object { $_.Name })
+  if (($checked -join "`n") -ne (@($toggleLabel, $presetLabels[0]) -join "`n")) { throw "smoke-tray-windows: checked '$($checked -join ' | ')', expected the switch and the first preset" }
+  Click-MenuItem $sub $presetLabels[1]
+  Wait-For { (Log-Text) -match 'tray menu polish action=Preset\("prompt"\)' } $StepTimeoutSec 'the preset entry in the log' | Out-Null
+  Wait-PolishChecked @($toggleLabel, $presetLabels[1]) 'the second preset checked' | Out-Null
+  Note "AI Polish: chose '$($presetLabels[1])'"
+  # The preset in use again: the OS unchecks a clicked check item; the menu must show it checked.
+  $sub = Open-PolishMenu
+  Click-MenuItem $sub $presetLabels[1]
+  Wait-PolishChecked @($toggleLabel, $presetLabels[1]) 'the preset in use still checked' | Out-Null
+  $sub = Open-PolishMenu
+  Click-MenuItem $sub $toggleLabel
+  Wait-For { (Log-Text) -match 'tray menu polish action=Toggle' } $StepTimeoutSec 'the switch in the log' | Out-Null
+  Wait-PolishChecked @($presetLabels[1]) 'the switch off' | Out-Null
+  Note 'AI Polish: switched off'
+  # Leave the profile as it was found: the switch on, the first preset.
+  $sub = Open-PolishMenu
+  Click-MenuItem $sub $toggleLabel
+  Wait-PolishChecked @($toggleLabel, $presetLabels[1]) 'the switch on again' | Out-Null
+  $sub = Open-PolishMenu
+  Click-MenuItem $sub $presetLabels[0]
+  Wait-PolishChecked @($toggleLabel, $presetLabels[0]) 'the defaults back' | Out-Null
+
+  # 4e. Quit.
   $opened = Open-TrayMenu
-  Click-MenuItem $opened $expected[-1]
+  Click-MenuItem $opened $quitLabel
   if (-not $app.WaitForExit($StepTimeoutSec * 1000)) { throw 'smoke-tray-windows: Quit did not end the process' }
   if (-not ((Log-Text) -match 'tray menu action=Quit')) { throw 'smoke-tray-windows: the process ended without the Quit entry in the log' }
   Note "Quit: process exited with $($app.ExitCode)"
