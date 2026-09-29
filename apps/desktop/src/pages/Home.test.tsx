@@ -140,6 +140,18 @@ describe("Home page", () => {
     ).toBeInTheDocument();
   });
 
+  // Layout check 2026-09-29 (plan 2.3, 960 px): with the preset chip the ready bar drew its chips
+  // over the title (「可以开」); the title keeps its width and the chips wrap instead.
+  it("regression: the ready title never shrinks under the chips; a narrow window wraps them", async () => {
+    renderApp();
+    await screen.findByText("可以开始听写");
+    const title = screen.getByText("可以开始听写");
+    expect(title).toHaveClass("shrink-0", "whitespace-nowrap");
+    expect(title.parentElement).toHaveClass("min-w-[10rem]", "flex-1");
+    expect(title.parentElement).not.toHaveClass("min-w-0");
+    expect(screen.getByTestId("home-readiness")).toHaveClass("flex-wrap");
+  });
+
   it("regression: a stat tile's note reads whole on hover when the default window cuts it", async () => {
     // The 1152 px check (the default window, plan 1.2): 「Keeps the newest 500」 was cut with no way
     // to read it.

@@ -462,6 +462,7 @@ describe("Settings · 场景 · built-in scenes (docs/dictation.md section 18.10
     expect(within(card(pane, 0)).getByRole("button", { name: "删除 聊天" })).toBeInTheDocument();
     const legal = within(pane).getByRole("article", { name: "法律" });
     expect(within(legal).getByTestId("scene-needs-apps")).toHaveTextContent("添加应用后生效");
+    expect(within(legal).getByTestId("scene-match")).not.toHaveTextContent("任何窗口");
     expect(within(legal).getByTestId("scene-summary")).toHaveTextContent(
       "AI 预设：校对 · 有补充要求",
     );

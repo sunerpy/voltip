@@ -45,6 +45,8 @@ describe("AI 模型 · 预设 (docs/dictation.md section 21)", () => {
       "书面语",
     ]);
     expect(cards[0]).toHaveAttribute("aria-selected", "true");
+    // Each card is named by its preset (the description and the button follow).
+    expect(within(builtin).getByRole("option", { name: "提示词优化" })).toBe(cards[1]);
     expect(within(cards[0] as HTMLElement).getByText("使用中")).toBeInTheDocument();
     expect(within(presets).getByTestId("presets-current")).toHaveTextContent("当前：校对");
     expect(within(presets).getByText("把口述的需求改写成清晰的 AI 提示词。")).toBeInTheDocument();

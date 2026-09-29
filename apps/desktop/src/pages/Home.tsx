@@ -278,8 +278,10 @@ export function Home() {
           size={10}
           pulse={dictation.listening || dictation.processing}
         />
-        <div className="flex min-w-0 flex-1 items-baseline gap-2">
-          <span className="text-[15px] font-medium whitespace-nowrap text-fg">
+        {/* At least the title's width: a narrow window wraps the chips instead of drawing them over
+            the title (960 px with the preset chip, 2026-09-29). */}
+        <div className="flex min-w-[10rem] flex-1 items-baseline gap-2">
+          <span className="shrink-0 text-[15px] font-medium whitespace-nowrap text-fg">
             {!ready
               ? t("home.status.notReady")
               : dictation.listening

@@ -135,18 +135,21 @@ function SceneCard({
             </span>
           </Chip>
         ))}
-        <span className="text-[12px] text-fg-muted">
-          {scene.match.title_contains.length === 0 ? (
-            t("settings.scenes.anyWindow")
-          ) : (
-            <>
-              {t("settings.scenes.titleKeywords")}{" "}
-              <span className="text-fg" data-user-text>
-                {scene.match.title_contains.join(" · ")}
-              </span>
-            </>
-          )}
-        </span>
+        {/* A scene that waits for an app names no window either. */}
+        {scene.match.apps.length > 0 && (
+          <span className="text-[12px] text-fg-muted">
+            {scene.match.title_contains.length === 0 ? (
+              t("settings.scenes.anyWindow")
+            ) : (
+              <>
+                {t("settings.scenes.titleKeywords")}{" "}
+                <span className="text-fg" data-user-text>
+                  {scene.match.title_contains.join(" · ")}
+                </span>
+              </>
+            )}
+          </span>
+        )}
       </div>
       <div className="pl-7 text-[12px] text-fg-muted" data-testid="scene-summary">
         {summary.length === 0 ? t("settings.scenes.followsGlobal") : summary.join(" · ")}

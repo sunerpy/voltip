@@ -833,7 +833,7 @@ export const en: Messages = {
     },
     llmSection: {
       title: "AI polish provider",
-      note: "After transcription, AI fixes punctuation, typos and filler words; voice edit uses the provider picked here too.",
+      note: "After transcription, AI processes the text with the chosen preset; voice edit uses the provider picked here too.",
     },
     current: "Now: {provider} · {model}",
     currentNone: "Now: none",
@@ -925,7 +925,7 @@ export const en: Messages = {
     refineToggle: "AI polish",
     refineToggleHelp:
       "Off inserts the transcription as is; a scene can turn polish on or off for itself.",
-    refineOn: "On · fixes punctuation and filler words only",
+    refineOn: "On · processes the text with the chosen preset",
     refineOff: "Off · inserts the transcription as is",
     refineNotReady: "AI polish provider unavailable: {issue}",
     refineLiveInject: "No polish in “Type as you speak” mode",
@@ -1343,7 +1343,7 @@ export const en: Messages = {
       keyPlaceholder: "Stored only in the system keychain",
       baseUrl: "Endpoint",
       refine: "Polish with AI too",
-      refineHelp: "Fixes punctuation, typos and filler words; provider: {provider}",
+      refineHelp: "Proofreads punctuation, typos and filler words by default; provider: {provider}",
       refineNone: "This choice has no polish service; set one up later on the AI models page.",
       localDownload:
         "Dictation works once the download finishes; you can continue now, it downloads in the background.",

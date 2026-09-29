@@ -101,6 +101,7 @@ export function PresetsSection() {
           {BUILTIN_PRESETS.map((id) => (
             <OptionCard
               key={id}
+              aria-label={t(`presets.${id}.name`)}
               selected={current === id}
               onSelect={() => {
                 use(id);
