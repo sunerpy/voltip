@@ -11,8 +11,8 @@ use parking_lot::Mutex;
 
 use super::engine::DictationPorts;
 use super::ports::{
-    AudioSource, Capture, CaptureOptions, DictationError, ForegroundApp, ForegroundProbe, Injection, Injector, LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm,
-    Recording, RefineHints, Refined, Refiner, Segment, SelectionTiming, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber,
+    AudioSource, Capture, CaptureOptions, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector, LIVE_CHUNK_SAMPLES, LevelFrame,
+    LivePcm, Recording, RefineHints, Refined, Refiner, Segment, SelectionTiming, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber,
     Transcript, Via,
 };
 use super::wav;
@@ -533,7 +533,7 @@ impl ForegroundProbe for FakeProbe {
 #[derive(Clone)]
 enum InjectReply {
     Paste,
-    Clipboard(Option<String>),
+    Clipboard(Option<InjectNote>),
     Err(String),
 }
 
@@ -594,7 +594,12 @@ impl FakeInjector {
     /// Reports the text left in the clipboard (`note` = why the paste did not happen, or `None`
     /// for clipboard-only mode).
     pub fn clipboard(note: Option<&str>) -> Self {
-        Self::with_reply(InjectReply::Clipboard(note.map(str::to_owned)))
+        Self::with_reply(InjectReply::Clipboard(note.map(InjectNote::other)))
+    }
+
+    /// Reports the text left in the clipboard for `note` (a coded fallback, docs/dictation.md §4.2).
+    pub fn clipboard_with(note: InjectNote) -> Self {
+        Self::with_reply(InjectReply::Clipboard(Some(note)))
     }
 
     /// Fails with `Inject(message)`.
@@ -662,7 +667,7 @@ impl FakeInjector {
 
     /// The first call is answered with the clipboard fallback (`note`), later ones as configured.
     pub fn clipboard_once(self, note: Option<&str>) -> Self {
-        self.first.lock().push_back(InjectReply::Clipboard(note.map(str::to_owned)));
+        self.first.lock().push_back(InjectReply::Clipboard(note.map(InjectNote::other)));
         self
     }
 
@@ -1189,7 +1194,9 @@ mod tests {
 
         let i = FakeInjector::paste();
         assert_eq!(i.inject("a").unwrap(), Injection { via: Via::Paste, note: None });
-        assert_eq!(FakeInjector::clipboard(Some("no focus")).inject("b").unwrap().note.as_deref(), Some("no focus"));
+        assert_eq!(FakeInjector::clipboard(Some("no focus")).inject("b").unwrap().note, Some(InjectNote::other("no focus")));
+        let coded = InjectNote::new(super::super::ports::ClipboardCode::NoPermission, "enigo: no permission");
+        assert_eq!(FakeInjector::clipboard_with(coded.clone()).inject("c").unwrap().note, Some(coded));
         assert_eq!(FakeInjector::clipboard(None).inject("b").unwrap().via, Via::Clipboard);
         let failing = FakeInjector::err("denied");
         assert_eq!(failing.inject("c").unwrap_err(), DictationError::Inject("denied".into()));

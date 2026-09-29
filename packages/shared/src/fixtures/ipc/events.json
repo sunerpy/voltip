@@ -957,6 +957,29 @@
   },
   {
     "type": "history",
+    "entries": [
+      {
+        "id": "1c2d3e4f-5a6b-4c8e-9f7a-0f3f1a1e8d4b",
+        "at_ms": 1758700540000,
+        "raw_text": "测试一下",
+        "text": "测试一下",
+        "refined": false,
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "duration_ms": 900,
+        "asr_ms": 410,
+        "outcome": {
+          "kind": "clipboard",
+          "reason": "enigo: the application does not have the permission to simulate input",
+          "code": "no_permission"
+        },
+        "starred": false,
+        "mode": "whole_take",
+        "kind": "dictation"
+      }
+    ]
+  },
+  {
+    "type": "history",
     "entries": []
   },
   {

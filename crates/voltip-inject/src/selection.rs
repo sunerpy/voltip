@@ -381,7 +381,10 @@ mod tests {
     /// back; the clipboard itself failing is its own error and nothing is pressed.
     #[test]
     fn keystroke_and_clipboard_failures_are_typed_and_restore() {
-        for outcome in [DeliveryError::Unavailable("no copy tool on Wayland · GNOME".into()), DeliveryError::Failed("wtype: exited 1".into())] {
+        for outcome in [
+            DeliveryError::Unavailable(crate::InjectNote::new(crate::FallbackCode::NoTool, "no copy tool on Wayland · GNOME")),
+            DeliveryError::Failed("wtype: exited 1".into()),
+        ] {
             let clipboard = MemoryClipboard::holding("previous");
             let app = Arc::new(App { outcome: Err(outcome.clone()), ..Arc::into_inner(App::with(&clipboard, Some("never"))).unwrap() });
             let err = copier(&clipboard, app).copy_selection(&[]).unwrap_err();

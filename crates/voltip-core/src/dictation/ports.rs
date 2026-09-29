@@ -404,13 +404,54 @@ pub enum Via {
     Clipboard,
 }
 
+/// Why a requested paste left the text on the clipboard (docs/dictation.md §4.2): the kind the
+/// interface explains in a sentence (`Outcome::Clipboard.code`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipboardCode {
+    /// The system does not let Voltip send keystrokes (macOS: Accessibility not granted).
+    NoPermission,
+    /// No paste tool for this session (Wayland without wtype, dotool or ydotool).
+    NoTool,
+    /// No connection to the display server.
+    NoDisplay,
+    /// A secure input field or the secure desktop has the keyboard.
+    SecureInput,
+    /// The window in front runs as administrator (Windows).
+    ElevatedTarget,
+    /// Anything else.
+    Other,
+}
+
+/// A clipboard fallback as the injector reports it: its kind and the original message (the
+/// history keeps both; the interface shows the message only under the technical details).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InjectNote {
+    /// What the interface says.
+    pub code: ClipboardCode,
+    /// The message as the tool or the system gave it.
+    pub detail: String,
+}
+
+impl InjectNote {
+    /// A note of `code` with `detail`.
+    pub fn new(code: ClipboardCode, detail: impl Into<String>) -> Self {
+        Self { code, detail: detail.into() }
+    }
+
+    /// A note with no kind the interface can name.
+    pub fn other(detail: impl Into<String>) -> Self {
+        Self::new(ClipboardCode::Other, detail)
+    }
+}
+
 /// Injection outcome.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Injection {
     /// Route taken.
     pub via: Via,
-    /// Why the text stayed in the clipboard when a paste was requested, or other diagnostics.
-    pub note: Option<String>,
+    /// Why the text stayed in the clipboard when a paste was requested.
+    pub note: Option<InjectNote>,
 }
 
 /// When a voice edit's copy chord can reach the foreground application (docs/dictation.md §19).

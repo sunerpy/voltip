@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::CoreError;
-use crate::dictation::{OutputMode, Segment, TakeKind, Via};
+use crate::dictation::{ClipboardCode, InjectNote, OutputMode, Segment, TakeKind, Via};
 use crate::scenes::{AppRef, SceneRef};
 use crate::vocabulary::VocabularyHits;
 
@@ -32,14 +32,25 @@ pub enum Outcome {
     },
     /// A paste was requested but the text stayed in the clipboard.
     Clipboard {
-        /// Why.
+        /// Why, as the injector said it (shown only under the technical details).
         reason: String,
+        /// The kind of reason the interface explains; absent in entries written before
+        /// 2026-09-29, which the interface explains in general terms.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<ClipboardCode>,
     },
     /// The text could not be delivered at all.
     Failed {
         /// Why.
         reason: String,
     },
+}
+
+impl Outcome {
+    /// The clipboard fallback `note` describes.
+    pub fn clipboard(note: InjectNote) -> Self {
+        Self::Clipboard { reason: note.detail, code: Some(note.code) }
+    }
 }
 
 /// What a voice edit worked on (docs/dictation.md §19). The result is the entry's `text`, the
@@ -358,7 +369,7 @@ mod tests {
         let mut e = entry("你好");
         e.refine_model = None;
         e.refine_ms = None;
-        e.outcome = Outcome::Clipboard { reason: "paste failed".into() };
+        e.outcome = Outcome::Clipboard { reason: "paste failed".into(), code: None };
         let json = serde_json::to_string(&e).unwrap();
         assert!(json.contains(r#""outcome":{"kind":"clipboard","reason":"paste failed"}"#), "{json}");
         assert!(!json.contains("refine_model") && !json.contains("refine_ms"), "{json}");
@@ -379,6 +390,30 @@ mod tests {
         let json = serde_json::to_string(&streamed).unwrap();
         assert!(json.contains(r#""mode":"live_inject","segments":[{"text":"你好。","start_ms":0,"end_ms":900}],"live_error":"decoder panicked""#), "{json}");
         assert_eq!(serde_json::from_str::<HistoryEntry>(&json).unwrap(), streamed);
+    }
+
+    /// docs/dictation.md §4.2: a clipboard fallback carries its code; an entry written before the
+    /// codes reads without one, and its wire shape did not change.
+    #[test]
+    fn clipboard_outcomes_carry_their_code_and_legacy_ones_read_without() {
+        let coded = Outcome::clipboard(InjectNote::new(ClipboardCode::NoPermission, "enigo: no permission"));
+        assert_eq!(coded, Outcome::Clipboard { reason: "enigo: no permission".into(), code: Some(ClipboardCode::NoPermission) });
+        let json = serde_json::to_string(&coded).unwrap();
+        assert_eq!(json, r#"{"kind":"clipboard","reason":"enigo: no permission","code":"no_permission"}"#);
+        assert_eq!(serde_json::from_str::<Outcome>(&json).unwrap(), coded);
+        let legacy: Outcome = serde_json::from_str(r#"{"kind":"clipboard","reason":"目标窗口没有焦点"}"#).unwrap();
+        assert_eq!(legacy, Outcome::Clipboard { reason: "目标窗口没有焦点".into(), code: None });
+        let names = [
+            (ClipboardCode::NoPermission, "no_permission"),
+            (ClipboardCode::NoTool, "no_tool"),
+            (ClipboardCode::NoDisplay, "no_display"),
+            (ClipboardCode::SecureInput, "secure_input"),
+            (ClipboardCode::ElevatedTarget, "elevated_target"),
+            (ClipboardCode::Other, "other"),
+        ];
+        for (code, name) in names {
+            assert_eq!(serde_json::to_string(&code).unwrap(), format!("\"{name}\""));
+        }
     }
 
     /// docs/dictation.md §16.3: the hits are on the wire only when something fired, and an entry

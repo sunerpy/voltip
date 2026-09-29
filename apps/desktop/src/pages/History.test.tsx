@@ -1,5 +1,5 @@
 import { type DictionaryEntry, HISTORY_LIMIT, type HistoryEntry } from "@voltip/shared";
-import { MockBackend } from "@voltip/shared/mock";
+import { MockBackend, desktopIdentity } from "@voltip/shared/mock";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
@@ -43,6 +43,68 @@ describe("History page keys and retention", () => {
     ).toBeInTheDocument();
   });
 
+  it("regression: a clipboard fallback shows a plain reason below the text, not the raw injector error in the header", async () => {
+    const user = userEvent.setup();
+    const raw = "enigo: the application does not have the permission to simulate input";
+    const now = Date.now();
+    const base = {
+      asr_model: "whisper-large-v3-turbo",
+      duration_ms: 1400,
+      asr_ms: 380,
+      refined: false,
+      starred: false,
+      mode: "whole_take",
+      kind: "dictation",
+    } as const;
+    const rows: HistoryEntry[] = [
+      {
+        ...base,
+        id: "coded",
+        at_ms: now - 60_000,
+        raw_text: "发给产品",
+        text: "发给产品。",
+        outcome: { kind: "clipboard", reason: raw, code: "no_permission" },
+      },
+      {
+        ...base,
+        id: "legacy",
+        at_ms: now - 120_000,
+        raw_text: "旧记录",
+        text: "旧记录。",
+        outcome: { kind: "clipboard", reason: "目标窗口没有焦点" },
+      },
+    ];
+    const backend = new MockBackend({
+      now: () => Date.now(),
+      history: rows,
+      identity: { ...desktopIdentity(), platform: "macos" },
+    });
+    renderApp({ path: "/history", backend });
+    const log = await screen.findByRole("list", { name: "听写记录" });
+    // One sentence for the reason, with the macOS paste keys and the setting to open.
+    const note = screen.getByTestId("history-clipboard-note");
+    expect(note).toHaveAttribute("data-code", "no_permission");
+    expect(note).toHaveTextContent(
+      "无法粘贴到光标处：Voltip 尚未获得「辅助功能」权限。文字已复制到剪贴板，可按 ⌘V 粘贴。",
+    );
+    // The raw message is only under the technical details: not in the header, the readout or the row.
+    expect(screen.getAllByText(raw)).toHaveLength(1);
+    expect(within(note).getByTestId("history-clipboard-detail")).toHaveTextContent(raw);
+    expect(within(log).queryByText(raw, { exact: false })).toBeNull();
+    expect(screen.getAllByText("已复制到剪贴板").length).toBeGreaterThanOrEqual(2);
+    await user.click(within(note).getByRole("button", { name: "打开辅助功能设置" }));
+    expect(backend.permissionRequests).toEqual(["accessibility"]);
+    // An entry written before the codes: the general sentence, its message under the details.
+    await user.click(within(log).getByRole("button", { name: /旧记录/ }));
+    const legacy = screen.getByTestId("history-clipboard-note");
+    expect(legacy).toHaveAttribute("data-code", "other");
+    expect(legacy).toHaveTextContent("无法直接粘贴，文字已复制到剪贴板，可按 ⌘V 粘贴。");
+    expect(within(legacy).getByTestId("history-clipboard-detail")).toHaveTextContent(
+      "目标窗口没有焦点",
+    );
+    expect(within(legacy).queryByRole("button", { name: "打开辅助功能设置" })).toBeNull();
+  });
+
   it("regression: a row's copy and paste buttons act on that row without selecting it", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn(() => Promise.resolve());
@@ -83,7 +145,9 @@ describe("History page keys and retention", () => {
     // Ctrl C copies the entry in the detail, like 复制.
     await user.keyboard("{Control>}c{/Control}");
     expect(writeText).toHaveBeenCalledWith(newest.text);
-    expect(await screen.findByText(/已复制/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(`已复制到剪贴板 · ${Array.from(newest.text).length} 字`),
+    ).toBeInTheDocument();
     // …unless text is selected: then the copy is the selection's (the browser's own).
     writeText.mockClear();
     // selectAllChildren replaces the selection; addRange is ignored while one exists (jsdom 30
@@ -214,7 +278,10 @@ describe("History page", () => {
       within(screen.getByRole("list", { name: "听写记录" })).getAllByRole("listitem"),
     ).toHaveLength(1 + 2);
     await user.click(screen.getByRole("radio", { name: "未插入" }));
-    expect(screen.getByText(/仅剪贴板 · 目标窗口没有焦点/)).toBeInTheDocument();
+    // The clipboard row says so in two words; its reason is only in the entry's note.
+    const unsent = screen.getByRole("list", { name: "听写记录" });
+    expect(within(unsent).getByText(/· 已复制到剪贴板$/)).toBeInTheDocument();
+    expect(within(unsent).queryByText(/目标窗口没有焦点/)).toBeNull();
     expect(screen.getByText(/失败 · 目标窗口已丢失/)).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "已收藏" }));
     await user.click(screen.getByText(/返回值类型改成/));

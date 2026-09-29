@@ -50,9 +50,9 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use super::ports::{
-    AudioSource, Capture, CaptureOptions, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, Injection, Injector, LIVE_CHUNK_SAMPLES,
-    LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MIN_RECORDING, PARTIAL_THROTTLE, PROBE_DEADLINE, Recording, RefineContext, RefineHints, Refiner, Segment,
-    SelectionTiming, ServiceProbe, StreamEvent, StreamFinal, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
+    AudioSource, Capture, CaptureOptions, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector,
+    LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MIN_RECORDING, PARTIAL_THROTTLE, PROBE_DEADLINE, Recording, RefineContext, RefineHints,
+    Refiner, Segment, SelectionTiming, ServiceProbe, StreamEvent, StreamFinal, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
 };
 use super::wav;
 use super::{DictationPhase, DictationStatus, FailureCode, LiveText, OutputMode, ProcessingStage, TakeKind, inject_separator, join_text};
@@ -339,7 +339,7 @@ struct LiveInject {
     /// one go at the end; `Some` from the fallback on.
     rest: Option<String>,
     /// The note the fallback came with (the history's clipboard reason).
-    note: Option<String>,
+    note: Option<InjectNote>,
     /// The final write of `rest` is with the injector.
     writing_rest: bool,
     /// The last sentence (tail / remainder) has been queued: when the queue drains the run is done.
@@ -1443,7 +1443,7 @@ impl DictationEngine {
             }
             Err(e) => {
                 tracing::warn!(session, idx, error = %e, "live injection failed; accumulating the rest");
-                li.note = Some(e.to_string());
+                li.note = Some(InjectNote::other(e.to_string()));
                 let mut rest = piece.text;
                 rest.extend(li.queue.drain(..).map(|p| p.text));
                 li.rest = Some(rest);
@@ -1760,7 +1760,7 @@ impl DictationEngine {
             Ok(Injection { via, note }) => {
                 entry.outcome = match (via, note) {
                     (Via::Paste, _) => Outcome::Inserted { via: Via::Paste },
-                    (Via::Clipboard, Some(reason)) => Outcome::Clipboard { reason },
+                    (Via::Clipboard, Some(note)) => Outcome::clipboard(note),
                     (Via::Clipboard, None) => Outcome::Inserted { via: Via::Clipboard },
                 };
                 let phase = DictationPhase::Done {
@@ -2154,6 +2154,7 @@ async fn run_edit(job: EditJob) {
 mod tests {
     use super::super::ports::{MAX_RECORDING, MAX_RECORDING_STREAMING};
     use super::*;
+    use crate::dictation::ClipboardCode;
     use crate::dictation::fakes::{
         FAKE_LATENCY_MS, FAKE_REFINE_MODEL, FAKE_STREAMING_MODEL_ID, FAKE_TRANSCRIPT, FakeAudio, FakeInjector, FakeModels, FakeProbe, FakeRefiner,
         FakeStreaming, FakeTranscriber, ports_with,
@@ -2497,7 +2498,7 @@ mod tests {
         r.engine.stop().unwrap();
         let fx = r.run_to_terminal().await;
         assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Clipboard, .. }));
-        assert_eq!(record(&fx).unwrap().outcome, Outcome::Clipboard { reason: "no focused window".into() });
+        assert_eq!(record(&fx).unwrap().outcome, Outcome::Clipboard { reason: "no focused window".into(), code: Some(ClipboardCode::Other) });
         let mut r = rig(FakeAudio::speech(), FakeTranscriber::ok("a"), None, FakeInjector::clipboard(None), false);
         r.start_open().await;
         r.engine.stop().unwrap();
@@ -3266,7 +3267,7 @@ mod tests {
             ["Hello world. ", "Hello world. How are you. Fine "].map(String::from),
             "the first attempt, then everything not pasted in one clipboard write"
         );
-        assert_eq!(record(&fx).unwrap().outcome, Outcome::Clipboard { reason: "no focused window".into() });
+        assert_eq!(record(&fx).unwrap().outcome, Outcome::Clipboard { reason: "no focused window".into(), code: Some(ClipboardCode::Other) });
         assert_eq!(r.transcriber.calls(), 0);
         // Only the first paste fails over; the final write pastes: `Done` via paste, all text delivered.
         let mut r = rig_mode(

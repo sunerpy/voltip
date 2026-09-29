@@ -15,7 +15,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use voltip_core::connectivity::{AddressCheck, ConnectivityReport, ConnectivityStatus, LanHostCheck, PeerCheck, ProbeResult, RelayCheck};
-use voltip_core::dictation::{FailureCode, ProcessingStage, Via};
+use voltip_core::dictation::{ClipboardCode, FailureCode, ProcessingStage, Via};
 use voltip_core::paste::{CopyReason, PasteFailure, PasteOutcome};
 use voltip_core::phone::{PhoneTakeFailure, PhoneTakeState, PhoneTakeView};
 use voltip_core::phone::{PhoneTextSource, SentText, SentTextFailure, SentTextState};
@@ -418,7 +418,8 @@ fn history_entries() -> Vec<HistoryEntry> {
             duration_ms: 900,
             asr_ms: 410,
             refine_ms: None,
-            outcome: Outcome::Clipboard { reason: "没有可粘贴的前台窗口".into() },
+            // Written before the fallback codes (2026-09-29): no `code`.
+            outcome: Outcome::Clipboard { reason: "没有可粘贴的前台窗口".into(), code: None },
             starred: false,
             mode: OutputMode::WholeTake,
             segments: None,
@@ -1142,6 +1143,14 @@ fn all_events() -> Vec<UiEvent> {
         history_event(history_entries()),
         history_event(vec![live_inject_history_entry()]),
         history_event(vec![HistoryEntry { outcome: Outcome::Failed { reason: "inject: 前台窗口拒绝了粘贴".into() }, ..history_entries().remove(0) }]),
+        // docs/dictation.md §4.2: a clipboard fallback with its code.
+        history_event(vec![HistoryEntry {
+            outcome: Outcome::Clipboard {
+                reason: "enigo: the application does not have the permission to simulate input".into(),
+                code: Some(ClipboardCode::NoPermission),
+            },
+            ..history_entries().remove(1)
+        }]),
         history_event(Vec::new()),
         UiEvent::Engines(engine_status()),
         UiEvent::Engines(EngineStatus { live_preview_ready: false, ..engine_status() }),

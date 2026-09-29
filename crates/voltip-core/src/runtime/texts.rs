@@ -128,10 +128,9 @@ impl Runtime {
         self.texts.busy = false;
         let (state, outcome) = match &result {
             Ok(Injection { via: Via::Paste, .. }) => (PhoneTextState::Delivered { pasted: true }, Outcome::Inserted { via: Via::Paste }),
-            Ok(Injection { via: Via::Clipboard, note }) => (
-                PhoneTextState::Delivered { pasted: false },
-                note.clone().map_or(Outcome::Inserted { via: Via::Clipboard }, |reason| Outcome::Clipboard { reason }),
-            ),
+            Ok(Injection { via: Via::Clipboard, note }) => {
+                (PhoneTextState::Delivered { pasted: false }, note.clone().map_or(Outcome::Inserted { via: Via::Clipboard }, Outcome::clipboard))
+            }
             Err(e) => (PhoneTextState::failed(PhoneTextFailure::Failed, &e.to_string()), Outcome::Failed { reason: e.to_string() }),
         };
         tracing::info!(phone = %text.name, id = text.id, ?state, "text from the phone handled");

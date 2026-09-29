@@ -114,7 +114,7 @@ pub fn paste_blocking(injector: &dyn Injector, probe: Option<&dyn ForegroundProb
         Ok(Injection { via: Via::Paste, .. }) => PasteOutcome::Pasted,
         Ok(Injection { via: Via::Clipboard, note: None }) => PasteOutcome::Copied { reason: CopyReason::ClipboardOnly },
         Ok(Injection { via: Via::Clipboard, note: Some(note) }) => {
-            tracing::info!(%note, "the paste fell back to the clipboard");
+            tracing::info!(reason = %note.detail, code = ?note.code, "the paste fell back to the clipboard");
             PasteOutcome::Copied { reason: CopyReason::PasteFailed }
         }
         Err(e) => {

@@ -599,10 +599,28 @@ export function idleDictation(): DictationStatus {
   return { session: 0, phase: { phase: "idle" }, kind: "dictation" };
 }
 
-/** `voltip_core::history::Outcome`. */
+/** `voltip_core::dictation::ClipboardCode`: why a requested paste left the text on the clipboard
+ *  (docs/dictation.md §4.2). The history explains each in a sentence. */
+export const CLIPBOARD_CODES = [
+  "no_permission",
+  "no_tool",
+  "no_display",
+  "secure_input",
+  "elevated_target",
+  "other",
+] as const;
+export const clipboardCodeSchema = z.enum(CLIPBOARD_CODES);
+export type ClipboardCode = z.infer<typeof clipboardCodeSchema>;
+
+/** `voltip_core::history::Outcome`. A clipboard fallback's `reason` is the injector's own message
+ *  (shown only under the technical details); `code` is absent in entries written before it. */
 export const historyOutcomeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("inserted"), via: viaSchema }),
-  z.object({ kind: z.literal("clipboard"), reason: z.string() }),
+  z.object({
+    kind: z.literal("clipboard"),
+    reason: z.string(),
+    code: clipboardCodeSchema.optional(),
+  }),
   z.object({ kind: z.literal("failed"), reason: z.string() }),
 ]);
 export type HistoryOutcome = z.infer<typeof historyOutcomeSchema>;

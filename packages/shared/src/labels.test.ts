@@ -242,10 +242,17 @@ describe("labels", () => {
       text: "已插入 · 粘贴",
       tone: "ok",
     });
+    // The reason is explained under the history entry, never in the label (docs/dictation.md §4.2).
     expect(outcomeLabel({ kind: "clipboard", reason: "目标窗口没有焦点" })).toEqual({
-      text: "仅剪贴板 · 目标窗口没有焦点",
+      text: "已复制到剪贴板",
       tone: "warn",
     });
+    expect(
+      outcomeLabel(
+        { kind: "clipboard", reason: "enigo: no permission", code: "no_permission" },
+        "en",
+      ),
+    ).toEqual({ text: "Copied to clipboard", tone: "warn" });
     expect(outcomeLabel({ kind: "failed", reason: "ASR 401" })).toEqual({
       text: "失败 · ASR 401",
       tone: "danger",

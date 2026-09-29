@@ -160,7 +160,9 @@ describe("Home page", () => {
     expect(within(table).getAllByRole("row")).toHaveLength(6 + 1);
     expect(within(table).getAllByText("Qwen3-ASR-1.7B").length).toBe(6);
     expect(within(table).getByText(/attach the latency report/)).toBeInTheDocument();
-    expect(within(table).getByText("仅剪贴板 · 目标窗口没有焦点")).toBeInTheDocument();
+    // A clipboard fallback's chip is the short label; the reason is explained in the history entry.
+    expect(within(table).getByText("已复制到剪贴板")).toBeInTheDocument();
+    expect(within(table).queryByText(/目标窗口没有焦点/)).toBeNull();
     expect(within(table).getByText("失败 · 目标窗口已丢失")).toBeInTheDocument();
     // Nothing on the page talks about phases or sample data any more.
     expect(screen.getByTestId("page-home").textContent).not.toMatch(/第二阶段|示例数据/);

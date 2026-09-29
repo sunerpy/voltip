@@ -174,6 +174,21 @@ pub struct HistoryEntry {
 
 门禁：`crates/voltip-core/src/paste.rs` 单测与 `crates/voltip-core/tests/paste.rs`（前台变了只复制、忙时拒绝、同一个 `request_id`、不写历史）；bridge `a_paste_waits_for_its_own_answer_and_gives_up_in_time`；壳层 `paste.rs` 的步骤判断单测与 `tests/ipc.rs@paste_text_pastes_into_the_window_in_front_and_refuses_while_a_take_runs`；前端 `Home.test.tsx`、`History.test.tsx`；Windows 真机为 CI `windows-native` 的 `scripts/smoke-windows-paste.ps1`（记事本在后、Voltip 在前，按下按钮后文字进入记事本）。
 
+### 4.2 无法直接粘贴时的说明（2026-09-29）
+
+粘贴没有成功、文字留在剪贴板时，`Outcome::Clipboard` 除了原文 `reason`，还带 `code`（`#[serde(default)]`，此前写入的记录没有这一项，照常读取）：
+
+| `code` | 来源 | 历史页说明（节选） |
+|---|---|---|
+| `no_permission` | enigo `NewConError::NoPermission`（macOS 未授予「辅助功能」） | Voltip 尚未获得「辅助功能」权限；macOS 上另给「打开辅助功能设置」 |
+| `no_tool` | Linux 工具链里没有能用的粘贴工具（`toolchain` 全部跳过） | 当前会话没有可用的粘贴工具 |
+| `no_display` | Linux 上 enigo 连不上显示服务 | 无法连接显示服务 |
+| `secure_input` | Windows 预检 `secure_desktop` | 密码框或系统安全界面正在接收输入 |
+| `elevated_target` | Windows 预检 `elevated_target` | 目标窗口以管理员身份运行 |
+| `other` | 其余情况，以及没有 `code` 的旧记录 | 无法直接粘贴 |
+
+链路：`voltip-inject` 的 `DeliveryError::Unavailable(InjectNote { code, detail })` → `Injection.note` → 桌面壳 `core_note` 换成核心的 `ClipboardCode` → `Outcome::clipboard(note)`。界面上，首页表格、历史列表和详情标题栏只显示短标签「已复制到剪贴板」；详情正文下方一张提示卡按 `code` 给出一句说明和本机的粘贴键（macOS ⌘V，其余 Ctrl+V），原文收在可展开的「技术细节」里（等宽、任意位置断行）。
+
 ## 5. IPC（bridge 与 TS 契约）
 
 | wire 名 | `UiCommand` | 参数 |

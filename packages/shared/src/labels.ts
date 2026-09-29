@@ -559,10 +559,8 @@ export function outcomeLabel(outcome: HistoryOutcome, locale: Locale = DEFAULT_L
         tone: "ok",
       };
     case "clipboard":
-      return {
-        text: translate(locale, "outcome.clipboard", { reason: outcome.reason }),
-        tone: "warn",
-      };
+      // The reason is explained under the entry (docs/dictation.md §4.2), never in the label.
+      return { text: translate(locale, "outcome.clipboard"), tone: "warn" };
     case "failed":
       return {
         text: translate(locale, "outcome.failed", { reason: outcome.reason }),

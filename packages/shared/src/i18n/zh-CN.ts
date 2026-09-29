@@ -224,7 +224,7 @@ export const zhCN = {
   },
   outcome: {
     inserted: "已插入 · {via}",
-    clipboard: "仅剪贴板 · {reason}",
+    clipboard: "已复制到剪贴板",
     failed: "失败 · {reason}",
   },
   /** Output modes (docs/dictation.md §12): name, one-line description, and the fallback note. */
@@ -531,6 +531,20 @@ export const zhCN = {
     eyebrow: { log: "听写记录", entry: "记录" },
     star: "收藏",
     unstar: "取消收藏",
+    clipboardNote: {
+      no_permission:
+        "无法粘贴到光标处：Voltip 尚未获得「辅助功能」权限。文字已复制到剪贴板，可按 {keys} 粘贴。",
+      no_tool:
+        "无法粘贴到光标处：当前会话没有可用的粘贴工具（wtype、dotool 或 ydotool）。文字已复制到剪贴板，可按 {keys} 粘贴。",
+      no_display: "无法粘贴到光标处：无法连接显示服务。文字已复制到剪贴板，可按 {keys} 粘贴。",
+      secure_input:
+        "无法粘贴到光标处：密码框或系统安全界面正在接收输入。文字已复制到剪贴板，可按 {keys} 粘贴。",
+      elevated_target:
+        "无法粘贴到光标处：目标窗口以管理员身份运行。文字已复制到剪贴板，可按 {keys} 粘贴。",
+      other: "无法直接粘贴，文字已复制到剪贴板，可按 {keys} 粘贴。",
+      openAccessibility: "打开辅助功能设置",
+      details: "技术细节",
+    },
     liveError: "实时识别中断，已改为整段识别：{reason}",
     /** Voice edit rows (docs/dictation.md §19.5): instruction → result, the original expandable. */
     edit: {

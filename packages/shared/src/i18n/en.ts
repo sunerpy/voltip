@@ -219,7 +219,7 @@ export const en: Messages = {
   },
   outcome: {
     inserted: "Inserted · {via}",
-    clipboard: "Clipboard only · {reason}",
+    clipboard: "Copied to clipboard",
     failed: "Failed · {reason}",
   },
   outputMode: {
@@ -541,6 +541,21 @@ export const en: Messages = {
     eyebrow: { log: "Dictation log", entry: "Entry" },
     star: "Star",
     unstar: "Unstar",
+    clipboardNote: {
+      no_permission:
+        "Could not paste at the cursor: Voltip does not have the Accessibility permission yet. The text is on the clipboard; press {keys} to paste it.",
+      no_tool:
+        "Could not paste at the cursor: this session has no paste tool (wtype, dotool or ydotool). The text is on the clipboard; press {keys} to paste it.",
+      no_display:
+        "Could not paste at the cursor: the display server could not be reached. The text is on the clipboard; press {keys} to paste it.",
+      secure_input:
+        "Could not paste at the cursor: a password field or a system security screen has the input. The text is on the clipboard; press {keys} to paste it.",
+      elevated_target:
+        "Could not paste at the cursor: the target window runs as administrator. The text is on the clipboard; press {keys} to paste it.",
+      other: "Could not paste directly. The text is on the clipboard; press {keys} to paste it.",
+      openAccessibility: "Open Accessibility settings",
+      details: "Technical details",
+    },
     liveError: "Live transcription stopped; the whole recording was transcribed instead: {reason}",
     /** Voice edit rows (docs/dictation.md §19.5): instruction → result, the original expandable. */
     edit: {

@@ -47,6 +47,7 @@ import {
   matchesHistoryQuery,
   textChars,
 } from "../features/history/stats";
+import { ClipboardNote } from "../features/history/ClipboardNote";
 import { ResultActions } from "../features/history/ResultActions";
 import { shortModel } from "../shell/page-meta";
 
@@ -500,6 +501,11 @@ export function History({ initialFilter }: HistoryProps) {
                     )}
                   </div>
                 </>
+              )}
+              {selected.outcome.kind === "clipboard" && (
+                // docs/dictation.md §4.2: why the paste fell back, in words; the raw message only
+                // under the technical details (never in the header).
+                <ClipboardNote outcome={selected.outcome} />
               )}
               {selected.live_error !== undefined && (
                 // §12: a streaming mode was asked for but the take (or part of it) fell back to the

@@ -150,6 +150,46 @@ impl std::fmt::Display for Via {
     }
 }
 
+/// Why a paste left the text on the clipboard, in the kinds the interface explains in words
+/// (docs/dictation.md §4.2); the message itself goes under the technical details.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FallbackCode {
+    /// The system does not let Voltip send keystrokes (macOS: Accessibility not granted).
+    NoPermission,
+    /// No paste tool for this session (Wayland without wtype, dotool or ydotool).
+    NoTool,
+    /// No connection to the display server.
+    NoDisplay,
+    /// A secure input field or the secure desktop has the keyboard.
+    SecureInput,
+    /// The window in front runs as administrator (Windows).
+    ElevatedTarget,
+    /// Anything else.
+    Other,
+}
+
+/// A clipboard fallback: its kind and the original message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InjectNote {
+    /// What the interface says.
+    pub code: FallbackCode,
+    /// The message as the tool or the system gave it (logs, technical details).
+    pub detail: String,
+}
+
+impl InjectNote {
+    /// A note of `code` with `detail`.
+    pub fn new(code: FallbackCode, detail: impl Into<String>) -> Self {
+        Self { code, detail: detail.into() }
+    }
+}
+
+impl std::fmt::Display for InjectNote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
 /// Outcome of a successful [`Injector::inject`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Injection {
@@ -157,8 +197,8 @@ pub struct Injection {
     pub via: Via,
     /// Characters delivered.
     pub chars: usize,
-    /// Why a step was skipped (e.g. no paste tool and the text stayed on the clipboard).
-    pub note: Option<String>,
+    /// Why a requested paste did not happen and the text stayed on the clipboard.
+    pub note: Option<InjectNote>,
 }
 
 impl Injection {
@@ -168,7 +208,7 @@ impl Injection {
     }
 
     /// Text left on the clipboard, with the reason when there is one.
-    pub fn clipboard(chars: usize, note: Option<String>) -> Self {
+    pub fn clipboard(chars: usize, note: Option<InjectNote>) -> Self {
         Self { via: Via::Clipboard, chars, note }
     }
 }
@@ -208,7 +248,9 @@ mod tests {
     #[test]
     fn injection_constructors() {
         assert_eq!(Injection::pasted(3), Injection { via: Via::Paste, chars: 3, note: None });
-        assert_eq!(Injection::clipboard(2, Some("x".into())), Injection { via: Via::Clipboard, chars: 2, note: Some("x".into()) });
+        let note = InjectNote::new(FallbackCode::NoTool, "x");
+        assert_eq!(Injection::clipboard(2, Some(note.clone())), Injection { via: Via::Clipboard, chars: 2, note: Some(note.clone()) });
+        assert_eq!(note.to_string(), "x", "the message, as the logs show it");
     }
 
     #[test]

@@ -13,6 +13,7 @@ use crate::platform::{EnigoBackend, EnigoError, SystemKeys};
 use crate::process::{self, CHORD_TIMEOUT, HELP_TIMEOUT, RunError};
 use crate::session::{Desktop, Session, SessionKind};
 use crate::toolchain::{Chord, CommandLine, Delivery, Modifier, Selection, ToolProbe, TypingTool, candidates, install_hint, probe_candidate, select};
+use crate::{FallbackCode, InjectNote};
 
 /// Runs one external tool to completion. [`SystemRunner`] is the real one.
 pub trait ToolRunner: Send + Sync {
@@ -178,7 +179,7 @@ impl ToolchainKeys {
             };
             return match outcome {
                 Ok(()) => Attempt::Done(Delivered { tool: tool.name().to_string(), delivery: Delivery::Chord }),
-                Err(e @ EnigoError::Connect(_)) => Attempt::NotStarted(format!("{}: {e}", tool.name())),
+                Err(e @ (EnigoError::Connect(_) | EnigoError::NoPermission(_))) => Attempt::NotStarted(format!("{}: {e}", tool.name())),
                 Err(e @ EnigoError::Input(_)) => Attempt::Retry(format!("{}: {e}", tool.name())),
             };
         }
@@ -240,7 +241,10 @@ impl ToolchainKeys {
             }
         }
         if failures.is_empty() {
-            Err(DeliveryError::Unavailable(format!("no {what} tool on {} ({}); {}", self.session, skipped.join(", "), install_hint(self.session))))
+            Err(DeliveryError::Unavailable(InjectNote::new(
+                FallbackCode::NoTool,
+                format!("no {what} tool on {} ({}); {}", self.session, skipped.join(", "), install_hint(self.session)),
+            )))
         } else {
             Err(DeliveryError::Failed(failures.join("; ")))
         }
@@ -486,16 +490,19 @@ mod tests {
         let err = keys.deliver(PasteMethod::CtrlV.chord_for("linux"), "t").unwrap_err();
         assert_eq!(
             err,
-            DeliveryError::Unavailable(
-                "no paste tool on Wayland · KDE (wtype: not on PATH, dotool: not on PATH, ydotool: not on PATH, kwtype: not on PATH, enigo-wayland: no connection); install wtype, kwtype, dotool or ydotool".into()
-            )
+            DeliveryError::Unavailable(InjectNote::new(
+                FallbackCode::NoTool,
+                "no paste tool on Wayland · KDE (wtype: not on PATH, dotool: not on PATH, ydotool: not on PATH, kwtype: not on PATH, enigo-wayland: no connection); install wtype, kwtype, dotool or ydotool"
+            ))
         );
         // Through the injector the text stays on the clipboard for the user to paste.
         let clipboard = MemoryClipboard::holding("before");
         let injector = injector_over(&clipboard, keys, PasteMethod::CtrlV);
         let out = injector.inject("ours").unwrap();
         assert_eq!(out.via, Via::Clipboard);
-        assert!(out.note.unwrap().starts_with("no paste tool on Wayland · KDE"));
+        let note = out.note.unwrap();
+        assert_eq!(note.code, FallbackCode::NoTool);
+        assert!(note.detail.starts_with("no paste tool on Wayland · KDE"));
         std::thread::sleep(Duration::from_millis(60));
         assert_eq!(clipboard.current().as_deref(), Some("ours"));
     }
@@ -548,7 +555,7 @@ mod tests {
         let keys = make_keys(&tools, KDE_WAYLAND, FakeEnigo::none());
         let err = keys.press_chord(copy, &[Modifier::Alt]).unwrap_err();
         assert!(
-            matches!(&err, DeliveryError::Unavailable(m) if m.starts_with("no copy tool on Wayland · KDE") && m.contains("kwtype: types text, cannot press a chord")),
+            matches!(&err, DeliveryError::Unavailable(n) if n.code == FallbackCode::NoTool && n.detail.starts_with("no copy tool on Wayland · KDE") && n.detail.contains("kwtype: types text, cannot press a chord")),
             "{err:?}"
         );
         assert!(!kwtype.exists(), "kwtype never ran for a copy");
