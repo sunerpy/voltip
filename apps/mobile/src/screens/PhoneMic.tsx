@@ -3,6 +3,7 @@ import {
   type LevelFrame,
   type PhoneTakeState,
   type TFunction,
+  coreMessageText,
   formatElapsed,
   phoneTakeFinal,
 } from "@voltip/shared";
@@ -140,7 +141,9 @@ export function PhoneMic({ desktops }: { desktops: readonly DeviceView[] }) {
           setHeld(false);
           setOffButton(false);
           shell.toast(
-            t("mobile.toast.error", { message: e instanceof Error ? e.message : String(e) }),
+            t("mobile.toast.error", {
+              message: coreMessageText(e instanceof Error ? e.message : String(e)),
+            }),
             "danger",
           );
           return false;

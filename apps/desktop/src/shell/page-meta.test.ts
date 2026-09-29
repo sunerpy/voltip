@@ -60,7 +60,7 @@ describe("pageMeta", () => {
     // Before the core reported its engines the readout says so instead of inventing one.
     expect(engineReadout(emptyEngineStatus())).toEqual({
       label: "语音模型",
-      value: "等待核心…",
+      value: "正在启动…",
       lamp: "idle",
     });
     expect(
@@ -135,8 +135,8 @@ describe("pageMeta", () => {
       label: "Speech model",
       value: "Light",
       lamp: "ok",
-      badge: "This device",
-      title: "This device · Light · Ready",
+      badge: "This computer",
+      title: "This computer · Light · Ready",
     });
     // An id the dictionary does not know keeps the core's name in both locales.
     expect(
@@ -176,13 +176,13 @@ describe("pageMeta", () => {
     expect(offlineMeta.readouts[0]?.lamp).toBe("idle");
     const onboarding = pageMeta({ name: "onboarding", step: 2 }, state, extras);
     expect(onboarding.title).toBe("设置向导 / 第 2 步");
-    expect(onboarding.readouts[0]?.value).toBe("2 / 4 · 热键");
+    expect(onboarding.readouts[0]?.value).toBe("2 / 4 · 快捷键");
     expect(onboarding.readouts[1]?.value).toBe("Windows");
     expect(
       pageMeta({ name: "onboarding", step: 1 }, stateWith({ identity: null }), extras).readouts[1]
         ?.value,
     ).toBe("未知");
-    expect(pageMeta({ name: "overlay" }, state, extras).title).toBe("悬浮胶囊");
+    expect(pageMeta({ name: "overlay" }, state, extras).title).toBe("悬浮窗");
     expect(pageMeta({ name: "notfound", path: "/x" }, state, extras)).toEqual({
       title: "未找到",
       readouts: [],
@@ -235,10 +235,10 @@ describe("pageMeta in English", () => {
       label: "Speech model",
       title: "Built-in service · Qwen/Qwen3-ASR-1.7B · Ready",
     });
-    expect(engineReadout(emptyEngineStatus(), EN).value).toBe("Waiting for core…");
+    expect(engineReadout(emptyEngineStatus(), EN).value).toBe("Starting…");
     expect(
       pageMeta({ name: "onboarding", step: 2 }, state, extras, undefined, EN).readouts[0]?.value,
-    ).toBe("2 / 4 · Hotkey");
+    ).toBe("2 / 4 · Shortcut");
     expect(
       pageMeta(
         { name: "onboarding", step: 9 },
@@ -263,13 +263,13 @@ describe("pageMeta in English", () => {
       { label: "Density", value: "Compact · 15 px" },
     ]);
     expect(hotkeyBackendReadout({ pressed: false, capturing: false, backend: "" }, EN)).toBe(
-      "Not reported yet",
+      "Detecting…",
     );
   });
 });
 
 describe("hotkeyBackendReadout", () => {
-  it("keeps the platform tail of the shell's report and names failures", () => {
+  it("regression: names the system and the Linux session, never the library or the system call, and names failures", () => {
     expect(
       hotkeyBackendReadout({
         pressed: false,
@@ -277,13 +277,25 @@ describe("hotkeyBackendReadout", () => {
         backend: "global-shortcut · Windows · RegisterHotKey",
         registered: "Ctrl+Alt+Space",
       }),
-    ).toBe("Windows · RegisterHotKey");
+    ).toBe("Windows");
+    expect(
+      hotkeyBackendReadout({
+        pressed: false,
+        capturing: false,
+        backend: "global-shortcut · macOS · Carbon",
+      }),
+    ).toBe("macOS");
+    expect(
+      hotkeyBackendReadout({
+        pressed: false,
+        capturing: false,
+        backend: "global-shortcut · Linux · Wayland",
+      }),
+    ).toBe("Linux · Wayland");
     expect(hotkeyBackendReadout({ pressed: false, capturing: false, backend: "mock" })).toBe(
       "mock",
     );
-    expect(hotkeyBackendReadout({ pressed: false, capturing: false, backend: "" })).toBe(
-      "尚未报告",
-    );
+    expect(hotkeyBackendReadout({ pressed: false, capturing: false, backend: "" })).toBe("检测中…");
     expect(
       hotkeyBackendReadout({
         pressed: false,
@@ -291,7 +303,7 @@ describe("hotkeyBackendReadout", () => {
         backend: "global-shortcut · Linux · X11",
         error: "已被占用",
       }),
-    ).toBe("注册失败");
+    ).toBe("未能生效");
   });
 });
 
@@ -309,7 +321,7 @@ describe("settingsReadouts", () => {
         lamp: "ok",
         title: "内置服务 · Qwen/Qwen3-ASR-1.7B · 就绪",
       },
-      { label: "注入", value: "粘贴" },
+      { label: "插入方式", value: "粘贴到光标处" },
     ]);
     expect(pageMeta({ name: "ai" }, state, extras).readouts).toEqual([
       { label: "润色", value: "开 · qwen3.8-27b", lamp: "ok" },
@@ -324,8 +336,8 @@ describe("settingsReadouts", () => {
     expect(pageMeta({ name: "ai" }, off, extras).readouts.map((r) => r.value)).toEqual(["关"]);
     expect(pageMeta({ name: "feedback" }, state, extras).title).toBe("首页");
     expect(settingsReadouts("hotkey", state, appearance)).toEqual([
-      { label: "热键", value: "Ctrl Alt Space" },
-      { label: "后端", value: MOCK_HOTKEY_BACKEND.split(" · ").slice(1).join(" · ") },
+      { label: "快捷键", value: "Ctrl Alt Space" },
+      { label: "快捷键方式", value: MOCK_HOTKEY_BACKEND },
     ]);
     expect(settingsReadouts("appearance", state, appearance)).toEqual([
       { label: "主题", value: "暖纸 · 不跟随系统" },

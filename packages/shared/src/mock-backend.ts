@@ -36,6 +36,8 @@ import {
   type HistoryEntry,
   type HotkeyEdgeArgs,
   type InjectPreflight,
+  type PasteFailure,
+  type PasteOutcome,
   type LiveSegment,
   type LiveText,
   type ModelInstallState,
@@ -62,6 +64,7 @@ import {
   SOLO_KEYS,
   type SoloKey,
   MAX_PHONE_TEXT_CHARS,
+  MAX_PASTE_TEXT_CHARS,
   type SentText,
   type NearbyDevice,
   applyEvent,
@@ -178,6 +181,9 @@ export interface MockBackendOptions {
   permissions?: PermissionReport | (() => PermissionReport);
   /** What `injectPreflight` answers (§15.3); defaults to the unchecked `proceed` of the host. */
   injectPreflight?: InjectPreflight;
+  /** What a valid `pasteText` ends with while no take runs (`setPasteOutcome` changes it);
+   *  defaults to `pasted`. */
+  pasteOutcome?: PasteOutcome;
   /** Only this code joins successfully (phone role); any well-formed code otherwise. */
   expectedCode?: string;
   /** What the desktop shell reports about the machine (docs/dictation.md §10.6); defaults to
@@ -238,7 +244,7 @@ export const MOCK_DICTATION_FAILED_DWELL_MS = 6000;
  *  beat of the same length (`inserting`). */
 export const MOCK_FINALIZE_MS = 120;
 /** `live_error` the mock records when a streaming take ends without any text (§12). */
-export const MOCK_EMPTY_STREAM_ERROR = "流式终稿为空";
+export const MOCK_EMPTY_STREAM_ERROR = "实时识别未得到文本";
 
 /** The built-in service the browser preview pretends was compiled in: its models only (its host
  *  never reaches the UI, like in the real app). */
@@ -435,7 +441,7 @@ export const PHONE_TEXT_UNAVAILABLE = "phone_text: 电脑接收手机发来的�
 /** `live_error` of a take whose scene asked for a streaming mode the live preview cannot serve
  *  (the core's `SCENE_MODE_NOT_READY`, §18.4). */
 export const MOCK_SCENE_MODE_NOT_READY =
-  "场景要求的流式输出暂不可用：实时预览未就绪（已关闭或流式模型未下载），本次按整段输出";
+  "场景要求边说边识别，但实时预览未就绪（已关闭或实时识别模型未下载），本次按整段输出处理";
 
 /** The core's text for a take with nothing left to insert (`FailureCode::NoSpeech`). */
 export const MOCK_NO_SPEECH = "没有听到声音";
@@ -721,6 +727,9 @@ export class MockBackend implements Backend {
   private meters = new Set<ReturnType<typeof setInterval>>();
   private permissions: PermissionReport | (() => PermissionReport);
   private readonly preflight: InjectPreflight;
+  private pasteOutcome: PasteOutcome;
+  /** Every text a `pasteText` handed on, in order (tests). */
+  readonly pastes: string[] = [];
   /** Every `permissionsRequest` made, in order (tests). */
   readonly permissionRequests: Permission[] = [];
   /** Secret-store entries holding a user key (`keyEntry`). */
@@ -774,6 +783,7 @@ export class MockBackend implements Backend {
     const host = hostOsOf(identity.platform);
     this.permissions = options.permissions ?? mockPermissions(host);
     this.preflight = options.injectPreflight ?? uncheckedPreflight(host);
+    this.pasteOutcome = options.pasteOutcome ?? { kind: "pasted" };
     const settings: Settings = { ...defaultSettings(), ...options.settings };
     // The phone has no local models (docs/dictation.md §10): an empty catalogue, commands refused.
     const models: ModelState[] =
@@ -938,6 +948,24 @@ export class MockBackend implements Backend {
     return Promise.resolve(structuredClone(this.preflight));
   }
 
+  /** `paste_text`: the refusals of the shell and the core (the phone cannot paste; empty or too
+   *  long text; a take under way, not queued), then the seeded outcome. Writes no history. */
+  pasteText(text: string): Promise<PasteOutcome> {
+    if (this.role === "phone") return pasteFailed("unsupported");
+    if (text.trim().length === 0 || Array.from(text).length > MAX_PASTE_TEXT_CHARS) {
+      return pasteFailed("invalid");
+    }
+    const phase = this.state.dictation.phase.phase;
+    if (phase === "listening" || phase === "processing") return pasteFailed("busy");
+    this.pastes.push(text);
+    return Promise.resolve(structuredClone(this.pasteOutcome));
+  }
+
+  /** What the next valid paste ends with (tests: the window changed, the paste fell back). */
+  setPasteOutcome(outcome: PasteOutcome): void {
+    this.pasteOutcome = outcome;
+  }
+
   private readonly handlers: {
     [K in MutationCommand]: (args: CommandArgs[K] | undefined) => void;
   } = {
@@ -955,11 +983,11 @@ export class MockBackend implements Backend {
       const { fingerprint } = required(args);
       const device = this.state.nearby.find((d) => d.fingerprint === fingerprint);
       if (device === undefined) {
-        this.emit({ type: "error", message: "pairing: 附近没有这台设备" });
+        this.emit({ type: "error", message: "pairing: 附近没有找到此设备" });
         return;
       }
       if (!device.pairing) {
-        this.emit({ type: "error", message: "pairing: 这台设备现在不在配对" });
+        this.emit({ type: "error", message: "pairing: 此设备当前没有等待配对" });
         return;
       }
       this.joinSession();
@@ -1056,7 +1084,7 @@ export class MockBackend implements Backend {
       }
       const edit = this.state.settings.edit_hotkey;
       if (edit !== null && mockSameChord(hotkey, edit)) {
-        this.emit({ type: "error", message: `hotkey: ${hotkey} 已用作编辑选中文本的热键` });
+        this.emit({ type: "error", message: `hotkey: ${hotkey} 已用作「编辑选中文本」的快捷键` });
         return;
       }
       this.emit({ type: "settings", ...this.state.settings, hotkey });
@@ -1079,7 +1107,7 @@ export class MockBackend implements Backend {
       ) {
         this.emit({
           type: "error",
-          message: "microphone: a device id of 1–1024 bytes, or none for the default",
+          message: "microphone: 麦克风标识须为 1–1024 字节，留空则使用系统默认输入",
         });
         return;
       }
@@ -1096,7 +1124,7 @@ export class MockBackend implements Backend {
           return;
         }
         if (mockSameChord(hotkey, this.state.settings.hotkey)) {
-          this.emit({ type: "error", message: `edit_hotkey: ${hotkey} 已用作听写热键` });
+          this.emit({ type: "error", message: `edit_hotkey: ${hotkey} 已用作听写快捷键` });
           return;
         }
       }
@@ -1143,7 +1171,7 @@ export class MockBackend implements Backend {
       }
       const target = this.state.devices.find((d) => d.device.public_key === publicKey);
       if (target?.connection.state !== "online") {
-        this.emit({ type: "error", message: "device is not online" });
+        this.emit({ type: "error", message: "设备不在线" });
         return;
       }
       // Like the core's counter: it outlives 清空, so the desktop never sees an id twice.
@@ -1183,7 +1211,7 @@ export class MockBackend implements Backend {
       }
       const target = this.state.devices.find((d) => d.device.public_key === publicKey);
       if (target?.connection.state !== "online") {
-        this.emit({ type: "error", message: "device is not online" });
+        this.emit({ type: "error", message: "设备不在线" });
         return;
       }
       const take = (running?.take ?? 0) + 1;
@@ -1695,13 +1723,11 @@ export class MockBackend implements Backend {
   private setModelState(id: string, state: ModelInstallState) {
     const models = this.state.models.map((m) => (m.id === id ? { ...m, state } : m));
     this.emit({ type: "models", models });
-    // Readiness follows the install state of the selected model and of the streaming model.
+    // Readiness and the on-device card follow the install state of the selected model and of the
+    // streaming model, whichever provider is in use (the core's rescan re-reports the engines);
+    // progress ticks change neither.
     const engines = this.resolveEngines(this.state.settings.engines);
-    if (
-      engines.local_ready !== this.state.engines.local_ready ||
-      engines.live_preview_ready !== this.state.engines.live_preview_ready ||
-      engines.effective_output_mode !== this.state.engines.effective_output_mode
-    )
+    if (JSON.stringify(engines) !== JSON.stringify(this.state.engines))
       this.emit({ type: "engines", ...engines });
   }
 
@@ -2390,6 +2416,7 @@ export class MockBackend implements Backend {
       phase: "processing",
       stage: streaming ? "finalizing" : "transcribing",
       started_at: stoppedAt,
+      stage_started_at: stoppedAt,
       ...carried,
     });
     const finish = () => {
@@ -2453,7 +2480,12 @@ export class MockBackend implements Backend {
       if (this.state.dictation.session !== session) return;
       if (mode === "live_inject") {
         // The tail is the last paste; nothing is refined (§12).
-        this.emitPhase({ phase: "processing", stage: "inserting", started_at: this.now() });
+        this.emitPhase({
+          phase: "processing",
+          stage: "inserting",
+          started_at: stoppedAt,
+          stage_started_at: this.now(),
+        });
         this.laterDictation(MOCK_FINALIZE_MS, finish);
         return;
       }
@@ -2464,7 +2496,8 @@ export class MockBackend implements Backend {
       this.emitPhase({
         phase: "processing",
         stage: "refining",
-        started_at: this.now(),
+        started_at: stoppedAt,
+        stage_started_at: this.now(),
         ...carried,
       });
       this.laterDictation(MOCK_REFINE_MS, finish);
@@ -2482,7 +2515,12 @@ export class MockBackend implements Backend {
     const context = this.takeContext;
     const stoppedAt = this.now();
     const durationMs = Math.max(0, stoppedAt - startedAt);
-    this.emitPhase({ phase: "processing", stage: "transcribing", started_at: stoppedAt });
+    this.emitPhase({
+      phase: "processing",
+      stage: "transcribing",
+      started_at: stoppedAt,
+      stage_started_at: stoppedAt,
+    });
     this.laterDictation(MOCK_ASR_MS, () => {
       if (this.state.dictation.session !== session) return;
       const selection = this.copiedSelection;
@@ -2494,10 +2532,20 @@ export class MockBackend implements Backend {
         this.dwell(MOCK_DICTATION_DWELL_MS, session);
         return;
       }
-      this.emitPhase({ phase: "processing", stage: "refining", started_at: this.now() });
+      this.emitPhase({
+        phase: "processing",
+        stage: "refining",
+        started_at: stoppedAt,
+        stage_started_at: this.now(),
+      });
       this.laterDictation(MOCK_REFINE_MS, () => {
         if (this.state.dictation.session !== session) return;
-        this.emitPhase({ phase: "processing", stage: "inserting", started_at: this.now() });
+        this.emitPhase({
+          phase: "processing",
+          stage: "inserting",
+          started_at: stoppedAt,
+          stage_started_at: this.now(),
+        });
         this.laterDictation(MOCK_FINALIZE_MS, () => {
           if (this.state.dictation.session !== session) return;
           const via = engines.inject === "clipboard_only" ? "clipboard" : "paste";
@@ -2806,6 +2854,11 @@ export class MockBackend implements Backend {
     this.log.push(event);
     for (const listener of this.listeners) listener(event);
   }
+}
+
+/** A paste that neither pasted nor copied (`paste_text`'s `failed { reason }`). */
+function pasteFailed(reason: PasteFailure): Promise<PasteOutcome> {
+  return Promise.resolve({ kind: "failed", reason });
 }
 
 function required<T>(args: T | undefined): T {

@@ -93,7 +93,7 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
       "chrome窗口标题含 GitHub · Pull request",
     );
     expect(within(github).getByTestId("scene-summary")).toHaveTextContent(
-      "输出：流式定稿 · 语言：English · en · 字形：繁体",
+      "输出：边说边识别 · 语言：English · en · 字形：繁体",
     );
     expect(github).toHaveAttribute("data-enabled", "false");
     expect(within(chat).getByRole("button", { name: "上移 聊天" })).toBeDisabled();
@@ -178,8 +178,8 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
     );
 
     expect(within(pane).queryByRole("list", { name: "场景列表" })).toBeNull();
-    expect(within(pane).getByText("还没有场景")).toBeInTheDocument();
-    expect(within(pane).getByText("scenes.json · 上限 50 个 · 从上到下匹配")).toBeInTheDocument();
+    expect(within(pane).getByText("暂无场景")).toBeInTheDocument();
+    expect(within(pane).getByText("上限 50 个 · 从上到下匹配")).toBeInTheDocument();
   });
 
   it("regression: 新建场景 builds a scene from a typed id and a recent app, title keywords and overrides that start at 跟随全局, and saves it through scenes_add", async () => {
@@ -274,10 +274,10 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
     expect(within(editor).queryByTestId("scene-streaming-note")).toBeNull();
     await user.selectOptions(
       within(overrides).getByRole("combobox", { name: "输出方式" }),
-      "流式定稿",
+      "边说边识别",
     );
     expect(within(editor).getByTestId("scene-streaming-note")).toHaveTextContent(
-      "流式模型未下载时本场景按整段输出",
+      "实时识别模型未下载时，本场景按整段输出运行",
     );
     const prompt = within(editor).getByRole("textbox", { name: "给 AI 的补充要求" });
     await user.type(prompt, "保留英文标识符");
@@ -306,7 +306,7 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
       "codeslack窗口标题含 GitHub",
     );
     expect(within(created).getByTestId("scene-summary")).toHaveTextContent(
-      "AI 润色 关 · 输出：流式定稿 · 有补充要求",
+      "AI 润色 关 · 输出：边说边识别 · 有补充要求",
     );
   });
 
@@ -318,7 +318,7 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
     await user.click(within(pane).getByRole("button", { name: "新建场景" }));
     let editor = await screen.findByRole("dialog", { name: "新建场景" });
     // No history app yet: the recent list says where they come from.
-    expect(editor).toHaveTextContent("历史里还没有记录到应用；听写一次后会出现在这里。");
+    expect(editor).toHaveTextContent("历史记录中暂无应用；完成一次听写后会显示在这里。");
     const name = within(editor).getByRole("textbox", { name: "名称" });
     // A clash is shown as soon as it is typed (ASCII case ignored, like the core).
     await user.type(name, "github");
@@ -346,7 +346,7 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
     await user.type(name, "名".repeat(33));
     await user.click(within(editor).getByRole("button", { name: /保存/ }));
     expect(await within(editor).findByRole("alert")).toHaveTextContent(
-      "scenes: 场景名称最多 32 个字符（当前 33）",
+      "场景名称最多 32 个字符（当前 33）",
     );
     expect(screen.getByRole("dialog", { name: "新建场景" })).toBeInTheDocument();
     // Editing again clears the refusal.
@@ -371,7 +371,7 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
     const overrides = within(editor).getByTestId("scene-editor-overrides");
     const select = (label: string) => within(overrides).getByRole("combobox", { name: label });
     expect(select("AI 润色")).toHaveDisplayValue("跟随全局");
-    expect(select("输出方式")).toHaveDisplayValue("流式定稿");
+    expect(select("输出方式")).toHaveDisplayValue("边说边识别");
     expect(select("语言")).toHaveDisplayValue("English · en");
     expect(select("中文字形")).toHaveDisplayValue("繁体");
     await user.selectOptions(select("AI 润色"), "开");
@@ -401,7 +401,7 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
     });
     const github = within(pane).getByRole("article", { name: "GitHub" });
     expect(within(github).getByTestId("scene-summary")).toHaveTextContent(
-      "AI 润色 开 · 输出：流式定稿 · 字形：繁体",
+      "AI 润色 开 · 输出：边说边识别 · 字形：繁体",
     );
     expect(within(github).getByText("firefox")).toBeInTheDocument();
   });
@@ -417,6 +417,6 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
     expect(cards(pane)).toHaveLength(MAX_SCENES);
     vi.spyOn(backend, "invoke").mockRejectedValueOnce(new Error("scenes: 暂时不能保存"));
     await user.click(within(card(pane, 0)).getByRole("switch", { name: "启用 s0" }));
-    expect(await screen.findByText("出错了 · scenes: 暂时不能保存")).toBeInTheDocument();
+    expect(await screen.findByText("出错了 · 暂时不能保存")).toBeInTheDocument();
   });
 });

@@ -43,11 +43,11 @@ describe("Pill", () => {
     const user = userEvent.setup();
     const onCopy = vi.fn();
     const onStop = vi.fn();
-    render(<Pill state="error" label="未送出 · 目标窗口没有焦点" onCopy={onCopy} />);
+    render(<Pill state="error" label="未插入 · 目标窗口没有焦点" onCopy={onCopy} />);
     await user.click(screen.getByRole("button", { name: "复制文本" }));
     expect(onCopy).toHaveBeenCalled();
     render(<Pill state="locked" readout="01:24" onStop={onStop} mode="云端 openai" />);
-    await user.click(screen.getByRole("button", { name: "结束收音" }));
+    await user.click(screen.getByRole("button", { name: "结束录音" }));
     expect(onStop).toHaveBeenCalled();
     expect(screen.getByText("01:24")).toBeInTheDocument();
     expect(screen.getByText("云端 openai")).toBeInTheDocument();
@@ -64,6 +64,33 @@ describe("Pill", () => {
     render(<Pill state="armed" keys="Ctrl Alt Space" />);
     // Compact resting capsule: the hotkey is announced, not drawn (52 px pill).
     expect(screen.getByRole("img", { name: /Ctrl Alt Space/ })).toBeInTheDocument();
+  });
+});
+
+describe("Pill cancel hint and step time (user feedback 2026-09-29)", () => {
+  it("regression: the Esc hint reads as cancel in the danger colour", () => {
+    // A running take cancels on Esc; the bare keycap did not say so.
+    for (const state of ["listening", "locked", "processing"] as const) {
+      const { unmount } = render(<Pill state={state} />);
+      const hint = screen.getByRole("img", { name: "按 Esc 取消这次录音" });
+      expect(hint).toHaveTextContent("Esc取消");
+      expect(hint).toHaveClass("text-danger");
+      expect(hint.querySelector("kbd")).toHaveClass("border-danger", "text-danger");
+      unmount();
+    }
+    for (const state of ["armed", "inserted", "error", "cancel-armed", "blocked"] as const) {
+      const { unmount } = render(<Pill state={state} />);
+      expect(screen.queryByTestId("pill-esc-cancel")).toBeNull();
+      unmount();
+    }
+  });
+
+  it("regression: a processing pill shows the step time it is given and no fixed 0.0 s", () => {
+    const { rerender } = render(<Pill state="processing" />);
+    expect(screen.queryByTestId("pill-stage-time")).toBeNull();
+    expect(screen.getByRole("status")).not.toHaveTextContent("0.0 s");
+    rerender(<Pill state="processing" readout="1.4 s" />);
+    expect(screen.getByTestId("pill-stage-time")).toHaveTextContent("1.4 s");
   });
 });
 
@@ -164,7 +191,7 @@ describe("Pill live preview (docs/dictation.md §11)", () => {
     const injected = screen.getByTestId("pill-live-injected");
     expect(injected).toHaveTextContent("把这段逻辑抽成一个 helper，");
     expect(injected).toHaveClass("text-pill-muted", "opacity-60");
-    expect(injected).toHaveAttribute("title", "已打进前台应用");
+    expect(injected).toHaveAttribute("title", "已输入到当前窗口");
     expect(screen.getByTestId("pill-live-committed")).toHaveTextContent("然后复用。");
     expect(screen.getByTestId("pill-live-committed")).not.toHaveClass("text-pill-muted");
     expect(screen.getByTestId("pill-live")).toHaveTextContent(
@@ -214,16 +241,16 @@ describe("Pill live preview (docs/dictation.md §11)", () => {
     expect(screen.queryByTestId("pill-waiting")).toBeNull();
     expect(screen.getByRole("status")).toHaveTextContent("00:07");
     rerender(
-      <Pill state="processing" label="转写中…" preview="把 fetchUser 改成 async，然后加上错误" />,
+      <Pill state="processing" label="识别中…" preview="把 fetchUser 改成 async，然后加上错误" />,
     );
     expect(screen.getByTestId("pill-preview")).toHaveTextContent(
       "把 fetchUser 改成 async，然后加上错误",
     );
     expect(screen.getByTestId("pill-preview")).toHaveClass("text-pill-muted");
-    expect(screen.queryByText("转写中…")).toBeNull();
+    expect(screen.queryByText("识别中…")).toBeNull();
     // An empty preview falls back to the caption; the final result never shows a preview.
-    rerender(<Pill state="processing" label="转写中…" preview="" />);
-    expect(screen.getByText("转写中…")).toBeInTheDocument();
+    rerender(<Pill state="processing" label="识别中…" preview="" />);
+    expect(screen.getByText("识别中…")).toBeInTheDocument();
     expect(screen.queryByTestId("pill-preview")).toBeNull();
     rerender(<Pill state="inserted" label="已插入 3 字" preview="ignored" />);
     expect(screen.queryByTestId("pill-preview")).toBeNull();
@@ -300,5 +327,29 @@ describe("LiveCaption", () => {
     rerender(<LiveCaption committed="x" tail="" tier="failed" elapsed="00:01" engine="e" />);
     expect(screen.getByText("出错了")).toBeInTheDocument();
     expect(screen.getByText("x")).toHaveClass("text-fg-subtle");
+  });
+});
+
+describe("Pill width", () => {
+  it("regression: the widest pill stays inside the 480 px overlay window; the waveform gives way", () => {
+    // Browser measurement 2026-09-29: a long scene name, the waiting hint and the Esc hint made the
+    // listening pill 533 px wide, and the 480 px overlay window cut it off.
+    for (const state of ["listening", "locked", "processing"] as const) {
+      const { container, unmount } = render(
+        <Pill
+          state={state}
+          waiting={state === "listening"}
+          scene="代码评审与重构场景名称很长"
+          mode="云端"
+        />,
+      );
+      const pill = container.querySelector('[role="status"]');
+      expect(pill?.className, `${state} pill`).toContain("max-w-[464px]");
+      const wave = container.querySelector('[role="img"][data-state]');
+      for (const cls of ["min-w-0", "shrink", "justify-end", "overflow-hidden"]) {
+        expect(wave?.className, `${state} waveform`).toContain(cls);
+      }
+      unmount();
+    }
   });
 });

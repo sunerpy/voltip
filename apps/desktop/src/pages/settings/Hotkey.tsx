@@ -13,6 +13,7 @@ import {
   activationDescription,
   activationHint,
   activationLabel,
+  hotkeyMethodText,
   platformLabel,
 } from "@voltip/shared";
 import {
@@ -105,7 +106,7 @@ function SessionCapabilities({ capabilities }: { capabilities: HotkeyCapabilitie
           label={t("settings.hotkey.capabilities.command")}
           help={t("settings.hotkey.capabilities.commandHelp")}
           data-testid="capability-command">
-          <div className="flex max-w-[360px] items-center gap-2">
+          <div className="flex max-w-full min-w-0 items-center gap-2">
             <code className="mono truncate text-[12px] text-fg" title={capabilities.toggle_command}>
               {capabilities.toggle_command}
             </code>
@@ -117,8 +118,8 @@ function SessionCapabilities({ capabilities }: { capabilities: HotkeyCapabilitie
               }}
             />
           </div>
-          <div className="flex max-w-[360px] items-center gap-2">
-            <span className="text-[11px] text-fg-subtle">
+          <div className="flex max-w-full min-w-0 items-center gap-2">
+            <span className="shrink-0 text-[11px] text-fg-subtle">
               {t("settings.hotkey.capabilities.editCommand")}
             </span>
             <code
@@ -223,7 +224,7 @@ function SoloKeyRow({
         offered.length === 0 ? (
           t("settings.hotkey.solo.unavailable")
         ) : status.solo_error !== undefined || notes.length > 0 ? (
-          <span className="flex max-w-[360px] flex-col gap-1" data-testid="solo-key-notes">
+          <span className="flex flex-col gap-1" data-testid="solo-key-notes">
             {status.solo_error !== undefined && (
               <span role="alert" className="text-danger">
                 {status.solo_error}
@@ -243,7 +244,6 @@ function SoloKeyRow({
         )}
         <Select
           size="sm"
-          className="w-48"
           aria-label={t("settings.hotkey.solo.select")}
           options={options}
           value={soloKey ?? "off"}
@@ -328,6 +328,8 @@ export function Hotkey() {
     editRecorder.start();
   };
 
+  const platformText = platform ? platformLabel(platform, locale) : "—";
+  const method = status.backend.length > 0 ? hotkeyMethodText(status.backend) : undefined;
   return (
     <SettingsPane title={t("settings.hotkey.title")} lede={t("settings.hotkey.lede")}>
       <SettingsSection title={t("settings.hotkey.backendTitle")}>
@@ -336,14 +338,15 @@ export function Hotkey() {
           data-testid="hotkey-backend">
           <span>
             <span className="text-fg-subtle">{t("settings.hotkey.platform")} </span>
-            <span className="mono text-fg">{platform ? platformLabel(platform, locale) : "—"}</span>
+            <span className="mono text-fg">{platformText}</span>
           </span>
-          <span>
-            <span className="text-fg-subtle">{t("settings.hotkey.backend")} </span>
-            <span className="mono text-fg">
-              {status.backend.length > 0 ? status.backend : t("settings.hotkey.notReported")}
+          {/* The method row only when it says more than the platform: the Linux session. */}
+          {method !== platformText && (
+            <span>
+              <span className="text-fg-subtle">{t("settings.hotkey.backend")} </span>
+              <span className="mono text-fg">{method ?? t("settings.hotkey.notReported")}</span>
             </span>
-          </span>
+          )}
           <span className="flex items-center gap-2">
             <span className="text-fg-subtle">{t("settings.hotkey.registration")}</span>
             <LampText
@@ -477,7 +480,9 @@ export function Hotkey() {
         title={t("settings.hotkey.activation")}
         description={t("settings.hotkey.activationHelp")}
         data-testid="activation">
-        <CardGrid min={200} role="listbox" aria-label={t("settings.hotkey.activation")}>
+        {/* Three cards: 240 px keeps a fourth, empty column from narrowing them (their longest
+            name is 「按一下开始，再按一下结束」). */}
+        <CardGrid min={240} role="listbox" aria-label={t("settings.hotkey.activation")}>
           {ACTIVATIONS.map((mode) => (
             <OptionCard
               key={mode}

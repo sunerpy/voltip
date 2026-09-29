@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use enigo::{Direction, Enigo, Keyboard, Settings};
 
-use crate::InjectError;
 use crate::injector::{ClipboardPort, Delivered, DeliveryError, KeystrokePort, check_display};
 use crate::toolchain::{Chord, Delivery, Key, Modifier};
+use crate::{FallbackCode, InjectError, InjectNote};
 
 /// [`check_display`] against this process's environment and platform.
 pub fn display_available() -> Result<(), InjectError> {
@@ -127,8 +127,11 @@ pub fn enigo_settings(backend: EnigoBackend) -> Settings {
 /// Why enigo could not press a chord.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EnigoError {
-    /// No connection (no display, no protocol, no accessibility permission): nothing was sent.
+    /// No connection (no display, no protocol): nothing was sent.
     Connect(String),
+    /// The system does not let this process send input (macOS: Accessibility not granted):
+    /// nothing was sent.
+    NoPermission(String),
     /// The connection exists but an event was refused.
     Input(String),
 }
@@ -137,6 +140,7 @@ impl std::fmt::Display for EnigoError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Connect(e) => write!(f, "no input connection: {e}"),
+            Self::NoPermission(e) => f.write_str(e),
             Self::Input(e) => write!(f, "input refused: {e}"),
         }
     }
@@ -335,7 +339,7 @@ impl SystemKeys {
         display_available().map_err(|e| EnigoError::Connect(e.to_string()))?;
         let x11_reachable = std::env::var("DISPLAY").is_ok_and(|d| !d.trim().is_empty());
         let backend = resolve_backend(self.backend, std::env::consts::OS, x11_reachable);
-        Enigo::new(&enigo_settings(backend)).map_err(|e| EnigoError::Connect(e.to_string()))
+        Enigo::new(&enigo_settings(backend)).map_err(|e| connect_error(&e))
     }
 
     /// Press `chord` once ([`chord_steps`] for this platform). Every key a failed step leaves down is
@@ -405,13 +409,33 @@ fn enigo_key(key: StepKey) -> Result<enigo::Key, EnigoError> {
     }
 }
 
+/// An enigo connection failure as the injectors see it: a missing permission apart from every
+/// other reason, so the interface can name it and offer the system setting.
+pub fn connect_error(e: &enigo::NewConError) -> EnigoError {
+    match e {
+        enigo::NewConError::NoPermission => EnigoError::NoPermission(e.to_string()),
+        _ => EnigoError::Connect(e.to_string()),
+    }
+}
+
+/// What a connection that could not be opened means here: the display server on Linux, nothing
+/// the interface can name elsewhere.
+fn connect_code() -> FallbackCode {
+    if cfg!(target_os = "linux") { FallbackCode::NoDisplay } else { FallbackCode::Other }
+}
+
 impl SystemKeys {
     /// An enigo outcome as the injectors see it: no connection is [`DeliveryError::Unavailable`]
     /// (nothing was sent), a refused event is [`DeliveryError::Failed`].
     fn delivered(&self, outcome: Result<(), EnigoError>) -> Result<Delivered, DeliveryError> {
         match outcome {
             Ok(()) => Ok(Delivered { tool: self.backend.name().to_string(), delivery: Delivery::Chord }),
-            Err(EnigoError::Connect(e)) => Err(DeliveryError::Unavailable(format!("{}: no input connection: {e}", self.backend.name()))),
+            Err(EnigoError::NoPermission(e)) => {
+                Err(DeliveryError::Unavailable(InjectNote::new(FallbackCode::NoPermission, format!("{}: {e}", self.backend.name()))))
+            }
+            Err(EnigoError::Connect(e)) => {
+                Err(DeliveryError::Unavailable(InjectNote::new(connect_code(), format!("{}: no input connection: {e}", self.backend.name()))))
+            }
             Err(EnigoError::Input(e)) => Err(DeliveryError::Failed(format!("{}: input refused: {e}", self.backend.name()))),
         }
     }
@@ -450,7 +474,7 @@ mod tests {
             assert!(matches!(keys.connect(), Err(EnigoError::Connect(_))), "{backend:?}");
             assert!(matches!(keys.press(crate::paste_chord()), Err(EnigoError::Connect(_))), "{backend:?}");
             let err = keys.deliver(crate::paste_chord(), "x").unwrap_err();
-            assert!(matches!(&err, DeliveryError::Unavailable(m) if m.starts_with(backend.name())), "{err:?}");
+            assert!(matches!(&err, DeliveryError::Unavailable(n) if n.detail.starts_with(backend.name())), "{err:?}");
         }
         assert!(matches!(ClipboardPasteInjector::new(Duration::ZERO).inject("x"), Err(InjectError::NoDisplay(_))));
         assert!(matches!(ClipboardOnlyInjector::default().inject("x"), Err(InjectError::NoDisplay(_))));
@@ -540,7 +564,7 @@ mod tests {
         assert_eq!(enigo_key(alt), Ok(enigo::Key::Alt));
         if display_available().is_err() {
             assert!(matches!(keys.copy(copy(std::env::consts::OS), &[Modifier::Alt]), Err(EnigoError::Connect(_))));
-            assert!(matches!(keys.press_chord(copy(std::env::consts::OS), &[]), Err(DeliveryError::Unavailable(m)) if m.starts_with("enigo")));
+            assert!(matches!(keys.press_chord(copy(std::env::consts::OS), &[]), Err(DeliveryError::Unavailable(n)) if n.detail.starts_with("enigo")));
         }
     }
 
@@ -599,5 +623,29 @@ mod tests {
         assert!(!enigo_settings(EnigoBackend::X11).open_prompt_to_get_permissions);
         assert_eq!(EnigoError::Connect("x".into()).to_string(), "no input connection: x");
         assert_eq!(EnigoError::Input("y".into()).to_string(), "input refused: y");
+        assert_eq!(EnigoError::NoPermission("z".into()).to_string(), "z");
+    }
+
+    /// The history's clipboard fallback names its reason (docs/dictation.md §4.2): enigo's
+    /// `NoPermission` (macOS Accessibility not granted) is `no_permission`, not a lost connection,
+    /// so the interface can say so and offer the setting; the message stays for the details.
+    #[test]
+    fn a_missing_input_permission_is_its_own_fallback_code() {
+        let e = connect_error(&enigo::NewConError::NoPermission);
+        assert_eq!(e, EnigoError::NoPermission("the application does not have the permission to simulate input".into()));
+        assert_eq!(
+            connect_error(&enigo::NewConError::EstablishCon("no display")),
+            EnigoError::Connect("no connection could be established: (no display)".into())
+        );
+        let keys = SystemKeys::with_backend(EnigoBackend::Native);
+        let Err(DeliveryError::Unavailable(note)) = keys.delivered(Err(e)) else { panic!("a permission refusal leaves the text on the clipboard") };
+        assert_eq!(note.code, FallbackCode::NoPermission);
+        assert_eq!(note.detail, "enigo: the application does not have the permission to simulate input");
+        let Err(DeliveryError::Unavailable(note)) = keys.delivered(Err(EnigoError::Connect("gone".into()))) else { panic!("no connection is a fallback") };
+        assert_eq!(note.code, if cfg!(target_os = "linux") { FallbackCode::NoDisplay } else { FallbackCode::Other });
+        assert!(
+            matches!(keys.delivered(Err(EnigoError::Input("refused".into()))), Err(DeliveryError::Failed(_))),
+            "a refused event is a failure, not a fallback"
+        );
     }
 }

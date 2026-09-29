@@ -493,8 +493,14 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       phase: "processing",
       stage: "transcribing",
       started_at: T0 + MOCK_MIC_READY_MS + 3200,
+      stage_started_at: T0 + MOCK_MIC_READY_MS + 3200,
     });
     tick(MOCK_ASR_MS);
+    // Like the core: the run keeps its start, the step clock restarts (user feedback 2026-09-29).
+    expect(backend.peek().dictation.phase).toMatchObject({
+      started_at: T0 + MOCK_MIC_READY_MS + 3200,
+      stage_started_at: T0 + MOCK_MIC_READY_MS + 3200 + MOCK_ASR_MS,
+    });
     expect(backend.peek().dictation.phase).toMatchObject({
       phase: "processing",
       stage: "refining",
@@ -727,6 +733,7 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       phase: "processing",
       stage: "transcribing",
       started_at: T0 + MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * (MOCK_LIVE_SCRIPT.length + 3),
+      stage_started_at: T0 + MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * (MOCK_LIVE_SCRIPT.length + 3),
       preview,
     });
     tick(MOCK_ASR_MS);
@@ -1134,6 +1141,25 @@ describe("MockBackend local models (docs/dictation.md §10)", () => {
     // A second download of an installed model is a no-op.
     await backend.invoke("model_download", { id: "sense-voice-small" });
     expect(state()?.kind).toBe("installed");
+    backend.destroy();
+  });
+
+  it("regression: installing the on-device model clears 模型未下载 on its card while the built-in service is in use", async () => {
+    // Screenshot check 2026-09-29: after 均衡 finished downloading, the 本机 card still said
+    // 模型未下载 until something else re-reported the engines.
+    const backend = new MockBackend({ now: () => clock });
+    const localIssue = () =>
+      backend.peek().engines.providers.find((p) => p.id === "local")?.asr?.issue;
+    expect(backend.peek().engines.asr_provider).toBe("builtin");
+    expect(localIssue()).toBe("model_not_installed");
+    const events = collect(backend);
+    const id = backend.peek().models[0]?.id ?? "";
+    await backend.invoke("model_download", { id });
+    for (let n = 0; n <= MOCK_MODEL_TICKS + 1; n += 1) tick(MOCK_MODEL_TICK_MS);
+    expect(backend.peek().models[0]?.state.kind).toBe("installed");
+    expect(localIssue()).toBeUndefined();
+    expect(backend.peek().engines.asr_provider).toBe("builtin");
+    expect(events.filter((e) => e.type === "engines")).toHaveLength(1);
     backend.destroy();
   });
 
@@ -1706,6 +1732,7 @@ describe("MockBackend output modes (docs/dictation.md §12)", () => {
       phase: "processing",
       stage: "finalizing",
       started_at: clock,
+      stage_started_at: clock,
       preview,
     });
     tick(MOCK_FINALIZE_MS);
@@ -1761,7 +1788,8 @@ describe("MockBackend output modes (docs/dictation.md §12)", () => {
     expect(backend.peek().dictation.phase).toEqual({
       phase: "processing",
       stage: "inserting",
-      started_at: clock,
+      started_at: clock - MOCK_FINALIZE_MS,
+      stage_started_at: clock,
     });
     tick(MOCK_FINALIZE_MS);
     expect(backend.peek().dictation.phase).toMatchObject({
@@ -2556,8 +2584,8 @@ describe("MockBackend voice edit (section 19)", () => {
     await backend.invoke("settings_set_hotkey", { hotkey: "shift+ctrl+alt+e" });
     expect(errors()).toEqual([
       expect.stringContaining("修饰键"),
-      "edit_hotkey: alt+ctrl+space 已用作听写热键",
-      "hotkey: shift+ctrl+alt+e 已用作编辑选中文本的热键",
+      "edit_hotkey: alt+ctrl+space 已用作听写快捷键",
+      "hotkey: shift+ctrl+alt+e 已用作「编辑选中文本」的快捷键",
     ]);
     expect(backend.peek().settings).toMatchObject({
       hotkey: "Ctrl+Alt+Space",
@@ -2606,12 +2634,12 @@ describe("MockBackend LAN pairing, always-on pairing and the phone's commands", 
     const events = collect(phone);
     expect(phone.peek().nearby).toEqual([...MOCK_NEARBY]);
     await phone.invoke("pairing_join_nearby", { fingerprint: "0000000000000000" });
-    expect(events.at(-1)).toEqual({ type: "error", message: "pairing: 附近没有这台设备" });
+    expect(events.at(-1)).toEqual({ type: "error", message: "pairing: 附近没有找到此设备" });
     const waiting = MOCK_NEARBY[0];
     if (!waiting) throw new Error("fixture");
     phone.publish({ type: "nearby", devices: [{ ...waiting, pairing: false }] });
     await phone.invoke("pairing_join_nearby", { fingerprint: waiting.fingerprint });
-    expect(events.at(-1)).toEqual({ type: "error", message: "pairing: 这台设备现在不在配对" });
+    expect(events.at(-1)).toEqual({ type: "error", message: "pairing: 此设备当前没有等待配对" });
     phone.publish({ type: "nearby", devices: [...MOCK_NEARBY] });
     await phone.invoke("pairing_join_nearby", { fingerprint: waiting.fingerprint });
     expect(phone.peek().pairing.state).toEqual({ state: "creating_session" });
@@ -2701,7 +2729,7 @@ describe("MockBackend LAN pairing, always-on pairing and the phone's commands", 
     await send("字".repeat(MAX_PHONE_TEXT_CHARS + 1));
     expect(events.at(-1)).toMatchObject({ type: "error" });
     await send("x", MOCK_PUBLIC_KEYS.phone);
-    expect(events.at(-1)).toEqual({ type: "error", message: "device is not online" });
+    expect(events.at(-1)).toEqual({ type: "error", message: "设备不在线" });
     await send("第一条");
     vi.advanceTimersByTime(MOCK_TEXT_MS);
     expect(phone.peek().sent_texts[0]).toMatchObject({
@@ -2714,7 +2742,7 @@ describe("MockBackend LAN pairing, always-on pairing and the phone's commands", 
     expect(phone.peek().sent_texts[0]?.id).toBe(2);
     phone.publish({ type: "devices", devices: [offline] });
     await send("离线");
-    expect(events.at(-1)).toEqual({ type: "error", message: "device is not online" });
+    expect(events.at(-1)).toEqual({ type: "error", message: "设备不在线" });
     phone.destroy();
   });
 
@@ -2728,7 +2756,7 @@ describe("MockBackend LAN pairing, always-on pairing and the phone's commands", 
     await phone.invoke("phone_take_cancel");
     expect(events.at(-1)).toEqual({ type: "error", message: "phone take: 没有进行中的录音" });
     await phone.invoke("phone_take_start", { publicKey: MOCK_PUBLIC_KEYS.phone });
-    expect(events.at(-1)).toEqual({ type: "error", message: "device is not online" });
+    expect(events.at(-1)).toEqual({ type: "error", message: "设备不在线" });
     await phone.invoke("phone_take_start", { publicKey: target.device.public_key });
     await phone.invoke("phone_take_start", { publicKey: target.device.public_key });
     expect(events.at(-1)).toEqual({ type: "error", message: "phone take: 已有一次录音在进行" });

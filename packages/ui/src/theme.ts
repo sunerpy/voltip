@@ -5,8 +5,27 @@ export type { ThemeId };
 
 export type Density = "compact" | "default";
 
+/** The accent choices of 设置 › 外观 (ChatGPT's and Codex's accent colours, tokens.css):
+ *  `default` is the theme's own accent (Codex's #339cff in the blue themes). */
+export const ACCENT_IDS = [
+  "default",
+  "blue",
+  "green",
+  "yellow",
+  "pink",
+  "orange",
+  "purple",
+  "ink",
+] as const;
+export type AccentId = (typeof ACCENT_IDS)[number];
+
+export function isAccentId(value: unknown): value is AccentId {
+  return typeof value === "string" && (ACCENT_IDS as readonly string[]).includes(value);
+}
+
 export interface Appearance {
   theme: ThemeId;
+  accent: AccentId;
   density: Density;
   fontSizePx: number;
   reduceMotion: boolean;
@@ -53,6 +72,7 @@ export function applyAppearance(
   root: HTMLElement = document.documentElement,
 ): void {
   applyTheme(appearance.theme, root);
+  root.dataset.accent = appearance.accent;
   root.dataset.density = appearance.density;
   root.dataset.reduceMotion = appearance.reduceMotion ? "true" : "false";
   const size = Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, appearance.fontSizePx));

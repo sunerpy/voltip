@@ -69,6 +69,7 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   nearby: null,
   hardware: null,
   connectivity: null,
+  paste_result: null,
 };
 const EVENT_TYPES = Object.keys(EVENT_TYPE_SET);
 
@@ -528,7 +529,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       "然后加上错误处理",
     ]);
     expect(done.find((p) => p.live_error !== undefined)?.live_error).toBe(
-      "open: asr: 流式模型未下载：实时预览",
+      "open: asr: 实时识别模型未下载：实时预览",
     );
     // `cancelled.injected_chars`: 0 for every other mode, the pasted count under live_inject.
     const cancelled = dictation.flatMap((p) => (p.phase === "cancelled" ? [p.injected_chars] : []));

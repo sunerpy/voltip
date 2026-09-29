@@ -40,6 +40,7 @@ function Probe() {
 describe("readLocalAppearance", () => {
   it("falls back to defaults on missing, malformed or out-of-range values", () => {
     expect(readLocalAppearance({ getItem: () => null })).toEqual({
+      accent: "default",
       density: "default",
       fontSizePx: 14,
       reduceMotion: false,
@@ -50,12 +51,14 @@ describe("readLocalAppearance", () => {
       readLocalAppearance({
         getItem: () =>
           JSON.stringify({
+            accent: "purple",
             density: "compact",
             fontSizePx: 99,
             reduceMotion: true,
           }),
       }),
     ).toEqual({
+      accent: "purple",
       density: "compact",
       fontSizePx: 18,
       reduceMotion: true,
@@ -97,6 +100,44 @@ describe("AppearanceProvider", () => {
       density: "compact",
       fontSizePx: 16,
     });
+  });
+
+  it("an unknown accent reads as the default", () => {
+    expect(readLocalAppearance({ getItem: () => JSON.stringify({ accent: "red" }) }).accent).toBe(
+      "default",
+    );
+  });
+
+  it("the accent is painted on <html>, and a change made in another window is followed", async () => {
+    const backend = new MockBackend();
+    window.localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify({ accent: "green" }));
+    render(
+      <BackendProvider backend={backend}>
+        <AppearanceProvider>
+          <Probe />
+        </AppearanceProvider>
+      </BackendProvider>,
+    );
+    await waitFor(() => {
+      expect(document.documentElement.dataset.accent).toBe("green");
+    });
+    // The settings window wrote a new choice: this window (the pill's, say) follows.
+    act(() => {
+      window.localStorage.setItem(
+        APPEARANCE_STORAGE_KEY,
+        JSON.stringify({ accent: "orange", density: "compact" }),
+      );
+      window.dispatchEvent(new StorageEvent("storage", { key: APPEARANCE_STORAGE_KEY }));
+    });
+    expect(document.documentElement.dataset.accent).toBe("orange");
+    expect(screen.getByTestId("density")).toHaveTextContent("compact");
+    // Other keys are not its business.
+    act(() => {
+      window.localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify({ accent: "pink" }));
+      window.dispatchEvent(new StorageEvent("storage", { key: "voltip.locale" }));
+    });
+    expect(document.documentElement.dataset.accent).toBe("orange");
+    window.localStorage.removeItem(APPEARANCE_STORAGE_KEY);
   });
 
   it("guards hook usage", () => {

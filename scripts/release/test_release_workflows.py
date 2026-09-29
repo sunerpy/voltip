@@ -7,6 +7,7 @@ Run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
 
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -143,6 +144,28 @@ class CandidateBuild(unittest.TestCase):
                 body = self.jobs[leg]
                 self.assertIn("run: .github/scripts/forget-sherpa-onnx-build.sh", body)
                 self.assertNotIn(".release-tooling/.github/scripts/forget-sherpa-onnx-build.sh", body)
+
+    def test_the_macos_legs_sign_with_the_release_certificate(self) -> None:
+        # docs/runbook.md 发布 · macOS 签名: one fixed self-signed certificate, never ad hoc, checked on
+        # the app and every Mach-O inside it against the one requirement release-targets.json names.
+        body = self.jobs["bundle-macos"]
+        imported = body.index("macos-signing-keychain.sh import --expect-sha1")
+        bundled = body.index("- name: Bundle and sign (app, dmg)")
+        checked = body.index("--expect-requirement")
+        self.assertLess(imported, bundled)
+        self.assertLess(bundled, checked)
+        self.assertIn("APPLE_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}", body[bundled:checked])
+        self.assertIn(".macos_signing.designated_requirement .release-tooling/.github/release-targets.json", body)
+        self.assertIn("/.github/release-targets.json", body)
+        removal = body.index("- name: Remove the release signing keychain")
+        self.assertIn("if: always()", body[removal:])
+        self.assertIn("macos-signing-keychain.sh remove", body[removal:])
+        self.assertIn("MACOS_CERTIFICATE_PRESENT", self.jobs["prepare"])
+        # Local and ordinary CI builds stay ad hoc; the hardened runtime stays off (a certificate
+        # without a Team ID would make library validation refuse the embedded dylibs).
+        config = json.loads((ROOT / "apps/desktop/src-tauri/tauri.macos.conf.json").read_text(encoding="utf-8"))
+        self.assertEqual(config["bundle"]["macOS"]["signingIdentity"], "-")
+        self.assertFalse(config["bundle"]["macOS"]["hardenedRuntime"])
 
     def test_the_gate_status_is_written_only_in_automatic_mode(self) -> None:
         gate = self.jobs["gate"]

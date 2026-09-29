@@ -120,7 +120,7 @@ describe("the 反馈 dialog", () => {
     renderApp({ backend: core });
     const { user, page } = await openFeedback();
     expect(await within(page).findByTestId("feedback-not-configured")).toHaveTextContent(
-      "这个构建没有配置反馈地址",
+      "此版本未配置反馈地址",
     );
     expect(within(page).queryByTestId("feedback-send")).toBeNull();
     await user.click(within(page).getByRole("button", { name: "在 GitHub 上反馈" }));
@@ -323,7 +323,7 @@ describe("the 反馈 dialog", () => {
     expect(diagnosticValue("llm_provider", "someone", t, "zh-CN")).toBe("someone");
     expect(diagnosticValue("compute", "gpu", t, "zh-CN")).toBe("GPU");
     expect(diagnosticValue("compute", "npu", t, "zh-CN")).toBe("npu");
-    expect(diagnosticValue("output_mode", "live_inject", t, "zh-CN")).toBe("实时注入");
+    expect(diagnosticValue("output_mode", "live_inject", t, "zh-CN")).toBe("边说边输入");
     expect(diagnosticValue("output_mode", "odd", t, "zh-CN")).toBe("odd");
     expect(diagnosticValue("arch", "aarch64", t, "zh-CN")).toBe("aarch64");
     expect(feedbackError(new Error("timeout"))).toBe("timeout");

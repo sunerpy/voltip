@@ -29,7 +29,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 81] = [
+pub const COMMANDS: [&str; 82] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -111,6 +111,7 @@ pub const COMMANDS: [&str; 81] = [
     "permissions_status",
     "permissions_request",
     "inject_preflight",
+    "paste_text",
 ];
 
 /// App data directory.
@@ -663,6 +664,14 @@ fn inject_preflight() -> voltip_platform::InjectPreflight {
     voltip_platform::InjectPreflight::not_applicable(voltip_platform::HostOs::current())
 }
 
+/// The history's paste button is the desktop's (`voltip_core::paste`): the phone has no window to
+/// paste into and answers `failed { unsupported }`.
+#[tauri::command]
+fn paste_text(text: String) -> voltip_core::paste::PasteOutcome {
+    tracing::debug!(chars = text.chars().count(), "paste_text is not supported on the phone");
+    voltip_core::paste::PasteOutcome::Failed { reason: voltip_core::paste::PasteFailure::Unsupported }
+}
+
 /// The phone's dictation ports: its microphone (the takes it streams, docs/dictation.md §20) and
 /// nothing else — the phone recognises and delivers nothing itself, so the other ports are the
 /// inert in-memory ones and the dictation commands refuse ([`DICTATION_UNAVAILABLE`]).
@@ -804,7 +813,8 @@ pub fn build_app<R: Runtime>(
             recent_apps,
             permissions_status,
             permissions_request,
-            inject_preflight
+            inject_preflight,
+            paste_text
         ])
 }
 

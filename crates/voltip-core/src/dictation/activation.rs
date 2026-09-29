@@ -516,7 +516,10 @@ mod tests {
         assert_eq!(PhaseHint::from(&DictationPhase::Idle), Idle);
         assert_eq!(PhaseHint::from(&DictationPhase::CANCELLED), Idle);
         assert_eq!(PhaseHint::from(&DictationPhase::Listening { started_at: 1, ready: true, live: None, locked: false }), Listening);
-        assert_eq!(PhaseHint::from(&DictationPhase::Processing { stage: super::super::ProcessingStage::Refining, started_at: 1, preview: None }), Processing);
+        assert_eq!(
+            PhaseHint::from(&DictationPhase::Processing { stage: super::super::ProcessingStage::Refining, started_at: 1, stage_started_at: 1, preview: None }),
+            Processing
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::toolchain::{Chord, Delivery, PasteMethod};
-use crate::{InjectError, Injection, Injector};
+use crate::{FallbackCode, InjectError, InjectNote, Injection, Injector};
 
 /// Linux default pause between writing the clipboard and pressing the paste chord, so the target
 /// application observes the new content (`paste_delay_ms`, docs/dictation.md §14).
@@ -118,7 +118,7 @@ pub struct Delivered {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DeliveryError {
     /// No tool / connection / permission to try with (nothing reached the application).
-    Unavailable(String),
+    Unavailable(InjectNote),
     /// A tool ran and reported failure, or the connection broke mid-way.
     Failed(String),
 }
@@ -126,7 +126,8 @@ pub enum DeliveryError {
 impl std::fmt::Display for DeliveryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Unavailable(r) | Self::Failed(r) => f.write_str(r),
+            Self::Unavailable(note) => f.write_str(&note.detail),
+            Self::Failed(r) => f.write_str(r),
         }
     }
 }
@@ -143,7 +144,7 @@ pub trait KeystrokePort: Send + Sync {
     /// copy, docs/dictation.md §19). The default refuses: a port without it cannot copy.
     fn press_chord(&self, chord: Chord, held: &[crate::Modifier]) -> Result<Delivered, DeliveryError> {
         let _ = (chord, held);
-        Err(DeliveryError::Unavailable("this keyboard port cannot press a chord on its own".into()))
+        Err(DeliveryError::Unavailable(InjectNote::new(FallbackCode::Other, "this keyboard port cannot press a chord on its own")))
     }
 }
 
@@ -234,10 +235,10 @@ impl Injector for ClipboardPasteInjector {
                 tracing::debug!(chars, chord = %self.chord, tool = %delivered.tool, delivery = ?delivered.delivery, "pasted");
                 Ok(Injection::pasted(chars))
             }
-            Err(DeliveryError::Unavailable(reason)) => {
+            Err(DeliveryError::Unavailable(note)) => {
                 // Nothing reached the application: the text stays on the clipboard for the user.
-                tracing::warn!(%reason, chord = %self.chord, "no way to paste; text left on the clipboard");
-                Ok(Injection::clipboard(chars, Some(reason)))
+                tracing::warn!(reason = %note.detail, code = ?note.code, chord = %self.chord, "no way to paste; text left on the clipboard");
+                Ok(Injection::clipboard(chars, Some(note)))
             }
             Err(DeliveryError::Failed(reason)) => {
                 // Something was attempted and failed: undo our clipboard write right away.
@@ -558,12 +559,12 @@ pub(crate) mod tests {
     #[test]
     fn unavailable_keystroke_falls_back_to_clipboard_with_note() {
         let clipboard = MemoryClipboard::holding("previous");
-        let keys = RecordingKeys::failing(DeliveryError::Unavailable("no connection could be established".into()));
+        let keys = RecordingKeys::failing(DeliveryError::Unavailable(InjectNote::new(FallbackCode::NoDisplay, "no connection could be established")));
         let injector = make_injector(Arc::clone(&clipboard), keys);
         let injection = injector.inject("fallback").unwrap();
         assert_eq!(injection.via, Via::Clipboard);
         assert_eq!(injection.chars, 8);
-        assert_eq!(injection.note.as_deref(), Some("no connection could be established"));
+        assert_eq!(injection.note, Some(InjectNote::new(FallbackCode::NoDisplay, "no connection could be established")), "the code rides along");
         std::thread::sleep(RESTORE * 4);
         assert_eq!(clipboard.current().as_deref(), Some("fallback"), "text stays for the user to paste");
         assert_eq!(clipboard.writes(), vec!["fallback".to_string()]);
@@ -626,7 +627,7 @@ pub(crate) mod tests {
         assert_eq!(injector.inject("ours").unwrap_err(), InjectError::Keystroke("broken".into()));
         assert_eq!(clipboard.current().as_deref(), Some("ours"));
         assert_eq!(DeliveryError::Failed("x".into()).to_string(), "x");
-        assert_eq!(DeliveryError::Unavailable("y".into()).to_string(), "y");
+        assert_eq!(DeliveryError::Unavailable(InjectNote::new(FallbackCode::Other, "y")).to_string(), "y");
     }
 
     #[test]

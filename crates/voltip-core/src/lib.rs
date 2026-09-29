@@ -15,6 +15,7 @@ pub mod history;
 pub mod hotkey;
 mod list_file;
 pub mod models;
+pub mod paste;
 mod peer;
 pub mod phone;
 pub mod providers;

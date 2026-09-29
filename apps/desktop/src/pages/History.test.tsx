@@ -1,5 +1,5 @@
 import { type DictionaryEntry, HISTORY_LIMIT, type HistoryEntry } from "@voltip/shared";
-import { MockBackend } from "@voltip/shared/mock";
+import { MockBackend, desktopIdentity } from "@voltip/shared/mock";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
@@ -28,19 +28,102 @@ describe("History page keys and retention", () => {
     await backend.invoke("settings_set_history", { enabled: true, keep: 50 });
     expect(await screen.findByText(`${saved} / 50`)).toBeInTheDocument();
     expect(screen.getByTestId("history-retention")).toHaveTextContent(
-      "history.json · 保留最近 50 条，超出后丢弃最旧的。",
+      "保留最近 50 条，超出后自动删除最早的记录。",
     );
     await backend.invoke("settings_set_history", { enabled: false, keep: 50 });
     await waitFor(() => {
       expect(screen.getByTestId("history-retention")).toHaveAttribute("data-enabled", "false");
     });
     expect(screen.getByTestId("history-retention")).toHaveTextContent(
-      `记录已关闭 · 新的听写不再保存，已保存的 ${saved} 条保留到你清空。`,
+      `历史记录已关闭 · 不再保存新的听写，已保存的 ${saved} 条在清空前会一直保留。`,
     );
     await user.click(screen.getByRole("button", { name: "保留设置" }));
     expect(
       await screen.findByRole("heading", { name: "隐私与历史", level: 2 }),
     ).toBeInTheDocument();
+  });
+
+  it("regression: a clipboard fallback shows a plain reason below the text, not the raw injector error in the header", async () => {
+    const user = userEvent.setup();
+    const raw = "enigo: the application does not have the permission to simulate input";
+    const now = Date.now();
+    const base = {
+      asr_model: "whisper-large-v3-turbo",
+      duration_ms: 1400,
+      asr_ms: 380,
+      refined: false,
+      starred: false,
+      mode: "whole_take",
+      kind: "dictation",
+    } as const;
+    const rows: HistoryEntry[] = [
+      {
+        ...base,
+        id: "coded",
+        at_ms: now - 60_000,
+        raw_text: "发给产品",
+        text: "发给产品。",
+        outcome: { kind: "clipboard", reason: raw, code: "no_permission" },
+      },
+      {
+        ...base,
+        id: "legacy",
+        at_ms: now - 120_000,
+        raw_text: "旧记录",
+        text: "旧记录。",
+        outcome: { kind: "clipboard", reason: "目标窗口没有焦点" },
+      },
+    ];
+    const backend = new MockBackend({
+      now: () => Date.now(),
+      history: rows,
+      identity: { ...desktopIdentity(), platform: "macos" },
+    });
+    renderApp({ path: "/history", backend });
+    const log = await screen.findByRole("list", { name: "听写记录" });
+    // One sentence for the reason, with the macOS paste keys and the setting to open.
+    const note = screen.getByTestId("history-clipboard-note");
+    expect(note).toHaveAttribute("data-code", "no_permission");
+    expect(note).toHaveTextContent(
+      "无法粘贴到光标处：Voltip 尚未获得「辅助功能」权限。文字已复制到剪贴板，可按 ⌘V 粘贴。",
+    );
+    // The raw message is only under the technical details: not in the header, the readout or the row.
+    expect(screen.getAllByText(raw)).toHaveLength(1);
+    expect(within(note).getByTestId("history-clipboard-detail")).toHaveTextContent(raw);
+    expect(within(log).queryByText(raw, { exact: false })).toBeNull();
+    expect(screen.getAllByText("已复制到剪贴板").length).toBeGreaterThanOrEqual(2);
+    await user.click(within(note).getByRole("button", { name: "打开辅助功能设置" }));
+    expect(backend.permissionRequests).toEqual(["accessibility"]);
+    // An entry written before the codes: the general sentence, its message under the details.
+    await user.click(within(log).getByRole("button", { name: /旧记录/ }));
+    const legacy = screen.getByTestId("history-clipboard-note");
+    expect(legacy).toHaveAttribute("data-code", "other");
+    expect(legacy).toHaveTextContent("无法直接粘贴，文字已复制到剪贴板，可按 ⌘V 粘贴。");
+    expect(within(legacy).getByTestId("history-clipboard-detail")).toHaveTextContent(
+      "目标窗口没有焦点",
+    );
+    expect(within(legacy).queryByRole("button", { name: "打开辅助功能设置" })).toBeNull();
+  });
+
+  it("regression: a row's copy and paste buttons act on that row without selecting it", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const { backend } = renderApp({ path: "/history", mock: liveClock() });
+    const log = await screen.findByRole("list", { name: "听写记录" });
+    const [newest, second] = backend.peek().history;
+    if (!newest || !second) throw new Error("fixture");
+    const actions = within(log).getAllByTestId("result-actions");
+    expect(actions).toHaveLength(backend.peek().history.length);
+    const secondRow = actions[1];
+    if (!secondRow) throw new Error("row");
+    await user.click(within(secondRow).getByRole("button", { name: "粘贴到上一个窗口" }));
+    expect(backend.pastes).toEqual([second.text]);
+    expect(await screen.findByText("已粘贴到上一个窗口")).toBeInTheDocument();
+    await user.click(within(secondRow).getByRole("button", { name: "复制这条结果" }));
+    expect(writeText).toHaveBeenCalledWith(second.text);
+    // The selection stayed on the newest row.
+    expect(within(log).getByRole("button", { pressed: true })).toHaveTextContent(newest.text);
   });
 
   it("regression: the footer's Ctrl F, Ctrl C and Del are real; they stand down in a field, over a selection and under the settings dialog", async () => {
@@ -62,7 +145,9 @@ describe("History page keys and retention", () => {
     // Ctrl C copies the entry in the detail, like 复制.
     await user.keyboard("{Control>}c{/Control}");
     expect(writeText).toHaveBeenCalledWith(newest.text);
-    expect(await screen.findByText(/已复制/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(`已复制到剪贴板 · ${Array.from(newest.text).length} 字`),
+    ).toBeInTheDocument();
     // …unless text is selected: then the copy is the selection's (the browser's own).
     writeText.mockClear();
     // selectAllChildren replaces the selection; addRange is ignored while one exists (jsdom 30
@@ -105,18 +190,32 @@ describe("History page", () => {
     expect(fixedSizeOffenders(page)).toEqual([]);
     const split = page.querySelector(".grid");
     expect(split?.className).toContain("grid-cols-1");
-    expect(split?.className).toMatch(/lg:grid-cols-\[minmax\(280px,360px\)_minmax\(0,1fr\)\]/);
+    expect(split?.className).toMatch(/lg:grid-cols-\[minmax\(280px,2fr\)_minmax\(0,3fr\)\]/);
+  });
+
+  it("regression: the log grows with the window instead of stopping at 360 px, and a row's model, time and result read whole on hover", async () => {
+    // User feedback 2026-09-29 (plan 1.6): at 1440 px the 360 px log cut 「Qwen3-ASR-1.7B · 622 ms ·
+    // 已插入 · 粘贴」 to 「Qwen3-ASR-1.7B · 622 ms · 已…」 with the detail pane half empty.
+    renderApp({ path: "/history" });
+    const page = await screen.findByTestId("page-history");
+    expect(page.querySelector(".grid")?.className).not.toContain("360px");
+    const metas = screen.getAllByTestId("history-row-meta");
+    expect(metas.length).toBeGreaterThan(0);
+    for (const meta of metas) {
+      expect(meta.textContent).toMatch(/ · /);
+      expect(meta).toHaveAttribute("title", meta.textContent);
+    }
   });
 
   it("renders the factual retention banner, the day-grouped log from state.history and the newest entry's detail", async () => {
     const { backend } = renderApp({ path: "/history", mock: liveClock() });
-    expect(await screen.findByText("历史记录 · 只保存在这台机器上")).toBeInTheDocument();
+    expect(await screen.findByText("历史记录 · 仅保存在本机")).toBeInTheDocument();
     expect(screen.getByTestId("history-retention")).toHaveTextContent(
-      `history.json · 保留最近 ${HISTORY_LIMIT} 条，超出后丢弃最旧的。`,
+      `保留最近 ${HISTORY_LIMIT} 条，超出后自动删除最早的记录。`,
     );
     const history = backend.peek().history;
     expect(await screen.findByText(`${history.length} / ${HISTORY_LIMIT}`)).toBeInTheDocument();
-    const log = screen.getByRole("list", { name: "会话日志" });
+    const log = screen.getByRole("list", { name: "听写记录" });
     expect(within(log).getByText(/^今天 · /)).toBeInTheDocument();
     expect(within(log).getByText(/^昨天 · /)).toBeInTheDocument();
     expect(within(log).getAllByRole("button", { pressed: true })).toHaveLength(1);
@@ -165,7 +264,7 @@ describe("History page", () => {
       origin: { device: "Pixel 8", kind: "take" },
     };
     renderApp({ path: "/history", mock: { now: () => now, history: [text, take] } });
-    const log = await screen.findByRole("list", { name: "会话日志" });
+    const log = await screen.findByRole("list", { name: "听写记录" });
     const origins = within(log).getAllByTestId("history-origin");
     expect(origins.map((o) => [o.dataset.origin, o.textContent])).toEqual([
       ["typed", "手机输入 · Pixel 8"],
@@ -190,10 +289,13 @@ describe("History page", () => {
     await user.click(screen.getByRole("button", { name: "清除搜索" }));
     await user.click(screen.getByRole("radio", { name: "今天" }));
     expect(
-      within(screen.getByRole("list", { name: "会话日志" })).getAllByRole("listitem"),
+      within(screen.getByRole("list", { name: "听写记录" })).getAllByRole("listitem"),
     ).toHaveLength(1 + 2);
     await user.click(screen.getByRole("radio", { name: "未插入" }));
-    expect(screen.getByText(/仅剪贴板 · 目标窗口没有焦点/)).toBeInTheDocument();
+    // The clipboard row says so in two words; its reason is only in the entry's note.
+    const unsent = screen.getByRole("list", { name: "听写记录" });
+    expect(within(unsent).getByText(/· 已复制到剪贴板$/)).toBeInTheDocument();
+    expect(within(unsent).queryByText(/目标窗口没有焦点/)).toBeNull();
     expect(screen.getByText(/失败 · 目标窗口已丢失/)).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "已收藏" }));
     await user.click(screen.getByText(/返回值类型改成/));
@@ -240,7 +342,7 @@ describe("History page", () => {
       expect(backend.peek().history[0]?.starred).toBe(!first.starred);
     });
     // Star from the row, by keyboard.
-    const rowStar = within(screen.getByRole("list", { name: "会话日志" })).getAllByRole("button", {
+    const rowStar = within(screen.getByRole("list", { name: "听写记录" })).getAllByRole("button", {
       name: /收藏/,
     })[0];
     if (!rowStar) throw new Error("no row star");
@@ -269,13 +371,13 @@ describe("History page", () => {
     // Clear everything.
     await user.click(screen.getByRole("button", { name: "全部清空" }));
     const clear = screen.getByRole("dialog");
-    expect(clear).toHaveTextContent("history.json 会被清空");
+    expect(clear).toHaveTextContent("全部历史记录将被清空");
     expect(clear.textContent).not.toMatch(/示例|sqlite/);
     await user.click(within(clear).getByRole("button", { name: "清空" }));
     await waitFor(() => {
       expect(backend.peek().history).toEqual([]);
     });
-    expect(screen.getByText("还没有记录任何结果。")).toBeInTheDocument();
+    expect(screen.getByText("暂无记录。")).toBeInTheDocument();
     expect(screen.getByText(/按住 Ctrl Alt Space 说一句/)).toBeInTheDocument();
     expect(screen.getByText("从左侧选择一条结果")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "全部清空" })).toBeDisabled();
@@ -316,14 +418,14 @@ describe("History page", () => {
       ],
     });
     renderApp({ path: "/history?filter=starred", backend: unstarred });
-    expect((await screen.findAllByText("已收藏还没有结果。")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("已收藏暂无结果。")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("在任意一条上点 ★ 收藏。").length).toBeGreaterThan(0);
     await user.click(screen.getAllByRole("radio", { name: "全部" }).at(-1) as HTMLElement);
     expect(screen.getAllByText("未记录耗时").length).toBeGreaterThan(0);
     expect(screen.getAllByText("已插入 · 剪贴板").length).toBeGreaterThan(0);
   });
 
-  it("regression: streaming rows carry a mode badge (流式定稿 / 实时注入) while whole takes stay quiet, and the detail shows the streaming fallback reason (docs/dictation.md §12)", async () => {
+  it("regression: streaming rows carry a mode badge (边说边识别 / 边说边打字) while whole takes stay quiet, and the detail shows the streaming fallback reason (docs/dictation.md §12)", async () => {
     const user = userEvent.setup();
     const now = Date.now();
     const base: Omit<HistoryEntry, "id" | "at_ms" | "text" | "raw_text" | "mode"> = {
@@ -367,21 +469,21 @@ describe("History page", () => {
       path: "/history",
       backend: new MockBackend({ now: () => Date.now(), history: rows }),
     });
-    const log = await screen.findByRole("list", { name: "会话日志" });
+    const log = await screen.findByRole("list", { name: "听写记录" });
     const badges = within(log).getAllByTestId("history-mode");
     expect(badges.map((b) => b.getAttribute("data-mode"))).toEqual([
       "live_inject",
       "streaming_final",
     ]);
-    expect(badges.map((b) => b.textContent)).toEqual(["实时注入", "流式定稿"]);
+    expect(badges.map((b) => b.textContent)).toEqual(["边说边输入", "边说边识别"]);
     // The newest row (live_inject) is the detail: badge in the header, the reason under the text.
-    expect(screen.getByTestId("history-detail-mode")).toHaveTextContent("实时注入");
+    expect(screen.getByTestId("history-detail-mode")).toHaveTextContent("边说边输入");
     expect(screen.getByTestId("history-live-error")).toHaveTextContent(
-      "流式回退：live tap overrun: the decoder fell behind the microphone",
+      "实时识别中断，已改为整段识别：live tap overrun: the decoder fell behind the microphone",
     );
     // A streaming take without a fallback: badge, no reason.
     await user.click(within(log).getByRole("button", { name: /流式定稿的一段/ }));
-    expect(screen.getByTestId("history-detail-mode")).toHaveTextContent("流式定稿");
+    expect(screen.getByTestId("history-detail-mode")).toHaveTextContent("边说边识别");
     expect(screen.queryByTestId("history-live-error")).toBeNull();
     // The whole take: no badge anywhere.
     await user.click(within(log).getByRole("button", { name: /整段识别的一段/ }));
@@ -427,7 +529,7 @@ describe("History page", () => {
       path: "/history",
       backend: new MockBackend({ now: () => Date.now(), history: rows }),
     });
-    const log = await screen.findByRole("list", { name: "会话日志" });
+    const log = await screen.findByRole("list", { name: "听写记录" });
     const contexts = within(log).getAllByTestId("history-context");
     expect(contexts.map((c) => c.textContent)).toEqual(["Slack聊天", "Code"]);
     expect(contexts[0]).toHaveAttribute("title", "应用与场景");
@@ -497,7 +599,7 @@ describe("History page", () => {
       path: "/history",
       backend: new MockBackend({ now: () => Date.now(), history: rows }),
     });
-    const log = await screen.findByRole("list", { name: "会话日志" });
+    const log = await screen.findByRole("list", { name: "听写记录" });
     // The row: badge, instruction → rewrite; the dictation row has neither.
     expect(
       within(log)
@@ -513,8 +615,8 @@ describe("History page", () => {
     expect(screen.getByTestId("entry-text")).toHaveTextContent("各位同事：会议改至周四上午十点。");
     const disclosure = screen.getByTestId("history-edit-selection");
     expect(disclosure).not.toHaveAttribute("open");
-    expect(within(disclosure).getByText("原选区 · 13 字")).toBeInTheDocument();
-    await user.click(within(disclosure).getByText("原选区 · 13 字"));
+    expect(within(disclosure).getByText("原选中文字 · 13 字")).toBeInTheDocument();
+    await user.click(within(disclosure).getByText("原选中文字 · 13 字"));
     expect(disclosure).toHaveAttribute("open");
     expect(within(disclosure).getByText("大家好，会议改到周四十点哈")).toBeVisible();
     // No raw / polished / diff switch for an edit; the app context still shows.
@@ -601,7 +703,7 @@ describe("History page", () => {
     await user.type(within(dialog).getByLabelText("正确写法"), "谷歌IDR");
     await user.click(within(dialog).getByRole("button", { name: "加入" }));
     expect(
-      await within(dialog).findByText("dictionary: 误识别写法「谷歌IDR」和正确写法相同"),
+      await within(dialog).findByText("误识别写法「谷歌IDR」和正确写法相同"),
     ).toBeInTheDocument();
     await user.clear(within(dialog).getByLabelText("正确写法"));
     await user.type(within(dialog).getByLabelText("正确写法"), "good idea{Enter}");
@@ -618,7 +720,7 @@ describe("History page", () => {
     const other = vi.spyOn(window, "getSelection").mockReturnValue({
       toString: () => "somewhere else",
     } as unknown as Selection);
-    const rows = within(screen.getByRole("list", { name: "会话日志" })).getAllByRole("button", {
+    const rows = within(screen.getByRole("list", { name: "听写记录" })).getAllByRole("button", {
       pressed: false,
     });
     await user.click(rows[0] ?? document.body);

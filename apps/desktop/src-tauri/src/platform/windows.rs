@@ -17,10 +17,12 @@ use voltip_core::ForegroundApp;
 use voltip_platform::foreground::from_exe_path;
 use voltip_platform::permissions::{Permission, PermissionReport};
 use voltip_platform::windows::{
-    ConsentValue, ForegroundFacts, InjectPreflight, IntegrityLevel, MicrophoneConsent, MicrophonePolicy, consent_store_app_key, microphone_consent,
+    ConsentValue, ForegroundFacts, InjectPreflight, IntegrityLevel, MicrophoneConsent, MicrophonePolicy, StackedWindow, consent_store_app_key, is_paste_target,
+    microphone_consent,
 };
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, HWND};
+use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, HWND, RECT, S_OK};
 use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
+use windows_sys::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows_sys::Win32::Security::{GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenIntegrityLevel};
 use windows_sys::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, REG_DWORD, REG_EXPAND_SZ, REG_SZ, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
@@ -30,7 +32,10 @@ use windows_sys::Win32::System::Threading::{
     GetCurrentProcess, GetCurrentProcessId, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetSystemMetricsForDpi};
-use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, SM_CXSMICON};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    GW_HWNDNEXT, GWL_EXSTYLE, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, SM_CXSMICON, SetForegroundWindow, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+};
 
 /// `PRIMARYLANGID` of a Chinese `LANGID` (`LANG_CHINESE`).
 const LANG_CHINESE: u16 = 0x04;
@@ -105,7 +110,102 @@ pub fn foreground_app() -> Result<Option<ForegroundApp>, String> {
     }
     let process = OwnedHandle(process);
     let Some(identity) = image_name(process.0).as_deref().and_then(from_exe_path) else { return Ok(None) };
-    Ok(Some(ForegroundApp { app_id: identity.app_id, name: identity.name, title: window_title(hwnd) }))
+    Ok(Some(ForegroundApp { app_id: identity.app_id, name: identity.name, title: window_title(hwnd), window: Some(hwnd as usize as u64) }))
+}
+
+/// The history paste's way back (`crate::paste`): Voltip's window in front and the window the user
+/// came from. Handles travel as integers: `HWND` is a raw pointer, which is not `Send`.
+#[derive(Clone, Copy, Debug)]
+pub struct PasteReturn {
+    voltip: isize,
+    target: isize,
+}
+
+/// How far down the Z order the walk goes before it gives up.
+const MAX_STACKED_WINDOWS: usize = 512;
+
+/// Voltip's window in front and the first ordinary application window below it
+/// (`voltip_platform::windows::is_paste_target`): activating a window puts it on top of the
+/// others, so the one right under Voltip is the one that was active before it. `None` when none of
+/// Voltip's windows is in front, or nothing below qualifies.
+pub fn paste_return() -> Option<PasteReturn> {
+    // SAFETY: no arguments.
+    let own = unsafe { GetCurrentProcessId() };
+    // SAFETY: no arguments; a null result means no window has the focus.
+    let front = unsafe { GetForegroundWindow() };
+    if front.is_null() || process_of(front) != Some(own) {
+        return None;
+    }
+    // SAFETY: `front` is a window handle from `GetForegroundWindow`; a stale one returns null.
+    let mut hwnd = unsafe { GetWindow(front, GW_HWNDNEXT) };
+    for _ in 0..MAX_STACKED_WINDOWS {
+        if hwnd.is_null() {
+            return None;
+        }
+        if is_paste_target(&StackedWindow { class: &class_name(hwnd), ..stacked_facts(hwnd, own) }) {
+            return Some(PasteReturn { voltip: front as isize, target: hwnd as isize });
+        }
+        // SAFETY: as above, `hwnd` came from `GetWindow` a moment ago.
+        hwnd = unsafe { GetWindow(hwnd, GW_HWNDNEXT) };
+    }
+    None
+}
+
+/// Once Voltip's window is minimised, put the window the user came from in front, unless another
+/// application already is: Windows usually activates it on `SW_MINIMIZE`, but when it leaves
+/// nothing in front (or Voltip's own window) the call is allowed, no window or Voltip holding the
+/// foreground. `false` while Voltip's window is not minimised yet (the minimise runs on the event
+/// loop), so the caller asks again.
+pub fn return_to(back: PasteReturn) -> bool {
+    // SAFETY: plain calls on window handles; a window that has closed since makes them fail
+    // harmlessly (0 / null).
+    unsafe {
+        if IsIconic(back.voltip as HWND) == 0 {
+            return false;
+        }
+        let front = GetForegroundWindow();
+        if front.is_null() || process_of(front) == Some(GetCurrentProcessId()) {
+            let brought = SetForegroundWindow(back.target as HWND) != 0;
+            tracing::info!(brought, "paste: brought the window below Voltip to the front");
+        }
+    }
+    true
+}
+
+/// The process that owns `hwnd`.
+fn process_of(hwnd: HWND) -> Option<u32> {
+    let mut pid = 0u32;
+    // SAFETY: `hwnd` is a window handle; `pid` is a valid out-pointer. A stale handle returns 0.
+    let thread = unsafe { GetWindowThreadProcessId(hwnd, &raw mut pid) };
+    (thread != 0 && pid != 0).then_some(pid)
+}
+
+/// What `is_paste_target` needs about `hwnd`, but its class.
+fn stacked_facts(hwnd: HWND, own: u32) -> StackedWindow<'static> {
+    let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut cloak = 0u32;
+    // SAFETY: `hwnd` is a window handle (a stale one makes every call fail: 0, which reads as
+    // hidden / empty); `rect` and `cloak` are valid out-pointers of the sizes passed.
+    unsafe {
+        let visible = IsWindowVisible(hwnd) != 0;
+        let minimized = IsIconic(hwnd) != 0;
+        let empty = GetWindowRect(hwnd, &raw mut rect) == 0 || rect.right <= rect.left || rect.bottom <= rect.top;
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE).cast_unsigned();
+        let tool = ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) != 0;
+        let size = u32::try_from(size_of::<u32>()).unwrap_or(4);
+        let cloaked = DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED.cast_unsigned(), (&raw mut cloak).cast(), size) == S_OK && cloak != 0;
+        StackedWindow { visible, minimized, empty, tool, cloaked, own_process: process_of(hwnd) == Some(own), class: "" }
+    }
+}
+
+/// The window class of `hwnd` (`""` when it cannot be read).
+fn class_name(hwnd: HWND) -> String {
+    let mut buf = [0u16; 256];
+    let cap = i32::try_from(buf.len()).unwrap_or(256);
+    // SAFETY: `buf` has `cap` UTF-16 slots, the most the call writes; it returns the number copied.
+    let copied = unsafe { GetClassNameW(hwnd, buf.as_mut_ptr(), cap) };
+    let copied = usize::try_from(copied).unwrap_or(0).min(buf.len());
+    String::from_utf16_lossy(&buf[..copied])
 }
 
 /// The caption of `hwnd`. For a window of another process `GetWindowTextW` reads the cached

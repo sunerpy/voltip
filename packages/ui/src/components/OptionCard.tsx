@@ -67,9 +67,18 @@ export function OptionCard({
           </span>
         )}
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <div className="truncate text-[14px] leading-5 font-semibold text-fg">{title}</div>
+          {/* One line; cut only when the card is too narrow, the whole title on hover. */}
+          <div
+            className="truncate text-[14px] leading-5 font-semibold text-fg"
+            title={typeof title === "string" ? title : undefined}>
+            {title}
+          </div>
           {subtitle !== undefined && (
-            <div className="mono truncate text-[11px] leading-4 text-fg-muted">{subtitle}</div>
+            <div
+              className="mono truncate text-[11px] leading-4 text-fg-muted"
+              title={typeof subtitle === "string" ? subtitle : undefined}>
+              {subtitle}
+            </div>
           )}
         </div>
         {badge !== undefined && (

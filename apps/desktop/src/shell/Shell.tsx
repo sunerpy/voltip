@@ -27,7 +27,7 @@ import { engineReadout, microphoneReadout, pageMeta } from "./page-meta";
 import { RevealSidebarButton, ShellSidebar } from "./ShellSidebar";
 import { useSidebarLayout } from "./sidebar-layout";
 
-/** The 润色 switch on the title bar: wand icon + a short text label (`AI润色` / `AI Polish`) +
+/** The 润色 switch on the title bar: wand icon + a short text label (`AI 润色` / `AI Polish`) +
  *  lamp (user feedback 2026-09-25: the icon alone did not read as a switch). It is the real LLM
  *  pass: a click writes `settings_set_engines { refine_enabled }` with the rest of the current
  *  engine settings, and `aria-pressed` follows what the core reports back. */
@@ -83,7 +83,7 @@ export function FooterShortcuts({ items }: { items: readonly (readonly [string, 
  *  via tauri.macos.conf.json), so the 40 px strip formed by the sidebar brand row and the title
  *  bar *is* the window title bar: one continuous drag region with the window controls at the far
  *  right on Windows / Linux. The title bar carries the title, the compact engine · microphone
- *  readout right after it, the search icon and the AI润色 toggle; there is no second header row. */
+ *  readout right after it, the search icon and the AI 润色 toggle; there is no second header row. */
 export function Shell({
   children,
   traySource,

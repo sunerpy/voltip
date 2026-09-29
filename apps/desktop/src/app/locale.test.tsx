@@ -22,7 +22,7 @@ const ROUTES = [
   ["/dictionary", "词典", "Dictionary"],
   ["/rules", "规则", "Rules"],
   ["/devices", "手机", "Phone"],
-  ["/overlay", "悬浮胶囊", "Overlay"],
+  ["/overlay", "悬浮窗", "Overlay"],
   ["/speech", "语音模型", "Speech models"],
   ["/ai", "AI 模型", "AI models"],
   ["/feedback", "首页", "Home"],
@@ -266,7 +266,7 @@ describe("locale", () => {
         for (const tab of nav.querySelectorAll('[role="tab"]')) {
           const text = (tab.textContent ?? "").trim();
           // "AI" is how Chinese UIs say it (the owner named the group AI 模型, 2026-09-27; the
-          // title bar's AI润色 too); any other Latin letter in a tab is an English gloss.
+          // title bar's AI 润色 too); any other Latin letter in a tab is an English gloss.
           if (/[A-Za-z]/.test(text.replace(/\bAI\b/g, ""))) offending.push(`${path} tab: ${text}`);
         }
         for (const mono of nav.querySelectorAll('[class~="mono"]')) {

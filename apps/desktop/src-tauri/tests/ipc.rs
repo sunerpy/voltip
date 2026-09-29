@@ -170,7 +170,7 @@ fn pairing_start_leaves_idle_and_cancel_reset_returns_to_it() {
         // Without a relay a bare code cannot be joined: the command is accepted, the core reports.
         assert_eq!(invoke(webview, "pairing_join_code", json!({ "code": "483 921" })), Ok(Value::Null));
         let err = wait_event(rx, "error", |e| e["type"] == "error");
-        assert!(err["message"].as_str().unwrap().contains("relay"), "{err}");
+        assert!(err["message"].as_str().unwrap().contains("中继"), "{err}");
         // A ticket is accepted by the IPC layer too; a malformed one is reported by the core.
         assert_eq!(invoke(webview, "pairing_join_ticket", json!({ "uri": "voltip://pair?v=1&t=AA" })), Ok(Value::Null));
         wait_event(rx, "error (bad ticket)", |e| e["type"] == "error" && e["message"] != err["message"]);
@@ -242,7 +242,7 @@ fn lan_discovery_commands_reach_the_core() {
         assert!(!wait_state(webview, |s| !s.settings.lan_discovery).settings.lan_discovery);
         assert!(invoke(webview, "pairing_join_nearby", json!({})).is_err(), "fingerprint is required");
         assert_eq!(invoke(webview, "pairing_join_nearby", json!({ "fingerprint": "0000000000000000" })), Ok(Value::Null));
-        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("附近没有这台设备")));
+        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("附近没有找到此设备")));
     });
 }
 
@@ -333,7 +333,7 @@ fn settings_set_edit_hotkey_persists_validates_and_switches_off() {
         assert_eq!(invoke(webview, "settings_set_edit_hotkey", json!({ "hotkey": "control + alt + shift + e" })), Ok(Value::Null));
         wait_state(webview, |s| s.settings.edit_hotkey.as_deref() == Some("Ctrl+Alt+Shift+E"));
         wait_event(rx, "settings", |e| e["type"] == "settings" && e["edit_hotkey"] == "Ctrl+Alt+Shift+E");
-        for (bad, needle) in [("E", "modifier"), ("Ctrl+Alt+Space", "已用作听写热键")] {
+        for (bad, needle) in [("E", "至少需要一个修饰键"), ("Ctrl+Alt+Space", "已用作听写快捷键")] {
             assert_eq!(invoke(webview, "settings_set_edit_hotkey", json!({ "hotkey": bad })), Ok(Value::Null), "{bad}");
             let ev = wait_event(rx, "error", |e| e["type"] == "error");
             assert!(ev["message"].as_str().is_some_and(|m| m.contains(needle)), "{bad}: {ev}");
@@ -342,7 +342,7 @@ fn settings_set_edit_hotkey_persists_validates_and_switches_off() {
         // The dictation hotkey may not take the edit chord either.
         assert_eq!(invoke(webview, "settings_set_hotkey", json!({ "hotkey": "Ctrl+Shift+Alt+E" })), Ok(Value::Null));
         let ev = wait_event(rx, "error (dictation = edit)", |e| e["type"] == "error");
-        assert!(ev["message"].as_str().is_some_and(|m| m.contains("已用作编辑选中文本的热键")), "{ev}");
+        assert!(ev["message"].as_str().is_some_and(|m| m.contains("已用作「编辑选中文本」的快捷键")), "{ev}");
         assert_eq!(invoke(webview, "settings_set_edit_hotkey", json!({ "hotkey": null })), Ok(Value::Null));
         let st = wait_state(webview, |s| s.settings.edit_hotkey.is_none());
         assert_eq!(st.settings.hotkey, voltip_core::DEFAULT_HOTKEY, "the refused dictation change did not land");
@@ -498,7 +498,7 @@ fn dictation_start_stop_runs_the_pipeline_and_records_history() {
         assert!(st.history.is_empty());
         // Stop with nothing running is refused by the core, as an `error` event, not a panic.
         assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
-        wait_event(rx, "error (idle stop)", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("no dictation")));
+        wait_event(rx, "error (idle stop)", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("没有进行中的听写")));
         assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
         let st = wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { .. }));
         assert_eq!(st.dictation.session, 1);
@@ -1013,7 +1013,10 @@ fn overlay_pill_and_hotkey_edges_follow_the_dictation_contract() {
     assert_eq!(pill_for(&DictationPhase::Idle), None);
     assert_eq!(pill_for(&DictationPhase::Listening { started_at: 1, ready: true, live: None, locked: false }), Some("listening"));
     assert_eq!(pill_for(&DictationPhase::Listening { started_at: 1, ready: true, live: None, locked: true }), Some("listening"), "locked is still listening");
-    assert_eq!(pill_for(&DictationPhase::Processing { stage: voltip_core::ProcessingStage::Refining, started_at: 1, preview: None }), Some("processing"));
+    assert_eq!(
+        pill_for(&DictationPhase::Processing { stage: voltip_core::ProcessingStage::Refining, started_at: 1, stage_started_at: 1, preview: None }),
+        Some("processing")
+    );
     assert_eq!(pill_for(&DictationPhase::CANCELLED), Some("cancelled"));
     assert_eq!(pill_for(&DictationPhase::Failed { code: FailureCode::Unknown, message: "x".into(), text: None }), Some("error"));
     let done = DictationPhase::Done {
@@ -1305,6 +1308,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "permissions_status",
             "permissions_request",
             "inject_preflight",
+            "paste_text",
             "provider_console_open",
             "project_link_open",
             "feedback_diagnostics",
@@ -1334,6 +1338,40 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
 /// docs/dictation.md §15: the three platform queries answer on every host. On the Linux test host
 /// nothing is gated (`not_applicable` throughout, `nothing_to_grant`), a request is an accepted
 /// no-op, and the injection preflight is `proceed` with `checked: false`; the wire is the
+/// 「粘贴到上一个窗口」 through the command layer (`paste_text`): with a probe the text goes into
+/// the window that came up, an empty text and a running take are refused, and none of it writes
+/// the history; without a probe (the headless wiring) the text is only copied.
+#[test]
+fn paste_text_pastes_into_the_window_in_front_and_refuses_while_a_take_runs() {
+    let probe = Arc::new(fakes::FakeProbe::app("notepad.exe", "Notepad", None));
+    let injector = Arc::new(fakes::FakeInjector::paste());
+    let ports = DictationPorts { probe: Some(probe), injector: injector.clone(), ..fakes::ports() };
+    // A pure Wayland session cannot name the window in front: the shell copies without waiting.
+    let pure_wayland = voltip_desktop_lib::hotkey::linux_session().is_some_and(|s| s.kind == voltip_inject::SessionKind::Wayland);
+    with_running_app_on(ports, move |_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        let answer = invoke(webview, "paste_text", json!({ "text": "你好" }));
+        if pure_wayland {
+            assert_eq!(answer, Ok(json!({ "kind": "copied", "reason": "no_probe" })));
+        } else {
+            assert_eq!(answer, Ok(json!({ "kind": "pasted" })));
+            assert_eq!(injector.injected(), vec!["你好".to_owned()]);
+        }
+        assert_eq!(invoke(webview, "paste_text", json!({ "text": " \n" })), Ok(json!({ "kind": "failed", "reason": "invalid" })));
+        assert!(invoke(webview, "paste_text", json!({})).is_err(), "text is required");
+        assert!(core_state(webview).history.is_empty(), "a paste writes no history");
+        assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
+        wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { .. }));
+        assert_eq!(invoke(webview, "paste_text", json!({ "text": "你好" })), Ok(json!({ "kind": "failed", "reason": "busy" })));
+        assert_eq!(invoke(webview, "dictation_cancel", json!({})), Ok(Value::Null));
+        assert!(injector.injected().len() <= 1, "nothing more was pasted: {:?}", injector.injected());
+    });
+    with_running_app(|_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(invoke(webview, "paste_text", json!({ "text": "你好" })), Ok(json!({ "kind": "copied", "reason": "no_probe" })));
+    });
+}
+
 /// `voltip_platform` snake_case contract the TypeScript schema mirrors.
 #[test]
 fn platform_queries_answer_not_applicable_on_a_host_without_gates() {

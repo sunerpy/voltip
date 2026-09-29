@@ -89,6 +89,6 @@ describe("Settings · 麦克风", () => {
       await backend.invoke("settings_set_microphone", { device: " " });
     });
     expect(backend.peek().settings.microphone).toBe("Realtek(R) Audio");
-    expect(await screen.findByText(/microphone: a device id of 1–1024 bytes/)).toBeInTheDocument();
+    expect(await screen.findByText(/出错了 · 麦克风标识须为 1–1024 字节/)).toBeInTheDocument();
   });
 });

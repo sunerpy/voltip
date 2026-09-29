@@ -115,7 +115,7 @@ describe("Rules page", () => {
       ["2", "PR 编号", "正则", "\\bpr (\\d+)Aa", "PR #$1", "1"],
       ["3", "filler", "字面", "嗯，", "（删除）", "—"],
     ]);
-    expect(screen.getByText("rules.json · 3 / 200 条 · 按此顺序执行")).toBeInTheDocument();
+    expect(screen.getByText("3 / 200 条 · 按此顺序执行")).toBeInTheDocument();
     for (const name of ["导入 TOML", "导出 TOML"])
       expect(screen.getByRole("button", { name })).toBeEnabled();
     expect(screen.queryByTestId("sample-footnote")).toBeNull();
@@ -323,7 +323,7 @@ describe("Rules page", () => {
     const backend = new MockBackend({ now: () => NOW, history: [] });
     vi.spyOn(backend, "rulesExport").mockRejectedValueOnce("rules: 无法导出 TOML");
     renderApp({ path: "/rules", backend });
-    expect(await screen.findByText("还没有规则")).toBeInTheDocument();
+    expect(await screen.findByText("暂无规则")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "用最近一次听写" })).toBeDisabled();
     await user.keyboard("{Control>}n{/Control}");
     expect(screen.getByTestId("rule-editor")).toBeInTheDocument();
@@ -331,13 +331,13 @@ describe("Rules page", () => {
     await user.click(screen.getByRole("button", { name: "新建规则" }));
     expect(screen.getByTestId("rule-editor")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "导出 TOML" }));
-    expect(await screen.findByText("导出失败：rules: 无法导出 TOML")).toBeInTheDocument();
+    expect(await screen.findByText("导出失败：无法导出 TOML")).toBeInTheDocument();
     vi.spyOn(backend, "vocabularyPreview").mockRejectedValueOnce(
       new Error("rules: 试写文本最多 64 KiB"),
     );
     await user.click(screen.getByRole("button", { name: /^运行/ }));
     expect(await screen.findByTestId("dry-run-error")).toHaveTextContent(
-      "试运行失败：rules: 试写文本最多 64 KiB",
+      "试运行失败：试写文本最多 64 KiB",
     );
   });
 });

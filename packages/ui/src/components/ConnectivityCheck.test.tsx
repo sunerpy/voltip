@@ -49,9 +49,7 @@ describe("ConnectivityCheck", () => {
     const onRun = vi.fn();
     render(<ConnectivityCheck status={{ running: false, report: REPORT }} onRun={onRun} />);
     const check = screen.getByTestId("connectivity");
-    expect(within(check).getByTestId("connectivity-lan")).toHaveTextContent(
-      "本机没有开启局域网监听",
-    );
+    expect(within(check).getByTestId("connectivity-lan")).toHaveTextContent("本机未开启局域网服务");
     expect(within(check).getByTestId("connectivity-relay")).toHaveTextContent(/^中继 · 连接失败$/);
     const peer = within(check).getByTestId("connectivity-peer");
     expect(peer).toHaveTextContent("Surface-Laptop · 中继 · 加密通道没有回应");

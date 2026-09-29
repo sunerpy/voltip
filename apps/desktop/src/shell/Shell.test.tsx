@@ -59,7 +59,8 @@ describe("Shell", () => {
     const groups = within(screen.getByRole("dialog", { name: "设置" })).getAllByRole("tab");
     expect(groups.map((g) => g.textContent)).toEqual([
       "通用",
-      "热键",
+      "快捷键",
+      "听写",
       "麦克风",
       "场景",
       "隐私与历史",
@@ -313,7 +314,7 @@ describe("Shell", () => {
       expect(within(palette).queryByText(/第二阶段|尚未接入/)).toBeNull();
       await user.keyboard("{Enter}");
       const confirm = screen.getByRole("dialog", { name: /删除全部 \d+ 条历史记录/ });
-      expect(confirm).toHaveTextContent("history.json 会被清空");
+      expect(confirm).toHaveTextContent("全部历史记录将被删除");
       await user.click(within(confirm).getByRole("button", { name: "删除全部" }));
       await waitFor(() => {
         expect(backend.peek().history).toEqual([]);
@@ -372,7 +373,7 @@ describe("Shell", () => {
       within(bar)
         .getAllByRole("button")
         .map((b) => b.getAttribute("aria-label")),
-    ).toEqual([TITLE_BAR_SEARCH_LABEL, "润色 · 开/关"]);
+    ).toEqual([TITLE_BAR_SEARCH_LABEL, "AI 润色 · 开/关"]);
     expect(within(bar).queryByText("Ctrl K")).toBeNull();
     expect(within(bar).queryByText(/SenseVoice|示例/)).toBeNull();
     expect(screen.queryByTestId("sample-data-notice")).toBeNull();
@@ -400,15 +401,15 @@ describe("Shell", () => {
     // The 润色 toggle is icon + short label + lamp and really toggles the LLM pass through the core.
     const toggle = within(bar).getByTestId("polish-toggle");
     expect(toggle.querySelector("svg[data-icon='wand']")).toBeInTheDocument();
-    expect(toggle.textContent).toBe("AI润色");
+    expect(toggle.textContent).toBe("AI 润色");
     expect(toggle).toHaveAttribute("aria-pressed", "true");
-    expect(toggle).toHaveAttribute("title", "润色 · 开 · 点击关闭 LLM 润色");
+    expect(toggle).toHaveAttribute("title", "AI 润色 · 已开启 · 点击关闭");
     await user.click(toggle);
     await waitFor(() => {
       expect(backend.peek().settings.engines.refine_enabled).toBe(false);
     });
     expect(toggle).toHaveAttribute("aria-pressed", "false");
-    expect(toggle).toHaveAttribute("title", "润色 · 关 · 点击开启 LLM 润色");
+    expect(toggle).toHaveAttribute("title", "AI 润色 · 已关闭 · 点击开启");
     expect(toggle.querySelector("[data-tone='idle']")).toBeInTheDocument();
     expect(backend.peek().engines.refine_enabled).toBe(false);
     await user.click(toggle);
@@ -453,26 +454,26 @@ describe("Shell", () => {
     }
   });
 
-  it("regression: the polish toggle carries the AI润色 text label", async () => {
+  it("regression: the polish toggle carries the AI 润色 text label", async () => {
     const { unmount } = renderApp();
     await screen.findByRole("heading", { name: "首页", level: 1 });
     const toggle = screen.getByTestId("polish-toggle");
     const label = within(toggle).getByTestId("polish-toggle-label");
-    expect(label).toHaveTextContent("AI润色");
+    expect(label).toHaveTextContent("AI 润色");
     expect(label).toHaveClass("text-[12px]");
     // Icon, then label, then lamp: the words sit between the wand and the status dot.
     const children = [...toggle.children];
     expect(children[0]?.tagName.toLowerCase()).toBe("svg");
     expect(children[1]).toBe(label);
     expect(children[2]).toHaveAttribute("data-tone", "ok");
-    expect(toggle).toHaveAttribute("aria-label", "润色 · 开/关");
+    expect(toggle).toHaveAttribute("aria-label", "AI 润色 · 开/关");
     expect(toggle).toHaveAttribute("aria-pressed", "true");
     unmount();
     // English: `AI Polish`.
     renderApp({ mock: { settings: { locale: "en" } } });
     await screen.findByRole("heading", { name: "Home", level: 1 });
     expect(screen.getByTestId("polish-toggle-label")).toHaveTextContent("AI Polish");
-    expect(screen.getByTestId("polish-toggle")).toHaveAttribute("aria-label", "Polish · on/off");
+    expect(screen.getByTestId("polish-toggle")).toHaveAttribute("aria-label", "AI polish · on/off");
   });
 
   it("regression: the title-bar readout stays on every page and the footer hotkey follows settings", async () => {

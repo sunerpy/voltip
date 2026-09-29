@@ -4,6 +4,7 @@ import {
   type PhoneTextSource,
   type SentText,
   type TFunction,
+  coreMessageText,
   formatDateTime,
   sentTextFinal,
 } from "@voltip/shared";
@@ -54,7 +55,9 @@ export function SendText({ desktops }: { desktops: readonly DeviceView[] }) {
   const tooLong = count > MAX_PHONE_TEXT_CHARS;
   const failed = (e: unknown) => {
     shell.toast(
-      t("mobile.toast.error", { message: e instanceof Error ? e.message : String(e) }),
+      t("mobile.toast.error", {
+        message: coreMessageText(e instanceof Error ? e.message : String(e)),
+      }),
       "danger",
     );
   };

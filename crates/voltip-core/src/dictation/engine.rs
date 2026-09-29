@@ -50,9 +50,9 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use super::ports::{
-    AudioSource, Capture, CaptureOptions, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, Injection, Injector, LIVE_CHUNK_SAMPLES,
-    LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MIN_RECORDING, PARTIAL_THROTTLE, PROBE_DEADLINE, Recording, RefineContext, RefineHints, Refiner, Segment,
-    SelectionTiming, ServiceProbe, StreamEvent, StreamFinal, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
+    AudioSource, Capture, CaptureOptions, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector,
+    LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MIN_RECORDING, PARTIAL_THROTTLE, PROBE_DEADLINE, Recording, RefineContext, RefineHints,
+    Refiner, Segment, SelectionTiming, ServiceProbe, StreamEvent, StreamFinal, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
 };
 use super::wav;
 use super::{DictationPhase, DictationStatus, FailureCode, LiveText, OutputMode, ProcessingStage, TakeKind, inject_separator, join_text};
@@ -339,7 +339,7 @@ struct LiveInject {
     /// one go at the end; `Some` from the fallback on.
     rest: Option<String>,
     /// The note the fallback came with (the history's clipboard reason).
-    note: Option<String>,
+    note: Option<InjectNote>,
     /// The final write of `rest` is with the injector.
     writing_rest: bool,
     /// The last sentence (tail / remainder) has been queued: when the queue drains the run is done.
@@ -486,9 +486,9 @@ pub struct DictationEngine {
 
 /// Why a scene's streaming output mode could not be honoured (docs/dictation.md §18.4); the take
 /// runs as a whole take and `Done.live_error` says so.
-const SCENE_MODE_NOT_READY: &str = "场景要求的流式输出暂不可用：实时预览未就绪（已关闭或流式模型未下载），本次按整段输出";
+const SCENE_MODE_NOT_READY: &str = "场景要求边说边识别，但实时预览未就绪（已关闭或实时识别模型未下载），本次按整段输出处理";
 /// The same, on a shell without a streaming recogniser.
-const SCENE_MODE_NO_STREAMING: &str = "场景要求的流式输出暂不可用：此设备没有流式识别器，本次按整段输出";
+const SCENE_MODE_NO_STREAMING: &str = "场景要求边说边识别，但此设备不支持实时识别，本次按整段输出处理";
 
 impl std::fmt::Debug for DictationEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -528,6 +528,12 @@ impl DictationEngine {
     /// The injector the takes deliver through; a phone's text uses it too (docs/dictation.md §20.6).
     pub fn injector(&self) -> Arc<dyn Injector> {
         self.injector.clone()
+    }
+
+    /// The foreground probe the shell plugged in, if any (a paste from the history checks the
+    /// front window with it, `crate::paste`).
+    pub fn probe(&self) -> Option<Arc<dyn ForegroundProbe>> {
+        self.probe.clone()
     }
 
     /// Build the engine; `levels` receives every level frame while a capture runs. The returned
@@ -982,7 +988,8 @@ impl DictationEngine {
         self.take.finalize_started = Some(Instant::now());
         // The streaming modes wait for the flush first (§12); the whole take goes to the transcriber.
         let stage = if self.take.mode.is_streaming() { ProcessingStage::Finalizing } else { ProcessingStage::Transcribing };
-        Ok(vec![self.set_phase(DictationPhase::Processing { stage, started_at: now_ms(), preview })])
+        let started_at = now_ms();
+        Ok(vec![self.set_phase(DictationPhase::Processing { stage, started_at, stage_started_at: started_at, preview })])
     }
 
     /// Start the live decode worker for this session on a blocking thread (docs/dictation.md §11).
@@ -1094,12 +1101,12 @@ impl DictationEngine {
         }
     }
 
-    /// Move `Processing` to `stage` (nothing outside `Processing`).
+    /// Move `Processing` to `stage` (nothing outside `Processing`); the stage clock restarts.
     fn stage(&mut self, stage: ProcessingStage) -> Vec<Effect> {
         match &self.status.phase {
-            DictationPhase::Processing { stage: current, started_at, preview } if *current != stage => {
+            DictationPhase::Processing { stage: current, started_at, preview, .. } if *current != stage => {
                 let (started_at, preview) = (*started_at, preview.clone());
-                vec![self.set_phase(DictationPhase::Processing { stage, started_at, preview })]
+                vec![self.set_phase(DictationPhase::Processing { stage, started_at, stage_started_at: now_ms(), preview })]
             }
             _ => Vec::new(),
         }
@@ -1219,9 +1226,11 @@ impl DictationEngine {
         };
         let final_text = LiveText { committed: fin.committed.clone(), current: fin.tail.clone(), ..LiveText::default() }.preview();
         let mut effects = match &self.status.phase {
-            DictationPhase::Processing { stage, started_at, preview } if !final_text.is_empty() && preview.as_deref() != Some(final_text.as_str()) => {
-                let (stage, started_at) = (*stage, *started_at);
-                vec![self.set_phase(DictationPhase::Processing { stage, started_at, preview: Some(final_text) })]
+            DictationPhase::Processing { stage, started_at, stage_started_at, preview }
+                if !final_text.is_empty() && preview.as_deref() != Some(final_text.as_str()) =>
+            {
+                let (stage, started_at, stage_started_at) = (*stage, *started_at, *stage_started_at);
+                vec![self.set_phase(DictationPhase::Processing { stage, started_at, stage_started_at, preview: Some(final_text) })]
             }
             _ => Vec::new(),
         };
@@ -1248,7 +1257,7 @@ impl DictationEngine {
         let Some(fin) = self.take.flushed.take() else { return Vec::new() };
         let raw_text = LiveText { committed: fin.committed.clone(), current: fin.tail.clone(), ..LiveText::default() }.preview();
         if raw_text.is_empty() {
-            return self.degrade("流式终稿为空".to_owned());
+            return self.degrade("实时识别未得到文本".to_owned());
         }
         let mut segments = fin.committed;
         let tail = fin.tail.trim();
@@ -1303,7 +1312,7 @@ impl DictationEngine {
             }
             if self.take.inject.segments.is_empty() {
                 // The stream produced no text at all: the whole take is the safety net.
-                return self.degrade("流式终稿为空".to_owned());
+                return self.degrade("实时识别未得到文本".to_owned());
             }
             return self.close_live_inject();
         }
@@ -1434,7 +1443,7 @@ impl DictationEngine {
             }
             Err(e) => {
                 tracing::warn!(session, idx, error = %e, "live injection failed; accumulating the rest");
-                li.note = Some(e.to_string());
+                li.note = Some(InjectNote::other(e.to_string()));
                 let mut rest = piece.text;
                 rest.extend(li.queue.drain(..).map(|p| p.text));
                 li.rest = Some(rest);
@@ -1751,7 +1760,7 @@ impl DictationEngine {
             Ok(Injection { via, note }) => {
                 entry.outcome = match (via, note) {
                     (Via::Paste, _) => Outcome::Inserted { via: Via::Paste },
-                    (Via::Clipboard, Some(reason)) => Outcome::Clipboard { reason },
+                    (Via::Clipboard, Some(note)) => Outcome::clipboard(note),
                     (Via::Clipboard, None) => Outcome::Inserted { via: Via::Clipboard },
                 };
                 let phase = DictationPhase::Done {
@@ -2145,6 +2154,7 @@ async fn run_edit(job: EditJob) {
 mod tests {
     use super::super::ports::{MAX_RECORDING, MAX_RECORDING_STREAMING};
     use super::*;
+    use crate::dictation::ClipboardCode;
     use crate::dictation::fakes::{
         FAKE_LATENCY_MS, FAKE_REFINE_MODEL, FAKE_STREAMING_MODEL_ID, FAKE_TRANSCRIPT, FakeAudio, FakeInjector, FakeModels, FakeProbe, FakeRefiner,
         FakeStreaming, FakeTranscriber, ports_with,
@@ -2310,6 +2320,29 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn stage_change_restarts_the_stage_clock() {
+        // User feedback 2026-09-29: the pill's timer stood at 0.0 s while transcribing and
+        // polishing. The first step starts with the run; every new step restarts the step clock.
+        let mut r = happy();
+        r.engine.start().unwrap();
+        r.next().await;
+        let fx = r.engine.stop().unwrap();
+        let DictationPhase::Processing { started_at, stage_started_at, .. } = phase(&fx).clone() else { panic!("{fx:?}") };
+        assert_eq!(stage_started_at, started_at, "the first step starts with the run");
+        // Let the first step have begun a second ago, then move on.
+        if let DictationPhase::Processing { started_at, stage_started_at, .. } = &mut r.engine.status.phase {
+            *started_at -= 1000;
+            *stage_started_at -= 1000;
+        }
+        let fx = r.engine.stage(ProcessingStage::Refining);
+        let DictationPhase::Processing { stage, started_at: run, stage_started_at: step, .. } = phase(&fx).clone() else { panic!("{fx:?}") };
+        assert_eq!(stage, ProcessingStage::Refining);
+        assert_eq!(run, started_at - 1000, "the run keeps its start");
+        assert!(step >= started_at, "the new step's clock restarted: {step} < {started_at}");
+        assert!(r.engine.stage(ProcessingStage::Refining).is_empty(), "the same step changes nothing");
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn happy_path_records_refined_text_and_dwells_then_idles() {
         let mut r = happy();
         assert_eq!(r.engine.status(), &DictationStatus::default());
@@ -2465,7 +2498,7 @@ mod tests {
         r.engine.stop().unwrap();
         let fx = r.run_to_terminal().await;
         assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Clipboard, .. }));
-        assert_eq!(record(&fx).unwrap().outcome, Outcome::Clipboard { reason: "no focused window".into() });
+        assert_eq!(record(&fx).unwrap().outcome, Outcome::Clipboard { reason: "no focused window".into(), code: Some(ClipboardCode::Other) });
         let mut r = rig(FakeAudio::speech(), FakeTranscriber::ok("a"), None, FakeInjector::clipboard(None), false);
         r.start_open().await;
         r.engine.stop().unwrap();
@@ -3234,7 +3267,7 @@ mod tests {
             ["Hello world. ", "Hello world. How are you. Fine "].map(String::from),
             "the first attempt, then everything not pasted in one clipboard write"
         );
-        assert_eq!(record(&fx).unwrap().outcome, Outcome::Clipboard { reason: "no focused window".into() });
+        assert_eq!(record(&fx).unwrap().outcome, Outcome::Clipboard { reason: "no focused window".into(), code: Some(ClipboardCode::Other) });
         assert_eq!(r.transcriber.calls(), 0);
         // Only the first paste fails over; the final write pastes: `Done` via paste, all text delivered.
         let mut r = rig_mode(

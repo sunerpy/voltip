@@ -11,8 +11,8 @@ use parking_lot::Mutex;
 
 use super::engine::DictationPorts;
 use super::ports::{
-    AudioSource, Capture, CaptureOptions, DictationError, ForegroundApp, ForegroundProbe, Injection, Injector, LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm,
-    Recording, RefineHints, Refined, Refiner, Segment, SelectionTiming, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber,
+    AudioSource, Capture, CaptureOptions, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector, LIVE_CHUNK_SAMPLES, LevelFrame,
+    LivePcm, Recording, RefineHints, Refined, Refiner, Segment, SelectionTiming, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber,
     Transcript, Via,
 };
 use super::wav;
@@ -456,7 +456,7 @@ impl FakeProbe {
 
     /// Always `app_id` / `name` with `title`.
     pub fn app(app_id: &str, name: &str, title: Option<&str>) -> Self {
-        Self::with(ProbeReply::App(ForegroundApp { app_id: app_id.to_owned(), name: name.to_owned(), title: title.map(str::to_owned) }))
+        Self::with(ProbeReply::App(ForegroundApp { app_id: app_id.to_owned(), name: name.to_owned(), title: title.map(str::to_owned), window: None }))
     }
 
     /// No nameable application (pure Wayland, the desktop, Voltip itself).
@@ -481,7 +481,14 @@ impl FakeProbe {
 
     /// Answer `app_id` / `name` / `title` from the next call on.
     pub fn set_app(&self, app_id: &str, name: &str, title: Option<&str>) {
-        *self.reply.lock() = ProbeReply::App(ForegroundApp { app_id: app_id.to_owned(), name: name.to_owned(), title: title.map(str::to_owned) });
+        *self.reply.lock() = ProbeReply::App(ForegroundApp { app_id: app_id.to_owned(), name: name.to_owned(), title: title.map(str::to_owned), window: None });
+    }
+
+    /// The answered application's window from the next call on (nothing when no app is answered).
+    pub fn set_window(&self, window: Option<u64>) {
+        if let ProbeReply::App(app) = &mut *self.reply.lock() {
+            app.window = window;
+        }
     }
 
     /// Answer nothing from the next call on.
@@ -526,7 +533,7 @@ impl ForegroundProbe for FakeProbe {
 #[derive(Clone)]
 enum InjectReply {
     Paste,
-    Clipboard(Option<String>),
+    Clipboard(Option<InjectNote>),
     Err(String),
 }
 
@@ -572,6 +579,8 @@ pub struct FakeInjector {
     timing: SelectionTiming,
     copies: Mutex<Vec<Vec<Modifier>>>,
     copy_gate: Option<Arc<Gate>>,
+    /// Texts put on the clipboard alone (`Injector::copy`).
+    clipboard: Mutex<Vec<String>>,
     /// Which application ids are terminals (docs/dictation.md §19.2).
     terminals: Arc<dyn Fn(&str) -> bool + Send + Sync>,
 }
@@ -585,7 +594,12 @@ impl FakeInjector {
     /// Reports the text left in the clipboard (`note` = why the paste did not happen, or `None`
     /// for clipboard-only mode).
     pub fn clipboard(note: Option<&str>) -> Self {
-        Self::with_reply(InjectReply::Clipboard(note.map(str::to_owned)))
+        Self::with_reply(InjectReply::Clipboard(note.map(InjectNote::other)))
+    }
+
+    /// Reports the text left in the clipboard for `note` (a coded fallback, docs/dictation.md §4.2).
+    pub fn clipboard_with(note: InjectNote) -> Self {
+        Self::with_reply(InjectReply::Clipboard(Some(note)))
     }
 
     /// Fails with `Inject(message)`.
@@ -603,6 +617,7 @@ impl FakeInjector {
             timing: SelectionTiming::AtPress,
             copies: Mutex::new(Vec::new()),
             copy_gate: None,
+            clipboard: Mutex::new(Vec::new()),
             terminals: Arc::new(|_: &str| false),
         }
     }
@@ -652,7 +667,7 @@ impl FakeInjector {
 
     /// The first call is answered with the clipboard fallback (`note`), later ones as configured.
     pub fn clipboard_once(self, note: Option<&str>) -> Self {
-        self.first.lock().push_back(InjectReply::Clipboard(note.map(str::to_owned)));
+        self.first.lock().push_back(InjectReply::Clipboard(note.map(InjectNote::other)));
         self
     }
 
@@ -662,7 +677,7 @@ impl FakeInjector {
         self
     }
 
-    /// Every `inject` blocks until [`FakeInjector::release`] grants it a permit.
+    /// Every `inject` and `copy` blocks until [`FakeInjector::release`] grants it a permit.
     pub fn gated(self) -> Self {
         Self { gate: Some(Arc::new(Gate::default())), ..self }
     }
@@ -683,6 +698,11 @@ impl FakeInjector {
     pub fn injected(&self) -> Vec<String> {
         self.injected.lock().clone()
     }
+
+    /// Texts put on the clipboard alone (`Injector::copy`), in order.
+    pub fn clipboard_copies(&self) -> Vec<String> {
+        self.clipboard.lock().clone()
+    }
 }
 
 impl Injector for FakeInjector {
@@ -697,6 +717,14 @@ impl Injector for FakeInjector {
             InjectReply::Clipboard(note) => Ok(Injection { via: Via::Clipboard, note }),
             InjectReply::Err(m) => Err(DictationError::Inject(m)),
         }
+    }
+
+    fn copy(&self, text: &str) -> Result<(), DictationError> {
+        if let Some(gate) = &self.gate {
+            gate.pass();
+        }
+        self.clipboard.lock().push(text.to_owned());
+        Ok(())
     }
 
     fn copy_selection(&self, held: &[Modifier]) -> Result<Option<String>, DictationError> {
@@ -1166,7 +1194,9 @@ mod tests {
 
         let i = FakeInjector::paste();
         assert_eq!(i.inject("a").unwrap(), Injection { via: Via::Paste, note: None });
-        assert_eq!(FakeInjector::clipboard(Some("no focus")).inject("b").unwrap().note.as_deref(), Some("no focus"));
+        assert_eq!(FakeInjector::clipboard(Some("no focus")).inject("b").unwrap().note, Some(InjectNote::other("no focus")));
+        let coded = InjectNote::new(super::super::ports::ClipboardCode::NoPermission, "enigo: no permission");
+        assert_eq!(FakeInjector::clipboard_with(coded.clone()).inject("c").unwrap().note, Some(coded));
         assert_eq!(FakeInjector::clipboard(None).inject("b").unwrap().via, Via::Clipboard);
         let failing = FakeInjector::err("denied");
         assert_eq!(failing.inject("c").unwrap_err(), DictationError::Inject("denied".into()));

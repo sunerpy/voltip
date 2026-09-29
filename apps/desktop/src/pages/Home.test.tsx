@@ -42,25 +42,143 @@ function liveClock() {
 }
 
 describe("Home page", () => {
+  it("regression: the recent table copies and pastes a row without opening it, by mouse and by keyboard", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const { backend } = renderApp({ mock: liveClock() });
+    const table = await screen.findByRole("table", { name: "最近的结果" });
+    const newest = backend.peek().history[0];
+    if (!newest) throw new Error("fixture");
+    const row = within(table).getAllByRole("row")[1] as HTMLElement;
+    // Copy: the row's text, the usual toast, and the page stays.
+    await user.click(within(row).getByRole("button", { name: "复制这条结果" }));
+    expect(writeText).toHaveBeenCalledWith(newest.text);
+    expect(
+      await screen.findByText(`已复制到剪贴板 · ${Array.from(newest.text).length} 字`),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("page-home")).toBeInTheDocument();
+    // Paste into the previous window: the text goes to paste_text, the answer becomes a toast.
+    await user.click(within(row).getByRole("button", { name: "粘贴到上一个窗口" }));
+    expect(backend.pastes).toEqual([newest.text]);
+    expect(await screen.findByText("已粘贴到上一个窗口")).toBeInTheDocument();
+    expect(screen.getByTestId("page-home")).toBeInTheDocument();
+    // The keyboard reaches the button, not the row; a copy instead says why.
+    backend.setPasteOutcome({ kind: "copied", reason: "target_changed" });
+    within(row).getByRole("button", { name: "粘贴到上一个窗口" }).focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("前台窗口已变化 · 仅复制到剪贴板")).toBeInTheDocument();
+    expect(backend.pastes).toHaveLength(2);
+    expect(screen.getByTestId("page-home")).toBeInTheDocument();
+    // The row itself still opens the entry.
+    await user.click(within(row).getByText(newest.text));
+    expect(await screen.findByTestId("page-history")).toBeInTheDocument();
+  });
+
+  it("the engine card's insert readout opens Settings › Dictation", async () => {
+    const user = userEvent.setup();
+    renderApp({ mock: liveClock() });
+    const link = await screen.findByTestId("home-inject-link");
+    expect(link).toHaveTextContent("粘贴到光标处");
+    expect(link).toHaveAttribute("title", "在「设置 › 听写」中更改");
+    await user.click(link);
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    expect(within(dialog).getByRole("tab", { name: /听写/, selected: true })).toBeInTheDocument();
+  });
+
+  it("a paste refused while a take runs says so, and a voice edit's row hands on its rewrite", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const now = Date.now();
+    const base = {
+      at_ms: now - 60_000,
+      asr_model: "whisper-large-v3-turbo",
+      duration_ms: 1400,
+      asr_ms: 380,
+      refined: true,
+      outcome: { kind: "inserted", via: "paste" },
+      starred: false,
+      mode: "whole_take",
+    } as const;
+    const { backend } = renderApp({
+      backend: new MockBackend({
+        now: () => Date.now(),
+        history: [
+          {
+            ...base,
+            id: "edit",
+            raw_text: "改得更正式",
+            text: "各位同事：会议改至周四上午十点。",
+            kind: "edit",
+            edit: { instruction: "改得更正式", selection: "大家好，会议改到周四十点哈" },
+          },
+        ],
+      }),
+    });
+    const table = await screen.findByRole("table", { name: "最近的结果" });
+    await user.click(within(table).getByRole("button", { name: "复制这条结果" }));
+    expect(writeText).toHaveBeenCalledWith("各位同事：会议改至周四上午十点。");
+    await act(async () => {
+      await backend.invoke("dictation_start");
+    });
+    await user.click(within(table).getByRole("button", { name: "粘贴到上一个窗口" }));
+    expect(await screen.findByText("正在听写 · 请结束后再粘贴")).toBeInTheDocument();
+    expect(backend.pastes).toEqual([]);
+  });
+
+  it("regression: the ready line leaves the model and the provider to the chip beside it and reads whole on hover", async () => {
+    // The 1280 px English check (plan 1.2) found 「Microphone, shortcut and recognition ready ·
+    // Qwen3-ASR-1.7B · Built-in…」 cut, next to a chip that already said 「Built-in service ·
+    // Qwen3-ASR-1.7B」.
+    renderApp({ mock: liveClock() });
+    const phase = await screen.findByTestId("home-phase");
+    expect(phase).toHaveTextContent(/^麦克风、快捷键和识别服务已就绪$/);
+    expect(phase).toHaveAttribute("title", "麦克风、快捷键和识别服务已就绪");
+    expect(
+      within(screen.getByTestId("home-readiness")).getByText("内置服务 · Qwen3-ASR-1.7B"),
+    ).toBeInTheDocument();
+  });
+
+  it("regression: a stat tile's note reads whole on hover when the default window cuts it", async () => {
+    // The 1152 px check (the default window, plan 1.2): 「Keeps the newest 500」 was cut with no way
+    // to read it.
+    renderApp({ mock: liveClock() });
+    const notes = await screen.findAllByTestId("home-tile-note");
+    expect(notes).toHaveLength(4);
+    for (const note of notes) expect(note).toHaveAttribute("title", note.textContent);
+    expect(notes[3]).toHaveTextContent("保留最近 500 条");
+  });
+
+  it("regression: the recent table's timing columns are as wide as their headers", async () => {
+    // The 1440 px English check (plan 1.2): 「Transcription」 ran past its 84 px column.
+    renderApp({ mock: liveClock() });
+    const table = await screen.findByRole("table", { name: "最近的结果" });
+    const header = (name: string) =>
+      within(table)
+        .getAllByRole("columnheader")
+        .find((h) => h.textContent === name);
+    expect(header("识别")).toHaveAttribute("style", "width: 1%;");
+    expect(header("润色")).toHaveAttribute("style", "width: 1%;");
+  });
+
   it("renders readiness row, four panels, stat strip and the recent table from the core's state", async () => {
     const { backend } = renderApp({ mock: liveClock() });
     expect(await screen.findByText("可以开始听写")).toBeInTheDocument();
     // The strength bar exists but stays silent while idle (the regression test below drives it).
     expect(screen.getByRole("meter", { name: "强度" })).toBeInTheDocument();
-    expect(screen.getByTestId("home-phase")).toHaveTextContent(
-      "麦克风、热键和识别服务就位 · Qwen3-ASR-1.7B · 内置服务",
-    );
+    expect(screen.getByTestId("home-phase")).toHaveTextContent(/^麦克风、快捷键和识别服务已就绪$/);
     expect(screen.getByText("麦克风输入")).toBeInTheDocument();
     expect(screen.getByText("Fifine K669 USB Microphone")).toBeInTheDocument();
     expect(within(screen.getByTestId("home-engine")).getByText("语音模型")).toBeInTheDocument();
-    expect(screen.getByText("手机 · 设备")).toBeInTheDocument();
-    expect(screen.getByText("今日会话")).toBeInTheDocument();
+    expect(within(screen.getByTestId("home-devices")).getByText("手机 · 设备")).toBeInTheDocument();
+    expect(screen.getByText("今日听写")).toBeInTheDocument();
     // The engine card reads state.engines, not a fixture.
     const engine = screen.getByTestId("home-engine");
     expect(within(engine).getByText("Qwen3-ASR-1.7B")).toBeInTheDocument();
     expect(within(engine).getByText(/内置服务 · 语言 自动/)).toBeInTheDocument();
     expect(within(engine).getByText("qwen3.8-27b")).toBeInTheDocument();
-    expect(within(engine).getByRole("switch", { name: /LLM 润色 开/ })).toBeChecked();
+    expect(within(engine).getByRole("switch", { name: /AI 润色 开/ })).toBeChecked();
     expect(screen.getByTestId("home-privacy")).toHaveTextContent(
       "音频发送到内置服务 · 文本发送到内置服务",
     );
@@ -86,7 +204,9 @@ describe("Home page", () => {
     expect(within(table).getAllByRole("row")).toHaveLength(6 + 1);
     expect(within(table).getAllByText("Qwen3-ASR-1.7B").length).toBe(6);
     expect(within(table).getByText(/attach the latency report/)).toBeInTheDocument();
-    expect(within(table).getByText("仅剪贴板 · 目标窗口没有焦点")).toBeInTheDocument();
+    // A clipboard fallback's chip is the short label; the reason is explained in the history entry.
+    expect(within(table).getByText("已复制到剪贴板")).toBeInTheDocument();
+    expect(within(table).queryByText(/目标窗口没有焦点/)).toBeNull();
     expect(within(table).getByText("失败 · 目标窗口已丢失")).toBeInTheDocument();
     // Nothing on the page talks about phases or sample data any more.
     expect(screen.getByTestId("page-home").textContent).not.toMatch(/第二阶段|示例数据/);
@@ -192,7 +312,7 @@ describe("Home page", () => {
       await user.click(start);
       expect(backend.peek().dictation.phase.phase).toBe("listening");
       expect(screen.getByText("正在听写")).toBeInTheDocument();
-      expect(screen.getByTestId("home-phase")).toHaveTextContent(/正在听… 00:0\d/);
+      expect(screen.getByTestId("home-phase")).toHaveTextContent(/正在录音… 00:0\d/);
       expect(screen.queryByRole("button", { name: "开始听写" })).toBeNull();
       // The live meter names the recording.
       await waitFor(() => {
@@ -203,14 +323,14 @@ describe("Home page", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(3000 + MOCK_MIC_READY_MS);
       });
-      expect(screen.getByTestId("home-phase")).toHaveTextContent(/正在听… 00:02/);
+      expect(screen.getByTestId("home-phase")).toHaveTextContent(/正在录音… 00:02/);
       await user.click(screen.getByRole("button", { name: "停止" }));
       expect(backend.peek().dictation.phase).toMatchObject({
         phase: "processing",
         stage: "transcribing",
       });
       expect(screen.getByText("正在处理")).toBeInTheDocument();
-      expect(screen.getByTestId("home-phase")).toHaveTextContent("转写中…");
+      expect(screen.getByTestId("home-phase")).toHaveTextContent("识别中…");
       expect(screen.getByRole("button", { name: "处理中…" })).toBeDisabled();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_ASR_MS);
@@ -260,7 +380,7 @@ describe("Home page", () => {
         await vi.advanceTimersByTimeAsync(MOCK_COPY_MS + MOCK_MIC_READY_MS + 1000);
       });
       await editEdge(false);
-      expect(screen.getByTestId("home-phase")).toHaveTextContent("转写中…");
+      expect(screen.getByTestId("home-phase")).toHaveTextContent("识别中…");
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_ASR_MS);
       });
@@ -398,13 +518,16 @@ describe("Home page", () => {
     // The reason follows `state.engines`, which the backend reports asynchronously after the first
     // paint (until then the button says the core is still being awaited): wait for it explicitly.
     await waitFor(() => {
-      expect(start).toHaveAttribute("title", "识别服务商还不能用：缺少密钥 · 在「语音模型」页配置");
+      expect(start).toHaveAttribute(
+        "title",
+        "语音识别服务商不可用：缺少密钥 · 请在「语音模型」页配置",
+      );
     });
     expect(screen.getByTestId("home-phase")).toHaveTextContent("缺少密钥");
     expect(screen.getByRole("button", { name: "今天 0 条" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "总计 0 / 500" })).toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "最近的结果" })).toBeNull();
-    expect(screen.getByText("还没有听写结果")).toBeInTheDocument();
+    expect(screen.getByText("暂无听写结果")).toBeInTheDocument();
     expect(screen.getByText("按住 Ctrl Alt Space 说一句，松开即插入")).toBeInTheDocument();
     // The microphone card shows its own `—` until the native enumeration lands; wait for the
     // device so the only remaining `—` is the average-latency readout.
@@ -461,7 +584,7 @@ describe("Home page", () => {
       "MacBook PromacOS离线",
     ]);
     expect(within(card).getByText("中继 · 未配置")).toBeInTheDocument();
-    expect(within(card).queryByText("还没有配对的手机 · 去配对")).toBeNull();
+    expect(within(card).queryByText("尚未配对手机 · 去配对")).toBeNull();
     await user.click(within(card).getByRole("button", { name: "打开「手机」页" }));
     expect(screen.getByRole("heading", { name: "手机", level: 1 })).toBeInTheDocument();
   });
@@ -474,7 +597,7 @@ describe("Home page", () => {
     expect(within(card).getByText("未配对")).toBeInTheDocument();
     expect(within(card).getByText("0 台已配对")).toBeInTheDocument();
     expect(within(card).queryByRole("listitem")).toBeNull();
-    await user.click(within(card).getByRole("button", { name: "还没有配对的手机 · 去配对" }));
+    await user.click(within(card).getByRole("button", { name: "尚未配对手机 · 去配对" }));
     expect(screen.getByRole("heading", { name: "手机", level: 1 })).toBeInTheDocument();
     // More phones than the card lists: the overflow line points at the devices page.
     const extra = many.map((d, i) => ({
@@ -517,16 +640,16 @@ describe("Home page", () => {
       expect(grid.className).not.toMatch(/(?:^|\s)grid-cols-\[[^\]]*\d+px/);
   });
 
-  it("the LLM 润色 toggle writes settings_set_engines and the card follows the core", async () => {
+  it("the AI 润色 toggle writes settings_set_engines and the card follows the core", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp();
     await screen.findByText("可以开始听写");
-    await user.click(screen.getByRole("switch", { name: /LLM 润色 开/ }));
+    await user.click(screen.getByRole("switch", { name: /AI 润色 开/ }));
     await waitFor(() => {
       expect(backend.peek().settings.engines.refine_enabled).toBe(false);
     });
     expect(backend.peek().engines.refine_enabled).toBe(false);
-    expect(screen.getByRole("switch", { name: "LLM 润色 关" })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: "AI 润色 关" })).not.toBeChecked();
     expect(screen.getByTestId("home-privacy")).toHaveTextContent("音频发送到内置服务");
     expect(screen.getByTestId("home-privacy")).not.toHaveTextContent("文本发送到");
     expect(within(screen.getByTestId("home-engine")).getByText("关")).toBeInTheDocument();
@@ -557,7 +680,7 @@ describe("Home page", () => {
     // Settings open as a modal over the page (Shell); 按住说话 lands on the 热键 group.
     await user.click(screen.getByRole("button", { name: "按住说话" }));
     const settings = screen.getByRole("dialog", { name: "设置" });
-    expect(within(settings).getByRole("tab", { name: /热键/ })).toHaveAttribute(
+    expect(within(settings).getByRole("tab", { name: /快捷键/ })).toHaveAttribute(
       "aria-selected",
       "true",
     );

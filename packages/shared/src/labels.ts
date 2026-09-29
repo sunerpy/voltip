@@ -526,6 +526,30 @@ export function processingStageLabel(
   return translate(locale, `dictation.stage.${stage}`);
 }
 
+/** A machine prefix the core and the shell put in front of a refusal (`scenes: `, `phone text: `,
+ *  `history.keep: `, `openai.asr_url: `): it names the field for the log, not for a reader. */
+const MACHINE_PREFIX = /^[a-z][a-z_]*(?:\.[a-z_]+)*(?: [a-z]+)?: /;
+
+/** A core or shell message as the interface shows it: without its machine prefix
+ *  (docs/frontend.md §8). */
+export function coreMessageText(message: string): string {
+  return message.replace(MACHINE_PREFIX, "");
+}
+
+/** The system calls a shortcut backend goes through: implementation, never shown. */
+const HOTKEY_SYSTEM_CALLS: ReadonlySet<string> = new Set(["RegisterHotKey", "Carbon"]);
+
+/** The shell's shortcut backend (`global-shortcut · Windows · RegisterHotKey`) in the words a reader
+ *  needs: the system and, on Linux, the session (`Windows`, `Linux · Wayland`), which decide what a
+ *  shortcut can do. The library and the system call are implementation. Any other text (the browser
+ *  preview's mock) is shown as it is. */
+export function hotkeyMethodText(backend: string): string {
+  const [library, ...rest] = backend.split(" · ");
+  if (library !== "global-shortcut") return backend;
+  const shown = rest.filter((part) => !HOTKEY_SYSTEM_CALLS.has(part));
+  return shown.length > 0 ? shown.join(" · ") : backend;
+}
+
 /** History row outcome: `已插入 · 粘贴`, `仅剪贴板 · <reason>`, `失败 · <reason>`. */
 export function outcomeLabel(outcome: HistoryOutcome, locale: Locale = DEFAULT_LOCALE): Labelled {
   switch (outcome.kind) {
@@ -535,10 +559,8 @@ export function outcomeLabel(outcome: HistoryOutcome, locale: Locale = DEFAULT_L
         tone: "ok",
       };
     case "clipboard":
-      return {
-        text: translate(locale, "outcome.clipboard", { reason: outcome.reason }),
-        tone: "warn",
-      };
+      // The reason is explained under the entry (docs/dictation.md §4.2), never in the label.
+      return { text: translate(locale, "outcome.clipboard"), tone: "warn" };
     case "failed":
       return {
         text: translate(locale, "outcome.failed", { reason: outcome.reason }),

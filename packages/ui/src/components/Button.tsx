@@ -3,7 +3,14 @@ import { cx } from "../cx";
 import { Icon, type IconName } from "./Icon";
 import { Keycaps } from "./Keycap";
 
-export type ButtonVariant = "primary" | "outline" | "ghost" | "danger" | "text";
+export type ButtonVariant =
+  | "primary"
+  | "outline"
+  | "ghost"
+  | "danger"
+  | "text"
+  | "text-danger"
+  | "text-muted";
 export type ButtonSize = "sm" | "md";
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -21,7 +28,11 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
   outline: "bg-surface text-fg hairline hover:bg-inset",
   ghost: "bg-transparent text-fg hover:bg-inset",
   danger: "bg-danger text-surface hover:opacity-90",
-  text: "bg-transparent px-0 text-accent-text hover:underline",
+  // Links as Codex draws them: the accent text colour, no underline, a stronger shade on hover.
+  text: "bg-transparent px-0 text-accent-text hover:text-accent-text-hover",
+  // A destructive or secondary action in the same place: its own colour, and its own hover.
+  "text-danger": "bg-transparent px-0 text-danger hover:underline",
+  "text-muted": "bg-transparent px-0 text-fg-muted hover:text-fg",
 };
 
 const SIZE_CLASS: Record<ButtonSize, string> = {

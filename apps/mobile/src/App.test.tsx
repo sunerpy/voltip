@@ -41,13 +41,13 @@ describe("Mobile app flow", () => {
     expect(screen.getByText("Android")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "配对电脑" }));
     expect(screen.getByRole("heading", { name: "配对电脑" })).toBeInTheDocument();
-    await user.click(screen.getByRole("radio", { name: "输入 6 位码" }));
+    await user.click(screen.getByRole("radio", { name: "输入 6 位验证码" }));
     await user.type(screen.getByLabelText("六位配对码"), "483921");
-    expect(await screen.findByText("正在加入会话…")).toBeInTheDocument();
+    expect(await screen.findByText("正在加入配对…")).toBeInTheDocument();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
-    expect(screen.getByText(/正在协商密钥/)).toBeInTheDocument();
+    expect(screen.getByText(/正在建立加密连接/)).toBeInTheDocument();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(400);
     });
@@ -75,7 +75,7 @@ describe("Mobile app flow", () => {
   it("regression: a wrong code shows the relay error under the cells and can be retried", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     renderApp({ mock: { role: "phone", expectedCode: "111222" }, initialScreen: "pair" });
-    await user.click(await screen.findByRole("radio", { name: "输入 6 位码" }));
+    await user.click(await screen.findByRole("radio", { name: "输入 6 位验证码" }));
     await user.type(screen.getByLabelText("六位配对码"), "999999");
     expect(await screen.findByRole("alert")).toHaveTextContent("验证码不正确");
     await user.click(screen.getByRole("button", { name: "清除并重试" }));
@@ -83,13 +83,13 @@ describe("Mobile app flow", () => {
     await user.type(screen.getByLabelText("六位配对码"), "11122");
     expect(screen.getByRole("button", { name: "加入" })).toBeDisabled();
     await user.type(screen.getByLabelText("六位配对码"), "2");
-    expect(await screen.findByText("正在加入会话…")).toBeInTheDocument();
+    expect(await screen.findByText("正在加入配对…")).toBeInTheDocument();
   });
 
   it("scan tab falls back to pasting a link without a scanner and validates it", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     renderApp({ initialScreen: "pair", scanner: undefined });
-    expect(await screen.findByText("此环境没有相机")).toBeInTheDocument();
+    expect(await screen.findByText("当前设备没有可用的相机")).toBeInTheDocument();
     const input = screen.getByLabelText("配对链接");
     await user.type(input, "https://evil.example");
     expect(screen.getByText("不是 Voltip 配对链接")).toBeInTheDocument();
@@ -117,7 +117,7 @@ describe("Mobile app flow", () => {
     await user.click(button);
     expect(await screen.findByText("已取消扫码或未授予相机权限")).toBeInTheDocument();
     await user.click(button);
-    expect(await screen.findByText("协议错误")).toBeInTheDocument();
+    expect(await screen.findByText("通信数据无效")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "重试" }));
     await user.click(screen.getByRole("button", { name: "打开相机扫码" }));
     await act(async () => {
@@ -136,7 +136,7 @@ describe("Mobile app flow", () => {
     });
     expect(await screen.findByRole("heading", { name: "核对安全码" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "拒绝" }));
-    expect(screen.getByText("配对已被拒绝，会话已销毁。")).toBeInTheDocument();
+    expect(screen.getByText("配对已被拒绝，本次配对已取消。")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "重新配对" }));
     expect(screen.getByRole("heading", { name: "配对电脑" })).toBeInTheDocument();
     expect(backend.peek().pairing.state).toEqual({ state: "idle" });
@@ -166,7 +166,7 @@ describe("Mobile app flow", () => {
     renderApp({ backend });
     expect(await screen.findByRole("heading", { name: "已配对设备" })).toBeInTheDocument();
     expect(screen.getAllByText("MacBook Pro").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("在线 · 中继")).toHaveLength(2);
+    expect(screen.getAllByText("在线 · 经中继")).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "发测试消息" }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(200);
@@ -183,7 +183,7 @@ describe("Mobile app flow", () => {
     await user.click(screen.getByRole("button", { name: "取消" }));
     await user.click(screen.getByRole("button", { name: "忘记 MacBook Pro" }));
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "忘记" }));
-    expect(await screen.findByText("还没有配对的电脑")).toBeInTheDocument();
+    expect(await screen.findByText("尚未配对电脑")).toBeInTheDocument();
     expect(await screen.findByText("已忘记 MacBook Pro")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "配对新电脑" }));
     expect(screen.getByRole("heading", { name: "配对电脑" })).toBeInTheDocument();
@@ -248,6 +248,7 @@ describe("Mobile app flow", () => {
       permissionsStatus: inner.permissionsStatus.bind(inner),
       permissionsRequest: inner.permissionsRequest.bind(inner),
       injectPreflight: inner.injectPreflight.bind(inner),
+      pasteText: inner.pasteText.bind(inner),
       providerConsoleOpen: inner.providerConsoleOpen.bind(inner),
       projectLinkOpen: inner.projectLinkOpen.bind(inner),
       feedbackDiagnostics: inner.feedbackDiagnostics.bind(inner),
@@ -258,12 +259,12 @@ describe("Mobile app flow", () => {
       phoneClipboardRead: inner.phoneClipboardRead.bind(inner),
     };
     const first = render(<TestApp backend={backend} />);
-    expect(await screen.findByText("正在连接核心…")).toBeInTheDocument();
+    expect(await screen.findByText("正在启动…")).toBeInTheDocument();
     first.unmount();
     render(
       <TestApp backend={{ ...backend, getState: () => Promise.reject(new Error("core down")) }} />,
     );
-    expect(await screen.findByText("无法连接核心：core down")).toBeInTheDocument();
+    expect(await screen.findByText("启动失败：core down")).toBeInTheDocument();
     const identityless = new MockBackend({ role: "phone" });
     const noIdentity = {
       getState: async () => ({ ...(await identityless.getState()), identity: null }),
@@ -278,6 +279,7 @@ describe("Mobile app flow", () => {
       permissionsStatus: identityless.permissionsStatus.bind(identityless),
       permissionsRequest: identityless.permissionsRequest.bind(identityless),
       injectPreflight: identityless.injectPreflight.bind(identityless),
+      pasteText: identityless.pasteText.bind(identityless),
       providerConsoleOpen: identityless.providerConsoleOpen.bind(identityless),
       projectLinkOpen: identityless.projectLinkOpen.bind(identityless),
       feedbackDiagnostics: identityless.feedbackDiagnostics.bind(identityless),

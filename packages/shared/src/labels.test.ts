@@ -16,7 +16,9 @@ import {
   formatMs,
   formatRemaining,
   formatSeconds,
+  coreMessageText,
   hostOf,
+  hotkeyMethodText,
   joinLiveText,
   liveCaptionParts,
   livePreviewText,
@@ -55,6 +57,35 @@ function leafTexts(tree: MessageTree): string[] {
   });
 }
 
+describe("coreMessageText", () => {
+  it("regression: a core refusal shows without its machine prefix (docs/frontend.md §8)", () => {
+    expect(coreMessageText("scenes: 已有名为「聊天」的场景")).toBe("已有名为「聊天」的场景");
+    expect(coreMessageText("phone text: 没有要发送的文字")).toBe("没有要发送的文字");
+    expect(coreMessageText("history.keep: 500–20000")).toBe("500–20000");
+    expect(coreMessageText("openai.asr_url: 地址无效")).toBe("地址无效");
+    // A message without one, and text that only looks like it, stay as they are.
+    expect(coreMessageText("Ctrl+Alt+Space 没能生效：纯 Wayland")).toBe(
+      "Ctrl+Alt+Space 没能生效：纯 Wayland",
+    );
+    expect(coreMessageText("relay refused the ticket")).toBe("relay refused the ticket");
+    expect(coreMessageText("Error: boom")).toBe("Error: boom");
+  });
+});
+
+describe("hotkeyMethodText", () => {
+  it("regression: the shortcut method names the system and the Linux session, not the library or the system call", () => {
+    // The shell's table (apps/desktop/src-tauri/src/hotkey.rs backend_name_for).
+    expect(hotkeyMethodText("global-shortcut · Windows · RegisterHotKey")).toBe("Windows");
+    expect(hotkeyMethodText("global-shortcut · macOS · Carbon")).toBe("macOS");
+    expect(hotkeyMethodText("global-shortcut · Linux · X11")).toBe("Linux · X11");
+    expect(hotkeyMethodText("global-shortcut · Linux · XWayland")).toBe("Linux · XWayland");
+    expect(hotkeyMethodText("global-shortcut · Linux · Wayland")).toBe("Linux · Wayland");
+    // Anything else is shown as it is.
+    expect(hotkeyMethodText("mock · browser preview")).toBe("mock · browser preview");
+    expect(hotkeyMethodText("global-shortcut")).toBe("global-shortcut");
+  });
+});
+
 describe("labels", () => {
   it("labels platforms and connections", () => {
     expect(platformLabel("macos")).toBe("macOS");
@@ -62,7 +93,7 @@ describe("labels", () => {
       text: "在线 · 直连",
       tone: "ok",
     });
-    expect(connectionLabel({ state: "online", via: "relay" }).text).toBe("在线 · 中继");
+    expect(connectionLabel({ state: "online", via: "relay" }).text).toBe("在线 · 经中继");
     expect(connectionLabel({ state: "connecting" }).tone).toBe("accent");
     expect(connectionLabel({ state: "offline" }).text).toBe("离线");
     expect(connectionLabel({ state: "identity_changed", presented_fingerprint: "x" }).tone).toBe(
@@ -97,9 +128,9 @@ describe("labels", () => {
 
   it("labels pairing states and failure reasons", () => {
     expect(pairingStateLabel({ state: "idle" }).text).toBe("未开始");
-    expect(pairingStateLabel({ state: "creating_session" }).text).toBe("正在创建会话");
-    expect(pairingStateLabel({ state: "waiting_for_peer" }).text).toBe("等待对端");
-    expect(pairingStateLabel({ state: "key_exchange" }).text).toBe("密钥协商中");
+    expect(pairingStateLabel({ state: "creating_session" }).text).toBe("正在准备配对");
+    expect(pairingStateLabel({ state: "waiting_for_peer" }).text).toBe("等待对方设备");
+    expect(pairingStateLabel({ state: "key_exchange" }).text).toBe("正在建立加密连接");
     expect(pairingStateLabel({ state: "awaiting_verification" }).text).toBe("请核对安全码");
     expect(pairingStateLabel({ state: "trusted" }).tone).toBe("ok");
     expect(pairingStateLabel({ state: "expired" }).text).toBe("已过期");
@@ -108,8 +139,8 @@ describe("labels", () => {
       "失败 · 超时",
     );
     expect(failureLabel({ kind: "relay", code: "invalid_code" })).toBe("验证码不正确");
-    expect(failureLabel({ kind: "relay", code: "weird" })).toBe("中继拒绝 · weird");
-    expect(failureLabel({ kind: "identity_changed" })).toBe("对端身份已变化");
+    expect(failureLabel({ kind: "relay", code: "weird" })).toBe("中继拒绝连接 · weird");
+    expect(failureLabel({ kind: "identity_changed" })).toBe("对方设备的身份已变化");
   });
 
   it("formats time, codes, fingerprints and counts", () => {
@@ -151,20 +182,20 @@ describe("labels", () => {
 
   it("labels dictation phases with elapsed time, insertion route and failure text", () => {
     const now = 1_000_000;
-    expect(dictationPhaseLabel({ phase: "idle" }, now)).toEqual({ text: "待命", tone: "idle" });
+    expect(dictationPhaseLabel({ phase: "idle" }, now)).toEqual({ text: "就绪", tone: "idle" });
     expect(
       dictationPhaseLabel(
         { phase: "listening", started_at: now - 3200, ready: true, locked: false },
         now,
       ),
     ).toEqual({
-      text: "正在听… 00:03",
+      text: "正在录音… 00:03",
       tone: "accent",
     });
     expect(
       dictationPhaseLabel({ phase: "processing", stage: "transcribing", started_at: now }, now)
         .text,
-    ).toBe("转写中…");
+    ).toBe("识别中…");
     expect(
       dictationPhaseLabel({ phase: "processing", stage: "refining", started_at: now }, now).text,
     ).toBe("润色中…");
@@ -211,10 +242,17 @@ describe("labels", () => {
       text: "已插入 · 粘贴",
       tone: "ok",
     });
+    // The reason is explained under the history entry, never in the label (docs/dictation.md §4.2).
     expect(outcomeLabel({ kind: "clipboard", reason: "目标窗口没有焦点" })).toEqual({
-      text: "仅剪贴板 · 目标窗口没有焦点",
+      text: "已复制到剪贴板",
       tone: "warn",
     });
+    expect(
+      outcomeLabel(
+        { kind: "clipboard", reason: "enigo: no permission", code: "no_permission" },
+        "en",
+      ),
+    ).toEqual({ text: "Copied to clipboard", tone: "warn" });
     expect(outcomeLabel({ kind: "failed", reason: "ASR 401" })).toEqual({
       text: "失败 · ASR 401",
       tone: "danger",
@@ -384,12 +422,12 @@ describe("local model names (docs/dictation.md §10)", () => {
 describe("output modes and activation labels (docs/dictation.md §12–§13)", () => {
   it("regression: the three output modes and three activation modes have Chinese names, one-line descriptions, a chip, a footer caption and a hotkey hint; English under en; nothing ASCII-shouty under zh-CN", () => {
     expect(outputModeLabel("whole_take")).toBe("整段输出");
-    expect(outputModeLabel("streaming_final")).toBe("流式定稿");
-    expect(outputModeLabel("live_inject")).toBe("实时注入");
-    expect(outputModeDescription("whole_take")).toBe("松开后一次性识别、润色、注入。");
-    expect(outputModeDescription("live_inject")).toMatch(/润色不可用/);
+    expect(outputModeLabel("streaming_final")).toBe("边说边识别");
+    expect(outputModeLabel("live_inject")).toBe("边说边输入");
+    expect(outputModeDescription("whole_take")).toBe("松开快捷键后一次性完成识别、润色和插入。");
+    expect(outputModeDescription("live_inject")).toMatch(/不进行润色/);
     expect(outputModeDescription("streaming_final")).toMatch(/只补最后一句/);
-    expect(outputModeLabel("live_inject", "en")).toBe("Live inject");
+    expect(outputModeLabel("live_inject", "en")).toBe("Type as you speak");
     expect(outputModeDescription("streaming_final", "en")).toMatch(/^Sentences settle/);
     expect(activationLabel("hold")).toBe("按住说话");
     expect(activationLabel("toggle")).toBe("按一下开始，再按一下结束");
@@ -412,7 +450,7 @@ describe("output modes and activation labels (docs/dictation.md §12–§13)", (
     expect(activationHint("hold", "Ctrl+Alt+Space", "en")).toBe(
       "Hold Ctrl Alt Space, say a sentence, release to insert",
     );
-    expect(activationLabel("toggle", "en")).toBe("Press to start, press again to stop");
+    expect(activationLabel("toggle", "en")).toBe("Press to start, again to stop");
     expect(activationShortcut("hold_or_toggle", "en")).toBe("Hold or press to dictate");
     expect(processingStageLabel("finalizing")).toBe("补齐最后一句…");
     expect(processingStageLabel("finalizing", "en")).toBe("Finishing the last sentence…");
@@ -451,7 +489,7 @@ describe("voice edit labels (section 19)", () => {
     expect(
       takePhaseLabel(edit({ phase: "processing", stage: "transcribing", started_at: now }), now)
         .text,
-    ).toBe("转写中…");
+    ).toBe("识别中…");
     const done: DictationPhase = {
       phase: "done",
       text: "各位同事：会议改至周四上午十点。",

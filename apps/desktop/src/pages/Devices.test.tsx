@@ -58,6 +58,23 @@ describe("Devices page", () => {
     expect(fixedSizeOffenders(page)).toEqual([]);
   });
 
+  it("regression: last seen and state are as wide as their text, and a cut device name reads whole on hover", async () => {
+    // The 1440 px English check (plan 1.2): 「14 minutes ago」 and 「Online · direct」 were cut in
+    // 76 and 92 px columns; 「在线 · 经中继」 did not fit either.
+    mount();
+    const table = await screen.findByRole("table", { name: "已配对设备" });
+    const header = (name: string) =>
+      within(table)
+        .getAllByRole("columnheader")
+        .find((h) => h.textContent === name);
+    expect(header("最近在线")).toHaveAttribute("style", "width: 1%;");
+    expect(header("状态")).toHaveAttribute("style", "width: 1%;");
+    expect(await within(table).findByText("Pixel 8 · Android")).toHaveAttribute(
+      "title",
+      "Pixel 8 · Android",
+    );
+  });
+
   it("renders the device table with the design's columns and readouts", async () => {
     mount();
     const table = await screen.findByRole("table", { name: "已配对设备" });
@@ -72,8 +89,8 @@ describe("Devices page", () => {
     expect(within(table).getByText("3 分钟前")).toBeInTheDocument();
     expect(screen.getByText("2 台已配对 · 1 在线")).toBeInTheDocument();
     expect(screen.getByText("Pixel 8 在线 · 在手机上按住「按住说话」")).toBeInTheDocument();
-    expect(screen.getByText("经这条通道传输")).toBeInTheDocument();
-    expect(screen.getByText(/局限 · 不是什么/)).toBeInTheDocument();
+    expect(screen.getByText("手机与电脑之间传输的内容")).toBeInTheDocument();
+    expect(screen.getByText("限制")).toBeInTheDocument();
   });
 
   it("regression: the phone microphone panel follows a phone's take — its name, the timer, the meter, the result — and nothing on the page is marked not wired", async () => {
@@ -88,7 +105,7 @@ describe("Devices page", () => {
       backend.simulatePhoneTake("Pixel 8");
     });
     expect(panel).toHaveAttribute("data-remote", "Pixel 8");
-    expect(await within(panel).findByText(/^Pixel 8 · 正在收音 00:0\d$/)).toBeInTheDocument();
+    expect(await within(panel).findByText(/^Pixel 8 · 正在录音 00:0\d$/)).toBeInTheDocument();
     // The meter shows the phone's audio while it records (the shell feeds its levels).
     await waitFor(() => {
       expect(
@@ -119,7 +136,7 @@ describe("Devices page", () => {
     mount();
     const footer = await screen.findByTestId("pairing-connect");
     expect(footer).toHaveTextContent(
-      "配对用二维码或 6 位码；之后同一局域网内直连，跨网络经中继，中继只转发密文。",
+      "使用二维码或 6 位验证码配对；之后在同一局域网内直接连接，跨网络时经中继连接，中继只转发加密数据。",
     );
     expect(within(footer).getByText(/^中继 · /)).toBeInTheDocument();
     expect(screen.queryByTestId("self-check")).toBeNull();
@@ -137,9 +154,9 @@ describe("Devices page", () => {
       await vi.advanceTimersByTimeAsync(MOCK_CONNECTIVITY_MS);
     });
     expect(within(check).getByTestId("connectivity-lan")).toHaveTextContent(
-      "本机局域网监听 · 192.168.1.30:47831",
+      "本机局域网服务 · 192.168.1.30:47831",
     );
-    expect(within(check).getByTestId("connectivity-relay")).toHaveTextContent("没有配置中继");
+    expect(within(check).getByTestId("connectivity-relay")).toHaveTextContent("未配置中继");
     const peers = within(check).getAllByTestId("connectivity-peer");
     expect(peers).toHaveLength(2);
     expect(peers[0]).toHaveTextContent("Pixel 8 · 直连 · 加密往返 6 ms");
@@ -153,7 +170,7 @@ describe("Devices page", () => {
   it("walks the full pairing flow: start → code + QR + countdown → verification → confirm → trusted → device online", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     const { backend } = mount({ devices: [] });
-    expect(await screen.findByText("还没有配对的手机")).toBeInTheDocument();
+    expect(await screen.findByText("尚未配对手机")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "开始配对" }));
     expect(screen.getByTestId("pairing-panel")).toHaveAttribute("data-phase", "creating_session");
     await act(async () => {
@@ -172,7 +189,7 @@ describe("Devices page", () => {
     act(() => {
       backend.simulatePeerJoined();
     });
-    expect(screen.getByText(/正在协商密钥/)).toBeInTheDocument();
+    expect(screen.getByText(/已加入，正在建立加密连接/)).toBeInTheDocument();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(400);
     });
@@ -222,7 +239,7 @@ describe("Devices page", () => {
   it("regression: Ctrl R starts a code when idle, regenerates a shown one and never interrupts a handshake", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     const { backend } = mount({ devices: [] });
-    await screen.findByText("还没有配对的手机");
+    await screen.findByText("尚未配对手机");
     const panel = () => screen.getByTestId("pairing-panel");
     await user.keyboard("{Control>}r{/Control}");
     expect(panel()).toHaveAttribute("data-phase", "creating_session");
@@ -266,7 +283,7 @@ describe("Devices page", () => {
       await vi.advanceTimersByTimeAsync(400);
     });
     await user.click(screen.getByRole("button", { name: "拒绝" }));
-    expect(screen.getByText("配对已被拒绝，会话已销毁。")).toBeInTheDocument();
+    expect(screen.getByText("配对已被拒绝，本次配对已取消。")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "重新开始" }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
@@ -280,7 +297,7 @@ describe("Devices page", () => {
     act(() => {
       backend.simulatePeerLeft();
     });
-    expect(screen.getAllByText(/对端已离开/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/对方设备已离开/).length).toBeGreaterThan(0);
   });
 
   it("copies the link and fingerprint while waiting", async () => {
@@ -314,7 +331,7 @@ describe("Devices page", () => {
     });
     const banner = await screen.findByText("「Pixel 8」出示了不同的身份密钥");
     expect(banner).toBeInTheDocument();
-    expect(screen.getByText(/本次出示 FF:00:11:22 · 33:44:55:66/)).toBeInTheDocument();
+    expect(screen.getByText(/本次出示的是 FF:00:11:22 · 33:44:55:66/)).toBeInTheDocument();
     expect(
       within(screen.getByRole("table", { name: "已配对设备" })).getByText("身份已变化"),
     ).toBeInTheDocument();
@@ -370,7 +387,9 @@ describe("Devices page", () => {
       "aria-checked",
       "true",
     );
-    expect(screen.getByText(/局域网发现在同一局域网里公布这台电脑的名称/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/开启局域网发现后，这台电脑会在同一局域网内公布自己的名称/),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "开始配对" }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);

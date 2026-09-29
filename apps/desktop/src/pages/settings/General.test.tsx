@@ -131,7 +131,7 @@ describe("Settings · 通用", () => {
       backend: new MockBackend({ update: { state: "disabled" } }),
     });
     await screen.findByRole("dialog", { name: "设置" });
-    expect(screen.getByTestId("update-status")).toHaveTextContent("此构建未配置更新源");
+    expect(screen.getByTestId("update-status")).toHaveTextContent("此版本未配置更新源");
     expect(screen.getByRole("button", { name: "检查更新" })).toBeDisabled();
     act(() => {
       backend.simulateUpdate({ state: "failed", message: "offline" });

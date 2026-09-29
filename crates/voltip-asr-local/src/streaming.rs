@@ -112,10 +112,10 @@ impl LocalStreamingTranscriber {
         }
         let dir = self.root.join(self.entry.id);
         if !store::is_installed(&dir, self.entry) {
-            return Err(DictationError::Asr(format!("流式模型未下载：{}", self.entry.name)));
+            return Err(DictationError::Asr(format!("实时识别模型未下载：{}", self.entry.name)));
         }
         let started = Instant::now();
-        let loaded = self.loader.load(self.entry, &dir, self.threads).map_err(|e| DictationError::Asr(format!("流式模型加载失败：{e}")))?;
+        let loaded = self.loader.load(self.entry, &dir, self.threads).map_err(|e| DictationError::Asr(format!("实时识别模型加载失败：{e}")))?;
         tracing::info!(model = self.entry.id, threads = self.threads, load_ms = started.elapsed().as_millis() as u64, "streaming model loaded");
         let mut slot = self.cache.lock();
         // Another thread may have loaded meanwhile (`warm` racing `open`): keep the first.
@@ -235,7 +235,7 @@ mod tests {
         assert_eq!(t.root(), dir.path());
         assert!(!t.is_installed() && !t.is_loaded());
         // Not installed: `open` refuses with the documented text, `warm` does nothing.
-        assert_eq!(t.open(None).err(), Some(DictationError::Asr("流式模型未下载：实时预览".into())));
+        assert_eq!(t.open(None).err(), Some(DictationError::Asr("实时识别模型未下载：实时预览".into())));
         t.warm();
         assert_eq!(loader.loads.load(Ordering::SeqCst), 0);
         install(dir.path(), entry);
@@ -263,7 +263,7 @@ mod tests {
         assert!(format!("{t:?}").contains("zipformer-stream-zh-en"));
         // A loader failure maps to `Asr`, nothing is cached, and `warm` only logs.
         let failing = LocalStreamingTranscriber::with_loader(dir.path(), entry, Arc::new(FakeLoader { loads: AtomicUsize::new(0), fail: true }));
-        assert_eq!(failing.open(None).err(), Some(DictationError::Asr("流式模型加载失败：onnxruntime: bad model".into())));
+        assert_eq!(failing.open(None).err(), Some(DictationError::Asr("实时识别模型加载失败：onnxruntime: bad model".into())));
         assert!(!failing.is_loaded());
         failing.warm();
         wait_until(|| !failing.warming.load(Ordering::SeqCst));

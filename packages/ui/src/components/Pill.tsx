@@ -3,7 +3,7 @@ import { cx } from "../cx";
 import { useT } from "../i18n/I18nProvider";
 import { Button } from "./Button";
 import { Icon } from "./Icon";
-import { Keycaps } from "./Keycap";
+import { Keycap, Keycaps } from "./Keycap";
 import { Lamp } from "./Lamp";
 import { Progress } from "./Progress";
 import { Waveform } from "./Waveform";
@@ -101,7 +101,8 @@ export interface PillProps {
   /** What the take does when it is not a plain dictation — `编辑` for a voice edit
    *  (docs/dictation.md §19): a leading tag in every state of a running or finished take. */
   tag?: string;
-  /** Keycap hint (`Ctrl Alt Space`, `Esc`). */
+  /** The hotkey shown by the resting and blocked pills (`Ctrl Alt Space`); a running take always
+   *  shows the Esc cancel hint instead. */
   keys?: string;
   /** Target app shown after `→` in the inserted state. */
   via?: string;
@@ -156,6 +157,23 @@ function SceneTag({ name }: { name: string | undefined }) {
   );
 }
 
+/** The cancel hint of a running take: Esc outlined in the danger colour and the word for what it
+ *  does (user feedback 2026-09-29: the bare Esc keycap did not say it cancels). */
+function EscCancel() {
+  const t = useT();
+  return (
+    <span
+      role="img"
+      aria-label={t("ui.pill.escCancelLabel")}
+      title={t("ui.pill.escCancelLabel")}
+      className="inline-flex shrink-0 items-center gap-1 text-[11px] text-danger"
+      data-testid="pill-esc-cancel">
+      <Keycap tone="danger">Esc</Keycap>
+      <span aria-hidden>{t("ui.pill.escCancel")}</span>
+    </span>
+  );
+}
+
 /** The states a take's kind tag shows in (not the resting, blocked or bridge capsules). */
 const TAGGED_STATES: ReadonlySet<PillState> = new Set<PillState>([
   "listening",
@@ -176,6 +194,11 @@ function KindTag({ label }: { label: string }) {
     </span>
   );
 }
+
+/** The pill never grows past the overlay window (480 px, `overlay.rs` `OVERLAY_WIDTH`) less its
+ *  margins; when a scene tag, the waiting hint and the Esc hint all show, the waveform gives way
+ *  and loses its oldest bars (the newest stay, at the right end). */
+const YIELDING_WAVE = "min-w-0 shrink justify-end overflow-hidden";
 
 /** The overlay capsule (height 40, radius 999). Never focusable: it must not steal the target window. */
 export function Pill({
@@ -218,7 +241,7 @@ export function Pill({
       ) : (
         <Lamp tone="accent" />
       )}
-      <Waveform levels={levels} height={16} bars={36} />
+      <Waveform levels={levels} height={16} bars={36} className={YIELDING_WAVE} />
       <span className="mono text-[11px] text-pill-muted">
         {waiting ? "00:00" : (readout ?? "00:00")}
       </span>
@@ -229,7 +252,7 @@ export function Pill({
       )}
       <ModeTag>{local}</ModeTag>
       <SceneTag name={scene} />
-      <Keycaps keys={keys ?? "Esc"} />
+      <EscCancel />
     </>
   );
   return (
@@ -239,7 +262,7 @@ export function Pill({
       data-state={state}
       tabIndex={-1}
       className={cx(
-        "inline-flex min-w-[52px] items-center gap-2.5 rounded-pill border bg-pill-bg pr-3.5 pl-3.5 text-[13px] font-medium whitespace-nowrap text-pill-fg shadow-pill select-none",
+        "inline-flex min-w-[52px] max-w-[464px] items-center gap-2.5 rounded-pill border bg-pill-bg pr-3.5 pl-3.5 text-[13px] font-medium whitespace-nowrap text-pill-fg shadow-pill select-none",
         caption ? "h-14" : "h-10",
         danger ? "border-danger" : accentRing ? "border-accent" : "border-pill-border",
         className,
@@ -305,10 +328,11 @@ export function Pill({
       {state === "locked" && (
         <>
           <Icon name="lock" size={13} className="text-pill-muted" />
-          <Waveform levels={levels} height={16} bars={36} />
+          <Waveform levels={levels} height={16} bars={36} className={YIELDING_WAVE} />
           <span className="mono text-[11px] text-pill-muted">{readout ?? "00:00"}</span>
           <ModeTag>{local}</ModeTag>
           <SceneTag name={scene} />
+          <EscCancel />
           <button
             type="button"
             aria-label={t("ui.pill.stop")}
@@ -321,7 +345,13 @@ export function Pill({
       {state === "processing" && (
         <>
           <Lamp tone="accent" pulse />
-          <Waveform levels={levels} state="frozen" height={14} bars={20} />
+          <Waveform
+            levels={levels}
+            state="frozen"
+            height={14}
+            bars={20}
+            className={YIELDING_WAVE}
+          />
           <span className="flex min-w-0 flex-col gap-1">
             {preview !== undefined && preview.length > 0 ? (
               <span className="max-w-[300px] truncate text-pill-muted" data-testid="pill-preview">
@@ -334,7 +364,13 @@ export function Pill({
           </span>
           <ModeTag>{local}</ModeTag>
           <SceneTag name={scene} />
-          <span className="mono text-[11px] text-pill-muted">{readout ?? "0.0 s"}</span>
+          {/* The current step's time; nothing when the caller has none to give (no fixed 0.0 s). */}
+          {readout !== undefined && (
+            <span className="mono text-[11px] text-pill-muted" data-testid="pill-stage-time">
+              {readout}
+            </span>
+          )}
+          <EscCancel />
         </>
       )}
       {state === "inserted" && (

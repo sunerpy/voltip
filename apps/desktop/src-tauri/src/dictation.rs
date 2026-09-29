@@ -23,11 +23,11 @@ use voltip_asr::{AsrClient, AsrConfig};
 use voltip_asr_local::{LocalStreamingTranscriber, LocalTranscriber, ModelStore};
 use voltip_audio::{Backend, CpalBackend, LiveConsumer, LiveTapConfig, Recorder, RecorderConfig};
 use voltip_core::dictation::{
-    AudioSource, Capture, CaptureOptions, DictationError, DictationPorts, EngineFactory, Injection, Injector, LevelFrame, LivePcm, Recording, RefineHints,
-    Refined, Refiner, SelectionTiming, ServiceProbe, Transcriber, Transcript, Via,
+    AudioSource, Capture, CaptureOptions, ClipboardCode, DictationError, DictationPorts, EngineFactory, InjectNote, Injection, Injector, LevelFrame, LivePcm,
+    Recording, RefineHints, Refined, Refiner, SelectionTiming, ServiceProbe, Transcriber, Transcript, Via,
 };
 use voltip_core::{InjectMode, Modifier, ProbeError, ProbeFailure, RefineStyle, ResolvedEngines, ServiceKind};
-use voltip_inject::{ClipboardOnlyInjector, CopyOptions, PasteOptions, SelectionSource};
+use voltip_inject::{ClipboardOnlyInjector, CopyOptions, FallbackCode, PasteOptions, SelectionSource};
 use voltip_platform::{HostOs, InjectDecision, InjectPreflight};
 use voltip_refine::{PromptContext, PromptHints, RefineClient, RefineConfig};
 
@@ -264,10 +264,10 @@ impl Refiner for Unconfigured {
 pub enum InjectRoute {
     /// Clipboard + paste chord.
     Paste,
-    /// Clipboard only; `reason` is why a requested paste was not attempted.
+    /// Clipboard only; `note` is why a requested paste was not attempted.
     Clipboard {
-        /// For the pill and the history (`Outcome::Clipboard { reason }`).
-        reason: Option<String>,
+        /// For the history (`Outcome::Clipboard { reason, code }`).
+        note: Option<voltip_inject::InjectNote>,
     },
 }
 
@@ -278,13 +278,16 @@ pub enum InjectRoute {
 pub fn inject_route(mode: InjectMode, preflight: &InjectPreflight) -> InjectRoute {
     let target = preflight.target_process.as_deref().map(|p| format!("（{p}）")).unwrap_or_default();
     match (mode, preflight.decision) {
-        (InjectMode::ClipboardOnly, _) => InjectRoute::Clipboard { reason: None },
+        (InjectMode::ClipboardOnly, _) => InjectRoute::Clipboard { note: None },
         (InjectMode::Paste, InjectDecision::ElevatedTarget) => InjectRoute::Clipboard {
-            reason: Some(format!("前台窗口{target}以更高权限运行，Windows 不允许向它粘贴；文本已留在剪贴板，请手动粘贴")),
+            note: Some(voltip_inject::InjectNote::new(
+                FallbackCode::ElevatedTarget,
+                format!("前台窗口{target}以更高权限运行，Windows 不允许向它粘贴；文本已留在剪贴板，请手动粘贴"),
+            )),
         },
-        (InjectMode::Paste, InjectDecision::SecureDesktop) => {
-            InjectRoute::Clipboard { reason: Some("安全桌面（UAC 提示或锁屏）正在前台，无法粘贴；文本已留在剪贴板".to_string()) }
-        }
+        (InjectMode::Paste, InjectDecision::SecureDesktop) => InjectRoute::Clipboard {
+            note: Some(voltip_inject::InjectNote::new(FallbackCode::SecureInput, "安全桌面（UAC 提示或锁屏）正在前台，无法粘贴；文本已留在剪贴板")),
+        },
         (InjectMode::Paste, InjectDecision::Proceed | InjectDecision::Unknown) => InjectRoute::Paste,
     }
 }
@@ -340,6 +343,19 @@ impl NativeInjector {
     }
 }
 
+/// A clipboard fallback of the inject crate as the core records it (docs/dictation.md §4.2).
+pub fn core_note(note: voltip_inject::InjectNote) -> InjectNote {
+    let code = match note.code {
+        FallbackCode::NoPermission => ClipboardCode::NoPermission,
+        FallbackCode::NoTool => ClipboardCode::NoTool,
+        FallbackCode::NoDisplay => ClipboardCode::NoDisplay,
+        FallbackCode::SecureInput => ClipboardCode::SecureInput,
+        FallbackCode::ElevatedTarget => ClipboardCode::ElevatedTarget,
+        FallbackCode::Other => ClipboardCode::Other,
+    };
+    InjectNote::new(code, note.detail)
+}
+
 /// The core's hotkey modifier as the inject crate names it (`Ctrl` presses `Control`).
 pub fn inject_modifier(modifier: Modifier) -> voltip_inject::Modifier {
     match modifier {
@@ -356,23 +372,31 @@ impl Injector for NativeInjector {
         // The preflight only runs when a paste is wanted (on Windows it opens the foreground token).
         let route = match mode {
             InjectMode::Paste => inject_route(mode, &(self.preflight)()),
-            InjectMode::ClipboardOnly => InjectRoute::Clipboard { reason: None },
+            InjectMode::ClipboardOnly => InjectRoute::Clipboard { note: None },
         };
         let (backend, blocked) = match route {
             InjectRoute::Paste => (&self.paste, None),
-            InjectRoute::Clipboard { reason } => (&self.clipboard, reason),
+            InjectRoute::Clipboard { note } => (&self.clipboard, note),
         };
-        if let Some(reason) = &blocked {
-            tracing::warn!(%reason, "paste not attempted; the text goes to the clipboard");
+        if let Some(note) = &blocked {
+            tracing::warn!(reason = %note.detail, code = ?note.code, "paste not attempted; the text goes to the clipboard");
         }
         let out = backend.inject(text).map_err(|e| DictationError::Inject(e.to_string()))?;
-        let note = out.note.or(blocked);
+        let note = out.note.or(blocked).map(core_note);
         tracing::info!(via = %out.via, chars = out.chars, note = ?note, injector = backend.describe(), "text delivered");
         let via = match out.via {
             voltip_inject::Via::Paste => Via::Paste,
             voltip_inject::Via::Clipboard => Via::Clipboard,
         };
         Ok(Injection { via, note })
+    }
+
+    /// The history paste's copy (`voltip_core::paste`): the clipboard backend, whatever the mode;
+    /// never the paste chord.
+    fn copy(&self, text: &str) -> Result<(), DictationError> {
+        let out = self.clipboard.inject(text).map_err(|e| DictationError::Inject(e.to_string()))?;
+        tracing::info!(chars = out.chars, injector = self.clipboard.describe(), "text copied for a paste from the history");
+        Ok(())
     }
 
     /// docs/dictation.md §19: the copy chord after releasing the edit hotkey's modifiers. Sent even
@@ -575,18 +599,37 @@ mod tests {
         assert_eq!(inject_route(InjectMode::Paste, &preflight(Proceed, None)), InjectRoute::Paste);
         assert_eq!(inject_route(InjectMode::Paste, &preflight(Unknown, None)), InjectRoute::Paste, "unknown proceeds and reports honestly");
         assert_eq!(inject_route(InjectMode::Paste, &InjectPreflight::not_applicable(HostOs::Linux)), InjectRoute::Paste, "Linux / macOS: unchanged");
-        let InjectRoute::Clipboard { reason: Some(elevated) } = inject_route(InjectMode::Paste, &preflight(ElevatedTarget, Some("regedit.exe"))) else {
+        let InjectRoute::Clipboard { note: Some(elevated) } = inject_route(InjectMode::Paste, &preflight(ElevatedTarget, Some("regedit.exe"))) else {
             panic!("elevated target must not paste")
         };
-        assert!(elevated.contains("（regedit.exe）") && elevated.contains("更高权限") && elevated.contains("剪贴板"), "{elevated}");
-        let InjectRoute::Clipboard { reason: Some(unnamed) } = inject_route(InjectMode::Paste, &preflight(ElevatedTarget, None)) else { panic!() };
-        assert!(unnamed.starts_with("前台窗口以更高权限运行"), "{unnamed}");
-        let InjectRoute::Clipboard { reason: Some(secure) } = inject_route(InjectMode::Paste, &preflight(SecureDesktop, None)) else {
+        assert_eq!(elevated.code, FallbackCode::ElevatedTarget);
+        assert!(elevated.detail.contains("（regedit.exe）") && elevated.detail.contains("更高权限") && elevated.detail.contains("剪贴板"), "{elevated}");
+        let InjectRoute::Clipboard { note: Some(unnamed) } = inject_route(InjectMode::Paste, &preflight(ElevatedTarget, None)) else { panic!() };
+        assert!(unnamed.detail.starts_with("前台窗口以更高权限运行"), "{unnamed}");
+        let InjectRoute::Clipboard { note: Some(secure) } = inject_route(InjectMode::Paste, &preflight(SecureDesktop, None)) else {
             panic!("secure desktop must not paste")
         };
-        assert!(secure.contains("安全桌面") && secure.contains("剪贴板"), "{secure}");
+        assert_eq!(secure.code, FallbackCode::SecureInput);
+        assert!(secure.detail.contains("安全桌面") && secure.detail.contains("剪贴板"), "{secure}");
         for decision in [Proceed, Unknown, ElevatedTarget, SecureDesktop] {
-            assert_eq!(inject_route(InjectMode::ClipboardOnly, &preflight(decision, None)), InjectRoute::Clipboard { reason: None }, "{decision:?}");
+            assert_eq!(inject_route(InjectMode::ClipboardOnly, &preflight(decision, None)), InjectRoute::Clipboard { note: None }, "{decision:?}");
+        }
+    }
+
+    /// docs/dictation.md §4.2: every fallback kind of the inject crate reaches the core as the same
+    /// kind, with its message.
+    #[test]
+    fn every_fallback_code_reaches_the_core() {
+        let codes = [
+            (FallbackCode::NoPermission, ClipboardCode::NoPermission),
+            (FallbackCode::NoTool, ClipboardCode::NoTool),
+            (FallbackCode::NoDisplay, ClipboardCode::NoDisplay),
+            (FallbackCode::SecureInput, ClipboardCode::SecureInput),
+            (FallbackCode::ElevatedTarget, ClipboardCode::ElevatedTarget),
+            (FallbackCode::Other, ClipboardCode::Other),
+        ];
+        for (from, to) in codes {
+            assert_eq!(core_note(voltip_inject::InjectNote::new(from, "detail")), InjectNote::new(to, "detail"));
         }
     }
 
@@ -660,6 +703,23 @@ mod tests {
         assert!(!broken.is_terminal_app("code"));
     }
 
+    /// Regression (history paste, 2026-09-29): the paste button's copy-only answers (no window came
+    /// up, the window changed, pure Wayland) go through `Injector::copy`; the native injector had no
+    /// copy of its own, so every one of them failed instead of leaving the text on the clipboard.
+    /// The copy uses the clipboard backend whatever the mode, and never the paste chord.
+    #[test]
+    fn regression_the_native_injector_copies_for_the_history_paste() {
+        let mode = Arc::new(Mutex::new(InjectMode::Paste));
+        let (paste, pasted) = Recording::boxed(voltip_inject::Via::Paste);
+        let (clipboard, copied) = Recording::boxed(voltip_inject::Via::Clipboard);
+        let injector = NativeInjector::with(mode.clone(), paste, clipboard);
+        assert_eq!(injector.copy("只复制"), Ok(()));
+        *mode.lock() = InjectMode::ClipboardOnly;
+        assert_eq!(injector.copy("仍然只复制"), Ok(()));
+        assert!(pasted.lock().is_empty(), "a copy never presses the paste chord");
+        assert_eq!(*copied.lock(), vec!["只复制".to_string(), "仍然只复制".to_string()]);
+    }
+
     #[test]
     fn blocked_preflight_uses_the_clipboard_backend_with_the_reason() {
         let mode = Arc::new(Mutex::new(InjectMode::Paste));
@@ -671,12 +731,16 @@ mod tests {
 
         let out = injector.inject("管理员窗口").unwrap();
         assert_eq!(out.via, Via::Clipboard);
-        assert!(out.note.as_deref().unwrap().contains("（taskmgr.exe）以更高权限运行"), "{:?}", out.note);
+        let note = out.note.clone().unwrap();
+        assert_eq!(note.code, ClipboardCode::ElevatedTarget, "the code reaches the core");
+        assert!(note.detail.contains("（taskmgr.exe）以更高权限运行"), "{note:?}");
         assert!(pasted.lock().is_empty(), "no paste attempted into an elevated window");
         assert_eq!(*copied.lock(), vec!["管理员窗口".to_string()]);
 
         *decision.lock() = InjectDecision::SecureDesktop;
-        assert!(injector.inject("锁屏").unwrap().note.unwrap().contains("安全桌面"));
+        let note = injector.inject("锁屏").unwrap().note.unwrap();
+        assert_eq!(note.code, ClipboardCode::SecureInput);
+        assert!(note.detail.contains("安全桌面"));
         assert!(pasted.lock().is_empty());
 
         *decision.lock() = InjectDecision::Proceed;

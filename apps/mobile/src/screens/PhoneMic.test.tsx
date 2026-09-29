@@ -70,7 +70,7 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
     await advance(0);
     expect(within(card).getByTestId("phone-mic-state")).toHaveAttribute("data-state", "starting");
     await advance(MOCK_MIC_READY_MS);
-    expect(within(card).getByTestId("phone-mic-state")).toHaveTextContent(/正在收音 · 00:0\d/);
+    expect(within(card).getByTestId("phone-mic-state")).toHaveTextContent(/正在录音 · 00:0\d/);
     // docs/dictation.md §20.1: the computer decodes Opus, so the rest of the take is compressed.
     expect(within(card).getByTestId("phone-mic-codec")).toHaveTextContent("Opus 压缩传输");
     fireEvent.pointerUp(hold, { pointerId: 1, clientX: 10, clientY: 10 });
@@ -110,7 +110,7 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
     fireEvent.click(within(check).getByRole("button", { name: "开始自检" }));
     await advance(MOCK_CONNECTIVITY_MS);
     expect(within(check).getByTestId("connectivity-lan")).toHaveTextContent(
-      "本机局域网监听 · 192.168.1.52:47831",
+      "本机局域网服务 · 192.168.1.52:47831",
     );
     const peers = within(check).getAllByTestId("connectivity-peer");
     expect(peers).toHaveLength(1);
@@ -153,7 +153,7 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
     const hold = await screen.findByTestId("phone-mic-hold");
     fireEvent.pointerDown(hold, { pointerId: 1 });
     await advance(0);
-    expect(await screen.findByText("出错了 · microphone: 麦克风权限被拒绝")).toBeInTheDocument();
+    expect(await screen.findByText("出错了 · 麦克风权限被拒绝")).toBeInTheDocument();
     expect(hold).toHaveAttribute("aria-pressed", "false");
     fireEvent.pointerUp(hold, { pointerId: 1 });
     await advance(0);
@@ -206,6 +206,6 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
     expect(phoneTakeLine({ state: "failed", code: "busy", message: "" }, 0, t)).toBe(
       "电脑正在听写，稍后再试",
     );
-    expect(phoneTakeLine({ state: "listening" }, 65_000, t)).toBe("正在收音 · 01:05");
+    expect(phoneTakeLine({ state: "listening" }, 65_000, t)).toBe("正在录音 · 01:05");
   });
 });

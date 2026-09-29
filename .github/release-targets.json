@@ -1,6 +1,10 @@
 {
   "schema_version": 1,
   "profile": "tauri",
+  "macos_signing": {
+    "certificate_sha1": "3571B3B4C8596B9731392EEFC280664E66234288",
+    "designated_requirement": "identifier \"dev.voltip.desktop\" and certificate leaf = H\"3571B3B4C8596B9731392EEFC280664E66234288\""
+  },
   "targets": [
     {
       "bundles": ["deb", "appimage"],

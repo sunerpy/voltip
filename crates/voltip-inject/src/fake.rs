@@ -71,8 +71,9 @@ mod tests {
         assert_eq!(fake.describe(), "fake");
         assert_eq!(fake.last(), None);
         assert_eq!(fake.inject("hello").unwrap(), Injection { via: Via::Paste, chars: 5, note: None });
-        fake.set_outcome(Ok(Injection::clipboard(0, Some("wayland".into()))));
-        assert_eq!(fake.inject("你好").unwrap(), Injection { via: Via::Clipboard, chars: 2, note: Some("wayland".into()) });
+        let note = crate::InjectNote::new(crate::FallbackCode::NoTool, "wayland");
+        fake.set_outcome(Ok(Injection::clipboard(0, Some(note.clone()))));
+        assert_eq!(fake.inject("你好").unwrap(), Injection { via: Via::Clipboard, chars: 2, note: Some(note) });
         fake.set_outcome(Err(InjectError::Clipboard("busy".into())));
         assert_eq!(fake.inject("x").unwrap_err(), InjectError::Clipboard("busy".into()));
         assert_eq!(fake.calls(), vec!["hello".to_string(), "你好".to_string(), "x".to_string()]);

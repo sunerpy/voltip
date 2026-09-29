@@ -18,7 +18,13 @@ import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
 import { clipTail } from "@voltip/ui";
-import { isOverlayWindowState, isPillState, pillLiveCaption, pillStateFor } from "./Overlay";
+import {
+  isOverlayWindowState,
+  isPillState,
+  pillLiveCaption,
+  pillStateFor,
+  stageStart,
+} from "./Overlay";
 import { fakeLevels } from "./OverlaySheet";
 
 /** Fixed pixel panel sizes and two-fixed-column grids broke the 1440 / 1920 px windows (Windows
@@ -73,7 +79,7 @@ describe("Overlay page", () => {
   it("renders the spec sheet's eight pill states, the live caption, toasts, fallback card and causes", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     renderApp({ path: "/overlay" });
-    expect(await screen.findByRole("heading", { name: "悬浮胶囊", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "悬浮窗", level: 1 })).toBeInTheDocument();
     await screen.findByTestId("page-overlay");
     const pills = screen.getAllByRole("status").filter((el) => el.hasAttribute("data-state"));
     expect(pills.map((p) => p.getAttribute("data-state"))).toEqual([
@@ -98,12 +104,12 @@ describe("Overlay page", () => {
     vi.useRealTimers();
   });
 
-  it("regression: copy is real, the locked pill's 结束收音 is the real dictation_stop, demo undo does nothing and 打开历史 navigates", async () => {
+  it("regression: copy is real, the locked pill's 结束录音 is the real dictation_stop, demo undo does nothing and 打开历史 navigates", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn(() => Promise.resolve());
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const { backend } = renderApp({ path: "/overlay" });
-    await screen.findByRole("heading", { name: "悬浮胶囊", level: 1 });
+    await screen.findByRole("heading", { name: "悬浮窗", level: 1 });
     await screen.findByTestId("page-overlay");
     await user.click(screen.getAllByRole("button", { name: "复制文本" })[0] as HTMLElement);
     expect(writeText).toHaveBeenCalledWith("把 fetchUser 改成 async，然后加三次 retry。");
@@ -113,7 +119,7 @@ describe("Overlay page", () => {
     await act(async () => {
       await backend.invoke("dictation_start");
     });
-    await user.click(screen.getByRole("button", { name: "结束收音" }));
+    await user.click(screen.getByRole("button", { name: "结束录音" }));
     await waitFor(() => {
       expect(backend.peek().dictation.phase.phase).toBe("processing");
     });
@@ -132,7 +138,7 @@ describe("Overlay page", () => {
     expect(win.querySelector('[data-state="listening"]')).not.toBeNull();
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
     renderApp({ path: "/overlay?state=bogus" });
-    expect(await screen.findByRole("heading", { name: "悬浮胶囊", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "悬浮窗", level: 1 })).toBeInTheDocument();
     expect(isPillState("armed")).toBe(true);
     expect(isPillState("x")).toBe(false);
     expect(isOverlayWindowState("live")).toBe(true);
@@ -260,13 +266,13 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
         await backend.invoke("dictation_stop");
       });
       expect(screen.getByRole("status")).toHaveAttribute("data-state", "processing");
-      expect(screen.getByRole("status")).toHaveTextContent("转写中…");
+      expect(screen.getByRole("status")).toHaveTextContent("识别中…");
       expect(backend.activeMeters()).toBe(0);
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_ASR_MS);
       });
       expect(screen.getByRole("status")).toHaveTextContent("润色中…");
-      expect(screen.getByRole("status")).toHaveTextContent("LLM");
+      expect(screen.getByRole("status")).toHaveTextContent("AI 润色");
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_REFINE_MS);
       });
@@ -278,6 +284,52 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
         await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS);
       });
       expect(screen.getByTestId("overlay-window")).toHaveAttribute("data-state", "blank");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("counts the step from stage_started_at, or from the run's start when a core sent none", () => {
+    const processing = { phase: "processing", stage: "refining", started_at: 5 } as const;
+    expect(stageStart(processing)).toBe(5);
+    expect(stageStart({ ...processing, stage_started_at: 0 })).toBe(5);
+    expect(stageStart({ ...processing, stage_started_at: 9 })).toBe(9);
+  });
+
+  it("regression: the processing pill counts the stage time instead of a fixed 0.0 s", async () => {
+    // User feedback 2026-09-29: while transcribing and polishing the pill's timer stood at 0.0 s.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const backend = new MockBackend({ now: () => Date.now() });
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      await act(async () => {
+        await backend.invoke("dictation_start");
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_MIC_READY_MS + 1000);
+      });
+      await act(async () => {
+        await backend.invoke("dictation_stop");
+      });
+      const seconds = () => Number.parseFloat(screen.getByTestId("pill-stage-time").textContent);
+      expect(screen.getByRole("status")).toHaveTextContent("识别中…");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+      });
+      const transcribing = seconds();
+      expect(transcribing).toBeGreaterThanOrEqual(0.3);
+      // The next step starts its own clock.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_ASR_MS - 300);
+      });
+      expect(screen.getByRole("status")).toHaveTextContent("润色中…");
+      expect(seconds()).toBeLessThan(transcribing);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200);
+      });
+      expect(seconds()).toBeGreaterThanOrEqual(0.2);
+      expect(seconds()).toBeLessThan(MOCK_ASR_MS / 1000);
     } finally {
       vi.useRealTimers();
     }
@@ -296,7 +348,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
     });
     const pill = await screen.findByRole("status");
     expect(pill).toHaveAttribute("data-state", "error");
-    expect(pill).toHaveTextContent("未送出 · 粘贴超时");
+    expect(pill).toHaveTextContent("未插入 · 粘贴超时");
     // The pill window has no toast viewport (chrome-less); the clipboard write is the evidence.
     await user.click(screen.getByRole("button", { name: "复制文本" }));
     expect(writeText).toHaveBeenCalledWith("kept text");
@@ -304,7 +356,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
     act(() => {
       backend.simulateDictationFailed("没有听到声音");
     });
-    expect(screen.getByRole("status")).toHaveTextContent("未送出 · 没有听到声音");
+    expect(screen.getByRole("status")).toHaveTextContent("未插入 · 没有听到声音");
     expect(screen.queryByRole("button", { name: "复制文本" })).toBeNull();
     expect(writeText).toHaveBeenCalledTimes(1);
     await act(async () => {
@@ -378,12 +430,12 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       expect(screen.getByRole("status")).toHaveClass("h-10");
       expect(screen.getByTestId("pill-preview")).toHaveTextContent(clipTail(livePreviewText(last)));
       expect(screen.getByTestId("pill-preview")).toHaveClass("text-pill-muted");
-      expect(screen.queryByText("转写中…")).toBeNull();
+      expect(screen.queryByText("识别中…")).toBeNull();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_ASR_MS);
       });
       expect(screen.getByTestId("pill-preview")).toBeInTheDocument();
-      expect(screen.getByRole("status")).toHaveTextContent("LLM");
+      expect(screen.getByRole("status")).toHaveTextContent("AI 润色");
       expect(screen.queryByText("润色中…")).toBeNull();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_REFINE_MS);
@@ -458,7 +510,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       expect(screen.getByTestId("pill-live-injected")).toHaveTextContent(
         new RegExp(`^…${committed.slice(1)}$`),
       );
-      expect(screen.getByTestId("pill-live-injected")).toHaveAttribute("title", "已打进前台应用");
+      expect(screen.getByTestId("pill-live-injected")).toHaveAttribute("title", "已输入到当前窗口");
       expect(screen.getByTestId("pill-live-committed")).toBeEmptyDOMElement();
       expect(screen.getByTestId("pill-live-current")).toHaveTextContent(current);
       expect(screen.getByTestId("pill-lock")).toBeInTheDocument();
@@ -603,7 +655,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       });
       await editEdge(false);
       expect(screen.getByRole("status")).toHaveAttribute("data-state", "processing");
-      expect(screen.getByRole("status")).toHaveTextContent("转写中…");
+      expect(screen.getByRole("status")).toHaveTextContent("识别中…");
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_ASR_MS);
       });
@@ -627,7 +679,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
         await vi.advanceTimersByTimeAsync(MOCK_COPY_MS);
       });
       expect(screen.getByRole("status")).toHaveAttribute("data-state", "error");
-      expect(screen.getByRole("status")).toHaveTextContent("未送出 · 没有选中文本");
+      expect(screen.getByRole("status")).toHaveTextContent("未插入 · 没有选中文本");
       expect(screen.getByTestId("pill-tag")).toHaveTextContent("编辑");
       await editEdge(false);
       // A dictation afterwards carries no tag.

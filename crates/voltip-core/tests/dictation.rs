@@ -111,7 +111,7 @@ async fn pipeline_history_secrets_and_engines_through_the_core() {
     // Stop with nothing running is reported, not ignored.
     node.handle.send(CoreCommand::DictationStop).await.unwrap();
     let err = wait(&mut node, |e| if let CoreEvent::Error(m) = e { Some(m.clone()) } else { None }).await;
-    assert!(err.contains("no dictation"), "{err}");
+    assert!(err.contains("没有进行中的听写"), "{err}");
 
     // Start → Listening (levels flow), Stop → Processing → Done (raw text: no refine key yet).
     let mut levels = node.handle.levels();
@@ -255,7 +255,7 @@ async fn history_and_secret_survive_a_restart() {
     assert_eq!(custom_asr(&engines).key.source, SecretSource::User, "key reloaded from the store");
     let history = wait(&mut again, |e| if let CoreEvent::History(h) = e { Some(h.clone()) } else { None }).await;
     assert_eq!(history.len(), 1);
-    assert_eq!(history[0].outcome, Outcome::Clipboard { reason: "paste blocked".into() });
+    assert_eq!(history[0].outcome, Outcome::Clipboard { reason: "paste blocked".into(), code: Some(voltip_core::dictation::ClipboardCode::Other) });
     again.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 

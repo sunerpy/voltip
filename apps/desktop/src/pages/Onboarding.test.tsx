@@ -18,7 +18,7 @@ import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MACOS_BUNDLE_ID, MACOS_TCC_RESET } from "./Onboarding";
+import { MACOS_BUNDLE_ID, MACOS_TCC_RESET, MACOS_TCC_RESET_MICROPHONE } from "./Onboarding";
 import { engineSettingsFor, initialChoice, vendorsFor } from "./OnboardingEngine";
 
 const mac = () => ({ ...desktopIdentity(), platform: "macos" as const, name: "MacBook Pro" });
@@ -83,13 +83,19 @@ describe("Onboarding wizard", () => {
     expect(within(table).getAllByRole("button", { name: "请求授权" })).toHaveLength(2);
     expect(screen.getByRole("button", { name: /历史记录/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /首页/ })).toBeEnabled();
+    // Both grants the last ad-hoc → fixed-certificate update may lose (plan 1.7), each with its copy.
+    const commands = screen.getByTestId("tcc-reset-commands");
     expect(
-      screen.getByText(/tccutil reset Accessibility dev\.voltip\.desktop/),
+      within(commands).getByText("tccutil reset Accessibility dev.voltip.desktop"),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "复制命令" }));
+    expect(
+      within(commands).getByText("tccutil reset Microphone dev.voltip.desktop"),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "复制辅助功能的重置命令" }));
     expect(await screen.findByText("已复制修复命令")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "复制麦克风的重置命令" })).toBeInTheDocument();
     expect(screen.getByTestId("permission-hint")).toHaveTextContent(
-      "辅助功能未授予，投递会停在历史记录里。",
+      "未授予辅助功能权限，文本无法插入到光标处，只会保存在历史记录中。",
     );
     expect(screen.getByRole("button", { name: "继续" })).toBeDisabled();
   });
@@ -179,7 +185,7 @@ describe("Onboarding wizard", () => {
     await user.click(micRequest);
     await permissionCell("microphone", "granted");
     expect(screen.getByTestId("permission-hint")).toHaveTextContent(
-      "辅助功能未授予，投递会停在历史记录里。",
+      "未授予辅助功能权限，文本无法插入到光标处，只会保存在历史记录中。",
     );
     expect(screen.getByRole("button", { name: "继续" })).toBeDisabled();
     await user.click(within(table).getByRole("button", { name: "请求授权" }));
@@ -277,7 +283,7 @@ describe("Onboarding wizard", () => {
       window.dispatchEvent(new KeyboardEvent("keyup", { key: " ", code: "Space" }));
     });
     expect(monitor).toHaveAttribute("data-edges", "passed");
-    expect(screen.getByText("边沿 2/2")).toBeInTheDocument();
+    expect(screen.getByText("已检测 2/2")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "继续" }));
     expect(screen.getByRole("heading", { name: "选择语音模型", level: 2 })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /内置服务/ })).toHaveAttribute("aria-checked", "true");
@@ -294,7 +300,7 @@ describe("Onboarding wizard", () => {
     expect(screen.getByTestId("onboarding-hotkey-backend")).toHaveTextContent(MOCK_HOTKEY_BACKEND);
     expect(screen.queryByText(/carbon/)).toBeNull();
     expect(screen.queryByText(/macOS 15/)).toBeNull();
-    expect(screen.getByTestId("onboarding-hotkey-status")).toHaveTextContent("已向系统注册");
+    expect(screen.getByTestId("onboarding-hotkey-status")).toHaveTextContent("已在系统中生效");
     // A real registration failure replaces the reassurance.
     act(() => {
       backend.publish({
@@ -307,7 +313,8 @@ describe("Onboarding wizard", () => {
     expect(screen.getByTestId("onboarding-hotkey-status")).toHaveTextContent(
       "HotKey already registered",
     );
-    expect(screen.getByTestId("onboarding-hotkey-backend")).toHaveTextContent("RegisterHotKey");
+    // The system is named once, without the library or the system call behind it.
+    expect(screen.getByTestId("onboarding-hotkey-backend")).toHaveTextContent(/^Windows$/);
     // Press and release reported by the OS-level hotkey, not by this window.
     act(() => {
       backend.publish({
@@ -329,6 +336,29 @@ describe("Onboarding wizard", () => {
     expect(monitor).toHaveAttribute("data-edges", "passed");
   });
 
+  it("regression: step 1 keeps the recheck note on one line, sizes the status to its text and wraps a permission's purpose", async () => {
+    // The 1440 px English check (plan 1.2): the 560 px card broke 「Re-checked every second」 into
+    // four lines and cut 「Not applicable here」 and the Accessibility purpose.
+    renderApp({ path: "/onboarding?step=1" });
+    const table = await screen.findByRole("table", { name: "系统权限" });
+    expect(screen.getByTestId("permission-poll")).toHaveClass("whitespace-nowrap");
+    const status = within(table)
+      .getAllByRole("columnheader")
+      .find((h) => h.textContent === "状态");
+    expect(status).toHaveAttribute("style", "width: 1%;");
+    expect(
+      within(table).getByText("必需 · 定位光标所在的输入框并插入文本；开启后立即生效"),
+    ).toHaveClass("whitespace-normal");
+    expect(table.closest(".max-w-\\[640px\\]")).not.toBeNull();
+  });
+
+  it("regression: the footer's platform and shortcut method read whole on hover when the footer cuts them", async () => {
+    renderApp({ path: "/onboarding?step=2" });
+    const footer = await screen.findByTestId("onboarding-footer-platform");
+    expect(footer).toHaveTextContent(MOCK_HOTKEY_BACKEND);
+    expect(footer).toHaveAttribute("title", footer.textContent);
+  });
+
   it("step 3 offers the built-in service first, writes the choice and the polish switch through settings_set_engines and moves on", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/onboarding?step=3" });
@@ -338,7 +368,7 @@ describe("Onboarding wizard", () => {
       within(group)
         .getAllByRole("radio")
         .map((r) => r.querySelector("span span")?.firstChild?.textContent),
-    ).toEqual(["内置服务", "本机识别（离线）", "其他服务商"]);
+    ).toEqual(["内置服务", "本地识别（离线）", "其他服务商"]);
     const builtin = within(group).getByRole("radio", { name: /内置服务/ });
     expect(builtin).toHaveAttribute("aria-checked", "true");
     expect(builtin).toHaveTextContent("Qwen3-ASR-1.7B · 开箱即用，无需密钥");
@@ -415,7 +445,7 @@ describe("Onboarding wizard", () => {
     await user.selectOptions(within(form).getByLabelText("服务商"), "custom");
     const next = screen.getByRole("button", { name: "保存并继续" });
     expect(next).toBeDisabled();
-    expect(screen.getByText("自定义接口需要 http(s) 地址")).toBeInTheDocument();
+    expect(screen.getByText("自定义接口需要以 http:// 或 https:// 开头的地址")).toBeInTheDocument();
     await user.type(within(form).getByLabelText("接口地址"), "asr.corp.local");
     expect(next).toBeDisabled();
     await user.clear(within(form).getByLabelText("接口地址"));
@@ -483,7 +513,7 @@ describe("Onboarding wizard", () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/onboarding?step=3" });
     await screen.findByRole("heading", { name: "选择语音模型", level: 2 });
-    await user.click(screen.getByRole("radio", { name: /本机识别/ }));
+    await user.click(screen.getByRole("radio", { name: /本地识别/ }));
     const local = screen.getByTestId("onboarding-local");
     const card = within(local).getByRole("article", { name: "均衡" });
     expect(within(card).getByRole("button", { name: "下载" })).toBeEnabled();
@@ -559,19 +589,19 @@ describe("Onboarding wizard", () => {
       expect(screen.queryByTestId("deferred-badge")).toBeNull();
       expect(document.body.textContent).not.toMatch(/第二阶段|示例数据/);
       expect(screen.getByRole("meter", { name: "强度" })).toHaveAttribute("aria-valuenow", "0");
-      expect(screen.getByText("待命")).toBeInTheDocument();
+      expect(screen.getByText("就绪")).toBeInTheDocument();
       const box = screen.getByRole("textbox", { name: "在这里试说" });
       expect(box).toHaveValue("");
       await user.click(screen.getByRole("button", { name: "试说一句" }));
       expect(backend.peek().dictation.phase.phase).toBe("listening");
       expect(screen.getByTestId("trial-status")).toHaveAttribute("data-phase", "listening");
-      expect(screen.getByText(/正在听… 00:0\d/)).toBeInTheDocument();
+      expect(screen.getByText(/正在录音… 00:0\d/)).toBeInTheDocument();
       // The meter is on while the recorder is open.
       await waitFor(() => {
         expect(backend.activeMeters()).toBe(1);
       });
       await user.click(screen.getByRole("button", { name: "停止" }));
-      expect(screen.getByText("转写中…")).toBeInTheDocument();
+      expect(screen.getByText("识别中…")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "处理中…" })).toBeDisabled();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_ASR_MS + MOCK_REFINE_MS);
@@ -586,7 +616,7 @@ describe("Onboarding wizard", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS);
       });
-      expect(screen.getByText("待命")).toBeInTheDocument();
+      expect(screen.getByText("就绪")).toBeInTheDocument();
       expect(box).toHaveValue(MOCK_DICTATION_TEXT);
       expect(screen.getByRole("button", { name: "再说一句" })).toBeEnabled();
       await user.click(screen.getByRole("button", { name: "完成设置" }));
@@ -622,11 +652,11 @@ describe("Onboarding wizard", () => {
     const table: [InjectPreflight, string][] = [
       [
         checked("elevated_target", "regedit.exe"),
-        "目标窗口 regedit.exe 以更高权限运行 · 投递会停在剪贴板",
+        "目标窗口 regedit.exe 以管理员身份运行 · 文本只能复制到剪贴板",
       ],
-      [checked("secure_desktop", null), "当前是安全桌面（UAC / 锁屏）· 无法投递"],
-      [checked("proceed", "notepad.exe"), "目标窗口 notepad.exe · 可投递"],
-      [checked("unknown", null), "目标窗口未知 · 将直接尝试投递"],
+      [checked("secure_desktop", null), "当前是安全桌面（UAC / 锁屏）· 无法插入文本"],
+      [checked("proceed", "notepad.exe"), "目标窗口 notepad.exe · 可以插入"],
+      [checked("unknown", null), "目标窗口未知 · 将直接尝试插入"],
     ];
     for (const [preflight, text] of table) {
       const view = renderApp({ path: "/onboarding?step=4", mock: { injectPreflight: preflight } });
@@ -723,5 +753,6 @@ describe("onboarding constants", () => {
         : undefined;
     expect(MACOS_BUNDLE_ID).toBe(identifier);
     expect(MACOS_TCC_RESET).toBe(`tccutil reset Accessibility ${MACOS_BUNDLE_ID}`);
+    expect(MACOS_TCC_RESET_MICROPHONE).toBe(`tccutil reset Microphone ${MACOS_BUNDLE_ID}`);
   });
 });

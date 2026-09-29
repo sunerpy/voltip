@@ -89,7 +89,7 @@ describe("useChordRecorder", () => {
     fireEvent.click(button);
     key("keydown", "KeyX");
     key("keyup", "KeyX");
-    expect(onReject).toHaveBeenLastCalledWith("这个后端不允许纯单键绑定，请加一个修饰键");
+    expect(onReject).toHaveBeenLastCalledWith("当前系统不允许单个按键作为快捷键，请加一个修饰键");
     fireEvent.click(button);
     key("keydown", "ControlLeft");
     key("keydown", "Escape", { key: "Escape" });

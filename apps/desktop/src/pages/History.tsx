@@ -47,6 +47,8 @@ import {
   matchesHistoryQuery,
   textChars,
 } from "../features/history/stats";
+import { ClipboardNote } from "../features/history/ClipboardNote";
+import { ResultActions } from "../features/history/ResultActions";
 import { shortModel } from "../shell/page-meta";
 
 type View = "raw" | "polished" | "diff";
@@ -197,17 +199,18 @@ export function History({ initialFilter }: HistoryProps) {
         </Button>
         <Button
           size="sm"
-          variant="text"
-          className="text-danger"
+          variant="text-danger"
+
           onClick={clearAll}
           disabled={entries.length === 0}>
           {t("history.banner.clearAll")}
         </Button>
       </Card>
 
-      {/* session log left, entry detail right. The log column follows the window between
-          280 and 360 px (designed at 320) and the detail takes the rest; below `lg` they stack. */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)]">
+      {/* session log left, entry detail right, two parts to three: at 1440 px the log is wide
+          enough for a row's model, time and result on one line (user feedback 2026-09-29, plan
+          1.6), and never narrower than 280 px; below `lg` they stack. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,2fr)_minmax(0,3fr)]">
         <Panel
           eyebrow={t("history.eyebrow.log")}
           title={String(visible.length)}
@@ -278,15 +281,20 @@ export function History({ initialFilter }: HistoryProps) {
                   {g.items.map((e) => {
                     const active = e.id === selected?.id;
                     const outcome = outcomeLabel(e.outcome, locale);
+                    const meta = sentAsText(e)
+                      ? outcome.text
+                      : `${shortModel(e.asr_model)} · ${formatMs(e.asr_ms + (e.refine_ms ?? 0))} · ${outcome.text}`;
                     return (
-                      <li key={e.id}>
+                      <li
+                        key={e.id}
+                        className={`group flex items-start rounded-6 hover:bg-canvas ${active ? "bg-canvas shadow-[inset_2px_0_0_var(--primary)]" : ""}`}>
                         <button
                           type="button"
                           aria-pressed={active}
                           onClick={() => {
                             setSelectedId(e.id);
                           }}
-                          className={`group flex w-full items-start gap-2 rounded-6 px-2 py-2 text-left hover:bg-canvas ${active ? "bg-canvas shadow-[inset_2px_0_0_var(--primary)]" : ""}`}>
+                          className="flex min-w-0 flex-1 items-start gap-2 rounded-6 px-2 py-2 text-left">
                           <span className="mono pt-0.5 text-[12px] text-fg-subtle">
                             {clockLabel(e.at_ms).slice(0, 5)}
                           </span>
@@ -351,10 +359,11 @@ export function History({ initialFilter }: HistoryProps) {
                                   )}
                                 </span>
                               )}
-                              <span className="truncate">
-                                {sentAsText(e)
-                                  ? outcome.text
-                                  : `${shortModel(e.asr_model)} · ${formatMs(e.asr_ms + (e.refine_ms ?? 0))} · ${outcome.text}`}
+                              <span
+                                className="truncate"
+                                title={meta}
+                                data-testid="history-row-meta">
+                                {meta}
                               </span>
                             </span>
                           </span>
@@ -380,6 +389,12 @@ export function History({ initialFilter }: HistoryProps) {
                             ★
                           </span>
                         </button>
+                        {/* Copy / paste into the previous window (plan 1.4): shown on the chosen row,
+                            and on the others while hovered or focused. */}
+                        <ResultActions
+                          entry={e}
+                          className={`pt-1.5 pr-1 ${active ? "" : "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"}`}
+                        />
                       </li>
                     );
                   })}
@@ -492,6 +507,11 @@ export function History({ initialFilter }: HistoryProps) {
                   </div>
                 </>
               )}
+              {selected.outcome.kind === "clipboard" && (
+                // docs/dictation.md §4.2: why the paste fell back, in words; the raw message only
+                // under the technical details (never in the header).
+                <ClipboardNote outcome={selected.outcome} />
+              )}
               {selected.live_error !== undefined && (
                 // §12: a streaming mode was asked for but the take (or part of it) fell back to the
                 // whole-take path; the core's reason, verbatim.
@@ -596,8 +616,8 @@ export function History({ initialFilter }: HistoryProps) {
                 </Button>
                 <Button
                   size="sm"
-                  variant="text"
-                  className="ml-auto text-danger"
+                  variant="text-danger"
+                  className="ml-auto"
                   onClick={() => {
                     remove(selected);
                   }}>

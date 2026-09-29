@@ -66,7 +66,6 @@ export function Microphone() {
             <Select
               aria-label={t("settings.microphone.device")}
               size="sm"
-              className="w-96 max-w-full"
               value={chosen ?? DEFAULT_CHOICE}
               disabled={meter.devices === undefined}
               options={options}

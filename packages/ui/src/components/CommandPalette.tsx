@@ -177,17 +177,21 @@ function PaletteBody({ items, onClose, onHighlight, placeholder }: CommandPalett
                           item.disabled ? "cursor-not-allowed text-fg-subtle" : "text-fg",
                         )}>
                         {item.icon && <Icon name={item.icon} size={15} className="text-fg-muted" />}
-                        <span className="flex-1 truncate">
+                        {/* One line; cut with an ellipsis only when the palette is too narrow,
+                            the whole label on hover. */}
+                        <span className="min-w-0 flex-1 truncate" title={item.label}>
                           <Highlight text={item.label} query={query} />
                         </span>
                         {item.disabled && item.disabledHint ? (
-                          <span className="mono text-[11px] text-fg-subtle">
+                          <span className="mono shrink-0 text-[11px] whitespace-nowrap text-fg-subtle">
                             {item.disabledHint}
                           </span>
                         ) : item.keys ? (
                           <Keycaps keys={item.keys} />
                         ) : item.hint ? (
-                          <span className="mono text-[11px] text-fg-muted">{item.hint}</span>
+                          <span className="mono shrink-0 text-[11px] whitespace-nowrap text-fg-muted">
+                            {item.hint}
+                          </span>
                         ) : null}
                       </li>
                     );

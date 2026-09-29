@@ -393,7 +393,7 @@
   },
   {
     "type": "hotkey",
-    "error": "Ctrl+Alt+Space 注册失败：纯 Wayland 会话不允许应用注册全局热键",
+    "error": "Ctrl+Alt+Space 未能生效：纯 Wayland 会话不允许应用设置全局快捷键",
     "pressed": false,
     "capturing": false,
     "backend": "global-shortcut · Linux · Wayland",
@@ -511,6 +511,7 @@
       "phase": "processing",
       "stage": "finalizing",
       "started_at": 1758700603200,
+      "stage_started_at": 1758700603200,
       "preview": "把 fetchUser 改成 async，然后加上错误"
     },
     "session": 7,
@@ -522,6 +523,7 @@
       "phase": "processing",
       "stage": "transcribing",
       "started_at": 1758700603200,
+      "stage_started_at": 1758700603200,
       "preview": "把 fetchUser 改成 async，然后加上错误"
     },
     "session": 7,
@@ -532,7 +534,8 @@
     "phase": {
       "phase": "processing",
       "stage": "transcribing",
-      "started_at": 1758700603200
+      "started_at": 1758700603200,
+      "stage_started_at": 1758700603200
     },
     "session": 7,
     "kind": "dictation"
@@ -543,6 +546,7 @@
       "phase": "processing",
       "stage": "refining",
       "started_at": 1758700603200,
+      "stage_started_at": 1758700604100,
       "preview": "把 fetchUser 改成 async，然后加上错误"
     },
     "session": 7,
@@ -553,7 +557,8 @@
     "phase": {
       "phase": "processing",
       "stage": "inserting",
-      "started_at": 1758700603200
+      "started_at": 1758700603200,
+      "stage_started_at": 1758700603200
     },
     "session": 7,
     "kind": "dictation"
@@ -634,7 +639,7 @@
       "asr_ms": 640,
       "refine_ms": 2400,
       "mode": "whole_take",
-      "live_error": "open: asr: 流式模型未下载：实时预览"
+      "live_error": "open: asr: 实时识别模型未下载：实时预览"
     },
     "session": 15,
     "kind": "dictation"
@@ -724,7 +729,8 @@
     "phase": {
       "phase": "processing",
       "stage": "transcribing",
-      "started_at": 1758700603200
+      "started_at": 1758700603200,
+      "stage_started_at": 1758700603200
     },
     "session": 18,
     "context": {
@@ -946,6 +952,29 @@
           "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
           "name": "代码评审"
         }
+      }
+    ]
+  },
+  {
+    "type": "history",
+    "entries": [
+      {
+        "id": "1c2d3e4f-5a6b-4c8e-9f7a-0f3f1a1e8d4b",
+        "at_ms": 1758700540000,
+        "raw_text": "测试一下",
+        "text": "测试一下",
+        "refined": false,
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "duration_ms": 900,
+        "asr_ms": 410,
+        "outcome": {
+          "kind": "clipboard",
+          "reason": "enigo: the application does not have the permission to simulate input",
+          "code": "no_permission"
+        },
+        "starred": false,
+        "mode": "whole_take",
+        "kind": "dictation"
       }
     ]
   },
@@ -2701,6 +2730,7 @@
       "phase": "processing",
       "stage": "refining",
       "started_at": 1758700601400,
+      "stage_started_at": 1758700601400,
       "preview": "改得更正式"
     },
     "session": 20,
@@ -2820,5 +2850,92 @@
   {
     "type": "scenes",
     "scenes": []
+  },
+  {
+    "type": "paste_result",
+    "request_id": 1,
+    "outcome": {
+      "kind": "pasted"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 2,
+    "outcome": {
+      "kind": "copied",
+      "reason": "no_probe"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 3,
+    "outcome": {
+      "kind": "copied",
+      "reason": "timeout"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 4,
+    "outcome": {
+      "kind": "copied",
+      "reason": "target_changed"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 5,
+    "outcome": {
+      "kind": "copied",
+      "reason": "clipboard_only"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 6,
+    "outcome": {
+      "kind": "copied",
+      "reason": "paste_failed"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 7,
+    "outcome": {
+      "kind": "failed",
+      "reason": "busy"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 8,
+    "outcome": {
+      "kind": "failed",
+      "reason": "invalid"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 9,
+    "outcome": {
+      "kind": "failed",
+      "reason": "timeout"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 10,
+    "outcome": {
+      "kind": "failed",
+      "reason": "inject"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 11,
+    "outcome": {
+      "kind": "failed",
+      "reason": "unsupported"
+    }
   }
 ]

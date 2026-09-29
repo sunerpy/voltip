@@ -9,6 +9,7 @@ import {
   MAX_TERM_CHARS,
   type ReplacementRule,
   type TFunction,
+  coreMessageText,
   zhT,
 } from "@voltip/shared";
 
@@ -40,9 +41,10 @@ export function splitHeardAs(text: string): string[] {
 /** How a list of heard-as forms is shown and edited. */
 export const HEARD_AS_JOINER = " · ";
 
-/** A rejection as text: Tauri rejects with the core's string, the in-memory backend with an Error. */
+/** A rejection as text: Tauri rejects with the core's string, the in-memory backend with an Error;
+ *  either way without the core's machine prefix. */
 export function errorText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return coreMessageText(e instanceof Error ? e.message : String(e));
 }
 
 function chars(text: string): number {

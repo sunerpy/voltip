@@ -417,7 +417,7 @@ mod tests {
         assert_eq!(take_state_for(&DictationPhase::Idle), None);
         assert_eq!(take_state_for(&DictationPhase::Listening { started_at: 1, ready: true, live: None, locked: false }), Some(TakeState::Listening));
         assert_eq!(
-            take_state_for(&DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: 1, preview: None }),
+            take_state_for(&DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: 1, stage_started_at: 1, preview: None }),
             Some(TakeState::Processing)
         );
         let done = DictationPhase::Done {

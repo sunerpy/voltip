@@ -118,7 +118,7 @@ describe("buildCommands", () => {
       }),
     ).find((i) => i.id === "dictate");
     expect(processing?.disabled).toBe(true);
-    expect(processing?.disabledHint).toBe("上一句还在转写 / 插入，稍等");
+    expect(processing?.disabledHint).toBe("上一段录音仍在识别或插入，请稍候");
     // With no history both history actions are disabled with a plain reason.
     const empty = buildCommands(deps({ state: { ...backend.peek(), history: [] } }));
     for (const id of ["copy-last", "clear-history"]) {

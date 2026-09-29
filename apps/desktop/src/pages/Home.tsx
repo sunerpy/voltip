@@ -41,6 +41,7 @@ import { MicrophoneStrength } from "../features/audio/MicrophoneStrength";
 import { useAudioMeter } from "../features/audio/useAudioMeter";
 import { useChosenMicrophone, useMicrophoneTest } from "../features/audio/useMicrophoneTest";
 import { useDictation, useTickingNow } from "../features/dictation/useDictation";
+import { ResultActions } from "../features/history/ResultActions";
 import { PermissionNotice } from "../features/permissions/PermissionNotice";
 import {
   type HistoryFilter,
@@ -104,6 +105,14 @@ export function Home() {
             issue: t(`engines.issue.${engines.asr_issue ?? "unavailable"}`),
           })
     : t("home.blocked.mic", { error: meter.error ?? "" });
+  // The chip beside it names the model and the provider, so the ready line does not repeat them.
+  const phaseText = !ready
+    ? blockedReason
+    : idle
+      ? local
+        ? t("home.status.readyDetailLocal")
+        : t("home.status.readyDetail")
+      : phaseLabel.text;
   const audioTarget = serviceTarget(engines.asr_provider, engines.asr_host, t);
   const textTarget = serviceTarget(engines.llm_provider, engines.refine_host, t);
   const openEngines = () => {
@@ -221,20 +230,29 @@ export function Home() {
     {
       id: "asr",
       header: t("home.table.asr"),
-      width: 84,
+      fit: true,
       align: "right",
       cell: (r) => ({ type: "mono", text: formatMs(r.asr_ms) }),
     },
     {
       id: "llm",
       header: t("home.table.refine"),
-      width: 84,
+      fit: true,
       align: "right",
       cell: (r) => ({
         type: "mono",
         text: formatMs(r.refine_ms),
         muted: r.refine_ms === undefined,
       }),
+    },
+    {
+      // Copy / paste into the previous window without opening the row (plan 1.4).
+      id: "actions",
+      header: <span className="sr-only">{t("home.table.actions")}</span>,
+      width: 64,
+      align: "right",
+      mono: false,
+      cell: (r) => <ResultActions entry={r} />,
     },
   ];
 
@@ -263,17 +281,9 @@ export function Home() {
           </span>
           <span
             className={`truncate text-[13px] ${phaseLabel.tone === "danger" ? "text-danger" : "text-fg-muted"}`}
+            title={phaseText}
             data-testid="home-phase">
-            {!ready
-              ? blockedReason
-              : idle
-                ? local
-                  ? t("home.status.readyDetailLocal", { model: asrModel })
-                  : t("home.status.readyDetail", {
-                      model: shortModel(engines.asr_model),
-                      provider: providerName,
-                    })
-                : phaseLabel.text}
+            {phaseText}
           </span>
         </div>
         <Keycaps keys={hotkey} />
@@ -462,14 +472,24 @@ export function Home() {
             <Readout
               label={t("home.engine.inject")}
               value={
-                engines.inject === "paste"
-                  ? t("home.engine.injectPaste")
-                  : t("home.engine.injectClipboard")
+                // The one place that sets it is 设置 › 听写 (plan 1.5).
+                <button
+                  type="button"
+                  className="text-accent-text hover:text-accent-text-hover"
+                  title={t("home.engine.injectChange")}
+                  data-testid="home-inject-link"
+                  onClick={() => {
+                    navigate({ name: "settings", section: "dictation" });
+                  }}>
+                  {engines.inject === "paste"
+                    ? t("home.engine.injectPaste")
+                    : t("home.engine.injectClipboard")}
+                </button>
               }
               size="sm"
             />
           </div>
-          <div className="mt-3 flex items-center justify-between gap-3">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <Toggle
               checked={engines.refine_enabled}
               onChange={setRefine}
@@ -479,7 +499,7 @@ export function Home() {
                   : t("home.engine.refineOff")
               }
             />
-            <span className="truncate text-[11px] text-fg-muted" data-testid="home-privacy">
+            <span className="text-[11px] text-fg-muted" data-testid="home-privacy">
               {reported
                 ? `${audioTarget === undefined ? t("home.engine.privacyLocal") : t("home.engine.privacyAudio", { target: audioTarget })}${engines.refine_enabled && textTarget !== undefined ? t("home.engine.privacyText", { target: textTarget }) : ""}`
                 : ""}
@@ -601,7 +621,12 @@ export function Home() {
             <span className="text-[10px] text-fg-subtle">{tile.eyebrow}</span>
             <span className="flex items-baseline justify-between">
               <span className="mono text-[16px] whitespace-nowrap text-fg">{tile.value}</span>
-              <span className="mono truncate pl-2 text-[11px] text-fg-muted">{tile.secondary}</span>
+              <span
+                className="mono truncate pl-2 text-[11px] text-fg-muted"
+                title={tile.secondary}
+                data-testid="home-tile-note">
+                {tile.secondary}
+              </span>
             </span>
           </Card>
         ))}

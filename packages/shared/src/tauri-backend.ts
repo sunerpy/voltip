@@ -19,6 +19,7 @@ import {
   feedbackReceiptSchema,
   injectPreflightSchema,
   levelFrameSchema,
+  pasteOutcomeSchema,
   permissionReportSchema,
   stagedAttachmentSchema,
   uiEventSchema,
@@ -159,6 +160,11 @@ export class TauriBackend implements Backend {
   async injectPreflight() {
     const raw = await this.transport.invoke("inject_preflight");
     return injectPreflightSchema.parse(raw);
+  }
+
+  async pasteText(text: string) {
+    const raw = await this.transport.invoke("paste_text", { text });
+    return pasteOutcomeSchema.parse(raw);
   }
 
   async meter(deviceId: string | undefined, onFrame: FrameListener): Promise<Unsubscribe> {

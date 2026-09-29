@@ -12,7 +12,9 @@ export interface StatusRowProps {
   "data-testid"?: string;
 }
 
-/** Settings form row: label + help on the left (240 px), control right-aligned, hairline below. */
+/** Settings form row: label + help on the left, taking the width the control leaves (no fixed cap:
+ *  help that fits the row stays on one line, user feedback 2026-09-29), control right-aligned,
+ *  hairline below. */
 export function StatusRow({ label, help, children, note, className, ...rest }: StatusRowProps) {
   return (
     <div
@@ -21,13 +23,16 @@ export function StatusRow({ label, help, children, note, className, ...rest }: S
         "flex min-h-[52px] items-center justify-between gap-4 border-b border-border py-3 last:border-b-0",
         className,
       )}>
-      <div className="min-w-0 max-w-[280px]">
-        <div className="text-[14px] text-fg">{label}</div>
+      <div className="min-w-0 flex-1">
+        {/* Codex's setting labels: 14 px, medium; the help under them 12 px, regular. */}
+        <div className="text-[14px] font-medium text-fg">{label}</div>
         {help !== undefined && (
           <div className="mt-0.5 text-[12px] leading-4 text-fg-muted">{help}</div>
         )}
       </div>
-      <div className="flex shrink-0 flex-col items-end gap-1">
+      {/* The control keeps its size up to 60 % of the row; long readouts (commands, paths)
+          truncate inside it instead of squeezing the label away. */}
+      <div className="flex min-w-0 max-w-[60%] flex-col items-end gap-1">
         {children}
         {note !== undefined && <span className="mono text-[11px] text-fg-subtle">{note}</span>}
       </div>

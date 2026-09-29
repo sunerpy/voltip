@@ -10,6 +10,7 @@ import {
   activationShortcut,
   engineReady,
   enginesReported,
+  hotkeyMethodText,
   modelDisplayName,
   platformLabel,
   relayLabel,
@@ -110,13 +111,11 @@ export function hotkeyShortcut(
   return [hotkey.replaceAll("+", " "), activationShortcut(activation, i18n.locale)];
 }
 
-/** Toolbar readout for the hotkey pane: the shell's backend name, or the registration failure. */
+/** Toolbar readout for the hotkey pane: the shell's shortcut method, or the registration failure. */
 export function hotkeyBackendReadout(status: HotkeyStatus, i18n: Translator = zhT): string {
   if (status.error) return i18n.t("page.hotkeyBackend.failed");
   if (status.backend.length === 0) return i18n.t("page.hotkeyBackend.notReported");
-  // "global-shortcut · Windows · RegisterHotKey" → keep the platform-specific tail.
-  const parts = status.backend.split(" · ");
-  return parts.length > 1 ? parts.slice(1).join(" · ") : status.backend;
+  return hotkeyMethodText(status.backend);
 }
 
 function devicesReadouts(

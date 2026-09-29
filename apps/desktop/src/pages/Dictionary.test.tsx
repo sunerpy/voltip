@@ -110,7 +110,7 @@ describe("Dictionary page", () => {
     expect(screen.getByText("3 条")).toBeInTheDocument();
     expect(screen.getByText("2 条启用")).toBeInTheDocument();
     expect(screen.getByTestId("dictionary-explain")).toHaveTextContent(
-      "dictionary.json · 最多 500 条 · 每条最多 10 个曾听成",
+      "最多 500 条 · 每条最多 10 个曾听成",
     );
     const table = screen.getByRole("table", { name: "词条表" });
     const rows = within(table).getAllByRole("row").slice(1);
@@ -168,9 +168,7 @@ describe("Dictionary page", () => {
     await user.type(screen.getByLabelText("正确写法"), "World");
     await user.type(screen.getByLabelText("曾听成"), "World");
     await user.click(within(screen.getByTestId("add-row")).getByRole("button", { name: "保存" }));
-    expect(
-      await screen.findByText("dictionary: 误识别写法「World」和正确写法相同"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("误识别写法「World」和正确写法相同")).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.queryByTestId("add-row")).toBeNull();
     // A clash with another entry is the core's error event (a toast); the list stays.
@@ -178,7 +176,7 @@ describe("Dictionary page", () => {
     await user.type(screen.getByLabelText("正确写法"), "Planet");
     await user.type(screen.getByLabelText("曾听成"), "沃提普{Enter}");
     expect(
-      await screen.findByText(/dictionary: 「沃提普」已是「Voltip」的误识别写法/),
+      await screen.findByText(/出错了 · 「沃提普」已是「Voltip」的误识别写法/),
     ).toBeInTheDocument();
     expect(backend.peek().dictionary.map((e) => e.term)).not.toContain("Planet");
     // Edit in place: Enter saves.
@@ -257,7 +255,7 @@ describe("Dictionary page", () => {
   it("regression: an empty dictionary shows its empty state and Ctrl N opens a new entry", async () => {
     const user = userEvent.setup();
     renderApp({ path: "/dictionary", mock: { history: [] } });
-    expect(await screen.findByText("还没有词条。")).toBeInTheDocument();
+    expect(await screen.findByText("暂无词条。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "用最近一次听写" })).toBeDisabled();
     expect(screen.queryByTestId("dictionary-hits")).toBeNull();
     await user.keyboard("{Control>}n{/Control}");
@@ -281,15 +279,15 @@ describe("Dictionary page", () => {
     await screen.findByRole("table", { name: "词条表" });
     await user.type(screen.getByLabelText("识别文本"), "x");
     expect(await screen.findByTestId("dictionary-test-error")).toHaveTextContent(
-      "试运行失败：rules: 试写文本最多 64 KiB",
+      "试运行失败：试写文本最多 64 KiB",
     );
     expect(preview).toHaveBeenCalled();
     vi.spyOn(backend, "invoke").mockRejectedValueOnce(new Error("dictionary: 没有 id"));
     await user.click(screen.getByRole("switch", { name: "启用 Voltip" }));
-    expect(await screen.findByText("出错了 · dictionary: 没有 id")).toBeInTheDocument();
+    expect(await screen.findByText("出错了 · 没有 id")).toBeInTheDocument();
     act(() => {
       backend.publish({ type: "dictionary", entries: [] });
     });
-    expect(await screen.findByText("还没有词条。")).toBeInTheDocument();
+    expect(await screen.findByText("暂无词条。")).toBeInTheDocument();
   });
 });

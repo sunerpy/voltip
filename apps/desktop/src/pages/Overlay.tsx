@@ -2,6 +2,7 @@ import {
   type DictationPhase,
   type LiveText,
   formatElapsed,
+  formatSeconds,
   joinLiveText,
   liveCaptionParts,
   takeFailureText,
@@ -18,7 +19,7 @@ import {
 } from "@voltip/ui";
 import { useAudioMeter } from "../features/audio/useAudioMeter";
 import { useChosenMicrophone } from "../features/audio/useMicrophoneTest";
-import { useLevelHistory, useTickingNow } from "../features/dictation/useDictation";
+import { useLevelHistory, useStageNow, useTickingNow } from "../features/dictation/useDictation";
 import { useOverlayWindowState } from "../features/overlay/useOverlayWindowState";
 import { copyWithToast, useShell } from "../app/shell-context";
 
@@ -62,6 +63,14 @@ export function pillStateFor(phase: DictationPhase): PillState | undefined {
   }
 }
 
+/** When the processing step began: `stage_started_at`, or the run's start from a core that does
+ *  not send it. */
+export function stageStart(phase: Extract<DictationPhase, { phase: "processing" }>): number {
+  return phase.stage_started_at !== undefined && phase.stage_started_at > 0
+    ? phase.stage_started_at
+    : phase.started_at;
+}
+
 /** Waveform bars of the listening pill (`Pill` draws 36). */
 const LIVE_BARS = 36;
 
@@ -100,6 +109,7 @@ export function Overlay({ state }: OverlayProps) {
   const meter = useAudioMeter(listening, useChosenMicrophone());
   const levels = useLevelHistory(listening ? meter.frame : undefined, LIVE_BARS);
   const now = useTickingNow(listening);
+  const stageNow = useStageNow(pill !== undefined && dictation.phase.phase === "processing");
 
   if (pill === undefined) {
     return (
@@ -134,9 +144,11 @@ export function Overlay({ state }: OverlayProps) {
             ? phase.ready
               ? formatElapsed(now - phase.started_at)
               : "00:00"
-            : phase.phase === "done"
-              ? viaLabel(phase.via, locale)
-              : undefined
+            : phase.phase === "processing"
+              ? formatSeconds(stageNow - stageStart(phase))
+              : phase.phase === "done"
+                ? viaLabel(phase.via, locale)
+                : undefined
         }
         waiting={phase.phase === "listening" && !phase.ready}
         // docs/dictation.md §13: a short press under hold_or_toggle locked the take.
@@ -170,12 +182,12 @@ export function Overlay({ state }: OverlayProps) {
                     : t("overlay.live.cancelled")
                   : undefined
         }
-        // The tag names where the audio goes; while refining it is the LLM, while a streaming
+        // The tag names where the audio goes; while refining it is the AI polish, while a streaming
         // mode waits for its final text (§12 `finalizing`) it is that stage, next to the preview.
         mode={
           phase.phase === "processing"
             ? phase.stage === "refining"
-              ? "LLM"
+              ? t("overlay.live.refineTag")
               : phase.stage === "finalizing"
                 ? label.text
                 : asrMode

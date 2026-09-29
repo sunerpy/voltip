@@ -228,10 +228,60 @@ pub fn consent_store_app_key(exe_path: &str) -> String {
     exe_path.replace('\\', "#")
 }
 
+/// What the shell reads about a top-level window below Voltip's in the Z order, to find the window
+/// the history paste goes to (apps/desktop/src-tauri/src/paste.rs).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StackedWindow<'a> {
+    /// `IsWindowVisible`.
+    pub visible: bool,
+    /// `IsIconic`.
+    pub minimized: bool,
+    /// Width or height 0.
+    pub empty: bool,
+    /// `WS_EX_TOOLWINDOW` or `WS_EX_NOACTIVATE`: a palette, an IME window, never the one typed into.
+    pub tool: bool,
+    /// Hidden by DWM: a suspended UWP frame, a window on another virtual desktop.
+    pub cloaked: bool,
+    /// One of Voltip's own windows.
+    pub own_process: bool,
+    /// The window class.
+    pub class: &'a str,
+}
+
+/// The desktop and the taskbar: in the Z order, but not a window anyone pastes into.
+const SHELL_CLASSES: [&str; 4] = ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"];
+
+/// Whether `window` is the one the user came from. Activating a window puts it on top of the
+/// others, so the first ordinary application window below Voltip's is the one that was active
+/// before Voltip.
+pub fn is_paste_target(window: &StackedWindow<'_>) -> bool {
+    window.visible && !window.minimized && !window.empty && !window.tool && !window.cloaked && !window.own_process && !SHELL_CLASSES.contains(&window.class)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use IntegrityLevel::{High, Low, Medium, MediumPlus, ProtectedProcess, System, Untrusted};
+
+    #[test]
+    fn regression_the_paste_goes_to_the_first_ordinary_window_below_voltip() {
+        // CI 2026-09-29: minimising Voltip left no other window in front, so the history paste only
+        // copied. The shell now brings the window below Voltip to the front itself.
+        let notepad = StackedWindow { visible: true, class: "Notepad", ..StackedWindow::default() };
+        assert!(is_paste_target(&notepad));
+        for (skipped, why) in [
+            (StackedWindow { visible: false, ..notepad }, "hidden"),
+            (StackedWindow { minimized: true, ..notepad }, "minimised"),
+            (StackedWindow { empty: true, ..notepad }, "no size"),
+            (StackedWindow { tool: true, ..notepad }, "tool window"),
+            (StackedWindow { cloaked: true, ..notepad }, "cloaked"),
+            (StackedWindow { own_process: true, ..notepad }, "Voltip's own"),
+            (StackedWindow { class: "Progman", ..notepad }, "the desktop"),
+            (StackedWindow { class: "Shell_TrayWnd", ..notepad }, "the taskbar"),
+        ] {
+            assert!(!is_paste_target(&skipped), "{why}");
+        }
+    }
 
     #[test]
     fn integrity_levels_bucket_rids_and_order() {

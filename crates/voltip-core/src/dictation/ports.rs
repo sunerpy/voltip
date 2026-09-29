@@ -71,10 +71,10 @@ pub enum DictationError {
     #[error("终端里不支持语音编辑：终端里的选区不能被替换")]
     EditInTerminal,
     /// A start arrived while a recording or a pipeline run is in progress.
-    #[error("dictation already in progress")]
+    #[error("已有听写正在进行")]
     Busy,
     /// A stop / cancel arrived with nothing running.
-    #[error("no dictation in progress")]
+    #[error("当前没有进行中的听写")]
     Idle,
 }
 
@@ -347,6 +347,11 @@ pub struct ForegroundApp {
     pub name: String,
     /// Window title, where the platform tells (not on macOS).
     pub title: Option<String>,
+    /// The focused window, where the platform tells: the HWND on Windows, the window id on X11, the
+    /// front process id on macOS (which cannot tell two windows of one application apart). Only
+    /// used to check that a paste from the history still goes where the user left off
+    /// ([`crate::paste`]); never shown, stored, logged or printed by `Debug`.
+    pub window: Option<u64>,
 }
 
 impl std::fmt::Debug for ForegroundApp {
@@ -366,7 +371,7 @@ impl ForegroundApp {
         }
         let name = clean_context_line(&self.name, MAX_CONTEXT_NAME_CHARS).unwrap_or_else(|| app_id.clone());
         let title = self.title.as_deref().and_then(|t| clean_context_line(t, MAX_CONTEXT_TITLE_CHARS));
-        Some(Self { app_id, name, title })
+        Some(Self { app_id, name, title, window: self.window })
     }
 }
 
@@ -399,13 +404,54 @@ pub enum Via {
     Clipboard,
 }
 
+/// Why a requested paste left the text on the clipboard (docs/dictation.md §4.2): the kind the
+/// interface explains in a sentence (`Outcome::Clipboard.code`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipboardCode {
+    /// The system does not let Voltip send keystrokes (macOS: Accessibility not granted).
+    NoPermission,
+    /// No paste tool for this session (Wayland without wtype, dotool or ydotool).
+    NoTool,
+    /// No connection to the display server.
+    NoDisplay,
+    /// A secure input field or the secure desktop has the keyboard.
+    SecureInput,
+    /// The window in front runs as administrator (Windows).
+    ElevatedTarget,
+    /// Anything else.
+    Other,
+}
+
+/// A clipboard fallback as the injector reports it: its kind and the original message (the
+/// history keeps both; the interface shows the message only under the technical details).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InjectNote {
+    /// What the interface says.
+    pub code: ClipboardCode,
+    /// The message as the tool or the system gave it.
+    pub detail: String,
+}
+
+impl InjectNote {
+    /// A note of `code` with `detail`.
+    pub fn new(code: ClipboardCode, detail: impl Into<String>) -> Self {
+        Self { code, detail: detail.into() }
+    }
+
+    /// A note with no kind the interface can name.
+    pub fn other(detail: impl Into<String>) -> Self {
+        Self::new(ClipboardCode::Other, detail)
+    }
+}
+
 /// Injection outcome.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Injection {
     /// Route taken.
     pub via: Via,
-    /// Why the text stayed in the clipboard when a paste was requested, or other diagnostics.
-    pub note: Option<String>,
+    /// Why the text stayed in the clipboard when a paste was requested.
+    pub note: Option<InjectNote>,
 }
 
 /// When a voice edit's copy chord can reach the foreground application (docs/dictation.md §19).
@@ -425,6 +471,14 @@ pub trait Injector: Send + Sync {
     /// Inject `text`. Blocking (clipboard + synthetic key events + a short restore delay); the
     /// core calls it from a blocking task.
     fn inject(&self, text: &str) -> Result<Injection, DictationError>;
+
+    /// Put `text` on the clipboard and nothing else, whatever `EngineSettings.inject` says: a paste
+    /// from the history whose window is gone ([`crate::paste`]). Blocking, like `inject`. The
+    /// default belongs to shells without a clipboard of their own (the phone).
+    fn copy(&self, text: &str) -> Result<(), DictationError> {
+        let _ = text;
+        Err(DictationError::Inject("this shell has no clipboard".to_owned()))
+    }
 
     /// The foreground application's selection (docs/dictation.md §19): clipboard saved, copy
     /// chord pressed after releasing `held` (the edit hotkey's modifiers the user may still
@@ -497,8 +551,8 @@ mod tests {
         assert_eq!(DictationError::Selection("no copy tool".into()).to_string(), "selection: no copy tool");
         assert_eq!(DictationError::EditUnavailable("no key".into()).to_string(), "edit: no key");
         assert_eq!(SelectionTiming::default(), SelectionTiming::AtPress);
-        assert!(DictationError::Busy.to_string().contains("in progress"));
-        assert!(DictationError::Idle.to_string().contains("no dictation"));
+        assert!(DictationError::Busy.to_string().contains("正在进行"));
+        assert!(DictationError::Idle.to_string().contains("没有进行中的听写"));
         assert_eq!(serde_json::to_string(&Via::Clipboard).unwrap(), r#""clipboard""#);
         assert_eq!(serde_json::from_str::<Via>(r#""paste""#).unwrap(), Via::Paste);
         assert!(MIN_RECORDING < DWELL && DWELL < DWELL_WITH_TEXT && DWELL_WITH_TEXT < MAX_RECORDING);
@@ -534,14 +588,15 @@ mod tests {
     /// it; `Debug` of the app and of the refine context never shows the title or the texts.
     #[test]
     fn foreground_answers_are_sanitised_and_never_debug_print_the_title() {
-        let raw = ForegroundApp { app_id: " Slack.EXE ".into(), name: " Slack\n".into(), title: Some("  #dev\u{7}chat  ".into()) };
+        let raw = ForegroundApp { app_id: " Slack.EXE ".into(), name: " Slack\n".into(), title: Some("  #dev\u{7}chat  ".into()), window: Some(42) };
         let app = raw.sanitized().unwrap();
-        assert_eq!(app, ForegroundApp { app_id: "slack".into(), name: "Slack".into(), title: Some("#dev chat".into()) });
+        assert_eq!(app, ForegroundApp { app_id: "slack".into(), name: "Slack".into(), title: Some("#dev chat".into()), window: Some(42) });
+        // Neither the title nor the window id is printed.
         assert_eq!(format!("{app:?}"), r#"ForegroundApp { app_id: "slack", name: "Slack", title: true }"#);
-        let nameless = ForegroundApp { app_id: "code".into(), name: "  ".into(), title: Some("\u{7}".into()) }.sanitized().unwrap();
+        let nameless = ForegroundApp { app_id: "code".into(), name: "  ".into(), title: Some("\u{7}".into()), window: None }.sanitized().unwrap();
         assert_eq!((nameless.name.as_str(), nameless.title), ("code", None), "the id stands in for an empty name");
-        assert_eq!(ForegroundApp { app_id: ".exe".into(), name: "x".into(), title: None }.sanitized(), None);
-        let long = ForegroundApp { app_id: "a".into(), name: "名".repeat(100), title: Some("t".repeat(500)) }.sanitized().unwrap();
+        assert_eq!(ForegroundApp { app_id: ".exe".into(), name: "x".into(), title: None, window: None }.sanitized(), None);
+        let long = ForegroundApp { app_id: "a".into(), name: "名".repeat(100), title: Some("t".repeat(500)), window: None }.sanitized().unwrap();
         assert_eq!((long.name.chars().count(), long.title.map(|t| t.chars().count())), (MAX_CONTEXT_NAME_CHARS, Some(MAX_CONTEXT_TITLE_CHARS)));
         let context = RefineContext { app_name: Some("Slack".into()), window_title: Some("secret title".into()), instruction: None };
         assert_eq!(format!("{context:?}"), "RefineContext { app_name: true, window_title: true, instruction: false }");

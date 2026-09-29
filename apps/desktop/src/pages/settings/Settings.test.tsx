@@ -50,6 +50,44 @@ describe("Settings · 外观", () => {
     expect(screen.getByText("prefers-color-scheme: light")).toBeInTheDocument();
   });
 
+  it("the accent colour is a local choice painted on <html>; each swatch shows its own colour", async () => {
+    const user = userEvent.setup();
+    window.localStorage.removeItem("voltip.appearance");
+    renderApp({ path: "/settings/appearance" });
+    const group = await screen.findByRole("radiogroup", { name: "强调色" });
+    const swatches = within(group).getAllByRole("radio");
+    expect(swatches.map((s) => s.getAttribute("aria-label"))).toEqual([
+      "默认",
+      "蓝色",
+      "绿色",
+      "黄色",
+      "粉色",
+      "橙色",
+      "紫色",
+      "墨色",
+    ]);
+    expect(within(group).getByRole("radio", { name: "默认" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    // Each swatch names its accent and the painted theme, so the tokens give it its colour.
+    for (const swatch of swatches) {
+      expect(swatch).toHaveAttribute("data-theme", document.documentElement.dataset.theme);
+      expect(swatch.dataset.accent).toBeDefined();
+    }
+    await user.click(within(group).getByRole("radio", { name: "绿色" }));
+    expect(document.documentElement.dataset.accent).toBe("green");
+    expect(within(group).getByRole("radio", { name: "绿色" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(JSON.parse(window.localStorage.getItem("voltip.appearance") ?? "{}")).toMatchObject({
+      accent: "green",
+    });
+    await user.click(within(group).getByRole("radio", { name: "默认" }));
+    expect(document.documentElement.dataset.accent).toBe("default");
+  });
+
   it("density, font size, overlay position and reduce motion write local appearance", async () => {
     const user = userEvent.setup();
     renderApp({ path: "/settings/appearance" });
@@ -82,7 +120,7 @@ describe("Settings · 外观", () => {
     renderApp({ path: "/settings/appearance", backend });
     const strip = await screen.findByTestId("preview-strip");
     expect(strip).not.toHaveTextContent("412");
-    expect(within(strip).getByTestId("preview-latency")).toHaveTextContent("还没有听写记录");
+    expect(within(strip).getByTestId("preview-latency")).toHaveTextContent("暂无听写记录");
     const hotkey = backend.peek().settings.hotkey;
     expect(within(strip).getByLabelText(hotkey.split("+").join(" "))).toBeInTheDocument();
     expect(strip).toHaveTextContent(backend.peek().engines.asr_ready ? "就绪" : "未就绪");
@@ -242,11 +280,11 @@ describe("Settings · 对话框", () => {
   it("regression: a deep link to /settings/hotkey renders home beneath the dialog", async () => {
     renderApp({ path: "/settings/hotkey" });
     const dialog = await screen.findByRole("dialog", { name: "设置" });
-    expect(within(dialog).getByRole("tab", { name: /热键/, selected: true })).toBeInTheDocument();
+    expect(within(dialog).getByRole("tab", { name: /快捷键/, selected: true })).toBeInTheDocument();
     expect(within(dialog).getByTestId("hotkey-recorder")).toBeInTheDocument();
-    // The backend readout keeps the platform-specific tail of the shell's report.
+    // The method readout is the shell's own report (the mock's here), in plain words.
     expect(within(dialog).getByTestId("settings-readouts")).toHaveTextContent(
-      `热键 Ctrl Alt Space · 后端 ${MOCK_HOTKEY_BACKEND.split(" · ").slice(1).join(" · ")}`,
+      `快捷键 Ctrl Alt Space · 快捷键方式 ${MOCK_HOTKEY_BACKEND}`,
     );
     expect(screen.getByTestId("page-background")).not.toBeEmptyDOMElement();
     expect(screen.getByRole("heading", { name: "首页", level: 1 })).toBeInTheDocument();
@@ -255,7 +293,8 @@ describe("Settings · 对话框", () => {
   it("regression: the settings dialog is fluid (no fixed 640 px column)", async () => {
     renderApp({ path: "/settings/appearance" });
     const dialog = await screen.findByRole("dialog", { name: "设置" });
-    expect(dialog.className).toMatch(/w-\[min\(960px,calc\(100vw-48px\)\)\]/);
+    // Plan 1.6 (user feedback 2026-09-29): wider, so help text fits on one line.
+    expect(dialog.className).toMatch(/w-\[min\(1120px,calc\(100vw-48px\)\)\]/);
     expect(dialog.className).toMatch(/h-\[min\(660px,calc\(100vh-48px\)\)\]/);
     const nav = within(dialog).getByRole("tablist", { name: "设置分组" }).closest("nav");
     expect(nav?.className).toMatch(/w-\[200px\]/);
@@ -265,7 +304,8 @@ describe("Settings · 对话框", () => {
       /w-\[640px\]|w-\[200px\]/.test(el.className),
     );
     expect(fixed).toHaveLength(0);
-    expect(content.firstElementChild?.className).toMatch(/max-w-\[720px\]/);
+    // The content takes the dialog's width: no 720 px column inside it.
+    expect(content.firstElementChild?.className ?? "").not.toMatch(/max-w-\[/);
   });
 
   it("regression: Esc while recording cancels the recording without closing the dialog", async () => {
@@ -291,6 +331,32 @@ describe("Settings · 对话框", () => {
   });
 });
 
+describe("Settings · 听写", () => {
+  it("the insert setting writes settings_set_engines { inject } with the rest of the block unchanged", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/dictation" });
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    expect(within(dialog).getByRole("tab", { name: /听写/, selected: true })).toBeInTheDocument();
+    const pane = within(dialog).getByTestId("dictation-pane");
+    expect(within(pane).getByRole("radio", { name: "粘贴到光标处" })).toBeChecked();
+    await user.click(within(pane).getByRole("radio", { name: "仅复制到剪贴板" }));
+    await waitFor(() => {
+      expect(backend.peek().settings.engines).toEqual({
+        ...defaultEngineSettings(),
+        inject: "clipboard_only",
+      });
+    });
+    expect(within(pane).getByRole("radio", { name: "仅复制到剪贴板" })).toBeChecked();
+    // It sits right after 快捷键 in the group list.
+    const tabs = within(dialog)
+      .getAllByRole("tab")
+      .map((tab) => tab.textContent ?? "");
+    expect(tabs.findIndex((name) => name.includes("听写"))).toBe(
+      tabs.findIndex((name) => name.includes("快捷键")) + 1,
+    );
+  });
+});
+
 describe("Settings · 热键", () => {
   it("regression: recording a chord saves it through settings_set_hotkey and shows the shell's registration; single keys are refused; Esc cancels; defaults restore", async () => {
     const user = userEvent.setup();
@@ -300,14 +366,14 @@ describe("Settings · 热键", () => {
     expect(screen.queryByTestId("sample-data-notice")).toBeNull();
     expect(screen.queryByTestId("deferred-badge")).toBeNull();
     // The activation cards are real (docs/dictation.md §13): hold is the default, all three enabled.
-    const modes = screen.getByRole("listbox", { name: "激活方式" });
+    const modes = screen.getByRole("listbox", { name: "录音方式" });
     expect(within(modes).getByRole("option", { name: "按住说话" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
     expect(within(modes).getAllByRole("option")).toHaveLength(3);
     expect(within(modes).queryByText(/尚未接入/)).toBeNull();
-    expect(screen.getByTestId("hotkey-status")).toHaveTextContent("已保存 · 系统热键已注册");
+    expect(screen.getByTestId("hotkey-status")).toHaveTextContent("已保存 · 快捷键已生效");
     await user.click(screen.getByRole("button", { name: "重新录制" }));
     expect(recorder).toHaveAttribute("data-recording", "true");
     // While the recorder is open the shell has suspended the OS registration.
@@ -320,7 +386,7 @@ describe("Settings · 热键", () => {
     expect(recorder).toHaveAttribute("data-recording", "false");
     await user.click(screen.getByRole("button", { name: "重新录制" }));
     await user.keyboard("x");
-    expect(await screen.findByText(/不允许纯单键绑定/)).toBeInTheDocument();
+    expect(await screen.findByText(/不允许单个按键作为快捷键/)).toBeInTheDocument();
     expect(backend.peek().settings.hotkey).toBe(DEFAULT_HOTKEY);
     // Physical keys and the peak set: Shift released first still records Ctrl+Shift+D.
     await user.click(screen.getByRole("button", { name: "重新录制" }));
@@ -336,10 +402,10 @@ describe("Settings · 热键", () => {
       expect(backend.peek().settings.hotkey).toBe("Ctrl+Shift+D");
     });
     expect(backend.peek().hotkey.registered).toBe("Ctrl+Shift+D");
-    expect(screen.getByTestId("hotkey-status")).toHaveTextContent("已保存 · 系统热键已注册");
+    expect(screen.getByTestId("hotkey-status")).toHaveTextContent("已保存 · 快捷键已生效");
     expect(within(recorder).getByText("Ctrl")).toBeInTheDocument();
     expect(within(recorder).getByText("D")).toBeInTheDocument();
-    expect(screen.getByText(/hotkey = "Ctrl\+Shift\+D"/)).toBeInTheDocument();
+    expect(screen.getByText("当前快捷键：Ctrl+Shift+D")).toBeInTheDocument();
     expect(screen.queryByText(/已被另一个 X11 客户端占用/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "重新录制" }));
     await user.keyboard("{Escape}");
@@ -360,7 +426,7 @@ describe("Settings · 热键", () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/settings/hotkey" });
     await screen.findByTestId("hotkey-recorder");
-    const modes = screen.getByRole("listbox", { name: "激活方式" });
+    const modes = screen.getByRole("listbox", { name: "录音方式" });
     expect(screen.queryByTestId("hold-threshold")).toBeNull();
     const extra = screen.getByTestId("extra-recording");
     expect(extra).toHaveValue(0);
@@ -473,7 +539,7 @@ describe("Settings · 热键", () => {
     const { backend } = renderApp({ path: "/settings/hotkey" });
     await screen.findByTestId("hotkey-recorder");
     const caps = screen.getByTestId("hotkey-capabilities");
-    expect(within(caps).getByTestId("capability-global")).toHaveTextContent("可以向系统注册");
+    expect(within(caps).getByTestId("capability-global")).toHaveTextContent("可用");
     expect(within(caps).getByTestId("capability-everywhere")).toHaveTextContent(
       "任何窗口有焦点时都生效",
     );
@@ -481,7 +547,7 @@ describe("Settings · 热键", () => {
     act(() => {
       backend.publish({
         type: "hotkey",
-        error: "Ctrl+Alt+Space 注册失败：纯 Wayland 会话不允许应用注册全局热键",
+        error: "Ctrl+Alt+Space 未能生效：纯 Wayland 会话不允许应用设置全局快捷键",
         pressed: false,
         capturing: false,
         backend: "global-shortcut · Linux · Wayland",
@@ -497,12 +563,12 @@ describe("Settings · 热键", () => {
     });
     await waitFor(() => {
       expect(within(caps).getByTestId("capability-global")).toHaveTextContent(
-        "这个会话不允许应用注册全局热键",
+        "当前会话不允许应用设置全局快捷键",
       );
     });
     // No input hook on pure Wayland: the single-key row says so and offers nothing.
     const solo = screen.getByTestId("solo-key");
-    expect(solo).toHaveTextContent("这个会话不能单独监听按键");
+    expect(solo).toHaveTextContent("当前会话不支持单键触发");
     expect(within(solo).getByRole("combobox", { name: "单键触发的按键" })).toBeDisabled();
     expect(within(caps).getByTestId("capability-hold")).toHaveTextContent("不支持");
     expect(within(caps).getByTestId("capability-command")).toHaveTextContent(
@@ -558,7 +624,7 @@ describe("Settings · 热键", () => {
     await waitFor(() => {
       expect(backend.peek().settings.solo_key).toBe("mouse_back");
     });
-    expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("监听中");
+    expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("已生效");
     expect(within(row).getByTestId("solo-key-notes")).toHaveTextContent("由 Voltip 独占");
     // The shell reports the key held down on its own.
     act(() => {
@@ -575,7 +641,7 @@ describe("Settings · 热键", () => {
         solo_error: "鼠标后退键 无法单独触发：另一个程序已经占用了这个鼠标键",
       });
     });
-    expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("无法监听");
+    expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("未生效");
     expect(within(row).getByRole("alert")).toHaveTextContent("另一个程序已经占用了这个鼠标键");
     await user.selectOptions(select, "off");
     await waitFor(() => {
@@ -588,7 +654,7 @@ describe("Settings · 热键", () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/settings/hotkey" });
     await screen.findByTestId("hotkey-recorder");
-    expect(screen.queryByRole("button", { name: "换一个组合键" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "更换快捷键" })).toBeNull();
     act(() => {
       backend.publish({
         type: "hotkey",
@@ -599,9 +665,9 @@ describe("Settings · 热键", () => {
       });
     });
     expect(await screen.findByText(/HotKey already registered/)).toBeInTheDocument();
-    expect(screen.getByTestId("hotkey-status")).toHaveTextContent("已保存 · 未能注册");
-    expect(screen.getByTestId("hotkey-backend")).toHaveTextContent("失败");
-    await user.click(screen.getByRole("button", { name: "换一个组合键" }));
+    expect(screen.getByTestId("hotkey-status")).toHaveTextContent("已保存 · 未能生效");
+    expect(screen.getByTestId("hotkey-backend")).toHaveTextContent("未生效");
+    await user.click(screen.getByRole("button", { name: "更换快捷键" }));
     expect(screen.getByTestId("hotkey-recorder")).toHaveAttribute("data-recording", "true");
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Alt", altKey: true }));
@@ -618,9 +684,9 @@ describe("Settings · 热键", () => {
       });
     });
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "换一个组合键" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "更换快捷键" })).toBeNull();
     });
-    expect(screen.getByTestId("hotkey-backend")).toHaveTextContent("已注册 · 按下中");
+    expect(screen.getByTestId("hotkey-backend")).toHaveTextContent("已生效 · 按下中");
   });
 
   it("regression: the voice-edit chord has its own recorder that saves through settings_set_edit_hotkey and never runs alongside the dictation recorder and turns off and on and refuses the dictation chord and shows the shell registration (section 19)", async () => {
@@ -629,9 +695,9 @@ describe("Settings · 热键", () => {
     const edit = await screen.findByTestId("edit-hotkey-recorder");
     const dictation = screen.getByTestId("hotkey-recorder");
     expect(screen.getByText("编辑选中文本")).toBeInTheDocument();
-    expect(screen.getByText(/按这个组合键说出修改指令/)).toBeInTheDocument();
+    expect(screen.getByText(/按这个快捷键说出修改指令/)).toBeInTheDocument();
     expect(within(edit).getByText("E")).toBeInTheDocument();
-    expect(screen.getByTestId("edit-hotkey-status")).toHaveTextContent("已保存 · 系统热键已注册");
+    expect(screen.getByTestId("edit-hotkey-status")).toHaveTextContent("已保存 · 快捷键已生效");
     // The built-in refine key is there: no warning.
     expect(screen.queryByText(/需要 AI 润色服务/)).toBeNull();
     // Recording the edit chord closes the dictation recorder (one recorder at a time).
@@ -660,7 +726,7 @@ describe("Settings · 热键", () => {
     await user.keyboard("{Control>}{Alt>}{ >}{/ }{/Alt}{/Control}");
     await waitFor(() => {
       expect(
-        backend.log.some((e) => e.type === "error" && e.message.includes("已用作听写热键")),
+        backend.log.some((e) => e.type === "error" && e.message.includes("已用作听写快捷键")),
       ).toBe(true);
     });
     expect(backend.peek().settings.edit_hotkey).toBe("Ctrl+Alt+Shift+E");
@@ -675,7 +741,7 @@ describe("Settings · 热键", () => {
     await waitFor(() => {
       expect(backend.peek().settings.edit_hotkey).toBe("Ctrl+Alt+E");
     });
-    expect(screen.getByTestId("edit-hotkey-status")).toHaveTextContent("已保存 · 系统热键已注册");
+    expect(screen.getByTestId("edit-hotkey-status")).toHaveTextContent("已保存 · 快捷键已生效");
     // The shell could not register it: the row says so and the banner offers a new chord.
     act(() => {
       backend.publish({
@@ -688,9 +754,9 @@ describe("Settings · 热键", () => {
       });
     });
     expect(await screen.findByText(/Ctrl\+Alt\+E 注册失败/)).toBeInTheDocument();
-    expect(screen.getByTestId("edit-hotkey-status")).toHaveTextContent("已保存 · 未能注册");
-    expect(screen.getByTestId("hotkey-status")).toHaveTextContent("已保存 · 系统热键已注册");
-    await user.click(screen.getByRole("button", { name: "换一个组合键" }));
+    expect(screen.getByTestId("edit-hotkey-status")).toHaveTextContent("已保存 · 未能生效");
+    expect(screen.getByTestId("hotkey-status")).toHaveTextContent("已保存 · 快捷键已生效");
+    await user.click(screen.getByRole("button", { name: "更换快捷键" }));
     expect(edit).toHaveAttribute("data-recording", "true");
     expect(dictation).toHaveAttribute("data-recording", "false");
     await user.keyboard("{Escape}");

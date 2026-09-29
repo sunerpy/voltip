@@ -15,7 +15,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use voltip_core::connectivity::{AddressCheck, ConnectivityReport, ConnectivityStatus, LanHostCheck, PeerCheck, ProbeResult, RelayCheck};
-use voltip_core::dictation::{FailureCode, ProcessingStage, Via};
+use voltip_core::dictation::{ClipboardCode, FailureCode, ProcessingStage, Via};
+use voltip_core::paste::{CopyReason, PasteFailure, PasteOutcome};
 use voltip_core::phone::{PhoneTakeFailure, PhoneTakeState, PhoneTakeView};
 use voltip_core::phone::{PhoneTextSource, SentText, SentTextFailure, SentTextState};
 use voltip_core::ui::{GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, UiEvent, UiState, UpdateStatus};
@@ -370,7 +371,7 @@ fn fallen_back_done_phase() -> DictationPhase {
             refine_error,
             mode: OutputMode::WholeTake,
             segments: None,
-            live_error: Some("open: asr: 流式模型未下载：实时预览".into()),
+            live_error: Some("open: asr: 实时识别模型未下载：实时预览".into()),
         },
         other => other,
     }
@@ -417,7 +418,8 @@ fn history_entries() -> Vec<HistoryEntry> {
             duration_ms: 900,
             asr_ms: 410,
             refine_ms: None,
-            outcome: Outcome::Clipboard { reason: "没有可粘贴的前台窗口".into() },
+            // Written before the fallback codes (2026-09-29): no `code`.
+            outcome: Outcome::Clipboard { reason: "没有可粘贴的前台窗口".into(), code: None },
             starred: false,
             mode: OutputMode::WholeTake,
             segments: None,
@@ -782,10 +784,11 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::Nearby { .. } => "nearby",
         UiEvent::Hardware(_) => "hardware",
         UiEvent::Connectivity(_) => "connectivity",
+        UiEvent::PasteResult { .. } => "paste_result",
     }
 }
 
-const ALL_EVENT_TAGS: [&str; 22] = [
+const ALL_EVENT_TAGS: [&str; 23] = [
     "state",
     "identity",
     "settings",
@@ -808,6 +811,7 @@ const ALL_EVENT_TAGS: [&str; 22] = [
     "provider_probe",
     "phone_take",
     "hardware",
+    "paste_result",
 ];
 
 /// The phone's list (docs/dictation.md §20.6): one text in every state.
@@ -895,7 +899,7 @@ fn scenes_event(list: Vec<Scene>) -> UiEvent {
 /// One value per `UiEvent` variant, plus the shapes the TypeScript union has to discriminate
 /// (`devices` with every connection kind, a failed pairing, a minimal default state).
 fn all_events() -> Vec<UiEvent> {
-    vec![
+    let mut events = vec![
         UiEvent::State(Box::default()),
         UiEvent::Identity(desktop_identity()),
         UiEvent::Settings(settings()),
@@ -950,7 +954,7 @@ fn all_events() -> Vec<UiEvent> {
         }),
         UiEvent::Hotkey(HotkeyStatus {
             registered: None,
-            error: Some("Ctrl+Alt+Space 注册失败：纯 Wayland 会话不允许应用注册全局热键".into()),
+            error: Some("Ctrl+Alt+Space 未能生效：纯 Wayland 会话不允许应用设置全局快捷键".into()),
             pressed: false,
             capturing: false,
             backend: "global-shortcut · Linux · Wayland".into(),
@@ -1009,35 +1013,50 @@ fn all_events() -> Vec<UiEvent> {
         }),
         // The streaming modes wait for the flush first (§12 `finalizing`).
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Processing { stage: ProcessingStage::Finalizing, started_at: AT_MS + 3200, preview: Some(live_text().preview()) },
+            phase: DictationPhase::Processing {
+                stage: ProcessingStage::Finalizing,
+                started_at: AT_MS + 3200,
+                stage_started_at: AT_MS + 3200,
+                preview: Some(live_text().preview()),
+            },
             session: 7,
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
         }),
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, preview: Some(live_text().preview()) },
+            phase: DictationPhase::Processing {
+                stage: ProcessingStage::Transcribing,
+                started_at: AT_MS + 3200,
+                stage_started_at: AT_MS + 3200,
+                preview: Some(live_text().preview()),
+            },
             session: 7,
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
         }),
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, preview: None },
+            phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
             session: 7,
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
         }),
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Processing { stage: ProcessingStage::Refining, started_at: AT_MS + 3200, preview: Some(live_text().preview()) },
+            phase: DictationPhase::Processing {
+                stage: ProcessingStage::Refining,
+                started_at: AT_MS + 3200,
+                stage_started_at: AT_MS + 4100,
+                preview: Some(live_text().preview()),
+            },
             session: 7,
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
         }),
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Processing { stage: ProcessingStage::Inserting, started_at: AT_MS + 3200, preview: None },
+            phase: DictationPhase::Processing { stage: ProcessingStage::Inserting, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
             session: 7,
             context: None,
             kind: TakeKind::Dictation,
@@ -1115,7 +1134,7 @@ fn all_events() -> Vec<UiEvent> {
             remote: None,
         }),
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, preview: None },
+            phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
             session: 18,
             context: Some(TakeContext { app: AppRef { id: "winword".into(), name: "WINWORD".into() }, scene: None }),
             kind: TakeKind::Dictation,
@@ -1124,6 +1143,14 @@ fn all_events() -> Vec<UiEvent> {
         history_event(history_entries()),
         history_event(vec![live_inject_history_entry()]),
         history_event(vec![HistoryEntry { outcome: Outcome::Failed { reason: "inject: 前台窗口拒绝了粘贴".into() }, ..history_entries().remove(0) }]),
+        // docs/dictation.md §4.2: a clipboard fallback with its code.
+        history_event(vec![HistoryEntry {
+            outcome: Outcome::Clipboard {
+                reason: "enigo: the application does not have the permission to simulate input".into(),
+                code: Some(ClipboardCode::NoPermission),
+            },
+            ..history_entries().remove(1)
+        }]),
         history_event(Vec::new()),
         UiEvent::Engines(engine_status()),
         UiEvent::Engines(EngineStatus { live_preview_ready: false, ..engine_status() }),
@@ -1209,7 +1236,12 @@ fn all_events() -> Vec<UiEvent> {
             remote: None,
         }),
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Processing { stage: ProcessingStage::Refining, started_at: AT_MS + 1400, preview: Some(EDIT_INSTRUCTION.into()) },
+            phase: DictationPhase::Processing {
+                stage: ProcessingStage::Refining,
+                started_at: AT_MS + 1400,
+                stage_started_at: AT_MS + 1400,
+                preview: Some(EDIT_INSTRUCTION.into()),
+            },
             session: 20,
             context: None,
             kind: TakeKind::Edit,
@@ -1284,7 +1316,24 @@ fn all_events() -> Vec<UiEvent> {
         // The scenes (docs/dictation.md §18.6), full and empty.
         scenes_event(scenes()),
         scenes_event(Vec::new()),
-    ]
+    ];
+    events.extend(paste_results());
+    events
+}
+
+/// The history's paste button (`voltip_core::paste`): every outcome with every reason, so the
+/// TypeScript enums are checked against all the Rust names.
+fn paste_results() -> Vec<UiEvent> {
+    let copied = [CopyReason::NoProbe, CopyReason::Timeout, CopyReason::TargetChanged, CopyReason::ClipboardOnly, CopyReason::PasteFailed]
+        .map(|reason| PasteOutcome::Copied { reason });
+    let failed = [PasteFailure::Busy, PasteFailure::Invalid, PasteFailure::Timeout, PasteFailure::Inject, PasteFailure::Unsupported]
+        .map(|reason| PasteOutcome::Failed { reason });
+    std::iter::once(PasteOutcome::Pasted)
+        .chain(copied)
+        .chain(failed)
+        .zip(1..)
+        .map(|(outcome, request_id)| UiEvent::PasteResult { request_id, outcome })
+        .collect()
 }
 
 /// Variant name for a parsed command; exhaustive so a new variant must be added to the fixture.

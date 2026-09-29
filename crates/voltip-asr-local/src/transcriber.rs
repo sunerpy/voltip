@@ -64,7 +64,7 @@ impl RecognizerLoader for DefaultLoader {
         match entry.engine {
             Engine::TranscribeCpp => GgufLoader.load(entry, dir, language, compute),
             Engine::SenseVoice | Engine::Paraformer => SherpaLoader.load(entry, dir, language, compute),
-            Engine::ZipformerStreaming => Err(format!("{}: 流式预览模型不能做整段识别", entry.id)),
+            Engine::ZipformerStreaming => Err(format!("{}: 实时预览模型不能识别整段录音", entry.id)),
             Engine::SileroVad => Err(format!("{}: 语音活动检测模型不能做整段识别", entry.id)),
         }
     }
@@ -435,7 +435,7 @@ mod tests {
         let Err(err) = DefaultLoader.load(crate::catalogue::streaming_entry(), dir.path(), None, &Compute::default()) else {
             panic!("a streaming model is not offline")
         };
-        assert!(err.contains("流式预览模型不能做整段识别"), "{err}");
+        assert!(err.contains("实时预览模型不能识别整段录音"), "{err}");
         let Err(err) = DefaultLoader.load(crate::catalogue::vad_entry(), dir.path(), None, &Compute::default()) else { panic!("a VAD is not a recogniser") };
         assert!(err.contains("语音活动检测模型不能做整段识别"), "{err}");
         // The real families reach their loaders and fail on the missing files, naming the entry.
@@ -624,7 +624,7 @@ mod tests {
         assert_eq!(loader.loads.load(Ordering::SeqCst), 4);
         // The streaming entry is installed but not a whole-take model: the loader refuses.
         let zf = t.select("zipformer-stream-zh-en");
-        assert!(matches!(zf.transcribe(&speech, None, &[]).await.unwrap_err(), DictationError::Asr(m) if m.contains("整段识别")));
+        assert!(matches!(zf.transcribe(&speech, None, &[]).await.unwrap_err(), DictationError::Asr(m) if m.contains("识别整段录音")));
         t.unload();
         assert_eq!(t.loaded(), None);
         // Other rates pass through (the recognisers resample); a recogniser error maps to `Asr`.

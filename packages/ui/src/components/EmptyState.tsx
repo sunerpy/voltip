@@ -40,7 +40,7 @@ export function EmptyState({
         {title}
       </div>
       {children !== undefined && (
-        <div className="max-w-[480px] text-[13px] leading-5 text-fg-muted">{children}</div>
+        <div className="max-w-[640px] text-[13px] leading-5 text-fg-muted">{children}</div>
       )}
       {mono !== undefined && <div className="mono text-[11px] text-fg-subtle">{mono}</div>}
       {actions !== undefined && <div className="mt-1 flex items-center gap-2">{actions}</div>}

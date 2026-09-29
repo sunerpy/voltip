@@ -37,7 +37,7 @@ describe("附近的电脑 (docs/pairing.md 「局域网发现」)", () => {
     expect(invoke).toHaveBeenCalledWith("pairing_join_nearby", {
       fingerprint: MOCK_NEARBY[0]?.fingerprint,
     });
-    expect(await screen.findByText("正在加入会话…")).toBeInTheDocument();
+    expect(await screen.findByText("正在加入配对…")).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "与 Studio 配对" })).toBeDisabled();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(700);
@@ -63,7 +63,7 @@ describe("附近的电脑 (docs/pairing.md 「局域网发现」)", () => {
     act(() => {
       backend.publish({ type: "nearby", devices: [device({ name: "Office PC" })] });
     });
-    expect(await within(card).findByText(/还没开始配对/)).toBeInTheDocument();
+    expect(await within(card).findByText(/尚未开始配对/)).toBeInTheDocument();
     expect(within(card).queryByRole("button")).toBeNull();
     act(() => {
       backend.publish({ type: "nearby", devices: [] });

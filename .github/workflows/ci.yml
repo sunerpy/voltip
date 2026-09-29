@@ -534,6 +534,15 @@ jobs:
           $exe = Get-ChildItem portable -Recurse -Filter 'voltip-desktop.exe' | Select-Object -First 1
           ./scripts/smoke-windows-gui.ps1 -Binary $exe.FullName -OutDir smoke-windows-gui
 
+      # The history's paste button on the same desktop: Notepad in front, Voltip on top of it; the
+      # entry lands in Notepad and Voltip stays minimised. Windows PowerShell for UI Automation.
+      - name: Portable exe — paste a history entry into Notepad
+        timeout-minutes: 5
+        shell: powershell
+        run: |
+          $exe = Get-ChildItem portable -Recurse -Filter 'voltip-desktop.exe' | Select-Object -First 1
+          ./scripts/smoke-windows-paste.ps1 -Binary $exe.FullName -OutDir smoke-windows-paste
+
       - name: NSIS installer — silent install, then the installed exe
         run: |
           $setup = Get-ChildItem dist-windows -Filter '*-setup.exe' | Select-Object -First 1
@@ -578,6 +587,8 @@ jobs:
             smoke-native-windows-installed/*.err
             smoke-windows-gui/*.txt
             smoke-windows-gui/*.log
+            smoke-windows-paste/*.txt
+            smoke-windows-paste/*.log
           if-no-files-found: warn
           retention-days: 7
 
@@ -858,6 +869,22 @@ jobs:
           version=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
           .github/scripts/check-macos-bundle.sh "target/$MACOS_TARGET/release/bundle" "$version" "$MACOS_ARCH"
           cp "target/$MACOS_TARGET/release/bundle/dmg/"*.dmg .
+
+      # The release guard's negative case (docs/runbook.md 发布 · macOS 签名): this build is signed ad
+      # hoc, so the check a release candidate runs must refuse it, and for that reason.
+      - name: The release guard refuses an ad-hoc app
+        env:
+          MACOS_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
+          requirement=$(jq -r .macos_signing.designated_requirement .github/release-targets.json)
+          if .github/scripts/check-macos-bundle.sh "target/$MACOS_TARGET/release/bundle" "$version" "$MACOS_ARCH" --expect-requirement "$requirement" >guard.log 2>&1; then
+            cat guard.log
+            echo "::error::the release guard accepted an ad-hoc app"
+            exit 1
+          fi
+          grep -F "signed ad hoc, not with the release certificate" guard.log
 
       - name: Headless native run (download a model, transcribe a public sample)
         shell: pwsh

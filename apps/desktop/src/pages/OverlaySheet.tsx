@@ -96,7 +96,7 @@ export default function OverlaySheet({ state }: OverlaySheetProps) {
           readout={READOUTS[single]}
           label={sampleLabels[single]}
           via={single === "inserted" ? "VS Code" : undefined}
-          mode={single === "processing" ? "LLM" : undefined}
+          mode={single === "processing" ? t("overlay.live.refineTag") : undefined}
           onCopy={copyFallback}
         />
       </div>
@@ -126,7 +126,7 @@ export default function OverlaySheet({ state }: OverlaySheetProps) {
                 readout={READOUTS[s]}
                 label={sampleLabels[s]}
                 via={s === "inserted" ? "VS Code" : undefined}
-                mode={s === "processing" ? "LLM" : undefined}
+                mode={s === "processing" ? t("overlay.live.refineTag") : undefined}
                 onCopy={copyFallback}
                 onStop={() => {
                   void backend.invoke("dictation_stop");

@@ -165,7 +165,7 @@ export function ModelCard({ model }: ModelCardProps) {
         <>
           {primary}
           {model.state.kind === "installed" && (
-            <Button size="sm" variant="text" className="text-danger" icon="trash" onClick={remove}>
+            <Button size="sm" variant="text-danger" icon="trash" onClick={remove}>
               {t("model.action.remove")}
             </Button>
           )}
@@ -225,7 +225,9 @@ export function ModelCard({ model }: ModelCardProps) {
               }),
             })}
           </span>
-          <span className="truncate text-fg-subtle">{model.state.path}</span>
+          <span className="truncate text-fg-subtle" title={model.state.path}>
+            {model.state.path}
+          </span>
         </div>
       )}
     </OptionCard>

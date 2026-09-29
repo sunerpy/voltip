@@ -1,4 +1,4 @@
-import { type Backend, type UiEvent, resolveLocale } from "@voltip/shared";
+import { type Backend, type UiEvent, coreMessageText, resolveLocale } from "@voltip/shared";
 import { BackendProvider, I18nProvider, useT, useUiState } from "@voltip/ui";
 import { type ReactNode, Suspense, lazy, useCallback, useEffect, useRef } from "react";
 import { AppearanceProvider } from "./app/appearance";
@@ -103,7 +103,7 @@ function EventToasts({ onEvent }: { onEvent: (fn: (e: UiEvent) => void) => void 
       switch (event.type) {
         case "error":
           shell.toast({
-            message: t("app.error", { message: event.message }),
+            message: t("app.error", { message: coreMessageText(event.message) }),
             duration: 5000,
             tone: "danger",
           });

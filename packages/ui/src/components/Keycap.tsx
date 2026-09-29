@@ -2,15 +2,18 @@ import { cx } from "../cx";
 
 export interface KeycapProps {
   children: string;
+  /** `danger`: outlined and lettered in the danger colour (the pill's Esc-to-cancel hint). */
+  tone?: "default" | "danger";
   className?: string;
 }
 
 /** `<kbd>`: mono 11 px, keycap surface, radius 6. */
-export function Keycap({ children, className }: KeycapProps) {
+export function Keycap({ children, tone = "default", className }: KeycapProps) {
   return (
     <kbd
       className={cx(
-        "mono inline-flex h-5 min-w-5 items-center justify-center rounded-6 border border-keycap-border bg-keycap-bg px-1.5 text-[11px] leading-none text-fg-muted",
+        "mono inline-flex h-5 min-w-5 items-center justify-center rounded-6 border bg-keycap-bg px-1.5 text-[11px] leading-none",
+        tone === "danger" ? "border-danger text-danger" : "border-keycap-border text-fg-muted",
         className,
       )}>
       {children}

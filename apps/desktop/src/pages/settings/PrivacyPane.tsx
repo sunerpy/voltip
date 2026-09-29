@@ -164,7 +164,6 @@ export function PrivacyPane() {
                 value: String(n),
                 label: t("settings.brief.privacy.keepOption", { n }),
               }))}
-              className="w-32"
             />
           </StatusRow>
           <StatusRow

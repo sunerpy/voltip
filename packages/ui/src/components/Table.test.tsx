@@ -120,6 +120,34 @@ describe("Table", () => {
     expect(renderCell({ type: "text", text: "x" })).toBeTruthy();
   });
 
+  it("regression: Enter and Space on a button inside a selectable row press the button, not the row", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const onAction = vi.fn();
+    const columns: TableColumn<Row>[] = [
+      { id: "name", header: "名称", cell: (r) => ({ type: "text", text: r.name }) },
+      {
+        id: "actions",
+        header: "操作",
+        cell: () => ({ type: "actions", actions: [{ label: "复制", onClick: onAction }] }),
+      },
+    ];
+    render(
+      <Table label="t" columns={columns} rows={rows} rowKey={(r) => r.id} onSelect={onSelect} />,
+    );
+    const button = screen.getAllByRole("button", { name: "复制" })[0];
+    if (button === undefined) throw new Error("no action button");
+    button.focus();
+    await user.keyboard("{Enter}");
+    await user.keyboard(" ");
+    expect(onAction).toHaveBeenCalledTimes(2);
+    expect(onSelect).not.toHaveBeenCalled();
+    // The row itself still answers its keys.
+    button.closest("tr")?.focus();
+    await user.keyboard("{Enter}");
+    expect(onSelect).toHaveBeenCalledWith(rows[0]);
+  });
+
   it("regression: cells are single truncated lines; flexible columns share width, fixed ones are capped", () => {
     const columns: TableColumn<Row>[] = [
       { id: "name", header: "名称", minWidth: 120, cell: (r) => ({ type: "text", text: r.name }) },
@@ -149,5 +177,59 @@ describe("Table", () => {
       expect(cell.className).toContain("overflow-hidden");
     }
     expect(style(firstCells[2])).toBe("width: 84px; max-width: 84px;");
+  });
+
+  it("regression: a fit column is as wide as its widest line and takes no share of the flexible width", () => {
+    // The 1280 / 1440 px English check (plan 1.2): 「14 minutes ago」 and 「Online · direct」 were cut
+    // in 76 and 92 px columns sized for 「14 分钟前」 and 「在线 · 直连」.
+    const columns: TableColumn<Row>[] = [
+      { id: "name", header: "名称", minWidth: 120, cell: (r) => ({ type: "text", text: r.name }) },
+      {
+        id: "state",
+        header: "状态",
+        fit: true,
+        cell: (r) => ({ type: "text", text: r.online ? "Online · direct" : "Offline" }),
+      },
+    ];
+    render(<Table label="t" columns={columns} rows={rows} rowKey={(r) => r.id} />);
+    const style = (el: HTMLElement | undefined) =>
+      (el?.getAttribute("style") ?? "").replaceAll(/\b0px\b/g, "0");
+    const headers = screen.getAllByRole("columnheader");
+    expect(style(headers[0])).toBe("width: 100%; max-width: 0; min-width: 120px;");
+    expect(style(headers[1])).toBe("width: 1%;");
+    const firstRow = screen.getAllByRole("row")[1];
+    if (firstRow === undefined) throw new Error("no body row");
+    const cells = within(firstRow).getAllByRole("cell");
+    expect(style(cells[1])).toBe("width: 1%;");
+    expect(cells[1]?.className).toContain("whitespace-nowrap");
+    expect(document.querySelectorAll("col")[1]).not.toHaveAttribute("style");
+  });
+
+  it("regression: a two-line cell cuts either line with an ellipsis and a title, or wraps the second when asked", () => {
+    render(
+      <>
+        {renderCell({
+          type: "two",
+          primary: "MacBook Pro · macOS",
+          secondary: "B08F … E2D8 · paired on 09-17",
+        })}
+        {renderCell({
+          type: "two",
+          primary: "Accessibility",
+          secondary: "Required · finds the focused field and inserts text",
+          wrapSecondary: true,
+        })}
+      </>,
+    );
+    const name = screen.getByText("MacBook Pro · macOS");
+    expect(name).toHaveClass("truncate");
+    expect(name).toHaveAttribute("title", "MacBook Pro · macOS");
+    const fingerprint = screen.getByText("B08F … E2D8 · paired on 09-17");
+    expect(fingerprint).toHaveClass("truncate");
+    expect(fingerprint).toHaveAttribute("title", "B08F … E2D8 · paired on 09-17");
+    const purpose = screen.getByText("Required · finds the focused field and inserts text");
+    expect(purpose).toHaveClass("whitespace-normal");
+    expect(purpose).not.toHaveClass("truncate");
+    expect(purpose).not.toHaveAttribute("title");
   });
 });

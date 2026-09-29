@@ -60,7 +60,7 @@ export function AboutPane() {
               className="mono flex flex-col items-end gap-0.5 text-[11px] text-fg"
               data-testid="model-sources">
               {sources.map((repo) => (
-                <li key={repo} className="max-w-[320px] truncate" title={repo}>
+                <li key={repo} className="max-w-full truncate" title={repo}>
                   {repo}
                 </li>
               ))}

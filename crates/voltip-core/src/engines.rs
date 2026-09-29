@@ -437,12 +437,12 @@ impl EngineIssue {
     pub fn message(self, kind: ServiceKind) -> &'static str {
         match (self, kind) {
             (Self::Unavailable, ServiceKind::Asr) => "此服务商不提供语音识别",
-            (Self::Unavailable, ServiceKind::Llm) => "此服务商不提供文本润色",
-            (Self::KeyMissing, _) => "服务商缺少 API 密钥（在「设置 › 引擎」填写）",
-            (Self::UrlMissing, _) => "自定义服务缺少接口地址（在「设置 › 引擎」填写）",
-            (Self::ModelMissing, _) => "未选择模型（在「设置 › 引擎」选择）",
+            (Self::Unavailable, ServiceKind::Llm) => "此服务商不提供 AI 润色",
+            (Self::KeyMissing, _) => "服务商缺少 API 密钥（在「语音模型」或「AI 模型」页填写）",
+            (Self::UrlMissing, _) => "自定义接口缺少接口地址（在「语音模型」或「AI 模型」页填写）",
+            (Self::ModelMissing, _) => "未选择模型（在「语音模型」或「AI 模型」页选择）",
             (Self::ModelNotInstalled, _) => "本地模型未下载",
-            (Self::NoProvider, _) => "未选择润色服务商",
+            (Self::NoProvider, _) => "未选择 AI 润色服务商",
         }
     }
 }

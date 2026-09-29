@@ -9,12 +9,15 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 use voltip_core::dictation::LevelFrame;
+use voltip_core::paste::{PasteFailure, PasteOutcome, PasteTarget};
 use voltip_core::scenes::{MAX_RECENT_APPS, recent_apps, validate_scene_draft};
 use voltip_core::ui::{UiEvent, UiState};
 use voltip_core::vocabulary::{export_rules_toml, parse_rules_toml, preview, validate_dictionary_draft, validate_rule_draft};
@@ -467,6 +470,8 @@ pub struct Bridge {
     handle: CoreHandle,
     state: Arc<Mutex<UiState>>,
     events: broadcast::Sender<UiEvent>,
+    /// The last id [`Bridge::paste`] gave out: each answer finds the call that asked.
+    paste_ids: Arc<AtomicU64>,
 }
 
 impl std::fmt::Debug for Bridge {
@@ -504,7 +509,7 @@ impl Bridge {
         let (tx, first) = broadcast::channel(256);
         let state = Arc::new(Mutex::new(UiState::default()));
         let (handle, core_events) = AppCore::start_with(config, secret_store, ports)?;
-        let bridge = Self { handle, state: state.clone(), events: tx.clone() };
+        let bridge = Self { handle, state: state.clone(), events: tx.clone(), paste_ids: Arc::new(AtomicU64::new(0)) };
         tokio::spawn(pump(core_events, state, tx));
         Ok((bridge, first))
     }
@@ -529,6 +534,35 @@ impl Bridge {
         let core_cmd = cmd.into_core()?;
         self.handle.try_send(core_cmd)?;
         Ok(())
+    }
+
+    /// `paste_text` (the history's 「粘贴到上一个窗口」, `voltip_core::paste`): hand `text` to the
+    /// core for `target` and wait at most `within` for the answer. The receiver subscribes before
+    /// the command goes out, so the answer cannot pass by unseen; none in time, or a core that has
+    /// stopped, is `failed { timeout }`.
+    pub async fn paste(&self, text: String, target: PasteTarget, within: Duration) -> PasteOutcome {
+        let no_answer = PasteOutcome::Failed { reason: PasteFailure::Timeout };
+        let request_id = self.paste_ids.fetch_add(1, Ordering::Relaxed) + 1;
+        let mut events = self.events.subscribe();
+        let answer = async {
+            self.handle.send(CoreCommand::PasteText { request_id, text, target }).await.map_err(|e| tracing::warn!(error = %e, "the core took no paste"))?;
+            loop {
+                match events.recv().await {
+                    Ok(UiEvent::PasteResult { request_id: id, outcome }) if id == request_id => return Ok(outcome),
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => tracing::warn!(skipped, "paste answer may have been dropped"),
+                    Err(broadcast::error::RecvError::Closed) => return Err(()),
+                }
+            }
+        };
+        match tokio::time::timeout(within, answer).await {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(())) => no_answer,
+            Err(_) => {
+                tracing::warn!(request_id, "no paste answer in time");
+                no_answer
+            }
+        }
     }
 
     /// Publish an event the shell produced itself (global hotkey registration / presses): folded
@@ -959,5 +993,47 @@ mod tests {
         bridge.shutdown();
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(bridge.dispatch(UiCommand::DevicesRefresh).is_err() || true, "dispatch after shutdown may fail; must not panic");
+    }
+
+    /// `paste` (the history's paste button): a core that does not answer in time is
+    /// `failed { timeout }`, and every call takes its own answer, whatever other paste answers go by.
+    #[tokio::test]
+    async fn a_paste_waits_for_its_own_answer_and_gives_up_in_time() {
+        use voltip_core::dictation::fakes::{FAKE_TRANSCRIPT, FakeAudio, FakeInjector, FakeTranscriber, ports_with};
+        use voltip_core::paste::CopyReason;
+        let dir = tempfile::tempdir().unwrap();
+        voltip_core::SettingsStore::new(dir.path())
+            .save(&voltip_core::Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Default::default() })
+            .unwrap();
+        // The injector holds every copy until the test lets it through.
+        let injector = Arc::new(FakeInjector::paste().gated());
+        let ports = ports_with(Arc::new(FakeAudio::speech()), Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT)), None, injector.clone());
+        let bridge = Bridge::start_with(CoreConfig::new(dir.path().to_path_buf()), Arc::new(MemorySecretStore::new()), ports).unwrap();
+        let copy = PasteTarget::CopyOnly;
+
+        // Held: no answer in time.
+        let mut rx = bridge.events();
+        assert_eq!(
+            bridge.paste("一".into(), copy(CopyReason::NoProbe), Duration::from_millis(200)).await,
+            PasteOutcome::Failed { reason: PasteFailure::Timeout }
+        );
+        // Let through, it still answers; that answer goes by before the next paste starts, so the
+        // next one is not refused as busy.
+        injector.release(1);
+        let late = loop {
+            if let UiEvent::PasteResult { request_id, outcome } = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap() {
+                break (request_id, outcome);
+            }
+        };
+        assert_eq!(late, (1, PasteOutcome::Copied { reason: CopyReason::NoProbe }));
+
+        // Another request's answer going by first is not taken for this one's.
+        injector.release(1);
+        let foreign = UiEvent::PasteResult { request_id: 999, outcome: PasteOutcome::Failed { reason: PasteFailure::Inject } };
+        let (outcome, ()) = tokio::join!(bridge.paste("二".into(), copy(CopyReason::Timeout), Duration::from_secs(5)), async { bridge.publish(foreign) });
+        assert_eq!(outcome, PasteOutcome::Copied { reason: CopyReason::Timeout });
+        assert_eq!(injector.clipboard_copies(), vec!["一".to_owned(), "二".to_owned()]);
+        assert!(injector.injected().is_empty(), "a copy-only paste never pastes");
+        bridge.shutdown();
     }
 }

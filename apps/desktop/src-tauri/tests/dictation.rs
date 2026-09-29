@@ -191,7 +191,8 @@ impl voltip_inject::Injector for Recording {
 fn native_injector_switches_on_the_mode_the_factory_saw() {
     let mode = Arc::new(Mutex::new(InjectMode::Paste));
     let paste = Box::new(Recording { outcome: Ok(voltip_inject::Injection::pasted(3)), calls: AtomicUsize::new(0) });
-    let clipboard = Box::new(Recording { outcome: Ok(voltip_inject::Injection::clipboard(3, Some("clipboard only".into()))), calls: AtomicUsize::new(0) });
+    let note = voltip_inject::InjectNote::new(voltip_inject::FallbackCode::Other, "clipboard only");
+    let clipboard = Box::new(Recording { outcome: Ok(voltip_inject::Injection::clipboard(3, Some(note))), calls: AtomicUsize::new(0) });
     let injector = NativeInjector::with(mode.clone(), paste, clipboard);
     assert_eq!(injector.inject("abc").unwrap().via, Via::Paste);
     let factory = engine_factory(mode.clone(), LocalTranscriber::new(std::env::temp_dir().join("voltip-test-models")), None);
@@ -199,7 +200,7 @@ fn native_injector_switches_on_the_mode_the_factory_saw() {
     assert_eq!(*mode.lock(), InjectMode::ClipboardOnly, "the factory records the mode");
     let out = injector.inject("abc").unwrap();
     assert_eq!(out.via, Via::Clipboard);
-    assert_eq!(out.note.as_deref(), Some("clipboard only"));
+    assert_eq!(out.note, Some(voltip_core::dictation::InjectNote::other("clipboard only")));
     factory(&resolved(None, None, None, None, InjectMode::Paste));
     assert_eq!(injector.inject("abc").unwrap().via, Via::Paste);
     // Failures map to `Inject` with the crate's message.
@@ -279,7 +280,7 @@ async fn build_clients_local_mode_selects_the_model_and_needs_no_endpoint() {
     assert!(matches!(t.transcribe(&wav, None, &[]).await.unwrap_err(), DictationError::Asr(m) if m.contains("均衡")));
     // The streaming port is wired over the same library: nothing installed → the documented refusal.
     let streaming = ports.dictation.streaming.as_ref().expect("the desktop wires the streaming preview");
-    assert_eq!(streaming.open(None).err(), Some(DictationError::Asr("流式模型未下载：实时预览".into())));
+    assert_eq!(streaming.open(None).err(), Some(DictationError::Asr("实时识别模型未下载：实时预览".into())));
     streaming.warm();
 }
 

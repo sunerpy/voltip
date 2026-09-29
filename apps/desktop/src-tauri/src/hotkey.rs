@@ -157,7 +157,7 @@ fn remote_command(flag: &str) -> String {
 pub fn session_block(session: Option<SessionKind>, label: &str, toggle: &str) -> Option<String> {
     match session.map(SessionKind::x11_grab) {
         Some(X11Grab::Unavailable) => {
-            Some(format!("{label} 注册失败：纯 Wayland 会话不允许应用注册全局热键。请在系统设置的自定义快捷键里把 {label} 绑定到命令 `{toggle}`"))
+            Some(format!("{label} 未能生效：纯 Wayland 会话不允许应用设置全局快捷键。请在系统设置的自定义快捷键里把 {label} 绑定到命令 `{toggle}`"))
         }
         _ => None,
     }
@@ -340,7 +340,7 @@ pub fn apply<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, registry: &Arc<Hot
     }
     if let Some(edit) = &chords.edit_hotkey {
         if Hotkey::same_chord(edit, &chords.hotkey) {
-            status.edit_error = Some(format!("{edit} 与听写热键相同，未注册"));
+            status.edit_error = Some(format!("{edit} 与听写快捷键相同，未生效"));
         } else {
             match register(app, bridge, registry, edit, TakeKind::Edit, session) {
                 Ok(label) => status.edit_registered = Some(label),
@@ -532,7 +532,7 @@ fn register<R: Runtime>(
         }
         Err(e) => {
             tracing::warn!(hotkey = %label, error = %e, purpose = purpose.as_str(), "global hotkey registration failed");
-            Err(format!("{label} 注册失败：{e}"))
+            Err(format!("{label} 未能生效：{e}"))
         }
     }
 }
@@ -613,7 +613,7 @@ mod tests {
     fn the_cancel_key_is_held_only_while_a_take_can_be_cancelled() {
         use voltip_core::ProcessingStage;
         let listening = DictationPhase::Listening { started_at: 0, ready: true, locked: false, live: None };
-        let processing = DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: 0, preview: None };
+        let processing = DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: 0, stage_started_at: 0, preview: None };
         assert!(cancel_key_wanted(&listening));
         assert!(cancel_key_wanted(&processing));
         assert!(!cancel_key_wanted(&DictationPhase::Idle));
@@ -706,7 +706,7 @@ mod tests {
         let reason = session_block(Some(SessionKind::Wayland), "Ctrl+Alt+Space", toggle).unwrap();
         assert_eq!(
             reason,
-            "Ctrl+Alt+Space 注册失败：纯 Wayland 会话不允许应用注册全局热键。请在系统设置的自定义快捷键里把 Ctrl+Alt+Space 绑定到命令 `voltip-desktop --toggle`"
+            "Ctrl+Alt+Space 未能生效：纯 Wayland 会话不允许应用设置全局快捷键。请在系统设置的自定义快捷键里把 Ctrl+Alt+Space 绑定到命令 `voltip-desktop --toggle`"
         );
         assert_eq!(session_block(Some(SessionKind::XWayland), "Ctrl+Alt+Space", toggle), None);
         assert_eq!(session_block(Some(SessionKind::X11), "Ctrl+Alt+Space", toggle), None);

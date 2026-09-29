@@ -92,8 +92,10 @@ describe("vocabulary page helpers", () => {
   });
 
   it("reports the rejection text of both backends", () => {
-    expect(errorText("dictionary: x")).toBe("dictionary: x");
-    expect(errorText(new Error("rules: y"))).toBe("rules: y");
+    // docs/frontend.md §8: the core's machine prefix is for the log, not the reader.
+    expect(errorText("dictionary: x")).toBe("x");
+    expect(errorText(new Error("rules: y"))).toBe("y");
+    expect(errorText("没有前缀的原因")).toBe("没有前缀的原因");
   });
 
   it("checks a dictionary draft while typing in both locales", () => {

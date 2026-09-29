@@ -455,6 +455,9 @@ export const dictationPhaseSchema = z.discriminatedUnion("phase", [
     phase: z.literal("processing"),
     stage: processingStageSchema,
     started_at: z.number(),
+    /** When the current `stage` began: the pill counts the step from here (user feedback
+     *  2026-09-29). Absent or `0` from a core that did not send it; fall back to `started_at`. */
+    stage_started_at: z.number().optional(),
     /** `committed + current` carried over from listening, shown until the final text arrives. */
     preview: z.string().optional(),
   }),
@@ -596,10 +599,28 @@ export function idleDictation(): DictationStatus {
   return { session: 0, phase: { phase: "idle" }, kind: "dictation" };
 }
 
-/** `voltip_core::history::Outcome`. */
+/** `voltip_core::dictation::ClipboardCode`: why a requested paste left the text on the clipboard
+ *  (docs/dictation.md §4.2). The history explains each in a sentence. */
+export const CLIPBOARD_CODES = [
+  "no_permission",
+  "no_tool",
+  "no_display",
+  "secure_input",
+  "elevated_target",
+  "other",
+] as const;
+export const clipboardCodeSchema = z.enum(CLIPBOARD_CODES);
+export type ClipboardCode = z.infer<typeof clipboardCodeSchema>;
+
+/** `voltip_core::history::Outcome`. A clipboard fallback's `reason` is the injector's own message
+ *  (shown only under the technical details); `code` is absent in entries written before it. */
 export const historyOutcomeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("inserted"), via: viaSchema }),
-  z.object({ kind: z.literal("clipboard"), reason: z.string() }),
+  z.object({
+    kind: z.literal("clipboard"),
+    reason: z.string(),
+    code: clipboardCodeSchema.optional(),
+  }),
   z.object({ kind: z.literal("failed"), reason: z.string() }),
 ]);
 export type HistoryOutcome = z.infer<typeof historyOutcomeSchema>;
@@ -1250,6 +1271,33 @@ export function uncheckedPreflight(platform: HostOs): InjectPreflight {
   };
 }
 
+/** `voltip_core::paste::MAX_PASTE_TEXT_CHARS`: most characters `paste_text` takes. */
+export const MAX_PASTE_TEXT_CHARS = 50_000;
+
+/** `voltip_core::paste::CopyReason`: why a paste left the text on the clipboard instead. */
+export const COPY_REASONS = [
+  "no_probe",
+  "timeout",
+  "target_changed",
+  "clipboard_only",
+  "paste_failed",
+] as const;
+export const copyReasonSchema = z.enum(COPY_REASONS);
+export type CopyReason = z.infer<typeof copyReasonSchema>;
+
+/** `voltip_core::paste::PasteFailure`: why a paste neither pasted nor copied. */
+export const PASTE_FAILURES = ["busy", "invalid", "timeout", "inject", "unsupported"] as const;
+export const pasteFailureSchema = z.enum(PASTE_FAILURES);
+export type PasteFailure = z.infer<typeof pasteFailureSchema>;
+
+/** `voltip_core::paste::PasteOutcome` (`#[serde(tag = "kind")]`): the `paste_text` answer. */
+export const pasteOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("pasted") }),
+  z.object({ kind: z.literal("copied"), reason: copyReasonSchema }),
+  z.object({ kind: z.literal("failed"), reason: pasteFailureSchema }),
+]);
+export type PasteOutcome = z.infer<typeof pasteOutcomeSchema>;
+
 /** `voltip_core::update::UpdateStatus` (`#[serde(tag = "state")]`). */
 export const updateStatusSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("idle") }),
@@ -1531,6 +1579,13 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("nearby"), devices: z.array(nearbyDeviceSchema) }),
   /** What the local models can run on (§10.6), reported once by the desktop shell. */
   hardwareStatusSchema.extend({ type: z.literal("hardware") }),
+  /** The core's answer to a paste from the history: the desktop shell waits for it, the webview
+   *  reads `paste_text`'s own answer instead. */
+  z.object({
+    type: z.literal("paste_result"),
+    request_id: z.number(),
+    outcome: pasteOutcomeSchema,
+  }),
 ]);
 export type UiEvent = z.infer<typeof uiEventSchema>;
 export type UiEventType = UiEvent["type"];
@@ -1745,6 +1800,10 @@ export interface CommandArgs {
   permissions_request: { permission: Permission };
   /** Query (§15.3): would an injection into the foreground window land (`Backend.injectPreflight`). */
   inject_preflight: undefined;
+  /** 「粘贴到上一个窗口」 on the home and history pages (`Backend.pasteText`): the desktop moves
+   *  Voltip out of the way and pastes into the window that comes to the front, or copies; the
+   *  answer says which. The phone answers `failed { unsupported }`. */
+  paste_text: { text: string };
 }
 export type CommandName = keyof CommandArgs;
 /** Queries and streams: called through dedicated `Backend` methods, never through `invoke`. */
@@ -1761,6 +1820,7 @@ export type QueryCommand =
   | "permissions_status"
   | "permissions_request"
   | "inject_preflight"
+  | "paste_text"
   | "provider_console_open"
   | "project_link_open"
   | "feedback_diagnostics"
@@ -1782,6 +1842,7 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "permissions_status",
   "permissions_request",
   "inject_preflight",
+  "paste_text",
   "provider_console_open",
   "project_link_open",
   "feedback_diagnostics",
@@ -1903,6 +1964,7 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
     case "message":
     case "error":
     case "provider_probe":
+    case "paste_result":
       return state;
   }
 }
