@@ -475,11 +475,117 @@ pub const fn main_window_close(os: HostOs, tray_installed: bool) -> CloseAction 
     }
 }
 
+/// Rebuilds a tray menu in the order the rebuilds read their state. A menu choice forces a rebuild
+/// (a clicked check item toggles itself, and the menu must show what was saved), and the settings
+/// event the choice causes triggers another; the two run at the same time. Reading the state,
+/// comparing it with the menu shown, building and installing the new menu all happen under one
+/// lock, so the menu installed last is built from the newest state. (CI 2026-09-29, the macOS tray
+/// smoke: the forced rebuild had read the state before AI 润色 was switched back on and installed
+/// its menu 37 µs after the one built from the new state; the menu showed the switch off.)
+#[derive(Debug)]
+pub struct MenuSync<M> {
+    shown: std::sync::Mutex<M>,
+}
+
+impl<M: Clone + PartialEq> MenuSync<M> {
+    /// `initial`: the model of the menu the tray was created with.
+    pub fn new(initial: M) -> Self {
+        Self { shown: std::sync::Mutex::new(initial) }
+    }
+
+    /// Rebuild when the model `read` returns differs from the one shown, or always with `force`.
+    /// `read` gets the model shown (for what it does not read itself); `install` builds and installs
+    /// the menu. Both run under the lock. `Ok(true)`: a menu was installed. After an error the model
+    /// shown stays as it was, so the next rebuild tries again.
+    pub fn sync<E>(&self, force: bool, read: impl FnOnce(&M) -> M, install: impl FnOnce(&M) -> Result<(), E>) -> Result<bool, E> {
+        let mut shown = self.shown.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let next = read(&shown);
+        if !force && *shown == next {
+            return Ok(false);
+        }
+        install(&next)?;
+        *shown = next;
+        Ok(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const SIZES: [u32; 5] = [16, 20, 24, 32, 36];
+
+    #[test]
+    fn regression_a_rebuild_that_read_the_state_earlier_never_installs_over_a_newer_one() {
+        // CI 2026-09-29 (run 36601783515, the macOS tray smoke): AI 润色 switched back on, the
+        // rebuild the choice forced had read the state before the change and installed its menu
+        // after the one the settings event built from the new state.
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::{Arc, Mutex, mpsc};
+        use std::time::Duration;
+        let menu = Arc::new(MenuSync::new(0u32));
+        let state = Arc::new(AtomicU32::new(1));
+        let installed = Arc::new(Mutex::new(Vec::new()));
+        let (read_tx, read_rx) = mpsc::channel();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        // The forced rebuild reads the state before the change, then is slow to install: it waits
+        // for the event's rebuild, or 500 ms when that one is (rightly) held back by the lock.
+        let forced = {
+            let (menu, state, installed) = (menu.clone(), state.clone(), installed.clone());
+            std::thread::spawn(move || {
+                menu.sync(
+                    true,
+                    |_| {
+                        let read = state.load(Ordering::SeqCst);
+                        read_tx.send(()).unwrap();
+                        read
+                    },
+                    |next| {
+                        let _ = go_rx.recv_timeout(Duration::from_millis(500));
+                        installed.lock().unwrap().push(*next);
+                        Ok::<(), ()>(())
+                    },
+                )
+            })
+        };
+        read_rx.recv().unwrap();
+        state.store(2, Ordering::SeqCst);
+        let event = {
+            let (menu, state, installed) = (menu.clone(), state.clone(), installed.clone());
+            std::thread::spawn(move || {
+                menu.sync(
+                    false,
+                    |_| state.load(Ordering::SeqCst),
+                    |next| {
+                        installed.lock().unwrap().push(*next);
+                        Ok::<(), ()>(())
+                    },
+                )
+            })
+        };
+        assert_eq!(event.join().unwrap(), Ok(true));
+        go_tx.send(()).ok();
+        assert_eq!(forced.join().unwrap(), Ok(true));
+        assert_eq!(*installed.lock().unwrap(), vec![1, 2], "the menu installed last shows the newest state");
+    }
+
+    #[test]
+    fn menu_sync_rebuilds_on_change_or_when_forced_and_retries_after_an_error() {
+        let menu = MenuSync::new(1u32);
+        let mut installs = 0;
+        let mut count = |_: &u32| {
+            installs += 1;
+            Ok::<(), ()>(())
+        };
+        assert_eq!(menu.sync(false, |_| 1, &mut count), Ok(false), "unchanged: nothing to do");
+        assert_eq!(menu.sync(true, |_| 1, &mut count), Ok(true), "forced");
+        assert_eq!(menu.sync(false, |shown| shown + 1, &mut count), Ok(true), "changed");
+        assert_eq!(installs, 2);
+        // A failed install keeps the old model, so the same state is tried again.
+        assert_eq!(menu.sync(false, |_| 3, |_| Err("no menu")), Err("no menu"));
+        assert_eq!(menu.sync(false, |_| 3, |_| Ok::<(), &str>(())), Ok(true));
+        assert_eq!(menu.sync(false, |shown| *shown, |_| Ok::<(), ()>(())), Ok(false));
+    }
 
     fn pixel(buf: &[u8], size: u32, x: u32, y: u32) -> [u8; 4] {
         let i = ((y * size + x) * 4) as usize;

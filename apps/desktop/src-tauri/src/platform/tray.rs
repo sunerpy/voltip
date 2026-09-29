@@ -15,8 +15,8 @@ use tauri::{AppHandle, Emitter as _, Manager as _, Runtime};
 use voltip_core::ui::UiEvent;
 use voltip_platform::HostOs;
 use voltip_platform::tray::{
-    TRAY_POLISH_ID, TRAY_POLISH_TOGGLE_ID, TrayAction, TrayGlyph, TrayLocale, TrayPolish, TrayPolishAction, TrayStyle, polish_menu_label, polish_toggle_label,
-    render_tray_icon, tray_icon_size, tray_preset_id, tray_tooltip,
+    MenuSync, TRAY_POLISH_ID, TRAY_POLISH_TOGGLE_ID, TrayAction, TrayGlyph, TrayLocale, TrayPolish, TrayPolishAction, TrayStyle, polish_menu_label,
+    polish_toggle_label, render_tray_icon, tray_icon_size, tray_preset_id, tray_tooltip,
 };
 use voltip_tauri_bridge::{Bridge, UiCommand};
 
@@ -36,7 +36,8 @@ struct TrayRequest {
 /// What the icon and the menu show. Managed as Tauri state once the tray is up.
 pub struct TrayState {
     shown: Mutex<Shown>,
-    menu: Mutex<MenuModel>,
+    /// The menu shown, rebuilt in the order the rebuilds read the state (`MenuSync`).
+    menu: MenuSync<MenuModel>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,7 +125,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, locale: TrayLocale, updater: bool
             }
         })
         .build(app)?;
-    app.manage(TrayState { shown: Mutex::new(Shown { glyph: TrayGlyph::Idle, locale }), menu: Mutex::new(model) });
+    app.manage(TrayState { shown: Mutex::new(Shown { glyph: TrayGlyph::Idle, locale }), menu: MenuSync::new(model) });
     tracing::info!(?locale, updater, "tray icon installed");
     Ok(())
 }
@@ -213,30 +214,30 @@ pub fn set_glyph<R: Runtime>(app: &AppHandle<R>, glyph: TrayGlyph) {
     show(app, Shown { glyph, ..current });
 }
 
-/// The tooltip's language, and the menu for the bridge's state (its language, the AI 润色 switch
-/// and the presets): rebuilt when it changed, or always with `force`.
+/// The menu for the bridge's state (its language, the AI 润色 switch and the presets) and the
+/// tooltip's language: rebuilt when it changed, or always with `force`. The state is read,
+/// compared and installed under the menu's lock, so a rebuild that read an older state never
+/// installs its menu after a newer one (`MenuSync`).
 fn sync<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, force: bool) {
     let (Some(tray), Some(tray_state)) = (app.tray_by_id(TRAY_ID), app.try_state::<TrayState>()) else { return };
-    let state = bridge.state();
-    let locale = super::tray_locale(state.settings.locale);
-    let current = *tray_state.shown.lock();
-    show(app, Shown { locale, ..current });
-    let next = {
-        let mut menu = tray_state.menu.lock();
-        let next = MenuModel { locale, updater: menu.updater, polish: super::tray_polish(&state, locale) };
-        if !force && *menu == next {
-            return;
-        }
-        *menu = next.clone();
-        next
-    };
-    match build_menu(app, &next) {
-        Ok(menu) => match tray.set_menu(Some(menu)) {
-            Ok(()) => tracing::info!(?locale, polish = next.polish.enabled, "tray menu rebuilt"),
-            Err(e) => tracing::warn!(error = %e, "tray menu update failed"),
+    // A failure is logged where it happens; the menu shown stays as it was and the next change
+    // tries again.
+    let _ = tray_state.menu.sync(
+        force,
+        |shown| {
+            let state = bridge.state();
+            let locale = super::tray_locale(state.settings.locale);
+            MenuModel { locale, updater: shown.updater, polish: super::tray_polish(&state, locale) }
         },
-        Err(e) => tracing::warn!(error = %e, "tray menu rebuild failed"),
-    }
+        |next| {
+            let current = *tray_state.shown.lock();
+            show(app, Shown { locale: next.locale, ..current });
+            let menu = build_menu(app, next).inspect_err(|e| tracing::warn!(error = %e, "tray menu rebuild failed"))?;
+            tray.set_menu(Some(menu)).inspect_err(|e| tracing::warn!(error = %e, "tray menu update failed"))?;
+            tracing::info!(locale = ?next.locale, polish = next.polish.enabled, "tray menu rebuilt");
+            Ok::<(), tauri::Error>(())
+        },
+    );
 }
 
 /// Keep the badge in step with `UiEvent::Dictation` for as long as the bridge lives (the same
