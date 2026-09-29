@@ -123,6 +123,8 @@ import {
   type PresetId,
   type PresetRef,
   type PresetTryOutcome,
+  type RecordingSource,
+  type SegmentProgress,
   builtinPresetTextSchema,
   isBuiltinPreset,
   type BuiltinScene,
@@ -796,6 +798,10 @@ export class MockBackend implements Backend {
   private takeContext: TakeContext | undefined;
   /** The paired phone the current take's audio comes from (docs/dictation.md §20). */
   private takeRemote: string | undefined;
+  /** What a take on this computer records (docs/dictation.md §22), and a long take's recognition
+   *  (`simulateLongTakeProgress`); both cleared at idle, the count already when the take ends. */
+  private takeSource: RecordingSource | undefined;
+  private takeSegments: SegmentProgress | undefined;
   private takeScene: Scene | undefined;
   /** The engines' preset and the custom presets as of the take's start (docs/dictation.md §21), and
    *  the preset the status names once the clean-up is under way. */
@@ -2408,10 +2414,14 @@ export class MockBackend implements Backend {
       this.takeContext = undefined;
       this.takeRemote = undefined;
       this.takePreset = undefined;
+      this.takeSource = undefined;
     }
+    if (phase.phase !== "listening" && phase.phase !== "processing") this.takeSegments = undefined;
     const context = this.takeContext === undefined ? {} : { context: this.takeContext };
     const remote = this.takeRemote === undefined ? {} : { remote: this.takeRemote };
     const preset = this.takePreset === undefined ? {} : { preset: this.takePreset };
+    const source = this.takeSource === undefined ? {} : { source: this.takeSource };
+    const segments = this.takeSegments === undefined ? {} : { segments: this.takeSegments };
     this.emit({
       type: "dictation",
       session,
@@ -2420,6 +2430,8 @@ export class MockBackend implements Backend {
       kind: this.takeKind,
       ...remote,
       ...preset,
+      ...source,
+      ...segments,
     });
   }
 
@@ -2429,7 +2441,17 @@ export class MockBackend implements Backend {
   simulatePhoneTake(name = phonePeer().name) {
     this.startDictation("dictation");
     this.takeRemote = name;
+    this.takeSource = undefined;
     this.emitPhase(this.state.dictation.phase);
+  }
+
+  /** A long take's recognition (docs/dictation.md §22): `done` of `total` segments, as the core
+   *  reports it once the take is past its first two minutes. Only while a take runs. */
+  simulateLongTakeProgress(done: number, total: number) {
+    const phase = this.state.dictation.phase;
+    if (phase.phase !== "listening" && phase.phase !== "processing") return;
+    this.takeSegments = { done, total };
+    this.emitPhase(phase);
   }
 
   /** Desktop: the phone let go (`TakeStop`). */
@@ -2527,6 +2549,9 @@ export class MockBackend implements Backend {
     this.takePresetId = this.state.settings.engines.refine_preset;
     this.takePresets = this.state.presets;
     this.takePreset = undefined;
+    // §22: a voice edit's instruction is spoken into the microphone.
+    this.takeSource = kind === "edit" ? "microphone" : this.state.settings.recording.source;
+    this.takeSegments = undefined;
     if (kind === "edit" && !this.state.engines.refine_ready) {
       // §19.4: no LLM, no edit — refused at the press, the microphone never opens.
       this.emitPhase(

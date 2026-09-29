@@ -278,6 +278,38 @@ describe("Pill live preview (docs/dictation.md §11)", () => {
     expect(screen.queryByTestId("pill-scene")).toBeNull();
   });
 
+  it("regression: a take names what it records before the mode tag and a long take counts its segments after the timer while it records, nowhere else (docs/dictation.md section 22)", () => {
+    const { rerender } = render(
+      <Pill
+        state="listening"
+        mode="云端"
+        source="混合"
+        progress="已识别 12 段"
+        readout="1:02:03"
+        scene="会议"
+      />,
+    );
+    const source = screen.getByTestId("pill-source");
+    expect(source).toHaveTextContent("混合");
+    expect(source.nextElementSibling).toBe(screen.getByText("云端"));
+    expect(screen.getByText("云端").nextElementSibling).toBe(screen.getByTestId("pill-scene"));
+    const count = screen.getByTestId("pill-progress");
+    expect(count).toHaveTextContent("已识别 12 段");
+    expect(screen.getByText("1:02:03").nextElementSibling).toBe(count);
+    rerender(<Pill state="locked" mode="云端" source="混合" progress="已识别 12 段" />);
+    expect(screen.getByTestId("pill-source")).toHaveTextContent("混合");
+    expect(screen.getByTestId("pill-progress")).toHaveTextContent("已识别 12 段");
+    for (const state of ["processing", "inserted", "error", "armed", "blocked"] as const) {
+      rerender(<Pill state={state} source="混合" progress="已识别 12 段" />);
+      expect(screen.getByRole("status")).toHaveAttribute("data-state", state);
+      expect(screen.queryByTestId("pill-source")).toBeNull();
+      expect(screen.queryByTestId("pill-progress")).toBeNull();
+    }
+    rerender(<Pill state="listening" source="" progress="" />);
+    expect(screen.queryByTestId("pill-source")).toBeNull();
+    expect(screen.queryByTestId("pill-progress")).toBeNull();
+  });
+
   it("regression: a voice edit leads the capsule with its kind tag in every state of a take and the resting and blocked capsules never show it (section 19)", () => {
     const { container, rerender } = render(<Pill state="listening" mode="云端" tag="编辑" />);
     const tag = screen.getByTestId("pill-tag");
@@ -341,6 +373,9 @@ describe("Pill width", () => {
           waiting={state === "listening"}
           scene="代码评审与重构场景名称很长"
           mode="云端"
+          source="电脑声音"
+          progress="已识别 120 段"
+          readout="1:02:03"
         />,
       );
       const pill = container.querySelector('[role="status"]');

@@ -657,6 +657,7 @@ pub fn ports_with_backend(backend: Arc<dyn Backend + Send + Sync>, hub: Arc<Audi
         streaming: Some(Arc::new(LocalStreamingTranscriber::new(models_root))),
         probe: Some(Arc::new(crate::platform::PlatformProbe::new())),
         service_probe: Some(Arc::new(HttpServiceProbe)),
+        segmenter: None,
     };
     ShellPorts { dictation, hub }
 }

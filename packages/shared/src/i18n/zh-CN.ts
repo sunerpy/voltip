@@ -223,6 +223,11 @@ export const zhCN = {
       doneClipboard: "改写结果已复制 {n} 字 · {via}",
       refineFailed: "改写失败，选中文本未改动",
     },
+    /** docs/dictation.md §22: a long take's recognition, once it is past its first two minutes. */
+    segments: {
+      listening: { one: "已识别 {n} 段", other: "已识别 {n} 段" },
+      processing: "已识别 {done}/{total} 段",
+    },
   },
   outcome: {
     inserted: "已插入 · {via}",
@@ -240,6 +245,10 @@ export const zhCN = {
     fallback: "实时识别模型未下载，当前按整段输出运行",
     effective: "当前生效",
     liveError: "实时识别中断，已改为整段识别：{reason}",
+  },
+  /** What a take records (docs/dictation.md §22, `settings.recording.source`). */
+  recordingSource: {
+    name: { microphone: "麦克风", system: "电脑声音", mixed: "混合" },
   },
   /** Activation (docs/dictation.md §13): name, description, the home chip, the footer shortcut and
    *  the one-sentence hint with the hotkey. */
@@ -553,6 +562,7 @@ export const zhCN = {
         "无法粘贴到光标处：密码框或系统安全界面正在接收输入。文字已复制到剪贴板，可按 {keys} 粘贴。",
       elevated_target:
         "无法粘贴到光标处：目标窗口以管理员身份运行。文字已复制到剪贴板，可按 {keys} 粘贴。",
+      too_long: "全文超过 5000 字，未直接粘贴。文字已复制到剪贴板，可按 {keys} 粘贴。",
       other: "无法直接粘贴，文字已复制到剪贴板，可按 {keys} 粘贴。",
       openAccessibility: "打开辅助功能设置",
       details: "技术细节",

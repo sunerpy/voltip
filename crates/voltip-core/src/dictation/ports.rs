@@ -175,8 +175,8 @@ pub trait Capture: Send {
     }
 
     /// The whole take at 16 kHz requested with `long` (docs/dictation.md §22; take-once, `None`
-    /// on the second call, when `long` was `false`, or when the shell has none — the take then
-    /// ends at its in-memory part). Closes when the capture stops.
+    /// on the second call, when `long` was `false`, or when the shell has none — its capture then
+    /// keeps the whole take in memory). Closes when the capture stops.
     fn pcm_stream(&mut self) -> Option<Box<dyn PcmStream>> {
         None
     }
@@ -184,6 +184,24 @@ pub trait Capture: Send {
 
 /// Sample rate of [`PcmStream`]: what the recognisers expect.
 pub const PCM_SAMPLE_RATE_HZ: u32 = 16_000;
+
+/// Cuts a long take into segments as it arrives (docs/dictation.md §22).
+pub trait Segmenter: Send {
+    /// Feed the next samples (mono, [`PCM_SAMPLE_RATE_HZ`]); returns where each segment these
+    /// samples complete ends, as a sample position from the start of the take. A segment starts
+    /// where the previous one ended, the first at 0.
+    fn push(&mut self, samples: &[f32]) -> Vec<u64>;
+    /// The take ended: where its last segment ends; `None` when nothing is left after the last cut.
+    fn finish(&mut self) -> Option<u64>;
+}
+
+/// Makes a [`Segmenter`] for each long take (the desktop's cuts where the speech pauses,
+/// docs/dictation.md §22).
+pub trait SegmenterFactory: Send + Sync {
+    /// A segmenter for one take, or why there is none now (its model is missing): the core cuts
+    /// with its own fallback then.
+    fn create(&self) -> Result<Box<dyn Segmenter>, String>;
+}
 
 /// The consumer end of a long take's stream (docs/dictation.md §22): the whole take as mono `f32`
 /// at [`PCM_SAMPLE_RATE_HZ`], produced on the audio thread and read by the core's recording
@@ -460,6 +478,9 @@ pub enum ClipboardCode {
     SecureInput,
     /// The window in front runs as administrator (Windows).
     ElevatedTarget,
+    /// The text is longer than a paste should be (a long take over 5 000 characters,
+    /// docs/dictation.md §22): it waits on the clipboard.
+    TooLong,
     /// Anything else.
     Other,
 }

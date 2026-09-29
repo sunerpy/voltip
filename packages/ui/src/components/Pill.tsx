@@ -101,6 +101,12 @@ export interface PillProps {
   /** What the take does when it is not a plain dictation — `编辑` for a voice edit
    *  (docs/dictation.md §19): a leading tag in every state of a running or finished take. */
   tag?: string;
+  /** `listening` / `locked`: what the take records — `麦克风` / `电脑声音` / `混合`
+   *  (docs/dictation.md §22) — a tag right before the mode tag (source, then where it goes). */
+  source?: string;
+  /** `listening` / `locked`: how far a long take's recognition got (`已识别 12 段`,
+   *  docs/dictation.md §22), after the timer. */
+  progress?: string;
   /** The hotkey shown by the resting and blocked pills (`Ctrl Alt Space`); a running take always
    *  shows the Esc cancel hint instead. */
   keys?: string;
@@ -139,6 +145,28 @@ function ModeTag({ children }: { children: string }) {
   return (
     <span className="mono rounded-6 bg-inset px-1.5 py-0.5 text-[10px] text-fg-muted">
       {children}
+    </span>
+  );
+}
+
+/** What the take records, in the mode tag's style. */
+function SourceTag({ name }: { name: string | undefined }) {
+  if (name === undefined || name.length === 0) return null;
+  return (
+    <span
+      className="mono shrink-0 rounded-6 bg-inset px-1.5 py-0.5 text-[10px] text-fg-muted"
+      data-testid="pill-source">
+      {name}
+    </span>
+  );
+}
+
+/** A long take's recognition count next to the timer. */
+function SegmentCount({ text }: { text: string | undefined }) {
+  if (text === undefined || text.length === 0) return null;
+  return (
+    <span className="shrink-0 text-[11px] text-pill-muted" data-testid="pill-progress">
+      {text}
     </span>
   );
 }
@@ -213,6 +241,8 @@ export function Pill({
   mode,
   scene,
   tag,
+  source,
+  progress,
   keys,
   via,
   onCopy,
@@ -250,6 +280,8 @@ export function Pill({
           {t("ui.pill.waitingMic")}
         </span>
       )}
+      <SegmentCount text={progress} />
+      <SourceTag name={source} />
       <ModeTag>{local}</ModeTag>
       <SceneTag name={scene} />
       <EscCancel />
@@ -330,6 +362,8 @@ export function Pill({
           <Icon name="lock" size={13} className="text-pill-muted" />
           <Waveform levels={levels} height={16} bars={36} className={YIELDING_WAVE} />
           <span className="mono text-[11px] text-pill-muted">{readout ?? "00:00"}</span>
+          <SegmentCount text={progress} />
+          <SourceTag name={source} />
           <ModeTag>{local}</ModeTag>
           <SceneTag name={scene} />
           <EscCancel />

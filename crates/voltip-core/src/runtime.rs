@@ -591,6 +591,14 @@ impl AppCore {
         dictation.set_context_sharing(settings.context_sharing);
         dictation.set_microphone(settings.microphone.clone());
         dictation.set_recording(settings.recording.clone());
+        // docs/dictation.md §22: a recording file left behind means the last run ended mid-take;
+        // nothing reads it, so it goes before the first take.
+        let recordings = crate::dictation::long::recordings_dir(&config.data_dir);
+        let cleared = crate::dictation::long::clear_leftovers(&recordings);
+        if cleared > 0 {
+            tracing::info!(cleared, "removed the recording files an earlier run left behind");
+        }
+        dictation.set_recordings_dir(recordings);
         let (cmd_tx, cmd_rx) = mpsc::channel(64);
         let (evt_tx, evt_rx) = mpsc::channel(512);
         let (link_tx, link_rx) = mpsc::channel(1024);

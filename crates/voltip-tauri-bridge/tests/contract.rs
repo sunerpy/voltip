@@ -767,6 +767,8 @@ fn full_state() -> UiState {
             kind: TakeKind::Dictation,
             remote: Some("Pixel 8".into()),
             preset: None,
+            source: None,
+            segments: None,
         },
         history_recent: history_entries(),
         // More entries than the recent ones: the rest are read through the queries.
@@ -1031,7 +1033,16 @@ fn all_events() -> Vec<UiEvent> {
         // Every dictation phase the pill and the home page discriminate on. `listening` in its three
         // shapes (device opening; ready with the live preview; preview degraded), `processing` with
         // and without the carried-over preview (docs/dictation.md §11).
-        UiEvent::Dictation(DictationStatus { phase: DictationPhase::Idle, session: 6, context: None, kind: TakeKind::Dictation, remote: None, preset: None }),
+        UiEvent::Dictation(DictationStatus {
+            phase: DictationPhase::Idle,
+            session: 6,
+            context: None,
+            kind: TakeKind::Dictation,
+            remote: None,
+            preset: None,
+            source: None,
+            segments: None,
+        }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Listening { started_at: AT_MS, ready: false, live: None, locked: false },
             session: 7,
@@ -1039,7 +1050,11 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
+        // docs/dictation.md §22: a long take from the microphone and the computer's sound, past its
+        // first two minutes, with segments recognised as it goes.
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Listening { started_at: AT_MS + 180, ready: true, live: Some(live_text()), locked: false },
             session: 7,
@@ -1047,6 +1062,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: Some(voltip_core::RecordingSource::Mixed),
+            segments: Some(voltip_core::dictation::SegmentProgress { done: 5, total: 6 }),
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Listening {
@@ -1060,6 +1077,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         // `hold_or_toggle` locked by a short press (docs/dictation.md §13): the pill shows a lock.
         UiEvent::Dictation(DictationStatus {
@@ -1069,6 +1088,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         // `live_inject` (docs/dictation.md §12): the first committed sentence is already pasted.
         UiEvent::Dictation(DictationStatus {
@@ -1078,6 +1099,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         // The streaming modes wait for the flush first (§12 `finalizing`).
         UiEvent::Dictation(DictationStatus {
@@ -1092,6 +1115,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing {
@@ -1105,6 +1130,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
@@ -1113,6 +1140,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing {
@@ -1127,6 +1156,8 @@ fn all_events() -> Vec<UiEvent> {
             remote: None,
             // docs/dictation.md §21: the pill names the preset while refining.
             preset: Some(PresetRef { id: PresetId::Custom(uuid(PRESET_ID)), name: "周报".into() }),
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing { stage: ProcessingStage::Inserting, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
@@ -1135,8 +1166,19 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
-        UiEvent::Dictation(DictationStatus { phase: done_phase(), session: 7, context: None, kind: TakeKind::Dictation, remote: None, preset: None }),
+        UiEvent::Dictation(DictationStatus {
+            phase: done_phase(),
+            session: 7,
+            context: None,
+            kind: TakeKind::Dictation,
+            remote: None,
+            preset: None,
+            source: None,
+            segments: None,
+        }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Done {
                 text: RAW_TEXT.into(),
@@ -1157,10 +1199,21 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         // `streaming_final`: the stream's sentences are the text; a streaming mode that fell back to
         // the whole take says why in `live_error` (docs/dictation.md §12).
-        UiEvent::Dictation(DictationStatus { phase: streamed_done_phase(), session: 14, context: None, kind: TakeKind::Dictation, remote: None, preset: None }),
+        UiEvent::Dictation(DictationStatus {
+            phase: streamed_done_phase(),
+            session: 14,
+            context: None,
+            kind: TakeKind::Dictation,
+            remote: None,
+            preset: None,
+            source: None,
+            segments: None,
+        }),
         UiEvent::Dictation(DictationStatus {
             phase: fallen_back_done_phase(),
             session: 15,
@@ -1168,6 +1221,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::NoSpeech, message: "没有听到声音".into(), text: None },
@@ -1176,6 +1231,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::Inject, message: "inject: 前台窗口拒绝了粘贴".into(), text: Some(REFINED_TEXT.into()) },
@@ -1184,6 +1241,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::Asr, message: "asr: 401 unauthorized".into(), text: None },
@@ -1192,6 +1251,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::Audio, message: "audio: no input device".into(), text: None },
@@ -1200,6 +1261,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::CANCELLED,
@@ -1208,6 +1271,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         // `live_inject` cancelled after one sentence was pasted: it stays pasted (§12).
         UiEvent::Dictation(DictationStatus {
@@ -1217,6 +1282,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         // docs/dictation.md §18.6: the probe named the app and a scene matched (the pill shows it);
         // an app no scene names carries no `scene`.
@@ -1227,6 +1294,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
@@ -1235,6 +1304,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Dictation,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         history_event(history_entries()),
         history_event(vec![live_inject_history_entry()]),
@@ -1245,6 +1316,11 @@ fn all_events() -> Vec<UiEvent> {
                 reason: "enigo: the application does not have the permission to simulate input".into(),
                 code: Some(ClipboardCode::NoPermission),
             },
+            ..history_entries().remove(1)
+        }]),
+        // docs/dictation.md §22: a long take's text past 5000 characters waits on the clipboard.
+        history_event(vec![HistoryEntry {
+            outcome: Outcome::Clipboard { reason: voltip_core::dictation::long::TOO_LONG_TO_PASTE.into(), code: Some(ClipboardCode::TooLong) },
             ..history_entries().remove(1)
         }]),
         history_event(Vec::new()),
@@ -1331,6 +1407,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Edit,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing {
@@ -1344,6 +1422,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Edit,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Done {
@@ -1365,6 +1445,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Edit,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::NoSelection, message: "没有选中文本".into(), text: None },
@@ -1373,6 +1455,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Edit,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed {
@@ -1383,6 +1467,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Edit,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed {
@@ -1393,6 +1479,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Edit,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed {
@@ -1405,6 +1493,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Edit,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         // §19.2: a terminal in front — refused before the copy chord and the microphone.
         UiEvent::Dictation(DictationStatus {
@@ -1416,6 +1506,8 @@ fn all_events() -> Vec<UiEvent> {
             kind: TakeKind::Edit,
             remote: None,
             preset: None,
+            source: None,
+            segments: None,
         }),
         // The scenes (docs/dictation.md §18.6), full and empty.
         scenes_event(scenes()),

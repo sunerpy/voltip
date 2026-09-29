@@ -23,8 +23,10 @@ import type {
   PresetId,
   PresetRef,
   ProcessingStage,
+  RecordingSource,
   RelayStatus,
   SecretState,
+  SegmentProgress,
   TakeKind,
   ThemeId,
   Via,
@@ -262,9 +264,13 @@ export function viaLabel(via: Via, locale: Locale = DEFAULT_LOCALE): string {
   return translate(locale, `via.${via}`);
 }
 
-/** `12_345` → `00:12` (elapsed listening time). */
+/** `12_345` → `00:12` (elapsed listening time); past an hour `3_723_000` → `1:02:03`
+ *  (docs/dictation.md §22: a take may run for two hours). */
 export function formatElapsed(ms: number): string {
-  return formatRemaining(Math.max(0, ms) / 1000);
+  const secs = Math.floor(Math.max(0, ms) / 1000);
+  if (secs < 3600) return formatRemaining(secs);
+  const hours = Math.floor(secs / 3600);
+  return `${hours}:${formatRemaining(secs % 3600)}`;
 }
 
 /** `1384` → `1,384 ms`; `undefined` → `—`. */
@@ -347,31 +353,60 @@ export function dictationPhaseLabel(
  *  (docs/dictation.md §19, `kind: "edit"`) listens for an instruction, rewrites instead of
  *  polishing and reports the replaced text. */
 export function takePhaseLabel(
-  status: Pick<DictationStatus, "phase" | "kind">,
+  status: Pick<DictationStatus, "phase" | "kind" | "segments">,
   now: number,
   locale: Locale = DEFAULT_LOCALE,
 ): Labelled {
-  return phaseLabel(status.phase, status.kind, now, locale);
+  return phaseLabel(status.phase, status.kind, now, locale, status.segments);
 }
 
-function phaseLabel(phase: DictationPhase, kind: TakeKind, now: number, locale: Locale): Labelled {
+/** A long take's recognition while it records (`已识别 12 段`, docs/dictation.md §22). */
+export function segmentsDoneLabel(
+  segments: SegmentProgress,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  return translate(locale, "dictation.segments.listening", { n: segments.done });
+}
+
+/** `mixed` → 混合 / Mixed: what a take records (docs/dictation.md §22). */
+export function recordingSourceLabel(
+  source: RecordingSource,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  return translate(locale, `recordingSource.name.${source}`);
+}
+
+function phaseLabel(
+  phase: DictationPhase,
+  kind: TakeKind,
+  now: number,
+  locale: Locale,
+  segments?: SegmentProgress,
+): Labelled {
   const edit = kind === "edit";
   switch (phase.phase) {
     case "idle":
       return { text: translate(locale, "dictation.idle"), tone: "idle" };
-    case "listening":
+    case "listening": {
+      const line = translate(locale, edit ? "dictation.edit.listening" : "dictation.listening", {
+        elapsed: formatElapsed(now - phase.started_at),
+      });
       return {
-        text: translate(locale, edit ? "dictation.edit.listening" : "dictation.listening", {
-          elapsed: formatElapsed(now - phase.started_at),
-        }),
+        text: segments === undefined ? line : `${line} · ${segmentsDoneLabel(segments, locale)}`,
         tone: "accent",
       };
+    }
     case "processing":
       return {
         text:
           edit && phase.stage === "refining"
             ? translate(locale, "dictation.edit.refining")
-            : processingStageLabel(phase.stage, locale),
+            : phase.stage === "transcribing" && segments !== undefined
+              ? translate(locale, "dictation.segments.processing", {
+                  done: segments.done,
+                  total: segments.total,
+                })
+              : processingStageLabel(phase.stage, locale),
         tone: "accent",
       };
     case "done":

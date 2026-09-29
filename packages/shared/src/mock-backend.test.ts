@@ -486,16 +486,19 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     });
     await backend.invoke("dictation_start");
     // The device has not delivered samples yet; the timer is re-based once it has (§11).
+    // docs/dictation.md §22: a take on this computer names what it records.
     expect(backend.peek().dictation).toEqual({
       session: 1,
       phase: { phase: "listening", started_at: T0, ready: false, locked: false },
       kind: "dictation",
+      source: "microphone",
     });
     tick(MOCK_MIC_READY_MS);
     expect(backend.peek().dictation).toEqual({
       session: 1,
       phase: { phase: "listening", started_at: T0 + MOCK_MIC_READY_MS, ready: true, locked: false },
       kind: "dictation",
+      source: "microphone",
     });
     tick(3200);
     await backend.invoke("dictation_stop");
@@ -556,6 +559,50 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     backend.destroy();
   });
 
+  it("names what a take records and counts a long take's segments while it runs (docs/dictation.md §22); a phone's take records nothing here", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    backend.simulateLongTakeProgress(1, 2);
+    expect(backend.peek().dictation).toEqual({
+      session: 0,
+      phase: { phase: "idle" },
+      kind: "dictation",
+    });
+    await backend.invoke("settings_set_recording", {
+      recording: { source: "system", output_device: null, max_minutes: 60 },
+    });
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS);
+    expect(backend.peek().dictation.source).toBe("system");
+    expect(backend.peek().dictation.segments).toBeUndefined();
+    backend.simulateLongTakeProgress(3, 4);
+    expect(backend.peek().dictation.segments).toEqual({ done: 3, total: 4 });
+    await backend.invoke("dictation_stop");
+    backend.simulateLongTakeProgress(4, 5);
+    expect(backend.peek().dictation).toMatchObject({
+      phase: { phase: "processing", stage: "transcribing" },
+      source: "system",
+      segments: { done: 4, total: 5 },
+    });
+    tick(MOCK_ASR_MS);
+    tick(MOCK_REFINE_MS);
+    // The count ends with the take; the source stays until the pill goes back to idle.
+    expect(backend.peek().dictation.phase.phase).toBe("done");
+    expect(backend.peek().dictation.segments).toBeUndefined();
+    expect(backend.peek().dictation.source).toBe("system");
+    backend.simulateLongTakeProgress(5, 5);
+    expect(backend.peek().dictation.segments).toBeUndefined();
+    tick(MOCK_DICTATION_DWELL_MS);
+    expect(backend.peek().dictation).toEqual({
+      session: 1,
+      phase: { phase: "idle" },
+      kind: "dictation",
+    });
+    backend.simulatePhoneTake("Pixel 8");
+    expect(backend.peek().dictation.remote).toBe("Pixel 8");
+    expect(backend.peek().dictation.source).toBeUndefined();
+    backend.destroy();
+  });
+
   it("skips the refine stage and pastes the raw text when refine is off; clipboard_only reports via clipboard", async () => {
     const backend = new MockBackend({ now: () => clock, history: [] });
     await backend.invoke("settings_set_engines", {
@@ -601,6 +648,7 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       session: 1,
       phase: { phase: "cancelled", injected_chars: 0 },
       kind: "dictation",
+      source: "microphone",
     });
     expect(backend.peek().history_recent).toEqual([]);
     tick(1000);
@@ -610,6 +658,7 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       session: 2,
       phase: { phase: "listening", started_at: T0 + 1500, ready: false, locked: false },
       kind: "dictation",
+      source: "microphone",
     });
     tick(MOCK_MIC_READY_MS);
     tick(MOCK_DICTATION_DWELL_MS - MOCK_MIC_READY_MS);

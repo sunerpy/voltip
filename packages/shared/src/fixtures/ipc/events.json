@@ -461,7 +461,12 @@
       "locked": false
     },
     "session": 7,
-    "kind": "dictation"
+    "kind": "dictation",
+    "source": "mixed",
+    "segments": {
+      "done": 5,
+      "total": 6
+    }
   },
   {
     "type": "dictation",
@@ -1001,6 +1006,30 @@
           "kind": "clipboard",
           "reason": "enigo: the application does not have the permission to simulate input",
           "code": "no_permission"
+        },
+        "starred": false,
+        "mode": "whole_take",
+        "kind": "dictation"
+      }
+    ],
+    "total": 1
+  },
+  {
+    "type": "history",
+    "recent": [
+      {
+        "id": "1c2d3e4f-5a6b-4c8e-9f7a-0f3f1a1e8d4b",
+        "at_ms": 1758700540000,
+        "raw_text": "测试一下",
+        "text": "测试一下",
+        "refined": false,
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "duration_ms": 900,
+        "asr_ms": 410,
+        "outcome": {
+          "kind": "clipboard",
+          "reason": "全文超过 5000 字，已复制到剪贴板，未直接粘贴。",
+          "code": "too_long"
         },
         "starred": false,
         "mode": "whole_take",

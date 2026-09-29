@@ -41,6 +41,7 @@
 
 use std::collections::VecDeque;
 use std::panic::AssertUnwindSafe;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -49,13 +50,15 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+use super::long::{self, EnergySegmenter};
 use super::ports::{
-    AudioSource, Capture, CaptureOptions, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector,
-    LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MIN_RECORDING, PARTIAL_THROTTLE, PROBE_DEADLINE, Recording, RefineContext, RefineHints,
-    Refiner, Segment, SelectionTiming, ServiceProbe, StreamEvent, StreamFinal, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
+    AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection,
+    Injector, LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MIN_RECORDING, PARTIAL_THROTTLE, PROBE_DEADLINE, PcmStream,
+    Recording, RefineContext, RefineHints, Refiner, Segment, Segmenter, SegmenterFactory, SelectionTiming, ServiceProbe, StreamEvent, StreamFinal,
+    StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
 };
 use super::wav;
-use super::{DictationPhase, DictationStatus, FailureCode, LiveText, OutputMode, ProcessingStage, TakeKind, inject_separator, join_text};
+use super::{DictationPhase, DictationStatus, FailureCode, LiveText, OutputMode, ProcessingStage, SegmentProgress, TakeKind, inject_separator, join_text};
 use crate::engines::{ChineseScript, ResolvedEngines};
 use crate::history::{EditRecord, HistoryEntry, Outcome};
 use crate::hotkey::Modifier;
@@ -63,7 +66,7 @@ use crate::models::ModelManager;
 use crate::presets::{CustomPreset, PresetId, TakePreset, resolve};
 use crate::scenes::{AppRef, ContextSharing, LANGUAGE_AUTO, Scene, TakeContext, match_scene};
 use crate::script::normalized;
-use crate::settings::RecordingSettings;
+use crate::settings::{RecordingSettings, RecordingSource};
 use crate::vocabulary::{Step, Vocabulary, VocabularyHits};
 
 /// Builds the network clients for a resolved configuration. Called at startup and again whenever
@@ -92,6 +95,9 @@ pub struct DictationPorts {
     /// Lists a provider's models for the engines pane's 测试连接 (docs/dictation.md §3.3); `None`
     /// on shells without HTTP (the phone, the fakes): the probe then answers `unsupported`.
     pub service_probe: Option<Arc<dyn ServiceProbe>>,
+    /// Cuts a long take into segments where the speech pauses (docs/dictation.md §22); `None`, or
+    /// one that cannot run now, leaves it to the core's fallback ([`EnergySegmenter`]).
+    pub segmenter: Option<Arc<dyn SegmenterFactory>>,
 }
 
 impl std::fmt::Debug for DictationPorts {
@@ -183,6 +189,36 @@ pub enum Internal {
         /// The selected text (`None`: nothing selected), or why it could not be read.
         result: Result<Option<String>, DictationError>,
     },
+    /// A long take's recording thread cut a segment ending at sample `end` (docs/dictation.md §22).
+    LongSegment {
+        /// Session.
+        session: u64,
+        /// Where the segment ends, in samples from the start of the take.
+        end: u64,
+    },
+    /// A long take's stream closed: how long the take is, the spans filled with silence because
+    /// samples went missing, and a write error that left the file incomplete.
+    LongClosed {
+        /// Session.
+        session: u64,
+        /// The recording file.
+        path: PathBuf,
+        /// Samples recorded.
+        total: u64,
+        /// `[start, end)` spans of silence standing in for lost samples.
+        gaps: Vec<(u64, u64)>,
+        /// Why the file could not be written, if it could not.
+        error: Option<String>,
+    },
+    /// One segment of a long take came back from the recogniser.
+    LongRecognized {
+        /// Session.
+        session: u64,
+        /// Which segment.
+        idx: usize,
+        /// The transcript, or why it failed.
+        result: Result<Transcript, DictationError>,
+    },
     /// The recording reached its maximum length ([`max_recording`]).
     AutoStop {
         /// Session the timer was armed for.
@@ -238,6 +274,17 @@ impl std::fmt::Debug for Internal {
                 .debug_struct("SelectionCopied")
                 .field("session", session)
                 .field("chars", &result.as_ref().map(|s| s.as_ref().map(|t| t.chars().count())))
+                .finish(),
+            Self::LongSegment { session, end } => f.debug_struct("LongSegment").field("session", session).field("end", end).finish(),
+            Self::LongClosed { session, total, gaps, error, .. } => {
+                f.debug_struct("LongClosed").field("session", session).field("total", total).field("gaps", &gaps.len()).field("error", error).finish()
+            }
+            // Transcripts never reach the log: their length only.
+            Self::LongRecognized { session, idx, result } => f
+                .debug_struct("LongRecognized")
+                .field("session", session)
+                .field("idx", idx)
+                .field("chars", &result.as_ref().map(|t| t.text.chars().count()))
                 .finish(),
             Self::AutoStop { session } => f.debug_struct("AutoStop").field("session", session).finish(),
             Self::Stage { session, stage } => f.debug_struct("Stage").field("session", session).field("stage", stage).finish(),
@@ -378,6 +425,70 @@ struct EditTake {
 /// The message of an edit take refused for want of an LLM.
 pub const EDIT_NEEDS_REFINE: &str = "语音编辑需要 AI 润色服务：请先配置润色的 API 密钥";
 
+/// Where one segment of a long take is (docs/dictation.md §22).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SegmentText {
+    /// Waiting for (another) try; `attempts` failed so far.
+    Pending { attempts: u8 },
+    /// Recognised (possibly nothing: silence).
+    Done(String),
+    /// Failed twice: the text says so.
+    Failed,
+}
+
+/// One segment of a long take: `[start, end)` in samples, and its text.
+#[derive(Clone, Debug)]
+struct LongSegment {
+    start: u64,
+    end: u64,
+    text: SegmentText,
+}
+
+/// A long take (docs/dictation.md §22): its recording file, the segments the recording thread cut
+/// and their recognition.
+struct LongTake {
+    path: PathBuf,
+    segments: Vec<LongSegment>,
+    /// The recording thread finished: the take's length and the spans filled with silence.
+    closed: Option<(u64, Vec<(u64, u64)>)>,
+    /// The file could not be written completely.
+    error: Option<String>,
+    /// The segment with the recogniser, and its task.
+    in_flight: Option<(usize, JoinHandle<()>)>,
+    /// Segments are recognised: from the start in a whole take; in a streaming take only once it
+    /// fell back (its text comes from the stream otherwise).
+    recognizing: bool,
+    /// Where the text starts (samples): `0`, or where a `live_inject` take's pasted sentences
+    /// ended when it fell back after pasting some.
+    from: u64,
+    /// The take was routed to its file at the stop: the text is put together once the last
+    /// segment is back.
+    finishing: bool,
+    asr_ms: u64,
+    /// Why the last failed try failed: the take's error when no segment was recognised.
+    last_error: Option<DictationError>,
+}
+
+impl LongTake {
+    /// Segments done / cut so far.
+    fn progress(&self) -> SegmentProgress {
+        let done = self.segments.iter().filter(|s| !matches!(s.text, SegmentText::Pending { .. })).count();
+        SegmentProgress { done: u32::try_from(done).unwrap_or(u32::MAX), total: u32::try_from(self.segments.len()).unwrap_or(u32::MAX) }
+    }
+
+    /// The take ran past its in-memory part (known once the recording thread closed).
+    fn is_long(&self) -> bool {
+        self.closed.as_ref().is_some_and(|(total, _)| *total > long::IN_MEMORY)
+    }
+
+    /// The take is past its in-memory part already: a cut beyond it arrived, or it closed long.
+    /// Before that nothing is recognised — a take that stops within two minutes is a short take,
+    /// and its segments would have been recognised for nothing.
+    fn past_in_memory(&self) -> bool {
+        self.is_long() || self.segments.last().is_some_and(|s| s.end > long::IN_MEMORY)
+    }
+}
+
 /// One run's output-mode state (docs/dictation.md §12), reset by `start`.
 struct Take {
     /// The mode resolved at `start`.
@@ -419,6 +530,10 @@ struct Take {
     /// Where this take's audio comes from instead of the microphone: a paired phone
     /// (docs/dictation.md §20, [`super::remote::RemoteFeed`]).
     source: Option<Arc<dyn AudioSource>>,
+    /// The capture was asked for a long take's stream (docs/dictation.md §22).
+    long_requested: bool,
+    /// The long take's file and segments, once its recording thread runs.
+    long: Option<LongTake>,
 }
 
 impl Take {
@@ -452,6 +567,8 @@ impl Take {
             scene: None,
             edit: None,
             source: None,
+            long_requested: false,
+            long: None,
         }
     }
 
@@ -507,6 +624,11 @@ pub struct DictationEngine {
     microphone: Option<String>,
     /// `Settings.recording` (docs/dictation.md §22): a dictation take's source and length.
     recording: RecordingSettings,
+    /// Cuts long takes where the speech pauses (the shell's), when there is one.
+    segmenter: Option<Arc<dyn SegmenterFactory>>,
+    /// Where long takes' recording files go (`<data_dir>/recordings`, set by the runtime); `None`:
+    /// a long take ends at its in-memory part.
+    recordings: Option<PathBuf>,
 }
 
 /// Why a scene's streaming output mode could not be honoured (docs/dictation.md §18.4); the take
@@ -596,6 +718,8 @@ impl DictationEngine {
             context_sharing: ContextSharing::default(),
             microphone: None,
             recording: RecordingSettings::default(),
+            segmenter: ports.segmenter,
+            recordings: None,
         };
         engine.warm_streaming();
         engine.warm_transcriber();
@@ -641,6 +765,12 @@ impl DictationEngine {
     /// source and the longest length of a dictation take on this computer.
     pub fn set_recording(&mut self, recording: RecordingSettings) {
         self.recording = recording;
+    }
+
+    /// Where long takes' recording files go (docs/dictation.md §22): the runtime's
+    /// `<data_dir>/recordings`, cleared of an earlier run's files before the first take.
+    pub fn set_recordings_dir(&mut self, dir: PathBuf) {
+        self.recordings = Some(dir);
     }
 
     /// Rebuild the clients for a changed configuration. A pipeline already running keeps the
@@ -811,9 +941,17 @@ impl DictationEngine {
             }
         };
         self.take = Take::with_presets(mode, self.vocabulary.clone(), self.scenes.clone(), (self.refine_preset, self.presets.clone()), self.context_sharing);
+        let local = source.is_none();
         self.take.source = source;
         self.status.context = None;
         self.status.preset = None;
+        self.status.segments = None;
+        // docs/dictation.md §22: the pill names where the take records from.
+        let recorded = match kind {
+            TakeKind::Dictation => self.recording.source,
+            TakeKind::Edit => RecordingSource::Microphone,
+        };
+        self.status.source = local.then_some(recorded);
         if kind == TakeKind::Edit {
             if self.refiner.is_none() {
                 tracing::warn!(session, "edit take refused: no LLM is configured");
@@ -891,6 +1029,7 @@ impl DictationEngine {
         });
         let options = self.capture_options();
         let max_duration = options.max_duration;
+        self.take.long_requested = options.long;
         tracing::info!(session, source = options.source.as_str(), max_s = max_duration.as_secs(), long = options.long, "capture options");
         // A phone's take streams from its own source; the microphone port records from the
         // device the settings name (the system default without one).
@@ -1165,6 +1304,9 @@ impl DictationEngine {
             Internal::LiveInjected { session, idx, result } => self.on_live_injected(session, idx, result),
             Internal::Remainder { session, result } => self.on_remainder(session, result),
             Internal::SelectionCopied { session, result } => self.on_selection_copied(session, result),
+            Internal::LongSegment { session, end } => self.on_long_segment(session, end),
+            Internal::LongClosed { session, path, total, gaps, error } => self.on_long_closed(session, path, total, gaps, error),
+            Internal::LongRecognized { session, idx, result } => self.on_long_recognized(session, idx, result),
             Internal::Finished { session, result } => {
                 if session != self.status.session || !matches!(self.status.phase, DictationPhase::Processing { .. }) {
                     tracing::debug!(session, "pipeline result for a finished session dropped");
@@ -1265,6 +1407,9 @@ impl DictationEngine {
                 self.take.live_error = Some(reason);
                 self.take.mode = OutputMode::WholeTake;
                 self.take.flushed = None;
+                if self.take.long.is_some() {
+                    return self.long_fallback(0);
+                }
                 // Already stopped and the recording is here: the whole take goes to the transcriber now.
                 match self.take.recording.take() {
                     Some(recording) if matches!(self.status.phase, DictationPhase::Processing { .. }) => self.run_whole_take(recording),
@@ -1279,6 +1424,9 @@ impl DictationEngine {
                 if self.take.inject.segments.is_empty() {
                     // Nothing pasted yet: a plain whole take from here.
                     self.take.mode = OutputMode::WholeTake;
+                    if self.take.long.is_some() {
+                        return self.long_fallback(0);
+                    }
                     return match self.take.recording.take() {
                         Some(recording) if matches!(self.status.phase, DictationPhase::Processing { .. }) => self.run_whole_take(recording),
                         other => {
@@ -1286,6 +1434,13 @@ impl DictationEngine {
                             Vec::new()
                         }
                     };
+                }
+                if self.take.long.is_some() {
+                    // What came after the last pasted sentence comes from the file (docs/dictation.md §22).
+                    let from = self.take.inject.last_end_ms * long::RATE / 1000;
+                    let mut effects = self.long_fallback(from);
+                    effects.extend(self.try_close_live_inject());
+                    return effects;
                 }
                 self.try_close_live_inject()
             }
@@ -1365,6 +1520,7 @@ impl DictationEngine {
             injector: self.injector.clone(),
             vocabulary: self.take.vocabulary.clone(),
             script: self.take_script(),
+            long: self.take.long.as_ref().is_some_and(LongTake::is_long),
             tx: self.internal.clone(),
         };
         self.abort_pipeline();
@@ -1401,7 +1557,11 @@ impl DictationEngine {
             }
             return self.close_live_inject();
         }
-        // Degraded after at least one sentence: transcribe what came after the last one.
+        // Degraded after at least one sentence: transcribe what came after the last one — from the
+        // file for a long take (docs/dictation.md §22).
+        if self.take.long.as_ref().is_some_and(LongTake::is_long) {
+            return self.run_long_take();
+        }
         let Some(recording) = self.take.recording.as_ref() else { return Vec::new() };
         let remainder = recording.slice_from_ms(self.take.inject.last_end_ms);
         if remainder.duration_ms < u64::try_from(MIN_RECORDING.as_millis()).unwrap_or(u64::MAX) || wav::is_silent(&remainder.wav) {
@@ -1719,8 +1879,12 @@ impl DictationEngine {
                             (_, None) => {}
                         }
                     }
+                    let stream = if self.take.long_requested { capture.pcm_stream() } else { None };
                     *mic = Mic::Open(capture);
                     drop(mic);
+                    if self.take.long_requested {
+                        self.start_long(session, stream);
+                    }
                     if let Some((pcm, streaming)) = worker {
                         self.spawn_live(session, pcm, streaming);
                     }
@@ -1760,6 +1924,44 @@ impl DictationEngine {
                 return self.fail(&e, None);
             }
         };
+        if self.take.long.as_ref().is_some_and(|l| l.closed.is_none()) {
+            // docs/dictation.md §22: whether this was a long take is known once the recording
+            // thread reports the length.
+            self.take.recording = Some(recording);
+            return Vec::new();
+        }
+        self.route_stopped(recording)
+    }
+
+    /// The take stopped and (for a long one) its recording thread finished: a take no longer than
+    /// its in-memory part goes on as it always did, its file removed; a longer one takes its text
+    /// from the file (docs/dictation.md §22).
+    fn route_stopped(&mut self, recording: Recording) -> Vec<Effect> {
+        if let Some(l) = &self.take.long
+            && !l.is_long()
+        {
+            long::remove(&l.path);
+            if let Some((_, task)) = &l.in_flight {
+                task.abort();
+            }
+            self.take.long = None;
+        }
+        if let Some(l) = &self.take.long {
+            let total = l.closed.as_ref().map_or(0, |c| c.0);
+            self.recording_ms = total * 1000 / long::RATE;
+            if let Some(error) = &l.error {
+                let error = DictationError::Audio(format!("录音文件未能完整写入：{error}"));
+                return self.fail(&error, None);
+            }
+            return match self.take.mode {
+                // The streaming modes keep their own text; the file serves if they fall back.
+                OutputMode::StreamingFinal | OutputMode::LiveInject => {
+                    self.take.recording = Some(recording);
+                    if self.take.mode == OutputMode::StreamingFinal { self.try_finalize_streaming() } else { self.try_close_live_inject() }
+                }
+                OutputMode::WholeTake => self.run_long_take(),
+            };
+        }
         // `live_inject` with sentences already pasted cannot be an empty take.
         let pasted_something = self.take.mode == OutputMode::LiveInject && !self.take.inject.segments.is_empty();
         if !pasted_something && (recording.duration_ms < u64::try_from(MIN_RECORDING.as_millis()).unwrap_or(u64::MAX) || wav::is_silent(&recording.wav)) {
@@ -1785,6 +1987,287 @@ impl DictationEngine {
         }
     }
 
+    /// A long take's capture is open (docs/dictation.md §22): its stream goes to a recording
+    /// thread writing `<recordings>/take-….pcm` and cutting segments. A capture without a stream
+    /// keeps the whole take in memory, as before. Without a directory or a file the shell's
+    /// in-memory part is all there is: the auto-stop moves to its end.
+    fn start_long(&mut self, session: u64, stream: Option<Box<dyn PcmStream>>) {
+        let Some(stream) = stream else {
+            tracing::info!(session, "the capture has no long take's stream; the take stays in memory");
+            return;
+        };
+        let file = match &self.recordings {
+            Some(dir) => match long::create_file(dir, session, now_ms()) {
+                Ok((file, path)) => Some((stream, file, path)),
+                Err(e) => {
+                    tracing::warn!(session, error = %e, "the recording file could not be created; the take ends at two minutes");
+                    None
+                }
+            },
+            None => {
+                tracing::warn!(session, "no recordings directory; the take ends at two minutes");
+                None
+            }
+        };
+        let Some((stream, file, path)) = file else {
+            if matches!(self.status.phase, DictationPhase::Listening { .. }) {
+                self.arm(MAX_RECORDING, |session| Internal::AutoStop { session });
+            }
+            return;
+        };
+        let segmenter: Box<dyn Segmenter> = match self.segmenter.as_ref().map(|f| f.create()) {
+            Some(Ok(segmenter)) => segmenter,
+            Some(Err(why)) => {
+                tracing::info!(session, %why, "segmenting the long take with the core's fallback");
+                Box::new(EnergySegmenter::new())
+            }
+            None => Box::new(EnergySegmenter::new()),
+        };
+        tracing::info!(session, path = %path.display(), "long take: recording to a file");
+        self.take.long = Some(LongTake {
+            path: path.clone(),
+            segments: Vec::new(),
+            closed: None,
+            error: None,
+            in_flight: None,
+            recognizing: self.take.mode == OutputMode::WholeTake,
+            from: 0,
+            finishing: false,
+            asr_ms: 0,
+            last_error: None,
+        });
+        let job = long::WriterJob { session, stream, file, path, segmenter, tx: self.internal.clone() };
+        tokio::task::spawn_blocking(move || long::run_writer(job));
+    }
+
+    /// The recording thread cut a segment: it joins the queue.
+    fn on_long_segment(&mut self, session: u64, end: u64) -> Vec<Effect> {
+        if session != self.status.session {
+            return Vec::new();
+        }
+        let Some(l) = self.take.long.as_mut() else { return Vec::new() };
+        let start = l.segments.last().map_or(0, |s| s.end);
+        if end <= start {
+            return Vec::new();
+        }
+        l.segments.push(LongSegment { start, end, text: SegmentText::Pending { attempts: 0 } });
+        self.recognize_next()
+    }
+
+    /// Hand the next segment waiting for its text to the recogniser: one at a time, in order,
+    /// from the file. Segments before `from` need none. With nothing left to do, the take may be
+    /// finished.
+    fn recognize_next(&mut self) -> Vec<Effect> {
+        let session = self.status.session;
+        let (language, script, transcriber, tx) = (self.take_language(), self.take_script(), self.transcriber.clone(), self.internal.clone());
+        let glossary = self.take.vocabulary.glossary().to_vec();
+        let Some(l) = self.take.long.as_mut() else { return Vec::new() };
+        if !l.recognizing || l.in_flight.is_some() || !l.past_in_memory() {
+            return self.long_progress();
+        }
+        let from = l.from;
+        for segment in &mut l.segments {
+            if segment.end <= from && matches!(segment.text, SegmentText::Pending { .. }) {
+                segment.text = SegmentText::Done(String::new());
+            }
+        }
+        let Some(idx) = l.segments.iter().position(|s| matches!(s.text, SegmentText::Pending { .. })) else {
+            let mut effects = self.long_progress();
+            effects.extend(self.finish_long());
+            return effects;
+        };
+        let (start, end, path) = (l.segments[idx].start.max(from), l.segments[idx].end, l.path.clone());
+        let task = tokio::spawn(async move {
+            let wav = tokio::task::spawn_blocking(move || long::read_segment(&path, start, end)).await;
+            let result = match wav {
+                Ok(Ok(wav)) if wav::is_silent(&wav) => Ok(Transcript { text: String::new(), latency_ms: 0 }),
+                Ok(Ok(wav)) => {
+                    transcriber.transcribe(&wav, language.as_deref(), &glossary).await.map(|t| Transcript { text: normalized(script, t.text.trim()), ..t })
+                }
+                Ok(Err(e)) => Err(DictationError::Audio(format!("the recording file could not be read: {e}"))),
+                Err(e) => Err(DictationError::Audio(format!("segment read task failed: {e}"))),
+            };
+            let _ = tx.send(Internal::LongRecognized { session, idx, result }).await;
+        });
+        l.in_flight = Some((idx, task));
+        self.long_progress()
+    }
+
+    /// A segment came back: its text, or one more failed try (twice, and the text says the span
+    /// was not recognised).
+    fn on_long_recognized(&mut self, session: u64, idx: usize, result: Result<Transcript, DictationError>) -> Vec<Effect> {
+        if session != self.status.session {
+            return Vec::new();
+        }
+        let Some(l) = self.take.long.as_mut() else { return Vec::new() };
+        if l.in_flight.as_ref().map(|(i, _)| *i) != Some(idx) {
+            return Vec::new();
+        }
+        l.in_flight = None;
+        let segment = &mut l.segments[idx];
+        match result {
+            Ok(t) => {
+                l.asr_ms += t.latency_ms;
+                segment.text = SegmentText::Done(t.text);
+            }
+            Err(e) => {
+                let attempts = match segment.text {
+                    SegmentText::Pending { attempts } => attempts + 1,
+                    _ => 1,
+                };
+                tracing::warn!(session, idx, attempts, error = %e, "a segment of the long take was not recognised");
+                segment.text = if attempts >= 2 { SegmentText::Failed } else { SegmentText::Pending { attempts } };
+                l.last_error = Some(e);
+            }
+        }
+        self.recognize_next()
+    }
+
+    /// The recording thread finished. For the current take: its length and gaps are kept, and a
+    /// stop that is already here is routed. A file nobody follows any more is removed.
+    fn on_long_closed(&mut self, session: u64, path: PathBuf, total: u64, gaps: Vec<(u64, u64)>, error: Option<String>) -> Vec<Effect> {
+        let current = session == self.status.session && self.take.long.as_ref().is_some_and(|l| l.path == path);
+        if !current {
+            long::remove(&path);
+            return Vec::new();
+        }
+        let Some(l) = self.take.long.as_mut() else { return Vec::new() };
+        l.closed = Some((total, gaps));
+        l.error = error;
+        match (&self.status.phase, self.take.recording.take()) {
+            (DictationPhase::Processing { .. }, Some(recording)) => self.route_stopped(recording),
+            (_, recording) => {
+                self.take.recording = recording;
+                // The stream closed without a stop (the device went away): the stop that follows
+                // routes; recognition may already have finished its queue.
+                self.recognize_next()
+            }
+        }
+    }
+
+    /// Take the text from the file: recognise what is left, then put it together
+    /// (docs/dictation.md §22).
+    fn run_long_take(&mut self) -> Vec<Effect> {
+        let Some(l) = self.take.long.as_mut() else { return Vec::new() };
+        l.recognizing = true;
+        l.finishing = true;
+        let refine = self.take_refine_enabled() && self.take.mode == OutputMode::WholeTake;
+        self.announce_preset(refine);
+        let mut effects = self.stage(ProcessingStage::Transcribing);
+        effects.extend(self.recognize_next());
+        effects
+    }
+
+    /// A streaming take fell back while long (docs/dictation.md §22): its text comes from the file
+    /// from `from` on; recognition starts now, the stop routes the rest.
+    fn long_fallback(&mut self, from: u64) -> Vec<Effect> {
+        let Some(l) = self.take.long.as_mut() else { return Vec::new() };
+        l.recognizing = true;
+        l.from = from;
+        if matches!(self.status.phase, DictationPhase::Processing { .. }) && l.is_long() {
+            return self.run_long_take();
+        }
+        self.recognize_next()
+    }
+
+    /// Every segment is back and the take was routed to its file: the text is put together (the
+    /// file is removed), then it goes on as a whole take's text — or, in `live_inject`, as the
+    /// remainder after the pasted sentences.
+    fn finish_long(&mut self) -> Vec<Effect> {
+        let ready = self
+            .take
+            .long
+            .as_ref()
+            .is_some_and(|l| l.finishing && l.closed.is_some() && l.in_flight.is_none() && matches!(self.status.phase, DictationPhase::Processing { .. }));
+        if !ready {
+            return Vec::new();
+        }
+        let Some(l) = self.take.long.as_mut() else { return Vec::new() };
+        l.finishing = false;
+        let from = l.from;
+        let pieces: Vec<(u64, u64, Option<String>)> = l
+            .segments
+            .iter()
+            .filter(|s| s.end > from)
+            .map(|s| {
+                let text = match &s.text {
+                    SegmentText::Done(t) => Some(t.clone()),
+                    SegmentText::Failed | SegmentText::Pending { .. } => None,
+                };
+                (s.start.max(from), s.end, text)
+            })
+            .collect();
+        let gaps: Vec<(u64, u64)> = l.closed.as_ref().map_or_else(Vec::new, |c| c.1.iter().filter(|g| g.1 > from).map(|g| (g.0.max(from), g.1)).collect());
+        let recognised = pieces.iter().any(|p| p.2.as_deref().is_some_and(|t| !t.trim().is_empty()));
+        let text = long::assemble(&pieces, &gaps);
+        let (asr_ms, error) = (l.asr_ms, l.last_error.take());
+        long::remove(&l.path);
+        if !recognised {
+            // Placeholders alone are no text: the take failed like a whole take whose recognition
+            // failed (silence: nothing was said); `live_inject` closes with what it pasted.
+            if self.take.mode == OutputMode::LiveInject {
+                if let Some(e) = error {
+                    let reason = self.take.live_error.take().unwrap_or_default();
+                    self.take.live_error = Some(format!("{reason}; 补齐失败：{e}"));
+                }
+                return self.close_live_inject();
+            }
+            return self.fail(&error.unwrap_or(DictationError::NoSpeech), None);
+        }
+        if self.take.mode == OutputMode::LiveInject {
+            let start_ms = self.take.inject.last_end_ms;
+            if !text.trim().is_empty() {
+                self.queue_sentence(Segment { text, start_ms, end_ms: self.recording_ms.max(start_ms) });
+            }
+            return self.close_live_inject();
+        }
+        let refine = self.take_refine_enabled();
+        let job = PipelineJob {
+            session: self.status.session,
+            input: PipelineInput::Text { raw_text: text, asr_ms },
+            language: self.take_language(),
+            transcriber: self.transcriber.clone(),
+            refiner: if refine { self.refiner.clone() } else { None },
+            refine_requested: refine,
+            hints: self.refine_hints(),
+            injector: self.injector.clone(),
+            vocabulary: self.take.vocabulary.clone(),
+            script: self.take_script(),
+            long: true,
+            tx: self.internal.clone(),
+        };
+        self.abort_pipeline();
+        self.pipeline = Some(tokio::spawn(run_pipeline(job)));
+        Vec::new()
+    }
+
+    /// The status's segment count (docs/dictation.md §22): while the take's segments are
+    /// recognised, once it is past its first two minutes — listening, and processing until the
+    /// take ends (`terminal` clears it).
+    fn long_progress(&mut self) -> Vec<Effect> {
+        let Some(l) = &self.take.long else { return Vec::new() };
+        let progress = l.progress();
+        let shown = matches!(self.status.phase, DictationPhase::Listening { .. } | DictationPhase::Processing { .. }) && l.recognizing && l.past_in_memory();
+        let segments = shown.then_some(progress);
+        if self.status.segments == segments {
+            return Vec::new();
+        }
+        self.status.segments = segments;
+        vec![Effect::Status(self.status.clone())]
+    }
+
+    /// The take is over (done, failed, cancelled): its recognition stops and its file goes — now
+    /// if the recording thread is done, when it reports otherwise.
+    fn discard_long(&mut self) {
+        let Some(l) = self.take.long.take() else { return };
+        if let Some((_, task)) = &l.in_flight {
+            task.abort();
+        }
+        if l.closed.is_some() {
+            long::remove(&l.path);
+        }
+    }
+
     /// The whole take goes to the transcriber (docs/dictation.md §2).
     fn run_whole_take(&mut self, recording: Recording) -> Vec<Effect> {
         let refine = self.take_refine_enabled();
@@ -1801,6 +2284,7 @@ impl DictationEngine {
             injector: self.injector.clone(),
             vocabulary: self.take.vocabulary.clone(),
             script: self.take_script(),
+            long: false,
             tx: self.internal.clone(),
         };
         self.abort_pipeline();
@@ -1817,7 +2301,9 @@ impl DictationEngine {
     fn finish_with(&mut self, outcome: PipelineOutcome, undelivered: Option<String>) -> Vec<Effect> {
         let PipelineOutcome { raw_text, text, refined, asr_ms, refine_ms, refine_error, refine_model, vocabulary, injection, edit } = outcome;
         let mode = self.take.mode;
-        let segments = if mode.is_streaming() { Some(std::mem::take(&mut self.take.inject.segments)) } else { None };
+        // A long take's recording file goes with the take (`terminal`), whichever text it took.
+        let segments =
+            if mode.is_streaming() { Some(std::mem::take(&mut self.take.inject.segments)) } else { self.take.long.as_ref().map(long_history_segments) };
         let live_error = if self.take.requested.is_streaming() { self.take.live_error.clone() } else { None };
         let mut entry = HistoryEntry {
             id: Uuid::new_v4(),
@@ -1887,6 +2373,8 @@ impl DictationEngine {
 
     /// Enter a terminal phase and arm its dwell timer.
     fn terminal(&mut self, phase: DictationPhase, dwell: Duration) -> Vec<Effect> {
+        self.discard_long();
+        self.status.segments = None;
         self.disarm();
         self.arm(dwell, |session| Internal::DwellOver { session });
         vec![self.set_phase(phase)]
@@ -1907,6 +2395,8 @@ impl DictationEngine {
             // The take is over: its context and preset go with it (the next start probes afresh).
             self.status.context = None;
             self.status.preset = None;
+            self.status.source = None;
+            self.status.segments = None;
         }
         self.status.phase = phase;
         Effect::Status(self.status.clone())
@@ -1948,6 +2438,25 @@ impl Drop for DictationEngine {
             tracing::debug!(error = %e, "capture stop on shutdown failed");
         }
     }
+}
+
+/// A long take's segments as the history keeps them (docs/dictation.md §22): each segment's time
+/// and text, one that was not recognised as the placeholder; silent ones carry nothing and are left
+/// out.
+fn long_history_segments(l: &LongTake) -> Vec<Segment> {
+    let ms = |sample: u64| sample * 1000 / long::RATE;
+    l.segments
+        .iter()
+        .filter(|s| s.end > l.from && !matches!(&s.text, SegmentText::Done(t) if t.trim().is_empty()))
+        .map(|s| Segment {
+            text: match &s.text {
+                SegmentText::Done(t) => t.clone(),
+                SegmentText::Failed | SegmentText::Pending { .. } => long::unrecognised(s.start, s.end),
+            },
+            start_ms: ms(s.start.max(l.from)),
+            end_ms: ms(s.end),
+        })
+        .collect()
 }
 
 struct LiveJob {
@@ -2078,6 +2587,9 @@ struct PipelineJob {
     vocabulary: Arc<Vocabulary>,
     /// The script the transcript is normalised to before anything else (docs/dictation.md §17).
     script: ChineseScript,
+    /// A long take's text (docs/dictation.md §22): cleaned up only up to
+    /// [`long::REFINE_MAX_CHARS`], pasted only up to [`long::PASTE_MAX_CHARS`].
+    long: bool,
     tx: mpsc::Sender<Internal>,
 }
 
@@ -2100,7 +2612,7 @@ fn process_final_text(vocabulary: &Vocabulary, text: &str) -> (String, Vocabular
 /// (ASR →) dictionary → (refine) → rules → inject, off the core task (docs/dictation.md §16.3).
 /// Every step reports back with the session id.
 async fn run_pipeline(job: PipelineJob) {
-    let PipelineJob { session, input, language, transcriber, refiner, refine_requested, hints, injector, vocabulary, script, tx } = job;
+    let PipelineJob { session, input, language, transcriber, refiner, refine_requested, hints, injector, vocabulary, script, long, tx } = job;
     let glossary = vocabulary.glossary();
     let (raw_text, asr_ms) = match input {
         // The recogniser's text in the chosen script first (docs/dictation.md §17); a streaming
@@ -2122,7 +2634,11 @@ async fn run_pipeline(job: PipelineJob) {
     note_fallback(&corrected, "dictionary");
     let mut text = corrected.text.clone();
     let (mut refined, mut refine_ms, mut refine_error, mut refine_model) = (false, None, None, None);
-    if let Some(refiner) = refiner {
+    let too_long_to_refine = long && corrected.text.chars().count() > long::REFINE_MAX_CHARS;
+    if too_long_to_refine && refine_requested {
+        refine_error = Some(long::REFINE_SKIPPED.to_owned());
+    }
+    if let Some(refiner) = refiner.filter(|_| !too_long_to_refine) {
         let _ = tx.send(Internal::Stage { session, stage: ProcessingStage::Refining }).await;
         match refiner.refine(&corrected.text, &hints).await {
             Ok(out) => {
@@ -2141,7 +2657,7 @@ async fn run_pipeline(job: PipelineJob) {
                 refine_error = Some(e.to_string());
             }
         }
-    } else if refine_requested {
+    } else if refine_requested && refine_error.is_none() {
         refine_error = Some("润色未配置：缺少 API 密钥".to_owned());
     }
     let ruled = vocabulary.apply_rules(&text);
@@ -2156,7 +2672,17 @@ async fn run_pipeline(job: PipelineJob) {
     }
     let _ = tx.send(Internal::Stage { session, stage: ProcessingStage::Inserting }).await;
     let to_inject = text.clone();
-    let injection = match tokio::task::spawn_blocking(move || injector.inject(&to_inject)).await {
+    let too_long_to_paste = long && text.chars().count() > long::PASTE_MAX_CHARS;
+    let injection = match tokio::task::spawn_blocking(move || {
+        if too_long_to_paste {
+            // docs/dictation.md §22: a text this long waits on the clipboard.
+            injector.copy(&to_inject).map(|()| Injection { via: Via::Clipboard, note: Some(InjectNote::new(ClipboardCode::TooLong, long::TOO_LONG_TO_PASTE)) })
+        } else {
+            injector.inject(&to_inject)
+        }
+    })
+    .await
+    {
         Ok(result) => result,
         Err(e) => Err(DictationError::Inject(format!("injector task failed: {e}"))),
     };
@@ -2963,6 +3489,7 @@ mod tests {
             streaming: None,
             probe: None,
             service_probe: None,
+            segmenter: None,
         };
         let (mut engine, mut rx) = DictationEngine::new(ports, &resolved(false, None), levels_tx);
         assert_eq!(calls.load(Ordering::SeqCst), 1, "clients are built once at construction");

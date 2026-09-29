@@ -64,6 +64,7 @@ fn ports(factory_calls: Arc<AtomicUsize>, injector: Arc<FakeInjector>) -> Dictat
         streaming: None,
         probe: None,
         service_probe: None,
+        segmenter: None,
     }
 }
 

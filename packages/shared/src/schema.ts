@@ -701,6 +701,13 @@ export const takeContextSchema = z.object({
 });
 export type TakeContext = z.infer<typeof takeContextSchema>;
 
+/** `voltip_core::dictation::SegmentProgress`. */
+export const segmentProgressSchema = z.object({
+  done: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+});
+export type SegmentProgress = z.infer<typeof segmentProgressSchema>;
+
 /** `voltip_core::dictation::DictationStatus`: the phase plus a session counter the UI uses to
  *  drop notifications that belong to an earlier run, the take's context once the foreground probe
  *  answered (§18.6; absent on shells without a probe), and the kind of the current (or last) take
@@ -715,6 +722,12 @@ export const dictationStatusSchema = z.object({
   /** The preset the take's clean-up runs with (docs/dictation.md §21): the pill names it while
    *  refining; absent when the clean-up is off. */
   preset: presetRefSchema.optional(),
+  /** Where a take on this computer records from (docs/dictation.md §22): the pill names it while
+   *  listening; absent for a phone's take. */
+  source: recordingSourceSchema.optional(),
+  /** A long take's recognition (docs/dictation.md §22), once the take is past its first two
+   *  minutes: segments done out of those cut so far. */
+  segments: segmentProgressSchema.optional(),
 });
 export type DictationStatus = z.infer<typeof dictationStatusSchema>;
 
@@ -731,6 +744,7 @@ export const CLIPBOARD_CODES = [
   "no_display",
   "secure_input",
   "elevated_target",
+  "too_long",
   "other",
 ] as const;
 export const clipboardCodeSchema = z.enum(CLIPBOARD_CODES);

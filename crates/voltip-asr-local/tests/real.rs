@@ -497,6 +497,7 @@ async fn real_qwen3_traditional_answer_reaches_the_pipeline_end_in_simplified() 
         streaming: None,
         probe: None,
         service_probe: None,
+        segmenter: None,
     };
     // The default settings: `chinese_script = simplified`.
     let settings = EngineSettings { refine_enabled: false, ..EngineSettings::default() };

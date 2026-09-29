@@ -218,6 +218,10 @@ export const en: Messages = {
       doneClipboard: "Rewrite copied, {n} chars · {via}",
       refineFailed: "Rewrite failed; the selection is unchanged",
     },
+    segments: {
+      listening: { one: "{n} segment recognised", other: "{n} segments recognised" },
+      processing: "{done} of {total} segments recognised",
+    },
   },
   outcome: {
     inserted: "Inserted · {via}",
@@ -241,6 +245,9 @@ export const en: Messages = {
     fallback: "Live transcription model not downloaded · running as All at once",
     effective: "In effect",
     liveError: "Live transcription stopped; the whole recording was transcribed instead: {reason}",
+  },
+  recordingSource: {
+    name: { microphone: "Microphone", system: "Computer audio", mixed: "Mixed" },
   },
   activation: {
     name: {
@@ -564,6 +571,8 @@ export const en: Messages = {
         "Could not paste at the cursor: a password field or a system security screen has the input. The text is on the clipboard; press {keys} to paste it.",
       elevated_target:
         "Could not paste at the cursor: the target window runs as administrator. The text is on the clipboard; press {keys} to paste it.",
+      too_long:
+        "The text is over 5,000 characters, so it was not pasted directly. It is on the clipboard; press {keys} to paste it.",
       other: "Could not paste directly. The text is on the clipboard; press {keys} to paste it.",
       openAccessibility: "Open Accessibility settings",
       details: "Technical details",

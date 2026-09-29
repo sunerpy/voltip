@@ -42,6 +42,7 @@ fn start() -> Node {
         streaming: None,
         probe: Some(probe.clone()),
         service_probe: None,
+        segmenter: None,
     };
     let mut config = CoreConfig::new(dir.path().to_path_buf());
     config.default_device_name = "Paste Test".into();
