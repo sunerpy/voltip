@@ -61,6 +61,13 @@ pub const AUTO_CHECK_DELAY: Duration = Duration::from_secs(10);
 pub const MARKER_FILE_NAME: &str = "update-ready.json";
 /// Minimum number of bytes between two `Downloading` events (keeps the event bus quiet).
 pub const PROGRESS_STEP: u64 = 512 * 1024;
+/// How long opening a connection to the update host may take (TCP and TLS), for the manifest and
+/// the package alike. The plugin sets none, which leaves it to the operating system (about 20 s on
+/// Windows, longer elsewhere) while the status sits at `Checking` (user report 2026-09-29).
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long one read may stall (the manifest's answer, the next chunk of the package) before the
+/// run fails as timed out. Without it a connection that goes quiet keeps the run waiting for good.
+pub const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The update source of this build. A value managed on the Tauri builder before `setup` overrides
 /// the build's (`tests/update.rs` points it at a local manifest server).
@@ -72,6 +79,10 @@ pub struct UpdaterConfig {
     pub pubkey: String,
     /// Delay before the automatic check at startup ([`AUTO_CHECK_DELAY`] in production).
     pub auto_check_delay: Duration,
+    /// [`CONNECT_TIMEOUT`] in production.
+    pub connect_timeout: Duration,
+    /// [`READ_TIMEOUT`] in production.
+    pub read_timeout: Duration,
 }
 
 impl UpdaterConfig {
@@ -85,7 +96,7 @@ impl UpdaterConfig {
         let url = url.map(str::trim).filter(|s| !s.is_empty())?;
         let pubkey = pubkey.map(str::trim).filter(|s| !s.is_empty())?;
         let endpoint = Url::parse(url).ok().filter(|u| matches!(u.scheme(), "https" | "http"))?;
-        Some(Self { endpoint, pubkey: pubkey.to_owned(), auto_check_delay: AUTO_CHECK_DELAY })
+        Some(Self { endpoint, pubkey: pubkey.to_owned(), auto_check_delay: AUTO_CHECK_DELAY, connect_timeout: CONNECT_TIMEOUT, read_timeout: READ_TIMEOUT })
     }
 
     /// The `plugins.updater` block the plugin deserialises at initialisation (injected into the
@@ -291,6 +302,24 @@ pub fn request<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<Updat
     Ok(())
 }
 
+/// `error` followed by its causes, outermost first: `error sending request for url (…): client
+/// error (Connect): tcp connect error: Connection refused (os error 111)`. The first line alone never
+/// says why a request failed, and that line is all `to_string` gives (user report 2026-09-29). A
+/// cause whose text is already in the message is left out.
+pub fn describe(error: &dyn std::error::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let text = cause.to_string();
+        if !text.is_empty() && !message.contains(&text) {
+            message.push_str(": ");
+            message.push_str(&text);
+        }
+        source = cause.source();
+    }
+    message
+}
+
 /// One run against the plugin; failures become `Failed`. The slot is released before the run's
 /// final status goes out ([`UpdateSlot::finish`]).
 async fn drive<R: Runtime>(app: AppHandle<R>, bridge: Bridge, slot: Arc<UpdateSlot>, intent: Intent) {
@@ -316,9 +345,18 @@ async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateS
         Some(pending) => (pending, None),
         None => {
             slot.publish(bridge, UpdateStatus::Checking);
-            let updater =
-                app.updater_builder().endpoints(vec![config.endpoint]).map_err(|e| e.to_string())?.pubkey(config.pubkey).build().map_err(|e| e.to_string())?;
-            match updater.check().await.map_err(|e| e.to_string())? {
+            let (connect, read) = (config.connect_timeout, config.read_timeout);
+            // The client settings reach the package download too: the plugin hands them on to the
+            // `Update` it returns.
+            let updater = app
+                .updater_builder()
+                .endpoints(vec![config.endpoint])
+                .map_err(|e| describe(&e))?
+                .pubkey(config.pubkey)
+                .configure_client(move |client| client.connect_timeout(connect).read_timeout(read))
+                .build()
+                .map_err(|e| describe(&e))?;
+            match updater.check().await.map_err(|e| describe(&e))? {
                 None => {
                     slot.clear_marker();
                     let version = app.package_info().version.to_string();
@@ -363,7 +401,7 @@ async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateS
                 || {},
             )
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| describe(&e))?;
         tracing::info!(version, bytes = bytes.len(), "update downloaded and verified");
         pending.bytes = Some(bytes);
         slot.write_marker(&version);
@@ -382,7 +420,7 @@ async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateS
     let bytes = bytes.unwrap_or_default();
     // Windows: the installer is launched and the process exits inside `install`; macOS / Linux: the
     // bundle is replaced and the app has to relaunch itself.
-    tauri::async_runtime::spawn_blocking(move || update.install(bytes)).await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || update.install(bytes)).await.map_err(|e| describe(&e))?.map_err(|e| describe(&e))?;
     slot.clear_marker();
     tracing::info!(version, "update installed; restarting");
     app.request_restart();
@@ -455,6 +493,7 @@ mod tests {
         let cfg = UpdaterConfig::from_values(Some(" https://updates.example.test/{{target}}/{{arch}}/{{current_version}} "), Some(" dW50cnVzdGVk ")).unwrap();
         assert_eq!(cfg.pubkey, "dW50cnVzdGVk");
         assert_eq!(cfg.auto_check_delay, AUTO_CHECK_DELAY);
+        assert_eq!((cfg.connect_timeout, cfg.read_timeout), (CONNECT_TIMEOUT, READ_TIMEOUT));
         // url::Url percent-encodes the braces in the path; the plugin replaces both spellings.
         assert!(cfg.endpoint.as_str().contains("%7B%7Btarget%7D%7D"), "{}", cfg.endpoint);
         let json = cfg.plugin_config();
@@ -464,6 +503,43 @@ mod tests {
         // The build-time values are whatever the environment held when this test binary compiled;
         // only the shape of the answer is fixed.
         let _ = UpdaterConfig::from_build();
+    }
+
+    /// An error with an optional cause, standing in for reqwest's and hyper's chain.
+    #[derive(Debug)]
+    struct Layer(&'static str, Option<Box<Layer>>);
+
+    impl std::fmt::Display for Layer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl std::error::Error for Layer {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            self.1.as_deref().map(|cause| cause as &(dyn std::error::Error + 'static))
+        }
+    }
+
+    #[test]
+    fn regression_describe_keeps_every_cause_of_a_failed_request() {
+        // User report 2026-09-29: 「更新失败 · error sending request for url (…)」 and nothing
+        // about why; the causes below that line were dropped.
+        let chain = Layer(
+            "error sending request for url (https://updates.example.test/latest.json)",
+            Some(Box::new(Layer(
+                "client error (Connect)",
+                Some(Box::new(Layer("tcp connect error", Some(Box::new(Layer("Connection refused (os error 111)", None)))))),
+            ))),
+        );
+        assert_eq!(
+            describe(&chain),
+            "error sending request for url (https://updates.example.test/latest.json): client error (Connect): tcp connect error: Connection refused (os error 111)"
+        );
+        // A cause already spelled out by the layer above, or with no text, adds nothing.
+        let repeated = Layer("operation timed out: deadline", Some(Box::new(Layer("deadline", Some(Box::new(Layer("", None)))))));
+        assert_eq!(describe(&repeated), "operation timed out: deadline");
+        assert_eq!(describe(&Layer("builder error", None)), "builder error");
     }
 
     #[test]

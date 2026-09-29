@@ -127,6 +127,17 @@ fn no_update(_: &MockServer) -> ResponseTemplate {
 /// server, run the event loop on this thread and drive it from `body` on a helper thread.
 /// `prepare` runs against the data dir before the app starts and returns the settings to save.
 fn with_updater_app(respond: fn(&MockServer) -> ResponseTemplate, prepare: impl FnOnce(&Path) -> Settings, body: Body) {
+    with_tuned_updater_app(respond, |_| {}, prepare, body);
+}
+
+/// [`with_updater_app`] with `tune` applied to the update source first (another endpoint, shorter
+/// timeouts).
+fn with_tuned_updater_app(
+    respond: fn(&MockServer) -> ResponseTemplate,
+    tune: impl FnOnce(&mut UpdaterConfig),
+    prepare: impl FnOnce(&Path) -> Settings,
+    body: Body,
+) {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
     let server = rt.block_on(async {
         let server = MockServer::start().await;
@@ -140,11 +151,14 @@ fn with_updater_app(respond: fn(&MockServer) -> ResponseTemplate, prepare: impl 
     let mut core = CoreConfig::new(dir.path().to_path_buf());
     core.default_device_name = "Update Test".into();
     core.direct_bind = "127.0.0.1:0".parse().unwrap();
-    let config = UpdaterConfig {
+    let mut config = UpdaterConfig {
         endpoint: format!("{}{MANIFEST_PATH}", server.uri()).parse().unwrap(),
         pubkey: PUBKEY.into(),
         auto_check_delay: Duration::from_millis(200),
+        connect_timeout: voltip_desktop_lib::update::CONNECT_TIMEOUT,
+        read_timeout: voltip_desktop_lib::update::READ_TIMEOUT,
     };
+    tune(&mut config);
     // What `run()` does in production: the plugin block comes from the build, not from a file.
     let mut context = mock_context(noop_assets());
     context.config_mut().plugins.0.insert("updater".to_owned(), config.plugin_config());
@@ -200,6 +214,58 @@ fn check_against_a_204_manifest_reports_up_to_date() {
             assert_eq!(invoke(webview, "update_install", json!({})), Ok(Value::Null));
             wait_update(rx, "checking", &[]);
             wait_update(rx, "up_to_date", &["checking"]);
+        }),
+    );
+}
+
+/// The manifest host refuses the connection: the run fails, and the message names the cause below
+/// reqwest's 「error sending request for url (…)」 line.
+#[test]
+fn regression_a_check_that_cannot_connect_says_why() {
+    // User report 2026-09-29: 「更新失败 · error sending request for url (https://github.com/…/
+    // latest.json)」 with nothing about why (DNS, the connection, TLS or a timeout).
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = closed.local_addr().unwrap().port();
+    drop(closed);
+    with_tuned_updater_app(
+        no_update,
+        move |config| config.endpoint = format!("http://127.0.0.1:{port}{MANIFEST_PATH}").parse().unwrap(),
+        |_| Settings::default(),
+        Box::new(|_, webview, rx| {
+            wait_state(webview, |s| s.identity.is_some());
+            assert_eq!(invoke(webview, "update_check", json!({})), Ok(Value::Null));
+            wait_update(rx, "checking", &[]);
+            let failed = wait_update(rx, "failed", &["checking"]);
+            let message = failed["message"].as_str().unwrap();
+            assert!(message.starts_with("error sending request for url ("), "{message}");
+            assert!(message.contains("tcp connect error"), "the connection is named: {message}");
+            assert!(message.contains("os error"), "and the operating system's reason: {message}");
+        }),
+    );
+}
+
+/// A manifest host that takes the request and never answers: the read timeout ends the run long
+/// before the answer would come, and the message says it timed out.
+#[test]
+fn regression_a_manifest_host_that_never_answers_times_out() {
+    // User report 2026-09-29: no timeout was set, so a connection that went quiet kept the status
+    // at 「正在检查更新…」 for as long as the operating system allowed, or for good.
+    fn stalled(_: &MockServer) -> ResponseTemplate {
+        ResponseTemplate::new(204).set_delay(Duration::from_secs(120))
+    }
+    with_tuned_updater_app(
+        stalled,
+        |config| config.read_timeout = Duration::from_millis(500),
+        |_| Settings::default(),
+        Box::new(|_, webview, rx| {
+            wait_state(webview, |s| s.identity.is_some());
+            let asked = Instant::now();
+            assert_eq!(invoke(webview, "update_check", json!({})), Ok(Value::Null));
+            wait_update(rx, "checking", &[]);
+            let failed = wait_update(rx, "failed", &["checking"]);
+            assert!(asked.elapsed() < Duration::from_secs(15), "failed after {:?}", asked.elapsed());
+            let message = failed["message"].as_str().unwrap();
+            assert!(message.contains("timed out"), "{message}");
         }),
     );
 }
