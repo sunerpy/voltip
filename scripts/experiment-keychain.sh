@@ -70,17 +70,26 @@ variant() {
   "./$name-probe-a" "$kc" "svc-$name" add
   "./$name-probe-a" "$kc" "svc-$name"
   "./$name-probe-b" "$kc" "svc-$name"
-  # The item's ACL: trusted applications and the partition list (hex JSON in the description).
-  security dump-keychain -a "$kc" 2>/dev/null | awk -v s="svc-$name" '$0 ~ s {f=1} f {print} /^keychain:/ && f && ++n > 1 {exit}' |
-    grep -E "description|applications|partition|0x7B22" | head -20
   echo "::endgroup::"
 }
 variant plain "/CN=Voltip Exp Plain"
+echo "::group::control: an item made by ad-hoc code (Voltip before 0.0.7)"
+cp probe-a adhoc-probe
+codesign -f -s - -i dev.voltip.experiment adhoc-probe
+codesign -dvvv adhoc-probe 2>&1 | grep -E "^(CDHash|TeamIdentifier|Signature)=" | sed "s/^/  adhoc: /"
+./adhoc-probe "$kc" svc-adhoc add
+./adhoc-probe "$kc" svc-adhoc
+./plain-probe-b "$kc" svc-adhoc
+echo "::endgroup::"
 variant team "/CN=Voltip Exp Team/OU=ABCDE12345/O=Voltip"
 
-# Decode every partition description in the dump.
-security dump-keychain -a "$kc" 2>/dev/null | grep -oE '7B22[0-9A-F]+' | while read -r hex; do
-  echo "$hex" | xxd -r -p; echo
-done
+echo "::group::the items' access lists"
+set +e
+security dump-keychain -a "$kc" >dump.txt 2>&1
+echo "dump exit=$?"
+grep -nE '"svce"|description|applications|partition|entry [0-9]|authorizations' dump.txt | head -80
+grep -oE '7B22[0-9A-Fa-f]+' dump.txt | while read -r hex; do echo "$hex" | xxd -r -p; echo; done
+set -e
+echo "::endgroup::"
 security list-keychains -d user -s $old
 security delete-keychain "$kc"
