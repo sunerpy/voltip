@@ -24,8 +24,8 @@ pub const MIN_SEGMENT: u64 = 20 * RATE;
 /// …and is cut wherever it is quietest once it reaches this length (45 s).
 pub const MAX_SEGMENT: u64 = 45 * RATE;
 /// How far into the pause after a span the cut goes: the detector ends a span only after at least
-/// 100 ms of silence (the shortest pause it splits an over-long utterance at), so 50 ms is always
-/// inside it.
+/// [`LONG_SPEECH_MIN_SILENCE`](crate::vad::LONG_SPEECH_MIN_SILENCE) of silence (the shortest pause
+/// it ends an over-long utterance at), so 50 ms is always inside it.
 pub const PAUSE_MARGIN: Duration = Duration::from_millis(50);
 
 /// Makes a [`VadSegmenter`] for each long take.
@@ -148,8 +148,8 @@ impl Segmenter for VadSegmenter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vad::MIN_SILENCE;
     use crate::vad::tests::{BrokenVad, EnergyVad, FakeVadLoader, install_vad};
-    use crate::vad::{MAX_SPEECH, MIN_SILENCE};
     use std::path::Path;
     use std::sync::atomic::Ordering;
 
@@ -197,27 +197,40 @@ mod tests {
         assert_eq!(segmenter.finish(), Some(100 * RATE));
     }
 
-    /// No pause at all: 45 s segments (cut where the last 5 s is quietest); the detector's spans
-    /// that end without a pause (an utterance longer than MAX_SPEECH) still count as pauses only
-    /// past 20 s.
+    /// No pause at all: 45 s segments, cut where the last 5 s is quietest. The detector reports no
+    /// span for a sound that never pauses, so the cuts are the forced ones.
     #[test]
     fn without_a_pause_the_segment_is_cut_at_45_seconds() {
         let dir = tempfile::tempdir().unwrap();
         install_vad(dir.path());
         let mut segmenter = factory(dir.path(), Arc::new(FakeVadLoader::energy())).create().unwrap();
         let cuts = cut_all(segmenter.as_mut(), &talk(100, 1_000, 0));
-        // The fake detector reports a span every MAX_SPEECH (20 s) of sound: 20, 40, 60, 80 s —
-        // the first at exactly 20 s past the start, so each one cuts.
-        let expected: Vec<u64> = (1..=4).map(|k| k * samples_at(MAX_SPEECH, VAD_SAMPLE_RATE_HZ) as u64).collect();
-        let margin = samples_at(PAUSE_MARGIN, VAD_SAMPLE_RATE_HZ) as u64;
-        assert_eq!(cuts, expected.iter().map(|c| c + margin).collect::<Vec<_>>());
-        // A detector that never reports: the forced cut at 45 s, then every 40–45 s.
-        let mut forced = VadSegmenter::new(Detector::Off);
-        let cuts = cut_all(&mut forced, &talk(100, 1_000, 0));
         assert_eq!(cuts.len(), 2, "{cuts:?}");
-        assert!((40 * RATE..=45 * RATE).contains(&cuts[0]));
-        assert!((cuts[0] + 40 * RATE..=cuts[0] + 45 * RATE).contains(&cuts[1]));
+        assert!((40 * RATE..=45 * RATE).contains(&cuts[0]), "{cuts:?}");
+        assert!((cuts[0] + 40 * RATE..=cuts[0] + 45 * RATE).contains(&cuts[1]), "{cuts:?}");
+        assert_eq!(segmenter.finish(), Some(100 * RATE));
+        // A detector that never reports cuts the same way.
+        let mut forced = VadSegmenter::new(Detector::Off);
+        assert_eq!(cut_all(&mut forced, &talk(100, 1_000, 0)), cuts);
         assert_eq!(forced.finish(), Some(100 * RATE));
+    }
+
+    /// Regression (goal review, 2026-09-30): the fake detector split a span of 20 s of speech at
+    /// exactly 20 s, and this test's predecessor asserted such cuts inside the sound, although
+    /// sherpa-onnx only waits for a shorter pause then. Speech with a 150 ms breath every 7 s
+    /// (too short to end a span before 20 s) is cut at the first breath past 20 s, inside it.
+    #[test]
+    fn regression_speech_past_20_seconds_is_cut_at_its_next_short_pause_not_inside_it() {
+        let mut segmenter = VadSegmenter::new(Detector::Ready(Box::new(EnergyVad::default())));
+        let signal = talk(60, 7, 150);
+        let cuts = cut_all(&mut segmenter, &signal);
+        assert_eq!(cuts.len(), 2, "{cuts:?}");
+        for (cut, breath_ends_at) in cuts.iter().zip([21, 42]) {
+            let at = usize::try_from(*cut).unwrap();
+            assert!(signal[at - 1] == 0.0 && signal[at] == 0.0, "cut at {} s is inside the sound", *cut as f64 / RATE as f64);
+            assert!((breath_ends_at * RATE - 150 * RATE / 1000..breath_ends_at * RATE).contains(cut), "cut at {} s", *cut as f64 / RATE as f64);
+        }
+        assert_eq!(segmenter.finish(), Some(60 * RATE));
     }
 
     /// A pause before 20 s is no cut.

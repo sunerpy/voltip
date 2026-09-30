@@ -1372,7 +1372,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 - **何时算长录音**：本机听写的 `max_minutes` 超过 2 分钟时请求 `long`；设备打开后，核心取 `pcm_stream()`，在非实时线程里读流，写到 `<data_dir>/recordings/take-<毫秒>-<会话>.pcm`（16 位小端，Unix 上权限 0600），同时交给切段器。拿不到流的采集（旧壳、测试假设备）照旧整段留在内存；建不了文件时自动停止提前到 2 分钟。
 - **切段**：端口 `SegmenterFactory`（`DictationPorts.segmenter`）。
-  - 桌面壳用 `voltip_asr_local::segmenter::VadSegmenterFactory`：Silero VAD（与 `vad_trim` 同一个辅助模型）跟着录音走，每段满 20 s 后在下一个停顿处切（停顿开始后 50 ms）；到 45 s 还没有停顿，就在最后 5 s 里能量最低的 200 ms 中间切断。检测器在录音线程上加载，不占核心的任务。模型没下载时本次用核心的兜底，同时在后台下载模型（`ModelStore::spawn_auxiliary_fetch`，不看 `vad_trim` 开关）。
+  - 桌面壳用 `voltip_asr_local::segmenter::VadSegmenterFactory`：Silero VAD（与 `vad_trim` 同一个辅助模型）跟着录音走，每段满 20 s 后在下一个停顿处切（停顿开始后 50 ms）；一句话说了 20 s 还没停时，检测器把 100 ms 的短停顿也算作停顿（sherpa-onnx 超过 `max_speech_duration` 后的做法），不在话中间切；到 45 s 还没有停顿，就在最后 5 s 里能量最低的 200 ms 中间切断。检测器在录音线程上加载，不占核心的任务。模型没下载时本次用核心的兜底，同时在后台下载模型（`ModelStore::spawn_auxiliary_fetch`，不看 `vad_trim` 开关）。
   - 核心兜底 `EnergySegmenter`：每满 30 s，在最后 5 s 里能量最低的 200 ms 中间切开，段长 25–30 s。
 - **识别**：录音超过 2 分钟后才开始识别；一次只识别一段，按顺序从文件读出，交给当前识别服务（云端或本地）。识别比录音慢时，排队的是文件里的位置，不占内存。全静音的段不上传。一段失败会重试一次，再失败，这一段在文中记为「[未识别 hh:mm:ss–hh:mm:ss]」；环形缓冲丢样本的空缺同样记为空缺，相邻的合并。
 - **停止后**：

@@ -35,9 +35,12 @@ pub const PADDING: Duration = Duration::from_millis(450);
 pub const VAD_SAMPLE_RATE_HZ: u32 = 16_000;
 /// Samples per detector window at [`VAD_SAMPLE_RATE_HZ`] (Silero v4).
 pub const WINDOW_SAMPLES: usize = 512;
-/// Longest speech segment the detector commits without a pause (it splits longer ones; only the
-/// ends matter here).
+/// Speech this long makes the detector end the span at a shorter pause: past it, sherpa-onnx
+/// (1.13.8, `voice-activity-detector.cc`) waits for [`LONG_SPEECH_MIN_SILENCE`] of audio under a
+/// 0.9 threshold instead of [`MIN_SILENCE`] under [`THRESHOLD`]. It does not cut inside speech.
 pub const MAX_SPEECH: Duration = Duration::from_secs(20);
+/// The pause that ends a span past [`MAX_SPEECH`] (sherpa-onnx's own value, not configurable).
+pub const LONG_SPEECH_MIN_SILENCE: Duration = Duration::from_millis(100);
 
 /// One stretch of speech, as sample offsets at [`VAD_SAMPLE_RATE_HZ`] into the audio fed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,8 +58,9 @@ pub trait VoiceActivity: Send {
 
     /// A stream instead of a take (docs/dictation.md §22, where a long take pauses): the next
     /// samples of it; returns the spans that ended by now, in order, as offsets from the stream's
-    /// start. A span is reported once the silence after it is [`MIN_SILENCE`] long (or once it
-    /// reaches [`MAX_SPEECH`]). Use a detector of its own: [`VoiceActivity::spans`] starts over.
+    /// start. A span is reported once the silence after it is [`MIN_SILENCE`] long, or
+    /// [`LONG_SPEECH_MIN_SILENCE`] once the span is [`MAX_SPEECH`] long. Use a detector of its
+    /// own: [`VoiceActivity::spans`] starts over.
     fn feed(&mut self, pcm16k: &[f32]) -> Result<Vec<SpeechSpan>, String>;
 }
 
@@ -217,8 +221,9 @@ pub(crate) mod tests {
 
     /// An energy detector: a window is speech when its RMS is above `-40 dBFS`; consecutive speech
     /// windows form a span. Good enough to find a tone between two silences. Fed as a stream, a
-    /// span is reported once [`MIN_SILENCE`] of quiet windows followed it, or once it reaches
-    /// [`MAX_SPEECH`].
+    /// span is reported once [`MIN_SILENCE`] of quiet windows followed it, or
+    /// [`LONG_SPEECH_MIN_SILENCE`] once it is [`MAX_SPEECH`] long, as sherpa-onnx does; a sound
+    /// without any pause is never reported.
     #[derive(Default)]
     pub struct EnergyVad {
         /// Samples fed so far (whole windows) and the part of a window still waiting.
@@ -237,12 +242,11 @@ pub(crate) mod tests {
                 self.quiet = 0;
                 let span = self.open.get_or_insert(SpeechSpan { start, end });
                 span.end = end;
-                if span.end - span.start >= samples_at(MAX_SPEECH, VAD_SAMPLE_RATE_HZ) {
-                    spans.extend(self.open.take());
-                }
-            } else if self.open.is_some() {
+            } else if let Some(span) = self.open {
                 self.quiet += window.len();
-                if self.quiet >= samples_at(MIN_SILENCE, VAD_SAMPLE_RATE_HZ) {
+                let long = span.end - span.start >= samples_at(MAX_SPEECH, VAD_SAMPLE_RATE_HZ);
+                let pause = if long { LONG_SPEECH_MIN_SILENCE } else { MIN_SILENCE };
+                if self.quiet >= samples_at(pause, VAD_SAMPLE_RATE_HZ) {
                     spans.extend(self.open.take());
                 }
             }
@@ -354,6 +358,7 @@ pub(crate) mod tests {
         assert_eq!(VAD_SAMPLE_RATE_HZ, 16_000);
         assert_eq!(WINDOW_SAMPLES, 512);
         assert_eq!(MAX_SPEECH, Duration::from_secs(20));
+        assert_eq!(LONG_SPEECH_MIN_SILENCE, Duration::from_millis(100));
         assert_eq!(samples_at(PADDING, 16_000), 7200);
         assert_eq!(samples_at(Duration::from_secs(1), 48_000), 48_000);
         assert_eq!(speech_range(&[], 100), None, "no speech, no range");
