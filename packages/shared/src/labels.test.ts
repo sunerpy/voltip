@@ -15,6 +15,7 @@ import {
   formatDate,
   formatDuration,
   formatElapsed,
+  formatTakeLength,
   formatMs,
   formatRemaining,
   formatSeconds,
@@ -503,6 +504,9 @@ describe("output modes and activation labels (docs/dictation.md §12–§13)", (
 
 describe("long take labels (section 22)", () => {
   it("the timer shows hours past an hour, the phase line counts the segments and the source has a name", () => {
+    expect(formatTakeLength(6_800)).toBe("6.8 s");
+    expect(formatTakeLength(660_000)).toBe("11 分");
+    expect(formatTakeLength(3_723_000, "en")).toBe("1 h 2 min");
     expect(formatElapsed(3_599_999)).toBe("59:59");
     expect(formatElapsed(3_600_000)).toBe("1:00:00");
     expect(formatElapsed(7_323_000)).toBe("2:02:03");

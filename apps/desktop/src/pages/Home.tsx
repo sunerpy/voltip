@@ -9,7 +9,7 @@ import {
   durationParts,
   formatDuration,
   formatMs,
-  formatSeconds,
+  formatTakeLength,
   isBuiltinPreset,
   modelDisplayName,
   outcomeLabel,
@@ -277,7 +277,7 @@ export function Home() {
       header: t("home.table.duration"),
       width: 64,
       align: "right",
-      cell: (r) => ({ type: "mono", text: formatSeconds(r.duration_ms) }),
+      cell: (r) => ({ type: "mono", text: formatTakeLength(r.duration_ms, locale) }),
     },
     {
       id: "asr",

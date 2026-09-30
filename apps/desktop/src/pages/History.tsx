@@ -7,7 +7,7 @@ import {
   formatCount,
   activationHint,
   formatMs,
-  formatSeconds,
+  formatTakeLength,
   isBuiltinPreset,
   outcomeLabel,
   outputModeLabel,
@@ -632,7 +632,7 @@ export function History({ initialFilter }: HistoryProps) {
                 />
                 <Readout
                   label={t("history.detail.duration")}
-                  value={formatSeconds(selected.duration_ms)}
+                  value={formatTakeLength(selected.duration_ms, locale)}
                   size="sm"
                 />
                 <Readout

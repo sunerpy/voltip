@@ -902,6 +902,8 @@ describe("History page · long entries (docs/dictation.md section 22)", () => {
       expect(screen.getByTestId("entry-processed")).toHaveTextContent(processed?.text ?? "none");
       expect(screen.getByTestId("entry-text")).toHaveTextContent("由「要点纪要」处理 · 原文保留");
       expect(backend.peek().history_recent[0]?.text).toBe(longEntry().text);
+      // Ten minutes read as such, not as 600.0 s.
+      expect(screen.getByText("10 分")).toBeInTheDocument();
       // Exports: the page's name for the file, the shell's answer in a toast.
       await user.click(within(tools).getByTestId("history-export-srt"));
       expect(

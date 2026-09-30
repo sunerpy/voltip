@@ -312,6 +312,12 @@ export function formatDuration(ms: number, locale: Locale = DEFAULT_LOCALE): str
     .join(" ");
 }
 
+/** A take's length: `6.8 s` under a minute, `11 分` / `1 小时 2 分` from then on (docs/dictation.md
+ *  §22: a take may run for two hours). */
+export function formatTakeLength(ms: number, locale: Locale = DEFAULT_LOCALE): string {
+  return ms < 60_000 ? formatSeconds(ms) : formatDuration(ms, locale);
+}
+
 type FailedPhase = Extract<DictationPhase, { phase: "failed" }>;
 
 /** The reason line of a failed dictation: the localized failure `code` when the core sent one,

@@ -78,6 +78,9 @@ export default function OverlaySheet({ state }: OverlaySheetProps) {
   const fallbackText = t("overlay.fallbackText");
   // While AI polish runs the pill names the preset in use (docs/dictation.md §21), the default one here.
   const refineTag = t("presets.proofread.name");
+  // A recording names what it records (docs/dictation.md §22): the default, the microphone.
+  const source = (s: PillState) =>
+    s === "listening" || s === "locked" ? t("recordingSource.name.microphone") : undefined;
   const sampleLabels: Partial<Record<PillState, string>> = {
     processing: t("overlay.label.processing"),
     inserted: t("overlay.label.inserted"),
@@ -99,6 +102,7 @@ export default function OverlaySheet({ state }: OverlaySheetProps) {
           label={sampleLabels[single]}
           via={single === "inserted" ? "VS Code" : undefined}
           mode={single === "processing" ? refineTag : undefined}
+          source={source(single)}
           onCopy={copyFallback}
         />
       </div>
@@ -129,6 +133,7 @@ export default function OverlaySheet({ state }: OverlaySheetProps) {
                 label={sampleLabels[s]}
                 via={s === "inserted" ? "VS Code" : undefined}
                 mode={s === "processing" ? refineTag : undefined}
+                source={source(s)}
                 onCopy={copyFallback}
                 onStop={() => {
                   void backend.invoke("dictation_stop");
