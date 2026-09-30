@@ -43,6 +43,7 @@ fn start(audio: Arc<FakeAudio>, transcriber: Arc<FakeTranscriber>) -> Node {
         streaming: None,
         probe: None,
         service_probe: None,
+        segmenter: None,
     };
     let (handle, events) = AppCore::start_with(config(dir.path()), Arc::new(MemorySecretStore::new()), ports).unwrap();
     Node { handle, events, dir }

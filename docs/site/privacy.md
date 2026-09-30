@@ -27,9 +27,11 @@ When AI polish is on, the recognised text is sent to the AI service you chose. F
 
 The switches are under **Settings → Scenes**, in **Context sent to AI polish**. With AI polish off, or in the **Type as you speak** output mode, no text is sent for polishing.
 
-## The microphone
+## The microphone and computer audio
 
-The microphone is open only while you record, or for the 15 seconds of a microphone test. Voltip does not listen in the background.
+The microphone is open only while you record, or for the 15 seconds of a microphone test. Computer audio is recorded only during a dictation with it chosen as the source. Voltip does not listen in the background.
+
+While a recording longer than 2 minutes runs, its audio is written to a file in Voltip's data folder so that it can be recognised in segments. The file is deleted when the recording ends, and at the next start if Voltip was closed during a recording.
 
 ## What stays on your computer
 

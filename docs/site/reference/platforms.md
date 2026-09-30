@@ -1,5 +1,5 @@
 ---
-description: What differs between Windows, macOS and Linux, including permissions, pasting on Wayland and windows that run as administrator.
+description: What differs between Windows, macOS and Linux, including permissions, recording computer audio, pasting on Wayland and windows that run as administrator.
 ---
 
 # Platform notes
@@ -16,6 +16,7 @@ Voltip is the same app on every desktop system. This page lists what differs bet
 - **Voice edit** copies the selection with <kbd>Ctrl</kbd> <kbd>Insert</kbd>. On keyboard layouts where AltGr types characters, <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>E</kbd> can clash with AltGr+E; choose another shortcut there.
 - **Tray**: left-click opens Voltip, right-click opens the menu. Closing the window keeps Voltip running in the tray.
 - **GPU**: Vulkan, with the graphics driver's Vulkan support. The Vulkan loader ships with Voltip.
+- **Computer audio** is recorded from the output device you choose, with nothing to set up.
 
 ## macOS
 
@@ -26,12 +27,14 @@ Voltip is the same app on every desktop system. This page lists what differs bet
 - **Scenes** recognise the app but not the window title.
 - **Tray**: clicking the menu bar icon opens the menu. Closing the window keeps Voltip running; it can be reopened from the Dock or the menu bar.
 - **GPU**: Metal.
+- **Computer audio** needs macOS 14.6 or later; on earlier versions the option is dimmed. The first time you record it, macOS asks whether Voltip may record the audio of other apps; the choice can be changed later under System Settings → Privacy & Security.
 
 ## Linux
 
 - **Packages**: `.deb` and AppImage, for x64. They are built on Ubuntu 22.04 and need glibc 2.34 or newer.
 - **Sessions**: X11 and Wayland. Closing the window quits Voltip, because there is no tray icon on Linux.
 - **GPU**: Vulkan, with a driver that supports it (`libvulkan1`).
+- **Computer audio** is recorded from the default output's monitor through PulseAudio; PipeWire's PulseAudio service (`pipewire-pulse`) works too. Without a sound server the option is dimmed. The microphone is recorded as before, whatever the sound server.
 
 ### Pasting
 

@@ -78,6 +78,7 @@ import {
   emptyHotkeyStatus,
   HISTORY_LIMIT,
   HISTORY_MIN_KEEP,
+  MAX_MINUTES_CHOICES,
   HISTORY_RECENT,
   type HistoryHits,
   type HistoryPage,
@@ -91,6 +92,9 @@ import {
   notApplicablePermissions,
   uncheckedPreflight,
   type AudioDevice,
+  type AudioOutputs,
+  type ExportFormat,
+  type ExportOutcome,
   type HostOs,
   type LevelFrame,
   type ProbeFailure,
@@ -122,6 +126,9 @@ import {
   type PresetId,
   type PresetRef,
   type PresetTryOutcome,
+  type ProcessState,
+  type RecordingSource,
+  type SegmentProgress,
   builtinPresetTextSchema,
   isBuiltinPreset,
   type BuiltinScene,
@@ -232,6 +239,9 @@ export interface MockBackendOptions {
   /** The phone's clipboard (docs/dictation.md §20.6); `null` = empty. Defaults to
    *  `MOCK_PHONE_CLIPBOARD`. */
   phoneClipboard?: string | null;
+  /** What `audioOutputs` answers (docs/dictation.md §22); defaults to the computer's sound
+   *  available on `MOCK_AUDIO_OUTPUTS` (the phone role: unsupported, no devices). */
+  audioOutputs?: AudioOutputs;
   /** Clock in milliseconds; injectable for deterministic tests. */
   now?: () => number;
   /** Deterministic randomness source in [0, 1). */
@@ -272,6 +282,11 @@ const MESSAGE_ECHO_MS = 150;
  *  dwell before the phase returns to idle. */
 export const MOCK_ASR_MS = 400;
 export const MOCK_REFINE_MS = 300;
+/** `voltip_core::history::process::PART_MAX_CHARS`: the preview's 用 AI 预设处理 counts its parts
+ *  the same way (docs/dictation.md §22). */
+export const MOCK_PART_MAX_CHARS = 1_500;
+/** Where the preview says an export was saved. */
+export const MOCK_EXPORT_DIR = "/home/you/Documents";
 export const MOCK_DICTATION_DWELL_MS = 2500;
 export const MOCK_DICTATION_FAILED_DWELL_MS = 6000;
 /** The streaming modes (docs/dictation.md §12) wait this long for the recogniser's final text
@@ -693,6 +708,23 @@ export const MOCK_AUDIO_DEVICES: readonly AudioDevice[] = [
     channels: 2,
   },
 ];
+/** Output devices the browser preview pretends to have (docs/dictation.md §22), default first. */
+export const MOCK_AUDIO_OUTPUTS: readonly AudioDevice[] = [
+  {
+    id: "Realtek(R) Audio Speakers",
+    name: "扬声器 (Realtek(R) Audio)",
+    is_default: true,
+    sample_rate_hz: 48_000,
+    channels: 2,
+  },
+  {
+    id: "Sony WH-1000XM5",
+    name: "Sony WH-1000XM5",
+    is_default: false,
+    sample_rate_hz: 48_000,
+    channels: 2,
+  },
+];
 /** Frame cadence of the synthetic meter (the native meter runs at 30 Hz too). */
 export const MOCK_METER_INTERVAL_MS = 1000 / 30;
 
@@ -795,6 +827,12 @@ export class MockBackend implements Backend {
   private takeContext: TakeContext | undefined;
   /** The paired phone the current take's audio comes from (docs/dictation.md §20). */
   private takeRemote: string | undefined;
+  /** What `audioOutputs` answers. */
+  private outputs: AudioOutputs;
+  /** What a take on this computer records (docs/dictation.md §22), and a long take's recognition
+   *  (`simulateLongTakeProgress`); both cleared at idle, the count already when the take ends. */
+  private takeSource: RecordingSource | undefined;
+  private takeSegments: SegmentProgress | undefined;
   private takeScene: Scene | undefined;
   /** The engines' preset and the custom presets as of the take's start (docs/dictation.md §21), and
    *  the preset the status names once the clean-up is under way. */
@@ -832,6 +870,11 @@ export class MockBackend implements Backend {
   private lastTextId = 0;
   private readonly feedback: "configured" | FeedbackError;
   private readonly probeTimers = new Set<ReturnType<typeof setTimeout>>();
+  /** `history_process` requests running (docs/dictation.md §22). */
+  private readonly processing = new Map<
+    number,
+    { id: string; timer: ReturnType<typeof setTimeout> }
+  >();
   /** Every event emitted, oldest first; handy for asserting ordering in tests. */
   readonly log: UiEvent[] = [];
   /** The whole history, newest first: what the core keeps in `history.sqlite3`. The state holds
@@ -860,6 +903,14 @@ export class MockBackend implements Backend {
     this.feedback = options.feedback ?? "configured";
     this.phoneClipboard =
       options.phoneClipboard === undefined ? MOCK_PHONE_CLIPBOARD : options.phoneClipboard;
+    this.outputs =
+      options.audioOutputs ??
+      (this.role === "phone"
+        ? { system_audio: { state: "unsupported" }, devices: [] }
+        : {
+            system_audio: { state: "available" },
+            devices: MOCK_AUDIO_OUTPUTS.map((d) => ({ ...d })),
+          });
     this.engineOverrides = options.engines ?? {};
     this.foregroundApp = options.foregroundApp ?? null;
     const host = hostOsOf(identity.platform);
@@ -937,6 +988,10 @@ export class MockBackend implements Backend {
     return Promise.resolve(MOCK_AUDIO_DEVICES.map((d) => ({ ...d })));
   }
 
+  audioOutputs(): Promise<AudioOutputs> {
+    return Promise.resolve(structuredClone(this.outputs));
+  }
+
   /** Synthetic meter: a breathing level on the requested device, 30 frames a second. A device
    *  that is not connected meters the default input, as the desktop shell does (2026-09-28: the
    *  chosen microphone may be unplugged). The phone's shell opens no microphone to meter: its
@@ -999,6 +1054,22 @@ export class MockBackend implements Backend {
     await Promise.resolve();
     return historyPageOf(this.role === "phone" ? [] : this.history, args);
   }
+
+  /** `history_export` (docs/dictation.md §22): the preview's save dialog takes the offered name;
+   *  what was asked for is kept in `exports`. */
+  async historyExport(id: string, format: ExportFormat, fileName: string): Promise<ExportOutcome> {
+    await Promise.resolve();
+    const entry = this.history.find((e) => e.id === id);
+    if (this.role === "phone" || entry === undefined)
+      return { kind: "failed", code: "gone", detail: "the entry is not in the history" };
+    if (format === "srt" && !(entry.segments ?? []).some((s) => s.text.trim().length > 0))
+      return { kind: "failed", code: "empty", detail: "the entry has no segments" };
+    this.exports.push({ id, format, fileName });
+    return { kind: "saved", path: `${MOCK_EXPORT_DIR}/${fileName}.${format}` };
+  }
+
+  /** Every `historyExport` that saved, in order (tests). */
+  readonly exports: { id: string; format: ExportFormat; fileName: string }[] = [];
 
   /** `history_entry`: one entry, `null` once it is gone. */
   async historyEntry(id: string): Promise<HistoryEntry | null> {
@@ -1238,6 +1309,30 @@ export class MockBackend implements Backend {
       }
       this.emit({ type: "settings", ...this.state.settings, microphone: device });
     },
+    settings_set_recording: (args) => {
+      // Mirrors `SetRecording` (docs/dictation.md §22): a length outside the choices or an output
+      // device id that is not 1–1024 bytes is refused with an `error` event, the setting kept.
+      const { recording } = required(args);
+      if (!(MAX_MINUTES_CHOICES as readonly number[]).includes(recording.max_minutes)) {
+        this.emit({
+          type: "error",
+          message: `recording.max_minutes: 最长录音时长须为 ${MAX_MINUTES_CHOICES.join(" / ")} 分钟之一`,
+        });
+        return;
+      }
+      const device = recording.output_device;
+      if (
+        device !== null &&
+        (device.trim().length === 0 || new TextEncoder().encode(device).length > 1024)
+      ) {
+        this.emit({
+          type: "error",
+          message: "recording.output_device: 输出设备标识须为 1–1024 字节，留空则使用系统默认输出",
+        });
+        return;
+      }
+      this.emit({ type: "settings", ...this.state.settings, recording: { ...recording } });
+    },
     settings_set_edit_hotkey: (args) => {
       // Mirrors `SetEditHotkey` (docs/dictation.md §19): the same validation, never the dictation
       // chord, `null` switches the key off.
@@ -1434,6 +1529,23 @@ export class MockBackend implements Backend {
     history_star: (args) => {
       const { id, starred } = required(args);
       this.setHistory(this.history.map((e) => (e.id === id ? { ...e, starred } : e)));
+    },
+    history_process: (args) => {
+      const { requestId, id, preset } = required(args);
+      this.processEntry(requestId, id, preset);
+    },
+    history_process_cancel: (args) => {
+      const { requestId } = required(args);
+      const running = this.processing.get(requestId);
+      if (running === undefined) return;
+      clearTimeout(running.timer);
+      this.processing.delete(requestId);
+      this.emit({
+        type: "history_process",
+        request_id: requestId,
+        id: running.id,
+        state: { state: "cancelled" },
+      });
     },
     settings_set_locale: (args) => {
       const { locale } = required(args);
@@ -1812,6 +1924,45 @@ export class MockBackend implements Backend {
 
   /** 试一试 (`presets_try`): refused at once without a clean-up, like the core; otherwise the
    *  canned clean-up answers after `MOCK_REFINE_MS`. Nothing is saved or recorded. */
+  /** `CoreCommand::HistoryProcess` (docs/dictation.md §22): a part every `MOCK_REFINE_MS`, 要点纪要
+   *  one request more when it has several parts, then the result stored with the entry. */
+  private processEntry(requestId: number, id: string, preset: string) {
+    const event = (state: ProcessState) => {
+      this.emit({ type: "history_process", request_id: requestId, id, state });
+    };
+    const entry = this.history.find((e) => e.id === id);
+    if (!this.state.engines.refine_ready)
+      return event({ state: "failed", reason: MOCK_PROCESS_UNCONFIGURED });
+    if (entry === undefined) return event({ state: "failed", reason: MOCK_PROCESS_ENTRY_GONE });
+    const resolved = resolvePreset(preset, this.state.presets).preset;
+    const parts = Math.max(1, Math.ceil(Array.from(entry.text).length / MOCK_PART_MAX_CHARS));
+    const total = parts + (resolved.id === "notes" && parts > 1 ? 1 : 0);
+    let done = 0;
+    event({ state: "running", done, total });
+    const step = () => {
+      done += 1;
+      if (done < total) {
+        event({ state: "running", done, total });
+        this.processing.set(requestId, { id, timer: setTimeout(step, MOCK_REFINE_MS) });
+        return;
+      }
+      this.processing.delete(requestId);
+      const current = this.history.find((e) => e.id === id);
+      if (current === undefined) return event({ state: "failed", reason: MOCK_PROCESS_ENTRY_GONE });
+      const processed = {
+        text: mockPresetOutput(
+          isBuiltinPreset(resolved.id) ? resolved.id : undefined,
+          current.text,
+        ),
+        preset: resolved,
+        at_ms: this.now(),
+      };
+      this.setHistory(this.history.map((e) => (e.id === id ? { ...e, processed } : e)));
+      event({ state: "done", processed });
+    };
+    this.processing.set(requestId, { id, timer: setTimeout(step, MOCK_REFINE_MS) });
+  }
+
   private tryPreset(id: number, trial: PresetTrial, text: string) {
     const engines = this.state.engines;
     if (!engines.refine_ready) {
@@ -1987,6 +2138,8 @@ export class MockBackend implements Backend {
   /** Stop every timer; call from test teardown or when the app unmounts. */
   destroy() {
     this.clearTimers();
+    for (const { timer } of this.processing.values()) clearTimeout(timer);
+    this.processing.clear();
     this.clearDictationTimers();
     this.clearLiveTimers();
     this.clearExtraStop();
@@ -2383,10 +2536,14 @@ export class MockBackend implements Backend {
       this.takeContext = undefined;
       this.takeRemote = undefined;
       this.takePreset = undefined;
+      this.takeSource = undefined;
     }
+    if (phase.phase !== "listening" && phase.phase !== "processing") this.takeSegments = undefined;
     const context = this.takeContext === undefined ? {} : { context: this.takeContext };
     const remote = this.takeRemote === undefined ? {} : { remote: this.takeRemote };
     const preset = this.takePreset === undefined ? {} : { preset: this.takePreset };
+    const source = this.takeSource === undefined ? {} : { source: this.takeSource };
+    const segments = this.takeSegments === undefined ? {} : { segments: this.takeSegments };
     this.emit({
       type: "dictation",
       session,
@@ -2395,6 +2552,8 @@ export class MockBackend implements Backend {
       kind: this.takeKind,
       ...remote,
       ...preset,
+      ...source,
+      ...segments,
     });
   }
 
@@ -2404,7 +2563,17 @@ export class MockBackend implements Backend {
   simulatePhoneTake(name = phonePeer().name) {
     this.startDictation("dictation");
     this.takeRemote = name;
+    this.takeSource = undefined;
     this.emitPhase(this.state.dictation.phase);
+  }
+
+  /** A long take's recognition (docs/dictation.md §22): `done` of `total` segments, as the core
+   *  reports it once the take is past its first two minutes. Only while a take runs. */
+  simulateLongTakeProgress(done: number, total: number) {
+    const phase = this.state.dictation.phase;
+    if (phase.phase !== "listening" && phase.phase !== "processing") return;
+    this.takeSegments = { done, total };
+    this.emitPhase(phase);
   }
 
   /** Desktop: the phone let go (`TakeStop`). */
@@ -2502,6 +2671,9 @@ export class MockBackend implements Backend {
     this.takePresetId = this.state.settings.engines.refine_preset;
     this.takePresets = this.state.presets;
     this.takePreset = undefined;
+    // §22: a voice edit's instruction is spoken into the microphone.
+    this.takeSource = kind === "edit" ? "microphone" : this.state.settings.recording.source;
+    this.takeSegments = undefined;
     if (kind === "edit" && !this.state.engines.refine_ready) {
       // §19.4: no LLM, no edit — refused at the press, the microphone never opens.
       this.emitPhase(
@@ -3202,6 +3374,11 @@ function mockPresetOutput(preset: PresetId | undefined, text: string): string {
   const body = cleaned.length > 0 ? cleaned : text;
   return /[。！？.!?]$/.test(body) ? body : `${body}。`;
 }
+
+/** `voltip_core::history::process::PROCESS_UNCONFIGURED`. */
+export const MOCK_PROCESS_UNCONFIGURED = "尚未配置 AI 润色服务，无法用预设处理";
+/** `voltip_core::history::process::PROCESS_ENTRY_GONE`. */
+export const MOCK_PROCESS_ENTRY_GONE = "这条记录已删除";
 
 /** The preview's fixed id of the built-in scene at `index` of `MOCK_BUILTIN_SCENES`. */
 export function builtinSceneId(index: number): string {

@@ -74,7 +74,10 @@ export function phoneTakeText(
         return {
           text: t("devices.live.failed", {
             name,
-            reason: takeFailureText({ phase, kind: dictation.kind }, locale),
+            reason: takeFailureText(
+              { phase, kind: dictation.kind, source: dictation.source },
+              locale,
+            ),
           }),
           tone: "danger",
         };

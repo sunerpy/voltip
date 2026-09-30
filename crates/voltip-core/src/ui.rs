@@ -105,6 +105,16 @@ pub enum UiEvent {
         /// The text, or why there is none.
         outcome: PresetTryOutcome,
     },
+    /// Where a 用 AI 预设处理 request is (docs/dictation.md §22; not cached): progress, and the
+    /// processed text once it is stored with the entry.
+    HistoryProcess {
+        /// The request's id.
+        request_id: u64,
+        /// The entry.
+        id: uuid::Uuid,
+        /// Running, done, failed or cancelled.
+        state: crate::history::process::ProcessState,
+    },
     /// Updater progress. Produced by the desktop shell (which owns the updater plugin) and folded
     /// into the same state as core events, like [`UiEvent::Hotkey`].
     Update(UpdateStatus),
@@ -494,6 +504,7 @@ impl UiState {
                 UiEvent::Presets { presets }
             }
             CoreEvent::PresetTry { id, outcome } => UiEvent::PresetTry { id, outcome },
+            CoreEvent::HistoryProcess { request_id, id, state } => UiEvent::HistoryProcess { request_id, id, state },
             CoreEvent::ProviderProbe(report) => UiEvent::ProviderProbe(report),
             CoreEvent::Connectivity(status) => {
                 self.connectivity = status.clone();
@@ -633,6 +644,7 @@ mod tests {
             scene: None,
             preset: None,
             origin: None,
+            processed: None,
         };
         let ev = st.apply(CoreEvent::History { recent: vec![entry.clone()], total: 7 });
         assert_eq!((st.history_recent.clone(), st.history_total), (vec![entry], 7));

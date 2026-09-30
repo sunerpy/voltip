@@ -15,6 +15,7 @@ import {
   formatDate,
   formatDuration,
   formatElapsed,
+  formatTakeLength,
   formatMs,
   formatRemaining,
   formatSeconds,
@@ -37,9 +38,12 @@ import {
   pairingStateLabel,
   platformLabel,
   processingStageLabel,
+  recordingSourceLabel,
   relativeTime,
   relayLabel,
   secretStateLabel,
+  segmentsDoneLabel,
+  systemAudioNote,
   shortFingerprint,
   shortKey,
   themeName,
@@ -495,6 +499,78 @@ describe("output modes and activation labels (docs/dictation.md §12–§13)", (
       ]),
     ];
     for (const text of zh) expect(text).not.toMatch(/[A-Za-z]/);
+  });
+});
+
+describe("long take labels (section 22)", () => {
+  it("the timer shows hours past an hour, the phase line counts the segments and the source has a name", () => {
+    expect(formatTakeLength(6_800)).toBe("6.8 s");
+    expect(formatTakeLength(660_000)).toBe("11 分");
+    expect(formatTakeLength(3_723_000, "en")).toBe("1 h 2 min");
+    expect(formatElapsed(3_599_999)).toBe("59:59");
+    expect(formatElapsed(3_600_000)).toBe("1:00:00");
+    expect(formatElapsed(7_323_000)).toBe("2:02:03");
+    const now = 10_000_000;
+    const listening = {
+      phase: "listening",
+      started_at: now - 3_723_000,
+      ready: true,
+      locked: false,
+    } as const;
+    const take = (phase: DictationPhase, done?: number, total?: number) => ({
+      phase,
+      kind: "dictation" as const,
+      segments: done === undefined ? undefined : { done, total: total ?? done },
+    });
+    expect(takePhaseLabel(take(listening, 12, 13), now).text).toBe(
+      "正在录音… 1:02:03 · 已识别 12 段",
+    );
+    expect(takePhaseLabel(take(listening, 1), now, "en").text).toBe(
+      "Recording… 1:02:03 · 1 segment recognised",
+    );
+    expect(segmentsDoneLabel({ done: 2, total: 3 }, "en")).toBe("2 segments recognised");
+    const transcribing = { phase: "processing", stage: "transcribing", started_at: now } as const;
+    expect(takePhaseLabel(take(transcribing, 12, 20), now).text).toBe("已识别 12/20 段");
+    expect(takePhaseLabel(take(transcribing, 12, 20), now, "en").text).toBe(
+      "12 of 20 segments recognised",
+    );
+    // A short take has no count; after the recognition the stage reads as before.
+    expect(takePhaseLabel(take(transcribing), now).text).toBe("识别中…");
+    expect(takePhaseLabel(take({ ...transcribing, stage: "refining" }, 20), now).text).toBe(
+      "润色中…",
+    );
+    expect(recordingSourceLabel("microphone")).toBe("麦克风");
+    expect(recordingSourceLabel("mixed")).toBe("混合");
+    expect(recordingSourceLabel("system", "en")).toBe("Computer audio");
+  });
+
+  it("says why the computer's sound cannot be recorded, and an audio failure names what failed to record", () => {
+    expect(systemAudioNote({ state: "available" })).toBeUndefined();
+    expect(systemAudioNote({ state: "macos_too_old", version: "14.5" })).toBe(
+      "录制电脑声音需要 macOS 14.6 或更高版本，当前为 14.5。",
+    );
+    expect(systemAudioNote({ state: "no_sound_server" }, "en")).toBe(
+      "Recording computer audio needs a PulseAudio or PipeWire sound server, and none was found.",
+    );
+    expect(systemAudioNote({ state: "unsupported" })).toBe("此设备不支持录制电脑声音。");
+    const failed = {
+      phase: "failed",
+      code: "audio",
+      message: "audio: system audio capture unavailable: macOS 14.5",
+    } as const;
+    expect(takeFailureText({ phase: failed, kind: "dictation" })).toBe("麦克风采集失败");
+    expect(takeFailureText({ phase: failed, kind: "dictation", source: "microphone" })).toBe(
+      "麦克风采集失败",
+    );
+    expect(takeFailureText({ phase: failed, kind: "dictation", source: "system" })).toBe(
+      "电脑声音录制失败",
+    );
+    expect(takeFailureText({ phase: failed, kind: "dictation", source: "mixed" }, "en")).toBe(
+      "Recording failed",
+    );
+    expect(takePhaseLabel({ phase: failed, kind: "dictation", source: "system" }, 0).text).toBe(
+      "失败 · 电脑声音录制失败",
+    );
   });
 });
 

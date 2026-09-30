@@ -10,12 +10,12 @@
 
 | crate | 职责 | 依赖 | 测试方式 |
 |---|---|---|---|
-| `voltip-audio` | `Recorder`：打开输入设备，采集 → 单声道 16 kHz i16，同时产出 30 Hz `LevelFrame`；`Recording::to_wav()`；上限 120 s 自动停止；`RecorderConfig.live_tap` 时另出一路实时 16 kHz 单声道 f32（`live.rs`：rubato 异步 sinc 按块重采样 → `rtrb` 无锁环，满环置 `overrun`），`on_ready` 在首块样本到达时回调一次 | cpal、rubato（重采样）、rtrb（SPSC 环） | `FakeBackend` 播放合成信号，DSP 纯函数；分块 vs 整段重采样差 < 1e-3 RMS |
+| `voltip-audio` | `Recorder`：打开输入设备（或电脑的输出、两者混合，§22），采集 → 单声道 16 kHz i16，同时产出 30 Hz `LevelFrame`；`Recording::to_wav()`；内存里最多留 120 s，长录音另出一路 16 kHz 流（`pcm.rs`，§22）；`RecorderConfig.live_tap` 时另出一路实时 16 kHz 单声道 f32（`live.rs`：rubato 异步 sinc 按块重采样 → `rtrb` 无锁环，满环置 `overrun`），`on_ready` 在首块样本到达时回调一次 | cpal、rubato（重采样）、rtrb（SPSC 环） | `FakeBackend` 播放合成信号，DSP 纯函数；分块 vs 整段重采样差 < 1e-3 RMS |
 | `voltip-asr` | `AsrClient::transcribe(wav, language) -> Transcript`：OpenAI 兼容 `POST {base}/v1/audio/transcriptions` multipart（`file`, `model`, `language?`），Bearer token；错误分类 `Unauthorized / RateLimited / Server / Network / Timeout / BadAudio` | reqwest 0.13（rustls，multipart，json） | wiremock |
 | `voltip-refine` | `RefineClient::refine_with(text, PromptHints) -> Refined`：OpenAI 兼容 `POST {base}/chat/completions`，系统提示词 = 这一次的预设（§21，默认「校对」）+ 语言 + 应用上下文 + 场景要求 + 术语表；`temperature 0.2`；结果去掉包裹引号/代码块 | reqwest | wiremock |
 | `voltip-inject` | `inject(text) -> Injection`：备份剪贴板 → 写入文本 → 发 `Ctrl+V`（macOS `Cmd+V`）→ 600 ms 后恢复剪贴板；任何一步失败都把文本留在剪贴板并返回 `Via::Clipboard` + 原因；`Injector` trait + `FakeInjector` | arboard 3.6、enigo 0.6（x11rb / SendInput / CGEvent） | trait 假实现；真实实现只在有显示器时冒烟 |
-| `voltip-asr-local` | 本地引擎（§10）：`catalogue`（6 条目录，含隐藏的 `silero-vad`）、`store`（下载 / 校验 / 安装，§12 辅助条目随首个模型下载）、`transcriber`（`LocalTranscriber`，按条目引擎分派：`gguf.rs` transcribe.cpp、`sherpa.rs` sherpa-onnx；`vad_trim` 时先经 `vad.rs` 裁剪）、`streaming`（`LocalStreamingTranscriber`，§11 实时预览）、`vad`（`VadTrimmer`，§12 Silero VAD 首尾裁剪） | transcribe-cpp 0.2.3（静态，CPU）、sherpa-onnx 1.13.8（动态）、rubato | 假加载器 / 假 VAD 单测；`tests/real.rs` 四条 `#[ignore]` 真模型测试 |
-| `voltip-core` | `dictation` 模块：状态机 + 编排（含 §11 的解码线程 `run_live` 与 `Listening.live` / `Processing.preview`）；`history` 模块：`history.json` 落盘（上限 500）；`engines` 模块：默认值解析（`option_env!`）与 `EngineSettings`；`models` 模块：模型库端口；秘密经 `SecretStore` | 只依赖 trait（`AudioSource` / `Capture` / `LivePcm` / `Transcriber` / `StreamingTranscriber` / `Refiner` / `Injector` / `ModelManager`），不依赖 cpal / rtrb / reqwest / enigo / sherpa | 假实现驱动完整状态机（`fakes.rs`：`FakeAudio` 带假 tap、`FakeStreaming` 脚本会话、`FakeModels`） |
+| `voltip-asr-local` | 本地引擎（§10）：`catalogue`（6 条目录，含隐藏的 `silero-vad`）、`store`（下载 / 校验 / 安装，§12 辅助条目随首个模型下载）、`transcriber`（`LocalTranscriber`，按条目引擎分派：`gguf.rs` transcribe.cpp、`sherpa.rs` sherpa-onnx；`vad_trim` 时先经 `vad.rs` 裁剪）、`streaming`（`LocalStreamingTranscriber`，§11 实时预览）、`vad`（`VadTrimmer`，§12 Silero VAD 首尾裁剪）、`segmenter`（`VadSegmenterFactory`，§22 长录音在停顿处切段） | transcribe-cpp 0.2.3（静态，CPU）、sherpa-onnx 1.13.8（动态）、rubato | 假加载器 / 假 VAD 单测；`tests/real.rs` 四条 `#[ignore]` 真模型测试 |
+| `voltip-core` | `dictation` 模块：状态机 + 编排（含 §11 的解码线程 `run_live` 与 `Listening.live` / `Processing.preview`，§22 长录音 `long.rs`）；`history` 模块：`history.sqlite3`（§4.3，上限 2 万条）、用 AI 预设处理与导出（§22）；`engines` 模块：默认值解析（`option_env!`）与 `EngineSettings`；`models` 模块：模型库端口；秘密经 `SecretStore` | 只依赖 trait（`AudioSource` / `Capture` / `LivePcm` / `Transcriber` / `StreamingTranscriber` / `Refiner` / `Injector` / `ModelManager`），不依赖 cpal / rtrb / reqwest / enigo / sherpa | 假实现驱动完整状态机（`fakes.rs`：`FakeAudio` 带假 tap、`FakeStreaming` 脚本会话、`FakeModels`） |
 | `apps/desktop/src-tauri` | 把真实实现注入核心；热键按下 / 释放 → `DictationStart` / `DictationStop`；悬浮胶囊跟随 `DictationPhase` | 全部 crate | mock runtime IPC |
 
 核心里的 trait（`voltip_core::dictation::ports`）：
@@ -23,17 +23,22 @@
 ```rust
 pub trait AudioSource: Send + Sync {
     /// 开始采集；`on_level` 以 ≈30 Hz 回调；`on_ready` 在设备送来首块样本时回调一次（§11 `CaptureReady`）；
-    /// `options.live` 为真时同时打开 16 kHz 实时 tap；`options.max_duration` 是本次录音上限（§12 `max_recording(mode)`：
-    /// whole_take 120 s，流式两种 600 s，录音机据此预留缓冲、不再自行截断）。返回句柄，`stop()` 交出录音。
+    /// `options.live` 为真时同时打开 16 kHz 实时 tap；`options.max_duration` 是本次录音上限（本机听写按
+    /// `Settings.recording.max_minutes`，§22；手机的录音按 §12 `max_recording(mode)`：whole_take 120 s，流式两种 600 s）；
+    /// `options.long` 时内存里只留 120 s，另出一路 `pcm_stream()`；`options.source` / `output_device` 是录什么（§22）。
+    /// 返回句柄，`stop()` 交出录音。
     fn start(&self, device_id: Option<&str>, on_level: Box<dyn Fn(LevelFrame) + Send>, on_ready: Box<dyn FnOnce() + Send>, options: CaptureOptions)
         -> Result<Box<dyn Capture>, DictationError>;
 }
-pub struct CaptureOptions { pub live: bool, pub max_duration: Duration }   // Default = { live: false, max_duration: MAX_RECORDING }
+pub struct CaptureOptions { pub live: bool, pub max_duration: Duration, pub long: bool, pub source: RecordingSource, pub output_device: Option<String> }   // Default = { live: false, max_duration: MAX_RECORDING, long: false, source: Microphone, output_device: None }
 pub trait Capture: Send {
     fn stop(self: Box<Self>) -> Result<Recording, DictationError>;
     /// 实时 tap 的消费端（只能取一次；未请求 `live` 时 `None`），录音停止即关闭。
     fn live_pcm(&mut self) -> Option<Box<dyn LivePcm>> { None }
+    /// 长录音的整段 16 kHz 流（§22；只能取一次；未请求 `long` 时 `None`），录音停止即关闭。
+    fn pcm_stream(&mut self) -> Option<Box<dyn PcmStream>> { None }
 }
+pub trait PcmStream: Send { fn read(&mut self, out: &mut [f32]) -> usize; fn gap(&mut self) -> Option<u64>; fn is_closed(&self) -> bool; }
 pub trait LivePcm: Send { fn read(&mut self, out: &mut [f32]) -> usize; fn overrun(&self) -> bool; fn is_closed(&self) -> bool; }
 pub struct Recording { pub wav: Vec<u8>, pub duration_ms: u64, pub sample_rate_hz: u32 }
 impl Recording { pub fn slice_from_ms(&self, ms: u64) -> Recording }    // §12 live_inject 降级后只送最后一句之后的音频
@@ -156,6 +161,8 @@ pub struct HistoryEntry {
 }
 ```
 
+条目另有 `mode`、`segments`、`live_error`、`vocabulary`、`kind`、`edit`、`app`、`scene`、`preset`、`origin`（见各节）与 `processed`（用 AI 预设处理的结果，§22.4），都可缺省。
+
 `app_data_dir/history.sqlite3`（SQLite，§4.3），最多 `MAX_ENTRIES = 20 000` 条，超出时丢弃最旧的。命令 `HistoryDelete(Uuid)`、`HistoryClear`、`HistoryStar(Uuid, bool)`；事件 `CoreEvent::History { recent, total }` 只带最新 `RECENT_ENTRIES = 20` 条和总条数，其余由界面查询（§4.4）。2026-09-30 之前是 `history.json`：最多 500 条，每次变化推送全量。
 
 ### 4.1 复制与粘贴到上一个窗口（2026-09-29）
@@ -216,7 +223,7 @@ pub struct HistoryEntry {
 | `recent_apps` | — | 历史里出现过的应用（§18.6），同样读库 |
 
 - **筛选**：`sinceMs`（页面按本地时间算好的零点）、收藏、失败（留在剪贴板或失败，即 `outcome` 不是 `inserted`）都用 SQL 过滤。
-- **搜索**：关键词去掉首尾空白、转小写后，在 `search` 列里做子串匹配。`search` 列在写入时拼成：内置场景的中英文名、`text`、`raw_text`、两个模型、应用名和 id、场景名、编辑指令、选区，各自 `to_lowercase` 后以 U+001F 分隔，所以一次匹配不会跨两个字段。
+- **搜索**：关键词去掉首尾空白、转小写后，在 `search` 列里做子串匹配。`search` 列在写入时拼成：内置场景的中英文名、`text`、`raw_text`、两个模型、应用名和 id、场景名、编辑指令、选区、处理后文本（§22.4，保存结果时重算），各自 `to_lowercase` 后以 U+001F 分隔，所以一次匹配不会跨两个字段。
 - **状态与事件**：`UiState.history_recent`（最新 20 条）与 `history_total` 取代原来的 `UiState.history`；`UiEvent::History { recent, total }`。复制上一条、侧栏计数、规则与词典页的「用最近一次听写」读 `history_recent`。
 - **历史页**：每页 `HISTORY_PAGE = 100` 条，列表底部进入视野时加载下一页（也可以点「加载更多」）；搜索在停止输入 200 ms 后发出；新结果回来之前保留原来的行，第一次结果回来之前不显示空状态。收到历史事件时重新加载已加载的条数。首页表格点开的条目不在已加载的页里时，详情用 `history_entry` 取。
 
@@ -1339,3 +1346,63 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 
 Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、解析与缺失回落）、refine 的预设正文 / 输出约定 / 预算表 / 请求体、engine 里一次听写的预设快照与历史记录、语音编辑不记预设、bridge 同步校验、桌面托盘子菜单的模型与设置变更（`platform::tests`）、IPC 夹具。TS：schema 与契约回放、`MockBackend` 的预设命令与试运行、`Menu` 组件、首页 / 标题栏 / AI 模型页 / 场景编辑器 / 胶囊 / 历史详情。
 
+
+## 22. 录音来源、长录音与导出（2026-09-30）
+
+**目标**：一次听写可以录麦克风、电脑播放的声音，或两者混合；单次最长 2 小时。超过 2 分钟的录音边录边写入文件、切段识别，停止后很快出全文；长文可以在历史里用 AI 预设分段处理，并导出字幕（SRT）和文本（TXT）。短录音（2 分钟以内）的路径不变。
+
+### 22.1 设置（`Settings.recording`）
+
+- `source`：`microphone`（默认）· `system`（电脑声音）· `mixed`（混合）。`output_device`：`audio_outputs` 的设备 id，`null` 跟随系统默认输出；所选设备未连接时这一次录默认输出。`max_minutes`：1 / 2 / 5 / 10 / 30 / 60 / 120（`MAX_MINUTES_CHOICES`），默认 10；到时自动停止。
+- `settings_set_recording { recording }`，核心校验（`recording.max_minutes:` / `recording.output_device:` 开头的错误），重发 `settings`。
+- 语音编辑（§19）只录麦克风，手机的录音（§20）不受这些设置影响（仍按 `max_recording(mode)`）。
+- 界面：设置 › 听写的「最长录音时长」；设置 › 录音来源（原「麦克风」，同一个 `/settings/microphone`）：录制内容（麦克风 / 电脑声音 / 混合）、输出设备、输入设备与测试麦克风（录麦克风时才显示）、混合时提醒外放要戴耳机；首页的录音来源卡片也能切换来源。录不了电脑声音的机器上，这两个选项置灰并写明原因。
+
+### 22.2 采集（`crates/voltip-audio`）
+
+- **录电脑声音**（cpal =0.18.2）：
+  - Windows：在输出设备上建输入流，WASAPI 以 loopback 方式采集；同时开一路静音输出，保证没有声音播放时采集循环也在走。
+  - macOS 14.6 起：在只有输出的设备上建输入流，cpal 建 Core Audio process tap 和聚合设备；首次使用时系统弹出授权，说明文字是 `Info.plist` 的 `NSAudioCaptureUsageDescription`（英文与简体中文 `InfoPlist.strings`）。更早的系统报 `macos_too_old`。
+  - Linux：开启 cpal 的 `pulseaudio` 特性，录默认输出（sink）的 `.monitor` 源；麦克风仍走 ALSA（`host_from_id(Alsa)`），与以前一致。没有 PulseAudio / PipeWire（`pipewire-pulse`）服务时报 `no_sound_server`。
+- `audio_outputs`（查询，桌面）：`{ system_audio: available | macos_too_old { version } | no_sound_server | unsupported, devices }`，设备列表默认设备在前；手机回 `unsupported`。
+- **混合**（`mix.rs`）：两路各自重采样到 16 kHz；麦克风是时钟，电脑声音进一个无锁队列，每个麦克风样本取一个队列样本（没有就补零）；队列超出 20 ms（`MAX_LAG_SAMPLES = 320`）的部分丢掉，所以两路相差不超过 20 ms。两路各乘 0.707（−3 dB）后相加，再过软限幅（0.9 以下不变，以上平滑逼近满幅，永不溢出）。
+- **长录音的流**（`pcm.rs`）：`CaptureOptions.long` 为真时，采集回调只做两件事：重采样、写进 60 s 的无锁环形缓冲，从不阻塞；环满时丢掉的样本数由 `PcmStream::gap()` 报告。这时 `Recorder` 的内存缓冲只留前 120 s，内存占用有上限。
+
+### 22.3 长录音（`crates/voltip-core/src/dictation/long.rs`、`engine.rs`）
+
+- **何时算长录音**：本机听写的 `max_minutes` 超过 2 分钟时请求 `long`；设备打开后，核心取 `pcm_stream()`，在非实时线程里读流，写到 `<data_dir>/recordings/take-<毫秒>-<会话>.pcm`（16 位小端，Unix 上权限 0600），同时交给切段器。拿不到流的采集（旧壳、测试假设备）照旧整段留在内存；建不了文件时自动停止提前到 2 分钟。
+- **切段**：端口 `SegmenterFactory`（`DictationPorts.segmenter`）。
+  - 桌面壳用 `voltip_asr_local::segmenter::VadSegmenterFactory`：Silero VAD（与 `vad_trim` 同一个辅助模型）跟着录音走，每段满 20 s 后在下一个停顿处切（停顿开始后 50 ms）；到 45 s 还没有停顿，就在最后 5 s 里能量最低的 200 ms 中间切断。检测器在录音线程上加载，不占核心的任务。模型没下载时本次用核心的兜底，同时在后台下载模型（`ModelStore::spawn_auxiliary_fetch`，不看 `vad_trim` 开关）。
+  - 核心兜底 `EnergySegmenter`：每满 30 s，在最后 5 s 里能量最低的 200 ms 中间切开，段长 25–30 s。
+- **识别**：录音超过 2 分钟后才开始识别；一次只识别一段，按顺序从文件读出，交给当前识别服务（云端或本地）。识别比录音慢时，排队的是文件里的位置，不占内存。全静音的段不上传。一段失败会重试一次，再失败，这一段在文中记为「[未识别 hh:mm:ss–hh:mm:ss]」；环形缓冲丢样本的空缺同样记为空缺，相邻的合并。
+- **停止后**：
+  - 不超过 2 分钟：删除录音文件，按以前的整段识别。
+  - 更长：识别完剩下的段（`Processing` 显示「已识别 N/M 段」）→ 按句子拼接（中文之间不加空格，英文加一个）→ 词典与规则 → AI 润色，只在全文不超过 2000 字时做（否则 `Done.refine_error` 写明原因）→ 送出：不超过 5000 字按设置粘贴，更长的放进剪贴板（`ClipboardCode::TooLong`，历史里写明原因）→ 连同分段写入历史 → 删除录音文件。
+  - 一段都没识别出来：像整段识别失败一样结束（识别服务的错误，或没有听到声音），不粘贴占位文字。
+- **流式模式**：`streaming_final` 与 `live_inject` 的文字仍来自流式识别，不参与分段识别；它们退回整段时（§12），长录音的文字从文件来：`streaming_final` 从头识别，`live_inject` 从最后一句粘贴出去的句子结束处开始，补在后面。`streaming_final` 的全文同样受 2000 / 5000 字的限制。
+- **清理**：取消和失败都删除录音文件；核心启动时删掉 `recordings/` 里上次异常退出留下的 `.pcm` 文件。
+- **状态**：`DictationStatus.source`（本机听写的录音来源；手机的录音没有）与 `segments: { done, total }`（录音超过 2 分钟后出现，结束时清空）。悬浮胶囊：来源标签在模式标签前（麦克风 / 电脑声音 / 混合），计时超过 1 小时显示 `h:mm:ss`，录音中在计时后显示「已识别 N 段」，处理中的说明是「已识别 N/M 段」。录音失败时按来源说明（「电脑声音录制失败」「录音失败」）。
+
+### 22.4 用 AI 预设处理（`voltip_core::history::process`、`runtime/processing.rs`）
+
+- 长条目（录音超过 2 分钟，或文字超过 2000 字）的历史详情有「用 AI 预设处理」：选一个预设，开始、看进度、取消。
+- `history_process { requestId, id, preset }` / `history_process_cancel { requestId }`；答复是 `history_process { request_id, id, state }` 事件：`running { done, total }`、`done { processed }`、`failed { reason }`、`cancelled`。
+- 全文切成不超过 1500 字的部分：在最后一个句末（。！？；… ! ? ; 换行，英文句点后面要有空白）之后切，没有句末就在最后一个停顿（，、：, : 空格）之后，再没有就在 1500 字处；每部分按顺序交给当前的 AI 润色服务，带预设、语言和词典术语；返回空文本的部分保留原文。要点纪要在多于一部分时，把各部分的要点合并后，长度不超过 1500 字就再汇总一次（这一次也计入进度）。
+- 结果存为 `HistoryEntry.processed { text, preset, at_ms }`：原文不变，搜索也能找到处理后文本；再处理一次会替换它。没有配置 AI 服务、条目已删除时立即 `failed`。界面上有「处理后」视图，注明用哪个预设处理；用内置服务时提示受免费额度限制、速度较慢。
+
+### 22.5 导出（`voltip_core::history::export`、桌面 `src/export.rs`）
+
+- `history_export { id, format: "srt" | "txt", fileName }`（查询，桌面）：弹出系统的保存对话框（`tauri-plugin-dialog` =2.7.3，只从 Rust 调用），默认文件名是页面给的 `Voltip YYYY-MM-DD HH.mm`（去掉文件系统不接受的字符，最长 120 字），文件由 Rust 写入。结果 `saved { path }`、`cancelled` 或 `failed { code: gone | empty | write, detail }`。手机没有导出。
+- **SRT**：按分段生成，每段的文字折成行：每行不超过 20 个汉字或 42 个英文字符（按宽度计：汉字 21、其他 10，上限 420），优先在后半行的标点之后折，其次在最后一个空格处，都没有就在满行处；每行一条字幕，这一段的时间按各行宽度比例切分。编号从 1 开始，CRLF 换行，UTF-8。没有文字的段不出字幕；没有分段的条目不能导出字幕。
+- **TXT**：有处理后文本就用处理后的，否则用条目的文字。
+
+### 22.6 门禁
+
+- Rust：`voltip-audio` 的混音、环形缓冲与空缺、录音来源、内存上限；`long.rs` 的切段器（含 2 小时 240 段）、占位文字、读回、清理；`tests/long.rs`（真实核心任务 + 假设备：录音中分段识别、120 s 边界、失败与空缺、取消与启动清理、停止时段还在识别、2 小时合成录音 240 段且每段不超过 30 s、2000 / 5000 字限制、两种流式模式的退回、用 AI 预设处理与取消）；`voltip-asr-local` 的 VAD 切段器（假检测器）与 `spawn_auxiliary_fetch`；`history::process` / `history::export` 单测；bridge 与 IPC 夹具；`tests/bundle.rs` 检查 `NSAudioCaptureUsageDescription`。
+- 真设备（`#[ignore]`，文件头写明运行方法）：`voltip-asr-local` `tests/real.rs` 的 `real_vad_cuts_a_long_take_at_its_pauses`（真 Silero 模型，3 分钟样音 0.8 s 切完，每刀都在停顿里）；各平台 loopback 实测见 `docs/acceptance.md`。
+- TS：schema 与契约回放、`MockBackend` 的来源 / 输出设备 / 分段进度 / 处理 / 导出、胶囊、首页卡片、录音来源设置页、历史详情。
+
+### 22.7 未做
+
+- 双语逐句对齐字幕、实时翻译字幕。
+- 手机端的录音来源、长录音与导出。

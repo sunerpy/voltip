@@ -6,6 +6,7 @@ import type { Backend, EventListener, FrameListener, Unsubscribe } from "./backe
 import {
   type ArgsOf,
   type AttachmentFile,
+  type ExportFormat,
   type FeedbackDraft,
   type HistoryQueryArgs,
   type MutationCommand,
@@ -16,7 +17,9 @@ import {
   UI_EVENT_NAME,
   appRefSchema,
   audioDeviceSchema,
+  audioOutputsSchema,
   builtinPresetTextSchema,
+  exportOutcomeSchema,
   builtinSceneTermsSchema,
   feedbackInfoSchema,
   feedbackReceiptSchema,
@@ -94,6 +97,16 @@ export class TauriBackend implements Backend {
   async audioDevices() {
     const raw = await this.transport.invoke("audio_devices");
     return audioDeviceSchema.array().parse(raw);
+  }
+
+  async audioOutputs() {
+    const raw = await this.transport.invoke("audio_outputs");
+    return audioOutputsSchema.parse(raw);
+  }
+
+  async historyExport(id: string, format: ExportFormat, fileName: string) {
+    const raw = await this.transport.invoke("history_export", { id, format, fileName });
+    return exportOutcomeSchema.parse(raw);
   }
 
   async updateStatus() {

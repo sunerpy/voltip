@@ -53,7 +53,12 @@
       "keep": 200
     },
     "overlay": "top",
-    "microphone": "wasapi:{0.0.1.00000000}.{c2}"
+    "microphone": "wasapi:{0.0.1.00000000}.{c2}",
+    "recording": {
+      "source": "mixed",
+      "output_device": "wasapi:{0.0.0.00000000}.{a1}",
+      "max_minutes": 60
+    }
   },
   "secret_backend": "memory",
   "app_version": "0.3.0",

@@ -7,6 +7,7 @@
 pub mod activation;
 pub mod engine;
 pub mod fakes;
+pub mod long;
 pub mod ports;
 pub mod remote;
 pub mod wav;
@@ -19,8 +20,9 @@ pub use engine::{DictationEngine, DictationPorts, EngineFactory};
 pub use ports::{
     AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection,
     Injector, LIVE_CHUNK_SAMPLES, LIVE_SAMPLE_RATE_HZ, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MAX_RECORDING_STREAMING, MIN_RECORDING,
-    PARTIAL_THROTTLE, PROBE_DEADLINE, Recording, RefineContext, RefineHints, Refined, Refiner, Segment, SelectionTiming, ServiceProbe, StreamEvent,
-    StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
+    PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineContext, RefineHints, Refined, Refiner, Segment, Segmenter,
+    SegmenterFactory, SelectionTiming, ServiceProbe, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via,
+    max_recording,
 };
 
 /// What a take is for (docs/dictation.md §19): dictating text, or rewriting the text selected in
@@ -308,13 +310,31 @@ pub struct DictationStatus {
     /// and by `Idle`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<crate::presets::PresetRef>,
+    /// Where the take records from (docs/dictation.md §22): the pill names it. Set at the start of
+    /// a take on this computer, absent for a phone's, cleared by `Idle`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<crate::settings::RecordingSource>,
+    /// A long take's recognition (docs/dictation.md §22): while listening once the take is past its
+    /// first two minutes, and while its last segments are recognised; cleared by `Idle`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub segments: Option<SegmentProgress>,
 }
 
 impl DictationStatus {
     /// A dictation take's status without a context (the pre-§18 / §19 shape).
     pub fn dictation(phase: DictationPhase, session: u64) -> Self {
-        Self { phase, session, context: None, kind: TakeKind::Dictation, remote: None, preset: None }
+        Self { phase, session, context: None, kind: TakeKind::Dictation, remote: None, preset: None, source: None, segments: None }
     }
+}
+
+/// How far a long take's recognition got (docs/dictation.md §22): segments with text (or given up
+/// on) out of those cut so far.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SegmentProgress {
+    /// Segments done.
+    pub done: u32,
+    /// Segments cut so far (the last one is cut when the take ends).
+    pub total: u32,
 }
 
 #[cfg(test)]

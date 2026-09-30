@@ -384,6 +384,29 @@ export const historySettingsSchema = z.object({
 });
 export type HistorySettings = z.infer<typeof historySettingsSchema>;
 
+/** Where a dictation take's audio comes from (`voltip_core::RecordingSource`, docs/dictation.md
+ *  §22): the microphone, what the computer plays, or both mixed. */
+export const RECORDING_SOURCES = ["microphone", "system", "mixed"] as const;
+export const recordingSourceSchema = z.enum(RECORDING_SOURCES);
+export type RecordingSource = z.infer<typeof recordingSourceSchema>;
+/** `voltip_core::MAX_MINUTES_CHOICES`: the lengths a take may be limited to, in minutes. */
+export const MAX_MINUTES_CHOICES = [1, 2, 5, 10, 30, 60, 120] as const;
+/** `voltip_core::DEFAULT_MAX_MINUTES`. */
+export const DEFAULT_MAX_MINUTES = 10;
+/** A dictation take's source, output device and longest length (`voltip_core::RecordingSettings`,
+ *  docs/dictation.md §22). */
+export const recordingSettingsSchema = z.object({
+  source: recordingSourceSchema.default("microphone"),
+  /** An `audio_outputs` id, or `null` for the system's default output. */
+  output_device: z.string().nullable().default(null),
+  /** One of `MAX_MINUTES_CHOICES`. */
+  max_minutes: z.number().int().positive().default(DEFAULT_MAX_MINUTES),
+});
+export type RecordingSettings = z.infer<typeof recordingSettingsSchema>;
+export function defaultRecordingSettings(): RecordingSettings {
+  return { source: "microphone", output_device: null, max_minutes: DEFAULT_MAX_MINUTES };
+}
+
 /** Where the dictation pill appears (`voltip_core::OverlayPlacement`); the desktop shell places the
  *  window, `off` shows none. */
 export const OVERLAY_PLACEMENTS = ["bottom", "top", "off"] as const;
@@ -443,6 +466,8 @@ export const settingsSchema = z.object({
   /** The microphone takes record from: an `audio_devices` id, or `null` for the system default.
    *  Always serialised; an older `settings.json` or core reads as the default. */
   microphone: z.string().nullable().default(null),
+  /** docs/dictation.md §22; an older `settings.json` or core reads as the microphone, 10 minutes. */
+  recording: recordingSettingsSchema.default(defaultRecordingSettings),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -676,6 +701,13 @@ export const takeContextSchema = z.object({
 });
 export type TakeContext = z.infer<typeof takeContextSchema>;
 
+/** `voltip_core::dictation::SegmentProgress`. */
+export const segmentProgressSchema = z.object({
+  done: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+});
+export type SegmentProgress = z.infer<typeof segmentProgressSchema>;
+
 /** `voltip_core::dictation::DictationStatus`: the phase plus a session counter the UI uses to
  *  drop notifications that belong to an earlier run, the take's context once the foreground probe
  *  answered (§18.6; absent on shells without a probe), and the kind of the current (or last) take
@@ -690,6 +722,12 @@ export const dictationStatusSchema = z.object({
   /** The preset the take's clean-up runs with (docs/dictation.md §21): the pill names it while
    *  refining; absent when the clean-up is off. */
   preset: presetRefSchema.optional(),
+  /** Where a take on this computer records from (docs/dictation.md §22): the pill names it while
+   *  listening; absent for a phone's take. */
+  source: recordingSourceSchema.optional(),
+  /** A long take's recognition (docs/dictation.md §22), once the take is past its first two
+   *  minutes: segments done out of those cut so far. */
+  segments: segmentProgressSchema.optional(),
 });
 export type DictationStatus = z.infer<typeof dictationStatusSchema>;
 
@@ -706,6 +744,7 @@ export const CLIPBOARD_CODES = [
   "no_display",
   "secure_input",
   "elevated_target",
+  "too_long",
   "other",
 ] as const;
 export const clipboardCodeSchema = z.enum(CLIPBOARD_CODES);
@@ -859,6 +898,28 @@ export const ORIGIN_KINDS = ["take", "typed", "clipboard"] as const;
 export const entryOriginSchema = z.object({ device: z.string(), kind: z.enum(ORIGIN_KINDS) });
 export type EntryOrigin = z.infer<typeof entryOriginSchema>;
 
+/** `voltip_core::history::ProcessedText`: what 用 AI 预设处理 made of a long entry's text
+ *  (docs/dictation.md §22), by the preset's name then; the entry's own text stays. */
+export const processedTextSchema = z.object({
+  text: z.string(),
+  preset: presetRefSchema,
+  at_ms: z.number().nonnegative(),
+});
+export type ProcessedText = z.infer<typeof processedTextSchema>;
+
+/** `voltip_core::history::process::ProcessState`: where one `history_process` request is. */
+export const processStateSchema = z.discriminatedUnion("state", [
+  z.object({
+    state: z.literal("running"),
+    done: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }),
+  z.object({ state: z.literal("done"), processed: processedTextSchema }),
+  z.object({ state: z.literal("failed"), reason: z.string() }),
+  z.object({ state: z.literal("cancelled") }),
+]);
+export type ProcessState = z.infer<typeof processStateSchema>;
+
 export const historyEntrySchema = z.object({
   id: z.string(),
   at_ms: z.number().nonnegative(),
@@ -892,8 +953,25 @@ export const historyEntrySchema = z.object({
   preset: presetRefSchema.optional(),
   /** A phone's take or text rather than this device's own (docs/dictation.md §20.6). */
   origin: entryOriginSchema.optional(),
+  /** 用 AI 预设处理's result (docs/dictation.md §22); absent until it ran. */
+  processed: processedTextSchema.optional(),
 });
 export type HistoryEntry = z.infer<typeof historyEntrySchema>;
+
+/** `voltip_core::history::export::ExportFormat`: 导出字幕（SRT）or 导出文本（TXT）. */
+export const EXPORT_FORMATS = ["srt", "txt"] as const;
+export type ExportFormat = (typeof EXPORT_FORMATS)[number];
+/** The desktop shell's answer to `history_export` (docs/dictation.md §22). */
+export const exportOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("saved"), path: z.string() }),
+  z.object({ kind: z.literal("cancelled") }),
+  z.object({
+    kind: z.literal("failed"),
+    code: z.enum(["gone", "empty", "write"]),
+    detail: z.string(),
+  }),
+]);
+export type ExportOutcome = z.infer<typeof exportOutcomeSchema>;
 
 /** `voltip_core::history::MAX_ENTRIES`: older rows are dropped past this. */
 export const HISTORY_LIMIT = 20_000;
@@ -1748,6 +1826,13 @@ export const uiEventSchema = z.discriminatedUnion("type", [
     id: z.number().int().nonnegative(),
     outcome: presetTryOutcomeSchema,
   }),
+  /** Where a `history_process` request is (§22; not folded into the state). */
+  z.object({
+    type: z.literal("history_process"),
+    request_id: z.number().int().nonnegative(),
+    id: z.string(),
+    state: processStateSchema,
+  }),
   /** The phone's take to a desktop moved (§20); `null` before the first. */
   z.object({ type: z.literal("phone_take"), take: phoneTakeViewSchema.nullable() }),
   /** The phone's list of sent texts, whole (§20.6). */
@@ -1780,6 +1865,25 @@ export const audioDeviceSchema = z.object({
   channels: z.number().int().positive().optional(),
 });
 export type AudioDevice = z.infer<typeof audioDeviceSchema>;
+
+/** `voltip_audio::SystemAudio`: whether this computer can record what it plays (docs/dictation.md
+ *  §22), and why not — macOS before 14.6, Linux without a PulseAudio server, or a platform
+ *  without it (the phone). */
+export const systemAudioSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("available") }),
+  z.object({ state: z.literal("macos_too_old"), version: z.string() }),
+  z.object({ state: z.literal("no_sound_server") }),
+  z.object({ state: z.literal("unsupported") }),
+]);
+export type SystemAudio = z.infer<typeof systemAudioSchema>;
+
+/** `audio_outputs`: whether the computer's sound can be recorded, and the output devices it can be
+ *  recorded from, default first (empty when the list could not be read). */
+export const audioOutputsSchema = z.object({
+  system_audio: systemAudioSchema,
+  devices: audioDeviceSchema.array(),
+});
+export type AudioOutputs = z.infer<typeof audioOutputsSchema>;
 
 /** One level-meter frame streamed from Rust through a Tauri `Channel` (≈ 30 Hz). */
 export const levelFrameSchema = z.object({
@@ -1865,12 +1969,17 @@ export interface CommandArgs {
   settings_set_solo_key: { key: SoloKey | null };
   /** The microphone takes record from (an `audio_devices` id), or `null` for the system default. */
   settings_set_microphone: { device: string | null };
+  /** A dictation take's source, output device and longest length (docs/dictation.md §22). */
+  settings_set_recording: { recording: RecordingSettings };
   /** Recorder open (`true`): the shell suspends the OS hotkey so the chord reaches the webview. */
   hotkey_capture: { active: boolean };
   devices_refresh: undefined;
   connectivity_check: undefined;
   /** Query: microphones known to the native audio backend (`Backend.audioDevices`). */
   audio_devices: undefined;
+  /** Query: the output devices a take can record the computer's sound from, and whether that
+   *  works here (`Backend.audioOutputs`, docs/dictation.md §22). */
+  audio_outputs: undefined;
   /** Stream: subscribe to the native level meter; frames arrive on the `onFrame` Channel, the
    *  command returns the subscription id (`Backend.meter`). */
   audio_meter_start: { deviceId: string | null };
@@ -1983,6 +2092,12 @@ export interface CommandArgs {
   presets_remove: { id: string };
   /** 试一试 on a preset: nothing is saved; the answer is a `preset_try` event. */
   presets_try: PresetsTryArgs;
+  /** 用 AI 预设处理 (§22): progress and the end arrive as `history_process` events. */
+  history_process: { requestId: number; id: string; preset: string };
+  /** Stop a `history_process`; nothing is stored. */
+  history_process_cancel: { requestId: number };
+  /** Query: 导出字幕 / 导出文本 through the save dialog (`Backend.historyExport`, §22). */
+  history_export: { id: string; format: ExportFormat; fileName: string };
   /** Query: every built-in preset's text (`Backend.presetsBuiltin`, 复制为自定义). */
   presets_builtin: undefined;
   /** Which parts of a take's context may go to the LLM (§18.5); the core re-emits `settings`. */
@@ -2016,6 +2131,7 @@ export type CommandName = keyof CommandArgs;
 export type QueryCommand =
   | "core_state"
   | "audio_devices"
+  | "audio_outputs"
   | "audio_meter_start"
   | "audio_meter_stop"
   | "overlay_state"
@@ -2040,10 +2156,12 @@ export type QueryCommand =
   | "feedback_attachments_clear"
   | "phone_clipboard_read"
   | "presets_builtin"
-  | "scenes_builtin";
+  | "scenes_builtin"
+  | "history_export";
 export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "core_state",
   "audio_devices",
+  "audio_outputs",
   "audio_meter_start",
   "audio_meter_stop",
   "overlay_state",
@@ -2069,6 +2187,7 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "phone_clipboard_read",
   "presets_builtin",
   "scenes_builtin",
+  "history_export",
 ];
 /** Commands the UI dispatches through `Backend.invoke` (everything except the queries / streams). */
 export type MutationCommand = Exclude<CommandName, QueryCommand>;
@@ -2103,6 +2222,7 @@ export function defaultSettings(): Settings {
     history: { enabled: true, keep: 20_000 },
     overlay: "bottom",
     microphone: null,
+    recording: defaultRecordingSettings(),
   };
 }
 
@@ -2186,6 +2306,7 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
     case "provider_probe":
     case "paste_result":
     case "preset_try":
+    case "history_process":
       return state;
   }
 }

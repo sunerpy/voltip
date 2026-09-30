@@ -50,6 +50,7 @@ fn start_with(dir: &std::path::Path, probe: Arc<FakeProbe>, refiner: Arc<FakeRef
         streaming: None,
         probe: Some(probe),
         service_probe: None,
+        segmenter: None,
     };
     let (handle, events) = AppCore::start_with(cfg, Arc::new(MemorySecretStore::new()), ports).unwrap();
     Node { handle, events }

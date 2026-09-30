@@ -29,7 +29,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 93] = [
+pub const COMMANDS: [&str; 98] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -56,10 +56,12 @@ pub const COMMANDS: [&str; 93] = [
     "settings_set_edit_hotkey",
     "settings_set_solo_key",
     "settings_set_microphone",
+    "settings_set_recording",
     "hotkey_capture",
     "devices_refresh",
     "connectivity_check",
     "audio_devices",
+    "audio_outputs",
     "audio_meter_start",
     "audio_meter_stop",
     "overlay_state",
@@ -81,6 +83,9 @@ pub const COMMANDS: [&str; 93] = [
     "history_delete",
     "history_clear",
     "history_star",
+    "history_process",
+    "history_process_cancel",
+    "history_export",
     "settings_set_locale",
     "settings_set_auto_update",
     "settings_set_history",
@@ -325,6 +330,13 @@ fn settings_set_microphone(bridge: tauri::State<'_, Bridge>, device: Option<Stri
     Ok(bridge.dispatch(UiCommand::SettingsSetMicrophone { device })?)
 }
 
+/// `settings_set_recording { recording }` (docs/dictation.md §22): a dictation take's source, the
+/// output device and the longest length. The core validates and persists it.
+#[tauri::command]
+fn settings_set_recording(bridge: tauri::State<'_, Bridge>, recording: voltip_core::RecordingSettings) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetRecording { recording })?)
+}
+
 /// Phones register no OS hotkey; the recorder's suspend request is accepted and ignored so the
 /// shared webview code needs no platform branch.
 #[tauri::command]
@@ -349,6 +361,13 @@ fn connectivity_check(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
 #[tauri::command]
 fn audio_devices() -> Result<Vec<serde_json::Value>, String> {
     Ok(Vec::new())
+}
+
+/// The phone records its own microphone (docs/dictation.md §22): the computer's sound is a desktop
+/// source.
+#[tauri::command]
+fn audio_outputs() -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({ "system_audio": { "state": "unsupported" }, "devices": [] }))
 }
 
 /// Stream the level of the phone's own takes to `on_frame` ([`meter::Meters`]): frames arrive
@@ -497,6 +516,25 @@ fn history_clear(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
 #[tauri::command]
 fn history_star(bridge: tauri::State<'_, Bridge>, id: String, starred: bool) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::HistoryStar { id, starred })?)
+}
+
+/// 用 AI 预设处理 (docs/dictation.md §22), as on the desktop; the phone's page does not offer it.
+#[tauri::command]
+fn history_process(bridge: tauri::State<'_, Bridge>, request_id: u64, id: String, preset: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::HistoryProcess { request_id, id, preset })?)
+}
+
+/// Stop a `history_process`.
+#[tauri::command]
+fn history_process_cancel(bridge: tauri::State<'_, Bridge>, request_id: u64) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::HistoryProcessCancel { request_id })?)
+}
+
+/// Exports are a desktop feature (docs/dictation.md §22): the phone writes no files.
+#[tauri::command]
+fn history_export(id: String, format: String, file_name: String) -> Result<serde_json::Value, String> {
+    let _ = (id, format, file_name);
+    Ok(serde_json::json!({ "kind": "failed", "code": "write", "detail": "exports are not available on the phone" }))
 }
 
 /// UI language is shared state: the phone edits it like the desktop does.
@@ -842,10 +880,12 @@ pub fn build_app<R: Runtime>(
             settings_set_edit_hotkey,
             settings_set_solo_key,
             settings_set_microphone,
+            settings_set_recording,
             hotkey_capture,
             devices_refresh,
             connectivity_check,
             audio_devices,
+            audio_outputs,
             audio_meter_start,
             audio_meter_stop,
             overlay_state,
@@ -867,6 +907,9 @@ pub fn build_app<R: Runtime>(
             history_delete,
             history_clear,
             history_star,
+            history_process,
+            history_process_cancel,
+            history_export,
             settings_set_locale,
             settings_set_auto_update,
             settings_set_history,

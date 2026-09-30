@@ -233,6 +233,47 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
     }
   });
 
+  it("regression: the live pill names what the take records, reads hours past an hour and counts a long take's segments while it records and processes (docs/dictation.md section 22)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      // By the backend's clock the device started 1:02:03 before the pill's.
+      const backend = new MockBackend({ now: () => Date.now() - 3_723_000 });
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      await act(async () => {
+        await backend.invoke("settings_set_recording", {
+          recording: { source: "mixed", output_device: null, max_minutes: 120 },
+        });
+      });
+      await act(async () => {
+        await backend.invoke("dictation_start");
+      });
+      expect(await screen.findByTestId("pill-source")).toHaveTextContent("混合");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_MIC_READY_MS);
+      });
+      expect(screen.getByRole("status")).toHaveTextContent(/1:02:0\d/);
+      expect(screen.queryByTestId("pill-progress")).toBeNull();
+      act(() => {
+        backend.simulateLongTakeProgress(12, 13);
+      });
+      expect(screen.getByTestId("pill-progress")).toHaveTextContent("已识别 12 段");
+      await act(async () => {
+        await backend.invoke("dictation_stop");
+      });
+      act(() => {
+        backend.simulateLongTakeProgress(13, 14);
+      });
+      const processing = screen.getByRole("status");
+      expect(processing).toHaveAttribute("data-state", "processing");
+      expect(processing).toHaveTextContent("已识别 13/14 段");
+      expect(screen.queryByTestId("pill-progress")).toBeNull();
+      expect(screen.queryByTestId("pill-source")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("regression: the live pill paints nothing while idle, then listening with the real meter, the processing stage, and the inserted count", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

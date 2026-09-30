@@ -90,6 +90,16 @@
   },
   {
     "args": {
+      "recording": {
+        "max_minutes": 60,
+        "output_device": "wasapi:{0.0.0.00000000}.{a1}",
+        "source": "mixed"
+      }
+    },
+    "name": "settings_set_recording"
+  },
+  {
+    "args": {
       "locale": "en"
     },
     "name": "settings_set_locale"
@@ -257,6 +267,20 @@
       "starred": true
     },
     "name": "history_star"
+  },
+  {
+    "args": {
+      "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      "preset": "notes",
+      "requestId": 5
+    },
+    "name": "history_process"
+  },
+  {
+    "args": {
+      "requestId": 5
+    },
+    "name": "history_process_cancel"
   },
   {
     "args": {

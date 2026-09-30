@@ -4,8 +4,8 @@ import {
   type HistoryEntry,
   formatCount,
 } from "@voltip/shared";
-import { MockBackend, desktopIdentity } from "@voltip/shared/mock";
-import { screen, waitFor, within } from "@testing-library/react";
+import { MOCK_REFINE_MS, MockBackend, desktopIdentity } from "@voltip/shared/mock";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
 
@@ -839,5 +839,140 @@ describe("History page with a long history (docs/dictation.md section 4.4)", () 
     renderApp({ path: `/history?filter=${rows(150)[140]?.id ?? ""}`, backend });
     expect(await screen.findByTestId("entry-text")).toHaveTextContent("第140句。");
     backend.destroy();
+  });
+});
+
+describe("History page · long entries (docs/dictation.md section 22)", () => {
+  const segment = (n: number) => ({
+    text: `第${n}段${"字".repeat(100)}。`,
+    start_ms: (n - 1) * 30_000,
+    end_ms: n * 30_000,
+  });
+  /** A ten-minute take of 20 segments, about 2100 characters: not cleaned up at the take. */
+  function longEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
+    const segments = Array.from({ length: 20 }, (_, i) => segment(i + 1));
+    const text = segments.map((s) => s.text).join("");
+    return {
+      id: "long-take",
+      at_ms: Date.now() - 60_000,
+      raw_text: text,
+      text,
+      refined: false,
+      asr_model: "Qwen3-ASR-1.7B",
+      duration_ms: 600_000,
+      asr_ms: 20_000,
+      outcome: { kind: "inserted", via: "paste" },
+      starred: false,
+      mode: "whole_take",
+      kind: "dictation",
+      segments,
+      ...overrides,
+    };
+  }
+
+  it("processes a long entry with a preset in parts, shows the progress, keeps the result beside the original and exports subtitles and text", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    try {
+      const backend = new MockBackend({ now: () => Date.now(), history: [longEntry()] });
+      renderApp({ path: "/history", backend });
+      const tools = await screen.findByTestId("history-long-tools");
+      expect(tools).toHaveTextContent("全文按句子分成不超过 1500 字的部分依次处理");
+      expect(tools).toHaveTextContent("内置 AI 服务受免费额度限制，长文处理较慢。");
+      expect(screen.queryByRole("radio", { name: "处理后" })).toBeNull();
+      await user.selectOptions(within(tools).getByRole("combobox", { name: "预设" }), "notes");
+      await user.click(within(tools).getByTestId("history-long-start"));
+      expect(await within(tools).findByTestId("history-long-progress")).toHaveTextContent(
+        "已处理 0/3 部分",
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_REFINE_MS);
+      });
+      expect(within(tools).getByTestId("history-long-progress")).toHaveTextContent(
+        "已处理 1/3 部分",
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_REFINE_MS * 2);
+      });
+      expect(within(tools).queryByTestId("history-long-progress")).toBeNull();
+      expect(within(tools).getByTestId("history-long-start")).toHaveTextContent("重新处理");
+      await user.click(screen.getByRole("radio", { name: "处理后" }));
+      const processed = backend.peek().history_recent[0]?.processed;
+      expect(processed?.preset).toEqual({ id: "notes", name: "要点纪要" });
+      expect(screen.getByTestId("entry-processed")).toHaveTextContent(processed?.text ?? "none");
+      expect(screen.getByTestId("entry-text")).toHaveTextContent("由「要点纪要」处理 · 原文保留");
+      expect(backend.peek().history_recent[0]?.text).toBe(longEntry().text);
+      // Ten minutes read as such, not as 600.0 s.
+      expect(screen.getByText("10 分")).toBeInTheDocument();
+      // Exports: the page's name for the file, the shell's answer in a toast.
+      await user.click(within(tools).getByTestId("history-export-srt"));
+      expect(
+        await screen.findByText(/已保存：\/home\/you\/Documents\/Voltip .*\.srt/),
+      ).toBeInTheDocument();
+      await user.click(within(tools).getByTestId("history-export-txt"));
+      await waitFor(() => {
+        expect(backend.exports.map((e) => e.format)).toEqual(["srt", "txt"]);
+      });
+      expect(backend.exports[0]?.fileName).toMatch(/^Voltip \d{4}-\d{2}-\d{2} \d{2}\.\d{2}$/);
+      expect(within(tools).getByTestId("history-export-txt-note")).toHaveTextContent(
+        "导出文本时使用处理后文本。",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a cancel keeps nothing; without segments there are no subtitles; a short entry has no tools; without an AI service processing says so", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    try {
+      const backend = new MockBackend({
+        now: () => Date.now(),
+        history: [
+          longEntry({ segments: undefined }),
+          {
+            ...longEntry(),
+            id: "short",
+            at_ms: Date.now() - 120_000,
+            duration_ms: 3000,
+            text: "短句。",
+            raw_text: "短句",
+            segments: undefined,
+          },
+        ],
+      });
+      renderApp({ path: "/history", backend });
+      const tools = await screen.findByTestId("history-long-tools");
+      await user.click(within(tools).getByTestId("history-long-start"));
+      await within(tools).findByTestId("history-long-progress");
+      await user.click(within(tools).getByTestId("history-long-cancel"));
+      expect(await within(tools).findByTestId("history-long-cancelled")).toHaveTextContent(
+        "已取消，未保存结果。",
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_REFINE_MS * 5);
+      });
+      expect(backend.peek().history_recent[0]?.processed).toBeUndefined();
+      const srt = within(tools).getByTestId("history-export-srt");
+      expect(srt).toBeDisabled();
+      expect(srt).toHaveAttribute("title", "这条记录没有分段，无法导出字幕。");
+      // A short entry: the tools are not there.
+      await user.click(
+        within(screen.getByRole("list", { name: "听写记录" })).getByRole("button", {
+          name: /短句。/,
+        }),
+      );
+      expect(screen.queryByTestId("history-long-tools")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+    const unconfigured = new MockBackend({ history: [longEntry()], builtIn: {} });
+    renderApp({ path: "/history", backend: unconfigured });
+    const clicks = userEvent.setup();
+    const shown = await screen.findByTestId("history-long-tools");
+    await clicks.click(within(shown).getByTestId("history-long-start"));
+    expect(await within(shown).findByTestId("history-long-failed")).toHaveTextContent(
+      "处理失败：尚未配置 AI 润色服务，无法用预设处理",
+    );
   });
 });

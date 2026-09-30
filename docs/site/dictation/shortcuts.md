@@ -1,5 +1,5 @@
 ---
-description: The dictation shortcut, the three recording modes, starting with a single key or a mouse button, the overlay, and cancelling with Esc.
+description: The dictation shortcut, the three recording modes, starting with a single key or a mouse button, the overlay, cancelling with Esc, and what and how long a dictation records.
 ---
 
 # Shortcuts and recording modes
@@ -34,8 +34,8 @@ A single key can start dictation on its own, in addition to the shortcut: Right 
 
 While you dictate, a small overlay at the bottom of the screen shows what is happening:
 
-- **Recording**: the input level, the elapsed time and, with the live transcription model installed, the words recognised so far. A padlock appears when a recording is locked.
-- **Processing**: the step in progress — recognition, AI polish or insertion — with the time it has taken.
+- **Recording**: the input level, the elapsed time, what is being recorded (Microphone, Computer audio or Mixed) and, with the live transcription model installed, the words recognised so far. A padlock appears when a recording is locked. After the first two minutes of a long recording, it also shows how many segments have been recognised.
+- **Processing**: the step in progress — recognition, AI polish or insertion — with the time it has taken. For a long recording, recognition shows how many of its segments are done.
 - **Done**: how many characters were inserted, or why the text stayed on the clipboard.
 
 The overlay never takes the keyboard focus, so the text still goes to the app you were using.
@@ -46,9 +46,29 @@ Press <kbd>Esc</kbd> while recording or processing to cancel; the overlay shows 
 
 On a pure Wayland session, bind a system shortcut to `voltip-desktop --cancel` instead.
 
+## Recording source
+
+Under **Settings → Recording source**, or with the switch on the home page, choose what a dictation records:
+
+| Source | Records |
+| --- | --- |
+| **Microphone** (default) | The chosen microphone, or the system's default input. |
+| **Computer audio** | The sound your computer plays, such as a meeting, a call or a video, from the chosen output device or the system's default output. |
+| **Mixed** | Both together. |
+
+When mixing, wear headphones: otherwise the microphone also picks up the speakers and the recording echoes. A voice edit always records the microphone.
+
+Recording computer audio needs macOS 14.6 or later on a Mac, and a PulseAudio or PipeWire sound server on Linux; see [Platform notes](/reference/platforms). Where it is not available, the two options are dimmed and the reason is shown.
+
 ## Recording length
 
-A recording stops by itself after 2 minutes with the **All at once** output mode, and after 10 minutes with the two modes that transcribe while you speak. Longer recordings, of up to two hours, are in development; see the [roadmap](/roadmap).
+A recording stops by itself when it reaches **Longest recording** under Settings → Dictation: 1, 2, 5, 10 (the default) or 30 minutes, 1 hour or 2 hours.
+
+A recording longer than 2 minutes is recognised in segments while you speak. Voltip cuts it where you pause, about every 20 to 30 seconds, and the overlay counts the segments; when you stop, only the last ones are left, so the text is ready soon after. A part that could not be recognised is marked in the text with its time, for example `[未识别 00:12:30–00:13:00]`.
+
+- AI polish runs only when the text is 2,000 characters or shorter. A longer text is inserted as recognised; in the [history](/dictation/history#long-recordings) you can process it with an AI preset in parts.
+- A text longer than 5,000 characters is not pasted. It stays on the clipboard.
+- While a long recording runs, its audio is written to a file in Voltip's data folder. The file is deleted when the recording ends.
 
 ## Linux with Wayland
 

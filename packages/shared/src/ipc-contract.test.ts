@@ -34,6 +34,7 @@ import {
   providerIdSchema,
   serviceKindSchema,
   settingsSchema,
+  recordingSettingsSchema,
   soloKeySchema,
   PHONE_TEXT_SOURCES,
   themeIdSchema,
@@ -74,6 +75,7 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   scenes: null,
   presets: null,
   preset_try: null,
+  history_process: null,
   provider_probe: null,
   phone_take: null,
   sent_texts: null,
@@ -110,6 +112,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   settings_set_edit_hotkey: null,
   settings_set_solo_key: null,
   settings_set_microphone: null,
+  settings_set_recording: null,
   hotkey_capture: null,
   devices_refresh: null,
   connectivity_check: null,
@@ -122,6 +125,8 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   history_delete: null,
   history_clear: null,
   history_star: null,
+  history_process: null,
+  history_process_cancel: null,
   settings_set_locale: null,
   settings_set_auto_update: null,
   settings_set_history: null,
@@ -185,6 +190,7 @@ const argSchemas = {
   settings_set_edit_hotkey: z.object({ hotkey: z.string().nullable() }).strict(),
   settings_set_solo_key: z.object({ key: soloKeySchema.nullable() }).strict(),
   settings_set_microphone: z.object({ device: z.string().nullable() }).strict(),
+  settings_set_recording: z.object({ recording: recordingSettingsSchema.strict() }).strict(),
   hotkey_capture: z.object({ active: z.boolean() }),
   settings_set_engines: z.object({ engines: engineSettingsSchema }),
   provider_key_set: z
@@ -200,6 +206,10 @@ const argSchemas = {
     .strict(),
   history_delete: z.object({ id: z.string() }),
   history_star: z.object({ id: z.string(), starred: z.boolean() }),
+  history_process: z
+    .object({ requestId: z.number().int().nonnegative(), id: z.string(), preset: presetIdSchema })
+    .strict(),
+  history_process_cancel: z.object({ requestId: z.number().int().nonnegative() }).strict(),
   settings_set_locale: z.object({ locale: localeSettingSchema }),
   settings_set_auto_update: z.object({ enabled: z.boolean() }),
   settings_set_history: z.object({ enabled: z.boolean(), keep: z.number().int() }).strict(),
@@ -308,6 +318,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.settings_set_solo_key.parse(args));
     case "settings_set_microphone":
       return backend.invoke(name, argSchemas.settings_set_microphone.parse(args));
+    case "settings_set_recording":
+      return backend.invoke(name, argSchemas.settings_set_recording.parse(args));
     case "hotkey_capture":
       return backend.invoke(name, argSchemas.hotkey_capture.parse(args));
     case "settings_set_engines":
@@ -374,6 +386,10 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.presets_remove.parse(args));
     case "presets_try":
       return backend.invoke(name, argSchemas.presets_try.parse(args));
+    case "history_process":
+      return backend.invoke(name, argSchemas.history_process.parse(args));
+    case "history_process_cancel":
+      return backend.invoke(name, argSchemas.history_process_cancel.parse(args));
     case "settings_set_context_sharing":
       return backend.invoke(name, argSchemas.settings_set_context_sharing.parse(args));
   }
@@ -426,6 +442,11 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       history: { enabled: true, keep: 200 },
       overlay: "top",
       microphone: "wasapi:{0.0.1.00000000}.{c2}",
+      recording: {
+        source: "mixed",
+        output_device: "wasapi:{0.0.0.00000000}.{a1}",
+        max_minutes: 60,
+      },
     });
     expect(parsed.app_version).toBe("0.3.0");
     // docs/dictation.md §10.6: what the local models can run on, a discrete and an integrated GPU.

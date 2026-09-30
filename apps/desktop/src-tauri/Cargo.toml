@@ -46,6 +46,9 @@ serde_json.workspace = true
 tauri = { version = "=2.11.6", default-features = false, features = ["wry", "macos-private-api"] }
 tauri-plugin-opener = "=2.5.4"
 tauri-plugin-global-shortcut = "=2.3.2"
+# The save dialog of 导出字幕 / 导出文本 (src/export.rs, docs/dictation.md §22); called from Rust
+# only. 2.7.3 is the newest release for tauri 2.11 (2.8 needs tauri 2.12).
+tauri-plugin-dialog = "=2.7.3"
 # `voltip --toggle` / `--cancel` reach the running instance (docs/dictation.md §13). No default
 # features: `semver` (version comparison between instances) and `deep-link` are not needed.
 tauri-plugin-single-instance = { version = "=2.4.3", default-features = false }

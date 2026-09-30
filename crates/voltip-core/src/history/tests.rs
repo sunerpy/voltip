@@ -9,7 +9,7 @@ use crate::scenes::{AppRef, BuiltinScene, MAX_RECENT_APPS, SceneRef};
 use crate::vocabulary::VocabularyHits;
 use uuid::Uuid;
 
-fn entry(text: &str) -> HistoryEntry {
+pub(super) fn entry(text: &str) -> HistoryEntry {
     HistoryEntry {
         id: Uuid::new_v4(),
         at_ms: 1_758_700_000_000,
@@ -33,6 +33,7 @@ fn entry(text: &str) -> HistoryEntry {
         scene: None,
         preset: None,
         origin: None,
+        processed: None,
     }
 }
 
@@ -632,4 +633,36 @@ fn twenty_thousand_entries_open_search_and_count_in_time() {
     assert!(searched < Duration::from_millis(50), "search {searched:?}");
     assert!(listed < Duration::from_millis(50), "page {listed:?}");
     assert!(counted < Duration::from_millis(100), "stats {counted:?}");
+}
+
+/// 用 AI 预设处理 (docs/dictation.md §22): the result is stored beside the entry's own text (the
+/// text is untouched), replaces an earlier one, is found by the search, survives a reopen and is
+/// omitted from the JSON until it exists; an unknown id stores nothing.
+#[test]
+fn a_processed_text_is_stored_beside_the_entry_and_searched() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = HistoryStore::open(dir.path());
+    let long = entry("会议记录");
+    store.push(long.clone(), MAX_ENTRIES).unwrap();
+    assert!(!serde_json::to_string(&long).unwrap().contains("processed"));
+    assert_eq!(store.get(long.id).unwrap(), Some(long.clone()));
+    assert_eq!(store.get(Uuid::new_v4()).unwrap(), None);
+    let processed = |text: &str, at_ms| ProcessedText { text: text.into(), preset: crate::presets::TakePreset::default().to_ref(), at_ms };
+    assert!(store.set_processed(long.id, processed("- 第一版要点", 1)).unwrap());
+    assert!(store.set_processed(long.id, processed("- 预算已批准", 2)).unwrap(), "replaces the earlier one");
+    assert!(!store.set_processed(Uuid::new_v4(), processed("x", 3)).unwrap());
+    let stored = HistoryStore::open(dir.path()).get(long.id).unwrap().unwrap();
+    assert_eq!(stored.text, long.text, "the entry's own text stays");
+    assert_eq!(stored.processed, Some(Box::new(processed("- 预算已批准", 2))));
+    let reader = HistoryReader::new(dir.path());
+    let found = reader.query(&page(HistoryQuery { query: "预算".into(), ..Default::default() })).unwrap();
+    assert_eq!(found.entries.len(), 1);
+    assert!(
+        reader.query(&page(HistoryQuery { query: "第一版".into(), ..Default::default() })).unwrap().entries.is_empty(),
+        "the replaced text is not searched"
+    );
+    let blocked = dir.path().join("blocked");
+    std::fs::write(&blocked, b"x").unwrap();
+    let mut broken = HistoryStore::open(&blocked);
+    assert!(broken.get(long.id).is_err() && broken.set_processed(long.id, processed("x", 4)).is_err());
 }

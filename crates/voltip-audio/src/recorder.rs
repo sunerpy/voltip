@@ -1,7 +1,12 @@
-//! The dictation recorder: one open stream, level frames for the UI while it runs, a mono
-//! 16-bit [`Recording`] at the requested rate when it stops, and — on request — a live 16 kHz
-//! tap for the streaming preview (docs/dictation.md §11) plus a one-shot `ready` mark when the
-//! device delivers its first samples.
+//! The dictation recorder: an open stream (or two, `mixed`), level frames for the UI while it
+//! runs, a mono 16-bit [`Recording`] at the requested rate when it stops, and — on request — a
+//! live 16 kHz tap for the streaming preview (docs/dictation.md §11), the long take's 16 kHz
+//! stream for the core's recording file (§22), and a one-shot `ready` mark when the device
+//! delivers its first samples.
+//!
+//! Sources (§22): the microphone, what an output device plays (the computer's sound), or both
+//! mixed at 16 kHz ([`crate::mix`]: the microphone is the clock). Whatever the source, one
+//! [`Sink`] turns the signal into levels, the in-memory take, the tap and the stream.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -10,19 +15,48 @@ use serde::{Deserialize, Serialize};
 
 use crate::AudioError;
 use crate::backend::{AudioDevice, Backend, CpalBackend, SampleCallback, StreamHandle};
-use crate::dsp::FrameAccumulator;
-use crate::live::{LiveConsumer, LiveProducer, LiveTapConfig, live_tap};
+use crate::dsp::{FrameAccumulator, SampleChunk};
+use crate::live::{LiveConsumer, LiveProducer, LiveTapConfig, StreamResampler, live_tap};
 use crate::meter::{DEFAULT_FRAMES_PER_SECOND, DEFAULT_PEAK_HOLD_MS, LevelFrame};
+use crate::mix::Mixer;
+use crate::pcm::{PcmConsumer, PcmProducer, PcmStreamConfig, pcm_stream};
 use crate::recording::{Recording, downmix_chunk, f32_to_i16, resample_mono};
 
 /// Default [`RecorderConfig::target_rate_hz`]: what speech models expect.
 pub const DEFAULT_TARGET_RATE_HZ: u32 = 16_000;
 /// Default [`RecorderConfig::max_duration`].
 pub const DEFAULT_MAX_DURATION: Duration = Duration::from_secs(120);
+/// The rate the `mixed` source is mixed at, and so the rate its [`Sink`] sees.
+pub const MIX_RATE_HZ: u32 = 16_000;
 
 /// Upper bound on the capture buffer reserved up front, in seconds of audio at the device rate.
 /// Longer `max_duration`s let the buffer grow instead.
 const RESERVE_SECONDS: u64 = 120;
+/// Mono frames reserved for one chunk's scratch space (cpal chunks are a few thousand frames at
+/// most); grows only for a chunk larger than any before.
+const SCRATCH_FRAMES: usize = 8192;
+/// How much of the computer's sound may wait for the microphone in `mixed` (one second at 16 kHz;
+/// the mixer keeps it to 20 ms in normal running).
+const MIX_QUEUE_SAMPLES: usize = 16_000;
+
+/// Where the recorder takes its audio from (docs/dictation.md §22).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CaptureSource {
+    /// The input device [`RecorderConfig::device_id`] (the default).
+    #[default]
+    Microphone,
+    /// What the output device `output_id` plays (`None`: the default output).
+    System {
+        /// [`AudioDevice::id`] of an output device, or `None`.
+        output_id: Option<String>,
+    },
+    /// The microphone and what `output_id` plays, mixed at [`MIX_RATE_HZ`].
+    Mixed {
+        /// [`AudioDevice::id`] of an output device, or `None`.
+        output_id: Option<String>,
+    },
+}
 
 /// How to run a [`Recorder`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,7 +66,8 @@ pub struct RecorderConfig {
     pub device_id: Option<String>,
     /// Sample rate of the finished [`Recording`]; the device's native rate is converted to it.
     pub target_rate_hz: u32,
-    /// Capture stops accepting samples once this much audio has been kept.
+    /// Capture stops accepting samples into the [`Recording`] once this much audio has been kept
+    /// (the tap and the long take's stream go on).
     pub max_duration: Duration,
     /// [`LevelFrame`]s emitted per second while recording (`0` is treated as `1`).
     pub frames_per_second: u16,
@@ -40,6 +75,12 @@ pub struct RecorderConfig {
     /// readable through [`Recorder::live_consumer`]; `None` = no tap.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_tap: Option<LiveTapConfig>,
+    /// The microphone, the computer's sound, or both (docs/dictation.md §22).
+    pub source: CaptureSource,
+    /// Also feed the whole take to [`Recorder::pcm_consumer`] (docs/dictation.md §22, a take that
+    /// may run past `max_duration`); `None` = no stream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pcm_stream: Option<PcmStreamConfig>,
 }
 
 impl Default for RecorderConfig {
@@ -50,6 +91,8 @@ impl Default for RecorderConfig {
             max_duration: DEFAULT_MAX_DURATION,
             frames_per_second: DEFAULT_FRAMES_PER_SECOND,
             live_tap: None,
+            source: CaptureSource::Microphone,
+            pcm_stream: None,
         }
     }
 }
@@ -57,7 +100,7 @@ impl Default for RecorderConfig {
 /// What the audio thread fills in and `stop()` drains.
 #[derive(Debug, Default)]
 struct Capture {
-    /// Mono samples at the device's native rate.
+    /// Mono samples at the device's native rate (at [`MIX_RATE_HZ`] for `mixed`).
     mono: Vec<f32>,
     /// Native rate, `0` until the first chunk arrives.
     rate: u32,
@@ -73,25 +116,130 @@ struct Capture {
 /// `Send + Sync`: the shell can keep it in a mutex and stop it from any thread. The audio thread
 /// only ever touches a short-lived lock around the sample buffer.
 pub struct Recorder {
+    /// The device being recorded: the microphone, or the output device for `system`.
     device: AudioDevice,
-    stream: Option<Box<dyn StreamHandle>>,
+    /// The output device whose sound is recorded (`system` and `mixed`).
+    output: Option<AudioDevice>,
+    streams: Vec<Box<dyn StreamHandle>>,
     capture: Arc<Mutex<Capture>>,
     target_rate_hz: u32,
     /// The consumer end of the live tap until [`Recorder::live_consumer`] takes it. Behind a mutex
     /// only so the recorder stays `Sync` (rtrb's consumer is `Send`, not `Sync`); never contended.
     live: Mutex<Option<LiveConsumer>>,
+    /// The consumer end of the long take's stream until [`Recorder::pcm_consumer`] takes it.
+    pcm: Mutex<Option<PcmConsumer>>,
 }
 
-/// The tap producer and its scratch space, owned by the audio callback.
-struct Tap {
-    producer: LiveProducer,
-    /// The mono frames of the current chunk, copied out of the capture buffer so the resampler
-    /// runs outside the lock. Reserved up front; grows only for a chunk larger than any before.
-    scratch: Vec<f32>,
+/// Where each chunk of the recorded signal goes, owned by the audio callback that feeds it: the
+/// level frames, the in-memory take (up to `max_duration`), the live tap and the long take's
+/// stream (the whole chunk, even once the in-memory take is full).
+struct Sink {
+    on_level: Box<dyn Fn(LevelFrame) + Send>,
+    on_ready: Option<Box<dyn FnOnce() + Send>>,
+    accumulator: Option<FrameAccumulator>,
+    frames_per_second: u16,
+    capture: Arc<Mutex<Capture>>,
+    max_duration: Duration,
+    /// The tap and the rate its resampler was built for.
+    tap: Option<(LiveProducer, u32, u32)>,
+    /// The stream and the rate its resampler was built for.
+    pcm: Option<(PcmProducer, u32, u32)>,
+    /// The current chunk as mono.
+    mono: Vec<f32>,
 }
 
-/// Mono frames reserved for one chunk's tap scratch (cpal chunks are a few thousand frames at most).
-const TAP_SCRATCH_FRAMES: usize = 8192;
+impl Sink {
+    fn process(&mut self, chunk: SampleChunk<'_>, rate: u32, channels: u16) {
+        if chunk_len(chunk) > 0
+            && let Some(ready) = self.on_ready.take()
+        {
+            ready();
+        }
+        let acc = self.accumulator.get_or_insert_with(|| FrameAccumulator::new(rate, channels, self.frames_per_second, DEFAULT_PEAK_HOLD_MS));
+        acc.push(chunk, &*self.on_level);
+        let channels = channels.max(1);
+        self.mono.clear();
+        downmix_chunk(chunk, channels, &mut self.mono);
+        let mut capture = self.capture.lock().unwrap_or_else(PoisonError::into_inner);
+        if capture.rate == 0 {
+            capture.rate = rate;
+            capture.channels = channels;
+            capture.max_frames = frames_for(self.max_duration, rate);
+            // Rare: the device runs at a rate other than the advertised one; the resamplers in
+            // front of the tap and the stream are rebuilt once, here in the first callback (the
+            // rings stay: rtrb cannot swap them).
+            if let Some((producer, built_for, target)) = &mut self.tap
+                && *built_for != rate
+            {
+                match StreamResampler::new(rate, *target) {
+                    Ok(resampler) => producer.replace_resampler(resampler),
+                    Err(e) => tracing::warn!(error = %e, rate, "live tap cannot resample this device rate; tap disabled"),
+                }
+                *built_for = rate;
+            }
+            if let Some((producer, built_for, target)) = &mut self.pcm
+                && *built_for != rate
+            {
+                match StreamResampler::new(rate, *target) {
+                    Ok(resampler) => producer.replace_resampler(resampler),
+                    Err(e) => tracing::warn!(error = %e, rate, "the long take's stream cannot resample this device rate"),
+                }
+                *built_for = rate;
+            }
+        }
+        let room = capture.max_frames.saturating_sub(capture.mono.len());
+        let take = self.mono.len().min(room);
+        if take < self.mono.len() {
+            capture.truncated = true;
+        }
+        let Capture { mono, .. } = &mut *capture;
+        mono.extend_from_slice(&self.mono[..take]);
+        drop(capture);
+        if let Some((producer, ..)) = &mut self.tap {
+            producer.push(&self.mono);
+        }
+        if let Some((producer, ..)) = &mut self.pcm {
+            producer.push(&self.mono);
+        }
+    }
+}
+
+/// One side of `mixed` on its way to 16 kHz mono: downmix, resample.
+struct ToMixRate {
+    resampler: StreamResampler,
+    built_for: u32,
+    mono: Vec<f32>,
+    out: Vec<f32>,
+}
+
+impl ToMixRate {
+    fn new(advertised_rate: u32) -> Result<Self, AudioError> {
+        Ok(Self {
+            resampler: StreamResampler::new(advertised_rate, MIX_RATE_HZ)?,
+            built_for: advertised_rate,
+            mono: Vec::with_capacity(SCRATCH_FRAMES),
+            out: Vec::with_capacity(SCRATCH_FRAMES),
+        })
+    }
+
+    /// `chunk` at `rate` as 16 kHz mono in `self.out` (whatever the resampler has ready).
+    fn convert(&mut self, chunk: SampleChunk<'_>, rate: u32, channels: u16) {
+        if rate != self.built_for {
+            match StreamResampler::new(rate, MIX_RATE_HZ) {
+                Ok(resampler) => self.resampler = resampler,
+                Err(e) => tracing::warn!(error = %e, rate, "cannot resample this device rate for mixing"),
+            }
+            self.built_for = rate;
+        }
+        self.mono.clear();
+        downmix_chunk(chunk, channels.max(1), &mut self.mono);
+        self.out.clear();
+        let Self { resampler, mono, out, .. } = self;
+        if resampler.push(mono, &mut |frames: &[f32]| out.extend_from_slice(frames)).is_err() {
+            out.clear();
+        }
+    }
+}
 
 impl Recorder {
     /// Open the configured device through the platform backend and start recording, pushing a
@@ -108,8 +256,9 @@ impl Recorder {
 
     /// [`Recorder::start_with`] plus a one-shot `on_ready`, called from the audio thread with the
     /// first chunk that carries samples (Bluetooth / USB devices take 100–500 ms to deliver after
-    /// the stream opens). Must not block. With `config.live_tap`, the tap is built here too and
-    /// handed out once by [`Recorder::live_consumer`].
+    /// the stream opens). Must not block. With `config.live_tap` / `config.pcm_stream`, the tap and
+    /// the stream are built here too and handed out once by [`Recorder::live_consumer`] /
+    /// [`Recorder::pcm_consumer`].
     pub fn start_with_ready(
         backend: &dyn Backend,
         config: RecorderConfig,
@@ -119,87 +268,121 @@ impl Recorder {
         if config.target_rate_hz == 0 {
             return Err(AudioError::Resample("target rate must be greater than 0 Hz".into()));
         }
-        let devices = backend.input_devices()?;
-        let device = match &config.device_id {
-            Some(id) => devices.iter().find(|d| &d.id == id).cloned().ok_or_else(|| AudioError::DeviceNotFound(id.clone()))?,
-            None => devices.iter().find(|d| d.is_default).or_else(|| devices.first()).cloned().ok_or(AudioError::NoDevice)?,
+        let output_id = match &config.source {
+            CaptureSource::Microphone => None,
+            CaptureSource::System { output_id } | CaptureSource::Mixed { output_id } => Some(output_id.as_deref()),
         };
-        let frames_per_second = config.frames_per_second;
+        let output = match output_id {
+            None => None,
+            Some(id) => {
+                let system = backend.system_audio();
+                if !system.is_available() {
+                    return Err(AudioError::SystemAudioUnavailable(system.describe()));
+                }
+                let outputs = backend.output_devices()?;
+                let device = match id {
+                    Some(id) => outputs.iter().find(|d| d.id == id).cloned().ok_or_else(|| AudioError::DeviceNotFound(id.to_owned()))?,
+                    None => outputs.iter().find(|d| d.is_default).or_else(|| outputs.first()).cloned().ok_or(AudioError::NoDevice)?,
+                };
+                Some(device)
+            }
+        };
+        let microphone = match &config.source {
+            CaptureSource::System { .. } => None,
+            CaptureSource::Microphone | CaptureSource::Mixed { .. } => {
+                let devices = backend.input_devices()?;
+                Some(match &config.device_id {
+                    Some(id) => devices.iter().find(|d| &d.id == id).cloned().ok_or_else(|| AudioError::DeviceNotFound(id.clone()))?,
+                    None => devices.iter().find(|d| d.is_default).or_else(|| devices.first()).cloned().ok_or(AudioError::NoDevice)?,
+                })
+            }
+        };
+        let mixed = matches!(config.source, CaptureSource::Mixed { .. });
+        // What the sink sees: the device's own rate, or the mixing rate.
+        let (device, sink_rate) = match (&microphone, &output) {
+            (Some(mic), _) if mixed => (mic.clone(), MIX_RATE_HZ),
+            (Some(mic), _) => (mic.clone(), mic.sample_rate_hz.unwrap_or(48_000)),
+            (None, Some(out)) => (out.clone(), out.sample_rate_hz.unwrap_or(48_000)),
+            (None, None) => return Err(AudioError::NoDevice),
+        };
         let max_duration = config.max_duration;
-        // Reserve for the whole take before the stream opens, so the audio thread never grows
-        // the buffer under normal use. The device's advertised rate is the best guess here; the
-        // real one arrives with the first chunk and only triggers a reallocation if it is higher.
+        // Reserve for the whole in-memory take before the stream opens, so the audio thread never
+        // grows the buffer under normal use. The advertised rate is the best guess here; the real
+        // one arrives with the first chunk and only triggers a reallocation if it is higher.
         let mut capture = Capture::default();
-        capture.mono.reserve(frames_for(max_duration.min(Duration::from_secs(RESERVE_SECONDS)), device.sample_rate_hz.unwrap_or(48_000)));
+        capture.mono.reserve(frames_for(max_duration.min(Duration::from_secs(RESERVE_SECONDS)), sink_rate));
         let capture = Arc::new(Mutex::new(capture));
-        let sink = Arc::clone(&capture);
-        // The tap's resampler needs the device's real rate, which only the first chunk knows for
-        // sure; the ring and the resampler are still built before the stream opens (from the
-        // advertised rate) so the audio thread allocates nothing. A device that then reports a
-        // different rate gets its tap rebuilt once, in that first callback.
-        let advertised_rate = device.sample_rate_hz.unwrap_or(48_000);
-        let (mut tap, live) = match &config.live_tap {
+        // The tap's and the stream's resamplers are built before the stream opens (from the
+        // advertised rate), so the audio thread allocates nothing; a device that then reports a
+        // different rate gets them rebuilt once, in the first callback.
+        let (tap, live) = match &config.live_tap {
             Some(tap_config) => {
-                let (producer, consumer) = live_tap(tap_config, advertised_rate)?;
-                (Some((Tap { producer, scratch: Vec::with_capacity(TAP_SCRATCH_FRAMES) }, tap_config.clone(), advertised_rate)), Some(consumer))
+                let (producer, consumer) = live_tap(tap_config, sink_rate)?;
+                (Some((producer, sink_rate, tap_config.target_rate_hz)), Some(consumer))
             }
             None => (None, None),
         };
-        let mut on_ready: Option<Box<dyn FnOnce() + Send>> = Some(Box::new(on_ready));
-        let mut accumulator: Option<FrameAccumulator> = None;
-        let on_samples: SampleCallback = Box::new(move |chunk, rate, channels| {
-            if chunk_len(chunk) > 0
-                && let Some(ready) = on_ready.take()
-            {
-                ready();
+        let (pcm, pcm_out) = match &config.pcm_stream {
+            Some(stream_config) => {
+                let (producer, consumer) = pcm_stream(stream_config, Some(sink_rate))?;
+                (Some((producer, sink_rate, stream_config.target_rate_hz)), Some(consumer))
             }
-            let acc = accumulator.get_or_insert_with(|| FrameAccumulator::new(rate, channels, frames_per_second, DEFAULT_PEAK_HOLD_MS));
-            acc.push(chunk, &on_level);
-            let mut capture = sink.lock().unwrap_or_else(PoisonError::into_inner);
-            if capture.rate == 0 {
-                capture.rate = rate;
-                capture.channels = channels;
-                capture.max_frames = frames_for(max_duration, rate);
-                if let Some((t, tap_config, built_for)) = &mut tap
-                    && *built_for != rate
-                {
-                    // Rare: the device runs at a rate other than the advertised one. Rebuilding
-                    // the producer here keeps the same consumer only if we could swap the ring,
-                    // which rtrb does not allow; so the tap is rebuilt as a fresh resampler in
-                    // front of the same producer instead.
-                    match crate::live::StreamResampler::new(rate, tap_config.target_rate_hz) {
-                        Ok(resampler) => t.producer.replace_resampler(resampler),
-                        Err(e) => tracing::warn!(error = %e, rate, "live tap cannot resample this device rate; tap disabled"),
-                    }
-                    *built_for = rate;
-                }
+            None => (None, None),
+        };
+        let mut sink = Sink {
+            on_level: Box::new(on_level),
+            on_ready: Some(Box::new(on_ready)),
+            accumulator: None,
+            frames_per_second: config.frames_per_second,
+            capture: Arc::clone(&capture),
+            max_duration,
+            tap,
+            pcm,
+            mono: Vec::with_capacity(SCRATCH_FRAMES),
+        };
+        let mut streams = Vec::with_capacity(2);
+        match (&microphone, &output) {
+            (Some(mic), Some(out)) => {
+                // `mixed`: the computer's sound waits in a queue at 16 kHz; the microphone's
+                // callback takes from it, mixes and feeds the sink.
+                let (mut queue, queued) = rtrb::RingBuffer::new(MIX_QUEUE_SAMPLES);
+                let mut other = ToMixRate::new(out.sample_rate_hz.unwrap_or(48_000))?;
+                let on_output: SampleCallback = Box::new(move |chunk, rate, channels| {
+                    other.convert(chunk, rate, channels);
+                    // A full queue means the microphone stopped taking: those samples are lost.
+                    let _ = queue.push_partial_slice(&other.out);
+                });
+                streams.push(backend.open_output_capture(Some(out.id.as_str()), on_output)?);
+                let mut own = ToMixRate::new(mic.sample_rate_hz.unwrap_or(48_000))?;
+                let mut mixer = Mixer::new(queued);
+                let mut mixed_out = Vec::with_capacity(SCRATCH_FRAMES);
+                let on_microphone: SampleCallback = Box::new(move |chunk, rate, channels| {
+                    own.convert(chunk, rate, channels);
+                    mixer.mix(&own.out, &mut mixed_out);
+                    sink.process(SampleChunk::F32(&mixed_out), MIX_RATE_HZ, 1);
+                });
+                streams.push(backend.open_input(config.device_id.as_deref(), on_microphone)?);
             }
-            let channels = channels.max(1);
-            let frames = chunk_len(chunk) / usize::from(channels);
-            let room = capture.max_frames.saturating_sub(capture.mono.len());
-            let take = frames.min(room);
-            if take < frames {
-                capture.truncated = true;
+            (Some(_), None) => {
+                streams.push(backend.open_input(config.device_id.as_deref(), Box::new(move |chunk, rate, channels| sink.process(chunk, rate, channels)))?);
             }
-            if take > 0 {
-                let before = capture.mono.len();
-                let Capture { mono, .. } = &mut *capture;
-                downmix_chunk(truncate_chunk(chunk, take * usize::from(channels)), channels, mono);
-                if let Some((t, ..)) = &mut tap {
-                    t.scratch.clear();
-                    t.scratch.extend_from_slice(&mono[before..]);
-                }
+            (None, Some(out)) => {
+                streams.push(backend.open_output_capture(Some(out.id.as_str()), Box::new(move |chunk, rate, channels| sink.process(chunk, rate, channels)))?);
             }
-            drop(capture);
-            if let Some((t, ..)) = &mut tap
-                && !t.scratch.is_empty()
-            {
-                t.producer.push(&t.scratch);
-            }
-        });
-        let stream = backend.open_input(config.device_id.as_deref(), on_samples)?;
-        tracing::info!(device = %device.id, name = %device.name, target_rate_hz = config.target_rate_hz, ?max_duration, live = config.live_tap.is_some(), "recorder started");
-        Ok(Self { device, stream: Some(stream), capture, target_rate_hz: config.target_rate_hz, live: Mutex::new(live) })
+            (None, None) => return Err(AudioError::NoDevice),
+        }
+        tracing::info!(
+            device = %device.id,
+            name = %device.name,
+            output = ?output.as_ref().map(|d| d.id.as_str()),
+            source = ?config.source,
+            target_rate_hz = config.target_rate_hz,
+            ?max_duration,
+            live = config.live_tap.is_some(),
+            stream = config.pcm_stream.is_some(),
+            "recorder started"
+        );
+        Ok(Self { device, output, streams, capture, target_rate_hz: config.target_rate_hz, live: Mutex::new(live), pcm: Mutex::new(pcm_out) })
     }
 
     /// The consumer end of the live tap requested with `RecorderConfig::live_tap`: `Some` exactly
@@ -209,9 +392,21 @@ impl Recorder {
         self.live.lock().unwrap_or_else(PoisonError::into_inner).take()
     }
 
-    /// The device being recorded.
+    /// The consumer end of the long take's stream requested with `RecorderConfig::pcm_stream`
+    /// (docs/dictation.md §22): `Some` exactly once. It closes when the recorder stops or is
+    /// dropped.
+    pub fn pcm_consumer(&self) -> Option<PcmConsumer> {
+        self.pcm.lock().unwrap_or_else(PoisonError::into_inner).take()
+    }
+
+    /// The device being recorded: the microphone, or the output device for `system`.
     pub fn device(&self) -> &AudioDevice {
         &self.device
+    }
+
+    /// The output device whose sound is recorded (`system` and `mixed`).
+    pub fn output_device(&self) -> Option<&AudioDevice> {
+        self.output.as_ref()
     }
 
     /// Audio kept so far, by the device clock (not wall time): `0` until the first chunk arrives,
@@ -233,8 +428,8 @@ impl Recorder {
     /// configured `target_rate_hz`. A recorder that never received a sample yields an empty
     /// recording.
     pub fn stop(mut self) -> Result<Recording, AudioError> {
-        // Dropping the handle stops the stream, so nothing touches the buffer after this line.
-        drop(self.stream.take());
+        // Dropping the handles stops the streams, so nothing touches the buffer after this line.
+        self.streams.clear();
         let capture = std::mem::take(&mut *self.capture.lock().unwrap_or_else(PoisonError::into_inner));
         if capture.rate == 0 {
             return Ok(Recording::from_samples(Vec::new(), self.target_rate_hz, capture.truncated));
@@ -257,7 +452,8 @@ impl Recorder {
 
 impl Drop for Recorder {
     fn drop(&mut self) {
-        if self.stream.take().is_some() {
+        if !self.streams.is_empty() {
+            self.streams.clear();
             tracing::info!(device = %self.device.id, "recorder dropped without stop; audio discarded");
         }
     }
@@ -268,21 +464,12 @@ fn frames_for(duration: Duration, rate: u32) -> usize {
     usize::try_from(duration.as_millis() * u128::from(rate) / 1000).unwrap_or(usize::MAX)
 }
 
-fn chunk_len(chunk: crate::SampleChunk<'_>) -> usize {
+fn chunk_len(chunk: SampleChunk<'_>) -> usize {
     match chunk {
-        crate::SampleChunk::F32(s) => s.len(),
-        crate::SampleChunk::I16(s) => s.len(),
-        crate::SampleChunk::U16(s) => s.len(),
-        crate::SampleChunk::I32(s) => s.len(),
-    }
-}
-
-fn truncate_chunk(chunk: crate::SampleChunk<'_>, len: usize) -> crate::SampleChunk<'_> {
-    match chunk {
-        crate::SampleChunk::F32(s) => crate::SampleChunk::F32(&s[..len.min(s.len())]),
-        crate::SampleChunk::I16(s) => crate::SampleChunk::I16(&s[..len.min(s.len())]),
-        crate::SampleChunk::U16(s) => crate::SampleChunk::U16(&s[..len.min(s.len())]),
-        crate::SampleChunk::I32(s) => crate::SampleChunk::I32(&s[..len.min(s.len())]),
+        SampleChunk::F32(s) => s.len(),
+        SampleChunk::I16(s) => s.len(),
+        SampleChunk::U16(s) => s.len(),
+        SampleChunk::I32(s) => s.len(),
     }
 }
 
@@ -293,8 +480,9 @@ mod tests {
 
     use super::*;
     use crate::SampleChunk;
+    use crate::backend::SystemAudio;
     use crate::dsp::DBFS_FLOOR;
-    use crate::fake::{FakeBackend, FakeFormat, Signal};
+    use crate::fake::{FAKE_DEFAULT_ID, FAKE_SPEAKERS_ID, FakeBackend, FakeFormat, Signal};
 
     const WAIT: Duration = Duration::from_secs(10);
 
@@ -317,8 +505,20 @@ mod tests {
         let config = RecorderConfig::default();
         assert_eq!(
             config,
-            RecorderConfig { device_id: None, target_rate_hz: 16_000, max_duration: Duration::from_secs(120), frames_per_second: 30, live_tap: None }
+            RecorderConfig {
+                device_id: None,
+                target_rate_hz: 16_000,
+                max_duration: Duration::from_secs(120),
+                frames_per_second: 30,
+                live_tap: None,
+                source: CaptureSource::Microphone,
+                pcm_stream: None,
+            }
         );
+        assert!(!serde_json::to_string(&config).unwrap().contains("pcm_stream"), "None is omitted");
+        let mixed: RecorderConfig = serde_json::from_str(r#"{"source":{"kind":"mixed","output_id":"fake:speakers"},"pcm_stream":{}}"#).unwrap();
+        assert_eq!(mixed.source, CaptureSource::Mixed { output_id: Some("fake:speakers".into()) });
+        assert_eq!(mixed.pcm_stream, Some(PcmStreamConfig::default()));
         assert!(!serde_json::to_string(&config).unwrap().contains("live_tap"), "None is omitted");
         let live: RecorderConfig = serde_json::from_str(r#"{"live_tap":{}}"#).unwrap();
         assert_eq!(live.live_tap, Some(LiveTapConfig::default()));
@@ -581,6 +781,97 @@ mod tests {
         assert_eq!(recording.to_wav().len(), 44);
     }
 
+    /// docs/dictation.md §22: `system` records what the output device plays, at its own rate,
+    /// and opens no microphone; a machine that cannot record its output says why before opening
+    /// anything.
+    #[test]
+    fn the_system_source_records_the_output_device() {
+        let backend = FakeBackend::new().with_output_signal(Signal::Sine { frequency_hz: 440.0, amplitude: 0.4 });
+        let system = || RecorderConfig { source: CaptureSource::System { output_id: None }, ..RecorderConfig::default() };
+        let recorder = Recorder::start_with(&backend, system(), |_| {}).unwrap();
+        assert_eq!(recorder.device().id, FAKE_SPEAKERS_ID);
+        assert_eq!(recorder.output_device().map(|d| d.id.as_str()), Some(FAKE_SPEAKERS_ID));
+        assert!(backend.opened_with().is_empty(), "no microphone is opened");
+        assert_eq!(backend.opened_outputs(), vec![Some(FAKE_SPEAKERS_ID.to_owned())]);
+        wait_until(|| recorder.elapsed() >= Duration::from_millis(500));
+        let recording = recorder.stop().unwrap();
+        assert!(!recording.is_silent());
+        // 0.4 of full scale, measured away from the take's edges (the resampler rings where the
+        // stop cuts the sine).
+        let core = &recording.samples[1600..recording.samples.len() - 1600];
+        let rms = (core.iter().map(|&s| f64::from(s) * f64::from(s)).sum::<f64>() / core.len() as f64).sqrt() / 32_768.0;
+        assert!(close(rms as f32, 0.2828, 0.01), "rms {rms}");
+        assert!(!backend.is_running());
+        let old = FakeBackend::new().without_system_audio(SystemAudio::MacosTooOld { version: "14.5".into() });
+        let refused = Recorder::start_with(&old, system(), |_| {}).map(drop).unwrap_err();
+        assert!(matches!(refused, AudioError::SystemAudioUnavailable(ref why) if why.contains("14.5")), "{refused:?}");
+        assert!(old.opened_with().is_empty() && old.opened_outputs().is_empty());
+        let missing = RecorderConfig { source: CaptureSource::System { output_id: Some("fake:none".into()) }, ..RecorderConfig::default() };
+        assert_eq!(Recorder::start_with(&backend, missing, |_| {}).map(drop).unwrap_err(), AudioError::DeviceNotFound("fake:none".into()));
+    }
+
+    /// `mixed`: the microphone (the clock) and the output land in one 16 kHz take, summed with
+    /// −3 dB each; the live tap follows the mix; both streams are released at the stop.
+    #[test]
+    fn the_mixed_source_sums_the_microphone_and_the_output() {
+        let backend = FakeBackend::new().with_signal(Signal::Constant(0.2)).with_output_signal(Signal::Constant(0.3));
+        let config = RecorderConfig {
+            source: CaptureSource::Mixed { output_id: Some(FAKE_SPEAKERS_ID.into()) },
+            live_tap: Some(LiveTapConfig::default()),
+            ..RecorderConfig::default()
+        };
+        let recorder = Recorder::start_with(&backend, config, |_| {}).unwrap();
+        assert_eq!(recorder.device().id, FAKE_DEFAULT_ID, "the microphone is the clock");
+        assert_eq!(recorder.output_device().map(|d| d.id.as_str()), Some(FAKE_SPEAKERS_ID));
+        assert_eq!((backend.opened_with(), backend.opened_outputs()), (vec![None], vec![Some(FAKE_SPEAKERS_ID.to_owned())]));
+        let mut tap = recorder.live_consumer().unwrap();
+        wait_until(|| recorder.elapsed() >= Duration::from_millis(800));
+        let recording = recorder.stop().unwrap();
+        assert_eq!(recording.sample_rate_hz, 16_000);
+        let (both, microphone) = (crate::mix::MIX_GAIN * 0.5, crate::mix::MIX_GAIN * 0.2);
+        let level = |s: i16| f32::from(s) / 32_768.0;
+        // Past the resamplers' start-up (100 ms).
+        let steady = &recording.samples[1600..];
+        assert!(steady.iter().any(|&s| (level(s) - both).abs() < 0.01), "the output is in the mix");
+        assert!(steady.iter().all(|&s| level(s) < both + 0.02), "nothing past the sum");
+        assert!(steady.iter().all(|&s| level(s) > microphone - 0.02), "the microphone is always in it");
+        let mut buf = vec![0.0f32; 4096];
+        assert!(tap.read(&mut buf) > 0, "the tap follows the mix");
+        assert!(!backend.is_running(), "both streams are released");
+    }
+
+    /// A long take (docs/dictation.md §22): the in-memory take stops at `max_duration`, the stream
+    /// carries the whole signal on at 16 kHz and closes when the recorder stops.
+    #[test]
+    fn a_long_take_streams_past_the_in_memory_part() {
+        let backend = FakeBackend::new();
+        assert!(Recorder::start_with(&backend, RecorderConfig::default(), |_| {}).unwrap().pcm_consumer().is_none(), "no stream unless asked");
+        let config = RecorderConfig { max_duration: Duration::from_millis(300), pcm_stream: Some(PcmStreamConfig::default()), ..RecorderConfig::default() };
+        let recorder = Recorder::start_with(&backend, config, |_| {}).unwrap();
+        let mut stream = recorder.pcm_consumer().unwrap();
+        assert!(recorder.pcm_consumer().is_none(), "handed out once");
+        let mut got = 0usize;
+        let mut buf = vec![0.0f32; 4096];
+        // Read while recording, as the core's recording thread does: a second of audio.
+        wait_until(|| {
+            got += stream.read(&mut buf);
+            got >= 16_000
+        });
+        assert!(recorder.is_truncated(), "the in-memory take stopped at 300 ms");
+        let recording = recorder.stop().unwrap();
+        assert!(recording.truncated && recording.duration_ms <= 300, "{}", recording.duration_ms);
+        loop {
+            let n = stream.read(&mut buf);
+            got += n;
+            if n == 0 && stream.gap().is_none() {
+                break;
+            }
+        }
+        assert!(stream.is_closed());
+        assert!(got >= 16_000);
+        assert_eq!(stream.sample_rate_hz(), 16_000);
+    }
+
     #[test]
     fn chunk_helpers() {
         assert_eq!(frames_for(Duration::from_millis(1500), 48_000), 72_000);
@@ -593,9 +884,5 @@ mod tests {
         assert_eq!(chunk_len(SampleChunk::I16(&i)), 6);
         assert_eq!(chunk_len(SampleChunk::U16(&u)), 6);
         assert_eq!(chunk_len(SampleChunk::I32(&w)), 6);
-        assert_eq!(chunk_len(truncate_chunk(SampleChunk::F32(&f), 4)), 4);
-        assert_eq!(chunk_len(truncate_chunk(SampleChunk::I16(&i), 4)), 4);
-        assert_eq!(chunk_len(truncate_chunk(SampleChunk::U16(&u), 9)), 6);
-        assert_eq!(chunk_len(truncate_chunk(SampleChunk::I32(&w), 0)), 0);
     }
 }

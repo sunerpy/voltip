@@ -67,6 +67,7 @@ fn start_with_probe(dir: &std::path::Path, injector: FakeInjector, llm: bool, pr
         streaming: None,
         probe,
         service_probe: None,
+        segmenter: None,
     };
     let (handle, events) = AppCore::start_with(config(dir), Arc::new(MemorySecretStore::new()), ports).unwrap();
     Node { handle, events, audio, injector, refiner, _dir: None }

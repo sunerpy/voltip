@@ -23,10 +23,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use voltip_asr_local::{
-    CATALOGUE_VERSION, Compute, LocalDevice, LocalStreamingTranscriber, LocalTranscriber, MANIFEST_FILE, Manifest, ModelEntry, VadTrimmer, entry, hardware,
-    streaming_entry, vad_entry,
+    CATALOGUE_VERSION, Compute, LocalDevice, LocalStreamingTranscriber, LocalTranscriber, MANIFEST_FILE, Manifest, ModelEntry, VadSegmenterFactory, VadTrimmer,
+    entry, hardware, streaming_entry, vad_entry,
 };
-use voltip_core::dictation::{LIVE_CHUNK_SAMPLES, StreamEvent, StreamingTranscriber, Transcriber};
+use voltip_core::dictation::{LIVE_CHUNK_SAMPLES, SegmenterFactory, StreamEvent, StreamingTranscriber, Transcriber};
 
 /// Stage `entry`'s files from `sources` (file name → path) into `root/<id>` with a manifest, as the
 /// store would have installed them; the sizes are checked against the catalogue.
@@ -245,6 +245,49 @@ async fn real_vad_trims_silence_around_speech() {
         assert!(t.applied());
         assert!(t.samples.len() * 10 >= samples.len() * 5, "a spoken sample keeps at least half of its length");
     }
+}
+
+/// A long take cut where it pauses (docs/dictation.md §22): the sample WAV repeated for three
+/// minutes with 0.8 s of silence between the repeats, fed to the desktop's segmenter in the
+/// recording thread's chunks. Every segment is 20–45 s long, and every cut lands in a pause.
+#[test]
+#[ignore = "needs VOLTIP_LOCAL_VAD_MODEL (the downloaded silero_vad.onnx) and VOLTIP_LOCAL_SAMPLE_WAV"]
+fn real_vad_cuts_a_long_take_at_its_pauses() {
+    let model = PathBuf::from(std::env::var("VOLTIP_LOCAL_VAD_MODEL").expect("VOLTIP_LOCAL_VAD_MODEL"));
+    let root = tempfile::tempdir().unwrap();
+    stage(root.path(), vad_entry(), |_| model.clone());
+    let (sample, rate) = voltip_asr_local::decode_wav(&sample_wav()).unwrap();
+    assert_eq!(rate, 16_000, "the sample is 16 kHz mono");
+    let mut take = Vec::new();
+    while take.len() < 180 * 16_000 {
+        take.extend_from_slice(&sample);
+        take.extend(std::iter::repeat_n(0.0_f32, 800 * 16));
+    }
+    let mut segmenter = VadSegmenterFactory::new(root.path(), None).create().unwrap();
+    let started = Instant::now();
+    let mut cuts = Vec::new();
+    for chunk in take.chunks(4096) {
+        cuts.extend(segmenter.push(chunk));
+    }
+    let end = segmenter.finish().unwrap();
+    let elapsed = started.elapsed();
+    let rms = |a: &[f32]| (a.iter().map(|s| s * s).sum::<f32>() / a.len().max(1) as f32).sqrt();
+    let overall = rms(&take);
+    let seconds: Vec<f64> = cuts.iter().map(|&c| c as f64 / 16_000.0).collect();
+    println!("vad segmenter: {} s in {elapsed:?}, cuts at {seconds:.2?}, end {} s", take.len() / 16_000, end / 16_000);
+    assert_eq!(end, take.len() as u64);
+    assert!(!cuts.is_empty());
+    let mut start = 0;
+    for &cut in &cuts {
+        let len = (cut - start) as f64 / 16_000.0;
+        assert!((20.0..=45.0).contains(&len), "a segment of {len:.2} s ending at {:.2} s", cut as f64 / 16_000.0);
+        let at = usize::try_from(cut).unwrap();
+        let around = &take[at.saturating_sub(400)..(at + 400).min(take.len())];
+        // The sample's own pauses carry its room noise (about −45 dBFS); speech is about −30.
+        assert!(rms(around) < 0.01, "the cut at {:.2} s is not in a pause (RMS {} against {overall} overall)", cut as f64 / 16_000.0, rms(around));
+        start = cut;
+    }
+    assert!(elapsed < Duration::from_secs(20), "the detector keeps up with the recording: {elapsed:?} for 3 minutes");
 }
 
 /// `bpe.vocab` (`piece<TAB>score` per line, what sherpa-onnx's `bpe_vocab` reads to encode hotwords)
@@ -497,6 +540,7 @@ async fn real_qwen3_traditional_answer_reaches_the_pipeline_end_in_simplified() 
         streaming: None,
         probe: None,
         service_probe: None,
+        segmenter: None,
     };
     // The default settings: `chinese_script = simplified`.
     let settings = EngineSettings { refine_enabled: false, ..EngineSettings::default() };

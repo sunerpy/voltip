@@ -20,13 +20,13 @@ use std::time::Duration;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use voltip_asr::{AsrClient, AsrConfig};
-use voltip_asr_local::{LocalStreamingTranscriber, LocalTranscriber, ModelStore};
-use voltip_audio::{Backend, CpalBackend, LiveConsumer, LiveTapConfig, Recorder, RecorderConfig};
+use voltip_asr_local::{LocalStreamingTranscriber, LocalTranscriber, ModelStore, VadSegmenterFactory};
+use voltip_audio::{Backend, CaptureSource, CpalBackend, LiveConsumer, LiveTapConfig, PcmConsumer, PcmStreamConfig, Recorder, RecorderConfig};
 use voltip_core::dictation::{
     AudioSource, Capture, CaptureOptions, ClipboardCode, DictationError, DictationPorts, EngineFactory, InjectNote, Injection, Injector, LevelFrame, LivePcm,
-    Recording, RefineHints, Refined, Refiner, SelectionTiming, ServiceProbe, Transcriber, Transcript, Via,
+    MAX_RECORDING, PcmStream, Recording, RefineHints, Refined, Refiner, SelectionTiming, ServiceProbe, Transcriber, Transcript, Via,
 };
-use voltip_core::{BuiltinPreset, InjectMode, Modifier, ProbeError, ProbeFailure, ProviderId, ResolvedEngines, ServiceKind, TakePreset};
+use voltip_core::{BuiltinPreset, InjectMode, Modifier, ProbeError, ProbeFailure, ProviderId, RecordingSource, ResolvedEngines, ServiceKind, TakePreset};
 use voltip_inject::{ClipboardOnlyInjector, CopyOptions, FallbackCode, PasteOptions, SelectionSource};
 use voltip_platform::{HostOs, InjectDecision, InjectPreflight};
 use voltip_refine::{PromptContext, PromptHints, RefineClient, RefineConfig};
@@ -48,8 +48,9 @@ pub fn to_audio_frame(f: LevelFrame) -> voltip_audio::LevelFrame {
     }
 }
 
-/// Microphone capture through [`voltip_audio::Recorder`] (mono 16 kHz WAV, the core's cap — 120 s
-/// for a whole take, 10 min in the streaming output modes — 30 Hz levels).
+/// Capture through [`voltip_audio::Recorder`] (mono 16 kHz WAV, the core's cap, 30 Hz levels): the
+/// microphone, the computer's sound or both (docs/dictation.md §22). A long take keeps its first
+/// [`MAX_RECORDING`] in memory and streams the whole take to the core.
 /// Coordinates with the [`AudioHub`]: the hub releases its device meter before the recorder opens
 /// the microphone and takes the recorder's level frames meanwhile, so the webview meters keep
 /// moving and the device is never opened twice.
@@ -79,10 +80,21 @@ impl AudioSource for RecorderAudioSource {
         options: CaptureOptions,
     ) -> Result<Box<dyn Capture>, DictationError> {
         let live = options.live;
+        let backend = self.backend.as_ref();
+        let output_id = || output_or_default(backend, options.output_device.as_deref());
+        let source = match options.source {
+            RecordingSource::Microphone => CaptureSource::Microphone,
+            RecordingSource::System => CaptureSource::System { output_id: output_id() },
+            RecordingSource::Mixed => CaptureSource::Mixed { output_id: output_id() },
+        };
         let config = RecorderConfig {
-            device_id: connected_or_default(self.backend.as_ref(), device_id),
+            device_id: if options.source.uses_microphone() { connected_or_default(backend, device_id) } else { None },
             live_tap: live.then(LiveTapConfig::default),
-            max_duration: options.max_duration,
+            // A long take (§22) keeps its first two minutes in memory; the core writes the whole
+            // take to its recording file from the stream.
+            max_duration: if options.long { options.max_duration.min(MAX_RECORDING) } else { options.max_duration },
+            source,
+            pcm_stream: options.long.then(PcmStreamConfig::default),
             ..RecorderConfig::default()
         };
         // Take the microphone from the level meter first; the hub fans our frames out from now on.
@@ -105,7 +117,15 @@ impl AudioSource for RecorderAudioSource {
                 return Err(DictationError::Audio(e.to_string()));
             }
         };
-        tracing::info!(device = %recorder.device().name, live, max_duration = ?options.max_duration, "dictation capture started");
+        tracing::info!(
+            device = %recorder.device().name,
+            output = ?recorder.output_device().map(|d| d.name.as_str()),
+            source = options.source.as_str(),
+            live,
+            long = options.long,
+            max_duration = ?options.max_duration,
+            "dictation capture started"
+        );
         Ok(Box::new(RecorderCapture { recorder, hub: self.hub.clone() }))
     }
 }
@@ -118,6 +138,19 @@ pub fn connected_or_default(backend: &dyn Backend, device_id: Option<&str>) -> O
     match backend.input_devices() {
         Ok(devices) if !devices.iter().any(|d| d.id == id) => {
             tracing::warn!(device = %id, "the chosen microphone is not connected; recording from the default input");
+            None
+        }
+        _ => Some(id.to_owned()),
+    }
+}
+
+/// The output device a take records the computer's sound from (docs/dictation.md §22): the chosen
+/// one while it is there, the system default output once it is not.
+pub fn output_or_default(backend: &dyn Backend, device_id: Option<&str>) -> Option<String> {
+    let id = device_id?;
+    match backend.output_devices() {
+        Ok(devices) if !devices.iter().any(|d| d.id == id) => {
+            tracing::warn!(device = %id, "the chosen output device is not connected; recording the default output");
             None
         }
         _ => Some(id.to_owned()),
@@ -141,6 +174,27 @@ impl Capture for RecorderCapture {
 
     fn live_pcm(&mut self) -> Option<Box<dyn LivePcm>> {
         self.recorder.live_consumer().map(|consumer| Box::new(LiveTap(consumer)) as Box<dyn LivePcm>)
+    }
+
+    fn pcm_stream(&mut self) -> Option<Box<dyn PcmStream>> {
+        self.recorder.pcm_consumer().map(|consumer| Box::new(TakeStream(consumer)) as Box<dyn PcmStream>)
+    }
+}
+
+/// The recorder's long-take stream as the core's [`PcmStream`] (docs/dictation.md §22).
+pub struct TakeStream(pub PcmConsumer);
+
+impl PcmStream for TakeStream {
+    fn read(&mut self, out: &mut [f32]) -> usize {
+        self.0.read(out)
+    }
+
+    fn gap(&mut self) -> Option<u64> {
+        self.0.gap()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.0.is_closed()
     }
 }
 
@@ -591,7 +645,8 @@ pub fn production_ports(models_root: PathBuf) -> ShellPorts {
 /// Wiring over any audio backend and hub (tests use `voltip_audio::FakeBackend`); the model
 /// library lives under `models_root`. The streaming transcriber is always plugged in: the core
 /// only opens it when `live_preview` is on and the streaming model is installed (docs/dictation.md
-/// §11), and it loads nothing until then.
+/// §11), and it loads nothing until then. A long take is cut where the Silero VAD hears a pause
+/// (§22); the first long take without the model fetches it.
 pub fn ports_with_backend(backend: Arc<dyn Backend + Send + Sync>, hub: Arc<AudioHub>, models_root: PathBuf) -> ShellPorts {
     let mode = Arc::new(Mutex::new(InjectMode::default()));
     let store = ModelStore::new(models_root.clone());
@@ -599,6 +654,7 @@ pub fn ports_with_backend(backend: Arc<dyn Backend + Send + Sync>, hub: Arc<Audi
         audio: Arc::new(RecorderAudioSource::with_backend(backend, hub.clone())),
         injector: Arc::new(NativeInjector::system(mode.clone())),
         factory: engine_factory(mode, LocalTranscriber::new(models_root.clone()), Some(store.clone())),
+        segmenter: Some(Arc::new(VadSegmenterFactory::new(models_root.clone(), Some(store.clone())))),
         models: Some(Arc::new(store)),
         streaming: Some(Arc::new(LocalStreamingTranscriber::new(models_root))),
         probe: Some(Arc::new(crate::platform::PlatformProbe::new())),
@@ -620,6 +676,43 @@ mod tests {
         assert_eq!(connected_or_default(&backend, None), None);
         assert_eq!(connected_or_default(&backend, Some(voltip_audio::FAKE_USB_ID)).as_deref(), Some(voltip_audio::FAKE_USB_ID));
         assert_eq!(connected_or_default(&backend, Some("fake:unplugged")), None);
+    }
+
+    /// docs/dictation.md §22: the capture options choose the recorder's source; a long take
+    /// streams the whole take to the core; an output device that is gone falls back to the default
+    /// output, as a microphone does.
+    #[test]
+    fn the_capture_follows_the_source_and_streams_a_long_take() {
+        use voltip_audio::FAKE_SPEAKERS_ID;
+        let backend = Arc::new(voltip_audio::FakeBackend::new());
+        let source = RecorderAudioSource::with_backend(backend.clone(), Arc::new(AudioHub::default()));
+        let options = |source, output: Option<&str>, long| CaptureOptions {
+            live: false,
+            max_duration: if long { Duration::from_secs(600) } else { MAX_RECORDING },
+            long,
+            source,
+            output_device: output.map(str::to_owned),
+        };
+        let mut capture = source.start(None, Box::new(|_| {}), Box::new(|| {}), options(RecordingSource::System, Some(FAKE_SPEAKERS_ID), true)).unwrap();
+        let mut stream = capture.pcm_stream().expect("a long take streams");
+        assert!(capture.pcm_stream().is_none(), "handed out once");
+        let (mut got, mut buf, started) = (0, vec![0.0f32; 1024], std::time::Instant::now());
+        while got < 1600 && started.elapsed() < Duration::from_secs(10) {
+            got += stream.read(&mut buf);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(got >= 1600, "the computer's sound reaches the stream: {got}");
+        capture.stop().unwrap();
+        assert_eq!(backend.opened_outputs(), vec![Some(FAKE_SPEAKERS_ID.to_owned())]);
+        assert!(backend.opened_with().is_empty(), "no microphone for the computer's sound");
+        let mut mixed = source.start(None, Box::new(|_| {}), Box::new(|| {}), options(RecordingSource::Mixed, Some("fake:gone"), false)).unwrap();
+        assert!(mixed.pcm_stream().is_none(), "a short take has no stream");
+        mixed.stop().unwrap();
+        // The recorder opens the default output by its id.
+        assert_eq!(backend.opened_outputs(), vec![Some(FAKE_SPEAKERS_ID.to_owned()); 2], "the default output");
+        assert_eq!(backend.opened_with(), vec![None], "and the microphone");
+        assert_eq!(output_or_default(backend.as_ref(), Some("fake:gone")), None);
+        assert_eq!(output_or_default(backend.as_ref(), Some(FAKE_SPEAKERS_ID)).as_deref(), Some(FAKE_SPEAKERS_ID));
     }
 
     fn preflight(decision: InjectDecision, target: Option<&str>) -> InjectPreflight {

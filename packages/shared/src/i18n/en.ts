@@ -218,6 +218,14 @@ export const en: Messages = {
       doneClipboard: "Rewrite copied, {n} chars · {via}",
       refineFailed: "Rewrite failed; the selection is unchanged",
     },
+    audioFailure: {
+      system: "Computer audio could not be recorded",
+      mixed: "Recording failed",
+    },
+    segments: {
+      listening: { one: "{n} segment recognised", other: "{n} segments recognised" },
+      processing: "{done} of {total} segments recognised",
+    },
   },
   outcome: {
     inserted: "Inserted · {via}",
@@ -241,6 +249,9 @@ export const en: Messages = {
     fallback: "Live transcription model not downloaded · running as All at once",
     effective: "In effect",
     liveError: "Live transcription stopped; the whole recording was transcribed instead: {reason}",
+  },
+  recordingSource: {
+    name: { microphone: "Microphone", system: "Computer audio", mixed: "Mixed" },
   },
   activation: {
     name: {
@@ -417,7 +428,16 @@ export const en: Messages = {
       processingTitle: "The previous recording is still being processed",
     },
     mic: {
-      eyebrow: "Microphone input",
+      eyebrow: "Recording source",
+      source: "Record",
+      systemDevice: "Computer audio · {name}",
+      systemDefaultDevice: "Computer audio · system default output",
+      systemFacts: "microphone not used",
+      alsoSystem: "Also recording computer audio · {name}",
+      systemHint:
+        "Dictation records the sound your computer plays; nothing is recorded while idle.",
+      mixedHint:
+        "Wear headphones if you use speakers, so the microphone does not pick them up again.",
       unavailable: "Unavailable",
       recording: "Recording",
       testing: "Testing · {n} s",
@@ -433,7 +453,7 @@ export const en: Messages = {
       testingHint: "Say a few words; the strength bar should move · stops automatically in {n} s",
       recordingHint: "Strength of this dictation's recording",
       devices: { one: "{n} input device", other: "{n} input devices" },
-      switch: "Switch microphone",
+      switch: "Choose devices",
       peak: "Peak {value}",
     },
     engine: {
@@ -564,6 +584,8 @@ export const en: Messages = {
         "Could not paste at the cursor: a password field or a system security screen has the input. The text is on the clipboard; press {keys} to paste it.",
       elevated_target:
         "Could not paste at the cursor: the target window runs as administrator. The text is on the clipboard; press {keys} to paste it.",
+      too_long:
+        "The text is over 5,000 characters, so it was not pasted directly. It is on the clipboard; press {keys} to paste it.",
       other: "Could not paste directly. The text is on the clipboard; press {keys} to paste it.",
       openAccessibility: "Open Accessibility settings",
       details: "Technical details",
@@ -609,6 +631,28 @@ export const en: Messages = {
       deleted: "Removed",
       added: "Added",
       rawOutput: "Raw transcription: {text}",
+      processed: "Processed",
+      processedBy: "Processed with “{preset}” · the original is kept",
+    },
+    long: {
+      title: "Process with an AI preset",
+      preset: "Preset",
+      start: "Process",
+      again: "Process again",
+      running: "{done} of {total} parts done",
+      failed: "Processing failed: {reason}",
+      cancelled: "Cancelled; nothing was saved.",
+      note: "The text is processed in parts of up to 1,500 characters, cut at sentence ends. The result is saved as a processed text; the original stays as it is.",
+      builtinNote: "The built-in AI service runs on a free quota, so long texts take a while.",
+      exportSrt: "Export subtitles (SRT)",
+      exportTxt: "Export text (TXT)",
+      txtUsesProcessed: "The text export uses the processed text.",
+      saved: "Saved: {path}",
+      exportFailed: {
+        gone: "This entry was deleted.",
+        empty: "This entry has no segments to make subtitles from.",
+        write: "The file could not be saved: {detail}",
+      },
     },
     detail: {
       asrModel: "Transcription model",
@@ -1474,7 +1518,7 @@ export const en: Messages = {
       general: "General",
       hotkey: "Shortcuts",
       dictation: "Dictation",
-      microphone: "Microphone",
+      microphone: "Recording source",
       scene: "Scenes",
       privacy: "Privacy and history",
       appearance: "Appearance",
@@ -1482,11 +1526,36 @@ export const en: Messages = {
     },
     dictation: {
       title: "Dictation",
-      lede: "Sets how the recognised text is inserted into the app you are using.",
+      lede: "Sets how the recognised text is inserted into the app you are using, and how long one recording can last.",
+      /** docs/dictation.md §22: `settings.recording.max_minutes`. */
+      maxLabel: "Longest recording",
+      maxHelp:
+        "A recording stops by itself at this length. Recordings longer than 2 minutes are recognised in segments while you record.",
+      minutes: { one: "{n} minute", other: "{n} minutes" },
+      hours: { one: "{n} hour", other: "{n} hours" },
     },
     microphone: {
-      title: "Microphone",
-      lede: "Dictation records from the microphone chosen here, or from the system's default input without a choice. Voltip keeps the microphone closed while idle and only uses it to dictate and to test.",
+      title: "Recording source",
+      lede: "Choose what dictation records: the microphone, the sound your computer plays, or both mixed. While idle, Voltip keeps the microphone closed and records no computer audio.",
+      source: "Record",
+      sourceHelp:
+        "Computer audio is for transcribing meetings, videos and anything else your computer plays.",
+      unavailable: {
+        macos_too_old:
+          "Recording computer audio needs macOS 14.6 or later; this Mac runs {version}.",
+        no_sound_server:
+          "Recording computer audio needs a PulseAudio or PipeWire sound server, and none was found.",
+        unsupported: "This device cannot record computer audio.",
+      },
+      mixedHint:
+        "Wear headphones when mixing; otherwise the microphone picks up the speakers and the recording echoes.",
+      output: "Output device",
+      outputHelp: "The sound this device plays is recorded.",
+      outputDefault: "System default ({name})",
+      outputDefaultNone: "System default",
+      outputDisconnected: "{name} · not connected",
+      outputMissingNote:
+        "The chosen output device is not connected, so dictation records the system default output for now and goes back to it once it is plugged in.",
       device: "Input device",
       deviceHelp: "Dictation, the test and the home page's strength bar all use this device.",
       followDefault: "System default ({name})",

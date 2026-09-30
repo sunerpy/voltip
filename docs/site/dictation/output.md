@@ -38,6 +38,7 @@ If Voltip cannot paste, the text stays on the clipboard so that nothing is lost.
 | A password field or the Windows secure desktop has the focus | These refuse typed input from apps by design. |
 | No paste tool on Linux with Wayland | Install a tool for your desktop; see [Platform notes](/reference/platforms#linux). |
 | No connection to the display (Linux) | Voltip was started outside a graphical session. |
+| The text of a long recording is longer than 5,000 characters | A text this long is not pasted; paste it where you want it. See [Recording length](/dictation/shortcuts#recording-length). |
 
 The details of the original error are available under **Technical details** in the history entry.
 

@@ -10,6 +10,10 @@
 #   scripts/windows-remote.sh gate hooks         the lone-key trigger's input hooks, fed with SendInput (the
 #                                                logged-on user's session must be unlocked)
 #   scripts/windows-remote.sh gate mdns          two real mDNS daemons on the machine see each other (LAN discovery)
+#   scripts/windows-remote.sh gate loopback      a tone played through the default output is recorded back as the
+#                                                computer's sound (docs/dictation.md §22; audible on the machine); with
+#                                                VOLTIP_LOOPBACK_PLAY=<16 kHz mono WAV> that recording plays instead and
+#                                                what was recorded comes back as target/windows-remote/loopback-out.wav
 #   scripts/windows-remote.sh smoke [dist]       scripts/smoke-native-cli.ps1 on a package (default dist/windows-x64)
 #   scripts/windows-remote.sh wait test|clippy|real|smoke   re-attach to a run that is still going
 #   scripts/windows-remote.sh ps                 run the PowerShell on stdin there (UTF-8 both ways)
@@ -151,6 +155,19 @@ stage_real_models() {
   put '' "$local_dir/real.env"
 }
 
+# The loopback gate's inputs: the recording to play, and where the test writes what it recorded.
+stage_loopback() {
+  local lines=() play=${VOLTIP_LOOPBACK_PLAY:-}
+  remote_ps <<<'$out = Join-Path $Dir "loopback-out.wav"; if (Test-Path $out) { Remove-Item $out }'
+  if [ -n "$play" ]; then
+    [ -f "$play" ] || { echo "windows-remote: VOLTIP_LOOPBACK_PLAY=$play is not a file" >&2; exit 2; }
+    scp -q "${ssh_opts[@]}" "$play" "$host:$scp_dir/loopback-play.wav"
+    lines+=("VOLTIP_LOOPBACK_PLAY=$dir\\loopback-play.wav" "VOLTIP_LOOPBACK_OUT=$dir\\loopback-out.wav")
+  fi
+  printf '%s\n' "${lines[@]}" >"$local_dir/loopback.env"
+  put '' "$local_dir/loopback.env"
+}
+
 gate() {
   local name=${1:-} args
   case $name in
@@ -162,12 +179,16 @@ gate() {
     hooks) args='test -p voltip-hooks --lib -- --ignored --nocapture --test-threads=1' ;;
     # LAN discovery (docs/pairing.md 「局域网发现」): real multicast DNS through Windows' own stack.
     mdns) args='test -p voltip-core --lib discovery -- --ignored --nocapture --test-threads=1' ;;
-    *) echo "usage: $0 gate test|clippy|real|hooks|mdns [test-name filter]" >&2; exit 2 ;;
+    # Recording the computer's sound (docs/dictation.md §22): WASAPI loopback of the default output,
+    # in the logged-on user's session where the audio engine runs.
+    loopback) args='test -p voltip-audio --test loopback -- --ignored --nocapture --test-threads=1' ;;
+    *) echo "usage: $0 gate test|clippy|real|hooks|mdns|loopback [test-name filter]" >&2; exit 2 ;;
   esac
   if [ "$name" = real ]; then stage_real_models; fi
+  if [ "$name" = loopback ]; then stage_loopback; fi
   put '' scripts/windows-remote-gate.ps1
   remote_ps Gate="$name" CargoArgs="$args" <<'PS'
-if ($Gate -ne 'real') { Remove-Item (Join-Path $Dir "$Gate.env") -ErrorAction SilentlyContinue }
+if ($Gate -notin @('real', 'loopback')) { Remove-Item (Join-Path $Dir "$Gate.env") -ErrorAction SilentlyContinue }
 $task = "voltip-gate-$Gate"
 $runner = Join-Path $Dir 'windows-remote-gate.ps1'
 $argv = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$runner`" -Dir `"$Dir`" -Gate $Gate -CargoArgs `"$CargoArgs`""
@@ -179,7 +200,12 @@ Remove-Item (Join-Path $Dir "$Gate.log") -ErrorAction SilentlyContinue
 Start-ScheduledTask -TaskName $task
 "windows-remote: started $task in the session of $user"
 PS
-  wait_log "$name" "voltip-gate-$name"
+  local rc=0
+  wait_log "$name" "voltip-gate-$name" || rc=$?
+  if [ "$name" = loopback ] && scp -q "${ssh_opts[@]}" "$host:$scp_dir/loopback-out.wav" "$local_dir/loopback-out.wav" 2>/dev/null; then
+    echo "windows-remote: the recording is at $local_dir/loopback-out.wav"
+  fi
+  return "$rc"
 }
 
 smoke() {
@@ -223,8 +249,8 @@ case "${1:-}" in
     case "${2:-}" in
       test | clippy | real) wait_log "$2" "voltip-gate-$2" ;;
       smoke) wait_log smoke voltip-smoke-native ;;
-      hooks | mdns) wait_log "$2" "voltip-gate-$2" ;;
-      *) echo "usage: $0 wait test|clippy|real|hooks|mdns|smoke" >&2; exit 2 ;;
+      hooks | mdns | loopback) wait_log "$2" "voltip-gate-$2" ;;
+      *) echo "usage: $0 wait test|clippy|real|hooks|mdns|loopback|smoke" >&2; exit 2 ;;
     esac
     ;;
   ps) remote_ps ;;

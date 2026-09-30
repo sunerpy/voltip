@@ -239,13 +239,18 @@ impl Silero {
 impl VoiceActivity for Silero {
     fn spans(&mut self, pcm16k: &[f32]) -> Result<Vec<SpeechSpan>, String> {
         self.0.reset();
+        let mut spans = self.feed(pcm16k)?;
+        self.0.flush();
+        self.drain(&mut spans);
+        Ok(spans)
+    }
+
+    fn feed(&mut self, pcm16k: &[f32]) -> Result<Vec<SpeechSpan>, String> {
         let mut spans = Vec::new();
         for window in pcm16k.chunks(WINDOW_SAMPLES) {
             self.0.accept_waveform(window);
             self.drain(&mut spans);
         }
-        self.0.flush();
-        self.drain(&mut spans);
         Ok(spans)
     }
 }

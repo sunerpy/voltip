@@ -4,5 +4,7 @@
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Voltip records only while you dictate, to turn your speech into text.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Voltip records the sound your computer plays only while you dictate with computer audio chosen as the source.</string>
 </dict>
 </plist>

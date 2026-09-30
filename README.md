@@ -43,6 +43,11 @@ LLM, and pastes it into whatever app has the focus. A paired Android phone can b
   and the rewrite replaces the selection.
 - Scenes: the app in focus when you start picks the polish style, output mode, language and extra
   instructions for that take.
+- Long recordings: record the microphone, the sound your computer plays, or both mixed, for up to
+  two hours in one take. A take is transcribed in segments while you speak, so the text is ready
+  soon after you stop. In the history, an AI preset processes a long text in parts (Chinese ⇄
+  English gives a translation, Key points a summary), and a take exports as SRT subtitles or as
+  plain text.
 - Phone as microphone and keyboard: pair an Android phone by QR code, a 6-digit code, or a tap on
   the computer it finds on the same network. Hold to talk on the phone (the audio goes end-to-end
   encrypted, compressed with Opus), or type or send the clipboard, and the text appears at the

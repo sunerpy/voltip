@@ -6,7 +6,9 @@ import {
   joinLiveText,
   liveCaptionParts,
   presetRefLabel,
+  recordingSourceLabel,
   sceneLabel,
+  segmentsDoneLabel,
   takeFailureText,
   takePhaseLabel,
   viaLabel,
@@ -175,7 +177,10 @@ export function Overlay({ state }: OverlayProps) {
                 )
               : phase.phase === "failed"
                 ? t("overlay.live.failed", {
-                    reason: takeFailureText({ phase, kind: dictation.kind }, locale),
+                    reason: takeFailureText(
+                      { phase, kind: dictation.kind, source: dictation.source },
+                      locale,
+                    ),
                   })
                 : phase.phase === "cancelled"
                   ? phase.injected_chars > 0
@@ -212,6 +217,18 @@ export function Overlay({ state }: OverlayProps) {
             : dictation.remote === undefined
               ? undefined
               : t("overlay.live.phoneTag", { name: dictation.remote })
+        }
+        // docs/dictation.md §22: what the take records, and how far a long take's recognition got
+        // while it records (the processing line counts on its own, `takePhaseLabel`).
+        source={
+          dictation.source === undefined
+            ? undefined
+            : recordingSourceLabel(dictation.source, locale)
+        }
+        progress={
+          phase.phase === "listening" && dictation.segments !== undefined
+            ? segmentsDoneLabel(dictation.segments, locale)
+            : undefined
         }
         onCopy={phase.phase === "failed" && phase.text !== undefined ? copyLive : undefined}
       />

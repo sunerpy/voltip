@@ -17,6 +17,7 @@ use crate::engines::OutputMode;
 use crate::hotkey::Modifier;
 use crate::presets::TakePreset;
 use crate::scenes::{MAX_CONTEXT_NAME_CHARS, MAX_CONTEXT_TITLE_CHARS, clean_context_line, normalize_app_id};
+use crate::settings::{RecordingSettings, RecordingSource};
 
 /// One input-level reading (≈ 30 Hz while a capture runs). Same wire shape as the meter frame the
 /// audio crate emits, so the webview's level meter can be fed from either source.
@@ -105,28 +106,43 @@ impl Recording {
     }
 }
 
-/// What a capture is asked for besides the device.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What a capture is asked for besides the microphone device.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CaptureOptions {
     /// Also feed a 16 kHz mono copy of the audio to [`Capture::live_pcm`] for the streaming
     /// recogniser (docs/dictation.md §11).
     pub live: bool,
-    /// Longest take the capture keeps ([`max_recording`] of the output mode); the core stops the
-    /// capture itself when it is reached, the recorder only has to reserve for it and never to
-    /// truncate before.
+    /// Longest take the capture records; the core stops the capture itself when it is reached,
+    /// the recorder only has to reserve for it and never to truncate before (except a `long` one,
+    /// which keeps at most [`MAX_RECORDING`] in memory).
     pub max_duration: Duration,
+    /// The take may run past [`MAX_RECORDING`] (docs/dictation.md §22): the capture keeps at most
+    /// [`MAX_RECORDING`] of audio in memory, and the whole take goes to the core's recording file
+    /// through [`Capture::pcm_stream`].
+    pub long: bool,
+    /// Where the audio comes from: the microphone, the computer's sound, or both.
+    pub source: RecordingSource,
+    /// The output device the computer's sound comes from (`None` = the system default output).
+    pub output_device: Option<String>,
 }
 
 impl Default for CaptureOptions {
-    /// No live tap, the whole-take cap ([`MAX_RECORDING`]).
+    /// The microphone, no live tap, the whole-take cap ([`MAX_RECORDING`]).
     fn default() -> Self {
-        Self { live: false, max_duration: MAX_RECORDING }
+        Self { live: false, max_duration: MAX_RECORDING, long: false, source: RecordingSource::Microphone, output_device: None }
     }
 }
 
 impl CaptureOptions {
-    /// A live tap with the whole-take cap.
-    pub const LIVE: Self = Self { live: true, max_duration: MAX_RECORDING };
+    /// The microphone with a live tap and the whole-take cap.
+    pub const LIVE: Self = Self { live: true, max_duration: MAX_RECORDING, long: false, source: RecordingSource::Microphone, output_device: None };
+
+    /// A dictation take on this computer (docs/dictation.md §22): the settings' source, output
+    /// device and length; `long` when the take may run past [`MAX_RECORDING`].
+    pub fn dictation(recording: &RecordingSettings, live: bool) -> Self {
+        let max_duration = recording.max_duration();
+        Self { live, max_duration, long: max_duration > MAX_RECORDING, source: recording.source, output_device: recording.output_device.clone() }
+    }
 }
 
 /// Microphone capture.
@@ -157,6 +173,47 @@ pub trait Capture: Send {
     fn live_pcm(&mut self) -> Option<Box<dyn LivePcm>> {
         None
     }
+
+    /// The whole take at 16 kHz requested with `long` (docs/dictation.md §22; take-once, `None`
+    /// on the second call, when `long` was `false`, or when the shell has none — its capture then
+    /// keeps the whole take in memory). Closes when the capture stops.
+    fn pcm_stream(&mut self) -> Option<Box<dyn PcmStream>> {
+        None
+    }
+}
+
+/// Sample rate of [`PcmStream`]: what the recognisers expect.
+pub const PCM_SAMPLE_RATE_HZ: u32 = 16_000;
+
+/// Cuts a long take into segments as it arrives (docs/dictation.md §22).
+pub trait Segmenter: Send {
+    /// Feed the next samples (mono, [`PCM_SAMPLE_RATE_HZ`]); returns where each segment these
+    /// samples complete ends, as a sample position from the start of the take. A segment starts
+    /// where the previous one ended, the first at 0.
+    fn push(&mut self, samples: &[f32]) -> Vec<u64>;
+    /// The take ended: where its last segment ends; `None` when nothing is left after the last cut.
+    fn finish(&mut self) -> Option<u64>;
+}
+
+/// Makes a [`Segmenter`] for each long take (the desktop's cuts where the speech pauses,
+/// docs/dictation.md §22).
+pub trait SegmenterFactory: Send + Sync {
+    /// A segmenter for one take, or why there is none now (its model is missing): the core cuts
+    /// with its own fallback then.
+    fn create(&self) -> Result<Box<dyn Segmenter>, String>;
+}
+
+/// The consumer end of a long take's stream (docs/dictation.md §22): the whole take as mono `f32`
+/// at [`PCM_SAMPLE_RATE_HZ`], produced on the audio thread and read by the core's recording
+/// thread. Never blocks.
+pub trait PcmStream: Send {
+    /// Copy up to `out.len()` samples, in order and never past a gap; returns how many.
+    fn read(&mut self, out: &mut [f32]) -> usize;
+    /// How many samples are missing at the current position (the shell's buffer overflowed
+    /// because the reader fell behind), once; `None` while the next sample follows the last one.
+    fn gap(&mut self) -> Option<u64>;
+    /// The capture stopped: once `read` returns `0` and `gap` `None`, nothing more will come.
+    fn is_closed(&self) -> bool;
 }
 
 /// The consumer end of the recorder's live tap (docs/dictation.md §11): mono `f32` at 16 kHz,
@@ -421,6 +478,9 @@ pub enum ClipboardCode {
     SecureInput,
     /// The window in front runs as administrator (Windows).
     ElevatedTarget,
+    /// The text is longer than a paste should be (a long take over 5 000 characters,
+    /// docs/dictation.md §22): it waits on the clipboard.
+    TooLong,
     /// Anything else.
     Other,
 }
@@ -505,12 +565,15 @@ pub trait Injector: Send + Sync {
     }
 }
 
-/// Longest whole-take recording; the core stops the capture itself when it is reached.
+/// The part of a take kept in memory and recognised in one piece (docs/dictation.md §22): a
+/// dictation take that stops before it is a short take, as before; a longer one is recognised in
+/// segments from its recording file. Also the longest voice edit.
 pub const MAX_RECORDING: Duration = Duration::from_secs(120);
-/// Longest recording in the streaming output modes (docs/dictation.md §12): text leaves the
-/// recogniser as it is spoken, so the take can run 10 min.
+/// Longest recording of a phone's take in the streaming output modes (docs/dictation.md §12,
+/// §20): text leaves the recogniser as it is spoken, so the take can run 10 min.
 pub const MAX_RECORDING_STREAMING: Duration = Duration::from_secs(600);
-/// Longest recording for an output mode: [`MAX_RECORDING`] for a whole take,
+/// Longest recording of a phone's take (docs/dictation.md §20; a take on this computer follows
+/// `Settings.recording.max_minutes`, §22): [`MAX_RECORDING`] for a whole take,
 /// [`MAX_RECORDING_STREAMING`] for `streaming_final` / `live_inject`.
 pub fn max_recording(mode: OutputMode) -> Duration {
     match mode {
@@ -607,17 +670,35 @@ mod tests {
         assert_eq!(PROBE_DEADLINE, Duration::from_millis(100));
     }
 
-    /// The recording cap follows the output mode (docs/dictation.md §12): 120 s for a whole take,
-    /// 10 min when the text streams out; the capture options carry it to the recorder.
+    /// A phone's take keeps the cap of its output mode (docs/dictation.md §12, §20): 120 s for a
+    /// whole take, 10 min when the text streams out; the capture options carry it to the recorder.
     #[test]
     fn max_recording_is_per_output_mode_and_capture_options_default_to_the_whole_take() {
         assert_eq!(max_recording(OutputMode::WholeTake), MAX_RECORDING);
         assert_eq!(MAX_RECORDING, Duration::from_secs(120), "existing whole-take behaviour");
         assert_eq!(max_recording(OutputMode::StreamingFinal), MAX_RECORDING_STREAMING);
         assert_eq!(max_recording(OutputMode::LiveInject), Duration::from_secs(600));
-        assert_eq!(CaptureOptions::default(), CaptureOptions { live: false, max_duration: MAX_RECORDING });
-        assert_eq!(CaptureOptions::LIVE, CaptureOptions { live: true, max_duration: MAX_RECORDING });
+        let microphone = CaptureOptions { live: false, max_duration: MAX_RECORDING, long: false, source: RecordingSource::Microphone, output_device: None };
+        assert_eq!(CaptureOptions::default(), microphone);
+        assert_eq!(CaptureOptions::LIVE, CaptureOptions { live: true, ..microphone });
         assert!(format!("{:?}", CaptureOptions::LIVE).contains("live: true"));
+    }
+
+    /// docs/dictation.md §22: a take on this computer records from the settings' source for their
+    /// length, and is `long` (a recording file, segments) only when it may run past 120 s.
+    #[test]
+    fn a_dictation_take_follows_the_recording_settings() {
+        let settings = RecordingSettings::default();
+        let options = CaptureOptions::dictation(&settings, true);
+        assert_eq!((options.max_duration, options.long, options.live), (Duration::from_secs(600), true, true), "10 minutes by default");
+        assert_eq!(options.source, RecordingSource::Microphone);
+        let short = |max_minutes| CaptureOptions::dictation(&RecordingSettings { max_minutes, ..RecordingSettings::default() }, false);
+        assert_eq!((short(1).max_duration, short(1).long), (Duration::from_secs(60), false));
+        assert_eq!((short(2).max_duration, short(2).long), (MAX_RECORDING, false), "2 minutes is a short take, as before");
+        assert_eq!((short(120).max_duration, short(120).long), (Duration::from_secs(7200), true));
+        let mixed = RecordingSettings { source: RecordingSource::Mixed, output_device: Some("wasapi:out".into()), max_minutes: 30 };
+        let options = CaptureOptions::dictation(&mixed, false);
+        assert_eq!((options.source, options.output_device.as_deref()), (RecordingSource::Mixed, Some("wasapi:out")));
     }
 
     /// `Recording::slice_from_ms` keeps the audio after the cut (sample-exact), re-encodes a valid

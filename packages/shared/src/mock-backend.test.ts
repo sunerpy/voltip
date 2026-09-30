@@ -3,6 +3,10 @@ import {
   ALWAYS_ON_DESKTOP_ONLY,
   MOCK_ALWAYS_ON_PAUSE_MS,
   MOCK_ASR_MS,
+  MOCK_AUDIO_OUTPUTS,
+  MOCK_EXPORT_DIR,
+  MOCK_PROCESS_ENTRY_GONE,
+  MOCK_PROCESS_UNCONFIGURED,
   MOCK_AUDIO_DEVICES,
   MOCK_NEARBY,
   MOCK_TEXT_MS,
@@ -60,6 +64,7 @@ import {
   startOfLocalDay,
 } from "./mock-backend";
 import {
+  DEFAULT_MAX_MINUTES,
   BUILTIN_PRESETS,
   BUILTIN_SCENES,
   HISTORY_LIMIT,
@@ -485,16 +490,19 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     });
     await backend.invoke("dictation_start");
     // The device has not delivered samples yet; the timer is re-based once it has (§11).
+    // docs/dictation.md §22: a take on this computer names what it records.
     expect(backend.peek().dictation).toEqual({
       session: 1,
       phase: { phase: "listening", started_at: T0, ready: false, locked: false },
       kind: "dictation",
+      source: "microphone",
     });
     tick(MOCK_MIC_READY_MS);
     expect(backend.peek().dictation).toEqual({
       session: 1,
       phase: { phase: "listening", started_at: T0 + MOCK_MIC_READY_MS, ready: true, locked: false },
       kind: "dictation",
+      source: "microphone",
     });
     tick(3200);
     await backend.invoke("dictation_stop");
@@ -555,6 +563,148 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     backend.destroy();
   });
 
+  it("names what a take records and counts a long take's segments while it runs (docs/dictation.md §22); a phone's take records nothing here", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    backend.simulateLongTakeProgress(1, 2);
+    expect(backend.peek().dictation).toEqual({
+      session: 0,
+      phase: { phase: "idle" },
+      kind: "dictation",
+    });
+    await backend.invoke("settings_set_recording", {
+      recording: { source: "system", output_device: null, max_minutes: 60 },
+    });
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS);
+    expect(backend.peek().dictation.source).toBe("system");
+    expect(backend.peek().dictation.segments).toBeUndefined();
+    backend.simulateLongTakeProgress(3, 4);
+    expect(backend.peek().dictation.segments).toEqual({ done: 3, total: 4 });
+    await backend.invoke("dictation_stop");
+    backend.simulateLongTakeProgress(4, 5);
+    expect(backend.peek().dictation).toMatchObject({
+      phase: { phase: "processing", stage: "transcribing" },
+      source: "system",
+      segments: { done: 4, total: 5 },
+    });
+    tick(MOCK_ASR_MS);
+    tick(MOCK_REFINE_MS);
+    // The count ends with the take; the source stays until the pill goes back to idle.
+    expect(backend.peek().dictation.phase.phase).toBe("done");
+    expect(backend.peek().dictation.segments).toBeUndefined();
+    expect(backend.peek().dictation.source).toBe("system");
+    backend.simulateLongTakeProgress(5, 5);
+    expect(backend.peek().dictation.segments).toBeUndefined();
+    tick(MOCK_DICTATION_DWELL_MS);
+    expect(backend.peek().dictation).toEqual({
+      session: 1,
+      phase: { phase: "idle" },
+      kind: "dictation",
+    });
+    backend.simulatePhoneTake("Pixel 8");
+    expect(backend.peek().dictation.remote).toBe("Pixel 8");
+    expect(backend.peek().dictation.source).toBeUndefined();
+    backend.destroy();
+  });
+
+  it("answers audio_outputs like the shells: the computer's sound on two outputs here, none on the phone, or what a test sets (docs/dictation.md §22)", async () => {
+    const desktop = await new MockBackend().audioOutputs();
+    expect(desktop).toEqual({
+      system_audio: { state: "available" },
+      devices: [...MOCK_AUDIO_OUTPUTS],
+    });
+    desktop.devices.pop();
+    expect((await new MockBackend().audioOutputs()).devices).toHaveLength(2);
+    expect(await new MockBackend({ role: "phone" }).audioOutputs()).toEqual({
+      system_audio: { state: "unsupported" },
+      devices: [],
+    });
+    const old = { system_audio: { state: "macos_too_old" as const, version: "14.5" }, devices: [] };
+    expect(await new MockBackend({ audioOutputs: old }).audioOutputs()).toEqual(old);
+  });
+
+  it("processes an entry like the core: parts at MOCK_REFINE_MS, 要点纪要's summary, the result stored; a cancel or a missing entry stores nothing; exports answer like the shell (docs/dictation.md §22)", async () => {
+    const text = "今天的会议讨论了三件事。".repeat(300);
+    const long: HistoryEntry = {
+      id: "long",
+      at_ms: T0,
+      raw_text: text,
+      text,
+      refined: false,
+      asr_model: "m",
+      duration_ms: 600_000,
+      asr_ms: 1,
+      outcome: { kind: "inserted", via: "paste" },
+      starred: false,
+      mode: "whole_take",
+      kind: "dictation",
+      segments: [{ text: "第一段。", start_ms: 0, end_ms: 1000 }],
+    };
+    const backend = new MockBackend({ now: () => clock, history: [long] });
+    const events = collect(backend);
+    const answers = () => events.flatMap((e) => (e.type === "history_process" ? [e.state] : []));
+    await backend.invoke("history_process", { requestId: 1, id: "long", preset: "notes" });
+    expect(answers()).toEqual([{ state: "running", done: 0, total: 4 }]);
+    tick(MOCK_REFINE_MS * 4);
+    const done = answers().at(-1);
+    expect(answers().map((a) => a.state)).toEqual([
+      "running",
+      "running",
+      "running",
+      "running",
+      "done",
+    ]);
+    expect(done).toMatchObject({
+      state: "done",
+      processed: { preset: { id: "notes" }, at_ms: clock },
+    });
+    expect(backend.peek().history_recent[0]?.processed).toEqual(
+      done?.state === "done" ? done.processed : null,
+    );
+    await backend.invoke("history_process", { requestId: 2, id: "long", preset: "formal" });
+    await backend.invoke("history_process_cancel", { requestId: 2 });
+    await backend.invoke("history_process_cancel", { requestId: 99 });
+    tick(MOCK_REFINE_MS * 5);
+    expect(answers().at(-1)).toEqual({ state: "cancelled" });
+    expect(backend.peek().history_recent[0]?.processed?.preset.id).toBe("notes");
+    await backend.invoke("history_process", { requestId: 3, id: "gone", preset: "notes" });
+    expect(answers().at(-1)).toEqual({ state: "failed", reason: MOCK_PROCESS_ENTRY_GONE });
+    // Deleted while it ran.
+    await backend.invoke("history_process", { requestId: 4, id: "long", preset: "proofread" });
+    await backend.invoke("history_delete", { id: "long" });
+    tick(MOCK_REFINE_MS * 3);
+    expect(answers().at(-1)).toEqual({ state: "failed", reason: MOCK_PROCESS_ENTRY_GONE });
+    const unconfigured = new MockBackend({ history: [long], builtIn: {} });
+    const their = collect(unconfigured);
+    await unconfigured.invoke("history_process", { requestId: 5, id: "long", preset: "notes" });
+    expect(their.at(-1)).toMatchObject({
+      type: "history_process",
+      state: { state: "failed", reason: MOCK_PROCESS_UNCONFIGURED },
+    });
+    expect(await unconfigured.historyExport("long", "srt", "a")).toEqual({
+      kind: "saved",
+      path: `${MOCK_EXPORT_DIR}/a.srt`,
+    });
+    expect(await unconfigured.historyExport("long", "txt", "b")).toEqual({
+      kind: "saved",
+      path: `${MOCK_EXPORT_DIR}/b.txt`,
+    });
+    expect(unconfigured.exports).toEqual([
+      { id: "long", format: "srt", fileName: "a" },
+      { id: "long", format: "txt", fileName: "b" },
+    ]);
+    expect(await unconfigured.historyExport("none", "txt", "c")).toMatchObject({
+      kind: "failed",
+      code: "gone",
+    });
+    const plain = new MockBackend({ history: [{ ...long, segments: undefined }] });
+    expect(await plain.historyExport("long", "srt", "d")).toMatchObject({
+      kind: "failed",
+      code: "empty",
+    });
+    backend.destroy();
+  });
+
   it("skips the refine stage and pastes the raw text when refine is off; clipboard_only reports via clipboard", async () => {
     const backend = new MockBackend({ now: () => clock, history: [] });
     await backend.invoke("settings_set_engines", {
@@ -600,6 +750,7 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       session: 1,
       phase: { phase: "cancelled", injected_chars: 0 },
       kind: "dictation",
+      source: "microphone",
     });
     expect(backend.peek().history_recent).toEqual([]);
     tick(1000);
@@ -609,6 +760,7 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       session: 2,
       phase: { phase: "listening", started_at: T0 + 1500, ready: false, locked: false },
       kind: "dictation",
+      source: "microphone",
     });
     tick(MOCK_MIC_READY_MS);
     tick(MOCK_DICTATION_DWELL_MS - MOCK_MIC_READY_MS);
@@ -1361,6 +1513,28 @@ describe("MockBackend locale, auto-update and updater (docs/frontend.md §7)", (
     expect(backend.log.filter((e) => e.type === "settings")).toHaveLength(2);
     // A seeded locale survives construction.
     expect(new MockBackend({ settings: { locale: "zh-cn" } }).peek().settings.locale).toBe("zh-cn");
+  });
+
+  it("settings_set_recording folds into settings and refuses what the core refuses (docs/dictation.md section 22)", async () => {
+    const backend = new MockBackend();
+    expect(backend.peek().settings.recording).toEqual({
+      source: "microphone",
+      output_device: null,
+      max_minutes: DEFAULT_MAX_MINUTES,
+    });
+    const mixed = { source: "mixed" as const, output_device: "fake:speakers", max_minutes: 60 };
+    await backend.invoke("settings_set_recording", { recording: mixed });
+    expect(backend.peek().settings.recording).toEqual(mixed);
+    for (const bad of [
+      { ...mixed, max_minutes: 15 },
+      { ...mixed, output_device: " " },
+      { ...mixed, output_device: "x".repeat(1025) },
+    ]) {
+      await backend.invoke("settings_set_recording", { recording: bad });
+      const last = backend.log.at(-1);
+      expect(last?.type === "error" && last.message.startsWith("recording.")).toBe(true);
+    }
+    expect(backend.peek().settings.recording).toEqual(mixed);
   });
 
   it("update_check answers checking → available and update_install streams download → ready → installing", async () => {

@@ -38,6 +38,7 @@ fn start(dir: &std::path::Path, injector: Arc<FakeInjector>) -> Node {
         streaming: None,
         probe: None,
         service_probe: None,
+        segmenter: None,
     };
     let (handle, events) = AppCore::start_with(cfg, Arc::new(MemorySecretStore::new()), ports).unwrap();
     Node { handle, events }

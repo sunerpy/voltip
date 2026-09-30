@@ -3,7 +3,10 @@ import type {
   ArgsOf,
   AttachmentFile,
   AudioDevice,
+  AudioOutputs,
   BuiltinPresetText,
+  ExportFormat,
+  ExportOutcome,
   BuiltinSceneTerms,
   FeedbackDraft,
   FeedbackInfo,
@@ -43,6 +46,12 @@ export interface Backend {
   on(listener: EventListener): Unsubscribe;
   /** Microphones the native audio backend can open (`audio_devices`); default device first. */
   audioDevices(): Promise<AudioDevice[]>;
+  /** Whether the computer's sound can be recorded here and the output devices it can be recorded
+   *  from (`audio_outputs`, docs/dictation.md §22). */
+  audioOutputs(): Promise<AudioOutputs>;
+  /** 导出字幕（SRT）/ 导出文本（TXT） of entry `id` (`history_export`, docs/dictation.md §22): the
+   *  shell's save dialog offers `fileName`, and the shell writes the file. */
+  historyExport(id: string, format: ExportFormat, fileName: string): Promise<ExportOutcome>;
   /** Start the native input level meter on `deviceId` (default device when `undefined`). Frames
    *  stream at ≈ 30 Hz through a Tauri `Channel`; the returned function stops the meter. */
   meter(deviceId: string | undefined, onFrame: FrameListener): Promise<Unsubscribe>;

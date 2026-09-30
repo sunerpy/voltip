@@ -52,6 +52,12 @@ pub struct SpeechSpan {
 pub trait VoiceActivity: Send {
     /// Speech spans in `pcm16k` (mono, `-1.0..=1.0`, 16 kHz), in order; empty when none.
     fn spans(&mut self, pcm16k: &[f32]) -> Result<Vec<SpeechSpan>, String>;
+
+    /// A stream instead of a take (docs/dictation.md §22, where a long take pauses): the next
+    /// samples of it; returns the spans that ended by now, in order, as offsets from the stream's
+    /// start. A span is reported once the silence after it is [`MIN_SILENCE`] long (or once it
+    /// reaches [`MAX_SPEECH`]). Use a detector of its own: [`VoiceActivity::spans`] starts over.
+    fn feed(&mut self, pcm16k: &[f32]) -> Result<Vec<SpeechSpan>, String>;
 }
 
 /// Builds a [`VoiceActivity`] from an installed model directory. The real one wraps sherpa-onnx;
@@ -210,15 +216,59 @@ pub(crate) mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// An energy detector: a window is speech when its RMS is above `-40 dBFS`; consecutive speech
-    /// windows form a span. Good enough to find a tone between two silences.
-    pub struct EnergyVad;
+    /// windows form a span. Good enough to find a tone between two silences. Fed as a stream, a
+    /// span is reported once [`MIN_SILENCE`] of quiet windows followed it, or once it reaches
+    /// [`MAX_SPEECH`].
+    #[derive(Default)]
+    pub struct EnergyVad {
+        /// Samples fed so far (whole windows) and the part of a window still waiting.
+        fed: usize,
+        pending: Vec<f32>,
+        /// The span being heard, and the quiet samples since its last speech window.
+        open: Option<SpeechSpan>,
+        quiet: usize,
+    }
+
+    impl EnergyVad {
+        fn window(&mut self, window: &[f32], spans: &mut Vec<SpeechSpan>) {
+            let (start, end) = (self.fed, self.fed + window.len());
+            self.fed = end;
+            if loud(window) {
+                self.quiet = 0;
+                let span = self.open.get_or_insert(SpeechSpan { start, end });
+                span.end = end;
+                if span.end - span.start >= samples_at(MAX_SPEECH, VAD_SAMPLE_RATE_HZ) {
+                    spans.extend(self.open.take());
+                }
+            } else if self.open.is_some() {
+                self.quiet += window.len();
+                if self.quiet >= samples_at(MIN_SILENCE, VAD_SAMPLE_RATE_HZ) {
+                    spans.extend(self.open.take());
+                }
+            }
+        }
+    }
+
+    fn loud(window: &[f32]) -> bool {
+        (window.iter().map(|s| s * s).sum::<f32>() / window.len() as f32).sqrt() >= 0.01
+    }
 
     impl VoiceActivity for EnergyVad {
+        fn feed(&mut self, pcm16k: &[f32]) -> Result<Vec<SpeechSpan>, String> {
+            let mut spans = Vec::new();
+            self.pending.extend_from_slice(pcm16k);
+            let whole = self.pending.len() / WINDOW_SAMPLES * WINDOW_SAMPLES;
+            let windows: Vec<f32> = self.pending.drain(..whole).collect();
+            for window in windows.chunks(WINDOW_SAMPLES) {
+                self.window(window, &mut spans);
+            }
+            Ok(spans)
+        }
+
         fn spans(&mut self, pcm16k: &[f32]) -> Result<Vec<SpeechSpan>, String> {
             let mut spans: Vec<SpeechSpan> = Vec::new();
             for (i, window) in pcm16k.chunks(WINDOW_SAMPLES).enumerate() {
-                let rms = (window.iter().map(|s| s * s).sum::<f32>() / window.len() as f32).sqrt();
-                if rms < 0.01 {
+                if !loud(window) {
                     continue;
                 }
                 let (start, end) = (i * WINDOW_SAMPLES, i * WINDOW_SAMPLES + window.len());
@@ -232,10 +282,14 @@ pub(crate) mod tests {
     }
 
     /// A detector that fails on every call.
-    struct BrokenVad;
+    pub struct BrokenVad;
 
     impl VoiceActivity for BrokenVad {
         fn spans(&mut self, _pcm16k: &[f32]) -> Result<Vec<SpeechSpan>, String> {
+            Err("onnxruntime: bad input".into())
+        }
+
+        fn feed(&mut self, _pcm16k: &[f32]) -> Result<Vec<SpeechSpan>, String> {
             Err("onnxruntime: bad input".into())
         }
     }
@@ -260,7 +314,7 @@ pub(crate) mod tests {
             if self.fail_load {
                 return Err("onnxruntime: bad model".into());
             }
-            Ok(if self.broken { Box::new(BrokenVad) } else { Box::new(EnergyVad) })
+            Ok(if self.broken { Box::new(BrokenVad) } else { Box::new(EnergyVad::default()) })
         }
     }
 

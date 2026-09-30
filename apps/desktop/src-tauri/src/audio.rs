@@ -252,6 +252,26 @@ pub async fn devices() -> Result<Vec<Device>, String> {
     tauri::async_runtime::spawn_blocking(voltip_audio::list_input_devices).await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())
 }
 
+/// What 设置 › 录音来源 offers for the computer's sound (docs/dictation.md §22): whether it can be
+/// recorded here, and the output devices it can be recorded from, default first.
+#[derive(Clone, Debug, Serialize)]
+pub struct Outputs {
+    /// Recording the computer's sound works here, or why not.
+    pub system_audio: voltip_audio::SystemAudio,
+    /// The output devices; empty when the list could not be read (a take follows the default).
+    pub devices: Vec<Device>,
+}
+
+/// Enumerate output devices off the UI thread.
+pub async fn outputs() -> Result<Outputs, String> {
+    let (system_audio, devices) = tauri::async_runtime::spawn_blocking(voltip_audio::list_output_devices).await.map_err(|e| e.to_string())?;
+    let devices = devices.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "output devices could not be listed");
+        Vec::new()
+    });
+    Ok(Outputs { system_audio, devices })
+}
+
 /// Register a webview channel as a subscriber (device open happens off the UI thread).
 pub async fn start(hub: Arc<AudioHub>, device_id: Option<String>, on_frame: tauri::ipc::Channel<Frame>) -> Result<u64, String> {
     let sink: Sink = Arc::new(move |frame| {

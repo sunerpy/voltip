@@ -12,8 +12,8 @@ use parking_lot::Mutex;
 use super::engine::DictationPorts;
 use super::ports::{
     AudioSource, Capture, CaptureOptions, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector, LIVE_CHUNK_SAMPLES, LevelFrame,
-    LivePcm, Recording, RefineHints, Refined, Refiner, Segment, SelectionTiming, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber,
-    Transcript, Via,
+    LivePcm, PCM_SAMPLE_RATE_HZ, PcmStream, Recording, RefineHints, Refined, Refiner, Segment, SelectionTiming, StreamEvent, StreamFinal, StreamingSession,
+    StreamingTranscriber, Transcriber, Transcript, Via,
 };
 use super::wav;
 use crate::hotkey::Modifier;
@@ -64,8 +64,13 @@ pub struct FakeAudio {
     tap_overrun: bool,
     /// `max_duration` of every successful start, in order.
     max_durations: Mutex<Vec<Duration>>,
+    /// Every start's options, in order (docs/dictation.md §22: source, length, `long`).
+    options: Mutex<Vec<CaptureOptions>>,
     /// The device id of every start, in order (`None` = the default input).
     devices: Mutex<Vec<Option<String>>>,
+    /// A long take's stream (docs/dictation.md §22): its length in samples and where samples go
+    /// missing (`at`, `len`); handed out when a start asks for `long`.
+    long: Option<(u64, Vec<(u64, u64)>)>,
 }
 
 impl FakeAudio {
@@ -109,6 +114,20 @@ impl FakeAudio {
         Self { tap_overrun: true, ..self }
     }
 
+    /// A start that asks for a long take's stream gets one of `seconds` ([`FakePcmStream`]).
+    pub fn long(self, seconds: u64) -> Self {
+        Self { long: Some((seconds * u64::from(PCM_SAMPLE_RATE_HZ), Vec::new())), ..self }
+    }
+
+    /// The long take's stream loses `len_s` seconds at `at_s` (the shell's buffer overflowed).
+    pub fn with_gap(mut self, at_s: u64, len_s: u64) -> Self {
+        let rate = u64::from(PCM_SAMPLE_RATE_HZ);
+        if let Some((_, gaps)) = &mut self.long {
+            gaps.push((at_s * rate, len_s * rate));
+        }
+        self
+    }
+
     fn with_mode(mode: AudioMode) -> Self {
         Self {
             mode,
@@ -118,7 +137,9 @@ impl FakeAudio {
             never_ready: false,
             tap_overrun: false,
             max_durations: Mutex::new(Vec::new()),
+            options: Mutex::new(Vec::new()),
             devices: Mutex::new(Vec::new()),
+            long: None,
         }
     }
 
@@ -142,6 +163,11 @@ impl FakeAudio {
         self.max_durations.lock().clone()
     }
 
+    /// The options of every start, in order.
+    pub fn options(&self) -> Vec<CaptureOptions> {
+        self.options.lock().clone()
+    }
+
     /// The device id every start asked for, in order (`None` = the default input).
     pub fn devices(&self) -> Vec<Option<String>> {
         self.devices.lock().clone()
@@ -152,6 +178,7 @@ struct FakeCapture {
     result: Option<Result<Recording, DictationError>>,
     stops: Arc<AtomicUsize>,
     live: Option<Box<dyn LivePcm>>,
+    pcm: Option<Box<dyn PcmStream>>,
     closed: Arc<AtomicBool>,
 }
 
@@ -164,6 +191,62 @@ impl Capture for FakeCapture {
 
     fn live_pcm(&mut self) -> Option<Box<dyn LivePcm>> {
         self.live.take()
+    }
+
+    fn pcm_stream(&mut self) -> Option<Box<dyn PcmStream>> {
+        self.pcm.take()
+    }
+}
+
+/// A fake long take's stream (docs/dictation.md §22): a signal loud except a 300 ms pause before
+/// every 30 s mark, generated as it is read — two hours never sit in memory — with samples missing
+/// where the fake says; everything is there at once, and the stream ends when the capture stops.
+pub struct FakePcmStream {
+    total: u64,
+    /// The stream's timeline position: samples delivered and gaps reported.
+    pos: u64,
+    gaps: std::collections::VecDeque<(u64, u64)>,
+    closed: Arc<AtomicBool>,
+}
+
+impl FakePcmStream {
+    /// The fake signal at sample `i`.
+    pub fn sample(i: u64) -> f32 {
+        let period = 30 * u64::from(PCM_SAMPLE_RATE_HZ);
+        let pause = 3 * u64::from(PCM_SAMPLE_RATE_HZ) / 10;
+        if i % period >= period - pause {
+            0.0
+        } else if i.is_multiple_of(2) {
+            0.3
+        } else {
+            -0.3
+        }
+    }
+}
+
+impl PcmStream for FakePcmStream {
+    fn read(&mut self, out: &mut [f32]) -> usize {
+        let until = self.gaps.front().map_or(self.total, |g| g.0.min(self.total));
+        let n = usize::try_from(until.saturating_sub(self.pos)).unwrap_or(usize::MAX).min(out.len());
+        for (k, slot) in out[..n].iter_mut().enumerate() {
+            *slot = Self::sample(self.pos + k as u64);
+        }
+        self.pos += n as u64;
+        n
+    }
+
+    fn gap(&mut self) -> Option<u64> {
+        let &(at, len) = self.gaps.front()?;
+        if at != self.pos {
+            return None;
+        }
+        self.gaps.pop_front();
+        self.pos += len;
+        Some(len)
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst) && self.pos >= self.total
     }
 }
 
@@ -227,6 +310,7 @@ impl AudioSource for FakeAudio {
         };
         self.starts.fetch_add(1, Ordering::SeqCst);
         self.max_durations.lock().push(options.max_duration);
+        self.options.lock().push(options.clone());
         let live = options.live;
         for seq in 0..3 {
             on_level(LevelFrame { rms_dbfs: -20.0 - seq as f32, peak_dbfs: -6.0, clipping: false, sample_rate_hz: SAMPLE_RATE_HZ, channels: 1, seq });
@@ -245,7 +329,13 @@ impl AudioSource for FakeAudio {
             }
             _ => None,
         };
-        Ok(Box::new(FakeCapture { result: Some(result), stops: self.stops.clone(), live: live_tap, closed }))
+        let pcm: Option<Box<dyn PcmStream>> = match (&self.long, options.long) {
+            (Some((total, gaps)), true) => {
+                Some(Box::new(FakePcmStream { total: *total, pos: 0, gaps: gaps.iter().copied().collect(), closed: closed.clone() }))
+            }
+            _ => None,
+        };
+        Ok(Box::new(FakeCapture { result: Some(result), stops: self.stops.clone(), live: live_tap, pcm, closed }))
     }
 }
 
@@ -254,6 +344,13 @@ enum Reply {
     Ok(String),
     Err(DictationError),
     Slow(String, Duration),
+    /// 「第n段」 (padded with `pad` 字) for call `n` (1-based), failing the calls in `fail`, each
+    /// after `delay` (docs/dictation.md §22: segments in order).
+    Numbered {
+        pad: usize,
+        fail: Vec<usize>,
+        delay: Duration,
+    },
 }
 
 /// ASR stand-in.
@@ -283,6 +380,12 @@ impl FakeTranscriber {
     /// Returns `text` after `delay` (tokio time, so tests can pause it).
     pub fn slow(text: &str, delay: Duration) -> Self {
         Self::with_reply(Reply::Slow(text.to_owned(), delay))
+    }
+
+    /// Answers call `n` with 「第n段」 plus `pad` times 「字」 and a full stop, failing the calls
+    /// numbered in `fail` (1-based), each after `delay` (tokio time).
+    pub fn numbered(pad: usize, fail: &[usize], delay: Duration) -> Self {
+        Self::with_reply(Reply::Numbered { pad, fail: fail.to_vec(), delay })
     }
 
     fn with_reply(reply: Reply) -> Self {
@@ -338,6 +441,16 @@ impl Transcriber for FakeTranscriber {
             Reply::Slow(text, delay) => {
                 tokio::time::sleep(*delay).await;
                 Ok(Transcript { text: text.clone(), latency_ms: FAKE_LATENCY_MS })
+            }
+            Reply::Numbered { pad, fail, delay } => {
+                let n = self.calls.load(Ordering::SeqCst);
+                if !delay.is_zero() {
+                    tokio::time::sleep(*delay).await;
+                }
+                if fail.contains(&n) {
+                    return Err(DictationError::Asr(format!("fake failure of call {n}")));
+                }
+                Ok(Transcript { text: format!("第{n}段{}。", "字".repeat(*pad)), latency_ms: FAKE_LATENCY_MS })
             }
         }
     }
@@ -411,6 +524,10 @@ impl FakeRefiner {
             Reply::Slow(text, delay) => {
                 tokio::time::sleep(*delay).await;
                 Ok(Refined { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: FAKE_REFINE_MODEL.into() })
+            }
+            Reply::Numbered { .. } => {
+                let n = self.calls.load(Ordering::SeqCst);
+                Ok(Refined { text: format!("润色第{n}次。"), latency_ms: FAKE_LATENCY_MS, model: FAKE_REFINE_MODEL.into() })
             }
         }
     }
@@ -905,6 +1022,35 @@ pub fn fake_engines() -> crate::engines::EngineSettings {
     }
 }
 
+/// A finished dictation of `text` as the history keeps it (a whole take, pasted, not cleaned up).
+pub fn history_entry(text: &str) -> crate::HistoryEntry {
+    crate::HistoryEntry {
+        id: uuid::Uuid::new_v4(),
+        at_ms: 1_758_700_000_000,
+        raw_text: text.to_owned(),
+        text: text.to_owned(),
+        refined: false,
+        asr_model: "fake/asr".to_owned(),
+        refine_model: None,
+        duration_ms: 1500,
+        asr_ms: FAKE_LATENCY_MS,
+        refine_ms: None,
+        outcome: crate::Outcome::Inserted { via: Via::Paste },
+        starred: false,
+        mode: crate::OutputMode::WholeTake,
+        segments: None,
+        live_error: None,
+        vocabulary: None,
+        kind: crate::TakeKind::Dictation,
+        edit: None,
+        app: None,
+        scene: None,
+        preset: None,
+        origin: None,
+        processed: None,
+    }
+}
+
 /// Ports that complete the happy path with no network: speech audio, [`FAKE_TRANSCRIPT`], no
 /// refiner, a paste injector, no streaming recogniser.
 pub fn ports() -> DictationPorts {
@@ -923,6 +1069,7 @@ pub fn ports_with(audio: Arc<FakeAudio>, transcriber: Arc<FakeTranscriber>, refi
         streaming: None,
         probe: None,
         service_probe: None,
+        segmenter: None,
     }
 }
 

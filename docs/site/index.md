@@ -36,17 +36,17 @@ home:
     pill:
       - light: /screens/overlay-listening-en-light.webp
         dark: /screens/overlay-listening-en-dark.webp
-        width: 784
+        width: 880
         height: 70
         alt: The overlay while you speak, showing the input level and the Esc key that cancels.
       - light: /screens/overlay-processing-en-light.webp
         dark: /screens/overlay-processing-en-dark.webp
-        width: 784
+        width: 880
         height: 70
         alt: The overlay during AI polish, showing the preset in use and the time the step has taken.
       - light: /screens/overlay-inserted-en-light.webp
         dark: /screens/overlay-inserted-en-dark.webp
-        width: 784
+        width: 880
         height: 70
         alt: The overlay after the text has been inserted, showing the number of characters and the app.
 
@@ -123,9 +123,9 @@ home:
             status: available
             link: /dictation/history#statistics
           - title: Long recordings and computer audio
-            body: Up to two hours per recording, from the microphone, the computer's own audio or both, with export to SRT subtitles.
-            status: building
-            link: /roadmap
+            body: Up to two hours per recording, from the microphone, the computer's own audio or both. Recognised in segments while you speak; process the text with an AI preset or export SRT subtitles.
+            status: available
+            link: /dictation/shortcuts#recording-source
 
   steps:
     title: One dictation, four steps
@@ -242,9 +242,6 @@ home:
     title: What comes next
     intro: The next releases, in the expected order. No dates are promised; each feature is described on this site once it ships.
     items:
-      - title: Long recordings and computer audio
-        status: building
-        body: Recordings of up to two hours from the microphone, the computer's own audio or both. Long recordings are recognised in segments and can be exported as SRT subtitles.
       - title: The Android app
         status: building
         body: Using the phone as a microphone and keyboard is built and tested. The app is being prepared for release.

@@ -13,7 +13,7 @@ so every frame of the home page's cross-fade has the same size and scale.
 
 Output: `overlay-<state>-<lang>-<theme>.webp` (quality 85) in --out.
 
-    python3 docs/site/tools/crop-overlay.py --width 392 --out docs/site/public/screens /tmp/overlay-*-*.png
+    python3 docs/site/tools/crop-overlay.py --width 440 --out docs/site/public/screens /tmp/overlay-*-*.png
 """
 
 import argparse

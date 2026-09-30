@@ -1,4 +1,9 @@
-import { MOCK_AUDIO_DEVICES, MOCK_METER_INTERVAL_MS, MockBackend } from "@voltip/shared/mock";
+import {
+  MOCK_AUDIO_DEVICES,
+  MOCK_AUDIO_OUTPUTS,
+  MOCK_METER_INTERVAL_MS,
+  MockBackend,
+} from "@voltip/shared/mock";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MIC_TEST_MS } from "../../features/audio/useMicrophoneTest";
@@ -13,7 +18,7 @@ async function openPane() {
   return pane;
 }
 
-describe("Settings · 麦克风", () => {
+describe("Settings · 录音来源 (was 麦克风)", () => {
   it("regression: the input device is chosen here and written through settings_set_microphone; 跟随系统默认 writes null (user feedback 2026-09-28)", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/settings/microphone" });
@@ -90,5 +95,74 @@ describe("Settings · 麦克风", () => {
     });
     expect(backend.peek().settings.microphone).toBe("Realtek(R) Audio");
     expect(await screen.findByText(/出错了 · 麦克风标识须为 1–1024 字节/)).toBeInTheDocument();
+  });
+
+  it("the source decides the rows: the computer's sound shows the output device and hides the microphone, mixing shows both and the headphones hint; an output is chosen and followed back to the default (docs/dictation.md section 22)", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/microphone" });
+    const pane = await openPane();
+    expect(within(pane).queryByRole("combobox", { name: "输出设备" })).toBeNull();
+    const switcher = within(pane).getByTestId("recording-source");
+    await user.click(within(switcher).getByRole("radio", { name: "电脑声音" }));
+    expect(backend.peek().settings.recording.source).toBe("system");
+    const output = await within(pane).findByRole("combobox", { name: "输出设备" });
+    expect(within(pane).queryByRole("combobox", { name: "输入设备" })).toBeNull();
+    expect(within(pane).queryByTestId("microphone-test")).toBeNull();
+    expect(
+      within(output)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual([
+      `跟随系统默认（${MOCK_AUDIO_OUTPUTS[0]?.name ?? ""}）`,
+      ...MOCK_AUDIO_OUTPUTS.map((d) => d.name),
+    ]);
+    await user.selectOptions(output, "Sony WH-1000XM5");
+    await waitFor(() => {
+      expect(backend.peek().settings.recording.output_device).toBe("Sony WH-1000XM5");
+    });
+    await user.click(within(switcher).getByRole("radio", { name: "混合" }));
+    expect(backend.peek().settings.recording).toMatchObject({
+      source: "mixed",
+      output_device: "Sony WH-1000XM5",
+    });
+    expect(within(pane).getByRole("combobox", { name: "输入设备" })).toBeInTheDocument();
+    expect(within(pane).getByRole("combobox", { name: "输出设备" })).toHaveValue("Sony WH-1000XM5");
+    expect(pane).toHaveTextContent("混合录制时请佩戴耳机");
+    await user.selectOptions(within(pane).getByRole("combobox", { name: "输出设备" }), "");
+    await waitFor(() => {
+      expect(backend.peek().settings.recording.output_device).toBeNull();
+    });
+  });
+
+  it("an unplugged output stays chosen and is named as such; where the computer's sound cannot be recorded the pane says why", async () => {
+    renderApp({
+      path: "/settings/microphone",
+      mock: {
+        settings: { recording: { source: "system", output_device: "HDMI", max_minutes: 10 } },
+      },
+    });
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    const pane = await within(dialog).findByTestId("microphone-pane");
+    const output = await within(pane).findByRole("combobox", { name: "输出设备" });
+    await waitFor(() => {
+      expect(within(output).getByRole("option", { name: "HDMI · 未连接" })).toBeInTheDocument();
+    });
+    expect(output).toHaveValue("HDMI");
+    expect(pane).toHaveTextContent("所选输出设备未连接，听写会先录制系统默认输出");
+  });
+
+  it("without a sound server the computer's sound is off, the reason under the choice", async () => {
+    renderApp({
+      path: "/settings/microphone",
+      mock: { audioOutputs: { system_audio: { state: "no_sound_server" }, devices: [] } },
+    });
+    const pane = await openPane();
+    const switcher = within(pane).getByTestId("recording-source");
+    await waitFor(() => {
+      expect(within(switcher).getByRole("radio", { name: "电脑声音" })).toBeDisabled();
+    });
+    expect(pane).toHaveTextContent(
+      "录制电脑声音需要 PulseAudio 或 PipeWire 音频服务，当前未检测到。",
+    );
   });
 });

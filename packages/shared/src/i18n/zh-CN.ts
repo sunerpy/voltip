@@ -223,6 +223,16 @@ export const zhCN = {
       doneClipboard: "改写结果已复制 {n} 字 · {via}",
       refineFailed: "改写失败，选中文本未改动",
     },
+    /** docs/dictation.md §22: the `audio` failure of a take that records more than the microphone. */
+    audioFailure: {
+      system: "电脑声音录制失败",
+      mixed: "录音失败",
+    },
+    /** docs/dictation.md §22: a long take's recognition, once it is past its first two minutes. */
+    segments: {
+      listening: { one: "已识别 {n} 段", other: "已识别 {n} 段" },
+      processing: "已识别 {done}/{total} 段",
+    },
   },
   outcome: {
     inserted: "已插入 · {via}",
@@ -240,6 +250,10 @@ export const zhCN = {
     fallback: "实时识别模型未下载，当前按整段输出运行",
     effective: "当前生效",
     liveError: "实时识别中断，已改为整段识别：{reason}",
+  },
+  /** What a take records (docs/dictation.md §22, `settings.recording.source`). */
+  recordingSource: {
+    name: { microphone: "麦克风", system: "电脑声音", mixed: "混合" },
   },
   /** Activation (docs/dictation.md §13): name, description, the home chip, the footer shortcut and
    *  the one-sentence hint with the hotkey. */
@@ -408,7 +422,15 @@ export const zhCN = {
       processingTitle: "上一段录音仍在处理，请稍候",
     },
     mic: {
-      eyebrow: "麦克风输入",
+      eyebrow: "录音来源",
+      /** docs/dictation.md §22: the source switch on the card. */
+      source: "录制内容",
+      systemDevice: "电脑声音 · {name}",
+      systemDefaultDevice: "电脑声音 · 系统默认输出",
+      systemFacts: "不使用麦克风",
+      alsoSystem: "同时录制电脑声音 · {name}",
+      systemHint: "听写录制电脑播放的声音；空闲时不录制。",
+      mixedHint: "外放时请佩戴耳机，以免扬声器的声音被麦克风再次录入。",
       unavailable: "不可用",
       recording: "录音中",
       testing: "测试中 · {n} 秒",
@@ -423,7 +445,7 @@ export const zhCN = {
       testingHint: "说几句话，强度条应跟着跳动 · {n} 秒后自动停止",
       recordingHint: "强度来自这次听写的录音",
       devices: { one: "{n} 个输入设备", other: "{n} 个输入设备" },
-      switch: "切换麦克风",
+      switch: "选择设备",
       peak: "峰值 {value}",
     },
     engine: {
@@ -553,6 +575,7 @@ export const zhCN = {
         "无法粘贴到光标处：密码框或系统安全界面正在接收输入。文字已复制到剪贴板，可按 {keys} 粘贴。",
       elevated_target:
         "无法粘贴到光标处：目标窗口以管理员身份运行。文字已复制到剪贴板，可按 {keys} 粘贴。",
+      too_long: "全文超过 5000 字，未直接粘贴。文字已复制到剪贴板，可按 {keys} 粘贴。",
       other: "无法直接粘贴，文字已复制到剪贴板，可按 {keys} 粘贴。",
       openAccessibility: "打开辅助功能设置",
       details: "技术细节",
@@ -598,6 +621,30 @@ export const zhCN = {
       deleted: "删除",
       added: "新增",
       rawOutput: "语音识别原始结果：{text}",
+      /** docs/dictation.md §22: 用 AI 预设处理's result. */
+      processed: "处理后",
+      processedBy: "由「{preset}」处理 · 原文保留",
+    },
+    /** docs/dictation.md §22: the tools of a long entry. */
+    long: {
+      title: "用 AI 预设处理",
+      preset: "预设",
+      start: "开始处理",
+      again: "重新处理",
+      running: "已处理 {done}/{total} 部分",
+      failed: "处理失败：{reason}",
+      cancelled: "已取消，未保存结果。",
+      note: "全文按句子分成不超过 1500 字的部分依次处理，结果另存为处理后文本，原文保留。",
+      builtinNote: "内置 AI 服务受免费额度限制，长文处理较慢。",
+      exportSrt: "导出字幕（SRT）",
+      exportTxt: "导出文本（TXT）",
+      txtUsesProcessed: "导出文本时使用处理后文本。",
+      saved: "已保存：{path}",
+      exportFailed: {
+        gone: "这条记录已删除。",
+        empty: "这条记录没有分段，无法导出字幕。",
+        write: "文件未能保存：{detail}",
+      },
     },
     detail: {
       asrModel: "识别模型",
@@ -1420,7 +1467,7 @@ export const zhCN = {
       general: "通用",
       hotkey: "快捷键",
       dictation: "听写",
-      microphone: "麦克风",
+      microphone: "录音来源",
       scene: "场景",
       privacy: "隐私与历史",
       appearance: "外观",
@@ -1428,11 +1475,31 @@ export const zhCN = {
     },
     dictation: {
       title: "听写",
-      lede: "设置识别结果如何插入正在使用的应用。",
+      lede: "设置识别结果如何插入正在使用的应用，以及单次录音的最长时长。",
+      /** docs/dictation.md §22: `settings.recording.max_minutes`. */
+      maxLabel: "最长录音时长",
+      maxHelp: "录音到达这个时长后自动停止。超过 2 分钟的录音在录制过程中分段识别。",
+      minutes: { one: "{n} 分钟", other: "{n} 分钟" },
+      hours: { one: "{n} 小时", other: "{n} 小时" },
     },
     microphone: {
-      title: "麦克风",
-      lede: "听写使用这里选择的麦克风录音，未选择时跟随系统默认输入。空闲时 Voltip 不打开麦克风，仅在听写和测试时使用。",
+      title: "录音来源",
+      lede: "选择听写录制的声音：麦克风、电脑播放的声音，或两者混合。空闲时 Voltip 不打开麦克风，也不录制电脑声音。",
+      /** docs/dictation.md §22: `settings.recording.source` and `output_device`. */
+      source: "录制内容",
+      sourceHelp: "电脑声音用于转写会议、视频等电脑正在播放的内容。",
+      unavailable: {
+        macos_too_old: "录制电脑声音需要 macOS 14.6 或更高版本，当前为 {version}。",
+        no_sound_server: "录制电脑声音需要 PulseAudio 或 PipeWire 音频服务，当前未检测到。",
+        unsupported: "此设备不支持录制电脑声音。",
+      },
+      mixedHint: "混合录制时请佩戴耳机，否则扬声器的声音会被麦克风再次录入，出现回声。",
+      output: "输出设备",
+      outputHelp: "录制这个设备播放的声音。",
+      outputDefault: "跟随系统默认（{name}）",
+      outputDefaultNone: "跟随系统默认",
+      outputDisconnected: "{name} · 未连接",
+      outputMissingNote: "所选输出设备未连接，听写会先录制系统默认输出；接回后自动恢复。",
       device: "输入设备",
       deviceHelp: "听写、测试和首页的强度条都用这个设备。",
       followDefault: "跟随系统默认（{name}）",

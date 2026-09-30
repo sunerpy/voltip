@@ -321,7 +321,13 @@ impl ModelStore {
     /// is missing or running already; returns whether a download was started. Called from inside a
     /// Tokio runtime (the core task) whenever the setting changes.
     pub fn spawn_auxiliary_download(&self) -> bool {
-        if !self.auxiliary_wanted() || self.missing_auxiliary().is_empty() {
+        self.auxiliary_wanted() && self.spawn_auxiliary_fetch()
+    }
+
+    /// [`ModelStore::spawn_auxiliary_download`] whatever the flag says: a long take cuts at the
+    /// pauses the VAD finds whether trimming is on or not (docs/dictation.md §22).
+    pub fn spawn_auxiliary_fetch(&self) -> bool {
+        if self.missing_auxiliary().is_empty() {
             return false;
         }
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
@@ -335,7 +341,7 @@ impl ModelStore {
         runtime.spawn(async move {
             match store.install_auxiliary(Arc::new(|_| {}), CancelToken::new()).await {
                 Ok(n) => tracing::info!(installed = n, "auxiliary models installed"),
-                Err(e) => tracing::warn!(error = %e, "auxiliary model download failed; trimming stays off until the next model download"),
+                Err(e) => tracing::warn!(error = %e, "auxiliary model download failed; what needs it stays off until the next try"),
             }
             store.auxiliary_in_flight.store(false, Ordering::SeqCst);
         });

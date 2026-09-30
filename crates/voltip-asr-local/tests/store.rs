@@ -458,6 +458,15 @@ async fn auxiliary_entries_ride_along_when_wanted_and_never_fail_the_model() {
     store3.download("tiny", progress, CancelToken::new()).await.unwrap();
     assert_eq!(store3.install_state("tiny-vad").unwrap(), ModelInstallState::NotInstalled);
     assert!(!store3.spawn_auxiliary_download());
+    // A long take cuts where the VAD finds pauses whatever the flag says (docs/dictation.md §22).
+    assert!(store3.spawn_auxiliary_fetch(), "fetched with the flag off");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !store3.install_state("tiny-vad").unwrap().is_installed() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(store3.install_state("tiny-vad").unwrap().is_installed(), "the VAD arrived for the long take");
+    assert!(!store3.spawn_auxiliary_fetch(), "nothing missing: nothing started");
+    store3.remove("tiny-vad").unwrap();
     // Installing the auxiliary entries directly, and removing one, work like any entry.
     let (progress, _) = sink();
     assert_eq!(store3.install_auxiliary(progress, CancelToken::new()).await.unwrap(), 1);
