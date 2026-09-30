@@ -909,6 +909,12 @@ jobs:
           fi
           grep -F "signed ad hoc, not with the release certificate" guard.log
 
+      # The fix for the prompts on every update from ad-hoc Voltip (user report 2026-09-30): the
+      # real app, ad hoc and then signed with a throwaway certificate of the release recipe.
+      - name: Keychain items from an ad-hoc build move to the signed build's
+        timeout-minutes: 10
+        run: .github/scripts/check-keychain-migration.sh "$APP"
+
       - name: Headless native run (download a model, transcribe a public sample)
         shell: pwsh
         # Both engines: sherpa-onnx (SenseVoice, the bundled dylibs) and transcribe.cpp (Qwen3-ASR
