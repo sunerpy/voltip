@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.15](https://github.com/sunerpy/voltip/compare/v0.0.14...v0.0.15) (2026-09-30)
+
+
+### Bug Fixes
+
+* **identity:** an in-app update on macOS hands the keychain over instead of asking again ([#38](https://github.com/sunerpy/voltip/issues/38)) ([21e6ff7](https://github.com/sunerpy/voltip/commit/21e6ff7e939035cc65bb618ca3495063ea4eec56))
+
 ## [0.0.14](https://github.com/sunerpy/voltip/compare/v0.0.13...v0.0.14) (2026-09-30)
 
 
