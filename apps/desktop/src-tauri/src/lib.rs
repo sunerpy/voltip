@@ -7,11 +7,11 @@
 
 // `unsafe` is forbidden everywhere except `platform/windows.rs` (Win32 FFI for the injection
 // preflight and the microphone consent store), `solo_key/windows.rs` (the low-level input hooks of
-// the lone-key trigger) and `exit.rs` (`_exit` on Linux): on those platforms the crate-level lint
-// is `deny`, which each of those modules relaxes with `#![allow(unsafe_code)]` and a SAFETY
-// comment on every block.
-#![cfg_attr(not(any(target_os = "windows", target_os = "linux")), forbid(unsafe_code))]
-#![cfg_attr(any(target_os = "windows", target_os = "linux"), deny(unsafe_code))]
+// the lone-key trigger), `exit.rs` (`_exit` on Linux) and `keychain_handoff.rs` (Security.framework
+// calls on macOS): on those platforms the crate-level lint is `deny`, which each of those modules
+// relaxes with `#![allow(unsafe_code)]` and a SAFETY comment on every block.
+#![cfg_attr(not(any(target_os = "windows", target_os = "linux", target_os = "macos")), forbid(unsafe_code))]
+#![cfg_attr(any(target_os = "windows", target_os = "linux", target_os = "macos"), deny(unsafe_code))]
 #![warn(missing_docs)]
 
 use std::sync::Arc;
