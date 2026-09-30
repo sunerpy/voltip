@@ -158,7 +158,7 @@ stage_real_models() {
 # The loopback gate's inputs: the recording to play, and where the test writes what it recorded.
 stage_loopback() {
   local lines=() play=${VOLTIP_LOOPBACK_PLAY:-}
-  remote_ps <<<'Remove-Item (Join-Path $Dir "loopback-out.wav") -ErrorAction SilentlyContinue'
+  remote_ps <<<'$out = Join-Path $Dir "loopback-out.wav"; if (Test-Path $out) { Remove-Item $out }'
   if [ -n "$play" ]; then
     [ -f "$play" ] || { echo "windows-remote: VOLTIP_LOOPBACK_PLAY=$play is not a file" >&2; exit 2; }
     scp -q "${ssh_opts[@]}" "$play" "$host:$scp_dir/loopback-play.wav"
