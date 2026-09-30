@@ -48,7 +48,9 @@ cat > probe.c <<'C'
 #ifndef BUILD
 #define BUILD 0
 #endif
-static const char *build = "probe build " __FILE__ " " #BUILD;
+#define STR2(x) #x
+#define STR(x) STR2(x)
+static const char *build = "probe build " STR(BUILD);
 // probe add|read|list|delete <service> [keychain]; the default keychain when none is given.
 int main(int argc, char **argv) {
   if (argc < 3) return 2;
