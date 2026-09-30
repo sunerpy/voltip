@@ -20,9 +20,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Migration experiment
+        run: bash scripts/experiment-migrate.sh
       - name: Run the experiment
         run: bash scripts/experiment-keychain.sh
-      - name: Update the released 0.0.7 to 0.0.8 (manual checklist item 15, the versions the plan names)
-        run: bash scripts/experiment-upgrade.sh 0.0.7 0.0.8
-      - name: Update the released 0.0.10 to 0.0.11 (manual checklist item 15)
-        run: bash scripts/experiment-upgrade.sh 0.0.10 0.0.11
