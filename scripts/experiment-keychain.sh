@@ -4,6 +4,10 @@
 # Nothing here touches the login keychain: a temporary keychain is created and searched first.
 set -euo pipefail
 set -x
+# The release certificate was made with OpenSSL 3; macOS's /usr/bin/openssl (LibreSSL) writes
+# extensions codesign reports as "Unknown critical cert extension" and will not sign with.
+openssl=$(brew --prefix openssl@3)/bin/openssl
+"$openssl" version
 work=$(mktemp -d)
 cd "$work"
 kc="$work/exp.keychain-db"
@@ -44,10 +48,10 @@ clang -Wno-deprecated-declarations -DVERSION='"build-b"' -framework Security -o 
 variant() {
   local name=$1 subject=$2
   echo "::group::variant $name ($subject)"
-  openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes -subj "$subject" \
+  "$openssl" req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes -subj "$subject" \
     -addext "keyUsage=critical,digitalSignature" -addext "extendedKeyUsage=critical,codeSigning" \
     -addext "basicConstraints=critical,CA:false" -keyout "$name.key" -out "$name.pem" 2>/dev/null
-  openssl pkcs12 -export -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1 \
+  "$openssl" pkcs12 -export -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1 \
     -inkey "$name.key" -in "$name.pem" -out "$name.p12" -passout pass:x
   security import "$name.p12" -k "$kc" -f pkcs12 -P x -T /usr/bin/codesign
   security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$kc" >/dev/null
