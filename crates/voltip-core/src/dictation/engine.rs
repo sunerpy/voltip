@@ -4912,8 +4912,58 @@ mod tests {
         r.start_edit_open(Vec::new()).await;
         assert_eq!(r.engine.current_mode(), OutputMode::WholeTake);
         assert_eq!(r.audio.max_durations(), vec![MAX_RECORDING], "a whole take's cap");
-        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if !l.committed.is_empty())).await;
+        preview_sentence(&mut r).await;
         assert!(r.injector.injected().is_empty(), "nothing is pasted while listening");
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::WholeTake, segments: None, .. } if text == REWRITE), "{fx:?}");
+        assert_eq!(r.injector.injected(), vec![REWRITE.to_owned()]);
+    }
+
+    /// Wait until the live preview shows its first sentence, unless it already does: it may come
+    /// in while the selection is still being copied, and then `start_edit_open` has folded it and
+    /// the decode thread has nothing more to send.
+    async fn preview_sentence(r: &mut Rig) {
+        let sentence = |p: &DictationPhase| matches!(p, DictationPhase::Listening { live: Some(l), .. } if !l.committed.is_empty());
+        if !sentence(&r.engine.status().phase) {
+            r.phases_until(sentence).await;
+        }
+    }
+
+    /// Regression (CI, 2026-09-30): the preview's first sentence came in while the selection was
+    /// still being copied, `start_edit_open` folded it, and the test then waited for a status the
+    /// decode thread would never send; the paused clock stands still while that thread runs, so the
+    /// wait did not time out and the run hung. Here the copy is held until the decoder is past the
+    /// sentence, the order CI hit.
+    #[tokio::test(start_paused = true)]
+    async fn regression_an_edit_takes_preview_sentence_before_the_selection_is_back() {
+        let audio = Arc::new(FakeAudio::speech());
+        let transcriber = Arc::new(FakeTranscriber::ok(INSTRUCTION));
+        let refiner = Arc::new(FakeRefiner::ok(REWRITE));
+        let injector = Arc::new(FakeInjector::paste().with_selection(SELECTION).copy_gated());
+        let (levels_tx, levels) = broadcast::channel(64);
+        let streaming = Arc::new(FakeStreaming::script());
+        let ports =
+            DictationPorts { streaming: Some(streaming.clone()), ..ports_with(audio.clone(), transcriber.clone(), Some(refiner.clone()), injector.clone()) };
+        let (engine, rx) = DictationEngine::new(ports, &resolved_mode(OutputMode::LiveInject, true, false), levels_tx);
+        let mut r = Rig { engine, rx, audio, transcriber, refiner: Some(refiner), injector, levels };
+        // The first sentence ends with the fourth word (100 ms of audio each): release the copy
+        // once the decoder has had six.
+        let (copies, decoder) = (r.injector.clone(), streaming.clone());
+        std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while decoder.feeds() < 6 && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            copies.release_copies(1);
+        });
+        r.start_edit_open(Vec::new()).await;
+        assert!(
+            matches!(&r.engine.status().phase, DictationPhase::Listening { live: Some(l), .. } if !l.committed.is_empty()),
+            "the sentence came before the selection: {:?}",
+            r.engine.status().phase
+        );
+        preview_sentence(&mut r).await;
         r.engine.stop().unwrap();
         let fx = r.run_to_terminal().await;
         assert!(matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::WholeTake, segments: None, .. } if text == REWRITE), "{fx:?}");
