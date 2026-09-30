@@ -11,7 +11,10 @@
 //!   sink's monitor through the recorder and removes the sink again; nothing is heard.
 //! - Windows and macOS (14.6 or later; macOS asks the terminal for the permission to record other
 //!   apps' audio the first time): the tone plays through the default output with cpal, at a
-//!   quarter of full scale for about three seconds, and the recorder records that output.
+//!   quarter of full scale for about three seconds, and the recorder records that output. With
+//!   `VOLTIP_LOOPBACK_PLAY=<16 kHz mono WAV>` it plays that recording instead, and
+//!   `VOLTIP_LOOPBACK_OUT=<path>` keeps what was recorded as a WAV, for a recogniser to check
+//!   (`scripts/windows-remote.sh gate loopback` stages both; see `crates/voltip-asr-local/tests/real.rs`).
 
 use std::time::Duration;
 
@@ -29,12 +32,13 @@ fn rms_dbfs(samples: &[i16]) -> f32 {
     dsp::to_dbfs(dsp::rms(&floats))
 }
 
-/// The recording of `source` while the tone plays; the tone starts before and ends after it.
-fn record(backend: &CpalBackend, source: CaptureSource) -> voltip_audio::Recording {
+/// `length` of `source` while the sound plays; the sound starts before and ends after it.
+#[cfg(target_os = "linux")]
+fn record(backend: &CpalBackend, source: CaptureSource, length: Duration) -> voltip_audio::Recording {
     let config = RecorderConfig { source, ..RecorderConfig::default() };
     let recorder = Recorder::start_with(backend, config, |_| {}).expect("the computer's sound can be recorded here");
-    // The recording's own length: the tone plays meanwhile.
-    std::thread::sleep(RECORD);
+    // The recording's own length: the sound plays meanwhile.
+    std::thread::sleep(length);
     recorder.stop().unwrap()
 }
 
@@ -72,7 +76,7 @@ fn the_computers_sound_is_recorded_from_a_sinks_monitor() {
     let mut player = Command::new("paplay").arg("--device=voltip_loopback_test").arg(&wav).spawn().expect("paplay");
     // paplay needs a moment to connect before the tone reaches the monitor.
     std::thread::sleep(Duration::from_millis(400));
-    let recording = record(&backend, CaptureSource::System { output_id: Some(sink.id.clone()) });
+    let recording = record(&backend, CaptureSource::System { output_id: Some(sink.id.clone()) }, RECORD);
     let _ = player.wait();
     let _ = std::fs::remove_file(&wav);
     let level = rms_dbfs(&recording.samples);
@@ -91,13 +95,26 @@ fn the_computers_sound_is_recorded_from_the_default_output() {
     let config = device.default_output_config().unwrap();
     assert_eq!(config.sample_format(), cpal::SampleFormat::F32, "the test plays f32");
     let (rate, channels) = (config.sample_rate() as f32, usize::from(config.channels()));
+    // What plays: a recording when one is given (16 kHz mono, linearly resampled), else the tone.
+    let speech = std::env::var_os("VOLTIP_LOOPBACK_PLAY").map(|path| wav_samples(&std::fs::read(path).expect("VOLTIP_LOOPBACK_PLAY")));
+    let length = speech.as_ref().map_or(RECORD, |s| Duration::from_millis(s.len() as u64 * 1000 / 16_000 + 800));
     let mut n = 0u64;
     let stream = device
         .build_output_stream(
             config.into(),
             move |data: &mut [f32], _| {
                 for frame in data.chunks_mut(channels) {
-                    let v = (n as f32 / rate * TONE_HZ * std::f32::consts::TAU).sin() * AMPLITUDE;
+                    let t = n as f32 / rate;
+                    let v = match &speech {
+                        Some(samples) => {
+                            let at = t * 16_000.0;
+                            let (i, frac) = (at as usize, at.fract());
+                            let a = samples.get(i).copied().unwrap_or(0.0);
+                            let b = samples.get(i + 1).copied().unwrap_or(0.0);
+                            a + (b - a) * frac
+                        }
+                        None => (t * TONE_HZ * std::f32::consts::TAU).sin() * AMPLITUDE,
+                    };
                     frame.fill(v);
                     n += 1;
                 }
@@ -106,13 +123,27 @@ fn the_computers_sound_is_recorded_from_the_default_output() {
             None,
         )
         .unwrap();
-    stream.play().unwrap();
-    std::thread::sleep(Duration::from_millis(400));
     let backend = CpalBackend::new();
-    let recording = record(&backend, CaptureSource::System { output_id: None });
+    // The recorder opens first, so the start of a recording played is not lost.
+    let config = RecorderConfig { source: CaptureSource::System { output_id: None }, ..RecorderConfig::default() };
+    let recorder = Recorder::start_with(&backend, config, |_| {}).expect("the computer's sound can be recorded here");
+    stream.play().unwrap();
+    std::thread::sleep(length);
+    let recording = recorder.stop().unwrap();
     drop(stream);
     let level = rms_dbfs(&recording.samples);
     println!("loopback on the default output: {} ms at {level:.1} dBFS", recording.duration_ms);
+    if let Some(out) = std::env::var_os("VOLTIP_LOOPBACK_OUT") {
+        std::fs::write(&out, recording.to_wav()).unwrap();
+        println!("recording written to {}", std::path::Path::new(&out).display());
+    }
     assert!(recording.duration_ms >= 1_500, "{} ms", recording.duration_ms);
-    assert!(level > -30.0, "the tone is in the recording: {level:.1} dBFS");
+    assert!(level > -40.0, "the sound is in the recording: {level:.1} dBFS");
+}
+
+/// The samples of a 16-bit mono WAV as `-1.0..=1.0` (the data after the canonical 44-byte header).
+#[cfg(any(windows, target_os = "macos"))]
+fn wav_samples(wav: &[u8]) -> Vec<f32> {
+    let data = wav.windows(4).position(|w| w == b"data").map_or(44, |at| at + 8);
+    wav[data..].chunks_exact(2).map(|b| dsp::i16_to_f32(i16::from_le_bytes([b[0], b[1]]))).collect()
 }
