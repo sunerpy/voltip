@@ -793,6 +793,12 @@ jobs:
           sw_vers; uname -m; sysctl -n machdep.cpu.brand_string; sysctl -n hw.ncpu
           xcode-select -p; clang --version | head -1; cmake --version | head -1 || true
 
+      # What the fixed release certificate is for: an update reads the keychain entries the
+      # previous version stored, without a prompt (user report 2026-09-30, checklist item 15).
+      - name: Keychain access across updates (builds signed as releases are)
+        timeout-minutes: 5
+        run: .github/scripts/check-keychain-across-updates.sh
+
       - name: Rust toolchain (rust-toolchain.toml) + ${{ matrix.target }}
         run: |
           set -euo pipefail
