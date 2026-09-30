@@ -184,6 +184,8 @@ mod tests {
         delay: Duration,
         pressed: Mutex<Vec<(Chord, Vec<Modifier>)>>,
         outcome: Result<(), DeliveryError>,
+        /// When the application put its copy on the clipboard.
+        wrote_at: Arc<Mutex<Option<Instant>>>,
     }
 
     impl App {
@@ -194,6 +196,7 @@ mod tests {
                 delay: Duration::ZERO,
                 pressed: Mutex::new(Vec::new()),
                 outcome: Ok(()),
+                wrote_at: Arc::default(),
             })
         }
     }
@@ -209,9 +212,11 @@ mod tests {
             if let Some(selection) = self.selection.clone() {
                 let clipboard = self.clipboard.clone();
                 let delay = self.delay;
+                let wrote_at = self.wrote_at.clone();
                 let writer = std::thread::spawn(move || {
                     std::thread::sleep(delay);
                     clipboard.write_text(&selection).unwrap();
+                    *wrote_at.lock().unwrap() = Some(Instant::now());
                 });
                 if delay.is_zero() {
                     writer.join().unwrap();
@@ -282,18 +287,22 @@ mod tests {
     }
 
     /// A slow application (the copy lands after a few polls) is still read, and the copy returns
-    /// as soon as the text shows, not at the timeout. The timeout is long here: with the 200 ms of
-    /// `fast()` the bound was the timeout itself, and main CI's Intel macOS runner (2026-09-30)
-    /// ran the application's 40 ms late enough to reach it.
+    /// as soon as the text shows. The bound is the one this test always had, 200 ms with the
+    /// application's 40 ms in it, now timed from when the text showed: on main CI's Intel Mac
+    /// (2026-09-30) the application's thread ran late enough that the text came near the timeout,
+    /// and how late a thread is scheduled says nothing about the copy. So the timeout only has to
+    /// outlast that thread.
     #[test]
     fn a_copy_that_lands_late_within_the_timeout_is_read() {
         let clipboard = MemoryClipboard::holding("before");
         let app = Arc::new(App { delay: Duration::from_millis(40), ..Arc::into_inner(App::with(&clipboard, Some("late"))).unwrap() });
+        let wrote_at = app.wrote_at.clone();
         let options = CopyOptions { timeout: Duration::from_secs(5), ..fast() };
-        let started = Instant::now();
         let got = ClipboardSelection::with_ports(clipboard.clone(), app, copy_chord_for("linux"), options).copy_selection(&[]).unwrap();
+        let returned = Instant::now();
         assert_eq!(got.as_deref(), Some("late"));
-        assert!(started.elapsed() < options.timeout / 2, "returned as soon as the text showed, not at the timeout: {:?}", started.elapsed());
+        let shown = wrote_at.lock().unwrap().expect("the application copied");
+        assert!(returned - shown < Duration::from_millis(200 - 40), "returned {:?} after the text showed", returned - shown);
         assert_eq!(clipboard.current().as_deref(), Some("before"));
     }
 
