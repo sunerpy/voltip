@@ -1366,7 +1366,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
   - Linux：开启 cpal 的 `pulseaudio` 特性，录默认输出（sink）的 `.monitor` 源；麦克风仍走 ALSA（`host_from_id(Alsa)`），与以前一致。没有 PulseAudio / PipeWire（`pipewire-pulse`）服务时报 `no_sound_server`。
 - `audio_outputs`（查询，桌面）：`{ system_audio: available | macos_too_old { version } | no_sound_server | unsupported, devices }`，设备列表默认设备在前；手机回 `unsupported`。
 - **混合**（`mix.rs`）：两路各自重采样到 16 kHz；麦克风是时钟，电脑声音进一个无锁队列，每个麦克风样本取一个队列样本（没有就补零）；每个麦克风块混合之前，队列里比这一块再早 20 ms（`MAX_LAG_SAMPLES = 320`）以上的样本先丢掉（包括电脑声音先开始、麦克风打开期间积下的），所以从第一块起两路相差都不超过 20 ms。两路各乘 0.707（−3 dB）后相加，再过软限幅（0.9 以下不变，以上平滑逼近满幅，永不溢出）。
-- **长录音的流**（`pcm.rs`）：`CaptureOptions.long` 为真时，采集回调只做两件事：重采样、写进 60 s 的无锁环形缓冲，从不阻塞；环满时丢掉的样本数由 `PcmStream::gap()` 报告。这时 `Recorder` 的内存缓冲只留前 120 s，内存占用有上限。
+- **长录音的流**（`pcm.rs`）：`CaptureOptions.long` 为真时，采集回调只做两件事：重采样、写进 60 s 的无锁环形缓冲，从不阻塞；环满时丢掉的样本数由 `PcmStream::gap()` 报告；丢样本之后录音随即停止时，这段空缺也在流结束前报告（`PcmProducer` 析构时补报，`is_closed()` 在空缺取走之后才为真）。这时 `Recorder` 的内存缓冲只留前 120 s，内存占用有上限。
 
 ### 22.3 长录音（`crates/voltip-core/src/dictation/long.rs`、`engine.rs`）
 
