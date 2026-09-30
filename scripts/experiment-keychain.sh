@@ -3,12 +3,13 @@
 # build created, without a prompt? Run on a GitHub-hosted macOS runner (passwordless sudo).
 # Nothing here touches the login keychain: a temporary keychain is created and searched first.
 set -euo pipefail
+set -x
 work=$(mktemp -d)
 cd "$work"
 kc="$work/exp.keychain-db"
 pw=experiment
 security create-keychain -p "$pw" "$kc"
-security set-keychain-settings "$kc"
+security set-keychain-settings -lut 21600 "$kc"
 security unlock-keychain -p "$pw" "$kc"
 # Search the experiment keychain first, keep the rest.
 old=$(security list-keychains -d user | sed 's/[" ]//g')
@@ -48,9 +49,10 @@ variant() {
     -addext "basicConstraints=critical,CA:false" -keyout "$name.key" -out "$name.pem" 2>/dev/null
   openssl pkcs12 -export -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1 \
     -inkey "$name.key" -in "$name.pem" -out "$name.p12" -passout pass:x
-  security import "$name.p12" -k "$kc" -P x -T /usr/bin/codesign >/dev/null
+  security import "$name.p12" -k "$kc" -f pkcs12 -P x -T /usr/bin/codesign
   security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$kc" >/dev/null
-  sudo security add-trusted-cert -d -r trustRoot -p codeSign -k "$kc" "$name.pem"
+  sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$name.pem"
+  security find-identity -v -p codesigning "$kc"
   local cn
   cn=$(sed -n 's/.*CN=\([^/]*\).*/\1/p' <<<"$subject")
   for b in a b; do
