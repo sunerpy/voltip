@@ -66,14 +66,36 @@ int main(int argc, char **argv) {
     UInt32 n = 0; void *d = NULL;
     s = SecKeychainFindGenericPassword(kc, sl, svc, al, acct, &n, &d, NULL);
     if (s == 0) SecKeychainItemFreeContent(NULL, d);
-  } else if (strcmp(op, "list") == 0) {
+  } else if (strcmp(op, "list") == 0 || strcmp(op, "delete-ref") == 0) {
+    // SecItemCopyMatching with an explicit search list: attributes (list) or a reference to
+    // delete without reading the value (delete-ref), as security-framework's ItemSearchOptions
+    // with .keychains(..) does.
     CFStringRef service = CFStringCreateWithCString(NULL, svc, kCFStringEncodingUTF8);
-    const void *keys[] = {kSecClass, kSecAttrService, kSecReturnAttributes, kSecMatchLimit};
-    const void *vals[] = {kSecClassGenericPassword, service, kCFBooleanTrue, kSecMatchLimitAll};
-    CFDictionaryRef q = CFDictionaryCreate(NULL, keys, vals, 4, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    if (kc == NULL) SecKeychainCopyDefault(&kc);
+    CFArrayRef list = CFArrayCreate(NULL, (const void **)&kc, 1, &kCFTypeArrayCallBacks);
+    int refs = strcmp(op, "delete-ref") == 0;
+    const void *keys[] = {kSecClass, kSecAttrService, refs ? kSecReturnRef : kSecReturnAttributes, kSecMatchLimit, kSecMatchSearchList};
+    const void *vals[] = {kSecClassGenericPassword, service, kCFBooleanTrue, kSecMatchLimitAll, list};
+    CFDictionaryRef q = CFDictionaryCreate(NULL, keys, vals, 5, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     CFTypeRef out = NULL;
     s = SecItemCopyMatching(q, &out);
-    if (s == 0) printf("list found %ld item(s)\n", (long)CFArrayGetCount((CFArrayRef)out));
+    if (s == 0 && !refs) {
+      CFIndex n = CFArrayGetCount((CFArrayRef)out);
+      printf("list found %ld item(s)\n", (long)n);
+      for (CFIndex i = 0; i < n; i++) {
+        CFDictionaryRef d = CFArrayGetValueAtIndex((CFArrayRef)out, i);
+        CFStringRef a = CFDictionaryGetValue(d, kSecAttrAccount);
+        CFDateRef c = CFDictionaryGetValue(d, kSecAttrCreationDate);
+        char buf[256] = "";
+        if (a) CFStringGetCString(a, buf, sizeof buf, kCFStringEncodingUTF8);
+        printf("  account %s created %.0f\n", buf, c ? CFDateGetAbsoluteTime(c) : -1.0);
+      }
+    }
+    if (s == 0 && refs) {
+      CFIndex n = CFArrayGetCount((CFArrayRef)out);
+      for (CFIndex i = 0; s == 0 && i < n; i++) s = SecKeychainItemDelete((SecKeychainItemRef)CFArrayGetValueAtIndex((CFArrayRef)out, i));
+      printf("delete-ref removed %ld item(s)\n", (long)n);
+    }
   } else if (strcmp(op, "delete") == 0) {
     SecKeychainItemRef it = NULL;
     s = SecKeychainFindGenericPassword(kc, sl, svc, al, acct, NULL, NULL, &it);
@@ -117,6 +139,9 @@ run() { # run <label> <keychain>
 	./probe-b read "$svc" "$kc"
 	there "$kc" "$svc"
 	./probe-a read "$svc" "$kc"
+	./probe-b delete-ref "$svc" "$kc"
+	there "$kc" "$svc"
+	./probe-a add "$svc" "$kc"
 	./probe-b delete "$svc" "$kc"
 	there "$kc" "$svc"
 	./probe-a read "$svc" "$kc"
