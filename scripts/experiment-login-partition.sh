@@ -101,20 +101,36 @@ acl() { # acl <keychain> <service>: the item's partition and requirement lines
 		END { if (h) printf "%s", b }' | grep -E '"acct"|authorizations|description|requirement'
 }
 
-run() { # run <label> <keychain or empty>
-	local label=$1 kc=${2:-} svc="exp.partition.$1"
-	echo "== $label"
-	./probe-a add "$svc" ${kc:+"$kc"}
-	acl "${kc:-$login}" "$svc"
-	./probe-b list "$svc" ${kc:+"$kc"}
-	./probe-b read "$svc" ${kc:+"$kc"}
-	./probe-a read "$svc" ${kc:+"$kc"}
-	./probe-b delete "$svc" ${kc:+"$kc"}
-	./probe-a read "$svc" ${kc:+"$kc"}
-	./probe-a delete "$svc" ${kc:+"$kc"} || true
+there() { # there <keychain> <service>: whether security(1) still finds the item (attributes only)
+	if security find-generic-password -s "$2" -a probe "$1" >/dev/null 2>&1; then echo "   (item present)"; else echo "   (item absent)"; fi
 }
 
-run login ""
+run() { # run <label> <keychain>
+	local label=$1 kc=$2 svc="exp.partition.$1"
+	echo "== $label ($kc)"
+	./probe-a add "$svc" "$kc"
+	there "$kc" "$svc"
+	acl "$kc" "$svc"
+	./probe-a read "$svc" "$kc"
+	there "$kc" "$svc"
+	./probe-b list "$svc" "$kc"
+	./probe-b read "$svc" "$kc"
+	there "$kc" "$svc"
+	./probe-a read "$svc" "$kc"
+	./probe-b delete "$svc" "$kc"
+	there "$kc" "$svc"
+	./probe-a read "$svc" "$kc"
+	./probe-a delete "$svc" "$kc" || true
+	there "$kc" "$svc"
+}
+
+echo "== default search list, no keychain given"
+./probe-a add exp.partition.default
+there "$login" exp.partition.default
+./probe-a read exp.partition.default
+./probe-a delete exp.partition.default || true
+there "$login" exp.partition.default
+run login "$login"
 made="$work/made.keychain-db"
 security create-keychain -p "$pw" "$made"
 security unlock-keychain -p "$pw" "$made"
