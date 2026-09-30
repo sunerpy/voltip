@@ -87,7 +87,10 @@ echo "::group::the items' access lists"
 set +e
 security dump-keychain -a "$kc" >dump.txt 2>&1
 echo "dump exit=$?"
-grep -nE '"svce"|description|applications|partition|entry [0-9]|authorizations' dump.txt | head -80
+for svc in svc-plain svc-adhoc svc-team; do
+  echo "--- $svc"
+  awk -v s="\"svce\"<blob>=\"$svc\"" 'index($0, s) {f=1} f {print} f && /^keychain:/ && ++n > 0 && !index($0, s) {exit}' dump.txt | sed -n '1,60p'
+done
 grep -oE '7B22[0-9A-Fa-f]+' dump.txt | while read -r hex; do echo "$hex" | xxd -r -p; echo; done
 set -e
 echo "::endgroup::"
