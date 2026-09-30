@@ -38,6 +38,17 @@ fn main() {
         _ => {}
     }
     tauri_build::build();
+    // tauri-build links its Windows resource (icon, version, and the manifest that asks for Common
+    // Controls v6) into the application binary only. tauri-plugin-dialog's message dialogs import
+    // `TaskDialogIndirect`, which only Common Controls v6 has: an integration test that builds the
+    // app (tests/ipc.rs, tests/update.rs) would not even start without the manifest
+    // (STATUS_ENTRYPOINT_NOT_FOUND). The test binaries get the same resource.
+    if target_os == "windows" {
+        let resource = PathBuf::from(std::env::var("OUT_DIR").unwrap_or_default()).join("resource.lib");
+        if resource.exists() {
+            println!("cargo:rustc-link-arg-tests={}", resource.display());
+        }
+    }
     // Static CRT (.cargo/config.toml `+crt-static`): the C++ objects from transcribe.cpp / ggml
     // and Rust std then need the static UCRT. `cargo xwin build` adds it by itself, but the Tauri
     // CLI invokes the binary as `cargo-xwin build …`, where that step does not run and the link
