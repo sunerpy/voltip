@@ -145,5 +145,5 @@ fn the_computers_sound_is_recorded_from_the_default_output() {
 #[cfg(any(windows, target_os = "macos"))]
 fn wav_samples(wav: &[u8]) -> Vec<f32> {
     let data = wav.windows(4).position(|w| w == b"data").map_or(44, |at| at + 8);
-    wav[data..].chunks_exact(2).map(|b| dsp::i16_to_f32(i16::from_le_bytes([b[0], b[1]]))).collect()
+    wav[data..].as_chunks::<2>().0.iter().map(|b| dsp::i16_to_f32(i16::from_le_bytes(*b))).collect()
 }
