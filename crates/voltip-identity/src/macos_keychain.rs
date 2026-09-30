@@ -74,17 +74,25 @@ impl Keychain for SecurityKeychain {
 
     fn read(&self, service: &str, account: &str, ask: Ask) -> Result<Read, IdentityError> {
         let _one = self.lock.lock();
-        let _quiet = match ask {
-            Ask::Never => Some(SecKeychain::disable_user_interaction().map_err(unavailable)?),
-            Ask::Allowed => {
-                tracing::info!(service, account, "reading the keychain item an earlier build stored; macOS asks once");
-                None
-            }
+        // Quietly first: an item this build may read, or no item at all, never needs the dialog.
+        let quiet = {
+            let _quiet = SecKeychain::disable_user_interaction().map_err(unavailable)?;
+            self.keychain.find_generic_password(service, account)
         };
+        match quiet {
+            Ok((password, _item)) => return Ok(Read::Found(Zeroizing::new(password.to_vec()))),
+            Err(e) if e.code() == NOT_FOUND => return Ok(Read::Missing),
+            Err(e) if matches!(e.code(), AUTH_FAILED | INTERACTION_NOT_ALLOWED) => {
+                if ask == Ask::Never {
+                    return Ok(Read::WouldAsk);
+                }
+            }
+            Err(e) => return Err(unavailable(e)),
+        }
+        tracing::info!(service, account, "reading the keychain item an earlier build stored; macOS asks once");
         match self.keychain.find_generic_password(service, account) {
             Ok((password, _item)) => Ok(Read::Found(Zeroizing::new(password.to_vec()))),
             Err(e) if e.code() == NOT_FOUND => Ok(Read::Missing),
-            Err(e) if ask == Ask::Never && matches!(e.code(), AUTH_FAILED | INTERACTION_NOT_ALLOWED) => Ok(Read::WouldAsk),
             Err(e) => Err(unavailable(e)),
         }
     }
