@@ -22,3 +22,5 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run the experiment
         run: bash scripts/experiment-keychain.sh
+      - name: Update the released 0.0.10 to 0.0.11 (manual checklist item 15)
+        run: bash scripts/experiment-upgrade.sh 0.0.10 0.0.11
