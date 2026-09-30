@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.11](https://github.com/sunerpy/voltip/compare/v0.0.10...v0.0.11) (2026-09-30)
+
+
+### Bug Fixes
+
+* **audio:** M4 corrections to mixing and long-take gaps, with tests that hold on slow runners ([#27](https://github.com/sunerpy/voltip/issues/27)) ([9ab69fd](https://github.com/sunerpy/voltip/commit/9ab69fd03d5a72e2e1e547d28d562f33456dcd1f))
+* **audio:** mix the first microphone chunk with recent computer sound ([9ab69fd](https://github.com/sunerpy/voltip/commit/9ab69fd03d5a72e2e1e547d28d562f33456dcd1f))
+* **audio:** report samples dropped right before a long take stops ([9ab69fd](https://github.com/sunerpy/voltip/commit/9ab69fd03d5a72e2e1e547d28d562f33456dcd1f))
+
 ## [0.0.10](https://github.com/sunerpy/voltip/compare/v0.0.9...v0.0.10) (2026-09-30)
 
 
