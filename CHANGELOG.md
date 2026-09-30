@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.13](https://github.com/sunerpy/voltip/compare/v0.0.12...v0.0.13) (2026-09-30)
+
+
+### Bug Fixes
+
+* **audio:** a mixed take empties a full queue before its overflow is reported ([#34](https://github.com/sunerpy/voltip/issues/34)) ([f1c2553](https://github.com/sunerpy/voltip/commit/f1c25539c510b74022604d56d8a539da7dc96c95))
+
 ## [0.0.12](https://github.com/sunerpy/voltip/compare/v0.0.11...v0.0.12) (2026-09-30)
 
 
