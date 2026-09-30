@@ -24,6 +24,26 @@ pub const SAMPLE_RATE_HZ: u32 = 16_000;
 pub const FAKE_TRANSCRIPT: &str = "你好，世界";
 /// Latency the fakes report.
 pub const FAKE_LATENCY_MS: u64 = 42;
+/// How long a held fake call (a gated injection or copy, a held recogniser session, a hanging
+/// probe) waits to be released before it gives up with a panic.
+const HOLD_LIMIT: Duration = Duration::from_secs(30);
+
+/// Wait on `cv` while `held` is true of the guarded value, for at most `limit`, and panic past it.
+/// A test that fails while a fake call is held never releases it, and dropping a runtime waits for
+/// every blocking thread: without the limit that test hangs the whole run instead of failing.
+fn wait_released<'a, T>(
+    guard: std::sync::MutexGuard<'a, T>,
+    cv: &std::sync::Condvar,
+    limit: Duration,
+    held: impl FnMut(&mut T) -> bool,
+) -> std::sync::MutexGuard<'a, T> {
+    let (guard, wait) = cv.wait_timeout_while(guard, limit, held).unwrap_or_else(std::sync::PoisonError::into_inner);
+    if wait.timed_out() {
+        drop(guard);
+        panic!("a held fake call was not released within {limit:?}");
+    }
+    guard
+}
 
 /// A mono 16 kHz recording of a 440 Hz tone at −6 dBFS, `ms` long.
 pub fn speech_recording(ms: u64) -> Recording {
@@ -637,10 +657,8 @@ impl ForegroundProbe for FakeProbe {
             ProbeReply::Panic => panic!("fake probe panicked"),
             ProbeReply::Hang => {
                 let (open, cv) = &*self.gate;
-                let mut released = open.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                while !*released {
-                    released = cv.wait(released).unwrap_or_else(std::sync::PoisonError::into_inner);
-                }
+                let released = open.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                drop(wait_released(released, cv, HOLD_LIMIT, |released| !*released));
                 Ok(None)
             }
         }
@@ -654,22 +672,27 @@ enum InjectReply {
     Err(String),
 }
 
-/// A blocking gate of the fake injector: a call waits until a permit is released.
-#[derive(Default)]
+/// A blocking gate of the fake injector: a call waits until a permit is released, for at most
+/// `limit` ([`HOLD_LIMIT`]).
 struct Gate {
     permits: std::sync::Mutex<usize>,
     cv: std::sync::Condvar,
     waiting: AtomicUsize,
+    limit: Duration,
+}
+
+impl Default for Gate {
+    fn default() -> Self {
+        Self { permits: std::sync::Mutex::new(0), cv: std::sync::Condvar::new(), waiting: AtomicUsize::new(0), limit: HOLD_LIMIT }
+    }
 }
 
 impl Gate {
     /// Block until a permit is there, then take it.
     fn pass(&self) {
-        let mut permits = self.permits.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let permits = self.permits.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         self.waiting.fetch_add(1, Ordering::SeqCst);
-        while *permits == 0 {
-            permits = self.cv.wait(permits).unwrap_or_else(std::sync::PoisonError::into_inner);
-        }
+        let mut permits = wait_released(permits, &self.cv, self.limit, |permits| *permits == 0);
         *permits -= 1;
         self.waiting.fetch_sub(1, Ordering::SeqCst);
     }
@@ -878,6 +901,8 @@ pub struct FakeStreaming {
     opens: AtomicUsize,
     warms: AtomicUsize,
     finishes: Arc<AtomicUsize>,
+    /// The word a session waits before, and its gate ([`FakeStreaming::holding`]).
+    hold: Option<(usize, Arc<Gate>)>,
 }
 
 /// The words the default [`FakeStreaming::script`] session emits, one per 100 ms chunk.
@@ -897,6 +922,20 @@ impl FakeStreaming {
             opens: AtomicUsize::new(0),
             warms: AtomicUsize::new(0),
             finishes: Arc::new(AtomicUsize::new(0)),
+            hold: None,
+        }
+    }
+
+    /// Sessions wait before word `index` (from 0) until [`FakeStreaming::release_hold`]: the decode
+    /// thread stops there, as a busy machine may stop it.
+    pub fn holding(self, index: usize) -> Self {
+        Self { hold: Some((index, Arc::new(Gate::default()))), ..self }
+    }
+
+    /// Let a session waiting before the held word go on (now or when it gets there).
+    pub fn release_hold(&self) {
+        if let Some((_, gate)) = &self.hold {
+            gate.release(1);
         }
     }
 
@@ -946,6 +985,7 @@ impl StreamingTranscriber for FakeStreaming {
                 committed: Vec::new(),
                 pending: std::collections::VecDeque::new(),
                 finishes: self.finishes.clone(),
+                hold: self.hold.clone(),
             })),
         }
     }
@@ -966,6 +1006,7 @@ struct FakeSession {
     committed: Vec<Segment>,
     pending: std::collections::VecDeque<StreamEvent>,
     finishes: Arc<AtomicUsize>,
+    hold: Option<(usize, Arc<Gate>)>,
 }
 
 impl FakeSession {
@@ -983,6 +1024,9 @@ impl StreamingSession for FakeSession {
             return;
         }
         let Some(text) = self.words.get(self.word) else { return };
+        if let Some((_, gate)) = self.hold.as_ref().filter(|(at, _)| *at == self.word) {
+            gate.pass();
+        }
         self.word += 1;
         if self.word.is_multiple_of(self.endpoint_every) {
             let segment = Segment { text: text.clone(), start_ms: self.sentence_start_ms, end_ms: self.fed_ms() };
@@ -1469,5 +1513,45 @@ mod tests {
         assert_eq!(s.poll(), StreamEvent::Partial { current: "你好".into() });
         s.feed(&chunk);
         assert_eq!(s.poll(), StreamEvent::Error("fake decoder failed".into()));
+    }
+
+    #[test]
+    fn a_held_session_waits_before_its_word_until_released() {
+        let fake = FakeStreaming::words(vec!["a".into(), "b".into()], 5).holding(1);
+        let chunk = vec![0.1_f32; LIVE_CHUNK_SAMPLES];
+        let mut s = fake.open(None).unwrap();
+        s.feed(&chunk);
+        assert_eq!(s.poll(), StreamEvent::Partial { current: "a".into() });
+        let gate = fake.hold.as_ref().map(|(_, gate)| gate.clone()).unwrap();
+        let feeding = std::thread::spawn(move || {
+            s.feed(&chunk);
+            s
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while gate.waiting.load(Ordering::SeqCst) == 0 {
+            assert!(std::time::Instant::now() < deadline, "the second feed waits before the held word");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        fake.release_hold();
+        let mut s = feeding.join().unwrap();
+        assert_eq!(s.poll(), StreamEvent::Partial { current: "b".into() });
+    }
+
+    /// Regression (CI, 2026-09-30): a test failed while its gated injection was held and never
+    /// released it; dropping the runtime waits for that blocking thread, so the run hung until
+    /// the job's hour ran out. A held call now gives up with a panic after its limit.
+    #[test]
+    fn regression_a_held_call_nobody_releases_gives_up_instead_of_hanging() {
+        let gate = Arc::new(Gate { limit: Duration::from_millis(50), ..Gate::default() });
+        let (tx, rx) = std::sync::mpsc::channel();
+        let held = gate.clone();
+        std::thread::spawn(move || {
+            let gave_up = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| held.pass())).is_err();
+            let _ = tx.send(gave_up);
+        });
+        assert_eq!(rx.recv_timeout(Duration::from_secs(10)), Ok(true), "the held call gave up");
+        // A released call still passes.
+        gate.release(1);
+        gate.pass();
     }
 }

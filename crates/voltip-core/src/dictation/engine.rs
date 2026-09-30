@@ -3788,7 +3788,11 @@ mod tests {
 
     /// Two English sentences and a tail: `Hello world.` (0–200 ms), `How are you.` (200–400 ms), `Fine`.
     fn english_script() -> Arc<FakeStreaming> {
-        Arc::new(FakeStreaming::words(["Hello", "Hello world.", "How", "How are you.", "Fine"].map(String::from).to_vec(), 2))
+        Arc::new(english_words())
+    }
+
+    fn english_words() -> FakeStreaming {
+        FakeStreaming::words(["Hello", "Hello world.", "How", "How are you.", "Fine"].map(String::from).to_vec(), 2)
     }
 
     fn statuses(effects: &[Effect]) -> Vec<&DictationPhase> {
@@ -3900,9 +3904,11 @@ mod tests {
         r.settle().await;
         assert_eq!(r.injector.waiting(), 1, "the second sentence is queued, not handed over while the first is in flight");
         assert!(r.injector.injected().is_empty(), "the gated injector recorded nothing yet");
-        // Let the first one through: it is counted, the second one is dispatched.
+        // Let the first one through: it is counted, the second one is dispatched. The decode thread
+        // sends the tail's partial before or after that count comes back, and the preview at the
+        // stop below includes it: wait for both.
         r.injector.release(1);
-        let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.injected == 1)).await;
+        let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.injected == 1 && l.current == "Fine")).await;
         assert!(matches!(phases.last().unwrap(), DictationPhase::Listening { live: Some(l), .. } if l.injected == 1 && l.committed.len() == 2), "{phases:?}");
         assert_eq!(r.injector.injected(), vec!["Hello world. ".to_owned()], "Latin sentence + one space");
         wait_until(|| r.injector.waiting() == 1).await;
@@ -3957,6 +3963,33 @@ mod tests {
         let fx = r.run_to_terminal().await;
         assert!(matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::LiveInject, .. } if text == "你好，世界。今天天气"), "{fx:?}");
         assert_eq!(r.injector.injected(), ["你好，世界。", "今天天气"].map(String::from));
+    }
+
+    /// Regression (CI, 2026-09-30): the decode thread sent the tail's partial only after the first
+    /// sentence's paste had been counted, the test above stopped before it came, and the failed
+    /// assertion hung the run. Held here until after that count, the tail still reaches the
+    /// preview the stop carries into `Processing`, and the text.
+    #[tokio::test(start_paused = true)]
+    async fn regression_live_inject_a_tail_after_the_first_paste_reaches_the_stop_preview() {
+        let streaming = Arc::new(english_words().holding(4));
+        let mut r = rig_mode(FakeAudio::speech(), FakeTranscriber::ok("never"), None, FakeInjector::paste().gated(), streaming.clone(), OutputMode::LiveInject);
+        r.start_open().await;
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.committed.len() == 2)).await;
+        wait_until(|| r.injector.waiting() == 1).await;
+        r.injector.release(1);
+        let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.injected == 1)).await;
+        assert!(matches!(phases.last().unwrap(), DictationPhase::Listening { live: Some(l), .. } if l.current.is_empty()), "the tail is held: {phases:?}");
+        streaming.release_hold();
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.injected == 1 && l.current == "Fine")).await;
+        let fx = r.engine.stop().unwrap();
+        assert!(
+            matches!(phase(&fx), DictationPhase::Processing { stage: ProcessingStage::Finalizing, preview: Some(p), .. } if p == "Hello world. How are you. Fine"),
+            "{fx:?}"
+        );
+        r.injector.release(2);
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { text, .. } if text == "Hello world. How are you. Fine"), "{fx:?}");
+        assert_eq!(r.injector.injected(), ["Hello world. ", "How are you. ", "Fine "].map(String::from));
     }
 
     /// `live_inject` when a paste falls back to the clipboard (docs/dictation.md §12): the pasting
