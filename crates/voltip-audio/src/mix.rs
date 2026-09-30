@@ -6,9 +6,15 @@
 //! behind or has nothing to play). Before each microphone chunk, queued samples older than the
 //! chunk plus [`MAX_LAG_SAMPLES`] are dropped — the computer's sound starts first and piles up
 //! while the microphone opens, and a faster clock piles up more — so the two are never more than
-//! 20 ms apart, from the first chunk on, whichever clock runs faster. The sum leaves
+//! 20 ms apart, from the first chunk on, whichever clock runs faster. A queue that fills up (the
+//! microphone took nothing for a second) drops the newest of the computer's sound, so what it
+//! still holds is older than that: [`MixSender`] counts the drop and the mixer empties the queue
+//! before its next chunk. The sum leaves
 //! headroom ([`MIX_GAIN`] on each side) and goes through a soft limiter, so a loud call over loud
 //! speech never wraps around.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Gain on each side before the sum: −3 dB, so two loud inputs rarely reach the limiter.
 pub const MIX_GAIN: f32 = 0.707;
@@ -20,6 +26,36 @@ pub const MAX_LAG_SAMPLES: usize = 320;
 /// Samples the other side's scratch buffer holds per step; a longer microphone chunk is mixed in
 /// several steps.
 pub const MIX_STEP: usize = 1024;
+
+/// The computer's sound on its way to a [`Mixer`], pushed from its own audio callback.
+pub struct MixSender {
+    queue: rtrb::Producer<f32>,
+    /// Samples that found the queue full since the mixer last looked.
+    overflowed: Arc<AtomicU64>,
+}
+
+impl std::fmt::Debug for MixSender {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MixSender").field("free", &self.queue.slots()).field("overflowed", &self.overflowed.load(Ordering::Relaxed)).finish()
+    }
+}
+
+impl MixSender {
+    /// Queue `samples` (16 kHz mono); what does not fit is dropped and counted. Never blocks.
+    pub fn push(&mut self, samples: &[f32]) {
+        let (_, rest) = self.queue.push_partial_slice(samples);
+        if !rest.is_empty() {
+            self.overflowed.fetch_add(rest.len() as u64, Ordering::Release);
+        }
+    }
+}
+
+/// A queue of `capacity` samples from the computer's sound to the mixer.
+pub fn mix_queue(capacity: usize) -> (MixSender, Mixer) {
+    let (queue, queued) = rtrb::RingBuffer::new(capacity);
+    let overflowed = Arc::new(AtomicU64::new(0));
+    (MixSender { queue, overflowed: overflowed.clone() }, Mixer::with_overflow(queued, overflowed))
+}
 
 /// Soft limiter: unchanged up to [`LIMIT_KNEE`], then bent smoothly towards full scale without
 /// ever reaching past it.
@@ -35,6 +71,8 @@ pub fn limit(x: f32) -> f32 {
 /// Mixes the microphone (the clock) with the queued computer's sound.
 pub struct Mixer {
     other: rtrb::Consumer<f32>,
+    /// Set by the [`MixSender`] when the queue was full.
+    overflowed: Arc<AtomicU64>,
     /// One step of the other side's samples; allocated once.
     scratch: Vec<f32>,
     /// Queued samples dropped because the other side ran ahead (for the log).
@@ -50,16 +88,24 @@ impl std::fmt::Debug for Mixer {
 }
 
 impl Mixer {
-    /// A mixer reading the other side from `other`.
+    /// A mixer reading the other side from `other` (a queue that never reports an overflow; see
+    /// [`mix_queue`] for one that does).
     pub fn new(other: rtrb::Consumer<f32>) -> Self {
-        Self { other, scratch: vec![0.0; MIX_STEP], dropped: 0, filled: 0 }
+        Self::with_overflow(other, Arc::new(AtomicU64::new(0)))
+    }
+
+    fn with_overflow(other: rtrb::Consumer<f32>, overflowed: Arc<AtomicU64>) -> Self {
+        Self { other, overflowed, scratch: vec![0.0; MIX_STEP], dropped: 0, filled: 0 }
     }
 
     /// Mix one microphone chunk (16 kHz mono) into `out` (cleared first; `mic.len()` samples).
     /// Allocates only when `out` has less capacity than the chunk.
     pub fn mix(&mut self, mic: &[f32], out: &mut Vec<f32>) {
         out.clear();
-        let excess = self.other.slots().saturating_sub(mic.len() + MAX_LAG_SAMPLES);
+        // The queue overflowed since the last chunk: its newest samples were dropped, so all it
+        // holds is older than they are.
+        let stale = if self.overflowed.swap(0, Ordering::Acquire) > 0 { self.other.slots() } else { 0 };
+        let excess = stale.max(self.other.slots().saturating_sub(mic.len() + MAX_LAG_SAMPLES));
         if excess > 0
             && let Ok(chunk) = self.other.read_chunk(excess)
         {
@@ -180,5 +226,27 @@ mod tests {
         assert!((index(out[0]) - newest_kept).abs() < 0.5, "mixed with sample {}", index(out[0]));
         assert!((index(out[159]) - (newest_kept + 159.0)).abs() < 0.5, "mixed with sample {}", index(out[159]));
         assert_eq!(mixer.dropped(), (8000 - 160 - MAX_LAG_SAMPLES) as u64);
+    }
+
+    /// Regression (goal review round 2, 2026-09-30): the microphone opened more than the queue's
+    /// second after the computer's sound, the queue filled, and its newest samples were dropped
+    /// while the oldest stayed; the first chunk was then mixed with sound from before those. A
+    /// queue that overflowed is emptied before the next chunk, which mixes with what comes after.
+    #[test]
+    fn regression_after_the_queue_overflowed_no_stale_sound_is_mixed_in() {
+        let (mut other, mut mixer) = mix_queue(1000);
+        // 1500 samples before the microphone takes any: 0..1000 stay queued, 1000..1500 are dropped.
+        let early: Vec<f32> = (0..1500u16).map(|i| f32::from(i) / 10_000.0).collect();
+        other.push(&early);
+        assert!(format!("{other:?}").contains("overflowed: 500"));
+        let mut out = Vec::new();
+        mixer.mix(&[0.0; 160], &mut out);
+        assert!(out.iter().all(|&s| s == 0.0), "stale sound mixed in: {:?}", &out[..4]);
+        assert_eq!(mixer.dropped(), 1000);
+        // What arrives after the overflow mixes in as usual.
+        other.push(&[0.5; 160]);
+        mixer.mix(&[0.0; 160], &mut out);
+        assert!(out.iter().all(|&s| (s - MIX_GAIN * 0.5).abs() < 1e-6), "{:?}", &out[..4]);
+        assert_eq!(mixer.dropped(), 1000);
     }
 }

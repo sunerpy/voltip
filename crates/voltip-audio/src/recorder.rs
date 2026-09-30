@@ -18,7 +18,7 @@ use crate::backend::{AudioDevice, Backend, CpalBackend, SampleCallback, StreamHa
 use crate::dsp::{FrameAccumulator, SampleChunk};
 use crate::live::{LiveConsumer, LiveProducer, LiveTapConfig, StreamResampler, live_tap};
 use crate::meter::{DEFAULT_FRAMES_PER_SECOND, DEFAULT_PEAK_HOLD_MS, LevelFrame};
-use crate::mix::Mixer;
+use crate::mix::mix_queue;
 use crate::pcm::{PcmConsumer, PcmProducer, PcmStreamConfig, pcm_stream};
 use crate::recording::{Recording, downmix_chunk, f32_to_i16, resample_mono};
 
@@ -345,16 +345,16 @@ impl Recorder {
             (Some(mic), Some(out)) => {
                 // `mixed`: the computer's sound waits in a queue at 16 kHz; the microphone's
                 // callback takes from it, mixes and feeds the sink.
-                let (mut queue, queued) = rtrb::RingBuffer::new(MIX_QUEUE_SAMPLES);
+                let (mut queue, mut mixer) = mix_queue(MIX_QUEUE_SAMPLES);
                 let mut other = ToMixRate::new(out.sample_rate_hz.unwrap_or(48_000))?;
                 let on_output: SampleCallback = Box::new(move |chunk, rate, channels| {
                     other.convert(chunk, rate, channels);
-                    // A full queue means the microphone stopped taking: those samples are lost.
-                    let _ = queue.push_partial_slice(&other.out);
+                    // A full queue means the microphone stopped taking: those samples are lost,
+                    // and the mixer drops what is left from before them.
+                    queue.push(&other.out);
                 });
                 streams.push(backend.open_output_capture(Some(out.id.as_str()), on_output)?);
                 let mut own = ToMixRate::new(mic.sample_rate_hz.unwrap_or(48_000))?;
-                let mut mixer = Mixer::new(queued);
                 let mut mixed_out = Vec::with_capacity(SCRATCH_FRAMES);
                 let on_microphone: SampleCallback = Box::new(move |chunk, rate, channels| {
                     own.convert(chunk, rate, channels);
