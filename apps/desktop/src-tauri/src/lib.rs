@@ -20,6 +20,7 @@ pub mod audio;
 pub mod cli;
 pub mod dictation;
 pub mod exit;
+pub mod export;
 pub mod feedback;
 pub mod hotkey;
 pub mod overlay;
@@ -44,7 +45,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 95] = [
+pub const COMMANDS: [&str; 98] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -98,6 +99,9 @@ pub const COMMANDS: [&str; 95] = [
     "history_delete",
     "history_clear",
     "history_star",
+    "history_process",
+    "history_process_cancel",
+    "history_export",
     "settings_set_locale",
     "settings_set_auto_update",
     "settings_set_history",
@@ -522,6 +526,36 @@ fn history_clear(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
 #[tauri::command]
 fn history_star(bridge: tauri::State<'_, Bridge>, id: String, starred: bool) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::HistoryStar { id, starred })?)
+}
+
+/// 用 AI 预设处理 (docs/dictation.md §22): progress and the end arrive as `history_process` events
+/// with `request_id`.
+#[tauri::command]
+fn history_process(bridge: tauri::State<'_, Bridge>, request_id: u64, id: String, preset: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::HistoryProcess { request_id, id, preset })?)
+}
+
+/// Stop a `history_process`; nothing is stored.
+#[tauri::command]
+fn history_process_cancel(bridge: tauri::State<'_, Bridge>, request_id: u64) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::HistoryProcessCancel { request_id })?)
+}
+
+/// 导出字幕 / 导出文本 (docs/dictation.md §22): the save dialog offers `file_name`, and the file is
+/// written here.
+#[tauri::command]
+async fn history_export<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    bridge: tauri::State<'_, Bridge>,
+    id: uuid::Uuid,
+    format: voltip_core::history::export::ExportFormat,
+    file_name: String,
+) -> Result<export::ExportOutcome, String> {
+    let entry = history_read(&bridge, move |b| b.history_entry(id)).await?;
+    Ok(match export::content(entry.as_ref(), format) {
+        Ok(content) => export::save(&app, content, format, &file_name).await,
+        Err(outcome) => outcome,
+    })
 }
 
 /// UI language (`system` | `zh-cn` | `en`); persisted by the core, every window follows `settings`.
@@ -1039,7 +1073,7 @@ pub fn build_app<R: Runtime>(
     // to this process and exits, so `--toggle` / `--cancel` are remote controls.
     let builder =
         if options.global_hotkey { builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| on_second_instance(app, &args))) } else { builder };
-    let builder = builder.plugin(tauri_plugin_opener::init());
+    let builder = builder.plugin(tauri_plugin_opener::init()).plugin(tauri_plugin_dialog::init());
     let builder = if options.global_hotkey { builder.plugin(tauri_plugin_global_shortcut::Builder::new().build()) } else { builder };
     // The updater plugin reads `plugins.updater` from the context (`run` injects it from the build
     // environment); without a source it is not registered at all.
@@ -1106,6 +1140,9 @@ pub fn build_app<R: Runtime>(
             history_delete,
             history_clear,
             history_star,
+            history_process,
+            history_process_cancel,
+            history_export,
             settings_set_locale,
             settings_set_auto_update,
             settings_set_history,

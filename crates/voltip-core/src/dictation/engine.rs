@@ -2329,6 +2329,7 @@ impl DictationEngine {
             // A voice edit rewrites with its own instruction (§19), never a preset.
             preset: (refined && self.status.kind == TakeKind::Dictation).then(|| self.take_preset().to_ref()),
             origin: None,
+            processed: None,
         };
         match injection {
             Ok(Injection { via, note }) => {

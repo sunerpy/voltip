@@ -1018,6 +1018,65 @@
     "type": "history",
     "recent": [
       {
+        "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+        "at_ms": 1758700600000,
+        "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+        "text": "把 fetchUser 改成 async，然后加上错误处理。",
+        "refined": true,
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "refine_model": "qwen/qwen3.8-27b",
+        "duration_ms": 3200,
+        "asr_ms": 640,
+        "refine_ms": 2400,
+        "outcome": {
+          "kind": "inserted",
+          "via": "paste"
+        },
+        "starred": true,
+        "mode": "whole_take",
+        "vocabulary": {
+          "corrections": [
+            {
+              "id": "3b241101-e2bb-4255-8caf-4136c566a962",
+              "count": 1
+            }
+          ],
+          "rules": [
+            {
+              "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+              "count": 2
+            }
+          ]
+        },
+        "kind": "dictation",
+        "app": {
+          "id": "code",
+          "name": "Code"
+        },
+        "scene": {
+          "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+          "name": "代码评审"
+        },
+        "preset": {
+          "id": "formal",
+          "name": "书面语"
+        },
+        "processed": {
+          "text": "- 预算已批准\n- 下周三前提交方案",
+          "preset": {
+            "id": "notes",
+            "name": "要点纪要"
+          },
+          "at_ms": 1758700660000
+        }
+      }
+    ],
+    "total": 1
+  },
+  {
+    "type": "history",
+    "recent": [
+      {
         "id": "1c2d3e4f-5a6b-4c8e-9f7a-0f3f1a1e8d4b",
         "at_ms": 1758700540000,
         "raw_text": "测试一下",
@@ -2966,6 +3025,49 @@
     "outcome": {
       "status": "failed",
       "reason": "尚未配置 AI 润色服务，无法试运行预设"
+    }
+  },
+  {
+    "type": "history_process",
+    "request_id": 5,
+    "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "state": {
+      "state": "running",
+      "done": 2,
+      "total": 5
+    }
+  },
+  {
+    "type": "history_process",
+    "request_id": 5,
+    "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "state": {
+      "state": "done",
+      "processed": {
+        "text": "- 预算已批准\n- 下周三前提交方案",
+        "preset": {
+          "id": "notes",
+          "name": "要点纪要"
+        },
+        "at_ms": 1758700660000
+      }
+    }
+  },
+  {
+    "type": "history_process",
+    "request_id": 6,
+    "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "state": {
+      "state": "failed",
+      "reason": "尚未配置 AI 润色服务，无法用预设处理"
+    }
+  },
+  {
+    "type": "history_process",
+    "request_id": 7,
+    "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "state": {
+      "state": "cancelled"
     }
   },
   {

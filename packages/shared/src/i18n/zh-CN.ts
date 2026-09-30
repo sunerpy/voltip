@@ -621,6 +621,30 @@ export const zhCN = {
       deleted: "删除",
       added: "新增",
       rawOutput: "语音识别原始结果：{text}",
+      /** docs/dictation.md §22: 用 AI 预设处理's result. */
+      processed: "处理后",
+      processedBy: "由「{preset}」处理 · 原文保留",
+    },
+    /** docs/dictation.md §22: the tools of a long entry. */
+    long: {
+      title: "用 AI 预设处理",
+      preset: "预设",
+      start: "开始处理",
+      again: "重新处理",
+      running: "已处理 {done}/{total} 部分",
+      failed: "处理失败：{reason}",
+      cancelled: "已取消，未保存结果。",
+      note: "全文按句子分成不超过 1500 字的部分依次处理，结果另存为处理后文本，原文保留。",
+      builtinNote: "内置 AI 服务受免费额度限制，长文处理较慢。",
+      exportSrt: "导出字幕（SRT）",
+      exportTxt: "导出文本（TXT）",
+      txtUsesProcessed: "导出文本时使用处理后文本。",
+      saved: "已保存：{path}",
+      exportFailed: {
+        gone: "这条记录已删除。",
+        empty: "这条记录没有分段，无法导出字幕。",
+        write: "文件未能保存：{detail}",
+      },
     },
     detail: {
       asrModel: "识别模型",

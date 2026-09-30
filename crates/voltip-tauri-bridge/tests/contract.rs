@@ -16,6 +16,8 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use voltip_core::connectivity::{AddressCheck, ConnectivityReport, ConnectivityStatus, LanHostCheck, PeerCheck, ProbeResult, RelayCheck};
 use voltip_core::dictation::{ClipboardCode, FailureCode, ProcessingStage, Via};
+use voltip_core::history::ProcessedText;
+use voltip_core::history::process::ProcessState;
 use voltip_core::paste::{CopyReason, PasteFailure, PasteOutcome};
 use voltip_core::phone::{PhoneTakeFailure, PhoneTakeState, PhoneTakeView};
 use voltip_core::phone::{PhoneTextSource, SentText, SentTextFailure, SentTextState};
@@ -423,6 +425,15 @@ fn stream_segments() -> Vec<Segment> {
     vec![Segment { text: LIVE_COMMITTED.into(), start_ms: 0, end_ms: 1480 }, Segment { text: "然后加上错误处理".into(), start_ms: 1480, end_ms: 3200 }]
 }
 
+/// 用 AI 预设处理's result as a long entry carries it (docs/dictation.md §22).
+fn processed_text() -> ProcessedText {
+    ProcessedText {
+        text: "- 预算已批准\n- 下周三前提交方案".into(),
+        preset: PresetRef { id: PresetId::Builtin(BuiltinPreset::Notes), name: "要点纪要".into() },
+        at_ms: AT_MS + 60_000,
+    }
+}
+
 fn history_entries() -> Vec<HistoryEntry> {
     vec![
         HistoryEntry {
@@ -448,6 +459,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             scene: Some(SceneRef { id: uuid(SCENE_ID), name: "代码评审".into(), builtin: None }),
             preset: Some(PresetRef { id: PresetId::Builtin(BuiltinPreset::Formal), name: "书面语".into() }),
             origin: None,
+            processed: None,
         },
         HistoryEntry {
             id: uuid(HISTORY_ID_2),
@@ -473,6 +485,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             scene: None,
             preset: None,
             origin: None,
+            processed: None,
         },
         // docs/dictation.md §19: the instruction is the raw text, the rewrite the text.
         HistoryEntry {
@@ -499,6 +512,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             scene: None,
             preset: None,
             origin: None,
+            processed: None,
         },
         // docs/dictation.md §20.6: text a phone sent, inserted as it was.
         HistoryEntry {
@@ -524,6 +538,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             scene: None,
             preset: None,
             origin: Some(EntryOrigin { device: "Pixel 8".into(), kind: OriginKind::Typed }),
+            processed: None,
         },
     ]
 }
@@ -835,6 +850,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::Scenes { .. } => "scenes",
         UiEvent::Presets { .. } => "presets",
         UiEvent::PresetTry { .. } => "preset_try",
+        UiEvent::HistoryProcess { .. } => "history_process",
         UiEvent::ProviderProbe(_) => "provider_probe",
         UiEvent::PhoneTake { .. } => "phone_take",
         UiEvent::SentTexts { .. } => "sent_texts",
@@ -1318,6 +1334,8 @@ fn all_events() -> Vec<UiEvent> {
             },
             ..history_entries().remove(1)
         }]),
+        // docs/dictation.md §22: a long take processed with a preset keeps the result beside its text.
+        history_event(vec![HistoryEntry { processed: Some(Box::new(processed_text())), ..history_entries().remove(0) }]),
         // docs/dictation.md §22: a long take's text past 5000 characters waits on the clipboard.
         history_event(vec![HistoryEntry {
             outcome: Outcome::Clipboard { reason: voltip_core::dictation::long::TOO_LONG_TO_PASTE.into(), code: Some(ClipboardCode::TooLong) },
@@ -1520,6 +1538,15 @@ fn all_events() -> Vec<UiEvent> {
             outcome: PresetTryOutcome::Ok { text: "Meeting at 10 a.m. tomorrow.".into(), latency_ms: 820, model: REFINE_MODEL.into() },
         },
         UiEvent::PresetTry { id: 4, outcome: PresetTryOutcome::Failed { reason: voltip_core::PRESET_TRY_UNCONFIGURED.into() } },
+        // 用 AI 预设处理 (docs/dictation.md §22): progress, the stored result, a failure, a cancel.
+        UiEvent::HistoryProcess { request_id: 5, id: uuid(HISTORY_ID), state: ProcessState::Running { done: 2, total: 5 } },
+        UiEvent::HistoryProcess { request_id: 5, id: uuid(HISTORY_ID), state: ProcessState::Done { processed: processed_text() } },
+        UiEvent::HistoryProcess {
+            request_id: 6,
+            id: uuid(HISTORY_ID),
+            state: ProcessState::Failed { reason: voltip_core::history::process::PROCESS_UNCONFIGURED.into() },
+        },
+        UiEvent::HistoryProcess { request_id: 7, id: uuid(HISTORY_ID), state: ProcessState::Cancelled },
     ];
     events.extend(paste_results());
     events
@@ -1585,6 +1612,8 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::HistoryDelete { .. } => "HistoryDelete",
         UiCommand::HistoryClear => "HistoryClear",
         UiCommand::HistoryStar { .. } => "HistoryStar",
+        UiCommand::HistoryProcess { .. } => "HistoryProcess",
+        UiCommand::HistoryProcessCancel { .. } => "HistoryProcessCancel",
         UiCommand::ModelDownload { .. } => "ModelDownload",
         UiCommand::ModelCancel { .. } => "ModelCancel",
         UiCommand::ModelRemove { .. } => "ModelRemove",
@@ -1670,6 +1699,9 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("history_delete", json!({ "id": HISTORY_ID }), "HistoryDelete"),
         ("history_clear", Value::Null, "HistoryClear"),
         ("history_star", json!({ "id": HISTORY_ID, "starred": true }), "HistoryStar"),
+        // 用 AI 预设处理 (docs/dictation.md §22).
+        ("history_process", json!({ "requestId": 5, "id": HISTORY_ID, "preset": "notes" }), "HistoryProcess"),
+        ("history_process_cancel", json!({ "requestId": 5 }), "HistoryProcessCancel"),
         ("model_download", json!({ "id": SENSE_VOICE_ID }), "ModelDownload"),
         ("model_cancel", json!({ "id": SENSE_VOICE_ID }), "ModelCancel"),
         ("model_remove", json!({ "id": PARAFORMER_ID }), "ModelRemove"),

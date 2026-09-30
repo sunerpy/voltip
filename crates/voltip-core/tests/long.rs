@@ -46,13 +46,13 @@ fn start(audio: FakeAudio, transcriber: FakeTranscriber, injector: FakeInjector,
 }
 
 fn start_in(dir: tempfile::TempDir, audio: FakeAudio, transcriber: FakeTranscriber, injector: FakeInjector, max_minutes: u16) -> Node {
-    start_with(dir, audio, transcriber, injector, max_minutes, None)
+    start_with(dir, audio, transcriber, injector, max_minutes, None, FakeRefiner::ok("润色后的全文。"))
 }
 
 /// [`start`] in a streaming mode (docs/dictation.md §12), its model installed and `streaming` the
 /// recogniser; no clean-up.
 fn start_streaming(audio: FakeAudio, transcriber: FakeTranscriber, streaming: FakeStreaming, mode: OutputMode) -> Node {
-    start_with(tempfile::tempdir().unwrap(), audio, transcriber, FakeInjector::paste(), 10, Some((streaming, mode)))
+    start_with(tempfile::tempdir().unwrap(), audio, transcriber, FakeInjector::paste(), 10, Some((streaming, mode)), FakeRefiner::ok("润色后的全文。"))
 }
 
 fn start_with(
@@ -62,6 +62,7 @@ fn start_with(
     injector: FakeInjector,
     max_minutes: u16,
     streaming: Option<(FakeStreaming, OutputMode)>,
+    refiner: FakeRefiner,
 ) -> Node {
     let recording = RecordingSettings { max_minutes, ..RecordingSettings::default() };
     let engines = match &streaming {
@@ -70,7 +71,7 @@ fn start_with(
     };
     SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, engines, recording, ..Settings::default() }).unwrap();
     let transcriber = Arc::new(transcriber);
-    let refiner = Arc::new(FakeRefiner::ok("润色后的全文。"));
+    let refiner = Arc::new(refiner);
     let injector = Arc::new(injector);
     let mut ports = ports_with(Arc::new(audio), transcriber.clone(), Some(refiner.clone()), injector.clone());
     if let Some((streaming, _)) = streaming {
@@ -447,5 +448,72 @@ async fn a_long_live_inject_take_that_falls_back_pastes_the_rest_from_the_file()
     }
     assert_eq!(node.injector.injected(), vec!["你好，世界。".to_owned(), rest]);
     wait_no_recordings(node.dir.path()).await;
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// 用 AI 预设处理 on a long take's entry (docs/dictation.md §22): its 2100 characters in two parts
+/// through 要点纪要 and a summary of their points, the progress counted, the result stored beside the
+/// entry's own text; a cancel stores nothing, and a request without an AI service or for an entry
+/// that is gone fails at once.
+#[tokio::test]
+async fn a_long_entry_is_processed_in_parts_and_the_result_kept_with_it() {
+    use voltip_core::history::process::{PROCESS_ENTRY_GONE, ProcessState};
+    use voltip_core::{BuiltinPreset, PresetId};
+    let dir = tempfile::tempdir().unwrap();
+    let refiner = FakeRefiner::slow("- 要点", Duration::from_millis(30));
+    let mut node =
+        start_with(dir, FakeAudio::speech().long(600), FakeTranscriber::numbered(100, &[], Duration::ZERO), FakeInjector::paste(), 10, None, refiner);
+    ready(&mut node).await;
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    statuses_until(&mut node, |s| listening_with(s, SegmentProgress { done: 20, total: 20 })).await;
+    stop(&mut node).await;
+    let entry = newest_entry(&mut node).await;
+    assert!(entry.processed.is_none() && entry.text.chars().count() > 2000);
+    let calls_before = node.refiner.calls();
+    let notes = PresetId::Builtin(BuiltinPreset::Notes);
+    node.handle.send(CoreCommand::HistoryProcess { request_id: 7, id: entry.id, preset: notes }).await.unwrap();
+    let (mut running, mut stored) = (Vec::new(), None);
+    let processed = wait(&mut node, |e| match e {
+        CoreEvent::HistoryProcess { request_id: 7, id, state } => {
+            assert_eq!(*id, entry.id);
+            match state {
+                ProcessState::Running { done, total } => {
+                    running.push((*done, *total));
+                    None
+                }
+                ProcessState::Done { processed } => Some(processed.clone()),
+                other => panic!("{other:?}"),
+            }
+        }
+        // The history is sent again with the stored result, before the answer.
+        CoreEvent::History { recent, .. } => {
+            stored = recent.first().cloned();
+            None
+        }
+        _ => None,
+    })
+    .await;
+    assert_eq!(running.first(), Some(&(0, 3)), "two parts and the summary: {running:?}");
+    assert_eq!(processed.text, "- 要点");
+    assert_eq!(processed.preset.id, notes);
+    assert_eq!(node.refiner.calls() - calls_before, 3);
+    let stored = stored.expect("the history came again");
+    assert_eq!((stored.text, stored.processed), (entry.text.clone(), Some(Box::new(processed))));
+
+    // Cancelled while its first part is out: nothing is stored.
+    node.handle.send(CoreCommand::HistoryProcess { request_id: 8, id: entry.id, preset: PresetId::Builtin(BuiltinPreset::Formal) }).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::HistoryProcess { request_id: 8, state: ProcessState::Running { .. }, .. }).then_some(())).await;
+    node.handle.send(CoreCommand::HistoryProcessCancel { request_id: 8 }).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::HistoryProcess { request_id: 8, state: ProcessState::Cancelled, .. }).then_some(())).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    node.handle.send(CoreCommand::HistoryProcess { request_id: 9, id: uuid::Uuid::new_v4(), preset: notes }).await.unwrap();
+    let reason = wait(&mut node, |e| match e {
+        CoreEvent::HistoryProcess { request_id: 9, state: ProcessState::Failed { reason }, .. } => Some(reason.clone()),
+        CoreEvent::HistoryProcess { request_id: 8, state, .. } => panic!("the cancelled request went on: {state:?}"),
+        _ => None,
+    })
+    .await;
+    assert_eq!(reason, PROCESS_ENTRY_GONE);
+    node.handle.send(CoreCommand::HistoryProcessCancel { request_id: 99 }).await.unwrap();
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }

@@ -251,6 +251,21 @@ pub enum UiCommand {
         /// New flag.
         starred: bool,
     },
+    /// 用 AI 预设处理 (docs/dictation.md §22): the entry's text through a preset in parts; progress
+    /// and the end arrive as `history_process` events with `request_id`.
+    HistoryProcess {
+        /// Echoed in every answer.
+        request_id: u64,
+        /// The entry's UUID.
+        id: String,
+        /// A built-in name or a custom preset's UUID.
+        preset: String,
+    },
+    /// Stop a `history_process`; nothing is stored.
+    HistoryProcessCancel {
+        /// The request to stop.
+        request_id: u64,
+    },
     /// Fetch and verify a local model (docs/dictation.md §10); progress arrives as `models` events.
     ModelDownload {
         /// Catalogue id (`sense-voice-small`, `paraformer-zh`).
@@ -436,6 +451,12 @@ impl UiCommand {
             Self::HistoryDelete { id } => CoreCommand::HistoryDelete(parse_id(&id)?),
             Self::HistoryClear => CoreCommand::HistoryClear,
             Self::HistoryStar { id, starred } => CoreCommand::HistoryStar(parse_id(&id)?, starred),
+            Self::HistoryProcess { request_id, id, preset } => CoreCommand::HistoryProcess {
+                request_id,
+                id: parse_id(&id)?,
+                preset: PresetId::parse(&preset).ok_or_else(|| BridgeError::BadArgument(format!("presets: 没有名为「{preset}」的预设")))?,
+            },
+            Self::HistoryProcessCancel { request_id } => CoreCommand::HistoryProcessCancel { request_id },
             Self::ModelDownload { id } => CoreCommand::ModelDownload(id),
             Self::ModelCancel { id } => CoreCommand::ModelCancel(id),
             Self::ModelRemove { id } => CoreCommand::ModelRemove(id),

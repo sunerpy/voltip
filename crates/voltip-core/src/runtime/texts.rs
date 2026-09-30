@@ -158,6 +158,7 @@ impl Runtime {
             scene: None,
             preset: None,
             origin: Some(EntryOrigin { device: text.name, kind: origin_kind(text.source) }),
+            processed: None,
         };
         self.record_history(entry);
         self.deliver_next_text();

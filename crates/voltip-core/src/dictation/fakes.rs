@@ -1022,6 +1022,35 @@ pub fn fake_engines() -> crate::engines::EngineSettings {
     }
 }
 
+/// A finished dictation of `text` as the history keeps it (a whole take, pasted, not cleaned up).
+pub fn history_entry(text: &str) -> crate::HistoryEntry {
+    crate::HistoryEntry {
+        id: uuid::Uuid::new_v4(),
+        at_ms: 1_758_700_000_000,
+        raw_text: text.to_owned(),
+        text: text.to_owned(),
+        refined: false,
+        asr_model: "fake/asr".to_owned(),
+        refine_model: None,
+        duration_ms: 1500,
+        asr_ms: FAKE_LATENCY_MS,
+        refine_ms: None,
+        outcome: crate::Outcome::Inserted { via: Via::Paste },
+        starred: false,
+        mode: crate::OutputMode::WholeTake,
+        segments: None,
+        live_error: None,
+        vocabulary: None,
+        kind: crate::TakeKind::Dictation,
+        edit: None,
+        app: None,
+        scene: None,
+        preset: None,
+        origin: None,
+        processed: None,
+    }
+}
+
 /// Ports that complete the happy path with no network: speech audio, [`FAKE_TRANSCRIPT`], no
 /// refiner, a paste injector, no streaming recogniser.
 pub fn ports() -> DictationPorts {

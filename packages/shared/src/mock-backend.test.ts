@@ -4,6 +4,9 @@ import {
   MOCK_ALWAYS_ON_PAUSE_MS,
   MOCK_ASR_MS,
   MOCK_AUDIO_OUTPUTS,
+  MOCK_EXPORT_DIR,
+  MOCK_PROCESS_ENTRY_GONE,
+  MOCK_PROCESS_UNCONFIGURED,
   MOCK_AUDIO_DEVICES,
   MOCK_NEARBY,
   MOCK_TEXT_MS,
@@ -618,6 +621,88 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     });
     const old = { system_audio: { state: "macos_too_old" as const, version: "14.5" }, devices: [] };
     expect(await new MockBackend({ audioOutputs: old }).audioOutputs()).toEqual(old);
+  });
+
+  it("processes an entry like the core: parts at MOCK_REFINE_MS, 要点纪要's summary, the result stored; a cancel or a missing entry stores nothing; exports answer like the shell (docs/dictation.md §22)", async () => {
+    const text = "今天的会议讨论了三件事。".repeat(300);
+    const long: HistoryEntry = {
+      id: "long",
+      at_ms: T0,
+      raw_text: text,
+      text,
+      refined: false,
+      asr_model: "m",
+      duration_ms: 600_000,
+      asr_ms: 1,
+      outcome: { kind: "inserted", via: "paste" },
+      starred: false,
+      mode: "whole_take",
+      kind: "dictation",
+      segments: [{ text: "第一段。", start_ms: 0, end_ms: 1000 }],
+    };
+    const backend = new MockBackend({ now: () => clock, history: [long] });
+    const events = collect(backend);
+    const answers = () => events.flatMap((e) => (e.type === "history_process" ? [e.state] : []));
+    await backend.invoke("history_process", { requestId: 1, id: "long", preset: "notes" });
+    expect(answers()).toEqual([{ state: "running", done: 0, total: 4 }]);
+    tick(MOCK_REFINE_MS * 4);
+    const done = answers().at(-1);
+    expect(answers().map((a) => a.state)).toEqual([
+      "running",
+      "running",
+      "running",
+      "running",
+      "done",
+    ]);
+    expect(done).toMatchObject({
+      state: "done",
+      processed: { preset: { id: "notes" }, at_ms: clock },
+    });
+    expect(backend.peek().history_recent[0]?.processed).toEqual(
+      done?.state === "done" ? done.processed : null,
+    );
+    await backend.invoke("history_process", { requestId: 2, id: "long", preset: "formal" });
+    await backend.invoke("history_process_cancel", { requestId: 2 });
+    await backend.invoke("history_process_cancel", { requestId: 99 });
+    tick(MOCK_REFINE_MS * 5);
+    expect(answers().at(-1)).toEqual({ state: "cancelled" });
+    expect(backend.peek().history_recent[0]?.processed?.preset.id).toBe("notes");
+    await backend.invoke("history_process", { requestId: 3, id: "gone", preset: "notes" });
+    expect(answers().at(-1)).toEqual({ state: "failed", reason: MOCK_PROCESS_ENTRY_GONE });
+    // Deleted while it ran.
+    await backend.invoke("history_process", { requestId: 4, id: "long", preset: "proofread" });
+    await backend.invoke("history_delete", { id: "long" });
+    tick(MOCK_REFINE_MS * 3);
+    expect(answers().at(-1)).toEqual({ state: "failed", reason: MOCK_PROCESS_ENTRY_GONE });
+    const unconfigured = new MockBackend({ history: [long], builtIn: {} });
+    const their = collect(unconfigured);
+    await unconfigured.invoke("history_process", { requestId: 5, id: "long", preset: "notes" });
+    expect(their.at(-1)).toMatchObject({
+      type: "history_process",
+      state: { state: "failed", reason: MOCK_PROCESS_UNCONFIGURED },
+    });
+    expect(await unconfigured.historyExport("long", "srt", "a")).toEqual({
+      kind: "saved",
+      path: `${MOCK_EXPORT_DIR}/a.srt`,
+    });
+    expect(await unconfigured.historyExport("long", "txt", "b")).toEqual({
+      kind: "saved",
+      path: `${MOCK_EXPORT_DIR}/b.txt`,
+    });
+    expect(unconfigured.exports).toEqual([
+      { id: "long", format: "srt", fileName: "a" },
+      { id: "long", format: "txt", fileName: "b" },
+    ]);
+    expect(await unconfigured.historyExport("none", "txt", "c")).toMatchObject({
+      kind: "failed",
+      code: "gone",
+    });
+    const plain = new MockBackend({ history: [{ ...long, segments: undefined }] });
+    expect(await plain.historyExport("long", "srt", "d")).toMatchObject({
+      kind: "failed",
+      code: "empty",
+    });
+    backend.destroy();
   });
 
   it("skips the refine stage and pastes the raw text when refine is off; clipboard_only reports via clipboard", async () => {

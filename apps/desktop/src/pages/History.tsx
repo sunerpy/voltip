@@ -55,10 +55,11 @@ import {
   useHistoryList,
 } from "../features/history/useHistoryList";
 import { ClipboardNote } from "../features/history/ClipboardNote";
+import { LongEntryTools, isLongEntry, useHistoryProcess } from "../features/history/LongEntryTools";
 import { ResultActions } from "../features/history/ResultActions";
 import { shortModel } from "../shell/page-meta";
 
-type View = "raw" | "polished" | "diff";
+type View = "raw" | "polished" | "diff" | "processed";
 
 export interface HistoryProps {
   /** `today | week | month | all | starred | failed` from the home tiles, or an entry id. */
@@ -127,6 +128,10 @@ export function History({ initialFilter }: HistoryProps) {
   // stale and a fresh dictation shows up on the right as soon as the core appends it.
   const selected = useHistoryEntry(selectedId, visible) ?? visible[0];
   const moreRef = useLoadMoreWhenSeen(list.more, list.loadMore);
+  // docs/dictation.md §22: 用 AI 预设处理 on the entry in the detail, and its result.
+  const process = useHistoryProcess(selected?.id ?? "");
+  const processed = process.view.state === "done" ? process.view.processed : selected?.processed;
+  const shown: View = view === "processed" && processed === undefined ? "polished" : view;
 
   const star = (entry: HistoryEntry) => {
     void backend.invoke("history_star", { id: entry.id, starred: !entry.starred });
@@ -502,7 +507,7 @@ export function History({ initialFilter }: HistoryProps) {
                     <Segmented
                       label={t("history.view.label")}
                       size="sm"
-                      value={view}
+                      value={shown}
                       onChange={setView}
                       options={[
                         { value: "raw", label: t("history.view.raw") },
@@ -513,9 +518,12 @@ export function History({ initialFilter }: HistoryProps) {
                             : t("history.view.inserted"),
                         },
                         { value: "diff", label: t("history.view.diff") },
+                        ...(processed === undefined
+                          ? []
+                          : [{ value: "processed" as const, label: t("history.view.processed") }]),
                       ]}
                     />
-                    {view === "diff" && (
+                    {shown === "diff" && (
                       <span className="flex gap-2">
                         <Badge tone="danger">{t("history.view.deleted")}</Badge>
                         <Badge tone="accent">{t("history.view.added")}</Badge>
@@ -526,9 +534,14 @@ export function History({ initialFilter }: HistoryProps) {
                     className="min-h-[120px] rounded-10 bg-inset p-4 text-[15px] leading-7 text-fg"
                     data-testid="entry-text"
                     data-user-text>
-                    {view === "raw" && selected.raw_text}
-                    {view === "polished" && selected.text}
-                    {view === "diff" &&
+                    {shown === "raw" && selected.raw_text}
+                    {shown === "polished" && selected.text}
+                    {shown === "processed" && processed !== undefined && (
+                      <span className="whitespace-pre-wrap" data-testid="entry-processed">
+                        {processed.text}
+                      </span>
+                    )}
+                    {shown === "diff" &&
                       diffSegments({ rawText: selected.raw_text, text: selected.text }).map(
                         (seg, i) =>
                           seg.kind === "same" ? (
@@ -547,14 +560,23 @@ export function History({ initialFilter }: HistoryProps) {
                             </span>
                           ),
                       )}
-                    {view !== "raw" && (
+                    {shown === "processed" && processed !== undefined ? (
                       <div className="mt-3 text-[12px] text-fg-subtle">
-                        {t("history.view.rawOutput", { text: selected.raw_text })}
+                        {t("history.view.processedBy", {
+                          preset: presetRefLabel(processed.preset, locale),
+                        })}
                       </div>
+                    ) : (
+                      shown !== "raw" && (
+                        <div className="mt-3 text-[12px] text-fg-subtle">
+                          {t("history.view.rawOutput", { text: selected.raw_text })}
+                        </div>
+                      )
                     )}
                   </div>
                 </>
               )}
+              {isLongEntry(selected) && <LongEntryTools entry={selected} process={process} />}
               {selected.outcome.kind === "clipboard" && (
                 // docs/dictation.md §4.2: why the paste fell back, in words; the raw message only
                 // under the technical details (never in the header).

@@ -43,6 +43,7 @@ use crate::{CoreError, is_initiator, rendezvous_channel};
 mod always_on;
 mod check;
 mod nearby;
+mod processing;
 mod take_codec;
 mod takes;
 mod texts;
@@ -320,6 +321,22 @@ pub enum CoreCommand {
     HistoryClear,
     /// Flag / unflag a history entry.
     HistoryStar(Uuid, bool),
+    /// 用 AI 预设处理 (docs/dictation.md §22): the entry's text through `preset` in parts; progress
+    /// and the end arrive as [`CoreEvent::HistoryProcess`] with `request_id`, and the result is
+    /// stored with the entry.
+    HistoryProcess {
+        /// Echoed in every answer.
+        request_id: u64,
+        /// The entry.
+        id: Uuid,
+        /// A built-in or custom preset (a custom one that is gone is 校对).
+        preset: crate::presets::PresetId,
+    },
+    /// Stop a [`CoreCommand::HistoryProcess`]; nothing is stored.
+    HistoryProcessCancel {
+        /// The request to stop.
+        request_id: u64,
+    },
     /// Fetch and verify a local model (catalogue id); progress arrives as `Models` events.
     ModelDownload(String),
     /// Stop a running download (`.part` files stay for a resume).
@@ -419,6 +436,7 @@ struct Inbox {
     phone_rx: mpsc::Receiver<takes::PhoneEvent>,
     check_rx: mpsc::Receiver<check::Probed>,
     disc_rx: mpsc::Receiver<crate::discovery::DiscoveryEvent>,
+    process_rx: mpsc::Receiver<processing::Processed>,
 }
 
 /// Events to the UI.
@@ -472,6 +490,15 @@ pub enum CoreEvent {
         recent: Vec<HistoryEntry>,
         /// Entries in the history.
         total: u32,
+    },
+    /// Where a [`CoreCommand::HistoryProcess`] is (docs/dictation.md §22).
+    HistoryProcess {
+        /// The request's id.
+        request_id: u64,
+        /// The entry.
+        id: Uuid,
+        /// Running, done (stored), failed or cancelled.
+        state: crate::history::process::ProcessState,
     },
     /// Resolved engine configuration (providers, models, user-entered hosts, key presence); on
     /// `Ready` and after changes.
@@ -607,6 +634,7 @@ impl AppCore {
         let (phone_tx, phone_rx) = mpsc::channel(64);
         let (check_tx, check_rx) = mpsc::channel(4);
         let (disc_tx, disc_rx) = mpsc::channel(64);
+        let (process_tx, process_rx) = mpsc::channel(8);
         let activation = ActivationState::new(ActivationConfig::from(&settings));
         let mut rt = Runtime {
             config,
@@ -662,9 +690,11 @@ impl AppCore {
             disc_tx,
             lan: nearby::Lan::default(),
             always_on_at: None,
+            processing: HashMap::new(),
+            process_tx,
         };
         rt.connect_relay()?;
-        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, disc_rx };
+        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, disc_rx, process_rx };
         tokio::spawn(async move { rt.run(inbox).await });
         Ok((CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
@@ -901,6 +931,10 @@ struct Runtime {
     lan: nearby::Lan,
     /// Always-on pairing (docs/pairing.md 「常开配对」): when the next session opens.
     always_on_at: Option<Instant>,
+    /// 用 AI 预设处理 requests running, by request id (docs/dictation.md §22).
+    processing: HashMap<u64, (Uuid, tokio::task::JoinHandle<()>)>,
+    /// Their tasks report here.
+    process_tx: mpsc::Sender<processing::Processed>,
 }
 
 impl Runtime {
@@ -1045,7 +1079,7 @@ impl Runtime {
     // ---------------- main loop ----------------
 
     async fn run(mut self, inbox: Inbox) {
-        let Inbox { mut cmd_rx, mut link_rx, mut dict_rx, mut model_rx, mut act_rx, mut phone_rx, mut check_rx, mut disc_rx } = inbox;
+        let Inbox { mut cmd_rx, mut link_rx, mut dict_rx, mut model_rx, mut act_rx, mut phone_rx, mut check_rx, mut disc_rx, mut process_rx } = inbox;
         self.emit(CoreEvent::Ready {
             identity: self.identity.public(),
             settings: self.settings.clone(),
@@ -1085,6 +1119,7 @@ impl Runtime {
                 Some(event) = phone_rx.recv() => self.on_phone_event(event),
                 Some(probed) = check_rx.recv() => self.on_probed(probed),
                 Some(seen) = disc_rx.recv() => self.on_discovery(seen),
+                Some(processed) = process_rx.recv() => self.on_processed(processed),
                 _ = ticker.tick() => self.tick().await,
             }
             // A rename or a pairing that started or ended changes what the LAN hears; a device
@@ -1192,6 +1227,14 @@ impl Runtime {
             CoreCommand::HistoryDelete(id) => self.history.delete(id).map(|_| self.emit_history()),
             CoreCommand::HistoryClear => self.history.clear().map(|()| self.emit_history()),
             CoreCommand::HistoryStar(id, starred) => self.history.star(id, starred).map(|_| self.emit_history()),
+            CoreCommand::HistoryProcess { request_id, id, preset } => {
+                self.process_entry(request_id, id, preset);
+                Ok(())
+            }
+            CoreCommand::HistoryProcessCancel { request_id } => {
+                self.cancel_processing(request_id);
+                Ok(())
+            }
             CoreCommand::ModelDownload(id) => self.model_download(&id),
             CoreCommand::ModelCancel(id) => self.model_cancel(&id),
             CoreCommand::ModelRemove(id) => self.model_remove(&id),

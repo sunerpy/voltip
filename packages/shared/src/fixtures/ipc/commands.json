@@ -270,6 +270,20 @@
   },
   {
     "args": {
+      "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      "preset": "notes",
+      "requestId": 5
+    },
+    "name": "history_process"
+  },
+  {
+    "args": {
+      "requestId": 5
+    },
+    "name": "history_process_cancel"
+  },
+  {
+    "args": {
       "id": "sense-voice-small"
     },
     "name": "model_download"

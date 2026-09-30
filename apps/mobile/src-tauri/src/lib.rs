@@ -29,7 +29,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 95] = [
+pub const COMMANDS: [&str; 98] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -83,6 +83,9 @@ pub const COMMANDS: [&str; 95] = [
     "history_delete",
     "history_clear",
     "history_star",
+    "history_process",
+    "history_process_cancel",
+    "history_export",
     "settings_set_locale",
     "settings_set_auto_update",
     "settings_set_history",
@@ -515,6 +518,25 @@ fn history_star(bridge: tauri::State<'_, Bridge>, id: String, starred: bool) -> 
     Ok(bridge.dispatch(UiCommand::HistoryStar { id, starred })?)
 }
 
+/// 用 AI 预设处理 (docs/dictation.md §22), as on the desktop; the phone's page does not offer it.
+#[tauri::command]
+fn history_process(bridge: tauri::State<'_, Bridge>, request_id: u64, id: String, preset: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::HistoryProcess { request_id, id, preset })?)
+}
+
+/// Stop a `history_process`.
+#[tauri::command]
+fn history_process_cancel(bridge: tauri::State<'_, Bridge>, request_id: u64) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::HistoryProcessCancel { request_id })?)
+}
+
+/// Exports are a desktop feature (docs/dictation.md §22): the phone writes no files.
+#[tauri::command]
+fn history_export(id: String, format: String, file_name: String) -> Result<serde_json::Value, String> {
+    let _ = (id, format, file_name);
+    Ok(serde_json::json!({ "kind": "failed", "code": "write", "detail": "exports are not available on the phone" }))
+}
+
 /// UI language is shared state: the phone edits it like the desktop does.
 #[tauri::command]
 fn settings_set_locale(bridge: tauri::State<'_, Bridge>, locale: Locale) -> Result<(), String> {
@@ -885,6 +907,9 @@ pub fn build_app<R: Runtime>(
             history_delete,
             history_clear,
             history_star,
+            history_process,
+            history_process_cancel,
+            history_export,
             settings_set_locale,
             settings_set_auto_update,
             settings_set_history,

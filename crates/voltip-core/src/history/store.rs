@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::{HISTORY_DB_FILE_NAME, HISTORY_FILE_NAME, HISTORY_SCHEMA, HistoryEntry, MAX_ENTRIES, derived};
+use super::{HISTORY_DB_FILE_NAME, HISTORY_FILE_NAME, HISTORY_SCHEMA, HistoryEntry, MAX_ENTRIES, ProcessedText, derived};
 use crate::CoreError;
 
 /// A database the import is still writing (step 2); deleted when found at start (step 1).
@@ -184,6 +184,27 @@ impl HistoryStore {
         entry.starred = starred;
         let json = serde_json::to_string(&entry).map_err(err)?;
         conn.execute("UPDATE entries SET starred = ?2, json = ?3 WHERE id = ?1", params![key, starred, json]).map_err(err)?;
+        Ok(true)
+    }
+
+    /// One entry by id.
+    pub fn get(&self, id: Uuid) -> Result<Option<HistoryEntry>, CoreError> {
+        let Some(conn) = &self.conn else { return Err(CoreError::History(format!("{} cannot be opened", self.path.display()))) };
+        let json: Option<String> =
+            conn.lock().query_row("SELECT json FROM entries WHERE id = ?1", [id.to_string()], |row| row.get(0)).optional().map_err(err)?;
+        Ok(json.as_deref().and_then(decode))
+    }
+
+    /// Keep 用 AI 预设处理's result with the entry (docs/dictation.md §22), replacing an earlier
+    /// one; the search finds its text too. `Ok(false)` when the id is unknown.
+    pub fn set_processed(&mut self, id: Uuid, processed: ProcessedText) -> Result<bool, CoreError> {
+        let conn = self.conn_mut()?;
+        let key = id.to_string();
+        let json: Option<String> = conn.query_row("SELECT json FROM entries WHERE id = ?1", [&key], |row| row.get(0)).optional().map_err(err)?;
+        let Some(mut entry) = json.as_deref().and_then(decode) else { return Ok(false) };
+        entry.processed = Some(Box::new(processed));
+        let json = serde_json::to_string(&entry).map_err(err)?;
+        conn.execute("UPDATE entries SET search = ?2, json = ?3 WHERE id = ?1", params![key, derived::search_text(&entry), json]).map_err(err)?;
         Ok(true)
     }
 

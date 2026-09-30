@@ -898,6 +898,28 @@ export const ORIGIN_KINDS = ["take", "typed", "clipboard"] as const;
 export const entryOriginSchema = z.object({ device: z.string(), kind: z.enum(ORIGIN_KINDS) });
 export type EntryOrigin = z.infer<typeof entryOriginSchema>;
 
+/** `voltip_core::history::ProcessedText`: what 用 AI 预设处理 made of a long entry's text
+ *  (docs/dictation.md §22), by the preset's name then; the entry's own text stays. */
+export const processedTextSchema = z.object({
+  text: z.string(),
+  preset: presetRefSchema,
+  at_ms: z.number().nonnegative(),
+});
+export type ProcessedText = z.infer<typeof processedTextSchema>;
+
+/** `voltip_core::history::process::ProcessState`: where one `history_process` request is. */
+export const processStateSchema = z.discriminatedUnion("state", [
+  z.object({
+    state: z.literal("running"),
+    done: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }),
+  z.object({ state: z.literal("done"), processed: processedTextSchema }),
+  z.object({ state: z.literal("failed"), reason: z.string() }),
+  z.object({ state: z.literal("cancelled") }),
+]);
+export type ProcessState = z.infer<typeof processStateSchema>;
+
 export const historyEntrySchema = z.object({
   id: z.string(),
   at_ms: z.number().nonnegative(),
@@ -931,8 +953,25 @@ export const historyEntrySchema = z.object({
   preset: presetRefSchema.optional(),
   /** A phone's take or text rather than this device's own (docs/dictation.md §20.6). */
   origin: entryOriginSchema.optional(),
+  /** 用 AI 预设处理's result (docs/dictation.md §22); absent until it ran. */
+  processed: processedTextSchema.optional(),
 });
 export type HistoryEntry = z.infer<typeof historyEntrySchema>;
+
+/** `voltip_core::history::export::ExportFormat`: 导出字幕（SRT）or 导出文本（TXT）. */
+export const EXPORT_FORMATS = ["srt", "txt"] as const;
+export type ExportFormat = (typeof EXPORT_FORMATS)[number];
+/** The desktop shell's answer to `history_export` (docs/dictation.md §22). */
+export const exportOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("saved"), path: z.string() }),
+  z.object({ kind: z.literal("cancelled") }),
+  z.object({
+    kind: z.literal("failed"),
+    code: z.enum(["gone", "empty", "write"]),
+    detail: z.string(),
+  }),
+]);
+export type ExportOutcome = z.infer<typeof exportOutcomeSchema>;
 
 /** `voltip_core::history::MAX_ENTRIES`: older rows are dropped past this. */
 export const HISTORY_LIMIT = 20_000;
@@ -1787,6 +1826,13 @@ export const uiEventSchema = z.discriminatedUnion("type", [
     id: z.number().int().nonnegative(),
     outcome: presetTryOutcomeSchema,
   }),
+  /** Where a `history_process` request is (§22; not folded into the state). */
+  z.object({
+    type: z.literal("history_process"),
+    request_id: z.number().int().nonnegative(),
+    id: z.string(),
+    state: processStateSchema,
+  }),
   /** The phone's take to a desktop moved (§20); `null` before the first. */
   z.object({ type: z.literal("phone_take"), take: phoneTakeViewSchema.nullable() }),
   /** The phone's list of sent texts, whole (§20.6). */
@@ -2046,6 +2092,12 @@ export interface CommandArgs {
   presets_remove: { id: string };
   /** 试一试 on a preset: nothing is saved; the answer is a `preset_try` event. */
   presets_try: PresetsTryArgs;
+  /** 用 AI 预设处理 (§22): progress and the end arrive as `history_process` events. */
+  history_process: { requestId: number; id: string; preset: string };
+  /** Stop a `history_process`; nothing is stored. */
+  history_process_cancel: { requestId: number };
+  /** Query: 导出字幕 / 导出文本 through the save dialog (`Backend.historyExport`, §22). */
+  history_export: { id: string; format: ExportFormat; fileName: string };
   /** Query: every built-in preset's text (`Backend.presetsBuiltin`, 复制为自定义). */
   presets_builtin: undefined;
   /** Which parts of a take's context may go to the LLM (§18.5); the core re-emits `settings`. */
@@ -2104,7 +2156,8 @@ export type QueryCommand =
   | "feedback_attachments_clear"
   | "phone_clipboard_read"
   | "presets_builtin"
-  | "scenes_builtin";
+  | "scenes_builtin"
+  | "history_export";
 export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "core_state",
   "audio_devices",
@@ -2134,6 +2187,7 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "phone_clipboard_read",
   "presets_builtin",
   "scenes_builtin",
+  "history_export",
 ];
 /** Commands the UI dispatches through `Backend.invoke` (everything except the queries / streams). */
 export type MutationCommand = Exclude<CommandName, QueryCommand>;
@@ -2252,6 +2306,7 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
     case "provider_probe":
     case "paste_result":
     case "preset_try":
+    case "history_process":
       return state;
   }
 }

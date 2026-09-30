@@ -75,6 +75,7 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   scenes: null,
   presets: null,
   preset_try: null,
+  history_process: null,
   provider_probe: null,
   phone_take: null,
   sent_texts: null,
@@ -124,6 +125,8 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   history_delete: null,
   history_clear: null,
   history_star: null,
+  history_process: null,
+  history_process_cancel: null,
   settings_set_locale: null,
   settings_set_auto_update: null,
   settings_set_history: null,
@@ -203,6 +206,10 @@ const argSchemas = {
     .strict(),
   history_delete: z.object({ id: z.string() }),
   history_star: z.object({ id: z.string(), starred: z.boolean() }),
+  history_process: z
+    .object({ requestId: z.number().int().nonnegative(), id: z.string(), preset: presetIdSchema })
+    .strict(),
+  history_process_cancel: z.object({ requestId: z.number().int().nonnegative() }).strict(),
   settings_set_locale: z.object({ locale: localeSettingSchema }),
   settings_set_auto_update: z.object({ enabled: z.boolean() }),
   settings_set_history: z.object({ enabled: z.boolean(), keep: z.number().int() }).strict(),
@@ -379,6 +386,10 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.presets_remove.parse(args));
     case "presets_try":
       return backend.invoke(name, argSchemas.presets_try.parse(args));
+    case "history_process":
+      return backend.invoke(name, argSchemas.history_process.parse(args));
+    case "history_process_cancel":
+      return backend.invoke(name, argSchemas.history_process_cancel.parse(args));
     case "settings_set_context_sharing":
       return backend.invoke(name, argSchemas.settings_set_context_sharing.parse(args));
   }

@@ -13,6 +13,8 @@ use crate::scenes::{AppRef, SceneRef};
 use crate::vocabulary::VocabularyHits;
 
 mod derived;
+pub mod export;
+pub mod process;
 mod reader;
 mod store;
 
@@ -143,6 +145,21 @@ pub struct HistoryEntry {
     /// the device's own takes and in entries written before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<EntryOrigin>,
+    /// What 用 AI 预设处理 made of the text (docs/dictation.md §22); the text itself stays as it
+    /// was. Absent until it ran. Boxed: most entries have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub processed: Option<Box<ProcessedText>>,
+}
+
+/// 用 AI 预设处理's result (docs/dictation.md §22): the text, the preset it ran with, and when.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct ProcessedText {
+    /// The processed text.
+    pub text: String,
+    /// The preset, by its name then.
+    pub preset: PresetRef,
+    /// Unix time in milliseconds.
+    pub at_ms: u64,
 }
 
 /// Which phone an entry came from, and how.
