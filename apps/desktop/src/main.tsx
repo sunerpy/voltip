@@ -30,7 +30,9 @@ installContextMenuPolicy(document, { enabled: isTauri() });
 const container = document.getElementById("root");
 if (!container) throw new Error("#root missing");
 const backend = await createBackend();
-createRoot(container).render(
+/** The mounted app: a test unmounts it before its environment goes away. */
+export const root = createRoot(container);
+root.render(
   <StrictMode>
     <App backend={backend} />
   </StrictMode>,
