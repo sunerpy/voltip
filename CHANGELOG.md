@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.10](https://github.com/sunerpy/voltip/compare/v0.0.9...v0.0.10) (2026-09-30)
+
+
+### Features
+
+* **history:** process long entries with an AI preset in parts, export SRT subtitles or text ([5e3397a](https://github.com/sunerpy/voltip/commit/5e3397ad04468cede23437281b7f3dc35715b4bb))
+* long recordings, computer audio and mixing, AI processing and exports ([#23](https://github.com/sunerpy/voltip/issues/23)) ([5e3397a](https://github.com/sunerpy/voltip/commit/5e3397ad04468cede23437281b7f3dc35715b4bb))
+* **recording:** recognise long recordings in segments while they record, cut where the speech pauses ([5e3397a](https://github.com/sunerpy/voltip/commit/5e3397ad04468cede23437281b7f3dc35715b4bb))
+* **recording:** record the microphone, the computer's sound or both, for up to two hours ([5e3397a](https://github.com/sunerpy/voltip/commit/5e3397ad04468cede23437281b7f3dc35715b4bb))
+
 ## [0.0.9](https://github.com/sunerpy/voltip/compare/v0.0.8...v0.0.9) (2026-09-29)
 
 
