@@ -131,7 +131,7 @@ partition() {
 		/^keychain: / { if (h) printf "%s", b; b = ""; h = 0 }
 		{ b = b $0 "\n" }
 		index($0, s) { h = 1 }
-		END { if (h) printf "%s", b }' | awk '/partition_id/ { getline; sub(/^ *description: /, ""); print }'
+		END { if (h) printf "%s", b }' | awk '/partition_id/ { p = 1; next } p && /description:/ { sub(/^ *description: /, ""); print; exit }'
 }
 
 # The login keychain, as a user's Mac has it.
