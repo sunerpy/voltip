@@ -96,8 +96,9 @@ runs landed in a row on 2026-09-30, and one of them stalled a release for an hou
   core busy. To confirm a suspected race, delay the step in the fake and watch the test fail.
 - The `macos` jobs do not run on pull requests. After a merge, check that `main`'s run is green on
   both Macs; a red `macos` job is fixed like any other.
-- A CI job that runs twice its usual time is a hung test. Cancel the run: the gate logs still
-  upload, and the hung test is the one "running for over 60 seconds".
+- A CI job that runs twice its usual time is a hung test. The Rust gates step stops at 25 minutes
+  by itself; cancel the run to learn sooner. Either way the gate logs still upload, and the hung
+  test is the one "running for over 60 seconds".
 - `scripts/windows-remote.sh gate` runs whatever was synced last. Run `sync` first, and check that
   the commit at the head of the gate's log is yours.
 
