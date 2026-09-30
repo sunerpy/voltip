@@ -6,10 +6,15 @@
 #      cdhash only.
 #   2. The same app, signed with a certificate made by the release recipe (not trusted, as on a
 #      user's Mac), is allowed to read those items, as the user's 「允许」/「始终允许」 does.
-#   3. It moves them to items it owns (account `<user>.signed`), trusted by its signing
-#      requirement, and removes the old ones.
-#   4. Another build signed the same way starts past its keychain read without a prompt (nobody
-#      answers a prompt here, so a start that needed one would stop at the keychain read).
+#   3. It moves them to items of its own (account `<user>.signed.<its cdhash>`), trusted by its
+#      signing requirement, and removes the old ones.
+#   4. Another build signed the same way moves them on to items of its own and starts past its
+#      keychain read.
+#
+# The keychain here is made with `security create-keychain`, which skips the partition check
+# (securityd `validatePartition`), so no step can ask: this checks the moves and the access lists,
+# not the dialog. On a user's Mac step 4 asks once; an in-app update hands the items over instead,
+# which check-keychain-handoff.sh checks on the login keychain.
 #
 # Usage: .github/scripts/check-keychain-migration.sh <Voltip.app (ad hoc)>
 # On a GitHub-hosted macOS runner. A temporary keychain is the user's default keychain for the
@@ -155,8 +160,9 @@ for entry in "${entries[@]}"; do
 	"$work/allow" "$keychain" "$service_prefix/$entry" "$user" "$work/signed-a.app" "$password" >/dev/null || fail "could not allow the signed build for $entry"
 done
 
-# 3. It moves them to items it owns.
+# 3. It moves them to items of its own.
 run "the signed build" "$work/signed-a.app" "$work/signed-a.log" || true
+signed_a=$(codesign -dvvv "$work/signed-a.app" 2>&1 | sed -n 's/^CDHash=//p' | head -1)
 moved=$(grep -c "keychain item moved to one this build owns" "$work/signed-a.log" || true)
 if [ "$moved" -eq "${#entries[@]}" ]; then
 	echo "ok: the signed build moved ${moved} items"
@@ -165,7 +171,7 @@ else
 fi
 want="identifier \"dev.voltip.desktop\" and certificate leaf = H\"$(tr '[:upper:]' '[:lower:]' <<<"$sha1")\""
 for entry in "${entries[@]}"; do
-	req=$(trusted "$entry" "$user.signed")
+	req=$(trusted "$entry" "$user.signed.$signed_a")
 	if [ "$req" = "$want" ]; then
 		echo "ok: $entry now trusts the signing requirement: $req"
 	else
@@ -178,7 +184,7 @@ for entry in "${entries[@]}"; do
 	fi
 done
 
-# 4. The next build reads them without a prompt.
+# 4. The next build moves them on to items of its own (no dialog in this keychain, see above).
 sign signed-b 1002
 run "the next signed build" "$work/signed-b.app" "$work/signed-b.log" || true
 exit "$failed"

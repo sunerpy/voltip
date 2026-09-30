@@ -64,7 +64,7 @@ The dmg packages are signed with the project's own certificate but are not notar
 - On macOS 11 to 14, Control-click Voltip in Applications and choose **Open**.
 - In a terminal, `xattr -dr com.apple.quarantine /Applications/Voltip.app` has the same effect.
 
-Updates install from inside the app. Updating from version 0.0.6 or earlier asks for the permissions once more. The keychain prompts come a last time when you first start 0.0.12 or later; **Allow** and **Always Allow** both work. Voltip then keeps those secrets in entries of its own, and later updates do not ask again. If dictation does not work afterwards, turn Voltip off and on again under Accessibility and under Microphone in System Settings.
+Updates install from inside the app. Updating from version 0.0.6 or earlier asks for the permissions once more. From 0.0.15, an update installed from inside Voltip does not ask for the keychain: the running version hands its keychain entries to the new one. Installing a new version by hand from the dmg, or updating to 0.0.15 from an earlier version, asks once for each entry; **Allow** and **Always Allow** both work. If dictation does not work afterwards, turn Voltip off and on again under Accessibility and under Microphone in System Settings.
 
 ### Linux
 

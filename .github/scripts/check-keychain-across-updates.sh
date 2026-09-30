@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
-# Keychain access across updates (docs/runbook.md 发布 · macOS 签名; manual checklist items 14–15):
-# a keychain entry that a build signed the way releases are made stored is read by the next build
-# without a prompt. An entry that ad-hoc code stored (Voltip before 0.0.7) is not, until one
-# 「始终允许」 adds a signed build to it; from then on the next build reads it too. (User report
-# 2026-09-30: updating 0.0.7 → 0.0.10 asked once more for voltip.identity.*, an entry from the
-# ad-hoc days that the 0.0.7 prompt had only let through once.)
+# Keychain partitions across updates (docs/runbook.md 发布 · macOS 签名与钥匙串; manual checklist
+# item 15): the platform facts the in-app update's hand-over rests on (crates/voltip-identity
+# per_build.rs and handoff.rs, check-keychain-handoff.sh).
 #
-# A throwaway certificate made with the release recipe, in a keychain of this job only, and three
-# probes of the same code built apart (so each has its own cdhash, like two releases). Each probe
-# adds, reads or allows a generic password with user interaction off: where a dialog would be
-# needed it gets an error instead. On GitHub's macOS runners: passwordless sudo trusts the
-# certificate for code signing, and that trust setting stays, as in macos-signing-keychain.sh.
+# User report 2026-09-30: every update asked for voltip.identity.*. In the LOGIN keychain every item
+# carries a partition list, and a build signed with a self-signed certificate (no Apple Team ID)
+# has the partition `cdhash:<that build>`. So a later build, signed the same way, is refused an
+# item an earlier build stored (a user sees the dialog) — but it can list such an item and remove
+# it without reading it. Keychains made with `security create-keychain` skip the partition check;
+# the checks before this one used such a keychain, which is how they missed it.
+#
+# A throwaway certificate made with the release recipe, in a keychain of this job used only for
+# signing, and two probes of the same code built apart (so each has its own cdhash, like two
+# releases). Each probe works on the keychain it is given with user interaction off: where a
+# dialog would be needed it gets an error instead. The login keychain of GitHub's runners is
+# unlocked; only the probes' own items are touched, and removed at the end.
 set -euo pipefail
 
 # The release certificate was made with OpenSSL 3; macOS's own /usr/bin/openssl (LibreSSL) writes
@@ -18,6 +22,7 @@ set -euo pipefail
 openssl=$(brew --prefix openssl@3)/bin/openssl
 work=$(mktemp -d)
 keychain="$work/keychain-check.keychain-db"
+login="$HOME/Library/Keychains/login.keychain-db"
 password=$("$openssl" rand -hex 16)
 existing=()
 while IFS= read -r line; do
@@ -27,6 +32,9 @@ while IFS= read -r line; do
 	[ -n "$line" ] && existing+=("$line")
 done < <(security list-keychains -d user)
 restore() {
+	for service in partition-login-a partition-login-b; do
+		security delete-generic-password -s "$service" "$login" >/dev/null 2>&1 || true
+	done
 	security list-keychains -d user -s "${existing[@]}" || true
 	security delete-keychain "$keychain" 2>/dev/null || true
 }
@@ -34,15 +42,15 @@ trap restore EXIT
 security create-keychain -p "$password" "$keychain"
 security set-keychain-settings -lut 21600 "$keychain"
 security unlock-keychain -p "$password" "$keychain"
-security list-keychains -d user -s "$keychain" "${existing[@]}"
+security list-keychains -d user -s "${existing[@]}" "$keychain"
 
 cat >"$work/probe.c" <<'C'
 #include <Security/Security.h>
 #include <stdio.h>
 #include <string.h>
-// Exported by Security.framework, not declared in its public headers (the `security` tool uses it).
-extern OSStatus SecKeychainItemSetAccessWithPassword(SecKeychainItemRef, SecAccessRef, UInt32, const void *);
-// probe <keychain> <service> add | read | allow <app> <keychain password>; prints the OSStatus.
+// probe <keychain> <service> add | read | list | remove; prints the OSStatus. `list` asks for the
+// items' attributes and `remove` for references (then deletes them), both through
+// SecItemCopyMatching with the keychain as the search list, never for the value.
 int main(int argc, char **argv) {
   SecKeychainRef kc = NULL;
   if (argc < 4 || SecKeychainOpen(argv[1], &kc) != 0) return 2;
@@ -56,24 +64,17 @@ int main(int argc, char **argv) {
     UInt32 len = 0; void *data = NULL;
     s = SecKeychainFindGenericPassword(kc, sl, svc, al, acct, &len, &data, NULL);
     if (data) SecKeychainItemFreeContent(NULL, data);
-  } else if (strcmp(op, "allow") == 0 && argc == 6) {
-    // What 「始终允许」 does: the application at argv[4] joins the entry's trusted applications.
-    SecKeychainItemRef item = NULL; SecAccessRef access = NULL; SecTrustedApplicationRef app = NULL;
-    CFArrayRef acls = NULL;
-    s = SecKeychainFindGenericPassword(kc, sl, svc, al, acct, NULL, NULL, &item);
-    if (s == 0) s = SecKeychainItemCopyAccess(item, &access);
-    if (s == 0) acls = SecAccessCopyMatchingACLList(access, kSecACLAuthorizationDecrypt);
-    if (s == 0 && (!acls || CFArrayGetCount(acls) == 0)) s = errSecNoAccessForItem;
-    if (s == 0) s = SecTrustedApplicationCreateFromPath(argv[4], &app);
-    for (CFIndex i = 0; s == 0 && i < CFArrayGetCount(acls); i++) {
-      SecACLRef acl = (SecACLRef)CFArrayGetValueAtIndex(acls, i);
-      CFArrayRef apps = NULL; CFStringRef desc = NULL; SecKeychainPromptSelector selector = 0;
-      s = SecACLCopyContents(acl, &apps, &desc, &selector);
-      CFMutableArrayRef more = apps ? CFArrayCreateMutableCopy(NULL, 0, apps) : CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
-      CFArrayAppendValue(more, app);
-      if (s == 0) s = SecACLSetContents(acl, more, desc, selector);
-    }
-    if (s == 0) s = SecKeychainItemSetAccessWithPassword(item, access, (UInt32)strlen(argv[5]), argv[5]);
+  } else if (strcmp(op, "list") == 0 || strcmp(op, "remove") == 0) {
+    int refs = strcmp(op, "remove") == 0;
+    CFStringRef service = CFStringCreateWithCString(NULL, svc, kCFStringEncodingUTF8);
+    CFArrayRef list = CFArrayCreate(NULL, (const void **)&kc, 1, &kCFTypeArrayCallBacks);
+    const void *keys[] = {kSecClass, kSecAttrService, refs ? kSecReturnRef : kSecReturnAttributes, kSecMatchLimit, kSecMatchSearchList};
+    const void *vals[] = {kSecClassGenericPassword, service, kCFBooleanTrue, kSecMatchLimitAll, list};
+    CFDictionaryRef query = CFDictionaryCreate(NULL, keys, vals, 5, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFTypeRef found = NULL;
+    s = SecItemCopyMatching(query, &found);
+    for (CFIndex i = 0; s == 0 && refs && i < CFArrayGetCount((CFArrayRef)found); i++)
+      s = SecKeychainItemDelete((SecKeychainItemRef)CFArrayGetValueAtIndex((CFArrayRef)found, i));
   } else {
     return 2;
   }
@@ -81,7 +82,7 @@ int main(int argc, char **argv) {
   return 0;
 }
 C
-for build in a b adhoc; do
+for build in a b; do
 	clang -Wno-deprecated-declarations -DBUILD="\"$build\"" -framework Security -framework CoreFoundation -o "$work/probe-$build" "$work/probe.c"
 done
 
@@ -93,11 +94,9 @@ done
 	-inkey "$work/check.key" -in "$work/check.pem" -out "$work/check.p12" -passout pass:check
 security import "$work/check.p12" -k "$keychain" -f pkcs12 -P check -T /usr/bin/codesign >/dev/null
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
-sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$work/check.pem"
-sha1=$(security find-identity -v -p codesigning "$keychain" | awk '/"Voltip Keychain Check"/ {print $2}')
+sha1=$(security find-identity -p codesigning "$keychain" | awk '/"Voltip Keychain Check"/ {print $2; exit}')
 [ -n "$sha1" ] || { echo "::error title=Keychain across updates::the check's certificate is not a signing identity" >&2; exit 1; }
 codesign -f -s "$sha1" -i dev.voltip.desktop "$work/probe-a" "$work/probe-b"
-codesign -f -s - -i dev.voltip.desktop "$work/probe-adhoc"
 
 failed=0
 # Both signed probes carry the requirement releases carry, with this certificate.
@@ -113,12 +112,12 @@ for build in a b; do
 done
 [ "$(cksum <"$work/probe-a")" != "$(cksum <"$work/probe-b")" ] || { echo "::error::the two builds are the same file"; failed=1; }
 
-# expect ok|refused <what> <probe> <service> <op> [args]
+# expect ok|refused <what> <probe> <keychain> <service> <op>
 expect() {
 	local want=$1 what=$2
 	shift 2
 	local status
-	status=$("$work/probe-$1" "$keychain" "${@:2}")
+	status=$("$work/probe-$1" "${@:2}")
 	if { [ "$want" = ok ] && [ "$status" = 0 ]; } || { [ "$want" = refused ] && [ "$status" != 0 ]; }; then
 		echo "ok: $what (OSStatus $status)"
 	else
@@ -126,12 +125,30 @@ expect() {
 		failed=1
 	fi
 }
-expect ok "build a stores an entry" a stored-by-a add
-expect ok "build b, a later build, reads it without a prompt" b stored-by-a read
-expect ok "ad-hoc code stores an entry (Voltip before 0.0.7)" adhoc stored-ad-hoc add
-expect refused "build b cannot read that entry without a prompt" b stored-ad-hoc read
-expect ok "「始终允许」 adds build a to that entry" a stored-ad-hoc allow "$work/probe-a" "$password"
-expect ok "build b reads that entry without a prompt from then on" b stored-ad-hoc read
+# partition <service>: the item's partition list in the login keychain
+partition() {
+	security dump-keychain -a "$login" 2>/dev/null | awk -v s="\"svce\"<blob>=\"$1\"" '
+		/^keychain: / { if (h) printf "%s", b; b = ""; h = 0 }
+		{ b = b $0 "\n" }
+		index($0, s) { h = 1 }
+		END { if (h) printf "%s", b }' | awk '/partition_id/ { p = 1; next } p && /description:/ { sub(/^ *description: /, ""); print; exit }'
+}
 
-security dump-keychain -a "$keychain" 2>/dev/null | grep -E '"svce"|requirement:' || true
+# The login keychain, as a user's Mac has it.
+expect ok "build a stores an entry in the login keychain" a "$login" partition-login-a add
+got=$(partition partition-login-a)
+case $got in
+cdhash:*) echo "ok: its partition list is build a alone: $got" ;;
+*) echo "::error title=Keychain across updates::the entry's partition list is '$got', not one cdhash"; failed=1 ;;
+esac
+expect ok "build a reads its own entry" a "$login" partition-login-a read
+expect refused "build b, a later build, is refused that entry (a user sees the dialog)" b "$login" partition-login-a read
+expect ok "build b lists that entry without reading it" b "$login" partition-login-a list
+expect ok "build b removes that entry without reading it" b "$login" partition-login-a remove
+expect refused "the entry is gone" a "$login" partition-login-a read
+
+# A keychain made with `security create-keychain` skips the partition check: why the earlier
+# checks, which used one, never saw the dialog.
+expect ok "build a stores an entry in a created keychain" a "$keychain" partition-made add
+expect ok "build b reads it there: no partition check" b "$keychain" partition-made read
 exit "$failed"

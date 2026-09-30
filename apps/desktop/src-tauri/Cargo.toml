@@ -104,6 +104,12 @@ objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std
 # The tray menu's language when `settings.locale` is `system` (`NSLocale.preferredLanguages`); the
 # version objc2-app-kit already pulls.
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSLocale", "NSString"] }
+# The keychain hand-over of an in-app update (src/keychain_handoff.rs): this build's designated
+# requirement and cdhash, and the other process's code; the versions voltip-identity already pulls.
+core-foundation = "=0.10.1"
+core-foundation-sys = "=0.8.7"
+security-framework = "=3.7.0"
+security-framework-sys = "=2.17.0"
 
 # The foreground application on X11 / XWayland (docs/dictation.md §18.2, `src/platform/linux.rs`);
 # the version enigo already pulls.

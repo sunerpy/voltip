@@ -280,14 +280,16 @@ pub fn before_run<R: Runtime>(app: &mut tauri::App<R>, start_hidden: bool) {
 }
 
 /// The event-loop callback. macOS `Reopen` (Dock click / `open -a Voltip` while running): show the
-/// main window (it may be hidden or on another Space) and put the tray back if it went missing.
-/// Other hosts never emit it.
-#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+/// main window (it may be hidden or on another Space) and put the tray back if it went missing;
+/// other hosts never emit it. `Exit`: after an update, start the new build (`restart::on_exit`).
 pub fn on_run_event<R: Runtime>(app: &AppHandle<R>, event: &tauri::RunEvent) {
     #[cfg(target_os = "macos")]
     if let tauri::RunEvent::Reopen { .. } = event {
         crate::show_main_window(app);
         tray::ensure_installed(app);
+    }
+    if let tauri::RunEvent::Exit = event {
+        crate::restart::on_exit(app);
     }
 }
 

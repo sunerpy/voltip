@@ -123,12 +123,25 @@ Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前�
 
   合并后 `main` 的 push 只跑 `verify-web`，Release 直接晋升候选，不再构建。
 - 一行命令安装：`scripts/install.sh`（Linux 与 macOS，按芯片挑 dmg，Linux 上优先 apt 装 deb，否则 AppImage）和 `scripts/install.ps1`（Windows，静默按用户安装），都从同一个 release 下载安装包和 `SHA256SUMS`，校验不过就不装。正式版发布后跑一遍 `gh workflow run install-scripts.yml -f version=<版本>`：在 Linux（deb 与 AppImage）、两种 Mac 和 Windows PowerShell 5.1 上真的装一次，再确认装好的程序能回答 `--version`。
-- macOS 签名（2026-09-29 起）：发布包用项目自己的自签名代码签名证书「Voltip Code Signing」（有效期 100 年，没有公证），这样 Mac 把每次更新都当作同一个应用，麦克风、辅助功能授权和钥匙串访问都会保留。
+- macOS 签名（2026-09-29 起）：发布包用项目自己的自签名代码签名证书「Voltip Code Signing」（有效期 100 年，没有公证），这样 Mac 把每次更新都当作同一个应用，麦克风和辅助功能授权都会保留；钥匙串另有分区限制，见下面「钥匙串」。
   - 位置：证书与私钥的 `.p12` 和它的密码只在所有者的密码管理器与仓库 secrets（`MACOS_CERTIFICATE`、`MACOS_CERTIFICATE_PASSWORD`、`MACOS_SIGNING_IDENTITY`，见 `.github/README-secrets.md`）里；仓库只记公开的 SHA-1 与规范的 designated requirement（`.github/release-targets.json` 的 `macos_signing`）。
   - 构建：候选的两条 macOS 腿把证书导入本 job 的临时钥匙串并信任它用于代码签名（`.github/scripts/macos-signing-keychain.sh`；结束时只删除临时钥匙串，不撤销信任设置：撤销要在对话框里授权，runner 上没人应答会一直卡住，runner 随 job 销毁），Tauri 用 `APPLE_SIGNING_IDENTITY` 签名；`hardenedRuntime` 保持关闭（自签名证书没有 Team ID，打开后库校验会拒绝内嵌的 sherpa dylib）。`check-macos-bundle.sh --expect-requirement` 要求 app 的 designated requirement 与 `macos_signing` 一致、每个 Mach-O 由同一证书签名；ad-hoc 包直接失败。本地构建和普通 CI 仍是 ad-hoc。
   - 轮换：换证书会让每位用户再授权一次，只在私钥泄露时做。用 `openssl req -x509 -newkey rsa:2048 -sha256 -days 36525 -nodes -subj "/CN=Voltip Code Signing" -addext "keyUsage=critical,digitalSignature" -addext "extendedKeyUsage=critical,codeSigning" -addext "basicConstraints=critical,CA:false"` 生成，`openssl pkcs12 -export -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1` 导出（macOS 的 `security import` 不认 OpenSSL 3 默认的 p12 算法），同一个 PR 里更新三个 secrets 与 `macos_signing`，发布说明写明这一版会再要求授权。
   - 丢失：没有备份就只能按轮换处理；已安装的用户在下一版会再被问一次。
-  - 钥匙串：固定签名的构建自己创建的条目，信任的是它的签名要求（identifier 与证书），之后每个发布版本都满足，不会再问。ad-hoc 时代（0.0.6 及更早）存的条目只信任当时那一个构建；系统对话框的「始终允许」也只加入按下它的那一个构建，所以这些条目每次更新都会再问（2026-09-30 用户从 0.0.10 更新到 0.0.11 时，`voltip.identity.x25519` 与 `.meta` 各问了一次）。0.0.12 起，用证书签名的发布包第一次读到这种条目时，把它迁到自己创建的条目（同名，账户 `<用户名>.signed`；写入并读回确认后才删除旧条目，删除不需要授权），所以最后再问一次，之后更新不再问（`crates/voltip-identity/src/secret_store.rs` 的 `read_moving`）。本地和 CI 的 ad-hoc 构建不迁移。CI 的 `macos` job 用 `.github/scripts/check-keychain-migration.sh` 拿真实的应用端到端验证：ad-hoc 构建存入身份，同一应用用发布配方的证书重签、放行一次后完成迁移，下一个签名构建不弹窗就读到。0.0.7 过渡时的另两项：辅助功能在系统设置里把 Voltip 关掉再打开，不行就 `tccutil reset Accessibility dev.voltip.desktop` 后重新授权；麦克风同样关掉再打开，没有再弹授权时 `tccutil reset Microphone dev.voltip.desktop`。发布说明要写这三项。签名构建自己创建的条目在更新间不再问，由 CI 的 `.github/scripts/check-keychain-across-updates.sh` 持续验证；真机在 `docs/acceptance/macos/manual-checklist.md` 第 15 项确认。
+  - 钥匙串（2026-09-30 用户从 0.0.12 更新到 0.0.14 仍各问一次）：
+    - 原因：登录钥匙串给每个条目一个分区列表（`partition_id`）。自签名证书没有 Apple Team ID，按 securityd 的规则（`clientid.cpp` 的 `partitionIdForProcess`），每个构建的分区都是 `cdhash:<该构建>`。一个构建去读另一个构建创建的条目就会弹窗，即使访问控制信任的签名要求（`identifier … and certificate leaf = H…`）它满足；「始终允许」也只把按下它的那一个构建加进列表。用户的条目分区是 `cdhash:<0.0.12>, cdhash:<0.0.14>`。
+    - 0.0.15 起，用证书签名的发布包把每个条目存进自己创建的条目，账户 `<用户名>.signed.<本构建 cdhash>`（`crates/voltip-identity/src/per_build.rs`）。
+    - 应用内更新：装好后旧版不交给 Tauri 重启，而是自己启动新版，用 socketpair 作新版的 stdin，把钥匙串存储这次进程里读到、写过的所有条目（含已删除的标记）交过去（`crates/voltip-identity/src/handoff.rs`、`apps/desktop/src-tauri/src/keychain_handoff.rs`）。两边都先校验对方进程满足本构建的 designated requirement。新版把交来的值写进自己的条目并读回确认，再删掉其他构建的条目（不读取值的删除不需要授权），整个过程不读其他构建的条目，所以不弹窗。
+    - 没有交接时（手动安装 dmg，或从不带交接的 0.0.14 及更早版本更新上来），新版读最新的一份旧条目，问一次，然后搬进自己的条目。
+    - 降级到 0.0.15 之前的版本时，旧版找不到它的条目，会生成新的设备身份，需要重新配对。本地和 CI 的 ad-hoc 构建仍用 `<用户名>` 账户，不参与。
+    - 验证：`security create-keychain` 建的钥匙串不做分区检查（`validatePartition` 在 `dbVersion() < version_partition` 时直接返回），所以 0.0.12 时的检查都通过了，却没发现问题。现在 CI 的 `macos` job 用 runner 的登录钥匙串：
+      - `.github/scripts/check-keychain-across-updates.sh` 断言后一个构建读不到前一个构建的条目，但能列出和删除；
+      - `.github/scripts/check-keychain-handoff.sh` 用真实应用端到端验证交接：harness 充当旧版，新版不弹窗、身份不变、旧条目被删；不交接的构建卡在弹窗上，作反面对照；
+      - `.github/scripts/check-keychain-migration.sh` 在临时钥匙串里验证 ad-hoc 条目的搬移。
+
+      真机在 `docs/acceptance/macos/manual-checklist.md` 第 15 项确认。
+    - 查看真机上的状态（只读，不输出密钥）：`security dump-keychain -a ~/Library/Keychains/login.keychain-db`，只看 `"svce"<blob>="dev.voltip.desktop/` 的条目，关注 `acct` 和 `partition_id`。
+  - 0.0.7 过渡时的另两项：辅助功能在系统设置里把 Voltip 关掉再打开，不行就 `tccutil reset Accessibility dev.voltip.desktop` 后重新授权；麦克风同样关掉再打开，没有再弹授权时 `tccutil reset Microphone dev.voltip.desktop`。发布说明要写这两项和钥匙串的变化。
 - 还没进工作流的：Android 包（`make android-apk` 在本机出 debug APK）；macOS 包没有公证（见 `docs/roadmap.md`）。
 
 ## 文档站

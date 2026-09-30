@@ -7,11 +7,11 @@
 
 // `unsafe` is forbidden everywhere except `platform/windows.rs` (Win32 FFI for the injection
 // preflight and the microphone consent store), `solo_key/windows.rs` (the low-level input hooks of
-// the lone-key trigger) and `exit.rs` (`_exit` on Linux): on those platforms the crate-level lint
-// is `deny`, which each of those modules relaxes with `#![allow(unsafe_code)]` and a SAFETY
-// comment on every block.
-#![cfg_attr(not(any(target_os = "windows", target_os = "linux")), forbid(unsafe_code))]
-#![cfg_attr(any(target_os = "windows", target_os = "linux"), deny(unsafe_code))]
+// the lone-key trigger), `exit.rs` (`_exit` on Linux) and `keychain_handoff.rs` (Security.framework
+// calls on macOS): on those platforms the crate-level lint is `deny`, which each of those modules
+// relaxes with `#![allow(unsafe_code)]` and a SAFETY comment on every block.
+#![cfg_attr(not(any(target_os = "windows", target_os = "linux", target_os = "macos")), forbid(unsafe_code))]
+#![cfg_attr(any(target_os = "windows", target_os = "linux", target_os = "macos"), deny(unsafe_code))]
 #![warn(missing_docs)]
 
 use std::sync::Arc;
@@ -23,9 +23,12 @@ pub mod exit;
 pub mod export;
 pub mod feedback;
 pub mod hotkey;
+#[cfg(target_os = "macos")]
+pub mod keychain_handoff;
 pub mod overlay;
 pub mod paste;
 pub mod platform;
+pub mod restart;
 pub mod solo_key;
 pub mod update;
 
@@ -155,12 +158,25 @@ pub fn data_dir() -> std::path::PathBuf {
     directories::ProjectDirs::from("dev", "voltip", "Voltip").map(|d| d.data_dir().to_path_buf()).unwrap_or_else(|| std::env::temp_dir().join("voltip"))
 }
 
-/// OS keychain store scoped to the current user (nothing is touched until the first read).
+/// OS keychain store scoped to the current user (nothing is touched until the first read). A macOS
+/// release keeps its items in ones it created itself, starting from what the build before it
+/// handed over (`keychain_handoff`; docs/runbook.md 发布 · macOS 签名与钥匙串).
 pub fn secret_store() -> Arc<dyn SecretStore> {
     let user = std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or_else(|_| "default".into());
     if dev_memory_store_requested(std::env::var(DEV_SECRET_STORE_ENV).ok().as_deref(), cfg!(debug_assertions)) {
         tracing::warn!("{DEV_SECRET_STORE_ENV}=memory: identity lives in memory for this run only (debug build smoke test)");
         return Arc::new(voltip_identity::MemorySecretStore::new());
+    }
+    #[cfg(target_os = "macos")]
+    if voltip_identity::signed_with_a_certificate() {
+        match (keychain_handoff::cdhash(), voltip_identity::SecurityKeychain::login()) {
+            (Some(build), Ok(keychain)) => {
+                return Arc::new(voltip_identity::PerBuildStore::new(keychain, KEYCHAIN_SERVICE, user, build, keychain_handoff::take_received()));
+            }
+            (build, keychain) => {
+                tracing::warn!(cdhash = build.is_some(), keychain = keychain.is_ok(), "per-build keychain items unavailable; using the shared ones")
+            }
+        }
     }
     Arc::new(KeyringSecretStore::new(KEYCHAIN_SERVICE, user))
 }
@@ -993,6 +1009,7 @@ pub fn attach_bridge<R: Runtime>(
         .map(|c| c.inner().clone())
         .or_else(|| if options.global_hotkey { update::UpdaterConfig::from_build() } else { None });
     let updater = Arc::new(update::UpdateSlot::new(updater_config, &config.data_dir));
+    app.manage(restart::Restart::new(store.clone()));
     // Tauri runs `setup` on the UI thread, outside any Tokio context; the core spawns its tasks
     // with `tokio::spawn`, so it has to be started from Tauri's own runtime.
     // Subscribed before the core starts: the first `state` event must reach the webview bus even
@@ -1200,6 +1217,9 @@ pub fn run() {
     // on a terminal (and never with NO_COLOR): piped stderr is a log file or a script's capture.
     let ansi = std::io::IsTerminal::is_terminal(&std::io::stderr()) && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
     let _ = tracing_subscriber::fmt().with_env_filter(filter).with_writer(std::io::stderr).with_ansi(ansi).try_init();
+    // Before anything else: a macOS update that started this build hands the keychain over here.
+    #[cfg(target_os = "macos")]
+    keychain_handoff::receive_at_startup();
 
     let args = match cli::Cli::parse_args(std::env::args_os()) {
         Ok(cli) => cli,
