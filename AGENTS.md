@@ -85,7 +85,10 @@ coverage run on `main` and the Intel Mac. Locally and in PR CI the same tests pa
 runs landed in a row on 2026-09-30, and one of them stalled a release for an hour. So:
 
 - Wait for the state an assertion reads. When two threads or tasks produce events, do not wait for
-  one event on the assumption that another has arrived before it.
+  one event on the assumption that another has arrived before it. Check the current state before
+  waiting for a status: an event may already have been folded by a helper. Under
+  `#[tokio::test(start_paused = true)]` the clock stands still while a blocking thread runs (a live
+  decode thread, a held fake), so a virtual timeout never ends such a wait.
 - To show that something returns before a timeout, give it a long timeout (seconds) and assert
   under half of it. A bound equal to the timeout fails as soon as a machine is slow.
 - A test stops what it started before it ends: it unmounts a React root it created itself, clears

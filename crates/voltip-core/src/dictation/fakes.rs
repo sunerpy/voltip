@@ -901,6 +901,8 @@ pub struct FakeStreaming {
     opens: AtomicUsize,
     warms: AtomicUsize,
     finishes: Arc<AtomicUsize>,
+    /// Feeds across sessions.
+    fed: Arc<AtomicUsize>,
     /// The word a session waits before, and its gate ([`FakeStreaming::holding`]).
     hold: Option<(usize, Arc<Gate>)>,
 }
@@ -922,6 +924,7 @@ impl FakeStreaming {
             opens: AtomicUsize::new(0),
             warms: AtomicUsize::new(0),
             finishes: Arc::new(AtomicUsize::new(0)),
+            fed: Arc::new(AtomicUsize::new(0)),
             hold: None,
         }
     }
@@ -967,6 +970,11 @@ impl FakeStreaming {
     pub fn finishes(&self) -> usize {
         self.finishes.load(Ordering::SeqCst)
     }
+
+    /// `feed` calls so far (across sessions): how far the decode thread got.
+    pub fn feeds(&self) -> usize {
+        self.fed.load(Ordering::SeqCst)
+    }
 }
 
 impl StreamingTranscriber for FakeStreaming {
@@ -985,6 +993,7 @@ impl StreamingTranscriber for FakeStreaming {
                 committed: Vec::new(),
                 pending: std::collections::VecDeque::new(),
                 finishes: self.finishes.clone(),
+                fed: self.fed.clone(),
                 hold: self.hold.clone(),
             })),
         }
@@ -1006,6 +1015,7 @@ struct FakeSession {
     committed: Vec<Segment>,
     pending: std::collections::VecDeque<StreamEvent>,
     finishes: Arc<AtomicUsize>,
+    fed: Arc<AtomicUsize>,
     hold: Option<(usize, Arc<Gate>)>,
 }
 
@@ -1018,6 +1028,7 @@ impl FakeSession {
 impl StreamingSession for FakeSession {
     fn feed(&mut self, pcm16k: &[f32]) {
         self.feeds += 1;
+        self.fed.fetch_add(1, Ordering::SeqCst);
         self.fed_samples += pcm16k.len();
         if self.error_after.is_some_and(|n| self.feeds > n) {
             self.pending.push_back(StreamEvent::Error("fake decoder failed".into()));
