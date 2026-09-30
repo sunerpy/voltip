@@ -55,9 +55,11 @@ variant() {
   security find-identity -v -p codesigning "$kc"
   local cn
   cn=$(sed -n 's/.*CN=\([^/]*\).*/\1/p' <<<"$subject")
+  local sha
+  sha=$(security find-identity -v -p codesigning "$kc" | awk -v cn="$cn" 'index($0, "\"" cn "\"") {print $2}')
   for b in a b; do
     cp "probe-$b" "$name-probe-$b"
-    codesign -f -s "$cn" --keychain "$kc" -i dev.voltip.experiment "$name-probe-$b"
+    codesign -f -s "$sha" -i dev.voltip.experiment "$name-probe-$b"
     codesign -dvvv "$name-probe-$b" 2>&1 | grep -E "^(CDHash|TeamIdentifier|Authority)=" | sed "s/^/  $b: /"
     codesign -d -r- "$name-probe-$b" 2>&1 | grep designated | sed "s/^/  $b: /"
   done
