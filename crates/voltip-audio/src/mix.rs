@@ -8,10 +8,11 @@
 //! while the microphone opens, and a faster clock piles up more — so the two are never more than
 //! 20 ms apart, from the first chunk on, whichever clock runs faster. A queue that fills up (the
 //! microphone took nothing for a second) drops the newest of the computer's sound, so what it
-//! still holds is older than that: [`MixSender`] counts the drop and the mixer empties the queue
-//! before its next chunk. The sum leaves
-//! headroom ([`MIX_GAIN`] on each side) and goes through a soft limiter, so a loud call over loud
-//! speech never wraps around.
+//! still holds is older than that. The mixer empties the queue before its next chunk when it finds
+//! it full, or when [`MixSender`] reported a drop since the last chunk. The sender reports a drop
+//! before it publishes the samples that fill the queue, so a mixer that has seen those samples has
+//! seen the report too. The sum leaves headroom ([`MIX_GAIN`] on each side) and goes through a
+//! soft limiter, so a loud call over loud speech never wraps around.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -43,10 +44,22 @@ impl std::fmt::Debug for MixSender {
 impl MixSender {
     /// Queue `samples` (16 kHz mono); what does not fit is dropped and counted. Never blocks.
     pub fn push(&mut self, samples: &[f32]) {
-        let (_, rest) = self.queue.push_partial_slice(samples);
-        if !rest.is_empty() {
-            self.overflowed.fetch_add(rest.len() as u64, Ordering::Release);
+        self.push_with(samples, || {});
+    }
+
+    /// [`Self::push`], calling `between` after the drop is reported and before what fits is
+    /// published: the tests mix a microphone chunk there, on another thread.
+    fn push_with(&mut self, samples: &[f32], between: impl FnOnce()) {
+        let fits = samples.len().min(self.queue.slots());
+        // Reported before the push publishes what fits (with Release; the mixer reads the queue
+        // with Acquire): a mixer that sees those samples sees the drop as well.
+        if fits < samples.len() {
+            self.overflowed.fetch_add((samples.len() - fits) as u64, Ordering::Release);
         }
+        between();
+        // Only the mixer frees slots, so the `fits` found above are still free.
+        let pushed = self.queue.push_entire_slice(&samples[..fits]);
+        debug_assert!(pushed.is_ok());
     }
 }
 
@@ -102,10 +115,12 @@ impl Mixer {
     /// Allocates only when `out` has less capacity than the chunk.
     pub fn mix(&mut self, mic: &[f32], out: &mut Vec<f32>) {
         out.clear();
-        // The queue overflowed since the last chunk: its newest samples were dropped, so all it
-        // holds is older than they are.
-        let stale = if self.overflowed.swap(0, Ordering::Acquire) > 0 { self.other.slots() } else { 0 };
-        let excess = stale.max(self.other.slots().saturating_sub(mic.len() + MAX_LAG_SAMPLES));
+        // The queue is full, or overflowed since the last chunk: its newest samples were dropped (a
+        // full queue drops the next ones), so all it holds is older than they are. The queue is read
+        // first: a drop is reported before the samples that filled the queue are published.
+        let queued = self.other.slots();
+        let overflowed = self.overflowed.swap(0, Ordering::Acquire) > 0;
+        let excess = if overflowed || queued >= self.other.buffer().capacity() { queued } else { queued.saturating_sub(mic.len() + MAX_LAG_SAMPLES) };
         if excess > 0
             && let Ok(chunk) = self.other.read_chunk(excess)
         {
@@ -137,6 +152,7 @@ impl Mixer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn queue(capacity: usize) -> (rtrb::Producer<f32>, Mixer) {
         let (producer, consumer) = rtrb::RingBuffer::new(capacity);
@@ -247,6 +263,72 @@ mod tests {
         other.push(&[0.5; 160]);
         mixer.mix(&[0.0; 160], &mut out);
         assert!(out.iter().all(|&s| (s - MIX_GAIN * 0.5).abs() < 1e-6), "{:?}", &out[..4]);
+        assert_eq!(mixer.dropped(), 1000);
+    }
+
+    /// Samples 0.0000, 0.0001, …: a mixed value tells which one it was.
+    fn early(n: u16) -> Vec<f32> {
+        (0..n).map(|i| f32::from(i) / 10_000.0).collect()
+    }
+
+    /// Runs `in_between` on this thread while a push of `samples` on another thread waits between
+    /// its two steps: reporting the drop and publishing what fits.
+    fn during_push(other: MixSender, samples: Vec<f32>, in_between: impl FnOnce()) {
+        let (at_tx, at_rx) = std::sync::mpsc::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let pusher = std::thread::spawn(move || {
+            let mut other = other;
+            other.push_with(&samples, || {
+                at_tx.send(()).expect("the test thread waits");
+                go_rx.recv_timeout(Duration::from_secs(5)).expect("the test thread went on");
+            });
+        });
+        at_rx.recv_timeout(Duration::from_secs(5)).expect("the push reached the point between its steps");
+        in_between();
+        go_tx.send(()).expect("the pusher waits");
+        pusher.join().expect("the push finished");
+    }
+
+    /// Regression (goal review round 3, 2026-09-30): the two sides are pushed and mixed on their own
+    /// audio threads, and a push used to publish what fit before it reported the rest as dropped. A
+    /// microphone chunk mixed between those two steps found the queue full with no drop reported,
+    /// and mixed in the stale samples at its end.
+    #[test]
+    fn regression_a_chunk_mixed_while_a_push_overflows_mixes_no_stale_sound() {
+        let (mut other, mut mixer) = mix_queue(1000);
+        other.push(&early(900));
+        let mut out = Vec::new();
+        during_push(other, vec![0.5; 200], || mixer.mix(&[0.0; 160], &mut out));
+        assert!(out.iter().all(|&s| s == 0.0), "stale sound mixed in: {:?}", &out[..4]);
+    }
+
+    /// Regression (the same review): a chunk being mixed can take samples while the push waits
+    /// between its steps, so the next chunk finds the queue no longer full. It needs the drop
+    /// reported by then, which is why a push reports before it publishes.
+    #[test]
+    fn regression_samples_taken_during_an_overflowing_push_do_not_hide_its_drop() {
+        let (mut other, mut mixer) = mix_queue(1000);
+        other.push(&early(900));
+        let mut out = Vec::new();
+        during_push(other, vec![0.5; 200], || {
+            for _ in 0..100 {
+                mixer.other.pop().expect("queued");
+            }
+            mixer.mix(&[0.0; 160], &mut out);
+        });
+        assert!(out.iter().all(|&s| s == 0.0), "stale sound mixed in: {:?}", &out[..4]);
+    }
+
+    /// A push that finds the queue full publishes nothing, so a chunk mixed right after it may not
+    /// see its report yet. The queue being full is enough.
+    #[test]
+    fn a_full_queue_is_emptied_before_a_drop_is_reported() {
+        let (mut other, mut mixer) = mix_queue(1000);
+        other.push(&early(1000));
+        assert!(format!("{other:?}").contains("free: 0, overflowed: 0"), "full, nothing reported: {other:?}");
+        let mut out = Vec::new();
+        mixer.mix(&[0.0; 160], &mut out);
+        assert!(out.iter().all(|&s| s == 0.0), "stale sound mixed in: {:?}", &out[..4]);
         assert_eq!(mixer.dropped(), 1000);
     }
 }
