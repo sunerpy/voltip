@@ -423,7 +423,7 @@ async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateS
     tauri::async_runtime::spawn_blocking(move || update.install(bytes)).await.map_err(|e| describe(&e))?.map_err(|e| describe(&e))?;
     slot.clear_marker();
     tracing::info!(version, "update installed; restarting");
-    app.request_restart();
+    crate::restart::after_update(app);
     Ok(None)
 }
 

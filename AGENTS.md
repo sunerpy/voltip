@@ -104,6 +104,10 @@ runs landed in a row on 2026-09-30, and one of them stalled a release for an hou
 - A CI job that runs twice its usual time is a hung test. The Rust gates step stops at 25 minutes
   by itself; cancel the run to learn sooner. Either way the gate logs still upload, and the hung
   test is the one "running for over 60 seconds".
+- Keychain checks on macOS use the runner's login keychain. A keychain made with `security
+  create-keychain` skips the partition check, so a test there cannot see the dialog a user gets
+  when one build reads an item another build created (2026-09-30: every such check passed, and
+  every update still asked). docs/runbook.md 发布 has the details.
 - `scripts/windows-remote.sh gate` runs whatever was synced last. Run `sync` first, and check that
   the commit at the head of the gate's log is yours.
 

@@ -793,9 +793,10 @@ jobs:
           sw_vers; uname -m; sysctl -n machdep.cpu.brand_string; sysctl -n hw.ncpu
           xcode-select -p; clang --version | head -1; cmake --version | head -1 || true
 
-      # What the fixed release certificate is for: an update reads the keychain entries the
-      # previous version stored, without a prompt (user report 2026-09-30, checklist item 15).
-      - name: Keychain access across updates (builds signed as releases are)
+      # Why an in-app update hands the keychain over (user report 2026-09-30, checklist item 15):
+      # in the login keychain a later build signed with the same self-signed certificate is refused
+      # an earlier build's item, but may list and remove it; a created keychain checks nothing.
+      - name: Keychain partitions across updates (login keychain)
         timeout-minutes: 5
         run: .github/scripts/check-keychain-across-updates.sh
 
@@ -914,6 +915,15 @@ jobs:
       - name: Keychain items from an ad-hoc build move to the signed build's
         timeout-minutes: 10
         run: .github/scripts/check-keychain-migration.sh "$APP"
+
+      # The fix for the prompt on every update (user report 2026-09-30): the old build hands the
+      # identity to the new one, which reads no other build's item; a hand install still asks.
+      - name: Keychain hand-over at an in-app update (login keychain)
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          cargo build --release -p voltip-identity --features keyring --example keychain_handoff --target "$MACOS_TARGET"
+          .github/scripts/check-keychain-handoff.sh "$APP" "target/$MACOS_TARGET/release/examples/keychain_handoff"
 
       - name: Headless native run (download a model, transcribe a public sample)
         shell: pwsh

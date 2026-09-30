@@ -40,3 +40,8 @@ android-native-keyring-store = { version = "=1.0.0", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+
+# Harness of .github/scripts/check-keychain-handoff.sh (macOS): the build an in-app update replaces.
+[[example]]
+name = "keychain_handoff"
+required-features = ["keyring"]

@@ -47,7 +47,7 @@ apps/desktop/src-tauri   桌面 shell：全局热键（tauri-plugin-global-short
 
 | 数据 | 位置 |
 |---|---|
-| Identity 私钥 | 平台安全存储：Windows Credential Manager / macOS Keychain（`keyring`），Android Keystore（移动端 `SecretStore` 实现），测试用内存实现 |
+| Identity 私钥 | 平台安全存储：Windows Credential Manager / macOS Keychain（`keyring`；macOS 发布包按构建建条目，应用内更新时交接，见 `docs/runbook.md` 发布），Android Keystore（移动端 `SecretStore` 实现），测试用内存实现 |
 | Trusted devices | `app_data_dir/trusted-devices.json`（只含公钥指纹、名称、平台、last_seen、connection_type） |
 | Settings | `app_data_dir/settings.json`（主题、relay url、热键等） |
 | Pairing session | 只在内存；过期或用完即销毁 |

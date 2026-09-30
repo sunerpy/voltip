@@ -11,16 +11,24 @@
 #![warn(missing_docs)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+#[cfg(unix)]
+pub mod handoff;
 mod identity;
+#[cfg(all(feature = "keyring", target_os = "macos"))]
+mod macos_keychain;
+mod per_build;
 mod secret_store;
 mod trusted;
 
 pub use identity::{DeviceIdentity, DeviceIdentityPublic, IdentityManager};
+#[cfg(all(feature = "keyring", target_os = "macos"))]
+pub use macos_keychain::SecurityKeychain;
+pub use per_build::{Ask, Entries, Keychain, PerBuildStore, Read, Stored};
 #[cfg(feature = "android-keystore")]
 pub use secret_store::AndroidKeystoreSecretStore;
 #[cfg(feature = "keyring")]
-pub use secret_store::{KeyringSecretStore, SIGNED_ACCOUNT_SUFFIX};
-pub use secret_store::{MemorySecretStore, SECRET_KEY_ENTRY, SecretStore};
+pub use secret_store::{KeyringSecretStore, signed_with_a_certificate};
+pub use secret_store::{MemorySecretStore, SECRET_KEY_ENTRY, SIGNED_ACCOUNT_SUFFIX, SecretStore};
 pub use trusted::{ConnectionKind, IdentityCheck, TrustedDevice, TrustedDeviceStore, TrustedDevicesFile};
 
 /// Errors from the identity layer.

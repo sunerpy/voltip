@@ -5,10 +5,14 @@ use std::collections::HashMap;
 use parking_lot::Mutex;
 use zeroize::Zeroizing;
 
-use crate::IdentityError;
+use crate::{Entries, IdentityError};
 
 /// Entry name under which the identity secret is stored.
 pub const SECRET_KEY_ENTRY: &str = "voltip.identity.x25519";
+
+/// Suffix of the account under which a signed macOS build keeps the items it created
+/// (`<user>.signed` in 0.0.12–0.0.14, `<user>.signed.<cdhash>` since; see [`crate::PerBuildStore`]).
+pub const SIGNED_ACCOUNT_SUFFIX: &str = ".signed";
 
 /// Byte-oriented secret storage. Implementations must never log values.
 pub trait SecretStore: Send + Sync {
@@ -20,6 +24,11 @@ pub trait SecretStore: Send + Sync {
     fn delete(&self, entry: &str) -> Result<(), IdentityError>;
     /// Human-readable backend name for diagnostics (`keychain`, `credential-manager`, `memory`).
     fn backend_name(&self) -> &'static str;
+    /// What an update should hand to the next build ([`crate::handoff`]); `None` for a store
+    /// whose items every build reads alike.
+    fn handoff_state(&self) -> Option<Entries> {
+        None
+    }
 }
 
 /// In-memory store for tests and for the relay binary (which has no identity of its own).
@@ -126,10 +135,6 @@ pub struct KeyringSecretStore {
     signed: bool,
 }
 
-/// Suffix of the account under which a signed macOS build keeps the items it created.
-#[cfg(feature = "keyring")]
-pub const SIGNED_ACCOUNT_SUFFIX: &str = ".signed";
-
 #[cfg(feature = "keyring")]
 impl KeyringSecretStore {
     /// `service` is the OS-visible application id (`dev.voltip.desktop`), `user` scopes
@@ -165,14 +170,15 @@ impl KeyringSecretStore {
 
 /// Whether this process is signed with a certificate, not ad hoc (macOS code signing).
 #[cfg(all(feature = "keyring", target_os = "macos"))]
-fn signed_with_a_certificate() -> bool {
+pub fn signed_with_a_certificate() -> bool {
     use security_framework::os::macos::code_signing::{Flags, SecCode, SecRequirement};
     let Ok(requirement) = "certificate leaf[subject.CN] exists".parse::<SecRequirement>() else { return false };
     SecCode::for_self(Flags::NONE).and_then(|code| code.check_validity(Flags::NONE, &requirement)).is_ok()
 }
 
+/// Whether this process is signed with a certificate (only macOS signs code this way).
 #[cfg(all(feature = "keyring", not(target_os = "macos")))]
-fn signed_with_a_certificate() -> bool {
+pub fn signed_with_a_certificate() -> bool {
     false
 }
 
