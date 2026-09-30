@@ -1,6 +1,6 @@
 {
   "name": "voltip-workspace",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "license": "Apache-2.0",
   "private": true,
   "description": "Voltip web workspace: UI kit, IPC contract, desktop and mobile webviews.",
