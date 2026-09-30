@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.14](https://github.com/sunerpy/voltip/compare/v0.0.13...v0.0.14) (2026-09-30)
+
+
+### Bug Fixes
+
+* **audio:** a mixed take mixes nothing pushed before a drop ([#36](https://github.com/sunerpy/voltip/issues/36)) ([1979f13](https://github.com/sunerpy/voltip/commit/1979f138dd87498943482f04229424c009c0e948))
+
 ## [0.0.13](https://github.com/sunerpy/voltip/compare/v0.0.12...v0.0.13) (2026-09-30)
 
 
