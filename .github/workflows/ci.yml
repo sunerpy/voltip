@@ -20,7 +20,5 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Migration experiment
-        run: bash scripts/experiment-migrate.sh
-      - name: Run the experiment
-        run: bash scripts/experiment-keychain.sh
+      - name: Login keychain partitions
+        run: bash scripts/experiment-login-partition.sh
