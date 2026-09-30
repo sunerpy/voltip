@@ -83,10 +83,14 @@ grant() { # grant <db> <service> [sudo]
 }
 if out=$(grant "/Library/Application Support/com.apple.TCC/TCC.db" kTCCServiceAccessibility sudo); then echo "ok: Accessibility granted to $old (csreq = its requirement)"; else echo "note: system TCC.db: $out"; fi
 if out=$(grant "$HOME/Library/Application Support/com.apple.TCC/TCC.db" kTCCServiceMicrophone); then echo "ok: Microphone granted to $old (csreq = its requirement)"; else echo "note: user TCC.db not writable here: $out"; fi
-# tcc <since>: what tccd decided for Voltip since then (no app output).
+# tcc <since>: what tccd decided for Voltip since then (no app output): each request's service and
+# result, joined by msgID (authValue 2 = allowed, 0 = denied).
 tcc() {
-	log show --start "$1" --style compact --predicate 'subsystem == "com.apple.TCC"' 2>/dev/null |
-		grep -E "dev\.voltip\.desktop|voltip-desktop" | grep -oE "(kTCCService[A-Za-z]+|auth_value=[0-9]+|authValue=[0-9]+|Failed to match[^,]*|code requirement[^,]*|AUTHREQ_[A-Z_]+)" | sort | uniq -c | head -20 || true
+	log show --start "$1" --style compact --predicate 'subsystem == "com.apple.TCC"' >"$work/tcc.log" 2>/dev/null || true
+	grep -E "dev\.voltip\.desktop" "$work/tcc.log" | grep -oE "msgID=[0-9]+\.[0-9]+" | sort -u | while read -r id; do
+		grep -F "$id," "$work/tcc.log" | grep -oE "service=kTCCService[A-Za-z]+|authValue=[0-9]+" | sort -u | tr '\n' ' '
+		echo
+	done | grep -v "^$" | sort | uniq -c || true
 }
 
 mkdir -p app
