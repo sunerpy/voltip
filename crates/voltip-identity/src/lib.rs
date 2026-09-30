@@ -19,7 +19,7 @@ pub use identity::{DeviceIdentity, DeviceIdentityPublic, IdentityManager};
 #[cfg(feature = "android-keystore")]
 pub use secret_store::AndroidKeystoreSecretStore;
 #[cfg(feature = "keyring")]
-pub use secret_store::KeyringSecretStore;
+pub use secret_store::{KeyringSecretStore, SIGNED_ACCOUNT_SUFFIX};
 pub use secret_store::{MemorySecretStore, SECRET_KEY_ENTRY, SecretStore};
 pub use trusted::{ConnectionKind, IdentityCheck, TrustedDevice, TrustedDeviceStore, TrustedDevicesFile};
 
