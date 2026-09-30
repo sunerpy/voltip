@@ -26,7 +26,6 @@ cat >probe.c <<'C'
 #include <stdio.h>
 #include <string.h>
 extern OSStatus SecKeychainItemSetAccessWithPassword(SecKeychainItemRef, SecAccessRef, UInt32, const void *);
-extern OSStatus SecTrustedApplicationSetRequirement(SecTrustedApplicationRef, SecRequirementRef);
 // probe <kc> <service> add | read | delete | allow <app> <pw> | allow-cdhash <app> <cdhash> <pw>
 int main(int argc, char **argv) {
   SecKeychainRef kc = NULL;
@@ -45,7 +44,7 @@ int main(int argc, char **argv) {
     SecKeychainItemRef item = NULL;
     s = SecKeychainFindGenericPassword(kc, sl, svc, al, acct, NULL, NULL, &item);
     if (s == 0) s = SecKeychainItemDelete(item);
-  } else if ((strcmp(op, "allow") == 0 && argc == 6) || (strcmp(op, "allow-cdhash") == 0 && argc == 7)) {
+  } else if (strcmp(op, "allow") == 0 && argc == 6) {
     SecKeychainItemRef item = NULL; SecAccessRef access = NULL; SecTrustedApplicationRef app = NULL;
     CFArrayRef acls = NULL;
     s = SecKeychainFindGenericPassword(kc, sl, svc, al, acct, NULL, NULL, &item);
@@ -53,14 +52,6 @@ int main(int argc, char **argv) {
     if (s == 0) acls = SecAccessCopyMatchingACLList(access, kSecACLAuthorizationDecrypt);
     if (s == 0 && (!acls || CFArrayGetCount(acls) == 0)) s = errSecNoAccessForItem;
     if (s == 0) s = SecTrustedApplicationCreateFromPath(argv[4], &app);
-    if (s == 0 && strcmp(op, "allow-cdhash") == 0) {
-      // What the dialog's 「始终允许」 appears to record: this one build, by its code hash.
-      char text[128]; snprintf(text, sizeof text, "cdhash H\"%s\"", argv[5]);
-      CFStringRef str = CFStringCreateWithCString(NULL, text, kCFStringEncodingUTF8);
-      SecRequirementRef req = NULL;
-      s = SecRequirementCreateWithString(str, kSecCSDefaultFlags, &req);
-      if (s == 0) s = SecTrustedApplicationSetRequirement(app, req);
-    }
     for (CFIndex i = 0; s == 0 && i < CFArrayGetCount(acls); i++) {
       SecACLRef acl = (SecACLRef)CFArrayGetValueAtIndex(acls, i);
       CFArrayRef apps = NULL; CFStringRef desc = NULL; SecKeychainPromptSelector sel = 0;
@@ -95,19 +86,24 @@ if ! codesign -f -s "$sha" -i dev.voltip.desktop probe-a 2>/dev/null; then
 fi
 codesign -f -s "$sha" -i dev.voltip.desktop probe-a probe-b
 codesign -f -s - -i dev.voltip.desktop probe-adhoc
-cdhash_a=$(codesign -dvvv probe-a 2>&1 | sed -n 's/^CDHash=//p')
 say() { printf '%-72s %s\n' "$1" "$2"; }
+for req in 'certificate leaf[subject.CN] exists' 'anchor exists'; do
+	for b in a adhoc; do
+		if codesign --verify -R="$req" "probe-$b" 2>/dev/null; then r=satisfied; else r=not; fi
+		say "requirement \"$req\" on build $b" "$r"
+	done
+done
 say "ad-hoc stores a legacy entry" "$(./probe-adhoc "$kc" legacy add)"
-say "build a reads it (no trust yet)" "$(./probe-a "$kc" legacy read)"
-say "「始终允许」 for build a, by its code hash" "$(./probe-a "$kc" legacy allow-cdhash "$work/probe-a" "$cdhash_a" "$pw")"
-say "build a reads it" "$(./probe-a "$kc" legacy read)"
-say "build b, the next update, reads it (the user's report: refused)" "$(./probe-b "$kc" legacy read)"
-say "build b deletes it (not trusted)" "$(./probe-b "$kc" legacy delete)"
+say "build b reads it (not trusted: a prompt would be needed)" "$(./probe-b "$kc" legacy read)"
+say "build b deletes it, not trusted, interaction off" "$(./probe-b "$kc" legacy delete)"
+say "the legacy entry is still there after that" "$(./probe-adhoc "$kc" legacy read)"
 ./probe-adhoc "$kc" legacy2 add >/dev/null
-./probe-a "$kc" legacy2 allow-cdhash "$work/probe-a" "$cdhash_a" "$pw" >/dev/null
-say "build a deletes a legacy entry it may read" "$(./probe-a "$kc" legacy2 delete)"
+say "「始终允许」-like trust for build a (its requirement)" "$(./probe-a "$kc" legacy2 allow "$work/probe-a" "$pw")"
+say "build a reads it" "$(./probe-a "$kc" legacy2 read)"
+say "build a deletes it, interaction off" "$(./probe-a "$kc" legacy2 delete)"
 say "build a stores the migrated entry" "$(./probe-a "$kc" migrated add)"
-say "build b reads the migrated entry (the fix: no prompt)" "$(./probe-b "$kc" migrated read)"
+say "build b reads the migrated entry" "$(./probe-b "$kc" migrated read)"
+say "build b deletes the migrated entry" "$(./probe-b "$kc" migrated delete)"
 security dump-keychain -a "$kc" 2>/dev/null | grep -E '"svce"|requirement:' || true
 security list-keychains -d user -s "${existing[@]}"
 security delete-keychain "$kc"
