@@ -125,7 +125,7 @@ pnpm -C apps/desktop dev --host 127.0.0.1 --port 1430
    Then cut them out onto a canvas at least as wide as the widest pill:
 
    ```bash
-   python3 docs/site/tools/crop-overlay.py --width 392 --out docs/site/public/screens <dir>/overlay-*-*.png
+   python3 docs/site/tools/crop-overlay.py --width 440 --out docs/site/public/screens <dir>/overlay-*-*.png
    ```
 
    Update `width` and `height` under `visual.pill` in both home pages if the canvas

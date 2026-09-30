@@ -8,13 +8,6 @@ The next releases, in the expected order. No dates are promised. Each feature is
 
 ## In development
 
-### Long recordings and computer audio <StatusTag status="building" />
-
-- Recordings of up to two hours, with the limit set under Settings.
-- Recording from the microphone, from the computer's own audio, or from both mixed.
-- Long recordings are recognised in segments while you speak.
-- The result can be processed with an AI preset in parts, and exported as SRT subtitles or as text.
-
 ### The Android app <StatusTag status="building" />
 
 Using the phone as a microphone and keyboard is built and tested; the app is being prepared for release. See [the phone page](/phone/).

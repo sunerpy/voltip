@@ -23,6 +23,13 @@ From an entry you can:
 
 The search box finds text, apps, scenes and models. Filters narrow the list to today, this week or this month, to starred entries, or entries whose text was not inserted. The list shows 100 entries at a time; scroll to the end, or select **Load more**, to see the next ones.
 
+## Long recordings
+
+An entry recorded for longer than 2 minutes, or with more than 2,000 characters, has two more tools in its detail:
+
+- **Process with an AI preset**: choose a preset and select **Process**. The text is processed in parts of up to 1,500 characters, cut at sentence ends; the progress is shown and you can cancel. The result is saved as a processed text beside the original, which stays as it is, and appears under **Processed**. With Key points, the points of all parts are summarised once more when they fit one request; with Chinese ⇄ English, you get a translation. The built-in AI service runs on a free quota, so long texts take a while.
+- **Export subtitles (SRT)** and **Export text (TXT)**: choose where to save the file. Subtitles follow the segments of the recording, with at most 20 Chinese or 42 Latin characters per line. The text export uses the processed text when there is one.
+
 ## How much is kept
 
 Under **Settings → Privacy and history**:

@@ -36,17 +36,17 @@ home:
     pill:
       - light: /screens/overlay-listening-zh-light.webp
         dark: /screens/overlay-listening-zh-dark.webp
-        width: 784
+        width: 880
         height: 70
         alt: 说话时的悬浮窗：显示输入音量和用于取消的 Esc 键。
       - light: /screens/overlay-processing-zh-light.webp
         dark: /screens/overlay-processing-zh-dark.webp
-        width: 784
+        width: 880
         height: 70
         alt: AI 润色时的悬浮窗：显示所用的预设和这一步已用的时间。
       - light: /screens/overlay-inserted-zh-light.webp
         dark: /screens/overlay-inserted-zh-dark.webp
-        width: 784
+        width: 880
         height: 70
         alt: 文字插入之后的悬浮窗：显示插入的字数和目标应用。
 
@@ -123,9 +123,9 @@ home:
             status: available
             link: /zh/dictation/history#统计
           - title: 长录音与电脑声音
-            body: 单次录音最长 2 小时，可以录制麦克风、电脑声音或两者混合，并导出 SRT 字幕。
-            status: building
-            link: /zh/roadmap
+            body: 单次录音最长 2 小时，可以录制麦克风、电脑声音或两者混合；录音时分段识别，可用 AI 预设处理全文或导出 SRT 字幕。
+            status: available
+            link: /zh/dictation/shortcuts#录音来源
 
   steps:
     title: 一次听写的四个步骤
@@ -242,9 +242,6 @@ home:
     title: 接下来的计划
     intro: 按预计顺序列出，不承诺日期；每项功能发布后，本站会随之更新。
     items:
-      - title: 长录音与电脑声音
-        status: building
-        body: 单次录音最长 2 小时，可选择麦克风、电脑声音或两者混合。长录音分段识别，并可导出 SRT 字幕。
       - title: Android 应用
         status: building
         body: 手机当麦克风和键盘的功能已经完成并通过测试，应用正在准备发布。
