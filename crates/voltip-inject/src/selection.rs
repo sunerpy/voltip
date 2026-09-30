@@ -281,15 +281,19 @@ mod tests {
         assert_eq!(clipboard.writes(), vec![CLEARED.to_string(), "x".into(), CLEARED.to_string()]);
     }
 
-    /// A slow application (the copy lands after a few polls) is still read.
+    /// A slow application (the copy lands after a few polls) is still read, and the copy returns
+    /// as soon as the text shows, not at the timeout. The timeout is long here: with the 200 ms of
+    /// `fast()` the bound was the timeout itself, and main CI's Intel macOS runner (2026-09-30)
+    /// ran the application's 40 ms late enough to reach it.
     #[test]
     fn a_copy_that_lands_late_within_the_timeout_is_read() {
         let clipboard = MemoryClipboard::holding("before");
         let app = Arc::new(App { delay: Duration::from_millis(40), ..Arc::into_inner(App::with(&clipboard, Some("late"))).unwrap() });
+        let options = CopyOptions { timeout: Duration::from_secs(5), ..fast() };
         let started = Instant::now();
-        let got = copier(&clipboard, app).copy_selection(&[]).unwrap();
+        let got = ClipboardSelection::with_ports(clipboard.clone(), app, copy_chord_for("linux"), options).copy_selection(&[]).unwrap();
         assert_eq!(got.as_deref(), Some("late"));
-        assert!(started.elapsed() < Duration::from_millis(200), "returned as soon as the text showed");
+        assert!(started.elapsed() < options.timeout / 2, "returned as soon as the text showed, not at the timeout: {:?}", started.elapsed());
         assert_eq!(clipboard.current().as_deref(), Some("before"));
     }
 

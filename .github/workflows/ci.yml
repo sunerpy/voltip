@@ -201,7 +201,11 @@ jobs:
       - name: Install web dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
+      # 2–6 minutes on main (2026-09-30). A test that hangs fails the step here instead of holding
+      # the job to its hour (and a release candidate's source gate to its 45 minutes); the log
+      # below still uploads and names the test "running for over 60 seconds".
       - name: Rust gates (VERIFY_GATES=rust scripts/verify-all.sh)
+        timeout-minutes: 25
         env:
           VERIFY_GATES: rust
         run: ./scripts/verify-all.sh verify-rust.log

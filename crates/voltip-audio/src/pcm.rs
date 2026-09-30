@@ -116,6 +116,17 @@ impl PcmProducer {
     }
 }
 
+impl Drop for PcmProducer {
+    /// Samples dropped since the last one that fit are reported when the recorder stops too: no
+    /// sample follows them to carry the report. (A report ring full of unread reports loses it:
+    /// nothing has read the stream for that long.)
+    fn drop(&mut self) {
+        if self.dropped > 0 {
+            let _ = self.gaps.push(Gap { at: self.written, len: self.dropped });
+        }
+    }
+}
+
 /// Consumer end: what the recorder hands to the core's recording thread.
 pub struct PcmConsumer {
     ring: rtrb::Consumer<f32>,
@@ -152,10 +163,15 @@ impl PcmConsumer {
         self.gaps.pop().ok().map(|g| g.len)
     }
 
-    /// The recorder stopped (the producer is gone): once [`PcmConsumer::read`] returns `0` and
-    /// [`PcmConsumer::gap`] `None`, nothing more will come.
+    /// The recorder stopped (the producer is gone) and no gap is left to take: once
+    /// [`PcmConsumer::read`] returns `0` as well, nothing more will come.
     pub fn is_closed(&self) -> bool {
-        self.ring.is_abandoned()
+        if !self.ring.is_abandoned() {
+            return false;
+        }
+        // The producer's last gap report comes before it lets go of the ring: see it.
+        std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
+        self.gaps.is_empty()
     }
 
     /// Sample rate of the stream.
@@ -270,6 +286,23 @@ mod tests {
         assert_eq!(&buf[..2], &[2.0, 2.0]);
         drop(producer);
         assert_eq!(drain(&mut consumer), Vec::<f32>::new());
+        assert!(consumer.is_closed());
+    }
+
+    /// Regression (goal review, 2026-09-30): samples dropped right before the recorder stopped were
+    /// to be reported with the next sample that fit, which never came, so the stream ended short
+    /// of the take and the span was missing from the file and the text. The producer reports them
+    /// when it goes, and the stream counts as closed only once that report was taken.
+    #[test]
+    fn regression_a_drop_right_before_the_stop_is_still_reported() {
+        let (mut producer, mut consumer) = pcm_stream(&tiny(4), None).unwrap();
+        producer.push(&[1.0; 6]); // 4 in, 2 dropped
+        drop(producer);
+        let mut buf = [0.0f32; 8];
+        assert_eq!(consumer.read(&mut buf), 4);
+        assert_eq!(consumer.read(&mut buf), 0);
+        assert!(!consumer.is_closed(), "the gap is still to be taken");
+        assert_eq!(consumer.gap(), Some(2));
         assert!(consumer.is_closed());
     }
 

@@ -1365,14 +1365,14 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
   - macOS 14.6 起：在只有输出的设备上建输入流，cpal 建 Core Audio process tap 和聚合设备；首次使用时系统弹出授权，说明文字是 `Info.plist` 的 `NSAudioCaptureUsageDescription`（英文与简体中文 `InfoPlist.strings`）。更早的系统报 `macos_too_old`。
   - Linux：开启 cpal 的 `pulseaudio` 特性，录默认输出（sink）的 `.monitor` 源；麦克风仍走 ALSA（`host_from_id(Alsa)`），与以前一致。没有 PulseAudio / PipeWire（`pipewire-pulse`）服务时报 `no_sound_server`。
 - `audio_outputs`（查询，桌面）：`{ system_audio: available | macos_too_old { version } | no_sound_server | unsupported, devices }`，设备列表默认设备在前；手机回 `unsupported`。
-- **混合**（`mix.rs`）：两路各自重采样到 16 kHz；麦克风是时钟，电脑声音进一个无锁队列，每个麦克风样本取一个队列样本（没有就补零）；队列超出 20 ms（`MAX_LAG_SAMPLES = 320`）的部分丢掉，所以两路相差不超过 20 ms。两路各乘 0.707（−3 dB）后相加，再过软限幅（0.9 以下不变，以上平滑逼近满幅，永不溢出）。
-- **长录音的流**（`pcm.rs`）：`CaptureOptions.long` 为真时，采集回调只做两件事：重采样、写进 60 s 的无锁环形缓冲，从不阻塞；环满时丢掉的样本数由 `PcmStream::gap()` 报告。这时 `Recorder` 的内存缓冲只留前 120 s，内存占用有上限。
+- **混合**（`mix.rs`）：两路各自重采样到 16 kHz；麦克风是时钟，电脑声音进一个无锁队列，每个麦克风样本取一个队列样本（没有就补零）；每个麦克风块混合之前，队列里比这一块再早 20 ms（`MAX_LAG_SAMPLES = 320`）以上的样本先丢掉（包括电脑声音先开始、麦克风打开期间积下的），所以从第一块起两路相差都不超过 20 ms。两路各乘 0.707（−3 dB）后相加，再过软限幅（0.9 以下不变，以上平滑逼近满幅，永不溢出）。
+- **长录音的流**（`pcm.rs`）：`CaptureOptions.long` 为真时，采集回调只做两件事：重采样、写进 60 s 的无锁环形缓冲，从不阻塞；环满时丢掉的样本数由 `PcmStream::gap()` 报告；丢样本之后录音随即停止时，这段空缺也在流结束前报告（`PcmProducer` 析构时补报，`is_closed()` 在空缺取走之后才为真）。这时 `Recorder` 的内存缓冲只留前 120 s，内存占用有上限。
 
 ### 22.3 长录音（`crates/voltip-core/src/dictation/long.rs`、`engine.rs`）
 
 - **何时算长录音**：本机听写的 `max_minutes` 超过 2 分钟时请求 `long`；设备打开后，核心取 `pcm_stream()`，在非实时线程里读流，写到 `<data_dir>/recordings/take-<毫秒>-<会话>.pcm`（16 位小端，Unix 上权限 0600），同时交给切段器。拿不到流的采集（旧壳、测试假设备）照旧整段留在内存；建不了文件时自动停止提前到 2 分钟。
 - **切段**：端口 `SegmenterFactory`（`DictationPorts.segmenter`）。
-  - 桌面壳用 `voltip_asr_local::segmenter::VadSegmenterFactory`：Silero VAD（与 `vad_trim` 同一个辅助模型）跟着录音走，每段满 20 s 后在下一个停顿处切（停顿开始后 50 ms）；到 45 s 还没有停顿，就在最后 5 s 里能量最低的 200 ms 中间切断。检测器在录音线程上加载，不占核心的任务。模型没下载时本次用核心的兜底，同时在后台下载模型（`ModelStore::spawn_auxiliary_fetch`，不看 `vad_trim` 开关）。
+  - 桌面壳用 `voltip_asr_local::segmenter::VadSegmenterFactory`：Silero VAD（与 `vad_trim` 同一个辅助模型）跟着录音走，每段满 20 s 后在下一个停顿处切（停顿开始后 50 ms）；一句话说了 20 s 还没停时，检测器把 100 ms 的短停顿也算作停顿（sherpa-onnx 超过 `max_speech_duration` 后的做法），不在话中间切；到 45 s 还没有停顿，就在最后 5 s 里能量最低的 200 ms 中间切断。检测器在录音线程上加载，不占核心的任务。模型没下载时本次用核心的兜底，同时在后台下载模型（`ModelStore::spawn_auxiliary_fetch`，不看 `vad_trim` 开关）。
   - 核心兜底 `EnergySegmenter`：每满 30 s，在最后 5 s 里能量最低的 200 ms 中间切开，段长 25–30 s。
 - **识别**：录音超过 2 分钟后才开始识别；一次只识别一段，按顺序从文件读出，交给当前识别服务（云端或本地）。识别比录音慢时，排队的是文件里的位置，不占内存。全静音的段不上传。一段失败会重试一次，再失败，这一段在文中记为「[未识别 hh:mm:ss–hh:mm:ss]」；环形缓冲丢样本的空缺同样记为空缺，相邻的合并。
 - **停止后**：

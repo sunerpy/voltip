@@ -78,6 +78,30 @@ make help                        # everything else
 - `docs/acceptance.md` maps each feature to its implementation and tests; `make acceptance` checks
   that every reference still exists.
 
+### Tests on CI's machines
+
+Most red runs on `main` came from tests that raced on a slower machine than the author's: the
+coverage run on `main` and the Intel Mac. Locally and in PR CI the same tests passed. Three such
+runs landed in a row on 2026-09-30, and one of them stalled a release for an hour. So:
+
+- Wait for the state an assertion reads. When two threads or tasks produce events, do not wait for
+  one event on the assumption that another has arrived before it.
+- To show that something returns before a timeout, give it a long timeout (seconds) and assert
+  under half of it. A bound equal to the timeout fails as soon as a machine is slow.
+- A test stops what it started before it ends: it unmounts a React root it created itself, clears
+  its intervals, and releases what a fake holds. Blocking fakes give up after `HOLD_LIMIT`
+  (`voltip_core::dictation::fakes`). Dropping a tokio runtime waits for every blocking thread, so a
+  failed assertion behind a held call would otherwise hang the job for its hour instead of failing.
+- Before pushing a test that depends on timing or threads, run it a few hundred times with every
+  core busy. To confirm a suspected race, delay the step in the fake and watch the test fail.
+- The `macos` jobs do not run on pull requests. After a merge, check that `main`'s run is green on
+  both Macs; a red `macos` job is fixed like any other.
+- A CI job that runs twice its usual time is a hung test. The Rust gates step stops at 25 minutes
+  by itself; cancel the run to learn sooner. Either way the gate logs still upload, and the hung
+  test is the one "running for over 60 seconds".
+- `scripts/windows-remote.sh gate` runs whatever was synced last. Run `sync` first, and check that
+  the commit at the head of the gate's log is yours.
+
 ## Commits and releases
 
 - Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, `ci:`). The type
