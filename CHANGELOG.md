@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.12](https://github.com/sunerpy/voltip/compare/v0.0.11...v0.0.12) (2026-09-30)
+
+
+### Bug Fixes
+
+* **audio:** a mixed take drops the computer's sound left from before a queue overflow ([4abaae1](https://github.com/sunerpy/voltip/commit/4abaae1463a4d0fbfba157abc2b73e9f8783c874))
+* **audio:** a mixed take drops the computer's sound left from before a queue overflow ([#31](https://github.com/sunerpy/voltip/issues/31)) ([4abaae1](https://github.com/sunerpy/voltip/commit/4abaae1463a4d0fbfba157abc2b73e9f8783c874))
+* **identity:** Mac releases stop asking for keychain items from ad-hoc Voltip on every update ([#33](https://github.com/sunerpy/voltip/issues/33)) ([c6bdc04](https://github.com/sunerpy/voltip/commit/c6bdc04df1da72d0599f4f4137aac19191c4a391))
+
 ## [0.0.11](https://github.com/sunerpy/voltip/compare/v0.0.10...v0.0.11) (2026-09-30)
 
 
