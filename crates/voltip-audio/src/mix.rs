@@ -3,8 +3,10 @@
 //! Both sides are resampled to 16 kHz mono first, each on its own audio thread. The computer's
 //! sound waits in a lock-free ring; the microphone's stream is the clock: each microphone sample
 //! takes the next queued sample of the other side (silence when none is queued — that side is
-//! behind or has nothing to play), and queued samples that pile up past [`MAX_LAG_SAMPLES`] are
-//! dropped, so the two drift apart by at most 20 ms whichever clock runs faster. The sum leaves
+//! behind or has nothing to play). Before each microphone chunk, queued samples older than the
+//! chunk plus [`MAX_LAG_SAMPLES`] are dropped — the computer's sound starts first and piles up
+//! while the microphone opens, and a faster clock piles up more — so the two are never more than
+//! 20 ms apart, from the first chunk on, whichever clock runs faster. The sum leaves
 //! headroom ([`MIX_GAIN`] on each side) and goes through a soft limiter, so a loud call over loud
 //! speech never wraps around.
 
@@ -57,6 +59,13 @@ impl Mixer {
     /// Allocates only when `out` has less capacity than the chunk.
     pub fn mix(&mut self, mic: &[f32], out: &mut Vec<f32>) {
         out.clear();
+        let excess = self.other.slots().saturating_sub(mic.len() + MAX_LAG_SAMPLES);
+        if excess > 0
+            && let Ok(chunk) = self.other.read_chunk(excess)
+        {
+            chunk.commit_all();
+            self.dropped += excess as u64;
+        }
         for step in mic.chunks(MIX_STEP) {
             let (queued, _) = self.other.pop_partial_slice(&mut self.scratch[..step.len()]);
             let got = queued.len();
@@ -65,13 +74,6 @@ impl Mixer {
                 let o = if i < got { self.scratch[i] } else { 0.0 };
                 out.push(limit(MIX_GAIN * m + MIX_GAIN * o));
             }
-        }
-        let excess = self.other.slots().saturating_sub(MAX_LAG_SAMPLES);
-        if excess > 0
-            && let Ok(chunk) = self.other.read_chunk(excess)
-        {
-            chunk.commit_all();
-            self.dropped += excess as u64;
         }
     }
 
@@ -139,7 +141,7 @@ mod tests {
         assert_eq!(mixer.filled(), 2);
     }
 
-    /// The other side running ahead is cut back to 20 ms after every chunk: the two never drift
+    /// The other side running ahead is cut back to 20 ms before every chunk: the two never drift
     /// apart by more.
     #[test]
     fn the_other_side_never_runs_more_than_20_ms_ahead() {
@@ -158,5 +160,25 @@ mod tests {
         assert_eq!(out.len(), long.len());
         assert_eq!(mixer.filled(), (long.len() - MAX_LAG_SAMPLES) as u64);
         assert!(format!("{mixer:?}").contains("dropped"));
+    }
+
+    /// Regression (goal review, 2026-09-30): the computer's sound starts before the microphone
+    /// opens, and the first microphone chunk was mixed with the oldest of what had piled up by
+    /// then — half a second before it here — the backlog going only afterwards. It goes first
+    /// now: the chunk is mixed with sound at most 20 ms older than the newest queued.
+    #[test]
+    fn regression_the_first_chunk_is_mixed_with_recent_sound_not_the_oldest_queued() {
+        let (mut other, mut mixer) = queue(16_000);
+        // Half a second queued; each sample is its own index (÷ 10 000).
+        for i in 0..8000u16 {
+            other.push(f32::from(i) / 10_000.0).unwrap();
+        }
+        let mut out = Vec::new();
+        mixer.mix(&[0.0; 160], &mut out);
+        let index = |v: f32| v / MIX_GAIN * 10_000.0;
+        let newest_kept = 8000.0 - 160.0 - MAX_LAG_SAMPLES as f32;
+        assert!((index(out[0]) - newest_kept).abs() < 0.5, "mixed with sample {}", index(out[0]));
+        assert!((index(out[159]) - (newest_kept + 159.0)).abs() < 0.5, "mixed with sample {}", index(out[159]));
+        assert_eq!(mixer.dropped(), (8000 - 160 - MAX_LAG_SAMPLES) as u64);
     }
 }
