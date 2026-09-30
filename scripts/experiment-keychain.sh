@@ -23,6 +23,8 @@ cat > probe.c <<'C'
 #include <Security/Security.h>
 #include <stdio.h>
 #include <string.h>
+// Exported by Security.framework but not in its public headers (the `security` tool uses it).
+extern OSStatus SecKeychainItemSetAccessWithPassword(SecKeychainItemRef, SecAccessRef, UInt32, const void *);
 // probe <keychain> <service> add|read|allow <app> <keychain password>
 int main(int argc, char **argv) {
   SecKeychainRef kc = NULL;
