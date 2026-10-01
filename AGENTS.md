@@ -100,7 +100,8 @@ runs landed in a row on 2026-09-30, and one of them stalled a release for an hou
 - Before pushing a test that depends on timing or threads, run it a few hundred times with every
   core busy. To confirm a suspected race, delay the step in the fake and watch the test fail.
 - The `macos` jobs do not run on pull requests. After a merge, check that `main`'s run is green on
-  both Macs; a red `macos` job is fixed like any other.
+  both Macs; a red `macos` job is fixed like any other, and until it is, `CI Success` on `main` is
+  red and no release candidate passes its source gate.
 - A CI job that runs twice its usual time is a hung test. The Rust gates step stops at 25 minutes
   by itself; cancel the run to learn sooner. Either way the gate logs still upload, and the hung
   test is the one "running for over 60 seconds".
@@ -125,13 +126,18 @@ runs landed in a row on 2026-09-30, and one of them stalled a release for an hou
   merges only, so for that merge the owner turns on rebase merging (Settings → General → Pull
   Requests) and merges with `--rebase`. (User decision 2026-09-29: sixteen commits pushed straight
   to `main` sat between 0.0.5 and 0.0.6.)
-- Merging needs an up-to-date branch and the `Release candidate` status on its head (the
-  `release-candidate` ruleset): `ci.yml`'s `candidate-status` writes it for an ordinary pull request,
-  `release-candidate.yml` for release-please's once the packages are built. `CI Success` is CI's
-  verdict; wait for it too. The ruleset lets the owner bypass it, for an emergency push or a fork's
-  pull request that cannot write the status, not as the way changes land. The `macos` jobs of
-  `ci.yml` (Apple silicon and Intel) run on pushes to `main` and on demand (`gh workflow run ci.yml
-  --ref <branch>` before merging a macOS change), not on pull requests.
+- Merging needs an up-to-date branch and two checks on its head (the `release-candidate` ruleset):
+  `CI Success`, CI's verdict, and the `Release candidate` status, which `ci.yml`'s
+  `candidate-status` writes for an ordinary pull request and `release-candidate.yml` for
+  release-please's once the packages are built. The ruleset lets the owner bypass them, for an
+  emergency push or a fork's pull request that cannot write the status, not as the way changes
+  land. The `macos` jobs of `ci.yml` (Apple silicon and Intel) run on pushes to `main` and on
+  demand (`gh workflow run ci.yml --ref <branch>` before merging a macOS change), not on pull
+  requests. On `main`, `CI Success` waits for them, and the release candidate's source gate reads
+  `CI Success` alone: every job of `ci.yml` but the Codecov upload is one of its needs
+  (`scripts/release/test_release_workflows.py`), so a red Mac stops the next release. (v0.0.5
+  shipped from a commit whose Intel leg had failed while `CI Success`, which did not wait for the
+  Macs then, was green.)
 - Releases build once: `release-candidate.yml` builds, signs and seals every package for the
   release PR head, and `release.yml` promotes those exact bytes after the squash merge, without
   compiling. `docs/runbook.md` (发布) has the recovery steps.

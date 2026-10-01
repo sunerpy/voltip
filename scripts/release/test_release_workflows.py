@@ -201,6 +201,29 @@ class ContinuousIntegration(unittest.TestCase):
         self.assertNotIn("autorelease", body)
         self.assertNotIn("candidate-status", self.jobs["ci-success"])
 
+    def test_regression_ci_success_needs_every_job_but_the_advisory_ones(self) -> None:
+        # v0.0.5 (2026-09-28): the candidate's gate commit 06334e6 had `macos-x64` red in main's CI
+        # run 36461609860 while `CI Success` was green, because `macos` was not one of its needs, and
+        # the source gate reads only `CI Success`. A job outside the aggregate is invisible to the
+        # release. The only exceptions: `candidate-status` writes the ruleset's status and must not
+        # wait for CI, and `codecov` is an upload to an outside service the file header leaves out.
+        match = re.search(r"(?m)^    needs: \[([^\]]*)\]$", self.jobs["ci-success"])
+        self.assertIsNotNone(match, "ci-success lists its needs on one line")
+        needs = {name.strip() for name in match.group(1).split(",")}
+        advisory = {"ci-success", "candidate-status", "codecov"}
+        self.assertEqual(sorted(set(self.jobs) - advisory - needs), [], "jobs CI Success does not wait for")
+        self.assertEqual(sorted(needs - set(self.jobs)), [], "needs that name no job")
+
+    def test_ci_success_decides_with_the_tested_script_and_the_event(self) -> None:
+        # `.github/scripts/ci-success.sh` holds the rule (scripts/release/test_ci_success.py): the
+        # `macos` legs may be skipped on a pull request only, since they never run on one.
+        body = "\n".join(code_lines(self.jobs["ci-success"]))
+        self.assertIn("if: always()", body)
+        self.assertIn(".github/scripts/ci-success.sh", body)
+        self.assertIn("NEEDS_JSON: ${{ toJSON(needs) }}", body)
+        self.assertIn("EVENT: ${{ github.event_name }}", body)
+        self.assertIn("github.event_name == 'push' || github.event_name == 'workflow_dispatch'", self.jobs["macos"])
+
 
 if __name__ == "__main__":
     unittest.main()

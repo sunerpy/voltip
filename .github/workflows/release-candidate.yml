@@ -284,8 +284,9 @@ jobs:
           >/dev/null
 
   # No test re-run: the commit the source sits on must have passed ci.yml on main (its push run's
-  # CI Success check). CI on a fresh main commit may still be running, so this waits, at most 45
-  # minutes, while the legs build.
+  # CI Success check, which waits for every CI job including both macOS legs: the gate is only as
+  # strong as that aggregate, scripts/release/test_release_workflows.py). CI on a fresh main commit
+  # may still be running, so this waits, at most 45 minutes, while the legs build.
   source-gate:
     name: Source gate · CI Success
     needs: prepare

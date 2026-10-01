@@ -11,14 +11,16 @@
 # host guard, formatting) and skips the builds, which CI Success accepts only in that case. Windows packages are cross-built from Linux exactly as `make windows-x64`
 # does locally (cargo-xwin + lld-link + llvm-rc + clang + makensis), then run on a real Windows
 # runner by `windows-native`. macOS builds and runs on both processors in `macos` (pushes to main
-# and on demand). release-please's pull request and the commit it lands on main only bump
-# versions: they run verify-web, since the release candidate (release-candidate.yml) builds and
-# checks every package from that exact head, whose base passed this CI.
+# and on demand; CI Success waits for it there). release-please's pull request and the commit it
+# lands on main only bump versions: they run verify-web, since the release candidate
+# (release-candidate.yml) builds and checks every package from that exact head, whose base passed
+# this CI.
 #
-# The main ruleset requires the `Release candidate` commit status on a pull request's head:
-# release-candidate.yml writes it for release-please's pull request, `candidate-status` writes
-# "not a release PR" for every other one. There is no merge queue (the ruleset has no merge_queue
-# rule, and nothing would write that status for a merge group), so there is no merge_group trigger.
+# The main ruleset requires `CI Success` (from the GitHub Actions app) and the `Release candidate`
+# commit status on a pull request's head: release-candidate.yml writes the status for
+# release-please's pull request, `candidate-status` writes "not a release PR" for every other one.
+# There is no merge queue (the ruleset has no merge_queue rule, and nothing would write that status
+# for a merge group), so there is no merge_group trigger.
 #
 # No job here receives the built-in engine values (docs/dictation.md §3): the gates are hermetic,
 # the CI package is engine-less on purpose (VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1) and the smokes use a
@@ -752,16 +754,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  # Stable branch-protection check: every job above except the Codecov upload must report success.
-  # The build, test and platform jobs may be skipped only when `changes` found documentation alone;
-  # any other skip, and every failure or cancellation, fails.
   # macOS on both processors (moved here from macos.yml, 2026-09-28): the app and the dmg, signed
   # ad hoc as the release signs them and checked the same way (.github/scripts/
   # check-macos-bundle.sh), the macOS-only unit tests, the real event tap on Apple silicon, and the
   # same headless run the Windows and Linux jobs do (scripts/smoke-native-cli.ps1), which proves the
   # bundle's dylibs load and the ggml / sherpa-onnx engines run natively. About 20 minutes on
   # macos-15 and more on macos-15-intel (GitHub's last x86_64 image, until 2027-08), so it runs on
-  # pushes to main and on demand, not on pull requests, and CI Success does not wait for it. The
+  # pushes to main and on demand, not on pull requests. CI Success waits for it on those events: a
+  # red Mac on main stops the next release candidate (v0.0.5 shipped past one when it did not). The
   # release commit skips it with the rest (changed-code.sh): the release run builds both Macs.
   macos:
     name: macos-${{ matrix.arch }} · build + native run
@@ -959,23 +959,29 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # Stable branch-protection check, and the one check release-candidate.yml's source gate reads:
+  # every job above but the Codecov upload (and `candidate-status`, which writes the ruleset's other
+  # status) is a need, so a job left out is invisible to the release
+  # (scripts/release/test_release_workflows.py). The rule lives in .github/scripts/ci-success.sh:
+  # the build, test and platform jobs may be skipped only when `changes` found documentation alone,
+  # the macOS legs also on a pull request (they never run there); any other skip, and every failure
+  # or cancellation, fails.
   ci-success:
     name: CI Success
-    needs: [changes, verify-rust, verify-web, windows-cross, windows-native, hooks-windows, smoke-desktop]
+    needs: [changes, verify-rust, verify-web, windows-cross, windows-native, hooks-windows, smoke-desktop, macos]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Checkout (the aggregate's rule)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
       - name: Require every CI job to succeed
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
           CODE: ${{ needs.changes.outputs.code }}
-        run: |
-          set -euo pipefail
-          echo "$NEEDS_JSON" | jq .
-          echo "code=${CODE}"
-          jq -e --arg code "$CODE" '
-            .changes.result == "success" and .["verify-web"].result == "success" and
-            (to_entries | map(select(.key != "changes" and .key != "verify-web")) | all(
-              .value.result == "success" or
-              ($code == "false" and .value.result == "skipped")))' <<<"$NEEDS_JSON"
+          EVENT: ${{ github.event_name }}
+        run: .github/scripts/ci-success.sh
