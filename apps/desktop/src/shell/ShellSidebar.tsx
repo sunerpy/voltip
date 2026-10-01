@@ -57,7 +57,12 @@ export const ALL_NAV_IDS = ["home", "history", "dictionary", "rules", "speech", 
  *  (user feedback and decision 2026-09-28), so a page lights up its own entry; 设置 and 反馈 are
  *  dialogs over the page beneath, which keeps its entry lit. */
 export function navIdFor(route: Route): string {
-  if (route.name === "onboarding" || route.name === "overlay" || route.name === "notfound")
+  if (
+    route.name === "onboarding" ||
+    route.name === "overlay" ||
+    route.name === "design" ||
+    route.name === "notfound"
+  )
     return "home";
   return route.name;
 }

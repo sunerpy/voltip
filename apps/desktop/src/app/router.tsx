@@ -48,6 +48,8 @@ export type Route =
   | { name: "settings"; section: SettingsSection }
   | { name: "onboarding"; step: number }
   | { name: "overlay"; state?: string }
+  /** A design preview sheet (`/design/switchers`), `pnpm dev` only like the overlay sheet. */
+  | { name: "design"; sheet: string }
   | { name: "notfound"; path: string };
 
 export function isSettingsSection(value: string): value is SettingsSection {
@@ -101,6 +103,8 @@ export function parseRoute(path: string): Route {
       const state = params.get("state");
       return state === null ? { name: "overlay" } : { name: "overlay", state };
     }
+    case "design":
+      return { name: "design", sheet: second ?? "switchers" };
     default:
       return { name: "notfound", path: pathname };
   }
@@ -124,6 +128,8 @@ export function routePath(route: Route): string {
         : `/overlay?state=${encodeURIComponent(route.state)}`;
     case "notfound":
       return route.path;
+    case "design":
+      return `/design/${route.sheet}`;
     case "rules":
       return route.compose === true ? "/rules?new=1" : "/rules";
     case "ai":
@@ -140,7 +146,7 @@ export function routePath(route: Route): string {
  *  chrome-less route. */
 export type BackgroundRoute = Exclude<
   Route,
-  { name: "settings" | "feedback" | "onboarding" | "overlay" | "notfound" }
+  { name: "settings" | "feedback" | "onboarding" | "overlay" | "design" | "notfound" }
 >;
 
 /** The routes that are modal dialogs over `background` (user decision 2026-09-28: 设置 and 反馈
@@ -158,6 +164,7 @@ export function isBackgroundRoute(route: Route): route is BackgroundRoute {
     !isDialogRoute(route) &&
     route.name !== "onboarding" &&
     route.name !== "overlay" &&
+    route.name !== "design" &&
     route.name !== "notfound"
   );
 }

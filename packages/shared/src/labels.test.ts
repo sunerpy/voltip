@@ -31,6 +31,7 @@ import {
   takeFailureText,
   takePhaseLabel,
   modelDisplayName,
+  modelFamilyName,
   modelTierLabel,
   outcomeLabel,
   outputModeDescription,
@@ -445,6 +446,14 @@ describe("local model names (docs/dictation.md §10)", () => {
     expect(modelTierLabel("accurate")).toBe("高精度");
     expect(modelTierLabel("light", "en")).toBe("Light");
     expect(modelTierLabel("streaming", "zh-CN")).toBe("实时预览");
+  });
+
+  it("names the product behind a tier in both languages, and keeps the core's name for an unknown id", () => {
+    expect(modelFamilyName("qwen3-asr-0.6b", "均衡")).toBe("Qwen3-ASR 0.6B");
+    expect(modelFamilyName("qwen3-asr-1.7b", "高精度", "en")).toBe("Qwen3-ASR 1.7B");
+    expect(modelFamilyName("sense-voice-small", "轻量", "zh-CN")).toBe("SenseVoice Small");
+    expect(modelFamilyName("paraformer-zh", "轻量 · 中文", "en")).toBe("Paraformer");
+    expect(modelFamilyName("future-model", "未来", "en")).toBe("未来");
   });
 });
 

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # A release webview bundle carries no in-memory mock backend and no sample-value views: both
 # `main.tsx` import `@voltip/shared/mock`, and the desktop `App` imports the overlay spec sheet, only
-# under `import.meta.env.DEV`, a build-time constant. Run after `pnpm -r run build`. The sentinels
-# are strings minification keeps: `MOCK_HOTKEY_BACKEND` and a dictionary key only the sheet reads.
+# under `import.meta.env.DEV`, a build-time constant; so do the design preview sheets. Run after
+# `pnpm -r run build`. The sentinels are strings minification keeps: `MOCK_HOTKEY_BACKEND` and a
+# dictionary key only each sheet reads.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-sentinels=('mock · browser preview' 'overlay.anatomyBody')
+sentinels=('mock · browser preview' 'overlay.anatomyBody' 'design.switchers.trayLinux')
 status=0
 for dist in apps/desktop/dist apps/mobile/dist; do
   if [ ! -d "$dist/assets" ]; then

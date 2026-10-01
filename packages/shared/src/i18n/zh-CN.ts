@@ -1075,6 +1075,14 @@ export const zhCN = {
       streaming: "实时预览",
       auxiliary: "辅助",
     },
+    /** The product behind a tier: the secondary text of the 语音模型 menu. */
+    family: {
+      "qwen3-asr-0_6b": "Qwen3-ASR 0.6B",
+      "qwen3-asr-1_7b": "Qwen3-ASR 1.7B",
+      "sense-voice-small": "SenseVoice Small",
+      "paraformer-zh": "Paraformer",
+      "zipformer-stream-zh-en": "Zipformer",
+    },
     name: {
       "qwen3-asr-0_6b": "均衡",
       "qwen3-asr-1_7b": "高精度",
@@ -1393,6 +1401,57 @@ export const zhCN = {
       saveContinue: "保存并继续",
       continue: "继续",
       finish: "完成设置",
+    },
+  },
+  /** The 语音模型 / AI 润色模型 / 麦克风 menus of the title bar and the home page (2026-09-30). */
+  switchers: {
+    unavailable: "需要配置",
+    speech: {
+      label: "语音模型",
+      trigger: "语音模型：{name}",
+      local: "本地模型",
+      manage: "管理语音模型…",
+    },
+    polish: {
+      label: "AI 润色模型",
+      trigger: "AI 润色模型：{name}",
+      manage: "管理 AI 模型…",
+      combinedLabel: "AI 润色",
+      combinedTrigger: "AI 润色：{preset} · {model}",
+      presets: "预设",
+    },
+    microphone: {
+      label: "麦克风",
+      trigger: "麦克风：{name}",
+      devices: "输入设备",
+      default: "系统默认",
+      defaultNamed: "系统默认（{name}）",
+      missing: "未连接",
+      source: "录音来源",
+      manage: "录音来源设置…",
+    },
+  },
+  /** The switchers design sheet (`/design/switchers`, `pnpm dev` only). */
+  design: {
+    switchers: {
+      heading: "切换菜单设计预览",
+      intro:
+        "标题栏与首页工作台的切换菜单。所有数据来自预览数据，菜单可以直接点选；确认之前，真实界面保持不变。",
+      theme: "主题",
+      light: "浅色",
+      dark: "深色",
+      language: "语言",
+      titleBarA: "标题栏 · 方案 A：预设和模型分成两个下拉",
+      titleBarB: "标题栏 · 方案 B：一个下拉同时选择预设和模型",
+      narrow: "标题栏 · 窗口宽 960 像素",
+      menus: "标题栏的三个菜单",
+      homeReady: "首页 · 就绪栏",
+      homeMic: "首页 · 录音来源卡片",
+      homeEngine: "首页 · 语音模型卡片",
+      tray: "托盘与菜单栏图标",
+      trayWindows: "Windows：单击或双击图标打开主窗口，右键弹出菜单。",
+      trayMac: "macOS：单击图标弹出菜单（在系统的双击间隔之后），双击直接打开主窗口。",
+      trayLinux: "Linux：没有托盘图标，再次启动 Voltip 会打开主窗口。",
     },
   },
   overlay: {

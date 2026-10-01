@@ -1091,6 +1091,13 @@ export const en: Messages = {
       streaming: "Live preview",
       auxiliary: "Auxiliary",
     },
+    family: {
+      "qwen3-asr-0_6b": "Qwen3-ASR 0.6B",
+      "qwen3-asr-1_7b": "Qwen3-ASR 1.7B",
+      "sense-voice-small": "SenseVoice Small",
+      "paraformer-zh": "Paraformer",
+      "zipformer-stream-zh-en": "Zipformer",
+    },
     name: {
       "qwen3-asr-0_6b": "Balanced",
       "qwen3-asr-1_7b": "Accurate",
@@ -1439,6 +1446,57 @@ export const en: Messages = {
       saveContinue: "Save and continue",
       continue: "Continue",
       finish: "Finish setup",
+    },
+  },
+  switchers: {
+    unavailable: "Needs setup",
+    speech: {
+      label: "Speech model",
+      trigger: "Speech model: {name}",
+      local: "Local models",
+      manage: "Manage speech models…",
+    },
+    polish: {
+      label: "AI Polish model",
+      trigger: "AI Polish model: {name}",
+      manage: "Manage AI models…",
+      combinedLabel: "AI Polish",
+      combinedTrigger: "AI Polish: {preset} · {model}",
+      presets: "Presets",
+    },
+    microphone: {
+      label: "Microphone",
+      trigger: "Microphone: {name}",
+      devices: "Input devices",
+      default: "System default",
+      defaultNamed: "System default ({name})",
+      missing: "Not connected",
+      source: "Recording source",
+      manage: "Recording source settings…",
+    },
+  },
+  design: {
+    switchers: {
+      heading: "Switcher menus · design preview",
+      intro:
+        "The switcher menus of the title bar and the home page, on preview data. The menus work; the real interface stays as it is until the design is confirmed.",
+      theme: "Theme",
+      light: "Light",
+      dark: "Dark",
+      language: "Language",
+      titleBarA: "Title bar · option A: preset and model in two menus",
+      titleBarB: "Title bar · option B: one menu for the preset and the model",
+      narrow: "Title bar · window 960 pixels wide",
+      menus: "The three title bar menus",
+      homeReady: "Home · ready bar",
+      homeMic: "Home · recording source card",
+      homeEngine: "Home · speech model card",
+      tray: "Tray and menu bar icon",
+      trayWindows:
+        "Windows: click or double-click the icon to open the main window; right-click for the menu.",
+      trayMac:
+        "macOS: click the icon for the menu (after the system's double-click interval); double-click opens the main window.",
+      trayLinux: "Linux: there is no tray icon; launching Voltip again opens the main window.",
     },
   },
   overlay: {

@@ -249,8 +249,8 @@ export function Shell({
   useTrayRequests(onTray, traySource);
 
   const onboarding = route.name === "onboarding";
-  // The overlay showcase is a chrome-less spec sheet of the pill.
-  const sheet = route.name === "overlay";
+  // The overlay showcase and the design previews are chrome-less spec sheets.
+  const sheet = route.name === "overlay" || route.name === "design";
   const pickTheme = useCallback(
     (choice: ThemeChoice) => {
       if (choice === "system") setTheme(state.settings.theme, true);

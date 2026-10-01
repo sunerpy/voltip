@@ -22,6 +22,21 @@ import { Shell } from "./shell/Shell";
 /** The pill spec sheet and the single sample pills run on made-up values: `pnpm dev` only.
  *  `import.meta.env.DEV` is a build-time constant, so a release build drops the import. */
 const OverlaySheet = import.meta.env.DEV ? lazy(() => import("./pages/OverlaySheet")) : undefined;
+/** The design preview sheets (`/design/<sheet>`): `pnpm dev` only, like the pill sheet. */
+const SwitchersSheet = import.meta.env.DEV
+  ? lazy(() => import("./pages/SwitchersSheet"))
+  : undefined;
+
+function DesignPreview({ sheet }: { sheet: string }) {
+  if (SwitchersSheet === undefined || sheet !== "switchers") {
+    return <NotFound path={routePath({ name: "design", sheet })} />;
+  }
+  return (
+    <Suspense fallback={null}>
+      <SwitchersSheet />
+    </Suspense>
+  );
+}
 
 function OverlayPreview({ state }: { state?: string }) {
   if (OverlaySheet === undefined) {
@@ -84,6 +99,8 @@ function Page({ route }: { route: Exclude<Route, { name: "settings" | "feedback"
       return <Onboarding step={route.step} />;
     case "overlay":
       return <OverlayPreview state={route.state} />;
+    case "design":
+      return <DesignPreview sheet={route.sheet} />;
     case "notfound":
       return <NotFound path={route.path} />;
   }
