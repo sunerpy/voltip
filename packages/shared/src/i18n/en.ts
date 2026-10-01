@@ -2249,6 +2249,7 @@ export const en: Messages = {
       history: "History",
       entry: "Entry",
       historySettings: "History",
+      feedback: "Feedback",
     },
     tab: { label: "Main navigation", talk: "Talk", history: "History", settings: "Settings" },
     settings: {
@@ -2269,6 +2270,7 @@ export const en: Messages = {
       pinnedDetail: "Takes use “{name}”",
       historyDetail: "Keeps the latest {keep}",
       historyOff: "New takes are not saved",
+      feedbackDetail: "Report a problem or suggest an idea",
     },
     history: {
       search: "Search the text or the transcript",
@@ -2286,6 +2288,11 @@ export const en: Messages = {
     historySettings: {
       lede: "What this phone transcribes is kept on this phone and is not sent to the computer.",
       clearBody: "The {n} entries on this phone will be deleted. This cannot be undone.",
+    },
+    feedback: {
+      lede: "Describe the problem, or what you would like improved. What goes along with the report is listed below, to check before you send it.",
+      attachHelp:
+        "Up to {count}: images (PNG, JPEG, GIF, WebP) up to {image}, videos (MP4, WebM, MOV) up to {video}, {total} in all.",
     },
     dictionary: {
       emptyBody: "Create an entry: the correct spelling, and how recognition tends to hear it.",

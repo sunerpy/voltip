@@ -1,25 +1,21 @@
 import {
-  FEEDBACK_ATTACHMENT_ERRORS,
   FEEDBACK_ATTACHMENT_TYPES,
   FEEDBACK_CONTACT_MAX,
-  FEEDBACK_ERRORS,
+  FEEDBACK_DIAGNOSTIC_ORDER,
   FEEDBACK_KINDS,
+  FEEDBACK_LIMITS,
   FEEDBACK_MAX_ATTACHMENTS,
-  FEEDBACK_MAX_ATTACHMENT_TOTAL_BYTES,
-  FEEDBACK_MAX_IMAGE_BYTES,
-  FEEDBACK_MAX_VIDEO_BYTES,
   FEEDBACK_MESSAGE_MAX,
   type FeedbackAttachmentError,
-  type FeedbackDiagnostics,
   type FeedbackError,
   type FeedbackInfo,
   type FeedbackKind,
-  type Locale,
-  PROVIDER_IDS,
-  type ProviderId,
-  type StagedAttachment,
-  type TFunction,
-  outputModeLabel,
+  attachmentError,
+  attachmentSize,
+  attachmentType,
+  diagnosticValue,
+  feedbackError,
+  precheckAttachment,
 } from "@voltip/shared";
 import {
   Button,
@@ -38,108 +34,11 @@ import { useFeedbackDraft } from "../app/feedback-draft";
 import { openProjectLink } from "../app/project-links";
 import { useRouter } from "../app/router";
 import { useShell } from "../app/shell-context";
-import { formatBytes } from "../features/update/download-rate";
 
-const OS_NAMES: Record<string, string> = { windows: "Windows", linux: "Linux", macos: "macOS" };
-const DIAGNOSTIC_ORDER = [
-  "app_version",
-  "os",
-  "arch",
-  "session",
-  "locale",
-  "asr_provider",
-  "local_model",
-  "compute",
-  "llm_provider",
-  "output_mode",
-] as const satisfies readonly (keyof FeedbackDiagnostics)[];
-
-function isProvider(value: string): value is ProviderId {
-  return (PROVIDER_IDS as readonly string[]).includes(value);
-}
-
-function isOutputMode(value: string): value is Parameters<typeof outputModeLabel>[0] {
-  return value === "whole_take" || value === "streaming_final" || value === "live_inject";
-}
-
-/** One diagnostics value as the page words it: provider and mode names, not wire ids. */
-export function diagnosticValue(
-  key: (typeof DIAGNOSTIC_ORDER)[number],
-  value: string,
-  t: TFunction,
-  locale: Locale,
-): string {
-  switch (key) {
-    case "os":
-      return OS_NAMES[value] ?? value;
-    case "asr_provider":
-    case "llm_provider":
-      return isProvider(value) ? t(`engines.provider.${value}`) : value;
-    case "compute":
-      return value === "auto" || value === "cpu" || value === "gpu"
-        ? t(`engines.compute.${value}`)
-        : value;
-    case "output_mode":
-      return isOutputMode(value) ? outputModeLabel(value, locale) : value;
-    default:
-      return value;
-  }
-}
-
-/** The wire name of a failed submission, or `server` for anything else the shell said. */
-export function feedbackError(error: unknown): FeedbackError {
-  const text = error instanceof Error ? error.message : String(error);
-  return FEEDBACK_ERRORS.find((e) => e === text) ?? "server";
-}
-
-/** The wire name of a refused attachment; anything else the shell said reads as a wrong type. */
-export function attachmentError(error: unknown): FeedbackAttachmentError {
-  const text = error instanceof Error ? error.message : String(error);
-  return FEEDBACK_ATTACHMENT_ERRORS.find((e) => e === text) ?? "attachment_type";
-}
-
-/** The types a file with no type from the webview is taken for, by its extension. */
-const EXTENSION_TYPES: Record<string, string> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  webp: "image/webp",
-  mp4: "video/mp4",
-  webm: "video/webm",
-  mov: "video/quicktime",
-};
-
-/** A picked or pasted file's MIME type: the webview's, else the extension's, else none. */
-export function attachmentType(file: { name: string; type: string }): string {
-  if (file.type.length > 0) return file.type;
-  const dot = file.name.lastIndexOf(".");
-  return dot < 0 ? "" : (EXTENSION_TYPES[file.name.slice(dot + 1).toLowerCase()] ?? "");
-}
-
-/** The refusal the shell would give, told from the type and the size before the bytes are read
- *  (a large video is never loaded to be turned away); the shell checks again. */
-export function precheckAttachment(
-  type: string,
-  size: number,
-  staged: readonly StagedAttachment[],
-): FeedbackAttachmentError | undefined {
-  if (!(FEEDBACK_ATTACHMENT_TYPES as readonly string[]).includes(type)) return "attachment_type";
-  const limit = type.startsWith("video/") ? FEEDBACK_MAX_VIDEO_BYTES : FEEDBACK_MAX_IMAGE_BYTES;
-  if (size === 0 || size > limit) return "attachment_too_large";
-  if (staged.length >= FEEDBACK_MAX_ATTACHMENTS) return "attachment_too_many";
-  const total = staged.reduce((n, a) => n + a.size, 0) + size;
-  return total > FEEDBACK_MAX_ATTACHMENT_TOTAL_BYTES ? "attachment_total" : undefined;
-}
-
-/** A limit in whole megabytes (`5 MB`), as the help line and the refusals word them. */
-const megabytes = (bytes: number) => `${Math.round(bytes / 1_048_576)} MB`;
-const LIMITS = {
-  count: FEEDBACK_MAX_ATTACHMENTS,
-  image: megabytes(FEEDBACK_MAX_IMAGE_BYTES),
-  video: megabytes(FEEDBACK_MAX_VIDEO_BYTES),
-  total: megabytes(FEEDBACK_MAX_ATTACHMENT_TOTAL_BYTES),
-};
+// The helpers (diagnosticValue, feedbackError, attachmentError, attachmentType,
+// precheckAttachment) live in `@voltip/shared` (feedback-drafts.ts), shared with the phone.
+const DIAGNOSTIC_ORDER = FEEDBACK_DIAGNOSTIC_ORDER;
+const LIMITS = FEEDBACK_LIMITS;
 
 const TITLE_ID = "vt-feedback-title";
 const MESSAGE_ID = "vt-feedback-message";
@@ -393,7 +292,7 @@ export function FeedbackDialog() {
                               {file.name}
                             </span>
                             <span className="mono shrink-0 text-fg-subtle">
-                              {formatBytes(file.size)}
+                              {attachmentSize(file.size)}
                             </span>
                             <IconButton
                               icon="x"

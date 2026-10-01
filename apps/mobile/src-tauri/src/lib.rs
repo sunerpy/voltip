@@ -19,6 +19,7 @@ pub mod share;
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter as _, Manager as _, Runtime};
+use voltip_cloud::feedback;
 use voltip_core::ui::{ProjectLink, UI_EVENT_NAME, UiState, UpdateStatus};
 use voltip_core::{
     Activation, AppRef, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PresetDraft, PreviewDraft, ProviderId,
@@ -504,35 +505,64 @@ fn open_in_browser<R: Runtime>(app: &AppHandle<R>, url: &str) -> Result<(), Stri
 /// Why a desktop-hosted build of the phone shell (tests) opens nothing.
 pub const BROWSER_UNAVAILABLE: &str = "opener: 这个平台没有手机浏览器";
 
-/// Feedback is sent from the computer (its 反馈 dialog, docs/feedback.md).
-pub const FEEDBACK_UNAVAILABLE: &str = "feedback: 请在电脑上反馈";
-
+/// What a 反馈 report would carry, and whether this build can send one (docs/feedback.md; user
+/// decision 2026-10-01: the phone sends its own, as the desktop does). `locale` is the language the
+/// webview resolved; the phone has no graphical session to name.
 #[tauri::command]
-fn feedback_diagnostics(_locale: String) -> Result<(), String> {
-    Err(FEEDBACK_UNAVAILABLE.into())
+fn feedback_diagnostics(bridge: tauri::State<'_, Bridge>, locale: String) -> feedback::FeedbackInfo {
+    let state = bridge.state();
+    feedback::FeedbackInfo { configured: feedback::feedback_url().is_some(), diagnostics: feedback::diagnostics(&state, &locale, None, &state.app_version) }
 }
 
+/// Post the 反馈 page's report with the diagnostics it showed and the attachments it staged, as
+/// the desktop does: the error is the reason's wire name, never the endpoint, and the staged files
+/// are forgotten once the report went out.
 #[tauri::command]
-fn feedback_submit(_kind: String, _message: String, _contact: Option<String>, _locale: String, _attachments: Option<Vec<String>>) -> Result<(), String> {
-    Err(FEEDBACK_UNAVAILABLE.into())
+async fn feedback_submit(
+    bridge: tauri::State<'_, Bridge>,
+    staged: tauri::State<'_, feedback::Attachments>,
+    kind: feedback::FeedbackKind,
+    message: String,
+    contact: Option<String>,
+    locale: String,
+    attachments: Option<Vec<String>>,
+) -> Result<feedback::Receipt, String> {
+    let url = feedback::feedback_url().ok_or_else(|| feedback::SendError::NotConfigured.as_str().to_owned())?;
+    let (message, contact) = feedback::check(&message, contact.as_deref()).map_err(|e| e.as_str().to_owned())?;
+    let ids = attachments.unwrap_or_default();
+    let files = staged.pick(&ids).map_err(|e| e.as_str().to_owned())?;
+    let state = bridge.state();
+    let diagnostics = feedback::diagnostics(&state, &locale, None, &state.app_version);
+    let agent = format!("voltip-mobile/{}", state.app_version);
+    let sent = feedback::send(url, feedback::feedback_token(), &agent, kind, &message, contact.as_deref(), &diagnostics, &files).await;
+    if matches!(sent, Ok(_) | Err(feedback::SendError::Attachments)) {
+        staged.forget(&ids);
+    }
+    sent.map_err(|e| e.as_str().to_owned())
 }
 
-/// Same answer as `feedback_submit`: the phone stages no attachments.
+/// Stage a screenshot or a screen recording the page read from the photo picker: the raw bytes as
+/// the body, the name (percent-encoded, `x-voltip-name`) and the type (`x-voltip-type`) as headers.
 #[tauri::command]
-fn feedback_attachment_add() -> Result<(), String> {
-    Err(FEEDBACK_UNAVAILABLE.into())
+fn feedback_attachment_add(request: tauri::ipc::Request<'_>, staged: tauri::State<'_, feedback::Attachments>) -> Result<feedback::StagedAttachment, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err(feedback::AttachError::Type.as_str().to_owned());
+    };
+    let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok()).unwrap_or_default();
+    let name = feedback::percent_decode(header("x-voltip-name"));
+    staged.add(&name, header("x-voltip-type"), bytes.clone()).map_err(|e| e.as_str().to_owned())
 }
 
-/// Same answer as `feedback_submit`.
+/// Drop a staged attachment (the page's ×).
 #[tauri::command]
-fn feedback_attachment_remove(_id: String) -> Result<(), String> {
-    Err(FEEDBACK_UNAVAILABLE.into())
+fn feedback_attachment_remove(staged: tauri::State<'_, feedback::Attachments>, id: String) {
+    staged.remove(&id);
 }
 
-/// Same answer as `feedback_submit`.
+/// Drop every staged attachment: the 反馈 page opens with none.
 #[tauri::command]
-fn feedback_attachments_clear() -> Result<(), String> {
-    Err(FEEDBACK_UNAVAILABLE.into())
+fn feedback_attachments_clear(staged: tauri::State<'_, feedback::Attachments>) {
+    staged.clear();
 }
 
 #[tauri::command]
@@ -949,6 +979,7 @@ pub fn attach_bridge<R: Runtime>(
         }
     });
     app.manage(bridge);
+    app.manage(feedback::Attachments::default());
     Ok(())
 }
 

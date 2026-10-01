@@ -492,8 +492,6 @@ function refuseAttachment(reason: FeedbackAttachmentError): Promise<never> {
   return Promise.reject(new Error(reason));
 }
 
-/** `voltip_mobile::FEEDBACK_UNAVAILABLE`. */
-export const FEEDBACK_UNAVAILABLE = "feedback: 请在电脑上反馈";
 /** How long the preview's feedback endpoint takes to answer. */
 export const MOCK_FEEDBACK_MS = 300;
 /** What the preview phone's LAN browse sees (docs/pairing.md 「局域网发现」). */
@@ -2356,15 +2354,16 @@ export class MockBackend implements Backend {
 
   // ---- feedback (docs/feedback.md) -------------------------------------------------------------
 
+  /** `feedback_diagnostics`; the phone sends feedback of its own too (user decision 2026-10-01). */
   feedbackDiagnostics(locale: string): Promise<FeedbackInfo> {
-    if (this.role === "phone") return Promise.reject(new Error(FEEDBACK_UNAVAILABLE));
     const engines = this.state.engines;
     const onDevice = engines.asr_provider === "local";
     const host = hostOsOf(this.state.identity?.platform ?? "windows");
+    const phone = this.role === "phone";
     const diagnostics: FeedbackDiagnostics = {
       app_version: MOCK_CURRENT_VERSION,
-      os: host === "other" ? "windows" : host,
-      arch: "x86_64",
+      os: phone ? "android" : host === "other" ? "windows" : host,
+      arch: phone ? "aarch64" : "x86_64",
       locale,
       asr_provider: engines.asr_provider,
       output_mode: engines.effective_output_mode,
@@ -2380,7 +2379,6 @@ export class MockBackend implements Backend {
   }
 
   feedbackSubmit(draft: FeedbackDraft): Promise<FeedbackReceipt> {
-    if (this.role === "phone") return Promise.reject(new Error(FEEDBACK_UNAVAILABLE));
     const message = draft.message.trim();
     const contact = draft.contact?.trim() ?? "";
     if (
@@ -2414,7 +2412,6 @@ export class MockBackend implements Backend {
 
   /** `feedback_attachment_add`: the shell's checks, in its order (`feedback::Attachments::add`). */
   feedbackAttachmentAdd(file: AttachmentFile): Promise<StagedAttachment> {
-    if (this.role === "phone") return Promise.reject(new Error(FEEDBACK_UNAVAILABLE));
     const name = cleanAttachmentName(file.name);
     if (name === undefined) return refuseAttachment("attachment_name");
     if (!(FEEDBACK_ATTACHMENT_TYPES as readonly string[]).includes(file.type))

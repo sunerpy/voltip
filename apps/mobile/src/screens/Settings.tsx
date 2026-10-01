@@ -149,6 +149,12 @@ export function Settings() {
       </Group>
       <Group title={t("mobile.settings.aboutGroup")}>
         <Row
+          icon="chat"
+          title={t("mobile.title.feedback")}
+          detail={t("mobile.settings.feedbackDetail")}
+          to="feedback"
+        />
+        <Row
           icon="info"
           title={t("mobile.title.about")}
           detail={t("mobile.settings.aboutDetail", { version })}

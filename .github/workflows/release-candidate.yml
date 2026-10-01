@@ -1032,6 +1032,9 @@ jobs:
       VOLTIP_REFINE_URL: ${{ secrets.VOLTIP_REFINE_URL }}
       VOLTIP_REFINE_MODEL: ${{ secrets.VOLTIP_REFINE_MODEL }}
       VOLTIP_REFINE_API_KEY: ${{ secrets.VOLTIP_REFINE_API_KEY }}
+      # The phone sends feedback of its own (docs/feedback.md, user decision 2026-10-01).
+      VOLTIP_FEEDBACK_URL: ${{ secrets.VOLTIP_FEEDBACK_URL }}
+      VOLTIP_FEEDBACK_TOKEN: ${{ secrets.VOLTIP_FEEDBACK_TOKEN }}
     steps:
       - name: Checkout exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

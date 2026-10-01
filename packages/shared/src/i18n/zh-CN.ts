@@ -2134,6 +2134,7 @@ export const zhCN = {
       history: "记录",
       entry: "记录详情",
       historySettings: "历史记录",
+      feedback: "反馈",
     },
     tab: { label: "主导航", talk: "说话", history: "记录", settings: "设置" },
     settings: {
@@ -2154,6 +2155,7 @@ export const zhCN = {
       pinnedDetail: "说话时使用「{name}」",
       historyDetail: "保留最近 {keep} 条",
       historyOff: "不保存新的记录",
+      feedbackDetail: "报告问题或提出建议",
     },
     /** The phone's history (user decision 2026-10-01: the phone has the desktop's history). */
     history: {
@@ -2171,6 +2173,11 @@ export const zhCN = {
     historySettings: {
       lede: "这部手机识别的结果保存在这部手机上，不会发送到电脑。",
       clearBody: "这部手机上的 {n} 条记录将被删除，此操作无法撤销。",
+    },
+    feedback: {
+      lede: "请描述遇到的问题或希望改进的地方。随反馈发送的信息列在下方，发送前可以查看。",
+      attachHelp:
+        "最多 {count} 个：图片（PNG、JPEG、GIF、WebP）不超过 {image}，视频（MP4、WebM、MOV）不超过 {video}，合计不超过 {total}。",
     },
     /** The phone's dictionary, rules and scenes (user decision 2026-10-01: the phone has the
      *  desktop's, for what it recognises itself). */

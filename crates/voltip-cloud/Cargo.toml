@@ -12,11 +12,24 @@ workspace = true
 
 [dependencies]
 async-trait.workspace = true
+# In-app feedback (src/feedback.rs): the attachments' SHA-256 and staging ids, the report to the
+# endpoint; the versions and features the ASR and refine clients already build.
+hex.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 voltip-asr.workspace = true
 voltip-core.workspace = true
 voltip-refine.workspace = true
 
+# Android: Mozilla's root store for the feedback requests, as voltip-asr and voltip-refine.
+[target.'cfg(target_os = "android")'.dependencies]
+webpki-root-certs.workspace = true
+
 [dev-dependencies]
 tokio.workspace = true
+wiremock.workspace = true

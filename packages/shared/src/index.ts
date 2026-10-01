@@ -10,4 +10,5 @@ export * from "./preset-drafts";
 export * from "./vocabulary-drafts";
 export * from "./scene-drafts";
 export * from "./history-stats";
+export * from "./feedback-drafts";
 export * from "./i18n";

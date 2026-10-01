@@ -18,7 +18,8 @@ export type Screen =
   | "scenes"
   | "history"
   | "entry"
-  | "historySettings";
+  | "historySettings"
+  | "feedback";
 
 /** The screens the tab bar switches between (user decision 2026-10-01: the phone has its own
  *  settings and history). 说话 is the welcome screen until a computer is paired, the device list

@@ -1,15 +1,8 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MOCK_FEEDBACK_MS, MockBackend, sampleDevices } from "@voltip/shared/mock";
-import { FEEDBACK_MAX_VIDEO_BYTES, zhT } from "@voltip/shared";
+import { FEEDBACK_MAX_VIDEO_BYTES } from "@voltip/shared";
 import { renderApp } from "../test/render";
-import {
-  attachmentError,
-  attachmentType,
-  diagnosticValue,
-  feedbackError,
-  precheckAttachment,
-} from "./Feedback";
 
 /** A file of `size` bytes; the bytes are only read when the page stages it. */
 function file(name: string, type: string, size = 4): File {
@@ -294,40 +287,5 @@ describe("the 反馈 dialog", () => {
     expect(within(page).getByRole("textbox", { name: "描述" })).toHaveValue("");
     expect(within(page).queryByTestId("feedback-attachment")).toBeNull();
     expect(core.feedbackSent).toHaveLength(1);
-  });
-
-  it("types a file without one by its extension and checks the limits before reading it", () => {
-    expect(attachmentType({ name: "a.PNG", type: "" })).toBe("image/png");
-    expect(attachmentType({ name: "clip.mov", type: "" })).toBe("video/quicktime");
-    expect(attachmentType({ name: "noext", type: "" })).toBe("");
-    expect(attachmentType({ name: "a.png", type: "image/x-icon" })).toBe("image/x-icon");
-    const staged = [{ id: "1", name: "a.mp4", type: "video/mp4", size: FEEDBACK_MAX_VIDEO_BYTES }];
-    expect(precheckAttachment("image/png", 1, [])).toBeUndefined();
-    expect(precheckAttachment("image/heic", 1, [])).toBe("attachment_type");
-    expect(precheckAttachment("video/webm", FEEDBACK_MAX_VIDEO_BYTES, staged)).toBe(
-      "attachment_total",
-    );
-    expect(precheckAttachment("image/png", 1, [...staged, ...staged, ...staged])).toBe(
-      "attachment_too_many",
-    );
-    expect(attachmentError(new Error("attachment_total"))).toBe("attachment_total");
-    expect(attachmentError(new Error("feedback: 请在电脑上反馈"))).toBe("attachment_type");
-    expect(feedbackError(new Error("storage_full"))).toBe("storage_full");
-  });
-
-  it("words the diagnostics and maps the shell's refusals", () => {
-    const { t } = zhT;
-    expect(diagnosticValue("os", "linux", t, "zh-CN")).toBe("Linux");
-    expect(diagnosticValue("os", "haiku", t, "zh-CN")).toBe("haiku");
-    expect(diagnosticValue("asr_provider", "local", t, "zh-CN")).toBe("本机");
-    expect(diagnosticValue("llm_provider", "someone", t, "zh-CN")).toBe("someone");
-    expect(diagnosticValue("compute", "gpu", t, "zh-CN")).toBe("GPU");
-    expect(diagnosticValue("compute", "npu", t, "zh-CN")).toBe("npu");
-    expect(diagnosticValue("output_mode", "live_inject", t, "zh-CN")).toBe("边说边输入");
-    expect(diagnosticValue("output_mode", "odd", t, "zh-CN")).toBe("odd");
-    expect(diagnosticValue("arch", "aarch64", t, "zh-CN")).toBe("aarch64");
-    expect(feedbackError(new Error("timeout"))).toBe("timeout");
-    expect(feedbackError("rate_limited")).toBe("rate_limited");
-    expect(feedbackError(new Error("feedback: 请在电脑上反馈"))).toBe("server");
   });
 });

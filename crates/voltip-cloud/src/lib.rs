@@ -3,10 +3,12 @@
 //! `voltip-refine` behind [`Refiner`], the choice of client for a [`ResolvedEngines`], and the
 //! provider probe behind [`ServiceProbe`]. The desktop adds its local models next to these
 //! (`apps/desktop/src-tauri/src/dictation.rs`); the phone, which has none, uses them alone when it
-//! recognises a take itself (§20.7).
+//! recognises a take itself (§20.7). [`feedback`] is the in-app feedback client both shells use.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+
+pub mod feedback;
 
 use std::sync::Arc;
 use std::time::Duration;
