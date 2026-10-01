@@ -10,7 +10,8 @@
 # 10 GB cap was evicting main's); a change that touches documentation only runs verify-web (ledger,
 # host guard, formatting) and skips the builds, which CI Success accepts only in that case. Windows packages are cross-built from Linux exactly as `make windows-x64`
 # does locally (cargo-xwin + lld-link + llvm-rc + clang + makensis), then run on a real Windows
-# runner by `windows-native`. macOS builds and runs on both processors in `macos` (pushes to main
+# runner by `windows-native`. The phone's APK and AAB are built and checked in `android`, signed
+# with a key made for the run. macOS builds and runs on both processors in `macos` (pushes to main
 # and on demand; CI Success waits for it there). release-please's pull request and the commit it
 # lands on main only bump versions: they run verify-web, since the release candidate
 # (release-candidate.yml) builds and checks every package from that exact head, whose base passed
@@ -754,6 +755,106 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # Android, arm64 (docs/runbook.md 发布 · Android): the phone's release APK and AAB, built as the
+  # release candidate builds them but signed with a key made for this run, then put through the
+  # checks the candidate runs on the release key (.github/scripts/check-android-package.sh): one
+  # signer, 16 KB page alignment, package name and version code, the licence texts, no provider key.
+  # Clippy for the Android target lints the code behind cfg(target_os = "android"), which the host
+  # gates never compile. Engine-less, like every CI package.
+  android:
+    name: android-arm64 · release build + package checks
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Android toolchain (JDK 21; SDK platform, build tools and NDK pinned)
+        run: .github/scripts/android-toolchain.sh
+
+      - name: Rust toolchain (rust-toolchain.toml) + aarch64-linux-android
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          rustup target add aarch64-linux-android
+          rustc --version && cargo --version && cargo clippy --version
+
+      # THIRD-PARTY-NOTICES.txt for the app (third-party-notices.py --app mobile).
+      - name: cargo-about (prebuilt, pinned)
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        with:
+          tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
+
+      - name: Tauri CLI (`cargo tauri`, pinned tarball + SHA-256)
+        run: .github/scripts/install-cargo-tauri.sh
+
+      - name: Cache Cargo registry and target/
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-android
+          cache-on-failure: true
+          # Tools come prebuilt from install-action; ~/.cargo/bin need not ride in the cache.
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: pnpm (packageManager in package.json)
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: package.json
+
+      - name: Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_MAJOR }}
+          cache: pnpm
+
+      - name: Install web dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Clippy for Android (make android-clippy)
+        run: make android-clippy
+
+      - name: Third-party notices
+        run: python3 scripts/release/third-party-notices.py --app mobile --out apps/mobile/src-tauri/resources/THIRD-PARTY-NOTICES.txt
+
+      # Unsigned: the candidate signs in a step of its own, so the release key never sits in the step
+      # that runs the dependencies' build code.
+      - name: Build the unsigned release APK and AAB (aarch64)
+        working-directory: apps/mobile
+        run: cargo tauri android build --ci --target aarch64 --apk --aab --config src-tauri/tauri.package-android.conf.json
+
+      # The candidate's signing step with a key made here (PKCS12: one password for the store and
+      # the key). Its certificate's SHA-256 is what the checks expect, as the candidate expects the
+      # one release-targets.json pins.
+      - name: Sign with a key made for this run
+        run: |
+          set -euo pipefail
+          ANDROID_KEYSTORE_PASSWORD=$(openssl rand -hex 24)
+          echo "::add-mask::$ANDROID_KEYSTORE_PASSWORD"
+          export ANDROID_KEYSTORE=$RUNNER_TEMP/ci-android.jks ANDROID_KEY_ALIAS=voltip-ci ANDROID_KEYSTORE_PASSWORD
+          export ANDROID_KEY_PASSWORD=$ANDROID_KEYSTORE_PASSWORD
+          keytool -genkeypair -noprompt -keystore "$ANDROID_KEYSTORE" -storetype PKCS12 -alias "$ANDROID_KEY_ALIAS" \
+            -keyalg RSA -keysize 2048 -validity 2 -dname "CN=Voltip CI" \
+            -storepass:env ANDROID_KEYSTORE_PASSWORD -keypass:env ANDROID_KEY_PASSWORD
+          digest=$(keytool -list -v -keystore "$ANDROID_KEYSTORE" -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS" |
+            sed -n 's/^[[:space:]]*SHA256: //p' | head -1)
+          [ -n "$digest" ] || { echo "::error::no certificate digest for the CI key"; exit 1; }
+          echo "CI_ANDROID_CERT_SHA256=$digest" >>"$GITHUB_ENV"
+          out=apps/mobile/src-tauri/gen/android/app/build/outputs
+          .github/scripts/sign-android-package.sh "$out/apk/universal/release/app-universal-release-unsigned.apk" \
+            "$out/bundle/universalRelease/app-universal-release.aab" android-bundle "$(jq -r .version package.json)"
+
+      - name: Check the packages (the candidate's checks, against this run's key)
+        run: |
+          set -euo pipefail
+          version=$(jq -r .version package.json)
+          .github/scripts/check-android-package.sh "android-bundle/apk/Voltip_${version}_android_arm64.apk" \
+            "android-bundle/aab/Voltip_${version}_android_arm64.aab" "$CI_ANDROID_CERT_SHA256" "$version"
+
   # macOS on both processors (moved here from macos.yml, 2026-09-28): the app and the dmg, signed
   # ad hoc as the release signs them and checked the same way (.github/scripts/
   # check-macos-bundle.sh), the macOS-only unit tests, the real event tap on Apple silicon, and the
@@ -968,7 +1069,7 @@ jobs:
   # or cancellation, fails.
   ci-success:
     name: CI Success
-    needs: [changes, verify-rust, verify-web, windows-cross, windows-native, hooks-windows, smoke-desktop, macos]
+    needs: [changes, verify-rust, verify-web, windows-cross, windows-native, hooks-windows, smoke-desktop, android, macos]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

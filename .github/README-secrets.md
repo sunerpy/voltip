@@ -8,8 +8,9 @@ meanings and where each value comes from, never a value.
 CI (`ci.yml`) needs almost none of them: its packages are built without the built-in
 engines on purpose, so pull requests from forks run the same jobs as the default branch. The
 release candidate workflow (`release-candidate.yml`, which builds every package once) needs the
-engine secrets and, when the updater is on, the signing key; the release controller (`release.yml`)
-needs only the updater pubkey, to verify the signatures before it publishes.
+engine secrets, the macOS certificate, the Android key and, when the updater is on, the updater's
+signing key; the release controller (`release.yml`) needs only the updater pubkey, to verify the
+signatures before it publishes.
 
 ## Setup
 
@@ -29,6 +30,11 @@ gh secret set VOLTIP_MODEL_BASE_URL --repo "$repo"
 # Optional: the feedback endpoint (both or neither).
 gh secret set VOLTIP_FEEDBACK_URL --repo "$repo"
 gh secret set VOLTIP_FEEDBACK_TOKEN --repo "$repo"
+# The Android release key (see below): the keystore base64 on one line, then its password and alias.
+base64 -w0 voltip-release.jks | gh secret set ANDROID_KEYSTORE_BASE64 --repo "$repo"
+gh secret set ANDROID_KEYSTORE_PASSWORD --repo "$repo"
+gh secret set ANDROID_KEY_ALIAS --repo "$repo" --body voltip
+gh secret set ANDROID_KEY_PASSWORD --repo "$repo"
 # The documentation site: a fine-grained token for sunerpy/firlab (see below).
 gh secret set FIRLAB_DOCS_TOKEN --repo "$repo"
 gh secret list --repo "$repo"
@@ -108,6 +114,24 @@ ordinary CI builds stay ad hoc. Rotation and recovery: `docs/runbook.md` (发布
 | `MACOS_CERTIFICATE` | The certificate and its private key: the `.p12`, base64 on one line. | kept in the owner's password manager |
 | `MACOS_CERTIFICATE_PASSWORD` | The `.p12` password. | same place |
 | `MACOS_SIGNING_IDENTITY` | The certificate's SHA-1 (upper case, no colons); must equal `macos_signing.certificate_sha1`. | `openssl x509 -noout -fingerprint -sha1` |
+
+## Android release key (release only, required)
+
+The Android packages are signed with one key (RSA 4096, valid for 100 years, alias `voltip`): the
+APK on the releases page and the AAB uploaded to Google Play, whose app signing keeps a copy of the
+same key. An APK signed with another key cannot update the installed app. `release-candidate.yml`
+builds both packages unsigned and signs them in a step of its own
+(`.github/scripts/sign-android-package.sh`), so the key is never present while the dependencies'
+build code runs; the checks require the certificate `android_signing.certificate_sha256` in
+`.github/release-targets.json` names. CI signs with a key it makes for the run. Backup and recovery:
+`docs/runbook.md` (发布 · Android 签名).
+
+| Secret | Meaning | Source |
+|---|---|---|
+| `ANDROID_KEYSTORE_BASE64` | The PKCS12 keystore holding the key, base64 on one line. | kept in the owner's password manager |
+| `ANDROID_KEYSTORE_PASSWORD` | The keystore password. | same place |
+| `ANDROID_KEY_ALIAS` | The key's alias, `voltip`. | same place |
+| `ANDROID_KEY_PASSWORD` | The key password; PKCS12 keeps one password, so it equals the keystore password. | same place |
 
 ## Repository settings the release relies on
 

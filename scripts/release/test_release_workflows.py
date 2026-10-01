@@ -101,7 +101,8 @@ class Promote(unittest.TestCase):
 class CandidateBuild(unittest.TestCase):
     """release-candidate.yml builds from the source commit with tooling from protected main."""
 
-    LEGS = ("bundle-windows", "bundle-linux", "bundle-macos")
+    DESKTOP_LEGS = ("bundle-windows", "bundle-linux", "bundle-macos")
+    LEGS = (*DESKTOP_LEGS, "bundle-android")
 
     def setUp(self) -> None:
         self.path = WORKFLOWS / "release-candidate.yml"
@@ -138,8 +139,9 @@ class CandidateBuild(unittest.TestCase):
         self.assertIn("voltip_linux_sonames_accounted ../../target/release/voltip-desktop", self.jobs["bundle-linux"])
 
     def test_the_sherpa_fingerprint_is_cleared_in_the_source_target(self) -> None:
-        # forget-sherpa-onnx-build.sh cds to the checkout it sits in and clears that target/.
-        for leg in self.LEGS:
+        # forget-sherpa-onnx-build.sh cds to the checkout it sits in and clears that target/. The
+        # Android app links no sherpa-onnx.
+        for leg in self.DESKTOP_LEGS:
             with self.subTest(leg=leg):
                 body = self.jobs[leg]
                 self.assertIn("run: .github/scripts/forget-sherpa-onnx-build.sh", body)
@@ -173,6 +175,50 @@ class CandidateBuild(unittest.TestCase):
         config = json.loads((ROOT / "apps/desktop/src-tauri/tauri.macos.conf.json").read_text(encoding="utf-8"))
         self.assertEqual(config["bundle"]["macOS"]["signingIdentity"], "-")
         self.assertFalse(config["bundle"]["macOS"]["hardenedRuntime"])
+
+    def test_every_leg_is_sealed_and_gated(self) -> None:
+        for job in ("aggregate", "gate"):
+            match = re.search(r"(?m)^    needs: \[([^\]]*)\]$", self.jobs[job])
+            self.assertIsNotNone(match, f"{job} lists its needs on one line")
+            needs = {name.strip() for name in match.group(1).split(",")}
+            with self.subTest(job=job):
+                self.assertEqual(sorted(set(self.LEGS) - needs), [])
+        legs = {name for name in self.jobs if name.startswith("bundle-")}
+        self.assertEqual(legs, set(self.LEGS))
+
+    def test_the_android_leg_signs_outside_the_build_with_the_pinned_certificate(self) -> None:
+        # docs/runbook.md 发布 · Android: one key for the GitHub APK and for Google Play. Gradle builds
+        # unsigned with no signing material; the key exists in the signing step alone, which runs
+        # tooling from the workflow commit; the checks require the certificate release-targets.json
+        # pins on both packages.
+        body = self.jobs["bundle-android"]
+        built = body.index("- name: Build (unsigned APK and AAB)")
+        signed = body.index("- name: Sign with the release key")
+        checked = body.index("- name: Check the APK and the AAB")
+        collected = body.index("- name: Collect bundles and evidence")
+        self.assertLess(built, signed)
+        self.assertLess(signed, checked)
+        self.assertLess(checked, collected)
+        self.assertNotIn("secrets.ANDROID_", body[:signed])
+        self.assertNotIn("secrets.ANDROID_", body[checked:])
+        self.assertIn(".release-tooling/.github/scripts/sign-android-package.sh", body[signed:checked])
+        self.assertIn("rm -f \"$ANDROID_KEYSTORE\"", body[signed:checked])
+        self.assertIn(".android_signing.certificate_sha256 .release-tooling/.github/release-targets.json", body[checked:collected])
+        self.assertIn(".release-tooling/.github/scripts/check-android-package.sh", body[checked:collected])
+        self.assertIn("/.github/release-targets.json", body)
+        self.assertIn("--updater-bundle none", body[collected:])
+        self.assertIn("--updater false", body[collected:])
+        self.assertIn("tauri.package-android.conf.json", body[built:signed])
+        self.assertNotIn("VOLTIP_ANDROID_", self.text)
+        # Every Android secret is required before a leg starts, and read nowhere but there and in
+        # the signing step.
+        prepare = self.jobs["prepare"]
+        for name in ("ANDROID_KEYSTORE_BASE64", "ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_ALIAS", "ANDROID_KEY_PASSWORD"):
+            with self.subTest(secret=name):
+                self.assertIn(f"{name}_PRESENT: ${{{{ secrets.{name} != '' }}}}", prepare)
+                self.assertEqual(self.text.count(f"secrets.{name} "), 2)
+        targets = json.loads((ROOT / ".github/release-targets.json").read_text(encoding="utf-8"))
+        self.assertRegex(targets["android_signing"]["certificate_sha256"], r"^[0-9a-f]{64}$")
 
     def test_the_gate_status_is_written_only_in_automatic_mode(self) -> None:
         gate = self.jobs["gate"]
@@ -213,6 +259,22 @@ class ContinuousIntegration(unittest.TestCase):
         advisory = {"ci-success", "candidate-status", "codecov"}
         self.assertEqual(sorted(set(self.jobs) - advisory - needs), [], "jobs CI Success does not wait for")
         self.assertEqual(sorted(needs - set(self.jobs)), [], "needs that name no job")
+
+    def test_the_android_job_signs_and_checks_as_the_candidate_does_with_a_key_of_its_own(self) -> None:
+        body = self.jobs["android"]
+        self.assertIn("if: needs.changes.outputs.code == 'true'", body)
+        self.assertNotIn("secrets.", body)
+        built = body.index("- name: Build the unsigned release APK and AAB (aarch64)")
+        signed = body.index("- name: Sign with a key made for this run")
+        checked = body.index("- name: Check the packages")
+        self.assertLess(built, signed)
+        self.assertLess(signed, checked)
+        self.assertIn("tauri.package-android.conf.json", body[built:signed])
+        self.assertIn(".github/scripts/sign-android-package.sh", body[signed:checked])
+        self.assertIn('.github/scripts/check-android-package.sh', body[checked:])
+        self.assertIn('"$CI_ANDROID_CERT_SHA256"', body[checked:])
+        self.assertIn("make android-clippy", body)
+        self.assertIn("third-party-notices.py --app mobile", body)
 
     def test_ci_success_decides_with_the_tested_script_and_the_event(self) -> None:
         # `.github/scripts/ci-success.sh` holds the rule (scripts/release/test_ci_success.py): the

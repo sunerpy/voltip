@@ -263,6 +263,27 @@ jobs:
           done
           exit "$missing"
 
+      # The Android packages are signed with the project's one key (docs/runbook.md 发布 · Android):
+      # Google Play takes uploads signed with that key only, and an APK signed with another cannot
+      # update the installed app.
+      - name: Require the Android release key (values compared with '' inside env, never echoed)
+        env:
+          ANDROID_KEYSTORE_BASE64_PRESENT: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+          ANDROID_KEYSTORE_PASSWORD_PRESENT: ${{ secrets.ANDROID_KEYSTORE_PASSWORD != '' }}
+          ANDROID_KEY_ALIAS_PRESENT: ${{ secrets.ANDROID_KEY_ALIAS != '' }}
+          ANDROID_KEY_PASSWORD_PRESENT: ${{ secrets.ANDROID_KEY_PASSWORD != '' }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            present_var="${name}_PRESENT"
+            if [ "${!present_var}" != true ]; then
+              echo "::error::repository secret ${name} is empty; the Android packages must be signed with the release key (see .github/README-secrets.md)"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       # The tree being released names no production host; the words come from a secret and a hit
       # prints path:line only. The guard scans the Git toplevel of its working directory.
       - name: No production hosts in the source tree
@@ -994,11 +1015,164 @@ jobs:
         continue-on-error: true
         run: .release-tooling/.github/scripts/macos-signing-keychain.sh remove
 
+  # Android, arm64 (docs/runbook.md 发布 · Android): Voltip_<version>_android_arm64.apk to install
+  # from the Release and Voltip_<version>_android_arm64.aab for Google Play. Gradle builds both
+  # unsigned; a step of its own then signs them with the project's one key (Play's app signing holds
+  # the same one), so the key never sits in the step that runs the dependencies' build code, and the
+  # checks require the certificate release-targets.json pins. The in-app updater serves no Android
+  # target: no .sig, no latest.json entry.
+  bundle-android:
+    name: Bundle aarch64-linux-android
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      ANDROID_TARGET: aarch64-linux-android
+      VOLTIP_RELAY_URL: ${{ secrets.VOLTIP_RELAY_URL }}
+      VOLTIP_ASR_URL: ${{ secrets.VOLTIP_ASR_URL }}
+      VOLTIP_ASR_MODEL: ${{ secrets.VOLTIP_ASR_MODEL }}
+      VOLTIP_ASR_TOKEN: ${{ secrets.VOLTIP_ASR_TOKEN }}
+      VOLTIP_REFINE_URL: ${{ secrets.VOLTIP_REFINE_URL }}
+      VOLTIP_REFINE_MODEL: ${{ secrets.VOLTIP_REFINE_MODEL }}
+      VOLTIP_REFINE_API_KEY: ${{ secrets.VOLTIP_REFINE_API_KEY }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_head_sha }}
+          persist-credentials: false
+
+      - name: Checkout trusted release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-tooling
+          persist-credentials: false
+          sparse-checkout: |
+            /.github/scripts/
+            /.github/release-targets.json
+            /scripts/release/
+            /scripts/lib/
+          sparse-checkout-cone-mode: false
+
+      - name: Re-verify the source and tooling identity
+        env:
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          EXPECTED_TREE_SHA: ${{ needs.prepare.outputs.tree_sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$EXPECTED_HEAD_SHA" ] || [ "$(git rev-parse 'HEAD^{tree}')" != "$EXPECTED_TREE_SHA" ] ||
+            [ "$(git -C .release-tooling rev-parse HEAD)" != "$WORKFLOW_SHA" ]; then
+            echo "::error title=Candidate build::checkout differs from the validated candidate identity"
+            exit 1
+          fi
+
+      - name: Android toolchain (JDK 21; SDK platform, build tools and NDK pinned)
+        run: .release-tooling/.github/scripts/android-toolchain.sh
+
+      - name: Rust toolchain (rust-toolchain.toml) + aarch64-linux-android
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          rustup target add "$ANDROID_TARGET"
+          rustc --version && cargo --version
+
+      - name: Tauri CLI (`cargo tauri`, pinned tarball + SHA-256)
+        run: .release-tooling/.github/scripts/install-cargo-tauri.sh
+
+      - name: cargo-about (prebuilt, pinned)
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        with:
+          tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
+
+      - name: Cache Cargo registry and target/
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: release-android-arm64
+          cache-on-failure: true
+
+      - name: pnpm (packageManager in package.json)
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: package.json
+
+      - name: Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_MAJOR }}
+          cache: pnpm
+
+      - name: Install web dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # The APK and the AAB carry the licence texts (assets/THIRD-PARTY-NOTICES.txt) through
+      # tauri.package-android.conf.json.
+      - name: Third-party notices
+        run: python3 scripts/release/third-party-notices.py --app mobile --out apps/mobile/src-tauri/resources/THIRD-PARTY-NOTICES.txt
+
+      # Phase 1: the frontend (build.beforeBuildCommand), the Rust library and the Gradle packaging,
+      # with the built-in engine values and no signing material.
+      - name: Build (unsigned APK and AAB)
+        working-directory: apps/mobile
+        run: cargo tauri android build --ci --target aarch64 --apk --aab --config src-tauri/tauri.package-android.conf.json
+
+      # Phase 2: the release key, decoded into this job's temporary directory for this step alone.
+      - name: Sign with the release key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          umask 077
+          export ANDROID_KEYSTORE=$RUNNER_TEMP/voltip-release.jks
+          trap 'rm -f "$ANDROID_KEYSTORE"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode >"$ANDROID_KEYSTORE"
+          out=apps/mobile/src-tauri/gen/android/app/build/outputs
+          .release-tooling/.github/scripts/sign-android-package.sh \
+            "$out/apk/universal/release/app-universal-release-unsigned.apk" \
+            "$out/bundle/universalRelease/app-universal-release.aab" android-bundle "$VERSION"
+
+      # What a phone that installs the APK, and what Google Play, meet: the one certificate
+      # release-targets.json pins on both, 16 KB page alignment, this release's version and code,
+      # the licence texts, and no provider key in the native library.
+      - name: Check the APK and the AAB
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          certificate=$(jq -r .android_signing.certificate_sha256 .release-tooling/.github/release-targets.json)
+          .release-tooling/.github/scripts/check-android-package.sh \
+            "android-bundle/apk/Voltip_${VERSION}_android_arm64.apk" \
+            "android-bundle/aab/Voltip_${VERSION}_android_arm64.aab" "$certificate" "$VERSION"
+
+      - name: Collect bundles and evidence
+        run: >-
+          python3 .release-tooling/scripts/release/updater-json.py collect
+          --target "$ANDROID_TARGET"
+          --bundle-dir android-bundle
+          --bundles apk,aab
+          --updater-bundle none
+          --updater false
+          --out candidate-leg/dist
+          --evidence "candidate-leg/evidence/$ANDROID_TARGET.json"
+
+      - name: Upload the leg
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-${{ env.ANDROID_TARGET }}
+          path: candidate-leg/
+          if-no-files-found: error
+          retention-days: 1
+
   # Downloads, checks, seals and attests; runs no project or dependency code, so it is the only
   # job holding id-token: write.
   aggregate:
     name: Seal release candidate
-    needs: [prepare, source-gate, bundle-windows, bundle-linux, bundle-macos]
+    needs: [prepare, source-gate, bundle-windows, bundle-linux, bundle-macos, bundle-android]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -1077,7 +1251,7 @@ jobs:
   gate:
     name: Candidate gate
     if: always()
-    needs: [prepare, source-gate, bundle-windows, bundle-linux, bundle-macos, aggregate]
+    needs: [prepare, source-gate, bundle-windows, bundle-linux, bundle-macos, bundle-android, aggregate]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

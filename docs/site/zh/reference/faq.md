@@ -66,9 +66,9 @@ Qwen3-ASR 需要支持 AVX2 的处理器。请改用 SenseVoice Small、Paraform
 
 ## 手机
 
-### 什么时候可以使用手机应用？
+### 如何安装手机应用？
 
-Android 应用已经完成并通过测试，但尚未发布。发布后会出现在[发布页面](https://github.com/sunerpy/voltip/releases)。
+在手机上从[发布页面](https://github.com/sunerpy/voltip/releases)下载 `Voltip_<版本>_android_arm64.apk` 并打开，见[安装](/zh/guide/install#android)。
 
 ## 其他问题
 

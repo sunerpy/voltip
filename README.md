@@ -97,7 +97,7 @@ build attestations:
 | Linux x64 | `.deb`, `.AppImage` | Built on Ubuntu 22.04, needs glibc 2.34 or newer; the `.deb` depends on `libwebkit2gtk-4.1-0`, `libvulkan1` and a BLAS (`libblas3`, from 0.0.5), the AppImage needs FUSE 2 (`libfuse2`). X11 and Wayland. |
 | macOS 11+ (Apple silicon) | .dmg | M1 or newer |
 | macOS 11+ (Intel) | .dmg | Intel Macs |
-| Android | not released yet | `make android-apk` builds a debug APK. |
+| Android 8.0+ (64-bit Arm) | `*_android_arm64.apk` | Open it on the phone to install. The `.aab` is the package for Google Play. |
 
 The Mac packages are `*_aarch64.dmg` (Apple silicon) and `*_x64.dmg` (Intel), signed with the
 project's own self-signed certificate and not notarized. On a Mac, open the dmg and drag Voltip onto

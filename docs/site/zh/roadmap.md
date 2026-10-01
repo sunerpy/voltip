@@ -8,9 +8,9 @@ description: Voltip 接下来要开发的功能、计划中的功能，以及刻
 
 ## 正在开发
 
-### Android 应用 <StatusTag status="building" />
+### Google Play 上架 <StatusTag status="building" />
 
-手机当麦克风和键盘的功能已经完成并通过测试，应用正在准备发布。见[手机端](/zh/phone/)。
+Android 应用已在发布页面提供，见[手机端](/zh/phone/)。Google Play 上架正在准备中，按 Google 的要求，应用公开发布前需要先完成封闭测试。
 
 ## 计划中
 

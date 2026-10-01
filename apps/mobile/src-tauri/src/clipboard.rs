@@ -36,7 +36,7 @@ pub async fn read_text<R: Runtime>(app: &AppHandle<R>) -> Result<Option<String>,
         let answer: serde_json::Value = tauri::async_runtime::spawn_blocking(move || handle.run_mobile_plugin("readText", ()).map_err(|e| e.to_string()))
             .await
             .map_err(|e| e.to_string())??;
-        return Ok(text_of(&answer));
+        Ok(text_of(&answer))
     }
     #[cfg(not(target_os = "android"))]
     {

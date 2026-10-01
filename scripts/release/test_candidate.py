@@ -1,5 +1,5 @@
 """Tests for scripts/release/candidate.py (seal / verify a release candidate), fed with the evidence
-the real ``updater-json.py collect`` writes for the four legs of .github/release-targets.json.
+the real ``updater-json.py collect`` writes for the five legs of .github/release-targets.json.
 
 Run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
 """
@@ -88,6 +88,17 @@ LEGS = {
         "rename": ["Voltip.app.tar.gz=Voltip_0.0.4_x64.app.tar.gz"],
         "extra": [],
     },
+    # The updater serves no Android target (docs/runbook.md 发布 · Android).
+    "aarch64-linux-android": {
+        "bundles": "apk,aab",
+        "updater": "none",
+        "files": {
+            "apk/Voltip_0.0.4_android_arm64.apk": b"apk",
+            "aab/Voltip_0.0.4_android_arm64.aab": b"aab",
+        },
+        "rename": [],
+        "extra": [],
+    },
 }
 
 
@@ -127,7 +138,7 @@ class Candidate(unittest.TestCase):
             "--updater-bundle",
             leg["updater"],
             "--updater",
-            "true",
+            "false" if leg["updater"] == "none" else "true",
             "--out",
             str(self.root / "dist"),
             "--evidence",
@@ -228,6 +239,8 @@ class Candidate(unittest.TestCase):
                 "Voltip_0.0.4_amd64.AppImage",
                 "Voltip_0.0.4_amd64.AppImage.sig",
                 "Voltip_0.0.4_amd64.deb",
+                "Voltip_0.0.4_android_arm64.aab",
+                "Voltip_0.0.4_android_arm64.apk",
                 "Voltip_0.0.4_x64-portable.zip",
                 "Voltip_0.0.4_x64-setup.exe",
                 "Voltip_0.0.4_x64-setup.exe.sig",
@@ -261,6 +274,21 @@ class Candidate(unittest.TestCase):
         evidence.write_text(json.dumps(leg), encoding="utf-8")
         (self.root / "dist" / "Voltip_0.0.4_amd64.deb").unlink()
         self.assertFails("x86_64-unknown-linux-gnu: no deb bundle", self.seal)
+
+    def test_an_android_leg_that_claims_the_updater_is_refused(self) -> None:
+        evidence = self.root / "evidence" / "aarch64-linux-android.json"
+        leg = json.loads(evidence.read_text(encoding="utf-8"))
+        leg["updater_enabled"] = True
+        evidence.write_text(json.dumps(leg), encoding="utf-8")
+        self.assertFails("aarch64-linux-android: the updater serves no such target", self.seal)
+
+    def test_a_target_with_half_an_updater_is_refused(self) -> None:
+        targets = json.loads(TARGETS.read_text(encoding="utf-8"))
+        android = next(t for t in targets["targets"] if t["target"] == "aarch64-linux-android")
+        android["updater_platform"] = "android-aarch64"
+        path = self.tmp / "targets.json"
+        path.write_text(json.dumps(targets), encoding="utf-8")
+        self.assertFails("aarch64-linux-android: bundles, updater_bundle or platforms are invalid", candidate.target_specs, path)
 
     def test_bytes_changed_after_sealing_are_refused(self) -> None:
         self.seal()

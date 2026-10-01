@@ -1,5 +1,5 @@
 ---
-description: Install Voltip on Windows, macOS or Linux with one command or from a package, and check what you downloaded.
+description: Install Voltip on Windows, macOS or Linux with one command or from a package, install the Android app, and check what you downloaded.
 ---
 
 # Install
@@ -50,7 +50,7 @@ Every [release](https://github.com/sunerpy/voltip/releases) carries the packages
 | Linux, x64 | `.deb`, `.AppImage` | Built on Ubuntu 22.04 and needs glibc 2.34 or newer. The `.deb` depends on `libwebkit2gtk-4.1-0`, `libvulkan1` and `libblas3`; the AppImage needs FUSE 2 (`libfuse2`). Works on X11 and Wayland |
 | macOS 11 or later, Apple silicon | `*_aarch64.dmg` | M1 or newer |
 | macOS 11 or later, Intel | `*_x64.dmg` | Intel Macs |
-| Android | Not released yet | See [the phone page](/phone/) |
+| Android 8.0 or later, 64-bit Arm | `*_android_arm64.apk` | See [Android](#android) below and [the phone page](/phone/) |
 
 ### Windows
 
@@ -71,6 +71,12 @@ Updates install from inside the app. Updating from version 0.0.6 or earlier asks
 - `.deb`: `sudo apt install ./Voltip_0.0.7_amd64.deb` installs it together with its dependencies.
 - AppImage: make it executable with `chmod +x`, then run it. It needs `libfuse2`.
 - On Wayland, pasting needs a helper tool, and the global shortcut is set up in the system settings. See [Platform notes](/reference/platforms#linux).
+
+### Android
+
+Download `Voltip_<version>_android_arm64.apk` on the phone and open it. Android asks whether the browser or the file manager may install apps; allow it for this installation. The app needs Android 8.0 or later and a 64-bit Arm processor.
+
+A new version installs over the old one and keeps the pairing, because every release is signed with the same key. The `.aab` file in the release is the package for Google Play; phones install the `.apk`.
 
 ## Check a download
 

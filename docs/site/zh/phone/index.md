@@ -4,9 +4,13 @@ description: 把 Android 手机当作电脑的麦克风和键盘使用，配对�
 
 # 手机当麦克风和键盘
 
-<StatusTag status="building" />
+<StatusTag status="available" />
 
-安装 Voltip 的 Android 应用后，手机可以当作电脑的麦克风和键盘：在手机上按住说话，文字会出现在电脑的光标处。这项功能已经完成并通过测试，但 Android 应用尚未发布。本页介绍它的工作方式；发布后可以从[发布页面](https://github.com/sunerpy/voltip/releases)获取。
+安装 Voltip 的 Android 应用后，手机可以当作电脑的麦克风和键盘：在手机上按住说话，文字会出现在电脑的光标处。
+
+## 安装应用
+
+每个[发布版本](https://github.com/sunerpy/voltip/releases)都附带应用安装包 `Voltip_<版本>_android_arm64.apk`，适用于 Android 8.0 及以上、64 位 Arm 处理器的手机。在手机上打开这个文件即可安装；具体步骤和核对下载文件的方法见[安装](/zh/guide/install#android)。
 
 ## 配对
 

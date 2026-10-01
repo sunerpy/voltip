@@ -25,6 +25,7 @@ docs/acceptance/screens/tauri/*-summary.txt
 # and Linux bundles (tauri.windows.conf.json / tauri.linux.conf.json)
 apps/desktop/src-tauri/resources/windows/
 apps/desktop/src-tauri/resources/THIRD-PARTY-NOTICES.txt
+apps/mobile/src-tauri/resources/THIRD-PARTY-NOTICES.txt
 apps/desktop/src-tauri/resources/linux/
 apps/desktop/src-tauri/resources/macos/
 # scripts/smoke-native-cli.ps1 output (make smoke-native, CI)

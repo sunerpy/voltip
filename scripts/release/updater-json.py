@@ -15,7 +15,9 @@ string. Subcommands:
 
   check-config   validate tauri.conf.json / package.json against the compile-time updater
                  secrets and emit GITHUB_OUTPUT values (updater_enabled, version, product_name)
-  collect        copy one target's bundles (+ .sig) into dist/ and write evidence JSON
+  collect        copy one target's bundles (+ .sig) into dist/ and write evidence JSON; a target
+                 the updater does not serve (Android: an APK and an AAB, docs/runbook.md 发布 ·
+                 Android) passes --updater-bundle none and records no updater platform
   write          build latest.json from the evidence of every leg
 
 Tested by ``python3 -m unittest discover -s scripts/release -p 'test_*.py'``.
@@ -52,6 +54,8 @@ KIND_DIRS = {
     "msi": "msi",
     "dmg": "dmg",
     "app": "macos",
+    "apk": "apk",
+    "aab": "aab",
 }
 KIND_SUFFIXES = {
     "deb": (".deb",),
@@ -61,6 +65,8 @@ KIND_SUFFIXES = {
     "msi": (".msi",),
     "dmg": (".dmg",),
     "app": (".app.tar.gz",),
+    "apk": (".apk",),
+    "aab": (".aab",),
 }
 UPDATER_BUNDLES = {"appimage", "nsis", "msi", "app"}
 # Written only with bundle.createUpdaterArtifacts, so absent (and not shipped) without the updater.
@@ -100,8 +106,16 @@ def require_semver(version: object, label: str) -> str:
     return version
 
 
+def has_updater(target: str) -> bool:
+    """Whether the in-app updater serves the target: an Android app is updated from its store or
+    a new APK, never through latest.json."""
+    return not target.endswith("-linux-android")
+
+
 def updater_platform_for(target: str) -> str:
     """OS-ARCH key as tauri-plugin-updater computes it (linux|darwin|windows, x86_64|aarch64|…)."""
+    if not has_updater(target):
+        raise Failure(f"{target}: the updater serves no Android target")
     arch = target.split("-", 1)[0]
     if arch not in ARCHES:
         raise Failure(f"{target}: unsupported architecture {arch!r}")
@@ -117,6 +131,10 @@ def updater_platform_for(target: str) -> str:
 
 
 def platform_for(target: str) -> str:
+    if not has_updater(target):
+        if target.split("-", 1)[0] not in ARCHES:
+            raise Failure(f"{target}: unsupported architecture")
+        return "android"
     return {"linux": "linux", "darwin": "macos", "windows": "windows"}[
         updater_platform_for(target).split("-", 1)[0]
     ]
@@ -351,7 +369,10 @@ def cmd_collect(args: argparse.Namespace) -> None:
     for kind in kinds:
         if kind not in KIND_DIRS:
             raise Failure(f"unsupported bundle kind {kind!r}; choose from {sorted(KIND_DIRS)}")
-    if args.updater_bundle not in UPDATER_BUNDLES or args.updater_bundle not in kinds:
+    if not has_updater(args.target):
+        if args.updater_bundle != "none" or args.updater != "false":
+            raise Failure(f"{args.target}: the updater serves no Android target; pass --updater-bundle none --updater false")
+    elif args.updater_bundle not in UPDATER_BUNDLES or args.updater_bundle not in kinds:
         raise Failure(
             f"--updater-bundle must be one of {sorted(UPDATER_BUNDLES)} and listed in --bundles"
         )
@@ -445,7 +466,7 @@ def cmd_collect(args: argparse.Namespace) -> None:
         "target": args.target,
         "updater": updater,
         "updater_enabled": enabled,
-        "updater_platform": updater_platform_for(args.target),
+        "updater_platform": updater_platform_for(args.target) if has_updater(args.target) else None,
     }
     with args.evidence.open("w", encoding="utf-8") as stream:
         json.dump(evidence, stream, indent=2, sort_keys=True)
@@ -568,7 +589,7 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--target", required=True, help="Rust target triple")
     collect.add_argument("--bundle-dir", required=True, type=Path, help="…/release/bundle")
     collect.add_argument("--bundles", required=True, help="comma-separated kinds, e.g. nsis")
-    collect.add_argument("--updater-bundle", required=True)
+    collect.add_argument("--updater-bundle", required=True, help="the updater's bundle kind, or none (Android)")
     collect.add_argument("--updater", choices=("true", "false"), required=True)
     collect.add_argument("--out", required=True, type=Path)
     collect.add_argument("--evidence", required=True, type=Path)

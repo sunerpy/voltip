@@ -13,7 +13,7 @@
 7. **平台交付**：
     - macOS：发布流程为 Apple 芯片与 Intel 芯片各出一个 `.dmg` 与更新用的 `.app.tar.gz`（2026-09-28 起；Intel 腿用 GitHub 最后一个 x86_64 镜像 `macos-15-intel`，可用到 2027-08），用项目固定的自签名证书签名（2026-09-29 起，更新后授权保留），没有公证：首次打开要在「隐私与安全性」里放行。桌面上的手测清单见 `docs/acceptance/macos/manual-checklist.md`。
     - Windows：安装包没有 Authenticode 签名。
-    - Android：能构建 debug APK，还没进 CI 和发布流程；iOS 未开始。
+    - Android：2026-10-01 起每次发布都带 arm64 的 APK 与 AAB，用项目固定的密钥签名（`docs/runbook.md` 发布 · Android 签名），CI 的 `android` job 每次都构建并检查；还没上架 Google Play（个人账号要先完成 12 名测试者、连续 14 天的封闭测试），没有 32 位与 x86 包；iOS 未开始。
     - macOS 的粘贴与复制键码按当前输入源查表（覆盖 Dvorak 等），没有逐键 `UCKeyTranslate` 反查。
 
 ## 刻意不做

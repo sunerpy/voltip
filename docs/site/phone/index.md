@@ -4,9 +4,13 @@ description: Use an Android phone as a microphone and keyboard for your computer
 
 # Your phone as a microphone and keyboard
 
-<StatusTag status="building" />
+<StatusTag status="available" />
 
-With the Voltip app for Android, a phone becomes a microphone and a keyboard for your computer. Hold to talk on the phone, and the text appears at the computer's cursor. The feature is built and tested, but the Android app is not released yet. This page describes how it works; it will be available from the [releases page](https://github.com/sunerpy/voltip/releases) once published.
+With the Voltip app for Android, a phone becomes a microphone and a keyboard for your computer. Hold to talk on the phone, and the text appears at the computer's cursor.
+
+## Install the app
+
+Every [release](https://github.com/sunerpy/voltip/releases) carries the app as `Voltip_<version>_android_arm64.apk`, for phones with Android 8.0 or later and a 64-bit Arm processor. Open the file on the phone to install it. [Install](/guide/install#android) describes the steps and how to check the download.
 
 ## Pairing
 
