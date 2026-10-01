@@ -18,7 +18,8 @@
        gets an answer (update.png); the AI Polish submenu lists its switch and every preset with
        the ones in use checked, choosing a preset or the switch reaches the core and the menu is
        rebuilt from what it saved, and choosing the preset in use keeps it checked
-       (tray-polish.png, docs/dictation.md section 21); Quit ends the process with exit code 0.
+       (tray-polish.png, docs/dictation.md section 21); a double click on the tray button shows
+       the main window (user request 2026-09-30); Quit ends the process with exit code 0.
   Mouse input is real (SetCursorPos + mouse_event). The popup menu is read through Win32
   (MN_GETHMENU, GetMenuStringW, GetMenuItemRect): UI Automation does not list the entries of the
   app's menu, which the screen shows. Each step has a timeout and the first failure stops the run.
@@ -144,6 +145,17 @@ public static class VoltipTray {
     mouse_event(right ? RIGHTDOWN : LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
     System.Threading.Thread.Sleep(60);
     mouse_event(right ? RIGHTUP : LEFTUP, 0, 0, 0, UIntPtr.Zero);
+  }
+  // Two left presses 100 ms apart, well inside the double-click time.
+  public static void DoubleClick(int x, int y) {
+    SetCursorPos(x, y);
+    System.Threading.Thread.Sleep(150);
+    for (int press = 0; press < 2; press++) {
+      if (press > 0) System.Threading.Thread.Sleep(60);
+      mouse_event(LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+      System.Threading.Thread.Sleep(40);
+      mouse_event(LEFTUP, 0, 0, 0, UIntPtr.Zero);
+    }
   }
 }
 '@
@@ -404,7 +416,31 @@ try {
   Click-MenuItem $sub $presetLabels[0]
   Wait-PolishChecked @($toggleLabel, $presetLabels[0]) 'the defaults back' | Out-Null
 
-  # 4e. Quit.
+  # 4e. A double click on the tray button (user request 2026-09-30) leaves the main window shown.
+  # Its first click shows the window already, and where the button sits in the overflow flyout
+  # the window coming up can close the flyout before the second click: whether the shell reported
+  # a double click is noted, the window is what is checked.
+  if ([VoltipTray]::IsWindowVisible($hwnd)) {
+    [void][VoltipTray]::PostMessageW($hwnd, [VoltipTray]::WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero)
+    Wait-For { -not [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'the window to hide' | Out-Null
+  }
+  $doubles = ([regex]::Matches((Log-Text), 'tray double click: main window')).Count
+  $tray = Wait-For { Find-TrayButton } $StepTimeoutSec 'the tray button'
+  $xy = Center $tray[0]
+  [VoltipTray]::DoubleClick($xy[0], $xy[1])
+  Wait-For { [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'the double click to show the window' | Out-Null
+  # The shell's report, when it makes one, follows the second press.
+  $reported = $false
+  $deadline = (Get-Date).AddSeconds(3)
+  while (-not $reported -and (Get-Date) -lt $deadline) {
+    $reported = ([regex]::Matches((Log-Text), 'tray double click: main window')).Count -gt $doubles
+    if (-not $reported) { Start-Sleep -Milliseconds 250 }
+  }
+  Note "double click in the $($tray[1]): main window shown (reported as a double click: $reported)"
+  [void][VoltipTray]::PostMessageW($hwnd, [VoltipTray]::WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero)
+  Wait-For { -not [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'the window to hide' | Out-Null
+
+  # 4f. Quit.
   $opened = Open-TrayMenu
   Click-MenuItem $opened $quitLabel
   if (-not $app.WaitForExit($StepTimeoutSec * 1000)) { throw 'smoke-tray-windows: Quit did not end the process' }

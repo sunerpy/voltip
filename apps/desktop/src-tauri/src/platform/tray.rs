@@ -178,7 +178,7 @@ fn left_click<R: Runtime>(tray: &TrayIcon<R>) {
                     if !open {
                         return;
                     }
-                    tracing::info!("tray click: menu");
+                    tracing::info!(after_ms, "tray click: menu");
                     // `show_menu` returns when the menu closes (AppKit tracks it in a modal loop):
                     // run it on the main thread, where `with_inner_tray_icon` runs inline, so no
                     // runtime worker waits for the user.
