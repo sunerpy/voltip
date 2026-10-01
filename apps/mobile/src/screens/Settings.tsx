@@ -1,4 +1,4 @@
-import { type TFunction, presetLabel } from "@voltip/shared";
+import { type TFunction, presetLabel, sceneLabel } from "@voltip/shared";
 import { Icon, type IconName, useI18n, useUiState } from "@voltip/ui";
 import type { ReactNode } from "react";
 import { type Screen, useMobileShell } from "../app/shell";
@@ -62,6 +62,7 @@ export function Settings() {
   const { t, locale } = useI18n();
   const state = useUiState();
   const { engines, settings, presets, identity, devices, app_version: version } = state;
+  const pinned = state.scenes.find((s) => s.id === settings.pinned_scene);
   const speech = t("mobile.settings.serviceDetail", {
     provider: t(`engines.provider.${engines.asr_provider}`),
     model: engines.asr_model.length > 0 ? engines.asr_model : "—",
@@ -82,6 +83,32 @@ export function Settings() {
       <Group title={t("mobile.settings.engines")}>
         <Row icon="wave" title={t("mobile.title.speech")} detail={speech} to="speech" />
         <Row icon="sparkles" title={t("mobile.title.ai")} detail={ai} to="ai" />
+      </Group>
+      <Group title={t("mobile.settings.vocabulary")}>
+        <Row
+          icon="book"
+          title={t("mobile.title.dictionary")}
+          detail={t("dictionary.enabledBadge", {
+            n: state.dictionary.filter((e) => e.enabled).length,
+          })}
+          to="dictionary"
+        />
+        <Row
+          icon="edit"
+          title={t("mobile.title.rules")}
+          detail={t("rules.enabledBadge", { n: state.rules.filter((r) => r.enabled).length })}
+          to="rules"
+        />
+        <Row
+          icon="grid"
+          title={t("mobile.title.scenes")}
+          detail={
+            pinned === undefined
+              ? t("mobile.settings.scenesDetail", { n: state.scenes.length })
+              : t("mobile.settings.pinnedDetail", { name: sceneLabel(pinned, locale) })
+          }
+          to="scenes"
+        />
       </Group>
       <Group title={t("mobile.settings.general")}>
         <Row

@@ -1,15 +1,20 @@
-// Pure helpers of the 场景 settings group (docs/dictation.md §18): the editor's form state and its
-// conversion to the wire `SceneDraft`, the instant localised checks shown while typing, the select
-// options (every override starts at 跟随全局), and the one-line summary on a scene card. The core
-// validates the draft again (its refusal comes back as the command's rejection) and checks the
-// list (a clash is an `error` event).
+// Pure helpers of the scene editor and the scene cards, shared by the desktop's 场景 settings and the
+// phone's (docs/dictation.md §18; user decision 2026-10-01: the phone has the desktop's scenes,
+// picked by hand instead of matched by application): the editor's form state and its conversion to
+// the wire `SceneDraft`, the instant localised checks shown while typing, the select options (every
+// override starts at 跟随全局), and the one-line summary on a scene card. The core validates the
+// draft again (its refusal comes back as the command's rejection) and checks the list (a clash is
+// an `error` event). Moved here from `apps/desktop/src/pages/settings/scenes/helpers.ts`.
+import { LANGUAGE_CODES } from "./engine-drafts";
+import { type Locale, zhT, type TFunction } from "./i18n";
+import { outputModeLabel, presetLabel } from "./labels";
+import { normalizeAppId } from "./scenes";
 import {
   BUILTIN_PRESETS,
   CHINESE_SCRIPTS,
   type ChineseScript,
   type CustomPreset,
   LANGUAGE_AUTO,
-  type Locale,
   MAX_SCENE_APPS,
   MAX_SCENE_PROMPT_CHARS,
   MAX_TITLE_KEYWORDS,
@@ -19,25 +24,19 @@ import {
   type Scene,
   type SceneDraft,
   type SceneOverrides,
-  type TFunction,
-  normalizeAppId,
-  outputModeLabel,
-  presetLabel,
-  zhT,
-} from "@voltip/shared";
-import { LANGUAGE_CODES } from "../engines/helpers";
+} from "./schema";
 
 /** An override that is either unset (`""`, 跟随全局) or switched on / off. */
-export type Switch = "" | "on" | "off";
+export type SceneSwitch = "" | "on" | "off";
 
 /** The editor's form: the overrides as select values, `""` meaning 跟随全局 (unset). */
-export interface EditorDraft {
+export interface SceneEditorDraft {
   name: string;
   enabled: boolean;
   /** Normalised app ids, in the order they were added. */
   apps: string[];
   keywords: string[];
-  refine: Switch;
+  refine: SceneSwitch;
   /** `""` = follow, otherwise a built-in preset's name or a custom preset's id (possibly deleted
    *  since). */
   preset: PresetId;
@@ -49,7 +48,7 @@ export interface EditorDraft {
 }
 
 /** The form for `scene`, or an empty one (enabled, every override following the globals). */
-export function editorDraftFrom(scene?: Scene): EditorDraft {
+export function sceneEditorDraftFrom(scene?: Scene): SceneEditorDraft {
   const o: SceneOverrides = scene?.overrides ?? {};
   return {
     name: scene?.name ?? "",
@@ -66,7 +65,7 @@ export function editorDraftFrom(scene?: Scene): EditorDraft {
 }
 
 /** The wire draft: only the overrides that are set (unset keys absent, as the core stores them). */
-export function sceneDraftOf(d: EditorDraft): SceneDraft {
+export function sceneDraftOf(d: SceneEditorDraft): SceneDraft {
   const overrides: SceneOverrides = {};
   if (d.refine !== "") overrides.refine_enabled = d.refine === "on";
   if (d.preset !== "") overrides.refine_preset = d.preset;
@@ -83,18 +82,18 @@ export function sceneDraftOf(d: EditorDraft): SceneDraft {
 }
 
 /** The draft for `scene` with only `enabled` changed (the card's switch). */
-export function withEnabled(scene: Scene, enabled: boolean): SceneDraft {
-  return { ...sceneDraftOf(editorDraftFrom(scene)), enabled };
+export function sceneWithEnabled(scene: Scene, enabled: boolean): SceneDraft {
+  return { ...sceneDraftOf(sceneEditorDraftFrom(scene)), enabled };
 }
 
 /** `list` plus `raw` normalised as an app id; the same list when it is empty or already there. */
-export function addApp(list: readonly string[], raw: string): string[] {
+export function addSceneApp(list: readonly string[], raw: string): string[] {
   const id = normalizeAppId(raw);
   return id.length === 0 || list.includes(id) ? [...list] : [...list, id];
 }
 
 /** `list` plus the trimmed keyword; the same list when it is empty or already there (any case). */
-export function addKeyword(list: readonly string[], raw: string): string[] {
+export function addSceneKeyword(list: readonly string[], raw: string): string[] {
   const keyword = raw.trim();
   const lower = keyword.toLowerCase();
   return keyword.length === 0 || list.some((k) => k.toLowerCase() === lower)
@@ -103,7 +102,7 @@ export function addKeyword(list: readonly string[], raw: string): string[] {
 }
 
 /** The prompt's length as the core counts it: characters after the line-ending clean-up. */
-export function promptChars(prompt: string): number {
+export function scenePromptChars(prompt: string): number {
   return Array.from(prompt.replaceAll("\r\n", "\n").trim()).length;
 }
 
@@ -113,22 +112,29 @@ function asciiFold(text: string): string {
 
 /** What is wrong with the form, per field (localised). `missing` problems (no name, no app) are
  *  shown after the first save attempt; the others as soon as they appear. */
-export interface EditorProblems {
+export interface SceneEditorProblems {
   name?: { text: string; missing: boolean };
   apps?: { text: string; missing: boolean };
   keywords?: { text: string; missing: boolean };
   prompt?: { text: string; missing: boolean };
 }
 
-/** `builtin`: the draft is a built-in scene's (docs/dictation.md §18.10), which keeps its name and
- *  may list no application; names are unique among the user's scenes only. */
-export function editorProblems(
-  d: EditorDraft,
+/** How a draft is checked: `builtin`, the draft is a built-in scene's (docs/dictation.md §18.10),
+ *  which keeps its name and may list no application (names are unique among the user's scenes
+ *  only); `needApps` false, scenes are picked by hand rather than matched (the phone, §18), so no
+ *  scene has to list one. */
+export interface SceneCheck {
+  builtin?: boolean;
+  needApps?: boolean;
+}
+
+export function sceneEditorProblems(
+  d: SceneEditorDraft,
   others: readonly Scene[],
   t: TFunction = zhT.t,
-  builtin = false,
-): EditorProblems {
-  const out: EditorProblems = {};
+  { builtin = false, needApps = true }: SceneCheck = {},
+): SceneEditorProblems {
+  const out: SceneEditorProblems = {};
   const name = d.name.trim();
   const clash = builtin
     ? undefined
@@ -136,7 +142,7 @@ export function editorProblems(
   if (name.length === 0) out.name = { text: t("sceneEditor.error.name"), missing: true };
   else if (clash !== undefined)
     out.name = { text: t("sceneEditor.error.duplicate", { name: clash.name }), missing: false };
-  if (d.apps.length === 0 && !builtin)
+  if (d.apps.length === 0 && !builtin && needApps)
     out.apps = { text: t("sceneEditor.error.noApps"), missing: true };
   else if (d.apps.length > MAX_SCENE_APPS)
     out.apps = {
@@ -148,7 +154,7 @@ export function editorProblems(
       text: t("sceneEditor.error.tooManyKeywords", { max: MAX_TITLE_KEYWORDS }),
       missing: false,
     };
-  if (promptChars(d.prompt) > MAX_SCENE_PROMPT_CHARS)
+  if (scenePromptChars(d.prompt) > MAX_SCENE_PROMPT_CHARS)
     out.prompt = {
       text: t("sceneEditor.error.promptTooLong", { max: MAX_SCENE_PROMPT_CHARS }),
       missing: false,
@@ -156,7 +162,7 @@ export function editorProblems(
   return out;
 }
 
-export function hasProblems(problems: EditorProblems): boolean {
+export function hasSceneProblems(problems: SceneEditorProblems): boolean {
   return Object.values(problems).some((p) => p !== undefined);
 }
 
@@ -166,12 +172,12 @@ const SCRIPT_KEYS = {
   as_is: "engines.chineseScript.asIs",
 } as const;
 
-export interface Choice<V extends string> {
+export interface SceneChoice<V extends string> {
   value: V;
   label: string;
 }
 
-export function refineChoices(t: TFunction = zhT.t): Choice<Switch>[] {
+export function sceneRefineChoices(t: TFunction = zhT.t): SceneChoice<SceneSwitch>[] {
   return [
     { value: "", label: t("sceneEditor.follow") },
     { value: "on", label: t("sceneEditor.refineOn") },
@@ -181,12 +187,12 @@ export function refineChoices(t: TFunction = zhT.t): Choice<Switch>[] {
 
 /** 跟随全局, the built-in presets, the custom ones, and `current` when it names a custom preset that
  *  was deleted since (it stays selectable, labelled as such). */
-export function presetChoices(
+export function scenePresetChoices(
   presets: readonly CustomPreset[],
   current: string,
   t: TFunction = zhT.t,
-): Choice<string>[] {
-  const out: Choice<string>[] = [
+): SceneChoice<string>[] {
+  const out: SceneChoice<string>[] = [
     { value: "", label: t("sceneEditor.follow") },
     ...BUILTIN_PRESETS.map((id) => ({ value: id, label: t(`presets.${id}.name`) })),
     ...presets.map((p) => ({ value: p.id, label: p.name })),
@@ -196,17 +202,17 @@ export function presetChoices(
   return out;
 }
 
-export function outputModeChoices(
+export function sceneOutputModeChoices(
   t: TFunction = zhT.t,
   locale: Locale = "zh-CN",
-): Choice<"" | OutputMode>[] {
+): SceneChoice<"" | OutputMode>[] {
   return [
     { value: "", label: t("sceneEditor.follow") },
     ...OUTPUT_MODES.map((mode) => ({ value: mode, label: outputModeLabel(mode, locale) })),
   ];
 }
 
-export function scriptChoices(t: TFunction = zhT.t): Choice<"" | ChineseScript>[] {
+export function sceneScriptChoices(t: TFunction = zhT.t): SceneChoice<"" | ChineseScript>[] {
   return [
     { value: "", label: t("sceneEditor.follow") },
     ...CHINESE_SCRIPTS.map((script) => ({
@@ -227,8 +233,8 @@ export function languageName(code: string, t: TFunction = zhT.t): string {
 }
 
 /** 跟随全局, 自动检测, the engines dialog's languages, and `current` when it is none of them. */
-export function languageChoices(current: string, t: TFunction = zhT.t): Choice<string>[] {
-  const out: Choice<string>[] = [
+export function sceneLanguageChoices(current: string, t: TFunction = zhT.t): SceneChoice<string>[] {
+  const out: SceneChoice<string>[] = [
     { value: "", label: t("sceneEditor.follow") },
     { value: LANGUAGE_AUTO, label: t("language.auto") },
   ];
@@ -241,7 +247,7 @@ export function languageChoices(current: string, t: TFunction = zhT.t): Choice<s
 }
 
 /** The overrides a scene sets, one short phrase each, in the editor's order. */
-export function overrideSummary(
+export function sceneOverrideSummary(
   o: SceneOverrides,
   t: TFunction = zhT.t,
   locale: Locale = "zh-CN",

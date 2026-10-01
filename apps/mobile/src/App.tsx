@@ -29,8 +29,11 @@ import { About } from "./screens/About";
 import { AiModels } from "./screens/AiModels";
 import { Appearance } from "./screens/Appearance";
 import { Devices } from "./screens/Devices";
+import { Dictionary } from "./screens/Dictionary";
 import { PairDevice } from "./screens/PairDevice";
 import { Recording } from "./screens/Recording";
+import { Rules } from "./screens/Rules";
+import { Scenes } from "./screens/Scenes";
 import { Settings } from "./screens/Settings";
 import { SpeechModels } from "./screens/SpeechModels";
 import { TabBar } from "./screens/TabBar";
@@ -59,6 +62,9 @@ const PARENT: Partial<Record<Screen, Screen>> = {
   appearance: "settings",
   recording: "settings",
   about: "settings",
+  dictionary: "settings",
+  rules: "settings",
+  scenes: "settings",
 };
 
 /** The screens under `screen` when it is the first one shown. */
@@ -286,6 +292,9 @@ function Frame({
             {screen === "appearance" && <Appearance />}
             {screen === "recording" && <Recording />}
             {screen === "about" && <About />}
+            {screen === "dictionary" && <Dictionary />}
+            {screen === "rules" && <Rules />}
+            {screen === "scenes" && <Scenes />}
           </main>
           {tabRoot && <TabBar />}
           <Dialog

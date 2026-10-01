@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use voltip_protocol::Platform;
 
-use super::{BuiltinScene, Scene, SceneDraft, SceneError, check_scenes, has_builtin_scenes, validate_scene_draft_with};
+use super::{BuiltinScene, Scene, SceneDraft, SceneError, check_scenes, has_builtin_scenes, scenes_need_apps, validate_scene_draft_with};
 use crate::list_file::{ListFile, permute};
 
 /// File name of the scene list inside the app data directory.
@@ -64,7 +64,7 @@ impl SceneStore {
                 let valid = || -> Result<(), SceneError> {
                     for s in scenes {
                         let draft = SceneDraft::from(s);
-                        if validate_scene_draft_with(&draft, s.builtin.is_none())? != draft {
+                        if validate_scene_draft_with(&draft, s.builtin.is_none() && scenes_need_apps(platform))? != draft {
                             return Err(SceneError::Invalid(format!("场景「{}」不是规范形式", s.name)));
                         }
                     }
@@ -78,7 +78,7 @@ impl SceneStore {
         (store, notice)
     }
 
-    /// Append the built-in categories the list lacks (a desktop only) and write the list back, so
+    /// Append the built-in categories the list lacks and write the list back, so
     /// their ids stay the same from one launch to the next. A list that cannot be written keeps them
     /// in memory for this run.
     fn fill_builtin(&mut self, now_ms: u64) {
@@ -118,7 +118,7 @@ impl SceneStore {
     /// Add a new scene of the user's before the first built-in one (the user's scenes match first
     /// unless the user moves them), at the end when there is none; returns its id.
     pub fn add(&mut self, draft: &SceneDraft, now_ms: u64) -> Result<Uuid, SceneError> {
-        let draft = validate_scene_draft_with(draft, true)?;
+        let draft = validate_scene_draft_with(draft, scenes_need_apps(self.platform))?;
         let id = Uuid::new_v4();
         let mut scenes = self.scenes.clone();
         let at = scenes.iter().position(|s| s.builtin.is_some()).unwrap_or(scenes.len());
@@ -132,7 +132,7 @@ impl SceneStore {
     pub fn update(&mut self, id: Uuid, draft: &SceneDraft, now_ms: u64) -> Result<(), SceneError> {
         let mut scenes = self.scenes.clone();
         let Some(scene) = scenes.iter_mut().find(|s| s.id == id) else { return Err(unknown_scene(id)) };
-        let draft = validate_scene_draft_with(draft, scene.builtin.is_none())?;
+        let draft = validate_scene_draft_with(draft, scene.builtin.is_none() && scenes_need_apps(self.platform))?;
         if scene.builtin.is_some() && draft.name != scene.name {
             return Err(SceneError::Invalid("内置场景不能改名".into()));
         }

@@ -21,6 +21,9 @@ The phone has settings of its own, under **Settings** at the bottom:
 - **Speech models** and **AI models and presets**: the recognition service and the AI polish service. Use the built-in services, or enter your own provider, endpoint, model and API key. Keys are stored only in the phone's system keystore. The phone does not run local models.
 - Whether AI polish runs, which preset it uses, the recognition language and the Chinese script.
 - **Appearance and language** and **Recording**: the interface language, the theme and the longest take.
+- **Dictionary**, **Replacement rules** and **Scenes**: correct the spellings recognition tends to get wrong, make fixed replacements in the text, and adjust AI polish, the preset, the language, the Chinese script and the extra instruction for the AI by scene. Rules can be imported by pasting a TOML file, and the exported TOML can be copied or shared.
+
+The phone cannot tell which app you are typing in, so scenes are not matched by app. Choose one under **Scene** above **Hold to talk**, and the recordings the phone recognises follow it; choose **No scene** to stop.
 
 These settings apply to recordings the phone recognises itself. A recording sent to a computer follows the computer's settings.
 
@@ -58,4 +61,4 @@ The phone can also send text without speaking: type it, or press **Send clipboar
 - **Forget device** removes a pairing on both sides when the other device is online.
 - **Connection check** tests the network path to each paired device and reports where it fails.
 
-The history, dictionary and rules stay on the computer and are not synced to the phone; the phone lists what it sent and what it transcribed on its own.
+The computer's history, dictionary, rules and scenes stay on the computer and are not synced to the phone, and the phone's own dictionary, rules and scenes apply only to what the phone recognises itself. The phone lists what it sent and what it transcribed on its own.

@@ -54,6 +54,7 @@ import {
   type SafetyCode,
   type Scene,
   type SceneDraft,
+  type SceneRef,
   type TakeContext,
   type Settings,
   type Snapshot,
@@ -146,7 +147,6 @@ import {
 } from "./presets";
 import {
   type ForegroundApp,
-  SceneError,
   checkScenes,
   isTerminalApp,
   matchScene,
@@ -157,7 +157,6 @@ import {
 import { historyHitsOf, historyPageOf, historyStatsOf } from "./history-queries";
 import {
   Vocabulary,
-  VocabularyError,
   checkDictionary,
   checkRules,
   exportRulesToml,
@@ -404,10 +403,6 @@ export const MOCK_MODEL_TICK_MS = 200;
 export const MOCK_MODEL_TICKS = 4;
 export const MOCK_MODEL_FILE = "model.int8.onnx";
 
-/** The phone shell's answer to every dictionary / rules command (`apps/mobile/src-tauri`). */
-export const VOCABULARY_UNAVAILABLE = "vocabulary: 手机端不支持个人词典与替换规则";
-/** What the phone answers to every scene command and to `recent_apps` (docs/dictation.md §18.6). */
-export const SCENES_UNAVAILABLE = "scenes: 手机端不支持场景与上下文";
 /** `voltip_core::PRESET_TRY_UNCONFIGURED`: a 试一试 while no clean-up is configured. */
 export const PRESET_TRY_UNCONFIGURED = "尚未配置 AI 润色服务，无法试运行预设";
 /** The built-in presets' texts (`presets_builtin`), the bytes the desktop shell answers with (the
@@ -416,7 +411,8 @@ export const MOCK_BUILTIN_PRESET_TEXTS: readonly BuiltinPresetText[] = builtinPr
   .array()
   .parse(builtinPresetTexts);
 /** The built-in scenes (docs/dictation.md §18.10) as the core fills them in: each category's defaults
- *  on the three desktops and its term pack (the Rust side keeps the fixture equal to the core). */
+ *  on the three desktops and on a phone (no applications), and its term pack (the Rust side keeps
+ *  the fixture equal to the core). */
 export const MOCK_BUILTIN_SCENES = z
   .array(
     z.object({
@@ -425,6 +421,7 @@ export const MOCK_BUILTIN_SCENES = z
         windows: sceneDraftSchema,
         macos: sceneDraftSchema,
         linux: sceneDraftSchema,
+        android: sceneDraftSchema,
       }),
       terms: z.array(z.string()),
     }),
@@ -955,10 +952,10 @@ export class MockBackend implements Backend {
       engines: emptyEngineStatus(),
       update: options.update ?? idleUpdate(),
       models,
-      dictionary: this.role === "phone" ? [] : [...(options.dictionary ?? [])],
-      rules: this.role === "phone" ? [] : [...(options.rules ?? [])],
+      dictionary: [...(options.dictionary ?? [])],
+      rules: [...(options.rules ?? [])],
       // The desktop's list always holds the built-in scenes, appended off after the user's (§18.10).
-      scenes: this.role === "phone" ? [] : [...(options.scenes ?? [])],
+      scenes: [...(options.scenes ?? [])],
       presets: [...(options.presets ?? [])],
       // What the desktop shell reports about the machine (§10.6); nothing on the phone.
       hardware:
@@ -967,7 +964,7 @@ export class MockBackend implements Backend {
     };
     this.state.engines = this.resolveEngines(settings.engines);
     this.state.models = this.modelsFor(settings.engines);
-    if (this.role !== "phone") this.state.scenes = this.withBuiltinScenes(this.state.scenes);
+    this.state.scenes = this.withBuiltinScenes(this.state.scenes);
   }
 
   getState(): Promise<UiState> {
@@ -1036,21 +1033,19 @@ export class MockBackend implements Backend {
   /** `vocabulary_preview` with the core's semantics (regex rules on the JavaScript engine). */
   async vocabularyPreview(text: string, draft?: PreviewDraft): Promise<VocabularyPreview> {
     await Promise.resolve();
-    this.refuseVocabularyOnPhone();
     return previewVocabulary(this.state.dictionary, this.state.rules, text, draft);
   }
 
   /** `rules_export`: the rules as the core's TOML text. */
   async rulesExport(): Promise<string> {
     await Promise.resolve();
-    this.refuseVocabularyOnPhone();
     return exportRulesToml(this.state.rules);
   }
 
-  /** `recent_apps`: the apps the history saw, newest first (the phone refuses, like the core). */
+  /** `recent_apps`: the apps the history saw, newest first (none on the phone, which names no
+   *  application). */
   async recentApps(): Promise<AppRef[]> {
     await Promise.resolve();
-    this.refuseScenesOnPhone();
     return recentAppsOf(this.history);
   }
 
@@ -1618,7 +1613,6 @@ export class MockBackend implements Backend {
     // `into_core` does); a clash with the rest of the list is an `error` event, list unchanged.
     dictionary_add: (args) => {
       const { entry, historyId } = required(args);
-      this.refuseVocabularyOnPhone();
       const draft = validateDictionaryDraft(entry);
       const source: EntrySource =
         historyId == null
@@ -1632,7 +1626,6 @@ export class MockBackend implements Backend {
     },
     dictionary_update: (args) => {
       const { id, entry } = required(args);
-      this.refuseVocabularyOnPhone();
       uuidArg(id);
       const draft = validateDictionaryDraft(entry);
       if (!this.state.dictionary.some((e) => e.id === id)) {
@@ -1647,7 +1640,6 @@ export class MockBackend implements Backend {
     },
     dictionary_remove: (args) => {
       const { id } = required(args);
-      this.refuseVocabularyOnPhone();
       uuidArg(id);
       if (!this.state.dictionary.some((e) => e.id === id)) {
         this.emit({ type: "error", message: `dictionary: 没有 id 为 ${id} 的词条` });
@@ -1657,7 +1649,6 @@ export class MockBackend implements Backend {
     },
     dictionary_reorder: (args) => {
       const { ids } = required(args);
-      this.refuseVocabularyOnPhone();
       const next = permute(this.state.dictionary, ids.map(uuidArg));
       if (next === undefined) {
         this.emit({ type: "error", message: "dictionary: 新的顺序必须恰好包含现有的全部词条" });
@@ -1667,14 +1658,12 @@ export class MockBackend implements Backend {
     },
     rules_add: (args) => {
       const { rule } = required(args);
-      this.refuseVocabularyOnPhone();
       const draft = validateRuleDraft(rule);
       const now = this.now();
       this.commitRules([...this.state.rules, this.ruleFrom(draft, this.uuid(), now)]);
     },
     rules_update: (args) => {
       const { id, rule } = required(args);
-      this.refuseVocabularyOnPhone();
       uuidArg(id);
       const draft = validateRuleDraft(rule);
       const current = this.state.rules.find((r) => r.id === id);
@@ -1688,7 +1677,6 @@ export class MockBackend implements Backend {
     },
     rules_remove: (args) => {
       const { id } = required(args);
-      this.refuseVocabularyOnPhone();
       uuidArg(id);
       if (!this.state.rules.some((r) => r.id === id)) {
         this.emit({ type: "error", message: `rules: 没有 id 为 ${id} 的规则` });
@@ -1698,7 +1686,6 @@ export class MockBackend implements Backend {
     },
     rules_reorder: (args) => {
       const { ids } = required(args);
-      this.refuseVocabularyOnPhone();
       const next = permute(this.state.rules, ids.map(uuidArg));
       if (next === undefined) {
         this.emit({ type: "error", message: "rules: 新的顺序必须恰好包含现有的全部规则" });
@@ -1708,15 +1695,15 @@ export class MockBackend implements Backend {
     },
     rules_import: (args) => {
       const { toml, mode } = required(args);
-      this.refuseVocabularyOnPhone();
       this.importRules(parseRulesToml(toml), mode);
     },
     // docs/dictation.md §18.6: the same split as the vocabulary — a draft wrong on its own throws,
     // a clash with the list (name, cap, unknown id) is an `error` event with the list unchanged.
     scenes_add: (args) => {
       const { scene } = required(args);
-      this.refuseScenesOnPhone();
-      const draft = validateSceneDraft(scene);
+      // A phone's scenes need not name an application (`scenes_need_apps`, user decision
+      // 2026-10-01); a desktop refuses one that names none, like the bridge.
+      const draft = validateSceneDraft(scene, this.role !== "phone");
       const now = this.now();
       // Before the first built-in scene: the user's scenes match first unless moved.
       const scenes = [...this.state.scenes];
@@ -1726,7 +1713,6 @@ export class MockBackend implements Backend {
     },
     scenes_update: (args) => {
       const { id, scene } = required(args);
-      this.refuseScenesOnPhone();
       uuidArg(id);
       // The bridge lets an update list no application; the core knows which scenes may.
       const draft = validateSceneDraft(scene, false);
@@ -1739,7 +1725,7 @@ export class MockBackend implements Backend {
         this.emit({ type: "error", message: "scenes: 内置场景不能改名" });
         return;
       }
-      if (current.builtin === undefined && draft.match.apps.length === 0) {
+      if (this.role !== "phone" && current.builtin === undefined && draft.match.apps.length === 0) {
         this.emit({ type: "error", message: `scenes: 场景「${draft.name}」至少要有一个应用` });
         return;
       }
@@ -1751,7 +1737,6 @@ export class MockBackend implements Backend {
     },
     scenes_remove: (args) => {
       const { id } = required(args);
-      this.refuseScenesOnPhone();
       uuidArg(id);
       const current = this.state.scenes.find((s) => s.id === id);
       if (current === undefined) {
@@ -1766,7 +1751,6 @@ export class MockBackend implements Backend {
     },
     scenes_restore: (args) => {
       const { id } = required(args);
-      this.refuseScenesOnPhone();
       uuidArg(id);
       const current = this.state.scenes.find((s) => s.id === id);
       if (current === undefined) {
@@ -1795,7 +1779,6 @@ export class MockBackend implements Backend {
     },
     scenes_reorder: (args) => {
       const { ids } = required(args);
-      this.refuseScenesOnPhone();
       const next = permute(this.state.scenes, ids.map(uuidArg));
       if (next === undefined) {
         this.emit({ type: "error", message: "scenes: 新的顺序必须恰好包含现有的全部场景" });
@@ -1841,19 +1824,26 @@ export class MockBackend implements Backend {
     },
     settings_set_context_sharing: (args) => {
       const { appName, windowTitle } = required(args);
-      this.refuseScenesOnPhone();
       this.emit({
         type: "settings",
         ...this.state.settings,
         context_sharing: { app_name: appName, window_title: windowTitle },
       });
     },
+    settings_set_pinned_scene: (args) => {
+      const { id } = required(args);
+      if (id !== null) uuidArg(id);
+      const { pinned_scene: _old, ...rest } = this.state.settings;
+      this.emit({ type: "settings", ...rest, ...(id === null ? {} : { pinned_scene: id }) });
+    },
   };
 
   // ---- scenes (docs/dictation.md §18) ------------------------------------------------------------
 
   /** Which desktop's default applications the built-in scenes get (the identity's). */
-  private builtinPlatform(): "windows" | "macos" | "linux" | undefined {
+  private builtinPlatform(): "windows" | "macos" | "linux" | "android" | undefined {
+    // The phone keeps the built-in scenes without applications (user decision 2026-10-01).
+    if (this.role === "phone") return "android";
     const platform = this.state.identity?.platform;
     return platform === "windows" || platform === "macos" || platform === "linux"
       ? platform
@@ -1880,15 +1870,10 @@ export class MockBackend implements Backend {
     return out;
   }
 
-  /** `scenes_builtin`: every built-in scene's term pack (the phone has no scenes). */
+  /** `scenes_builtin`: every built-in scene's term pack. */
   async scenesBuiltin(): Promise<BuiltinSceneTerms[]> {
     await Promise.resolve();
-    this.refuseScenesOnPhone();
     return MOCK_BUILTIN_SCENES.map((row) => ({ id: row.id, terms: [...row.terms] }));
-  }
-
-  private refuseScenesOnPhone() {
-    if (this.role === "phone") throw new SceneError(SCENES_UNAVAILABLE);
   }
 
   private commitScenes(scenes: Scene[]) {
@@ -2006,10 +1991,6 @@ export class MockBackend implements Backend {
   }
 
   // ---- personal dictionary and replacement rules (docs/dictation.md §16) -------------------------
-
-  private refuseVocabularyOnPhone() {
-    if (this.role === "phone") throw new VocabularyError(VOCABULARY_UNAVAILABLE);
-  }
 
   private commitDictionary(entries: DictionaryEntry[]) {
     try {
@@ -2708,19 +2689,28 @@ export class MockBackend implements Backend {
       this.dwell(MOCK_DICTATION_DWELL_MS, session);
       return;
     }
-    if (app !== undefined) {
-      const scene = kind === "edit" ? undefined : matchScene(this.state.scenes, app);
-      this.takeScene = scene;
+    // The phone has no probe: its takes run with the scene the user picked
+    // (`settings.pinned_scene`) while the list still has it, like the core (user decision
+    // 2026-10-01).
+    const scene =
+      kind === "edit"
+        ? undefined
+        : app !== undefined
+          ? matchScene(this.state.scenes, app)
+          : this.role === "phone"
+            ? this.state.scenes.find((s) => s.id === this.state.settings.pinned_scene)
+            : undefined;
+    this.takeScene = scene;
+    if (app !== undefined)
       this.takeContext = {
         app: { id: app.id, name: app.name },
-        ...(scene === undefined ? {} : { scene: { id: scene.id, name: scene.name } }),
+        ...(scene === undefined ? {} : { scene: sceneRefOf(scene) }),
       };
-      const mode = scene?.overrides.output_mode;
-      if (mode != null) {
-        const serviceable = mode === "whole_take" || this.state.engines.live_preview_ready;
-        this.takeMode = serviceable ? mode : "whole_take";
-        if (!serviceable) this.takeModeError = MOCK_SCENE_MODE_NOT_READY;
-      }
+    const mode = scene?.overrides.output_mode;
+    if (mode != null) {
+      const serviceable = mode === "whole_take" || this.state.engines.live_preview_ready;
+      this.takeMode = serviceable ? mode : "whole_take";
+      if (!serviceable) this.takeModeError = MOCK_SCENE_MODE_NOT_READY;
     }
     this.emitPhase(
       { phase: "listening", started_at: this.now(), ready: false, locked: false },
@@ -2979,7 +2969,7 @@ export class MockBackend implements Backend {
         ...extra,
         ...(hits.corrections.length + hits.rules.length > 0 ? { vocabulary: hits } : {}),
         ...(context === undefined ? {} : { app: context.app }),
-        ...(context?.scene === undefined ? {} : { scene: context.scene }),
+        ...(scene === undefined ? {} : { scene: context?.scene ?? sceneRefOf(scene) }),
         ...(preset === undefined ? {} : { preset }),
         kind: "dictation",
       };
@@ -3393,6 +3383,15 @@ function mockPresetOutput(preset: PresetId | undefined, text: string): string {
 export const MOCK_PROCESS_UNCONFIGURED = "尚未配置 AI 润色服务，无法用预设处理";
 /** `voltip_core::history::process::PROCESS_ENTRY_GONE`. */
 export const MOCK_PROCESS_ENTRY_GONE = "这条记录已删除";
+
+/** How the status and the history name `scene` (`Scene::to_ref`). */
+function sceneRefOf(scene: Scene): SceneRef {
+  return {
+    id: scene.id,
+    name: scene.name,
+    ...(scene.builtin === undefined ? {} : { builtin: scene.builtin }),
+  };
+}
 
 /** The preview's fixed id of the built-in scene at `index` of `MOCK_BUILTIN_SCENES`. */
 export function builtinSceneId(index: number): string {

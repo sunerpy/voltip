@@ -620,6 +620,8 @@ pub struct DictationEngine {
     presets: Arc<Vec<CustomPreset>>,
     /// `Settings.context_sharing` for the next run.
     context_sharing: ContextSharing,
+    /// `Settings.pinned_scene`: the scene a take runs with where no foreground probe picks one.
+    pinned_scene: Option<Uuid>,
     /// `Settings.microphone`: the device the microphone port opens (`None` = the default).
     microphone: Option<String>,
     /// `Settings.recording` (docs/dictation.md §22): a dictation take's source and length.
@@ -716,6 +718,7 @@ impl DictationEngine {
             scenes: Arc::new(Vec::new()),
             presets: Arc::new(Vec::new()),
             context_sharing: ContextSharing::default(),
+            pinned_scene: None,
             microphone: None,
             recording: RecordingSettings::default(),
             segmenter: ports.segmenter,
@@ -753,6 +756,12 @@ impl DictationEngine {
     /// `Settings.context_sharing` for the runs that start from now on (docs/dictation.md §18.5).
     pub fn set_context_sharing(&mut self, sharing: ContextSharing) {
         self.context_sharing = sharing;
+    }
+
+    /// `Settings.pinned_scene` for the takes that start from now on (the phone, docs/dictation.md
+    /// §18): with no foreground probe, a take runs with this scene when the list still has it.
+    pub fn set_pinned_scene(&mut self, id: Option<Uuid>) {
+        self.pinned_scene = id;
     }
 
     /// `Settings.microphone` for the takes that start from now on: the device id handed to the
@@ -972,7 +981,16 @@ impl DictationEngine {
         // overrides are known before the capture and the live worker start (docs/dictation.md §18.4).
         match self.probe.clone() {
             Some(probe) => self.spawn_probe(probe),
-            None => self.open_capture(),
+            None => {
+                // No probe (the phone): the scene the user picked, chosen before the capture opens
+                // like a matched one (user decision 2026-10-01).
+                let pinned = self.pinned_scene.and_then(|id| self.take.scenes.iter().find(|s| s.id == id)).cloned();
+                if let (TakeKind::Dictation, Some(scene)) = (self.status.kind, pinned) {
+                    tracing::info!(session, scene = %scene.id, "pinned scene");
+                    self.apply_scene(scene);
+                }
+                self.open_capture();
+            }
         }
         Ok(vec![listening])
     }
@@ -1104,6 +1122,19 @@ impl DictationEngine {
             TakeKind::Edit => None,
         };
         tracing::info!(session, app = %app.app_id, scene = ?scene.as_ref().map(|s| s.id), "take context");
+        self.status.context = Some(TakeContext { app: AppRef { id: app.app_id.clone(), name: app.name.clone() }, scene: scene.as_ref().map(Scene::to_ref) });
+        self.take.app = Some(app);
+        if let Some(scene) = scene {
+            self.apply_scene(scene);
+        }
+        vec![Effect::Status(self.status.clone())]
+    }
+
+    /// Apply `scene` to this take: the output mode now (it decides the capture), the built-in
+    /// scene's term pack, the rest where it is used.
+    fn apply_scene(&mut self, scene: Scene) {
+        let session = self.status.session;
+        let scene = Some(scene);
         if let Some(requested) = scene.as_ref().and_then(|s| s.overrides.output_mode) {
             let (mode, reason) = self.resolve_output_mode(requested);
             self.take.requested = requested;
@@ -1119,10 +1150,7 @@ impl DictationEngine {
                 self.take.vocabulary = Arc::new(self.take.vocabulary.with_terms(pack));
             }
         }
-        self.status.context = Some(TakeContext { app: AppRef { id: app.app_id.clone(), name: app.name.clone() }, scene: scene.as_ref().map(Scene::to_ref) });
-        self.take.app = Some(app);
         self.take.scene = scene;
-        vec![Effect::Status(self.status.clone())]
     }
 
     /// The take's language hint: the scene's (`auto` = none), else the engines'.
@@ -5361,6 +5389,57 @@ mod tests {
         assert!(!glossaries[0].iter().any(|t| t == "Docker"), "a term already there is not repeated");
         assert_eq!(glossaries[0].len(), 2 + pack.len() - 1);
         assert_eq!(glossaries[1], ["Voltip", "docker"], "no scene, no pack");
+    }
+
+    /// The phone (user decision 2026-10-01): with no foreground probe, a take runs with the scene the
+    /// user picked (`Settings.pinned_scene`), even one that names no application or is switched
+    /// off for matching; a pinned id the list no longer has means no scene, and a shell with a
+    /// probe goes by the application in front.
+    #[tokio::test(start_paused = true)]
+    async fn without_a_probe_a_take_runs_with_the_pinned_scene() {
+        use crate::scenes::BuiltinScene;
+        let mut r = rig(FakeAudio::speech(), FakeTranscriber::ok("好"), Some(FakeRefiner::ok("好。")), FakeInjector::paste(), true);
+        let template = BuiltinScene::Legal.template(voltip_protocol::Platform::Android);
+        assert!(template.matching.apps.is_empty(), "a phone's built-in scenes name no application");
+        let legal = Scene {
+            id: Uuid::new_v4(),
+            name: template.name,
+            enabled: false,
+            matching: template.matching,
+            overrides: crate::scenes::SceneOverrides { language: Some("en".into()), ..template.overrides },
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            builtin: Some(BuiltinScene::Legal),
+        };
+        r.engine.set_scenes(Arc::new(vec![legal.clone()]));
+        r.engine.set_pinned_scene(Some(legal.id));
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        let entry = record(&fx).expect("history");
+        assert_eq!((entry.app.clone(), entry.scene.clone()), (None, Some(legal.to_ref())), "no application, the pinned scene");
+        assert!(status_of(&fx).context.is_none(), "there is no application to name");
+        assert_eq!(r.transcriber.languages(), vec![Some("en".to_owned())], "the scene's language");
+        let pack = crate::vocabulary::packs::terms(BuiltinScene::Legal);
+        assert_eq!(r.transcriber.glossaries()[0].len(), pack.len(), "the built-in scene's term pack");
+        tokio::time::advance(DWELL).await;
+        assert_eq!(phase(&r.next().await), &DictationPhase::Idle);
+        // A scene that is gone: the globals.
+        r.engine.set_pinned_scene(Some(Uuid::new_v4()));
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert_eq!(record(&fx).expect("history").scene, None);
+        assert_eq!(r.transcriber.languages()[1], None);
+        // A shell with a probe goes by the application in front, whatever is pinned.
+        let probe = Arc::new(FakeProbe::app("mail", "Mail", None));
+        let mut r = rig_probed(probe, FakeTranscriber::ok("好"), None, None, &resolved(false, None));
+        r.engine.set_scenes(Arc::new(vec![legal.clone()]));
+        r.engine.set_pinned_scene(Some(legal.id));
+        r.start_probed().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert_eq!(record(&fx).expect("history").scene, None, "the pinned scene is the phone's");
     }
 
     /// §18.4: no answer means no scene — the probe failing, finding nothing, panicking or not

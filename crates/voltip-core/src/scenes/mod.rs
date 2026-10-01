@@ -13,6 +13,10 @@
 //! The desktop's list also holds the built-in scenes ([`BuiltinScene`], §18.10): they carry their
 //! category, may list no application, cannot be deleted or renamed, and count toward neither
 //! [`MAX_SCENES`] nor the name rule of the user's scenes.
+//!
+//! On a phone (user decision 2026-10-01) there is no foreground probe: the user picks the scene a
+//! take runs with (`Settings.pinned_scene`), the built-in scenes come without applications, and a
+//! scene of the user's need not name one ([`scenes_need_apps`]).
 
 mod builtin;
 mod store;
@@ -24,7 +28,7 @@ use crate::dictation::ports::ForegroundApp;
 use crate::engines::{ChineseScript, OutputMode};
 use crate::presets::PresetId;
 
-pub use builtin::{BuiltinScene, has_builtin_scenes};
+pub use builtin::{BuiltinScene, has_builtin_scenes, scenes_need_apps};
 pub use store::{SCENES_FILE_NAME, SCENES_SCHEMA, SceneStore};
 
 /// Most scenes the user makes (the built-in ones come on top).

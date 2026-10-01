@@ -51,7 +51,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 99] = [
+pub const COMMANDS: [&str; 100] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -141,6 +141,7 @@ pub const COMMANDS: [&str; 99] = [
     "presets_try",
     "presets_builtin",
     "settings_set_context_sharing",
+    "settings_set_pinned_scene",
     "recent_apps",
     "history_query",
     "history_entry",
@@ -812,6 +813,13 @@ fn settings_set_context_sharing(bridge: tauri::State<'_, Bridge>, app_name: bool
     Ok(bridge.dispatch(UiCommand::SettingsSetContextSharing { app_name, window_title })?)
 }
 
+/// The scene a take runs with where no foreground probe picks one: the phone's talk card. The
+/// desktop has a probe, so it never uses it; the command is shared state like every setting.
+#[tauri::command]
+fn settings_set_pinned_scene(bridge: tauri::State<'_, Bridge>, id: Option<String>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetPinnedScene { id })?)
+}
+
 /// Query: the applications the history saw, newest first (the scene editor's picker, §18.6).
 /// Run a history read off the main thread: SQLite blocks (docs/dictation.md §4.4).
 async fn history_read<T: Send + 'static>(
@@ -1212,6 +1220,7 @@ pub fn build_app<R: Runtime>(
             presets_try,
             presets_builtin,
             settings_set_context_sharing,
+            settings_set_pinned_scene,
             recent_apps,
             history_query,
             history_entry,

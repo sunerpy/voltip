@@ -32,7 +32,7 @@ import {
   HEARD_AS_JOINER,
   dictionaryDraftProblem,
   errorText,
-  moved,
+  movedBy,
   splitHeardAs,
 } from "../features/vocabulary/vocabulary";
 
@@ -161,7 +161,7 @@ export function Dictionary() {
   };
   const move = (entry: DictionaryEntry, delta: -1 | 1) => {
     const ids = entries.map((e) => e.id);
-    run(backend.invoke("dictionary_reorder", { ids: moved(ids, ids.indexOf(entry.id), delta) }));
+    run(backend.invoke("dictionary_reorder", { ids: movedBy(ids, ids.indexOf(entry.id), delta) }));
   };
 
   const termInput = (value: Editing) => (

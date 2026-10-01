@@ -205,6 +205,11 @@ pub struct Settings {
     /// session always waits for a phone and is renewed before it lapses. Off by default.
     #[serde(default)]
     pub pairing_always_on: bool,
+    /// The scene a take runs with where no foreground probe picks one (the phone, docs/dictation.md
+    /// §18, user decision 2026-10-01): chosen on the phone's talk card; `None` (the default, and
+    /// files written before it) = no scene. A scene that is gone counts as none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_scene: Option<uuid::Uuid>,
     /// History recording and retention.
     #[serde(default)]
     pub history: HistorySettings,
@@ -263,6 +268,7 @@ impl Default for Settings {
             solo_key: None,
             lan_discovery: true,
             pairing_always_on: false,
+            pinned_scene: None,
             history: HistorySettings::default(),
             overlay: OverlayPlacement::Bottom,
             microphone: None,

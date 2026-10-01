@@ -12,7 +12,10 @@ export type Screen =
   | "ai"
   | "appearance"
   | "recording"
-  | "about";
+  | "about"
+  | "dictionary"
+  | "rules"
+  | "scenes";
 
 /** The screens the tab bar switches between (user decision 2026-10-01: the phone has its own
  *  settings). 说话 is the welcome screen until a computer is paired, the device list after. */

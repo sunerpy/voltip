@@ -1,28 +1,23 @@
+import { createTranslator, zhT } from "./i18n";
 import {
-  MAX_SCENE_APPS,
-  MAX_TITLE_KEYWORDS,
-  type Scene,
-  createTranslator,
-  sceneLabel,
-  zhT,
-} from "@voltip/shared";
-import {
-  addApp,
-  addKeyword,
-  editorDraftFrom,
-  editorProblems,
-  hasProblems,
-  languageChoices,
+  addSceneApp,
+  addSceneKeyword,
+  hasSceneProblems,
   languageName,
-  outputModeChoices,
-  overrideSummary,
-  promptChars,
-  refineChoices,
   sceneDraftOf,
-  presetChoices,
-  scriptChoices,
-  withEnabled,
-} from "./helpers";
+  sceneEditorDraftFrom,
+  sceneEditorProblems,
+  sceneLanguageChoices,
+  sceneOutputModeChoices,
+  sceneOverrideSummary,
+  scenePresetChoices,
+  scenePromptChars,
+  sceneRefineChoices,
+  sceneScriptChoices,
+  sceneWithEnabled,
+} from "./scene-drafts";
+import { sceneLabel } from "./labels";
+import { MAX_SCENE_APPS, MAX_TITLE_KEYWORDS, type Scene } from "./schema";
 
 const en = createTranslator("en").t;
 
@@ -43,9 +38,9 @@ const SCENE: Scene = {
   updated_at_ms: 2,
 };
 
-describe("scene editor helpers (docs/dictation.md section 18)", () => {
+describe("the scene editor helpers, desktop and phone (docs/dictation.md section 18)", () => {
   it("round-trips a scene through the form and back to the wire draft", () => {
-    const form = editorDraftFrom(SCENE);
+    const form = sceneEditorDraftFrom(SCENE);
     expect(form).toEqual({
       name: "Docs",
       enabled: true,
@@ -66,15 +61,17 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
     });
     // Unset overrides stay absent; a blank language or prompt is unset; the name is trimmed.
     expect(
-      sceneDraftOf({ ...editorDraftFrom(), name: " New ", language: " ", prompt: " \n" }),
+      sceneDraftOf({ ...sceneEditorDraftFrom(), name: " New ", language: " ", prompt: " \n" }),
     ).toEqual({
       name: "New",
       enabled: true,
       match: { apps: [], title_contains: [] },
       overrides: {},
     });
-    expect(editorDraftFrom({ ...SCENE, overrides: { refine_enabled: false } }).refine).toBe("off");
-    expect(withEnabled(SCENE, false)).toEqual({
+    expect(sceneEditorDraftFrom({ ...SCENE, overrides: { refine_enabled: false } }).refine).toBe(
+      "off",
+    );
+    expect(sceneWithEnabled(SCENE, false)).toEqual({
       name: "Docs",
       enabled: false,
       match: SCENE.match,
@@ -83,22 +80,22 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
   });
 
   it("adds normalised app ids and keywords once", () => {
-    expect(addApp([], " Slack.EXE ")).toEqual(["slack"]);
-    expect(addApp(["slack"], "SLACK")).toEqual(["slack"]);
-    expect(addApp(["slack"], ".exe")).toEqual(["slack"]);
-    expect(addKeyword([], " GitHub ")).toEqual(["GitHub"]);
-    expect(addKeyword(["GitHub"], "github")).toEqual(["GitHub"]);
-    expect(addKeyword(["GitHub"], "  ")).toEqual(["GitHub"]);
-    expect(promptChars(" 第一行\r\n第二行 ")).toBe(7);
+    expect(addSceneApp([], " Slack.EXE ")).toEqual(["slack"]);
+    expect(addSceneApp(["slack"], "SLACK")).toEqual(["slack"]);
+    expect(addSceneApp(["slack"], ".exe")).toEqual(["slack"]);
+    expect(addSceneKeyword([], " GitHub ")).toEqual(["GitHub"]);
+    expect(addSceneKeyword(["GitHub"], "github")).toEqual(["GitHub"]);
+    expect(addSceneKeyword(["GitHub"], "  ")).toEqual(["GitHub"]);
+    expect(scenePromptChars(" 第一行\r\n第二行 ")).toBe(7);
   });
 
   it("reports the problems the core would, per field, marking the missing ones", () => {
-    const ok = { ...editorDraftFrom(), name: "a", apps: ["x"] };
-    expect(hasProblems(editorProblems(ok, []))).toBe(false);
-    const empty = editorProblems(editorDraftFrom(), []);
+    const ok = { ...sceneEditorDraftFrom(), name: "a", apps: ["x"] };
+    expect(hasSceneProblems(sceneEditorProblems(ok, []))).toBe(false);
+    const empty = sceneEditorProblems(sceneEditorDraftFrom(), []);
     expect(empty.name).toEqual({ text: "请填写名称", missing: true });
     expect(empty.apps).toEqual({ text: "至少添加一个应用", missing: true });
-    const many = editorProblems(
+    const many = sceneEditorProblems(
       {
         ...ok,
         apps: Array.from({ length: MAX_SCENE_APPS + 1 }, (_, i) => `a${i}`),
@@ -113,7 +110,7 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
       keywords: { text: "At most 10 keywords", missing: false },
       prompt: { text: "Extra instructions can be at most 500 characters", missing: false },
     });
-    expect(editorProblems({ ...ok, name: "DOCS" }, [SCENE]).name).toEqual({
+    expect(sceneEditorProblems({ ...ok, name: "DOCS" }, [SCENE]).name).toEqual({
       text: "已有名为「Docs」的场景",
       missing: false,
     });
@@ -121,13 +118,13 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
 
   it("offers 跟随全局 first in every select and names languages like the engines dialog", () => {
     for (const choices of [
-      refineChoices(),
-      presetChoices([], ""),
-      outputModeChoices(),
-      scriptChoices(),
+      sceneRefineChoices(),
+      scenePresetChoices([], ""),
+      sceneOutputModeChoices(),
+      sceneScriptChoices(),
     ])
       expect(choices[0]).toEqual({ value: "", label: "跟随全局" });
-    expect(presetChoices([], "", en).map((c) => c.label)).toEqual([
+    expect(scenePresetChoices([], "", en).map((c) => c.label)).toEqual([
       "Follow global",
       "Proofread",
       "Prompt optimizer",
@@ -146,22 +143,27 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
       created_at_ms: 1,
       updated_at_ms: 1,
     };
-    expect(presetChoices([weekly], weekly.id).slice(-1)).toEqual([
+    expect(scenePresetChoices([weekly], weekly.id).slice(-1)).toEqual([
       { value: weekly.id, label: "周报" },
     ]);
     const gone = "11111111-1111-4111-8111-111111111111";
-    expect(presetChoices([weekly], gone).slice(-2)).toEqual([
+    expect(scenePresetChoices([weekly], gone).slice(-2)).toEqual([
       { value: weekly.id, label: "周报" },
       { value: gone, label: "已删除的预设（按校对处理）" },
     ]);
-    expect(outputModeChoices(en, "en").map((c) => c.value)).toEqual([
+    expect(sceneOutputModeChoices(en, "en").map((c) => c.value)).toEqual([
       "",
       "whole_take",
       "streaming_final",
       "live_inject",
     ]);
-    expect(scriptChoices().map((c) => c.label)).toEqual(["跟随全局", "简体", "繁体", "保持原样"]);
-    expect(languageChoices("").map((c) => c.value)).toEqual([
+    expect(sceneScriptChoices().map((c) => c.label)).toEqual([
+      "跟随全局",
+      "简体",
+      "繁体",
+      "保持原样",
+    ]);
+    expect(sceneLanguageChoices("").map((c) => c.value)).toEqual([
       "",
       "auto",
       "zh",
@@ -171,8 +173,8 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
       "ko",
     ]);
     // A code the core accepted but the list does not offer stays selectable.
-    expect(languageChoices("fr").at(-1)).toEqual({ value: "fr", label: "fr" });
-    expect(languageChoices("en")).toHaveLength(7);
+    expect(sceneLanguageChoices("fr").at(-1)).toEqual({ value: "fr", label: "fr" });
+    expect(sceneLanguageChoices("en")).toHaveLength(7);
     expect(languageName("auto")).toBe("自动检测");
     expect(languageName("ja")).toBe("日本語 · ja");
     expect(languageName("fr")).toBe("fr");
@@ -185,19 +187,35 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
       name: "legal",
       builtin: "legal",
     };
-    const form = { ...editorDraftFrom(legal), apps: [] };
-    expect(editorProblems(form, [SCENE], zhT.t, true)).toEqual({});
-    expect(editorProblems(form, [SCENE]).apps).toEqual({ text: "至少添加一个应用", missing: true });
+    const form = { ...sceneEditorDraftFrom(legal), apps: [] };
+    expect(sceneEditorProblems(form, [SCENE], zhT.t, { builtin: true })).toEqual({});
+    expect(sceneEditorProblems(form, [SCENE]).apps).toEqual({
+      text: "至少添加一个应用",
+      missing: true,
+    });
     // A user scene may take a category's name: the built-in one keeps its own.
-    const mine = { ...editorDraftFrom(SCENE), name: "legal" };
-    expect(editorProblems(mine, [legal]).name).toBeUndefined();
+    const mine = { ...sceneEditorDraftFrom(SCENE), name: "legal" };
+    expect(sceneEditorProblems(mine, [legal]).name).toBeUndefined();
     expect(sceneLabel(legal)).toBe("法律");
     expect(sceneLabel(legal, "en")).toBe("Legal");
     expect(sceneLabel(SCENE, "en")).toBe("Docs");
   });
 
+  it("on the phone a scene is picked by hand, so it needs no application (user decision 2026-10-01)", () => {
+    const form = { ...sceneEditorDraftFrom(), name: "会议" };
+    expect(sceneEditorProblems(form, [SCENE], zhT.t, { needApps: false })).toEqual({});
+    expect(sceneEditorProblems(form, [SCENE]).apps?.missing).toBe(true);
+    // The other checks stay: a name, unique among the user's scenes.
+    const unnamed = sceneEditorProblems(sceneEditorDraftFrom(), [], zhT.t, { needApps: false });
+    expect(unnamed).toEqual({ name: { text: "请填写名称", missing: true } });
+    const clash = sceneEditorProblems({ ...form, name: "docs" }, [SCENE], en, { needApps: false });
+    expect(clash.name?.missing).toBe(false);
+    // The wire draft of such a scene matches nothing.
+    expect(sceneDraftOf(form).match).toEqual({ apps: [], title_contains: [] });
+  });
+
   it("summarises the overrides a scene sets, in the editor's order and the UI language", () => {
-    expect(overrideSummary(SCENE.overrides)).toEqual([
+    expect(sceneOverrideSummary(SCENE.overrides)).toEqual([
       "AI 润色 开",
       "AI 预设：书面语",
       "输出：整段输出",
@@ -205,10 +223,10 @@ describe("scene editor helpers (docs/dictation.md section 18)", () => {
       "字形：保持原样",
       "有补充要求",
     ]);
-    expect(overrideSummary({ refine_enabled: false, language: "en" }, en, "en")).toEqual([
+    expect(sceneOverrideSummary({ refine_enabled: false, language: "en" }, en, "en")).toEqual([
       "AI polish off",
       "Language: English · en",
     ]);
-    expect(overrideSummary({})).toEqual([]);
+    expect(sceneOverrideSummary({})).toEqual([]);
   });
 });

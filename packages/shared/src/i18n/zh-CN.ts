@@ -1742,6 +1742,8 @@ export const zhCN = {
       listLabel: "场景列表",
       emptyTitle: "暂无场景",
       emptyBody: "新建一个场景，例如在聊天软件里只加标点，或在代码编辑器里保留英文标识符。",
+      /** The phone, where a scene is picked by hand (user decision 2026-10-01). */
+      emptyBodyPicked: "新建一个场景，例如「会议纪要」或「客户邮件」，然后在说话卡片上选择它。",
       add: "新建场景",
       edit: "编辑 {name}",
       remove: "删除 {name}",
@@ -2125,6 +2127,9 @@ export const zhCN = {
       appearance: "外观与语言",
       recording: "录音",
       about: "关于 Voltip",
+      dictionary: "个人词典",
+      rules: "替换规则",
+      scenes: "场景",
     },
     tab: { label: "主导航", talk: "说话", settings: "设置" },
     settings: {
@@ -2140,6 +2145,30 @@ export const zhCN = {
       device: "本机与配对",
       devicesDetail: "{n} 台电脑",
       aboutDetail: "版本 {version}",
+      vocabulary: "词典、规则与场景",
+      scenesDetail: { one: "{n} 个场景", other: "{n} 个场景" },
+      pinnedDetail: "说话时使用「{name}」",
+    },
+    /** The phone's dictionary, rules and scenes (user decision 2026-10-01: the phone has the
+     *  desktop's, for what it recognises itself). */
+    dictionary: {
+      emptyBody: "新建一条：写下正确的写法，以及识别时常被听成的写法。",
+      editTitle: "编辑词条",
+      order: "匹配顺序第 {n} 条，共 {total} 条",
+      deleteBody: "删除后不再纠正这个写法，此操作无法撤销。",
+    },
+    rules: {
+      intro:
+        "识别和润色之后、复制到剪贴板之前，按列表顺序执行的固定替换：字面规则逐字匹配（英文等按词边界），正则规则使用正则表达式语法，替换内容中可使用 $1 / ${name}。",
+      emptyBody: "没有规则时，文本按原样复制。可以新建一条，或导入一份 TOML。",
+      editTitle: "编辑规则",
+      test: "试一试",
+      testPlaceholder: "输入一段文字，查看规则替换后的结果",
+      share: "分享",
+    },
+    scenes: {
+      lede: "说话时在卡片上选择一个场景，这一次听写就按它的设置处理：AI 润色、预设、语言、中文字形和给 AI 的补充要求。手机无法得知你在哪个应用里输入，所以场景不按应用匹配。",
+      footnote: "自建场景最多 {limit} 个",
     },
     about: {
       version: "版本",
@@ -2250,6 +2279,8 @@ export const zhCN = {
       localBody:
         "按住按钮说话，松开后由内置服务识别并润色，结果自动复制到这部手机的剪贴板。手指滑出按钮再松开则取消。",
       offline: "已配对的电脑都不在线，现在在手机上识别。",
+      scene: "场景",
+      noScene: "不使用场景",
       target: "发送到",
       toDesktop: "发送到 {name}",
       onPhone: "在手机上识别",
