@@ -78,21 +78,12 @@ describe("switcher choices", () => {
 });
 
 describe("the 语音模型 menu", () => {
-  it("lists the built-in service, the installed local models with their product, the providers to set up, and the page", async () => {
+  it("regression: lists the built-in service and the installed local models with their product, leaves out the providers not set up (user decision 2026-10-01), and ends with the page", async () => {
     const ui = await state(defaultEngineSettings());
     const sections = speechMenuSections(ui.engines, ui.models);
     expect(rows(sections)).toEqual([
       { label: "内置服务", items: ["✓ Qwen3-ASR-1.7B"] },
       { label: "本地模型", items: ["均衡 · Qwen3-ASR 0.6B", "轻量 · SenseVoice Small"] },
-      {
-        label: "需要配置",
-        items: [
-          "OpenAI · 缺少密钥 (off)",
-          "Groq · 缺少密钥 (off)",
-          "硅基流动 · 缺少密钥 (off)",
-          "自定义接口 · 缺少接口地址 (off)",
-        ],
-      },
       { label: undefined, items: ["> 管理语音模型…"] },
     ]);
   });
@@ -110,12 +101,7 @@ describe("the 语音模型 menu", () => {
     });
     const keyed = await state({ ...defaultEngineSettings(), asr_provider: "groq" }, { groq: true });
     const groq = speechMenuSections(keyed.engines, [], en.t, "en");
-    expect(rows(groq).map((s) => s.label)).toEqual([
-      "Built-in service",
-      "Groq",
-      "Needs setup",
-      undefined,
-    ]);
+    expect(rows(groq).map((s) => s.label)).toEqual(["Built-in service", "Groq", undefined]);
     expect(rows(groq)[1]).toEqual({
       label: "Groq",
       items: ["✓ whisper-large-v3-turbo", "whisper-large-v3"],
@@ -133,7 +119,8 @@ describe("the AI 润色模型 menu", () => {
       label: "Groq",
       items: ["✓ qwen3.8-27b", "gpt-oss-20b", "llama-3.3-70b-versatile"],
     });
-    expect(rows(sections).at(-2)?.label).toBe("需要配置");
+    // OpenAI, SiliconFlow, DeepSeek, Ollama and the custom endpoint are not set up: not listed.
+    expect(rows(sections).map((s) => s.label)).toEqual(["内置服务", "Groq", undefined]);
     expect(rows(sections).at(-1)).toEqual({ label: undefined, items: ["> 管理 AI 模型…"] });
   });
 });

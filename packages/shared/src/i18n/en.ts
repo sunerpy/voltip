@@ -453,7 +453,6 @@ export const en: Messages = {
       testingHint: "Say a few words; the strength bar should move · stops automatically in {n} s",
       recordingHint: "Strength of this dictation's recording",
       devices: { one: "{n} input device", other: "{n} input devices" },
-      switch: "Choose devices",
       peak: "Peak {value}",
     },
     engine: {
@@ -1449,7 +1448,6 @@ export const en: Messages = {
     },
   },
   switchers: {
-    unavailable: "Needs setup",
     speech: {
       label: "Speech model",
       trigger: "Speech model: {name}",
@@ -1460,9 +1458,6 @@ export const en: Messages = {
       label: "AI Polish model",
       trigger: "AI Polish model: {name}",
       manage: "Manage AI models…",
-      combinedLabel: "AI Polish",
-      combinedTrigger: "AI Polish: {preset} · {model}",
-      presets: "Presets",
     },
     microphone: {
       label: "Microphone",
@@ -1473,30 +1468,6 @@ export const en: Messages = {
       missing: "Not connected",
       source: "Recording source",
       manage: "Recording source settings…",
-    },
-  },
-  design: {
-    switchers: {
-      heading: "Switcher menus · design preview",
-      intro:
-        "The switcher menus of the title bar and the home page, on preview data. The menus work; the real interface stays as it is until the design is confirmed.",
-      theme: "Theme",
-      light: "Light",
-      dark: "Dark",
-      language: "Language",
-      titleBarA: "Title bar · option A: preset and model in two menus",
-      titleBarB: "Title bar · option B: one menu for the preset and the model",
-      narrow: "Title bar · window 960 pixels wide",
-      menus: "The three title bar menus",
-      homeReady: "Home · ready bar",
-      homeMic: "Home · recording source card",
-      homeEngine: "Home · speech model card",
-      tray: "Tray and menu bar icon",
-      trayWindows:
-        "Windows: click or double-click the icon to open the main window; right-click for the menu.",
-      trayMac:
-        "macOS: click the icon for the menu (after the system's double-click interval); double-click opens the main window.",
-      trayLinux: "Linux: there is no tray icon; launching Voltip again opens the main window.",
     },
   },
   overlay: {

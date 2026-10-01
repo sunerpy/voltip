@@ -24,8 +24,13 @@ import { useWindowChrome } from "../app/window";
 import { microphoneReadoutValue, useMicrophoneReadout } from "../features/audio/mic-store";
 import { useDictation } from "../features/dictation/useDictation";
 import { PresetMenu } from "../features/presets/PresetMenu";
+import {
+  MicrophoneMenu,
+  PolishModelMenu,
+  SpeechModelMenu,
+} from "../features/switchers/SwitcherMenus";
 import { UpdateBadge, UpdateDialog } from "../features/update/UpdateDialog";
-import { engineReadout, microphoneReadout, pageMeta } from "./page-meta";
+import { pageMeta } from "./page-meta";
 import { RevealSidebarButton, ShellSidebar } from "./ShellSidebar";
 import { useSidebarLayout } from "./sidebar-layout";
 
@@ -33,7 +38,8 @@ import { useSidebarLayout } from "./sidebar-layout";
  *  lamp (user feedback 2026-09-25: the icon alone did not read as a switch). It is the real LLM
  *  pass: a click writes `settings_set_engines { refine_enabled }` with the rest of the current
  *  engine settings, and `aria-pressed` follows what the core reports back. Next to it, the current
- *  preset opens the same preset menu as the home page (docs/dictation.md §21). */
+ *  preset opens the same preset menu as the home page (docs/dictation.md §21), and the model the
+ *  clean-up runs on is shown and switched in place (user request 2026-09-30, option A). */
 export function PolishToggle({ className }: { className?: string }) {
   const { backend } = useBackend();
   const { t, locale } = useI18n();
@@ -81,6 +87,14 @@ export function PolishToggle({ className }: { className?: string }) {
           </>
         }
       />
+      <PolishModelMenu
+        align="end"
+        data-testid="polish-model"
+        triggerClassName={cx(
+          "mono inline-flex h-7 max-w-[160px] min-w-0 items-center gap-1 rounded-6 px-1.5 text-[11px] transition-colors hover:bg-inset hover:text-fg",
+          on ? "text-fg-muted" : "text-fg-subtle",
+        )}
+      />
     </div>
   );
 }
@@ -103,8 +117,9 @@ export function FooterShortcuts({ items }: { items: readonly (readonly [string, 
  *  main window is frameless (tauri.conf.json `decorations: false`; macOS keeps its traffic lights
  *  via tauri.macos.conf.json), so the 40 px strip formed by the sidebar brand row and the title
  *  bar *is* the window title bar: one continuous drag region with the window controls at the far
- *  right on Windows / Linux. The title bar carries the title, the compact engine · microphone
- *  readout right after it, the search icon and the AI 润色 toggle; there is no second header row. */
+ *  right on Windows / Linux. The title bar carries the title, the compact speech model · microphone
+ *  readout right after it (two menus that switch them in place, user request 2026-09-30), the
+ *  search icon and the AI 润色 toggle with its preset and model; there is no second header row. */
 export function Shell({
   children,
   traySource,
@@ -135,14 +150,6 @@ export function Shell({
         i18n,
       ),
     [route, background, state, microphone, i18n, t],
-  );
-  // The compact title-bar readout: the default engine (with its token lamp) and the microphone.
-  const barReadouts = useMemo(
-    () => [
-      engineReadout(state.engines, i18n),
-      microphoneReadout(microphoneReadoutValue(microphone, t), i18n),
-    ],
-    [state.engines, microphone, i18n, t],
   );
 
   const setTheme = useCallback(
@@ -249,8 +256,8 @@ export function Shell({
   useTrayRequests(onTray, traySource);
 
   const onboarding = route.name === "onboarding";
-  // The overlay showcase and the design previews are chrome-less spec sheets.
-  const sheet = route.name === "overlay" || route.name === "design";
+  // The overlay showcase is a chrome-less spec sheet of the pill.
+  const sheet = route.name === "overlay";
   const pickTheme = useCallback(
     (choice: ThemeChoice) => {
       if (choice === "system") setTheme(state.settings.theme, true);
@@ -301,7 +308,14 @@ export function Shell({
         ) : (
           <TitleBar
             title={meta.title}
-            readouts={barReadouts}
+            readout={
+              // The speech model (with its lamp) and the microphone, each a menu that switches it.
+              <>
+                <SpeechModelMenu data-testid="title-bar-speech" />
+                <span aria-hidden>·</span>
+                <MicrophoneMenu withSource data-testid="title-bar-mic" />
+              </>
+            }
             left={
               sidebar.layout.hidden ? <RevealSidebarButton onReveal={sidebar.reveal} /> : undefined
             }

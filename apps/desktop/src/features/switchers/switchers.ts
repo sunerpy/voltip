@@ -104,54 +104,36 @@ export function parseChoice(id: string): SwitchChoice | undefined {
   }
 }
 
-/** One section per provider that can run `kind`, its models as rows, the one in use checked; a
- *  provider that cannot run yet is one disabled row in a closing 需要配置 section, with the reason. */
-function providerSections(
-  status: EngineStatus,
-  kind: ServiceKind,
-  t: TFunction,
-): { ready: MenuSection[]; unavailable: MenuItem[] } {
-  const ready: MenuSection[] = [];
-  const unavailable: MenuItem[] = [];
-  for (const provider of providersFor(status, kind)) {
-    if (provider.id === "local") continue;
+/** One section per provider that can run `kind`, its models as rows, the one in use checked. A
+ *  provider that cannot run yet is left out (user decision 2026-10-01): 管理… at the end leads to
+ *  the page where it is set up. */
+function providerSections(status: EngineStatus, kind: ServiceKind, t: TFunction): MenuSection[] {
+  return providersFor(status, kind).flatMap((provider) => {
     const service = provider[kind];
-    if (service === undefined) continue;
-    const name = t(`engines.provider.${provider.id}`);
-    if (service.issue !== undefined) {
-      unavailable.push({
-        kind: "radio",
-        // Never chosen (the row is disabled): an id parseChoice does not accept.
-        id: `unavailable:${provider.id}`,
-        label: name,
-        checked: false,
-        disabled: true,
-        detail: t(`engines.issue.${service.issue}`),
-      });
-      continue;
-    }
-    ready.push({
-      label: name,
-      items: modelChoices(service).map((model) => ({
-        kind: "radio",
-        id: choiceId({ kind: "remote", provider: provider.id, model }),
-        label: shortModel(model),
-        checked: service.active && model === service.model,
-      })),
-    });
-  }
-  return { ready, unavailable };
+    if (provider.id === "local" || service === undefined || service.issue !== undefined) return [];
+    return [
+      {
+        label: t(`engines.provider.${provider.id}`),
+        items: modelChoices(service).map((model) => ({
+          kind: "radio" as const,
+          id: choiceId({ kind: "remote", provider: provider.id, model }),
+          label: shortModel(model),
+          checked: service.active && model === service.model,
+        })),
+      },
+    ];
+  });
 }
 
 /** The 语音模型 menu: the cloud providers' models, the installed local models (tier name, the
- *  product beside it), the providers that still need setting up, then 管理语音模型…. */
+ *  product beside it), then 管理语音模型…. */
 export function speechMenuSections(
   status: EngineStatus,
   models: readonly ModelState[],
   t: TFunction = zhT.t,
   locale: Locale = "zh-CN",
 ): MenuSection[] {
-  const { ready, unavailable } = providerSections(status, "asr", t);
+  const sections = providerSections(status, "asr", t);
   const local: MenuItem[] = models
     .filter((m) => isRecognitionModel(m) && m.state.kind === "installed")
     .map((m) => ({
@@ -161,10 +143,7 @@ export function speechMenuSections(
       detail: modelFamilyName(m.id, m.name, locale),
       checked: status.asr_provider === "local" && m.active,
     }));
-  const sections = [...ready];
   if (local.length > 0) sections.push({ label: t("switchers.speech.local"), items: local });
-  if (unavailable.length > 0)
-    sections.push({ label: t("switchers.unavailable"), items: unavailable });
   sections.push({
     items: [
       {
@@ -177,12 +156,9 @@ export function speechMenuSections(
   return sections;
 }
 
-/** The AI 润色模型 menu: the LLM providers' models, those still needing setup, 管理 AI 模型…. */
+/** The AI 润色模型 menu: the LLM providers' models, then 管理 AI 模型…. */
 export function polishMenuSections(status: EngineStatus, t: TFunction = zhT.t): MenuSection[] {
-  const { ready, unavailable } = providerSections(status, "llm", t);
-  const sections = [...ready];
-  if (unavailable.length > 0)
-    sections.push({ label: t("switchers.unavailable"), items: unavailable });
+  const sections = providerSections(status, "llm", t);
   sections.push({
     items: [
       {

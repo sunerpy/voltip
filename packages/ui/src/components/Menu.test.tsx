@@ -183,25 +183,6 @@ describe("Menu", () => {
     expect(onOpen).toHaveBeenCalledTimes(2);
   });
 
-  it("opens by itself with defaultOpen and leaves the focus where it is", () => {
-    render(
-      <>
-        <button type="button">elsewhere</button>
-        <Menu
-          trigger="Fifine K669"
-          label="麦克风"
-          sections={SECTIONS}
-          onSelect={vi.fn()}
-          defaultOpen
-          data-testid="mic"
-        />
-      </>,
-    );
-    screen.getByRole("button", { name: "elsewhere" }).focus();
-    expect(screen.getByTestId("mic-menu")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "elsewhere" })).toHaveFocus();
-  });
-
   it("picks with a click, keeps rows on one line and marks the user's own names", async () => {
     const user = userEvent.setup();
     const { onSelect, trigger } = renderMenu();

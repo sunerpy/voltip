@@ -1,15 +1,5 @@
-import { type AudioDevice, isBuiltinPreset, presetLabel } from "@voltip/shared";
-import {
-  Icon,
-  Lamp,
-  type LampTone,
-  Menu,
-  type MenuSection,
-  cx,
-  useBackend,
-  useI18n,
-  useUiState,
-} from "@voltip/ui";
+import type { AudioDevice } from "@voltip/shared";
+import { Icon, Lamp, type LampTone, Menu, useBackend, useI18n, useUiState } from "@voltip/ui";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { AI_ROUTE, SPEECH_ROUTE, useRouter } from "../../app/router";
 import { engineReadout, shortModel } from "../../shell/page-meta";
@@ -19,7 +9,6 @@ import {
   useMicrophoneReadout,
 } from "../audio/mic-store";
 import { useRecordingSource } from "../audio/RecordingSource";
-import { MANAGE_PRESETS, presetMenuSections } from "../presets/presets";
 import {
   engineSettingsFor,
   microphoneMenuSections,
@@ -28,18 +17,12 @@ import {
   speechMenuSections,
 } from "./switchers";
 
-/** The sections of a list with a heading (its choices), without its closing command. */
-function choices(sections: readonly MenuSection[]): MenuSection[] {
-  return sections.filter((s) => s.label !== undefined);
-}
-
 export interface SwitcherMenuProps {
   /** What the button shows; each menu has a title-bar default (the compact mono readout). */
   trigger?: ReactNode;
   triggerClassName?: string;
   align?: "start" | "end";
-  /** Spec sheet only: start open without taking the focus. */
-  defaultOpen?: boolean;
+  title?: string;
   "data-testid"?: string;
 }
 
@@ -52,17 +35,21 @@ export function ReadoutTrigger({
   value,
   lamp,
   badge,
+  badgeTestId,
 }: {
   value: string;
   lamp?: LampTone;
   badge?: string;
+  badgeTestId?: string;
 }) {
   return (
     <>
       {lamp !== undefined && <Lamp tone={lamp} size={6} />}
       <span className="truncate">{value}</span>
       {badge !== undefined && (
-        <span className="shrink-0 rounded-6 bg-inset px-1 text-[10px] leading-4 text-fg-muted">
+        <span
+          data-testid={badgeTestId}
+          className="shrink-0 rounded-6 bg-inset px-1 text-[10px] leading-4 text-fg-muted">
           {badge}
         </span>
       )}
@@ -71,13 +58,13 @@ export function ReadoutTrigger({
   );
 }
 
-/** The 语音模型 menu (plan 2026-09-30): the cloud providers' models and the installed local
- *  models, picked in place; 管理语音模型… opens the page. */
+/** The 语音模型 menu (user request 2026-09-30): the cloud providers' models and the installed
+ *  local models, picked in place; 管理语音模型… opens the page. */
 export function SpeechModelMenu({
   trigger,
   triggerClassName,
   align,
-  defaultOpen,
+  title,
   "data-testid": testId,
 }: SwitcherMenuProps) {
   const { backend } = useBackend();
@@ -90,15 +77,19 @@ export function SpeechModelMenu({
     <Menu
       trigger={
         trigger ?? (
-          <ReadoutTrigger value={readout.value} lamp={readout.lamp} badge={readout.badge} />
+          <ReadoutTrigger
+            value={readout.value}
+            lamp={readout.lamp}
+            badge={readout.badge}
+            badgeTestId="title-bar-readout-badge"
+          />
         )
       }
       label={t("switchers.speech.label")}
       triggerLabel={t("switchers.speech.trigger", { name: readout.value })}
-      title={readout.title}
+      title={title ?? readout.title}
       sections={speechMenuSections(state.engines, state.models, t, locale)}
       align={align}
-      defaultOpen={defaultOpen}
       triggerClassName={triggerClassName ?? BAR_TRIGGER}
       data-testid={testId}
       onSelect={(id) => {
@@ -128,7 +119,7 @@ export function PolishModelMenu({
   trigger,
   triggerClassName,
   align,
-  defaultOpen,
+  title,
   "data-testid": testId,
 }: SwitcherMenuProps) {
   const { backend } = useBackend();
@@ -141,10 +132,9 @@ export function PolishModelMenu({
       trigger={trigger ?? <ReadoutTrigger value={name} />}
       label={t("switchers.polish.label")}
       triggerLabel={t("switchers.polish.trigger", { name })}
-      title={state.engines.refine_model || undefined}
+      title={title ?? (state.engines.refine_model || undefined)}
       sections={polishMenuSections(state.engines, t)}
       align={align}
-      defaultOpen={defaultOpen}
       triggerClassName={triggerClassName ?? BAR_TRIGGER}
       data-testid={testId}
       onSelect={(id) => {
@@ -160,79 +150,22 @@ export function PolishModelMenu({
   );
 }
 
-/** Option B of the design: one menu for the preset and the model the clean-up runs with. */
-export function PolishMenu({
-  trigger,
-  triggerClassName,
-  align,
-  defaultOpen,
-  "data-testid": testId,
-}: SwitcherMenuProps) {
-  const { backend } = useBackend();
-  const { t, locale } = useI18n();
-  const state = useUiState();
-  const { navigate } = useRouter();
-  const engines = state.settings.engines;
-  const preset = presetLabel(engines.refine_preset, state.presets, locale);
-  const model = usePolishModelName();
-  const presets = presetMenuSections(engines.refine_preset, state.presets, t);
-  // The two lists, then their two commands together at the end.
-  const sections: MenuSection[] = [
-    ...choices(presets),
-    ...choices(polishMenuSections(state.engines, t)),
-    {
-      items: [
-        { kind: "action", id: MANAGE_PRESETS, label: t("presets.menu.manage") },
-        { kind: "action", id: "manage:ai", label: t("switchers.polish.manage") },
-      ],
-    },
-  ];
-  return (
-    <Menu
-      trigger={
-        trigger ?? (
-          <>
-            <span {...(isBuiltinPreset(engines.refine_preset) ? {} : { "data-user-text": "" })}>
-              {preset}
-            </span>
-            <span aria-hidden>·</span>
-            <span className="mono truncate text-[11px]">{model}</span>
-            <Icon name="chevronDown" size={10} className="shrink-0 opacity-70" />
-          </>
-        )
-      }
-      label={t("switchers.polish.combinedLabel")}
-      triggerLabel={t("switchers.polish.combinedTrigger", { preset, model })}
-      sections={sections}
-      align={align}
-      defaultOpen={defaultOpen}
-      triggerClassName={triggerClassName ?? BAR_TRIGGER}
-      data-testid={testId}
-      onSelect={(id) => {
-        if (id === MANAGE_PRESETS) {
-          navigate({ name: "ai", section: "presets" });
-          return;
-        }
-        const choice = parseChoice(id);
-        if (choice?.kind === "manage") {
-          navigate(AI_ROUTE);
-          return;
-        }
-        const next =
-          choice === undefined
-            ? id === engines.refine_preset
-              ? undefined
-              : { ...engines, refine_preset: id }
-            : engineSettingsFor(engines, "llm", choice);
-        if (next !== undefined) void backend.invoke("settings_set_engines", { engines: next });
-      }}
-    />
-  );
-}
-
 export interface MicrophoneMenuProps extends SwitcherMenuProps {
   /** Also offer what a take records (the title bar; the home card has its own switch). */
   withSource?: boolean;
+}
+
+/** The input device a take records from: the chosen one, else the system default, by its short
+ *  name; the metered device (or why there is none) until the list has answered. */
+export function useMicrophoneName(devices: readonly AudioDevice[]): string {
+  const { t } = useI18n();
+  const chosen = useUiState().settings.microphone ?? null;
+  const metered = useMicrophoneReadout();
+  const device =
+    chosen === null ? devices.find((d) => d.is_default) : devices.find((d) => d.id === chosen);
+  return device !== undefined
+    ? shortMicrophoneName(device.name)
+    : microphoneReadoutValue(metered, t);
 }
 
 /** The 麦克风 menu: the input devices, read again each time it opens (a USB microphone may have
@@ -241,7 +174,7 @@ export function MicrophoneMenu({
   trigger,
   triggerClassName,
   align,
-  defaultOpen,
+  title,
   withSource = false,
   "data-testid": testId,
 }: MicrophoneMenuProps) {
@@ -250,7 +183,6 @@ export function MicrophoneMenu({
   const state = useUiState();
   const { navigate } = useRouter();
   const source = useRecordingSource();
-  const metered = useMicrophoneReadout();
   const [devices, setDevices] = useState<AudioDevice[]>([]);
   const load = useCallback(() => {
     backend
@@ -262,15 +194,13 @@ export function MicrophoneMenu({
   }, [backend]);
   useEffect(load, [load]);
   const chosen = state.settings.microphone ?? null;
-  const device =
-    chosen === null ? devices.find((d) => d.is_default) : devices.find((d) => d.id === chosen);
-  const name =
-    device !== undefined ? shortMicrophoneName(device.name) : microphoneReadoutValue(metered, t);
+  const name = useMicrophoneName(devices);
   return (
     <Menu
       trigger={trigger ?? <ReadoutTrigger value={name} />}
       label={t("switchers.microphone.label")}
       triggerLabel={t("switchers.microphone.trigger", { name })}
+      title={title}
       sections={microphoneMenuSections(
         devices,
         chosen,
@@ -284,9 +214,8 @@ export function MicrophoneMenu({
         locale,
       )}
       align={align}
-      defaultOpen={defaultOpen}
       onOpen={load}
-      triggerClassName={cx(triggerClassName ?? BAR_TRIGGER)}
+      triggerClassName={triggerClassName ?? BAR_TRIGGER}
       data-testid={testId}
       onSelect={(id) => {
         const choice = parseChoice(id);
@@ -294,7 +223,8 @@ export function MicrophoneMenu({
           navigate({ name: "settings", section: "microphone" });
           return;
         }
-        if (choice?.kind === "source") source.setSource(choice.source);
+        if (choice?.kind === "source" && choice.source !== source.recording.source)
+          source.setSource(choice.source);
         if (choice?.kind === "microphone" && choice.device !== chosen)
           void backend.invoke("settings_set_microphone", { device: choice.device });
       }}

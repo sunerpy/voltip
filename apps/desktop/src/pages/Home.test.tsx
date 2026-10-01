@@ -313,16 +313,24 @@ describe("Home page", () => {
     }
   });
 
-  it("regression: 选择设备 (was 切换麦克风) opens 设置 › 录音来源 (was 麦克风), and an unplugged choice is named as such", async () => {
+  // User request 2026-09-30: the device is switched in place. The device name is the menu (选择设备,
+  // was 切换麦克风, went with it); 录音来源设置… in it opens 设置 › 录音来源 (was 麦克风).
+  it("regression: the device name opens the device menu, whose 录音来源设置… opens 设置 › 录音来源, and an unplugged choice is named as such", async () => {
     const user = userEvent.setup();
     renderApp({ mock: { settings: { microphone: "Blue Yeti" } } });
     expect(await screen.findByTestId("home-mic-missing")).toHaveTextContent(
       "所选麦克风未连接 · 使用系统默认",
     );
-    expect(screen.getByTestId("home-mic-device")).toHaveTextContent(
-      MOCK_AUDIO_DEVICES[0]?.name ?? "",
-    );
-    await user.click(screen.getByTestId("home-mic-switch"));
+    const device = screen.getByTestId("home-mic-device");
+    expect(device).toHaveTextContent(MOCK_AUDIO_DEVICES[0]?.name ?? "");
+    expect(screen.queryByText("选择设备")).toBeNull();
+    await user.click(device);
+    const menu = screen.getByTestId("home-mic-device-menu");
+    // The chosen microphone that is not plugged in: named, checked, not choosable.
+    const missing = within(menu).getByRole("menuitemradio", { name: "Blue Yeti · 未连接" });
+    expect(missing).toHaveAttribute("aria-checked", "true");
+    expect(missing).toBeDisabled();
+    await user.click(within(menu).getByRole("menuitem", { name: "录音来源设置…" }));
     const dialog = await screen.findByRole("dialog", { name: "设置" });
     expect(
       within(dialog).getByRole("tab", { name: "录音来源", selected: true }),
@@ -831,7 +839,15 @@ describe("Home page", () => {
     );
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "内置服务 · Qwen3-ASR-1.7B" }));
+    // The model chip is a menu now (user request 2026-09-30): its 管理语音模型… leads to the page.
+    const chip = screen.getByTestId("home-engine-chip");
+    expect(chip).toHaveAccessibleName("语音模型：Qwen3-ASR-1.7B");
+    await user.click(chip);
+    await user.click(
+      within(screen.getByTestId("home-engine-chip-menu")).getByRole("menuitem", {
+        name: "管理语音模型…",
+      }),
+    );
     expect(await screen.findByTestId("page-speech")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^首页$/ }));
     const tile = await screen.findByRole("button", { name: `本月 ${saved(stats.month.savedMs)}` });

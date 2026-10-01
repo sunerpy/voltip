@@ -369,11 +369,20 @@ describe("Shell", () => {
     expect(bar).toHaveAttribute("data-tauri-drag-region", "deep");
     expect(bar).toHaveClass("h-10");
     expect(within(bar).getByRole("heading", { name: "首页", level: 1 })).toBeInTheDocument();
+    // User request 2026-09-30: the speech model and the microphone are menus in the readout, and
+    // the model the clean-up runs on follows the preset (option A of the design, 2026-10-01).
     expect(
       within(bar)
         .getAllByRole("button")
         .map((b) => b.getAttribute("aria-label")),
-    ).toEqual([TITLE_BAR_SEARCH_LABEL, "AI 润色 · 开/关", "AI 预设：校对"]);
+    ).toEqual([
+      "语音模型：Qwen3-ASR-1.7B",
+      expect.stringMatching(/^麦克风：/),
+      TITLE_BAR_SEARCH_LABEL,
+      "AI 润色 · 开/关",
+      "AI 预设：校对",
+      "AI 润色模型：qwen3.8-27b",
+    ]);
     expect(within(bar).queryByText("Ctrl K")).toBeNull();
     expect(within(bar).queryByText(/SenseVoice|示例/)).toBeNull();
     expect(screen.queryByTestId("sample-data-notice")).toBeNull();

@@ -365,8 +365,6 @@ export function pageMeta(
           ["Ctrl ,", sc("page.shortcut.settings")],
         ],
       };
-    case "design":
-      return { title: t("design.switchers.heading"), readouts: [], shortcuts: [] };
     case "notfound":
       return { title: t("page.title.notfound"), readouts: [], shortcuts: [] };
   }

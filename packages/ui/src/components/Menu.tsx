@@ -45,8 +45,6 @@ export interface MenuProps {
   triggerClassName?: string;
   title?: string;
   disabled?: boolean;
-  /** Start open without taking the focus (spec sheets show several menus open side by side). */
-  defaultOpen?: boolean;
   /** Called each time the user opens the menu (a list read fresh then, such as the microphones). */
   onOpen?: () => void;
   "data-testid"?: string;
@@ -66,18 +64,17 @@ export function Menu({
   triggerClassName,
   title,
   disabled = false,
-  defaultOpen = false,
   onOpen,
   "data-testid": testId,
 }: MenuProps) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(false);
   const menuId = useId();
   const wrapper = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
   const items = useRef<(HTMLButtonElement | null)[]>([]);
   /** The row the menu focuses once it is open: the checked choice, else the first one that can be
-   *  chosen; `undefined` while it opened by itself (`defaultOpen`) and must leave the focus alone. */
-  const focusOnOpen = useRef<number | undefined>(undefined);
+   *  chosen. */
+  const focusOnOpen = useRef(0);
   const flat = sections.flatMap((s) => s.items);
   const choosable = (i: number) => {
     const item = flat[i];
@@ -98,7 +95,7 @@ export function Menu({
   };
 
   useEffect(() => {
-    if (open && focusOnOpen.current !== undefined) items.current[focusOnOpen.current]?.focus();
+    if (open) items.current[focusOnOpen.current]?.focus();
   }, [open]);
 
   // A press anywhere else closes it (without taking the focus back).
