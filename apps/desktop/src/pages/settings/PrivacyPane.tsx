@@ -1,4 +1,10 @@
-import { HISTORY_LIMIT, HISTORY_MIN_KEEP, type MessageKey, formatCount } from "@voltip/shared";
+import {
+  HISTORY_KEEP_OPTIONS,
+  HISTORY_LIMIT,
+  HISTORY_MIN_KEEP,
+  type MessageKey,
+  formatCount,
+} from "@voltip/shared";
 import {
   Button,
   LampText,
@@ -16,8 +22,8 @@ import { useRouter } from "../../app/router";
 import { useShell } from "../../app/shell-context";
 import { serviceTarget } from "./engines/helpers";
 
-/** The retention choices the select offers (all inside `HISTORY_MIN_KEEP..=HISTORY_LIMIT`). */
-export const KEEP_OPTIONS = [500, 2000, 5000, 10_000, HISTORY_LIMIT] as const;
+/** The retention choices the select offers (moved to `@voltip/shared`, shared with the phone). */
+export const KEEP_OPTIONS = HISTORY_KEEP_OPTIONS;
 
 /** A secret-store backend name (`SecretStore::backend_name`) as the user knows it. */
 const BACKEND_KEYS: ReadonlyMap<string, MessageKey> = new Map<string, MessageKey>([

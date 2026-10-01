@@ -27,7 +27,7 @@ The phone cannot tell which app you are typing in, so scenes are not matched by 
 
 These settings apply to recordings the phone recognises itself. A recording sent to a computer follows the computer's settings.
 
-**Recent results** lists what the phone transcribed, newest first, with **Copy** and **Share**. These results are kept on the phone only.
+**Recent results** lists what the phone transcribed, newest first, with **Copy** and **Share**. **History** at the bottom lists everything: search it, filter it by time or by star, and see how many takes you made today, this week, this month and in total, and the time they saved. Open an entry to read the polished text and the transcript, and to copy, share, star or delete it; a long recording can also be processed again with an AI preset, and its subtitles (SRT) or text (TXT) shared to another app as a file. **Settings** › **History** turns saving off, sets how many entries are kept, or clears them all. These results are kept on the phone only.
 
 When a paired computer is online, the button reads **Send to** and the computer's name instead, and the recording goes to the computer as described below. A recording keeps its route until it ends, even if a computer comes online or goes offline in the meantime.
 

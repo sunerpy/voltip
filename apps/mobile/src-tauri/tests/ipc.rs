@@ -341,6 +341,16 @@ fn a_take_on_the_phone_runs_through_the_cloud_clients_onto_its_clipboard() {
         assert_eq!((page["total"].as_u64(), page["entries"][0]["text"].as_str()), (Some(1), Some("今天下午三点开会。")), "{page}");
         let id = page["entries"][0]["id"].clone();
         assert_eq!(invoke(webview, "history_entry", json!({ "id": id })).unwrap()["refined"], true);
+        // 分享文本 / 分享字幕 (§22, user decision 2026-10-01: the phone has the desktop's history): an
+        // export goes to the share sheet, which this host build does not have; a whole take has no
+        // subtitles, and a deleted entry has nothing to export.
+        let shared = invoke(webview, "history_export", json!({ "id": id, "format": "txt", "fileName": "Voltip 2026-10-02 10.00" })).unwrap();
+        assert_eq!((shared["kind"].as_str(), shared["code"].as_str()), (Some("failed"), Some("share")), "{shared}");
+        assert!(shared["detail"].as_str().is_some_and(|d| d.starts_with("share: ")), "{shared}");
+        let subtitles = invoke(webview, "history_export", json!({ "id": id, "format": "srt", "fileName": "x" })).unwrap();
+        assert_eq!(subtitles["code"], "empty", "{subtitles}");
+        let gone = invoke(webview, "history_export", json!({ "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d", "format": "txt", "fileName": "x" })).unwrap();
+        assert_eq!(gone["code"], "gone", "{gone}");
         // One request to each service.
         let requests = rt.block_on(server.received_requests()).unwrap();
         let paths: Vec<&str> = requests.iter().map(|r| r.url.path()).collect();

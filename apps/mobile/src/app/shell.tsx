@@ -15,11 +15,15 @@ export type Screen =
   | "about"
   | "dictionary"
   | "rules"
-  | "scenes";
+  | "scenes"
+  | "history"
+  | "entry"
+  | "historySettings";
 
 /** The screens the tab bar switches between (user decision 2026-10-01: the phone has its own
- *  settings). 说话 is the welcome screen until a computer is paired, the device list after. */
-export const TAB_ROOTS: readonly Screen[] = ["welcome", "devices", "settings"];
+ *  settings and history). 说话 is the welcome screen until a computer is paired, the device list
+ *  after. */
+export const TAB_ROOTS: readonly Screen[] = ["welcome", "devices", "history", "settings"];
 
 export interface ConfirmSpec {
   title: string;
@@ -30,8 +34,12 @@ export interface ConfirmSpec {
 
 export interface MobileShell {
   screen: Screen;
-  /** Open `screen`: a tab root replaces the stack, any other screen goes on top of it. */
-  go: (screen: Screen) => void;
+  /** What the current screen shows, when it shows one thing: the id of the history entry on
+   *  `entry`. */
+  param: string | undefined;
+  /** Open `screen` (about `param`): a tab root replaces the stack, any other screen goes on top
+   *  of it. */
+  go: (screen: Screen, param?: string) => void;
   /** Back to the screen underneath (the header's back button). */
   back: () => void;
   toast: (message: string, tone?: "neutral" | "danger") => void;

@@ -972,13 +972,16 @@ export type HistoryEntry = z.infer<typeof historyEntrySchema>;
 /** `voltip_core::history::export::ExportFormat`: 导出字幕（SRT）or 导出文本（TXT）. */
 export const EXPORT_FORMATS = ["srt", "txt"] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
-/** The desktop shell's answer to `history_export` (docs/dictation.md §22). */
+/** The shell's answer to `history_export` (docs/dictation.md §22): the desktop saves a file
+ *  (`saved`, `cancelled`), the phone hands it to the share sheet (`shared`, or `failed { share }`
+ *  when the sheet did not open). */
 export const exportOutcomeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("saved"), path: z.string() }),
   z.object({ kind: z.literal("cancelled") }),
+  z.object({ kind: z.literal("shared") }),
   z.object({
     kind: z.literal("failed"),
-    code: z.enum(["gone", "empty", "write"]),
+    code: z.enum(["gone", "empty", "write", "share"]),
     detail: z.string(),
   }),
 ]);

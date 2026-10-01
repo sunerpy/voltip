@@ -700,6 +700,13 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       kind: "failed",
       code: "empty",
     });
+    // The phone hands an export to the share sheet (user decision 2026-10-01: the phone has the
+    // desktop's history; it refused exports before).
+    const phone = new MockBackend({ role: "phone", history: [long] });
+    expect(await phone.historyExport("long", "srt", "e")).toEqual({ kind: "shared" });
+    expect(phone.exports).toEqual([{ id: "long", format: "srt", fileName: "e" }]);
+    expect(await phone.historyExport("none", "txt", "f")).toMatchObject({ code: "gone" });
+    phone.destroy();
     backend.destroy();
   });
 

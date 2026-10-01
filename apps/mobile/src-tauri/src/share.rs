@@ -49,3 +49,28 @@ pub async fn share_text<R: Runtime>(app: &AppHandle<R>, text: String) -> Result<
         Err(SHARE_UNAVAILABLE.into())
     }
 }
+
+/// Open the system share sheet with `text` as the file `name` of type `mime` (a history export,
+/// docs/dictation.md §22): the plugin writes it into the app's cache, and the share target reads
+/// it from there, so its length is not bounded by what an intent carries.
+pub async fn share_file<R: Runtime>(app: &AppHandle<R>, name: String, text: String, mime: &'static str) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager as _;
+        let Some(plugin) = app.try_state::<Share<R>>() else { return Err("share: plugin missing".into()) };
+        let handle = plugin.0.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            handle
+                .run_mobile_plugin::<serde_json::Value>("shareFile", serde_json::json!({ "name": name, "text": text, "mime": mime }))
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, name, text, mime);
+        Err(SHARE_UNAVAILABLE.into())
+    }
+}

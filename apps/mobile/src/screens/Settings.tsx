@@ -1,4 +1,4 @@
-import { type TFunction, presetLabel, sceneLabel } from "@voltip/shared";
+import { type TFunction, formatCount, presetLabel, sceneLabel } from "@voltip/shared";
 import { Icon, type IconName, useI18n, useUiState } from "@voltip/ui";
 import type { ReactNode } from "react";
 import { type Screen, useMobileShell } from "../app/shell";
@@ -116,6 +116,16 @@ export function Settings() {
           title={t("mobile.title.appearance")}
           detail={`${t(`settings.general.locale.${settings.locale}`)} · ${theme}`}
           to="appearance"
+        />
+        <Row
+          icon="history"
+          title={t("mobile.title.historySettings")}
+          detail={
+            settings.history.enabled
+              ? t("mobile.settings.historyDetail", { keep: formatCount(settings.history.keep) })
+              : t("mobile.settings.historyOff")
+          }
+          to="historySettings"
         />
         <Row
           icon="mic"
