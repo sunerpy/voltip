@@ -4,7 +4,7 @@ description: The speech models that run on your computer, how to download them, 
 
 # Local recognition
 
-With a local model, your recordings are recognised on your computer and no audio leaves it. Open **Speech models** in the sidebar, choose **This computer**, and download a model.
+With a local model, your recordings are recognised on your computer and no audio leaves it. Open **Speech models** in the sidebar, choose **This computer**, and download a model. Once it is downloaded, you can also switch to it from the speech model name in the title bar or on the home page.
 
 <ScreenFigure src="/screens/local-en-light.webp" width="1440" height="900"
   alt="The This computer card on the Speech models page: four local models, one of them installed and in use, and the compute device settings below."

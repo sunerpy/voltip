@@ -6,11 +6,11 @@ description: What AI polish changes in the recognised text, how to turn it on or
 
 AI polish tidies the recognised text before it is inserted. What it does depends on the [preset](#presets) in use. The default preset, **Proofread**, fixes punctuation and typos and removes filler words and repetitions; it does not change what you said, translate it or add to it.
 
-Turn it on or off with the **AI Polish** switch in the title bar, and choose the preset from the menu next to it. A [scene](/recognition/scenes) can turn it on or off, and choose a preset, for a particular app.
+Turn it on or off with the **AI Polish** switch in the title bar. The two menus next to it choose the preset and the model that polishes the text. A [scene](/recognition/scenes) can turn it on or off, and choose a preset, for a particular app.
 
 ## Services
 
-AI polish uses the service chosen on the **AI models** page: the built-in service, OpenAI, Groq, SiliconFlow, DeepSeek, a local Ollama, or any OpenAI-compatible endpoint. See [Cloud services](/recognition/cloud) for setting one up.
+AI polish uses the service and model chosen on the **AI models** page, or from the model menu next to the **AI Polish** switch: the built-in service, OpenAI, Groq, SiliconFlow, DeepSeek, a local Ollama, or any OpenAI-compatible endpoint. The same menu is on the home page; it lists the models of the built-in service and of each provider that is set up. See [Cloud services](/recognition/cloud) for setting one up.
 
 If the service does not answer, the recognised text is inserted without polish, and the dictation is not lost.
 

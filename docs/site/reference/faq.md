@@ -13,7 +13,7 @@ When dictation does not behave as expected, look for the symptom below; each ans
 Check the overlay and the latest entry in the history; they say what happened.
 
 - **The text is on the clipboard**: Voltip could not paste, and the entry says why. Paste with <kbd>Ctrl</kbd> <kbd>V</kbd>, or <kbd>⌘</kbd> <kbd>V</kbd> on a Mac. On a Mac, check that Voltip has the Accessibility permission. On Linux with Wayland, install a paste tool; see [Platform notes](/reference/platforms#pasting).
-- **"No speech detected"**: the recording was silent or shorter than about a third of a second. Press **Test microphone** on the home page and check the strength bar, and the input device under **Settings → Microphone**.
+- **"No speech detected"**: the recording was silent or shorter than about a third of a second. Press **Test microphone** on the home page and check the strength bar, and the input device: click the microphone name on the home page, or open **Settings → Recording source**.
 - **An error**: the recognition service could not be reached, or a key or model is missing. The home page shows which service is in use and what it needs.
 
 ### The shortcut does nothing

@@ -14,7 +14,7 @@ Voltip is the same app on every desktop system. This page lists what differs bet
 - **Windows that run as administrator**: Windows does not let an ordinary app type into them. Voltip notices this before pasting and leaves the text on the clipboard instead.
 - **Secure desktop**: the sign-in screen and elevation prompts refuse typed input from apps.
 - **Voice edit** copies the selection with <kbd>Ctrl</kbd> <kbd>Insert</kbd>. On keyboard layouts where AltGr types characters, <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>E</kbd> can clash with AltGr+E; choose another shortcut there.
-- **Tray**: left-click opens Voltip, right-click opens the menu. Closing the window keeps Voltip running in the tray.
+- **Tray**: a click or a double click opens Voltip, a right click opens the menu. Closing the window keeps Voltip running in the tray.
 - **GPU**: Vulkan, with the graphics driver's Vulkan support. The Vulkan loader ships with Voltip.
 - **Computer audio** is recorded from the output device you choose, with nothing to set up.
 
@@ -25,7 +25,7 @@ Voltip is the same app on every desktop system. This page lists what differs bet
 - **Permissions**: the microphone, and Accessibility, which Voltip needs to paste and to use a single key as the trigger. Voltip does not need Input Monitoring. From version 0.0.7 on, releases share one signing certificate so that updates keep the permissions; the first such update has not been checked on a real Mac yet.
 - **Fn as the trigger**: set **When pressing the 🌐 key** to **Do Nothing** under System Settings → Keyboard.
 - **Scenes** recognise the app but not the window title.
-- **Tray**: clicking the menu bar icon opens the menu. Closing the window keeps Voltip running; it can be reopened from the Dock or the menu bar.
+- **Tray**: a click on the menu bar icon opens the menu, and a double click opens the Voltip window. The menu appears once the double-click interval set in System Settings has passed, so that a double click does not open it. Closing the window keeps Voltip running; it can be reopened from the Dock or the menu bar.
 - **GPU**: Metal.
 - **Computer audio** needs macOS 14.6 or later; on earlier versions the option is dimmed. The first time you record it, macOS asks whether Voltip may record the audio of other apps; the choice can be changed later under System Settings → Privacy & Security.
 

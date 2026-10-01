@@ -132,7 +132,7 @@ export function PolishModelMenu({
       trigger={trigger ?? <ReadoutTrigger value={name} />}
       label={t("switchers.polish.label")}
       triggerLabel={t("switchers.polish.trigger", { name })}
-      title={title ?? (state.engines.refine_model || undefined)}
+      title={title ?? (state.engines.refine_model || name)}
       sections={polishMenuSections(state.engines, t)}
       align={align}
       triggerClassName={triggerClassName ?? BAR_TRIGGER}
@@ -155,14 +155,22 @@ export interface MicrophoneMenuProps extends SwitcherMenuProps {
   withSource?: boolean;
 }
 
-/** The input device a take records from: the chosen one, else the system default, by its short
- *  name; the metered device (or why there is none) until the list has answered. */
+/** The input device a take records from: the chosen one, else the system default; none until the
+ *  list has answered, or while the chosen one is not connected. */
+function recordingDevice(
+  devices: readonly AudioDevice[],
+  chosen: string | null,
+): AudioDevice | undefined {
+  return chosen === null ? devices.find((d) => d.is_default) : devices.find((d) => d.id === chosen);
+}
+
+/** That device by its short name; the metered device (or why there is none) until the list has
+ *  answered. */
 export function useMicrophoneName(devices: readonly AudioDevice[]): string {
   const { t } = useI18n();
   const chosen = useUiState().settings.microphone ?? null;
   const metered = useMicrophoneReadout();
-  const device =
-    chosen === null ? devices.find((d) => d.is_default) : devices.find((d) => d.id === chosen);
+  const device = recordingDevice(devices, chosen);
   return device !== undefined
     ? shortMicrophoneName(device.name)
     : microphoneReadoutValue(metered, t);
@@ -200,7 +208,8 @@ export function MicrophoneMenu({
       trigger={trigger ?? <ReadoutTrigger value={name} />}
       label={t("switchers.microphone.label")}
       triggerLabel={t("switchers.microphone.trigger", { name })}
-      title={title}
+      // The whole name on hover: the short one can still be cut where the title bar is tight.
+      title={title ?? recordingDevice(devices, chosen)?.name ?? name}
       sections={microphoneMenuSections(
         devices,
         chosen,
