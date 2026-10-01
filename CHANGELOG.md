@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.19](https://github.com/sunerpy/voltip/compare/v0.0.18...v0.0.19) (2026-10-01)
+
+
+### Bug Fixes
+
+* **identity:** 在安装前交接 macOS 钥匙串条目 ([#48](https://github.com/sunerpy/voltip/issues/48)) ([a34e436](https://github.com/sunerpy/voltip/commit/a34e436ecc862d1a937054792588f0b0feb154be))
+
 ## [0.0.18](https://github.com/sunerpy/voltip/compare/v0.0.17...v0.0.18) (2026-10-01)
 
 
