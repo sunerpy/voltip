@@ -19,3 +19,9 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# JNI binds `Keyring.Companion.initializeNdkContext` by its class and method names
+# (src/main/java/io/crates/keyring/Keyring.kt): R8 must neither rename nor move them.
+-keep class io.crates.keyring.Keyring$Companion {
+    native <methods>;
+}

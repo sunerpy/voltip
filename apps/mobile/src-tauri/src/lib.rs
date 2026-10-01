@@ -891,17 +891,13 @@ pub fn attach_bridge<R: Runtime>(
 }
 
 /// Register the plugins, the command handlers and the setup hook that attaches the bridge.
-/// `config`, `store` and `ports` all run inside `setup`: the platform data dir and the clipboard
-/// injector need a live [`AppHandle`], and the Android Keystore needs the Android context, which
-/// tao sets only in the activity's `onCreate` — after `run` has started (regression 2026-10-01:
-/// built eagerly in `run`, the store panicked with "android context was not initialized" and
-/// 0.0.18 and 0.0.19 closed on start). [`run`] feeds it `tauri::Builder::default()`,
-/// [`secret_store`] and [`phone_ports`]; tests feed it `tauri::test::mock_builder()` and the
-/// in-memory fakes.
+/// `config` and `ports` run inside `setup`: the platform data dir and the clipboard injector need
+/// a live [`AppHandle`]. [`run`] feeds it `tauri::Builder::default()` and [`phone_ports`]; tests
+/// feed it `tauri::test::mock_builder()` and the in-memory fakes.
 pub fn build_app<R: Runtime>(
     builder: tauri::Builder<R>,
     config: impl FnOnce(&AppHandle<R>) -> CoreConfig + Send + 'static,
-    store: impl FnOnce() -> Arc<dyn SecretStore> + Send + 'static,
+    store: Arc<dyn SecretStore>,
     ports: impl FnOnce(&AppHandle<R>) -> voltip_core::dictation::DictationPorts + Send + 'static,
 ) -> tauri::Builder<R> {
     #[cfg(mobile)]
@@ -914,7 +910,6 @@ pub fn build_app<R: Runtime>(
         .manage(meter::Meters::default())
         .setup(move |app| {
             let config = config(app.handle());
-            let store = store();
             let ports = ports(app.handle());
             Ok(attach_bridge(app.handle(), config, store, ports).map_err(|e| std::io::Error::other(e.to_string()))?)
         })
@@ -1027,7 +1022,7 @@ pub fn run() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,voltip=debug"));
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 
-    let outcome = build_app(tauri::Builder::default(), production_config, secret_store, phone_ports).run(tauri::generate_context!());
+    let outcome = build_app(tauri::Builder::default(), production_config, secret_store(), phone_ports).run(tauri::generate_context!());
     if let Err(e) = outcome {
         tracing::error!(error = %e, "tauri exited with error");
         std::process::exit(1);

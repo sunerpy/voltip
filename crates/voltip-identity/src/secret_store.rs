@@ -355,7 +355,9 @@ mod tests {
 
 /// Android Keystore-backed store: secrets live in `SharedPreferences`, encrypted with an AES
 /// key generated inside the hardware-backed Keystore, via `android-native-keyring-store`.
-/// Tauri Mobile initialises `ndk-context` before Rust runs, which is all the store needs.
+/// The store reads the application context through `ndk-context`, which Tauri's Android runtime
+/// does not set: the mobile shell's `MainActivity` hands it over through the crate's JNI entry
+/// before Rust starts (`Keyring.kt`). Without that, `new` panics.
 ///
 /// Compiled only for `target_os = "android"`; on other targets the type exists but `new`
 /// reports `StoreUnavailable`, so the mobile shell can share one code path.

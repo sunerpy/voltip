@@ -888,13 +888,6 @@ jobs:
           name: voltip-android-apk
           path: android-apk
 
-      # Diagnosis of the 0.0.19 crash, this pull request only: the published APK runs first, and
-      # its log is uploaded next to the new build's.
-      - name: Download the published 0.0.19 APK (diagnosis)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release download v0.0.19 --repo "$GITHUB_REPOSITORY" --pattern '*_android_arm64.apk' --dir released-apk
-
       # The hosted runner has KVM; this lets the emulator use it.
       - name: Enable KVM
         run: |
@@ -910,18 +903,14 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: |
-            .github/scripts/android-device-smoke.sh released-apk device-0.0.19 || echo "the published 0.0.19 APK failed on the emulator too (diagnosis)"
-            .github/scripts/android-device-smoke.sh android-apk device
+          script: .github/scripts/android-device-smoke.sh android-apk device
 
       - name: Upload the device logs and screenshots
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: android-device
-          path: |
-            device/
-            device-0.0.19/
+          path: device/
           if-no-files-found: warn
           retention-days: 7
 

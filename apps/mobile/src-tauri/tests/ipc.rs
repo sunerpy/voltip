@@ -108,7 +108,7 @@ fn with_app(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path().to_path_buf();
-    let app = build_app(mock_builder(), move |_| offline_config(&data, settings), || Arc::new(MemorySecretStore::new()), ports)
+    let app = build_app(mock_builder(), move |_| offline_config(&data, settings), Arc::new(MemorySecretStore::new()), ports)
         .build(mock_context(noop_assets()))
         .unwrap();
     let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
