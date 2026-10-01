@@ -192,6 +192,7 @@ scripts/windows-remote.sh gate test       # 原生 cargo test --workspace --all-
 scripts/windows-remote.sh gate clippy     # 原生 cargo clippy --workspace --all-targets -D warnings
 scripts/windows-remote.sh gate real       # 真实模型用例（整段 + 流式 + 热词 + VAD）在该机 CPU 上跑；VOLTIP_LOCAL_* 同本机，文件会拷过去
 scripts/windows-remote.sh gate mdns       # 局域网发现：两个真实 mDNS 守护进程经 Windows 自己的网络栈互相看到
+scripts/windows-remote.sh gate echo       # 混合录音的回声消除（release）：合成房间的指标与每帧耗时（docs/dictation.md §22.6）
 make windows-x64 && scripts/windows-remote.sh smoke   # 便携包的无头运行：列出计算设备、下载模型、识别公开样音（smoke-native-cli.ps1）
 make windows-remote                       # 以上四步依次执行
 ```

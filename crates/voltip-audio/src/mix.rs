@@ -15,9 +15,15 @@
 //! anything pushed after a drop finds its report, and the second read holds everything pushed
 //! before it. The sum leaves headroom ([`MIX_GAIN`] on each side) and goes through a soft limiter,
 //! so a loud call over loud speech never wraps around.
+//!
+//! With echo cancellation (docs/dictation.md §22.6) the pairing stays in the microphone's callback
+//! ([`Mixer::pair`]) and the cancelling and the sum ([`CancelledMix`]) run on the recorder's mixing
+//! thread: the canceller allocates, an audio callback must not.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use crate::echo::EchoCanceller;
 
 /// Gain on each side before the sum: −3 dB, so two loud inputs rarely reach the limiter.
 pub const MIX_GAIN: f32 = 0.707;
@@ -76,6 +82,37 @@ pub fn mix_queue(capacity: usize) -> (MixSender, Mixer) {
     (MixSender { queue, overflowed: overflowed.clone() }, Mixer::with_overflow(queued, overflowed))
 }
 
+/// Append the sum of the microphone and the other side, sample by sample: [`MIX_GAIN`] on each and
+/// the limiter.
+pub fn sum_into(mic: &[f32], other: &[f32], out: &mut Vec<f32>) {
+    for (m, o) in mic.iter().zip(other) {
+        out.push(limit(MIX_GAIN * m + MIX_GAIN * o));
+    }
+}
+
+/// The echo-cancelled sum (docs/dictation.md §22.6): the microphone through an [`EchoCanceller`]
+/// with the other side as its reference, then [`sum_into`] with the other side as it came. The
+/// voice lags the other side by the canceller's frame in the mix, which no recogniser notices.
+#[derive(Debug, Default)]
+pub struct CancelledMix {
+    echo: EchoCanceller,
+    cancelled: Vec<f32>,
+}
+
+impl CancelledMix {
+    /// A canceller that has heard nothing yet.
+    pub fn new() -> Self {
+        Self { echo: EchoCanceller::new(), cancelled: Vec::with_capacity(MIX_STEP) }
+    }
+
+    /// Append the mix of one paired step (`mic` and `other` of the same length) to `out`.
+    pub fn mix(&mut self, mic: &[f32], other: &[f32], out: &mut Vec<f32>) {
+        self.cancelled.clear();
+        self.echo.process(mic, other, &mut self.cancelled);
+        sum_into(&self.cancelled, other, out);
+    }
+}
+
 /// Soft limiter: unchanged up to [`LIMIT_KNEE`], then bent smoothly towards full scale without
 /// ever reaching past it.
 pub fn limit(x: f32) -> f32 {
@@ -127,6 +164,17 @@ impl Mixer {
     /// the tests push there.
     fn mix_with(&mut self, mic: &[f32], out: &mut Vec<f32>, between: impl FnOnce()) {
         out.clear();
+        self.pair_with(mic, |mic, other| sum_into(mic, other, out), between);
+    }
+
+    /// Pair one microphone chunk (16 kHz mono) with the queued computer's sound, as [`Self::mix`]
+    /// does, without summing: `pair` gets the chunk step by step, each with as many samples of the
+    /// other side (silence where none was queued). Allocates nothing.
+    pub fn pair(&mut self, mic: &[f32], pair: impl FnMut(&[f32], &[f32])) {
+        self.pair_with(mic, pair, || {});
+    }
+
+    fn pair_with(&mut self, mic: &[f32], mut pair: impl FnMut(&[f32], &[f32]), between: impl FnOnce()) {
         // The queue first: a push is published before a later drop is reported, so if this read
         // holds anything pushed after a drop, the report is there as well.
         let queued = self.other.slots();
@@ -151,10 +199,8 @@ impl Mixer {
             let (queued, _) = self.other.pop_partial_slice(&mut self.scratch[..step.len()]);
             let got = queued.len();
             self.filled += (step.len() - got) as u64;
-            for (i, m) in step.iter().enumerate() {
-                let o = if i < got { self.scratch[i] } else { 0.0 };
-                out.push(limit(MIX_GAIN * m + MIX_GAIN * o));
-            }
+            self.scratch[got..step.len()].fill(0.0);
+            pair(step, &self.scratch[..step.len()]);
         }
     }
 
@@ -208,6 +254,58 @@ mod tests {
         assert!(out[2] > 0.9 && out[2] < 1.0, "full scale on both sides is limited, not wrapped: {}", out[2]);
         assert_eq!(out[3], 0.0);
         assert_eq!((mixer.dropped(), mixer.filled()), (0, 0));
+    }
+
+    /// The pairing moved out of the sum for echo cancellation (docs/dictation.md §22.6,
+    /// 2026-10-01): without it the mix is still the sum of each pair, bit for bit, whatever the
+    /// chunks, and [`Mixer::pair`] hands out exactly those pairs.
+    #[test]
+    fn the_plain_mix_is_still_the_sum_of_each_pair_bit_for_bit() {
+        let mut seed = 0x2545_f491_u32;
+        let mut noise = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            (seed as f32 / u32::MAX as f32) * 2.4 - 1.2
+        };
+        let mic: Vec<f32> = (0..6_000).map(|_| noise()).collect();
+        let other: Vec<f32> = (0..6_000).map(|_| noise()).collect();
+        for chunk in [1, 160, 1_000, 3_000] {
+            let (mut queued, mut mixer) = queue(8_192);
+            let (mut paired, mut pairer) = queue(8_192);
+            let (mut out, mut pairs) = (Vec::new(), Vec::new());
+            for (m, o) in mic.chunks(chunk).zip(other.chunks(chunk)) {
+                // The other side's chunk arrives just before the microphone's: nothing is dropped.
+                queued.push_entire_slice(o).unwrap();
+                paired.push_entire_slice(o).unwrap();
+                let mut part = Vec::new();
+                mixer.mix(m, &mut part);
+                out.extend(part);
+                pairer.pair(m, |m, o| pairs.extend(m.iter().copied().zip(o.iter().copied())));
+            }
+            let expected: Vec<f32> = mic.iter().zip(&other).map(|(m, o)| limit(MIX_GAIN * m + MIX_GAIN * o)).collect();
+            assert!(out.iter().zip(&expected).all(|(a, b)| a.to_bits() == b.to_bits()), "chunks of {chunk}");
+            assert_eq!(pairs, mic.iter().copied().zip(other.iter().copied()).collect::<Vec<_>>(), "chunks of {chunk}");
+        }
+    }
+
+    /// The echo-cancelled sum: the microphone a frame late and without the echo of the other
+    /// side, the other side as it came.
+    #[test]
+    fn the_cancelled_mix_keeps_the_other_side_and_delays_the_microphone_by_a_frame() {
+        let mut mix = CancelledMix::new();
+        let mic: Vec<f32> = (0..1_600).map(|n| 0.3 * (n as f32 * 0.05).sin()).collect();
+        let silent = vec![0.0f32; mic.len()];
+        let mut out = Vec::new();
+        mix.mix(&silent, &mic, &mut out);
+        assert_eq!(out.len(), mic.len());
+        // A silent microphone adds nothing but AEC3's comfort noise, about −55 dBFS at its peak.
+        let extra = (out.iter().zip(&mic).map(|(o, m)| (o - MIX_GAIN * m).powi(2)).sum::<f32>() / out.len() as f32).sqrt();
+        assert!(extra < 3e-3, "a silent microphone adds {extra}");
+        let mut mix = CancelledMix::new();
+        let mut out = Vec::new();
+        mix.mix(&mic, &silent, &mut out);
+        assert!(out[..crate::echo::FRAME].iter().all(|s| *s == 0.0), "the canceller's frame");
     }
 
     /// Nothing queued (the other side is behind or quiet): the microphone goes through alone.

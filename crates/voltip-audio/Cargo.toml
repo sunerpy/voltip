@@ -21,6 +21,8 @@ cpal.workspace = true
 rtrb.workspace = true
 rubato.workspace = true
 serde.workspace = true
+# The mixed recording's echo canceller (docs/dictation.md §22.6).
+sonora.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

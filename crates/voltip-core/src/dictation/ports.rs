@@ -124,24 +124,35 @@ pub struct CaptureOptions {
     pub source: RecordingSource,
     /// The output device the computer's sound comes from (`None` = the system default output).
     pub output_device: Option<String>,
+    /// `mixed`: cancel the microphone's echo of the computer's sound (docs/dictation.md §22.6).
+    pub echo_cancel: bool,
 }
 
 impl Default for CaptureOptions {
     /// The microphone, no live tap, the whole-take cap ([`MAX_RECORDING`]).
     fn default() -> Self {
-        Self { live: false, max_duration: MAX_RECORDING, long: false, source: RecordingSource::Microphone, output_device: None }
+        Self { live: false, max_duration: MAX_RECORDING, long: false, source: RecordingSource::Microphone, output_device: None, echo_cancel: false }
     }
 }
 
 impl CaptureOptions {
     /// The microphone with a live tap and the whole-take cap.
-    pub const LIVE: Self = Self { live: true, max_duration: MAX_RECORDING, long: false, source: RecordingSource::Microphone, output_device: None };
+    pub const LIVE: Self =
+        Self { live: true, max_duration: MAX_RECORDING, long: false, source: RecordingSource::Microphone, output_device: None, echo_cancel: false };
 
     /// A dictation take on this computer (docs/dictation.md §22): the settings' source, output
-    /// device and length; `long` when the take may run past [`MAX_RECORDING`].
+    /// device, length and echo cancellation (which only a `mixed` take has); `long` when the take
+    /// may run past [`MAX_RECORDING`].
     pub fn dictation(recording: &RecordingSettings, live: bool) -> Self {
         let max_duration = recording.max_duration();
-        Self { live, max_duration, long: max_duration > MAX_RECORDING, source: recording.source, output_device: recording.output_device.clone() }
+        Self {
+            live,
+            max_duration,
+            long: max_duration > MAX_RECORDING,
+            source: recording.source,
+            output_device: recording.output_device.clone(),
+            echo_cancel: recording.echo_cancel && recording.source == RecordingSource::Mixed,
+        }
     }
 }
 
@@ -678,7 +689,14 @@ mod tests {
         assert_eq!(MAX_RECORDING, Duration::from_secs(120), "existing whole-take behaviour");
         assert_eq!(max_recording(OutputMode::StreamingFinal), MAX_RECORDING_STREAMING);
         assert_eq!(max_recording(OutputMode::LiveInject), Duration::from_secs(600));
-        let microphone = CaptureOptions { live: false, max_duration: MAX_RECORDING, long: false, source: RecordingSource::Microphone, output_device: None };
+        let microphone = CaptureOptions {
+            live: false,
+            max_duration: MAX_RECORDING,
+            long: false,
+            source: RecordingSource::Microphone,
+            output_device: None,
+            echo_cancel: false,
+        };
         assert_eq!(CaptureOptions::default(), microphone);
         assert_eq!(CaptureOptions::LIVE, CaptureOptions { live: true, ..microphone });
         assert!(format!("{:?}", CaptureOptions::LIVE).contains("live: true"));
@@ -696,9 +714,17 @@ mod tests {
         assert_eq!((short(1).max_duration, short(1).long), (Duration::from_secs(60), false));
         assert_eq!((short(2).max_duration, short(2).long), (MAX_RECORDING, false), "2 minutes is a short take, as before");
         assert_eq!((short(120).max_duration, short(120).long), (Duration::from_secs(7200), true));
-        let mixed = RecordingSettings { source: RecordingSource::Mixed, output_device: Some("wasapi:out".into()), max_minutes: 30 };
+        let mixed = RecordingSettings { source: RecordingSource::Mixed, output_device: Some("wasapi:out".into()), max_minutes: 30, echo_cancel: true };
         let options = CaptureOptions::dictation(&mixed, false);
         assert_eq!((options.source, options.output_device.as_deref()), (RecordingSource::Mixed, Some("wasapi:out")));
+        // docs/dictation.md §22.6: the echo is cancelled in a mixed take unless it is switched off,
+        // and only there: a take of one source has nothing to cancel.
+        assert!(options.echo_cancel);
+        assert!(!CaptureOptions::dictation(&RecordingSettings { echo_cancel: false, ..mixed.clone() }, false).echo_cancel);
+        for source in [RecordingSource::Microphone, RecordingSource::System] {
+            assert!(!CaptureOptions::dictation(&RecordingSettings { source, ..mixed.clone() }, false).echo_cancel, "{source:?}");
+        }
+        assert!(RecordingSettings::default().echo_cancel, "on by default");
     }
 
     /// `Recording::slice_from_ms` keeps the audio after the cut (sample-exact), re-encodes a valid

@@ -126,11 +126,15 @@ pub struct RecordingSettings {
     pub output_device: Option<String>,
     /// A take stops by itself after this many minutes: one of [`MAX_MINUTES_CHOICES`].
     pub max_minutes: u16,
+    /// `mixed`: remove the microphone's echo of the computer's sound before the two are summed
+    /// (docs/dictation.md §22.6). On by default; a settings file from before it has none and
+    /// reads as on.
+    pub echo_cancel: bool,
 }
 
 impl Default for RecordingSettings {
     fn default() -> Self {
-        Self { source: RecordingSource::Microphone, output_device: None, max_minutes: DEFAULT_MAX_MINUTES }
+        Self { source: RecordingSource::Microphone, output_device: None, max_minutes: DEFAULT_MAX_MINUTES, echo_cancel: true }
     }
 }
 

@@ -3401,7 +3401,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_take_records_from_the_settings_source_and_a_voice_edit_from_the_microphone() {
         let mut r = happy();
-        let system = RecordingSettings { source: RecordingSource::System, output_device: Some("wasapi:out".into()), max_minutes: 30 };
+        let system = RecordingSettings { source: RecordingSource::System, output_device: Some("wasapi:out".into()), max_minutes: 30, echo_cancel: true };
         r.engine.set_recording(system);
         r.start_open().await;
         r.engine.stop().unwrap();
@@ -3415,10 +3415,11 @@ mod tests {
                 long: true,
                 source: RecordingSource::System,
                 output_device: Some("wasapi:out".into()),
+                echo_cancel: false,
             }
         );
         let mut edit = edit_rig(FakeInjector::paste().with_selection(SELECTION), Some(FakeRefiner::ok(REWRITE)));
-        edit.engine.set_recording(RecordingSettings { source: RecordingSource::Mixed, output_device: None, max_minutes: 120 });
+        edit.engine.set_recording(RecordingSettings { source: RecordingSource::Mixed, output_device: None, max_minutes: 120, echo_cancel: true });
         edit.start_edit_open(Vec::new()).await;
         assert_eq!(edit.audio.options(), vec![CaptureOptions::default()], "the microphone, 120 s, no recording file");
     }

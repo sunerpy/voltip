@@ -4,6 +4,7 @@ import {
   SettingsPane,
   SettingsRows,
   StatusRow,
+  Toggle,
   useBackend,
   useI18n,
   useUiState,
@@ -18,8 +19,9 @@ const DEFAULT_CHOICE = "";
 
 /** 设置 › 录音来源 (docs/dictation.md §22; was 设置 › 麦克风, user feedback 2026-09-28): what a take
  *  records — the microphone, the computer's sound or both (`settings_set_recording`) — the output
- *  device the computer's sound comes from, the input device (`settings_set_microphone`, `null` =
- *  the system default) and a 测试麦克风 run with the strength bar. Nothing meters the microphone
+ *  device the computer's sound comes from, for a mixed take whether the speakers' echo is removed
+ *  (§22.6), the input device (`settings_set_microphone`, `null` = the system default) and a
+ *  测试麦克风 run with the strength bar. Nothing meters the microphone
  *  outside a test or a take. A chosen device that is unplugged stays chosen and is listed as not
  *  connected; takes use the default until it is back. */
 export function Microphone() {
@@ -76,9 +78,16 @@ export function Microphone() {
         ]
       : []),
   ];
+  const mixed = source.recording.source === "mixed";
   const sourceNote =
     source.unavailable ??
-    (source.recording.source === "mixed" ? t("settings.microphone.mixedHint") : undefined);
+    (mixed
+      ? t(
+          source.recording.echo_cancel
+            ? "settings.microphone.mixedEchoHint"
+            : "settings.microphone.mixedHint",
+        )
+      : undefined);
   return (
     <SettingsPane
       title={t("settings.microphone.title")}
@@ -106,6 +115,17 @@ export function Microphone() {
               onChange={(value) => {
                 source.setOutput(value === DEFAULT_CHOICE ? null : value);
               }}
+            />
+          </StatusRow>
+        )}
+        {mixed && (
+          <StatusRow
+            label={t("settings.microphone.echoCancel")}
+            help={t("settings.microphone.echoCancelHelp")}>
+            <Toggle
+              checked={source.recording.echo_cancel}
+              onChange={source.setEchoCancel}
+              label={t("settings.microphone.echoCancel")}
             />
           </StatusRow>
         )}

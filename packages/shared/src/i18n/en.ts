@@ -438,6 +438,8 @@ export const en: Messages = {
         "Dictation records the sound your computer plays; nothing is recorded while idle.",
       mixedHint:
         "Wear headphones if you use speakers, so the microphone does not pick them up again.",
+      mixedEchoHint:
+        "Speaker echo is removed. At high speaker volume, headphones are still recommended.",
       unavailable: "Unavailable",
       recording: "Recording",
       testing: "Testing · {n} s",
@@ -1578,6 +1580,11 @@ export const en: Messages = {
       },
       mixedHint:
         "Wear headphones when mixing; otherwise the microphone picks up the speakers and the recording echoes.",
+      mixedEchoHint:
+        "Speaker echo is removed. At high speaker volume, headphones are still recommended.",
+      echoCancel: "Cancel speaker echo",
+      echoCancelHelp:
+        "When the computer's sound plays through the speakers, it is removed from what the microphone records, so it is not recorded twice.",
       output: "Output device",
       outputHelp: "The sound this device plays is recorded.",
       outputDefault: "System default ({name})",

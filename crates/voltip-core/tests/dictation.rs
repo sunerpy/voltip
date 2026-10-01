@@ -324,7 +324,7 @@ async fn the_recording_settings_reach_the_capture_and_persist() {
     ports.audio = audio.clone();
     let (handle, events) = AppCore::start_with(config(dir.path()), Arc::new(MemorySecretStore::new()), ports).unwrap();
     let mut node = Node { handle, events };
-    let recording = RecordingSettings { source: RecordingSource::Mixed, output_device: Some("fake:speakers".into()), max_minutes: 30 };
+    let recording = RecordingSettings { source: RecordingSource::Mixed, output_device: Some("fake:speakers".into()), max_minutes: 30, echo_cancel: false };
     node.handle.send(CoreCommand::SetRecording(recording.clone())).await.unwrap();
     wait(&mut node, |e| matches!(e, CoreEvent::Settings(s) if s.recording == recording).then_some(())).await;
     assert_eq!(SettingsStore::new(dir.path()).load().unwrap().recording, recording);
@@ -334,6 +334,7 @@ async fn the_recording_settings_reach_the_capture_and_persist() {
     wait_phase(&mut node, |p| matches!(p, DictationPhase::Done { .. } | DictationPhase::Failed { .. })).await;
     let options = audio.options();
     assert_eq!((options[0].source, options[0].output_device.as_deref()), (RecordingSource::Mixed, Some("fake:speakers")));
+    assert!(!options[0].echo_cancel, "echo cancellation switched off reaches the capture (docs/dictation.md §22.6)");
     assert_eq!((options[0].max_duration, options[0].long), (Duration::from_secs(1800), true));
     for bad in [
         RecordingSettings { max_minutes: 15, ..recording.clone() },

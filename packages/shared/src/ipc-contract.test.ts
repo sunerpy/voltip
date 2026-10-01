@@ -446,6 +446,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
         source: "mixed",
         output_device: "wasapi:{0.0.0.00000000}.{a1}",
         max_minutes: 60,
+        echo_cancel: false,
       },
     });
     expect(parsed.app_version).toBe("0.3.0");

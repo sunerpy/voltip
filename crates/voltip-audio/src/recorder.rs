@@ -6,8 +6,12 @@
 //!
 //! Sources (§22): the microphone, what an output device plays (the computer's sound), or both
 //! mixed at 16 kHz ([`crate::mix`]: the microphone is the clock). Whatever the source, one
-//! [`Sink`] turns the signal into levels, the in-memory take, the tap and the stream.
+//! [`Sink`] turns the signal into levels, the in-memory take, the tap and the stream. A `mixed`
+//! take with echo cancellation (§22.6) feeds its sink from a mixing thread of its own: the
+//! microphone's callback pairs the two sides and queues the pairs, the thread cancels the echo,
+//! sums and feeds the sink, and `stop()` lets it finish what is queued first.
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -18,7 +22,7 @@ use crate::backend::{AudioDevice, Backend, CpalBackend, SampleCallback, StreamHa
 use crate::dsp::{FrameAccumulator, SampleChunk};
 use crate::live::{LiveConsumer, LiveProducer, LiveTapConfig, StreamResampler, live_tap};
 use crate::meter::{DEFAULT_FRAMES_PER_SECOND, DEFAULT_PEAK_HOLD_MS, LevelFrame};
-use crate::mix::mix_queue;
+use crate::mix::{CancelledMix, MIX_STEP, mix_queue};
 use crate::pcm::{PcmConsumer, PcmProducer, PcmStreamConfig, pcm_stream};
 use crate::recording::{Recording, downmix_chunk, f32_to_i16, resample_mono};
 
@@ -38,6 +42,12 @@ const SCRATCH_FRAMES: usize = 8192;
 /// How much of the computer's sound may wait for the microphone in `mixed` (one second at 16 kHz;
 /// the mixer keeps it to 20 ms in normal running).
 const MIX_QUEUE_SAMPLES: usize = 16_000;
+/// How many paired samples may wait for the mixing thread of an echo-cancelled `mixed` take: two
+/// seconds; the thread is woken for every microphone chunk and keeps up with a few milliseconds of
+/// work per 100 ms.
+const PAIR_QUEUE_SAMPLES: usize = 2 * MIX_RATE_HZ as usize;
+/// How long the mixing thread sleeps when nothing wakes it.
+const MIX_THREAD_IDLE: Duration = Duration::from_millis(20);
 
 /// Where the recorder takes its audio from (docs/dictation.md §22).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,7 +65,15 @@ pub enum CaptureSource {
     Mixed {
         /// [`AudioDevice::id`] of an output device, or `None`.
         output_id: Option<String>,
+        /// Cancel the microphone's echo of the computer's sound before the sum (docs/dictation.md
+        /// §22.6); on unless told otherwise.
+        #[serde(default = "cancel_echo")]
+        echo_cancel: bool,
     },
+}
+
+fn cancel_echo() -> bool {
+    true
 }
 
 /// How to run a [`Recorder`].
@@ -128,6 +146,86 @@ pub struct Recorder {
     live: Mutex<Option<LiveConsumer>>,
     /// The consumer end of the long take's stream until [`Recorder::pcm_consumer`] takes it.
     pcm: Mutex<Option<PcmConsumer>>,
+    /// An echo-cancelled `mixed` take's mixing thread; after `streams`, so a drop stops the
+    /// callbacks before the thread finishes.
+    mixing: Option<MixThread>,
+}
+
+/// The mixing thread of an echo-cancelled `mixed` take (docs/dictation.md §22.6): it owns the
+/// take's [`Sink`] and feeds it the cancelled sum of the pairs the microphone's callback queues.
+struct MixThread {
+    handle: Option<std::thread::JoinHandle<()>>,
+    done: Arc<AtomicBool>,
+    /// Pairs dropped because the queue was full (the thread fell two seconds behind).
+    lost: Arc<AtomicU64>,
+}
+
+impl MixThread {
+    fn spawn(mut pairs: rtrb::Consumer<[f32; 2]>, mut sink: Sink) -> Result<Self, AudioError> {
+        let done = Arc::new(AtomicBool::new(false));
+        let finished = Arc::clone(&done);
+        let handle = std::thread::Builder::new()
+            .name("voltip-mix".into())
+            .spawn(move || {
+                let mut mix = CancelledMix::new();
+                let (mut mic, mut other, mut out) = (Vec::with_capacity(MIX_STEP), Vec::with_capacity(MIX_STEP), Vec::with_capacity(MIX_STEP));
+                loop {
+                    // Read the flag before draining: the callbacks have stopped by the time it is
+                    // set, so a drain after seeing it takes everything they queued.
+                    let last = finished.load(Ordering::Acquire);
+                    loop {
+                        let n = pairs.slots().min(MIX_STEP);
+                        let Ok(chunk) = pairs.read_chunk(n) else { break };
+                        if n == 0 {
+                            break;
+                        }
+                        let (first, second) = chunk.as_slices();
+                        mic.clear();
+                        other.clear();
+                        for pair in first.iter().chain(second) {
+                            mic.push(pair[0]);
+                            other.push(pair[1]);
+                        }
+                        chunk.commit_all();
+                        out.clear();
+                        mix.mix(&mic, &other, &mut out);
+                        sink.process(SampleChunk::F32(&out), MIX_RATE_HZ, 1);
+                    }
+                    if last {
+                        break;
+                    }
+                    std::thread::park_timeout(MIX_THREAD_IDLE);
+                }
+            })
+            .map_err(|e| AudioError::Backend(format!("mixing thread: {e}")))?;
+        Ok(Self { handle: Some(handle), done, lost: Arc::new(AtomicU64::new(0)) })
+    }
+
+    /// The handle the microphone's callback wakes the thread with.
+    fn waker(&self) -> Option<std::thread::Thread> {
+        self.handle.as_ref().map(|h| h.thread().clone())
+    }
+
+    /// Let the thread mix what is queued, then wait for it.
+    fn finish(&mut self) {
+        self.done.store(true, Ordering::Release);
+        if let Some(handle) = self.handle.take() {
+            handle.thread().unpark();
+            if handle.join().is_err() {
+                tracing::warn!("the mixing thread panicked; the take ends where it stopped");
+            }
+        }
+        let lost = self.lost.load(Ordering::Relaxed);
+        if lost > 0 {
+            tracing::warn!(lost, "the mixing thread fell behind; samples of the take were dropped");
+        }
+    }
+}
+
+impl Drop for MixThread {
+    fn drop(&mut self) {
+        self.finish();
+    }
 }
 
 /// Where each chunk of the recorded signal goes, owned by the audio callback that feeds it: the
@@ -270,7 +368,7 @@ impl Recorder {
         }
         let output_id = match &config.source {
             CaptureSource::Microphone => None,
-            CaptureSource::System { output_id } | CaptureSource::Mixed { output_id } => Some(output_id.as_deref()),
+            CaptureSource::System { output_id } | CaptureSource::Mixed { output_id, .. } => Some(output_id.as_deref()),
         };
         let output = match output_id {
             None => None,
@@ -298,6 +396,7 @@ impl Recorder {
             }
         };
         let mixed = matches!(config.source, CaptureSource::Mixed { .. });
+        let echo_cancel = matches!(config.source, CaptureSource::Mixed { echo_cancel: true, .. });
         // What the sink sees: the device's own rate, or the mixing rate.
         let (device, sink_rate) = match (&microphone, &output) {
             (Some(mic), _) if mixed => (mic.clone(), MIX_RATE_HZ),
@@ -341,6 +440,7 @@ impl Recorder {
             mono: Vec::with_capacity(SCRATCH_FRAMES),
         };
         let mut streams = Vec::with_capacity(2);
+        let mut mixing = None;
         match (&microphone, &output) {
             (Some(mic), Some(out)) => {
                 // `mixed`: the computer's sound waits in a queue at 16 kHz; the microphone's
@@ -355,12 +455,35 @@ impl Recorder {
                 });
                 streams.push(backend.open_output_capture(Some(out.id.as_str()), on_output)?);
                 let mut own = ToMixRate::new(mic.sample_rate_hz.unwrap_or(48_000))?;
-                let mut mixed_out = Vec::with_capacity(SCRATCH_FRAMES);
-                let on_microphone: SampleCallback = Box::new(move |chunk, rate, channels| {
-                    own.convert(chunk, rate, channels);
-                    mixer.mix(&own.out, &mut mixed_out);
-                    sink.process(SampleChunk::F32(&mixed_out), MIX_RATE_HZ, 1);
-                });
+                let on_microphone: SampleCallback = if echo_cancel {
+                    // The canceller allocates: the callback only pairs and queues, the mixing
+                    // thread does the rest.
+                    let (mut pairs, queued) = rtrb::RingBuffer::new(PAIR_QUEUE_SAMPLES);
+                    let thread = MixThread::spawn(queued, sink)?;
+                    let (wake, lost) = (thread.waker(), Arc::clone(&thread.lost));
+                    mixing = Some(thread);
+                    Box::new(move |chunk, rate, channels| {
+                        own.convert(chunk, rate, channels);
+                        mixer.pair(&own.out, |mic, other| match pairs.write_chunk_uninit(mic.len()) {
+                            Ok(slots) => {
+                                slots.fill_from_iter(mic.iter().zip(other).map(|(m, o)| [*m, *o]));
+                            }
+                            Err(_) => {
+                                lost.fetch_add(mic.len() as u64, Ordering::Relaxed);
+                            }
+                        });
+                        if let Some(thread) = &wake {
+                            thread.unpark();
+                        }
+                    })
+                } else {
+                    let mut mixed_out = Vec::with_capacity(SCRATCH_FRAMES);
+                    Box::new(move |chunk, rate, channels| {
+                        own.convert(chunk, rate, channels);
+                        mixer.mix(&own.out, &mut mixed_out);
+                        sink.process(SampleChunk::F32(&mixed_out), MIX_RATE_HZ, 1);
+                    })
+                };
                 streams.push(backend.open_input(config.device_id.as_deref(), on_microphone)?);
             }
             (Some(_), None) => {
@@ -380,9 +503,10 @@ impl Recorder {
             ?max_duration,
             live = config.live_tap.is_some(),
             stream = config.pcm_stream.is_some(),
+            echo_cancel,
             "recorder started"
         );
-        Ok(Self { device, output, streams, capture, target_rate_hz: config.target_rate_hz, live: Mutex::new(live), pcm: Mutex::new(pcm_out) })
+        Ok(Self { device, output, streams, capture, target_rate_hz: config.target_rate_hz, live: Mutex::new(live), pcm: Mutex::new(pcm_out), mixing })
     }
 
     /// The consumer end of the live tap requested with `RecorderConfig::live_tap`: `Some` exactly
@@ -428,8 +552,12 @@ impl Recorder {
     /// configured `target_rate_hz`. A recorder that never received a sample yields an empty
     /// recording.
     pub fn stop(mut self) -> Result<Recording, AudioError> {
-        // Dropping the handles stops the streams, so nothing touches the buffer after this line.
+        // Dropping the handles stops the streams; a mixing thread then mixes what they queued and
+        // ends. Nothing touches the buffer after these lines.
         self.streams.clear();
+        if let Some(mut thread) = self.mixing.take() {
+            thread.finish();
+        }
         let capture = std::mem::take(&mut *self.capture.lock().unwrap_or_else(PoisonError::into_inner));
         if capture.rate == 0 {
             return Ok(Recording::from_samples(Vec::new(), self.target_rate_hz, capture.truncated));
@@ -517,7 +645,13 @@ mod tests {
         );
         assert!(!serde_json::to_string(&config).unwrap().contains("pcm_stream"), "None is omitted");
         let mixed: RecorderConfig = serde_json::from_str(r#"{"source":{"kind":"mixed","output_id":"fake:speakers"},"pcm_stream":{}}"#).unwrap();
-        assert_eq!(mixed.source, CaptureSource::Mixed { output_id: Some("fake:speakers".into()) });
+        assert_eq!(
+            mixed.source,
+            CaptureSource::Mixed { output_id: Some("fake:speakers".into()), echo_cancel: true },
+            "echo cancellation unless told otherwise"
+        );
+        let plain: CaptureSource = serde_json::from_str(r#"{"kind":"mixed","output_id":null,"echo_cancel":false}"#).unwrap();
+        assert_eq!(plain, CaptureSource::Mixed { output_id: None, echo_cancel: false });
         assert_eq!(mixed.pcm_stream, Some(PcmStreamConfig::default()));
         assert!(!serde_json::to_string(&config).unwrap().contains("live_tap"), "None is omitted");
         let live: RecorderConfig = serde_json::from_str(r#"{"live_tap":{}}"#).unwrap();
@@ -811,12 +945,13 @@ mod tests {
     }
 
     /// `mixed`: the microphone (the clock) and the output land in one 16 kHz take, summed with
-    /// −3 dB each; the live tap follows the mix; both streams are released at the stop.
+    /// −3 dB each; the live tap follows the mix; both streams are released at the stop. Without
+    /// echo cancellation: the sum itself (the cancelled one has its own test below).
     #[test]
     fn the_mixed_source_sums_the_microphone_and_the_output() {
         let backend = FakeBackend::new().with_signal(Signal::Constant(0.2)).with_output_signal(Signal::Constant(0.3));
         let config = RecorderConfig {
-            source: CaptureSource::Mixed { output_id: Some(FAKE_SPEAKERS_ID.into()) },
+            source: CaptureSource::Mixed { output_id: Some(FAKE_SPEAKERS_ID.into()), echo_cancel: false },
             live_tap: Some(LiveTapConfig::default()),
             ..RecorderConfig::default()
         };
@@ -838,6 +973,37 @@ mod tests {
         let mut buf = vec![0.0f32; 4096];
         assert!(tap.read(&mut buf) > 0, "the tap follows the mix");
         assert!(!backend.is_running(), "both streams are released");
+    }
+
+    /// `mixed` with echo cancellation (docs/dictation.md §22.6): the mixing thread feeds the take,
+    /// the tap and the levels, the microphone comes through (a tone the computer is not playing
+    /// is no echo), and `stop()` waits for the thread, so the take ends with everything the
+    /// callbacks queued and nothing runs after it.
+    #[test]
+    fn the_echo_cancelled_mix_runs_on_its_own_thread_and_the_stop_waits_for_it() {
+        let backend = FakeBackend::new().with_signal(Signal::Sine { frequency_hz: 440.0, amplitude: 0.2 }).with_output_signal(Signal::Silence);
+        let config = RecorderConfig {
+            source: CaptureSource::Mixed { output_id: Some(FAKE_SPEAKERS_ID.into()), echo_cancel: true },
+            live_tap: Some(LiveTapConfig::default()),
+            ..RecorderConfig::default()
+        };
+        let levels = Arc::new(Mutex::new(0usize));
+        let seen = Arc::clone(&levels);
+        let recorder = Recorder::start_with(&backend, config, move |_| *seen.lock().unwrap() += 1).unwrap();
+        let mut tap = recorder.live_consumer().unwrap();
+        wait_until(|| recorder.elapsed() >= Duration::from_millis(800));
+        let recording = recorder.stop().unwrap();
+        assert!(!backend.is_running(), "both streams are released");
+        assert_eq!(recording.sample_rate_hz, 16_000);
+        assert!(recording.samples.len() >= 12_800, "{} samples", recording.samples.len());
+        // Past the resamplers' and the canceller's start-up: the tone at −3 dB, give or take.
+        let steady = &recording.samples[3_200..];
+        let rms = (steady.iter().map(|&s| (f32::from(s) / 32_768.0).powi(2)).sum::<f32>() / steady.len() as f32).sqrt();
+        let expected = crate::mix::MIX_GAIN * 0.2 / std::f32::consts::SQRT_2;
+        assert!((rms / expected - 1.0).abs() < 0.25, "the microphone comes through: rms {rms}, expected about {expected}");
+        let mut buf = vec![0.0f32; 4096];
+        assert!(tap.read(&mut buf) > 0, "the tap follows the mix");
+        assert!(*levels.lock().unwrap() > 0, "levels are reported");
     }
 
     /// A long take (docs/dictation.md §22): the in-memory take stops at `max_duration`, the stream

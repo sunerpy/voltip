@@ -97,16 +97,19 @@ describe("Settings · 录音来源 (was 麦克风)", () => {
     expect(await screen.findByText(/出错了 · 麦克风标识须为 1–1024 字节/)).toBeInTheDocument();
   });
 
-  it("the source decides the rows: the computer's sound shows the output device and hides the microphone, mixing shows both and the headphones hint; an output is chosen and followed back to the default (docs/dictation.md section 22)", async () => {
+  it("the source decides the rows: the computer's sound shows the output device and hides the microphone, mixing shows both and the echo cancellation switch with its hint; an output is chosen and followed back to the default (docs/dictation.md section 22)", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/settings/microphone" });
     const pane = await openPane();
     expect(within(pane).queryByRole("combobox", { name: "输出设备" })).toBeNull();
+    // One source has no echo to cancel: the switch is for mixed takes only.
+    expect(within(pane).queryByRole("switch", { name: "消除扬声器回声" })).toBeNull();
     const switcher = within(pane).getByTestId("recording-source");
     await user.click(within(switcher).getByRole("radio", { name: "电脑声音" }));
     expect(backend.peek().settings.recording.source).toBe("system");
     const output = await within(pane).findByRole("combobox", { name: "输出设备" });
     expect(within(pane).queryByRole("combobox", { name: "输入设备" })).toBeNull();
+    expect(within(pane).queryByRole("switch", { name: "消除扬声器回声" })).toBeNull();
     expect(within(pane).queryByTestId("microphone-test")).toBeNull();
     expect(
       within(output)
@@ -127,6 +130,19 @@ describe("Settings · 录音来源 (was 麦克风)", () => {
     });
     expect(within(pane).getByRole("combobox", { name: "输入设备" })).toBeInTheDocument();
     expect(within(pane).getByRole("combobox", { name: "输出设备" })).toHaveValue("Sony WH-1000XM5");
+    // Since 2026-10-01 (docs/dictation.md §22.6, the user's request of 2026-09-30) a mixed take
+    // cancels the speakers' echo by default and says so; switched off, the headphones hint is back.
+    const echo = within(pane).getByRole("switch", { name: "消除扬声器回声" });
+    expect(echo).toHaveAttribute("aria-checked", "true");
+    expect(pane).toHaveTextContent("已消除扬声器回声。外放音量很大时，仍建议佩戴耳机。");
+    await user.click(echo);
+    await waitFor(() => {
+      expect(backend.peek().settings.recording.echo_cancel).toBe(false);
+    });
+    expect(within(pane).getByRole("switch", { name: "消除扬声器回声" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
     expect(pane).toHaveTextContent("混合录制时请佩戴耳机");
     await user.selectOptions(within(pane).getByRole("combobox", { name: "输出设备" }), "");
     await waitFor(() => {
@@ -138,7 +154,14 @@ describe("Settings · 录音来源 (was 麦克风)", () => {
     renderApp({
       path: "/settings/microphone",
       mock: {
-        settings: { recording: { source: "system", output_device: "HDMI", max_minutes: 10 } },
+        settings: {
+          recording: {
+            source: "system",
+            output_device: "HDMI",
+            max_minutes: 10,
+            echo_cancel: true,
+          },
+        },
       },
     });
     const dialog = await screen.findByRole("dialog", { name: "设置" });

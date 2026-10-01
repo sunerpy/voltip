@@ -42,7 +42,8 @@
       "recording": {
         "source": "microphone",
         "output_device": null,
-        "max_minutes": 10
+        "max_minutes": 10,
+        "echo_cancel": true
       }
     },
     "secret_backend": "",
@@ -175,7 +176,8 @@
     "recording": {
       "source": "mixed",
       "output_device": "wasapi:{0.0.0.00000000}.{a1}",
-      "max_minutes": 60
+      "max_minutes": 60,
+      "echo_cancel": false
     }
   },
   {
@@ -2831,7 +2833,8 @@
     "recording": {
       "source": "mixed",
       "output_device": "wasapi:{0.0.0.00000000}.{a1}",
-      "max_minutes": 60
+      "max_minutes": 60,
+      "echo_cancel": false
     }
   },
   {

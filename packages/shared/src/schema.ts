@@ -401,10 +401,18 @@ export const recordingSettingsSchema = z.object({
   output_device: z.string().nullable().default(null),
   /** One of `MAX_MINUTES_CHOICES`. */
   max_minutes: z.number().int().positive().default(DEFAULT_MAX_MINUTES),
+  /** `mixed`: the microphone's echo of the computer's sound is removed before the two are summed
+   *  (docs/dictation.md §22.6); on by default. */
+  echo_cancel: z.boolean().default(true),
 });
 export type RecordingSettings = z.infer<typeof recordingSettingsSchema>;
 export function defaultRecordingSettings(): RecordingSettings {
-  return { source: "microphone", output_device: null, max_minutes: DEFAULT_MAX_MINUTES };
+  return {
+    source: "microphone",
+    output_device: null,
+    max_minutes: DEFAULT_MAX_MINUTES,
+    echo_cancel: true,
+  };
 }
 
 /** Where the dictation pill appears (`voltip_core::OverlayPlacement`); the desktop shell places the

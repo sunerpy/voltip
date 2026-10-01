@@ -12,6 +12,8 @@
 //!   [`RecorderConfig::live_tap`] it also feeds a lock-free 16 kHz mono tap ([`live`]) for the
 //!   streaming preview, and it reports the first delivered samples through `on_ready`.
 //! * [`dsp`] — the arithmetic (RMS, peak, dBFS, peak hold, frame cadence), hardware-free.
+//! * [`mix`] and [`echo`] — the `mixed` source: pairing the microphone with the computer's sound,
+//!   cancelling the microphone's echo of it (AEC3), and the sum, hardware-free.
 //! * [`recording`] — downmix, resampling and WAV framing, hardware-free.
 //! * [`Backend`] — the seam between the meter and the sound system. [`CpalBackend`] is the real
 //!   one; [`FakeBackend`] (feature `test-support`, always on for this crate's tests) plays a
@@ -26,6 +28,7 @@
 
 mod backend;
 pub mod dsp;
+pub mod echo;
 #[cfg(any(test, feature = "test-support"))]
 mod fake;
 pub mod live;
@@ -37,6 +40,7 @@ pub mod recording;
 
 pub use backend::{AudioDevice, Backend, CpalBackend, SampleCallback, StreamHandle, SystemAudio};
 pub use dsp::SampleChunk;
+pub use echo::EchoCanceller;
 #[cfg(any(test, feature = "test-support"))]
 pub use fake::{FAKE_DEFAULT_ID, FAKE_SPEAKERS_ID, FAKE_USB_ID, FakeBackend, FakeFormat, Signal};
 pub use live::{DEFAULT_LIVE_BUFFER_MS, DEFAULT_LIVE_RATE_HZ, LiveConsumer, LiveTapConfig, StreamResampler};

@@ -546,7 +546,9 @@ export function Home() {
                   : systemOnly
                     ? t("home.mic.systemHint")
                     : source.recording.source === "mixed"
-                      ? t("home.mic.mixedHint")
+                      ? source.recording.echo_cancel
+                        ? t("home.mic.mixedEchoHint")
+                        : t("home.mic.mixedHint")
                       : t("home.mic.idleHint")}
             </span>
           </div>

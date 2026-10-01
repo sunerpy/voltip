@@ -289,11 +289,13 @@ fn settings() -> Settings {
         // docs/pairing.md 「常开配对」: on, away from its default.
         pairing_always_on: true,
         microphone: Some("wasapi:{0.0.1.00000000}.{c2}".into()),
-        // docs/dictation.md §22: the microphone and the computer's sound, an hour at most.
+        // docs/dictation.md §22: the microphone and the computer's sound, an hour at most, with the
+        // echo cancellation (§22.6) away from its default.
         recording: voltip_core::RecordingSettings {
             source: voltip_core::RecordingSource::Mixed,
             output_device: Some("wasapi:{0.0.0.00000000}.{a1}".into()),
             max_minutes: 60,
+            echo_cancel: false,
         },
         ..Settings::default()
     }
@@ -1660,10 +1662,11 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         // docs/dictation.md §13.1: the lone-key trigger (`null` switches it off).
         ("settings_set_solo_key", json!({ "key": "mouse_back" }), "SettingsSetSoloKey"),
         ("settings_set_microphone", json!({ "device": "wasapi:{0.0.1.00000000}.{c2}" }), "SettingsSetMicrophone"),
-        // docs/dictation.md §22: the source, the output device and the longest length of a take.
+        // docs/dictation.md §22: the source, the output device, the longest length of a take and the
+        // echo cancellation of a mixed one (§22.6).
         (
             "settings_set_recording",
-            json!({ "recording": { "source": "mixed", "output_device": "wasapi:{0.0.0.00000000}.{a1}", "max_minutes": 60 } }),
+            json!({ "recording": { "source": "mixed", "output_device": "wasapi:{0.0.0.00000000}.{a1}", "max_minutes": 60, "echo_cancel": false } }),
             "SettingsSetRecording",
         ),
         ("settings_set_locale", json!({ "locale": "en" }), "SettingsSetLocale"),
