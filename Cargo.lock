@@ -6995,6 +6995,7 @@ name = "voltip-cloud"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "serde",
  "tokio",
  "tracing",
  "voltip-asr",
@@ -7169,6 +7170,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-barcode-scanner",
+ "tauri-plugin-opener",
  "tempfile",
  "tokio",
  "tracing",

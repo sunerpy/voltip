@@ -1,8 +1,9 @@
 //! The cloud services as the core's ports (docs/dictation.md §3): speech-to-text through
 //! `voltip-asr` behind [`Transcriber`], clean-up and the voice edit's rewrite through
-//! `voltip-refine` behind [`Refiner`], and the choice of client for a [`ResolvedEngines`]. The
-//! desktop adds its local models next to these (`apps/desktop/src-tauri/src/dictation.rs`); the
-//! phone, which has none, uses them alone when it recognises a take itself (§20.7).
+//! `voltip-refine` behind [`Refiner`], the choice of client for a [`ResolvedEngines`], and the
+//! provider probe behind [`ServiceProbe`]. The desktop adds its local models next to these
+//! (`apps/desktop/src-tauri/src/dictation.rs`); the phone, which has none, uses them alone when it
+//! recognises a take itself (§20.7).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -12,14 +13,16 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use voltip_asr::{AsrClient, AsrConfig};
-use voltip_core::dictation::{DictationError, RefineHints, Refined, Refiner, Transcriber, Transcript};
-use voltip_core::{BuiltinPreset, ProviderId, ResolvedEngines, ServiceKind, TakePreset};
+use voltip_core::dictation::{DictationError, RefineHints, Refined, Refiner, ServiceProbe, Transcriber, Transcript};
+use voltip_core::{BuiltinPreset, ProbeError, ProbeFailure, ProviderId, ResolvedEngines, ServiceKind, TakePreset};
 use voltip_refine::{PromptContext, PromptHints, RefineClient, RefineConfig};
 
 /// HTTP request deadline for one transcription (long recordings on a slow link).
 pub const ASR_TIMEOUT: Duration = Duration::from_secs(90);
 /// HTTP request deadline for one refinement.
 pub const REFINE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Deadline of one provider probe (the engines pane's 测试连接).
+pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Speech-to-text through [`voltip_asr::AsrClient`].
 pub struct HttpTranscriber {
@@ -53,6 +56,27 @@ impl HttpRefiner {
     pub fn new(config: RefineConfig) -> Result<Self, DictationError> {
         Ok(Self { client: RefineClient::new(config).map_err(|e| DictationError::Refine(e.to_string()))? })
     }
+}
+
+/// The built-in preset's own text (task, rules, examples; the output contract is added to every
+/// preset): what 复制为自定义 starts from.
+pub fn builtin_preset_body(preset: BuiltinPreset) -> &'static str {
+    refine_preset(&TakePreset::Builtin(preset)).builtin_body().unwrap_or_default()
+}
+
+/// One built-in preset's own text as `presets_builtin` answers it.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct BuiltinPresetText {
+    /// Which preset.
+    pub id: BuiltinPreset,
+    /// Its task, rules and examples ([`builtin_preset_body`]).
+    pub prompt: &'static str,
+}
+
+/// Every built-in preset's text, in the order the interface lists them (`presets_builtin`; the
+/// preview serves the same list from `packages/shared/src/fixtures/ipc/presets-builtin.json`).
+pub fn builtin_preset_texts() -> Vec<BuiltinPresetText> {
+    BuiltinPreset::ALL.into_iter().map(|id| BuiltinPresetText { id, prompt: builtin_preset_body(id) }).collect()
 }
 
 /// The take's preset as the refine crate names it (docs/dictation.md §21).
@@ -163,6 +187,30 @@ pub fn refiner(engines: &ResolvedEngines) -> Option<Arc<dyn Refiner>> {
             }
         }
     })
+}
+
+/// The engines pane's 测试连接 over HTTP (docs/dictation.md §3.3): `GET {base}/models` with the
+/// key, answered with ids or a host-free failure. Recognition and clean-up endpoints are
+/// normalised the same way (`…/v1`), so one request serves both kinds. Both shells use it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HttpServiceProbe;
+
+#[async_trait]
+impl ServiceProbe for HttpServiceProbe {
+    async fn list_models(&self, base_url: &str, key: Option<&str>) -> Result<Vec<String>, ProbeError> {
+        voltip_refine::list_models(base_url, key, PROBE_TIMEOUT).await.map_err(|e| {
+            use voltip_refine::RefineError as E;
+            match e {
+                E::InvalidConfig(_) => ProbeError::new(ProbeFailure::InvalidUrl),
+                E::Unauthorized => ProbeError::new(ProbeFailure::Unauthorized),
+                E::RateLimited { .. } => ProbeError { reason: ProbeFailure::HttpStatus, status: Some(429) },
+                E::Server { status, .. } => ProbeError { reason: ProbeFailure::HttpStatus, status: Some(status) },
+                E::Network(_) => ProbeError::new(ProbeFailure::Unreachable),
+                E::Timeout => ProbeError::new(ProbeFailure::Timeout),
+                _ => ProbeError::new(ProbeFailure::BadResponse),
+            }
+        })
+    }
 }
 
 #[cfg(test)]

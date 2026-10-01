@@ -16,18 +16,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::audio::AudioHub;
-use std::time::Duration;
 
-use async_trait::async_trait;
 use parking_lot::Mutex;
 use voltip_asr_local::{LocalStreamingTranscriber, LocalTranscriber, ModelStore, VadSegmenterFactory};
 use voltip_audio::{Backend, CaptureSource, CpalBackend, LiveConsumer, LiveTapConfig, PcmConsumer, PcmStreamConfig, Recorder, RecorderConfig};
-pub use voltip_cloud::{ASR_TIMEOUT, HttpRefiner, HttpTranscriber, REFINE_TIMEOUT, Unconfigured, prompt_hints, refine_preset};
+pub use voltip_cloud::{
+    ASR_TIMEOUT, BuiltinPresetText, HttpRefiner, HttpServiceProbe, HttpTranscriber, PROBE_TIMEOUT, REFINE_TIMEOUT, Unconfigured, builtin_preset_body,
+    builtin_preset_texts, prompt_hints, refine_preset,
+};
 use voltip_core::dictation::{
     AudioSource, Capture, CaptureOptions, ClipboardCode, DictationError, DictationPorts, EngineFactory, InjectNote, Injection, Injector, LevelFrame, LivePcm,
-    MAX_RECORDING, PcmStream, Recording, Refiner, SelectionTiming, ServiceProbe, Transcriber, Via,
+    MAX_RECORDING, PcmStream, Recording, Refiner, SelectionTiming, Transcriber, Via,
 };
-use voltip_core::{BuiltinPreset, InjectMode, Modifier, ProbeError, ProbeFailure, RecordingSource, ResolvedEngines, TakePreset};
+use voltip_core::{InjectMode, Modifier, RecordingSource, ResolvedEngines};
 use voltip_inject::{ClipboardOnlyInjector, CopyOptions, FallbackCode, PasteOptions, SelectionSource};
 use voltip_platform::{HostOs, InjectDecision, InjectPreflight};
 
@@ -213,27 +214,6 @@ impl LivePcm for LiveTap {
     fn is_closed(&self) -> bool {
         self.0.is_closed()
     }
-}
-
-/// The built-in preset's own text (task, rules, examples; the output contract is added to every
-/// preset): what 复制为自定义 starts from.
-pub fn builtin_preset_body(preset: BuiltinPreset) -> &'static str {
-    refine_preset(&TakePreset::Builtin(preset)).builtin_body().unwrap_or_default()
-}
-
-/// One built-in preset's own text as `presets_builtin` answers it.
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct BuiltinPresetText {
-    /// Which preset.
-    pub id: BuiltinPreset,
-    /// Its task, rules and examples ([`builtin_preset_body`]).
-    pub prompt: &'static str,
-}
-
-/// Every built-in preset's text, in the order the interface lists them (`presets_builtin`; the
-/// preview serves the same list from `packages/shared/src/fixtures/ipc/presets-builtin.json`).
-pub fn builtin_preset_texts() -> Vec<BuiltinPresetText> {
-    BuiltinPreset::ALL.into_iter().map(|id| BuiltinPresetText { id, prompt: builtin_preset_body(id) }).collect()
 }
 
 /// Where one text goes (docs/dictation.md §15.3).
@@ -435,33 +415,6 @@ pub fn hardware_status(machine: &voltip_asr_local::HardwareInfo) -> voltip_core:
     }
 }
 
-/// Deadline of one provider probe (the engines pane's 测试连接).
-pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// The engines pane's 测试连接 over HTTP (docs/dictation.md §3.3): `GET {base}/models` with the
-/// key, answered with ids or a host-free failure. Recognition and clean-up endpoints are
-/// normalised the same way (`…/v1`), so one request serves both kinds.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct HttpServiceProbe;
-
-#[async_trait]
-impl ServiceProbe for HttpServiceProbe {
-    async fn list_models(&self, base_url: &str, key: Option<&str>) -> Result<Vec<String>, ProbeError> {
-        voltip_refine::list_models(base_url, key, PROBE_TIMEOUT).await.map_err(|e| {
-            use voltip_refine::RefineError as E;
-            match e {
-                E::InvalidConfig(_) => ProbeError::new(ProbeFailure::InvalidUrl),
-                E::Unauthorized => ProbeError::new(ProbeFailure::Unauthorized),
-                E::RateLimited { .. } => ProbeError { reason: ProbeFailure::HttpStatus, status: Some(429) },
-                E::Server { status, .. } => ProbeError { reason: ProbeFailure::HttpStatus, status: Some(status) },
-                E::Network(_) => ProbeError::new(ProbeFailure::Unreachable),
-                E::Timeout => ProbeError::new(ProbeFailure::Timeout),
-                _ => ProbeError::new(ProbeFailure::BadResponse),
-            }
-        })
-    }
-}
-
 /// The factory the core calls at start and after every settings / secret change. It also
 /// records the injection mode for the [`NativeInjector`] sharing `mode`, hands the one
 /// [`LocalTranscriber`] (with its loaded recogniser) to every local-mode configuration, and — with
@@ -529,6 +482,8 @@ pub fn ports_with_backend(backend: Arc<dyn Backend + Send + Sync>, hub: Arc<Audi
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     /// Regression (2026-09-28): a chosen microphone that is gone (unplugged, a settings file from
