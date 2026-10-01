@@ -419,16 +419,31 @@ try {
   # 4e. A double click on the tray button (user request 2026-09-30) leaves the main window shown.
   # Its first click shows the window already, and where the button sits in the overflow flyout
   # the window coming up can close the flyout before the second click: whether the shell reported
-  # a double click is noted, the window is what is checked.
+  # a double click is noted, the window is what is checked. As with a right click, a double click
+  # that lands while the flyout closes reaches nothing (CI 2026-10-01: no click in the app's log):
+  # the button is looked up and double-clicked again.
   if ([VoltipTray]::IsWindowVisible($hwnd)) {
     [void][VoltipTray]::PostMessageW($hwnd, [VoltipTray]::WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero)
     Wait-For { -not [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'the window to hide' | Out-Null
   }
   $doubles = ([regex]::Matches((Log-Text), 'tray double click: main window')).Count
-  $tray = Wait-For { Find-TrayButton } $StepTimeoutSec 'the tray button'
-  $xy = Center $tray[0]
-  [VoltipTray]::DoubleClick($xy[0], $xy[1])
-  Wait-For { [VoltipTray]::IsWindowVisible($hwnd) } $StepTimeoutSec 'the double click to show the window' | Out-Null
+  $shown = $false
+  for ($attempt = 1; $attempt -le 4 -and -not $shown; $attempt++) {
+    $clicks = ([regex]::Matches((Log-Text), 'tray click: main window')).Count
+    $tray = Wait-For { Find-TrayButton } $StepTimeoutSec 'the tray button'
+    $xy = Center $tray[0]
+    [VoltipTray]::DoubleClick($xy[0], $xy[1])
+    $deadline = (Get-Date).AddSeconds(5)
+    while (-not $shown -and (Get-Date) -lt $deadline) {
+      $shown = [VoltipTray]::IsWindowVisible($hwnd)
+      if (-not $shown) { Start-Sleep -Milliseconds 250 }
+    }
+    if (-not $shown) {
+      $reached = ([regex]::Matches((Log-Text), 'tray click: main window')).Count - $clicks
+      Note "double click $attempt on the tray button showed no window ($reached clicks reached the app); looking for the button again"
+    }
+  }
+  if (-not $shown) { throw 'smoke-tray-windows: four double clicks on the tray button showed no window' }
   # The shell's report, when it makes one, follows the second press.
   $reported = $false
   $deadline = (Get-Date).AddSeconds(3)

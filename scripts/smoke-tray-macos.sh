@@ -231,11 +231,11 @@ interval=$(log_text | sed -n 's/.*tray click: menu after_ms=\([0-9]*\).*/\1/p' |
 window_hidden || fail 'a click showed the main window'
 note "click: the menu opened ${delay} ms after it (double-click interval ${interval} ms)"
 before=$(log_count 'tray double click: main window')
-ax doubleclick
+# Watched past the first click's interval: that click must open nothing when its wait ends.
+seen=$(ax doubleclick $((interval + 1500)))
 wait_for 30 'the double click in the log' log_count_above 'tray double click: main window' "$before"
 wait_for 30 'the double click to show the window' window_shown
-# The first click of the pair must open nothing when its interval ends.
-! settles $((interval / 1000 + 2)) ax menu-open || fail 'a double click opened the menu as well as the window'
+[ "$seen" = "no menu" ] || fail 'a double click opened the menu as well as the window'
 note 'double click: main window shown, no menu'
 ax close Voltip
 wait_for 30 'the window to hide' window_hidden

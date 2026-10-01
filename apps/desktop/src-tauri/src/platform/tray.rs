@@ -195,7 +195,10 @@ fn left_click<R: Runtime>(tray: &TrayIcon<R>) {
         }
     }
     #[cfg(not(target_os = "macos"))]
-    crate::show_main_window(tray.app_handle());
+    {
+        tracing::info!("tray click: main window");
+        crate::show_main_window(tray.app_handle());
+    }
 }
 
 /// The user's double-click interval (System Settings › Mouse / Trackpad), in milliseconds, kept to

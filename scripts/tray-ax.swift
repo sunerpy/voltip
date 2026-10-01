@@ -9,10 +9,11 @@
 //                                    (a checked one as "<entry><TAB>✓"), close the menu
 //   tray-ax <pid> press-sub <title> <entry>  open that submenu and choose <entry>
 //   tray-ax <pid> click              a real left click at the item's centre (mouse events, not an
-//                                    accessibility press); waits for the menu, prints how many
-//                                    milliseconds after the click it opened, and closes it
-//   tray-ax <pid> doubleclick        a real double click at the item's centre
-//   tray-ax <pid> menu-open          exit 0 while the item's menu is open, 1 otherwise
+//                                    accessibility press); waits for a menu of the app to open,
+//                                    prints how many milliseconds after the click it did, closes it
+//   tray-ax <pid> doubleclick <ms>   a real double click at the item's centre; then "menu" when a
+//                                    menu of the app opened within <ms> (and closes it), else
+//                                    "no menu"
 //   tray-ax <pid> windows            the titles of the process's windows, one per line
 //   tray-ax <pid> close <title>      press the close button of the window titled <title>
 //   tray-ax <pid> dialog <name>      exit 0 when a window holds a dialog named <name>
@@ -131,7 +132,7 @@ if args.count == 3 && args[1] == "ink" {
 }
 
 guard args.count >= 3, let pid = pid_t(args[1]) else {
-    fail("usage: tray-ax <pid> frame|menu|press <title>|submenu <title>|press-sub <title> <entry>|click|doubleclick|menu-open|windows|close <title>|chrome <title>|dialog <name>")
+    fail("usage: tray-ax <pid> frame|menu|press <title>|submenu <title>|press-sub <title> <entry>|click|doubleclick <ms>|windows|close <title>|chrome <title>|dialog <name>")
 }
 guard AXIsProcessTrusted() else { fail("this binary has no Accessibility permission") }
 let app = AXUIElementCreateApplication(pid)
@@ -144,9 +145,36 @@ func statusItem() -> AXUIElement {
     }
 }
 
-/// The status item's menu while it is open.
+/// The status item's menu. The accessibility tree carries it whether or not it is open (as it
+/// carries a menu bar's menus), so it says nothing about what the screen shows: `watchMenus`
+/// does.
 func openedMenu(_ item: AXUIElement) -> AXUIElement? {
     children(item).first(where: { text($0, kAXRoleAttribute) == kAXMenuRole })
+}
+
+/// The first menu of the app that opened since `watchMenus`, and when (system uptime).
+var menuOpened: (menu: AXUIElement, at: TimeInterval)?
+
+/// Start listening for the app's AXMenuOpened notifications (the one VoiceOver announces a menu
+/// by); keep the observer until the listening is done.
+func watchMenus() -> AXObserver {
+    var made: AXObserver?
+    let created = AXObserverCreate(pid, { _, element, _, _ in
+        if menuOpened == nil { menuOpened = (element, ProcessInfo.processInfo.systemUptime) }
+    }, &made)
+    guard created == .success, let observer = made else { fail("cannot observe the app (\(created.rawValue))") }
+    let added = AXObserverAddNotification(observer, app, kAXMenuOpenedNotification as CFString, nil)
+    guard added == .success else { fail("cannot listen for the app's menus (\(added.rawValue))") }
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), .defaultMode)
+    return observer
+}
+
+/// Run the run loop (which delivers the notifications) until a menu opened or `seconds` passed.
+func awaitMenu(_ seconds: Double) {
+    let deadline = Date().addingTimeInterval(seconds)
+    while menuOpened == nil && Date() < deadline {
+        _ = CFRunLoopRunInMode(.defaultMode, 0.05, true)
+    }
 }
 
 /// Left-button mouse events at the status item's centre, as a hand makes them (the cursor moves
@@ -277,15 +305,26 @@ case "click":
     // Timed from just before the release the app answers, so the figure is never shorter than the
     // app's wait.
     let item = statusItem()
+    let observer = watchMenus()
     var released = 0.0
     clickItem(item, presses: 1) { released = ProcessInfo.processInfo.systemUptime }
-    let menu = wait(15, "the menu after a click") { openedMenu(item) }
-    print(Int((ProcessInfo.processInfo.systemUptime - released) * 1000))
-    _ = AXUIElementPerformAction(menu, kAXCancelAction as CFString)
+    awaitMenu(15)
+    guard let opened = menuOpened else { fail("no menu opened within 15 s of a click") }
+    print(Int((opened.at - released) * 1000))
+    _ = AXUIElementPerformAction(opened.menu, kAXCancelAction as CFString)
+    withExtendedLifetime(observer) {}
 case "doubleclick":
+    guard args.count == 4, let watch = Double(args[3]) else { fail("doubleclick needs how many ms to watch for a menu") }
+    let observer = watchMenus()
     clickItem(statusItem(), presses: 2)
-case "menu-open":
-    exit(openedMenu(statusItem()) == nil ? 1 : 0)
+    awaitMenu(watch / 1000)
+    if let opened = menuOpened {
+        _ = AXUIElementPerformAction(opened.menu, kAXCancelAction as CFString)
+        print("menu")
+    } else {
+        print("no menu")
+    }
+    withExtendedLifetime(observer) {}
 case "windows":
     for window in windows() { print(text(window, kAXTitleAttribute)) }
 case "wait-text":
