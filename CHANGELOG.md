@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.24](https://github.com/sunerpy/voltip/compare/v0.0.23...v0.0.24) (2026-10-01)
+
+
+### Features
+
+* **mobile:** the phone has the desktop's history ([#60](https://github.com/sunerpy/voltip/issues/60)) ([6385f85](https://github.com/sunerpy/voltip/commit/6385f851e9dbb5f6bf8d167896e4ccba80dd37c0))
+
 ## [0.0.23](https://github.com/sunerpy/voltip/compare/v0.0.22...v0.0.23) (2026-10-01)
 
 
