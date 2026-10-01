@@ -1,12 +1,17 @@
 import type { HistoryEntry } from "@voltip/shared";
 import { MockBackend } from "@voltip/shared/mock";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, configure, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
 
 // The phone's history (user decision 2026-10-01: the phone has the desktop's history, for what it
 // recognises itself; a take sent to a computer is in that computer's history).
 const NOW = Date.now();
+
+// A page opened here shows the core's answers asynchronously; on a busy machine (CI's coverage
+// run, 2026-10-01: a page opened after 返回 had not drawn its rows within the default second)
+// they take longer, so the waits for them do too. Nothing here times how fast a page reacts.
+configure({ asyncUtilTimeout: 5000 });
 
 function take(n: number, extra: Partial<HistoryEntry> = {}): HistoryEntry {
   return {
