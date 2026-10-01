@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.22](https://github.com/sunerpy/voltip/compare/v0.0.21...v0.0.22) (2026-10-01)
+
+
+### Bug Fixes
+
+* **desktop:** a history paste on Windows no longer lands in Voltip's own web view ([#55](https://github.com/sunerpy/voltip/issues/55)) ([03a9f4f](https://github.com/sunerpy/voltip/commit/03a9f4fa98bab1ac8a3932ef6aff6e6a8a4fa32c))
+
 ## [0.0.21](https://github.com/sunerpy/voltip/compare/v0.0.20...v0.0.21) (2026-10-01)
 
 
