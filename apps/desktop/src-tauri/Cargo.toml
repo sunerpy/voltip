@@ -100,7 +100,7 @@ tauri-plugin-macos-permissions = "=2.3.0"
 # The frontmost application for scenes (docs/dictation.md §18.2): `NSWorkspace.frontmostApplication`.
 # The exact versions tray-icon / muda already pull; only the two AppKit classes the probe touches.
 objc2 = "=0.6.4"
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSRunningApplication", "NSWorkspace"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSEvent", "NSRunningApplication", "NSWorkspace"] }
 # The tray menu's language when `settings.locale` is `system` (`NSLocale.preferredLanguages`); the
 # version objc2-app-kit already pulls.
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSLocale", "NSString"] }

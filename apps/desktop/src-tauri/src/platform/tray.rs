@@ -2,15 +2,17 @@
 //! mark with a badge that follows the dictation phase (drawn by `voltip_platform::tray`), and a
 //! menu in the UI's language: 打开 Voltip, the AI 润色 submenu (the switch and every preset,
 //! docs/dictation.md §21), 设置…, 检查更新… (only when the build has an update source) and 退出
-//! Voltip. On Windows a left click shows the main window and a right click opens the menu; on macOS
-//! a click opens the menu, as with every menu bar item. The menu is rebuilt when the language, the
-//! engine settings or the custom presets change.
+//! Voltip. On Windows a left click (or a double click) shows the main window and a right click
+//! opens the menu. On macOS a click opens the menu once the system's double-click interval has
+//! passed, and a double click shows the main window instead (user request 2026-09-30,
+//! `voltip_platform::tray::ClickSeries`); a right click opens the menu at once. The menu is rebuilt
+//! when the language, the engine settings or the custom presets change.
 
 use parking_lot::Mutex;
 use serde::Serialize;
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter as _, Manager as _, Runtime};
 use voltip_core::ui::UiEvent;
 use voltip_platform::HostOs;
@@ -38,6 +40,11 @@ pub struct TrayState {
     shown: Mutex<Shown>,
     /// The menu shown, rebuilt in the order the rebuilds read the state (`MenuSync`).
     menu: MenuSync<MenuModel>,
+    /// macOS: a left click waiting to become a double click.
+    clicks: Mutex<voltip_platform::tray::ClickSeries>,
+    /// The clock of `clicks`.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    started: std::time::Instant,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,7 +113,9 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, locale: TrayLocale, updater: bool
         .icon_as_template(macos)
         .tooltip(tray_tooltip(TrayGlyph::Idle, locale))
         .menu(&menu)
-        .show_menu_on_left_click(macos)
+        // The left button is ours everywhere (macOS: `left_click` opens the menu itself after the
+        // double-click interval); a right click opens the menu at once.
+        .show_menu_on_left_click(false)
         .on_menu_event(|app, event: MenuEvent| {
             let id = event.id().as_ref();
             if let Some(action) = TrayAction::from_id(id) {
@@ -117,17 +126,87 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, locale: TrayLocale, updater: bool
                 tracing::warn!(id, "tray menu event for no entry");
             }
         })
-        .on_tray_icon_event(|tray, event| {
-            if !cfg!(target_os = "macos")
-                && let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event
-            {
+        .on_tray_icon_event(|tray, event| match event {
+            TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } => left_click(tray),
+            // The menu opens at once: a left click waiting to open it opens nothing.
+            TrayIconEvent::Click { button: MouseButton::Right, button_state: MouseButtonState::Down, .. } => {
+                if let Some(state) = tray.app_handle().try_state::<TrayState>() {
+                    state.clicks.lock().cancel();
+                }
+            }
+            // Windows only (tray-icon); the first click of it has already shown the window.
+            TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => {
+                tracing::info!("tray double click: main window");
                 crate::show_main_window(tray.app_handle());
             }
+            _ => {}
         })
         .build(app)?;
-    app.manage(TrayState { shown: Mutex::new(Shown { glyph: TrayGlyph::Idle, locale }), menu: MenuSync::new(model) });
+    app.manage(TrayState {
+        shown: Mutex::new(Shown { glyph: TrayGlyph::Idle, locale }),
+        menu: MenuSync::new(model),
+        clicks: Mutex::new(voltip_platform::tray::ClickSeries::default()),
+        started: std::time::Instant::now(),
+    });
     tracing::info!(?locale, updater, "tray icon installed");
     Ok(())
+}
+
+/// A left click on the icon. Windows: the main window comes up. macOS: the click waits for the
+/// system's double-click interval (`ClickSeries`); a second click within it shows the main window,
+/// otherwise the menu opens when the wait ends.
+fn left_click<R: Runtime>(tray: &TrayIcon<R>) {
+    #[cfg(target_os = "macos")]
+    {
+        use voltip_platform::tray::ClickStep;
+        let app = tray.app_handle();
+        let Some(state) = app.try_state::<TrayState>() else { return };
+        let interval = double_click_interval_ms();
+        let now = u64::try_from(state.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let step = state.clicks.lock().click(now, interval);
+        match step {
+            ClickStep::OpenWindow => {
+                tracing::info!("tray double click: main window");
+                crate::show_main_window(app);
+            }
+            ClickStep::Wait { generation, after_ms } => {
+                let app = app.clone();
+                let tray = tray.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(after_ms)).await;
+                    let open = app.try_state::<TrayState>().is_some_and(|state| state.clicks.lock().expire(generation));
+                    if !open {
+                        return;
+                    }
+                    tracing::info!("tray click: menu");
+                    // `show_menu` returns when the menu closes (AppKit tracks it in a modal loop):
+                    // run it on the main thread, where `with_inner_tray_icon` runs inline, so no
+                    // runtime worker waits for the user.
+                    let opened = app.run_on_main_thread(move || {
+                        if let Err(e) = tray.with_inner_tray_icon(|inner| inner.show_menu()) {
+                            tracing::warn!(error = %e, "tray menu did not open after a click");
+                        }
+                    });
+                    if let Err(e) = opened {
+                        tracing::warn!(error = %e, "tray menu did not open after a click");
+                    }
+                });
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    crate::show_main_window(tray.app_handle());
+}
+
+/// The user's double-click interval (System Settings › Mouse / Trackpad), in milliseconds, kept to
+/// a sane range.
+#[cfg(target_os = "macos")]
+fn double_click_interval_ms() -> u64 {
+    std::time::Duration::try_from_secs_f64(objc2_app_kit::NSEvent::doubleClickInterval())
+        .ok()
+        .and_then(|interval| u64::try_from(interval.as_millis()).ok())
+        .unwrap_or(500)
+        .clamp(150, 2000)
 }
 
 /// An AI 润色 entry: the engine settings with the switch flipped or the preset chosen, through the
