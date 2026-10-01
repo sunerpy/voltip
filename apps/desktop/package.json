@@ -1,6 +1,6 @@
 {
   "name": "@voltip/desktop",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "private": true,
   "description": "Voltip desktop webview (Windows / macOS).",
   "license": "AGPL-3.0-or-later",

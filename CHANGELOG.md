@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.21](https://github.com/sunerpy/voltip/compare/v0.0.20...v0.0.21) (2026-10-01)
+
+
+### Features
+
+* **mobile:** the phone has its own speech models, AI models and presets ([#53](https://github.com/sunerpy/voltip/issues/53)) ([98b4930](https://github.com/sunerpy/voltip/commit/98b49307b9d43374c1812c831431bc1fc309f100))
+
 ## [0.0.20](https://github.com/sunerpy/voltip/compare/v0.0.19...v0.0.20) (2026-10-01)
 
 
