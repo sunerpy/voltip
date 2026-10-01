@@ -6,6 +6,8 @@ description: The dictation history on your computer, what each entry shows, how 
 
 Every dictation, voice edit and text sent from a paired phone is listed on the **History** page. The history is stored only on your computer.
 
+The latest results are also listed on the home page: six, or more when the window is taller, up to 30.
+
 ## What an entry shows
 
 - The text that was inserted and the text that was recognised, with a view of what changed between them.

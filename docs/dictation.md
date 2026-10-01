@@ -224,7 +224,7 @@ pub struct HistoryEntry {
 
 - **筛选**：`sinceMs`（页面按本地时间算好的零点）、收藏、失败（留在剪贴板或失败，即 `outcome` 不是 `inserted`）都用 SQL 过滤。
 - **搜索**：关键词去掉首尾空白、转小写后，在 `search` 列里做子串匹配。`search` 列在写入时拼成：内置场景的中英文名、`text`、`raw_text`、两个模型、应用名和 id、场景名、编辑指令、选区、处理后文本（§22.4，保存结果时重算），各自 `to_lowercase` 后以 U+001F 分隔，所以一次匹配不会跨两个字段。
-- **状态与事件**：`UiState.history_recent`（最新 20 条）与 `history_total` 取代原来的 `UiState.history`；`UiEvent::History { recent, total }`。复制上一条、侧栏计数、规则与词典页的「用最近一次听写」读 `history_recent`。
+- **状态与事件**：`UiState.history_recent`（最新 `RECENT_ENTRIES = 30` 条，2026-10-01 之前为 20 条）与 `history_total` 取代原来的 `UiState.history`；`UiEvent::History { recent, total }`。复制上一条、侧栏计数、规则与词典页的「用最近一次听写」读 `history_recent`。首页「最近的结果」至少显示 6 行，窗口更高时按页面下方的空白增加行数，直到页面底部不再留空，最多显示 `history_recent` 的全部条目（`useRowsThatFit`，2026-10-01 用户要求：高分辨率下表格下方空白一大片）。
 - **历史页**：每页 `HISTORY_PAGE = 100` 条，列表底部进入视野时加载下一页（也可以点「加载更多」）；搜索在停止输入 200 ms 后发出；新结果回来之前保留原来的行，第一次结果回来之前不显示空状态。收到历史事件时重新加载已加载的条数。首页表格点开的条目不在已加载的页里时，详情用 `history_entry` 取。
 
 ### 4.5 统计（2026-09-30）

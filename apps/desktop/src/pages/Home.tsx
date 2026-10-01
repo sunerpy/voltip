@@ -40,6 +40,7 @@ import {
   useI18n,
   useUiState,
 } from "@voltip/ui";
+import { useRef } from "react";
 import { SPEECH_ROUTE, useRouter } from "../app/router";
 import { serviceTarget } from "./settings/engines/helpers";
 import { MicrophoneStrength } from "../features/audio/MicrophoneStrength";
@@ -57,6 +58,7 @@ import {
   SpeechModelMenu,
 } from "../features/switchers/SwitcherMenus";
 import { type HistoryFilter, recentTimeLabel, todayLabel } from "../features/history/stats";
+import { useRowsThatFit } from "../features/history/recent-rows";
 import { useHomeStats } from "../features/history/useHomeStats";
 import { shortModel } from "../shell/page-meta";
 
@@ -69,7 +71,7 @@ const TITLE_MENU =
 
 /** How many paired phones the phone-microphone card lists before pointing at the devices page. */
 const HOME_DEVICE_ROWS = 3;
-/** Rows of the recent-results table. */
+/** Rows of the recent-results table at the least; a taller window shows more (`useRowsThatFit`). */
 const RECENT_ROWS = 6;
 
 /** A span of time in the session panel: each number with its unit smaller, as the character
@@ -175,7 +177,10 @@ export function Home() {
   };
 
   const stats = useHomeStats(now);
-  const recent = state.history_recent.slice(0, RECENT_ROWS);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const recentRef = useRef<HTMLDivElement>(null);
+  const recentRows = useRowsThatFit(pageRef, recentRef, RECENT_ROWS, state.history_recent.length);
+  const recent = state.history_recent.slice(0, recentRows);
 
   // Phone link summary: the first online phone names the card's lamp, otherwise a connecting one,
   // otherwise offline (or "no device" when nothing is paired).
@@ -322,7 +327,10 @@ export function Home() {
   ];
 
   return (
-    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-3 p-6" data-testid="page-home">
+    <div
+      ref={pageRef}
+      className="mx-auto flex w-full max-w-[1600px] flex-col gap-3 p-6"
+      data-testid="page-home">
       <Card
         padding="none"
         className="flex min-h-[52px] flex-wrap items-center gap-3 px-3.5 py-2"
@@ -813,7 +821,7 @@ export function Home() {
         ))}
       </div>
 
-      <div>
+      <div ref={recentRef}>
         <Eyebrow
           className="mb-1.5"
           right={

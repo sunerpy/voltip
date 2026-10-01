@@ -1,4 +1,10 @@
-import { defaultEngineSettings, formatCount, formatDuration, formatMs } from "@voltip/shared";
+import {
+  type HistoryEntry,
+  defaultEngineSettings,
+  formatCount,
+  formatDuration,
+  formatMs,
+} from "@voltip/shared";
 import {
   MOCK_ASR_MS,
   MOCK_AUDIO_DEVICES,
@@ -79,6 +85,83 @@ describe("Home page", () => {
     // The row itself still opens the entry.
     await user.click(within(row).getByText(newest.text));
     expect(await screen.findByTestId("page-history")).toBeInTheDocument();
+  });
+
+  // User request 2026-10-01: on a tall window six rows left a large blank space under the table.
+  it("regression: the recent table fills a tall window with more rows and gives them back when the window shrinks", async () => {
+    const ROW = 26;
+    /** The page without the table's rows, as measured at 1440 × 900. */
+    const PAGE = 759 - 6 * ROW;
+    let area = 841;
+    const observers = new Set<() => void>();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private readonly callback: () => void) {}
+        observe() {
+          observers.add(this.callback);
+        }
+        unobserve() {}
+        disconnect() {
+          observers.delete(this.callback);
+        }
+      },
+    );
+    const bodyRows = (root: ParentNode) =>
+      root.querySelectorAll('table[aria-label="最近的结果"] tbody tr').length;
+    // The layout jsdom does not do: the scroll area is `area` tall, the page as tall as its rows
+    // make it, every row 26 px.
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (this: Element) {
+      return this.querySelector(':scope > [data-testid="page-home"]') === null ? 0 : area;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.dataset.testid === "page-home" ? PAGE + ROW * bodyRows(this) : 0;
+    });
+    vi.spyOn(HTMLTableRowElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 1000, ROW),
+    );
+    const now = Date.now();
+    const history: HistoryEntry[] = Array.from({ length: 30 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      at_ms: now - i * 60_000,
+      raw_text: `第${i}句`,
+      text: `第${i}句。`,
+      refined: false,
+      asr_model: "Qwen/Qwen3-ASR-1.7B",
+      duration_ms: 1000,
+      asr_ms: 100,
+      outcome: { kind: "inserted", via: "paste" },
+      starred: false,
+      mode: "whole_take",
+      kind: "dictation",
+    }));
+    try {
+      renderApp({ mock: { now: () => now, history } });
+      const table = await screen.findByRole("table", { name: "最近的结果" });
+      const resize = (height: number) => {
+        area = height;
+        act(() => {
+          for (const measure of observers) measure();
+        });
+      };
+      const shown = () => bodyRows(table.parentElement ?? table);
+      // 1440 × 900: 82 px under six rows hold three more.
+      resize(841);
+      expect(shown()).toBe(9);
+      // 1920 × 1080.
+      resize(1021);
+      expect(shown()).toBe(16);
+      // Taller than thirty rows need: all thirty, the most the core sends.
+      resize(1600);
+      expect(shown()).toBe(30);
+      // Back to a short window: six rows, the page scrolls as before.
+      resize(600);
+      expect(shown()).toBe(6);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("the engine card's insert readout opens Settings › Dictation", async () => {
