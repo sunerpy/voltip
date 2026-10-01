@@ -2,7 +2,8 @@
   "schema_version": 1,
   "profile": "tauri",
   "android_signing": {
-    "certificate_sha256": "6cb470461043982d88d74a6894c4cfb21e2529bc01ac1e5e6acc7ac841788613"
+    "certificate_sha256": "6cb470461043982d88d74a6894c4cfb21e2529bc01ac1e5e6acc7ac841788613",
+    "key_alias": "voltip"
   },
   "macos_signing": {
     "certificate_sha1": "3571B3B4C8596B9731392EEFC280664E66234288",

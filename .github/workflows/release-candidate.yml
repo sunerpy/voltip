@@ -270,12 +270,11 @@ jobs:
         env:
           ANDROID_KEYSTORE_BASE64_PRESENT: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
           ANDROID_KEYSTORE_PASSWORD_PRESENT: ${{ secrets.ANDROID_KEYSTORE_PASSWORD != '' }}
-          ANDROID_KEY_ALIAS_PRESENT: ${{ secrets.ANDROID_KEY_ALIAS != '' }}
           ANDROID_KEY_PASSWORD_PRESENT: ${{ secrets.ANDROID_KEY_PASSWORD != '' }}
         run: |
           set -euo pipefail
           missing=0
-          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_PASSWORD; do
             present_var="${name}_PRESENT"
             if [ "${!present_var}" != true ]; then
               echo "::error::repository secret ${name} is empty; the Android packages must be signed with the release key (see .github/README-secrets.md)"
@@ -1118,17 +1117,19 @@ jobs:
         run: cargo tauri android build --ci --target aarch64 --apk --aab --config src-tauri/tauri.package-android.conf.json
 
       # Phase 2: the release key, decoded into this job's temporary directory for this step alone.
+      # The alias only names the key inside the keystore, so release-targets.json holds it: as a
+      # secret, its value (the project's name) was masked in every log line of the job.
       - name: Sign with the release key
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           umask 077
-          export ANDROID_KEYSTORE=$RUNNER_TEMP/voltip-release.jks
+          ANDROID_KEY_ALIAS=$(jq -r .android_signing.key_alias .release-tooling/.github/release-targets.json)
+          export ANDROID_KEY_ALIAS ANDROID_KEYSTORE=$RUNNER_TEMP/voltip-release.jks
           trap 'rm -f "$ANDROID_KEYSTORE"' EXIT
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode >"$ANDROID_KEYSTORE"
           out=apps/mobile/src-tauri/gen/android/app/build/outputs
