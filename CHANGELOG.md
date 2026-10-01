@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.20](https://github.com/sunerpy/voltip/compare/v0.0.19...v0.0.20) (2026-10-01)
+
+
+### Features
+
+* **mobile:** the phone transcribes on its own when no paired computer is online ([#50](https://github.com/sunerpy/voltip/issues/50)) ([633f1d6](https://github.com/sunerpy/voltip/commit/633f1d68f5aeb43ff0c8269a2385792d13c62768))
+
+
+### Bug Fixes
+
+* **mobile:** Android no longer closes at once on start: the app hands the Android Keystore its context before Rust starts (0.0.18 and 0.0.19 closed on a Xiaomi HyperOS 3) ([633f1d6](https://github.com/sunerpy/voltip/commit/633f1d68f5aeb43ff0c8269a2385792d13c62768))
+
 ## [0.0.19](https://github.com/sunerpy/voltip/compare/v0.0.18...v0.0.19) (2026-10-01)
 
 
