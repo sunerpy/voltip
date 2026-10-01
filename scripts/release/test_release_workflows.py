@@ -321,6 +321,17 @@ class ContinuousIntegration(unittest.TestCase):
         self.assertIn("EVENT: ${{ github.event_name }}", body)
         self.assertIn("github.event_name == 'push' || github.event_name == 'workflow_dispatch'", self.jobs["macos"])
 
+    def test_regression_the_keychain_harness_builds_outside_the_timed_check(self) -> None:
+        # 2026-10-01 (main CI 36931331563): a cold release build of the harness took 14 min 32 s of
+        # the check's 15 minutes on the Intel Mac, and the release candidate waited on the rerun.
+        body = self.jobs["macos"]
+        steps = re.split(r"\n      - name: ", body)
+        build = next(s for s in steps if s.startswith("Build the keychain pre-install harness"))
+        check = next(s for s in steps if s.startswith("Keychain pre-install hand-over"))
+        self.assertIn("--example keychain_preinstall", build)
+        self.assertNotIn("cargo build", check)
+        self.assertLess(body.index("Build the keychain pre-install harness"), body.index("Keychain pre-install hand-over"))
+
     def test_macos_exercises_the_preinstall_keychain_boundary(self) -> None:
         body = self.jobs["macos"]
         self.assertIn("--example keychain_preinstall", body)
