@@ -220,6 +220,20 @@ class CandidateBuild(unittest.TestCase):
         targets = json.loads((ROOT / ".github/release-targets.json").read_text(encoding="utf-8"))
         self.assertRegex(targets["android_signing"]["certificate_sha256"], r"^[0-9a-f]{64}$")
 
+    def test_regression_the_release_apk_starts_on_a_device_before_it_is_sealed(self) -> None:
+        # 2026-10-01: 0.0.18 and 0.0.19 closed at once on the user's phone although every package
+        # check passed; nothing had started the APK. The signed leg runs on an emulator in a job
+        # with no secrets, and both the seal and the gate wait for it.
+        body = self.jobs["device-android"]
+        self.assertIn("needs: [prepare, bundle-android]", body)
+        self.assertIn("name: candidate-aarch64-linux-android", body)
+        self.assertIn(".release-tooling/.github/scripts/android-device-smoke.sh android-leg/dist", body)
+        self.assertNotIn("secrets.", body)
+        self.assertNotRegex(body, r"name: candidate-(?!aarch64-linux-android)")
+        for job in ("aggregate", "gate"):
+            with self.subTest(job=job):
+                self.assertRegex(self.jobs[job], r"(?m)^    needs: \[[^\]]*\bdevice-android\b")
+
     def test_regression_the_key_alias_is_no_secret(self) -> None:
         # Candidate 36844362994 (0.0.18, 2026-10-01): the alias was the secret ANDROID_KEY_ALIAS,
         # whose value is the project's name, so GitHub masked "voltip" in every log line of
@@ -289,6 +303,13 @@ class ContinuousIntegration(unittest.TestCase):
         self.assertIn('"$CI_ANDROID_CERT_SHA256"', body[checked:])
         self.assertIn("make android-clippy", body)
         self.assertIn("third-party-notices.py --app mobile", body)
+
+    def test_regression_ci_starts_the_android_app_on_a_device(self) -> None:
+        # 2026-10-01: the packages passed every check and still closed on start on a phone.
+        body = self.jobs["android-device"]
+        self.assertIn("needs: [android]", body)
+        self.assertIn(".github/scripts/android-device-smoke.sh android-apk device", body)
+        self.assertIn("name: voltip-android-apk", self.jobs["android"])
 
     def test_ci_success_decides_with_the_tested_script_and_the_event(self) -> None:
         # `.github/scripts/ci-success.sh` holds the rule (scripts/release/test_ci_success.py): the
