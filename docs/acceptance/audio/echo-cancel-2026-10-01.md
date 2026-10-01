@@ -62,6 +62,9 @@
 
   测试的门槛是 20 dB、3 dB 和 8 dB。双讲的门槛留出余量，是因为不同处理器走的 SIMD 路径不同，结果会略有差异。
 - **耗时**：release 构建下每帧平均 192 µs，p99 722 µs，最大 762 µs（`a_frame_takes_well_under_a_millisecond`，`#[ignore]`）。
+- **Windows SSH 主机**（`scripts/windows-remote.sh gate echo`，release，提交 ba4e8ab）：
+  - 三组房间消掉 36.9 / 32.5 / 29.9 dB，只有人声时损失 0.53 / 0.42 / 0.30 dB，双讲时 2.14 / 3.00 / 5.86 dB。与本机略有差异，因为两台机器走的 SIMD 路径不同。
+  - 每帧平均 332 µs，p99 1.32 ms，最大 1.44 ms。
 - **真实声音服务器**：`crates/voltip-audio/tests/loopback.rs` 在 PulseAudio 16 上运行（`#[ignore]`）。测试把默认输入临时指向空 sink 的监听源，让麦克风听到的正是扬声器播放的内容，然后录三次：
 
   | 录制方式 | 电平 |
