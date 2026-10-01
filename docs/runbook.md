@@ -133,12 +133,12 @@ Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前�
   - 钥匙串（2026-09-30 用户从 0.0.12 更新到 0.0.14 仍各问一次）：
     - 原因：登录钥匙串给每个条目一个分区列表（`partition_id`）。自签名证书没有 Apple Team ID，按 securityd 的规则（`clientid.cpp` 的 `partitionIdForProcess`），每个构建的分区都是 `cdhash:<该构建>`。一个构建去读另一个构建创建的条目就会弹窗，即使访问控制信任的签名要求（`identifier … and certificate leaf = H…`）它满足；「始终允许」也只把按下它的那一个构建加进列表。用户的条目分区是 `cdhash:<0.0.12>, cdhash:<0.0.14>`。
     - 0.0.15 起，用证书签名的发布包把每个条目存进自己创建的条目，账户 `<用户名>.signed.<本构建 cdhash>`（`crates/voltip-identity/src/per_build.rs`）。
-    - 应用内更新：装好后旧版不交给 Tauri 重启，而是自己启动新版，用 socketpair 作新版的 stdin，把钥匙串存储这次进程里读到、写过的所有条目（含已删除的标记）交过去（`crates/voltip-identity/src/handoff.rs`、`apps/desktop/src-tauri/src/keychain_handoff.rs`）。两边都先校验对方进程满足本构建的 designated requirement。新版把交来的值写进自己的条目并读回确认，再删掉其他构建的条目（不读取值的删除不需要授权），整个过程不读其他构建的条目，所以不弹窗。
+    - 应用内更新：0.0.15–0.0.16 的「安装后交接」无效——Tauri updater 返回前会删除旧 bundle，旧进程随后用 `SecCodeCopySelf` / `SecCodeCopyGuestWithAttributes` 校验双方时得到 `ENOENT`，静默退回普通重启。修复后，updater 已验签的 `.app.tar.gz` 先解到临时目录；旧版与 staged 新版的 bundle 都存在时，两边校验对方满足同一 designated requirement，旧版通过 socketpair 交出本进程已知的所有条目（含删除标记），staged 新版写入自己 cdhash 的条目并 readback，之后才 ACK；只有 ACK 成功才安装。安装失败保留旧版值，安装成功后的新版读取自己的条目并删掉旧副本。首个带修复的版本仍由 0.0.16 的旧更新代码安装，所以会最后询问一次；从两个都带修复的连续版本开始不弹窗。
     - 没有交接时（手动安装 dmg，或从不带交接的 0.0.14 及更早版本更新上来），新版读最新的一份旧条目，问一次，然后搬进自己的条目。
     - 降级到 0.0.15 之前的版本时，旧版找不到它的条目，会生成新的设备身份，需要重新配对。本地和 CI 的 ad-hoc 构建仍用 `<用户名>` 账户，不参与。
     - 验证：`security create-keychain` 建的钥匙串不做分区检查（`validatePartition` 在 `dbVersion() < version_partition` 时直接返回），所以 0.0.12 时的检查都通过了，却没发现问题。现在 CI 的 `macos` job 用 runner 的登录钥匙串：
       - `.github/scripts/check-keychain-across-updates.sh` 断言后一个构建读不到前一个构建的条目，但能列出和删除；
-      - `.github/scripts/check-keychain-handoff.sh` 用真实应用端到端验证交接：harness 充当旧版，新版不弹窗、身份不变、旧条目被删；不交接的构建卡在弹窗上，作反面对照；
+      - `.github/scripts/check-keychain-preinstall.sh` 用真实应用端到端验证安装前交接：不同 cdhash 的双方都做真实签名校验，staged 新版持久化后才 ACK，安装后的新版不弹窗、身份不变并删除旧条目；错误签名必须在安装前失败；持久化失败由 `persist_handoff` 回归测试证明不 ACK 并回滚本构建条目；
       - `.github/scripts/check-keychain-migration.sh` 在临时钥匙串里验证 ad-hoc 条目的搬移。
 
       真机在 `docs/acceptance/macos/manual-checklist.md` 第 15 项确认。

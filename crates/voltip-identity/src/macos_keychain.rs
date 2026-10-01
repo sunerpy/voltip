@@ -6,7 +6,7 @@
 //! not need the item's partition, so neither ever asks (same runs, both kinds of Mac).
 //!
 //! Excluded from the coverage gate with the rest of the platform store: it only runs where a real
-//! keychain is unlocked. `.github/scripts/check-keychain-handoff.sh` runs it on both Macs.
+//! keychain is unlocked. `.github/scripts/check-keychain-preinstall.sh` runs it on both Macs.
 
 use parking_lot::Mutex;
 use security_framework::base::Error as SecError;

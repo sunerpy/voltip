@@ -43,6 +43,9 @@ use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
 
 /// Keychain service id.
 pub const KEYCHAIN_SERVICE: &str = "dev.voltip.desktop";
+/// Debug-only override for the application data directory (native smoke tests that must leave the
+/// developer's settings and history untouched). Release builds ignore it.
+pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 
 /// Every command the webview may invoke, in registration order. The TypeScript side
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
@@ -155,6 +158,11 @@ pub const APP_VERSION: &str = env!("VOLTIP_APP_VERSION");
 
 /// App data directory (`ProjectDirs` → per-OS conventional location).
 pub fn data_dir() -> std::path::PathBuf {
+    if cfg!(debug_assertions)
+        && let Some(path) = std::env::var_os(DEV_DATA_DIR_ENV).filter(|path| !path.is_empty())
+    {
+        return path.into();
+    }
     directories::ProjectDirs::from("dev", "voltip", "Voltip").map(|d| d.data_dir().to_path_buf()).unwrap_or_else(|| std::env::temp_dir().join("voltip"))
 }
 

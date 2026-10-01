@@ -14,7 +14,7 @@ use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use zeroize::Zeroizing;
 
@@ -22,6 +22,8 @@ use crate::Entries;
 
 /// Environment variable that tells a new build to read a hand-over from its stdin.
 pub const HANDOFF_ENV: &str = "VOLTIP_SECRET_HANDOFF";
+/// [`HANDOFF_ENV`] value used by a staged new build before the updater replaces the running one.
+pub const PREINSTALL_HANDOFF: &str = "preinstall";
 
 const MAGIC: &[u8; 8] = b"VOLTIPH1";
 const ACK: u8 = 0x06;
@@ -154,6 +156,33 @@ pub fn send(stream: &mut UnixStream, entries: &Entries, check: &dyn PeerCheck, p
 /// The new build's side: check the old build's process `peer` (the parent), read the hand-over
 /// and acknowledge it. Nothing is read from a peer that fails the check.
 pub fn receive(stream: &mut UnixStream, check: &dyn PeerCheck, peer: u32, timeout: Duration) -> Result<Entries, HandoffError> {
+    receive_pending(stream, check, peer, timeout)?.acknowledge()
+}
+
+/// A received hand-over that has not yet been acknowledged. A staged new build keeps this value
+/// while it persists and reads back every entry; dropping it sends no acknowledgement, so the old
+/// build does not install the update.
+pub struct PendingReceive {
+    stream: UnixStream,
+    entries: Entries,
+}
+
+impl PendingReceive {
+    /// Entries received from the authenticated peer, before ownership is transferred.
+    pub fn entries(&self) -> &Entries {
+        &self.entries
+    }
+
+    /// Tell the sender that persistence succeeded and return the entries.
+    pub fn acknowledge(mut self) -> Result<Entries, HandoffError> {
+        self.stream.write_all(&[ACK])?;
+        Ok(std::mem::take(&mut self.entries))
+    }
+}
+
+/// Authenticate `peer` and receive a hand-over without acknowledging it. The caller must persist
+/// the entries before calling [`PendingReceive::acknowledge`].
+pub fn receive_pending(stream: &mut UnixStream, check: &dyn PeerCheck, peer: u32, timeout: Duration) -> Result<PendingReceive, HandoffError> {
     if !check.trusted(peer) {
         return Err(HandoffError::NotTrusted);
     }
@@ -168,8 +197,7 @@ pub fn receive(stream: &mut UnixStream, check: &dyn PeerCheck, peer: u32, timeou
     let mut payload = Zeroizing::new(vec![0u8; len]);
     stream.read_exact(&mut payload)?;
     let entries = decode(&payload)?;
-    stream.write_all(&[ACK])?;
-    Ok(entries)
+    Ok(PendingReceive { stream: stream.try_clone()?, entries })
 }
 
 /// Why [`start`] did not hand over.
@@ -178,20 +206,71 @@ pub enum StartError {
     /// The new build was not started at all.
     #[error("the new build could not be started: {0}")]
     NotStarted(std::io::Error),
-    /// The new build runs, but without the hand-over (it reads an older build's items once).
-    #[error("the new build started without the hand-over: {0}")]
-    WithoutHandOver(HandoffError),
+    /// The new build was started, but the hand-over failed; it is stopped and reaped.
+    #[error("the new build was stopped after the hand-over failed: {0}")]
+    HandOverFailed(HandoffError),
 }
 
 /// The old build's side of an update: start `exe` with `args`, a socket as its stdin and
 /// [`HANDOFF_ENV`] set, and hand it `entries` once `check` trusts it.
 pub fn start(exe: &Path, args: impl IntoIterator<Item = OsString>, entries: &Entries, check: &dyn PeerCheck, timeout: Duration) -> Result<Child, StartError> {
+    start_with_mode(exe, args, entries, check, timeout, "1")
+}
+
+/// Start a staged new build which persists the hand-over before the updater replaces this build.
+pub fn start_preinstall(
+    exe: &Path,
+    args: impl IntoIterator<Item = OsString>,
+    entries: &Entries,
+    check: &dyn PeerCheck,
+    timeout: Duration,
+) -> Result<Child, StartError> {
+    start_with_mode(exe, args, entries, check, timeout, PREINSTALL_HANDOFF)
+}
+
+fn start_with_mode(
+    exe: &Path,
+    args: impl IntoIterator<Item = OsString>,
+    entries: &Entries,
+    check: &dyn PeerCheck,
+    timeout: Duration,
+    mode: &str,
+) -> Result<Child, StartError> {
     let (mut ours, theirs) = UnixStream::pair().map_err(StartError::NotStarted)?;
-    let child = Command::new(exe).args(args).env(HANDOFF_ENV, "1").stdin(Stdio::from(OwnedFd::from(theirs))).spawn().map_err(StartError::NotStarted)?;
+    let mut child = Command::new(exe).args(args).env(HANDOFF_ENV, mode).stdin(Stdio::from(OwnedFd::from(theirs))).spawn().map_err(StartError::NotStarted)?;
+    let deadline = Instant::now() + timeout;
+    while !check.trusted(child.id()) {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(StartError::HandOverFailed(HandoffError::Io(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    format!("the staged build exited with {status} before the hand-over"),
+                ))));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                stop_child(&mut child);
+                return Err(StartError::HandOverFailed(HandoffError::Io(error)));
+            }
+        }
+        if Instant::now() >= deadline {
+            stop_child(&mut child);
+            return Err(StartError::HandOverFailed(HandoffError::NotTrusted));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
     match send(&mut ours, entries, check, child.id(), timeout) {
         Ok(()) => Ok(child),
-        Err(e) => Err(StartError::WithoutHandOver(e)),
+        Err(error) => {
+            stop_child(&mut child);
+            Err(StartError::HandOverFailed(error))
+        }
     }
+}
+
+fn stop_child(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// The new build's side, given that [`HANDOFF_ENV`] asked for it: read the hand-over from stdin
@@ -199,6 +278,12 @@ pub fn start(exe: &Path, args: impl IntoIterator<Item = OsString>, entries: &Ent
 pub fn take_from_stdin(check: &dyn PeerCheck, timeout: Duration) -> Result<Entries, HandoffError> {
     let mut stream = UnixStream::from(std::io::stdin().as_fd().try_clone_to_owned()?);
     receive(&mut stream, check, std::os::unix::process::parent_id(), timeout)
+}
+
+/// [`receive_pending`] on the socket supplied as this process's stdin.
+pub fn take_pending_from_stdin(check: &dyn PeerCheck, timeout: Duration) -> Result<PendingReceive, HandoffError> {
+    let mut stream = UnixStream::from(std::io::stdin().as_fd().try_clone_to_owned()?);
+    receive_pending(&mut stream, check, std::os::unix::process::parent_id(), timeout)
 }
 
 #[cfg(test)]
@@ -236,6 +321,32 @@ mod tests {
         let got = receive(&mut new, &Pids(vec![1]), 1, LONG).unwrap();
         sender.join().unwrap().unwrap();
         assert!(same(&got, &entries()), "{:?}", got.iter().map(|e| &e.0).collect::<Vec<_>>());
+    }
+
+    /// A staged update must not tell the old build to install until the new build has persisted
+    /// every entry. Receiving and acknowledging are deliberately two separate operations.
+    #[test]
+    fn a_pending_hand_over_acknowledges_only_when_the_receiver_commits() {
+        let (mut old, mut new) = UnixStream::pair().unwrap();
+        let sent = entries();
+        let sender = std::thread::spawn(move || {
+            old.set_write_timeout(Some(LONG)).unwrap();
+            old.set_read_timeout(Some(SHORT)).unwrap();
+            let payload = encode(&sent).unwrap();
+            old.write_all(&u32::try_from(payload.len()).unwrap().to_be_bytes()).unwrap();
+            old.write_all(&payload).unwrap();
+            let mut ack = [0u8; 1];
+            assert!(old.read_exact(&mut ack).is_err(), "nothing acknowledges before persistence");
+            old.set_read_timeout(Some(LONG)).unwrap();
+            old.read_exact(&mut ack).unwrap();
+            assert_eq!(ack, [ACK]);
+        });
+        let pending = receive_pending(&mut new, &Pids(vec![1]), 1, LONG).unwrap();
+        assert!(same(pending.entries(), &entries()));
+        std::thread::sleep(SHORT + Duration::from_millis(50));
+        let got = pending.acknowledge().unwrap();
+        assert!(same(&got, &entries()));
+        sender.join().unwrap();
     }
 
     /// The new build takes nothing from a parent that is not this app, signed as it is, and so
@@ -296,7 +407,7 @@ mod tests {
     fn start_hands_the_entries_to_the_process_it_starts() {
         let script = "test \"$VOLTIP_SECRET_HANDOFF\" = 1 || exit 3; head -c 4 >/dev/null; printf '\\006' >&0; cat >/dev/null";
         let mut child = start(Path::new("/bin/sh"), ["-c".into(), script.into()], &entries(), &Pids(vec![]), SHORT).map(Some).unwrap_or_else(|e| {
-            assert!(matches!(e, StartError::WithoutHandOver(HandoffError::NotTrusted)), "{e}");
+            assert!(matches!(e, StartError::HandOverFailed(HandoffError::NotTrusted)), "{e}");
             None
         });
         assert!(child.is_none(), "an untrusted process is sent nothing");
@@ -304,6 +415,39 @@ mod tests {
         child = Some(start(Path::new("/bin/sh"), ["-c".into(), script.into()], &entries(), &trusted, LONG).unwrap());
         assert!(child.take().unwrap().wait().unwrap().success());
         assert!(matches!(start(Path::new("/nonexistent/voltip"), Vec::<OsString>::new(), &entries(), &trusted, SHORT), Err(StartError::NotStarted(_))));
+    }
+
+    #[test]
+    fn start_waits_for_the_new_process_to_become_checkable() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct ReadyAfter(AtomicUsize);
+        impl PeerCheck for ReadyAfter {
+            fn trusted(&self, _pid: u32) -> bool {
+                self.0.fetch_add(1, Ordering::SeqCst) >= 2
+            }
+        }
+
+        let script = "test \"$VOLTIP_SECRET_HANDOFF\" = preinstall || exit 3; head -c 4 >/dev/null; printf '\\006' >&0; cat >/dev/null";
+        let check = ReadyAfter(AtomicUsize::new(0));
+        let mut child = start_preinstall(Path::new("/bin/sh"), ["-c".into(), script.into()], &entries(), &check, LONG).unwrap();
+        assert!(check.0.load(Ordering::SeqCst) >= 4, "readiness retries, then send verifies once more");
+        assert!(child.wait().unwrap().success());
+    }
+
+    #[test]
+    fn an_untrusted_staged_process_is_stopped_and_reaped() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("pid");
+        let script = format!("echo $$ > '{}'; sleep 30", pid_file.display());
+        assert!(matches!(
+            start_preinstall(Path::new("/bin/sh"), ["-c".into(), script.into()], &entries(), &Pids(vec![]), SHORT),
+            Err(StartError::HandOverFailed(HandoffError::NotTrusted))
+        ));
+        let pid = std::fs::read_to_string(pid_file).unwrap();
+        let alive =
+            Command::new("/bin/kill").args(["-0", pid.trim()]).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|status| status.success());
+        assert!(!alive, "the refused child must not survive the failed hand-over");
     }
 
     struct AnyPid;

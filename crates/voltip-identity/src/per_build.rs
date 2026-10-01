@@ -107,6 +107,66 @@ impl<K: Keychain> PerBuildStore<K> {
         entries
     }
 
+    /// Persist a staged update's authenticated hand-over in this build's own items, without
+    /// removing the running build's copies. Every value is read back before success. On failure the
+    /// items that belonged to this build before the attempt are restored best-effort, so the caller
+    /// can refuse the installation without leaving a partial new state.
+    pub fn persist_handoff(&self, entries: &Entries) -> Result<(), IdentityError> {
+        let mut before = Vec::with_capacity(entries.len());
+        for (entry, _) in entries {
+            let slot = self.slot(entry, self.own_account(), Ask::Never);
+            before.push((entry.clone(), slot.read()?));
+        }
+
+        let apply = || -> Result<(), IdentityError> {
+            for (entry, wanted) in entries {
+                let slot = self.slot(entry, self.own_account(), Ask::Never);
+                match wanted {
+                    Some(value) => {
+                        slot.write(value)?;
+                        let Some(back) = slot.read()? else {
+                            return Err(IdentityError::StoreUnavailable(format!("the staged keychain item {entry} was not stored")));
+                        };
+                        if back.as_slice() != value.as_slice() {
+                            return Err(IdentityError::StoreUnavailable(format!("the staged keychain item {entry} did not read back")));
+                        }
+                    }
+                    None => {
+                        slot.remove()?;
+                        // `None` is the running build's authoritative deletion marker, not a value
+                        // that needs rollback if installation fails. Remove stale older copies now
+                        // or the installed build would ask for and resurrect one of them.
+                        self.remove_others_strict(entry)?;
+                        if slot.read()?.is_some() {
+                            return Err(IdentityError::StoreUnavailable(format!("the staged keychain item {entry} was not removed")));
+                        }
+                    }
+                }
+            }
+            Ok(())
+        };
+
+        if let Err(error) = apply() {
+            for (entry, original) in before {
+                let slot = self.slot(&entry, self.own_account(), Ask::Never);
+                let restored = match original {
+                    Some(value) => slot.write(&value),
+                    None => slot.remove(),
+                };
+                if let Err(rollback) = restored {
+                    tracing::warn!(entry, error = %rollback, "staged keychain rollback failed");
+                }
+            }
+            return Err(error);
+        }
+
+        let mut known = self.known.lock();
+        for (entry, value) in entries {
+            known.insert(entry.clone(), value.clone());
+        }
+        Ok(())
+    }
+
     fn item_service(&self, entry: &str) -> String {
         format!("{}/{entry}", self.service)
     }
@@ -122,20 +182,28 @@ impl<K: Keychain> PerBuildStore<K> {
     /// Every other copy of `entry`: other builds' items, newest first, then the item 0.0.12–0.0.14
     /// used (`<user>.signed`) and the one before (`<user>`).
     fn others(&self, entry: &str) -> Vec<String> {
+        match self.listed_others(entry) {
+            Ok(accounts) => accounts,
+            Err(error) => {
+                tracing::warn!(%error, entry, "keychain items could not be listed; looking at the older accounts only");
+                self.legacy_accounts()
+            }
+        }
+    }
+
+    fn listed_others(&self, entry: &str) -> Result<Vec<String>, IdentityError> {
         let prefix = format!("{}{SIGNED_ACCOUNT_SUFFIX}.", self.user);
         let own = self.own_account();
-        let mut builds: Vec<Stored> = match self.keychain.items(&self.item_service(entry)) {
-            Ok(items) => items.into_iter().filter(|s| s.account.starts_with(&prefix) && s.account != own).collect(),
-            Err(e) => {
-                tracing::warn!(error = %e, entry, "keychain items could not be listed; looking at the older accounts only");
-                Vec::new()
-            }
-        };
+        let mut builds: Vec<Stored> =
+            self.keychain.items(&self.item_service(entry))?.into_iter().filter(|stored| stored.account.starts_with(&prefix) && stored.account != own).collect();
         builds.sort_by(|a, b| b.created.cmp(&a.created));
         let mut accounts: Vec<String> = builds.into_iter().map(|s| s.account).collect();
-        accounts.push(format!("{}{SIGNED_ACCOUNT_SUFFIX}", self.user));
-        accounts.push(self.user.clone());
-        accounts
+        accounts.extend(self.legacy_accounts());
+        Ok(accounts)
+    }
+
+    fn legacy_accounts(&self) -> Vec<String> {
+        vec![format!("{}{SIGNED_ACCOUNT_SUFFIX}", self.user), self.user.clone()]
     }
 
     /// Remove every other copy of `entry`, never asking; one that cannot go stays, unused.
@@ -147,9 +215,20 @@ impl<K: Keychain> PerBuildStore<K> {
         }
     }
 
+    fn remove_others_strict(&self, entry: &str) -> Result<(), IdentityError> {
+        for account in self.listed_others(entry)? {
+            self.keychain.remove(&self.item_service(entry), &account)?;
+        }
+        Ok(())
+    }
+
     fn load(&self, entry: &str) -> Result<Option<Zeroizing<Vec<u8>>>, IdentityError> {
         let own = self.slot(entry, self.own_account(), Ask::Never);
         if let Some(value) = own.read()? {
+            // A staged update deliberately leaves the running build's item in place until the
+            // installer commits. Whichever build starts next owns this value and retires every
+            // other copy: the new build after success, or the old build after a failed install.
+            self.remove_others(entry);
             return Ok(Some(value));
         }
         if let Some(handed) = self.handed.lock().remove(entry) {
@@ -275,7 +354,7 @@ mod tests {
 
     impl Login {
         fn as_build(&self, build: &str) -> Fake {
-            Fake { login: self.clone(), build: build.to_owned(), fail_write: false }
+            Fake { login: self.clone(), build: build.to_owned(), fail_write: false, fail_service: None, fail_list: false }
         }
         fn accounts(&self, entry: &str) -> Vec<String> {
             let service = format!("{SVC}/{entry}");
@@ -294,10 +373,15 @@ mod tests {
         login: Login,
         build: String,
         fail_write: bool,
+        fail_service: Option<String>,
+        fail_list: bool,
     }
 
     impl Keychain for Fake {
         fn items(&self, service: &str) -> Result<Vec<Stored>, IdentityError> {
+            if self.fail_list {
+                return Err(IdentityError::StoreUnavailable("keychain list failed".into()));
+            }
             let items = self.login.items.lock();
             Ok(items.iter().filter(|((s, _), _)| s == service).map(|((_, a), item)| Stored { account: a.clone(), created: item.created.clone() }).collect())
         }
@@ -316,7 +400,7 @@ mod tests {
             }
         }
         fn write(&self, service: &str, account: &str, value: &[u8]) -> Result<(), IdentityError> {
-            if self.fail_write {
+            if self.fail_write || self.fail_service.as_deref() == Some(service) {
                 return Err(IdentityError::StoreUnavailable("keychain locked".into()));
             }
             let mut items = self.login.items.lock();
@@ -368,6 +452,68 @@ mod tests {
         let again = store(&login, "bbbb", Entries::new());
         assert_eq!(read(&again, SECRET_KEY_ENTRY).as_deref(), Some(&b"key"[..]));
         assert_eq!(login.asked(), Vec::<String>::new());
+    }
+
+    /// Before the updater replaces the old bundle, the staged new build writes and reads back its
+    /// own items. The old build's items stay until the installed new build starts, so a failed
+    /// installation leaves the running version intact.
+    #[test]
+    fn regression_a_staged_update_persists_before_install_and_cleans_up_after_restart() {
+        let login = Login::default();
+        let old = store(&login, "aaaa", Entries::new());
+        old.set(SECRET_KEY_ENTRY, b"key").unwrap();
+        old.set(META, b"meta").unwrap();
+        let handed = old.handoff_state().unwrap();
+
+        let staged = store(&login, "bbbb", Entries::new());
+        staged.persist_handoff(&handed).unwrap();
+        assert_eq!(login.asked(), Vec::<String>::new());
+        assert_eq!(login.accounts(SECRET_KEY_ENTRY), ["mac.signed.aaaa", "mac.signed.bbbb"]);
+
+        let installed = store(&login, "bbbb", Entries::new());
+        assert_eq!(read(&installed, SECRET_KEY_ENTRY).as_deref(), Some(&b"key"[..]));
+        assert_eq!(read(&installed, META).as_deref(), Some(&b"meta"[..]));
+        assert_eq!(login.asked(), Vec::<String>::new());
+        assert_eq!(login.accounts(SECRET_KEY_ENTRY), ["mac.signed.bbbb"]);
+        assert_eq!(login.accounts(META), ["mac.signed.bbbb"]);
+    }
+
+    /// No partial staged state is acknowledged: if one write fails, entries this attempt created
+    /// are removed and entries that already belonged to this build are restored.
+    #[test]
+    fn a_failed_staged_persistence_rolls_back_its_own_items() {
+        let login = Login::default();
+        login.put("bbbb", META, "mac.signed.bbbb", b"before");
+        let mut staged = store(&login, "bbbb", Entries::new());
+        staged.keychain.fail_service = Some(format!("{SVC}/{SECRET_KEY_ENTRY}"));
+        let handed = vec![(META.to_owned(), Some(Zeroizing::new(b"after".to_vec()))), (SECRET_KEY_ENTRY.to_owned(), Some(Zeroizing::new(b"key".to_vec())))];
+        assert!(staged.persist_handoff(&handed).is_err());
+        staged.keychain.fail_service = None;
+        assert_eq!(read(&staged, META).as_deref(), Some(&b"before"[..]));
+        assert!(login.accounts(SECRET_KEY_ENTRY).is_empty());
+        assert!(login.asked().is_empty());
+    }
+
+    /// An absent entry is authoritative. Staging removes stale copies before ACK, otherwise the
+    /// installed build would read one with `Ask::Allowed`, prompt, and resurrect a deleted key.
+    #[test]
+    fn a_staged_absence_removes_every_stale_copy_without_asking() {
+        let login = Login::default();
+        login.put("older", "voltip.provider.x.llm", "mac.signed.older", b"stale");
+        let staged = store(&login, "bbbb", Entries::new());
+        staged.persist_handoff(&vec![("voltip.provider.x.llm".to_owned(), None)]).unwrap();
+        assert!(login.accounts("voltip.provider.x.llm").is_empty());
+        let installed = store(&login, "bbbb", Entries::new());
+        assert_eq!(read(&installed, "voltip.provider.x.llm"), None);
+        assert!(login.asked().is_empty());
+    }
+
+    #[test]
+    fn a_staged_absence_is_not_acknowledged_when_stale_copies_cannot_be_listed() {
+        let login = Login::default();
+        let mut staged = store(&login, "bbbb", Entries::new());
+        staged.keychain.fail_list = true;
+        assert!(staged.persist_handoff(&vec![("voltip.provider.x.llm".to_owned(), None)]).is_err());
     }
 
     /// Without a hand-over (a hand install) the newest older item is read once, which asks once per

@@ -110,6 +110,12 @@ core-foundation = "=0.10.1"
 core-foundation-sys = "=0.8.7"
 security-framework = "=3.7.0"
 security-framework-sys = "=2.17.0"
+# The updater has already minisign-verified these bytes. Before replacing the running bundle,
+# keychain_handoff expands its macOS `.app.tar.gz` to start the staged build and persist secrets in
+# that build's cdhash partition. Keep the exact versions already in tauri-plugin-updater's graph.
+flate2 = "=1.1.10"
+tar = "=0.4.46"
+tempfile.workspace = true
 
 # The foreground application on X11 / XWayland (docs/dictation.md §18.2, `src/platform/linux.rs`);
 # the version enigo already pulls.

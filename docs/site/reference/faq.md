@@ -58,7 +58,7 @@ The packages are not code-signed yet. Choose **More info**, then **Run anyway**.
 
 ### macOS blocks Voltip or asks for permissions again
 
-The first start of an app that is not notarized needs one confirmation; see [Install](/guide/install#macos). Updating from version 0.0.6 or earlier asks for the permissions once more. Releases share one signing certificate, so updates keep the microphone and Accessibility permissions. The keychain asks whenever one version reads entries that another version created. From 0.0.15, updates installed from inside Voltip avoid that; installing by hand asks once for each entry.
+The first start of an app that is not notarized needs one confirmation; see [Install](/guide/install#macos). Updating from version 0.0.6 or earlier asks for the permissions once more. Releases share one signing certificate, so updates keep the microphone and Accessibility permissions. The keychain asks whenever one version reads entries that another version created. The post-install hand-over attempted by 0.0.15 and 0.0.16 did not work because the updater had already removed the old bundle. The first release with the fix may therefore ask one last time when installed by 0.0.16. In-app updates between two fixed releases avoid the prompt; installing by hand still asks once for each entry.
 
 ### Where are my files, and how do I remove Voltip?
 
