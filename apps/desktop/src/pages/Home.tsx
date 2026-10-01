@@ -605,17 +605,11 @@ export function Home() {
             <Readout
               label={t("home.engine.refineModel")}
               value={
-                // Switched in place, even while 润色 is off (the next take that polishes uses it).
+                // Switched in place, even while 润色 is off (the next take that polishes uses it):
+                // the model by name, muted like the preset beside it; the switch below says off.
                 <PolishModelMenu
                   data-testid="home-refine-model"
                   triggerClassName="-mx-1 inline-flex min-w-0 items-center gap-1 rounded-6 px-1 transition-colors hover:bg-inset"
-                  trigger={
-                    <ReadoutTrigger
-                      value={
-                        engines.refine_enabled ? shortModel(engines.refine_model) : t("common.off")
-                      }
-                    />
-                  }
                 />
               }
               size="sm"

@@ -164,6 +164,18 @@ describe("Home page", () => {
     }
   });
 
+  // The real window under Xvfb (2026-10-01) showed 润色模型「关」 beside a title bar naming the
+  // model, and the button's name (AI 润色模型：qwen3.8-27b) did not contain what it showed.
+  it("regression: the engine card names the polish model while 润色 is off, as the title bar does, and its button is named by what it shows", async () => {
+    renderApp({
+      mock: { settings: { engines: { ...defaultEngineSettings(), refine_enabled: false } } },
+    });
+    const model = await screen.findByTestId("home-refine-model");
+    expect(model).toHaveTextContent("qwen3.8-27b");
+    expect(model).toHaveAccessibleName("AI 润色模型：qwen3.8-27b");
+    expect(screen.getByTestId("polish-model")).toHaveTextContent("qwen3.8-27b");
+  });
+
   it("the engine card's insert readout opens Settings › Dictation", async () => {
     const user = userEvent.setup();
     renderApp({ mock: liveClock() });
@@ -833,7 +845,11 @@ describe("Home page", () => {
     expect(screen.getByRole("switch", { name: "AI 润色 关" })).not.toBeChecked();
     expect(screen.getByTestId("home-privacy")).toHaveTextContent("音频发送到内置服务");
     expect(screen.getByTestId("home-privacy")).not.toHaveTextContent("文本发送到");
-    expect(within(screen.getByTestId("home-engine")).getByText("关")).toBeInTheDocument();
+    // The card says off with its switch; since 2026-10-01 the 润色模型 readout keeps naming the
+    // model (it is the menu that switches it, user request 2026-09-30) instead of 「关」.
+    const card = screen.getByTestId("home-engine");
+    expect(within(card).getByText("AI 润色 关")).toBeInTheDocument();
+    expect(within(card).getByTestId("home-refine-model")).toHaveTextContent("qwen3.8-27b");
     // 配置语音模型 opens the 语音模型 page (a page of the main layout since 2026-09-28).
     await user.click(screen.getByRole("button", { name: "配置语音模型" }));
     expect(await screen.findByTestId("page-speech")).toBeInTheDocument();
