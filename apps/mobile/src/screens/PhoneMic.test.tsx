@@ -6,11 +6,12 @@ import {
   MOCK_REFINE_MS,
   MockBackend,
   sampleDevices,
+  sampleHistory,
 } from "@voltip/shared/mock";
 import { PHONE_TAKE_FAILURES, zhT } from "@voltip/shared";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { renderApp } from "../test/render";
-import { phoneTakeLine } from "./PhoneMic";
+import { localTakeLine, phoneTakeLine } from "./PhoneMic";
 
 function desktops(state: "online" | "offline") {
   const now = Math.floor(Date.now() / 1000);
@@ -276,5 +277,94 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
       "电脑正在听写，稍后再试",
     );
     expect(phoneTakeLine({ state: "listening" }, 65_000, t)).toBe("正在录音 · 01:05");
+  });
+
+  it("every phase of a take on the phone has its line (docs/dictation.md §20.7)", () => {
+    const t = zhT.t;
+    expect(localTakeLine({ phase: "idle" }, 0, t)).toBe("");
+    expect(
+      localTakeLine({ phase: "listening", started_at: 0, ready: true, locked: false }, 65_000, t),
+    ).toBe("正在录音 · 01:05");
+    const processing = (stage: "transcribing" | "refining" | "finalizing" | "inserting") =>
+      localTakeLine({ phase: "processing", stage, started_at: 0 }, 0, t);
+    expect(processing("transcribing")).toBe("正在识别…");
+    expect(processing("refining")).toBe("正在润色…");
+    expect(processing("finalizing")).toBe("正在处理…");
+    expect(processing("inserting")).toBe("正在处理…");
+    expect(
+      localTakeLine(
+        {
+          phase: "done",
+          text: "你好。",
+          raw_text: "你好",
+          chars: 3,
+          via: "clipboard",
+          refined: true,
+          duration_ms: 900,
+          asr_ms: 300,
+          mode: "whole_take",
+        },
+        0,
+        t,
+      ),
+    ).toBe("已复制到剪贴板：你好。");
+    expect(
+      localTakeLine({ phase: "failed", message: "没有听到声音", code: "no_speech" }, 0, t),
+    ).toBe("没有听到声音");
+    expect(localTakeLine({ phase: "failed", message: "asr: 网络超时", code: "asr" }, 0, t)).toBe(
+      "未完成：网络超时",
+    );
+    expect(localTakeLine({ phase: "cancelled", injected_chars: 0 }, 0, t)).toBe("已取消");
+  });
+
+  it("on the phone, sliding off the button cancels the take before it is recognised", async () => {
+    const backend = new MockBackend({ role: "phone" });
+    const clipboard = backend.phoneClipboard;
+    renderApp({ backend });
+    const hold = await screen.findByTestId("phone-mic-hold");
+    layOut(hold);
+    fireEvent.pointerDown(hold, { pointerId: 1, clientX: 10, clientY: 10 });
+    await advance(MOCK_MIC_READY_MS);
+    fireEvent.pointerMove(hold, { pointerId: 1, clientX: 10, clientY: -80 });
+    expect(hold).toHaveTextContent("松开取消");
+    fireEvent.pointerUp(hold, { pointerId: 1, clientX: 10, clientY: -80 });
+    await advance(0);
+    expect(screen.getByTestId("phone-mic-state")).toHaveAttribute("data-state", "cancelled");
+    expect(screen.getByTestId("phone-mic-state")).toHaveTextContent("已取消");
+    expect(backend.phoneClipboard).toBe(clipboard);
+    expect(screen.queryByTestId("phone-recent")).toBeNull();
+  });
+
+  it("a refused start on the phone is a toast and leaves the button idle", async () => {
+    const backend = new MockBackend({ role: "phone" });
+    vi.spyOn(backend, "invoke").mockRejectedValueOnce(new Error("microphone: 麦克风权限被拒绝"));
+    renderApp({ backend });
+    const hold = await screen.findByTestId("phone-mic-hold");
+    fireEvent.pointerDown(hold, { pointerId: 1 });
+    await advance(0);
+    expect(await screen.findByText("出错了 · 麦克风权限被拒绝")).toBeInTheDocument();
+    expect(hold).toHaveAttribute("aria-pressed", "false");
+    fireEvent.pointerUp(hold, { pointerId: 1 });
+    await advance(0);
+    expect(backend.peek().dictation.phase.phase).toBe("idle");
+  });
+
+  it("a copy or a share that fails says so", async () => {
+    const entry = sampleHistory(Date.now())[0];
+    if (!entry) throw new Error("fixture");
+    const backend = new MockBackend({ role: "phone", history: [entry] });
+    vi.spyOn(backend, "pasteText").mockResolvedValueOnce({ kind: "failed", reason: "inject" });
+    renderApp({ backend });
+    const row = (await screen.findAllByTestId("phone-recent-row"))[0];
+    if (!row) throw new Error("no result row");
+    fireEvent.click(within(row).getByRole("button", { name: /^复制「/ }));
+    expect(await screen.findByText("复制失败")).toBeInTheDocument();
+    vi.spyOn(backend, "pasteText").mockRejectedValueOnce(new Error("gone"));
+    fireEvent.click(within(row).getByRole("button", { name: /^复制「/ }));
+    await advance(0);
+    expect(screen.getAllByText("复制失败").length).toBeGreaterThan(0);
+    vi.spyOn(backend, "invoke").mockRejectedValueOnce(new Error("share: 这个平台没有系统分享"));
+    fireEvent.click(within(row).getByRole("button", { name: /^分享「/ }));
+    expect(await screen.findByText("出错了 · share: 这个平台没有系统分享")).toBeInTheDocument();
   });
 });

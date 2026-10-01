@@ -172,7 +172,7 @@ pub async fn ensure_permission<R: Runtime>(app: &AppHandle<R>) -> Result<(), Str
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use std::time::Duration;
 
