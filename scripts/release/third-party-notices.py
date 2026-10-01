@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Write THIRD-PARTY-NOTICES.txt for a desktop package.
+"""Write THIRD-PARTY-NOTICES.txt for a desktop package, or with --app mobile for the Android app.
 
 Three sources, each with the licence texts themselves, since most of these licences ask for the text
 to travel with the binary:
 
-- the Rust crates the desktop shell links, from cargo-about (`about.toml`: the deny.toml allow-list,
-  build and dev dependencies excluded, all three desktop targets);
+- the Rust crates the shell links, from cargo-about (`about.toml`: the deny.toml allow-list, build
+  and dev dependencies excluded; the three desktop targets, or aarch64-linux-android for the app);
 - the npm packages in the web frontend's production dependency tree, from `pnpm licenses list`,
   with the licence file each package ships (the three fonts are OFL-1.1);
-- the native libraries that ship inside or beside the binary: transcribe.cpp and ggml (from the
-  transcribe-cpp-sys sources), sherpa-onnx, ONNX Runtime and the Khronos Vulkan loader (texts in
-  scripts/release/licenses/).
+- the native libraries that ship inside or beside the desktop binary: transcribe.cpp and ggml (from
+  the transcribe-cpp-sys sources), sherpa-onnx, ONNX Runtime and the Khronos Vulkan loader (texts in
+  scripts/release/licenses/). The Android app links none of them.
 
-Usage: third-party-notices.py --out FILE [--version V] [--about-json FILE] [--pnpm-json FILE]
+Usage: third-party-notices.py --out FILE [--app desktop|mobile] [--version V] [--about-json FILE]
+                              [--pnpm-json FILE]
 The two JSON options replace running cargo-about / pnpm (tests, or a CI step that ran them already).
 """
 
@@ -27,6 +28,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 LICENSES = Path(__file__).resolve().parent / "licenses"
 DESKTOP_MANIFEST = ROOT / "apps" / "desktop" / "src-tauri" / "Cargo.toml"
+MOBILE_MANIFEST = ROOT / "apps" / "mobile" / "src-tauri" / "Cargo.toml"
+ANDROID_TARGET = "aarch64-linux-android"
 LICENSE_FILE_PREFIXES = ("license", "licence", "copying", "notice", "ofl", "unlicense")
 RULE = "=" * 78
 
@@ -45,15 +48,16 @@ def run_json(argv: list[str], cwd: Path) -> object:
     return json.loads(out)
 
 
-def cargo_about() -> dict:
-    return run_json(
-        ["cargo", "about", "generate", "--format", "json", "-m", str(DESKTOP_MANIFEST), "--features", "gpu-vulkan", "--locked", "--fail"],
-        ROOT,
-    )
+def cargo_about(app: str) -> dict:
+    if app == "mobile":
+        scope = ["-m", str(MOBILE_MANIFEST), "--target", ANDROID_TARGET]
+    else:
+        scope = ["-m", str(DESKTOP_MANIFEST), "--features", "gpu-vulkan"]
+    return run_json(["cargo", "about", "generate", "--format", "json", *scope, "--locked", "--fail"], ROOT)
 
 
-def pnpm_licenses() -> dict:
-    return run_json(["pnpm", "licenses", "list", "--prod", "--json"], ROOT / "apps" / "desktop")
+def pnpm_licenses(app: str) -> dict:
+    return run_json(["pnpm", "licenses", "list", "--prod", "--json"], ROOT / "apps" / app)
 
 
 def crate_dir(name: str) -> Path:
@@ -101,7 +105,8 @@ def render(version: str, about: dict, pnpm: dict, natives: list[tuple[str, str, 
         "",
     ]
 
-    lines += [RULE, "Native libraries", RULE, ""]
+    if natives:
+        lines += [RULE, "Native libraries", RULE, ""]
     for name, licence, origin, text in natives:
         lines += [f"{name}", f"Licence: {licence}", f"Source: {origin}", "", text, "", "-" * 78, ""]
 
@@ -136,6 +141,7 @@ def render(version: str, about: dict, pnpm: dict, natives: list[tuple[str, str, 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--app", choices=("desktop", "mobile"), default="desktop", help="the package: the desktop shell or the Android app")
     parser.add_argument("--version", default=None, help="the app version (default: package.json)")
     parser.add_argument("--about-json", type=Path, help="cargo-about JSON instead of running it")
     parser.add_argument("--pnpm-json", type=Path, help="`pnpm licenses list --prod --json` output instead of running it")
@@ -143,9 +149,12 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     try:
         version = args.version or json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
-        about = json.loads(args.about_json.read_text(encoding="utf-8")) if args.about_json else cargo_about()
-        pnpm = json.loads(args.pnpm_json.read_text(encoding="utf-8")) if args.pnpm_json else pnpm_licenses()
-        natives = native_components(None if args.no_crate_sources else crate_dir("transcribe-cpp-sys"))
+        about = json.loads(args.about_json.read_text(encoding="utf-8")) if args.about_json else cargo_about(args.app)
+        pnpm = json.loads(args.pnpm_json.read_text(encoding="utf-8")) if args.pnpm_json else pnpm_licenses(args.app)
+        if args.app == "mobile":
+            natives = []
+        else:
+            natives = native_components(None if args.no_crate_sources else crate_dir("transcribe-cpp-sys"))
         text = render(version, about, pnpm, natives)
     except Failure as e:
         print(f"third-party-notices: {e}", file=sys.stderr)

@@ -1,5 +1,5 @@
 ---
-description: 用一条命令或安装包在 Windows、macOS 和 Linux 上安装 Voltip，并核对下载的文件。
+description: 用一条命令或安装包在 Windows、macOS 和 Linux 上安装 Voltip，安装 Android 应用，并核对下载的文件。
 ---
 
 # 安装
@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install
 | Linux，x64 | `.deb`、`.AppImage` | 在 Ubuntu 22.04 上构建，需要 glibc 2.34 或更高版本。`.deb` 依赖 `libwebkit2gtk-4.1-0`、`libvulkan1` 和 `libblas3`；AppImage 需要 FUSE 2（`libfuse2`）。支持 X11 和 Wayland |
 | macOS 11 及以上，Apple 芯片 | `*_aarch64.dmg` | M1 及更新的芯片 |
 | macOS 11 及以上，Intel 芯片 | `*_x64.dmg` | Intel 芯片的 Mac |
-| Android | 尚未发布 | 见[手机端](/zh/phone/) |
+| Android 8.0 及以上，64 位 Arm | `*_android_arm64.apk` | 见下面的 [Android](#android) 和[手机端](/zh/phone/) |
 
 ### Windows
 
@@ -71,6 +71,12 @@ dmg 安装包使用项目自己的证书签名，但未经 Apple 公证。打开
 - `.deb`：执行 `sudo apt install ./Voltip_0.0.7_amd64.deb`，apt 会一并安装依赖。
 - AppImage：用 `chmod +x` 设为可执行后运行，需要 `libfuse2`。
 - 在 Wayland 下，粘贴需要辅助工具，全局快捷键需要在系统设置中配置。见[各平台说明](/zh/reference/platforms#linux)。
+
+### Android
+
+在手机上下载 `Voltip_<版本>_android_arm64.apk` 并打开。Android 会询问是否允许浏览器或文件管理器安装应用，为这次安装选择允许即可。应用需要 Android 8.0 或更高版本，以及 64 位 Arm 处理器。
+
+新版本可以直接覆盖安装，配对关系会保留，因为每个版本都使用同一把密钥签名。发布中的 `.aab` 文件是提交给 Google Play 的安装包，手机上安装的是 `.apk`。
 
 ## 核对下载的文件
 

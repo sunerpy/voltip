@@ -101,6 +101,10 @@ smoke-desktop: ## Build and run the real Tauri desktop app under Xvfb, screensho
 android-apk: ## Build the arm64 debug APK of the mobile shell (needs ANDROID_HOME, NDK_HOME, JAVA_HOME)
 	./scripts/build-android-debug.sh dist/android/build-info.txt
 
+.PHONY: android-clippy
+android-clippy: frontend-dist-dirs ## clippy -D warnings for aarch64-linux-android: every workspace crate the phone links (needs NDK_HOME)
+	./scripts/clippy-android.sh
+
 .PHONY: windows-x64
 windows-x64: ## Cross-build the Windows x64 portable exe + NSIS installer from Linux (cargo-xwin)
 	./scripts/build-windows-x64.sh dist/windows-x64

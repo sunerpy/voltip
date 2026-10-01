@@ -361,6 +361,95 @@ class CollectMacos(Workspace):
         )
 
 
+class CollectAndroid(Workspace):
+    """The Android leg (docs/runbook.md 发布 · Android 签名): the APK and the AAB
+    sign-android-package.sh writes in this layout. The in-app updater does not serve it."""
+
+    BUNDLE = "android-bundle"
+    APK = "Voltip_2.0.0-alpha.2_android_arm64.apk"
+    AAB = "Voltip_2.0.0-alpha.2_android_arm64.aab"
+
+    def make(self) -> None:
+        self.write(f"{self.BUNDLE}/apk/{self.APK}", b"apk-bytes")
+        self.write(f"{self.BUNDLE}/aab/{self.AAB}", b"aab-bytes")
+
+    def args(self, updater_bundle: str = "none", updater: str = "false") -> tuple[str, ...]:
+        return (
+            "collect",
+            "--target",
+            "aarch64-linux-android",
+            "--bundle-dir",
+            str(self.root / self.BUNDLE),
+            "--bundles",
+            "apk,aab",
+            "--updater-bundle",
+            updater_bundle,
+            "--updater",
+            updater,
+            "--out",
+            str(self.root / "dist"),
+            "--evidence",
+            str(self.root / "evidence/aarch64-linux-android.json"),
+        )
+
+    def test_collects_the_apk_and_the_aab_with_no_updater(self) -> None:
+        self.make()
+        run(*self.args())
+        self.assertEqual(sorted(p.name for p in (self.root / "dist").iterdir()), [self.AAB, self.APK])
+        evidence = json.loads((self.root / "evidence/aarch64-linux-android.json").read_text())
+        self.assertEqual(evidence["platform"], "android")
+        self.assertIsNone(evidence["updater_platform"])
+        self.assertIsNone(evidence["updater"])
+        self.assertFalse(evidence["updater_enabled"])
+        self.assertEqual({item["name"]: item["kind"] for item in evidence["files"]}, {self.APK: "apk", self.AAB: "aab"})
+
+    def test_the_updater_is_refused_for_android(self) -> None:
+        self.make()
+        self.assertFails("serves no Android target", *self.args("apk", "false"))
+        self.assertFails("serves no Android target", *self.args("none", "true"))
+
+    def test_none_is_refused_for_a_desktop_target(self) -> None:
+        self.write("bundle/nsis/Voltip_2.0.0-alpha.2_x64-setup.exe", b"setup")
+        self.assertFails(
+            "--updater-bundle must be one of",
+            "collect", "--target", "x86_64-pc-windows-msvc", "--bundle-dir", str(self.root / "bundle"),
+            "--bundles", "nsis", "--updater-bundle", "none", "--updater", "false",
+            "--out", str(self.root / "dist"), "--evidence", str(self.root / "evidence/w.json"),
+        )
+
+    def test_latest_json_leaves_the_android_leg_out(self) -> None:
+        self.make()
+        run(*self.args())
+        dist = self.root / "dist"
+        (dist / "Voltip_2.0.0-alpha.2_x64-setup.exe").write_bytes(b"installer")
+        (dist / "Voltip_2.0.0-alpha.2_x64-setup.exe.sig").write_text(SIG_B64)
+        windows = {
+            "schema_version": 1,
+            "target": "x86_64-pc-windows-msvc",
+            "platform": "windows",
+            "updater_platform": "windows-x86_64",
+            "updater_enabled": True,
+            "updater": {
+                "kind": "nsis",
+                "name": "Voltip_2.0.0-alpha.2_x64-setup.exe",
+                "signature": "Voltip_2.0.0-alpha.2_x64-setup.exe.sig",
+            },
+            "files": [
+                {"kind": "nsis", "name": "Voltip_2.0.0-alpha.2_x64-setup.exe", "sha256": uj.sha256(dist / "Voltip_2.0.0-alpha.2_x64-setup.exe"), "signature": True, "size": 9},
+                {"kind": "signature", "name": "Voltip_2.0.0-alpha.2_x64-setup.exe.sig", "sha256": uj.sha256(dist / "Voltip_2.0.0-alpha.2_x64-setup.exe.sig"), "signature": False, "size": (dist / "Voltip_2.0.0-alpha.2_x64-setup.exe.sig").stat().st_size},
+            ],
+        }
+        self.write_json("evidence/x86_64-pc-windows-msvc.json", windows)
+        run(
+            "write", "--dist", str(dist), "--evidence-dir", str(self.root / "evidence"),
+            "--base-url", "https://github.com/example/voltip/releases/download",
+            "--tag", "v2.0.0-alpha.2", "--version", "2.0.0-alpha.2",
+            "--require-platform", "windows-x86_64", "--out", str(self.root / "latest.json"),
+        )
+        manifest = json.loads((self.root / "latest.json").read_text())
+        self.assertEqual(sorted(manifest["platforms"]), ["windows-x86_64"])
+
+
 class Write(Workspace):
     def seed(self, *, linux: bool = True, tamper: bool = False) -> None:
         dist = self.root / "dist"
@@ -542,6 +631,10 @@ class Helpers(unittest.TestCase):
         self.assertEqual(uj.updater_platform_for("aarch64-apple-darwin"), "darwin-aarch64")
         self.assertEqual(uj.updater_platform_for("x86_64-apple-darwin"), "darwin-x86_64")
         self.assertEqual(uj.platform_for("x86_64-apple-darwin"), "macos")
+        self.assertEqual(uj.platform_for("aarch64-linux-android"), "android")
+        self.assertFalse(uj.has_updater("aarch64-linux-android"))
+        with self.assertRaises(SystemExit):
+            uj.updater_platform_for("aarch64-linux-android")
         with self.assertRaises(SystemExit):
             uj.updater_platform_for("wasm32-unknown-unknown")
 

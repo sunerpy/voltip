@@ -60,9 +60,10 @@ Voltip 在各个桌面系统上是同一个应用。本页列出各平台之间�
 
 ## Android
 
-把手机当作电脑麦克风和键盘的 Android 应用正在开发，尚未发布。见[手机端](/zh/phone/)。
+Android 应用把手机当作电脑的麦克风和键盘，见[手机端](/zh/phone/)。应用需要 Android 8.0 或更高版本，以及 64 位 Arm 处理器，通过发布页面的 APK 安装（见[安装](/zh/guide/install#android)）。识别、AI 润色和插入文字都在配对的电脑上完成。
 
 ## 暂不提供
 
 - iOS 尚未开始开发。
 - 暂不提供 Windows ARM 和 Linux ARM 的安装包。
+- 暂不提供适用于 32 位 Arm 或 x86 处理器手机的 Android 应用。

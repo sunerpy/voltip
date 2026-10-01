@@ -22,7 +22,7 @@ hero:
 home:
   facts:
     - term: Runs on
-      text: Windows, macOS (Apple silicon and Intel) and Linux. An Android app is in development.
+      text: Windows, macOS (Apple silicon and Intel) and Linux, with an Android app that makes a phone the computer's microphone and keyboard.
     - term: Your audio
       text: With a local model it never leaves your computer. With a cloud service it goes only to the service you chose.
 
@@ -108,7 +108,7 @@ home:
         items:
           - title: Your phone as a microphone and keyboard
             body: Pair an Android phone by QR code, a 6-digit code or a tap on the same network. Hold to talk or type on the phone, and the text appears at the computer's cursor.
-            status: building
+            status: available
             link: /phone/
           - title: An iOS app
             body: The phone as a microphone and keyboard on iOS as well. Development has not started.
@@ -215,9 +215,9 @@ home:
           - Yes
           - Vulkan
       - name: Android
-        status: building
+        status: available
         cells:
-          - Not released yet
+          - APK, Android 8.0 or later, 64-bit Arm
           - Hold to talk in the app
           - Done by the paired computer
           - —
@@ -242,9 +242,9 @@ home:
     title: What comes next
     intro: The next releases, in the expected order. No dates are promised; each feature is described on this site once it ships.
     items:
-      - title: The Android app
+      - title: Google Play
         status: building
-        body: Using the phone as a microphone and keyboard is built and tested. The app is being prepared for release.
+        body: The Android app is on the releases page. A listing on Google Play is being prepared; Google requires a closed test first.
       - title: Streaming recognition with cloud services
         status: planned
         body: Text while you speak currently uses the local live transcription model. Streaming results from cloud services are planned.
@@ -295,11 +295,11 @@ Presets decide what AI polish does: proofreading by default, or a prompt, intent
 
 ## Your phone as a microphone and keyboard
 
-<StatusTag status="building" />
+<StatusTag status="available" />
 
 Pair an Android phone with the computer and hold to talk on the phone. The computer recognises the speech with its own settings and inserts the text at its cursor. The phone can also send typed text or its clipboard.
 
-The Android app is built and tested but not released yet. It will be on the releases page once it is. [How the phone works](/phone/)
+The Android app is on the releases page as an APK. [Install it](/guide/install#android) · [How the phone works](/phone/)
 
 </SplitBlock>
 

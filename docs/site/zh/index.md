@@ -22,7 +22,7 @@ hero:
 home:
   facts:
     - term: 适用平台
-      text: Windows、macOS（Apple 芯片与 Intel 芯片）和 Linux。Android 手机应用正在开发中。
+      text: Windows、macOS（Apple 芯片与 Intel 芯片）和 Linux；另有 Android 应用，可把手机当作电脑的麦克风和键盘。
     - term: 音频去向
       text: 使用本地模型时，音频不会离开这台电脑；使用云端服务时，只发送给你选择的服务。
 
@@ -108,7 +108,7 @@ home:
         items:
           - title: 手机当麦克风和键盘
             body: 通过二维码、6 位验证码，或在同一局域网内点选，即可与 Android 手机配对。在手机上按住说话或输入文字，内容会出现在电脑的光标处。
-            status: building
+            status: available
             link: /zh/phone/
           - title: iOS 应用
             body: 在 iOS 上同样把手机当作麦克风和键盘，尚未开始开发。
@@ -215,9 +215,9 @@ home:
           - 支持
           - Vulkan
       - name: Android
-        status: building
+        status: available
         cells:
-          - 尚未发布
+          - APK，Android 8.0 及以上，64 位 Arm
           - 在应用里按住说话
           - 由配对的电脑完成
           - —
@@ -242,9 +242,9 @@ home:
     title: 接下来的计划
     intro: 按预计顺序列出，不承诺日期；每项功能发布后，本站会随之更新。
     items:
-      - title: Android 应用
+      - title: Google Play 上架
         status: building
-        body: 手机当麦克风和键盘的功能已经完成并通过测试，应用正在准备发布。
+        body: Android 应用已在发布页面提供。Google Play 上架正在准备中，按 Google 的要求需要先完成封闭测试。
       - title: 云端流式识别
         status: planned
         body: 目前边说边出字只使用本地的实时识别模型，今后计划支持云端服务的流式识别结果。
@@ -295,11 +295,11 @@ home:
 
 ## 手机当麦克风和键盘
 
-<StatusTag status="building" />
+<StatusTag status="available" />
 
 把 Android 手机与电脑配对后，在手机上按住说话：电脑使用自己的识别设置处理语音，并把文字插入电脑的光标处。手机也可以发送输入的文字或剪贴板内容。
 
-Android 应用已经完成并通过测试，但尚未发布，发布后会出现在发布页面。[了解手机端](/zh/phone/)
+Android 应用以 APK 形式在发布页面提供。[安装方法](/zh/guide/install#android) · [了解手机端](/zh/phone/)
 
 </SplitBlock>
 

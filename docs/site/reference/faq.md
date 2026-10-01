@@ -66,9 +66,9 @@ See [Updates, uninstall and your data](/guide/updates).
 
 ## The phone
 
-### When can I use the phone app?
+### How do I install the phone app?
 
-The Android app is built and tested but not released yet. It will be on the [releases page](https://github.com/sunerpy/voltip/releases) once it is.
+On the phone, download `Voltip_<version>_android_arm64.apk` from the [releases page](https://github.com/sunerpy/voltip/releases) and open it. See [Install](/guide/install#android).
 
 ## Something else
 

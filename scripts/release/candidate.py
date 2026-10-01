@@ -6,8 +6,9 @@ or an existing tag in backfill). Each build leg uploads what ``updater-json.py c
 
     dist/<asset>                 the files a release ships (installers, bundles, .sig files)
     evidence/<target>.json       name, size, sha256 and kind of each file, plus the updater entry
+                                 (none for Android, which the updater does not serve)
 
-The aggregate job downloads every leg into one directory and runs ``seal``: the four legs of
+The aggregate job downloads every leg into one directory and runs ``seal``: the five legs of
 ``.github/release-targets.json`` must all be there, every file must match its evidence, and the
 result is ``candidate-manifest.json`` binding those bytes to the source (head, tree, version),
 the workflow run that built them and the CI gate the source passed. ``release.yml`` promotes a
@@ -53,7 +54,7 @@ MODES = ("automatic", "dry-run", "backfill")
 PROMOTABLE_MODES = {"automatic", "backfill"}
 SOURCE_GATE_CHECK = "CI Success"
 # File kinds updater-json.py collect records.
-BUNDLE_KINDS = {"deb", "rpm", "appimage", "nsis", "msi", "dmg", "app"}
+BUNDLE_KINDS = {"deb", "rpm", "appimage", "nsis", "msi", "dmg", "app", "apk", "aab"}
 FILE_KINDS = BUNDLE_KINDS | {"signature", "extra"}
 # Written only with bundle.createUpdaterArtifacts (updater-json.py UPDATER_ONLY).
 UPDATER_ONLY = {"app"}
@@ -123,13 +124,17 @@ def target_specs(path: Path) -> dict[str, dict]:
             raise Failure(f"{path}: invalid target {target!r}")
         if target in specs:
             raise Failure(f"{path}: duplicate target {target}")
+        # A target the updater does not serve (Android) names neither an updater bundle nor an
+        # updater platform; every other target names both.
+        updater_bundle = entry.get("updater_bundle")
+        updater_platform = entry.get("updater_platform")
+        served = updater_bundle is not None or updater_platform is not None
         if (
             not isinstance(bundles, list)
             or not bundles
             or any(kind not in BUNDLE_KINDS for kind in bundles)
-            or entry.get("updater_bundle") not in bundles
+            or (served and (updater_bundle not in bundles or not isinstance(updater_platform, str)))
             or not isinstance(entry.get("platform"), str)
-            or not isinstance(entry.get("updater_platform"), str)
         ):
             raise Failure(f"{path}: {target}: bundles, updater_bundle or platforms are invalid")
         specs[target] = entry
@@ -179,7 +184,11 @@ def check_evidence(root: Path, specs: dict[str, dict]) -> tuple[list[dict], list
         enabled = leg["updater_enabled"]
         if not isinstance(enabled, bool):
             raise Failure(f"{target}: updater_enabled must be a boolean")
-        updater_states.add(enabled)
+        if spec["updater_bundle"] is None:
+            if enabled or leg["updater"] is not None:
+                raise Failure(f"{target}: the updater serves no such target")
+        else:
+            updater_states.add(enabled)
         files = leg["files"]
         if not isinstance(files, list) or not files:
             raise Failure(f"{target}: evidence lists no files")
@@ -239,7 +248,7 @@ def check_evidence(root: Path, specs: dict[str, dict]) -> tuple[list[dict], list
             raise Failure(f"{target}: an updater entry without the updater")
         legs.append(leg)
     if len(updater_states) != 1:
-        raise Failure("the legs disagree on whether the updater is enabled")
+        raise Failure("the legs the updater serves disagree on whether it is enabled")
     disk = {path.name for path in dist.iterdir()}
     if disk != set(owner):
         raise Failure(

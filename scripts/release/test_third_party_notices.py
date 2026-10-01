@@ -81,6 +81,31 @@ class Notices(unittest.TestCase):
         self.assertIn("Apache License", (HERE / "licenses" / "vulkan-loader-LICENSE.txt").read_text(encoding="utf-8"))
         self.assertIn("sherpa-onnx", text)
 
+    def test_the_android_app_lists_its_crates_and_packages_and_no_desktop_library(self) -> None:
+        out = self.root / "android" / "THIRD-PARTY-NOTICES.txt"
+        code = notices.main(["--out", str(out), "--app", "mobile", "--version", "0.0.1", "--about-json", str(self.root / "about.json"), "--pnpm-json", str(self.root / "pnpm.json")])
+        self.assertEqual(code, 0)
+        text = out.read_text(encoding="utf-8")
+        self.assertIn("Rust crates (2)", text)
+        self.assertIn("Web frontend packages (2)", text)
+        for desktop_only in ("Native libraries", "ONNX Runtime", "Vulkan", "WebView2", "transcribe.cpp"):
+            self.assertNotIn(desktop_only, text)
+
+    def test_the_android_app_is_scanned_for_its_own_target(self) -> None:
+        calls = []
+        original = notices.run_json
+        notices.run_json = lambda argv, cwd: calls.append((argv, cwd)) or {}
+        try:
+            notices.cargo_about("mobile")
+            notices.pnpm_licenses("mobile")
+        finally:
+            notices.run_json = original
+        (about, _), (pnpm, cwd) = calls
+        self.assertIn(str(notices.MOBILE_MANIFEST), about)
+        self.assertEqual(about[about.index("--target") + 1], "aarch64-linux-android")
+        self.assertNotIn("gpu-vulkan", about)
+        self.assertEqual(cwd, notices.ROOT / "apps" / "mobile")
+
     def test_a_tool_that_fails_is_an_error_not_an_empty_notice(self) -> None:
         with self.assertRaises(notices.Failure):
             notices.run_json(["false"], self.root)

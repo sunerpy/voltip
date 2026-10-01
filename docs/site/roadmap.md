@@ -8,9 +8,9 @@ The next releases, in the expected order. No dates are promised. Each feature is
 
 ## In development
 
-### The Android app <StatusTag status="building" />
+### Google Play <StatusTag status="building" />
 
-Using the phone as a microphone and keyboard is built and tested; the app is being prepared for release. See [the phone page](/phone/).
+The Android app is on the releases page; see [the phone page](/phone/). A listing on Google Play is being prepared. Google requires a closed test before an app can be published there.
 
 ## Planned
 

@@ -60,9 +60,10 @@ In a session that runs X11 apps through XWayland, the shortcut works only while 
 
 ## Android
 
-The Android app, which turns a phone into a microphone and keyboard for the computer, is in development and not released yet. See [the phone page](/phone/).
+The Android app turns a phone into a microphone and keyboard for the computer; see [the phone page](/phone/). It needs Android 8.0 or later and a 64-bit Arm processor, and installs from the APK on the releases page ([Install](/guide/install#android)). Recognition, AI polish and inserting the text happen on the paired computer.
 
 ## Not available
 
 - iOS has not been started.
 - Packages for Windows on ARM and Linux on ARM are not planned for now.
+- The Android app is not built for phones with a 32-bit Arm or an x86 processor.

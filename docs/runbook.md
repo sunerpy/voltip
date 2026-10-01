@@ -39,7 +39,7 @@ make desktop-vnc-stop
 | `VOLTIP_UPDATE_PUBKEY` | 更新器公钥；发布工作流据此打开更新器，更新地址由仓库推出（`docs/dictation.md` §9） |
 | `VOLTIP_MODEL_BASE_URL` | 可选：本地模型的第一下载源 |
 
-打包脚本（`make windows-x64` / `make linux-x64` / `make android-apk`）与发布候选（`release-candidate.yml` 的 `prepare`）在任一内置引擎值为空时拒绝出包（`scripts/lib/require-builtin-engines.sh`），显式 `VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1` 才放行，CI 的打包 job 就是这样出无内置服务的包。客户端里唯一的凭据是应用令牌；`scripts/build-windows-x64.sh` 与 release 的 Linux 分支用 `strings` 扫描二进制，出现 `gsk_…` / `sk-…` 即拒绝出包。生产主机名守卫（`.github/scripts/check-no-production-hosts.sh`）从 `VOLTIP_PRODUCTION_HOSTS` 读要找的词，扫描整棵树，命中时只打印 `文件:行号`。
+打包脚本（`make windows-x64` / `make linux-x64` / `make android-apk`）与发布候选（`release-candidate.yml` 的 `prepare`）在任一内置引擎值为空时拒绝出包（`scripts/lib/require-builtin-engines.sh`），显式 `VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1` 才放行，CI 的打包 job 就是这样出无内置服务的包。客户端里唯一的凭据是应用令牌；`scripts/build-windows-x64.sh`、release 的 Linux 腿与 Android 包检查（`.github/scripts/check-android-package.sh`）用 `strings` 扫描二进制，出现 `gsk_…` / `sk-…` 即拒绝出包。生产主机名守卫（`.github/scripts/check-no-production-hosts.sh`）从 `VOLTIP_PRODUCTION_HOSTS` 读要找的词，扫描整棵树，命中时只打印 `文件:行号`。
 
 ## 自建内置服务
 
@@ -79,17 +79,17 @@ Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前�
 
 工作流都跑在 GitHub 托管的 runner 上：
 
-- `ci.yml`：push `main` / PR → `changes`（`.github/scripts/changed-code.sh`：只改了 `docs/**`、`*.md`、`LICENSE*` 时 `code=false`；新分支、API 失败或一次推送 300 个以上文件都算改了代码）→ 并行的 `verify-rust`（`VERIFY_GATES=rust`：格式、features、clippy、交叉检查、覆盖率下跑一遍测试、cargo-deny、IPC e2e）与 `verify-web`（`VERIFY_GATES=web`：web 门禁、台账、主机名守卫、发布脚本测试，外加带 `VOLTIP_PRODUCTION_HOSTS` 的守卫；fork 与 Dependabot 的 PR 没有 secrets，跳过这一步）、`codecov`（上传覆盖率，只做报告，不阻塞）、`windows-cross`（`make windows-x64`，无内置服务）→ `windows-native`（Windows Server 上无头运行便携包与安装后的 exe）、`hooks-windows`（Windows 桌面上真实的单键钩子）、`smoke-desktop`（Xvfb 与纯 Wayland 冒烟、X11 真实钩子、无头识别）、`ci-success` 聚合（CI 的总结论）；另有 `candidate-status` 给不是发布 PR 的 PR head 写 `Release candidate = success`（见下面的 ruleset）。只改文档时 `verify-web` 照常跑，其余构建、测试、平台 job 跳过；`ci-success` 只在 `changes` 判定为只改文档时接受跳过，其他任何跳过、失败或取消都判失败。CI 不注入任何内置引擎值。
+- `ci.yml`：push `main` / PR → `changes`（`.github/scripts/changed-code.sh`：只改了 `docs/**`、`*.md`、`LICENSE*` 时 `code=false`；新分支、API 失败或一次推送 300 个以上文件都算改了代码）→ 并行的 `verify-rust`（`VERIFY_GATES=rust`：格式、features、clippy、交叉检查、覆盖率下跑一遍测试、cargo-deny、IPC e2e）与 `verify-web`（`VERIFY_GATES=web`：web 门禁、台账、主机名守卫、发布脚本测试，外加带 `VOLTIP_PRODUCTION_HOSTS` 的守卫；fork 与 Dependabot 的 PR 没有 secrets，跳过这一步）、`codecov`（上传覆盖率，只做报告，不阻塞）、`windows-cross`（`make windows-x64`，无内置服务）→ `windows-native`（Windows Server 上无头运行便携包与安装后的 exe）、`hooks-windows`（Windows 桌面上真实的单键钩子）、`smoke-desktop`（Xvfb 与纯 Wayland 冒烟、X11 真实钩子、无头识别）、`android`（对 Android 目标跑 clippy；构建未签名的 release APK 与 AAB，用当次生成的临时密钥签名，再跑与候选相同的包检查）、`ci-success` 聚合（CI 的总结论）；另有 `candidate-status` 给不是发布 PR 的 PR head 写 `Release candidate = success`（见下面的 ruleset）。只改文档时 `verify-web` 照常跑，其余构建、测试、平台 job 跳过；`ci-success` 只在 `changes` 判定为只改文档时接受跳过，其他任何跳过、失败或取消都判失败。CI 不注入任何内置引擎值。
 - CI 的速度（2026-09-28 实测后调整）：Rust 测试只在覆盖率门禁里跑一遍（原先 `cargo test` 与 `cargo llvm-cov` 各编一遍、各跑一遍，各约 170 秒）；`verify` 拆成可并行的两半；Cargo 缓存只从 `main` 保存（PR 的缓存只有同一个 PR 能用，而仓库 10 GB 的上限会把 `main` 的挤掉），不缓存 `~/.cargo/bin`；dev / test 构建只留行号表（`CARGO_PROFILE_DEV_DEBUG=line-tables-only`）；清理预装 SDK 只在剩余空间不足 40 GB 时做（`.github/scripts/free-disk-space.sh`，托管 runner 实测开跑时有 86 GB）；CI 的 Windows 包复用按全部输入（锁文件、清单、`about.toml`、生成脚本与许可证文本）缓存的第三方声明，省掉约两分钟的 cargo-about（`VOLTIP_NOTICES_CACHED=1`，发布总是重新生成）；下载失败重试（`CARGO_NET_RETRY`、`RUSTUP_MAX_RETRIES`）。`verify-*.log` 里每道门都记了耗时（`secs=`）。
 - `ci.yml` 的 `macos` job（2026-09-28 从 `macos.yml` 并入）：推送 `main` 或手动运行时在 `macos-15`（Apple 芯片）与 `macos-15-intel`（Intel）上构建 ad-hoc 签名的 `.app` 和 `.dmg`（发布包用固定证书，见下面「macOS 签名」），用 `.github/scripts/check-macos-bundle.sh` 检查，并确认发布用的检查会拒绝这个 ad-hoc 包，跑 macOS 单元测试、真实的事件 tap（仅 Apple 芯片，先在 TCC 里给测试程序授予辅助功能）、无头识别，以及桌面上的 `scripts/smoke-tray-macos.sh`（标题栏左端的内容离红绿灯至少 12 pt，菜单栏图标、菜单与各项操作，截图随产物保存）；不跑在 pull request 上。在 push 和手动运行时 `CI Success` 等它（规则在 `.github/scripts/ci-success.sh`，只有 pull request 上允许它被跳过），所以 `main` 上任何一台 Mac 失败，下一个候选都过不了 `source-gate`；Cargo 缓存从 `main` 保存。
 - release-please 的 PR（作者 `github-actions[bot]`、分支 `release-please--branches--main--*`、标签 `autorelease: pending`）和它合并到 `main` 的发布提交只改版本号和 CHANGELOG，只跑 `verify-web`：候选在同一个 head 上构建并检查每个安装包，而 head 的基点已经通过 CI（`.github/scripts/changed-code.sh`）。同样的改动换个作者或没有标签，照常跑完整 CI。
 - 发布是「构建一次再晋升」（2026-09-28 用户选定）：安装包在发布 PR 上构建、签名、证明并封存，合并后只校验和发布，不再编译。
   - `release.yml`（控制器）：每次推送 `main`，release-please 维护 Release PR（`release-please-config.json`）。PR head 与 `main` 同步时，`dispatch_candidate` 用 `gh workflow run` 派发 `release-candidate.yml`（`mode=automatic`，带 PR 号、head、base）；head 落后 `main` 时不派发，只在 step summary 说明怎么恢复。
   - `release-candidate.yml`（候选）：`prepare` 校验工作流身份（受保护的 `main`）、PR 身份，以及 `.github/scripts/check-release-delta.py` 的 delta 证明：head 相对 `main` 只改了 `CHANGELOG.md`、`.release-please-manifest.json` 和三份 `package.json` 的版本号，任何模式下证明失败都停止，因为构建腿带着生产和签名 secrets。之后做原 preflight 的三件事（`check-config`、内置引擎 secrets、主机名守卫），并把 head 的 `Release candidate` 置为 pending。
-  - 四条构建腿（Windows 交叉构建、Linux、Apple 芯片与 Intel macOS）在根目录检出被构建的源码，在 `.release-tooling/` 检出本工作流所在提交的发布脚本（`updater-json.py`、`check-macos-bundle.sh`、`tauri-bundle-retry.sh`、`install-cargo-tauri.sh`、`artefact-checks.sh`）；定义产品的脚本（Makefile、构建脚本、第三方声明、`forget-sherpa-onnx-build.sh`）来自源码。缓存沿用 `release-<target>`。
-  - `source-gate` 不重跑测试：要求 `ci.yml` 在 head 所在的 `main` 提交（backfill 时是标签提交）上 push 运行的 `CI Success` 通过，最多等 45 分钟。`CI Success` 等 `ci.yml` 里除 Codecov 上传之外的全部作业，包括两条 macOS 腿（`scripts/release/test_release_workflows.py` 检查这一点；v0.0.5 就是在它还不等 macOS 时，从一个 Intel 腿失败的提交发出去的）。`aggregate`（唯一持有 `id-token: write`、不执行项目代码的 job）用 `scripts/release/candidate.py seal` 核对四条腿齐全、每个文件与证据一致，写 `candidate-manifest.json`，证明全部文件和清单，上传 `release-candidate`（保留 14 天）。`gate` 按结果把 `Release candidate` 写成 success 或 failure（只在 automatic 模式写）。
+  - 五条构建腿（Windows 交叉构建、Linux、Apple 芯片与 Intel macOS、Android）在根目录检出被构建的源码，在 `.release-tooling/` 检出本工作流所在提交的发布脚本（`updater-json.py`、`check-macos-bundle.sh`、`tauri-bundle-retry.sh`、`install-cargo-tauri.sh`、`artefact-checks.sh`、`android-toolchain.sh`、`sign-android-package.sh`、`check-android-package.sh`）；定义产品的脚本（Makefile、构建脚本、第三方声明、`forget-sherpa-onnx-build.sh`）来自源码。缓存沿用 `release-<target>`。
+  - `source-gate` 不重跑测试：要求 `ci.yml` 在 head 所在的 `main` 提交（backfill 时是标签提交）上 push 运行的 `CI Success` 通过，最多等 45 分钟。`CI Success` 等 `ci.yml` 里除 Codecov 上传之外的全部作业，包括两条 macOS 腿（`scripts/release/test_release_workflows.py` 检查这一点；v0.0.5 就是在它还不等 macOS 时，从一个 Intel 腿失败的提交发出去的）。`aggregate`（唯一持有 `id-token: write`、不执行项目代码的 job）用 `scripts/release/candidate.py seal` 核对五条腿齐全、每个文件与证据一致，写 `candidate-manifest.json`，证明全部文件和清单，上传 `release-candidate`（保留 14 天）。`gate` 按结果把 `Release candidate` 写成 success 或 failure（只在 automatic 模式写）。
   - 实测（0.0.4 backfill、0.0.5 自动路径，2026-09-28）：候选约 26 分钟，四条腿并行，Intel macOS 腿约 25 分钟是关键路径（Linux 8.6、Windows 8.1、Apple 芯片 10.7 分钟）；合并到公开 2 分 31 秒（同轮构建时是 20–35 分钟）。
-  - 合并（squash）后 release-please 打标签并建草稿 Release，控制器的 `resolve_release` 按合并的 PR head 上 `github-actions[bot]` 写的最新 `Release candidate` 成功状态找到候选运行，校验它是 `main` 上成功的 `release-candidate.yml` 运行；`promote`（`environment: release`，不装编译器和包管理器）用 `candidate.py verify` 核对身份（PR、head、tree 等于标签提交的 tree、版本、工作流 SHA、运行号），对每个文件 `gh attestation verify`，用 minisign 校验每个 `.sig`，写 `latest.json`（四个平台，地址都指向本次 Release 的资产）与 `SHA256SUMS` 并证明，上传后逐个核对远端字节，再把草稿转为正式。没有 `push: tags` / `release:` 触发。
+  - 合并（squash）后 release-please 打标签并建草稿 Release，控制器的 `resolve_release` 按合并的 PR head 上 `github-actions[bot]` 写的最新 `Release candidate` 成功状态找到候选运行，校验它是 `main` 上成功的 `release-candidate.yml` 运行；`promote`（`environment: release`，不装编译器和包管理器）用 `candidate.py verify` 核对身份（PR、head、tree 等于标签提交的 tree、版本、工作流 SHA、运行号），对每个文件 `gh attestation verify`，用 minisign 校验每个 `.sig`，写 `latest.json`（四个桌面平台，地址都指向本次 Release 的资产；更新器不服务 Android，APK 与 AAB 只进 Release 和 `SHA256SUMS`）与 `SHA256SUMS` 并证明，上传后逐个核对远端字节，再把草稿转为正式。没有 `push: tags` / `release:` 触发。
 - 仓库 ruleset：`main`（24076328）禁止删除与强推，谁都不能绕过；`release-candidate` 要求 `CI Success`（来源固定为 GitHub Actions，app id 15368）和 `Release candidate` 两项检查，并且 PR 必须与 `main` 同步才能合并（strict），只有仓库管理员（所有者）能绕过，所以直接推 `main` 照常可以。
   - 普通 PR 由 `ci.yml` 的 `candidate-status` 写 `Release candidate = success`，`CI Success` 由它自己的 CI 运行给出；fork 与 Dependabot 的只读令牌写不了状态，这类 PR 等 `CI Success` 变绿后由所有者 `gh pr merge --squash --admin` 合并。
   - 发布 PR 是机器人开的，它的 CI 运行停在 `action_required`，要先批准（`gh api -X POST repos/<owner>/voltip/actions/runs/<id>/approve`），否则没有 `CI Success`，PR 无法合并。
@@ -144,7 +144,13 @@ Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前�
       真机在 `docs/acceptance/macos/manual-checklist.md` 第 15 项确认。
     - 查看真机上的状态（只读，不输出密钥）：`security dump-keychain -a ~/Library/Keychains/login.keychain-db`，只看 `"svce"<blob>="dev.voltip.desktop/` 的条目，关注 `acct` 和 `partition_id`。
   - 0.0.7 过渡时的另两项：辅助功能在系统设置里把 Voltip 关掉再打开，不行就 `tccutil reset Accessibility dev.voltip.desktop` 后重新授权；麦克风同样关掉再打开，没有再弹授权时 `tccutil reset Microphone dev.voltip.desktop`。发布说明要写这两项和钥匙串的变化。
-- 还没进工作流的：Android 包（`make android-apk` 在本机出 debug APK）；macOS 包没有公证（见 `docs/roadmap.md`）。
+- Android 签名（2026-10-01 起）：GitHub Release 里的 APK 与上传 Google Play 的 AAB 用同一把密钥签名（RSA 4096，有效期 100 年，别名 `voltip`，证书 `CN=Voltip, O=Voltip`）。Play 应用签名保存的也是这把密钥（用户 2026-09-30 选定），所以从 GitHub 安装的应用与从 Play 安装的应用可以互相覆盖升级。
+  - 位置：PKCS12 密钥库和它的密码只在所有者的密码管理器与仓库 secrets（`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`，见 `.github/README-secrets.md`）里；仓库只记证书的 SHA-256（`.github/release-targets.json` 的 `android_signing`）。`prepare` 要求四个 secrets 都存在。
+  - 构建：候选的 `bundle-android` 腿先用 Gradle 构建未签名的 APK 和 AAB。这一步运行全部依赖的构建代码，所以不接触密钥。然后在单独一步把密钥库解码到本 job 的临时目录，用 `.github/scripts/sign-android-package.sh` 签名，步骤结束即删除：APK 先 `zipalign -P 16`，再用 apksigner 做 v2 与 v3 签名（minSdk 26 不需要 v1）；AAB 用 jarsigner 签名。
+  - 检查（`.github/scripts/check-android-package.sh`）：两个包都由 `android_signing` 的证书签名，且只有一个签名者；APK 按 16 KB 页对齐，每个 `.so` 的 LOAD 段按 16 KB 对齐（Google Play 要求面向 Android 15 及以上的应用支持 16 KB 页）；包名 `dev.voltip.mobile`，versionName 等于发布版本，versionCode 等于 主版本 × 1000000 + 次版本 × 1000 + 补丁号（Tauri 的算法，所以每次发布都更大）；targetSdk 36；原生库里没有服务商密钥；带本版本的第三方许可声明（`assets/THIRD-PARTY-NOTICES.txt`）。CI 的 `android` job 用当次生成的临时密钥走同一条签名与检查路径。
+  - 丢失：GitHub 上的 APK 再也无法用同一签名发布，已安装的用户只能卸载后重装（配对随之丢失）；Play 上的应用可以在 Play Console 申请重置上传密钥，Play 继续用它保存的密钥签名。所以密钥库必须另存一份。
+  - 泄露：轮换要用 APK 签名方案 v3 的密钥轮换（`apksigner rotate`）和 Play Console 的应用签名密钥升级，届时单独设计；Android 8.x 不支持 v3 轮换，这些设备只能重装。
+- 还没进工作流的：上传 Google Play；macOS 包没有公证（见 `docs/roadmap.md`）。
 
 ## 文档站
 
@@ -170,9 +176,23 @@ Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前�
 export ANDROID_HOME=<sdk> NDK_HOME=<sdk>/ndk/<27+> JAVA_HOME=<jdk17+>
 rustup target add aarch64-linux-android
 make android-apk        # scripts/build-android-debug.sh：arm64 debug APK + aapt badging 写入 dist/android/build-info.txt
+make android-clippy     # 对 aarch64-linux-android 跑 clippy：手机壳链接的每个工作区 crate，含只在 Android 上编译的代码
 ```
 
-Gradle 工程 `apps/mobile/src-tauri/gen/android` 已提交（`cargo tauri android init --ci` 可重建）；`app/build`、`.gradle`、`jniLibs` 符号链接不入库。发布流水线（`release-candidate.yml` 与 `release.yml`）目前只出桌面包，签名的 Android release APK / AAB 尚未接入。
+发布用的包与 CI 的 `android` job 走同一条路（CI 上的工具链由 `.github/scripts/android-toolchain.sh` 固定：JDK 21、platform 36、build-tools 35.0.0、NDK 29.0.13846066）：
+
+```bash
+python3 scripts/release/third-party-notices.py --app mobile --out apps/mobile/src-tauri/resources/THIRD-PARTY-NOTICES.txt
+(cd apps/mobile && cargo tauri android build --ci --target aarch64 --apk --aab --config src-tauri/tauri.package-android.conf.json)
+out=apps/mobile/src-tauri/gen/android/app/build/outputs
+# 四个 ANDROID_* 环境变量指向密钥库与它的密码（.github/README-secrets.md），不要写进命令历史
+.github/scripts/sign-android-package.sh "$out/apk/universal/release/app-universal-release-unsigned.apk" \
+  "$out/bundle/universalRelease/app-universal-release.aab" dist/android <版本>
+.github/scripts/check-android-package.sh dist/android/apk/Voltip_<版本>_android_arm64.apk \
+  dist/android/aab/Voltip_<版本>_android_arm64.aab <证书 SHA-256> <版本>
+```
+
+Gradle 工程 `apps/mobile/src-tauri/gen/android` 已提交（`cargo tauri android init --ci` 可重建）；`app/build`、`.gradle`、`jniLibs` 符号链接和 CLI 复制进 `app/src/main/assets/` 的文件不入库，CLI 每次构建都重新生成它们（2026-10-01 在删掉这些文件后从头构建验证过）。release 构建开着 R8，Tauri 生成的 `proguard-tauri.pro` 保留插件类和 `@Command` 方法（同日在 release 的 DEX 里核对过三个插件及其命令）。
 
 ## Windows 交叉构建（Linux 主机）
 
