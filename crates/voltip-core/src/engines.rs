@@ -727,7 +727,8 @@ pub struct ProviderStatus {
     pub key: KeyPolicy,
     /// Runs on this machine.
     pub on_device: bool,
-    /// The desktop can open the vendor's key page (`provider_console_open`).
+    /// The shell can open the vendor's key page (`provider_console_open`; the phone too since
+    /// 2026-10-01).
     pub console: bool,
     /// Recognition, when the provider offers it in this build.
     #[serde(default, skip_serializing_if = "Option::is_none")]

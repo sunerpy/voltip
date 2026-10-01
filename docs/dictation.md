@@ -1305,14 +1305,21 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 
 用户 2026-09-30 的要求（第 10 项）：没有在线的已配对电脑时，手机自己识别。配对后「按住说话」照旧发给电脑（§20.1），只有在线的已配对电脑一台都没有时才改为在手机上识别；从未配对的手机一打开就能这样用。
 
-- **端口**（`apps/mobile/src-tauri/src/lib.rs` 的 `phone_ports`）：麦克风是 `PhoneMicrophone`；识别与润色由 `voltip-cloud` 按 `ResolvedEngines` 构建云端客户端，手机没有本地模型，也没有用户密钥，所以用的是编译进构建的内置服务（`BuiltIn::from_build`，§3）；注入器是 `PhoneClipboardInjector`，结果一律写进手机剪贴板（`PhoneClipboardPlugin.kt` 的 `writeText`），`Via::Clipboard`。没有流式预览、前台探针、服务探针和 VAD，核心的回退照常适用。`build_app` 在 `setup` 里拿到 `AppHandle` 后才构建端口（剪贴板注入器需要它）。
+- **端口**（`apps/mobile/src-tauri/src/lib.rs` 的 `phone_ports`）：麦克风是 `PhoneMicrophone`；识别与润色由 `voltip-cloud` 按 `ResolvedEngines` 构建云端客户端，手机没有本地模型，默认用编译进构建的内置服务（`BuiltIn::from_build`，§3），设置里换成其他服务商后用它；注入器是 `PhoneClipboardInjector`，结果一律写进手机剪贴板（`PhoneClipboardPlugin.kt` 的 `writeText`），`Via::Clipboard`；服务探针是 `voltip_cloud::HttpServiceProbe`（「测试连接」，与桌面相同）。没有流式预览、前台探针和 VAD，核心的回退照常适用。`build_app` 在 `setup` 里拿到 `AppHandle` 后才构建端口（剪贴板注入器需要它）。
+- **手机自己的设置**（用户 2026-10-01 决定：手机除本地模型外功能齐全；手机上识别时用手机自己的设置，配对前后都一样，发给电脑的录音仍按电脑的设置处理）：
+  - 识别与润色的服务商、模型、接口地址与 API 密钥（`settings_set_engines`、`provider_key_set`，密钥存进 Android Keystore）、「测试连接」（`provider_probe`）、服务商密钥页（`provider_console_open`，经 `tauri-plugin-opener` 用浏览器打开）；
+  - AI 润色开关、预设（`presets_*` 交给核心，`presets_builtin` 由 `voltip_cloud::builtin_preset_texts` 回答）、识别语言与中文字形（§17）；
+  - 界面语言、主题（`settings_set_locale`、`settings_set_theme`）与单次录音最长时间（`settings_set_recording`）；
+  - 「关于」：版本、许可证（AGPL-3.0-or-later）、源代码与发布页（`project_link_open`）。
+  - 界面与桌面共用 `@voltip/ui` 的服务商卡片（`ProviderCard`）、预设区（`PresetsSection`、`PresetEditor`）与中文字形（`ChineseScript`），它们经 `FeatureShellProvider` 用各自应用的提示与确认框。手机界面加了底部标签栏「说话」「设置」，「返回」回到打开当前页的那一页。
+  - 词典、规则、场景与完整的历史页随后分两批加入（计划 M6b-2、M6b-3）；在此之前，这些命令在手机上照旧拒绝。
 - **命令**：`dictation_start`（Android 上先申请麦克风权限，被拒时回 `MICROPHONE_DENIED`，与 `phone_take_start` 相同）/ `dictation_stop` / `dictation_cancel` 交给核心；`hotkey_edge` 仍被拒（`HOTKEY_UNAVAILABLE`，手机没有快捷键）。`paste_text` 在手机上把文字写进剪贴板，回 `copied { clipboard_only }`。新命令 `phone_share_text { text }` 经 `SharePlugin.kt`（`ACTION_SEND`）打开系统分享面板，文字须非空白、不超过 `MAX_PASTE_TEXT_CHARS`；桌面壳回 `SHARE_UNAVAILABLE`。
 - **历史**：结果进手机自己的 `history.sqlite3`（`origin` 为空：本机产生）；`history_query` / `history_entry` / `history_stats` / `history_hits` 与桌面一样经 bridge 读取。发给电脑的听写记在电脑的历史里，不在手机上。
 - **长录音**：手机的采集与桌面一样提供整段录音的流（`pcm_stream`），内存里只留前两分钟，超过时核心按 §22 写录音文件并分段识别。
 - **TLS**：reqwest 0.13 在 Android 上默认的系统证书校验（rustls-platform-verifier）需要应用经 JNI 交给它上下文，未初始化时第一次请求就 panic。`voltip-asr` 与 `voltip-refine` 在 Android 上改为只信任 Mozilla 根证书库（`webpki-root-certs`），与中继连接一致。
 - **界面**（`apps/mobile/src/screens/PhoneMic.tsx`、`RecentResults.tsx`）：未配对时首屏就是「用手机说话」；有在线的已配对电脑时按钮写「发送到 {电脑}」，没有时写「在手机上识别」，已配对但都不在线时另有一行说明。一次录音保持开始时的去向，中途有电脑上线或掉线都不改。下方一行跟随状态（正在录音 · 计时 / 正在识别 / 正在润色 / 已复制到剪贴板：文字 / 原因）。「最近结果」列出手机自己识别的最新 10 条，可以再次复制或分享。
 - **隐私**：手机单独识别时，音频和识别出的文字发往内置服务，与电脑默认设置下的行为相同（docs/site 隐私页）。
-- **门禁**：`crates/voltip-cloud` 的单测；`voltip-asr`、`voltip-refine` 的 `regression_android_trusts_mozillas_roots_not_an_uninitialised_platform_verifier`；手机 `tests/ipc.rs@a_take_on_the_phone_runs_through_the_cloud_clients_onto_its_clipboard`（真实云端客户端对本地假服务：一次识别、一次润色、结果进注入器和历史；取消不发请求）、`microphone::a_long_take_on_the_phone_streams_the_whole_take`、`clipboard::without_a_phone_clipboard_the_injector_reports_the_reason`；TS `PhoneMic.test.tsx`（两条去向、去向保持、复制与分享）。真机上的录音、剪贴板与分享面板见 §20.5。
+- **门禁**：`crates/voltip-cloud` 的单测；手机 `tests/ipc.rs@provider_probe_lists_the_models_through_the_http_probe`（手机的 HTTP 探针对本地假服务列出模型、带上草稿里的密钥）与 `hotkeys_are_refused_but_engines_secrets_and_history_work`（预设命令到达核心，密钥页和项目页交给浏览器）；TS `apps/mobile/src/screens/Settings.test.tsx`（标签栏、各设置页写入的设置）与 `packages/ui/src/features/{engines,presets}/*.test.tsx`；`voltip-asr`、`voltip-refine` 的 `regression_android_trusts_mozillas_roots_not_an_uninitialised_platform_verifier`；手机 `tests/ipc.rs@a_take_on_the_phone_runs_through_the_cloud_clients_onto_its_clipboard`（真实云端客户端对本地假服务：一次识别、一次润色、结果进注入器和历史；取消不发请求）、`microphone::a_long_take_on_the_phone_streams_the_whole_take`、`clipboard::without_a_phone_clipboard_the_injector_reports_the_reason`；TS `PhoneMic.test.tsx`（两条去向、去向保持、复制与分享）。真机上的录音、剪贴板与分享面板见 §20.5。
 
 ## 21. AI 预设（2026-09-29）
 

@@ -52,7 +52,6 @@ import {
   mockSameChord,
   SCENES_UNAVAILABLE,
   SHARE_UNAVAILABLE,
-  PRESETS_UNAVAILABLE,
   PRESET_TRY_UNCONFIGURED,
   VOCABULARY_UNAVAILABLE,
   mockLevel,
@@ -2841,7 +2840,7 @@ describe("MockBackend presets (docs/dictation.md section 21)", () => {
     bare.destroy();
   });
 
-  it("presetsBuiltin answers the shell's texts in the interface's order; the phone refuses every preset command", async () => {
+  it("presetsBuiltin answers the shell's texts in the interface's order, on the phone too", async () => {
     const backend = new MockBackend();
     const texts = await backend.presetsBuiltin();
     expect(texts.map((t) => t.id)).toEqual([...BUILTIN_PRESETS]);
@@ -2851,15 +2850,15 @@ describe("MockBackend presets (docs/dictation.md section 21)", () => {
       expect(body).toContain(`输入：${sample.input}\n输出：${sample.output}`);
     }
     backend.destroy();
+    // User decision 2026-10-01: the phone has its own presets (they were refused before), and it
+    // opens the project's pages in its browser.
     const phone = new MockBackend({ role: "phone", presets: [] });
     expect(phone.peek().presets).toEqual([]);
-    await expect(phone.invoke("presets_add", { preset: draft("a") })).rejects.toThrow(
-      PRESETS_UNAVAILABLE,
-    );
-    await expect(
-      phone.invoke("presets_try", { id: 1, preset: "chat", prompt: null, text: "x" }),
-    ).rejects.toThrow(PRESETS_UNAVAILABLE);
-    await expect(phone.presetsBuiltin()).rejects.toThrow(PRESETS_UNAVAILABLE);
+    await phone.invoke("presets_add", { preset: draft("a") });
+    expect(phone.peek().presets.map((p) => p.name)).toEqual(["a"]);
+    expect((await phone.presetsBuiltin()).map((t) => t.id)).toEqual([...BUILTIN_PRESETS]);
+    await phone.projectLinkOpen("source");
+    expect(phone.linksOpened).toEqual(["source"]);
     phone.destroy();
   });
 });

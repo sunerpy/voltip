@@ -189,11 +189,14 @@ describe("Mobile app flow", () => {
     expect(await screen.findByText("已忘记 MacBook Pro")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "配对新电脑" }));
     expect(screen.getByRole("heading", { name: "配对电脑" })).toBeInTheDocument();
+    // 2026-10-01 (the phone's own settings, with a tab bar): 返回 leads back to the screen the
+    // pairing was opened from, the device list here (it led to 本机 before).
     await user.click(screen.getByRole("button", { name: "返回" }));
-    expect(screen.getByRole("heading", { name: "本机" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "查看已配对设备" }));
+    expect(screen.getByRole("heading", { name: "已配对设备" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "本机" }));
     expect(screen.getByRole("heading", { name: "本机" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "查看已配对设备" }));
+    expect(screen.getByRole("heading", { name: "已配对设备" })).toBeInTheDocument();
   });
 
   it("renames this device, surfaces backend errors as toasts and applies the theme", async () => {

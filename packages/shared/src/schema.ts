@@ -1072,7 +1072,8 @@ export const providerStatusSchema = z.object({
   id: providerIdSchema,
   key: keyPolicySchema,
   on_device: z.boolean(),
-  /** The desktop can open the vendor's key page (`provider_console_open`). */
+  /** The shell can open the vendor's key page (`provider_console_open`; the phone too since
+   *  2026-10-01). */
   console: z.boolean(),
   asr: serviceStatusSchema.optional(),
   llm: serviceStatusSchema.optional(),

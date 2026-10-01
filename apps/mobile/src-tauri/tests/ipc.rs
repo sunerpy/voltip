@@ -18,9 +18,8 @@ use voltip_core::ui::{UI_EVENT_NAME, UiState};
 use voltip_core::{CoreConfig, Settings, SettingsStore, ThemeId};
 use voltip_identity::MemorySecretStore;
 use voltip_mobile_lib::{
-    COMMANDS, FEEDBACK_UNAVAILABLE, HOTKEY_UNAVAILABLE, KEYSTORE_SERVICE, MODELS_UNAVAILABLE, PRESETS_UNAVAILABLE, PROJECT_LINKS_UNAVAILABLE,
-    PROVIDERS_UNAVAILABLE, SCENES_UNAVAILABLE, UPDATE_UNAVAILABLE, VOCABULARY_UNAVAILABLE, build_app, data_dir, platform_label, production_config,
-    secret_store,
+    BROWSER_UNAVAILABLE, COMMANDS, FEEDBACK_UNAVAILABLE, HOTKEY_UNAVAILABLE, KEYSTORE_SERVICE, MODELS_UNAVAILABLE, SCENES_UNAVAILABLE, UPDATE_UNAVAILABLE,
+    VOCABULARY_UNAVAILABLE, build_app, data_dir, platform_label, production_config, secret_store,
 };
 use voltip_pairing::PairingState;
 use voltip_tauri_bridge::Bridge;
@@ -462,18 +461,18 @@ fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
             assert_eq!(invoke(webview, cmd, args), Err(Value::String(SCENES_UNAVAILABLE.into())), "{cmd}");
         }
         assert!(wait_state(webview, |_| true).scenes.is_empty());
-        // No pipeline: no clean-up to shape, so the presets refuse as well (docs/dictation.md §21).
-        let preset = json!({ "name": "周报", "prompt": "整理成周报" });
-        for (cmd, args) in [
-            ("presets_add", json!({ "preset": preset })),
-            ("presets_update", json!({ "id": id, "preset": preset })),
-            ("presets_remove", json!({ "id": id })),
-            ("presets_try", json!({ "id": 1, "preset": "proofread", "prompt": null, "text": "你好" })),
-            ("presets_builtin", json!({})),
-        ] {
-            assert_eq!(invoke(webview, cmd, args), Err(Value::String(PRESETS_UNAVAILABLE.into())), "{cmd}");
-        }
-        assert!(wait_state(webview, |_| true).presets.is_empty());
+        // The phone cleans up what it recognises itself, with its own presets (user decision
+        // 2026-10-01: the phone has every setting but the local models; they were refused before).
+        let builtin = invoke(webview, "presets_builtin", json!({})).unwrap();
+        assert!(builtin.as_array().is_some_and(|list| !list.is_empty() && list.iter().all(|p| p["prompt"].as_str().is_some_and(|t| !t.is_empty()))));
+        assert_eq!(invoke(webview, "presets_add", json!({ "preset": { "name": "周报", "prompt": "整理成周报" } })), Ok(Value::Null));
+        let added = wait_state(webview, |s| s.presets.len() == 1).presets[0].id.to_string();
+        assert_eq!(invoke(webview, "presets_update", json!({ "id": added, "preset": { "name": "日报", "prompt": "整理成日报" } })), Ok(Value::Null));
+        wait_state(webview, |s| s.presets.first().is_some_and(|p| p.name == "日报"));
+        assert_eq!(invoke(webview, "presets_try", json!({ "id": 7, "preset": null, "prompt": "整理成日报", "text": "你好" })), Ok(Value::Null));
+        wait_event(rx, "preset_try", |e| e["type"] == "preset_try" && e["id"] == 7);
+        assert_eq!(invoke(webview, "presets_remove", json!({ "id": added })), Ok(Value::Null));
+        wait_state(webview, |s| s.presets.is_empty());
         assert_eq!(invoke(webview, "settings_set_locale", json!({ "locale": "en" })), Ok(Value::Null));
         wait_state(webview, |s| s.settings.locale == voltip_core::Locale::En);
         assert!(invoke(webview, "settings_set_locale", json!({ "locale": "fr" })).is_err());
@@ -484,11 +483,16 @@ fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
             |s: &UiState| s.engines.providers.iter().find(|p| p.id == voltip_core::ProviderId::Groq).and_then(|p| p.llm.as_ref()).is_some_and(|l| l.key.set);
         let st = wait_state(webview, groq_key);
         assert!(!serde_json::to_string(&st).unwrap().contains("gsk_x"));
-        // The phone has no HTTP probe: the core answers `unsupported`, it does not hang.
+        // These ports are the fakes, without an HTTP probe: the core answers `unsupported`, it does
+        // not hang (the phone's own probe: `provider_probe_lists_the_models_through_the_http_probe`).
         assert_eq!(invoke(webview, "provider_probe", json!({ "provider": "groq", "kind": "llm" })), Ok(Value::Null));
         wait_event(rx, "provider_probe", |e| e["type"] == "provider_probe" && e["reason"] == "unsupported");
-        assert_eq!(invoke(webview, "provider_console_open", json!({ "provider": "groq" })), Err(Value::String(PROVIDERS_UNAVAILABLE.into())));
-        assert_eq!(invoke(webview, "project_link_open", json!({ "link": "feedback" })), Err(Value::String(PROJECT_LINKS_UNAVAILABLE.into())));
+        // Key pages and the repository open in the phone's browser (user decision 2026-10-01; they
+        // were refused before). This desktop-hosted build has none and says so; a provider without
+        // a key page is refused before any browser is asked.
+        assert_eq!(invoke(webview, "provider_console_open", json!({ "provider": "groq" })), Err(Value::String(BROWSER_UNAVAILABLE.into())));
+        assert!(invoke(webview, "provider_console_open", json!({ "provider": "local" })).unwrap_err().as_str().unwrap().contains("no key page"));
+        assert_eq!(invoke(webview, "project_link_open", json!({ "link": "source" })), Err(Value::String(BROWSER_UNAVAILABLE.into())));
         // Feedback goes from the computer (docs/feedback.md).
         assert_eq!(invoke(webview, "feedback_diagnostics", json!({ "locale": "zh-CN" })), Err(Value::String(FEEDBACK_UNAVAILABLE.into())));
         let report = json!({ "kind": "bug", "message": "x", "contact": null, "locale": "zh-CN" });
@@ -511,6 +515,36 @@ fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
         assert!(invoke(webview, "history_stats", json!({ "boundaries": [5, 5] })).is_err());
         assert_eq!(invoke(webview, "history_hits", json!({})), Ok(json!({ "dictionary": {}, "rules": {} })));
     });
+}
+
+/// 测试连接 on the phone (user decision 2026-10-01: it configures its own providers): the phone's
+/// HTTP probe lists a provider's models, with the key typed in the draft (docs/dictation.md §3.3).
+#[test]
+fn provider_probe_lists_the_models_through_the_http_probe() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": [{ "id": "whisper-b" }, { "id": "whisper-a" }] })))
+            .mount(&server)
+            .await;
+        server
+    });
+    let base = format!("{}/v1", server.uri());
+    let ports =
+        |_: &AppHandle<MockRuntime>| DictationPorts { service_probe: Some(Arc::new(voltip_cloud::HttpServiceProbe)), ..voltip_core::dictation::fakes::ports() };
+    with_app(Settings { relay_enabled: false, ..Settings::default() }, ports, move |_, webview, rx| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(invoke(webview, "provider_probe", json!({ "provider": "custom", "kind": "asr", "baseUrl": base, "key": "k" })), Ok(Value::Null));
+        let ev = wait_event(rx, "provider_probe", |e| e["type"] == "provider_probe" && e["result"] == "ok");
+        assert_eq!(ev["models"], json!(["whisper-a", "whisper-b"]));
+    });
+    let seen = rt.block_on(server.received_requests()).unwrap();
+    assert_eq!(seen[0].headers.get("authorization").unwrap(), "Bearer k", "the draft key is used for the request");
 }
 
 // ---------------- command list parity ----------------
