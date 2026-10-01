@@ -572,7 +572,7 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       kind: "dictation",
     });
     await backend.invoke("settings_set_recording", {
-      recording: { source: "system", output_device: null, max_minutes: 60 },
+      recording: { source: "system", output_device: null, max_minutes: 60, echo_cancel: true },
     });
     await backend.invoke("dictation_start");
     tick(MOCK_MIC_READY_MS);
@@ -1521,8 +1521,15 @@ describe("MockBackend locale, auto-update and updater (docs/frontend.md §7)", (
       source: "microphone",
       output_device: null,
       max_minutes: DEFAULT_MAX_MINUTES,
+      echo_cancel: true,
     });
-    const mixed = { source: "mixed" as const, output_device: "fake:speakers", max_minutes: 60 };
+    // Echo cancellation off (docs/dictation.md §22.6): kept as saved, like the rest.
+    const mixed = {
+      source: "mixed" as const,
+      output_device: "fake:speakers",
+      max_minutes: 60,
+      echo_cancel: false,
+    };
     await backend.invoke("settings_set_recording", { recording: mixed });
     expect(backend.peek().settings.recording).toEqual(mixed);
     for (const bad of [

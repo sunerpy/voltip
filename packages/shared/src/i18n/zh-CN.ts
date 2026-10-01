@@ -431,6 +431,8 @@ export const zhCN = {
       alsoSystem: "同时录制电脑声音 · {name}",
       systemHint: "听写录制电脑播放的声音；空闲时不录制。",
       mixedHint: "外放时请佩戴耳机，以免扬声器的声音被麦克风再次录入。",
+      /** docs/dictation.md §22.6: mixed with the speaker echo removed. */
+      mixedEchoHint: "已消除扬声器回声；外放音量很大时，仍建议佩戴耳机。",
       unavailable: "不可用",
       recording: "录音中",
       testing: "测试中 · {n} 秒",
@@ -1525,6 +1527,11 @@ export const zhCN = {
         unsupported: "此设备不支持录制电脑声音。",
       },
       mixedHint: "混合录制时请佩戴耳机，否则扬声器的声音会被麦克风再次录入，出现回声。",
+      /** docs/dictation.md §22.6: `settings.recording.echo_cancel`, only for `mixed`. */
+      mixedEchoHint: "已消除扬声器回声。外放音量很大时，仍建议佩戴耳机。",
+      echoCancel: "消除扬声器回声",
+      echoCancelHelp:
+        "电脑声音从扬声器播放时，从麦克风的录音中去掉这部分声音，避免同一段声音录入两次。",
       output: "输出设备",
       outputHelp: "录制这个设备播放的声音。",
       outputDefault: "跟随系统默认（{name}）",

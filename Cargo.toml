@@ -90,6 +90,10 @@ rusqlite = { version = "=0.40.2", features = ["bundled"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_bytes = "=0.11.19"
 serde_json = "=1.0.151"
+# Echo cancellation for mixed recording (docs/dictation.md §22.6): a pure-Rust port of WebRTC's audio
+# processing (AEC3), so no C toolchain and the same code on every target. Chosen over `aec3` on
+# measured cancellation and dependencies (docs/acceptance/audio/echo-cancel-2026-10-01.md).
+sonora = { version = "=0.2.0", default-features = false }
 sha2 = "=0.11.0"
 # Official k2-fsa sherpa-onnx bindings (docs/dictation.md §10). Its build script downloads the
 # prebuilt v1.13.8 libraries for the target and copies the runtime libraries next to every binary.
@@ -156,6 +160,19 @@ voltip-inject = { path = "crates/voltip-inject" }
 # The bundled SQLite (the history, docs/dictation.md §4) is C code that is not debugged here:
 # optimised even in dev builds, so tests and `make desktop-dev` see a realistic database.
 [profile.dev.package.libsqlite3-sys]
+opt-level = 3
+
+# The echo canceller's signal processing (sonora, docs/dictation.md §22.6) is optimised in dev builds
+# too: the mixed recording's tests run it over tens of seconds of audio.
+[profile.dev.package.sonora]
+opt-level = 3
+[profile.dev.package.sonora-aec3]
+opt-level = 3
+[profile.dev.package.sonora-common-audio]
+opt-level = 3
+[profile.dev.package.sonora-fft]
+opt-level = 3
+[profile.dev.package.sonora-simd]
 opt-level = 3
 
 [profile.release]

@@ -57,7 +57,8 @@
     "recording": {
       "source": "mixed",
       "output_device": "wasapi:{0.0.0.00000000}.{a1}",
-      "max_minutes": 60
+      "max_minutes": 60,
+      "echo_cancel": false
     }
   },
   "secret_backend": "memory",

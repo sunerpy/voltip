@@ -56,7 +56,7 @@ Under **Settings → Recording source**, with the switch on the home page, or fr
 | **Computer audio** | The sound your computer plays, such as a meeting, a call or a video, from the chosen output device or the system's default output. |
 | **Mixed** | Both together. |
 
-When mixing, wear headphones: otherwise the microphone also picks up the speakers and the recording echoes. A voice edit always records the microphone.
+When mixing, Voltip removes the sound of the speakers from what the microphone records, so the computer's sound is not recorded twice. This is **Cancel speaker echo** under Settings → Recording source, on by default. At high speaker volume, headphones are still recommended. A voice edit always records the microphone.
 
 Recording computer audio needs macOS 14.6 or later on a Mac, and a PulseAudio or PipeWire sound server on Linux; see [Platform notes](/reference/platforms). Where it is not available, the two options are dimmed and the reason is shown.
 

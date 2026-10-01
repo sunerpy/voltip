@@ -461,6 +461,16 @@ describe("Home page", () => {
     expect(within(card).getByTestId("home-mic-also")).toHaveTextContent(
       "同时录制电脑声音 · 扬声器 (Realtek(R) Audio)",
     );
+    // The speakers' echo is cancelled by default since 2026-10-01 (docs/dictation.md §22.6, the
+    // user's request of 2026-09-30); switched off, the headphones hint is back.
+    expect(within(card).getByTestId("home-mic-hint")).toHaveTextContent(
+      "已消除扬声器回声；外放音量很大时，仍建议佩戴耳机。",
+    );
+    await act(async () => {
+      await backend.invoke("settings_set_recording", {
+        recording: { ...backend.peek().settings.recording, echo_cancel: false },
+      });
+    });
     expect(within(card).getByTestId("home-mic-hint")).toHaveTextContent("外放时请佩戴耳机");
     expect(within(card).getByTestId("home-mic-test")).toBeInTheDocument();
   });

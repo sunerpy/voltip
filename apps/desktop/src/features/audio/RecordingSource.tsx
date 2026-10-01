@@ -28,6 +28,8 @@ export interface RecordingSourceState {
   outputMissing: boolean;
   setSource: (source: RecordingSource) => void;
   setOutput: (device: string | null) => void;
+  /** `mixed`: remove the microphone's echo of the computer's sound (docs/dictation.md §22.6). */
+  setEchoCancel: (on: boolean) => void;
 }
 
 export function useRecordingSource(): RecordingSourceState {
@@ -69,6 +71,9 @@ export function useRecordingSource(): RecordingSourceState {
     },
     setOutput: (device) => {
       set({ output_device: device });
+    },
+    setEchoCancel: (on) => {
+      set({ echo_cancel: on });
     },
   };
 }

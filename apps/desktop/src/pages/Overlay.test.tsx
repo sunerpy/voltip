@@ -242,7 +242,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       await screen.findByTestId("overlay-window");
       await act(async () => {
         await backend.invoke("settings_set_recording", {
-          recording: { source: "mixed", output_device: null, max_minutes: 120 },
+          recording: { source: "mixed", output_device: null, max_minutes: 120, echo_cancel: true },
         });
       });
       await act(async () => {

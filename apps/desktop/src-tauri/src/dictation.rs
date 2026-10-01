@@ -85,7 +85,7 @@ impl AudioSource for RecorderAudioSource {
         let source = match options.source {
             RecordingSource::Microphone => CaptureSource::Microphone,
             RecordingSource::System => CaptureSource::System { output_id: output_id() },
-            RecordingSource::Mixed => CaptureSource::Mixed { output_id: output_id() },
+            RecordingSource::Mixed => CaptureSource::Mixed { output_id: output_id(), echo_cancel: options.echo_cancel },
         };
         let config = RecorderConfig {
             device_id: if options.source.uses_microphone() { connected_or_default(backend, device_id) } else { None },
@@ -692,6 +692,8 @@ mod tests {
             long,
             source,
             output_device: output.map(str::to_owned),
+            // The mixed take below runs through the echo canceller's mixing thread (§22.6).
+            echo_cancel: true,
         };
         let mut capture = source.start(None, Box::new(|_| {}), Box::new(|| {}), options(RecordingSource::System, Some(FAKE_SPEAKERS_ID), true)).unwrap();
         let mut stream = capture.pcm_stream().expect("a long take streams");
