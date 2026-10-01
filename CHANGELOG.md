@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.17](https://github.com/sunerpy/voltip/compare/v0.0.16...v0.0.17) (2026-10-01)
+
+
+### Features
+
+* **desktop:** cancel the speakers' echo in a mixed recording ([#43](https://github.com/sunerpy/voltip/issues/43)) ([97e3550](https://github.com/sunerpy/voltip/commit/97e3550e95d0ff7da56016615cd9d0c473caff6f))
+
 ## [0.0.16](https://github.com/sunerpy/voltip/compare/v0.0.15...v0.0.16) (2026-10-01)
 
 
