@@ -72,6 +72,18 @@ class Notices(unittest.TestCase):
         self.assertIn("SIL OPEN FONT LICENSE Version 1.1", text)
         self.assertIn("(no licence file in the package; the licence is MIT)", text)
 
+    def test_regression_the_notices_carry_voltips_own_licence_and_where_its_source_is(self) -> None:
+        # User decision 2026-10-01: AGPL-3.0-or-later after 0.0.20. AGPL-3.0 s. 4 and 6 ask for the
+        # licence text with every copy of the program and for the Corresponding Source; the notices
+        # file is what each package ships, so both are in it.
+        text = self.generate()
+        licence = (notices.ROOT / "LICENSE").read_text(encoding="utf-8").strip()
+        self.assertIn("GNU AFFERO GENERAL PUBLIC LICENSE", licence)
+        self.assertEqual(text.count(licence), 1)
+        self.assertIn("either version 3\nof the License, or (at your option) any later version", text)
+        self.assertIn("https://github.com/sunerpy/voltip/tree/v0.0.1", text)
+        self.assertLess(text.index(licence), text.index("Rust crates (2)"), "Voltip's own licence comes first")
+
     def test_the_native_libraries_carry_their_own_texts(self) -> None:
         text = self.generate()
         self.assertIn("ONNX Runtime 1.28.2", text)

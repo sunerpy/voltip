@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "Offline speech-to-text for the dictation pipeline: transcribe.cpp (Qwen3-ASR GGUF) and sherpa-onnx (SenseVoice, Paraformer, streaming Zipformer) recognisers plus the model library that downloads, verifies and stores them."
 build = "build.rs"
 

@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "OpenAI-compatible speech-to-text client (multipart /v1/audio/transcriptions) for the dictation pipeline."
 
 [lints]

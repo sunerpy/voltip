@@ -9,7 +9,7 @@
 [![CI](https://github.com/sunerpy/voltip/actions/workflows/ci.yml/badge.svg)](https://github.com/sunerpy/voltip/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/sunerpy/voltip)](https://github.com/sunerpy/voltip/releases)
 [![codecov](https://codecov.io/gh/sunerpy/voltip/branch/main/graph/badge.svg)](https://codecov.io/gh/sunerpy/voltip)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](../../LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](../../LICENSE)
 
 [网站](https://voltip.firlab.app/zh/) · [功能](#功能) · [安装](#安装) · [快速开始](#快速开始) · [隐私](#隐私) · [从源码构建](#从源码构建) · [文档](#文档)
 
@@ -145,4 +145,5 @@ VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1 make windows-x64   # 在 Linux 上交叉构建
 
 ## 许可证
 
-[Apache License 2.0](../../LICENSE)。
+[GNU Affero 通用公共许可证 3.0 或更高版本](../../LICENSE)（AGPL-3.0-or-later）。0.0.20 及之前的版本以
+Apache License 2.0 发布，仍适用该许可证。

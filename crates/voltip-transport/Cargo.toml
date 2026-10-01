@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "Transport abstraction for Voltip: connection state machine, reconnect policy, WebSocket relay client, direct LAN host, and the Noise secure channel."
 
 [lints]

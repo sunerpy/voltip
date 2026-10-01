@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "The lone-key trigger's low-level input hooks (docs/dictation.md §13.1): WH_KEYBOARD_LL / WH_MOUSE_LL on Windows, an active CGEventTap on macOS, XInput 2 raw events on X11. Kept apart from the desktop shell so CI can run them on real Windows and macOS desktops without building the app."
 
 # The Windows hook procedures are Win32 callbacks: unsafe is denied, and allowed in that one module
