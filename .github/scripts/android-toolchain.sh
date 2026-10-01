@@ -11,7 +11,7 @@ set -euo pipefail
 
 PLATFORM="platforms;android-36"
 BUILD_TOOLS_VERSION="35.0.0"
-NDK_VERSION="29.0.13846066"
+NDK_VERSION="30.0.16248370"
 
 fail() {
   echo "::error title=Android toolchain::$*" >&2

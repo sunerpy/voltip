@@ -179,7 +179,7 @@ make android-apk        # scripts/build-android-debug.sh：arm64 debug APK + aap
 make android-clippy     # 对 aarch64-linux-android 跑 clippy：手机壳链接的每个工作区 crate，含只在 Android 上编译的代码
 ```
 
-发布用的包与 CI 的 `android` job 走同一条路（CI 上的工具链由 `.github/scripts/android-toolchain.sh` 固定：JDK 21、platform 36、build-tools 35.0.0、NDK 29.0.13846066）：
+发布用的包与 CI 的 `android` job 走同一条路（CI 上的工具链由 `.github/scripts/android-toolchain.sh` 固定：JDK 21、platform 36、build-tools 35.0.0、NDK 30.0.16248370（r30，当前的 LTS））：
 
 ```bash
 python3 scripts/release/third-party-notices.py --app mobile --out apps/mobile/src-tauri/resources/THIRD-PARTY-NOTICES.txt
