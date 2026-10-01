@@ -653,6 +653,7 @@ export const en: Messages = {
         gone: "This entry was deleted.",
         empty: "This entry has no segments to make subtitles from.",
         write: "The file could not be saved: {detail}",
+        share: "Sharing could not start: {detail}",
       },
     },
     detail: {
@@ -2245,8 +2246,11 @@ export const en: Messages = {
       dictionary: "Dictionary",
       rules: "Replacement rules",
       scenes: "Scenes",
+      history: "History",
+      entry: "Entry",
+      historySettings: "History",
     },
-    tab: { label: "Main navigation", talk: "Talk", settings: "Settings" },
+    tab: { label: "Main navigation", talk: "Talk", history: "History", settings: "Settings" },
     settings: {
       own: "These settings apply to takes the phone recognises itself. A take sent to a computer is recognised and polished with the computer's settings.",
       engines: "Recognition and polish",
@@ -2263,6 +2267,25 @@ export const en: Messages = {
       vocabulary: "Dictionary, rules and scenes",
       scenesDetail: { one: "{n} scene", other: "{n} scenes" },
       pinnedDetail: "Takes use “{name}”",
+      historyDetail: "Keeps the latest {keep}",
+      historyOff: "New takes are not saved",
+    },
+    history: {
+      search: "Search the text or the transcript",
+      failed: "Not finished",
+      emptyBody:
+        "What the phone transcribes appears here; a recording sent to a computer is in the computer's history.",
+      starHint: "Tap Star on an entry's page.",
+    },
+    entry: {
+      goneBody: "This entry was deleted or the history was cleared.",
+      time: "Time taken",
+      shareSrt: "Share subtitles (SRT)",
+      shareTxt: "Share text (TXT)",
+    },
+    historySettings: {
+      lede: "What this phone transcribes is kept on this phone and is not sent to the computer.",
+      clearBody: "The {n} entries on this phone will be deleted. This cannot be undone.",
     },
     dictionary: {
       emptyBody: "Create an entry: the correct spelling, and how recognition tends to hear it.",
@@ -2434,6 +2457,7 @@ export const en: Messages = {
       copied: "Copied",
       copyFailed: "Could not copy",
       share: "Share",
+      all: "All history",
       copyLabel: "Copy “{text}”",
       shareLabel: "Share “{text}”",
     },

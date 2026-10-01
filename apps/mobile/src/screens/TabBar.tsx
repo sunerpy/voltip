@@ -1,9 +1,9 @@
 import { Icon, type IconName, useI18n, useUiState } from "@voltip/ui";
 import { useMobileShell } from "../app/shell";
 
-/** The bottom tab bar on the tab roots (user decision 2026-10-01: the phone has its own settings):
- *  说话 is the welcome screen until a computer is paired, the device list after; 设置 the phone's
- *  own settings. */
+/** The bottom tab bar on the tab roots (user decision 2026-10-01: the phone has its own settings
+ *  and history): 说话 is the welcome screen until a computer is paired, the device list after;
+ *  记录 what the phone recognised itself; 设置 the phone's own settings. */
 export function TabBar() {
   const shell = useMobileShell();
   const { t } = useI18n();
@@ -16,6 +16,15 @@ export function TabBar() {
       active: shell.screen === "welcome" || shell.screen === "devices",
       open: () => {
         shell.go(devices.length > 0 ? "devices" : "welcome");
+      },
+    },
+    {
+      id: "history",
+      icon: "history",
+      label: t("mobile.tab.history"),
+      active: shell.screen === "history",
+      open: () => {
+        shell.go("history");
       },
     },
     {

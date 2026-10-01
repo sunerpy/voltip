@@ -30,6 +30,9 @@ import { AiModels } from "./screens/AiModels";
 import { Appearance } from "./screens/Appearance";
 import { Devices } from "./screens/Devices";
 import { Dictionary } from "./screens/Dictionary";
+import { History } from "./screens/History";
+import { HistoryEntry } from "./screens/HistoryEntry";
+import { HistorySettings } from "./screens/HistorySettings";
 import { PairDevice } from "./screens/PairDevice";
 import { Recording } from "./screens/Recording";
 import { Rules } from "./screens/Rules";
@@ -65,13 +68,21 @@ const PARENT: Partial<Record<Screen, Screen>> = {
   dictionary: "settings",
   rules: "settings",
   scenes: "settings",
+  entry: "history",
+  historySettings: "settings",
 };
 
+/** One screen on the stack, and what it shows (`MobileShell.param`). */
+interface Opened {
+  screen: Screen;
+  param?: string;
+}
+
 /** The screens under `screen` when it is the first one shown. */
-function stackFor(screen: Screen): Screen[] {
-  const stack: Screen[] = [screen];
+function stackFor(screen: Screen): Opened[] {
+  const stack: Opened[] = [{ screen }];
   for (let parent = PARENT[screen]; parent !== undefined; parent = PARENT[parent])
-    stack.unshift(parent);
+    stack.unshift({ screen: parent });
   return stack;
 }
 
@@ -157,16 +168,22 @@ function Frame({
   const state = useUiState();
   const toasts = useToasts();
   // Land on the device list when this phone already trusts someone; otherwise start at welcome.
-  const [stack, setStack] = useState<Screen[]>(() =>
+  const [stack, setStack] = useState<Opened[]>(() =>
     stackFor(
       verifying ? "verify" : (initialScreen ?? (initialDevices > 0 ? "devices" : "welcome")),
     ),
   );
-  const screen = stack[stack.length - 1] ?? "welcome";
-  const go = useCallback((next: Screen) => {
-    setStack((current) =>
-      TAB_ROOTS.includes(next) ? [next] : current.at(-1) === next ? current : [...current, next],
-    );
+  const top = stack.at(-1);
+  const screen = top?.screen ?? "welcome";
+  const param = top?.param;
+  const go = useCallback((next: Screen, about?: string) => {
+    setStack((current) => {
+      if (TAB_ROOTS.includes(next)) return [{ screen: next }];
+      const last = current.at(-1);
+      return last?.screen === next && last.param === about
+        ? current
+        : [...current, { screen: next, ...(about === undefined ? {} : { param: about }) }];
+    });
   }, []);
   const back = useCallback(() => {
     setStack((current) => (current.length > 1 ? current.slice(0, -1) : current));
@@ -225,6 +242,7 @@ function Frame({
   const shell = useMemo<MobileShell>(
     () => ({
       screen,
+      param,
       go,
       back,
       toast,
@@ -232,7 +250,7 @@ function Frame({
       scanner: scanner.value,
       scannerReady: scanner.ready,
     }),
-    [screen, go, back, toast, scanner],
+    [screen, param, go, back, toast, scanner],
   );
   // The shared settings (`@voltip/ui`: provider cards, presets) report through the same toasts and
   // confirmation dialog.
@@ -295,6 +313,9 @@ function Frame({
             {screen === "dictionary" && <Dictionary />}
             {screen === "rules" && <Rules />}
             {screen === "scenes" && <Scenes />}
+            {screen === "history" && <History />}
+            {screen === "entry" && <HistoryEntry key={param} />}
+            {screen === "historySettings" && <HistorySettings />}
           </main>
           {tabRoot && <TabBar />}
           <Dialog

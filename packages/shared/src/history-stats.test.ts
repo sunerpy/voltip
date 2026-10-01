@@ -1,5 +1,7 @@
-import { type HistoryEntry, createTranslator, formatDuration } from "@voltip/shared";
-import { MockBackend } from "@voltip/shared/mock";
+import { createTranslator } from "./i18n";
+import { formatDuration } from "./labels";
+import { MockBackend } from "./mock-backend";
+import type { HistoryEntry } from "./schema";
 import {
   HISTORY_FILTER_LABELS,
   type HistoryFilter,
@@ -21,7 +23,7 @@ import {
   statsBoundaries,
   textChars,
   todayLabel,
-} from "./stats";
+} from "./history-stats";
 
 /** Local Thursday 2026-09-24 12:00 — noon keeps every offset below inside a predictable day. */
 const NOW = new Date(2026, 8, 24, 12, 0, 0).getTime();

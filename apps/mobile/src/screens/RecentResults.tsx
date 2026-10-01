@@ -48,7 +48,19 @@ export function RecentResults() {
   return (
     <Card className="flex flex-col gap-3" data-testid="phone-recent">
       <div className="flex flex-col gap-1">
-        <span className="text-[15px] font-semibold text-fg">{t("mobile.recent.title")}</span>
+        <span className="flex items-center gap-2">
+          <span className="flex-1 text-[15px] font-semibold text-fg">
+            {t("mobile.recent.title")}
+          </span>
+          <Button
+            size="sm"
+            variant="text"
+            onClick={() => {
+              shell.go("history");
+            }}>
+            {t("mobile.recent.all")}
+          </Button>
+        </span>
         <p className="text-[12px] text-fg-muted">{t("mobile.recent.body")}</p>
       </div>
       <ul className="flex flex-col gap-2">

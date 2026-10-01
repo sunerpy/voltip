@@ -1056,20 +1056,21 @@ export class MockBackend implements Backend {
     return historyPageOf(this.history, args);
   }
 
-  /** `history_export` (docs/dictation.md §22): the preview's save dialog takes the offered name;
-   *  what was asked for is kept in `exports`. */
+  /** `history_export` (docs/dictation.md §22): the preview's save dialog takes the offered name,
+   *  the phone's share sheet opens (`shared`); what was asked for is kept in `exports`. */
   async historyExport(id: string, format: ExportFormat, fileName: string): Promise<ExportOutcome> {
     await Promise.resolve();
     const entry = this.history.find((e) => e.id === id);
-    if (this.role === "phone" || entry === undefined)
+    if (entry === undefined)
       return { kind: "failed", code: "gone", detail: "the entry is not in the history" };
     if (format === "srt" && !(entry.segments ?? []).some((s) => s.text.trim().length > 0))
       return { kind: "failed", code: "empty", detail: "the entry has no segments" };
     this.exports.push({ id, format, fileName });
+    if (this.role === "phone") return { kind: "shared" };
     return { kind: "saved", path: `${MOCK_EXPORT_DIR}/${fileName}.${format}` };
   }
 
-  /** Every `historyExport` that saved, in order (tests). */
+  /** Every `historyExport` that saved or was shared, in order (tests). */
   readonly exports: { id: string; format: ExportFormat; fileName: string }[] = [];
 
   /** `history_entry`: one entry, `null` once it is gone. */

@@ -58,3 +58,6 @@ export * from "./features/vocabulary/useHitTotals";
 export * from "./features/scenes/SceneEditor";
 export * from "./features/scenes/SceneCards";
 export * from "./features/rules/RulesTransfer";
+export * from "./features/history/useHistoryList";
+export * from "./features/history/useHistoryProcess";
+export * from "./features/history/useHomeStats";

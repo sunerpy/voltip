@@ -562,11 +562,34 @@ fn history_process_cancel(bridge: tauri::State<'_, Bridge>, request_id: u64) -> 
     Ok(bridge.dispatch(UiCommand::HistoryProcessCancel { request_id })?)
 }
 
-/// Exports are a desktop feature (docs/dictation.md §22): the phone writes no files.
+/// 分享字幕 / 分享文本 (docs/dictation.md §20.7, §22): the phone has no file dialog, so an export
+/// goes to the system share sheet as a file (`SharePlugin.kt` `shareFile`), named as the desktop's
+/// save dialog would offer it. Answers like the desktop's `history_export`, with `shared` for a
+/// sheet that opened and `failed { share }` for one that did not.
 #[tauri::command]
-fn history_export(id: String, format: String, file_name: String) -> Result<serde_json::Value, String> {
-    let _ = (id, format, file_name);
-    Ok(serde_json::json!({ "kind": "failed", "code": "write", "detail": "exports are not available on the phone" }))
+async fn history_export<R: Runtime>(
+    app: AppHandle<R>,
+    bridge: tauri::State<'_, Bridge>,
+    id: uuid::Uuid,
+    format: voltip_core::history::export::ExportFormat,
+    file_name: String,
+) -> Result<serde_json::Value, String> {
+    use voltip_core::history::export;
+    let entry = history_read(&bridge, move |b| b.history_entry(id)).await?;
+    let failed = |code: &str, detail: &str| serde_json::json!({ "kind": "failed", "code": code, "detail": detail });
+    let Some(entry) = entry else { return Ok(failed("gone", "the entry is not in the history")) };
+    let Some(content) = export::render(&entry, format) else { return Ok(failed("empty", "the entry has no segments")) };
+    let mime = match format {
+        export::ExportFormat::Srt => "application/x-subrip",
+        export::ExportFormat::Txt => "text/plain",
+    };
+    Ok(match share::share_file(&app, export::file_name(&file_name, format), content, mime).await {
+        Ok(()) => serde_json::json!({ "kind": "shared" }),
+        Err(e) => {
+            tracing::warn!(error = %e, "sharing an export failed");
+            failed("share", &e)
+        }
+    })
 }
 
 /// UI language is shared state: the phone edits it like the desktop does.

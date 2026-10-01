@@ -645,6 +645,7 @@ export const zhCN = {
         gone: "这条记录已删除。",
         empty: "这条记录没有分段，无法导出字幕。",
         write: "文件未能保存：{detail}",
+        share: "无法打开分享：{detail}",
       },
     },
     detail: {
@@ -2130,8 +2131,11 @@ export const zhCN = {
       dictionary: "个人词典",
       rules: "替换规则",
       scenes: "场景",
+      history: "记录",
+      entry: "记录详情",
+      historySettings: "历史记录",
     },
-    tab: { label: "主导航", talk: "说话", settings: "设置" },
+    tab: { label: "主导航", talk: "说话", history: "记录", settings: "设置" },
     settings: {
       own: "这些设置用于在手机上识别的录音。发送到电脑的录音，按电脑上的设置识别和润色。",
       engines: "识别与润色",
@@ -2148,6 +2152,25 @@ export const zhCN = {
       vocabulary: "词典、规则与场景",
       scenesDetail: { one: "{n} 个场景", other: "{n} 个场景" },
       pinnedDetail: "说话时使用「{name}」",
+      historyDetail: "保留最近 {keep} 条",
+      historyOff: "不保存新的记录",
+    },
+    /** The phone's history (user decision 2026-10-01: the phone has the desktop's history). */
+    history: {
+      search: "搜索文本或原文",
+      failed: "未完成",
+      emptyBody: "在手机上识别的结果会出现在这里；发送到电脑的录音记录在电脑上。",
+      starHint: "在记录详情中点「收藏」。",
+    },
+    entry: {
+      goneBody: "这条记录已被删除或清空。",
+      time: "耗时",
+      shareSrt: "分享字幕（SRT）",
+      shareTxt: "分享文本（TXT）",
+    },
+    historySettings: {
+      lede: "这部手机识别的结果保存在这部手机上，不会发送到电脑。",
+      clearBody: "这部手机上的 {n} 条记录将被删除，此操作无法撤销。",
     },
     /** The phone's dictionary, rules and scenes (user decision 2026-10-01: the phone has the
      *  desktop's, for what it recognises itself). */
@@ -2317,6 +2340,7 @@ export const zhCN = {
       copied: "已复制",
       copyFailed: "复制失败",
       share: "分享",
+      all: "全部记录",
       copyLabel: "复制「{text}」",
       shareLabel: "分享「{text}」",
     },

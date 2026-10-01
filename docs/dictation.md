@@ -1328,7 +1328,8 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
   - 「关于」：版本、许可证（AGPL-3.0-or-later）、源代码与发布页（`project_link_open`）。
   - 界面与桌面共用 `@voltip/ui` 的服务商卡片（`ProviderCard`）、预设区（`PresetsSection`、`PresetEditor`）与中文字形（`ChineseScript`），它们经 `FeatureShellProvider` 用各自应用的提示与确认框。手机界面加了底部标签栏「说话」「设置」，「返回」回到打开当前页的那一页。
   - 词典、替换规则与场景（M6b-2，§16.6、§18.11）：命令与桌面相同，场景改为在说话卡片上手动选择；
-  - 完整的历史页、统计与反馈随后加入（M6b-3）。
+  - 历史记录（M6b-3）：底部标签栏加「记录」，与「说话」「设置」并列（`apps/mobile/src/screens/History.tsx`）：今天、本周、本月、累计四格统计（`history_stats`，与桌面首页同一套 `homeStats`）；搜索与筛选在核心里执行（`history_query`，`@voltip/ui` 的 `useHistoryList`，每页 100 条，「加载更多」）；按天分组。点开一条进入「记录详情」（`HistoryEntry.tsx`，导航栈的这一项带着条目 id）：润色后 / 原文 / 处理后三种文本，复制、分享、收藏、删除（确认后），时长、字数、模型、预设、场景与耗时；长条目（§22）可以用 AI 预设处理（`useHistoryProcess`），字幕与文本经系统分享面板以文件发出。设置 › 「历史记录」开关保存、选择保留条数（与桌面相同的选项）、清空（确认后）。「说话」页的「最近结果」有「全部记录」链接。桌面的历史辅助函数（`history-stats.ts`）与三个 hook 移到 `@voltip/shared` / `@voltip/ui`，两端共用。
+  - 反馈随后加入（M6b-3 第二批）。
 - **命令**：`dictation_start`（Android 上先申请麦克风权限，被拒时回 `MICROPHONE_DENIED`，与 `phone_take_start` 相同）/ `dictation_stop` / `dictation_cancel` 交给核心；`hotkey_edge` 仍被拒（`HOTKEY_UNAVAILABLE`，手机没有快捷键）。`paste_text` 在手机上把文字写进剪贴板，回 `copied { clipboard_only }`。新命令 `phone_share_text { text }` 经 `SharePlugin.kt`（`ACTION_SEND`）打开系统分享面板，文字须非空白、不超过 `MAX_PASTE_TEXT_CHARS`；桌面壳回 `SHARE_UNAVAILABLE`。
 - **历史**：结果进手机自己的 `history.sqlite3`（`origin` 为空：本机产生）；`history_query` / `history_entry` / `history_stats` / `history_hits` 与桌面一样经 bridge 读取。发给电脑的听写记在电脑的历史里，不在手机上。
 - **长录音**：手机的采集与桌面一样提供整段录音的流（`pcm_stream`），内存里只留前两分钟，超过时核心按 §22 写录音文件并分段识别。
@@ -1428,7 +1429,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 ### 22.5 导出（`voltip_core::history::export`、桌面 `src/export.rs`）
 
-- `history_export { id, format: "srt" | "txt", fileName }`（查询，桌面）：弹出系统的保存对话框（`tauri-plugin-dialog` =2.7.3，只从 Rust 调用），默认文件名是页面给的 `Voltip YYYY-MM-DD HH.mm`（去掉文件系统不接受的字符，最长 120 字），文件由 Rust 写入。结果 `saved { path }`、`cancelled` 或 `failed { code: gone | empty | write, detail }`。手机没有导出。
+- `history_export { id, format: "srt" | "txt", fileName }`（查询，桌面）：弹出系统的保存对话框（`tauri-plugin-dialog` =2.7.3，只从 Rust 调用），默认文件名是页面给的 `Voltip YYYY-MM-DD HH.mm`（去掉文件系统不接受的字符，最长 120 字），文件由 Rust 写入。结果 `saved { path }`、`cancelled` 或 `failed { code: gone | empty | write, detail }`。手机没有保存对话框：同一条命令把内容作为文件交给系统分享面板（`SharePlugin.kt` 的 `shareFile`，文件写在应用缓存里，经清单里的 FileProvider 交给目标应用，不受 intent 大小限制），结果 `shared`，面板没能打开时 `failed { code: share, detail }`（§20.7）。
 - **SRT**：按分段生成，每段的文字折成行：每行不超过 20 个汉字或 42 个英文字符（按宽度计：汉字 21、其他 10，上限 420），优先在后半行的标点之后折，其次在最后一个空格处，都没有就在满行处；每行一条字幕，这一段的时间按各行宽度比例切分。编号从 1 开始，CRLF 换行，UTF-8。没有文字的段不出字幕；没有分段的条目不能导出字幕。
 - **TXT**：有处理后文本就用处理后的，否则用条目的文字。
 
