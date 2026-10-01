@@ -51,7 +51,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 98] = [
+pub const COMMANDS: [&str; 99] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -150,6 +150,7 @@ pub const COMMANDS: [&str; 98] = [
     "permissions_request",
     "inject_preflight",
     "paste_text",
+    "phone_share_text",
 ];
 
 /// The app version: `package.json`'s, which release-please bumps and `tauri.conf.json` names
@@ -308,6 +309,16 @@ fn sent_texts_clear() -> Result<(), String> {
 #[tauri::command]
 fn phone_clipboard_read() -> Result<serde_json::Value, String> {
     Err(PHONE_TEXT_UNAVAILABLE.into())
+}
+
+/// Why the desktop refuses `phone_share_text`: 「分享」 is the phone's system share sheet
+/// (docs/dictation.md §20.7); here a result is pasted or copied.
+pub const SHARE_UNAVAILABLE: &str = "share: 电脑端没有系统分享";
+
+#[tauri::command]
+fn phone_share_text(text: String) -> Result<(), String> {
+    tracing::debug!(chars = text.chars().count(), "phone_share_text refused on the desktop");
+    Err(SHARE_UNAVAILABLE.into())
 }
 
 #[tauri::command]
@@ -1209,7 +1220,8 @@ pub fn build_app<R: Runtime>(
             permissions_status,
             permissions_request,
             inject_preflight,
-            paste_text
+            paste_text,
+            phone_share_text
         ],
     )
 }

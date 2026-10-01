@@ -2249,7 +2249,10 @@ export const en: Messages = {
     cancel: "Cancel",
     welcome: {
       intro:
-        "Turn this phone into the computer's microphone. Audio is end-to-end encrypted and goes directly over the LAN; keys stay between the two devices.",
+        "Hold to talk and let go to get text: with no computer connected the phone transcribes and polishes it and copies the result; paired with a computer, the text appears at the computer's cursor.",
+      pairing: "Connect a computer",
+      pairingBody:
+        "Once paired, this phone works as the computer's microphone and keyboard. Audio is end-to-end encrypted and goes directly over the LAN; keys stay between the two devices.",
       e2ee: "End-to-end encrypted",
       e2eeBody:
         "Only the two paired devices can decrypt the content; the relay sees ciphertext only.",
@@ -2259,7 +2262,7 @@ export const en: Messages = {
       identity: "Identity changes raise an alert",
       identityBody:
         "A trusted computer with a new key is marked red and not trusted automatically.",
-      start: "Get started",
+      start: "Connect a computer",
     },
     device: {
       generating: "Generating the device identity…",
@@ -2332,17 +2335,29 @@ export const en: Messages = {
       codecOpus: "Sent as Opus · about 24 kbit/s",
       title: "Talk through your phone",
       body: "Hold the button and speak; let go and the text lands at the computer's cursor. Slide off the button before letting go to cancel.",
+      localBody:
+        "Hold the button and speak; let go and the built-in service transcribes and polishes it, and the result is copied to this phone's clipboard. Slide off the button before letting go to cancel.",
+      offline: "No paired computer is online, so the phone transcribes for now.",
       target: "Send to",
+      toDesktop: "Send to {name}",
+      onPhone: "Transcribe on the phone",
       hold: "Hold to talk",
       release: "Release to send",
+      releaseLocal: "Release to transcribe",
       releaseCancel: "Release to cancel",
-      noDesktop: "Once a paired computer is online you can talk through your phone here.",
       starting: "Opening the microphone…",
       listening: "Recording · {elapsed}",
       processing: "The computer is transcribing…",
       donePasted: "Inserted on the computer: {text}",
       doneClipboard: "Left on the computer's clipboard: {text}",
       cancelled: "Cancelled",
+      local: {
+        transcribing: "Transcribing…",
+        refining: "Polishing…",
+        processing: "Processing…",
+        copied: "Copied to the clipboard: {text}",
+        failed: "Not finished: {message}",
+      },
       failed: {
         busy: "The computer is dictating; try again in a moment",
         unavailable: "The computer cannot take it: {message}",
@@ -2351,6 +2366,16 @@ export const en: Messages = {
         microphone: "The microphone did not open: {message}",
         offline: "The computer went offline",
       },
+    },
+    recent: {
+      title: "Recent results",
+      body: "What this phone transcribed stays on this phone.",
+      copy: "Copy",
+      copied: "Copied",
+      copyFailed: "Could not copy",
+      share: "Share",
+      copyLabel: "Copy “{text}”",
+      shareLabel: "Share “{text}”",
     },
     send: {
       title: "Send text to the computer",

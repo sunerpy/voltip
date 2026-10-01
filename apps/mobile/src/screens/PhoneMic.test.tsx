@@ -6,11 +6,12 @@ import {
   MOCK_REFINE_MS,
   MockBackend,
   sampleDevices,
+  sampleHistory,
 } from "@voltip/shared/mock";
 import { PHONE_TAKE_FAILURES, zhT } from "@voltip/shared";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { renderApp } from "../test/render";
-import { phoneTakeLine } from "./PhoneMic";
+import { localTakeLine, phoneTakeLine } from "./PhoneMic";
 
 function desktops(state: "online" | "offline") {
   const now = Math.floor(Date.now() / 1000);
@@ -139,11 +140,80 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
     expect(take?.state.state).toBe("processing");
   });
 
-  it("without an online computer there is no button, only the note", async () => {
-    renderApp({ backend: new MockBackend({ role: "phone", devices: desktops("offline") }) });
+  // Changed by the user's request of 2026-09-30 (item 10, docs/dictation.md §20.7): with no paired
+  // computer online the phone transcribes the take itself; it showed a note and no button before.
+  it("without an online computer the phone transcribes the take itself and copies the result", async () => {
+    const backend = new MockBackend({ role: "phone", devices: desktops("offline") });
+    renderApp({ backend });
     const card = await screen.findByTestId("phone-mic");
-    expect(card).toHaveTextContent("已配对的电脑上线后，可以在这里用手机说话。");
-    expect(within(card).queryByTestId("phone-mic-hold")).toBeNull();
+    expect(card).toHaveAttribute("data-route", "phone");
+    expect(card).toHaveTextContent("已配对的电脑都不在线，现在在手机上识别。");
+    const hold = within(card).getByTestId("phone-mic-hold");
+    layOut(hold);
+    expect(within(hold).getByTestId("phone-mic-route")).toHaveTextContent("在手机上识别");
+    fireEvent.pointerDown(hold, { pointerId: 1, clientX: 10, clientY: 10 });
+    expect(hold).toHaveTextContent("松开识别");
+    await advance(MOCK_MIC_READY_MS);
+    await advance(600);
+    expect(within(card).getByTestId("phone-mic-state")).toHaveTextContent(/正在录音 · 00:0\d/);
+    const meter = within(card).getByRole("meter", { name: "输入强度" });
+    expect(Number(meter.getAttribute("aria-valuenow"))).toBeGreaterThan(0);
+    fireEvent.pointerUp(hold, { pointerId: 1, clientX: 10, clientY: 10 });
+    await advance(0);
+    expect(within(card).getByTestId("phone-mic-state")).toHaveTextContent("正在识别…");
+    await advance(MOCK_ASR_MS + MOCK_REFINE_MS);
+    expect(within(card).getByTestId("phone-mic-state")).toHaveTextContent(
+      `已复制到剪贴板：${MOCK_DICTATION_TEXT}`,
+    );
+    expect(backend.phoneClipboard).toBe(MOCK_DICTATION_TEXT);
+    expect(backend.peek().phone_take).toBeUndefined();
+    // The result is in the phone's own list, newest first.
+    const recent = screen.getByTestId("phone-recent");
+    expect(within(recent).getAllByTestId("phone-recent-row")[0]).toHaveTextContent(
+      MOCK_DICTATION_TEXT,
+    );
+  });
+
+  it("a take keeps its route: a computer coming online in the middle moves nothing", async () => {
+    const backend = new MockBackend({ role: "phone", devices: desktops("offline") });
+    renderApp({ backend });
+    const hold = await screen.findByTestId("phone-mic-hold");
+    layOut(hold);
+    fireEvent.pointerDown(hold, { pointerId: 1, clientX: 10, clientY: 10 });
+    await advance(MOCK_MIC_READY_MS);
+    act(() => {
+      backend.publish({ type: "devices", devices: desktops("online") });
+    });
+    expect(screen.getByTestId("phone-mic")).toHaveAttribute("data-route", "phone");
+    fireEvent.pointerUp(hold, { pointerId: 1, clientX: 10, clientY: 10 });
+    await advance(MOCK_ASR_MS + MOCK_REFINE_MS);
+    expect(backend.phoneClipboard).toBe(MOCK_DICTATION_TEXT);
+    // Once the take is over, the next one goes to the computer that came online.
+    await advance(3000);
+    expect(screen.getByTestId("phone-mic")).toHaveAttribute("data-route", "computer");
+    expect(
+      within(screen.getByTestId("phone-mic-hold")).getByTestId("phone-mic-route"),
+    ).toHaveTextContent("发送到 MacBook Pro");
+  });
+
+  it("a result in the list is copied again or handed to the share sheet", async () => {
+    const backend = new MockBackend({ role: "phone" });
+    renderApp({ backend });
+    const hold = await screen.findByTestId("phone-mic-hold");
+    layOut(hold);
+    fireEvent.pointerDown(hold, { pointerId: 1, clientX: 10, clientY: 10 });
+    await advance(MOCK_MIC_READY_MS + 600);
+    fireEvent.pointerUp(hold, { pointerId: 1, clientX: 10, clientY: 10 });
+    await advance(MOCK_ASR_MS + MOCK_REFINE_MS);
+    backend.phoneClipboard = null;
+    const row = within(screen.getByTestId("phone-recent")).getAllByTestId("phone-recent-row")[0];
+    if (!row) throw new Error("no result row");
+    fireEvent.click(within(row).getByRole("button", { name: /^复制「/ }));
+    expect(await screen.findByText("已复制")).toBeInTheDocument();
+    expect(backend.phoneClipboard).toBe(MOCK_DICTATION_TEXT);
+    fireEvent.click(within(row).getByRole("button", { name: /^分享「/ }));
+    await advance(0);
+    expect(backend.shared).toEqual([MOCK_DICTATION_TEXT]);
   });
 
   it("a refused start (the microphone permission) is a toast and leaves the button idle", async () => {
@@ -207,5 +277,94 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
       "电脑正在听写，稍后再试",
     );
     expect(phoneTakeLine({ state: "listening" }, 65_000, t)).toBe("正在录音 · 01:05");
+  });
+
+  it("every phase of a take on the phone has its line (docs/dictation.md §20.7)", () => {
+    const t = zhT.t;
+    expect(localTakeLine({ phase: "idle" }, 0, t)).toBe("");
+    expect(
+      localTakeLine({ phase: "listening", started_at: 0, ready: true, locked: false }, 65_000, t),
+    ).toBe("正在录音 · 01:05");
+    const processing = (stage: "transcribing" | "refining" | "finalizing" | "inserting") =>
+      localTakeLine({ phase: "processing", stage, started_at: 0 }, 0, t);
+    expect(processing("transcribing")).toBe("正在识别…");
+    expect(processing("refining")).toBe("正在润色…");
+    expect(processing("finalizing")).toBe("正在处理…");
+    expect(processing("inserting")).toBe("正在处理…");
+    expect(
+      localTakeLine(
+        {
+          phase: "done",
+          text: "你好。",
+          raw_text: "你好",
+          chars: 3,
+          via: "clipboard",
+          refined: true,
+          duration_ms: 900,
+          asr_ms: 300,
+          mode: "whole_take",
+        },
+        0,
+        t,
+      ),
+    ).toBe("已复制到剪贴板：你好。");
+    expect(
+      localTakeLine({ phase: "failed", message: "没有听到声音", code: "no_speech" }, 0, t),
+    ).toBe("没有听到声音");
+    expect(localTakeLine({ phase: "failed", message: "asr: 网络超时", code: "asr" }, 0, t)).toBe(
+      "未完成：网络超时",
+    );
+    expect(localTakeLine({ phase: "cancelled", injected_chars: 0 }, 0, t)).toBe("已取消");
+  });
+
+  it("on the phone, sliding off the button cancels the take before it is recognised", async () => {
+    const backend = new MockBackend({ role: "phone" });
+    const clipboard = backend.phoneClipboard;
+    renderApp({ backend });
+    const hold = await screen.findByTestId("phone-mic-hold");
+    layOut(hold);
+    fireEvent.pointerDown(hold, { pointerId: 1, clientX: 10, clientY: 10 });
+    await advance(MOCK_MIC_READY_MS);
+    fireEvent.pointerMove(hold, { pointerId: 1, clientX: 10, clientY: -80 });
+    expect(hold).toHaveTextContent("松开取消");
+    fireEvent.pointerUp(hold, { pointerId: 1, clientX: 10, clientY: -80 });
+    await advance(0);
+    expect(screen.getByTestId("phone-mic-state")).toHaveAttribute("data-state", "cancelled");
+    expect(screen.getByTestId("phone-mic-state")).toHaveTextContent("已取消");
+    expect(backend.phoneClipboard).toBe(clipboard);
+    expect(screen.queryByTestId("phone-recent")).toBeNull();
+  });
+
+  it("a refused start on the phone is a toast and leaves the button idle", async () => {
+    const backend = new MockBackend({ role: "phone" });
+    vi.spyOn(backend, "invoke").mockRejectedValueOnce(new Error("microphone: 麦克风权限被拒绝"));
+    renderApp({ backend });
+    const hold = await screen.findByTestId("phone-mic-hold");
+    fireEvent.pointerDown(hold, { pointerId: 1 });
+    await advance(0);
+    expect(await screen.findByText("出错了 · 麦克风权限被拒绝")).toBeInTheDocument();
+    expect(hold).toHaveAttribute("aria-pressed", "false");
+    fireEvent.pointerUp(hold, { pointerId: 1 });
+    await advance(0);
+    expect(backend.peek().dictation.phase.phase).toBe("idle");
+  });
+
+  it("a copy or a share that fails says so", async () => {
+    const entry = sampleHistory(Date.now())[0];
+    if (!entry) throw new Error("fixture");
+    const backend = new MockBackend({ role: "phone", history: [entry] });
+    vi.spyOn(backend, "pasteText").mockResolvedValueOnce({ kind: "failed", reason: "inject" });
+    renderApp({ backend });
+    const row = (await screen.findAllByTestId("phone-recent-row"))[0];
+    if (!row) throw new Error("no result row");
+    fireEvent.click(within(row).getByRole("button", { name: /^复制「/ }));
+    expect(await screen.findByText("复制失败")).toBeInTheDocument();
+    vi.spyOn(backend, "pasteText").mockRejectedValueOnce(new Error("gone"));
+    fireEvent.click(within(row).getByRole("button", { name: /^复制「/ }));
+    await advance(0);
+    expect(screen.getAllByText("复制失败").length).toBeGreaterThan(0);
+    vi.spyOn(backend, "invoke").mockRejectedValueOnce(new Error("share: 这个平台没有系统分享"));
+    fireEvent.click(within(row).getByRole("button", { name: /^分享「/ }));
+    expect(await screen.findByText("出错了 · share: 这个平台没有系统分享")).toBeInTheDocument();
   });
 });

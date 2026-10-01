@@ -40,9 +40,11 @@ describe("paste_text", () => {
     await backend.invoke("dictation_cancel");
     expect(backend.pastes).toEqual(["你好", "字".repeat(MAX_PASTE_TEXT_CHARS), "再来"]);
     expect(backend.peek().history_recent).toEqual(history);
+    // Changed by the user's request of 2026-09-30 (item 10, docs/dictation.md §20.7): the phone
+    // has no window to paste into and copies to its clipboard (it answered `unsupported` before).
     expect(await new MockBackend({ role: "phone" }).pasteText("你好")).toEqual({
-      kind: "failed",
-      reason: "unsupported",
+      kind: "copied",
+      reason: "clipboard_only",
     });
   });
 });

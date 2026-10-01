@@ -1,13 +1,14 @@
 //! The phone's microphone (docs/dictation.md §20): the audio crate's recorder behind the core's
-//! [`AudioSource`] port, with the 16 kHz live tap a phone take streams from. On Android cpal
-//! opens AAudio; the `RECORD_AUDIO` runtime permission is asked for first through
+//! [`AudioSource`] port, with the 16 kHz live tap a phone take streams from and, for a long take
+//! the phone recognises itself (§20.7, §22), the stream the core writes to its recording file. On
+//! Android cpal opens AAudio; the `RECORD_AUDIO` runtime permission is asked for first through
 //! `MicrophonePlugin.kt` ([`ensure_permission`]).
 
 use std::sync::Arc;
 
 use tauri::{AppHandle, Runtime};
-use voltip_audio::{Backend, CpalBackend, LiveConsumer, LiveTapConfig, Recorder, RecorderConfig};
-use voltip_core::dictation::{AudioSource, Capture, CaptureOptions, DictationError, LevelFrame, LivePcm, Recording};
+use voltip_audio::{Backend, CpalBackend, LiveConsumer, LiveTapConfig, PcmConsumer, PcmStreamConfig, Recorder, RecorderConfig};
+use voltip_core::dictation::{AudioSource, Capture, CaptureOptions, DictationError, LevelFrame, LivePcm, MAX_RECORDING, PcmStream, Recording};
 
 /// Why a phone take could not open the microphone because of the permission.
 pub const MICROPHONE_DENIED: &str = "microphone: 麦克风权限被拒绝，请在系统设置中允许 Voltip 使用麦克风";
@@ -40,7 +41,10 @@ impl AudioSource for PhoneMicrophone {
         let config = RecorderConfig {
             device_id: device_id.map(str::to_owned),
             live_tap: options.live.then(LiveTapConfig::default),
-            max_duration: options.max_duration,
+            // As on the desktop: a long take keeps its first two minutes in memory, and the core
+            // writes the whole take to its recording file from the stream.
+            max_duration: if options.long { options.max_duration.min(MAX_RECORDING) } else { options.max_duration },
+            pcm_stream: options.long.then(PcmStreamConfig::default),
             ..RecorderConfig::default()
         };
         let recorder = Recorder::start_with_ready(
@@ -76,6 +80,27 @@ impl Capture for PhoneCapture {
 
     fn live_pcm(&mut self) -> Option<Box<dyn LivePcm>> {
         self.recorder.live_consumer().map(|consumer| Box::new(LiveTap(consumer)) as Box<dyn LivePcm>)
+    }
+
+    fn pcm_stream(&mut self) -> Option<Box<dyn PcmStream>> {
+        self.recorder.pcm_consumer().map(|consumer| Box::new(TakeStream(consumer)) as Box<dyn PcmStream>)
+    }
+}
+
+/// The recorder's long-take stream as the core's [`PcmStream`] (docs/dictation.md §22).
+struct TakeStream(PcmConsumer);
+
+impl PcmStream for TakeStream {
+    fn read(&mut self, out: &mut [f32]) -> usize {
+        self.0.read(out)
+    }
+
+    fn gap(&mut self) -> Option<u64> {
+        self.0.gap()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.0.is_closed()
     }
 }
 
@@ -147,7 +172,7 @@ pub async fn ensure_permission<R: Runtime>(app: &AppHandle<R>) -> Result<(), Str
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use std::time::Duration;
 
@@ -174,5 +199,29 @@ mod tests {
         assert!(granted(&serde_json::json!({ "microphone": "granted" })));
         assert!(!granted(&serde_json::json!({ "microphone": "prompt-with-rationale" })));
         assert!(!granted(&serde_json::json!({})));
+    }
+
+    /// A long take the phone recognises itself (docs/dictation.md §20.7, §22) streams the whole
+    /// take for the core's recording file, as the desktop does; a short one has no stream.
+    #[test]
+    fn a_long_take_on_the_phone_streams_the_whole_take() {
+        let mic = PhoneMicrophone::with_backend(Arc::new(FakeBackend::default()));
+        let options = CaptureOptions::dictation(&voltip_core::RecordingSettings::default(), false);
+        assert!(options.long, "a dictation take may run ten minutes by default");
+        let mut capture = mic.start(None, Box::new(|_| {}), Box::new(|| {}), options).unwrap();
+        let mut stream = capture.pcm_stream().expect("a long take streams");
+        let mut buf = vec![0.0f32; 1600];
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut got = 0;
+        while got == 0 && std::time::Instant::now() < deadline {
+            got = stream.read(&mut buf);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(got > 0, "the fake device delivers audio into the stream");
+        capture.stop().unwrap();
+        assert!(stream.is_closed());
+        let mut short = mic.start(None, Box::new(|_| {}), Box::new(|| {}), CaptureOptions::default()).unwrap();
+        assert!(short.pcm_stream().is_none());
+        short.stop().unwrap();
     }
 }

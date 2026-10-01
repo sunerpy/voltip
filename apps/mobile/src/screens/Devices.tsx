@@ -21,6 +21,7 @@ import {
 } from "@voltip/ui";
 import { useMobileShell } from "../app/shell";
 import { PhoneMic } from "./PhoneMic";
+import { RecentResults } from "./RecentResults";
 import { SendText } from "./SendText";
 
 /** Detail rows of a device card; the labels come from `mobile.devices.column.*`. */
@@ -126,13 +127,14 @@ export function Devices() {
           {t("mobile.devices.relay", { state: relayLabel(relay, locale).text })}
         </span>
       </div>
+      <PhoneMic desktops={devices} />
+      <RecentResults />
       {devices.length === 0 ? (
         <EmptyState icon="monitor" title={t("mobile.devices.emptyTitle")}>
           {t("mobile.devices.emptyBody")}
         </EmptyState>
       ) : (
         <>
-          <PhoneMic desktops={devices} />
           <SendText desktops={devices} />
           {devices.map((d) => (
             <DeviceRow key={d.device.public_key} view={d} now={now} />

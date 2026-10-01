@@ -35,7 +35,9 @@ describe("Mobile app flow", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     const { backend } = renderApp();
     expect(await screen.findByRole("heading", { name: "Voltip" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "开始" }));
+    // The welcome's button reads 连接电脑 since the phone works on its own (user request
+    // 2026-09-30, docs/dictation.md §20.7); it was 开始.
+    await user.click(screen.getByRole("button", { name: "连接电脑" }));
     expect(screen.getByRole("heading", { name: "本机" })).toBeInTheDocument();
     expect(screen.getByTestId("fingerprint")).toHaveTextContent("5B:0F:E2:91 · C3:7A:0D:44");
     expect(screen.getByText("Android")).toBeInTheDocument();
@@ -338,12 +340,12 @@ describe("locale", () => {
       mock: { settings: { locale: "en" }, devices: sampleDevices(1_758_700_000) },
       initialScreen: "welcome",
     });
-    expect(await screen.findByRole("button", { name: "Get started" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Connect a computer" })).toBeInTheDocument();
     // `lang` is set by an effect after the commit that shows the button: wait for it (a single read
     // raced it under the coverage run's load, 2026-09-26).
     await waitFor(() => expect(document.documentElement.lang).toBe("en-US"));
     expect(document.body.textContent).not.toMatch(CJK);
-    await user.click(screen.getByRole("button", { name: "Get started" }));
+    await user.click(screen.getByRole("button", { name: "Connect a computer" }));
     expect(screen.getByRole("heading", { name: "This device", level: 1 })).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(CJK);
     await user.click(screen.getByRole("button", { name: "Pair a computer" }));
@@ -394,6 +396,6 @@ describe("locale", () => {
 
   it("system locale follows the phone's language", async () => {
     renderApp({ initialScreen: "welcome", systemLanguage: "en-US" });
-    expect(await screen.findByRole("button", { name: "Get started" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Connect a computer" })).toBeInTheDocument();
   });
 });

@@ -299,6 +299,8 @@ Presets decide what AI polish does: proofreading by default, or a prompt, intent
 
 Pair an Android phone with the computer and hold to talk on the phone. The computer recognises the speech with its own settings and inserts the text at its cursor. The phone can also send typed text or its clipboard.
 
+With no computer online, the phone transcribes on its own and copies the result to its clipboard.
+
 The Android app is on the releases page as an APK. [Install it](/guide/install#android) · [How the phone works](/phone/)
 
 </SplitBlock>

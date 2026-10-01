@@ -26,8 +26,11 @@ tauri-plugin-barcode-scanner = "=2.4.5"
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+uuid.workspace = true
 # The phone as the desktop's microphone (docs/dictation.md §20): cpal (AAudio on Android).
 voltip-audio.workspace = true
+# A take the phone recognises itself (docs/dictation.md §20.7): the built-in cloud services.
+voltip-cloud.workspace = true
 voltip-core.workspace = true
 voltip-identity = { workspace = true, features = ["android-keystore"] }
 # Wire types of the platform queries (docs/dictation.md §15); the phone answers `not_applicable`.
@@ -44,6 +47,7 @@ tauri = { version = "=2.11.6", default-features = false, features = ["wry", "tes
 tempfile.workspace = true
 voltip-audio = { workspace = true, features = ["test-support"] }
 voltip-pairing.workspace = true
+wiremock.workspace = true
 
 [features]
 # Enabled by `tauri build`: serve the bundled frontend instead of the dev server URL.

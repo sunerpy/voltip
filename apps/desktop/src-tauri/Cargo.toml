@@ -67,6 +67,7 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 voltip-asr.workspace = true
+voltip-cloud.workspace = true
 voltip-asr-local.workspace = true
 voltip-audio.workspace = true
 voltip-core = { workspace = true, features = ["keyring"] }

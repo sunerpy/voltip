@@ -18,7 +18,8 @@ crates/voltip-transport  Transport trait、连接状态机、重连策略、Dire
 crates/voltip-relay      可选中继服务（axum WS）：会话/短码索引、限流、失败计数、只转发密文
 crates/voltip-core       应用外观层：把 identity + pairing + transport + trusted store 组合成 CoreCommand → CoreEvent；Hotkey 解析/规范化与 Settings.hotkey
 crates/voltip-tauri-bridge  UiCommand / UiEvent / UiState：webview 看到的唯一契约；Bridge::publish 让 shell 自己产生的状态（热键注册结果）并入同一状态流
-crates/voltip-audio      麦克风枚举与输入电平（cpal：WASAPI / CoreAudio / ALSA），纯 DSP 可脱离硬件测试；仅桌面 shell 依赖
+crates/voltip-audio      麦克风枚举与输入电平（cpal：WASAPI / CoreAudio / ALSA / Android AAudio），纯 DSP 可脱离硬件测试
+crates/voltip-cloud      云端识别与润色（voltip-asr、voltip-refine 的 HTTP 客户端）作为核心的 Transcriber / Refiner 端口，桌面与手机共用
 apps/desktop/src-tauri   桌面 shell：全局热键（tauri-plugin-global-shortcut）、悬浮胶囊窗口（预热、事件驱动）、无边框主窗口、音频电平 Channel
 ```
 

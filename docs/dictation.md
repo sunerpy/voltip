@@ -1254,7 +1254,7 @@ Rust：`voltip-platform` `cmd_c_keycode` 表与终端表（`terminal_ids_are_per
 
 ## 20. 手机作为电脑的麦克风（2026-09-27 契约）
 
-手机按住说话，音频经已配对设备之间的端到端加密通道实时流到电脑；电脑用自己的识别、润色、词典、规则、场景跑一次普通的听写，把文字插入电脑的光标处，并把每个状态回报给手机。手机本身不识别也不插入。
+手机按住说话，音频经已配对设备之间的端到端加密通道实时流到电脑；电脑用自己的识别、润色、词典、规则、场景跑一次普通的听写，把文字插入电脑的光标处，并把每个状态回报给手机。没有在线的已配对电脑时，手机改为自己识别，结果复制到手机剪贴板（§20.7）。
 
 ### 20.1 线协议（`voltip-protocol` `AppMessage`，在 Noise 通道内，中继只见密文）
 
@@ -1291,7 +1291,7 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 
 ### 20.5 未验证
 
-真机：Android 麦克风采集与权限弹窗、蓝牙耳机、后台切换时的采集行为，以及 `PhoneClipboardPlugin.kt` 读剪贴板，只能在手机上验证；`cargo check` / `clippy --target aarch64-linux-android` 通过，APK 构建见 `scripts/build-android-debug.sh`。
+真机：Android 麦克风采集与权限弹窗、蓝牙耳机、后台切换时的采集行为，`PhoneClipboardPlugin.kt` 读写剪贴板，`SharePlugin.kt` 的分享面板，以及手机单独识别时对内置服务的 HTTPS 请求（§20.7），只能在手机上验证；`cargo check` / `clippy --target aarch64-linux-android` 通过，APK 构建见 `scripts/build-android-debug.sh`。
 
 ### 20.6 手机发文字到电脑（2026-09-28）
 
@@ -1300,6 +1300,19 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 - **手机**：`CoreCommand::PhoneTextSend { to, body, source }`（`phone_text_send { publicKey, body, source }`）要求对端是在线的可信电脑、文字非空白且不超过 10 000 字（按字符计）。每条文字进 `UiState.sent_texts`（最新在前，最多 50 条，存 `sent-texts.json`；id 跨重启、跨「清空」递增，计数跟列表一起保存，没有可读的文件时从随机值开始，所以电脑按 `(手机, id)` 去重时不会把新文字当成见过的），状态 `sending` → `queued` / `delivered{pasted}` / `failed`；15 秒没有回音记为 `no_answer`（旧版电脑会丢掉不认识的消息），排队超过 10 分钟同样放弃。`sent_texts_clear` 清空列表。「发送剪贴板」经 `phone_clipboard_read` 读系统剪贴板（Android：`PhoneClipboardPlugin.kt`，系统只回答前台应用，按下按钮时 Voltip 就在前台；其他构建返回 `CLIPBOARD_UNAVAILABLE`）。界面在「已配对设备」页的「用手机说话」下面：文本框、字数、「发送剪贴板」「发送到 {电脑}」和已发送列表。
 - **电脑**：可信手机的 `phone_text` 经听写同一个注入器插入（粘贴，不行就留在剪贴板）；同一时间只插一条，电脑自己在录音或处理时先排队（最多 10 条，满了回 `busy`），手机看到 `queued`，这次听写结束（回到空闲或终态停留）后依次插入。同一条文字从第二条路径再到按 `(手机, id)` 丢弃（记最近 64 条）。每条插入都进历史，`HistoryEntry.origin = { device: 手机名, kind: typed｜clipboard }`；手机的听写（§20.1）也记成 `origin.kind = take`。历史页给这些条目加「手机输入 · {名称}」「手机剪贴板 · {名称}」「手机 · {名称}」徽标，文字条目不显示模型和耗时。`CoreConfig.accepts_phone_takes` 为假（手机）时回 `unavailable`；桌面壳的 `phone_text_send` / `sent_texts_clear` / `phone_clipboard_read` 返回 `PHONE_TEXT_UNAVAILABLE`。
 - 实现：`crates/voltip-protocol/src/app.rs`（`PhoneText` / `PhoneTextStatus`）、`crates/voltip-core/src/runtime/texts.rs`、`crates/voltip-core/src/phone.rs`（`SentText` / `SentTexts`）、`apps/mobile/src/screens/SendText.tsx`、`apps/mobile/src-tauri/src/clipboard.rs`。
+
+### 20.7 手机单独使用（2026-10-01）
+
+用户 2026-09-30 的要求（第 10 项）：没有在线的已配对电脑时，手机自己识别。配对后「按住说话」照旧发给电脑（§20.1），只有在线的已配对电脑一台都没有时才改为在手机上识别；从未配对的手机一打开就能这样用。
+
+- **端口**（`apps/mobile/src-tauri/src/lib.rs` 的 `phone_ports`）：麦克风是 `PhoneMicrophone`；识别与润色由 `voltip-cloud` 按 `ResolvedEngines` 构建云端客户端，手机没有本地模型，也没有用户密钥，所以用的是编译进构建的内置服务（`BuiltIn::from_build`，§3）；注入器是 `PhoneClipboardInjector`，结果一律写进手机剪贴板（`PhoneClipboardPlugin.kt` 的 `writeText`），`Via::Clipboard`。没有流式预览、前台探针、服务探针和 VAD，核心的回退照常适用。`build_app` 在 `setup` 里拿到 `AppHandle` 后才构建端口（剪贴板注入器需要它）。
+- **命令**：`dictation_start`（Android 上先申请麦克风权限，被拒时回 `MICROPHONE_DENIED`，与 `phone_take_start` 相同）/ `dictation_stop` / `dictation_cancel` 交给核心；`hotkey_edge` 仍被拒（`HOTKEY_UNAVAILABLE`，手机没有快捷键）。`paste_text` 在手机上把文字写进剪贴板，回 `copied { clipboard_only }`。新命令 `phone_share_text { text }` 经 `SharePlugin.kt`（`ACTION_SEND`）打开系统分享面板，文字须非空白、不超过 `MAX_PASTE_TEXT_CHARS`；桌面壳回 `SHARE_UNAVAILABLE`。
+- **历史**：结果进手机自己的 `history.sqlite3`（`origin` 为空：本机产生）；`history_query` / `history_entry` / `history_stats` / `history_hits` 与桌面一样经 bridge 读取。发给电脑的听写记在电脑的历史里，不在手机上。
+- **长录音**：手机的采集与桌面一样提供整段录音的流（`pcm_stream`），内存里只留前两分钟，超过时核心按 §22 写录音文件并分段识别。
+- **TLS**：reqwest 0.13 在 Android 上默认的系统证书校验（rustls-platform-verifier）需要应用经 JNI 交给它上下文，未初始化时第一次请求就 panic。`voltip-asr` 与 `voltip-refine` 在 Android 上改为只信任 Mozilla 根证书库（`webpki-root-certs`），与中继连接一致。
+- **界面**（`apps/mobile/src/screens/PhoneMic.tsx`、`RecentResults.tsx`）：未配对时首屏就是「用手机说话」；有在线的已配对电脑时按钮写「发送到 {电脑}」，没有时写「在手机上识别」，已配对但都不在线时另有一行说明。一次录音保持开始时的去向，中途有电脑上线或掉线都不改。下方一行跟随状态（正在录音 · 计时 / 正在识别 / 正在润色 / 已复制到剪贴板：文字 / 原因）。「最近结果」列出手机自己识别的最新 10 条，可以再次复制或分享。
+- **隐私**：手机单独识别时，音频和识别出的文字发往内置服务，与电脑默认设置下的行为相同（docs/site 隐私页）。
+- **门禁**：`crates/voltip-cloud` 的单测；`voltip-asr`、`voltip-refine` 的 `regression_android_trusts_mozillas_roots_not_an_uninitialised_platform_verifier`；手机 `tests/ipc.rs@a_take_on_the_phone_runs_through_the_cloud_clients_onto_its_clipboard`（真实云端客户端对本地假服务：一次识别、一次润色、结果进注入器和历史；取消不发请求）、`microphone::a_long_take_on_the_phone_streams_the_whole_take`、`clipboard::without_a_phone_clipboard_the_injector_reports_the_reason`；TS `PhoneMic.test.tsx`（两条去向、去向保持、复制与分享）。真机上的录音、剪贴板与分享面板见 §20.5。
 
 ## 21. AI 预设（2026-09-29）
 
