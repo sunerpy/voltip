@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.23](https://github.com/sunerpy/voltip/compare/v0.0.22...v0.0.23) (2026-10-01)
+
+
+### Features
+
+* **mobile:** the phone has the desktop's dictionary, rules and scenes ([#58](https://github.com/sunerpy/voltip/issues/58)) ([833f24e](https://github.com/sunerpy/voltip/commit/833f24eac250d95732c08086bb40b9d4390106ef))
+
 ## [0.0.22](https://github.com/sunerpy/voltip/compare/v0.0.21...v0.0.22) (2026-10-01)
 
 
