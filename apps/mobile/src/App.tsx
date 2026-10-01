@@ -3,6 +3,8 @@ import {
   BackendProvider,
   Button,
   Dialog,
+  type FeatureShell,
+  FeatureShellProvider,
   I18nProvider,
   Icon,
   ToastViewport,
@@ -16,9 +18,22 @@ import {
 } from "@voltip/ui";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Scanner } from "./app/scanner";
-import { type ConfirmSpec, type MobileShell, type Screen, ShellContext } from "./app/shell";
+import {
+  type ConfirmSpec,
+  type MobileShell,
+  type Screen,
+  ShellContext,
+  TAB_ROOTS,
+} from "./app/shell";
+import { About } from "./screens/About";
+import { AiModels } from "./screens/AiModels";
+import { Appearance } from "./screens/Appearance";
 import { Devices } from "./screens/Devices";
 import { PairDevice } from "./screens/PairDevice";
+import { Recording } from "./screens/Recording";
+import { Settings } from "./screens/Settings";
+import { SpeechModels } from "./screens/SpeechModels";
+import { TabBar } from "./screens/TabBar";
 import { ThisDevice } from "./screens/ThisDevice";
 import { VerifyDevice } from "./screens/VerifyDevice";
 import { Welcome } from "./screens/Welcome";
@@ -33,12 +48,26 @@ export interface AppProps {
   systemLanguage?: string;
 }
 
-const BACK: Partial<Record<Screen, Screen>> = {
+/** Where 返回 leads from a screen opened on its own (the first screen, or one of a tab root's
+ *  pages); a screen opened from another one goes back to that one. */
+const PARENT: Partial<Record<Screen, Screen>> = {
   device: "welcome",
   pair: "device",
   verify: "pair",
-  devices: "device",
+  speech: "settings",
+  ai: "settings",
+  appearance: "settings",
+  recording: "settings",
+  about: "settings",
 };
+
+/** The screens under `screen` when it is the first one shown. */
+function stackFor(screen: Screen): Screen[] {
+  const stack: Screen[] = [screen];
+  for (let parent = PARENT[screen]; parent !== undefined; parent = PARENT[parent])
+    stack.unshift(parent);
+  return stack;
+}
 
 export function App({ backend, loadScanner, initialScreen, systemLanguage }: AppProps) {
   const handler = useRef<((e: UiEvent) => void) | undefined>(undefined);
@@ -122,9 +151,20 @@ function Frame({
   const state = useUiState();
   const toasts = useToasts();
   // Land on the device list when this phone already trusts someone; otherwise start at welcome.
-  const [screen, setScreen] = useState<Screen>(
-    verifying ? "verify" : (initialScreen ?? (initialDevices > 0 ? "devices" : "welcome")),
+  const [stack, setStack] = useState<Screen[]>(() =>
+    stackFor(
+      verifying ? "verify" : (initialScreen ?? (initialDevices > 0 ? "devices" : "welcome")),
+    ),
   );
+  const screen = stack[stack.length - 1] ?? "welcome";
+  const go = useCallback((next: Screen) => {
+    setStack((current) =>
+      TAB_ROOTS.includes(next) ? [next] : current.at(-1) === next ? current : [...current, next],
+    );
+  }, []);
+  const back = useCallback(() => {
+    setStack((current) => (current.length > 1 ? current.slice(0, -1) : current));
+  }, []);
   const [scanner, setScanner] = useState<{ ready: boolean; value: Scanner | undefined }>({
     ready: false,
     value: undefined,
@@ -167,99 +207,121 @@ function Frame({
       else if (event.type === "identity_changed")
         toast(t("mobile.toast.identityChanged", { name: event.previous.name }), "danger");
       else if (event.type === "pairing") {
-        if (event.state.state === "awaiting_verification") setScreen("verify");
+        if (event.state.state === "awaiting_verification") go("verify");
         else if (event.state.state === "trusted") {
-          setScreen("devices");
+          go("devices");
           void backend.invoke("pairing_reset");
         }
       }
     });
-  }, [register, toast, backend, t]);
+  }, [register, toast, backend, t, go]);
 
   const shell = useMemo<MobileShell>(
     () => ({
       screen,
-      go: setScreen,
+      go,
+      back,
       toast,
       confirm: setPending,
       scanner: scanner.value,
       scannerReady: scanner.ready,
     }),
-    [screen, toast, scanner],
+    [screen, go, back, toast, scanner],
+  );
+  // The shared settings (`@voltip/ui`: provider cards, presets) report through the same toasts and
+  // confirmation dialog.
+  const features = useMemo<FeatureShell>(
+    () => ({
+      notify: toast,
+      confirm: ({ title, body, confirmLabel, onConfirm }) => {
+        setPending({ title, body, confirmLabel, onConfirm });
+      },
+    }),
+    [toast],
   );
 
-  const back = BACK[screen];
+  const canGoBack = stack.length > 1;
+  const tabRoot = TAB_ROOTS.includes(screen);
   return (
     <ShellContext.Provider value={shell}>
-      <div className="mx-auto flex h-full min-h-screen w-full max-w-[430px] flex-col bg-canvas text-fg">
-        {screen !== "welcome" && (
-          <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-surface px-3">
-            {back && (
-              <button
-                type="button"
-                aria-label={t("mobile.back")}
-                onClick={() => {
-                  if (screen === "verify") void backend.invoke("pairing_cancel");
-                  setScreen(back);
-                }}
-                className="flex h-8 w-8 items-center justify-center rounded-6 text-fg-muted hover:bg-inset">
-                <Icon name="chevronRight" size={16} className="rotate-180" />
-              </button>
-            )}
-            <h1 className="flex-1 text-[15px] font-semibold">{t(`mobile.title.${screen}`)}</h1>
-            {screen === "devices" && (
-              <button
-                type="button"
-                aria-label={t("mobile.thisDevice")}
-                onClick={() => {
-                  setScreen("device");
-                }}
-                className="flex h-8 w-8 items-center justify-center rounded-6 text-fg-muted hover:bg-inset">
-                <Icon name="user" size={16} />
-              </button>
-            )}
-          </header>
-        )}
-        <main className="min-h-0 flex-1 overflow-y-auto">
-          {screen === "welcome" && <Welcome />}
-          {screen === "device" && <ThisDevice />}
-          {screen === "pair" && <PairDevice />}
-          {screen === "verify" && <VerifyDevice />}
-          {screen === "devices" && <Devices />}
-        </main>
-        <Dialog
-          open={pending !== undefined}
-          title={pending?.title ?? ""}
-          width={340}
-          onClose={() => {
-            setPending(undefined);
-          }}
-          actions={
-            <>
-              <Button
-                size="sm"
-                variant="ghost"
-                data-autofocus
-                onClick={() => {
-                  setPending(undefined);
-                }}>
-                {t("mobile.cancel")}
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                onClick={() => {
-                  pending?.onConfirm();
-                  setPending(undefined);
-                }}>
-                {pending?.confirmLabel}
-              </Button>
-            </>
-          }>
-          {pending?.body}
-        </Dialog>
-        <ToastViewport toasts={toasts.toasts} onDismiss={toasts.dismiss} />
-      </div>
+      <FeatureShellProvider shell={features}>
+        <div className="mx-auto flex h-full min-h-screen w-full max-w-[430px] flex-col bg-canvas text-fg">
+          {screen !== "welcome" && (
+            <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-surface px-3">
+              {canGoBack && (
+                <button
+                  type="button"
+                  aria-label={t("mobile.back")}
+                  onClick={() => {
+                    if (screen === "verify") void backend.invoke("pairing_cancel");
+                    back();
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-6 text-fg-muted hover:bg-inset">
+                  <Icon name="chevronRight" size={16} className="rotate-180" />
+                </button>
+              )}
+              <h1 className="flex-1 text-[15px] font-semibold">{t(`mobile.title.${screen}`)}</h1>
+              {screen === "devices" && (
+                <button
+                  type="button"
+                  aria-label={t("mobile.thisDevice")}
+                  onClick={() => {
+                    go("device");
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-6 text-fg-muted hover:bg-inset">
+                  <Icon name="user" size={16} />
+                </button>
+              )}
+            </header>
+          )}
+          <main className="min-h-0 flex-1 overflow-y-auto">
+            {screen === "welcome" && <Welcome />}
+            {screen === "device" && <ThisDevice />}
+            {screen === "pair" && <PairDevice />}
+            {screen === "verify" && <VerifyDevice />}
+            {screen === "devices" && <Devices />}
+            {screen === "settings" && <Settings />}
+            {screen === "speech" && <SpeechModels />}
+            {screen === "ai" && <AiModels />}
+            {screen === "appearance" && <Appearance />}
+            {screen === "recording" && <Recording />}
+            {screen === "about" && <About />}
+          </main>
+          {tabRoot && <TabBar />}
+          <Dialog
+            open={pending !== undefined}
+            title={pending?.title ?? ""}
+            width={340}
+            onClose={() => {
+              setPending(undefined);
+            }}
+            actions={
+              <>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  data-autofocus
+                  onClick={() => {
+                    setPending(undefined);
+                  }}>
+                  {t("mobile.cancel")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => {
+                    pending?.onConfirm();
+                    setPending(undefined);
+                  }}>
+                  {pending?.confirmLabel}
+                </Button>
+              </>
+            }>
+            {pending?.body}
+          </Dialog>
+          <ToastViewport toasts={toasts.toasts} onDismiss={toasts.dismiss} />
+        </div>
+      </FeatureShellProvider>
     </ShellContext.Provider>
   );
 }

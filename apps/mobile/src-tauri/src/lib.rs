@@ -453,7 +453,8 @@ fn provider_key_set(bridge: tauri::State<'_, Bridge>, provider: ProviderId, kind
     Ok(bridge.dispatch(UiCommand::ProviderKeySet { provider, kind, value })?)
 }
 
-/// The phone has no HTTP probe: the core answers `unsupported` with a `provider_probe` event.
+/// 测试连接 (docs/dictation.md §3.3): the core lists the provider's models through the phone's
+/// HTTP probe (`voltip_cloud::HttpServiceProbe`) and answers with a `provider_probe` event.
 #[tauri::command]
 fn provider_probe(
     bridge: tauri::State<'_, Bridge>,
@@ -465,21 +466,41 @@ fn provider_probe(
     Ok(bridge.dispatch(UiCommand::ProviderProbe { provider, kind, base_url, key })?)
 }
 
-/// Why the phone opens no vendor key page: it configures no engines (dictation runs on the desktop).
-pub const PROVIDERS_UNAVAILABLE: &str = "providers: 手机端不配置识别与润色服务";
-
+/// Open the vendor's API-key page in the phone's browser. Only catalogue URLs can be opened: the
+/// webview names a provider, never a URL (as on the desktop).
 #[tauri::command]
-fn provider_console_open(_provider: ProviderId) -> Result<(), String> {
-    Err(PROVIDERS_UNAVAILABLE.into())
+fn provider_console_open<R: Runtime>(app: AppHandle<R>, provider: ProviderId) -> Result<(), String> {
+    let url = provider.spec().console_url.ok_or_else(|| format!("{}: no key page", provider.as_str()))?;
+    open_in_browser(&app, url)
 }
 
-/// Why the phone opens no project page: it has no About pane or feedback entry.
-pub const PROJECT_LINKS_UNAVAILABLE: &str = "project: 手机端不打开项目页面";
+/// The repository this build comes from (`Cargo.toml` `repository`): what 关于 opens.
+pub const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 
+/// Open a project page (the repository, its releases) in the phone's browser; the webview names
+/// the page and the shell builds the URL.
 #[tauri::command]
-fn project_link_open(_link: ProjectLink) -> Result<(), String> {
-    Err(PROJECT_LINKS_UNAVAILABLE.into())
+fn project_link_open<R: Runtime>(app: AppHandle<R>, link: ProjectLink) -> Result<(), String> {
+    open_in_browser(&app, &link.url(REPOSITORY))
 }
+
+/// `url` in the browser: Android's `ACTION_VIEW` through the opener plugin. The desktop-hosted
+/// builds of this crate (tests) have no browser to hand it to.
+fn open_in_browser<R: Runtime>(app: &AppHandle<R>, url: &str) -> Result<(), String> {
+    #[cfg(mobile)]
+    {
+        use tauri_plugin_opener::OpenerExt as _;
+        app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+    }
+    #[cfg(not(mobile))]
+    {
+        let _ = (app, url);
+        Err(BROWSER_UNAVAILABLE.into())
+    }
+}
+
+/// Why a desktop-hosted build of the phone shell (tests) opens nothing.
+pub const BROWSER_UNAVAILABLE: &str = "opener: 这个平台没有手机浏览器";
 
 /// Feedback is sent from the computer (its 反馈 dialog, docs/feedback.md).
 pub const FEEDBACK_UNAVAILABLE: &str = "feedback: 请在电脑上反馈";
@@ -749,33 +770,33 @@ async fn history_hits(bridge: tauri::State<'_, Bridge>) -> Result<voltip_core::H
     history_read(&bridge, Bridge::history_hits).await
 }
 
-/// The phone has no dictation pipeline, so no clean-up to shape (docs/dictation.md §21): every
-/// preset verb and the query refuse honestly.
-pub const PRESETS_UNAVAILABLE: &str = "presets: 手机端不支持 AI 预设";
-
+/// The phone's own AI presets (docs/dictation.md §21, §20.7): the phone cleans up what it
+/// recognises itself, so its presets are edited here like the desktop's.
 #[tauri::command]
-fn presets_add(_preset: PresetDraft) -> Result<(), String> {
-    Err(PRESETS_UNAVAILABLE.to_owned())
+fn presets_add(bridge: tauri::State<'_, Bridge>, preset: PresetDraft) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PresetsAdd { preset })?)
 }
 
 #[tauri::command]
-fn presets_update(_id: String, _preset: PresetDraft) -> Result<(), String> {
-    Err(PRESETS_UNAVAILABLE.to_owned())
+fn presets_update(bridge: tauri::State<'_, Bridge>, id: String, preset: PresetDraft) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PresetsUpdate { id, preset })?)
 }
 
 #[tauri::command]
-fn presets_remove(_id: String) -> Result<(), String> {
-    Err(PRESETS_UNAVAILABLE.to_owned())
+fn presets_remove(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PresetsRemove { id })?)
 }
 
+/// 试一试: the answer arrives as a `preset_try` event carrying `id`.
 #[tauri::command]
-fn presets_try(_id: u64, _preset: Option<String>, _prompt: Option<String>, _text: String) -> Result<(), String> {
-    Err(PRESETS_UNAVAILABLE.to_owned())
+fn presets_try(bridge: tauri::State<'_, Bridge>, id: u64, preset: Option<String>, prompt: Option<String>, text: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::PresetsTry { id, preset, prompt, text })?)
 }
 
+/// Query: every built-in preset's text, what 复制为自定义 starts from.
 #[tauri::command]
-fn presets_builtin() -> Result<Vec<serde_json::Value>, String> {
-    Err(PRESETS_UNAVAILABLE.to_owned())
+fn presets_builtin() -> Vec<voltip_cloud::BuiltinPresetText> {
+    voltip_cloud::builtin_preset_texts()
 }
 
 #[tauri::command]
@@ -843,8 +864,8 @@ async fn phone_share_text<R: Runtime>(app: AppHandle<R>, text: String) -> Result
 /// The phone's dictation ports: its microphone (the takes it streams, docs/dictation.md §20, and
 /// the ones it recognises itself, §20.7), the cloud clients of the resolved engines — the built-in
 /// services unless the settings name others; the phone has no local models — and its clipboard
-/// for the result. No live preview, no foreground probe, no provider probe, no VAD: the core's
-/// fallbacks apply.
+/// for the result, and the HTTP provider probe (测试连接). No live preview, no foreground probe,
+/// no VAD: the core's fallbacks apply.
 pub fn phone_ports<R: Runtime>(app: &AppHandle<R>) -> voltip_core::dictation::DictationPorts {
     voltip_core::dictation::DictationPorts {
         audio: Arc::new(microphone::PhoneMicrophone::cpal()),
@@ -853,7 +874,7 @@ pub fn phone_ports<R: Runtime>(app: &AppHandle<R>) -> voltip_core::dictation::Di
         models: None,
         streaming: None,
         probe: None,
-        service_probe: None,
+        service_probe: Some(Arc::new(voltip_cloud::HttpServiceProbe)),
         segmenter: None,
     }
 }
@@ -901,7 +922,7 @@ pub fn build_app<R: Runtime>(
     ports: impl FnOnce(&AppHandle<R>) -> voltip_core::dictation::DictationPorts + Send + 'static,
 ) -> tauri::Builder<R> {
     #[cfg(mobile)]
-    let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
+    let builder = builder.plugin(tauri_plugin_barcode_scanner::init()).plugin(tauri_plugin_opener::init());
     builder
         .plugin(microphone::init())
         .plugin(clipboard::init())

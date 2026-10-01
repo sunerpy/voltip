@@ -16,6 +16,14 @@ Every [release](https://github.com/sunerpy/voltip/releases) carries the app as `
 
 Before any computer is paired, and whenever no paired computer is online, **Hold to talk** works on the phone alone, and the button reads **Transcribe on the phone**. The built-in service transcribes and polishes what you said, and the text is copied to the phone's clipboard, ready to paste into any app.
 
+The phone has settings of its own, under **Settings** at the bottom:
+
+- **Speech models** and **AI models and presets**: the recognition service and the AI polish service. Use the built-in services, or enter your own provider, endpoint, model and API key. Keys are stored only in the phone's system keystore. The phone does not run local models.
+- Whether AI polish runs, which preset it uses, the recognition language and the Chinese script.
+- **Appearance and language** and **Recording**: the interface language, the theme and the longest take.
+
+These settings apply to recordings the phone recognises itself. A recording sent to a computer follows the computer's settings.
+
 **Recent results** lists what the phone transcribed, newest first, with **Copy** and **Share**. These results are kept on the phone only.
 
 When a paired computer is online, the button reads **Send to** and the computer's name instead, and the recording goes to the computer as described below. A recording keeps its route until it ends, even if a computer comes online or goes offline in the meantime.

@@ -85,7 +85,8 @@ export function Dialog({
         className={cx(
           "flex flex-col gap-4 rounded-14 bg-surface p-6 outline-none hairline shadow-pop",
         )}
-        style={{ width }}>
+        // Never wider than the screen (a 720 px editor on a phone).
+        style={{ width, maxWidth: "calc(100vw - 24px)" }}>
         <h2 id={titleId} className="text-[16px] font-semibold text-fg">
           {title}
         </h2>

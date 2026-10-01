@@ -137,7 +137,6 @@ import {
   sceneDraftSchema,
 } from "./schema";
 import {
-  PresetError,
   type PresetTrial,
   checkPresets,
   presetTrial,
@@ -409,8 +408,6 @@ export const MOCK_MODEL_FILE = "model.int8.onnx";
 export const VOCABULARY_UNAVAILABLE = "vocabulary: 手机端不支持个人词典与替换规则";
 /** What the phone answers to every scene command and to `recent_apps` (docs/dictation.md §18.6). */
 export const SCENES_UNAVAILABLE = "scenes: 手机端不支持场景与上下文";
-/** What the phone shell answers to every preset command (docs/dictation.md §21). */
-export const PRESETS_UNAVAILABLE = "presets: 手机端不支持 AI 预设";
 /** `voltip_core::PRESET_TRY_UNCONFIGURED`: a 试一试 while no clean-up is configured. */
 export const PRESET_TRY_UNCONFIGURED = "尚未配置 AI 润色服务，无法试运行预设";
 /** The built-in presets' texts (`presets_builtin`), the bytes the desktop shell answers with (the
@@ -475,8 +472,6 @@ export const MOCK_GPU_HARDWARE: HardwareStatus = {
 export const PHONE_TAKE_UNAVAILABLE = "phone_take: 电脑接收手机的录音，不向其他设备推送";
 /** `voltip_desktop_lib::SHARE_UNAVAILABLE`: 「分享」 is the phone's system share sheet. */
 export const SHARE_UNAVAILABLE = "share: 电脑端没有系统分享";
-/** `voltip_mobile::PROJECT_LINKS_UNAVAILABLE`. */
-export const PROJECT_LINKS_UNAVAILABLE = "project: 手机端不打开项目页面";
 /** `feedback::clean_name` in the desktop shell: the last path component, trimmed, control
  *  characters and quotes replaced, at most 120 characters (a longer one keeps its extension);
  *  `undefined` when nothing is left. */
@@ -858,7 +853,7 @@ export class MockBackend implements Backend {
   private readonly engineOverrides: Partial<EngineStatus>;
   /** Every `providerConsoleOpen` made, in order (tests). */
   readonly consolesOpened: ProviderId[] = [];
-  /** `project_link_open` calls, for tests (the phone opens none). */
+  /** `project_link_open` calls, for tests. */
   readonly linksOpened: ProjectLink[] = [];
   /** Reports `feedbackSubmit` accepted, in order. */
   readonly feedbackSent: FeedbackDraft[] = [];
@@ -964,7 +959,7 @@ export class MockBackend implements Backend {
       rules: this.role === "phone" ? [] : [...(options.rules ?? [])],
       // The desktop's list always holds the built-in scenes, appended off after the user's (§18.10).
       scenes: this.role === "phone" ? [] : [...(options.scenes ?? [])],
-      presets: this.role === "phone" ? [] : [...(options.presets ?? [])],
+      presets: [...(options.presets ?? [])],
       // What the desktop shell reports about the machine (§10.6); nothing on the phone.
       hardware:
         this.role === "phone" ? { cpu_threads: 0, gpus: [] } : (options.hardware ?? MOCK_HARDWARE),
@@ -1170,10 +1165,10 @@ export class MockBackend implements Backend {
     this.pasteOutcome = outcome;
   }
 
-  /** `presets_builtin`: the built-in presets' texts (the phone has no presets). */
+  /** `presets_builtin`: the built-in presets' texts (the phone has its own presets since
+   *  2026-10-01, user decision). */
   async presetsBuiltin(): Promise<BuiltinPresetText[]> {
     await Promise.resolve();
-    this.refusePresetsOnPhone();
     return MOCK_BUILTIN_PRESET_TEXTS.map((text) => ({ ...text }));
   }
 
@@ -1812,14 +1807,12 @@ export class MockBackend implements Backend {
     // core a clash with the list (name, cap, unknown id) with an `error` event.
     presets_add: (args) => {
       const { preset } = required(args);
-      this.refusePresetsOnPhone();
       const draft = validatePresetDraft(preset);
       const now = this.now();
       this.commitPresets([...this.state.presets, this.presetFrom(draft, this.uuid(), now)]);
     },
     presets_update: (args) => {
       const { id, preset } = required(args);
-      this.refusePresetsOnPhone();
       uuidArg(id);
       const draft = validatePresetDraft(preset);
       const current = this.state.presets.find((p) => p.id === id);
@@ -1835,7 +1828,6 @@ export class MockBackend implements Backend {
     },
     presets_remove: (args) => {
       const { id } = required(args);
-      this.refusePresetsOnPhone();
       uuidArg(id);
       if (!this.state.presets.some((p) => p.id === id)) {
         this.emit({ type: "error", message: `presets: 没有 id 为 ${id} 的预设` });
@@ -1845,7 +1837,6 @@ export class MockBackend implements Backend {
     },
     presets_try: (args) => {
       const { id, preset, prompt, text } = required(args);
-      this.refusePresetsOnPhone();
       this.tryPreset(id, presetTrial(preset, prompt), presetTryText(text));
     },
     settings_set_context_sharing: (args) => {
@@ -1926,10 +1917,6 @@ export class MockBackend implements Backend {
   }
 
   // ---- presets (docs/dictation.md §21) -----------------------------------------------------------
-
-  private refusePresetsOnPhone() {
-    if (this.role === "phone") throw new PresetError(PRESETS_UNAVAILABLE);
-  }
 
   private commitPresets(presets: CustomPreset[]) {
     try {
@@ -2381,7 +2368,6 @@ export class MockBackend implements Backend {
   }
 
   projectLinkOpen(link: ProjectLink): Promise<void> {
-    if (this.role === "phone") return Promise.reject(new Error(PROJECT_LINKS_UNAVAILABLE));
     this.linksOpened.push(link);
     return Promise.resolve();
   }
