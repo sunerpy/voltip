@@ -1074,14 +1074,18 @@ jobs:
         timeout-minutes: 10
         run: .github/scripts/check-keychain-migration.sh "$APP"
 
+      # The harness of the hand-over below, built in a step of its own: on a cold cache it is a
+      # whole release build (2026-10-01, main: 14 min 32 s on the Intel Mac, which left the check
+      # no time inside its 15 minutes, and the release candidate waited on the rerun).
+      - name: Build the keychain pre-install harness
+        timeout-minutes: 45
+        run: cargo build --release -p voltip-desktop --example keychain_preinstall --target "$MACOS_TARGET"
+
       # The updater-verified new app persists its own cdhash items before installation. This uses
       # real mutual code-signature checks and then starts the installed B; a foreign B fails closed.
       - name: Keychain pre-install hand-over (login keychain)
         timeout-minutes: 15
-        run: |
-          set -euo pipefail
-          cargo build --release -p voltip-desktop --example keychain_preinstall --target "$MACOS_TARGET"
-          .github/scripts/check-keychain-preinstall.sh "$APP" "target/$MACOS_TARGET/release/examples/keychain_preinstall"
+        run: .github/scripts/check-keychain-preinstall.sh "$APP" "target/$MACOS_TARGET/release/examples/keychain_preinstall"
 
       - name: Headless native run (download a model, transcribe a public sample)
         shell: pwsh
