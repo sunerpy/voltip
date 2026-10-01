@@ -1,6 +1,13 @@
 import { type Backend, type UiEvent, coreMessageText, resolveLocale } from "@voltip/shared";
-import { BackendProvider, I18nProvider, useT, useUiState } from "@voltip/ui";
-import { type ReactNode, Suspense, lazy, useCallback, useEffect, useRef } from "react";
+import {
+  BackendProvider,
+  type FeatureShell,
+  FeatureShellProvider,
+  I18nProvider,
+  useT,
+  useUiState,
+} from "@voltip/ui";
+import { type ReactNode, Suspense, lazy, useCallback, useEffect, useMemo, useRef } from "react";
 import { AppearanceProvider } from "./app/appearance";
 import { FeedbackDraftProvider } from "./app/feedback-draft";
 import { type Route, RouterProvider, isDialogRoute, routePath, useRouter } from "./app/router";
@@ -180,15 +187,37 @@ export function App({ backend, initialPath, systemLanguage, traySource }: AppPro
       <LocaleProvider systemLanguage={systemLanguage}>
         <RouterProvider initialPath={initialPath}>
           <ShellProvider>
-            <AppearanceProvider>
-              <EventToasts onEvent={register} />
-              <Frame traySource={traySource} />
-            </AppearanceProvider>
+            <FeatureShellBridge>
+              <AppearanceProvider>
+                <EventToasts onEvent={register} />
+                <Frame traySource={traySource} />
+              </AppearanceProvider>
+            </FeatureShellBridge>
           </ShellProvider>
         </RouterProvider>
       </LocaleProvider>
     </BackendProvider>
   );
+}
+
+/** The shared features (`@voltip/ui`: provider cards, presets) report through the shell's toasts
+ *  and confirmation dialog. */
+function FeatureShellBridge({ children }: { children: ReactNode }) {
+  const shell = useShell();
+  const feature = useMemo<FeatureShell>(
+    () => ({
+      notify: (message, tone) => {
+        shell.toast(
+          tone === "danger"
+            ? { message, duration: 5000, tone: "danger" }
+            : { message, duration: 3000 },
+        );
+      },
+      confirm: shell.confirm,
+    }),
+    [shell],
+  );
+  return <FeatureShellProvider shell={feature}>{children}</FeatureShellProvider>;
 }
 
 /** The overlay window has no chrome; every other route lives inside the shell. */

@@ -9,7 +9,6 @@ import {
   MAX_TERM_CHARS,
   type ReplacementRule,
   type TFunction,
-  coreMessageText,
   zhT,
 } from "@voltip/shared";
 
@@ -38,9 +37,7 @@ export const HEARD_AS_JOINER = " · ";
 
 /** A rejection as text: Tauri rejects with the core's string, the in-memory backend with an Error;
  *  either way without the core's machine prefix. */
-export function errorText(e: unknown): string {
-  return coreMessageText(e instanceof Error ? e.message : String(e));
-}
+export { errorText } from "@voltip/shared";
 
 function chars(text: string): number {
   return Array.from(text).length;
