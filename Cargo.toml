@@ -14,6 +14,7 @@ members = [
     "crates/voltip-asr",
     "crates/voltip-asr-local",
     "crates/voltip-refine",
+    "crates/voltip-cloud",
     "crates/voltip-inject",
     "crates/voltip-platform",
     "crates/voltip-hooks",
@@ -139,6 +140,10 @@ tower = { version = "=0.5.3", features = ["util"] }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
 url = { version = "=2.5.8", features = ["serde"] }
+# Mozilla's root store as DER certificates: what the HTTP clients trust on Android, where reqwest's
+# platform verifier needs a JNI context the app never hands it (voltip-asr, voltip-refine). Already
+# in the graph through rustls-platform-verifier; CDLA-Permissive-2.0 like webpki-roots (deny.toml).
+webpki-root-certs = "=1.0.9"
 uuid = { version = "=1.26.1", features = ["v4", "serde"] }
 wiremock = "=0.6.5"
 zeroize = { version = "=1.9.0", features = ["derive"] }
@@ -155,6 +160,7 @@ voltip-audio = { path = "crates/voltip-audio" }
 voltip-asr = { path = "crates/voltip-asr" }
 voltip-asr-local = { path = "crates/voltip-asr-local" }
 voltip-refine = { path = "crates/voltip-refine" }
+voltip-cloud = { path = "crates/voltip-cloud" }
 voltip-inject = { path = "crates/voltip-inject" }
 
 # The bundled SQLite (the history, docs/dictation.md §4) is C code that is not debugged here:

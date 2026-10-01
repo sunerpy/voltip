@@ -473,6 +473,8 @@ export const MOCK_GPU_HARDWARE: HardwareStatus = {
 
 /** `voltip_desktop_lib::PHONE_TAKE_UNAVAILABLE`: the desktop records phone takes, it sends none. */
 export const PHONE_TAKE_UNAVAILABLE = "phone_take: 电脑接收手机的录音，不向其他设备推送";
+/** `voltip_desktop_lib::SHARE_UNAVAILABLE`: 「分享」 is the phone's system share sheet. */
+export const SHARE_UNAVAILABLE = "share: 电脑端没有系统分享";
 /** `voltip_mobile::PROJECT_LINKS_UNAVAILABLE`. */
 export const PROJECT_LINKS_UNAVAILABLE = "project: 手机端不打开项目页面";
 /** `feedback::clean_name` in the desktop shell: the last path component, trimmed, control
@@ -864,8 +866,11 @@ export class MockBackend implements Backend {
   readonly feedbackStaged: StagedAttachment[] = [];
   /** The last staged file's number. */
   private lastAttachment = 0;
-  /** The phone's clipboard (`phone_clipboard_read`). */
+  /** The phone's clipboard (`phone_clipboard_read`; a take the phone recognised and a copy from its
+   *  history land here). */
   phoneClipboard: string | null;
+  /** Texts the phone handed to the share sheet (`phone_share_text`), in order. */
+  readonly shared: string[] = [];
   /** The last id a phone text took (`SentTexts::next_id` in the core). */
   private lastTextId = 0;
   private readonly feedback: "configured" | FeedbackError;
@@ -917,7 +922,9 @@ export class MockBackend implements Backend {
     this.permissions = options.permissions ?? mockPermissions(host);
     this.preflight = options.injectPreflight ?? uncheckedPreflight(host);
     this.pasteOutcome = options.pasteOutcome ?? { kind: "pasted" };
-    this.history = options.history ?? sampleHistory(this.now());
+    // The phone's own history starts empty: it holds the takes it recognises itself (§20.7); the
+    // samples are a computer's dictations.
+    this.history = options.history ?? (this.role === "phone" ? [] : sampleHistory(this.now()));
     const settings: Settings = { ...defaultSettings(), ...options.settings };
     // The phone has no local models (docs/dictation.md §10): an empty catalogue, commands refused.
     const models: ModelState[] =
@@ -995,7 +1002,8 @@ export class MockBackend implements Backend {
   /** Synthetic meter: a breathing level on the requested device, 30 frames a second. A device
    *  that is not connected meters the default input, as the desktop shell does (2026-09-28: the
    *  chosen microphone may be unplugged). The phone's shell opens no microphone to meter: its
-   *  frames are those of its own take, so the phone role only sends them while a take listens. */
+   *  frames are those of its own take — streamed to a computer, or recognised on the phone
+   *  (§20.7) — so the phone role only sends them while one listens. */
   meter(deviceId: string | undefined, onFrame: FrameListener): Promise<Unsubscribe> {
     const phone = this.role === "phone";
     const device =
@@ -1003,7 +1011,10 @@ export class MockBackend implements Backend {
       MOCK_AUDIO_DEVICES.find((d) => d.is_default);
     let seq = 0;
     const timer = setInterval(() => {
-      if (phone && this.state.phone_take?.state.state !== "listening") return;
+      const listening =
+        this.state.phone_take?.state.state === "listening" ||
+        this.state.dictation.phase.phase === "listening";
+      if (phone && !listening) return;
       seq += 1;
       const level = mockLevel(seq);
       const frame: LevelFrame = {
@@ -1048,11 +1059,11 @@ export class MockBackend implements Backend {
     return recentAppsOf(this.history);
   }
 
-  /** `history_query`: the core's filters, search and order over the whole list (the phone keeps
-   *  no dictation history and answers empty, after the same check). */
+  /** `history_query`: the core's filters, search and order over the whole list (the phone's is
+   *  the takes it recognised itself, docs/dictation.md §20.7). */
   async historyQuery(args: HistoryQueryArgs): Promise<HistoryPage> {
     await Promise.resolve();
-    return historyPageOf(this.role === "phone" ? [] : this.history, args);
+    return historyPageOf(this.history, args);
   }
 
   /** `history_export` (docs/dictation.md §22): the preview's save dialog takes the offered name;
@@ -1074,19 +1085,19 @@ export class MockBackend implements Backend {
   /** `history_entry`: one entry, `null` once it is gone. */
   async historyEntry(id: string): Promise<HistoryEntry | null> {
     await Promise.resolve();
-    return this.role === "phone" ? null : (this.history.find((e) => e.id === id) ?? null);
+    return this.history.find((e) => e.id === id) ?? null;
   }
 
   /** `history_stats`: the dictations between the page's local midnights, and in total. */
   async historyStats(boundaries: readonly number[]): Promise<HistoryStats> {
     await Promise.resolve();
-    return historyStatsOf(this.role === "phone" ? [] : this.history, boundaries);
+    return historyStatsOf(this.history, boundaries);
   }
 
   /** `history_hits`: hits per dictionary entry and rule over the whole history. */
   async historyHits(): Promise<HistoryHits> {
     await Promise.resolve();
-    return historyHitsOf(this.role === "phone" ? [] : this.history);
+    return historyHitsOf(this.history);
   }
 
   /** Replace the whole history and tell the UI its newest entries and the total. */
@@ -1137,12 +1148,16 @@ export class MockBackend implements Backend {
     return Promise.resolve(structuredClone(this.preflight));
   }
 
-  /** `paste_text`: the refusals of the shell and the core (the phone cannot paste; empty or too
-   *  long text; a take under way, not queued), then the seeded outcome. Writes no history. */
+  /** `paste_text`: the refusals of the shell and the core (empty or too long text; a take under
+   *  way, not queued), then the seeded outcome. The phone has no window to paste into: it puts the
+   *  text on its clipboard (docs/dictation.md §20.7). Writes no history. */
   pasteText(text: string): Promise<PasteOutcome> {
-    if (this.role === "phone") return pasteFailed("unsupported");
     if (text.trim().length === 0 || Array.from(text).length > MAX_PASTE_TEXT_CHARS) {
       return pasteFailed("invalid");
+    }
+    if (this.role === "phone") {
+      this.phoneClipboard = text;
+      return Promise.resolve({ kind: "copied", reason: "clipboard_only" });
     }
     const phase = this.state.dictation.phase.phase;
     if (phase === "listening" || phase === "processing") return pasteFailed("busy");
@@ -1420,6 +1435,14 @@ export class MockBackend implements Backend {
     },
     sent_texts_clear: () => {
       this.emit({ type: "sent_texts", texts: [] });
+    },
+    phone_share_text: (args) => {
+      // The shell's own command (docs/dictation.md §20.7): the share sheet opens, nothing in the
+      // core changes. The phone refuses what a paste would refuse.
+      const { text } = required(args);
+      if (text.trim().length === 0 || Array.from(text).length > MAX_PASTE_TEXT_CHARS)
+        throw new Error(`share: 文字为空或超过 ${MAX_PASTE_TEXT_CHARS} 字`);
+      this.shared.push(text);
     },
     phone_take_start: (args) => {
       const { publicKey } = required(args);
@@ -2043,9 +2066,11 @@ export class MockBackend implements Backend {
   }
 
   async invoke<C extends MutationCommand>(name: C, ...args: ArgsOf<C>): Promise<void> {
-    // Like the desktop shell: the desktop records a phone's takes and streams none itself (§20).
+    // Like the desktop shell: the desktop records a phone's takes and streams none itself (§20),
+    // and has no share sheet (§20.7).
     if (this.role === "desktop" && name.startsWith("phone_take_"))
       throw new Error(PHONE_TAKE_UNAVAILABLE);
+    if (this.role === "desktop" && name === "phone_share_text") throw new Error(SHARE_UNAVAILABLE);
     const payload: CommandArgs[C] | undefined = args[0];
     this.handlers[name](payload);
     await Promise.resolve();
@@ -2918,7 +2943,9 @@ export class MockBackend implements Backend {
     });
     const finish = () => {
       if (this.state.dictation.session !== session) return;
-      const via = engines.inject === "clipboard_only" ? "clipboard" : "paste";
+      // The phone's result goes to its clipboard (docs/dictation.md §20.7), whatever the setting.
+      const via =
+        this.role === "phone" || engines.inject === "clipboard_only" ? "clipboard" : "paste";
       // docs/dictation.md §16.3: the dictionary corrects the transcript, the (canned) LLM keeps the
       // glossary terms, the rules run last; an emptied text is no speech, nothing is inserted.
       const vocabulary = Vocabulary.compile(this.state.dictionary, this.state.rules);
@@ -2971,6 +2998,7 @@ export class MockBackend implements Backend {
         kind: "dictation",
       };
       this.recordHistory(entry);
+      if (this.role === "phone") this.phoneClipboard = text;
       this.emitPhase(done);
       this.dwell(MOCK_DICTATION_DWELL_MS, session);
     };

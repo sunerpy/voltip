@@ -27,6 +27,9 @@ const PATHS = {
   plus: "M12 5v14M5 12h14",
   minus: "M5 12h14",
   upload: "M12 16V4M6 10l6-6 6 6M4 20h16",
+  // Three linked dots: hand something to another app (the phone's share sheet).
+  share:
+    "M18 2a3 3 0 1 0 0 6 3 3 0 1 0 0-6zM6 9a3 3 0 1 0 0 6 3 3 0 1 0 0-6zM18 16a3 3 0 1 0 0 6 3 3 0 1 0 0-6zM8.6 13.5l6.8 4M15.4 6.5l-6.8 4",
   refresh: "M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5",
   eye: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
   external: "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6",

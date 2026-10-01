@@ -1,5 +1,6 @@
 import {
   type DeviceView,
+  type DictationPhase,
   type LevelFrame,
   type PhoneTakeState,
   type TFunction,
@@ -34,11 +35,46 @@ export function phoneTakeLine(state: PhoneTakeState, elapsedMs: number, t: TFunc
   }
 }
 
+/** The line under the button for a take the phone recognises itself (docs/dictation.md §20.7). */
+export function localTakeLine(phase: DictationPhase, elapsedMs: number, t: TFunction): string {
+  switch (phase.phase) {
+    case "idle":
+      return "";
+    case "listening":
+      return t("mobile.mic.listening", { elapsed: formatElapsed(elapsedMs) });
+    case "processing":
+      if (phase.stage === "transcribing") return t("mobile.mic.local.transcribing");
+      if (phase.stage === "refining") return t("mobile.mic.local.refining");
+      return t("mobile.mic.local.processing");
+    case "done":
+      return t("mobile.mic.local.copied", { text: phase.text });
+    case "failed":
+      return phase.code === "no_speech"
+        ? t("mobile.mic.failed.no_speech")
+        : t("mobile.mic.local.failed", { message: coreMessageText(phase.message) });
+    case "cancelled":
+      return t("mobile.mic.cancelled");
+  }
+}
+
 function tone(state: PhoneTakeState): "ok" | "accent" | "danger" | "idle" {
   switch (state.state) {
     case "listening":
       return "ok";
     case "starting":
+    case "processing":
+      return "accent";
+    case "failed":
+      return "danger";
+    default:
+      return "idle";
+  }
+}
+
+function localTone(phase: DictationPhase): "ok" | "accent" | "danger" | "idle" {
+  switch (phase.phase) {
+    case "listening":
+      return "ok";
     case "processing":
       return "accent";
     case "failed":
@@ -97,67 +133,68 @@ function useTicking(active: boolean): number {
   return now;
 }
 
-/** The phone as the desktop's microphone (docs/dictation.md §20): hold to talk, release to send,
- *  slide off the button before releasing to cancel. The phone streams its microphone to the chosen
- *  paired desktop, which recognises and inserts the text; the line below follows the desktop. */
+/** The phone's talk card (docs/dictation.md §20, §20.7): hold to talk, release to finish, slide
+ *  off the button before releasing to cancel. With a paired computer online the take streams to
+ *  it, and the computer recognises and inserts the text; with none online the phone recognises
+ *  it itself through the built-in service and copies the result. A take keeps its route until it
+ *  ends: a computer coming online or going away in the middle moves nothing. */
 export function PhoneMic({ desktops }: { desktops: readonly DeviceView[] }) {
-  const { backend } = useBackend();
-  const shell = useMobileShell();
-  const { t } = useI18n();
-  const { phone_take: take } = useUiState();
+  const { phone_take: take, dictation } = useUiState();
   const online = desktops.filter((d) => d.connection.state === "online");
-  const [picked, setPicked] = useState<string | undefined>(undefined);
-  const target = online.find((d) => d.device.public_key === picked) ?? online[0];
+  const toComputer = take !== undefined && !phoneTakeFinal(take.state);
+  const onPhone = dictation.phase.phase === "listening" || dictation.phase.phase === "processing";
+  const route = toComputer ? "computer" : onPhone || online.length === 0 ? "phone" : "computer";
+  return route === "computer" ? (
+    <ComputerTalk desktops={desktops} online={online} />
+  ) : (
+    <PhoneTalk paired={desktops.length > 0} />
+  );
+}
+
+/** The hold-to-talk button both routes share. `start` resolves whether the take started; a
+ *  release waits for it, so a quick tap still stops the take it started (the core keeps the
+ *  order: start, then stop). */
+function HoldButton({
+  busy,
+  sublabel,
+  releaseLabel,
+  start,
+  stop,
+  cancel,
+}: {
+  busy: boolean;
+  sublabel: string;
+  releaseLabel: string;
+  start: () => Promise<boolean>;
+  stop: () => void;
+  cancel: () => void;
+}) {
+  const { t } = useI18n();
   const [held, setHeld] = useState(false);
   const [offButton, setOffButton] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
-  // The start's invoke, while the button is held: a release waits for it, so a quick tap still
-  // stops the take it started (the core keeps the order: start, then stop).
   const started = useRef<Promise<boolean> | null>(null);
-  const running = take !== undefined && !phoneTakeFinal(take.state);
-  const listening = take?.state.state === "listening";
-  const now = useTicking(listening);
-  const level = useTakeLevel(listening);
 
-  if (target === undefined) {
-    return (
-      <Card className="flex flex-col gap-2" data-testid="phone-mic">
-        <span className="text-[15px] font-semibold text-fg">{t("mobile.mic.title")}</span>
-        <p className="text-[12px] text-fg-muted">{t("mobile.mic.noDesktop")}</p>
-      </Card>
-    );
-  }
-
-  const start = () => {
-    if (running || started.current !== null) return;
+  const begin = () => {
+    if (busy || started.current !== null) return;
     setHeld(true);
     setOffButton(false);
-    started.current = backend
-      .invoke("phone_take_start", { publicKey: target.device.public_key })
-      .then(
-        () => true,
-        (e: unknown) => {
-          // Refused before the core saw it (Android: the microphone permission was denied).
-          setHeld(false);
-          setOffButton(false);
-          shell.toast(
-            t("mobile.toast.error", {
-              message: coreMessageText(e instanceof Error ? e.message : String(e)),
-            }),
-            "danger",
-          );
-          return false;
-        },
-      );
+    started.current = start().then((ok) => {
+      if (!ok) {
+        setHeld(false);
+        setOffButton(false);
+      }
+      return ok;
+    });
   };
-  const finish = (cancel: boolean) => {
+  const finish = (cancelled: boolean) => {
     const pending = started.current;
     started.current = null;
     setHeld(false);
     setOffButton(false);
     if (pending === null) return;
     void pending.then((ok) => {
-      if (ok) void backend.invoke(cancel ? "phone_take_cancel" : "phone_take_stop");
+      if (ok) (cancelled ? cancel : stop)();
     });
   };
   const outside = (e: PointerEvent) => {
@@ -175,9 +212,102 @@ export function PhoneMic({ desktops }: { desktops: readonly DeviceView[] }) {
     ? t("mobile.mic.hold")
     : offButton
       ? t("mobile.mic.releaseCancel")
-      : t("mobile.mic.release");
+      : releaseLabel;
   return (
-    <Card className="flex flex-col gap-3" data-testid="phone-mic">
+    <button
+      ref={button}
+      type="button"
+      aria-pressed={held}
+      data-testid="phone-mic-hold"
+      data-cancel={offButton || undefined}
+      disabled={busy && !held}
+      className={`h-24 w-full touch-none select-none rounded-14 text-[17px] font-semibold transition-colors ${
+        offButton
+          ? "bg-danger-soft text-danger"
+          : held
+            ? "bg-accent text-accent-fg"
+            : "bg-inset text-fg hairline"
+      }`}
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        begin();
+      }}
+      onPointerMove={(e) => {
+        if (held) setOffButton(outside(e));
+      }}
+      onPointerUp={(e) => {
+        finish(outside(e));
+      }}
+      onPointerCancel={() => {
+        finish(true);
+      }}
+      onKeyDown={(e) => {
+        if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+          e.preventDefault();
+          begin();
+        }
+      }}
+      onKeyUp={(e) => {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          finish(false);
+        }
+      }}>
+      {label}
+      <span className="mt-1 block text-[12px] font-normal opacity-80" data-testid="phone-mic-route">
+        {sublabel}
+      </span>
+    </button>
+  );
+}
+
+/** A start the shell refused before the core saw it (Android: the microphone permission was
+ *  denied): a toast, and the button lets go. */
+function useStart(): (run: () => Promise<void>) => Promise<boolean> {
+  const shell = useMobileShell();
+  const { t } = useI18n();
+  return (run) =>
+    run().then(
+      () => true,
+      (e: unknown) => {
+        shell.toast(
+          t("mobile.toast.error", {
+            message: coreMessageText(e instanceof Error ? e.message : String(e)),
+          }),
+          "danger",
+        );
+        return false;
+      },
+    );
+}
+
+/** The take streams to a paired computer, which recognises and inserts the text; the line below
+ *  follows the computer. */
+function ComputerTalk({
+  desktops,
+  online,
+}: {
+  desktops: readonly DeviceView[];
+  online: readonly DeviceView[];
+}) {
+  const { backend } = useBackend();
+  const { t } = useI18n();
+  const { phone_take: take } = useUiState();
+  const begin = useStart();
+  const [picked, setPicked] = useState<string | undefined>(undefined);
+  const running = take !== undefined && !phoneTakeFinal(take.state);
+  // A running take stays with its computer even when that one went offline meanwhile.
+  const target =
+    (running ? desktops.find((d) => d.device.public_key === take.device) : undefined) ??
+    online.find((d) => d.device.public_key === picked) ??
+    online[0];
+  const listening = take?.state.state === "listening";
+  const now = useTicking(listening);
+  const level = useTakeLevel(listening);
+  if (target === undefined) return null;
+
+  return (
+    <Card className="flex flex-col gap-3" data-testid="phone-mic" data-route="computer">
       <div className="flex flex-col gap-1">
         <span className="text-[15px] font-semibold text-fg">{t("mobile.mic.title")}</span>
         <p className="text-[12px] text-fg-muted">{t("mobile.mic.body")}</p>
@@ -200,48 +330,16 @@ export function PhoneMic({ desktops }: { desktops: readonly DeviceView[] }) {
           </select>
         </label>
       )}
-      <button
-        ref={button}
-        type="button"
-        aria-pressed={held}
-        data-testid="phone-mic-hold"
-        data-cancel={offButton || undefined}
-        disabled={running && !held}
-        className={`h-24 w-full touch-none select-none rounded-14 text-[17px] font-semibold transition-colors ${
-          offButton
-            ? "bg-danger-soft text-danger"
-            : held
-              ? "bg-accent text-accent-fg"
-              : "bg-inset text-fg hairline"
-        }`}
-        onPointerDown={(e) => {
-          e.currentTarget.setPointerCapture(e.pointerId);
-          start();
-        }}
-        onPointerMove={(e) => {
-          if (held) setOffButton(outside(e));
-        }}
-        onPointerUp={(e) => {
-          finish(outside(e));
-        }}
-        onPointerCancel={() => {
-          finish(true);
-        }}
-        onKeyDown={(e) => {
-          if ((e.key === " " || e.key === "Enter") && !e.repeat) {
-            e.preventDefault();
-            start();
-          }
-        }}
-        onKeyUp={(e) => {
-          if (e.key === " " || e.key === "Enter") {
-            e.preventDefault();
-            finish(false);
-          }
-        }}>
-        {label}
-        <span className="mt-1 block text-[12px] font-normal opacity-80">{target.device.name}</span>
-      </button>
+      <HoldButton
+        busy={running}
+        sublabel={t("mobile.mic.toDesktop", { name: target.device.name })}
+        releaseLabel={t("mobile.mic.release")}
+        start={() =>
+          begin(() => backend.invoke("phone_take_start", { publicKey: target.device.public_key }))
+        }
+        stop={() => void backend.invoke("phone_take_stop")}
+        cancel={() => void backend.invoke("phone_take_cancel")}
+      />
       {take !== undefined && take.device === target.device.public_key && (
         <div data-testid="phone-mic-state" data-state={take.state.state}>
           <LampText tone={tone(take.state)} pulse={take.state.state === "listening"}>
@@ -255,6 +353,60 @@ export function PhoneMic({ desktops }: { desktops: readonly DeviceView[] }) {
             </span>
           )}
           {take.state.state === "listening" && (
+            <LedMeter
+              className="mt-2"
+              size="sm"
+              segments={24}
+              label={t("mobile.mic.level")}
+              level={level === undefined ? 0 : levelFraction(level.rms_dbfs)}
+              peak={level === undefined ? undefined : levelFraction(level.peak_dbfs)}
+            />
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** The phone recognises the take itself (docs/dictation.md §20.7): the built-in service
+ *  transcribes and polishes it, and the result lands on the phone's clipboard. */
+function PhoneTalk({ paired }: { paired: boolean }) {
+  const { backend } = useBackend();
+  const { t } = useI18n();
+  const { dictation } = useUiState();
+  const begin = useStart();
+  const phase = dictation.phase;
+  const running = phase.phase === "listening" || phase.phase === "processing";
+  const listening = phase.phase === "listening";
+  const now = useTicking(listening);
+  const level = useTakeLevel(listening);
+  const line = localTakeLine(phase, listening && phase.ready ? now - phase.started_at : 0, t);
+
+  return (
+    <Card className="flex flex-col gap-3" data-testid="phone-mic" data-route="phone">
+      <div className="flex flex-col gap-1">
+        <span className="text-[15px] font-semibold text-fg">{t("mobile.mic.title")}</span>
+        <p className="text-[12px] text-fg-muted">{t("mobile.mic.localBody")}</p>
+        {paired && (
+          <p className="text-[12px] text-fg-muted" data-testid="phone-mic-offline">
+            {t("mobile.mic.offline")}
+          </p>
+        )}
+      </div>
+      <HoldButton
+        busy={running}
+        sublabel={t("mobile.mic.onPhone")}
+        releaseLabel={t("mobile.mic.releaseLocal")}
+        start={() => begin(() => backend.invoke("dictation_start"))}
+        stop={() => void backend.invoke("dictation_stop")}
+        cancel={() => void backend.invoke("dictation_cancel")}
+      />
+      {line !== "" && (
+        <div data-testid="phone-mic-state" data-state={phase.phase}>
+          <LampText tone={localTone(phase)} pulse={listening}>
+            {line}
+          </LampText>
+          {listening && (
             <LedMeter
               className="mt-2"
               size="sm"

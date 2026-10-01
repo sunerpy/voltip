@@ -1767,11 +1767,18 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
     ]
 }
 
-/// Commands the desktop shell answers itself, without a `UiCommand` (the recorder suspends the OS
-/// hotkey registration; the updater checks / downloads / installs). They are part of the wire
-/// contract the webview sees, so they are in the fixture, but they never reach the bridge.
+/// Commands a shell answers itself, without a `UiCommand` (the desktop's recorder suspends the OS
+/// hotkey registration; its updater checks / downloads / installs; the phone opens its share
+/// sheet). They are part of the wire contract the webview sees, so they are in the fixture, but
+/// they never reach the bridge.
 fn shell_only_commands() -> Vec<(&'static str, Value)> {
-    vec![("hotkey_capture", json!({ "active": true })), ("update_check", Value::Null), ("update_install", Value::Null)]
+    vec![
+        ("hotkey_capture", json!({ "active": true })),
+        ("update_check", Value::Null),
+        ("update_install", Value::Null),
+        // docs/dictation.md §20.7: the phone's share sheet.
+        ("phone_share_text", json!({ "text": "今天下午三点开会。" })),
+    ]
 }
 
 /// `printWidth` of the repository's `oxfmt` configuration.

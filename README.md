@@ -51,7 +51,8 @@ LLM, and pastes it into whatever app has the focus. A paired Android phone can b
 - Phone as microphone and keyboard: pair an Android phone by QR code, a 6-digit code, or a tap on
   the computer it finds on the same network. Hold to talk on the phone (the audio goes end-to-end
   encrypted, compressed with Opus), or type or send the clipboard, and the text appears at the
-  computer's cursor. The computer can keep pairing open for the next phone.
+  computer's cursor. The computer can keep pairing open for the next phone. With no computer
+  online, the phone transcribes on its own through the built-in service and copies the result.
 
 ## Install
 

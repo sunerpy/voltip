@@ -103,6 +103,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   phone_take_cancel: null,
   phone_text_send: null,
   sent_texts_clear: null,
+  phone_share_text: null,
   settings_set_lan_discovery: null,
   settings_set_pairing_always_on: null,
   pairing_join_nearby: null,
@@ -181,6 +182,7 @@ const argSchemas = {
   phone_text_send: z
     .object({ publicKey: hexKeySchema, body: z.string(), source: z.enum(PHONE_TEXT_SOURCES) })
     .strict(),
+  phone_share_text: z.object({ text: z.string() }).strict(),
   settings_set_lan_discovery: z.object({ enabled: z.boolean() }).strict(),
   settings_set_pairing_always_on: z.object({ enabled: z.boolean() }).strict(),
   pairing_join_nearby: z.object({ fingerprint: z.string() }).strict(),
@@ -296,6 +298,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.phone_take_start.parse(args));
     case "phone_text_send":
       return backend.invoke(name, argSchemas.phone_text_send.parse(args));
+    case "phone_share_text":
+      return backend.invoke(name, argSchemas.phone_share_text.parse(args));
     case "settings_set_lan_discovery":
       return backend.invoke(name, argSchemas.settings_set_lan_discovery.parse(args));
     case "settings_set_pairing_always_on":

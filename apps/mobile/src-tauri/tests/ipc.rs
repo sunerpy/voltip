@@ -13,11 +13,12 @@ use tauri::ipc::{CallbackFn, InvokeBody};
 use tauri::test::{INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder, mock_context, noop_assets};
 use tauri::webview::InvokeRequest;
 use tauri::{AppHandle, Listener as _, Manager as _, WebviewWindow};
+use voltip_core::dictation::DictationPorts;
 use voltip_core::ui::{UI_EVENT_NAME, UiState};
 use voltip_core::{CoreConfig, Settings, SettingsStore, ThemeId};
 use voltip_identity::MemorySecretStore;
 use voltip_mobile_lib::{
-    COMMANDS, DICTATION_UNAVAILABLE, FEEDBACK_UNAVAILABLE, KEYSTORE_SERVICE, MODELS_UNAVAILABLE, PRESETS_UNAVAILABLE, PROJECT_LINKS_UNAVAILABLE,
+    COMMANDS, FEEDBACK_UNAVAILABLE, HOTKEY_UNAVAILABLE, KEYSTORE_SERVICE, MODELS_UNAVAILABLE, PRESETS_UNAVAILABLE, PROJECT_LINKS_UNAVAILABLE,
     PROVIDERS_UNAVAILABLE, SCENES_UNAVAILABLE, UPDATE_UNAVAILABLE, VOCABULARY_UNAVAILABLE, build_app, data_dir, platform_label, production_config,
     secret_store,
 };
@@ -32,7 +33,12 @@ const NOT_FOUND: &str = "not found";
 /// Offline core: relay disabled, LAN host on an ephemeral loopback port, a phone as in
 /// `production_config`.
 fn offline_config(dir: &Path) -> CoreConfig {
-    SettingsStore::new(dir).save(&Settings { relay_enabled: false, ..Settings::default() }).unwrap();
+    offline_config_with(dir, Settings { relay_enabled: false, ..Settings::default() })
+}
+
+/// [`offline_config`] with `settings` written first.
+fn offline_config_with(dir: &Path, settings: Settings) -> CoreConfig {
+    SettingsStore::new(dir).save(&settings).unwrap();
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = DEVICE_NAME.into();
     cfg.direct_bind = "127.0.0.1:0".parse().unwrap();
@@ -96,9 +102,18 @@ fn wait_event(rx: &mpsc::Receiver<String>, what: &str, mut pred: impl FnMut(&Val
 /// Build the app on the mock runtime, run its event loop on this thread (which is where Tauri
 /// executes the `setup` hook) and drive it from `body` on a helper thread.
 fn with_running_app(body: impl FnOnce(&AppHandle<MockRuntime>, &WebviewWindow<MockRuntime>, &mpsc::Receiver<String>) + Send + 'static) {
+    with_app(Settings { relay_enabled: false, ..Settings::default() }, |_| voltip_core::dictation::fakes::ports(), body);
+}
+
+/// [`with_running_app`] with `settings` and the dictation `ports`.
+fn with_app(
+    settings: Settings,
+    ports: impl FnOnce(&AppHandle<MockRuntime>) -> DictationPorts + Send + 'static,
+    body: impl FnOnce(&AppHandle<MockRuntime>, &WebviewWindow<MockRuntime>, &mpsc::Receiver<String>) + Send + 'static,
+) {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path().to_path_buf();
-    let app = build_app(mock_builder(), move |_| offline_config(&data), Arc::new(MemorySecretStore::new()), voltip_core::dictation::fakes::ports())
+    let app = build_app(mock_builder(), move |_| offline_config_with(&data, settings), Arc::new(MemorySecretStore::new()), ports)
         .build(mock_context(noop_assets()))
         .unwrap();
     let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
@@ -260,6 +275,93 @@ fn phone_take_commands_reach_the_core() {
 }
 
 /// docs/dictation.md §20.6: the phone's texts go through the core (an unknown desktop is the
+/// docs/dictation.md §20.7 (user request 2026-09-30): with no paired desktop online the phone
+/// recognises a take itself. `dictation_start` / `dictation_stop` reach the core, the real cloud
+/// clients the phone's factory builds (`voltip-cloud`) post the take to the recogniser and the
+/// clean-up — local fake servers here, the built-in services in a release — and the result goes
+/// to the phone's injector (its clipboard) and into its own history; `dictation_cancel` discards.
+#[test]
+fn a_take_on_the_phone_runs_through_the_cloud_clients_onto_its_clipboard() {
+    use voltip_core::dictation::fakes::{FakeAudio, FakeInjector};
+    use voltip_core::{EngineSettings, ProviderId, ProviderSettings};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/audio/transcriptions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "text": "今天下午三点开会" })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "model": "clean-up",
+                "choices": [{ "message": { "role": "assistant", "content": "今天下午三点开会。" } }]
+            })))
+            .mount(&server)
+            .await;
+        server
+    });
+    let engines = EngineSettings {
+        asr_provider: ProviderId::Custom,
+        llm_provider: ProviderId::Custom,
+        providers: [(
+            ProviderId::Custom,
+            ProviderSettings {
+                asr_url: Some(server.uri()),
+                asr_model: Some("asr".into()),
+                llm_url: Some(format!("{}/v1", server.uri())),
+                llm_model: Some("clean-up".into()),
+            },
+        )]
+        .into(),
+        refine_enabled: true,
+        ..EngineSettings::default()
+    };
+    let injector = Arc::new(FakeInjector::clipboard(None));
+    let delivered = injector.clone();
+    let ports = move |_: &AppHandle<MockRuntime>| DictationPorts {
+        audio: Arc::new(FakeAudio::speech()),
+        injector,
+        factory: Arc::new(|engines: &voltip_core::ResolvedEngines| (voltip_cloud::remote_transcriber(engines), voltip_cloud::refiner(engines))),
+        ..voltip_core::dictation::fakes::ports()
+    };
+    with_app(Settings { relay_enabled: false, engines, ..Settings::default() }, ports, move |_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
+        wait_state(webview, |s| matches!(s.dictation.phase, voltip_core::DictationPhase::Listening { .. }));
+        assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
+        let st = wait_state(webview, |s| matches!(s.dictation.phase, voltip_core::DictationPhase::Done { .. } | voltip_core::DictationPhase::Failed { .. }));
+        let phase = serde_json::to_value(&st.dictation.phase).unwrap();
+        assert_eq!(phase["phase"], "done", "{phase}");
+        assert_eq!((phase["text"].as_str(), phase["raw_text"].as_str()), (Some("今天下午三点开会。"), Some("今天下午三点开会")), "{phase}");
+        assert_eq!(phase["via"], "clipboard", "the phone's result is on its clipboard: {phase}");
+        assert_eq!(delivered.injected(), vec!["今天下午三点开会。".to_owned()]);
+        // The take is in the phone's own history, as the state and the queries show it.
+        let st = wait_state(webview, |s| !s.history_recent.is_empty());
+        assert_eq!(st.history_recent[0].text, "今天下午三点开会。");
+        let page = invoke(webview, "history_query", json!({ "limit": 10 })).unwrap();
+        assert_eq!((page["total"].as_u64(), page["entries"][0]["text"].as_str()), (Some(1), Some("今天下午三点开会。")), "{page}");
+        let id = page["entries"][0]["id"].clone();
+        assert_eq!(invoke(webview, "history_entry", json!({ "id": id })).unwrap()["refined"], true);
+        // One request to each service.
+        let requests = rt.block_on(server.received_requests()).unwrap();
+        let paths: Vec<&str> = requests.iter().map(|r| r.url.path()).collect();
+        assert_eq!(paths, ["/v1/audio/transcriptions", "/v1/chat/completions"]);
+        // A take discarded before it is recognised reaches no service.
+        wait_state(webview, |s| matches!(s.dictation.phase, voltip_core::DictationPhase::Idle));
+        assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
+        wait_state(webview, |s| matches!(s.dictation.phase, voltip_core::DictationPhase::Listening { .. }));
+        assert_eq!(invoke(webview, "dictation_cancel", json!({})), Ok(Value::Null));
+        wait_state(webview, |s| matches!(s.dictation.phase, voltip_core::DictationPhase::Cancelled { .. } | voltip_core::DictationPhase::Idle));
+        assert_eq!(rt.block_on(server.received_requests()).unwrap().len(), 2);
+        assert_eq!(delivered.injected().len(), 1);
+    });
+}
+
 /// core's error), the list can be cleared, and a build without a phone clipboard says so.
 #[test]
 fn phone_text_commands_reach_the_core() {
@@ -275,19 +377,17 @@ fn phone_text_commands_reach_the_core() {
 }
 
 #[test]
-fn dictation_is_refused_but_engines_secrets_and_history_work() {
+fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
     with_running_app(|_, webview, rx| {
         wait_state(webview, |s| s.identity.is_some());
-        for cmd in ["dictation_start", "dictation_stop", "dictation_cancel"] {
-            assert_eq!(invoke(webview, cmd, json!({})), Err(Value::String(DICTATION_UNAVAILABLE.into())), "{cmd}");
-        }
-        // No hotkey on the phone: a key edge is refused the same way; the activation mode is a
-        // shared setting and persists through the core like the desktop's (docs/dictation.md §13).
-        assert_eq!(invoke(webview, "hotkey_edge", json!({ "pressed": true, "atMs": 1, "source": "ui" })), Err(Value::String(DICTATION_UNAVAILABLE.into())));
+        // No hotkey on the phone: a key edge is refused (its takes start from the button, see
+        // `a_take_on_the_phone_runs_through_the_cloud_clients_onto_its_clipboard`); the activation
+        // mode is a shared setting and persists through the core like the desktop's (§13).
+        assert_eq!(invoke(webview, "hotkey_edge", json!({ "pressed": true, "atMs": 1, "source": "ui" })), Err(Value::String(HOTKEY_UNAVAILABLE.into())));
         assert!(invoke(webview, "hotkey_edge", json!({})).is_err(), "pressed is required");
         // Voice edit (docs/dictation.md §19): the edit key's edge is refused the same way, its
         // chord is a shared setting the phone edits through the core like the desktop does.
-        assert_eq!(invoke(webview, "hotkey_edge", json!({ "pressed": true, "purpose": "edit" })), Err(Value::String(DICTATION_UNAVAILABLE.into())));
+        assert_eq!(invoke(webview, "hotkey_edge", json!({ "pressed": true, "purpose": "edit" })), Err(Value::String(HOTKEY_UNAVAILABLE.into())));
         assert_eq!(invoke(webview, "settings_set_edit_hotkey", json!({ "hotkey": "ctrl+alt+shift+e" })), Ok(Value::Null));
         wait_state(webview, |s| s.settings.edit_hotkey.as_deref() == Some("Ctrl+Alt+Shift+E"));
         assert_eq!(invoke(webview, "settings_set_edit_hotkey", json!({ "hotkey": null })), Ok(Value::Null));
@@ -295,7 +395,7 @@ fn dictation_is_refused_but_engines_secrets_and_history_work() {
         // The lone-key trigger (§13.1) is a shared setting too; only the desktop watches the key.
         assert_eq!(invoke(webview, "settings_set_solo_key", json!({ "key": "mouse_back" })), Ok(Value::Null));
         wait_state(webview, |s| s.settings.solo_key == Some(voltip_core::SoloKey::MouseBack));
-        assert_eq!(invoke(webview, "hotkey_edge", json!({ "pressed": false, "chorded": true })), Err(Value::String(DICTATION_UNAVAILABLE.into())));
+        assert_eq!(invoke(webview, "hotkey_edge", json!({ "pressed": false, "chorded": true })), Err(Value::String(HOTKEY_UNAVAILABLE.into())));
         assert_eq!(
             invoke(webview, "settings_set_activation", json!({ "activation": "toggle", "holdThresholdMs": 300, "extraRecordingMs": 0 })),
             Ok(Value::Null)
@@ -317,8 +417,14 @@ fn dictation_is_refused_but_engines_secrets_and_history_work() {
         assert!(invoke(webview, "permissions_request", json!({ "permission": "camera" })).is_err());
         let preflight = invoke(webview, "inject_preflight", json!({})).unwrap();
         assert_eq!((preflight["checked"].as_bool(), preflight["decision"].as_str()), (Some(false), Some("proceed")));
-        // The history's paste button is the desktop's: the phone answers that it cannot paste.
-        assert_eq!(invoke(webview, "paste_text", json!({ "text": "你好" })), Ok(json!({ "kind": "failed", "reason": "unsupported" })));
+        // The history's paste button copies on the phone (user request 2026-09-30, docs/dictation.md
+        // §20.7): this desktop-hosted build has no phone clipboard, so the copy fails honestly;
+        // nothing to copy is `invalid` before any clipboard is asked. Sharing needs the Android
+        // share sheet the same way.
+        assert_eq!(invoke(webview, "paste_text", json!({ "text": "你好" })), Ok(json!({ "kind": "failed", "reason": "inject" })));
+        assert_eq!(invoke(webview, "paste_text", json!({ "text": "  " })), Ok(json!({ "kind": "failed", "reason": "invalid" })));
+        assert_eq!(invoke(webview, "phone_share_text", json!({ "text": "你好" })), Err(Value::String(voltip_mobile_lib::share::SHARE_UNAVAILABLE.into())));
+        assert!(invoke(webview, "phone_share_text", json!({ "text": " " })).unwrap_err().as_str().unwrap().starts_with("share: 文字为空"));
         assert_eq!(wait_state(webview, |_| true).update, voltip_core::ui::UpdateStatus::Disabled);
         // No local models on a phone: the library verbs refuse and the state carries an empty list.
         for cmd in ["model_download", "model_cancel", "model_remove"] {
@@ -401,7 +507,7 @@ fn dictation_is_refused_but_engines_secrets_and_history_work() {
         assert!(invoke(webview, "history_delete", json!({ "id": "nope" })).unwrap_err().as_str().unwrap().contains("UUID"));
         assert_eq!(invoke(webview, "history_star", json!({ "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d", "starred": true })), Ok(Value::Null));
         assert!(wait_state(webview, |_| true).history_recent.is_empty());
-        // The phone keeps no dictation history: the queries answer empty, with the desktop's checks.
+        // The phone's own history (§20.7): empty after the clear, read with the desktop's checks.
         assert_eq!(invoke(webview, "history_query", json!({ "limit": 50 })), Ok(json!({ "entries": [], "matching": 0, "total": 0 })));
         assert!(invoke(webview, "history_query", json!({ "limit": 0 })).is_err());
         assert_eq!(invoke(webview, "history_entry", json!({ "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d" })), Ok(Value::Null));

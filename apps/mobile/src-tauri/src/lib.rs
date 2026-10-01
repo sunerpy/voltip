@@ -1,6 +1,8 @@
 //! Voltip mobile shell: the same command surface as the desktop, with the Android Keystore as
 //! the secret store, the barcode-scanner plugin for QR pairing, and the phone's microphone for the
-//! takes it streams to a paired desktop (docs/dictation.md §20, [`microphone`]).
+//! takes it streams to a paired desktop (docs/dictation.md §20, [`microphone`]) — or, with no
+//! paired desktop online, recognises itself through the built-in cloud services, the result
+//! landing on the phone's clipboard and in its own history (§20.7, [`phone_ports`]).
 //!
 //! Everything except [`run`] is generic over the Tauri runtime so `tests/ipc.rs` drives the real
 //! command layer on `tauri::test::MockRuntime` (desktop host, no keystore, no window).
@@ -12,6 +14,7 @@ pub mod clipboard;
 pub mod meter;
 pub mod microphone;
 pub mod multicast;
+pub mod share;
 
 use std::sync::Arc;
 
@@ -29,7 +32,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 98] = [
+pub const COMMANDS: [&str; 99] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -128,6 +131,7 @@ pub const COMMANDS: [&str; 98] = [
     "permissions_request",
     "inject_preflight",
     "paste_text",
+    "phone_share_text",
 ];
 
 /// App data directory.
@@ -399,31 +403,36 @@ fn overlay_state() -> String {
     "blank".to_owned()
 }
 
-/// Why the phone refuses the dictation verbs: there is no local pipeline on it (the phone will
-/// stream its microphone to the desktop in a later round). Honest error, not a silent no-op.
-pub const DICTATION_UNAVAILABLE: &str = "dictation: 手机端不做本地听写";
-
+/// A take the phone recognises itself (docs/dictation.md §20.7): 「按住说话」 with no paired
+/// desktop online. On Android the microphone permission is asked for first, as for a phone take.
 #[tauri::command]
-fn dictation_start() -> Result<(), String> {
-    Err(DICTATION_UNAVAILABLE.to_owned())
+async fn dictation_start<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    microphone::ensure_permission(&app).await?;
+    let bridge = app.state::<Bridge>();
+    Ok(bridge.dispatch(UiCommand::DictationStart)?)
 }
 
+/// Close the microphone and run ASR → refine → the phone's clipboard.
 #[tauri::command]
-fn dictation_stop() -> Result<(), String> {
-    Err(DICTATION_UNAVAILABLE.to_owned())
+fn dictation_stop(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::DictationStop)?)
 }
 
+/// Discard the recording or the pending result (the finger slid off the button).
 #[tauri::command]
-fn dictation_cancel() -> Result<(), String> {
-    Err(DICTATION_UNAVAILABLE.to_owned())
+fn dictation_cancel(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::DictationCancel)?)
 }
 
-/// No hotkey and no local pipeline on the phone: a key edge (dictation or voice edit) is refused
-/// like the dictation verbs.
+/// Why the phone refuses a key edge: it has no hotkey (and no voice edit); its takes start from
+/// the button. Honest error, not a silent no-op.
+pub const HOTKEY_UNAVAILABLE: &str = "hotkey: 手机端没有快捷键";
+
+/// No hotkey on the phone: a key edge (dictation or voice edit) is refused.
 #[tauri::command]
 fn hotkey_edge(pressed: bool, at_ms: Option<u64>, source: Option<EdgeSource>, purpose: Option<TakeKind>, chorded: Option<bool>) -> Result<(), String> {
     tracing::debug!(pressed, ?at_ms, ?source, ?purpose, ?chorded, "hotkey_edge refused on mobile");
-    Err(DICTATION_UNAVAILABLE.to_owned())
+    Err(HOTKEY_UNAVAILABLE.to_owned())
 }
 
 /// The activation mode is a shared setting (docs/dictation.md §13): the phone edits it like the
@@ -687,36 +696,57 @@ fn recent_apps() -> Result<Vec<AppRef>, String> {
     Err(SCENES_UNAVAILABLE.to_owned())
 }
 
-/// The phone keeps no dictation history (its takes are recognised on the computer): the history
-/// queries answer empty, after the same argument checks as the desktop's (docs/dictation.md §4.4).
-#[tauri::command]
-fn history_query(limit: u32) -> Result<voltip_core::HistoryPage, String> {
-    if !(1..=voltip_core::history::MAX_QUERY_LIMIT).contains(&limit) {
-        return Err(format!("history_query: limit 1–{}", voltip_core::history::MAX_QUERY_LIMIT));
-    }
-    Ok(voltip_core::HistoryPage::default())
+/// A history read on a blocking thread (it opens the database).
+async fn history_read<T: Send + 'static>(
+    bridge: &Bridge,
+    read: impl FnOnce(&Bridge) -> Result<T, voltip_tauri_bridge::BridgeError> + Send + 'static,
+) -> Result<T, String> {
+    let bridge = bridge.clone();
+    Ok(tauri::async_runtime::spawn_blocking(move || read(&bridge)).await.map_err(|e| e.to_string())??)
 }
 
+/// The phone's own history (docs/dictation.md §20.7): the takes it recognised itself — a take
+/// streamed to a desktop is that desktop's. Read as on the desktop (§4.4): filtered, searched and
+/// paged in the database.
 #[tauri::command]
-fn history_entry(id: String) -> Option<voltip_core::HistoryEntry> {
-    let _ = id;
-    None
+async fn history_query(
+    bridge: tauri::State<'_, Bridge>,
+    since_ms: Option<u64>,
+    starred: Option<bool>,
+    failed: Option<bool>,
+    query: Option<String>,
+    offset: Option<u32>,
+    limit: u32,
+) -> Result<voltip_core::HistoryPage, String> {
+    let query = voltip_core::HistoryQuery {
+        since_ms,
+        starred: starred.unwrap_or(false),
+        failed: failed.unwrap_or(false),
+        query: query.unwrap_or_default(),
+        offset: offset.unwrap_or(0),
+        limit,
+    };
+    history_read(&bridge, move |b| b.history_query(&query)).await
 }
 
+/// One history entry by id; `null` once it is gone.
 #[tauri::command]
-fn history_stats(boundaries: Vec<u64>) -> Result<voltip_core::HistoryStats, String> {
-    if boundaries.len() < 2 || boundaries.len() > voltip_core::history::MAX_STATS_BOUNDARIES || boundaries.windows(2).any(|w| w[0] >= w[1]) {
-        return Err(format!("history_stats: 2–{} increasing boundaries", voltip_core::history::MAX_STATS_BOUNDARIES));
-    }
-    Ok(voltip_core::HistoryStats {
-        buckets: vec![voltip_core::HistoryStatsBucket::default(); boundaries.len() - 1],
-        total: voltip_core::HistoryStatsBucket::default(),
-    })
+async fn history_entry(bridge: tauri::State<'_, Bridge>, id: uuid::Uuid) -> Result<Option<voltip_core::HistoryEntry>, String> {
+    history_read(&bridge, move |b| b.history_entry(id)).await
 }
 
+/// The dictations between each two of the local midnights in `boundaries`, and over the whole
+/// history (docs/dictation.md §4.5).
 #[tauri::command]
-fn history_hits() -> voltip_core::HistoryHits {
-    voltip_core::HistoryHits::default()
+async fn history_stats(bridge: tauri::State<'_, Bridge>, boundaries: Vec<u64>) -> Result<voltip_core::HistoryStats, String> {
+    history_read(&bridge, move |b| b.history_stats(&boundaries)).await
+}
+
+/// How often each dictionary entry and rule fired in the history: none on the phone, which has
+/// no vocabulary (docs/dictation.md §16.4); the same read as the desktop's.
+#[tauri::command]
+async fn history_hits(bridge: tauri::State<'_, Bridge>) -> Result<voltip_core::HistoryHits, String> {
+    history_read(&bridge, Bridge::history_hits).await
 }
 
 /// The phone has no dictation pipeline, so no clean-up to shape (docs/dictation.md §21): every
@@ -785,19 +815,47 @@ fn inject_preflight() -> voltip_platform::InjectPreflight {
     voltip_platform::InjectPreflight::not_applicable(voltip_platform::HostOs::current())
 }
 
-/// The history's paste button is the desktop's (`voltip_core::paste`): the phone has no window to
-/// paste into and answers `failed { unsupported }`.
+/// The history's paste button (`voltip_core::paste`): the phone has no window to paste into, so
+/// the text goes onto its clipboard (`copied { clipboard_only }`, as with `EngineSettings.inject =
+/// clipboard_only` on the desktop); `failed { inject }` when the clipboard refuses it.
 #[tauri::command]
-fn paste_text(text: String) -> voltip_core::paste::PasteOutcome {
-    tracing::debug!(chars = text.chars().count(), "paste_text is not supported on the phone");
-    voltip_core::paste::PasteOutcome::Failed { reason: voltip_core::paste::PasteFailure::Unsupported }
+async fn paste_text<R: Runtime>(app: AppHandle<R>, text: String) -> Result<voltip_core::paste::PasteOutcome, String> {
+    use voltip_core::paste::{CopyReason, PasteFailure, PasteOutcome};
+    if !voltip_core::paste::valid_paste_text(&text) {
+        return Ok(PasteOutcome::Failed { reason: PasteFailure::Invalid });
+    }
+    let written = tauri::async_runtime::spawn_blocking(move || clipboard::write_text(&app, &text)).await.map_err(|e| e.to_string())?;
+    Ok(match written {
+        Ok(()) => PasteOutcome::Copied { reason: CopyReason::ClipboardOnly },
+        Err(e) => {
+            tracing::warn!(error = %e, "copy to the phone clipboard failed");
+            PasteOutcome::Failed { reason: PasteFailure::Inject }
+        }
+    })
 }
 
-/// The phone's dictation ports: its microphone (the takes it streams, docs/dictation.md §20) and
-/// nothing else — the phone recognises and delivers nothing itself, so the other ports are the
-/// inert in-memory ones and the dictation commands refuse ([`DICTATION_UNAVAILABLE`]).
-pub fn phone_ports() -> voltip_core::dictation::DictationPorts {
-    voltip_core::dictation::DictationPorts { audio: Arc::new(microphone::PhoneMicrophone::cpal()), ..voltip_core::dictation::fakes::ports() }
+/// 「分享」 (docs/dictation.md §20.7): `text` through the system share sheet (`SharePlugin.kt`).
+#[tauri::command]
+async fn phone_share_text<R: Runtime>(app: AppHandle<R>, text: String) -> Result<(), String> {
+    share::share_text(&app, text).await
+}
+
+/// The phone's dictation ports: its microphone (the takes it streams, docs/dictation.md §20, and
+/// the ones it recognises itself, §20.7), the cloud clients of the resolved engines — the built-in
+/// services unless the settings name others; the phone has no local models — and its clipboard
+/// for the result. No live preview, no foreground probe, no provider probe, no VAD: the core's
+/// fallbacks apply.
+pub fn phone_ports<R: Runtime>(app: &AppHandle<R>) -> voltip_core::dictation::DictationPorts {
+    voltip_core::dictation::DictationPorts {
+        audio: Arc::new(microphone::PhoneMicrophone::cpal()),
+        injector: Arc::new(clipboard::PhoneClipboardInjector(app.clone())),
+        factory: Arc::new(|engines: &voltip_core::ResolvedEngines| (voltip_cloud::remote_transcriber(engines), voltip_cloud::refiner(engines))),
+        models: None,
+        streaming: None,
+        probe: None,
+        service_probe: None,
+        segmenter: None,
+    }
 }
 
 /// Start the core, forward every [`voltip_core::ui::UiEvent`] onto the webview event bus and
@@ -833,24 +891,26 @@ pub fn attach_bridge<R: Runtime>(
 }
 
 /// Register the plugins, the command handlers and the setup hook that attaches the bridge.
-/// `config` runs inside `setup` because the platform data dir needs a live [`AppHandle`].
-/// [`run`] feeds it `tauri::Builder::default()` and [`phone_ports`]; tests feed it
-/// `tauri::test::mock_builder()` and the in-memory fakes.
+/// `config` and `ports` run inside `setup`: the platform data dir and the clipboard injector need
+/// a live [`AppHandle`]. [`run`] feeds it `tauri::Builder::default()` and [`phone_ports`]; tests
+/// feed it `tauri::test::mock_builder()` and the in-memory fakes.
 pub fn build_app<R: Runtime>(
     builder: tauri::Builder<R>,
     config: impl FnOnce(&AppHandle<R>) -> CoreConfig + Send + 'static,
     store: Arc<dyn SecretStore>,
-    ports: voltip_core::dictation::DictationPorts,
+    ports: impl FnOnce(&AppHandle<R>) -> voltip_core::dictation::DictationPorts + Send + 'static,
 ) -> tauri::Builder<R> {
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
     builder
         .plugin(microphone::init())
         .plugin(clipboard::init())
+        .plugin(share::init())
         .plugin(multicast::init())
         .manage(meter::Meters::default())
         .setup(move |app| {
             let config = config(app.handle());
+            let ports = ports(app.handle());
             Ok(attach_bridge(app.handle(), config, store, ports).map_err(|e| std::io::Error::other(e.to_string()))?)
         })
         .invoke_handler(tauri::generate_handler![
@@ -951,7 +1011,8 @@ pub fn build_app<R: Runtime>(
             permissions_status,
             permissions_request,
             inject_preflight,
-            paste_text
+            paste_text,
+            phone_share_text
         ])
 }
 
@@ -961,7 +1022,7 @@ pub fn run() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,voltip=debug"));
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 
-    let outcome = build_app(tauri::Builder::default(), production_config, secret_store(), phone_ports()).run(tauri::generate_context!());
+    let outcome = build_app(tauri::Builder::default(), production_config, secret_store(), phone_ports).run(tauri::generate_context!());
     if let Err(e) = outcome {
         tracing::error!(error = %e, "tauri exited with error");
         std::process::exit(1);

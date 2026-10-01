@@ -495,5 +495,11 @@
   {
     "args": null,
     "name": "update_install"
+  },
+  {
+    "args": {
+      "text": "今天下午三点开会。"
+    },
+    "name": "phone_share_text"
   }
 ]

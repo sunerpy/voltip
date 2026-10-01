@@ -1,16 +1,24 @@
 ---
-description: Use an Android phone as a microphone and keyboard for your computer, how pairing works, and how the connection is protected.
+description: Use an Android phone as a microphone and keyboard for your computer or on its own, how pairing works, and how the connection is protected.
 ---
 
 # Your phone as a microphone and keyboard
 
 <StatusTag status="available" />
 
-With the Voltip app for Android, a phone becomes a microphone and a keyboard for your computer. Hold to talk on the phone, and the text appears at the computer's cursor.
+With the Voltip app for Android, a phone becomes a microphone and a keyboard for your computer. Hold to talk on the phone, and the text appears at the computer's cursor. With no computer online, the phone transcribes on its own.
 
 ## Install the app
 
 Every [release](https://github.com/sunerpy/voltip/releases) carries the app as `Voltip_<version>_android_arm64.apk`, for phones with Android 8.0 or later and a 64-bit Arm processor. Open the file on the phone to install it. [Install](/guide/install#android) describes the steps and how to check the download.
+
+## Using the phone on its own
+
+Before any computer is paired, and whenever no paired computer is online, **Hold to talk** works on the phone alone, and the button reads **Transcribe on the phone**. The built-in service transcribes and polishes what you said, and the text is copied to the phone's clipboard, ready to paste into any app.
+
+**Recent results** lists what the phone transcribed, newest first, with **Copy** and **Share**. These results are kept on the phone only.
+
+When a paired computer is online, the button reads **Send to** and the computer's name instead, and the recording goes to the computer as described below. A recording keeps its route until it ends, even if a computer comes online or goes offline in the meantime.
 
 ## Pairing
 
@@ -42,4 +50,4 @@ The phone can also send text without speaking: type it, or press **Send clipboar
 - **Forget device** removes a pairing on both sides when the other device is online.
 - **Connection check** tests the network path to each paired device and reports where it fails.
 
-The history, dictionary and rules stay on the computer and are not synced to the phone; the phone only lists what it sent.
+The history, dictionary and rules stay on the computer and are not synced to the phone; the phone lists what it sent and what it transcribed on its own.

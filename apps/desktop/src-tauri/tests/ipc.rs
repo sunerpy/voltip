@@ -421,6 +421,8 @@ fn phone_take_commands_are_refused_on_the_desktop() {
             assert_eq!(invoke(webview, cmd, args), Err(Value::String(voltip_desktop_lib::PHONE_TEXT_UNAVAILABLE.into())), "{cmd}");
         }
         assert!(core_state(webview).sent_texts.is_empty());
+        // §20.7: 「分享」 is the phone's share sheet; the desktop pastes or copies instead.
+        assert_eq!(invoke(webview, "phone_share_text", json!({ "text": "x" })), Err(Value::String(voltip_desktop_lib::SHARE_UNAVAILABLE.into())));
     });
 }
 

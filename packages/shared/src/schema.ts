@@ -2039,6 +2039,9 @@ export interface CommandArgs {
   pairing_join_nearby: { fingerprint: string };
   /** Query (phone): the phone's clipboard text, `null` when it holds none. */
   phone_clipboard_read: undefined;
+  /** Phone (docs/dictation.md §20.7): hand `text` to another app through the system share sheet;
+   *  the desktop refuses. */
+  phone_share_text: { text: string };
   history_delete: { id: string };
   history_clear: undefined;
   history_star: { id: string; starred: boolean };

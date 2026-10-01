@@ -51,6 +51,7 @@ import {
   MockBackend,
   mockSameChord,
   SCENES_UNAVAILABLE,
+  SHARE_UNAVAILABLE,
   PRESETS_UNAVAILABLE,
   PRESET_TRY_UNCONFIGURED,
   VOCABULARY_UNAVAILABLE,
@@ -3336,13 +3337,35 @@ describe("MockBackend history queries (docs/dictation.md section 4.4)", () => {
     backend.destroy();
   });
 
-  it("the phone keeps no dictation history: the queries answer empty", async () => {
+  // Changed by the user's request of 2026-09-30 (item 10, docs/dictation.md §20.7): the phone
+  // recognises takes itself when no paired computer is online and keeps them in its own history,
+  // so the queries read it as the desktop's do (they answered empty before).
+  it("the phone's history holds the takes it recognised itself", async () => {
     const phone = new MockBackend({ role: "phone", history: [row(0)] });
-    expect(await phone.historyQuery({ limit: 10 })).toEqual({ entries: [], matching: 0, total: 0 });
-    expect(await phone.historyEntry("id-0")).toBeNull();
+    expect((await phone.historyQuery({ limit: 10 })).entries.map((e) => e.id)).toEqual(["id-0"]);
+    expect((await phone.historyEntry("id-0"))?.id).toBe("id-0");
     expect((await phone.historyStats([0, 1, 2])).buckets).toHaveLength(2);
     expect(await phone.historyHits()).toEqual({ dictionary: {}, rules: {} });
     await expect(phone.historyQuery({ limit: 0 })).rejects.toThrow(/limit/);
     phone.destroy();
+  });
+
+  it("the phone copies instead of pasting and shares through its own sheet (§20.7)", async () => {
+    const phone = new MockBackend({ role: "phone" });
+    expect(await phone.pasteText("今天下午三点开会。")).toEqual({
+      kind: "copied",
+      reason: "clipboard_only",
+    });
+    expect(phone.phoneClipboard).toBe("今天下午三点开会。");
+    expect(await phone.pasteText("  ")).toEqual({ kind: "failed", reason: "invalid" });
+    await phone.invoke("phone_share_text", { text: "今天下午三点开会。" });
+    expect(phone.shared).toEqual(["今天下午三点开会。"]);
+    await expect(phone.invoke("phone_share_text", { text: " " })).rejects.toThrow(/share/);
+    phone.destroy();
+    const desktop = new MockBackend();
+    await expect(desktop.invoke("phone_share_text", { text: "x" })).rejects.toThrow(
+      SHARE_UNAVAILABLE,
+    );
+    desktop.destroy();
   });
 });

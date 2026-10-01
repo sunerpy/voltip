@@ -6948,6 +6948,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "webpki-root-certs",
  "wiremock",
 ]
 
@@ -6987,6 +6988,18 @@ dependencies = [
  "sonora",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "voltip-cloud"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "tokio",
+ "tracing",
+ "voltip-asr",
+ "voltip-core",
+ "voltip-refine",
 ]
 
 [[package]]
@@ -7087,6 +7100,7 @@ dependencies = [
  "voltip-asr",
  "voltip-asr-local",
  "voltip-audio",
+ "voltip-cloud",
  "voltip-core",
  "voltip-hooks",
  "voltip-identity",
@@ -7159,12 +7173,15 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "voltip-audio",
+ "voltip-cloud",
  "voltip-core",
  "voltip-identity",
  "voltip-pairing",
  "voltip-platform",
  "voltip-tauri-bridge",
+ "wiremock",
 ]
 
 [[package]]
@@ -7215,6 +7232,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "webpki-root-certs",
  "wiremock",
 ]
 

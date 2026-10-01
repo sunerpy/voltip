@@ -1,8 +1,9 @@
 //! The real dictation ports (docs/dictation.md §1) the desktop plugs into the core: cpal
 //! capture through `voltip-audio` (with the live 16 kHz tap of §11), HTTP speech-to-text through
-//! `voltip-asr` or offline speech-to-text through `voltip-asr-local` (docs/dictation.md §10), the
+//! `voltip-asr` (as `voltip-cloud` adapts it, shared with the phone) or offline speech-to-text
+//! through `voltip-asr-local` (docs/dictation.md §10), the
 //! streaming preview through `voltip-asr-local`'s Zipformer (§11), the Silero VAD trim in front
-//! of the local recogniser (§12 `vad_trim`), HTTP clean-up through `voltip-refine`, clipboard +
+//! of the local recogniser (§12 `vad_trim`), HTTP clean-up through `voltip-refine` (`voltip-cloud`), clipboard +
 //! paste through `voltip-inject`, and the foreground-application probe of §18 (Win32 / X11 /
 //! AppKit, `crate::platform::PlatformProbe`) — and, for voice edit (§19), the selection copy
 //! through the same inject crate and the rewrite through the same `RefineClient`. The core calls
@@ -19,17 +20,16 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use parking_lot::Mutex;
-use voltip_asr::{AsrClient, AsrConfig};
 use voltip_asr_local::{LocalStreamingTranscriber, LocalTranscriber, ModelStore, VadSegmenterFactory};
 use voltip_audio::{Backend, CaptureSource, CpalBackend, LiveConsumer, LiveTapConfig, PcmConsumer, PcmStreamConfig, Recorder, RecorderConfig};
+pub use voltip_cloud::{ASR_TIMEOUT, HttpRefiner, HttpTranscriber, REFINE_TIMEOUT, Unconfigured, prompt_hints, refine_preset};
 use voltip_core::dictation::{
     AudioSource, Capture, CaptureOptions, ClipboardCode, DictationError, DictationPorts, EngineFactory, InjectNote, Injection, Injector, LevelFrame, LivePcm,
-    MAX_RECORDING, PcmStream, Recording, RefineHints, Refined, Refiner, SelectionTiming, ServiceProbe, Transcriber, Transcript, Via,
+    MAX_RECORDING, PcmStream, Recording, Refiner, SelectionTiming, ServiceProbe, Transcriber, Via,
 };
-use voltip_core::{BuiltinPreset, InjectMode, Modifier, ProbeError, ProbeFailure, ProviderId, RecordingSource, ResolvedEngines, ServiceKind, TakePreset};
+use voltip_core::{BuiltinPreset, InjectMode, Modifier, ProbeError, ProbeFailure, RecordingSource, ResolvedEngines, TakePreset};
 use voltip_inject::{ClipboardOnlyInjector, CopyOptions, FallbackCode, PasteOptions, SelectionSource};
 use voltip_platform::{HostOs, InjectDecision, InjectPreflight};
-use voltip_refine::{PromptContext, PromptHints, RefineClient, RefineConfig};
 
 /// A level frame as the core broadcasts it, from the audio crate's meter frame (same fields).
 pub fn to_core_frame(f: voltip_audio::LevelFrame) -> LevelFrame {
@@ -215,58 +215,6 @@ impl LivePcm for LiveTap {
     }
 }
 
-/// Speech-to-text through [`voltip_asr::AsrClient`].
-pub struct HttpTranscriber {
-    client: AsrClient,
-}
-
-impl HttpTranscriber {
-    /// Build the client; fails on an unusable configuration (bad URL, empty model).
-    pub fn new(config: AsrConfig) -> Result<Self, DictationError> {
-        Ok(Self { client: AsrClient::new(config).map_err(|e| DictationError::Asr(e.to_string()))? })
-    }
-}
-
-#[async_trait]
-impl Transcriber for HttpTranscriber {
-    /// The glossary goes out as the OpenAI `prompt` field when there is one (docs/dictation.md §16.3).
-    async fn transcribe(&self, wav: &[u8], language: Option<&str>, glossary: &[String]) -> Result<Transcript, DictationError> {
-        let prompt = voltip_core::vocabulary::glossary_prompt(glossary);
-        let t = self.client.transcribe_with_prompt(wav, language, prompt.as_deref()).await.map_err(|e| DictationError::Asr(e.to_string()))?;
-        Ok(Transcript { text: t.text, latency_ms: t.latency_ms })
-    }
-}
-
-/// Clean-up through [`voltip_refine::RefineClient`].
-pub struct HttpRefiner {
-    client: RefineClient,
-}
-
-impl HttpRefiner {
-    /// Build the client (the take's language, style and context arrive with every request).
-    pub fn new(config: RefineConfig) -> Result<Self, DictationError> {
-        Ok(Self { client: RefineClient::new(config).map_err(|e| DictationError::Refine(e.to_string()))? })
-    }
-}
-
-/// The take's preset as the refine crate names it (docs/dictation.md §21).
-pub fn refine_preset(preset: &TakePreset) -> voltip_refine::Preset<'_> {
-    use voltip_refine::Preset;
-    match preset {
-        TakePreset::Builtin(builtin) => match builtin {
-            BuiltinPreset::Proofread => Preset::Proofread,
-            BuiltinPreset::Prompt => Preset::Prompt,
-            BuiltinPreset::Intent => Preset::Intent,
-            BuiltinPreset::Chat => Preset::Chat,
-            BuiltinPreset::Translate => Preset::Translate,
-            BuiltinPreset::Notes => Preset::Notes,
-            BuiltinPreset::Punctuation => Preset::Punctuation,
-            BuiltinPreset::Formal => Preset::Formal,
-        },
-        TakePreset::Custom { prompt, .. } => Preset::Custom(prompt),
-    }
-}
-
 /// The built-in preset's own text (task, rules, examples; the output contract is added to every
 /// preset): what 复制为自定义 starts from.
 pub fn builtin_preset_body(preset: BuiltinPreset) -> &'static str {
@@ -286,61 +234,6 @@ pub struct BuiltinPresetText {
 /// preview serves the same list from `packages/shared/src/fixtures/ipc/presets-builtin.json`).
 pub fn builtin_preset_texts() -> Vec<BuiltinPresetText> {
     BuiltinPreset::ALL.into_iter().map(|id| BuiltinPresetText { id, prompt: builtin_preset_body(id) }).collect()
-}
-
-/// The core's hints as the refine crate's prompt input, one-to-one (the core already filtered the
-/// context by the privacy switches, docs/dictation.md §18.5).
-pub fn prompt_hints(hints: &RefineHints) -> PromptHints<'_> {
-    PromptHints {
-        preset: refine_preset(&hints.preset),
-        language: hints.language.as_deref(),
-        glossary: &hints.glossary,
-        context: PromptContext {
-            app_name: hints.context.app_name.as_deref(),
-            window_title: hints.context.window_title.as_deref(),
-            instruction: hints.context.instruction.as_deref(),
-        },
-    }
-}
-
-#[async_trait]
-impl Refiner for HttpRefiner {
-    /// The glossary joins the system prompt as the user-dictionary block (docs/dictation.md §16.3),
-    /// the take's context as the scene blocks (§18.5); the take's language and style shape the rest.
-    async fn refine(&self, text: &str, hints: &RefineHints) -> Result<Refined, DictationError> {
-        let r = self.client.refine_with(text, &prompt_hints(hints)).await.map_err(|e| DictationError::Refine(e.to_string()))?;
-        Ok(Refined { text: r.text, latency_ms: r.latency_ms, model: r.model })
-    }
-
-    /// The voice edit's rewrite (docs/dictation.md §19) through the same client and the same hints
-    /// (the edit prompt uses the glossary and the app block); a cut-off or empty answer is an
-    /// error, so nothing is pasted.
-    async fn edit(&self, selection: &str, instruction: &str, hints: &RefineHints) -> Result<Refined, DictationError> {
-        let r = self.client.edit(selection, instruction, &prompt_hints(hints)).await.map_err(|e| DictationError::Refine(e.to_string()))?;
-        Ok(Refined { text: r.text, latency_ms: r.latency_ms, model: r.model })
-    }
-}
-
-/// Stands in for a client that could not be built: every call fails with the reason, so the
-/// pill and the history say what is wrong instead of hanging.
-pub struct Unconfigured(pub String);
-
-#[async_trait]
-impl Transcriber for Unconfigured {
-    async fn transcribe(&self, _wav: &[u8], _language: Option<&str>, _glossary: &[String]) -> Result<Transcript, DictationError> {
-        Err(DictationError::Asr(self.0.clone()))
-    }
-}
-
-#[async_trait]
-impl Refiner for Unconfigured {
-    async fn refine(&self, _text: &str, _hints: &RefineHints) -> Result<Refined, DictationError> {
-        Err(DictationError::Refine(self.0.clone()))
-    }
-
-    async fn edit(&self, _selection: &str, _instruction: &str, _hints: &RefineHints) -> Result<Refined, DictationError> {
-        Err(DictationError::Refine(self.0.clone()))
-    }
 }
 
 /// Where one text goes (docs/dictation.md §15.3).
@@ -502,50 +395,20 @@ impl Injector for NativeInjector {
     }
 }
 
-/// HTTP request deadline for one transcription (long recordings on a slow link).
-pub const ASR_TIMEOUT: Duration = Duration::from_secs(90);
-/// HTTP request deadline for one refinement.
-pub const REFINE_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// Clients for a resolved configuration. On-device recognition hands out the shared
 /// [`LocalTranscriber`] pointed at the selected model (the loaded recogniser survives settings
-/// changes that keep the model) with `vad_trim` applied (docs/dictation.md §12). A remote provider
-/// that is not ready, or whose configuration the client refuses, becomes an [`Unconfigured`] client
-/// that reports the problem on use. No ready clean-up provider means no refiner (the core then
-/// explains "润色未配置").
+/// changes that keep the model) with `vad_trim` applied (docs/dictation.md §12); the cloud services
+/// come from `voltip-cloud`, which reports a provider that is not ready, or a configuration the
+/// client refuses, on use. No ready clean-up provider means no refiner (the core then explains
+/// "润色未配置").
 pub fn build_clients(engines: &ResolvedEngines, local: &LocalTranscriber) -> (Arc<dyn Transcriber>, Option<Arc<dyn Refiner>>) {
     let transcriber: Arc<dyn Transcriber> = if engines.is_local() {
         let id = engines.local_model.as_ref().map_or(voltip_asr_local::DEFAULT_MODEL_ID, |m| m.id.as_str());
         Arc::new(local.select(id).with_vad_trim(engines.vad_trim).with_compute(compute_of(engines)))
     } else {
-        match &engines.asr_remote {
-            None => Arc::new(Unconfigured(match engines.asr_issue {
-                Some(issue) => format!("识别服务未配置：{}", issue.message(ServiceKind::Asr)),
-                None => "识别服务未配置".to_owned(),
-            })),
-            Some(remote) => match HttpTranscriber::new(AsrConfig::new(&remote.url, &remote.model).with_token(remote.key.clone()).with_timeout(ASR_TIMEOUT)) {
-                Ok(t) => Arc::new(t),
-                Err(e) => {
-                    tracing::warn!(error = %e, "ASR client not built");
-                    Arc::new(Unconfigured(format!("识别服务配置无效：{e}")))
-                }
-            },
-        }
+        voltip_cloud::remote_transcriber(engines)
     };
-    let refiner: Option<Arc<dyn Refiner>> = engines.refine.as_ref().map(|remote| {
-        // The built-in service stays under its free tier's output limit; a service the user
-        // configured may answer a long translation or notes in full (docs/dictation.md §21).
-        let cap = if engines.llm_provider == Some(ProviderId::Builtin) { voltip_refine::BUILTIN_OUTPUT_CAP } else { voltip_refine::USER_OUTPUT_CAP };
-        let config = RefineConfig::new(&remote.url, &remote.model).with_api_key(remote.key.clone()).with_timeout(REFINE_TIMEOUT).with_output_cap(cap);
-        match HttpRefiner::new(config) {
-            Ok(r) => Arc::new(r) as Arc<dyn Refiner>,
-            Err(e) => {
-                tracing::warn!(error = %e, "refine client not built");
-                Arc::new(Unconfigured(format!("润色服务配置无效：{e}")))
-            }
-        }
-    });
-    (transcriber, refiner)
+    (transcriber, voltip_cloud::refiner(engines))
 }
 
 /// Where the local recogniser runs, from `EngineSettings.local_device / local_gpu / local_threads`

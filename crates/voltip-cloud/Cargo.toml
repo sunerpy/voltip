@@ -1,0 +1,20 @@
+[package]
+name = "voltip-cloud"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The cloud recognition and clean-up clients (voltip-asr, voltip-refine) as the core's Transcriber and Refiner ports, shared by the desktop and the phone."
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+tracing.workspace = true
+voltip-asr.workspace = true
+voltip-core.workspace = true
+voltip-refine.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

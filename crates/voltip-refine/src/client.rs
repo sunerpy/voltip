@@ -11,6 +11,23 @@ use crate::error::RefineError;
 use crate::presets::{BUILTIN_OUTPUT_CAP, output_token_budget};
 use crate::prompt::{PromptHints, TEMPERATURE, edit_nonce, edit_system_prompt, edit_user_message, system_prompt};
 
+/// The HTTP client builder with the trust roots of this platform. Elsewhere reqwest verifies with
+/// the system's own store (rustls-platform-verifier); on Android that verifier needs a JNI context
+/// the app never hands it and panics on the first request, so the requests there trust Mozilla's
+/// root store, as the relay connection does (`voltip-transport`). voltip-asr does the same.
+fn client_builder() -> reqwest::ClientBuilder {
+    let builder = Client::builder();
+    #[cfg(target_os = "android")]
+    let builder = builder.tls_certs_only(mozilla_roots());
+    builder
+}
+
+/// Mozilla's root store (webpki-root-certs) as reqwest certificates.
+#[cfg(any(target_os = "android", test))]
+fn mozilla_roots() -> Vec<reqwest::Certificate> {
+    webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().filter_map(|der| reqwest::Certificate::from_der(der.as_ref()).ok()).collect()
+}
+
 /// The cleaned answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Refined {
@@ -102,7 +119,7 @@ impl RefineClient {
         if config.timeout.is_zero() {
             return Err(RefineError::InvalidConfig("timeout must be greater than zero".into()));
         }
-        let http = Client::builder()
+        let http = client_builder()
             .timeout(config.timeout)
             .user_agent(concat!("voltip-refine/", env!("CARGO_PKG_VERSION")))
             .build()
@@ -238,7 +255,7 @@ pub async fn list_models(base_url: &str, api_key: Option<&str>, timeout: Duratio
     if timeout.is_zero() {
         return Err(RefineError::InvalidConfig("timeout must be greater than zero".into()));
     }
-    let http = Client::builder()
+    let http = client_builder()
         .timeout(timeout)
         .user_agent(concat!("voltip-refine/", env!("CARGO_PKG_VERSION")))
         .build()
@@ -384,6 +401,19 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
+
+    /// Regression (2026-10-01, the phone recognising its own takes): on Android reqwest's platform
+    /// verifier needs a JNI context the app never hands it and panics on the first request
+    /// ("Expect rustls-platform-verifier to be initialized"). The client there trusts Mozilla's
+    /// root store instead; the store loads in full and makes a client.
+    #[test]
+    fn regression_android_trusts_mozillas_roots_not_an_uninitialised_platform_verifier() {
+        let roots = mozilla_roots();
+        assert!(roots.len() > 100, "{} roots", roots.len());
+        assert_eq!(roots.len(), webpki_root_certs::TLS_SERVER_ROOT_CERTS.len(), "every root parses");
+        assert!(Client::builder().tls_certs_only(roots).build().is_ok());
+        assert!(client_builder().build().is_ok());
+    }
 
     /// Regression (2026-09-27): the debug log carried the whole endpoint URL, host included.
     #[test]
