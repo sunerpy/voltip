@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.16](https://github.com/sunerpy/voltip/compare/v0.0.15...v0.0.16) (2026-10-01)
+
+
+### Features
+
+* **desktop:** switch the speech model, AI model and microphone in place; a double click on the tray icon opens the window ([#41](https://github.com/sunerpy/voltip/issues/41)) ([0d60085](https://github.com/sunerpy/voltip/commit/0d60085446e918ea8d0e398802675c93cbf6c0b5))
+
 ## [0.0.15](https://github.com/sunerpy/voltip/compare/v0.0.14...v0.0.15) (2026-09-30)
 
 
