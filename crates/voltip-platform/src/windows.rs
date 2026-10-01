@@ -255,6 +255,31 @@ pub struct StackedWindow<'a> {
 /// The image name of the WebView2 runtime's processes.
 pub const WEBVIEW_PROCESS: &str = "msedgewebview2.exe";
 
+/// Whether `image` (a process image name, `notepad.exe`) is the WebView2 runtime's.
+pub fn is_webview_image(image: &str) -> bool {
+    image.eq_ignore_ascii_case(WEBVIEW_PROCESS)
+}
+
+/// What the shell reads about the window in front, for the foreground probe and the history
+/// paste. `GetForegroundWindow` can name a child window, the WebView2 runtime's render window
+/// inside an application's web view, so the shell reads the top-level window it is part of
+/// (`GetAncestor(GA_ROOT)`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FrontWindow {
+    /// One of Voltip's own windows.
+    pub own_process: bool,
+    /// Owned by a WebView2 process ([`WEBVIEW_PROCESS`]).
+    pub webview: bool,
+}
+
+/// Whether another application's window is in front (`None`: no window has the focus). The probe
+/// names such a window (the scene, the paste's target), and the paste's way back leaves it in
+/// front. Voltip's own window and a WebView2 window do not count: the probe gives no answer for
+/// them, and the way back brings the window the user came from forward.
+pub fn another_application_in_front(front: Option<FrontWindow>) -> bool {
+    front.is_some_and(|front| !front.own_process && !front.webview)
+}
+
 /// The desktop and the taskbar: in the Z order, but not a window anyone pastes into.
 const SHELL_CLASSES: [&str; 4] = ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"];
 
@@ -307,6 +332,21 @@ mod tests {
         assert!(!is_paste_target(&popup));
         assert!(is_paste_target(&StackedWindow { webview: false, ..popup }), "the same window of an application's own process qualifies");
         assert_eq!(WEBVIEW_PROCESS, "msedgewebview2.exe");
+    }
+
+    #[test]
+    fn regression_a_webview2_window_in_front_is_not_another_application() {
+        // CI 2026-10-01 (main, smoke-windows-paste): once Voltip had minimised, the window in front
+        // was a render window of msedgewebview2.exe (Voltip's web view took the focus back). The
+        // probe named it as the paste's target, the way back left it in front, and the text went
+        // into Voltip's own minimised web view instead of Notepad.
+        let notepad = FrontWindow { own_process: false, webview: false };
+        assert!(another_application_in_front(Some(notepad)));
+        assert!(!another_application_in_front(Some(FrontWindow { webview: true, ..notepad })), "a WebView2 window");
+        assert!(!another_application_in_front(Some(FrontWindow { own_process: true, ..notepad })), "Voltip's own window");
+        assert!(!another_application_in_front(None), "no window has the focus");
+        assert!(is_webview_image("msedgewebview2.exe") && is_webview_image("MSEdgeWebView2.EXE"));
+        assert!(!is_webview_image("notepad.exe"));
     }
 
     #[test]

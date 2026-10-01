@@ -23,7 +23,7 @@ pub const ANSWER_WITHIN: Duration = Duration::from_secs(5);
 
 /// Called after each "Voltip is still in front" answer while the shell waits, until it returns
 /// `true`: on Windows it brings the window the user came from to the front once Voltip's window is
-/// minimised ([`came_from`]).
+/// minimised ([`step_aside`]).
 pub type Nudge = Box<dyn FnMut() -> bool + Send>;
 
 /// The foreground probe the core was given (the same `Arc`), managed as Tauri state; `None` on
@@ -97,34 +97,45 @@ pub async fn wait_for_target(probe: Arc<dyn ForegroundProbe>, every: Duration, w
     }
 }
 
-/// Get Voltip out of the way so the window the user came from comes back to the front: the main
-/// window is minimised, and on macOS the whole application is hidden (a minimised window leaves
-/// the application active there).
-fn step_aside<R: Runtime>(app: &AppHandle<R>) {
-    #[cfg(target_os = "macos")]
-    if let Err(e) = app.hide() {
-        tracing::warn!(error = %e, "hiding the application for the paste failed");
+/// Get Voltip out of the way so the window the user came from comes back to the front, and return
+/// the nudge for when it does not come back by itself:
+/// - Windows: Voltip, still in front, activates the window below its own and minimises without
+///   activating anything (`hand_over`); when there is no such window or Windows refuses, the main
+///   window is minimised, and the nudge brings the window the user came from forward when Windows
+///   leaves the front to nobody, to Voltip or to a WebView2 window (CI 2026-09-29, 2026-10-01).
+/// - macOS: the whole application is hidden (a minimised window leaves the application active
+///   there), and macOS activates the previous application.
+/// - X11: the main window is minimised, and the window manager activates the next window.
+fn step_aside<R: Runtime>(app: &AppHandle<R>) -> Option<Nudge> {
+    #[cfg(target_os = "windows")]
+    {
+        let back = crate::platform::windows::paste_return();
+        if !back.is_some_and(crate::platform::windows::hand_over) {
+            minimise(app);
+        }
+        back.map(|back| -> Nudge { Box::new(move || crate::platform::windows::return_to(back)) })
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(e) = app.hide() {
+            tracing::warn!(error = %e, "hiding the application for the paste failed");
+        }
+        None
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        minimise(app);
+        None
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn minimise<R: Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window(crate::MAIN_WINDOW)
         && let Err(e) = window.minimize()
     {
         tracing::warn!(error = %e, "minimising the main window for the paste failed");
     }
-}
-
-/// The window the user came from, remembered before Voltip steps aside. On Windows, minimising
-/// Voltip usually activates it; when Windows leaves nothing in front (CI 2026-09-29, Notepad never
-/// came back), the nudge brings it to the front. macOS activates the previous application when
-/// Voltip hides, and the X11 window manager the next window when Voltip is minimised.
-fn came_from() -> Option<Nudge> {
-    #[cfg(target_os = "windows")]
-    {
-        let back = crate::platform::windows::paste_return()?;
-        Some(Box::new(move || crate::platform::windows::return_to(back)))
-    }
-    #[cfg(not(target_os = "windows"))]
-    None
 }
 
 /// Bring Voltip back to the front after a paste that did not go into the other window.
@@ -148,8 +159,7 @@ pub async fn paste_text<R: Runtime>(app: &AppHandle<R>, text: String) -> PasteOu
         (FirstStep::CopyOnly(reason), _) => (PasteTarget::CopyOnly(reason), false),
         (FirstStep::FindTarget, None) => (PasteTarget::CopyOnly(CopyReason::NoProbe), false),
         (FirstStep::FindTarget, Some(probe)) => {
-            let nudge = came_from();
-            step_aside(app);
+            let nudge = step_aside(app);
             (target_after(wait_for_target(probe, PROBE_EVERY, FIND_TARGET_WITHIN, nudge).await), true)
         }
     };
