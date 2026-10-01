@@ -227,9 +227,18 @@ impl BuiltinScene {
     }
 }
 
-/// Whether `platform` keeps built-in scenes (the phone has no scenes at all).
+/// Whether `platform` keeps built-in scenes: every real platform (`Other` is the tests' and the
+/// lists' without them). On a phone they name no application: the user picks a take's scene there
+/// (user decision 2026-10-01; before it, the phone had no scenes at all).
 pub const fn has_builtin_scenes(platform: Platform) -> bool {
-    matches!(platform, Platform::Windows | Platform::Macos | Platform::Linux)
+    !matches!(platform, Platform::Other)
+}
+
+/// Whether a scene of the user's must name an application on `platform`: where scenes match the
+/// application in front (the desktops). A phone has no foreground probe; its scenes are picked by
+/// hand, so they need none.
+pub const fn scenes_need_apps(platform: Platform) -> bool {
+    !matches!(platform, Platform::Android | Platform::Ios)
 }
 
 #[cfg(test)]
@@ -254,9 +263,15 @@ mod tests {
                 }
             }
         }
+        // Phones keep the built-in scenes without applications (user decision 2026-10-01: the user
+        // picks a take's scene there); `Other` has none.
         for platform in [Platform::Android, Platform::Ios, Platform::Other] {
             assert!(BuiltinScene::ALL.iter().all(|s| s.default_apps(platform).is_empty()));
-            assert!(!has_builtin_scenes(platform));
+            assert_eq!(has_builtin_scenes(platform), platform != Platform::Other);
+            assert_eq!(scenes_need_apps(platform), platform == Platform::Other);
+        }
+        for platform in [Platform::Windows, Platform::Macos, Platform::Linux] {
+            assert!(has_builtin_scenes(platform) && scenes_need_apps(platform));
         }
         assert_eq!(BuiltinScene::Coding.template(Platform::Windows).overrides.refine_preset, Some(PresetId::Builtin(BuiltinPreset::Proofread)));
         assert_eq!(BuiltinScene::Office.template(Platform::Macos).overrides.refine_preset, Some(PresetId::Builtin(BuiltinPreset::Formal)));

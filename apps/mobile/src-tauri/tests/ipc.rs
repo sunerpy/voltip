@@ -18,8 +18,8 @@ use voltip_core::ui::{UI_EVENT_NAME, UiState};
 use voltip_core::{CoreConfig, Settings, SettingsStore, ThemeId};
 use voltip_identity::MemorySecretStore;
 use voltip_mobile_lib::{
-    BROWSER_UNAVAILABLE, COMMANDS, FEEDBACK_UNAVAILABLE, HOTKEY_UNAVAILABLE, KEYSTORE_SERVICE, MODELS_UNAVAILABLE, SCENES_UNAVAILABLE, UPDATE_UNAVAILABLE,
-    VOCABULARY_UNAVAILABLE, build_app, data_dir, platform_label, production_config, secret_store,
+    BROWSER_UNAVAILABLE, COMMANDS, FEEDBACK_UNAVAILABLE, HOTKEY_UNAVAILABLE, KEYSTORE_SERVICE, MODELS_UNAVAILABLE, UPDATE_UNAVAILABLE, build_app, data_dir,
+    platform_label, production_config, secret_store,
 };
 use voltip_pairing::PairingState;
 use voltip_tauri_bridge::Bridge;
@@ -37,7 +37,7 @@ fn offline_config(dir: &Path, settings: Settings) -> CoreConfig {
     cfg.default_device_name = DEVICE_NAME.into();
     cfg.direct_bind = "127.0.0.1:0".parse().unwrap();
     cfg.accepts_phone_takes = false;
-    cfg.builtin_scenes = false;
+    cfg.manual_scenes = true;
     cfg
 }
 
@@ -425,42 +425,33 @@ fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
             assert_eq!(invoke(webview, cmd, json!({ "id": "sense-voice-small" })), Err(Value::String(MODELS_UNAVAILABLE.into())), "{cmd}");
         }
         assert!(wait_state(webview, |_| true).models.is_empty());
-        // No dictation pipeline, so no personal dictionary or rules (docs/dictation.md §16.4): every
-        // vocabulary verb and query refuses, and the state carries empty lists.
-        let id = "0f3f1a1e-8d4b-4c8e-9f7a-1c2d3e4f5a6b";
-        let rule = json!({ "name": "n", "pattern": "p" });
-        for (cmd, args) in [
-            ("dictionary_add", json!({ "entry": { "term": "x" }, "historyId": null })),
-            ("dictionary_update", json!({ "id": id, "entry": { "term": "x" } })),
-            ("dictionary_remove", json!({ "id": id })),
-            ("dictionary_reorder", json!({ "ids": [id] })),
-            ("rules_add", json!({ "rule": rule })),
-            ("rules_update", json!({ "id": id, "rule": rule })),
-            ("rules_remove", json!({ "id": id })),
-            ("rules_reorder", json!({ "ids": [id] })),
-            ("rules_import", json!({ "toml": "version = 1\n", "mode": "merge" })),
-            ("rules_export", json!({})),
-            ("vocabulary_preview", json!({ "text": "你好", "draft": null })),
-        ] {
-            assert_eq!(invoke(webview, cmd, args), Err(Value::String(VOCABULARY_UNAVAILABLE.into())), "{cmd}");
-        }
-        let st = wait_state(webview, |_| true);
-        assert!(st.dictionary.is_empty() && st.rules.is_empty());
-        // No probe and no pipeline: scenes and the context switch refuse too (docs/dictation.md §18.6).
-        let scene = json!({ "name": "聊天", "match": { "apps": ["slack"] } });
-        for (cmd, args) in [
-            ("scenes_add", json!({ "scene": scene })),
-            ("scenes_update", json!({ "id": id, "scene": scene })),
-            ("scenes_remove", json!({ "id": id })),
-            ("scenes_reorder", json!({ "ids": [id] })),
-            ("scenes_restore", json!({ "id": id })),
-            ("scenes_builtin", json!({})),
-            ("settings_set_context_sharing", json!({ "appName": true, "windowTitle": false })),
-            ("recent_apps", json!({})),
-        ] {
-            assert_eq!(invoke(webview, cmd, args), Err(Value::String(SCENES_UNAVAILABLE.into())), "{cmd}");
-        }
-        assert!(wait_state(webview, |_| true).scenes.is_empty());
+        // The phone's own dictionary, rules and scenes (user decision 2026-10-01: the phone has every
+        // setting but the local models; every one of these was refused before).
+        assert_eq!(invoke(webview, "dictionary_add", json!({ "entry": { "term": "Voltip", "heard_as": ["沃尔提普"] }, "historyId": null })), Ok(Value::Null));
+        let term = wait_state(webview, |s| s.dictionary.len() == 1).dictionary[0].id.to_string();
+        assert_eq!(invoke(webview, "rules_add", json!({ "rule": { "name": "句号", "pattern": "。。", "replacement": "。" } })), Ok(Value::Null));
+        wait_state(webview, |s| s.rules.len() == 1);
+        let preview = invoke(webview, "vocabulary_preview", json!({ "text": "沃尔提普。。", "draft": null })).unwrap();
+        assert_eq!(preview["output"], "Voltip。");
+        assert!(invoke(webview, "rules_export", json!({})).unwrap().as_str().is_some_and(|t| t.contains("句号")));
+        assert_eq!(invoke(webview, "dictionary_remove", json!({ "id": term })), Ok(Value::Null));
+        wait_state(webview, |s| s.dictionary.is_empty());
+        // Scenes: the built-in ones without applications, the phone's own without one either, and
+        // the one its takes run with (`pinned_scene`, the talk card's choice).
+        let st = wait_state(webview, |s| !s.scenes.is_empty());
+        assert!(st.scenes.iter().all(|s| s.builtin.is_some() && s.matching.apps.is_empty()), "{:?}", st.scenes);
+        let builtins = invoke(webview, "scenes_builtin", json!({})).unwrap();
+        assert_eq!(builtins.as_array().map(Vec::len), Some(st.scenes.len()));
+        assert_eq!(invoke(webview, "scenes_add", json!({ "scene": { "name": "会议", "match": { "apps": [] } } })), Ok(Value::Null));
+        let meeting = wait_state(webview, |s| s.scenes.iter().any(|x| x.name == "会议")).scenes.into_iter().find(|x| x.name == "会议").unwrap();
+        assert!(meeting.matching.apps.is_empty());
+        assert_eq!(invoke(webview, "settings_set_pinned_scene", json!({ "id": meeting.id.to_string() })), Ok(Value::Null));
+        wait_state(webview, |s| s.settings.pinned_scene == Some(meeting.id));
+        assert!(invoke(webview, "settings_set_pinned_scene", json!({ "id": "nope" })).unwrap_err().as_str().unwrap().contains("UUID"));
+        assert_eq!(invoke(webview, "settings_set_pinned_scene", json!({ "id": null })), Ok(Value::Null));
+        wait_state(webview, |s| s.settings.pinned_scene.is_none());
+        assert_eq!(invoke(webview, "recent_apps", json!({})), Ok(json!([])), "a phone names no application");
+        assert_eq!(invoke(webview, "settings_set_context_sharing", json!({ "appName": true, "windowTitle": false })), Ok(Value::Null));
         // The phone cleans up what it recognises itself, with its own presets (user decision
         // 2026-10-01: the phone has every setting but the local models; they were refused before).
         let builtin = invoke(webview, "presets_builtin", json!({})).unwrap();

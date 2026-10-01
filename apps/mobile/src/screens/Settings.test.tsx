@@ -23,6 +23,11 @@ describe("the phone's settings", () => {
     expect(within(settings).getByTestId("settings-appearance")).toHaveTextContent("跟随系统");
     expect(within(settings).getByTestId("settings-recording")).toHaveTextContent("单次最长");
     expect(within(settings).getByTestId("settings-about")).toHaveTextContent("版本");
+    expect(within(settings).getByTestId("settings-dictionary")).toHaveTextContent("0 条启用");
+    expect(within(settings).getByTestId("settings-rules")).toHaveTextContent("0 条启用");
+    expect(within(settings).getByTestId("settings-scenes")).toHaveTextContent(
+      `${backend.peek().scenes.length} 个场景`,
+    );
     // No paired computer: no device list row.
     expect(within(settings).queryByTestId("settings-devices")).toBeNull();
     for (const [row, heading] of [
@@ -32,6 +37,9 @@ describe("the phone's settings", () => {
       ["settings-recording", "录音"],
       ["settings-about", "关于 Voltip"],
       ["settings-device", "本机"],
+      ["settings-dictionary", "个人词典"],
+      ["settings-rules", "替换规则"],
+      ["settings-scenes", "场景"],
     ] as const) {
       await user.click(screen.getByTestId(row));
       expect(screen.getByRole("heading", { name: heading, level: 1 })).toBeInTheDocument();

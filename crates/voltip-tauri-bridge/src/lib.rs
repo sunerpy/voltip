@@ -19,7 +19,7 @@ use uuid::Uuid;
 use voltip_core::dictation::LevelFrame;
 use voltip_core::paste::{PasteFailure, PasteOutcome, PasteTarget};
 use voltip_core::presets::{MAX_PRESET_TRY_CHARS, PresetDraft, PresetId, PresetTrial, clean_preset_prompt, validate_preset_draft};
-use voltip_core::scenes::{MAX_RECENT_APPS, validate_scene_draft, validate_scene_draft_with};
+use voltip_core::scenes::{MAX_RECENT_APPS, validate_scene_draft_with};
 use voltip_core::ui::{UiEvent, UiState};
 use voltip_core::vocabulary::{export_rules_toml, parse_rules_toml, preview, validate_dictionary_draft, validate_rule_draft};
 use voltip_core::{
@@ -401,11 +401,24 @@ pub enum UiCommand {
         /// Send the window title.
         window_title: bool,
     },
+    /// The scene a take runs with where no foreground probe picks one (the phone's talk card,
+    /// docs/dictation.md §18); `None` = no scene. Persisted, the core re-emits `settings`.
+    SettingsSetPinnedScene {
+        /// The scene's id.
+        id: Option<String>,
+    },
 }
 
 impl UiCommand {
     /// Translate to a core command. Fails on malformed keys.
     pub fn into_core(self) -> Result<CoreCommand, BridgeError> {
+        self.into_core_for(true)
+    }
+
+    /// [`UiCommand::into_core`] on a shell whose new scenes must name an application or not: not on
+    /// a phone, where the user picks a take's scene (`CoreConfig::manual_scenes`, user decision
+    /// 2026-10-01).
+    pub fn into_core_for(self, scenes_need_apps: bool) -> Result<CoreCommand, BridgeError> {
         Ok(match self {
             Self::PairingStart => CoreCommand::StartPairing,
             Self::PairingJoinCode { code } => CoreCommand::JoinWithCode(code),
@@ -482,7 +495,7 @@ impl UiCommand {
             Self::RulesImport { toml, mode } => CoreCommand::RulesImport { rules: parse_rules_toml(&toml).map_err(bad)?, mode },
             // Same split as the vocabulary: a draft wrong on its own is the command's error; list-level
             // refusals (duplicate name, cap, unknown id) arrive as `error` events.
-            Self::ScenesAdd { scene } => CoreCommand::SceneAdd(validate_scene_draft(&scene).map_err(bad_scene)?),
+            Self::ScenesAdd { scene } => CoreCommand::SceneAdd(validate_scene_draft_with(&scene, scenes_need_apps).map_err(bad_scene)?),
             Self::ScenesUpdate { id, scene } => {
                 CoreCommand::SceneUpdate { id: parse_id(&id)?, draft: validate_scene_draft_with(&scene, false).map_err(bad_scene)? }
             }
@@ -496,6 +509,7 @@ impl UiCommand {
             Self::PresetsRemove { id } => CoreCommand::PresetRemove(parse_id(&id)?),
             Self::PresetsTry { id, preset, prompt, text } => CoreCommand::PresetTry { id, trial: preset_trial(preset, prompt)?, text: preset_try_text(&text)? },
             Self::SettingsSetContextSharing { app_name, window_title } => CoreCommand::SetContextSharing(ContextSharing { app_name, window_title }),
+            Self::SettingsSetPinnedScene { id } => CoreCommand::SetPinnedScene(id.as_deref().map(parse_id).transpose()?),
         })
     }
 }
@@ -573,6 +587,9 @@ pub struct Bridge {
     paste_ids: Arc<AtomicU64>,
     /// The history queries' own read-only connection (docs/dictation.md §4.4).
     history: Arc<HistoryReader>,
+    /// A new scene must name an application: everywhere but on a phone, where the user picks a
+    /// take's scene (`CoreConfig::manual_scenes`, user decision 2026-10-01).
+    scenes_need_apps: bool,
 }
 
 impl std::fmt::Debug for Bridge {
@@ -610,8 +627,9 @@ impl Bridge {
         let (tx, first) = broadcast::channel(256);
         let state = Arc::new(Mutex::new(UiState::default()));
         let history = Arc::new(HistoryReader::new(&config.data_dir));
+        let scenes_need_apps = !config.manual_scenes;
         let (handle, core_events) = AppCore::start_with(config, secret_store, ports)?;
-        let bridge = Self { handle, state: state.clone(), events: tx.clone(), paste_ids: Arc::new(AtomicU64::new(0)), history };
+        let bridge = Self { handle, state: state.clone(), events: tx.clone(), paste_ids: Arc::new(AtomicU64::new(0)), history, scenes_need_apps };
         tokio::spawn(pump(core_events, state, tx));
         Ok((bridge, first))
     }
@@ -633,7 +651,7 @@ impl Bridge {
 
     /// Execute a webview command.
     pub fn dispatch(&self, cmd: UiCommand) -> Result<(), BridgeError> {
-        let core_cmd = cmd.into_core()?;
+        let core_cmd = cmd.into_core_for(self.scenes_need_apps)?;
         self.handle.try_send(core_cmd)?;
         Ok(())
     }
@@ -886,8 +904,11 @@ mod tests {
             CoreCommand::SceneAdd(d) if d.name == "聊天" && d.enabled && d.matching.apps == ["slack"] && d.overrides.prompt.as_deref() == Some("口语化")
         ));
         let c: UiCommand = serde_json::from_str(r#"{"command":"scenes_add","scene":{"name":"x","match":{"apps":[]}}}"#).unwrap();
-        let err: String = c.into_core().unwrap_err().into();
+        let err: String = c.clone().into_core().unwrap_err().into();
         assert!(err.starts_with("scenes: ") && err.contains("至少要有一个应用"), "{err}");
+        // The phone picks a take's scene by hand (user decision 2026-10-01): one of its own may list
+        // no application.
+        assert!(matches!(c.into_core_for(false).unwrap(), CoreCommand::SceneAdd(d) if d.name == "x" && d.matching.apps.is_empty()));
         let c: UiCommand =
             serde_json::from_str(r#"{"command":"scenes_add","scene":{"name":"x","match":{"apps":["a"]},"overrides":{"language":"中文"}}}"#).unwrap();
         assert!(String::from(c.into_core().unwrap_err()).contains("语言代码"));

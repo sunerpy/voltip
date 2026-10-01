@@ -50,10 +50,8 @@ import {
   MOCK_STREAMING_MODEL_ID,
   MockBackend,
   mockSameChord,
-  SCENES_UNAVAILABLE,
   SHARE_UNAVAILABLE,
   PRESET_TRY_UNCONFIGURED,
-  VOCABULARY_UNAVAILABLE,
   mockLevel,
   desktopIdentity,
   desktopPeer,
@@ -2325,7 +2323,7 @@ describe("MockBackend personal dictionary and replacement rules (docs/dictation.
     backend.destroy();
   });
 
-  it("regression: vocabularyPreview answers with the core semantics and seeded lists are kept and the phone refuses every vocabulary command", async () => {
+  it("regression: vocabularyPreview answers with the core semantics and seeded lists are kept, and the phone keeps its own lists", async () => {
     const seeded = new MockBackend({ now: () => clock, history: [] });
     await seeded.invoke("dictionary_add", { entry: draft("good idea", ["谷歌IDR"]) });
     const dictionary = seeded.peek().dictionary;
@@ -2343,16 +2341,14 @@ describe("MockBackend personal dictionary and replacement rules (docs/dictation.
     await expect(
       backend.vocabularyPreview("x", { rule: rule("r", "(", "", { kind: "regex" }) }),
     ).rejects.toThrow(/正则无法编译/);
+    // User decision 2026-10-01: the phone keeps its own dictionary and rules (it refused every
+    // vocabulary command before).
     const phone = new MockBackend({ role: "phone", dictionary, rules: [] });
-    expect(phone.peek().dictionary).toEqual([]);
-    await expect(phone.invoke("dictionary_add", { entry: draft("a", []) })).rejects.toThrow(
-      VOCABULARY_UNAVAILABLE,
-    );
-    await expect(
-      phone.invoke("rules_import", { toml: "version = 1", mode: "merge" }),
-    ).rejects.toThrow(VOCABULARY_UNAVAILABLE);
-    await expect(phone.vocabularyPreview("x")).rejects.toThrow(VOCABULARY_UNAVAILABLE);
-    await expect(phone.rulesExport()).rejects.toThrow(VOCABULARY_UNAVAILABLE);
+    expect(phone.peek().dictionary).toEqual(dictionary);
+    await phone.invoke("dictionary_add", { entry: draft("a", []) });
+    expect(phone.peek().dictionary.map((e) => e.term)).toContain("a");
+    expect((await phone.vocabularyPreview("x")).output).toBe("x");
+    expect(await phone.rulesExport()).toContain("version = 1");
     seeded.destroy();
     backend.destroy();
     phone.destroy();
@@ -2605,18 +2601,28 @@ describe("MockBackend scenes and context (docs/dictation.md section 18)", () => 
     backend.destroy();
   });
 
-  it("regression: the phone refuses every scene command and the query", async () => {
+  it("regression: the phone's scenes follow the core: built-in ones and its own without applications, and a pinned scene", async () => {
+    // User decision 2026-10-01: the phone picks a take's scene on its talk card (it refused every
+    // scene command before); a desktop's scene still names an application.
     const phone = new MockBackend({ role: "phone", scenes: [] });
-    expect(phone.peek().scenes).toEqual([]);
-    await expect(phone.invoke("scenes_add", { scene: scene("a", ["x"]) })).rejects.toThrow(
-      SCENES_UNAVAILABLE,
-    );
-    await expect(
-      phone.invoke("settings_set_context_sharing", { appName: true, windowTitle: false }),
-    ).rejects.toThrow(SCENES_UNAVAILABLE);
-    await expect(phone.recentApps()).rejects.toThrow(SCENES_UNAVAILABLE);
-    await expect(phone.scenesBuiltin()).rejects.toThrow(SCENES_UNAVAILABLE);
+    const builtins = phone.peek().scenes;
+    expect(builtins.map((s) => s.builtin)).toEqual([...BUILTIN_SCENES]);
+    expect(builtins.every((s) => s.match.apps.length === 0)).toBe(true);
+    await phone.invoke("scenes_add", { scene: scene("会议", []) });
+    const meeting = phone.peek().scenes.find((s) => s.name === "会议");
+    expect(meeting?.match.apps).toEqual([]);
+    await phone.invoke("settings_set_pinned_scene", { id: meeting?.id ?? null });
+    expect(phone.peek().settings.pinned_scene).toBe(meeting?.id);
+    await phone.invoke("settings_set_pinned_scene", { id: null });
+    expect(phone.peek().settings.pinned_scene).toBeUndefined();
+    expect(await phone.recentApps()).toEqual([]);
+    expect((await phone.scenesBuiltin()).map((p) => p.id)).toEqual([...BUILTIN_SCENES]);
     phone.destroy();
+    const desktop = new MockBackend({ scenes: [] });
+    await expect(desktop.invoke("scenes_add", { scene: scene("会议", []) })).rejects.toThrow(
+      "scenes: 场景「会议」至少要有一个应用",
+    );
+    desktop.destroy();
   });
 });
 

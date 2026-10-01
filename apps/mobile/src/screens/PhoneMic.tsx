@@ -5,10 +5,12 @@ import {
   type PhoneTakeState,
   type TFunction,
   coreMessageText,
+  errorText,
   formatElapsed,
   phoneTakeFinal,
+  sceneLabel,
 } from "@voltip/shared";
-import { Card, LampText, LedMeter, useBackend, useI18n, useUiState } from "@voltip/ui";
+import { Card, LampText, LedMeter, Select, useBackend, useI18n, useUiState } from "@voltip/ui";
 import { type PointerEvent, useEffect, useRef, useState } from "react";
 import { useMobileShell } from "../app/shell";
 
@@ -370,6 +372,38 @@ function ComputerTalk({
 
 /** The phone recognises the take itself (docs/dictation.md §20.7): the built-in service
  *  transcribes and polishes it, and the result lands on the phone's clipboard. */
+/** The scene the phone's takes run with (docs/dictation.md §18; user decision 2026-10-01): the
+ *  phone cannot tell which app the text goes to, so the user picks one, or none
+ *  (`settings_set_pinned_scene`). A pinned scene that was deleted since reads as none. */
+function ScenePicker({ disabled }: { disabled: boolean }) {
+  const { backend } = useBackend();
+  const shell = useMobileShell();
+  const { t, locale } = useI18n();
+  const { scenes, settings } = useUiState();
+  if (scenes.length === 0) return null;
+  const pinned = scenes.some((s) => s.id === settings.pinned_scene) ? settings.pinned_scene : "";
+  return (
+    <Select
+      label={t("mobile.mic.scene")}
+      size="sm"
+      value={pinned ?? ""}
+      disabled={disabled}
+      data-testid="phone-scene"
+      options={[
+        { value: "", label: t("mobile.mic.noScene") },
+        ...scenes.map((scene) => ({ value: scene.id, label: sceneLabel(scene, locale) })),
+      ]}
+      onChange={(id) => {
+        backend
+          .invoke("settings_set_pinned_scene", { id: id === "" ? null : id })
+          .catch((e: unknown) => {
+            shell.toast(t("mobile.toast.error", { message: errorText(e) }), "danger");
+          });
+      }}
+    />
+  );
+}
+
 function PhoneTalk({ paired }: { paired: boolean }) {
   const { backend } = useBackend();
   const { t } = useI18n();
@@ -393,6 +427,7 @@ function PhoneTalk({ paired }: { paired: boolean }) {
           </p>
         )}
       </div>
+      <ScenePicker disabled={running} />
       <HoldButton
         busy={running}
         sublabel={t("mobile.mic.onPhone")}

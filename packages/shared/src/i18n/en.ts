@@ -1809,6 +1809,8 @@ export const en: Messages = {
       emptyTitle: "No scenes yet",
       emptyBody:
         "Create one, for example punctuation only in chat apps, or English identifiers kept as they are in the code editor.",
+      emptyBodyPicked:
+        "Create a scene, such as “Meeting notes” or “Client email”, then choose it on the talk card.",
       add: "New scene",
       edit: "Edit {name}",
       remove: "Delete {name}",
@@ -2240,6 +2242,9 @@ export const en: Messages = {
       appearance: "Appearance and language",
       recording: "Recording",
       about: "About Voltip",
+      dictionary: "Dictionary",
+      rules: "Replacement rules",
+      scenes: "Scenes",
     },
     tab: { label: "Main navigation", talk: "Talk", settings: "Settings" },
     settings: {
@@ -2255,6 +2260,28 @@ export const en: Messages = {
       device: "This device and pairing",
       devicesDetail: "{n} computers",
       aboutDetail: "Version {version}",
+      vocabulary: "Dictionary, rules and scenes",
+      scenesDetail: { one: "{n} scene", other: "{n} scenes" },
+      pinnedDetail: "Takes use “{name}”",
+    },
+    dictionary: {
+      emptyBody: "Create an entry: the correct spelling, and how recognition tends to hear it.",
+      editTitle: "Edit entry",
+      order: "{n} of {total} in matching order",
+      deleteBody: "The spelling is no longer corrected. This cannot be undone.",
+    },
+    rules: {
+      intro:
+        "Fixed replacements, run in list order after recognition and polish and before the text is copied: literal rules match the text as written (whole words in English and other spaced scripts), regex rules use regular expressions, and the replacement may use $1 / ${name}.",
+      emptyBody: "Without rules the text is copied as it is. Create one, or import a TOML file.",
+      editTitle: "Edit rule",
+      test: "Try it",
+      testPlaceholder: "Type some text to see it after the rules",
+      share: "Share",
+    },
+    scenes: {
+      lede: "Choose a scene on the talk card, and the take follows its settings: AI polish, preset, language, Chinese script and the extra instruction for the AI. The phone cannot tell which app you are typing in, so scenes are not matched by app.",
+      footnote: "Up to {limit} scenes of your own",
     },
     about: {
       version: "Version",
@@ -2369,6 +2396,8 @@ export const en: Messages = {
       localBody:
         "Hold the button and speak; let go and the built-in service transcribes and polishes it, and the result is copied to this phone's clipboard. Slide off the button before letting go to cancel.",
       offline: "No paired computer is online, so the phone transcribes for now.",
+      scene: "Scene",
+      noScene: "No scene",
       target: "Send to",
       toDesktop: "Send to {name}",
       onPhone: "Transcribe on the phone",

@@ -7,4 +7,6 @@ export * from "./vocabulary";
 export * from "./scenes";
 export * from "./engine-drafts";
 export * from "./preset-drafts";
+export * from "./vocabulary-drafts";
+export * from "./scene-drafts";
 export * from "./i18n";

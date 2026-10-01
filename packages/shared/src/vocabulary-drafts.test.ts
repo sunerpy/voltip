@@ -1,18 +1,14 @@
-import {
-  type DictionaryEntry,
-  type HistoryEntry,
-  type ReplacementRule,
-  createTranslator,
-} from "@voltip/shared";
-import { MockBackend } from "@voltip/shared/mock";
+import { errorText } from "./preset-drafts";
+import { createTranslator } from "./i18n";
+import { MockBackend } from "./mock-backend";
+import type { DictionaryEntry, HistoryEntry, ReplacementRule } from "./schema";
 import {
   dictionaryDraftProblem,
-  errorText,
   hitTotals,
-  moved,
+  movedBy,
   ruleDraftProblem,
   splitHeardAs,
-} from "./vocabulary";
+} from "./vocabulary-drafts";
 
 const EN = createTranslator("en").t;
 
@@ -56,7 +52,7 @@ const rule: ReplacementRule = {
   updated_at_ms: 1,
 };
 
-describe("vocabulary page helpers", () => {
+describe("the dictionary and rules helpers (desktop and phone)", () => {
   it("sums the hits of the history per id and kind (the core's history_hits)", async () => {
     const history = [
       row({ corrections: [{ id: "e1", count: 2 }], rules: [{ id: "r1", count: 1 }] }),
@@ -135,9 +131,9 @@ describe("vocabulary page helpers", () => {
   });
 
   it("moves one id up or down and leaves the ends alone", () => {
-    expect(moved(["a", "b", "c"], 1, -1)).toEqual(["b", "a", "c"]);
-    expect(moved(["a", "b", "c"], 1, 1)).toEqual(["a", "c", "b"]);
-    expect(moved(["a", "b"], 0, -1)).toEqual(["a", "b"]);
-    expect(moved(["a", "b"], 1, 1)).toEqual(["a", "b"]);
+    expect(movedBy(["a", "b", "c"], 1, -1)).toEqual(["b", "a", "c"]);
+    expect(movedBy(["a", "b", "c"], 1, 1)).toEqual(["a", "c", "b"]);
+    expect(movedBy(["a", "b"], 0, -1)).toEqual(["a", "b"]);
+    expect(movedBy(["a", "b"], 1, 1)).toEqual(["a", "b"]);
   });
 });

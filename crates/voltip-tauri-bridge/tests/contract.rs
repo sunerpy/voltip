@@ -1638,6 +1638,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::PresetsRemove { .. } => "PresetsRemove",
         UiCommand::PresetsTry { .. } => "PresetsTry",
         UiCommand::SettingsSetContextSharing { .. } => "SettingsSetContextSharing",
+        UiCommand::SettingsSetPinnedScene { .. } => "SettingsSetPinnedScene",
     }
 }
 
@@ -1764,6 +1765,7 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("presets_remove", json!({ "id": PRESET_ID }), "PresetsRemove"),
         ("presets_try", json!({ "id": 3, "preset": "translate", "prompt": null, "text": "明天上午十点开会" }), "PresetsTry"),
         ("settings_set_context_sharing", json!({ "appName": true, "windowTitle": false }), "SettingsSetContextSharing"),
+        ("settings_set_pinned_scene", json!({ "id": "0f3f1a1e-8d4b-4c8e-9f7a-1c2d3e4f5a6b" }), "SettingsSetPinnedScene"),
     ]
 }
 
@@ -2173,7 +2175,8 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
 }
 
 /// The built-in scenes (§18.10) as the preview's in-memory backend fills them in: each category's
-/// defaults on the three desktops and its term pack (`@voltip/shared/mock` reads this file).
+/// defaults on the three desktops and on a phone (no applications, user decision 2026-10-01), and
+/// its term pack (`@voltip/shared/mock` reads this file).
 #[test]
 fn builtin_scenes_fixture_matches_the_core() {
     let rows: Vec<Value> = BuiltinScene::ALL
@@ -2185,6 +2188,7 @@ fn builtin_scenes_fixture_matches_the_core() {
                     "windows": scene.template(Platform::Windows),
                     "macos": scene.template(Platform::Macos),
                     "linux": scene.template(Platform::Linux),
+                    "android": scene.template(Platform::Android),
                 },
                 "terms": voltip_core::vocabulary::packs::terms(scene),
                 // The names the history's search finds it by; the dictionaries must say the same.

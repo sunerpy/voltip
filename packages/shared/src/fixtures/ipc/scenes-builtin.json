@@ -6,6 +6,18 @@
       "zh-CN": "编程开发"
     },
     "templates": {
+      "android": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "coding",
+        "overrides": {
+          "prompt": "保留代码、命令、路径、英文标识符和 Markdown，不把技术词翻译成中文。",
+          "refine_preset": "proofread"
+        }
+      },
       "linux": {
         "enabled": false,
         "match": {
@@ -189,6 +201,18 @@
       "zh-CN": "办公写作"
     },
     "templates": {
+      "android": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "office",
+        "overrides": {
+          "prompt": "邮件和文档：句子完整，自然分段，不编造称呼和事实。",
+          "refine_preset": "formal"
+        }
+      },
       "linux": {
         "enabled": false,
         "match": {
@@ -295,6 +319,17 @@
       "zh-CN": "即时聊天"
     },
     "templates": {
+      "android": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "chat",
+        "overrides": {
+          "refine_preset": "chat"
+        }
+      },
       "linux": {
         "enabled": false,
         "match": {
@@ -374,6 +409,18 @@
       "zh-CN": "法律"
     },
     "templates": {
+      "android": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "legal",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是法律文本：法条、案号和当事人名称照原样保留。",
+          "refine_preset": "proofread"
+        }
+      },
       "linux": {
         "enabled": false,
         "match": {
@@ -471,6 +518,18 @@
       "zh-CN": "医疗"
     },
     "templates": {
+      "android": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "medical",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是医疗文本：药名、剂量和检查项目照原样保留，不改动医学含义。",
+          "refine_preset": "proofread"
+        }
+      },
       "linux": {
         "enabled": false,
         "match": {
@@ -572,6 +631,18 @@
       "zh-CN": "金融"
     },
     "templates": {
+      "android": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "finance",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是金融文本：金额、百分比、证券代码和机构名称照原样保留。",
+          "refine_preset": "proofread"
+        }
+      },
       "linux": {
         "enabled": false,
         "match": {
@@ -674,6 +745,18 @@
       "zh-CN": "学术"
     },
     "templates": {
+      "android": {
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "academic",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是学术文本：引用、公式符号和专有名词照原样保留。",
+          "refine_preset": "proofread"
+        }
+      },
       "linux": {
         "enabled": false,
         "match": {

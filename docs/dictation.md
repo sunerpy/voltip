@@ -849,7 +849,7 @@ live_inject     ：每个 committed 句子 / tail / 补齐的 remainder：句子
 - 参数形状错误、草稿本身不合法（空 / 超长 / 控制字符 / 正则编译失败 / TOML 解析失败）在 bridge 的 `into_core` 里**同步**拒绝，webview 的 `invoke` 直接收到错误文本；依赖现有列表的校验（重复、上限、未知 id、排列不完整）由核心执行，失败以 `error` 事件报告、列表不变。错误文本前缀 `dictionary:` / `rules:`，细节中文，正则编译错误附 `regex` crate 的原文。
 - 两个查询由 shell 用 bridge 缓存的 `UiState.dictionary` / `UiState.rules` 调用核心的纯函数（`Vocabulary::compile` + `preview`、`export_rules_toml`），与流水线同一份代码。`vocabulary_preview` 的 `draft` 表示「假如这条规则已保存」：`id` 相同的规则被它替换，`id = null` 时追加到末尾（它的命中记在 nil UUID 下）；草稿编译失败则查询返回错误——规则编辑器用它做保存前的即时校验。`corrected` = 词典纠正后，`output` = 再经规则后（试写不跑 LLM 润色）；某一步回退到它的输入时（输出膨胀超限等，与流水线相同）给出 `error`（原因文本，缺省不上 wire）。输入超过 `MAX_TEXT_BYTES` 时查询报错。
 - 事件：`UiEvent::Dictionary { entries }`、`UiEvent::Rules { rules }`（全量替换，`Ready` 后各一次、每次变更后一次）；`UiState` 新增 `dictionary`、`rules`（`#[serde(default)]`）。
-- 手机端：11 条命令全部返回 `Err("vocabulary: 手机端不支持个人词典与替换规则")`，界面没有词典 / 规则页；核心在手机上照常加载（空）两个文件。
+- 手机端（2026-10-01 起）：命令与查询和桌面相同，作用于手机自己识别的录音；界面见 §16.6。
 
 ### 16.5 TOML 导入 / 导出（只针对规则表）
 
@@ -884,6 +884,7 @@ case_sensitive = false
 - **历史页**：详情显示本次触发的词典纠正与规则（按当前列表取名称，已删除的显示「已删除的词条 / 规则」）；「加入词典」打开对话框（曾听成用条目原文或终稿里的当前选区预填，正确写法手填），提交 `dictionary_add { historyId }`；核心拒绝时对话框保持打开并显示原因。
 - **侧栏**：历史、词典、规则的计数都来自核心列表，为 0 时不显示。
 - 旧的示例数据与占位全部移除：`fixtures/{dictionary,rules}.ts`、`features/scope/sample-dictionary.ts`、TS 的 `runDryRun` / `matchHotwords` / `chineseNumberToInt`、所有「尚未接入」按钮（CSV 导入导出、规则集切换、复制为规则、权重、作用域、预算、逐阶段视图、CLI 命令行）。
+- **手机**（2026-10-01，用户决定手机除本地模型外功能齐全）：设置 › 「词典、规则与场景」下的「个人词典」「替换规则」两页（`apps/mobile/src/screens/{Dictionary,Rules}.tsx`）读写同一套 `dictionary_*` / `rules_*` 命令，作用于手机自己识别的录音。列表每行一个启用开关，点开是编辑对话框（词典：正确写法、曾听成、上移下移、删除；规则：名称、字面 / 正则、匹配、替换、区分大小写、「试一试」，同样由 `vocabulary_preview` 带草稿让核心判定正则）；本地检查与桌面共用 `@voltip/shared` 的 `dictionaryDraftProblem` / `ruleDraftProblem`。「导入 TOML」与「导出 TOML」用 `@voltip/ui` 的 `RulesImportDialog` / `RulesExportDialog`（与桌面相同），导出的文本在手机上可以复制（`paste_text` 写进剪贴板）或经系统分享面板发出（`phone_share_text`）。手机没有命中统计与历史页的「加入词典」（随 M6b-3 的历史页加入）。
 - `MockBackend` 按本节语义在内存里模拟（`packages/shared/src/vocabulary.ts`：同样的上限、校验与拒绝文本、ASCII 词边界与大小写、最长优先、规则顺序、空匹配忽略、TOML 子集的导入导出与错误定位；一次模拟听写同样先纠正再润色再跑规则，并记录命中）；它的正则走 JS `RegExp`（额外拒绝环视与反向引用以贴近 Rust 方言）——桌面端永远问 Rust。
 
 ### 16.7 门禁
@@ -1085,11 +1086,12 @@ UiEvent::Scenes { scenes }                                                   // 
 | `scenes_remove` | `ScenesRemove` | `id` | |
 | `scenes_reorder` | `ScenesReorder` | `ids: uuid[]` | 必须恰好是现有 id 的一个排列 |
 | `settings_set_context_sharing` | `SettingsSetContextSharing` | `appName: bool`，`windowTitle: bool` | 持久化并回发 `settings` |
+| `settings_set_pinned_scene` | `SettingsSetPinnedScene` | `id: uuid \| null` | 手机上说话时用的场景（§18.11），持久化为 `Settings.pinned_scene` 并回发 `settings`；`null` 表示不使用场景 |
 | `recent_apps` | —（查询） | 无 | `AppRef[]`：历史里出现过的应用，最新在前，按 id 去重，≤ 20 |
 
 - 草稿本身不合法（空 / 超长 / 控制字符 / 应用 id 无效、重复或过多 / 语言代码无效 / 未知字段）在 bridge 的 `into_core` 里同步拒绝，webview 的 `invoke` 直接收到错误；依赖现有列表的校验（重名、上限、未知 id、排列不完整）由核心执行，失败以 `error` 事件报告、列表不变。错误前缀 `scenes:`，细节中文。
 - `recent_apps` 由 bridge 的只读连接直接读库（`HistoryReader::recent_apps`，§4.4）；2026-09-30 之前用缓存的 `UiState.history` 计算。
-- 手机端：6 条命令 / 查询全部返回 `Err("scenes: 手机端不支持场景与上下文")`，没有探针；核心照常加载（空）`scenes.json`，`UiState.scenes = []`。
+- 手机端：命令与查询和桌面相同，规则见 §18.11；手机没有前台探针，`settings_set_context_sharing` 照常保存但不起作用。
 
 ### 18.7 前端
 
@@ -1107,7 +1109,7 @@ Rust：`scenes` 单测（校验与规范形式、上限、应用 id 规范化、
 
 ### 18.9 未做
 
-浏览器 URL 匹配（macOS 要 AppleScript 与自动化授权，Windows 要 UIA，Linux 无通用办法）；选中文本 / 剪贴板 / 截图 OCR 作为上下文；口令切换场景；默认场景；按场景切换识别引擎或模型、按场景的替换规则集；macOS 窗口标题（辅助功能权限）；Windows 用 exe 的 `FileDescription` 作显示名；纯 Wayland 探测；手机端。
+浏览器 URL 匹配（macOS 要 AppleScript 与自动化授权，Windows 要 UIA，Linux 无通用办法）；选中文本 / 剪贴板 / 截图 OCR 作为上下文；口令切换场景；默认场景；按场景切换识别引擎或模型、按场景的替换规则集；macOS 窗口标题（辅助功能权限）；Windows 用 exe 的 `FileDescription` 作显示名；纯 Wayland 探测；手机按应用匹配（手机无法得知文字进了哪个应用，改为手动选择，§18.11）。
 
 ### 18.10 内置场景（2026-09-29）
 
@@ -1121,7 +1123,7 @@ Rust：`scenes` 单测（校验与规范形式、上限、应用 id 规范化、
 | `legal` `medical` `finance` `academic` | 法律 / 医疗 / 金融 / 学术 | 校对 | 严格校对，保持专业术语原样；数字、单位、日期写规范，另加一句该领域的说明 | 无，用户添加自己用的软件后才生效 |
 
 - 默认应用按平台列出（`scenes/builtin.rs`：Windows 的 exe 名、macOS 的 bundle id、Linux 的 X11 `WM_CLASS`），经 `normalize_app_id` 规范化；取哪一套由核心所在的主机决定（`Platform::current()`）。
-- **补齐**：`SceneStore` 打开时，缺哪个分类就在表尾补上（关闭状态），再写回文件，所以 id 在重启之间不变；已存在的分类不重复补，旧字段一个不改，旧 `scenes.json` 照常读。手机端的核心不补（`CoreConfig.builtin_scenes = false`）。
+- **补齐**：`SceneStore` 打开时，缺哪个分类就在表尾补上（关闭状态），再写回文件，所以 id 在重启之间不变；已存在的分类不重复补，旧字段一个不改，旧 `scenes.json` 照常读。手机端也补齐，只是不带默认应用（§18.11）。
 - **顺序**：补上的内置场景排在用户场景之后；之后用户新建的场景插在第一个内置场景之前，所以默认用户场景先匹配；用户可以用上移 / 下移调整。关闭的、或应用列表为空的内置场景永不匹配。
 - **规则**（核心与 bridge）：
   - 内置场景可以关闭、修改应用 / 预设 / 补充要求，也可以恢复默认（`scenes_restore { id }`：应用和覆盖项恢复为模板，开关、位置、id 不变；对用户场景返回「只有内置场景可以恢复默认」）；
@@ -1129,10 +1131,19 @@ Rust：`scenes` 单测（校验与规范形式、上限、应用 id 规范化、
   - 只有内置场景允许应用列表为空：bridge 对 `scenes_update` 的同步校验不要求应用（`validate_scene_draft_with(draft, false)`），由核心按场景判断；`scenes_add` 仍然要求至少一个应用；
   - `MAX_SCENES` 和名称唯一只算用户场景；同一分类最多一个、内置场景的 `name` 必须是分类名，否则整个文件按「无法使用」处理。
 - `SceneRef.builtin`：状态与历史里的场景引用带上分类，界面据此显示本地化名称（`sceneLabel`，历史搜索两种语言的名称都能搜到）。
-- **术语包**（`voltip_core::vocabulary::packs`）：coding、office、legal、medical、finance、academic 各 40–80 个手工整理的术语（即时聊天没有）。某个内置场景匹配时，它的术语排在个人词典之后并入这一次的术语表（`Vocabulary::with_terms`）：与已有术语重复（忽略 ASCII 大小写）的跳过，仍受 200 个 / 1000 字符的上限约束（第一个放不下的术语结束本次追加），不占个人词典的 500 条名额。查询 `scenes_builtin` 返回 `[{ id, terms }]`（查看术语用）；手机端拒绝。
+- **术语包**（`voltip_core::vocabulary::packs`）：coding、office、legal、medical、finance、academic 各 40–80 个手工整理的术语（即时聊天没有）。某个内置场景匹配时，它的术语排在个人词典之后并入这一次的术语表（`Vocabulary::with_terms`）：与已有术语重复（忽略 ASCII 大小写）的跳过，仍受 200 个 / 1000 字符的上限约束（第一个放不下的术语结束本次追加），不占个人词典的 500 条名额。查询 `scenes_builtin` 返回 `[{ id, terms }]`（查看术语用），手机端相同。
 - **界面**：设置 › 场景的卡片里，内置场景显示本地化名称、「内置」标记、一句说明、「术语 N 个 · 查看术语」（对话框列出全部术语），没有删除按钮；领域场景没有应用时显示「添加应用后生效」。编辑器里名称只读，应用可以为空，多一个「恢复默认」（确认后发 `scenes_restore`）。页脚写「自建场景最多 50 个」。
 - `MockBackend`：从 `packages/shared/src/fixtures/ipc/scenes-builtin.json` 读模板和术语（`crates/voltip-tauri-bridge/tests/contract.rs` 让它与核心一致，`UPDATE_IPC_FIXTURES=1` 再生），按身份的平台补齐，id 按分类固定；同样的拒绝文本与插入位置。
 - 测试：补齐（缺失时补上且关闭、已存在不重复、旧文件能读、写回后 id 不变）、重启回归（应用为空的内置场景与同名用户场景都原样保留，不隔离）、删除和改名被拒、更新保留分类、恢复默认、用户场景优先、关闭或无应用的内置场景不匹配、术语表拼接与上限（`vocabulary/tests.rs`、`engine.rs`）、经 runtime 的整条链路（`tests/scenes.rs`）、IPC 命令（`apps/desktop/src-tauri/tests/ipc.rs`）、界面的开关与恢复默认（`ScenesPane.test.tsx`）。
+
+### 18.11 手机上的场景（2026-10-01）
+
+用户 2026-10-01 决定手机除本地模型外功能齐全，场景也在内。手机无法得知文字进了哪个应用，所以场景在手机上不按应用匹配，由用户在说话卡片上手动选择。
+
+- **列表规则**（`voltip_core::scenes::scenes_need_apps(platform)`：Android、iOS 为 false）：手机的场景表补齐全部内置场景，但不带默认应用（`BuiltinScene::template(Platform::Android)`）；用户场景可以不写应用，`scenes_add` 在 bridge 和核心两处都不要求应用（`Bridge` 按 `!CoreConfig.manual_scenes` 选 `into_core_for`）。手机壳设 `CoreConfig.manual_scenes = true`，核心据此按 Android 的规则打开场景表，与测试运行在哪个主机上无关。
+- **选中的场景**：`Settings.pinned_scene: Option<Uuid>`（`#[serde(default, skip_serializing_if = "Option::is_none")]`，旧文件照常读），由 `settings_set_pinned_scene { id | null }` 写入。核心在没有前台探针时（手机）于录音开始前取这个场景，像匹配到的场景一样生效：润色开关与预设、语言、中文字形、补充要求、内置场景的术语包；场景的启用开关在手机上不起作用。列表里已经没有这个 id 时按没有场景处理。状态里没有 `context`（没有应用可写），历史记下 `scene`、不记 `app`。有探针的桌面始终按前台应用匹配，`pinned_scene` 对它无效。
+- **界面**：说话卡片上方一个「场景」选择框（`apps/mobile/src/screens/PhoneMic.tsx` 的 `ScenePicker`）：「不使用场景」与全部场景；录音或处理中不可改；已删除的场景显示为「不使用场景」。设置 › 「场景」页（`apps/mobile/src/screens/Scenes.tsx`）用与桌面相同的卡片和编辑器（`@voltip/ui` 的 `SceneCards`、`SceneEditor`，`matchApps={false}`、`outputModes={false}`）：没有序号、启用开关、上移下移和应用 / 标题关键词，也没有输出方式（手机只把结果复制到剪贴板，没有流式模型）；内置场景照样可以编辑、恢复默认和查看术语。设置页的「场景」一行显示当前选中的场景。
+- **门禁**：`scenes/tests.rs@a_phone_keeps_the_builtin_scenes_and_scenes_without_applications`、`scenes/builtin.rs` 的平台表、`engine.rs@without_a_probe_a_take_runs_with_the_pinned_scene`、手机 `tests/ipc.rs`（词典、规则、场景与 `settings_set_pinned_scene` 经 bridge 到达核心）；TS `packages/shared/src/scene-drafts.test.ts`（手机的场景不要求应用）、`packages/ui/src/features/scenes/Scenes.test.tsx`（桌面与手机两种卡片和编辑器）、`apps/mobile/src/screens/Vocabulary.test.tsx`（三页与说话卡片的选择，选中的场景作用于一次听写）。
 
 ## 19. 语音编辑选中文本（2026-09-26）
 
@@ -1316,7 +1327,8 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
   - 界面语言、主题（`settings_set_locale`、`settings_set_theme`）与单次录音最长时间（`settings_set_recording`）；
   - 「关于」：版本、许可证（AGPL-3.0-or-later）、源代码与发布页（`project_link_open`）。
   - 界面与桌面共用 `@voltip/ui` 的服务商卡片（`ProviderCard`）、预设区（`PresetsSection`、`PresetEditor`）与中文字形（`ChineseScript`），它们经 `FeatureShellProvider` 用各自应用的提示与确认框。手机界面加了底部标签栏「说话」「设置」，「返回」回到打开当前页的那一页。
-  - 词典、规则、场景与完整的历史页随后分两批加入（计划 M6b-2、M6b-3）；在此之前，这些命令在手机上照旧拒绝。
+  - 词典、替换规则与场景（M6b-2，§16.6、§18.11）：命令与桌面相同，场景改为在说话卡片上手动选择；
+  - 完整的历史页、统计与反馈随后加入（M6b-3）。
 - **命令**：`dictation_start`（Android 上先申请麦克风权限，被拒时回 `MICROPHONE_DENIED`，与 `phone_take_start` 相同）/ `dictation_stop` / `dictation_cancel` 交给核心；`hotkey_edge` 仍被拒（`HOTKEY_UNAVAILABLE`，手机没有快捷键）。`paste_text` 在手机上把文字写进剪贴板，回 `copied { clipboard_only }`。新命令 `phone_share_text { text }` 经 `SharePlugin.kt`（`ACTION_SEND`）打开系统分享面板，文字须非空白、不超过 `MAX_PASTE_TEXT_CHARS`；桌面壳回 `SHARE_UNAVAILABLE`。
 - **历史**：结果进手机自己的 `history.sqlite3`（`origin` 为空：本机产生）；`history_query` / `history_entry` / `history_stats` / `history_hits` 与桌面一样经 bridge 读取。发给电脑的听写记在电脑的历史里，不在手机上。
 - **长录音**：手机的采集与桌面一样提供整段录音的流（`pcm_stream`），内存里只留前两分钟，超过时核心按 §22 写录音文件并分段识别。
@@ -1356,7 +1368,7 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 | `presets_try { id, preset?, prompt?, text }` | 试运行：`preset` 与 `prompt` 恰好一个（已保存的预设，或正在编辑的提示词），`text` 去首尾空白后 1–2000 字符；用当前的 AI 润色服务跑一次，不保存、不写历史；答复是带同一个 `id` 的 `preset_try` 事件（`ok { text, latency_ms, model }` 或 `failed { reason }`）；没有配置润色服务时立即 `failed` |
 | `presets_builtin`（查询） | 每个内置预设的正文（不含输出约定），「复制为自定义」从这里开始；`packages/shared/src/fixtures/ipc/presets-builtin.json` 与它一致（`cargo test -p voltip-desktop --test ipc`，`UPDATE_IPC_FIXTURES=1` 再生），预览用的 mock 读这个文件 |
 
-手机端对这些命令一律回「手机端不支持 AI 预设」。
+手机端与桌面相同（§20.7）。
 
 ### 21.5 界面
 

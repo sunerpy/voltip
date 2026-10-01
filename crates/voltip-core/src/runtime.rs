@@ -109,9 +109,13 @@ pub struct CoreConfig {
     /// Run takes whose audio a trusted phone streams (docs/dictation.md §20): the desktop yes,
     /// the phone no (it answers `unavailable`).
     pub accepts_phone_takes: bool,
-    /// Keep the built-in scenes in the scene list (docs/dictation.md §18.10): the desktop yes, with
-    /// this host's default applications; the phone, which has no scenes, no.
+    /// Keep the built-in scenes in the scene list (docs/dictation.md §18.10), with this host's
+    /// default applications.
     pub builtin_scenes: bool,
+    /// The phone (user decision 2026-10-01): the user picks a take's scene (`Settings.pinned_scene`),
+    /// so the scene list follows a phone's rules — built-in scenes without applications, and a scene
+    /// of the user's need not name one — whatever host the tests run on.
+    pub manual_scenes: bool,
     /// LAN discovery (docs/pairing.md 「局域网发现」): the shells pass [`crate::discovery::MdnsDiscovery`],
     /// the tests an in-memory LAN; `None` announces and browses nothing.
     pub discovery: Option<Arc<dyn crate::discovery::Discovery>>,
@@ -137,6 +141,7 @@ impl CoreConfig {
             peer_handshake_timeout: Duration::from_secs(15),
             accepts_phone_takes: true,
             builtin_scenes: true,
+            manual_scenes: false,
             discovery: None,
         }
     }
@@ -419,6 +424,9 @@ pub enum CoreCommand {
     },
     /// Which parts of a take's context may go to the LLM (persisted; the next take follows).
     SetContextSharing(ContextSharing),
+    /// The scene a take runs with where no foreground probe picks one (persisted; the next take
+    /// follows).
+    SetPinnedScene(Option<Uuid>),
     /// Stop the core.
     Shutdown,
 }
@@ -601,7 +609,13 @@ impl AppCore {
         let sent_texts = crate::phone::SentTexts::open(&config.data_dir);
         let (dictionary, dictionary_notice) = DictionaryStore::open(&config.data_dir);
         let (rules, rules_notice) = RuleStore::open(&config.data_dir);
-        let scene_host = if config.builtin_scenes { voltip_protocol::Platform::current() } else { voltip_protocol::Platform::Other };
+        let scene_host = if config.manual_scenes {
+            voltip_protocol::Platform::Android
+        } else if config.builtin_scenes {
+            voltip_protocol::Platform::current()
+        } else {
+            voltip_protocol::Platform::Other
+        };
         let (scenes, scenes_notice) = SceneStore::open_on(&config.data_dir, scene_host, now_ms());
         let (presets, presets_notice) = PresetStore::open(&config.data_dir);
         let built_in = BuiltIn::from_build();
@@ -616,6 +630,7 @@ impl AppCore {
         dictation.set_scenes(Arc::new(scenes.scenes().to_vec()));
         dictation.set_presets(Arc::new(presets.presets().to_vec()));
         dictation.set_context_sharing(settings.context_sharing);
+        dictation.set_pinned_scene(settings.pinned_scene);
         dictation.set_microphone(settings.microphone.clone());
         dictation.set_recording(settings.recording.clone());
         // docs/dictation.md §22: a recording file left behind means the last run ended mid-take;
@@ -1313,6 +1328,11 @@ impl Runtime {
             CoreCommand::SetContextSharing(sharing) => {
                 self.settings.context_sharing = sharing;
                 self.dictation.set_context_sharing(sharing);
+                self.save_settings()
+            }
+            CoreCommand::SetPinnedScene(id) => {
+                self.settings.pinned_scene = id;
+                self.dictation.set_pinned_scene(id);
                 self.save_settings()
             }
             CoreCommand::Shutdown => Ok(()),

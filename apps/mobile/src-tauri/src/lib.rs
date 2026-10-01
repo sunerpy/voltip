@@ -32,7 +32,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 99] = [
+pub const COMMANDS: [&str; 100] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -122,6 +122,7 @@ pub const COMMANDS: [&str; 99] = [
     "presets_try",
     "presets_builtin",
     "settings_set_context_sharing",
+    "settings_set_pinned_scene",
     "recent_apps",
     "history_query",
     "history_entry",
@@ -148,7 +149,8 @@ pub fn production_config<R: Runtime>(app: &AppHandle<R>) -> CoreConfig {
     config.app_version = app.package_info().version.to_string();
     // The phone is the microphone; a desktop records its takes, never the other way round.
     config.accepts_phone_takes = false;
-    config.builtin_scenes = false;
+    // The user picks a take's scene on the talk card (no foreground probe on a phone).
+    config.manual_scenes = true;
     // LAN discovery (docs/pairing.md 「局域网发现」): Android drops multicast without the lock,
     // held while the switch is on.
     let discovering = voltip_core::SettingsStore::new(&config.data_dir).load().map_or(true, |s| s.lan_discovery);
@@ -612,109 +614,125 @@ fn model_remove(_id: String) -> Result<(), String> {
     Err(MODELS_UNAVAILABLE.to_owned())
 }
 
-/// The phone has no dictation pipeline, so no personal dictionary or replacement rules
-/// (docs/dictation.md §16.4): every vocabulary verb and query refuses honestly.
-pub const VOCABULARY_UNAVAILABLE: &str = "vocabulary: 手机端不支持个人词典与替换规则";
+// The phone's own dictionary, rules and scenes (user decision 2026-10-01: the phone has every
+// setting but the local models), handed to the core like the desktop's (docs/dictation.md §16, §18).
+// A phone has no foreground probe: the user picks a take's scene (`settings_set_pinned_scene`).
 
 #[tauri::command]
-fn dictionary_add(entry: DictionaryDraft, history_id: Option<String>) -> Result<(), String> {
-    tracing::debug!(chars = entry.term.chars().count(), from_history = history_id.is_some(), "dictionary_add refused on mobile");
-    Err(VOCABULARY_UNAVAILABLE.to_owned())
+fn dictionary_add(bridge: tauri::State<'_, Bridge>, entry: DictionaryDraft, history_id: Option<String>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::DictionaryAdd { entry, history_id })?)
 }
 
 #[tauri::command]
-fn dictionary_update(_id: String, _entry: DictionaryDraft) -> Result<(), String> {
-    Err(VOCABULARY_UNAVAILABLE.to_owned())
+fn dictionary_update(bridge: tauri::State<'_, Bridge>, id: String, entry: DictionaryDraft) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::DictionaryUpdate { id, entry })?)
 }
 
 #[tauri::command]
-fn dictionary_remove(_id: String) -> Result<(), String> {
-    Err(VOCABULARY_UNAVAILABLE.to_owned())
+fn dictionary_remove(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::DictionaryRemove { id })?)
 }
 
 #[tauri::command]
-fn dictionary_reorder(_ids: Vec<String>) -> Result<(), String> {
-    Err(VOCABULARY_UNAVAILABLE.to_owned())
+fn dictionary_reorder(bridge: tauri::State<'_, Bridge>, ids: Vec<String>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::DictionaryReorder { ids })?)
 }
 
 #[tauri::command]
-fn rules_add(_rule: RuleDraft) -> Result<(), String> {
-    Err(VOCABULARY_UNAVAILABLE.to_owned())
+fn rules_add(bridge: tauri::State<'_, Bridge>, rule: RuleDraft) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::RulesAdd { rule })?)
 }
 
 #[tauri::command]
-fn rules_update(_id: String, _rule: RuleDraft) -> Result<(), String> {
-    Err(VOCABULARY_UNAVAILABLE.to_owned())
+fn rules_update(bridge: tauri::State<'_, Bridge>, id: String, rule: RuleDraft) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::RulesUpdate { id, rule })?)
 }
 
 #[tauri::command]
-fn rules_remove(_id: String) -> Result<(), String> {
-    Err(VOCABULARY_UNAVAILABLE.to_owned())
+fn rules_remove(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::RulesRemove { id })?)
 }
 
 #[tauri::command]
-fn rules_reorder(_ids: Vec<String>) -> Result<(), String> {
-    Err(VOCABULARY_UNAVAILABLE.to_owned())
+fn rules_reorder(bridge: tauri::State<'_, Bridge>, ids: Vec<String>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::RulesReorder { ids })?)
+}
+
+/// Import rules from pasted TOML (`replace` | `merge`, docs/dictation.md §16.5).
+#[tauri::command]
+fn rules_import(bridge: tauri::State<'_, Bridge>, toml: String, mode: ImportMode) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::RulesImport { toml, mode })?)
+}
+
+/// Query: the rules as TOML text (the phone hands it to the share sheet).
+#[tauri::command]
+fn rules_export(bridge: tauri::State<'_, Bridge>) -> Result<String, String> {
+    Ok(bridge.rules_export()?)
+}
+
+/// Query: `text` through the dictionary and the rules with the pipeline's own code.
+#[tauri::command]
+fn vocabulary_preview(bridge: tauri::State<'_, Bridge>, text: String, draft: Option<PreviewDraft>) -> Result<VocabularyPreview, String> {
+    Ok(bridge.vocabulary_preview(&text, draft.as_ref())?)
 }
 
 #[tauri::command]
-fn rules_import(_toml: String, _mode: ImportMode) -> Result<(), String> {
-    Err(VOCABULARY_UNAVAILABLE.to_owned())
+fn scenes_add(bridge: tauri::State<'_, Bridge>, scene: SceneDraft) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ScenesAdd { scene })?)
 }
 
 #[tauri::command]
-fn rules_export() -> Result<String, String> {
-    Err(VOCABULARY_UNAVAILABLE.to_owned())
+fn scenes_update(bridge: tauri::State<'_, Bridge>, id: String, scene: SceneDraft) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ScenesUpdate { id, scene })?)
 }
 
 #[tauri::command]
-fn vocabulary_preview(_text: String, _draft: Option<PreviewDraft>) -> Result<VocabularyPreview, String> {
-    Err(VOCABULARY_UNAVAILABLE.to_owned())
-}
-
-/// The phone has no dictation pipeline and no foreground probe, so no scenes and no context for an
-/// LLM (docs/dictation.md §18.6): every scene verb, the context switch and the query refuse honestly.
-pub const SCENES_UNAVAILABLE: &str = "scenes: 手机端不支持场景与上下文";
-
-#[tauri::command]
-fn scenes_add(scene: SceneDraft) -> Result<(), String> {
-    tracing::debug!(apps = scene.matching.apps.len(), "scenes_add refused on mobile");
-    Err(SCENES_UNAVAILABLE.to_owned())
+fn scenes_remove(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ScenesRemove { id })?)
 }
 
 #[tauri::command]
-fn scenes_update(_id: String, _scene: SceneDraft) -> Result<(), String> {
-    Err(SCENES_UNAVAILABLE.to_owned())
+fn scenes_reorder(bridge: tauri::State<'_, Bridge>, ids: Vec<String>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ScenesReorder { ids })?)
 }
 
+/// 恢复默认 on a built-in scene (docs/dictation.md §18.10).
 #[tauri::command]
-fn scenes_remove(_id: String) -> Result<(), String> {
-    Err(SCENES_UNAVAILABLE.to_owned())
+fn scenes_restore(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ScenesRestore { id })?)
 }
 
-#[tauri::command]
-fn scenes_reorder(_ids: Vec<String>) -> Result<(), String> {
-    Err(SCENES_UNAVAILABLE.to_owned())
+/// One built-in scene's term pack, what 查看术语 lists.
+#[derive(serde::Serialize)]
+struct BuiltinSceneTerms {
+    id: voltip_core::BuiltinScene,
+    terms: &'static [&'static str],
 }
 
+/// Query: every built-in scene's term pack (§18.10), in the order the scene list appends them.
 #[tauri::command]
-fn scenes_restore(_id: String) -> Result<(), String> {
-    Err(SCENES_UNAVAILABLE.to_owned())
+fn scenes_builtin() -> Vec<BuiltinSceneTerms> {
+    voltip_core::BuiltinScene::ALL.into_iter().map(|id| BuiltinSceneTerms { id, terms: voltip_core::vocabulary::packs::terms(id) }).collect()
 }
 
+/// What of a take's context may go to the LLM (§18.5); the phone names no application, but the
+/// setting is shared state like the desktop's.
 #[tauri::command]
-fn scenes_builtin() -> Result<Vec<()>, String> {
-    Err(SCENES_UNAVAILABLE.to_owned())
+fn settings_set_context_sharing(bridge: tauri::State<'_, Bridge>, app_name: bool, window_title: bool) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetContextSharing { app_name, window_title })?)
 }
 
+/// The scene the phone's takes run with (the talk card's choice); `None` = no scene.
 #[tauri::command]
-fn settings_set_context_sharing(_app_name: bool, _window_title: bool) -> Result<(), String> {
-    Err(SCENES_UNAVAILABLE.to_owned())
+fn settings_set_pinned_scene(bridge: tauri::State<'_, Bridge>, id: Option<String>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetPinnedScene { id })?)
 }
 
+/// Query: the applications the history saw, newest first: none on a phone, which names no
+/// application (the scene editor's picker on the desktop, §18.6).
 #[tauri::command]
-fn recent_apps() -> Result<Vec<AppRef>, String> {
-    Err(SCENES_UNAVAILABLE.to_owned())
+async fn recent_apps(bridge: tauri::State<'_, Bridge>) -> Result<Vec<AppRef>, String> {
+    history_read(&bridge, Bridge::recent_apps).await
 }
 
 /// A history read on a blocking thread (it opens the database).
@@ -1024,6 +1042,7 @@ pub fn build_app<R: Runtime>(
             scenes_restore,
             scenes_builtin,
             settings_set_context_sharing,
+            settings_set_pinned_scene,
             recent_apps,
             history_query,
             history_entry,

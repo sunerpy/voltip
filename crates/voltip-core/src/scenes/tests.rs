@@ -482,3 +482,24 @@ fn user_scenes_come_first_and_an_off_or_empty_builtin_scene_never_matches() {
     assert_eq!(to_ref.builtin, Some(BuiltinScene::Coding));
     assert!(serde_json::to_string(&to_ref).unwrap().ends_with(r#""name":"coding","builtin":"coding"}"#));
 }
+
+/// The phone (user decision 2026-10-01): its list holds the built-in scenes without applications,
+/// and a scene of the user's need not name one — the user picks a take's scene there. A desktop
+/// still refuses a scene of the user's without an application.
+#[test]
+fn a_phone_keeps_the_builtin_scenes_and_scenes_without_applications() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut phone, notice) = SceneStore::open_on(dir.path(), Platform::Android, 5);
+    assert!(notice.is_none());
+    assert_eq!(phone.scenes().iter().map(|s| s.builtin).collect::<Vec<_>>(), BuiltinScene::ALL.map(Some));
+    assert!(phone.scenes().iter().all(|s| s.matching.apps.is_empty()));
+    let id = phone.add(&draft("会议", &[], &[]), 6).unwrap();
+    assert!(phone.scenes().iter().any(|s| s.id == id && s.matching.apps.is_empty()));
+    phone.update(id, &draft("会议纪要", &[], &[]), 7).unwrap();
+    let (again, notice) = SceneStore::open_on(dir.path(), Platform::Android, 8);
+    assert!(notice.is_none(), "the saved list is valid on the phone");
+    assert!(again.scenes().iter().any(|s| s.id == id && s.name == "会议纪要"));
+    let desktop = tempfile::tempdir().unwrap();
+    let (mut store, _) = SceneStore::open_on(desktop.path(), Platform::Windows, 5);
+    assert!(matches!(store.add(&draft("会议", &[], &[]), 6), Err(SceneError::Invalid(m)) if m.contains("至少要有一个应用")));
+}

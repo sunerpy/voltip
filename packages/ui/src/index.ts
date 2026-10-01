@@ -53,3 +53,8 @@ export * from "./features/shell";
 export * from "./features/presets/usePresetTrial";
 export * from "./features/presets/PresetEditor";
 export * from "./features/presets/PresetsSection";
+export * from "./features/vocabulary/usePreview";
+export * from "./features/vocabulary/useHitTotals";
+export * from "./features/scenes/SceneEditor";
+export * from "./features/scenes/SceneCards";
+export * from "./features/rules/RulesTransfer";

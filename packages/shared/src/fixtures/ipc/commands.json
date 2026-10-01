@@ -484,6 +484,12 @@
   },
   {
     "args": {
+      "id": "0f3f1a1e-8d4b-4c8e-9f7a-1c2d3e4f5a6b"
+    },
+    "name": "settings_set_pinned_scene"
+  },
+  {
+    "args": {
       "active": true
     },
     "name": "hotkey_capture"

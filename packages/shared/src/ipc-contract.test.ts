@@ -158,6 +158,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   presets_remove: null,
   presets_try: null,
   settings_set_context_sharing: null,
+  settings_set_pinned_scene: null,
 };
 const MUTATION_COMMANDS = Object.keys(MUTATION_COMMAND_SET);
 
@@ -261,6 +262,7 @@ const argSchemas = {
   settings_set_context_sharing: z
     .object({ appName: z.boolean(), windowTitle: z.boolean() })
     .strict(),
+  settings_set_pinned_scene: z.object({ id: z.string().nullable() }).strict(),
 } satisfies {
   [C in MutationCommand as CommandArgs[C] extends undefined ? never : C]: z.ZodType<CommandArgs[C]>;
 };
@@ -396,6 +398,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.history_process_cancel.parse(args));
     case "settings_set_context_sharing":
       return backend.invoke(name, argSchemas.settings_set_context_sharing.parse(args));
+    case "settings_set_pinned_scene":
+      return backend.invoke(name, argSchemas.settings_set_pinned_scene.parse(args));
   }
 }
 

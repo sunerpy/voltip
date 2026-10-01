@@ -469,6 +469,9 @@ export const settingsSchema = z.object({
   /** Keep a pairing open on this desktop until turned off (docs/pairing.md 「常开配对」); off by
    *  default and in an older `settings.json`. */
   pairing_always_on: z.boolean().default(false),
+  /** The scene a take runs with where no foreground probe picks one (the phone's talk card, user
+   *  decision 2026-10-01); absent = no scene. */
+  pinned_scene: z.string().optional(),
   history: historySettingsSchema.default(() => ({ enabled: true, keep: 20_000 })),
   overlay: overlayPlacementSchema.default("bottom"),
   /** The microphone takes record from: an `audio_devices` id, or `null` for the system default.
@@ -2114,6 +2117,8 @@ export interface CommandArgs {
   presets_builtin: undefined;
   /** Which parts of a take's context may go to the LLM (§18.5); the core re-emits `settings`. */
   settings_set_context_sharing: SetContextSharingArgs;
+  /** The scene the phone's takes run with (its talk card, §18); `null` = no scene. */
+  settings_set_pinned_scene: { id: string | null };
   /** Query: the apps the history saw, newest first (`Backend.recentApps`, the scene editor). */
   recent_apps: undefined;
   /** Query (docs/dictation.md §4.4): a page of the history (`Backend.historyQuery`). */
