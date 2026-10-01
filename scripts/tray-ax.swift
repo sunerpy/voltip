@@ -8,6 +8,12 @@
 //   tray-ax <pid> submenu <title>    open the submenu of the entry <title>, print its entries
 //                                    (a checked one as "<entry><TAB>✓"), close the menu
 //   tray-ax <pid> press-sub <title> <entry>  open that submenu and choose <entry>
+//   tray-ax <pid> click              a real left click at the item's centre (mouse events, not an
+//                                    accessibility press); waits for a menu of the app to open,
+//                                    prints how many milliseconds after the click it did, closes it
+//   tray-ax <pid> doubleclick <ms>   a real double click at the item's centre; then "menu" when a
+//                                    menu of the app opened within <ms> (and closes it), else
+//                                    "no menu"
 //   tray-ax <pid> windows            the titles of the process's windows, one per line
 //   tray-ax <pid> close <title>      press the close button of the window titled <title>
 //   tray-ax <pid> dialog <name>      exit 0 when a window holds a dialog named <name>
@@ -126,7 +132,7 @@ if args.count == 3 && args[1] == "ink" {
 }
 
 guard args.count >= 3, let pid = pid_t(args[1]) else {
-    fail("usage: tray-ax <pid> frame|menu|press <title>|submenu <title>|press-sub <title> <entry>|windows|close <title>|chrome <title>|dialog <name>")
+    fail("usage: tray-ax <pid> frame|menu|press <title>|submenu <title>|press-sub <title> <entry>|click|doubleclick <ms>|windows|close <title>|chrome <title>|dialog <name>")
 }
 guard AXIsProcessTrusted() else { fail("this binary has no Accessibility permission") }
 let app = AXUIElementCreateApplication(pid)
@@ -136,6 +142,63 @@ func statusItem() -> AXUIElement {
     wait(15, "the status item") { () -> AXUIElement? in
         guard let bar = element(app, "AXExtrasMenuBar") else { return nil }
         return children(bar).first
+    }
+}
+
+/// The status item's menu. The accessibility tree carries it whether or not it is open (as it
+/// carries a menu bar's menus), so it says nothing about what the screen shows: `watchMenus`
+/// does.
+func openedMenu(_ item: AXUIElement) -> AXUIElement? {
+    children(item).first(where: { text($0, kAXRoleAttribute) == kAXMenuRole })
+}
+
+/// The first menu of the app that opened since `watchMenus`, and when (system uptime).
+var menuOpened: (menu: AXUIElement, at: TimeInterval)?
+
+/// Start listening for the app's AXMenuOpened notifications (the one VoiceOver announces a menu
+/// by); keep the observer until the listening is done.
+func watchMenus() -> AXObserver {
+    var made: AXObserver?
+    let created = AXObserverCreate(pid, { _, element, _, _ in
+        if menuOpened == nil { menuOpened = (element, ProcessInfo.processInfo.systemUptime) }
+    }, &made)
+    guard created == .success, let observer = made else { fail("cannot observe the app (\(created.rawValue))") }
+    let added = AXObserverAddNotification(observer, app, kAXMenuOpenedNotification as CFString, nil)
+    guard added == .success else { fail("cannot listen for the app's menus (\(added.rawValue))") }
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), .defaultMode)
+    return observer
+}
+
+/// Run the run loop (which delivers the notifications) until a menu opened or `seconds` passed.
+func awaitMenu(_ seconds: Double) {
+    let deadline = Date().addingTimeInterval(seconds)
+    while menuOpened == nil && Date() < deadline {
+        _ = CFRunLoopRunInMode(.defaultMode, 0.05, true)
+    }
+}
+
+/// Left-button mouse events at the status item's centre, as a hand makes them (the cursor moves
+/// there): `presses` clicks, the n-th carrying click count n, so AppKit sees a double click.
+/// `beforeLastUp` runs just before the last button-up is posted. The pauses are a hand's: a press
+/// held 40 ms, and 100 ms from one release to the next, well inside the shortest double-click
+/// interval System Settings offers.
+func clickItem(_ item: AXUIElement, presses: Int, beforeLastUp: () -> Void = {}) {
+    let (x, y, w, h) = frame(item)
+    let at = CGPoint(x: Double(x) + Double(w) / 2, y: Double(y) + Double(h) / 2)
+    func post(_ type: CGEventType, _ count: Int) {
+        guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: at, mouseButton: .left)
+        else { fail("cannot make a mouse event") }
+        event.setIntegerValueField(.mouseEventClickState, value: Int64(count))
+        event.post(tap: .cghidEventTap)
+    }
+    post(.mouseMoved, 0)
+    usleep(100_000)
+    for n in 1...presses {
+        post(.leftMouseDown, n)
+        usleep(40_000)
+        if n == presses { beforeLastUp() }
+        post(.leftMouseUp, n)
+        if n < presses { usleep(60_000) }
     }
 }
 
@@ -149,7 +212,7 @@ func openMenu() -> [AXUIElement] {
     let pressed = AXUIElementPerformAction(item, kAXPressAction as CFString)
     guard pressed == .success || pressed == .cannotComplete else { fail("pressing the status item failed (\(pressed.rawValue))") }
     return wait(5, "the status item's menu") { () -> [AXUIElement]? in
-        guard let menu = children(item).first(where: { text($0, kAXRoleAttribute) == kAXMenuRole }) else { return nil }
+        guard let menu = openedMenu(item) else { return nil }
         let entries = children(menu).filter { text($0, kAXRoleAttribute) == kAXMenuItemRole && !text($0, kAXTitleAttribute).isEmpty }
         return entries.isEmpty ? nil : entries
     }
@@ -174,7 +237,7 @@ func openSubmenu(_ title: String) -> [AXUIElement] {
 
 /// Close whatever menu the status item has open (a submenu closes with it).
 func cancelMenu() {
-    if let menu = children(statusItem()).first(where: { text($0, kAXRoleAttribute) == kAXMenuRole }) {
+    if let menu = openedMenu(statusItem()) {
         _ = AXUIElementPerformAction(menu, kAXCancelAction as CFString)
     }
 }
@@ -213,9 +276,7 @@ case "frame":
 case "menu":
     let entries = openMenu()
     for entry in entries { print(text(entry, kAXTitleAttribute)) }
-    if let menu = children(statusItem()).first(where: { text($0, kAXRoleAttribute) == kAXMenuRole }) {
-        _ = AXUIElementPerformAction(menu, kAXCancelAction as CFString)
-    }
+    cancelMenu()
 case "press":
     guard args.count == 4 else { fail("press needs a title") }
     let entries = openMenu()
@@ -240,6 +301,30 @@ case "press-sub":
     }
     let chosen = AXUIElementPerformAction(entry, kAXPressAction as CFString)
     guard chosen == .success else { fail("choosing '\(args[4])' failed (\(chosen.rawValue))") }
+case "click":
+    // Timed from just before the release the app answers, so the figure is never shorter than the
+    // app's wait.
+    let item = statusItem()
+    let observer = watchMenus()
+    var released = 0.0
+    clickItem(item, presses: 1) { released = ProcessInfo.processInfo.systemUptime }
+    awaitMenu(15)
+    guard let opened = menuOpened else { fail("no menu opened within 15 s of a click") }
+    print(Int((opened.at - released) * 1000))
+    _ = AXUIElementPerformAction(opened.menu, kAXCancelAction as CFString)
+    withExtendedLifetime(observer) {}
+case "doubleclick":
+    guard args.count == 4, let watch = Double(args[3]) else { fail("doubleclick needs how many ms to watch for a menu") }
+    let observer = watchMenus()
+    clickItem(statusItem(), presses: 2)
+    awaitMenu(watch / 1000)
+    if let opened = menuOpened {
+        _ = AXUIElementPerformAction(opened.menu, kAXCancelAction as CFString)
+        print("menu")
+    } else {
+        print("no menu")
+    }
+    withExtendedLifetime(observer) {}
 case "windows":
     for window in windows() { print(text(window, kAXTitleAttribute)) }
 case "wait-text":

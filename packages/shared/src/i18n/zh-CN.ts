@@ -445,7 +445,6 @@ export const zhCN = {
       testingHint: "说几句话，强度条应跟着跳动 · {n} 秒后自动停止",
       recordingHint: "强度来自这次听写的录音",
       devices: { one: "{n} 个输入设备", other: "{n} 个输入设备" },
-      switch: "选择设备",
       peak: "峰值 {value}",
     },
     engine: {
@@ -1075,6 +1074,14 @@ export const zhCN = {
       streaming: "实时预览",
       auxiliary: "辅助",
     },
+    /** The product behind a tier: the secondary text of the 语音模型 menu. */
+    family: {
+      "qwen3-asr-0_6b": "Qwen3-ASR 0.6B",
+      "qwen3-asr-1_7b": "Qwen3-ASR 1.7B",
+      "sense-voice-small": "SenseVoice Small",
+      "paraformer-zh": "Paraformer",
+      "zipformer-stream-zh-en": "Zipformer",
+    },
     name: {
       "qwen3-asr-0_6b": "均衡",
       "qwen3-asr-1_7b": "高精度",
@@ -1393,6 +1400,30 @@ export const zhCN = {
       saveContinue: "保存并继续",
       continue: "继续",
       finish: "完成设置",
+    },
+  },
+  /** The 语音模型 / AI 润色模型 / 麦克风 menus of the title bar and the home page (2026-09-30). */
+  switchers: {
+    speech: {
+      label: "语音模型",
+      trigger: "语音模型：{name}",
+      local: "本地模型",
+      manage: "管理语音模型…",
+    },
+    polish: {
+      label: "AI 润色模型",
+      trigger: "AI 润色模型：{name}",
+      manage: "管理 AI 模型…",
+    },
+    microphone: {
+      label: "麦克风",
+      trigger: "麦克风：{name}",
+      devices: "输入设备",
+      default: "系统默认",
+      defaultNamed: "系统默认（{name}）",
+      missing: "未连接",
+      source: "录音来源",
+      manage: "录音来源设置…",
     },
   },
   overlay: {

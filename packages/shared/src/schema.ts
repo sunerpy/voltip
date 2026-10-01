@@ -976,7 +976,7 @@ export type ExportOutcome = z.infer<typeof exportOutcomeSchema>;
 /** `voltip_core::history::MAX_ENTRIES`: older rows are dropped past this. */
 export const HISTORY_LIMIT = 20_000;
 /** `voltip_core::history::RECENT_ENTRIES`: the newest entries `UiState.history_recent` carries. */
-export const HISTORY_RECENT = 20;
+export const HISTORY_RECENT = 30;
 /** `voltip_core::history::MAX_QUERY_LIMIT`: the most entries one `history_query` returns. */
 export const HISTORY_QUERY_LIMIT = 200;
 /** `voltip_core::history::MAX_STATS_BOUNDARIES`: the most boundaries one `history_stats` takes. */

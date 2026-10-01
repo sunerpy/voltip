@@ -48,11 +48,11 @@ On a pure Wayland session, bind a system shortcut to `voltip-desktop --cancel` i
 
 ## Recording source
 
-Under **Settings → Recording source**, or with the switch on the home page, choose what a dictation records:
+Under **Settings → Recording source**, with the switch on the home page, or from the microphone menu in the title bar, choose what a dictation records:
 
 | Source | Records |
 | --- | --- |
-| **Microphone** (default) | The chosen microphone, or the system's default input. |
+| **Microphone** (default) | The chosen microphone, or the system's default input. Choose the microphone from its name on the home page or in the title bar, or under Settings → Recording source. |
 | **Computer audio** | The sound your computer plays, such as a meeting, a call or a video, from the chosen output device or the system's default output. |
 | **Mixed** | Both together. |
 

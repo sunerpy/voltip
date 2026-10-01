@@ -14,7 +14,7 @@ These steps take you from a fresh install to text at your cursor, and then to re
 
 The text appears at the cursor, and the result is listed under the latest results on the home page.
 
-If nothing arrives, press **Test microphone** on the home page and say a few words: the strength bar should move. [Questions and troubleshooting](/reference/faq) covers the usual causes.
+If nothing arrives, press **Test microphone** on the home page and say a few words: the strength bar should move. To record from another microphone, click its name on the home page or in the title bar and choose the device. [Questions and troubleshooting](/reference/faq) covers the usual causes.
 
 The setup guide under **Settings → General** walks through the shortcut, the recognition service and a test dictation.
 
@@ -26,7 +26,7 @@ To keep the audio on your computer:
 2. Download a model. **Qwen3-ASR 0.6B** (690 MB) is the recommended one; **SenseVoice Small** (240 MB) is the smallest.
 3. Select the model when the download is finished.
 
-From then on, no audio leaves the computer. [Local recognition](/recognition/local) compares the models and explains when the graphics card is used.
+From then on, no audio leaves the computer. To switch between the downloaded models, or back to the built-in service, click the speech model name in the title bar or on the home page. [Local recognition](/recognition/local) compares the models and explains when the graphics card is used.
 
 ## On Linux with Wayland
 

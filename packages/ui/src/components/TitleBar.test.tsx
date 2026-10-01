@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Mock } from "vitest";
 import { I18nProvider } from "../i18n/I18nProvider";
@@ -202,6 +202,39 @@ describe("TitleBar", () => {
       "Maximize",
       "Close",
     ]);
+  });
+
+  it("puts controls in the readout's place when given, inline, without clipping the menus they open", () => {
+    render(
+      <TitleBar
+        title="首页"
+        readouts={READOUTS}
+        readout={
+          <>
+            <button type="button">Qwen3-ASR-1.7B</button>
+            <button type="button">Fifine K669</button>
+          </>
+        }
+        platform="windows"
+      />,
+    );
+    const bar = screen.getByTestId("title-bar");
+    const readout = screen.getByTestId("title-bar-readout");
+    expect(bar).toContainElement(readout);
+    expect(readout).toHaveAttribute("role", "group");
+    expect(readout).toHaveAttribute("aria-label", "语音模型与麦克风");
+    expect(readout).toHaveClass("mono", "text-[11px]", "hidden", "md:flex");
+    // A menu opens below its button: the box must not hide what overflows it.
+    expect(readout).not.toHaveClass("truncate");
+    expect(readout).not.toHaveClass("overflow-hidden");
+    expect(
+      within(readout)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Qwen3-ASR-1.7B", "Fifine K669"]);
+    // The slot replaces the text readouts; there is still only one strip.
+    expect(screen.queryByText("精确 · SenseVoice")).toBeNull();
+    expect(bar.nextElementSibling).toBeNull();
   });
 
   it("tolerates controls without a drag fallback", () => {

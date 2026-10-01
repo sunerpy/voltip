@@ -34,6 +34,10 @@ export interface TitleBarProps {
    *  mono 11 px, subtle, ` · ` separated, truncated when narrow, hidden below `md`. At most
    *  `TITLE_BAR_READOUT_MAX` items are drawn. */
   readouts?: readonly ToolbarReadout[];
+  /** The same place for controls instead of text (the 语音模型 and 麦克风 menu buttons, plan
+   *  2026-09-30): replaces `readouts` when given. Hidden below `md` like them; the box does not clip,
+   *  so a menu that opens from it is not cut off, and the buttons truncate their own text. */
+  readout?: ReactNode;
   /** Renders the `Ctrl K` search as a single icon button (the 220 px field is gone). */
   onSearch?: () => void;
   /** Right-most content slot (the 润色 toggle); sits left of the window controls. */
@@ -72,6 +76,7 @@ const CONTROL =
 export function TitleBar({
   title,
   readouts = [],
+  readout,
   onSearch,
   right,
   left,
@@ -109,7 +114,16 @@ export function TitleBar({
         )}>
         {left}
         <h1 className="shrink-0 truncate text-[14px] font-semibold text-fg">{title}</h1>
-        {shown.length > 0 && (
+        {readout !== undefined && (
+          <div
+            data-testid="title-bar-readout"
+            role="group"
+            aria-label={t("ui.titleBar.readout")}
+            className="mono hidden min-w-0 flex-1 items-center gap-1.5 text-[11px] text-fg-subtle md:flex">
+            {readout}
+          </div>
+        )}
+        {readout === undefined && shown.length > 0 && (
           <div
             data-testid="title-bar-readout"
             aria-label={t("ui.titleBar.readout")}
@@ -133,7 +147,7 @@ export function TitleBar({
             ))}
           </div>
         )}
-        {shown.length === 0 && <span className="min-w-0 flex-1" />}
+        {readout === undefined && shown.length === 0 && <span className="min-w-0 flex-1" />}
         {onSearch && (
           <IconButton
             icon="search"

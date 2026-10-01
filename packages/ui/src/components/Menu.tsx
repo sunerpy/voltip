@@ -19,6 +19,10 @@ export type MenuItem =
       checked: boolean;
       /** The label is the user's own text (a name they typed), not interface copy. */
       userText?: boolean;
+      /** Short secondary text at the row's end (a model's tier, why a choice cannot be made). */
+      detail?: string;
+      /** Shown but not choosable: the arrow keys skip it and a click does nothing. */
+      disabled?: boolean;
     }
   | { kind: "action"; id: string; label: string; icon?: IconName };
 
@@ -41,6 +45,8 @@ export interface MenuProps {
   triggerClassName?: string;
   title?: string;
   disabled?: boolean;
+  /** Called each time the user opens the menu (a list read fresh then, such as the microphones). */
+  onOpen?: () => void;
   "data-testid"?: string;
 }
 
@@ -58,6 +64,7 @@ export function Menu({
   triggerClassName,
   title,
   disabled = false,
+  onOpen,
   "data-testid": testId,
 }: MenuProps) {
   const [open, setOpen] = useState(false);
@@ -65,9 +72,14 @@ export function Menu({
   const wrapper = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
   const items = useRef<(HTMLButtonElement | null)[]>([]);
-  /** The row the menu focuses once it is open: the checked choice, else the first. */
+  /** The row the menu focuses once it is open: the checked choice, else the first one that can be
+   *  chosen. */
   const focusOnOpen = useRef(0);
   const flat = sections.flatMap((s) => s.items);
+  const choosable = (i: number) => {
+    const item = flat[i];
+    return item !== undefined && !(item.kind === "radio" && item.disabled === true);
+  };
 
   const close = useCallback((refocus: boolean) => {
     setOpen(false);
@@ -75,9 +87,11 @@ export function Menu({
   }, []);
 
   const openMenu = () => {
-    const checked = flat.findIndex((i) => i.kind === "radio" && i.checked);
-    focusOnOpen.current = checked >= 0 ? checked : 0;
+    const checked = flat.findIndex((i, at) => i.kind === "radio" && i.checked && choosable(at));
+    const first = flat.findIndex((_, at) => choosable(at));
+    focusOnOpen.current = checked >= 0 ? checked : Math.max(first, 0);
     setOpen(true);
+    onOpen?.();
   };
 
   useEffect(() => {
@@ -96,10 +110,16 @@ export function Menu({
     };
   }, [open, close]);
 
+  /** The next row from `from` in the direction of `delta` that can be chosen, wrapping around. */
   const move = (from: number, delta: number) => {
     const n = flat.length;
-    if (n === 0) return;
-    items.current[(from + delta + n) % n]?.focus();
+    for (let step = 1; step <= n; step += 1) {
+      const at = (((from + delta * step) % n) + n) % n;
+      if (choosable(at)) {
+        items.current[at]?.focus();
+        return;
+      }
+    }
   };
 
   const onMenuKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -115,11 +135,11 @@ export function Menu({
         break;
       case "Home":
         e.preventDefault();
-        items.current[0]?.focus();
+        move(-1, 1);
         break;
       case "End":
         e.preventDefault();
-        items.current[flat.length - 1]?.focus();
+        move(flat.length, -1);
         break;
       case "Escape":
         // Handled here: a dialog under the menu must not close with it.
@@ -138,7 +158,9 @@ export function Menu({
     sections.slice(0, s).reduce((n, section) => n + section.items.length, 0),
   );
   return (
-    <div ref={wrapper} className="relative inline-flex">
+    // `min-w-0`: in a crowded row (the title bar at 960 px) the menu button shrinks and its text
+    // truncates instead of running over what follows it.
+    <div ref={wrapper} className="relative inline-flex min-w-0">
       <button
         ref={button}
         type="button"
@@ -172,8 +194,9 @@ export function Menu({
           data-tauri-drag-region="false"
           onKeyDown={onMenuKey}
           data-testid={testId === undefined ? undefined : `${testId}-menu`}
+          // The UI font whatever the trigger sits in (the title bar's readout is mono).
           className={cx(
-            "absolute top-full z-50 mt-1 flex w-max min-w-full flex-col rounded-10 bg-surface py-1 whitespace-nowrap shadow-win hairline",
+            "absolute top-full z-50 mt-1 flex w-max min-w-full flex-col rounded-10 bg-surface py-1 font-ui whitespace-nowrap shadow-win hairline",
             align === "end" ? "right-0" : "left-0",
           )}>
           {sections.map((section, s) => (
@@ -189,6 +212,7 @@ export function Menu({
               )}
               {section.items.map((item, i) => {
                 const at = (starts[s] ?? 0) + i;
+                const off = item.kind === "radio" && item.disabled === true;
                 return (
                   <button
                     key={item.id}
@@ -198,12 +222,25 @@ export function Menu({
                     type="button"
                     role={item.kind === "radio" ? "menuitemradio" : "menuitem"}
                     aria-checked={item.kind === "radio" ? item.checked : undefined}
+                    // The detail reads as its own phrase (「OpenAI · 缺少密钥」), not run into the label.
+                    aria-label={
+                      item.kind === "radio" && item.detail !== undefined
+                        ? `${item.label} · ${item.detail}`
+                        : undefined
+                    }
+                    aria-disabled={off ? true : undefined}
+                    disabled={off}
                     tabIndex={-1}
                     onClick={() => {
                       close(true);
                       onSelect(item.id);
                     }}
-                    className="flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] text-fg outline-none hover:bg-inset focus-visible:bg-inset focus:bg-inset">
+                    className={cx(
+                      "flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] outline-none",
+                      off
+                        ? "cursor-default text-fg-subtle"
+                        : "text-fg hover:bg-inset focus-visible:bg-inset focus:bg-inset",
+                    )}>
                     <span className="flex w-4 shrink-0 justify-center text-accent-text">
                       {item.kind === "radio" && item.checked && <Icon name="check" size={14} />}
                       {item.kind === "action" && item.icon !== undefined && (
@@ -214,6 +251,9 @@ export function Menu({
                       {...(item.kind === "radio" && item.userText ? { "data-user-text": "" } : {})}>
                       {item.label}
                     </span>
+                    {item.kind === "radio" && item.detail !== undefined && (
+                      <span className="ml-auto pl-6 text-[11px] text-fg-subtle">{item.detail}</span>
+                    )}
                   </button>
                 );
               })}

@@ -31,8 +31,9 @@ pub const HISTORY_FILE_NAME: &str = "history.json";
 pub const MAX_ENTRIES: usize = 20_000;
 /// The fewest entries `HistorySettings.keep` may ask for.
 pub const MIN_KEEP: usize = 10;
-/// How many of the newest entries `UiState.history_recent` carries.
-pub const RECENT_ENTRIES: usize = 20;
+/// How many of the newest entries `UiState.history_recent` carries: the home page's recent table
+/// fills a tall window with them (30 rows fit a maximised 2560 × 1440 window; 20 until 2026-10-01).
+pub const RECENT_ENTRIES: usize = 30;
 /// Schema version of the legacy `history.json`.
 pub const HISTORY_SCHEMA: u16 = 1;
 

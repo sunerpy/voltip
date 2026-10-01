@@ -40,6 +40,7 @@ import {
   useI18n,
   useUiState,
 } from "@voltip/ui";
+import { useRef } from "react";
 import { SPEECH_ROUTE, useRouter } from "../app/router";
 import { serviceTarget } from "./settings/engines/helpers";
 import { MicrophoneStrength } from "../features/audio/MicrophoneStrength";
@@ -50,13 +51,27 @@ import { useDictation, useTickingNow } from "../features/dictation/useDictation"
 import { ResultActions } from "../features/history/ResultActions";
 import { PermissionNotice } from "../features/permissions/PermissionNotice";
 import { PresetMenu } from "../features/presets/PresetMenu";
+import {
+  MicrophoneMenu,
+  PolishModelMenu,
+  ReadoutTrigger,
+  SpeechModelMenu,
+} from "../features/switchers/SwitcherMenus";
 import { type HistoryFilter, recentTimeLabel, todayLabel } from "../features/history/stats";
+import { useRowsThatFit } from "../features/history/recent-rows";
 import { useHomeStats } from "../features/history/useHomeStats";
 import { shortModel } from "../shell/page-meta";
 
+/** The ready bar's model chip as a menu button: the chip's look (`Chip`), hover included. */
+const CHIP_MENU =
+  "inline-flex h-7 min-w-0 items-center gap-1.5 rounded-6 bg-surface px-2.5 text-[12px] whitespace-nowrap text-fg hairline hover:border-fg-subtle";
+/** A card's first line (the device, the model) as a menu button. */
+const TITLE_MENU =
+  "-mx-1 inline-flex min-w-0 items-center gap-1.5 rounded-6 px-1 text-[13px] font-medium text-fg transition-colors hover:bg-inset";
+
 /** How many paired phones the phone-microphone card lists before pointing at the devices page. */
 const HOME_DEVICE_ROWS = 3;
-/** Rows of the recent-results table. */
+/** Rows of the recent-results table at the least; a taller window shows more (`useRowsThatFit`). */
 const RECENT_ROWS = 6;
 
 /** A span of time in the session panel: each number with its unit smaller, as the character
@@ -162,7 +177,10 @@ export function Home() {
   };
 
   const stats = useHomeStats(now);
-  const recent = state.history_recent.slice(0, RECENT_ROWS);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const recentRef = useRef<HTMLDivElement>(null);
+  const recentRows = useRowsThatFit(pageRef, recentRef, RECENT_ROWS, state.history_recent.length);
+  const recent = state.history_recent.slice(0, recentRows);
 
   // Phone link summary: the first online phone names the card's lamp, otherwise a connecting one,
   // otherwise offline (or "no device" when nothing is paired).
@@ -309,7 +327,10 @@ export function Home() {
   ];
 
   return (
-    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-3 p-6" data-testid="page-home">
+    <div
+      ref={pageRef}
+      className="mx-auto flex w-full max-w-[1600px] flex-col gap-3 p-6"
+      data-testid="page-home">
       <Card
         padding="none"
         className="flex min-h-[52px] flex-wrap items-center gap-3 px-3.5 py-2"
@@ -347,13 +368,25 @@ export function Home() {
           }}>
           {activationChip(activation, locale)}
         </Chip>
-        <Chip onClick={openEngines}>
-          {!reported
-            ? t("home.chip.notReady")
-            : local
-              ? t("home.chip.local", { model: asrModel })
-              : t("home.chip.provider", { provider: providerName, model: asrModel })}
-        </Chip>
+        {/* The chip names the model and switches it in place (user request 2026-09-30); before the
+            core reported there is nothing to choose, so it leads to the page. */}
+        {reported ? (
+          <SpeechModelMenu
+            data-testid="home-engine-chip"
+            triggerClassName={CHIP_MENU}
+            trigger={
+              <ReadoutTrigger
+                value={
+                  local
+                    ? t("home.chip.local", { model: asrModel })
+                    : t("home.chip.provider", { provider: providerName, model: asrModel })
+                }
+              />
+            }
+          />
+        ) : (
+          <Chip onClick={openEngines}>{t("home.chip.notReady")}</Chip>
+        )}
         <PresetMenu
           align="end"
           data-testid="home-preset"
@@ -432,12 +465,29 @@ export function Home() {
           className="min-h-[144px]"
           data-testid="home-mic">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="min-w-0 text-[13px] font-medium text-fg" data-testid="home-mic-device">
-              {systemOnly
-                ? outputName === undefined
-                  ? t("home.mic.systemDefaultDevice")
-                  : t("home.mic.systemDevice", { name: outputName })
-                : (meter.device?.name ?? meter.error ?? t("home.mic.enumerating"))}
+            <div className="min-w-0 text-[13px] font-medium text-fg">
+              {systemOnly ? (
+                <span data-testid="home-mic-device">
+                  {outputName === undefined
+                    ? t("home.mic.systemDefaultDevice")
+                    : t("home.mic.systemDevice", { name: outputName })}
+                </span>
+              ) : (
+                // The device is the menu that switches it (user request 2026-09-30); 选择设备,
+                // which opened 设置 › 录音来源, went with it.
+                <MicrophoneMenu
+                  data-testid="home-mic-device"
+                  title={
+                    meter.devices ? t("home.mic.devices", { n: meter.devices.length }) : undefined
+                  }
+                  triggerClassName={TITLE_MENU}
+                  trigger={
+                    <ReadoutTrigger
+                      value={meter.device?.name ?? meter.error ?? t("home.mic.enumerating")}
+                    />
+                  }
+                />
+              )}
             </div>
             <SourceSwitch state={source} testId="home-mic-source" />
           </div>
@@ -499,16 +549,6 @@ export function Home() {
                       ? t("home.mic.mixedHint")
                       : t("home.mic.idleHint")}
             </span>
-            <Button
-              size="sm"
-              variant="text"
-              data-testid="home-mic-switch"
-              title={meter.devices ? t("home.mic.devices", { n: meter.devices.length }) : undefined}
-              onClick={() => {
-                navigate({ name: "settings", section: "microphone" });
-              }}>
-              {t("home.mic.switch")}
-            </Button>
           </div>
         </Panel>
 
@@ -522,7 +562,15 @@ export function Home() {
           className="min-h-[144px]"
           data-testid="home-engine">
           <div className="flex items-center gap-2 text-[13px] font-medium text-fg">
-            <span className="truncate">{reported ? asrModel : t("home.engine.waiting")}</span>
+            {reported ? (
+              <SpeechModelMenu
+                data-testid="home-engine-model"
+                triggerClassName={TITLE_MENU}
+                trigger={<ReadoutTrigger value={asrModel} />}
+              />
+            ) : (
+              <span className="truncate">{t("home.engine.waiting")}</span>
+            )}
             {local && <Badge tone="accent">{t("home.engine.local")}</Badge>}
             {engines.live_preview_ready && (
               <span className="inline-flex" data-testid="home-live-preview">
@@ -556,7 +604,14 @@ export function Home() {
           <div className="mt-3 grid grid-cols-3 gap-3">
             <Readout
               label={t("home.engine.refineModel")}
-              value={engines.refine_enabled ? shortModel(engines.refine_model) : t("common.off")}
+              value={
+                // Switched in place, even while 润色 is off (the next take that polishes uses it):
+                // the model by name, muted like the preset beside it; the switch below says off.
+                <PolishModelMenu
+                  data-testid="home-refine-model"
+                  triggerClassName="-mx-1 inline-flex min-w-0 items-center gap-1 rounded-6 px-1 transition-colors hover:bg-inset"
+                />
+              }
               size="sm"
               muted={!engines.refine_enabled}
             />
@@ -760,7 +815,7 @@ export function Home() {
         ))}
       </div>
 
-      <div>
+      <div ref={recentRef}>
         <Eyebrow
           className="mb-1.5"
           right={

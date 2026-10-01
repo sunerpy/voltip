@@ -453,7 +453,6 @@ export const en: Messages = {
       testingHint: "Say a few words; the strength bar should move · stops automatically in {n} s",
       recordingHint: "Strength of this dictation's recording",
       devices: { one: "{n} input device", other: "{n} input devices" },
-      switch: "Choose devices",
       peak: "Peak {value}",
     },
     engine: {
@@ -1091,6 +1090,13 @@ export const en: Messages = {
       streaming: "Live preview",
       auxiliary: "Auxiliary",
     },
+    family: {
+      "qwen3-asr-0_6b": "Qwen3-ASR 0.6B",
+      "qwen3-asr-1_7b": "Qwen3-ASR 1.7B",
+      "sense-voice-small": "SenseVoice Small",
+      "paraformer-zh": "Paraformer",
+      "zipformer-stream-zh-en": "Zipformer",
+    },
     name: {
       "qwen3-asr-0_6b": "Balanced",
       "qwen3-asr-1_7b": "Accurate",
@@ -1439,6 +1445,29 @@ export const en: Messages = {
       saveContinue: "Save and continue",
       continue: "Continue",
       finish: "Finish setup",
+    },
+  },
+  switchers: {
+    speech: {
+      label: "Speech model",
+      trigger: "Speech model: {name}",
+      local: "Local models",
+      manage: "Manage speech models…",
+    },
+    polish: {
+      label: "AI Polish model",
+      trigger: "AI Polish model: {name}",
+      manage: "Manage AI models…",
+    },
+    microphone: {
+      label: "Microphone",
+      trigger: "Microphone: {name}",
+      devices: "Input devices",
+      default: "System default",
+      defaultNamed: "System default ({name})",
+      missing: "Not connected",
+      source: "Recording source",
+      manage: "Recording source settings…",
     },
   },
   overlay: {

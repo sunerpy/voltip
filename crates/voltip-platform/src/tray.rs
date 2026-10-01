@@ -509,6 +509,64 @@ impl<M: Clone + PartialEq> MenuSync<M> {
     }
 }
 
+/// Tells a single left click on the menu bar item from a double click (user request 2026-09-30:
+/// a double click opens the main window). macOS reports clicks only (tray-icon's `DoubleClick` is
+/// Windows-only), so a first click waits for the system's double-click interval: a second click
+/// within it opens the window, otherwise the menu opens when the wait ends. Times are milliseconds
+/// on any monotonic clock the caller keeps.
+#[derive(Debug, Default)]
+pub struct ClickSeries {
+    /// The click that waits, and the generation its timer was armed with.
+    pending: Option<(u64, u64)>,
+    generation: u64,
+}
+
+/// What a click asks the shell to do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClickStep {
+    /// Arm a timer of `after_ms`; when it fires, call [`ClickSeries::expire`] with `generation`.
+    Wait {
+        /// Names this wait; a later click makes it stale.
+        generation: u64,
+        /// The double-click interval.
+        after_ms: u64,
+    },
+    /// The second click of a double click: open the main window (and no menu).
+    OpenWindow,
+}
+
+impl ClickSeries {
+    /// A left click (button up) at `now_ms`, with the system's double-click `interval_ms`.
+    pub fn click(&mut self, now_ms: u64, interval_ms: u64) -> ClickStep {
+        if let Some((at, _)) = self.pending.take()
+            && now_ms.saturating_sub(at) <= interval_ms
+        {
+            return ClickStep::OpenWindow;
+        }
+        self.generation += 1;
+        self.pending = Some((now_ms, self.generation));
+        ClickStep::Wait { generation: self.generation, after_ms: interval_ms }
+    }
+
+    /// The timer of `generation` fired: `true` when no second click came, so the menu opens. A
+    /// timer a double click or a later click made stale answers `false`.
+    pub fn expire(&mut self, generation: u64) -> bool {
+        match self.pending {
+            Some((_, waiting)) if waiting == generation => {
+                self.pending = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Something else took the item (a right click opens the menu at once): the click that waits
+    /// opens nothing, and it does not pair with the next one.
+    pub fn cancel(&mut self) {
+        self.pending = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -807,5 +865,49 @@ mod tests {
         for (os, tray, action) in table {
             assert_eq!(main_window_close(os, tray), action, "{os:?} tray={tray}");
         }
+    }
+
+    #[test]
+    fn a_click_alone_opens_the_menu_once_the_double_click_interval_has_passed() {
+        let mut clicks = ClickSeries::default();
+        let ClickStep::Wait { generation, after_ms } = clicks.click(1_000, 500) else { panic!("a first click waits") };
+        assert_eq!(after_ms, 500);
+        assert!(clicks.expire(generation), "no second click: the menu opens");
+        assert!(!clicks.expire(generation), "a timer fires once");
+    }
+
+    #[test]
+    fn a_second_click_within_the_interval_opens_the_window_and_the_first_timer_opens_nothing() {
+        let mut clicks = ClickSeries::default();
+        let ClickStep::Wait { generation, .. } = clicks.click(1_000, 500) else { panic!("waits") };
+        assert_eq!(clicks.click(1_300, 500), ClickStep::OpenWindow);
+        assert!(!clicks.expire(generation), "the double click took the wait: no menu");
+        // Exactly the interval still counts as a double click.
+        let ClickStep::Wait { .. } = clicks.click(5_000, 500) else { panic!("waits") };
+        assert_eq!(clicks.click(5_500, 500), ClickStep::OpenWindow);
+    }
+
+    #[test]
+    fn a_slow_second_click_starts_a_series_of_its_own_and_a_third_click_waits_again() {
+        let mut clicks = ClickSeries::default();
+        let ClickStep::Wait { generation: first, .. } = clicks.click(1_000, 500) else { panic!("waits") };
+        // The timer ran late; the second click came after the interval: not a double click.
+        let ClickStep::Wait { generation: second, .. } = clicks.click(1_600, 500) else { panic!("waits") };
+        assert_ne!(first, second);
+        assert!(!clicks.expire(first), "the stale timer opens nothing");
+        assert!(clicks.expire(second), "the newest click's menu opens");
+        // Click, click (window), click: the third click starts a new wait.
+        let ClickStep::Wait { .. } = clicks.click(9_000, 500) else { panic!("waits") };
+        assert_eq!(clicks.click(9_100, 500), ClickStep::OpenWindow);
+        assert!(matches!(clicks.click(9_200, 500), ClickStep::Wait { .. }));
+    }
+
+    #[test]
+    fn a_right_click_takes_the_waiting_click_so_its_timer_opens_no_second_menu() {
+        let mut clicks = ClickSeries::default();
+        let ClickStep::Wait { generation, .. } = clicks.click(1_000, 500) else { panic!("waits") };
+        clicks.cancel();
+        assert!(!clicks.expire(generation), "the right click's menu is the only one");
+        assert!(matches!(clicks.click(1_200, 500), ClickStep::Wait { .. }), "and the next click starts afresh");
     }
 }

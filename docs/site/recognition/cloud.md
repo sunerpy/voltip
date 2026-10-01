@@ -32,7 +32,14 @@ A provider that offers both services uses one key for both.
 3. Enter your key. **Test connection** checks the address and the key and lists the models the provider offers.
 4. Choose **Use** to switch to the provider.
 
-The home page shows which provider is in use and whether it is ready.
+## Switching models
+
+The title bar and the home page show the speech model and the AI polish model in use, and whether they are ready. Click either name to switch without opening its page:
+
+- The speech model menu lists the built-in service, each provider you have set up, and the local models you have downloaded.
+- The AI polish model menu, to the right of the **AI Polish** switch, lists the models of the built-in service and of each provider you have set up.
+
+Providers that are not set up do not appear in these menus. **Manage speech models…** and **Manage AI models…** at the end of the menus open the pages where you set them up.
 
 ## Keys
 

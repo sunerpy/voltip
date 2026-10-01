@@ -642,6 +642,17 @@ export function modelDisplayName(
   return translate(locale, `model.name.${key}`);
 }
 
+/** The product behind a model's tier (`Qwen3-ASR 0.6B`, `SenseVoice Small`): the secondary text of
+ *  the 语音模型 menu. `fallback` (the core's name) for an id the dictionary does not know. */
+export function modelFamilyName(
+  id: string,
+  fallback: string,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  const key = modelDictionaryKey(id);
+  return key === undefined ? fallback : translate(locale, `model.family.${key}`);
+}
+
 /** The core's own catalogue text, localised by id when the dictionary knows the model. */
 export function modelDescription(
   id: string,

@@ -15,10 +15,13 @@
 #      role=dialog in the accessibility tree); Check for Updates asks the update source and gets
 #      an answer; the AI Polish submenu lists its switch and every preset with the ones in use
 #      checked, a preset and the switch reach the core, the menu is rebuilt from what it saved,
-#      and choosing the preset in use keeps it checked (docs/dictation.md §21); Quit ends the
-#      process with exit code 0.
-# The Accessibility API does the clicking (scripts/tray-ax.swift, compiled here and granted the
-# permission in the runner's writable TCC database, as ci.yml does for the event tap test).
+#      and choosing the preset in use keeps it checked (docs/dictation.md §21); a real click on
+#      the item opens the menu once the double-click interval has passed, and a real double
+#      click shows the main window and opens no menu (user request 2026-09-30; releases before
+#      0.0.16 fail here by design); Quit ends the process with exit code 0.
+# The Accessibility API does the clicking, except for the real clicks, which are mouse events
+# (scripts/tray-ax.swift, compiled here and granted both permissions in the runner's writable TCC
+# database, as ci.yml does for the event tap test).
 #
 # Usage: scripts/smoke-tray-macos.sh [app bundle (default /Applications/Voltip.app)] [out dir]
 #        VOLTIP_NO_UPDATER=1 for a build without an update source; VOLTIP_CHECK_CHROME=1 to fail
@@ -69,6 +72,7 @@ grant() { # <service> <client path>
   sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier, flags, last_modified) VALUES ('$1', '$2', 1, 2, 4, 1, 'UNUSED', 0, $(date +%s));"
 }
 grant kTCCServiceAccessibility "$helper"
+grant kTCCServicePostEvent "$helper"
 grant kTCCServiceScreenCapture /usr/sbin/screencapture
 ax() { "$helper" "$pid" "$@"; }
 window_shown() { ax windows | grep -qx Voltip; }
@@ -211,7 +215,32 @@ wait_for 30 'the switch on again' polish_shows "$toggle" "${presets[1]}"
 press_polish "${presets[0]}" 'tray menu polish action=Preset\("proofread"\)'
 wait_for 30 'the defaults back' polish_shows "$toggle" "${presets[0]}"
 
-# 4e. Quit.
+# 4e. Real clicks on the item (user request 2026-09-30), mouse events at its centre rather than
+# accessibility presses: a click opens the menu once the double-click interval has passed (the app
+# logs the interval it waited), a double click shows the main window and opens no menu.
+if window_shown; then
+  ax close Voltip
+  wait_for 30 'the window to hide' window_hidden
+fi
+before=$(log_count 'tray click: menu')
+delay=$(ax click)
+wait_for 10 'the click in the log' log_count_above 'tray click: menu' "$before"
+interval=$(log_text | sed -n 's/.*tray click: menu after_ms=\([0-9]*\).*/\1/p' | tail -1)
+[ -n "$interval" ] || fail 'the click line in the log names no interval'
+[ "$delay" -ge "$interval" ] || fail "the menu opened ${delay} ms after the click, inside the double-click interval (${interval} ms)"
+window_hidden || fail 'a click showed the main window'
+note "click: the menu opened ${delay} ms after it (double-click interval ${interval} ms)"
+before=$(log_count 'tray double click: main window')
+# Watched past the first click's interval: that click must open nothing when its wait ends.
+seen=$(ax doubleclick $((interval + 1500)))
+wait_for 30 'the double click in the log' log_count_above 'tray double click: main window' "$before"
+wait_for 30 'the double click to show the window' window_shown
+[ "$seen" = "no menu" ] || fail 'a double click opened the menu as well as the window'
+note 'double click: main window shown, no menu'
+ax close Voltip
+wait_for 30 'the window to hide' window_hidden
+
+# 4f. Quit.
 ax press "$quit_label"
 # Gone, or a zombie waiting to be reaped (kill -0 still answers for one).
 process_gone() {

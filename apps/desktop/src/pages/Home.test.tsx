@@ -1,4 +1,10 @@
-import { defaultEngineSettings, formatCount, formatDuration, formatMs } from "@voltip/shared";
+import {
+  type HistoryEntry,
+  defaultEngineSettings,
+  formatCount,
+  formatDuration,
+  formatMs,
+} from "@voltip/shared";
 import {
   MOCK_ASR_MS,
   MOCK_AUDIO_DEVICES,
@@ -79,6 +85,95 @@ describe("Home page", () => {
     // The row itself still opens the entry.
     await user.click(within(row).getByText(newest.text));
     expect(await screen.findByTestId("page-history")).toBeInTheDocument();
+  });
+
+  // User request 2026-10-01: on a tall window six rows left a large blank space under the table.
+  it("regression: the recent table fills a tall window with more rows and gives them back when the window shrinks", async () => {
+    const ROW = 26;
+    /** The page without the table's rows, as measured at 1440 × 900. */
+    const PAGE = 759 - 6 * ROW;
+    let area = 841;
+    const observers = new Set<() => void>();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private readonly callback: () => void) {}
+        observe() {
+          observers.add(this.callback);
+        }
+        unobserve() {}
+        disconnect() {
+          observers.delete(this.callback);
+        }
+      },
+    );
+    const bodyRows = (root: ParentNode) =>
+      root.querySelectorAll('table[aria-label="最近的结果"] tbody tr').length;
+    // The layout jsdom does not do: the scroll area is `area` tall, the page as tall as its rows
+    // make it, every row 26 px.
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (this: Element) {
+      return this.querySelector(':scope > [data-testid="page-home"]') === null ? 0 : area;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.dataset.testid === "page-home" ? PAGE + ROW * bodyRows(this) : 0;
+    });
+    vi.spyOn(HTMLTableRowElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 1000, ROW),
+    );
+    const now = Date.now();
+    const history: HistoryEntry[] = Array.from({ length: 30 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      at_ms: now - i * 60_000,
+      raw_text: `第${i}句`,
+      text: `第${i}句。`,
+      refined: false,
+      asr_model: "Qwen/Qwen3-ASR-1.7B",
+      duration_ms: 1000,
+      asr_ms: 100,
+      outcome: { kind: "inserted", via: "paste" },
+      starred: false,
+      mode: "whole_take",
+      kind: "dictation",
+    }));
+    try {
+      renderApp({ mock: { now: () => now, history } });
+      const table = await screen.findByRole("table", { name: "最近的结果" });
+      const resize = (height: number) => {
+        area = height;
+        act(() => {
+          for (const measure of observers) measure();
+        });
+      };
+      const shown = () => bodyRows(table.parentElement ?? table);
+      // 1440 × 900: 82 px under six rows hold three more.
+      resize(841);
+      expect(shown()).toBe(9);
+      // 1920 × 1080.
+      resize(1021);
+      expect(shown()).toBe(16);
+      // Taller than thirty rows need: all thirty, the most the core sends.
+      resize(1600);
+      expect(shown()).toBe(30);
+      // Back to a short window: six rows, the page scrolls as before.
+      resize(600);
+      expect(shown()).toBe(6);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  // The real window under Xvfb (2026-10-01) showed 润色模型「关」 beside a title bar naming the
+  // model, and the button's name (AI 润色模型：qwen3.8-27b) did not contain what it showed.
+  it("regression: the engine card names the polish model while 润色 is off, as the title bar does, and its button is named by what it shows", async () => {
+    renderApp({
+      mock: { settings: { engines: { ...defaultEngineSettings(), refine_enabled: false } } },
+    });
+    const model = await screen.findByTestId("home-refine-model");
+    expect(model).toHaveTextContent("qwen3.8-27b");
+    expect(model).toHaveAccessibleName("AI 润色模型：qwen3.8-27b");
+    expect(screen.getByTestId("polish-model")).toHaveTextContent("qwen3.8-27b");
   });
 
   it("the engine card's insert readout opens Settings › Dictation", async () => {
@@ -313,16 +408,24 @@ describe("Home page", () => {
     }
   });
 
-  it("regression: 选择设备 (was 切换麦克风) opens 设置 › 录音来源 (was 麦克风), and an unplugged choice is named as such", async () => {
+  // User request 2026-09-30: the device is switched in place. The device name is the menu (选择设备,
+  // was 切换麦克风, went with it); 录音来源设置… in it opens 设置 › 录音来源 (was 麦克风).
+  it("regression: the device name opens the device menu, whose 录音来源设置… opens 设置 › 录音来源, and an unplugged choice is named as such", async () => {
     const user = userEvent.setup();
     renderApp({ mock: { settings: { microphone: "Blue Yeti" } } });
     expect(await screen.findByTestId("home-mic-missing")).toHaveTextContent(
       "所选麦克风未连接 · 使用系统默认",
     );
-    expect(screen.getByTestId("home-mic-device")).toHaveTextContent(
-      MOCK_AUDIO_DEVICES[0]?.name ?? "",
-    );
-    await user.click(screen.getByTestId("home-mic-switch"));
+    const device = screen.getByTestId("home-mic-device");
+    expect(device).toHaveTextContent(MOCK_AUDIO_DEVICES[0]?.name ?? "");
+    expect(screen.queryByText("选择设备")).toBeNull();
+    await user.click(device);
+    const menu = screen.getByTestId("home-mic-device-menu");
+    // The chosen microphone that is not plugged in: named, checked, not choosable.
+    const missing = within(menu).getByRole("menuitemradio", { name: "Blue Yeti · 未连接" });
+    expect(missing).toHaveAttribute("aria-checked", "true");
+    expect(missing).toBeDisabled();
+    await user.click(within(menu).getByRole("menuitem", { name: "录音来源设置…" }));
     const dialog = await screen.findByRole("dialog", { name: "设置" });
     expect(
       within(dialog).getByRole("tab", { name: "录音来源", selected: true }),
@@ -742,7 +845,11 @@ describe("Home page", () => {
     expect(screen.getByRole("switch", { name: "AI 润色 关" })).not.toBeChecked();
     expect(screen.getByTestId("home-privacy")).toHaveTextContent("音频发送到内置服务");
     expect(screen.getByTestId("home-privacy")).not.toHaveTextContent("文本发送到");
-    expect(within(screen.getByTestId("home-engine")).getByText("关")).toBeInTheDocument();
+    // The card says off with its switch; since 2026-10-01 the 润色模型 readout keeps naming the
+    // model (it is the menu that switches it, user request 2026-09-30) instead of 「关」.
+    const card = screen.getByTestId("home-engine");
+    expect(within(card).getByText("AI 润色 关")).toBeInTheDocument();
+    expect(within(card).getByTestId("home-refine-model")).toHaveTextContent("qwen3.8-27b");
     // 配置语音模型 opens the 语音模型 page (a page of the main layout since 2026-09-28).
     await user.click(screen.getByRole("button", { name: "配置语音模型" }));
     expect(await screen.findByTestId("page-speech")).toBeInTheDocument();
@@ -831,7 +938,15 @@ describe("Home page", () => {
     );
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "内置服务 · Qwen3-ASR-1.7B" }));
+    // The model chip is a menu now (user request 2026-09-30): its 管理语音模型… leads to the page.
+    const chip = screen.getByTestId("home-engine-chip");
+    expect(chip).toHaveAccessibleName("语音模型：Qwen3-ASR-1.7B");
+    await user.click(chip);
+    await user.click(
+      within(screen.getByTestId("home-engine-chip-menu")).getByRole("menuitem", {
+        name: "管理语音模型…",
+      }),
+    );
     expect(await screen.findByTestId("page-speech")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^首页$/ }));
     const tile = await screen.findByRole("button", { name: `本月 ${saved(stats.month.savedMs)}` });

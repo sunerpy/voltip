@@ -1,7 +1,8 @@
-// Preset menu check (plan 2.3, the one-line rule of plan 1.6). Run in the desktop web preview
-// (MockBackend) through chrome-devtools `evaluate_script` on the home page, at 1440×900, 1920×1080
-// and the 960 px minimum window width (`emulate` viewport), in 中文 and in English. It opens the
-// home page's preset menu and the title bar's, and reports, per menu:
+// Menu check (plan 2.3, the one-line rule of plan 1.6; the switcher menus since 2026-10-01). Run in
+// the desktop web preview (MockBackend) through chrome-devtools `evaluate_script` on the home page,
+// at 1440×900, 1920×1080 and the 960 px minimum window width (`emulate` viewport), in 中文 and in
+// English. It opens the preset menus of the home page and the title bar, then the speech model,
+// microphone and AI 润色 model menus of both, and reports, per menu:
 //   rows      every row's text and width;
 //   wrapped   rows whose text takes more than one line (must be empty);
 //   cut       rows whose text is cut off (must be empty);
@@ -23,7 +24,18 @@ async () => {
     return count;
   };
   const out = { viewport: `${innerWidth}x${innerHeight}`, lang: document.documentElement.lang };
-  for (const id of ["home-preset", "polish-preset"]) {
+  const menus = [
+    "home-preset",
+    "polish-preset",
+    "title-bar-speech",
+    "title-bar-mic",
+    "polish-model",
+    "home-engine-chip",
+    "home-mic-device",
+    "home-engine-model",
+    "home-refine-model",
+  ];
+  for (const id of menus) {
     const trigger = document.querySelector(`[data-testid="${id}"]`);
     if (!trigger) {
       out[id] = "no trigger on this page";

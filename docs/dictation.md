@@ -224,7 +224,7 @@ pub struct HistoryEntry {
 
 - **筛选**：`sinceMs`（页面按本地时间算好的零点）、收藏、失败（留在剪贴板或失败，即 `outcome` 不是 `inserted`）都用 SQL 过滤。
 - **搜索**：关键词去掉首尾空白、转小写后，在 `search` 列里做子串匹配。`search` 列在写入时拼成：内置场景的中英文名、`text`、`raw_text`、两个模型、应用名和 id、场景名、编辑指令、选区、处理后文本（§22.4，保存结果时重算），各自 `to_lowercase` 后以 U+001F 分隔，所以一次匹配不会跨两个字段。
-- **状态与事件**：`UiState.history_recent`（最新 20 条）与 `history_total` 取代原来的 `UiState.history`；`UiEvent::History { recent, total }`。复制上一条、侧栏计数、规则与词典页的「用最近一次听写」读 `history_recent`。
+- **状态与事件**：`UiState.history_recent`（最新 `RECENT_ENTRIES = 30` 条，2026-10-01 之前为 20 条）与 `history_total` 取代原来的 `UiState.history`；`UiEvent::History { recent, total }`。复制上一条、侧栏计数、规则与词典页的「用最近一次听写」读 `history_recent`。首页「最近的结果」至少显示 6 行，窗口更高时按页面下方的空白增加行数，直到页面底部不再留空，最多显示 `history_recent` 的全部条目（`useRowsThatFit`，2026-10-01 用户要求：高分辨率下表格下方空白一大片）。
 - **历史页**：每页 `HISTORY_PAGE = 100` 条，列表底部进入视野时加载下一页（也可以点「加载更多」）；搜索在停止输入 200 ms 后发出；新结果回来之前保留原来的行，第一次结果回来之前不显示空状态。收到历史事件时重新加载已加载的条数。首页表格点开的条目不在已加载的页里时，详情用 `history_entry` 取。
 
 ### 4.5 统计（2026-09-30）
@@ -721,7 +721,7 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
 - 听写状态用右下角的角标表示（跟随 `UiEvent::Dictation`，`platform::glyph_for`）：空闲时没有角标（done / failed / cancelled 的停留也算空闲），录音时是红点（macOS 为实心圆点），处理中是蓝点（macOS 为圆环）。角标外有一圈白色间隔（macOS 为镂空）。提示文字同步变化：`Voltip`、`Voltip · 正在听写`、`Voltip · 正在处理`。
 - 菜单依次为：打开 Voltip、设置…、检查更新…（仅在构建带更新源时出现）、分隔线、退出 Voltip。语言跟随 `settings.locale`。设为 `system` 时按系统显示语言解析：Windows 用 `GetUserDefaultUILanguage`，macOS 用 `NSLocale.preferredLanguages` 首项，与 webview 的 `navigator.language` 同源；读不到时用中文。
 - 「设置…」和「检查更新…」先显示主窗，再向主窗发 `voltip://tray`（`{ action: "settings" | "update" }`），由界面打开设置对话框或更新对话框；更新状态为空闲、已是最新或失败时，顺带检查一次。
-- Windows 左键单击显示主窗，右键弹出菜单。macOS 单击弹出菜单，与菜单栏惯例一致。
+- Windows 左键单击或双击显示主窗，右键弹出菜单。macOS 双击显示主窗而不弹菜单，单击在系统的双击间隔（`NSEvent.doubleClickInterval`，限定在 150–2000 ms）过后弹出菜单，右键立即弹出菜单（2026-09-30 用户要求）。tray-icon 只在 Windows 上报告双击，所以 macOS 关掉 `show_menu_on_left_click`，由 `voltip_platform::tray::ClickSeries` 按左键抬起的时刻区分单击与双击：第一次抬起后等一个间隔，期间再抬起一次即为双击；等待结束仍无第二次时在主线程调用 `show_menu()`（`performClick`，菜单关闭前不返回，因此不占用运行时的工作线程）；每次等待带代次号，过期的定时什么也不做，右键按下会取消正在等待的单击。冒烟脚本用真实鼠标事件验证：`scripts/smoke-tray-macos.sh` 第 4e 步单击后菜单出现的时刻不早于日志里的间隔（`tray click: menu after_ms=…`）、双击后主窗出现且菜单不出现，菜单是否打开以 App 发出的 AXMenuOpened 通知为准（辅助功能树里状态栏菜单不论开没开都在）；`scripts/smoke-tray-windows.ps1` 第 4e 步双击后主窗可见，并记下系统是否报告了双击（图标在通知区溢出面板里时，主窗弹出可能先关掉面板；双击落在面板关闭的时刻时找到按钮重试，最多四次，App 日志的 `tray click: main window` 记下每次收到的单击）。
 - 关闭主窗口（标题栏 ×、Alt+F4、红色交通灯）的行为由 `main_window_close` 决定：macOS 总是隐藏，Dock 与托盘都能找回；Windows 有托盘时隐藏，没有托盘时退出；Linux 退出。此前关闭会销毁主窗口，而预热的悬浮窗仍让进程存活，托盘和二次启动都找不到窗口，也没有退出入口（2026-09-28 用户反馈）。
 
 ### 15.5 打包矩阵

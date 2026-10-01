@@ -101,12 +101,94 @@ describe("Menu", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  it("skips rows that cannot be chosen, names why, and picks nothing when one is clicked", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(
+      <Menu
+        trigger="内置服务 · Qwen3-ASR-1.7B"
+        label="语音模型"
+        sections={[
+          {
+            label: "云端服务",
+            items: [
+              {
+                kind: "radio",
+                id: "openai",
+                label: "OpenAI",
+                checked: false,
+                disabled: true,
+                detail: "缺少密钥",
+              },
+              { kind: "radio", id: "builtin", label: "内置服务", checked: true },
+              {
+                kind: "radio",
+                id: "groq",
+                label: "Groq",
+                checked: false,
+                disabled: true,
+                detail: "缺少密钥",
+              },
+            ],
+          },
+          {
+            label: "本地模型",
+            items: [{ kind: "radio", id: "local", label: "均衡", checked: false, detail: "本机" }],
+          },
+        ]}
+        onSelect={onSelect}
+        data-testid="speech"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "语音模型" }));
+    const menu = screen.getByTestId("speech-menu");
+    const openai = within(menu).getByRole("menuitemradio", { name: "OpenAI · 缺少密钥" });
+    expect(openai).toBeDisabled();
+    expect(openai).toHaveAttribute("aria-disabled", "true");
+    expect(within(openai).getByText("缺少密钥")).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitemradio", { name: "内置服务" })).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(within(menu).getByRole("menuitemradio", { name: "均衡 · 本机" })).toHaveFocus();
+    // Wraps past the disabled first row back to the first one that can be chosen.
+    await user.keyboard("{ArrowDown}");
+    expect(within(menu).getByRole("menuitemradio", { name: "内置服务" })).toHaveFocus();
+    await user.keyboard("{End}");
+    expect(within(menu).getByRole("menuitemradio", { name: "均衡 · 本机" })).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(within(menu).getByRole("menuitemradio", { name: "内置服务" })).toHaveFocus();
+    await user.click(openai);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.getByTestId("speech-menu")).toBeInTheDocument();
+  });
+
+  it("tells its owner each time the user opens it, not when it closes", async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    render(
+      <Menu
+        trigger="Fifine K669"
+        label="麦克风"
+        sections={SECTIONS}
+        onSelect={vi.fn()}
+        onOpen={onOpen}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "麦克风" });
+    await user.click(trigger);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    await user.click(trigger);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    trigger.focus();
+    await user.keyboard("{ArrowDown}");
+    expect(onOpen).toHaveBeenCalledTimes(2);
+  });
+
   it("picks with a click, keeps rows on one line and marks the user's own names", async () => {
     const user = userEvent.setup();
     const { onSelect, trigger } = renderMenu();
     await user.click(trigger);
     const menu = screen.getByTestId("presets-menu");
-    expect(menu).toHaveClass("whitespace-nowrap", "w-max");
+    expect(menu).toHaveClass("whitespace-nowrap", "w-max", "font-ui");
     expect(menu).toHaveAttribute("data-tauri-drag-region", "false");
     expect(within(menu).getByText("周报")).toHaveAttribute("data-user-text");
     expect(within(menu).getByText("校对")).not.toHaveAttribute("data-user-text");
