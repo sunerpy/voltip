@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.18](https://github.com/sunerpy/voltip/compare/v0.0.17...v0.0.18) (2026-10-01)
+
+
+### Features
+
+* **android:** ship the phone app's APK and AAB with every release ([#45](https://github.com/sunerpy/voltip/issues/45)) ([e5f4c06](https://github.com/sunerpy/voltip/commit/e5f4c06654a5e940fd8130329d455eaaedf14ac1))
+
 ## [0.0.17](https://github.com/sunerpy/voltip/compare/v0.0.16...v0.0.17) (2026-10-01)
 
 
