@@ -9,8 +9,8 @@
     1. with one entry seeded in the history, the home page's recent table offers the button;
     2. pressing it (UI Automation Invoke) moves Voltip out of the way, Notepad comes back to the
        front and receives the entry's text, CJK included (read back from its edit control). The
-       script never activates Notepad itself (a background script may not): Voltip brings back the
-       window below its own when Windows leaves nothing in front;
+       script never activates Notepad itself (a background script may not): Voltip, still in
+       front, activates the window below its own and then minimises;
     3. Voltip stays minimised after a paste that landed (it comes back only when it did not).
   The entry goes into the runner user's real data directory (Windows resolves it through the
   Known Folder API, which no environment variable redirects) as a history.json that the app
@@ -58,6 +58,10 @@ public static class VoltipPaste {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+  const uint GA_ROOT = 2;
+  // The top-level window `hwnd` is part of (itself when it is one).
+  public static IntPtr Root(IntPtr hwnd) { var root = GetAncestor(hwnd, GA_ROOT); return root == IntPtr.Zero ? hwnd : root; }
   const uint WM_GETTEXT = 0x000D, WM_GETTEXTLENGTH = 0x000E;
 
   public static string ClassOf(IntPtr hwnd) { var name = new StringBuilder(256); GetClassNameW(hwnd, name, name.Capacity); return name.ToString(); }
@@ -131,11 +135,19 @@ function Cond($property, $value) { New-Object System.Windows.Automation.Property
 function Focus([IntPtr] $window, [string] $what) {
   try { $A::FromHandle($window).SetFocus() } catch { Note "focus ${what}: $($_.Exception.Message)" }
 }
+function Window-Text([IntPtr] $window) {
+  $owner = 'none'
+  if ($window -ne [IntPtr]::Zero) { $owner = (Get-Process -Id ([VoltipPaste]::Owner($window)) -ErrorAction SilentlyContinue).ProcessName }
+  "0x$($window.ToString('x')) ($owner, $([VoltipPaste]::ClassOf($window)))"
+}
+# The window in front, and the top-level window it is part of when it is a child (a web view's
+# render window: CI 2026-10-01).
 function Front-Text {
   $front = [VoltipPaste]::GetForegroundWindow()
-  $owner = 'none'
-  if ($front -ne [IntPtr]::Zero) { $owner = (Get-Process -Id ([VoltipPaste]::Owner($front)) -ErrorAction SilentlyContinue).ProcessName }
-  "0x$($front.ToString('x')) ($owner, $([VoltipPaste]::ClassOf($front)))"
+  $text = Window-Text $front
+  $root = [VoltipPaste]::Root($front)
+  if ($front -ne [IntPtr]::Zero -and $root -ne $front) { $text += " in $(Window-Text $root)" }
+  $text
 }
 
 # The text to paste: ASCII and CJK ("paste test" in Chinese), so the clipboard path carries both.
@@ -242,13 +254,19 @@ try {
   $app = $null
   Note 'OK'
 } finally {
-  if ($null -ne $app -and -not $app.HasExited) { Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue }
+  # The instance is stopped and waited for: until it has exited it holds the database open, and a
+  # removal that fails here would hide the step that failed (CI 2026-10-01).
+  if ($null -ne $app -and -not $app.HasExited) {
+    Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+    if (-not $app.WaitForExit($StepTimeoutSec * 1000)) { Note 'cleanup: the instance did not exit' }
+  }
   $pads = Get-Process -Name notepad -ErrorAction SilentlyContinue
   if ($null -ne $pads) { $pads | Stop-Process -Force -ErrorAction SilentlyContinue }
   # What the run wrote goes (the database the seed was imported into and the renamed seed), then
-  # what was set aside comes back.
-  foreach ($file in $historyFiles) { if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force } }
-  foreach ($name in (Imported)) { if ($importedBefore -notcontains $name) { Remove-Item -LiteralPath (Join-Path $dataDir $name) -Force } }
-  foreach ($file in $historyFiles) { if (Test-Path -LiteralPath "$file.smoke-backup") { Move-Item -LiteralPath "$file.smoke-backup" -Destination $file -Force } }
+  # what was set aside comes back. A step that fails is noted, and the rest still run.
+  function Cleanup([scriptblock] $step) { try { & $step } catch { Note "cleanup: $($_.Exception.Message)" } }
+  foreach ($file in $historyFiles) { if (Test-Path -LiteralPath $file) { Cleanup { Remove-Item -LiteralPath $file -Force } } }
+  foreach ($name in (Imported)) { if ($importedBefore -notcontains $name) { Cleanup { Remove-Item -LiteralPath (Join-Path $dataDir $name) -Force } } }
+  foreach ($file in $historyFiles) { if (Test-Path -LiteralPath "$file.smoke-backup") { Cleanup { Move-Item -LiteralPath "$file.smoke-backup" -Destination $file -Force } } }
   $summary | Set-Content -LiteralPath (Join-Path $OutDir 'summary.txt') -Encoding utf8
 }

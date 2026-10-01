@@ -17,8 +17,8 @@ use voltip_core::ForegroundApp;
 use voltip_platform::foreground::from_exe_path;
 use voltip_platform::permissions::{Permission, PermissionReport};
 use voltip_platform::windows::{
-    ConsentValue, ForegroundFacts, InjectPreflight, IntegrityLevel, MicrophoneConsent, MicrophonePolicy, StackedWindow, WEBVIEW_PROCESS, consent_store_app_key,
-    is_paste_target, microphone_consent,
+    ConsentValue, ForegroundFacts, FrontWindow, InjectPreflight, IntegrityLevel, MicrophoneConsent, MicrophonePolicy, StackedWindow,
+    another_application_in_front, consent_store_app_key, is_paste_target, is_webview_image, microphone_consent,
 };
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, HWND, RECT, S_OK};
 use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
@@ -33,8 +33,9 @@ use windows_sys::Win32::System::Threading::{
 };
 use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GW_HWNDNEXT, GWL_EXSTYLE, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindowVisible, SM_CXSMICON, SetForegroundWindow, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    GA_ROOT, GW_HWNDNEXT, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SM_CXSMICON, SW_SHOWMINNOACTIVE, SetForegroundWindow, ShowWindowAsync,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
 /// `PRIMARYLANGID` of a Chinese `LANGID` (`LANG_CHINESE`).
@@ -84,21 +85,13 @@ pub fn inject_preflight() -> InjectPreflight {
 }
 
 /// The application in front when a take starts (docs/dictation.md §18.2): the foreground window's
-/// process image name (the same chain as the preflight) and the window's title. Voltip's own window
-/// and "no window has the focus" are no answer; a process that refuses to be opened is an error.
+/// process image name (the same chain as the preflight) and the window's title. Voltip's own
+/// window, a WebView2 window and "no window has the focus" are no answer
+/// (`voltip_platform::windows::another_application_in_front`); a process that refuses to be
+/// opened is an error.
 pub fn foreground_app() -> Result<Option<ForegroundApp>, String> {
-    // SAFETY: no arguments; a null result means no window has the focus.
-    let hwnd = unsafe { GetForegroundWindow() };
-    if hwnd.is_null() {
-        return Ok(None);
-    }
-    let mut pid = 0u32;
-    // SAFETY: `hwnd` came from `GetForegroundWindow` a moment ago (a window that has since closed
-    // makes the call return 0, which is handled); `pid` is a valid out-pointer.
-    let thread = unsafe { GetWindowThreadProcessId(hwnd, &raw mut pid) };
-    if thread == 0 || pid == 0 {
-        return Ok(None);
-    }
+    let Some(hwnd) = front_window() else { return Ok(None) };
+    let Some(pid) = process_of(hwnd) else { return Ok(None) };
     // SAFETY: no arguments.
     if pid == unsafe { GetCurrentProcessId() } {
         return Ok(None);
@@ -109,8 +102,35 @@ pub fn foreground_app() -> Result<Option<ForegroundApp>, String> {
         return Err(format!("OpenProcess refused for pid {pid}"));
     }
     let process = OwnedHandle(process);
-    let Some(identity) = image_name(process.0).as_deref().and_then(from_exe_path) else { return Ok(None) };
+    let Some(image) = image_name(process.0) else { return Ok(None) };
+    if !another_application_in_front(Some(FrontWindow { own_process: false, webview: is_webview_image(&image) })) {
+        return Ok(None);
+    }
+    let Some(identity) = from_exe_path(&image) else { return Ok(None) };
     Ok(Some(ForegroundApp { app_id: identity.app_id, name: identity.name, title: window_title(hwnd), window: Some(hwnd as usize as u64) }))
+}
+
+/// The window in front, as the top-level window it is part of: `GetForegroundWindow` can name a
+/// child window, the WebView2 runtime's render window inside an application's web view (CI
+/// 2026-10-01: Voltip's own, once it had minimised). `None` when no window has the focus.
+fn front_window() -> Option<HWND> {
+    // SAFETY: no arguments; a null result means no window has the focus.
+    let front = unsafe { GetForegroundWindow() };
+    if front.is_null() {
+        return None;
+    }
+    // SAFETY: `front` came from `GetForegroundWindow` a moment ago; a stale handle returns null.
+    let root = unsafe { GetAncestor(front, GA_ROOT) };
+    Some(if root.is_null() { front } else { root })
+}
+
+/// What `another_application_in_front` needs about the window in front.
+fn front_facts() -> Option<FrontWindow> {
+    let hwnd = front_window()?;
+    // SAFETY: no arguments.
+    let own_process = process_of(hwnd) == Some(unsafe { GetCurrentProcessId() });
+    let webview = !own_process && owner_image(hwnd).is_some_and(|name| is_webview_image(&name));
+    Some(FrontWindow { own_process, webview })
 }
 
 /// The history paste's way back (`crate::paste`): Voltip's window in front and the window the user
@@ -131,12 +151,11 @@ const MAX_STACKED_WINDOWS: usize = 512;
 pub fn paste_return() -> Option<PasteReturn> {
     // SAFETY: no arguments.
     let own = unsafe { GetCurrentProcessId() };
-    // SAFETY: no arguments; a null result means no window has the focus.
-    let front = unsafe { GetForegroundWindow() };
-    if front.is_null() || process_of(front) != Some(own) {
+    let front = front_window()?;
+    if process_of(front) != Some(own) {
         return None;
     }
-    // SAFETY: `front` is a window handle from `GetForegroundWindow`; a stale one returns null.
+    // SAFETY: `front` came from `front_window` a moment ago; a stale handle returns null.
     let mut hwnd = unsafe { GetWindow(front, GW_HWNDNEXT) };
     for _ in 0..MAX_STACKED_WINDOWS {
         if hwnd.is_null() {
@@ -153,23 +172,40 @@ pub fn paste_return() -> Option<PasteReturn> {
     None
 }
 
-/// Once Voltip's window is minimised, put the window the user came from in front, unless another
-/// application already is: Windows usually activates it on `SW_MINIMIZE`, but when it leaves
-/// nothing in front (or Voltip's own window) the call is allowed, no window or Voltip holding the
-/// foreground. `false` while Voltip's window is not minimised yet (the minimise runs on the event
-/// loop), so the caller asks again.
-pub fn return_to(back: PasteReturn) -> bool {
+/// Hand the front to the window the user came from while Voltip still holds it (Windows lets the
+/// application in front activate another window), then minimise Voltip's window without
+/// activating anything. Minimising the window in front lets Windows choose the next one, which can
+/// be none (CI 2026-09-29) or Voltip's window again, whose web view then takes the focus back (CI
+/// 2026-10-01: wry moves the focus into the web view on `WM_SETFOCUS`). `false` when Windows
+/// refused the activation; nothing was minimised then.
+pub fn hand_over(back: PasteReturn) -> bool {
     // SAFETY: plain calls on window handles; a window that has closed since makes them fail
-    // harmlessly (0 / null).
+    // harmlessly (0).
     unsafe {
-        if IsIconic(back.voltip as HWND) == 0 {
+        if SetForegroundWindow(back.target as HWND) == 0 {
+            tracing::info!("paste: Windows refused to activate the window below Voltip");
             return false;
         }
-        let front = GetForegroundWindow();
-        if front.is_null() || process_of(front) == Some(GetCurrentProcessId()) {
-            let brought = SetForegroundWindow(back.target as HWND) != 0;
-            tracing::info!(brought, "paste: brought the window below Voltip to the front");
-        }
+        ShowWindowAsync(back.voltip as HWND, SW_SHOWMINNOACTIVE);
+    }
+    tracing::info!("paste: handed the front to the window below Voltip");
+    true
+}
+
+/// Once Voltip's window is minimised, put the window the user came from in front, unless another
+/// application already is (`voltip_platform::windows::another_application_in_front`): when
+/// Windows leaves nothing in front, or Voltip's own window or a WebView2 window, the call is
+/// allowed. `false` while Voltip's window is not minimised yet (the minimise runs on the event
+/// loop), so the caller asks again.
+pub fn return_to(back: PasteReturn) -> bool {
+    // SAFETY: a plain call on a window handle; a window that has closed since makes it return 0.
+    if unsafe { IsIconic(back.voltip as HWND) } == 0 {
+        return false;
+    }
+    if !another_application_in_front(front_facts()) {
+        // SAFETY: as above.
+        let brought = unsafe { SetForegroundWindow(back.target as HWND) } != 0;
+        tracing::info!(brought, "paste: brought the window below Voltip to the front");
     }
     true
 }
@@ -198,13 +234,7 @@ fn stacked_facts(hwnd: HWND, own: u32) -> StackedWindow<'static> {
         let cloaked = DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED.cast_unsigned(), (&raw mut cloak).cast(), size) == S_OK && cloak != 0;
         let own_process = process_of(hwnd) == Some(own);
         // Only a window every other check lets through is worth opening its process for.
-        let webview = visible
-            && !minimized
-            && !empty
-            && !tool
-            && !cloaked
-            && !own_process
-            && owner_image(hwnd).is_some_and(|name| name.eq_ignore_ascii_case(WEBVIEW_PROCESS));
+        let webview = visible && !minimized && !empty && !tool && !cloaked && !own_process && owner_image(hwnd).is_some_and(|name| is_webview_image(&name));
         StackedWindow { visible, minimized, empty, tool, cloaked, own_process, webview, class: "" }
     }
 }
