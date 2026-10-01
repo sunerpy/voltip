@@ -418,10 +418,9 @@ jobs:
       - name: Windows cross toolchain (nsis, clang, lld, llvm)
         run: |
           set -euo pipefail
-          sudo apt-get update
           # LLVM 19: the MSVC STL headers cargo-xwin downloads (current CRT) refuse older clang
           # ("STL1000: expected Clang 19.0.0 or newer"); Ubuntu 24.04 ships 19 as clang-19.
-          sudo apt-get install --yes --no-install-recommends nsis clang-19 lld-19 llvm-19 cmake ninja-build zip unzip
+          .release-tooling/.github/scripts/apt-install.sh nsis clang-19 lld-19 llvm-19 cmake ninja-build zip unzip
           echo "/usr/lib/llvm-19/bin" >>"$GITHUB_PATH"
           export PATH="/usr/lib/llvm-19/bin:$PATH"
           lld-link --version; command -v llvm-rc; clang --version | head -1; makensis -VERSION
@@ -626,8 +625,7 @@ jobs:
       - name: Linux system dependencies (Tauri bundler, webkit2gtk, ALSA, X11)
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
+          .release-tooling/.github/scripts/apt-install.sh \
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libdbus-1-dev \
             libayatana-appindicator3-dev librsvg2-dev libasound2-dev libssl-dev \
             libx11-dev libxtst-dev libxcb1-dev patchelf pkg-config file xdg-utils binutils cmake \

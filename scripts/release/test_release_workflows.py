@@ -335,5 +335,27 @@ class ContinuousIntegration(unittest.TestCase):
         self.assertIn("$bad_user.signed.$old", script)
 
 
+class AptInstalls(unittest.TestCase):
+    """2026-10-01: a slow apt mirror held the desktop smoke in its package step for 48 and 35
+    minutes, twice in one day, and stalled the release candidates waiting for CI Success."""
+
+    def test_regression_ci_and_the_candidate_install_packages_through_the_mirror_safe_script(self) -> None:
+        for name, script in (
+            ("ci.yml", ".github/scripts/apt-install.sh"),
+            ("release-candidate.yml", ".release-tooling/.github/scripts/apt-install.sh"),
+        ):
+            with self.subTest(workflow=name):
+                code = "\n".join(code_lines((WORKFLOWS / name).read_text(encoding="utf-8")))
+                self.assertNotRegex(code, r"apt-get (update|install)")
+                self.assertIn(script, code)
+        body = (ROOT / ".github/scripts/apt-install.sh").read_text(encoding="utf-8")
+        # Each download has a deadline and a later attempt leaves the Azure mirror; the install
+        # from the downloaded files is never cut short.
+        self.assertIn('sudo timeout "$deadline" apt-get "${opts[@]}" update', body)
+        self.assertIn("--download-only", body)
+        self.assertIn("s#azure\\.archive\\.ubuntu\\.com#archive.ubuntu.com#g", body)
+        self.assertIn('sudo apt-get "${opts[@]}" install --yes --no-install-recommends "$@"', body)
+
+
 if __name__ == "__main__":
     unittest.main()
