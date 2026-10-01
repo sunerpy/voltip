@@ -3,11 +3,13 @@
 # Checked in CI by `cargo deny check licenses bans advisories` (.github/workflows/ci.yml).
 # Run locally with the same command.
 #
-# Voltip is released under Apache-2.0 and its packages bundle every dependency. That constrains
-# what may be linked in: every dependency must be under a licence that lets the combined binaries
-# be distributed under Apache-2.0 terms. Permissive licences qualify. GPL-family and other
-# copyleft that would extend to the whole binary, and non-commercial licences, do not; they are
-# absent from `licenses.allow` below so they fail the build rather than being caught by memory.
+# Voltip is released under AGPL-3.0-or-later (from the release after 0.0.20; Apache-2.0 before)
+# and its packages bundle every dependency. Every dependency must be under a licence that lets the
+# combined binaries be distributed under those terms, and the allow-list stays permissive-only on
+# top of that, so that the author can still offer Voltip under another licence (a commercial one, say),
+# which a copyleft dependency (GPL-family, or AGPL itself) would rule out. Non-commercial licences are out as
+# well. They are absent from `licenses.allow` below so they fail the build rather than being
+# caught by memory.
 
 [graph]
 # Evaluate every platform, not just the host. A dependency that is GPL on Android and absent
@@ -60,8 +62,10 @@ allow = [
 
 # Deliberately NOT allowed, recorded so the omission reads as a decision rather than an
 # oversight. Adding any of these to `allow` is a licensing decision, not a build fix:
-#   GPL-2.0-only / GPL-2.0-or-later / GPL-3.0-only / GPL-3.0-or-later
-#     Copyleft that would put the shipped binaries under the GPL. `rlx-funasr` is
+#   GPL-2.0-only / GPL-2.0-or-later / GPL-3.0-only / GPL-3.0-or-later / AGPL-3.0-*
+#     Copyleft. GPL-3.0 and AGPL-3.0 code could be combined with Voltip's AGPL-3.0, but
+#     the author could no longer offer Voltip under another licence (code they do not own
+#     would be in it), and GPL-2.0-only cannot be combined at all. `rlx-funasr` is
 #     GPL-3.0-only and is banned by name under [bans] below.
 #   LGPL-2.1-* / LGPL-3.0-*
 #     Static linking is what Rust does by default, which triggers LGPL's relinking duty. Note
@@ -74,6 +78,11 @@ allow = [
 # *crate* metadata. It cannot see the licence of a downloaded MODEL WEIGHT. Moonshine's
 # non-English weights are non-commercial and no cargo-deny rule can catch that. Model licences
 # are policed by the model manifest in the model manager (todo 17), not here.
+
+# The workspace's own crates (`publish = false` in Cargo.toml) carry the project's licence; the
+# allow-list above is for third-party code.
+[licenses.private]
+ignore = true
 
 [bans]
 # Duplicate versions are a warning, not an error: cpal's Android backend already pulls two

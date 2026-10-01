@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "Microphone enumeration and a live input level meter on top of cpal (WASAPI / CoreAudio / ALSA)."
 
 [lints]

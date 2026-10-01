@@ -4,7 +4,7 @@ description: 从源码构建 Voltip、参与贡献，以及说明其工作原理
 
 # 开发者
 
-Voltip 基于 [Apache License 2.0](https://github.com/sunerpy/voltip/blob/main/LICENSE) 开源，代码、issue 和发布版本都在 [GitHub](https://github.com/sunerpy/voltip) 上。
+Voltip 基于 [GNU Affero 通用公共许可证 3.0 或更高版本](https://github.com/sunerpy/voltip/blob/main/LICENSE) 开源（0.0.20 及之前的版本以 Apache License 2.0 发布），代码、issue 和发布版本都在 [GitHub](https://github.com/sunerpy/voltip) 上。
 
 ## 构成
 

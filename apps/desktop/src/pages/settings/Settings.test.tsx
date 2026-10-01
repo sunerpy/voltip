@@ -183,12 +183,14 @@ describe("Settings · 外观", () => {
     await user.click(screen.getByRole("tab", { name: /关于/ }));
     expect(screen.getByRole("heading", { name: "关于", level: 2 })).toBeInTheDocument();
     expect(screen.queryByTestId("sample-footnote")).toBeNull();
-    expect(screen.getByText("Apache-2.0")).toBeInTheDocument();
+    // User decision 2026-10-01: AGPL-3.0-or-later after 0.0.20 (Apache-2.0 before).
+    expect(screen.getByText("AGPL-3.0-or-later")).toBeInTheDocument();
     expect(screen.getByText(MOCK_CURRENT_VERSION)).toBeInTheDocument();
     expect(screen.getByTestId("model-sources")).toHaveTextContent(
       "handy-computer/Qwen3-ASR-0.6B-gguf",
     );
-    expect(screen.queryByText(/私有|All rights reserved|AGPL/)).toBeNull();
+    // AGPL left this guard on 2026-10-01: it is the licence now (see above).
+    expect(screen.queryByText(/私有|All rights reserved/)).toBeNull();
     expect(screen.getByTestId("update-status")).toHaveTextContent("尚未检查更新");
     // The repository opens through the shell (the webview names the page); 反馈 is the same
     // dialog the sidebar opens, in this dialog's place, never the issue tracker (user feedback and

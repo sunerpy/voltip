@@ -30,7 +30,10 @@ exclude = ["apps/desktop/node_modules", "apps/mobile/node_modules", "packages"]
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.98"
-license = "Apache-2.0"
+license = "AGPL-3.0-or-later"
+# Not on crates.io: the crates ship inside the apps. Also lets cargo-deny and cargo-about tell them
+# from third-party code ([licenses.private] / [private]).
+publish = false
 repository = "https://github.com/sunerpy/voltip"
 
 [workspace.lints.rust]

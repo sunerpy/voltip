@@ -368,7 +368,7 @@ export interface FeedbackDraft {
   attachments?: string[];
 }
 
-export const APP_LICENSE = "Apache-2.0";
+export const APP_LICENSE = "AGPL-3.0-or-later";
 
 /** `voltip_core::DEFAULT_EDIT_HOTKEY`: the voice-edit chord (docs/dictation.md §19). */
 export const DEFAULT_EDIT_HOTKEY = "Ctrl+Alt+E";

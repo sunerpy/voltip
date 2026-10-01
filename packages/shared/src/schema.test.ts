@@ -1164,6 +1164,9 @@ describe("release facts", () => {
     const pkg: unknown = JSON.parse(readFileSync(new URL("package.json", root), "utf8"));
     const license = typeof pkg === "object" && pkg !== null && "license" in pkg ? pkg.license : "";
     expect(license).toBe(APP_LICENSE);
-    expect(readFileSync(new URL("LICENSE", root), "utf8")).toContain("Apache License");
+    // User decision 2026-10-01: AGPL-3.0-or-later after 0.0.20 (Apache-2.0 before).
+    expect(readFileSync(new URL("LICENSE", root), "utf8")).toContain(
+      "GNU AFFERO GENERAL PUBLIC LICENSE",
+    );
   });
 });

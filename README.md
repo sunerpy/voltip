@@ -9,7 +9,7 @@
 [![CI](https://github.com/sunerpy/voltip/actions/workflows/ci.yml/badge.svg)](https://github.com/sunerpy/voltip/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/sunerpy/voltip)](https://github.com/sunerpy/voltip/releases)
 [![codecov](https://codecov.io/gh/sunerpy/voltip/branch/main/graph/badge.svg)](https://codecov.io/gh/sunerpy/voltip)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](./LICENSE)
 
 [Website](https://voltip.firlab.app) · [Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Privacy](#privacy) · [Build from source](#build-from-source) · [Documentation](#documentation)
 
@@ -208,4 +208,5 @@ described in [SECURITY.md](./SECURITY.md).
 
 ## License
 
-[Apache License 2.0](./LICENSE).
+[GNU Affero General Public License v3.0 or later](./LICENSE) (AGPL-3.0-or-later). Versions 0.0.20
+and earlier were released under the Apache License 2.0 and stay under it.

@@ -32,6 +32,8 @@ MOBILE_MANIFEST = ROOT / "apps" / "mobile" / "src-tauri" / "Cargo.toml"
 ANDROID_TARGET = "aarch64-linux-android"
 LICENSE_FILE_PREFIXES = ("license", "licence", "copying", "notice", "ofl", "unlicense")
 RULE = "=" * 78
+# Where the Corresponding Source of each release is (AGPL-3.0 s. 6): the tag of that version.
+SOURCE_URL = "https://github.com/sunerpy/voltip"
 
 
 class Failure(Exception):
@@ -100,8 +102,21 @@ def render(version: str, about: dict, pnpm: dict, natives: list[tuple[str, str, 
     lines = [
         f"Voltip {version} — third-party notices",
         "",
-        "Voltip is licensed under the Apache License 2.0 (LICENSE). It includes the third-party software",
-        "listed below, each under its own licence, whose text follows its entry.",
+        "Voltip is free software: you can redistribute it and/or modify it under the terms of the GNU",
+        "Affero General Public License as published by the Free Software Foundation, either version 3",
+        "of the License, or (at your option) any later version. Its full text follows. Voltip 0.0.20 and",
+        "earlier were released under the Apache License 2.0.",
+        "",
+        f"The complete source code of this version: {SOURCE_URL}/tree/v{version}",
+        "",
+        "Voltip includes the third-party software listed after the licence, each under its own licence,",
+        "whose text follows its entry.",
+        "",
+        RULE,
+        "Voltip's licence",
+        RULE,
+        "",
+        (ROOT / "LICENSE").read_text(encoding="utf-8").strip(),
         "",
     ]
 

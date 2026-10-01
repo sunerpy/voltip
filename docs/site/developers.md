@@ -4,7 +4,7 @@ description: Building Voltip from source, contributing, and the design documents
 
 # Developers
 
-Voltip is open source under the [Apache License 2.0](https://github.com/sunerpy/voltip/blob/main/LICENSE). The code, issues and releases are on [GitHub](https://github.com/sunerpy/voltip).
+Voltip is open source under the [GNU Affero General Public License v3.0 or later](https://github.com/sunerpy/voltip/blob/main/LICENSE); versions 0.0.20 and earlier were released under the Apache License 2.0. The code, issues and releases are on [GitHub](https://github.com/sunerpy/voltip).
 
 ## How it is built
 
