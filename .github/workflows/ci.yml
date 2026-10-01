@@ -855,6 +855,76 @@ jobs:
           .github/scripts/check-android-package.sh "android-bundle/apk/Voltip_${version}_android_arm64.apk" \
             "android-bundle/aab/Voltip_${version}_android_arm64.aab" "$CI_ANDROID_CERT_SHA256" "$version"
 
+      # For `android-device`: the APK runs on an emulator there.
+      - name: Upload the APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: voltip-android-apk
+          path: android-bundle/apk/
+          if-no-files-found: error
+          retention-days: 3
+
+  # The app on a device. 0.0.18 and 0.0.19 closed at once on the user's phone (a Xiaomi HyperOS 3,
+  # 2026-10-01) although every package check passed: nothing had started the app. Here the APK the
+  # `android` job built runs on an Android 15 emulator (x86_64, which runs the arm64 code through
+  # its ARM translation; KVM on the hosted runner): it installs, its first screen comes up and it
+  # stays up with nothing fatal in its log (.github/scripts/android-device-smoke.sh). The log, the
+  # crash buffer, the exit reason, the UI tree and a screenshot upload either way.
+  android-device:
+    name: android-arm64 · runs on an emulator
+    needs: [android]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout (the smoke script)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Download the APK
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: voltip-android-apk
+          path: android-apk
+
+      # Diagnosis of the 0.0.19 crash, this pull request only: the published APK runs first, and
+      # its log is uploaded next to the new build's.
+      - name: Download the published 0.0.19 APK (diagnosis)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download v0.0.19 --repo "$GITHUB_REPOSITORY" --pattern '*_android_arm64.apk' --dir released-apk
+
+      # The hosted runner has KVM; this lets the emulator use it.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run on an emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            .github/scripts/android-device-smoke.sh released-apk device-0.0.19 || echo "the published 0.0.19 APK failed on the emulator too (diagnosis)"
+            .github/scripts/android-device-smoke.sh android-apk device
+
+      - name: Upload the device logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-device
+          path: |
+            device/
+            device-0.0.19/
+          if-no-files-found: warn
+          retention-days: 7
+
   # macOS on both processors (moved here from macos.yml, 2026-09-28): the app and the dmg, signed
   # ad hoc as the release signs them and checked the same way (.github/scripts/
   # check-macos-bundle.sh), the macOS-only unit tests, the real event tap on Apple silicon, and the
@@ -1069,7 +1139,7 @@ jobs:
   # or cancellation, fails.
   ci-success:
     name: CI Success
-    needs: [changes, verify-rust, verify-web, windows-cross, windows-native, hooks-windows, smoke-desktop, android, macos]
+    needs: [changes, verify-rust, verify-web, windows-cross, windows-native, hooks-windows, smoke-desktop, android, android-device, macos]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
