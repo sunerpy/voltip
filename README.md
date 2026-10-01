@@ -105,9 +105,10 @@ Applications. The first start is blocked because the app is not notarized: on ma
 open System Settings → Privacy & Security and click Open Anyway; on macOS 11 to 14 Control-click
 Voltip in Applications and choose Open. From a terminal,
 `xattr -dr com.apple.quarantine /Applications/Voltip.app` does the same. Updates install from inside
-the app and keep the microphone and Accessibility permissions; only the update from 0.0.6 or earlier
-asks once more (click Always Allow for the keychain, and turn Voltip off and on again under
-Accessibility and Microphone if dictation does not work).
+the app and keep the microphone and Accessibility permissions. The post-install keychain hand-over
+in 0.0.15 and 0.0.16 did not work; 0.0.16 therefore asks once per keychain item when it installs the
+first release with the pre-install fix. In-app updates between two fixed releases do not ask. Turn
+Voltip off and on again under Accessibility and Microphone if dictation does not work.
 
 Release packages come with a default recognition and clean-up service, so dictation works before
 you configure anything. You can switch to another provider or to an on-device model at any time.

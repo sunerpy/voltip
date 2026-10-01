@@ -300,6 +300,19 @@ class ContinuousIntegration(unittest.TestCase):
         self.assertIn("EVENT: ${{ github.event_name }}", body)
         self.assertIn("github.event_name == 'push' || github.event_name == 'workflow_dispatch'", self.jobs["macos"])
 
+    def test_macos_exercises_the_preinstall_keychain_boundary(self) -> None:
+        body = self.jobs["macos"]
+        self.assertIn("--example keychain_preinstall", body)
+        self.assertIn(".github/scripts/check-keychain-preinstall.sh", body)
+        self.assertNotIn("check-keychain-handoff.sh", body)
+        script = (ROOT / ".github/scripts/check-keychain-preinstall.sh").read_text(encoding="utf-8")
+        self.assertIn("USER=\"$user\" \"$work/harness\" \"$work/B.app.tar.gz\"", script)
+        self.assertIn('make_tar "$work/good/Voltip.app" "$work/B.app.tar.gz"', script)
+        self.assertIn('make_tar "$work/bad/Voltip.app" "$work/bad.app.tar.gz"', script)
+        self.assertIn("wrong-signature staged app was stopped", script)
+        self.assertIn("$user.signed.$b", script)
+        self.assertIn("$bad_user.signed.$old", script)
+
 
 if __name__ == "__main__":
     unittest.main()

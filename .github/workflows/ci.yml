@@ -1017,14 +1017,14 @@ jobs:
         timeout-minutes: 10
         run: .github/scripts/check-keychain-migration.sh "$APP"
 
-      # The fix for the prompt on every update (user report 2026-09-30): the old build hands the
-      # identity to the new one, which reads no other build's item; a hand install still asks.
-      - name: Keychain hand-over at an in-app update (login keychain)
+      # The updater-verified new app persists its own cdhash items before installation. This uses
+      # real mutual code-signature checks and then starts the installed B; a foreign B fails closed.
+      - name: Keychain pre-install hand-over (login keychain)
         timeout-minutes: 15
         run: |
           set -euo pipefail
-          cargo build --release -p voltip-identity --features keyring --example keychain_handoff --target "$MACOS_TARGET"
-          .github/scripts/check-keychain-handoff.sh "$APP" "target/$MACOS_TARGET/release/examples/keychain_handoff"
+          cargo build --release -p voltip-desktop --example keychain_preinstall --target "$MACOS_TARGET"
+          .github/scripts/check-keychain-preinstall.sh "$APP" "target/$MACOS_TARGET/release/examples/keychain_preinstall"
 
       - name: Headless native run (download a model, transcribe a public sample)
         shell: pwsh

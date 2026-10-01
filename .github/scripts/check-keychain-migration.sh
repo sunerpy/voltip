@@ -14,7 +14,7 @@
 # The keychain here is made with `security create-keychain`, which skips the partition check
 # (securityd `validatePartition`), so no step can ask: this checks the moves and the access lists,
 # not the dialog. On a user's Mac step 4 asks once; an in-app update hands the items over instead,
-# which check-keychain-handoff.sh checks on the login keychain.
+# which check-keychain-preinstall.sh checks on the login keychain.
 #
 # Usage: .github/scripts/check-keychain-migration.sh <Voltip.app (ad hoc)>
 # On a GitHub-hosted macOS runner. A temporary keychain is the user's default keychain for the

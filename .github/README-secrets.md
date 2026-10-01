@@ -103,7 +103,8 @@ then demand the private key. The release candidate's `prepare` job refuses such 
 
 The macOS packages are signed with one self-signed code signing certificate, "Voltip Code Signing"
 (100 years), so a Mac sees every update as the same app and keeps its microphone and Accessibility
-grants and its keychain access. `release-candidate.yml` imports it into a keychain of the job
+grants. A self-signed build has a per-CDHash Keychain partition; the desktop updater therefore hands
+entries to the staged new build before installation (see `docs/runbook.md`). `release-candidate.yml` imports it into a keychain of the job
 (`.github/scripts/macos-signing-keychain.sh`) and checks the app and every Mach-O in it against
 `macos_signing` in `.github/release-targets.json` (`scripts/release/macos-signature.py`). Local and
 ordinary CI builds stay ad hoc. Rotation and recovery: `docs/runbook.md` (发布 · macOS 签名).

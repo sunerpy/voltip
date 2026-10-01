@@ -42,9 +42,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "macos")]
+use tauri::Manager as _;
 use tauri::{AppHandle, Runtime, Url};
 use tauri_plugin_updater::{Update, UpdaterExt as _};
 use voltip_core::ui::{UiEvent, UpdateStatus};
+use voltip_identity::Entries;
 use voltip_tauri_bridge::Bridge;
 
 /// Compile-time environment variable carrying the manifest URL (`https://host/updates/latest.json`).
@@ -418,13 +421,47 @@ async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateS
     slot.publish(bridge, UpdateStatus::Installing { version: version.clone() });
     let Pending { update, bytes } = pending;
     let bytes = bytes.unwrap_or_default();
+    #[cfg(target_os = "macos")]
+    let entries = app.try_state::<crate::restart::Restart>().and_then(|restart| restart.handoff_state());
+    #[cfg(not(target_os = "macos"))]
+    let entries = None;
     // Windows: the installer is launched and the process exits inside `install`; macOS / Linux: the
     // bundle is replaced and the app has to relaunch itself.
-    tauri::async_runtime::spawn_blocking(move || update.install(bytes)).await.map_err(|e| describe(&e))?.map_err(|e| describe(&e))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        prepare_then_install(
+            bytes,
+            entries,
+            |package, entries| {
+                #[cfg(target_os = "macos")]
+                {
+                    crate::keychain_handoff::prepare_update(package, entries)?;
+                    tracing::info!(entries = entries.len(), "staged update persisted the keychain hand-over");
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = (package, entries);
+                Ok(())
+            },
+            |package| update.install(package).map_err(|e| describe(&e)),
+        )
+    })
+    .await
+    .map_err(|e| describe(&e))??;
     slot.clear_marker();
     tracing::info!(version, "update installed; restarting");
     crate::restart::after_update(app);
     Ok(None)
+}
+
+fn prepare_then_install(
+    package: Vec<u8>,
+    entries: Option<Entries>,
+    prepare: impl FnOnce(&[u8], &Entries) -> Result<(), String>,
+    install: impl FnOnce(Vec<u8>) -> Result<(), String>,
+) -> Result<(), String> {
+    if let Some(entries) = entries {
+        prepare(&package, &entries)?;
+    }
+    install(package)
 }
 
 /// Follow `Settings.auto_update`: on at startup → check after [`AUTO_CHECK_DELAY`] (installing only
@@ -503,6 +540,38 @@ mod tests {
         // The build-time values are whatever the environment held when this test binary compiled;
         // only the shape of the answer is fixed.
         let _ = UpdaterConfig::from_build();
+    }
+
+    #[test]
+    fn an_install_runs_only_after_the_staged_hand_over_commits() {
+        let order = std::sync::Mutex::new(Vec::new());
+        prepare_then_install(
+            vec![7],
+            Some(vec![("entry".into(), None)]),
+            |package, entries| {
+                assert_eq!(package, [7]);
+                assert_eq!(entries.len(), 1);
+                order.lock().unwrap().push("prepare");
+                Ok(())
+            },
+            |package| {
+                assert_eq!(package, [7]);
+                order.lock().unwrap().push("install");
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(*order.lock().unwrap(), ["prepare", "install"]);
+
+        assert_eq!(
+            prepare_then_install(
+                vec![8],
+                Some(vec![("entry".into(), None)]),
+                |_, _| Err("persistence failed".into()),
+                |_| panic!("install must not run after a failed hand-over"),
+            ),
+            Err("persistence failed".into())
+        );
     }
 
     /// An error with an optional cause, standing in for reqwest's and hyper's chain.

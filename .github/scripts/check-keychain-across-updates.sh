@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Keychain partitions across updates (docs/runbook.md 发布 · macOS 签名与钥匙串; manual checklist
 # item 15): the platform facts the in-app update's hand-over rests on (crates/voltip-identity
-# per_build.rs and handoff.rs, check-keychain-handoff.sh).
+# per_build.rs and handoff.rs, check-keychain-preinstall.sh).
 #
 # User report 2026-09-30: every update asked for voltip.identity.*. In the LOGIN keychain every item
 # carries a partition list, and a build signed with a self-signed certificate (no Apple Team ID)
