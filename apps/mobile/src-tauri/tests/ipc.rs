@@ -30,14 +30,9 @@ const POLL: Duration = Duration::from_millis(20);
 const DEVICE_NAME: &str = "Phone Test";
 const NOT_FOUND: &str = "not found";
 
-/// Offline core: relay disabled, LAN host on an ephemeral loopback port, a phone as in
-/// `production_config`.
-fn offline_config(dir: &Path) -> CoreConfig {
-    offline_config_with(dir, Settings { relay_enabled: false, ..Settings::default() })
-}
-
-/// [`offline_config`] with `settings` written first.
-fn offline_config_with(dir: &Path, settings: Settings) -> CoreConfig {
+/// Offline core with `settings` written first: LAN host on an ephemeral loopback port, a phone as
+/// in `production_config` (the callers turn the relay off in `settings`).
+fn offline_config(dir: &Path, settings: Settings) -> CoreConfig {
     SettingsStore::new(dir).save(&settings).unwrap();
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = DEVICE_NAME.into();
@@ -113,7 +108,7 @@ fn with_app(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path().to_path_buf();
-    let app = build_app(mock_builder(), move |_| offline_config_with(&data, settings), Arc::new(MemorySecretStore::new()), ports)
+    let app = build_app(mock_builder(), move |_| offline_config(&data, settings), Arc::new(MemorySecretStore::new()), ports)
         .build(mock_context(noop_assets()))
         .unwrap();
     let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
