@@ -213,12 +213,26 @@ class CandidateBuild(unittest.TestCase):
         # Every Android secret is required before a leg starts, and read nowhere but there and in
         # the signing step.
         prepare = self.jobs["prepare"]
-        for name in ("ANDROID_KEYSTORE_BASE64", "ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_ALIAS", "ANDROID_KEY_PASSWORD"):
+        for name in ("ANDROID_KEYSTORE_BASE64", "ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_PASSWORD"):
             with self.subTest(secret=name):
                 self.assertIn(f"{name}_PRESENT: ${{{{ secrets.{name} != '' }}}}", prepare)
                 self.assertEqual(self.text.count(f"secrets.{name} "), 2)
         targets = json.loads((ROOT / ".github/release-targets.json").read_text(encoding="utf-8"))
         self.assertRegex(targets["android_signing"]["certificate_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_regression_the_key_alias_is_no_secret(self) -> None:
+        # Candidate 36844362994 (0.0.18, 2026-10-01): the alias was the secret ANDROID_KEY_ALIAS,
+        # whose value is the project's name, so GitHub masked "voltip" in every log line of
+        # `prepare` and the Android leg ("sunerpy/***", "dev.***.mobile"). The alias names the key
+        # inside the keystore and reveals nothing; release-targets.json holds it.
+        self.assertNotIn("ANDROID_KEY_ALIAS", "\n".join(code_lines(self.jobs["prepare"])))
+        self.assertNotIn("secrets.ANDROID_KEY_ALIAS", self.text)
+        body = self.jobs["bundle-android"]
+        signed = body.index("- name: Sign with the release key")
+        checked = body.index("- name: Check the APK and the AAB")
+        self.assertIn(".android_signing.key_alias .release-tooling/.github/release-targets.json", body[signed:checked])
+        targets = json.loads((ROOT / ".github/release-targets.json").read_text(encoding="utf-8"))
+        self.assertEqual(targets["android_signing"]["key_alias"], "voltip")
 
     def test_the_gate_status_is_written_only_in_automatic_mode(self) -> None:
         gate = self.jobs["gate"]

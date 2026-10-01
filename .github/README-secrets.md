@@ -30,10 +30,9 @@ gh secret set VOLTIP_MODEL_BASE_URL --repo "$repo"
 # Optional: the feedback endpoint (both or neither).
 gh secret set VOLTIP_FEEDBACK_URL --repo "$repo"
 gh secret set VOLTIP_FEEDBACK_TOKEN --repo "$repo"
-# The Android release key (see below): the keystore base64 on one line, then its password and alias.
+# The Android release key (see below): the keystore base64 on one line, then its passwords.
 base64 -w0 voltip-release.jks | gh secret set ANDROID_KEYSTORE_BASE64 --repo "$repo"
 gh secret set ANDROID_KEYSTORE_PASSWORD --repo "$repo"
-gh secret set ANDROID_KEY_ALIAS --repo "$repo" --body voltip
 gh secret set ANDROID_KEY_PASSWORD --repo "$repo"
 # The documentation site: a fine-grained token for sunerpy/firlab (see below).
 gh secret set FIRLAB_DOCS_TOKEN --repo "$repo"
@@ -123,14 +122,15 @@ same key. An APK signed with another key cannot update the installed app. `relea
 builds both packages unsigned and signs them in a step of its own
 (`.github/scripts/sign-android-package.sh`), so the key is never present while the dependencies'
 build code runs; the checks require the certificate `android_signing.certificate_sha256` in
-`.github/release-targets.json` names. CI signs with a key it makes for the run. Backup and recovery:
-`docs/runbook.md` (发布 · Android 签名).
+`.github/release-targets.json` names. The alias is not a secret: it only names the key inside the
+keystore, and `android_signing.key_alias` holds it (as a secret its value, the project's name, was
+masked in every log line of the jobs that read it). CI signs with a key it makes for the run.
+Backup and recovery: `docs/runbook.md` (发布 · Android 签名).
 
 | Secret | Meaning | Source |
 |---|---|---|
 | `ANDROID_KEYSTORE_BASE64` | The PKCS12 keystore holding the key, base64 on one line. | kept in the owner's password manager |
 | `ANDROID_KEYSTORE_PASSWORD` | The keystore password. | same place |
-| `ANDROID_KEY_ALIAS` | The key's alias, `voltip`. | same place |
 | `ANDROID_KEY_PASSWORD` | The key password; PKCS12 keeps one password, so it equals the keystore password. | same place |
 
 ## Repository settings the release relies on
