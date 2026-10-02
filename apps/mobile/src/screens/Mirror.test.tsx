@@ -1,4 +1,9 @@
-import { type DeviceView, type HistoryEntry, MAX_PASTE_TEXT_CHARS } from "@voltip/shared";
+import {
+  type DeviceView,
+  type HistoryEntry,
+  MAX_PASTE_TEXT_CHARS,
+  type MirrorProfile,
+} from "@voltip/shared";
 import {
   MOCK_PUBLIC_KEYS,
   MockBackend,
@@ -79,6 +84,11 @@ function mirror(extra: Partial<MockMirror> = {}): MockMirror {
     }),
     ...extra,
   };
+}
+
+/** The value beside `label` in a read-only list of facts. */
+function fact(region: HTMLElement, label: string): string | null | undefined {
+  return within(region).getByText(label, { selector: "dt" }).nextElementSibling?.textContent;
 }
 
 function phone(
@@ -193,6 +203,149 @@ describe("a computer's history on the phone", () => {
     }
     backend.destroy();
   });
+
+  it("the source switch returns to this phone, and an empty 已收藏 on a computer does not ask for a star", async () => {
+    const user = userEvent.setup();
+    const backend = phone();
+    renderApp({ backend, initialScreen: "history" });
+    const page = await screen.findByTestId("phone-history");
+    await user.click(await within(page).findByRole("radio", { name: "MacBook Pro" }));
+    expect(await within(page).findByText("电脑上说的话。")).toBeInTheDocument();
+    // The computer's entries cannot be starred on the phone: the empty filter names another range.
+    await user.selectOptions(within(page).getByRole("combobox", { name: "筛选" }), "starred");
+    expect(await within(page).findByText("已收藏暂无结果。")).toBeInTheDocument();
+    expect(within(page).getByText("可选择其他时间范围。")).toBeInTheDocument();
+    expect(within(page).queryByText("在记录详情中点「收藏」。")).toBeNull();
+    await user.click(within(page).getByRole("radio", { name: "这部手机" }));
+    // This phone's own entries can be starred, so its empty filter says how.
+    expect(await within(page).findByText("在记录详情中点「收藏」。")).toBeInTheDocument();
+    expect(within(page).getByTestId("phone-history-stats")).toBeInTheDocument();
+    expect(within(page).queryByTestId("phone-history-mirror-state")).toBeNull();
+    backend.destroy();
+  });
+
+  it("an entry of a computer reads as polished, as recognised and as processed, with where and how it was made", async () => {
+    const user = userEvent.setup();
+    const full = take(4, {
+      text: "润色后的一段话。",
+      raw_text: "识别出的一段话",
+      processed: {
+        text: "处理后的会议纪要。",
+        preset: { id: "4f9c2a10-7b3e-4c1d-9e8f-0a1b2c3d4e5f", name: "会议纪要" },
+        at_ms: NOW,
+      },
+      preset: { id: "proofread", name: "校对" },
+      app: { id: "com.tencent.xinWeChat", name: "微信" },
+      scene: { id: "builtin-chat", name: "Chat", builtin: "chat" },
+      origin: { device: "Pixel 8", kind: "standalone" },
+    });
+    const plain: HistoryEntry = {
+      id: "00000000-0000-4000-8000-000000000006",
+      at_ms: NOW - 6 * 60_000,
+      raw_text: "未润色的一条",
+      text: "未润色的一条。",
+      refined: false,
+      asr_model: "Qwen/Qwen3-ASR-1.7B",
+      duration_ms: 2000,
+      asr_ms: 300,
+      outcome: { kind: "inserted", via: "clipboard" },
+      starred: false,
+      mode: "whole_take",
+      kind: "dictation",
+      preset: { id: "7d1e5b20-3c4a-4b6f-8a9d-1e2f3a4b5c6d", name: "我的预设" },
+    };
+    const backend = phone([mirror({ history: [full, plain] })]);
+    renderApp({ backend, initialScreen: "history" });
+    await user.click(await screen.findByRole("radio", { name: "MacBook Pro" }));
+    await user.click(await screen.findByText("润色后的一段话。"));
+    const entry = await screen.findByTestId("phone-mirror-entry");
+    const text = within(entry).getByTestId("phone-mirror-entry-text");
+    expect(text).toHaveTextContent("润色后的一段话。");
+    const views = within(entry).getByRole("radiogroup", { name: "文本视图" });
+    await user.click(within(views).getByRole("radio", { name: "原文" }));
+    expect(text).toHaveTextContent("识别出的一段话");
+    await user.click(within(views).getByRole("radio", { name: "处理后" }));
+    expect(text).toHaveTextContent("处理后的会议纪要。");
+    expect(within(entry).getByText("由「会议纪要」处理 · 原文保留")).toBeInTheDocument();
+    expect(fact(entry, "来源")).toBe("手机 · Pixel 8");
+    expect(fact(entry, "AI 预设")).toBe("校对");
+    expect(fact(entry, "应用")).toBe("微信");
+    expect(fact(entry, "场景")).toBe("即时聊天");
+    expect(fact(entry, "润色模型")).toBe("clean-up");
+    expect(fact(entry, "耗时")).toBe("总计 500 ms");
+
+    await user.click(screen.getByRole("button", { name: "返回" }));
+    await user.click(await screen.findByText("未润色的一条。"));
+    await waitFor(() => {
+      expect(screen.getByTestId("phone-mirror-entry-text")).toHaveTextContent("未润色的一条。");
+    });
+    const second = screen.getByTestId("phone-mirror-entry");
+    // Neither polished nor processed: one text, no views to switch.
+    expect(within(second).queryByRole("radiogroup", { name: "文本视图" })).toBeNull();
+    expect(fact(second, "润色模型")).toBe("未润色");
+    expect(fact(second, "AI 预设")).toBe("我的预设");
+    expect(fact(second, "耗时")).toBe("总计 300 ms");
+    expect(within(second).queryByText("来源")).toBeNull();
+    backend.destroy();
+  });
+
+  it("a copy or a share of a computer's entry that fails says so", async () => {
+    const user = userEvent.setup();
+    const backend = phone();
+    renderApp({ backend, initialScreen: "history" });
+    await user.click(await screen.findByRole("radio", { name: "MacBook Pro" }));
+    await user.click(await screen.findByText("电脑上说的话。"));
+    const entry = await screen.findByTestId("phone-mirror-entry");
+    vi.spyOn(backend, "pasteText").mockResolvedValueOnce({ kind: "failed", reason: "inject" });
+    await user.click(within(entry).getByRole("button", { name: "复制" }));
+    expect(await screen.findByText("复制失败")).toBeInTheDocument();
+    vi.spyOn(backend, "pasteText").mockRejectedValueOnce(new Error("no clipboard"));
+    await user.click(within(entry).getByRole("button", { name: "复制" }));
+    await waitFor(() => {
+      expect(screen.getAllByText("复制失败")).toHaveLength(2);
+    });
+    vi.spyOn(backend, "invoke").mockRejectedValueOnce(new Error("share: 没有可以分享的应用"));
+    await user.click(within(entry).getByRole("button", { name: "分享" }));
+    expect(await screen.findByText("出错了 · 没有可以分享的应用")).toBeInTheDocument();
+    backend.destroy();
+  });
+
+  it("an entry the computer deletes while it is open says it is gone", async () => {
+    const user = userEvent.setup();
+    const backend = phone();
+    renderApp({ backend, initialScreen: "history" });
+    await user.click(await screen.findByRole("radio", { name: "MacBook Pro" }));
+    await user.click(await screen.findByText("电脑上说的话。"));
+    await screen.findByTestId("phone-mirror-entry");
+    act(() => {
+      const copy = mirror();
+      backend.simulateMirror({
+        ...copy,
+        view: { ...copy.view, entries: 1 },
+        history: copy.history.slice(1),
+      });
+    });
+    expect(await screen.findByText("这条记录已删除。")).toBeInTheDocument();
+    expect(screen.getByText("这条记录已被删除或清空。")).toBeInTheDocument();
+    expect(screen.queryByTestId("phone-mirror-entry")).toBeNull();
+    backend.destroy();
+  });
+
+  it("a copy that cannot be read shows no entry and no settings instead of waiting", async () => {
+    const user = userEvent.setup();
+    const backend = phone();
+    vi.spyOn(backend, "mirrorHistoryEntry").mockRejectedValue(new Error("bad copy"));
+    vi.spyOn(backend, "mirrorProfile").mockRejectedValue(new Error("bad copy"));
+    renderApp({ backend, initialScreen: "history" });
+    await user.click(await screen.findByRole("radio", { name: "MacBook Pro" }));
+    await user.click(await screen.findByText("电脑上说的话。"));
+    expect(await screen.findByText("这条记录已删除。")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "返回" }));
+    await user.click(await screen.findByTestId("tab-settings"));
+    await user.click(await screen.findByTestId(`settings-computerSettings-${DESK}`));
+    expect(await screen.findByText("尚未收到这台电脑的设置。")).toBeInTheDocument();
+    backend.destroy();
+  });
 });
 
 describe("a computer's settings on the phone", () => {
@@ -225,6 +378,89 @@ describe("a computer's settings on the phone", () => {
     renderApp({ backend, initialScreen: "settings" });
     await user.click(await screen.findByTestId(`settings-computerSettings-${DESK}`));
     expect(await screen.findByText("尚未收到这台电脑的设置。")).toBeInTheDocument();
+    backend.destroy();
+  });
+
+  it("reads the settings as set there: the system theme, polish off, no model chosen, and the lists", async () => {
+    const user = userEvent.setup();
+    const quiet: MirrorProfile = {
+      ...mockMirrorProfile(undefined, {
+        dictionary: [
+          {
+            id: "5c8d2e40-1a3b-4c5d-8e6f-7a8b9c0d1e2f",
+            term: "Voltip",
+            heard_as: [],
+            enabled: true,
+            source: { kind: "manual" },
+            created_at_ms: 1,
+            updated_at_ms: 1,
+          },
+        ],
+        rules: [
+          {
+            id: "rule-1",
+            name: "去掉语气词",
+            kind: "literal",
+            pattern: "嗯",
+            replacement: "",
+            case_sensitive: false,
+            enabled: true,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+          },
+        ],
+        scenes: [
+          {
+            id: "builtin-chat",
+            name: "Chat",
+            builtin: "chat",
+            enabled: true,
+            match: { apps: [], title_contains: [] },
+            overrides: {},
+            created_at_ms: 1,
+            updated_at_ms: 1,
+          },
+          {
+            id: "scene-2",
+            name: "写周报",
+            enabled: true,
+            match: { apps: [], title_contains: ["周报"] },
+            overrides: {},
+            created_at_ms: 1,
+            updated_at_ms: 1,
+          },
+        ],
+      }),
+      follow_system_theme: true,
+      asr_model: "",
+      refine_enabled: false,
+      refine_model: "",
+    };
+    delete quiet.llm_provider;
+    const backend = phone([mirror({ profile: quiet })]);
+    renderApp({ backend, initialScreen: "settings" });
+    await user.click(await screen.findByTestId(`settings-computerSettings-${DESK}`));
+    const page = await screen.findByTestId("phone-computer-settings");
+    expect(fact(within(page).getByRole("region", { name: "外观" }), "主题")).toBe("跟随系统");
+    expect(fact(within(page).getByRole("region", { name: "识别" }), "语音模型")).toBe(
+      "内置服务 · —",
+    );
+    const polish = within(page).getByRole("region", { name: "AI 润色" });
+    expect(fact(polish, "状态")).toBe("未开启");
+    expect(fact(polish, "润色模型")).toBe("— · —");
+    const dictionary = within(page).getByRole("region", { name: "个人词典" });
+    expect(dictionary).toHaveTextContent("Voltip");
+    expect(dictionary).not.toHaveTextContent("听成");
+    expect(within(page).getByRole("region", { name: "替换规则" })).toHaveTextContent(
+      "去掉语气词嗯 →",
+    );
+    const scenes = within(page).getByRole("region", { name: "场景" });
+    expect(
+      within(scenes)
+        .getAllByRole("listitem")
+        .map((i) => i.textContent),
+    ).toEqual(["即时聊天", "写周报"]);
+    expect(within(page).getByRole("region", { name: "自定义预设" })).toHaveTextContent("无");
     backend.destroy();
   });
 });
