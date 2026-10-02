@@ -951,6 +951,18 @@ jobs:
           sw_vers; uname -m; sysctl -n machdep.cpu.brand_string; sysctl -n hw.ncpu
           xcode-select -p; clang --version | head -1; cmake --version | head -1 || true
 
+      # Every build in this job gets the deployment target `cargo tauri build` exports (the app's
+      # minimumSystemVersion). The C crates' build scripts run again when it changes, so a plain
+      # `cargo build` without it recompiled the tree after the app build, and the cache it left
+      # made the next app build recompile it again (2026-10-02, main CI 36982316309 on the Intel
+      # Mac: 9 min 14 s and 8 min 15 s with a warm cache).
+      - name: MACOSX_DEPLOYMENT_TARGET as the app's (tauri.macos.conf.json)
+        run: |
+          set -euo pipefail
+          target=$(jq -er .bundle.macOS.minimumSystemVersion apps/desktop/src-tauri/tauri.macos.conf.json)
+          echo "MACOSX_DEPLOYMENT_TARGET=$target" >>"$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=$target"
+
       # Why an in-app update hands the keychain over (user report 2026-09-30, checklist item 15):
       # in the login keychain a later build signed with the same self-signed certificate is refused
       # an earlier build's item, but may list and remove it; a created keychain checks nothing.
@@ -1076,7 +1088,9 @@ jobs:
 
       # The harness of the hand-over below, built in a step of its own: on a cold cache it is a
       # whole release build (2026-10-01, main: 14 min 32 s on the Intel Mac, which left the check
-      # no time inside its 15 minutes, and the release candidate waited on the rerun).
+      # no time inside its 15 minutes, and the release candidate waited on the rerun). With the
+      # app's deployment target it reuses the app build's crates; only the `test` variant of
+      # tauri (a dev-dependency feature) and the crates above it are its own.
       - name: Build the keychain pre-install harness
         timeout-minutes: 45
         run: cargo build --release -p voltip-desktop --example keychain_preinstall --target "$MACOS_TARGET"

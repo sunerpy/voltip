@@ -341,6 +341,19 @@ class ContinuousIntegration(unittest.TestCase):
         self.assertNotIn("cargo build", check)
         self.assertLess(body.index("Build the keychain pre-install harness"), body.index("Keychain pre-install hand-over"))
 
+    def test_regression_every_macos_build_shares_the_apps_deployment_target(self) -> None:
+        # 2026-10-02 (main CI 36982316309, Intel Mac): `cargo tauri build` exports the app's
+        # minimumSystemVersion as MACOSX_DEPLOYMENT_TARGET and the harness build had none, so the C
+        # crates' build scripts ran again and each build recompiled the tree (9 min 14 s and
+        # 8 min 15 s with a warm cache); the cache kept whichever build ran last.
+        body = self.jobs["macos"]
+        steps = re.split(r"\n      - name: ", body)
+        export = next(s for s in steps if "MACOSX_DEPLOYMENT_TARGET" in s and "GITHUB_ENV" in s)
+        self.assertIn("apps/desktop/src-tauri/tauri.macos.conf.json", export)
+        self.assertIn(".bundle.macOS.minimumSystemVersion", export)
+        first_build = next(i for i, s in enumerate(steps) if re.search(r"\bcargo (test|build|tauri build)\b", "\n".join(code_lines(s))))
+        self.assertLess(steps.index(export), first_build)
+
     def test_macos_exercises_the_preinstall_keychain_boundary(self) -> None:
         body = self.jobs["macos"]
         self.assertIn("--example keychain_preinstall", body)
