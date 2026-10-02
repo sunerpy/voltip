@@ -350,6 +350,8 @@ export const MOCK_UPDATE_TICK_MS = 200;
 export const MOCK_UPDATE_TICKS = 3;
 export const MOCK_UPDATE_TOTAL_BYTES = 48_000_000;
 export const MOCK_CURRENT_VERSION = "0.0.1";
+/** The phone's `update_install` before a check found a newer release (`update.rs` `NOTHING_TO_INSTALL`). */
+export const PHONE_NOTHING_TO_INSTALL = "updater: 没有可下载的新版本，请先检查更新";
 export const MOCK_AVAILABLE_VERSION = "0.0.2";
 /** Release notes as release-please writes them into `latest.json`. */
 export const MOCK_UPDATE_NOTES = [
@@ -932,6 +934,8 @@ export class MockBackend implements Backend {
   readonly linksOpened: ProjectLink[] = [];
   /** `model_folder_open` calls (model ids), for tests. */
   readonly modelFoldersOpened: string[] = [];
+  /** What the phone's `update_install` opened: `store` for the listing, else the release's version. */
+  readonly updatePagesOpened: string[] = [];
   /** `model_link_open` calls, the addresses opened, for tests. */
   readonly modelLinksOpened: string[] = [];
   /** What imports find wrong per model id (`simulateImportProblems`). */
@@ -2465,7 +2469,8 @@ export class MockBackend implements Backend {
 
   private checkForUpdate() {
     const current = this.state.update.state;
-    if (current === "disabled" || current === "checking") return;
+    // From a store, the store updates (docs/dictation.md §20.9): nothing to ask.
+    if (current === "disabled" || current === "checking" || current === "store") return;
     if (current === "downloading" || current === "installing") return;
     this.clearUpdateTimers();
     this.emit({ type: "update", state: "checking" });
@@ -2483,6 +2488,14 @@ export class MockBackend implements Backend {
 
   private installUpdate() {
     const current = this.state.update;
+    if (this.role === "phone") {
+      // docs/dictation.md §20.9: the phone downloads nothing itself. The page that installs the
+      // update opens in the browser: the store listing, or the APK of the newer release.
+      if (current.state === "store") this.updatePagesOpened.push("store");
+      else if (current.state === "available") this.updatePagesOpened.push(current.version);
+      else throw new Error(PHONE_NOTHING_TO_INSTALL);
+      return;
+    }
     if (current.state === "ready") {
       this.emit({ type: "update", state: "installing", version: current.version });
       return;

@@ -26,6 +26,8 @@ tauri = { version = "=2.11.6", default-features = false, features = ["wry"] }
 tauri-plugin-barcode-scanner = "=2.4.5"
 # Key pages and the repository in the browser (Android `ACTION_VIEW`), as the desktop opens them.
 tauri-plugin-opener = "=2.5.4"
+# Updates outside Google Play (docs/dictation.md §20.9): GitHub's latest-release API.
+reqwest.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

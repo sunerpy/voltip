@@ -1493,6 +1493,7 @@ fn all_events() -> Vec<UiEvent> {
         UiEvent::Update(UpdateStatus::Ready { version: "2.1.0".into() }),
         UiEvent::Update(UpdateStatus::Installing { version: "2.1.0".into() }),
         UiEvent::Update(UpdateStatus::Failed { message: "updater: 无法连接更新源".into() }),
+        UiEvent::Update(UpdateStatus::Store { version: "0.0.1".into() }),
         UiEvent::Update(UpdateStatus::Disabled),
         // The vocabulary lists (docs/dictation.md §16.4), full and empty.
         dictionary_event(dictionary()),

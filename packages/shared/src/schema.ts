@@ -1611,6 +1611,8 @@ export const updateStatusSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("ready"), version: z.string() }),
   z.object({ state: z.literal("installing"), version: z.string() }),
   z.object({ state: z.literal("failed"), message: z.string() }),
+  /** Updated by the app store it was installed from (Google Play): the phone only points there. */
+  z.object({ state: z.literal("store"), version: z.string() }),
   /** This build was packaged without an update endpoint / public key. */
   z.object({ state: z.literal("disabled") }),
 ]);
@@ -1635,6 +1637,7 @@ const updateEventSchema = z.discriminatedUnion("state", [
   updateStatusSchema.options[6].extend({ type: UPDATE_TYPE }),
   updateStatusSchema.options[7].extend({ type: UPDATE_TYPE }),
   updateStatusSchema.options[8].extend({ type: UPDATE_TYPE }),
+  updateStatusSchema.options[9].extend({ type: UPDATE_TYPE }),
 ]);
 
 /** Why a phone's take ended without delivering (`voltip_core::phone::PhoneTakeFailure`): the

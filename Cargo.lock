@@ -7171,6 +7171,7 @@ name = "voltip-mobile"
 version = "0.0.0"
 dependencies = [
  "directories",
+ "reqwest",
  "serde",
  "serde_json",
  "tauri",
