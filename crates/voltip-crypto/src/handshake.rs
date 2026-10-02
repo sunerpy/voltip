@@ -14,7 +14,12 @@ pub const PATTERN: &str = "Noise_XX_25519_ChaChaPoly_SHA256";
 /// Noise's hard limit on a single message (handshake or transport), in bytes.
 pub const MAX_NOISE_MESSAGE_LEN: usize = 65_535;
 /// AEAD tag length ChaCha20-Poly1305 appends to every transport message.
-const TAG_LEN: usize = 16;
+pub const TAG_LEN: usize = 16;
+/// Lengths of the three handshake messages, in order. This build never puts a payload in them,
+/// so `e` is 32 bytes, `e, ee, s, es` 96 and `s, se` 64. No transport frame has one of these
+/// lengths (`voltip_transport::SecureChannel::seal` sees to it), so a handshake tells its own
+/// messages from frames of an ended session by length alone (docs/dictation.md §20.8).
+pub const HANDSHAKE_MESSAGE_LENS: [usize; 3] = [32, 96, 64];
 
 /// Which side of the handshake we are.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -144,6 +149,15 @@ impl Handshake {
         self.state.read_message(msg, &mut payload)?;
         self.messages_seen += 1;
         Ok(())
+    }
+
+    /// Length of the message this side waits for next ([`HANDSHAKE_MESSAGE_LENS`]); `None` while
+    /// it is this side's turn to write, and once the handshake is over.
+    pub fn expected_message_len(&self) -> Option<usize> {
+        if self.pending_out.is_some() || self.state.is_handshake_finished() || self.state.is_my_turn() {
+            return None;
+        }
+        HANDSHAKE_MESSAGE_LENS.get(usize::from(self.messages_seen)).copied()
     }
 
     /// Advance: returns the next message to send, or tells the driver to wait / finish.
@@ -281,6 +295,32 @@ mod tests {
         assert_eq!(oa.handshake_hash, ob.handshake_hash);
         assert_eq!(oa.safety_code, ob.safety_code);
         assert!(format!("{oa:?}").contains("safety_code"));
+    }
+
+    /// docs/dictation.md §20.8: the three messages have the fixed lengths the peers sort payloads
+    /// by, and each side knows which one it waits for.
+    #[test]
+    fn handshake_messages_have_fixed_lengths() {
+        let (ka, kb) = pair();
+        let mut a = Handshake::new(Role::Initiator, &ka, None).unwrap();
+        let mut b = Handshake::new(Role::Responder, &kb, None).unwrap();
+        assert_eq!(a.expected_message_len(), None, "message 1 is still to be sent");
+        assert_eq!(b.expected_message_len(), Some(HANDSHAKE_MESSAGE_LENS[0]));
+        let HandshakeStep::Send(m1) = a.next_step().unwrap() else { panic!("message 1") };
+        assert_eq!(m1.len(), HANDSHAKE_MESSAGE_LENS[0]);
+        assert_eq!(a.expected_message_len(), Some(HANDSHAKE_MESSAGE_LENS[1]));
+        b.receive(&m1).unwrap();
+        assert_eq!(b.expected_message_len(), None);
+        let HandshakeStep::Send(m2) = b.next_step().unwrap() else { panic!("message 2") };
+        assert_eq!(m2.len(), HANDSHAKE_MESSAGE_LENS[1]);
+        assert_eq!(b.expected_message_len(), Some(HANDSHAKE_MESSAGE_LENS[2]));
+        a.receive(&m2).unwrap();
+        let HandshakeStep::Send(m3) = a.next_step().unwrap() else { panic!("message 3") };
+        assert_eq!(m3.len(), HANDSHAKE_MESSAGE_LENS[2]);
+        assert_eq!(a.expected_message_len(), None);
+        b.receive(&m3).unwrap();
+        assert!(a.is_finished() && b.is_finished());
+        assert_eq!(b.expected_message_len(), None);
     }
 
     #[test]

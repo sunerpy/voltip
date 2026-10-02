@@ -31,7 +31,7 @@ use crate::dictation::{DictationEngine, DictationError, DictationPhase, Dictatio
 use crate::engines::{BuiltIn, EngineSettings, EngineStatus, MAX_LOCAL_THREADS, ProviderId, ResolvedEngines, ServiceKind, UserSecrets};
 use crate::history::{HistoryEntry, HistoryStore};
 use crate::models::{CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelInstallState, ModelManager, ModelState};
-use crate::peer::{LinkId, PeerPath, PeerPhase, PeerState};
+use crate::peer::{Incoming, LinkId, PeerPath, PeerPhase, PeerState};
 use crate::presets::{CustomPreset, PresetDraft, PresetStore, PresetTrial, PresetTryOutcome};
 use crate::providers::{ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, key_entries, key_entry};
 use crate::scenes::{ContextSharing, Scene, SceneDraft, SceneStore};
@@ -2451,7 +2451,8 @@ impl Runtime {
 
     /// Tell `key` who we are and where our LAN host listens, over the best secure path.
     async fn announce_self(&mut self, key: PublicKey) {
-        let msg = AppMessage::DeviceInfoUpdate { version: ProtocolVersion::CURRENT, device: self.identity.info(), direct_hints: self.lan_hints() };
+        let msg =
+            AppMessage::DeviceInfoUpdate { version: ProtocolVersion::CURRENT, device: self.identity.info(), direct_hints: self.lan_hints(), mirror: false };
         tracing::debug!(peer = %key.fingerprint(), hints = ?self.lan_hints(), "announcing device info");
         let Some(st) = self.peers.get_mut(&key) else { return };
         let Some(path) = st.best_secure_path() else {
@@ -2585,6 +2586,7 @@ impl Runtime {
                 self.session_to_peer.insert((id, session_id), key);
                 if let Some(p) = self.peers.get_mut(&key).and_then(|st| st.path(id)) {
                     p.session_id = Some(session_id);
+                    p.present = peer_online;
                 }
                 if peer_online {
                     self.start_peer_handshake(key, id).await;
@@ -2593,11 +2595,15 @@ impl Runtime {
             }
             RelayFrame::PeerPresence { session_id, online, .. } => {
                 let Some(key) = self.session_to_peer.get(&(id, session_id)).copied() else { return };
+                if let Some(p) = self.peers.get_mut(&key).and_then(|st| st.path(id)) {
+                    p.present = online;
+                }
                 if online {
                     self.start_peer_handshake(key, id).await;
                 } else if let Some(p) = self.peers.get_mut(&key).and_then(|st| st.path(id)) {
                     p.phase = PeerPhase::Idle;
                     p.handshake_started = None;
+                    p.retry_at = None;
                 }
                 self.emit_devices();
             }
@@ -2661,11 +2667,23 @@ impl Runtime {
 
     async fn on_peer_bytes(&mut self, key: PublicKey, link: LinkId, session_id: SessionId, payload: Vec<u8>) {
         let local = self.identity.keypair.clone();
+        let initiator = is_initiator(&local.public, &key);
         let Some(p) = self.peers.get_mut(&key).and_then(|st| st.path(link)) else { return };
-        if matches!(p.phase, PeerPhase::Idle) {
-            // The peer initiated; we are the responder. Fall through to feed message 1.
-            if p.begin(&local, Role::Responder).is_err() {
-                return;
+        if matches!(p.phase, PeerPhase::Idle | PeerPhase::Handshaking(_)) {
+            // docs/dictation.md §20.8: a payload is a handshake message only when it has the length
+            // the handshake waits for; anything else is a frame of a session that has ended.
+            match p.classify(payload.len()) {
+                // The peer initiated (or gave up and started over); we are the responder.
+                Incoming::Start | Incoming::Restart => {
+                    if p.begin(&local, Role::Responder).is_err() {
+                        return;
+                    }
+                }
+                Incoming::Feed => {}
+                Incoming::Drop => {
+                    tracing::debug!(peer = %key.fingerprint(), len = payload.len(), "dropped a payload that is no message of this handshake");
+                    return;
+                }
             }
         }
         match &mut p.phase {
@@ -2675,7 +2693,7 @@ impl Runtime {
                     Ok(v) => v,
                     Err(e) => {
                         tracing::warn!(error = %e, "peer handshake failed");
-                        p.phase = PeerPhase::Idle;
+                        p.handshake_failed(Instant::now(), initiator);
                         return;
                     }
                 };
@@ -2748,12 +2766,13 @@ impl Runtime {
     }
 
     async fn finish_peer_handshake(&mut self, key: PublicKey, link: LinkId) {
+        let initiator = is_initiator(&self.identity.keypair.public, &key);
         let Some(p) = self.peers.get_mut(&key).and_then(|st| st.path(link)) else { return };
         let remote = match p.finish() {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(error = %e, "peer handshake finish failed");
-                p.phase = PeerPhase::Idle;
+                p.handshake_failed(Instant::now(), initiator);
                 return;
             }
         };
@@ -2789,15 +2808,30 @@ impl Runtime {
     async fn tick(&mut self) {
         let now = Instant::now();
         let limit = self.config.peer_handshake_timeout;
+        let local = self.identity.keypair.public;
         let mut stalled = false;
-        for p in self.peers.values_mut().flat_map(|st| st.paths.iter_mut()) {
-            if p.expire_stalled_handshake(now, limit) {
-                stalled = true;
+        let mut retries = Vec::new();
+        for (key, st) in &mut self.peers {
+            let initiator = is_initiator(&local, key);
+            for p in &mut st.paths {
+                if p.expire_stalled_handshake(now, limit) {
+                    p.handshake_failed(now, initiator);
+                    stalled = true;
+                }
+                if p.retry_due(now) {
+                    p.retry_at = None;
+                    retries.push((*key, p.link));
+                }
             }
         }
         if stalled {
             tracing::warn!("peer handshake stalled; back to offline");
             self.emit_devices();
+        }
+        // docs/dictation.md §20.8: a relay handshake that failed is started again after a backoff.
+        for (key, link) in retries {
+            tracing::info!(peer = %key.fingerprint(), "retrying the peer handshake");
+            self.start_peer_handshake(key, link).await;
         }
         self.maintain_direct(now);
         self.check_takes();
