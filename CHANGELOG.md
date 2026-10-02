@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.26](https://github.com/sunerpy/voltip/compare/v0.0.25...v0.0.26) (2026-10-02)
+
+
+### Features
+
+* **sync:** the computer's history and settings on the phone, the phone's records on the computer ([#65](https://github.com/sunerpy/voltip/issues/65)) ([c1b5382](https://github.com/sunerpy/voltip/commit/c1b5382b95fa215fb1af812843fcd4ea6f6f05c6))
+
 ## [0.0.25](https://github.com/sunerpy/voltip/compare/v0.0.24...v0.0.25) (2026-10-02)
 
 
