@@ -43,6 +43,7 @@ use std::collections::VecDeque;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
@@ -503,6 +504,9 @@ struct Take {
     /// The live worker will report (`StreamFinished` / `StreamDegraded`) — it was spawned and has
     /// not reported yet.
     worker_pending: bool,
+    /// Set when the take is cancelled while listening: the live worker then ends without its flush,
+    /// so nothing more of a take the person abandoned reaches a recogniser (docs/dictation.md §11.8).
+    live_cancelled: Arc<AtomicBool>,
     /// The recording, once `Stopped` arrived (the streaming modes hold it until the flush).
     recording: Option<Recording>,
     /// The flushed stream, once `StreamFinished` arrived (held until the recording).
@@ -554,6 +558,7 @@ impl Take {
             mode: requested,
             live_error: None,
             worker_pending: false,
+            live_cancelled: Arc::new(AtomicBool::new(false)),
             recording: None,
             flushed: None,
             finalize_started: None,
@@ -1271,7 +1276,15 @@ impl DictationEngine {
     /// Start the live decode worker for this session on a blocking thread (docs/dictation.md §11).
     /// It ends by itself when the tap closes (the capture stopped or was released).
     fn spawn_live(&mut self, session: u64, pcm: Box<dyn LivePcm>, streaming: Arc<dyn StreamingTranscriber>) {
-        let job = LiveJob { session, pcm, streaming, language: self.take_language(), script: self.take_script(), tx: self.internal.clone() };
+        let job = LiveJob {
+            session,
+            pcm,
+            streaming,
+            language: self.take_language(),
+            script: self.take_script(),
+            cancelled: self.take.live_cancelled.clone(),
+            tx: self.internal.clone(),
+        };
         self.take.worker_pending = true;
         tokio::task::spawn_blocking(move || run_live(job));
     }
@@ -1297,6 +1310,8 @@ impl DictationEngine {
         match self.status.phase {
             DictationPhase::Idle => Err(DictationError::Idle),
             DictationPhase::Listening { .. } => {
+                // Before the tap closes: the live worker must see it when its loop ends.
+                self.take.live_cancelled.store(true, Ordering::SeqCst);
                 let mut mic = self.mic.lock();
                 match std::mem::replace(&mut *mic, Mic::Closed) {
                     Mic::Open(capture) => release(capture),
@@ -2520,6 +2535,8 @@ struct LiveJob {
     language: Option<String>,
     /// The script partials, sentences and the flush are normalised to (docs/dictation.md §17).
     script: ChineseScript,
+    /// The take was cancelled while listening: end without the flush.
+    cancelled: Arc<AtomicBool>,
     tx: mpsc::Sender<Internal>,
 }
 
@@ -2530,7 +2547,7 @@ struct LiveJob {
 /// failure — open, tap overrun, decoder error, a panic in the recogniser — becomes one
 /// [`Internal::StreamDegraded`] and ends the worker; the recording never notices.
 fn run_live(job: LiveJob) {
-    let LiveJob { session, mut pcm, streaming, language, script, tx } = job;
+    let LiveJob { session, mut pcm, streaming, language, script, cancelled, tx } = job;
     let degrade = |reason: String| {
         let _ = tx.blocking_send(Internal::StreamDegraded { session, reason });
     };
@@ -2544,6 +2561,10 @@ fn run_live(job: LiveJob) {
     let mut throttle = PartialThrottle::default();
     let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
         loop {
+            // Cancelled while listening: nothing more of the take goes to the recogniser.
+            if cancelled.load(Ordering::SeqCst) {
+                return Ok(());
+            }
             let n = pcm.read(&mut buf);
             pending.extend_from_slice(&buf[..n]);
             if pcm.overrun() {
@@ -2582,6 +2603,13 @@ fn run_live(job: LiveJob) {
         Ok(Ok(())) => {}
         Ok(Err(reason)) => return degrade(reason),
         Err(_) => return degrade("decoder panicked".to_owned()),
+    }
+    // A cancelled take ends here, without the flush: with the built-in service's preview the
+    // flush would upload the rest of a take the person abandoned (docs/dictation.md §11.8). The
+    // engine has left the session; nothing is reported.
+    if cancelled.load(Ordering::SeqCst) {
+        tracing::debug!(session, "live preview: take cancelled; no flush");
+        return;
     }
     let result = match std::panic::catch_unwind(AssertUnwindSafe(move || stream.finish())) {
         Ok(r) => r,
@@ -3845,21 +3873,54 @@ mod tests {
         r.wait_stops(1).await;
     }
 
-    /// Cancelling while previewing releases the device, which closes the tap; the worker's late
-    /// flush belongs to a finished session and is dropped.
+    /// Cancelling while previewing releases the device, which closes the tap, and the worker ends
+    /// without its flush. Changed 2026-10-03 (the goal gate on docs/dictation.md §11.8): the worker
+    /// used to flush and the engine dropped the result, but with the built-in service's preview the
+    /// flush is a request that would upload the rest of a take the person abandoned.
     #[tokio::test(start_paused = true)]
-    async fn cancel_while_previewing_closes_the_tap_and_drops_the_late_flush() {
+    async fn cancel_while_previewing_closes_the_tap_and_ends_the_worker_without_its_flush() {
         let streaming = Arc::new(FakeStreaming::script());
         let mut r = rig_live(FakeAudio::speech(), streaming.clone(), true);
         r.start_open().await;
         r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(_), .. })).await;
         assert_eq!(phase(&r.engine.cancel().unwrap()), &DictationPhase::CANCELLED);
         r.wait_stops(1).await;
-        wait_until(|| streaming.finishes() == 1).await;
-        assert_eq!(streaming.finishes(), 1, "the worker flushed when the tap closed");
+        wait_until(|| streaming.sessions_ended() == 1).await;
+        assert_eq!(streaming.finishes(), 0, "a cancelled take is not flushed");
         r.drain().await;
-        assert_eq!(r.engine.status().phase, DictationPhase::CANCELLED, "the late flush changed nothing");
+        assert_eq!(r.engine.status().phase, DictationPhase::CANCELLED);
         assert_eq!(r.transcriber.calls(), 0);
+    }
+
+    /// Regression (2026-10-03, the goal gate): a take cancelled while listening still sent the rest
+    /// of itself to the built-in service, because the live worker flushed when the tap closed and
+    /// the cloud preview's flush is a request (docs/dictation.md §11.8). Cancelled, the worker sends
+    /// nothing more and reports nothing; otherwise it sends the preview and the flush and reports.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn regression_a_cancelled_take_sends_nothing_more_to_the_recogniser() {
+        use crate::dictation::fakes::FakeLivePcm;
+        // 1.5 s of a tone, all in the tap, which is closed: what a released capture leaves behind.
+        let tone: Vec<f32> = (0..24_000).map(|i| (i as f32 * 440.0 * std::f32::consts::TAU / 16_000.0).sin() / 3.0).collect();
+        for (cancelled, calls) in [(true, 0), (false, 2)] {
+            let transcriber = Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT));
+            let (tx, mut rx) = mpsc::channel(64);
+            let job = LiveJob {
+                session: 1,
+                pcm: Box::new(FakeLivePcm::new(tone.clone(), Arc::new(AtomicBool::new(true)))),
+                streaming: Arc::new(RedecodeStreaming::new(transcriber.clone(), Vec::new())),
+                language: None,
+                script: ChineseScript::AsIs,
+                cancelled: Arc::new(AtomicBool::new(cancelled)),
+                tx,
+            };
+            tokio::task::spawn_blocking(move || run_live(job)).await.unwrap();
+            assert_eq!(transcriber.calls(), calls, "cancelled: {cancelled}");
+            let mut finished = false;
+            while let Ok(event) = rx.try_recv() {
+                finished |= matches!(event, Internal::StreamFinished { .. });
+            }
+            assert_eq!(finished, !cancelled, "cancelled: {cancelled}");
+        }
     }
 
     // ---------------- output modes (docs/dictation.md §12) ----------------

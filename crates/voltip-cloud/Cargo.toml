@@ -26,10 +26,12 @@ voltip-asr.workspace = true
 voltip-core.workspace = true
 voltip-refine.workspace = true
 
-# Android: Mozilla's root store for the feedback requests, as voltip-asr and voltip-refine.
+# Android: Mozilla's root store for the shells' own requests (feedback, the phone's update check),
+# as voltip-asr and voltip-refine.
 [target.'cfg(target_os = "android")'.dependencies]
 webpki-root-certs.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
+webpki-root-certs.workspace = true
 wiremock.workspace = true

@@ -179,7 +179,8 @@ fn version_of(text: &str) -> Option<(u64, u64, u64)> {
 
 /// Ask GitHub for the latest release.
 async fn fetch(url: &str) -> Result<Release, String> {
-    let client = reqwest::Client::builder()
+    // Not a bare reqwest client: its verifier panics on Android at the first HTTPS request.
+    let client = voltip_cloud::http_client_builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .read_timeout(READ_TIMEOUT)
         // GitHub's API refuses requests without one.
@@ -419,6 +420,17 @@ mod tests {
         for (tag, current) in [("v0.0.29-rc.1", "0.0.28"), ("nightly", "0.0.28"), ("v0.0.29", "dev"), ("v0.0", "0.0.28"), ("v0.0.29.1", "0.0.28")] {
             assert!(read_release(&release(tag, &[]), current, 7).unwrap_err().starts_with("无法识别版本号"), "{tag} vs {current}");
         }
+    }
+
+    /// Regression (2026-10-03, the goal gate): the update check built a bare reqwest client, whose
+    /// platform verifier panics on Android at the first HTTPS request; a test host never reaches
+    /// that branch. The check takes voltip-cloud's builder, which trusts Mozilla's roots there.
+    #[test]
+    fn regression_the_update_check_takes_the_client_that_works_on_android() {
+        let code: String = include_str!("update.rs").lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n");
+        assert!(code.contains("voltip_cloud::http_client_builder()"));
+        assert!(!code.contains(concat!("reqwest::Client", "::builder()")), "a bare client panics on Android");
+        assert!(voltip_cloud::http_client_builder().build().is_ok());
     }
 
     #[test]

@@ -399,18 +399,6 @@ struct Declared<'a> {
     sha256: &'a str,
 }
 
-/// The HTTP client builder with the trust roots of this platform: on Android, Mozilla's root
-/// store, as voltip-asr and voltip-refine do (the system verifier needs a JNI context the app never
-/// hands it).
-fn client_builder() -> reqwest::ClientBuilder {
-    let builder = reqwest::Client::builder();
-    #[cfg(target_os = "android")]
-    let builder = builder.tls_certs_only(
-        webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().filter_map(|der| reqwest::Certificate::from_der(der.as_ref()).ok()).collect::<Vec<_>>(),
-    );
-    builder
-}
-
 /// Post one report to `url` as `user_agent` (`voltip-desktop/0.0.23`), then the `attachments`'
 /// bytes in the chunks the endpoint asks for. Errors carry no host: the endpoint is a build secret.
 #[allow(clippy::too_many_arguments)]
@@ -424,7 +412,7 @@ pub async fn send(
     diagnostics: &Diagnostics,
     attachments: &[Staged],
 ) -> Result<Receipt, SendError> {
-    let http = client_builder().user_agent(user_agent).build().map_err(|_| SendError::Network)?;
+    let http = crate::http_client_builder().user_agent(user_agent).build().map_err(|_| SendError::Network)?;
     let token = token.filter(|t| !t.is_empty());
     let declared = attachments.iter().map(|a| Declared { name: &a.name, mime: &a.mime, size: a.bytes.len(), sha256: &a.sha256 }).collect();
     let mut request = http.post(url).timeout(SEND_TIMEOUT).json(&Payload { kind, message, contact, diagnostics, attachments: declared });
