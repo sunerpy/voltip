@@ -56,7 +56,7 @@ use super::ports::{
     AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection,
     Injector, LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MIN_RECORDING, PARTIAL_THROTTLE, PROBE_DEADLINE, PcmStream,
     Recording, RefineContext, RefineHints, Refiner, Segment, Segmenter, SegmenterFactory, SelectionTiming, ServiceProbe, StreamEvent, StreamFinal,
-    StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
+    StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
 };
 use super::redecode::RedecodeStreaming;
 use super::wav;
@@ -2571,12 +2571,12 @@ fn run_live(job: LiveJob) {
                 return Err("live tap overrun: the decoder fell behind the microphone".to_owned());
             }
             let closed = pcm.is_closed() && n == 0;
-            if pending.len() >= LIVE_CHUNK_SAMPLES || (closed && !pending.is_empty()) {
-                stream.feed(&pending);
-                pending.clear();
+            // Everything the session has to say, sent on: after a feed, and while no audio comes,
+            // since a remote recogniser's answer arrives whenever it does (docs/dictation.md §11.8).
+            let mut drain = |stream: &mut Box<dyn StreamingSession>| -> Result<(), String> {
                 loop {
                     match stream.poll() {
-                        StreamEvent::Idle => break,
+                        StreamEvent::Idle => return Ok(()),
                         StreamEvent::Error(e) => return Err(e),
                         StreamEvent::Endpoint { text, start_ms, end_ms } => {
                             throttle.reset();
@@ -2591,9 +2591,15 @@ fn run_live(job: LiveJob) {
                         }
                     }
                 }
+            };
+            if pending.len() >= LIVE_CHUNK_SAMPLES || (closed && !pending.is_empty()) {
+                stream.feed(&pending);
+                pending.clear();
+                drain(&mut stream)?;
             } else if closed {
                 return Ok(());
             } else if n == 0 {
+                drain(&mut stream)?;
                 // Nothing buffered yet: a short back-off, not a wait for anything in particular.
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -3890,6 +3896,47 @@ mod tests {
         r.drain().await;
         assert_eq!(r.engine.status().phase, DictationPhase::CANCELLED);
         assert_eq!(r.transcriber.calls(), 0);
+    }
+
+    /// Regression (2026-10-03, main's CI after M8): the decode loop polled the session only after a
+    /// feed, so a remote recogniser's answer that came back once the tap had nothing new to hand
+    /// over was never read. On a slow machine the preview of a take whose audio had all arrived
+    /// stayed empty (`the_built_in_service_previews_with_the_takes_transcriber` hung in CI's
+    /// coverage run). The loop polls while no audio comes too.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn regression_an_answer_after_the_last_feed_still_reaches_the_preview() {
+        use crate::dictation::fakes::FakeLivePcm;
+        let tone: Vec<f32> = (0..24_000).map(|i| (i as f32 * 440.0 * std::f32::consts::TAU / 16_000.0).sin() / 3.0).collect();
+        // The answer comes back well after the tap, still open, has handed over all of its audio.
+        let transcriber = Arc::new(FakeTranscriber::slow(FAKE_TRANSCRIPT, Duration::from_millis(300)));
+        let closed = Arc::new(AtomicBool::new(false));
+        let (tx, mut rx) = mpsc::channel(64);
+        let job = LiveJob {
+            session: 1,
+            pcm: Box::new(FakeLivePcm::new(tone, closed.clone())),
+            streaming: Arc::new(RedecodeStreaming::new(transcriber.clone(), Vec::new()).flushing(false)),
+            language: None,
+            script: ChineseScript::AsIs,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            tx,
+        };
+        let worker = tokio::task::spawn_blocking(move || run_live(job));
+        let preview = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match rx.recv().await {
+                    Some(Internal::Partial { current, .. }) => break Some(current),
+                    Some(_) => {}
+                    None => break None,
+                }
+            }
+        })
+        .await;
+        // The tap closes whatever happened: a failed assertion behind a running worker would hold
+        // the runtime's drop, and the test would hang instead of failing.
+        closed.store(true, Ordering::SeqCst);
+        worker.await.unwrap();
+        assert_eq!(preview, Ok(Some(FAKE_TRANSCRIPT.to_owned())), "the preview arrives while the tap stays open");
+        assert_eq!(transcriber.calls(), 1);
     }
 
     /// Regression (2026-10-03, the goal gate): a take cancelled while listening still sent the rest
