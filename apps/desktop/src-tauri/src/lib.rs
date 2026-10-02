@@ -52,7 +52,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 104] = [
+pub const COMMANDS: [&str; 107] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -120,6 +120,9 @@ pub const COMMANDS: [&str; 104] = [
     "model_download",
     "model_cancel",
     "model_remove",
+    "model_import",
+    "model_folder_open",
+    "model_link_open",
     "dictionary_add",
     "dictionary_update",
     "dictionary_remove",
@@ -671,6 +674,28 @@ fn model_cancel(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), Stri
 #[tauri::command]
 fn model_remove(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::ModelRemove { id })?)
+}
+
+/// Install a model from files a person downloaded into its directory (docs/dictation.md §10); the
+/// result arrives as `models` events.
+#[tauri::command]
+fn model_import(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ModelImport { id })?)
+}
+
+/// Open the directory a manual download of model `id` goes into (created when missing).
+#[tauri::command]
+fn model_folder_open(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    let dir = bridge.model_folder(&id)?;
+    tauri_plugin_opener::open_path(dir, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Open one file's download address in the browser. The webview names the model, the file and the
+/// source; the address comes from the core's catalogue.
+#[tauri::command]
+fn model_link_open(bridge: tauri::State<'_, Bridge>, id: String, file: String, source: usize) -> Result<(), String> {
+    let url = bridge.model_link(&id, &file, source)?;
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
 /// Append a personal dictionary entry (docs/dictation.md §16.4); `history_id` marks one added from
@@ -1250,6 +1275,9 @@ pub fn build_app<R: Runtime>(
             model_download,
             model_cancel,
             model_remove,
+            model_import,
+            model_folder_open,
+            model_link_open,
             dictionary_add,
             dictionary_update,
             dictionary_remove,

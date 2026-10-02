@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   CardGrid,
+  IconButton,
   OptionCard,
   Progress,
   SettingsSection,
@@ -10,7 +11,8 @@ import {
   useI18n,
   useUiState,
 } from "@voltip/ui";
-import { useShell } from "../../../app/shell-context";
+import { useState } from "react";
+import { copyWithToast, useShell } from "../../../app/shell-context";
 import {
   STATE_BADGE_TONE,
   activateLocalModel,
@@ -212,6 +214,9 @@ export function ModelCard({ model }: ModelCardProps) {
           {t("model.failedPrefix")} · {model.state.message}
         </p>
       )}
+      {model.state.kind !== "installed" && model.files.length > 0 && (
+        <ManualDownload model={model} />
+      )}
       {model.state.kind === "installed" && (
         <div
           className="mono flex flex-col gap-0.5 text-[11px] text-fg-muted"
@@ -231,5 +236,134 @@ export function ModelCard({ model }: ModelCardProps) {
         </div>
       )}
     </OptionCard>
+  );
+}
+
+/** 手动下载 (docs/dictation.md §10, user request 2026-10-02): for a network the app cannot
+ *  download through. The folder the files go into (copy, or open it in the file manager), each
+ *  file with the addresses a browser can fetch it from (`model_link_open`: the shell takes the
+ *  address from the core; each copies too, for another device that can reach the sources), and
+ *  检查并导入 (`model_import`), which installs what was put there or
+ *  names what is missing. Open from the start when the last import came back incomplete. */
+function ManualDownload({ model }: { model: ModelState }) {
+  const { backend } = useBackend();
+  const shell = useShell();
+  const { t } = useI18n();
+  const incomplete = model.state.kind === "import_incomplete" ? model.state : undefined;
+  const [open, setOpen] = useState(incomplete !== undefined);
+  const busy = model.state.kind === "downloading" || model.state.kind === "verifying";
+  const fail = (e: unknown) => {
+    shell.toast({
+      message: String(e instanceof Error ? e.message : e),
+      duration: 4000,
+      tone: "danger",
+    });
+  };
+  return (
+    <div className="flex flex-col gap-2" data-testid="manual-download">
+      <Button
+        size="sm"
+        variant="text"
+        icon={open ? "chevronDown" : "chevronRight"}
+        aria-expanded={open}
+        className="self-start"
+        onClick={() => {
+          setOpen(!open);
+        }}>
+        {t("model.manual.toggle")}
+      </Button>
+      {(open || incomplete !== undefined) && (
+        <div className="flex flex-col gap-2 rounded-6 bg-inset p-3 text-[12px] leading-5">
+          <p className="text-fg-muted">{t("model.manual.lede")}</p>
+          <div className="flex flex-col gap-1">
+            <span className="text-fg-subtle">{t("model.manual.folder")}</span>
+            <span
+              className="mono break-all text-fg select-text"
+              title={model.dir}
+              data-testid="manual-download-dir">
+              {model.dir}
+            </span>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="copy"
+                onClick={() => {
+                  void copyWithToast(shell, model.dir, t("model.manual.folderCopied"));
+                }}>
+                {t("model.manual.copyFolder")}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="folder"
+                onClick={() => {
+                  backend.modelFolderOpen(model.id).catch(fail);
+                }}>
+                {t("model.manual.openFolder")}
+              </Button>
+            </div>
+          </div>
+          <ul className="flex flex-col gap-1.5" aria-label={t("model.manual.toggle")}>
+            {model.files.map((file) => (
+              <li
+                key={file.name}
+                className="flex flex-col gap-0.5"
+                data-testid="manual-download-file">
+                <span className="mono text-fg">
+                  {t("model.manual.file", { name: file.name, size: formatBytes(file.size_bytes) })}
+                </span>
+                {file.urls.map((url, source) => (
+                  <div key={url} className="flex items-start gap-1">
+                    <button
+                      type="button"
+                      className="mono min-w-0 text-left break-all text-accent underline-offset-2 hover:underline"
+                      aria-label={t("model.manual.open", { url })}
+                      onClick={() => {
+                        backend.modelLinkOpen(model.id, file.name, source).catch(fail);
+                      }}>
+                      {url}
+                    </button>
+                    <IconButton
+                      icon="copy"
+                      label={t("model.manual.copyLink", { url })}
+                      onClick={() => {
+                        void copyWithToast(shell, url, t("model.manual.linkCopied"));
+                      }}
+                    />
+                  </div>
+                ))}
+              </li>
+            ))}
+          </ul>
+          {incomplete !== undefined && (
+            <div
+              className="flex flex-col gap-1 rounded-6 bg-warning-soft px-3 py-2 text-warning"
+              role="status"
+              data-testid="manual-download-problems">
+              {incomplete.missing.length > 0 && (
+                <span>{t("model.manual.missing", { files: incomplete.missing.join("、") })}</span>
+              )}
+              {incomplete.mismatched.length > 0 && (
+                <span>
+                  {t("model.manual.mismatched", { files: incomplete.mismatched.join("、") })}
+                </span>
+              )}
+            </div>
+          )}
+          <Button
+            size="sm"
+            variant="primary"
+            icon="check"
+            className="self-start"
+            disabled={busy}
+            onClick={() => {
+              void backend.invoke("model_import", { id: model.id });
+            }}>
+            {t("model.manual.import")}
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }

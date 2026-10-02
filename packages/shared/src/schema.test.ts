@@ -541,9 +541,42 @@ describe("local models (docs/dictation.md §10)", () => {
     description: "SenseVoice Small，中英日韩粤，自带标点与数字规整（ITN）；240 MB",
     recommended: false,
     repo: "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+    dir: "/home/u/.local/share/voltip/models/sense-voice-small",
+    files: [
+      {
+        name: "tokens.txt",
+        size_bytes: 315_894,
+        urls: [
+          "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt",
+          "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt",
+        ],
+      },
+    ],
     active: false,
     state: { kind: "not_installed" as const },
   };
+
+  it("a model names its directory and files for a manual download, and an import can come back incomplete", () => {
+    // Before 2026-10-02 a core sent neither: the card then offers no manual download.
+    const { dir: _dir, files: _files, ...older } = MODEL;
+    expect(modelStateSchema.parse(older)).toMatchObject({ dir: "", files: [] });
+    const incomplete = {
+      ...MODEL,
+      state: {
+        kind: "import_incomplete" as const,
+        missing: ["tokens.txt"],
+        mismatched: ["model.int8.onnx"],
+      },
+    };
+    expect(modelStateSchema.parse(incomplete)).toEqual(incomplete);
+    expect(
+      modelStateSchema.safeParse({ ...MODEL, state: { kind: "import_incomplete", missing: [] } })
+        .success,
+    ).toBe(false);
+    expect(
+      modelStateSchema.safeParse({ ...MODEL, files: [{ name: "x", size_bytes: 1 }] }).success,
+    ).toBe(false);
+  });
 
   it("regression: ModelState carries the product tier, the capabilities and the four engines", () => {
     const qwen = {

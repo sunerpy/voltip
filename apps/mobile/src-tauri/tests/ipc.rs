@@ -432,9 +432,13 @@ fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
         assert!(invoke(webview, "phone_share_text", json!({ "text": " " })).unwrap_err().as_str().unwrap().starts_with("share: 文字为空"));
         assert_eq!(wait_state(webview, |_| true).update, voltip_core::ui::UpdateStatus::Disabled);
         // No local models on a phone: the library verbs refuse and the state carries an empty list.
-        for cmd in ["model_download", "model_cancel", "model_remove"] {
+        for cmd in ["model_download", "model_cancel", "model_remove", "model_import", "model_folder_open"] {
             assert_eq!(invoke(webview, cmd, json!({ "id": "sense-voice-small" })), Err(Value::String(MODELS_UNAVAILABLE.into())), "{cmd}");
         }
+        assert_eq!(
+            invoke(webview, "model_link_open", json!({ "id": "sense-voice-small", "file": "tokens.txt", "source": 0 })),
+            Err(Value::String(MODELS_UNAVAILABLE.into()))
+        );
         assert!(wait_state(webview, |_| true).models.is_empty());
         // The phone's own dictionary, rules and scenes (user decision 2026-10-01: the phone has every
         // setting but the local models; every one of these was refused before).
@@ -682,6 +686,8 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "paste_text",
             "provider_console_open",
             "project_link_open",
+            "model_folder_open",
+            "model_link_open",
             "feedback_diagnostics",
             "feedback_submit",
             "feedback_attachment_add",

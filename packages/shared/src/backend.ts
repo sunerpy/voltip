@@ -102,6 +102,12 @@ export interface Backend {
   /** Open a project page in the browser (`project_link_open`): the repository or its new-issue
    *  page; the shell builds the URL from its own repository. */
   projectLinkOpen(link: ProjectLink): Promise<void>;
+  /** `model_folder_open` (docs/dictation.md §10): the model's directory in the file manager,
+   *  created when missing. */
+  modelFolderOpen(id: string): Promise<void>;
+  /** `model_link_open`: `files[file].urls[source]` of the model in the browser; the shell takes
+   *  the address from the core's catalogue. */
+  modelLinkOpen(id: string, file: string, source: number): Promise<void>;
   /** What a 反馈 report would carry and whether this build can send it (`feedback_diagnostics`,
    *  docs/feedback.md); `locale` is the language the webview resolved. */
   feedbackDiagnostics(locale: string): Promise<FeedbackInfo>;

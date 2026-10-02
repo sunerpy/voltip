@@ -893,7 +893,7 @@ fn model_commands_are_registered_and_refused_without_a_library() {
         assert!(st.models.is_empty());
         assert_eq!(st.engines.asr_provider, voltip_core::ProviderId::Custom);
         assert!(!st.engines.local_ready);
-        for cmd in ["model_download", "model_cancel", "model_remove"] {
+        for cmd in ["model_download", "model_cancel", "model_remove", "model_import"] {
             assert_eq!(invoke(webview, cmd, json!({ "id": "sense-voice-small" })), Ok(Value::Null), "{cmd}");
             let ev = wait_event(rx, "error (no library)", |e| e["type"] == "error");
             assert!(ev["message"].as_str().unwrap().contains("本地模型不可用"), "{cmd}: {ev}");
@@ -966,6 +966,25 @@ fn with_model_library_the_catalogue_is_listed_and_local_mode_reports_readiness()
             assert_eq!(invoke(&webview, "model_download", json!({ "id": "ghost" })), Ok(Value::Null));
             wait_event(&rx, "error (unknown id)", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("目录中没有 ghost")));
             assert!(!models_root.join("paraformer-zh").exists(), "nothing was downloaded");
+            // The manual download (docs/dictation.md §10): a card names its folder and the public
+            // addresses of its files; an import of an empty folder names every file as missing.
+            let st = wait_state(&webview, |_| true);
+            let sense = st.models.iter().find(|m| m.id == "sense-voice-small").unwrap();
+            assert_eq!(std::path::Path::new(&sense.dir), models_root.join("sense-voice-small"));
+            assert_eq!(sense.files.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["model.int8.onnx", "tokens.txt"]);
+            assert!(
+                sense
+                    .files
+                    .iter()
+                    .all(|f| f.urls.len() == 2 && f.urls[0].starts_with("https://huggingface.co/") && f.urls[1].starts_with("https://hf-mirror.com/")),
+                "{:?}",
+                sense.files
+            );
+            assert_eq!(invoke(&webview, "model_import", json!({ "id": "sense-voice-small" })), Ok(Value::Null));
+            let ev = wait_event(&rx, "models (import incomplete)", |e| e["type"] == "models" && e["models"][2]["state"]["kind"] == "import_incomplete");
+            assert_eq!(ev["models"][2]["state"]["missing"], json!(["model.int8.onnx", "tokens.txt"]));
+            assert_eq!(ev["models"][2]["state"]["mismatched"], json!([]));
+            assert!(!models_root.join("sense-voice-small").exists(), "an import only reads");
             // Back to the remote endpoint: the selection is gone from the status, nothing active.
             assert_eq!(invoke(&webview, "settings_set_engines", json!({ "engines": fake_engines() })), Ok(Value::Null));
             let st = wait_state(&webview, |s| s.engines.asr_provider == voltip_core::ProviderId::Custom);
@@ -1394,6 +1413,8 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "paste_text",
             "provider_console_open",
             "project_link_open",
+            "model_folder_open",
+            "model_link_open",
             "feedback_diagnostics",
             "feedback_submit",
             "feedback_attachment_add",

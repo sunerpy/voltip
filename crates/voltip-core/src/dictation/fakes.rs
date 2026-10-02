@@ -1149,12 +1149,23 @@ pub struct FakeModels {
     fail_with: Option<String>,
     downloads: AtomicUsize,
     removals: AtomicUsize,
+    imports: AtomicUsize,
+    /// What an import finds wrong (missing, mismatched); `None`: the files are right.
+    import_problems: Mutex<Option<(Vec<String>, Vec<String>)>>,
 }
 
 impl FakeModels {
     /// Three catalogue entries, nothing installed; downloads install after `steps` reports.
     pub fn new(steps: u32) -> Self {
-        Self { entries: Mutex::new(Self::catalogue()), steps: Some(steps), fail_with: None, downloads: AtomicUsize::new(0), removals: AtomicUsize::new(0) }
+        Self {
+            entries: Mutex::new(Self::catalogue()),
+            steps: Some(steps),
+            fail_with: None,
+            downloads: AtomicUsize::new(0),
+            removals: AtomicUsize::new(0),
+            imports: AtomicUsize::new(0),
+            import_problems: Mutex::new(None),
+        }
     }
 
     /// Downloads fail verification with `message` (the `.part` would stay).
@@ -1165,6 +1176,17 @@ impl FakeModels {
     /// Downloads never finish on their own: they wait for the cancel token.
     pub fn hanging() -> Self {
         Self { steps: None, ..Self::new(0) }
+    }
+
+    /// A manual import finds `missing` and `mismatched` files until [`Self::fix_import`].
+    pub fn with_import_problems(self, missing: &[&str], mismatched: &[&str]) -> Self {
+        *self.import_problems.lock() = Some((missing.iter().map(|m| (*m).to_owned()).collect(), mismatched.iter().map(|m| (*m).to_owned()).collect()));
+        self
+    }
+
+    /// The person put the right files in place: the next import installs.
+    pub fn fix_import(&self) {
+        *self.import_problems.lock() = None;
     }
 
     /// Mark `id` as installed before the core starts.
@@ -1180,8 +1202,8 @@ impl FakeModels {
     /// The fake catalogue: the default tier, one light tier and the streaming model of
     /// docs/dictation.md §10 / §11 (sizes are tiny).
     pub fn catalogue() -> Vec<crate::models::ModelState> {
-        use crate::models::{CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ModelInstallState, ModelState};
-        vec![
+        use crate::models::{CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ModelFileView, ModelInstallState, ModelState};
+        let mut entries = vec![
             ModelState {
                 id: crate::models::DEFAULT_LOCAL_MODEL_ID.into(),
                 name: "均衡".into(),
@@ -1193,6 +1215,8 @@ impl FakeModels {
                 description: "fake".into(),
                 recommended: true,
                 repo: "example/model".into(),
+                dir: String::new(),
+                files: Vec::new(),
                 active: false,
                 state: ModelInstallState::NotInstalled,
             },
@@ -1207,6 +1231,8 @@ impl FakeModels {
                 description: "fake".into(),
                 recommended: false,
                 repo: "example/model".into(),
+                dir: String::new(),
+                files: Vec::new(),
                 active: false,
                 state: ModelInstallState::NotInstalled,
             },
@@ -1221,10 +1247,23 @@ impl FakeModels {
                 description: "fake".into(),
                 recommended: false,
                 repo: "example/model".into(),
+                dir: String::new(),
+                files: Vec::new(),
                 active: false,
                 state: ModelInstallState::NotInstalled,
             },
-        ]
+        ];
+        for m in &mut entries {
+            m.dir = format!("/fake/models/{}", m.id);
+            let urls = ["https://huggingface.co", "https://hf-mirror.com"].map(|base| format!("{base}/{}/resolve/main/model.int8.onnx", m.repo));
+            m.files = vec![ModelFileView { name: "model.int8.onnx".into(), size_bytes: m.size_bytes, urls: urls.to_vec() }];
+        }
+        entries
+    }
+
+    /// `import` calls so far.
+    pub fn imports(&self) -> usize {
+        self.imports.load(Ordering::SeqCst)
     }
 
     /// `download` calls so far.
@@ -1269,6 +1308,26 @@ impl crate::models::ModelManager for FakeModels {
         progress(ModelInstallState::Verifying);
         if let Some(message) = &self.fail_with {
             return Err(message.clone());
+        }
+        let installed = ModelInstallState::Installed { path: format!("/fake/models/{id}"), installed_at: 1_758_700_000 };
+        for m in self.entries.lock().iter_mut() {
+            if m.id == id {
+                m.state = installed.clone();
+            }
+        }
+        Ok(installed)
+    }
+
+    async fn import(&self, id: &str, progress: crate::models::ProgressSink) -> Result<crate::models::ModelInstallState, crate::models::ModelImportError> {
+        use crate::models::{ModelImportError, ModelInstallState};
+        self.imports.fetch_add(1, Ordering::SeqCst);
+        if !self.entries.lock().iter().any(|m| m.id == id) {
+            return Err(ModelImportError::Failed(format!("unknown model {id}")));
+        }
+        progress(ModelInstallState::Verifying);
+        tokio::task::yield_now().await;
+        if let Some((missing, mismatched)) = self.import_problems.lock().clone() {
+            return Err(ModelImportError::Incomplete { missing, mismatched });
         }
         let installed = ModelInstallState::Installed { path: format!("/fake/models/{id}"), installed_at: 1_758_700_000 };
         for m in self.entries.lock().iter_mut() {

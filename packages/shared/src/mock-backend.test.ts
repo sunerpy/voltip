@@ -1430,6 +1430,58 @@ describe("MockBackend local models (docs/dictation.md §10)", () => {
     backend.destroy();
   });
 
+  it("model_import verifies, then installs or names what is missing; the folder and the links open what the catalogue names (docs/dictation.md section 10)", async () => {
+    const backend = new MockBackend({ now: () => clock });
+    const state = () => backend.peek().models[2]?.state;
+    const sense = backend.peek().models[2];
+    expect(sense?.id).toBe("sense-voice-small");
+    expect(sense?.dir).toBe(`${MOCK_MODELS_ROOT}/sense-voice-small`);
+    expect(sense?.files.map((f) => f.name)).toEqual(["model.int8.onnx", "tokens.txt"]);
+    expect(sense?.files[0]?.urls[0]).toMatch(
+      /^https:\/\/huggingface\.co\/.+\/resolve\/main\/model\.int8\.onnx$/,
+    );
+    backend.simulateImportProblems("sense-voice-small", {
+      missing: ["tokens.txt"],
+      mismatched: [],
+    });
+    await backend.invoke("model_import", { id: "sense-voice-small" });
+    expect(state()).toEqual({ kind: "verifying" });
+    tick(MOCK_MODEL_TICK_MS);
+    expect(state()).toEqual({ kind: "import_incomplete", missing: ["tokens.txt"], mismatched: [] });
+    // A download still works from there; an import while verifying is a no-op.
+    backend.simulateImportProblems("sense-voice-small", undefined);
+    await backend.invoke("model_import", { id: "sense-voice-small" });
+    await backend.invoke("model_import", { id: "sense-voice-small" });
+    tick(MOCK_MODEL_TICK_MS);
+    expect(state()?.kind).toBe("installed");
+    await backend.invoke("model_import", { id: "sense-voice-small" });
+    expect(state()?.kind).toBe("installed");
+    await backend.invoke("model_import", { id: "nope" });
+    expect(backend.peek().models.every((m) => m.id !== "nope")).toBe(true);
+    // The opens record what they would hand to the shell, and refuse anything off the catalogue.
+    await backend.modelFolderOpen("sense-voice-small");
+    expect(backend.modelFoldersOpened).toEqual(["sense-voice-small"]);
+    await backend.modelLinkOpen("sense-voice-small", "tokens.txt", 1);
+    expect(backend.modelLinksOpened).toEqual([sense?.files[1]?.urls[1]]);
+    await expect(backend.modelFolderOpen("nope")).rejects.toThrow("no model nope");
+    await expect(backend.modelLinkOpen("sense-voice-small", "evil.txt", 0)).rejects.toThrow(
+      "model_link_open: sense-voice-small evil.txt 0",
+    );
+    await expect(backend.modelLinkOpen("sense-voice-small", "tokens.txt", 2)).rejects.toThrow(
+      "model_link_open: sense-voice-small tokens.txt 2",
+    );
+    backend.destroy();
+    // A phone has no library: the import is refused like the download.
+    const phone = new MockBackend({ role: "phone", now: () => clock });
+    const errors: string[] = [];
+    phone.on((e) => {
+      if (e.type === "error") errors.push(e.message);
+    });
+    await phone.invoke("model_import", { id: "sense-voice-small" });
+    expect(errors.some((m) => m.includes("手机端不支持本地模型"))).toBe(true);
+    phone.destroy();
+  });
+
   it("regression: activation writes settings_set_engines; removing the active model drops local_ready; unknown ids are refused", async () => {
     const backend = new MockBackend({
       now: () => clock,

@@ -1070,6 +1070,24 @@ export const en: Messages = {
       verifying: "Verifying",
       installed: "Installed",
       failed: "Download failed",
+      import_incomplete: "Import incomplete",
+    },
+    /** Downloading by hand where the app cannot (docs/dictation.md §10). */
+    manual: {
+      toggle: "Download by hand",
+      lede: "If the app cannot download the model, download these files in a browser, put them in this folder, then choose Check and import.",
+      folder: "Folder",
+      copyFolder: "Copy path",
+      folderCopied: "Path copied",
+      openFolder: "Open folder",
+      file: "{name} · {size}",
+      open: "Open in the browser: {url}",
+      copyLink: "Copy the link: {url}",
+      linkCopied: "Link copied",
+      import: "Check and import",
+      missing: "Missing: {files}",
+      mismatched:
+        "Did not verify: {files}. The file is incomplete or not this model's; download it again.",
     },
     action: {
       download: "Download",

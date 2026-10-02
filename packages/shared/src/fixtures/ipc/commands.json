@@ -310,6 +310,12 @@
   },
   {
     "args": {
+      "id": "sense-voice-small"
+    },
+    "name": "model_import"
+  },
+  {
+    "args": {
       "entry": {
         "enabled": true,
         "heard_as": ["谷歌IDR"],

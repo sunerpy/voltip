@@ -659,6 +659,85 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     }
   });
 
+  it("手动下载 names the folder and every file's addresses, opens them through the shell or copies them, and an import names what it found missing (docs/dictation.md section 10)", async () => {
+    // User request 2026-10-02: a network that cannot download from the app downloads in a browser.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    try {
+      const { backend } = renderApp({ path: "/speech" });
+      await openLocalCard(user);
+      const sense = modelCard("轻量");
+      const panel = within(sense).getByTestId("manual-download");
+      const toggle = within(panel).getByRole("button", { name: "手动下载" });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(within(panel).queryByTestId("manual-download-dir")).toBeNull();
+      await user.click(toggle);
+      const dir = `${MOCK_MODELS_ROOT}/sense-voice-small`;
+      expect(within(panel).getByTestId("manual-download-dir")).toHaveTextContent(dir);
+      const files = within(panel).getAllByTestId("manual-download-file");
+      expect(files).toHaveLength(2);
+      expect(files[0]).toHaveTextContent("model.int8.onnx · 239.2 MB");
+      expect(files[1]).toHaveTextContent("tokens.txt · 315.9 KB");
+      const repo = "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17";
+      const mirror = `https://hf-mirror.com/${repo}/resolve/main/tokens.txt`;
+      expect(
+        within(files[1] as HTMLElement).getByText(
+          `https://huggingface.co/${repo}/resolve/main/tokens.txt`,
+        ),
+      ).toBeInTheDocument();
+      await user.click(
+        within(files[1] as HTMLElement).getByRole("button", { name: `在浏览器中打开：${mirror}` }),
+      );
+      expect(backend.modelLinksOpened).toEqual([mirror]);
+      // Another device may be the one that can reach the sources: each address copies too.
+      await user.click(
+        within(files[1] as HTMLElement).getByRole("button", { name: `复制链接：${mirror}` }),
+      );
+      expect(writeText).toHaveBeenCalledWith(mirror);
+      expect(await screen.findByText("已复制链接")).toBeInTheDocument();
+      await user.click(within(panel).getByRole("button", { name: "打开文件夹" }));
+      expect(backend.modelFoldersOpened).toEqual(["sense-voice-small"]);
+      await user.click(within(panel).getByRole("button", { name: "复制路径" }));
+      expect(writeText).toHaveBeenCalledWith(dir);
+      expect(await screen.findByText("已复制路径")).toBeInTheDocument();
+      // An import that finds the folder incomplete names the files; the panel stays open.
+      backend.simulateImportProblems("sense-voice-small", {
+        missing: ["tokens.txt"],
+        mismatched: ["model.int8.onnx"],
+      });
+      await user.click(within(panel).getByRole("button", { name: "检查并导入" }));
+      await waitFor(() => {
+        expect(within(sense).getByText("校验中")).toBeInTheDocument();
+      });
+      expect(within(sense).getByRole("button", { name: "检查并导入" })).toBeDisabled();
+      act(() => {
+        vi.advanceTimersByTime(MOCK_MODEL_TICK_MS);
+      });
+      await waitFor(() => {
+        expect(within(sense).getByText("导入未完成")).toBeInTheDocument();
+      });
+      const problems = within(sense).getByTestId("manual-download-problems");
+      expect(problems).toHaveTextContent("缺少文件：tokens.txt");
+      expect(problems).toHaveTextContent("校验不通过：model.int8.onnx");
+      expect(within(sense).getByRole("button", { name: "下载" })).toBeEnabled();
+      // The person put the right files there: the next import installs, and the panel goes.
+      backend.simulateImportProblems("sense-voice-small", undefined);
+      await user.click(within(sense).getByRole("button", { name: "检查并导入" }));
+      act(() => {
+        vi.advanceTimersByTime(MOCK_MODEL_TICK_MS);
+      });
+      await waitFor(() => {
+        expect(within(sense).getByText("已安装")).toBeInTheDocument();
+      });
+      expect(within(sense).queryByTestId("manual-download")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
   it("regression: the library lists recognition models by tier (均衡 → 高精度 → 轻量 → 轻量 · 中文) and the streaming model only in the 实时预览 block, without 使用此模型", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({

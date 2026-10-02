@@ -33,6 +33,16 @@ When **Silence trimming** is on, a 1.8 MB silence detection model is downloaded 
 
 The models are stored in the `models` folder of Voltip's data folder ([where that is](/guide/updates#where-your-data-is-kept)). Deleting a model on the Speech models page removes its files.
 
+### Downloading by hand
+
+When the app cannot download a model, for example on a network where only another device can reach the sources, download it by hand:
+
+1. On the model's card, choose **Download by hand** to see the model's folder and the files it needs.
+2. Open each file's address (Hugging Face or hf-mirror.com) in a browser, or copy it to download the file on another device, and save the file into the folder the card shows, under the same name. **Open folder** opens that folder, and **Copy path** copies its location.
+3. Once every file is there, choose **Check and import**. Voltip checks each file's size and SHA-256. When they are all right, the model is ready to use; otherwise the card lists the files that are missing or wrong.
+
+When the app downloads a model itself, it checks the files already in the folder first and downloads again any that are wrong.
+
 ## CPU or GPU
 
 Under **This computer**, **Run on** offers:

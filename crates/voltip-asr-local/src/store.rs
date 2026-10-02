@@ -27,7 +27,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncWriteExt as _;
-use voltip_core::{CancelToken, ModelInstallState, ModelManager, ModelState, ProgressSink};
+use voltip_core::{CancelToken, ModelFileView, ModelImportError, ModelInstallState, ModelManager, ModelState, ProgressSink};
 
 use crate::catalogue::{CATALOGUE, ModelEntry, ModelFile};
 
@@ -142,6 +142,21 @@ impl Source {
         sources.push(Self::HfResolve("https://hf-mirror.com".into()));
         sources
     }
+}
+
+/// Why [`ModelStore::import`] did not install a model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportError {
+    /// Catalogue files absent from the directory (or not of their size), and files there whose
+    /// sha256 is not the catalogue's.
+    Incomplete {
+        /// Absent, or not of the catalogue size.
+        missing: Vec<String>,
+        /// The right size, the wrong content.
+        mismatched: Vec<String>,
+    },
+    /// The library failed (unknown id, file system trouble).
+    Store(StoreError),
 }
 
 /// Why a library operation failed.
@@ -293,12 +308,29 @@ impl ModelStore {
     /// Every catalogue entry the UI shows as a card, with its install state (`active` left
     /// `false`). Auxiliary entries are left out: they are dependencies, not choices.
     pub fn scan(&self) -> Vec<ModelState> {
-        self.catalogue.iter().filter(|e| e.tier.is_visible()).map(|e| e.state(installed_state(&self.dir(e.id), e))).collect()
+        self.catalogue.iter().filter(|e| e.tier.is_visible()).map(|e| self.view(e)).collect()
     }
 
     /// Every catalogue entry, auxiliary ones included, with its install state.
     pub fn scan_all(&self) -> Vec<ModelState> {
-        self.catalogue.iter().map(|e| e.state(installed_state(&self.dir(e.id), e))).collect()
+        self.catalogue.iter().map(|e| self.view(e)).collect()
+    }
+
+    /// One entry as the UI sees it: its install state, its directory, and its files with the
+    /// public addresses a manual download can use (docs/dictation.md §10).
+    fn view(&self, entry: &ModelEntry) -> ModelState {
+        let dir = self.dir(entry.id);
+        let mut state = entry.state(installed_state(&dir, entry));
+        state.dir = dir.to_string_lossy().into_owned();
+        state.files =
+            entry.files().iter().map(|f| ModelFileView { name: f.name.to_owned(), size_bytes: f.size, urls: self.public_urls(entry, f.name) }).collect();
+        state
+    }
+
+    /// Where `file` of `entry` can be downloaded by hand: the Hugging Face sources in their order.
+    /// A build's own mirror (`Source::Base`) is a host the interface never shows.
+    pub fn public_urls(&self, entry: &ModelEntry, file: &str) -> Vec<String> {
+        self.sources.iter().filter(|s| matches!(s, Source::HfResolve(_))).map(|s| s.url(entry.repo, file)).collect()
     }
 
     /// The auxiliary entries that are not installed yet.
@@ -372,9 +404,56 @@ impl ModelStore {
         Ok(state)
     }
 
+    /// Install `id` from files a person put into its directory: every catalogue file must be
+    /// there with its size and sha256; then the manifest is written, as a download writes it.
+    /// What is missing or not the catalogue's file comes back by name.
+    pub async fn import(&self, id: &str, progress: ProgressSink) -> Result<ModelInstallState, ImportError> {
+        let entry = self.entry(id).map_err(ImportError::Store)?;
+        let dir = self.dir(id);
+        progress(ModelInstallState::Verifying);
+        let check_dir = dir.clone();
+        let (missing, mismatched) = tokio::task::spawn_blocking(move || -> Result<(Vec<String>, Vec<String>), StoreError> {
+            let (mut missing, mut mismatched) = (Vec::new(), Vec::new());
+            for file in entry.files() {
+                let path = check_dir.join(file.name);
+                if !std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() == file.size) {
+                    missing.push(file.name.to_owned());
+                } else if sha256_file(&path)? != file.sha256 {
+                    mismatched.push(file.name.to_owned());
+                }
+            }
+            Ok((missing, mismatched))
+        })
+        .await
+        .map_err(|e| ImportError::Store(StoreError::Io(e.to_string())))?
+        .map_err(ImportError::Store)?;
+        if !missing.is_empty() || !mismatched.is_empty() {
+            tracing::info!(model = id, ?missing, ?mismatched, "manual import incomplete");
+            return Err(ImportError::Incomplete { missing, mismatched });
+        }
+        let manifest = Manifest {
+            id: entry.id.to_owned(),
+            version: CATALOGUE_VERSION,
+            downloaded_at: now_secs(),
+            files: entry.files().iter().map(|f| (f.name.to_owned(), f.sha256.to_owned())).collect(),
+        };
+        write_manifest(&dir, &manifest).await.map_err(ImportError::Store)?;
+        tracing::info!(model = id, dir = %dir.display(), "model imported by hand");
+        // As after a download: the dependencies come along when they are wanted, best effort.
+        if entry.engine.is_offline() {
+            self.spawn_auxiliary_download();
+        }
+        Ok(ModelInstallState::Installed { path: dir.to_string_lossy().into_owned(), installed_at: manifest.downloaded_at })
+    }
+
     /// Fetch and verify every file of `entry` and write its manifest.
     async fn install(&self, entry: &'static ModelEntry, progress: &ProgressSink, cancel: &CancelToken) -> Result<ModelInstallState, StoreError> {
         let dir = self.dir(entry.id);
+        // Its files were verified before the manifest was written (by a download or an import):
+        // downloading an installed model again fetches and hashes nothing.
+        if let installed @ ModelInstallState::Installed { .. } = installed_state(&dir, entry) {
+            return Ok(installed);
+        }
         tokio::fs::create_dir_all(&dir).await?;
         self.check_space(entry, &dir)?;
         let client = reqwest::Client::builder()
@@ -427,8 +506,16 @@ impl ModelStore {
     ) -> Result<(), StoreError> {
         let final_path = dir.join(file.name);
         if tokio::fs::metadata(&final_path).await.is_ok_and(|m| m.len() == file.size) {
-            // Verified on an earlier run (a file only gets its final name after the hash check).
-            return Ok(());
+            // A file under its final name passed the hash check on an earlier run, or a person put
+            // it there (a manual download, docs/dictation.md §10): check it rather than trust it.
+            progress(ModelInstallState::Verifying);
+            let path = final_path.clone();
+            let digest = tokio::task::spawn_blocking(move || sha256_file(&path)).await.map_err(|e| StoreError::Io(e.to_string()))??;
+            if digest == file.sha256 {
+                return Ok(());
+            }
+            tracing::warn!(file = file.name, "a file under its final name has the wrong sha256; downloading it again");
+            tokio::fs::remove_file(&final_path).await?;
         }
         let part = dir.join(format!("{}.part", file.name));
         let mut received = tokio::fs::metadata(&part).await.map(|m| m.len()).unwrap_or(0);
@@ -606,6 +693,13 @@ impl ModelManager for ModelStore {
 
     fn remove(&self, id: &str) -> Result<(), String> {
         Self::remove(self, id).map_err(String::from)
+    }
+
+    async fn import(&self, id: &str, progress: ProgressSink) -> Result<ModelInstallState, ModelImportError> {
+        Self::import(self, id, progress).await.map_err(|e| match e {
+            ImportError::Incomplete { missing, mismatched } => ModelImportError::Incomplete { missing, mismatched },
+            ImportError::Store(e) => ModelImportError::Failed(String::from(e)),
+        })
     }
 }
 

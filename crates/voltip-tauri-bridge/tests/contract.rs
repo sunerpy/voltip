@@ -26,10 +26,10 @@ use voltip_core::ui::{GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatu
 use voltip_core::{
     Activation, AppRef, BuiltIn, BuiltinScene, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ContextSharing, DeviceConnection, DeviceView,
     DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, HistoryEntry, HistoryHits,
-    HistoryPage, HistoryQuery, HistoryStats, HistoryStatsBucket, ImportMode, InjectMode, LiveText, LocalDevice, Locale, ModelInstallState, ModelState, Outcome,
-    OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSettings, RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft,
-    RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef, Segment, ServiceKind, Settings, SoloKey, TakeContext, TakeKind, ThemeId, UserSecrets,
-    VocabularyHit, VocabularyHits,
+    HistoryPage, HistoryQuery, HistoryStats, HistoryStatsBucket, ImportMode, InjectMode, LiveText, LocalDevice, Locale, ModelFileView, ModelInstallState,
+    ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSettings, RelaySource, RelayStatus, ReplacementRule,
+    ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef, Segment, ServiceKind, Settings, SoloKey, TakeContext,
+    TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
 };
 use voltip_core::{EntryOrigin, OriginKind};
 use voltip_crypto::{PublicKey, SafetyCode};
@@ -679,6 +679,8 @@ fn models_installed_and_downloading() -> Vec<ModelState> {
             description: "推荐；Qwen3-ASR 0.6B，30 语种自动识别，自带标点；690 MB".into(),
             recommended: true,
             repo: "handy-computer/Qwen3-ASR-0.6B-gguf".into(),
+            dir: format!("{MODELS_DIR}\\{QWEN_ID}"),
+            files: model_files("handy-computer/Qwen3-ASR-0.6B-gguf", &[("Qwen3-ASR-0.6B-Q6_K.gguf", 690_417_824)]),
             active: true,
             state: ModelInstallState::Installed { path: format!("{MODELS_DIR}\\{QWEN_ID}"), installed_at: TRUSTED_AT },
         },
@@ -693,6 +695,8 @@ fn models_installed_and_downloading() -> Vec<ModelState> {
             description: "SenseVoice Small，中英日韩粤，自带标点与数字规整（ITN）；240 MB".into(),
             recommended: false,
             repo: "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17".into(),
+            dir: format!("{MODELS_DIR}\\{SENSE_VOICE_ID}"),
+            files: model_files("csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17", &[("model.int8.onnx", 239_233_841), ("tokens.txt", 315_894)]),
             active: false,
             state: ModelInstallState::NotInstalled,
         },
@@ -707,6 +711,8 @@ fn models_installed_and_downloading() -> Vec<ModelState> {
             description: "Paraformer 中文（含方言）更准，中英混读；无标点，开启 AI 润色可补；227 MB".into(),
             recommended: false,
             repo: "csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09".into(),
+            dir: format!("{MODELS_DIR}\\{PARAFORMER_ID}"),
+            files: model_files("csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09", &[("model.int8.onnx", 227_330_205), ("tokens.txt", 75_354)]),
             active: false,
             state: ModelInstallState::Downloading { received: 104_857_600, total: 227_330_205, file: "model.int8.onnx".into() },
         },
@@ -721,17 +727,45 @@ fn models_installed_and_downloading() -> Vec<ModelState> {
             description: "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB".into(),
             recommended: false,
             repo: "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05".into(),
+            dir: format!("{MODELS_DIR}\\{STREAMING_ID}"),
+            files: model_files(
+                "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
+                &[
+                    ("encoder.int8.onnx", 155_278_641),
+                    ("decoder.onnx", 11_309_084),
+                    ("joiner.int8.onnx", 2_581_422),
+                    ("tokens.txt", 58_806),
+                    ("bpe.model", 119_265),
+                ],
+            ),
             active: false,
             state: ModelInstallState::Installed { path: format!("{MODELS_DIR}\\{STREAMING_ID}"), installed_at: TRUSTED_AT },
         },
     ]
 }
 
-/// Every remaining `ModelInstallState` variant: verifying, failed (`.part` kept), not installed.
+/// A model's files with the two public addresses each, as `ModelStore::view` reports them.
+fn model_files(repo: &str, files: &[(&str, u64)]) -> Vec<ModelFileView> {
+    files
+        .iter()
+        .map(|(name, size)| ModelFileView {
+            name: (*name).to_owned(),
+            size_bytes: *size,
+            urls: ["https://huggingface.co", "https://hf-mirror.com"].map(|base| format!("{base}/{repo}/resolve/main/{name}")).to_vec(),
+        })
+        .collect()
+}
+
+/// Every remaining `ModelInstallState` variant: verifying, failed (`.part` kept), an incomplete
+/// manual import (docs/dictation.md §10), not installed.
 fn models_other_states() -> Vec<ModelState> {
     let base = models_installed_and_downloading();
     vec![
         ModelState { active: false, state: ModelInstallState::Verifying, ..base[0].clone() },
+        ModelState {
+            state: ModelInstallState::ImportIncomplete { missing: vec!["tokens.txt".into()], mismatched: vec!["model.int8.onnx".into()] },
+            ..base[1].clone()
+        },
         ModelState { active: true, state: ModelInstallState::Failed { message: "sha256 mismatch: model.int8.onnx".into() }, ..base[2].clone() },
         ModelState { state: ModelInstallState::Downloading { received: 52_428_800, total: 155_278_641, file: "encoder.int8.onnx".into() }, ..base[3].clone() },
     ]
@@ -1673,6 +1707,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::ModelDownload { .. } => "ModelDownload",
         UiCommand::ModelCancel { .. } => "ModelCancel",
         UiCommand::ModelRemove { .. } => "ModelRemove",
+        UiCommand::ModelImport { .. } => "ModelImport",
         UiCommand::DictionaryAdd { .. } => "DictionaryAdd",
         UiCommand::DictionaryUpdate { .. } => "DictionaryUpdate",
         UiCommand::DictionaryRemove { .. } => "DictionaryRemove",
@@ -1765,6 +1800,7 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("model_download", json!({ "id": SENSE_VOICE_ID }), "ModelDownload"),
         ("model_cancel", json!({ "id": SENSE_VOICE_ID }), "ModelCancel"),
         ("model_remove", json!({ "id": PARAFORMER_ID }), "ModelRemove"),
+        ("model_import", json!({ "id": SENSE_VOICE_ID }), "ModelImport"),
         // The vocabulary (docs/dictation.md §16.4): the add from a history entry carries every key.
         (
             "dictionary_add",
@@ -2026,7 +2062,7 @@ fn events_fixture_covers_every_variant_and_matches_serde_output() {
         .flatten()
         .map(|m| serde_json::to_value(&m.state).unwrap()["kind"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(kinds, ["not_installed", "downloading", "verifying", "installed", "failed"].map(String::from).into_iter().collect());
+    assert_eq!(kinds, ["not_installed", "downloading", "verifying", "installed", "failed", "import_incomplete"].map(String::from).into_iter().collect());
     // On-device recognition shows on the engines events too.
     let local: Vec<&UiEvent> = events.iter().filter(|e| matches!(e, UiEvent::Engines(s) if s.asr_provider == ProviderId::Local)).collect();
     assert_eq!(local.len(), 2);

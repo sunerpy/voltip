@@ -187,6 +187,9 @@ impl ModelEntry {
             description: self.description.to_owned(),
             recommended: self.recommended,
             repo: self.repo.to_owned(),
+            // The store knows where the library is and which sources are public (`ModelStore::view`).
+            dir: String::new(),
+            files: Vec::new(),
             active: false,
             state,
         }

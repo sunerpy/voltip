@@ -1056,6 +1056,23 @@ export const zhCN = {
       verifying: "校验中",
       installed: "已安装",
       failed: "下载失败",
+      import_incomplete: "导入未完成",
+    },
+    /** Downloading by hand where the app cannot (docs/dictation.md §10). */
+    manual: {
+      toggle: "手动下载",
+      lede: "无法在应用中下载时，可以用浏览器下载下面的文件，放进这个文件夹，再点「检查并导入」。",
+      folder: "放入文件夹",
+      copyFolder: "复制路径",
+      folderCopied: "已复制路径",
+      openFolder: "打开文件夹",
+      file: "{name} · {size}",
+      open: "在浏览器中打开：{url}",
+      copyLink: "复制链接：{url}",
+      linkCopied: "已复制链接",
+      import: "检查并导入",
+      missing: "缺少文件：{files}",
+      mismatched: "校验不通过：{files}。文件不完整，或不是这个模型的文件，请重新下载。",
     },
     action: {
       download: "下载",

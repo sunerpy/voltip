@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! The model library against a local HTTP server (docs/dictation.md §10 门禁): resume with
 //! `Range`, sha256 rejection that keeps the `.part`, cancel, source fall-back, manifest, removal,
-//! the free-space check.
+//! the free-space check, and the manual import.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -10,8 +10,8 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use sha2::{Digest as _, Sha256};
 use voltip_asr_local::{
-    CATALOGUE_VERSION, Capability, DISK_HEADROOM, Engine, FreeSpace, MANIFEST_FILE, Manifest, ModelEntry, ModelFile, ModelStore, SlowSourcePolicy, Source,
-    StoreError, Tier, bytes_to_fetch,
+    CATALOGUE_VERSION, Capability, DISK_HEADROOM, Engine, FreeSpace, ImportError, MANIFEST_FILE, Manifest, ModelEntry, ModelFile, ModelStore, SlowSourcePolicy,
+    Source, StoreError, Tier, bytes_to_fetch,
 };
 use voltip_core::{CancelToken, ModelInstallState, ModelManager, ProgressSink};
 use wiremock::matchers::{header, method, path};
@@ -576,4 +576,76 @@ async fn a_slow_source_that_is_the_only_working_one_still_finishes_on_the_second
     assert!(requests.len() >= 2 && requests[0].is_none() && requests[1].is_some_and(|from| from > 0), "second pass resumed on the slow source: {requests:?}");
     assert_eq!(StoreError::TooSlow { kib_per_sec: 12 }.to_string(), "下载源太慢：12 KB/s");
     assert_eq!(SlowSourcePolicy::default(), SlowSourcePolicy { window: Duration::from_secs(15), min_bytes_per_sec: 256 * 1024 });
+}
+
+/// The manual import (docs/dictation.md §10, user request 2026-10-02): a card names the folder and
+/// each file's public addresses; an import installs what was put there and names what is not.
+#[tokio::test]
+async fn a_manual_import_installs_what_was_put_there_and_names_what_is_not() {
+    let root = tempfile::tempdir().unwrap();
+    let sources = vec![
+        Source::Base("https://mirror.example.test".into()),
+        Source::HfResolve("https://huggingface.co".into()),
+        Source::HfResolve("https://hf-mirror.com".into()),
+    ];
+    let store = store(root.path(), sources);
+    let dir = root.path().join("tiny");
+    let card = store.scan().into_iter().find(|m| m.id == "tiny").unwrap();
+    assert_eq!(Path::new(&card.dir), dir);
+    let names: Vec<(&str, u64)> = card.files.iter().map(|f| (f.name.as_str(), f.size_bytes)).collect();
+    assert_eq!(names, [("model.int8.onnx", MODEL_SIZE as u64), ("tokens.txt", TOKENS_SIZE as u64)]);
+    // The build's own mirror is a host the interface never shows.
+    assert_eq!(
+        card.files[1].urls,
+        [format!("https://huggingface.co/{REPO}/resolve/main/tokens.txt"), format!("https://hf-mirror.com/{REPO}/resolve/main/tokens.txt")]
+    );
+
+    let (progress, seen) = sink();
+    let import = |progress| store.import("tiny", progress);
+    assert_eq!(
+        import(progress.clone()).await,
+        Err(ImportError::Incomplete { missing: vec!["model.int8.onnx".into(), "tokens.txt".into()], mismatched: vec![] })
+    );
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("model.int8.onnx"), model_bytes()).unwrap();
+    let mut wrong = tokens_bytes();
+    wrong[0] ^= 1;
+    std::fs::write(dir.join("tokens.txt"), &wrong).unwrap();
+    assert_eq!(import(progress.clone()).await, Err(ImportError::Incomplete { missing: vec![], mismatched: vec!["tokens.txt".into()] }));
+    std::fs::write(dir.join("tokens.txt"), &wrong[..100]).unwrap();
+    assert_eq!(import(progress.clone()).await, Err(ImportError::Incomplete { missing: vec!["tokens.txt".into()], mismatched: vec![] }));
+    assert_eq!(store.install_state("tiny").unwrap(), ModelInstallState::NotInstalled);
+    std::fs::write(dir.join("tokens.txt"), tokens_bytes()).unwrap();
+    let state = import(progress).await.unwrap();
+    assert_installed(root.path(), &state);
+    assert_eq!(store.install_state("tiny").unwrap(), state);
+    assert!(seen.lock().iter().all(|s| *s == ModelInstallState::Verifying), "{:?}", seen.lock());
+    assert!(matches!(store.import("nope", sink().0).await, Err(ImportError::Store(StoreError::UnknownModel(_)))));
+    // Through the core's port: the problems keep their names.
+    let manager: &dyn ModelManager = &store;
+    std::fs::write(dir.join("tokens.txt"), &wrong).unwrap();
+    assert!(matches!(
+        manager.import("tiny", sink().0).await,
+        Err(voltip_core::ModelImportError::Incomplete { missing, mismatched }) if missing.is_empty() && mismatched == ["tokens.txt"]
+    ));
+}
+
+/// regression (2026-10-02): a download took a file under its final name as checked, which held
+/// only while the store alone named files. Since people put files there by hand, a wrong one of
+/// the right size would have been written into the manifest as the model.
+#[tokio::test]
+async fn regression_a_file_put_under_its_final_name_is_checked_before_the_download_trusts_it() {
+    let server = MockServer::start().await;
+    serve_full(&server).await;
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("tiny");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut wrong = model_bytes();
+    wrong[MODEL_SIZE / 2] ^= 1;
+    std::fs::write(dir.join("model.int8.onnx"), &wrong).unwrap();
+    std::fs::write(dir.join("tokens.txt"), tokens_bytes()).unwrap();
+    let store = store(root.path(), vec![Source::Base(server.uri())]);
+    let (progress, _) = sink();
+    let state = store.download("tiny", progress, CancelToken::new()).await.unwrap();
+    assert_installed(root.path(), &state);
 }
