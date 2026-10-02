@@ -1735,6 +1735,41 @@ describe("MockBackend locale, auto-update and updater (docs/frontend.md §7)", (
     store.destroy();
   });
 
+  it("the built-in service previews itself when it says so (docs/dictation.md section 11.8): live_source cloud without the model, and the streaming modes take effect; other providers and the switch follow the old rule", async () => {
+    const builtIn = {
+      asr: { model: MOCK_ENGINE_BUILTIN.asr_model, key: true, preview: true },
+      llm: { model: MOCK_ENGINE_BUILTIN.refine_model, key: true },
+    };
+    const backend = new MockBackend({ builtIn });
+    expect(backend.peek().engines).toMatchObject({
+      live_preview_ready: true,
+      live_source: "cloud",
+    });
+    const engines = backend.peek().settings.engines;
+    await backend.invoke("settings_set_engines", {
+      engines: { ...engines, output_mode: "live_inject" },
+    });
+    expect(backend.peek().engines.effective_output_mode).toBe("live_inject");
+    await backend.invoke("settings_set_engines", { engines: { ...engines, live_preview: false } });
+    expect(backend.peek().engines.live_preview_ready).toBe(false);
+    expect(backend.peek().engines.live_source).toBeUndefined();
+    // Another provider does not preview by decoding again: without the model, no source.
+    await backend.invoke("settings_set_engines", {
+      engines: {
+        ...engines,
+        asr_provider: "custom",
+        providers: { custom: { asr_url: "https://asr.example.test" } },
+      },
+    });
+    expect(backend.peek().engines.live_source).toBeUndefined();
+    backend.destroy();
+    // A built-in service that does not say so (the default here) has no source without the model.
+    const quiet = new MockBackend();
+    expect(quiet.peek().engines).toMatchObject({ live_preview_ready: false });
+    expect(quiet.peek().engines.live_source).toBeUndefined();
+    quiet.destroy();
+  });
+
   it("update_install from ready installs at once; from idle it is ignored", async () => {
     const backend = new MockBackend({ update: { state: "ready", version: "9.9.9" } });
     await backend.invoke("update_install");

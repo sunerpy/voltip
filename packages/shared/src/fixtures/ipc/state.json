@@ -299,6 +299,7 @@
     "asr_host": "",
     "local_ready": false,
     "live_preview_ready": true,
+    "live_source": "cloud",
     "effective_output_mode": "whole_take",
     "language": "zh",
     "refine_enabled": true,

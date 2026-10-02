@@ -235,6 +235,8 @@ const BUILT: BuiltIn = BuiltIn {
     refine_url: Some("https://llm.builtin-host.test/v1"),
     refine_api_key: Some("builtin-key"),
     refine_model: REFINE_MODEL,
+    // The status says where the live preview comes from (docs/dictation.md §11.8).
+    asr_live_preview: true,
 };
 
 /// Recognition on the built-in service, clean-up on Groq with a chosen model, a custom endpoint

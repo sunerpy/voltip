@@ -134,7 +134,7 @@ home:
         keys: [Ctrl, Alt, Space]
         body: The microphone opens only now. The overlay at the bottom of the screen shows the input level.
       - title: Speak
-        body: With the live transcription model installed, the words appear in the overlay as you say them.
+        body: With the built-in service, or with the live transcription model installed, the words appear in the overlay as you say them.
       - title: Release the keys
         body: The speech is recognised, corrected with your dictionary, polished by AI if you want, and rewritten by your rules.
       - title: The text is at your cursor
@@ -245,9 +245,9 @@ home:
       - title: Google Play
         status: building
         body: The Android app is on the releases page. A listing on Google Play is being prepared; Google requires a closed test first.
-      - title: Streaming recognition with cloud services
+      - title: Streaming recognition with other cloud services
         status: planned
-        body: Text while you speak currently uses the local live transcription model. Streaming results from cloud services are planned.
+        body: With the built-in service, text appears while you speak. Streaming results from other cloud services are not supported yet.
       - title: More local models
         status: planned
         body: Whisper among others, and measurements on AMD and Intel graphics cards.

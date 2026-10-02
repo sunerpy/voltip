@@ -614,3 +614,96 @@ async fn real_gguf_runs_where_the_compute_choice_says() {
     eprintln!("auto: backend {backend}");
     assert!(!backend.to_ascii_lowercase().contains("cpu"), "auto on a GPU build ran on {backend}");
 }
+
+/// Times every decode of the transcriber it wraps: audio length in, time spent (M9).
+struct Timed {
+    inner: std::sync::Arc<LocalTranscriber>,
+    calls: std::sync::Mutex<Vec<(u64, u64)>>,
+}
+
+#[async_trait::async_trait]
+impl Transcriber for Timed {
+    async fn transcribe(
+        &self,
+        wav: &[u8],
+        language: Option<&str>,
+        glossary: &[String],
+    ) -> Result<voltip_core::dictation::Transcript, voltip_core::dictation::DictationError> {
+        let audio_ms = voltip_core::dictation::wav::pcm_data(wav).map_or(0, |pcm| pcm.len() as u64 / 32);
+        let started = Instant::now();
+        let out = self.inner.transcribe(wav, language, glossary).await;
+        self.calls.lock().unwrap().push((audio_ms, started.elapsed().as_millis() as u64));
+        out
+    }
+}
+
+/// M9, an experiment (docs/dictation.md §11.8; user request 2026-09-30, plan item M9): the live
+/// preview from the local Qwen3-ASR model, previewing the way the built-in service does —
+/// `RedecodeStreaming` over `LocalTranscriber`, the sample fed at the microphone's pace. Prints
+/// every decode (audio length and time), p50 / p95, the preview timeline, and the share of the
+/// wall time spent decoding. The bar for offering it (the plan): p95 < 1.2 s with the 0.6B model
+/// on the Windows build host. Data only: nothing in the app uses it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs VOLTIP_LOCAL_GGUF (a downloaded Qwen3-ASR Q6_K gguf) and VOLTIP_LOCAL_SAMPLE_WAV; an experiment, not a gate"]
+async fn real_qwen3_redecode_preview_timing() {
+    let gguf = PathBuf::from(std::env::var("VOLTIP_LOCAL_GGUF").expect("VOLTIP_LOCAL_GGUF"));
+    let id = if gguf.to_string_lossy().contains("1.7B") { "qwen3-asr-1.7b" } else { "qwen3-asr-0.6b" };
+    let e = entry(id).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    stage(root.path(), e, |_| gguf.clone());
+    let wav = sample_wav();
+    let local = std::sync::Arc::new(LocalTranscriber::new(root.path()).select(e.id));
+    // Loaded before the take, as the warm-up does (docs/dictation.md §10.7).
+    let load = Instant::now();
+    local.transcribe(&wav, None, &[]).await.unwrap();
+    println!("model={id} load + first decode of the whole sample: {} ms", load.elapsed().as_millis());
+    // The default sentence cap (20 s, the built-in service's), then 8 s to bound every decode.
+    for longest in [Duration::from_secs(20), Duration::from_secs(8)] {
+        let timed = std::sync::Arc::new(Timed { inner: local.clone(), calls: std::sync::Mutex::new(Vec::new()) });
+        let params = voltip_core::dictation::redecode::RedecodeParams { longest, ..Default::default() };
+        let streaming = voltip_core::dictation::redecode::RedecodeStreaming::with_params(timed.clone(), Vec::new(), params);
+        let (samples, rate) = voltip_asr_local::decode_wav(&wav).unwrap();
+        assert_eq!(rate, 16_000, "the sample must be 16 kHz mono");
+        let (events, fin, wall_ms) = tokio::task::spawn_blocking(move || {
+            let mut session = streaming.open(Some("zh")).unwrap();
+            let started = Instant::now();
+            let mut events = Vec::new();
+            for (i, chunk) in samples.chunks(LIVE_CHUNK_SAMPLES).enumerate() {
+                if let Some(wait) = Duration::from_millis(100 * i as u64).checked_sub(started.elapsed()) {
+                    std::thread::sleep(wait);
+                }
+                session.feed(chunk);
+                loop {
+                    match session.poll() {
+                        StreamEvent::Idle => break,
+                        event => events.push((started.elapsed().as_millis(), event)),
+                    }
+                }
+            }
+            let fin = session.finish().unwrap();
+            (events, fin, started.elapsed().as_millis())
+        })
+        .await
+        .unwrap();
+        println!("--- longest={longest:?}");
+        for (at, event) in &events {
+            println!("{at:>6} ms  {event:?}");
+        }
+        let calls = timed.calls.lock().unwrap().clone();
+        let mut times: Vec<u64> = calls.iter().map(|&(_, t)| t).collect();
+        times.sort_unstable();
+        let pick = |q: f64| times[((times.len() as f64 - 1.0) * q).round() as usize];
+        let busy: u64 = times.iter().sum();
+        println!("decodes (audio ms, decode ms): {calls:?}");
+        println!(
+            "p50={} ms p95={} ms max={} ms; decoding {busy} ms of {wall_ms} ms wall ({}%); final={fin:?}",
+            pick(0.5),
+            pick(0.95),
+            times.last().unwrap(),
+            busy * 100 / u64::try_from(wall_ms.max(1)).unwrap()
+        );
+        assert!(events.iter().any(|(_, e)| matches!(e, StreamEvent::Partial { .. })), "a preview came back while the sample played");
+        let text: String = fin.committed.iter().map(|s| s.text.as_str()).chain(std::iter::once(fin.tail.as_str())).collect();
+        assert!(text.contains("想创建"), "the sample says 想创建: {text}");
+    }
+}

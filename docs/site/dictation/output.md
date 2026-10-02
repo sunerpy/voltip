@@ -23,7 +23,7 @@ On the **Speech models** page, the **Recognition** tab has three output modes:
 | **While you speak** | Sentences are settled while you speak; after you release, only the last one remains. AI polish still runs once, on the whole text. |
 | **Type as you speak** | Each sentence is typed into the app as soon as it is settled. This mode does not use AI polish, and cancelling does not remove sentences already typed. |
 
-The last two modes need the live transcription model (169 MB). Until it is downloaded they run as **All at once**, and the Recognition tab says so.
+The last two modes need text while you speak: with the built-in service they work as they are; with another provider or a local model, download the live transcription model (169 MB) first. Until then they run as **All at once**, and the Recognition tab says so.
 
 On the same tab, **Silence trimming** cuts the silence before and after your speech when recognising on your computer. The small model it needs is downloaded with the first local model.
 

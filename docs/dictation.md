@@ -487,6 +487,19 @@ Processing { stage: ProcessingStage, started_at: u64, preview: Option<String> }
 
 **门禁**：`voltip-audio` 流式重采样单测（整段 vs 分块结果差 < 1e-3）与 tap 单测（满环 `overrun`、生产端丢弃即关闭）；`voltip-asr-local` 假流式加载器单测 + 真模型 `real_streaming_model_emits_partials`（`#[ignore]`）；core 状态机 `PartialThrottle` 节流、`CaptureReady`、`Stop` 后 `preview` 保留并被 `StreamFinished` 精化、open 失败 / 解码错误 / 溢出三种降级都不改变结果、取消关闭 tap 的回归测试；桌面 mock runtime 断言 `listening` 事件带 `live`、`processing` 事件带 `preview`；IPC 夹具再生；smoke 用 PulseAudio 回放样音断言 `live` 至少一次（待做）。
 
+### 11.8 内置服务的实时预览（2026-10-02，M8）
+
+用户 2026-09-30 问：Qwen3-ASR 支持流式，为什么内置服务和本地模型都要借 Zipformer 做实时预览。现在内置服务自己提供预览，不需要下载实时识别模型。
+
+- **做法**（`dictation/redecode.rs` `RedecodeStreaming`）：正在说的这句话每多出 1 s 音频，就整句发给本次录音的识别客户端再识别一次，同一时间只有一个请求，最新的回答就是预览（`Partial`）。停顿 0.8 s（20 ms 帧的 RMS 低于 0.01），或一句满 20 s，这句话整句再识别一次，作为它的最终结果（`Endpoint`）。说话前的静音只保留 0.3 s；静音超过 0.2 s 后不再发预览请求。识别提示与本次录音相同（语言、词典）。预览请求失败只记日志，下一步再问；句子的最终识别失败则预览降级（`StreamDegraded`），整段识别不受影响。
+- **收尾**：「边说边识别」「边说边输入」以收尾结果作为文字：结束时还在说的那句整句识别，作为 `tail`；之前因停顿已经结束、结果还没回来的句子等它回来（上限 30 s）。「整段输出」不发收尾请求，因为整段识别本来就要识别同样的音频，最后一次预览就是 `tail`。
+- **来源**（`ResolvedEngines::live_source`）：实时预览开启时，如果用内置服务识别，而且这个构建的内置服务提供预览（`BuiltIn::asr_live_preview`，编入了内置识别的构建都开启），来源为 `cloud`；否则本地流式模型已安装时为 `local`；都不满足时没有来源。内置服务优先于本地模型，因为预览来自最终识别用的同一个模型。其他云端服务商不做重复识别：每次预览都是一次计费请求。`EngineStatus.live_source` 告诉界面来源，「实时预览」显示「已就绪 · 内置服务」。
+- **手机**：手机界面不显示实时预览，`CoreConfig::shows_live_preview = false` 让内置服务在手机上不发预览请求。
+- **隐私**：开启后，说话过程中音频就会发给内置服务；以前只在松开快捷键后发送。取消这次听写时，已经发送的部分已经到达内置服务。站点的隐私页写明了这一点，以及如何关闭。
+- **为什么不用服务端流式**（2026-10-02 只读查看 GPU 主机）：vLLM 0.29 自带 `/v1/realtime`（`Qwen3ASRRealtimeGeneration`），但它固定每 5 s 切一段、各段单独识别，预览要 5 s 才更新一次，而且要把生产的 vLLM 换成这个模型类；另起一个流式服务要再加载一份模型，而 L40S 只剩约 5.4 GB 显存。客户端重复识别不需要改服务器。实测（这台开发机经内置服务的边缘，`/tmp/voltip-sample.wav` 截取的窗口，各 3 次）：2 s 音频 1.2–2.0 s，4 s 1.5–2.5 s，8 s 1.9–2.0 s，16 s 2.4–3.2 s；相邻窗口的识别结果前缀一致。端到端（`crates/voltip-cloud/tests/real_preview.rs`，同一段 16 s 样音按麦克风的节奏输入）：说话从 0.9 s 开始，第一个预览在 3.4 s 出现，之后在 4.8、7.7、10.7、12.6、15.1 s 更新；整段没有 0.8 s 的停顿，是一句话，最后的整句识别用了 1.9 s。句子越长，每次重新识别的音频越多，间隔从 1.4 s 增加到约 3 s。
+- **负载**：每次预览是一个请求，一段 10 s 的录音大约 4–6 个，外加整段识别。
+- **本地模型这样预览（M9 实验，2026-10-02，未上线）**：`RedecodeStreaming` 也能包住本机的 Qwen3-ASR（`crates/voltip-asr-local/tests/real.rs@real_qwen3_redecode_preview_timing`，`#[ignore]`，同一段 16 s 样音按麦克风的节奏输入；transcribe.cpp 的 C++ 核心在测试构建里也按 Release 编译）。每步耗时 p50 / p95：这台开发机上 0.6B 845 / 1581 ms（句长上限 20 s，68% 的时间在解码），上限 8 s 时 618 / 871 ms；1.7B 1636 / 3476 ms。Windows 主机上 0.6B 1686 / 4183 ms（20 s），上限 8 s 时 1634 / 2592 ms，录音期间 84–86% 的时间在解码，约慢 2.4 倍。计划的上线门槛是 Windows 主机上 0.6B 每步 p95 < 1.2 s，没有达到；0.6B 在这段中英混说的样音上也明显认错（「good idea」认成「固态IDR」），没有停顿时按 8–10 s 硬切还会切坏边界上的词。所以本地识别时的实时预览仍用 Zipformer，是否把本地 Qwen3 预览作为可选项由用户决定。
+
 ## 12. 输出模式（2026-09-25）
 
 `EngineSettings.output_mode: OutputMode`（`#[serde(default)]`，wire `"whole_take"`（默认）| `"streaming_final"` | `"live_inject"`）与 `EngineSettings.vad_trim: bool`（默认 `false`）。`EngineStatus.effective_output_mode: OutputMode` = 本次 `DictationStart` 时真正会走的模式（`streaming_final` / `live_inject` 需要 `live_preview_ready`，否则回落 `whole_take`）。

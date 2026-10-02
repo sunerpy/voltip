@@ -110,6 +110,10 @@ pub struct CoreConfig {
     /// Run takes whose audio a trusted phone streams (docs/dictation.md §20): the desktop yes,
     /// the phone no (it answers `unavailable`).
     pub accepts_phone_takes: bool,
+    /// The shell shows the live preview (the desktop's pill). The phone does not, so the built-in
+    /// service sends no previews there (docs/dictation.md §11.8): each would be a request for
+    /// nothing.
+    pub shows_live_preview: bool,
     /// Keep the built-in scenes in the scene list (docs/dictation.md §18.10), with this host's
     /// default applications.
     pub builtin_scenes: bool,
@@ -198,6 +202,7 @@ impl CoreConfig {
             direct_connect_timeout: Duration::from_secs(3),
             peer_handshake_timeout: Duration::from_secs(15),
             accepts_phone_takes: true,
+            shows_live_preview: true,
             builtin_scenes: true,
             manual_scenes: false,
             discovery: None,
@@ -706,7 +711,8 @@ impl AppCore {
         };
         let (scenes, scenes_notice) = SceneStore::open_on(&config.data_dir, scene_host, now_ms());
         let (presets, presets_notice) = PresetStore::open(&config.data_dir);
-        let built_in = BuiltIn::from_build();
+        let mut built_in = BuiltIn::from_build();
+        built_in.asr_live_preview &= config.shows_live_preview;
         let user_secrets = load_user_secrets(secrets.as_ref());
         let models = ports.models.clone();
         let service_probe = ports.service_probe.clone();

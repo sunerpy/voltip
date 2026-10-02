@@ -14,7 +14,7 @@ The Android app is on the releases page; see [the phone page](/phone/). A listin
 
 ## Planned
 
-- Streaming recognition with cloud services. Text while you speak currently uses the local live transcription model.
+- Streaming recognition with other cloud services. With the built-in service, text while you speak comes from the service itself; with another provider it still needs the local live transcription model.
 - A check that the field in focus accepts text before pasting.
 - More local models, such as Whisper, and measurements on AMD and Intel graphics cards.
 - Exporting and importing all data, and a diagnostics bundle.

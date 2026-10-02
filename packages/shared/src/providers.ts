@@ -12,6 +12,7 @@ import type {
   SecretState,
   ServiceKind,
   ServiceStatus,
+  LiveSource,
 } from "./schema";
 import { PROVIDER_IDS } from "./schema";
 
@@ -119,6 +120,9 @@ export function keyEntry(provider: ProviderId, kind: ServiceKind): string | unde
 export interface BuiltInService {
   model: string;
   key: boolean;
+  /** Recognition only: the built-in service previews while recording, the sentence decoded
+   *  again as it grows (`BuiltIn::asr_live_preview`, docs/dictation.md §11.8). */
+  preview?: boolean;
 }
 
 export interface EngineResolveInput {
@@ -128,7 +132,7 @@ export interface EngineResolveInput {
   builtIn: { asr?: BuiltInService; llm?: BuiltInService };
   /** The local model the settings select, as the library sees it. */
   local: { id: string; name: string; installed: boolean };
-  /** `live_preview_ready` (the switch and the streaming model's install state). */
+  /** The switch is on and the library's streaming model is installed (the local source). */
   liveReady: boolean;
 }
 
@@ -290,8 +294,18 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
       ...(llm === undefined ? {} : { llm }),
     });
   }
+  // `ResolvedEngines::live_source`: the built-in service previews itself, else the local model.
+  const liveSource: LiveSource | undefined = !settings.live_preview
+    ? undefined
+    : asrProvider === "builtin" && asrTarget !== undefined && input.builtIn.asr?.preview === true
+      ? "cloud"
+      : input.liveReady
+        ? "local"
+        : undefined;
   const effective =
-    settings.output_mode !== "whole_take" && !input.liveReady ? "whole_take" : settings.output_mode;
+    settings.output_mode !== "whole_take" && liveSource === undefined
+      ? "whole_take"
+      : settings.output_mode;
   const language = trimmed(settings.language);
   return {
     asr_provider: asrProvider,
@@ -301,7 +315,8 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
     asr_host: userHost(asrProvider, asrTarget),
     ...(asrProvider === "local" ? { local_model: input.local.id } : {}),
     local_ready: asrProvider === "local" && input.local.installed,
-    live_preview_ready: input.liveReady,
+    live_preview_ready: liveSource !== undefined,
+    ...(liveSource === undefined ? {} : { live_source: liveSource }),
     effective_output_mode: effective,
     ...(language === undefined ? {} : { language }),
     refine_enabled: settings.refine_enabled,

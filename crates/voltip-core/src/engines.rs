@@ -30,6 +30,17 @@ pub enum InjectMode {
     ClipboardOnly,
 }
 
+/// Where the live preview comes from (docs/dictation.md §11.8).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveSource {
+    /// The built-in service, which decodes the sentence again as it grows
+    /// (`dictation::redecode`): its own model, nothing to download.
+    Cloud,
+    /// The library's streaming model, on this device.
+    Local,
+}
+
 /// Where the final text comes from and when it is delivered (docs/dictation.md §12).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -239,6 +250,9 @@ pub struct BuiltIn {
     pub refine_api_key: Option<&'static str>,
     /// `VOLTIP_REFINE_MODEL` or [`DEFAULT_REFINE_MODEL`].
     pub refine_model: &'static str,
+    /// The built-in recognition previews while recording: the sentence is decoded again as it
+    /// grows (docs/dictation.md §11.8). On in every build that carries the built-in recognition.
+    pub asr_live_preview: bool,
 }
 
 const fn present(value: Option<&'static str>) -> Option<&'static str> {
@@ -264,12 +278,20 @@ impl BuiltIn {
                 Some(v) => v,
                 None => DEFAULT_REFINE_MODEL,
             },
+            asr_live_preview: present(option_env!("VOLTIP_ASR_URL")).is_some(),
         }
     }
 
     /// No built-in service at all (tests, and builds without `.env.build`).
-    pub const EMPTY: Self =
-        Self { asr_url: None, asr_token: None, asr_model: DEFAULT_ASR_MODEL, refine_url: None, refine_api_key: None, refine_model: DEFAULT_REFINE_MODEL };
+    pub const EMPTY: Self = Self {
+        asr_url: None,
+        asr_token: None,
+        asr_model: DEFAULT_ASR_MODEL,
+        refine_url: None,
+        refine_api_key: None,
+        refine_model: DEFAULT_REFINE_MODEL,
+        asr_live_preview: false,
+    };
 
     /// Whether this build carries the built-in `kind` service.
     pub fn offers(&self, kind: ServiceKind) -> bool {
@@ -297,6 +319,7 @@ impl std::fmt::Debug for BuiltIn {
             .field("refine", &self.refine_url.is_some())
             .field("refine_api_key", &self.refine_api_key.is_some())
             .field("refine_model", &self.refine_model)
+            .field("asr_live_preview", &self.asr_live_preview)
             .finish()
     }
 }
@@ -466,6 +489,9 @@ pub struct ResolvedEngines {
     /// The library's streaming model (`capabilities` contains `streaming`), whatever the provider;
     /// `None` when the library has none (or there is no library).
     pub streaming_model: Option<LocalModelRef>,
+    /// The built-in recognition is in use and previews by decoding again
+    /// ([`BuiltIn::asr_live_preview`]).
+    pub cloud_preview: bool,
     /// `EngineSettings.local_device`.
     pub local_device: LocalDevice,
     /// `EngineSettings.local_gpu`.
@@ -522,6 +548,7 @@ impl ResolvedEngines {
         let streaming_model =
             models.iter().find(|m| m.is_streaming()).map(|m| LocalModelRef { id: m.id.clone(), name: m.name.clone(), installed: m.state.is_installed() });
         let providers = provider_statuses(settings, secrets, built_in, &local, asr_provider, llm_provider);
+        let cloud_preview = asr_provider == ProviderId::Builtin && asr_remote.is_some() && built_in.asr_live_preview;
         Self {
             asr_provider,
             local_model,
@@ -540,6 +567,7 @@ impl ResolvedEngines {
             vad_trim: settings.vad_trim,
             chinese_script: settings.chinese_script,
             streaming_model,
+            cloud_preview,
             local_device: settings.local_device,
             local_gpu: trimmed(settings.local_gpu.as_deref()).map(str::to_owned),
             local_threads: settings.local_threads,
@@ -553,10 +581,24 @@ impl ResolvedEngines {
         self.asr_provider == ProviderId::Local
     }
 
-    /// Live preview is on and the streaming model is installed: the engine opens a streaming
-    /// session next to every recording (docs/dictation.md §11).
+    /// Where the live preview comes from when it is on (docs/dictation.md §11.8): the built-in
+    /// service when it recognises (user request 2026-09-30: Qwen3-ASR previews itself); otherwise
+    /// the library's streaming model when it is installed. Other cloud services do not preview: each
+    /// preview is another request, which their owners pay for.
+    pub fn live_source(&self) -> Option<LiveSource> {
+        if !self.live_preview {
+            return None;
+        }
+        if self.cloud_preview {
+            return Some(LiveSource::Cloud);
+        }
+        self.streaming_model.as_ref().is_some_and(|m| m.installed).then_some(LiveSource::Local)
+    }
+
+    /// The live preview has a source: the engine opens a streaming session next to every recording
+    /// (docs/dictation.md §11).
     pub fn live_preview_ready(&self) -> bool {
-        self.live_preview && self.streaming_model.as_ref().is_some_and(|m| m.installed)
+        self.live_source().is_some()
     }
 
     /// The output mode a `DictationStart` would run with now (docs/dictation.md §12): the two
@@ -580,6 +622,7 @@ impl ResolvedEngines {
             local_model: self.local_model.as_ref().map(|m| m.id.clone()),
             local_ready: self.local_model.as_ref().is_some_and(|m| m.installed),
             live_preview_ready: self.live_preview_ready(),
+            live_source: self.live_source(),
             effective_output_mode: self.effective_output_mode(),
             language: self.language.clone(),
             refine_enabled: self.refine_enabled,
@@ -784,9 +827,12 @@ pub struct EngineStatus {
     pub local_model: Option<String>,
     /// On-device and the model's files are on disk and verified.
     pub local_ready: bool,
-    /// `live_preview` is on and the streaming model is installed, so the pill shows partial text
-    /// while recording. Independent of the provider.
+    /// `live_preview` is on and has a source ([`EngineStatus::live_source`]), so the pill shows
+    /// partial text while recording.
     pub live_preview_ready: bool,
+    /// Where the live preview comes from; `None` when it is off or has no source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_source: Option<LiveSource>,
     /// The output mode the next `DictationStart` really runs with (docs/dictation.md §12).
     pub effective_output_mode: OutputMode,
     /// Language hint.
@@ -825,6 +871,7 @@ impl Default for EngineStatus {
             local_model: None,
             local_ready: false,
             live_preview_ready: false,
+            live_source: None,
             effective_output_mode: OutputMode::WholeTake,
             language: None,
             refine_enabled: true,
@@ -862,6 +909,7 @@ mod tests {
         refine_url: Some("https://llm.builtin.test/v1"),
         refine_api_key: Some("built-refine-key"),
         refine_model: "qwen/qwen3.8-27b",
+        asr_live_preview: false,
     };
 
     fn with_provider(provider: ProviderId, choice: ProviderSettings) -> BTreeMap<ProviderId, ProviderSettings> {
@@ -1169,6 +1217,42 @@ mod tests {
     /// Live preview (docs/dictation.md §11) is independent of the provider: ready when the setting
     /// is on and the library's streaming model is installed; off by setting, missing model or no
     /// library at all.
+    /// docs/dictation.md §11.8 (user request 2026-09-30: Qwen3-ASR previews itself): the built-in
+    /// recognition previews on its own when its build says so, even with the streaming model
+    /// installed; other providers, and a built-in service that does not preview, need the model;
+    /// live preview switched off has no source.
+    #[test]
+    fn the_built_in_recognition_previews_itself_and_the_rest_needs_the_streaming_model() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..BUILT };
+        let (streaming, none) = (library(true), library(false));
+        let source = |settings: &EngineSettings, built_in: &BuiltIn, models: &[ModelState]| {
+            let e = ResolvedEngines::resolve_with_models(settings, &UserSecrets::default(), built_in, models);
+            assert_eq!(e.live_preview_ready(), e.live_source().is_some());
+            assert_eq!(e.status().live_source, e.live_source());
+            e.live_source()
+        };
+        let builtin = EngineSettings::default();
+        assert_eq!(source(&builtin, &PREVIEWING, &none), Some(LiveSource::Cloud));
+        assert_eq!(source(&builtin, &PREVIEWING, &streaming), Some(LiveSource::Cloud), "the service's own model before the local one");
+        assert_eq!(source(&builtin, &BUILT, &none), None, "a built-in service that does not preview");
+        assert_eq!(source(&builtin, &BUILT, &streaming), Some(LiveSource::Local));
+        let off = EngineSettings { live_preview: false, ..EngineSettings::default() };
+        assert_eq!(source(&off, &PREVIEWING, &streaming), None);
+        let custom = EngineSettings {
+            asr_provider: ProviderId::Custom,
+            providers: with_provider(ProviderId::Custom, ProviderSettings { asr_url: Some("https://asr.example.test".into()), ..Default::default() }),
+            ..EngineSettings::default()
+        };
+        assert_eq!(source(&custom, &PREVIEWING, &none), None, "another service's previews would be the owner's to pay for");
+        assert_eq!(source(&custom, &PREVIEWING, &streaming), Some(LiveSource::Local));
+        let local = EngineSettings { asr_provider: ProviderId::Local, ..EngineSettings::default() };
+        assert_eq!(source(&local, &PREVIEWING, &streaming), Some(LiveSource::Local));
+        // A build without the built-in recognition falls back to local, which previews locally.
+        assert_eq!(source(&builtin, &BuiltIn::EMPTY, &streaming), Some(LiveSource::Local));
+        assert!(BuiltIn::EMPTY.asr_live_preview.eq(&false));
+        assert_eq!(serde_json::to_string(&[LiveSource::Cloud, LiveSource::Local]).unwrap(), r#"["cloud","local"]"#);
+    }
+
     #[test]
     fn live_preview_readiness_follows_the_setting_and_the_streaming_model_only() {
         let secrets = UserSecrets::default();

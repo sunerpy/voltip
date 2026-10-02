@@ -152,14 +152,16 @@ export function streamingModel(models: readonly ModelState[]): ModelState | unde
 }
 
 /** What the 实时预览 block says: the switch is off, or the model is missing, or it is ready. */
-export type LivePreviewState = "ready" | "missing" | "off";
+export type LivePreviewState = "ready" | "cloud" | "missing" | "off";
 
 export function livePreviewState(
   settings: Pick<EngineSettings, "live_preview">,
-  status: Pick<EngineStatus, "live_preview_ready">,
+  status: Pick<EngineStatus, "live_preview_ready" | "live_source">,
 ): LivePreviewState {
   if (!settings.live_preview) return "off";
-  return status.live_preview_ready ? "ready" : "missing";
+  if (!status.live_preview_ready) return "missing";
+  // docs/dictation.md §11.8: the built-in service previews itself, no model needed.
+  return status.live_source === "cloud" ? "cloud" : "ready";
 }
 
 /** `Settings.engines` after picking a local model: on-device recognition with that model. */

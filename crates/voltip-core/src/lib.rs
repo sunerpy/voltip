@@ -36,8 +36,8 @@ pub use dictation::{
     ProcessingStage, Segment, SelectionTiming, TakeKind,
 };
 pub use engines::{
-    BuiltIn, ChineseScript, EngineIssue, EngineSettings, EngineStatus, InjectMode, LocalDevice, LocalModelRef, MAX_LOCAL_THREADS, OutputMode, ProviderSettings,
-    ProviderStatus, RemoteService, ResolvedEngines, SecretSource, SecretState, ServiceStatus, UserSecrets,
+    BuiltIn, ChineseScript, EngineIssue, EngineSettings, EngineStatus, InjectMode, LiveSource, LocalDevice, LocalModelRef, MAX_LOCAL_THREADS, OutputMode,
+    ProviderSettings, ProviderStatus, RemoteService, ResolvedEngines, SecretSource, SecretState, ServiceStatus, UserSecrets,
 };
 pub use history::{
     EditRecord, EntryOrigin, HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryReader, HistoryStats, HistoryStatsBucket, HistoryStore, OriginKind,

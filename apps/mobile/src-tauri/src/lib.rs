@@ -158,6 +158,8 @@ pub fn production_config<R: Runtime>(app: &AppHandle<R>) -> CoreConfig {
     config.app_version = app.package_info().version.to_string();
     // The phone is the microphone; a desktop records its takes, never the other way round.
     config.accepts_phone_takes = false;
+    // The phone shows no live preview: the built-in service sends none (docs/dictation.md §11.8).
+    config.shows_live_preview = false;
     // The user picks a take's scene on the talk card (no foreground probe on a phone).
     config.manual_scenes = true;
     // Copies of the computers' histories and settings, read-only; the phone's own records go to

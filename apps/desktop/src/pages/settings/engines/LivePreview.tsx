@@ -12,8 +12,9 @@ import { ModelCard } from "./LocalModels";
 
 /** The 实时预览 block of the engines group (docs/dictation.md §11): the switch writes
  *  `EngineSettings.live_preview` through `settings_set_engines` (the whole block, like every other
- *  engine setting); the status line follows `state.engines.live_preview_ready` — ready, model not
- *  downloaded, or off. The streaming model's card underneath offers download / cancel / retry /
+ *  engine setting); the status line follows `state.engines.live_preview_ready` and `live_source` —
+ *  ready through the built-in service (§11.8) or the downloaded model, model not downloaded, or
+ *  off. The streaming model's card underneath offers download / cancel / retry /
  *  delete only: it is not a recognition model, so there is no 使用此模型 and it is never `active`. */
 export function LivePreview() {
   const { backend } = useBackend();
@@ -32,7 +33,11 @@ export function LivePreview() {
       data-testid="live-preview"
       data={{ "data-state": status }}
       aside={
-        <LampText tone={status === "ready" ? "ok" : status === "off" ? "idle" : "warn"} size="sm">
+        <LampText
+          tone={
+            status === "ready" || status === "cloud" ? "ok" : status === "off" ? "idle" : "warn"
+          }
+          size="sm">
           <span data-testid="live-preview-state">{t(`engines.livePreview.state.${status}`)}</span>
         </LampText>
       }>

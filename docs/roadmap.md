@@ -4,7 +4,7 @@
 
 ## 尚未实现
 
-1. **云端流式识别**：实时预览只走本机的流式 Zipformer（§11）；云端识别仍是整段上传。要接 WebSocket 或分块 HTTP 的流式 ASR，并把部分结果从状态事件挪到独立的订阅流里。
+1. **其他云端服务的流式识别**：内置服务的实时预览由客户端重复识别实现（`docs/dictation.md` §11.8）；使用其他云端服务商时，预览仍要本机的流式 Zipformer。服务端流式（WebSocket）等 GPU 显存允许再部署。
 2. **插入前判断焦点控件能否编辑**：Windows 上已经检查提权窗口与安全桌面（§15.3），但还没用 UI Automation / macOS 辅助功能接口判断焦点控件是否可编辑。不可编辑时，文字目前留在剪贴板并提示。
 3. **更多本地模型与自有镜像**：还没有 Whisper；模型文件来自 Hugging Face、hf-mirror 和可选的构建期镜像，没有官方镜像。加载模型前也不检查内存。
 4. **GPU 的覆盖面**：Windows 和 Linux 的发行包用 Vulkan（在 NVIDIA L40S 和 Tesla T4 上实测过），macOS 用 Metal；AMD、Intel 显卡还没有实测。第一次在 GPU 上加载要编译 Vulkan 管线（实测十几秒到两分钟），还没有预先编译或进度提示。sherpa-onnx 的几个模型只用 CPU。

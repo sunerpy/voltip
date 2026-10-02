@@ -57,9 +57,10 @@ use super::ports::{
     Recording, RefineContext, RefineHints, Refiner, Segment, Segmenter, SegmenterFactory, SelectionTiming, ServiceProbe, StreamEvent, StreamFinal,
     StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
 };
+use super::redecode::RedecodeStreaming;
 use super::wav;
 use super::{DictationPhase, DictationStatus, FailureCode, LiveText, OutputMode, ProcessingStage, SegmentProgress, TakeKind, inject_separator, join_text};
-use crate::engines::{ChineseScript, ResolvedEngines};
+use crate::engines::{ChineseScript, LiveSource, ResolvedEngines};
 use crate::history::{EditRecord, HistoryEntry, Outcome};
 use crate::hotkey::Modifier;
 use crate::models::ModelManager;
@@ -589,6 +590,8 @@ pub struct DictationEngine {
     /// `ResolvedEngines::live_preview_ready()` of the last configuration: whether the next start
     /// opens a live tap and a streaming session.
     live_ready: bool,
+    /// `ResolvedEngines::live_source()` of the last configuration: which port the session uses.
+    live_source: Option<LiveSource>,
     /// `EngineSettings.output_mode` of the last configuration; resolved per run at `start`.
     output_mode: OutputMode,
     levels: broadcast::Sender<LevelFrame>,
@@ -698,6 +701,7 @@ impl DictationEngine {
             factory: ports.factory,
             streaming: ports.streaming,
             live_ready: engines.live_preview_ready(),
+            live_source: engines.live_source(),
             output_mode: engines.output_mode,
             levels,
             internal: tx,
@@ -796,15 +800,35 @@ impl DictationEngine {
         self.asr_model = engines.asr_model.clone();
         self.refine_model = engines.refine_model.clone();
         self.live_ready = engines.live_preview_ready();
+        self.live_source = engines.live_source();
         self.output_mode = engines.output_mode;
         self.warm_streaming();
         self.warm_transcriber();
     }
 
-    /// Whether the next start previews: a streaming port is plugged in and the configuration says
-    /// live preview is on with its model installed.
+    /// Whether the next start previews: live preview is on and its source is here — the built-in
+    /// service (always, through the transcriber), or the library's model with a streaming port
+    /// plugged in.
     pub fn live_enabled(&self) -> bool {
-        self.live_ready && self.streaming.is_some()
+        self.live_ready
+            && match self.live_source {
+                Some(LiveSource::Cloud) => true,
+                Some(LiveSource::Local) => self.streaming.is_some(),
+                None => false,
+            }
+    }
+
+    /// The streaming port this take previews with (docs/dictation.md §11.8): the take's
+    /// transcriber deciding the sentence again as it grows, hinted with the take's glossary, or
+    /// the library's streaming model.
+    fn live_port(&self) -> Option<Arc<dyn StreamingTranscriber>> {
+        match self.live_source? {
+            // The streaming modes take their text from the flush; a whole take decodes it itself.
+            LiveSource::Cloud => Some(Arc::new(
+                RedecodeStreaming::new(self.transcriber.clone(), self.take.vocabulary.glossary().to_vec()).flushing(self.take.mode.is_streaming()),
+            )),
+            LiveSource::Local => self.streaming.clone(),
+        }
     }
 
     /// The output mode the next start runs with (docs/dictation.md §12): the configured one, or
@@ -833,7 +857,8 @@ impl DictationEngine {
     /// Preload the streaming model (2.6 s measured) so the first partial is not late. No-op when
     /// live preview is not ready; the port itself makes it idempotent.
     fn warm_streaming(&self) {
-        if let (true, Some(streaming)) = (self.live_ready, &self.streaming) {
+        // The built-in service has nothing to load.
+        if let (true, Some(LiveSource::Local), Some(streaming)) = (self.live_ready, self.live_source, &self.streaming) {
             streaming.warm();
         }
     }
@@ -1901,7 +1926,7 @@ impl DictationEngine {
                 None => {
                     let (mut worker, mut no_tap) = (None, false);
                     if self.live_enabled() {
-                        match (capture.live_pcm(), self.streaming.clone()) {
+                        match (capture.live_pcm(), self.live_port()) {
                             (Some(pcm), Some(streaming)) => worker = Some((pcm, streaming)),
                             (None, _) => no_tap = true,
                             (_, None) => {}
@@ -3643,6 +3668,56 @@ mod tests {
         // The stages keep the preview.
         let entry = record(&fx).unwrap();
         assert_eq!(entry.text, FAKE_TRANSCRIPT);
+    }
+
+    /// docs/dictation.md §11.8 (user request 2026-09-30, M8 2026-10-02): with the built-in service
+    /// the preview comes from the take's own transcriber, the sentence decoded again as it grows,
+    /// with the take's glossary. No local streaming port is needed, nothing is warmed, and the
+    /// final text is still the whole take's.
+    #[tokio::test(start_paused = true)]
+    async fn the_built_in_service_previews_with_the_takes_transcriber() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..TEST_BUILT_IN };
+        let settings = EngineSettings { refine_enabled: false, ..EngineSettings::default() };
+        let engines = ResolvedEngines::resolve(&settings, &UserSecrets::default(), &PREVIEWING);
+        assert_eq!(engines.live_source(), Some(LiveSource::Cloud));
+        let (audio, transcriber, injector) = (Arc::new(FakeAudio::speech()), Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT)), Arc::new(FakeInjector::paste()));
+        let (levels_tx, levels) = broadcast::channel(64);
+        let (engine, rx) = DictationEngine::new(ports_with(audio.clone(), transcriber.clone(), None, injector.clone()), &engines, levels_tx);
+        let mut r = Rig { engine, rx, audio, transcriber, refiner: None, injector, levels };
+        assert!(r.engine.live_enabled(), "no streaming port, and still a preview");
+        r.start_open().await;
+        assert_eq!(r.audio.live_requests(), 1, "the capture was asked for a tap");
+        // The 1.5 s take's first second went out for a preview, and the answer shows.
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.current == FAKE_TRANSCRIPT)).await;
+        let fx = r.engine.stop().unwrap();
+        assert!(matches!(phase(&fx), DictationPhase::Processing { stage: ProcessingStage::Transcribing, .. }), "{fx:?}");
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { text, .. } if text == FAKE_TRANSCRIPT), "{fx:?}");
+        assert_eq!(r.injector.injected(), vec![FAKE_TRANSCRIPT.to_owned()]);
+        // One preview of the first second, then the whole take; a whole take sends no flush.
+        assert_eq!(r.transcriber.durations_ms(), [1000, 1500]);
+    }
+
+    /// With the built-in preview a streaming output mode needs no local model (docs/dictation.md
+    /// §11.8, §12): `streaming_final` takes its text from the flush, and no whole take is sent.
+    #[tokio::test(start_paused = true)]
+    async fn streaming_final_on_the_built_in_service_takes_the_flushed_sentence() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..TEST_BUILT_IN };
+        let settings = EngineSettings { refine_enabled: false, output_mode: OutputMode::StreamingFinal, ..EngineSettings::default() };
+        let engines = ResolvedEngines::resolve(&settings, &UserSecrets::default(), &PREVIEWING);
+        assert_eq!(engines.effective_output_mode(), OutputMode::StreamingFinal, "no local model, and still a streaming mode");
+        let (audio, transcriber, injector) = (Arc::new(FakeAudio::speech()), Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT)), Arc::new(FakeInjector::paste()));
+        let (levels_tx, levels) = broadcast::channel(64);
+        let (engine, rx) = DictationEngine::new(ports_with(audio.clone(), transcriber.clone(), None, injector.clone()), &engines, levels_tx);
+        let mut r = Rig { engine, rx, audio, transcriber, refiner: None, injector, levels };
+        r.start_open().await;
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.current == FAKE_TRANSCRIPT)).await;
+        let fx = r.engine.stop().unwrap();
+        assert!(matches!(phase(&fx), DictationPhase::Processing { stage: ProcessingStage::Finalizing, .. }), "{fx:?}");
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::StreamingFinal, .. } if text == FAKE_TRANSCRIPT), "{fx:?}");
+        // The preview, then the flush of the whole sentence, which is the text.
+        assert_eq!(r.transcriber.durations_ms(), [1000, 1500]);
     }
 
     /// Partials the script produces in the default session (before and after the endpoint).

@@ -1031,13 +1031,18 @@ export const en: Messages = {
     installedCount: "{installed} / {total} installed",
     livePreview: {
       title: "Live preview",
-      note: "While you hold the shortcut, the overlay shows the words as you speak; on release the selected provider still transcribes the whole recording, so the final text is unaffected.",
+      note: "While you hold the shortcut, the overlay shows the words as you speak; on release the selected provider still transcribes the whole recording, so the final text is unaffected. With the built-in service, the service itself provides the preview, updated about every 2 seconds; with another provider or a local model, download the Live preview model below.",
       toggle: "Live preview",
-      state: { ready: "Ready", missing: "Model not downloaded", off: "Off" },
+      state: {
+        ready: "Ready",
+        cloud: "Ready · built-in service",
+        missing: "Model not downloaded",
+        off: "Off",
+      },
     },
     outputMode: {
       title: "Output mode",
-      note: "How the final text is produced and when it is inserted. The last two modes need the live preview model; until it is downloaded they run as “All at once”.",
+      note: "How the final text is produced and when it is inserted. The last two modes need the live preview: with the built-in service it is there already; otherwise download the Live preview model first. Without it they run as “All at once”.",
       label: "Output mode",
     },
     vadTrim: {

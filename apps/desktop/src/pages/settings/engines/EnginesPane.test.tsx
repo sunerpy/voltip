@@ -6,6 +6,7 @@ import {
   providerStatus,
 } from "@voltip/shared";
 import {
+  MOCK_ENGINE_BUILTIN,
   MOCK_MODEL_FILE,
   MOCK_MODEL_TICK_MS,
   MOCK_MODEL_TICKS,
@@ -811,6 +812,26 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(within(live).getByRole("list", { name: "实时预览" }).style.gridTemplateColumns).toBe(
       "repeat(auto-fill, minmax(300px, 1fr))",
     );
+  });
+
+  it("with the built-in service the 实时预览 block is ready without the model, and the streaming output modes take effect (docs/dictation.md section 11.8)", async () => {
+    // M8 2026-10-02 (user request 2026-09-30: Qwen3-ASR previews itself): a release build's
+    // built-in service previews while recording; no model needs downloading.
+    const user = userEvent.setup();
+    renderApp({
+      path: "/speech",
+      mock: {
+        builtIn: {
+          asr: { model: MOCK_ENGINE_BUILTIN.asr_model, key: true, preview: true },
+          llm: { model: MOCK_ENGINE_BUILTIN.refine_model, key: true },
+        },
+      },
+    });
+    await openTab(user, "识别设置");
+    const live = await screen.findByTestId("live-preview");
+    expect(live).toHaveAttribute("data-state", "cloud");
+    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("已就绪 · 内置服务");
+    expect(live).toHaveTextContent("使用内置服务时，预览由内置服务提供");
   });
 
   it("regression: the 实时预览 toggle writes live_preview through settings_set_engines and the state line follows live_preview_ready", async () => {

@@ -38,6 +38,7 @@ fn offline_config(dir: &Path, settings: Settings) -> CoreConfig {
     cfg.default_device_name = DEVICE_NAME.into();
     cfg.direct_bind = "127.0.0.1:0".parse().unwrap();
     cfg.accepts_phone_takes = false;
+    cfg.shows_live_preview = false;
     cfg.manual_scenes = true;
     cfg.sync_role = voltip_core::sync::SyncRole::Phone;
     cfg
