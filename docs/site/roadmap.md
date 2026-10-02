@@ -19,7 +19,6 @@ The Android app is on the releases page; see [the phone page](/phone/). A listin
 - More local models, such as Whisper, and measurements on AMD and Intel graphics cards.
 - Exporting and importing all data, and a diagnostics bundle.
 - Code signing for the Windows packages.
-- Syncing the computer's history, speech and AI models, dictionary, rules and scenes to its paired phones, read-only there.
 - An iOS app, with the phone as a microphone and keyboard as on Android. Development has not started.
 
 ## Deliberately left out

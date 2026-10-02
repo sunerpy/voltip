@@ -1,5 +1,5 @@
 ---
-description: Use an Android phone as a microphone and keyboard for your computer or on its own, how pairing works, and how the connection is protected.
+description: Use an Android phone as a microphone and keyboard for your computer or on its own, see the history and settings your computer syncs to it, how pairing works, and how the connection is protected.
 ---
 
 # Your phone as a microphone and keyboard
@@ -27,7 +27,7 @@ The phone cannot tell which app you are typing in, so scenes are not matched by 
 
 These settings apply to recordings the phone recognises itself. A recording sent to a computer follows the computer's settings.
 
-**Recent results** lists what the phone transcribed, newest first, with **Copy** and **Share**. **History** at the bottom lists everything: search it, filter it by time or by star, and see how many takes you made today, this week, this month and in total, and the time they saved. Open an entry to read the polished text and the transcript, and to copy, share, star or delete it; a long recording can also be processed again with an AI preset, and its subtitles (SRT) or text (TXT) shared to another app as a file. **Settings** › **History** turns saving off, sets how many entries are kept, or clears them all. These results are kept on the phone only.
+**Recent results** lists what the phone transcribed, newest first, with **Copy** and **Share**. **History** at the bottom lists everything: search it, filter it by time or by star, and see how many takes you made today, this week, this month and in total, and the time they saved. Open an entry to read the polished text and the transcript, and to copy, share, star or delete it; a long recording can also be processed again with an AI preset, and its subtitles (SRT) or text (TXT) shared to another app as a file. **Settings** › **History** turns saving off, sets how many entries are kept, or clears them all. These results are kept on the phone; while it syncs with a paired computer, a copy goes to the computer, see [The computer's history and settings](#the-computer-s-history-and-settings).
 
 **Settings** › **Feedback** reports a problem or suggests an idea, with screenshots or screen recordings from the gallery; before anything is sent, the page lists everything that goes along. See [Privacy](/privacy).
 
@@ -55,6 +55,18 @@ If several computers are paired and online, choose the one to send to.
 
 The phone can also send text without speaking: type it, or press **Send clipboard** to send what is on the phone's clipboard. The computer inserts it at its cursor like a dictation result, without recognition or polish. When the computer is busy with a dictation, the text waits in a queue and is inserted afterwards.
 
+## The computer's history and settings
+
+A paired computer syncs its history and settings to the phone, where you can read them but not change them.
+
+- Choose the computer's name at the top of **History** to see its history: search and filter it, open an entry to read the polished text, the transcript and where it came from, and copy or share it. The computer's entries cannot be starred or deleted on the phone. An entry longer than 50,000 characters cannot be copied or shared in one piece; a very long entry shows only part of its text on the phone, the computer has it all.
+- **Settings** › **Computers** › **Computer name's settings** shows the computer's language and theme, speech model, AI polish, presets, dictionary, rules and scenes. The phone's own look and settings do not change with them.
+- What the phone transcribes on its own is copied to a paired computer when the phone connects to it; with several computers paired, to the one that connected first. On the computer the copy is marked **Phone · phone name**. The phone keeps its own entries, and each side deletes its entries independently.
+- A computer syncs with up to 5 phones, and a phone with up to 5 computers.
+- On the computer's **Phone** page each phone has a **Sync** switch, on by default. Turned off, this computer's history and settings are deleted from the phone, and the phone stops uploading to this computer.
+- This computer's history and settings are deleted from the phone when you forget the computer on the phone, when the computer stops syncing with the phone, or when the computer forgets the phone while the phone is online. If the computer forgets the phone while it is offline, they stay on the phone until you forget the computer there.
+- Voltip on the computer must be a version that syncs; otherwise the phone shows **Voltip on the computer needs an update to sync**.
+
 ## How the connection is protected
 
 - Pairing creates an encrypted connection and asks you to compare the safety code, so that nobody in between can pretend to be one of the devices.
@@ -63,4 +75,4 @@ The phone can also send text without speaking: type it, or press **Send clipboar
 - **Forget device** removes a pairing on both sides when the other device is online.
 - **Connection check** tests the network path to each paired device and reports where it fails.
 
-The computer's history, dictionary, rules and scenes stay on the computer and are not synced to the phone, and the phone's own dictionary, rules and scenes apply only to what the phone recognises itself. The phone lists what it sent and what it transcribed on its own.
+The phone's own dictionary, rules and scenes apply only to what the phone recognises itself; the computer's settings synced to the phone are for reading and are never used to recognise on the phone.

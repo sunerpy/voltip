@@ -4,7 +4,7 @@ description: The dictation history on your computer, what each entry shows, how 
 
 # History
 
-Every dictation, voice edit and text sent from a paired phone is listed on the **History** page. The history is stored only on your computer.
+Every dictation, voice edit and text sent from a paired phone, and every copy a phone uploads of what it transcribed on its own, is listed on the **History** page. The history is stored on your computer; paired phones can read it, see [The computer's history and settings](/phone/#the-computer-s-history-and-settings).
 
 The latest results are also listed on the home page: six, or more when the window is taller, up to 30.
 
@@ -51,4 +51,4 @@ The home page adds up the dictations in the history for today, this week, this m
 
 Time saved is speaking time × 1.9. The factor comes from Ruan et al., 2016 (arXiv:1608.07323): in their experiments, speaking was about 2.9 times as fast as typing on a phone, in English (153 against 52 words per minute) and in Chinese (123 against 43 characters per minute). Typing the same text takes about 2.9 times as long as saying it, which saves 1.9 times the speaking time. **Basis**, next to **Time saved** on the home page, shows the same explanation.
 
-Only dictations kept in the history count. Voice edits, and text or clipboard content sent from the phone, do not; a recording made on the phone and recognised on this computer does.
+Only dictations kept in the history count. Voice edits, and text or clipboard content sent from the phone, do not; a recording made on the phone and recognised on this computer does, and so does a copy a phone uploads of what it transcribed on its own.
