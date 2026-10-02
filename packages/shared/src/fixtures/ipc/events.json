@@ -117,6 +117,102 @@
     }
   },
   {
+    "type": "mirrors",
+    "mirrors": [
+      {
+        "desktop": "1111111111111111111111111111111111111111111111111111111111111111",
+        "name": "MacBook Pro",
+        "state": "syncing",
+        "entries": 1200,
+        "synced_at_ms": 1758700600000,
+        "profile": {
+          "locale": "system",
+          "theme": "dark",
+          "follow_system_theme": true,
+          "asr_provider": "builtin",
+          "asr_model": "Qwen/Qwen3-ASR-1.7B",
+          "local_model": "qwen3-asr-0.6b",
+          "refine_enabled": true,
+          "llm_provider": "builtin",
+          "refine_model": "qwen/qwen3.8-27b",
+          "preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+          "presets": [],
+          "dictionary": [],
+          "rules": [],
+          "scenes": []
+        }
+      },
+      {
+        "desktop": "1111111111111111111111111111111111111111111111111111111111111111",
+        "name": "Surface",
+        "state": "up_to_date",
+        "entries": 312,
+        "synced_at_ms": 1758700600000,
+        "profile": {
+          "locale": "system",
+          "theme": "dark",
+          "follow_system_theme": true,
+          "asr_provider": "builtin",
+          "asr_model": "Qwen/Qwen3-ASR-1.7B",
+          "local_model": "qwen3-asr-0.6b",
+          "refine_enabled": true,
+          "llm_provider": "builtin",
+          "refine_model": "qwen/qwen3.8-27b",
+          "preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+          "presets": [],
+          "dictionary": [],
+          "rules": [],
+          "scenes": []
+        }
+      },
+      {
+        "desktop": "1111111111111111111111111111111111111111111111111111111111111111",
+        "name": "Studio",
+        "state": "offline",
+        "entries": 87,
+        "synced_at_ms": 1758700600000,
+        "profile": {
+          "locale": "system",
+          "theme": "dark",
+          "follow_system_theme": true,
+          "asr_provider": "builtin",
+          "asr_model": "Qwen/Qwen3-ASR-1.7B",
+          "local_model": "qwen3-asr-0.6b",
+          "refine_enabled": true,
+          "llm_provider": "builtin",
+          "refine_model": "qwen/qwen3.8-27b",
+          "preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+          "presets": [],
+          "dictionary": [],
+          "rules": [],
+          "scenes": []
+        }
+      },
+      {
+        "desktop": "1111111111111111111111111111111111111111111111111111111111111111",
+        "name": "Office",
+        "state": "revoked",
+        "entries": 0
+      },
+      {
+        "desktop": "1111111111111111111111111111111111111111111111111111111111111111",
+        "name": "Old Desk",
+        "state": "needs_upgrade",
+        "entries": 0
+      },
+      {
+        "desktop": "1111111111111111111111111111111111111111111111111111111111111111",
+        "name": "Sixth",
+        "state": "limit",
+        "entries": 0
+      }
+    ]
+  },
+  {
+    "type": "phone_outbox",
+    "too_large": ["9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"]
+  },
+  {
     "type": "identity",
     "device_id": "0f3f1a1e-8d4b-4c8e-9f7a-1c2d3e4f5a6b",
     "name": "Surface-Laptop",
@@ -251,7 +347,9 @@
           "trusted_at": 1758700000,
           "last_seen": 1758700600,
           "last_connection": "relay",
-          "direct_hints": ["192.168.1.20:47831"]
+          "direct_hints": ["192.168.1.20:47831"],
+          "sync": true,
+          "sync_gen": 3
         },
         "connection": {
           "state": "offline"
@@ -264,7 +362,9 @@
           "platform": "ios",
           "public_key": "3333333333333333333333333333333333333333333333333333333333333333",
           "fingerprint": "DE:B0:E3:8C · ED:1E:41:DE",
-          "trusted_at": 1758700000
+          "trusted_at": 1758700000,
+          "sync": false,
+          "sync_gen": 1
         },
         "connection": {
           "state": "connecting"
@@ -280,7 +380,9 @@
           "trusted_at": 1758700000,
           "last_seen": 1758700600,
           "last_connection": "relay",
-          "direct_hints": ["192.168.1.20:47831"]
+          "direct_hints": ["192.168.1.20:47831"],
+          "sync": true,
+          "sync_gen": 3
         },
         "connection": {
           "state": "online",
@@ -294,7 +396,9 @@
           "platform": "ios",
           "public_key": "3333333333333333333333333333333333333333333333333333333333333333",
           "fingerprint": "DE:B0:E3:8C · ED:1E:41:DE",
-          "trusted_at": 1758700000
+          "trusted_at": 1758700000,
+          "sync": false,
+          "sync_gen": 1
         },
         "connection": {
           "state": "identity_changed",
@@ -317,7 +421,9 @@
     "trusted_at": 1758700000,
     "last_seen": 1758700600,
     "last_connection": "relay",
-    "direct_hints": ["192.168.1.20:47831"]
+    "direct_hints": ["192.168.1.20:47831"],
+    "sync": true,
+    "sync_gen": 3
   },
   {
     "type": "unpaired",
@@ -329,7 +435,9 @@
     "trusted_at": 1758700000,
     "last_seen": 1758700600,
     "last_connection": "relay",
-    "direct_hints": ["192.168.1.20:47831"]
+    "direct_hints": ["192.168.1.20:47831"],
+    "sync": true,
+    "sync_gen": 3
   },
   {
     "type": "identity_changed",
@@ -342,7 +450,9 @@
       "trusted_at": 1758700000,
       "last_seen": 1758700600,
       "last_connection": "relay",
-      "direct_hints": ["192.168.1.20:47831"]
+      "direct_hints": ["192.168.1.20:47831"],
+      "sync": true,
+      "sync_gen": 3
     },
     "presented_fingerprint": "DE:B0:E3:8C · ED:1E:41:DE"
   },

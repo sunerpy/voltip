@@ -83,6 +83,10 @@ import {
   HISTORY_RECENT,
   type HistoryHits,
   type HistoryPage,
+  type MirrorEntry,
+  type MirrorProfile,
+  type MirrorView,
+  MAX_SYNC_PEERS,
   type HistoryQueryArgs,
   type HistoryStats,
   idleDictation,
@@ -135,6 +139,7 @@ import {
   type BuiltinScene,
   type BuiltinSceneTerms,
   builtinSceneSchema,
+  isPhone,
   sceneDraftSchema,
 } from "./schema";
 import {
@@ -240,10 +245,44 @@ export interface MockBackendOptions {
   /** What `audioOutputs` answers (docs/dictation.md §22); defaults to the computer's sound
    *  available on `MOCK_AUDIO_OUTPUTS` (the phone role: unsupported, no devices). */
   audioOutputs?: AudioOutputs;
+  /** Phone (docs/dictation.md §20.8): its copies of computers, each with the entries and the
+   *  settings the copy holds; none by default. */
+  mirrors?: MockMirror[];
   /** Clock in milliseconds; injectable for deterministic tests. */
   now?: () => number;
   /** Deterministic randomness source in [0, 1). */
   random?: () => number;
+}
+
+/** One computer's copy on the mock phone (`mirror_history_query`, `mirror_profile`). */
+export interface MockMirror {
+  view: MirrorView;
+  history: HistoryEntry[];
+  profile: MirrorProfile | null;
+  /** Entries that arrived shortened. */
+  shortened?: readonly string[];
+}
+
+/** A computer's settings as a phone shows them, from settings and lists (the copy's `profile`). */
+export function mockMirrorProfile(
+  settings: Settings = defaultSettings(),
+  lists: Partial<Pick<MirrorProfile, "presets" | "dictionary" | "rules" | "scenes">> = {},
+): MirrorProfile {
+  return {
+    locale: settings.locale,
+    theme: settings.theme,
+    follow_system_theme: settings.follow_system_theme,
+    asr_provider: settings.engines.asr_provider,
+    asr_model: MOCK_ENGINE_BUILTIN.asr_model,
+    refine_enabled: settings.engines.refine_enabled,
+    llm_provider: settings.engines.llm_provider,
+    refine_model: MOCK_ENGINE_BUILTIN.refine_model,
+    preset: settings.engines.refine_preset,
+    presets: [...(lists.presets ?? [])],
+    dictionary: [...(lists.dictionary ?? [])],
+    rules: [...(lists.rules ?? [])],
+    scenes: [...(lists.scenes ?? [])],
+  };
 }
 
 export const MOCK_PUBLIC_KEYS = {
@@ -959,7 +998,10 @@ export class MockBackend implements Backend {
       hardware:
         this.role === "phone" ? { cpu_threads: 0, gpus: [] } : (options.hardware ?? MOCK_HARDWARE),
       connectivity: { running: false },
+      mirrors: (options.mirrors ?? []).map((m) => structuredClone(m.view)),
+      phone_outbox_too_large: [],
     };
+    for (const m of options.mirrors ?? []) this.mirrors.set(m.view.desktop, structuredClone(m));
     this.state.engines = this.resolveEngines(settings.engines);
     this.state.models = this.modelsFor(settings.engines);
     this.state.scenes = this.withBuiltinScenes(this.state.scenes);
@@ -1075,6 +1117,44 @@ export class MockBackend implements Backend {
   async historyEntry(id: string): Promise<HistoryEntry | null> {
     await Promise.resolve();
     return this.history.find((e) => e.id === id) ?? null;
+  }
+
+  /** The phone's copies by computer key (docs/dictation.md §20.8). */
+  private readonly mirrors = new Map<string, MockMirror>();
+
+  /** `mirror_history_query`: a page of the copy, read like the phone's own; empty without one. */
+  async mirrorHistoryQuery(desktop: string, args: HistoryQueryArgs): Promise<HistoryPage> {
+    await Promise.resolve();
+    return historyPageOf(this.mirrors.get(desktop)?.history ?? [], args);
+  }
+
+  /** `mirror_history_entry`: one entry of the copy and whether it arrived shortened. */
+  async mirrorHistoryEntry(desktop: string, id: string): Promise<MirrorEntry | null> {
+    await Promise.resolve();
+    const mirror = this.mirrors.get(desktop);
+    const entry = mirror?.history.find((e) => e.id === id);
+    if (mirror === undefined || entry === undefined) return null;
+    return { entry: structuredClone(entry), shortened: (mirror.shortened ?? []).includes(id) };
+  }
+
+  /** `mirror_profile`: the computer's settings as the copy holds them. */
+  async mirrorProfile(desktop: string): Promise<MirrorProfile | null> {
+    await Promise.resolve();
+    return structuredClone(this.mirrors.get(desktop)?.profile ?? null);
+  }
+
+  /** The core reported its copies (tests; replaces a copy's view and, when given, its content). */
+  simulateMirror(mirror: MockMirror) {
+    this.mirrors.set(mirror.view.desktop, structuredClone(mirror));
+    this.emit({
+      type: "mirrors",
+      mirrors: [...this.mirrors.values()].map((m) => structuredClone(m.view)),
+    });
+  }
+
+  /** The core reported records too large to upload (tests). */
+  simulateTooLarge(ids: readonly string[]) {
+    this.emit({ type: "phone_outbox", too_large: [...ids] });
   }
 
   /** `history_stats`: the dictations between the page's local midnights, and in total. */
@@ -1240,6 +1320,26 @@ export class MockBackend implements Backend {
       this.emit({
         type: "devices",
         devices: this.state.devices.filter((d) => d.device.public_key !== publicKey),
+      });
+    },
+    device_sync_set: (args) => {
+      const { publicKey, on } = required(args);
+      const target = this.state.devices.find((d) => d.device.public_key === publicKey);
+      if (target === undefined) throw new Error("未知设备");
+      if (target.device.sync === on) return;
+      const syncing = this.state.devices.filter(
+        (d) => d !== target && isPhone(d) && d.device.sync,
+      ).length;
+      if (on && isPhone(target) && syncing >= MAX_SYNC_PEERS) {
+        throw new Error(`最多与 ${MAX_SYNC_PEERS} 部手机同步`);
+      }
+      this.emit({
+        type: "devices",
+        devices: this.state.devices.map((d) =>
+          d === target
+            ? { ...d, device: { ...d.device, sync: on, sync_gen: d.device.sync_gen + 1 } }
+            : d,
+        ),
       });
     },
     device_rename: (args) => {
@@ -3246,6 +3346,8 @@ export class MockBackend implements Backend {
       trusted_at: trustedAt,
       last_seen: trustedAt,
       last_connection: "direct",
+      sync: true,
+      sync_gen: 0,
     };
     this.emitPairing({ state: { state: "trusted" } });
     this.openNextIfAlwaysOn();
@@ -3450,6 +3552,8 @@ export function sampleDevices(now = Math.floor(Date.now() / 1000)): DeviceView[]
     trusted_at: now - 86_400 * 12,
     last_seen: now - 86_400 * 2,
     last_connection: "relay",
+    sync: true,
+    sync_gen: 0,
   };
   return [
     {
@@ -3463,6 +3567,8 @@ export function sampleDevices(now = Math.floor(Date.now() / 1000)): DeviceView[]
         last_seen: now - 200,
         last_connection: "direct",
         direct_hints: ["192.168.1.37:47831"],
+        sync: true,
+        sync_gen: 0,
       },
       connection: { state: "online", via: "direct" },
     },

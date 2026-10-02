@@ -126,6 +126,9 @@ pub struct RelayStats {
     pub channels: usize,
     /// Frames forwarded since start.
     pub forwarded: u64,
+    /// Frames dropped since start because a connection's outbound queue was full (counted by
+    /// the server that owns the queues; the core reports `0`).
+    pub dropped: u64,
 }
 
 /// The relay's entire state and logic.
@@ -172,7 +175,7 @@ impl RelayCore {
 
     /// Snapshot counters.
     pub fn stats(&self) -> RelayStats {
-        RelayStats { connections: self.conns.len(), sessions: self.sessions.len(), channels: self.channels.len(), forwarded: self.forwarded }
+        RelayStats { connections: self.conns.len(), sessions: self.sessions.len(), channels: self.channels.len(), forwarded: self.forwarded, dropped: 0 }
     }
 
     /// A transport accepted a connection.

@@ -19,7 +19,7 @@ mod safety;
 
 #[doc(hidden)]
 pub use handshake::complete_in_memory;
-pub use handshake::{Handshake, HandshakeOutcome, HandshakeStep, MAX_NOISE_MESSAGE_LEN, Role, SessionCipher};
+pub use handshake::{HANDSHAKE_MESSAGE_LENS, Handshake, HandshakeOutcome, HandshakeStep, MAX_NOISE_MESSAGE_LEN, Role, SessionCipher, TAG_LEN};
 pub use keys::{PUBLIC_KEY_LEN, PublicKey, SecretKey, StaticKeypair};
 pub use safety::{SafetyCode, WORD_COUNT, fingerprint_hex};
 

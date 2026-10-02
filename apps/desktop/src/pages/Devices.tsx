@@ -2,12 +2,15 @@ import {
   type ArgsOf,
   type DeviceView,
   type DictationStatus,
+  MAX_SYNC_PEERS,
   type MutationCommand,
   type TFunction,
   connectionKindLabel,
   connectionLabel,
+  errorText,
   formatDate,
   formatElapsed,
+  isPhone,
   platformLabel,
   relativeTime,
   shortFingerprint,
@@ -42,7 +45,7 @@ import { useShell } from "../app/shell-context";
 const PAIRING_TTL_SECS = 120;
 
 /** What travels over the E2EE channel (docs/dictation.md §20). */
-const SYNC_ROWS = ["text", "audio", "result", "unpair"] as const;
+const SYNC_ROWS = ["text", "audio", "result", "history", "upload", "unpair"] as const;
 
 const LIVE_METER_SEGMENTS = 28;
 
@@ -118,9 +121,13 @@ export function Devices() {
   };
 
   const forget = (view: DeviceView) => {
+    // docs/dictation.md §20.8: an offline phone is not told, so its copy of this computer stays.
+    const offlinePhone = isPhone(view) && view.connection.state !== "online";
     shell.confirm({
       title: t("devices.confirm.forgetTitle", { name: view.device.name }),
-      body: t("devices.confirm.forgetBody"),
+      body: offlinePhone
+        ? `${t("devices.confirm.forgetBody")}${t("devices.confirm.forgetOffline")}`
+        : t("devices.confirm.forgetBody"),
       facts: t("devices.confirm.forgetFacts", {
         fingerprint: view.device.fingerprint,
         date: formatDate(view.device.trusted_at),
@@ -138,6 +145,15 @@ export function Devices() {
   };
 
   const online = state.devices.filter((d) => d.connection.state === "online");
+  // docs/dictation.md §20.8: at most MAX_SYNC_PEERS phones sync; the others' switch stays off.
+  const syncing = state.devices.filter((d) => isPhone(d) && d.device.sync).length;
+  const setSync = (view: DeviceView, on: boolean) => {
+    backend
+      .invoke("device_sync_set", { publicKey: view.device.public_key, on })
+      .catch((e: unknown) => {
+        shell.toast({ message: errorText(e), duration: 3000, tone: "danger" });
+      });
+  };
   const columns: TableColumn<DeviceView>[] = [
     {
       id: "device",
@@ -183,6 +199,30 @@ export function Devices() {
           text: l.text,
           pulse: r.connection.state === "connecting",
         };
+      },
+    },
+    {
+      id: "sync",
+      header: t("devices.column.sync"),
+      fit: true,
+      mono: false,
+      cell: (r) => {
+        if (!isPhone(r)) return { type: "mono", text: "—", muted: true };
+        const full = !r.device.sync && syncing >= MAX_SYNC_PEERS;
+        return (
+          <span
+            data-testid="device-sync"
+            title={full ? t("devices.syncSwitch.limit", { max: MAX_SYNC_PEERS }) : undefined}>
+            <Toggle
+              checked={r.device.sync}
+              disabled={full}
+              ariaLabel={t("devices.syncSwitch.toggle", { name: r.device.name })}
+              onChange={(on) => {
+                setSync(r, on);
+              }}
+            />
+          </span>
+        );
       },
     },
     {
@@ -368,6 +408,11 @@ export function Devices() {
           />
           <p className="mt-2 text-[11px] text-fg-subtle">{t("devices.panel.note")}</p>
           <p className="mt-1 text-[11px] text-fg-subtle">{t("devices.panel.lanNote")}</p>
+          <p className="mt-1 text-[11px] text-fg-subtle" data-testid="devices-sync-note">
+            {t("devices.panel.syncNote")}
+            {syncing >= MAX_SYNC_PEERS &&
+              ` ${t("devices.syncSwitch.limit", { max: MAX_SYNC_PEERS })}`}
+          </p>
         </Panel>
       </div>
 

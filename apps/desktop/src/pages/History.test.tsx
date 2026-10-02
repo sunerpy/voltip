@@ -4,7 +4,12 @@ import {
   type HistoryEntry,
   formatCount,
 } from "@voltip/shared";
-import { MOCK_REFINE_MS, MockBackend, desktopIdentity } from "@voltip/shared/mock";
+import {
+  MOCK_PUBLIC_KEYS,
+  MOCK_REFINE_MS,
+  MockBackend,
+  desktopIdentity,
+} from "@voltip/shared/mock";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
@@ -25,6 +30,22 @@ function liveClock() {
 }
 
 describe("History page keys and retention", () => {
+  it("regression: the banner says the history goes to the phones that sync, and only on this computer once none does", async () => {
+    // 2026-10-02 (docs/dictation.md §20.8): the banner said 「仅保存在本机」 while a phone with
+    // Sync on received a copy of every entry.
+    const { backend } = renderApp({ path: "/history", mock: liveClock() });
+    const title = await screen.findByTestId("history-banner-title");
+    await waitFor(() => {
+      expect(title).toHaveTextContent("历史记录 · 保存在本机，并同步到已配对的手机");
+    });
+    await act(async () => {
+      await backend.invoke("device_sync_set", { publicKey: MOCK_PUBLIC_KEYS.phone, on: false });
+    });
+    await waitFor(() => {
+      expect(title).toHaveTextContent("历史记录 · 仅保存在本机");
+    });
+  });
+
   it("regression: the banner follows 隐私与历史 (kept count, recording off) and links to it", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/history", mock: liveClock() });
@@ -214,7 +235,10 @@ describe("History page", () => {
 
   it("renders the factual retention banner, the day-grouped log from state.history_recent and the newest entry's detail", async () => {
     const { backend } = renderApp({ path: "/history", mock: liveClock() });
-    expect(await screen.findByText("历史记录 · 仅保存在本机")).toBeInTheDocument();
+    // 2026-10-02 (docs/dictation.md §20.8): the sample phone syncs, so the history is on it too.
+    expect(
+      await screen.findByText("历史记录 · 保存在本机，并同步到已配对的手机"),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("history-retention")).toHaveTextContent(
       `保留最近 ${formatCount(HISTORY_LIMIT)} 条，超出后自动删除最早的记录。`,
     );

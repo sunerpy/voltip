@@ -90,6 +90,8 @@ const EMPTY: UiState = {
   presets: [],
   hardware: { cpu_threads: 0, gpus: [] },
   connectivity: { running: false },
+  mirrors: [],
+  phone_outbox_too_large: [],
 };
 
 export function useBackend(): BackendContextValue {

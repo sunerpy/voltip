@@ -20,6 +20,8 @@ import {
   engineSettingsSchema,
   hexKeySchema,
   historyEntrySchema,
+  mirrorEntrySchema,
+  mirrorProfileSchema,
   historyHitsSchema,
   historyPageSchema,
   historyStatsBucketSchema,
@@ -54,6 +56,8 @@ function loadFixture(name: string): unknown {
 /** Every event tag the Rust enum has (the `Record` makes a new `UiEventType` a compile error). */
 const EVENT_TYPE_SET: Record<UiEventType, null> = {
   state: null,
+  mirrors: null,
+  phone_outbox: null,
   identity: null,
   settings: null,
   relay: null,
@@ -96,6 +100,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   pairing_cancel: null,
   pairing_reset: null,
   device_forget: null,
+  device_sync_set: null,
   device_rename: null,
   send_text: null,
   phone_take_start: null,
@@ -177,6 +182,7 @@ const argSchemas = {
   pairing_join_code: z.object({ code: z.string() }),
   pairing_join_ticket: z.object({ uri: z.string() }),
   device_forget: z.object({ publicKey: hexKeySchema }),
+  device_sync_set: z.object({ publicKey: hexKeySchema, on: z.boolean() }).strict(),
   device_rename: z.object({ name: z.string() }),
   send_text: z.object({ publicKey: hexKeySchema, body: z.string() }),
   phone_take_start: z.object({ publicKey: hexKeySchema }).strict(),
@@ -292,6 +298,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.pairing_join_ticket.parse(args));
     case "device_forget":
       return backend.invoke(name, argSchemas.device_forget.parse(args));
+    case "device_sync_set":
+      return backend.invoke(name, argSchemas.device_sync_set.parse(args));
     case "device_rename":
       return backend.invoke(name, argSchemas.device_rename.parse(args));
     case "send_text":
@@ -1146,6 +1154,45 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
     function hits(raw: unknown) {
       return historyHitsSchema.parse(raw);
     }
+  });
+
+  it("a phone's copy of a computer: the answers parse and the commands name the computer (section 20.8)", async () => {
+    const fixture = z.record(z.string(), z.unknown()).parse(loadFixture("history-queries.json"));
+    const entry = mirrorEntrySchema.parse(fixture.mirror_entry);
+    expect(entry.shortened).toBe(true);
+    expect(entry.entry.origin).toEqual({ device: "Pixel 8", kind: "standalone" });
+    expect(mirrorEntrySchema.nullable().parse(fixture.mirror_missing)).toBeNull();
+    const profile = mirrorProfileSchema.parse(fixture.mirror_profile);
+    expect([profile.theme, profile.locale, profile.local_model]).toEqual([
+      "dark",
+      "system",
+      "qwen3-asr-0.6b",
+    ]);
+    expect(profile.presets.length).toBeGreaterThan(0);
+    const calls: { command: string; args: unknown }[] = [];
+    const answers: Record<string, unknown> = {
+      mirror_history_query: fixture.page,
+      mirror_history_entry: fixture.mirror_entry,
+      mirror_profile: fixture.mirror_profile,
+    };
+    const backend = new TauriBackend({
+      invoke: (command, args) => {
+        calls.push({ command, args });
+        return Promise.resolve(answers[command]);
+      },
+      listen: () => Promise.resolve(() => undefined),
+    });
+    const desktop = "ab".repeat(32);
+    expect((await backend.mirrorHistoryQuery(desktop, { query: "会议", limit: 50 })).total).toBe(
+      312,
+    );
+    expect((await backend.mirrorHistoryEntry(desktop, entry.entry.id))?.shortened).toBe(true);
+    expect((await backend.mirrorProfile(desktop))?.theme).toBe("dark");
+    expect(calls).toStrictEqual([
+      { command: "mirror_history_query", args: { desktop, query: "会议", limit: 50 } },
+      { command: "mirror_history_entry", args: { desktop, id: entry.entry.id } },
+      { command: "mirror_profile", args: { desktop } },
+    ]);
   });
 
   it("the built-in scenes' names in both dictionaries are the ones the core's search finds", () => {

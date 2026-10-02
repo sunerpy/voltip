@@ -99,7 +99,13 @@ pub struct HistoryReader {
 impl HistoryReader {
     /// The reader of `data_dir/history.sqlite3`; nothing is opened yet.
     pub fn new(data_dir: &Path) -> Self {
-        Self { path: data_dir.join(HISTORY_DB_FILE_NAME), conn: Mutex::new(None) }
+        Self::at(&data_dir.join(HISTORY_DB_FILE_NAME))
+    }
+
+    /// The reader of the history database at `path` (a phone's copy of a computer's history,
+    /// docs/dictation.md §20.8); nothing is opened yet.
+    pub fn at(path: &Path) -> Self {
+        Self { path: path.to_path_buf(), conn: Mutex::new(None) }
     }
 
     /// Run `read` on the connection; `Ok(None)` while there is no database yet.

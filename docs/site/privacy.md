@@ -46,7 +46,9 @@ While a recording longer than 2 minutes runs, its audio is written to a file in 
 
 Paired devices talk over an end-to-end encrypted connection; you confirm a safety code when pairing. An optional relay forwards traffic between different networks without being able to read it. See [Your phone as a microphone and keyboard](/phone/#how-the-connection-is-protected), and the [threat model](/dev/threat-model) for the technical detail.
 
-When no paired computer is online, the phone transcribes on its own: the recording goes to the built-in service for recognition and the recognised text to the built-in service for AI polish, as on a computer with the default settings. Its results are kept on the phone. See [Using the phone on its own](/phone/#using-the-phone-on-its-own).
+When no paired computer is online, the phone transcribes on its own: the recording goes to the built-in service for recognition and the recognised text to the built-in service for AI polish, as on a computer with the default settings. Its results are kept on the phone; while it syncs with a paired computer, a copy goes to that computer. See [Using the phone on its own](/phone/#using-the-phone-on-its-own).
+
+A paired computer syncs its history and settings to the phone for reading there. They travel end-to-end encrypted, the relay cannot read them, and they are kept in Voltip's private storage on the phone. The computer's **Phone** page turns syncing off per phone; when the phone deletes them is described in [The computer's history and settings](/phone/#the-computer-s-history-and-settings).
 
 ## Feedback
 

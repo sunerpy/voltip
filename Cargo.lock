@@ -7018,6 +7018,7 @@ dependencies = [
  "aho-corasick",
  "async-trait",
  "base64 0.23.1",
+ "ciborium",
  "ferrous-opencc",
  "futures-util",
  "hex",

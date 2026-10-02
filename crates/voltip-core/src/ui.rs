@@ -136,6 +136,16 @@ pub enum UiEvent {
         /// The whole list.
         devices: Vec<crate::discovery::NearbyDevice>,
     },
+    /// Phone: its copies of its computers changed (docs/dictation.md §20.8).
+    Mirrors {
+        /// The whole list.
+        mirrors: Vec<crate::sync::MirrorView>,
+    },
+    /// Phone: its records too large to upload.
+    PhoneOutbox {
+        /// Their ids.
+        too_large: Vec<uuid::Uuid>,
+    },
     /// The connectivity self-check started or finished.
     Connectivity(crate::connectivity::ConnectivityStatus),
     /// The answer to a paste from the history (`crate::paste`): the desktop shell waits for it; the
@@ -388,6 +398,13 @@ pub struct UiState {
     /// The connectivity self-check: running, and the last report.
     #[serde(default)]
     pub connectivity: crate::connectivity::ConnectivityStatus,
+    /// Phone: its copies of its computers' histories and settings (docs/dictation.md §20.8);
+    /// always empty on the desktop.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mirrors: Vec<crate::sync::MirrorView>,
+    /// Phone: its own records too large to upload to a computer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub phone_outbox_too_large: Vec<uuid::Uuid>,
 }
 
 impl Default for UiState {
@@ -416,6 +433,8 @@ impl Default for UiState {
             nearby: Vec::new(),
             hardware: HardwareStatus::default(),
             connectivity: crate::connectivity::ConnectivityStatus::default(),
+            mirrors: Vec::new(),
+            phone_outbox_too_large: Vec::new(),
         }
     }
 }
@@ -453,6 +472,14 @@ impl UiState {
             CoreEvent::Settings(s) => {
                 self.settings = s.clone();
                 UiEvent::Settings(s)
+            }
+            CoreEvent::Mirrors(mirrors) => {
+                self.mirrors = mirrors.clone();
+                UiEvent::Mirrors { mirrors }
+            }
+            CoreEvent::PhoneOutbox { too_large } => {
+                self.phone_outbox_too_large = too_large.clone();
+                UiEvent::PhoneOutbox { too_large }
             }
             CoreEvent::Relay(r) => {
                 self.relay = r.clone();
@@ -604,6 +631,8 @@ mod tests {
             last_seen: None,
             last_connection: None,
             direct_hints: vec!["192.168.1.24:47831".into()],
+            sync: true,
+            sync_gen: 0,
         };
         assert!(matches!(st.apply(CoreEvent::Trusted(rec.clone())), UiEvent::Trusted(_)));
         let ev = st.apply(CoreEvent::IdentityChanged { previous: rec, presented_fingerprint: "AA".into() });

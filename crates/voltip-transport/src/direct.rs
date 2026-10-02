@@ -33,6 +33,8 @@ struct Shared {
     core: Mutex<RelayCore>,
     outbound: Mutex<std::collections::HashMap<ConnId, mpsc::Sender<Outbound>>>,
     next_id: AtomicU64,
+    /// Frames dropped on a full outbound queue.
+    dropped: AtomicU64,
 }
 
 enum Outbound {
@@ -70,7 +72,12 @@ impl DirectHost {
     async fn bind_with(addr: SocketAddr, config: RelayConfig) -> Result<Self, TransportError> {
         let listener = TcpListener::bind(addr).await?;
         let addr = listener.local_addr()?;
-        let shared = Arc::new(Shared { core: Mutex::new(RelayCore::new(config)), outbound: Mutex::new(Default::default()), next_id: AtomicU64::new(1) });
+        let shared = Arc::new(Shared {
+            core: Mutex::new(RelayCore::new(config)),
+            outbound: Mutex::new(Default::default()),
+            next_id: AtomicU64::new(1),
+            dropped: AtomicU64::new(0),
+        });
         let accept_shared = shared.clone();
         let accept_task = tokio::spawn(async move {
             loop {
@@ -111,7 +118,7 @@ impl DirectHost {
 
     /// Relay-core counters.
     pub fn stats(&self) -> voltip_relay::RelayStats {
-        self.shared.core.lock().stats()
+        voltip_relay::RelayStats { dropped: self.shared.dropped.load(Ordering::Relaxed), ..self.shared.core.lock().stats() }
     }
 
     /// Stop accepting and drop all connections. Returns once the accept loop has ended, so the
@@ -151,6 +158,7 @@ fn dispatch(shared: &Shared, deliveries: Vec<Delivery>) {
         if let Some(tx) = outbound.get(&conn)
             && tx.try_send(item).is_err()
         {
+            shared.dropped.fetch_add(1, Ordering::Relaxed);
             tracing::warn!(?conn, "outbound queue full; frame dropped");
         }
     }

@@ -53,6 +53,8 @@ function baseState(): UiState {
   return {
     sent_texts: [],
     nearby: [],
+    mirrors: [],
+    phone_outbox_too_large: [],
     identity: desktopIdentity(),
     settings: defaultSettings(),
     secret_backend: "memory",

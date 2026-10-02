@@ -1,5 +1,5 @@
 import { type HistoryEntry, defaultEngineSettings } from "@voltip/shared";
-import { MockBackend, sampleHistory } from "@voltip/shared/mock";
+import { MOCK_PUBLIC_KEYS, MockBackend, sampleHistory } from "@voltip/shared/mock";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../../test/render";
@@ -8,6 +8,23 @@ import { KEEP_OPTIONS } from "./PrivacyPane";
 const NOW = 1_758_700_000_000;
 
 describe("Settings · 隐私与历史", () => {
+  it("regression: says the history and the settings go to the phones that sync, and stay here once none does", async () => {
+    // 2026-10-02 (docs/dictation.md §20.8): 发送出去的内容 listed the audio, the text and the app
+    // context only, while a phone with Sync on received the history and the settings.
+    const { backend } = renderApp({ path: "/settings/privacy" });
+    const value = await screen.findByTestId("privacy-history-sync");
+    await waitFor(() => {
+      expect(value).toHaveTextContent("同步到已配对的手机");
+    });
+    expect(
+      screen.getByText(/开启「同步」的已配对手机会收到历史记录和设置，在手机上只能查看/),
+    ).toBeInTheDocument();
+    await backend.invoke("device_sync_set", { publicKey: MOCK_PUBLIC_KEYS.phone, on: false });
+    await waitFor(() => {
+      expect(value).toHaveTextContent("不离开本机");
+    });
+  });
+
   it("says where the audio, the text and the app context go, from the core's engines and switches", async () => {
     const { backend } = renderApp({ path: "/settings/privacy" });
     await screen.findByTestId("privacy-pane");

@@ -166,12 +166,15 @@ impl Runtime {
 
     /// Seal `msg` for `to` on its best secure path and send it.
     pub(super) async fn send_app(&mut self, to: PublicKey, msg: &AppMessage) -> Result<(), CoreError> {
+        if self.config.test_hooks.drop_app.as_ref().is_some_and(|drop| drop(msg)) {
+            return Ok(());
+        }
         let Some(st) = self.peers.get_mut(&to) else { return Err(CoreError::Invalid("未知设备".into())) };
         let Some(path) = st.best_secure_path() else { return Err(CoreError::Invalid("设备不在线".into())) };
         let (PeerPhase::Secure(sc), Some(sid), link) = (&mut path.phase, path.session_id, path.link) else {
             return Err(CoreError::Invalid("设备不在线".into()));
         };
-        let bytes = sc.seal(msg)?;
+        let bytes = sc.channel.seal(msg)?;
         self.send_on(link, RelayFrame::forward(sid, bytes)).await
     }
 

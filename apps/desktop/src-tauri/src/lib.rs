@@ -52,7 +52,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 100] = [
+pub const COMMANDS: [&str; 104] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -62,6 +62,7 @@ pub const COMMANDS: [&str; 100] = [
     "pairing_cancel",
     "pairing_reset",
     "device_forget",
+    "device_sync_set",
     "device_rename",
     "send_text",
     "phone_take_start",
@@ -148,6 +149,9 @@ pub const COMMANDS: [&str; 100] = [
     "history_entry",
     "history_stats",
     "history_hits",
+    "mirror_history_query",
+    "mirror_history_entry",
+    "mirror_profile",
     "permissions_status",
     "permissions_request",
     "inject_preflight",
@@ -245,6 +249,12 @@ fn pairing_reset(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
 #[tauri::command]
 fn device_forget(bridge: tauri::State<'_, Bridge>, public_key: String) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::DeviceForget { public_key })?)
+}
+
+/// Sync this computer's history and settings with a phone, or stop (docs/dictation.md §20.8).
+#[tauri::command]
+fn device_sync_set(bridge: tauri::State<'_, Bridge>, public_key: String, on: bool) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::DeviceSyncSet { public_key, on })?)
 }
 
 #[tauri::command]
@@ -885,6 +895,43 @@ async fn history_hits(bridge: tauri::State<'_, Bridge>) -> Result<voltip_core::H
     history_read(&bridge, Bridge::history_hits).await
 }
 
+/// A phone's copy of a computer's history (docs/dictation.md §20.8): the same command surface as
+/// the phone, empty on the desktop, which keeps no copies.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn mirror_history_query(
+    bridge: tauri::State<'_, Bridge>,
+    desktop: String,
+    since_ms: Option<u64>,
+    starred: Option<bool>,
+    failed: Option<bool>,
+    query: Option<String>,
+    offset: Option<u32>,
+    limit: u32,
+) -> Result<voltip_core::HistoryPage, String> {
+    let query = voltip_core::HistoryQuery {
+        since_ms,
+        starred: starred.unwrap_or(false),
+        failed: failed.unwrap_or(false),
+        query: query.unwrap_or_default(),
+        offset: offset.unwrap_or(0),
+        limit,
+    };
+    history_read(&bridge, move |b| b.mirror_history_query(&desktop, &query)).await
+}
+
+/// One entry of a copy (none on the desktop).
+#[tauri::command]
+async fn mirror_history_entry(bridge: tauri::State<'_, Bridge>, desktop: String, id: uuid::Uuid) -> Result<Option<voltip_tauri_bridge::MirrorEntry>, String> {
+    history_read(&bridge, move |b| b.mirror_history_entry(&desktop, id)).await
+}
+
+/// A copied computer's settings (none on the desktop).
+#[tauri::command]
+async fn mirror_profile(bridge: tauri::State<'_, Bridge>, desktop: String) -> Result<Option<voltip_core::sync::Profile>, String> {
+    history_read(&bridge, move |b| b.mirror_profile(&desktop)).await
+}
+
 /// Microphones the native audio backend can open (`voltip-audio`), default first.
 #[tauri::command]
 async fn audio_devices() -> Result<Vec<audio::Device>, String> {
@@ -1145,6 +1192,7 @@ pub fn build_app<R: Runtime>(
             pairing_cancel,
             pairing_reset,
             device_forget,
+            device_sync_set,
             device_rename,
             send_text,
             phone_take_start,
@@ -1231,6 +1279,9 @@ pub fn build_app<R: Runtime>(
             history_entry,
             history_stats,
             history_hits,
+            mirror_history_query,
+            mirror_history_entry,
+            mirror_profile,
             permissions_status,
             permissions_request,
             inject_preflight,
@@ -1290,6 +1341,9 @@ pub fn run() {
     let mut config = CoreConfig::new(data_dir());
     config.client_version = format!("voltip/{APP_VERSION}");
     config.app_version = APP_VERSION.to_owned();
+    // The phones get this computer's history and settings and upload their own records
+    // (docs/dictation.md §20.8).
+    config.sync_role = voltip_core::sync::SyncRole::Computer;
     // LAN discovery (docs/pairing.md 「局域网发现」): phones find this desktop, and each other's
     // address after it changed, without a relay.
     config.discovery = match voltip_core::discovery::MdnsDiscovery::new() {

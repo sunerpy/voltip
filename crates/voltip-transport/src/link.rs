@@ -29,6 +29,10 @@ pub struct LinkConfig {
     pub ping_interval: Duration,
     /// Time allowed for a pong before the socket is declared dead.
     pub pong_timeout: Duration,
+    /// Tests only: the writer takes this shared before it writes a frame, so a test that holds it
+    /// exclusively keeps the queued frames waiting (docs/dictation.md §20.8, frames of an ended
+    /// session left in the queue).
+    pub write_gate: Option<std::sync::Arc<tokio::sync::RwLock<()>>>,
 }
 
 impl LinkConfig {
@@ -42,6 +46,7 @@ impl LinkConfig {
             reconnect: ReconnectPolicy::default(),
             ping_interval: Duration::from_secs(20),
             pong_timeout: Duration::from_secs(10),
+            write_gate: None,
         }
     }
 }
@@ -98,6 +103,12 @@ impl RelayLink {
             return Err(TransportError::NotConnected(st));
         }
         self.cmd.send(Cmd::Send(frame)).await.map_err(|_| TransportError::Closed)
+    }
+
+    /// Free places in the queue of frames waiting to be written (docs/dictation.md §20.8: the
+    /// parts of a large body go out only while room is left for other messages).
+    pub fn free_slots(&self) -> usize {
+        self.cmd.capacity()
     }
 
     /// Close for good (sends `bye` when connected). Idempotent.
@@ -272,6 +283,10 @@ async fn connect_and_run(
             cmd = cmd_rx.recv() => match cmd {
                 Some(Cmd::Send(frame)) => {
                     let Ok(text) = frame.encode() else { continue };
+                    let _gate = match &config.write_gate {
+                        Some(gate) => Some(gate.read().await),
+                        None => None,
+                    };
                     if let Err(e) = sink.send(Message::Text(text.into())).await {
                         return Outcome::Lost(format!("send: {e}"));
                     }

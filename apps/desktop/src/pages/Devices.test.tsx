@@ -81,7 +81,8 @@ describe("Devices page", () => {
     const headers = within(table)
       .getAllByRole("columnheader")
       .map((h) => h.textContent);
-    expect(headers).toEqual(["设备", "局域网地址", "最近在线", "状态", ""]);
+    // 同步 (docs/dictation.md §20.8, M7 design 2026-10-02): the switch per phone.
+    expect(headers).toEqual(["设备", "局域网地址", "最近在线", "状态", "同步", ""]);
     // The table exists before `core_state` resolves (empty placeholder); wait for the first row.
     expect(await within(table).findByText("Pixel 8 · Android")).toBeInTheDocument();
     expect(within(table).getByText("在线 · 直连")).toBeInTheDocument();
@@ -91,6 +92,86 @@ describe("Devices page", () => {
     expect(screen.getByText("Pixel 8 在线 · 在手机上按住「按住说话」")).toBeInTheDocument();
     expect(screen.getByText("手机与电脑之间传输的内容")).toBeInTheDocument();
     expect(screen.getByText("限制")).toBeInTheDocument();
+  });
+
+  it("regression: the transfer panel lists the synced history and the phone's uploads, and no longer says the history stays here", async () => {
+    // 2026-10-02 (docs/dictation.md §20.8): the panel said 「历史记录、词典、规则和设置只保存在这台
+    // 电脑上」 while a phone with Sync on received them.
+    mount();
+    await screen.findByText("手机与电脑之间传输的内容");
+    const rows = screen
+      .getAllByRole("row")
+      .map((r) => r.textContent ?? "")
+      .filter((text) => text.includes("端到端加密") || text.includes("两边都删除记录"));
+    expect(rows).toEqual([
+      "文本消息手机 ⇄ 电脑端到端加密",
+      "手机录音手机 → 电脑Opus 音频 · 端到端加密",
+      "识别结果电脑 → 手机端到端加密",
+      "历史记录与设置电脑 → 手机端到端加密 · 手机上只读",
+      "手机识别的记录手机 → 电脑端到端加密 · 上传副本",
+      "解除配对手机 ⇄ 电脑两边都删除记录",
+    ]);
+    expect(
+      screen.getByText(/历史记录和设置只同步到开启「同步」的手机，在手机上只能查看。/),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("只保存在这台电脑上");
+  });
+
+  it("each phone has a sync switch; a sixth phone's stays off, and forgetting an offline phone says its copy stays", async () => {
+    // docs/dictation.md §20.8 (M7 design, user decisions 2026-10-02).
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    const now = Math.floor(Date.now() / 1000);
+    const [pixel, laptop] = sampleDevices(now);
+    if (pixel === undefined || laptop === undefined) throw new Error("sample devices");
+    const { backend } = mount({ devices: [pixel, laptop] });
+    const table = await screen.findByRole("table", { name: "已配对设备" });
+    const toggle = await within(table).findByRole("switch", { name: "与 Pixel 8 同步记录" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(within(table).queryByRole("switch", { name: "与 MacBook Pro 同步记录" })).toBeNull();
+    expect(screen.getByTestId("devices-sync-note")).toHaveTextContent(
+      "关闭后，手机上这台电脑的记录会被删除。",
+    );
+    await user.click(toggle);
+    await waitFor(() => {
+      expect(within(table).getByRole("switch", { name: "与 Pixel 8 同步记录" })).toHaveAttribute(
+        "aria-checked",
+        "false",
+      );
+    });
+    expect(backend.peek().devices.find((d) => d.device.name === "Pixel 8")?.device.sync_gen).toBe(
+      1,
+    );
+
+    // Five other phones sync: the sixth's switch cannot be turned on, and the note says why.
+    backend.destroy();
+    const others = Array.from({ length: 5 }, (_, i) => ({
+      ...pixel,
+      device: { ...pixel.device, name: `手机${i}`, public_key: `${i}`.repeat(64) },
+    }));
+    const offline = {
+      ...pixel,
+      device: { ...pixel.device, sync: false },
+      connection: { state: "offline" as const },
+    };
+    mount({ devices: [offline, ...others] });
+    const crowded = (await screen.findAllByRole("table", { name: "已配对设备" })).at(-1);
+    if (crowded === undefined) throw new Error("table");
+    const sixth = await within(crowded).findByRole("switch", { name: "与 Pixel 8 同步记录" });
+    expect(sixth).toBeDisabled();
+    expect(sixth.closest("[data-testid=device-sync]")).toHaveAttribute(
+      "title",
+      "最多与 5 部手机同步",
+    );
+    expect(screen.getAllByTestId("devices-sync-note").at(-1)).toHaveTextContent(
+      "最多与 5 部手机同步",
+    );
+    // Forgetting the offline phone: its copy of this computer stays until it forgets the computer.
+    const row = within(crowded).getByText("Pixel 8 · Android").closest("tr");
+    if (row === null) throw new Error("row");
+    await user.click(within(row).getByRole("button", { name: "忘记" }));
+    expect(
+      await screen.findByText(/这部手机现在不在线，它上面这台电脑的记录不会删除/),
+    ).toBeInTheDocument();
   });
 
   it("regression: the phone microphone panel follows a phone's take — its name, the timer, the meter, the result — and nothing on the page is marked not wired", async () => {
@@ -123,7 +204,8 @@ describe("Devices page", () => {
     // so the readout above names it and only the placeholder wording is banned.
     expect(document.body.textContent).not.toMatch(/尚未接入|计划|第二阶段/);
     expect(screen.queryByTestId("deferred-badge")).toBeNull();
-    // The channel carries exactly text, the phone's audio and the recognised text.
+    // The channel carries text, the phone's audio and the recognised text, and since 2026-10-02
+    // the synced history (see the regression test on the transfer panel below).
     expect(screen.getByText("手机录音")).toBeInTheDocument();
     expect(screen.getByText("识别结果")).toBeInTheDocument();
     expect(screen.getByText("解除配对")).toBeInTheDocument();

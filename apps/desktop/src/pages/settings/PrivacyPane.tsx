@@ -4,6 +4,7 @@ import {
   HISTORY_MIN_KEEP,
   type MessageKey,
   formatCount,
+  syncsToPhones,
 } from "@voltip/shared";
 import {
   Button,
@@ -38,8 +39,8 @@ function backendKey(name: string): MessageKey {
   return BACKEND_KEYS.get(name) ?? "settings.brief.privacy.backend.unknown";
 }
 
-/** Settings · 隐私: what leaves this computer right now (from `state.engines` and the context
- *  switches), the history switch and retention (`settings_set_history`), 清空历史 (with a confirm)
+/** Settings · 隐私: what leaves this computer right now (from `state.engines`, the context
+ *  switches and the phones' sync switches), the history switch and retention (`settings_set_history`), 清空历史 (with a confirm)
  *  and where the provider keys live (`state.secret_backend`). */
 export function PrivacyPane() {
   const { backend } = useBackend();
@@ -56,6 +57,8 @@ export function PrivacyPane() {
       ? serviceTarget(engines.llm_provider, engines.refine_host, t)
       : undefined;
   const textSent = engines.refine_enabled && engines.llm_provider !== undefined;
+  // A phone with Sync on gets the history and the settings (docs/dictation.md §20.8).
+  const synced = syncsToPhones(state.devices);
   const contextParts = [
     ...(sharing.app_name ? [t("settings.brief.privacy.contextApp")] : []),
     ...(sharing.window_title ? [t("settings.brief.privacy.contextTitle")] : []),
@@ -132,6 +135,15 @@ export function PrivacyPane() {
                 {t("settings.brief.privacy.openScenes")}
               </Button>
             </div>
+          </StatusRow>
+          <StatusRow
+            label={t("settings.brief.privacy.history")}
+            help={t("settings.brief.privacy.historyHelp")}>
+            <LampText tone={synced ? "warn" : "ok"} size="sm">
+              <span data-testid="privacy-history-sync">
+                {synced ? t("settings.brief.privacy.synced") : t("settings.brief.privacy.stays")}
+              </span>
+            </LampText>
           </StatusRow>
         </SettingsRows>
       </SettingsSection>

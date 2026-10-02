@@ -38,6 +38,7 @@ fn offline_config(dir: &Path, settings: Settings) -> CoreConfig {
     cfg.direct_bind = "127.0.0.1:0".parse().unwrap();
     cfg.accepts_phone_takes = false;
     cfg.manual_scenes = true;
+    cfg.sync_role = voltip_core::sync::SyncRole::Phone;
     cfg
 }
 
@@ -529,6 +530,28 @@ fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
     });
 }
 
+/// docs/dictation.md §20.8: the copies of the computers' histories through the command layer:
+/// nothing before a computer synced, only a key names a copy, a page is checked like the phone's
+/// own; the sync switch is the computer's and the phone's core refuses it.
+#[test]
+fn copies_of_computers_answer_empty_and_the_switch_is_refused() {
+    with_running_app(|_, webview, rx| {
+        wait_state(webview, |s| s.identity.is_some());
+        let desktop = "ab".repeat(32);
+        assert_eq!(
+            invoke(webview, "mirror_history_query", json!({ "desktop": desktop, "limit": 50 })),
+            Ok(json!({ "entries": [], "matching": 0, "total": 0 }))
+        );
+        assert!(invoke(webview, "mirror_history_query", json!({ "desktop": desktop, "limit": 0 })).is_err());
+        assert_eq!(invoke(webview, "mirror_history_entry", json!({ "desktop": desktop, "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d" })), Ok(Value::Null));
+        assert_eq!(invoke(webview, "mirror_profile", json!({ "desktop": desktop })), Ok(Value::Null));
+        assert!(invoke(webview, "mirror_profile", json!({ "desktop": "../history" })).is_err(), "only a key names a copy");
+        assert_eq!(invoke(webview, "device_sync_set", json!({ "publicKey": "11".repeat(32), "on": false })), Ok(Value::Null));
+        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("只有电脑")));
+        assert!(core_state(webview).mirrors.is_empty());
+    });
+}
+
 /// 测试连接 on the phone (user decision 2026-10-01: it configures its own providers): the phone's
 /// HTTP probe lists a provider's models, with the key typed in the draft (docs/dictation.md §3.3).
 #[test]
@@ -650,6 +673,9 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "history_entry",
             "history_stats",
             "history_hits",
+            "mirror_history_query",
+            "mirror_history_entry",
+            "mirror_profile",
             "permissions_status",
             "permissions_request",
             "inject_preflight",

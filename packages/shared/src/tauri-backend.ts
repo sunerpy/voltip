@@ -25,6 +25,8 @@ import {
   feedbackReceiptSchema,
   historyEntrySchema,
   historyHitsSchema,
+  mirrorEntrySchema,
+  mirrorProfileSchema,
   historyPageSchema,
   historyStatsSchema,
   injectPreflightSchema,
@@ -147,6 +149,21 @@ export class TauriBackend implements Backend {
   async historyHits() {
     const raw = await this.transport.invoke("history_hits");
     return historyHitsSchema.parse(raw);
+  }
+
+  async mirrorHistoryQuery(desktop: string, args: HistoryQueryArgs) {
+    const raw = await this.transport.invoke("mirror_history_query", { desktop, ...args });
+    return historyPageSchema.parse(raw);
+  }
+
+  async mirrorHistoryEntry(desktop: string, id: string) {
+    const raw = await this.transport.invoke("mirror_history_entry", { desktop, id });
+    return mirrorEntrySchema.nullable().parse(raw);
+  }
+
+  async mirrorProfile(desktop: string) {
+    const raw = await this.transport.invoke("mirror_profile", { desktop });
+    return mirrorProfileSchema.nullable().parse(raw);
   }
 
   async permissionsStatus() {

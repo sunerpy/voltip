@@ -270,6 +270,9 @@ describe("Mobile app flow", () => {
       historyEntry: inner.historyEntry.bind(inner),
       historyStats: inner.historyStats.bind(inner),
       historyHits: inner.historyHits.bind(inner),
+      mirrorHistoryQuery: inner.mirrorHistoryQuery.bind(inner),
+      mirrorHistoryEntry: inner.mirrorHistoryEntry.bind(inner),
+      mirrorProfile: inner.mirrorProfile.bind(inner),
     };
     const first = render(<TestApp backend={backend} />);
     expect(await screen.findByText("正在启动…")).toBeInTheDocument();
@@ -309,6 +312,9 @@ describe("Mobile app flow", () => {
       historyEntry: identityless.historyEntry.bind(identityless),
       historyStats: identityless.historyStats.bind(identityless),
       historyHits: identityless.historyHits.bind(identityless),
+      mirrorHistoryQuery: identityless.mirrorHistoryQuery.bind(identityless),
+      mirrorHistoryEntry: identityless.mirrorHistoryEntry.bind(identityless),
+      mirrorProfile: identityless.mirrorProfile.bind(identityless),
     };
     render(<TestApp backend={noIdentity} />);
     expect(await screen.findByText("正在生成设备身份…")).toBeInTheDocument();

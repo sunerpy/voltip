@@ -56,6 +56,7 @@ import {
   desktopIdentity,
   desktopPeer,
   phoneIdentity,
+  mockMirrorProfile,
   sampleDevices,
   sampleHistory,
   seededRandom,
@@ -292,6 +293,71 @@ describe("MockBackend devices, relay, identity and messages", () => {
     expect(events.filter((e) => e.type === "devices")).toHaveLength(2);
     await backend.invoke("device_rename", { name: "Studio" });
     expect(backend.peek().identity?.name).toBe("Studio");
+  });
+
+  it("switches syncing per phone and stops at five phones (docs/dictation.md §20.8)", async () => {
+    const devices = sampleDevices(1_700_000_000);
+    const backend = new MockBackend({ devices });
+    await backend.invoke("device_sync_set", { publicKey: MOCK_PUBLIC_KEYS.phone, on: false });
+    const off = backend.peek().devices.find((d) => d.device.public_key === MOCK_PUBLIC_KEYS.phone);
+    expect([off?.device.sync, off?.device.sync_gen]).toEqual([false, 1]);
+    await backend.invoke("device_sync_set", { publicKey: MOCK_PUBLIC_KEYS.phone, on: false });
+    expect(
+      backend.peek().devices.find((d) => d.device.public_key === MOCK_PUBLIC_KEYS.phone)?.device
+        .sync_gen,
+    ).toBe(1);
+    // Five other phones sync already: the sixth cannot be switched on.
+    const phone = devices[0];
+    if (phone === undefined) throw new Error("sample phone");
+    const others = Array.from({ length: 5 }, (_, i) => ({
+      ...phone,
+      device: { ...phone.device, public_key: `${i}`.repeat(64).slice(0, 64), name: `手机${i}` },
+    }));
+    const crowded = new MockBackend({ devices: [...devices, ...others] });
+    await expect(
+      crowded.invoke("device_sync_set", { publicKey: MOCK_PUBLIC_KEYS.phone, on: false }),
+    ).resolves.toBeUndefined();
+    await expect(
+      crowded.invoke("device_sync_set", { publicKey: MOCK_PUBLIC_KEYS.phone, on: true }),
+    ).rejects.toThrow("最多与 5 部手机同步");
+    await expect(
+      backend.invoke("device_sync_set", { publicKey: "f".repeat(64), on: true }),
+    ).rejects.toThrow("未知设备");
+  });
+
+  it("answers a phone's copy of a computer (docs/dictation.md §20.8)", async () => {
+    const history = sampleHistory(1_700_000_000_000);
+    const first = history[0];
+    if (first === undefined) throw new Error("sample history");
+    const desktop = MOCK_PUBLIC_KEYS.laptop;
+    const backend = new MockBackend({
+      role: "phone",
+      mirrors: [
+        {
+          view: { desktop, name: "MacBook Pro", state: "up_to_date", entries: history.length },
+          history,
+          profile: mockMirrorProfile(),
+          shortened: [first.id],
+        },
+      ],
+    });
+    expect(backend.peek().mirrors.map((m) => m.name)).toEqual(["MacBook Pro"]);
+    expect((await backend.mirrorHistoryQuery(desktop, { limit: 200 })).total).toBe(history.length);
+    expect((await backend.mirrorHistoryQuery("0".repeat(64), { limit: 200 })).total).toBe(0);
+    expect((await backend.mirrorHistoryEntry(desktop, first.id))?.shortened).toBe(true);
+    expect(await backend.mirrorHistoryEntry(desktop, "missing")).toBeNull();
+    expect((await backend.mirrorProfile(desktop))?.theme).toBe("light");
+    const events = collect(backend);
+    backend.simulateMirror({
+      view: { desktop, name: "MacBook Pro", state: "revoked", entries: 0 },
+      history: [],
+      profile: null,
+    });
+    backend.simulateTooLarge([first.id]);
+    expect(events.map((e) => e.type)).toEqual(["mirrors", "phone_outbox"]);
+    expect(backend.peek().mirrors[0]?.state).toBe("revoked");
+    expect(backend.peek().phone_outbox_too_large).toEqual([first.id]);
+    expect(await backend.mirrorProfile(desktop)).toBeNull();
   });
 
   it("regression: identity change flags the device and never auto-trusts", () => {

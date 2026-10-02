@@ -17,6 +17,8 @@ import type {
   HistoryQueryArgs,
   HistoryStats,
   InjectPreflight,
+  MirrorEntry,
+  MirrorProfile,
   LevelFrame,
   MutationCommand,
   PasteOutcome,
@@ -77,6 +79,13 @@ export interface Backend {
   historyStats(boundaries: readonly number[]): Promise<HistoryStats>;
   /** How often each dictionary entry and rule fired in the history (`history_hits`, §16.3). */
   historyHits(): Promise<HistoryHits>;
+  /** Phone (docs/dictation.md §20.8): a page of the copy of computer `desktop`'s history (its key
+   *  in hex), read like the phone's own; empty when there is no copy (`mirror_history_query`). */
+  mirrorHistoryQuery(desktop: string, args: HistoryQueryArgs): Promise<HistoryPage>;
+  /** Phone: one entry of the copy and whether it arrived shortened, `null` once it is gone. */
+  mirrorHistoryEntry(desktop: string, id: string): Promise<MirrorEntry | null>;
+  /** Phone: the computer's settings as the copy holds them (设置 › 电脑), `null` before any arrived. */
+  mirrorProfile(desktop: string): Promise<MirrorProfile | null>;
   /** What the OS grants right now (`permissions_status`, docs/dictation.md §15.1). */
   permissionsStatus(): Promise<PermissionReport>;
   /** Ask the OS for one permission (`permissions_request`); resolves once the request was issued

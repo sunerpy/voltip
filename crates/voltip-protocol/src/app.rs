@@ -36,6 +36,14 @@ pub const MAX_TAKE_OPUS_PACKETS: usize = 50;
 pub const MAX_OPUS_PACKET_BYTES: usize = 1275;
 /// Longest text a phone sends for the desktop to insert ([`AppMessage::PhoneText`], characters).
 pub const MAX_PHONE_TEXT_CHARS: usize = 10_000;
+/// Largest payload of one [`AppMessage::Bulk`] part (docs/dictation.md §20.8): with CBOR and the
+/// Noise tag it stays well under [`AppMessage::MAX_ENCODED_BYTES`] and the relay's frame limit.
+pub const BULK_PART_BYTES: usize = 48 * 1024;
+/// Most record ids one [`AppMessage::PhoneRecordsAck`] confirms (one upload batch).
+pub const MAX_PHONE_RECORDS_ACK: usize = 200;
+/// Length of the tag that names a computer's settings in a [`AppMessage::MirrorRequest`]
+/// (a SHA-256).
+pub const MIRROR_PROFILE_TAG_BYTES: usize = 32;
 
 /// Where a phone's text came from (docs/dictation.md §20.6).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -205,6 +213,10 @@ pub enum AppMessage {
         /// `ip:port` endpoints where this device's LAN host listens right now (may be empty).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         direct_hints: Vec<String>,
+        /// This computer offers its history and settings to its phones and takes the phones'
+        /// own records (docs/dictation.md §20.8). Absent from older builds and from phones.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        mirror: bool,
     },
     /// Phone → desktop: start a dictation take whose audio this phone streams (the phone is the
     /// microphone; recognition, clean-up and delivery run on the desktop).
@@ -291,6 +303,65 @@ pub enum AppMessage {
         /// Its state.
         state: PhoneTextState,
     },
+    /// Phone → computer: send the changes to the computer's history after `since`, and its
+    /// settings when they differ from `profile` (docs/dictation.md §20.8).
+    MirrorRequest {
+        /// Protocol version.
+        version: ProtocolVersion,
+        /// The phone's number for this request; the replies carry it.
+        req: u32,
+        /// The computer's history the phone's copy came from, if it has one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<uuid::Uuid>,
+        /// The last change the phone applied; `0` for an empty copy.
+        since: u64,
+        /// The tag of the settings the phone holds ([`MIRROR_PROFILE_TAG_BYTES`] bytes), if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<serde_bytes::ByteBuf>,
+    },
+    /// Computer → phone: the history or the settings changed.
+    MirrorChanged {
+        /// Protocol version.
+        version: ProtocolVersion,
+        /// The newest change.
+        head: u64,
+        /// The phone's sync switch generation on the computer.
+        generation: u32,
+    },
+    /// Computer → phone: the computer stopped syncing with this phone.
+    MirrorRevoke {
+        /// Protocol version.
+        version: ProtocolVersion,
+        /// The phone's sync switch generation on the computer.
+        generation: u32,
+    },
+    /// Computer → phone: these uploaded records are in the computer's history (at most
+    /// [`MAX_PHONE_RECORDS_ACK`]).
+    PhoneRecordsAck {
+        /// Protocol version.
+        version: ProtocolVersion,
+        /// The records.
+        ids: Vec<uuid::Uuid>,
+    },
+    /// One part of a larger body sent over one path (docs/dictation.md §20.8): parts are numbered
+    /// from `0` within the path's session and put back together in order.
+    Bulk {
+        /// Protocol version.
+        version: ProtocolVersion,
+        /// Part number; `0` starts a new body.
+        seq: u32,
+        /// The body's last part.
+        last: bool,
+        /// 1..=[`BULK_PART_BYTES`] bytes of the body.
+        bytes: serde_bytes::ByteBuf,
+    },
+    /// How many [`AppMessage::Bulk`] parts arrived on this path's session so far.
+    BulkAck {
+        /// Protocol version.
+        version: ProtocolVersion,
+        /// Parts received.
+        received: u64,
+    },
     /// Sent right before the sender forgets this peer (docs/pairing.md): the receiver forgets the
     /// sender too, so neither side keeps a record the other one no longer honours.
     Unpair {
@@ -320,6 +391,12 @@ impl AppMessage {
             | Self::TakeStatus { version, .. }
             | Self::PhoneText { version, .. }
             | Self::PhoneTextStatus { version, .. }
+            | Self::MirrorRequest { version, .. }
+            | Self::MirrorChanged { version, .. }
+            | Self::MirrorRevoke { version, .. }
+            | Self::PhoneRecordsAck { version, .. }
+            | Self::Bulk { version, .. }
+            | Self::BulkAck { version, .. }
             | Self::Unpair { version } => *version,
         }
     }
@@ -373,6 +450,15 @@ impl AppMessage {
             Self::PhoneTextStatus { state: PhoneTextState::Failed { message, .. }, .. } if message.chars().count() > MAX_TAKE_MESSAGE_CHARS => {
                 return Err(CodecError::InvalidField { field: "message", reason: format!("more than {MAX_TAKE_MESSAGE_CHARS} characters") });
             }
+            Self::MirrorRequest { profile: Some(tag), .. } if tag.len() != MIRROR_PROFILE_TAG_BYTES => {
+                return Err(CodecError::InvalidField { field: "profile", reason: format!("{} bytes, expected {MIRROR_PROFILE_TAG_BYTES}", tag.len()) });
+            }
+            Self::PhoneRecordsAck { ids, .. } if ids.len() > MAX_PHONE_RECORDS_ACK => {
+                return Err(CodecError::InvalidField { field: "ids", reason: format!("{} ids, at most {MAX_PHONE_RECORDS_ACK}", ids.len()) });
+            }
+            Self::Bulk { bytes, .. } if bytes.is_empty() || bytes.len() > BULK_PART_BYTES => {
+                return Err(CodecError::InvalidField { field: "bytes", reason: format!("{} bytes, expected 1..={BULK_PART_BYTES}", bytes.len()) });
+            }
             _ => {}
         }
         Ok(msg)
@@ -407,6 +493,16 @@ impl AppMessage {
     pub fn unpair() -> Self {
         Self::Unpair { version: ProtocolVersion::CURRENT }
     }
+
+    /// Convenience: one part of a body.
+    pub fn bulk(seq: u32, last: bool, bytes: Vec<u8>) -> Self {
+        Self::Bulk { version: ProtocolVersion::CURRENT, seq, last, bytes: serde_bytes::ByteBuf::from(bytes) }
+    }
+
+    /// Convenience: how many parts arrived.
+    pub fn bulk_ack(received: u64) -> Self {
+        Self::BulkAck { version: ProtocolVersion::CURRENT, received }
+    }
 }
 
 #[cfg(test)]
@@ -427,8 +523,8 @@ mod tests {
             AppMessage::ping(1),
             AppMessage::pong(1),
             AppMessage::text("把 fetchUser 改成 async"),
-            AppMessage::DeviceInfoUpdate { version: v, device: device(), direct_hints: vec!["192.168.1.24:47831".into()] },
-            AppMessage::DeviceInfoUpdate { version: v, device: device(), direct_hints: Vec::new() },
+            AppMessage::DeviceInfoUpdate { version: v, device: device(), direct_hints: vec!["192.168.1.24:47831".into()], mirror: false },
+            AppMessage::DeviceInfoUpdate { version: v, device: device(), direct_hints: Vec::new(), mirror: true },
             AppMessage::unpair(),
         ] {
             let bytes = m.encode().unwrap();
@@ -525,6 +621,66 @@ mod tests {
         assert_eq!(serde_json::to_string(&PhoneTextSource::Clipboard).unwrap(), r#""clipboard""#);
     }
 
+    /// docs/dictation.md §20.8: the sync messages round-trip; a part's bytes travel as a CBOR byte
+    /// string and a full part stays under the message limit; empty or oversized parts, a long ack
+    /// and a settings tag of the wrong length are refused on decode.
+    #[test]
+    fn sync_messages_roundtrip_and_are_validated() {
+        let v = ProtocolVersion::CURRENT;
+        let epoch = uuid::Uuid::from_u128(7);
+        for m in [
+            AppMessage::MirrorRequest { version: v, req: 1, epoch: None, since: 0, profile: None },
+            AppMessage::MirrorRequest {
+                version: v,
+                req: 9,
+                epoch: Some(epoch),
+                since: 1234,
+                profile: Some(serde_bytes::ByteBuf::from(vec![7; MIRROR_PROFILE_TAG_BYTES])),
+            },
+            AppMessage::MirrorChanged { version: v, head: 99, generation: 3 },
+            AppMessage::MirrorRevoke { version: v, generation: 4 },
+            AppMessage::PhoneRecordsAck { version: v, ids: (0..MAX_PHONE_RECORDS_ACK as u128).map(uuid::Uuid::from_u128).collect() },
+            AppMessage::bulk(0, false, vec![1, 2, 3]),
+            AppMessage::bulk(41, true, vec![9; BULK_PART_BYTES]),
+            AppMessage::bulk_ack(42),
+        ] {
+            let bytes = m.encode().unwrap();
+            assert_eq!(AppMessage::decode(&bytes).unwrap(), m);
+            assert_eq!(m.version(), v);
+        }
+        let full = AppMessage::bulk(u32::MAX, true, vec![0; BULK_PART_BYTES]).encode().unwrap();
+        assert!(full.len() < BULK_PART_BYTES + 64, "{} bytes", full.len());
+        assert!(full.len() + 16 < AppMessage::MAX_ENCODED_BYTES);
+        for (m, field) in [
+            (AppMessage::bulk(0, true, Vec::new()), "bytes"),
+            (AppMessage::bulk(0, true, vec![0; BULK_PART_BYTES + 1]), "bytes"),
+            (AppMessage::PhoneRecordsAck { version: v, ids: vec![epoch; MAX_PHONE_RECORDS_ACK + 1] }, "ids"),
+            (AppMessage::MirrorRequest { version: v, req: 1, epoch: None, since: 0, profile: Some(serde_bytes::ByteBuf::from(vec![0; 31])) }, "profile"),
+        ] {
+            let bytes = m.encode().unwrap();
+            assert!(matches!(AppMessage::decode(&bytes).unwrap_err(), CodecError::InvalidField { field: f, .. } if f == field), "{field}");
+        }
+    }
+
+    /// docs/dictation.md §20.8: a computer says it syncs through `mirror` in its device info. The
+    /// flag is left out when false, so an older phone reads the same message as before; a field
+    /// this build does not know (what a newer peer may add) is ignored.
+    #[test]
+    fn device_info_update_mirror_flag_is_optional() {
+        let v = ProtocolVersion::CURRENT;
+        let plain = AppMessage::DeviceInfoUpdate { version: v, device: device(), direct_hints: Vec::new(), mirror: false }.encode().unwrap();
+        let flagged = AppMessage::DeviceInfoUpdate { version: v, device: device(), direct_hints: Vec::new(), mirror: true }.encode().unwrap();
+        assert!(flagged.len() > plain.len(), "the flag is left out when false");
+        assert!(matches!(AppMessage::decode(&plain).unwrap(), AppMessage::DeviceInfoUpdate { mirror: false, .. }));
+        assert!(matches!(AppMessage::decode(&flagged).unwrap(), AppMessage::DeviceInfoUpdate { mirror: true, .. }));
+        let mut value: ciborium::Value = ciborium::from_reader(flagged.as_slice()).unwrap();
+        let ciborium::Value::Map(fields) = &mut value else { panic!("a map") };
+        fields.push((ciborium::Value::Text("added_later".into()), ciborium::Value::Integer(1.into())));
+        let mut extended = Vec::new();
+        ciborium::into_writer(&value, &mut extended).unwrap();
+        assert!(matches!(AppMessage::decode(&extended).unwrap(), AppMessage::DeviceInfoUpdate { mirror: true, .. }));
+    }
+
     #[test]
     fn version_is_enforced_on_decode() {
         let m = AppMessage::Ping { version: ProtocolVersion(3), seq: 1 };
@@ -542,9 +698,14 @@ mod tests {
 
     #[test]
     fn device_info_update_hints_are_validated_on_decode() {
-        let bytes = AppMessage::DeviceInfoUpdate { version: ProtocolVersion::CURRENT, device: device(), direct_hints: vec!["relay.example.org:1".into()] }
-            .encode()
-            .unwrap();
+        let bytes = AppMessage::DeviceInfoUpdate {
+            version: ProtocolVersion::CURRENT,
+            device: device(),
+            direct_hints: vec!["relay.example.org:1".into()],
+            mirror: false,
+        }
+        .encode()
+        .unwrap();
         assert!(matches!(AppMessage::decode(&bytes).unwrap_err(), CodecError::InvalidField { field: "direct_hints", .. }));
     }
 

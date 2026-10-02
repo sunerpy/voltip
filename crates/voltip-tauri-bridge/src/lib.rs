@@ -59,6 +59,13 @@ pub enum UiCommand {
         /// Hex public key.
         public_key: String,
     },
+    /// Computer: sync with this phone or not (docs/dictation.md §20.8).
+    DeviceSyncSet {
+        /// Hex public key.
+        public_key: String,
+        /// On or off.
+        on: bool,
+    },
     /// Rename this device.
     DeviceRename {
         /// New name.
@@ -428,6 +435,7 @@ impl UiCommand {
             Self::PairingCancel => CoreCommand::CancelPairing,
             Self::PairingReset => CoreCommand::ResetPairing,
             Self::DeviceForget { public_key } => CoreCommand::ForgetDevice(parse_key(&public_key)?),
+            Self::DeviceSyncSet { public_key, on } => CoreCommand::SetDeviceSync { key: parse_key(&public_key)?, on },
             Self::DeviceRename { name } => CoreCommand::RenameDevice(name),
             Self::SendText { public_key, body } => CoreCommand::SendText { to: parse_key(&public_key)?, body },
             Self::PhoneTakeStart { public_key } => CoreCommand::PhoneTakeStart { to: parse_key(&public_key)? },
@@ -552,6 +560,23 @@ fn parse_ids(texts: &[String]) -> Result<Vec<Uuid>, BridgeError> {
     texts.iter().map(|t| parse_id(t)).collect()
 }
 
+/// One entry of a phone's copy of a computer's history (`mirror_history_entry`).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MirrorEntry {
+    /// The entry.
+    pub entry: HistoryEntry,
+    /// It arrived as its bounded projection: the phone shows the beginning only.
+    pub shortened: bool,
+}
+
+/// A copy query naming no computer key is the caller's mistake; anything else is the database's.
+fn bad_copy(e: voltip_core::CoreError) -> BridgeError {
+    match e {
+        voltip_core::CoreError::Invalid(why) => BridgeError::BadArgument(why),
+        other => BridgeError::from(other),
+    }
+}
+
 fn parse_key(hex: &str) -> Result<PublicKey, BridgeError> {
     PublicKey::from_hex(hex).map_err(|_| BridgeError::BadArgument("publicKey must be 64 hex chars".into()))
 }
@@ -587,6 +612,9 @@ pub struct Bridge {
     paste_ids: Arc<AtomicU64>,
     /// The history queries' own read-only connection (docs/dictation.md §4.4).
     history: Arc<HistoryReader>,
+    /// Phone: the copies of its computers' histories, shared with the core (its locks keep a
+    /// deletion from meeting a query, docs/dictation.md §20.8).
+    mirrors: Arc<voltip_core::sync::MirrorFiles>,
     /// A new scene must name an application: everywhere but on a phone, where the user picks a
     /// take's scene (`CoreConfig::manual_scenes`, user decision 2026-10-01).
     scenes_need_apps: bool,
@@ -627,9 +655,10 @@ impl Bridge {
         let (tx, first) = broadcast::channel(256);
         let state = Arc::new(Mutex::new(UiState::default()));
         let history = Arc::new(HistoryReader::new(&config.data_dir));
+        let mirrors = config.mirror_files.clone();
         let scenes_need_apps = !config.manual_scenes;
         let (handle, core_events) = AppCore::start_with(config, secret_store, ports)?;
-        let bridge = Self { handle, state: state.clone(), events: tx.clone(), paste_ids: Arc::new(AtomicU64::new(0)), history, scenes_need_apps };
+        let bridge = Self { handle, state: state.clone(), events: tx.clone(), paste_ids: Arc::new(AtomicU64::new(0)), history, mirrors, scenes_need_apps };
         tokio::spawn(pump(core_events, state, tx));
         Ok((bridge, first))
     }
@@ -736,6 +765,27 @@ impl Bridge {
     /// `history_hits` (docs/dictation.md §16.3): how often each dictionary entry and rule fired.
     pub fn history_hits(&self) -> Result<HistoryHits, BridgeError> {
         Ok(self.history.hits()?)
+    }
+
+    /// `mirror_history_query` (docs/dictation.md §20.8): a page of the phone's copy of `desktop`'s
+    /// history (the key in hex), read like the phone's own; empty when there is no copy.
+    pub fn mirror_history_query(&self, desktop: &str, query: &HistoryQuery) -> Result<HistoryPage, BridgeError> {
+        // Checked like the phone's own history even when there is no copy to read.
+        if !(1..=voltip_core::history::MAX_QUERY_LIMIT).contains(&query.limit) {
+            return Err(BridgeError::BadArgument(format!("mirror_history_query: limit 1–{}", voltip_core::history::MAX_QUERY_LIMIT)));
+        }
+        Ok(self.mirrors.read(desktop, |reader, _| reader.query(query)).map_err(bad_copy)?.unwrap_or_default())
+    }
+
+    /// `mirror_history_entry`: one entry of the copy, and whether it arrived shortened.
+    pub fn mirror_history_entry(&self, desktop: &str, id: uuid::Uuid) -> Result<Option<MirrorEntry>, BridgeError> {
+        let found = self.mirrors.read(desktop, |_, path| voltip_core::sync::read_entry(path, id)).map_err(bad_copy)?.flatten();
+        Ok(found.map(|(entry, shortened)| MirrorEntry { entry, shortened }))
+    }
+
+    /// `mirror_profile`: the computer's settings as the copy holds them.
+    pub fn mirror_profile(&self, desktop: &str) -> Result<Option<voltip_core::sync::Profile>, BridgeError> {
+        Ok(self.mirrors.read(desktop, |_, path| voltip_core::sync::read_copied_profile(path)).map_err(bad_copy)?.flatten())
     }
 
     /// Stop the core.

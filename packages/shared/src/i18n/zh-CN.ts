@@ -531,6 +531,9 @@ export const zhCN = {
       take: "手机 · {device}",
       typed: "手机输入 · {device}",
       clipboard: "手机剪贴板 · {device}",
+      /** A record the phone recognised on its own and uploaded (docs/dictation.md §20.8; user
+       *  decision 2026-10-02: 「手机 · {名称}」). */
+      standalone: "手机 · {device}",
     },
     filter: {
       all: "全部",
@@ -543,6 +546,7 @@ export const zhCN = {
     },
     banner: {
       title: "历史记录 · 仅保存在本机",
+      titleSynced: "历史记录 · 保存在本机，并同步到已配对的手机",
       retention: "保留最近 {keep} 条，超出后自动删除最早的记录。",
       off: "历史记录已关闭 · 不再保存新的听写，已保存的 {n} 条在清空前会一直保留。",
       settings: "保留设置",
@@ -656,6 +660,7 @@ export const zhCN = {
       outcome: "插入结果",
       duration: "音频时长",
       chars: "字数",
+      origin: "来源",
       id: "记录 ID",
       copied: "已复制到剪贴板 · {n} 字",
     },
@@ -1125,6 +1130,12 @@ export const zhCN = {
       result: "识别结果",
       resultDir: "电脑 → 手机",
       resultHow: "端到端加密",
+      history: "历史记录与设置",
+      historyDir: "电脑 → 手机",
+      historyHow: "端到端加密 · 手机上只读",
+      upload: "手机识别的记录",
+      uploadDir: "手机 → 电脑",
+      uploadHow: "端到端加密 · 上传副本",
       unpair: "解除配对",
       unpairDir: "手机 ⇄ 电脑",
       unpairHow: "两边都删除记录",
@@ -1142,6 +1153,9 @@ export const zhCN = {
       forgetFacts: "{fingerprint} · 信任于 {date}",
       forget: "忘记设备",
       forgotten: "已忘记 {name}",
+      /** docs/dictation.md §20.8: the phone cannot be told, so its copy stays. */
+      forgetOffline:
+        "这部手机现在不在线，它上面这台电脑的记录不会删除，要在手机上忘记这台电脑才会删除。",
     },
     column: {
       device: "设备",
@@ -1149,6 +1163,12 @@ export const zhCN = {
       lan: "局域网地址",
       lastSeen: "最近在线",
       state: "状态",
+      sync: "同步",
+    },
+    /** The switch per phone (docs/dictation.md §20.8). */
+    syncSwitch: {
+      toggle: "与 {name} 同步记录",
+      limit: "最多与 {max} 部手机同步",
     },
     action: { sendTest: "发测试消息", testBody: "来自电脑的测试消息", forget: "忘记" },
     copied: "已复制{what}",
@@ -1170,6 +1190,8 @@ export const zhCN = {
       note: "忘记后，此设备需要重新扫码并核对安全码；身份密钥发生变化的设备会标为红色，直到处理为止。",
       lanNote:
         "开启局域网发现后，这台电脑会在同一局域网内公布自己的名称：手机点选即可配对，地址变化后已配对的设备也能找到它。关闭后只能通过扫码或输入验证码配对。",
+      syncNote:
+        "与这部手机同步记录：历史记录和模型、词典等设置同步到这部手机，手机上只能查看；手机单独识别的记录会把副本上传到这台电脑。关闭后，手机上这台电脑的记录会被删除。",
     },
     live: {
       title: "手机麦克风",
@@ -1191,7 +1213,7 @@ export const zhCN = {
       title: "手机与电脑之间传输的内容",
       inSync: "已连接",
       localOnly: "未连接",
-      body: "只有下面几项会经端到端加密通道在手机与电脑之间传输；历史记录、词典、规则和设置只保存在这台电脑上。一方解除配对时，如果另一方在线，也会同时删除这台设备的记录。",
+      body: "只有下面几项会经端到端加密通道在手机与电脑之间传输。历史记录和设置只同步到开启「同步」的手机，在手机上只能查看。一方解除配对时，如果另一方在线，也会同时删除这台设备的记录。",
       crypto: "技术细节：Noise XX · X25519 · ChaCha20-Poly1305；中继无法读取明文",
     },
     limitsTitle: "限制",
@@ -1790,11 +1812,15 @@ export const zhCN = {
         context: "前台应用信息",
         contextHelp: "只随润色一起发送，识别服务商收不到；在「场景」里开关。",
         contextNone: "不发送",
+        history: "历史记录与设置",
+        historyHelp:
+          "开启「同步」的已配对手机会收到历史记录和设置，在手机上只能查看；经端到端加密传输，中继无法读取。可在「手机」页按手机关闭。",
         contextApp: "应用名称",
         contextTitle: "窗口标题",
         openScenes: "去设置",
         sentTo: "发送到{target}",
         stays: "不离开本机",
+        synced: "同步到已配对的手机",
         notSent: "不发送",
         historyTitle: "听写历史",
         historyCount: "{n} / {keep} 条",
@@ -2116,6 +2142,48 @@ export const zhCN = {
     oneKey: "一次只能绑定一个按键",
     needModifier: "当前系统不允许单个按键作为快捷键，请加一个修饰键",
   },
+  /** A computer's history and settings on the phone (docs/dictation.md §20.8; user decision
+   *  2026-10-02: the 记录 tab switches between this phone and each computer). */
+  mirror: {
+    source: "记录来源",
+    thisPhone: "这部手机",
+    state: {
+      syncing: "正在同步 · 已收到 {n} 条",
+      up_to_date: "已同步 {n} 条 · {when}",
+      up_to_date_never: "已同步 {n} 条",
+      offline: "电脑不在线 · 已同步 {n} 条 · {when}",
+      revoked: "这台电脑关闭了同步",
+      needs_upgrade: "电脑上的 Voltip 需要升级才能同步",
+      limit: "最多同步 {max} 台电脑，这台电脑没有同步",
+    },
+    empty: "尚无记录",
+    emptyBody: "这台电脑的历史记录同步后会出现在这里，手机上只能查看。",
+    shortened: "这条记录太长，手机上只显示了一部分，完整内容请在电脑上查看。",
+    tooLong: "超过 5 万字，无法整段复制或分享。",
+    readOnly: "电脑上的记录在手机上只能查看，不能收藏或删除。",
+    settingsRow: "{name} 的设置",
+    settings: {
+      lede: "{name} 的设置，在手机上只能查看；在电脑上修改后会同步到手机。",
+      none: "尚未收到这台电脑的设置。",
+      look: "外观",
+      locale: "界面语言",
+      theme: "主题",
+      speech: "识别",
+      speechModel: "语音模型",
+      polish: "AI 润色",
+      polishState: "状态",
+      polishOn: "已开启",
+      polishOff: "未开启",
+      polishModel: "润色模型",
+      preset: "当前预设",
+      presets: "自定义预设",
+      dictionary: "个人词典",
+      rules: "替换规则",
+      scenes: "场景",
+      none_items: "无",
+      heardAs: "听成：{terms}",
+    },
+  },
   mobile: {
     title: {
       device: "本机",
@@ -2133,6 +2201,8 @@ export const zhCN = {
       scenes: "场景",
       history: "记录",
       entry: "记录详情",
+      mirrorEntry: "电脑上的记录",
+      computerSettings: "电脑设置",
       historySettings: "历史记录",
       feedback: "反馈",
     },
@@ -2166,12 +2236,13 @@ export const zhCN = {
     },
     entry: {
       goneBody: "这条记录已被删除或清空。",
+      tooLarge: "这条记录太大，没有上传到电脑。",
       time: "耗时",
       shareSrt: "分享字幕（SRT）",
       shareTxt: "分享文本（TXT）",
     },
     historySettings: {
-      lede: "这部手机识别的结果保存在这部手机上，不会发送到电脑。",
+      lede: "这部手机识别的结果保存在这部手机上；与已配对的电脑同步时，副本会上传到电脑，手机上的记录照样保留。",
       clearBody: "这部手机上的 {n} 条记录将被删除，此操作无法撤销。",
     },
     feedback: {
@@ -2342,7 +2413,7 @@ export const zhCN = {
     },
     recent: {
       title: "最近结果",
-      body: "在这部手机上识别的结果，只保存在这部手机上。",
+      body: "在这部手机上识别的结果保存在这部手机上；与已配对的电脑同步时，副本会上传到电脑。",
       copy: "复制",
       copied: "已复制",
       copyFailed: "复制失败",
@@ -2396,7 +2467,8 @@ export const zhCN = {
       sendTest: "发测试消息",
       forget: "忘记 {name}",
       forgetTitle: "忘记「{name}」？",
-      forgetBody: "忘记后需要重新扫码并核对安全码才能再连接；电脑在线的话也会同时忘记这部手机。",
+      forgetBody:
+        "忘记后需要重新扫码并核对安全码才能再连接；电脑在线的话也会同时忘记这部手机。这台电脑同步到手机的记录和设置也会删除。",
       forgetConfirm: "忘记",
       forgotten: "已忘记 {name}",
       count: "{paired} 台已配对 · {online} 在线",
