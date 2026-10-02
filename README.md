@@ -21,7 +21,8 @@
 
 Voltip is a dictation app for Windows, Linux and macOS. It records while you hold the hotkey,
 recognises the speech in the cloud or on your own machine, optionally cleans the text up with an
-LLM, and pastes it into whatever app has the focus. A paired Android phone can be the microphone.
+LLM, and pastes it into whatever app has the focus. The Android app works on its own, or as the
+computer's microphone and keyboard.
 
 ![Voltip's home screen: readiness, the microphone and its test, speech engine, paired phones and recent results](./docs/acceptance/screens/desktop/home-1440-light-en.png)
 
@@ -51,8 +52,12 @@ LLM, and pastes it into whatever app has the focus. A paired Android phone can b
 - Phone as microphone and keyboard: pair an Android phone by QR code, a 6-digit code, or a tap on
   the computer it finds on the same network. Hold to talk on the phone (the audio goes end-to-end
   encrypted, compressed with Opus), or type or send the clipboard, and the text appears at the
-  computer's cursor. The computer can keep pairing open for the next phone. With no computer
-  online, the phone transcribes on its own through the built-in service and copies the result.
+  computer's cursor. The computer can keep pairing open for the next phone.
+- The phone on its own: with no computer online, the phone recognises and cleans up the speech
+  itself and copies the text. It has its own speech and AI providers, presets, dictionary, rules,
+  scenes and history: every feature but the local models. A paired computer's history and
+  settings sync to the phone to read, and what the phone recognised on its own goes to the
+  computer as a copy.
 
 ## Install
 
