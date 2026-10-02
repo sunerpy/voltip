@@ -478,6 +478,9 @@ impl Runtime {
 
     /// Switch syncing with a phone on or off (docs/dictation.md §20.8).
     pub(super) async fn set_device_sync(&mut self, key: PublicKey, on: bool) -> Result<(), CoreError> {
+        if self.sync_role() != SyncRole::Computer {
+            return Err(CoreError::Invalid("只有电脑能设置与手机的同步".into()));
+        }
         match self.trusted.set_sync(&key, on)? {
             SyncChange::Changed(record) => {
                 if on {

@@ -817,6 +817,8 @@ fn full_state() -> UiState {
         nearby: nearby(),
         hardware: hardware_status(),
         connectivity: ConnectivityStatus { running: false, report: Some(connectivity_report()) },
+        mirrors: mirror_views(),
+        phone_outbox_too_large: vec![uuid(HISTORY_ID)],
     }
 }
 
@@ -864,10 +866,12 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::Hardware(_) => "hardware",
         UiEvent::Connectivity(_) => "connectivity",
         UiEvent::PasteResult { .. } => "paste_result",
+        UiEvent::Mirrors { .. } => "mirrors",
+        UiEvent::PhoneOutbox { .. } => "phone_outbox",
     }
 }
 
-const ALL_EVENT_TAGS: [&str; 25] = [
+const ALL_EVENT_TAGS: [&str; 27] = [
     "state",
     "identity",
     "settings",
@@ -893,7 +897,50 @@ const ALL_EVENT_TAGS: [&str; 25] = [
     "phone_take",
     "hardware",
     "paste_result",
+    "mirrors",
+    "phone_outbox",
 ];
+
+/// The computer's settings as a phone shows them (docs/dictation.md §20.8): every `Option` set.
+fn mirror_profile() -> voltip_core::sync::Profile {
+    voltip_core::sync::Profile {
+        locale: Locale::System,
+        theme: ThemeId::Dark,
+        follow_system_theme: true,
+        asr_provider: ProviderId::Builtin,
+        asr_model: "Qwen/Qwen3-ASR-1.7B".into(),
+        local_model: Some(QWEN_ID.into()),
+        refine_enabled: true,
+        llm_provider: Some(ProviderId::Builtin),
+        refine_model: "qwen/qwen3.8-27b".into(),
+        preset: PresetId::Custom(uuid(PRESET_ID)),
+        presets: custom_presets(),
+        dictionary: dictionary(),
+        rules: rules(),
+        scenes: scenes(),
+    }
+}
+
+/// A phone's copies (docs/dictation.md §20.8): one computer in every state.
+fn mirror_views() -> Vec<voltip_core::sync::MirrorView> {
+    use voltip_core::sync::{MirrorSyncState, MirrorView};
+    let view = |name: &str, state, entries, synced: bool| MirrorView {
+        desktop: DESKTOP_KEY.to_hex(),
+        name: name.into(),
+        state,
+        entries,
+        synced_at_ms: synced.then_some(AT_MS),
+        profile: synced.then(|| mirror_profile().without_lists()),
+    };
+    vec![
+        view("MacBook Pro", MirrorSyncState::Syncing, 1200, true),
+        view("Surface", MirrorSyncState::UpToDate, 312, true),
+        view("Studio", MirrorSyncState::Offline, 87, true),
+        view("Office", MirrorSyncState::Revoked, 0, false),
+        view("Old Desk", MirrorSyncState::NeedsUpgrade, 0, false),
+        view("Sixth", MirrorSyncState::Limit, 0, false),
+    ]
+}
 
 /// The phone's list (docs/dictation.md §20.6): one text in every state.
 fn sent_texts() -> Vec<SentText> {
@@ -988,6 +1035,8 @@ fn presets_event(list: Vec<CustomPreset>) -> UiEvent {
 fn all_events() -> Vec<UiEvent> {
     let mut events = vec![
         UiEvent::State(Box::default()),
+        UiEvent::Mirrors { mirrors: mirror_views() },
+        UiEvent::PhoneOutbox { too_large: vec![uuid(HISTORY_ID)] },
         UiEvent::Identity(desktop_identity()),
         UiEvent::Settings(settings()),
         UiEvent::Relay(RelayStatus {
@@ -1584,6 +1633,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::PairingCancel => "PairingCancel",
         UiCommand::PairingReset => "PairingReset",
         UiCommand::DeviceForget { .. } => "DeviceForget",
+        UiCommand::DeviceSyncSet { .. } => "DeviceSyncSet",
         UiCommand::DeviceRename { .. } => "DeviceRename",
         UiCommand::SendText { .. } => "SendText",
         UiCommand::SettingsSetRelay { .. } => "SettingsSetRelay",
@@ -1657,6 +1707,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("pairing_cancel", Value::Null, "PairingCancel"),
         ("pairing_reset", Value::Null, "PairingReset"),
         ("device_forget", json!({ "publicKey": PHONE_KEY.to_hex() }), "DeviceForget"),
+        // docs/dictation.md §20.8: the computer's switch per phone.
+        ("device_sync_set", json!({ "publicKey": PHONE_KEY.to_hex(), "on": false }), "DeviceSyncSet"),
         ("device_rename", json!({ "name": "Studio" }), "DeviceRename"),
         ("send_text", json!({ "publicKey": PHONE_KEY.to_hex(), "body": "把 fetchUser 改成 async" }), "SendText"),
         ("settings_set_relay", json!({ "url": RELAY_URL, "enabled": true }), "SettingsSetRelay"),
@@ -2225,6 +2277,14 @@ fn history_queries_fixture_matches_serde_output() {
             dictionary: [(uuid(DICT_ID), 3)].into_iter().collect(),
             rules: [(uuid(RULE_ID), 1)].into_iter().collect(),
         },
+        // docs/dictation.md §20.8: a phone's copy of a computer's history; a record the phone
+        // uploaded comes back named after it.
+        "mirror_entry": voltip_tauri_bridge::MirrorEntry {
+            entry: HistoryEntry { origin: Some(EntryOrigin { device: "Pixel 8".into(), kind: OriginKind::Standalone }), ..entry.clone() },
+            shortened: true,
+        },
+        "mirror_missing": Option::<voltip_tauri_bridge::MirrorEntry>::None,
+        "mirror_profile": mirror_profile(),
     });
     check_fixture(HISTORY_QUERIES_FILE, &pretty(&answers));
 }

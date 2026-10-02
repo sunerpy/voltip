@@ -39,6 +39,13 @@
   },
   {
     "args": {
+      "on": false,
+      "publicKey": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "name": "device_sync_set"
+  },
+  {
+    "args": {
       "name": "Studio"
     },
     "name": "device_rename"

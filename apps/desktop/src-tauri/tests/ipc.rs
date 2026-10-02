@@ -41,6 +41,8 @@ fn offline_config(dir: &Path) -> CoreConfig {
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = DEVICE_NAME.into();
     cfg.direct_bind = "127.0.0.1:0".parse().unwrap();
+    // As in the shell's own configuration (docs/dictation.md §20.8).
+    cfg.sync_role = voltip_core::sync::SyncRole::Computer;
     cfg
 }
 
@@ -400,6 +402,24 @@ fn the_shell_reports_the_machine_the_local_models_run_on() {
         let machine = voltip_asr_local::hardware();
         assert_eq!(state.hardware.cpu_threads as usize, machine.cpu_threads);
         assert_eq!(state.hardware.gpus.iter().map(|g| g.name.clone()).collect::<Vec<_>>(), machine.gpus.iter().map(|g| g.name.clone()).collect::<Vec<_>>());
+    });
+}
+
+/// docs/dictation.md §20.8: the sync switch reaches the core, which names a device it does not
+/// know; the desktop keeps no copies, so their queries answer empty.
+#[test]
+fn the_sync_switch_reaches_the_core_and_copies_are_empty_here() {
+    with_running_app(|_, webview, rx| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert!(invoke(webview, "device_sync_set", json!({ "publicKey": "nope", "on": true })).is_err(), "a key");
+        assert_eq!(invoke(webview, "device_sync_set", json!({ "publicKey": "11".repeat(32), "on": false })), Ok(Value::Null));
+        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("未知设备")));
+        let desktop = "ab".repeat(32);
+        assert_eq!(
+            invoke(webview, "mirror_history_query", json!({ "desktop": desktop, "limit": 20 })).unwrap(),
+            json!({ "entries": [], "matching": 0, "total": 0 })
+        );
+        assert_eq!(invoke(webview, "mirror_profile", json!({ "desktop": desktop })).unwrap(), Value::Null);
     });
 }
 
@@ -1365,6 +1385,9 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "history_entry",
             "history_stats",
             "history_hits",
+            "mirror_history_query",
+            "mirror_history_entry",
+            "mirror_profile",
             "permissions_status",
             "permissions_request",
             "inject_preflight",

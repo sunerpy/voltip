@@ -531,6 +531,9 @@ export const zhCN = {
       take: "手机 · {device}",
       typed: "手机输入 · {device}",
       clipboard: "手机剪贴板 · {device}",
+      /** A record the phone recognised on its own and uploaded (docs/dictation.md §20.8; user
+       *  decision 2026-10-02: 「手机 · {名称}」). */
+      standalone: "手机 · {device}",
     },
     filter: {
       all: "全部",

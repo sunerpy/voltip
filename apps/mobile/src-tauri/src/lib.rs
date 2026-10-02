@@ -33,7 +33,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 100] = [
+pub const COMMANDS: [&str; 104] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -43,6 +43,7 @@ pub const COMMANDS: [&str; 100] = [
     "pairing_cancel",
     "pairing_reset",
     "device_forget",
+    "device_sync_set",
     "device_rename",
     "send_text",
     "phone_take_start",
@@ -129,6 +130,9 @@ pub const COMMANDS: [&str; 100] = [
     "history_entry",
     "history_stats",
     "history_hits",
+    "mirror_history_query",
+    "mirror_history_entry",
+    "mirror_profile",
     "permissions_status",
     "permissions_request",
     "inject_preflight",
@@ -152,6 +156,9 @@ pub fn production_config<R: Runtime>(app: &AppHandle<R>) -> CoreConfig {
     config.accepts_phone_takes = false;
     // The user picks a take's scene on the talk card (no foreground probe on a phone).
     config.manual_scenes = true;
+    // Copies of the computers' histories and settings, read-only; the phone's own records go to
+    // the computer as copies (docs/dictation.md §20.8).
+    config.sync_role = voltip_core::sync::SyncRole::Phone;
     // LAN discovery (docs/pairing.md 「局域网发现」): Android drops multicast without the lock,
     // held while the switch is on.
     let discovering = voltip_core::SettingsStore::new(&config.data_dir).load().map_or(true, |s| s.lan_discovery);
@@ -229,6 +236,12 @@ fn pairing_reset(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
 #[tauri::command]
 fn device_forget(bridge: tauri::State<'_, Bridge>, public_key: String) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::DeviceForget { public_key })?)
+}
+
+/// The sync switch is the computer's (docs/dictation.md §20.8): the phone's core refuses it.
+#[tauri::command]
+fn device_sync_set(bridge: tauri::State<'_, Bridge>, public_key: String, on: bool) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::DeviceSyncSet { public_key, on })?)
 }
 
 #[tauri::command]
@@ -827,6 +840,43 @@ async fn history_entry(bridge: tauri::State<'_, Bridge>, id: uuid::Uuid) -> Resu
     history_read(&bridge, move |b| b.history_entry(id)).await
 }
 
+/// A page of the phone's copy of a computer's history (docs/dictation.md §20.8), read like the
+/// phone's own; `desktop` is the computer's key in hex.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn mirror_history_query(
+    bridge: tauri::State<'_, Bridge>,
+    desktop: String,
+    since_ms: Option<u64>,
+    starred: Option<bool>,
+    failed: Option<bool>,
+    query: Option<String>,
+    offset: Option<u32>,
+    limit: u32,
+) -> Result<voltip_core::HistoryPage, String> {
+    let query = voltip_core::HistoryQuery {
+        since_ms,
+        starred: starred.unwrap_or(false),
+        failed: failed.unwrap_or(false),
+        query: query.unwrap_or_default(),
+        offset: offset.unwrap_or(0),
+        limit,
+    };
+    history_read(&bridge, move |b| b.mirror_history_query(&desktop, &query)).await
+}
+
+/// One entry of the copy, and whether it arrived shortened; `null` once it is gone.
+#[tauri::command]
+async fn mirror_history_entry(bridge: tauri::State<'_, Bridge>, desktop: String, id: uuid::Uuid) -> Result<Option<voltip_tauri_bridge::MirrorEntry>, String> {
+    history_read(&bridge, move |b| b.mirror_history_entry(&desktop, id)).await
+}
+
+/// The computer's settings as the copy holds them (设置 › 电脑).
+#[tauri::command]
+async fn mirror_profile(bridge: tauri::State<'_, Bridge>, desktop: String) -> Result<Option<voltip_core::sync::Profile>, String> {
+    history_read(&bridge, move |b| b.mirror_profile(&desktop)).await
+}
+
 /// The dictations between each two of the local midnights in `boundaries`, and over the whole
 /// history (docs/dictation.md §4.5).
 #[tauri::command]
@@ -1016,6 +1066,7 @@ pub fn build_app<R: Runtime>(
             pairing_cancel,
             pairing_reset,
             device_forget,
+            device_sync_set,
             device_rename,
             send_text,
             phone_take_start,
@@ -1100,6 +1151,9 @@ pub fn build_app<R: Runtime>(
             recent_apps,
             history_query,
             history_entry,
+            mirror_history_query,
+            mirror_history_entry,
+            mirror_profile,
             history_stats,
             history_hits,
             permissions_status,

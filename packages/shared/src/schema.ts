@@ -904,7 +904,8 @@ export type EditRecord = z.infer<typeof editRecordSchema>;
 
 /** One finished dictation as persisted in `history.json` (`voltip_core::history::HistoryEntry`). */
 /** What a phone sent (`voltip_core::OriginKind`, docs/dictation.md §20). */
-export const ORIGIN_KINDS = ["take", "typed", "clipboard"] as const;
+/** `standalone`: the phone recognised it on its own and uploaded a copy (docs/dictation.md §20.8). */
+export const ORIGIN_KINDS = ["take", "typed", "clipboard", "standalone"] as const;
 /** Which phone a history entry came from, and how (`voltip_core::EntryOrigin`). */
 export const entryOriginSchema = z.object({ device: z.string(), kind: z.enum(ORIGIN_KINDS) });
 export type EntryOrigin = z.infer<typeof entryOriginSchema>;
@@ -1359,8 +1360,17 @@ export const trustedDeviceSchema = z.object({
   last_connection: connectionKindSchema.optional(),
   /** Last known `ip:port` endpoints of the peer's LAN host; omitted by the core when empty. */
   direct_hints: z.array(z.string()).optional(),
+  /** On a computer: this phone gets the history and settings and uploads its own records
+   *  (docs/dictation.md §20.8). Records from before the switch read as on. */
+  sync: z.boolean().default(true),
+  /** Goes up with every switch and re-pair. */
+  sync_gen: z.number().int().nonnegative().default(0),
 });
 export type TrustedDevice = z.infer<typeof trustedDeviceSchema>;
+
+/** Most phones a computer syncs with, and most computers a phone syncs with
+ *  (`voltip_identity::MAX_SYNC_PEERS`). */
+export const MAX_SYNC_PEERS = 5;
 
 export const deviceConnectionSchema = z.union([
   z.object({ state: z.enum(["offline", "connecting"]) }),
@@ -1755,6 +1765,55 @@ export const connectivityStatusSchema = z.object({
 });
 export type ConnectivityStatus = z.infer<typeof connectivityStatusSchema>;
 
+/** A computer's settings as its phones show them, read-only (`voltip_core::sync::Profile`,
+ *  docs/dictation.md §20.8). The computer's language and theme are shown, never followed. */
+export const mirrorProfileSchema = z.object({
+  locale: localeSettingSchema,
+  theme: themeIdSchema,
+  follow_system_theme: z.boolean(),
+  asr_provider: providerIdSchema,
+  /** As the computer's title bar names it (at most 256 characters). */
+  asr_model: z.string(),
+  local_model: z.string().optional(),
+  refine_enabled: z.boolean(),
+  llm_provider: providerIdSchema.optional(),
+  refine_model: z.string(),
+  preset: presetIdSchema,
+  presets: z.array(customPresetSchema),
+  dictionary: z.array(dictionaryEntrySchema),
+  rules: z.array(replacementRuleSchema),
+  scenes: z.array(sceneSchema),
+});
+export type MirrorProfile = z.infer<typeof mirrorProfileSchema>;
+
+export const MIRROR_SYNC_STATES = [
+  "syncing",
+  "up_to_date",
+  "offline",
+  "revoked",
+  "needs_upgrade",
+  "limit",
+] as const;
+export const mirrorSyncStateSchema = z.enum(MIRROR_SYNC_STATES);
+export type MirrorSyncState = z.infer<typeof mirrorSyncStateSchema>;
+
+/** One computer as the phone's 记录 and 设置 › 电脑 show it (`voltip_core::sync::MirrorView`). */
+export const mirrorViewSchema = z.object({
+  /** The computer's key in hex: what the copy queries name. */
+  desktop: hexKeySchema,
+  name: z.string(),
+  state: mirrorSyncStateSchema,
+  entries: z.number().int().nonnegative(),
+  synced_at_ms: z.number().nonnegative().optional(),
+  /** The settings without the four lists (`mirror_profile` has them). */
+  profile: mirrorProfileSchema.optional(),
+});
+export type MirrorView = z.infer<typeof mirrorViewSchema>;
+
+/** `mirror_history_entry`: one entry of a copy, and whether it arrived shortened. */
+export const mirrorEntrySchema = z.object({ entry: historyEntrySchema, shortened: z.boolean() });
+export type MirrorEntry = z.infer<typeof mirrorEntrySchema>;
+
 export const uiStateSchema = z.object({
   identity: deviceIdentityPublicSchema.nullable(),
   settings: settingsSchema,
@@ -1792,6 +1851,10 @@ export const uiStateSchema = z.object({
   hardware: hardwareStatusSchema.default(() => ({ cpu_threads: 0, gpus: [] })),
   /** The connectivity self-check: running, and the last report. */
   connectivity: connectivityStatusSchema.default(() => ({ running: false })),
+  /** Phone: its copies of its computers (docs/dictation.md §20.8); absent on the desktop. */
+  mirrors: z.array(mirrorViewSchema).default(() => []),
+  /** Phone: its own records too large to upload to a computer. */
+  phone_outbox_too_large: z.array(z.string()).default(() => []),
 });
 export type UiState = z.infer<typeof uiStateSchema>;
 
@@ -1854,6 +1917,10 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("sent_texts"), texts: z.array(sentTextSchema) }),
   /** What the LAN browse sees, whole (docs/pairing.md). */
   z.object({ type: z.literal("nearby"), devices: z.array(nearbyDeviceSchema) }),
+  /** Phone: its copies of its computers, whole (docs/dictation.md §20.8). */
+  z.object({ type: z.literal("mirrors"), mirrors: z.array(mirrorViewSchema) }),
+  /** Phone: its records too large to upload. */
+  z.object({ type: z.literal("phone_outbox"), too_large: z.array(z.string()) }),
   /** What the local models can run on (§10.6), reported once by the desktop shell. */
   hardwareStatusSchema.extend({ type: z.literal("hardware") }),
   /** The core's answer to a paste from the history: the desktop shell waits for it, the webview
@@ -1967,6 +2034,8 @@ export interface CommandArgs {
   pairing_cancel: undefined;
   pairing_reset: undefined;
   device_forget: { publicKey: string };
+  /** Computer: sync with this phone or stop (docs/dictation.md §20.8); refused for a sixth phone. */
+  device_sync_set: { publicKey: string; on: boolean };
   device_rename: { name: string };
   send_text: { publicKey: string; body: string };
   /** Phone: stream a take to this paired desktop, which records, recognises and delivers it. */
@@ -2128,6 +2197,12 @@ export interface CommandArgs {
   history_query: HistoryQueryArgs;
   /** Query: one history entry, `null` once it is gone (`Backend.historyEntry`). */
   history_entry: { id: string };
+  /** Query (phone, §20.8): a page of the copy of computer `desktop`'s history. */
+  mirror_history_query: { desktop: string } & HistoryQueryArgs;
+  /** Query (phone): one entry of the copy, `null` once it is gone. */
+  mirror_history_entry: { desktop: string; id: string };
+  /** Query (phone): the computer's settings as the copy holds them. */
+  mirror_profile: { desktop: string };
   /** Query (§4.5): the dictations between local midnights (`Backend.historyStats`, the home page). */
   history_stats: { boundaries: number[] };
   /** Query (§16.3): hits per dictionary entry and rule (`Backend.historyHits`). */
@@ -2163,6 +2238,9 @@ export type QueryCommand =
   | "history_entry"
   | "history_stats"
   | "history_hits"
+  | "mirror_history_query"
+  | "mirror_history_entry"
+  | "mirror_profile"
   | "permissions_status"
   | "permissions_request"
   | "inject_preflight"
@@ -2193,6 +2271,9 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "history_entry",
   "history_stats",
   "history_hits",
+  "mirror_history_query",
+  "mirror_history_entry",
+  "mirror_profile",
   "permissions_status",
   "permissions_request",
   "inject_preflight",
@@ -2318,6 +2399,10 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
       return { ...state, sent_texts: event.texts };
     case "nearby":
       return { ...state, nearby: event.devices };
+    case "mirrors":
+      return { ...state, mirrors: event.mirrors };
+    case "phone_outbox":
+      return { ...state, phone_outbox_too_large: event.too_large };
     case "trusted":
     case "unpaired":
     case "identity_changed":

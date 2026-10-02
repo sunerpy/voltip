@@ -539,6 +539,7 @@ export const en: Messages = {
       take: "Phone · {device}",
       typed: "Typed on {device}",
       clipboard: "Clipboard of {device}",
+      standalone: "Phone · {device}",
     },
     filter: {
       all: "All",
