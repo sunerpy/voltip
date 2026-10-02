@@ -30,6 +30,7 @@ import { AiModels } from "./screens/AiModels";
 import { Appearance } from "./screens/Appearance";
 import { Devices } from "./screens/Devices";
 import { Dictionary } from "./screens/Dictionary";
+import { Feedback } from "./screens/Feedback";
 import { History } from "./screens/History";
 import { HistoryEntry } from "./screens/HistoryEntry";
 import { HistorySettings } from "./screens/HistorySettings";
@@ -70,6 +71,7 @@ const PARENT: Partial<Record<Screen, Screen>> = {
   scenes: "settings",
   entry: "history",
   historySettings: "settings",
+  feedback: "settings",
 };
 
 /** One screen on the stack, and what it shows (`MobileShell.param`). */
@@ -316,6 +318,7 @@ function Frame({
             {screen === "history" && <History />}
             {screen === "entry" && <HistoryEntry key={param} />}
             {screen === "historySettings" && <HistorySettings />}
+            {screen === "feedback" && <Feedback />}
           </main>
           {tabRoot && <TabBar />}
           <Dialog

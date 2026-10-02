@@ -1,10 +1,13 @@
-//! In-app feedback (docs/feedback.md). The 反馈 page shows what a report carries, then the shell
-//! posts it to the feedback endpoint (`services/feedback`, a Cloudflare Worker). The endpoint and
-//! its application token are build secrets like the built-in services: `option_env!` bakes them in,
-//! nothing in the tree or the UI names the host. A report carries the user's words, an optional
-//! contact, diagnostics that name no host, no key and no dictation, and the screenshots or screen
-//! recordings the user attached: the page stages them here (`feedback_attachment_add`), the report
-//! declares them, and their bytes follow in chunks with the upload token the endpoint answered.
+//! In-app feedback (docs/feedback.md), shared by the desktop and the phone (user decision
+//! 2026-10-01: the phone works on its own with every feature but the local models). The 反馈 page
+//! shows what a report carries, then the shell posts it to the feedback endpoint
+//! (`services/feedback`, a Cloudflare Worker). The endpoint and its application token are build
+//! secrets like the built-in services: `option_env!` bakes them in, nothing in the tree or the UI
+//! names the host. A report carries the user's words, an optional contact, diagnostics that name no
+//! host, no key and no dictation, and the screenshots or screen recordings the user attached: the
+//! page stages them in the shell (`feedback_attachment_add`), the report declares them, and their
+//! bytes follow in chunks with the upload token the endpoint answered. Moved here from
+//! `apps/desktop/src-tauri/src/feedback.rs`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -344,12 +347,12 @@ fn locale_tag(locale: &str) -> String {
     if ok { tag.to_owned() } else { "unknown".to_owned() }
 }
 
-/// The diagnostics for the state the UI shows now.
-pub fn diagnostics(state: &UiState, locale: &str, session: Option<String>) -> Diagnostics {
+/// The diagnostics for the state the UI shows now, from the shell `app_version`.
+pub fn diagnostics(state: &UiState, locale: &str, session: Option<String>, app_version: &str) -> Diagnostics {
     let engines = &state.engines;
     let on_device = engines.asr_provider == voltip_core::ProviderId::Local;
     Diagnostics {
-        app_version: crate::APP_VERSION.to_owned(),
+        app_version: app_version.to_owned(),
         os: std::env::consts::OS.to_owned(),
         arch: std::env::consts::ARCH.to_owned(),
         session,
@@ -396,18 +399,32 @@ struct Declared<'a> {
     sha256: &'a str,
 }
 
-/// Post one report to `url`, then the `attachments`' bytes in the chunks the endpoint asks for.
-/// Errors carry no host: the endpoint is a build secret.
+/// The HTTP client builder with the trust roots of this platform: on Android, Mozilla's root
+/// store, as voltip-asr and voltip-refine do (the system verifier needs a JNI context the app never
+/// hands it).
+fn client_builder() -> reqwest::ClientBuilder {
+    let builder = reqwest::Client::builder();
+    #[cfg(target_os = "android")]
+    let builder = builder.tls_certs_only(
+        webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().filter_map(|der| reqwest::Certificate::from_der(der.as_ref()).ok()).collect::<Vec<_>>(),
+    );
+    builder
+}
+
+/// Post one report to `url` as `user_agent` (`voltip-desktop/0.0.23`), then the `attachments`'
+/// bytes in the chunks the endpoint asks for. Errors carry no host: the endpoint is a build secret.
+#[allow(clippy::too_many_arguments)]
 pub async fn send(
     url: &str,
     token: Option<&str>,
+    user_agent: &str,
     kind: FeedbackKind,
     message: &str,
     contact: Option<&str>,
     diagnostics: &Diagnostics,
     attachments: &[Staged],
 ) -> Result<Receipt, SendError> {
-    let http = reqwest::Client::builder().user_agent(concat!("voltip-desktop/", env!("VOLTIP_APP_VERSION"))).build().map_err(|_| SendError::Network)?;
+    let http = client_builder().user_agent(user_agent).build().map_err(|_| SendError::Network)?;
     let token = token.filter(|t| !t.is_empty());
     let declared = attachments.iter().map(|a| Declared { name: &a.name, mime: &a.mime, size: a.bytes.len(), sha256: &a.sha256 }).collect();
     let mut request = http.post(url).timeout(SEND_TIMEOUT).json(&Payload { kind, message, contact, diagnostics, attachments: declared });
@@ -468,6 +485,10 @@ async fn put_chunk(http: &reqwest::Client, url: &str, token: Option<&str>, uploa
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    /// What the shells pass: their version and their user agent.
+    const VERSION: &str = "0.0.0-test";
+    const AGENT: &str = "voltip-test/0.0.0";
     use voltip_core::ProviderId;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -485,8 +506,8 @@ mod tests {
 
     #[test]
     fn diagnostics_name_the_platform_and_the_provider_kinds_and_nothing_else() {
-        let d = diagnostics(&state(), "zh-CN", Some("wayland".into()));
-        assert_eq!(d.app_version, crate::APP_VERSION);
+        let d = diagnostics(&state(), "zh-CN", Some("wayland".into()), VERSION);
+        assert_eq!(d.app_version, VERSION);
         assert_eq!(d.os, std::env::consts::OS);
         assert_eq!(d.arch, std::env::consts::ARCH);
         assert_eq!(d.session.as_deref(), Some("wayland"));
@@ -502,7 +523,7 @@ mod tests {
         let mut local = state();
         local.engines.asr_provider = ProviderId::Local;
         local.engines.refine_enabled = false;
-        let d = diagnostics(&local, "<script>", None);
+        let d = diagnostics(&local, "<script>", None, VERSION);
         assert_eq!(d.local_model.as_deref(), Some("qwen3-asr-0.6b"));
         assert_eq!(d.compute.as_deref(), Some("auto"));
         assert_eq!(d.llm_provider, None, "the clean-up is off");
@@ -555,9 +576,9 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let d = diagnostics(&state(), "en", None);
+        let d = diagnostics(&state(), "en", None, VERSION);
         let url = format!("{}/v1/feedback", server.uri());
-        let receipt = send(&url, Some("app-token"), FeedbackKind::Bug, "no paste", Some("me@example.test"), &d, &[]).await.unwrap();
+        let receipt = send(&url, Some("app-token"), AGENT, FeedbackKind::Bug, "no paste", Some("me@example.test"), &d, &[]).await.unwrap();
         assert_eq!(receipt, Receipt { id: "f-1".into() });
         let seen = server.received_requests().await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&seen[0].body).unwrap();
@@ -570,7 +591,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_refusal_has_its_reason() {
-        let d = diagnostics(&state(), "en", None);
+        let d = diagnostics(&state(), "en", None, VERSION);
         for (status, want) in [
             (400, SendError::Invalid),
             (413, SendError::Invalid),
@@ -582,18 +603,21 @@ mod tests {
         ] {
             let server = MockServer::start().await;
             Mock::given(method("POST")).respond_with(ResponseTemplate::new(status)).mount(&server).await;
-            let got = send(&server.uri(), None, FeedbackKind::Idea, "x", None, &d, &[]).await;
+            let got = send(&server.uri(), None, AGENT, FeedbackKind::Idea, "x", None, &d, &[]).await;
             assert_eq!(got, Err(want), "HTTP {status}");
         }
         // A 201 that is not a receipt is the endpoint's failure.
         let server = MockServer::start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(201).set_body_string("ok")).mount(&server).await;
-        assert_eq!(send(&server.uri(), None, FeedbackKind::Other, "x", None, &d, &[]).await, Err(SendError::Server));
+        assert_eq!(send(&server.uri(), None, AGENT, FeedbackKind::Other, "x", None, &d, &[]).await, Err(SendError::Server));
         // Nothing listening: a network failure, and no request went out without the token check.
         let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = closed.local_addr().unwrap().port();
         drop(closed);
-        assert_eq!(send(&format!("http://127.0.0.1:{port}/v1/feedback"), Some(""), FeedbackKind::Other, "x", None, &d, &[]).await, Err(SendError::Network));
+        assert_eq!(
+            send(&format!("http://127.0.0.1:{port}/v1/feedback"), Some(""), AGENT, FeedbackKind::Other, "x", None, &d, &[]).await,
+            Err(SendError::Network)
+        );
     }
 
     fn png(n: usize) -> Vec<u8> {
@@ -665,9 +689,9 @@ mod tests {
         let shot = staged.add("shot.png", "image/png", b"0123456789".to_vec()).unwrap();
         let clip = staged.add("clip.webm", "video/webm", b"abc".to_vec()).unwrap();
         let files = staged.pick(&[shot.id, clip.id]).unwrap();
-        let d = diagnostics(&state(), "en", None);
+        let d = diagnostics(&state(), "en", None, VERSION);
         let url = format!("{}/v1/feedback", server.uri());
-        let receipt = send(&url, Some("app-token"), FeedbackKind::Bug, "look", None, &d, &files).await.unwrap();
+        let receipt = send(&url, Some("app-token"), AGENT, FeedbackKind::Bug, "look", None, &d, &files).await.unwrap();
         assert_eq!(receipt.id, "f-2");
         let seen = server.received_requests().await.unwrap();
         let report: serde_json::Value = serde_json::from_slice(&seen[0].body).unwrap();
@@ -690,7 +714,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_upload_that_cannot_finish_says_the_report_went_out_without_it() {
-        let d = diagnostics(&state(), "en", None);
+        let d = diagnostics(&state(), "en", None, VERSION);
         let staged = Attachments::default();
         let shot = staged.add("shot.png", "image/png", b"0123".to_vec()).unwrap();
         let files = staged.pick(&[shot.id]).unwrap();
@@ -703,7 +727,7 @@ mod tests {
             let server = MockServer::start().await;
             Mock::given(method("POST")).respond_with(ResponseTemplate::new(201).set_body_json(answer.clone())).mount(&server).await;
             Mock::given(method("PUT")).respond_with(ResponseTemplate::new(chunk_status)).mount(&server).await;
-            let got = send(&format!("{}/v1/feedback", server.uri()), None, FeedbackKind::Bug, "x", None, &d, &files).await;
+            let got = send(&format!("{}/v1/feedback", server.uri()), None, AGENT, FeedbackKind::Bug, "x", None, &d, &files).await;
             assert_eq!(got, Err(SendError::Attachments), "{answer}");
         }
         // A chunk the endpoint already has counts as sent.
@@ -713,6 +737,6 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("PUT")).respond_with(ResponseTemplate::new(409)).mount(&server).await;
-        assert!(send(&format!("{}/v1/feedback", server.uri()), None, FeedbackKind::Bug, "x", None, &d, &files).await.is_ok());
+        assert!(send(&format!("{}/v1/feedback", server.uri()), None, AGENT, FeedbackKind::Bug, "x", None, &d, &files).await.is_ok());
     }
 }

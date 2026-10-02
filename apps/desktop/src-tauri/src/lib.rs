@@ -21,7 +21,8 @@ pub mod cli;
 pub mod dictation;
 pub mod exit;
 pub mod export;
-pub mod feedback;
+/// In-app feedback (docs/feedback.md): the client lives in `voltip-cloud`, shared with the phone.
+pub use voltip_cloud::feedback;
 pub mod hotkey;
 #[cfg(target_os = "macos")]
 pub mod keychain_handoff;
@@ -491,7 +492,10 @@ fn project_link_open(link: ProjectLink) -> Result<(), String> {
 #[tauri::command]
 fn feedback_diagnostics(bridge: tauri::State<'_, Bridge>, locale: String) -> feedback::FeedbackInfo {
     let session = hotkey::linux_session().map(|s| s.kind.to_string());
-    feedback::FeedbackInfo { configured: feedback::feedback_url().is_some(), diagnostics: feedback::diagnostics(&bridge.state(), &locale, session) }
+    feedback::FeedbackInfo {
+        configured: feedback::feedback_url().is_some(),
+        diagnostics: feedback::diagnostics(&bridge.state(), &locale, session, APP_VERSION),
+    }
 }
 
 /// Post the 反馈 page's report with the diagnostics it showed and the attachments it staged; the
@@ -513,8 +517,9 @@ async fn feedback_submit(
     let ids = attachments.unwrap_or_default();
     let files = staged.pick(&ids).map_err(|e| e.as_str().to_owned())?;
     let session = hotkey::linux_session().map(|s| s.kind.to_string());
-    let diagnostics = feedback::diagnostics(&bridge.state(), &locale, session);
-    let sent = feedback::send(url, feedback::feedback_token(), kind, &message, contact.as_deref(), &diagnostics, &files).await;
+    let diagnostics = feedback::diagnostics(&bridge.state(), &locale, session, APP_VERSION);
+    let agent = concat!("voltip-desktop/", env!("VOLTIP_APP_VERSION"));
+    let sent = feedback::send(url, feedback::feedback_token(), agent, kind, &message, contact.as_deref(), &diagnostics, &files).await;
     // `Attachments`: the report itself went out, so its files are done with too.
     if matches!(sent, Ok(_) | Err(feedback::SendError::Attachments)) {
         staged.forget(&ids);

@@ -1329,7 +1329,7 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
   - 界面与桌面共用 `@voltip/ui` 的服务商卡片（`ProviderCard`）、预设区（`PresetsSection`、`PresetEditor`）与中文字形（`ChineseScript`），它们经 `FeatureShellProvider` 用各自应用的提示与确认框。手机界面加了底部标签栏「说话」「设置」，「返回」回到打开当前页的那一页。
   - 词典、替换规则与场景（M6b-2，§16.6、§18.11）：命令与桌面相同，场景改为在说话卡片上手动选择；
   - 历史记录（M6b-3）：底部标签栏加「记录」，与「说话」「设置」并列（`apps/mobile/src/screens/History.tsx`）：今天、本周、本月、累计四格统计（`history_stats`，与桌面首页同一套 `homeStats`）；搜索与筛选在核心里执行（`history_query`，`@voltip/ui` 的 `useHistoryList`，每页 100 条，「加载更多」）；按天分组。点开一条进入「记录详情」（`HistoryEntry.tsx`，导航栈的这一项带着条目 id）：润色后 / 原文 / 处理后三种文本，复制、分享、收藏、删除（确认后），时长、字数、模型、预设、场景与耗时；长条目（§22）可以用 AI 预设处理（`useHistoryProcess`），字幕与文本经系统分享面板以文件发出。设置 › 「历史记录」开关保存、选择保留条数（与桌面相同的选项）、清空（确认后）。「说话」页的「最近结果」有「全部记录」链接。桌面的历史辅助函数（`history-stats.ts`）与三个 hook 移到 `@voltip/shared` / `@voltip/ui`，两端共用。
-  - 反馈随后加入（M6b-3 第二批）。
+  - 反馈（M6b-3 第二批，docs/feedback.md）：设置 ›「反馈」是桌面同一张表单的单栏页面，附件从照片选择器添加；客户端从桌面壳移到 `voltip_cloud::feedback`，两个壳共用，Android 发布构建同样编入反馈地址。
 - **命令**：`dictation_start`（Android 上先申请麦克风权限，被拒时回 `MICROPHONE_DENIED`，与 `phone_take_start` 相同）/ `dictation_stop` / `dictation_cancel` 交给核心；`hotkey_edge` 仍被拒（`HOTKEY_UNAVAILABLE`，手机没有快捷键）。`paste_text` 在手机上把文字写进剪贴板，回 `copied { clipboard_only }`。新命令 `phone_share_text { text }` 经 `SharePlugin.kt`（`ACTION_SEND`）打开系统分享面板，文字须非空白、不超过 `MAX_PASTE_TEXT_CHARS`；桌面壳回 `SHARE_UNAVAILABLE`。
 - **历史**：结果进手机自己的 `history.sqlite3`（`origin` 为空：本机产生）；`history_query` / `history_entry` / `history_stats` / `history_hits` 与桌面一样经 bridge 读取。发给电脑的听写记在电脑的历史里，不在手机上。
 - **长录音**：手机的采集与桌面一样提供整段录音的流（`pcm_stream`），内存里只留前两分钟，超过时核心按 §22 写录音文件并分段识别。

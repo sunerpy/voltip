@@ -33,10 +33,6 @@ tauri-build = { version = "=2.6.3", features = [] }
 [dependencies]
 async-trait.workspace = true
 directories.workspace = true
-# The 反馈 page's attachments (src/feedback.rs): their SHA-256 and staging ids; the versions the
-# core already builds.
-hex.workspace = true
-sha2.workspace = true
 uuid.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -61,9 +57,6 @@ clap.workspace = true
 # the CLI's v2 artefacts are the raw NSIS installer / `.app.tar.gz` / AppImage.
 tauri-plugin-updater = { version = "=2.12.0", default-features = false }
 parking_lot.workspace = true
-# The 反馈 dialog's report to the feedback endpoint (src/feedback.rs); the version and features the
-# ASR and refine clients already build.
-reqwest.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

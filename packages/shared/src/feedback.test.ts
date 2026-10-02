@@ -1,7 +1,6 @@
 // In-app feedback (docs/feedback.md): the wire schemas mirror the shell's src/feedback.rs, both
 // backends answer the two queries, and the mock plays the endpoint.
 import {
-  FEEDBACK_UNAVAILABLE,
   MOCK_FEEDBACK_MS,
   MockBackend,
   cleanAttachmentName,
@@ -99,9 +98,10 @@ describe("feedback", () => {
     await expect(refused).rejects.toThrow("storage_full");
     expect(full.feedbackSent).toEqual([]);
     expect(full.feedbackStaged).toHaveLength(1);
-    await expect(new MockBackend({ role: "phone" }).feedbackAttachmentAdd(png)).rejects.toThrow(
-      FEEDBACK_UNAVAILABLE,
-    );
+    // The phone stages files like the desktop (user decision 2026-10-01; it refused before).
+    expect(await new MockBackend({ role: "phone" }).feedbackAttachmentAdd(png)).toMatchObject({
+      name: png.name,
+    });
   });
 
   it("cleanAttachmentName is the shell's clean_name", () => {
@@ -228,12 +228,29 @@ describe("feedback", () => {
     expect(failing.feedbackSent).toEqual([]);
   });
 
-  it("the phone sends no feedback", async () => {
+  it("the phone sends feedback of its own, naming the phone (user decision 2026-10-01; it refused before)", async () => {
+    vi.useFakeTimers();
     const phone = new MockBackend({ role: "phone" });
-    await expect(phone.feedbackDiagnostics("zh-CN")).rejects.toThrow(FEEDBACK_UNAVAILABLE);
-    await expect(
-      phone.feedbackSubmit({ kind: "bug", message: "x", contact: null, locale: "zh-CN" }),
-    ).rejects.toThrow(FEEDBACK_UNAVAILABLE);
+    const info = await phone.feedbackDiagnostics("zh-CN");
+    expect(info.configured).toBe(true);
+    expect(info.diagnostics).toMatchObject({ os: "android", arch: "aarch64", locale: "zh-CN" });
+    expect(info.diagnostics.session).toBeUndefined();
+    const staged = await phone.feedbackAttachmentAdd({
+      name: "截图.png",
+      type: "image/png",
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    const sent = phone.feedbackSubmit({
+      kind: "bug",
+      message: "x",
+      contact: null,
+      locale: "zh-CN",
+      attachments: [staged.id],
+    });
+    vi.advanceTimersByTime(MOCK_FEEDBACK_MS);
+    await expect(sent).resolves.toEqual({ id: "feedback-1" });
+    expect(phone.feedbackSent).toHaveLength(1);
+    vi.useRealTimers();
   });
 
   it("TauriBackend invokes both commands and validates what comes back", async () => {

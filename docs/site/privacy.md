@@ -50,7 +50,7 @@ When no paired computer is online, the phone transcribes on its own: the recordi
 
 ## Feedback
 
-The **Feedback** dialog sends only what it lists before you send: your message, an optional contact, the attachments you add, and non-sensitive details such as the app version, the operating system and which kind of service is in use. It never sends dictation text, history, keys, the dictionary or the rules.
+The **Feedback** dialog on the computer and the **Feedback** page on the phone send only what they list before you send: your message, an optional contact, the attachments you add, and non-sensitive details such as the app version, the operating system and which kind of service is in use. It never sends dictation text, history, keys, the dictionary or the rules.
 
 ## Updates
 

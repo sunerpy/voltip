@@ -18,8 +18,8 @@ use voltip_core::ui::{UI_EVENT_NAME, UiState};
 use voltip_core::{CoreConfig, Settings, SettingsStore, ThemeId};
 use voltip_identity::MemorySecretStore;
 use voltip_mobile_lib::{
-    BROWSER_UNAVAILABLE, COMMANDS, FEEDBACK_UNAVAILABLE, HOTKEY_UNAVAILABLE, KEYSTORE_SERVICE, MODELS_UNAVAILABLE, UPDATE_UNAVAILABLE, build_app, data_dir,
-    platform_label, production_config, secret_store,
+    BROWSER_UNAVAILABLE, COMMANDS, HOTKEY_UNAVAILABLE, KEYSTORE_SERVICE, MODELS_UNAVAILABLE, UPDATE_UNAVAILABLE, build_app, data_dir, platform_label,
+    production_config, secret_store,
 };
 use voltip_pairing::PairingState;
 use voltip_tauri_bridge::Bridge;
@@ -494,10 +494,21 @@ fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
         assert_eq!(invoke(webview, "provider_console_open", json!({ "provider": "groq" })), Err(Value::String(BROWSER_UNAVAILABLE.into())));
         assert!(invoke(webview, "provider_console_open", json!({ "provider": "local" })).unwrap_err().as_str().unwrap().contains("no key page"));
         assert_eq!(invoke(webview, "project_link_open", json!({ "link": "source" })), Err(Value::String(BROWSER_UNAVAILABLE.into())));
-        // Feedback goes from the computer (docs/feedback.md).
-        assert_eq!(invoke(webview, "feedback_diagnostics", json!({ "locale": "zh-CN" })), Err(Value::String(FEEDBACK_UNAVAILABLE.into())));
+        // Feedback goes from the phone too (docs/feedback.md; user decision 2026-10-01, it was
+        // refused before): what a report would carry names no host and no graphical session, and
+        // a build without the endpoint refuses to send.
+        let info = invoke(webview, "feedback_diagnostics", json!({ "locale": "zh-CN" })).unwrap();
+        assert_eq!(info["configured"], voltip_cloud::feedback::feedback_url().is_some(), "{info}");
+        assert_eq!(info["diagnostics"]["os"], std::env::consts::OS, "{info}");
+        assert_eq!(info["diagnostics"]["locale"], "zh-CN", "{info}");
+        assert!(info["diagnostics"].get("session").is_none(), "{info}");
+        assert_eq!(info["diagnostics"]["app_version"], core_state(webview).app_version, "{info}");
         let report = json!({ "kind": "bug", "message": "x", "contact": null, "locale": "zh-CN" });
-        assert_eq!(invoke(webview, "feedback_submit", report), Err(Value::String(FEEDBACK_UNAVAILABLE.into())));
+        if voltip_cloud::feedback::feedback_url().is_none() {
+            assert_eq!(invoke(webview, "feedback_submit", report), Err(Value::String("not_configured".into())));
+        }
+        assert_eq!(invoke(webview, "feedback_attachment_remove", json!({ "id": "nope" })), Ok(Value::Null));
+        assert_eq!(invoke(webview, "feedback_attachments_clear", json!({})), Ok(Value::Null));
         let engines = json!({ "refine_enabled": false, "inject": "clipboard_only" });
         assert_eq!(invoke(webview, "settings_set_engines", json!({ "engines": engines })), Ok(Value::Null));
         wait_state(webview, |s| !s.engines.refine_enabled);

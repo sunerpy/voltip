@@ -234,6 +234,15 @@ class CandidateBuild(unittest.TestCase):
             with self.subTest(job=job):
                 self.assertRegex(self.jobs[job], r"(?m)^    needs: \[[^\]]*\bdevice-android\b")
 
+    def test_every_leg_bakes_in_the_feedback_endpoint(self) -> None:
+        # The phone sends feedback of its own too (user decision 2026-10-01): a leg without the
+        # endpoint would ship a 反馈 page that can only point to GitHub.
+        for leg in self.LEGS:
+            with self.subTest(leg=leg):
+                body = self.jobs[leg]
+                self.assertIn("VOLTIP_FEEDBACK_URL: ${{ secrets.VOLTIP_FEEDBACK_URL }}", body)
+                self.assertIn("VOLTIP_FEEDBACK_TOKEN: ${{ secrets.VOLTIP_FEEDBACK_TOKEN }}", body)
+
     def test_regression_the_key_alias_is_no_secret(self) -> None:
         # Candidate 36844362994 (0.0.18, 2026-10-01): the alias was the secret ANDROID_KEY_ALIAS,
         # whose value is the project's name, so GitHub masked "voltip" in every log line of
