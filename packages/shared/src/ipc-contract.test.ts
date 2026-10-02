@@ -1056,7 +1056,8 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       settings: fixture.settings.engines,
       userKeys: new Set(["provider-key.groq"]),
       builtIn: {
-        asr: { model: "Qwen/Qwen3-ASR-1.7B", key: true },
+        // contract.rs's `BUILT` previews (`asr_live_preview`): the fixture's source is `cloud`.
+        asr: { model: "Qwen/Qwen3-ASR-1.7B", key: true, preview: true },
         llm: { model: "qwen/qwen3.8-27b", key: true },
       },
       local: { id: "qwen3-asr-0.6b", name: local?.name ?? "", installed: true },

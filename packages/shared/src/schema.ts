@@ -81,6 +81,10 @@ export const OUTPUT_MODES = ["whole_take", "streaming_final", "live_inject"] as 
 export const outputModeSchema = z.enum(OUTPUT_MODES);
 export type OutputMode = z.infer<typeof outputModeSchema>;
 
+/** `voltip_core::LiveSource` (docs/dictation.md §11.8). */
+export const liveSourceSchema = z.enum(["cloud", "local"]);
+export type LiveSource = z.infer<typeof liveSourceSchema>;
+
 /** The two modes that ride on the streaming recogniser (they need `live_preview_ready`). */
 export function isStreamingOutputMode(mode: OutputMode): boolean {
   return mode !== "whole_take";
@@ -1102,8 +1106,11 @@ export const engineStatusSchema = z.object({
   local_model: z.string().nullable().optional(),
   /** On-device and every model file present and checksummed. */
   local_ready: z.boolean().default(false),
-  /** `live_preview` is on and the streaming model is installed (independent of the provider). */
+  /** `live_preview` is on and has a source (`live_source`). */
   live_preview_ready: z.boolean().default(false),
+  /** Where the live preview comes from (docs/dictation.md §11.8): the built-in service decoding
+   *  the sentence again, or the library's streaming model; absent when there is none. */
+  live_source: liveSourceSchema.optional(),
   /** The mode the next `dictation_start` really runs (§12): `output_mode`, or `whole_take` when a
    *  streaming mode was asked for but the streaming model is not ready. */
   effective_output_mode: outputModeSchema.default("whole_take"),

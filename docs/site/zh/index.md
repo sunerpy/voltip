@@ -134,7 +134,7 @@ home:
         keys: [Ctrl, Alt, Space]
         body: 此时才会打开麦克风。屏幕底部的悬浮窗显示输入音量。
       - title: 说话
-        body: 安装实时识别模型后，识别出的文字会随着说话显示在悬浮窗里。
+        body: 使用内置服务时，或安装实时识别模型后，识别出的文字会随着说话显示在悬浮窗里。
       - title: 松开按键
         body: 语音被识别，按你的词典纠正，可选经过 AI 润色，再按替换规则改写。
       - title: 文字出现在光标处
@@ -245,9 +245,9 @@ home:
       - title: Google Play 上架
         status: building
         body: Android 应用已在发布页面提供。Google Play 上架正在准备中，按 Google 的要求需要先完成封闭测试。
-      - title: 云端流式识别
+      - title: 其他云端服务的流式识别
         status: planned
-        body: 目前边说边出字只使用本地的实时识别模型，今后计划支持云端服务的流式识别结果。
+        body: 使用内置服务时，边说边出字由内置服务提供；其他云端服务的流式识别结果尚未支持。
       - title: 更多本地模型
         status: planned
         body: 包括 Whisper 等模型，以及在 AMD 和 Intel 显卡上的实测。

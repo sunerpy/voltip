@@ -18,7 +18,7 @@ With a local model, your recordings are recognised on your computer and no audio
 | Qwen3-ASR 1.7B | 1.7 GB | 30 languages, detected automatically | GPU or CPU | The most accurate, and slower. The same model the built-in service uses |
 | SenseVoice Small | 240 MB | Chinese, English, Japanese, Korean, Cantonese | CPU | The smallest download. Writes punctuation and normalises numbers |
 | Paraformer | 227 MB | Chinese, including dialects, mixed with English | CPU | More accurate on Chinese. Writes no punctuation; AI polish can add it |
-| Live transcription | 169 MB | Chinese and English | CPU | Shows the words while you speak. The final text still comes from the model above |
+| Live transcription | 169 MB | Chinese and English | CPU | Shows the words while you speak. The final text still comes from the model above; not needed with the built-in service |
 
 The **Language** setting on the Speech models page's **Recognition** tab is passed to the models and services that accept one. Qwen3-ASR always detects the language itself.
 

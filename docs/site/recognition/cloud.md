@@ -10,6 +10,8 @@ Instead of a local model, recognition and AI polish can use a service on the int
 
 Release packages come with a built-in service, so dictation and AI polish work before you set anything up. It is run by the Voltip project and needs no key. Builds from source have no built-in service.
 
+With the built-in service, the overlay shows the words while you speak (live preview), with no live transcription model to download: the sentence you are saying is sent about every second, and the preview updates about every 2 seconds. The final text is still the transcript of the whole recording after you release the shortcut. **Live preview** can be turned off under **Speech models → Recognition**.
+
 ## Providers
 
 | Provider | Recognition | AI polish | Key |

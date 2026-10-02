@@ -15,6 +15,8 @@ What leaves your computer depends on the services you choose. The home page and 
 | Cloud provider | The recording, the model name, your key, and your dictionary's correct spellings as a hint | The provider you chose, and no one else |
 | The phone on its own | The recording | The built-in service run by the Voltip project |
 
+With the built-in service and the live preview on (the default), the sentence you are saying is sent about every second while you speak, to show the words in the overlay; if you then cancel the dictation, what was sent has already reached the built-in service. With **Live preview** off (**Speech models → Recognition**), the recording is sent only when you release the shortcut.
+
 With a local model, the only network use is downloading the model file, which is verified against a SHA-256 hash.
 
 ## AI polish and voice edit

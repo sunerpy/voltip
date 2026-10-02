@@ -9,6 +9,7 @@ pub mod engine;
 pub mod fakes;
 pub mod long;
 pub mod ports;
+pub mod redecode;
 pub mod remote;
 pub mod wav;
 
