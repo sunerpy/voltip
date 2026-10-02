@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.28](https://github.com/sunerpy/voltip/compare/v0.0.27...v0.0.28) (2026-10-02)
+
+
+### Features
+
+* **models:** download a model by hand and import it ([#71](https://github.com/sunerpy/voltip/issues/71)) ([5d48f8f](https://github.com/sunerpy/voltip/commit/5d48f8f7dbbd1b61374f0dd8f028f289941afde1))
+
 ## [0.0.27](https://github.com/sunerpy/voltip/compare/v0.0.26...v0.0.27) (2026-10-02)
 
 
