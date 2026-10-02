@@ -849,6 +849,102 @@ async fn regression_stalled_peer_handshake_times_out() {
     assert!(matches!(list[0].connection, DeviceConnection::Offline), "{list:?}");
 }
 
+/// A relay-only node whose test hooks `hooks` sets.
+fn relay_node(name: &str, url: &str, hooks: impl FnOnce(&mut voltip_core::TestHooks)) -> Node {
+    let settings = Settings { relay_url: Some(url.to_owned()), relay_enabled: true, ..Settings::default() };
+    node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), name, &settings, |cfg| {
+        cfg.direct_enabled = false;
+        hooks(&mut cfg.test_hooks);
+    })
+}
+
+async fn wait_not_online(node: &mut Node) {
+    wait(node, |e| match e {
+        CoreEvent::Devices(list) if !list.is_empty() && !list.iter().any(|d| matches!(d.connection, DeviceConnection::Online { .. })) => Some(()),
+        _ => None,
+    })
+    .await;
+}
+
+/// Pair `desk` and `phone`; the one that starts the peer handshakes (the smaller key) first, and
+/// each side's record of the other.
+async fn pair_ordered<'a>(
+    desk: &'a mut Node,
+    phone: &'a mut Node,
+) -> ((&'a mut Node, voltip_identity::TrustedDevice), (&'a mut Node, voltip_identity::TrustedDevice)) {
+    let (phone_record, desk_record) = pair_by_code(desk, phone).await;
+    if desk_record.public_key.0 < phone_record.public_key.0 {
+        ((desk, phone_record), (phone, desk_record))
+    } else {
+        ((phone, desk_record), (desk, phone_record))
+    }
+}
+
+/// Text from each side reaches the other.
+async fn texts_both_ways(a: &mut Node, a_peer: &voltip_identity::TrustedDevice, b: &mut Node, b_peer: &voltip_identity::TrustedDevice) {
+    async fn text(from: &mut Node, to: &mut Node, peer: &voltip_identity::TrustedDevice, body: &str) {
+        from.handle.send(CoreCommand::SendText { to: peer.public_key, body: body.into() }).await.unwrap();
+        let got = wait(to, |e| if let CoreEvent::Message { body, .. } = e { Some(body.clone()) } else { None }).await;
+        assert_eq!(got, body);
+    }
+    text(a, b, a_peer, "一").await;
+    text(b, a, b_peer, "二").await;
+}
+
+/// regression (2026-10-02, the Windows build host): the responder gave up waiting for the
+/// handshake's last message just before it came, while the initiator already had its channel.
+/// Each side then dropped all the other sent until a connection was lost (a phone's records never
+/// reached the computer). The initiator, not heard from on its new channel, starts over
+/// (docs/dictation.md §20.8).
+#[tokio::test]
+async fn regression_a_responder_that_missed_the_last_handshake_message_is_asked_again() {
+    let (url, _stop, _relay) = relay().await;
+    // The handshake's third message (64 bytes, which no sealed frame is) is lost once, at the
+    // side that responds.
+    let lose_third = |hooks: &mut voltip_core::TestHooks| {
+        let lost = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        hooks.drop_peer_payload = Some(Arc::new(move |payload: &[u8]| payload.len() == 64 && !lost.swap(true, std::sync::atomic::Ordering::SeqCst)));
+    };
+    let mut desk = relay_node("Desk", &url, lose_third);
+    let mut phone = relay_node("Phone", &url, lose_third);
+    for n in [&mut desk, &mut phone] {
+        wait(n, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    }
+    let ((initiator, initiator_peer), (responder, responder_peer)) = pair_ordered(&mut desk, &mut phone).await;
+    // The responder has a channel only from a second handshake on.
+    tokio::time::timeout(Duration::from_secs(30), wait_online(responder)).await.expect("the responder is asked again");
+    texts_both_ways(initiator, &initiator_peer, responder, &responder_peer).await;
+}
+
+/// regression (2026-10-02): an initiator that heard nothing on its new channel starts over, and a
+/// responder whose channel is up answers the new handshake instead of dropping it as a frame it
+/// cannot open (docs/dictation.md §20.8).
+#[tokio::test]
+async fn regression_a_responder_with_a_channel_answers_an_initiator_that_starts_over() {
+    use voltip_protocol::app::AppMessage;
+    let (url, _stop, _relay) = relay().await;
+    // The first device info each side sends is lost: the initiator hears nothing on its channel.
+    let quiet = |hooks: &mut voltip_core::TestHooks| {
+        let lost = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        hooks.drop_app =
+            Some(Arc::new(move |msg: &AppMessage| matches!(msg, AppMessage::DeviceInfoUpdate { .. }) && !lost.swap(true, std::sync::atomic::Ordering::SeqCst)));
+    };
+    let mut desk = relay_node("Desk", &url, quiet);
+    let mut phone = relay_node("Phone", &url, quiet);
+    for n in [&mut desk, &mut phone] {
+        wait(n, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    }
+    let ((initiator, initiator_peer), (responder, responder_peer)) = pair_ordered(&mut desk, &mut phone).await;
+    // Up, given up on, and up again: the responder answered the second handshake.
+    let restarted = async {
+        wait_online(initiator).await;
+        wait_not_online(initiator).await;
+        wait_online(initiator).await;
+    };
+    tokio::time::timeout(Duration::from_secs(30), restarted).await.expect("the second handshake is answered");
+    texts_both_ways(initiator, &initiator_peer, responder, &responder_peer).await;
+}
+
 /// A desktop whose recogniser is ready: the custom endpoint (the fake factory answers for it).
 fn desktop_ready(name: &str, relay_url: &str) -> Node {
     let mut settings = Settings { relay_url: Some(relay_url.to_owned()), relay_enabled: true, ..Settings::default() };

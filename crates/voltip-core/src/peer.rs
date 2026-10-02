@@ -55,8 +55,8 @@ pub(crate) const HANDSHAKE_RETRY_MAX: Duration = Duration::from_secs(60);
 pub(crate) enum Incoming {
     /// A first message on an idle path: answer it.
     Start,
-    /// The responder waits for message 3 and a first message came: the initiator gave up and
-    /// started over, so answer the new one.
+    /// A first message came to a responder waiting for message 3, or to a responder's secure
+    /// channel: the initiator gave up and started over, so answer the new one.
     Restart,
     /// The message the handshake waits for.
     Feed,
@@ -69,6 +69,15 @@ pub(crate) enum Incoming {
 pub(crate) struct SecureSession {
     pub(crate) channel: SecureChannel,
     pub(crate) bulk: BulkPath,
+    /// This side sent the handshake's first message.
+    pub(crate) initiated: bool,
+    /// The other side has been heard on this channel. A responder knows it from the handshake's
+    /// last message; an initiator only from the first message it opens, because its last
+    /// handshake message may not have arrived before the responder gave up.
+    pub(crate) heard: bool,
+    /// When the channel came up: an initiator not heard from by then plus the handshake's
+    /// deadline starts over ([`PeerPath::expire_unheard`]).
+    pub(crate) since: Instant,
 }
 
 /// One rendezvous session with a peer on one link.
@@ -103,7 +112,22 @@ impl PeerPath {
         }
     }
 
-    /// Sort a payload that arrived while the channel is not up.
+    /// An initiator's channel on which the other side has not been heard `limit` after it came up
+    /// (docs/dictation.md §20.8): the responder may have given up before the handshake's last
+    /// message arrived, and then nothing this side sends is read. Back to idle, as for a stalled
+    /// handshake; the retry starts a new one, which the responder answers.
+    pub(crate) fn expire_unheard(&mut self, now: Instant, limit: Duration) -> bool {
+        match &self.phase {
+            PeerPhase::Secure(s) if !s.heard && now.duration_since(s.since) >= limit => {
+                self.phase = PeerPhase::Idle;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Sort a payload that arrived while the channel is not up, or a first message on a
+    /// responder's channel (no sealed frame has that length, see `SecureChannel::seal`).
     pub(crate) fn classify(&self, len: usize) -> Incoming {
         let [first, _, third] = HANDSHAKE_MESSAGE_LENS;
         match &self.phase {
@@ -113,6 +137,7 @@ impl PeerPath {
                 Some(expected) if expected == third && len == first && hs.role() == Role::Responder => Incoming::Restart,
                 _ => Incoming::Drop,
             },
+            PeerPhase::Secure(s) if !s.initiated && len == first => Incoming::Restart,
             _ => Incoming::Drop,
         }
     }
@@ -164,9 +189,16 @@ impl PeerPath {
         let PeerPhase::Handshaking(hs) = std::mem::replace(&mut self.phase, PeerPhase::Idle) else {
             return Err(voltip_crypto::CryptoError::OutOfOrder { expected: "handshaking" });
         };
+        let initiated = hs.role() == Role::Initiator;
         let outcome = (*hs).finish()?;
         let remote = outcome.remote_static;
-        self.phase = PeerPhase::Secure(Box::new(SecureSession { channel: SecureChannel::new(outcome.cipher), bulk: BulkPath::default() }));
+        self.phase = PeerPhase::Secure(Box::new(SecureSession {
+            channel: SecureChannel::new(outcome.cipher),
+            bulk: BulkPath::default(),
+            initiated,
+            heard: !initiated,
+            since: Instant::now(),
+        }));
         self.handshake_started = None;
         self.retry_at = None;
         self.retry_backoff = HANDSHAKE_RETRY_MIN;
@@ -289,9 +321,55 @@ mod tests {
         assert!(done);
         assert_eq!(retry.finish().unwrap(), kb.public);
         assert_eq!(responder.finish().unwrap(), ka.public);
-        assert_eq!(retry.classify(first), Incoming::Drop, "a secure path sorts nothing");
+        for len in [first, second, third, 97] {
+            assert_eq!(retry.classify(len), Incoming::Drop, "an initiator's secure path sorts nothing: {len}");
+        }
+        // A responder's channel takes a first message as the initiator starting over.
+        assert_eq!(responder.classify(first), Incoming::Restart);
+        for len in [second, third, 97] {
+            assert_eq!(responder.classify(len), Incoming::Drop, "{len}");
+        }
         idle.phase = PeerPhase::IdentityChanged { presented: PublicKey([1; 32]) };
         assert_eq!(idle.classify(first), Incoming::Drop);
+    }
+
+    /// regression (2026-10-02, the Windows build host): a responder that gave up before the
+    /// handshake's last message arrived left the initiator on a channel nobody read, for good.
+    /// An initiator not heard from on its new channel within the deadline is back to idle (and
+    /// retries); a responder heard the initiator in the handshake itself.
+    #[test]
+    fn regression_an_initiator_unheard_on_its_new_channel_starts_over() {
+        let (ka, kb) = keys();
+        let mut initiator = PeerPath::new(LinkId::Relay);
+        let mut responder = PeerPath::new(LinkId::Relay);
+        let m1 = initiator.begin(&ka, Role::Initiator).unwrap().unwrap();
+        responder.begin(&kb, Role::Responder).unwrap();
+        let (m2, _) = responder.handshake_input(&m1).unwrap();
+        let (m3, done) = initiator.handshake_input(&m2.unwrap()).unwrap();
+        assert!(done);
+        initiator.finish().unwrap();
+        responder.handshake_input(&m3.unwrap()).unwrap();
+        responder.finish().unwrap();
+        let limit = Duration::from_secs(15);
+        let since = match &initiator.phase {
+            PeerPhase::Secure(s) => {
+                assert!(s.initiated && !s.heard);
+                s.since
+            }
+            _ => panic!("secure"),
+        };
+        assert!(matches!(&responder.phase, PeerPhase::Secure(s) if !s.initiated && s.heard));
+        assert!(!initiator.expire_unheard(since + limit - Duration::from_millis(1), limit));
+        assert!(!responder.expire_unheard(since + limit * 2, limit), "a responder heard the initiator");
+        assert!(initiator.expire_unheard(since + limit, limit));
+        assert!(matches!(initiator.phase, PeerPhase::Idle));
+        // Heard in time, it stays.
+        let mut heard = PeerPath::new(LinkId::Relay);
+        heard.phase = std::mem::replace(&mut responder.phase, PeerPhase::Idle);
+        if let PeerPhase::Secure(s) = &mut heard.phase {
+            s.initiated = true;
+        }
+        assert!(!heard.expire_unheard(since + limit * 2, limit));
     }
 
     /// regression (plan gate, M7 design round 7): a relay handshake that failed is tried again by

@@ -149,6 +149,10 @@ pub struct CoreConfig {
 #[doc(hidden)]
 pub type DropApp = Arc<dyn Fn(&AppMessage) -> bool + Send + Sync>;
 
+/// Decides whether a test's transport loses a payload from a peer (sealed or a handshake message).
+#[doc(hidden)]
+pub type DropPayload = Arc<dyn Fn(&[u8]) -> bool + Send + Sync>;
+
 /// Ways the end-to-end tests disturb a core's traffic (never set by a shell).
 #[doc(hidden)]
 #[derive(Clone, Default)]
@@ -159,6 +163,8 @@ pub struct TestHooks {
     pub relay_write_gate: Option<Arc<tokio::sync::RwLock<()>>>,
     /// A computer answers a phone's request only once it is this old.
     pub answer_delay: Duration,
+    /// A payload from a peer this returns `true` for is dropped before it is read.
+    pub drop_peer_payload: Option<DropPayload>,
 }
 
 impl std::fmt::Debug for TestHooks {
@@ -167,6 +173,7 @@ impl std::fmt::Debug for TestHooks {
             .field("drop_app", &self.drop_app.is_some())
             .field("relay_write_gate", &self.relay_write_gate.is_some())
             .field("answer_delay", &self.answer_delay)
+            .field("drop_peer_payload", &self.drop_peer_payload.is_some())
             .finish()
     }
 }
@@ -2566,6 +2573,9 @@ impl Runtime {
             mirror: self.config.sync_role == crate::sync::SyncRole::Computer,
         };
         tracing::debug!(peer = %key.fingerprint(), hints = ?self.lan_hints(), "announcing device info");
+        if self.config.test_hooks.drop_app.as_ref().is_some_and(|drop| drop(&msg)) {
+            return;
+        }
         let Some(st) = self.peers.get_mut(&key) else { return };
         let Some(path) = st.best_secure_path() else {
             tracing::debug!(peer = %key.fingerprint(), "no secure path to announce on");
@@ -2778,15 +2788,24 @@ impl Runtime {
     }
 
     async fn on_peer_bytes(&mut self, key: PublicKey, link: LinkId, session_id: SessionId, payload: Vec<u8>) {
+        if self.config.test_hooks.drop_peer_payload.as_ref().is_some_and(|drop| drop(&payload)) {
+            return;
+        }
         let local = self.identity.keypair.clone();
         let initiator = is_initiator(&local.public, &key);
         let Some(p) = self.peers.get_mut(&key).and_then(|st| st.path(link)) else { return };
-        if matches!(p.phase, PeerPhase::Idle | PeerPhase::Handshaking(_)) {
-            // docs/dictation.md §20.8: a payload is a handshake message only when it has the length
-            // the handshake waits for; anything else is a frame of a session that has ended.
-            match p.classify(payload.len()) {
+        // docs/dictation.md §20.8: a payload is a handshake message only when it has the length
+        // the handshake waits for; anything else is a frame of a session that has ended. On a
+        // responder's secure channel a first message means the initiator heard nothing back and
+        // started over.
+        let incoming = p.classify(payload.len());
+        if !p.is_secure() || incoming == Incoming::Restart {
+            match incoming {
                 // The peer initiated (or gave up and started over); we are the responder.
                 Incoming::Start | Incoming::Restart => {
+                    if p.is_secure() {
+                        tracing::info!(peer = %key.fingerprint(), "the peer started the secure channel over");
+                    }
                     if p.begin(&local, Role::Responder).is_err() {
                         return;
                     }
@@ -2818,7 +2837,7 @@ impl Runtime {
                     self.finish_peer_handshake(key, link).await;
                 }
             }
-            PeerPhase::Secure(sc) => match sc.channel.open(&payload) {
+            PeerPhase::Secure(sc) => match sc.channel.open(&payload).inspect(|_| sc.heard = true) {
                 Ok(AppMessage::Ping { seq, .. }) => {
                     if let Ok(bytes) = sc.channel.seal(&AppMessage::pong(seq)) {
                         let _ = self.send_on(link, RelayFrame::forward(session_id, bytes)).await;
@@ -2949,6 +2968,12 @@ impl Runtime {
             let initiator = is_initiator(&local, key);
             for p in &mut st.paths {
                 if p.expire_stalled_handshake(now, limit) {
+                    p.handshake_failed(now, initiator);
+                    stalled = true;
+                }
+                // docs/dictation.md §20.8: the responder never answered on the new channel.
+                if p.expire_unheard(now, limit) {
+                    tracing::info!(peer = %key.fingerprint(), "the peer never answered on the new secure channel; starting over");
                     p.handshake_failed(now, initiator);
                     stalled = true;
                 }
