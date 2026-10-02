@@ -1,6 +1,6 @@
 {
   "name": "voltip-workspace",
-  "version": "0.0.28",
+  "version": "0.0.29",
   "license": "AGPL-3.0-or-later",
   "private": true,
   "description": "Voltip web workspace: UI kit, IPC contract, desktop and mobile webviews.",
