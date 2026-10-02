@@ -17,6 +17,11 @@ use voltip_relay::RelayConfig;
 use voltip_relay::server::RelayHandle;
 use voltip_transport::ConnectionState;
 
+/// How long a wait below gives the state it waits for. A hang guard, not a speed check: CI's
+/// coverage run is several times slower than a laptop, and the Windows build host took 2.4 times
+/// as long as one for this file (2026-10-02).
+const PATIENCE: Duration = Duration::from_secs(90);
+
 struct Node {
     handle: CoreHandle,
     events: mpsc::Receiver<CoreEvent>,
@@ -80,7 +85,7 @@ fn restart(old: Node, name: &str, url: &str, role: SyncRole, tune: impl FnOnce(&
 }
 
 async fn wait<T>(node: &mut Node, mut pick: impl FnMut(&CoreEvent) -> Option<T>) -> T {
-    wait_for(node, Duration::from_secs(30), &mut pick).await
+    wait_for(node, PATIENCE, &mut pick).await
 }
 
 async fn wait_for<T>(node: &mut Node, limit: Duration, pick: &mut impl FnMut(&CoreEvent) -> Option<T>) -> T {
@@ -197,7 +202,7 @@ async fn the_computers_history_reaches_the_phone_and_follows_every_change() {
 
     desk.handle.send(CoreCommand::HistoryStar(seeded[1].id, true)).await.unwrap();
     wait_mirror(&mut phone, &key, |v| v.state == MirrorSyncState::UpToDate && v.entries == 5).await;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let deadline = tokio::time::Instant::now() + PATIENCE;
     while !copy(&phone, &key).contains(&(seeded[1].id, true)) {
         assert!(tokio::time::Instant::now() < deadline, "the star arrives");
         wait(&mut phone, |e| matches!(e, CoreEvent::Mirrors(_)).then_some(())).await;
@@ -273,7 +278,7 @@ async fn the_computers_settings_reach_the_phone_and_the_phone_keeps_its_own_look
         })
         .await
         .unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let deadline = tokio::time::Instant::now() + PATIENCE;
     loop {
         let terms: Vec<String> = phone
             .mirrors
@@ -314,7 +319,7 @@ async fn the_phones_own_records_go_to_the_computer_as_copies() {
     }
     drop(desk_store);
     // The phone keeps its records and remembers the computer has them.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let deadline = tokio::time::Instant::now() + PATIENCE;
     while uploaded_rows(phone.dir.path()) < 3 {
         assert!(tokio::time::Instant::now() < deadline, "the confirmation is recorded");
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -363,9 +368,9 @@ fn own_ids(dir: &std::path::Path) -> Vec<Uuid> {
     HistoryStore::open(dir).recent(20_000).into_iter().map(|e| e.id).collect()
 }
 
-/// Wait until `cond` holds, re-checking on every event of `node` (at most 30 s).
+/// Wait until `cond` holds, re-checking on every event of `node` (at most [`PATIENCE`]).
 async fn until(node: &mut Node, what: &str, mut cond: impl FnMut(&Node) -> bool) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let deadline = tokio::time::Instant::now() + PATIENCE;
     while !cond(node) {
         assert!(tokio::time::Instant::now() < deadline, "{what}");
         let _ = tokio::time::timeout(Duration::from_millis(200), node.events.recv()).await;

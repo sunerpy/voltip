@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use super::wire::Profile;
 use crate::CoreError;
-use crate::history::{BUSY_TIMEOUT, HistoryEntry, HistoryReader, TABLES, insert_entry};
+use crate::history::{BUSY_TIMEOUT, HistoryEntry, HistoryReader, TABLES, insert_copy};
 
 /// The directory of the copies inside the app data directory.
 pub const MIRROR_DIR_NAME: &str = "mirror";
@@ -215,7 +215,7 @@ fn apply_batch(
     for entry in upserts {
         let id = entry.id.to_string();
         tx.execute("DELETE FROM entries WHERE id = ?1", [&id])?;
-        insert_entry(tx, entry, false)?;
+        insert_copy(tx, entry)?;
         if shortened.contains(&entry.id) {
             tx.execute("INSERT OR IGNORE INTO shortened (id) VALUES (?1)", [&id])?;
         } else {
@@ -302,6 +302,28 @@ mod tests {
         store.apply(other, true, 1, &[entry("新", 9)], &[], &[], 300).unwrap();
         assert_eq!(query(&files).unwrap(), ["新"]);
         assert_eq!(store.state().unwrap().epoch, Some(other));
+    }
+
+    /// A copy's statistics are never read, so it does not count corrections: an edit distance per
+    /// entry was most of the cost of a first sync (docs/dictation.md §20.8).
+    #[test]
+    fn a_copy_keeps_no_correction_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = MirrorFiles::new(dir.path());
+        let mut store = MirrorStore::open(&files, COMPUTER).unwrap();
+        let corrected = HistoryEntry { raw_text: "嗯那个明天开会".into(), ..entry("明天开会。", 4) };
+        store.apply(Uuid::new_v4(), true, 1, std::slice::from_ref(&corrected), &[], &[], 100).unwrap();
+        let conn = Connection::open(files.path(COMPUTER)).unwrap();
+        let count: i64 = conn.query_row("SELECT corrected_chars FROM entries WHERE id = ?1", [corrected.id.to_string()], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(read_entry(&files.path(COMPUTER), corrected.id).unwrap(), Some((corrected.clone(), false)), "the entry itself is whole");
+        let mut history = crate::history::HistoryStore::open(dir.path());
+        history.push(corrected.clone(), 100).unwrap();
+        let own: i64 = Connection::open(dir.path().join(crate::history::HISTORY_DB_FILE_NAME))
+            .unwrap()
+            .query_row("SELECT corrected_chars FROM entries WHERE id = ?1", [corrected.id.to_string()], |row| row.get(0))
+            .unwrap();
+        assert_eq!(own, 4, "the computer's own history counts them");
     }
 
     #[test]

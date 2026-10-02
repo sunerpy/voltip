@@ -347,6 +347,17 @@ fn drop_oldest(conn: &Connection, n: usize) -> rusqlite::Result<usize> {
 /// Write one entry and its hits. `skip_duplicate`: an id already there is left as it is (the
 /// import); otherwise it is an error.
 pub(crate) fn insert(conn: &Connection, entry: &HistoryEntry, skip_duplicate: bool) -> rusqlite::Result<()> {
+    write_row(conn, entry, skip_duplicate, derived::corrected_chars(&entry.raw_text, &entry.text))
+}
+
+/// Write one entry of a copy of another device's history (the phone's copy of a computer's,
+/// docs/dictation.md §20.8) and its hits. Nothing reads a copy's statistics, so its correction
+/// count stays 0: that count is an edit distance, most of the cost of writing a row.
+pub(crate) fn insert_copy(conn: &Connection, entry: &HistoryEntry) -> rusqlite::Result<()> {
+    write_row(conn, entry, false, 0)
+}
+
+fn write_row(conn: &Connection, entry: &HistoryEntry, skip_duplicate: bool, corrected_chars: u64) -> rusqlite::Result<()> {
     let json = serde_json::to_string(entry).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     let id = entry.id.to_string();
     let verb = if skip_duplicate { "INSERT OR IGNORE" } else { "INSERT" };
@@ -365,7 +376,7 @@ pub(crate) fn insert(conn: &Connection, entry: &HistoryEntry, skip_duplicate: bo
             entry.scene.as_ref().map(|s| s.id.to_string()),
             int(entry.duration_ms),
             int(derived::raw_chars(entry)),
-            int(derived::corrected_chars(&entry.raw_text, &entry.text)),
+            int(corrected_chars),
             int(derived::latency_ms(entry)),
             derived::counts_for_stats(entry),
             derived::search_text(entry),

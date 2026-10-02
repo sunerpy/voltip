@@ -23,7 +23,7 @@ pub use derived::{corrected_chars, counts_for_stats};
 pub use reader::{HistoryHits, HistoryPage, HistoryQuery, HistoryReader, HistoryStats, HistoryStatsBucket, MAX_QUERY_LIMIT, MAX_STATS_BOUNDARIES};
 pub use revs::{ChangeBatch, Outbox, SHORTENED_FIELD_CHARS, SHORTENED_TEXT_CHARS, bounded};
 pub use store::HistoryStore;
-pub(crate) use store::{BUSY_TIMEOUT, SCHEMA as TABLES, insert as insert_entry};
+pub(crate) use store::{BUSY_TIMEOUT, SCHEMA as TABLES, insert_copy};
 
 /// The database inside the app data directory.
 pub const HISTORY_DB_FILE_NAME: &str = "history.sqlite3";
