@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.25](https://github.com/sunerpy/voltip/compare/v0.0.24...v0.0.25) (2026-10-02)
+
+
+### Features
+
+* **mobile:** the phone sends feedback of its own ([#63](https://github.com/sunerpy/voltip/issues/63)) ([9f85157](https://github.com/sunerpy/voltip/commit/9f85157ebfa6e07f823433f67082c989973ea7d9))
+
 ## [0.0.24](https://github.com/sunerpy/voltip/compare/v0.0.23...v0.0.24) (2026-10-01)
 
 
