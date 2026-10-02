@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.30](https://github.com/sunerpy/voltip/compare/v0.0.29...v0.0.30) (2026-10-02)
+
+
+### Features
+
+* **mobile:** updates on Android, from Google Play or from GitHub ([#75](https://github.com/sunerpy/voltip/issues/75)) ([e540c39](https://github.com/sunerpy/voltip/commit/e540c39690fa2bf4a5496f3c873b4bd49739e1b6))
+
 ## [0.0.29](https://github.com/sunerpy/voltip/compare/v0.0.28...v0.0.29) (2026-10-02)
 
 
