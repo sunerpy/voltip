@@ -1,5 +1,11 @@
-import { type TFunction, formatCount, presetLabel, sceneLabel } from "@voltip/shared";
-import { Icon, type IconName, useI18n, useUiState } from "@voltip/ui";
+import {
+  type TFunction,
+  formatCount,
+  mirrorStateText,
+  presetLabel,
+  sceneLabel,
+} from "@voltip/shared";
+import { Icon, type IconName, useI18n, useNow, useUiState } from "@voltip/ui";
 import type { ReactNode } from "react";
 import { type Screen, useMobileShell } from "../app/shell";
 
@@ -15,20 +21,23 @@ function Row({
   title,
   detail,
   to,
+  param,
 }: {
   icon: IconName;
   title: string;
   detail?: ReactNode;
   to: Screen;
+  /** What `to` shows (`MobileShell.param`). */
+  param?: string;
 }) {
   const shell = useMobileShell();
   return (
     <li>
       <button
         type="button"
-        data-testid={`settings-${to}`}
+        data-testid={param === undefined ? `settings-${to}` : `settings-${to}-${param}`}
         onClick={() => {
-          shell.go(to);
+          shell.go(to, param);
         }}
         className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-inset">
         <Icon name={icon} size={18} className="shrink-0 text-fg-muted" />
@@ -61,7 +70,8 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
 export function Settings() {
   const { t, locale } = useI18n();
   const state = useUiState();
-  const { engines, settings, presets, identity, devices, app_version: version } = state;
+  const { engines, settings, presets, identity, devices, mirrors, app_version: version } = state;
+  const now = useNow();
   const pinned = state.scenes.find((s) => s.id === settings.pinned_scene);
   const speech = t("mobile.settings.serviceDetail", {
     provider: t(`engines.provider.${engines.asr_provider}`),
@@ -146,6 +156,17 @@ export function Settings() {
             to="devices"
           />
         )}
+        {/* docs/dictation.md §20.8: each computer's settings, read-only. */}
+        {mirrors.map((m) => (
+          <Row
+            key={m.desktop}
+            icon="settings"
+            title={t("mirror.settingsRow", { name: m.name })}
+            detail={mirrorStateText(m, Math.floor(now / 1000), locale)}
+            to="computerSettings"
+            param={m.desktop}
+          />
+        ))}
       </Group>
       <Group title={t("mobile.settings.aboutGroup")}>
         <Row

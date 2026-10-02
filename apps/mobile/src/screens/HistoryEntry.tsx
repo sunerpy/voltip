@@ -188,6 +188,7 @@ export function HistoryEntry() {
   const now = useNow();
   const id = shell.param ?? "";
   const entry = useEntry(id);
+  const tooLarge = useUiState().phone_outbox_too_large.includes(id);
   const process = useHistoryProcess(id);
   const [view, setView] = useState<View>("polished");
 
@@ -292,6 +293,11 @@ export function HistoryEntry() {
           {t("common.delete")}
         </Button>
       </div>
+      {tooLarge && (
+        <p className="text-[12px] text-fg-muted" data-testid="phone-entry-too-large">
+          {t("mobile.entry.tooLarge")}
+        </p>
+      )}
       {isLongEntry(entry) && <LongTools entry={entry} process={process} />}
       <dl className="flex flex-col divide-y divide-border rounded-10 bg-surface px-4 hairline">
         <Fact label={t("history.detail.duration")}>

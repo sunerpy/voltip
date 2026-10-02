@@ -3,8 +3,9 @@
 // helper takes the locale last, defaulting to Simplified Chinese so callers without a provider (and
 // the existing tests) keep their wording.
 import { type Locale, DEFAULT_LOCALE, type MessageKey, translate } from "./i18n";
-import { isBuiltinPreset } from "./schema";
+import { MAX_SYNC_PEERS, isBuiltinPreset } from "./schema";
 import type {
+  MirrorView,
   Activation,
   BuiltinPreset,
   BuiltinScene,
@@ -732,5 +733,36 @@ export function hostOf(url: string): string {
     return new URL(url).host;
   } catch {
     return url.replace(/^[a-z]+:\/\//i, "").split("/")[0] ?? url;
+  }
+}
+
+/** Where a phone's copy of a computer stands (docs/dictation.md §20.8), as the 记录 tab, 设置 ›
+ *  电脑 and the device cards word it. `now` is unix seconds. */
+export function mirrorStateText(
+  view: MirrorView,
+  now: number,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  const n = formatCount(view.entries);
+  const when =
+    view.synced_at_ms === undefined
+      ? undefined
+      : relativeTime(Math.floor(view.synced_at_ms / 1000), now, locale);
+  switch (view.state) {
+    case "syncing":
+      return translate(locale, "mirror.state.syncing", { n });
+    case "up_to_date":
+      return when === undefined
+        ? translate(locale, "mirror.state.up_to_date_never", { n })
+        : translate(locale, "mirror.state.up_to_date", { n, when });
+    case "offline":
+      return when === undefined
+        ? translate(locale, "mirror.state.up_to_date_never", { n })
+        : translate(locale, "mirror.state.offline", { n, when });
+    case "revoked":
+    case "needs_upgrade":
+      return translate(locale, `mirror.state.${view.state}`);
+    case "limit":
+      return translate(locale, "mirror.state.limit", { max: MAX_SYNC_PEERS });
   }
 }

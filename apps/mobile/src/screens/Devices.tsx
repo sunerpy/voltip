@@ -3,6 +3,7 @@ import {
   connectionKindLabel,
   connectionLabel,
   formatDate,
+  mirrorStateText,
   platformLabel,
   relativeTime,
   relayLabel,
@@ -31,6 +32,8 @@ function DeviceRow({ view, now }: { view: DeviceView; now: number }) {
   const { backend } = useBackend();
   const shell = useMobileShell();
   const { t, locale } = useI18n();
+  // docs/dictation.md §20.8: how this computer's history and settings stand on the phone.
+  const copy = useUiState().mirrors.find((m) => m.desktop === view.device.public_key);
   const online = connectionLabel(view.connection, locale);
   const cells: Record<(typeof COLUMNS)[number], string> = {
     device: view.device.name,
@@ -67,6 +70,11 @@ function DeviceRow({ view, now }: { view: DeviceView; now: number }) {
           </div>
         ))}
       </dl>
+      {copy !== undefined && (
+        <p className="text-[12px] text-fg-muted" data-testid="device-sync" data-state={copy.state}>
+          {mirrorStateText(copy, now, locale)}
+        </p>
+      )}
       <div className="mono text-[11px] text-fg-subtle">{view.device.fingerprint}</div>
       {view.connection.state === "identity_changed" && (
         <div className="rounded-6 bg-danger-soft px-3 py-2 text-[12px] text-danger" role="alert">

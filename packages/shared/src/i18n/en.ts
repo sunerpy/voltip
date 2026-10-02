@@ -665,6 +665,7 @@ export const en: Messages = {
       outcome: "Result",
       duration: "Audio length",
       chars: "Characters",
+      origin: "From",
       id: "Entry ID",
       copied: "Copied to clipboard · {n} chars",
     },
@@ -1165,6 +1166,8 @@ export const en: Messages = {
       forgetFacts: "{fingerprint} · trusted on {date}",
       forget: "Forget device",
       forgotten: "Forgot {name}",
+      forgetOffline:
+        "This phone is offline: this computer's history stays on it until the computer is forgotten on the phone.",
     },
     column: {
       device: "Device",
@@ -1172,6 +1175,11 @@ export const en: Messages = {
       lan: "LAN address",
       lastSeen: "Last seen",
       state: "State",
+      sync: "Sync",
+    },
+    syncSwitch: {
+      toggle: "Sync history with {name}",
+      limit: "Syncs with up to {max} phones",
     },
     action: {
       sendTest: "Send test message",
@@ -1197,6 +1205,8 @@ export const en: Messages = {
       note: "A forgotten device has to scan again and compare the safety code; a device whose identity key changed is marked red here until you deal with it.",
       lanNote:
         "LAN discovery announces this computer's name on the local network: a phone pairs with one tap, and paired devices find it again after its address changes. With it off, pair by QR code or code only.",
+      syncNote:
+        "Sync history with a phone: the history and the settings such as models and the dictionary go to the phone, read-only there; what the phone transcribes on its own is copied to this computer. Turned off, this computer's history is deleted from the phone.",
     },
     live: {
       title: "Phone microphone",
@@ -2232,6 +2242,49 @@ export const en: Messages = {
     oneKey: "Only one key can be bound at a time",
     needModifier: "This system does not accept a single key as a shortcut; add a modifier",
   },
+  mirror: {
+    source: "Whose history",
+    thisPhone: "This phone",
+    state: {
+      syncing: "Syncing · {n} so far",
+      up_to_date: "{n} synced · {when}",
+      up_to_date_never: "{n} synced",
+      offline: "Computer offline · {n} synced · {when}",
+      revoked: "This computer stopped syncing",
+      needs_upgrade: "Voltip on the computer needs an update to sync",
+      limit: "This phone syncs with up to {max} computers; this one is not synced",
+    },
+    empty: "No history yet",
+    emptyBody:
+      "This computer's history appears here once it has synced. It is read-only on the phone.",
+    shortened:
+      "This entry is too long; the phone shows only part of it. See the computer for the whole text.",
+    tooLong: "Longer than 50,000 characters: it cannot be copied or shared in one piece.",
+    readOnly:
+      "A computer's entries are read-only on the phone: they cannot be starred or deleted here.",
+    settingsRow: "{name}'s settings",
+    settings: {
+      lede: "{name}'s settings, read-only on the phone. Changes made on the computer sync here.",
+      none: "No settings have arrived from this computer yet.",
+      look: "Appearance",
+      locale: "Language",
+      theme: "Theme",
+      speech: "Recognition",
+      speechModel: "Speech model",
+      polish: "AI polish",
+      polishState: "Status",
+      polishOn: "On",
+      polishOff: "Off",
+      polishModel: "Polish model",
+      preset: "Current preset",
+      presets: "Custom presets",
+      dictionary: "Dictionary",
+      rules: "Replacement rules",
+      scenes: "Scenes",
+      none_items: "None",
+      heardAs: "Heard as: {terms}",
+    },
+  },
   mobile: {
     title: {
       device: "This device",
@@ -2249,6 +2302,8 @@ export const en: Messages = {
       scenes: "Scenes",
       history: "History",
       entry: "Entry",
+      mirrorEntry: "Computer entry",
+      computerSettings: "Computer settings",
       historySettings: "History",
       feedback: "Feedback",
     },
@@ -2282,12 +2337,13 @@ export const en: Messages = {
     },
     entry: {
       goneBody: "This entry was deleted or the history was cleared.",
+      tooLarge: "This entry is too large and was not uploaded to the computer.",
       time: "Time taken",
       shareSrt: "Share subtitles (SRT)",
       shareTxt: "Share text (TXT)",
     },
     historySettings: {
-      lede: "What this phone transcribes is kept on this phone and is not sent to the computer.",
+      lede: "What this phone transcribes is kept on this phone. While it syncs with a paired computer, a copy goes to the computer and the phone keeps its own.",
       clearBody: "The {n} entries on this phone will be deleted. This cannot be undone.",
     },
     feedback: {
@@ -2515,7 +2571,7 @@ export const en: Messages = {
       forget: "Forget {name}",
       forgetTitle: "Forget “{name}”?",
       forgetBody:
-        "It will have to scan again and compare the safety code before reconnecting; a computer that is online forgets this phone too.",
+        "It will have to scan again and compare the safety code before reconnecting; a computer that is online forgets this phone too. The computer's history and settings synced to this phone are deleted as well.",
       forgetConfirm: "Forget",
       forgotten: "Forgot {name}",
       count: "{paired} paired · {online} online",

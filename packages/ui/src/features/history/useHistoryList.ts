@@ -44,27 +44,46 @@ export interface HistoryList {
 
 /** The history page's list, on the desktop and the phone (docs/dictation.md §4.4): `filter` and `search` go to the core as
  *  `history_query`, a page of `HISTORY_PAGE` at a time. Every history event (a new take, a star, a
- *  deletion) reloads what is loaded, so the list never shows an entry the core no longer has. */
-export function useHistoryList(filter: HistoryFilter, search: string, now: number): HistoryList {
+ *  deletion) reloads what is loaded, so the list never shows an entry the core no longer has.
+ *  With `desktop` (a computer's key, on the phone) the list is the phone's copy of that computer's
+ *  history (`mirror_history_query`, §20.8), reloaded whenever the copy changes. */
+export function useHistoryList(
+  filter: HistoryFilter,
+  search: string,
+  now: number,
+  desktop?: string,
+): HistoryList {
   const { backend } = useBackend();
-  // A new array on every history event: the reload signal.
-  const { history_recent: revision } = useUiState();
+  // A new array on every history event, or the copy's view when it changes: the reload signal.
+  const { history_recent: own, mirrors } = useUiState();
+  const copy = desktop === undefined ? undefined : mirrors.find((m) => m.desktop === desktop);
+  const revision =
+    desktop === undefined ? own : `${copy?.state}:${copy?.entries}:${copy?.synced_at_ms}`;
+  const query = useMemo(
+    () =>
+      desktop === undefined
+        ? backend.historyQuery.bind(backend)
+        : (a: HistoryQueryArgs) => backend.mirrorHistoryQuery(desktop, a),
+    [backend, desktop],
+  );
   const day = startOfDay(now);
   const args = useMemo(() => historyQueryArgs(filter, search, day), [filter, search, day]);
-  const [list, setList] = useState<{ args: object; entries: HistoryEntry[]; matching: number }>({
-    args: {},
+  // The arguments and the computer together: a change of either starts the list over.
+  const request = useMemo(() => ({ args, desktop }), [args, desktop]);
+  const [list, setList] = useState<{ request: object; entries: HistoryEntry[]; matching: number }>({
+    request: {},
     entries: [],
     matching: 0,
   });
-  // How many entries the list keeps loaded for `args`: one page, plus one per `loadMore`.
-  const wanted = useRef({ args, count: HISTORY_PAGE });
+  // How many entries the list keeps loaded for `request`: one page, plus one per `loadMore`.
+  const wanted = useRef({ request, count: HISTORY_PAGE });
 
   useEffect(() => {
-    if (wanted.current.args !== args) wanted.current = { args, count: HISTORY_PAGE };
+    if (wanted.current.request !== request) wanted.current = { request, count: HISTORY_PAGE };
     let live = true;
-    void loadUpTo(backend.historyQuery.bind(backend), args, wanted.current.count).then(
+    void loadUpTo(query, request.args, wanted.current.count).then(
       (loaded) => {
-        if (live) setList({ args, ...loaded });
+        if (live) setList({ request, ...loaded });
       },
       () => undefined,
     );
@@ -73,27 +92,27 @@ export function useHistoryList(filter: HistoryFilter, search: string, now: numbe
     };
     // A history event (a new take, a star, a deletion) is a reason to load again.
     // oxlint-disable-next-line react/exhaustive-effect-dependencies
-  }, [backend, args, revision]);
+  }, [query, request, revision]);
 
   // Until the answer for new arguments arrives the previous rows stay: the list changes in one
   // step instead of flashing empty (and the empty state) on every keystroke or filter.
-  const current = list.args === args;
+  const current = list.request === request;
   const loaded = list;
   const loadMore = useCallback(() => {
     const offset = loaded.entries.length;
     if (!current || offset >= loaded.matching) return;
-    wanted.current = { args, count: offset + HISTORY_PAGE };
-    void backend.historyQuery({ ...args, offset, limit: HISTORY_PAGE }).then(
+    wanted.current = { request, count: offset + HISTORY_PAGE };
+    void query({ ...request.args, offset, limit: HISTORY_PAGE }).then(
       (page) => {
         setList((prev) =>
-          prev.args === args && prev.entries.length === offset
-            ? { args, entries: [...prev.entries, ...page.entries], matching: page.matching }
+          prev.request === request && prev.entries.length === offset
+            ? { request, entries: [...prev.entries, ...page.entries], matching: page.matching }
             : prev,
         );
       },
       () => undefined,
     );
-  }, [backend, args, current, loaded.entries.length, loaded.matching]);
+  }, [query, request, current, loaded.entries.length, loaded.matching]);
 
   return {
     entries: loaded.entries,

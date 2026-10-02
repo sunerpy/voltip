@@ -32,7 +32,9 @@ import { Devices } from "./screens/Devices";
 import { Dictionary } from "./screens/Dictionary";
 import { Feedback } from "./screens/Feedback";
 import { History } from "./screens/History";
+import { ComputerSettings } from "./screens/ComputerSettings";
 import { HistoryEntry } from "./screens/HistoryEntry";
+import { MirrorEntry } from "./screens/MirrorEntry";
 import { HistorySettings } from "./screens/HistorySettings";
 import { PairDevice } from "./screens/PairDevice";
 import { Recording } from "./screens/Recording";
@@ -70,6 +72,8 @@ const PARENT: Partial<Record<Screen, Screen>> = {
   rules: "settings",
   scenes: "settings",
   entry: "history",
+  mirrorEntry: "history",
+  computerSettings: "settings",
   historySettings: "settings",
   feedback: "settings",
 };
@@ -180,7 +184,9 @@ function Frame({
   const param = top?.param;
   const go = useCallback((next: Screen, about?: string) => {
     setStack((current) => {
-      if (TAB_ROOTS.includes(next)) return [{ screen: next }];
+      // A tab root replaces the stack; it keeps what it shows (记录 a computer's history, §20.8).
+      if (TAB_ROOTS.includes(next))
+        return [{ screen: next, ...(about === undefined ? {} : { param: about }) }];
       const last = current.at(-1);
       return last?.screen === next && last.param === about
         ? current
@@ -317,6 +323,8 @@ function Frame({
             {screen === "scenes" && <Scenes />}
             {screen === "history" && <History />}
             {screen === "entry" && <HistoryEntry key={param} />}
+            {screen === "mirrorEntry" && <MirrorEntry key={param} />}
+            {screen === "computerSettings" && <ComputerSettings key={param} />}
             {screen === "historySettings" && <HistorySettings />}
             {screen === "feedback" && <Feedback />}
           </main>

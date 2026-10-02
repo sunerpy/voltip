@@ -18,6 +18,8 @@ export type Screen =
   | "scenes"
   | "history"
   | "entry"
+  | "mirrorEntry"
+  | "computerSettings"
   | "historySettings"
   | "feedback";
 
@@ -36,7 +38,8 @@ export interface ConfirmSpec {
 export interface MobileShell {
   screen: Screen;
   /** What the current screen shows, when it shows one thing: the id of the history entry on
-   *  `entry`. */
+   *  `entry`, `desktop/id` on `mirrorEntry`, the computer's key on `computerSettings` and on
+   *  `history` when it shows a computer's history (docs/dictation.md §20.8). */
   param: string | undefined;
   /** Open `screen` (about `param`): a tab root replaces the stack, any other screen goes on top
    *  of it. */
