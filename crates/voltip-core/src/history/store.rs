@@ -33,7 +33,7 @@ pub(super) const IMPORTED_DIGEST_KEY: &str = "imported_json_sha256";
 /// `uploaded` (docs/dictation.md §20.8). Tables are only ever added, never changed.
 pub(super) const SCHEMA_VERSION: i32 = 2;
 /// How long a statement waits for another connection's lock before it fails.
-pub(super) const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Newest first: the order of every list.
 pub(super) const NEWEST_FIRST: &str = "ORDER BY at_ms DESC, rowid DESC";
 
@@ -42,7 +42,7 @@ pub(super) const NEWEST_FIRST: &str = "ORDER BY at_ms DESC, rowid DESC";
 /// entry's dictionary and rule hits for `history_hits`. For the phones (docs/dictation.md §20.8):
 /// `sync_revs` numbers the changes (`revs`), `phone_received` remembers the records a phone
 /// uploaded, and on a phone `uploaded` says which of its own records a computer has.
-pub(super) const SCHEMA: &str = "
+pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS entries (
     id TEXT PRIMARY KEY NOT NULL,
     at_ms INTEGER NOT NULL,
@@ -250,9 +250,9 @@ impl HistoryStore {
 
     /// On a phone: the next batch of its own records no computer has confirmed (docs/dictation.md
     /// §20.8).
-    pub fn outbox(&self, budget: usize, max_records: usize) -> Result<Outbox, CoreError> {
+    pub fn outbox(&self, budget: usize, max_records: usize, max_entry: usize) -> Result<Outbox, CoreError> {
         let conn = self.conn.as_ref().ok_or_else(|| CoreError::History(format!("{} cannot be opened", self.path.display())))?;
-        revs::outbox(&conn.lock(), budget, max_records).map_err(err)
+        revs::outbox(&conn.lock(), budget, max_records, max_entry).map_err(err)
     }
 
     /// On a phone: `computer` (its key in hex) confirmed these records; the number recorded.
@@ -346,7 +346,7 @@ fn drop_oldest(conn: &Connection, n: usize) -> rusqlite::Result<usize> {
 
 /// Write one entry and its hits. `skip_duplicate`: an id already there is left as it is (the
 /// import); otherwise it is an error.
-fn insert(conn: &Connection, entry: &HistoryEntry, skip_duplicate: bool) -> rusqlite::Result<()> {
+pub(crate) fn insert(conn: &Connection, entry: &HistoryEntry, skip_duplicate: bool) -> rusqlite::Result<()> {
     let json = serde_json::to_string(entry).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     let id = entry.id.to_string();
     let verb = if skip_duplicate { "INSERT OR IGNORE" } else { "INSERT" };

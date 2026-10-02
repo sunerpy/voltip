@@ -296,8 +296,8 @@ fn clip(text: &str, max: usize) -> String {
 
 /// The phone's records no computer has confirmed, oldest first: one batch of at most
 /// `max_records` adding up to `budget` encoded bytes (at least one record), passing over records
-/// larger than [`MAX_ENTRY_BYTES`].
-pub(super) fn outbox(conn: &Connection, budget: usize, max_records: usize) -> rusqlite::Result<Outbox> {
+/// larger than `max_entry` ([`MAX_ENTRY_BYTES`] outside the tests).
+pub(super) fn outbox(conn: &Connection, budget: usize, max_records: usize, max_entry: usize) -> rusqlite::Result<Outbox> {
     let mut stmt = conn.prepare(
         "SELECT json FROM entries WHERE json_extract(json, '$.origin') IS NULL AND id NOT IN (SELECT id FROM uploaded) ORDER BY at_ms ASC, rowid ASC",
     )?;
@@ -309,7 +309,7 @@ pub(super) fn outbox(conn: &Connection, budget: usize, max_records: usize) -> ru
         let Some(mut entry) = decode(&json) else { continue };
         entry.segments = None;
         let size = cbor_len(&entry);
-        if size > MAX_ENTRY_BYTES {
+        if size > max_entry {
             out.too_large.push(entry.id);
             continue;
         }

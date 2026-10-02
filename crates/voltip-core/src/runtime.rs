@@ -44,6 +44,7 @@ mod always_on;
 mod check;
 mod nearby;
 mod processing;
+mod sync;
 mod take_codec;
 mod takes;
 mod texts;
@@ -119,11 +120,61 @@ pub struct CoreConfig {
     /// LAN discovery (docs/pairing.md 「局域网发现」): the shells pass [`crate::discovery::MdnsDiscovery`],
     /// the tests an in-memory LAN; `None` announces and browses nothing.
     pub discovery: Option<Arc<dyn crate::discovery::Discovery>>,
+    /// Which side of the sync this core plays (docs/dictation.md §20.8): the desktop shell sets
+    /// `Computer`, the phone shell `Phone`.
+    pub sync_role: crate::sync::SyncRole,
+    /// A phone asks again when a request has had no answer for this long; the wait doubles up to
+    /// `sync_request_timeout_max`.
+    pub sync_request_timeout: Duration,
+    /// The longest wait between two requests that go unanswered.
+    pub sync_request_timeout_max: Duration,
+    /// A phone sends an upload again when it is not confirmed this long after its last part.
+    pub sync_upload_timeout: Duration,
+    /// Tests only: how long a phone takes to apply each batch.
+    pub sync_apply_delay: Duration,
+    /// A phone's record larger than this stays on the phone ([`crate::sync::MAX_ENTRY_BYTES`]; the
+    /// tests make it small).
+    pub sync_max_entry_bytes: usize,
+    /// The phone's copies of its computers' histories; the bridge reads them through the same
+    /// value (its locks keep a deletion from meeting a query).
+    pub mirror_files: Arc<crate::sync::MirrorFiles>,
+    /// What the bulk traffic reached (the end-to-end tests read it).
+    pub sync_stats: Arc<crate::sync::SyncStats>,
+    /// Tests only.
+    #[doc(hidden)]
+    pub test_hooks: TestHooks,
+}
+
+/// Decides whether a test's transport loses an application message.
+#[doc(hidden)]
+pub type DropApp = Arc<dyn Fn(&AppMessage) -> bool + Send + Sync>;
+
+/// Ways the end-to-end tests disturb a core's traffic (never set by a shell).
+#[doc(hidden)]
+#[derive(Clone, Default)]
+pub struct TestHooks {
+    /// An application message this returns `true` for is dropped instead of sent.
+    pub drop_app: Option<DropApp>,
+    /// The relay link's writer waits on this (`LinkConfig::write_gate`).
+    pub relay_write_gate: Option<Arc<tokio::sync::RwLock<()>>>,
+    /// A computer answers a phone's request only once it is this old.
+    pub answer_delay: Duration,
+}
+
+impl std::fmt::Debug for TestHooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TestHooks")
+            .field("drop_app", &self.drop_app.is_some())
+            .field("relay_write_gate", &self.relay_write_gate.is_some())
+            .field("answer_delay", &self.answer_delay)
+            .finish()
+    }
 }
 
 impl CoreConfig {
     /// Defaults for `data_dir`.
     pub fn new(data_dir: PathBuf) -> Self {
+        let data_dir_for_mirrors = data_dir.clone();
         Self {
             models_root: data_dir.join(MODELS_DIR_NAME),
             data_dir,
@@ -143,6 +194,15 @@ impl CoreConfig {
             builtin_scenes: true,
             manual_scenes: false,
             discovery: None,
+            sync_role: crate::sync::SyncRole::Off,
+            sync_request_timeout: Duration::from_secs(30),
+            sync_request_timeout_max: Duration::from_secs(300),
+            sync_upload_timeout: Duration::from_secs(60),
+            sync_apply_delay: Duration::ZERO,
+            sync_max_entry_bytes: crate::sync::MAX_ENTRY_BYTES,
+            mirror_files: Arc::new(crate::sync::MirrorFiles::new(&data_dir_for_mirrors)),
+            sync_stats: Arc::default(),
+            test_hooks: TestHooks::default(),
         }
     }
 }
@@ -174,6 +234,16 @@ pub enum CoreCommand {
     ResetPairing,
     /// Remove a trusted device.
     ForgetDevice(PublicKey),
+    /// Tests only: close every outgoing LAN connection (they are dialled again after the backoff).
+    #[doc(hidden)]
+    DropDirectLinks,
+    /// Computer: sync with this phone or not (docs/dictation.md §20.8).
+    SetDeviceSync {
+        /// The phone.
+        key: PublicKey,
+        /// On or off.
+        on: bool,
+    },
     /// Rename this device.
     RenameDevice(String),
     /// Change relay configuration (takes effect immediately).
@@ -465,6 +535,13 @@ pub enum CoreEvent {
     Identity(DeviceIdentityPublic),
     /// Settings changed.
     Settings(Settings),
+    /// Phone: its copies of its computers (docs/dictation.md §20.8).
+    Mirrors(Vec<crate::sync::MirrorView>),
+    /// Phone: its own records too large to upload to a computer.
+    PhoneOutbox {
+        /// Their ids.
+        too_large: Vec<Uuid>,
+    },
     /// Relay link status.
     Relay(RelayStatus),
     /// Pairing screen state.
@@ -707,6 +784,9 @@ impl AppCore {
             always_on_at: None,
             processing: HashMap::new(),
             process_tx,
+            sync: sync::SyncState::default(),
+            history_dirty: std::sync::atomic::AtomicBool::new(true),
+            profile_dirty: std::sync::atomic::AtomicBool::new(true),
         };
         rt.connect_relay()?;
         let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, disc_rx, process_rx };
@@ -950,10 +1030,23 @@ struct Runtime {
     processing: HashMap<u64, (Uuid, tokio::task::JoinHandle<()>)>,
     /// Their tasks report here.
     process_tx: mpsc::Sender<processing::Processed>,
+    /// Sync with the computer or the phones (docs/dictation.md §20.8).
+    sync: sync::SyncState,
+    /// The history changed since the sync last looked.
+    history_dirty: std::sync::atomic::AtomicBool,
+    /// The settings a phone shows changed since the sync last looked.
+    profile_dirty: std::sync::atomic::AtomicBool,
 }
 
 impl Runtime {
     fn emit(&self, event: CoreEvent) {
+        match &event {
+            CoreEvent::History { .. } => self.history_dirty.store(true, std::sync::atomic::Ordering::Relaxed),
+            CoreEvent::Settings(_) | CoreEvent::Engines(_) | CoreEvent::Presets(_) | CoreEvent::Dictionary(_) | CoreEvent::Rules(_) | CoreEvent::Scenes(_) => {
+                self.profile_dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            _ => {}
+        }
         if self.evt.try_send(event).is_err() {
             tracing::warn!("core event queue full; UI is not draining events");
         }
@@ -1022,6 +1115,7 @@ impl Runtime {
         let mut cfg = LinkConfig::new(endpoint.clone());
         cfg.client_version = self.config.client_version.clone();
         cfg.reconnect = self.config.reconnect;
+        cfg.write_gate = self.config.test_hooks.relay_write_gate.clone();
         let link = self.spawn_link(LinkId::Relay, cfg);
         self.relay_status = RelayStatus { endpoint: shown, source, state: ConnectionState::Connecting, attempts: 0 };
         self.emit(CoreEvent::Relay(self.relay_status.clone()));
@@ -1147,6 +1241,9 @@ impl Runtime {
             if !self.take_outbox.is_empty() {
                 self.flush_takes().await;
             }
+            // Sync (docs/dictation.md §20.8): who came and went, answers, uploads, the parts the
+            // windows allow.
+            self.sync_step().await;
         }
         for (_, d) in self.downloads.drain() {
             d.cancel.cancel();
@@ -1182,6 +1279,15 @@ impl Runtime {
             CoreCommand::CancelPairing => self.step_pairing(Event::Cancel).await,
             CoreCommand::ResetPairing => self.reset_pairing().await,
             CoreCommand::ForgetDevice(key) => self.forget(key, true).await,
+            CoreCommand::SetDeviceSync { key, on } => self.set_device_sync(key, on).await,
+            CoreCommand::DropDirectLinks => {
+                let dials: Vec<u64> = self.dials.keys().copied().collect();
+                for n in dials {
+                    self.close_dial(n).await;
+                }
+                self.emit_devices();
+                Ok(())
+            }
             CoreCommand::CheckConnectivity => self.check_connectivity().await,
             CoreCommand::RenameDevice(name) => self.rename(name).await,
             CoreCommand::SetRelay { url, enabled } => self.set_relay(url, enabled),
@@ -2265,6 +2371,7 @@ impl Runtime {
         }
         tracing::info!(peer = %est.peer.name, "device trusted");
         self.emit(CoreEvent::Trusted(record));
+        self.on_sync_paired(key).await;
         let backoff = self.config.direct_retry;
         self.peers.entry(key).or_insert_with(|| PeerState::new(backoff));
         // Long-lived presence and traffic move to the rendezvous channel on the same link; the
@@ -2328,6 +2435,7 @@ impl Runtime {
         for n in dials {
             self.close_dial(n).await;
         }
+        self.on_sync_forgotten(key).await;
         self.emit_devices();
         Ok(())
     }
@@ -2451,8 +2559,12 @@ impl Runtime {
 
     /// Tell `key` who we are and where our LAN host listens, over the best secure path.
     async fn announce_self(&mut self, key: PublicKey) {
-        let msg =
-            AppMessage::DeviceInfoUpdate { version: ProtocolVersion::CURRENT, device: self.identity.info(), direct_hints: self.lan_hints(), mirror: false };
+        let msg = AppMessage::DeviceInfoUpdate {
+            version: ProtocolVersion::CURRENT,
+            device: self.identity.info(),
+            direct_hints: self.lan_hints(),
+            mirror: self.config.sync_role == crate::sync::SyncRole::Computer,
+        };
         tracing::debug!(peer = %key.fingerprint(), hints = ?self.lan_hints(), "announcing device info");
         let Some(st) = self.peers.get_mut(&key) else { return };
         let Some(path) = st.best_secure_path() else {
@@ -2460,7 +2572,7 @@ impl Runtime {
             return;
         };
         let (PeerPhase::Secure(sc), Some(sid), link) = (&mut path.phase, path.session_id, path.link) else { return };
-        match sc.seal(&msg) {
+        match sc.channel.seal(&msg) {
             Ok(bytes) => {
                 if let Err(e) = self.send_on(link, RelayFrame::forward(sid, bytes)).await {
                     tracing::warn!(error = %e, "device info announce failed");
@@ -2706,14 +2818,36 @@ impl Runtime {
                     self.finish_peer_handshake(key, link).await;
                 }
             }
-            PeerPhase::Secure(sc) => match sc.open(&payload) {
+            PeerPhase::Secure(sc) => match sc.channel.open(&payload) {
                 Ok(AppMessage::Ping { seq, .. }) => {
-                    if let Ok(bytes) = sc.seal(&AppMessage::pong(seq)) {
+                    if let Ok(bytes) = sc.channel.seal(&AppMessage::pong(seq)) {
                         let _ = self.send_on(link, RelayFrame::forward(session_id, bytes)).await;
                     }
                 }
                 Ok(AppMessage::Text { body, .. }) => self.emit(CoreEvent::Message { from: key, body }),
-                Ok(AppMessage::DeviceInfoUpdate { device, direct_hints, .. }) => self.on_device_info(key, &device, &direct_hints),
+                Ok(AppMessage::DeviceInfoUpdate { device, direct_hints, mirror, .. }) => {
+                    self.on_device_info(key, &device, &direct_hints);
+                    self.on_sync_announce(key, mirror).await;
+                }
+                // Sync (docs/dictation.md §20.8).
+                Ok(AppMessage::Bulk { seq, last, bytes, .. }) => {
+                    let got = sc.bulk.on_part(seq, last, &bytes);
+                    let ack = got.ack.and_then(|n| sc.channel.seal(&AppMessage::bulk_ack(n)).ok());
+                    if let Some(ack) = ack {
+                        let _ = self.send_on(link, RelayFrame::forward(session_id, ack)).await;
+                    }
+                    self.on_bulk_progress(key);
+                    if let Some(body) = got.body {
+                        self.on_bulk_body(key, &body).await;
+                    }
+                }
+                Ok(AppMessage::BulkAck { received, .. }) => sc.bulk.on_ack(received),
+                Ok(AppMessage::MirrorRequest { req, epoch, since, profile, .. }) => {
+                    self.on_mirror_request(key, req, epoch, since, profile.as_ref().map(|t| t.as_slice())).await
+                }
+                Ok(AppMessage::MirrorChanged { generation, .. }) => self.on_mirror_changed(key, generation).await,
+                Ok(AppMessage::MirrorRevoke { generation, .. }) => self.on_mirror_revoke(key, generation).await,
+                Ok(AppMessage::PhoneRecordsAck { ids, .. }) => self.on_records_ack(key, &ids),
                 // The phone as microphone (docs/dictation.md §20).
                 Ok(AppMessage::TakeStart { take, .. }) => self.on_take_start(key, take),
                 Ok(AppMessage::TakeAudio { take, seq, pcm, .. }) => self.on_take_audio(key, take, seq, &pcm),
@@ -2833,6 +2967,7 @@ impl Runtime {
             tracing::info!(peer = %key.fingerprint(), "retrying the peer handshake");
             self.start_peer_handshake(key, link).await;
         }
+        self.sync_tick().await;
         self.maintain_direct(now);
         self.check_takes();
         self.check_texts();

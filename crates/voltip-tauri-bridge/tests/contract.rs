@@ -171,6 +171,8 @@ fn phone_device() -> TrustedDevice {
         last_seen: Some(LAST_SEEN),
         last_connection: Some(ConnectionKind::Relay),
         direct_hints: vec![LAN_HINT.into()],
+        sync: true,
+        sync_gen: 3,
     }
 }
 
@@ -185,6 +187,8 @@ fn tablet_device() -> TrustedDevice {
         last_seen: None,
         last_connection: None,
         direct_hints: Vec::new(),
+        sync: false,
+        sync_gen: 1,
     }
 }
 

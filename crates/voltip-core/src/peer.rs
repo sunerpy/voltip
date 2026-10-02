@@ -11,6 +11,8 @@ use voltip_crypto::{HANDSHAKE_MESSAGE_LENS, Handshake, HandshakeStep, PublicKey,
 use voltip_protocol::SessionId;
 use voltip_transport::SecureChannel;
 
+use crate::sync::BulkPath;
+
 /// Which connection a frame arrived on / should leave on.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum LinkId {
@@ -36,7 +38,7 @@ pub(crate) enum PeerPhase {
     /// Noise XX in flight.
     Handshaking(Box<Handshake>),
     /// Secure channel up.
-    Secure(Box<SecureChannel>),
+    Secure(Box<SecureSession>),
     /// Peer presented a key that is not the trusted one.
     IdentityChanged { presented: PublicKey },
 }
@@ -60,6 +62,13 @@ pub(crate) enum Incoming {
     Feed,
     /// Not a message of this handshake.
     Drop,
+}
+
+/// A secure channel and the parts of large bodies going over it (docs/dictation.md §20.8): they
+/// begin and end together, so a body is only ever put back together from one Noise session.
+pub(crate) struct SecureSession {
+    pub(crate) channel: SecureChannel,
+    pub(crate) bulk: BulkPath,
 }
 
 /// One rendezvous session with a peer on one link.
@@ -157,7 +166,7 @@ impl PeerPath {
         };
         let outcome = (*hs).finish()?;
         let remote = outcome.remote_static;
-        self.phase = PeerPhase::Secure(Box::new(SecureChannel::new(outcome.cipher)));
+        self.phase = PeerPhase::Secure(Box::new(SecureSession { channel: SecureChannel::new(outcome.cipher), bulk: BulkPath::default() }));
         self.handshake_started = None;
         self.retry_at = None;
         self.retry_backoff = HANDSHAKE_RETRY_MIN;

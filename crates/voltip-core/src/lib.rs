@@ -49,7 +49,9 @@ pub use models::{
 };
 pub use presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetError, PresetId, PresetRef, PresetTrial, PresetTryOutcome, TakePreset};
 pub use providers::{KeyPolicy, PROVIDERS, ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSpec, ServiceKind, ServicePreset};
-pub use runtime::{AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED, now_ms};
+pub use runtime::{
+    AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED, TestHooks, now_ms,
+};
 pub use scenes::{AppRef, BuiltinScene, ContextSharing, Scene, SceneDraft, SceneError, SceneMatch, SceneOverrides, SceneRef, TakeContext};
 pub use settings::{
     DEFAULT_MAX_MINUTES, HistorySettings, Locale, MAX_MINUTES_CHOICES, OverlayPlacement, RecordingSettings, RecordingSource, SETTINGS_FILE_NAME, Settings,

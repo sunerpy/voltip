@@ -38,6 +38,8 @@ struct Shared {
     core: Mutex<RelayCore>,
     outbound: Mutex<std::collections::HashMap<ConnId, mpsc::Sender<Outbound>>>,
     next_id: AtomicU64,
+    /// Frames dropped on a full outbound queue.
+    dropped: AtomicU64,
 }
 
 enum Outbound {
@@ -48,12 +50,19 @@ enum Outbound {
 impl RelayHandle {
     /// New handle around a fresh core.
     pub fn new(config: RelayConfig) -> Self {
-        Self { inner: Arc::new(Shared { core: Mutex::new(RelayCore::new(config)), outbound: Mutex::new(Default::default()), next_id: AtomicU64::new(1) }) }
+        Self {
+            inner: Arc::new(Shared {
+                core: Mutex::new(RelayCore::new(config)),
+                outbound: Mutex::new(Default::default()),
+                next_id: AtomicU64::new(1),
+                dropped: AtomicU64::new(0),
+            }),
+        }
     }
 
     /// Counters.
     pub fn stats(&self) -> RelayStats {
-        self.inner.core.lock().stats()
+        RelayStats { dropped: self.inner.dropped.load(Ordering::Relaxed), ..self.inner.core.lock().stats() }
     }
 
     /// The axum router: `GET /ws` upgrades, `GET /healthz` reports stats.
@@ -112,6 +121,7 @@ impl RelayHandle {
             if let Some(tx) = outbound.get(&conn)
                 && tx.try_send(item).is_err()
             {
+                self.inner.dropped.fetch_add(1, Ordering::Relaxed);
                 tracing::warn!(?conn, "outbound queue full; dropping frame");
             }
         }

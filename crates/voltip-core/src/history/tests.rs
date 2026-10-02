@@ -957,7 +957,7 @@ fn the_outbox_is_the_phones_own_unconfirmed_records_oldest_first() {
     for e in own.iter().rev() {
         store.push(e.clone(), MAX_ENTRIES).unwrap();
     }
-    let batch = store.outbox(ALL, 3).unwrap();
+    let batch = store.outbox(ALL, 3, crate::sync::MAX_ENTRY_BYTES).unwrap();
     assert_eq!(
         batch.records.iter().map(|e| e.id).collect::<Vec<_>>(),
         own[..3].iter().map(|e| e.id).collect::<Vec<_>>(),
@@ -966,12 +966,12 @@ fn the_outbox_is_the_phones_own_unconfirmed_records_oldest_first() {
     assert!(batch.records.iter().all(|e| e.segments.is_none()));
     assert!(batch.too_large.is_empty());
     store.mark_uploaded(&[own[0].id, own[1].id], "ab12", 1).unwrap();
-    let next = store.outbox(1, 200).unwrap();
+    let next = store.outbox(1, 200, crate::sync::MAX_ENTRY_BYTES).unwrap();
     assert_eq!(next.records.iter().map(|e| e.id).collect::<Vec<_>>(), [own[2].id], "a tiny budget still takes one");
     // A record too large to upload is passed over and named; the ones after it still go.
     let big = HistoryEntry { at_ms: 1_758_699_000_000, text: "x".repeat(crate::sync::MAX_ENTRY_BYTES + 1), ..entry("太大") };
     store.push(big.clone(), MAX_ENTRIES).unwrap();
-    let with_big = store.outbox(ALL, 200).unwrap();
+    let with_big = store.outbox(ALL, 200, crate::sync::MAX_ENTRY_BYTES).unwrap();
     assert_eq!(with_big.too_large, [big.id]);
     assert_eq!(with_big.records.len(), 3);
 }

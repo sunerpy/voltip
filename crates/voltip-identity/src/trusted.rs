@@ -13,6 +13,10 @@ use crate::IdentityError;
 pub const TRUSTED_FILE_SCHEMA: u16 = 1;
 /// File name inside the app data directory.
 pub const TRUSTED_FILE_NAME: &str = "trusted-devices.json";
+/// Most phones a computer syncs with at once, and most computers a phone syncs with
+/// (docs/dictation.md §20.8): the per-path windows of that many peers stay well inside the relay's
+/// per-connection queue.
+pub const MAX_SYNC_PEERS: usize = 5;
 
 /// How the peer was last reached.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -49,6 +53,38 @@ pub struct TrustedDevice {
     /// before falling back to the relay. Refreshed by the peer over the encrypted channel.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub direct_hints: Vec<String>,
+    /// On a computer: this phone gets the computer's history and settings and may upload its own
+    /// records (docs/dictation.md §20.8). On by default; a record from before reads as on.
+    #[serde(default = "sync_on")]
+    pub sync: bool,
+    /// Goes up every time `sync` changes and on every re-pair, so the phone tells the newest
+    /// switch message from an older one that arrives late.
+    #[serde(default)]
+    pub sync_gen: u32,
+}
+
+fn sync_on() -> bool {
+    true
+}
+
+impl TrustedDevice {
+    /// A phone (the sync switch is a phone's).
+    pub fn is_phone(&self) -> bool {
+        matches!(self.platform, Platform::Android | Platform::Ios)
+    }
+}
+
+/// What [`TrustedDeviceStore::set_sync`] did.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum SyncChange {
+    /// Switched; the record as it is now.
+    Changed(TrustedDevice),
+    /// It was already so.
+    Unchanged,
+    /// Not switched on: [`MAX_SYNC_PEERS`] phones sync already.
+    Limit,
+    /// No such device.
+    Unknown,
 }
 
 /// Outcome of comparing a freshly authenticated peer against the registry.
@@ -104,7 +140,7 @@ impl TrustedDeviceStore {
     pub fn open(dir: &Path) -> Result<Self, IdentityError> {
         std::fs::create_dir_all(dir)?;
         let path = dir.join(TRUSTED_FILE_NAME);
-        let state = match std::fs::read(&path) {
+        let mut state = match std::fs::read(&path) {
             Ok(bytes) => {
                 let file: TrustedDevicesFile = serde_json::from_slice(&bytes)?;
                 if file.schema != TRUSTED_FILE_SCHEMA {
@@ -115,7 +151,12 @@ impl TrustedDeviceStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => TrustedDevicesFile::default(),
             Err(e) => return Err(e.into()),
         };
-        Ok(Self { path: Some(path), state: Mutex::new(state) })
+        let capped = cap_sync(&mut state.devices);
+        let store = Self { path: Some(path), state: Mutex::new(state) };
+        if capped {
+            store.flush()?;
+        }
+        Ok(store)
     }
 
     /// All records, sorted by name for stable UI ordering.
@@ -158,22 +199,56 @@ impl TrustedDeviceStore {
             last_seen: None,
             last_connection: None,
             direct_hints: Vec::new(),
+            sync: true,
+            sync_gen: 0,
         };
-        {
+        let record = {
             let mut state = self.state.lock();
+            let others = state.devices.iter().filter(|d| d.public_key != key && d.is_phone() && d.sync).count();
+            let sync = !record.is_phone() || others < MAX_SYNC_PEERS;
             if let Some(existing) = state.devices.iter_mut().find(|d| d.public_key == key) {
+                // A re-pair: the generation only ever goes up, so the phone (which starts over
+                // from 0 when a pairing completes) accepts what the computer sends from now on.
                 *existing = TrustedDevice {
                     last_seen: existing.last_seen,
                     last_connection: existing.last_connection,
                     direct_hints: std::mem::take(&mut existing.direct_hints),
-                    ..record.clone()
+                    sync,
+                    sync_gen: existing.sync_gen.wrapping_add(1),
+                    ..record
                 };
+                existing.clone()
             } else {
+                let record = TrustedDevice { sync, ..record };
                 state.devices.push(record.clone());
+                record
             }
-        }
+        };
         self.flush()?;
         Ok(record)
+    }
+
+    /// Switch syncing with `key` on or off (docs/dictation.md §20.8); the generation goes up with
+    /// every change. Switching on is refused once [`MAX_SYNC_PEERS`] phones sync.
+    pub fn set_sync(&self, key: &PublicKey, on: bool) -> Result<SyncChange, IdentityError> {
+        let change = {
+            let mut state = self.state.lock();
+            let others = state.devices.iter().filter(|d| &d.public_key != key && d.is_phone() && d.sync).count();
+            match state.devices.iter_mut().find(|d| &d.public_key == key) {
+                None => SyncChange::Unknown,
+                Some(d) if d.sync == on => SyncChange::Unchanged,
+                Some(d) if on && d.is_phone() && others >= MAX_SYNC_PEERS => SyncChange::Limit,
+                Some(d) => {
+                    d.sync = on;
+                    d.sync_gen = d.sync_gen.wrapping_add(1);
+                    SyncChange::Changed(d.clone())
+                }
+            }
+        };
+        if matches!(change, SyncChange::Changed(_)) {
+            self.flush()?;
+        }
+        Ok(change)
     }
 
     /// Update presence metadata after a successful connection.
@@ -263,6 +338,21 @@ impl TrustedDeviceStore {
         std::fs::rename(&tmp, path)?;
         Ok(())
     }
+}
+
+/// More than [`MAX_SYNC_PEERS`] phones syncing (a file from before the switch reads every phone as
+/// on): the ones paired first stay on, the others are switched off. `true` when anything changed.
+fn cap_sync(devices: &mut [TrustedDevice]) -> bool {
+    let mut syncing: Vec<usize> = (0..devices.len()).filter(|&i| devices[i].is_phone() && devices[i].sync).collect();
+    if syncing.len() <= MAX_SYNC_PEERS {
+        return false;
+    }
+    syncing.sort_by_key(|&i| (devices[i].trusted_at, i));
+    for &i in &syncing[MAX_SYNC_PEERS..] {
+        devices[i].sync = false;
+        devices[i].sync_gen = devices[i].sync_gen.wrapping_add(1);
+    }
+    true
 }
 
 #[cfg(test)]
@@ -393,6 +483,73 @@ mod tests {
         let store = TrustedDeviceStore::in_memory();
         let bad = DeviceInfo { device_id: DeviceId::random(), name: String::new(), platform: Platform::Ios };
         assert!(matches!(store.trust(&bad, PublicKey([1; 32]), 1).unwrap_err(), IdentityError::Protocol(_)));
+    }
+
+    fn phone(name: &str) -> DeviceInfo {
+        DeviceInfo { device_id: DeviceId::random(), name: name.into(), platform: Platform::Android }
+    }
+
+    fn key(n: u8) -> PublicKey {
+        PublicKey([n; 32])
+    }
+
+    /// regression (plan gate, M7 design round 3): a re-pair of the same key replaces the record,
+    /// and its sync generation must go up, or the phone (which starts over from 0) could take a
+    /// late message from before the re-pair as current. Forget-then-pair starts again from 0.
+    #[test]
+    fn regression_a_re_pair_raises_the_sync_generation() {
+        let store = TrustedDeviceStore::in_memory();
+        let first = store.trust(&phone("Pixel"), key(1), 10).unwrap();
+        assert!(first.sync);
+        assert_eq!(first.sync_gen, 0);
+        assert!(matches!(store.set_sync(&key(1), false).unwrap(), SyncChange::Changed(d) if !d.sync && d.sync_gen == 1));
+        let again = store.trust(&phone("Pixel"), key(1), 20).unwrap();
+        assert!(again.sync, "a re-pair syncs again");
+        assert_eq!(again.sync_gen, 2, "and its generation goes up");
+        assert_eq!(store.get_by_key(&key(1)).unwrap(), again);
+        store.forget(&key(1)).unwrap();
+        assert_eq!(store.trust(&phone("Pixel"), key(1), 30).unwrap().sync_gen, 0, "a new pairing starts from 0");
+    }
+
+    #[test]
+    fn the_sync_switch_changes_once_and_stops_at_the_limit() {
+        let store = TrustedDeviceStore::in_memory();
+        for n in 1..=MAX_SYNC_PEERS as u8 {
+            assert!(store.trust(&phone(&format!("手机{n}")), key(n), u64::from(n)).unwrap().sync);
+        }
+        let sixth = store.trust(&phone("第六部"), key(9), 99).unwrap();
+        assert!(!sixth.sync, "the sixth phone starts with sync off");
+        assert_eq!(store.set_sync(&key(9), true).unwrap(), SyncChange::Limit);
+        assert_eq!(store.set_sync(&key(1), true).unwrap(), SyncChange::Unchanged);
+        assert!(matches!(store.set_sync(&key(1), false).unwrap(), SyncChange::Changed(d) if d.sync_gen == 1));
+        assert!(matches!(store.set_sync(&key(9), true).unwrap(), SyncChange::Changed(d) if d.sync && d.sync_gen == 1), "a place came free");
+        assert_eq!(store.set_sync(&key(42), true).unwrap(), SyncChange::Unknown);
+        // Computers are not counted: a computer's record is never one of the phones.
+        let desk = DeviceInfo { device_id: DeviceId::random(), name: "Desk".into(), platform: Platform::Windows };
+        assert!(store.trust(&desk, key(50), 1).unwrap().sync);
+    }
+
+    #[test]
+    fn a_file_from_before_reads_as_syncing_and_keeps_the_first_five_phones() {
+        let dir = tempfile::tempdir().unwrap();
+        let devices: Vec<serde_json::Value> = (1..=7u8)
+            .map(|n| {
+                serde_json::json!({
+                    "device_id": DeviceId::random(), "name": format!("手机{n}"), "platform": "android",
+                    "public_key": key(n), "fingerprint": key(n).fingerprint(), "trusted_at": 100 - u64::from(n)
+                })
+            })
+            .collect();
+        std::fs::write(dir.path().join(TRUSTED_FILE_NAME), serde_json::to_vec(&serde_json::json!({ "schema": 1, "devices": devices })).unwrap()).unwrap();
+        let store = TrustedDeviceStore::open(dir.path()).unwrap();
+        let syncing: Vec<u8> = store.list().iter().filter(|d| d.sync).map(|d| d.public_key.0[0]).collect();
+        let mut syncing = syncing;
+        syncing.sort_unstable();
+        assert_eq!(syncing, [3, 4, 5, 6, 7], "paired first (smallest trusted_at) stay on");
+        assert!(store.list().iter().filter(|d| !d.sync).all(|d| d.sync_gen == 1));
+        // Written back: reading it again changes nothing.
+        let again = TrustedDeviceStore::open(dir.path()).unwrap();
+        assert_eq!(again.list(), store.list());
     }
 
     #[test]
