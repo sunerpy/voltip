@@ -213,6 +213,12 @@ pub enum UpdateStatus {
         /// Human-readable reason.
         message: String,
     },
+    /// This install is updated by the app store it came from (Google Play on Android): the phone
+    /// only points there.
+    Store {
+        /// Running version.
+        version: String,
+    },
     /// This build has no update endpoint / public key baked in (or the shell has no updater).
     Disabled,
 }

@@ -16,6 +16,7 @@ import {
   MOCK_UPDATE_CHECK_MS,
   MOCK_UPDATE_TICK_MS,
   MOCK_UPDATE_TICKS,
+  PHONE_NOTHING_TO_INSTALL,
   MOCK_UPDATE_TOTAL_BYTES,
   MOCK_DICTATION_DWELL_MS,
   MOCK_DICTATION_FAILED_DWELL_MS,
@@ -1707,6 +1708,31 @@ describe("MockBackend locale, auto-update and updater (docs/frontend.md §7)", (
       state: "installing",
       version: MOCK_AVAILABLE_VERSION,
     });
+  });
+
+  it("the phone's updates (docs/dictation.md section 20.9): a check asks as the desktop's does, the install opens a page instead of downloading, and an install from a store asks nothing", async () => {
+    const phone = new MockBackend({ role: "phone" });
+    await expect(phone.invoke("update_install")).rejects.toThrow(PHONE_NOTHING_TO_INSTALL);
+    await phone.invoke("update_check");
+    vi.advanceTimersByTime(MOCK_UPDATE_CHECK_MS);
+    expect(phone.peek().update).toMatchObject({
+      state: "available",
+      version: MOCK_AVAILABLE_VERSION,
+    });
+    await phone.invoke("update_install");
+    expect(phone.updatePagesOpened).toEqual([MOCK_AVAILABLE_VERSION]);
+    // Nothing is downloaded on the phone: the status stays where the check left it.
+    vi.advanceTimersByTime(MOCK_UPDATE_TICK_MS * (MOCK_UPDATE_TICKS + 2));
+    expect(phone.peek().update.state).toBe("available");
+    phone.destroy();
+    const store = new MockBackend({ role: "phone", update: { state: "store", version: "0.0.1" } });
+    await store.invoke("update_check");
+    vi.advanceTimersByTime(MOCK_UPDATE_CHECK_MS);
+    expect(store.peek().update).toEqual({ state: "store", version: "0.0.1" });
+    expect(store.log.filter((e) => e.type === "update")).toHaveLength(0);
+    await store.invoke("update_install");
+    expect(store.updatePagesOpened).toEqual(["store"]);
+    store.destroy();
   });
 
   it("update_install from ready installs at once; from idle it is ignored", async () => {

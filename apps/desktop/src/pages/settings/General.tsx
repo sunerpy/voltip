@@ -73,6 +73,11 @@ export function updateStatusLine(
         text: t("settings.general.update.failed", { message: update.message }),
         tone: "danger",
       };
+    case "store":
+      return {
+        text: t("settings.general.update.store", { version: update.version }),
+        tone: "idle",
+      };
     case "disabled":
       return { text: t("settings.general.update.disabled"), tone: "idle" };
   }

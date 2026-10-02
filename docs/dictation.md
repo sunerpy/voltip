@@ -1366,6 +1366,15 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 - **桥接与界面**：`mirror_history_query { desktop, … }`、`mirror_history_entry { desktop, id }`（带 `shortened`）、`mirror_profile { desktop }`；`UiState.mirrors`（每台电脑的状态 `syncing` / `up_to_date` / `offline` / `revoked` / `needs_upgrade` / `limit`、条数、最近同步时间、不带四个列表的设置）。手机「记录」页顶部切换「这部手机 / 电脑名」（选中的电脑是导航栈里这一页的参数，打开详情再返回仍在这台电脑，从标签栏回来是「这部手机」），电脑视图只读：没有统计、收藏、删除和重新处理；详情可以复制、分享（超过 `MAX_PASTE_TEXT_CHARS` 时写明无法整段复制），被截短的条目写明。「设置 › 电脑」每台电脑一行，点开是只读的「电脑设置」页。电脑设备页每部手机一个「同步」开关，忘记离线手机时确认框写明它上面的副本会保留。
 - **门禁**：`crates/voltip-core/tests/sync.rs`（17 个场景，真实中继：历史到达与跟随、3000 条分批、设置、进程被杀、确认丢失与防复活、开关与丢失的撤销、重新配对、过大记录、慢的手机、5 部手机同时、局域网路径中途断开、旧会话分片在重新 attach 后到达新连接（含手机进程重启））；`history/tests.rs`、`sync/{bulk,wire,mirror}.rs`、`peer.rs`、`trusted.rs`、`secure.rs` 的单测（各回归测试在没有修复时失败）；IPC 夹具与 `ipc-contract.test.ts`；手机 `Mirror.test.tsx`、电脑 `Devices.test.tsx`；两个壳的 `tests/ipc.rs`。真机项见 `docs/acceptance/android/manual-checklist.md` 第 14–16 项。
 
+### 20.9 手机更新（2026-10-02 用户要求）
+
+- **来源**：`UpdatePlugin.kt` 读取系统记录的安装来源（Android 11 起 `getInstallSourceInfo`，之前 `getInstallerPackageName`），启动时读一次。`com.android.vending`（Google Play）为 `InstallSource::Store`；其他情况（打开 GitHub 发布页安装包的浏览器或文件管理器、`adb`、没有记录）为 `Direct`。
+- **Google Play 安装**：从第一帧起就是 `UpdateStatus::Store { version }`（`store`）。`update_check` 不访问任何地方，`Settings.auto_update` 也不触发检查；`update_install` 在浏览器中打开 `https://play.google.com/store/apps/details?id=<包名>`，Android 会交给 Play 应用。不引入 Play Core 的应用内更新库：它是专有许可，与 AGPL 不兼容，而 Google Play 本身会自动更新应用。
+- **其他安装**：状态从 `idle` 开始。`update_check` 在后台查询 `https://api.github.com/repos/<owner>/<repo>/releases/latest`（由 `REPOSITORY` 得出，带 User-Agent，连接 10 s、读取 30 s）。标签 `vX.Y.Z` 按数字比较：更新则为 `available { version, current, notes（发布说明）, date（published_at） }`，并记下资产 `Voltip_<版本>_android_arm64.apk` 的地址；不更新则为 `up_to_date`；新版本缺少 APK、版本号无法识别、403/429（GitHub 每小时的查询次数有限）或其他失败为 `failed { message }`。检查进行中再次检查会被拒（`updater: 正在检查更新`）。
+- **安装**：`update_install` 在浏览器中打开新版本的 APK，由浏览器下载，用户打开后由系统安装；Android 只接受与已安装版本签名相同的安装包。应用本身不下载、不安装：Google Play 不允许上架的应用绕过 Play 自行更新，所需的 `REQUEST_INSTALL_PACKAGES` 权限也不能用于这个目的，而 APK 与 Google Play 的 AAB 来自同一份清单。没有检查到新版本时，`update_install` 被拒（`updater: 没有可下载的新版本，请先检查更新`）。
+- **自动检查**：跟随 `Settings.auto_update`（默认关闭，与电脑相同）：启动时已开启，10 s 后检查一次；之后开启，立即检查一次。
+- **界面**：设置 › 关于 的「软件更新」卡片。Google Play 安装显示「由 Google Play 更新」和「在 Google Play 中打开」；其他安装显示状态行（与电脑的措辞相同）、有新版本时的更新说明和「下载新版本」、「检查更新」，以及「自动检查更新」开关。
+
 ## 21. AI 预设（2026-09-29）
 
 **目标**：AI 润色按「预设」处理识别出的文字。内置八个预设，默认「校对」；用户可以复制内置预设或自己写，最多 30 个自定义预设；首页、标题栏、托盘都能切换，场景可以指定自己的预设。

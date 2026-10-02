@@ -3120,6 +3120,11 @@
   },
   {
     "type": "update",
+    "state": "store",
+    "version": "0.0.1"
+  },
+  {
+    "type": "update",
     "state": "disabled"
   },
   {

@@ -17,9 +17,10 @@ use voltip_core::dictation::DictationPorts;
 use voltip_core::ui::{UI_EVENT_NAME, UiState};
 use voltip_core::{CoreConfig, Settings, SettingsStore, ThemeId};
 use voltip_identity::MemorySecretStore;
+use voltip_mobile_lib::update::{InstallSource, NOTHING_TO_INSTALL, UpdateConfig};
 use voltip_mobile_lib::{
-    BROWSER_UNAVAILABLE, COMMANDS, HOTKEY_UNAVAILABLE, KEYSTORE_SERVICE, MODELS_UNAVAILABLE, UPDATE_UNAVAILABLE, build_app, data_dir, platform_label,
-    production_config, secret_store,
+    BROWSER_UNAVAILABLE, COMMANDS, HOTKEY_UNAVAILABLE, KEYSTORE_SERVICE, MODELS_UNAVAILABLE, build_app, data_dir, platform_label, production_config,
+    secret_store,
 };
 use voltip_pairing::PairingState;
 use voltip_tauri_bridge::Bridge;
@@ -100,15 +101,37 @@ fn with_running_app(body: impl FnOnce(&AppHandle<MockRuntime>, &WebviewWindow<Mo
     with_app(Settings { relay_enabled: false, ..Settings::default() }, |_| voltip_core::dictation::fakes::ports(), body);
 }
 
+/// An install from outside Google Play whose release endpoint is `latest_release`; the automatic
+/// check, when `Settings.auto_update` turns it on, runs at once.
+fn direct_updates(latest_release: &str) -> UpdateConfig {
+    UpdateConfig {
+        source: Some(InstallSource::Direct),
+        latest_release: latest_release.to_owned(),
+        listing: voltip_mobile_lib::update::store_listing("dev.voltip.mobile"),
+        auto_check_delay: Duration::ZERO,
+    }
+}
+
 /// [`with_running_app`] with `settings` and the dictation `ports`.
 fn with_app(
     settings: Settings,
     ports: impl FnOnce(&AppHandle<MockRuntime>) -> DictationPorts + Send + 'static,
     body: impl FnOnce(&AppHandle<MockRuntime>, &WebviewWindow<MockRuntime>, &mpsc::Receiver<String>) + Send + 'static,
 ) {
+    // No release endpoint answers: no test reaches GitHub.
+    with_app_updating(settings, ports, direct_updates("http://127.0.0.1:9/releases/latest"), body);
+}
+
+/// [`with_app`] with where updates come from.
+fn with_app_updating(
+    settings: Settings,
+    ports: impl FnOnce(&AppHandle<MockRuntime>) -> DictationPorts + Send + 'static,
+    updates: UpdateConfig,
+    body: impl FnOnce(&AppHandle<MockRuntime>, &WebviewWindow<MockRuntime>, &mpsc::Receiver<String>) + Send + 'static,
+) {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path().to_path_buf();
-    let app = build_app(mock_builder(), move |_| offline_config(&data, settings), Arc::new(MemorySecretStore::new()), ports)
+    let app = build_app(mock_builder(), move |_| offline_config(&data, settings), Arc::new(MemorySecretStore::new()), ports, move |_| updates)
         .build(mock_context(noop_assets()))
         .unwrap();
     let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
@@ -407,12 +430,13 @@ fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
         );
         wait_state(webview, |s| s.settings.activation == voltip_core::Activation::Toggle);
         assert!(invoke(webview, "settings_set_activation", json!({ "activation": "press", "holdThresholdMs": 300, "extraRecordingMs": 0 })).is_err());
-        // Phones update through the store: the updater is `disabled` everywhere the UI looks, the
-        // update verbs refuse honestly, while the locale / auto-update settings persist like on the desktop.
-        for cmd in ["update_check", "update_install"] {
-            assert_eq!(invoke(webview, cmd, json!({})), Err(Value::String(UPDATE_UNAVAILABLE.into())), "{cmd}");
-        }
-        assert_eq!(invoke(webview, "update_status", json!({})), Ok(json!({ "state": "disabled" })));
+        // User request 2026-10-02 (docs/dictation.md §20.9): an install from outside Google Play
+        // looks for releases on GitHub, so the updater starts `idle` (it was `disabled` with every
+        // update verb refused); installing before a check found a newer release is refused.
+        // `updates_come_from_github_outside_play_and_from_the_listing_with_play` has the rest.
+        assert_eq!(invoke(webview, "update_status", json!({})), Ok(json!({ "state": "idle" })));
+        assert_eq!(core_state(webview).update, voltip_core::ui::UpdateStatus::Idle);
+        assert_eq!(invoke(webview, "update_install", json!({})), Err(Value::String(NOTHING_TO_INSTALL.into())));
         // docs/dictation.md §15: the phone gates nothing through these queries.
         let report = invoke(webview, "permissions_status", json!({})).unwrap();
         for key in ["microphone", "accessibility"] {
@@ -430,7 +454,9 @@ fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
         assert_eq!(invoke(webview, "paste_text", json!({ "text": "  " })), Ok(json!({ "kind": "failed", "reason": "invalid" })));
         assert_eq!(invoke(webview, "phone_share_text", json!({ "text": "你好" })), Err(Value::String(voltip_mobile_lib::share::SHARE_UNAVAILABLE.into())));
         assert!(invoke(webview, "phone_share_text", json!({ "text": " " })).unwrap_err().as_str().unwrap().starts_with("share: 文字为空"));
-        assert_eq!(wait_state(webview, |_| true).update, voltip_core::ui::UpdateStatus::Disabled);
+        // `idle`, not `disabled`, since the phone looks for updates itself (user request 2026-10-02,
+        // docs/dictation.md §20.9).
+        assert_eq!(wait_state(webview, |_| true).update, voltip_core::ui::UpdateStatus::Idle);
         // No local models on a phone: the library verbs refuse and the state carries an empty list.
         for cmd in ["model_download", "model_cancel", "model_remove", "model_import", "model_folder_open"] {
             assert_eq!(invoke(webview, cmd, json!({ "id": "sense-voice-small" })), Err(Value::String(MODELS_UNAVAILABLE.into())), "{cmd}");
@@ -725,4 +751,95 @@ fn production_wiring_helpers_are_well_formed() {
     let config = production_config(app.handle());
     assert_eq!(config.data_dir, dir);
     assert_eq!(config.default_device_name, "Voltip 手机");
+}
+
+/// docs/dictation.md §20.9 (user request 2026-10-02): an install from outside Google Play asks
+/// GitHub for the latest release. A newer one is `available`, and the install opens its APK in the
+/// browser (a desktop-hosted build has none: the command gets as far as the opener). Turning
+/// `Settings.auto_update` on checks at once; the same version is `up_to_date`, after which there
+/// is nothing to install; a refused query is `failed`, saying why.
+#[test]
+fn updates_outside_play_come_from_github_releases() {
+    use wiremock::matchers::{header_exists, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(async {
+        let server = MockServer::start().await;
+        let release = |tag: &str, apk: &str| {
+            json!({
+                "tag_name": tag,
+                "body": "## 0.2.0\n\n* 修复",
+                "published_at": "2026-10-03T08:00:00Z",
+                "assets": [
+                    { "name": apk.replace(".apk", ".aab"), "browser_download_url": format!("{}/download/{}", server.uri(), apk.replace(".apk", ".aab")) },
+                    { "name": apk, "browser_download_url": format!("{}/download/{apk}", server.uri()) },
+                ],
+            })
+        };
+        let latest = || Mock::given(method("GET")).and(path("/repos/sunerpy/voltip/releases/latest")).and(header_exists("user-agent"));
+        // One answer each, in order: newer, the same version, then refused.
+        latest()
+            .respond_with(ResponseTemplate::new(200).set_body_json(release("v0.2.0", "Voltip_0.2.0_android_arm64.apk")))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        latest()
+            .respond_with(ResponseTemplate::new(200).set_body_json(release("v0.1.0", "Voltip_0.1.0_android_arm64.apk")))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        latest().respond_with(ResponseTemplate::new(403)).mount(&server).await;
+        server
+    });
+    let updates = direct_updates(&format!("{}/repos/sunerpy/voltip/releases/latest", server.uri()));
+    with_app_updating(
+        Settings { relay_enabled: false, ..Settings::default() },
+        |_| voltip_core::dictation::fakes::ports(),
+        updates,
+        move |_, webview, rx| {
+            wait_state(webview, |s| s.identity.is_some());
+            assert_eq!(invoke(webview, "update_status", json!({})), Ok(json!({ "state": "idle" })));
+            assert_eq!(invoke(webview, "update_check", json!({})), Ok(Value::Null));
+            let available = wait_event(rx, "update available", |e| e["type"] == "update" && e["state"] == "available");
+            assert_eq!((available["version"].as_str(), available["current"].as_str()), (Some("0.2.0"), Some("0.1.0")), "{available}");
+            assert_eq!(available["notes"], "## 0.2.0\n\n* 修复");
+            assert_eq!(available["date"], "2026-10-03T08:00:00Z");
+            assert_eq!(invoke(webview, "update_status", json!({})).unwrap()["state"], "available");
+            assert!(matches!(core_state(webview).update, voltip_core::ui::UpdateStatus::Available { .. }));
+            // The APK of 0.2.0 goes to the browser.
+            assert_eq!(invoke(webview, "update_install", json!({})), Err(Value::String(BROWSER_UNAVAILABLE.into())));
+            // 自动检查更新 turned on: a check at once, which finds nothing newer.
+            assert_eq!(invoke(webview, "settings_set_auto_update", json!({ "enabled": true })), Ok(Value::Null));
+            let current = wait_event(rx, "update up_to_date", |e| e["type"] == "update" && e["state"] == "up_to_date");
+            assert_eq!(current["version"], "0.1.0");
+            assert_eq!(invoke(webview, "update_install", json!({})), Err(Value::String(NOTHING_TO_INSTALL.into())));
+            assert_eq!(invoke(webview, "update_check", json!({})), Ok(Value::Null));
+            let failed = wait_event(rx, "update failed", |e| e["type"] == "update" && e["state"] == "failed");
+            assert!(failed["message"].as_str().is_some_and(|m| m.contains("每小时的查询次数有限")), "{failed}");
+            assert_eq!(rt.block_on(server.received_requests()).unwrap().len(), 3);
+        },
+    );
+}
+
+/// docs/dictation.md §20.9: Google Play updates what it installed. The status is `store` from the
+/// first frame, a check asks nobody (and `Settings.auto_update` starts none), and the install
+/// opens the Play listing in the browser.
+#[test]
+fn an_install_from_play_is_updated_by_play_and_points_to_its_listing() {
+    let updates = UpdateConfig { source: Some(InstallSource::Store), ..direct_updates("http://127.0.0.1:9/releases/latest") };
+    let settings = Settings { relay_enabled: false, auto_update: true, ..Settings::default() };
+    with_app_updating(
+        settings,
+        |_| voltip_core::dictation::fakes::ports(),
+        updates,
+        |_, webview, _| {
+            let store = json!({ "state": "store", "version": "0.1.0" });
+            assert_eq!(invoke(webview, "update_status", json!({})), Ok(store.clone()));
+            assert_eq!(wait_state(webview, |s| s.identity.is_some()).update, voltip_core::ui::UpdateStatus::Store { version: "0.1.0".into() });
+            assert_eq!(invoke(webview, "update_check", json!({})), Ok(Value::Null));
+            assert_eq!(invoke(webview, "update_status", json!({})), Ok(store));
+            assert_eq!(invoke(webview, "update_install", json!({})), Err(Value::String(BROWSER_UNAVAILABLE.into())));
+        },
+    );
 }

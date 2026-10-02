@@ -15,6 +15,7 @@ pub mod meter;
 pub mod microphone;
 pub mod multicast;
 pub mod share;
+pub mod update;
 
 use std::sync::Arc;
 
@@ -661,9 +662,6 @@ fn settings_set_overlay(bridge: tauri::State<'_, Bridge>, placement: OverlayPlac
     Ok(bridge.dispatch(UiCommand::SettingsSetOverlay { placement })?)
 }
 
-/// Why the phone refuses the update verbs: app stores deliver phone updates, not the app itself.
-pub const UPDATE_UNAVAILABLE: &str = "updater: 手机端由应用商店更新";
-
 /// Phones carry no local speech models (docs/dictation.md §10): the library verbs refuse honestly
 /// and `UiState.models` stays empty.
 pub const MODELS_UNAVAILABLE: &str = "models: 手机端不支持本地模型";
@@ -938,20 +936,22 @@ fn presets_builtin() -> Vec<voltip_cloud::BuiltinPresetText> {
     voltip_cloud::builtin_preset_texts()
 }
 
+/// 检查更新 (docs/dictation.md §20.9): an install from Google Play is Play's to update, so nothing
+/// happens; otherwise GitHub's latest release is asked in the background (`update` event).
 #[tauri::command]
-fn update_check() -> Result<(), String> {
-    Err(UPDATE_UNAVAILABLE.to_owned())
+fn update_check(bridge: tauri::State<'_, Bridge>, updater: tauri::State<'_, Arc<update::PhoneUpdater>>) -> Result<(), String> {
+    updater.check(&bridge)
+}
+
+/// The page that installs the update, in the browser: the Play listing, or the newer release's APK.
+#[tauri::command]
+fn update_install<R: Runtime>(app: AppHandle<R>, updater: tauri::State<'_, Arc<update::PhoneUpdater>>) -> Result<(), String> {
+    open_in_browser(&app, &updater.install_url()?)
 }
 
 #[tauri::command]
-fn update_install() -> Result<(), String> {
-    Err(UPDATE_UNAVAILABLE.to_owned())
-}
-
-/// No updater on the phone: always `disabled`, so the shared settings page hides the section.
-#[tauri::command]
-fn update_status() -> UpdateStatus {
-    UpdateStatus::Disabled
+fn update_status(updater: tauri::State<'_, Arc<update::PhoneUpdater>>) -> UpdateStatus {
+    updater.status()
 }
 
 /// The phone asks for its permissions through the Android runtime-permission flow, not through
@@ -1030,8 +1030,6 @@ pub fn attach_bridge<R: Runtime>(
     // with `tokio::spawn`, so it has to be started from Tauri's own runtime.
     // Subscribed before the core starts so the first `state` event reaches the webview bus.
     let (bridge, mut events) = tauri::async_runtime::block_on(async { Bridge::start_subscribed(config, store, ports) })?;
-    // No updater on the phone: `core_state().update` says so from the first frame.
-    bridge.publish(voltip_core::ui::UiEvent::Update(UpdateStatus::Disabled));
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
@@ -1052,14 +1050,16 @@ pub fn attach_bridge<R: Runtime>(
 }
 
 /// Register the plugins, the command handlers and the setup hook that attaches the bridge.
-/// `config` and `ports` run inside `setup`: the platform data dir and the clipboard injector need
-/// a live [`AppHandle`]. [`run`] feeds it `tauri::Builder::default()` and [`phone_ports`]; tests
-/// feed it `tauri::test::mock_builder()` and the in-memory fakes.
+/// `config`, `ports` and `updates` run inside `setup`: the platform data dir, the clipboard
+/// injector and the install source need a live [`AppHandle`]. [`run`] feeds it
+/// `tauri::Builder::default()`, [`phone_ports`] and [`update::UpdateConfig::production`]; tests
+/// feed it `tauri::test::mock_builder()`, the in-memory fakes and a release endpoint of their own.
 pub fn build_app<R: Runtime>(
     builder: tauri::Builder<R>,
     config: impl FnOnce(&AppHandle<R>) -> CoreConfig + Send + 'static,
     store: Arc<dyn SecretStore>,
     ports: impl FnOnce(&AppHandle<R>) -> voltip_core::dictation::DictationPorts + Send + 'static,
+    updates: impl FnOnce(&AppHandle<R>) -> update::UpdateConfig + Send + 'static,
 ) -> tauri::Builder<R> {
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init()).plugin(tauri_plugin_opener::init());
@@ -1068,11 +1068,19 @@ pub fn build_app<R: Runtime>(
         .plugin(clipboard::init())
         .plugin(share::init())
         .plugin(multicast::init())
+        .plugin(update::init())
         .manage(meter::Meters::default())
         .setup(move |app| {
             let config = config(app.handle());
             let ports = ports(app.handle());
-            Ok(attach_bridge(app.handle(), config, store, ports).map_err(|e| std::io::Error::other(e.to_string()))?)
+            attach_bridge(app.handle(), config, store, ports).map_err(|e| std::io::Error::other(e.to_string()))?;
+            // docs/dictation.md §20.9: Play installs are Play's to update, others ask GitHub.
+            let updater = Arc::new(update::PhoneUpdater::new(updates(app.handle()), &app.package_info().version.to_string()));
+            let bridge = app.state::<Bridge>().inner().clone();
+            bridge.publish(voltip_core::ui::UiEvent::Update(updater.status()));
+            app.manage(updater.clone());
+            update::start(app.handle(), bridge, updater);
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             core_state,
@@ -1191,7 +1199,8 @@ pub fn run() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,voltip=debug"));
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 
-    let outcome = build_app(tauri::Builder::default(), production_config, secret_store(), phone_ports).run(tauri::generate_context!());
+    let outcome =
+        build_app(tauri::Builder::default(), production_config, secret_store(), phone_ports, update::UpdateConfig::production).run(tauri::generate_context!());
     if let Err(e) = outcome {
         tracing::error!(error = %e, "tauri exited with error");
         std::process::exit(1);
