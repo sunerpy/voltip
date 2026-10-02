@@ -31,7 +31,7 @@ use crate::dictation::{DictationEngine, DictationError, DictationPhase, Dictatio
 use crate::engines::{BuiltIn, EngineSettings, EngineStatus, MAX_LOCAL_THREADS, ProviderId, ResolvedEngines, ServiceKind, UserSecrets};
 use crate::history::{HistoryEntry, HistoryStore};
 use crate::models::{CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelInstallState, ModelManager, ModelState};
-use crate::peer::{Incoming, LinkId, PeerPath, PeerPhase, PeerState};
+use crate::peer::{Incoming, LinkId, ParkedChannel, PeerPath, PeerPhase, PeerState};
 use crate::presets::{CustomPreset, PresetDraft, PresetStore, PresetTrial, PresetTryOutcome};
 use crate::providers::{ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, key_entries, key_entry};
 use crate::scenes::{ContextSharing, Scene, SceneDraft, SceneStore};
@@ -779,6 +779,7 @@ impl AppCore {
             peers: HashMap::new(),
             session_to_peer: HashMap::new(),
             pending_attach: HashMap::new(),
+            parked: HashMap::new(),
             remote_take: None,
             phone_take: None,
             next_phone_take: 0,
@@ -1011,6 +1012,8 @@ struct Runtime {
     peers: HashMap<PublicKey, PeerState>,
     session_to_peer: HashMap<(LinkId, SessionId), PublicKey>,
     pending_attach: HashMap<LinkId, VecDeque<PublicKey>>,
+    /// Channels still held on a link for devices this one forgot ([`ParkedChannel`]).
+    parked: HashMap<(LinkId, PublicKey), ParkedChannel>,
     /// Desktop: the take a paired phone streams (docs/dictation.md §20).
     remote_take: Option<takes::RemoteTake>,
     /// Phone: the take this phone streams to a desktop.
@@ -1189,6 +1192,7 @@ impl Runtime {
         }
         self.session_to_peer.retain(|(l, _), _| *l != id);
         self.pending_attach.remove(&id);
+        self.parked.retain(|(l, _), _| *l != id);
     }
 
     async fn close_dial(&mut self, n: u64) {
@@ -2491,6 +2495,10 @@ impl Runtime {
             for p in &st.paths {
                 if let Some(sid) = p.session_id {
                     self.session_to_peer.remove(&(p.link, sid));
+                    // Still on the channel there until the link drops; a dial is closed below.
+                    if !matches!(p.link, LinkId::Dial(_)) {
+                        self.parked.insert((p.link, key), ParkedChannel { session_id: sid, present: p.present, early: None });
+                    }
                 }
             }
         }
@@ -2740,15 +2748,45 @@ impl Runtime {
         }
     }
 
-    /// Attach to the rendezvous channel with `key` on `link`.
+    /// Attach to the rendezvous channel with `key` on `link`. A channel this device is already on
+    /// there is used as it is: the relay refuses a second attach on the same connection.
     async fn attach(&mut self, link: LinkId, key: PublicKey) {
-        let channel = rendezvous_channel(&self.identity.keypair.public, &key);
         let backoff = self.config.direct_retry;
-        self.peers.entry(key).or_insert_with(|| PeerState::new(backoff)).path_or_insert(link);
-        self.pending_attach.entry(link).or_default().push_back(key);
-        if let Err(e) = self.send_on(link, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel }).await {
-            tracing::warn!(error = %e, link = ?link, "attach failed");
+        let path = self.peers.entry(key).or_insert_with(|| PeerState::new(backoff)).path_or_insert(link);
+        let held = match (path.session_id, self.parked.remove(&(link, key))) {
+            // Paired again while this side still trusted the peer: the same channel. A handshake
+            // under way is left to finish; an idle path or an old channel starts a new one.
+            (Some(_), _) => Some((path.present && !matches!(path.phase, PeerPhase::Handshaking(_)), None)),
+            // Forgotten and paired again: take up the channel left behind.
+            (None, Some(parked)) => {
+                path.session_id = Some(parked.session_id);
+                path.present = parked.present;
+                self.session_to_peer.insert((link, parked.session_id), key);
+                Some((parked.present, parked.early.map(|bytes| (parked.session_id, bytes))))
+            }
+            (None, None) => None,
+        };
+        let Some((present, early)) = held else {
+            let channel = rendezvous_channel(&self.identity.keypair.public, &key);
+            self.pending_attach.entry(link).or_default().push_back(key);
+            if let Err(e) = self.send_on(link, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel }).await {
+                tracing::warn!(error = %e, link = ?link, "attach failed");
+            }
+            return;
+        };
+        tracing::debug!(peer = %key.fingerprint(), link = ?link, present, "rendezvous channel already held; using it");
+        if present {
+            self.start_peer_handshake(key, link).await;
         }
+        // The handshake of a peer that trusted this device again first.
+        if let Some((session_id, bytes)) = early {
+            self.on_peer_bytes(key, link, session_id, bytes).await;
+        }
+    }
+
+    /// The channel held on `link` under `session_id` for a device this one forgot.
+    fn parked_on(&mut self, link: LinkId, session_id: SessionId) -> Option<&mut ParkedChannel> {
+        self.parked.iter_mut().find(|((l, _), p)| *l == link && p.session_id == session_id).map(|(_, p)| p)
     }
 
     async fn attach_all(&mut self, link: LinkId) {
@@ -2761,6 +2799,11 @@ impl Runtime {
         match frame {
             RelayFrame::Attached { session_id, peer_online, .. } => {
                 let Some(key) = self.pending_attach.get_mut(&id).and_then(VecDeque::pop_front) else { return };
+                if !self.peers.contains_key(&key) {
+                    // Forgotten while the attach was on its way: the channel is held all the same.
+                    self.parked.insert((id, key), ParkedChannel { session_id, present: peer_online, early: None });
+                    return;
+                }
                 self.session_to_peer.insert((id, session_id), key);
                 if let Some(p) = self.peers.get_mut(&key).and_then(|st| st.path(id)) {
                     p.session_id = Some(session_id);
@@ -2772,7 +2815,15 @@ impl Runtime {
                 self.emit_devices();
             }
             RelayFrame::PeerPresence { session_id, online, .. } => {
-                let Some(key) = self.session_to_peer.get(&(id, session_id)).copied() else { return };
+                let Some(key) = self.session_to_peer.get(&(id, session_id)).copied() else {
+                    if let Some(parked) = self.parked_on(id, session_id) {
+                        parked.present = online;
+                        if !online {
+                            parked.early = None;
+                        }
+                    }
+                    return;
+                };
                 if let Some(p) = self.peers.get_mut(&key).and_then(|st| st.path(id)) {
                     p.present = online;
                 }
@@ -2798,6 +2849,8 @@ impl Runtime {
                 }
                 if let Some(key) = self.session_to_peer.get(&(id, session_id)).copied() {
                     self.on_peer_bytes(key, id, session_id, payload).await;
+                } else if let Some(parked) = self.parked_on(id, session_id) {
+                    parked.early = Some(payload);
                 }
             }
             RelayFrame::SessionCreated { .. }

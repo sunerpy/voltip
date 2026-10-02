@@ -945,6 +945,109 @@ async fn regression_a_responder_with_a_channel_answers_an_initiator_that_starts_
     texts_both_ways(initiator, &initiator_peer, responder, &responder_peer).await;
 }
 
+/// Forget the other device on `desk` and wait until both sides have let go of each other.
+async fn forget_both_ways(desk: &mut Node, phone: &mut Node, phone_on_desk: &voltip_identity::TrustedDevice) {
+    desk.handle.send(CoreCommand::ForgetDevice(phone_on_desk.public_key)).await.unwrap();
+    wait(desk, |e| matches!(e, CoreEvent::Devices(l) if l.is_empty()).then_some(())).await;
+    wait(phone, |e| matches!(e, CoreEvent::Unpaired(_)).then_some(())).await;
+}
+
+/// regression (2026-10-02, a user report): forgetting a device left this device on their
+/// rendezvous channel, because the relay keeps a connection on a channel until the connection
+/// drops. Paired again at once, each side asked to attach to the channel it was still on, the
+/// relay refused (`SessionAlreadyActive`), and neither came online until its relay connection was
+/// replaced. The channel a forgotten device leaves behind is taken up again (docs/pairing.md).
+#[tokio::test]
+async fn regression_a_device_forgotten_and_paired_again_at_once_comes_online_over_the_relay() {
+    let (url, _stop, _relay) = relay().await;
+    let mut desk = relay_node("Desk", &url, |_| {});
+    let mut phone = relay_node("Phone", &url, |_| {});
+    for n in [&mut desk, &mut phone] {
+        wait(n, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    }
+    let (phone_on_desk, _) = pair_by_code(&mut desk, &mut phone).await;
+    wait_online(&mut desk).await;
+    wait_online(&mut phone).await;
+    forget_both_ways(&mut desk, &mut phone, &phone_on_desk).await;
+    // At once, on the relay connections both already have.
+    let (phone_on_desk, desk_on_phone) = pair_by_code(&mut desk, &mut phone).await;
+    let online = async {
+        wait_online(&mut desk).await;
+        wait_online(&mut phone).await;
+    };
+    tokio::time::timeout(Duration::from_secs(30), online).await.expect("both come online without a new relay connection");
+    texts_both_ways(&mut desk, &phone_on_desk, &mut phone, &desk_on_phone).await;
+}
+
+/// One-sided: the device that answers handshakes forgets the other while that one is offline, so
+/// the other, never told, still trusts it, attaches to their channel when it is back and opens a
+/// handshake there that nobody answers. Paired again, the forgetting side takes up the channel and
+/// answers that handshake; the other, already on the channel, attaches no second time.
+#[tokio::test]
+async fn regression_a_device_forgotten_while_offline_and_paired_again_comes_online() {
+    let (url, _stop, _relay) = relay().await;
+    // A handshake nobody answers stays open long after this test would give up: only an answer to
+    // the one already sent brings the two online.
+    let settings = Settings { relay_url: Some(url.clone()), relay_enabled: true, ..Settings::default() };
+    let patient = |cfg: &mut CoreConfig| {
+        cfg.direct_enabled = false;
+        cfg.peer_handshake_timeout = Duration::from_secs(120);
+    };
+    let mut desk = node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Desk", &settings, patient);
+    let mut phone = node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Phone", &settings, patient);
+    for n in [&mut desk, &mut phone] {
+        wait(n, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    }
+    let ((initiator, _), (responder, initiator_on_responder)) = pair_ordered(&mut desk, &mut phone).await;
+    wait_online(initiator).await;
+    wait_online(responder).await;
+    initiator.handle.send(CoreCommand::SetRelay { url: Some(url.clone()), enabled: false }).await.unwrap();
+    wait_offline(responder).await;
+    responder.handle.send(CoreCommand::ForgetDevice(initiator_on_responder.public_key)).await.unwrap();
+    wait(responder, |e| matches!(e, CoreEvent::Devices(l) if l.is_empty()).then_some(())).await;
+    initiator.handle.send(CoreCommand::SetRelay { url: Some(url.clone()), enabled: true }).await.unwrap();
+    wait(initiator, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    let (initiator_on_responder, responder_on_initiator) = pair_by_code(responder, initiator).await;
+    let online = async {
+        wait_online(responder).await;
+        wait_online(initiator).await;
+    };
+    tokio::time::timeout(Duration::from_secs(30), online).await.expect("both come online on the channel both kept");
+    texts_both_ways(initiator, &responder_on_initiator, responder, &initiator_on_responder).await;
+}
+
+/// The same on the LAN, with no relay at all: the desktop's link to its own LAN host never
+/// reconnects by itself, so a device forgotten and paired again there stayed offline until the app
+/// restarted.
+#[tokio::test]
+async fn regression_a_device_forgotten_and_paired_again_at_once_comes_online_on_the_lan() {
+    async fn pair_by_ticket(desk: &mut Node, phone: &mut Node) -> (voltip_identity::TrustedDevice, voltip_identity::TrustedDevice) {
+        desk.handle.send(CoreCommand::StartPairing).await.unwrap();
+        let ticket = wait_pairing(desk, PairingState::WaitingForPeer).await.ticket_uri.unwrap();
+        phone.handle.send(CoreCommand::JoinWithTicket(ticket)).await.unwrap();
+        wait_pairing(desk, PairingState::AwaitingVerification).await;
+        wait_pairing(phone, PairingState::AwaitingVerification).await;
+        desk.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
+        phone.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
+        let on_desk = wait(desk, |e| if let CoreEvent::Trusted(d) = e { Some(d.clone()) } else { None }).await;
+        let on_phone = wait(phone, |e| if let CoreEvent::Trusted(d) = e { Some(d.clone()) } else { None }).await;
+        (on_desk, on_phone)
+    }
+    let mut desk = node("Desk", None);
+    let mut phone = node("Phone", None);
+    let (phone_on_desk, _) = pair_by_ticket(&mut desk, &mut phone).await;
+    wait_online_via(&mut desk, voltip_identity::ConnectionKind::Direct).await;
+    wait_online_via(&mut phone, voltip_identity::ConnectionKind::Direct).await;
+    forget_both_ways(&mut desk, &mut phone, &phone_on_desk).await;
+    let (phone_on_desk, desk_on_phone) = pair_by_ticket(&mut desk, &mut phone).await;
+    let online = async {
+        wait_online_via(&mut desk, voltip_identity::ConnectionKind::Direct).await;
+        wait_online_via(&mut phone, voltip_identity::ConnectionKind::Direct).await;
+    };
+    tokio::time::timeout(Duration::from_secs(30), online).await.expect("both come online on the desktop's LAN host");
+    texts_both_ways(&mut desk, &phone_on_desk, &mut phone, &desk_on_phone).await;
+}
+
 /// A desktop whose recogniser is ready: the custom endpoint (the fake factory answers for it).
 fn desktop_ready(name: &str, relay_url: &str) -> Node {
     let mut settings = Settings { relay_url: Some(relay_url.to_owned()), relay_enabled: true, ..Settings::default() };
