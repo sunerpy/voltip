@@ -2394,6 +2394,8 @@ export const en: Messages = {
     connecting: "Starting…",
     connectFailed: "Could not start: {error}",
     back: "Back",
+    /** Android's back at 说话: a second one within two seconds leaves the app. */
+    backToLeave: "Go back again to leave",
     thisDevice: "This device",
     toast: {
       error: "Error · {message}",

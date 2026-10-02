@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="1024" height="1024">
+  <!-- Android 13 themed icons: the V in one colour; the launcher tints it. Scaled to two thirds about the centre so that it stays inside the 66 dp safe circle of
+       the 108 dp canvas (the generator draws the canvas whole and ignores android_fg_scale for SVG). -->
+  <g transform="translate(50 50.5) scale(0.67) translate(-50 -50.5)">
+    <polygon points="22.5,22 39.5,22 50,46 50,79" fill="#FFFFFF"/>
+    <polygon points="60.5,22 77.5,22 50,79 50,46" fill="#FFFFFF"/>
+  </g>
+</svg>

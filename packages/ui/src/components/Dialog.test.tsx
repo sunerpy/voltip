@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Dialog } from "./Dialog";
+import { Dialog, dismissTopDialog } from "./Dialog";
 
 describe("Dialog", () => {
   it("renders nothing when closed and closes on Esc / scrim click", async () => {
@@ -106,6 +106,35 @@ describe("Dialog", () => {
     );
     fireEvent.keyDown(document, { key: "Escape" });
     expect([closeInner.mock.calls.length, closeOuter.mock.calls.length]).toEqual([1, 1]);
+  });
+
+  it("the phone's system back closes the dialog on top, as Esc does, and reports when none is open", () => {
+    const closeOuter = vi.fn();
+    const closeInner = vi.fn();
+    const both = (inner: boolean) => (
+      <>
+        <Dialog
+          open
+          title="编辑词条"
+          onClose={closeOuter}
+          actions={<button type="button">a</button>}
+        />
+        <Dialog
+          open={inner}
+          title="删除词条？"
+          onClose={closeInner}
+          actions={<button type="button">b</button>}
+        />
+      </>
+    );
+    const { rerender, unmount } = render(both(true));
+    expect(dismissTopDialog()).toBe(true);
+    expect([closeInner.mock.calls.length, closeOuter.mock.calls.length]).toEqual([1, 0]);
+    rerender(both(false));
+    expect(dismissTopDialog()).toBe(true);
+    expect([closeInner.mock.calls.length, closeOuter.mock.calls.length]).toEqual([1, 1]);
+    unmount();
+    expect(dismissTopDialog()).toBe(false);
   });
 
   it("regression: Escape is marked consumed so an enclosing document listener does not also close", () => {

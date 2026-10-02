@@ -2283,6 +2283,8 @@ export const zhCN = {
     connecting: "正在启动…",
     connectFailed: "启动失败：{error}",
     back: "返回",
+    /** Android's back at 说话: a second one within two seconds leaves the app. */
+    backToLeave: "再返回一次即可退出",
     thisDevice: "本机",
     toast: {
       error: "出错了 · {message}",
