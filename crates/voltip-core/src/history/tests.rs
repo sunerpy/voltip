@@ -666,3 +666,312 @@ fn a_processed_text_is_stored_beside_the_entry_and_searched() {
     let mut broken = HistoryStore::open(&blocked);
     assert!(broken.get(long.id).is_err() && broken.set_processed(long.id, processed("x", 4)).is_err());
 }
+
+// ---------------- numbered changes (docs/dictation.md §20.8) ----------------
+
+/// The rows of `sync_revs`, by revision: `(id, rev, deleted)`.
+fn revs(dir: &std::path::Path) -> Vec<(Uuid, u64, bool)> {
+    let conn = rusqlite::Connection::open(dir.join(HISTORY_DB_FILE_NAME)).unwrap();
+    let mut stmt = conn.prepare("SELECT id, rev, deleted FROM sync_revs ORDER BY rev").unwrap();
+    stmt.query_map([], |r| Ok((r.get::<_, String>(0)?.parse().unwrap(), r.get::<_, i64>(1)? as u64, r.get::<_, bool>(2)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+fn floor(dir: &std::path::Path) -> u64 {
+    let conn = rusqlite::Connection::open(dir.join(HISTORY_DB_FILE_NAME)).unwrap();
+    conn.query_row("SELECT value FROM meta WHERE key = 'sync_floor'", [], |r| r.get::<_, String>(0)).unwrap().parse().unwrap()
+}
+
+const ALL: usize = usize::MAX;
+
+#[test]
+fn every_write_takes_a_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = HistoryStore::open(dir.path());
+    let [a, b, c] = [0u64, 1, 2].map(|i| HistoryEntry { at_ms: 1_758_700_000_000 + i, ..entry(&format!("第{i}句")) });
+    for e in [&a, &b, &c] {
+        store.push(e.clone(), MAX_ENTRIES).unwrap();
+    }
+    let first = store.changes_since(None, 0, ALL).unwrap();
+    assert!(first.reset && !first.more);
+    assert_eq!(first.upserts.iter().map(|e| e.id).collect::<Vec<_>>(), [a.id, b.id, c.id], "in revision order");
+    assert_eq!((first.head, first.to), (3, 3));
+    let epoch = Some(first.epoch);
+    let since = |store: &HistoryStore, rev| store.changes_since(epoch, rev, ALL).unwrap();
+
+    assert!(store.star(a.id, true).unwrap());
+    assert!(store.star(a.id, true).unwrap(), "no change, no revision");
+    let starred = since(&store, 3);
+    assert!(!starred.reset);
+    assert_eq!((starred.upserts.len(), starred.upserts[0].id, starred.upserts[0].starred, starred.to), (1, a.id, true, 4));
+
+    let processed = ProcessedText { text: "处理后".into(), preset: PresetRef { id: crate::presets::PresetId::default(), name: "校对".into() }, at_ms: 9 };
+    assert!(store.set_processed(b.id, processed.clone()).unwrap());
+    let batch = since(&store, 4);
+    assert_eq!(batch.upserts[0].processed.as_deref(), Some(&processed));
+
+    assert!(store.delete(c.id).unwrap());
+    assert!(!store.delete(c.id).unwrap(), "not there: no revision");
+    let batch = since(&store, 5);
+    assert_eq!((batch.upserts.len(), batch.deletes.as_slice(), batch.to), (0, [c.id].as_slice(), 6));
+
+    // `push` past `keep` and `retain_newest` record what they dropped.
+    let d = HistoryEntry { at_ms: 1_758_700_000_010, ..entry("第3句") };
+    store.push(d.clone(), 2).unwrap();
+    let batch = since(&store, 6);
+    assert_eq!(batch.upserts.iter().map(|e| e.id).collect::<Vec<_>>(), [d.id]);
+    assert_eq!(batch.deletes, [a.id], "the oldest went");
+    assert!(store.retain_newest(MIN_KEEP).unwrap() || store.total() <= MIN_KEEP);
+    store.push(HistoryEntry { at_ms: 1_758_700_000_011, ..entry("第4句") }, 1).unwrap();
+    let batch = since(&store, batch.to);
+    assert_eq!(batch.deletes.len(), 2, "two dropped to keep one: {batch:?}");
+    assert_eq!(store.total(), 1);
+
+    // `clear` raises the floor past every revision: the next request starts over.
+    store.clear().unwrap();
+    let after = since(&store, batch.to);
+    assert!(after.reset && after.upserts.is_empty() && after.deletes.is_empty());
+    assert_eq!(after.to, after.head);
+    assert!(revs(dir.path()).is_empty());
+    assert_eq!(floor(dir.path()), after.head);
+}
+
+#[test]
+fn a_database_from_before_gets_its_entries_numbered() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = entries(5, 1_758_700_000_000);
+    {
+        let mut store = HistoryStore::open(dir.path());
+        for e in old.iter().rev() {
+            store.push(e.clone(), MAX_ENTRIES).unwrap();
+        }
+    }
+    // As a version 1 database: no revisions, no identity.
+    let conn = rusqlite::Connection::open(dir.path().join(HISTORY_DB_FILE_NAME)).unwrap();
+    conn.execute_batch("DELETE FROM sync_revs; DELETE FROM meta WHERE key LIKE 'sync_%'; PRAGMA user_version = 1;").unwrap();
+    drop(conn);
+    let store = HistoryStore::open(dir.path());
+    let numbered = revs(dir.path());
+    assert_eq!(numbered.len(), 5);
+    assert!(numbered.iter().all(|(_, _, deleted)| !deleted));
+    assert_eq!(numbered.iter().map(|(id, _, _)| *id).collect::<Vec<_>>(), old.iter().rev().map(|e| e.id).collect::<Vec<_>>(), "oldest first");
+    let batch = store.changes_since(None, 0, ALL).unwrap();
+    assert_eq!((batch.upserts.len(), batch.head), (5, 5));
+    // An imported history.json is numbered the same way.
+    let imported = tempfile::tempdir().unwrap();
+    write_legacy(imported.path(), &entries(3, 1_758_700_000_000));
+    let store = HistoryStore::open(imported.path());
+    assert_eq!(store.changes_since(None, 0, ALL).unwrap().upserts.len(), 3);
+    let conn = rusqlite::Connection::open(imported.path().join(HISTORY_DB_FILE_NAME)).unwrap();
+    assert_eq!(conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0)).unwrap(), 2);
+}
+
+#[test]
+fn a_batch_counts_encoded_bytes_and_leaves_the_segments_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = HistoryStore::open(dir.path());
+    let segment = Segment { text: "第一段".into(), start_ms: 0, end_ms: 900 };
+    let all: Vec<HistoryEntry> =
+        (0..5u64).map(|i| HistoryEntry { at_ms: 1_758_700_000_000 + i, segments: Some(vec![segment.clone(); 50]), ..entry(&"字".repeat(1000)) }).collect();
+    for e in &all {
+        store.push(e.clone(), MAX_ENTRIES).unwrap();
+    }
+    let one = crate::sync::cbor_len(&HistoryEntry { segments: None, ..all[0].clone() });
+    let batch = store.changes_since(None, 0, one * 2 + one / 2).unwrap();
+    assert_eq!(batch.upserts.len(), 2, "two fit, a third does not");
+    assert!(batch.more && batch.reset);
+    assert_eq!(batch.to, 2);
+    assert!(batch.upserts.iter().all(|e| e.segments.is_none()), "segments stay on the computer");
+    assert_eq!(batch.upserts[0].text, all[0].text, "everything else is sent as it is");
+    // The next request goes on from `to` without starting over, and a tiny budget still takes one.
+    let next = store.changes_since(Some(batch.epoch), batch.to, 1).unwrap();
+    assert!(!next.reset && next.more);
+    assert_eq!((next.upserts.len(), next.upserts[0].id, next.to), (1, all[2].id, 3));
+    let rest = store.changes_since(Some(batch.epoch), next.to, ALL).unwrap();
+    assert!(!rest.more);
+    assert_eq!((rest.upserts.len(), rest.to), (2, rest.head));
+    assert!(batch.shortened.is_empty() && rest.shortened.is_empty());
+}
+
+/// regression (plan gate, M7 design): any field of an entry may be huge (a custom model name has no
+/// limit), and an entry larger than a body would stop the sync for good. It goes out as its bounded
+/// projection instead, listed in `shortened`, and the revision moves on.
+#[test]
+fn regression_a_huge_entry_goes_out_bounded_and_the_sync_moves_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = HistoryStore::open(dir.path());
+    let huge = HistoryEntry {
+        at_ms: 1_758_700_000_000,
+        asr_model: "m".repeat(20_000_000),
+        live_error: Some("e".repeat(20_000_000)),
+        text: "字".repeat(SHORTENED_TEXT_CHARS + 10),
+        vocabulary: Some(VocabularyHits::default()),
+        ..entry("很长")
+    };
+    let after = HistoryEntry { at_ms: 1_758_700_000_001, ..entry("下一条") };
+    store.push(huge.clone(), MAX_ENTRIES).unwrap();
+    store.push(after.clone(), MAX_ENTRIES).unwrap();
+    let batch = store.changes_since(None, 0, crate::sync::BATCH_BUDGET_BYTES).unwrap();
+    assert_eq!(batch.upserts[0].id, huge.id);
+    assert_eq!(batch.shortened, [huge.id]);
+    let sent = &batch.upserts[0];
+    assert_eq!(sent.asr_model.chars().count(), SHORTENED_FIELD_CHARS);
+    assert!(sent.asr_model.ends_with('…'));
+    assert_eq!(sent.live_error.as_ref().unwrap().chars().count(), SHORTENED_FIELD_CHARS);
+    assert_eq!(sent.text.chars().count(), SHORTENED_TEXT_CHARS);
+    assert!(sent.vocabulary.is_none() && sent.edit.is_none());
+    assert_eq!((sent.raw_text.as_str(), sent.at_ms, sent.duration_ms), (huge.raw_text.as_str(), huge.at_ms, huge.duration_ms));
+    assert!(crate::sync::cbor_len(sent) < 1_400_000, "{} bytes", crate::sync::cbor_len(sent));
+    // The projection is small enough to share the batch: the sync moves past it.
+    assert_eq!(batch.upserts.iter().map(|e| e.id).collect::<Vec<_>>(), [huge.id, after.id]);
+    assert!(!batch.more);
+    assert_eq!(batch.to, batch.head);
+    // The entry on the computer is untouched.
+    assert_eq!(store.get(huge.id).unwrap().unwrap().asr_model.len(), 20_000_000);
+}
+
+#[test]
+fn a_phone_that_cannot_go_on_gets_the_whole_history_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = HistoryStore::open(dir.path());
+    for e in entries(4, 1_758_700_000_000).into_iter().rev() {
+        store.push(e, MAX_ENTRIES).unwrap();
+    }
+    let epoch = store.changes_since(None, 0, ALL).unwrap().epoch;
+    let other = Some(Uuid::new_v4());
+    for (asked, since, why) in
+        [(Some(epoch), 0, "an empty copy"), (Some(epoch), 99, "ahead of head"), (other, 99, "another history, ahead"), (other, 2, "another history, behind")]
+    {
+        let batch = store.changes_since(asked, since, ALL).unwrap();
+        assert!(batch.reset, "{why}");
+        assert_eq!(batch.upserts.len(), 4, "{why}: every live entry (regression: none of the new history's entries is missed)");
+        assert!(batch.deletes.is_empty(), "{why}");
+        assert_eq!(batch.epoch, epoch);
+        // regression: the reset is not repeated.
+        let next = store.changes_since(Some(batch.epoch), batch.to, ALL).unwrap();
+        assert!(!next.reset && next.upserts.is_empty(), "{why}");
+    }
+    // Behind the floor: the deletions it missed are gone, so it starts over (with live entries only).
+    // A deletion record is pruned once every entry older than it has gone too.
+    let first = store.recent(RECENT_ENTRIES).last().unwrap().id;
+    assert!(store.delete(first).unwrap());
+    for i in 0..4 {
+        store.push(HistoryEntry { at_ms: 1_758_800_000_000 + i, ..entry(&format!("新{i}")) }, 3).unwrap();
+    }
+    let f = floor(dir.path());
+    assert!(f > 0, "the deletions older than every live entry were pruned");
+    let batch = store.changes_since(Some(epoch), f - 1, ALL).unwrap();
+    assert!(batch.reset);
+    assert_eq!(batch.upserts.len(), 3);
+    assert!(!store.changes_since(Some(epoch), f, ALL).unwrap().reset, "at the floor it goes on");
+}
+
+#[test]
+fn pruning_keeps_every_live_revision_above_the_floor() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = HistoryStore::open(dir.path());
+    for i in 0..60u64 {
+        store.push(HistoryEntry { at_ms: 1_758_700_000_000 + i, ..entry(&i.to_string()) }, MIN_KEEP).unwrap();
+        if i % 7 == 0 {
+            let newest = store.recent(1)[0].id;
+            store.delete(newest).unwrap();
+        }
+        let rows = revs(dir.path());
+        let f = floor(dir.path());
+        let live: Vec<u64> = rows.iter().filter(|r| !r.2).map(|r| r.1).collect();
+        assert!(live.iter().all(|rev| *rev > f), "step {i}: live {live:?} floor {f}");
+        let oldest_live = live.iter().min().copied().unwrap_or(u64::MAX);
+        assert!(rows.iter().filter(|r| r.2).all(|r| r.1 > oldest_live), "step {i}: only deletions newer than every live entry stay");
+        assert_eq!(live.len(), store.total());
+    }
+    // Bounded by the history, not by how much was written: the live entries, the deletions of the
+    // last `keep` pushes, and the deletes made meanwhile.
+    assert!(revs(dir.path()).len() <= 3 * MIN_KEEP, "bounded: {}", revs(dir.path()).len());
+}
+
+#[test]
+fn a_record_from_a_phone_is_written_once_and_never_comes_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = HistoryStore::open(dir.path());
+    let now = 1_758_800_000_000;
+    let record = HistoryEntry { origin: Some(EntryOrigin { device: "Pixel".into(), kind: OriginKind::Standalone }), ..entry("手机上说的") };
+    assert!(store.insert_received(record.clone(), MAX_ENTRIES, now).unwrap());
+    assert!(!store.insert_received(record.clone(), MAX_ENTRIES, now).unwrap(), "already there");
+    assert_eq!(store.total(), 1);
+    let batch = store.changes_since(None, 0, ALL).unwrap();
+    assert_eq!(batch.upserts[0].origin, record.origin);
+    // Deleted on the computer, then sent again by the phone (its confirmation was lost).
+    assert!(store.delete(record.id).unwrap());
+    assert!(!store.insert_received(record.clone(), MAX_ENTRIES, now + 1).unwrap(), "regression: a deleted record is not written back");
+    assert_eq!(store.total(), 0);
+    // After 90 days the id is forgotten; the history's `keep` applies to received records too.
+    let later = now + 91 * 24 * 60 * 60 * 1000;
+    let other = HistoryEntry { at_ms: 2, ..entry("另一条") };
+    assert!(store.insert_received(other, MAX_ENTRIES, later).unwrap());
+    assert!(store.insert_received(record.clone(), 1, later).unwrap(), "forgotten after 90 days");
+    assert_eq!(store.total(), 1, "keep");
+}
+
+/// regression (plan gate, M7 design round 4): a phone remembers which of its records a computer
+/// confirmed in `uploaded`. Every way an entry leaves takes its row along, and a confirmation that
+/// arrives after the user deleted the record leaves nothing behind, so the table never outgrows the
+/// history.
+#[test]
+fn regression_uploaded_rows_never_outlive_their_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = HistoryStore::open(dir.path());
+    let all: Vec<HistoryEntry> = (0..6u64).map(|i| HistoryEntry { at_ms: 1_758_700_000_000 + i, ..entry(&i.to_string()) }).collect();
+    for e in &all {
+        store.push(e.clone(), MAX_ENTRIES).unwrap();
+    }
+    let ids: Vec<Uuid> = all.iter().map(|e| e.id).collect();
+    assert_eq!(store.mark_uploaded(&ids, "ab12", 5).unwrap(), 6);
+    assert_eq!(store.mark_uploaded(&ids, "ab12", 6).unwrap(), 0, "once");
+    let uploaded = |dir: &std::path::Path| -> usize {
+        let conn = rusqlite::Connection::open(dir.join(HISTORY_DB_FILE_NAME)).unwrap();
+        conn.query_row("SELECT COUNT(*) FROM uploaded", [], |r| r.get::<_, i64>(0)).unwrap() as usize
+    };
+    assert!(store.delete(ids[5]).unwrap());
+    assert_eq!(uploaded(dir.path()), 5, "delete");
+    store.push(HistoryEntry { at_ms: 1_758_700_000_100, ..entry("新") }, 5).unwrap();
+    assert_eq!(uploaded(dir.path()), 4, "push past keep");
+    assert!(store.retain_newest(MIN_KEEP).is_ok());
+    store.push(HistoryEntry { at_ms: 1_758_700_000_101, ..entry("新2") }, 2).unwrap();
+    assert!(uploaded(dir.path()) <= store.total(), "rows never outnumber entries");
+    // A late confirmation for a record deleted meanwhile writes nothing.
+    assert_eq!(store.mark_uploaded(&[ids[5], Uuid::new_v4()], "ab12", 7).unwrap(), 0);
+    store.clear().unwrap();
+    assert_eq!(uploaded(dir.path()), 0, "clear");
+}
+
+#[test]
+fn the_outbox_is_the_phones_own_unconfirmed_records_oldest_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = HistoryStore::open(dir.path());
+    let own: Vec<HistoryEntry> =
+        (0..5u64).map(|i| HistoryEntry { at_ms: 1_758_700_000_000 + i, segments: Some(Vec::new()), ..entry(&format!("本机{i}")) }).collect();
+    let taken = HistoryEntry { at_ms: 1_758_600_000_000, origin: Some(EntryOrigin { device: "Pixel".into(), kind: OriginKind::Take }), ..entry("别处") };
+    store.push(taken, MAX_ENTRIES).unwrap();
+    for e in own.iter().rev() {
+        store.push(e.clone(), MAX_ENTRIES).unwrap();
+    }
+    let batch = store.outbox(ALL, 3).unwrap();
+    assert_eq!(
+        batch.records.iter().map(|e| e.id).collect::<Vec<_>>(),
+        own[..3].iter().map(|e| e.id).collect::<Vec<_>>(),
+        "own records only, oldest first, at most 3"
+    );
+    assert!(batch.records.iter().all(|e| e.segments.is_none()));
+    assert!(batch.too_large.is_empty());
+    store.mark_uploaded(&[own[0].id, own[1].id], "ab12", 1).unwrap();
+    let next = store.outbox(1, 200).unwrap();
+    assert_eq!(next.records.iter().map(|e| e.id).collect::<Vec<_>>(), [own[2].id], "a tiny budget still takes one");
+    // A record too large to upload is passed over and named; the ones after it still go.
+    let big = HistoryEntry { at_ms: 1_758_699_000_000, text: "x".repeat(crate::sync::MAX_ENTRY_BYTES + 1), ..entry("太大") };
+    store.push(big.clone(), MAX_ENTRIES).unwrap();
+    let with_big = store.outbox(ALL, 200).unwrap();
+    assert_eq!(with_big.too_large, [big.id]);
+    assert_eq!(with_big.records.len(), 3);
+}

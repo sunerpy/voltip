@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use super::revs::{self, ChangeBatch, Outbox, RECEIVED_KEEP_MS};
 use super::{HISTORY_DB_FILE_NAME, HISTORY_FILE_NAME, HISTORY_SCHEMA, HistoryEntry, MAX_ENTRIES, ProcessedText, derived};
 use crate::CoreError;
 
@@ -28,8 +29,9 @@ use crate::CoreError;
 pub(super) const IMPORTING_FILE_NAME: &str = "history.sqlite3.importing";
 /// `meta` key: the SHA-256 of the `history.json` that was imported.
 pub(super) const IMPORTED_DIGEST_KEY: &str = "imported_json_sha256";
-/// `PRAGMA user_version` of the tables below.
-pub(super) const SCHEMA_VERSION: i32 = 1;
+/// `PRAGMA user_version` of the tables below: 2 added `sync_revs`, `phone_received` and
+/// `uploaded` (docs/dictation.md §20.8). Tables are only ever added, never changed.
+pub(super) const SCHEMA_VERSION: i32 = 2;
 /// How long a statement waits for another connection's lock before it fails.
 pub(super) const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Newest first: the order of every list.
@@ -37,7 +39,9 @@ pub(super) const NEWEST_FIRST: &str = "ORDER BY at_ms DESC, rowid DESC";
 
 /// One row per entry: the entry's JSON is the record, the other columns are derived from it when
 /// it is written (`derived`) for the filters, the search and the statistics. `hits` holds the
-/// entry's dictionary and rule hits for `history_hits`.
+/// entry's dictionary and rule hits for `history_hits`. For the phones (docs/dictation.md §20.8):
+/// `sync_revs` numbers the changes (`revs`), `phone_received` remembers the records a phone
+/// uploaded, and on a phone `uploaded` says which of its own records a computer has.
 pub(super) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS entries (
     id TEXT PRIMARY KEY NOT NULL,
@@ -68,6 +72,21 @@ CREATE INDEX IF NOT EXISTS hits_entry ON hits (entry_id);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY NOT NULL,
     value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sync_revs (
+    id TEXT PRIMARY KEY NOT NULL,
+    rev INTEGER NOT NULL,
+    deleted INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sync_revs_rev ON sync_revs (rev);
+CREATE TABLE IF NOT EXISTS phone_received (
+    id TEXT PRIMARY KEY NOT NULL,
+    at_ms INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS uploaded (
+    id TEXT PRIMARY KEY NOT NULL REFERENCES entries (id) ON DELETE CASCADE,
+    computer TEXT NOT NULL,
+    at_ms INTEGER NOT NULL
 );
 ";
 
@@ -111,6 +130,12 @@ impl HistoryStore {
                 None
             }
         };
+        let mut conn = conn;
+        if let Some(conn) = &mut conn
+            && let Err(e) = revs::prepare(conn)
+        {
+            tracing::warn!(error = %e, "history changes could not be numbered; phones may get the whole history again");
+        }
         let len = conn.as_ref().map_or(0, |conn| count(conn).unwrap_or(0));
         Self { path, conn: conn.map(Mutex::new), len }
     }
@@ -141,10 +166,36 @@ impl HistoryStore {
         let len = self.len + 1;
         let tx = self.conn_mut()?.transaction().map_err(err)?;
         insert(&tx, &entry, false).map_err(err)?;
+        revs::record(&tx, &entry.id.to_string(), false).map_err(err)?;
         let dropped = drop_oldest(&tx, len.saturating_sub(keep.min(MAX_ENTRIES))).map_err(err)?;
+        revs::prune(&tx).map_err(err)?;
         tx.commit().map_err(err)?;
         self.len = len.saturating_sub(dropped);
         Ok(())
+    }
+
+    /// A record a phone uploaded (docs/dictation.md §20.8): written like [`Self::push`], unless
+    /// its id is in the history already or was uploaded before (and perhaps deleted since, which
+    /// must not bring it back). `Ok(false)` when it was not written.
+    pub fn insert_received(&mut self, entry: HistoryEntry, keep: usize, now_ms: u64) -> Result<bool, CoreError> {
+        let len = self.len + 1;
+        let tx = self.conn_mut()?.transaction().map_err(err)?;
+        let id = entry.id.to_string();
+        let known: bool = tx
+            .query_row("SELECT EXISTS (SELECT 1 FROM phone_received WHERE id = ?1) OR EXISTS (SELECT 1 FROM entries WHERE id = ?1)", [&id], |row| row.get(0))
+            .map_err(err)?;
+        if known {
+            return Ok(false);
+        }
+        insert(&tx, &entry, false).map_err(err)?;
+        revs::record(&tx, &id, false).map_err(err)?;
+        tx.execute("INSERT INTO phone_received (id, at_ms) VALUES (?1, ?2)", params![id, int(now_ms)]).map_err(err)?;
+        tx.execute("DELETE FROM phone_received WHERE at_ms < ?1", [int(now_ms.saturating_sub(RECEIVED_KEEP_MS))]).map_err(err)?;
+        let dropped = drop_oldest(&tx, len.saturating_sub(keep.min(MAX_ENTRIES))).map_err(err)?;
+        revs::prune(&tx).map_err(err)?;
+        tx.commit().map_err(err)?;
+        self.len = len.saturating_sub(dropped);
+        Ok(true)
     }
 
     /// Drop the oldest entries past `keep`; `Ok(true)` when anything was dropped.
@@ -153,23 +204,60 @@ impl HistoryStore {
         if excess == 0 {
             return Ok(false);
         }
-        let dropped = drop_oldest(self.conn_mut()?, excess).map_err(err)?;
+        let tx = self.conn_mut()?.transaction().map_err(err)?;
+        let dropped = drop_oldest(&tx, excess).map_err(err)?;
+        revs::prune(&tx).map_err(err)?;
+        tx.commit().map_err(err)?;
         self.len = self.len.saturating_sub(dropped);
         Ok(dropped > 0)
     }
 
     /// Remove one entry; `Ok(false)` when it was not there.
     pub fn delete(&mut self, id: Uuid) -> Result<bool, CoreError> {
-        let removed = self.conn_mut()?.execute("DELETE FROM entries WHERE id = ?1", [id.to_string()]).map_err(err)?;
+        let key = id.to_string();
+        let tx = self.conn_mut()?.transaction().map_err(err)?;
+        let removed = tx.execute("DELETE FROM entries WHERE id = ?1", [&key]).map_err(err)?;
+        if removed > 0 {
+            revs::record(&tx, &key, true).map_err(err)?;
+            revs::prune(&tx).map_err(err)?;
+        }
+        tx.commit().map_err(err)?;
         self.len = self.len.saturating_sub(removed);
         Ok(removed > 0)
     }
 
     /// Remove everything.
     pub fn clear(&mut self) -> Result<(), CoreError> {
-        self.conn_mut()?.execute_batch("DELETE FROM hits; DELETE FROM entries;").map_err(err)?;
+        let tx = self.conn_mut()?.transaction().map_err(err)?;
+        tx.execute_batch("DELETE FROM hits; DELETE FROM entries;").map_err(err)?;
+        revs::record_clear(&tx).map_err(err)?;
+        tx.commit().map_err(err)?;
         self.len = 0;
         Ok(())
+    }
+
+    /// The changes after `since` for a phone whose copy came from the history `epoch`, up to
+    /// `budget` encoded bytes (docs/dictation.md §20.8).
+    pub fn changes_since(&self, epoch: Option<Uuid>, since: u64, budget: usize) -> Result<ChangeBatch, CoreError> {
+        let conn = self.conn.as_ref().ok_or_else(|| CoreError::History(format!("{} cannot be opened", self.path.display())))?;
+        revs::changes_since(&conn.lock(), epoch, since, budget).map_err(err)
+    }
+
+    /// The newest change's revision (`0` when the history cannot be opened).
+    pub fn head(&self) -> u64 {
+        self.conn.as_ref().and_then(|conn| revs::position(&conn.lock()).ok()).map_or(0, |(_, head, _)| head)
+    }
+
+    /// On a phone: the next batch of its own records no computer has confirmed (docs/dictation.md
+    /// §20.8).
+    pub fn outbox(&self, budget: usize, max_records: usize) -> Result<Outbox, CoreError> {
+        let conn = self.conn.as_ref().ok_or_else(|| CoreError::History(format!("{} cannot be opened", self.path.display())))?;
+        revs::outbox(&conn.lock(), budget, max_records).map_err(err)
+    }
+
+    /// On a phone: `computer` (its key in hex) confirmed these records; the number recorded.
+    pub fn mark_uploaded(&mut self, ids: &[Uuid], computer: &str, at_ms: u64) -> Result<usize, CoreError> {
+        revs::mark_uploaded(self.conn_mut()?, ids, computer, at_ms).map_err(err)
     }
 
     /// Flag / unflag; `Ok(false)` when the id is unknown.
@@ -183,7 +271,10 @@ impl HistoryStore {
         }
         entry.starred = starred;
         let json = serde_json::to_string(&entry).map_err(err)?;
-        conn.execute("UPDATE entries SET starred = ?2, json = ?3 WHERE id = ?1", params![key, starred, json]).map_err(err)?;
+        let tx = conn.transaction().map_err(err)?;
+        tx.execute("UPDATE entries SET starred = ?2, json = ?3 WHERE id = ?1", params![key, starred, json]).map_err(err)?;
+        revs::record(&tx, &key, false).map_err(err)?;
+        tx.commit().map_err(err)?;
         Ok(true)
     }
 
@@ -204,7 +295,10 @@ impl HistoryStore {
         let Some(mut entry) = json.as_deref().and_then(decode) else { return Ok(false) };
         entry.processed = Some(Box::new(processed));
         let json = serde_json::to_string(&entry).map_err(err)?;
-        conn.execute("UPDATE entries SET search = ?2, json = ?3 WHERE id = ?1", params![key, derived::search_text(&entry), json]).map_err(err)?;
+        let tx = conn.transaction().map_err(err)?;
+        tx.execute("UPDATE entries SET search = ?2, json = ?3 WHERE id = ?1", params![key, derived::search_text(&entry), json]).map_err(err)?;
+        revs::record(&tx, &key, false).map_err(err)?;
+        tx.commit().map_err(err)?;
         Ok(true)
     }
 
@@ -232,12 +326,22 @@ fn count(conn: &Connection) -> rusqlite::Result<usize> {
     conn.query_row("SELECT COUNT(*) FROM entries", [], |row| row.get::<_, i64>(0)).map(|n| usize::try_from(n).unwrap_or(0))
 }
 
-/// Delete the `n` oldest entries (their hits go with them); the number deleted.
+/// Delete the `n` oldest entries (their hits and `uploaded` rows go with them), each with its
+/// deletion record; the number deleted.
 fn drop_oldest(conn: &Connection, n: usize) -> rusqlite::Result<usize> {
     if n == 0 {
         return Ok(0);
     }
-    conn.execute("DELETE FROM entries WHERE id IN (SELECT id FROM entries ORDER BY at_ms ASC, rowid ASC LIMIT ?1)", [int(n)])
+    let ids: Vec<String> = {
+        let mut stmt = conn.prepare_cached("SELECT id FROM entries ORDER BY at_ms ASC, rowid ASC LIMIT ?1")?;
+        stmt.query_map([int(n)], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?
+    };
+    let mut delete = conn.prepare_cached("DELETE FROM entries WHERE id = ?1")?;
+    for id in &ids {
+        delete.execute([id])?;
+        revs::record(conn, id, true)?;
+    }
+    Ok(ids.len())
 }
 
 /// Write one entry and its hits. `skip_duplicate`: an id already there is left as it is (the

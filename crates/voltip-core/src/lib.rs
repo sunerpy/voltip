@@ -24,6 +24,7 @@ mod runtime;
 pub mod scenes;
 pub mod script;
 mod settings;
+pub mod sync;
 pub mod ui;
 mod view;
 pub mod vocabulary;
