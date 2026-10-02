@@ -288,6 +288,11 @@ pub enum UiCommand {
         /// Catalogue id.
         id: String,
     },
+    /// Install a model from files a person downloaded into its directory (docs/dictation.md §10).
+    ModelImport {
+        /// Catalogue id.
+        id: String,
+    },
     /// Append a personal dictionary entry (docs/dictation.md §16.4).
     DictionaryAdd {
         /// Term, mis-hearings, flag (snake_case inside).
@@ -481,6 +486,7 @@ impl UiCommand {
             Self::ModelDownload { id } => CoreCommand::ModelDownload(id),
             Self::ModelCancel { id } => CoreCommand::ModelCancel(id),
             Self::ModelRemove { id } => CoreCommand::ModelRemove(id),
+            Self::ModelImport { id } => CoreCommand::ModelImport(id),
             // The drafts are validated here as well as in the core: a draft that is wrong on its own
             // (empty, too long, a regex that does not compile, a TOML file that does not parse) comes
             // back as the command's error; list-level refusals arrive as `error` events.
@@ -666,6 +672,25 @@ impl Bridge {
     /// Current state for a freshly mounted webview.
     pub fn state(&self) -> UiState {
         self.state.lock().clone()
+    }
+
+    /// `model_folder_open`: the directory of model `id` for a manual download (docs/dictation.md
+    /// §10), created when it is not there yet. The path comes from the core's catalogue, never from
+    /// the webview.
+    pub fn model_folder(&self, id: &str) -> Result<std::path::PathBuf, BridgeError> {
+        let dir = self.state.lock().models.iter().find(|m| m.id == id).map(|m| m.dir.clone()).filter(|d| !d.is_empty());
+        let dir = std::path::PathBuf::from(dir.ok_or_else(|| BridgeError::BadArgument(format!("model_folder_open: no model {id}")))?);
+        std::fs::create_dir_all(&dir).map_err(|e| BridgeError::BadArgument(format!("model_folder_open: {e}")))?;
+        Ok(dir)
+    }
+
+    /// `model_link_open`: where `file` of model `id` downloads from its `source`-th public source.
+    /// Like the folder, the address comes from the core's catalogue: the webview names a file.
+    pub fn model_link(&self, id: &str, file: &str, source: usize) -> Result<String, BridgeError> {
+        let state = self.state.lock();
+        let model = state.models.iter().find(|m| m.id == id).ok_or_else(|| BridgeError::BadArgument(format!("model_link_open: no model {id}")))?;
+        let entry = model.files.iter().find(|f| f.name == file).ok_or_else(|| BridgeError::BadArgument(format!("model_link_open: {id} has no {file}")))?;
+        entry.urls.get(source).cloned().ok_or_else(|| BridgeError::BadArgument(format!("model_link_open: {file} has no source {source}")))
     }
 
     /// Subscribe to UI events.
@@ -896,6 +921,8 @@ mod tests {
         assert!(matches!(c.into_core().unwrap(), CoreCommand::ModelCancel(id) if id == "paraformer-zh"));
         let c: UiCommand = serde_json::from_str(r#"{"command":"model_remove","id":"paraformer-zh"}"#).unwrap();
         assert!(matches!(c.into_core().unwrap(), CoreCommand::ModelRemove(id) if id == "paraformer-zh"));
+        let c: UiCommand = serde_json::from_str(r#"{"command":"model_import","id":"paraformer-zh"}"#).unwrap();
+        assert!(matches!(c.into_core().unwrap(), CoreCommand::ModelImport(id) if id == "paraformer-zh"));
         assert!(serde_json::from_str::<UiCommand>(r#"{"command":"model_download"}"#).is_err(), "the id is required");
         // Vocabulary (docs/dictation.md §16.4): drafts are snake_case inside, validated synchronously.
         let hid = "0f3f1a1e-8d4b-4c8e-9f7a-1c2d3e4f5a6b";
@@ -1034,6 +1061,30 @@ mod tests {
             let core = c.into_core().unwrap();
             assert!(format!("{core:?}").starts_with(expect), "{json} -> {core:?}");
         }
+    }
+
+    /// docs/dictation.md §10: the webview names a model, a file and a source; the folder and the
+    /// address come from the core's catalogue in the cached state.
+    #[tokio::test]
+    async fn the_manual_download_opens_the_catalogue_folder_and_addresses_only() {
+        let dir = tempfile::tempdir().unwrap();
+        voltip_core::SettingsStore::new(dir.path())
+            .save(&voltip_core::Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Default::default() })
+            .unwrap();
+        let bridge = Bridge::start(CoreConfig::new(dir.path().to_path_buf()), Arc::new(MemorySecretStore::new())).unwrap();
+        let mut model = voltip_core::dictation::fakes::FakeModels::catalogue().remove(0);
+        model.dir = dir.path().join("models").join(&model.id).to_string_lossy().into_owned();
+        let (id, file, urls) = (model.id.clone(), model.files[0].name.clone(), model.files[0].urls.clone());
+        bridge.state.lock().models = vec![model];
+        let folder = bridge.model_folder(&id).unwrap();
+        assert!(folder.is_dir(), "created for the person to put files in");
+        assert_eq!(folder, dir.path().join("models").join(&id));
+        assert_eq!(bridge.model_link(&id, &file, 1).unwrap(), urls[1]);
+        assert!(bridge.model_link(&id, &file, 2).is_err(), "no third source");
+        assert!(bridge.model_link(&id, "evil.txt", 0).is_err(), "only the catalogue's files");
+        assert!(bridge.model_link("nope", &file, 0).is_err());
+        assert!(bridge.model_folder("nope").is_err());
+        bridge.shutdown();
     }
 
     /// docs/dictation.md §16.4: the two queries answer from the bridge's cached lists with the core's

@@ -398,6 +398,7 @@ pub fn list_models(models_root: &Path, out: &mut dyn Write) -> ExitCode {
             voltip_core::ModelInstallState::Downloading { .. } => "downloading",
             voltip_core::ModelInstallState::Verifying => "verifying",
             voltip_core::ModelInstallState::Failed { .. } => "failed",
+            voltip_core::ModelInstallState::ImportIncomplete { .. } => "import_incomplete",
         };
         let _ = writeln!(out, "{}\t{state}\t{}", m.id, m.name);
     }

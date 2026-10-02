@@ -40,7 +40,9 @@ pub use catalogue::{
 };
 pub use compute::{Compute, GpuInfo, HardwareInfo, LocalDevice, hardware};
 pub use segmenter::{VadSegmenter, VadSegmenterFactory};
-pub use store::{CATALOGUE_VERSION, DISK_HEADROOM, FreeSpace, MANIFEST_FILE, Manifest, ModelStore, SlowSourcePolicy, Source, StoreError, bytes_to_fetch};
+pub use store::{
+    CATALOGUE_VERSION, DISK_HEADROOM, FreeSpace, ImportError, MANIFEST_FILE, Manifest, ModelStore, SlowSourcePolicy, Source, StoreError, bytes_to_fetch,
+};
 pub use streaming::{LocalStreamingTranscriber, StreamingLoader, StreamingRecognizer};
 pub use transcriber::{DefaultLoader, LocalTranscriber, MIN_INPUT, Recognizer, RecognizerLoader, decode_wav};
 pub use vad::{SpeechSpan, Trim, VadLoader, VadTrimmer, VoiceActivity};

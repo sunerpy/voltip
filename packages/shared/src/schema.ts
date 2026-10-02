@@ -1232,9 +1232,25 @@ export const modelInstallStateSchema = z.discriminatedUnion("kind", [
   }),
   /** The `.part` files stay on disk; `model_download` resumes. */
   z.object({ kind: z.literal("failed"), message: z.string() }),
+  /** A manual import (`model_import`, docs/dictation.md §10) found catalogue files absent from
+   *  the model's directory (or of another size) and files whose sha256 is not the catalogue's. */
+  z.object({
+    kind: z.literal("import_incomplete"),
+    missing: z.array(z.string()),
+    mismatched: z.array(z.string()),
+  }),
 ]);
 export type ModelInstallState = z.infer<typeof modelInstallStateSchema>;
 export type ModelInstallKind = ModelInstallState["kind"];
+
+/** One file of a catalogue model (`voltip_core::models::ModelFileView`): huggingface.co first, then
+ *  hf-mirror.com, as the app tries them. */
+export const modelFileSchema = z.object({
+  name: z.string(),
+  size_bytes: z.number().nonnegative(),
+  urls: z.array(z.string()),
+});
+export type ModelFile = z.infer<typeof modelFileSchema>;
 
 /** One catalogue row plus its install state (`voltip_core::models::ModelState`, `UiState.models`). */
 export const modelStateSchema = z.object({
@@ -1251,6 +1267,10 @@ export const modelStateSchema = z.object({
   recommended: z.boolean(),
   /** Where the files come from (`owner/name` on Hugging Face). */
   repo: z.string().default(""),
+  /** The directory its files go into (`<models root>/<id>`): where a manual download puts them. */
+  dir: z.string().default(""),
+  /** Its files, primary first, with the public addresses to download each from. */
+  files: z.array(modelFileSchema).default(() => []),
   /** The model `Settings.engines` currently selects. */
   active: z.boolean(),
   state: modelInstallStateSchema,
@@ -2155,6 +2175,12 @@ export interface CommandArgs {
   model_download: { id: string };
   model_cancel: { id: string };
   model_remove: { id: string };
+  /** Install from files a person put into `dir` (docs/dictation.md §10); `models` events follow. */
+  model_import: { id: string };
+  /** Open the model's directory (created when missing) in the file manager. */
+  model_folder_open: { id: string };
+  /** Open `files[file].urls[source]` in the browser; the shell takes the address from the core. */
+  model_link_open: { id: string; file: string; source: number };
   /** Personal dictionary (docs/dictation.md §16.4): append, replace, delete, reorder (every id in
    *  the new order). A draft that is wrong on its own rejects the call with the core's message;
    *  a clash with another entry comes back as an `error` event and the list stays as it was. */
@@ -2257,6 +2283,8 @@ export type QueryCommand =
   | "paste_text"
   | "provider_console_open"
   | "project_link_open"
+  | "model_folder_open"
+  | "model_link_open"
   | "feedback_diagnostics"
   | "feedback_submit"
   | "feedback_attachment_add"
@@ -2290,6 +2318,8 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "paste_text",
   "provider_console_open",
   "project_link_open",
+  "model_folder_open",
+  "model_link_open",
   "feedback_diagnostics",
   "feedback_submit",
   "feedback_attachment_add",

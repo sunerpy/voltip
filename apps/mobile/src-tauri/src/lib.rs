@@ -33,7 +33,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 104] = [
+pub const COMMANDS: [&str; 107] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -101,6 +101,9 @@ pub const COMMANDS: [&str; 104] = [
     "model_download",
     "model_cancel",
     "model_remove",
+    "model_import",
+    "model_folder_open",
+    "model_link_open",
     "dictionary_add",
     "dictionary_update",
     "dictionary_remove",
@@ -680,6 +683,21 @@ fn model_remove(_id: String) -> Result<(), String> {
     Err(MODELS_UNAVAILABLE.to_owned())
 }
 
+#[tauri::command]
+fn model_import(_id: String) -> Result<(), String> {
+    Err(MODELS_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn model_folder_open(_id: String) -> Result<(), String> {
+    Err(MODELS_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn model_link_open(_id: String, _file: String, _source: usize) -> Result<(), String> {
+    Err(MODELS_UNAVAILABLE.to_owned())
+}
+
 // The phone's own dictionary, rules and scenes (user decision 2026-10-01: the phone has every
 // setting but the local models), handed to the core like the desktop's (docs/dictation.md §16, §18).
 // A phone has no foreground probe: the user picks a take's scene (`settings_set_pinned_scene`).
@@ -1124,6 +1142,9 @@ pub fn build_app<R: Runtime>(
             model_download,
             model_cancel,
             model_remove,
+            model_import,
+            model_folder_open,
+            model_link_open,
             dictionary_add,
             dictionary_update,
             dictionary_remove,

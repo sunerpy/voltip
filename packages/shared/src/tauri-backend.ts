@@ -183,6 +183,14 @@ export class TauriBackend implements Backend {
     await this.transport.invoke("project_link_open", { link });
   }
 
+  async modelFolderOpen(id: string): Promise<void> {
+    await this.transport.invoke("model_folder_open", { id });
+  }
+
+  async modelLinkOpen(id: string, file: string, source: number): Promise<void> {
+    await this.transport.invoke("model_link_open", { id, file, source });
+  }
+
   async feedbackDiagnostics(locale: string) {
     const raw = await this.transport.invoke("feedback_diagnostics", { locale });
     return feedbackInfoSchema.parse(raw);

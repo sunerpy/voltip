@@ -71,6 +71,8 @@ export function modelStateCell(
       return { tone: "idle", text: t("model.state.not_installed") };
     case "failed":
       return { tone: "danger", text: t("model.state.failed") };
+    case "import_incomplete":
+      return { tone: "warn", text: t("model.state.import_incomplete") };
   }
 }
 
@@ -96,6 +98,9 @@ export function modelAction(model: ModelState): ModelAction {
       return "cancel";
     case "failed":
       return "retry";
+    // The manual download stays open below with what is missing; downloading still works.
+    case "import_incomplete":
+      return "download";
     case "installed":
       if (!isRecognitionModel(model)) return "installed";
       return model.active ? "current" : "use";

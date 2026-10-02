@@ -2576,6 +2576,17 @@
         "description": "推荐；Qwen3-ASR 0.6B，30 语种自动识别，自带标点；690 MB",
         "recommended": true,
         "repo": "handy-computer/Qwen3-ASR-0.6B-gguf",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\qwen3-asr-0.6b",
+        "files": [
+          {
+            "name": "Qwen3-ASR-0.6B-Q6_K.gguf",
+            "size_bytes": 690417824,
+            "urls": [
+              "https://huggingface.co/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/main/Qwen3-ASR-0.6B-Q6_K.gguf",
+              "https://hf-mirror.com/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/main/Qwen3-ASR-0.6B-Q6_K.gguf"
+            ]
+          }
+        ],
         "active": true,
         "state": {
           "kind": "installed",
@@ -2594,6 +2605,25 @@
         "description": "SenseVoice Small，中英日韩粤，自带标点与数字规整（ITN）；240 MB",
         "recommended": false,
         "repo": "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\sense-voice-small",
+        "files": [
+          {
+            "name": "model.int8.onnx",
+            "size_bytes": 239233841,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 315894,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt"
+            ]
+          }
+        ],
         "active": false,
         "state": {
           "kind": "not_installed"
@@ -2610,6 +2640,25 @@
         "description": "Paraformer 中文（含方言）更准，中英混读；无标点，开启 AI 润色可补；227 MB",
         "recommended": false,
         "repo": "csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\paraformer-zh",
+        "files": [
+          {
+            "name": "model.int8.onnx",
+            "size_bytes": 227330205,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 75354,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/tokens.txt"
+            ]
+          }
+        ],
         "active": false,
         "state": {
           "kind": "downloading",
@@ -2629,6 +2678,49 @@
         "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
         "recommended": false,
         "repo": "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\zipformer-stream-zh-en",
+        "files": [
+          {
+            "name": "encoder.int8.onnx",
+            "size_bytes": 155278641,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/encoder.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/encoder.int8.onnx"
+            ]
+          },
+          {
+            "name": "decoder.onnx",
+            "size_bytes": 11309084,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/decoder.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/decoder.onnx"
+            ]
+          },
+          {
+            "name": "joiner.int8.onnx",
+            "size_bytes": 2581422,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/joiner.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/joiner.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 58806,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/tokens.txt"
+            ]
+          },
+          {
+            "name": "bpe.model",
+            "size_bytes": 119265,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/bpe.model",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/bpe.model"
+            ]
+          }
+        ],
         "active": false,
         "state": {
           "kind": "installed",
@@ -2652,9 +2744,57 @@
         "description": "推荐；Qwen3-ASR 0.6B，30 语种自动识别，自带标点；690 MB",
         "recommended": true,
         "repo": "handy-computer/Qwen3-ASR-0.6B-gguf",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\qwen3-asr-0.6b",
+        "files": [
+          {
+            "name": "Qwen3-ASR-0.6B-Q6_K.gguf",
+            "size_bytes": 690417824,
+            "urls": [
+              "https://huggingface.co/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/main/Qwen3-ASR-0.6B-Q6_K.gguf",
+              "https://hf-mirror.com/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/main/Qwen3-ASR-0.6B-Q6_K.gguf"
+            ]
+          }
+        ],
         "active": false,
         "state": {
           "kind": "verifying"
+        }
+      },
+      {
+        "id": "sense-voice-small",
+        "name": "轻量",
+        "engine": "sense_voice",
+        "tier": "light",
+        "capabilities": ["offline"],
+        "languages": ["zh", "en", "ja", "ko", "yue"],
+        "size_bytes": 239549735,
+        "description": "SenseVoice Small，中英日韩粤，自带标点与数字规整（ITN）；240 MB",
+        "recommended": false,
+        "repo": "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\sense-voice-small",
+        "files": [
+          {
+            "name": "model.int8.onnx",
+            "size_bytes": 239233841,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 315894,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt"
+            ]
+          }
+        ],
+        "active": false,
+        "state": {
+          "kind": "import_incomplete",
+          "missing": ["tokens.txt"],
+          "mismatched": ["model.int8.onnx"]
         }
       },
       {
@@ -2668,6 +2808,25 @@
         "description": "Paraformer 中文（含方言）更准，中英混读；无标点，开启 AI 润色可补；227 MB",
         "recommended": false,
         "repo": "csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\paraformer-zh",
+        "files": [
+          {
+            "name": "model.int8.onnx",
+            "size_bytes": 227330205,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 75354,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/tokens.txt"
+            ]
+          }
+        ],
         "active": true,
         "state": {
           "kind": "failed",
@@ -2685,6 +2844,49 @@
         "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
         "recommended": false,
         "repo": "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\zipformer-stream-zh-en",
+        "files": [
+          {
+            "name": "encoder.int8.onnx",
+            "size_bytes": 155278641,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/encoder.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/encoder.int8.onnx"
+            ]
+          },
+          {
+            "name": "decoder.onnx",
+            "size_bytes": 11309084,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/decoder.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/decoder.onnx"
+            ]
+          },
+          {
+            "name": "joiner.int8.onnx",
+            "size_bytes": 2581422,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/joiner.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/joiner.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 58806,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/tokens.txt"
+            ]
+          },
+          {
+            "name": "bpe.model",
+            "size_bytes": 119265,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/bpe.model",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/bpe.model"
+            ]
+          }
+        ],
         "active": false,
         "state": {
           "kind": "downloading",
@@ -2709,6 +2911,17 @@
         "description": "推荐；Qwen3-ASR 0.6B，30 语种自动识别，自带标点；690 MB",
         "recommended": true,
         "repo": "handy-computer/Qwen3-ASR-0.6B-gguf",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\qwen3-asr-0.6b",
+        "files": [
+          {
+            "name": "Qwen3-ASR-0.6B-Q6_K.gguf",
+            "size_bytes": 690417824,
+            "urls": [
+              "https://huggingface.co/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/main/Qwen3-ASR-0.6B-Q6_K.gguf",
+              "https://hf-mirror.com/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/main/Qwen3-ASR-0.6B-Q6_K.gguf"
+            ]
+          }
+        ],
         "active": false,
         "state": {
           "kind": "not_installed"
@@ -2725,6 +2938,25 @@
         "description": "SenseVoice Small，中英日韩粤，自带标点与数字规整（ITN）；240 MB",
         "recommended": false,
         "repo": "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\sense-voice-small",
+        "files": [
+          {
+            "name": "model.int8.onnx",
+            "size_bytes": 239233841,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 315894,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt"
+            ]
+          }
+        ],
         "active": false,
         "state": {
           "kind": "not_installed"
@@ -2741,6 +2973,25 @@
         "description": "Paraformer 中文（含方言）更准，中英混读；无标点，开启 AI 润色可补；227 MB",
         "recommended": false,
         "repo": "csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\paraformer-zh",
+        "files": [
+          {
+            "name": "model.int8.onnx",
+            "size_bytes": 227330205,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 75354,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/tokens.txt"
+            ]
+          }
+        ],
         "active": false,
         "state": {
           "kind": "not_installed"
@@ -2757,6 +3008,49 @@
         "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
         "recommended": false,
         "repo": "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\zipformer-stream-zh-en",
+        "files": [
+          {
+            "name": "encoder.int8.onnx",
+            "size_bytes": 155278641,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/encoder.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/encoder.int8.onnx"
+            ]
+          },
+          {
+            "name": "decoder.onnx",
+            "size_bytes": 11309084,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/decoder.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/decoder.onnx"
+            ]
+          },
+          {
+            "name": "joiner.int8.onnx",
+            "size_bytes": 2581422,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/joiner.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/joiner.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 58806,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/tokens.txt"
+            ]
+          },
+          {
+            "name": "bpe.model",
+            "size_bytes": 119265,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/bpe.model",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/bpe.model"
+            ]
+          }
+        ],
         "active": false,
         "state": {
           "kind": "not_installed"

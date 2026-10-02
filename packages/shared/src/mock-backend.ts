@@ -368,10 +368,51 @@ export const MOCK_UPDATE_NOTES = [
 /** The streaming model the live preview needs (docs/dictation.md §11). */
 export const MOCK_STREAMING_MODEL_ID = "zipformer-stream-zh-en";
 
+/** Where the preview pretends the model files land (`<app data dir>/models/<id>`). */
+export const MOCK_MODELS_ROOT = "~/.local/share/voltip/models";
+
+/** The real catalogue's files, name and size (`voltip_asr_local::catalogue`). */
+const MOCK_MODEL_FILES: Record<string, readonly (readonly [string, number])[]> = {
+  "qwen3-asr-0.6b": [["Qwen3-ASR-0.6B-Q6_K.gguf", 690_417_824]],
+  "qwen3-asr-1.7b": [["Qwen3-ASR-1.7B-Q6_K.gguf", 1_692_554_208]],
+  "sense-voice-small": [
+    ["model.int8.onnx", 239_233_841],
+    ["tokens.txt", 315_894],
+  ],
+  "paraformer-zh": [
+    ["model.int8.onnx", 227_330_205],
+    ["tokens.txt", 75_354],
+  ],
+  "zipformer-stream-zh-en": [
+    ["encoder.int8.onnx", 155_278_641],
+    ["decoder.onnx", 11_309_084],
+    ["joiner.int8.onnx", 2_581_422],
+    ["tokens.txt", 58_806],
+    ["bpe.model", 119_265],
+  ],
+};
+
+/** A catalogue row with its directory and its files' public addresses, as the core reports them. */
+function withFiles(
+  row: Omit<ModelState, "active" | "state" | "dir" | "files">,
+): Omit<ModelState, "active" | "state"> {
+  return {
+    ...row,
+    dir: `${MOCK_MODELS_ROOT}/${row.id}`,
+    files: (MOCK_MODEL_FILES[row.id] ?? []).map(([name, size]) => ({
+      name,
+      size_bytes: size,
+      urls: ["https://huggingface.co", "https://hf-mirror.com"].map(
+        (base) => `${base}/${row.repo}/resolve/main/${name}`,
+      ),
+    })),
+  };
+}
+
 /** The local model catalogue the preview pretends was compiled in (docs/dictation.md §10: the
  *  five product tiers, sizes as the real files, names and descriptions in the core's own words —
  *  the UI localises both by id). `MOCK_MODEL_CATALOGUE[0]` is the default. */
-export const MOCK_MODEL_CATALOGUE: readonly Omit<ModelState, "active" | "state">[] = [
+const MOCK_MODEL_ROWS: readonly Omit<ModelState, "active" | "state" | "dir" | "files">[] = [
   {
     id: "qwen3-asr-0.6b",
     name: "均衡",
@@ -434,8 +475,8 @@ export const MOCK_MODEL_CATALOGUE: readonly Omit<ModelState, "active" | "state">
     repo: "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
   },
 ];
-/** Where the preview pretends the model files land (`<app data dir>/models/<id>`). */
-export const MOCK_MODELS_ROOT = "~/.local/share/voltip/models";
+export const MOCK_MODEL_CATALOGUE: readonly Omit<ModelState, "active" | "state">[] =
+  MOCK_MODEL_ROWS.map(withFiles);
 /** Simulated download: `MOCK_MODEL_TICKS` progress events `MOCK_MODEL_TICK_MS` apart, then a
  *  `verifying` beat of the same length, then `installed`. */
 export const MOCK_MODEL_TICK_MS = 200;
@@ -889,6 +930,12 @@ export class MockBackend implements Backend {
   readonly consolesOpened: ProviderId[] = [];
   /** `project_link_open` calls, for tests. */
   readonly linksOpened: ProjectLink[] = [];
+  /** `model_folder_open` calls (model ids), for tests. */
+  readonly modelFoldersOpened: string[] = [];
+  /** `model_link_open` calls, the addresses opened, for tests. */
+  readonly modelLinksOpened: string[] = [];
+  /** What imports find wrong per model id (`simulateImportProblems`). */
+  private readonly importProblems = new Map<string, { missing: string[]; mismatched: string[] }>();
   /** Reports `feedbackSubmit` accepted, in order. */
   readonly feedbackSent: FeedbackDraft[] = [];
   /** The files staged for the next report (`feedback_attachment_add`), in order. */
@@ -1615,6 +1662,9 @@ export class MockBackend implements Backend {
     },
     model_remove: (args) => {
       this.removeModel(required(args).id);
+    },
+    model_import: (args) => {
+      this.importModel(required(args).id);
     },
     provider_key_set: (args) => {
       const { provider, kind, value } = required(args);
@@ -2346,6 +2396,50 @@ export class MockBackend implements Backend {
     this.setModelState(id, { kind: "not_installed" });
   }
 
+  /** `model_import` (docs/dictation.md §10): a verifying beat, then installed, or what
+   *  {@link simulateImportProblems} said the directory lacks. */
+  private importModel(id: string) {
+    const current = this.modelState(id);
+    if (!this.catalogueRow(id) || current === undefined) {
+      this.emit({
+        type: "error",
+        message:
+          this.role === "phone" ? "models: 手机端不支持本地模型" : `models: 未知的本地模型 ${id}`,
+      });
+      return;
+    }
+    if (
+      current.kind === "installed" ||
+      current.kind === "downloading" ||
+      current.kind === "verifying"
+    )
+      return;
+    this.stopModelTimer(id);
+    this.setModelState(id, { kind: "verifying" });
+    this.laterModel(id, () => {
+      const problems = this.importProblems.get(id);
+      this.setModelState(
+        id,
+        problems === undefined
+          ? {
+              kind: "installed",
+              path: `${MOCK_MODELS_ROOT}/${id}`,
+              installed_at: Math.floor(this.now() / 1000),
+            }
+          : { kind: "import_incomplete", ...problems },
+      );
+    });
+  }
+
+  /** What the next imports of `id` find wrong (tests); `undefined`: the files are right. */
+  simulateImportProblems(
+    id: string,
+    problems: { missing: string[]; mismatched: string[] } | undefined,
+  ) {
+    if (problems === undefined) this.importProblems.delete(id);
+    else this.importProblems.set(id, problems);
+  }
+
   private laterModel(id: string, fn: () => void) {
     this.stopModelTimer(id);
     const handle = setTimeout(() => {
@@ -2449,6 +2543,24 @@ export class MockBackend implements Backend {
 
   projectLinkOpen(link: ProjectLink): Promise<void> {
     this.linksOpened.push(link);
+    return Promise.resolve();
+  }
+
+  // ---- manual model download (docs/dictation.md §10) -------------------------------------------
+
+  modelFolderOpen(id: string): Promise<void> {
+    if (!this.state.models.some((m) => m.id === id))
+      return Promise.reject(new Error(`model_folder_open: no model ${id}`));
+    this.modelFoldersOpened.push(id);
+    return Promise.resolve();
+  }
+
+  modelLinkOpen(id: string, file: string, source: number): Promise<void> {
+    const url = this.state.models.find((m) => m.id === id)?.files.find((f) => f.name === file)
+      ?.urls[source];
+    if (url === undefined)
+      return Promise.reject(new Error(`model_link_open: ${id} ${file} ${source}`));
+    this.modelLinksOpened.push(url);
     return Promise.resolve();
   }
 

@@ -425,6 +425,10 @@ pub enum CoreCommand {
     ModelCancel(String),
     /// Delete an installed (or partially downloaded) model directory.
     ModelRemove(String),
+    /// Install a model from files a person downloaded into its directory (docs/dictation.md
+    /// §10): the result arrives as `Models` events (`installed`, or `import_incomplete` naming
+    /// the files).
+    ModelImport(String),
     /// Append a personal dictionary entry (docs/dictation.md §16).
     DictionaryAdd {
         /// Term, mis-hearings, flag.
@@ -874,6 +878,8 @@ enum ModelProgress {
     State { id: String, state: ModelInstallState },
     /// The task is over: installed, failed or cancelled.
     Finished { id: String, result: Result<ModelInstallState, String>, cancelled: bool },
+    /// A manual import is over.
+    Imported { id: String, result: Result<ModelInstallState, crate::models::ModelImportError> },
 }
 
 impl From<&Settings> for ActivationConfig {
@@ -1366,6 +1372,7 @@ impl Runtime {
             CoreCommand::ModelDownload(id) => self.model_download(&id),
             CoreCommand::ModelCancel(id) => self.model_cancel(&id),
             CoreCommand::ModelRemove(id) => self.model_remove(&id),
+            CoreCommand::ModelImport(id) => self.model_import(&id),
             CoreCommand::DictionaryAdd { draft, source } => {
                 let result = self.dictionary.add(&draft, source, now_ms()).map(drop);
                 self.dictionary_changed(result)
@@ -1813,7 +1820,8 @@ impl Runtime {
         for m in &mut library {
             let Some(current) = self.library.iter().find(|c| c.id == m.id) else { continue };
             let in_flight = self.downloads.contains_key(&m.id);
-            let failed = matches!(current.state, ModelInstallState::Failed { .. }) && m.state == ModelInstallState::NotInstalled;
+            let failed = matches!(current.state, ModelInstallState::Failed { .. } | ModelInstallState::ImportIncomplete { .. })
+                && m.state == ModelInstallState::NotInstalled;
             if in_flight || failed {
                 m.state = current.state.clone();
             }
@@ -1886,6 +1894,34 @@ impl Runtime {
         Ok(())
     }
 
+    /// `ModelImport`: check the files a person put into the model's directory on a task, as a
+    /// download runs (nothing else may start on the model meanwhile).
+    fn model_import(&mut self, id: &str) -> Result<(), CoreError> {
+        let entry = self.model_entry(id)?;
+        if entry.state.is_installed() {
+            return Err(CoreError::Invalid(format!("models: {id} 已安装")));
+        }
+        if self.downloads.contains_key(id) {
+            return Err(CoreError::Invalid(format!("models: {id} 正在下载")));
+        }
+        let Some(manager) = self.models.clone() else { return Err(CoreError::Invalid("models: 本地模型不可用".into())) };
+        let tx = self.model_tx.clone();
+        let task_id = id.to_owned();
+        let task = tokio::spawn(async move {
+            let progress_tx = tx.clone();
+            let progress_id = task_id.clone();
+            let progress: crate::models::ProgressSink = Arc::new(move |state: ModelInstallState| {
+                let _ = progress_tx.try_send(ModelProgress::State { id: progress_id.clone(), state });
+            });
+            let result = manager.import(&task_id, progress).await;
+            let _ = tx.send(ModelProgress::Imported { id: task_id, result }).await;
+        });
+        self.downloads.insert(id.to_owned(), Download { cancel: CancelToken::new(), task });
+        tracing::info!(model = id, "model import started");
+        self.set_model_state(id, ModelInstallState::Verifying);
+        Ok(())
+    }
+
     fn model_remove(&mut self, id: &str) -> Result<(), CoreError> {
         self.model_entry(id)?;
         if self.downloads.contains_key(id) {
@@ -1928,6 +1964,26 @@ impl Runtime {
                     Err(e) => {
                         tracing::warn!(model = %id, error = %e, "model download failed");
                         ModelInstallState::Failed { message: e }
+                    }
+                };
+                if let Some(m) = self.library.iter_mut().find(|m| m.id == id) {
+                    m.state = state;
+                }
+                self.rescan_models();
+            }
+            ModelProgress::Imported { id, result } => {
+                if let Some(d) = self.downloads.remove(&id) {
+                    d.task.abort();
+                }
+                let state = match result {
+                    Ok(state) => {
+                        tracing::info!(model = %id, "model imported");
+                        state
+                    }
+                    Err(crate::models::ModelImportError::Incomplete { missing, mismatched }) => ModelInstallState::ImportIncomplete { missing, mismatched },
+                    Err(crate::models::ModelImportError::Failed(message)) => {
+                        tracing::warn!(model = %id, error = %message, "model import failed");
+                        ModelInstallState::Failed { message }
                     }
                 };
                 if let Some(m) = self.library.iter_mut().find(|m| m.id == id) {

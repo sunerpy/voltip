@@ -274,3 +274,52 @@ async fn without_a_library_models_are_empty_and_the_commands_are_refused() {
     assert!(r.status().local_ready);
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
+
+/// The manual import through the core (docs/dictation.md §10, user request 2026-10-02): a card
+/// names its folder and files; an import that finds the folder incomplete keeps the names until
+/// the person fixes it, and the next import installs and readies the engine.
+#[tokio::test]
+async fn a_manual_import_names_what_is_missing_until_the_files_are_right() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Arc::new(FakeModels::new(1).with_import_problems(&["tokens.txt"], &["model.int8.onnx"]));
+    let mut node = start_with(dir.path(), Some(fake.clone()), local(None));
+    let models = wait_models(&mut node, |_| true).await;
+    let card = models.iter().find(|m| m.id == DEFAULT_LOCAL_MODEL_ID).unwrap();
+    assert_eq!(card.dir, format!("/fake/models/{DEFAULT_LOCAL_MODEL_ID}"));
+    assert_eq!(card.files.len(), 1);
+    assert_eq!(card.files[0].urls.len(), 2, "huggingface.co and hf-mirror.com");
+
+    node.handle.send(CoreCommand::ModelImport(DEFAULT_LOCAL_MODEL_ID.into())).await.unwrap();
+    wait_models(&mut node, |m| *state_of(m, DEFAULT_LOCAL_MODEL_ID) == ModelInstallState::Verifying).await;
+    let models = wait_models(&mut node, |m| matches!(state_of(m, DEFAULT_LOCAL_MODEL_ID), ModelInstallState::ImportIncomplete { .. })).await;
+    assert_eq!(
+        *state_of(&models, DEFAULT_LOCAL_MODEL_ID),
+        ModelInstallState::ImportIncomplete { missing: vec!["tokens.txt".into()], mismatched: vec!["model.int8.onnx".into()] }
+    );
+    // A rescan (any settings change) keeps what the import found: the disk only says "not installed".
+    node.handle.send(CoreCommand::SetEngines(local(Some("paraformer-zh")))).await.unwrap();
+    let models = wait_models(&mut node, |m| m.iter().any(|x| x.id == "paraformer-zh" && x.active)).await;
+    assert!(matches!(state_of(&models, DEFAULT_LOCAL_MODEL_ID), ModelInstallState::ImportIncomplete { .. }));
+    node.handle.send(CoreCommand::SetEngines(local(None))).await.unwrap();
+
+    fake.fix_import();
+    node.handle.send(CoreCommand::ModelImport(DEFAULT_LOCAL_MODEL_ID.into())).await.unwrap();
+    // The rescan reports the engines before the models: wait for both, in whatever order.
+    let (mut installed, mut ready) = (false, false);
+    wait(&mut node, |e| {
+        match e {
+            CoreEvent::Models(m) => installed |= state_of(m, DEFAULT_LOCAL_MODEL_ID).is_installed(),
+            CoreEvent::Engines(s) => ready |= s.local_ready,
+            _ => {}
+        }
+        (installed && ready).then_some(())
+    })
+    .await;
+    assert_eq!(fake.imports(), 2);
+    // An installed model is not imported again.
+    node.handle.send(CoreCommand::ModelImport(DEFAULT_LOCAL_MODEL_ID.into())).await.unwrap();
+    wait_error(&mut node, "已安装").await;
+    node.handle.send(CoreCommand::ModelImport("nope".into())).await.unwrap();
+    wait_error(&mut node, "目录中没有 nope").await;
+    assert_eq!(fake.imports(), 2);
+}

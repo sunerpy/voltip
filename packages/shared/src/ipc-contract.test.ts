@@ -144,6 +144,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   model_download: null,
   model_cancel: null,
   model_remove: null,
+  model_import: null,
   dictionary_add: null,
   dictionary_update: null,
   dictionary_remove: null,
@@ -238,6 +239,7 @@ const argSchemas = {
   model_download: z.object({ id: z.string() }),
   model_cancel: z.object({ id: z.string() }),
   model_remove: z.object({ id: z.string() }),
+  model_import: z.object({ id: z.string() }),
   dictionary_add: z
     .object({ entry: dictionaryDraftSchema, historyId: z.string().nullable().optional() })
     .strict(),
@@ -364,6 +366,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.model_cancel.parse(args));
     case "model_remove":
       return backend.invoke(name, argSchemas.model_remove.parse(args));
+    case "model_import":
+      return backend.invoke(name, argSchemas.model_import.parse(args));
     case "dictionary_add":
       return backend.invoke(name, argSchemas.dictionary_add.parse(args));
     case "dictionary_update":

@@ -700,6 +700,8 @@ mod tests {
             description: "d".into(),
             recommended: true,
             repo: "example/model".into(),
+            dir: String::new(),
+            files: Vec::new(),
             active: true,
             state: crate::ModelInstallState::Verifying,
         };
