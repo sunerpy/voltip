@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.27](https://github.com/sunerpy/voltip/compare/v0.0.26...v0.0.27) (2026-10-02)
+
+
+### Features
+
+* **mobile:** Android's back goes up a level, and the launcher icon is the Voltip mark ([#68](https://github.com/sunerpy/voltip/issues/68)) ([1d8c756](https://github.com/sunerpy/voltip/commit/1d8c756757575fd83b2b2386bbd59959e7e46721))
+
 ## [0.0.26](https://github.com/sunerpy/voltip/compare/v0.0.25...v0.0.26) (2026-10-02)
 
 
