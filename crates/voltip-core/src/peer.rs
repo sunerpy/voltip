@@ -80,6 +80,19 @@ pub(crate) struct SecureSession {
     pub(crate) since: Instant,
 }
 
+/// A rendezvous channel this device is still on after forgetting the peer. The relay (and our
+/// own LAN host) keeps a connection on a channel until the connection drops, and refuses a second
+/// `attach` to it on the same connection (`SessionAlreadyActive`), so pairing the same device
+/// again takes this up instead of attaching (docs/pairing.md 「忘记设备后重新配对」).
+pub(crate) struct ParkedChannel {
+    pub(crate) session_id: SessionId,
+    /// The peer is on the channel too (`peer_presence` keeps it current).
+    pub(crate) present: bool,
+    /// The last payload that came in meanwhile: the handshake of a peer that trusted this device
+    /// again first.
+    pub(crate) early: Option<Vec<u8>>,
+}
+
 /// One rendezvous session with a peer on one link.
 pub(crate) struct PeerPath {
     pub(crate) link: LinkId,

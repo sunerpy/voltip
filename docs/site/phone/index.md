@@ -74,7 +74,7 @@ A paired computer syncs its history and settings to the phone, where you can rea
 - Pairing creates an encrypted connection and asks you to compare the safety code, so that nobody in between can pretend to be one of the devices.
 - Afterwards, the devices connect directly on the same network. On different networks, an optional relay forwards their traffic. Everything is encrypted end to end, so the relay cannot read audio or text.
 - Audio is compressed with Opus before it is sent.
-- **Forget device** removes a pairing on both sides when the other device is online.
+- **Forget device** removes a pairing on both sides when the other device is online. The two can be paired again straight away.
 - **Connection check** tests the network path to each paired device and reports where it fails.
 
 The phone's own dictionary, rules and scenes apply only to what the phone recognises itself; the computer's settings synced to the phone are for reading and are never used to recognise on the phone.
