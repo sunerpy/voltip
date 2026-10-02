@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.29](https://github.com/sunerpy/voltip/compare/v0.0.28...v0.0.29) (2026-10-02)
+
+
+### Bug Fixes
+
+* **pairing:** a device forgotten and paired again at once comes online ([#73](https://github.com/sunerpy/voltip/issues/73)) ([aa69121](https://github.com/sunerpy/voltip/commit/aa6912154cfd56dc5ec27dcc374734b38e4608ee))
+
 ## [0.0.28](https://github.com/sunerpy/voltip/compare/v0.0.27...v0.0.28) (2026-10-02)
 
 
