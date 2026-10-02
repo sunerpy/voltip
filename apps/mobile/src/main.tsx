@@ -4,6 +4,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
+import { tauriBack } from "./app/back";
 import { loadScanner } from "./app/scanner";
 import "./index.css";
 
@@ -22,6 +23,10 @@ if (!container) throw new Error("#root missing");
 const backend = await createBackend();
 createRoot(container).render(
   <StrictMode>
-    <App backend={backend} loadScanner={loadScanner} />
+    <App
+      backend={backend}
+      loadScanner={loadScanner}
+      {...(isTauri() ? { systemBack: tauriBack() } : {})}
+    />
   </StrictMode>,
 );

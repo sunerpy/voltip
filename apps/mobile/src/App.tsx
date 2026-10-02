@@ -9,6 +9,7 @@ import {
   Icon,
   ToastViewport,
   applyTheme,
+  dismissTopDialog,
   resolveTheme,
   systemPrefersDark,
   useBackend,
@@ -17,6 +18,7 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { SystemBack } from "./app/back";
 import type { Scanner } from "./app/scanner";
 import {
   type ConfirmSpec,
@@ -52,6 +54,8 @@ export type { Screen };
 export interface AppProps {
   backend: Backend;
   loadScanner: () => Promise<Scanner | undefined>;
+  /** Android's back (edge swipe or button); absent in a browser. */
+  systemBack?: SystemBack;
   initialScreen?: Screen;
   /** What `settings.locale = "system"` follows; defaults to `navigator.language`. */
   systemLanguage?: string;
@@ -78,6 +82,9 @@ const PARENT: Partial<Record<Screen, Screen>> = {
   feedback: "settings",
 };
 
+/** How long the second back at 说话 has to leave the app: the usual two seconds on Android. */
+export const EXIT_WINDOW_MS = 2000;
+
 /** One screen on the stack, and what it shows (`MobileShell.param`). */
 interface Opened {
   screen: Screen;
@@ -92,7 +99,7 @@ function stackFor(screen: Screen): Opened[] {
   return stack;
 }
 
-export function App({ backend, loadScanner, initialScreen, systemLanguage }: AppProps) {
+export function App({ backend, loadScanner, initialScreen, systemLanguage, systemBack }: AppProps) {
   const handler = useRef<((e: UiEvent) => void) | undefined>(undefined);
   const onEvent = useCallback((e: UiEvent) => {
     handler.current?.(e);
@@ -103,7 +110,12 @@ export function App({ backend, loadScanner, initialScreen, systemLanguage }: App
   return (
     <BackendProvider backend={backend} onEvent={onEvent}>
       <LocaleProvider systemLanguage={systemLanguage}>
-        <Gate loadScanner={loadScanner} initialScreen={initialScreen} register={register} />
+        <Gate
+          loadScanner={loadScanner}
+          initialScreen={initialScreen}
+          register={register}
+          {...(systemBack === undefined ? {} : { systemBack })}
+        />
       </LocaleProvider>
     </BackendProvider>
   );
@@ -132,6 +144,7 @@ interface FrameProps {
   loadScanner: () => Promise<Scanner | undefined>;
   initialScreen?: Screen;
   register: (fn: (e: UiEvent) => void) => void;
+  systemBack?: SystemBack;
   initialDevices?: number;
   /** A handshake already completed before the frame mounted (events raced the splash). */
   verifying?: boolean;
@@ -166,6 +179,7 @@ function Frame({
   loadScanner,
   initialScreen,
   register,
+  systemBack,
   initialDevices = 0,
   verifying = false,
 }: FrameProps) {
@@ -274,6 +288,33 @@ function Frame({
 
   const canGoBack = stack.length > 1;
   const tabRoot = TAB_ROOTS.includes(screen);
+  const goUp = () => {
+    if (screen === "verify") void backend.invoke("pairing_cancel");
+    back();
+  };
+  // Android's back (user report 2026-10-02: it left the app from every screen). A dialog closes
+  // first, then a screen goes up a level, and 记录 or 设置 go to 说话; at 说话 a first back says a
+  // second one leaves, and lets that one through to the system, which does what it always does.
+  const onSystemBack = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    onSystemBack.current = () => {
+      if (dismissTopDialog()) return;
+      if (canGoBack) goUp();
+      else if (screen === "history" || screen === "settings")
+        go(state.devices.length > 0 ? "devices" : "welcome");
+      else {
+        toast(t("mobile.backToLeave"));
+        systemBack?.release(EXIT_WINDOW_MS);
+      }
+    };
+  });
+  useEffect(
+    () =>
+      systemBack?.listen(() => {
+        onSystemBack.current();
+      }),
+    [systemBack],
+  );
   return (
     <ShellContext.Provider value={shell}>
       <FeatureShellProvider shell={features}>
@@ -284,10 +325,7 @@ function Frame({
                 <button
                   type="button"
                   aria-label={t("mobile.back")}
-                  onClick={() => {
-                    if (screen === "verify") void backend.invoke("pairing_cancel");
-                    back();
-                  }}
+                  onClick={goUp}
                   className="flex h-8 w-8 items-center justify-center rounded-6 text-fg-muted hover:bg-inset">
                   <Icon name="chevronRight" size={16} className="rotate-180" />
                 </button>

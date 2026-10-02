@@ -18,7 +18,15 @@ export interface DialogProps {
 
 /** The open dialogs, the most recent last: Esc closes only that one (a confirmation over an editor
  *  closes, the editor stays). */
-const openDialogs: symbol[] = [];
+const openDialogs: { token: symbol; close: () => void }[] = [];
+
+/** Close the dialog on top as Esc does, for the phone's system back; `false` when none is open. */
+export function dismissTopDialog(): boolean {
+  const top = openDialogs.at(-1);
+  if (top === undefined) return false;
+  top.close();
+  return true;
+}
 
 /** Modal over a 28 % scrim; Esc and scrim click close. Focuses `[data-autofocus]` or the dialog.
  *  Its title names it (an id of its own, so a dialog over another one keeps its name). */
@@ -45,12 +53,17 @@ export function Dialog({
   useEffect(() => {
     if (!open) return;
     const token = Symbol("dialog");
-    openDialogs.push(token);
+    openDialogs.push({
+      token,
+      close: () => {
+        close.current();
+      },
+    });
     const node = ref.current;
     const target = node?.querySelector<HTMLElement>("[data-autofocus]") ?? node;
     target?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented || openDialogs.at(-1) !== token) return;
+      if (e.key !== "Escape" || e.defaultPrevented || openDialogs.at(-1)?.token !== token) return;
       // Every dialog listens on `document`, so stopPropagation cannot order them; the dialog on
       // top marks the key consumed and outer listeners (the settings dialog) check the flag.
       e.preventDefault();
@@ -62,7 +75,7 @@ export function Dialog({
     document.addEventListener("keydown", onKey, true);
     return () => {
       document.removeEventListener("keydown", onKey, true);
-      const at = openDialogs.indexOf(token);
+      const at = openDialogs.findIndex((d) => d.token === token);
       if (at >= 0) openDialogs.splice(at, 1);
     };
   }, [open]);

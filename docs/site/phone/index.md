@@ -12,6 +12,8 @@ With the Voltip app for Android, a phone becomes a microphone and a keyboard for
 
 Every [release](https://github.com/sunerpy/voltip/releases) carries the app as `Voltip_<version>_android_arm64.apk`, for phones with Android 8.0 or later and a 64-bit Arm processor. Open the file on the phone to install it. [Install](/guide/install#android) describes the steps and how to check the download.
 
+In the app, the system back gesture or back button goes up one level. From **History** and **Settings** it goes to **Talk**, and two backs in a row on **Talk** leave the app. An open dialog closes first.
+
 ## Using the phone on its own
 
 Before any computer is paired, and whenever no paired computer is online, **Hold to talk** works on the phone alone, and the button reads **Transcribe on the phone**. The built-in service transcribes and polishes what you said, and the text is copied to the phone's clipboard, ready to paste into any app.
