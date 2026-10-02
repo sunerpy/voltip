@@ -10,6 +10,7 @@ import {
   errorText,
   formatDate,
   formatElapsed,
+  isPhone,
   platformLabel,
   relativeTime,
   shortFingerprint,
@@ -43,13 +44,8 @@ import { useShell } from "../app/shell-context";
 
 const PAIRING_TTL_SECS = 120;
 
-/** A phone's record: the sync switch is a phone's (docs/dictation.md §20.8). */
-function isPhone(view: DeviceView): boolean {
-  return view.device.platform === "android" || view.device.platform === "ios";
-}
-
 /** What travels over the E2EE channel (docs/dictation.md §20). */
-const SYNC_ROWS = ["text", "audio", "result", "unpair"] as const;
+const SYNC_ROWS = ["text", "audio", "result", "history", "upload", "unpair"] as const;
 
 const LIVE_METER_SEGMENTS = 28;
 

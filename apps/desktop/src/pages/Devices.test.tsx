@@ -94,6 +94,29 @@ describe("Devices page", () => {
     expect(screen.getByText("限制")).toBeInTheDocument();
   });
 
+  it("regression: the transfer panel lists the synced history and the phone's uploads, and no longer says the history stays here", async () => {
+    // 2026-10-02 (docs/dictation.md §20.8): the panel said 「历史记录、词典、规则和设置只保存在这台
+    // 电脑上」 while a phone with Sync on received them.
+    mount();
+    await screen.findByText("手机与电脑之间传输的内容");
+    const rows = screen
+      .getAllByRole("row")
+      .map((r) => r.textContent ?? "")
+      .filter((text) => text.includes("端到端加密") || text.includes("两边都删除记录"));
+    expect(rows).toEqual([
+      "文本消息手机 ⇄ 电脑端到端加密",
+      "手机录音手机 → 电脑Opus 音频 · 端到端加密",
+      "识别结果电脑 → 手机端到端加密",
+      "历史记录与设置电脑 → 手机端到端加密 · 手机上只读",
+      "手机识别的记录手机 → 电脑端到端加密 · 上传副本",
+      "解除配对手机 ⇄ 电脑两边都删除记录",
+    ]);
+    expect(
+      screen.getByText(/历史记录和设置只同步到开启「同步」的手机，在手机上只能查看。/),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("只保存在这台电脑上");
+  });
+
   it("each phone has a sync switch; a sixth phone's stays off, and forgetting an offline phone says its copy stays", async () => {
     // docs/dictation.md §20.8 (M7 design, user decisions 2026-10-02).
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
@@ -181,7 +204,8 @@ describe("Devices page", () => {
     // so the readout above names it and only the placeholder wording is banned.
     expect(document.body.textContent).not.toMatch(/尚未接入|计划|第二阶段/);
     expect(screen.queryByTestId("deferred-badge")).toBeNull();
-    // The channel carries exactly text, the phone's audio and the recognised text.
+    // The channel carries text, the phone's audio and the recognised text, and since 2026-10-02
+    // the synced history (see the regression test on the transfer panel below).
     expect(screen.getByText("手机录音")).toBeInTheDocument();
     expect(screen.getByText("识别结果")).toBeInTheDocument();
     expect(screen.getByText("解除配对")).toBeInTheDocument();

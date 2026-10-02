@@ -139,6 +139,7 @@ import {
   type BuiltinScene,
   type BuiltinSceneTerms,
   builtinSceneSchema,
+  isPhone,
   sceneDraftSchema,
 } from "./schema";
 import {
@@ -251,11 +252,6 @@ export interface MockBackendOptions {
   now?: () => number;
   /** Deterministic randomness source in [0, 1). */
   random?: () => number;
-}
-
-/** A phone's record: the sync switch is a phone's (docs/dictation.md §20.8). */
-function isPhone(d: DeviceView): boolean {
-  return d.device.platform === "android" || d.device.platform === "ios";
 }
 
 /** One computer's copy on the mock phone (`mirror_history_query`, `mirror_profile`). */

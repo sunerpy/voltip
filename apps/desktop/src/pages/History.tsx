@@ -13,6 +13,7 @@ import {
   outputModeLabel,
   presetRefLabel,
   sceneLabel,
+  syncsToPhones,
 } from "@voltip/shared";
 import {
   Badge,
@@ -108,6 +109,8 @@ export function History({ initialFilter }: HistoryProps) {
   const total = state.history_total;
   // Settings › 隐私与历史: whether takes are recorded and how many are kept.
   const retention = state.settings.history;
+  // A phone with Sync on gets a copy (docs/dictation.md §20.8).
+  const synced = syncsToPhones(state.devices);
   const now = useTickingNow(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<HistoryFilter>(
@@ -205,7 +208,9 @@ export function History({ initialFilter }: HistoryProps) {
         className="flex min-h-16 flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
         <Lamp tone={retention.enabled && total > 0 ? "ok" : "idle"} />
         <div className="min-w-0 flex-1">
-          <div className="text-[14px] font-medium text-fg">{t("history.banner.title")}</div>
+          <div className="text-[14px] font-medium text-fg" data-testid="history-banner-title">
+            {synced ? t("history.banner.titleSynced") : t("history.banner.title")}
+          </div>
           <div
             className="text-[12px] text-fg-muted"
             data-testid="history-retention"

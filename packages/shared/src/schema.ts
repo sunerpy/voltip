@@ -1385,6 +1385,16 @@ export const deviceViewSchema = z.object({
 });
 export type DeviceView = z.infer<typeof deviceViewSchema>;
 
+/** A phone's record: only a phone has a sync switch (docs/dictation.md §20.8). */
+export function isPhone(view: DeviceView): boolean {
+  return view.device.platform === "android" || view.device.platform === "ios";
+}
+
+/** Whether this computer syncs its history and settings to any paired phone (§20.8). */
+export function syncsToPhones(devices: readonly DeviceView[]): boolean {
+  return devices.some((d) => isPhone(d) && d.device.sync);
+}
+
 /** What the hotkey can do in the session the desktop runs in (`voltip_core::ui::HotkeyCapabilities`). */
 export const hotkeyCapabilitiesSchema = z.object({
   /** The shell can register a global chord here (not on a pure Wayland session). */
