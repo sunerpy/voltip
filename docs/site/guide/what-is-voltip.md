@@ -6,6 +6,23 @@ description: What Voltip is, how a dictation works from the shortcut to the curs
 
 Voltip is a dictation app for Windows, macOS and Linux. You hold a shortcut, speak and release it, and the text appears at your cursor in whatever app you are using.
 
+## Watch the tutorial
+
+<VideoFigure src="/media/voltip-tutorial-en.mp4" poster="/media/voltip-tutorial-en.webp" width="1920" height="1080" title="Voltip tutorial" caption="2 min 52 s, recorded with Voltip 0.0.14. The Chinese version is on the Chinese page." />
+
+| Time | Chapter |
+| --- | --- |
+| 0:00 | Introduction |
+| 0:07 | Install |
+| 0:22 | The home page and the microphone test |
+| 0:41 | The first dictation |
+| 1:01 | AI polish |
+| 1:27 | Voice edit |
+| 1:47 | Recognition on this computer |
+| 2:19 | Dictionary and rules |
+| 2:30 | History |
+| 2:40 | Where to find more |
+
 ## How a dictation works
 
 1. **Hold the shortcut**, Ctrl+Alt+Space by default. Voltip opens the microphone and shows a small overlay at the bottom of the screen with the input level.

@@ -11,7 +11,7 @@
 [![codecov](https://codecov.io/gh/sunerpy/voltip/branch/main/graph/badge.svg)](https://codecov.io/gh/sunerpy/voltip)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](./LICENSE)
 
-[Website](https://voltip.firlab.app) · [Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Privacy](#privacy) · [Build from source](#build-from-source) · [Documentation](#documentation)
+[Website](https://voltip.firlab.app) · [Video](#video) · [Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Privacy](#privacy) · [Build from source](#build-from-source) · [Documentation](#documentation) · [Community](#community)
 
 [**English**](./README.md) · [简体中文](./docs/readme/README.zh-CN.md)
 
@@ -25,6 +25,14 @@ LLM, and pastes it into whatever app has the focus. The Android app works on its
 computer's microphone and keyboard.
 
 ![Voltip's home screen: readiness, the microphone and its test, speech engine, paired phones and recent results](./docs/acceptance/screens/desktop/home-1440-light-en.png)
+
+## Video
+
+Voltip in 2 minutes 52 seconds: installing it, the first dictation, AI polish, voice edit,
+recognition on this computer, the dictionary and the history. Recorded with 0.0.14; the
+[Chinese version](./docs/readme/README.zh-CN.md#视频) is in the Chinese README.
+
+https://github.com/user-attachments/assets/64e1fdc2-1ab0-42a6-a8c9-740a1efa2ecb
 
 ## Features
 
@@ -136,6 +144,10 @@ gh attestation verify Voltip_0.0.4_amd64.deb --repo sunerpy/voltip \
 3. On a pure Wayland session there is no global hotkey. Bind a compositor shortcut to
    `voltip-desktop --toggle` (and `--edit-toggle` for voice edit).
 
+<p align="center">
+  <img src="./docs/readme/media/voltip-dictation-en.webp" width="720" alt="A note editor with the cursor in it: holding Ctrl+Alt+Space brings up Voltip's overlay, which listens, transcribes and polishes, and the spoken sentence appears at the cursor" />
+</p>
+
 For on-device recognition, open Speech models in the sidebar, choose This device and download a
 model: Qwen3-ASR 0.6B (690 MB) is the recommended one, SenseVoice-small (240 MB) the lightest.
 After that no audio leaves the machine.
@@ -204,6 +216,20 @@ The design documents are in Chinese:
 - [docs/runbook.md](./docs/runbook.md): building, packaging, the relay and releases.
 - [docs/feedback.md](./docs/feedback.md): what the in-app feedback sends, and the endpoint behind it.
 - [docs/acceptance.md](./docs/acceptance.md): every feature mapped to its code and tests.
+
+## Community
+
+- Telegram: [the Voltip group](https://t.me/+gUetkPz35KgwNDg1)
+- WeChat: the Voltip group and the Official Account 六月水蓝. The group's code is valid for seven
+  days and is replaced every week; if WeChat reports that it has expired, follow the Official
+  Account or join the Telegram group.
+
+| Telegram group | WeChat group | Official Account 六月水蓝 |
+| :---: | :---: | :---: |
+| <img src="./docs/site/public/community/telegram-group.png" width="180" alt="QR code of the Voltip Telegram group" /> | <img src="./docs/site/public/community/wechat-group.png" width="180" alt="QR code of the Voltip WeChat group" /> | <img src="./docs/site/public/community/wechat-official-account.jpg" width="180" alt="QR code of the WeChat Official Account 六月水蓝" /> |
+
+Report a problem or suggest a feature in [GitHub issues](https://github.com/sunerpy/voltip/issues),
+or with Feedback at the bottom of the app's sidebar.
 
 ## Contributing
 

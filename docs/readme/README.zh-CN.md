@@ -11,7 +11,7 @@
 [![codecov](https://codecov.io/gh/sunerpy/voltip/branch/main/graph/badge.svg)](https://codecov.io/gh/sunerpy/voltip)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](../../LICENSE)
 
-[网站](https://voltip.firlab.app/zh/) · [功能](#功能) · [安装](#安装) · [快速开始](#快速开始) · [隐私](#隐私) · [从源码构建](#从源码构建) · [文档](#文档)
+[网站](https://voltip.firlab.app/zh/) · [视频](#视频) · [功能](#功能) · [安装](#安装) · [快速开始](#快速开始) · [隐私](#隐私) · [从源码构建](#从源码构建) · [文档](#文档) · [交流与反馈](#交流与反馈)
 
 [English](../../README.md) · [**简体中文**](./README.zh-CN.md)
 
@@ -22,6 +22,12 @@
 Voltip 是 Windows、Linux 和 macOS 上的语音输入工具。按住热键时录音，松开后交给云端或本机模型识别，可选用 LLM 润色，再粘贴到当前有焦点的应用里。Android 应用可以单独使用，也可以当电脑的麦克风和键盘。
 
 ![Voltip 首页：就绪状态、麦克风与测试、识别引擎、已配对手机和最近的结果](../acceptance/screens/desktop/home-1440-light.png)
+
+## 视频
+
+2 分 38 秒的使用教程：安装、第一次听写、AI 润色、语音编辑、本地识别、词典与规则，以及历史记录。使用 0.0.14 录制；[英文版](../../README.md#video)见英文 README。
+
+https://github.com/user-attachments/assets/f1a0fcf0-e5f0-4c21-b487-f91299a59ce9
 
 ## 功能
 
@@ -88,6 +94,10 @@ gh attestation verify Voltip_0.0.4_amd64.deb --repo sunerpy/voltip \
 2. 把光标放进任意输入框，按住 `Ctrl+Alt+Space` 说话，松开。
 3. 纯 Wayland 会话里没有全局热键：在合成器里给 `voltip-desktop --toggle` 绑一个快捷键（语音编辑用 `--edit-toggle`）。
 
+<p align="center">
+  <img src="./media/voltip-dictation-zh.webp" width="720" alt="光标位于笔记应用中：按住 Ctrl+Alt+Space 后，Voltip 的悬浮窗依次显示录音、识别和润色，说出的句子出现在光标处" />
+</p>
+
 想完全在本机识别，打开侧栏的「语音模型」，选「本机」，下载一个模型：推荐 Qwen3-ASR 0.6B（690 MB），最轻的是 SenseVoice-small（240 MB）。下载完之后，音频不再离开这台电脑。
 
 程序还带一套无界面的命令行，适合脚本和服务器：
@@ -139,6 +149,17 @@ VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1 make windows-x64   # 在 Linux 上交叉构建
 - [docs/runbook.md](../runbook.md)：构建、打包、中继与发版。
 - [docs/feedback.md](../feedback.md)：应用内反馈发出哪些内容，以及背后的接口。
 - [docs/acceptance.md](../acceptance.md)：每个功能对应的实现和测试。
+
+## 交流与反馈
+
+- Telegram：[Voltip 交流群](https://t.me/+gUetkPz35KgwNDg1)
+- 微信：Voltip 交流群和公众号「六月水蓝」。交流群的二维码有效期为 7 天，每周更换一次；如果微信提示二维码已过期，请关注公众号或加入 Telegram 群。
+
+| Telegram 交流群 | 微信交流群 | 公众号「六月水蓝」 |
+| :---: | :---: | :---: |
+| <img src="../site/public/community/telegram-group.png" width="180" alt="Voltip Telegram 交流群的二维码" /> | <img src="../site/public/community/wechat-group.png" width="180" alt="Voltip 微信交流群的二维码" /> | <img src="../site/public/community/wechat-official-account.jpg" width="180" alt="微信公众号「六月水蓝」的二维码" /> |
+
+报告问题或提出功能建议，请在 [GitHub Issues](https://github.com/sunerpy/voltip/issues) 中提交，或使用应用侧栏底部的「反馈」。
 
 ## 参与贡献
 

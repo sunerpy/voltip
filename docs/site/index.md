@@ -16,6 +16,9 @@ hero:
       text: Quick start
       link: /guide/quick-start
     - theme: alt
+      text: Watch the video
+      link: /guide/what-is-voltip#watch-the-tutorial
+    - theme: alt
       text: GitHub
       link: https://github.com/sunerpy/voltip
 

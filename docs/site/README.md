@@ -11,7 +11,7 @@ This directory holds the words of the Voltip website: English at `docs/site/`, C
 | `guide/`, `dictation/`, `recognition/`, `phone/`, `reference/` | the user guide |
 | `privacy.md`, `roadmap.md`, `developers.md` | reference pages |
 | `docs/{architecture,dictation,frontend,pairing,protocol,threat-model,state-machines,feedback}.md` | `/zh/dev/*`, as they are; `/dev/*` is a generated English pointer |
-| `public/` | site root (`/voltip-logo.svg`, `/screens/*.webp`) |
+| `public/` | site root (`/voltip-logo.svg`, `/screens/*.webp`, `/community/*`) |
 | `tools/` | helpers for authors; not published |
 
 ## How a change reaches the site
@@ -71,6 +71,8 @@ Pages may use these components and no others:
 | --- | --- |
 | `<StatusTag status="available \| building \| planned" />` | release state, shown as text |
 | `<ScreenFigure src dark? width height alt caption? />` | a screenshot; `dark` is the same screen in the dark theme |
+| `<VideoFigure src poster width height title caption? />` | a video with its poster; nothing loads until it plays |
+| `<QrCode src alt caption? size? />` | a QR code on a white plate in both themes |
 | `<Badge>` | VitePress's own badge |
 | `HomeIndex`, `HomeSteps`, `SplitBlock`, `HomeModels`, `HomePlatforms`, `HomePrivacy`, `HomeRoadmap` | the home pages only; they render the `home:` frontmatter |
 
@@ -133,6 +135,32 @@ pnpm -C apps/desktop dev --host 127.0.0.1 --port 1430
 4. Look at every image before committing it. The host guard does not read images.
 
 Capture again when the interface's text or layout changes.
+
+## Videos and QR codes
+
+The tutorial videos are too large for this repository: the files live in firlab under
+`voltip/src/public/media/` (`voltip-tutorial-<lang>.mp4` and its `.webp` poster), and the
+pages only give the path. Keep each file under Cloudflare Pages' 25 MiB limit and encode it
+with `-movflags +faststart`, so it starts playing before it has finished downloading. The
+captions are part of the picture.
+
+The READMEs embed 720p copies uploaded as GitHub attachments (GitHub plays only those, up to
+10 MB). Upload a new copy by dropping it into a comment box of this repository and posting the
+comment, then replace the `https://github.com/user-attachments/assets/…` line in both READMEs.
+Check that the link opens without logging in: `curl -sI <link>` answers 302, while 404 means
+the file is visible to signed-in users only.
+
+`public/community/` holds the three codes of the community page, which the READMEs use too:
+`telegram-group.png`, `wechat-group.png` and `wechat-official-account.jpg`. Check that a code
+still scans after every edit.
+
+- The Telegram code holds the same invite link as the text link beside it: if the link
+  changes, replace the code and the link in both community pages and both READMEs together.
+  Telegram's own export leaves less than one module of margin, so pad it with white to a
+  quiet zone of four modules.
+- The WeChat group's code expires after seven days, so replace `wechat-group.png` every week,
+  under the same name: crop WeChat's share card to the code with a quiet zone of four
+  modules, and drop the members' avatars.
 
 ## Reviews
 

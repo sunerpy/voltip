@@ -73,3 +73,5 @@ On the phone, download `Voltip_<version>_android_arm64.apk` from the [releases p
 ## Something else
 
 Use **Feedback** at the bottom of the sidebar, or [open an issue on GitHub](https://github.com/sunerpy/voltip/issues). The feedback dialog lists everything it sends before you send it.
+
+To ask other users, join one of the groups on the [Community](/reference/community) page.

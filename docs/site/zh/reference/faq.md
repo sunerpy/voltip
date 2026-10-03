@@ -73,3 +73,5 @@ Qwen3-ASR 需要支持 AVX2 的处理器。请改用 SenseVoice Small、Paraform
 ## 其他问题
 
 使用侧栏底部的「反馈」，或[在 GitHub 上提交 issue](https://github.com/sunerpy/voltip/issues)。反馈对话框会在发送前列出它要发送的全部内容。
+
+也可以在[交流与反馈](/zh/reference/community)页面列出的群里向其他用户提问。
