@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.33](https://github.com/sunerpy/voltip/compare/v0.0.32...v0.0.33) (2026-10-03)
+
+
+### Bug Fixes
+
+* **mobile:** the update check asks the phone's own repository ([#83](https://github.com/sunerpy/voltip/issues/83)) ([e7acaa8](https://github.com/sunerpy/voltip/commit/e7acaa82e336dd5e4c01d8313516f9cc0e2c29f4))
+
 ## [0.0.32](https://github.com/sunerpy/voltip/compare/v0.0.31...v0.0.32) (2026-10-03)
 
 
