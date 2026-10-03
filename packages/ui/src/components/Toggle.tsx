@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { cx } from "../cx";
+import { usePresentation } from "../presentation/PresentationProvider";
+import { TOUCH_CONTROL, TOUCH_TARGET } from "../presentation/touch";
 
 export interface ToggleProps {
   checked: boolean;
@@ -25,11 +27,14 @@ export function Toggle({
   className,
   ariaLabel,
 }: ToggleProps) {
+  const touch = usePresentation() === "touch";
   return (
     <label
       className={cx(
         "inline-flex items-center gap-2 text-[13px]",
         disabled && "opacity-50",
+        // The phone: a tap on the label flips the switch too, without a flash or a selection.
+        touch && cx(TOUCH_CONTROL, "select-none"),
         className,
       )}>
       <button
@@ -52,6 +57,9 @@ export function Toggle({
             : checked
               ? "cursor-pointer hover:opacity-90"
               : "cursor-pointer hover:bg-fg/15",
+          // The phone: a 44 px target around the 32 × 19 switch, and a pressed state.
+          touch && TOUCH_TARGET,
+          touch && !disabled && (checked ? "active:opacity-80" : "active:bg-fg/20"),
         )}>
         <span
           className={cx(

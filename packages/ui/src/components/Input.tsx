@@ -1,5 +1,7 @@
 import { type InputHTMLAttributes, type TextareaHTMLAttributes, useId } from "react";
 import { cx } from "../cx";
+import { usePresentation } from "../presentation/PresentationProvider";
+import { NO_TAP_HIGHLIGHT, TOUCH_FIELD_TARGET } from "../presentation/touch";
 import { Icon, type IconName } from "./Icon";
 import { Keycaps } from "./Keycap";
 
@@ -32,11 +34,12 @@ export function Input({
   id,
   ...rest
 }: InputProps) {
+  const touch = usePresentation() === "touch";
   const autoId = useId();
   const inputId = id ?? autoId;
   const errorId = `${inputId}-error`;
   return (
-    <div className={cx("flex flex-col gap-1", className)}>
+    <div className={cx("flex flex-col gap-1", className, touch && NO_TAP_HIGHLIGHT)}>
       {label && (
         <label htmlFor={inputId} className="text-[12px] text-fg-muted">
           {label}
@@ -49,7 +52,17 @@ export function Input({
           error &&
             "border-danger focus-within:border-danger focus-within:shadow-[0_0_0_1px_var(--danger)]",
           SIZE_CLASS[size],
-        )}>
+          // The phone: the field takes taps 44 px tall, around its icon and keycaps too.
+          touch && cx("touch-manipulation", TOUCH_FIELD_TARGET),
+        )}
+        onClick={
+          touch
+            ? (e) => {
+                const input = e.currentTarget.querySelector("input");
+                if (input !== null && e.target !== input) input.focus();
+              }
+            : undefined
+        }>
         {icon && <Icon name={icon} size={14} className="shrink-0 text-fg-subtle" />}
         <input
           id={inputId}
@@ -58,6 +71,8 @@ export function Input({
           className={cx(
             "min-w-0 flex-1 bg-transparent outline-none placeholder:text-fg-subtle",
             mono && "mono",
+            // Over the field's touch target, so a tap on the text still places the caret.
+            touch && "relative",
           )}
           {...rest}
         />
@@ -79,11 +94,14 @@ export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElemen
   label?: string;
 }
 
+/** At least 46 px tall with a single row (padding, leading and hairline), so on the phone it needs
+ *  only the touch presentation's missing tap flash and double-tap zoom. */
 export function Textarea({ mono = false, label, className, id, ...rest }: TextareaProps) {
+  const touch = usePresentation() === "touch";
   const autoId = useId();
   const inputId = id ?? autoId;
   return (
-    <div className={cx("flex flex-col gap-1", className)}>
+    <div className={cx("flex flex-col gap-1", className, touch && NO_TAP_HIGHLIGHT)}>
       {label && (
         <label htmlFor={inputId} className="text-[12px] text-fg-muted">
           {label}
@@ -95,6 +113,7 @@ export function Textarea({ mono = false, label, className, id, ...rest }: Textar
           "w-full resize-none rounded-10 bg-surface p-3 text-[13px] leading-5 hairline outline-none",
           "placeholder:text-fg-subtle focus:border-fg focus:shadow-[0_0_0_1px_var(--fg)]",
           mono && "mono",
+          touch && "touch-manipulation",
         )}
         {...rest}
       />

@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useId, useRef } from "react";
 import { cx } from "../cx";
 import { useT } from "../i18n/I18nProvider";
 import { Keycap } from "./Keycap";
+import { dismissTopLayer, openLayer } from "./layers";
 
 export interface DialogProps {
   open: boolean;
@@ -16,16 +17,11 @@ export interface DialogProps {
   width?: number;
 }
 
-/** The open dialogs, the most recent last: Esc closes only that one (a confirmation over an editor
- *  closes, the editor stays). */
-const openDialogs: { token: symbol; close: () => void }[] = [];
-
-/** Close the dialog on top as Esc does, for the phone's system back; `false` when none is open. */
+/** Close the dialog on top as Esc does, for the phone's system back; `false` when none is open.
+ *  Dialogs share their stack with a touch `Select`'s open list (`layers.ts`): a list on top closes
+ *  first. */
 export function dismissTopDialog(): boolean {
-  const top = openDialogs.at(-1);
-  if (top === undefined) return false;
-  top.close();
-  return true;
+  return dismissTopLayer();
 }
 
 /** Modal over a 28 % scrim; Esc and scrim click close. Focuses `[data-autofocus]` or the dialog.
@@ -52,18 +48,16 @@ export function Dialog({
 
   useEffect(() => {
     if (!open) return;
-    const token = Symbol("dialog");
-    openDialogs.push({
-      token,
-      close: () => {
-        close.current();
-      },
+    // The open dialogs, the most recent last: Esc closes only that one (a confirmation over an
+    // editor closes, the editor stays).
+    const layer = openLayer(() => {
+      close.current();
     });
     const node = ref.current;
     const target = node?.querySelector<HTMLElement>("[data-autofocus]") ?? node;
     target?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented || openDialogs.at(-1)?.token !== token) return;
+      if (e.key !== "Escape" || e.defaultPrevented || !layer.isTop()) return;
       // Every dialog listens on `document`, so stopPropagation cannot order them; the dialog on
       // top marks the key consumed and outer listeners (the settings dialog) check the flag.
       e.preventDefault();
@@ -75,8 +69,7 @@ export function Dialog({
     document.addEventListener("keydown", onKey, true);
     return () => {
       document.removeEventListener("keydown", onKey, true);
-      const at = openDialogs.findIndex((d) => d.token === token);
-      if (at >= 0) openDialogs.splice(at, 1);
+      layer.remove();
     };
   }, [open]);
 
