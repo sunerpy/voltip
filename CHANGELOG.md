@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.32](https://github.com/sunerpy/voltip/compare/v0.0.31...v0.0.32) (2026-10-03)
+
+
+### Features
+
+* **mobile:** the phone in the desktop's look, touch dropdowns, entries from 说话, and counts that move ([#80](https://github.com/sunerpy/voltip/issues/80)) ([8c2080e](https://github.com/sunerpy/voltip/commit/8c2080e5c284d369bdd75179553391b6aedf3bb4))
+
 ## [0.0.31](https://github.com/sunerpy/voltip/compare/v0.0.30...v0.0.31) (2026-10-03)
 
 
