@@ -2,6 +2,7 @@ export { cx } from "./cx";
 export * from "./theme";
 export * from "./backend/BackendProvider";
 export * from "./i18n/I18nProvider";
+export * from "./presentation/PresentationProvider";
 export * from "./components/Icon";
 export * from "./components/Lamp";
 export * from "./components/Logo";

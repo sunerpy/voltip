@@ -8,6 +8,8 @@ import {
   useState,
 } from "react";
 import { cx } from "../cx";
+import { usePresentation } from "../presentation/PresentationProvider";
+import { TOUCH_CONTROL, TOUCH_TARGET } from "../presentation/touch";
 import { Icon, type IconName } from "./Icon";
 
 /** One row of a `Menu`: a choice of a set (`radio`) or a command (`action`). */
@@ -67,6 +69,7 @@ export function Menu({
   onOpen,
   "data-testid": testId,
 }: MenuProps) {
+  const touch = usePresentation() === "touch";
   const [open, setOpen] = useState(false);
   const menuId = useId();
   const wrapper = useRef<HTMLDivElement>(null);
@@ -160,7 +163,9 @@ export function Menu({
   return (
     // `min-w-0`: in a crowded row (the title bar at 960 px) the menu button shrinks and its text
     // truncates instead of running over what follows it.
-    <div ref={wrapper} className="relative inline-flex min-w-0">
+    <div
+      ref={wrapper}
+      className={cx("relative inline-flex min-w-0", touch && cx(TOUCH_CONTROL, "select-none"))}>
       <button
         ref={button}
         type="button"
@@ -181,7 +186,10 @@ export function Menu({
             openMenu();
           }
         }}
-        className={triggerClassName}>
+        // The phone: a 44 px target around the trigger, and a pressed state whatever it looks like.
+        className={
+          touch ? cx(triggerClassName, TOUCH_TARGET, "enabled:active:opacity-70") : triggerClassName
+        }>
         {trigger}
       </button>
       {open && (
@@ -236,10 +244,15 @@ export function Menu({
                       onSelect(item.id);
                     }}
                     className={cx(
-                      "flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] outline-none",
+                      "flex",
+                      // The phone: rows 44 px tall (in pixels: rem follows the type-size setting),
+                      // and a pressed state below.
+                      touch ? "min-h-[44px]" : "h-8",
+                      "w-full items-center gap-2 px-3 text-left text-[13px] outline-none",
                       off
                         ? "cursor-default text-fg-subtle"
                         : "text-fg hover:bg-inset focus-visible:bg-inset focus:bg-inset",
+                      touch && !off && "active:bg-inset2",
                     )}>
                     <span className="flex w-4 shrink-0 justify-center text-accent-text">
                       {item.kind === "radio" && item.checked && <Icon name="check" size={14} />}

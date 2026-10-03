@@ -1,4 +1,6 @@
 import { cx } from "../cx";
+import { usePresentation } from "../presentation/PresentationProvider";
+import { TOUCH_CONTROL, TOUCH_TARGET_Y } from "../presentation/touch";
 
 export interface SegmentedOption<V extends string> {
   value: V;
@@ -30,6 +32,7 @@ export function Segmented<V extends string>({
   label,
   className,
 }: SegmentedProps<V>) {
+  const touch = usePresentation() === "touch";
   return (
     <div
       role="radiogroup"
@@ -37,6 +40,7 @@ export function Segmented<V extends string>({
       className={cx(
         "inline-flex items-center rounded-6 bg-inset p-0.5 hairline",
         size === "sm" ? "h-7" : "h-8",
+        touch && cx(TOUCH_CONTROL, "select-none"),
         className,
       )}>
       {options.map((opt) => {
@@ -62,6 +66,10 @@ export function Segmented<V extends string>({
               selected && variant === "ink" && "bg-primary text-primary-fg",
               !selected && "text-fg-muted hover:text-fg",
               opt.disabled && "cursor-not-allowed opacity-40 hover:text-fg-muted",
+              // The phone: segments 44 px tall to the finger (in height only, side by side) and at
+              // least 44 px wide, and a pressed state on the ones that change the choice.
+              touch && cx(TOUCH_TARGET_Y, "min-w-[44px]"),
+              touch && !selected && opt.disabled !== true && "active:bg-inset2 active:text-fg",
             )}>
             {opt.label}
           </button>
