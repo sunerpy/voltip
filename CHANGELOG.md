@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.34](https://github.com/sunerpy/voltip/compare/v0.0.33...v0.0.34) (2026-10-03)
+
+
+### Features
+
+* **asr:** 支持阿里云百炼的语音识别，实时模型边说边识别 ([#86](https://github.com/sunerpy/voltip/issues/86)) ([52dea8e](https://github.com/sunerpy/voltip/commit/52dea8eab53b2a5e898344785ad42a9752145bb5))
+
 ## [0.0.33](https://github.com/sunerpy/voltip/compare/v0.0.32...v0.0.33) (2026-10-03)
 
 
