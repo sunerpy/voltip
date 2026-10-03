@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.31](https://github.com/sunerpy/voltip/compare/v0.0.30...v0.0.31) (2026-10-03)
+
+
+### Features
+
+* **dictation:** the built-in service previews while you speak ([#77](https://github.com/sunerpy/voltip/issues/77)) ([8b26a1a](https://github.com/sunerpy/voltip/commit/8b26a1a54c7f7d4f2eb76c6de3ac06ddcd4e45a8))
+
+
+### Bug Fixes
+
+* the phone's update check and back on Android, and the live preview after a cancel or the last audio ([#79](https://github.com/sunerpy/voltip/issues/79)) ([2cebe5b](https://github.com/sunerpy/voltip/commit/2cebe5b26f5a7ef3aed91f74a360aa73f5f2d709))
+
 ## [0.0.30](https://github.com/sunerpy/voltip/compare/v0.0.29...v0.0.30) (2026-10-02)
 
 
