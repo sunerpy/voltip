@@ -433,6 +433,16 @@ mod tests {
         assert!(voltip_cloud::http_client_builder().build().is_ok());
     }
 
+    /// Regression (user report 2026-10-03, 「更新失败 · GitHub 返回 404 Not Found」): the phone
+    /// crate did not take the workspace's `repository`, so `REPOSITORY` was empty. The update check
+    /// asked `https://api.github.com/repos//releases/latest`, and 关于's links opened nothing.
+    #[test]
+    fn regression_the_phone_asks_its_own_repository() {
+        assert_eq!(crate::REPOSITORY, "https://github.com/sunerpy/voltip");
+        assert_eq!(latest_release_api(crate::REPOSITORY), "https://api.github.com/repos/sunerpy/voltip/releases/latest");
+        assert_eq!(voltip_core::ui::ProjectLink::Releases.url(crate::REPOSITORY), "https://github.com/sunerpy/voltip/releases");
+    }
+
     #[test]
     fn the_store_listing_and_the_github_api_come_from_the_package_and_the_repository() {
         assert_eq!(latest_release_api("https://github.com/sunerpy/voltip"), "https://api.github.com/repos/sunerpy/voltip/releases/latest");
