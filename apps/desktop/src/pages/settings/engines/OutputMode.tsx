@@ -28,7 +28,8 @@ const MODE_ICONS: Readonly<Record<OutputModeId, IconName>> = {
  *  `EngineSettings.output_mode` through `settings_set_engines` (the whole block, like every other
  *  engine setting). The status line and the 当前生效 badge read `state.engines.effective_output_mode`:
  *  a streaming mode picked while the streaming model is missing stays selected but runs as a whole
- *  take, and the card says so. */
+ *  take, and the card says so; 整段输出 on a realtime model runs as 边说边识别 (§11.9), and its card
+ *  says that. */
 export function OutputMode() {
   const { backend } = useBackend();
   const { t, locale } = useI18n();
@@ -37,6 +38,7 @@ export function OutputMode() {
   const engines = state.engines;
   const effective = engines.effective_output_mode;
   const fallback = isStreamingOutputMode(settings.output_mode) && effective === "whole_take";
+  const streamed = settings.output_mode === "whole_take" && engines.live_source === "stream";
   const setMode = (output_mode: OutputModeId) => {
     if (output_mode === settings.output_mode) return;
     void backend.invoke("settings_set_engines", { engines: { ...settings, output_mode } });
@@ -84,6 +86,13 @@ export function OutputMode() {
                   className="text-[12px] leading-4 text-warning"
                   data-testid="output-mode-fallback">
                   {t("outputMode.fallback")}
+                </p>
+              )}
+              {selected && streamed && (
+                <p
+                  className="text-[12px] leading-4 text-fg-muted"
+                  data-testid="output-mode-streamed">
+                  {t("outputMode.streamed")}
                 </p>
               )}
             </OptionCard>

@@ -384,6 +384,10 @@ pub struct FakeTranscriber {
     glossaries: Mutex<Vec<Vec<String>>>,
     /// The language of every warm-up (docs/dictation.md §10.7).
     warms: Mutex<Vec<Option<String>>>,
+    /// The service's own stream, a realtime model's (docs/dictation.md §11.9).
+    stream: Option<Arc<FakeStreaming>>,
+    /// The glossary of every [`Transcriber::streaming`] call.
+    stream_glossaries: Mutex<Vec<Vec<String>>>,
 }
 
 impl FakeTranscriber {
@@ -416,7 +420,19 @@ impl FakeTranscriber {
             durations: Mutex::new(Vec::new()),
             glossaries: Mutex::new(Vec::new()),
             warms: Mutex::new(Vec::new()),
+            stream: None,
+            stream_glossaries: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The same service also streams: a realtime model, whose sessions `stream` scripts.
+    pub fn with_stream(self, stream: Arc<FakeStreaming>) -> Self {
+        Self { stream: Some(stream), ..self }
+    }
+
+    /// The glossary every [`Transcriber::streaming`] call carried, in order.
+    pub fn stream_glossaries(&self) -> Vec<Vec<String>> {
+        self.stream_glossaries.lock().clone()
     }
 
     /// Calls so far.
@@ -477,6 +493,12 @@ impl Transcriber for FakeTranscriber {
 
     fn warm(&self, language: Option<&str>) {
         self.warms.lock().push(language.map(str::to_owned));
+    }
+
+    fn streaming(&self, glossary: &[String]) -> Option<Arc<dyn StreamingTranscriber>> {
+        let stream = self.stream.clone()?;
+        self.stream_glossaries.lock().push(glossary.to_vec());
+        Some(stream)
     }
 }
 

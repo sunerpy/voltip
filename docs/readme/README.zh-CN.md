@@ -32,7 +32,7 @@ https://github.com/user-attachments/assets/f1a0fcf0-e5f0-4c21-b487-f91299a59ce9
 ## 功能
 
 - 全局热键按住说话（默认 `Ctrl+Alt+Space`），也可以只用一个键，比如右 Ctrl 或鼠标侧键：按住说、松开出字；也可以按一下开始、再按一下结束，或者轻点一下锁定，适合长段口述。录音时屏幕上的悬浮胶囊显示输入强度、实时文字和结果。
-- 识别可以走云端服务商（OpenAI、Groq、硅基流动，或任意 OpenAI 兼容接口），也可以在本机跑：Qwen3-ASR 0.6B / 1.7B（transcribe.cpp），SenseVoice、Paraformer（sherpa-onnx）。Qwen3-ASR 有 GPU 时在 GPU 上跑（Windows 和 Linux 用 Vulkan，在 NVIDIA 显卡上实测过；macOS 用 Metal），没有 GPU 时用 CPU。
+- 识别可以走云端服务商（OpenAI、Groq、硅基流动、阿里云百炼（含边说边识别的实时模型），或任意 OpenAI 兼容接口），也可以在本机跑：Qwen3-ASR 0.6B / 1.7B（transcribe.cpp），SenseVoice、Paraformer（sherpa-onnx）。Qwen3-ASR 有 GPU 时在 GPU 上跑（Windows 和 Linux 用 Vulkan，在 NVIDIA 显卡上实测过；macOS 用 Metal），没有 GPU 时用 CPU。
 - 边说边出字的实时预览（流式 Zipformer 模型）；输出方式可以是整段输出、流式定稿或逐句实时插入。
 - 可选的 LLM 润色（同样这些服务商，外加 DeepSeek 和本机的 Ollama）；个人词典专门纠正识别器总听错的词；字面和正则两种替换规则；中文统一成简体或繁体。
 - 语音编辑：选中一段文字，按住 `Ctrl+Alt+E` 说「改得正式一点」或「翻译成英文」，改写结果直接替换选区。

@@ -247,6 +247,8 @@ export const en: Messages = {
         "Each sentence is typed into the current window once it settles. Polish is not available in this mode, and cancelling does not remove text already typed.",
     },
     fallback: "Live transcription model not downloaded · running as All at once",
+    streamed:
+      "The selected model is a realtime model: it transcribes while you speak, so takes run as “While you speak”, and the text is still inserted once on release.",
     effective: "In effect",
     liveError: "Live transcription stopped; the whole recording was transcribed instead: {reason}",
   },
@@ -908,6 +910,7 @@ export const en: Messages = {
       openai: "OpenAI",
       groq: "Groq",
       siliconflow: "SiliconFlow",
+      aliyun: "Alibaba Cloud Model Studio",
       deepseek: "DeepSeek",
       ollama: "Ollama",
       custom: "Custom endpoint",
@@ -918,6 +921,8 @@ export const en: Messages = {
       openai: "OpenAI's transcription and chat models.",
       groq: "Whisper and open models hosted by Groq; fast.",
       siliconflow: "SenseVoice and open models hosted by SiliconFlow.",
+      aliyun:
+        "Model Studio's speech recognition and Qwen models; its realtime models transcribe while you speak.",
       deepseek: "DeepSeek's chat models, for polish only.",
       ollama: "Models in Ollama on this computer; text never leaves it.",
       custom: "Any OpenAI-compatible endpoint: vLLM, LocalAI or your own gateway.",
@@ -941,7 +946,10 @@ export const en: Messages = {
       baseUrl: "Endpoint",
       baseUrlHelpVendor:
         "Leave empty for the official endpoint; fill in only for a proxy or relay.",
-      baseUrlHelpCustom: "An OpenAI-compatible endpoint, e.g. http://192.168.1.20:8000/v1",
+      baseUrlHelpCustom:
+        "An OpenAI-compatible endpoint, e.g. http://192.168.1.20:8000/v1; an Alibaba Cloud Model Studio address works too.",
+      baseUrlHelpAliyun:
+        "Leave empty for the public endpoint; enter your workspace's own address here to use it.",
       key: "API key",
       keyOptional: "API key (optional)",
       keyPlaceholderSet: "Saved · leave empty to keep",
@@ -1032,18 +1040,19 @@ export const en: Messages = {
     installedCount: "{installed} / {total} installed",
     livePreview: {
       title: "Live preview",
-      note: "While you hold the shortcut, the overlay shows the words as you speak; on release the selected provider still transcribes the whole recording, so the final text is unaffected. With the built-in service, the service itself provides the preview, updated about every 2 seconds; with another provider or a local model, download the Live preview model below.",
+      note: "While you hold the shortcut, the overlay shows the words as you speak. With the built-in service, the service itself provides the preview, updated about every 2 seconds, and the whole recording is still transcribed on release; with a realtime model (such as Model Studio's qwen-audio-3.1-asr-flash-streaming) the words are transcribed as you speak and release only finishes the last sentence; with another provider or a local model, download the Live preview model below, and the preview does not change the final text.",
       toggle: "Live preview",
       state: {
         ready: "Ready",
         cloud: "Ready · built-in service",
+        stream: "Ready · realtime model",
         missing: "Model not downloaded",
         off: "Off",
       },
     },
     outputMode: {
       title: "Output mode",
-      note: "How the final text is produced and when it is inserted. The last two modes need the live preview: with the built-in service it is there already; otherwise download the Live preview model first. Without it they run as “All at once”.",
+      note: "How the final text is produced and when it is inserted. The last two modes need the live preview: with the built-in service or a realtime model it is there already; otherwise download the Live preview model first. Without it they run as “All at once”.",
       label: "Output mode",
     },
     vadTrim: {

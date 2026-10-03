@@ -1,22 +1,27 @@
 //! The cloud services as the core's ports (docs/dictation.md §3): speech-to-text through
-//! `voltip-asr` behind [`Transcriber`], clean-up and the voice edit's rewrite through
-//! `voltip-refine` behind [`Refiner`], the choice of client for a [`ResolvedEngines`], and the
-//! provider probe behind [`ServiceProbe`]. The desktop adds its local models next to these
+//! `voltip-asr` behind [`Transcriber`] (Alibaba Cloud Model Studio's models through
+//! [`dashscope`], its realtime ones streaming as well), clean-up and the voice edit's rewrite
+//! through `voltip-refine` behind [`Refiner`], the choice of client for a [`ResolvedEngines`], and
+//! the provider probe behind [`ServiceProbe`]. The desktop adds its local models next to these
 //! (`apps/desktop/src-tauri/src/dictation.rs`); the phone, which has none, uses them alone when it
 //! recognises a take itself (§20.7). [`feedback`] is the in-app feedback client both shells use.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod dashscope;
 pub mod feedback;
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use voltip_asr::{AsrClient, AsrConfig};
+use voltip_asr::{AsrClient, AsrConfig, DashscopeMode};
 use voltip_core::dictation::{DictationError, RefineHints, Refined, Refiner, ServiceProbe, Transcriber, Transcript};
-use voltip_core::{BuiltinPreset, ProbeError, ProbeFailure, ProviderId, ResolvedEngines, ServiceKind, TakePreset};
+use voltip_core::providers::is_dashscope;
+use voltip_core::{AsrProtocol, BuiltinPreset, ProbeError, ProbeFailure, ProviderId, RemoteService, ResolvedEngines, ServiceKind, TakePreset};
+
+use crate::dashscope::DashscopeTranscriber;
 use voltip_refine::{PromptContext, PromptHints, RefineClient, RefineConfig};
 
 /// HTTP request deadline for one transcription (long recordings on a slow link).
@@ -181,24 +186,56 @@ pub fn remote_transcriber(engines: &ResolvedEngines) -> Arc<dyn Transcriber> {
             Some(issue) => format!("识别服务未配置：{}", issue.message(ServiceKind::Asr)),
             None => "识别服务未配置".to_owned(),
         })),
-        Some(remote) => match HttpTranscriber::new(AsrConfig::new(&remote.url, &remote.model).with_token(remote.key.clone()).with_timeout(ASR_TIMEOUT)) {
-            Ok(t) => Arc::new(t),
-            Err(e) => {
-                tracing::warn!(error = %e, "ASR client not built");
-                Arc::new(Unconfigured(format!("识别服务配置无效：{e}")))
-            }
-        },
+        Some(remote) => transcriber_for(AsrProtocol::of(&remote.url, &remote.model), remote),
     }
+}
+
+/// The client that speaks `protocol` to `remote` (docs/dictation.md §3.4): OpenAI's
+/// `/audio/transcriptions`, or one of Model Studio's; a Model Studio model dictation cannot use
+/// says so on use.
+pub fn transcriber_for(protocol: AsrProtocol, remote: &RemoteService) -> Arc<dyn Transcriber> {
+    let config = AsrConfig::new(&remote.url, &remote.model).with_token(remote.key.clone()).with_timeout(ASR_TIMEOUT);
+    let built = match protocol {
+        AsrProtocol::OpenaiTranscriptions => HttpTranscriber::new(config).map(|t| Arc::new(t) as Arc<dyn Transcriber>),
+        AsrProtocol::DashscopeChat => DashscopeTranscriber::new(config, DashscopeMode::Chat).map(|t| Arc::new(t) as Arc<dyn Transcriber>),
+        AsrProtocol::DashscopeMultimodal => DashscopeTranscriber::new(config, DashscopeMode::Multimodal).map(|t| Arc::new(t) as Arc<dyn Transcriber>),
+        AsrProtocol::DashscopeDuplex => DashscopeTranscriber::new(config, DashscopeMode::Duplex).map(|t| Arc::new(t) as Arc<dyn Transcriber>),
+        AsrProtocol::DashscopeUnsupported => return Arc::new(Unconfigured(unsupported_model(&remote.model))),
+    };
+    built.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, ?protocol, "ASR client not built");
+        Arc::new(Unconfigured(format!("识别服务配置无效：{e}")))
+    })
+}
+
+/// Why a Model Studio model cannot dictate, and what to pick instead.
+fn unsupported_model(model: &str) -> String {
+    let instead = "请改用 qwen-audio-3.1-asr-flash-streaming 等实时识别模型，或 qwen-audio-3.1-asr-flash";
+    if model.trim().to_ascii_lowercase().starts_with("qwen3-asr-flash-realtime") {
+        format!("识别服务配置无效：暂不支持 {model} 的实时接口；{instead}")
+    } else {
+        format!("识别服务配置无效：{model} 只能在后台转写录音文件，不能用于听写；{instead}")
+    }
+}
+
+/// The OpenAI-compatible base of a Model Studio address that names no `compatible-mode` path (a
+/// workspace's bare host, its `/api/v1`): where its chat models and its model list are. Any other
+/// address is used as it is.
+pub fn openai_compatible_base(base_url: &str) -> String {
+    if is_dashscope(base_url)
+        && !base_url.contains("/compatible-mode")
+        && let Ok(base) = voltip_asr::compatible_base(base_url)
+    {
+        return base;
+    }
+    base_url.to_owned()
 }
 
 /// The clean-up client of a configuration; no ready clean-up provider means none (the core then
 /// explains "润色未配置").
 pub fn refiner(engines: &ResolvedEngines) -> Option<Arc<dyn Refiner>> {
     engines.refine.as_ref().map(|remote| {
-        // The built-in service stays under its free tier's output limit; a service the user
-        // configured may answer a long translation or notes in full (docs/dictation.md §21).
-        let cap = if engines.llm_provider == Some(ProviderId::Builtin) { voltip_refine::BUILTIN_OUTPUT_CAP } else { voltip_refine::USER_OUTPUT_CAP };
-        let config = RefineConfig::new(&remote.url, &remote.model).with_api_key(remote.key.clone()).with_timeout(REFINE_TIMEOUT).with_output_cap(cap);
+        let config = refine_config(remote, engines.llm_provider == Some(ProviderId::Builtin));
         match HttpRefiner::new(config) {
             Ok(r) => Arc::new(r) as Arc<dyn Refiner>,
             Err(e) => {
@@ -209,16 +246,30 @@ pub fn refiner(engines: &ResolvedEngines) -> Option<Arc<dyn Refiner>> {
     })
 }
 
+/// How the clean-up client reaches `remote`. The built-in service stays under its free tier's
+/// output limit; a service the user configured may answer a long translation or notes in full
+/// (docs/dictation.md §21). A Model Studio address gets its OpenAI-compatible base and
+/// `enable_thinking: false` (§3.4): its Qwen3 and DeepSeek models think by default there.
+pub fn refine_config(remote: &RemoteService, builtin: bool) -> RefineConfig {
+    let cap = if builtin { voltip_refine::BUILTIN_OUTPUT_CAP } else { voltip_refine::USER_OUTPUT_CAP };
+    RefineConfig::new(openai_compatible_base(&remote.url), &remote.model)
+        .with_api_key(remote.key.clone())
+        .with_timeout(REFINE_TIMEOUT)
+        .with_output_cap(cap)
+        .with_enable_thinking(is_dashscope(&remote.url).then_some(false))
+}
+
 /// The engines pane's 测试连接 over HTTP (docs/dictation.md §3.3): `GET {base}/models` with the
 /// key, answered with ids or a host-free failure. Recognition and clean-up endpoints are
-/// normalised the same way (`…/v1`), so one request serves both kinds. Both shells use it.
+/// normalised the same way (`…/v1`), so one request serves both kinds; a Model Studio address
+/// is asked at its OpenAI-compatible base (§3.4). Both shells use it.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HttpServiceProbe;
 
 #[async_trait]
 impl ServiceProbe for HttpServiceProbe {
     async fn list_models(&self, base_url: &str, key: Option<&str>) -> Result<Vec<String>, ProbeError> {
-        voltip_refine::list_models(base_url, key, PROBE_TIMEOUT).await.map_err(|e| {
+        voltip_refine::list_models(&openai_compatible_base(base_url), key, PROBE_TIMEOUT).await.map_err(|e| {
             use voltip_refine::RefineError as E;
             match e {
                 E::InvalidConfig(_) => ProbeError::new(ProbeFailure::InvalidUrl),
@@ -283,6 +334,65 @@ mod tests {
         assert!(matches!(&err, DictationError::Asr(m) if m.starts_with("识别服务配置无效")), "{err}");
         let err = refiner(&engines).expect("configured").refine("x", &RefineHints::default()).await.unwrap_err();
         assert!(matches!(&err, DictationError::Refine(m) if m.starts_with("润色服务配置无效")), "{err}");
+    }
+
+    /// docs/dictation.md §3.4 (goal 2026-10-03: every Model Studio model failed on
+    /// `/audio/transcriptions`): the endpoint and the model pick the client — a realtime model's
+    /// streams, the HTTP ones do not, a file-only model says what to use instead, and everything
+    /// else keeps OpenAI's multipart.
+    #[tokio::test]
+    async fn the_protocol_picks_the_client() {
+        let remote = |url: &str, model: &str| RemoteService { url: url.into(), model: model.into(), key: Some("sk-test".into()) };
+        let studio = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+        let pick = |url: &str, model: &str| transcriber_for(AsrProtocol::of(url, model), &remote(url, model));
+        assert!(pick(studio, "qwen-audio-3.1-asr-flash-streaming").streaming(&[]).is_some());
+        assert!(pick(studio, "qwen-audio-3.1-asr-flash-message").streaming(&["Voltip".into()]).is_some());
+        assert!(pick(studio, "qwen-audio-3.1-asr-flash").streaming(&[]).is_none());
+        assert!(pick(studio, "qwen3-asr-flash").streaming(&[]).is_none());
+        assert!(pick("https://api.openai.com/v1", "whisper-1").streaming(&[]).is_none());
+        for (model, says) in
+            [("qwen-audio-3.1-asr-flash-filetrans", "后台转写录音文件"), ("paraformer-v2", "后台转写录音文件"), ("qwen3-asr-flash-realtime", "暂不支持")]
+        {
+            let err = pick(studio, model).transcribe(b"RIFF", None, &[]).await.unwrap_err();
+            assert!(
+                matches!(&err, DictationError::Asr(m) if m.contains(says) && m.contains(model) && m.contains("qwen-audio-3.1-asr-flash")),
+                "{model}: {err}"
+            );
+        }
+        // A configuration the client refuses is reported on use, whatever the protocol.
+        for protocol in [AsrProtocol::DashscopeChat, AsrProtocol::DashscopeMultimodal, AsrProtocol::DashscopeDuplex, AsrProtocol::OpenaiTranscriptions] {
+            let err = transcriber_for(protocol, &remote("not a url", "m")).transcribe(b"RIFF", None, &[]).await.unwrap_err();
+            assert!(matches!(&err, DictationError::Asr(m) if m.starts_with("识别服务配置无效")), "{protocol:?}: {err}");
+        }
+        // Through the resolution: the Model Studio vendor with a key.
+        let mut secrets = UserSecrets::default();
+        secrets.set(ProviderId::Aliyun, ServiceKind::Asr, Some("sk-test".into()));
+        let settings = EngineSettings { asr_provider: ProviderId::Aliyun, ..EngineSettings::default() };
+        let engines = ResolvedEngines::resolve(&settings, &secrets, &BuiltIn::EMPTY);
+        assert!(remote_transcriber(&engines).streaming(&[]).is_some(), "the catalogue's default model streams");
+    }
+
+    /// Regression (2026-10-04): a Model Studio clean-up runs without thinking, at the compatible
+    /// base; every other service is asked as before.
+    #[test]
+    fn regression_a_model_studio_clean_up_does_not_think() {
+        let remote = |url: &str| RemoteService { url: url.into(), model: "qwen3.8-flash".into(), key: Some("sk-test".into()) };
+        let studio = refine_config(&remote("https://ws-1.cn-beijing.maas.aliyuncs.com"), false);
+        assert_eq!(studio.enable_thinking, Some(false));
+        assert_eq!(studio.base_url, "https://ws-1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1");
+        assert_eq!(studio.output_cap, voltip_refine::USER_OUTPUT_CAP);
+        let other = refine_config(&remote("https://api.groq.com/openai/v1"), false);
+        assert_eq!((other.enable_thinking, other.base_url.as_str()), (None, "https://api.groq.com/openai/v1"));
+        assert_eq!(refine_config(&remote("https://llm.builtin.test/v1"), true).output_cap, voltip_refine::BUILTIN_OUTPUT_CAP);
+    }
+
+    #[test]
+    fn a_model_studio_address_is_asked_at_its_compatible_base() {
+        assert_eq!(openai_compatible_base("https://ws-1.cn-beijing.maas.aliyuncs.com"), "https://ws-1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1");
+        assert_eq!(openai_compatible_base("https://dashscope.aliyuncs.com/api/v1"), "https://dashscope.aliyuncs.com/compatible-mode/v1");
+        for kept in ["https://dashscope.aliyuncs.com/compatible-mode/v1", "https://api.openai.com/v1", "http://127.0.0.1:8000", "not a url"] {
+            assert_eq!(openai_compatible_base(kept), kept);
+        }
     }
 
     #[test]

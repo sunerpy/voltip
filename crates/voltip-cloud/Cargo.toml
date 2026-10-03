@@ -20,6 +20,8 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+# A realtime model's stream (src/dashscope.rs): its WebSocket task on the core's runtime.
+tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 voltip-asr.workspace = true
@@ -32,6 +34,8 @@ voltip-refine.workspace = true
 webpki-root-certs.workspace = true
 
 [dev-dependencies]
+futures-util.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 webpki-root-certs.workspace = true
 wiremock.workspace = true

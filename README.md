@@ -39,10 +39,11 @@ https://github.com/user-attachments/assets/64e1fdc2-1ab0-42a6-a8c9-740a1efa2ecb
 - Push-to-talk on a global hotkey (`Ctrl+Alt+Space` by default) or on a single key such as Right
   Ctrl or a mouse side button: hold to talk, press to start and press again to stop, or tap to lock
   a long take. A floating pill shows the input strength, the live transcript and the result.
-- Recognition from a cloud provider (OpenAI, Groq, SiliconFlow, or any OpenAI-compatible endpoint)
-  or on-device: Qwen3-ASR 0.6B / 1.7B through transcribe.cpp, SenseVoice and Paraformer through
-  sherpa-onnx. Qwen3-ASR runs on the GPU when there is one (Vulkan on Windows and Linux, measured
-  on NVIDIA cards; Metal on macOS) and on the CPU otherwise.
+- Recognition from a cloud provider (OpenAI, Groq, SiliconFlow, Alibaba Cloud Model Studio with its
+  realtime models, or any OpenAI-compatible endpoint) or on-device: Qwen3-ASR 0.6B / 1.7B through
+  transcribe.cpp, SenseVoice and Paraformer through sherpa-onnx. Qwen3-ASR runs on the GPU when
+  there is one (Vulkan on Windows and Linux, measured on NVIDIA cards; Metal on macOS) and on the
+  CPU otherwise.
 - Live preview while you speak (a streaming Zipformer model), and output as one block, sentence by
   sentence, or from the stream directly.
 - Clean-up by an LLM (the same providers, plus DeepSeek and a local Ollama), a personal dictionary

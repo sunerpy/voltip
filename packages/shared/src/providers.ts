@@ -75,6 +75,25 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     onDevice: false,
     console: true,
   },
+  aliyun: {
+    asr: {
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      models: [
+        "qwen-audio-3.1-asr-flash-streaming",
+        "qwen-audio-3.1-asr-flash",
+        "qwen-audio-3.1-asr-flash-message",
+        "qwen3-asr-flash",
+        "fun-asr-realtime",
+      ],
+    },
+    llm: {
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      models: ["qwen3.8-flash", "qwen3.8-max", "qwen3.7-flash"],
+    },
+    key: "required",
+    onDevice: false,
+    console: true,
+  },
   deepseek: {
     llm: { baseUrl: "https://api.deepseek.com", models: ["deepseek-flash", "deepseek-v4-pro"] },
     key: "required",
@@ -99,6 +118,27 @@ export const PROVIDER_CATALOGUE: readonly ProviderSpec[] = PROVIDER_IDS.map(prov
 
 export function offers(id: ProviderId, kind: ServiceKind): boolean {
   return providerSpec(id)[kind] !== undefined;
+}
+
+/** `voltip_core::providers::is_dashscope`: an Alibaba Cloud Model Studio address. */
+export function isDashscope(url: string): boolean {
+  try {
+    return new URL(url.trim()).hostname.toLowerCase().endsWith(".aliyuncs.com");
+  } catch {
+    return false;
+  }
+}
+
+/** `AsrProtocol::of(url, model).streams()` (docs/dictation.md §3.4): a Model Studio realtime model,
+ *  which recognises while the take is spoken. */
+export function asrStreams(url: string, model: string): boolean {
+  if (!isDashscope(url)) return false;
+  const m = model.trim().toLowerCase();
+  if (m.includes("filetrans") || m.startsWith("qwen3-asr")) return false;
+  const realtime = m.includes("realtime");
+  if (m.startsWith("qwen-audio") && m.includes("-asr"))
+    return realtime || m.includes("-streaming") || m.includes("-message");
+  return (m.startsWith("fun-asr") || m.startsWith("paraformer")) && realtime;
 }
 
 /** The secret-store entry of the user's key (`voltip_core::providers::key_entry`): a vendor's two
@@ -294,18 +334,24 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
       ...(llm === undefined ? {} : { llm }),
     });
   }
-  // `ResolvedEngines::live_source`: the built-in service previews itself, else the local model.
+  // `ResolvedEngines::live_source`: the built-in service previews itself, a realtime model streams
+  // itself, else the local model.
   const liveSource: LiveSource | undefined = !settings.live_preview
     ? undefined
     : asrProvider === "builtin" && asrTarget !== undefined && input.builtIn.asr?.preview === true
       ? "cloud"
-      : input.liveReady
-        ? "local"
-        : undefined;
+      : asrTarget !== undefined && asrStreams(asrTarget.url, asrTarget.model)
+        ? "stream"
+        : input.liveReady
+          ? "local"
+          : undefined;
+  // `effective_output_mode`: a realtime model's stream is the take's text (§11.9).
   const effective =
-    settings.output_mode !== "whole_take" && liveSource === undefined
-      ? "whole_take"
-      : settings.output_mode;
+    settings.output_mode === "whole_take" && liveSource === "stream"
+      ? "streaming_final"
+      : settings.output_mode !== "whole_take" && liveSource === undefined
+        ? "whole_take"
+        : settings.output_mode;
   const language = trimmed(settings.language);
   return {
     asr_provider: asrProvider,

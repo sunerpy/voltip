@@ -49,7 +49,9 @@ pub use models::{
     ModelManager, ModelState, ProgressSink,
 };
 pub use presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetError, PresetId, PresetRef, PresetTrial, PresetTryOutcome, TakePreset};
-pub use providers::{KeyPolicy, PROVIDERS, ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSpec, ServiceKind, ServicePreset};
+pub use providers::{
+    AsrProtocol, KeyPolicy, PROVIDERS, ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSpec, ServiceKind, ServicePreset,
+};
 pub use runtime::{
     AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED, TestHooks, now_ms,
 };

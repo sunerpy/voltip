@@ -437,6 +437,42 @@
         }
       },
       {
+        "id": "aliyun",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "qwen-audio-3.1-asr-flash-streaming",
+          "presets": [
+            "qwen-audio-3.1-asr-flash-streaming",
+            "qwen-audio-3.1-asr-flash",
+            "qwen-audio-3.1-asr-flash-message",
+            "qwen3-asr-flash",
+            "fun-asr-realtime"
+          ],
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "qwen3.8-flash",
+          "presets": ["qwen3.8-flash", "qwen3.8-max", "qwen3.7-flash"],
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
         "id": "deepseek",
         "key": "required",
         "on_device": false,

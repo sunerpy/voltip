@@ -31,14 +31,16 @@ export const injectModeSchema = z.enum(["paste", "clipboard_only"]);
 export type InjectMode = z.infer<typeof injectModeSchema>;
 
 /** Who serves recognition or clean-up (`voltip_core::providers::ProviderId`, docs/dictation.md
- *  §3): the build's own service, the on-device models, a few OpenAI-compatible vendors, Ollama on
- *  this machine and a custom endpoint. Display order. */
+ *  §3): the build's own service, the on-device models, a few OpenAI-compatible vendors, Alibaba
+ *  Cloud Model Studio (its own recognition protocols, §3.4), Ollama on this machine and a custom
+ *  endpoint. Display order. */
 export const PROVIDER_IDS = [
   "builtin",
   "local",
   "openai",
   "groq",
   "siliconflow",
+  "aliyun",
   "deepseek",
   "ollama",
   "custom",
@@ -81,8 +83,9 @@ export const OUTPUT_MODES = ["whole_take", "streaming_final", "live_inject"] as 
 export const outputModeSchema = z.enum(OUTPUT_MODES);
 export type OutputMode = z.infer<typeof outputModeSchema>;
 
-/** `voltip_core::LiveSource` (docs/dictation.md §11.8). */
-export const liveSourceSchema = z.enum(["cloud", "local"]);
+/** `voltip_core::LiveSource` (docs/dictation.md §11.8, §11.9): the built-in service decoding again,
+ *  the library's streaming model, or the recognition service's own realtime model. */
+export const liveSourceSchema = z.enum(["cloud", "local", "stream"]);
 export type LiveSource = z.infer<typeof liveSourceSchema>;
 
 /** The two modes that ride on the streaming recogniser (they need `live_preview_ready`). */

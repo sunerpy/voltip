@@ -7,6 +7,7 @@
 //! plugs in cpal / rtrb / reqwest / sherpa-onnx / enigo implementations, tests plug in
 //! [`crate::dictation::fakes`].
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -263,6 +264,14 @@ pub trait Transcriber: Send + Sync {
     /// once and is idempotent; a failure only logs (the take then loads again and reports it). The
     /// default does nothing: a remote client has nothing to load.
     fn warm(&self, _language: Option<&str>) {}
+
+    /// The same service as a [`StreamingTranscriber`], when it recognises while the audio arrives
+    /// (a realtime model, docs/dictation.md §11.9), hinted with `glossary` as a take is. The engine
+    /// then streams the take to it and takes its sentences as the take's text. `None` (the
+    /// default): the service only takes whole recordings.
+    fn streaming(&self, _glossary: &[String]) -> Option<Arc<dyn StreamingTranscriber>> {
+        None
+    }
 }
 
 /// One sentence the streaming recogniser committed at an endpoint (docs/dictation.md §11). Times

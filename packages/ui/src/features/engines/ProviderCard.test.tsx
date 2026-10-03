@@ -99,6 +99,47 @@ describe("ProviderCard (desktop engines pane and phone settings)", () => {
     backend.destroy();
   });
 
+  it("offers Model Studio's realtime model first and explains its workspace address", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    const invoke = vi.spyOn(backend, "invoke");
+    renderCard(backend, { id: "aliyun", kind: "asr" });
+    const form = await screen.findByTestId("provider-form");
+    const model = within(form).getByRole("combobox", { name: t("engines.field.model") });
+    expect(model).toHaveValue("qwen-audio-3.1-asr-flash-streaming");
+    expect(
+      within(model)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual([
+      "qwen-audio-3.1-asr-flash-streaming",
+      "qwen-audio-3.1-asr-flash",
+      "qwen-audio-3.1-asr-flash-message",
+      "qwen3-asr-flash",
+      "fun-asr-realtime",
+      t("engines.field.modelOther"),
+    ]);
+    expect(form).toHaveTextContent(t("engines.field.baseUrlHelpAliyun"));
+    const url = within(form).getByLabelText(t("engines.field.baseUrl"));
+    expect(url).toHaveAttribute("placeholder", "https://dashscope.aliyuncs.com/compatible-mode/v1");
+    await user.type(url, "https://ws-test.cn-beijing.maas.aliyuncs.com/compatible-mode/v1");
+    await user.type(within(form).getByLabelText(t("engines.field.key")), "sk-test");
+    await user.click(within(form).getByRole("button", { name: t("engines.save") }));
+    expect(invoke).toHaveBeenCalledWith("settings_set_engines", {
+      engines: expect.objectContaining({
+        providers: expect.objectContaining({
+          aliyun: { asr_url: "https://ws-test.cn-beijing.maas.aliyuncs.com/compatible-mode/v1" },
+        }),
+      }),
+    });
+    expect(invoke).toHaveBeenCalledWith("provider_key_set", {
+      provider: "aliyun",
+      kind: "asr",
+      value: "sk-test",
+    });
+    backend.destroy();
+  });
+
   it("refuses a draft the checks reject and saves nothing", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend();
