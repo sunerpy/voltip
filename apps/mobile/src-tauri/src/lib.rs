@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod back;
 pub mod clipboard;
 pub mod meter;
 pub mod microphone;
@@ -1066,6 +1067,7 @@ pub fn build_app<R: Runtime>(
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init()).plugin(tauri_plugin_opener::init());
     builder
+        .plugin(back::init())
         .plugin(microphone::init())
         .plugin(clipboard::init())
         .plugin(share::init())

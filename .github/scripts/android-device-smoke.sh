@@ -124,22 +124,61 @@ in_front() {
   adb shell dumpsys window | grep -E 'mCurrentFocus' | grep -q "$package"
 }
 
-tap 设置 Settings
-showing '外观与语言|Appearance and language'
-tap 外观与语言 'Appearance and language'
-showing '按操作系统的语言选择|picks by the operating system language'
-back
-showing '外观与语言|Appearance and language'
-if grep -qE '按操作系统的语言选择|picks by the operating system language' "$out/ui.xml"; then
-  fail "back on 外观与语言 did not go up a level"
+# Up a level from 设置 › 外观与语言, then to 说话.
+up_a_level() {
+  tap 设置 Settings
+  showing '外观与语言|Appearance and language'
+  tap 外观与语言 'Appearance and language'
+  showing '按操作系统的语言选择|picks by the operating system language'
+  back
+  showing '外观与语言|Appearance and language'
+  if grep -qE '按操作系统的语言选择|picks by the operating system language' "$out/ui.xml"; then
+    fail "back on 外观与语言 did not go up a level ($1)"
+  fi
+  in_front || fail "back on 外观与语言 left the app ($1)"
+  back
+  showing '按住说话|Hold to talk'
+  if grep -qE '外观与语言|Appearance and language' "$out/ui.xml"; then
+    fail "back on 设置 did not go to 说话 ($1)"
+  fi
+  in_front || fail "back on 设置 left the app ($1)"
+}
+up_a_level "the activity Android started"
+
+# Android recreates the activity when an overlay changes (the navigation mode, the wallpaper's
+# colours) and when the font or display size does, and the back handler has to survive that
+# (2026-10-03: Tauri's own one stayed with the first activity, so after a recreation every back
+# left the app). A font-size change recreates it here: the system's event log says so, and so does
+# the app's log, where every MainActivity says when it takes the backs (BackPlugin.kt).
+attached() {
+  adb logcat -d -s VoltipBack:I | grep -c 'attached to activity' || true
+}
+activities=$(attached)
+font_scale=$(adb shell settings get system font_scale | tr -d '\r')
+restore_font_scale() {
+  if [ "$font_scale" = null ] || [ -z "$font_scale" ]; then
+    adb shell settings delete system font_scale >/dev/null 2>&1 || true
+  else
+    adb shell settings put system font_scale "$font_scale" >/dev/null 2>&1 || true
+  fi
+}
+trap restore_font_scale EXIT
+adb logcat -b events -c
+if [ "$font_scale" = 1.15 ]; then
+  adb shell settings put system font_scale 1.0
+else
+  adb shell settings put system font_scale 1.15
 fi
-in_front || fail "back on 外观与语言 left the app"
-back
+deadline=$((SECONDS + 60))
+until adb logcat -b events -d | grep -qE "(wm|am)_relaunch(_resume)?_activity.*$package" || [ "$(attached)" -gt "$activities" ]; do
+  running || fail "the app closed when the font size changed"
+  [ "$SECONDS" -lt "$deadline" ] || fail "Android did not recreate the activity within 60 s of a font-size change"
+  sleep 1
+done
 showing '按住说话|Hold to talk'
-if grep -qE '外观与语言|Appearance and language' "$out/ui.xml"; then
-  fail "back on 设置 did not go to 说话"
-fi
-in_front || fail "back on 设置 left the app"
+up_a_level "the activity Android recreated"
+
+# At 说话 a first back says a second one leaves.
 back
 showing '再返回一次即可退出|Go back again to leave'
 in_front || fail "the first back on 说话 left the app"
@@ -155,5 +194,5 @@ while in_front; do
   sleep 1
 done
 collect
-echo "android-device-smoke: back goes up a level, and two backs on 说话 leave the app"
+echo "android-device-smoke: back goes up a level, before and after Android recreates the activity, and two backs on 说话 leave the app"
 echo "android-device-smoke: $package came up and stayed up ($(basename "$apk"))"

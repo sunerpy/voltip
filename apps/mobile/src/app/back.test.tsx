@@ -1,12 +1,18 @@
 import { sampleDevices, sampleHistory } from "@voltip/shared/mock";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type * as TauriCore from "@tauri-apps/api/core";
 import { EXIT_WINDOW_MS } from "../App";
 import { renderApp } from "../test/render";
-import { type SystemBack, tauriBack } from "./back";
+import { BACK_PLUGIN, type SystemBack, tauriBack } from "./back";
 
 const { onBackButtonPress } = vi.hoisted(() => ({ onBackButtonPress: vi.fn() }));
 vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress }));
+const core = vi.hoisted(() => ({ addPluginListener: vi.fn(), invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof TauriCore>()),
+  ...core,
+}));
 
 /** Android's back as a test drives it: `press` is one swipe from the edge. */
 function fakeBack() {
@@ -121,42 +127,47 @@ describe("Android's back on the phone", () => {
 
 describe("tauriBack", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
     onBackButtonPress.mockReset();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
+    core.addPluginListener.mockReset();
+    core.invoke.mockReset();
   });
 
-  it("listens once, steps aside for the second back, then listens again", async () => {
+  it("regression: it listens through the app's own back plugin, and the second back goes to the system", async () => {
+    // The android-device CI job, 2026-10-03: Tauri's back event (`onBackButtonPress`) is added to
+    // the first activity alone; Android recreated the activity after start, and the first back on
+    // 外观与语言 left the app. BackPlugin.kt takes the backs of every activity.
     const unregister = vi.fn(() => Promise.resolve());
     const handlers: (() => void)[] = [];
-    onBackButtonPress.mockImplementation((h: () => void) => {
+    core.addPluginListener.mockImplementation((_plugin: string, _event: string, h: () => void) => {
       handlers.push(h);
       return Promise.resolve({ unregister });
     });
+    core.invoke.mockResolvedValue(undefined);
     const back = tauriBack();
     const pressed = vi.fn();
     const stop = back.listen(pressed);
-    expect(onBackButtonPress).toHaveBeenCalledTimes(1);
+    expect(core.addPluginListener).toHaveBeenCalledTimes(1);
+    expect(core.addPluginListener).toHaveBeenCalledWith(BACK_PLUGIN, "back", expect.any(Function));
+    expect(onBackButtonPress).not.toHaveBeenCalled();
     handlers[0]?.();
     expect(pressed).toHaveBeenCalledTimes(1);
+    // At 说话: the plugin lets the backs of the window through, and the page keeps listening.
     back.release(EXIT_WINDOW_MS);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(unregister).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(EXIT_WINDOW_MS - 1);
-    expect(onBackButtonPress).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(onBackButtonPress).toHaveBeenCalledTimes(2);
+    expect(core.invoke).toHaveBeenCalledWith(`plugin:${BACK_PLUGIN}|release`, {
+      ms: EXIT_WINDOW_MS,
+    });
+    expect(unregister).not.toHaveBeenCalled();
     stop();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(unregister).toHaveBeenCalledTimes(2);
-    // Stopped during a release: nothing listens again.
-    back.listen(pressed);
-    back.release(EXIT_WINDOW_MS);
-    const stopAgain = back.listen(pressed);
-    stopAgain();
-    await vi.advanceTimersByTimeAsync(EXIT_WINDOW_MS);
-    expect(onBackButtonPress).toHaveBeenCalledTimes(4);
+    await vi.waitFor(() => {
+      expect(unregister).toHaveBeenCalledTimes(1);
+    });
+    handlers[0]?.();
+    expect(pressed).toHaveBeenCalledTimes(1);
+    // Listening again registers again.
+    back.listen(pressed)();
+    expect(core.addPluginListener).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => {
+      expect(unregister).toHaveBeenCalledTimes(2);
+    });
   });
 });
