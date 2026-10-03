@@ -91,22 +91,36 @@ showing() {
   done
 }
 # The centre of the node labelled with one of the words: the text or description equal to it,
-# else containing it.
+# else containing it. With --clear-of-tabs, the centre of the part above the tab bar (the
+# WebView's nodes reach under it, and a tap there lands on a tab), or status 3 when too little
+# of it shows there: the page has to scroll first.
 centre() {
   python3 - "$out/ui.xml" "$@" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
-path, *words = sys.argv[1:]
+path, *args = sys.argv[1:]
+clear = bool(args) and args[0] == "--clear-of-tabs"
+words = args[1:] if clear else args
+TABS = {"说话", "记录", "设置", "Talk", "History", "Settings"}
 nodes = []
 for node in ET.parse(path).getroot().iter("node"):
     m = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.get("bounds", ""))
     if m:
         x1, y1, x2, y2 = map(int, m.groups())
         if x2 > x1 and y2 > y1:
-            nodes.append(((node.get("text") or "").strip(), (node.get("content-desc") or "").strip(), (x1 + x2) // 2, (y1 + y2) // 2))
+            nodes.append(((node.get("text") or "").strip(), (node.get("content-desc") or "").strip(), x1, y1, x2, y2))
+# The window is the first node; the tab bar is where the tab names are, in its lowest quarter.
+bottom = nodes[0][5] if nodes else 0
+tab_top = min((n[3] for n in nodes if (n[0] in TABS or n[1] in TABS) and bottom * 3 // 4 <= n[3] < bottom), default=bottom)
 for exact in (True, False):
-    for text, desc, x, y in nodes:
+    for text, desc, x1, y1, x2, y2 in nodes:
         if any((w in (text, desc)) if exact else (w in text or w in desc) for w in words):
-            print(x, y)
+            if not clear:
+                print((x1 + x2) // 2, (y1 + y2) // 2)
+                sys.exit(0)
+            shown = min(y2, tab_top) - y1
+            if shown < 24:
+                sys.exit(3)
+            print((x1 + x2) // 2, (y1 + min(y2, tab_top)) // 2)
             sys.exit(0)
 sys.exit(1)
 PY
@@ -117,6 +131,27 @@ tap() {
   xy=$(centre "$@") || fail "nothing on the screen reads $*"
   # shellcheck disable=SC2086 # "x y"
   adb shell input tap $xy
+}
+# A row of a page that scrolls: while the tab bar hides it (a small screen, a large font), the
+# page scrolls up by about a third of the screen first.
+tap_row() {
+  local xy status w h
+  read -r w h <<EOF
+$(adb shell wm size | tr -d '\r' | awk -F'[ x]' '/size/ { w = $(NF - 1); h = $NF } END { print w, h }')
+EOF
+  for _ in 1 2 3 4 5 6; do
+    dump || fail "the screen could not be read"
+    status=0
+    xy=$(centre --clear-of-tabs "$@") || status=$?
+    if [ "$status" -eq 0 ]; then
+      # shellcheck disable=SC2086 # "x y"
+      adb shell input tap $xy
+      return 0
+    fi
+    [ "$status" -eq 3 ] || fail "nothing on the screen reads $*"
+    adb shell input swipe $((w / 2)) $((h * 3 / 5)) $((w / 2)) $((h * 3 / 10)) 300
+  done
+  fail "$* stayed under the tab bar"
 }
 back() {
   adb shell input keyevent KEYCODE_BACK
@@ -129,7 +164,7 @@ in_front() {
 up_a_level() {
   tap 设置 Settings
   showing '外观与语言|Appearance and language'
-  tap 外观与语言 'Appearance and language'
+  tap_row 外观与语言 'Appearance and language'
   showing '按操作系统的语言选择|picks by the operating system language'
   back
   showing '外观与语言|Appearance and language'
