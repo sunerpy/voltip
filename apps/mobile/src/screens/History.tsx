@@ -2,8 +2,8 @@ import {
   HISTORY_FILTERS,
   type HistoryBucket,
   type HistoryFilter,
+  durationParts,
   formatCount,
-  formatDuration,
   groupByDay,
   historyFilterLabel,
   mirrorStateText,
@@ -13,6 +13,7 @@ import {
 } from "@voltip/shared";
 import {
   Button,
+  Card,
   EmptyState,
   Icon,
   Input,
@@ -26,24 +27,46 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { useMemo, useState } from "react";
+import { PAGE, TOUCH } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 import { mirrorEntryParam } from "./MirrorEntry";
 
 /** How long the search waits after the last keystroke, as on the desktop. */
 const SEARCH_DEBOUNCE_MS = 200;
 
-function Tile({ label, bucket }: { label: string; bucket: HistoryBucket }) {
+/** 「节省 {time}」 as the desktop's stat tiles draw it: the numbers as mono readouts, the words
+ *  and the units small beside them, before or after as the language puts them. */
+function SavedTime({ ms }: { ms: number }) {
   const { t, locale } = useI18n();
+  const [before = "", after = ""] = t("home.tiles.saved", { time: "\u0000" }).split("\u0000");
   return (
-    <div className="flex flex-col gap-0.5 rounded-10 bg-surface p-3 hairline">
-      <span className="text-[12px] text-fg-muted">{label}</span>
-      <span className="text-[15px] font-semibold text-fg">
-        {t("home.session.count", { n: formatCount(bucket.count) })}
+    <span className="whitespace-nowrap text-fg">
+      {before.trim() && <span className="mr-1 text-[11px] text-fg-muted">{before.trim()}</span>}
+      {durationParts(ms, locale).map((part, i) => (
+        <span key={part.unit} className={i > 0 ? "ml-1.5" : undefined}>
+          <span className="mono text-[16px]">{part.value}</span>
+          <span className="ml-1 text-[11px] text-fg-muted">{part.unit}</span>
+        </span>
+      ))}
+      {after.trim() && <span className="ml-1 text-[11px] text-fg-muted">{after.trim()}</span>}
+    </span>
+  );
+}
+
+/** One span of the counts, as the desktop's stat strip draws it: the span's name and the takes in
+ *  it on one line, the time saved under them. */
+function Tile({ label, bucket }: { label: string; bucket: HistoryBucket }) {
+  const { t } = useI18n();
+  return (
+    <Card padding="sm" className="flex flex-col gap-1">
+      <span className="flex items-baseline justify-between gap-2">
+        <span className="text-[11px] text-fg-subtle">{label}</span>
+        <span className="truncate text-[11px] text-fg-muted">
+          {t("home.session.count", { n: formatCount(bucket.count) })}
+        </span>
       </span>
-      <span className="text-[11px] text-fg-subtle">
-        {t("home.tiles.saved", { time: formatDuration(bucket.savedMs, locale) })}
-      </span>
-    </div>
+      <SavedTime ms={bucket.savedMs} />
+    </Card>
   );
 }
 
@@ -78,12 +101,12 @@ export function History() {
     f === "failed" ? t("mobile.history.failed") : historyFilterLabel(f, t);
 
   return (
-    <div className="flex flex-col gap-3 p-4" data-testid="phone-history">
+    <div className={PAGE} data-testid="phone-history">
       {state.mirrors.length > 0 && (
-        <div className="-mx-1 overflow-x-auto px-1">
+        // A long list of computers scrolls sideways rather than squeezing the names.
+        <div className="-mx-4 overflow-x-auto px-4">
           <Segmented<string>
             label={t("mirror.source")}
-            size="sm"
             value={desktop ?? THIS_PHONE}
             onChange={(next) => {
               if (next === THIS_PHONE) shell.go("history");
@@ -93,11 +116,12 @@ export function History() {
               { value: THIS_PHONE, label: t("mirror.thisPhone") },
               ...state.mirrors.map((m) => ({ value: m.desktop, label: m.name })),
             ]}
+            className="h-11 min-w-full [&>button]:flex-1"
           />
         </div>
       )}
       {copy === undefined ? (
-        <>
+        <div className="flex flex-col gap-2">
           <div className="grid grid-cols-2 gap-2" data-testid="phone-history-stats">
             <Tile label={t("home.tiles.today")} bucket={stats.today} />
             <Tile label={t("home.tiles.week")} bucket={stats.week} />
@@ -106,7 +130,7 @@ export function History() {
           </div>
           <button
             type="button"
-            className="flex items-center gap-2 px-1 text-left text-[12px] text-fg-muted"
+            className="flex min-h-11 items-center gap-2 rounded-6 px-1 text-left text-[12px] leading-4 text-fg-muted transition-colors active:text-fg"
             data-testid="phone-history-retention"
             onClick={() => {
               shell.go("historySettings");
@@ -118,20 +142,20 @@ export function History() {
             </span>
             <Icon name="chevronRight" size={14} className="shrink-0 text-fg-subtle" />
           </button>
-        </>
+        </div>
       ) : (
         <p
-          className="px-1 text-[12px] text-fg-muted"
+          className="px-1 text-[12px] leading-5 text-fg-muted"
           data-testid="phone-history-mirror-state"
           data-state={copy.state}>
           {mirrorStateText(copy, Math.floor(now / 1000), locale)}
         </p>
       )}
-      <div className="flex items-end gap-2">
+      <div className="flex items-center gap-2">
         <Input
-          size="sm"
+          size="lg"
           icon="search"
-          className="flex-1"
+          className="min-w-0 flex-1"
           aria-label={t("history.search.label")}
           placeholder={t("mobile.history.search")}
           value={query}
@@ -141,107 +165,119 @@ export function History() {
         />
         <Select
           aria-label={t("history.filter.label")}
-          size="sm"
           value={filter}
           options={HISTORY_FILTERS.map((f) => ({ value: f, label: filterLabel(f) }))}
           onChange={setFilter}
         />
       </div>
       {total === 0 && (
-        <EmptyState
-          compact
-          title={copy === undefined ? t("history.empty.none") : t("mirror.empty")}>
-          {copy === undefined ? t("mobile.history.emptyBody") : t("mirror.emptyBody")}
-        </EmptyState>
+        <Card padding="none">
+          <EmptyState
+            compact
+            title={copy === undefined ? t("history.empty.none") : t("mirror.empty")}>
+            {copy === undefined ? t("mobile.history.emptyBody") : t("mirror.emptyBody")}
+          </EmptyState>
+        </Card>
       )}
       {total > 0 && list.settled && list.matching === 0 && (
-        <EmptyState
-          compact
-          title={
-            search
-              ? t("history.empty.noMatch", { query: search })
-              : t("history.empty.noneInFilter", { filter: filterLabel(filter) })
-          }
-          actions={
-            search ? (
-              <Button
-                size="sm"
-                variant="text"
-                onClick={() => {
-                  setQuery("");
-                }}>
-                {t("history.empty.clearSearch")}
-              </Button>
-            ) : undefined
-          }>
-          {search
-            ? t("history.empty.noMatchBody", { n: formatCount(total) })
-            : filter === "starred" && copy === undefined
-              ? t("mobile.history.starHint")
-              : t("history.empty.rangeHint")}
-        </EmptyState>
+        <Card padding="none">
+          <EmptyState
+            compact
+            title={
+              search
+                ? t("history.empty.noMatch", { query: search })
+                : t("history.empty.noneInFilter", { filter: filterLabel(filter) })
+            }
+            actions={
+              search ? (
+                <Button
+                  variant="text"
+                  className="h-11 text-[14px]"
+                  onClick={() => {
+                    setQuery("");
+                  }}>
+                  {t("history.empty.clearSearch")}
+                </Button>
+              ) : undefined
+            }>
+            {search
+              ? t("history.empty.noMatchBody", { n: formatCount(total) })
+              : filter === "starred" && copy === undefined
+                ? t("mobile.history.starHint")
+                : t("history.empty.rangeHint")}
+          </EmptyState>
+        </Card>
       )}
-      <ul className="flex flex-col gap-3" aria-label={t("history.log")}>
+      <ul className="flex flex-col gap-4" aria-label={t("history.log")}>
         {groups.map((group) => (
-          <li key={group.day} className="flex flex-col gap-1">
+          <li key={group.day} className="flex flex-col gap-2">
             <div className="flex items-center justify-between px-1 text-[12px] text-fg-muted">
               <span>{group.day}</span>
-              <span className="mono">{group.items.length}</span>
+              <span className="mono text-[11px]">{group.items.length}</span>
             </div>
-            <ul className="flex flex-col divide-y divide-border overflow-hidden rounded-10 bg-surface hairline">
-              {group.items.map((entry) => {
-                const outcome = outcomeLabel(entry.outcome, locale);
-                return (
-                  <li key={entry.id}>
-                    <button
-                      type="button"
-                      className="flex w-full flex-col gap-1 px-4 py-3 text-left"
-                      data-testid="phone-history-row"
-                      onClick={() => {
-                        if (desktop === undefined) shell.go("entry", entry.id);
-                        else shell.go("mirrorEntry", mirrorEntryParam(desktop, entry.id));
-                      }}>
-                      <span className="line-clamp-2 text-[14px] leading-5 text-fg" data-user-text>
-                        {entry.text.trim().length > 0 ? entry.text : entry.raw_text}
-                      </span>
-                      <span className="flex items-center gap-2 text-[12px] text-fg-muted">
-                        <span className="mono">{shortClockLabel(entry.at_ms)}</span>
-                        <span>{outcome.text}</span>
-                        {entry.origin !== undefined && (
-                          <span className="truncate" data-user-text data-origin={entry.origin.kind}>
-                            {t(`history.origin.${entry.origin.kind}`, {
-                              device: entry.origin.device,
-                            })}
+            <Card padding="none" className="overflow-hidden">
+              <ul className="flex flex-col divide-y divide-border">
+                {group.items.map((entry) => {
+                  const outcome = outcomeLabel(entry.outcome, locale);
+                  return (
+                    <li key={entry.id}>
+                      <button
+                        type="button"
+                        className="flex w-full flex-col gap-1 px-4 py-3 text-left transition-colors hover:bg-inset active:bg-inset"
+                        data-testid="phone-history-row"
+                        onClick={() => {
+                          if (desktop === undefined) shell.go("entry", entry.id);
+                          else shell.go("mirrorEntry", mirrorEntryParam(desktop, entry.id));
+                        }}>
+                        <span
+                          className="line-clamp-2 text-[14px] leading-[22px] break-words text-fg"
+                          data-user-text>
+                          {entry.text.trim().length > 0 ? entry.text : entry.raw_text}
+                        </span>
+                        <span className="flex min-w-0 items-center gap-2 text-[12px] text-fg-muted">
+                          <span className="mono shrink-0 text-[11px] text-fg-subtle">
+                            {shortClockLabel(entry.at_ms)}
                           </span>
-                        )}
-                        {entry.scene !== undefined && (
-                          <span className="truncate" data-user-text>
-                            {sceneLabel(entry.scene, locale)}
-                          </span>
-                        )}
-                        {entry.starred && (
-                          <Icon
-                            name="star"
-                            size={12}
-                            className="ml-auto shrink-0 text-accent"
-                            aria-label={t("history.star")}
-                          />
-                        )}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+                          <span className="shrink-0">{outcome.text}</span>
+                          {entry.origin !== undefined && (
+                            <span
+                              className="truncate"
+                              data-user-text
+                              data-origin={entry.origin.kind}>
+                              {t(`history.origin.${entry.origin.kind}`, {
+                                device: entry.origin.device,
+                              })}
+                            </span>
+                          )}
+                          {entry.scene !== undefined && (
+                            <span className="truncate" data-user-text>
+                              {sceneLabel(entry.scene, locale)}
+                            </span>
+                          )}
+                          {entry.starred && (
+                            <Icon
+                              name="star"
+                              size={12}
+                              className="ml-auto shrink-0 text-accent-text"
+                              aria-label={t("history.star")}
+                            />
+                          )}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
           </li>
         ))}
       </ul>
       {list.more && (
         <div className="flex flex-col items-center gap-1">
-          <Button size="sm" variant="ghost" onClick={list.loadMore}>
+          <Button className={TOUCH} onClick={list.loadMore}>
             {t("history.loadMore")}
           </Button>
-          <span className="text-[11px] text-fg-subtle">
+          <span className="mono text-[11px] text-fg-subtle">
             {t("history.loaded", {
               shown: formatCount(list.entries.length),
               n: formatCount(list.matching),

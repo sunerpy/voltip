@@ -16,7 +16,11 @@ import {
 } from "@voltip/shared";
 import {
   Button,
+  Card,
   EmptyState,
+  Eyebrow,
+  LampText,
+  Panel,
   Progress,
   Segmented,
   Select,
@@ -28,7 +32,8 @@ import {
   useNow,
   useUiState,
 } from "@voltip/ui";
-import { type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { Fact, Facts, PAGE, TOUCH } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 
 type View = "polished" | "raw" | "processed";
@@ -58,15 +63,6 @@ function useEntry(id: string): Entry | null | undefined {
   return answer?.id === id ? answer.entry : undefined;
 }
 
-function Fact({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex items-start justify-between gap-3 py-2">
-      <dt className="shrink-0 text-[12px] text-fg-muted">{label}</dt>
-      <dd className="min-w-0 text-right text-[12px] break-words text-fg">{children}</dd>
-    </div>
-  );
-}
-
 /** 用 AI 预设处理 and the two exports of a long entry (docs/dictation.md §22), the desktop's tools
  *  on the phone: the exports go to the share sheet as files. */
 function LongTools({
@@ -94,87 +90,120 @@ function LongTools({
       );
   };
   return (
-    <section
-      className="flex flex-col gap-3 rounded-10 bg-surface p-3 hairline"
-      aria-label={t("history.long.title")}
-      data-testid="phone-entry-long">
-      <span className="text-[13px] font-medium text-fg">{t("history.long.title")}</span>
-      <div className="flex items-center gap-2">
-        <Select
-          aria-label={t("history.long.preset")}
-          size="sm"
-          className="flex-1"
-          value={preset}
-          disabled={running}
-          options={[
-            ...BUILTIN_PRESETS.map((id) => ({
-              value: id,
-              label: presetLabel(id, presets, locale),
-            })),
-            ...presets.map((p) => ({ value: p.id, label: p.name })),
-          ]}
-          onChange={setPreset}
-        />
-        {running ? (
-          <Button size="sm" variant="outline" onClick={process.cancel}>
-            {t("common.cancel")}
-          </Button>
-        ) : (
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={() => {
-              process.start(preset);
-            }}>
-            {processed === undefined ? t("history.long.start") : t("history.long.again")}
-          </Button>
-        )}
-      </div>
-      {running && (
-        <div className="flex items-center gap-3">
-          <Progress
-            value={view.total === 0 ? 0 : view.done / view.total}
-            indeterminate={view.total === 0}
-            size={2}
-            className="flex-1"
+    <section aria-label={t("history.long.title")} data-testid="phone-entry-long">
+      <Panel eyebrow={t("history.long.title")} bodyClassName="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <Select
+            aria-label={t("history.long.preset")}
+            className="min-w-0 flex-1"
+            value={preset}
+            disabled={running}
+            options={[
+              ...BUILTIN_PRESETS.map((id) => ({
+                value: id,
+                label: presetLabel(id, presets, locale),
+              })),
+              ...presets.map((p) => ({ value: p.id, label: p.name })),
+            ]}
+            onChange={setPreset}
           />
-          <span className="mono text-[11px] text-fg-muted">
-            {t("history.long.running", { done: view.done, total: view.total })}
-          </span>
+          {running ? (
+            <Button variant="outline" className={TOUCH} onClick={process.cancel}>
+              {t("common.cancel")}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              className={TOUCH}
+              onClick={() => {
+                process.start(preset);
+              }}>
+              {processed === undefined ? t("history.long.start") : t("history.long.again")}
+            </Button>
+          )}
         </div>
-      )}
-      {view.state === "failed" && (
-        <p className="text-[12px] text-danger">
-          {t("history.long.failed", { reason: view.reason })}
-        </p>
-      )}
-      {view.state === "cancelled" && (
-        <p className="text-[12px] text-fg-muted">{t("history.long.cancelled")}</p>
-      )}
-      <p className="text-[11px] leading-4 text-fg-subtle">{t("history.long.note")}</p>
-      <div className="flex flex-wrap gap-2 border-t border-border pt-3">
-        <Button
-          size="sm"
-          icon="share"
-          disabled={!hasSegments}
-          onClick={() => {
-            void share("srt");
-          }}>
-          {t("mobile.entry.shareSrt")}
-        </Button>
-        <Button
-          size="sm"
-          icon="share"
-          onClick={() => {
-            void share("txt");
-          }}>
-          {t("mobile.entry.shareTxt")}
-        </Button>
-      </div>
-      {processed !== undefined && (
-        <span className="text-[11px] text-fg-muted">{t("history.long.txtUsesProcessed")}</span>
-      )}
+        {running && (
+          <div className="flex items-center gap-3">
+            <Progress
+              value={view.total === 0 ? 0 : view.done / view.total}
+              indeterminate={view.total === 0}
+              size={2}
+              className="flex-1"
+            />
+            <span className="mono text-[11px] text-fg-muted">
+              {t("history.long.running", { done: view.done, total: view.total })}
+            </span>
+          </div>
+        )}
+        {view.state === "failed" && (
+          <p className="text-[12px] leading-5 text-danger">
+            {t("history.long.failed", { reason: view.reason })}
+          </p>
+        )}
+        {view.state === "cancelled" && (
+          <p className="text-[12px] leading-5 text-fg-muted">{t("history.long.cancelled")}</p>
+        )}
+        <p className="text-[12px] leading-5 text-fg-subtle">{t("history.long.note")}</p>
+        <div className="flex flex-wrap gap-2 border-t border-border pt-3">
+          <Button
+            icon="share"
+            className={TOUCH}
+            disabled={!hasSegments}
+            onClick={() => {
+              void share("srt");
+            }}>
+            {t("mobile.entry.shareSrt")}
+          </Button>
+          <Button
+            icon="share"
+            className={TOUCH}
+            onClick={() => {
+              void share("txt");
+            }}>
+            {t("mobile.entry.shareTxt")}
+          </Button>
+        </div>
+        {processed !== undefined && (
+          <span className="text-[12px] text-fg-muted">{t("history.long.txtUsesProcessed")}</span>
+        )}
+      </Panel>
     </section>
+  );
+}
+
+/** The day, the time and how the take ended, above its text: the desktop's detail header (the
+ *  eyebrow left, the outcome's lamp right). */
+export function EntryHeader({
+  when,
+  outcome,
+}: {
+  when: string;
+  outcome: ReturnType<typeof outcomeLabel>;
+}) {
+  return (
+    <Eyebrow
+      className="px-1"
+      right={
+        <LampText tone={outcome.tone} size="sm">
+          {outcome.text}
+        </LampText>
+      }>
+      {when}
+    </Eyebrow>
+  );
+}
+
+/** The text of an entry as the chosen view shows it: 15 px, selectable, in a hairline card. */
+export function EntryText({ text, testId }: { text: string; testId: string }) {
+  return (
+    <Card>
+      <p
+        className="text-[15px] leading-7 break-words whitespace-pre-wrap text-fg select-text"
+        data-testid={testId}
+        data-user-text>
+        {text}
+      </p>
+    </Card>
   );
 }
 
@@ -195,10 +224,12 @@ export function HistoryEntry() {
   if (entry === undefined) return null;
   if (entry === null)
     return (
-      <div className="p-4">
-        <EmptyState compact title={t("history.long.exportFailed.gone")}>
-          {t("mobile.entry.goneBody")}
-        </EmptyState>
+      <div className={PAGE}>
+        <Card padding="none">
+          <EmptyState compact title={t("history.long.exportFailed.gone")}>
+            {t("mobile.entry.goneBody")}
+          </EmptyState>
+        </Card>
       </div>
     );
 
@@ -243,67 +274,64 @@ export function HistoryEntry() {
   ];
 
   return (
-    <div className="flex flex-col gap-3 p-4" data-testid="phone-entry">
-      <div className="flex items-center gap-2 text-[12px] text-fg-muted">
-        <span>{`${dayLabel(entry.at_ms, now, locale)} ${shortClockLabel(entry.at_ms)}`}</span>
-        <span>{outcome.text}</span>
-      </div>
+    <div className={PAGE} data-testid="phone-entry">
+      <EntryHeader
+        when={`${dayLabel(entry.at_ms, now, locale)} ${shortClockLabel(entry.at_ms)}`}
+        outcome={outcome}
+      />
       {entry.refined && (
         <Segmented
           label={t("history.view.label")}
-          size="sm"
           value={shown}
           onChange={setView}
           options={views}
+          className="h-11 w-full [&>button]:flex-1"
         />
       )}
       {shown === "processed" && processed !== undefined && (
-        <p className="text-[12px] text-fg-muted" data-user-text>
+        <p className="px-1 text-[12px] leading-5 text-fg-muted" data-user-text>
           {t("history.view.processedBy", { preset: processed.preset.name })}
         </p>
       )}
-      <p
-        className="rounded-10 bg-surface p-4 text-[15px] leading-7 whitespace-pre-wrap break-words text-fg hairline"
-        data-testid="phone-entry-text"
-        data-user-text>
-        {text}
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" icon="copy" onClick={copy}>
+      <EntryText text={text} testId="phone-entry-text" />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button icon="copy" className={TOUCH} onClick={copy}>
           {t("mobile.recent.copy")}
         </Button>
         <Button
-          size="sm"
           icon="share"
+          className={TOUCH}
           onClick={() => {
             backend.invoke("phone_share_text", { text }).catch(fail);
           }}>
           {t("mobile.recent.share")}
         </Button>
         <Button
-          size="sm"
           icon="star"
+          className={TOUCH}
           aria-pressed={entry.starred}
           onClick={() => {
             backend.invoke("history_star", { id: entry.id, starred: !entry.starred }).catch(fail);
           }}>
           {entry.starred ? t("history.unstar") : t("history.star")}
         </Button>
-        <Button size="sm" variant="text-danger" className="ml-auto" onClick={remove}>
+        <Button variant="text-danger" className={`${TOUCH} ml-auto`} onClick={remove}>
           {t("common.delete")}
         </Button>
       </div>
       {tooLarge && (
-        <p className="text-[12px] text-fg-muted" data-testid="phone-entry-too-large">
+        <p className="px-1 text-[12px] leading-5 text-fg-muted" data-testid="phone-entry-too-large">
           {t("mobile.entry.tooLarge")}
         </p>
       )}
       {isLongEntry(entry) && <LongTools entry={entry} process={process} />}
-      <dl className="flex flex-col divide-y divide-border rounded-10 bg-surface px-4 hairline">
+      <Facts>
         <Fact label={t("history.detail.duration")}>
           {formatDuration(entry.duration_ms, locale)}
         </Fact>
-        <Fact label={t("history.detail.chars")}>{textChars(entry.text)}</Fact>
+        <Fact label={t("history.detail.chars")}>
+          <span className="mono">{textChars(entry.text)}</span>
+        </Fact>
         <Fact label={t("history.detail.asrModel")}>
           <span className="mono">{entry.asr_model}</span>
         </Fact>
@@ -329,7 +357,7 @@ export function HistoryEntry() {
         <Fact label={t("mobile.entry.time")}>
           {t("history.timing.total", { n: formatCount(entry.asr_ms + (entry.refine_ms ?? 0)) })}
         </Fact>
-      </dl>
+      </Facts>
     </div>
   );
 }

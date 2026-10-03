@@ -1,5 +1,15 @@
 import { type HistoryEntry, relativeTime } from "@voltip/shared";
-import { Button, Card, useBackend, useI18n, useNow, useUiState } from "@voltip/ui";
+import {
+  Button,
+  Card,
+  Eyebrow,
+  IconButton,
+  useBackend,
+  useI18n,
+  useNow,
+  useUiState,
+} from "@voltip/ui";
+import { TOUCH_ICON } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 
 /** How many of the phone's newest results the list shows. */
@@ -13,10 +23,11 @@ function quoted(text: string): string {
   return chars.length > LABEL_CHARS ? `${chars.slice(0, LABEL_CHARS).join("")}…` : chars.join("");
 }
 
-/** What the phone recognised itself (docs/dictation.md §20.7), newest first: each result opens its
- *  entry's page, as a row of 记录 does (user report 2026-10-03), and can be copied again or handed
- *  to another app with the buttons beside it. A take streamed to a computer is in that computer's
- *  history, not here; nothing to show, no card. */
+/** What the phone recognised itself (docs/dictation.md §20.7), newest first, as the desktop's
+ *  最近的结果: a label with the way to the whole history, then a hairline list. A row opens its
+ *  entry's page, as a row of 记录 does (user report 2026-10-03), and copies or shares the result
+ *  with the two buttons at its end. A take streamed to a computer is in that computer's history,
+ *  not here; nothing to show, no list. */
 export function RecentResults() {
   const { backend } = useBackend();
   const shell = useMobileShell();
@@ -47,73 +58,70 @@ export function RecentResults() {
   };
 
   return (
-    <Card className="flex flex-col gap-3" data-testid="phone-recent">
-      <div className="flex flex-col gap-1">
-        <span className="flex items-center gap-2">
-          <span className="flex-1 text-[15px] font-semibold text-fg">
-            {t("mobile.recent.title")}
-          </span>
+    <section className="flex flex-col gap-2" data-testid="phone-recent">
+      {/* The link keeps a 44 px target and lends the row none of its height; it is a link, so it
+          takes the interface font, not the readout font of the slot it sits in. */}
+      <Eyebrow
+        className="pl-1"
+        right={
           <Button
-            size="sm"
             variant="text"
+            className="-my-3 h-11 font-ui text-[13px]"
             onClick={() => {
               shell.go("history");
             }}>
             {t("mobile.recent.all")}
           </Button>
-        </span>
-        <p className="text-[12px] text-fg-muted">{t("mobile.recent.body")}</p>
-      </div>
-      <ul className="flex flex-col gap-2">
-        {shown.map((entry) => (
-          <li
-            key={entry.id}
-            className="flex flex-col gap-2 rounded-10 bg-inset p-3"
-            data-testid="phone-recent-row">
-            {/* The text opens the entry; copy and share below are buttons of their own, never
-                inside this one. */}
-            <button
-              type="button"
-              className="rounded-6 text-left"
-              aria-label={t("mobile.recent.openLabel", { text: quoted(entry.text) })}
-              onClick={() => {
-                shell.go("entry", entry.id);
-              }}>
-              <span
-                className="line-clamp-4 whitespace-pre-wrap break-words text-[14px] leading-6 text-fg"
-                data-user-text>
-                {entry.text}
-              </span>
-            </button>
-            <div className="flex items-center gap-2">
-              <span className="text-[12px] text-fg-subtle">
-                {relativeTime(Math.floor(entry.at_ms / 1000), now, locale)}
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                icon="copy"
-                className="ml-auto"
-                aria-label={t("mobile.recent.copyLabel", { text: quoted(entry.text) })}
+        }>
+        {t("mobile.recent.title")}
+      </Eyebrow>
+      <Card padding="none" className="overflow-hidden">
+        <ul className="divide-y divide-border">
+          {shown.map((entry) => (
+            <li key={entry.id} className="relative" data-testid="phone-recent-row">
+              {/* The row is the open target: this button covers it, the line at its foot included.
+                  Copy and share sit over that line as buttons of their own, never inside it. */}
+              <button
+                type="button"
+                className="block w-full px-4 pt-3 pb-11 text-left transition-colors hover:bg-inset active:bg-inset"
+                aria-label={t("mobile.recent.openLabel", { text: quoted(entry.text) })}
                 onClick={() => {
-                  copy(entry);
+                  shell.go("entry", entry.id);
                 }}>
-                {t("mobile.recent.copy")}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                icon="share"
-                aria-label={t("mobile.recent.shareLabel", { text: quoted(entry.text) })}
-                onClick={() => {
-                  share(entry);
-                }}>
-                {t("mobile.recent.share")}
-              </Button>
-            </div>
-          </li>
-        ))}
-      </ul>
-    </Card>
+                <span
+                  className="line-clamp-3 text-[14px] leading-[22px] break-words whitespace-pre-wrap text-fg"
+                  data-user-text>
+                  {entry.text}
+                </span>
+              </button>
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 flex h-11 items-center pr-1 pl-4">
+                <span className="mono flex-1 text-[11px] text-fg-subtle">
+                  {relativeTime(Math.floor(entry.at_ms / 1000), now, locale)}
+                </span>
+                <IconButton
+                  icon="copy"
+                  size={28}
+                  label={t("mobile.recent.copyLabel", { text: quoted(entry.text) })}
+                  className={`${TOUCH_ICON} pointer-events-auto active:bg-inset2`}
+                  onClick={() => {
+                    copy(entry);
+                  }}
+                />
+                <IconButton
+                  icon="share"
+                  size={28}
+                  label={t("mobile.recent.shareLabel", { text: quoted(entry.text) })}
+                  className={`${TOUCH_ICON} pointer-events-auto active:bg-inset2`}
+                  onClick={() => {
+                    share(entry);
+                  }}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+      </Card>
+      <p className="px-1 text-[12px] leading-5 text-fg-subtle">{t("mobile.recent.body")}</p>
+    </section>
   );
 }

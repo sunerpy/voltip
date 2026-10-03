@@ -149,6 +149,30 @@ describe("the phone's settings", () => {
     backend.destroy();
   });
 
+  it("following the system, the phone takes its dark scheme and says which one it follows", async () => {
+    const user = userEvent.setup();
+    // jsdom has no matchMedia: this phone's system is dark for the length of the test.
+    const original = Object.getOwnPropertyDescriptor(window, "matchMedia");
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query: string) => ({ matches: query === "(prefers-color-scheme: dark)" }),
+    });
+    try {
+      const { backend } = renderApp({
+        mock: { role: "phone", settings: { follow_system_theme: true } },
+      });
+      await user.click(within(await openSettings(user)).getByTestId("settings-appearance"));
+      expect(screen.getByTestId("phone-appearance")).toHaveTextContent("当前系统：深色");
+      await waitFor(() => {
+        expect(document.documentElement.dataset.theme).toBe("dark");
+      });
+      backend.destroy();
+    } finally {
+      if (original === undefined) delete (window as { matchMedia?: unknown }).matchMedia;
+      else Object.defineProperty(window, "matchMedia", original);
+    }
+  });
+
   it("the recording page sets the longest take", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp();

@@ -5,12 +5,14 @@ import {
   Input,
   Lamp,
   Readout,
+  StatusRow,
   Toggle,
   useBackend,
   useI18n,
   useUiState,
 } from "@voltip/ui";
 import { useState } from "react";
+import { Lede, PAGE, TOUCH, TOUCH_TOGGLE } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 
 export function ThisDevice() {
@@ -23,7 +25,7 @@ export function ThisDevice() {
   const dirty = identity !== null && name.trim() !== identity.name;
 
   return (
-    <div className="flex h-full flex-col gap-4 p-4">
+    <div className={`${PAGE} min-h-full`}>
       {/* No eyebrow: the screen title above already says 本机 / This device. */}
       <Card className="flex flex-col gap-4">
         {!identity ? (
@@ -33,25 +35,52 @@ export function ThisDevice() {
         ) : (
           <>
             {editing ? (
-              <Input
-                label={t("mobile.device.name")}
-                value={name}
-                maxLength={64}
-                onChange={(e) => {
-                  setName(e.target.value);
-                }}
-                help={`${name.length} / 64`}
-              />
+              <div className="flex flex-col gap-3">
+                <Input
+                  label={t("mobile.device.name")}
+                  size="lg"
+                  value={name}
+                  maxLength={64}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                  }}
+                  help={`${name.length} / 64`}
+                />
+                <div className="flex gap-2">
+                  <Button
+                    variant="primary"
+                    className={TOUCH}
+                    disabled={!dirty || name.trim().length === 0}
+                    onClick={() => {
+                      void backend.invoke("device_rename", { name: name.trim() });
+                      setEditing(false);
+                      shell.toast(t("mobile.device.renamed"));
+                    }}>
+                    {t("mobile.device.save")}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className={TOUCH}
+                    onClick={() => {
+                      setName(identity.name);
+                      setEditing(false);
+                    }}>
+                    {t("mobile.device.cancel")}
+                  </Button>
+                </div>
+              </div>
             ) : (
-              <div className="flex items-center justify-between">
-                <div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 flex-col gap-0.5">
                   <div className="text-[11px] text-fg-subtle">{t("mobile.device.name")}</div>
-                  <div className="text-[20px] font-semibold text-fg">{identity.name}</div>
+                  <div className="text-[18px] font-semibold break-words text-fg" data-user-text>
+                    {identity.name}
+                  </div>
                 </div>
                 <Button
-                  size="sm"
                   variant="ghost"
                   icon="edit"
+                  className={`${TOUCH} -mr-2`}
                   onClick={() => {
                     setEditing(true);
                   }}>
@@ -59,31 +88,7 @@ export function ThisDevice() {
                 </Button>
               </div>
             )}
-            {editing && (
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="primary"
-                  disabled={!dirty || name.trim().length === 0}
-                  onClick={() => {
-                    void backend.invoke("device_rename", { name: name.trim() });
-                    setEditing(false);
-                    shell.toast(t("mobile.device.renamed"));
-                  }}>
-                  {t("mobile.device.save")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    setName(identity.name);
-                    setEditing(false);
-                  }}>
-                  {t("mobile.device.cancel")}
-                </Button>
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 border-t border-border pt-4">
               <Readout
                 label={t("mobile.device.platform")}
                 value={platformLabel(identity.platform, locale)}
@@ -91,37 +96,37 @@ export function ThisDevice() {
               />
               <Readout label={t("mobile.device.keystore")} value={secret_backend} size="sm" />
             </div>
-            <div>
+            <div className="flex flex-col gap-1">
               <div className="text-[11px] text-fg-subtle">{t("mobile.device.fingerprint")}</div>
-              <div className="mono text-[15px] tracking-wider text-fg" data-testid="fingerprint">
+              <div
+                className="mono text-[15px] tracking-wider text-fg select-text"
+                data-testid="fingerprint">
                 {identity.fingerprint}
               </div>
-              <div className="mono mt-1 text-[11px] text-fg-subtle">
+              <div className="mono text-[11px] text-fg-subtle select-text">
                 {t("mobile.device.publicKey", { key: shortKey(identity.public_key) })}
               </div>
             </div>
           </>
         )}
       </Card>
-      <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.device.note")}</p>
-      <Card className="flex items-start justify-between gap-3" data-testid="lan-discovery">
-        <div className="flex flex-col gap-1">
-          <span className="text-[14px] font-medium text-fg">{t("mobile.device.lan")}</span>
-          <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.device.lanHelp")}</p>
-        </div>
-        <Toggle
-          checked={settings.lan_discovery}
-          ariaLabel={t("mobile.device.lan")}
-          className="mt-0.5"
-          onChange={(enabled) => {
-            void backend.invoke("settings_set_lan_discovery", { enabled });
-          }}
-        />
+      <Lede>{t("mobile.device.note")}</Lede>
+      <Card padding="none" className="px-4" data-testid="lan-discovery">
+        <StatusRow label={t("mobile.device.lan")} help={t("mobile.device.lanHelp")}>
+          <Toggle
+            checked={settings.lan_discovery}
+            ariaLabel={t("mobile.device.lan")}
+            className={TOUCH_TOGGLE}
+            onChange={(enabled) => {
+              void backend.invoke("settings_set_lan_discovery", { enabled });
+            }}
+          />
+        </StatusRow>
       </Card>
       <div className="mt-auto flex flex-col gap-2">
         <Button
           variant="primary"
-          className="h-11 w-full text-[15px]"
+          className={`${TOUCH} w-full`}
           disabled={!identity}
           onClick={() => {
             shell.go("pair");
@@ -130,7 +135,7 @@ export function ThisDevice() {
         </Button>
         <Button
           variant="ghost"
-          className="h-11 w-full"
+          className={`${TOUCH} w-full`}
           onClick={() => {
             shell.go("devices");
           }}>
