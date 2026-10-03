@@ -1394,7 +1394,7 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 - **顺序**：系统的返回手势或返回键先关闭最上层的对话框（与 Esc 相同），再回到上一级页面（与页头「返回」相同，核对安全码时取消配对）；在「记录」「设置」中回到「说话」；在「说话」中第一次返回提示「再返回一次即可退出」，之后两秒内的返回交给系统，即退出应用，超过两秒再返回则重新提示（`apps/mobile/src/App.tsx`）。
 - **通道**：应用自己的插件 `BackPlugin.kt`，Rust 侧（`src/back.rs`）只负责注册。页面经插件的 `register_listener` 监听 `back`，经 `release { ms }` 让之后 `ms` 毫秒内的返回交给系统（`apps/mobile/src/app/back.ts`）；这三条命令在 `build.rs` 中声明，由 `capabilities/default.json` 允许。没有监听者时，返回也交给系统。
 - **每个 Activity 都接管返回**：导航方式或壁纸配色等叠加层变化、字体或显示大小变化时，Android 会重建 `MainActivity`。Tauri 自带的返回事件（`onBackButtonPress`）只挂在第一个实例上，重建之后返回直接交给系统，应用随即退出（2026-10-03，CI `android-device`：模拟器在应用启动后应用叠加层，`MainActivity` 被重建，在「外观与语言」中第一次返回就退出了应用）。所以 `MainActivity.onCreate` 每次都调用 `BackPlugin.attach`；监听者和放行时间保存在插件里，插件的生命周期比 Activity 长。
-- **门禁**：`apps/mobile/src/app/back.test.tsx`；CI `android-device`（`.github/scripts/android-device-smoke.sh`）在 Android 15 模拟器上按返回键走一遍「外观与语言 → 设置 → 说话」，改字体大小让系统重建 Activity（以系统事件日志里的 `wm_relaunch_*` 或应用日志为准）后再走一遍；最后在「说话」中返回，页面请求放行（以应用日志为准：提示只显示 3 秒，比模拟器上读一次界面还短），两秒后再返回仍然提示，两秒内再返回则退出应用。
+- **门禁**：`apps/mobile/src/app/back.test.tsx`；CI `android-device`（`.github/scripts/android-device-smoke.sh`）在 Android 15 模拟器上按返回键走一遍「外观与语言 → 设置 → 说话」，把字体调大再调回，让系统两次重建 Activity（以应用日志为准，没有这个插件的构建以系统事件日志里的 `wm_relaunch_*` 为准；调回是为了第二遍的版面与第一遍相同，字体变大后「外观与语言」一行有一半在底部标签栏下面，点它的中心会点到标签栏）后再走一遍；最后在「说话」中返回，页面请求放行（以应用日志为准：提示只显示 3 秒，比模拟器上读一次界面还短），两秒后再返回仍然提示，两秒内再返回则退出应用。
 
 ## 21. AI 预设（2026-09-29）
 

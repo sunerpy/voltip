@@ -7,7 +7,7 @@
 #
 # Usage: android-device-smoke.sh <apk or directory holding one> <out dir>
 # Needs `adb` on PATH with one device online. Writes into <out>: install.txt, start.txt,
-# logcat.txt, crash.txt, exit-info.txt, ui.xml and screen.png, whatever the outcome, and
+# logcat.txt, crash.txt, events.txt, exit-info.txt, ui.xml and screen.png, whatever the outcome, and
 # app-logcat.txt (the app's process alone) when it came up.
 set -euo pipefail
 
@@ -26,6 +26,7 @@ mkdir -p "$out"
 collect() {
   adb logcat -d >"$out/logcat.txt" 2>&1 || true
   adb logcat -b crash -d >"$out/crash.txt" 2>&1 || true
+  adb logcat -b events -d >"$out/events.txt" 2>&1 || true
   # Android 11+ keeps why the process last ended (a crash, a native crash, an exit code).
   adb shell dumpsys activity exit-info "$package" >"$out/exit-info.txt" 2>&1 || true
   adb exec-out screencap -p >"$out/screen.png" 2>/dev/null || true
@@ -148,12 +149,31 @@ up_a_level "the activity Android started"
 # Android recreates the activity when an overlay changes (the navigation mode, the wallpaper's
 # colours) and when the font or display size does, and the back handler has to survive that
 # (2026-10-03: Tauri's own one stayed with the first activity, so after a recreation every back
-# left the app). A font-size change recreates it here: the system's event log says so, and so does
+# left the app). A font-size change recreates it here, and the size goes back before the second
+# walk, which recreates it once more: a larger font moves the rows, and a row half under the tab
+# bar takes a tap meant for it as one on the tab. The system's event log says when, and so does
 # the app's log, where every MainActivity says when it takes the backs (BackPlugin.kt).
 attached() {
   adb logcat -d -s VoltipBack:I | grep -c 'attached to activity' || true
 }
-activities=$(attached)
+relaunched() {
+  adb logcat -b events -d | grep -cE "(wm|am)_relaunch(_resume)?_activity.*$package" || true
+}
+# The new activity's own line comes once it exists, after the system's; a build without the plugin
+# has the system's alone.
+if [ "$(attached)" -gt 0 ]; then recreations=attached; else recreations=relaunched; fi
+# Set the font scale to $1 and wait until Android has recreated the activity.
+recreate_with_font_scale() {
+  local before deadline
+  before=$("$recreations")
+  adb shell settings put system font_scale "$1"
+  deadline=$((SECONDS + 60))
+  until [ "$("$recreations")" -gt "$before" ]; do
+    running || fail "the app closed when the font size changed to $1"
+    [ "$SECONDS" -lt "$deadline" ] || fail "Android did not recreate the activity within 60 s of a font-size change to $1"
+    sleep 1
+  done
+}
 font_scale=$(adb shell settings get system font_scale | tr -d '\r')
 restore_font_scale() {
   if [ "$font_scale" = null ] || [ -z "$font_scale" ]; then
@@ -163,18 +183,16 @@ restore_font_scale() {
   fi
 }
 trap restore_font_scale EXIT
-adb logcat -b events -c
-if [ "$font_scale" = 1.15 ]; then
-  adb shell settings put system font_scale 1.0
+case "$font_scale" in
+  null | "") scale=1.0 ;;
+  *) scale=$font_scale ;;
+esac
+if [ "$scale" = 1.15 ]; then
+  recreate_with_font_scale 1.3
 else
-  adb shell settings put system font_scale 1.15
+  recreate_with_font_scale 1.15
 fi
-deadline=$((SECONDS + 60))
-until adb logcat -b events -d | grep -qE "(wm|am)_relaunch(_resume)?_activity.*$package" || [ "$(attached)" -gt "$activities" ]; do
-  running || fail "the app closed when the font size changed"
-  [ "$SECONDS" -lt "$deadline" ] || fail "Android did not recreate the activity within 60 s of a font-size change"
-  sleep 1
-done
+recreate_with_font_scale "$scale"
 showing '按住说话|Hold to talk'
 up_a_level "the activity Android recreated"
 
