@@ -28,12 +28,17 @@ pub struct RefineConfig {
     /// Ceiling of `max_tokens` ([`crate::output_token_budget`]): [`BUILTIN_OUTPUT_CAP`] for the
     /// built-in service (the default), [`crate::USER_OUTPUT_CAP`] for a service the user configured.
     pub output_cap: u32,
+    /// The request's `enable_thinking`, sent when set. Alibaba Cloud Model Studio's compatible mode
+    /// answers with its Qwen3 and DeepSeek models in thinking mode by default: ten times slower
+    /// for a clean-up, and a short `max_tokens` is spent on the reasoning, leaving the answer
+    /// empty (measured 2026-10-04). `Some(false)` there; `None` (the default) sends nothing.
+    pub enable_thinking: Option<bool>,
 }
 
 impl RefineConfig {
     /// A configuration without a key, the default timeout and the built-in service's output ceiling.
     pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Self {
-        Self { base_url: base_url.into(), api_key: None, model: model.into(), timeout: DEFAULT_TIMEOUT, output_cap: BUILTIN_OUTPUT_CAP }
+        Self { base_url: base_url.into(), api_key: None, model: model.into(), timeout: DEFAULT_TIMEOUT, output_cap: BUILTIN_OUTPUT_CAP, enable_thinking: None }
     }
 
     /// Set the bearer key.
@@ -53,6 +58,12 @@ impl RefineConfig {
         self.output_cap = output_cap;
         self
     }
+
+    /// Set the request's `enable_thinking` (`None` sends nothing).
+    pub fn with_enable_thinking(mut self, enable_thinking: Option<bool>) -> Self {
+        self.enable_thinking = enable_thinking;
+        self
+    }
 }
 
 impl fmt::Debug for RefineConfig {
@@ -63,6 +74,7 @@ impl fmt::Debug for RefineConfig {
             .field("model", &self.model)
             .field("timeout", &self.timeout)
             .field("output_cap", &self.output_cap)
+            .field("enable_thinking", &self.enable_thinking)
             .finish()
     }
 }
@@ -118,7 +130,8 @@ mod tests {
     #[test]
     fn config_builder_and_redacted_debug() {
         let config = RefineConfig::new("https://host", "llama-3.3-70b-versatile");
-        assert_eq!((config.api_key.as_deref(), config.timeout, config.output_cap), (None, DEFAULT_TIMEOUT, BUILTIN_OUTPUT_CAP));
+        assert_eq!((config.api_key.as_deref(), config.timeout, config.output_cap, config.enable_thinking), (None, DEFAULT_TIMEOUT, BUILTIN_OUTPUT_CAP, None));
+        assert_eq!(config.clone().with_enable_thinking(Some(false)).enable_thinking, Some(false));
         let config = config.with_api_key(Some("gsk_secret_key".into())).with_timeout(Duration::from_secs(3)).with_output_cap(crate::USER_OUTPUT_CAP);
         assert_eq!(config.output_cap, crate::USER_OUTPUT_CAP);
         assert_eq!(config.timeout, Duration::from_secs(3));

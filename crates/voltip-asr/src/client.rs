@@ -14,7 +14,7 @@ use crate::error::AsrError;
 /// the system's own store (rustls-platform-verifier); on Android that verifier needs a JNI context
 /// the app never hands it and panics on the first request, so the requests there trust Mozilla's
 /// root store, as the relay connection does (`voltip-transport`). voltip-refine does the same.
-fn client_builder() -> reqwest::ClientBuilder {
+pub(crate) fn client_builder() -> reqwest::ClientBuilder {
     let builder = Client::builder();
     #[cfg(target_os = "android")]
     let builder = builder.tls_certs_only(mozilla_roots());

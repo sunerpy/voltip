@@ -208,6 +208,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       "OpenAI",
       "Groq",
       "硅基流动",
+      "阿里云百炼",
       "自定义接口",
     ]);
     const builtin = providerCard("asr", "builtin");
@@ -419,7 +420,16 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       within(list)
         .getAllByRole("article")
         .map((c) => c.getAttribute("aria-label")),
-    ).toEqual(["内置服务", "OpenAI", "Groq", "硅基流动", "DeepSeek", "Ollama", "自定义接口"]);
+    ).toEqual([
+      "内置服务",
+      "OpenAI",
+      "Groq",
+      "硅基流动",
+      "阿里云百炼",
+      "DeepSeek",
+      "Ollama",
+      "自定义接口",
+    ]);
     expect(within(providerCard("llm", "builtin")).getByText("使用中")).toBeInTheDocument();
     expect(screen.getByTestId("current-llm")).toHaveTextContent("当前：内置服务 · qwen3.8-27b");
     expect(screen.getByTestId("privacy-llm")).toHaveTextContent("文本发送到内置服务");
@@ -834,6 +844,58 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(live).toHaveTextContent("使用内置服务时，预览由内置服务提供");
   });
 
+  it("regression: on Model Studio's realtime model the 实时预览 block is ready without the model, and 整段输出 says it runs as 边说边识别 (docs/dictation.md section 11.9)", async () => {
+    // Goal 2026-10-03: qwen-audio-3.1-asr-flash-streaming failed; it streams the take itself now.
+    const user = userEvent.setup();
+    renderApp({
+      path: "/speech",
+      mock: {
+        settings: { engines: { ...defaultEngineSettings(), asr_provider: "aliyun" } },
+        providerKeys: [{ provider: "aliyun", kind: "asr" }],
+      },
+    });
+    await openTab(user, "识别设置");
+    const live = await screen.findByTestId("live-preview");
+    expect(live).toHaveAttribute("data-state", "stream");
+    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent(
+      "已就绪 · 实时识别模型",
+    );
+    const mode = screen.getByTestId("output-mode");
+    expect(mode).toHaveAttribute("data-mode", "whole_take");
+    expect(mode).toHaveAttribute("data-effective", "streaming_final");
+    expect(within(mode).getByTestId("output-mode-streamed")).toHaveTextContent(
+      "所选识别模型是实时识别模型",
+    );
+    expect(within(mode).getByTestId("output-mode-state")).toHaveTextContent("边说边识别");
+    expect(screen.queryByTestId("output-mode-fallback")).toBeNull();
+  });
+
+  it("a whole-file Model Studio model keeps the old preview rules and the custom endpoint takes a Model Studio address", async () => {
+    const user = userEvent.setup();
+    renderApp({
+      path: "/speech",
+      mock: {
+        settings: {
+          engines: {
+            ...defaultEngineSettings(),
+            asr_provider: "custom",
+            providers: {
+              custom: {
+                asr_url: "https://ws-test.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+                asr_model: "qwen-audio-3.1-asr-flash",
+              },
+            },
+          },
+        },
+      },
+    });
+    await openTab(user, "识别设置");
+    const live = await screen.findByTestId("live-preview");
+    expect(live).toHaveAttribute("data-state", "missing");
+    expect(screen.getByTestId("output-mode")).toHaveAttribute("data-effective", "whole_take");
+    expect(screen.queryByTestId("output-mode-streamed")).toBeNull();
+  });
+
   it("regression: the 实时预览 toggle writes live_preview through settings_set_engines and the state line follows live_preview_ready", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/speech" });
@@ -1104,6 +1166,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       "openai",
       "groq",
       "siliconflow",
+      "aliyun",
       "custom",
     ]);
     expect(providersFor(status, "llm").map((p) => p.id)).toContain("ollama");
@@ -1236,6 +1299,11 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(livePreviewState({ live_preview: false }, { live_preview_ready: true })).toBe("off");
     expect(livePreviewState({ live_preview: true }, { live_preview_ready: false })).toBe("missing");
     expect(livePreviewState({ live_preview: true }, { live_preview_ready: true })).toBe("ready");
+    for (const source of ["cloud", "stream", "local"] as const) {
+      expect(
+        livePreviewState({ live_preview: true }, { live_preview_ready: true, live_source: source }),
+      ).toBe(source === "local" ? "ready" : source);
+    }
   });
 
   it("regression: the Chinese script choice writes chinese_script through settings_set_engines with the three single-language options", async () => {

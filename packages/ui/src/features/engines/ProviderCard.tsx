@@ -34,6 +34,7 @@ const ICONS: Readonly<Record<ProviderStatus["id"], IconName>> = {
   openai: "cloud",
   groq: "cloud",
   siliconflow: "cloud",
+  aliyun: "cloud",
   deepseek: "cloud",
   ollama: "monitor",
   custom: "link",
@@ -285,7 +286,9 @@ function ProviderForm({
           help={
             service.default_base_url === undefined
               ? t("engines.field.baseUrlHelpCustom")
-              : t("engines.field.baseUrlHelpVendor")
+              : provider.id === "aliyun"
+                ? t("engines.field.baseUrlHelpAliyun")
+                : t("engines.field.baseUrlHelpVendor")
           }
         />
       </div>

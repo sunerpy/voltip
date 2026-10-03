@@ -11,7 +11,7 @@
 | crate | 职责 | 依赖 | 测试方式 |
 |---|---|---|---|
 | `voltip-audio` | `Recorder`：打开输入设备（或电脑的输出、两者混合，§22），采集 → 单声道 16 kHz i16，同时产出 30 Hz `LevelFrame`；`Recording::to_wav()`；内存里最多留 120 s，长录音另出一路 16 kHz 流（`pcm.rs`，§22）；`RecorderConfig.live_tap` 时另出一路实时 16 kHz 单声道 f32（`live.rs`：rubato 异步 sinc 按块重采样 → `rtrb` 无锁环，满环置 `overrun`），`on_ready` 在首块样本到达时回调一次 | cpal、rubato（重采样）、rtrb（SPSC 环） | `FakeBackend` 播放合成信号，DSP 纯函数；分块 vs 整段重采样差 < 1e-3 RMS |
-| `voltip-asr` | `AsrClient::transcribe(wav, language) -> Transcript`：OpenAI 兼容 `POST {base}/v1/audio/transcriptions` multipart（`file`, `model`, `language?`），Bearer token；错误分类 `Unauthorized / RateLimited / Server / Network / Timeout / BadAudio` | reqwest 0.13（rustls，multipart，json） | wiremock |
+| `voltip-asr` | `AsrClient::transcribe(wav, language) -> Transcript`：OpenAI 兼容 `POST {base}/v1/audio/transcriptions` multipart（`file`, `model`, `language?`），Bearer token；`DashscopeClient`：阿里云百炼的 chat / multimodal / 实时 WebSocket 三种协议（§3.4，`duplex` 模块供流式会话用）；错误分类 `Unauthorized / RateLimited / Server / Service / FreeQuotaExhausted / Network / Timeout / BadResponse / Audio` | reqwest 0.13（rustls，multipart，json）、tokio-tungstenite（Mozilla 根证书） | wiremock；本地 WebSocket 假服务 |
 | `voltip-refine` | `RefineClient::refine_with(text, PromptHints) -> Refined`：OpenAI 兼容 `POST {base}/chat/completions`，系统提示词 = 这一次的预设（§21，默认「校对」）+ 语言 + 应用上下文 + 场景要求 + 术语表；`temperature 0.2`；结果去掉包裹引号/代码块 | reqwest | wiremock |
 | `voltip-inject` | `inject(text) -> Injection`：备份剪贴板 → 写入文本 → 发 `Ctrl+V`（macOS `Cmd+V`）→ 600 ms 后恢复剪贴板；任何一步失败都把文本留在剪贴板并返回 `Via::Clipboard` + 原因；`Injector` trait + `FakeInjector` | arboard 3.6、enigo 0.6（x11rb / SendInput / CGEvent） | trait 假实现；真实实现只在有显示器时冒烟 |
 | `voltip-asr-local` | 本地引擎（§10）：`catalogue`（6 条目录，含隐藏的 `silero-vad`）、`store`（下载 / 校验 / 安装，§12 辅助条目随首个模型下载）、`transcriber`（`LocalTranscriber`，按条目引擎分派：`gguf.rs` transcribe.cpp、`sherpa.rs` sherpa-onnx；`vad_trim` 时先经 `vad.rs` 裁剪）、`streaming`（`LocalStreamingTranscriber`，§11 实时预览）、`vad`（`VadTrimmer`，§12 Silero VAD 首尾裁剪）、`segmenter`（`VadSegmenterFactory`，§22 长录音在停顿处切段） | transcribe-cpp 0.2.3（静态，CPU）、sherpa-onnx 1.13.8（动态）、rubato | 假加载器 / 假 VAD 单测；`tests/real.rs` 四条 `#[ignore]` 真模型测试 |
@@ -111,7 +111,7 @@ pub struct DictationStatus { pub phase: DictationPhase, pub session: u64 /* 递�
 |---|---|---|---|
 | `builtin` | ✓ | ✓ | 构建时写入，界面看不到也改不了 |
 | `local` | ✓（§10） | — | 无 |
-| `openai`、`groq`、`siliconflow` | ✓ | ✓ | 必填，同一家的两项服务共用一把 |
+| `openai`、`groq`、`siliconflow`、`aliyun` | ✓ | ✓ | 必填，同一家的两项服务共用一把 |
 | `deepseek` | — | ✓ | 必填 |
 | `ollama` | — | ✓（`http://127.0.0.1:11434/v1`） | 无 |
 | `custom` | ✓ | ✓ | 可选，识别与润色各一把；接口地址必填 |
@@ -145,6 +145,25 @@ pub struct EngineSettings {                                  // Settings.engines
 **密钥**：`provider_key_set { provider, kind, value }`（`value: null` 删除）写进系统钥匙串（条目 `provider-key.<id>`，自定义接口为 `provider-key.custom-asr` / `-llm`）。界面只看到 `SecretState`（有没有、来自哪里），永远拿不到值。一把密钥只发给它所属的服务商：换了服务商或改了自定义地址，旧密钥不会跟过去，内置令牌也只发给内置服务（回归测试 `regression_keys_never_leave_their_provider`）。
 
 **测试连接**：`provider_probe { provider, kind, base_url?, key? }` 请求 `GET {base}/models`，结果以 `provider_probe` 事件返回模型列表或失败原因（`ProbeFailure`，不含主机名，内置服务的地址也不会借错误信息泄露）。`provider_console_open { provider }` 在浏览器里打开该服务商的密钥页。
+
+### 3.4 阿里云百炼的识别协议（2026-10-04）
+
+目标（2026-10-03）：配置阿里云百炼的 `qwen-audio-3.1-asr-flash-streaming`、`qwen-audio-3.1-asr-flash-message` 等模型全部失败。原因：所有云端识别都发 `POST {base}/audio/transcriptions`，百炼对任何模型都回 404。百炼一个地址下有三种协议，`voltip_core::providers::AsrProtocol::of(url, model)` 按地址（主机在 `aliyuncs.com` 下：`dashscope.aliyuncs.com`、`dashscope-intl.aliyuncs.com`、业务空间的 `<id>.cn-beijing.maas.aliyuncs.com`）和模型名分派，其余地址一律保持 `/audio/transcriptions`。目录新增 `aliyun`（阿里云百炼），自定义接口填百炼地址时同样分派。
+
+| 模型 | 协议（`voltip-asr`） | 词典 | 语言提示 |
+|---|---|---|---|
+| `qwen3-asr-flash…` | `DashscopeChat`：`POST {origin}/compatible-mode/v1/chat/completions`，用户消息的 `input_audio.data` 为 `data:audio/wav;base64,…`，`asr_options.language` | 不发（兼容模式没有写明上下文消息的格式） | 原样 |
+| `qwen-audio-…-asr-flash`、`fun-asr-flash…` | `DashscopeMultimodal`：`POST {origin}/api/v1/services/aigc/multimodal-generation/generation`，`X-DashScope-SSE: disable`，答案 `output.text` | qwen-audio 发即时热词 `parameters.vocabulary {词: 4}` | `language_hints`（zh/en/ja/ko） |
+| `…-asr-flash-streaming`、`…-asr-flash-message`、`fun-asr…realtime…`、`paraformer-realtime…` | `DashscopeDuplex`：`wss://{host}/api-ws/v1/inference`，握手带密钥，`run-task` → `task-started` → 二进制 16-bit PCM → `result-generated`（`sentence_end` 区分中间结果与整句）→ `finish-task` → `task-finished` / `task-failed` | 同上（qwen-audio） | 同上；`-message` 不收；Paraformer 另收 `yue` |
+| `…-filetrans`、`fun-asr`、`fun-asr-mtl`、`paraformer-v2` 等；`qwen3-asr-flash-realtime` | `DashscopeUnsupported`：只做异步文件转写，或是另一种实时协议（`/api-ws/v1/realtime`），听写时报「不能用于听写，请改用 …」 | — | — |
+
+- 端点都从基址的 origin 推出，所以 `https://host`、`…/compatible-mode/v1`、`…/api/v1` 都可以；测试连接与 AI 润色对没有 `compatible-mode` 路径的百炼地址改用 `{origin}/compatible-mode/v1`（`voltip_cloud::openai_compatible_base`）。
+- AI 润色发往百炼时带 `enable_thinking: false`（`voltip_cloud::refine_config`）：兼容模式下 Qwen3 与 DeepSeek 模型默认先思考，实测（2026-10-04）qwen3.8-flash 一次润色 6.5 s、412 个推理 token，关闭后 0.6 s；`max_tokens` 较小时 deepseek-v4-flash 把额度全用在推理上，回答为空。
+- 手机与电脑同步设置镜像（§20.8）时，旧版手机不认识 `aliyun` 这个服务商 id，丢弃这份镜像（`sync body unreadable; dropped`），历史记录照常同步；两端都更新后恢复。
+- HTTP 模型单次 data URI 不超过 10 MB（约 4 分钟 16 kHz 单声道），超出时不发送并报 `Audio`。
+- 实时模型把整段录音一次发完时，服务端有时按播放速度处理（实测 16 s 样音 2.4–35 s），所以录音时就要推流（§11.9）；`transcribe_whole` 只用于回落和语音编辑，期限为超时加录音时长。
+- 错误：`InvalidApiKey`/401 → `Unauthorized`；`AllocationQuota.FreeTierOnly`（控制台「免费额度用完即停」生效）→ `FreeQuotaExhausted`；`Throttling…`/429 → `RateLimited`；其他带 `code` 的 4xx 与 `task-failed` → `Service { code, message }`；5xx 仍可重试。
+- 实测（2026-10-04，开发机直连北京业务空间，16 s 中文样音，只用有免费额度的模型）：`qwen-audio-3.1-asr-flash` 整段 1.4 s；`qwen-audio-3.1-asr-flash-streaming` 整段一次发完 2.8 s。`crates/voltip-cloud/tests/real_dashscope.rs`（`#[ignore]`，需要 `VOLTIP_REAL_DASHSCOPE_URL` / `_KEY`）。
 
 **界面看到的**是 `EngineStatus`（`UiState.engines`）：两项服务各自的服务商、就绪状态与原因、模型、用户填写的接口主机（内置服务与本机为空字符串），`local_model` / `local_ready`、`live_preview_ready`、`effective_output_mode`、语言、润色开关、注入方式，以及每家服务商的 `ProviderStatus`（模型、预设、密钥状态、是否在用），供引擎页的服务商卡片渲染。
 
@@ -501,9 +520,20 @@ Processing { stage: ProcessingStage, started_at: u64, preview: Option<String> }
 - **负载**：每次预览是一个请求，一段 10 s 的录音大约 4–6 个，外加整段识别。
 - **本地模型这样预览（M9 实验，2026-10-02，未上线）**：`RedecodeStreaming` 也能包住本机的 Qwen3-ASR（`crates/voltip-asr-local/tests/real.rs@real_qwen3_redecode_preview_timing`，`#[ignore]`，同一段 16 s 样音按麦克风的节奏输入；transcribe.cpp 的 C++ 核心在测试构建里也按 Release 编译）。每步耗时 p50 / p95：这台开发机上 0.6B 845 / 1581 ms（句长上限 20 s，68% 的时间在解码），上限 8 s 时 618 / 871 ms；1.7B 1636 / 3476 ms。Windows 主机上 0.6B 1686 / 4183 ms（20 s），上限 8 s 时 1634 / 2592 ms，录音期间 84–86% 的时间在解码，约慢 2.4 倍。计划的上线门槛是 Windows 主机上 0.6B 每步 p95 < 1.2 s，没有达到；0.6B 在这段中英混说的样音上也明显认错（「good idea」认成「固态IDR」），没有停顿时按 8–10 s 硬切还会切坏边界上的词。所以本地识别时的实时预览仍用 Zipformer，是否把本地 Qwen3 预览作为可选项由用户决定。
 
+### 11.9 服务商的实时识别模型（2026-10-04）
+
+百炼的实时模型（`AsrProtocol::streams`，§3.4）在说话时就识别，它自己就是预览和终稿的来源：
+
+- **来源**：`ResolvedEngines.asr_streams` 为真且实时预览开启时，`live_source` 为 `stream`（排在本地流式模型之前，不需要下载 Zipformer）；`EngineStatus.live_source = "stream"`，「实时预览」显示「已就绪 · 实时识别模型」。
+- **端口**：`Transcriber::streaming(glossary) -> Option<Arc<dyn StreamingTranscriber>>`（默认 `None`）。`voltip_cloud::dashscope::DashscopeStreaming::open` 立即返回，在核心运行时上起一个任务连 WebSocket：`feed` 把 16-bit PCM 排进通道，`poll` 读中间结果（`Partial`）和整句（`Endpoint`），`finish` 发 `finish-task` 并等 `task-finished`（上限 30 s），返回全部整句和未结束的一句（`tail`）。实时会话额外请求 `heartbeat`（停顿时不断线）和 `-message` 模型的 `intermediate_result_enabled`。会话被丢弃（取消）时任务关闭连接，不再发送任何内容。
+- **输出方式**：`effective_output_mode` 把 `whole_take` 解析为 `streaming_final`（引擎的 `resolve_output_mode` 同样，场景覆盖也一样）：实时模型的整句就是这次听写的文字，整段录音不再发第二遍（既不重复计费，也不用等它按播放速度再识别一遍）。插入仍在松开后一次完成，润色照常。流在第一句之前失败时回落整段识别（`transcribe_whole`），`live_error` 记原因。实时预览关闭时没有流，松开后整段发送。语音编辑的口述要求很短，始终整段识别。
+- **界面**：「输出方式」选「整段输出」而模型是实时模型时，卡片注明「按『边说边识别』运行」，「当前生效」落在「边说边识别」上。
+- **实测**（`real_dashscope.rs@real_realtime_models_stream_a_spoken_take`，16 s 样音按麦克风节奏输入）：`qwen-audio-3.1-asr-flash-streaming` 开始说话后约 1.6 s 出第一个中间结果，松开后 0.07 s 收到最后一句；`qwen-audio-3.1-asr-flash-message` 0.46 s。
+- **手机**：手机的麦克风也有实时分接，手机单独识别时同样推流。
+
 ## 12. 输出模式（2026-09-25）
 
-`EngineSettings.output_mode: OutputMode`（`#[serde(default)]`，wire `"whole_take"`（默认）| `"streaming_final"` | `"live_inject"`）与 `EngineSettings.vad_trim: bool`（默认 `false`）。`EngineStatus.effective_output_mode: OutputMode` = 本次 `DictationStart` 时真正会走的模式（`streaming_final` / `live_inject` 需要 `live_preview_ready`，否则回落 `whole_take`）。
+`EngineSettings.output_mode: OutputMode`（`#[serde(default)]`，wire `"whole_take"`（默认）| `"streaming_final"` | `"live_inject"`）与 `EngineSettings.vad_trim: bool`（默认 `false`）。`EngineStatus.effective_output_mode: OutputMode` = 本次 `DictationStart` 时真正会走的模式（`streaming_final` / `live_inject` 需要 `live_preview_ready`，否则回落 `whole_take`；实时识别模型把 `whole_take` 解析为 `streaming_final`，§11.9）。
 
 | 模式 | 终稿来源 | 阶段序列 | 润色 | 降级 |
 |---|---|---|---|---|

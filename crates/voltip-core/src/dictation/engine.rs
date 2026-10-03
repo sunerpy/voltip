@@ -812,26 +812,28 @@ impl DictationEngine {
     }
 
     /// Whether the next start previews: live preview is on and its source is here — the built-in
-    /// service (always, through the transcriber), or the library's model with a streaming port
-    /// plugged in.
+    /// service (always, through the transcriber), a realtime model whose client streams, or the
+    /// library's model with a streaming port plugged in.
     pub fn live_enabled(&self) -> bool {
         self.live_ready
             && match self.live_source {
                 Some(LiveSource::Cloud) => true,
+                Some(LiveSource::Stream) => self.transcriber.streaming(&[]).is_some(),
                 Some(LiveSource::Local) => self.streaming.is_some(),
                 None => false,
             }
     }
 
-    /// The streaming port this take previews with (docs/dictation.md §11.8): the take's
-    /// transcriber deciding the sentence again as it grows, hinted with the take's glossary, or
-    /// the library's streaming model.
+    /// The streaming port this take previews with (docs/dictation.md §11.8, §11.9): the take's
+    /// transcriber deciding the sentence again as it grows, hinted with the take's glossary; the
+    /// realtime model's own stream, hinted the same way; or the library's streaming model.
     fn live_port(&self) -> Option<Arc<dyn StreamingTranscriber>> {
         match self.live_source? {
             // The streaming modes take their text from the flush; a whole take decodes it itself.
             LiveSource::Cloud => Some(Arc::new(
                 RedecodeStreaming::new(self.transcriber.clone(), self.take.vocabulary.glossary().to_vec()).flushing(self.take.mode.is_streaming()),
             )),
+            LiveSource::Stream => self.transcriber.streaming(self.take.vocabulary.glossary()),
             LiveSource::Local => self.streaming.clone(),
         }
     }
@@ -845,8 +847,12 @@ impl DictationEngine {
 
     /// The mode a run asking for `mode` gets: the streaming modes need the live preview, the rest
     /// is `whole_take`, with the reason (docs/dictation.md §12; the same rule for a scene, §18.4).
+    /// A realtime model streaming the take turns `whole_take` into `streaming_final` (§11.9): its
+    /// sentences are the take's text, and sending the whole take once more would recognise (and
+    /// bill) it twice, and may take as long as the take played.
     fn resolve_output_mode(&self, mode: OutputMode) -> (OutputMode, Option<&'static str>) {
         match mode {
+            OutputMode::WholeTake if self.live_source == Some(LiveSource::Stream) && self.live_enabled() => (OutputMode::StreamingFinal, None),
             OutputMode::WholeTake => (OutputMode::WholeTake, None),
             mode if self.live_enabled() => (mode, None),
             _ if !self.live_ready => (OutputMode::WholeTake, Some("live preview is not ready (switched off or streaming model not installed)")),
@@ -862,7 +868,7 @@ impl DictationEngine {
     /// Preload the streaming model (2.6 s measured) so the first partial is not late. No-op when
     /// live preview is not ready; the port itself makes it idempotent.
     fn warm_streaming(&self) {
-        // The built-in service has nothing to load.
+        // The built-in service and a realtime model have nothing to load.
         if let (true, Some(LiveSource::Local), Some(streaming)) = (self.live_ready, self.live_source, &self.streaming) {
             streaming.warm();
         }
@@ -2862,7 +2868,7 @@ mod tests {
         FAKE_LATENCY_MS, FAKE_REFINE_MODEL, FAKE_STREAMING_MODEL_ID, FAKE_TRANSCRIPT, FakeAudio, FakeInjector, FakeModels, FakeProbe, FakeRefiner,
         FakeStreaming, FakeTranscriber, ports_with,
     };
-    use crate::engines::{BuiltIn, EngineSettings, UserSecrets};
+    use crate::engines::{BuiltIn, EngineSettings, ProviderId, ProviderSettings, ServiceKind, UserSecrets};
     use crate::history::EditRecord;
     use crate::settings::RecordingSource;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -3752,6 +3758,103 @@ mod tests {
         assert!(matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::StreamingFinal, .. } if text == FAKE_TRANSCRIPT), "{fx:?}");
         // The preview, then the flush of the whole sentence, which is the text.
         assert_eq!(r.transcriber.durations_ms(), [1000, 1500]);
+    }
+
+    /// A configuration on a Model Studio realtime model (docs/dictation.md §11.9); the fakes stand
+    /// in for the clients, so only the live source and the output mode it resolves to matter.
+    fn resolved_stream(live_preview: bool, output_mode: OutputMode) -> ResolvedEngines {
+        let mut secrets = UserSecrets::default();
+        secrets.set(ProviderId::Aliyun, ServiceKind::Asr, Some("sk-test".into()));
+        let choice = ProviderSettings { asr_model: Some("qwen-audio-3.1-asr-flash-streaming".into()), ..Default::default() };
+        let settings = EngineSettings {
+            asr_provider: ProviderId::Aliyun,
+            providers: [(ProviderId::Aliyun, choice)].into(),
+            refine_enabled: false,
+            live_preview,
+            output_mode,
+            ..EngineSettings::default()
+        };
+        ResolvedEngines::resolve(&settings, &secrets, &TEST_BUILT_IN)
+    }
+
+    /// A rig on a realtime model: no streaming port of the shell's, the transcriber streams.
+    fn rig_stream(transcriber: FakeTranscriber, live_preview: bool, output_mode: OutputMode) -> Rig {
+        let (audio, transcriber, injector) = (Arc::new(FakeAudio::speech()), Arc::new(transcriber), Arc::new(FakeInjector::paste()));
+        let (levels_tx, levels) = broadcast::channel(64);
+        let (engine, rx) = DictationEngine::new(
+            ports_with(audio.clone(), transcriber.clone(), None, injector.clone()),
+            &resolved_stream(live_preview, output_mode),
+            levels_tx,
+        );
+        Rig { engine, rx, audio, transcriber, refiner: None, injector, levels }
+    }
+
+    /// Regression (goal 2026-10-03: Model Studio's `qwen-audio-3.1-asr-flash-streaming` and
+    /// `-message` failed): a realtime model streams the take while it is spoken, with the take's
+    /// glossary, and its sentences are the take's text — in `whole_take` too, as `streaming_final`:
+    /// the whole take is not sent a second time (it would be recognised and billed twice, and may
+    /// take as long as it played).
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_realtime_model_streams_the_take_and_its_sentences_are_the_text() {
+        for configured in [OutputMode::WholeTake, OutputMode::StreamingFinal] {
+            let stream = Arc::new(FakeStreaming::script());
+            let mut r = rig_stream(FakeTranscriber::ok("整段识别的结果").with_stream(stream.clone()), true, configured);
+            r.engine.set_vocabulary(Arc::new(Vocabulary::compile(&[dict_entry("Voltip", &[])], &[])));
+            assert_eq!(r.engine.effective_output_mode(), (OutputMode::StreamingFinal, None), "{configured:?}");
+            r.start_open().await;
+            assert_eq!(r.engine.current_mode(), OutputMode::StreamingFinal);
+            r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.current == "今天")).await;
+            r.engine.stop().unwrap();
+            let fx = r.run_to_terminal().await;
+            assert!(
+                matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::StreamingFinal, live_error: None, .. } if text == "你好，世界。今天天气"),
+                "{configured:?}: {fx:?}"
+            );
+            assert_eq!(r.transcriber.calls(), 0, "{configured:?}: the take is not recognised a second time");
+            assert_eq!((stream.opens(), stream.finishes()), (1, 1));
+            assert_eq!(r.transcriber.stream_glossaries().last(), Some(&vec!["Voltip".to_owned()]), "the stream is hinted like a take");
+            assert_eq!(record(&fx).map(|e| e.mode), Some(OutputMode::StreamingFinal));
+        }
+    }
+
+    /// docs/dictation.md §11.9: a realtime model without the live preview, or a stream that fails,
+    /// still recognises the take — the whole take goes to the service after the take; a client
+    /// that cannot stream leaves `whole_take` alone.
+    #[tokio::test(start_paused = true)]
+    async fn a_realtime_model_without_its_stream_recognises_the_whole_take() {
+        // Preview off: no stream at all.
+        let stream = Arc::new(FakeStreaming::script());
+        let mut r = rig_stream(FakeTranscriber::ok(FAKE_TRANSCRIPT).with_stream(stream.clone()), false, OutputMode::WholeTake);
+        assert_eq!(r.engine.effective_output_mode(), (OutputMode::WholeTake, None));
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::WholeTake, .. } if text == FAKE_TRANSCRIPT), "{fx:?}");
+        assert_eq!((r.transcriber.calls(), stream.opens()), (1, 0));
+        // The stream fails before its first sentence: the take falls back to the whole take.
+        let stream = Arc::new(FakeStreaming::failing_open("WebSocket: connection refused"));
+        let mut r = rig_stream(FakeTranscriber::ok(FAKE_TRANSCRIPT).with_stream(stream.clone()), true, OutputMode::WholeTake);
+        r.start_open().await;
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.degraded.is_some())).await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        match phase(&fx) {
+            DictationPhase::Done { text, live_error, .. } => {
+                assert_eq!(text, FAKE_TRANSCRIPT, "{fx:?}");
+                assert!(live_error.as_deref().is_some_and(|e| e.contains("connection refused")), "the reason is kept: {live_error:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!((r.transcriber.calls(), stream.opens()), (1, 1));
+        // A client that cannot stream (the engines say realtime, the client says no): whole take.
+        let mut r = rig_stream(FakeTranscriber::ok(FAKE_TRANSCRIPT), true, OutputMode::WholeTake);
+        assert!(!r.engine.live_enabled());
+        assert_eq!(r.engine.effective_output_mode(), (OutputMode::WholeTake, None));
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { mode: OutputMode::WholeTake, .. }), "{fx:?}");
+        assert_eq!(r.transcriber.calls(), 1);
     }
 
     /// Partials the script produces in the default session (before and after the endpoint).

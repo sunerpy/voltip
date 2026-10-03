@@ -86,7 +86,7 @@ home:
             status: available
             link: /zh/recognition/local#cpu-与-gpu
           - title: 云端服务
-            body: 正式版安装包内置默认服务；也可以使用自己的密钥，改用 OpenAI、Groq、硅基流动或任意 OpenAI 兼容接口。
+            body: 正式版安装包内置默认服务；也可以使用自己的密钥，改用 OpenAI、Groq、硅基流动、阿里云百炼或任意 OpenAI 兼容接口。
             status: available
             link: /zh/recognition/cloud
       - name: 让文字准确易读
@@ -276,7 +276,7 @@ home:
 
 下载一次模型，听写即可离线使用。Qwen3-ASR 可识别 30 种语言并自带标点；SenseVoice 和 Paraformer 体积小，在普通处理器上也很快。电脑有显卡时，Qwen3-ASR 会通过 Vulkan 或 Metal 使用显卡，否则使用处理器。
 
-正式版安装包还内置了默认的云端服务，无需任何设置即可开始听写。你也可以随时改用 OpenAI、Groq、硅基流动或任意 OpenAI 兼容接口，并使用自己的密钥。
+正式版安装包还内置了默认的云端服务，无需任何设置即可开始听写。你也可以随时改用 OpenAI、Groq、硅基流动、阿里云百炼或任意 OpenAI 兼容接口，并使用自己的密钥。
 
 [本地识别](/zh/recognition/local) · [云端服务](/zh/recognition/cloud)
 

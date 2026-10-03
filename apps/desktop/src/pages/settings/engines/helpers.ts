@@ -151,8 +151,9 @@ export function streamingModel(models: readonly ModelState[]): ModelState | unde
   return models.find((m) => isStreamingModel(m));
 }
 
-/** What the 实时预览 block says: the switch is off, or the model is missing, or it is ready. */
-export type LivePreviewState = "ready" | "cloud" | "missing" | "off";
+/** What the 实时预览 block says: the switch is off, or the model is missing, or it is ready — on
+ *  the downloaded model, through the built-in service, or from the realtime model itself. */
+export type LivePreviewState = "ready" | "cloud" | "stream" | "missing" | "off";
 
 export function livePreviewState(
   settings: Pick<EngineSettings, "live_preview">,
@@ -160,8 +161,10 @@ export function livePreviewState(
 ): LivePreviewState {
   if (!settings.live_preview) return "off";
   if (!status.live_preview_ready) return "missing";
-  // docs/dictation.md §11.8: the built-in service previews itself, no model needed.
-  return status.live_source === "cloud" ? "cloud" : "ready";
+  // docs/dictation.md §11.8, §11.9: the built-in service and a realtime model preview themselves,
+  // no model needed.
+  if (status.live_source === "cloud" || status.live_source === "stream") return status.live_source;
+  return "ready";
 }
 
 /** `Settings.engines` after picking a local model: on-device recognition with that model. */

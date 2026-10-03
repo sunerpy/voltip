@@ -3,6 +3,8 @@
 //! provider offers speech recognition, text clean-up (LLM) or both; the catalogue carries the
 //! public base URL and a short list of suggested models per service. A provider's key is shared by
 //! its services, except for the custom provider, whose two endpoints may be two different servers.
+//! [`AsrProtocol`] says how a recognition request reaches an endpoint: most speak OpenAI's
+//! `/audio/transcriptions`, Alibaba Cloud Model Studio speaks its own protocols (§3.4).
 
 use serde::{Deserialize, Serialize};
 
@@ -23,17 +25,22 @@ pub enum ProviderId {
     Groq,
     /// SiliconFlow (硅基流动).
     Siliconflow,
+    /// Alibaba Cloud Model Studio (阿里云百炼, the DashScope API): its own recognition protocols
+    /// ([`AsrProtocol`]), clean-up through its OpenAI-compatible mode.
+    Aliyun,
     /// DeepSeek (clean-up only).
     Deepseek,
     /// Ollama on this machine (clean-up only, no key).
     Ollama,
-    /// Any OpenAI-compatible endpoint the user enters.
+    /// Any OpenAI-compatible endpoint the user enters (a Model Studio address speaks Model
+    /// Studio's protocols, [`AsrProtocol::of`]).
     Custom,
 }
 
 impl ProviderId {
     /// Every provider in display order.
-    pub const ALL: [Self; 8] = [Self::Builtin, Self::Local, Self::Openai, Self::Groq, Self::Siliconflow, Self::Deepseek, Self::Ollama, Self::Custom];
+    pub const ALL: [Self; 9] =
+        [Self::Builtin, Self::Local, Self::Openai, Self::Groq, Self::Siliconflow, Self::Aliyun, Self::Deepseek, Self::Ollama, Self::Custom];
 
     /// Wire name.
     pub fn as_str(self) -> &'static str {
@@ -43,6 +50,7 @@ impl ProviderId {
             Self::Openai => "openai",
             Self::Groq => "groq",
             Self::Siliconflow => "siliconflow",
+            Self::Aliyun => "aliyun",
             Self::Deepseek => "deepseek",
             Self::Ollama => "ollama",
             Self::Custom => "custom",
@@ -59,7 +67,8 @@ impl ProviderId {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceKind {
-    /// Speech recognition (`POST {base}/audio/transcriptions`).
+    /// Speech recognition (`POST {base}/audio/transcriptions`, or the endpoint's own protocol:
+    /// [`AsrProtocol`]).
     Asr,
     /// Text clean-up and voice edit (`POST {base}/chat/completions`).
     Llm,
@@ -124,6 +133,76 @@ impl ProviderSpec {
 
 const NO_PRESET: ServicePreset = ServicePreset { base_url: "", models: &[] };
 
+/// How a recognition request reaches a service (docs/dictation.md §3.4), decided by the endpoint and
+/// the model: an Alibaba Cloud Model Studio address serves models that speak three different
+/// protocols, none of them OpenAI's `/audio/transcriptions` (which answers 404 there).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AsrProtocol {
+    /// `POST {base}/audio/transcriptions`, multipart: OpenAI, Groq, SiliconFlow, vLLM, the built-in
+    /// service, any other endpoint.
+    OpenaiTranscriptions,
+    /// Model Studio's `qwen3-asr-flash…`: `POST …/compatible-mode/v1/chat/completions` with the
+    /// audio as an `input_audio` part.
+    DashscopeChat,
+    /// Model Studio's `qwen-audio-…-asr-flash` and `fun-asr-flash…`: the whole file to
+    /// `POST /api/v1/services/aigc/multimodal-generation/generation`.
+    DashscopeMultimodal,
+    /// Model Studio's realtime models on its WebSocket task protocol (`/api-ws/v1/inference`,
+    /// `run-task`): `…-asr-flash-streaming`, `…-asr-flash-message`, `fun-asr…realtime…`,
+    /// `paraformer-realtime…`. They recognise while the audio arrives ([`AsrProtocol::streams`]);
+    /// a whole file sent at once may take as long as it plays.
+    DashscopeDuplex,
+    /// A Model Studio model dictation cannot use: the ones that only transcribe files by URL, in
+    /// the background (`…-filetrans`, `fun-asr`, `fun-asr-mtl`, `paraformer-v2`), and
+    /// `qwen3-asr-flash-realtime`, whose realtime protocol this client does not speak.
+    DashscopeUnsupported,
+}
+
+impl AsrProtocol {
+    /// The protocol `model` speaks at `url` (a base URL as the settings hold it). Any address under
+    /// `aliyuncs.com` is Model Studio's (`dashscope.aliyuncs.com`, `dashscope-intl.aliyuncs.com`, a
+    /// workspace's `<id>.cn-beijing.maas.aliyuncs.com`); the model id picks among its protocols,
+    /// snapshots (`…-2026-02-10`) included. An unknown model there gets the OpenAI-compatible chat
+    /// form, which Model Studio's newer recognition models answer.
+    pub fn of(url: &str, model: &str) -> Self {
+        if !is_dashscope(url) {
+            return Self::OpenaiTranscriptions;
+        }
+        let model = model.trim().to_ascii_lowercase();
+        let realtime = model.contains("realtime");
+        if model.contains("filetrans") || model.starts_with("qwen3-asr-flash-realtime") {
+            Self::DashscopeUnsupported
+        } else if model.starts_with("qwen3-asr") {
+            Self::DashscopeChat
+        } else if model.starts_with("qwen-audio") && model.contains("-asr") {
+            if realtime || model.contains("-streaming") || model.contains("-message") { Self::DashscopeDuplex } else { Self::DashscopeMultimodal }
+        } else if model.starts_with("fun-asr") {
+            if realtime {
+                Self::DashscopeDuplex
+            } else if model.starts_with("fun-asr-flash") {
+                Self::DashscopeMultimodal
+            } else {
+                Self::DashscopeUnsupported
+            }
+        } else if model.starts_with("paraformer") {
+            if realtime { Self::DashscopeDuplex } else { Self::DashscopeUnsupported }
+        } else {
+            Self::DashscopeChat
+        }
+    }
+
+    /// The service recognises while the take is spoken, so the take's audio goes to it as it is
+    /// recorded and its sentences are the take's text (docs/dictation.md §3.4, §11.9).
+    pub fn streams(self) -> bool {
+        self == Self::DashscopeDuplex
+    }
+}
+
+/// Whether `url` is an Alibaba Cloud Model Studio address (a host under `aliyuncs.com`).
+pub fn is_dashscope(url: &str) -> bool {
+    url::Url::parse(url.trim()).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase)).is_some_and(|host| host.ends_with(".aliyuncs.com"))
+}
+
 /// The catalogue, in display order. Model ids checked against the vendors' documentation on
 /// 2026-09-27; lists go stale, so the UI also offers the provider's own `GET /models`.
 pub const PROVIDERS: &[ProviderSpec] = &[
@@ -153,6 +232,27 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://cloud.siliconflow.cn/account/ak"),
     },
+    // Model Studio (checked 2026-10-04): the realtime `…-streaming` model first, since it recognises
+    // while the user speaks (§3.4); `…-asr-flash` takes a whole file over HTTP. A workspace's own
+    // address (`https://<workspace>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`) replaces the
+    // public one in the URL field.
+    ProviderSpec {
+        id: ProviderId::Aliyun,
+        asr: Some(ServicePreset {
+            base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            models: &[
+                "qwen-audio-3.1-asr-flash-streaming",
+                "qwen-audio-3.1-asr-flash",
+                "qwen-audio-3.1-asr-flash-message",
+                "qwen3-asr-flash",
+                "fun-asr-realtime",
+            ],
+        }),
+        llm: Some(ServicePreset { base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1", models: &["qwen3.8-flash", "qwen3.8-max", "qwen3.7-flash"] }),
+        key: KeyPolicy::Required,
+        on_device: false,
+        console_url: Some("https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key"),
+    },
     ProviderSpec {
         id: ProviderId::Deepseek,
         asr: None,
@@ -181,6 +281,7 @@ pub fn key_entry(provider: ProviderId, kind: ServiceKind) -> Option<&'static str
         (ProviderId::Openai, _) => Some("provider-key.openai"),
         (ProviderId::Groq, _) => Some("provider-key.groq"),
         (ProviderId::Siliconflow, _) => Some("provider-key.siliconflow"),
+        (ProviderId::Aliyun, _) => Some("provider-key.aliyun"),
         (ProviderId::Deepseek, _) => Some("provider-key.deepseek"),
         (ProviderId::Custom, ServiceKind::Asr) => Some("provider-key.custom-asr"),
         (ProviderId::Custom, ServiceKind::Llm) => Some("provider-key.custom-llm"),
@@ -320,9 +421,71 @@ mod tests {
             assert_eq!(key_entry(p, ServiceKind::Asr), None);
             assert_eq!(key_entry(p, ServiceKind::Llm), None);
         }
+        assert_eq!(key_entry(ProviderId::Aliyun, ServiceKind::Asr), Some("provider-key.aliyun"));
+        assert_eq!(key_entry(ProviderId::Aliyun, ServiceKind::Asr), key_entry(ProviderId::Aliyun, ServiceKind::Llm));
         let entries = key_entries();
-        assert_eq!(entries.len(), 6, "{entries:?}");
+        assert_eq!(entries.len(), 7, "{entries:?}");
         assert!(entries.iter().all(|e| e.starts_with("provider-key.")));
+    }
+
+    /// docs/dictation.md §3.4: a Model Studio address speaks Model Studio's protocols, picked by the
+    /// model; every other address keeps OpenAI's `/audio/transcriptions`.
+    #[test]
+    fn the_endpoint_and_the_model_pick_the_recognition_protocol() {
+        use AsrProtocol::*;
+        let public = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+        let workspace = "https://ws-test.cn-beijing.maas.aliyuncs.com/compatible-mode/v1";
+        let intl = "HTTPS://DashScope-Intl.AliyunCS.com/api/v1/";
+        let table = [
+            ("qwen-audio-3.1-asr-flash-streaming", DashscopeDuplex),
+            ("qwen-audio-3.0-asr-flash-streaming", DashscopeDuplex),
+            ("qwen-audio-3.1-asr-flash-message", DashscopeDuplex),
+            (" Qwen-Audio-3.1-ASR-Flash-Streaming-2026-12-01 ", DashscopeDuplex),
+            ("fun-asr-realtime", DashscopeDuplex),
+            ("fun-asr-realtime-2026-02-28", DashscopeDuplex),
+            ("fun-asr-flash-8k-realtime", DashscopeDuplex),
+            ("paraformer-realtime-v2", DashscopeDuplex),
+            ("paraformer-realtime-8k-v2", DashscopeDuplex),
+            ("qwen-audio-3.1-asr-flash", DashscopeMultimodal),
+            ("qwen-audio-3.0-asr-flash", DashscopeMultimodal),
+            ("fun-asr-flash-2026-06-15", DashscopeMultimodal),
+            ("qwen3-asr-flash", DashscopeChat),
+            ("qwen3-asr-flash-2026-02-10", DashscopeChat),
+            ("qwen3-asr-flash-realtime", DashscopeUnsupported),
+            ("qwen3-asr-flash-realtime-2026-02-10", DashscopeUnsupported),
+            ("qwen-audio-3.1-asr-flash-filetrans", DashscopeUnsupported),
+            ("qwen3-asr-flash-filetrans", DashscopeUnsupported),
+            ("fun-asr", DashscopeUnsupported),
+            ("fun-asr-mtl", DashscopeUnsupported),
+            ("paraformer-v2", DashscopeUnsupported),
+            ("qwen3.8-omni-flash", DashscopeChat),
+        ];
+        for url in [public, workspace, intl] {
+            for (model, want) in table {
+                assert_eq!(AsrProtocol::of(url, model), want, "{url} {model}");
+            }
+        }
+        for other in [
+            "https://api.openai.com/v1",
+            "http://127.0.0.1:8000/v1",
+            "https://aliyuncs.com.example.test/v1",
+            "https://example.test/aliyuncs.com",
+            "not a url",
+            "",
+        ] {
+            assert!(!is_dashscope(other), "{other}");
+            assert_eq!(AsrProtocol::of(other, "qwen-audio-3.1-asr-flash-streaming"), OpenaiTranscriptions, "{other}");
+        }
+        assert!(is_dashscope(" https://dashscope.aliyuncs.com "));
+        let streams: Vec<AsrProtocol> = table.iter().map(|(_, p)| *p).filter(|p| p.streams()).collect();
+        assert!(streams.iter().all(|p| *p == DashscopeDuplex) && !streams.is_empty());
+        for p in [OpenaiTranscriptions, DashscopeChat, DashscopeMultimodal, DashscopeUnsupported] {
+            assert!(!p.streams(), "{p:?}");
+        }
+        // The catalogue's Model Studio models are all usable, the default one streams.
+        let aliyun = ProviderId::Aliyun.spec().asr.expect("Model Studio recognises");
+        assert!(aliyun.models.iter().all(|m| AsrProtocol::of(aliyun.base_url, m) != DashscopeUnsupported), "{aliyun:?}");
+        assert!(AsrProtocol::of(aliyun.base_url, aliyun.models[0]).streams());
     }
 
     #[test]

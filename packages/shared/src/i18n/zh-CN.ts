@@ -248,6 +248,8 @@ export const zhCN = {
       live_inject: "每句确定后立即输入到当前窗口；此方式不进行润色，取消后已输入的文字不会撤回。",
     },
     fallback: "实时识别模型未下载，当前按整段输出运行",
+    streamed:
+      "所选识别模型是实时识别模型：说话时就已识别，按「边说边识别」运行，文字仍在松开后一次插入。",
     effective: "当前生效",
     liveError: "实时识别中断，已改为整段识别：{reason}",
   },
@@ -902,6 +904,7 @@ export const zhCN = {
       openai: "OpenAI",
       groq: "Groq",
       siliconflow: "硅基流动",
+      aliyun: "阿里云百炼",
       deepseek: "DeepSeek",
       ollama: "Ollama",
       custom: "自定义接口",
@@ -912,6 +915,7 @@ export const zhCN = {
       openai: "OpenAI 的语音转写与对话模型。",
       groq: "Groq 托管的 Whisper 与开源大模型，响应快。",
       siliconflow: "硅基流动托管的 SenseVoice 与开源大模型。",
+      aliyun: "阿里云百炼的语音识别与千问大模型；实时识别模型在说话时就完成识别。",
       deepseek: "DeepSeek 的对话模型，只用于润色。",
       ollama: "本机 Ollama 里的模型，文本不离开这台电脑。",
       custom: "任意 OpenAI 兼容接口，例如 vLLM、LocalAI 或自建网关。",
@@ -933,7 +937,9 @@ export const zhCN = {
       modelHelp: "从列表里选；测试连接后，服务商返回的模型也会出现在列表里。",
       baseUrl: "接口地址",
       baseUrlHelpVendor: "留空使用官方地址；需要代理或中转时再填写。",
-      baseUrlHelpCustom: "OpenAI 兼容地址，例如 http://192.168.1.20:8000/v1",
+      baseUrlHelpCustom:
+        "OpenAI 兼容地址，例如 http://192.168.1.20:8000/v1；也可以填写阿里云百炼的地址。",
+      baseUrlHelpAliyun: "留空使用公共地址；使用业务空间的专属地址时在此填写。",
       key: "API 密钥",
       keyOptional: "API 密钥（可选）",
       keyPlaceholderSet: "已保存 · 留空则不改",
@@ -1020,13 +1026,19 @@ export const zhCN = {
     installedCount: "{installed} / {total} 已安装",
     livePreview: {
       title: "实时预览",
-      note: "按住快捷键说话时，悬浮窗实时显示识别的文字；松开后仍由所选服务商识别整段录音，最终文本不受影响。使用内置服务时，预览由内置服务提供，约每 2 秒更新一次；使用其他服务商或本地模型时，需要下载下面的「实时预览」模型。",
+      note: "按住快捷键说话时，悬浮窗实时显示识别的文字。使用内置服务时，预览由内置服务提供，约每 2 秒更新一次，松开后仍识别整段录音；使用实时识别模型（如阿里云百炼的 qwen-audio-3.1-asr-flash-streaming）时，说话时就已识别，松开后只补最后一句；使用其他服务商或本地模型时，需要下载下面的「实时预览」模型，预览不影响最终文本。",
       toggle: "实时预览",
-      state: { ready: "已就绪", cloud: "已就绪 · 内置服务", missing: "模型未下载", off: "已关闭" },
+      state: {
+        ready: "已就绪",
+        cloud: "已就绪 · 内置服务",
+        stream: "已就绪 · 实时识别模型",
+        missing: "模型未下载",
+        off: "已关闭",
+      },
     },
     outputMode: {
       title: "输出方式",
-      note: "决定最终文本的生成方式和插入时机。后两种方式需要实时预览：使用内置服务时可以直接使用，否则需要先下载「实时预览」模型；不满足时按「整段输出」运行。",
+      note: "决定最终文本的生成方式和插入时机。后两种方式需要实时预览：使用内置服务或实时识别模型时可以直接使用，否则需要先下载「实时预览」模型；不满足时按「整段输出」运行。",
       label: "输出方式",
     },
     vadTrim: {

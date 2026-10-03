@@ -32,6 +32,22 @@ pub enum AsrError {
     /// A 2xx answer whose body is not the expected JSON.
     #[error("ASR returned an unexpected response: {0}")]
     BadResponse(String),
+    /// The service refused the request with its own error code (Model Studio's `InvalidParameter`,
+    /// `Model.AccessDenied`, a realtime task's `task-failed`).
+    #[error("ASR service error {code}: {message}")]
+    Service {
+        /// The service's error code.
+        code: String,
+        /// Its message, cut to [`crate::MAX_ERROR_BODY_CHARS`] characters.
+        message: String,
+    },
+    /// Model Studio's 免费额度用完即停 stopped the model: its free quota is used up and the account
+    /// allows it nothing more (`AllocationQuota.FreeTierOnly`).
+    #[error("ASR free quota used up: Model Studio stops this model once its free quota ends (免费额度用完即停)")]
+    FreeQuotaExhausted,
+    /// The recording is not audio the protocol can send (not a 16-bit PCM WAV).
+    #[error("ASR audio: {0}")]
+    Audio(String),
 }
 
 impl AsrError {
@@ -41,7 +57,7 @@ impl AsrError {
         match self {
             Self::RateLimited { .. } | Self::Network(_) | Self::Timeout => true,
             Self::Server { status, .. } => *status >= 500,
-            Self::InvalidConfig(_) | Self::Unauthorized | Self::BadResponse(_) => false,
+            Self::InvalidConfig(_) | Self::Unauthorized | Self::BadResponse(_) | Self::Service { .. } | Self::FreeQuotaExhausted | Self::Audio(_) => false,
         }
     }
 }
@@ -64,6 +80,12 @@ mod tests {
         assert_eq!(AsrError::Network("connection refused".into()).to_string(), "ASR network error: connection refused");
         assert_eq!(AsrError::Timeout.to_string(), "ASR request timed out");
         assert_eq!(AsrError::BadResponse("not json".into()).to_string(), "ASR returned an unexpected response: not json");
+        assert_eq!(
+            AsrError::Service { code: "InvalidParameter".into(), message: "Model not exist.".into() }.to_string(),
+            "ASR service error InvalidParameter: Model not exist."
+        );
+        assert!(AsrError::FreeQuotaExhausted.to_string().contains("免费额度用完即停"));
+        assert_eq!(AsrError::Audio("not a WAV file".into()).to_string(), "ASR audio: not a WAV file");
     }
 
     #[test]
@@ -78,5 +100,8 @@ mod tests {
         assert!(!AsrError::Unauthorized.is_retryable());
         assert!(!AsrError::InvalidConfig(String::new()).is_retryable());
         assert!(!AsrError::BadResponse(String::new()).is_retryable());
+        assert!(!AsrError::Service { code: String::new(), message: String::new() }.is_retryable());
+        assert!(!AsrError::FreeQuotaExhausted.is_retryable());
+        assert!(!AsrError::Audio(String::new()).is_retryable());
     }
 }

@@ -86,7 +86,7 @@ home:
             status: available
             link: /recognition/local#cpu-or-gpu
           - title: Cloud services
-            body: Release packages include a default service. OpenAI, Groq, SiliconFlow or any OpenAI-compatible endpoint can be used with your own key.
+            body: Release packages include a default service. OpenAI, Groq, SiliconFlow, Alibaba Cloud Model Studio or any OpenAI-compatible endpoint can be used with your own key.
             status: available
             link: /recognition/cloud
       - name: Text that reads right
@@ -276,7 +276,7 @@ home:
 
 Download a model once and dictation works offline. Qwen3-ASR recognises 30 languages and writes the punctuation itself; SenseVoice and Paraformer are small and fast on any processor. When the computer has a graphics card, Qwen3-ASR runs on it through Vulkan or Metal, and on the processor otherwise.
 
-Release packages also include a default cloud service, so dictation works before you set anything up. You can switch to OpenAI, Groq, SiliconFlow or any OpenAI-compatible endpoint with your own key at any time.
+Release packages also include a default cloud service, so dictation works before you set anything up. You can switch to OpenAI, Groq, SiliconFlow, Alibaba Cloud Model Studio or any OpenAI-compatible endpoint with your own key at any time.
 
 [Local recognition](/recognition/local) · [Cloud services](/recognition/cloud)
 

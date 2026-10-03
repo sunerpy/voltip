@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::{DEFAULT_LOCAL_MODEL_ID, ModelState};
 use crate::presets::PresetId;
-pub use crate::providers::{KeyPolicy, ProviderId, ServiceKind};
+pub use crate::providers::{AsrProtocol, KeyPolicy, ProviderId, ServiceKind};
 use crate::providers::{PROVIDERS, key_entry};
 
 /// The built-in recognition model's name when the build names none (`VOLTIP_ASR_MODEL`).
@@ -30,7 +30,7 @@ pub enum InjectMode {
     ClipboardOnly,
 }
 
-/// Where the live preview comes from (docs/dictation.md §11.8).
+/// Where the live preview comes from (docs/dictation.md §11.8, §11.9).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LiveSource {
@@ -39,6 +39,9 @@ pub enum LiveSource {
     Cloud,
     /// The library's streaming model, on this device.
     Local,
+    /// The recognition service itself, a realtime model ([`crate::providers::AsrProtocol::streams`]):
+    /// the take's audio goes to it while it is spoken, and its sentences are the take's text.
+    Stream,
 }
 
 /// Where the final text comes from and when it is delivered (docs/dictation.md §12).
@@ -401,7 +404,8 @@ pub struct LocalModelRef {
 /// `Debug` shows its presence only.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RemoteService {
-    /// Base URL (the client appends `/audio/transcriptions` or `/chat/completions`).
+    /// Base URL (the client appends `/audio/transcriptions` or `/chat/completions`, or derives the
+    /// endpoint of the model's protocol: [`AsrProtocol`]).
     pub url: String,
     /// Model id.
     pub model: String,
@@ -492,6 +496,9 @@ pub struct ResolvedEngines {
     /// The built-in recognition is in use and previews by decoding again
     /// ([`BuiltIn::asr_live_preview`]).
     pub cloud_preview: bool,
+    /// The remote recognition service in use is a realtime model ([`AsrProtocol::streams`]): it
+    /// recognises while the take is spoken (docs/dictation.md §11.9).
+    pub asr_streams: bool,
     /// `EngineSettings.local_device`.
     pub local_device: LocalDevice,
     /// `EngineSettings.local_gpu`.
@@ -549,6 +556,7 @@ impl ResolvedEngines {
             models.iter().find(|m| m.is_streaming()).map(|m| LocalModelRef { id: m.id.clone(), name: m.name.clone(), installed: m.state.is_installed() });
         let providers = provider_statuses(settings, secrets, built_in, &local, asr_provider, llm_provider);
         let cloud_preview = asr_provider == ProviderId::Builtin && asr_remote.is_some() && built_in.asr_live_preview;
+        let asr_streams = asr_remote.as_ref().is_some_and(|r| AsrProtocol::of(&r.url, &r.model).streams());
         Self {
             asr_provider,
             local_model,
@@ -568,6 +576,7 @@ impl ResolvedEngines {
             chinese_script: settings.chinese_script,
             streaming_model,
             cloud_preview,
+            asr_streams,
             local_device: settings.local_device,
             local_gpu: trimmed(settings.local_gpu.as_deref()).map(str::to_owned),
             local_threads: settings.local_threads,
@@ -581,16 +590,20 @@ impl ResolvedEngines {
         self.asr_provider == ProviderId::Local
     }
 
-    /// Where the live preview comes from when it is on (docs/dictation.md §11.8): the built-in
-    /// service when it recognises (user request 2026-09-30: Qwen3-ASR previews itself); otherwise
-    /// the library's streaming model when it is installed. Other cloud services do not preview: each
-    /// preview is another request, which their owners pay for.
+    /// Where the live preview comes from when it is on (docs/dictation.md §11.8, §11.9): the
+    /// built-in service when it recognises (user request 2026-09-30: Qwen3-ASR previews itself), a
+    /// realtime model of the service in use (it recognises while the take is spoken anyway);
+    /// otherwise the library's streaming model when it is installed. Other cloud services do not
+    /// preview: each preview is another request, which their owners pay for.
     pub fn live_source(&self) -> Option<LiveSource> {
         if !self.live_preview {
             return None;
         }
         if self.cloud_preview {
             return Some(LiveSource::Cloud);
+        }
+        if self.asr_streams {
+            return Some(LiveSource::Stream);
         }
         self.streaming_model.as_ref().is_some_and(|m| m.installed).then_some(LiveSource::Local)
     }
@@ -602,9 +615,15 @@ impl ResolvedEngines {
     }
 
     /// The output mode a `DictationStart` would run with now (docs/dictation.md §12): the two
-    /// streaming modes need [`ResolvedEngines::live_preview_ready`], otherwise `WholeTake`.
+    /// streaming modes need [`ResolvedEngines::live_preview_ready`], otherwise `WholeTake`. A
+    /// realtime model's own stream turns `WholeTake` into `StreamingFinal` (§11.9): the same text,
+    /// inserted at the end, without recognising the take a second time.
     pub fn effective_output_mode(&self) -> OutputMode {
-        if self.output_mode.is_streaming() && !self.live_preview_ready() { OutputMode::WholeTake } else { self.output_mode }
+        match self.output_mode {
+            OutputMode::WholeTake if self.live_source() == Some(LiveSource::Stream) => OutputMode::StreamingFinal,
+            mode if mode.is_streaming() && !self.live_preview_ready() => OutputMode::WholeTake,
+            mode => mode,
+        }
     }
 
     /// The UI projection: provider ids, models, user-entered hosts and key presence only.
@@ -1251,6 +1270,67 @@ mod tests {
         assert_eq!(source(&builtin, &BuiltIn::EMPTY, &streaming), Some(LiveSource::Local));
         assert!(BuiltIn::EMPTY.asr_live_preview.eq(&false));
         assert_eq!(serde_json::to_string(&[LiveSource::Cloud, LiveSource::Local]).unwrap(), r#"["cloud","local"]"#);
+    }
+
+    /// docs/dictation.md §11.9 (goal 2026-10-03: Model Studio's realtime models failed): a realtime
+    /// model of the service in use is the live source — before an installed streaming model — and
+    /// its stream is the take's text, so `whole_take` runs as `streaming_final`. Its whole-file
+    /// models, other endpoints and preview switched off keep the old rules.
+    #[test]
+    fn a_realtime_model_streams_the_take_and_its_text_is_final() {
+        let mut secrets = UserSecrets::default();
+        secrets.set(ProviderId::Aliyun, ServiceKind::Asr, Some("sk-test".into()));
+        let aliyun = |model: &str, output_mode: OutputMode, live_preview: bool| EngineSettings {
+            asr_provider: ProviderId::Aliyun,
+            providers: with_provider(ProviderId::Aliyun, ProviderSettings { asr_model: Some(model.into()), ..Default::default() }),
+            output_mode,
+            live_preview,
+            ..EngineSettings::default()
+        };
+        for models in [library(true), library(false)] {
+            let e = ResolvedEngines::resolve_with_models(&aliyun("qwen-audio-3.1-asr-flash-streaming", OutputMode::WholeTake, true), &secrets, &BUILT, &models);
+            assert!(e.asr_streams && e.asr_issue.is_none(), "{e:?}");
+            assert_eq!(e.asr_remote.as_ref().map(|r| r.url.as_str()), Some("https://dashscope.aliyuncs.com/compatible-mode/v1"));
+            assert_eq!(e.live_source(), Some(LiveSource::Stream), "the service's own stream before the local model");
+            assert_eq!(e.effective_output_mode(), OutputMode::StreamingFinal, "no second recognition of the take");
+            let st = e.status();
+            assert_eq!((st.live_source, st.live_preview_ready, st.effective_output_mode), (Some(LiveSource::Stream), true, OutputMode::StreamingFinal));
+            for mode in [OutputMode::StreamingFinal, OutputMode::LiveInject] {
+                let e = ResolvedEngines::resolve_with_models(&aliyun("qwen-audio-3.1-asr-flash-message", mode, true), &secrets, &BUILT, &models);
+                assert_eq!((e.live_source(), e.effective_output_mode()), (Some(LiveSource::Stream), mode), "{mode:?}");
+            }
+            // Preview off: no stream, the whole take goes to the service after the take.
+            let off =
+                ResolvedEngines::resolve_with_models(&aliyun("qwen-audio-3.1-asr-flash-streaming", OutputMode::WholeTake, false), &secrets, &BUILT, &models);
+            assert_eq!((off.live_source(), off.effective_output_mode()), (None, OutputMode::WholeTake));
+            // The service's whole-file model previews like any other cloud service.
+            let file = ResolvedEngines::resolve_with_models(&aliyun("qwen-audio-3.1-asr-flash", OutputMode::WholeTake, true), &secrets, &BUILT, &models);
+            assert!(!file.asr_streams);
+            let local = models.iter().any(|m| m.is_streaming() && m.state.is_installed());
+            assert_eq!(file.live_source(), local.then_some(LiveSource::Local));
+            assert_eq!(file.effective_output_mode(), OutputMode::WholeTake);
+        }
+        // The same model through the custom endpoint at a workspace address streams too.
+        let mut custom_key = UserSecrets::default();
+        custom_key.set(ProviderId::Custom, ServiceKind::Asr, Some("sk-test".into()));
+        let custom = EngineSettings {
+            asr_provider: ProviderId::Custom,
+            providers: with_provider(
+                ProviderId::Custom,
+                ProviderSettings {
+                    asr_url: Some("https://ws-test.cn-beijing.maas.aliyuncs.com/compatible-mode/v1".into()),
+                    asr_model: Some("qwen-audio-3.1-asr-flash-streaming".into()),
+                    ..Default::default()
+                },
+            ),
+            ..EngineSettings::default()
+        };
+        let e = ResolvedEngines::resolve(&custom, &custom_key, &BUILT);
+        assert_eq!((e.live_source(), e.effective_output_mode()), (Some(LiveSource::Stream), OutputMode::StreamingFinal));
+        // A key missing: no service, nothing streams.
+        let missing = ResolvedEngines::resolve(&aliyun("qwen-audio-3.1-asr-flash-streaming", OutputMode::WholeTake, true), &UserSecrets::default(), &BUILT);
+        assert_eq!((missing.asr_issue, missing.asr_streams, missing.live_source()), (Some(EngineIssue::KeyMissing), false, None));
+        assert_eq!(serde_json::to_string(&LiveSource::Stream).unwrap(), r#""stream""#);
     }
 
     #[test]

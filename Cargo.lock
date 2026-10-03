@@ -6941,13 +6941,18 @@ dependencies = [
 name = "voltip-asr"
 version = "0.0.0"
 dependencies = [
+ "base64 0.23.1",
+ "futures-util",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-tungstenite 0.30.0",
  "tracing",
  "url",
+ "uuid",
  "webpki-root-certs",
  "wiremock",
 ]
@@ -6995,6 +7000,7 @@ name = "voltip-cloud"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "futures-util",
  "hex",
  "parking_lot",
  "reqwest",
@@ -7002,6 +7008,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tokio",
+ "tokio-tungstenite 0.30.0",
  "tracing",
  "uuid",
  "voltip-asr",

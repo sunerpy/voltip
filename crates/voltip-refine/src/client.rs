@@ -49,6 +49,8 @@ struct ChatRequest<'a> {
     temperature: f32,
     max_tokens: u32,
     messages: [Message<'a>; 2],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enable_thinking: Option<bool>,
 }
 
 /// Smallest `max_tokens` of an edit (docs/dictation.md §19): room for a short selection rewritten
@@ -213,6 +215,7 @@ impl RefineClient {
             temperature: TEMPERATURE,
             max_tokens,
             messages: [Message { role: "system", content: system }, Message { role: "user", content: user }],
+            enable_thinking: self.config.enable_thinking,
         };
         let mut request = self.http.post(&self.endpoint).json(&payload);
         if let Some(key) = &self.config.api_key {
@@ -473,6 +476,7 @@ mod tests {
         assert!((body["temperature"].as_f64().unwrap() - 0.2).abs() < 1e-6);
         // Regression (Groq free tier, 2026-09-25): an unbounded request is refused with 429 OTPM.
         assert_eq!(body["max_tokens"], 128, "a short transcript asks for the minimum budget");
+        assert!(body.get("enable_thinking").is_none(), "not sent unless configured: {body}");
         let messages = body["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["role"], "system");
@@ -485,6 +489,23 @@ mod tests {
 
     /// docs/dictation.md §16.3: the glossary rides in the system message (after the base prompt),
     /// the user message is the text alone.
+    /// Regression (2026-10-04, Alibaba Cloud Model Studio): its Qwen3 and DeepSeek models think by
+    /// default in the compatible mode, so a clean-up took 6–11 s and a short budget came back
+    /// empty; the configured `enable_thinking` goes out with every request, the edit's too.
+    #[tokio::test]
+    async fn regression_the_configured_enable_thinking_reaches_every_request() {
+        let server = MockServer::start().await;
+        mount(&server, answer("你好，今天天气怎么样？")).await;
+        let config = RefineConfig::new(server.uri(), "qwen3.8-flash").with_enable_thinking(Some(false));
+        let client = RefineClient::new(config).unwrap();
+        client.refine("你好今天天气怎么样", Some("zh")).await.unwrap();
+        client.edit("你好", "改成英文", &PromptHints::default()).await.unwrap();
+        for request in server.received_requests().await.unwrap() {
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(body["enable_thinking"], false, "{body}");
+        }
+    }
+
     #[tokio::test]
     async fn the_glossary_reaches_the_system_message() {
         let server = MockServer::start().await;
