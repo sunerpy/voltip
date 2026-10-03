@@ -44,6 +44,39 @@ running() {
   [ -n "$(adb shell pidof "$package" 2>/dev/null | tr -d '\r')" ]
 }
 
+# The screen's UI tree into $out/ui.xml. A system dialog over the app hides it from the dump (on a
+# freshly booted emulator the launcher may not answer for a while: run 37098351522 had its
+# "isn't responding" dialog over the first screen), so such a dialog is told to wait, and the
+# screen is read again.
+dump() {
+  local xy
+  for _ in 1 2 3; do
+    adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "$out/ui.xml" >/dev/null 2>&1 || return 1
+    xy=$(not_responding_wait) || return 0
+    echo "android-device-smoke: a system dialog says an app is not responding; telling it to wait" >&2
+    # shellcheck disable=SC2086 # "x y"
+    adb shell input tap $xy
+    # The dialog's own close animation, not a wait for anything in the app.
+    sleep 1
+  done
+}
+# The centre of the "Wait" button of a not-responding dialog on the screen, or status 1.
+not_responding_wait() {
+  python3 - "$out/ui.xml" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+nodes = list(ET.parse(sys.argv[1]).getroot().iter("node"))
+if not any(re.search(r"isn't responding|没有响应|无响应", n.get("text") or "") for n in nodes):
+    sys.exit(1)
+for n in nodes:
+    m = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", n.get("bounds", ""))
+    if m and (n.get("text") or "").strip() in ("Wait", "等待"):
+        x1, y1, x2, y2 = map(int, m.groups())
+        print((x1 + x2) // 2, (y1 + y2) // 2)
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
 adb wait-for-device
 # A build signed with another key cannot replace the installed one.
 adb uninstall "$package" >/dev/null 2>&1 || true
@@ -54,8 +87,7 @@ adb shell am start -W -n "$package/.MainActivity" >"$out/start.txt" 2>&1 || fail
 # Up: the first screen's hold-to-talk button (in Chinese or English) is in the window's UI tree.
 # At most 120 s: an emulator running arm64 code through its ARM translation is slow.
 deadline=$((SECONDS + 120))
-until adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "$out/ui.xml" >/dev/null 2>&1 &&
-  grep -qE '按住说话|Hold to talk' "$out/ui.xml"; do
+until dump && grep -qE '按住说话|Hold to talk' "$out/ui.xml"; do
   running || fail "the app closed on start"
   [ "$SECONDS" -lt "$deadline" ] || fail "the first screen did not come up within 120 s"
   sleep 3
@@ -78,9 +110,6 @@ fi
 # Android's back (user request 2026-10-02, docs/acceptance/android/manual-checklist.md item 17):
 # a page goes up a level, 设置 goes to 说话, and there a first back says so and a second within two
 # seconds leaves the app. The WebView's text is in the UI tree the dump writes.
-dump() {
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "$out/ui.xml" >/dev/null 2>&1
-}
 # Wait (at most 60 s) until the screen shows text matching the extended regex $1.
 showing() {
   local deadline=$((SECONDS + 60))
