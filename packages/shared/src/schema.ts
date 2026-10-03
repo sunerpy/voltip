@@ -908,9 +908,12 @@ export type EditRecord = z.infer<typeof editRecordSchema>;
 
 /** One finished dictation as persisted in `history.json` (`voltip_core::history::HistoryEntry`). */
 /** What a phone sent (`voltip_core::OriginKind`, docs/dictation.md §20). */
-/** `standalone`: the phone recognised it on its own and uploaded a copy (docs/dictation.md §20.8). */
-export const ORIGIN_KINDS = ["take", "typed", "clipboard", "standalone"] as const;
-/** Which phone a history entry came from, and how (`voltip_core::EntryOrigin`). */
+/** `standalone`: the phone recognised it on its own and uploaded a copy (docs/dictation.md §20.8).
+ *  `sent`, on the phone only: its audio went to that computer, which delivered it; the phone keeps
+ *  what the computer reported (§20.7, user decision 2026-10-03). */
+export const ORIGIN_KINDS = ["take", "typed", "clipboard", "standalone", "sent"] as const;
+/** The other device of a history entry (`voltip_core::EntryOrigin`): on a computer the phone it
+ *  came from, on a phone the computer it went to. */
 export const entryOriginSchema = z.object({ device: z.string(), kind: z.enum(ORIGIN_KINDS) });
 export type EntryOrigin = z.infer<typeof entryOriginSchema>;
 

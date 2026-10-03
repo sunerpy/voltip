@@ -6,9 +6,11 @@ import {
   type FeatureShell,
   FeatureShellProvider,
   I18nProvider,
-  Icon,
-  ToastViewport,
+  IconButton,
+  Logo,
+  PresentationProvider,
   applyTheme,
+  cx,
   dismissTopDialog,
   resolveTheme,
   systemPrefersDark,
@@ -17,9 +19,19 @@ import {
   useToasts,
   useUiState,
 } from "@voltip/ui";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { SystemBack } from "./app/back";
+import { TOUCH, TOUCH_ICON } from "./app/phone-ui";
 import type { Scanner } from "./app/scanner";
+import { PhoneToasts } from "./app/toasts";
 import {
   type ConfirmSpec,
   type MobileShell,
@@ -107,17 +119,21 @@ export function App({ backend, loadScanner, initialScreen, systemLanguage, syste
   const register = useCallback((fn: (e: UiEvent) => void) => {
     handler.current = fn;
   }, []);
+  // The phone's controls (user report 2026-10-03): a dropdown opens its own list of options
+  // instead of Android's old picker, and buttons take a pressed state and 44 px targets.
   return (
-    <BackendProvider backend={backend} onEvent={onEvent}>
-      <LocaleProvider systemLanguage={systemLanguage}>
-        <Gate
-          loadScanner={loadScanner}
-          initialScreen={initialScreen}
-          register={register}
-          {...(systemBack === undefined ? {} : { systemBack })}
-        />
-      </LocaleProvider>
-    </BackendProvider>
+    <PresentationProvider value="touch">
+      <BackendProvider backend={backend} onEvent={onEvent}>
+        <LocaleProvider systemLanguage={systemLanguage}>
+          <Gate
+            loadScanner={loadScanner}
+            initialScreen={initialScreen}
+            register={register}
+            {...(systemBack === undefined ? {} : { systemBack })}
+          />
+        </LocaleProvider>
+      </BackendProvider>
+    </PresentationProvider>
   );
 }
 
@@ -157,9 +173,9 @@ function Gate(props: FrameProps) {
   if (!state) {
     return (
       <div
-        className="flex h-full min-h-screen flex-col items-center justify-center gap-3 bg-canvas p-6 text-center text-fg"
+        className="flex h-full flex-col items-center justify-center gap-4 bg-canvas p-6 text-center text-fg"
         role="status">
-        <Icon name="wave" size={28} className="text-fg-subtle" />
+        <Logo size={40} />
         <span className="text-[13px] text-fg-muted">
           {error ? t("mobile.connectFailed", { error }) : t("mobile.connecting")}
         </span>
@@ -215,6 +231,13 @@ function Frame({
     value: undefined,
   });
   const [pending, setPending] = useState<ConfirmSpec | undefined>(undefined);
+  // Every screen shares the one scroller: a screen opens at its top, not where the last one was.
+  const scroller = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    if (scroller.current) scroller.current.scrollTop = 0;
+    // Opening another screen (or the same one about something else) is the reason to scroll up.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies
+  }, [screen, param]);
 
   useEffect(() => {
     applyTheme(resolveTheme(state.settings, systemPrefersDark()));
@@ -318,33 +341,52 @@ function Frame({
   return (
     <ShellContext.Provider value={shell}>
       <FeatureShellProvider shell={features}>
-        <div className="mx-auto flex h-full min-h-screen w-full max-w-[430px] flex-col bg-canvas text-fg">
-          {screen !== "welcome" && (
-            <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-surface px-3">
+        <div className="mx-auto flex h-full w-full max-w-[430px] flex-col bg-canvas text-fg">
+          {/* The title bar of every screen, the desktop's: the surface, a hairline below, the
+              title at 16 px, 44 px targets at either end. It runs under the status bar. */}
+          <header className="shrink-0 border-b border-border bg-surface pt-[env(safe-area-inset-top)]">
+            <div className={cx("flex h-12 items-center gap-1 pr-1", canGoBack ? "pl-1" : "pl-4")}>
               {canGoBack && (
-                <button
-                  type="button"
-                  aria-label={t("mobile.back")}
+                // The chevron points right in the icon set; turned, it points back.
+                <IconButton
+                  icon="chevronRight"
+                  label={t("mobile.back")}
+                  size={28}
                   onClick={goUp}
-                  className="flex h-8 w-8 items-center justify-center rounded-6 text-fg-muted hover:bg-inset">
-                  <Icon name="chevronRight" size={16} className="rotate-180" />
-                </button>
+                  className={cx(TOUCH_ICON, "rotate-180 active:bg-inset")}
+                />
               )}
-              <h1 className="flex-1 text-[15px] font-semibold">{t(`mobile.title.${screen}`)}</h1>
+              <h1 className="flex min-w-0 flex-1 items-center gap-2 text-[16px] font-semibold text-fg">
+                {screen === "welcome" ? (
+                  <>
+                    <Logo size={22} />
+                    Voltip
+                  </>
+                ) : (
+                  <span className="truncate">{t(`mobile.title.${screen}`)}</span>
+                )}
+              </h1>
               {screen === "devices" && (
-                <button
-                  type="button"
-                  aria-label={t("mobile.thisDevice")}
+                <IconButton
+                  icon="user"
+                  label={t("mobile.thisDevice")}
+                  size={28}
                   onClick={() => {
                     go("device");
                   }}
-                  className="flex h-8 w-8 items-center justify-center rounded-6 text-fg-muted hover:bg-inset">
-                  <Icon name="user" size={16} />
-                </button>
+                  className={cx(TOUCH_ICON, "active:bg-inset")}
+                />
               )}
-            </header>
-          )}
-          <main className="min-h-0 flex-1 overflow-y-auto">
+            </div>
+          </header>
+          {/* The one scroller; a screen without the tab bar keeps its end above the navigation
+              bar. */}
+          <main
+            ref={scroller}
+            className={cx(
+              "min-h-0 flex-1 overflow-y-auto overscroll-none",
+              !tabRoot && "pb-[env(safe-area-inset-bottom)]",
+            )}>
             {screen === "welcome" && <Welcome />}
             {screen === "device" && <ThisDevice />}
             {screen === "pair" && <PairDevice />}
@@ -367,18 +409,20 @@ function Frame({
             {screen === "feedback" && <Feedback />}
           </main>
           {tabRoot && <TabBar />}
+          {/* No key hint under the buttons: a phone has no Esc; its back closes the dialog. */}
           <Dialog
             open={pending !== undefined}
             title={pending?.title ?? ""}
             width={340}
+            hint=""
             onClose={() => {
               setPending(undefined);
             }}
             actions={
               <>
                 <Button
-                  size="sm"
                   variant="ghost"
+                  className={TOUCH}
                   data-autofocus
                   onClick={() => {
                     setPending(undefined);
@@ -386,8 +430,8 @@ function Frame({
                   {t("mobile.cancel")}
                 </Button>
                 <Button
-                  size="sm"
                   variant="danger"
+                  className={TOUCH}
                   onClick={() => {
                     pending?.onConfirm();
                     setPending(undefined);
@@ -398,7 +442,7 @@ function Frame({
             }>
             {pending?.body}
           </Dialog>
-          <ToastViewport toasts={toasts.toasts} onDismiss={toasts.dismiss} />
+          <PhoneToasts toasts={toasts.toasts} aboveTabBar={tabRoot} />
         </div>
       </FeatureShellProvider>
     </ShellContext.Provider>

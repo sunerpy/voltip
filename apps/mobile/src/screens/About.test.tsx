@@ -4,7 +4,7 @@ import {
   MOCK_UPDATE_NOTES,
   MockBackend,
 } from "@voltip/shared/mock";
-import { screen, within } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
 
@@ -46,6 +46,35 @@ describe("updates on the phone", () => {
       "true",
     );
     expect(backend.peek().settings.auto_update).toBe(true);
+    backend.destroy();
+  });
+
+  it("the update line says where a check ended, with the desktop's lamp for it", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({ role: "phone" });
+    renderApp({ backend });
+    const card = await openAbout(user);
+    const status = () => within(card).getByTestId("phone-update-status");
+    const lamp = () => card.querySelector("[data-tone]")?.getAttribute("data-tone");
+    expect(lamp()).toBe("idle");
+    act(() => {
+      backend.simulateUpdate({ state: "checking" });
+    });
+    expect(status()).toHaveTextContent("正在检查更新…");
+    expect(lamp()).toBe("accent");
+    expect(within(card).getByRole("button", { name: "检查更新" })).toBeDisabled();
+    act(() => {
+      backend.simulateUpdate({ state: "up_to_date", version: "0.0.1", checked_at: 1_790_000_000 });
+    });
+    expect(status()).toHaveTextContent(/^已是最新 · 0\.0\.1 · 检查于 /);
+    expect(lamp()).toBe("ok");
+    act(() => {
+      backend.simulateUpdate({ state: "failed", message: "update: 无法连接 GitHub" });
+    });
+    // The machine prefix goes; the line turns the danger colour.
+    expect(status()).toHaveTextContent("更新失败 · 无法连接 GitHub");
+    expect(status()).toHaveClass("text-danger");
+    expect(lamp()).toBe("danger");
     backend.destroy();
   });
 

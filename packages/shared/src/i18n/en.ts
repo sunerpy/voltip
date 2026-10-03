@@ -540,6 +540,7 @@ export const en: Messages = {
       typed: "Typed on {device}",
       clipboard: "Clipboard of {device}",
       standalone: "Phone · {device}",
+      sent: "Sent to {device}",
     },
     filter: {
       all: "All",
@@ -2374,11 +2375,12 @@ export const en: Messages = {
       goneBody: "This entry was deleted or the history was cleared.",
       tooLarge: "This entry is too large and was not uploaded to the computer.",
       time: "Time taken",
+      sentNote: "The recognition and polish details are in the computer's history.",
       shareSrt: "Share subtitles (SRT)",
       shareTxt: "Share text (TXT)",
     },
     historySettings: {
-      lede: "What this phone transcribes is kept on this phone. While it syncs with a paired computer, a copy goes to the computer and the phone keeps its own.",
+      lede: "What this phone transcribes and the takes it sends to a computer are kept on this phone. While it syncs with a paired computer, a copy of what it transcribes goes to the computer and the phone keeps its own.",
       clearBody: "The {n} entries on this phone will be deleted. This cannot be undone.",
     },
     feedback: {
@@ -2568,12 +2570,13 @@ export const en: Messages = {
     },
     recent: {
       title: "Recent results",
-      body: "What this phone transcribed is kept on this phone; while it syncs with a paired computer, a copy goes to the computer.",
+      body: "What this phone transcribed and the takes it sent to a computer are kept on this phone; while it syncs with a paired computer, a copy of what it transcribed goes to the computer.",
       copy: "Copy",
       copied: "Copied",
       copyFailed: "Could not copy",
       share: "Share",
       all: "All history",
+      openLabel: "Open “{text}”",
       copyLabel: "Copy “{text}”",
       shareLabel: "Share “{text}”",
     },

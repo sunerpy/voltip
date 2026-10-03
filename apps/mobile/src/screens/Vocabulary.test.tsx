@@ -2,6 +2,7 @@ import { MockBackend } from "@voltip/shared/mock";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
+import { chooseOption, selectTrigger } from "../test/select";
 
 // The phone's dictionary, rules and scenes (user decision 2026-10-01: the phone works on its own
 // with every feature but the local models; a scene is picked by hand on the talk card, since the
@@ -296,9 +297,9 @@ describe("the phone's scenes", () => {
     const editor = await screen.findByTestId("scene-editor");
     expect(within(editor).queryByTestId("scene-editor-apps")).toBeNull();
     expect(within(editor).queryByTestId("scene-editor-keywords")).toBeNull();
-    expect(within(editor).queryByRole("combobox", { name: "输出方式" })).toBeNull();
+    expect(within(editor).queryByRole("button", { name: "输出方式" })).toBeNull();
     await user.type(within(editor).getByLabelText("名称"), "会议纪要");
-    await user.selectOptions(within(editor).getByRole("combobox", { name: "AI 润色" }), "off");
+    await chooseOption(user, selectTrigger("AI 润色", editor), "off");
     await user.click(screen.getByRole("button", { name: /保存/ }));
     await waitFor(() => {
       const mine = backend.peek().scenes.find((s) => s.name === "会议纪要");
@@ -331,9 +332,9 @@ describe("the phone's scenes", () => {
     );
     const mine = backend.peek().scenes.find((s) => s.name === "会议纪要");
     renderApp({ backend });
-    const picker = await screen.findByRole("combobox", { name: "场景" });
-    expect(picker).toHaveValue("");
-    await user.selectOptions(picker, mine?.id ?? "");
+    const picker = await screen.findByRole("button", { name: "场景" });
+    expect(picker).toHaveTextContent("不使用场景");
+    await chooseOption(user, picker, mine?.id ?? "");
     await waitFor(() => {
       expect(backend.peek().settings.pinned_scene).toBe(mine?.id);
     });
@@ -362,8 +363,8 @@ describe("the phone's scenes", () => {
     await user.click(screen.getByRole("button", { name: "返回" }));
     expect(screen.getByTestId("settings-scenes")).not.toHaveTextContent("说话时使用");
     await user.click(screen.getByTestId("tab-talk"));
-    expect(await screen.findByRole("combobox", { name: "场景" })).toHaveValue("");
-    await user.selectOptions(screen.getByRole("combobox", { name: "场景" }), "");
+    expect(await screen.findByRole("button", { name: "场景" })).toHaveTextContent("不使用场景");
+    await chooseOption(user, selectTrigger("场景"), "");
     await waitFor(() => {
       expect(backend.peek().settings.pinned_scene).toBeUndefined();
     });

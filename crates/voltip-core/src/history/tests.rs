@@ -946,6 +946,24 @@ fn regression_uploaded_rows_never_outlive_their_entries() {
     assert_eq!(uploaded(dir.path()), 0, "clear");
 }
 
+/// docs/dictation.md §20.7–20.8 (user decision 2026-10-03): the phone's record of a take it sent
+/// to a computer counts in the phone's statistics and is never uploaded: the computer keeps its
+/// own record of that take.
+#[test]
+fn a_record_of_a_sent_take_counts_and_stays_out_of_the_outbox() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = HistoryStore::open(dir.path());
+    let own = HistoryEntry { at_ms: 1_758_700_000_000, ..entry("手机自己识别的") };
+    let sent =
+        HistoryEntry { at_ms: 1_758_700_000_001, origin: Some(EntryOrigin { device: "Studio".into(), kind: OriginKind::Sent }), ..entry("发给电脑的") };
+    assert!(counts_for_stats(&sent));
+    store.push(own.clone(), MAX_ENTRIES).unwrap();
+    store.push(sent, MAX_ENTRIES).unwrap();
+    let batch = store.outbox(ALL, 200, crate::sync::MAX_ENTRY_BYTES).unwrap();
+    assert_eq!(batch.records.iter().map(|e| e.id).collect::<Vec<_>>(), vec![own.id]);
+    assert_eq!(HistoryReader::new(dir.path()).stats(&[0, 4_102_444_800_000]).unwrap().total.count, 2);
+}
+
 #[test]
 fn the_outbox_is_the_phones_own_unconfirmed_records_oldest_first() {
     let dir = tempfile::tempdir().unwrap();

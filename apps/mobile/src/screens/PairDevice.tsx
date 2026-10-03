@@ -5,6 +5,7 @@ import {
   CodeInput,
   Input,
   LampText,
+  Panel,
   Progress,
   Segmented,
   useBackend,
@@ -12,6 +13,7 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { useState } from "react";
+import { Lede, PAGE, TOUCH } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 
 type Method = "scan" | "code";
@@ -37,36 +39,39 @@ function Nearby({ busy }: { busy: boolean }) {
   const { t, locale } = useI18n();
   const computers = nearbyComputers(nearby);
   return (
-    <Card className="flex flex-col gap-3" data-testid="nearby">
-      <span className="text-[14px] font-medium text-fg">{t("mobile.pair.nearby.title")}</span>
+    <Panel eyebrow={t("mobile.pair.nearby.title")} data-testid="nearby">
       {!settings.lan_discovery ? (
-        <p className="text-[12px] text-fg-muted">{t("mobile.pair.nearby.off")}</p>
+        <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.pair.nearby.off")}</p>
       ) : computers.length === 0 ? (
-        <div className="flex flex-col gap-1">
-          <LampText tone="idle" pulse size="sm">
+        <div className="flex flex-col gap-1.5">
+          <LampText tone="idle" pulse>
             {t("mobile.pair.nearby.searching")}
           </LampText>
-          <p className="text-[12px] text-fg-muted">{t("mobile.pair.nearby.empty")}</p>
+          <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.pair.nearby.empty")}</p>
         </div>
       ) : (
-        <ul className="flex flex-col gap-2" aria-label={t("mobile.pair.nearby.title")}>
+        <ul
+          className="-my-2 flex flex-col divide-y divide-border"
+          aria-label={t("mobile.pair.nearby.title")}>
           {computers.map((d) => (
             <li
               key={d.fingerprint}
-              className="flex items-center justify-between gap-3 rounded-10 bg-inset px-3 py-2"
+              className="flex min-h-14 items-center justify-between gap-3 py-2"
               data-testid="nearby-computer"
               data-pairing={d.pairing}>
-              <div className="flex min-w-0 flex-col">
-                <span className="truncate text-[14px] text-fg">{d.name}</span>
-                <span className="text-[11px] text-fg-subtle">
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <span className="truncate text-[14px] font-medium text-fg" data-user-text>
+                  {d.name}
+                </span>
+                <span className="text-[12px] text-fg-muted">
                   {platformLabel(d.platform, locale)}
                   {!d.pairing && ` · ${t("mobile.pair.nearby.idle")}`}
                 </span>
               </div>
               {d.pairing && (
                 <Button
-                  size="sm"
                   variant="primary"
+                  className={TOUCH}
                   aria-label={t("mobile.pair.nearby.joinLabel", { name: d.name })}
                   disabled={busy}
                   onClick={() => {
@@ -79,7 +84,7 @@ function Nearby({ busy }: { busy: boolean }) {
           ))}
         </ul>
       )}
-    </Card>
+    </Panel>
   );
 }
 
@@ -126,14 +131,14 @@ export function PairDevice() {
   };
 
   return (
-    <div className="flex h-full flex-col gap-4 p-4">
-      <p className="text-[13px] leading-5 text-fg-muted">{t("mobile.pair.intro")}</p>
+    <div className={PAGE}>
+      <Lede>{t("mobile.pair.intro")}</Lede>
       <Nearby busy={busy} />
       <Segmented
         label={t("mobile.pair.method")}
         value={method}
         onChange={setMethod}
-        className="w-full"
+        className="h-11 w-full [&>button]:flex-1"
         options={[
           { value: "scan", label: t("mobile.pair.scan") },
           { value: "code", label: t("mobile.pair.code") },
@@ -151,7 +156,7 @@ export function PairDevice() {
               <div className="text-[14px] font-medium text-fg">{t("mobile.pair.aim")}</div>
               <Button
                 variant="primary"
-                className="h-11 w-full"
+                className={`${TOUCH} w-full`}
                 icon="qr"
                 loading={scanning}
                 disabled={busy}
@@ -161,11 +166,14 @@ export function PairDevice() {
             </>
           ) : (
             <>
-              <div className="text-[14px] font-medium text-fg">{t("mobile.pair.noCamera")}</div>
-              <p className="text-[12px] text-fg-muted">{t("mobile.pair.pasteLink")}</p>
+              <div className="flex flex-col gap-1">
+                <div className="text-[14px] font-medium text-fg">{t("mobile.pair.noCamera")}</div>
+                <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.pair.pasteLink")}</p>
+              </div>
               <Input
                 label={t("mobile.pair.link")}
                 mono
+                size="lg"
                 value={link}
                 placeholder="voltip://pair?v=1&s=…&t=…"
                 onChange={(e) => {
@@ -177,7 +185,7 @@ export function PairDevice() {
               />
               <Button
                 variant="primary"
-                className="h-11 w-full"
+                className={`${TOUCH} w-full`}
                 disabled={!isPairingLink(link) || busy}
                 onClick={() => {
                   joinLink(link);
@@ -204,7 +212,7 @@ export function PairDevice() {
           />
           <Button
             variant="primary"
-            className="h-11 w-full"
+            className={`${TOUCH} w-full`}
             disabled={code.length !== 6 || busy}
             onClick={() => {
               joinCode(code);
@@ -215,7 +223,7 @@ export function PairDevice() {
       )}
 
       {busy && (
-        <div className="flex flex-col gap-2" role="status">
+        <div className="flex flex-col gap-2 px-1" role="status">
           <LampText tone="accent" pulse>
             {phase === "creating_session" ? t("mobile.pair.joining") : t("mobile.pair.negotiating")}
           </LampText>
@@ -224,16 +232,16 @@ export function PairDevice() {
       )}
       {failed && method === "scan" && (
         <div
-          className="flex items-center justify-between gap-3 rounded-10 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+          className="flex items-center justify-between gap-3 rounded-10 bg-danger-soft py-1 pr-1 pl-4 text-[13px] text-danger"
           role="alert">
           <span>{failed}</span>
-          <Button size="sm" onClick={retry}>
+          <Button className={TOUCH} onClick={retry}>
             {t("mobile.pair.retry")}
           </Button>
         </div>
       )}
       {failed && method === "code" && (
-        <Button size="sm" variant="ghost" className="self-center" onClick={retry}>
+        <Button variant="ghost" className={`${TOUCH} self-center`} onClick={retry}>
           {t("mobile.pair.clearRetry")}
         </Button>
       )}

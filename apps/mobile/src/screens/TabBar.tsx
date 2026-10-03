@@ -1,9 +1,11 @@
-import { Icon, type IconName, useI18n, useUiState } from "@voltip/ui";
+import { Icon, type IconName, cx, useI18n, useUiState } from "@voltip/ui";
 import { useMobileShell } from "../app/shell";
 
 /** The bottom tab bar on the tab roots (user decision 2026-10-01: the phone has its own settings
  *  and history): 说话 is the welcome screen until a computer is paired, the device list after;
- *  记录 what the phone recognised itself; 设置 the phone's own settings. */
+ *  记录 what the phone recognised itself; 设置 the phone's own settings. The tab in view is marked
+ *  as the desktop's sidebar marks its page: ink text on the nav-active shade, the others muted.
+ *  The bar runs under the navigation bar. */
 export function TabBar() {
   const shell = useMobileShell();
   const { t } = useI18n();
@@ -40,7 +42,7 @@ export function TabBar() {
   return (
     <nav
       aria-label={t("mobile.tab.label")}
-      className="sticky bottom-0 flex shrink-0 border-t border-border bg-surface">
+      className="flex shrink-0 border-t border-border bg-surface pb-[env(safe-area-inset-bottom)]">
       {tabs.map((tab) => (
         <button
           key={tab.id}
@@ -48,10 +50,17 @@ export function TabBar() {
           aria-current={tab.active ? "page" : undefined}
           data-testid={`tab-${tab.id}`}
           onClick={tab.open}
-          className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] font-medium ${
-            tab.active ? "text-accent" : "text-fg-muted"
-          }`}>
-          <Icon name={tab.icon} size={20} />
+          className={cx(
+            "group flex h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition-colors",
+            tab.active ? "text-fg" : "text-fg-muted active:text-fg",
+          )}>
+          <span
+            className={cx(
+              "flex h-7 w-14 items-center justify-center rounded-pill transition-colors",
+              tab.active ? "bg-nav-active" : "group-active:bg-inset",
+            )}>
+            <Icon name={tab.icon} size={18} />
+          </span>
           {tab.label}
         </button>
       ))}

@@ -1,5 +1,7 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cx } from "../cx";
+import { usePresentation } from "../presentation/PresentationProvider";
+import { TOUCH_CONTROL, TOUCH_TARGET } from "../presentation/touch";
 import { Icon, type IconName } from "./Icon";
 import { Keycaps } from "./Keycap";
 
@@ -40,6 +42,18 @@ const SIZE_CLASS: Record<ButtonSize, string> = {
   md: "h-8 px-3 text-[13px] gap-2",
 };
 
+/** The pressed state under the touch presentation, where no hover comes before the tap: a step
+ *  past the hover colour on surfaces, a little lighter for fills and links. */
+const PRESSED_CLASS: Record<ButtonVariant, string> = {
+  primary: "active:opacity-80",
+  outline: "active:bg-inset2",
+  ghost: "active:bg-inset2",
+  danger: "active:opacity-80",
+  text: "active:opacity-60",
+  "text-danger": "active:opacity-60",
+  "text-muted": "active:opacity-60",
+};
+
 export function Button({
   variant = "outline",
   size = "md",
@@ -52,6 +66,8 @@ export function Button({
   type = "button",
   ...rest
 }: ButtonProps) {
+  const touch = usePresentation() === "touch";
+  const off = disabled === true || loading;
   return (
     <button
       type={type}
@@ -63,6 +79,10 @@ export function Button({
         "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50",
         VARIANT_CLASS[variant],
         SIZE_CLASS[size],
+        // The phone: the same size, a 44 px target around it, and a pressed state.
+        touch && TOUCH_CONTROL,
+        touch && TOUCH_TARGET,
+        touch && !off && PRESSED_CLASS[variant],
         className,
       )}
       {...rest}>

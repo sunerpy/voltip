@@ -13,6 +13,7 @@ import {
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
+import { chooseOption, selectTrigger } from "../test/select";
 
 // A computer's history and settings on the phone (docs/dictation.md §20.8; user decision
 // 2026-10-02: the 记录 tab switches between this phone and each computer; the computer's settings
@@ -212,7 +213,7 @@ describe("a computer's history on the phone", () => {
     await user.click(await within(page).findByRole("radio", { name: "MacBook Pro" }));
     expect(await within(page).findByText("电脑上说的话。")).toBeInTheDocument();
     // The computer's entries cannot be starred on the phone: the empty filter names another range.
-    await user.selectOptions(within(page).getByRole("combobox", { name: "筛选" }), "starred");
+    await chooseOption(user, selectTrigger("筛选", page), "starred");
     expect(await within(page).findByText("已收藏暂无结果。")).toBeInTheDocument();
     expect(within(page).getByText("可选择其他时间范围。")).toBeInTheDocument();
     expect(within(page).queryByText("在记录详情中点「收藏」。")).toBeNull();

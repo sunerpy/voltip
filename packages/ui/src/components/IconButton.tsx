@@ -1,5 +1,7 @@
 import type { ButtonHTMLAttributes } from "react";
 import { cx } from "../cx";
+import { usePresentation } from "../presentation/PresentationProvider";
+import { TOUCH_CONTROL, TOUCH_TARGET } from "../presentation/touch";
 import { Icon, type IconName } from "./Icon";
 
 export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -21,6 +23,7 @@ export function IconButton({
   type = "button",
   ...rest
 }: IconButtonProps) {
+  const touch = usePresentation() === "touch";
   return (
     <button
       type={type}
@@ -31,6 +34,9 @@ export function IconButton({
         "text-fg-muted hover:bg-inset hover:text-fg disabled:cursor-not-allowed disabled:opacity-50",
         tone === "danger" && "hover:text-danger",
         bordered && "bg-surface hairline",
+        // The phone: a 44 px target around the 24 / 28 px button, and a pressed state.
+        touch && cx(TOUCH_CONTROL, TOUCH_TARGET, "select-none enabled:active:bg-inset2"),
+        touch && (tone === "danger" ? "enabled:active:text-danger" : "enabled:active:text-fg"),
         className,
       )}
       style={{ width: size, height: size }}

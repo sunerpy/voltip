@@ -5,21 +5,18 @@ import {
   errorText,
   formatCount,
 } from "@voltip/shared";
-import { Button, Select, Toggle, useBackend, useI18n, useUiState } from "@voltip/ui";
-import type { ReactNode } from "react";
+import {
+  Button,
+  Card,
+  Select,
+  StatusRow,
+  Toggle,
+  useBackend,
+  useI18n,
+  useUiState,
+} from "@voltip/ui";
+import { Lede, TOUCH, TOUCH_TOGGLE } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
-
-function Row({ label, help, children }: { label: string; help: string; children: ReactNode }) {
-  return (
-    <div className="flex items-center gap-3 px-4 py-3">
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="text-[14px] font-medium text-fg">{label}</span>
-        <span className="text-[12px] leading-5 text-fg-muted">{help}</span>
-      </span>
-      {children}
-    </div>
-  );
-}
 
 /** 历史记录 under the phone's settings (docs/dictation.md §4, §20.7): whether takes are recorded,
  *  how many are kept (`settings_set_history`, the desktop's choices), and 清空历史 after a
@@ -54,24 +51,26 @@ export function HistorySettings() {
     });
   };
   return (
-    <div className="flex flex-col gap-3 p-4" data-testid="phone-history-settings">
-      <p className="px-1 text-[12px] leading-5 text-fg-muted">{t("mobile.historySettings.lede")}</p>
-      <div className="flex flex-col divide-y divide-border overflow-hidden rounded-10 bg-surface hairline">
-        <Row
+    <div className="flex flex-col gap-4 p-4" data-testid="phone-history-settings">
+      <Lede>{t("mobile.historySettings.lede")}</Lede>
+      <Card padding="none" className="px-4">
+        <StatusRow
           label={t("settings.brief.privacy.record")}
           help={t("settings.brief.privacy.recordHelp")}>
           <Toggle
             checked={history.enabled}
             ariaLabel={t("settings.brief.privacy.record")}
+            className={TOUCH_TOGGLE}
             onChange={(enabled) => {
               set({ enabled });
             }}
           />
-        </Row>
-        <Row label={t("settings.brief.privacy.keep")} help={t("settings.brief.privacy.keepHelp")}>
+        </StatusRow>
+        <StatusRow
+          label={t("settings.brief.privacy.keep")}
+          help={t("settings.brief.privacy.keepHelp")}>
           <Select
             aria-label={t("settings.brief.privacy.keep")}
-            size="sm"
             value={String(keep)}
             options={options.map((n) => ({
               value: String(n),
@@ -81,16 +80,16 @@ export function HistorySettings() {
               set({ keep: Number(value) });
             }}
           />
-        </Row>
-      </div>
-      <div className="flex items-center gap-3 px-1">
-        <span className="flex-1 text-[12px] text-fg-muted" data-testid="phone-history-count">
+        </StatusRow>
+      </Card>
+      <div className="flex items-center gap-3 pl-1">
+        <span className="mono flex-1 text-[11px] text-fg-subtle" data-testid="phone-history-count">
           {t("settings.brief.privacy.historyCount", {
             n: formatCount(total),
             keep: formatCount(keep),
           })}
         </span>
-        <Button size="sm" variant="text-danger" disabled={total === 0} onClick={clear}>
+        <Button variant="text-danger" className={TOUCH} disabled={total === 0} onClick={clear}>
           {t("settings.brief.privacy.clear")}
         </Button>
       </div>

@@ -147,7 +147,9 @@ type UiEvent = { type: "state" } & UiState | { type: "identity" } & DeviceIdenti
 
 所有页面的数据都来自 `Backend`（`state.dictation` / `state.history_recent` 与历史查询 / `state.dictionary` / `state.rules` / `state.engines` / `state.settings` …）；`packages/shared/src/fixtures/` 只剩 IPC 契约夹具与测试数据。
 
-移动端（`apps/mobile/src`，同一套组件，竖屏 390×844 起）：`Welcome → This Device（名称、指纹、平台）→ Pair Device（[扫码] 或 输入 6 位码 `_ _ _   _ _ _`）→ Verify Device（对端名称/平台 + Safety Code 四词 + 指纹 + [Confirm & Trust]/[Reject]）→ Devices（Device / Platform / Online·Offline / Last Seen / Trusted / Connection Type）`。扫码用 `@tauri-apps/plugin-barcode-scanner`（在 Mock 下用文本输入代替）。Welcome 与 Devices 的顶部都是「用手机说话」（`PhoneMic`）：有在线的已配对电脑时录音发给电脑（`phone_take_*`），没有时在手机上识别（`dictation_*`，结果进手机剪贴板），一次录音保持开始时的去向；下面的「最近结果」（`RecentResults`）读 `state.history_recent`，每条可复制（`pasteText`）或分享（`phone_share_text`），docs/dictation.md §20.7。
+移动端（`apps/mobile/src`，同一套组件，竖屏 390×844 起）：`Welcome → This Device（名称、指纹、平台）→ Pair Device（[扫码] 或 输入 6 位码 `_ _ _   _ _ _`）→ Verify Device（对端名称/平台 + Safety Code 四词 + 指纹 + [Confirm & Trust]/[Reject]）→ Devices（Device / Platform / Online·Offline / Last Seen / Trusted / Connection Type）`。扫码用 `@tauri-apps/plugin-barcode-scanner`（在 Mock 下用文本输入代替）。Welcome 与 Devices 的顶部都是「用手机说话」（`PhoneMic`）：有在线的已配对电脑时录音发给电脑（`phone_take_*`），没有时在手机上识别（`dictation_*`，结果进手机剪贴板），一次录音保持开始时的去向；下面的「最近结果」（`RecentResults`）读 `state.history_recent`，列出手机识别的结果和发送到电脑的听写，点一行打开记录详情，也可以直接复制（`pasteText`）或分享（`phone_share_text`），docs/dictation.md §20.7。
+
+手机的样式（2026-10-03 用户要求：与桌面一致、去掉老式安卓控件）：根字号 16 px（`apps/mobile/src/index.css` 的 `--ui-font-size`；桌面 13 px 起，由设置 › 外观调），所以共享组件的尺寸按标称值显示，`h-11` 即 44 px 的最小触控目标、`p-4` 即 16 px 页边距，文字大小两端都是像素。`App` 用 `PresentationProvider value="touch"` 包住整个应用：`Select` 不再用原生 `<select>`（Android WebView 会弹出系统老式的单选对话框），而是同样外观的触发按钮加页面内的选项列表（与 `Menu` 同一套样式，行高 44 px，下方放不下时翻到上方，点外面、Esc 和系统返回关闭，返回先关列表再关对话框，共用 `components/layers.ts` 的层栈）；Button、IconButton、Toggle、Segmented、Menu 行与输入框去掉点按高亮，带按下状态，点按区域至少 44 × 44 px。没有提供者时为 `native`，桌面渲染与之前逐字节一致。页面沿用桌面的视觉语言：小号眉标、细线卡片、等宽读数、墨色主按钮、强调色文字链接；设置列表一种行样式（14 px 中等字重标签、12 px 说明、右侧控件或箭头）。`useNow` 是 Unix 秒，按天分组、统计与时间筛选的 hook 要毫秒（`useNow() * 1000`），桌面用 `useTickingNow`。
 
 ## 5. 质量门
 

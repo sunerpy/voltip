@@ -5,10 +5,37 @@ import {
   coreMessageText,
   formatDateTime,
 } from "@voltip/shared";
-import { Button, Card, Readout, Toggle, useBackend, useI18n, useUiState } from "@voltip/ui";
+import {
+  Button,
+  Card,
+  type LampTone,
+  Logo,
+  Readout,
+  StatusRow,
+  Toggle,
+  useBackend,
+  useI18n,
+  useUiState,
+} from "@voltip/ui";
+import { StateLine, TOUCH, TOUCH_TOGGLE } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 
 type T = ReturnType<typeof useI18n>["t"];
+
+/** The lamp beside the update line, as the line reads it: the desktop's tones, with the download
+ *  steps (which the phone words as a newer version, `updateLine`) lit as a newer version is. */
+const UPDATE_TONE: Record<UpdateStatus["state"], LampTone> = {
+  idle: "idle",
+  checking: "accent",
+  up_to_date: "ok",
+  available: "accent",
+  downloading: "accent",
+  ready: "accent",
+  installing: "accent",
+  failed: "danger",
+  store: "idle",
+  disabled: "idle",
+};
 
 /** The updater's state in one line, in the desktop's words (`settings.general.update`); `current`
  *  is this build's version. */
@@ -70,13 +97,12 @@ function UpdateCard() {
   if (update.state === "store") {
     return (
       <Card className="flex flex-col gap-3" data-testid="phone-update">
-        <h2 className="text-[14px] font-medium text-fg">{t("mobile.about.update.storeTitle")}</h2>
-        <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.about.update.storeBody")}</p>
+        <h2 className="eyebrow">{t("mobile.about.update.storeTitle")}</h2>
+        <p className="text-[13px] leading-5 text-fg-muted">{t("mobile.about.update.storeBody")}</p>
         <Button
-          size="sm"
           variant="outline"
           icon="external"
-          className="self-start"
+          className={`${TOUCH} self-start`}
           onClick={install}>
           {t("mobile.about.update.openStore")}
         </Button>
@@ -90,62 +116,61 @@ function UpdateCard() {
     version,
   );
   return (
-    <Card className="flex flex-col gap-3" data-testid="phone-update">
-      <h2 className="text-[14px] font-medium text-fg">{t("mobile.about.update.title")}</h2>
-      <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.about.update.directBody")}</p>
-      <p
-        className={update.state === "failed" ? "text-[13px] text-danger" : "text-[13px] text-fg"}
-        role="status"
-        data-testid="phone-update-status">
-        {line}
-      </p>
-      {update.state === "available" && (
-        <div className="flex flex-col gap-2">
-          {update.notes !== undefined && (
-            <details className="rounded-6 bg-inset px-3 py-2 text-[12px] leading-5">
-              <summary className="cursor-pointer text-fg-muted">
-                {t("mobile.about.update.notes")}
-              </summary>
-              <p className="mt-2 whitespace-pre-wrap text-fg">{update.notes}</p>
-            </details>
-          )}
-          <Button
-            size="sm"
-            variant="primary"
-            icon="download"
-            className="self-start"
-            onClick={install}>
-            {t("mobile.about.update.download")}
-          </Button>
-          <p className="text-[12px] leading-5 text-fg-muted">
-            {t("mobile.about.update.downloadHint")}
-          </p>
-        </div>
-      )}
-      <Button
-        size="sm"
-        variant="outline"
-        className="self-start"
-        disabled={update.state === "checking"}
-        onClick={() => {
-          backend.invoke("update_check").catch(fail);
-        }}>
-        {t("mobile.about.update.check")}
-      </Button>
-      <div className="flex items-center gap-3">
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="text-[14px] font-medium text-fg">{t("mobile.about.update.auto")}</span>
-          <span className="text-[12px] leading-5 text-fg-muted">
-            {t("mobile.about.update.autoHelp")}
+    <Card padding="none" data-testid="phone-update">
+      <div className="flex flex-col gap-3 p-4">
+        <h2 className="eyebrow">{t("mobile.about.update.title")}</h2>
+        <p className="text-[13px] leading-5 text-fg-muted">{t("mobile.about.update.directBody")}</p>
+        <StateLine tone={UPDATE_TONE[update.state]} pulse={update.state === "checking"}>
+          <span
+            className={update.state === "failed" ? "text-danger" : "text-fg"}
+            role="status"
+            data-testid="phone-update-status">
+            {line}
           </span>
-        </span>
-        <Toggle
-          checked={settings.auto_update}
-          ariaLabel={t("mobile.about.update.auto")}
-          onChange={(enabled) => {
-            backend.invoke("settings_set_auto_update", { enabled }).catch(fail);
-          }}
-        />
+        </StateLine>
+        {update.state === "available" && (
+          <div className="flex flex-col gap-3">
+            {update.notes !== undefined && (
+              <details className="rounded-6 bg-inset px-3 text-[12px] leading-5">
+                <summary className="cursor-pointer py-3 text-fg-muted">
+                  {t("mobile.about.update.notes")}
+                </summary>
+                <p className="pb-3 whitespace-pre-wrap text-fg select-text">{update.notes}</p>
+              </details>
+            )}
+            <Button
+              variant="primary"
+              icon="download"
+              className={`${TOUCH} self-start`}
+              onClick={install}>
+              {t("mobile.about.update.download")}
+            </Button>
+            <p className="text-[12px] leading-5 text-fg-muted">
+              {t("mobile.about.update.downloadHint")}
+            </p>
+          </div>
+        )}
+        <Button
+          variant="outline"
+          className={`${TOUCH} self-start`}
+          disabled={update.state === "checking"}
+          onClick={() => {
+            backend.invoke("update_check").catch(fail);
+          }}>
+          {t("mobile.about.update.check")}
+        </Button>
+      </div>
+      <div className="border-t border-border px-4">
+        <StatusRow label={t("mobile.about.update.auto")} help={t("mobile.about.update.autoHelp")}>
+          <Toggle
+            checked={settings.auto_update}
+            ariaLabel={t("mobile.about.update.auto")}
+            className={TOUCH_TOGGLE}
+            onChange={(enabled) => {
+              backend.invoke("settings_set_auto_update", { enabled }).catch(fail);
+            }}
+          />
+        </StatusRow>
       </div>
     </Card>
   );
@@ -170,30 +195,42 @@ export function About() {
   };
   return (
     <div className="flex flex-col gap-4 p-4" data-testid="phone-about">
-      <Card className="flex flex-col gap-3">
-        <Readout label={t("mobile.about.version")} value={version} />
-        <Readout label={t("mobile.about.license")} value={APP_LICENSE} />
-        <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.about.licenseBody")}</p>
-        <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.about.notices")}</p>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            icon="external"
-            onClick={() => {
-              open("source");
-            }}>
-            {t("mobile.about.source")}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            icon="external"
-            onClick={() => {
-              open("releases");
-            }}>
-            {t("mobile.about.releases")}
-          </Button>
+      <Card padding="none">
+        <div className="flex items-center gap-3 p-4">
+          <Logo size={36} />
+          <span className="text-[16px] font-semibold text-fg">Voltip</span>
+        </div>
+        <div className="border-t border-border px-4">
+          <StatusRow label={t("mobile.about.version")}>
+            <Readout label="" value={version} size="sm" />
+          </StatusRow>
+          <StatusRow label={t("mobile.about.license")}>
+            <Readout label="" value={APP_LICENSE} size="sm" />
+          </StatusRow>
+        </div>
+        <div className="flex flex-col gap-3 border-t border-border p-4">
+          <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.about.licenseBody")}</p>
+          <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.about.notices")}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              icon="external"
+              className={TOUCH}
+              onClick={() => {
+                open("source");
+              }}>
+              {t("mobile.about.source")}
+            </Button>
+            <Button
+              variant="outline"
+              icon="external"
+              className={TOUCH}
+              onClick={() => {
+                open("releases");
+              }}>
+              {t("mobile.about.releases")}
+            </Button>
+          </div>
         </div>
       </Card>
       <UpdateCard />

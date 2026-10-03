@@ -10,6 +10,7 @@ import {
 } from "@voltip/shared";
 import {
   Button,
+  Card,
   Dialog,
   EmptyState,
   IconButton,
@@ -20,6 +21,7 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { useMemo, useState } from "react";
+import { Lede, PAGE, TOUCH, TOUCH_ICON, TOUCH_TOGGLE } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 
 /** Creates or edits one entry: the correct spelling and the forms it is heard as. The instant
@@ -74,24 +76,26 @@ function EntryDialog({ entry, onClose }: { entry?: DictionaryEntry; onClose: () 
   };
 
   return (
+    // No key hint under the buttons: a phone has no Esc; its back closes the dialog.
     <Dialog
       open
       title={entry === undefined ? t("dictionary.newEntry") : t("mobile.dictionary.editTitle")}
       width={420}
+      hint=""
       onClose={onClose}
       actions={
         <>
           {entry !== undefined && (
-            <Button size="sm" variant="text-danger" className="mr-auto" onClick={remove}>
+            <Button variant="text-danger" className={`${TOUCH} mr-auto`} onClick={remove}>
               {t("common.delete")}
             </Button>
           )}
-          <Button size="sm" variant="ghost" onClick={onClose}>
+          <Button variant="ghost" className={TOUCH} onClick={onClose}>
             {t("common.cancel")}
           </Button>
           <Button
-            size="sm"
             variant="primary"
+            className={TOUCH}
             disabled={problem !== undefined}
             onClick={() => {
               void save();
@@ -103,7 +107,7 @@ function EntryDialog({ entry, onClose }: { entry?: DictionaryEntry; onClose: () 
       <div className="flex flex-col gap-3" data-testid="dictionary-editor">
         <Input
           label={t("dictionary.column.term")}
-          size="sm"
+          size="lg"
           value={term}
           data-autofocus
           error={term.length > 0 ? problem?.term : undefined}
@@ -114,7 +118,7 @@ function EntryDialog({ entry, onClose }: { entry?: DictionaryEntry; onClose: () 
         />
         <Input
           label={t("dictionary.column.heard")}
-          size="sm"
+          size="lg"
           value={heard}
           help={t("dictionary.column.heardHelp")}
           error={problem?.heard}
@@ -127,7 +131,10 @@ function EntryDialog({ entry, onClose }: { entry?: DictionaryEntry; onClose: () 
           <div className="flex items-center gap-1">
             <IconButton
               icon="chevronUp"
+              size={28}
+              bordered
               label={t("dictionary.row.up", { term: entry.term })}
+              className={TOUCH_ICON}
               disabled={index <= 0}
               onClick={() => {
                 move(-1);
@@ -135,13 +142,16 @@ function EntryDialog({ entry, onClose }: { entry?: DictionaryEntry; onClose: () 
             />
             <IconButton
               icon="chevronDown"
+              size={28}
+              bordered
               label={t("dictionary.row.down", { term: entry.term })}
+              className={TOUCH_ICON}
               disabled={index === entries.length - 1}
               onClick={() => {
                 move(1);
               }}
             />
-            <span className="text-[12px] text-fg-subtle">
+            <span className="ml-2 text-[12px] text-fg-subtle">
               {t("mobile.dictionary.order", { n: index + 1, total: entries.length })}
             </span>
           </div>
@@ -188,12 +198,13 @@ export function Dictionary() {
   };
 
   return (
-    <div className="flex flex-col gap-3 p-4" data-testid="phone-dictionary">
-      <p className="px-1 text-[12px] leading-5 text-fg-muted">{t("dictionary.explain")}</p>
-      <div className="flex items-end gap-2">
+    <div className={PAGE} data-testid="phone-dictionary">
+      <Lede>{t("dictionary.explain")}</Lede>
+      <div className="flex items-center gap-2">
         <Input
-          size="sm"
-          className="flex-1"
+          size="lg"
+          icon="search"
+          className="min-w-0 flex-1"
           aria-label={t("dictionary.searchLabel")}
           placeholder={t("dictionary.searchPlaceholder")}
           value={query}
@@ -202,9 +213,9 @@ export function Dictionary() {
           }}
         />
         <Button
-          size="sm"
           variant="primary"
           icon="plus"
+          className={TOUCH}
           disabled={entries.length >= MAX_DICTIONARY_ENTRIES}
           onClick={() => {
             setEditing({});
@@ -213,45 +224,49 @@ export function Dictionary() {
         </Button>
       </div>
       {entries.length === 0 ? (
-        <EmptyState compact title={t("dictionary.empty.title")}>
-          {t("mobile.dictionary.emptyBody")}
-        </EmptyState>
+        <Card padding="none">
+          <EmptyState compact title={t("dictionary.empty.title")}>
+            {t("mobile.dictionary.emptyBody")}
+          </EmptyState>
+        </Card>
       ) : visible.length === 0 ? (
         <p className="px-1 text-[12px] text-fg-subtle">{t("dictionary.noMatch")}</p>
       ) : (
-        <ul
-          aria-label={t("dictionary.list")}
-          className="flex flex-col divide-y divide-border overflow-hidden rounded-10 bg-surface hairline">
-          {visible.map((entry) => (
-            <li key={entry.id} className="flex items-center gap-3 px-4 py-3">
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 flex-col text-left"
-                aria-label={t("dictionary.row.edit", { term: entry.term })}
-                onClick={() => {
-                  setEditing({ entry });
-                }}>
-                <span
-                  className={`truncate text-[14px] font-medium ${entry.enabled ? "text-fg" : "text-fg-subtle"}`}
-                  data-user-text>
-                  {entry.term}
-                </span>
-                {entry.heard_as.length > 0 && (
-                  <span className="truncate text-[12px] text-fg-muted" data-user-text>
-                    {entry.heard_as.join(HEARD_AS_JOINER)}
+        <Card padding="none" className="overflow-hidden">
+          <ul aria-label={t("dictionary.list")} className="flex flex-col divide-y divide-border">
+            {visible.map((entry) => (
+              <li key={entry.id} className="flex items-center gap-3 pr-4">
+                {/* The entry opens in the editor; the switch beside it is a control of its own. */}
+                <button
+                  type="button"
+                  className="flex min-h-14 min-w-0 flex-1 flex-col justify-center gap-0.5 py-3 pl-4 text-left transition-colors hover:bg-inset active:bg-inset"
+                  aria-label={t("dictionary.row.edit", { term: entry.term })}
+                  onClick={() => {
+                    setEditing({ entry });
+                  }}>
+                  <span
+                    className={`truncate text-[14px] font-medium ${entry.enabled ? "text-fg" : "text-fg-subtle"}`}
+                    data-user-text>
+                    {entry.term}
                   </span>
-                )}
-              </button>
-              <Toggle
-                checked={entry.enabled}
-                ariaLabel={t("dictionary.row.enable", { term: entry.term })}
-                onChange={(enabled) => {
-                  toggle(entry, enabled);
-                }}
-              />
-            </li>
-          ))}
-        </ul>
+                  {entry.heard_as.length > 0 && (
+                    <span className="truncate text-[12px] leading-4 text-fg-muted" data-user-text>
+                      {entry.heard_as.join(HEARD_AS_JOINER)}
+                    </span>
+                  )}
+                </button>
+                <Toggle
+                  checked={entry.enabled}
+                  ariaLabel={t("dictionary.row.enable", { term: entry.term })}
+                  className={TOUCH_TOGGLE}
+                  onChange={(enabled) => {
+                    toggle(entry, enabled);
+                  }}
+                />
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
       <p className="mono px-1 text-[11px] text-fg-subtle">
         {t("dictionary.facts", { limit: MAX_DICTIONARY_ENTRIES, heard: MAX_HEARD_AS })}

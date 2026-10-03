@@ -83,6 +83,8 @@ pub(super) struct PhoneTake {
     /// Encodes the chunks as Opus once the desktop said it decodes them (docs/dictation.md §20.1);
     /// until then, and for a desktop that never says so, the chunks go out as PCM.
     opus: Option<TakeEncoder>,
+    /// Samples read from the microphone so far: the length of the phone's own record of the take.
+    samples: u64,
 }
 
 impl PhoneTake {
@@ -359,6 +361,7 @@ impl Runtime {
             seq: 0,
             stop_wanted: false,
             opus: None,
+            samples: 0,
         });
         self.emit_phone_take();
         Ok(())
@@ -393,6 +396,7 @@ impl Runtime {
             PhoneEvent::Chunk { take, pcm } => {
                 let Some(t) = self.phone_take.as_mut().filter(|t| t.take() == take && t.running()) else { return };
                 let to = t.to;
+                t.samples += u64::try_from(pcm.len() / 2).unwrap_or(u64::MAX);
                 let msg = match t.opus.as_mut().map(|encoder| encoder.push(&pcm)) {
                     None => Some(AppMessage::TakeAudio { version: ProtocolVersion::CURRENT, take, seq: t.seq, pcm }),
                     // Less than a frame so far: it goes out with the next chunk.
@@ -479,15 +483,61 @@ impl Runtime {
                 Err(e) => tracing::warn!(error = %e, "phone take: no Opus encoder; staying on PCM"),
             }
         }
+        let was_running = t.running();
         let state = PhoneTakeState::from(state);
         if state.is_final() {
             // The desktop is done with it (delivered, refused, cancelled): nothing more to stream.
             t.release();
-        } else if !t.running() {
+        } else if !was_running {
             return; // a late `listening` after the phone cancelled
         }
-        t.view.state = state;
+        // The phone keeps its own record of a delivered take (docs/dictation.md §20.7, user
+        // decision 2026-10-03), once: a second path may report the same end again.
+        let record = match &state {
+            PhoneTakeState::Done { text, pasted } if was_running && !text.trim().is_empty() => Some(self.sent_take_record(from, text, *pasted)),
+            _ => None,
+        };
+        if let Some(t) = self.phone_take.as_mut() {
+            t.view.state = state;
+        }
         self.emit_phone_take();
+        if let Some(entry) = record {
+            self.record_history(entry);
+        }
+    }
+
+    /// The phone's record of a take a computer delivered: the text the computer reported, the
+    /// length of the audio the phone sent, and the computer it went to. The computer keeps the
+    /// full record (recognition, clean-up, timings); this one is never uploaded (§20.8).
+    fn sent_take_record(&self, to: PublicKey, text: &str, pasted: bool) -> crate::history::HistoryEntry {
+        use crate::history::{EntryOrigin, HistoryEntry, OriginKind, Outcome};
+        let samples = self.phone_take.as_ref().map_or(0, |t| t.samples);
+        let computer = self.trusted.get_by_key(&to).map_or_else(|| to.fingerprint(), |d| d.name);
+        HistoryEntry {
+            id: uuid::Uuid::new_v4(),
+            at_ms: now_ms(),
+            raw_text: text.to_owned(),
+            text: text.to_owned(),
+            refined: false,
+            asr_model: String::new(),
+            refine_model: None,
+            duration_ms: samples.saturating_mul(1000) / u64::from(TAKE_SAMPLE_RATE_HZ),
+            asr_ms: 0,
+            refine_ms: None,
+            outcome: Outcome::Inserted { via: if pasted { crate::dictation::Via::Paste } else { crate::dictation::Via::Clipboard } },
+            starred: false,
+            mode: crate::dictation::OutputMode::WholeTake,
+            segments: None,
+            live_error: None,
+            vocabulary: None,
+            kind: crate::dictation::TakeKind::Dictation,
+            edit: None,
+            app: None,
+            scene: None,
+            preset: None,
+            origin: Some(EntryOrigin { device: computer, kind: OriginKind::Sent }),
+            processed: None,
+        }
     }
 }
 

@@ -10,6 +10,7 @@ import {
 import {
   Badge,
   Button,
+  Card,
   Dialog,
   EmptyState,
   IconButton,
@@ -25,6 +26,7 @@ import {
   useVocabularyPreview,
 } from "@voltip/ui";
 import { useMemo, useState } from "react";
+import { Lede, PAGE, TOUCH, TOUCH_ICON, TOUCH_TEXTAREA, TOUCH_TOGGLE } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 
 const NEW_RULE: RuleDraft = {
@@ -108,25 +110,27 @@ function RuleDialog({ rule, onClose }: { rule?: ReplacementRule; onClose: () => 
     (draft.pattern.length > 0 ? problem?.pattern : undefined) ??
     (check.kind === "error" ? check.message : undefined);
 
+  // No key hint under the buttons: a phone has no Esc; its back closes the dialog.
   return (
     <Dialog
       open
       title={rule === undefined ? t("rules.empty.newRule") : t("mobile.rules.editTitle")}
       width={420}
+      hint=""
       onClose={onClose}
       actions={
         <>
           {rule !== undefined && (
-            <Button size="sm" variant="text-danger" className="mr-auto" onClick={remove}>
+            <Button variant="text-danger" className={`${TOUCH} mr-auto`} onClick={remove}>
               {t("common.delete")}
             </Button>
           )}
-          <Button size="sm" variant="ghost" onClick={onClose}>
+          <Button variant="ghost" className={TOUCH} onClick={onClose}>
             {t("common.cancel")}
           </Button>
           <Button
-            size="sm"
             variant="primary"
+            className={TOUCH}
             disabled={problem !== undefined || check.kind === "error"}
             onClick={() => {
               void save();
@@ -135,10 +139,12 @@ function RuleDialog({ rule, onClose }: { rule?: ReplacementRule; onClose: () => 
           </Button>
         </>
       }>
-      <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto" data-testid="rule-editor">
+      <div
+        className="-mx-1 flex max-h-[60vh] flex-col gap-3 overflow-y-auto overscroll-none px-1"
+        data-testid="rule-editor">
         <Input
           label={t("rules.editor.name")}
-          size="sm"
+          size="lg"
           value={draft.name}
           data-autofocus
           error={draft.name.length > 0 ? problem?.name : undefined}
@@ -150,7 +156,6 @@ function RuleDialog({ rule, onClose }: { rule?: ReplacementRule; onClose: () => 
           <span className="text-[12px] text-fg-muted">{t("rules.editor.kind")}</span>
           <Segmented
             label={t("rules.editor.kind")}
-            size="sm"
             value={draft.kind}
             onChange={(kind) => {
               update({ kind });
@@ -159,12 +164,13 @@ function RuleDialog({ rule, onClose }: { rule?: ReplacementRule; onClose: () => 
               { value: "literal", label: t("rules.kind.literal") },
               { value: "regex", label: t("rules.kind.regex") },
             ]}
+            className="h-11 w-full [&>button]:flex-1"
           />
         </div>
         <Input
           label={t("rules.editor.from")}
           mono
-          size="sm"
+          size="lg"
           value={draft.pattern}
           onChange={(e) => {
             update({ pattern: e.target.value });
@@ -173,16 +179,18 @@ function RuleDialog({ rule, onClose }: { rule?: ReplacementRule; onClose: () => 
         <Input
           label={t("rules.editor.to")}
           mono
-          size="sm"
+          size="lg"
           value={draft.replacement}
           help={t("rules.editor.toHelp")}
           onChange={(e) => {
             update({ replacement: e.target.value });
           }}
         />
+        {/* The label takes the taps beside the switch: the row is the target. */}
         <Toggle
           checked={draft.case_sensitive}
           label={t("rules.editor.caseSensitive")}
+          className="min-h-11 self-start"
           onChange={(case_sensitive) => {
             update({ case_sensitive });
           }}
@@ -200,6 +208,7 @@ function RuleDialog({ rule, onClose }: { rule?: ReplacementRule; onClose: () => 
         </span>
         <Textarea
           label={t("mobile.rules.test")}
+          className={TOUCH_TEXTAREA}
           rows={2}
           value={sample}
           placeholder={t("mobile.rules.testPlaceholder")}
@@ -219,7 +228,10 @@ function RuleDialog({ rule, onClose }: { rule?: ReplacementRule; onClose: () => 
           <div className="flex items-center gap-1">
             <IconButton
               icon="chevronUp"
+              size={28}
+              bordered
               label={t("rules.row.up", { name: rule.name })}
+              className={TOUCH_ICON}
               disabled={index <= 0}
               onClick={() => {
                 move(-1);
@@ -227,13 +239,16 @@ function RuleDialog({ rule, onClose }: { rule?: ReplacementRule; onClose: () => 
             />
             <IconButton
               icon="chevronDown"
+              size={28}
+              bordered
               label={t("rules.row.down", { name: rule.name })}
+              className={TOUCH_ICON}
               disabled={index === rules.length - 1}
               onClick={() => {
                 move(1);
               }}
             />
-            <span className="text-[12px] text-fg-subtle">
+            <span className="ml-2 text-[12px] text-fg-subtle">
               {t("mobile.dictionary.order", { n: index + 1, total: rules.length })}
             </span>
           </div>
@@ -282,13 +297,13 @@ export function Rules() {
   };
 
   return (
-    <div className="flex flex-col gap-3 p-4" data-testid="phone-rules">
-      <p className="px-1 text-[12px] leading-5 text-fg-muted">{t("mobile.rules.intro")}</p>
-      <div className="flex flex-wrap gap-2">
+    <div className={PAGE} data-testid="phone-rules">
+      <Lede>{t("mobile.rules.intro")}</Lede>
+      <div className="flex gap-2">
         <Button
-          size="sm"
           variant="primary"
           icon="plus"
+          className={`${TOUCH} min-w-0 flex-1`}
           disabled={rules.length >= MAX_RULES}
           onClick={() => {
             setEditing({});
@@ -296,59 +311,62 @@ export function Rules() {
           {t("rules.empty.newRule")}
         </Button>
         <Button
-          size="sm"
-          icon="upload"
+          className={TOUCH}
           onClick={() => {
             setImporting(true);
           }}>
           {t("rules.importToml")}
         </Button>
-        <Button size="sm" icon="download" onClick={openExport}>
+        <Button className={TOUCH} onClick={openExport}>
           {t("rules.exportToml")}
         </Button>
       </div>
       {rules.length === 0 ? (
-        <EmptyState compact title={t("rules.empty.title")}>
-          {t("mobile.rules.emptyBody")}
-        </EmptyState>
+        <Card padding="none">
+          <EmptyState compact title={t("rules.empty.title")}>
+            {t("mobile.rules.emptyBody")}
+          </EmptyState>
+        </Card>
       ) : (
-        <ul
-          aria-label={t("mobile.title.rules")}
-          className="flex flex-col divide-y divide-border overflow-hidden rounded-10 bg-surface hairline">
-          {rules.map((rule) => (
-            <li key={rule.id} className="flex items-center gap-3 px-4 py-3">
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
-                aria-label={t("rules.row.edit", { name: rule.name })}
-                onClick={() => {
-                  setEditing({ rule });
-                }}>
-                <span className="flex items-center gap-2">
-                  <span
-                    className={`truncate text-[14px] font-medium ${rule.enabled ? "text-fg" : "text-fg-subtle"}`}
-                    data-user-text>
-                    {rule.name}
+        <Card padding="none" className="overflow-hidden">
+          <ul aria-label={t("mobile.title.rules")} className="flex flex-col divide-y divide-border">
+            {rules.map((rule) => (
+              <li key={rule.id} className="flex items-center gap-3 pr-4">
+                {/* The rule opens in the editor; the switch beside it is a control of its own. */}
+                <button
+                  type="button"
+                  className="flex min-h-14 min-w-0 flex-1 flex-col justify-center gap-0.5 py-3 pl-4 text-left transition-colors hover:bg-inset active:bg-inset"
+                  aria-label={t("rules.row.edit", { name: rule.name })}
+                  onClick={() => {
+                    setEditing({ rule });
+                  }}>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span
+                      className={`truncate text-[14px] font-medium ${rule.enabled ? "text-fg" : "text-fg-subtle"}`}
+                      data-user-text>
+                      {rule.name}
+                    </span>
+                    <Badge tone={rule.kind === "regex" ? "accent" : "neutral"} className="shrink-0">
+                      {t(`rules.kind.${rule.kind}`)}
+                    </Badge>
                   </span>
-                  <Badge tone={rule.kind === "regex" ? "accent" : "neutral"} className="shrink-0">
-                    {t(`rules.kind.${rule.kind}`)}
-                  </Badge>
-                </span>
-                <span className="mono truncate text-[12px] text-fg-muted" data-user-text>
-                  {rule.pattern} →{" "}
-                  {rule.replacement.length === 0 ? t("rules.column.emptyTo") : rule.replacement}
-                </span>
-              </button>
-              <Toggle
-                checked={rule.enabled}
-                ariaLabel={t("rules.row.enable", { name: rule.name })}
-                onChange={(enabled) => {
-                  toggle(rule, enabled);
-                }}
-              />
-            </li>
-          ))}
-        </ul>
+                  <span className="mono truncate text-[12px] text-fg-muted" data-user-text>
+                    {rule.pattern} →{" "}
+                    {rule.replacement.length === 0 ? t("rules.column.emptyTo") : rule.replacement}
+                  </span>
+                </button>
+                <Toggle
+                  checked={rule.enabled}
+                  ariaLabel={t("rules.row.enable", { name: rule.name })}
+                  className={TOUCH_TOGGLE}
+                  onChange={(enabled) => {
+                    toggle(rule, enabled);
+                  }}
+                />
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
       <p className="mono px-1 text-[11px] text-fg-subtle">
         {t("rules.footer", { n: rules.length, limit: MAX_RULES })}
@@ -378,17 +396,17 @@ export function Rules() {
           actions={
             <>
               <Button
-                size="sm"
                 icon="share"
+                className={TOUCH}
                 onClick={() => {
                   backend.invoke("phone_share_text", { text: exported }).catch(fail);
                 }}>
                 {t("mobile.rules.share")}
               </Button>
               <Button
-                size="sm"
                 variant="primary"
                 icon="copy"
+                className={TOUCH}
                 onClick={() => {
                   copy(exported);
                 }}>

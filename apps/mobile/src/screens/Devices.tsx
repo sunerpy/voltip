@@ -15,11 +15,14 @@ import {
   EmptyState,
   IconButton,
   LampText,
+  Panel,
+  cx,
   useBackend,
   useI18n,
   useNow,
   useUiState,
 } from "@voltip/ui";
+import { PAGE, TOUCH, TOUCH_ICON } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 import { PhoneMic } from "./PhoneMic";
 import { RecentResults } from "./RecentResults";
@@ -28,6 +31,8 @@ import { SendText } from "./SendText";
 /** Detail rows of a device card; the labels come from `mobile.devices.column.*`. */
 const COLUMNS = ["device", "platform", "online", "lastSeen", "trusted", "connection"] as const;
 
+/** One paired computer, as a row of the desktop's device table reads on a phone: its name and
+ *  state, then the table's columns as label-over-value readouts. */
 function DeviceRow({ view, now }: { view: DeviceView; now: number }) {
   const { backend } = useBackend();
   const shell = useMobileShell();
@@ -48,45 +53,56 @@ function DeviceRow({ view, now }: { view: DeviceView; now: number }) {
   };
   return (
     <Card
-      className={`flex flex-col gap-3 ${view.connection.state === "identity_changed" ? "border-danger" : ""}`}
+      className={cx(
+        "flex flex-col gap-4",
+        view.connection.state === "identity_changed" && "border-danger",
+      )}
       data-testid="device-card">
-      <div className="flex items-center justify-between">
-        <span className="text-[16px] font-semibold text-fg">{view.device.name}</span>
+      <div className="flex items-start justify-between gap-3">
+        <span className="min-w-0 text-[15px] font-semibold break-words text-fg" data-user-text>
+          {view.device.name}
+        </span>
         <LampText
           tone={online.tone === "neutral" ? "idle" : online.tone}
-          pulse={view.connection.state === "connecting"}>
+          pulse={view.connection.state === "connecting"}
+          className="mt-0.5">
           {online.text}
         </LampText>
       </div>
       <dl
-        className="grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]"
+        className="grid grid-cols-2 gap-x-4 gap-y-3"
         aria-label={t("mobile.devices.details", { name: view.device.name })}>
         {COLUMNS.map((c) => (
-          <div key={c}>
-            <dt className="mono text-[10px] uppercase tracking-wider text-fg-subtle">
-              {t(`mobile.devices.column.${c}`)}
-            </dt>
-            <dd className="text-fg">{cells[c]}</dd>
+          <div key={c} className="flex min-w-0 flex-col gap-0.5">
+            <dt className="text-[11px] text-fg-subtle">{t(`mobile.devices.column.${c}`)}</dt>
+            <dd className={cx("text-[13px] break-words text-fg", c === "trusted" && "mono")}>
+              {cells[c]}
+            </dd>
           </div>
         ))}
       </dl>
       {copy !== undefined && (
-        <p className="text-[12px] text-fg-muted" data-testid="device-sync" data-state={copy.state}>
+        <p
+          className="text-[12px] leading-5 text-fg-muted"
+          data-testid="device-sync"
+          data-state={copy.state}>
           {mirrorStateText(copy, now, locale)}
         </p>
       )}
-      <div className="mono text-[11px] text-fg-subtle">{view.device.fingerprint}</div>
+      <div className="mono text-[11px] text-fg-subtle select-text">{view.device.fingerprint}</div>
       {view.connection.state === "identity_changed" && (
-        <div className="rounded-6 bg-danger-soft px-3 py-2 text-[12px] text-danger" role="alert">
+        <div
+          className="rounded-6 bg-danger-soft px-3 py-2 text-[12px] leading-5 text-danger"
+          role="alert">
           {t("mobile.devices.identityChanged", {
             fingerprint: view.connection.presented_fingerprint,
           })}
         </div>
       )}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 border-t border-border pt-3">
         {view.connection.state === "online" && (
           <Button
-            size="sm"
+            className={TOUCH}
             onClick={() =>
               void backend.invoke("send_text", {
                 publicKey: view.device.public_key,
@@ -102,7 +118,7 @@ function DeviceRow({ view, now }: { view: DeviceView; now: number }) {
           tone="danger"
           bordered
           size={28}
-          className="ml-auto"
+          className={cx(TOUCH_ICON, "ml-auto")}
           onClick={() => {
             shell.confirm({
               title: t("mobile.devices.forgetTitle", { name: view.device.name }),
@@ -120,6 +136,8 @@ function DeviceRow({ view, now }: { view: DeviceView; now: number }) {
   );
 }
 
+/** 说话 once a computer is paired: the talk card, the phone's own results, the keyboard, then the
+ *  paired computers, the connection check and the way to pair another. */
 export function Devices() {
   const { backend } = useBackend();
   const { devices, relay, connectivity } = useUiState();
@@ -128,39 +146,42 @@ export function Devices() {
   const now = useNow();
   const online = devices.filter((d) => d.connection.state === "online").length;
   return (
-    <div className="flex h-full flex-col gap-3 p-4">
-      <div className="flex items-center justify-between text-[12px] text-fg-muted">
-        <span>{t("mobile.devices.count", { paired: devices.length, online })}</span>
-        <span className="mono">
+    <div className={cx(PAGE, "min-h-full")}>
+      <div className="flex items-center justify-between gap-3 px-1 text-[12px] text-fg-muted">
+        <LampText tone={online > 0 ? "ok" : "idle"}>
+          {t("mobile.devices.count", { paired: devices.length, online })}
+        </LampText>
+        <span className="mono truncate">
           {t("mobile.devices.relay", { state: relayLabel(relay, locale).text })}
         </span>
       </div>
       <PhoneMic desktops={devices} />
       <RecentResults />
       {devices.length === 0 ? (
-        <EmptyState icon="monitor" title={t("mobile.devices.emptyTitle")}>
-          {t("mobile.devices.emptyBody")}
-        </EmptyState>
+        <Card padding="none">
+          <EmptyState icon="monitor" title={t("mobile.devices.emptyTitle")}>
+            {t("mobile.devices.emptyBody")}
+          </EmptyState>
+        </Card>
       ) : (
         <>
           <SendText desktops={devices} />
           {devices.map((d) => (
             <DeviceRow key={d.device.public_key} view={d} now={now} />
           ))}
-          <Card className="flex flex-col gap-2">
-            <span className="text-[15px] font-semibold text-fg">{t("connectivity.title")}</span>
+          <Panel eyebrow={t("connectivity.title")}>
             <ConnectivityCheck
               status={connectivity}
               onRun={() => {
                 void backend.invoke("connectivity_check");
               }}
             />
-          </Card>
+          </Panel>
         </>
       )}
       <Button
         variant="primary"
-        className="mt-auto h-11 w-full text-[15px]"
+        className={cx(TOUCH, "mt-auto w-full")}
         icon="qr"
         onClick={() => {
           shell.go("pair");

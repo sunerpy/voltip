@@ -20,15 +20,18 @@ import {
 } from "@voltip/shared";
 import {
   Button,
+  Card,
   Icon,
   IconButton,
   Input,
+  Panel,
   Segmented,
   Textarea,
   useBackend,
   useI18n,
 } from "@voltip/ui";
 import { useEffect, useRef, useState } from "react";
+import { Lede, PAGE, TOUCH, TOUCH_ICON, TOUCH_TEXTAREA } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 
 /** 反馈 on the phone (docs/feedback.md; user decision 2026-10-01: the phone sends feedback of its
@@ -138,46 +141,50 @@ export function Feedback() {
   };
 
   return (
-    <div className="flex flex-col gap-4 p-4" data-testid="phone-feedback">
-      <p className="px-1 text-[12px] leading-5 text-fg-muted">{t("mobile.feedback.lede")}</p>
-      <Segmented<FeedbackKind>
-        label={t("feedback.kindLabel")}
-        value={kind}
-        onChange={setKind}
-        options={FEEDBACK_KINDS.map((k) => ({ value: k, label: t(`feedback.kind.${k}`) }))}
-        className="self-start"
-      />
-      <div className="flex flex-col gap-1">
-        <Textarea
-          label={t("feedback.messageLabel")}
-          placeholder={t("feedback.messagePlaceholder")}
-          value={message}
-          maxLength={FEEDBACK_MESSAGE_MAX}
-          rows={6}
+    <div className={PAGE} data-testid="phone-feedback">
+      <Lede>{t("mobile.feedback.lede")}</Lede>
+      <Card className="flex flex-col gap-4">
+        <Segmented<FeedbackKind>
+          label={t("feedback.kindLabel")}
+          value={kind}
+          onChange={setKind}
+          options={FEEDBACK_KINDS.map((k) => ({ value: k, label: t(`feedback.kind.${k}`) }))}
+          className="h-11 w-full [&>button]:flex-1"
+        />
+        <div className="flex flex-col gap-1">
+          <Textarea
+            label={t("feedback.messageLabel")}
+            className={TOUCH_TEXTAREA}
+            placeholder={t("feedback.messagePlaceholder")}
+            value={message}
+            maxLength={FEEDBACK_MESSAGE_MAX}
+            rows={6}
+            onChange={(e) => {
+              setMessage(e.target.value);
+            }}
+          />
+          <span className="mono self-end text-[11px] text-fg-subtle" data-testid="feedback-count">
+            {t("feedback.count", { n: message.length, max: FEEDBACK_MESSAGE_MAX })}
+          </span>
+        </div>
+        <Input
+          label={t("feedback.contactLabel")}
+          placeholder={t("feedback.contactPlaceholder")}
+          size="lg"
+          value={contact}
+          maxLength={FEEDBACK_CONTACT_MAX}
           onChange={(e) => {
-            setMessage(e.target.value);
+            setContact(e.target.value);
           }}
         />
-        <span className="mono self-end text-[11px] text-fg-subtle" data-testid="feedback-count">
-          {t("feedback.count", { n: message.length, max: FEEDBACK_MESSAGE_MAX })}
-        </span>
-      </div>
-      <Input
-        label={t("feedback.contactLabel")}
-        placeholder={t("feedback.contactPlaceholder")}
-        value={contact}
-        maxLength={FEEDBACK_CONTACT_MAX}
-        onChange={(e) => {
-          setContact(e.target.value);
-        }}
-      />
+      </Card>
       {configured && (
         <div className="flex flex-col gap-2" data-testid="feedback-attachments">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-[12px] font-medium text-fg">{t("feedback.attachLabel")}</span>
+          <div className="flex items-center justify-between gap-3 pl-1">
+            <span className="eyebrow">{t("feedback.attachLabel")}</span>
             <Button
-              size="sm"
               icon="plus"
+              className={TOUCH}
               disabled={adding || sending || files.length >= FEEDBACK_MAX_ATTACHMENTS}
               onClick={() => {
                 picker.current?.click();
@@ -200,64 +207,79 @@ export function Feedback() {
             />
           </div>
           {files.length > 0 && (
-            <ul className="flex flex-col gap-1" aria-label={t("feedback.attachLabel")}>
-              {files.map((file) => {
-                const video = file.type.startsWith("video/");
-                return (
-                  <li
-                    key={file.id}
-                    className="flex items-center gap-2 rounded-6 bg-inset px-2 py-1.5 text-[12px]"
-                    data-testid="feedback-attachment">
-                    <Icon
-                      name={video ? "video" : "image"}
-                      size={14}
-                      className="shrink-0 text-fg-muted"
-                      role="img"
-                      aria-label={t(`feedback.attachKind.${video ? "video" : "image"}`)}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-fg">{file.name}</span>
-                    <span className="mono shrink-0 text-fg-subtle">
-                      {attachmentSize(file.size)}
-                    </span>
-                    <IconButton
-                      icon="x"
-                      label={t("feedback.attachRemove", { name: file.name })}
-                      disabled={sending || adding}
-                      onClick={() => {
-                        detach(file.id);
-                      }}
-                    />
-                  </li>
-                );
-              })}
-            </ul>
+            <Card padding="none" className="overflow-hidden">
+              <ul
+                className="flex flex-col divide-y divide-border"
+                aria-label={t("feedback.attachLabel")}>
+                {files.map((file) => {
+                  const video = file.type.startsWith("video/");
+                  return (
+                    <li
+                      key={file.id}
+                      className="flex min-h-12 items-center gap-2 pr-1 pl-4 text-[13px]"
+                      data-testid="feedback-attachment">
+                      <Icon
+                        name={video ? "video" : "image"}
+                        size={16}
+                        className="shrink-0 text-fg-muted"
+                        role="img"
+                        aria-label={t(`feedback.attachKind.${video ? "video" : "image"}`)}
+                      />
+                      <span className="min-w-0 flex-1 truncate text-fg">{file.name}</span>
+                      <span className="mono shrink-0 text-[11px] text-fg-subtle">
+                        {attachmentSize(file.size)}
+                      </span>
+                      <IconButton
+                        icon="x"
+                        size={28}
+                        label={t("feedback.attachRemove", { name: file.name })}
+                        className={TOUCH_ICON}
+                        disabled={sending || adding}
+                        onClick={() => {
+                          detach(file.id);
+                        }}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
           )}
           {refusal !== undefined && (
-            <p role="alert" className="text-[12px] text-danger" data-testid="feedback-attach-error">
+            <p
+              role="alert"
+              className="px-1 text-[12px] leading-5 text-danger"
+              data-testid="feedback-attach-error">
               {t(`feedback.attachError.${refusal.reason}`, {
                 ...FEEDBACK_LIMITS,
                 name: refusal.name,
               })}
             </p>
           )}
-          <p className="text-[11px] leading-4 text-fg-subtle">
+          <p className="px-1 text-[12px] leading-5 text-fg-subtle">
             {t("mobile.feedback.attachHelp", FEEDBACK_LIMITS)}
           </p>
         </div>
       )}
       {!configured && (
-        <p className="text-[12px] text-fg-muted" data-testid="feedback-not-configured">
+        <p
+          className="px-1 text-[12px] leading-5 text-fg-muted"
+          data-testid="feedback-not-configured">
           {t("feedback.notConfigured")}
         </p>
       )}
       {error !== undefined && (
-        <p role="alert" className="text-[12px] text-danger" data-testid="feedback-error">
+        <p
+          role="alert"
+          className="px-1 text-[12px] leading-5 text-danger"
+          data-testid="feedback-error">
           {t(`feedback.error.${error}`, { max: FEEDBACK_MESSAGE_MAX })}
         </p>
       )}
       {configured ? (
         <Button
           variant="primary"
+          className={`${TOUCH} w-full`}
           disabled={empty || sending || adding || info === undefined}
           onClick={() => {
             void submit();
@@ -269,6 +291,7 @@ export function Feedback() {
         <Button
           variant="primary"
           icon="external"
+          className={`${TOUCH} w-full`}
           onClick={() => {
             backend.projectLinkOpen("feedback").catch((e: unknown) => {
               shell.toast(
@@ -280,30 +303,28 @@ export function Feedback() {
           {t("feedback.openIssue")}
         </Button>
       )}
-      <section
-        aria-label={t("feedback.attached")}
-        className="flex flex-col gap-2 rounded-10 bg-surface p-4 hairline"
-        data-testid="feedback-attached">
-        <span className="text-[12px] font-medium text-fg">{t("feedback.attached")}</span>
-        {info === undefined ? (
-          <p className="text-[12px] text-fg-muted">{t("feedback.loading")}</p>
-        ) : (
-          <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-[12px]">
-            {FEEDBACK_DIAGNOSTIC_ORDER.flatMap((key) => {
-              const value = info.diagnostics[key];
-              if (value === undefined) return [];
-              return [
-                <dt key={`${key}-k`} className="text-fg-muted">
-                  {t(`feedback.diag.${key}`)}
-                </dt>,
-                <dd key={`${key}-v`} className="mono truncate text-fg" data-diagnostic={key}>
-                  {diagnosticValue(key, value, t, locale)}
-                </dd>,
-              ];
-            })}
-          </dl>
-        )}
-        <p className="text-[11px] leading-4 text-fg-subtle">{t("feedback.attachedHelp")}</p>
+      <section aria-label={t("feedback.attached")} data-testid="feedback-attached">
+        <Panel eyebrow={t("feedback.attached")} bodyClassName="flex flex-col gap-3">
+          {info === undefined ? (
+            <p className="text-[12px] text-fg-muted">{t("feedback.loading")}</p>
+          ) : (
+            <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[12px]">
+              {FEEDBACK_DIAGNOSTIC_ORDER.flatMap((key) => {
+                const value = info.diagnostics[key];
+                if (value === undefined) return [];
+                return [
+                  <dt key={`${key}-k`} className="text-fg-muted">
+                    {t(`feedback.diag.${key}`)}
+                  </dt>,
+                  <dd key={`${key}-v`} className="mono truncate text-fg" data-diagnostic={key}>
+                    {diagnosticValue(key, value, t, locale)}
+                  </dd>,
+                ];
+              })}
+            </dl>
+          )}
+          <p className="text-[12px] leading-5 text-fg-subtle">{t("feedback.attachedHelp")}</p>
+        </Panel>
       </section>
     </div>
   );

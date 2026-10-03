@@ -534,6 +534,9 @@ export const zhCN = {
       /** A record the phone recognised on its own and uploaded (docs/dictation.md §20.8; user
        *  decision 2026-10-02: 「手机 · {名称}」). */
       standalone: "手机 · {device}",
+      /** On the phone: a take the computer delivered (docs/dictation.md §20.7, user decision
+       *  2026-10-03). */
+      sent: "发送到 {device}",
     },
     filter: {
       all: "全部",
@@ -2256,11 +2259,13 @@ export const zhCN = {
       goneBody: "这条记录已被删除或清空。",
       tooLarge: "这条记录太大，没有上传到电脑。",
       time: "耗时",
+      /** A take the computer delivered (docs/dictation.md §20.7): the phone has its text only. */
+      sentNote: "识别和润色的详细信息保存在电脑的记录中。",
       shareSrt: "分享字幕（SRT）",
       shareTxt: "分享文本（TXT）",
     },
     historySettings: {
-      lede: "这部手机识别的结果保存在这部手机上；与已配对的电脑同步时，副本会上传到电脑，手机上的记录照样保留。",
+      lede: "这部手机识别的结果和发送到电脑的听写保存在这部手机上；与已配对的电脑同步时，手机识别的结果会把副本上传到电脑，手机上的记录照样保留。",
       clearBody: "这部手机上的 {n} 条记录将被删除，此操作无法撤销。",
     },
     feedback: {
@@ -2448,12 +2453,13 @@ export const zhCN = {
     },
     recent: {
       title: "最近结果",
-      body: "在这部手机上识别的结果保存在这部手机上；与已配对的电脑同步时，副本会上传到电脑。",
+      body: "这部手机识别的结果和发送到电脑的听写保存在这部手机上；与已配对的电脑同步时，手机识别的结果会把副本上传到电脑。",
       copy: "复制",
       copied: "已复制",
       copyFailed: "复制失败",
       share: "分享",
       all: "全部记录",
+      openLabel: "打开「{text}」",
       copyLabel: "复制「{text}」",
       shareLabel: "分享「{text}」",
     },

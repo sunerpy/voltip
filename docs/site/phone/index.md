@@ -29,7 +29,7 @@ The phone cannot tell which app you are typing in, so scenes are not matched by 
 
 These settings apply to recordings the phone recognises itself. A recording sent to a computer follows the computer's settings.
 
-**Recent results** lists what the phone transcribed, newest first, with **Copy** and **Share**. **History** at the bottom lists everything: search it, filter it by time or by star, and see how many takes you made today, this week, this month and in total, and the time they saved. Open an entry to read the polished text and the transcript, and to copy, share, star or delete it; a long recording can also be processed again with an AI preset, and its subtitles (SRT) or text (TXT) shared to another app as a file. **Settings** › **History** turns saving off, sets how many entries are kept, or clears them all. These results are kept on the phone; while it syncs with a paired computer, a copy goes to the computer, see [The computer's history and settings](#the-computer-s-history-and-settings).
+**Recent results** lists what the phone transcribed and the takes it sent to a computer, newest first: open one to see its details, or **Copy** or **Share** it directly. **History** at the bottom lists everything: search it, filter it by time or by star, and see how many takes you made today, this week, this month and in total, and the time they saved, takes sent to a computer included. Open an entry to read the polished text and the transcript, and to copy, share, star or delete it; a long recording can also be processed again with an AI preset, and its subtitles (SRT) or text (TXT) shared to another app as a file. **Settings** › **History** turns saving off, sets how many entries are kept, or clears them all. These results are kept on the phone; while it syncs with a paired computer, a copy of what the phone recognised itself goes to the computer, see [The computer's history and settings](#the-computer-s-history-and-settings).
 
 **Settings** › **Feedback** reports a problem or suggests an idea, with screenshots or screen recordings from the gallery; before anything is sent, the page lists everything that goes along. See [Privacy](/privacy).
 
@@ -50,6 +50,8 @@ Pairing connects one phone and one computer, once:
 ## Talking on the phone
 
 Hold **Hold to talk** on the phone, speak, and release. The audio streams to the computer while you speak. The computer recognises it with its own settings — its recognition service, dictionary, AI polish, rules and scenes — and inserts the text at its own cursor. The phone shows each step and the result. Slide your finger off the button before releasing to cancel.
+
+Once the computer has inserted the text, the phone also keeps an entry in its own **History**, marked **Sent to** and the computer's name: the text the computer reported (up to 2,000 characters) and the length of the recording. The recognition and polish details stay in the computer's history. This entry is never uploaded to the computer. With saving turned off under **Settings** › **History** on the phone, the phone keeps none.
 
 If several computers are paired and online, choose the one to send to.
 

@@ -10,8 +10,9 @@ import {
   phoneTakeFinal,
   sceneLabel,
 } from "@voltip/shared";
-import { Card, LampText, LedMeter, Select, useBackend, useI18n, useUiState } from "@voltip/ui";
-import { type PointerEvent, useEffect, useRef, useState } from "react";
+import { Icon, LedMeter, Panel, Select, cx, useBackend, useI18n, useUiState } from "@voltip/ui";
+import { type PointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { StateLine } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 
 /** How often the listening timer redraws. */
@@ -215,6 +216,8 @@ function HoldButton({
     : offButton
       ? t("mobile.mic.releaseCancel")
       : releaseLabel;
+  // At rest the inset shade and a hairline, as the desktop's fields; held, the accent (the colour
+  // of a live level); off the button, the danger shade that says the take goes.
   return (
     <button
       ref={button}
@@ -223,13 +226,14 @@ function HoldButton({
       data-testid="phone-mic-hold"
       data-cancel={offButton || undefined}
       disabled={busy && !held}
-      className={`h-24 w-full touch-none select-none rounded-14 text-[17px] font-semibold transition-colors ${
+      className={cx(
+        "flex min-h-24 w-full touch-none flex-col items-center justify-center gap-1 rounded-14 px-4 py-4 text-[16px] font-semibold transition-colors select-none disabled:opacity-60",
         offButton
           ? "bg-danger-soft text-danger"
           : held
             ? "bg-accent text-accent-fg"
-            : "bg-inset text-fg hairline"
-      }`}
+            : "bg-inset text-fg hairline active:bg-inset2",
+      )}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
         begin();
@@ -255,11 +259,40 @@ function HoldButton({
           finish(false);
         }
       }}>
+      <Icon name={offButton ? "x" : "mic"} size={22} />
       {label}
-      <span className="mt-1 block text-[12px] font-normal opacity-80" data-testid="phone-mic-route">
+      <span className="block text-[12px] font-normal opacity-80" data-testid="phone-mic-route">
         {sublabel}
       </span>
     </button>
+  );
+}
+
+/** Where a take stands, under the button: a status line that wraps (a result can be long), the
+ *  codec while it streams, and the level while it records. */
+function TakeState({
+  state,
+  lamp,
+  pulse,
+  line,
+  codec,
+  level,
+}: {
+  state: string;
+  lamp: "ok" | "accent" | "danger" | "idle";
+  pulse: boolean;
+  line: string;
+  codec?: ReactNode;
+  level?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2" data-testid="phone-mic-state" data-state={state}>
+      <StateLine tone={lamp} pulse={pulse}>
+        <span className="line-clamp-3">{line}</span>
+      </StateLine>
+      {codec}
+      {level}
+    </div>
   );
 }
 
@@ -309,28 +342,21 @@ function ComputerTalk({
   if (target === undefined) return null;
 
   return (
-    <Card className="flex flex-col gap-3" data-testid="phone-mic" data-route="computer">
-      <div className="flex flex-col gap-1">
-        <span className="text-[15px] font-semibold text-fg">{t("mobile.mic.title")}</span>
-        <p className="text-[12px] text-fg-muted">{t("mobile.mic.body")}</p>
-      </div>
+    <Panel
+      eyebrow={t("mobile.mic.title")}
+      bodyClassName="flex flex-col gap-3"
+      data-testid="phone-mic"
+      data-route="computer">
+      <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.mic.body")}</p>
       {online.length > 1 && (
-        <label className="flex items-center justify-between gap-3 text-[12px] text-fg-muted">
-          {t("mobile.mic.target")}
-          <select
-            className="rounded-6 bg-surface px-2 py-1 text-[13px] text-fg hairline"
-            value={target.device.public_key}
-            disabled={running}
-            onChange={(e) => {
-              setPicked(e.target.value);
-            }}>
-            {online.map((d) => (
-              <option key={d.device.public_key} value={d.device.public_key}>
-                {d.device.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <Select
+          label={t("mobile.mic.target")}
+          value={target.device.public_key}
+          disabled={running}
+          options={online.map((d) => ({ value: d.device.public_key, label: d.device.name }))}
+          onChange={setPicked}
+          data-user-text=""
+        />
       )}
       <HoldButton
         busy={running}
@@ -343,50 +369,50 @@ function ComputerTalk({
         cancel={() => void backend.invoke("phone_take_cancel")}
       />
       {take !== undefined && take.device === target.device.public_key && (
-        <div data-testid="phone-mic-state" data-state={take.state.state}>
-          <LampText tone={tone(take.state)} pulse={take.state.state === "listening"}>
-            {phoneTakeLine(take.state, now - take.started_at, t)}
-          </LampText>
-          {take.opus === true && !phoneTakeFinal(take.state) && (
-            <span
-              className="mono mt-1 block text-[11px] text-fg-subtle"
-              data-testid="phone-mic-codec">
-              {t("mobile.mic.codecOpus")}
-            </span>
-          )}
-          {take.state.state === "listening" && (
-            <LedMeter
-              className="mt-2"
-              size="sm"
-              segments={24}
-              label={t("mobile.mic.level")}
-              level={level === undefined ? 0 : levelFraction(level.rms_dbfs)}
-              peak={level === undefined ? undefined : levelFraction(level.peak_dbfs)}
-            />
-          )}
-        </div>
+        <TakeState
+          state={take.state.state}
+          lamp={tone(take.state)}
+          pulse={take.state.state === "listening"}
+          line={phoneTakeLine(take.state, now - take.started_at, t)}
+          codec={
+            take.opus === true &&
+            !phoneTakeFinal(take.state) && (
+              <span className="mono text-[11px] text-fg-subtle" data-testid="phone-mic-codec">
+                {t("mobile.mic.codecOpus")}
+              </span>
+            )
+          }
+          level={
+            take.state.state === "listening" && (
+              <LedMeter
+                size="sm"
+                segments={40}
+                label={t("mobile.mic.level")}
+                level={level === undefined ? 0 : levelFraction(level.rms_dbfs)}
+                peak={level === undefined ? undefined : levelFraction(level.peak_dbfs)}
+              />
+            )
+          }
+        />
       )}
-    </Card>
+    </Panel>
   );
 }
 
-/** The phone recognises the take itself (docs/dictation.md §20.7): the built-in service
- *  transcribes and polishes it, and the result lands on the phone's clipboard. */
 /** The scene the phone's takes run with (docs/dictation.md §18; user decision 2026-10-01): the
  *  phone cannot tell which app the text goes to, so the user picks one, or none
- *  (`settings_set_pinned_scene`). A pinned scene that was deleted since reads as none. */
+ *  (`settings_set_pinned_scene`). A pinned scene that was deleted since reads as none, the option
+ *  a value no option has shows, and choosing 不使用场景 then clears it. */
 function ScenePicker({ disabled }: { disabled: boolean }) {
   const { backend } = useBackend();
   const shell = useMobileShell();
   const { t, locale } = useI18n();
   const { scenes, settings } = useUiState();
   if (scenes.length === 0) return null;
-  const pinned = scenes.some((s) => s.id === settings.pinned_scene) ? settings.pinned_scene : "";
   return (
     <Select
       label={t("mobile.mic.scene")}
-      size="sm"
-      value={pinned ?? ""}
+      value={settings.pinned_scene ?? ""}
       disabled={disabled}
       data-testid="phone-scene"
       options={[
@@ -404,6 +430,8 @@ function ScenePicker({ disabled }: { disabled: boolean }) {
   );
 }
 
+/** The phone recognises the take itself (docs/dictation.md §20.7): the built-in service
+ *  transcribes and polishes it, and the result lands on the phone's clipboard. */
 function PhoneTalk({ paired }: { paired: boolean }) {
   const { backend } = useBackend();
   const { t } = useI18n();
@@ -417,12 +445,15 @@ function PhoneTalk({ paired }: { paired: boolean }) {
   const line = localTakeLine(phase, listening && phase.ready ? now - phase.started_at : 0, t);
 
   return (
-    <Card className="flex flex-col gap-3" data-testid="phone-mic" data-route="phone">
+    <Panel
+      eyebrow={t("mobile.mic.title")}
+      bodyClassName="flex flex-col gap-3"
+      data-testid="phone-mic"
+      data-route="phone">
       <div className="flex flex-col gap-1">
-        <span className="text-[15px] font-semibold text-fg">{t("mobile.mic.title")}</span>
-        <p className="text-[12px] text-fg-muted">{t("mobile.mic.localBody")}</p>
+        <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.mic.localBody")}</p>
         {paired && (
-          <p className="text-[12px] text-fg-muted" data-testid="phone-mic-offline">
+          <p className="text-[12px] leading-5 text-fg-muted" data-testid="phone-mic-offline">
             {t("mobile.mic.offline")}
           </p>
         )}
@@ -437,22 +468,24 @@ function PhoneTalk({ paired }: { paired: boolean }) {
         cancel={() => void backend.invoke("dictation_cancel")}
       />
       {line !== "" && (
-        <div data-testid="phone-mic-state" data-state={phase.phase}>
-          <LampText tone={localTone(phase)} pulse={listening}>
-            {line}
-          </LampText>
-          {listening && (
-            <LedMeter
-              className="mt-2"
-              size="sm"
-              segments={24}
-              label={t("mobile.mic.level")}
-              level={level === undefined ? 0 : levelFraction(level.rms_dbfs)}
-              peak={level === undefined ? undefined : levelFraction(level.peak_dbfs)}
-            />
-          )}
-        </div>
+        <TakeState
+          state={phase.phase}
+          lamp={localTone(phase)}
+          pulse={listening}
+          line={line}
+          level={
+            listening && (
+              <LedMeter
+                size="sm"
+                segments={40}
+                label={t("mobile.mic.level")}
+                level={level === undefined ? 0 : levelFraction(level.rms_dbfs)}
+                peak={level === undefined ? undefined : levelFraction(level.peak_dbfs)}
+              />
+            )
+          }
+        />
       )}
-    </Card>
+    </Panel>
   );
 }

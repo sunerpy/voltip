@@ -44,6 +44,39 @@ running() {
   [ -n "$(adb shell pidof "$package" 2>/dev/null | tr -d '\r')" ]
 }
 
+# The screen's UI tree into $out/ui.xml. A system dialog over the app hides it from the dump (on a
+# freshly booted emulator the launcher may not answer for a while: run 37098351522 had its
+# "isn't responding" dialog over the first screen), so such a dialog is told to wait, and the
+# screen is read again.
+dump() {
+  local xy
+  for _ in 1 2 3; do
+    adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "$out/ui.xml" >/dev/null 2>&1 || return 1
+    xy=$(not_responding_wait) || return 0
+    echo "android-device-smoke: a system dialog says an app is not responding; telling it to wait" >&2
+    # shellcheck disable=SC2086 # "x y"
+    adb shell input tap $xy
+    # The dialog's own close animation, not a wait for anything in the app.
+    sleep 1
+  done
+}
+# The centre of the "Wait" button of a not-responding dialog on the screen, or status 1.
+not_responding_wait() {
+  python3 - "$out/ui.xml" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+nodes = list(ET.parse(sys.argv[1]).getroot().iter("node"))
+if not any(re.search(r"isn't responding|没有响应|无响应", n.get("text") or "") for n in nodes):
+    sys.exit(1)
+for n in nodes:
+    m = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", n.get("bounds", ""))
+    if m and (n.get("text") or "").strip() in ("Wait", "等待"):
+        x1, y1, x2, y2 = map(int, m.groups())
+        print((x1 + x2) // 2, (y1 + y2) // 2)
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
 adb wait-for-device
 # A build signed with another key cannot replace the installed one.
 adb uninstall "$package" >/dev/null 2>&1 || true
@@ -54,8 +87,7 @@ adb shell am start -W -n "$package/.MainActivity" >"$out/start.txt" 2>&1 || fail
 # Up: the first screen's hold-to-talk button (in Chinese or English) is in the window's UI tree.
 # At most 120 s: an emulator running arm64 code through its ARM translation is slow.
 deadline=$((SECONDS + 120))
-until adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "$out/ui.xml" >/dev/null 2>&1 &&
-  grep -qE '按住说话|Hold to talk' "$out/ui.xml"; do
+until dump && grep -qE '按住说话|Hold to talk' "$out/ui.xml"; do
   running || fail "the app closed on start"
   [ "$SECONDS" -lt "$deadline" ] || fail "the first screen did not come up within 120 s"
   sleep 3
@@ -78,9 +110,6 @@ fi
 # Android's back (user request 2026-10-02, docs/acceptance/android/manual-checklist.md item 17):
 # a page goes up a level, 设置 goes to 说话, and there a first back says so and a second within two
 # seconds leaves the app. The WebView's text is in the UI tree the dump writes.
-dump() {
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "$out/ui.xml" >/dev/null 2>&1
-}
 # Wait (at most 60 s) until the screen shows text matching the extended regex $1.
 showing() {
   local deadline=$((SECONDS + 60))
@@ -91,22 +120,36 @@ showing() {
   done
 }
 # The centre of the node labelled with one of the words: the text or description equal to it,
-# else containing it.
+# else containing it. With --clear-of-tabs, the centre of the part above the tab bar (the
+# WebView's nodes reach under it, and a tap there lands on a tab), or status 3 when too little
+# of it shows there: the page has to scroll first.
 centre() {
   python3 - "$out/ui.xml" "$@" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
-path, *words = sys.argv[1:]
+path, *args = sys.argv[1:]
+clear = bool(args) and args[0] == "--clear-of-tabs"
+words = args[1:] if clear else args
+TABS = {"说话", "记录", "设置", "Talk", "History", "Settings"}
 nodes = []
 for node in ET.parse(path).getroot().iter("node"):
     m = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.get("bounds", ""))
     if m:
         x1, y1, x2, y2 = map(int, m.groups())
         if x2 > x1 and y2 > y1:
-            nodes.append(((node.get("text") or "").strip(), (node.get("content-desc") or "").strip(), (x1 + x2) // 2, (y1 + y2) // 2))
+            nodes.append(((node.get("text") or "").strip(), (node.get("content-desc") or "").strip(), x1, y1, x2, y2))
+# The window is the first node; the tab bar is where the tab names are, in its lowest quarter.
+bottom = nodes[0][5] if nodes else 0
+tab_top = min((n[3] for n in nodes if (n[0] in TABS or n[1] in TABS) and bottom * 3 // 4 <= n[3] < bottom), default=bottom)
 for exact in (True, False):
-    for text, desc, x, y in nodes:
+    for text, desc, x1, y1, x2, y2 in nodes:
         if any((w in (text, desc)) if exact else (w in text or w in desc) for w in words):
-            print(x, y)
+            if not clear:
+                print((x1 + x2) // 2, (y1 + y2) // 2)
+                sys.exit(0)
+            shown = min(y2, tab_top) - y1
+            if shown < 24:
+                sys.exit(3)
+            print((x1 + x2) // 2, (y1 + min(y2, tab_top)) // 2)
             sys.exit(0)
 sys.exit(1)
 PY
@@ -117,6 +160,27 @@ tap() {
   xy=$(centre "$@") || fail "nothing on the screen reads $*"
   # shellcheck disable=SC2086 # "x y"
   adb shell input tap $xy
+}
+# A row of a page that scrolls: while the tab bar hides it (a small screen, a large font), the
+# page scrolls up by about a third of the screen first.
+tap_row() {
+  local xy status w h
+  read -r w h <<EOF
+$(adb shell wm size | tr -d '\r' | awk -F'[ x]' '/size/ { w = $(NF - 1); h = $NF } END { print w, h }')
+EOF
+  for _ in 1 2 3 4 5 6; do
+    dump || fail "the screen could not be read"
+    status=0
+    xy=$(centre --clear-of-tabs "$@") || status=$?
+    if [ "$status" -eq 0 ]; then
+      # shellcheck disable=SC2086 # "x y"
+      adb shell input tap $xy
+      return 0
+    fi
+    [ "$status" -eq 3 ] || fail "nothing on the screen reads $*"
+    adb shell input swipe $((w / 2)) $((h * 3 / 5)) $((w / 2)) $((h * 3 / 10)) 300
+  done
+  fail "$* stayed under the tab bar"
 }
 back() {
   adb shell input keyevent KEYCODE_BACK
@@ -129,7 +193,7 @@ in_front() {
 up_a_level() {
   tap 设置 Settings
   showing '外观与语言|Appearance and language'
-  tap 外观与语言 'Appearance and language'
+  tap_row 外观与语言 'Appearance and language'
   showing '按操作系统的语言选择|picks by the operating system language'
   back
   showing '外观与语言|Appearance and language'
