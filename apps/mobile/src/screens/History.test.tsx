@@ -47,7 +47,9 @@ describe("the phone's history", () => {
     const page = await screen.findByTestId("phone-history");
     for (const span of ["today", "week", "month", "total"]) {
       await waitFor(() => {
-        expect(within(page).getByTestId(`phone-history-stat-${span}`)).toHaveTextContent("听写 3 次");
+        expect(within(page).getByTestId(`phone-history-stat-${span}`)).toHaveTextContent(
+          "听写 3 次",
+        );
       });
     }
     // The list's days are today's too.
