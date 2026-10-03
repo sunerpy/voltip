@@ -88,6 +88,10 @@ gh attestation verify Voltip_0.0.4_amd64.deb --repo sunerpy/voltip \
 2. 把光标放进任意输入框，按住 `Ctrl+Alt+Space` 说话，松开。
 3. 纯 Wayland 会话里没有全局热键：在合成器里给 `voltip-desktop --toggle` 绑一个快捷键（语音编辑用 `--edit-toggle`）。
 
+<p align="center">
+  <img src="./media/voltip-dictation-zh.webp" width="720" alt="光标位于笔记应用中：按住 Ctrl+Alt+Space 后，Voltip 的悬浮窗依次显示录音、识别和润色，说出的句子出现在光标处" />
+</p>
+
 想完全在本机识别，打开侧栏的「语音模型」，选「本机」，下载一个模型：推荐 Qwen3-ASR 0.6B（690 MB），最轻的是 SenseVoice-small（240 MB）。下载完之后，音频不再离开这台电脑。
 
 程序还带一套无界面的命令行，适合脚本和服务器：

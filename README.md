@@ -136,6 +136,10 @@ gh attestation verify Voltip_0.0.4_amd64.deb --repo sunerpy/voltip \
 3. On a pure Wayland session there is no global hotkey. Bind a compositor shortcut to
    `voltip-desktop --toggle` (and `--edit-toggle` for voice edit).
 
+<p align="center">
+  <img src="./docs/readme/media/voltip-dictation-en.webp" width="720" alt="A note editor with the cursor in it: holding Ctrl+Alt+Space brings up Voltip's overlay, which listens, transcribes and polishes, and the spoken sentence appears at the cursor" />
+</p>
+
 For on-device recognition, open Speech models in the sidebar, choose This device and download a
 model: Qwen3-ASR 0.6B (690 MB) is the recommended one, SenseVoice-small (240 MB) the lightest.
 After that no audio leaves the machine.
