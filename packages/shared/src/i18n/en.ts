@@ -2575,6 +2575,7 @@ export const en: Messages = {
       copyFailed: "Could not copy",
       share: "Share",
       all: "All history",
+      openLabel: "Open “{text}”",
       copyLabel: "Copy “{text}”",
       shareLabel: "Share “{text}”",
     },

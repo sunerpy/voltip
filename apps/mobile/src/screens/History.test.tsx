@@ -263,4 +263,37 @@ describe("the phone's history", () => {
     expect(await screen.findByTestId("phone-history")).toBeInTheDocument();
     backend.destroy();
   });
+
+  it("regression: a recent result on 说话 opens its entry", async () => {
+    // User report 2026-10-03: a result under 最近结果 could be copied or shared but not opened,
+    // while a row of 记录 opens the entry's page. The row's text is that row's open target now.
+    const user = userEvent.setup();
+    const backend = new MockBackend({
+      role: "phone",
+      history: [take(1), take(2, { text: "明天交周报。" })],
+    });
+    renderApp({ backend });
+    const recent = await screen.findByTestId("phone-recent");
+    const second = within(recent).getAllByTestId("phone-recent-row")[1] as HTMLElement;
+    await user.click(within(second).getByRole("button", { name: "打开「明天交周报。」" }));
+    const entry = await screen.findByTestId("phone-entry");
+    expect(screen.getByRole("heading", { name: "记录详情", level: 1 })).toBeInTheDocument();
+    expect(within(entry).getByTestId("phone-entry-text")).toHaveTextContent("明天交周报。");
+    // 返回 leads back to 说话, where the list was.
+    await user.click(screen.getByRole("button", { name: "返回" }));
+    expect(screen.getByTestId("tab-talk")).toHaveAttribute("aria-current", "page");
+    // Copy and share stay buttons of their own beside the open target, never inside it.
+    const row = within(await screen.findByTestId("phone-recent")).getAllByTestId(
+      "phone-recent-row",
+    )[0] as HTMLElement;
+    const open = within(row).getByRole("button", { name: "打开「第 1 条记录。」" });
+    expect(within(open).queryAllByRole("button")).toHaveLength(0);
+    expect(within(row).getByRole("button", { name: "复制「第 1 条记录。」" })).not.toContainElement(
+      open,
+    );
+    expect(within(row).getByRole("button", { name: "分享「第 1 条记录。」" })).not.toContainElement(
+      open,
+    );
+    backend.destroy();
+  });
 });

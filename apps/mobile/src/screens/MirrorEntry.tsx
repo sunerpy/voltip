@@ -12,9 +12,20 @@ import {
   shortClockLabel,
   textChars,
 } from "@voltip/shared";
-import { Button, EmptyState, Segmented, useBackend, useI18n, useNow, useUiState } from "@voltip/ui";
-import { type ReactNode, useEffect, useState } from "react";
+import {
+  Button,
+  Card,
+  EmptyState,
+  Segmented,
+  useBackend,
+  useI18n,
+  useNow,
+  useUiState,
+} from "@voltip/ui";
+import { useEffect, useState } from "react";
+import { Fact, Facts, PAGE, TOUCH } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
+import { EntryHeader, EntryText } from "./HistoryEntry";
 
 type View = "polished" | "raw" | "processed";
 
@@ -55,15 +66,6 @@ function useMirrorEntry(desktop: string, id: string): Entry | null | undefined {
   return answer?.key === key ? answer.entry : undefined;
 }
 
-function Fact({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex items-start justify-between gap-3 py-2">
-      <dt className="shrink-0 text-[12px] text-fg-muted">{label}</dt>
-      <dd className="min-w-0 text-right text-[12px] break-words text-fg">{children}</dd>
-    </div>
-  );
-}
-
 /** One entry of a computer's history on the phone (docs/dictation.md §20.8; user decision
  *  2026-10-02): read-only — the text as polished, as recognised and as processed, when and how it
  *  was made and where it came from; copy and share, which a text over `MAX_PASTE_TEXT_CHARS` cannot
@@ -80,10 +82,12 @@ export function MirrorEntry() {
   if (found === undefined) return null;
   if (found === null)
     return (
-      <div className="p-4">
-        <EmptyState compact title={t("history.long.exportFailed.gone")}>
-          {t("mobile.entry.goneBody")}
-        </EmptyState>
+      <div className={PAGE}>
+        <Card padding="none">
+          <EmptyState compact title={t("history.long.exportFailed.gone")}>
+            {t("mobile.entry.goneBody")}
+          </EmptyState>
+        </Card>
       </div>
     );
 
@@ -117,22 +121,22 @@ export function MirrorEntry() {
   ];
 
   return (
-    <div className="flex flex-col gap-3 p-4" data-testid="phone-mirror-entry">
-      <div className="flex items-center gap-2 text-[12px] text-fg-muted">
-        <span>{`${dayLabel(entry.at_ms, now, locale)} ${shortClockLabel(entry.at_ms)}`}</span>
-        <span>{outcome.text}</span>
-      </div>
+    <div className={PAGE} data-testid="phone-mirror-entry">
+      <EntryHeader
+        when={`${dayLabel(entry.at_ms, now, locale)} ${shortClockLabel(entry.at_ms)}`}
+        outcome={outcome}
+      />
       {(entry.refined || processed !== undefined) && (
         <Segmented
           label={t("history.view.label")}
-          size="sm"
           value={shown}
           onChange={setView}
           options={views}
+          className="h-11 w-full [&>button]:flex-1"
         />
       )}
       {shown === "processed" && processed !== undefined && (
-        <p className="text-[12px] text-fg-muted" data-user-text>
+        <p className="px-1 text-[12px] leading-5 text-fg-muted" data-user-text>
           {t("history.view.processedBy", { preset: processed.preset.name })}
         </p>
       )}
@@ -144,19 +148,14 @@ export function MirrorEntry() {
           {t("mirror.shortened")}
         </p>
       )}
-      <p
-        className="rounded-10 bg-surface p-4 text-[15px] leading-7 whitespace-pre-wrap break-words text-fg select-text hairline"
-        data-testid="phone-mirror-entry-text"
-        data-user-text>
-        {text}
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" icon="copy" disabled={tooLong} onClick={copy}>
+      <EntryText text={text} testId="phone-mirror-entry-text" />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button icon="copy" className={TOUCH} disabled={tooLong} onClick={copy}>
           {t("mobile.recent.copy")}
         </Button>
         <Button
-          size="sm"
           icon="share"
+          className={TOUCH}
           disabled={tooLong}
           onClick={() => {
             backend.invoke("phone_share_text", { text }).catch(fail);
@@ -165,12 +164,14 @@ export function MirrorEntry() {
         </Button>
       </div>
       {tooLong && (
-        <p className="text-[12px] text-fg-muted" data-testid="phone-mirror-entry-too-long">
+        <p
+          className="px-1 text-[12px] leading-5 text-fg-muted"
+          data-testid="phone-mirror-entry-too-long">
           {t("mirror.tooLong")}
         </p>
       )}
-      <p className="text-[11px] leading-4 text-fg-subtle">{t("mirror.readOnly")}</p>
-      <dl className="flex flex-col divide-y divide-border rounded-10 bg-surface px-4 hairline">
+      <p className="px-1 text-[12px] leading-5 text-fg-subtle">{t("mirror.readOnly")}</p>
+      <Facts>
         {entry.origin !== undefined && (
           <Fact label={t("history.detail.origin")}>
             <span data-user-text data-origin={entry.origin.kind}>
@@ -181,7 +182,9 @@ export function MirrorEntry() {
         <Fact label={t("history.detail.duration")}>
           {formatDuration(entry.duration_ms, locale)}
         </Fact>
-        <Fact label={t("history.detail.chars")}>{textChars(entry.text)}</Fact>
+        <Fact label={t("history.detail.chars")}>
+          <span className="mono">{textChars(entry.text)}</span>
+        </Fact>
         <Fact label={t("history.detail.asrModel")}>
           <span className="mono">{entry.asr_model}</span>
         </Fact>
@@ -212,7 +215,7 @@ export function MirrorEntry() {
         <Fact label={t("mobile.entry.time")}>
           {t("history.timing.total", { n: formatCount(entry.asr_ms + (entry.refine_ms ?? 0)) })}
         </Fact>
-      </dl>
+      </Facts>
     </div>
   );
 }

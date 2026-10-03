@@ -8,8 +8,9 @@ import {
   formatDateTime,
   sentTextFinal,
 } from "@voltip/shared";
-import { Button, Card, LampText, Textarea, useBackend, useI18n, useUiState } from "@voltip/ui";
+import { Button, Panel, Select, Textarea, cx, useBackend, useI18n, useUiState } from "@voltip/ui";
 import { useState } from "react";
+import { StateLine, TOUCH, TOUCH_TEXTAREA } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 
 /** Characters as the core counts them (code points), not UTF-16 units. */
@@ -87,104 +88,108 @@ export function SendText({ desktops }: { desktops: readonly DeviceView[] }) {
   };
 
   return (
-    <Card className="flex flex-col gap-3" data-testid="send-text">
-      <div className="flex flex-col gap-1">
-        <span className="text-[15px] font-semibold text-fg">{t("mobile.send.title")}</span>
-        <p className="text-[12px] text-fg-muted">
-          {target === undefined ? t("mobile.send.noDesktop") : t("mobile.send.body")}
-        </p>
-      </div>
+    <Panel
+      eyebrow={t("mobile.send.title")}
+      bodyClassName="flex flex-col gap-3"
+      data-testid="send-text">
+      <p className="text-[12px] leading-5 text-fg-muted">
+        {target === undefined ? t("mobile.send.noDesktop") : t("mobile.send.body")}
+      </p>
       {target !== undefined && (
         <>
           {online.length > 1 && (
-            <label className="flex items-center justify-between gap-3 text-[12px] text-fg-muted">
-              {t("mobile.send.target")}
-              <select
-                className="rounded-6 bg-surface px-2 py-1 text-[13px] text-fg hairline"
-                value={target.device.public_key}
-                onChange={(e) => {
-                  setPicked(e.target.value);
-                }}>
-                {online.map((d) => (
-                  <option key={d.device.public_key} value={d.device.public_key}>
-                    {d.device.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <Select
+              label={t("mobile.send.target")}
+              value={target.device.public_key}
+              options={online.map((d) => ({ value: d.device.public_key, label: d.device.name }))}
+              onChange={setPicked}
+              data-user-text=""
+            />
           )}
-          <Textarea
-            aria-label={t("mobile.send.draft")}
-            placeholder={t("mobile.send.placeholder")}
-            rows={3}
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-            }}
-          />
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-1">
+            <Textarea
+              className={TOUCH_TEXTAREA}
+              aria-label={t("mobile.send.draft")}
+              placeholder={t("mobile.send.placeholder")}
+              rows={3}
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value);
+              }}
+            />
             <span
-              className={`mono text-[11px] ${tooLong ? "text-danger" : "text-fg-subtle"}`}
+              className={cx(
+                "mono self-end text-[11px]",
+                tooLong ? "text-danger" : "text-fg-subtle",
+              )}
               data-testid="send-text-count">
               {t("mobile.send.count", { n: count, max: MAX_PHONE_TEXT_CHARS })}
             </span>
+          </div>
+          <div className="flex items-center gap-2">
             <Button
-              size="sm"
-              variant="ghost"
-              icon="copy"
-              className="ml-auto"
+              icon="paste"
+              className={TOUCH}
               onClick={() => {
                 void sendClipboard();
               }}>
               {t("mobile.send.clipboard")}
             </Button>
             <Button
-              size="sm"
               variant="primary"
+              className={cx(TOUCH, "min-w-0 flex-1")}
               disabled={draft.trim().length === 0 || tooLong}
               onClick={() => {
                 void sendDraft();
               }}>
-              {t("mobile.send.send", { name: target.device.name })}
+              <span className="truncate">
+                {t("mobile.send.send", { name: target.device.name })}
+              </span>
             </Button>
           </div>
         </>
       )}
       {sent.length > 0 && (
-        <div className="flex flex-col gap-2 border-t border-border pt-3">
+        <div className="flex flex-col border-t border-border pt-1">
           <div className="flex items-center justify-between">
-            <span className="text-[12px] font-semibold text-fg-muted">
+            <span className="text-[12px] text-fg-muted">
               {t("mobile.send.sent", { n: sent.length })}
             </span>
             <Button
-              size="sm"
-              variant="ghost"
+              variant="text-muted"
+              className="h-11 text-[13px]"
               onClick={() => {
                 void backend.invoke("sent_texts_clear");
               }}>
               {t("mobile.send.clear")}
             </Button>
           </div>
-          <ul className="flex flex-col gap-2" aria-label={t("mobile.send.sentLabel")}>
+          <ul
+            className="flex flex-col divide-y divide-border"
+            aria-label={t("mobile.send.sentLabel")}>
             {sent.map((text) => (
               <li
                 key={`${text.device}-${text.id}`}
-                className="flex flex-col gap-1 rounded-10 bg-inset p-2.5"
+                className="flex flex-col gap-1 py-2.5"
                 data-testid="sent-text"
                 data-state={text.state.state}>
-                <span className="line-clamp-2 text-[13px] break-words text-fg">{text.body}</span>
-                <span className="mono text-[10px] text-fg-subtle">
+                <span
+                  className="line-clamp-2 text-[13px] leading-5 break-words text-fg"
+                  data-user-text>
+                  {text.body}
+                </span>
+                <span className="mono text-[11px] text-fg-subtle">
                   {formatDateTime(locale, text.sent_at, { timeStyle: "short" })} ·{" "}
                   {t(`mobile.send.source.${text.source}`)} · {text.device_name}
                 </span>
-                <LampText tone={tone(text)} size="sm" pulse={!sentTextFinal(text.state)}>
+                <StateLine tone={tone(text)} pulse={!sentTextFinal(text.state)} size="sm">
                   {sentTextLine(text, t)}
-                </LampText>
+                </StateLine>
               </li>
             ))}
           </ul>
         </div>
       )}
-    </Card>
+    </Panel>
   );
 }

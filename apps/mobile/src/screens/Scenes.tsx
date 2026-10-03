@@ -1,6 +1,7 @@
 import { MAX_SCENES, type Scene } from "@voltip/shared";
 import { Button, SceneCards, SceneEditor, useI18n, useUiState } from "@voltip/ui";
 import { useCallback, useState } from "react";
+import { Lede, PAGE, TOUCH } from "../app/phone-ui";
 
 /** 场景 on the phone (docs/dictation.md §18; user decision 2026-10-01): the desktop's scenes, the
  *  built-in ones included, without matching. The phone cannot tell which app the text goes to, so
@@ -17,13 +18,12 @@ export function Scenes() {
     setEditing(undefined);
   }, []);
   return (
-    <div className="flex flex-col gap-3 p-4" data-testid="phone-scenes">
-      <p className="px-1 text-[12px] leading-5 text-fg-muted">{t("mobile.scenes.lede")}</p>
+    <div className={PAGE} data-testid="phone-scenes">
+      <Lede>{t("mobile.scenes.lede")}</Lede>
       <Button
-        size="sm"
         variant="primary"
         icon="plus"
-        className="self-start"
+        className={`${TOUCH} w-full`}
         disabled={own >= MAX_SCENES}
         onClick={() => {
           setEditing({});

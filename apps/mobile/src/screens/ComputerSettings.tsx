@@ -1,6 +1,15 @@
 import { type MirrorProfile, mirrorStateText, presetLabel, sceneLabel } from "@voltip/shared";
-import { EmptyState, useBackend, useI18n, useNow, useUiState } from "@voltip/ui";
+import {
+  Card,
+  EmptyState,
+  SettingsSection,
+  useBackend,
+  useI18n,
+  useNow,
+  useUiState,
+} from "@voltip/ui";
 import { type ReactNode, useEffect, useState } from "react";
+import { Fact } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 
 /** The settings the copy of `desktop` holds (`mirror_profile`), asked again whenever the copy
@@ -29,33 +38,27 @@ function useProfile(desktop: string): MirrorProfile | null | undefined {
   return answer?.desktop === desktop ? answer.profile : undefined;
 }
 
+/** One group of the computer's settings, as the desktop's settings sections: the eyebrow label,
+ *  then its facts or its list in a hairline card. */
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="flex flex-col gap-2" aria-label={title}>
-      <h2 className="px-1 text-[12px] font-medium text-fg-subtle">{title}</h2>
-      <div className="rounded-10 bg-surface px-4 hairline">{children}</div>
-    </section>
-  );
-}
-
-function Fact({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex items-start justify-between gap-3 border-b border-border py-2.5 last:border-b-0">
-      <dt className="shrink-0 text-[13px] text-fg-muted">{label}</dt>
-      <dd className="min-w-0 text-right text-[13px] break-words text-fg">{children}</dd>
-    </div>
+    <SettingsSection title={title}>
+      <Card padding="none" className="px-4">
+        {children}
+      </Card>
+    </SettingsSection>
   );
 }
 
 /** One item of a list section: a title and an optional detail line. */
 function Item({ title, detail }: { title: string; detail?: string }) {
   return (
-    <li className="flex flex-col gap-0.5 border-b border-border py-2.5 last:border-b-0">
-      <span className="text-[13px] text-fg" data-user-text>
+    <li className="flex flex-col gap-0.5 border-b border-border py-3 last:border-b-0">
+      <span className="text-[14px] font-medium text-fg" data-user-text>
         {title}
       </span>
       {detail !== undefined && detail.length > 0 && (
-        <span className="text-[12px] break-words text-fg-muted" data-user-text>
+        <span className="text-[12px] leading-4 break-words text-fg-muted" data-user-text>
           {detail}
         </span>
       )}
@@ -70,7 +73,7 @@ function List({
   items: { key: string; title: string; detail?: string }[];
   none: string;
 }) {
-  if (items.length === 0) return <p className="py-2.5 text-[13px] text-fg-muted">{none}</p>;
+  if (items.length === 0) return <p className="py-3 text-[13px] text-fg-muted">{none}</p>;
   return (
     <ul>
       {items.map((i) => (
@@ -98,17 +101,19 @@ export function ComputerSettings() {
 
   if (profile === undefined) return null;
   return (
-    <div className="flex flex-col gap-5 p-4" data-testid="phone-computer-settings">
+    <div className="flex flex-col gap-6 p-4" data-testid="phone-computer-settings">
       <div className="flex flex-col gap-1 px-1">
-        <p className="text-[12px] leading-5 text-fg-muted">{t("mirror.settings.lede", { name })}</p>
+        <p className="text-[13px] leading-5 text-fg-muted">{t("mirror.settings.lede", { name })}</p>
         {copy !== undefined && (
-          <p className="text-[12px] text-fg-subtle" data-state={copy.state}>
+          <p className="mono text-[11px] text-fg-subtle" data-state={copy.state}>
             {mirrorStateText(copy, Math.floor(now / 1000), locale)}
           </p>
         )}
       </div>
       {profile === null ? (
-        <EmptyState compact title={t("mirror.settings.none")} />
+        <Card padding="none">
+          <EmptyState compact title={t("mirror.settings.none")} />
+        </Card>
       ) : (
         <>
           <Section title={t("mirror.settings.look")}>

@@ -4,11 +4,14 @@ import {
   ChineseScript,
   ProviderCard,
   Select,
+  SettingsSection,
+  StatusRow,
   useBackend,
   useI18n,
   useUiState,
 } from "@voltip/ui";
 import { useState } from "react";
+import { Lede } from "../app/phone-ui";
 
 /** Which provider cards are open: the one in use unless the user closed it, any other once the
  *  user opened it (as the desktop's engines pane). */
@@ -33,39 +36,46 @@ export function SpeechModels() {
   const providers = providersFor(state.engines, "asr").filter((p) => !p.on_device);
   const cards = useOpenCards(state.engines.asr_provider);
   return (
-    <div className="flex flex-col gap-4 p-4" data-testid="phone-speech">
-      <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.settings.own")}</p>
-      <div className="flex flex-col gap-3" role="list" aria-label={t("engines.asrSection.title")}>
-        {providers.map((p) => (
-          <div role="listitem" key={p.id}>
-            <ProviderCard
-              provider={p}
-              kind="asr"
-              open={cards.isOpen(p.id)}
-              onToggle={(open) => {
-                cards.toggle(p.id, open);
-              }}
-            />
-          </div>
-        ))}
-      </div>
-      <Card className="flex flex-col gap-2">
-        <Select
-          label={t("engines.languageLabel")}
-          size="sm"
-          value={settings.language ?? ""}
-          onChange={(language) => {
-            const { language: _old, ...rest } = settings;
-            void backend.invoke("settings_set_engines", {
-              engines: language.length > 0 ? { ...rest, language } : rest,
-            });
-          }}
-          options={languageOptions(t)}
-          data-endonyms=""
-        />
-        <p className="text-[12px] leading-5 text-fg-muted">{t("engines.languageHelp")}</p>
+    <div className="flex flex-col gap-6 p-4" data-testid="phone-speech">
+      <Lede>{t("mobile.settings.own")}</Lede>
+      <SettingsSection
+        title={t("engines.asrSection.title")}
+        description={t("engines.asrSection.note")}>
+        <div className="flex flex-col gap-3" role="list" aria-label={t("engines.asrSection.title")}>
+          {providers.map((p) => (
+            <div role="listitem" key={p.id}>
+              <ProviderCard
+                provider={p}
+                kind="asr"
+                open={cards.isOpen(p.id)}
+                onToggle={(open) => {
+                  cards.toggle(p.id, open);
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      </SettingsSection>
+      <Card padding="none" className="px-4">
+        <StatusRow label={t("engines.languageLabel")} help={t("engines.languageHelp")}>
+          <Select
+            aria-label={t("engines.languageLabel")}
+            value={settings.language ?? ""}
+            onChange={(language) => {
+              const { language: _old, ...rest } = settings;
+              void backend.invoke("settings_set_engines", {
+                engines: language.length > 0 ? { ...rest, language } : rest,
+              });
+            }}
+            options={languageOptions(t)}
+            data-endonyms=""
+          />
+        </StatusRow>
       </Card>
-      <ChineseScript />
+      {/* The desktop's 中文字形 section, in a card of its own as the rest of the page. */}
+      <Card>
+        <ChineseScript />
+      </Card>
     </div>
   );
 }

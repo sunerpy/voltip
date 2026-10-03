@@ -5,8 +5,9 @@ import {
   presetLabel,
   sceneLabel,
 } from "@voltip/shared";
-import { Icon, type IconName, useI18n, useNow, useUiState } from "@voltip/ui";
+import { type IconName, SettingsSection, useI18n, useNow, useUiState } from "@voltip/ui";
 import type { ReactNode } from "react";
+import { Lede, NavRow, RowList } from "../app/phone-ui";
 import { type Screen, useMobileShell } from "../app/shell";
 
 /** `60` → 「1 小时」, `30` → 「30 分钟」 (as 设置 › 听写 on the desktop says it). */
@@ -32,35 +33,25 @@ function Row({
 }) {
   const shell = useMobileShell();
   return (
-    <li>
-      <button
-        type="button"
-        data-testid={param === undefined ? `settings-${to}` : `settings-${to}-${param}`}
-        onClick={() => {
-          shell.go(to, param);
-        }}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-inset">
-        <Icon name={icon} size={18} className="shrink-0 text-fg-muted" />
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="text-[14px] font-medium text-fg">{title}</span>
-          {detail !== undefined && (
-            <span className="truncate text-[12px] text-fg-muted">{detail}</span>
-          )}
-        </span>
-        <Icon name="chevronRight" size={16} className="shrink-0 text-fg-subtle" />
-      </button>
-    </li>
+    <NavRow
+      icon={icon}
+      title={title}
+      detail={detail}
+      data-testid={param === undefined ? `settings-${to}` : `settings-${to}-${param}`}
+      onOpen={() => {
+        shell.go(to, param);
+      }}
+    />
   );
 }
 
+/** A group of the list, as the desktop's settings sections: the eyebrow label, then the rows in
+ *  one hairline card. */
 function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="flex flex-col gap-2" aria-label={title}>
-      <h2 className="px-1 text-[12px] font-medium text-fg-subtle">{title}</h2>
-      <ul className="flex flex-col divide-y divide-border overflow-hidden rounded-10 bg-surface hairline">
-        {children}
-      </ul>
-    </section>
+    <SettingsSection title={title}>
+      <RowList>{children}</RowList>
+    </SettingsSection>
   );
 }
 
@@ -88,8 +79,8 @@ export function Settings() {
     ? t("theme.followSystem")
     : t(`theme.name.${settings.theme}`);
   return (
-    <div className="flex flex-col gap-5 p-4" data-testid="phone-settings">
-      <p className="px-1 text-[12px] leading-5 text-fg-muted">{t("mobile.settings.own")}</p>
+    <div className="flex flex-col gap-6 p-4" data-testid="phone-settings">
+      <Lede>{t("mobile.settings.own")}</Lede>
       <Group title={t("mobile.settings.engines")}>
         <Row icon="wave" title={t("mobile.title.speech")} detail={speech} to="speech" />
         <Row icon="sparkles" title={t("mobile.title.ai")} detail={ai} to="ai" />
