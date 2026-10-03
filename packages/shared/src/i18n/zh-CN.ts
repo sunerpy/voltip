@@ -2454,6 +2454,7 @@ export const zhCN = {
       copyFailed: "复制失败",
       share: "分享",
       all: "全部记录",
+      openLabel: "打开「{text}」",
       copyLabel: "复制「{text}」",
       shareLabel: "分享「{text}」",
     },

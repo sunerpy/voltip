@@ -13,8 +13,9 @@ function quoted(text: string): string {
   return chars.length > LABEL_CHARS ? `${chars.slice(0, LABEL_CHARS).join("")}…` : chars.join("");
 }
 
-/** What the phone recognised itself (docs/dictation.md §20.7), newest first: each result can be
- *  copied again or handed to another app. A take streamed to a computer is in that computer's
+/** What the phone recognised itself (docs/dictation.md §20.7), newest first: each result opens its
+ *  entry's page, as a row of 记录 does (user report 2026-10-03), and can be copied again or handed
+ *  to another app with the buttons beside it. A take streamed to a computer is in that computer's
  *  history, not here; nothing to show, no card. */
 export function RecentResults() {
   const { backend } = useBackend();
@@ -69,11 +70,21 @@ export function RecentResults() {
             key={entry.id}
             className="flex flex-col gap-2 rounded-10 bg-inset p-3"
             data-testid="phone-recent-row">
-            <p
-              className="line-clamp-4 whitespace-pre-wrap break-words text-[14px] leading-6 text-fg"
-              data-user-text>
-              {entry.text}
-            </p>
+            {/* The text opens the entry; copy and share below are buttons of their own, never
+                inside this one. */}
+            <button
+              type="button"
+              className="rounded-6 text-left"
+              aria-label={t("mobile.recent.openLabel", { text: quoted(entry.text) })}
+              onClick={() => {
+                shell.go("entry", entry.id);
+              }}>
+              <span
+                className="line-clamp-4 whitespace-pre-wrap break-words text-[14px] leading-6 text-fg"
+                data-user-text>
+                {entry.text}
+              </span>
+            </button>
             <div className="flex items-center gap-2">
               <span className="text-[12px] text-fg-subtle">
                 {relativeTime(Math.floor(entry.at_ms / 1000), now, locale)}
