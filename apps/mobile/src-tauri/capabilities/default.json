@@ -1,7 +1,16 @@
 {
   "$schema": "../gen/schemas/mobile-schema.json",
   "identifier": "default",
-  "description": "Main window: core IPC plus the camera-based QR scanner.",
+  "description": "Main window: core IPC, the camera-based QR scanner, and Android's back (src/back.rs).",
   "windows": ["main"],
-  "permissions": ["core:default", "barcode-scanner:allow-scan", "barcode-scanner:allow-cancel", "barcode-scanner:allow-check-permissions", "barcode-scanner:allow-request-permissions"]
+  "permissions": [
+    "core:default",
+    "barcode-scanner:allow-scan",
+    "barcode-scanner:allow-cancel",
+    "barcode-scanner:allow-check-permissions",
+    "barcode-scanner:allow-request-permissions",
+    "voltip-back:allow-register-listener",
+    "voltip-back:allow-remove-listener",
+    "voltip-back:allow-release"
+  ]
 }

@@ -901,6 +901,8 @@ pub struct FakeStreaming {
     opens: AtomicUsize,
     warms: AtomicUsize,
     finishes: Arc<AtomicUsize>,
+    /// Sessions that ended, flushed or dropped.
+    ended: Arc<AtomicUsize>,
     /// Feeds across sessions.
     fed: Arc<AtomicUsize>,
     /// The word a session waits before, and its gate ([`FakeStreaming::holding`]).
@@ -924,6 +926,7 @@ impl FakeStreaming {
             opens: AtomicUsize::new(0),
             warms: AtomicUsize::new(0),
             finishes: Arc::new(AtomicUsize::new(0)),
+            ended: Arc::new(AtomicUsize::new(0)),
             fed: Arc::new(AtomicUsize::new(0)),
             hold: None,
         }
@@ -975,6 +978,11 @@ impl FakeStreaming {
     pub fn feeds(&self) -> usize {
         self.fed.load(Ordering::SeqCst)
     }
+
+    /// Sessions that ended so far, with a flush or without one: the decode thread let go of them.
+    pub fn sessions_ended(&self) -> usize {
+        self.ended.load(Ordering::SeqCst)
+    }
 }
 
 impl StreamingTranscriber for FakeStreaming {
@@ -993,6 +1001,7 @@ impl StreamingTranscriber for FakeStreaming {
                 committed: Vec::new(),
                 pending: std::collections::VecDeque::new(),
                 finishes: self.finishes.clone(),
+                ended: self.ended.clone(),
                 fed: self.fed.clone(),
                 hold: self.hold.clone(),
             })),
@@ -1015,8 +1024,15 @@ struct FakeSession {
     committed: Vec<Segment>,
     pending: std::collections::VecDeque<StreamEvent>,
     finishes: Arc<AtomicUsize>,
+    ended: Arc<AtomicUsize>,
     fed: Arc<AtomicUsize>,
     hold: Option<(usize, Arc<Gate>)>,
+}
+
+impl Drop for FakeSession {
+    fn drop(&mut self) {
+        self.ended.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 impl FakeSession {
@@ -1053,11 +1069,11 @@ impl StreamingSession for FakeSession {
         self.pending.pop_front().unwrap_or(StreamEvent::Idle)
     }
 
-    fn finish(self: Box<Self>) -> Result<StreamFinal, DictationError> {
+    fn finish(mut self: Box<Self>) -> Result<StreamFinal, DictationError> {
         self.finishes.fetch_add(1, Ordering::SeqCst);
         let tail =
             if self.word.is_multiple_of(self.endpoint_every) { String::new() } else { self.words.get(self.word.wrapping_sub(1)).cloned().unwrap_or_default() };
-        Ok(StreamFinal { committed: self.committed, tail })
+        Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail })
     }
 }
 

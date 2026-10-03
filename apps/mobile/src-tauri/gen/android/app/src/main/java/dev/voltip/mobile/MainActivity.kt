@@ -12,5 +12,8 @@ class MainActivity : TauriActivity() {
     Keyring.initializeNdkContext(applicationContext)
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    // Each instance: Android recreates the activity (an overlay, the font size), and the back
+    // handler of the one before goes with it (BackPlugin.kt).
+    BackPlugin.attach(this)
   }
 }

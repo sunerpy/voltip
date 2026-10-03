@@ -154,6 +154,24 @@ impl Refiner for Unconfigured {
     }
 }
 
+/// The HTTP client builder with the trust roots of this platform, for the shells' own requests
+/// (feedback, the phone's update check). Elsewhere reqwest verifies with the system's store
+/// (rustls-platform-verifier); on Android that verifier needs a JNI context the app never hands it
+/// and panics on the first request, so there the requests trust Mozilla's root store, as
+/// voltip-asr, voltip-refine and the relay connection do.
+pub fn http_client_builder() -> reqwest::ClientBuilder {
+    let builder = reqwest::Client::builder();
+    #[cfg(target_os = "android")]
+    let builder = builder.tls_certs_only(mozilla_roots());
+    builder
+}
+
+/// Mozilla's root store (webpki-root-certs) as reqwest certificates.
+#[cfg(any(target_os = "android", test))]
+fn mozilla_roots() -> Vec<reqwest::Certificate> {
+    webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().filter_map(|der| reqwest::Certificate::from_der(der.as_ref()).ok()).collect()
+}
+
 /// The recogniser of a configuration that recognises in the cloud. A provider that is not ready,
 /// or whose configuration the client refuses, becomes an [`Unconfigured`] client that reports the
 /// problem on use.
@@ -220,6 +238,19 @@ impl ServiceProbe for HttpServiceProbe {
 mod tests {
     use super::*;
     use voltip_core::{BuiltIn, EngineSettings, ProviderSettings, UserSecrets};
+
+    /// Regression (2026-10-03, the goal gate on the phone's update check): on Android reqwest's
+    /// platform verifier panics on the first request ("Expect rustls-platform-verifier to be
+    /// initialized"). The shells' own requests take this builder, which trusts Mozilla's roots
+    /// there; the store loads in full and makes a client.
+    #[test]
+    fn regression_the_shells_own_requests_trust_mozillas_roots_on_android() {
+        let roots = mozilla_roots();
+        assert_eq!(roots.len(), webpki_root_certs::TLS_SERVER_ROOT_CERTS.len(), "every root parses");
+        assert!(roots.len() > 100, "{} roots", roots.len());
+        assert!(reqwest::Client::builder().tls_certs_only(roots).build().is_ok());
+        assert!(http_client_builder().build().is_ok());
+    }
 
     fn custom(asr_url: Option<&str>, llm_url: Option<&str>) -> ResolvedEngines {
         let provider = ProviderSettings {

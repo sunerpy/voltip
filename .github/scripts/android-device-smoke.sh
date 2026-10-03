@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# The Android app on a device: install the APK, start it, and check that it comes up and stays up,
-# the first thing every user does. 0.0.18 and 0.0.19 closed at once on the user's phone (a Xiaomi
-# HyperOS 3, 2026-10-01) although every package check passed; nothing had started the app. CI runs
-# this against an emulator (`android-device` in ci.yml); it runs the same against a phone over adb.
+# The Android app on a device: install the APK, start it, check that it comes up and stays up, the
+# first thing every user does, and that Android's back moves through it as on any app. 0.0.18 and
+# 0.0.19 closed at once on the user's phone (a Xiaomi HyperOS 3, 2026-10-01) although every package
+# check passed; nothing had started the app. CI runs this against an emulator (`android-device` in
+# ci.yml); it runs the same against a phone over adb.
 #
 # Usage: android-device-smoke.sh <apk or directory holding one> <out dir>
 # Needs `adb` on PATH with one device online. Writes into <out>: install.txt, start.txt,
-# logcat.txt, crash.txt, exit-info.txt, ui.xml and screen.png, whatever the outcome, and
+# logcat.txt, crash.txt, events.txt, exit-info.txt, ui.xml and screen.png, whatever the outcome, and
 # app-logcat.txt (the app's process alone) when it came up.
 set -euo pipefail
 
@@ -25,6 +26,7 @@ mkdir -p "$out"
 collect() {
   adb logcat -d >"$out/logcat.txt" 2>&1 || true
   adb logcat -b crash -d >"$out/crash.txt" 2>&1 || true
+  adb logcat -b events -d >"$out/events.txt" 2>&1 || true
   # Android 11+ keeps why the process last ended (a crash, a native crash, an exit code).
   adb shell dumpsys activity exit-info "$package" >"$out/exit-info.txt" 2>&1 || true
   adb exec-out screencap -p >"$out/screen.png" 2>/dev/null || true
@@ -72,4 +74,157 @@ adb logcat -d --pid="$pid" >"$out/app-logcat.txt" 2>&1 || true
 if grep -qE "FATAL EXCEPTION|panicked at|Fatal signal" "$out/app-logcat.txt" || grep -q "$package" "$out/crash.txt"; then
   fail "the app logged a fatal error although it is still running"
 fi
+
+# Android's back (user request 2026-10-02, docs/acceptance/android/manual-checklist.md item 17):
+# a page goes up a level, 设置 goes to 说话, and there a first back says so and a second within two
+# seconds leaves the app. The WebView's text is in the UI tree the dump writes.
+dump() {
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "$out/ui.xml" >/dev/null 2>&1
+}
+# Wait (at most 60 s) until the screen shows text matching the extended regex $1.
+showing() {
+  local deadline=$((SECONDS + 60))
+  until dump && grep -qE "$1" "$out/ui.xml"; do
+    running || fail "the app closed while waiting for: $1"
+    [ "$SECONDS" -lt "$deadline" ] || fail "the screen did not show $1 within 60 s"
+    sleep 1
+  done
+}
+# The centre of the node labelled with one of the words: the text or description equal to it,
+# else containing it.
+centre() {
+  python3 - "$out/ui.xml" "$@" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+path, *words = sys.argv[1:]
+nodes = []
+for node in ET.parse(path).getroot().iter("node"):
+    m = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.get("bounds", ""))
+    if m:
+        x1, y1, x2, y2 = map(int, m.groups())
+        if x2 > x1 and y2 > y1:
+            nodes.append(((node.get("text") or "").strip(), (node.get("content-desc") or "").strip(), (x1 + x2) // 2, (y1 + y2) // 2))
+for exact in (True, False):
+    for text, desc, x, y in nodes:
+        if any((w in (text, desc)) if exact else (w in text or w in desc) for w in words):
+            print(x, y)
+            sys.exit(0)
+sys.exit(1)
+PY
+}
+tap() {
+  local xy
+  dump || fail "the screen could not be read"
+  xy=$(centre "$@") || fail "nothing on the screen reads $*"
+  # shellcheck disable=SC2086 # "x y"
+  adb shell input tap $xy
+}
+back() {
+  adb shell input keyevent KEYCODE_BACK
+}
+in_front() {
+  adb shell dumpsys window | grep -E 'mCurrentFocus' | grep -q "$package"
+}
+
+# Up a level from 设置 › 外观与语言, then to 说话.
+up_a_level() {
+  tap 设置 Settings
+  showing '外观与语言|Appearance and language'
+  tap 外观与语言 'Appearance and language'
+  showing '按操作系统的语言选择|picks by the operating system language'
+  back
+  showing '外观与语言|Appearance and language'
+  if grep -qE '按操作系统的语言选择|picks by the operating system language' "$out/ui.xml"; then
+    fail "back on 外观与语言 did not go up a level ($1)"
+  fi
+  in_front || fail "back on 外观与语言 left the app ($1)"
+  back
+  showing '按住说话|Hold to talk'
+  if grep -qE '外观与语言|Appearance and language' "$out/ui.xml"; then
+    fail "back on 设置 did not go to 说话 ($1)"
+  fi
+  in_front || fail "back on 设置 left the app ($1)"
+}
+up_a_level "the activity Android started"
+
+# Android recreates the activity when an overlay changes (the navigation mode, the wallpaper's
+# colours) and when the font or display size does, and the back handler has to survive that
+# (2026-10-03: Tauri's own one stayed with the first activity, so after a recreation every back
+# left the app). A font-size change recreates it here, and the size goes back before the second
+# walk, which recreates it once more: a larger font moves the rows, and a row half under the tab
+# bar takes a tap meant for it as one on the tab. The system's event log says when, and so does
+# the app's log, where every MainActivity says when it takes the backs (BackPlugin.kt).
+attached() {
+  adb logcat -d -s VoltipBack:I | grep -c 'attached to activity' || true
+}
+relaunched() {
+  adb logcat -b events -d | grep -cE "(wm|am)_relaunch(_resume)?_activity.*$package" || true
+}
+# The new activity's own line comes once it exists, after the system's; a build without the plugin
+# has the system's alone.
+if [ "$(attached)" -gt 0 ]; then recreations=attached; else recreations=relaunched; fi
+# Set the font scale to $1 and wait until Android has recreated the activity.
+recreate_with_font_scale() {
+  local before deadline
+  before=$("$recreations")
+  adb shell settings put system font_scale "$1"
+  deadline=$((SECONDS + 60))
+  until [ "$("$recreations")" -gt "$before" ]; do
+    running || fail "the app closed when the font size changed to $1"
+    [ "$SECONDS" -lt "$deadline" ] || fail "Android did not recreate the activity within 60 s of a font-size change to $1"
+    sleep 1
+  done
+}
+font_scale=$(adb shell settings get system font_scale | tr -d '\r')
+restore_font_scale() {
+  if [ "$font_scale" = null ] || [ -z "$font_scale" ]; then
+    adb shell settings delete system font_scale >/dev/null 2>&1 || true
+  else
+    adb shell settings put system font_scale "$font_scale" >/dev/null 2>&1 || true
+  fi
+}
+trap restore_font_scale EXIT
+case "$font_scale" in
+  null | "") scale=1.0 ;;
+  *) scale=$font_scale ;;
+esac
+if [ "$scale" = 1.15 ]; then
+  recreate_with_font_scale 1.3
+else
+  recreate_with_font_scale 1.15
+fi
+recreate_with_font_scale "$scale"
+showing '按住说话|Hold to talk'
+up_a_level "the activity Android recreated"
+
+# At 说话 a back asks the plugin to let the backs of the next two seconds through, and shows a hint
+# that a second one leaves. The hint is up for 3 s, about as long as one dump takes here, so the
+# check reads the request in the app's log (BackPlugin.kt); back.test.tsx checks the hint.
+releases() {
+  adb logcat -d -s VoltipBack:I | grep -c 'release ' || true
+}
+first_back_at_talk() {
+  local before deadline
+  before=$(releases)
+  back
+  deadline=$((SECONDS + 30))
+  until [ "$(releases)" -gt "$before" ]; do
+    running || fail "the app closed on a first back at 说话 ($1)"
+    [ "$SECONDS" -lt "$deadline" ] || fail "a first back at 说话 did not let the next one through ($1)"
+    sleep 0.2
+  done
+  in_front || fail "a first back at 说话 left the app ($1)"
+}
+first_back_at_talk "the first"
+# The two seconds pass (the wait is the behaviour under test): a back after them asks again
+# instead of leaving. Then a back within the two seconds leaves.
+sleep 3
+first_back_at_talk "after the two seconds"
+back
+deadline=$((SECONDS + 15))
+while in_front; do
+  [ "$SECONDS" -lt "$deadline" ] || fail "a second back on 说话 did not leave the app"
+  sleep 1
+done
+collect
+echo "android-device-smoke: back goes up a level, before and after Android recreates the activity, and two backs on 说话 leave the app"
 echo "android-device-smoke: $package came up and stayed up ($(basename "$apk"))"
