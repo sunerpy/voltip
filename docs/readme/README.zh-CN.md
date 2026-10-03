@@ -75,9 +75,9 @@ curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install
 | Linux x64 | `.deb`、`.AppImage` | 在 Ubuntu 22.04 上构建，要求 glibc 2.34 及以上；`.deb` 依赖 `libwebkit2gtk-4.1-0`、`libvulkan1` 和 BLAS（`libblas3`，0.0.5 起），AppImage 需要 FUSE 2（`libfuse2`）。支持 X11 和 Wayland。 |
 | macOS 11+（Apple 芯片） | .dmg | M1 及更新 |
 | macOS 11+（Intel 芯片） | .dmg | Intel 芯片的 Mac |
-| Android | 暂未发布 | `make android-apk` 可以构建 debug APK。 |
+| Android 8.0+（64 位 Arm） | `*_android_arm64.apk` | 在手机上打开即可安装。`.aab` 是上架 Google Play 用的安装包。 |
 
-Mac 的安装包是 `*_aarch64.dmg`（Apple 芯片）和 `*_x64.dmg`（Intel 芯片），用项目自己的自签名证书签名，没有公证。在 Mac 上手动安装：打开 dmg，把 Voltip 拖到「应用程序」。应用没有公证，第一次打开会被拦下：macOS 15 起到「系统设置 → 隐私与安全性」里点「仍要打开」；macOS 11 到 14 在「应用程序」里按住 Control 点 Voltip，选「打开」。也可以在终端执行 `xattr -dr com.apple.quarantine /Applications/Voltip.app`。之后的更新在应用里完成，麦克风和辅助功能的授权会保留；只有从 0.0.6 及更早的版本更新时还会再问一次（钥匙串的提示点「始终允许」；听写无效时，在系统设置的「辅助功能」和「麦克风」里把 Voltip 关掉再打开）。
+Mac 的安装包是 `*_aarch64.dmg`（Apple 芯片）和 `*_x64.dmg`（Intel 芯片），用项目自己的自签名证书签名，没有公证。在 Mac 上手动安装：打开 dmg，把 Voltip 拖到「应用程序」。应用没有公证，第一次打开会被拦下：macOS 15 起到「系统设置 → 隐私与安全性」里点「仍要打开」；macOS 11 到 14 在「应用程序」里按住 Control 点 Voltip，选「打开」。也可以在终端执行 `xattr -dr com.apple.quarantine /Applications/Voltip.app`。之后的更新在应用里完成，麦克风和辅助功能的授权会保留。0.0.15 和 0.0.16 在安装后交接钥匙串条目的做法没有生效，所以 0.0.16 安装第一个带安装前交接修复的版本时，会为每个钥匙串条目各询问一次；两个都带修复的版本之间在应用内更新时不再询问。听写无效时，在系统设置的「辅助功能」和「麦克风」里把 Voltip 关掉再打开。
 
 release 里的安装包内置了默认的识别和润色服务，装好就能直接听写，不用先配置。随时可以换成别的服务商或本机模型。
 
