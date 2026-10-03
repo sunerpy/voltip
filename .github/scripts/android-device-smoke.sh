@@ -178,19 +178,33 @@ done
 showing '按住说话|Hold to talk'
 up_a_level "the activity Android recreated"
 
-# At 说话 a first back says a second one leaves.
-back
-showing '再返回一次即可退出|Go back again to leave'
-in_front || fail "the first back on 说话 left the app"
-# The two seconds pass: a back after them asks again instead of leaving. Then two backs in a row
-# leave (the pause between them is the pace of a person's two backs, not a wait for anything).
+# At 说话 a back asks the plugin to let the backs of the next two seconds through, and shows a hint
+# that a second one leaves. The hint is up for 3 s, about as long as one dump takes here, so the
+# check reads the request in the app's log (BackPlugin.kt); back.test.tsx checks the hint.
+releases() {
+  adb logcat -d -s VoltipBack:I | grep -c 'release ' || true
+}
+first_back_at_talk() {
+  local before deadline
+  before=$(releases)
+  back
+  deadline=$((SECONDS + 30))
+  until [ "$(releases)" -gt "$before" ]; do
+    running || fail "the app closed on a first back at 说话 ($1)"
+    [ "$SECONDS" -lt "$deadline" ] || fail "a first back at 说话 did not let the next one through ($1)"
+    sleep 0.2
+  done
+  in_front || fail "a first back at 说话 left the app ($1)"
+}
+first_back_at_talk "the first"
+# The two seconds pass (the wait is the behaviour under test): a back after them asks again
+# instead of leaving. Then a back within the two seconds leaves.
 sleep 3
-back
-sleep 0.3
+first_back_at_talk "after the two seconds"
 back
 deadline=$((SECONDS + 15))
 while in_front; do
-  [ "$SECONDS" -lt "$deadline" ] || fail "two backs on 说话 did not leave the app"
+  [ "$SECONDS" -lt "$deadline" ] || fail "a second back on 说话 did not leave the app"
   sleep 1
 done
 collect
