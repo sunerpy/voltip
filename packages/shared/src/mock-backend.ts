@@ -1618,12 +1618,32 @@ export class MockBackend implements Backend {
         return;
       }
       this.emitPhoneTake({ state: "processing" });
+      const spokenMs = Math.max(0, this.now() - t.started_at);
       this.later(MOCK_ASR_MS + MOCK_REFINE_MS, () => {
         if (
           this.state.phone_take?.take === t.take &&
           this.state.phone_take.state.state === "processing"
-        )
+        ) {
           this.emitPhoneTake({ state: "done", text: MOCK_DICTATION_TEXT, pasted: true });
+          // The phone keeps its own record of a delivered take, marked with the computer it went
+          // to (docs/dictation.md §20.7, user decision 2026-10-03), as the core does.
+          const computer = this.state.devices.find((d) => d.device.public_key === t.device);
+          this.recordHistory({
+            id: this.uuid(),
+            at_ms: this.now(),
+            raw_text: MOCK_DICTATION_TEXT,
+            text: MOCK_DICTATION_TEXT,
+            refined: false,
+            asr_model: "",
+            duration_ms: spokenMs,
+            asr_ms: 0,
+            outcome: { kind: "inserted", via: "paste" },
+            starred: false,
+            mode: "whole_take",
+            kind: "dictation",
+            origin: { device: computer?.device.name ?? t.device, kind: "sent" },
+          });
+        }
       });
     },
     phone_take_cancel: () => {

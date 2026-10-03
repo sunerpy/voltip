@@ -540,6 +540,7 @@ export const en: Messages = {
       typed: "Typed on {device}",
       clipboard: "Clipboard of {device}",
       standalone: "Phone · {device}",
+      sent: "Sent to {device}",
     },
     filter: {
       all: "All",

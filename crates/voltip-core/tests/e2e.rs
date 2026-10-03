@@ -1158,6 +1158,60 @@ async fn a_phone_streams_a_take_the_desktop_delivers() {
     desk.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 
+/// Regression (user report 2026-10-03, and the user's decision the same day): a take the phone
+/// streamed to a computer was in the computer's history only, so the phone's 记录 counted no
+/// dictations however many it had sent. The phone now keeps its own record of a take a computer
+/// delivered: the text the computer reported, the length of the audio sent and the computer it
+/// went to. It counts in the phone's statistics; a take that did not deliver leaves none.
+#[tokio::test]
+async fn regression_a_take_the_phone_streamed_is_in_the_phones_own_history_and_counts() {
+    use voltip_core::dictation::DictationPhase;
+    use voltip_core::dictation::fakes::FAKE_TRANSCRIPT;
+    use voltip_core::history::{HistoryReader, OriginKind};
+    use voltip_core::phone::PhoneTakeState;
+    let (url, _stop, _relay) = relay().await;
+    let mut desk = desktop_ready("Studio", &url);
+    let mut phone = node_opts(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 8", Some(&url), false);
+    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    let (_, desktop) = pair_by_code(&mut desk, &mut phone).await;
+    wait_online(&mut desk).await;
+    wait_online(&mut phone).await;
+
+    phone.handle.send(CoreCommand::PhoneTakeStart { to: desktop.public_key }).await.unwrap();
+    wait(&mut desk, |e| match e {
+        CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { ready: true, .. }) => Some(()),
+        _ => None,
+    })
+    .await;
+    phone.handle.send(CoreCommand::PhoneTakeStop).await.unwrap();
+    let done = wait(&mut phone, |e| phone_take(e).filter(PhoneTakeState::is_final)).await;
+    assert_eq!(done, PhoneTakeState::Done { text: FAKE_TRANSCRIPT.into(), pasted: true });
+    // The record is written after the take's end is shown, and announced like any other.
+    let recent = wait(&mut phone, |e| match e {
+        CoreEvent::History { recent, total: 1 } => Some(recent.clone()),
+        _ => None,
+    })
+    .await;
+    let entry = &recent[0];
+    assert_eq!((entry.text.as_str(), entry.raw_text.as_str()), (FAKE_TRANSCRIPT, FAKE_TRANSCRIPT));
+    assert_eq!(entry.origin.as_ref().map(|o| (o.device.as_str(), o.kind)), Some(("Studio", OriginKind::Sent)));
+    assert!(entry.duration_ms >= 1000, "the length of the audio the phone sent: {} ms", entry.duration_ms);
+    let reader = HistoryReader::new(&phone.dir_path);
+    assert_eq!(reader.stats(&[0, 4_102_444_800_000]).unwrap().total.count, 1, "the phone's statistics count it");
+
+    // A take the phone cancelled delivered nothing: no record.
+    wait(&mut desk, |e| matches!(e, CoreEvent::Dictation(s) if s.phase == DictationPhase::Idle).then_some(())).await;
+    phone.handle.send(CoreCommand::PhoneTakeStart { to: desktop.public_key }).await.unwrap();
+    wait(&mut phone, |e| (phone_take(e) == Some(PhoneTakeState::Listening)).then_some(())).await;
+    phone.handle.send(CoreCommand::PhoneTakeCancel).await.unwrap();
+    assert_eq!(wait(&mut phone, |e| phone_take(e).filter(PhoneTakeState::is_final)).await, PhoneTakeState::Cancelled);
+    assert_eq!(reader.stats(&[0, 4_102_444_800_000]).unwrap().total.count, 1);
+
+    phone.handle.send(CoreCommand::Shutdown).await.unwrap();
+    desk.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
 /// The phone's list of sent texts, from the latest `SentTexts` event.
 fn sent_texts(e: &CoreEvent) -> Option<Vec<voltip_core::phone::SentText>> {
     match e {

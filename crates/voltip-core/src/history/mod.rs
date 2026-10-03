@@ -166,16 +166,17 @@ pub struct ProcessedText {
     pub at_ms: u64,
 }
 
-/// Which phone an entry came from, and how.
+/// The other device of an entry: on a computer the phone it came from (`take`, `typed`,
+/// `clipboard`, `standalone`), on a phone the computer it went to (`sent`).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct EntryOrigin {
-    /// The phone's name at the time.
+    /// That device's name at the time.
     pub device: String,
-    /// What the phone sent.
+    /// What came or went.
     pub kind: OriginKind,
 }
 
-/// What a phone sent (docs/dictation.md §20).
+/// What a phone sent (docs/dictation.md §20), or, on the phone, that it went to a computer.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OriginKind {
@@ -187,6 +188,9 @@ pub enum OriginKind {
     Clipboard,
     /// The phone recognised it on its own and uploaded a copy (§20.8).
     Standalone,
+    /// On the phone: its audio went to this computer, which recognised and delivered it; the
+    /// phone keeps what the computer reported (§20.7, user decision 2026-10-03). Never uploaded.
+    Sent,
 }
 
 #[cfg(test)]

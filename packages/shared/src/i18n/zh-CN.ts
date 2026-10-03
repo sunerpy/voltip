@@ -534,6 +534,9 @@ export const zhCN = {
       /** A record the phone recognised on its own and uploaded (docs/dictation.md §20.8; user
        *  decision 2026-10-02: 「手机 · {名称}」). */
       standalone: "手机 · {device}",
+      /** On the phone: a take the computer delivered (docs/dictation.md §20.7, user decision
+       *  2026-10-03). */
+      sent: "发送到 {device}",
     },
     filter: {
       all: "全部",
