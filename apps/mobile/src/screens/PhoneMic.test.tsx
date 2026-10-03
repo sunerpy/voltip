@@ -12,6 +12,7 @@ import { PHONE_TAKE_FAILURES, zhT } from "@voltip/shared";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { renderApp } from "../test/render";
 import { localTakeLine, phoneTakeLine } from "./PhoneMic";
+import { selectTrigger } from "../test/select";
 
 function desktops(state: "online" | "offline") {
   const now = Math.floor(Date.now() / 1000);
@@ -245,8 +246,9 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
     const backend = new MockBackend({ role: "phone", devices: [first, second] });
     renderApp({ backend });
     const card = await screen.findByTestId("phone-mic");
-    const select = within(card).getByRole("combobox", { name: "发送到" });
-    fireEvent.change(select, { target: { value: second.device.public_key } });
+    const select = selectTrigger("发送到", card);
+    fireEvent.click(select);
+    fireEvent.click(screen.getByRole("option", { name: "Studio PC" }));
     const hold = within(card).getByTestId("phone-mic-hold");
     expect(hold).toHaveTextContent("Studio PC");
     fireEvent.keyDown(hold, { key: " " });

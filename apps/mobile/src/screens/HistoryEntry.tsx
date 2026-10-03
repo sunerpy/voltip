@@ -93,20 +93,22 @@ function LongTools({
     <section aria-label={t("history.long.title")} data-testid="phone-entry-long">
       <Panel eyebrow={t("history.long.title")} bodyClassName="flex flex-col gap-3">
         <div className="flex items-center gap-2">
-          <Select
-            aria-label={t("history.long.preset")}
-            className="min-w-0 flex-1"
-            value={preset}
-            disabled={running}
-            options={[
-              ...BUILTIN_PRESETS.map((id) => ({
-                value: id,
-                label: presetLabel(id, presets, locale),
-              })),
-              ...presets.map((p) => ({ value: p.id, label: p.name })),
-            ]}
-            onChange={setPreset}
-          />
+          {/* The select takes the rest of the row and may shrink below its longest preset. */}
+          <div className="min-w-0 flex-1">
+            <Select
+              aria-label={t("history.long.preset")}
+              value={preset}
+              disabled={running}
+              options={[
+                ...BUILTIN_PRESETS.map((id) => ({
+                  value: id,
+                  label: presetLabel(id, presets, locale),
+                })),
+                ...presets.map((p) => ({ value: p.id, label: p.name })),
+              ]}
+              onChange={setPreset}
+            />
+          </div>
           {running ? (
             <Button variant="outline" className={TOUCH} onClick={process.cancel}>
               {t("common.cancel")}
@@ -214,7 +216,8 @@ export function HistoryEntry() {
   const shell = useMobileShell();
   const { backend } = useBackend();
   const { t, locale } = useI18n();
-  const now = useNow();
+  // Milliseconds for `dayLabel` (`useNow` is Unix seconds).
+  const now = useNow() * 1000;
   const id = shell.param ?? "";
   const entry = useEntry(id);
   const tooLarge = useUiState().phone_outbox_too_large.includes(id);
@@ -238,6 +241,9 @@ export function HistoryEntry() {
   const text =
     shown === "raw" ? entry.raw_text : shown === "processed" ? (processed?.text ?? "") : entry.text;
   const outcome = outcomeLabel(entry.outcome, locale);
+  // A take a computer delivered (docs/dictation.md §20.7): the phone has the text the computer
+  // reported and the length of the audio; the models and timings are in the computer's history.
+  const sent = entry.origin?.kind === "sent";
   const fail = (e: unknown) => {
     shell.toast(t("mobile.toast.error", { message: errorText(e) }), "danger");
   };
@@ -326,38 +332,54 @@ export function HistoryEntry() {
       )}
       {isLongEntry(entry) && <LongTools entry={entry} process={process} />}
       <Facts>
+        {sent && (
+          <Fact label={t("history.detail.origin")}>
+            <span data-user-text data-origin="sent">
+              {t("history.origin.sent", { device: entry.origin?.device ?? "" })}
+            </span>
+          </Fact>
+        )}
         <Fact label={t("history.detail.duration")}>
           {formatDuration(entry.duration_ms, locale)}
         </Fact>
         <Fact label={t("history.detail.chars")}>
           <span className="mono">{textChars(entry.text)}</span>
         </Fact>
-        <Fact label={t("history.detail.asrModel")}>
-          <span className="mono">{entry.asr_model}</span>
-        </Fact>
-        <Fact label={t("history.detail.refineModel")}>
-          {entry.refine_model === undefined ? (
-            t("history.detail.notRefined")
-          ) : (
-            <span className="mono">{entry.refine_model}</span>
-          )}
-        </Fact>
-        {entry.preset !== undefined && (
-          <Fact label={t("history.detail.preset")}>
-            <span {...(isBuiltinPreset(entry.preset.id) ? {} : { "data-user-text": "" })}>
-              {presetRefLabel(entry.preset, locale)}
-            </span>
-          </Fact>
+        {!sent && (
+          <>
+            <Fact label={t("history.detail.asrModel")}>
+              <span className="mono">{entry.asr_model}</span>
+            </Fact>
+            <Fact label={t("history.detail.refineModel")}>
+              {entry.refine_model === undefined ? (
+                t("history.detail.notRefined")
+              ) : (
+                <span className="mono">{entry.refine_model}</span>
+              )}
+            </Fact>
+            {entry.preset !== undefined && (
+              <Fact label={t("history.detail.preset")}>
+                <span {...(isBuiltinPreset(entry.preset.id) ? {} : { "data-user-text": "" })}>
+                  {presetRefLabel(entry.preset, locale)}
+                </span>
+              </Fact>
+            )}
+            {entry.scene !== undefined && (
+              <Fact label={t("history.context.scene")}>
+                <span data-user-text>{sceneLabel(entry.scene, locale)}</span>
+              </Fact>
+            )}
+            <Fact label={t("mobile.entry.time")}>
+              {t("history.timing.total", { n: formatCount(entry.asr_ms + (entry.refine_ms ?? 0)) })}
+            </Fact>
+          </>
         )}
-        {entry.scene !== undefined && (
-          <Fact label={t("history.context.scene")}>
-            <span data-user-text>{sceneLabel(entry.scene, locale)}</span>
-          </Fact>
-        )}
-        <Fact label={t("mobile.entry.time")}>
-          {t("history.timing.total", { n: formatCount(entry.asr_ms + (entry.refine_ms ?? 0)) })}
-        </Fact>
       </Facts>
+      {sent && (
+        <p className="px-1 text-[12px] leading-5 text-fg-muted" data-testid="phone-entry-sent-note">
+          {t("mobile.entry.sentNote")}
+        </p>
+      )}
     </div>
   );
 }

@@ -213,7 +213,9 @@ function TouchSelect<V extends string>({
 
   const choose = (at: number, next: V) => {
     close(true);
-    if (at !== current) onChange(next);
+    // Against the option that has the value, not the one shown for it: a value no option has (a
+    // deleted scene, say) is replaced when its stand-in is chosen.
+    if (at !== selected) onChange(next);
   };
 
   /** Focuses a row and scrolls the list just enough to show it (`center`: into the middle). */

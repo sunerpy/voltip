@@ -106,7 +106,7 @@ export function ComputerSettings() {
         <p className="text-[13px] leading-5 text-fg-muted">{t("mirror.settings.lede", { name })}</p>
         {copy !== undefined && (
           <p className="mono text-[11px] text-fg-subtle" data-state={copy.state}>
-            {mirrorStateText(copy, Math.floor(now / 1000), locale)}
+            {mirrorStateText(copy, now, locale)}
           </p>
         )}
       </div>

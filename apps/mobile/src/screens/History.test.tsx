@@ -1,11 +1,13 @@
-import type { HistoryEntry } from "@voltip/shared";
-import { MockBackend } from "@voltip/shared/mock";
+import { type HistoryEntry, startOfDay } from "@voltip/shared";
+import { MockBackend, sampleDevices } from "@voltip/shared/mock";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
+import { chooseOption, selectTrigger } from "../test/select";
 
 // The phone's history (user decision 2026-10-01: the phone has the desktop's history, for what it
-// recognises itself; a take sent to a computer is in that computer's history).
+// recognises itself; user decision 2026-10-03: and for the takes it sends to a computer, which
+// that computer keeps in full).
 const NOW = Date.now();
 
 function take(n: number, extra: Partial<HistoryEntry> = {}): HistoryEntry {
@@ -37,6 +39,59 @@ const LONG = take(9, {
 });
 
 describe("the phone's history", () => {
+  it("regression: today, this week and this month count today's takes", async () => {
+    // User report 2026-10-03 (「听写次数统计一直为 0」): the page handed the seconds of \`useNow\` to
+    // the hooks that take milliseconds, so its days were in January 1970 and only 累计 counted.
+    const today = (n: number) => take(n, { at_ms: Math.min(NOW, startOfDay(NOW) + n * 1000) });
+    renderApp({ mock: { history: [today(1), today(2), today(3)] }, initialScreen: "history" });
+    const page = await screen.findByTestId("phone-history");
+    for (const span of ["today", "week", "month", "total"]) {
+      await waitFor(() => {
+        expect(within(page).getByTestId(`phone-history-stat-${span}`)).toHaveTextContent("听写 3 次");
+      });
+    }
+    // The list's days are today's too.
+    expect(within(page).getByRole("list", { name: "听写记录" })).toHaveTextContent("今天");
+  });
+
+  it("regression: a take sent to a computer is kept on the phone, counts, and opens with where it went", async () => {
+    // User report 2026-10-03: the phone's counts stayed at 0 while its takes went to a computer,
+    // which alone recorded them; the user decided the same day that the phone keeps them too
+    // (docs/dictation.md §20.7). The phone has the text the computer reported, not its models.
+    const user = userEvent.setup();
+    const [paired] = sampleDevices(Math.floor(NOW / 1000));
+    if (paired === undefined) throw new Error("no sample device");
+    const computer = { ...paired, device: { ...paired.device, name: "Studio PC" } };
+    const backend = new MockBackend({ role: "phone", devices: [computer] });
+    renderApp({ backend });
+    await screen.findByTestId("phone-mic");
+    await act(() => backend.invoke("phone_take_start", { publicKey: computer.device.public_key }));
+    await waitFor(() => {
+      expect(backend.peek().phone_take?.state.state).toBe("listening");
+    });
+    await act(() => backend.invoke("phone_take_stop"));
+    // 说话: the recent results list it, and the row opens its page.
+    const recent = await screen.findByTestId("phone-recent", {}, { timeout: 3000 });
+    expect(within(recent).getAllByTestId("phone-recent-row")).toHaveLength(1);
+    await user.click(screen.getByTestId("tab-history"));
+    const page = await screen.findByTestId("phone-history");
+    await waitFor(() => {
+      expect(within(page).getByTestId("phone-history-stats")).toHaveTextContent("听写 1 次");
+    });
+    const row = within(page).getAllByTestId("phone-history-row")[0] as HTMLElement;
+    expect(row).toHaveTextContent("发送到 Studio PC");
+    await user.click(row);
+    const entry = await screen.findByTestId("phone-entry");
+    expect(within(entry).getByText("发送到 Studio PC")).toBeInTheDocument();
+    expect(within(entry).getByTestId("phone-entry-sent-note")).toHaveTextContent(
+      "识别和润色的详细信息保存在电脑的记录中。",
+    );
+    // What the phone does not know is not shown as empty or zero.
+    expect(within(entry).queryByText("识别模型")).toBeNull();
+    expect(within(entry).queryByText("耗时")).toBeNull();
+    backend.destroy();
+  });
+
   it("the 记录 tab counts, searches, filters and opens what the phone recognised", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend({
@@ -66,13 +121,13 @@ describe("the phone's history", () => {
       expect(within(page).getAllByTestId("phone-history-row")).toHaveLength(3);
     });
 
-    await user.selectOptions(within(page).getByRole("combobox", { name: "筛选" }), "starred");
+    await chooseOption(user, selectTrigger("筛选", page), "starred");
     await waitFor(() => {
       expect(within(page).getAllByTestId("phone-history-row")).toHaveLength(1);
     });
-    await user.selectOptions(within(page).getByRole("combobox", { name: "筛选" }), "failed");
+    await chooseOption(user, selectTrigger("筛选", page), "failed");
     expect(await within(page).findByText("未完成暂无结果。")).toBeInTheDocument();
-    await user.selectOptions(within(page).getByRole("combobox", { name: "筛选" }), "all");
+    await chooseOption(user, selectTrigger("筛选", page), "all");
 
     const rows = await within(page).findAllByTestId("phone-history-row");
     await user.click(rows[2] as HTMLElement);
@@ -160,7 +215,7 @@ describe("the phone's history", () => {
     await user.click((await screen.findAllByTestId("phone-history-row"))[1] as HTMLElement);
     const entry = await screen.findByTestId("phone-entry");
     const tools = within(entry).getByTestId("phone-entry-long");
-    await user.selectOptions(within(tools).getByRole("combobox", { name: "预设" }), "notes");
+    await chooseOption(user, selectTrigger("预设", tools), "notes");
     await user.click(within(tools).getByRole("button", { name: "开始处理" }));
     expect(await within(tools).findByRole("button", { name: "取消" })).toBeInTheDocument();
     await waitFor(
@@ -230,7 +285,7 @@ describe("the phone's history", () => {
     await user.click(row);
     const page = screen.getByTestId("phone-history-settings");
     expect(within(page).getByTestId("phone-history-count")).toHaveTextContent("2 /");
-    await user.selectOptions(within(page).getByRole("combobox", { name: "保留最近" }), "2000");
+    await chooseOption(user, selectTrigger("保留最近", page), "2000");
     await waitFor(() => {
       expect(backend.peek().settings.history.keep).toBe(2000);
     });

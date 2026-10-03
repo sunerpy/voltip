@@ -401,18 +401,18 @@ function ComputerTalk({
 
 /** The scene the phone's takes run with (docs/dictation.md §18; user decision 2026-10-01): the
  *  phone cannot tell which app the text goes to, so the user picks one, or none
- *  (`settings_set_pinned_scene`). A pinned scene that was deleted since reads as none. */
+ *  (`settings_set_pinned_scene`). A pinned scene that was deleted since reads as none, the option
+ *  a value no option has shows, and choosing 不使用场景 then clears it. */
 function ScenePicker({ disabled }: { disabled: boolean }) {
   const { backend } = useBackend();
   const shell = useMobileShell();
   const { t, locale } = useI18n();
   const { scenes, settings } = useUiState();
   if (scenes.length === 0) return null;
-  const pinned = scenes.some((s) => s.id === settings.pinned_scene) ? settings.pinned_scene : "";
   return (
     <Select
       label={t("mobile.mic.scene")}
-      value={pinned ?? ""}
+      value={settings.pinned_scene ?? ""}
       disabled={disabled}
       data-testid="phone-scene"
       options={[

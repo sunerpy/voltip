@@ -275,7 +275,10 @@ describe("Select under the touch presentation", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
-  it("shows the first option that can be chosen when the value matches none, as a native select does", async () => {
+  it("shows the first option that can be chosen when the value matches none, and choosing it replaces the value", async () => {
+    // A value no option has (the phone's pinned scene after the scene was deleted): the trigger
+    // shows what a native select would, and a tap on that option is a choice like any other, so
+    // the stale value goes (the phone's talk card clears its scene that way).
     const user = userEvent.setup();
     const onChange = vi.fn();
     touch(
@@ -291,10 +294,10 @@ describe("Select under the touch presentation", () => {
     await user.click(trigger);
     expect(screen.getByRole("option", { selected: true })).toHaveTextContent("自动检测");
     await user.click(screen.getByRole("option", { name: "自动检测" }));
-    expect(onChange).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledWith("auto");
     await user.click(trigger);
     await user.click(screen.getByRole("option", { name: "English" }));
-    expect(onChange).toHaveBeenCalledWith("en");
+    expect(onChange).toHaveBeenLastCalledWith("en");
     // No options at all: an empty trigger, an empty list.
     touch(<Select aria-label="空" options={[]} value="" onChange={vi.fn()} />);
     const empty = screen.getByRole("button", { name: "空" });

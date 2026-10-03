@@ -2,6 +2,7 @@ import { MockBackend, sampleDevices } from "@voltip/shared/mock";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
+import { chooseOption, selectTrigger } from "../test/select";
 
 // The phone's own settings (user decision 2026-10-01: the phone works on its own with every setting
 // but the local models; a take sent to a computer still follows the computer's settings).
@@ -76,11 +77,11 @@ describe("the phone's settings", () => {
     expect(within(cards).queryByTestId("provider-asr-local")).toBeNull();
     expect(within(cards).getByTestId("provider-asr-builtin")).toBeInTheDocument();
     expect(within(cards).getByTestId("provider-asr-groq")).toBeInTheDocument();
-    await user.selectOptions(within(page).getByRole("combobox", { name: "识别语言" }), "en");
+    await chooseOption(user, selectTrigger("识别语言", page), "en");
     await waitFor(() => {
       expect(backend.peek().settings.engines.language).toBe("en");
     });
-    await user.selectOptions(within(page).getByRole("combobox", { name: "识别语言" }), "");
+    await chooseOption(user, selectTrigger("识别语言", page), "");
     await waitFor(() => {
       expect(backend.peek().settings.engines.language).toBeUndefined();
     });
@@ -177,7 +178,7 @@ describe("the phone's settings", () => {
     const user = userEvent.setup();
     const { backend } = renderApp();
     await user.click(within(await openSettings(user)).getByTestId("settings-recording"));
-    await user.selectOptions(screen.getByTestId("recording-max-minutes"), "60");
+    await chooseOption(user, screen.getByTestId("recording-max-minutes"), "60");
     await waitFor(() => {
       expect(backend.peek().settings.recording.max_minutes).toBe(60);
     });

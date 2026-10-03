@@ -23,11 +23,11 @@ function quoted(text: string): string {
   return chars.length > LABEL_CHARS ? `${chars.slice(0, LABEL_CHARS).join("")}…` : chars.join("");
 }
 
-/** What the phone recognised itself (docs/dictation.md §20.7), newest first, as the desktop's
+/** What the phone recognised itself and the takes it sent to a computer (docs/dictation.md §20.7;
+ *  user decision 2026-10-03: the phone keeps those too), newest first, as the desktop's
  *  最近的结果: a label with the way to the whole history, then a hairline list. A row opens its
  *  entry's page, as a row of 记录 does (user report 2026-10-03), and copies or shares the result
- *  with the two buttons at its end. A take streamed to a computer is in that computer's history,
- *  not here; nothing to show, no list. */
+ *  with the two buttons at its end. Nothing to show, no card. */
 export function RecentResults() {
   const { backend } = useBackend();
   const shell = useMobileShell();

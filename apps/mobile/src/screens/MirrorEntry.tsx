@@ -74,7 +74,8 @@ export function MirrorEntry() {
   const shell = useMobileShell();
   const { backend } = useBackend();
   const { t, locale } = useI18n();
-  const now = useNow();
+  // Milliseconds for `dayLabel` (`useNow` is Unix seconds).
+  const now = useNow() * 1000;
   const { desktop, id } = parseParam(shell.param);
   const found = useMirrorEntry(desktop, id);
   const [view, setView] = useState<View>("polished");

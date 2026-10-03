@@ -8,6 +8,7 @@ import {
   I18nProvider,
   IconButton,
   Logo,
+  PresentationProvider,
   applyTheme,
   cx,
   dismissTopDialog,
@@ -118,17 +119,21 @@ export function App({ backend, loadScanner, initialScreen, systemLanguage, syste
   const register = useCallback((fn: (e: UiEvent) => void) => {
     handler.current = fn;
   }, []);
+  // The phone's controls (user report 2026-10-03): a dropdown opens its own list of options
+  // instead of Android's old picker, and buttons take a pressed state and 44 px targets.
   return (
-    <BackendProvider backend={backend} onEvent={onEvent}>
-      <LocaleProvider systemLanguage={systemLanguage}>
-        <Gate
-          loadScanner={loadScanner}
-          initialScreen={initialScreen}
-          register={register}
-          {...(systemBack === undefined ? {} : { systemBack })}
-        />
-      </LocaleProvider>
-    </BackendProvider>
+    <PresentationProvider value="touch">
+      <BackendProvider backend={backend} onEvent={onEvent}>
+        <LocaleProvider systemLanguage={systemLanguage}>
+          <Gate
+            loadScanner={loadScanner}
+            initialScreen={initialScreen}
+            register={register}
+            {...(systemBack === undefined ? {} : { systemBack })}
+          />
+        </LocaleProvider>
+      </BackendProvider>
+    </PresentationProvider>
   );
 }
 

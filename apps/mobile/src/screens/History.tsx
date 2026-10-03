@@ -55,10 +55,10 @@ function SavedTime({ ms }: { ms: number }) {
 
 /** One span of the counts, as the desktop's stat strip draws it: the span's name and the takes in
  *  it on one line, the time saved under them. */
-function Tile({ label, bucket }: { label: string; bucket: HistoryBucket }) {
+function Tile({ id, label, bucket }: { id: string; label: string; bucket: HistoryBucket }) {
   const { t } = useI18n();
   return (
-    <Card padding="sm" className="flex flex-col gap-1">
+    <Card padding="sm" className="flex flex-col gap-1" data-testid={`phone-history-stat-${id}`}>
       <span className="flex items-baseline justify-between gap-2">
         <span className="text-[11px] text-fg-subtle">{label}</span>
         <span className="truncate text-[11px] text-fg-muted">
@@ -90,7 +90,9 @@ export function History() {
   const copy = state.mirrors.find((m) => m.desktop === desktop);
   const total = copy === undefined ? state.history_total : copy.entries;
   const retention = state.settings.history;
-  const now = useNow();
+  // Milliseconds: `useNow` is Unix seconds, and the days, the counts and the filters take ms (user
+  // report 2026-10-03: in seconds today was in January 1970, so only 累计 counted).
+  const now = useNow() * 1000;
   const stats = useHomeStats(now);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<HistoryFilter>("all");
@@ -123,10 +125,10 @@ export function History() {
       {copy === undefined ? (
         <div className="flex flex-col gap-2">
           <div className="grid grid-cols-2 gap-2" data-testid="phone-history-stats">
-            <Tile label={t("home.tiles.today")} bucket={stats.today} />
-            <Tile label={t("home.tiles.week")} bucket={stats.week} />
-            <Tile label={t("home.tiles.month")} bucket={stats.month} />
-            <Tile label={t("home.tiles.total")} bucket={stats.total} />
+            <Tile id="today" label={t("home.tiles.today")} bucket={stats.today} />
+            <Tile id="week" label={t("home.tiles.week")} bucket={stats.week} />
+            <Tile id="month" label={t("home.tiles.month")} bucket={stats.month} />
+            <Tile id="total" label={t("home.tiles.total")} bucket={stats.total} />
           </div>
           <button
             type="button"

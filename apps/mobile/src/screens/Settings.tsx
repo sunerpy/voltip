@@ -153,7 +153,7 @@ export function Settings() {
             key={m.desktop}
             icon="settings"
             title={t("mirror.settingsRow", { name: m.name })}
-            detail={mirrorStateText(m, Math.floor(now / 1000), locale)}
+            detail={mirrorStateText(m, now, locale)}
             to="computerSettings"
             param={m.desktop}
           />
