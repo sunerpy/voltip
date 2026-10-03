@@ -44,40 +44,48 @@ running() {
   [ -n "$(adb shell pidof "$package" 2>/dev/null | tr -d '\r')" ]
 }
 
-# The screen's UI tree into $out/ui.xml. A system dialog over the app hides it from the dump (on a
-# freshly booted emulator the launcher may not answer for a while: run 37098351522 had its
-# "isn't responding" dialog over the first screen), so such a dialog is told to wait, and the
-# screen is read again.
+# The screen's UI tree into $out/ui.xml. A not-responding dialog over the app hides it from the
+# dump: on a busy, freshly booted emulator the launcher can stop answering, and while it stays
+# stuck its dialog comes back every few seconds and takes the taps meant for the app (CI runs
+# 37098351522 and 37109103623). Such a dialog for another app closes that app (the system starts
+# the launcher again when it needs it); one for Voltip is a failure.
 dump() {
-  local xy
-  for _ in 1 2 3; do
+  local title xy
+  for _ in 1 2 3 4 5; do
     adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "$out/ui.xml" >/dev/null 2>&1 || return 1
-    xy=$(not_responding_wait) || return 0
-    echo "android-device-smoke: a system dialog says an app is not responding; telling it to wait" >&2
+    { read -r title && read -r xy; } < <(not_responding) || return 0
+    case "$title" in
+      *Voltip*) fail "the app is not responding: $title" ;;
+    esac
+    echo "android-device-smoke: $title; closing that app" >&2
     # shellcheck disable=SC2086 # "x y"
     adb shell input tap $xy
     # The dialog's own close animation, not a wait for anything in the app.
     sleep 1
   done
 }
-# The centre of the "Wait" button of a not-responding dialog on the screen, or status 1.
-not_responding_wait() {
+# The title of a not-responding dialog on the screen and the centre of its "Close app" button
+# (Android's own resource ids, the same in every language), or status 1 when there is none.
+not_responding() {
   python3 - "$out/ui.xml" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
 nodes = list(ET.parse(sys.argv[1]).getroot().iter("node"))
-if not any(re.search(r"isn't responding|没有响应|无响应", n.get("text") or "") for n in nodes):
+title = next((n.get("text") or "" for n in nodes if n.get("resource-id") == "android:id/alertTitle"), "")
+close = next((n for n in nodes if n.get("resource-id") == "android:id/aerr_close"), None)
+m = close is not None and re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", close.get("bounds", ""))
+if not m:
     sys.exit(1)
-for n in nodes:
-    m = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", n.get("bounds", ""))
-    if m and (n.get("text") or "").strip() in ("Wait", "等待"):
-        x1, y1, x2, y2 = map(int, m.groups())
-        print((x1 + x2) // 2, (y1 + y2) // 2)
-        sys.exit(0)
-sys.exit(1)
+x1, y1, x2, y2 = map(int, m.groups())
+print(title.replace("\n", " ") or "an app is not responding")
+print((x1 + x2) // 2, (y1 + y2) // 2)
 PY
 }
 
 adb wait-for-device
+# A freshly booted emulator is still delivering the broadcasts of its own setup (packages enabled,
+# settings synced), which is what keeps its launcher too busy to answer: let them drain first, for
+# at most two minutes (Android 13 and later; elsewhere this ends at once).
+timeout 120 adb shell am wait-for-broadcast-idle >/dev/null 2>&1 || echo "android-device-smoke: the broadcast queues were still busy; going on" >&2
 # A build signed with another key cannot replace the installed one.
 adb uninstall "$package" >/dev/null 2>&1 || true
 adb install -r -g "$apk" >"$out/install.txt" 2>&1 || fail "the APK did not install: $(tail -3 "$out/install.txt")"
