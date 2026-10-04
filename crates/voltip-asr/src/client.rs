@@ -8,7 +8,7 @@ use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 
 use crate::config::{AsrConfig, MAX_ERROR_BODY_CHARS, normalize_base_url};
-use crate::error::AsrError;
+use crate::error::{AsrError, quota_error};
 
 /// The HTTP client builder with the trust roots of this platform. Elsewhere reqwest verifies with
 /// the system's own store (rustls-platform-verifier); on Android that verifier needs a JNI context
@@ -109,16 +109,13 @@ impl AsrClient {
         tracing::debug!(path = log_path(&self.endpoint), model = %self.config.model, bytes = wav.len(), ?language, prompt_chars = prompt.map_or(0, |p| p.chars().count()), "transcribing");
         let response = request.send().await.map_err(map_reqwest)?;
         let status = response.status();
-        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-            return Err(AsrError::Unauthorized);
-        }
-        if status == StatusCode::TOO_MANY_REQUESTS {
-            return Err(AsrError::RateLimited { retry_after_ms: retry_after_ms(response.headers()) });
+        if !status.is_success() {
+            let retry_after_ms = retry_after_ms(response.headers());
+            // The body of a refusal is only read to sort it: one that cannot be read sorts by status.
+            let body = response.text().await.unwrap_or_default();
+            return Err(http_error(status, retry_after_ms, &body));
         }
         let body = response.text().await.map_err(map_reqwest)?;
-        if !status.is_success() {
-            return Err(AsrError::Server { status: status.as_u16(), body: truncate_chars(&body, MAX_ERROR_BODY_CHARS) });
-        }
         let parsed: TranscriptionResponse =
             serde_json::from_str(&body).map_err(|e| AsrError::BadResponse(format!("{e}: {}", truncate_chars(&body, MAX_ERROR_BODY_CHARS))))?;
         let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -126,6 +123,21 @@ impl AsrClient {
         tracing::debug!(latency_ms, chars = text.chars().count(), "transcribed");
         Ok(Transcript { text, latency_ms, model: self.config.model.clone() })
     }
+}
+
+/// A non-2xx answer: a used-up quota first, whatever the status (docs/dictation.md §3.5; some
+/// services send OpenAI's `insufficient_quota` with 403, others with 429), then by status.
+fn http_error(status: StatusCode, retry_after_ms: Option<u64>, body: &str) -> AsrError {
+    if let Some(quota) = quota_error(body) {
+        return quota;
+    }
+    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+        return AsrError::Unauthorized;
+    }
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        return AsrError::RateLimited { retry_after_ms };
+    }
+    AsrError::Server { status: status.as_u16(), body: truncate_chars(body, MAX_ERROR_BODY_CHARS) }
 }
 
 /// A reqwest failure, split into timeout and everything else.
@@ -284,6 +296,33 @@ mod tests {
             assert_eq!(err, AsrError::Unauthorized, "status {status}");
             assert!(!err.is_retryable());
         }
+    }
+
+    /// docs/dictation.md §3.5: a used-up quota is told by the body, whatever the status, so a
+    /// fallback model list can move on; a refusal without it keeps its status's meaning.
+    #[tokio::test]
+    async fn a_used_up_quota_is_read_from_the_body_of_any_refusal() {
+        let insufficient = r#"{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#;
+        let free_tier = r#"{"error":{"code":"AllocationQuota.FreeTierOnly","message":"The free tier of the model has been exhausted."}}"#;
+        let cases = [
+            (429_u16, insufficient, "insufficient_quota"),
+            (403, insufficient, "insufficient_quota"),
+            (403, free_tier, "AllocationQuota.FreeTierOnly"),
+            (400, free_tier, "AllocationQuota.FreeTierOnly"),
+        ];
+        for (status, body, code) in cases {
+            let server = MockServer::start().await;
+            mount(&server, ResponseTemplate::new(status).set_body_string(body)).await;
+            let err = client(&server, Some("k")).transcribe(WAV, None).await.unwrap_err();
+            assert!(matches!(&err, AsrError::QuotaExhausted { code: c, .. } if c == code), "{status} {body}: {err:?}");
+            assert!(!err.is_retryable());
+        }
+        let server = MockServer::start().await;
+        mount(&server, ResponseTemplate::new(429).set_body_string(r#"{"error":{"code":"rate_limit_exceeded","message":"Rate limit reached"}}"#)).await;
+        assert_eq!(client(&server, None).transcribe(WAV, None).await.unwrap_err(), AsrError::RateLimited { retry_after_ms: None });
+        let server = MockServer::start().await;
+        mount(&server, ResponseTemplate::new(403).set_body_string(r#"{"error":{"code":"invalid_api_key","message":"Incorrect API key provided"}}"#)).await;
+        assert_eq!(client(&server, None).transcribe(WAV, None).await.unwrap_err(), AsrError::Unauthorized);
     }
 
     #[tokio::test]

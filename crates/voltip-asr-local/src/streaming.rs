@@ -186,7 +186,7 @@ mod tests {
             if self.fed > 0 { StreamEvent::Partial { current: format!("{}:{}", self.id, self.fed) } } else { StreamEvent::Idle }
         }
         fn finish(self: Box<Self>) -> Result<StreamFinal, DictationError> {
-            Ok(StreamFinal { committed: Vec::new(), tail: format!("{}:{}", self.id, self.fed) })
+            Ok(StreamFinal { committed: Vec::new(), tail: format!("{}:{}", self.id, self.fed), model: None })
         }
     }
 

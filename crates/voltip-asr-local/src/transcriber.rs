@@ -305,6 +305,8 @@ impl Transcriber for LocalTranscriber {
         let loader = self.loader.clone();
         let compute = self.compute.clone();
         let id = entry.id.to_owned();
+        // docs/dictation.md §3.5: the catalogue entry's name is the model the history records.
+        let name = entry.name.to_owned();
         let vad = self.vad_trim.then(|| self.vad.clone());
         let text = tokio::task::spawn_blocking(move || -> Result<String, String> {
             if let Some(vad) = vad {
@@ -328,7 +330,7 @@ impl Transcriber for LocalTranscriber {
         .map_err(|e| DictationError::Asr(format!("本地识别任务失败：{e}")))?
         .map_err(|e| DictationError::Asr(format!("本地识别失败：{e}")))?;
         let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        Ok(Transcript { text: text.trim().to_owned(), latency_ms })
+        Ok(Transcript { text: text.trim().to_owned(), latency_ms, model: Some(name) })
     }
 }
 
@@ -670,7 +672,9 @@ mod tests {
         let vad = VadTrimmer::with_loader(dir.path(), crate::catalogue::vad_entry(), Arc::new(FakeVadLoader::energy()));
         let t = LocalTranscriber::with_loader(dir.path(), CATALOGUE, loader.clone()).select("sense-voice-small").with_vad(vad.clone());
         assert!(!t.vad_trim(), "off by default");
-        assert_eq!(t.transcribe(&take, Some("zh"), &[]).await.unwrap().text, "sense-voice-small:zh:16000:48000", "off: the whole 3 s");
+        let whole = t.transcribe(&take, Some("zh"), &[]).await.unwrap();
+        assert_eq!(whole.text, "sense-voice-small:zh:16000:48000", "off: the whole 3 s");
+        assert_eq!(whole.model.as_deref(), Some("轻量"), "the catalogue entry's name is the receipt (docs/dictation.md §3.5)");
         let trimming = t.clone().with_vad_trim(true);
         assert!(trimming.vad_trim() && trimming.vad().entry().id == "silero-vad");
         assert!(format!("{trimming:?}").contains("vad_trim: true"));

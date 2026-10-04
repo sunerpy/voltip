@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::dictation::fallback::{QuotaKey, QuotaLedger};
 use crate::models::{DEFAULT_LOCAL_MODEL_ID, ModelState};
 use crate::presets::PresetId;
 pub use crate::providers::{AsrProtocol, KeyPolicy, ProviderId, ServiceKind};
@@ -159,6 +160,39 @@ fn trimmed(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|s| !s.is_empty())
 }
 
+/// Most fallback models one service may list (docs/dictation.md §3.5).
+pub const MAX_FALLBACK_MODELS: usize = 8;
+
+/// One fallback model (docs/dictation.md §3.5): a provider and one of its models. The endpoint and
+/// the key are the provider's own, as its card configures them; the built-in service has one model.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct FallbackModel {
+    /// Whose model.
+    pub provider: ProviderId,
+    /// The model id (ignored for `builtin`).
+    #[serde(default)]
+    pub model: String,
+}
+
+/// `EngineSettings.asr_fallback` / `llm_fallback` (docs/dictation.md §3.5): the models to move on
+/// to, in order, when the selected one's quota is used up.
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FallbackSettings {
+    /// Move on to the next model when a model's quota is used up (off by default).
+    pub enabled: bool,
+    /// The models after the selected one, in order; at most [`MAX_FALLBACK_MODELS`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<FallbackModel>,
+}
+
+impl FallbackSettings {
+    /// Off with an empty list: not written to the settings file.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// `Settings.engines`.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -205,6 +239,12 @@ pub struct EngineSettings {
     pub chinese_script: ChineseScript,
     /// Injection route.
     pub inject: InjectMode,
+    /// The recognition models to try after the selected one runs out of quota (docs/dictation.md §3.5).
+    #[serde(skip_serializing_if = "FallbackSettings::is_default")]
+    pub asr_fallback: FallbackSettings,
+    /// The clean-up (and voice edit) models to try after the selected one runs out of quota.
+    #[serde(skip_serializing_if = "FallbackSettings::is_default")]
+    pub llm_fallback: FallbackSettings,
 }
 
 impl Default for EngineSettings {
@@ -225,6 +265,8 @@ impl Default for EngineSettings {
             vad_trim: false,
             chinese_script: ChineseScript::Simplified,
             inject: InjectMode::Paste,
+            asr_fallback: FallbackSettings::default(),
+            llm_fallback: FallbackSettings::default(),
         }
     }
 }
@@ -233,6 +275,14 @@ impl EngineSettings {
     /// `providers[provider]`, or the presets.
     pub fn provider(&self, provider: ProviderId) -> ProviderSettings {
         self.providers.get(&provider).cloned().unwrap_or_default()
+    }
+
+    /// The fallback models of `kind`'s service (docs/dictation.md §3.5).
+    pub fn fallback(&self, kind: ServiceKind) -> &FallbackSettings {
+        match kind {
+            ServiceKind::Asr => &self.asr_fallback,
+            ServiceKind::Llm => &self.llm_fallback,
+        }
     }
 }
 
@@ -507,7 +557,138 @@ pub struct ResolvedEngines {
     pub local_threads: Option<u16>,
     /// Injection route.
     pub inject: InjectMode,
+    /// The recognition fallback models (docs/dictation.md §3.5).
+    pub asr_fallback: FallbackPlan,
+    /// The clean-up fallback models.
+    pub refine_fallback: FallbackPlan,
     providers: Vec<ProviderStatus>,
+}
+
+/// A service's fallback models as resolved (docs/dictation.md §3.5): every settings entry in
+/// order, with what became of it, and whether the chain runs.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct FallbackPlan {
+    /// `FallbackSettings.enabled`.
+    pub enabled: bool,
+    /// The switch is on and the selected service is ready and remote (recognition not on this
+    /// device, a clean-up provider chosen): the chain runs.
+    pub in_use: bool,
+    /// The selected model's ledger key while the chain runs.
+    pub selected: Option<QuotaKey>,
+    /// One row per settings entry, in order.
+    pub rows: Vec<FallbackRow>,
+}
+
+impl FallbackPlan {
+    /// The models the chain moves on to, in order: the ready rows while the chain runs.
+    pub fn targets(&self) -> impl Iterator<Item = &FallbackTarget> {
+        self.rows.iter().filter(|_| self.in_use).filter_map(|row| match &row.state {
+            FallbackRowState::Ready(target) => Some(target),
+            _ => None,
+        })
+    }
+
+    /// The pages' view: each row's problem or skip, and when a model that ran out is tried again.
+    fn status(&self, ledger: &QuotaLedger) -> FallbackStatus {
+        let retry = |key: &QuotaKey| if self.in_use { ledger.retry_at(key) } else { None };
+        FallbackStatus {
+            enabled: self.enabled,
+            in_use: self.in_use,
+            selected_retry_at_ms: self.selected.as_ref().and_then(retry),
+            models: self
+                .rows
+                .iter()
+                .map(|row| {
+                    let (issue, skip, retry_at_ms) = match &row.state {
+                        FallbackRowState::Ready(target) => (None, None, retry(&target.key)),
+                        FallbackRowState::Issue(issue) => (Some(*issue), None, None),
+                        FallbackRowState::SameAsSelected => (None, Some(FallbackSkip::SameAsSelected), None),
+                        FallbackRowState::Duplicate => (None, Some(FallbackSkip::Duplicate), None),
+                    };
+                    FallbackModelStatus { provider: row.provider, model: row.model.clone(), issue, skip, retry_at_ms }
+                })
+                .collect(),
+        }
+    }
+}
+
+/// One settings entry of a [`FallbackPlan`].
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FallbackRow {
+    /// Whose model.
+    pub provider: ProviderId,
+    /// The model in effect (the built-in service's own for `builtin`).
+    pub model: String,
+    /// What became of it.
+    pub state: FallbackRowState,
+}
+
+/// What became of a fallback entry.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum FallbackRowState {
+    /// In the chain.
+    Ready(FallbackTarget),
+    /// Cannot run: the same reasons as a provider card's (no key, no address, …).
+    Issue(EngineIssue),
+    /// The selected model itself: never asked twice.
+    SameAsSelected,
+    /// The same as an entry above it (a hand-edited settings file).
+    Duplicate,
+}
+
+/// A fallback model ready to run: its provider, endpoint, model and key, and its ledger key.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FallbackTarget {
+    /// Whose model.
+    pub provider: ProviderId,
+    /// Where the requests go, with the provider's own key.
+    pub remote: RemoteService,
+    /// The ledger's name for it.
+    pub key: QuotaKey,
+}
+
+/// The ledger key of `provider`'s `remote` for `kind`.
+fn quota_key(kind: ServiceKind, provider: ProviderId, remote: &RemoteService) -> QuotaKey {
+    QuotaKey { kind, provider, model: remote.model.clone(), url: remote.url.clone() }
+}
+
+/// Resolve `kind`'s fallback entries (docs/dictation.md §3.5); `selected` is the provider and
+/// service in use when it is remote and ready.
+fn fallback_plan(
+    kind: ServiceKind,
+    settings: &EngineSettings,
+    secrets: &UserSecrets,
+    built_in: &BuiltIn,
+    selected: Option<(ProviderId, &RemoteService)>,
+) -> FallbackPlan {
+    let config = settings.fallback(kind);
+    let selected = selected.map(|(provider, remote)| quota_key(kind, provider, remote));
+    let mut seen: Vec<QuotaKey> = Vec::new();
+    let rows = config
+        .models
+        .iter()
+        .map(|entry| {
+            let asked = trimmed(Some(&entry.model));
+            match service_target_for(entry.provider, kind, asked, settings, secrets, built_in) {
+                Err((issue, model)) => {
+                    FallbackRow { provider: entry.provider, model: asked.map_or(model, str::to_owned), state: FallbackRowState::Issue(issue) }
+                }
+                Ok(remote) => {
+                    let key = quota_key(kind, entry.provider, &remote);
+                    let state = if selected.as_ref() == Some(&key) {
+                        FallbackRowState::SameAsSelected
+                    } else if seen.contains(&key) {
+                        FallbackRowState::Duplicate
+                    } else {
+                        seen.push(key.clone());
+                        FallbackRowState::Ready(FallbackTarget { provider: entry.provider, remote: remote.clone(), key })
+                    };
+                    FallbackRow { provider: entry.provider, model: remote.model, state }
+                }
+            }
+        })
+        .collect();
+    FallbackPlan { enabled: config.enabled, in_use: config.enabled && selected.is_some(), selected: selected.filter(|_| config.enabled), rows }
 }
 
 impl ResolvedEngines {
@@ -557,6 +738,8 @@ impl ResolvedEngines {
         let providers = provider_statuses(settings, secrets, built_in, &local, asr_provider, llm_provider);
         let cloud_preview = asr_provider == ProviderId::Builtin && asr_remote.is_some() && built_in.asr_live_preview;
         let asr_streams = asr_remote.as_ref().is_some_and(|r| AsrProtocol::of(&r.url, &r.model).streams());
+        let asr_fallback = fallback_plan(ServiceKind::Asr, settings, secrets, built_in, asr_remote.as_ref().map(|r| (asr_provider, r)));
+        let refine_fallback = fallback_plan(ServiceKind::Llm, settings, secrets, built_in, llm_provider.zip(refine.as_ref()));
         Self {
             asr_provider,
             local_model,
@@ -581,8 +764,35 @@ impl ResolvedEngines {
             local_gpu: trimmed(settings.local_gpu.as_deref()).map(str::to_owned),
             local_threads: settings.local_threads,
             inject: settings.inject,
+            asr_fallback,
+            refine_fallback,
             providers,
         }
+    }
+
+    /// This configuration as if `target` were the selected model of `kind`'s service (docs/dictation.md
+    /// §3.5): only that service's fields change, and neither service has fallback models. What the
+    /// engine hands the shell's client factory to build a fallback model's client.
+    pub fn with_candidate(&self, kind: ServiceKind, target: &FallbackTarget) -> Self {
+        let mut view = Self { asr_fallback: FallbackPlan::default(), refine_fallback: FallbackPlan::default(), ..self.clone() };
+        match kind {
+            ServiceKind::Asr => {
+                view.asr_provider = target.provider;
+                view.local_model = None;
+                view.asr_remote = Some(target.remote.clone());
+                view.asr_issue = None;
+                view.asr_model = target.remote.model.clone();
+                view.asr_streams = AsrProtocol::of(&target.remote.url, &target.remote.model).streams();
+                view.cloud_preview = false;
+            }
+            ServiceKind::Llm => {
+                view.llm_provider = Some(target.provider);
+                view.refine = Some(target.remote.clone());
+                view.refine_issue = None;
+                view.refine_model = target.remote.model.clone();
+            }
+        }
+        view
     }
 
     /// Recognition is on-device.
@@ -626,8 +836,14 @@ impl ResolvedEngines {
         }
     }
 
-    /// The UI projection: provider ids, models, user-entered hosts and key presence only.
+    /// The UI projection without a ledger: no model is known to have run out of quota.
     pub fn status(&self) -> EngineStatus {
+        self.status_with(&QuotaLedger::default())
+    }
+
+    /// The UI projection: provider ids, models, user-entered hosts and key presence only, and from
+    /// `ledger` which fallback models ran out of quota (docs/dictation.md §3.5).
+    pub fn status_with(&self, ledger: &QuotaLedger) -> EngineStatus {
         let user_host = |provider: ProviderId, remote: &Option<RemoteService>| match (provider, remote) {
             (ProviderId::Builtin | ProviderId::Local, _) | (_, None) => String::new(),
             (_, Some(r)) => host_of(&r.url),
@@ -652,6 +868,8 @@ impl ResolvedEngines {
             refine_host: self.llm_provider.map(|p| user_host(p, &self.refine)).unwrap_or_default(),
             inject: self.inject,
             providers: self.providers.clone(),
+            asr_fallback: self.asr_fallback.status(ledger),
+            llm_fallback: self.refine_fallback.status(ledger),
         }
     }
 }
@@ -684,6 +902,19 @@ fn service_target(
     secrets: &UserSecrets,
     built_in: &BuiltIn,
 ) -> Result<RemoteService, (EngineIssue, String)> {
+    service_target_for(provider, kind, None, settings, secrets, built_in)
+}
+
+/// [`service_target`] with `model` instead of the provider card's (a fallback model, docs/dictation.md
+/// §3.5); the endpoint and the key stay the provider's. The built-in service has only its own model.
+fn service_target_for(
+    provider: ProviderId,
+    kind: ServiceKind,
+    model: Option<&str>,
+    settings: &EngineSettings,
+    secrets: &UserSecrets,
+    built_in: &BuiltIn,
+) -> Result<RemoteService, (EngineIssue, String)> {
     let spec = provider.spec();
     let Some(preset) = spec.service(kind).filter(|_| provider != ProviderId::Local) else {
         return Err((EngineIssue::Unavailable, String::new()));
@@ -693,7 +924,7 @@ fn service_target(
     }
     let choice = settings.providers.get(&provider);
     let url = choice.and_then(|c| c.url(kind)).map(str::to_owned).or_else(|| (!preset.base_url.is_empty()).then(|| preset.base_url.to_owned()));
-    let model = choice.and_then(|c| c.model(kind)).map(str::to_owned).or_else(|| preset.models.first().map(|m| (*m).to_owned()));
+    let model = model.or_else(|| choice.and_then(|c| c.model(kind))).map(str::to_owned).or_else(|| preset.models.first().map(|m| (*m).to_owned()));
     let key = secrets.get(provider, kind).map(str::to_owned);
     let shown = model.clone().unwrap_or_default();
     let Some(url) = url else { return Err((EngineIssue::UrlMissing, shown)) };
@@ -876,6 +1107,54 @@ pub struct EngineStatus {
     pub inject: InjectMode,
     /// Every provider this build offers, in display order.
     pub providers: Vec<ProviderStatus>,
+    /// The recognition fallback models (docs/dictation.md §3.5).
+    pub asr_fallback: FallbackStatus,
+    /// The clean-up fallback models.
+    pub llm_fallback: FallbackStatus,
+}
+
+/// `EngineStatus.asr_fallback` / `llm_fallback` (docs/dictation.md §3.5).
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FallbackStatus {
+    /// The switch.
+    pub enabled: bool,
+    /// The chain runs: the switch is on and the selected service is ready and remote.
+    pub in_use: bool,
+    /// The selected model ran out of quota: it is tried again then (ms since the epoch).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_retry_at_ms: Option<u64>,
+    /// One row per settings entry, in order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<FallbackModelStatus>,
+}
+
+/// One fallback model as the engines pages show it.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct FallbackModelStatus {
+    /// Whose model.
+    pub provider: ProviderId,
+    /// The model in effect (the built-in service's own for `builtin`).
+    pub model: String,
+    /// Why it cannot run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<EngineIssue>,
+    /// Why it is not in the chain although it could run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip: Option<FallbackSkip>,
+    /// It ran out of quota: it is tried again then (ms since the epoch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at_ms: Option<u64>,
+}
+
+/// Why a fallback model that could run is left out of the chain.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FallbackSkip {
+    /// It is the selected model.
+    SameAsSelected,
+    /// An entry above it is the same model.
+    Duplicate,
 }
 
 impl Default for EngineStatus {
@@ -901,6 +1180,8 @@ impl Default for EngineStatus {
             refine_host: String::new(),
             inject: InjectMode::Paste,
             providers: Vec::new(),
+            asr_fallback: FallbackStatus::default(),
+            llm_fallback: FallbackStatus::default(),
         }
     }
 }
@@ -1400,5 +1681,207 @@ mod tests {
         assert_eq!(host_of("weird://host.test/path?x"), "host.test");
         assert_eq!(host_of("host.only/path"), "host.only");
         assert_eq!(host_of(""), "");
+    }
+
+    fn fallback_entry(provider: ProviderId, model: &str) -> FallbackModel {
+        FallbackModel { provider, model: model.into() }
+    }
+
+    fn row_states(plan: &FallbackPlan) -> Vec<(ProviderId, &str, &'static str)> {
+        plan.rows
+            .iter()
+            .map(|r| {
+                let state = match &r.state {
+                    FallbackRowState::Ready(_) => "ready",
+                    FallbackRowState::Issue(EngineIssue::KeyMissing) => "key_missing",
+                    FallbackRowState::Issue(EngineIssue::Unavailable) => "unavailable",
+                    FallbackRowState::Issue(_) => "issue",
+                    FallbackRowState::SameAsSelected => "same",
+                    FallbackRowState::Duplicate => "duplicate",
+                };
+                (r.provider, r.model.as_str(), state)
+            })
+            .collect()
+    }
+
+    const WORKSPACE: &str = "https://ws-example.cn-beijing.maas.aliyuncs.com/compatible-mode/v1";
+
+    /// A Model Studio selection with seven fallback entries of every kind.
+    fn studio_with_fallbacks() -> (EngineSettings, UserSecrets) {
+        let mut secrets = UserSecrets::default();
+        secrets.set(ProviderId::Aliyun, ServiceKind::Asr, Some("sk-aliyun".into()));
+        secrets.set(ProviderId::Groq, ServiceKind::Asr, Some("gsk-groq".into()));
+        let settings = EngineSettings {
+            asr_provider: ProviderId::Aliyun,
+            providers: with_provider(
+                ProviderId::Aliyun,
+                ProviderSettings { asr_model: Some("qwen-audio-3.1-asr-flash-streaming".into()), asr_url: Some(WORKSPACE.into()), ..Default::default() },
+            ),
+            asr_fallback: FallbackSettings {
+                enabled: true,
+                models: vec![
+                    fallback_entry(ProviderId::Aliyun, "qwen-audio-3.1-asr-flash-message"),
+                    fallback_entry(ProviderId::Aliyun, " qwen-audio-3.1-asr-flash-streaming "),
+                    fallback_entry(ProviderId::Openai, "whisper-1"),
+                    fallback_entry(ProviderId::Groq, "whisper-large-v3"),
+                    fallback_entry(ProviderId::Aliyun, "qwen-audio-3.1-asr-flash-message"),
+                    fallback_entry(ProviderId::Builtin, ""),
+                    fallback_entry(ProviderId::Local, "qwen3-asr-0.6b"),
+                ],
+            },
+            ..EngineSettings::default()
+        };
+        (settings, secrets)
+    }
+
+    /// docs/dictation.md §3.5: every fallback entry becomes a row, in order. A ready one carries
+    /// its own provider's endpoint and key (as `regression_keys_never_leave_their_provider`); the
+    /// selected model, a repeat, a provider without a key and the on-device one stay out of the chain.
+    #[test]
+    fn fallback_models_resolve_row_by_row_with_their_own_providers_keys() {
+        let (settings, secrets) = studio_with_fallbacks();
+        let resolved = ResolvedEngines::resolve(&settings, &secrets, &BUILT);
+        let plan = &resolved.asr_fallback;
+        assert!(plan.enabled && plan.in_use);
+        let selected = plan.selected.clone().unwrap();
+        assert_eq!((selected.provider, selected.model.as_str(), selected.url.as_str()), (ProviderId::Aliyun, "qwen-audio-3.1-asr-flash-streaming", WORKSPACE));
+        assert_eq!(
+            row_states(plan),
+            vec![
+                (ProviderId::Aliyun, "qwen-audio-3.1-asr-flash-message", "ready"),
+                (ProviderId::Aliyun, "qwen-audio-3.1-asr-flash-streaming", "same"),
+                (ProviderId::Openai, "whisper-1", "key_missing"),
+                (ProviderId::Groq, "whisper-large-v3", "ready"),
+                (ProviderId::Aliyun, "qwen-audio-3.1-asr-flash-message", "duplicate"),
+                (ProviderId::Builtin, "Qwen/Qwen3-ASR-1.7B", "ready"),
+                (ProviderId::Local, "qwen3-asr-0.6b", "unavailable"),
+            ]
+        );
+        let targets: Vec<&FallbackTarget> = plan.targets().collect();
+        let seen: Vec<(&str, &str, Option<&str>)> = targets.iter().map(|t| (t.remote.model.as_str(), t.remote.url.as_str(), t.remote.key.as_deref())).collect();
+        assert_eq!(
+            seen,
+            vec![
+                ("qwen-audio-3.1-asr-flash-message", WORKSPACE, Some("sk-aliyun")),
+                ("whisper-large-v3", "https://api.groq.com/openai/v1", Some("gsk-groq")),
+                ("Qwen/Qwen3-ASR-1.7B", "https://asr.builtin.test", Some("built-asr-token")),
+            ]
+        );
+        assert!(
+            targets
+                .iter()
+                .all(|t| t.key == QuotaKey { kind: ServiceKind::Asr, provider: t.provider, model: t.remote.model.clone(), url: t.remote.url.clone() })
+        );
+        // No fallback models for the clean-up: an empty plan, not in use.
+        assert!(!resolved.refine_fallback.enabled && !resolved.refine_fallback.in_use && resolved.refine_fallback.rows.is_empty());
+        // `Debug` names no key and no host.
+        let debug = format!("{plan:?}");
+        assert!(!debug.contains("sk-aliyun") && !debug.contains("gsk-groq") && !debug.contains("ws-example") && !debug.contains("builtin.test"), "{debug}");
+    }
+
+    /// The chain runs only with the switch on and a selected service that is ready and remote; the
+    /// pages still see every row, and the retry times of models that ran out while it runs.
+    #[test]
+    fn fallback_models_run_only_with_the_switch_on_and_a_remote_service_selected() {
+        let (settings, secrets) = studio_with_fallbacks();
+        let off = EngineSettings { asr_fallback: FallbackSettings { enabled: false, ..settings.asr_fallback.clone() }, ..settings.clone() };
+        let resolved = ResolvedEngines::resolve(&off, &secrets, &BUILT);
+        assert!(!resolved.asr_fallback.in_use && resolved.asr_fallback.selected.is_none());
+        assert_eq!(resolved.asr_fallback.targets().count(), 0);
+        assert_eq!(resolved.asr_fallback.rows.len(), 7, "the rows are there to show");
+        let local = EngineSettings { asr_provider: ProviderId::Local, ..settings.clone() };
+        let resolved = ResolvedEngines::resolve(&local, &secrets, &BUILT);
+        assert!(resolved.asr_fallback.enabled && !resolved.asr_fallback.in_use, "on-device recognition never runs out of quota");
+        let not_ready = ResolvedEngines::resolve(&settings, &UserSecrets::default(), &BUILT);
+        assert!(!not_ready.asr_fallback.in_use, "a selected service without its key does not fall back: only a used-up quota does");
+        let no_llm = EngineSettings {
+            llm_fallback: FallbackSettings { enabled: true, models: vec![fallback_entry(ProviderId::Groq, "llama-3.3-70b-versatile")] },
+            ..EngineSettings::default()
+        };
+        let resolved = ResolvedEngines::resolve(&no_llm, &secrets, &BuiltIn::EMPTY);
+        assert!(resolved.llm_provider.is_none() && !resolved.refine_fallback.in_use);
+
+        // The status, row by row, and from the ledger the models that ran out.
+        let resolved = ResolvedEngines::resolve(&settings, &secrets, &BUILT);
+        let ledger = QuotaLedger::with_clock(|| 1_000);
+        ledger.mark(resolved.asr_fallback.selected.as_ref().unwrap());
+        let groq = resolved.asr_fallback.targets().nth(1).unwrap().key.clone();
+        ledger.mark(&groq);
+        let status = resolved.status_with(&ledger).asr_fallback;
+        let day = u64::try_from(crate::dictation::QUOTA_RETRY_AFTER.as_millis()).unwrap();
+        assert!(status.enabled && status.in_use);
+        assert_eq!(status.selected_retry_at_ms, Some(1_000 + day));
+        let rows: Vec<(ProviderId, Option<EngineIssue>, Option<FallbackSkip>, Option<u64>)> =
+            status.models.iter().map(|m| (m.provider, m.issue, m.skip, m.retry_at_ms)).collect();
+        assert_eq!(
+            rows,
+            vec![
+                (ProviderId::Aliyun, None, None, None),
+                (ProviderId::Aliyun, None, Some(FallbackSkip::SameAsSelected), None),
+                (ProviderId::Openai, Some(EngineIssue::KeyMissing), None, None),
+                (ProviderId::Groq, None, None, Some(1_000 + day)),
+                (ProviderId::Aliyun, None, Some(FallbackSkip::Duplicate), None),
+                (ProviderId::Builtin, None, None, None),
+                (ProviderId::Local, Some(EngineIssue::Unavailable), None, None),
+            ]
+        );
+        assert_eq!(resolved.status().asr_fallback.selected_retry_at_ms, None, "without a ledger nothing ran out");
+        let off = ResolvedEngines::resolve(
+            &EngineSettings { asr_fallback: FallbackSettings { enabled: false, ..settings.asr_fallback.clone() }, ..settings.clone() },
+            &secrets,
+            &BUILT,
+        );
+        assert!(off.status_with(&ledger).asr_fallback.models.iter().all(|m| m.retry_at_ms.is_none()), "no retry times while the chain does not run");
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["models"][1], serde_json::json!({ "provider": "aliyun", "model": "qwen-audio-3.1-asr-flash-streaming", "skip": "same_as_selected" }));
+        assert_eq!(json["models"][2]["issue"], "key_missing");
+        assert_eq!(serde_json::to_value(FallbackStatus::default()).unwrap(), serde_json::json!({ "enabled": false, "in_use": false }));
+    }
+
+    /// The view the engine hands the client factory for one fallback model: only that service changes.
+    #[test]
+    fn a_fallback_models_view_changes_only_its_service() {
+        let (settings, mut secrets) = studio_with_fallbacks();
+        secrets.set(ProviderId::Groq, ServiceKind::Llm, Some("gsk-groq".into()));
+        let settings = EngineSettings {
+            llm_provider: ProviderId::Builtin,
+            llm_fallback: FallbackSettings { enabled: true, models: vec![fallback_entry(ProviderId::Groq, "llama-3.3-70b-versatile")] },
+            ..settings
+        };
+        let resolved = ResolvedEngines::resolve(&settings, &secrets, &BUILT);
+        let groq = resolved.asr_fallback.targets().nth(1).unwrap().clone();
+        let view = resolved.with_candidate(ServiceKind::Asr, &groq);
+        assert_eq!((view.asr_provider, view.asr_model.as_str(), view.asr_issue), (ProviderId::Groq, "whisper-large-v3", None));
+        assert_eq!(view.asr_remote.as_ref(), Some(&groq.remote));
+        assert!(!view.asr_streams && view.local_model.is_none() && !view.cloud_preview);
+        assert_eq!((view.llm_provider, view.refine.as_ref()), (resolved.llm_provider, resolved.refine.as_ref()), "the clean-up stays");
+        assert!(view.asr_fallback.rows.is_empty() && view.refine_fallback.rows.is_empty(), "a view has no fallback models of its own");
+        let streaming = resolved.asr_fallback.targets().next().unwrap().clone();
+        assert!(resolved.with_candidate(ServiceKind::Asr, &streaming).asr_streams, "a realtime fallback model streams in its view");
+        let llm = resolved.refine_fallback.targets().next().unwrap().clone();
+        assert_eq!(llm.remote.key.as_deref(), Some("gsk-groq"));
+        let view = resolved.with_candidate(ServiceKind::Llm, &llm);
+        assert_eq!((view.llm_provider, view.refine_model.as_str(), view.refine_issue), (Some(ProviderId::Groq), "llama-3.3-70b-versatile", None));
+        assert_eq!(view.refine.as_ref(), Some(&llm.remote));
+        assert_eq!((view.asr_provider, view.asr_remote.as_ref()), (resolved.asr_provider, resolved.asr_remote.as_ref()), "the recognition stays");
+    }
+
+    /// Settings files from before fallback models parse, and the new fields round-trip.
+    #[test]
+    fn fallback_settings_parse_and_round_trip() {
+        let old: EngineSettings = serde_json::from_str(r#"{"asr_provider":"aliyun"}"#).unwrap();
+        assert!(old.asr_fallback.is_default() && old.llm_fallback.is_default());
+        let json = r#"{"asr_fallback":{"enabled":true,"models":[{"provider":"aliyun","model":"qwen-audio-3.1-asr-flash"},{"provider":"builtin"}]}}"#;
+        let parsed: EngineSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            parsed.fallback(ServiceKind::Asr).models,
+            vec![fallback_entry(ProviderId::Aliyun, "qwen-audio-3.1-asr-flash"), fallback_entry(ProviderId::Builtin, "")]
+        );
+        assert!(parsed.fallback(ServiceKind::Llm).is_default());
+        let written = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(written["asr_fallback"]["models"][1], serde_json::json!({ "provider": "builtin", "model": "" }));
+        assert!(written.get("llm_fallback").is_none(), "a default list is not written");
+        let on_without_models: EngineSettings = serde_json::from_str(r#"{"llm_fallback":{"enabled":true}}"#).unwrap();
+        assert_eq!(serde_json::to_value(&on_without_models).unwrap()["llm_fallback"], serde_json::json!({ "enabled": true }));
     }
 }

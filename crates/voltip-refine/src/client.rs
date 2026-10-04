@@ -7,7 +7,7 @@ use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{MAX_ERROR_BODY_CHARS, RefineConfig, normalize_base_url};
-use crate::error::RefineError;
+use crate::error::{RefineError, error_fields, is_quota_exhausted};
 use crate::presets::{BUILTIN_OUTPUT_CAP, output_token_budget};
 use crate::prompt::{PromptHints, TEMPERATURE, edit_nonce, edit_system_prompt, edit_user_message, system_prompt};
 
@@ -223,16 +223,13 @@ impl RefineClient {
         }
         let response = request.send().await.map_err(map_reqwest)?;
         let status = response.status();
-        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-            return Err(RefineError::Unauthorized);
-        }
-        if status == StatusCode::TOO_MANY_REQUESTS {
-            return Err(RefineError::RateLimited { retry_after_ms: retry_after_ms(response.headers()) });
+        if !status.is_success() {
+            let retry_after_ms = retry_after_ms(response.headers());
+            // The body of a refusal is only read to sort it: one that cannot be read sorts by status.
+            let body = response.text().await.unwrap_or_default();
+            return Err(completion_error(status, retry_after_ms, &body));
         }
         let body = response.text().await.map_err(map_reqwest)?;
-        if !status.is_success() {
-            return Err(RefineError::Server { status: status.as_u16(), body: truncate_chars(&body, MAX_ERROR_BODY_CHARS) });
-        }
         let parsed: ChatResponse =
             serde_json::from_str(&body).map_err(|e| RefineError::BadResponse(format!("{e}: {}", truncate_chars(&body, MAX_ERROR_BODY_CHARS))))?;
         let choice = parsed.choices.into_iter().next().ok_or_else(|| RefineError::BadResponse("no choices in response".into()))?;
@@ -240,6 +237,22 @@ impl RefineClient {
         let model = parsed.model.filter(|m| !m.trim().is_empty()).unwrap_or_else(|| self.config.model.clone());
         Ok(Completion { content: choice.message.content.unwrap_or_default(), finish_reason: choice.finish_reason, latency_ms, model })
     }
+}
+
+/// A refused completion: a used-up quota first, whatever the status (docs/dictation.md §3.5; Model
+/// Studio answers 免费额度用完即停 with 403, which used to read as a wrong key), then by status.
+fn completion_error(status: StatusCode, retry_after_ms: Option<u64>, body: &str) -> RefineError {
+    let (code, message) = error_fields(body);
+    if is_quota_exhausted(&code, &message) {
+        return RefineError::QuotaExhausted { code, message: truncate_chars(&message, MAX_ERROR_BODY_CHARS) };
+    }
+    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+        return RefineError::Unauthorized;
+    }
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        return RefineError::RateLimited { retry_after_ms };
+    }
+    RefineError::Server { status: status.as_u16(), body: truncate_chars(body, MAX_ERROR_BODY_CHARS) }
 }
 
 /// The models an OpenAI-compatible service lists (`GET {base}/models`, each `data[].id`): the
@@ -626,6 +639,39 @@ mod tests {
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(400).set_body_string("bad request")).await;
         assert_eq!(client(&server, None).refine("x", None).await.unwrap_err(), RefineError::Server { status: 400, body: "bad request".into() });
+    }
+
+    /// Regression (2026-10-04, docs/dictation.md §3.5): Model Studio answers 免费额度用完即停 with a
+    /// 403 whose body names `AllocationQuota.FreeTierOnly`; the status was sorted first and the
+    /// polish reported a wrong key. The body decides on every refusal, for an edit too; a refusal
+    /// without a quota code keeps its status's meaning.
+    #[tokio::test]
+    async fn regression_a_free_tier_stop_on_polish_is_not_reported_as_a_bad_key() {
+        let free_tier = json!({
+            "error": { "code": "AllocationQuota.FreeTierOnly", "message": "The free tier of the model has been exhausted.", "type": "AllocationQuota.FreeTierOnly" },
+            "request_id": "r",
+        });
+        let used_up =
+            RefineError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "The free tier of the model has been exhausted.".into() };
+        let server = MockServer::start().await;
+        mount(&server, ResponseTemplate::new(403).set_body_json(free_tier)).await;
+        assert_eq!(client(&server, Some("sk-x")).refine("x", None).await.unwrap_err(), used_up);
+        assert_eq!(client(&server, Some("sk-x")).edit("你好", "改成英文", &PromptHints::default()).await.unwrap_err(), used_up);
+        let insufficient =
+            json!({ "error": { "message": "You exceeded your current quota.", "type": "insufficient_quota", "param": null, "code": "insufficient_quota" } });
+        for status in [429_u16, 403] {
+            let server = MockServer::start().await;
+            mount(&server, ResponseTemplate::new(status).set_body_json(insufficient.clone())).await;
+            let err = client(&server, Some("k")).refine("x", None).await.unwrap_err();
+            assert_eq!(err, RefineError::QuotaExhausted { code: "insufficient_quota".into(), message: "You exceeded your current quota.".into() }, "{status}");
+            assert!(!err.is_retryable());
+        }
+        let server = MockServer::start().await;
+        mount(&server, ResponseTemplate::new(403).set_body_json(json!({ "error": { "code": "invalid_api_key", "message": "Incorrect API key" } }))).await;
+        assert_eq!(client(&server, Some("k")).refine("x", None).await.unwrap_err(), RefineError::Unauthorized);
+        let server = MockServer::start().await;
+        mount(&server, ResponseTemplate::new(429).set_body_json(json!({ "code": "Throttling.RateQuota", "message": "Requests rate limit exceeded" }))).await;
+        assert_eq!(client(&server, Some("k")).refine("x", None).await.unwrap_err(), RefineError::RateLimited { retry_after_ms: None });
     }
 
     #[tokio::test]

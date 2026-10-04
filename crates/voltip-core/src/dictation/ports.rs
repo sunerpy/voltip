@@ -53,6 +53,16 @@ pub enum DictationError {
     /// Text refinement failed (never fatal for the pipeline: the raw text is injected).
     #[error("refine: {0}")]
     Refine(String),
+    /// The service said the model's quota is used up (docs/dictation.md §3.5): a fallback model
+    /// list moves on to its next model; with none left the take fails with `FailureCode::Quota`
+    /// (a refinement still injects the raw text).
+    #[error("额度已用完：{detail}")]
+    QuotaExhausted {
+        /// The service that ran out.
+        service: crate::providers::ServiceKind,
+        /// The adapter's explanation: the service's code and message.
+        detail: String,
+    },
     /// The text could not be handed to the foreground application.
     #[error("inject: {0}")]
     Inject(String),
@@ -79,6 +89,14 @@ pub enum DictationError {
     /// A stop / cancel arrived with nothing running.
     #[error("当前没有进行中的听写")]
     Idle,
+}
+
+impl DictationError {
+    /// The model's quota is used up ([`DictationError::QuotaExhausted`]): the one failure a
+    /// fallback model list moves on for (docs/dictation.md §3.5).
+    pub fn is_quota_exhausted(&self) -> bool {
+        matches!(self, Self::QuotaExhausted { .. })
+    }
 }
 
 /// Captured audio, ready for upload.
@@ -247,6 +265,10 @@ pub struct Transcript {
     pub text: String,
     /// Round-trip time of the request.
     pub latency_ms: u64,
+    /// The model that recognised it, as the client that ran reports it (docs/dictation.md §3.5):
+    /// what the history records, also when a fallback model or a configuration changed mid-take
+    /// did the work. `None` when the client cannot say (the fakes).
+    pub model: Option<String>,
 }
 
 /// Speech-to-text.
@@ -317,6 +339,10 @@ pub struct StreamFinal {
     pub committed: Vec<Segment>,
     /// The last, uncommitted sentence after flushing the recogniser (may be empty).
     pub tail: String,
+    /// The model this text came from, set after the flush (docs/dictation.md §3.5): the flush may
+    /// itself send the last requests. `None` when the session cannot say (the local streaming
+    /// model, the fakes).
+    pub model: Option<String>,
 }
 
 /// A streaming recogniser (docs/dictation.md §11): the source of the pill's live text while the
@@ -342,6 +368,13 @@ pub trait StreamingSession: Send {
     fn poll(&mut self) -> StreamEvent;
     /// Flush: signal end of input, decode the rest, return every committed sentence plus the tail.
     fn finish(self: Box<Self>) -> Result<StreamFinal, DictationError>;
+
+    /// The model the text so far came from (docs/dictation.md §3.5): read when the session
+    /// degrades, after sentences of it may have been used. `None` (the default) when the session
+    /// cannot say.
+    fn model(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Refinement result.
@@ -646,7 +679,7 @@ mod tests {
         assert!(json.contains(r#""rms_dbfs":-20.0"#) && json.contains(r#""seq":7"#), "{json}");
         let segment = Segment { text: "你好。".into(), start_ms: 120, end_ms: 1480 };
         assert_eq!(serde_json::to_string(&segment).unwrap(), r#"{"text":"你好。","start_ms":120,"end_ms":1480}"#);
-        assert_eq!(StreamFinal::default(), StreamFinal { committed: Vec::new(), tail: String::new() });
+        assert_eq!(StreamFinal::default(), StreamFinal { committed: Vec::new(), tail: String::new(), model: None });
         assert_eq!(PARTIAL_THROTTLE, Duration::from_millis(80));
         assert_eq!(LIVE_CHUNK_SAMPLES as u32 * 10, LIVE_SAMPLE_RATE_HZ, "one chunk is 100 ms");
     }

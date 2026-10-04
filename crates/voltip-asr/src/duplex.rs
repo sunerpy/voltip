@@ -25,8 +25,9 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::client::{Transcript, truncate_chars};
 use crate::config::MAX_ERROR_BODY_CHARS;
-use crate::dashscope::{DashscopeClient, is_free_tier_stop, join_sentences, service_error, wav_format};
+use crate::dashscope::{DashscopeClient, join_sentences, service_error, wav_format};
 use crate::error::AsrError;
+use crate::error::is_quota_exhausted;
 
 /// Deadline for the handshake and `task-started`.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -208,8 +209,8 @@ fn bad_event(e: &serde_json::Error, text: &str) -> AsrError {
 fn task_failed(value: &Value) -> AsrError {
     let field = |key: &str| value.pointer(&format!("/header/{key}")).and_then(Value::as_str).unwrap_or_default().to_owned();
     let (code, message) = (field("error_code"), field("error_message"));
-    if is_free_tier_stop(&code) || is_free_tier_stop(&message) {
-        AsrError::FreeQuotaExhausted
+    if is_quota_exhausted(&code, &message) {
+        AsrError::QuotaExhausted { code, message: truncate_chars(&message, MAX_ERROR_BODY_CHARS) }
     } else if code.starts_with("Throttling") {
         AsrError::RateLimited { retry_after_ms: None }
     } else if code == "InvalidApiKey" {
@@ -483,7 +484,10 @@ pub(crate) mod tests {
         let (url, _) = serve(Script::Refuse(401, r#"{"code":"InvalidApiKey","message":"Invalid API-key provided."}"#)).await;
         assert_eq!(connect(&options(&url, Some("bad"))).await.err(), Some(AsrError::Unauthorized));
         let (url, _) = serve(Script::Refuse(403, r#"{"code":"AllocationQuota.FreeTierOnly","message":"free tier exhausted"}"#)).await;
-        assert_eq!(connect(&options(&url, Some("k"))).await.err(), Some(AsrError::FreeQuotaExhausted));
+        assert_eq!(
+            connect(&options(&url, Some("k"))).await.err(),
+            Some(AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "free tier exhausted".into() })
+        );
         let (url, _) = serve(Script::FailAtStart("ModelNotFound", "Model not found (qwen3-asr-flash-realtime)!")).await;
         assert_eq!(
             connect(&options(&url, Some("k"))).await.err(),
@@ -492,7 +496,10 @@ pub(crate) mod tests {
         let (url, _) = serve(Script::FailAtStart("Throttling.RateQuota", "slow down")).await;
         assert_eq!(connect(&options(&url, Some("k"))).await.err(), Some(AsrError::RateLimited { retry_after_ms: None }));
         let (url, _) = serve(Script::FailAtStart("AllocationQuota.FreeTierOnly", "x")).await;
-        assert_eq!(connect(&options(&url, Some("k"))).await.err(), Some(AsrError::FreeQuotaExhausted));
+        assert_eq!(
+            connect(&options(&url, Some("k"))).await.err(),
+            Some(AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "x".into() })
+        );
         let (url, _) = serve(Script::FailAtStart("InvalidApiKey", "no")).await;
         assert_eq!(connect(&options(&url, None)).await.err(), Some(AsrError::Unauthorized));
         // A whole take on a task that fails reports the task's reason.

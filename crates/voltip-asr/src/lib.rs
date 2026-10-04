@@ -8,7 +8,7 @@
 //!   `qwen3-asr-flash`, the native multimodal generation of `qwen-audio-…-asr-flash`, and the
 //!   realtime models' WebSocket task protocol ([`duplex`]), live or with a whole take.
 //! * [`AsrError`] — outcomes sorted into what the caller can act on (`Unauthorized`,
-//!   `RateLimited`, `Server`, `Service`, `FreeQuotaExhausted`, `Network`, `Timeout`,
+//!   `RateLimited`, `Server`, `Service`, `QuotaExhausted`, `Network`, `Timeout`,
 //!   `BadResponse`, …), with [`AsrError::is_retryable`].
 //!
 //! TLS is rustls; nothing here knows a production hostname — the core injects it.
@@ -26,4 +26,4 @@ mod error;
 pub use client::{AsrClient, Transcript};
 pub use config::{AsrConfig, DEFAULT_TIMEOUT, MAX_ERROR_BODY_CHARS, normalize_base_url};
 pub use dashscope::{DashscopeClient, DashscopeMode, HOTWORD_WEIGHT, MAX_DATA_URI_BYTES, MAX_HOTWORDS, compatible_base, origin_of};
-pub use error::AsrError;
+pub use error::{AsrError, is_quota_exhausted};

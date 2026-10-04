@@ -7,6 +7,7 @@
 pub mod activation;
 pub mod engine;
 pub mod fakes;
+pub mod fallback;
 pub mod long;
 pub mod ports;
 pub mod redecode;
@@ -18,6 +19,7 @@ use serde::{Deserialize, Serialize};
 pub use crate::engines::OutputMode;
 pub use crate::scenes::TakeContext;
 pub use engine::{DictationEngine, DictationPorts, EngineFactory};
+pub use fallback::{FallbackRefiner, FallbackTranscriber, Link, QUOTA_RETRY_AFTER, QuotaKey, QuotaLedger, first_with_quota};
 pub use ports::{
     AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection,
     Injector, LIVE_CHUNK_SAMPLES, LIVE_SAMPLE_RATE_HZ, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MAX_RECORDING_STREAMING, MIN_RECORDING,
@@ -158,6 +160,8 @@ pub enum FailureCode {
     EditUnavailable,
     /// Voice edit: the foreground application is a terminal, whose selection cannot be replaced.
     EditInTerminal,
+    /// The model's quota is used up and no fallback model had any left (docs/dictation.md §3.5).
+    Quota,
     /// Anything else.
     #[default]
     Unknown,
@@ -176,6 +180,7 @@ impl From<&DictationError> for FailureCode {
             DictationError::Selection(_) => Self::Selection,
             DictationError::EditUnavailable(_) => Self::EditUnavailable,
             DictationError::EditInTerminal => Self::EditInTerminal,
+            DictationError::QuotaExhausted { .. } => Self::Quota,
             DictationError::Busy | DictationError::Idle => Self::Unknown,
         }
     }
@@ -519,6 +524,8 @@ mod tests {
             (DictationError::Selection("no copy tool".into()), FailureCode::Selection, "selection"),
             (DictationError::EditUnavailable("no key".into()), FailureCode::EditUnavailable, "edit_unavailable"),
             (DictationError::EditInTerminal, FailureCode::EditInTerminal, "edit_in_terminal"),
+            (DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Asr, detail: "x".into() }, FailureCode::Quota, "quota"),
+            (DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Llm, detail: "x".into() }, FailureCode::Quota, "quota"),
             (DictationError::Busy, FailureCode::Unknown, "unknown"),
             (DictationError::Idle, FailureCode::Unknown, "unknown"),
         ];

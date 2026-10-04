@@ -2154,7 +2154,7 @@ impl DictationEngine {
         let task = tokio::spawn(async move {
             let wav = tokio::task::spawn_blocking(move || long::read_segment(&path, start, end)).await;
             let result = match wav {
-                Ok(Ok(wav)) if wav::is_silent(&wav) => Ok(Transcript { text: String::new(), latency_ms: 0 }),
+                Ok(Ok(wav)) if wav::is_silent(&wav) => Ok(Transcript { text: String::new(), latency_ms: 0, model: None }),
                 Ok(Ok(wav)) => {
                     transcriber.transcribe(&wav, language.as_deref(), &glossary).await.map(|t| Transcript { text: normalized(script, t.text.trim()), ..t })
                 }
@@ -2630,6 +2630,7 @@ fn run_live(job: LiveJob) {
     let result = result.map(|fin| StreamFinal {
         committed: fin.committed.into_iter().map(|s| Segment { text: normalized(script, &s.text), ..s }).collect(),
         tail: normalized(script, &fin.tail),
+        model: fin.model,
     });
     let _ = tx.blocking_send(Internal::StreamFinished { session, result });
 }
@@ -3405,7 +3406,9 @@ mod tests {
         };
         assert!(format!("{stale:?}").contains("Finished"));
         assert!(format!("{:?}", Internal::LiveInjected { session: 1, idx: 0, result: Ok(Injection { via: Via::Paste, note: None }) }).contains("idx: 0"));
-        assert!(format!("{:?}", Internal::Remainder { session: 1, result: Ok(Transcript { text: "秘密".into(), latency_ms: 1 }) }).contains("Ok(2)"));
+        assert!(
+            format!("{:?}", Internal::Remainder { session: 1, result: Ok(Transcript { text: "秘密".into(), latency_ms: 1, model: None }) }).contains("Ok(2)")
+        );
         assert!(r.engine.on_internal(Internal::LiveInjected { session: 1, idx: 0, result: Ok(Injection { via: Via::Paste, note: None }) }).is_empty());
         assert!(r.engine.on_internal(Internal::Remainder { session: 1, result: Err(DictationError::Asr("late".into())) }).is_empty());
         assert!(r.engine.on_internal(stale).is_empty());
@@ -3930,7 +3933,7 @@ mod tests {
         r.engine.stop().unwrap();
         assert!(r.engine.on_internal(Internal::StreamFinished { session: 1, result: Err(DictationError::Asr("flush".into())) }).is_empty());
         assert!(r.engine.on_internal(Internal::StreamFinished { session: 9, result: Ok(StreamFinal::default()) }).is_empty());
-        let fin = StreamFinal { committed: vec![Segment { text: "迟到的".into(), start_ms: 0, end_ms: 1 }], tail: String::new() };
+        let fin = StreamFinal { committed: vec![Segment { text: "迟到的".into(), start_ms: 0, end_ms: 1 }], tail: String::new(), model: None };
         let fx = r.engine.on_internal(Internal::StreamFinished { session: 1, result: Ok(fin.clone()) });
         assert!(matches!(phase(&fx), DictationPhase::Processing { preview: Some(p), .. } if p == "迟到的"), "a good flush fills an empty preview: {fx:?}");
         assert!(r.engine.on_internal(Internal::StreamFinished { session: 1, result: Ok(fin) }).is_empty(), "same text: no update");

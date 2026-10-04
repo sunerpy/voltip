@@ -25,11 +25,11 @@ use voltip_core::presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetId, P
 use voltip_core::ui::{GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, UiEvent, UiState, UpdateStatus};
 use voltip_core::{
     Activation, AppRef, BuiltIn, BuiltinScene, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ContextSharing, DeviceConnection, DeviceView,
-    DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, HistoryEntry, HistoryHits,
-    HistoryPage, HistoryQuery, HistoryStats, HistoryStatsBucket, ImportMode, InjectMode, LiveText, LocalDevice, Locale, ModelFileView, ModelInstallState,
-    ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSettings, RelaySource, RelayStatus, ReplacementRule,
-    ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef, Segment, ServiceKind, Settings, SoloKey, TakeContext,
-    TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
+    DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, FallbackModel, FallbackSettings,
+    HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryStats, HistoryStatsBucket, ImportMode, InjectMode, LiveText, LocalDevice, Locale,
+    ModelFileView, ModelInstallState, ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSettings, RelaySource,
+    RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef, Segment, ServiceKind,
+    Settings, SoloKey, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
 };
 use voltip_core::{EntryOrigin, OriginKind};
 use voltip_crypto::{PublicKey, SafetyCode};
@@ -266,6 +266,10 @@ fn engine_settings() -> EngineSettings {
         vad_trim: false,
         chinese_script: ChineseScript::Simplified,
         inject: InjectMode::Paste,
+        // docs/dictation.md §3.5: a ready fallback model for the recognition, one without its key
+        // for the clean-up.
+        asr_fallback: FallbackSettings { enabled: true, models: vec![FallbackModel { provider: ProviderId::Custom, model: "qwen3-asr-flash".into() }] },
+        llm_fallback: FallbackSettings { enabled: true, models: vec![FallbackModel { provider: ProviderId::Openai, model: "gpt-6-luna".into() }] },
     }
 }
 
