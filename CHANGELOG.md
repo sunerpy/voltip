@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.40](https://github.com/sunerpy/voltip/compare/v0.0.39...v0.0.40) (2026-10-04)
+
+
+### Bug Fixes
+
+* **mobile:** 手机不注册本机服务的三条命令 ([#103](https://github.com/sunerpy/voltip/issues/103)) ([32f266f](https://github.com/sunerpy/voltip/commit/32f266f99242d6ea881a6c0790a98170b2b7601e))
+
 ## [0.0.39](https://github.com/sunerpy/voltip/compare/v0.0.38...v0.0.39) (2026-10-04)
 
 
