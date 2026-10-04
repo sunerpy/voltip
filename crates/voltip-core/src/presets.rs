@@ -331,6 +331,24 @@ fn unknown_preset(id: Uuid) -> PresetError {
     PresetError::Invalid(format!("没有 id 为 {id} 的预设"))
 }
 
+fn presets_of(file: PresetsFile) -> Option<Vec<CustomPreset>> {
+    (file.schema == PRESETS_SCHEMA).then_some(file.presets)
+}
+
+/// A stored list is usable when every preset is in its normalised form and the list keeps the rules.
+fn check_stored_presets(presets: &[CustomPreset]) -> Result<(), String> {
+    let valid = || -> Result<(), PresetError> {
+        for p in presets {
+            let draft = PresetDraft::from(p);
+            if validate_preset_draft(&draft)? != draft {
+                return Err(invalid(format!("预设「{}」不是规范形式", p.name)));
+            }
+        }
+        check_presets(presets)
+    };
+    valid().map_err(|e| e.to_string())
+}
+
 /// The custom presets (`presets.json`), in the order they were made.
 #[derive(Debug)]
 pub struct PresetStore {
@@ -343,25 +361,15 @@ impl PresetStore {
     /// could not be used (a preset that does not validate, or is not in its normalised form, counts
     /// as unusable).
     pub fn open(dir: &Path) -> (Self, Option<String>) {
-        let (file, presets, notice) = ListFile::load(
-            dir,
-            PRESETS_FILE_NAME,
-            PRESETS_SCHEMA,
-            |f: PresetsFile| (f.schema == PRESETS_SCHEMA).then_some(f.presets),
-            |presets: &[CustomPreset]| {
-                let valid = || -> Result<(), PresetError> {
-                    for p in presets {
-                        let draft = PresetDraft::from(p);
-                        if validate_preset_draft(&draft)? != draft {
-                            return Err(invalid(format!("预设「{}」不是规范形式", p.name)));
-                        }
-                    }
-                    check_presets(presets)
-                };
-                valid().map_err(|e| e.to_string())
-            },
-        );
+        let (file, presets, notice) = ListFile::load(dir, PRESETS_FILE_NAME, PRESETS_SCHEMA, presets_of, check_stored_presets);
         (Self { file, presets }, notice)
+    }
+
+    /// The custom presets in `dir/presets.json`, read with the same checks as [`Self::open`] and
+    /// no side effect: a file that cannot be used is reported and left where it is (the local
+    /// speech service shares the app's data directory, docs/dictation.md §23).
+    pub fn read(dir: &Path) -> Result<Vec<CustomPreset>, String> {
+        ListFile::read(dir, PRESETS_FILE_NAME, PRESETS_SCHEMA, presets_of, check_stored_presets)
     }
 
     /// Current custom presets.
@@ -497,6 +505,22 @@ mod tests {
         assert!(store.presets().is_empty());
         assert!(notice.unwrap().contains("不是规范形式"));
         assert!(!dir.path().join(PRESETS_FILE_NAME).exists(), "moved aside, never deleted");
+    }
+
+    /// docs/dictation.md §23: reading the presets has no side effect; an unusable file is
+    /// reported and stays exactly where it was.
+    #[test]
+    fn reading_the_presets_never_moves_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(PresetStore::read(dir.path()).unwrap(), Vec::new());
+        let (mut store, _) = PresetStore::open(dir.path());
+        let id = store.add(&draft("周报", "整理成周报"), 1).unwrap();
+        assert_eq!(PresetStore::read(dir.path()).unwrap().iter().map(|p| p.id).collect::<Vec<_>>(), [id]);
+        let path = dir.path().join(PRESETS_FILE_NAME);
+        std::fs::write(&path, b"[1,2").unwrap();
+        assert!(PresetStore::read(dir.path()).unwrap_err().contains("presets.json 无法使用"));
+        assert_eq!(std::fs::read(&path).unwrap(), b"[1,2");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "no .corrupt copy, no temporary file");
     }
 
     #[test]

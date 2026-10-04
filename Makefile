@@ -117,6 +117,10 @@ smoke-wayland: ## Real desktop app on headless weston + sway: pure Wayland, --to
 linux-x64: ## Build the Linux x64 deb / rpm / AppImage with their build record (dist/linux-x64)
 	./scripts/build-linux-x64.sh dist/linux-x64
 
+.PHONY: server-linux-x64
+server-linux-x64: ## Build voltip-server, the headless local speech service, as a Linux x64 tar.gz (dist/server-linux-x64)
+	./scripts/build-server-linux-x64.sh dist/server-linux-x64
+
 .PHONY: smoke-native
 smoke-native: ## Headless native run of a built binary (BIN=path): version, list, download a model, transcribe a public sample
 	pwsh -NoProfile -File scripts/smoke-native-cli.ps1 -Binary "$(or $(BIN),target/debug/voltip-desktop)" -OutDir smoke-native-cli

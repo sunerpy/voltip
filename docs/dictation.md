@@ -16,6 +16,8 @@
 | `voltip-inject` | `inject(text) -> Injection`：备份剪贴板 → 写入文本 → 发 `Ctrl+V`（macOS `Cmd+V`）→ 600 ms 后恢复剪贴板；任何一步失败都把文本留在剪贴板并返回 `Via::Clipboard` + 原因；`Injector` trait + `FakeInjector` | arboard 3.6、enigo 0.6（x11rb / SendInput / CGEvent） | trait 假实现；真实实现只在有显示器时冒烟 |
 | `voltip-asr-local` | 本地引擎（§10）：`catalogue`（6 条目录，含隐藏的 `silero-vad`）、`store`（下载 / 校验 / 安装，§12 辅助条目随首个模型下载）、`transcriber`（`LocalTranscriber`，按条目引擎分派：`gguf.rs` transcribe.cpp、`sherpa.rs` sherpa-onnx；`vad_trim` 时先经 `vad.rs` 裁剪）、`streaming`（`LocalStreamingTranscriber`，§11 实时预览）、`vad`（`VadTrimmer`，§12 Silero VAD 首尾裁剪）、`segmenter`（`VadSegmenterFactory`，§22 长录音在停顿处切段） | transcribe-cpp 0.2.3（静态，CPU）、sherpa-onnx 1.13.8（动态）、rubato | 假加载器 / 假 VAD 单测；`tests/real.rs` 四条 `#[ignore]` 真模型测试 |
 | `voltip-core` | `dictation` 模块：状态机 + 编排（含 §11 的解码线程 `run_live` 与 `Listening.live` / `Processing.preview`，§22 长录音 `long.rs`）；`history` 模块：`history.sqlite3`（§4.3，上限 2 万条）、用 AI 预设处理与导出（§22）；`engines` 模块：默认值解析（`option_env!`）与 `EngineSettings`；`models` 模块：模型库端口；秘密经 `SecretStore` | 只依赖 trait（`AudioSource` / `Capture` / `LivePcm` / `Transcriber` / `StreamingTranscriber` / `Refiner` / `Injector` / `ModelManager`），不依赖 cpal / rtrb / reqwest / enigo / sherpa | 假实现驱动完整状态机（`fakes.rs`：`FakeAudio` 带假 tap、`FakeStreaming` 脚本会话、`FakeModels`） |
+| `voltip-serve` | 本机语音服务的 HTTP 层（§23）：`ServeHandle`（路由、令牌、准入、边收边解码的 WAV 上传、OpenAI 的返回与错误格式）与 `HttpHost`（核心 `ServeHost` 端口的实现，桌面 App 用）；处理本身在 `voltip_core::serve` | axum 0.8（`multipart`）、hound、rubato、subtle | `tower::ServiceExt::oneshot` 加假 `SpeechService`；真实 socket |
+| `apps/server` | 无头服务端 `voltip-server`（§23.5）：命令行、读 App 的数据目录、只读钥匙串、信号与退出 | voltip-core、voltip-cloud、voltip-asr-local、voltip-serve；不依赖 voltip-audio、voltip-inject 和 Tauri | 假工厂下的各命令；真实二进制收到 SIGTERM 后的退出 |
 | `apps/desktop/src-tauri` | 把真实实现注入核心；热键按下 / 释放 → `DictationStart` / `DictationStop`；悬浮胶囊跟随 `DictationPhase` | 全部 crate | mock runtime IPC |
 
 核心里的 trait（`voltip_core::dictation::ports`）：
@@ -1569,3 +1571,185 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 - 双语逐句对齐字幕、实时翻译字幕。
 - 手机端的录音来源、长录音与导出。
+
+
+## 23. 本机语音服务（2026-10-04）
+
+**目标**：这台电脑上的其他程序（Paseo 的手机听写、脚本）通过 OpenAI 兼容的 `POST /v1/audio/transcriptions` 使用 Voltip。一段录音经过与热键听写相同的处理（识别 → 字形 → 词典 → AI 预设 → 规则），只返回文字：不粘贴，不写历史和统计。超过 2 分钟的录音按长录音（§22.3）分段识别，单次最长 2 小时。两种运行方式共用同一套处理和接口：
+
+- 无头服务端 `voltip-server`（`apps/server`）：Linux x64 tar.gz，不依赖 GTK、WebKit 和音频库，读 App 的设置和列表（§23.5）。
+- 桌面 App：设置 › 本机服务的开关，在 App 进程里运行，与听写共用已加载的模型、设置和密钥（§23.6）。
+
+处理在 `voltip_core::serve`（不开 socket），HTTP 在 `crates/voltip-serve`（axum），两者之间是 `SpeechService` 与 `ServeHost` 两个端口（`serve/host.rs`）。
+
+### 23.1 起因与决定
+
+- 本机的 Paseo daemon 支持手机听写，但它的 `openai` STT 只接 OpenAI 兼容接口，自带的本地方案不适合中文。
+- 用户决定（2026-10-04 AskUserQuestion）：
+
+  | 问题 | 选择 |
+  |---|---|
+  | 服务能否使用内置识别和润色服务 | 允许 |
+  | 没有桌面会话的服务器上，密钥从哪里来 | 只读系统钥匙串，不新增密钥文件 |
+  | 单个请求能否用 `model` 另选预设或场景 | 允许 |
+  | 单段音频长度 | 按 App 的长录音逻辑，最长 2 小时 |
+  | 无头服务端的发布形式 | 只出 tar.gz |
+  | GUI 如何支持 | 设置里的开关，在 App 进程内运行 |
+  | 发布节奏 | 两种方式同一个版本发布 |
+
+- `docs/roadmap.md`「刻意不做」的「对外的 HTTP API」随之改为：只监听本机、给其他程序做语音输入的接口；通用的转录 API 仍不做。
+
+### 23.2 接口
+
+| 路由 | 令牌 | 说明 |
+|---|---|---|
+| `POST /v1/audio/transcriptions` | 要 | multipart：`file`（WAV）必填；`model`（§23.3）、`language`、`response_format` 可选；`prompt`、`temperature`、`include[]`、`timestamp_granularities[]` 读取后忽略（Paseo 固定发一段英文 `prompt`，它不是润色要求）；`stream=true` 返回 400 |
+| `GET /v1/models` | 要 | 每个 `id` 都能原样作为 `model` 发回（§23.3） |
+| `GET /healthz` | 不要 | 识别可用时 200 `{"status":"ok"}`，否则 503 `{"status":"unavailable"}` |
+
+- 返回格式：
+  - `json`（缺省）：只有 `{"text"}`。
+  - `text`：`text/plain; charset=utf-8`。
+  - `verbose_json`：`{"task":"transcribe","language","duration","text","segments":[],"voltip":{…}}`。`language` 是实际用的语言提示（没有时为 null），`duration` 是秒数；`voltip` 是这一次的处理详情 `ServeOutcome`：`text`、`raw_text`（识别和字形转换之后、词典之前）、`refined`、`refine_error`、`preset { id, name }`、`scene { id, name, builtin? }`、`language`、`asr_model`、`refine_model`、`asr_ms`、`refine_ms`、`duration_ms`、`segments`（分段数：整段为 1，长录音为切出的段数，没听到说话为 0）。不提供时间戳，`segments` 总是空数组，`srt`、`vtt` 返回 400。
+- 没听到说话（短于 300 ms、静音、识别为空、规则执行后为空）：200，文字为空，不算错误。
+- 错误用 OpenAI 的格式 `{"error":{"message","type","code"}}`，`message` 是中文说明：
+
+  | 情况 | 状态码 | `code` |
+  |---|---|---|
+  | 没有令牌或令牌不对 | 401（带 `WWW-Authenticate: Bearer`） | `invalid_api_key` |
+  | `model` 写法不对、选择找不到 | 400 | `invalid_model` |
+  | `language` 不合法 | 400 | `invalid_language` |
+  | 缺 `file`、多个 `file`、字段过多或过长、请求体或音频损坏、`stream=true`、`srt` / `vtt` | 400 | `missing_file`、`duplicate_file`、`too_many_fields`、`field_too_long`、`invalid_multipart`、`invalid_audio`、`stream_unsupported`、`unsupported_response_format` |
+  | 上传超过 60 s 没有新数据；处理中被取消 | 408 | `upload_timeout`、`cancelled` |
+  | 超过时长上限 | 413 | `audio_too_long` |
+  | 不是支持的 WAV | 415 | `unsupported_audio_format` |
+  | 识别额度用完 | 429 | `insufficient_quota` |
+  | 识别服务出错 | 502 | `upstream_error` |
+  | 识别不可用、排队已满、服务正在停止 | 503（后两种带 `Retry-After: 5`） | `not_ready`、`server_busy`、`shutting_down` |
+
+### 23.3 处理方式（`voltip_core::serve::profile`）
+
+- `model` 的写法：
+  - `voltip`、不写，或任何不以 `voltip:` 开头的值（如 Paseo 缺省的 `whisper-1`）：默认处理方式。
+  - `voltip:` 后接用 `;` 分隔的项：`raw`（不润色）、`scene=<选择>`、`preset=<选择>`，每项最多一次。写法不对、`raw` 与 `preset` 同时出现时返回 400 `invalid_model`，消息说明可用的写法；选择找不到时也是 400 `invalid_model`，消息指向 `GET /v1/models`。
+- `<选择>` 依次匹配：内置条目的 wire 名（`coding`、`proofread` …）→ UUID → 用户条目的名称（ASCII 不区分大小写）→ 内置预设的中文名，内置场景的中文名或英文名。
+- 默认处理方式：无头服务端由 `--scene`、`--app`、`--preset`、`--refine` 决定（§23.5），App 由设置 › 本机服务的预设和场景决定（§23.6）。请求一旦写了 `voltip:…`，就只用请求自己的项，不继承默认处理方式的任何一项，包括 `--app` 的匹配。
+- 一个处理方式内各项的取值顺序：
+
+  | 项 | 顺序 |
+  |---|---|
+  | 润色开关 | `raw` 或 `--refine` → 场景 → 设置 |
+  | 预设 | 明确指定 → 场景 → 设置；自定义预设已删除时按校对（§21.2） |
+  | 场景 | 明确指定 → `--app` 匹配（只用于默认处理方式；与前台应用的匹配相同，只看已启用的场景，应用 id 按 §18.3 规范化）→ 无。明确指定的场景已关闭也生效，与 App 选定的场景相同；默认处理方式的场景已删除时不用场景，记一行日志 |
+
+- 语言和字形属于识别，对所有处理方式生效：语言 `--language` → 场景 → 请求的 `language` → 设置，`auto` 表示不给语言提示；字形 `--script` → 场景 → 设置。
+- 词汇是编译后的个人词典和替换规则，内置场景再加上它的术语包（§18.10）。润色提示带场景的补充要求；`context_sharing.app_name` 打开时才带上 `--app` 的应用名。
+- `GET /v1/models` 列出 `voltip`、`voltip:raw`、每个预设的 `voltip:preset=<wire 名或 UUID>` 和每个场景的 `voltip:scene=<内置类别或 UUID>`，各带 `name`。
+
+### 23.4 一次请求（`voltip-serve`、`voltip_core::serve::service`）
+
+1. **鉴权**（§23.7）。
+2. **准入**（`admission.rs`）：同时处理 `concurrency` 个请求（缺省 2，最多 8），另有两倍的排队位；排队位也满时返回 503。排队中的请求只占一个连接，不读请求体，也不建临时文件；拿到许可后才开始读。
+3. **multipart**（`upload.rs`）：最多 16 个部分，非文件部分每个不超过 4 KiB，有且只有一个 `file`；60 s 没有新数据返回 408。`language` 按场景语言代码的规则校验（§18.1）。axum 默认的 2 MB 请求体上限关闭，由下面的界限代替。
+4. **边收边解码**（`wav.rs`）：原始上传不落盘。请求体的数据块经有界通道交给阻塞线程上的 hound。
+   - WAV 头必须在前 64 KiB 内，否则 415。支持 1–8 声道、8–192 kHz、8 / 16 / 24 / 32 位整数和 32 位浮点。
+   - 头里声明的长度已超过上限时立即 413；解码中超过上限、数据块之后的附加数据超过 1 MiB，也是 413。
+   - 混成单声道，用 rubato 重采样到 16 kHz（`resample.rs`，与 `voltip-audio` 同一种 sinc 设置；`voltip-audio` 链接 cpal 和 ALSA，所以这里有自己的一份），写入 `<数据目录>/serve/uploads/<uuid>.pcm`（16 位小端；Unix 上目录 0700、文件 0600）。请求结束时删除，服务启动时清理上次留下的文件；磁盘占用最多约 concurrency × 230 MB（2 小时的录音）。
+5. **处理**（`Service::transcribe`）：
+   - 识别服务未配置、本地模型未下载：503 `not_ready`，原因与 `--check` 相同。
+   - 不超过 2 分钟：短于 300 ms 或静音时不上传；否则整段识别，识别后立即做字形转换（§17）。
+   - 超过 2 分钟：与 App 的长录音相同（§22.3）。切段器是宿主的：App 里是听写引擎的 VAD 切段；无头服务端在模型目录里有 VAD 模型时也用 VAD，没有就用核心的能量切段，不自动下载。每段识别后做字形转换，静音段跳过，每段最多识别两次，两次都失败就写入「[未识别 hh:mm:ss–hh:mm:ss]」，最后用 `long::assemble` 拼接。一段都没识别出来时，有失败就返回最后一次的错误，否则返回空文字。
+   - 识别之后依次是词典 → 润色 → 规则（`dictation/steps.rs`，与 `run_pipeline` 共用）。长录音全文超过 2000 字时不润色，`refine_error` 写明原因；润色失败时返回原文并带上原因。
+6. **取消**：处理在一个持有许可的任务里进行。客户端断开时，守卫触发 `CancelToken`：任务不再开始新的分段，也不再润色，但正在进行的一次识别（本地推理在 `spawn_blocking` 里，不能中断）要跑完，之后才释放许可，所以并发上限始终成立。临时文件由守卫删除。
+7. **日志**：请求序号、录音时长、`model`、分段数、识别模型、是否润色、耗时、状态码；不记文字、音频和令牌。
+
+### 23.5 无头服务端（`apps/server`，包名 `voltip-server`）
+
+`voltip-server [选项]` 在前台运行服务，直到收到 SIGINT 或 SIGTERM（非 Unix 平台是 Ctrl+C）。
+
+| 选项 | 作用 | 缺省 |
+|---|---|---|
+| `--listen <地址:端口>` | 监听地址；非回环地址还要 `--allow-remote`，否则退出码 2 | `127.0.0.1:47840` |
+| `--allow-remote` | 允许非回环地址。服务是明文 HTTP，能用 SSH 隧道或 TLS 反向代理时优先用它们 | 关 |
+| `--token-file <路径>` | 令牌文件，不存在时生成 | `<数据目录>/serve/token` |
+| `--scene` / `--app` / `--preset` / `--refine on\|off` | 默认处理方式（§23.3），`--scene` 与 `--app` 互斥；选择找不到时退出码 1 | 无 / 无 / 设置 / 设置 |
+| `--language <代码\|auto>` | 所有请求都用这个语言，不看场景和请求 | 不指定 |
+| `--script simplified\|traditional\|as_is` | 中文字形 | 设置 |
+| `--asr <服务商>`、`--llm <服务商>` | 换用服务商（`ProviderId` 的 wire 名，如 `builtin`、`local`、`aliyun`） | 设置 |
+| `--local-model <id>`、`--device auto\|cpu\|gpu`、`--gpu <名称>`、`--threads <n>` | 本地模型，含义同桌面版的 `--transcribe-file`；`--local-model` 同时选用本地识别，除非 `--asr` 另有指定 | 设置 |
+| `--max-minutes <1–120>` | 单次音频的时长上限 | 120 |
+| `--concurrency <1–8>` | 同时处理的请求数，排队位是它的两倍 | 2 |
+| `--no-preload` | 启动时不预热本地模型（第一个请求等它加载） | 预热 |
+| `--check` | 打印解析后的配置和提示后退出：0 可用，1 识别不可用 | — |
+| `--print-token` | 打印令牌（没有就先生成）后退出 | — |
+| `--list-models`、`--download-model <id>`、`--list-compute` | 与桌面版相同的模型命令（`voltip_asr_local::cli`，两个程序共用） | — |
+
+- **数据目录**：与桌面版相同（`ProjectDirs("dev","voltip","Voltip")`，Linux 上是 `~/.local/share/voltip`）；debug 构建可用 `VOLTIP_DEV_DATA_DIR` 换一个目录。服务端读 `settings.json`、`presets.json`、`scenes.json`、`dictionary.json`、`rules.json` 和模型目录；把 App 的这些文件复制到服务器的数据目录，服务端就按 App 的设置、预设、场景、词典和规则处理。
+- **只读**（`FileSource`）：服务端从不改名、移动或改写这些文件。每个请求开始前按修改时间和大小检查，有变化就重新读取，再用命令行的选项覆盖引擎设置；解析出的引擎没变时沿用已有的客户端（已加载的本地模型不重新加载）。文件不能用时：
+
+  | 文件 | 缺失 | 启动时不能用 | 运行中变得不能用 |
+  |---|---|---|---|
+  | `settings.json` | 用缺省设置 | 退出码 1，`--check` 给出原因 | 保留上一次能用的内容并记警告；文件恢复后的下一个请求重新读取 |
+  | 预设、场景、词典、规则 | 空列表（场景在内存里补齐内置场景） | 空列表并提示；启动参数选中的自定义条目因此找不到时退出码 1 | 同上 |
+
+- **密钥**：启动时用 `SecretStore::peek` 从系统钥匙串读一次，只读：不写入、不删除、不弹授权框（签名的 macOS 构建的 `PerBuildStore` 用 `Ask::Never`，跳过会弹窗的条目）。没有桌面会话、钥匙串不可用时，需要密钥的服务商按未配置处理，内置服务不受影响；`--check` 会说明。
+- **`--check`** 打印数据目录、地址、令牌文件、识别与润色服务（`内置服务 · <模型>`）、默认处理方式、语言与字形、上限、提示（如 Paseo 不设 `language` 时会发 `en`、所选模型是流式模型时整段上传按实时速度处理）和状态。
+- **CA 证书**（`https_unavailable`）：云端识别与润色（包括内置服务）由 rustls-platform-verifier 用系统的证书库验证，没有装 `ca-certificates` 的精简系统（如 `ubuntu:24.04` 容器镜像）上每个 HTTPS 客户端都建不起来（2026-10-04 容器验收发现：`--check` 仍说可用，每个请求都失败）。服务端启动时试建一次客户端：识别走云端时，`--check` 判定不可用（退出码 1）、服务不启动，并说明要安装 `ca-certificates`；只有润色走云端时记一条警告，识别结果按原文返回。不改信任来源：没有回退到内置的 Mozilla 根证书。
+- **退出**：收到信号后停止接收新请求，排队的请求返回 503；在途的请求最多再等 30 s，仍未结束的直接放弃（`Runtime::shutdown_timeout(1 s)` 不等无法中断的推理线程），删除 `serve/uploads/` 里剩下的临时文件，日志里记下放弃了几个请求，以退出码 0 结束。每条退出路径都先刷新 stdout 和 stderr，再调用 `exit_process`（`src/exit.rs`，与桌面壳的相同）：Linux 上是 `_exit`，不运行 C/C++ 的退出处理器，原因见 §10.6。crate 的 lint 与桌面壳相同：`unsafe_code = "deny"`，唯一的例外是这个函数。
+- **退出码**：0 正常结束，1 启动失败或 `--check` 判定不可用，2 用法错误。
+- **版本**：`build.rs` 从根 `package.json` 注入 `VOLTIP_APP_VERSION`（Cargo 版本固定为 0.0.0），`--version` 输出 `voltip-server <版本>`。
+- **打包**（`scripts/build-server-linux-x64.sh`，Vulkan 后端）：`voltip-server-<版本>-linux-x64.tar.gz` 内有 `bin/voltip-server`；`lib/` 里的 sherpa-onnx、onnxruntime 和 Vulkan 加载器（二进制的 RUNPATH 是 `$ORIGIN:$ORIGIN/../lib`）；`LICENSE`、`THIRD-PARTY-NOTICES.txt`；`voltip-server.service.example`。从系统取的只有 `VOLTIP_SERVER_SONAMES`（`scripts/lib/artefact-checks.sh`）：C/C++ 运行库，以及构建机上有 BLAS 时的 `libblas.so.3`。脚本做提供商密钥扫描、Vulkan 链接检查和系统库检查，然后把包解到别处，在没有 `DISPLAY`、`LD_LIBRARY_PATH` 的环境里运行 `--version`、`--list-models`、`--list-compute`，并用 `LD_DEBUG` 确认这些库都从包里加载。`release-candidate.yml` 的 Linux 腿在签名步骤之前调用它，tar.gz 作为 `extra` 产物进入候选包。
+- **安装**（`scripts/install.sh --server`）：按 `SHA256SUMS` 校验，解到 `~/.local/share/voltip-server/<版本>`，链接为 `~/.local/bin/voltip-server`，不需要 root；装好后运行一次 `--version`，起不来就用 `ldd` 列出缺少的系统库和 apt / dnf 的安装命令，从不自己调用 sudo。`--systemd-user` 写入 `~/.config/systemd/user/voltip-server.service` 并 daemon-reload，加 `--enable` 才启用并启动；注销后继续运行需要 `loginctl enable-linger`。没有自动更新，重新运行安装脚本即可升级。
+
+### 23.6 App 内置开关
+
+- **设置**：`Settings.serve: ServeSettings { enabled（缺省 false）, port（缺省 47840）, preset?, scene? }`，`#[serde(default)]`，旧设置文件读作关闭。端口须在 `MIN_SERVE_PORT`（1024）–65535 之间；`preset`、`scene` 为空表示跟随全局设置、不使用场景。
+- **命令**：
+  - `settings_set_serve { enabled, port, preset, scene }`（`CoreCommand::SetServe`）：校验端口和所选的预设、场景，保存，然后按设置启动、停止或换端口重启监听；只改预设或场景时不重启，下一个请求就按新的处理。
+  - `serve_copy_token`：令牌由核心通过 `Injector::copy` 放进剪贴板，不经过 webview。
+  - `serve_rotate_token`：原子写入新令牌，正在运行的服务立即改用它。
+- **状态**：`UiState.serve: ServeStatus { available, phase: off | running | failed, address?, error? }`，变化时发 `serve` 事件。`address` 形如 `http://127.0.0.1:47840/v1`；端口被占用时 `failed`，`error` 写明原因。
+- **宿主**：shell 通过 `CoreConfig.serve_host` 提供 `ServeHost`（桌面是 `voltip_serve::HttpHost`），只监听 127.0.0.1。服务的处理使用 App 自己的状态：设置、预设、场景、词汇和听写引擎的识别器、润色器、额度记录、切段器（`runtime/serve.rs` 在这些变化时重新推送，`PushedState`），本地模型在内存里只有一份；服务的请求与 App 自己的听写按段轮流使用它。密钥沿用运行时已读到的，不再访问钥匙串。关掉开关或退出 App 时停止监听并取消在途的请求，已开始的推理在后台跑完，结果丢弃。
+- **手机**：shell 不提供宿主，`available` 为 false，三条命令都以 `SERVE_UNAVAILABLE` 拒绝（`apps/mobile/src-tauri/tests/ipc.rs`）。
+- **界面**：设置 › 本机服务（`/settings/service`）：启用开关；状态（未启用 / 运行中 / 无法启动：原因）和接口地址；端口与「应用」；处理方式里的预设（与全局设置相同，或某个预设）和场景（不使用场景，或某个场景）；访问令牌的「复制令牌」和「重新生成」（先确认：旧令牌立即失效）。界面不显示令牌内容。
+
+### 23.7 安全
+
+- 默认只监听回环地址。无头服务端监听非回环地址必须显式加 `--allow-remote`，启动时警告 HTTP 是明文；App 只监听 127.0.0.1。
+- 令牌（`serve/token.rs`）：32 个随机字节，写成 64 个十六进制字符，存在 `<数据目录>/serve/token`；第一次启动时以 `create_new` 和 0600 权限创建，之后一直沿用，只在用户要求时更换；无头服务端与 App 共用这个文件，所以客户端换着连两者都能用。文件对同组或其他用户可读时给出警告。
+- 每个请求（`/healthz` 除外）都要 `Authorization: Bearer <令牌>`，用 `subtle` 做常量时间比较；不提供关闭认证的选项。不返回 CORS 头：浏览器里的网页读不到响应，也拿不到令牌，跨站发来的请求一律 401。
+- 内置服务的使用与 App 相同，每段的长度上限也相同；客户端里从不带提供商的 API 密钥（打包脚本扫描二进制）。
+- 日志见 §23.4；`docs/threat-model.md` 列出了这一监听面。
+
+### 23.8 与 Paseo 对接
+
+- Paseo 的配置在 `$PASEO_HOME/config.json`（缺省 `~/.paseo/config.json`）：
+
+  ```json
+  {
+    "providers": { "openai": { "stt": { "baseUrl": "http://127.0.0.1:47840/v1", "apiKey": "<令牌>" } } },
+    "features": { "dictation": { "stt": { "provider": "openai", "model": "voltip", "language": "zh" } } }
+  }
+  ```
+
+  `model` 也可以写 `/v1/models` 里的任何一项，例如 `voltip:scene=coding`。
+- `language`：Paseo 不设时发送 `en`，中文会被当作英文识别。在 Paseo 里设为 `zh`，或者用 `voltip-server --language`。
+- 分段：Paseo 默认每满 15 s 的音频就按字节数切一段，不看停顿，各段文字用空格拼接，中文里会多出空格，句子也可能断在中间。建议在 Paseo daemon 的环境里设 `PASEO_DICTATION_AUTO_COMMIT_SECONDS=0`，口述结束后整段提交；本地模型较慢而口述又很长时，可以设为 110，让每段在说话时就开始识别，每段仍在 2 分钟的整段路径内。Paseo 等结果的上限是 10 s + 每个待处理段 15 s + 每秒待处理音频 1.5 s，最多 5 分钟。
+- Paseo 只在模型名为 `gpt-4o-transcribe` / `gpt-4o-mini-transcribe` 时请求 `logprobs` 做置信度过滤，`voltip` 不受影响。
+
+### 23.9 门禁
+
+- Rust：
+  - `serve::tests`：`model` 语法与错误、处理方式优先级（请求级重置、`auto`、已关闭的场景、缺失的自定义预设、默认场景被删除）、`/v1/models` 的每个 `id` 都能解析回同一个条目、字形在词典之前（整段与长录音）、整段与长录音的处理顺序和失败、只读加载与文件损坏（不合法的文件逐字节不变，热重读保留上一次能用的内容）。
+  - `dictation/steps.rs` 与引擎现有的测试（重构不改变行为）；`voltip-identity` 的 `peek`（写入、删除、弹窗都是零）。
+  - `crates/voltip-serve/tests/http.rs`：鉴权与更换令牌、与 Paseo 相同的请求、三种返回格式、错误映射、排队与 503（排队中不读请求体、不建文件）、三种 413、multipart 界限、`language` 校验、断开后许可在推理结束后才释放、真实 socket 的优雅退出、App 的宿主；`wav.rs` / `resample.rs` 单测（8 / 24 / 48 kHz、单声道与立体声、整数与浮点）。
+  - `apps/server/tests/cli.rs`：参数与冲突、`--check`、`--print-token`（0600、复用）、模型命令、`--version`、宽限期内放不掉的请求；真实二进制收到 SIGTERM 后退出码 0 且临时文件已清理。
+  - `crates/voltip-core/tests/serve.rs`（真实核心任务 + 假宿主）：开关、换端口、端口被占用、复制和更换令牌、服务跟随 App 的预设、随 App 启动和停止、手机拒绝；bridge 与 IPC 夹具。
+- 打包与发布：`scripts/release/test_artefact_checks.py`（服务端的系统库清单）、`test_install_script.py`（`--server`、缺库提示、systemd 单元、校验失败）、`test_release_workflows.py`（Linux 腿在签名前构建服务端、`--extra` 收集）、`test_candidate.py`；`install-scripts.yml` 的 `linux-server` 在发布后从 GitHub 安装并实际启动、请求、停止。
+- TS：schema 与契约回放、`MockBackend` 的三条命令和状态、设置 › 本机服务的交互与中英文文案。
+
+### 23.10 未做
+
+- TTS；流式返回部分结果（Realtime / WebSocket），以及 Paseo 原生的 provider。
+- 写入历史和统计；WAV 以外的格式；时间戳与字幕格式。
+- 密钥文件；macOS 和 Windows 的独立服务端，deb 包和容器镜像；服务端的自动更新。

@@ -110,6 +110,7 @@ build attestations:
 |---|---|---|
 | Windows 10/11 x64 | `*_x64-setup.exe` (per-user installer), `*_x64-portable.zip` (unpack and run `voltip-desktop.exe`; keep the DLLs beside it) | Not code-signed yet: SmartScreen warns on the first start. |
 | Linux x64 | `.deb`, `.AppImage` | Built on Ubuntu 22.04, needs glibc 2.34 or newer; the `.deb` depends on `libwebkit2gtk-4.1-0`, `libvulkan1` and a BLAS (`libblas3`, from 0.0.5), the AppImage needs FUSE 2 (`libfuse2`). X11 and Wayland. |
+| Linux x64 server | `voltip-server-*-linux-x64.tar.gz` | The local speech service for a server without a desktop (below); `install.sh --server` installs it without root. |
 | macOS 11+ (Apple silicon) | .dmg | M1 or newer |
 | macOS 11+ (Intel) | .dmg | Intel Macs |
 | Android 8.0+ (64-bit Arm) | `*_android_arm64.apk` | Open it on the phone to install. The `.aab` is the package for Google Play. |
@@ -161,6 +162,13 @@ voltip-desktop --download-model qwen3-asr-0.6b    # resumable, sha256-verified
 voltip-desktop --transcribe-file sample.wav --json
 voltip-desktop --list-compute                     # CPU threads and the GPUs this build can use
 ```
+
+Other programs on the computer, such as Paseo's dictation from a phone, can use Voltip's
+recognition, dictionary and presets through an OpenAI-compatible `/v1/audio/transcriptions`:
+switch on Settings → Local service in the app, or run `voltip-server` on a Linux server without a
+desktop (`curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install.sh | sh -s -- --server`).
+It listens on this computer only and every request carries a token; see
+[Local service](https://voltip.firlab.app/recognition/service).
 
 ## Privacy
 

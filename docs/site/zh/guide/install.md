@@ -34,11 +34,21 @@ curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install
 | --- | --- |
 | `VOLTIP_VERSION=0.0.7` | 安装指定版本，而不是最新版本 |
 | `VOLTIP_PACKAGE=appimage` | 在有 apt 的系统上改为安装 AppImage |
-| `VOLTIP_INSTALL_DIR=<目录>` | 把 AppImage 或 Mac 应用放到其他目录 |
+| `VOLTIP_INSTALL_DIR=<目录>` | 把 AppImage、Mac 应用或 `voltip-server` 放到其他目录 |
 
 例如 `curl -fsSL … | VOLTIP_VERSION=0.0.7 sh`。在 PowerShell 中，先执行 `$env:VOLTIP_VERSION = "0.0.7"`，再执行安装命令。
 
 上面的命令从 `main` 分支读取安装脚本。如果要使用某个版本随附的脚本，把 `main` 换成它的标签，例如 `v0.0.7`。
+
+### 在服务器上安装本机服务
+
+如果要在没有桌面的 Linux x64 电脑上安装[本机服务](/zh/recognition/service) `voltip-server`，加上 `--server`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install.sh | sh -s -- --server
+```
+
+它安装到 `~/.local/share/voltip-server`，不需要管理员权限，命令为 `~/.local/bin/voltip-server`。加上 `--systemd-user` 时另外写入 systemd 用户服务，再加上 `--enable` 时启动它。
 
 ## 安装包
 
@@ -48,6 +58,7 @@ curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install
 | --- | --- | --- |
 | Windows 10 和 11，x64 | `*_x64-setup.exe`，按用户安装；`*_x64-portable.zip`，解压后运行 `voltip-desktop.exe`，旁边的 DLL 需要保留 | 尚未进行代码签名，首次启动时 SmartScreen 会提示 |
 | Linux，x64 | `.deb`、`.AppImage` | 在 Ubuntu 22.04 上构建，需要 glibc 2.34 或更高版本。`.deb` 依赖 `libwebkit2gtk-4.1-0`、`libvulkan1` 和 `libblas3`；AppImage 需要 FUSE 2（`libfuse2`）。支持 X11 和 Wayland |
+| Linux 服务器，x64 | `voltip-server-*-linux-x64.tar.gz` | 用于没有桌面的电脑的[本机服务](/zh/recognition/service)。与 Linux 安装包一样在 Ubuntu 22.04 上构建；自带运行所需的库，缺少系统库时 `install.sh --server` 会列出 |
 | macOS 11 及以上，Apple 芯片 | `*_aarch64.dmg` | M1 及更新的芯片 |
 | macOS 11 及以上，Intel 芯片 | `*_x64.dmg` | Intel 芯片的 Mac |
 | Android 8.0 及以上，64 位 Arm | `*_android_arm64.apk` | 见下面的 [Android](#android) 和[手机端](/zh/phone/) |

@@ -53,6 +53,8 @@ import {
   type RelayStatus,
   type SafetyCode,
   type Scene,
+  type ServeSettings,
+  type ServeStatus,
   type SceneDraft,
   type SceneRef,
   type TakeContext,
@@ -79,6 +81,7 @@ import {
   emptyHotkeyStatus,
   HISTORY_LIMIT,
   HISTORY_MIN_KEEP,
+  MIN_SERVE_PORT,
   MAX_MINUTES_CHOICES,
   HISTORY_RECENT,
   type HistoryHits,
@@ -597,6 +600,9 @@ export const ALWAYS_ON_DESKTOP_ONLY = "pairing: 常开配对只在电脑上可�
 
 /** How long the preview's desktop takes to insert a phone's text (docs/dictation.md §20.6). */
 export const MOCK_TEXT_MS = 200;
+/** Ports the preview's local speech service cannot bind (another program has them). */
+export const MOCK_TAKEN_PORTS: readonly number[] = [47999];
+
 /** What the preview phone's clipboard holds. */
 export const MOCK_PHONE_CLIPBOARD = "https://example.test/voltip";
 /** `voltip_desktop_lib::PHONE_TEXT_UNAVAILABLE`: the desktop inserts phones' texts, it sends none. */
@@ -1061,6 +1067,7 @@ export class MockBackend implements Backend {
       connectivity: { running: false },
       mirrors: (options.mirrors ?? []).map((m) => structuredClone(m.view)),
       phone_outbox_too_large: [],
+      serve: this.serveStatusFor(settings.serve),
     };
     for (const m of options.mirrors ?? []) this.mirrors.set(m.view.desktop, structuredClone(m));
     this.state.engines = this.resolveEngines(settings.engines);
@@ -2174,7 +2181,60 @@ export class MockBackend implements Backend {
         ...(id === null ? {} : { pinned_scene: id }),
       });
     },
+    settings_set_serve: (args) => {
+      const { enabled, port, preset, scene } = required(args);
+      this.requireServe();
+      if (!Number.isInteger(port) || port < MIN_SERVE_PORT || port > 65_535)
+        throw new Error(`serve: 端口须在 ${MIN_SERVE_PORT}–65535 之间`);
+      if (scene !== null && !this.state.scenes.some((s) => s.id === scene))
+        throw new Error(`serve: 没有 id 为 ${scene} 的场景`);
+      if (
+        preset !== null &&
+        !isBuiltinPreset(preset) &&
+        !this.state.presets.some((p) => p.id === preset)
+      )
+        throw new Error(`serve: 没有 id 为 ${preset} 的预设`);
+      const serve: ServeSettings = {
+        enabled,
+        port,
+        ...(preset === null ? {} : { preset }),
+        ...(scene === null ? {} : { scene }),
+      };
+      this.emit({ type: "settings", ...this.state.settings, serve });
+      this.emit({ type: "serve", ...this.serveStatusFor(serve) });
+    },
+    serve_copy_token: () => {
+      this.requireServe();
+      this.serveTokenCopies += 1;
+    },
+    serve_rotate_token: () => {
+      this.requireServe();
+      this.serveTokenRotations += 1;
+    },
   };
+
+  /** How often 复制令牌 was pressed (tests; the token itself never reaches the interface). */
+  serveTokenCopies = 0;
+  /** How often 重新生成 was pressed (tests). */
+  serveTokenRotations = 0;
+
+  /** The service runs on a computer only (docs/dictation.md §23.6). */
+  private requireServe() {
+    if (this.role === "phone") throw new Error("serve: 本机服务仅在电脑上提供");
+  }
+
+  /** What the preview's service does with `serve`: a port in `MOCK_TAKEN_PORTS` cannot be bound. */
+  private serveStatusFor(serve: ServeSettings): ServeStatus {
+    if (this.role === "phone") return { available: false, phase: "off" };
+    if (!serve.enabled) return { available: true, phase: "off" };
+    if (MOCK_TAKEN_PORTS.includes(serve.port))
+      return {
+        available: true,
+        phase: "failed",
+        error: `无法监听 127.0.0.1:${serve.port}：Address already in use`,
+      };
+    return { available: true, phase: "running", address: `http://127.0.0.1:${serve.port}/v1` };
+  }
 
   // ---- scenes (docs/dictation.md §18) ------------------------------------------------------------
 

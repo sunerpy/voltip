@@ -38,6 +38,10 @@ The microphone is open only while you record, or for the 15 seconds of a microph
 
 While a recording longer than 2 minutes runs, its audio is written to a file in Voltip's data folder so that it can be recognised in segments. The file is deleted when the recording ends, and at the next start if Voltip was closed during a recording.
 
+## The local service
+
+When the [local service](/recognition/service) is on, programs on this computer that have its access token can send recordings to Voltip. Each recording is processed like a dictation with the same settings: it goes to the recognition service in use, and its text to the AI service when AI polish applies. While a request is processed, its audio is kept in a temporary file in Voltip's data folder, which is deleted when the request ends. Requests are not added to the history, and the service's log records durations and the models used, never the text or the audio.
+
 ## What stays on your computer
 
 - **History**: every dictation, stored in Voltip's data folder. It can be limited, turned off or cleared under **Settings → Privacy and history**.

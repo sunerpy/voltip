@@ -1,5 +1,5 @@
 ---
-description: voltip-desktop 的命令行选项，用于控制正在运行的应用，以及在不打开窗口的情况下识别音频文件。
+description: voltip-desktop 的命令行选项，用于控制正在运行的应用，以及在不打开窗口的情况下识别音频文件；以及用于没有桌面的电脑的本机服务 voltip-server 的选项。
 ---
 
 # 命令行
@@ -60,3 +60,38 @@ voltip-desktop --transcribe-file meeting-note.wav --model sense-voice-small --js
 ```
 
 在 Windows 上，程序按桌面应用构建，因此 PowerShell 不会直接显示它的输出。请把输出重定向到文件：`voltip-desktop.exe --transcribe-file a.wav --json > out.json`。
+
+## voltip-server
+
+`voltip-server` 在没有桌面的电脑上运行[本机服务](/zh/recognition/service)。它适用于 Linux x64，用 `install.sh --server` 安装。不带选项时，它在 `127.0.0.1:47840` 上监听，直到按下 Ctrl+C 或收到 `SIGTERM`。
+
+| 选项 | 作用 |
+| --- | --- |
+| `--listen <地址:端口>` | 监听的地址。默认为 `127.0.0.1:47840`。其他电脑可以访问的地址还需要加上 `--allow-remote` |
+| `--allow-remote` | 允许使用这类地址。连接不加密 |
+| `--token-file <路径>` | 访问令牌的文件，第一次运行时生成。默认为 `~/.local/share/voltip/serve/token` |
+| `--scene <场景>` | 每个 `voltip` 请求使用的场景：内置场景（`coding`、`office`、`chat`、`legal`、`medical`、`finance`、`academic`）或场景的名称 |
+| `--app <应用标识>` | 代替 `--scene`：使用列出了这个应用的场景，如同它是前台应用 |
+| `--preset <预设>` | AI 润色使用的预设：内置预设（`proofread`、`prompt`、`intent`、`chat`、`translate`、`notes`、`punctuation`、`formal`）或预设的名称 |
+| `--refine on\|off` | 每个 `voltip` 请求是否进行 AI 润色。默认使用设置或场景中的选择 |
+| `--language <代码>` | 每个请求使用的识别语言（`zh`、`en` 等；`auto` 表示由模型判断） |
+| `--script simplified\|traditional\|as_is` | 中文字形 |
+| `--asr <服务商>`、`--llm <服务商>` | 改用其他识别或 AI 润色服务商，例如 `builtin`、`local` 或 `aliyun` |
+| `--local-model <id>`、`--device`、`--gpu`、`--threads` | 用本地模型识别，含义与 `--transcribe-file` 相同 |
+| `--max-minutes <1–120>` | 每个请求的音频最长时长（分钟）。默认为 120 |
+| `--concurrency <1–8>` | 同时处理的请求数。默认为 2 |
+| `--no-preload` | 启动时不加载本地模型，第一个请求会等待模型加载 |
+
+以下选项输出结果后即退出：
+
+| 选项 | 输出 |
+| --- | --- |
+| `--check` | 使用的服务、默认处理方式、各项上限和提示 |
+| `--print-token` | 访问令牌，第一次运行时生成 |
+| `--list-models`、`--download-model <id>`、`--list-compute` | 与 `voltip-desktop` 相同 |
+
+| 退出码 | 含义 |
+| --- | --- |
+| 0 | 服务正常停止，或 `--check` 判定可以识别 |
+| 1 | 服务无法启动，或无法识别 |
+| 2 | 选项不能同时使用，或选项未知 |

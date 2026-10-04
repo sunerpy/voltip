@@ -725,6 +725,20 @@ jobs:
           . .release-tooling/scripts/lib/artefact-checks.sh
           voltip_scan_provider_keys target/release/voltip-desktop release || { echo "::error::provider API key found inside voltip-desktop — refusing to ship"; exit 1; }
 
+      # voltip-server, the headless local speech service (docs/dictation.md §23.5), from the same
+      # source with this leg's env (the same built-in engines) and no signing material: the
+      # source's script builds, checks and packages it as
+      # dist/server-linux-x64/voltip-server-<version>-linux-x64.tar.gz and runs the unpacked package
+      # headless; the trusted copy of the checks then reads the binary again. It ships as the
+      # leg's extra asset.
+      - name: Build and package voltip-server (tar.gz)
+        run: |
+          set -euo pipefail
+          scripts/build-server-linux-x64.sh dist/server-linux-x64 "$RUNNER_TEMP/server-build-info.txt"
+          . .release-tooling/scripts/lib/artefact-checks.sh
+          voltip_scan_provider_keys target/release/voltip-server release || { echo "::error::provider API key found inside voltip-server — refusing to ship"; exit 1; }
+          voltip_linux_sonames_accounted target/release/voltip-server release VOLTIP_SERVER_SONAMES || { echo "::error::voltip-server links a library its package neither ships nor checks for"; exit 1; }
+
       # Phase 2: bundling and updater signatures; the only step holding the signing key. With the
       # updater enabled, createUpdaterArtifacts and the pubkey the app trusts arrive through
       # --config; otherwise the bundles ship unsigned and the key variables are unset.
@@ -753,9 +767,11 @@ jobs:
             cargo tauri bundle --ci --bundles deb,appimage
           fi
 
+      # candidate-leg/dist: the deb, the AppImage (+ .sig) and voltip-server's tar.gz.
       - name: Collect bundles and evidence
         env:
           UPDATER_ENABLED: ${{ needs.prepare.outputs.updater_enabled }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: >-
           python3 .release-tooling/scripts/release/updater-json.py collect
           --target "$LINUX_TARGET"
@@ -765,6 +781,7 @@ jobs:
           --updater "$UPDATER_ENABLED"
           --out candidate-leg/dist
           --evidence "candidate-leg/evidence/$LINUX_TARGET.json"
+          --extra "voltip-server-${VERSION}-linux-x64.tar.gz=dist/server-linux-x64/voltip-server-${VERSION}-linux-x64.tar.gz"
 
       - name: Upload the leg
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

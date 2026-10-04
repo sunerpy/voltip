@@ -297,6 +297,33 @@ pub fn key_entries() -> Vec<&'static str> {
     out
 }
 
+/// Read the user's engine secrets from the store (the app at start). A store that cannot be read
+/// leaves the secret unset (and logs): the identity already loaded from the same store, so this is
+/// rare.
+pub fn load_user_secrets(store: &dyn voltip_identity::SecretStore) -> crate::engines::UserSecrets {
+    read_user_secrets(store, false)
+}
+
+/// The user's engine secrets read with no side effect ([`voltip_identity::SecretStore::peek`]):
+/// the local speech service shares the app's keychain items and never moves, writes or asks for
+/// one (docs/dictation.md §23). What it cannot read without that stays unset.
+pub fn peek_user_secrets(store: &dyn voltip_identity::SecretStore) -> crate::engines::UserSecrets {
+    read_user_secrets(store, true)
+}
+
+fn read_user_secrets(store: &dyn voltip_identity::SecretStore, read_only: bool) -> crate::engines::UserSecrets {
+    let mut secrets = crate::engines::UserSecrets::default();
+    for entry in key_entries() {
+        let read = if read_only { store.peek(entry) } else { store.get(entry) };
+        match read {
+            Ok(Some(bytes)) => secrets.set_entry(entry, String::from_utf8(bytes.to_vec()).ok()),
+            Ok(None) => {}
+            Err(e) => tracing::warn!(error = %e, secret = entry, backend = store.backend_name(), "secret store read failed; treating as unset"),
+        }
+    }
+    secrets
+}
+
 /// Why a provider probe failed (`GET {base}/models`, the engines pane's 测试连接). Carries no host
 /// and no key: the built-in service's endpoint must not reach the UI through an error either.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -372,6 +399,20 @@ pub struct ProbeReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Both readers see the same keys; the read-only one goes through `peek` (docs/dictation.md §23).
+    #[test]
+    fn the_secret_readers_read_the_provider_keys() {
+        let store = voltip_identity::MemorySecretStore::new();
+        let entry = key_entry(ProviderId::Aliyun, ServiceKind::Asr).expect("aliyun has a key");
+        voltip_identity::SecretStore::set(&store, entry, b"sk-test").unwrap();
+        for secrets in [load_user_secrets(&store), peek_user_secrets(&store)] {
+            assert_eq!(secrets.get(ProviderId::Aliyun, ServiceKind::Asr), Some("sk-test"));
+            assert_eq!(secrets.get(ProviderId::Openai, ServiceKind::Asr), None);
+        }
+        store.set_unavailable(true);
+        assert_eq!(peek_user_secrets(&store).get(ProviderId::Aliyun, ServiceKind::Asr), None, "an unreadable store leaves the key unset");
+    }
 
     #[test]
     fn catalogue_covers_every_id_once_in_display_order() {

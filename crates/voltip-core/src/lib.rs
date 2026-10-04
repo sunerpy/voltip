@@ -23,6 +23,7 @@ pub mod providers;
 mod runtime;
 pub mod scenes;
 pub mod script;
+pub mod serve;
 mod settings;
 pub mod sync;
 pub mod ui;
@@ -51,15 +52,17 @@ pub use models::{
 };
 pub use presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetError, PresetId, PresetRef, PresetTrial, PresetTryOutcome, TakePreset};
 pub use providers::{
-    AsrProtocol, KeyPolicy, PROVIDERS, ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSpec, ServiceKind, ServicePreset,
+    AsrProtocol, KeyPolicy, PROVIDERS, ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSpec, ServiceKind, ServicePreset, key_entries,
+    load_user_secrets, peek_user_secrets,
 };
 pub use runtime::{
-    AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED, TestHooks, now_ms,
+    AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED, SERVE_UNAVAILABLE, TestHooks,
+    now_ms,
 };
 pub use scenes::{AppRef, BuiltinScene, ContextSharing, Scene, SceneDraft, SceneError, SceneMatch, SceneOverrides, SceneRef, TakeContext};
 pub use settings::{
-    DEFAULT_MAX_MINUTES, HistorySettings, Locale, MAX_MINUTES_CHOICES, OverlayPlacement, RecordingSettings, RecordingSource, SETTINGS_FILE_NAME, Settings,
-    SettingsStore, ThemeId,
+    DEFAULT_MAX_MINUTES, HistorySettings, Locale, MAX_MINUTES_CHOICES, MIN_SERVE_PORT, OverlayPlacement, RecordingSettings, RecordingSource,
+    SETTINGS_FILE_NAME, ServeSettings, Settings, SettingsStore, ThemeId,
 };
 pub use view::{DeviceConnection, DeviceView, RelaySource, RelayStatus};
 pub use vocabulary::{

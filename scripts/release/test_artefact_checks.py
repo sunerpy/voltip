@@ -69,7 +69,7 @@ NEEDED_0_0_4 = [
 class LinuxSonames(unittest.TestCase):
     """voltip_linux_sonames_accounted, with a fake readelf that prints the dynamic section."""
 
-    def check(self, needed: list[str]) -> subprocess.CompletedProcess:
+    def check(self, needed: list[str], sonames: str = "") -> subprocess.CompletedProcess:
         with tempfile.TemporaryDirectory() as d:
             exe = os.path.join(d, "voltip-desktop")
             open(exe, "wb").close()
@@ -79,7 +79,7 @@ class LinuxSonames(unittest.TestCase):
                 f.write(f"#!/bin/sh\nprintf '{lines}'\n")
             os.chmod(readelf, 0o755)
             return subprocess.run(
-                ["bash", "-c", f"set -euo pipefail; . {LIB}; voltip_linux_sonames_accounted {exe} test"],
+                ["bash", "-c", f"set -euo pipefail; . {LIB}; voltip_linux_sonames_accounted {exe} test {sonames}"],
                 capture_output=True, text=True, check=False, env={**os.environ, "PATH": f"{d}:{os.environ['PATH']}"},
             )
 
@@ -93,6 +93,15 @@ class LinuxSonames(unittest.TestCase):
         result = self.check([*NEEDED_0_0_4, "libopenblas.so.0"])
         self.assertEqual(result.returncode, 1)
         self.assertIn("links libopenblas.so.0, which no Linux package depends on", result.stderr)
+
+    def test_the_server_may_take_only_what_its_package_ships_or_checks(self):
+        # docs/dictation.md §23.5: voltip-server links no GTK, WebKit or ALSA.
+        server = ["libsherpa-onnx-c-api.so", "libvulkan.so.1", "libblas.so.3", "libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld-linux-x86-64.so.2"]
+        self.assertEqual(self.check(server, "VOLTIP_SERVER_SONAMES").returncode, 0)
+        for desktop_only in ["libgtk-3.so.0", "libasound.so.2", "libwebkit2gtk-4.1.so.0"]:
+            result = self.check([*server, desktop_only], "VOLTIP_SERVER_SONAMES")
+            self.assertEqual(result.returncode, 1, desktop_only)
+            self.assertIn(f"links {desktop_only}, which the server package neither ships nor checks for", result.stderr)
 
     def test_a_binary_without_a_dynamic_section_is_not_accounted_for(self):
         result = self.check([])

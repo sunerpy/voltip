@@ -18,6 +18,14 @@ pub const SIGNED_ACCOUNT_SUFFIX: &str = ".signed";
 pub trait SecretStore: Send + Sync {
     /// Read an entry; `Ok(None)` when absent.
     fn get(&self, entry: &str) -> Result<Option<Zeroizing<Vec<u8>>>, IdentityError>;
+    /// Read an entry with no side effect at all: no item is written, moved or removed and no
+    /// system dialog is shown; an item that only a dialog would give reads as absent. A second
+    /// process reading the app's secrets (the local speech service, docs/dictation.md §23) uses
+    /// this. The default is [`Self::get`], right for stores whose `get` has no side effect; the
+    /// keychain stores, whose `get` moves items between builds, override it.
+    fn peek(&self, entry: &str) -> Result<Option<Zeroizing<Vec<u8>>>, IdentityError> {
+        self.get(entry)
+    }
     /// Write (or overwrite) an entry.
     fn set(&self, entry: &str, value: &[u8]) -> Result<(), IdentityError>;
     /// Remove an entry; removing a missing entry is not an error.
@@ -88,6 +96,14 @@ pub(crate) trait Slot {
     fn write(&self, value: &[u8]) -> Result<(), IdentityError>;
     /// Remove the item; a missing one is not an error.
     fn remove(&self) -> Result<(), IdentityError>;
+}
+
+/// Read a secret without moving it ([`SecretStore::peek`]): a signed build reads only the item it
+/// owns (an older build's item could ask, and reading it is how it would be moved), any other
+/// build its usual item. Nothing is ever written or removed.
+#[cfg(any(feature = "keyring", test))]
+pub(crate) fn read_only(signed: bool, owned: &dyn Slot, legacy: &dyn Slot) -> Result<Option<Zeroizing<Vec<u8>>>, IdentityError> {
+    if signed { owned.read() } else { legacy.read() }
 }
 
 /// Read a secret from the item this build created (`owned`), moving it there from the item an
@@ -217,6 +233,10 @@ impl SecretStore for KeyringSecretStore {
         self.legacy(entry)?.read()
     }
 
+    fn peek(&self, entry: &str) -> Result<Option<Zeroizing<Vec<u8>>>, IdentityError> {
+        read_only(self.signed, &self.owned(entry)?, &self.legacy(entry)?)
+    }
+
     fn set(&self, entry: &str, value: &[u8]) -> Result<(), IdentityError> {
         if self.signed {
             self.owned(entry)?.write(value)?;
@@ -324,6 +344,30 @@ mod tests {
         let legacy_reads = *legacy.reads.lock();
         assert_eq!(read_moving(&owned, &legacy).unwrap().unwrap().as_slice(), b"key");
         assert_eq!(*legacy.reads.lock(), legacy_reads, "an owned item is read without asking for the older one");
+    }
+
+    /// docs/dictation.md §23: a read-only read never moves a secret: a signed build looks at its
+    /// own item only (an older build's item is left unread, it could ask), an unsigned build at its
+    /// usual item; neither item changes.
+    #[test]
+    fn a_read_only_read_moves_nothing() {
+        let (owned, legacy) = (TestSlot::default(), TestSlot::holding(b"key"));
+        assert!(read_only(true, &owned, &legacy).unwrap().is_none(), "a signed build does not take the older item");
+        assert_eq!((owned.value(), legacy.value().as_deref(), *legacy.reads.lock()), (None, Some(&b"key"[..]), 0));
+        assert_eq!(read_only(false, &owned, &legacy).unwrap().unwrap().as_slice(), b"key");
+        assert_eq!((owned.value(), legacy.value().as_deref()), (None, Some(&b"key"[..])), "nothing written or removed");
+        let mine = TestSlot::holding(b"mine");
+        assert_eq!(read_only(true, &mine, &legacy).unwrap().unwrap().as_slice(), b"mine");
+        assert_eq!(*legacy.reads.lock(), 1, "only the unsigned read looked at the older item");
+    }
+
+    /// The default `peek` is `get`: the memory store has no side effect to avoid.
+    #[test]
+    fn the_memory_store_peeks_what_it_holds() {
+        let s = MemorySecretStore::new();
+        s.set("k", b"v").unwrap();
+        assert_eq!(s.peek("k").unwrap().unwrap().as_slice(), b"v");
+        assert!(s.peek("absent").unwrap().is_none());
     }
 
     /// Nothing stored anywhere: nothing is created either.

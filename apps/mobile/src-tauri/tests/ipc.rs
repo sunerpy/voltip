@@ -437,6 +437,8 @@ fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
         // `updates_come_from_github_outside_play_and_from_the_listing_with_play` has the rest.
         assert_eq!(invoke(webview, "update_status", json!({})), Ok(json!({ "state": "idle" })));
         assert_eq!(core_state(webview).update, voltip_core::ui::UpdateStatus::Idle);
+        // docs/dictation.md §23.6: the local speech service runs on a computer only.
+        assert!(!core_state(webview).serve.available, "the phone hosts no local speech service");
         assert_eq!(invoke(webview, "update_install", json!({})), Err(Value::String(NOTHING_TO_INSTALL.into())));
         // docs/dictation.md §15: the phone gates nothing through these queries.
         let report = invoke(webview, "permissions_status", json!({})).unwrap();

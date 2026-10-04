@@ -11,7 +11,19 @@
 #   VOLTIP_VERSION=0.0.4       a given release instead of the latest
 #   VOLTIP_PACKAGE=appimage    Linux: the AppImage even where apt is (or deb to insist on it)
 #   VOLTIP_INSTALL_DIR=DIR     the AppImage's directory (default ~/.local/bin), or the Mac app's
-#                              (default /Applications, ~/Applications when that is not writable)
+#                              (default /Applications, ~/Applications when that is not writable),
+#                              or the server's (default ~/.local/share/voltip-server)
+#
+# voltip-server, the local speech service for a Linux server without a desktop (docs/dictation.md
+# §23.5), installs without root into ~/.local/share/voltip-server/<version>, linked as
+# ~/.local/bin/voltip-server:
+#
+#   curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install.sh | sh -s -- --server
+#
+#   --server        (VOLTIP_PACKAGE=server) voltip-server instead of the app
+#   --systemd-user  (VOLTIP_SYSTEMD=user) also write ~/.config/systemd/user/voltip-server.service
+#   --enable        (VOLTIP_SYSTEMD_ENABLE=1) with --systemd-user: enable and start it now
+#   VOLTIP_BIN_DIR=DIR         where the server's command is linked (default ~/.local/bin)
 set -eu
 
 REPO="sunerpy/voltip"
@@ -25,6 +37,15 @@ err() {
 info() {
 	printf 'voltip-install: %s\n' "$1" >&2
 }
+
+for arg in "$@"; do
+	case "$arg" in
+	--server) VOLTIP_PACKAGE=server ;;
+	--systemd-user) VOLTIP_SYSTEMD=user ;;
+	--enable) VOLTIP_SYSTEMD_ENABLE=1 ;;
+	*) err "unknown option: $arg (options: --server, --systemd-user, --enable)" ;;
+	esac
+done
 
 if command -v curl >/dev/null 2>&1; then
 	download() { curl -fsSL --retry 3 "$1" -o "$2"; }
@@ -48,11 +69,12 @@ Linux)
 		if command -v apt-get >/dev/null 2>&1; then package=deb; else package=appimage; fi
 	fi
 	case "$package" in
-	deb | appimage) ;;
-	*) err "VOLTIP_PACKAGE must be deb or appimage, not '$package'" ;;
+	deb | appimage | server) ;;
+	*) err "VOLTIP_PACKAGE must be deb, appimage or server, not '$package'" ;;
 	esac
 	;;
 Darwin)
+	if [ "${VOLTIP_PACKAGE:-}" = server ]; then err "voltip-server ships for x86_64 Linux only; on a Mac, switch on the local service in Voltip's settings"; fi
 	# A shell under Rosetta reports x86_64 on Apple silicon; the native build is the one to take.
 	if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = 1 ]; then
 		mac_arch=aarch64
@@ -83,6 +105,7 @@ printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' ||
 case "$package" in
 deb) asset="Voltip_${version}_amd64.deb" ;;
 appimage) asset="Voltip_${version}_amd64.AppImage" ;;
+server) asset="voltip-server-${version}-linux-x64.tar.gz" ;;
 dmg) asset="Voltip_${version}_${mac_arch}.dmg" ;;
 esac
 base_url="https://github.com/${REPO}/releases/download/v${version}"
@@ -167,6 +190,69 @@ Categories=Utility;
 EOF
 	info "installed Voltip ${version} to $dir/Voltip.AppImage (and the applications menu)"
 	info "an AppImage needs FUSE 2 (libfuse2) to start"
+	;;
+server)
+	root=${VOLTIP_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/voltip-server}
+	bindir=${VOLTIP_BIN_DIR:-$HOME/.local/bin}
+	unpacked="voltip-server-${version}-linux-x64"
+	tar -xzf "$tmp/$asset" -C "$tmp" || err "could not unpack ${asset}"
+	[ -x "$tmp/$unpacked/bin/voltip-server" ] || err "${asset} holds no bin/voltip-server"
+	mkdir -p "$root" "$bindir"
+	rm -rf "${root:?}/$version"
+	mv "$tmp/$unpacked" "$root/$version"
+	ln -sfn "$root/$version/bin/voltip-server" "$bindir/voltip-server"
+	# Start it once. What it takes from the system (VOLTIP_SERVER_SONAMES; whether BLAS is among
+	# them depends on the build machine) is named when missing, never installed here; the package's
+	# own lib/ is found through the binary's RUNPATH.
+	if ! started=$("$root/$version/bin/voltip-server" --version 2>&1); then
+		info "voltip-server does not start on this system: $(printf '%s\n' "$started" | head -1)"
+		missing=$(ldd "$root/$version/bin/voltip-server" 2>/dev/null | awk '$2 == "=>" && $3 == "not" { printf " %s", $1 }' || true)
+		if [ -n "$missing" ]; then
+			info "these system libraries are missing:$missing"
+			apt='' dnf=''
+			for lib in $missing; do
+				case "$lib" in
+				libblas.so.3) apt="$apt libblas3" dnf="$dnf blas" ;;
+				libstdc++.so.6) apt="$apt libstdc++6" dnf="$dnf libstdc++" ;;
+				libgcc_s.so.1) apt="$apt libgcc-s1" dnf="$dnf libgcc" ;;
+				esac
+			done
+			if [ -n "$apt" ] && command -v apt-get >/dev/null 2>&1; then
+				info "install them with: sudo apt-get install$apt"
+			elif [ -n "$dnf" ] && command -v dnf >/dev/null 2>&1; then
+				info "install them with: sudo dnf install$dnf"
+			fi
+		fi
+	fi
+	if [ "${VOLTIP_SYSTEMD:-}" = user ]; then
+		unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+		mkdir -p "$unit_dir"
+		cat >"$unit_dir/voltip-server.service" <<UNIT
+[Unit]
+Description=Voltip local speech service
+
+[Service]
+ExecStart=$bindir/voltip-server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+UNIT
+		info "wrote $unit_dir/voltip-server.service (its options: voltip-server --help)"
+		if command -v systemctl >/dev/null 2>&1; then
+			systemctl --user daemon-reload || info "systemctl --user daemon-reload failed (no user session?)"
+			if [ "${VOLTIP_SYSTEMD_ENABLE:-}" = 1 ]; then
+				systemctl --user enable --now voltip-server || err "could not start the voltip-server user service"
+				info "voltip-server is running as a systemd user service"
+			else
+				info "start it with: systemctl --user enable --now voltip-server"
+			fi
+		fi
+		info "to keep it running after you log out: loginctl enable-linger $(id -un)"
+	fi
+	info "installed voltip-server ${version} to $root/$version, command $bindir/voltip-server"
+	info "check it with: voltip-server --check (the token: voltip-server --print-token)"
 	;;
 dmg)
 	dir=${VOLTIP_INSTALL_DIR:-/Applications}

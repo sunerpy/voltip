@@ -7,6 +7,10 @@
 //! both the file and the list as they were. A file that cannot be used does not stop the app: it is
 //! renamed to `<file>.corrupt-<unix seconds>` (never deleted) and the store starts empty; if even
 //! the rename fails the store refuses to write, so the unreadable file is never overwritten.
+//!
+//! [`ListFile::read`] is the same reading and the same checks without any of that: a second process
+//! sharing the data directory (the local speech service, docs/dictation.md §23) reads the lists the
+//! app maintains and never renames, moves or writes them.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -36,27 +40,36 @@ impl ListFile {
         check: impl FnOnce(&[T]) -> Result<(), String>,
     ) -> (Self, Vec<T>, Option<String>) {
         let path = dir.join(name);
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Self { path, writable: true }, Vec::new(), None),
-            Err(e) => {
+        match read_items(&path, schema, into_items, check) {
+            Contents::Missing => (Self { path, writable: true }, Vec::new(), None),
+            Contents::Items(items) => (Self { path, writable: true }, items, None),
+            Contents::Unreadable(e) => {
                 tracing::warn!(error = %e, path = %path.display(), "list file unreadable; starting empty and not writing it");
                 let notice = format!("{name} 无法读取（{e}），本次从空列表开始，且不会覆盖该文件");
-                return (Self { path, writable: false }, Vec::new(), Some(notice));
+                (Self { path, writable: false }, Vec::new(), Some(notice))
             }
-        };
-        let why = match serde_json::from_slice::<F>(&bytes) {
-            Ok(file) => match into_items(file) {
-                Some(items) => match check(&items) {
-                    Ok(()) => return (Self { path, writable: true }, items, None),
-                    Err(e) => e,
-                },
-                None => format!("schema 不是 {schema}"),
-            },
-            Err(e) => e.to_string(),
-        };
-        let (writable, notice) = quarantine(&path, name, &why);
-        (Self { path, writable }, Vec::new(), Some(notice))
+            Contents::Unusable(why) => {
+                let (writable, notice) = quarantine(&path, name, &why);
+                (Self { path, writable }, Vec::new(), Some(notice))
+            }
+        }
+    }
+
+    /// Read `dir/name` as [`Self::load`] does, with no side effect at all: missing → empty;
+    /// unreadable or unusable → the reason, the file left exactly as it is.
+    pub(crate) fn read<T, F: DeserializeOwned>(
+        dir: &Path,
+        name: &str,
+        schema: u16,
+        into_items: impl FnOnce(F) -> Option<Vec<T>>,
+        check: impl FnOnce(&[T]) -> Result<(), String>,
+    ) -> Result<Vec<T>, String> {
+        match read_items(&dir.join(name), schema, into_items, check) {
+            Contents::Missing => Ok(Vec::new()),
+            Contents::Items(items) => Ok(items),
+            Contents::Unreadable(e) => Err(format!("{name} 无法读取（{e}）")),
+            Contents::Unusable(why) => Err(format!("{name} 无法使用（{why}）")),
+        }
     }
 
     /// Write `value` atomically. The error text is `<path>：<reason>`; the caller adds its prefix.
@@ -72,6 +85,41 @@ impl ListFile {
         let tmp = self.path.with_extension("json.tmp");
         std::fs::write(&tmp, bytes).map_err(|e| err(&e))?;
         std::fs::rename(&tmp, &self.path).map_err(|e| err(&e))
+    }
+}
+
+/// What a list file holds.
+enum Contents<T> {
+    /// No file.
+    Missing,
+    /// The validated list.
+    Items(Vec<T>),
+    /// The file is there but could not be read.
+    Unreadable(std::io::Error),
+    /// The file was read but is not a list `check` accepts (or not the schema).
+    Unusable(String),
+}
+
+fn read_items<T, F: DeserializeOwned>(
+    path: &Path,
+    schema: u16,
+    into_items: impl FnOnce(F) -> Option<Vec<T>>,
+    check: impl FnOnce(&[T]) -> Result<(), String>,
+) -> Contents<T> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Contents::Missing,
+        Err(e) => return Contents::Unreadable(e),
+    };
+    match serde_json::from_slice::<F>(&bytes) {
+        Ok(file) => match into_items(file) {
+            Some(items) => match check(&items) {
+                Ok(()) => Contents::Items(items),
+                Err(e) => Contents::Unusable(e),
+            },
+            None => Contents::Unusable(format!("schema 不是 {schema}")),
+        },
+        Err(e) => Contents::Unusable(e.to_string()),
     }
 }
 

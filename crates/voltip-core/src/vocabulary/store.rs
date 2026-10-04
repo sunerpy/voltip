@@ -38,6 +38,43 @@ fn store_err(reason: String) -> VocabularyError {
     VocabularyError::Store(reason)
 }
 
+fn dictionary_of(file: DictionaryFile) -> Option<Vec<DictionaryEntry>> {
+    (file.schema == VOCABULARY_SCHEMA).then_some(file.entries)
+}
+
+/// A stored dictionary is usable when every entry is in its normalised form and the list keeps the rules.
+fn check_stored_dictionary(entries: &[DictionaryEntry]) -> Result<(), String> {
+    let valid = || -> Result<(), VocabularyError> {
+        for e in entries {
+            let draft = DictionaryDraft { term: e.term.clone(), heard_as: e.heard_as.clone(), enabled: e.enabled };
+            if validate_dictionary_draft(&draft)? != draft {
+                return Err(VocabularyError::Dictionary(format!("词条「{}」不是规范形式", e.term)));
+            }
+        }
+        check_dictionary(entries)
+    };
+    valid().map_err(|e| e.to_string())
+}
+
+fn rules_of(file: RulesFile) -> Option<Vec<ReplacementRule>> {
+    (file.schema == VOCABULARY_SCHEMA).then_some(file.rules)
+}
+
+/// Stored rules are usable when every rule is in its normalised form (its regex compiles) and the
+/// list keeps the rules.
+fn check_stored_rules(rules: &[ReplacementRule]) -> Result<(), String> {
+    let valid = || -> Result<(), VocabularyError> {
+        for r in rules {
+            let draft = RuleDraft::from(r);
+            if validate_rule_draft(&draft)? != draft {
+                return Err(VocabularyError::Rules(format!("规则「{}」不是规范形式", r.name)));
+            }
+        }
+        check_rules(rules)
+    };
+    valid().map_err(|e| e.to_string())
+}
+
 /// The personal dictionary (`dictionary.json`).
 #[derive(Debug)]
 pub struct DictionaryStore {
@@ -49,25 +86,14 @@ impl DictionaryStore {
     /// Open `dir/dictionary.json`; the second value is the notice for the UI when the file could
     /// not be used (see the module docs).
     pub fn open(dir: &Path) -> (Self, Option<String>) {
-        let (file, entries, notice) = ListFile::load(
-            dir,
-            DICTIONARY_FILE_NAME,
-            VOCABULARY_SCHEMA,
-            |f: DictionaryFile| (f.schema == VOCABULARY_SCHEMA).then_some(f.entries),
-            |entries: &[DictionaryEntry]| {
-                let valid = || -> Result<(), VocabularyError> {
-                    for e in entries {
-                        let draft = DictionaryDraft { term: e.term.clone(), heard_as: e.heard_as.clone(), enabled: e.enabled };
-                        if validate_dictionary_draft(&draft)? != draft {
-                            return Err(VocabularyError::Dictionary(format!("词条「{}」不是规范形式", e.term)));
-                        }
-                    }
-                    check_dictionary(entries)
-                };
-                valid().map_err(|e| e.to_string())
-            },
-        );
+        let (file, entries, notice) = ListFile::load(dir, DICTIONARY_FILE_NAME, VOCABULARY_SCHEMA, dictionary_of, check_stored_dictionary);
         (Self { file, entries }, notice)
+    }
+
+    /// The entries of `dir/dictionary.json`, read with the same checks as [`Self::open`] and no
+    /// side effect (docs/dictation.md §23).
+    pub fn read(dir: &Path) -> Result<Vec<DictionaryEntry>, String> {
+        ListFile::read(dir, DICTIONARY_FILE_NAME, VOCABULARY_SCHEMA, dictionary_of, check_stored_dictionary)
     }
 
     /// Current entries, in order.
@@ -161,25 +187,14 @@ impl RuleStore {
     /// Open `dir/rules.json`; the second value is the notice for the UI when the file could not be
     /// used (a stored regex that no longer compiles counts as unusable).
     pub fn open(dir: &Path) -> (Self, Option<String>) {
-        let (file, rules, notice) = ListFile::load(
-            dir,
-            RULES_FILE_NAME,
-            VOCABULARY_SCHEMA,
-            |f: RulesFile| (f.schema == VOCABULARY_SCHEMA).then_some(f.rules),
-            |rules: &[ReplacementRule]| {
-                let valid = || -> Result<(), VocabularyError> {
-                    for r in rules {
-                        let draft = RuleDraft::from(r);
-                        if validate_rule_draft(&draft)? != draft {
-                            return Err(VocabularyError::Rules(format!("规则「{}」不是规范形式", r.name)));
-                        }
-                    }
-                    check_rules(rules)
-                };
-                valid().map_err(|e| e.to_string())
-            },
-        );
+        let (file, rules, notice) = ListFile::load(dir, RULES_FILE_NAME, VOCABULARY_SCHEMA, rules_of, check_stored_rules);
         (Self { file, rules }, notice)
+    }
+
+    /// The rules of `dir/rules.json`, read with the same checks as [`Self::open`] and no side
+    /// effect (docs/dictation.md §23).
+    pub fn read(dir: &Path) -> Result<Vec<ReplacementRule>, String> {
+        ListFile::read(dir, RULES_FILE_NAME, VOCABULARY_SCHEMA, rules_of, check_stored_rules)
     }
 
     /// Current rules, in execution order.
@@ -433,5 +448,28 @@ mod tests {
         assert!(store.rules().iter().all(|r| r.id != keep), "replace gives new ids");
         store.import(&[], ImportMode::Replace, 9).unwrap();
         assert!(RuleStore::open(dir.path()).0.rules().is_empty());
+    }
+
+    /// docs/dictation.md §23: the readers see what the stores saved and never touch the files; an
+    /// unusable file is reported and left exactly where it was (no `.corrupt-` copy).
+    #[test]
+    fn reading_the_dictionary_and_the_rules_never_moves_the_files() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(DictionaryStore::read(dir.path()).unwrap().is_empty() && RuleStore::read(dir.path()).unwrap().is_empty());
+        let (mut dictionary, _) = DictionaryStore::open(dir.path());
+        let term = dictionary.add(&draft("Voltip", &["沃提普"]), EntrySource::Manual, 1).unwrap();
+        let (mut rules, _) = RuleStore::open(dir.path());
+        let rule_id = rules.add(&rule("keep", RuleKind::Literal, "k", "K"), 1).unwrap();
+        assert_eq!(DictionaryStore::read(dir.path()).unwrap()[0].id, term);
+        assert_eq!(RuleStore::read(dir.path()).unwrap()[0].id, rule_id);
+        for name in [DICTIONARY_FILE_NAME, RULES_FILE_NAME] {
+            std::fs::write(dir.path().join(name), b"{broken").unwrap();
+        }
+        assert!(DictionaryStore::read(dir.path()).unwrap_err().contains("dictionary.json 无法使用"));
+        assert!(RuleStore::read(dir.path()).unwrap_err().contains("rules.json 无法使用"));
+        for name in [DICTIONARY_FILE_NAME, RULES_FILE_NAME] {
+            assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), b"{broken");
+            assert!(corrupt_files(dir.path(), name).is_empty());
+        }
     }
 }

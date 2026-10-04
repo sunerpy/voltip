@@ -476,6 +476,41 @@ export const SOLO_KEYS = [
 export const soloKeySchema = z.enum(SOLO_KEYS);
 export type SoloKey = z.infer<typeof soloKeySchema>;
 
+// ---- the local speech service (docs/dictation.md §23.6; `voltip_core::ServeSettings`) -------
+
+/** `voltip_core::serve::DEFAULT_PORT`. */
+export const DEFAULT_SERVE_PORT = 47840;
+/** `voltip_core::MIN_SERVE_PORT`: the lowest port `settings_set_serve` accepts. */
+export const MIN_SERVE_PORT = 1024;
+/** `Settings.serve`: whether the app serves other programs on this computer, on which port, and
+ *  the preset and scene of their `voltip` requests (absent = the engines' preset, no scene). */
+export const serveSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  port: z.number().int().min(1).max(65_535).default(DEFAULT_SERVE_PORT),
+  preset: presetIdSchema.optional(),
+  scene: z.string().optional(),
+});
+export type ServeSettings = z.infer<typeof serveSettingsSchema>;
+export const defaultServeSettings = (): ServeSettings => ({
+  enabled: false,
+  port: DEFAULT_SERVE_PORT,
+});
+
+/** `voltip_core::ui::ServePhase`. */
+export const SERVE_PHASES = ["off", "running", "failed"] as const;
+export const servePhaseSchema = z.enum(SERVE_PHASES);
+export type ServePhase = z.infer<typeof servePhaseSchema>;
+/** `UiState.serve`: whether this app can host the service, and what it is doing. */
+export const serveStatusSchema = z.object({
+  available: z.boolean(),
+  phase: servePhaseSchema,
+  /** What a client sets as its base URL while running (`http://127.0.0.1:<port>/v1`). */
+  address: z.string().optional(),
+  /** Why it is not running although switched on (the port is taken). */
+  error: z.string().optional(),
+});
+export type ServeStatus = z.infer<typeof serveStatusSchema>;
+
 export const settingsSchema = z.object({
   schema: z.literal(1),
   theme: themeIdSchema,
@@ -522,6 +557,8 @@ export const settingsSchema = z.object({
   microphone: z.string().nullable().default(null),
   /** docs/dictation.md §22; an older `settings.json` or core reads as the microphone, 10 minutes. */
   recording: recordingSettingsSchema.default(defaultRecordingSettings),
+  /** docs/dictation.md §23.6; an older `settings.json` or core reads as off on the default port. */
+  serve: serveSettingsSchema.default(defaultServeSettings),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -1996,6 +2033,8 @@ export const uiStateSchema = z.object({
   mirrors: z.array(mirrorViewSchema).default(() => []),
   /** Phone: its own records too large to upload to a computer. */
   phone_outbox_too_large: z.array(z.string()).default(() => []),
+  /** The local speech service the app hosts (docs/dictation.md §23.6); not available on the phone. */
+  serve: serveStatusSchema.default(() => ({ available: false, phase: "off" as const })),
 });
 export type UiState = z.infer<typeof uiStateSchema>;
 
@@ -2013,6 +2052,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   trustedDeviceSchema.extend({ type: z.literal("unpaired") }),
   /** The connectivity self-check started (`running`) or finished (`report`). */
   connectivityStatusSchema.extend({ type: z.literal("connectivity") }),
+  /** The local speech service started, stopped or failed to start (§23.6). */
+  serveStatusSchema.extend({ type: z.literal("serve") }),
   z.object({
     type: z.literal("identity_changed"),
     previous: trustedDeviceSchema,
@@ -2174,6 +2215,14 @@ export type PresetsTryArgs = {
   preset: PresetId | null;
   prompt: string | null;
   text: string;
+};
+
+/** `settings_set_serve` arguments: the whole service setting. */
+export type SetServeArgs = {
+  enabled: boolean;
+  port: number;
+  preset: PresetId | null;
+  scene: string | null;
 };
 
 /** `settings_set_context_sharing` arguments: both switches together. */
@@ -2360,6 +2409,13 @@ export interface CommandArgs {
   settings_set_context_sharing: SetContextSharingArgs;
   /** The scene the phone's takes run with (its talk card, §18); `null` = no scene. */
   settings_set_pinned_scene: { id: string | null };
+  /** The local speech service (§23.6): on / off, port, the preset and scene of its `voltip`
+   *  requests (`null` = the engines' preset, no scene); the core re-emits `settings` and `serve`. */
+  settings_set_serve: SetServeArgs;
+  /** Put the service's token on the clipboard (it never reaches the webview). */
+  serve_copy_token: undefined;
+  /** Replace the service's token. */
+  serve_rotate_token: undefined;
   /** Query: the apps the history saw, newest first (`Backend.recentApps`, the scene editor). */
   recent_apps: undefined;
   /** Query (docs/dictation.md §4.4): a page of the history (`Backend.historyQuery`). */
@@ -2501,6 +2557,7 @@ export function defaultSettings(): Settings {
     overlay: "bottom",
     microphone: null,
     recording: defaultRecordingSettings(),
+    serve: defaultServeSettings(),
   };
 }
 
@@ -2568,6 +2625,10 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
     case "connectivity": {
       const { type: _type, ...connectivity } = event;
       return { ...state, connectivity };
+    }
+    case "serve": {
+      const { type: _type, ...serve } = event;
+      return { ...state, serve };
     }
     case "phone_take": {
       if (event.take === null) {

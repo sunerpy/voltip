@@ -22,7 +22,7 @@ use voltip_core::paste::{CopyReason, PasteFailure, PasteOutcome};
 use voltip_core::phone::{PhoneTakeFailure, PhoneTakeState, PhoneTakeView};
 use voltip_core::phone::{PhoneTextSource, SentText, SentTextFailure, SentTextState};
 use voltip_core::presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetId, PresetRef, PresetTryOutcome};
-use voltip_core::ui::{GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, UiEvent, UiState, UpdateStatus};
+use voltip_core::ui::{GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, ServePhase, ServeStatus, UiEvent, UiState, UpdateStatus};
 use voltip_core::{
     Activation, AppRef, BuiltIn, BuiltinScene, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ContextSharing, DeviceConnection, DeviceView,
     DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, FallbackModel, FallbackSettings,
@@ -312,6 +312,13 @@ fn settings() -> Settings {
             output_device: Some("wasapi:{0.0.0.00000000}.{a1}".into()),
             max_minutes: 60,
             echo_cancel: false,
+        },
+        // docs/dictation.md §23.6: the local speech service on, with a preset and a scene.
+        serve: voltip_core::ServeSettings {
+            enabled: true,
+            port: 47840,
+            preset: Some(voltip_core::PresetId::Builtin(voltip_core::BuiltinPreset::Prompt)),
+            scene: Some(uuid(SCENE_ID)),
         },
         ..Settings::default()
     }
@@ -870,6 +877,8 @@ fn full_state() -> UiState {
         connectivity: ConnectivityStatus { running: false, report: Some(connectivity_report()) },
         mirrors: mirror_views(),
         phone_outbox_too_large: vec![uuid(HISTORY_ID)],
+        // docs/dictation.md §23.6: the app's local speech service, running.
+        serve: ServeStatus { available: true, phase: ServePhase::Running, address: Some("http://127.0.0.1:47840/v1".into()), error: None },
     }
 }
 
@@ -916,6 +925,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::Nearby { .. } => "nearby",
         UiEvent::Hardware(_) => "hardware",
         UiEvent::Connectivity(_) => "connectivity",
+        UiEvent::Serve(_) => "serve",
         UiEvent::PasteResult { .. } => "paste_result",
         UiEvent::Mirrors { .. } => "mirrors",
         UiEvent::PhoneOutbox { .. } => "phone_outbox",
@@ -1488,6 +1498,13 @@ fn all_events() -> Vec<UiEvent> {
         // The connectivity self-check (docs/pairing.md): running, then a report with every probe outcome.
         UiEvent::Connectivity(ConnectivityStatus { running: true, report: None }),
         UiEvent::Connectivity(ConnectivityStatus { running: false, report: Some(connectivity_report()) }),
+        // docs/dictation.md §23.6: the service could not start (every key of the status present).
+        UiEvent::Serve(ServeStatus {
+            available: true,
+            phase: ServePhase::Failed,
+            address: Some("http://127.0.0.1:47840/v1".into()),
+            error: Some("无法监听 127.0.0.1:47840：Address already in use".into()),
+        }),
         // The model library: every `ModelInstallState` variant across these three lists.
         models_event(models_installed_and_downloading()),
         models_event(models_other_states()),
@@ -1747,6 +1764,9 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::PresetsTry { .. } => "PresetsTry",
         UiCommand::SettingsSetContextSharing { .. } => "SettingsSetContextSharing",
         UiCommand::SettingsSetPinnedScene { .. } => "SettingsSetPinnedScene",
+        UiCommand::SettingsSetServe { .. } => "SettingsSetServe",
+        UiCommand::ServeCopyToken => "ServeCopyToken",
+        UiCommand::ServeRotateToken => "ServeRotateToken",
     }
 }
 
@@ -1879,6 +1899,10 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("presets_try", json!({ "id": 3, "preset": "translate", "prompt": null, "text": "明天上午十点开会" }), "PresetsTry"),
         ("settings_set_context_sharing", json!({ "appName": true, "windowTitle": false }), "SettingsSetContextSharing"),
         ("settings_set_pinned_scene", json!({ "id": "0f3f1a1e-8d4b-4c8e-9f7a-1c2d3e4f5a6b" }), "SettingsSetPinnedScene"),
+        // The local speech service (docs/dictation.md §23.6).
+        ("settings_set_serve", json!({ "enabled": true, "port": 47840, "preset": "prompt", "scene": SCENE_ID }), "SettingsSetServe"),
+        ("serve_copy_token", Value::Null, "ServeCopyToken"),
+        ("serve_rotate_token", Value::Null, "ServeRotateToken"),
     ]
 }
 

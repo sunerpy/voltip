@@ -503,3 +503,26 @@ fn a_phone_keeps_the_builtin_scenes_and_scenes_without_applications() {
     let (mut store, _) = SceneStore::open_on(desktop.path(), Platform::Windows, 5);
     assert!(matches!(store.add(&draft("会议", &[], &[]), 6), Err(SceneError::Invalid(m)) if m.contains("至少要有一个应用")));
 }
+
+/// docs/dictation.md §23: the local speech service reads the app's `scenes.json` with the store's
+/// checks and never touches it: a file without the built-in scenes gets them in memory only, and an
+/// unusable file is reported, neither moved nor rewritten.
+#[test]
+fn reading_the_scenes_never_moves_or_writes_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(SCENES_FILE_NAME);
+    assert_eq!(SceneStore::read_on(dir.path(), Platform::Other, 1).unwrap(), Vec::<Scene>::new(), "missing: nothing");
+    assert!(!path.exists(), "a missing file is not created");
+    let user = r#"{"schema":1,"scenes":[{"id":"00000000-0000-4000-8000-000000000001","name":"聊天","enabled":true,"match":{"apps":["slack"],"title_contains":[]},"overrides":{},"created_at_ms":1,"updated_at_ms":1}]}"#;
+    std::fs::write(&path, user).unwrap();
+    let scenes = SceneStore::read_on(dir.path(), Platform::Linux, 3).unwrap();
+    assert_eq!(scenes.len(), 1 + BuiltinScene::ALL.len());
+    assert_eq!((scenes[0].name.as_str(), scenes[0].builtin), ("聊天", None));
+    assert!(scenes[1..].iter().all(|s| s.builtin.is_some() && !s.enabled), "built-ins after the user's, switched off");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), user, "the file is not rewritten");
+    std::fs::write(&path, b"{not json").unwrap();
+    let err = SceneStore::read_on(dir.path(), Platform::Linux, 3).unwrap_err();
+    assert!(err.contains("scenes.json 无法使用"), "{err}");
+    assert_eq!(std::fs::read(&path).unwrap(), b"{not json", "left where it is");
+    assert!(corrupt_files(dir.path()).is_empty(), "nothing set aside");
+}

@@ -35,7 +35,7 @@ use crate::history::{HistoryEntry, HistoryStore};
 use crate::models::{CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelInstallState, ModelManager, ModelState};
 use crate::peer::{Incoming, LinkId, ParkedChannel, PeerPath, PeerPhase, PeerState};
 use crate::presets::{CustomPreset, PresetDraft, PresetStore, PresetTrial, PresetTryOutcome};
-use crate::providers::{ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, key_entries, key_entry};
+use crate::providers::{ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, key_entry, load_user_secrets};
 use crate::scenes::{ContextSharing, Scene, SceneDraft, SceneStore};
 use crate::settings::{Locale, Settings, SettingsStore, ThemeId};
 use crate::view::{DeviceConnection, DeviceView, RelaySource, RelayStatus};
@@ -46,6 +46,8 @@ mod always_on;
 mod check;
 mod nearby;
 mod processing;
+mod serve;
+pub use serve::SERVE_UNAVAILABLE;
 mod sync;
 mod take_codec;
 mod takes;
@@ -126,6 +128,9 @@ pub struct CoreConfig {
     /// LAN discovery (docs/pairing.md 「局域网发现」): the shells pass [`crate::discovery::MdnsDiscovery`],
     /// the tests an in-memory LAN; `None` announces and browses nothing.
     pub discovery: Option<Arc<dyn crate::discovery::Discovery>>,
+    /// Starts the local speech service's listener (docs/dictation.md §23.6); `None` on shells that
+    /// cannot host it (the phone), whose service commands are then refused.
+    pub serve_host: Option<Arc<dyn crate::serve::ServeHost>>,
     /// Which side of the sync this core plays (docs/dictation.md §20.8): the desktop shell sets
     /// `Computer`, the phone shell `Phone`.
     pub sync_role: crate::sync::SyncRole,
@@ -208,6 +213,7 @@ impl CoreConfig {
             builtin_scenes: true,
             manual_scenes: false,
             discovery: None,
+            serve_host: None,
             sync_role: crate::sync::SyncRole::Off,
             sync_request_timeout: Duration::from_secs(30),
             sync_request_timeout_max: Duration::from_secs(300),
@@ -518,6 +524,13 @@ pub enum CoreCommand {
     /// The scene a take runs with where no foreground probe picks one (persisted; the next take
     /// follows).
     SetPinnedScene(Option<Uuid>),
+    /// The local speech service's settings (persisted, applied at once: the listener starts,
+    /// stops or moves; docs/dictation.md §23.6).
+    SetServe(crate::settings::ServeSettings),
+    /// Put the service's token on the clipboard (it never reaches the webview).
+    ServeCopyToken,
+    /// Replace the service's token; clients need the new one from now on.
+    ServeRotateToken,
     /// Stop the core.
     Shutdown,
 }
@@ -645,6 +658,8 @@ pub enum CoreEvent {
     Nearby(Vec<crate::discovery::NearbyDevice>),
     /// The connectivity self-check started or finished ([`crate::connectivity`]).
     Connectivity(crate::connectivity::ConnectivityStatus),
+    /// The local speech service started, stopped or failed to start (docs/dictation.md §23.6).
+    Serve(crate::ui::ServeStatus),
     /// Non-fatal error for the UI.
     Error(String),
 }
@@ -750,6 +765,7 @@ impl AppCore {
         let (disc_tx, disc_rx) = mpsc::channel(64);
         let (process_tx, process_rx) = mpsc::channel(8);
         let activation = ActivationState::new(ActivationConfig::from(&settings));
+        let serve_host = config.serve_host.clone();
         let mut rt = Runtime {
             config,
             manager,
@@ -810,26 +826,13 @@ impl AppCore {
             sync: sync::SyncState::default(),
             history_dirty: std::sync::atomic::AtomicBool::new(true),
             profile_dirty: std::sync::atomic::AtomicBool::new(true),
+            serve: serve::ServeRuntime::new(serve_host),
         };
         rt.connect_relay()?;
         let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, disc_rx, process_rx };
         tokio::spawn(async move { rt.run(inbox).await });
         Ok((CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
-}
-
-/// Read the user's engine secrets from the store. A store that cannot be read leaves the secret
-/// unset (and logs): the identity already loaded from the same store, so this is rare.
-fn load_user_secrets(store: &dyn SecretStore) -> UserSecrets {
-    let mut secrets = UserSecrets::default();
-    for entry in key_entries() {
-        match store.get(entry) {
-            Ok(Some(bytes)) => secrets.set_entry(entry, String::from_utf8(bytes.to_vec()).ok()),
-            Ok(None) => {}
-            Err(e) => tracing::warn!(error = %e, secret = entry, "secret store read failed; treating as unset"),
-        }
-    }
-    secrets
 }
 
 /// An endpoint the user entered must be an http(s) URL with a host.
@@ -1087,6 +1090,8 @@ struct Runtime {
     history_dirty: std::sync::atomic::AtomicBool,
     /// The settings a phone shows changed since the sync last looked.
     profile_dirty: std::sync::atomic::AtomicBool,
+    /// The local speech service the app hosts (docs/dictation.md §23.6).
+    serve: serve::ServeRuntime,
 }
 
 impl Runtime {
@@ -1095,6 +1100,8 @@ impl Runtime {
             CoreEvent::History { .. } => self.history_dirty.store(true, std::sync::atomic::Ordering::Relaxed),
             CoreEvent::Settings(_) | CoreEvent::Engines(_) | CoreEvent::Presets(_) | CoreEvent::Dictionary(_) | CoreEvent::Rules(_) | CoreEvent::Scenes(_) => {
                 self.profile_dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+                // docs/dictation.md §23.6: the service runs with what the app has.
+                self.push_serve_state();
             }
             _ => {}
         }
@@ -1261,6 +1268,8 @@ impl Runtime {
         self.emit_devices();
         self.start_host().await;
         self.start_discovery();
+        self.emit(CoreEvent::Serve(self.serve.status()));
+        self.apply_serve().await;
         let mut ticker = tokio::time::interval(self.config.tick);
         // docs/dictation.md §3.5: a model running out of quota (or 重新检查) shows on the pages.
         let mut quota_rx = self.dictation.quota().subscribe();
@@ -1310,6 +1319,7 @@ impl Runtime {
             t.abort();
         }
         self.stop_discovery();
+        self.stop_serve();
         // The LAN host stops first: once a peer sees this device go offline (its relay or direct
         // link closed), the LAN address it was told about must not answer any more.
         if let Some(h) = self.host.take() {
@@ -1502,6 +1512,9 @@ impl Runtime {
                 self.dictation.set_pinned_scene(id);
                 self.save_settings()
             }
+            CoreCommand::SetServe(serve) => self.set_serve(serve).await,
+            CoreCommand::ServeCopyToken => self.copy_serve_token().await,
+            CoreCommand::ServeRotateToken => self.rotate_serve_token(),
             CoreCommand::Shutdown => Ok(()),
         };
         if let Err(e) = result {

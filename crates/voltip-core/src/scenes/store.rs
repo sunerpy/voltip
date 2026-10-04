@@ -36,6 +36,38 @@ fn scene_from(draft: SceneDraft, id: Uuid, created_at_ms: u64, now_ms: u64, buil
     Scene { id, name: draft.name, enabled: draft.enabled, matching: draft.matching, overrides: draft.overrides, created_at_ms, updated_at_ms: now_ms, builtin }
 }
 
+fn scenes_of(file: ScenesFile) -> Option<Vec<Scene>> {
+    (file.schema == SCENES_SCHEMA).then_some(file.scenes)
+}
+
+/// A stored list is usable when every scene is in its normalised form for `platform` and the list
+/// keeps the rules.
+fn check_stored_scenes(scenes: &[Scene], platform: Platform) -> Result<(), String> {
+    let valid = || -> Result<(), SceneError> {
+        for s in scenes {
+            let draft = SceneDraft::from(s);
+            if validate_scene_draft_with(&draft, s.builtin.is_none() && scenes_need_apps(platform))? != draft {
+                return Err(SceneError::Invalid(format!("场景「{}」不是规范形式", s.name)));
+            }
+        }
+        check_scenes(scenes)
+    };
+    valid().map_err(|e| e.to_string())
+}
+
+/// The built-in categories `scenes` lacks on `platform` (none where there are no built-in scenes).
+fn missing_builtin(scenes: &[Scene], platform: Platform) -> Vec<BuiltinScene> {
+    if !has_builtin_scenes(platform) {
+        return Vec::new();
+    }
+    BuiltinScene::ALL.into_iter().filter(|c| !scenes.iter().any(|s| s.builtin == Some(*c))).collect()
+}
+
+/// A new built-in scene of `category` with its defaults for `platform`.
+fn builtin_scene(category: BuiltinScene, platform: Platform, now_ms: u64) -> Scene {
+    scene_from(category.template(platform), Uuid::new_v4(), now_ms, now_ms, Some(category))
+}
+
 /// The scenes (`scenes.json`), in matching order.
 #[derive(Debug)]
 pub struct SceneStore {
@@ -55,43 +87,33 @@ impl SceneStore {
 
     /// [`Self::open`] for `platform`, filling in the built-in scenes a desktop lacks at `now_ms`.
     pub fn open_on(dir: &Path, platform: Platform, now_ms: u64) -> (Self, Option<String>) {
-        let (file, scenes, notice) = ListFile::load(
-            dir,
-            SCENES_FILE_NAME,
-            SCENES_SCHEMA,
-            |f: ScenesFile| (f.schema == SCENES_SCHEMA).then_some(f.scenes),
-            |scenes: &[Scene]| {
-                let valid = || -> Result<(), SceneError> {
-                    for s in scenes {
-                        let draft = SceneDraft::from(s);
-                        if validate_scene_draft_with(&draft, s.builtin.is_none() && scenes_need_apps(platform))? != draft {
-                            return Err(SceneError::Invalid(format!("场景「{}」不是规范形式", s.name)));
-                        }
-                    }
-                    check_scenes(scenes)
-                };
-                valid().map_err(|e| e.to_string())
-            },
-        );
+        let (file, scenes, notice) = ListFile::load(dir, SCENES_FILE_NAME, SCENES_SCHEMA, scenes_of, |scenes: &[Scene]| check_stored_scenes(scenes, platform));
         let mut store = Self { file, scenes, platform };
         store.fill_builtin(now_ms);
         (store, notice)
+    }
+
+    /// The scenes of `dir/scenes.json` for `platform`, read with the same checks as
+    /// [`Self::open_on`] and no side effect (docs/dictation.md §23): a built-in category the file
+    /// lacks is added in memory only (switched off, after the rest, a fresh id each read), and a
+    /// file that cannot be used is reported and left where it is.
+    pub fn read_on(dir: &Path, platform: Platform, now_ms: u64) -> Result<Vec<Scene>, String> {
+        let mut scenes = ListFile::read(dir, SCENES_FILE_NAME, SCENES_SCHEMA, scenes_of, |scenes: &[Scene]| check_stored_scenes(scenes, platform))?;
+        scenes.extend(missing_builtin(&scenes, platform).into_iter().map(|category| builtin_scene(category, platform, now_ms)));
+        Ok(scenes)
     }
 
     /// Append the built-in categories the list lacks and write the list back, so
     /// their ids stay the same from one launch to the next. A list that cannot be written keeps them
     /// in memory for this run.
     fn fill_builtin(&mut self, now_ms: u64) {
-        if !has_builtin_scenes(self.platform) {
-            return;
-        }
-        let missing: Vec<BuiltinScene> = BuiltinScene::ALL.into_iter().filter(|c| !self.scenes.iter().any(|s| s.builtin == Some(*c))).collect();
+        let missing = missing_builtin(&self.scenes, self.platform);
         if missing.is_empty() {
             return;
         }
         let mut scenes = self.scenes.clone();
         for category in &missing {
-            scenes.push(scene_from(category.template(self.platform), Uuid::new_v4(), now_ms, now_ms, Some(*category)));
+            scenes.push(builtin_scene(*category, self.platform, now_ms));
         }
         let names: Vec<&str> = missing.iter().map(|c| c.as_str()).collect();
         match self.commit(scenes.clone()) {

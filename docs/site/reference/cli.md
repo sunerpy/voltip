@@ -1,5 +1,5 @@
 ---
-description: The voltip-desktop command-line options, for controlling the running app and for recognising files without a window.
+description: The voltip-desktop command-line options, for controlling the running app and for recognising files without a window, and the options of voltip-server, the local service for computers without a desktop.
 ---
 
 # Command line
@@ -60,3 +60,38 @@ voltip-desktop --transcribe-file meeting-note.wav --model sense-voice-small --js
 ```
 
 On Windows the program is built as a desktop app, so PowerShell does not show its output directly. Redirect it to a file instead: `voltip-desktop.exe --transcribe-file a.wav --json > out.json`.
+
+## voltip-server
+
+`voltip-server` runs the [local service](/recognition/service) on a computer without a desktop. It is built for Linux x64 and installed with `install.sh --server`. Without options it listens on `127.0.0.1:47840` until it receives Ctrl+C or `SIGTERM`.
+
+| Option | Effect |
+| --- | --- |
+| `--listen <address:port>` | Where to listen. Default: `127.0.0.1:47840`. An address other computers can reach also needs `--allow-remote` |
+| `--allow-remote` | Allows such an address. The connection is not encrypted |
+| `--token-file <path>` | The access token's file, created the first time. Default: `~/.local/share/voltip/serve/token` |
+| `--scene <scene>` | The scene of every `voltip` request: a built-in one (`coding`, `office`, `chat`, `legal`, `medical`, `finance`, `academic`) or a scene's name |
+| `--app <app id>` | Instead of `--scene`: the scene that lists this app, as if it were the app in front |
+| `--preset <preset>` | The preset for AI polish: a built-in one (`proofread`, `prompt`, `intent`, `chat`, `translate`, `notes`, `punctuation`, `formal`) or a preset's name |
+| `--refine on\|off` | AI polish for every `voltip` request. Default: the settings, or the scene's |
+| `--language <code>` | The recognition language of every request (`zh`, `en`, …; `auto` leaves it to the model) |
+| `--script simplified\|traditional\|as_is` | The Chinese script |
+| `--asr <provider>`, `--llm <provider>` | Another recognition or AI polish provider, for example `builtin`, `local` or `aliyun` |
+| `--local-model <id>`, `--device`, `--gpu`, `--threads` | Recognition with a local model, as with `--transcribe-file` |
+| `--max-minutes <1–120>` | The longest audio of one request. Default: 120 |
+| `--concurrency <1–8>` | Requests processed at a time. Default: 2 |
+| `--no-preload` | Does not load the local model at start; the first request waits for it |
+
+These options print their result and exit:
+
+| Option | Output |
+| --- | --- |
+| `--check` | The services, the default processing, the limits and any warnings |
+| `--print-token` | The access token, created the first time |
+| `--list-models`, `--download-model <id>`, `--list-compute` | The same as for `voltip-desktop` |
+
+| Code | Meaning |
+| --- | --- |
+| 0 | The service stopped normally, or `--check` found that recognition can run |
+| 1 | The service could not start, or recognition is not available |
+| 2 | Options that do not go together, or an unknown option |

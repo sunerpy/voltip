@@ -227,6 +227,23 @@ fn invalid(message: impl Into<String>) -> SceneError {
     SceneError::Invalid(message.into())
 }
 
+/// A language code as a scene override, the local speech service's `--language` and a request's
+/// `language` field take it (docs/dictation.md §18, §23): trimmed and lower-cased, letters, digits
+/// and `-`, at most [`MAX_LANGUAGE_CHARS`]; [`LANGUAGE_AUTO`] stays as it is (no hint). An empty
+/// value is `None`; the error is the Chinese explanation the interface shows.
+pub fn clean_language(raw: &str) -> Result<Option<String>, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let code = trimmed.to_ascii_lowercase();
+    let valid = code.len() <= MAX_LANGUAGE_CHARS && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && !code.starts_with('-');
+    if !valid {
+        return Err(format!("语言代码「{trimmed}」无效（字母、数字或 -，最多 {MAX_LANGUAGE_CHARS} 个字符；auto = 自动识别）"));
+    }
+    Ok(Some(code))
+}
+
 /// The id normalisation of docs/dictation.md §18.3 (`voltip_platform::foreground` applies the same
 /// rule): trim → lower-case → strip trailing `.exe` (repeatedly, so it is idempotent) → trim.
 pub fn normalize_app_id(raw: &str) -> String {
@@ -321,16 +338,9 @@ pub fn validate_scene_draft_with(draft: &SceneDraft, require_apps: bool) -> Resu
     if title_contains.len() > MAX_TITLE_KEYWORDS {
         return Err(invalid(format!("一个场景最多 {MAX_TITLE_KEYWORDS} 个窗口标题关键词（当前 {}）", title_contains.len())));
     }
-    let language = match draft.overrides.language.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+    let language = match draft.overrides.language.as_deref() {
         None => None,
-        Some(raw) => {
-            let code = raw.to_ascii_lowercase();
-            let valid = code.len() <= MAX_LANGUAGE_CHARS && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && !code.starts_with('-');
-            if !valid {
-                return Err(invalid(format!("语言代码「{raw}」无效（字母、数字或 -，最多 {MAX_LANGUAGE_CHARS} 个字符；auto = 自动识别）")));
-            }
-            Some(code)
-        }
+        Some(raw) => clean_language(raw).map_err(SceneError::Invalid)?,
     };
     let prompt = match draft.overrides.prompt.as_deref() {
         None => None,

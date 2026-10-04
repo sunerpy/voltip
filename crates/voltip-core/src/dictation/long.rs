@@ -13,8 +13,10 @@ use tokio::sync::mpsc;
 
 use super::engine::Internal;
 use super::inject_separator;
-use super::ports::{PCM_SAMPLE_RATE_HZ, PcmStream, Segmenter};
+use super::ports::{DictationError, PCM_SAMPLE_RATE_HZ, PcmStream, Segmenter, Transcriber, Transcript};
 use super::wav;
+use crate::engines::ChineseScript;
+use crate::script::normalized;
 
 /// Samples per second of a recording file.
 pub const RATE: u64 = PCM_SAMPLE_RATE_HZ as u64;
@@ -250,6 +252,27 @@ fn merge_spans(mut spans: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
 pub fn clock(sample: u64) -> String {
     let seconds = sample / RATE;
     format!("{:02}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60)
+}
+
+/// How often a segment is sent to the recogniser before its span counts as not recognised
+/// (docs/dictation.md §22).
+pub const SEGMENT_ATTEMPTS: u8 = 2;
+
+/// Recognise one segment of a long take (docs/dictation.md §22): a silent segment is no text and
+/// never reaches the recogniser; any other is recognised with the take's hint and glossary and
+/// brought to the take's script (§17), as a whole take is. The engine and the local speech service
+/// (§23) recognise their segments with this.
+pub async fn recognize_segment(
+    transcriber: &dyn Transcriber,
+    wav: &[u8],
+    language: Option<&str>,
+    glossary: &[String],
+    script: ChineseScript,
+) -> Result<Transcript, DictationError> {
+    if wav::is_silent(wav) {
+        return Ok(Transcript { text: String::new(), latency_ms: 0, model: None });
+    }
+    transcriber.transcribe(wav, language, glossary).await.map(|t| Transcript { text: normalized(script, t.text.trim()), ..t })
 }
 
 /// The placeholder for a span nothing was recognised in (docs/dictation.md §22).

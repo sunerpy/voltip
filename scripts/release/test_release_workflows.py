@@ -138,6 +138,27 @@ class CandidateBuild(unittest.TestCase):
     def test_the_linux_leg_refuses_a_library_its_packages_do_not_depend_on(self) -> None:
         self.assertIn("voltip_linux_sonames_accounted ../../target/release/voltip-desktop", self.jobs["bundle-linux"])
 
+    def test_the_linux_leg_ships_the_headless_server_built_before_any_signing_key(self) -> None:
+        body = self.jobs["bundle-linux"]
+        build = body.index("- name: Build and package voltip-server (tar.gz)")
+        signing = body.index("- name: Bundle and sign (deb, AppImage)")
+        collect = body.index("- name: Collect bundles and evidence")
+        self.assertLess(build, signing, "nothing is compiled after the signing step")
+        step = "\n".join(code_lines(body[build:signing]))
+        # The source's packaging script, then the trusted copy of the checks on the same binary.
+        self.assertIn("scripts/build-server-linux-x64.sh dist/server-linux-x64", step)
+        self.assertNotIn(".release-tooling/scripts/build-server-linux-x64.sh", step)
+        self.assertIn(". .release-tooling/scripts/lib/artefact-checks.sh", step)
+        self.assertIn("voltip_scan_provider_keys target/release/voltip-server release", step)
+        self.assertIn("voltip_linux_sonames_accounted target/release/voltip-server release VOLTIP_SERVER_SONAMES", step)
+        self.assertNotIn("secrets.", step)
+        gather = body[collect:]
+        self.assertIn("VERSION: ${{ needs.prepare.outputs.version }}", gather)
+        self.assertIn(
+            '--extra "voltip-server-${VERSION}-linux-x64.tar.gz=dist/server-linux-x64/voltip-server-${VERSION}-linux-x64.tar.gz"',
+            gather,
+        )
+
     def test_the_sherpa_fingerprint_is_cleared_in_the_source_target(self) -> None:
         # forget-sherpa-onnx-build.sh cds to the checkout it sits in and clears that target/. The
         # Android app links no sherpa-onnx.

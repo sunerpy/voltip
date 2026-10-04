@@ -35,7 +35,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 108] = [
+pub const COMMANDS: [&str; 111] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -131,6 +131,9 @@ pub const COMMANDS: [&str; 108] = [
     "presets_builtin",
     "settings_set_context_sharing",
     "settings_set_pinned_scene",
+    "settings_set_serve",
+    "serve_copy_token",
+    "serve_rotate_token",
     "recent_apps",
     "history_query",
     "history_entry",
@@ -821,6 +824,25 @@ fn settings_set_pinned_scene(bridge: tauri::State<'_, Bridge>, id: Option<String
     Ok(bridge.dispatch(UiCommand::SettingsSetPinnedScene { id })?)
 }
 
+/// The local speech service (docs/dictation.md §23.6) runs on a computer only: the phone's core
+/// has no host and refuses these commands.
+#[tauri::command]
+fn settings_set_serve(bridge: tauri::State<'_, Bridge>, enabled: bool, port: u16, preset: Option<String>, scene: Option<String>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetServe { enabled, port, preset, scene })?)
+}
+
+/// The service's token goes to the clipboard; it never reaches the webview.
+#[tauri::command]
+fn serve_copy_token(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ServeCopyToken)?)
+}
+
+/// A new token for the service; clients need it from now on.
+#[tauri::command]
+fn serve_rotate_token(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ServeRotateToken)?)
+}
+
 /// Query: the applications the history saw, newest first: none on a phone, which names no
 /// application (the scene editor's picker on the desktop, §18.6).
 #[tauri::command]
@@ -1190,6 +1212,9 @@ pub fn build_app<R: Runtime>(
             scenes_builtin,
             settings_set_context_sharing,
             settings_set_pinned_scene,
+            settings_set_serve,
+            serve_copy_token,
+            serve_rotate_token,
             recent_apps,
             history_query,
             history_entry,

@@ -34,11 +34,21 @@ Options are environment variables for `sh`, written after the pipe:
 | --- | --- |
 | `VOLTIP_VERSION=0.0.7` | Installs this release instead of the latest one |
 | `VOLTIP_PACKAGE=appimage` | Installs the AppImage on a system that has apt |
-| `VOLTIP_INSTALL_DIR=<folder>` | Puts the AppImage or the Mac app in another folder |
+| `VOLTIP_INSTALL_DIR=<folder>` | Puts the AppImage, the Mac app or `voltip-server` in another folder |
 
 For example `curl -fsSL … | VOLTIP_VERSION=0.0.7 sh`. In PowerShell, run `$env:VOLTIP_VERSION = "0.0.7"` before the install command.
 
 The commands read the install scripts from the `main` branch. To use the copy that shipped with a release, replace `main` with its tag, for example `v0.0.7`.
+
+### The local service on a server
+
+To install `voltip-server`, the [local service](/recognition/service) for a Linux x64 computer without a desktop, add `--server`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install.sh | sh -s -- --server
+```
+
+It is installed to `~/.local/share/voltip-server` without administrator rights, and the command is `~/.local/bin/voltip-server`. `--systemd-user` also writes a systemd user service, and `--enable` starts it.
 
 ## Packages
 
@@ -48,6 +58,7 @@ Every [release](https://github.com/sunerpy/voltip/releases) carries the packages
 | --- | --- | --- |
 | Windows 10 and 11, x64 | `*_x64-setup.exe`, a per-user installer; `*_x64-portable.zip`, which you unpack and run as `voltip-desktop.exe` with its DLLs beside it | Not code-signed yet, so SmartScreen warns on the first start |
 | Linux, x64 | `.deb`, `.AppImage` | Built on Ubuntu 22.04 and needs glibc 2.34 or newer. The `.deb` depends on `libwebkit2gtk-4.1-0`, `libvulkan1` and `libblas3`; the AppImage needs FUSE 2 (`libfuse2`). Works on X11 and Wayland |
+| Linux server, x64 | `voltip-server-*-linux-x64.tar.gz` | The [local service](/recognition/service) for a computer without a desktop. Built on Ubuntu 22.04, like the Linux packages; it carries its own runtime libraries, and `install.sh --server` names any system library that is missing |
 | macOS 11 or later, Apple silicon | `*_aarch64.dmg` | M1 or newer |
 | macOS 11 or later, Intel | `*_x64.dmg` | Intel Macs |
 | Android 8.0 or later, 64-bit Arm | `*_android_arm64.apk` | See [Android](#android) below and [the phone page](/phone/) |

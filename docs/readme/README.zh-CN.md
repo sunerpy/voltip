@@ -73,6 +73,7 @@ curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install
 |---|---|---|
 | Windows 10/11 x64 | `*_x64-setup.exe`（按用户安装）、`*_x64-portable.zip`（解压后运行 `voltip-desktop.exe`，旁边的 DLL 不能删） | 还没有代码签名，首次启动时 SmartScreen 会提示。 |
 | Linux x64 | `.deb`、`.AppImage` | 在 Ubuntu 22.04 上构建，要求 glibc 2.34 及以上；`.deb` 依赖 `libwebkit2gtk-4.1-0`、`libvulkan1` 和 BLAS（`libblas3`，0.0.5 起），AppImage 需要 FUSE 2（`libfuse2`）。支持 X11 和 Wayland。 |
+| Linux x64 服务器 | `voltip-server-*-linux-x64.tar.gz` | 用于没有桌面的服务器的本机语音服务（见下文）；`install.sh --server` 安装，不需要 root。 |
 | macOS 11+（Apple 芯片） | .dmg | M1 及更新 |
 | macOS 11+（Intel 芯片） | .dmg | Intel 芯片的 Mac |
 | Android 8.0+（64 位 Arm） | `*_android_arm64.apk` | 在手机上打开即可安装。`.aab` 是上架 Google Play 用的安装包。 |
@@ -108,6 +109,11 @@ voltip-desktop --download-model qwen3-asr-0.6b    # 可续传，校验 sha256
 voltip-desktop --transcribe-file sample.wav --json
 voltip-desktop --list-compute                     # CPU 线程数和这个构建能用的 GPU
 ```
+
+这台电脑上的其他程序（例如 Paseo 的手机听写）可以通过 OpenAI 兼容的 `/v1/audio/transcriptions`
+使用 Voltip 的识别、词典和预设：在应用的「设置 → 本机服务」中开启，或在没有桌面的 Linux 服务器上运行
+`voltip-server`（`curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install.sh | sh -s -- --server`）。
+服务只监听本机，每个请求都要携带令牌，详见[本机服务](https://voltip.firlab.app/zh/recognition/service)。
 
 ## 隐私
 
