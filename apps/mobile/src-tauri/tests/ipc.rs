@@ -687,11 +687,19 @@ fn sorted(mut names: Vec<String>) -> Vec<String> {
 /// Two-sided like the desktop's: a name here that `schema.ts` now declares fails too.
 const PENDING_TYPESCRIPT: &[&str] = &[];
 
+/// Commands of the shared contract (schema.ts, the fixtures) that only the desktop shell registers:
+/// the local speech service runs on a computer only (docs/dictation.md §23.6), so the phone offers
+/// no command for it and an invoke is "not found".
+const DESKTOP_ONLY: &[&str] = &["settings_set_serve", "serve_copy_token", "serve_rotate_token"];
+
 #[test]
 fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() {
     let rust = sorted(COMMANDS.iter().map(|s| (*s).to_owned()).collect());
     assert_eq!(rust.len(), COMMANDS.len(), "COMMANDS has duplicates");
-    let typescript = sorted(typescript_command_names());
+    let typescript: Vec<String> = sorted(typescript_command_names()).into_iter().filter(|n| !DESKTOP_ONLY.contains(&n.as_str())).collect();
+    for name in DESKTOP_ONLY {
+        assert!(!rust.contains(&(*name).to_owned()), "{name} is desktop-only, yet the phone registers it");
+    }
     for name in &typescript {
         assert!(rust.contains(name), "schema.ts CommandArgs declares {name}, which Rust COMMANDS lacks");
     }
@@ -705,7 +713,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
         assert!(rust.contains(&name), "tauri-backend.ts invokes unknown command {name}");
     }
     // Queries and streams (`QUERY_COMMANDS` in schema.ts) are not `UiCommand`s and have no fixture entry.
-    let mut fixture = fixture_command_names();
+    let mut fixture: Vec<String> = fixture_command_names().into_iter().filter(|n| !DESKTOP_ONLY.contains(&n.as_str())).collect();
     fixture.extend(
         [
             "core_state",
@@ -758,6 +766,10 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
         }
         let err = invoke(webview, "core_state_v2", json!({})).unwrap_err();
         assert!(err.as_str().unwrap().contains(NOT_FOUND));
+        for cmd in DESKTOP_ONLY {
+            let err = invoke(webview, cmd, json!({ "enabled": true, "port": 47840, "preset": null, "scene": null })).unwrap_err();
+            assert!(err.as_str().unwrap().contains(NOT_FOUND), "{cmd}: {err}");
+        }
     });
 }
 
