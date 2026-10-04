@@ -101,6 +101,7 @@ pub(crate) trait Slot {
 /// Read a secret without moving it ([`SecretStore::peek`]): a signed build reads only the item it
 /// owns (an older build's item could ask, and reading it is how it would be moved), any other
 /// build its usual item. Nothing is ever written or removed.
+#[cfg(any(feature = "keyring", test))]
 pub(crate) fn read_only(signed: bool, owned: &dyn Slot, legacy: &dyn Slot) -> Result<Option<Zeroizing<Vec<u8>>>, IdentityError> {
     if signed { owned.read() } else { legacy.read() }
 }

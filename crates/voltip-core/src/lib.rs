@@ -23,6 +23,7 @@ pub mod providers;
 mod runtime;
 pub mod scenes;
 pub mod script;
+pub mod serve;
 mod settings;
 pub mod sync;
 pub mod ui;

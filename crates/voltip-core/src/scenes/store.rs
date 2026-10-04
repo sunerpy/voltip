@@ -87,8 +87,7 @@ impl SceneStore {
 
     /// [`Self::open`] for `platform`, filling in the built-in scenes a desktop lacks at `now_ms`.
     pub fn open_on(dir: &Path, platform: Platform, now_ms: u64) -> (Self, Option<String>) {
-        let (file, scenes, notice) =
-            ListFile::load(dir, SCENES_FILE_NAME, SCENES_SCHEMA, scenes_of, |scenes: &[Scene]| check_stored_scenes(scenes, platform));
+        let (file, scenes, notice) = ListFile::load(dir, SCENES_FILE_NAME, SCENES_SCHEMA, scenes_of, |scenes: &[Scene]| check_stored_scenes(scenes, platform));
         let mut store = Self { file, scenes, platform };
         store.fill_builtin(now_ms);
         (store, notice)
