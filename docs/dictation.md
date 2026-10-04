@@ -1694,6 +1694,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 - **密钥**：启动时用 `SecretStore::peek` 从系统钥匙串读一次，只读：不写入、不删除、不弹授权框（签名的 macOS 构建的 `PerBuildStore` 用 `Ask::Never`，跳过会弹窗的条目）。没有桌面会话、钥匙串不可用时，需要密钥的服务商按未配置处理，内置服务不受影响；`--check` 会说明。
 - **`--check`** 打印数据目录、地址、令牌文件、识别与润色服务（`内置服务 · <模型>`）、默认处理方式、语言与字形、上限、提示（如 Paseo 不设 `language` 时会发 `en`、所选模型是流式模型时整段上传按实时速度处理）和状态。
+- **CA 证书**（`https_unavailable`）：云端识别与润色（包括内置服务）由 rustls-platform-verifier 用系统的证书库验证，没有装 `ca-certificates` 的精简系统（如 `ubuntu:24.04` 容器镜像）上每个 HTTPS 客户端都建不起来（2026-10-04 容器验收发现：`--check` 仍说可用，每个请求都失败）。服务端启动时试建一次客户端：识别走云端时，`--check` 判定不可用（退出码 1）、服务不启动，并说明要安装 `ca-certificates`；只有润色走云端时记一条警告，识别结果按原文返回。不改信任来源：没有回退到内置的 Mozilla 根证书。
 - **退出**：收到信号后停止接收新请求，排队的请求返回 503；在途的请求最多再等 30 s，仍未结束的直接放弃（`Runtime::shutdown_timeout(1 s)` 不等无法中断的推理线程），删除 `serve/uploads/` 里剩下的临时文件，日志里记下放弃了几个请求，以退出码 0 结束。每条退出路径都先刷新 stdout 和 stderr，再调用 `exit_process`（`src/exit.rs`，与桌面壳的相同）：Linux 上是 `_exit`，不运行 C/C++ 的退出处理器，原因见 §10.6。crate 的 lint 与桌面壳相同：`unsafe_code = "deny"`，唯一的例外是这个函数。
 - **退出码**：0 正常结束，1 启动失败或 `--check` 判定不可用，2 用法错误。
 - **版本**：`build.rs` 从根 `package.json` 注入 `VOLTIP_APP_VERSION`（Cargo 版本固定为 0.0.0），`--version` 输出 `voltip-server <版本>`。

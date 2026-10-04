@@ -44,6 +44,7 @@ voltip-server --scene coding --preset prompt --language zh
 
 - **设置**：`voltip-server` 读取与应用相同的数据目录 `~/.local/share/voltip`。如果要使用你的预设、场景、词典和规则，把应用的 `settings.json`、`presets.json`、`scenes.json`、`dictionary.json` 和 `rules.json` 复制到这个目录。服务端只读取这些文件，文件改动后，下一个请求即按新内容处理。
 - **服务**：正式版内置了默认的识别和 AI 润色服务，不需要密钥。也可以使用本地模型：先执行 `voltip-server --download-model qwen3-asr-0.6b`，再用 `voltip-server --local-model qwen3-asr-0.6b` 启动。
+- **证书**：云端识别和 AI 润色（包括内置服务）用系统的 CA 证书验证服务器证书。容器镜像等精简系统可能没有这些证书，这时 `--check` 会显示无法识别，服务也不会启动，安装 `ca-certificates` 后即可使用。
 - **密钥**：其他服务商的密钥从系统钥匙串读取，不会改动钥匙串。没有桌面会话的服务器通常没有钥匙串，这时 `--check` 会把需要密钥的服务商显示为未配置。
 - **后台运行**：安装时改用 `sh -s -- --server --systemd-user --enable`，脚本会另外写入 systemd 用户服务并启动它。如果要在注销后继续运行，请执行 `loginctl enable-linger`。
 

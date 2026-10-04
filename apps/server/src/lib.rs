@@ -128,6 +128,20 @@ pub struct Prepared {
     pub notices: Vec<String>,
     /// The token file.
     pub token_file: PathBuf,
+    /// Why recognition cannot run although it is configured: the cloud service it uses cannot be
+    /// reached over HTTPS from this system ([`https_unavailable`]).
+    pub unavailable: Option<String>,
+}
+
+/// Why this system cannot make HTTPS requests, when it cannot. Cloud recognition and clean-up (the
+/// built-in service too) verify the server's certificate with the system's own store, and a minimal
+/// system — a container image without ca-certificates — has none: every client then fails to
+/// build, and each request with it.
+pub fn https_unavailable() -> Option<String> {
+    voltip_cloud::http_client_builder()
+        .build()
+        .err()
+        .map(|e| format!("无法建立 HTTPS 连接（{e}）：系统中没有可用的 CA 证书，请安装 ca-certificates（例如 sudo apt-get install ca-certificates）后重新启动"))
 }
 
 /// Read the data directory and check the options against it.
@@ -150,9 +164,15 @@ pub fn prepare(options: &ServeOptions, data_dir: &Path, wiring: Wiring) -> Resul
     if state.engines.asr_streams {
         notices.push("所选识别模型只支持实时流式：整段上传的音频会按实时速度处理，等待时间约等于音频时长；建议改用整段识别的模型".to_owned());
     }
+    let (cloud_asr, cloud_refine) = (!state.engines.is_local(), state.engines.refine.is_some());
+    let https = if cloud_asr || cloud_refine { https_unavailable() } else { None };
+    let unavailable = https.clone().filter(|_| cloud_asr);
+    if let Some(reason) = https.filter(|_| !cloud_asr) {
+        notices.push(format!("{reason}；在此之前 AI 润色不可用，识别结果按原文返回"));
+    }
     let service = Arc::new(Service::new(Arc::new(source) as Arc<dyn StateSource>, defaults.clone()));
     let token_file = options.token_file.clone().unwrap_or_else(|| default_token_path(data_dir));
-    Ok(Prepared { service, defaults, notices, token_file })
+    Ok(Prepared { service, defaults, notices, token_file, unavailable })
 }
 
 fn provider(id: ProviderId) -> &'static str {
@@ -223,7 +243,7 @@ pub fn check(options: &ServeOptions, data_dir: &Path, wiring: Wiring, out: &mut 
     {
         let _ = writeln!(out, "警告：{warning}");
     }
-    match not_ready(engines) {
+    match not_ready(engines).or_else(|| prepared.unavailable.clone()) {
         None => {
             let _ = writeln!(out, "状态：可用");
             0
@@ -274,6 +294,12 @@ where
     };
     for notice in &prepared.notices {
         tracing::warn!("{notice}");
+    }
+    // Every request would fail: say why and stop, so that a supervisor shows it at once.
+    if let Some(reason) = &prepared.unavailable {
+        tracing::error!("{reason}");
+        eprintln!("voltip-server: 语音识别不可用：{reason}");
+        return 1;
     }
     let token = match load_or_create_token(&prepared.token_file) {
         Ok((token, warning)) => {

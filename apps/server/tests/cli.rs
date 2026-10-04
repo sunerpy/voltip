@@ -4,15 +4,14 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::io::{BufRead as _, BufReader};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use voltip_core::BuiltIn;
 use voltip_core::dictation::fakes::{FakeRefiner, FakeTranscriber};
 use voltip_core::dictation::{EngineFactory, Refiner, Transcriber};
+use voltip_core::{BuiltIn, ProviderId, ProviderSettings, Settings, SettingsStore};
 use voltip_server::cli::{Action, Cli, ServeOptions};
 use voltip_server::{APP_VERSION, Wiring, check, run};
 
@@ -247,9 +246,52 @@ fn the_binary_reports_its_version_usage_errors_and_its_check() {
     assert!(stdout.contains("本地模型未下载") && stdout.contains("--download-model qwen3-asr-0.6b"), "{stdout}");
 }
 
+// Linux only: there the system's store is files (rustls-native-certs, which `SSL_CERT_FILE` and
+// `SSL_CERT_DIR` redirect); Windows and macOS keep theirs in the operating system.
+#[cfg(target_os = "linux")]
+#[test]
+fn regression_without_ca_certificates_cloud_recognition_is_unavailable_and_says_why() {
+    // In an ubuntu:24.04 container without ca-certificates every HTTPS client failed to build:
+    // `--check` still said 可用, the service started, and each request failed with "builder error".
+    let dir = tempfile::tempdir().unwrap();
+    let mut settings = Settings { relay_enabled: false, ..Settings::default() };
+    settings.engines.asr_provider = ProviderId::Custom;
+    settings.engines.providers.insert(
+        ProviderId::Custom,
+        ProviderSettings { asr_url: Some("https://127.0.0.1:9/v1".into()), asr_model: Some("whisper-1".into()), ..ProviderSettings::default() },
+    );
+    SettingsStore::new(dir.path()).save(&settings).unwrap();
+    // rustls-native-certs reads these first: an empty file and an empty directory are a system
+    // without certificates.
+    let certs = tempfile::tempdir().unwrap();
+    std::fs::write(certs.path().join("none.pem"), "").unwrap();
+    let without = |args: &[&str]| {
+        binary()
+            .env("VOLTIP_DEV_DATA_DIR", dir.path())
+            .env("SSL_CERT_FILE", certs.path().join("none.pem"))
+            .env("SSL_CERT_DIR", certs.path())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let checked = without(&["--check"]);
+    let stdout = String::from_utf8(checked.stdout).unwrap();
+    assert_eq!(checked.status.code(), Some(1), "{stdout}");
+    assert!(stdout.contains("状态：不可用：无法建立 HTTPS 连接") && stdout.contains("ca-certificates"), "{stdout}");
+    let served = without(&["--listen", "127.0.0.1:0", "--no-preload"]);
+    assert_eq!(served.status.code(), Some(1), "the service does not start");
+    assert!(String::from_utf8(served.stderr).unwrap().contains("语音识别不可用：无法建立 HTTPS 连接"));
+    // With the system's certificates the same configuration is ready.
+    let ready = binary().env("VOLTIP_DEV_DATA_DIR", dir.path()).arg("--check").output().unwrap();
+    assert_eq!(ready.status.code(), Some(0), "{}", String::from_utf8_lossy(&ready.stdout));
+}
+
 #[cfg(unix)]
 #[test]
 fn the_binary_stops_cleanly_on_sigterm() {
+    use std::io::{BufRead as _, BufReader};
+    use std::process::Stdio;
+
     let dir = tempfile::tempdir().unwrap();
     let mut child = binary()
         .env("VOLTIP_DEV_DATA_DIR", dir.path())

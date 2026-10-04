@@ -44,6 +44,7 @@ The service runs in the foreground and stops on Ctrl+C or `SIGTERM`, after the r
 
 - **Settings**: `voltip-server` reads the same data folder as the app, `~/.local/share/voltip`. To use your presets, scenes, dictionary and rules, copy the app's `settings.json`, `presets.json`, `scenes.json`, `dictionary.json` and `rules.json` into it. The server only reads these files and picks up changes before the next request.
 - **Services**: release builds include the built-in recognition and AI polish service, which needs no key. A local model works too: `voltip-server --download-model qwen3-asr-0.6b`, then `voltip-server --local-model qwen3-asr-0.6b`.
+- **Certificates**: cloud recognition and AI polish, the built-in service included, check the server's certificate with the system's CA certificates. Minimal systems such as container images may not have them; then `--check` reports recognition as unavailable and the service does not start until `ca-certificates` is installed.
 - **Keys**: keys for other providers are read from the system keychain, without changing it. A server without a desktop session usually has no keychain; there, providers that need a key are shown as not configured by `--check`.
 - **Running in the background**: install with `sh -s -- --server --systemd-user --enable` to also write a systemd user service and start it. To keep it running after you log out, run `loginctl enable-linger`.
 
