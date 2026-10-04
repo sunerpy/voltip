@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.37](https://github.com/sunerpy/voltip/compare/v0.0.36...v0.0.37) (2026-10-04)
+
+
+### Features
+
+* **serve:** 本机语音服务：OpenAI 兼容接口、无头 voltip-server 与 App 开关 ([#96](https://github.com/sunerpy/voltip/issues/96)) ([31c1784](https://github.com/sunerpy/voltip/commit/31c17844de74cc0cec88b41de533314a488e254b))
+
 ## [0.0.36](https://github.com/sunerpy/voltip/compare/v0.0.35...v0.0.36) (2026-10-04)
 
 
