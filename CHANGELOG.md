@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.36](https://github.com/sunerpy/voltip/compare/v0.0.35...v0.0.36) (2026-10-04)
+
+
+### Bug Fixes
+
+* **engines:** 候补模型顶替时的实时预览状态与隐私说明 ([#94](https://github.com/sunerpy/voltip/issues/94)) ([f09776d](https://github.com/sunerpy/voltip/commit/f09776dd0807e24d7c170a702f8bb40aa701c420))
+
 ## [0.0.35](https://github.com/sunerpy/voltip/compare/v0.0.34...v0.0.35) (2026-10-04)
 
 
