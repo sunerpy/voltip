@@ -54,7 +54,7 @@ LEGS = {
             "appimage/Voltip_0.0.4_amd64.AppImage.sig": SIG.encode(),
         },
         "rename": [],
-        "extra": [],
+        "extra": ["voltip-server-0.0.4-linux-x64.tar.gz"],
     },
     "x86_64-pc-windows-msvc": {
         "bundles": "nsis",
@@ -247,6 +247,7 @@ class Candidate(unittest.TestCase):
                 "Voltip_0.0.4_x64.app.tar.gz",
                 "Voltip_0.0.4_x64.app.tar.gz.sig",
                 "Voltip_0.0.4_x64.dmg",
+                "voltip-server-0.0.4-linux-x64.tar.gz",
             ]
         )
         self.assertEqual(listed, [f"dist/{name}" for name in expected] + ["candidate-manifest.json"])

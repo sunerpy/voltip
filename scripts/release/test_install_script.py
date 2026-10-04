@@ -180,5 +180,106 @@ class MacInstall(unittest.TestCase):
         )
 
 
+
+SERVER = "voltip-server-0.0.4-linux-x64.tar.gz"
+
+
+class ServerInstall(unittest.TestCase):
+    """install.sh --server (docs/dictation.md §23.5): the tar.gz into ~/.local/share, the command
+    linked into ~/.local/bin, missing system libraries named, a systemd user unit on request."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        fakes = {
+            **FAKES,
+            "ldd": '#!/bin/sh\nfor lib in $FAKE_MISSING; do printf "\\t%s => not found\\n" "$lib"; done\n',
+            "systemctl": '#!/bin/sh\necho "$*" >>"$SYSTEMCTL_LOG"\n',
+        }
+        for name, text in fakes.items():
+            path = self.bin / name
+            path.write_text(text, encoding="utf-8")
+            path.chmod(path.stat().st_mode | stat.S_IEXEC)
+        self.fixtures = self.root / "release"
+        self.fixtures.mkdir()
+        package = self.root / "package" / "voltip-server-0.0.4-linux-x64"
+        (package / "bin").mkdir(parents=True)
+        (package / "lib").mkdir()
+        exe = package / "bin" / "voltip-server"
+        # Like the real binary: it does not start while a library it links is missing.
+        exe.write_text(
+            '#!/bin/sh\nfor lib in $FAKE_MISSING; do echo "voltip-server: error while loading shared libraries: $lib: cannot open shared object file" >&2; exit 127; done\necho voltip-server 0.0.4\n',
+            encoding="utf-8",
+        )
+        exe.chmod(0o755)
+        subprocess.run(["tar", "-C", str(self.root / "package"), "-czf", str(self.fixtures / SERVER), "voltip-server-0.0.4-linux-x64"], check=True)
+        digest = hashlib.sha256((self.fixtures / SERVER).read_bytes()).hexdigest()
+        self.write_sums(digest)
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.systemctl = self.root / "systemctl.log"
+
+    def write_sums(self, digest: str) -> None:
+        (self.fixtures / "SHA256SUMS").write_text(f"{'0' * 64}  {DEB}\n{digest}  {SERVER}\n", encoding="utf-8")
+
+    def install(self, *args: str, missing: str = "") -> tuple[int, str]:
+        done = subprocess.run(
+            ["sh", str(SCRIPT), *args],
+            env={
+                "PATH": f"{self.bin}:{os.environ['PATH']}",
+                "HOME": str(self.home),
+                "FIXTURES": str(self.fixtures),
+                "APT_LOG": str(self.root / "apt.log"),
+                "SYSTEMCTL_LOG": str(self.systemctl),
+                "FAKE_MISSING": missing,
+                "VOLTIP_VERSION": "0.0.4",
+            },
+            capture_output=True,
+            text=True,
+        )
+        return done.returncode, done.stderr
+
+    def test_the_server_installs_without_root_and_links_its_command(self) -> None:
+        code, stderr = self.install("--server")
+        self.assertEqual(code, 0, stderr)
+        installed = self.home / ".local/share/voltip-server/0.0.4/bin/voltip-server"
+        self.assertTrue(installed.is_file())
+        link = self.home / ".local/bin/voltip-server"
+        self.assertEqual(Path(os.readlink(link)), installed)
+        self.assertEqual(subprocess.run([str(link)], capture_output=True, text=True, check=True).stdout.strip(), "voltip-server 0.0.4")
+        self.assertFalse((self.root / "apt.log").exists(), "apt is never called")
+        self.assertNotIn("does not start", stderr)
+        self.assertFalse(self.systemctl.exists(), "no unit unless asked")
+
+    def test_missing_system_libraries_are_named_not_installed(self) -> None:
+        code, stderr = self.install("--server", missing="libblas.so.3")
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("does not start on this system: voltip-server: error while loading shared libraries: libblas.so.3", stderr)
+        self.assertIn("these system libraries are missing: libblas.so.3\n", stderr)
+        self.assertIn("sudo apt-get install libblas3\n", stderr)
+        self.assertFalse((self.root / "apt.log").exists(), "named, never installed")
+
+    def test_a_systemd_user_unit_is_written_and_started_on_request(self) -> None:
+        code, stderr = self.install("--server", "--systemd-user", "--enable")
+        self.assertEqual(code, 0, stderr)
+        unit = (self.home / ".config/systemd/user/voltip-server.service").read_text(encoding="utf-8")
+        self.assertIn(f"ExecStart={self.home}/.local/bin/voltip-server\n", unit)
+        self.assertEqual(self.systemctl.read_text(encoding="utf-8").splitlines(), ["--user daemon-reload", "--user enable --now voltip-server"])
+        self.assertIn("loginctl enable-linger", stderr)
+
+    def test_a_checksum_mismatch_or_an_unknown_option_installs_nothing(self) -> None:
+        self.write_sums("f" * 64)
+        code, stderr = self.install("--server")
+        self.assertEqual(code, 1)
+        self.assertIn("checksum mismatch", stderr)
+        self.assertFalse((self.home / ".local/share/voltip-server").exists())
+        code, stderr = self.install("--srever")
+        self.assertEqual(code, 1)
+        self.assertIn("unknown option: --srever", stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

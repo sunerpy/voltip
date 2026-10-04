@@ -1,0 +1,15 @@
+# A systemd user unit for voltip-server, the local speech service (docs/dictation.md §23.5).
+# `install.sh --server --systemd-user` writes one like it to ~/.config/systemd/user/; to use this
+# copy, put it there, adjust ExecStart (its options are `voltip-server --help`), then
+#   systemctl --user daemon-reload && systemctl --user enable --now voltip-server
+# The token is in ~/.local/share/voltip/serve/token (`voltip-server --print-token`).
+[Unit]
+Description=Voltip local speech service
+
+[Service]
+ExecStart=%h/.local/bin/voltip-server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

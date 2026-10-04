@@ -2,7 +2,9 @@
 # every computer they serve: Linux with the .deb and with the AppImage, macOS on Apple silicon and
 # on Intel, and Windows in Windows PowerShell 5.1 (what `irm | iex` runs in). Each job runs the
 # script the way the README says, then proves the installed app answers `--version`, and on a Mac
-# that the app is the right architecture, sealed, and not quarantined. On Windows and on both Macs
+# that the app is the right architecture, sealed, and not quarantined. On Linux, voltip-server
+# (`install.sh --server`, from the release that first ships it) also has to start headless, answer
+# over HTTP and stop cleanly on SIGTERM. On Windows and on both Macs
 # it then drives the release's tray on the desktop: the icon is the mark, the menu lists the
 # build's entries, and each one works (scripts/smoke-tray-{windows.ps1,macos.sh}; the screenshots
 # are kept as artifacts).
@@ -74,6 +76,70 @@ jobs:
           fi
           echo "$out"
           case "$out" in "voltip ${VERSION#v}"*) ;; *) echo "::error::unexpected --version: $out"; exit 1 ;; esac
+
+  # The headless local speech service (docs/dictation.md §23.5) on a server without a desktop: the
+  # tar.gz into ~/.local/share/voltip-server, then the service itself on its default address with
+  # the built-in engines. A silent take is answered without reaching any engine.
+  linux-server:
+    name: linux · server
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install with scripts/install.sh --server
+        env:
+          VOLTIP_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          sh scripts/install.sh --server 2>&1 | tee "$RUNNER_TEMP/install.log"
+          # A library the binary takes from the system and the runner lacks: the packages the
+          # script named are the user's next step, so they are this job's too.
+          packages=$(sed -n 's/^voltip-install: install them with: sudo apt-get install //p' "$RUNNER_TEMP/install.log")
+          if [ -n "$packages" ]; then
+            echo "installing what the script named: $packages"
+            # shellcheck disable=SC2086 # one package per word
+            .github/scripts/apt-install.sh $packages
+          fi
+
+      - name: The service starts headless, answers and stops on SIGTERM
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          server=$HOME/.local/bin/voltip-server
+          out=$("$server" --version)
+          echo "$out"
+          case "$out" in "voltip-server ${VERSION#v}"*) ;; *) echo "::error::unexpected --version: $out"; exit 1 ;; esac
+          "$server" --check
+          "$server" >"$RUNNER_TEMP/server.log" 2>&1 &
+          pid=$!
+          timeout 60 sh -c 'until curl -sf http://127.0.0.1:47840/healthz >/dev/null; do sleep 1; done' ||
+            { cat "$RUNNER_TEMP/server.log"; echo "::error::voltip-server was not ready on 127.0.0.1:47840 within 60 s"; exit 1; }
+          token=$("$server" --print-token)
+          echo "::add-mask::$token"
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:47840/v1/models)
+          [ "$code" = 401 ] || { echo "::error::/v1/models without the token answered $code"; exit 1; }
+          curl -sf -H "Authorization: Bearer $token" http://127.0.0.1:47840/v1/models >"$RUNNER_TEMP/models.json"
+          python3 -c 'import json, sys; ids = [m["id"] for m in json.load(open(sys.argv[1]))["data"]]; print(ids); assert {"voltip", "voltip:raw"} <= set(ids)' "$RUNNER_TEMP/models.json"
+          # One second of silence at 24 kHz, as Paseo sends it: 200 and no text, no engine called.
+          python3 -c 'import sys, wave; w = wave.open(sys.argv[1], "wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000); w.writeframes(bytes(48000)); w.close()' "$RUNNER_TEMP/silence.wav"
+          code=$(curl -s -o "$RUNNER_TEMP/text.json" -w '%{http_code}' -H "Authorization: Bearer $token" \
+            -F file=@"$RUNNER_TEMP/silence.wav" -F model=voltip -F language=zh -F response_format=json \
+            http://127.0.0.1:47840/v1/audio/transcriptions)
+          cat "$RUNNER_TEMP/text.json"; echo
+          [ "$code" = 200 ] && [ "$(cat "$RUNNER_TEMP/text.json")" = '{"text":""}' ] ||
+            { cat "$RUNNER_TEMP/server.log"; echo "::error::the silent take answered $code"; exit 1; }
+          kill -TERM "$pid"
+          status=0
+          wait "$pid" || status=$?
+          cat "$RUNNER_TEMP/server.log"
+          [ "$status" = 0 ] || { echo "::error::voltip-server exited $status on SIGTERM"; exit 1; }
+          uploads=$HOME/.local/share/voltip/serve/uploads
+          [ -z "$(ls -A "$uploads" 2>/dev/null)" ] || { echo "::error::$uploads is not empty after the stop"; exit 1; }
 
   macos:
     name: macos · ${{ matrix.arch }}
