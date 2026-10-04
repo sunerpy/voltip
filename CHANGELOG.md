@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.38](https://github.com/sunerpy/voltip/compare/v0.0.37...v0.0.38) (2026-10-04)
+
+
+### Bug Fixes
+
+* **serve:** 关闭服务时中断上传，补齐 starting 状态、使用指南与英文预设名 ([#99](https://github.com/sunerpy/voltip/issues/99)) ([ea9afb5](https://github.com/sunerpy/voltip/commit/ea9afb5d80f5af8490af7b43a111ee3fc1bfeb99))
+
 ## [0.0.37](https://github.com/sunerpy/voltip/compare/v0.0.36...v0.0.37) (2026-10-04)
 
 
