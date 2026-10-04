@@ -158,11 +158,18 @@ impl<P: ?Sized> Clone for Link<P> {
     }
 }
 
-/// The links a call goes through, in order: those with quota left; when none has, the first alone
-/// (its quota may be back sooner than the ledger thinks).
+/// The positions of a chain's `keys` a call goes through, in order: those with quota left; when
+/// none has, the first alone (its quota may be back sooner than the ledger thinks). The status the
+/// pages show follows the same order (`ResolvedEngines::status_with`).
+pub fn open_order(keys: &[&QuotaKey], ledger: &QuotaLedger) -> Vec<usize> {
+    let open: Vec<usize> = (0..keys.len()).filter(|&i| ledger.retry_at(keys[i]).is_none()).collect();
+    if open.is_empty() && !keys.is_empty() { vec![0] } else { open }
+}
+
+/// The links a call goes through, in order ([`open_order`]).
 fn order<P: ?Sized>(links: &[Link<P>], ledger: &QuotaLedger) -> Vec<usize> {
-    let open: Vec<usize> = (0..links.len()).filter(|&i| ledger.retry_at(&links[i].key).is_none()).collect();
-    if open.is_empty() && !links.is_empty() { vec![0] } else { open }
+    let keys: Vec<&QuotaKey> = links.iter().map(|link| &link.key).collect();
+    open_order(&keys, ledger)
 }
 
 /// The future a [`first_with_quota`] call makes of one port.

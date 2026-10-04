@@ -14,7 +14,8 @@ import { ModelCard } from "./LocalModels";
  *  `EngineSettings.live_preview` through `settings_set_engines` (the whole block, like every other
  *  engine setting); the status line follows `state.engines.live_preview_ready` and `live_source` —
  *  ready through the built-in service (§11.8), the realtime model in use (§11.9) or the downloaded
- *  model, model not downloaded, or off. The streaming model's card underneath offers download /
+ *  model, unavailable while a fallback model taking whole recordings stands in for the realtime
+ *  one (§3.5), model not downloaded, or off. The streaming model's card underneath offers download /
  *  cancel / retry / delete only: it is not a recognition model, so there is no 使用此模型 and it is
  *  never `active`. */
 export function LivePreview() {
