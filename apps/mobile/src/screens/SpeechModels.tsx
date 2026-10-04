@@ -2,9 +2,11 @@ import { type ProviderId, languageOptions, providersFor } from "@voltip/shared";
 import {
   Card,
   ChineseScript,
+  CurrentService,
   FallbackSection,
   ProviderCard,
   Select,
+  ServicePrivacy,
   SettingsSection,
   StatusRow,
   useBackend,
@@ -27,8 +29,9 @@ export function useOpenCards(active: ProviderId | undefined) {
 }
 
 /** 语音模型 on the phone (user decision 2026-10-01): the recognition providers as the desktop's
- *  cards (`@voltip/ui`), without the on-device one — the phone has no local models — then the
- *  recognition language and the Chinese script. */
+ *  cards (`@voltip/ui`), without the on-device one — the phone has no local models — with the
+ *  desktop's 当前 and privacy lines under them, then the recognition language and the Chinese
+ *  script. */
 export function SpeechModels() {
   const { backend } = useBackend();
   const { t } = useI18n();
@@ -55,6 +58,11 @@ export function SpeechModels() {
               />
             </div>
           ))}
+        </div>
+        {/* docs/dictation.md §3.5: the model in use (a fallback model says so) and who gets the audio. */}
+        <div className="flex flex-col gap-1">
+          <CurrentService kind="asr" />
+          <ServicePrivacy kind="asr" />
         </div>
       </SettingsSection>
       {/* docs/dictation.md §3.5: the models to move on to when the selected one runs out. */}

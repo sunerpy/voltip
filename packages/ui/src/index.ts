@@ -51,6 +51,7 @@ export * from "./features/engines/useProviderProbe";
 export * from "./features/engines/ProviderCard";
 export * from "./features/engines/ChineseScript";
 export * from "./features/engines/FallbackSection";
+export * from "./features/engines/ServiceSummary";
 export * from "./features/shell";
 export * from "./features/presets/usePresetTrial";
 export * from "./features/presets/PresetEditor";

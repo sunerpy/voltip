@@ -1,9 +1,11 @@
 import { providersFor } from "@voltip/shared";
 import {
   Card,
+  CurrentService,
   FallbackSection,
   PresetsSection,
   ProviderCard,
+  ServicePrivacy,
   SettingsSection,
   StatusRow,
   Toggle,
@@ -66,6 +68,11 @@ export function AiModels() {
               />
             </div>
           ))}
+        </div>
+        {/* docs/dictation.md §3.5: the model in use (a fallback model says so) and who gets the text. */}
+        <div className="flex flex-col gap-1">
+          <CurrentService kind="llm" />
+          <ServicePrivacy kind="llm" />
         </div>
       </SettingsSection>
       <FallbackSection kind="llm" toggleClassName={TOUCH_TOGGLE} />

@@ -15,22 +15,20 @@ import {
   modelDisplayName,
   platformLabel,
   relayLabel,
+  shortModel,
   themeName,
   zhT,
 } from "@voltip/shared";
 import type { ToolbarReadout } from "@voltip/ui";
 import { type BackgroundRoute, HOME_ROUTE, type Route, type SettingsSection } from "../app/router";
 
+/** `Qwen/Qwen3-ASR-1.7B` → `Qwen3-ASR-1.7B` (`@voltip/shared`, which the phone's pages use too). */
+export { shortModel };
+
 export interface PageMeta {
   title: string;
   readouts: ToolbarReadout[];
   shortcuts: readonly (readonly [string, string])[];
-}
-
-/** `Qwen/Qwen3-ASR-1.7B` → `Qwen3-ASR-1.7B`: the model id without its vendor prefix. */
-export function shortModel(model: string): string {
-  const tail = model.split("/").at(-1) ?? model;
-  return tail.length > 0 ? tail : model;
 }
 
 /** Title-bar readout for the resolved recognition (`state.engines`), or a pending marker before

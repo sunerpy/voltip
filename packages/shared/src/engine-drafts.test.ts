@@ -7,6 +7,7 @@ import {
   providerDraft,
   providersFor,
   serviceTarget,
+  shortModel,
   withProvider,
 } from "./engine-drafts";
 import { createTranslator, zhT } from "./i18n";
@@ -174,6 +175,12 @@ describe("engine drafts (provider cards, desktop and phone)", () => {
     expect(serviceTarget("builtin", "hidden.example.test", t)).toBe(t("engines.provider.builtin"));
     expect(serviceTarget("custom", "asr.example.test", t)).toBe("asr.example.test");
     expect(serviceTarget("groq", "")).toBe(t("engines.provider.groq"));
+  });
+
+  it("shortens a model id to its name without the vendor", () => {
+    expect(shortModel("Qwen/Qwen3-ASR-1.7B")).toBe("Qwen3-ASR-1.7B");
+    expect(shortModel("whisper-large-v3")).toBe("whisper-large-v3");
+    expect(shortModel("vendor/")).toBe("vendor/");
   });
 
   it("offers the recognition languages with a localised auto entry", () => {

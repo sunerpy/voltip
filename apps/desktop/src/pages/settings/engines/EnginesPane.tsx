@@ -1,11 +1,12 @@
-import { type EngineIssue, type ProviderId, type ServiceKind, fallbackRows } from "@voltip/shared";
+import { type ProviderId, type ServiceKind } from "@voltip/shared";
 import {
+  CurrentService,
   FallbackSection,
-  LampText,
   Segmented,
   Select,
   SettingsPane,
   SettingsRows,
+  ServicePrivacy,
   SettingsSection,
   StatusRow,
   Toggle,
@@ -14,15 +15,8 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { useState } from "react";
-import { shortModel } from "../../../shell/page-meta";
 import { ChineseScript } from "./ChineseScript";
-import {
-  type SpeechTab,
-  SPEECH_TABS,
-  languageOptions,
-  providersFor,
-  serviceTarget,
-} from "./helpers";
+import { type SpeechTab, SPEECH_TABS, languageOptions, providersFor } from "./helpers";
 import { LivePreview } from "./LivePreview";
 import { OutputMode, VadTrim } from "./OutputMode";
 import { PresetsSection } from "./PresetsSection";
@@ -78,11 +72,6 @@ function ProviderList({ kind }: { kind: ServiceKind }) {
   // opened it. Derived during render, so a provider that becomes active opens by itself.
   const [toggled, setToggled] = useState<ReadonlyMap<ProviderId, boolean>>(() => new Map());
   const isOpen = (id: ProviderId) => toggled.get(id) ?? id === active;
-  const model = kind === "asr" ? engines.asr_model : engines.refine_model;
-  const issue: EngineIssue | undefined = kind === "asr" ? engines.asr_issue : engines.refine_issue;
-  // docs/dictation.md §3.5: a fallback model stands in while the selected one is out of quota.
-  const { active: inUse } = fallbackRows(engines, kind);
-  const standIn = inUse !== undefined && inUse.index !== "selected" ? inUse : undefined;
   const settings = state.settings.engines;
   const toggle = (id: ProviderId, next: boolean) => {
     setToggled((prev) => new Map(prev).set(id, next));
@@ -124,23 +113,8 @@ function ProviderList({ kind }: { kind: ServiceKind }) {
         title={t(kind === "asr" ? "engines.asrSection.title" : "engines.llmSection.title")}
         description={t(kind === "asr" ? "engines.asrSection.note" : "engines.llmSection.note")}
         data-testid={`providers-${kind}`}
-        aside={
-          <LampText tone={issue === undefined ? "ok" : "warn"} size="sm">
-            <span data-testid={`current-${kind}`}>
-              {active === undefined
-                ? t("engines.currentNone")
-                : standIn !== undefined
-                  ? t("engines.currentFallback", {
-                      provider: t(`engines.provider.${standIn.provider}`),
-                      model: shortModel(standIn.model),
-                    })
-                  : t("engines.current", {
-                      provider: t(`engines.provider.${active}`),
-                      model: model.length > 0 ? shortModel(model) : "—",
-                    })}
-            </span>
-          </LampText>
-        }>
+        // docs/dictation.md §3.5: a fallback model standing in for the selected one says so.
+        aside={<CurrentService kind={kind} />}>
         {providers.length === 0 ? (
           <p className="text-[12px] text-fg-muted">{t("engines.waiting")}</p>
         ) : (
@@ -164,55 +138,10 @@ function ProviderList({ kind }: { kind: ServiceKind }) {
             ))}
           </div>
         )}
-        <PrivacyLine kind={kind} />
+        <ServicePrivacy kind={kind} />
       </SettingsSection>
       <FallbackSection kind={kind} />
     </>
-  );
-}
-
-/** Where the service sends its data right now: the provider in use, never the built-in host. */
-function PrivacyLine({ kind }: { kind: ServiceKind }) {
-  const { t, locale } = useI18n();
-  const engines = useUiState().engines;
-  const provider = kind === "asr" ? engines.asr_provider : engines.llm_provider;
-  const host = kind === "asr" ? engines.asr_host : engines.refine_host;
-  const target = serviceTarget(provider, host, t);
-  const sent =
-    kind === "asr"
-      ? target === undefined
-        ? t("engines.privacy.audioLocal")
-        : t("engines.privacy.audioSent", { target })
-      : target === undefined
-        ? t("engines.privacy.textLocal")
-        : t("engines.privacy.textSent", { target });
-  // docs/dictation.md §3.5: while the chain runs, the providers of the fallback models that can
-  // run get the audio (or text) once the models before them run out.
-  const others = [
-    ...new Set(
-      fallbackRows(engines, kind)
-        .rows.filter(
-          (r) =>
-            r.index !== "selected" &&
-            (r.state === "ready" || r.state === "active" || r.state === "exhausted"),
-        )
-        .map((r) => r.provider)
-        .filter((p) => p !== provider),
-    ),
-  ];
-  const text =
-    others.length === 0
-      ? sent
-      : `${sent}${t("engines.privacy.fallbackTargets", {
-          targets: others
-            .map((p) => t(`engines.provider.${p}`))
-            .join(locale === "zh-CN" ? "、" : ", "),
-        })}`;
-  if (kind === "llm" && provider === undefined) return null;
-  return (
-    <p className="mono text-[11px] text-fg-subtle" data-testid={`privacy-${kind}`}>
-      {text}
-    </p>
   );
 }
 
