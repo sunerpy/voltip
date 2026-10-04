@@ -94,7 +94,8 @@ Paseo can use the local service for dictation from its phone app. In Paseo's `~/
 ```
 
 - Set `language`: without it, Paseo asks for English.
-- Paseo cuts a dictation into a new piece after every 15 seconds of audio, wherever the speaker is, and joins the pieces with spaces. Setting `PASEO_DICTATION_AUTO_COMMIT_SECONDS=0` in the environment of the Paseo daemon sends the whole dictation at the end instead. With a slow local model and long dictations, `110` lets each piece be recognised while you are still speaking.
+- Paseo reads these settings when its daemon starts; `paseo daemon reload` does not apply them. Restart the daemon after editing the file: `paseo daemon restart`. The restart also ends the agents the daemon is running.
+- Paseo cuts a dictation into a new piece after every 15 seconds of audio, wherever the speaker is, and joins the pieces with spaces. Setting `PASEO_DICTATION_AUTO_COMMIT_SECONDS=0` in the environment of the Paseo daemon sends the whole dictation at the end instead; the daemon takes the environment of the command that starts it, for example `PASEO_DICTATION_AUTO_COMMIT_SECONDS=0 paseo daemon restart`. With a slow local model and long dictations, `110` lets each piece be recognised while you are still speaking.
 - `model` may be any value from `GET /v1/models`, for example `voltip:scene=coding`.
 
 ## Limits
