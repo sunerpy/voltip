@@ -81,6 +81,12 @@
       "output_device": "wasapi:{0.0.0.00000000}.{a1}",
       "max_minutes": 60,
       "echo_cancel": false
+    },
+    "serve": {
+      "enabled": true,
+      "port": 47840,
+      "preset": "prompt",
+      "scene": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f"
     }
   },
   "secret_backend": "memory",
@@ -1119,5 +1125,10 @@
       "entries": 0
     }
   ],
-  "phone_outbox_too_large": ["9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"]
+  "phone_outbox_too_large": ["9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"],
+  "serve": {
+    "available": true,
+    "phase": "running",
+    "address": "http://127.0.0.1:47840/v1"
+  }
 }

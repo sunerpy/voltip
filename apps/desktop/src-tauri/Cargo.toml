@@ -74,6 +74,8 @@ voltip-platform = { path = "../../../crates/voltip-platform" }
 # The lone-key trigger's low-level input hooks (docs/dictation.md §13.1).
 voltip-hooks = { path = "../../../crates/voltip-hooks" }
 voltip-refine.workspace = true
+# The local speech service's HTTP layer (docs/dictation.md §23.6).
+voltip-serve.workspace = true
 voltip-tauri-bridge.workspace = true
 # Not used from Rust (voltip-asr-local → sherpa-onnx links it): named here for build order only.
 # build.rs stages the sherpa-onnx runtime that this crate's build script downloads and copies into

@@ -56,6 +56,7 @@ function loadFixture(name: string): unknown {
 /** Every event tag the Rust enum has (the `Record` makes a new `UiEventType` a compile error). */
 const EVENT_TYPE_SET: Record<UiEventType, null> = {
   state: null,
+  serve: null,
   mirrors: null,
   phone_outbox: null,
   identity: null,
@@ -166,6 +167,9 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   presets_try: null,
   settings_set_context_sharing: null,
   settings_set_pinned_scene: null,
+  settings_set_serve: null,
+  serve_copy_token: null,
+  serve_rotate_token: null,
 };
 const MUTATION_COMMANDS = Object.keys(MUTATION_COMMAND_SET);
 
@@ -294,6 +298,14 @@ const argSchemas = {
     .object({ appName: z.boolean(), windowTitle: z.boolean() })
     .strict(),
   settings_set_pinned_scene: z.object({ id: z.string().nullable() }).strict(),
+  settings_set_serve: z
+    .object({
+      enabled: z.boolean(),
+      port: z.number().int(),
+      preset: z.string().nullable(),
+      scene: z.string().nullable(),
+    })
+    .strict(),
 } satisfies {
   [C in MutationCommand as CommandArgs[C] extends undefined ? never : C]: z.ZodType<CommandArgs[C]>;
 };
@@ -314,6 +326,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
     case "history_clear":
     case "update_check":
     case "update_install":
+    case "serve_copy_token":
+    case "serve_rotate_token":
       if (args !== null)
         throw new Error(`${name} takes no args, fixture has ${JSON.stringify(args)}`);
       return backend.invoke(name);
@@ -437,6 +451,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.settings_set_context_sharing.parse(args));
     case "settings_set_pinned_scene":
       return backend.invoke(name, argSchemas.settings_set_pinned_scene.parse(args));
+    case "settings_set_serve":
+      return backend.invoke(name, argSchemas.settings_set_serve.parse(args));
   }
 }
 
@@ -493,8 +509,20 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
         max_minutes: 60,
         echo_cancel: false,
       },
+      serve: {
+        enabled: true,
+        port: 47840,
+        preset: "prompt",
+        scene: "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+      },
     });
     expect(parsed.app_version).toBe("0.3.0");
+    // docs/dictation.md §23.6: the app's local speech service, running.
+    expect(parsed.serve).toEqual({
+      available: true,
+      phase: "running",
+      address: "http://127.0.0.1:47840/v1",
+    });
     // docs/dictation.md §10.6: what the local models can run on, a discrete and an integrated GPU.
     expect(parsed.hardware.cpu_threads).toBe(16);
     expect(parsed.hardware.gpus.map((g) => [g.name, g.integrated])).toEqual([

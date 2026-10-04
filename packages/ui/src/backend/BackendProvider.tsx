@@ -92,6 +92,7 @@ const EMPTY: UiState = {
   connectivity: { running: false },
   mirrors: [],
   phone_outbox_too_large: [],
+  serve: { available: false, phase: "off" },
 };
 
 export function useBackend(): BackendContextValue {

@@ -52,7 +52,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 108] = [
+pub const COMMANDS: [&str; 111] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -148,6 +148,9 @@ pub const COMMANDS: [&str; 108] = [
     "presets_builtin",
     "settings_set_context_sharing",
     "settings_set_pinned_scene",
+    "settings_set_serve",
+    "serve_copy_token",
+    "serve_rotate_token",
     "recent_apps",
     "history_query",
     "history_entry",
@@ -868,6 +871,25 @@ fn settings_set_pinned_scene(bridge: tauri::State<'_, Bridge>, id: Option<String
     Ok(bridge.dispatch(UiCommand::SettingsSetPinnedScene { id })?)
 }
 
+/// The local speech service (docs/dictation.md §23.6): on / off, its port, the preset and scene of
+/// its `voltip` requests. The core applies it at once and re-emits `settings` and `serve`.
+#[tauri::command]
+fn settings_set_serve(bridge: tauri::State<'_, Bridge>, enabled: bool, port: u16, preset: Option<String>, scene: Option<String>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetServe { enabled, port, preset, scene })?)
+}
+
+/// The service's token goes to the clipboard; it never reaches the webview.
+#[tauri::command]
+fn serve_copy_token(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ServeCopyToken)?)
+}
+
+/// A new token for the service; clients need it from now on.
+#[tauri::command]
+fn serve_rotate_token(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ServeRotateToken)?)
+}
+
 /// Query: the applications the history saw, newest first (the scene editor's picker, §18.6).
 /// Run a history read off the main thread: SQLite blocks (docs/dictation.md §4.4).
 async fn history_read<T: Send + 'static>(
@@ -1311,6 +1333,9 @@ pub fn build_app<R: Runtime>(
             presets_builtin,
             settings_set_context_sharing,
             settings_set_pinned_scene,
+            settings_set_serve,
+            serve_copy_token,
+            serve_rotate_token,
             recent_apps,
             history_query,
             history_entry,
@@ -1390,6 +1415,9 @@ pub fn run() {
             None
         }
     };
+    // docs/dictation.md §23.6: the local speech service listens through the HTTP layer when it is
+    // switched on in the settings.
+    config.serve_host = Some(std::sync::Arc::new(voltip_serve::HttpHost));
     let ports = dictation::production_ports(config.models_root.clone());
     let mut app = match build_app(tauri::Builder::default(), config, secret_store(), ShellOptions::PRODUCTION.hidden(start_hidden), ports).build(context) {
         Ok(app) => app,

@@ -11,6 +11,7 @@ import { Dictation } from "./Dictation";
 import { Hotkey } from "./Hotkey";
 import { Microphone } from "./Microphone";
 import { PrivacyPane } from "./PrivacyPane";
+import { ServicePane } from "./ServicePane";
 import { ScenesPane } from "./scenes/ScenesPane";
 
 const TITLE_ID = "vt-settings-title";
@@ -170,6 +171,7 @@ export function SettingsDialog({ section }: { section: SettingsSection }) {
               {section === "microphone" && <Microphone />}
               {section === "scene" && <ScenesPane />}
               {section === "privacy" && <PrivacyPane />}
+              {section === "service" && <ServicePane />}
               {section === "about" && <AboutPane />}
             </div>
           </div>

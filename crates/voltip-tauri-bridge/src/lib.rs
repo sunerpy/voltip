@@ -425,6 +425,23 @@ pub enum UiCommand {
         /// The scene's id.
         id: Option<String>,
     },
+    /// The local speech service the app hosts (docs/dictation.md §23.6): on / off, its port, the
+    /// preset and scene of its `voltip` requests. Persisted and applied at once; the core
+    /// re-emits `settings` and the service's status (`serve`).
+    SettingsSetServe {
+        /// Serve on 127.0.0.1.
+        enabled: bool,
+        /// The port (1024–65535).
+        port: u16,
+        /// A built-in preset's name or a custom preset's UUID; `None` follows the engines'.
+        preset: Option<String>,
+        /// A scene's UUID; `None` = no scene.
+        scene: Option<String>,
+    },
+    /// Put the service's token on the clipboard (it never reaches the webview).
+    ServeCopyToken,
+    /// Replace the service's token.
+    ServeRotateToken,
 }
 
 impl UiCommand {
@@ -531,6 +548,17 @@ impl UiCommand {
             Self::PresetsTry { id, preset, prompt, text } => CoreCommand::PresetTry { id, trial: preset_trial(preset, prompt)?, text: preset_try_text(&text)? },
             Self::SettingsSetContextSharing { app_name, window_title } => CoreCommand::SetContextSharing(ContextSharing { app_name, window_title }),
             Self::SettingsSetPinnedScene { id } => CoreCommand::SetPinnedScene(id.as_deref().map(parse_id).transpose()?),
+            Self::SettingsSetServe { enabled, port, preset, scene } => CoreCommand::SetServe(voltip_core::ServeSettings {
+                enabled,
+                port,
+                preset: preset
+                    .as_deref()
+                    .map(|p| PresetId::parse(p).ok_or_else(|| BridgeError::BadArgument(format!("serve: 没有名为「{p}」的预设"))))
+                    .transpose()?,
+                scene: scene.as_deref().map(parse_id).transpose()?,
+            }),
+            Self::ServeCopyToken => CoreCommand::ServeCopyToken,
+            Self::ServeRotateToken => CoreCommand::ServeRotateToken,
         })
     }
 }
@@ -1046,6 +1074,26 @@ mod tests {
             let c: UiCommand = serde_json::from_str(&json).unwrap();
             assert_eq!(String::from(c.into_core().unwrap_err()), want, "{json}");
         }
+        let c: UiCommand = serde_json::from_str(r#"{"command":"settings_set_serve","enabled":true,"port":47840,"preset":"prompt","scene":null}"#).unwrap();
+        assert!(matches!(
+            c.into_core().unwrap(),
+            CoreCommand::SetServe(voltip_core::ServeSettings {
+                enabled: true,
+                port: 47840,
+                preset: Some(PresetId::Builtin(voltip_core::BuiltinPreset::Prompt)),
+                scene: None
+            })
+        ));
+        let bad: UiCommand = serde_json::from_str(r#"{"command":"settings_set_serve","enabled":true,"port":47840,"preset":"nope","scene":null}"#).unwrap();
+        assert!(bad.into_core().is_err(), "an unknown preset is refused");
+        let bad: UiCommand =
+            serde_json::from_str(r#"{"command":"settings_set_serve","enabled":true,"port":47840,"preset":null,"scene":"not-a-uuid"}"#).unwrap();
+        assert!(bad.into_core().is_err(), "a scene is a UUID");
+        assert!(matches!(serde_json::from_str::<UiCommand>(r#"{"command":"serve_copy_token"}"#).unwrap().into_core().unwrap(), CoreCommand::ServeCopyToken));
+        assert!(matches!(
+            serde_json::from_str::<UiCommand>(r#"{"command":"serve_rotate_token"}"#).unwrap().into_core().unwrap(),
+            CoreCommand::ServeRotateToken
+        ));
         let c: UiCommand = serde_json::from_str(r#"{"command":"settings_set_context_sharing","appName":false,"windowTitle":true}"#).unwrap();
         assert!(matches!(c.into_core().unwrap(), CoreCommand::SetContextSharing(ContextSharing { app_name: false, window_title: true })));
         assert!(serde_json::from_str::<UiCommand>(r#"{"command":"settings_set_context_sharing","appName":true}"#).is_err(), "both switches are required");

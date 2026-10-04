@@ -7166,6 +7166,7 @@ dependencies = [
  "voltip-pairing",
  "voltip-platform",
  "voltip-refine",
+ "voltip-serve",
  "voltip-tauri-bridge",
  "windows-sys 0.61.2",
  "wiremock",

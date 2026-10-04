@@ -15,6 +15,7 @@ export type SettingsSection =
   | "microphone"
   | "scene"
   | "privacy"
+  | "service"
   | "appearance"
   | "about";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
@@ -24,6 +25,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   "microphone",
   "scene",
   "privacy",
+  "service",
   "appearance",
   "about",
 ];

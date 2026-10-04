@@ -531,6 +531,23 @@
   },
   {
     "args": {
+      "enabled": true,
+      "port": 47840,
+      "preset": "prompt",
+      "scene": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f"
+    },
+    "name": "settings_set_serve"
+  },
+  {
+    "args": null,
+    "name": "serve_copy_token"
+  },
+  {
+    "args": null,
+    "name": "serve_rotate_token"
+  },
+  {
+    "args": {
       "active": true
     },
     "name": "hotkey_capture"

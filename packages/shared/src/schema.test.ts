@@ -51,6 +51,7 @@ import type { EngineStatus, HistoryEntry, UiState } from "./schema";
 
 function baseState(): UiState {
   return {
+    serve: { available: true, phase: "off" },
     sent_texts: [],
     nearby: [],
     mirrors: [],
