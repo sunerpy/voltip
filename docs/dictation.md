@@ -1710,7 +1710,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
   - `serve_rotate_token`：原子写入新令牌，正在运行的服务立即改用它。
 - **状态**：`UiState.serve: ServeStatus { available, phase: off | starting | running | failed, address?, error? }`，变化时发 `serve` 事件。每次启动监听（打开开关、换端口、随 App 启动）先发 `starting`，再发 `running` 或 `failed`。`address` 形如 `http://127.0.0.1:47840/v1`；端口被占用时 `failed`，`error` 写明原因。
 - **宿主**：shell 通过 `CoreConfig.serve_host` 提供 `ServeHost`（桌面是 `voltip_serve::HttpHost`），只监听 127.0.0.1。服务的处理使用 App 自己的状态：设置、预设、场景、词汇和听写引擎的识别器、润色器、额度记录、切段器（`runtime/serve.rs` 在这些变化时重新推送，`PushedState`），本地模型在内存里只有一份；服务的请求与 App 自己的听写按段轮流使用它。密钥沿用运行时已读到的，不再访问钥匙串。关掉开关或退出 App 时停止监听并取消在途的请求，已开始的推理在后台跑完，结果丢弃。
-- **手机**：shell 不提供宿主，`available` 为 false，三条命令都以 `SERVE_UNAVAILABLE` 拒绝（`apps/mobile/src-tauri/tests/ipc.rs`）。
+- **手机**：手机壳不注册 `settings_set_serve`、`serve_copy_token`、`serve_rotate_token`（契约测试里的 `DESKTOP_ONLY`：schema.ts 与夹具中只有桌面壳注册的命令，手机上调用是 not found，`apps/mobile/src-tauri/tests/ipc.rs`）；手机的核心没有宿主，`available` 为 false，收到这些命令也以 `SERVE_UNAVAILABLE` 拒绝。
 - **界面**：设置 › 本机服务（`/settings/service`）：标题旁的「使用指南」（`guide_open { page: service, locale }`：webview 只给页面和界面语言，shell 用 `voltip_core::ui::GUIDE_SITE` 拼出使用指南的地址，与密钥页、项目页相同，两个 shell 都注册，手机上在没有浏览器的测试环境里返回 `BROWSER_UNAVAILABLE`）；启用开关；状态（未启用 / 正在启动 / 运行中 / 无法启动：原因）和接口地址；端口与「应用」；处理方式里的预设（与全局设置相同，或某个预设）和场景（不使用场景，或某个场景）；访问令牌的「复制令牌」和「重新生成」（先确认：旧令牌立即失效）。界面不显示令牌内容。
 
 ### 23.7 安全
