@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.35](https://github.com/sunerpy/voltip/compare/v0.0.34...v0.0.35) (2026-10-04)
+
+
+### Features
+
+* **engines:** 额度用完后自动改用候补模型 ([#89](https://github.com/sunerpy/voltip/issues/89)) ([c76599f](https://github.com/sunerpy/voltip/commit/c76599fa94ad562781d013754f11e1e9d048c4f6))
+
 ## [0.0.34](https://github.com/sunerpy/voltip/compare/v0.0.33...v0.0.34) (2026-10-03)
 
 
