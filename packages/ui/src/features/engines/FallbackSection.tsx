@@ -58,10 +58,7 @@ export interface FallbackSectionProps {
  *  adding one (a provider offering the service, one of its models), 重新检查 once a model ran out,
  *  and Model Studio's note on its 免费额度用完即停. Every change goes through
  *  `settings_set_engines`; the desktop's two engines pages and the phone's use it. */
-export function FallbackSection({
-  kind,
-  toggleClassName,
-}: FallbackSectionProps) {
+export function FallbackSection({ kind, toggleClassName }: FallbackSectionProps) {
   const { backend } = useBackend();
   const { notify } = useFeatureShell();
   const { t, locale } = useI18n();
@@ -75,9 +72,7 @@ export function FallbackSection({
   // shows without its state rather than another entry's.
   const resolved = (i: number): FallbackRowView | undefined => {
     const row = rows.find((r) => r.index === i);
-    return row !== undefined && row.provider === config.models[i]?.provider
-      ? row
-      : undefined;
+    return row !== undefined && row.provider === config.models[i]?.provider ? row : undefined;
   };
   const save = (next: FallbackSettings) => {
     void backend.invoke("settings_set_engines", {
@@ -124,31 +119,24 @@ export function FallbackSection({
         <Toggle
           checked={config.enabled}
           ariaLabel={t("engines.fallback.toggle")}
-          label={
-            config.enabled
-              ? t("engines.fallback.on")
-              : t("engines.fallback.off")
-          }
+          label={config.enabled ? t("engines.fallback.on") : t("engines.fallback.off")}
           className={toggleClassName}
           onChange={(enabled) => {
             save({ ...config, enabled });
           }}
         />
-      }
-    >
+      }>
       {notInUse !== undefined && (
         <p
           className="text-[12px] leading-5 text-fg-muted"
-          data-testid={`fallback-${kind}-not-in-use`}
-        >
+          data-testid={`fallback-${kind}-not-in-use`}>
           {t(`engines.fallback.notInUse.${notInUse}`)}
         </p>
       )}
       <ol
         className="flex flex-col divide-y divide-border rounded-md border border-border"
         aria-label={t("engines.fallback.listLabel")}
-        data-testid={`fallback-${kind}-list`}
-      >
+        data-testid={`fallback-${kind}-list`}>
         {selected !== undefined && (
           <Row
             n={1}
@@ -214,10 +202,7 @@ export function FallbackSection({
         })}
       </ol>
       {config.models.length === 0 && (
-        <p
-          className="text-[12px] text-fg-muted"
-          data-testid={`fallback-${kind}-empty`}
-        >
+        <p className="text-[12px] text-fg-muted" data-testid={`fallback-${kind}-empty`}>
           {t("engines.fallback.empty")}
         </p>
       )}
@@ -238,16 +223,14 @@ export function FallbackSection({
               onClick={() => {
                 void backend.invoke("engines_quota_reset", { kind });
                 notify(t("engines.fallback.recheckDone"));
-              }}
-            >
+              }}>
               {t("engines.fallback.recheck")}
             </Button>
           )}
           {studio && (
             <p
               className="text-[12px] leading-5 text-fg-muted"
-              data-testid={`fallback-${kind}-aliyun`}
-            >
+              data-testid={`fallback-${kind}-aliyun`}>
               {t("engines.fallback.aliyunNote")}
             </p>
           )}
@@ -279,14 +262,11 @@ function Row({
   return (
     <li
       className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2"
-      data-state={state ?? "pending"}
-    >
+      data-state={state ?? "pending"}>
       <span className="mono w-4 text-[12px] text-fg-subtle">{n}</span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
         <span className="text-[13px] text-fg">{provider}</span>
-        <span className="mono min-w-0 truncate text-[12px] text-fg-muted">
-          {model}
-        </span>
+        <span className="mono min-w-0 truncate text-[12px] text-fg-muted">{model}</span>
         {badge !== undefined && <Badge>{badge}</Badge>}
       </div>
       {status !== undefined && (
@@ -294,9 +274,7 @@ function Row({
           {status}
         </LampText>
       )}
-      {actions !== undefined && (
-        <div className="flex items-center gap-1">{actions}</div>
-      )}
+      {actions !== undefined && <div className="flex items-center gap-1">{actions}</div>}
     </li>
   );
 }
@@ -314,12 +292,8 @@ function AddFallback({
 }) {
   const { t } = useI18n();
   const state = useUiState();
-  const candidates = providersFor(state.engines, kind).filter(
-    (p) => p.id !== "local",
-  );
-  const [providerId, setProviderId] = useState<ProviderId | undefined>(
-    undefined,
-  );
+  const candidates = providersFor(state.engines, kind).filter((p) => p.id !== "local");
+  const [providerId, setProviderId] = useState<ProviderId | undefined>(undefined);
   const provider = candidates.find((p) => p.id === providerId) ?? candidates[0];
   const service = provider?.[kind];
   const choices = service === undefined ? [] : modelChoices(service);
@@ -329,18 +303,12 @@ function AddFallback({
   if (provider === undefined || service === undefined) return null;
   const builtin = provider.id === "builtin";
   const selectValue = picked ?? choices[0] ?? OTHER_MODEL;
-  const model = builtin
-    ? ""
-    : selectValue === OTHER_MODEL
-      ? typed.trim()
-      : selectValue;
+  const model = builtin ? "" : selectValue === OTHER_MODEL ? typed.trim() : selectValue;
   const add = () => {
     const entry: FallbackModel = { provider: provider.id, model };
     const why = fallbackAddProblem(list, entry);
     if (why !== undefined) {
-      setProblem(
-        t(`engines.fallback.problem.${why}`, { n: MAX_FALLBACK_MODELS }),
-      );
+      setProblem(t(`engines.fallback.problem.${why}`, { n: MAX_FALLBACK_MODELS }));
       return;
     }
     setProblem(undefined);
@@ -411,8 +379,7 @@ function AddFallback({
           size="sm"
           variant="outline"
           onClick={add}
-          data-testid={`fallback-${kind}-add-button`}
-        >
+          data-testid={`fallback-${kind}-add-button`}>
           {t("engines.fallback.add")}
         </Button>
         {problem !== undefined && (
