@@ -1811,8 +1811,7 @@ mod tests {
         let day = u64::try_from(crate::dictation::QUOTA_RETRY_AFTER.as_millis()).unwrap();
         assert!(status.enabled && status.in_use);
         assert_eq!(status.selected_retry_at_ms, Some(1_000 + day));
-        let rows: Vec<(ProviderId, Option<EngineIssue>, Option<FallbackSkip>, Option<u64>)> =
-            status.models.iter().map(|m| (m.provider, m.issue, m.skip, m.retry_at_ms)).collect();
+        let rows: Vec<_> = status.models.iter().map(|m| (m.provider, m.issue, m.skip, m.retry_at_ms)).collect();
         assert_eq!(
             rows,
             vec![
