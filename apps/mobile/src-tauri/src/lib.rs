@@ -34,7 +34,9 @@ use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
 pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
-/// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
+/// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`, less the
+/// desktop-only commands (the local speech service's, docs/dictation.md §23.6) that
+/// `tests/ipc.rs` lists as `DESKTOP_ONLY`.
 pub const COMMANDS: [&str; 109] = [
     "core_state",
     "pairing_start",
