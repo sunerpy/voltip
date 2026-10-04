@@ -148,6 +148,8 @@ pub enum UiEvent {
     },
     /// The connectivity self-check started or finished.
     Connectivity(crate::connectivity::ConnectivityStatus),
+    /// The local speech service started, stopped or failed to start (docs/dictation.md §23.6).
+    Serve(ServeStatus),
     /// The answer to a paste from the history (`crate::paste`): the desktop shell waits for it; the
     /// webview reads the `paste_text` command's answer instead and ignores the event.
     PasteResult {
@@ -263,6 +265,34 @@ pub struct GpuDevice {
     /// Integrated (shares system memory).
     #[serde(default)]
     pub integrated: bool,
+}
+
+/// Whether the local speech service runs (docs/dictation.md §23.6).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServePhase {
+    /// Switched off (or not available here).
+    #[default]
+    Off,
+    /// Listening on `address`.
+    Running,
+    /// Switched on but not listening: `error` says why (the port is taken).
+    Failed,
+}
+
+/// `UiState.serve`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServeStatus {
+    /// This app can host the service (the desktop).
+    pub available: bool,
+    /// Off, running or failed.
+    pub phase: ServePhase,
+    /// What a client sets as its base URL (`http://127.0.0.1:<port>/v1`) while running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    /// Why the service is not running although switched on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// The machine as the local engines see it (docs/dictation.md §10.6). Shell-owned: empty until the
@@ -411,6 +441,10 @@ pub struct UiState {
     /// Phone: its own records too large to upload to a computer.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub phone_outbox_too_large: Vec<uuid::Uuid>,
+    /// The local speech service the app hosts (docs/dictation.md §23.6); `available` is false
+    /// where the shell cannot host it (the phone).
+    #[serde(default)]
+    pub serve: ServeStatus,
 }
 
 impl Default for UiState {
@@ -441,6 +475,7 @@ impl Default for UiState {
             connectivity: crate::connectivity::ConnectivityStatus::default(),
             mirrors: Vec::new(),
             phone_outbox_too_large: Vec::new(),
+            serve: ServeStatus::default(),
         }
     }
 }
@@ -542,6 +577,10 @@ impl UiState {
             CoreEvent::Connectivity(status) => {
                 self.connectivity = status.clone();
                 UiEvent::Connectivity(status)
+            }
+            CoreEvent::Serve(status) => {
+                self.serve = status.clone();
+                UiEvent::Serve(status)
             }
             CoreEvent::PhoneTake(take) => {
                 self.phone_take = take.clone();

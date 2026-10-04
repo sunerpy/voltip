@@ -66,7 +66,7 @@ pub trait RunningServer: Send + Sync {
 
 /// Starts listeners (the desktop shell implements it with the HTTP layer; the phone has none).
 #[async_trait]
-pub trait ServeHost: Send + Sync {
+pub trait ServeHost: Send + Sync + std::fmt::Debug {
     /// Bind and serve `service` with `config`; the reason (the port is taken) when it cannot.
     async fn start(&self, config: ListenConfig, service: Arc<dyn SpeechService>) -> Result<Box<dyn RunningServer>, String>;
 }

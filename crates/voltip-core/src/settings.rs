@@ -226,7 +226,37 @@ pub struct Settings {
     /// files written before it (the microphone, 10 minutes).
     #[serde(default)]
     pub recording: RecordingSettings,
+    /// The local speech service the desktop app hosts (docs/dictation.md §23.6); off by default,
+    /// and in files written before it.
+    #[serde(default)]
+    pub serve: ServeSettings,
 }
+
+/// `Settings.serve`: whether the app serves other programs on this computer, on which port, and
+/// the processing its `voltip` requests get.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServeSettings {
+    /// Serve (only this computer: 127.0.0.1).
+    pub enabled: bool,
+    /// The port.
+    pub port: u16,
+    /// The preset of a `voltip` request; `None` follows the engines' (or the scene's).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preset: Option<crate::presets::PresetId>,
+    /// The scene of a `voltip` request; `None` = no scene. One that is gone counts as none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene: Option<uuid::Uuid>,
+}
+
+impl Default for ServeSettings {
+    fn default() -> Self {
+        Self { enabled: false, port: crate::serve::DEFAULT_PORT, preset: None, scene: None }
+    }
+}
+
+/// Lowest port `SetServe` accepts (the ones below need privileges).
+pub const MIN_SERVE_PORT: u16 = 1024;
 
 /// Longest device id `SetMicrophone` accepts (cpal ids are a host name and an endpoint id: well
 /// under this).
@@ -273,6 +303,7 @@ impl Default for Settings {
             overlay: OverlayPlacement::Bottom,
             microphone: None,
             recording: RecordingSettings::default(),
+            serve: ServeSettings::default(),
         }
     }
 }
@@ -465,6 +496,28 @@ mod tests {
 
     /// A `settings.json` written before scenes (docs/dictation.md §18.5) has no `context_sharing`:
     /// it loads with the app name shared and the window title not, and the next save writes both.
+    /// docs/dictation.md §23.6: a file written before the local speech service has it off on
+    /// its default port; what is set survives a save.
+    #[test]
+    fn the_service_settings_default_to_off_and_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore::new(dir.path());
+        std::fs::write(dir.path().join(SETTINGS_FILE_NAME), br#"{"schema":1,"theme":"warm","follow_system_theme":false,"relay_enabled":true}"#).unwrap();
+        let s = store.load().unwrap();
+        assert_eq!(s.serve, ServeSettings { enabled: false, port: crate::serve::DEFAULT_PORT, preset: None, scene: None });
+        let id = uuid::Uuid::new_v4();
+        let serve = ServeSettings {
+            enabled: true,
+            port: 48000,
+            preset: Some(crate::presets::PresetId::Builtin(crate::presets::BuiltinPreset::Prompt)),
+            scene: Some(id),
+        };
+        store.save(&Settings { serve: serve.clone(), ..s }).unwrap();
+        assert_eq!(store.load().unwrap().serve, serve);
+        let text = std::fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME)).unwrap();
+        assert!(text.contains(r#""preset": "prompt""#), "{text}");
+    }
+
     #[test]
     fn regression_settings_without_context_sharing_load_with_the_private_defaults() {
         let dir = tempfile::tempdir().unwrap();
