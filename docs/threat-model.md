@@ -16,9 +16,11 @@
 
 | LAN 主机暴露在局域网 | 主机只承载配对会话与会合频道；`attach` 者仍要过 Noise XX，身份不符即 `IdentityChanged`；频道最多 2 人；`direct_hints` 只接受 `ip:port` 字面量（不解析主机名），且只来自认证通道 | `lan_host_mode_keeps_one_pairing_session_but_serves_channels`、`direct_hints_are_bounded_and_must_be_socket_addrs`、`regression_relay_compromise_impostor_on_channel_is_flagged_not_trusted` |
 | 恶意 peer 让我拨任意 `ip:port` | hints 上限 4 个、每 tick 每设备最多一条出站连接、指数退避、连接超时 3 s；连接只做 WebSocket + 本协议 `hello` | `direct_hints_persist_survive_retrust_and_are_validated` |
+| 本机语音服务被其他用户、网页或局域网滥用（`docs/dictation.md` §23） | 默认只监听回环地址，`voltip-server` 监听其他地址必须加 `--allow-remote`（并警告明文），App 只监听 127.0.0.1；除 `/healthz` 外每个请求都要 32 字节随机令牌（0600 文件，常量时间比较，可随时更换），没有关闭认证的选项；不返回 CORS 头，网页读不到响应；并发与排队有上限，时长、请求体和字段有界限，原始上传不落盘；日志不记文字、音频和令牌；无头服务端只读钥匙串与 App 的文件 | `the_token_guards_everything_but_the_health_check`、`malformed_and_oversized_requests_are_refused`、`a_waiting_request_reads_nothing_until_it_has_a_permit_and_a_full_queue_is_refused`（`voltip-serve`）；`the_command_line_names_the_service_and_its_one_shot_actions`、`print_token_creates_the_token_once_and_prints_it_again`（`voltip-server`）；`peek` 的零写入测试（`voltip-identity`） |
 
 ## 已知缺口
 
 - `forward` 洪泛：Relay 对已加入会话 / 频道的转发不限速；应加每连接字节 / 帧速率上限。
 - 频道标签可被知道两把公钥的人计算出来（公钥不是秘密），攻击者可占位造成 `channel_full`（公共 Relay 与 LAN 主机同样适用）；缓解：attach 需要对频道所有者的签名挑战（下一版协议）。
 - 桌面端 keyring 在 Linux 依赖 Secret Service（无守护进程时 `StoreUnavailable`，应用拒绝降级到明文文件）。
+- 本机语音服务的令牌对同一用户的所有进程可读（这就是给其他程序用的）：能读到这个文件的程序就能使用服务，包括它背后的内置服务额度。`--allow-remote` 时令牌以明文 HTTP 传输，应改用 SSH 隧道或 TLS 反向代理。

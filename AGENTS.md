@@ -7,8 +7,10 @@ How to work in this repository, for coding agents and people alike. `CONTRIBUTIN
 - `crates/` — the Rust workspace. `voltip-core` is the platform-free application core (commands in,
   events out, ports for everything native); the other crates are its adapters: audio, cloud and
   on-device recognition, clean-up, injection, platform tables, protocol, crypto, identity, pairing,
-  transport, relay, and the Tauri bridge.
+  transport, relay, the local speech service's HTTP layer (`voltip-serve`), and the Tauri bridge.
 - `apps/desktop`, `apps/mobile` — the Tauri 2 shells (`src-tauri/`) and their React front ends.
+- `apps/server` — `voltip-server`, the headless local speech service (`docs/dictation.md` §23.5): no
+  webview and no audio stack, shipped as a Linux x64 tar.gz (`scripts/build-server-linux-x64.sh`).
 - `packages/shared` (IPC contract, i18n, labels, mock backend), `packages/ui` (design system).
 - `docs/` — `architecture.md` first. `dictation.md` is the pipeline's contract; the `§N` references
   in code comments point into it.
@@ -23,7 +25,7 @@ make verify                      # every gate; writes verify-all.log bound to HE
 make fmt | make lint | make test # the narrower loops
 make desktop-dev                 # the desktop app with hot reload
 make smoke-desktop               # the real app under Xvfb (Linux); make smoke-wayland for Wayland
-make windows-x64 | make linux-x64 | make android-apk   # packages
+make windows-x64 | make linux-x64 | make server-linux-x64 | make android-apk   # packages
 make help                        # everything else
 ```
 

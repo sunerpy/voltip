@@ -20,10 +20,12 @@ crates/voltip-core       应用外观层：把 identity + pairing + transport + 
 crates/voltip-tauri-bridge  UiCommand / UiEvent / UiState：webview 看到的唯一契约；Bridge::publish 让 shell 自己产生的状态（热键注册结果）并入同一状态流
 crates/voltip-audio      麦克风枚举与输入电平（cpal：WASAPI / CoreAudio / ALSA / Android AAudio），纯 DSP 可脱离硬件测试
 crates/voltip-cloud      云端识别与润色（voltip-asr、voltip-refine 的客户端；阿里云百炼的实时模型经 WebSocket 推流）作为核心的 Transcriber / Refiner / StreamingTranscriber 端口，桌面与手机共用
-apps/desktop/src-tauri   桌面 shell：全局热键（tauri-plugin-global-shortcut）、悬浮胶囊窗口（预热、事件驱动）、无边框主窗口、音频电平 Channel
+crates/voltip-serve      本机语音服务的 HTTP 层（axum）：OpenAI 兼容的 /v1/audio/transcriptions、令牌、准入、边收边解码的 WAV 上传；处理在 voltip-core 的 serve 模块（docs/dictation.md §23）
+apps/desktop/src-tauri   桌面 shell：全局热键（tauri-plugin-global-shortcut）、悬浮胶囊窗口（预热、事件驱动）、无边框主窗口、音频电平 Channel；设置里打开本机服务时经 voltip-serve 监听 127.0.0.1
+apps/server              无头服务端 voltip-server（Linux x64 tar.gz）：命令行、只读地读 App 的数据目录与系统钥匙串，没有 GUI 和音频依赖
 ```
 
-依赖方向只允许向下：`apps → core → {pairing, transport, identity} → {crypto, protocol}`；`relay` 只依赖 `protocol`，不依赖 `crypto`（它拿不到、也不需要会话密钥）。
+依赖方向只允许向下：`apps → core → {pairing, transport, identity} → {crypto, protocol}`；`relay` 只依赖 `protocol`，不依赖 `crypto`（它拿不到、也不需要会话密钥）。`voltip-serve` 是 `voltip-core` 之上的适配层（实现核心的 `ServeHost` 端口，调用 `SpeechService`），只有桌面壳和 `apps/server` 依赖它。
 
 ## 1.1 原生优先（硬约束）
 
@@ -51,6 +53,8 @@ apps/desktop/src-tauri   桌面 shell：全局热键（tauri-plugin-global-short
 | Identity 私钥 | 平台安全存储：Windows Credential Manager / macOS Keychain（`keyring`；macOS 发布包按构建建条目，应用内更新时交接，见 `docs/runbook.md` 发布），Android Keystore（移动端 `SecretStore` 实现），测试用内存实现 |
 | Trusted devices | `app_data_dir/trusted-devices.json`（只含公钥指纹、名称、平台、last_seen、connection_type） |
 | Settings | `app_data_dir/settings.json`（主题、relay url、热键等） |
+| 本机语音服务的令牌 | `app_data_dir/serve/token`（0600；桌面 App 与 `voltip-server` 共用，`docs/dictation.md` §23.7） |
+| 本机语音服务的临时上传 | `app_data_dir/serve/uploads/`（解码后的 16 kHz PCM，请求结束即删除，启动时清理残留） |
 | Pairing session | 只在内存；过期或用完即销毁 |
 
 ## 4. 构建与配置
