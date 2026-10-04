@@ -268,6 +268,28 @@ impl<K: Keychain> SecretStore for PerBuildStore<K> {
         Ok(value)
     }
 
+    /// This build's item, then the other copies, never asking and never moving one: an item only
+    /// the dialog would give is left alone (docs/dictation.md §23).
+    fn peek(&self, entry: &str) -> Result<Option<Zeroizing<Vec<u8>>>, IdentityError> {
+        if let Some(known) = self.known.lock().get(entry) {
+            return Ok(known.clone());
+        }
+        if let Some(handed) = self.handed.lock().get(entry) {
+            return Ok(handed.clone());
+        }
+        let service = self.item_service(entry);
+        let mut accounts = vec![self.own_account()];
+        accounts.extend(self.others(entry));
+        for account in accounts {
+            match self.keychain.read(&service, &account, Ask::Never)? {
+                Read::Found(value) => return Ok(Some(value)),
+                Read::Missing => {}
+                Read::WouldAsk => tracing::debug!(entry, "a keychain item needs the user's permission; a read-only read leaves it alone"),
+            }
+        }
+        Ok(None)
+    }
+
     fn set(&self, entry: &str, value: &[u8]) -> Result<(), IdentityError> {
         self.slot(entry, self.own_account(), Ask::Never).write(value)?;
         self.handed.lock().remove(entry);
@@ -452,6 +474,26 @@ mod tests {
         let again = store(&login, "bbbb", Entries::new());
         assert_eq!(read(&again, SECRET_KEY_ENTRY).as_deref(), Some(&b"key"[..]));
         assert_eq!(login.asked(), Vec::<String>::new());
+    }
+
+    /// docs/dictation.md §23: a read-only read (the local speech service) finds this build's item
+    /// and leaves every other copy alone: nothing is asked, written or removed, and an older
+    /// build's item that would need the dialog reads as absent.
+    #[test]
+    fn a_read_only_read_never_asks_moves_or_removes() {
+        let login = Login::default();
+        login.put("aaaa", SECRET_KEY_ENTRY, "mac.signed.aaaa", b"old");
+        login.put("cccc", META, "mac.signed.cccc", b"mine");
+        let before = (login.accounts(SECRET_KEY_ENTRY), login.accounts(META));
+        let reader = store(&login, "cccc", Entries::new());
+        assert_eq!(reader.peek(META).unwrap().map(|v| v.to_vec()).as_deref(), Some(&b"mine"[..]));
+        assert!(reader.peek(SECRET_KEY_ENTRY).unwrap().is_none(), "another build's item would need the dialog");
+        assert_eq!(login.asked(), Vec::<String>::new(), "nothing asked");
+        assert_eq!((login.accounts(SECRET_KEY_ENTRY), login.accounts(META)), before, "nothing written, moved or removed");
+        // What the build was handed is read without touching the keychain.
+        let handed = store(&login, "dddd", vec![(SECRET_KEY_ENTRY.to_owned(), Some(Zeroizing::new(b"handed".to_vec())))]);
+        assert_eq!(handed.peek(SECRET_KEY_ENTRY).unwrap().map(|v| v.to_vec()).as_deref(), Some(&b"handed"[..]));
+        assert_eq!((login.accounts(SECRET_KEY_ENTRY), login.accounts(META)), before);
     }
 
     /// Before the updater replaces the old bundle, the staged new build writes and reads back its

@@ -60,7 +60,7 @@ use super::ports::{
     StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
 };
 use super::redecode::RedecodeStreaming;
-use super::wav;
+use super::{steps, wav};
 use super::{DictationPhase, DictationStatus, FailureCode, LiveText, OutputMode, ProcessingStage, SegmentProgress, TakeKind, inject_separator, join_text};
 use crate::engines::{ChineseScript, FallbackTarget, LiveSource, ResolvedEngines};
 use crate::history::{EditRecord, HistoryEntry, Outcome};
@@ -71,7 +71,7 @@ use crate::providers::ServiceKind;
 use crate::scenes::{AppRef, ContextSharing, LANGUAGE_AUTO, Scene, TakeContext, match_scene};
 use crate::script::normalized;
 use crate::settings::{RecordingSettings, RecordingSource};
-use crate::vocabulary::{Step, Vocabulary, VocabularyHits};
+use crate::vocabulary::{Vocabulary, VocabularyHits};
 
 /// Builds the network clients for a resolved configuration. Called at startup and again whenever
 /// the engine settings or a secret change.
@@ -695,7 +695,8 @@ fn now_ms() -> u64 {
 /// behind a fallback chain when fallback models run — the factory builds each fallback model's
 /// client from the configuration as if that model were selected
 /// ([`ResolvedEngines::with_candidate`]). Every chain shares `quota`.
-fn clients(factory: &EngineFactory, engines: &ResolvedEngines, quota: &QuotaLedger) -> (Arc<dyn Transcriber>, Option<Arc<dyn Refiner>>) {
+/// The local speech service builds its clients the same way (docs/dictation.md §23).
+pub fn engine_clients(factory: &EngineFactory, engines: &ResolvedEngines, quota: &QuotaLedger) -> (Arc<dyn Transcriber>, Option<Arc<dyn Refiner>>) {
     let (transcriber, refiner) = factory(engines);
     let asr: Vec<&FallbackTarget> = engines.asr_fallback.targets().collect();
     let transcriber = match &engines.asr_fallback.selected {
@@ -747,7 +748,7 @@ impl DictationEngine {
     pub fn new(ports: DictationPorts, engines: &ResolvedEngines, levels: broadcast::Sender<LevelFrame>) -> (Self, mpsc::Receiver<Internal>) {
         let (tx, rx) = mpsc::channel(INTERNAL_QUEUE);
         let quota = QuotaLedger::default();
-        let (transcriber, refiner) = clients(&ports.factory, engines, &quota);
+        let (transcriber, refiner) = engine_clients(&ports.factory, engines, &quota);
         let engine = Self {
             audio: ports.audio,
             transcriber,
@@ -813,6 +814,17 @@ impl DictationEngine {
         self.refiner.clone()
     }
 
+    /// The recogniser the current configuration builds (behind its fallback chain): the local
+    /// speech service hosted by the app recognises with it (docs/dictation.md §23).
+    pub fn transcriber(&self) -> Arc<dyn Transcriber> {
+        self.transcriber.clone()
+    }
+
+    /// The shell's segmenter for long takes (docs/dictation.md §22), when it plugged one in.
+    pub fn segmenter(&self) -> Option<Arc<dyn SegmenterFactory>> {
+        self.segmenter.clone()
+    }
+
     /// Which models ran out of quota (docs/dictation.md §3.5): the runtime shows it and clears it.
     pub fn quota(&self) -> &QuotaLedger {
         &self.quota
@@ -851,7 +863,7 @@ impl DictationEngine {
     /// clients it started with; a live preview already running keeps its session; a run already
     /// started keeps its output mode.
     pub fn configure(&mut self, engines: &ResolvedEngines) {
-        let (transcriber, refiner) = clients(&self.factory, engines, &self.quota);
+        let (transcriber, refiner) = engine_clients(&self.factory, engines, &self.quota);
         self.transcriber = transcriber;
         self.refiner = refiner;
         self.language = engines.language.clone();
@@ -2233,10 +2245,7 @@ impl DictationEngine {
         let task = tokio::spawn(async move {
             let wav = tokio::task::spawn_blocking(move || long::read_segment(&path, start, end)).await;
             let result = match wav {
-                Ok(Ok(wav)) if wav::is_silent(&wav) => Ok(Transcript { text: String::new(), latency_ms: 0, model: None }),
-                Ok(Ok(wav)) => {
-                    transcriber.transcribe(&wav, language.as_deref(), &glossary).await.map(|t| Transcript { text: normalized(script, t.text.trim()), ..t })
-                }
+                Ok(Ok(wav)) => long::recognize_segment(transcriber.as_ref(), &wav, language.as_deref(), &glossary, script).await,
                 Ok(Err(e)) => Err(DictationError::Audio(format!("the recording file could not be read: {e}"))),
                 Err(e) => Err(DictationError::Audio(format!("segment read task failed: {e}"))),
             };
@@ -2274,7 +2283,7 @@ impl DictationEngine {
                     _ => 1,
                 };
                 tracing::warn!(session, idx, attempts, error = %e, "a segment of the long take was not recognised");
-                segment.text = if attempts >= 2 { SegmentText::Failed } else { SegmentText::Pending { attempts } };
+                segment.text = if attempts >= long::SEGMENT_ATTEMPTS { SegmentText::Failed } else { SegmentText::Pending { attempts } };
                 l.last_error = Some(e);
             }
         }
@@ -2777,19 +2786,10 @@ struct PipelineJob {
     tx: mpsc::Sender<Internal>,
 }
 
-/// Log a vocabulary step that fell back to its input (docs/dictation.md §16.3); the take goes on.
-fn note_fallback(step: &Step, what: &str) {
-    if let Some(reason) = &step.error {
-        tracing::warn!(step = what, %reason, "vocabulary step fell back to the unmodified text");
-    }
-}
-
 /// The dictionary then the rules on a text nothing else will touch (a `live_inject` sentence).
 fn process_final_text(vocabulary: &Vocabulary, text: &str) -> (String, VocabularyHits) {
-    let corrected = vocabulary.correct(text);
-    note_fallback(&corrected, "dictionary");
-    let ruled = vocabulary.apply_rules(&corrected.text);
-    note_fallback(&ruled, "rules");
+    let corrected = steps::correct(vocabulary, text);
+    let ruled = steps::apply_rules(vocabulary, &corrected.text);
     (ruled.text, VocabularyHits { corrections: corrected.hits, rules: ruled.hits })
 }
 
@@ -2801,8 +2801,8 @@ async fn run_pipeline(job: PipelineJob) {
     let (raw_text, asr_ms, asr_model) = match input {
         // The recogniser's text in the chosen script first (docs/dictation.md §17); a streaming
         // final text (`Text`) was normalised by the live worker already, and its model came with it.
-        PipelineInput::Wav(wav) => match transcriber.transcribe(&wav, language.as_deref(), glossary).await {
-            Ok(t) => (normalized(script, t.text.trim()), t.latency_ms, t.model),
+        PipelineInput::Wav(wav) => match steps::recognize(transcriber.as_ref(), &wav, language.as_deref(), glossary, script).await {
+            Ok(r) => (r.text, r.asr_ms, r.model),
             Err(e) => {
                 let _ = tx.send(Internal::Finished { session, result: Err(e) }).await;
                 return;
@@ -2814,38 +2814,17 @@ async fn run_pipeline(job: PipelineJob) {
         let _ = tx.send(Internal::Finished { session, result: Err(DictationError::NoSpeech) }).await;
         return;
     }
-    let corrected = vocabulary.correct(&raw_text);
-    note_fallback(&corrected, "dictionary");
-    let mut text = corrected.text.clone();
-    let (mut refined, mut refine_ms, mut refine_error, mut refine_model) = (false, None, None, None);
-    let too_long_to_refine = long && corrected.text.chars().count() > long::REFINE_MAX_CHARS;
-    if too_long_to_refine && refine_requested {
-        refine_error = Some(long::REFINE_SKIPPED.to_owned());
-    }
-    if let Some(refiner) = refiner.filter(|_| !too_long_to_refine) {
-        let _ = tx.send(Internal::Stage { session, stage: ProcessingStage::Refining }).await;
-        match refiner.refine(&corrected.text, &hints).await {
-            Ok(out) => {
-                let cleaned = out.text.trim();
-                if cleaned.is_empty() {
-                    refine_error = Some("润色返回空文本，已使用原文".to_owned());
-                } else {
-                    text = cleaned.to_owned();
-                    refined = true;
-                    refine_model = Some(out.model);
-                }
-                refine_ms = Some(out.latency_ms);
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "refine failed; injecting the raw transcript");
-                refine_error = Some(e.to_string());
-            }
+    let corrected = steps::correct(&vocabulary, &raw_text);
+    let cleaned = match (steps::plan_refine(refiner.is_some(), refine_requested, long, &corrected.text), refiner) {
+        (steps::RefinePlan::Run, Some(refiner)) => {
+            let _ = tx.send(Internal::Stage { session, stage: ProcessingStage::Refining }).await;
+            steps::run_refine(refiner.as_ref(), &corrected.text, &hints).await
         }
-    } else if refine_requested && refine_error.is_none() {
-        refine_error = Some("润色未配置：缺少 API 密钥".to_owned());
-    }
-    let ruled = vocabulary.apply_rules(&text);
-    note_fallback(&ruled, "rules");
+        (steps::RefinePlan::Skip { error }, _) => steps::CleanUp::skipped(&corrected.text, error),
+        (steps::RefinePlan::Run, None) => steps::CleanUp::skipped(&corrected.text, None),
+    };
+    let steps::CleanUp { text, refined, refine_ms, refine_error, refine_model } = cleaned;
+    let ruled = steps::apply_rules(&vocabulary, &text);
     let text = ruled.text;
     let hits = VocabularyHits { corrections: corrected.hits, rules: ruled.hits };
     if text.trim().is_empty() {
@@ -2906,12 +2885,11 @@ async fn run_edit(job: EditJob) {
         }
     };
     let glossary = vocabulary.glossary();
-    let (raw_text, asr_ms, asr_model) = match transcriber.transcribe(&wav, language.as_deref(), glossary).await {
-        Ok(t) => (normalized(script, t.text.trim()), t.latency_ms, t.model),
+    let (raw_text, asr_ms, asr_model) = match steps::recognize(transcriber.as_ref(), &wav, language.as_deref(), glossary, script).await {
+        Ok(r) => (r.text, r.asr_ms, r.model),
         Err(e) => return finish(Err(e)).await,
     };
-    let corrected = vocabulary.correct(&raw_text);
-    note_fallback(&corrected, "dictionary");
+    let corrected = steps::correct(&vocabulary, &raw_text);
     let instruction = corrected.text.trim().to_owned();
     if instruction.is_empty() {
         return finish(Err(DictationError::NoSpeech)).await;

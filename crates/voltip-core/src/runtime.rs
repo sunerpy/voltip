@@ -35,7 +35,7 @@ use crate::history::{HistoryEntry, HistoryStore};
 use crate::models::{CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelInstallState, ModelManager, ModelState};
 use crate::peer::{Incoming, LinkId, ParkedChannel, PeerPath, PeerPhase, PeerState};
 use crate::presets::{CustomPreset, PresetDraft, PresetStore, PresetTrial, PresetTryOutcome};
-use crate::providers::{ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, key_entries, key_entry};
+use crate::providers::{ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, key_entry, load_user_secrets};
 use crate::scenes::{ContextSharing, Scene, SceneDraft, SceneStore};
 use crate::settings::{Locale, Settings, SettingsStore, ThemeId};
 use crate::view::{DeviceConnection, DeviceView, RelaySource, RelayStatus};
@@ -816,20 +816,6 @@ impl AppCore {
         tokio::spawn(async move { rt.run(inbox).await });
         Ok((CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
-}
-
-/// Read the user's engine secrets from the store. A store that cannot be read leaves the secret
-/// unset (and logs): the identity already loaded from the same store, so this is rare.
-fn load_user_secrets(store: &dyn SecretStore) -> UserSecrets {
-    let mut secrets = UserSecrets::default();
-    for entry in key_entries() {
-        match store.get(entry) {
-            Ok(Some(bytes)) => secrets.set_entry(entry, String::from_utf8(bytes.to_vec()).ok()),
-            Ok(None) => {}
-            Err(e) => tracing::warn!(error = %e, secret = entry, "secret store read failed; treating as unset"),
-        }
-    }
-    secrets
 }
 
 /// An endpoint the user entered must be an http(s) URL with a host.

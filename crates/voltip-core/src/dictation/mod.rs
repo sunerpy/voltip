@@ -12,13 +12,14 @@ pub mod long;
 pub mod ports;
 pub mod redecode;
 pub mod remote;
+pub mod steps;
 pub mod wav;
 
 use serde::{Deserialize, Serialize};
 
 pub use crate::engines::OutputMode;
 pub use crate::scenes::TakeContext;
-pub use engine::{DictationEngine, DictationPorts, EngineFactory};
+pub use engine::{DictationEngine, DictationPorts, EngineFactory, engine_clients};
 pub use fallback::{FallbackRefiner, FallbackTranscriber, Link, QUOTA_RETRY_AFTER, QuotaKey, QuotaLedger, first_with_quota, open_order};
 pub use ports::{
     AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection,
