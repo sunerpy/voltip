@@ -128,6 +128,7 @@ pub struct EngineSettings {                                  // Settings.engines
     pub live_preview: bool, pub output_mode: OutputMode, pub vad_trim: bool,                   // §11 §12
     pub chinese_script: ChineseScript,                       // §17
     pub inject: InjectMode,                                  // Paste（默认）| ClipboardOnly
+    pub asr_fallback: FallbackSettings, pub llm_fallback: FallbackSettings, // §3.5，关闭且为空时不写出
 }
 ```
 
@@ -162,10 +163,25 @@ pub struct EngineSettings {                                  // Settings.engines
 - 手机与电脑同步设置镜像（§20.8）时，旧版手机不认识 `aliyun` 这个服务商 id，丢弃这份镜像（`sync body unreadable; dropped`），历史记录照常同步；两端都更新后恢复。
 - HTTP 模型单次 data URI 不超过 10 MB（约 4 分钟 16 kHz 单声道），超出时不发送并报 `Audio`。
 - 实时模型把整段录音一次发完时，服务端有时按播放速度处理（实测 16 s 样音 2.4–35 s），所以录音时就要推流（§11.9）；`transcribe_whole` 只用于回落和语音编辑，期限为超时加录音时长。
-- 错误：`InvalidApiKey`/401 → `Unauthorized`；`AllocationQuota.FreeTierOnly`（控制台「免费额度用完即停」生效）→ `FreeQuotaExhausted`；`Throttling…`/429 → `RateLimited`；其他带 `code` 的 4xx 与 `task-failed` → `Service { code, message }`；5xx 仍可重试。
+- 错误：`InvalidApiKey`/401 → `Unauthorized`；`AllocationQuota.FreeTierOnly`（控制台「免费额度用完即停」生效）→ `QuotaExhausted { code, message }`（§3.5）；`Throttling…`/429 → `RateLimited`；其他带 `code` 的 4xx 与 `task-failed` → `Service { code, message }`；5xx 仍可重试。
 - 实测（2026-10-04，开发机直连北京业务空间，16 s 中文样音，只用有免费额度的模型）：`qwen-audio-3.1-asr-flash` 整段 1.4 s；`qwen-audio-3.1-asr-flash-streaming` 整段一次发完 2.8 s。`crates/voltip-cloud/tests/real_dashscope.rs`（`#[ignore]`，需要 `VOLTIP_REAL_DASHSCOPE_URL` / `_KEY`）。
 
-**界面看到的**是 `EngineStatus`（`UiState.engines`）：两项服务各自的服务商、就绪状态与原因、模型、用户填写的接口主机（内置服务与本机为空字符串），`local_model` / `local_ready`、`live_preview_ready`、`effective_output_mode`、语言、润色开关、注入方式，以及每家服务商的 `ProviderStatus`（模型、预设、密钥状态、是否在用），供引擎页的服务商卡片渲染。
+**界面看到的**是 `EngineStatus`（`UiState.engines`）：两项服务各自的服务商、就绪状态与原因、模型、用户填写的接口主机（内置服务与本机为空字符串），`local_model` / `local_ready`、`live_preview_ready`、`effective_output_mode`、语言、润色开关、注入方式，以及每家服务商的 `ProviderStatus`（模型、预设、密钥状态、是否在用），供引擎页的服务商卡片渲染；还有两项服务的候补模型状态 `asr_fallback` / `llm_fallback`（§3.5）。
+
+### 3.5 候补模型：额度用完后改用其他模型（2026-10-04）
+
+用户需求（2026-10-04）：百炼的每个模型各有一份免费额度，希望按顺序列出多个模型，一个的额度用完就自动改用下一个，并做成可复用的能力。用户决定：识别和 AI 润色都做；**只在额度用完时切换**，缺模型、无权限、限流、网络错误都不切换。
+
+- **信号**：百炼没有用 API Key 查询剩余免费额度的接口（只有控制台页面）。额度用完的唯一可靠信号是服务拒绝请求：控制台为该模型打开「免费额度用完即停」（国际站 Free Quota Only，未实名账号强制打开）后，额度用完时 HTTP 请求回 403、实时任务回 `task-failed`，错误码 `AllocationQuota.FreeTierOnly`；没打开时用完直接计费，Voltip 收不到信号。OpenAI 兼容接口的 `insufficient_quota` 同样算额度用完。`voltip_asr::is_quota_exhausted` 与 `voltip_refine::is_quota_exhausted` 是同一条规则：错误码或消息含 `FreeTierOnly`，或错误码为 `insufficient_quota`；`Throttling…`、`rate_limit_exceeded` 仍是限流。识别与润色客户端对**所有非 2xx** 先读响应体判断，再按状态码分类（此前润色把百炼的 403 FreeTierOnly 报成密钥错误，回归测试 `regression_a_free_tier_stop_on_polish_is_not_reported_as_a_bad_key`）。核心收到的是 `DictationError::QuotaExhausted { service, detail }`（`voltip_cloud::asr_error` / `refine_error`）。
+- **设置**：`EngineSettings.asr_fallback` / `llm_fallback: FallbackSettings { enabled, models: Vec<FallbackModel { provider, model }> }`，默认关闭，最多 `MAX_FALLBACK_MODELS = 8` 项。每项用该服务商卡片上的地址和**该服务商自己的密钥**（`service_target_for`），只是换了模型；内置服务只有它自己的模型。识别不能把本机模型列为候补。`Runtime::set_engines` 拒绝超出数量、不提供该服务的服务商、空模型和重复项；与当前选择相同的项不拒绝，解析时跳过。
+- **解析**：`ResolvedEngines.asr_fallback` / `refine_fallback: FallbackPlan { enabled, in_use, selected, rows }`，设置里的每一项一行（`Ready(FallbackTarget)` / `Issue(EngineIssue)` / `SameAsSelected` / `Duplicate`）。`in_use`：开关打开且当前选择就绪、是远程服务（识别不在本机，润色有服务商）。当前选择不可用时不启用候补：候补只在额度用完时接手。
+- **链与账本**（`voltip_core::dictation::fallback`，不依赖具体服务商和端口）：`QuotaLedger` 记哪些模型（`QuotaKey { kind, provider, model, url }`）何时用完，用 `tokio::sync::watch` 通知变化；`first_with_quota` 按顺序调用仍有额度的项，额度用完就记账并试下一项，其他错误原样返回，成功则清掉该项的记录；全部用完时只再试第一项（用户可能已续上）。`FallbackTranscriber` / `FallbackRefiner` 把链放在识别、润色端口后面。账本归 `DictationEngine` 所有，配置变化时客户端重建，账本不变；引擎经 `ResolvedEngines::with_candidate` 为每个候补再调一次外壳的客户端工厂，外壳不用改。
+- **重试**：用完的模型 `QUOTA_RETRY_AFTER = 24 h` 内跳过，之后再试一次（被拒的请求不计费）。记录只在内存里，重启后从第一个重新开始。命令 `engines_quota_reset { kind }`（「重新检查」）清除该服务的记录；保存或删除某服务商的密钥清除该服务商的记录（可能换了账号）。账本变化时运行时重发 `CoreEvent::Engines`（`status_with(ledger)`）。
+- **收尾**：沿用现有规则。整段识别、语音编辑的指令、一段都没识别出来的长录音以新的失败码 `quota`（「模型额度已用完」）结束；开关关闭时额度用完同样报 `quota`。已有部分文字时保留部分结果：`live_inject` 已插入句子后补齐失败，照旧以已插入的内容结束，原因写进 `live_error`；长录音某段两次都失败，照旧留下占位、交付其余文字。润色失败照旧插入原文。旧版手机把 `quota` 当普通失败解析（`take_state_for` 的 `_ => TakeFailure::Failed`）。
+- **实时识别**：边说边识别仍只在当前选择是实时模型时启用（`asr_streams` 不变，不影响「当前选择非实时 + 本机实时预览」）。录音开始用第一个仍有额度的项：实时模型就推流，否则整段识别。实时模型在录音中报额度用完时预览降级，录音结束后整段走候补链（第一次多一次被拒请求，之后跳过它）。当前选择不是实时模型时，排在后面的实时模型只做整段识别。
+- **历史里的模型**：记这次听写最后一段文字实际来自的模型，由实际执行识别的客户端报告：`Transcript.model`（HTTP、百炼、本机客户端都报告，候补链在为空时补上所用项的模型）、`StreamingSession::model()`（流降级时读）、`StreamFinal.model`（flush 完成后由会话填写：内置服务的边说边识别在 `finish()` 里还会发出最后几次请求）。`Take.served_asr_model` 只被带来非空文字的结果覆盖；没有回执时（fake、本机实时预览模型）沿用配置的模型。客户端仍在每一步取引擎当前的那个，录音中改了设置时记新客户端报告的模型。
+- **界面**（`packages/ui` `FallbackSection`，桌面「语音模型」「AI 模型」两页与手机两页）：开关、模型顺序（当前选择在第一行）、每行的状态（使用中 / 可用 / 额度已用完 · 何时再试 / 缺少密钥等 / 与当前选择相同 / 已在列表中）、上移下移移除、添加、「重新检查」；有百炼时说明「免费额度用完即停」。服务商区块标题在候补顶替时显示「当前：服务商 · 模型（候补）」；隐私说明列出额度用完时会收到音频或文字的其他服务商。
+- **不做**：读取剩余额度、替用户改控制台开关；把本机模型作为候补；欠费（`Arrearage`）、限流、网络错误时切换；账本持久化与同步到手机；一次听写记多个识别模型。
 
 ## 4. 历史记录（`voltip_core::history`）
 
@@ -180,7 +196,7 @@ pub struct HistoryEntry {
 }
 ```
 
-条目另有 `mode`、`segments`、`live_error`、`vocabulary`、`kind`、`edit`、`app`、`scene`、`preset`、`origin`（见各节）与 `processed`（用 AI 预设处理的结果，§22.4），都可缺省。
+条目另有 `mode`、`segments`、`live_error`、`vocabulary`、`kind`、`edit`、`app`、`scene`、`preset`、`origin`（见各节）与 `processed`（用 AI 预设处理的结果，§22.4），都可缺省。`asr_model` 是这次听写最后一段文字实际来自的识别模型（§3.5：候补模型接手时记候补），`refine_model` 是实际回答的润色模型。
 
 `app_data_dir/history.sqlite3`（SQLite，§4.3），最多 `MAX_ENTRIES = 20 000` 条，超出时丢弃最旧的。命令 `HistoryDelete(Uuid)`、`HistoryClear`、`HistoryStar(Uuid, bool)`；事件 `CoreEvent::History { recent, total }` 只带最新 `RECENT_ENTRIES = 20` 条和总条数，其余由界面查询（§4.4）。2026-09-30 之前是 `history.json`：最多 500 条，每次变化推送全量。
 
@@ -530,6 +546,7 @@ Processing { stage: ProcessingStage, started_at: u64, preview: Option<String> }
 - **界面**：「输出方式」选「整段输出」而模型是实时模型时，卡片注明「按『边说边识别』运行」，「当前生效」落在「边说边识别」上。
 - **实测**（`real_dashscope.rs@real_realtime_models_stream_a_spoken_take`，16 s 样音按麦克风节奏输入）：`qwen-audio-3.1-asr-flash-streaming` 开始说话后约 1.6 s 出第一个中间结果，松开后 0.07 s 收到最后一句；`qwen-audio-3.1-asr-flash-message` 0.46 s。
 - **手机**：手机的麦克风也有实时分接，手机单独识别时同样推流。
+- **候补模型**（§3.5）：推流用第一个仍有额度的项；实时模型额度用完时预览降级，整段走候补链。
 
 ## 12. 输出模式（2026-09-25）
 
