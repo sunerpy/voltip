@@ -127,6 +127,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   dictation_cancel: null,
   settings_set_engines: null,
   provider_key_set: null,
+  engines_quota_reset: null,
   provider_probe: null,
   history_delete: null,
   history_clear: null,
@@ -188,14 +189,24 @@ const argSchemas = {
   send_text: z.object({ publicKey: hexKeySchema, body: z.string() }),
   phone_take_start: z.object({ publicKey: hexKeySchema }).strict(),
   phone_text_send: z
-    .object({ publicKey: hexKeySchema, body: z.string(), source: z.enum(PHONE_TEXT_SOURCES) })
+    .object({
+      publicKey: hexKeySchema,
+      body: z.string(),
+      source: z.enum(PHONE_TEXT_SOURCES),
+    })
     .strict(),
   phone_share_text: z.object({ text: z.string() }).strict(),
   settings_set_lan_discovery: z.object({ enabled: z.boolean() }).strict(),
   settings_set_pairing_always_on: z.object({ enabled: z.boolean() }).strict(),
   pairing_join_nearby: z.object({ fingerprint: z.string() }).strict(),
-  settings_set_relay: z.object({ url: z.string().nullable(), enabled: z.boolean() }),
-  settings_set_theme: z.object({ theme: themeIdSchema, followSystem: z.boolean() }),
+  settings_set_relay: z.object({
+    url: z.string().nullable(),
+    enabled: z.boolean(),
+  }),
+  settings_set_theme: z.object({
+    theme: themeIdSchema,
+    followSystem: z.boolean(),
+  }),
   settings_set_hotkey: z.object({ hotkey: z.string() }),
   settings_set_edit_hotkey: z.object({ hotkey: z.string().nullable() }).strict(),
   settings_set_solo_key: z.object({ key: soloKeySchema.nullable() }).strict(),
@@ -204,8 +215,13 @@ const argSchemas = {
   hotkey_capture: z.object({ active: z.boolean() }),
   settings_set_engines: z.object({ engines: engineSettingsSchema }),
   provider_key_set: z
-    .object({ provider: providerIdSchema, kind: serviceKindSchema, value: z.string().nullable() })
+    .object({
+      provider: providerIdSchema,
+      kind: serviceKindSchema,
+      value: z.string().nullable(),
+    })
     .strict(),
+  engines_quota_reset: z.object({ kind: serviceKindSchema }).strict(),
   provider_probe: z
     .object({
       provider: providerIdSchema,
@@ -217,7 +233,11 @@ const argSchemas = {
   history_delete: z.object({ id: z.string() }),
   history_star: z.object({ id: z.string(), starred: z.boolean() }),
   history_process: z
-    .object({ requestId: z.number().int().nonnegative(), id: z.string(), preset: presetIdSchema })
+    .object({
+      requestId: z.number().int().nonnegative(),
+      id: z.string(),
+      preset: presetIdSchema,
+    })
     .strict(),
   history_process_cancel: z.object({ requestId: z.number().int().nonnegative() }).strict(),
   settings_set_locale: z.object({ locale: localeSettingSchema }),
@@ -241,7 +261,10 @@ const argSchemas = {
   model_remove: z.object({ id: z.string() }),
   model_import: z.object({ id: z.string() }),
   dictionary_add: z
-    .object({ entry: dictionaryDraftSchema, historyId: z.string().nullable().optional() })
+    .object({
+      entry: dictionaryDraftSchema,
+      historyId: z.string().nullable().optional(),
+    })
     .strict(),
   dictionary_update: z.object({ id: z.string(), entry: dictionaryDraftSchema.strict() }).strict(),
   dictionary_remove: z.object({ id: z.string() }).strict(),
@@ -342,6 +365,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.settings_set_engines.parse(args));
     case "provider_key_set":
       return backend.invoke(name, argSchemas.provider_key_set.parse(args));
+    case "engines_quota_reset":
+      return backend.invoke(name, argSchemas.engines_quota_reset.parse(args));
     case "provider_probe":
       return backend.invoke(name, argSchemas.provider_probe.parse(args));
     case "history_delete":
@@ -522,7 +547,10 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(parsed.pairing.peer?.platform).toBe("android");
     expect(parsed.devices.map((d) => d.connection)).toEqual([
       { state: "online", via: "relay" },
-      { state: "identity_changed", presented_fingerprint: "DE:B0:E3:8C · ED:1E:41:DE" },
+      {
+        state: "identity_changed",
+        presented_fingerprint: "DE:B0:E3:8C · ED:1E:41:DE",
+      },
     ]);
     expect(parsed.devices[0]?.device.last_connection).toBe("relay");
     expect(parsed.devices[1]?.device.last_seen).toBeUndefined();
@@ -683,7 +711,10 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     });
     const rawRows = events.flatMap((raw) => {
       const r = z
-        .object({ type: z.literal("history"), recent: z.array(z.record(z.string(), z.unknown())) })
+        .object({
+          type: z.literal("history"),
+          recent: z.array(z.record(z.string(), z.unknown())),
+        })
         .safeParse(raw);
       return r.success ? r.data.recent : [];
     });
@@ -776,7 +807,10 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     ]);
     const failed = parsedState.sent_texts.at(-1)?.state;
     expect(failed?.state === "failed" ? failed.code : undefined).toBe("no_answer");
-    expect(parsedState.history_recent.at(-1)?.origin).toEqual({ device: "Pixel 8", kind: "typed" });
+    expect(parsedState.history_recent.at(-1)?.origin).toEqual({
+      device: "Pixel 8",
+      kind: "typed",
+    });
     expect(parsedState.history_recent[0]?.origin).toBeUndefined();
     const lists = events.flatMap((raw) => {
       const r = uiEventSchema.safeParse(raw);
@@ -833,7 +867,9 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       false,
     );
     const setSolo = commands.find((c) => c.name === "settings_set_solo_key");
-    expect(argSchemas.settings_set_solo_key.parse(setSolo?.args)).toEqual({ key: "mouse_back" });
+    expect(argSchemas.settings_set_solo_key.parse(setSolo?.args)).toEqual({
+      key: "mouse_back",
+    });
     expect(argSchemas.hotkey_edge.parse({ pressed: false, chorded: true }).chorded).toBe(true);
   });
 
@@ -940,7 +976,10 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(legal?.match).toEqual({ apps: [], title_contains: [] });
     expect(legal?.overrides.refine_preset).toBe("proofread");
     expect(review?.builtin).toBeUndefined();
-    expect(review?.match).toEqual({ apps: ["chrome", "code"], title_contains: ["Pull request"] });
+    expect(review?.match).toEqual({
+      apps: ["chrome", "code"],
+      title_contains: ["Pull request"],
+    });
     expect(review?.overrides).toEqual({
       refine_enabled: true,
       refine_preset: "formal",
@@ -952,12 +991,18 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     // Unset overrides are absent on the wire (the core skips them), not `null`.
     expect(chat?.overrides).toEqual({ refine_preset: "punctuation" });
     expect(chat?.enabled).toBe(false);
-    expect(parsedState.settings.context_sharing).toEqual({ app_name: false, window_title: true });
+    expect(parsedState.settings.context_sharing).toEqual({
+      app_name: false,
+      window_title: true,
+    });
     expect(parsedState.dictation.context).toEqual({
       app: { id: "code", name: "Code" },
       scene: { id: review?.id, name: "代码评审" },
     });
-    expect(parsedState.history_recent[0]?.app).toEqual({ id: "code", name: "Code" });
+    expect(parsedState.history_recent[0]?.app).toEqual({
+      id: "code",
+      name: "Code",
+    });
     expect(parsedState.history_recent[0]?.scene?.name).toBe("代码评审");
     expect(parsedState.history_recent[1]?.app).toBeUndefined();
     const parsed = events.flatMap((raw) => {
@@ -971,7 +1016,11 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
         ? e.recent.flatMap((h) => (h.scene?.builtin === undefined ? [] : [h.scene]))
         : [],
     );
-    expect(builtinRefs).toContainEqual({ id: legal?.id, name: "legal", builtin: "legal" });
+    expect(builtinRefs).toContainEqual({
+      id: legal?.id,
+      name: "legal",
+      builtin: "legal",
+    });
     const contexts = parsed.flatMap((e) =>
       e.type === "dictation" && e.context !== undefined ? [e.context] : [],
     );
@@ -1063,7 +1112,21 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       local: { id: "qwen3-asr-0.6b", name: local?.name ?? "", installed: true },
       liveReady: true,
     });
-    expect(resolved).toEqual(fixture.engines);
+    // docs/dictation.md §3.5: the core's ledger says when a model that ran out is tried again; the
+    // preview keeps none. Everything else about the fallback models is resolved the same way.
+    const selectedRetry = fixture.engines.asr_fallback?.selected_retry_at_ms;
+    expect(selectedRetry).toBeGreaterThan(0);
+    const { selected_retry_at_ms: _retry, ...asrFallback } = fixture.engines.asr_fallback ?? {
+      enabled: false,
+      in_use: false,
+      models: [],
+    };
+    expect(resolved).toEqual({ ...fixture.engines, asr_fallback: asrFallback });
+    expect(resolved.asr_fallback?.models.map((m) => m.skip ?? m.issue ?? "ready")).toEqual([
+      "ready",
+      "same_as_selected",
+    ]);
+    expect(resolved.llm_fallback?.models.map((m) => m.issue)).toEqual(["key_missing"]);
   });
 
   it("events.json entries are rejected once mutated", () => {
@@ -1086,7 +1149,10 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
   });
 
   it("TauriBackend sends each command with the name and args the Rust side parses", async () => {
-    const recorded: { command: string; args: Record<string, unknown> | undefined }[] = [];
+    const recorded: {
+      command: string;
+      args: Record<string, unknown> | undefined;
+    }[] = [];
     const backend = new TauriBackend({
       invoke: (command, args) => {
         recorded.push({ command, args });
@@ -1096,12 +1162,18 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     });
     for (const entry of commands) await replay(backend, entry.name, entry.args);
     expect(recorded).toStrictEqual(
-      commands.map((entry) => ({ command: entry.name, args: entry.args ?? undefined })),
+      commands.map((entry) => ({
+        command: entry.name,
+        args: entry.args ?? undefined,
+      })),
     );
     // core_state is the one non-mutation command: the fixture state is what it returns.
     const viaBackend = await backend.getState();
     expect(viaBackend).toEqual(uiStateSchema.parse(state));
-    expect(recorded.at(-1)).toStrictEqual({ command: "core_state", args: undefined });
+    expect(recorded.at(-1)).toStrictEqual({
+      command: "core_state",
+      args: undefined,
+    });
   });
 });
 
@@ -1145,14 +1217,27 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
       listen: () => Promise.resolve(() => undefined),
     });
     expect(
-      (await backend.historyQuery({ sinceMs: 5, failed: true, query: "会议", limit: 100 })).total,
+      (
+        await backend.historyQuery({
+          sinceMs: 5,
+          failed: true,
+          query: "会议",
+          limit: 100,
+        })
+      ).total,
     ).toBe(312);
     expect(await backend.historyEntry("9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d")).toBeNull();
     expect((await backend.historyStats([1, 2, 3])).buckets).toHaveLength(2);
     expect((await backend.historyHits()).rules).toEqual(hits(fixture.hits).rules);
     expect(calls).toStrictEqual([
-      { command: "history_query", args: { sinceMs: 5, failed: true, query: "会议", limit: 100 } },
-      { command: "history_entry", args: { id: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d" } },
+      {
+        command: "history_query",
+        args: { sinceMs: 5, failed: true, query: "会议", limit: 100 },
+      },
+      {
+        command: "history_entry",
+        args: { id: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d" },
+      },
       { command: "history_stats", args: { boundaries: [1, 2, 3] } },
       { command: "history_hits", args: undefined },
     ]);
@@ -1165,7 +1250,10 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
     const fixture = z.record(z.string(), z.unknown()).parse(loadFixture("history-queries.json"));
     const entry = mirrorEntrySchema.parse(fixture.mirror_entry);
     expect(entry.shortened).toBe(true);
-    expect(entry.entry.origin).toEqual({ device: "Pixel 8", kind: "standalone" });
+    expect(entry.entry.origin).toEqual({
+      device: "Pixel 8",
+      kind: "standalone",
+    });
     expect(mirrorEntrySchema.nullable().parse(fixture.mirror_missing)).toBeNull();
     const profile = mirrorProfileSchema.parse(fixture.mirror_profile);
     expect([profile.theme, profile.locale, profile.local_model]).toEqual([
@@ -1194,8 +1282,14 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
     expect((await backend.mirrorHistoryEntry(desktop, entry.entry.id))?.shortened).toBe(true);
     expect((await backend.mirrorProfile(desktop))?.theme).toBe("dark");
     expect(calls).toStrictEqual([
-      { command: "mirror_history_query", args: { desktop, query: "会议", limit: 50 } },
-      { command: "mirror_history_entry", args: { desktop, id: entry.entry.id } },
+      {
+        command: "mirror_history_query",
+        args: { desktop, query: "会议", limit: 50 },
+      },
+      {
+        command: "mirror_history_entry",
+        args: { desktop, id: entry.entry.id },
+      },
       { command: "mirror_profile", args: { desktop } },
     ]);
   });

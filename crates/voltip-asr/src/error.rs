@@ -41,10 +41,16 @@ pub enum AsrError {
         /// Its message, cut to [`crate::MAX_ERROR_BODY_CHARS`] characters.
         message: String,
     },
-    /// Model Studio's 免费额度用完即停 stopped the model: its free quota is used up and the account
-    /// allows it nothing more (`AllocationQuota.FreeTierOnly`).
-    #[error("ASR free quota used up: Model Studio stops this model once its free quota ends (免费额度用完即停)")]
-    FreeQuotaExhausted,
+    /// The service says the model's quota is used up ([`is_quota_exhausted`]): Model Studio's
+    /// 免费额度用完即停 (`AllocationQuota.FreeTierOnly`) or OpenAI's `insufficient_quota`. The
+    /// one error a fallback model list moves on for (docs/dictation.md §3.5).
+    #[error("ASR quota used up ({code}): {message}")]
+    QuotaExhausted {
+        /// The service's error code.
+        code: String,
+        /// Its message, cut to [`crate::MAX_ERROR_BODY_CHARS`] characters.
+        message: String,
+    },
     /// The recording is not audio the protocol can send (not a 16-bit PCM WAV).
     #[error("ASR audio: {0}")]
     Audio(String),
@@ -57,9 +63,39 @@ impl AsrError {
         match self {
             Self::RateLimited { .. } | Self::Network(_) | Self::Timeout => true,
             Self::Server { status, .. } => *status >= 500,
-            Self::InvalidConfig(_) | Self::Unauthorized | Self::BadResponse(_) | Self::Service { .. } | Self::FreeQuotaExhausted | Self::Audio(_) => false,
+            Self::InvalidConfig(_) | Self::Unauthorized | Self::BadResponse(_) | Self::Service { .. } | Self::QuotaExhausted { .. } | Self::Audio(_) => false,
         }
     }
+}
+
+/// Whether a service's error `code` or `message` says the model's quota is used up
+/// (docs/dictation.md §3.5): Model Studio's 免费额度用完即停 names it `AllocationQuota.FreeTierOnly`,
+/// OpenAI and the services copying its errors `insufficient_quota`. Rate limits are not: Model
+/// Studio's `Throttling…` and OpenAI's `rate_limit_exceeded` stay [`AsrError::RateLimited`].
+pub fn is_quota_exhausted(code: &str, message: &str) -> bool {
+    code.contains("FreeTierOnly") || message.contains("FreeTierOnly") || code == "insufficient_quota"
+}
+
+/// The `code` and `message` of an error body, OpenAI's form (`{"error": {"code", "message"}}`) or
+/// Model Studio's native one (`{"code", "message"}`); empty strings when the body has neither.
+pub(crate) fn error_fields(body: &str) -> (String, String) {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else { return (String::new(), String::new()) };
+    let field = |v: &serde_json::Value, key: &str| match v.get(key) {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Null) | None => String::new(),
+        Some(other) => other.to_string(),
+    };
+    match value.get("error") {
+        Some(inner @ serde_json::Value::Object(_)) => (field(inner, "code"), field(inner, "message")),
+        _ => (field(&value, "code"), field(&value, "message")),
+    }
+}
+
+/// [`AsrError::QuotaExhausted`] when the error body says so, whatever the HTTP status.
+pub(crate) fn quota_error(body: &str) -> Option<AsrError> {
+    let (code, message) = error_fields(body);
+    is_quota_exhausted(&code, &message)
+        .then(|| AsrError::QuotaExhausted { code, message: crate::client::truncate_chars(&message, crate::MAX_ERROR_BODY_CHARS) })
 }
 
 fn retry_suffix(retry_after_ms: &Option<u64>) -> String {
@@ -84,7 +120,11 @@ mod tests {
             AsrError::Service { code: "InvalidParameter".into(), message: "Model not exist.".into() }.to_string(),
             "ASR service error InvalidParameter: Model not exist."
         );
-        assert!(AsrError::FreeQuotaExhausted.to_string().contains("免费额度用完即停"));
+        assert_eq!(
+            AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "The free tier of the model has been exhausted.".into() }
+                .to_string(),
+            "ASR quota used up (AllocationQuota.FreeTierOnly): The free tier of the model has been exhausted."
+        );
         assert_eq!(AsrError::Audio("not a WAV file".into()).to_string(), "ASR audio: not a WAV file");
     }
 
@@ -101,7 +141,33 @@ mod tests {
         assert!(!AsrError::InvalidConfig(String::new()).is_retryable());
         assert!(!AsrError::BadResponse(String::new()).is_retryable());
         assert!(!AsrError::Service { code: String::new(), message: String::new() }.is_retryable());
-        assert!(!AsrError::FreeQuotaExhausted.is_retryable());
+        assert!(!AsrError::QuotaExhausted { code: String::new(), message: String::new() }.is_retryable());
         assert!(!AsrError::Audio(String::new()).is_retryable());
+    }
+
+    #[test]
+    fn a_used_up_quota_is_told_from_a_rate_limit() {
+        assert!(is_quota_exhausted("AllocationQuota.FreeTierOnly", ""));
+        assert!(is_quota_exhausted("", "AllocationQuota.FreeTierOnly: the free tier of the model has been exhausted"));
+        assert!(is_quota_exhausted("insufficient_quota", "You exceeded your current quota"));
+        assert!(!is_quota_exhausted("Throttling.RateQuota", "Requests rate limit exceeded"));
+        assert!(!is_quota_exhausted("Throttling.AllocationQuota", "Allocated quota exceeded"));
+        assert!(!is_quota_exhausted("rate_limit_exceeded", "Rate limit reached"));
+        assert!(!is_quota_exhausted("", ""));
+        assert_eq!(
+            error_fields(r#"{"error":{"code":"insufficient_quota","message":"m","type":"insufficient_quota"}}"#),
+            ("insufficient_quota".into(), "m".into())
+        );
+        assert_eq!(
+            error_fields(r#"{"code":"AllocationQuota.FreeTierOnly","message":"m","request_id":"r"}"#),
+            ("AllocationQuota.FreeTierOnly".into(), "m".into())
+        );
+        assert_eq!(error_fields(r#"{"code":7,"message":null}"#), ("7".into(), String::new()));
+        assert_eq!(error_fields("bad gateway"), (String::new(), String::new()));
+        assert_eq!(
+            quota_error(r#"{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}"#),
+            Some(AsrError::QuotaExhausted { code: "insufficient_quota".into(), message: "You exceeded your current quota".into() })
+        );
+        assert_eq!(quota_error(r#"{"error":{"code":"rate_limit_exceeded","message":"slow"}}"#), None);
     }
 }

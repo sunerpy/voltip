@@ -1356,3 +1356,36 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     ).toEqual(["Simplified", "Traditional", "As recognised"]);
   });
 });
+
+describe("fallback models on the engines pages (docs/dictation.md §3.5)", () => {
+  it("names the fallback model standing in, and where the audio goes once the quota runs out", async () => {
+    const backend = new MockBackend({ providerKeys: [{ provider: "groq", kind: "asr" }] });
+    const state = await backend.getState();
+    await backend.invoke("settings_set_engines", {
+      engines: {
+        ...state.settings.engines,
+        asr_fallback: { enabled: true, models: [{ provider: "groq", model: "whisper-large-v3" }] },
+      },
+    });
+    renderApp({ path: "/speech", backend });
+    expect(await screen.findByTestId("fallback-asr")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId("privacy-asr")).toHaveTextContent("额度用完时改发给Groq");
+    });
+    expect(screen.getByTestId("current-asr")).not.toHaveTextContent("候补");
+    act(() => {
+      backend.simulateQuotaExhausted("asr", Date.now() + 86_400_000);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("current-asr")).toHaveTextContent(
+        "当前：Groq · whisper-large-v3（候补）",
+      );
+    });
+  });
+
+  it("the AI page carries the clean-up's list", async () => {
+    renderApp({ path: "/ai" });
+    expect(await screen.findByTestId("fallback-llm")).toBeInTheDocument();
+    expect(screen.queryByTestId("fallback-asr")).toBeNull();
+  });
+});

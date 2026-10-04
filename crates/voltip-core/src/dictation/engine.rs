@@ -51,6 +51,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+use super::fallback::{FallbackRefiner, FallbackTranscriber, Link, QuotaLedger};
 use super::long::{self, EnergySegmenter};
 use super::ports::{
     AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection,
@@ -61,11 +62,12 @@ use super::ports::{
 use super::redecode::RedecodeStreaming;
 use super::wav;
 use super::{DictationPhase, DictationStatus, FailureCode, LiveText, OutputMode, ProcessingStage, SegmentProgress, TakeKind, inject_separator, join_text};
-use crate::engines::{ChineseScript, LiveSource, ResolvedEngines};
+use crate::engines::{ChineseScript, FallbackTarget, LiveSource, ResolvedEngines};
 use crate::history::{EditRecord, HistoryEntry, Outcome};
 use crate::hotkey::Modifier;
 use crate::models::ModelManager;
 use crate::presets::{CustomPreset, PresetId, TakePreset, resolve};
+use crate::providers::ServiceKind;
 use crate::scenes::{AppRef, ContextSharing, LANGUAGE_AUTO, Scene, TakeContext, match_scene};
 use crate::script::normalized;
 use crate::settings::{RecordingSettings, RecordingSource};
@@ -159,6 +161,9 @@ pub enum Internal {
         session: u64,
         /// Why.
         reason: String,
+        /// The model the stream's text so far came from (docs/dictation.md §3.5): `live_inject`
+        /// may have pasted some of it.
+        model: Option<String>,
     },
     /// The live worker finished (the capture closed): the flushed committed sentences and tail.
     StreamFinished {
@@ -166,6 +171,9 @@ pub enum Internal {
         session: u64,
         /// The flushed result, or why the flush failed.
         result: Result<StreamFinal, DictationError>,
+        /// The model the stream's text came from before the flush: the receipt when the flush
+        /// failed after `live_inject` pasted sentences (docs/dictation.md §3.5).
+        before: Option<String>,
     },
     /// `live_inject` (docs/dictation.md §12): one sentence's injection came back.
     LiveInjected {
@@ -261,8 +269,8 @@ impl std::fmt::Debug for Internal {
             // Preview text never reaches the log, like transcripts.
             Self::Partial { session, current } => f.debug_struct("Partial").field("session", session).field("chars", &current.chars().count()).finish(),
             Self::Segment { session, segment } => f.debug_struct("Segment").field("session", session).field("end_ms", &segment.end_ms).finish(),
-            Self::StreamDegraded { session, reason } => f.debug_struct("StreamDegraded").field("session", session).field("reason", reason).finish(),
-            Self::StreamFinished { session, result } => {
+            Self::StreamDegraded { session, reason, .. } => f.debug_struct("StreamDegraded").field("session", session).field("reason", reason).finish(),
+            Self::StreamFinished { session, result, .. } => {
                 f.debug_struct("StreamFinished").field("session", session).field("segments", &result.as_ref().map(|r| r.committed.len())).finish()
             }
             Self::LiveInjected { session, idx, result } => {
@@ -307,6 +315,9 @@ pub struct PipelineOutcome {
     pub refined: bool,
     /// ASR latency.
     pub asr_ms: u64,
+    /// The model that recognised `raw_text`, when the pipeline recognised it itself (a whole take,
+    /// an edit's instruction) and the client said (docs/dictation.md §3.5).
+    pub asr_model: Option<String>,
     /// Refine latency.
     pub refine_ms: Option<u64>,
     /// Refine skip / failure reason.
@@ -539,6 +550,10 @@ struct Take {
     long_requested: bool,
     /// The long take's file and segments, once its recording thread runs.
     long: Option<LongTake>,
+    /// The model the take's latest text came from, as the client that produced it reported it
+    /// (docs/dictation.md §3.5): the stream that pasted or flushed sentences, the remainder, the
+    /// last recognised segment of a long take. The history records it.
+    served_asr_model: Option<String>,
 }
 
 impl Take {
@@ -575,6 +590,7 @@ impl Take {
             source: None,
             long_requested: false,
             long: None,
+            served_asr_model: None,
         }
     }
 
@@ -639,6 +655,9 @@ pub struct DictationEngine {
     /// Where long takes' recording files go (`<data_dir>/recordings`, set by the runtime); `None`:
     /// a long take ends at its in-memory part.
     recordings: Option<PathBuf>,
+    /// Which models ran out of quota (docs/dictation.md §3.5): shared by every client built, so it
+    /// outlives a configuration change.
+    quota: QuotaLedger,
 }
 
 /// Why a scene's streaming output mode could not be honoured (docs/dictation.md §18.4); the take
@@ -672,6 +691,36 @@ fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)).unwrap_or(0)
 }
 
+/// The clients for `engines` (docs/dictation.md §3.5): the factory's for the selected services,
+/// behind a fallback chain when fallback models run — the factory builds each fallback model's
+/// client from the configuration as if that model were selected
+/// ([`ResolvedEngines::with_candidate`]). Every chain shares `quota`.
+fn clients(factory: &EngineFactory, engines: &ResolvedEngines, quota: &QuotaLedger) -> (Arc<dyn Transcriber>, Option<Arc<dyn Refiner>>) {
+    let (transcriber, refiner) = factory(engines);
+    let asr: Vec<&FallbackTarget> = engines.asr_fallback.targets().collect();
+    let transcriber = match &engines.asr_fallback.selected {
+        Some(selected) if !asr.is_empty() => {
+            let mut links = vec![Link { key: selected.clone(), port: transcriber }];
+            links.extend(asr.into_iter().map(|target| Link { key: target.key.clone(), port: factory(&engines.with_candidate(ServiceKind::Asr, target)).0 }));
+            Arc::new(FallbackTranscriber::new(links, quota.clone())) as Arc<dyn Transcriber>
+        }
+        _ => transcriber,
+    };
+    let llm: Vec<&FallbackTarget> = engines.refine_fallback.targets().collect();
+    let refiner = match (refiner, &engines.refine_fallback.selected) {
+        (Some(refiner), Some(selected)) if !llm.is_empty() => {
+            let mut links = vec![Link { key: selected.clone(), port: refiner }];
+            links.extend(
+                llm.into_iter()
+                    .filter_map(|target| factory(&engines.with_candidate(ServiceKind::Llm, target)).1.map(|port| Link { key: target.key.clone(), port })),
+            );
+            Some(Arc::new(FallbackRefiner::new(links, quota.clone())) as Arc<dyn Refiner>)
+        }
+        (refiner, _) => refiner,
+    };
+    (transcriber, refiner)
+}
+
 /// Stop a capture nobody wants any more (device release), off the core task.
 fn release(capture: Box<dyn Capture>) {
     tokio::task::spawn_blocking(move || {
@@ -697,7 +746,8 @@ impl DictationEngine {
     /// receiver must be polled by the owner and fed back through [`DictationEngine::on_internal`].
     pub fn new(ports: DictationPorts, engines: &ResolvedEngines, levels: broadcast::Sender<LevelFrame>) -> (Self, mpsc::Receiver<Internal>) {
         let (tx, rx) = mpsc::channel(INTERNAL_QUEUE);
-        let (transcriber, refiner) = (ports.factory)(engines);
+        let quota = QuotaLedger::default();
+        let (transcriber, refiner) = clients(&ports.factory, engines, &quota);
         let engine = Self {
             audio: ports.audio,
             transcriber,
@@ -732,6 +782,7 @@ impl DictationEngine {
             recording: RecordingSettings::default(),
             segmenter: ports.segmenter,
             recordings: None,
+            quota,
         };
         engine.warm_streaming();
         engine.warm_transcriber();
@@ -760,6 +811,11 @@ impl DictationEngine {
     /// (docs/dictation.md §21).
     pub fn refiner(&self) -> Option<Arc<dyn Refiner>> {
         self.refiner.clone()
+    }
+
+    /// Which models ran out of quota (docs/dictation.md §3.5): the runtime shows it and clears it.
+    pub fn quota(&self) -> &QuotaLedger {
+        &self.quota
     }
 
     /// `Settings.context_sharing` for the runs that start from now on (docs/dictation.md §18.5).
@@ -795,7 +851,7 @@ impl DictationEngine {
     /// clients it started with; a live preview already running keeps its session; a run already
     /// started keeps its output mode.
     pub fn configure(&mut self, engines: &ResolvedEngines) {
-        let (transcriber, refiner) = (self.factory)(engines);
+        let (transcriber, refiner) = clients(&self.factory, engines, &self.quota);
         self.transcriber = transcriber;
         self.refiner = refiner;
         self.language = engines.language.clone();
@@ -1373,8 +1429,8 @@ impl DictationEngine {
                 true
             }),
             Internal::Segment { session, segment } => self.on_segment(session, segment),
-            Internal::StreamDegraded { session, reason } => self.on_stream_degraded(session, reason),
-            Internal::StreamFinished { session, result } => self.on_stream_finished(session, result),
+            Internal::StreamDegraded { session, reason, model } => self.on_stream_degraded(session, reason, model),
+            Internal::StreamFinished { session, result, before } => self.on_stream_finished(session, result, before),
             Internal::LiveInjected { session, idx, result } => self.on_live_injected(session, idx, result),
             Internal::Remainder { session, result } => self.on_remainder(session, result),
             Internal::SelectionCopied { session, result } => self.on_selection_copied(session, result),
@@ -1455,16 +1511,28 @@ impl DictationEngine {
         })
     }
 
+    /// The take's latest text came from `model` (docs/dictation.md §3.5); `None` (a client that
+    /// cannot say) keeps the receipt it had.
+    fn served_by(&mut self, model: Option<String>) {
+        if let Some(model) = model {
+            self.take.served_asr_model = Some(model);
+        }
+    }
+
     /// The live worker gave up (docs/dictation.md §11 / §12). Whole take: the preview is marked
     /// degraded, nothing else. Streaming modes: before the first sentence the run becomes a whole
     /// take; `live_inject` after a sentence keeps what it pasted and later transcribes only the
     /// remainder. `Done.live_error` carries the reason either way.
-    fn on_stream_degraded(&mut self, session: u64, reason: String) -> Vec<Effect> {
+    fn on_stream_degraded(&mut self, session: u64, reason: String, model: Option<String>) -> Vec<Effect> {
         if session != self.status.session {
             return Vec::new();
         }
         tracing::warn!(session, reason = %reason, mode = self.take.mode.as_str(), "live preview degraded; the recording continues without it");
         self.take.worker_pending = false;
+        if self.take.mode == OutputMode::LiveInject && !self.take.inject.segments.is_empty() {
+            // Sentences of the stream were taken: they came from its model.
+            self.served_by(model);
+        }
         let mut effects = self.on_live(session, |live| {
             live.degraded = Some(reason.clone());
             true
@@ -1525,18 +1593,27 @@ impl DictationEngine {
     /// (committed sentences + tail) replaces the preview taken at stop time, which may have missed
     /// the last partial; a failed flush keeps the earlier preview. Streaming modes: the flush is
     /// the text (or, failing, the reason to fall back).
-    fn on_stream_finished(&mut self, session: u64, result: Result<StreamFinal, DictationError>) -> Vec<Effect> {
+    fn on_stream_finished(&mut self, session: u64, result: Result<StreamFinal, DictationError>, before: Option<String>) -> Vec<Effect> {
         if session != self.status.session {
             return Vec::new();
         }
         self.take.worker_pending = false;
-        let fin = match result {
+        let mut fin = match result {
             Ok(fin) => fin,
             Err(e) => {
                 tracing::warn!(session, error = %e, mode = self.take.mode.as_str(), "live preview flush failed");
+                if self.take.mode == OutputMode::LiveInject && !self.take.inject.segments.is_empty() {
+                    self.served_by(before);
+                }
                 return self.degrade(format!("flush: {e}"));
             }
         };
+        let model = fin.model.take().or(before);
+        let has_text = !fin.tail.trim().is_empty() || fin.committed.iter().any(|s| !s.text.trim().is_empty());
+        if self.take.mode.is_streaming() && has_text {
+            // The flush is the take's text (or its last sentences): its model is the receipt.
+            self.served_by(model);
+        }
         let final_text = LiveText { committed: fin.committed.clone(), current: fin.tail.clone(), ..LiveText::default() }.preview();
         let mut effects = match &self.status.phase {
             DictationPhase::Processing { stage, started_at, stage_started_at, preview }
@@ -1666,6 +1743,7 @@ impl DictationEngine {
             Ok(t) if !t.text.trim().is_empty() => {
                 let start_ms = self.take.inject.last_end_ms;
                 self.queue_sentence(Segment { text: t.text.trim().to_owned(), start_ms, end_ms: self.recording_ms.max(start_ms) });
+                self.served_by(t.model);
             }
             Ok(_) => tracing::info!(session, "the remainder transcribed to nothing"),
             Err(e) => {
@@ -1822,6 +1900,7 @@ impl DictationEngine {
             text,
             refined: false,
             asr_ms: self.take.asr_ms,
+            asr_model: None,
             refine_ms: None,
             refine_error: None,
             refine_model: None,
@@ -2154,7 +2233,7 @@ impl DictationEngine {
         let task = tokio::spawn(async move {
             let wav = tokio::task::spawn_blocking(move || long::read_segment(&path, start, end)).await;
             let result = match wav {
-                Ok(Ok(wav)) if wav::is_silent(&wav) => Ok(Transcript { text: String::new(), latency_ms: 0 }),
+                Ok(Ok(wav)) if wav::is_silent(&wav) => Ok(Transcript { text: String::new(), latency_ms: 0, model: None }),
                 Ok(Ok(wav)) => {
                     transcriber.transcribe(&wav, language.as_deref(), &glossary).await.map(|t| Transcript { text: normalized(script, t.text.trim()), ..t })
                 }
@@ -2182,6 +2261,11 @@ impl DictationEngine {
         match result {
             Ok(t) => {
                 l.asr_ms += t.latency_ms;
+                if !t.text.trim().is_empty()
+                    && let Some(model) = t.model
+                {
+                    self.take.served_asr_model = Some(model);
+                }
                 segment.text = SegmentText::Done(t.text);
             }
             Err(e) => {
@@ -2373,7 +2457,7 @@ impl DictationEngine {
 
     /// Enter `Done` (or `Failed` with `undelivered` when the injection failed) and record the run.
     fn finish_with(&mut self, outcome: PipelineOutcome, undelivered: Option<String>) -> Vec<Effect> {
-        let PipelineOutcome { raw_text, text, refined, asr_ms, refine_ms, refine_error, refine_model, vocabulary, injection, edit } = outcome;
+        let PipelineOutcome { raw_text, text, refined, asr_ms, asr_model, refine_ms, refine_error, refine_model, vocabulary, injection, edit } = outcome;
         let mode = self.take.mode;
         // A long take's recording file goes with the take (`terminal`), whichever text it took.
         let segments =
@@ -2385,7 +2469,8 @@ impl DictationEngine {
             raw_text: raw_text.clone(),
             text: text.clone(),
             refined,
-            asr_model: self.asr_model.clone(),
+            // docs/dictation.md §3.5: the model the text came from, as its client reported it.
+            asr_model: asr_model.or_else(|| self.take.served_asr_model.clone()).unwrap_or_else(|| self.asr_model.clone()),
             refine_model: if refined { Some(refine_model.filter(|m| !m.is_empty()).unwrap_or_else(|| self.refine_model.clone())) } else { None },
             duration_ms: self.recording_ms,
             asr_ms,
@@ -2554,13 +2639,13 @@ struct LiveJob {
 /// [`Internal::StreamDegraded`] and ends the worker; the recording never notices.
 fn run_live(job: LiveJob) {
     let LiveJob { session, mut pcm, streaming, language, script, cancelled, tx } = job;
-    let degrade = |reason: String| {
-        let _ = tx.blocking_send(Internal::StreamDegraded { session, reason });
+    let degrade = |reason: String, model: Option<String>| {
+        let _ = tx.blocking_send(Internal::StreamDegraded { session, reason, model });
     };
     let mut stream = match std::panic::catch_unwind(AssertUnwindSafe(|| streaming.open(language.as_deref()))) {
         Ok(Ok(s)) => s,
-        Ok(Err(e)) => return degrade(format!("open: {e}")),
-        Err(_) => return degrade("open: recogniser panicked".to_owned()),
+        Ok(Err(e)) => return degrade(format!("open: {e}"), None),
+        Err(_) => return degrade("open: recogniser panicked".to_owned(), None),
     };
     let mut buf = vec![0.0_f32; LIVE_CHUNK_SAMPLES];
     let mut pending: Vec<f32> = Vec::with_capacity(LIVE_CHUNK_SAMPLES * 2);
@@ -2613,8 +2698,9 @@ fn run_live(job: LiveJob) {
     }));
     match outcome {
         Ok(Ok(())) => {}
-        Ok(Err(reason)) => return degrade(reason),
-        Err(_) => return degrade("decoder panicked".to_owned()),
+        // The text the stream gave so far came from its model (docs/dictation.md §3.5).
+        Ok(Err(reason)) => return degrade(reason, stream.model()),
+        Err(_) => return degrade("decoder panicked".to_owned(), None),
     }
     // A cancelled take ends here, without the flush: with the built-in service's preview the
     // flush would upload the rest of a take the person abandoned (docs/dictation.md §11.8). The
@@ -2623,6 +2709,9 @@ fn run_live(job: LiveJob) {
         tracing::debug!(session, "live preview: take cancelled; no flush");
         return;
     }
+    // The flush consumes the session and may itself send its last requests: its own receipt comes
+    // back in `StreamFinal.model`; this one is for a flush that fails (docs/dictation.md §3.5).
+    let before = stream.model();
     let result = match std::panic::catch_unwind(AssertUnwindSafe(move || stream.finish())) {
         Ok(r) => r,
         Err(_) => Err(DictationError::Asr("flush: recogniser panicked".to_owned())),
@@ -2630,8 +2719,9 @@ fn run_live(job: LiveJob) {
     let result = result.map(|fin| StreamFinal {
         committed: fin.committed.into_iter().map(|s| Segment { text: normalized(script, &s.text), ..s }).collect(),
         tail: normalized(script, &fin.tail),
+        model: fin.model,
     });
-    let _ = tx.blocking_send(Internal::StreamFinished { session, result });
+    let _ = tx.blocking_send(Internal::StreamFinished { session, result, before });
 }
 
 /// Rate limit for partial results: one every [`PARTIAL_THROTTLE`] at most, only when the text
@@ -2708,17 +2798,17 @@ fn process_final_text(vocabulary: &Vocabulary, text: &str) -> (String, Vocabular
 async fn run_pipeline(job: PipelineJob) {
     let PipelineJob { session, input, language, transcriber, refiner, refine_requested, hints, injector, vocabulary, script, long, tx } = job;
     let glossary = vocabulary.glossary();
-    let (raw_text, asr_ms) = match input {
+    let (raw_text, asr_ms, asr_model) = match input {
         // The recogniser's text in the chosen script first (docs/dictation.md §17); a streaming
-        // final text (`Text`) was normalised by the live worker already.
+        // final text (`Text`) was normalised by the live worker already, and its model came with it.
         PipelineInput::Wav(wav) => match transcriber.transcribe(&wav, language.as_deref(), glossary).await {
-            Ok(t) => (normalized(script, t.text.trim()), t.latency_ms),
+            Ok(t) => (normalized(script, t.text.trim()), t.latency_ms, t.model),
             Err(e) => {
                 let _ = tx.send(Internal::Finished { session, result: Err(e) }).await;
                 return;
             }
         },
-        PipelineInput::Text { raw_text, asr_ms } => (raw_text.trim().to_owned(), asr_ms),
+        PipelineInput::Text { raw_text, asr_ms } => (raw_text.trim().to_owned(), asr_ms, None),
     };
     if raw_text.is_empty() {
         let _ = tx.send(Internal::Finished { session, result: Err(DictationError::NoSpeech) }).await;
@@ -2780,7 +2870,8 @@ async fn run_pipeline(job: PipelineJob) {
         Ok(result) => result,
         Err(e) => Err(DictationError::Inject(format!("injector task failed: {e}"))),
     };
-    let outcome = PipelineOutcome { raw_text, text, refined, asr_ms, refine_ms, refine_error, refine_model, vocabulary: hits, injection, edit: None };
+    let outcome =
+        PipelineOutcome { raw_text, text, refined, asr_ms, asr_model, refine_ms, refine_error, refine_model, vocabulary: hits, injection, edit: None };
     let _ = tx.send(Internal::Finished { session, result: Ok(outcome) }).await;
 }
 
@@ -2815,8 +2906,8 @@ async fn run_edit(job: EditJob) {
         }
     };
     let glossary = vocabulary.glossary();
-    let (raw_text, asr_ms) = match transcriber.transcribe(&wav, language.as_deref(), glossary).await {
-        Ok(t) => (normalized(script, t.text.trim()), t.latency_ms),
+    let (raw_text, asr_ms, asr_model) = match transcriber.transcribe(&wav, language.as_deref(), glossary).await {
+        Ok(t) => (normalized(script, t.text.trim()), t.latency_ms, t.model),
         Err(e) => return finish(Err(e)).await,
     };
     let corrected = vocabulary.correct(&raw_text);
@@ -2848,6 +2939,7 @@ async fn run_edit(job: EditJob) {
         text,
         refined: true,
         asr_ms,
+        asr_model,
         refine_ms: Some(out.latency_ms),
         refine_error: None,
         refine_model: Some(out.model),
@@ -3395,6 +3487,7 @@ mod tests {
                 text: "x".into(),
                 refined: false,
                 asr_ms: 1,
+                asr_model: None,
                 refine_ms: None,
                 refine_error: None,
                 refine_model: None,
@@ -3405,7 +3498,9 @@ mod tests {
         };
         assert!(format!("{stale:?}").contains("Finished"));
         assert!(format!("{:?}", Internal::LiveInjected { session: 1, idx: 0, result: Ok(Injection { via: Via::Paste, note: None }) }).contains("idx: 0"));
-        assert!(format!("{:?}", Internal::Remainder { session: 1, result: Ok(Transcript { text: "秘密".into(), latency_ms: 1 }) }).contains("Ok(2)"));
+        assert!(
+            format!("{:?}", Internal::Remainder { session: 1, result: Ok(Transcript { text: "秘密".into(), latency_ms: 1, model: None }) }).contains("Ok(2)")
+        );
         assert!(r.engine.on_internal(Internal::LiveInjected { session: 1, idx: 0, result: Ok(Injection { via: Via::Paste, note: None }) }).is_empty());
         assert!(r.engine.on_internal(Internal::Remainder { session: 1, result: Err(DictationError::Asr("late".into())) }).is_empty());
         assert!(r.engine.on_internal(stale).is_empty());
@@ -3928,21 +4023,24 @@ mod tests {
         let mut r = happy();
         r.start_open().await;
         r.engine.stop().unwrap();
-        assert!(r.engine.on_internal(Internal::StreamFinished { session: 1, result: Err(DictationError::Asr("flush".into())) }).is_empty());
-        assert!(r.engine.on_internal(Internal::StreamFinished { session: 9, result: Ok(StreamFinal::default()) }).is_empty());
-        let fin = StreamFinal { committed: vec![Segment { text: "迟到的".into(), start_ms: 0, end_ms: 1 }], tail: String::new() };
-        let fx = r.engine.on_internal(Internal::StreamFinished { session: 1, result: Ok(fin.clone()) });
+        assert!(r.engine.on_internal(Internal::StreamFinished { session: 1, result: Err(DictationError::Asr("flush".into())), before: None }).is_empty());
+        assert!(r.engine.on_internal(Internal::StreamFinished { session: 9, result: Ok(StreamFinal::default()), before: None }).is_empty());
+        let fin = StreamFinal { committed: vec![Segment { text: "迟到的".into(), start_ms: 0, end_ms: 1 }], tail: String::new(), model: None };
+        let fx = r.engine.on_internal(Internal::StreamFinished { session: 1, result: Ok(fin.clone()), before: None });
         assert!(matches!(phase(&fx), DictationPhase::Processing { preview: Some(p), .. } if p == "迟到的"), "a good flush fills an empty preview: {fx:?}");
-        assert!(r.engine.on_internal(Internal::StreamFinished { session: 1, result: Ok(fin) }).is_empty(), "same text: no update");
-        assert!(r.engine.on_internal(Internal::StreamDegraded { session: 1, reason: "late".into() }).is_empty(), "degraded while processing: ignored");
+        assert!(r.engine.on_internal(Internal::StreamFinished { session: 1, result: Ok(fin), before: None }).is_empty(), "same text: no update");
+        assert!(
+            r.engine.on_internal(Internal::StreamDegraded { session: 1, reason: "late".into(), model: None }).is_empty(),
+            "degraded while processing: ignored"
+        );
         assert!(r.engine.on_internal(Internal::Segment { session: 1, segment: Segment { text: "x".into(), start_ms: 0, end_ms: 1 } }).is_empty());
         let fx = r.run_to_terminal().await;
         assert!(matches!(phase(&fx), DictationPhase::Done { .. }));
-        assert!(format!("{:?}", Internal::StreamDegraded { session: 1, reason: "r".into() }).contains("StreamDegraded"));
+        assert!(format!("{:?}", Internal::StreamDegraded { session: 1, reason: "r".into(), model: None }).contains("StreamDegraded"));
         assert!(format!("{:?}", Internal::Partial { session: 1, current: "秘密".into() }).contains("chars: 2"));
         assert!(!format!("{:?}", Internal::Partial { session: 1, current: "秘密".into() }).contains("秘密"), "preview text stays out of the log");
         assert!(format!("{:?}", Internal::Segment { session: 1, segment: Segment { text: "s".into(), start_ms: 0, end_ms: 5 } }).contains("end_ms: 5"));
-        assert!(format!("{:?}", Internal::StreamFinished { session: 1, result: Ok(StreamFinal::default()) }).contains("segments: Ok(0)"));
+        assert!(format!("{:?}", Internal::StreamFinished { session: 1, result: Ok(StreamFinal::default()), before: None }).contains("segments: Ok(0)"));
     }
 
     /// Live preview is gated twice: by the configuration (`live_preview_ready`) and by the port
@@ -4477,7 +4575,7 @@ mod tests {
         r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.current == "今天")).await;
         let fx = r.engine.stop().unwrap();
         assert!(matches!(phase(&fx), DictationPhase::Processing { stage: ProcessingStage::Finalizing, .. }));
-        assert!(r.engine.on_internal(Internal::StreamFinished { session: 1, result: Err(DictationError::Asr("flush".into())) }).is_empty());
+        assert!(r.engine.on_internal(Internal::StreamFinished { session: 1, result: Err(DictationError::Asr("flush".into())), before: None }).is_empty());
         assert_eq!(r.engine.current_mode(), OutputMode::WholeTake);
         let fx = r.run_to_terminal().await;
         assert!(statuses(&fx).iter().any(|p| matches!(p, DictationPhase::Processing { stage: ProcessingStage::Transcribing, .. })), "{fx:?}");
@@ -5881,5 +5979,291 @@ mod tests {
         assert!(matches!(phase(&fx), DictationPhase::Done { refined: true, .. }), "{fx:?}");
         let hints = r.refiner.as_ref().unwrap().hints();
         assert_eq!(hints[0].context, RefineContext { app_name: Some("Slack".into()), window_title: None, instruction: None }, "the take's snapshot");
+    }
+
+    // ---------------- fallback models (docs/dictation.md §3.5) ----------------
+
+    /// Model Studio selected for both services with fallback models; `asr` and `llm` in chain order
+    /// (the first of each is the selected one; no `llm` = no clean-up).
+    fn resolved_fallback(asr: &[&str], llm: &[&str], live_preview: bool, output_mode: OutputMode) -> ResolvedEngines {
+        resolved_fallback_with(&TEST_BUILT_IN, ProviderId::Aliyun, asr, llm, live_preview, output_mode)
+    }
+
+    fn resolved_fallback_with(
+        built_in: &BuiltIn,
+        asr_provider: ProviderId,
+        asr: &[&str],
+        llm: &[&str],
+        live_preview: bool,
+        output_mode: OutputMode,
+    ) -> ResolvedEngines {
+        use crate::engines::{FallbackModel, FallbackSettings};
+        let mut secrets = UserSecrets::default();
+        secrets.set(ProviderId::Aliyun, ServiceKind::Asr, Some("sk-test".into()));
+        let selected_asr = (asr_provider == ProviderId::Aliyun).then(|| asr[0].to_owned());
+        let choice = ProviderSettings { asr_model: selected_asr, llm_model: llm.first().map(|m| (*m).to_owned()), ..Default::default() };
+        let skip = usize::from(asr_provider == ProviderId::Aliyun);
+        let entries =
+            |list: &[&str], skip: usize| list.iter().skip(skip).map(|m| FallbackModel { provider: ProviderId::Aliyun, model: (*m).to_owned() }).collect();
+        let settings = EngineSettings {
+            asr_provider,
+            llm_provider: ProviderId::Aliyun,
+            providers: [(ProviderId::Aliyun, choice)].into(),
+            refine_enabled: !llm.is_empty(),
+            live_preview,
+            output_mode,
+            asr_fallback: FallbackSettings { enabled: true, models: entries(asr, skip) },
+            llm_fallback: FallbackSettings { enabled: true, models: entries(llm, 1) },
+            ..EngineSettings::default()
+        };
+        ResolvedEngines::resolve(&settings, &secrets, built_in)
+    }
+
+    /// A rig whose factory hands every model its own fake ([`crate::dictation::fakes::factory_by_model`]).
+    fn rig_fallback(
+        engines: &ResolvedEngines,
+        transcribers: &[(&str, Arc<FakeTranscriber>)],
+        refiners: &[(&str, Arc<FakeRefiner>)],
+        injector: FakeInjector,
+    ) -> Rig {
+        let (audio, injector) = (Arc::new(FakeAudio::speech()), Arc::new(injector));
+        let (levels_tx, levels) = broadcast::channel(64);
+        let unused = Arc::new(FakeTranscriber::ok("unused"));
+        let factory = crate::dictation::fakes::factory_by_model(transcribers, refiners);
+        let ports = DictationPorts { factory, ..ports_with(audio.clone(), unused.clone(), None, injector.clone()) };
+        let (engine, rx) = DictationEngine::new(ports, engines, levels_tx);
+        Rig { engine, rx, audio, transcriber: unused, refiner: None, injector, levels }
+    }
+
+    /// The ledger key of `model` in `engines`' recognition chain.
+    fn asr_key(engines: &ResolvedEngines, model: &str) -> crate::dictation::QuotaKey {
+        let plan = &engines.asr_fallback;
+        plan.selected.iter().chain(plan.targets().map(|t| &t.key)).find(|k| k.model == model).cloned().unwrap()
+    }
+
+    /// The selected model refuses for want of quota: the take is recognised and cleaned up by the
+    /// next models, the history names them, the used-up models are skipped by the next take.
+    #[tokio::test(start_paused = true)]
+    async fn a_used_up_model_hands_the_take_to_the_next_and_the_history_names_it() {
+        let engines = resolved_fallback(&["qwen-audio-3.1-asr-flash", "qwen3-asr-flash"], &["qwen3.8-flash", "qwen3.8-max"], false, OutputMode::WholeTake);
+        let (selected, fallback) = (Arc::new(FakeTranscriber::quota()), Arc::new(FakeTranscriber::ok("候补识别的文字")));
+        let (polish, polish_fallback) = (Arc::new(FakeRefiner::quota()), Arc::new(FakeRefiner::ok("候补润色的文字。").with_model("qwen3.8-max")));
+        let mut r = rig_fallback(
+            &engines,
+            &[("qwen-audio-3.1-asr-flash", selected.clone()), ("qwen3-asr-flash", fallback.clone())],
+            &[("qwen3.8-flash", polish.clone()), ("qwen3.8-max", polish_fallback.clone())],
+            FakeInjector::paste(),
+        );
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(
+            matches!(phase(&fx), DictationPhase::Done { text, raw_text, refined: true, .. } if text == "候补润色的文字。" && raw_text == "候补识别的文字"),
+            "{fx:?}"
+        );
+        let entry = record(&fx).unwrap();
+        assert_eq!((entry.asr_model.as_str(), entry.refine_model.as_deref()), ("qwen3-asr-flash", Some("qwen3.8-max")));
+        assert_eq!((selected.calls(), fallback.calls(), polish.calls(), polish_fallback.calls()), (1, 1, 1, 1));
+        assert!(r.engine.quota().retry_at(&asr_key(&engines, "qwen-audio-3.1-asr-flash")).is_some());
+        // The next take goes straight to the models with quota left: no second refusal.
+        tokio::time::advance(DWELL).await;
+        assert_eq!(phase(&r.next().await), &DictationPhase::Idle);
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { .. }), "{fx:?}");
+        assert_eq!((selected.calls(), fallback.calls(), polish.calls(), polish_fallback.calls()), (1, 2, 1, 2));
+    }
+
+    /// With every model out of quota the take fails with its own code (the switch off too); the
+    /// clean-up's models running out still inserts the recognised text, and says why.
+    #[tokio::test(start_paused = true)]
+    async fn with_every_model_out_of_quota_the_take_fails_with_quota_and_a_clean_up_keeps_the_raw_text() {
+        let engines = resolved_fallback(&["qwen-audio-3.1-asr-flash", "qwen3-asr-flash"], &[], false, OutputMode::WholeTake);
+        let (a, b) = (Arc::new(FakeTranscriber::quota()), Arc::new(FakeTranscriber::quota()));
+        let mut r = rig_fallback(&engines, &[("qwen-audio-3.1-asr-flash", a.clone()), ("qwen3-asr-flash", b.clone())], &[], FakeInjector::paste());
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Failed { code: FailureCode::Quota, message, .. } if message.starts_with("额度已用完")), "{fx:?}");
+        assert!(r.injector.injected().is_empty());
+        assert_eq!((a.calls(), b.calls()), (1, 1));
+
+        let engines = resolved_fallback(&["qwen-audio-3.1-asr-flash"], &["qwen3.8-flash", "qwen3.8-max"], false, OutputMode::WholeTake);
+        let (p, q) = (Arc::new(FakeRefiner::quota()), Arc::new(FakeRefiner::quota()));
+        let mut r = rig_fallback(
+            &engines,
+            &[("qwen-audio-3.1-asr-flash", Arc::new(FakeTranscriber::ok("识别出的原文")))],
+            &[("qwen3.8-flash", p.clone()), ("qwen3.8-max", q.clone())],
+            FakeInjector::paste(),
+        );
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(
+            matches!(phase(&fx), DictationPhase::Done { text, refined: false, refine_error: Some(e), .. } if text == "识别出的原文" && e.starts_with("额度已用完")),
+            "{fx:?}"
+        );
+        assert_eq!((p.calls(), q.calls()), (1, 1));
+
+        // No fallback models: a used-up model fails the take with the same code.
+        let mut r = rig(FakeAudio::speech(), FakeTranscriber::quota(), None, FakeInjector::paste(), false);
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Failed { code: FailureCode::Quota, .. }), "{fx:?}");
+    }
+
+    /// A voice edit goes along both chains: its instruction is recognised and its rewrite written by
+    /// the next models (docs/dictation.md §19).
+    #[tokio::test(start_paused = true)]
+    async fn a_voice_edit_goes_along_both_chains() {
+        let engines = resolved_fallback(&["qwen-audio-3.1-asr-flash", "qwen3-asr-flash"], &["qwen3.8-flash", "qwen3.8-max"], false, OutputMode::WholeTake);
+        let rewrite = Arc::new(FakeRefiner::ok(REWRITE).with_model("qwen3.8-max"));
+        let mut r = rig_fallback(
+            &engines,
+            &[("qwen-audio-3.1-asr-flash", Arc::new(FakeTranscriber::quota())), ("qwen3-asr-flash", Arc::new(FakeTranscriber::ok(INSTRUCTION)))],
+            &[("qwen3.8-flash", Arc::new(FakeRefiner::quota())), ("qwen3.8-max", rewrite.clone())],
+            FakeInjector::paste().with_selection(SELECTION),
+        );
+        r.start_edit_open(vec![Modifier::Alt]).await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { text, raw_text, .. } if text == REWRITE && raw_text == INSTRUCTION), "{fx:?}");
+        assert_eq!(rewrite.edits().len(), 1);
+        let entry = record(&fx).unwrap();
+        assert_eq!((entry.asr_model.as_str(), entry.refine_model.as_deref()), ("qwen3-asr-flash", Some("qwen3.8-max")));
+        assert_eq!(r.injector.injected(), vec![REWRITE.to_owned()]);
+    }
+
+    /// A realtime selected model that ran out: its stream fails, the take is recognised whole by the
+    /// next model (one more refusal, which marks it), and the next take does not stream at all —
+    /// the next model takes whole recordings. With quota, the stream's model is the receipt.
+    #[tokio::test(start_paused = true)]
+    async fn a_used_up_realtime_model_degrades_to_the_next_models_whole_take() {
+        let engines = resolved_fallback(&["qwen-audio-3.1-asr-flash-streaming", "qwen-audio-3.1-asr-flash"], &[], true, OutputMode::WholeTake);
+        let refused_stream = Arc::new(FakeStreaming::failing_open("task-failed: AllocationQuota.FreeTierOnly"));
+        let realtime = Arc::new(FakeTranscriber::quota().with_stream(refused_stream.clone()));
+        let whole = Arc::new(FakeTranscriber::ok("整段识别的文字"));
+        let mut r = rig_fallback(
+            &engines,
+            &[("qwen-audio-3.1-asr-flash-streaming", realtime.clone()), ("qwen-audio-3.1-asr-flash", whole.clone())],
+            &[],
+            FakeInjector::paste(),
+        );
+        assert_eq!(r.engine.effective_output_mode(), (OutputMode::StreamingFinal, None));
+        r.start_open().await;
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.degraded.is_some())).await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::WholeTake, .. } if text == "整段识别的文字"), "{fx:?}");
+        assert_eq!(record(&fx).unwrap().asr_model, "qwen-audio-3.1-asr-flash");
+        assert_eq!((refused_stream.opens(), realtime.calls(), whole.calls()), (1, 1, 1));
+        tokio::time::advance(DWELL).await;
+        assert_eq!(phase(&r.next().await), &DictationPhase::Idle);
+        assert!(!r.engine.live_enabled(), "the model with quota left takes whole recordings only");
+        assert_eq!(r.engine.effective_output_mode(), (OutputMode::WholeTake, None));
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { mode: OutputMode::WholeTake, .. }), "{fx:?}");
+        assert_eq!((refused_stream.opens(), realtime.calls(), whole.calls()), (1, 1, 2));
+
+        // With quota, the take is the stream's text, and its model the receipt.
+        let stream = Arc::new(FakeStreaming::script());
+        let realtime = Arc::new(FakeTranscriber::ok("unused").with_stream(stream.clone()));
+        let mut r = rig_fallback(
+            &engines,
+            &[("qwen-audio-3.1-asr-flash-streaming", realtime.clone()), ("qwen-audio-3.1-asr-flash", whole.clone())],
+            &[],
+            FakeInjector::paste(),
+        );
+        r.start_open().await;
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.current == "今天")).await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { mode: OutputMode::StreamingFinal, .. }), "{fx:?}");
+        assert_eq!(record(&fx).unwrap().asr_model, "qwen-audio-3.1-asr-flash-streaming");
+        assert_eq!(realtime.calls(), 0);
+    }
+
+    /// Regression (plan review 2026-10-04): a fallback model's stream pastes a sentence in
+    /// `live_inject`, then fails, and the remainder finds every model out of quota. The take ends
+    /// with what was pasted and says why — and the history names the fallback stream's model, not
+    /// the selected one; a flush that fails after a pasted sentence keeps that model too.
+    #[tokio::test(start_paused = true)]
+    async fn regression_pasted_sentences_of_a_fallback_stream_keep_its_model_in_the_history() {
+        for failing_finish in [false, true] {
+            let engines = resolved_fallback(&["qwen-audio-3.1-asr-flash-streaming", "qwen-audio-3.1-asr-flash-message"], &[], true, OutputMode::LiveInject);
+            let fallback_stream = if failing_finish { FakeStreaming::script().failing_finish() } else { FakeStreaming::erroring_after(5) };
+            let selected = Arc::new(FakeTranscriber::quota().with_stream(Arc::new(FakeStreaming::script())));
+            let fallback = Arc::new(FakeTranscriber::quota().with_stream(Arc::new(fallback_stream)));
+            let mut r = rig_fallback(
+                &engines,
+                &[("qwen-audio-3.1-asr-flash-streaming", selected.clone()), ("qwen-audio-3.1-asr-flash-message", fallback.clone())],
+                &[],
+                FakeInjector::paste(),
+            );
+            // The selected model ran out before this take.
+            r.engine.quota().mark(&asr_key(&engines, "qwen-audio-3.1-asr-flash-streaming"));
+            r.start_open().await;
+            r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if !l.committed.is_empty())).await;
+            wait_until(|| r.injector.injected().len() == 1).await;
+            r.engine.stop().unwrap();
+            let fx = r.run_to_terminal().await;
+            match phase(&fx) {
+                DictationPhase::Done { text, mode: OutputMode::LiveInject, live_error: Some(e), .. } => {
+                    assert!(text.starts_with("你好，世界。"), "{failing_finish}: {text}");
+                    assert!(e.contains("额度已用完") || e.contains("fake flush failed"), "{failing_finish}: {e}");
+                }
+                other => panic!("{failing_finish}: {other:?}"),
+            }
+            assert_eq!(record(&fx).unwrap().asr_model, "qwen-audio-3.1-asr-flash-message", "{failing_finish}");
+            assert_eq!(selected.calls(), 0, "{failing_finish}: the used-up model is not asked");
+        }
+    }
+
+    /// The built-in preview decodes the sentence again through the take's chain (docs/dictation.md
+    /// §11.8): when the built-in service runs out mid-take, the fallback model answers the flush's
+    /// last request, and the history names it.
+    #[tokio::test(start_paused = true)]
+    async fn a_built_in_preview_whose_flush_the_fallback_answers_records_the_fallback() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..TEST_BUILT_IN };
+        let engines = resolved_fallback_with(&PREVIEWING, ProviderId::Builtin, &["qwen-audio-3.1-asr-flash"], &[], true, OutputMode::StreamingFinal);
+        assert_eq!(engines.live_source(), Some(LiveSource::Cloud));
+        // The preview's first request is the built-in service's; then it runs out.
+        let builtin = Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT).quota_after(1));
+        let fallback = Arc::new(FakeTranscriber::ok("候补模型识别的句子。"));
+        let mut r = rig_fallback(
+            &engines,
+            &[(crate::engines::DEFAULT_ASR_MODEL, builtin.clone()), ("qwen-audio-3.1-asr-flash", fallback.clone())],
+            &[],
+            FakeInjector::paste(),
+        );
+        r.start_open().await;
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.current == FAKE_TRANSCRIPT)).await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::StreamingFinal, .. } if text == "候补模型识别的句子。"), "{fx:?}");
+        assert_eq!(record(&fx).unwrap().asr_model, "qwen-audio-3.1-asr-flash", "the flush's last request was the fallback's");
+        assert_eq!((builtin.calls(), fallback.calls()), (2, 1));
+    }
+
+    /// A configuration changed while recording: the stop recognises with the new client, and the
+    /// history names the model that did (docs/dictation.md §3.5).
+    #[tokio::test(start_paused = true)]
+    async fn a_mid_take_configuration_change_records_the_model_that_recognised() {
+        let before = resolved_fallback(&["qwen-audio-3.1-asr-flash"], &[], false, OutputMode::WholeTake);
+        let after = resolved_fallback(&["qwen3-asr-flash"], &[], false, OutputMode::WholeTake);
+        let first = Arc::new(FakeTranscriber::ok("旧客户端").with_model("qwen-audio-3.1-asr-flash"));
+        let second = Arc::new(FakeTranscriber::ok("新客户端").with_model("qwen3-asr-flash-2026-09-08"));
+        let mut r = rig_fallback(&before, &[("qwen-audio-3.1-asr-flash", first.clone()), ("qwen3-asr-flash", second.clone())], &[], FakeInjector::paste());
+        r.start_open().await;
+        r.engine.configure(&after);
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { text, .. } if text == "新客户端"), "{fx:?}");
+        assert_eq!(record(&fx).unwrap().asr_model, "qwen3-asr-flash-2026-09-08", "the client's own receipt");
+        assert_eq!((first.calls(), second.calls()), (0, 1));
     }
 }

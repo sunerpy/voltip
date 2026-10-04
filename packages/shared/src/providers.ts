@@ -2,10 +2,13 @@
 // resolution the browser preview runs in place of the core (`ResolvedEngines::status`). The Rust
 // catalogue is the source of truth: `ipc-contract.test.ts` compares this copy with the provider
 // cards in the Rust-generated fixtures, so a drift fails the build.
+import { fallbackSettingsOf } from "./fallback";
 import type {
   EngineIssue,
   EngineSettings,
   EngineStatus,
+  FallbackModelStatus,
+  FallbackStatus,
   KeyPolicy,
   ProviderId,
   ProviderStatus,
@@ -37,14 +40,23 @@ export interface ProviderSpec {
 const NO_PRESET: ServicePreset = { baseUrl: "", models: [] };
 
 const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
-  builtin: { asr: NO_PRESET, llm: NO_PRESET, key: "builtin", onDevice: false, console: false },
+  builtin: {
+    asr: NO_PRESET,
+    llm: NO_PRESET,
+    key: "builtin",
+    onDevice: false,
+    console: false,
+  },
   local: { asr: NO_PRESET, key: "none", onDevice: true, console: false },
   openai: {
     asr: {
       baseUrl: "https://api.openai.com/v1",
       models: ["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
     },
-    llm: { baseUrl: "https://api.openai.com/v1", models: ["gpt-6-luna", "gpt-6-sol"] },
+    llm: {
+      baseUrl: "https://api.openai.com/v1",
+      models: ["gpt-6-luna", "gpt-6-sol"],
+    },
     key: "required",
     onDevice: false,
     console: true,
@@ -95,7 +107,10 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     console: true,
   },
   deepseek: {
-    llm: { baseUrl: "https://api.deepseek.com", models: ["deepseek-flash", "deepseek-v4-pro"] },
+    llm: {
+      baseUrl: "https://api.deepseek.com",
+      models: ["deepseek-flash", "deepseek-v4-pro"],
+    },
     key: "required",
     onDevice: false,
     console: true,
@@ -106,7 +121,13 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     onDevice: true,
     console: false,
   },
-  custom: { asr: NO_PRESET, llm: NO_PRESET, key: "optional", onDevice: false, console: false },
+  custom: {
+    asr: NO_PRESET,
+    llm: NO_PRESET,
+    key: "optional",
+    onDevice: false,
+    console: false,
+  },
 };
 
 export function providerSpec(id: ProviderId): ProviderSpec {
@@ -196,11 +217,13 @@ interface Target {
   key: boolean;
 }
 
-/** Mirrors `service_target`: the endpoint, model and key presence, or why it cannot run. */
+/** Mirrors `service_target_for`: the endpoint, model and key presence, or why it cannot run;
+ *  `asked` is a fallback model's own model instead of the card's (docs/dictation.md §3.5). */
 function target(
   provider: ProviderId,
   kind: ServiceKind,
   input: EngineResolveInput,
+  asked?: string,
 ): { ok: Target } | { issue: EngineIssue; model: string } {
   const spec = providerSpec(provider);
   const preset = spec[kind];
@@ -215,7 +238,8 @@ function target(
   const url =
     trimmed(kind === "asr" ? choice?.asr_url : choice?.llm_url) ??
     (preset.baseUrl.length > 0 ? preset.baseUrl : undefined);
-  const model = trimmed(kind === "asr" ? choice?.asr_model : choice?.llm_model) ?? preset.models[0];
+  const model =
+    asked ?? trimmed(kind === "asr" ? choice?.asr_model : choice?.llm_model) ?? preset.models[0];
   const entry = keyEntry(provider, kind);
   const key = entry !== undefined && input.userKeys.has(entry);
   const shown = model ?? "";
@@ -269,6 +293,42 @@ function serviceStatus(
     key: userKey ? { set: true, source: "user" } : NO_KEY,
     ...("issue" in resolved ? { issue: resolved.issue } : {}),
     active,
+  };
+}
+
+/** Mirrors `fallback_plan` + `FallbackPlan::status` without a ledger (docs/dictation.md §3.5):
+ *  one row per settings entry, its problem or why it is skipped; `selected` is the provider and
+ *  service in use when it is remote and ready. */
+function fallbackStatus(
+  kind: ServiceKind,
+  input: EngineResolveInput,
+  selected: { provider: ProviderId; target: Target } | undefined,
+): FallbackStatus {
+  const config = fallbackSettingsOf(input.settings, kind);
+  const keyOf = (provider: ProviderId, t: Target) => JSON.stringify([provider, t.model, t.url]);
+  const selectedKey =
+    selected === undefined ? undefined : keyOf(selected.provider, selected.target);
+  const seen = new Set<string>();
+  const models = config.models.map((entry): FallbackModelStatus => {
+    const asked = trimmed(entry.model);
+    const r = target(entry.provider, kind, input, asked);
+    if (!("ok" in r))
+      return {
+        provider: entry.provider,
+        model: asked ?? r.model,
+        issue: r.issue,
+      };
+    const key = keyOf(entry.provider, r.ok);
+    const model = r.ok.model;
+    if (key === selectedKey) return { provider: entry.provider, model, skip: "same_as_selected" };
+    if (seen.has(key)) return { provider: entry.provider, model, skip: "duplicate" };
+    seen.add(key);
+    return { provider: entry.provider, model };
+  });
+  return {
+    enabled: config.enabled,
+    in_use: config.enabled && selectedKey !== undefined,
+    models,
   };
 }
 
@@ -373,5 +433,19 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
     refine_host: userHost(llmProvider, refineTarget),
     inject: settings.inject,
     providers,
+    asr_fallback: fallbackStatus(
+      "asr",
+      input,
+      asrProvider !== "local" && asrTarget !== undefined
+        ? { provider: asrProvider, target: asrTarget }
+        : undefined,
+    ),
+    llm_fallback: fallbackStatus(
+      "llm",
+      input,
+      llmProvider !== undefined && refineTarget !== undefined
+        ? { provider: llmProvider, target: refineTarget }
+        : undefined,
+    ),
   };
 }

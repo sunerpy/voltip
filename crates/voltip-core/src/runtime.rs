@@ -28,7 +28,9 @@ use voltip_transport::{ConnectionState, DirectHost, LinkConfig, LinkEvent, Recon
 use crate::dictation::activation::{Activation, ActivationConfig, ActivationMachine, Edge, EdgeSource, Intent, PhaseHint};
 use crate::dictation::engine::{Effect, Internal};
 use crate::dictation::{DictationEngine, DictationError, DictationPhase, DictationPorts, DictationStatus, LevelFrame, RefineHints, SelectionTiming, TakeKind};
-use crate::engines::{BuiltIn, EngineSettings, EngineStatus, MAX_LOCAL_THREADS, ProviderId, ResolvedEngines, ServiceKind, UserSecrets};
+use crate::engines::{
+    BuiltIn, EngineSettings, EngineStatus, FallbackSettings, MAX_FALLBACK_MODELS, MAX_LOCAL_THREADS, ProviderId, ResolvedEngines, ServiceKind, UserSecrets,
+};
 use crate::history::{HistoryEntry, HistoryStore};
 use crate::models::{CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelInstallState, ModelManager, ModelState};
 use crate::peer::{Incoming, LinkId, ParkedChannel, PeerPath, PeerPhase, PeerState};
@@ -380,6 +382,9 @@ pub enum CoreCommand {
     },
     /// Replace `Settings.engines`; clients are rebuilt and `Engines` re-emitted.
     SetEngines(EngineSettings),
+    /// Forget which `kind` models ran out of quota (docs/dictation.md §3.5, 重新检查): the next
+    /// request starts from the selected model again.
+    ResetQuota(ServiceKind),
     /// Store (`Some`) or delete (`None`) the user's key for a provider's service (a vendor's
     /// services share one key). The value never comes back out.
     SetProviderKey {
@@ -839,6 +844,30 @@ fn check_http_url(url: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// `EngineSettings.*_fallback` (docs/dictation.md §3.5): at most [`MAX_FALLBACK_MODELS`] models,
+/// each of a provider that offers the service remotely, with a model named (the built-in service
+/// has its own), none listed twice. The selected model may be listed: it is skipped.
+fn check_fallback_models(kind: ServiceKind, fallback: &FallbackSettings) -> Result<(), CoreError> {
+    let field = |i: usize| format!("{}_fallback.models[{i}]", kind_name(kind));
+    if fallback.models.len() > MAX_FALLBACK_MODELS {
+        return Err(CoreError::Invalid(format!("{}_fallback: 最多 {MAX_FALLBACK_MODELS} 个候补模型", kind_name(kind))));
+    }
+    for (i, entry) in fallback.models.iter().enumerate() {
+        if entry.provider == ProviderId::Local || !entry.provider.spec().offers(kind) {
+            return Err(CoreError::Invalid(format!("{}: {} 不能作为候补模型", field(i), entry.provider.as_str())));
+        }
+        let model = entry.model.trim();
+        if model.is_empty() && entry.provider != ProviderId::Builtin {
+            return Err(CoreError::Invalid(format!("{}: 未填写模型", field(i))));
+        }
+        let repeated = fallback.models[..i].iter().any(|e| e.provider == entry.provider && (e.provider == ProviderId::Builtin || e.model.trim() == model));
+        if repeated {
+            return Err(CoreError::Invalid(format!("{}: {} 已在列表中", field(i), if model.is_empty() { entry.provider.as_str() } else { model })));
+        }
+    }
+    Ok(())
+}
+
 fn kind_name(kind: ServiceKind) -> &'static str {
     match kind {
         ServiceKind::Asr => "asr",
@@ -1218,7 +1247,7 @@ impl Runtime {
             secret_backend: self.manager.backend_name(),
             app_version: self.config.app_version.clone(),
         });
-        self.emit(CoreEvent::Engines(self.resolved_engines().status()));
+        self.emit(CoreEvent::Engines(self.engine_status()));
         self.emit_models();
         self.emit_history();
         self.emit(CoreEvent::Dictionary(self.dictionary.entries().to_vec()));
@@ -1233,6 +1262,8 @@ impl Runtime {
         self.start_host().await;
         self.start_discovery();
         let mut ticker = tokio::time::interval(self.config.tick);
+        // docs/dictation.md §3.5: a model running out of quota (or 重新检查) shows on the pages.
+        let mut quota_rx = self.dictation.quota().subscribe();
         loop {
             tokio::select! {
                 cmd = cmd_rx.recv() => {
@@ -1252,6 +1283,7 @@ impl Runtime {
                 Some(probed) = check_rx.recv() => self.on_probed(probed),
                 Some(seen) = disc_rx.recv() => self.on_discovery(seen),
                 Some(processed) = process_rx.recv() => self.on_processed(processed),
+                Ok(()) = quota_rx.changed() => self.emit(CoreEvent::Engines(self.engine_status())),
                 _ = ticker.tick() => self.tick().await,
             }
             // A rename or a pairing that started or ended changes what the LAN hears; a device
@@ -1367,6 +1399,11 @@ impl Runtime {
             }
             CoreCommand::SetEngines(engines) => self.set_engines(engines),
             CoreCommand::SetProviderKey { provider, kind, value } => self.set_provider_key(provider, kind, value),
+            CoreCommand::ResetQuota(kind) => {
+                // The ledger's change re-sends the status (`quota_rx` above).
+                self.dictation.quota().clear(kind);
+                Ok(())
+            }
             CoreCommand::ProbeProvider { provider, kind, base_url, key } => self.probe_provider(provider, kind, base_url, key),
             CoreCommand::HistoryDelete(id) => self.history.delete(id).map(|_| self.emit_history()),
             CoreCommand::HistoryClear => self.history.clear().map(|()| self.emit_history()),
@@ -1483,7 +1520,13 @@ impl Runtime {
     fn reconfigure_engines(&mut self) {
         let resolved = self.resolved_engines();
         self.dictation.configure(&resolved);
-        self.emit(CoreEvent::Engines(resolved.status()));
+        self.emit(CoreEvent::Engines(resolved.status_with(self.dictation.quota())));
+    }
+
+    /// `UiState.engines`: the configuration, and which fallback models ran out of quota
+    /// (docs/dictation.md §3.5).
+    fn engine_status(&self) -> EngineStatus {
+        self.resolved_engines().status_with(self.dictation.quota())
     }
 
     /// The catalogue id the settings select in local mode.
@@ -1509,6 +1552,9 @@ impl Runtime {
             && !(1..=MAX_LOCAL_THREADS).contains(&threads)
         {
             return Err(CoreError::Invalid(format!("local_threads: 1–{MAX_LOCAL_THREADS}")));
+        }
+        for kind in [ServiceKind::Asr, ServiceKind::Llm] {
+            check_fallback_models(kind, engines.fallback(kind))?;
         }
         if engines.asr_provider == ProviderId::Local {
             // The model has to exist in the catalogue; it need not be installed yet (the UI then
@@ -2015,6 +2061,8 @@ impl Runtime {
         }
         self.user_secrets.set_entry(entry, value);
         tracing::info!(secret = entry, "provider key updated");
+        // Another key may be another account, with its own quota (docs/dictation.md §3.5).
+        self.dictation.quota().clear_provider(provider);
         self.reconfigure_engines();
         Ok(())
     }

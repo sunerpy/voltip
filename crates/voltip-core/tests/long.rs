@@ -12,13 +12,13 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use voltip_core::dictation::fakes::{
-    FAKE_STREAMING_MODEL_ID, FakeAudio, FakeInjector, FakeModels, FakeRefiner, FakeStreaming, FakeTranscriber, fake_engines, ports_with,
+    FAKE_STREAMING_MODEL_ID, FakeAudio, FakeInjector, FakeModels, FakeRefiner, FakeStreaming, FakeTranscriber, factory_by_model, fake_engines, ports_with,
 };
 use voltip_core::dictation::long::{self, REFINE_SKIPPED, TOO_LONG_TO_PASTE};
 use voltip_core::dictation::{ClipboardCode, SegmentProgress, Via};
 use voltip_core::{
-    AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DictationPhase, DictationStatus, EngineSettings, FailureCode, HistoryEntry, Outcome, OutputMode,
-    RecordingSettings, RecordingSource, Segment, Settings, SettingsStore,
+    AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DictationPhase, DictationStatus, EngineSettings, FailureCode, FallbackModel, FallbackSettings,
+    HistoryEntry, Outcome, OutputMode, ProviderId, RecordingSettings, RecordingSource, Segment, Settings, SettingsStore,
 };
 use voltip_identity::MemorySecretStore;
 
@@ -515,5 +515,65 @@ async fn a_long_entry_is_processed_in_parts_and_the_result_kept_with_it() {
     .await;
     assert_eq!(reason, PROCESS_ENTRY_GONE);
     node.handle.send(CoreCommand::HistoryProcessCancel { request_id: 99 }).await.unwrap();
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// The core with a fallback recognition model on the same custom endpoint (docs/dictation.md §3.5):
+/// `selected` is the configured model's client, `fallback` the fallback model's; no clean-up.
+fn start_fallback(audio: FakeAudio, selected: FakeTranscriber, fallback: FakeTranscriber) -> (Node, Arc<FakeTranscriber>) {
+    let dir = tempfile::tempdir().unwrap();
+    let engines = EngineSettings {
+        refine_enabled: false,
+        asr_fallback: FallbackSettings { enabled: true, models: vec![FallbackModel { provider: ProviderId::Custom, model: "fallback-asr".into() }] },
+        ..fake_engines()
+    };
+    let recording = RecordingSettings { max_minutes: 10, ..RecordingSettings::default() };
+    SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, engines, recording, ..Settings::default() }).unwrap();
+    let (selected, fallback) = (Arc::new(selected), Arc::new(fallback));
+    let (refiner, injector) = (Arc::new(FakeRefiner::ok("unused")), Arc::new(FakeInjector::paste()));
+    let mut ports = ports_with(Arc::new(audio), selected.clone(), None, injector.clone());
+    ports.factory = factory_by_model(&[(voltip_core::engines::DEFAULT_ASR_MODEL, selected.clone()), ("fallback-asr", fallback.clone())], &[]);
+    let mut config = CoreConfig::new(dir.path().to_path_buf());
+    config.default_device_name = "Long Test".into();
+    config.direct_enabled = false;
+    let (handle, events) = AppCore::start_with(config, Arc::new(MemorySecretStore::new()), ports).unwrap();
+    (Node { handle, events, transcriber: selected, refiner, injector, dir }, fallback)
+}
+
+/// docs/dictation.md §3.5: a long take's segments go along the fallback models. The selected model
+/// recognises the first segment and runs out; the fallback model recognises the next and runs out
+/// too: the rest is marked as not recognised, the text keeps what was, and the history names the
+/// fallback model, whose segment is the last recognised one. With every model out of quota from the
+/// start, nothing is recognised and the take fails with `quota`.
+#[tokio::test]
+async fn a_long_takes_segments_go_along_the_fallback_models() {
+    let selected = FakeTranscriber::numbered(0, &[], Duration::ZERO).quota_after(1);
+    let (mut node, fallback) = start_fallback(FakeAudio::speech().long(150), selected, FakeTranscriber::ok("候补模型的一段。").quota_after(1));
+    ready(&mut node).await;
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    statuses_until(&mut node, |s| listening_with(s, SegmentProgress { done: 5, total: 5 })).await;
+    let (done, _) = stop(&mut node).await;
+    match &done {
+        DictationPhase::Done { raw_text, .. } => {
+            // The segments nobody could recognise are one span.
+            assert_eq!(raw_text, "第1段。候补模型的一段。[未识别 00:00:59–00:02:29]");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(fallback.calls(), 2, "one answer, then one refusal: marked, never asked again");
+    let entry = newest_entry(&mut node).await;
+    assert_eq!(entry.asr_model, "fallback-asr", "the last recognised text was the fallback model's");
+    wait_no_recordings(node.dir.path()).await;
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+
+    let (mut node, fallback) = start_fallback(FakeAudio::speech().long(150), FakeTranscriber::quota(), FakeTranscriber::quota());
+    ready(&mut node).await;
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    statuses_until(&mut node, |s| listening_with(s, SegmentProgress { done: 5, total: 5 })).await;
+    let (done, _) = stop(&mut node).await;
+    assert!(matches!(&done, DictationPhase::Failed { code: FailureCode::Quota, text: None, .. }), "{done:?}");
+    assert_eq!(fallback.calls(), 1, "out of quota once: from then on only the selected model is asked again");
+    assert!(node.injector.injected().is_empty());
+    wait_no_recordings(node.dir.path()).await;
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }

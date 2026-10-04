@@ -23,7 +23,7 @@ use url::Url;
 use crate::client::{Transcript, client_builder, map_reqwest, retry_after_ms, truncate_chars};
 use crate::config::{AsrConfig, MAX_ERROR_BODY_CHARS};
 use crate::duplex::{self, DuplexOptions};
-use crate::error::AsrError;
+use crate::error::{AsrError, error_fields, quota_error};
 
 /// Which of Model Studio's recognition protocols the model speaks (the core decides from the
 /// endpoint and the model: `voltip_core::providers::AsrProtocol`).
@@ -330,10 +330,10 @@ pub(crate) fn duplex_url(origin: &str) -> String {
 /// compatible one (`{"error": {"code", "message"}}`). The free tier's stop is named; 401 is the
 /// key; 5xx stays retryable.
 pub(crate) fn service_error(status: StatusCode, retry_after_ms: Option<u64>, body: &str) -> AsrError {
-    let (code, message) = error_fields(body);
-    if is_free_tier_stop(&code) || is_free_tier_stop(&message) {
-        return AsrError::FreeQuotaExhausted;
+    if let Some(quota) = quota_error(body) {
+        return quota;
     }
+    let (code, message) = error_fields(body);
     if status == StatusCode::UNAUTHORIZED || code == "InvalidApiKey" {
         return AsrError::Unauthorized;
     }
@@ -348,24 +348,6 @@ pub(crate) fn service_error(status: StatusCode, retry_after_ms: Option<u64>, bod
         return AsrError::Server { status: status.as_u16(), body: truncate_chars(&shown, MAX_ERROR_BODY_CHARS) };
     }
     AsrError::Service { code, message: truncate_chars(&message, MAX_ERROR_BODY_CHARS) }
-}
-
-/// Model Studio names the 免费额度用完即停 refusal `AllocationQuota.FreeTierOnly`.
-pub(crate) fn is_free_tier_stop(text: &str) -> bool {
-    text.contains("FreeTierOnly")
-}
-
-fn error_fields(body: &str) -> (String, String) {
-    let Ok(value) = serde_json::from_str::<Value>(body) else { return (String::new(), String::new()) };
-    let field = |v: &Value, key: &str| match v.get(key) {
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Null) | None => String::new(),
-        Some(other) => other.to_string(),
-    };
-    match value.get("error") {
-        Some(inner @ Value::Object(_)) => (field(inner, "code"), field(inner, "message")),
-        _ => (field(&value, "code"), field(&value, "message")),
-    }
 }
 
 /// A WAV's sample format: where its PCM is and at what rate.
@@ -618,7 +600,16 @@ pub(crate) mod tests {
     async fn service_errors_are_sorted() {
         let cases = [
             (401, json!({ "code": "InvalidApiKey", "message": "Invalid API-key provided." }), AsrError::Unauthorized),
-            (403, json!({ "code": "AllocationQuota.FreeTierOnly", "message": "The free tier of the model has been exhausted." }), AsrError::FreeQuotaExhausted),
+            (
+                403,
+                json!({ "code": "AllocationQuota.FreeTierOnly", "message": "The free tier of the model has been exhausted." }),
+                AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "The free tier of the model has been exhausted.".into() },
+            ),
+            (
+                403,
+                json!({ "error": { "code": "AllocationQuota.FreeTierOnly", "message": "free tier exhausted", "type": "AllocationQuota.FreeTierOnly" } }),
+                AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "free tier exhausted".into() },
+            ),
             (
                 400,
                 json!({ "error": { "code": "invalid_parameter_error", "message": "url error, please check url！", "type": "invalid_request_error" } }),
@@ -659,7 +650,6 @@ pub(crate) mod tests {
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_string("not json")).mount(&server).await;
         let err = client(&server, "qwen3-asr-flash", DashscopeMode::Chat).transcribe(&wav(10, 16_000), None, &[]).await.unwrap_err();
         assert!(matches!(err, AsrError::BadResponse(_)), "{err:?}");
-        assert!(is_free_tier_stop("AllocationQuota.FreeTierOnly") && !is_free_tier_stop("Throttling"));
     }
 
     #[tokio::test]

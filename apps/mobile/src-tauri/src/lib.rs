@@ -35,7 +35,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 107] = [
+pub const COMMANDS: [&str; 108] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -79,6 +79,7 @@ pub const COMMANDS: [&str; 107] = [
     "settings_set_activation",
     "settings_set_engines",
     "provider_key_set",
+    "engines_quota_reset",
     "provider_probe",
     "provider_console_open",
     "project_link_open",
@@ -474,6 +475,13 @@ fn settings_set_engines(bridge: tauri::State<'_, Bridge>, engines: EngineSetting
 #[tauri::command]
 fn provider_key_set(bridge: tauri::State<'_, Bridge>, provider: ProviderId, kind: ServiceKind, value: Option<String>) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::ProviderKeySet { provider, kind, value })?)
+}
+
+/// 重新检查 (docs/dictation.md §3.5): forget which models of `kind` ran out of quota; the core
+/// answers with an `engines` event.
+#[tauri::command]
+fn engines_quota_reset(bridge: tauri::State<'_, Bridge>, kind: ServiceKind) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::EnginesQuotaReset { kind })?)
 }
 
 /// 测试连接 (docs/dictation.md §3.3): the core lists the provider's models through the phone's
@@ -1130,6 +1138,7 @@ pub fn build_app<R: Runtime>(
             settings_set_activation,
             settings_set_engines,
             provider_key_set,
+            engines_quota_reset,
             provider_probe,
             provider_console_open,
             project_link_open,

@@ -115,7 +115,12 @@ export const en: Messages = {
   },
   theme: {
     name: { light: "Light", dark: "Dark", warm: "Warm", graphite: "Graphite" },
-    subtitle: { light: "Porcelain", dark: "Night", warm: "Manuscript", graphite: "Instrument" },
+    subtitle: {
+      light: "Porcelain",
+      dark: "Night",
+      warm: "Manuscript",
+      graphite: "Instrument",
+    },
     followSystem: "Follow system",
     notFollowing: "Not following system",
   },
@@ -209,6 +214,7 @@ export const en: Messages = {
       selection: "Could not read the selection: {reason}",
       edit_unavailable: "Editing needs the AI polishing service; set its key first",
       edit_in_terminal: "Voice edit is off in terminals: a terminal's selection cannot be replaced",
+      quota: "The model's quota is used up",
     },
     /** Voice edit (docs/dictation.md §19): the phase line of an edit take. */
     edit: {
@@ -223,7 +229,10 @@ export const en: Messages = {
       mixed: "Recording failed",
     },
     segments: {
-      listening: { one: "{n} segment recognised", other: "{n} segments recognised" },
+      listening: {
+        one: "{n} segment recognised",
+        other: "{n} segments recognised",
+      },
       processing: "{done} of {total} segments recognised",
     },
   },
@@ -253,7 +262,11 @@ export const en: Messages = {
     liveError: "Live transcription stopped; the whole recording was transcribed instead: {reason}",
   },
   recordingSource: {
-    name: { microphone: "Microphone", system: "Computer audio", mixed: "Mixed" },
+    name: {
+      microphone: "Microphone",
+      system: "Computer audio",
+      mixed: "Mixed",
+    },
   },
   activation: {
     name: {
@@ -562,7 +575,10 @@ export const en: Messages = {
       saved: "Saved",
       clearAll: "Clear all",
     },
-    search: { placeholder: "Text, original, model or app", label: "Search history" },
+    search: {
+      placeholder: "Text, original, model or app",
+      label: "Search history",
+    },
     empty: {
       none: "Nothing recorded yet.",
       noneBody: "{hint}; finished dictations show up here.",
@@ -898,6 +914,7 @@ export const en: Messages = {
       note: "After transcription, AI processes the text with the chosen preset; voice edit uses the provider picked here too.",
     },
     current: "Now: {provider} · {model}",
+    currentFallback: "Now: {provider} · {model} (fallback)",
     currentNone: "Now: none",
     inUse: "In use",
     use: "Use",
@@ -1002,6 +1019,47 @@ export const en: Messages = {
       audioSent: "Audio goes to {target}",
       textLocal: "Text stays on this computer",
       textSent: "Text goes to {target}",
+      fallbackTargets: "; to {targets} when the quota runs out",
+    },
+    fallback: {
+      title: "When a model's quota runs out",
+      description: {
+        asr: "When the selected model's quota is used up, the models below recognise speech instead, in order. Other errors, such as a network failure or a wrong key, do not switch models.",
+        llm: "When the selected model's quota is used up, the models below polish and edit text instead, in order. Other errors, such as a network failure or a wrong key, do not switch models.",
+      },
+      toggle: "Use other models when the quota runs out",
+      on: "On",
+      off: "Off",
+      listLabel: "Model order",
+      selected: "Selected",
+      state: {
+        active: "In use",
+        ready: "Available",
+        exhausted: "Quota used up · tried again {time}",
+        same: "Same as the selected model, not used",
+        duplicate: "Already in the list, not used",
+      },
+      notInUse: {
+        local: "The selected model runs on this computer, so fallback models are not used.",
+        notReady:
+          "The selected service is not available. Fallback models only take over when a quota runs out, not for a service that is not set up.",
+      },
+      empty: "No fallback models yet.",
+      provider: "Provider",
+      model: "Model",
+      add: "Add",
+      moveUp: "Move {model} up",
+      moveDown: "Move {model} down",
+      remove: "Remove {model}",
+      problem: {
+        full: "At most {n} fallback models",
+        blank: "Choose or enter a model",
+        listed: "This model is already in the list",
+      },
+      recheck: "Check again",
+      recheckDone: "Quota records cleared; the next request starts with the selected model",
+      aliyunNote:
+        "Alibaba Cloud Model Studio: turn on Free Quota Only for these models in the Model Studio console. Then the service refuses requests once the free quota is used up and Voltip moves on to the next model; without it, the service starts charging instead. Voltip cannot read the remaining quota.",
     },
     injectLabel: "Insert method",
     injectHelp:
@@ -1994,7 +2052,10 @@ export const en: Messages = {
       name: "Chinese ⇄ English",
       description: "Corrects recognition errors, then translates between Chinese and English.",
     },
-    notes: { name: "Key points", description: "Organizes the text into key points and to-dos." },
+    notes: {
+      name: "Key points",
+      description: "Organizes the text into key points and to-dos.",
+    },
     punctuation: {
       name: "Punctuation only",
       description: "Adds punctuation and sentence breaks without changing the words.",
@@ -2077,7 +2138,10 @@ export const en: Messages = {
       name: "Office writing",
       description: "Mail and documents: complete, formal sentences.",
     },
-    chat: { name: "Chat", description: "Chat apps: short conversational sentences." },
+    chat: {
+      name: "Chat",
+      description: "Chat apps: short conversational sentences.",
+    },
     legal: {
       name: "Legal",
       description: "Strict proofreading; legal terms, statutes and case numbers stay as they are.",
@@ -2352,7 +2416,12 @@ export const en: Messages = {
       historySettings: "History",
       feedback: "Feedback",
     },
-    tab: { label: "Main navigation", talk: "Talk", history: "History", settings: "Settings" },
+    tab: {
+      label: "Main navigation",
+      talk: "Talk",
+      history: "History",
+      settings: "Settings",
+    },
     settings: {
       own: "These settings apply to takes the phone recognises itself. A take sent to a computer is recognised and polished with the computer's settings.",
       engines: "Recognition and polish",

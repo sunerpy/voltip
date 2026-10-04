@@ -579,6 +579,38 @@ fn provider_key_set_flips_presence_without_exposing_the_value() {
     });
 }
 
+/// 重新检查 from the webview (docs/dictation.md §3.5): a take whose selected model ran out of quota is
+/// the fallback model's, the state says when the selected one is tried again, `engines_quota_reset`
+/// forgets it; an unknown service is refused at the boundary.
+#[test]
+fn engines_quota_reset_forgets_a_model_that_ran_out() {
+    let selected = Arc::new(fakes::FakeTranscriber::quota());
+    let fallback = Arc::new(fakes::FakeTranscriber::ok("候补识别的文字"));
+    let factory = fakes::factory_by_model(&[(voltip_core::engines::DEFAULT_ASR_MODEL, selected), ("fallback-asr", fallback)], &[]);
+    let ports = DictationPorts { factory, ..fakes::ports() };
+    with_running_app_on(ports, |_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        let engines = voltip_core::EngineSettings {
+            asr_fallback: voltip_core::FallbackSettings {
+                enabled: true,
+                models: vec![voltip_core::FallbackModel { provider: voltip_core::ProviderId::Custom, model: "fallback-asr".into() }],
+            },
+            ..fake_engines()
+        };
+        assert_eq!(invoke(webview, "settings_set_engines", json!({ "engines": engines })), Ok(Value::Null));
+        wait_state(webview, |s| s.engines.asr_fallback.in_use);
+        assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
+        wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { ready: true, .. }));
+        assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
+        let st = wait_state(webview, |s| s.dictation.phase.is_terminal());
+        assert!(matches!(&st.dictation.phase, DictationPhase::Done { text, .. } if text == "候补识别的文字"), "{:?}", st.dictation.phase);
+        wait_state(webview, |s| s.engines.asr_fallback.selected_retry_at_ms.is_some());
+        assert_eq!(invoke(webview, "engines_quota_reset", json!({ "kind": "asr" })), Ok(Value::Null));
+        wait_state(webview, |s| s.engines.asr_fallback.selected_retry_at_ms.is_none());
+        assert!(invoke(webview, "engines_quota_reset", json!({ "kind": "tts" })).is_err());
+    });
+}
+
 /// 测试连接 before anything is sent: a vendor without a key and a custom endpoint without a URL are
 /// answered at once; a URL that answers is listed (docs/dictation.md §3.3).
 #[test]

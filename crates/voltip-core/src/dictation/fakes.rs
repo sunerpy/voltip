@@ -388,6 +388,10 @@ pub struct FakeTranscriber {
     stream: Option<Arc<FakeStreaming>>,
     /// The glossary of every [`Transcriber::streaming`] call.
     stream_glossaries: Mutex<Vec<Vec<String>>>,
+    /// The model its transcripts report ([`FakeTranscriber::with_model`]); `None` by default.
+    model: Option<String>,
+    /// Calls past this many fail as a used-up quota ([`FakeTranscriber::quota_after`]).
+    quota_after: Option<usize>,
 }
 
 impl FakeTranscriber {
@@ -406,6 +410,22 @@ impl FakeTranscriber {
         Self::with_reply(Reply::Slow(text.to_owned(), delay))
     }
 
+    /// Always fails as a model whose quota is used up (docs/dictation.md §3.5).
+    pub fn quota() -> Self {
+        Self::with_reply(Reply::Err(DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Asr, detail: FAKE_QUOTA_DETAIL.into() }))
+    }
+
+    /// Its transcripts report `model` as the model that recognised them (docs/dictation.md §3.5).
+    pub fn with_model(self, model: &str) -> Self {
+        Self { model: Some(model.to_owned()), ..self }
+    }
+
+    /// Answers its first `calls` calls as configured; every later one fails as a model whose quota
+    /// ran out meanwhile (docs/dictation.md §3.5).
+    pub fn quota_after(self, calls: usize) -> Self {
+        Self { quota_after: Some(calls), ..self }
+    }
+
     /// Answers call `n` with 「第n段」 plus `pad` times 「字」 and a full stop, failing the calls
     /// numbered in `fail` (1-based), each after `delay` (tokio time).
     pub fn numbered(pad: usize, fail: &[usize], delay: Duration) -> Self {
@@ -422,6 +442,8 @@ impl FakeTranscriber {
             warms: Mutex::new(Vec::new()),
             stream: None,
             stream_glossaries: Mutex::new(Vec::new()),
+            model: None,
+            quota_after: None,
         }
     }
 
@@ -471,12 +493,15 @@ impl Transcriber for FakeTranscriber {
         if wav::pcm_data(wav).is_none() {
             return Err(DictationError::Asr("not a wav file".into()));
         }
+        if self.quota_after.is_some_and(|n| self.calls.load(Ordering::SeqCst) > n) {
+            return Err(DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Asr, detail: FAKE_QUOTA_DETAIL.into() });
+        }
         match &self.reply {
-            Reply::Ok(text) => Ok(Transcript { text: text.clone(), latency_ms: FAKE_LATENCY_MS }),
+            Reply::Ok(text) => Ok(Transcript { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone() }),
             Reply::Err(e) => Err(e.clone()),
             Reply::Slow(text, delay) => {
                 tokio::time::sleep(*delay).await;
-                Ok(Transcript { text: text.clone(), latency_ms: FAKE_LATENCY_MS })
+                Ok(Transcript { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone() })
             }
             Reply::Numbered { pad, fail, delay } => {
                 let n = self.calls.load(Ordering::SeqCst);
@@ -486,7 +511,7 @@ impl Transcriber for FakeTranscriber {
                 if fail.contains(&n) {
                     return Err(DictationError::Asr(format!("fake failure of call {n}")));
                 }
-                Ok(Transcript { text: format!("第{n}段{}。", "字".repeat(*pad)), latency_ms: FAKE_LATENCY_MS })
+                Ok(Transcript { text: format!("第{n}段{}。", "字".repeat(*pad)), latency_ms: FAKE_LATENCY_MS, model: self.model.clone() })
             }
         }
     }
@@ -509,14 +534,29 @@ pub struct FakeRefiner {
     calls: AtomicUsize,
     inputs: Mutex<Vec<(String, RefineHints)>>,
     edits: Mutex<Vec<(String, String, RefineHints)>>,
+    /// The model its answers report ([`FAKE_REFINE_MODEL`] unless [`FakeRefiner::with_model`]).
+    model: String,
 }
 
 /// Model name the fake refiner reports.
 pub const FAKE_REFINE_MODEL: &str = "fake/refiner";
 
+/// The explanation a fake's used-up quota carries (docs/dictation.md §3.5).
+pub const FAKE_QUOTA_DETAIL: &str = "fake: the model's quota is used up";
+
 impl FakeRefiner {
     fn with_reply(reply: Reply) -> Self {
-        Self { reply, calls: AtomicUsize::new(0), inputs: Mutex::new(Vec::new()), edits: Mutex::new(Vec::new()) }
+        Self { reply, calls: AtomicUsize::new(0), inputs: Mutex::new(Vec::new()), edits: Mutex::new(Vec::new()), model: FAKE_REFINE_MODEL.to_owned() }
+    }
+
+    /// Always fails as a model whose quota is used up (docs/dictation.md §3.5).
+    pub fn quota() -> Self {
+        Self::with_reply(Reply::Err(DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Llm, detail: FAKE_QUOTA_DETAIL.into() }))
+    }
+
+    /// Its answers report `model` as the model that wrote them.
+    pub fn with_model(self, model: &str) -> Self {
+        Self { model: model.to_owned(), ..self }
     }
 
     /// Always returns `text`.
@@ -561,15 +601,15 @@ impl FakeRefiner {
 
     async fn answer(&self) -> Result<Refined, DictationError> {
         match &self.reply {
-            Reply::Ok(text) => Ok(Refined { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: FAKE_REFINE_MODEL.into() }),
+            Reply::Ok(text) => Ok(Refined { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone() }),
             Reply::Err(e) => Err(e.clone()),
             Reply::Slow(text, delay) => {
                 tokio::time::sleep(*delay).await;
-                Ok(Refined { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: FAKE_REFINE_MODEL.into() })
+                Ok(Refined { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone() })
             }
             Reply::Numbered { .. } => {
                 let n = self.calls.load(Ordering::SeqCst);
-                Ok(Refined { text: format!("润色第{n}次。"), latency_ms: FAKE_LATENCY_MS, model: FAKE_REFINE_MODEL.into() })
+                Ok(Refined { text: format!("润色第{n}次。"), latency_ms: FAKE_LATENCY_MS, model: self.model.clone() })
             }
         }
     }
@@ -929,6 +969,10 @@ pub struct FakeStreaming {
     fed: Arc<AtomicUsize>,
     /// The word a session waits before, and its gate ([`FakeStreaming::holding`]).
     hold: Option<(usize, Arc<Gate>)>,
+    /// The model its sessions report ([`FakeStreaming::with_model`]); `None` by default.
+    model: Option<String>,
+    /// Its sessions' flush fails ([`FakeStreaming::failing_finish`]).
+    finish_fails: bool,
 }
 
 /// The words the default [`FakeStreaming::script`] session emits, one per 100 ms chunk.
@@ -951,7 +995,19 @@ impl FakeStreaming {
             ended: Arc::new(AtomicUsize::new(0)),
             fed: Arc::new(AtomicUsize::new(0)),
             hold: None,
+            model: None,
+            finish_fails: false,
         }
+    }
+
+    /// Its sessions report `model` as the model their text came from (docs/dictation.md §3.5).
+    pub fn with_model(self, model: &str) -> Self {
+        Self { model: Some(model.to_owned()), ..self }
+    }
+
+    /// Its sessions' flush fails (after their sentences were reported).
+    pub fn failing_finish(self) -> Self {
+        Self { finish_fails: true, ..self }
     }
 
     /// Sessions wait before word `index` (from 0) until [`FakeStreaming::release_hold`]: the decode
@@ -1026,6 +1082,8 @@ impl StreamingTranscriber for FakeStreaming {
                 ended: self.ended.clone(),
                 fed: self.fed.clone(),
                 hold: self.hold.clone(),
+                model: self.model.clone(),
+                finish_fails: self.finish_fails,
             })),
         }
     }
@@ -1049,6 +1107,8 @@ struct FakeSession {
     ended: Arc<AtomicUsize>,
     fed: Arc<AtomicUsize>,
     hold: Option<(usize, Arc<Gate>)>,
+    model: Option<String>,
+    finish_fails: bool,
 }
 
 impl Drop for FakeSession {
@@ -1091,11 +1151,18 @@ impl StreamingSession for FakeSession {
         self.pending.pop_front().unwrap_or(StreamEvent::Idle)
     }
 
+    fn model(&self) -> Option<String> {
+        self.model.clone()
+    }
+
     fn finish(mut self: Box<Self>) -> Result<StreamFinal, DictationError> {
         self.finishes.fetch_add(1, Ordering::SeqCst);
+        if self.finish_fails {
+            return Err(DictationError::Asr("fake flush failed".into()));
+        }
         let tail =
             if self.word.is_multiple_of(self.endpoint_every) { String::new() } else { self.words.get(self.word.wrapping_sub(1)).cloned().unwrap_or_default() };
-        Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail })
+        Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail, model: self.model.clone() })
     }
 }
 
@@ -1164,6 +1231,21 @@ pub fn ports_with(audio: Arc<FakeAudio>, transcriber: Arc<FakeTranscriber>, refi
         service_probe: None,
         segmenter: None,
     }
+}
+
+/// A client factory that hands every model its own fake, as a shell builds every model's client
+/// (docs/dictation.md §3.5): the recognition fake named after `ResolvedEngines.asr_model` (a model
+/// without one is a test bug and panics), the clean-up fake after `refine_model` (none without one).
+pub fn factory_by_model(transcribers: &[(&str, Arc<FakeTranscriber>)], refiners: &[(&str, Arc<FakeRefiner>)]) -> crate::dictation::EngineFactory {
+    let transcribers: Vec<(String, Arc<dyn Transcriber>)> = transcribers.iter().map(|(m, t)| ((*m).to_owned(), t.clone() as Arc<dyn Transcriber>)).collect();
+    let refiners: Vec<(String, Arc<dyn Refiner>)> = refiners.iter().map(|(m, r)| ((*m).to_owned(), r.clone() as Arc<dyn Refiner>)).collect();
+    Arc::new(move |engines: &crate::engines::ResolvedEngines| {
+        let transcriber = match transcribers.iter().find(|(m, _)| *m == engines.asr_model) {
+            Some((_, t)) => t.clone(),
+            None => panic!("no fake recogniser for {:?}", engines.asr_model),
+        };
+        (transcriber, refiners.iter().find(|(m, _)| *m == engines.refine_model).map(|(_, r)| r.clone()))
+    })
 }
 
 /// [`ports`] plus a streaming recogniser and a library with the streaming model installed, so

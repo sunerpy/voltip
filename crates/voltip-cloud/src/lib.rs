@@ -39,7 +39,7 @@ pub struct HttpTranscriber {
 impl HttpTranscriber {
     /// Build the client; fails on an unusable configuration (bad URL, empty model).
     pub fn new(config: AsrConfig) -> Result<Self, DictationError> {
-        Ok(Self { client: AsrClient::new(config).map_err(|e| DictationError::Asr(e.to_string()))? })
+        Ok(Self { client: AsrClient::new(config).map_err(asr_error)? })
     }
 }
 
@@ -48,8 +48,8 @@ impl Transcriber for HttpTranscriber {
     /// The glossary goes out as the OpenAI `prompt` field when there is one (docs/dictation.md §16.3).
     async fn transcribe(&self, wav: &[u8], language: Option<&str>, glossary: &[String]) -> Result<Transcript, DictationError> {
         let prompt = voltip_core::vocabulary::glossary_prompt(glossary);
-        let t = self.client.transcribe_with_prompt(wav, language, prompt.as_deref()).await.map_err(|e| DictationError::Asr(e.to_string()))?;
-        Ok(Transcript { text: t.text, latency_ms: t.latency_ms })
+        let t = self.client.transcribe_with_prompt(wav, language, prompt.as_deref()).await.map_err(asr_error)?;
+        Ok(Transcript { text: t.text, latency_ms: t.latency_ms, model: Some(t.model) })
     }
 }
 
@@ -61,7 +61,7 @@ pub struct HttpRefiner {
 impl HttpRefiner {
     /// Build the client (the take's language, style and context arrive with every request).
     pub fn new(config: RefineConfig) -> Result<Self, DictationError> {
-        Ok(Self { client: RefineClient::new(config).map_err(|e| DictationError::Refine(e.to_string()))? })
+        Ok(Self { client: RefineClient::new(config).map_err(refine_error)? })
     }
 }
 
@@ -124,7 +124,7 @@ impl Refiner for HttpRefiner {
     /// The glossary joins the system prompt as the user-dictionary block (docs/dictation.md §16.3),
     /// the take's context as the scene blocks (§18.5); the take's language and style shape the rest.
     async fn refine(&self, text: &str, hints: &RefineHints) -> Result<Refined, DictationError> {
-        let r = self.client.refine_with(text, &prompt_hints(hints)).await.map_err(|e| DictationError::Refine(e.to_string()))?;
+        let r = self.client.refine_with(text, &prompt_hints(hints)).await.map_err(refine_error)?;
         Ok(Refined { text: r.text, latency_ms: r.latency_ms, model: r.model })
     }
 
@@ -132,9 +132,27 @@ impl Refiner for HttpRefiner {
     /// (the edit prompt uses the glossary and the app block); a cut-off or empty answer is an
     /// error, so nothing is pasted.
     async fn edit(&self, selection: &str, instruction: &str, hints: &RefineHints) -> Result<Refined, DictationError> {
-        let r = self.client.edit(selection, instruction, &prompt_hints(hints)).await.map_err(|e| DictationError::Refine(e.to_string()))?;
+        let r = self.client.edit(selection, instruction, &prompt_hints(hints)).await.map_err(refine_error)?;
         Ok(Refined { text: r.text, latency_ms: r.latency_ms, model: r.model })
     }
+}
+
+/// The core's error for a failed recognition: a used-up quota keeps its kind, so a fallback model
+/// list moves on to its next model (docs/dictation.md §3.5); anything else is `Asr` with the reason.
+pub fn asr_error(error: voltip_asr::AsrError) -> DictationError {
+    if matches!(error, voltip_asr::AsrError::QuotaExhausted { .. }) {
+        return DictationError::QuotaExhausted { service: ServiceKind::Asr, detail: error.to_string() };
+    }
+    DictationError::Asr(error.to_string())
+}
+
+/// The core's error for a failed clean-up or edit: a used-up quota keeps its kind (docs/dictation.md
+/// §3.5); anything else is `Refine` with the reason.
+pub fn refine_error(error: voltip_refine::RefineError) -> DictationError {
+    if matches!(error, voltip_refine::RefineError::QuotaExhausted { .. }) {
+        return DictationError::QuotaExhausted { service: ServiceKind::Llm, detail: error.to_string() };
+    }
+    DictationError::Refine(error.to_string())
 }
 
 /// Stands in for a client that could not be built: every call fails with the reason, so the
@@ -370,6 +388,49 @@ mod tests {
         let settings = EngineSettings { asr_provider: ProviderId::Aliyun, ..EngineSettings::default() };
         let engines = ResolvedEngines::resolve(&settings, &secrets, &BuiltIn::EMPTY);
         assert!(remote_transcriber(&engines).streaming(&[]).is_some(), "the catalogue's default model streams");
+    }
+
+    /// docs/dictation.md §3.5: a used-up quota reaches the core as its own kind, which a fallback
+    /// model list moves on for; every other failure keeps its service's kind; a transcript and a
+    /// clean-up name the model that answered.
+    #[tokio::test]
+    async fn a_used_up_quota_keeps_its_kind_and_answers_name_their_model() {
+        use voltip_asr::AsrError;
+        use voltip_refine::RefineError;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let asr = asr_error(AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "free tier exhausted".into() });
+        assert!(matches!(&asr, DictationError::QuotaExhausted { service: ServiceKind::Asr, detail } if detail.contains("FreeTierOnly")), "{asr:?}");
+        assert!(asr.is_quota_exhausted());
+        assert_eq!(asr_error(AsrError::Unauthorized), DictationError::Asr("ASR rejected the credentials".into()));
+        let llm = refine_error(RefineError::QuotaExhausted { code: "insufficient_quota".into(), message: "m".into() });
+        assert!(matches!(&llm, DictationError::QuotaExhausted { service: ServiceKind::Llm, .. }), "{llm:?}");
+        assert_eq!(refine_error(RefineError::Timeout), DictationError::Refine("refine request timed out".into()));
+
+        let used_up = serde_json::json!({ "error": { "code": "insufficient_quota", "message": "You exceeded your current quota" } });
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/audio/transcriptions"))
+            .respond_with(ResponseTemplate::new(429).set_body_json(used_up.clone()))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST")).and(path("/v1/chat/completions")).respond_with(ResponseTemplate::new(403).set_body_json(used_up)).mount(&server).await;
+        let remote = RemoteService { url: server.uri(), model: "whisper-1".into(), key: Some("sk-test".into()) };
+        let err = transcriber_for(AsrProtocol::OpenaiTranscriptions, &remote).transcribe(b"RIFF", None, &[]).await.unwrap_err();
+        assert!(matches!(&err, DictationError::QuotaExhausted { service: ServiceKind::Asr, .. }), "{err:?}");
+        let refiner = HttpRefiner::new(refine_config(&remote, false)).unwrap();
+        let err = refiner.refine("x", &RefineHints::default()).await.unwrap_err();
+        assert!(matches!(&err, DictationError::QuotaExhausted { service: ServiceKind::Llm, .. }), "{err:?}");
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/audio/transcriptions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"text":"你好"}"#))
+            .mount(&server)
+            .await;
+        let remote = RemoteService { url: server.uri(), model: "whisper-1".into(), key: None };
+        let t = transcriber_for(AsrProtocol::OpenaiTranscriptions, &remote).transcribe(b"RIFF", None, &[]).await.unwrap();
+        assert_eq!((t.text.as_str(), t.model.as_deref()), ("你好", Some("whisper-1")));
     }
 
     /// Regression (2026-10-04): a Model Studio clean-up runs without thinking, at the compatible

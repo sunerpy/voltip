@@ -214,6 +214,7 @@ export const zhCN = {
       selection: "读取选中文本失败：{reason}",
       edit_unavailable: "编辑需要 AI 润色服务，请先配置润色密钥",
       edit_in_terminal: "终端里不支持语音编辑：终端里的选区不能被替换",
+      quota: "模型额度已用完",
     },
     /** Voice edit (docs/dictation.md §19): the phase line of an edit take. */
     edit: {
@@ -241,7 +242,11 @@ export const zhCN = {
   },
   /** Output modes (docs/dictation.md §12): name, one-line description, and the fallback note. */
   outputMode: {
-    name: { whole_take: "整段输出", streaming_final: "边说边识别", live_inject: "边说边输入" },
+    name: {
+      whole_take: "整段输出",
+      streaming_final: "边说边识别",
+      live_inject: "边说边输入",
+    },
     description: {
       whole_take: "松开快捷键后一次性完成识别、润色和插入。",
       streaming_final: "边说边确定句子，松开后只补最后一句；润色仍在最后一次做。",
@@ -260,7 +265,11 @@ export const zhCN = {
   /** Activation (docs/dictation.md §13): name, description, the home chip, the footer shortcut and
    *  the one-sentence hint with the hotkey. */
   activation: {
-    name: { hold: "按住说话", toggle: "按一下开始，再按一下结束", hold_or_toggle: "按住或按一下" },
+    name: {
+      hold: "按住说话",
+      toggle: "按一下开始，再按一下结束",
+      hold_or_toggle: "按住或按一下",
+    },
     description: {
       hold: "按住快捷键录音，松开即结束并识别。",
       toggle: "按一下开始录音，再按一下结束；松开不会停止。",
@@ -271,7 +280,11 @@ export const zhCN = {
       toggle: "按一下开始 · 再按结束",
       hold_or_toggle: "按住说话 · 短按锁定",
     },
-    shortcut: { hold: "按住听写", toggle: "按一下听写", hold_or_toggle: "按住或按一下听写" },
+    shortcut: {
+      hold: "按住听写",
+      toggle: "按一下听写",
+      hold_or_toggle: "按住或按一下听写",
+    },
     hint: {
       hold: "按住 {hotkey} 说一句，松开即插入",
       toggle: "按一下 {hotkey} 开始，再按一下结束",
@@ -892,6 +905,7 @@ export const zhCN = {
       note: "识别后用大模型按所选预设处理文字；语音编辑也用这里选的服务商。",
     },
     current: "当前：{provider} · {model}",
+    currentFallback: "当前：{provider} · {model}（候补）",
     currentNone: "当前：未选择",
     inUse: "使用中",
     use: "使用",
@@ -990,6 +1004,47 @@ export const zhCN = {
       audioSent: "音频发送到{target}",
       textLocal: "文本不离开本机",
       textSent: "文本发送到{target}",
+      fallbackTargets: "；额度用完时改发给{targets}",
+    },
+    /** docs/dictation.md §3.5: the models to move on to when the selected one's quota runs out. */
+    fallback: {
+      title: "额度用完后改用其他模型",
+      description: {
+        asr: "所选模型的额度用完时，按顺序改用下面的模型识别。网络、密钥等其他错误不会切换模型。",
+        llm: "所选模型的额度用完时，按顺序改用下面的模型润色和编辑。网络、密钥等其他错误不会切换模型。",
+      },
+      toggle: "额度用完后改用其他模型",
+      on: "已开启",
+      off: "已关闭",
+      listLabel: "模型顺序",
+      selected: "当前选择",
+      state: {
+        active: "使用中",
+        ready: "可用",
+        exhausted: "额度已用完 · {time} 再试",
+        same: "与当前选择相同，不会用到",
+        duplicate: "已在列表中，不会用到",
+      },
+      notInUse: {
+        local: "当前选择的是本机模型，不会用到候补模型。",
+        notReady: "当前选择不可用。候补模型只在额度用完时启用，不替代未配置好的服务商。",
+      },
+      empty: "尚未添加候补模型。",
+      provider: "服务商",
+      model: "模型",
+      add: "添加",
+      moveUp: "上移 {model}",
+      moveDown: "下移 {model}",
+      remove: "移除 {model}",
+      problem: {
+        full: "最多添加 {n} 个候补模型",
+        blank: "请选择或填写模型",
+        listed: "这个模型已在列表中",
+      },
+      recheck: "重新检查",
+      recheckDone: "已清除额度记录，之后的请求从所选模型开始",
+      aliyunNote:
+        "阿里云百炼：请在百炼控制台为这些模型打开「免费额度用完即停」。打开后，额度用完时服务会拒绝请求，Voltip 随即改用下一个模型；未打开时服务会直接按量计费。Voltip 无法读取剩余额度。",
     },
     injectLabel: "插入方式",
     injectHelp: "粘贴会临时占用剪贴板，完成后恢复原内容；选择「仅复制到剪贴板」时需要手动粘贴。",
@@ -1202,7 +1257,11 @@ export const zhCN = {
       toggle: "与 {name} 同步记录",
       limit: "最多与 {max} 部手机同步",
     },
-    action: { sendTest: "发测试消息", testBody: "来自电脑的测试消息", forget: "忘记" },
+    action: {
+      sendTest: "发测试消息",
+      testBody: "来自电脑的测试消息",
+      forget: "忘记",
+    },
     copied: "已复制{what}",
     identityBanner: {
       title: "「{name}」出示了不同的身份密钥",
@@ -1329,7 +1388,12 @@ export const zhCN = {
     relay: "中继 · {state}",
   },
   onboarding: {
-    steps: { permissions: "权限", hotkey: "快捷键", engine: "语音模型", trial: "试说" },
+    steps: {
+      permissions: "权限",
+      hotkey: "快捷键",
+      engine: "语音模型",
+      trial: "试说",
+    },
     stepsLabel: "步骤",
     eyebrow: {
       permissions: "权限 · {platform}",
@@ -1544,7 +1608,12 @@ export const zhCN = {
       copy: "复制文本",
       openHistory: "打开历史",
     },
-    failures: { title: "失败原因与去向", cause: "原因", code: "代码", dest: "去向" },
+    failures: {
+      title: "失败原因与去向",
+      cause: "原因",
+      code: "代码",
+      dest: "去向",
+    },
   },
   settings: {
     title: "设置",
@@ -1904,13 +1973,34 @@ export const zhCN = {
   },
   /** The AI presets (docs/dictation.md §21): the built-in ones by id, a custom one by its own name. */
   presets: {
-    proofread: { name: "校对", description: "修正错字、标点和断句，删去口头禅，其余保持原样。" },
-    prompt: { name: "提示词优化", description: "把口述的需求改写成清晰的 AI 提示词。" },
-    intent: { name: "意图整理", description: "采纳改口，去掉重复，把多个要点整理成列表。" },
-    chat: { name: "口语聊天", description: "整理成口语化的短句，句末不加句号。" },
-    translate: { name: "中英互译", description: "修正识别错误后，在中文和英文之间互译。" },
-    notes: { name: "要点纪要", description: "整理成「要点」和「待办」两组列表。" },
-    punctuation: { name: "只加标点", description: "只补标点和断句，不改动文字。" },
+    proofread: {
+      name: "校对",
+      description: "修正错字、标点和断句，删去口头禅，其余保持原样。",
+    },
+    prompt: {
+      name: "提示词优化",
+      description: "把口述的需求改写成清晰的 AI 提示词。",
+    },
+    intent: {
+      name: "意图整理",
+      description: "采纳改口，去掉重复，把多个要点整理成列表。",
+    },
+    chat: {
+      name: "口语聊天",
+      description: "整理成口语化的短句，句末不加句号。",
+    },
+    translate: {
+      name: "中英互译",
+      description: "修正识别错误后，在中文和英文之间互译。",
+    },
+    notes: {
+      name: "要点纪要",
+      description: "整理成「要点」和「待办」两组列表。",
+    },
+    punctuation: {
+      name: "只加标点",
+      description: "只补标点和断句，不改动文字。",
+    },
     formal: { name: "书面语", description: "改写成通顺、完整的书面表达。" },
     /** A custom preset the settings or a scene name that was deleted since: takes use 校对. */
     missing: "已删除的预设（按校对处理）",
@@ -1980,13 +2070,31 @@ export const zhCN = {
   },
   /** The built-in scenes by category (docs/dictation.md §18.10). */
   builtinScenes: {
-    coding: { name: "编程开发", description: "代码编辑器与终端：保留代码、命令和英文标识符。" },
-    office: { name: "办公写作", description: "邮件与文档：书面表达，句子完整。" },
+    coding: {
+      name: "编程开发",
+      description: "代码编辑器与终端：保留代码、命令和英文标识符。",
+    },
+    office: {
+      name: "办公写作",
+      description: "邮件与文档：书面表达，句子完整。",
+    },
     chat: { name: "即时聊天", description: "聊天软件：口语化的短句。" },
-    legal: { name: "法律", description: "严格校对，法律术语、法条和案号照原样保留。" },
-    medical: { name: "医疗", description: "严格校对，药名、剂量和检查项目照原样保留。" },
-    finance: { name: "金融", description: "严格校对，金额、比例和证券代码照原样保留。" },
-    academic: { name: "学术", description: "严格校对，引用和专有名词照原样保留。" },
+    legal: {
+      name: "法律",
+      description: "严格校对，法律术语、法条和案号照原样保留。",
+    },
+    medical: {
+      name: "医疗",
+      description: "严格校对，药名、剂量和检查项目照原样保留。",
+    },
+    finance: {
+      name: "金融",
+      description: "严格校对，金额、比例和证券代码照原样保留。",
+    },
+    academic: {
+      name: "学术",
+      description: "严格校对，引用和专有名词照原样保留。",
+    },
   },
   sceneEditor: {
     titleNew: "新建场景",

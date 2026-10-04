@@ -47,7 +47,23 @@ With the endpoint left empty, Voltip uses the public address `https://dashscope.
 
 The correct spellings in your [dictionary](/recognition/dictionary) go to the qwen-audio models as hot words. For AI polish with Model Studio's Qwen or DeepSeek models, Voltip turns off their thinking mode, which is on by default and makes polish slow.
 
-Model Studio gives newly activated models a free quota. To use the free quota only, turn on **免费额度用完即停** (stop when the free quota is used up) on the console's free quota page; once the quota is used up, dictation says so.
+Model Studio gives newly activated models a free quota, one for each model. To use the free quota only, turn on **Free Quota Only** (免费额度用完即停 in the Chinese console) on the console's free quota page. Once the quota is used up, dictation says that the model's quota is used up, or Voltip moves on to another model: see the next section.
+
+## When a model's quota runs out
+
+Recognition and AI polish can each list fallback models: when the selected model's quota is used up, Voltip moves on to the next model in the list, and the dictation still goes through. Each of Model Studio's models has its own free quota, so you can list several models with a free quota one after another.
+
+1. On the Speech models or AI models page, turn on **When a model's quota runs out**.
+2. Below it, choose a provider and a model, and choose **Add**. A provider can be added with several of its models, up to 8 in all; each uses the address and the key set on the provider's card.
+3. Use the move up and move down buttons to change the order. The first row is the selected model.
+
+- Voltip moves on only when the provider answers that the quota is used up. Other errors, such as a network failure, a wrong key or too many requests, are reported as before and do not switch models.
+- A model whose quota is used up is skipped for 24 hours and then tried again; the list shows when. **Check again** starts over with the selected model at once, and so does restarting Voltip or changing the provider's key.
+- When every model's quota is used up, dictation says the model's quota is used up. Text that was already inserted stays: in **Type as you speak**, the sentences already inserted are kept, and the recognised parts of a long recording are inserted as usual.
+- Fallback models are not used while the selected model is a local model, or while the selected provider cannot be used (for example, its key is missing).
+- When the selected model is a realtime model, a realtime fallback model also recognises while you speak; a whole-recording fallback model recognises the recording after you release the shortcut.
+- The history shows the model that actually recognised and polished the text, and the **Now** line above the providers notes when a fallback model stands in.
+- Model Studio needs **Free Quota Only** turned on for these models in its console: then it refuses requests once a quota is used up and Voltip moves on to the next model; without it, Model Studio starts charging instead. Voltip cannot read the remaining quota and does not change the console's settings.
 
 ## Switching models
 
@@ -68,3 +84,4 @@ Providers that are not set up do not appear in these menus. **Manage speech mode
 
 - **Recognition**: the recording, the model name and your key. If your [dictionary](/recognition/dictionary) has entries, their correct spellings go along as a hint. With a realtime model, the recording is sent while you speak.
 - **AI polish**: the recognised text, never audio, together with the app's name unless you turn that off. See [Privacy](/privacy) for the details.
+- **Fallback models**: with **When a model's quota runs out** turned on, the recording or the text goes to the provider of the next model in the list once the selected model's quota is used up.

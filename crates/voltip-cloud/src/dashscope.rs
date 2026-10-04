@@ -32,7 +32,7 @@ pub struct DashscopeTranscriber {
 impl DashscopeTranscriber {
     /// Build the client for `mode`; fails on an unusable configuration (bad URL, empty model).
     pub fn new(config: AsrConfig, mode: DashscopeMode) -> Result<Self, DictationError> {
-        Ok(Self { client: DashscopeClient::new(config, mode).map_err(|e| DictationError::Asr(e.to_string()))? })
+        Ok(Self { client: DashscopeClient::new(config, mode).map_err(crate::asr_error)? })
     }
 }
 
@@ -42,8 +42,8 @@ impl Transcriber for DashscopeTranscriber {
     /// once (the fallback when its stream did not run). The glossary goes out as hot words where
     /// the model takes them.
     async fn transcribe(&self, wav: &[u8], language: Option<&str>, glossary: &[String]) -> Result<Transcript, DictationError> {
-        let t = self.client.transcribe(wav, language, glossary).await.map_err(|e| DictationError::Asr(e.to_string()))?;
-        Ok(Transcript { text: t.text, latency_ms: t.latency_ms })
+        let t = self.client.transcribe(wav, language, glossary).await.map_err(crate::asr_error)?;
+        Ok(Transcript { text: t.text, latency_ms: t.latency_ms, model: Some(t.model) })
     }
 
     fn streaming(&self, glossary: &[String]) -> Option<Arc<dyn StreamingTranscriber>> {
@@ -67,6 +67,7 @@ impl StreamingTranscriber for DashscopeStreaming {
     fn open(&self, language: Option<&str>) -> Result<Box<dyn StreamingSession>, DictationError> {
         let runtime = tokio::runtime::Handle::try_current().map_err(|_| DictationError::Asr("realtime model: no runtime for the connection".into()))?;
         let options = self.client.duplex_options(language, &self.glossary, LIVE_SAMPLE_RATE_HZ, true);
+        let model = options.model.clone();
         let (commands, inbox) = mpsc::unbounded_channel();
         let (events_tx, events) = std_mpsc::channel();
         let (done_tx, done) = std_mpsc::sync_channel(1);
@@ -77,7 +78,7 @@ impl StreamingTranscriber for DashscopeStreaming {
             }
             let _ = done_tx.send(result.map_err(DictationError::Asr));
         });
-        Ok(Box::new(DashscopeSession { commands, events, done, finish_timeout: self.finish_timeout }))
+        Ok(Box::new(DashscopeSession { commands, events, done, finish_timeout: self.finish_timeout, model }))
     }
 
     /// Nothing to load: the model is the service's.
@@ -94,6 +95,8 @@ struct DashscopeSession {
     events: std_mpsc::Receiver<StreamEvent>,
     done: std_mpsc::Receiver<Result<StreamFinal, DictationError>>,
     finish_timeout: Duration,
+    /// The realtime model the session streams to: its text's model (docs/dictation.md §3.5).
+    model: String,
 }
 
 impl StreamingSession for DashscopeSession {
@@ -105,6 +108,10 @@ impl StreamingSession for DashscopeSession {
 
     fn poll(&mut self) -> StreamEvent {
         self.events.try_recv().unwrap_or(StreamEvent::Idle)
+    }
+
+    fn model(&self) -> Option<String> {
+        Some(self.model.clone())
     }
 
     fn finish(self: Box<Self>) -> Result<StreamFinal, DictationError> {
@@ -151,7 +158,7 @@ async fn drive(options: &DuplexOptions, mut inbox: mpsc::UnboundedReceiver<Comma
                 DuplexEvent::Finished => {
                     sender.close().await;
                     // A sentence the service never closed is the tail.
-                    return Ok(StreamFinal { committed, tail: current });
+                    return Ok(StreamFinal { committed, tail: current, model: Some(options.model.clone()) });
                 }
             },
         }
@@ -257,6 +264,8 @@ pub(crate) mod tests {
     /// does, until `want` events came; then finish.
     fn drive_session(streaming: Arc<dyn StreamingTranscriber>, chunks: usize, want: usize) -> (Vec<StreamEvent>, Result<StreamFinal, DictationError>) {
         let mut session = streaming.open(Some("zh")).unwrap();
+        // docs/dictation.md §3.5: the session names the model its text comes from.
+        assert!(session.model().is_some_and(|m| m.starts_with("qwen-audio-")), "{:?}", session.model());
         let mut events = Vec::new();
         for _ in 0..chunks {
             session.feed(&[0.25; 1600]);
@@ -294,6 +303,7 @@ pub(crate) mod tests {
         let fin = fin.unwrap();
         assert_eq!(fin.committed.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), ["第1句。", "字字。"]);
         assert_eq!(fin.tail, "");
+        assert_eq!(fin.model.as_deref(), Some("qwen-audio-3.1-asr-flash-message"), "the receipt comes back with the flush");
         let seen = seen.lock().unwrap();
         assert_eq!(seen.audio_bytes, 5 * 3200, "16-bit PCM, 100 ms per feed");
         assert!(seen.finished);
@@ -313,8 +323,8 @@ pub(crate) mod tests {
         let (origin, _) = serve(Some("AllocationQuota.FreeTierOnly")).await;
         let streaming = transcriber(&origin, "qwen-audio-3.1-asr-flash-streaming", DashscopeMode::Duplex).streaming(&[]).unwrap();
         let (events, fin) = tokio::task::spawn_blocking(move || drive_session(streaming, 1, 1)).await.unwrap();
-        assert!(matches!(&events[..], [StreamEvent::Error(m)] if m.contains("free quota")), "{events:?}");
-        assert!(matches!(&fin, Err(DictationError::Asr(m)) if m.contains("free quota")), "{fin:?}");
+        assert!(matches!(&events[..], [StreamEvent::Error(m)] if m.contains("quota used up")), "{events:?}");
+        assert!(matches!(&fin, Err(DictationError::Asr(m)) if m.contains("quota used up")), "{fin:?}");
         // Cancelled: the session is dropped after some audio.
         let (origin, seen) = serve(None).await;
         let streaming = transcriber(&origin, "qwen-audio-3.1-asr-flash-streaming", DashscopeMode::Duplex).streaming(&[]).unwrap();

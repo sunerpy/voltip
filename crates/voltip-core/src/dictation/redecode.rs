@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError, TryRecvError};
 use std::time::{Duration, Instant};
 
-use super::ports::{DictationError, LIVE_SAMPLE_RATE_HZ, Segment, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber};
+use super::ports::{DictationError, LIVE_SAMPLE_RATE_HZ, Segment, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript};
 use super::wav;
 
 /// Samples in the 20 ms frame the pause detector looks at.
@@ -121,6 +121,8 @@ impl RedecodeStreaming {
             committed: Vec::new(),
             tail: String::new(),
             last_preview: String::new(),
+            model: None,
+            preview_model: None,
             failure: None,
         }
     }
@@ -166,7 +168,7 @@ enum Job {
 
 struct Running {
     job: Job,
-    answer: mpsc::Receiver<Result<String, DictationError>>,
+    answer: mpsc::Receiver<Result<Transcript, DictationError>>,
 }
 
 struct RedecodeSession {
@@ -190,6 +192,10 @@ struct RedecodeSession {
     committed: Vec<Segment>,
     tail: String,
     last_preview: String,
+    /// The model behind the last non-empty committed sentence or tail (docs/dictation.md §3.5).
+    model: Option<String>,
+    /// The model behind `last_preview`.
+    preview_model: Option<String>,
     failure: Option<DictationError>,
 }
 
@@ -253,28 +259,35 @@ impl RedecodeSession {
         let (tx, answer) = mpsc::channel();
         let (transcriber, glossary, language) = (self.transcriber.clone(), self.glossary.clone(), self.language.clone());
         self.rt.spawn(async move {
-            let result = transcriber.transcribe(&wav, language.as_deref(), &glossary).await.map(|t| t.text);
+            let result = transcriber.transcribe(&wav, language.as_deref(), &glossary).await;
             let _ = tx.send(result);
         });
         self.running = Some(Running { job, answer });
     }
 
-    fn settle(&mut self, job: Job, answer: Result<String, DictationError>) {
+    fn settle(&mut self, job: Job, answer: Result<Transcript, DictationError>) {
         match (job, answer) {
-            (Job::Preview { sentence }, Ok(text)) => {
-                let text = text.trim();
+            (Job::Preview { sentence }, Ok(t)) => {
+                let text = t.text.trim();
                 if sentence == self.current.id && !text.is_empty() && text != self.last_preview {
                     self.last_preview = text.to_owned();
+                    self.preview_model = t.model;
                     self.events.push_back(StreamEvent::Partial { current: text.to_owned() });
                 }
             }
             // A preview is only a preview: the next step asks again.
             (Job::Preview { .. }, Err(e)) => tracing::debug!(error = %e, "live preview request failed"),
-            (Job::Close { last: true, .. }, Ok(text)) => self.tail = text.trim().to_owned(),
-            (Job::Close { start_ms, end_ms, last: false }, Ok(text)) => {
+            (Job::Close { last: true, .. }, Ok(t)) => {
+                self.tail = t.text.trim().to_owned();
+                if !self.tail.is_empty() {
+                    self.model = t.model;
+                }
+            }
+            (Job::Close { start_ms, end_ms, last: false }, Ok(t)) => {
                 self.last_preview.clear();
-                let text = text.trim().to_owned();
+                let text = t.text.trim().to_owned();
                 if !text.is_empty() {
+                    self.model = t.model;
                     self.committed.push(Segment { text: text.clone(), start_ms, end_ms });
                     self.events.push_back(StreamEvent::Endpoint { text, start_ms, end_ms });
                 }
@@ -307,6 +320,11 @@ impl StreamingSession for RedecodeSession {
         self.pump();
     }
 
+    /// The model behind the sentences committed so far (docs/dictation.md §3.5).
+    fn model(&self) -> Option<String> {
+        self.model.clone()
+    }
+
     fn poll(&mut self) -> StreamEvent {
         if let Some(running) = &self.running {
             match running.answer.try_recv() {
@@ -329,7 +347,8 @@ impl StreamingSession for RedecodeSession {
     fn finish(mut self: Box<Self>) -> Result<StreamFinal, DictationError> {
         if !self.flush {
             // A whole take: its transcriber has the audio; the preview so far is all there is.
-            return Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail: std::mem::take(&mut self.last_preview) });
+            let model = self.model.take().or_else(|| self.preview_model.take());
+            return Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail: std::mem::take(&mut self.last_preview), model });
         }
         self.close_current(true);
         let deadline = Instant::now() + self.params.finish_timeout;
@@ -354,7 +373,8 @@ impl StreamingSession for RedecodeSession {
                 Err(RecvTimeoutError::Disconnected) => return Err(DictationError::Asr("flush: the request was dropped".into())),
             }
         }
-        Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail: std::mem::take(&mut self.tail) })
+        // After the flush: its own requests may have recognised the last sentences.
+        Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail: std::mem::take(&mut self.tail), model: self.model.take() })
     }
 }
 
@@ -436,7 +456,7 @@ mod tests {
             ]
         );
         // The open sentence at the end is the tail; the closed one stays committed.
-        assert_eq!(fin, StreamFinal { committed: vec![Segment { text: "第3段。".into(), start_ms: 200, end_ms: 3000 }], tail: "第5段。".into() });
+        assert_eq!(fin, StreamFinal { committed: vec![Segment { text: "第3段。".into(), start_ms: 200, end_ms: 3000 }], tail: "第5段。".into(), model: None });
         // The previews grew by a second from the pre-roll on; the close carried the sentence with
         // its pause; the second sentence starts with the 0.2 s of silence before it.
         assert_eq!(transcriber.durations_ms(), [1000, 2000, 3600, 1000, 1600]);
@@ -542,7 +562,7 @@ mod tests {
             Box::new(s).finish().unwrap()
         })
         .await;
-        assert_eq!(fin, StreamFinal { committed: Vec::new(), tail: "第1段。".into() });
+        assert_eq!(fin, StreamFinal { committed: Vec::new(), tail: "第1段。".into(), model: None });
         assert_eq!(transcriber.durations_ms(), [1000], "the preview only");
     }
 

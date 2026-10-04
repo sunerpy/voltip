@@ -215,11 +215,33 @@
   {
     "args": {
       "engines": {
+        "asr_fallback": {
+          "enabled": true,
+          "models": [
+            {
+              "model": "qwen3-asr-flash",
+              "provider": "custom"
+            },
+            {
+              "model": "",
+              "provider": "builtin"
+            }
+          ]
+        },
         "asr_provider": "local",
         "chinese_script": "traditional",
         "inject": "paste",
         "language": "zh",
         "live_preview": true,
+        "llm_fallback": {
+          "enabled": true,
+          "models": [
+            {
+              "model": "gpt-6-luna",
+              "provider": "openai"
+            }
+          ]
+        },
         "llm_provider": "groq",
         "local_device": "gpu",
         "local_gpu": "Vulkan0",
@@ -258,6 +280,12 @@
       "provider": "custom"
     },
     "name": "provider_probe"
+  },
+  {
+    "args": {
+      "kind": "asr"
+    },
+    "name": "engines_quota_reset"
   },
   {
     "args": {

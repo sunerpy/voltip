@@ -181,7 +181,8 @@ impl StreamingSession for OnlineSession {
         self.stream.input_finished();
         self.decode_ready();
         let tail = self.text();
-        Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail })
+        // No receipt: the live-preview model's text keeps the configured model (docs/dictation.md §3.5).
+        Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail, model: None })
     }
 }
 

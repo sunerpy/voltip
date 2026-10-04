@@ -33,7 +33,29 @@
       "output_mode": "whole_take",
       "vad_trim": false,
       "chinese_script": "simplified",
-      "inject": "paste"
+      "inject": "paste",
+      "asr_fallback": {
+        "enabled": true,
+        "models": [
+          {
+            "provider": "custom",
+            "model": "qwen3-asr-flash"
+          },
+          {
+            "provider": "builtin",
+            "model": ""
+          }
+        ]
+      },
+      "llm_fallback": {
+        "enabled": true,
+        "models": [
+          {
+            "provider": "openai",
+            "model": "gpt-6-luna"
+          }
+        ]
+      }
     },
     "locale": "zh-cn",
     "auto_update": true,
@@ -534,7 +556,34 @@
           "active": false
         }
       }
-    ]
+    ],
+    "asr_fallback": {
+      "enabled": true,
+      "in_use": true,
+      "selected_retry_at_ms": 1758787000000,
+      "models": [
+        {
+          "provider": "custom",
+          "model": "qwen3-asr-flash"
+        },
+        {
+          "provider": "builtin",
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "skip": "same_as_selected"
+        }
+      ]
+    },
+    "llm_fallback": {
+      "enabled": true,
+      "in_use": true,
+      "models": [
+        {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "issue": "key_missing"
+        }
+      ]
+    }
   },
   "update": {
     "state": "available",

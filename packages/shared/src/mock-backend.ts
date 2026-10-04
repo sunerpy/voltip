@@ -803,7 +803,10 @@ export const MOCK_AUDIO_OUTPUTS: readonly AudioDevice[] = [
 export const MOCK_METER_INTERVAL_MS = 1000 / 30;
 
 /** Deterministic breathing level in dBFS so screenshots and tests are stable. */
-export function mockLevel(seq: number): { rms_dbfs: number; peak_dbfs: number } {
+export function mockLevel(seq: number): {
+  rms_dbfs: number;
+  peak_dbfs: number;
+} {
   const phase = seq / 18;
   const rms = -34 + 14 * Math.abs(Math.sin(phase)) + 3 * Math.abs(Math.sin(phase * 2.7));
   return { rms_dbfs: rms, peak_dbfs: rms + 8 };
@@ -928,6 +931,9 @@ export class MockBackend implements Backend {
   private readonly builtIn: { asr?: BuiltInService; llm?: BuiltInService };
   private readonly probeModels: Partial<Record<ProviderId, readonly string[]>> | false;
   private readonly engineOverrides: Partial<EngineStatus>;
+  /** docs/dictation.md §3.5: the selected model of a service that ran out of quota, and when it
+   *  is tried again (`simulateQuotaExhausted`); `engines_quota_reset` forgets it. */
+  private readonly quotaOut = new Map<ServiceKind, number>();
   /** Every `providerConsoleOpen` made, in order (tests). */
   readonly consolesOpened: ProviderId[] = [];
   /** `project_link_open` calls, for tests. */
@@ -1020,7 +1026,11 @@ export class MockBackend implements Backend {
       settings,
       secret_backend: this.role === "phone" ? "android-keystore" : "credential-manager",
       app_version: MOCK_CURRENT_VERSION,
-      relay: options.relay ?? { state: "disconnected", attempts: 0, source: "none" },
+      relay: options.relay ?? {
+        state: "disconnected",
+        attempts: 0,
+        source: "none",
+      },
       pairing: idleSnapshot(),
       devices: options.devices ?? [],
       hotkey: {
@@ -1153,9 +1163,17 @@ export class MockBackend implements Backend {
     await Promise.resolve();
     const entry = this.history.find((e) => e.id === id);
     if (entry === undefined)
-      return { kind: "failed", code: "gone", detail: "the entry is not in the history" };
+      return {
+        kind: "failed",
+        code: "gone",
+        detail: "the entry is not in the history",
+      };
     if (format === "srt" && !(entry.segments ?? []).some((s) => s.text.trim().length > 0))
-      return { kind: "failed", code: "empty", detail: "the entry has no segments" };
+      return {
+        kind: "failed",
+        code: "empty",
+        detail: "the entry has no segments",
+      };
     this.exports.push({ id, format, fileName });
     if (this.role === "phone") return { kind: "shared" };
     return { kind: "saved", path: `${MOCK_EXPORT_DIR}/${fileName}.${format}` };
@@ -1185,7 +1203,10 @@ export class MockBackend implements Backend {
     const mirror = this.mirrors.get(desktop);
     const entry = mirror?.history.find((e) => e.id === id);
     if (mirror === undefined || entry === undefined) return null;
-    return { entry: structuredClone(entry), shortened: (mirror.shortened ?? []).includes(id) };
+    return {
+      entry: structuredClone(entry),
+      shortened: (mirror.shortened ?? []).includes(id),
+    };
   }
 
   /** `mirror_profile`: the computer's settings as the copy holds them. */
@@ -1223,7 +1244,11 @@ export class MockBackend implements Backend {
   /** Replace the whole history and tell the UI its newest entries and the total. */
   private setHistory(entries: HistoryEntry[]) {
     this.history = entries;
-    this.emit({ type: "history", recent: entries.slice(0, HISTORY_RECENT), total: entries.length });
+    this.emit({
+      type: "history",
+      recent: entries.slice(0, HISTORY_RECENT),
+      total: entries.length,
+    });
   }
 
   /** The fake foreground probe (docs/dictation.md §18.2): what the next take finds in front
@@ -1318,7 +1343,10 @@ export class MockBackend implements Backend {
         return;
       }
       if (!device.pairing) {
-        this.emit({ type: "error", message: "pairing: 此设备当前没有等待配对" });
+        this.emit({
+          type: "error",
+          message: "pairing: 此设备当前没有等待配对",
+        });
         return;
       }
       this.joinSession();
@@ -1329,7 +1357,11 @@ export class MockBackend implements Backend {
         this.emit({ type: "error", message: ALWAYS_ON_DESKTOP_ONLY });
         return;
       }
-      this.emit({ type: "settings", ...this.state.settings, pairing_always_on: enabled });
+      this.emit({
+        type: "settings",
+        ...this.state.settings,
+        pairing_always_on: enabled,
+      });
       const phase = this.state.pairing.state.state;
       if (enabled && (phase === "idle" || phase === "expired")) {
         this.startPairing();
@@ -1341,7 +1373,11 @@ export class MockBackend implements Backend {
     },
     settings_set_lan_discovery: (args) => {
       const { enabled } = required(args);
-      this.emit({ type: "settings", ...this.state.settings, lan_discovery: enabled });
+      this.emit({
+        type: "settings",
+        ...this.state.settings,
+        lan_discovery: enabled,
+      });
       this.emit({
         type: "nearby",
         devices: enabled && this.role === "phone" ? [...MOCK_NEARBY] : [],
@@ -1388,7 +1424,14 @@ export class MockBackend implements Backend {
         type: "devices",
         devices: this.state.devices.map((d) =>
           d === target
-            ? { ...d, device: { ...d.device, sync: on, sync_gen: d.device.sync_gen + 1 } }
+            ? {
+                ...d,
+                device: {
+                  ...d.device,
+                  sync: on,
+                  sync_gen: d.device.sync_gen + 1,
+                },
+              }
             : d,
         ),
       });
@@ -1410,7 +1453,10 @@ export class MockBackend implements Backend {
     },
     settings_set_relay: (args) => {
       const { url, enabled } = required(args);
-      const settings: Settings = { ...this.state.settings, relay_enabled: enabled };
+      const settings: Settings = {
+        ...this.state.settings,
+        relay_enabled: enabled,
+      };
       if (url === null) delete settings.relay_url;
       else settings.relay_url = url;
       this.emit({ type: "settings", ...settings });
@@ -1435,7 +1481,10 @@ export class MockBackend implements Backend {
       }
       const edit = this.state.settings.edit_hotkey;
       if (edit !== null && mockSameChord(hotkey, edit)) {
-        this.emit({ type: "error", message: `hotkey: ${hotkey} 已用作「编辑选中文本」的快捷键` });
+        this.emit({
+          type: "error",
+          message: `hotkey: ${hotkey} 已用作「编辑选中文本」的快捷键`,
+        });
         return;
       }
       this.emit({ type: "settings", ...this.state.settings, hotkey });
@@ -1462,7 +1511,11 @@ export class MockBackend implements Backend {
         });
         return;
       }
-      this.emit({ type: "settings", ...this.state.settings, microphone: device });
+      this.emit({
+        type: "settings",
+        ...this.state.settings,
+        microphone: device,
+      });
     },
     settings_set_recording: (args) => {
       // Mirrors `SetRecording` (docs/dictation.md §22): a length outside the choices or an output
@@ -1486,7 +1539,11 @@ export class MockBackend implements Backend {
         });
         return;
       }
-      this.emit({ type: "settings", ...this.state.settings, recording: { ...recording } });
+      this.emit({
+        type: "settings",
+        ...this.state.settings,
+        recording: { ...recording },
+      });
     },
     settings_set_edit_hotkey: (args) => {
       // Mirrors `SetEditHotkey` (docs/dictation.md §19): the same validation, never the dictation
@@ -1499,11 +1556,18 @@ export class MockBackend implements Backend {
           return;
         }
         if (mockSameChord(hotkey, this.state.settings.hotkey)) {
-          this.emit({ type: "error", message: `edit_hotkey: ${hotkey} 已用作听写快捷键` });
+          this.emit({
+            type: "error",
+            message: `edit_hotkey: ${hotkey} 已用作听写快捷键`,
+          });
           return;
         }
       }
-      this.emit({ type: "settings", ...this.state.settings, edit_hotkey: hotkey });
+      this.emit({
+        type: "settings",
+        ...this.state.settings,
+        edit_hotkey: hotkey,
+      });
       this.emit({ type: "hotkey", ...this.hotkeyStatus(false) });
     },
     hotkey_capture: (args) => {
@@ -1519,9 +1583,17 @@ export class MockBackend implements Backend {
         this.emit({ type: "error", message: "connectivity: 自检正在进行" });
         return;
       }
-      this.emit({ type: "connectivity", ...this.state.connectivity, running: true });
+      this.emit({
+        type: "connectivity",
+        ...this.state.connectivity,
+        running: true,
+      });
       this.later(MOCK_CONNECTIVITY_MS, () => {
-        this.emit({ type: "connectivity", running: false, report: this.connectivityReport() });
+        this.emit({
+          type: "connectivity",
+          running: false,
+          report: this.connectivityReport(),
+        });
       });
     },
     phone_text_send: (args) => {
@@ -1561,7 +1633,10 @@ export class MockBackend implements Backend {
         sent_at: this.now(),
         state: { state: "sending" },
       };
-      this.emit({ type: "sent_texts", texts: [text, ...this.state.sent_texts].slice(0, 50) });
+      this.emit({
+        type: "sent_texts",
+        texts: [text, ...this.state.sent_texts].slice(0, 50),
+      });
       this.later(MOCK_TEXT_MS, () => {
         this.emit({
           type: "sent_texts",
@@ -1600,7 +1675,12 @@ export class MockBackend implements Backend {
       const take = (running?.take ?? 0) + 1;
       this.emit({
         type: "phone_take",
-        take: { device: publicKey, take, started_at: this.now(), state: { state: "starting" } },
+        take: {
+          device: publicKey,
+          take,
+          started_at: this.now(),
+          state: { state: "starting" },
+        },
       });
       this.later(MOCK_MIC_READY_MS, () => {
         if (
@@ -1624,7 +1704,11 @@ export class MockBackend implements Backend {
           this.state.phone_take?.take === t.take &&
           this.state.phone_take.state.state === "processing"
         ) {
-          this.emitPhoneTake({ state: "done", text: MOCK_DICTATION_TEXT, pasted: true });
+          this.emitPhoneTake({
+            state: "done",
+            text: MOCK_DICTATION_TEXT,
+            pasted: true,
+          });
           // The phone keeps its own record of a delivered take, marked with the computer it went
           // to (docs/dictation.md §20.7, user decision 2026-10-03), as the core does.
           const computer = this.state.devices.find((d) => d.device.public_key === t.device);
@@ -1673,7 +1757,10 @@ export class MockBackend implements Backend {
         });
         return;
       }
-      const settings: Settings = { ...this.state.settings, engines: { ...engines } };
+      const settings: Settings = {
+        ...this.state.settings,
+        engines: { ...engines },
+      };
       this.emit({ type: "settings", ...settings });
       this.emit({ type: "engines", ...this.resolveEngines(settings.engines) });
       this.emit({ type: "models", models: this.modelsFor(settings.engines) });
@@ -1694,16 +1781,30 @@ export class MockBackend implements Backend {
       const { provider, kind, value } = required(args);
       const entry = keyEntry(provider, kind);
       if (entry === undefined) {
-        this.emit({ type: "error", message: `${provider}: 此服务商不需要密钥` });
+        this.emit({
+          type: "error",
+          message: `${provider}: 此服务商不需要密钥`,
+        });
         return;
       }
       if (value !== null && value.trim().length > 0) this.userKeys.add(entry);
       else this.userKeys.delete(entry);
-      this.emit({ type: "engines", ...this.resolveEngines(this.state.settings.engines) });
+      this.emit({
+        type: "engines",
+        ...this.resolveEngines(this.state.settings.engines),
+      });
     },
     provider_probe: (args) => {
       const { provider, kind, baseUrl, key } = required(args);
       this.probe(provider, kind, baseUrl ?? undefined, key ?? undefined);
+    },
+    engines_quota_reset: (args) => {
+      const { kind } = required(args);
+      this.quotaOut.delete(kind);
+      this.emit({
+        type: "engines",
+        ...this.resolveEngines(this.state.settings.engines),
+      });
     },
     history_delete: (args) => {
       const { id } = required(args);
@@ -1739,21 +1840,36 @@ export class MockBackend implements Backend {
     },
     settings_set_auto_update: (args) => {
       const { enabled } = required(args);
-      this.emit({ type: "settings", ...this.state.settings, auto_update: enabled });
+      this.emit({
+        type: "settings",
+        ...this.state.settings,
+        auto_update: enabled,
+      });
     },
     settings_set_history: (args) => {
       const { enabled, keep } = required(args);
       // Mirrors `SetHistory`: out of range is refused, a smaller keep trims at once.
       if (!Number.isInteger(keep) || keep < HISTORY_MIN_KEEP || keep > HISTORY_LIMIT) {
-        this.emit({ type: "error", message: `history.keep: ${HISTORY_MIN_KEEP}–${HISTORY_LIMIT}` });
+        this.emit({
+          type: "error",
+          message: `history.keep: ${HISTORY_MIN_KEEP}–${HISTORY_LIMIT}`,
+        });
         return;
       }
-      this.emit({ type: "settings", ...this.state.settings, history: { enabled, keep } });
+      this.emit({
+        type: "settings",
+        ...this.state.settings,
+        history: { enabled, keep },
+      });
       if (this.history.length > keep) this.setHistory(this.history.slice(0, keep));
     },
     settings_set_overlay: (args) => {
       const { placement } = required(args);
-      this.emit({ type: "settings", ...this.state.settings, overlay: placement });
+      this.emit({
+        type: "settings",
+        ...this.state.settings,
+        overlay: placement,
+      });
     },
     hotkey_edge: (args) => {
       this.hotkeyEdge(required(args));
@@ -1794,7 +1910,13 @@ export class MockBackend implements Backend {
       const now = this.now();
       this.commitDictionary([
         ...this.state.dictionary,
-        { id: this.uuid(), ...draft, source, created_at_ms: now, updated_at_ms: now },
+        {
+          id: this.uuid(),
+          ...draft,
+          source,
+          created_at_ms: now,
+          updated_at_ms: now,
+        },
       ]);
     },
     dictionary_update: (args) => {
@@ -1802,7 +1924,10 @@ export class MockBackend implements Backend {
       uuidArg(id);
       const draft = validateDictionaryDraft(entry);
       if (!this.state.dictionary.some((e) => e.id === id)) {
-        this.emit({ type: "error", message: `dictionary: 没有 id 为 ${id} 的词条` });
+        this.emit({
+          type: "error",
+          message: `dictionary: 没有 id 为 ${id} 的词条`,
+        });
         return;
       }
       this.commitDictionary(
@@ -1815,7 +1940,10 @@ export class MockBackend implements Backend {
       const { id } = required(args);
       uuidArg(id);
       if (!this.state.dictionary.some((e) => e.id === id)) {
-        this.emit({ type: "error", message: `dictionary: 没有 id 为 ${id} 的词条` });
+        this.emit({
+          type: "error",
+          message: `dictionary: 没有 id 为 ${id} 的词条`,
+        });
         return;
       }
       this.commitDictionary(this.state.dictionary.filter((e) => e.id !== id));
@@ -1824,7 +1952,10 @@ export class MockBackend implements Backend {
       const { ids } = required(args);
       const next = permute(this.state.dictionary, ids.map(uuidArg));
       if (next === undefined) {
-        this.emit({ type: "error", message: "dictionary: 新的顺序必须恰好包含现有的全部词条" });
+        this.emit({
+          type: "error",
+          message: "dictionary: 新的顺序必须恰好包含现有的全部词条",
+        });
         return;
       }
       this.commitDictionary(next);
@@ -1861,7 +1992,10 @@ export class MockBackend implements Backend {
       const { ids } = required(args);
       const next = permute(this.state.rules, ids.map(uuidArg));
       if (next === undefined) {
-        this.emit({ type: "error", message: "rules: 新的顺序必须恰好包含现有的全部规则" });
+        this.emit({
+          type: "error",
+          message: "rules: 新的顺序必须恰好包含现有的全部规则",
+        });
         return;
       }
       this.commitRules(next);
@@ -1891,7 +2025,10 @@ export class MockBackend implements Backend {
       const draft = validateSceneDraft(scene, false);
       const current = this.state.scenes.find((s) => s.id === id);
       if (current === undefined) {
-        this.emit({ type: "error", message: `scenes: 没有 id 为 ${id} 的场景` });
+        this.emit({
+          type: "error",
+          message: `scenes: 没有 id 为 ${id} 的场景`,
+        });
         return;
       }
       if (current.builtin !== undefined && draft.name !== current.name) {
@@ -1899,7 +2036,10 @@ export class MockBackend implements Backend {
         return;
       }
       if (this.role !== "phone" && current.builtin === undefined && draft.match.apps.length === 0) {
-        this.emit({ type: "error", message: `scenes: 场景「${draft.name}」至少要有一个应用` });
+        this.emit({
+          type: "error",
+          message: `scenes: 场景「${draft.name}」至少要有一个应用`,
+        });
         return;
       }
       this.commitScenes(
@@ -1913,11 +2053,17 @@ export class MockBackend implements Backend {
       uuidArg(id);
       const current = this.state.scenes.find((s) => s.id === id);
       if (current === undefined) {
-        this.emit({ type: "error", message: `scenes: 没有 id 为 ${id} 的场景` });
+        this.emit({
+          type: "error",
+          message: `scenes: 没有 id 为 ${id} 的场景`,
+        });
         return;
       }
       if (current.builtin !== undefined) {
-        this.emit({ type: "error", message: "scenes: 内置场景不能删除，可以关闭" });
+        this.emit({
+          type: "error",
+          message: "scenes: 内置场景不能删除，可以关闭",
+        });
         return;
       }
       this.commitScenes(this.state.scenes.filter((s) => s.id !== id));
@@ -1927,13 +2073,19 @@ export class MockBackend implements Backend {
       uuidArg(id);
       const current = this.state.scenes.find((s) => s.id === id);
       if (current === undefined) {
-        this.emit({ type: "error", message: `scenes: 没有 id 为 ${id} 的场景` });
+        this.emit({
+          type: "error",
+          message: `scenes: 没有 id 为 ${id} 的场景`,
+        });
         return;
       }
       const platform = this.builtinPlatform();
       const row = MOCK_BUILTIN_SCENES.find((r) => r.id === current.builtin);
       if (row === undefined || platform === undefined) {
-        this.emit({ type: "error", message: "scenes: 只有内置场景可以恢复默认" });
+        this.emit({
+          type: "error",
+          message: "scenes: 只有内置场景可以恢复默认",
+        });
         return;
       }
       const template = structuredClone(row.templates[platform]);
@@ -1954,7 +2106,10 @@ export class MockBackend implements Backend {
       const { ids } = required(args);
       const next = permute(this.state.scenes, ids.map(uuidArg));
       if (next === undefined) {
-        this.emit({ type: "error", message: "scenes: 新的顺序必须恰好包含现有的全部场景" });
+        this.emit({
+          type: "error",
+          message: "scenes: 新的顺序必须恰好包含现有的全部场景",
+        });
         return;
       }
       this.commitScenes(next);
@@ -1973,7 +2128,10 @@ export class MockBackend implements Backend {
       const draft = validatePresetDraft(preset);
       const current = this.state.presets.find((p) => p.id === id);
       if (current === undefined) {
-        this.emit({ type: "error", message: `presets: 没有 id 为 ${id} 的预设` });
+        this.emit({
+          type: "error",
+          message: `presets: 没有 id 为 ${id} 的预设`,
+        });
         return;
       }
       this.commitPresets(
@@ -1986,7 +2144,10 @@ export class MockBackend implements Backend {
       const { id } = required(args);
       uuidArg(id);
       if (!this.state.presets.some((p) => p.id === id)) {
-        this.emit({ type: "error", message: `presets: 没有 id 为 ${id} 的预设` });
+        this.emit({
+          type: "error",
+          message: `presets: 没有 id 为 ${id} 的预设`,
+        });
         return;
       }
       this.commitPresets(this.state.presets.filter((p) => p.id !== id));
@@ -2007,7 +2168,11 @@ export class MockBackend implements Backend {
       const { id } = required(args);
       if (id !== null) uuidArg(id);
       const { pinned_scene: _old, ...rest } = this.state.settings;
-      this.emit({ type: "settings", ...rest, ...(id === null ? {} : { pinned_scene: id }) });
+      this.emit({
+        type: "settings",
+        ...rest,
+        ...(id === null ? {} : { pinned_scene: id }),
+      });
     },
   };
 
@@ -2046,14 +2211,20 @@ export class MockBackend implements Backend {
   /** `scenes_builtin`: every built-in scene's term pack. */
   async scenesBuiltin(): Promise<BuiltinSceneTerms[]> {
     await Promise.resolve();
-    return MOCK_BUILTIN_SCENES.map((row) => ({ id: row.id, terms: [...row.terms] }));
+    return MOCK_BUILTIN_SCENES.map((row) => ({
+      id: row.id,
+      terms: [...row.terms],
+    }));
   }
 
   private commitScenes(scenes: Scene[]) {
     try {
       checkScenes(scenes);
     } catch (e) {
-      this.emit({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      this.emit({
+        type: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
       return;
     }
     this.emit({ type: "scenes", scenes });
@@ -2080,14 +2251,22 @@ export class MockBackend implements Backend {
     try {
       checkPresets(presets);
     } catch (e) {
-      this.emit({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      this.emit({
+        type: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
       return;
     }
     this.emit({ type: "presets", presets });
   }
 
   private presetFrom(draft: PresetDraft, id: string, createdAtMs: number): CustomPreset {
-    return { id, ...draft, created_at_ms: createdAtMs, updated_at_ms: this.now() };
+    return {
+      id,
+      ...draft,
+      created_at_ms: createdAtMs,
+      updated_at_ms: this.now(),
+    };
   }
 
   /** 试一试 (`presets_try`): refused at once without a clean-up, like the core; otherwise the
@@ -2111,7 +2290,10 @@ export class MockBackend implements Backend {
       done += 1;
       if (done < total) {
         event({ state: "running", done, total });
-        this.processing.set(requestId, { id, timer: setTimeout(step, MOCK_REFINE_MS) });
+        this.processing.set(requestId, {
+          id,
+          timer: setTimeout(step, MOCK_REFINE_MS),
+        });
         return;
       }
       this.processing.delete(requestId);
@@ -2128,7 +2310,10 @@ export class MockBackend implements Backend {
       this.setHistory(this.history.map((e) => (e.id === id ? { ...e, processed } : e)));
       event({ state: "done", processed });
     };
-    this.processing.set(requestId, { id, timer: setTimeout(step, MOCK_REFINE_MS) });
+    this.processing.set(requestId, {
+      id,
+      timer: setTimeout(step, MOCK_REFINE_MS),
+    });
   }
 
   private tryPreset(id: number, trial: PresetTrial, text: string) {
@@ -2169,7 +2354,10 @@ export class MockBackend implements Backend {
     try {
       checkDictionary(entries);
     } catch (e) {
-      this.emit({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      this.emit({
+        type: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
       return;
     }
     this.emit({ type: "dictionary", entries });
@@ -2179,14 +2367,22 @@ export class MockBackend implements Backend {
     try {
       checkRules(rules);
     } catch (e) {
-      this.emit({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      this.emit({
+        type: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
       return;
     }
     this.emit({ type: "rules", rules });
   }
 
   private ruleFrom(draft: RuleDraft, id: string, createdAtMs: number): ReplacementRule {
-    return { id, ...draft, created_at_ms: createdAtMs, updated_at_ms: this.now() };
+    return {
+      id,
+      ...draft,
+      created_at_ms: createdAtMs,
+      updated_at_ms: this.now(),
+    };
   }
 
   /** `replace`: the file is the list; `merge`: same-name rules updated in place, the rest appended. */
@@ -2252,6 +2448,13 @@ export class MockBackend implements Backend {
 
   simulatePeerLeft() {
     this.finish({ state: "failed", reason: { kind: "peer_left" } });
+  }
+
+  /** The selected model of `kind` ran out of quota (docs/dictation.md §3.5): the engines' status
+   *  says it is tried again at `retryAtMs` while its fallback models run. */
+  simulateQuotaExhausted(kind: ServiceKind, retryAtMs: number) {
+    this.quotaOut.set(kind, retryAtMs);
+    this.emit({ type: "engines", ...this.resolveEngines(this.state.settings.engines) });
   }
 
   simulateRelay(patch: Partial<RelayStatus>) {
@@ -2400,7 +2603,12 @@ export class MockBackend implements Backend {
       });
     };
     // The first progress event carries 0 bytes so the UI flips to the download row at once.
-    this.setModelState(id, { kind: "downloading", received: 0, total, file: MOCK_MODEL_FILE });
+    this.setModelState(id, {
+      kind: "downloading",
+      received: 0,
+      total,
+      file: MOCK_MODEL_FILE,
+    });
     this.laterModel(id, () => {
       tick(1);
     });
@@ -2517,7 +2725,11 @@ export class MockBackend implements Backend {
       return;
     }
     if (current.state === "ready") {
-      this.emit({ type: "update", state: "installing", version: current.version });
+      this.emit({
+        type: "update",
+        state: "installing",
+        version: current.version,
+      });
       return;
     }
     if (current.state !== "available") return;
@@ -2620,7 +2832,10 @@ export class MockBackend implements Backend {
         ? { llm_provider: engines.llm_provider }
         : {}),
     };
-    return Promise.resolve({ configured: this.feedback !== "not_configured", diagnostics });
+    return Promise.resolve({
+      configured: this.feedback !== "not_configured",
+      diagnostics,
+    });
   }
 
   feedbackSubmit(draft: FeedbackDraft): Promise<FeedbackReceipt> {
@@ -2645,7 +2860,11 @@ export class MockBackend implements Backend {
           reject(new Error(failure));
           return;
         }
-        this.feedbackSent.push({ ...draft, message, contact: contact.length > 0 ? contact : null });
+        this.feedbackSent.push({
+          ...draft,
+          message,
+          contact: contact.length > 0 ? contact : null,
+        });
         // The report went out: the shell forgets its files, uploaded or not.
         for (const id of ids) void this.feedbackAttachmentRemove(id);
         if (failure === "attachments") reject(new Error(failure));
@@ -2704,7 +2923,13 @@ export class MockBackend implements Backend {
    *  `probeModels`) after `MOCK_PROBE_MS`. */
   private probe(provider: ProviderId, kind: ServiceKind, baseUrl?: string, key?: string) {
     const failed = (reason: ProbeFailure) =>
-      this.emit({ type: "provider_probe", provider, kind, result: "failed", reason });
+      this.emit({
+        type: "provider_probe",
+        provider,
+        kind,
+        result: "failed",
+        reason,
+      });
     const spec = providerSpec(provider);
     const preset = spec[kind];
     if (preset === undefined || provider === "local") return failed("unsupported");
@@ -2761,7 +2986,18 @@ export class MockBackend implements Backend {
       liveReady:
         settings.live_preview && this.modelState(MOCK_STREAMING_MODEL_ID)?.kind === "installed",
     });
-    return { ...status, ...this.engineOverrides };
+    const marked = (kind: ServiceKind, fallback: EngineStatus["asr_fallback"]) => {
+      const retry = this.quotaOut.get(kind);
+      return fallback === undefined || retry === undefined || !fallback.in_use
+        ? fallback
+        : { ...fallback, selected_retry_at_ms: retry };
+    };
+    return {
+      ...status,
+      asr_fallback: marked("asr", status.asr_fallback),
+      llm_fallback: marked("llm", status.llm_fallback),
+      ...this.engineOverrides,
+    };
   }
 
   private emitPhase(phase: DictationPhase, session = this.state.dictation.session) {
@@ -2912,7 +3148,11 @@ export class MockBackend implements Backend {
     if (kind === "edit" && !this.state.engines.refine_ready) {
       // §19.4: no LLM, no edit — refused at the press, the microphone never opens.
       this.emitPhase(
-        { phase: "failed", message: MOCK_EDIT_UNAVAILABLE, code: "edit_unavailable" },
+        {
+          phase: "failed",
+          message: MOCK_EDIT_UNAVAILABLE,
+          code: "edit_unavailable",
+        },
         session,
       );
       this.dwell(MOCK_DICTATION_DWELL_MS, session);
@@ -2925,10 +3165,19 @@ export class MockBackend implements Backend {
       // §19.2: the copy chord is a terminal's interrupt; refused once the probe answered — no
       // copy, no microphone, nothing recorded.
       this.emitPhase(
-        { phase: "listening", started_at: this.now(), ready: false, locked: false },
+        {
+          phase: "listening",
+          started_at: this.now(),
+          ready: false,
+          locked: false,
+        },
         session,
       );
-      this.emitPhase({ phase: "failed", message: MOCK_EDIT_IN_TERMINAL, code: "edit_in_terminal" });
+      this.emitPhase({
+        phase: "failed",
+        message: MOCK_EDIT_IN_TERMINAL,
+        code: "edit_in_terminal",
+      });
       this.dwell(MOCK_DICTATION_DWELL_MS, session);
       return;
     }
@@ -2956,7 +3205,12 @@ export class MockBackend implements Backend {
       if (!serviceable) this.takeModeError = MOCK_SCENE_MODE_NOT_READY;
     }
     this.emitPhase(
-      { phase: "listening", started_at: this.now(), ready: false, locked: false },
+      {
+        phase: "listening",
+        started_at: this.now(),
+        ready: false,
+        locked: false,
+      },
       session,
     );
     if (kind === "edit") this.copySelection(session);
@@ -2964,7 +3218,12 @@ export class MockBackend implements Backend {
       if (!this.listeningIn(session)) return;
       const current = this.state.dictation.phase;
       const locked = current.phase === "listening" && current.locked;
-      this.emitPhase({ phase: "listening", started_at: this.now(), ready: true, locked });
+      this.emitPhase({
+        phase: "listening",
+        started_at: this.now(),
+        ready: true,
+        locked,
+      });
       if (!this.state.engines.live_preview_ready) return;
       const injecting = this.takeMode === "live_inject";
       const step = (n: number) => {
@@ -2977,7 +3236,10 @@ export class MockBackend implements Backend {
         // paste is instant, so `injected` follows `committed` and the cancel count follows both.
         const injected = injecting ? live.committed.length : 0;
         if (injecting) this.injectedChars = injectedChars(live.committed, injected);
-        this.emitPhase({ ...phase, live: { ...structuredClone(live), injected } });
+        this.emitPhase({
+          ...phase,
+          live: { ...structuredClone(live), injected },
+        });
         this.laterLive(MOCK_LIVE_STEP_MS, () => {
           step(n + 1);
         });
@@ -3173,7 +3435,11 @@ export class MockBackend implements Backend {
       const ruled = vocabulary.applyRules(refined);
       const text = ruled.text;
       if (text.trim().length === 0) {
-        this.emitPhase({ phase: "failed", message: MOCK_NO_SPEECH, code: "no_speech" });
+        this.emitPhase({
+          phase: "failed",
+          message: MOCK_NO_SPEECH,
+          code: "no_speech",
+        });
         this.dwell(MOCK_DICTATION_DWELL_MS, session);
         return;
       }
@@ -3273,7 +3539,11 @@ export class MockBackend implements Backend {
       const vocabulary = Vocabulary.compile(this.state.dictionary, this.state.rules);
       const instruction = vocabulary.correct(MOCK_EDIT_INSTRUCTION);
       if (instruction.text.trim().length === 0) {
-        this.emitPhase({ phase: "failed", message: MOCK_NO_SPEECH, code: "no_speech" });
+        this.emitPhase({
+          phase: "failed",
+          message: MOCK_NO_SPEECH,
+          code: "no_speech",
+        });
         this.dwell(MOCK_DICTATION_DWELL_MS, session);
         return;
       }
@@ -3403,7 +3673,10 @@ export class MockBackend implements Backend {
 
   private startPairing() {
     this.clearTimers();
-    this.emitPairing({ ...idleSnapshot(), state: { state: "creating_session" } });
+    this.emitPairing({
+      ...idleSnapshot(),
+      state: { state: "creating_session" },
+    });
     this.later(CREATE_SESSION_MS, () => {
       const sessionId = hexFromRandom(this.random, 8);
       const ticket = hexFromRandom(this.random, 16);
@@ -3430,11 +3703,17 @@ export class MockBackend implements Backend {
   private joinWithCode(code: string) {
     const digits = code.replace(/\s+/g, "");
     if (!/^\d{6}$/.test(digits)) {
-      this.finish({ state: "failed", reason: { kind: "relay", code: "invalid_code" } });
+      this.finish({
+        state: "failed",
+        reason: { kind: "relay", code: "invalid_code" },
+      });
       return;
     }
     if (this.expectedCode !== undefined && this.expectedCode.replace(/\s+/g, "") !== digits) {
-      this.finish({ state: "failed", reason: { kind: "relay", code: "invalid_code" } });
+      this.finish({
+        state: "failed",
+        reason: { kind: "relay", code: "invalid_code" },
+      });
       return;
     }
     this.joinSession();
@@ -3456,7 +3735,10 @@ export class MockBackend implements Backend {
 
   private joinSession() {
     this.clearTimers();
-    this.emitPairing({ ...idleSnapshot(), state: { state: "creating_session" } });
+    this.emitPairing({
+      ...idleSnapshot(),
+      state: { state: "creating_session" },
+    });
     this.later(CREATE_SESSION_MS, () => {
       this.simulatePeerJoined();
       if (this.autoPeer) {
@@ -3506,7 +3788,10 @@ export class MockBackend implements Backend {
 
   private finish(state: Snapshot["state"]) {
     this.clearTimers();
-    this.emitPairing({ state, remaining_secs: state.state === "expired" ? 0 : undefined });
+    this.emitPairing({
+      state,
+      remaining_secs: state.state === "expired" ? 0 : undefined,
+    });
     this.openNextIfAlwaysOn();
   }
 
@@ -3559,14 +3844,31 @@ export class MockBackend implements Backend {
 
   private applyRelaySettings(settings: Settings) {
     if (!settings.relay_enabled || settings.relay_url === undefined) {
-      this.emit({ type: "relay", state: "disconnected", attempts: 0, source: "none" });
+      this.emit({
+        type: "relay",
+        state: "disconnected",
+        attempts: 0,
+        source: "none",
+      });
       return;
     }
     // A relay the user entered is named; the build's own relay never is (the mock has none).
     const endpoint = settings.relay_url;
-    this.emit({ type: "relay", endpoint, source: "user", state: "connecting", attempts: 0 });
+    this.emit({
+      type: "relay",
+      endpoint,
+      source: "user",
+      state: "connecting",
+      attempts: 0,
+    });
     this.later(RELAY_CONNECT_MS, () => {
-      this.emit({ type: "relay", endpoint, source: "user", state: "connected", attempts: 0 });
+      this.emit({
+        type: "relay",
+        endpoint,
+        source: "user",
+        state: "connected",
+        attempts: 0,
+      });
     });
   }
 
@@ -3579,7 +3881,10 @@ export class MockBackend implements Backend {
 
   private safetyCode(): SafetyCode {
     const pick = () => SAFETY_WORDS[Math.floor(this.random() * SAFETY_WORDS.length)] ?? "amber";
-    return { words: [pick(), pick(), pick(), pick()], fingerprint: fingerprintOf(this.random) };
+    return {
+      words: [pick(), pick(), pick(), pick()],
+      fingerprint: fingerprintOf(this.random),
+    };
   }
 
   /** What the desktop shell would report on its own (mirrors `Bridge::publish`): a hotkey
