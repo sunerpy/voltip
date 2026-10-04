@@ -191,10 +191,19 @@ async fn transcribe(app: &Arc<App>, id: u64, multipart: Multipart) -> Result<Res
     let started = Instant::now();
     // The permit first: a request waiting for one has not read a byte of its body.
     let permit = app.admission.admit().await?;
-    let upload = upload::read(multipart, &app.uploads, app.max_samples).await?;
+    // Known as active before its body is read, so that stopping the service (the app's switch,
+    // `cancel_all`) also ends an upload in progress; one that slipped in after the queue closed
+    // ends here.
     let cancel = CancelToken::new();
     app.active.lock().insert(id, cancel.clone());
     let active = Active { app: app.as_ref(), id, cancel: cancel.clone() };
+    if app.admission.is_closed() {
+        return Err(ApiError::unavailable("shutting_down", "服务正在停止"));
+    }
+    let upload = tokio::select! {
+        upload = upload::read(multipart, &app.uploads, app.max_samples) => upload?,
+        () = cancel.cancelled() => return Err(ApiError::unavailable("shutting_down", "服务正在停止")),
+    };
     let (service, format, model) = (app.service.clone(), upload.format, upload.request.model.clone());
     let pcm = upload.pcm;
     let audio = PcmFile { path: pcm.path().to_path_buf(), samples: pcm.samples() };

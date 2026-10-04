@@ -250,6 +250,31 @@ impl ProjectLink {
     }
 }
 
+/// The user guide's site (docs/site, published from sunerpy/firlab): English at the root,
+/// Chinese under `/zh/`.
+pub const GUIDE_SITE: &str = "https://voltip.firlab.app";
+
+/// A page of the user guide the shell opens in the browser (`guide_open`): the webview names the
+/// page and its language, never a URL.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GuidePage {
+    /// 本机服务 (docs/site/recognition/service.md; docs/dictation.md §23.6).
+    Service,
+}
+
+impl GuidePage {
+    /// The page in the language of `locale` (a BCP 47 tag such as `zh-CN` or `en`): Chinese for
+    /// `zh…`, English otherwise.
+    pub fn url(self, locale: &str) -> String {
+        let path = match self {
+            Self::Service => "recognition/service",
+        };
+        let zh = locale.trim().to_ascii_lowercase().starts_with("zh");
+        format!("{GUIDE_SITE}/{}{path}", if zh { "zh/" } else { "" })
+    }
+}
+
 /// A GPU the local engines can run on (docs/dictation.md §10.6).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct GpuDevice {
@@ -274,6 +299,8 @@ pub enum ServePhase {
     /// Switched off (or not available here).
     #[default]
     Off,
+    /// Switched on, the listener being started.
+    Starting,
     /// Listening on `address`.
     Running,
     /// Switched on but not listening: `error` says why (the port is taken).
@@ -624,6 +651,10 @@ mod tests {
         assert_eq!(ProjectLink::Source.url(repo), repo);
         assert_eq!(ProjectLink::Feedback.url(&format!("{repo}/")), format!("{repo}/issues/new/choose"));
         assert_eq!(ProjectLink::Releases.url(repo), format!("{repo}/releases"));
+        assert_eq!(GuidePage::Service.url("zh-CN"), "https://voltip.firlab.app/zh/recognition/service");
+        assert_eq!(GuidePage::Service.url("en"), "https://voltip.firlab.app/recognition/service");
+        assert_eq!(GuidePage::Service.url("ZH-tw"), "https://voltip.firlab.app/zh/recognition/service");
+        assert_eq!(serde_json::to_string(&GuidePage::Service).unwrap(), r#""service""#);
         assert_eq!(serde_json::to_string(&ProjectLink::Feedback).unwrap(), r#""feedback""#);
         assert_eq!(serde_json::from_str::<ProjectLink>(r#""source""#).unwrap(), ProjectLink::Source);
     }

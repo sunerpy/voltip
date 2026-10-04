@@ -125,6 +125,16 @@ async fn serve_status(node: &mut Node) -> ServeStatus {
     wait(node, |e| if let CoreEvent::Serve(s) = e { Some(s.clone()) } else { None }).await
 }
 
+/// The next status that is not `starting` (it comes first whenever a listener is started).
+async fn serve_settled(node: &mut Node) -> ServeStatus {
+    loop {
+        let status = serve_status(node).await;
+        if status.phase != ServePhase::Starting {
+            return status;
+        }
+    }
+}
+
 async fn error(node: &mut Node) -> String {
     wait(node, |e| if let CoreEvent::Error(m) = e { Some(m.clone()) } else { None }).await
 }
@@ -145,9 +155,10 @@ async fn switching_the_service_on_starts_a_listener_that_runs_with_the_apps_stat
     let dir = tempfile::tempdir().unwrap();
     let host = Arc::new(FakeHost::default());
     let mut node = start(dir.path(), Some(host.clone()));
-    assert_eq!(serve_status(&mut node).await, ServeStatus { available: true, phase: ServePhase::Off, address: None, error: None }, "off at first");
+    assert_eq!(serve_settled(&mut node).await, ServeStatus { available: true, phase: ServePhase::Off, address: None, error: None }, "off at first");
     node.handle.send(CoreCommand::SetServe(on(48123))).await.unwrap();
-    let status = serve_status(&mut node).await;
+    assert_eq!(serve_status(&mut node).await.phase, ServePhase::Starting, "starting first");
+    let status = serve_settled(&mut node).await;
     assert_eq!((status.phase, status.address.as_deref()), (ServePhase::Running, Some("http://127.0.0.1:48123/v1")));
     let (config, service) = {
         let log = host.log.lock();
@@ -179,9 +190,9 @@ async fn the_token_goes_to_the_clipboard_and_a_new_one_is_in_force_at_once() {
     let dir = tempfile::tempdir().unwrap();
     let host = Arc::new(FakeHost::default());
     let mut node = start(dir.path(), Some(host.clone()));
-    serve_status(&mut node).await;
+    serve_settled(&mut node).await;
     node.handle.send(CoreCommand::SetServe(on(48124))).await.unwrap();
-    assert_eq!(serve_status(&mut node).await.phase, ServePhase::Running);
+    assert_eq!(serve_settled(&mut node).await.phase, ServePhase::Running);
     node.handle.send(CoreCommand::ServeCopyToken).await.unwrap();
     node.handle.send(CoreCommand::ServeRotateToken).await.unwrap();
     // Commands run in order: once the rotation reached the host, the copy is done too.
@@ -203,19 +214,19 @@ async fn a_taken_port_is_reported_and_switching_off_stops_the_listener() {
     let host = Arc::new(FakeHost::default());
     *host.refuse.lock() = true;
     let mut node = start(dir.path(), Some(host.clone()));
-    serve_status(&mut node).await;
+    serve_settled(&mut node).await;
     node.handle.send(CoreCommand::SetServe(on(48125))).await.unwrap();
-    let failed = serve_status(&mut node).await;
+    let failed = serve_settled(&mut node).await;
     assert_eq!(failed.phase, ServePhase::Failed);
     assert!(failed.error.unwrap().contains("Address already in use"));
     *host.refuse.lock() = false;
     node.handle.send(CoreCommand::SetServe(on(48126))).await.unwrap();
-    assert_eq!(serve_status(&mut node).await.phase, ServePhase::Running, "another port works");
+    assert_eq!(serve_settled(&mut node).await.phase, ServePhase::Running, "another port works");
     node.handle.send(CoreCommand::SetServe(on(48127))).await.unwrap();
-    assert_eq!(serve_status(&mut node).await.address.as_deref(), Some("http://127.0.0.1:48127/v1"), "a new port restarts it");
+    assert_eq!(serve_settled(&mut node).await.address.as_deref(), Some("http://127.0.0.1:48127/v1"), "a new port restarts it");
     assert_eq!(host.log.lock().stops, 1, "the old listener stopped");
     node.handle.send(CoreCommand::SetServe(ServeSettings { enabled: false, ..on(48127) })).await.unwrap();
-    assert_eq!(serve_status(&mut node).await.phase, ServePhase::Off);
+    assert_eq!(serve_settled(&mut node).await.phase, ServePhase::Off);
     assert_eq!(host.log.lock().stops, 2);
     // Refusals change nothing.
     node.handle.send(CoreCommand::SetServe(on(80))).await.unwrap();
@@ -235,8 +246,8 @@ async fn a_service_switched_on_starts_with_the_app() {
         .unwrap();
     let host = Arc::new(FakeHost::default());
     let mut node = start(dir.path(), Some(host.clone()));
-    let first = serve_status(&mut node).await;
-    let status = if first.phase == ServePhase::Running { first } else { serve_status(&mut node).await };
+    let first = serve_settled(&mut node).await;
+    let status = if first.phase == ServePhase::Running { first } else { serve_settled(&mut node).await };
     assert_eq!(status.address.as_deref(), Some("http://127.0.0.1:48129/v1"));
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
     let started = std::time::Instant::now();
@@ -250,7 +261,7 @@ async fn a_service_switched_on_starts_with_the_app() {
 async fn a_shell_without_a_host_refuses_the_service() {
     let dir = tempfile::tempdir().unwrap();
     let mut node = start(dir.path(), None);
-    assert_eq!(serve_status(&mut node).await, ServeStatus::default(), "not available");
+    assert_eq!(serve_settled(&mut node).await, ServeStatus::default(), "not available");
     for command in [CoreCommand::SetServe(on(48130)), CoreCommand::ServeCopyToken, CoreCommand::ServeRotateToken] {
         node.handle.send(command).await.unwrap();
         assert_eq!(error(&mut node).await, SERVE_UNAVAILABLE);

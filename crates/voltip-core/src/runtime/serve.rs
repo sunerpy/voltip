@@ -103,6 +103,7 @@ impl Runtime {
                 return;
             }
         };
+        self.set_serve_status(ServePhase::Starting, None, None);
         let state = Arc::new(PushedState::new(self.serve_state()));
         let service = Arc::new(Service::new(state.clone(), defaults(&wanted)));
         let config = ListenConfig {

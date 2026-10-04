@@ -79,6 +79,21 @@ impl BuiltinPreset {
         }
     }
 
+    /// The English name, as the English interface shows it (`presets.<id>.name` in
+    /// packages/shared/src/i18n/en.ts); the local speech service accepts it (docs/dictation.md §23.3).
+    pub fn english_name(self) -> &'static str {
+        match self {
+            Self::Proofread => "Proofread",
+            Self::Prompt => "Prompt optimizer",
+            Self::Intent => "Clarify intent",
+            Self::Chat => "Casual chat",
+            Self::Translate => "Chinese ⇄ English",
+            Self::Notes => "Key points",
+            Self::Punctuation => "Punctuation only",
+            Self::Formal => "Formal",
+        }
+    }
+
     /// A wire name, including the refine styles scenes stored before presets existed (`default`
     /// was the proofreader, `punctuation` and `formal` keep their names).
     fn from_wire(text: &str) -> Option<Self> {

@@ -101,7 +101,29 @@ describe("Settings · 本机服务", () => {
     await waitFor(() => {
       expect(backend.serveTokenRotations).toBe(1);
     });
-    expect(document.body.textContent).not.toMatch(/[0-9a-f]{64}/);
+    expect(document.body.textContent).not.toMatch(/[0-9a-f]{64}|[A-Za-z0-9_-]{43}/);
+  });
+
+  it("使用指南 opens the guide's page in the interface's language", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    renderApp({ path: "/settings/service", backend });
+    const pane = await screen.findByTestId("service-pane");
+    await user.click(within(pane).getByRole("button", { name: "使用指南" }));
+    expect(backend.guidesOpened).toEqual([{ page: "service", locale: "zh-CN" }]);
+  });
+
+  it("a listener being started says so and shows no address yet", async () => {
+    renderApp({
+      path: "/settings/service",
+      backend: new MockBackend({
+        settings: { serve: { enabled: true, port: 47840 } },
+        serve: { available: true, phase: "starting" },
+      }),
+    });
+    const pane = await screen.findByTestId("service-pane");
+    expect(within(pane).getByTestId("service-status")).toHaveTextContent("正在启动");
+    expect(within(pane).queryByTestId("service-address")).toBeNull();
   });
 
   it("the English pane reads the same", async () => {

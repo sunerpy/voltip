@@ -1632,7 +1632,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - `model` 的写法：
   - `voltip`、不写，或任何不以 `voltip:` 开头的值（如 Paseo 缺省的 `whisper-1`）：默认处理方式。
   - `voltip:` 后接用 `;` 分隔的项：`raw`（不润色）、`scene=<选择>`、`preset=<选择>`，每项最多一次。写法不对、`raw` 与 `preset` 同时出现时返回 400 `invalid_model`，消息说明可用的写法；选择找不到时也是 400 `invalid_model`，消息指向 `GET /v1/models`。
-- `<选择>` 依次匹配：内置条目的 wire 名（`coding`、`proofread` …）→ UUID → 用户条目的名称（ASCII 不区分大小写）→ 内置预设的中文名，内置场景的中文名或英文名。
+- `<选择>` 依次匹配：内置条目的 wire 名（`coding`、`proofread` …）→ UUID → 用户条目的名称（ASCII 不区分大小写）→ 内置条目的中文名或英文名（英文名与英文界面相同，ASCII 不区分大小写）。
 - 默认处理方式：无头服务端由 `--scene`、`--app`、`--preset`、`--refine` 决定（§23.5），App 由设置 › 本机服务的预设和场景决定（§23.6）。请求一旦写了 `voltip:…`，就只用请求自己的项，不继承默认处理方式的任何一项，包括 `--app` 的匹配。
 - 一个处理方式内各项的取值顺序：
 
@@ -1660,7 +1660,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
    - 不超过 2 分钟：短于 300 ms 或静音时不上传；否则整段识别，识别后立即做字形转换（§17）。
    - 超过 2 分钟：与 App 的长录音相同（§22.3）。切段器是宿主的：App 里是听写引擎的 VAD 切段；无头服务端在模型目录里有 VAD 模型时也用 VAD，没有就用核心的能量切段，不自动下载。每段识别后做字形转换，静音段跳过，每段最多识别两次，两次都失败就写入「[未识别 hh:mm:ss–hh:mm:ss]」，最后用 `long::assemble` 拼接。一段都没识别出来时，有失败就返回最后一次的错误，否则返回空文字。
    - 识别之后依次是词典 → 润色 → 规则（`dictation/steps.rs`，与 `run_pipeline` 共用）。长录音全文超过 2000 字时不润色，`refine_error` 写明原因；润色失败时返回原文并带上原因。
-6. **取消**：处理在一个持有许可的任务里进行。客户端断开时，守卫触发 `CancelToken`：任务不再开始新的分段，也不再润色，但正在进行的一次识别（本地推理在 `spawn_blocking` 里，不能中断）要跑完，之后才释放许可，所以并发上限始终成立。临时文件由守卫删除。
+6. **取消**：拿到许可后，请求在读请求体之前就登记为在途（`active`），所以停止服务（App 关掉开关、`cancel_all`）也会中断还在上传的请求（503 `shutting_down`，临时文件随之删除）；拿到许可时队列已关闭的请求同样结束。处理在一个持有许可的任务里进行，开始识别前先看一次 `CancelToken`。客户端断开时，守卫触发 `CancelToken`：任务不再开始新的分段，也不再润色，但正在进行的一次识别（本地推理在 `spawn_blocking` 里，不能中断）要跑完，之后才释放许可，所以并发上限始终成立。临时文件由守卫删除。
 7. **日志**：请求序号、录音时长、`model`、分段数、识别模型、是否润色、耗时、状态码；不记文字、音频和令牌。
 
 ### 23.5 无头服务端（`apps/server`，包名 `voltip-server`）
@@ -1708,15 +1708,15 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
   - `settings_set_serve { enabled, port, preset, scene }`（`CoreCommand::SetServe`）：校验端口和所选的预设、场景，保存，然后按设置启动、停止或换端口重启监听；只改预设或场景时不重启，下一个请求就按新的处理。
   - `serve_copy_token`：令牌由核心通过 `Injector::copy` 放进剪贴板，不经过 webview。
   - `serve_rotate_token`：原子写入新令牌，正在运行的服务立即改用它。
-- **状态**：`UiState.serve: ServeStatus { available, phase: off | running | failed, address?, error? }`，变化时发 `serve` 事件。`address` 形如 `http://127.0.0.1:47840/v1`；端口被占用时 `failed`，`error` 写明原因。
+- **状态**：`UiState.serve: ServeStatus { available, phase: off | starting | running | failed, address?, error? }`，变化时发 `serve` 事件。每次启动监听（打开开关、换端口、随 App 启动）先发 `starting`，再发 `running` 或 `failed`。`address` 形如 `http://127.0.0.1:47840/v1`；端口被占用时 `failed`，`error` 写明原因。
 - **宿主**：shell 通过 `CoreConfig.serve_host` 提供 `ServeHost`（桌面是 `voltip_serve::HttpHost`），只监听 127.0.0.1。服务的处理使用 App 自己的状态：设置、预设、场景、词汇和听写引擎的识别器、润色器、额度记录、切段器（`runtime/serve.rs` 在这些变化时重新推送，`PushedState`），本地模型在内存里只有一份；服务的请求与 App 自己的听写按段轮流使用它。密钥沿用运行时已读到的，不再访问钥匙串。关掉开关或退出 App 时停止监听并取消在途的请求，已开始的推理在后台跑完，结果丢弃。
 - **手机**：shell 不提供宿主，`available` 为 false，三条命令都以 `SERVE_UNAVAILABLE` 拒绝（`apps/mobile/src-tauri/tests/ipc.rs`）。
-- **界面**：设置 › 本机服务（`/settings/service`）：启用开关；状态（未启用 / 运行中 / 无法启动：原因）和接口地址；端口与「应用」；处理方式里的预设（与全局设置相同，或某个预设）和场景（不使用场景，或某个场景）；访问令牌的「复制令牌」和「重新生成」（先确认：旧令牌立即失效）。界面不显示令牌内容。
+- **界面**：设置 › 本机服务（`/settings/service`）：标题旁的「使用指南」（`guide_open { page: service, locale }`：webview 只给页面和界面语言，shell 用 `voltip_core::ui::GUIDE_SITE` 拼出使用指南的地址，与密钥页、项目页相同，两个 shell 都注册，手机上在没有浏览器的测试环境里返回 `BROWSER_UNAVAILABLE`）；启用开关；状态（未启用 / 正在启动 / 运行中 / 无法启动：原因）和接口地址；端口与「应用」；处理方式里的预设（与全局设置相同，或某个预设）和场景（不使用场景，或某个场景）；访问令牌的「复制令牌」和「重新生成」（先确认：旧令牌立即失效）。界面不显示令牌内容。
 
 ### 23.7 安全
 
 - 默认只监听回环地址。无头服务端监听非回环地址必须显式加 `--allow-remote`，启动时警告 HTTP 是明文；App 只监听 127.0.0.1。
-- 令牌（`serve/token.rs`）：32 个随机字节，写成 64 个十六进制字符，存在 `<数据目录>/serve/token`；第一次启动时以 `create_new` 和 0600 权限创建，之后一直沿用，只在用户要求时更换；无头服务端与 App 共用这个文件，所以客户端换着连两者都能用。文件对同组或其他用户可读时给出警告。
+- 令牌（`serve/token.rs`）：32 个随机字节，写成 43 个 base64url 字符（不补 `=`），存在 `<数据目录>/serve/token`（0.0.37 生成的是 64 个十六进制字符，服务把令牌当作不透明的字符串，旧令牌照常可用）；第一次启动时以 `create_new` 和 0600 权限创建，之后一直沿用，只在用户要求时更换；无头服务端与 App 共用这个文件，所以客户端换着连两者都能用。文件对同组或其他用户可读时给出警告。
 - 每个请求（`/healthz` 除外）都要 `Authorization: Bearer <令牌>`，用 `subtle` 做常量时间比较；不提供关闭认证的选项。不返回 CORS 头：浏览器里的网页读不到响应，也拿不到令牌，跨站发来的请求一律 401。
 - 内置服务的使用与 App 相同，每段的长度上限也相同；客户端里从不带提供商的 API 密钥（打包脚本扫描二进制）。
 - 日志见 §23.4；`docs/threat-model.md` 列出了这一监听面。

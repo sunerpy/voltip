@@ -1961,11 +1961,13 @@ export const en: Messages = {
     service: {
       title: "Local service",
       lede: "Lets other programs on this computer, such as Paseo, use Voltip's speech recognition, dictionary and AI presets through an OpenAI-compatible API. Only connections from this computer are accepted, and every request must carry the token.",
+      guide: "User guide",
       serviceTitle: "Service",
       enable: "Turn on the local service",
       enableHelp: "When it is off, other programs cannot use Voltip through the local service.",
       status: "Status",
       statusOff: "Off",
+      statusStarting: "Starting",
       statusRunning: "Running",
       statusFailed: "Could not start: {reason}",
       address: "API address",

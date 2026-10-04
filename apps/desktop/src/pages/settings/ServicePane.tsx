@@ -32,7 +32,8 @@ export function validPort(text: string): number | undefined {
 
 /** Settings · 本机服务 (docs/dictation.md §23.6): the switch, the status and the address other
  *  programs use, the port, the preset and scene of their `voltip` requests, and the token, which
- *  is copied to the clipboard by the core and never shown here. */
+ *  is copied to the clipboard by the core and never shown here. 使用指南 opens the guide's page in
+ *  the interface's language. */
 export function ServicePane() {
   const { backend } = useBackend();
   const shell = useShell();
@@ -82,10 +83,19 @@ export function ServicePane() {
   const statusText =
     status.phase === "running"
       ? t("settings.service.statusRunning")
-      : status.phase === "failed"
-        ? t("settings.service.statusFailed", { reason: status.error ?? "" })
-        : t("settings.service.statusOff");
-  const tone = status.phase === "running" ? "ok" : status.phase === "failed" ? "danger" : "off";
+      : status.phase === "starting"
+        ? t("settings.service.statusStarting")
+        : status.phase === "failed"
+          ? t("settings.service.statusFailed", { reason: status.error ?? "" })
+          : t("settings.service.statusOff");
+  const tone =
+    status.phase === "running"
+      ? "ok"
+      : status.phase === "starting"
+        ? "warn"
+        : status.phase === "failed"
+          ? "danger"
+          : "off";
   const presetOptions = [
     { value: "", label: t("settings.service.presetFollow") },
     ...BUILTIN_PRESETS.map((id) => ({ value: id, label: presetLabel(id, state.presets, locale) })),
@@ -100,6 +110,18 @@ export function ServicePane() {
     <SettingsPane
       title={t("settings.service.title")}
       lede={t("settings.service.lede")}
+      actions={
+        <Button
+          size="sm"
+          variant="ghost"
+          icon="external"
+          data-testid="service-guide"
+          onClick={() => {
+            backend.guideOpen("service", locale).catch(fail);
+          }}>
+          {t("settings.service.guide")}
+        </Button>
+      }
       data-testid="service-pane">
       <SettingsSection title={t("settings.service.serviceTitle")}>
         <SettingsRows>

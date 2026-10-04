@@ -1908,11 +1908,13 @@ export const zhCN = {
     service: {
       title: "本机服务",
       lede: "让这台电脑上的其他程序（如 Paseo）通过 OpenAI 兼容接口使用 Voltip 的语音识别、词典和 AI 预设。仅接受来自本机的连接，每个请求都须携带令牌。",
+      guide: "使用指南",
       serviceTitle: "服务",
       enable: "启用本机服务",
       enableHelp: "关闭后，其他程序无法再通过本机服务使用 Voltip。",
       status: "状态",
       statusOff: "未启用",
+      statusStarting: "正在启动",
       statusRunning: "运行中",
       statusFailed: "无法启动：{reason}",
       address: "接口地址",

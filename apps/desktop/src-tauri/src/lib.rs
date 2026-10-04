@@ -34,7 +34,7 @@ pub mod solo_key;
 pub mod update;
 
 use tauri::{Emitter as _, Manager as _, Runtime};
-use voltip_core::ui::{ProjectLink, UI_EVENT_NAME, UiEvent, UiState, UpdateStatus};
+use voltip_core::ui::{GuidePage, ProjectLink, UI_EVENT_NAME, UiEvent, UiState, UpdateStatus};
 use voltip_core::{
     Activation, AppRef, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PresetDraft, PreviewDraft, ProviderId,
     RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
@@ -52,7 +52,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 111] = [
+pub const COMMANDS: [&str; 112] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -100,6 +100,7 @@ pub const COMMANDS: [&str; 111] = [
     "provider_probe",
     "provider_console_open",
     "project_link_open",
+    "guide_open",
     "feedback_diagnostics",
     "feedback_submit",
     "feedback_attachment_add",
@@ -509,6 +510,13 @@ pub const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 #[tauri::command]
 fn project_link_open(link: ProjectLink) -> Result<(), String> {
     tauri_plugin_opener::open_url(link.url(REPOSITORY), None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Open a page of the user guide in the browser, in the language the webview resolved; the
+/// webview names the page and the shell builds the URL.
+#[tauri::command]
+fn guide_open(page: GuidePage, locale: String) -> Result<(), String> {
+    tauri_plugin_opener::open_url(page.url(&locale), None::<&str>).map_err(|e| e.to_string())
 }
 
 /// What a 反馈 report would carry, and whether this build can send one (docs/feedback.md).
@@ -1285,6 +1293,7 @@ pub fn build_app<R: Runtime>(
             provider_probe,
             provider_console_open,
             project_link_open,
+            guide_open,
             feedback_diagnostics,
             feedback_submit,
             feedback_attachment_add,

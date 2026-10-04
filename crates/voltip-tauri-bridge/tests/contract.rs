@@ -1498,7 +1498,9 @@ fn all_events() -> Vec<UiEvent> {
         // The connectivity self-check (docs/pairing.md): running, then a report with every probe outcome.
         UiEvent::Connectivity(ConnectivityStatus { running: true, report: None }),
         UiEvent::Connectivity(ConnectivityStatus { running: false, report: Some(connectivity_report()) }),
-        // docs/dictation.md §23.6: the service could not start (every key of the status present).
+        // docs/dictation.md §23.6: the listener being started, then one that could not start (every
+        // key of the status present).
+        UiEvent::Serve(ServeStatus { available: true, phase: ServePhase::Starting, address: None, error: None }),
         UiEvent::Serve(ServeStatus {
             available: true,
             phase: ServePhase::Failed,

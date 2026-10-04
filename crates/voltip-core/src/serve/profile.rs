@@ -85,7 +85,7 @@ pub fn parse_model(model: Option<&str>) -> Result<Profile, ProfileError> {
 }
 
 /// The preset `selector` names: a built-in's wire name, a custom preset's UUID, a custom preset's
-/// name (ASCII case ignored), or a built-in's Chinese name.
+/// name (ASCII case ignored), or a built-in's Chinese or English name.
 pub fn find_preset(selector: &str, presets: &[CustomPreset]) -> Option<PresetId> {
     let selector = selector.trim();
     if let Some(builtin) = BuiltinPreset::ALL.into_iter().find(|p| p.as_str() == selector) {
@@ -97,7 +97,7 @@ pub fn find_preset(selector: &str, presets: &[CustomPreset]) -> Option<PresetId>
     if let Some(custom) = presets.iter().find(|p| p.name.eq_ignore_ascii_case(selector)) {
         return Some(PresetId::Custom(custom.id));
     }
-    BuiltinPreset::ALL.into_iter().find(|p| p.display_name() == selector).map(PresetId::Builtin)
+    BuiltinPreset::ALL.into_iter().find(|p| p.display_name() == selector || p.english_name().eq_ignore_ascii_case(selector)).map(PresetId::Builtin)
 }
 
 /// The scene `selector` names in `scenes`: a built-in category's wire name, a scene's UUID, a

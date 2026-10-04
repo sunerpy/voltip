@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter as _, Manager as _, Runtime};
 use voltip_cloud::feedback;
-use voltip_core::ui::{ProjectLink, UI_EVENT_NAME, UiState, UpdateStatus};
+use voltip_core::ui::{GuidePage, ProjectLink, UI_EVENT_NAME, UiState, UpdateStatus};
 use voltip_core::{
     Activation, AppRef, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PresetDraft, PreviewDraft, ProviderId,
     RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
@@ -35,7 +35,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`.
-pub const COMMANDS: [&str; 111] = [
+pub const COMMANDS: [&str; 112] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -83,6 +83,7 @@ pub const COMMANDS: [&str; 111] = [
     "provider_probe",
     "provider_console_open",
     "project_link_open",
+    "guide_open",
     "feedback_diagnostics",
     "feedback_submit",
     "feedback_attachment_add",
@@ -520,6 +521,12 @@ fn project_link_open<R: Runtime>(app: AppHandle<R>, link: ProjectLink) -> Result
 
 /// `url` in the browser: Android's `ACTION_VIEW` through the opener plugin. The desktop-hosted
 /// builds of this crate (tests) have no browser to hand it to.
+/// Open a page of the user guide in the phone's browser (as on the desktop).
+#[tauri::command]
+fn guide_open<R: Runtime>(app: AppHandle<R>, page: GuidePage, locale: String) -> Result<(), String> {
+    open_in_browser(&app, &page.url(&locale))
+}
+
 fn open_in_browser<R: Runtime>(app: &AppHandle<R>, url: &str) -> Result<(), String> {
     #[cfg(mobile)]
     {
@@ -1164,6 +1171,7 @@ pub fn build_app<R: Runtime>(
             provider_probe,
             provider_console_open,
             project_link_open,
+            guide_open,
             feedback_diagnostics,
             feedback_submit,
             feedback_attachment_add,

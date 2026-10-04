@@ -9,6 +9,7 @@ import {
   MOCK_PROCESS_UNCONFIGURED,
   MOCK_AUDIO_DEVICES,
   MOCK_NEARBY,
+  MOCK_TAKEN_PORTS,
   MOCK_TEXT_MS,
   PHONE_TEXT_UNAVAILABLE,
   MOCK_AVAILABLE_VERSION,
@@ -3559,5 +3560,43 @@ describe("MockBackend history queries (docs/dictation.md section 4.4)", () => {
       SHARE_UNAVAILABLE,
     );
     desktop.destroy();
+  });
+});
+
+describe("MockBackend local service (docs/dictation.md section 23.6)", () => {
+  it("a listener that starts is starting first, then running or failed; other changes are not", async () => {
+    const backend = new MockBackend();
+    const events = collect(backend);
+    const phases = () =>
+      events.filter((e) => e.type === "serve").map((e) => (e.type === "serve" ? e.phase : ""));
+    await backend.invoke("settings_set_serve", {
+      enabled: true,
+      port: 47840,
+      preset: null,
+      scene: null,
+    });
+    expect(phases()).toEqual(["starting", "running"]);
+    await backend.invoke("settings_set_serve", {
+      enabled: true,
+      port: 47840,
+      preset: "prompt",
+      scene: null,
+    });
+    expect(phases()).toEqual(["starting", "running", "running"]);
+    await backend.invoke("settings_set_serve", {
+      enabled: true,
+      port: MOCK_TAKEN_PORTS[0] ?? 47999,
+      preset: null,
+      scene: null,
+    });
+    expect(phases().slice(-2)).toEqual(["starting", "failed"]);
+    await backend.invoke("settings_set_serve", {
+      enabled: false,
+      port: 47840,
+      preset: null,
+      scene: null,
+    });
+    expect(phases().at(-1)).toBe("off");
+    backend.destroy();
   });
 });

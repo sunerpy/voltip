@@ -25,6 +25,7 @@ import type {
   PreviewDraft,
   Permission,
   PermissionReport,
+  GuidePage,
   ProjectLink,
   ProviderId,
   StagedAttachment,
@@ -102,6 +103,9 @@ export interface Backend {
   /** Open a project page in the browser (`project_link_open`): the repository or its new-issue
    *  page; the shell builds the URL from its own repository. */
   projectLinkOpen(link: ProjectLink): Promise<void>;
+  /** Open a page of the user guide in the browser (`guide_open`), in `locale`'s language; the
+   *  shell builds the URL. */
+  guideOpen(page: GuidePage, locale: string): Promise<void>;
   /** `model_folder_open` (docs/dictation.md §10): the model's directory in the file manager,
    *  created when missing. */
   modelFolderOpen(id: string): Promise<void>;

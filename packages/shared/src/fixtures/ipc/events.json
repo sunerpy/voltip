@@ -2932,6 +2932,11 @@
   {
     "type": "serve",
     "available": true,
+    "phase": "starting"
+  },
+  {
+    "type": "serve",
+    "available": true,
     "phase": "failed",
     "address": "http://127.0.0.1:47840/v1",
     "error": "无法监听 127.0.0.1:47840：Address already in use"

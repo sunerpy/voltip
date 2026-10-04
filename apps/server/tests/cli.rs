@@ -122,7 +122,7 @@ fn print_token_creates_the_token_once_and_prints_it_again() {
     let (mut second, mut err) = (Vec::new(), Vec::new());
     assert_eq!(run(&action, dir.path(), &mut second, &mut err), 0);
     assert_eq!(first, second);
-    assert_eq!(String::from_utf8(first).unwrap().trim().len(), 64);
+    assert_eq!(String::from_utf8(first).unwrap().trim().len(), 43, "32 bytes as base64url");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;

@@ -480,6 +480,9 @@ impl Service {
         if let Some(reason) = not_ready(&state.engines) {
             return Err(ServeError::NotReady(reason));
         }
+        if cancel.is_cancelled() {
+            return Err(ServeError::Cancelled);
+        }
         let duration_ms = audio.samples * 1000 / RATE;
         let quiet = ServeOutcome { scene: recipe.scene.clone(), language: recipe.language.clone(), duration_ms, ..ServeOutcome::default() };
         let long_take = audio.samples > long::IN_MEMORY;

@@ -53,6 +53,11 @@ impl Admission {
         self.permits.close();
     }
 
+    /// Whether [`Admission::close`] was called.
+    pub fn is_closed(&self) -> bool {
+        self.permits.is_closed()
+    }
+
     /// Permits not taken.
     pub fn available(&self) -> usize {
         self.permits.available_permits()
