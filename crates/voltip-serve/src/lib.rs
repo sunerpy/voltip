@@ -23,6 +23,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use axum::Router;
+use axum::extract::multipart::MultipartRejection;
 use axum::extract::{DefaultBodyLimit, Multipart, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -169,10 +170,15 @@ async fn models(State(app): State<Arc<App>>) -> Response {
     openai::models(&app.service.models())
 }
 
-async fn transcriptions(State(app): State<Arc<App>>, multipart: Multipart) -> Response {
+async fn transcriptions(State(app): State<Arc<App>>, multipart: Result<Multipart, MultipartRejection>) -> Response {
     let started = Instant::now();
     let id = app.next.fetch_add(1, Ordering::SeqCst);
-    match transcribe(&app, id, multipart).await {
+    // A body that is not multipart is answered in the OpenAI shape too, not with axum's plain text.
+    let result = match multipart {
+        Ok(multipart) => transcribe(&app, id, multipart).await,
+        Err(rejection) => Err(ApiError::invalid("invalid_multipart", format!("请求体须为 multipart/form-data：{}", rejection.body_text()))),
+    };
+    match result {
         Ok(response) => response,
         Err(error) => {
             tracing::info!(request = id, status = error.status.as_u16(), code = error.code, ms = started.elapsed().as_millis() as u64, "transcription refused");

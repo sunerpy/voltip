@@ -163,7 +163,7 @@ fn an_explicit_scene_applies_even_when_switched_off_and_a_missing_one_is_an_erro
     assert_eq!(by_app.scene, None);
     // A request naming what is not there is refused; a default that went away is not.
     let err = resolve_recipe(&Defaults::default(), &parse_model(Some("voltip:scene=nope")).unwrap(), None, lists.catalog()).unwrap_err();
-    assert!(err.0.contains("没有名为「nope」的场景"));
+    assert!(err.0.contains("没有名为「nope」的场景（可选值见 GET /v1/models）"), "{err}");
     assert!(resolve_recipe(&Defaults::default(), &parse_model(Some("voltip:preset=nope")).unwrap(), None, lists.catalog()).is_err());
     let gone = Defaults { scene: Some(Uuid::new_v4()), preset: Some(PresetId::Custom(Uuid::new_v4())), ..Defaults::default() };
     let recipe = resolve_recipe(&gone, &Profile::Default, None, lists.catalog()).unwrap();

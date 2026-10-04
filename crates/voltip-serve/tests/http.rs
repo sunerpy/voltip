@@ -283,6 +283,28 @@ async fn malformed_and_oversized_requests_are_refused() {
 }
 
 #[tokio::test]
+async fn regression_a_body_that_is_not_multipart_gets_an_openai_error() {
+    // axum's own rejection answered in plain text, which an OpenAI client cannot read.
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Fake::answering(outcome("x"));
+    let h = handle(&fake, dir.path());
+    let request = Request::post("/v1/audio/transcriptions")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .body(Body::from(r#"{"file":"x"}"#))
+        .unwrap();
+    let (got, headers, body) = call(&h, request).await;
+    assert_eq!(got, StatusCode::BAD_REQUEST);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/json");
+    let error = &json(&body)["error"];
+    assert_eq!((error["code"].as_str(), error["type"].as_str()), (Some("invalid_multipart"), Some("invalid_request_error")));
+    assert!(fake.seen.lock().is_empty());
+    // Without the token it is still 401 first.
+    let request = Request::post("/v1/audio/transcriptions").header(header::CONTENT_TYPE, "application/json").body(Body::from("{}")).unwrap();
+    assert_eq!(call(&h, request).await.0, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn regression_a_malformed_language_is_refused_as_a_language_not_as_a_model() {
     // The field went through to the core, whose refusal was `invalid_model`: a client could not
     // tell which of its fields was wrong.

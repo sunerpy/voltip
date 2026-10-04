@@ -245,11 +245,15 @@ pub fn resolve_recipe(defaults: &Defaults, profile: &Profile, request_language: 
         }
         Profile::Request { raw, scene, preset } => {
             let scene = match scene {
-                Some(selector) => Some(find_scene(selector, catalog.scenes).ok_or_else(|| invalid(format!("没有名为「{selector}」的场景")))?),
+                Some(selector) => {
+                    Some(find_scene(selector, catalog.scenes).ok_or_else(|| invalid(format!("没有名为「{selector}」的场景（可选值见 GET /v1/models）")))?)
+                }
                 None => None,
             };
             let preset = match preset {
-                Some(selector) => Some(find_preset(selector, catalog.presets).ok_or_else(|| invalid(format!("没有名为「{selector}」的预设")))?),
+                Some(selector) => {
+                    Some(find_preset(selector, catalog.presets).ok_or_else(|| invalid(format!("没有名为「{selector}」的预设（可选值见 GET /v1/models）")))?)
+                }
                 None => None,
             };
             (scene, None, preset, raw.then_some(false))
