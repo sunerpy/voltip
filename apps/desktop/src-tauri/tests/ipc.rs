@@ -1445,6 +1445,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "paste_text",
             "provider_console_open",
             "project_link_open",
+            "guide_open",
             "model_folder_open",
             "model_link_open",
             "feedback_diagnostics",

@@ -7323,6 +7323,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "axum",
+ "futures-util",
  "hound",
  "parking_lot",
  "reqwest",

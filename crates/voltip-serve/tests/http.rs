@@ -365,6 +365,41 @@ async fn a_waiting_request_reads_nothing_until_it_has_a_permit_and_a_full_queue_
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn regression_stopping_the_service_ends_an_upload_in_progress() {
+    // The take was known as active only once its body had been read: switching the app's
+    // service off let an upload in progress go on, and its take started after the switch.
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Fake::answering(outcome("迟到的文字"));
+    let h = handle(&fake, dir.path());
+    let body = multipart(&[("file", wav(16_000, 1, 4.0), true)]);
+    let first = axum::body::Bytes::copy_from_slice(&body[..body.len() / 2]);
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(1);
+    tx.send(Ok(first)).await.unwrap();
+    let stream = futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|item| (item, rx)) });
+    let request = Request::post("/v1/audio/transcriptions")
+        .header(header::CONTENT_TYPE, format!("multipart/form-data; boundary={BOUNDARY}"))
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .body(Body::from_stream(stream))
+        .unwrap();
+    let router = h.router();
+    let call = tokio::spawn(async move { router.oneshot(request).await.unwrap() });
+    // The first half is being decoded into its file; the rest never comes.
+    let uploads = dir.path().join("uploads");
+    until(|| std::fs::read_dir(&uploads).is_ok_and(|d| d.count() == 1)).await;
+    assert_eq!(h.active(), 1, "an upload in progress is active");
+    h.close_queue();
+    h.cancel_all();
+    let response = tokio::time::timeout(HOLD_LIMIT, call).await.expect("the upload ends").unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!((status, json(&body)["error"]["code"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("shutting_down")));
+    assert!(fake.seen.lock().is_empty(), "no take started");
+    until(|| std::fs::read_dir(&uploads).is_ok_and(|d| d.count() == 0)).await;
+    assert_eq!(h.active(), 0);
+    drop(tx);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_client_that_goes_away_cancels_its_take_which_keeps_its_permit_until_it_ends() {
     let dir = tempfile::tempdir().unwrap();
     let fake = Fake::answering(outcome("x"));

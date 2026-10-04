@@ -20,6 +20,7 @@ async-trait.workspace = true
 # The bodies a computer and its phones exchange (`sync`, docs/dictation.md §20.8).
 ciborium.workspace = true
 ferrous-opencc.workspace = true
+base64.workspace = true
 hex.workspace = true
 parking_lot.workspace = true
 regex.workspace = true
@@ -53,7 +54,6 @@ mdns-sd.workspace = true
 voltip-platform = { path = "../voltip-platform" }
 
 [dev-dependencies]
-base64.workspace = true
 futures-util.workspace = true
 tempfile.workspace = true
 tokio-tungstenite.workspace = true

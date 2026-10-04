@@ -527,6 +527,7 @@ fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
         // a key page is refused before any browser is asked.
         assert_eq!(invoke(webview, "provider_console_open", json!({ "provider": "groq" })), Err(Value::String(BROWSER_UNAVAILABLE.into())));
         assert!(invoke(webview, "provider_console_open", json!({ "provider": "local" })).unwrap_err().as_str().unwrap().contains("no key page"));
+        assert_eq!(invoke(webview, "guide_open", json!({ "page": "service", "locale": "zh-CN" })), Err(Value::String(BROWSER_UNAVAILABLE.into())));
         assert_eq!(invoke(webview, "project_link_open", json!({ "link": "source" })), Err(Value::String(BROWSER_UNAVAILABLE.into())));
         // Feedback goes from the phone too (docs/feedback.md; user decision 2026-10-01, it was
         // refused before): what a report would carry names no host and no graphical session, and
@@ -731,6 +732,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "paste_text",
             "provider_console_open",
             "project_link_open",
+            "guide_open",
             "model_folder_open",
             "model_link_open",
             "feedback_diagnostics",

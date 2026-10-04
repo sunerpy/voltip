@@ -220,6 +220,12 @@ fn the_host_choices_are_checked_against_the_lists_it_starts_with() {
     }
     assert_eq!(find_scene(&scenes[0].id.to_string(), &scenes).map(|s| s.name.as_str()), Some("会议"));
     assert_eq!(find_preset("提示词优化", &presets), Some(PresetId::Builtin(BuiltinPreset::Prompt)));
+    // The English interface's names too, ASCII case ignored.
+    assert_eq!(find_preset("Prompt optimizer", &presets), Some(PresetId::Builtin(BuiltinPreset::Prompt)));
+    assert_eq!(find_preset("key points", &presets), Some(PresetId::Builtin(BuiltinPreset::Notes)));
+    for preset in BuiltinPreset::ALL {
+        assert_eq!(find_preset(preset.english_name(), &presets), Some(PresetId::Builtin(preset)), "{preset:?}");
+    }
     assert_eq!(find_preset(&Uuid::new_v4().to_string(), &presets), None, "a UUID that is not a preset");
     assert!(DefaultChoices { scene: Some("nope".into()), ..DefaultChoices::default() }.resolve(&presets, &scenes).unwrap_err().0.contains("场景"));
     assert!(DefaultChoices { preset: Some("nope".into()), ..DefaultChoices::default() }.resolve(&presets, &scenes).unwrap_err().0.contains("预设"));
@@ -416,6 +422,18 @@ async fn a_cancelled_long_take_starts_no_further_segment() {
 }
 
 #[tokio::test]
+async fn regression_a_whole_take_cancelled_before_it_starts_is_never_sent() {
+    // Only long takes looked at the token: a take of up to two minutes whose service was switched
+    // off between its upload and its processing was still recognised.
+    let r = rig(FakeTranscriber::ok("不该识别"), None);
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    let err = r.service.transcribe(&pcm(r.dir.path(), &tone(3.0, 3000.0)), &request("voltip"), &cancel).await.unwrap_err();
+    assert_eq!(err, ServeError::Cancelled);
+    assert_eq!(r.transcriber.calls(), 0, "nothing was sent");
+}
+
+#[tokio::test]
 async fn a_long_take_with_nothing_recognised_reports_the_recognisers_error() {
     let r = rig(FakeTranscriber::err("down"), None);
     let err = r.service.transcribe(&pcm(r.dir.path(), &tone(130.0, 3000.0)), &request("voltip"), &CancelToken::new()).await.unwrap_err();
@@ -506,8 +524,8 @@ fn the_token_is_created_once_private_kept_and_replaced_on_request() {
     let dir = tempfile::tempdir().unwrap();
     let path = default_token_path(dir.path());
     let (token, warning) = load_or_create_token(&path).unwrap();
-    assert_eq!((token.len(), warning), (64, None), "32 bytes as hexadecimal");
-    assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    assert_eq!((token.len(), warning), (43, None), "32 bytes as base64url without padding");
+    assert!(token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'), "{token}");
     assert_eq!(load_or_create_token(&path).unwrap().0, token, "kept across starts");
     #[cfg(unix)]
     {

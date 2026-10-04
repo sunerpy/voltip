@@ -12,6 +12,7 @@ import {
   type MutationCommand,
   type PreviewDraft,
   type Permission,
+  type GuidePage,
   type ProjectLink,
   type ProviderId,
   UI_EVENT_NAME,
@@ -177,6 +178,10 @@ export class TauriBackend implements Backend {
 
   async providerConsoleOpen(provider: ProviderId): Promise<void> {
     await this.transport.invoke("provider_console_open", { provider });
+  }
+
+  async guideOpen(page: GuidePage, locale: string): Promise<void> {
+    await this.transport.invoke("guide_open", { page, locale });
   }
 
   async projectLinkOpen(link: ProjectLink): Promise<void> {

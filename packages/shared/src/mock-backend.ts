@@ -107,6 +107,7 @@ import {
   type LevelFrame,
   type ProbeFailure,
   type ServiceKind,
+  type GuidePage,
   type ProjectLink,
   FEEDBACK_ATTACHMENT_TYPES,
   FEEDBACK_CONTACT_MAX,
@@ -198,6 +199,9 @@ export interface MockBackendOptions {
   /** Overrides for the resolved engine status (tests that need a status the settings cannot
    *  produce). */
   engines?: Partial<EngineStatus>;
+  /** The local service's status at start, instead of the one the settings give (tests that need
+   *  a status the preview passes through only for a moment, such as `starting`). */
+  serve?: ServeStatus;
   /** Which built-in services the preview pretends were compiled in (default: both, with keys);
    *  `{}` is a build without them. */
   builtIn?: { asr?: BuiltInService; llm?: BuiltInService };
@@ -944,6 +948,8 @@ export class MockBackend implements Backend {
   readonly consolesOpened: ProviderId[] = [];
   /** `project_link_open` calls, for tests. */
   readonly linksOpened: ProjectLink[] = [];
+  /** `guide_open` calls (page and language), for tests. */
+  readonly guidesOpened: { page: GuidePage; locale: string }[] = [];
   /** `model_folder_open` calls (model ids), for tests. */
   readonly modelFoldersOpened: string[] = [];
   /** What the phone's `update_install` opened: `store` for the listing, else the release's version. */
@@ -1067,7 +1073,7 @@ export class MockBackend implements Backend {
       connectivity: { running: false },
       mirrors: (options.mirrors ?? []).map((m) => structuredClone(m.view)),
       phone_outbox_too_large: [],
-      serve: this.serveStatusFor(settings.serve),
+      serve: options.serve ?? this.serveStatusFor(settings.serve),
     };
     for (const m of options.mirrors ?? []) this.mirrors.set(m.view.desktop, structuredClone(m));
     this.state.engines = this.resolveEngines(settings.engines);
@@ -2200,7 +2206,11 @@ export class MockBackend implements Backend {
         ...(preset === null ? {} : { preset }),
         ...(scene === null ? {} : { scene }),
       };
+      const before = this.state.settings.serve;
       this.emit({ type: "settings", ...this.state.settings, serve });
+      // As the core: a listener that (re)starts is `starting` first.
+      if (serve.enabled && (!before.enabled || before.port !== serve.port))
+        this.emit({ type: "serve", available: true, phase: "starting" });
       this.emit({ type: "serve", ...this.serveStatusFor(serve) });
     },
     serve_copy_token: () => {
@@ -2848,6 +2858,11 @@ export class MockBackend implements Backend {
 
   projectLinkOpen(link: ProjectLink): Promise<void> {
     this.linksOpened.push(link);
+    return Promise.resolve();
+  }
+
+  guideOpen(page: GuidePage, locale: string): Promise<void> {
+    this.guidesOpened.push({ page, locale });
     return Promise.resolve();
   }
 

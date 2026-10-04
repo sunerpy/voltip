@@ -1,7 +1,8 @@
-//! The local speech service's bearer token (docs/dictation.md §23.7): 32 random bytes as 64
-//! hexadecimal digits in `<data dir>/serve/token`, created with mode 0600 (on Unix) the first time a host
-//! starts, kept across restarts, replaced only on request. The headless server and the app share
-//! the file, so a client keeps working with whichever of the two runs.
+//! The local speech service's bearer token (docs/dictation.md §23.7): 32 random bytes as 43
+//! base64url characters (no padding) in `<data dir>/serve/token`, created with mode 0600 (on
+//! Unix) the first time a host starts, kept across restarts, replaced only on request. The
+//! headless server and the app share the file, so a client keeps working with whichever of the
+//! two runs.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -28,9 +29,11 @@ pub fn uploads_dir(data_dir: &Path) -> PathBuf {
     serve_dir(data_dir).join(UPLOADS_DIR)
 }
 
-/// A fresh token.
+/// A fresh token. A token is opaque to the service: one written by 0.0.37, as 64 hexadecimal
+/// digits, keeps working.
 pub fn new_token() -> String {
-    hex::encode(voltip_crypto::random_nonce::<32>())
+    use base64::Engine as _;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(voltip_crypto::random_nonce::<32>())
 }
 
 /// The token in `path`, created when the file does not exist. The second value is a warning when

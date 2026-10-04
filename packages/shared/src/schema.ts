@@ -305,6 +305,11 @@ export type LocaleSetting = z.infer<typeof localeSettingSchema>;
 export const PROJECT_LINKS = ["source", "feedback", "releases"] as const;
 export const projectLinkSchema = z.enum(PROJECT_LINKS);
 export type ProjectLink = z.infer<typeof projectLinkSchema>;
+/** Pages of the user guide the shell opens (`voltip_core::ui::GuidePage`), in the language the
+ *  webview names. */
+export const GUIDE_PAGES = ["service"] as const;
+export const guidePageSchema = z.enum(GUIDE_PAGES);
+export type GuidePage = z.infer<typeof guidePageSchema>;
 
 // ---- in-app feedback (docs/feedback.md; the shell's src/feedback.rs) -------------------------
 
@@ -497,7 +502,7 @@ export const defaultServeSettings = (): ServeSettings => ({
 });
 
 /** `voltip_core::ui::ServePhase`. */
-export const SERVE_PHASES = ["off", "running", "failed"] as const;
+export const SERVE_PHASES = ["off", "starting", "running", "failed"] as const;
 export const servePhaseSchema = z.enum(SERVE_PHASES);
 export type ServePhase = z.infer<typeof servePhaseSchema>;
 /** `UiState.serve`: whether this app can host the service, and what it is doing. */
@@ -2304,6 +2309,7 @@ export interface CommandArgs {
   provider_console_open: { provider: ProviderId };
   /** Open a project page in the browser; the shell builds the URL from its repository. */
   project_link_open: { link: ProjectLink };
+  guide_open: { page: GuidePage; locale: string };
   /** Query (docs/feedback.md): what a report would carry, and whether the build can send one. */
   feedback_diagnostics: { locale: string };
   /** Query: post the 反馈 dialog's report; rejects with a `FeedbackError` wire name. */
@@ -2472,6 +2478,7 @@ export type QueryCommand =
   | "paste_text"
   | "provider_console_open"
   | "project_link_open"
+  | "guide_open"
   | "model_folder_open"
   | "model_link_open"
   | "feedback_diagnostics"
@@ -2507,6 +2514,7 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "paste_text",
   "provider_console_open",
   "project_link_open",
+  "guide_open",
   "model_folder_open",
   "model_link_open",
   "feedback_diagnostics",
