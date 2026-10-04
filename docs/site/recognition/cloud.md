@@ -61,8 +61,8 @@ Recognition and AI polish can each list fallback models: when the selected model
 - A model whose quota is used up is skipped for 24 hours and then tried again; the list shows when. **Check again** starts over with the selected model at once, and so does restarting Voltip or changing the provider's key.
 - When every model's quota is used up, dictation says the model's quota is used up. Text that was already inserted stays: in **Type as you speak**, the sentences already inserted are kept, and the recognised parts of a long recording are inserted as usual.
 - Fallback models are not used while the selected model is a local model, or while the selected provider cannot be used (for example, its key is missing).
-- When the selected model is a realtime model, a realtime fallback model also recognises while you speak; a whole-recording fallback model recognises the recording after you release the shortcut.
-- The history shows the model that actually recognised and polished the text, and the **Now** line above the providers notes when a fallback model stands in.
+- When the selected model is a realtime model, a realtime fallback model also recognises while you speak; a whole-recording fallback model recognises the recording after you release the shortcut, and meanwhile **Live preview** shows as unavailable and the output runs as **All at once**.
+- The history shows the model that actually recognised and polished the text, and the **Now** line (above the providers on the computer, under the provider cards on the phone) notes when a fallback model stands in.
 - Model Studio needs **Free Quota Only** turned on for these models in its console: then it refuses requests once a quota is used up and Voltip moves on to the next model; without it, Model Studio starts charging instead. Voltip cannot read the remaining quota and does not change the console's settings.
 
 ## Switching models
