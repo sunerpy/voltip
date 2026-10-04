@@ -439,13 +439,13 @@ jobs:
           rustc --version && cargo --version
 
       - name: cargo-xwin (prebuilt, pinned)
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-xwin@${{ env.CARGO_XWIN_VERSION }}
 
       # THIRD-PARTY-NOTICES.txt (scripts/release/third-party-notices.py) for the package.
       - name: cargo-about (prebuilt, pinned)
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
 
@@ -647,7 +647,7 @@ jobs:
         run: .release-tooling/.github/scripts/install-cargo-tauri.sh
 
       - name: cargo-about (prebuilt, pinned)
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
 
@@ -1082,7 +1082,7 @@ jobs:
         run: .release-tooling/.github/scripts/install-cargo-tauri.sh
 
       - name: cargo-about (prebuilt, pinned)
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
 
