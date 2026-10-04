@@ -199,7 +199,7 @@ pub fn check(options: &ServeOptions, data_dir: &Path, wiring: Wiring, out: &mut 
     let _ = writeln!(out, "地址：http://{}/v1{}", options.listen, if options.listen.ip().is_loopback() { "（仅本机）" } else { "（允许其他电脑访问）" });
     let _ = writeln!(out, "令牌文件：{}", prepared.token_file.display());
     let asr = match &engines.local_model {
-        Some(m) => format!("{} · {}（{}）", provider(engines.asr_provider), m.name, if m.installed { "已下载" } else { "未下载" }),
+        Some(m) => format!("{} · {}（{}，{}）", provider(engines.asr_provider), m.name, m.id, if m.installed { "已下载" } else { "未下载" }),
         None => format!("{} · {}", provider(engines.asr_provider), engines.asr_model),
     };
     let _ = writeln!(out, "语音识别：{asr}");

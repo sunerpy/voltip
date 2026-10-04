@@ -244,6 +244,7 @@ fn the_binary_reports_its_version_usage_errors_and_its_check() {
     let stdout = String::from_utf8(checked.stdout).unwrap();
     assert_eq!(checked.status.code(), Some(1), "{stdout}");
     assert!(stdout.contains("本地模型未下载") && stdout.contains("--download-model qwen3-asr-0.6b"), "{stdout}");
+    assert!(stdout.contains("（qwen3-asr-0.6b，未下载）"), "the id --local-model takes: {stdout}");
 }
 
 // Linux only: there the system's store is files (rustls-native-certs, which `SSL_CERT_FILE` and
