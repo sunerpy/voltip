@@ -79,7 +79,7 @@ hound = "=3.5.1"
 keyring = "=4.2.0"
 parking_lot = "=0.12.5"
 proptest = "=1.11.0"
-rand = "=0.10.2"
+rand = "=0.10.3"
 # Regex replacement rules (docs/dictation.md §16): linear-time matching, compiled size capped per rule.
 regex = "=1.13.1"
 # rustls (aws-lc-rs provider + platform verifier) so the Windows cross-build needs no OpenSSL.
@@ -134,7 +134,7 @@ toml = "=1.1.6"
 # for macOS and Vulkan on behind its `vulkan` feature (§10.6), which the Windows and Linux packages
 # use. Built from source with cmake and linked statically (a Vulkan build links the system's loader
 # dynamically), and it cross-compiles to x86_64-pc-windows-msvc under cargo-xwin.
-transcribe-cpp = { version = "=0.2.3", default-features = false }
+transcribe-cpp = { version = "=0.2.4", default-features = false }
 # The WebSocket client's TLS provider. tokio-tungstenite pulls rustls without one, so a binary that
 # does not also link reqwest (the mobile shell, the core test suite) would panic on the first `wss://`
 # dial. aws-lc-rs matches reqwest's choice: exactly one provider in every binary, auto-detected.
