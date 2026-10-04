@@ -1699,7 +1699,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - **退出码**：0 正常结束，1 启动失败或 `--check` 判定不可用，2 用法错误。
 - **版本**：`build.rs` 从根 `package.json` 注入 `VOLTIP_APP_VERSION`（Cargo 版本固定为 0.0.0），`--version` 输出 `voltip-server <版本>`。
 - **打包**（`scripts/build-server-linux-x64.sh`，Vulkan 后端）：`voltip-server-<版本>-linux-x64.tar.gz` 内有 `bin/voltip-server`；`lib/` 里的 sherpa-onnx、onnxruntime 和 Vulkan 加载器（二进制的 RUNPATH 是 `$ORIGIN:$ORIGIN/../lib`）；`LICENSE`、`THIRD-PARTY-NOTICES.txt`；`voltip-server.service.example`。从系统取的只有 `VOLTIP_SERVER_SONAMES`（`scripts/lib/artefact-checks.sh`）：C/C++ 运行库，以及构建机上有 BLAS 时的 `libblas.so.3`。脚本做提供商密钥扫描、Vulkan 链接检查和系统库检查，然后把包解到别处，在没有 `DISPLAY`、`LD_LIBRARY_PATH` 的环境里运行 `--version`、`--list-models`、`--list-compute`，并用 `LD_DEBUG` 确认这些库都从包里加载。`release-candidate.yml` 的 Linux 腿在签名步骤之前调用它，tar.gz 作为 `extra` 产物进入候选包。
-- **安装**（`scripts/install.sh --server`）：按 `SHA256SUMS` 校验，解到 `~/.local/share/voltip-server/<版本>`，链接为 `~/.local/bin/voltip-server`，不需要 root；装好后运行一次 `--version`，起不来就用 `ldd` 列出缺少的系统库和 apt / dnf 的安装命令，从不自己调用 sudo。`--systemd-user` 写入 `~/.config/systemd/user/voltip-server.service` 并 daemon-reload，加 `--enable` 才启用并启动；注销后继续运行需要 `loginctl enable-linger`。没有自动更新，重新运行安装脚本即可升级。
+- **安装**（`scripts/install.sh --server`）：按 `SHA256SUMS` 校验，解到 `~/.local/share/voltip-server/<版本>`，链接为 `~/.local/bin/voltip-server`，不需要 root；装好后运行一次 `--version`，起不来就用 `ldd` 列出缺少的系统库和 apt / dnf 的安装命令，从不自己调用 sudo。`--systemd-user` 写入 `~/.config/systemd/user/voltip-server.service` 并 daemon-reload，加 `--enable` 才启用并（重新）启动；注销后继续运行需要 `loginctl enable-linger`。没有自动更新，重新运行安装脚本即可升级：带 `--enable` 时重启服务，换上新版本；不带时，服务若在运行，脚本提示用 `systemctl --user restart voltip-server` 重启（0.0.37 的 `enable --now` 不会重启正在运行的服务，升级后仍是旧版本）。
 
 ### 23.6 App 内置开关
 

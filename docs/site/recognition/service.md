@@ -30,7 +30,7 @@ Install `voltip-server` with the install script; it needs no administrator right
 curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install.sh | sh -s -- --server
 ```
 
-The script checks the download against the release's `SHA256SUMS`, unpacks it to `~/.local/share/voltip-server/<version>` and links the command as `~/.local/bin/voltip-server`. When a system library is missing, it names the package to install, for example `sudo apt-get install libblas3`, and installs nothing itself. To upgrade, run the script again.
+The script checks the download against the release's `SHA256SUMS`, unpacks it to `~/.local/share/voltip-server/<version>` and links the command as `~/.local/bin/voltip-server`. When a system library is missing, it names the package to install, for example `sudo apt-get install libblas3`, and installs nothing itself. To upgrade, run the script again; with `--systemd-user --enable` it also restarts the service, otherwise restart a running service with `systemctl --user restart voltip-server`.
 
 Then check the configuration, and start the service:
 
