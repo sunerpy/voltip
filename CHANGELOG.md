@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.39](https://github.com/sunerpy/voltip/compare/v0.0.38...v0.0.39) (2026-10-04)
+
+
+### Bug Fixes
+
+* **install:** 升级 voltip-server 时重启正在运行的用户服务 ([#101](https://github.com/sunerpy/voltip/issues/101)) ([7df894d](https://github.com/sunerpy/voltip/commit/7df894d1d8be7731745a1b9bf3ef18f95e005a34))
+
 ## [0.0.38](https://github.com/sunerpy/voltip/compare/v0.0.37...v0.0.38) (2026-10-04)
 
 
