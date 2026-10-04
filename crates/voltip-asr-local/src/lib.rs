@@ -26,6 +26,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod catalogue;
+pub mod cli;
 pub mod compute;
 mod gguf;
 pub mod segmenter;

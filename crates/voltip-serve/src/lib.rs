@@ -122,6 +122,11 @@ impl ServeHandle {
         }
     }
 
+    /// Refuse new and waiting requests (503) from now on; the takes being processed go on.
+    pub fn close_queue(&self) {
+        self.app.admission.close();
+    }
+
     /// Takes being processed now.
     pub fn active(&self) -> usize {
         self.app.active.lock().len()
@@ -228,6 +233,7 @@ impl RunningServer for Running {
     }
 
     fn stop(&self) {
+        self.handle.close_queue();
         self.handle.cancel_all();
         if let Some(stop) = self.stop.lock().take() {
             let _ = stop.send(());

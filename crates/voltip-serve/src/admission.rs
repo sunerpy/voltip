@@ -47,6 +47,12 @@ impl Admission {
         self.permits.clone().acquire_owned().await.map_err(|_| ApiError::unavailable("shutting_down", "服务正在停止"))
     }
 
+    /// Refuse every request from now on, the waiting ones too (the service stops); the takes
+    /// holding a permit go on.
+    pub fn close(&self) {
+        self.permits.close();
+    }
+
     /// Permits not taken.
     pub fn available(&self) -> usize {
         self.permits.available_permits()
