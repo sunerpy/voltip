@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use axum::extract::Multipart;
 use axum::extract::multipart::Field;
+use voltip_core::scenes::clean_language;
 use voltip_core::serve::ServeRequest;
 
 use crate::openai::{ApiError, ResponseFormat};
@@ -161,7 +162,11 @@ pub async fn read(mut multipart: Multipart, uploads: &Path, max_samples: u64) ->
                 pcm = Some(file_field(&mut field, uploads, max_samples).await?);
             }
             "model" => request.model = Some(text_field(&mut field, &name).await?),
-            "language" => request.language = Some(text_field(&mut field, &name).await?).filter(|l| !l.trim().is_empty()),
+            // Checked here, by the scenes' rule (§18.1), so that the refusal names the field.
+            "language" => {
+                let raw = text_field(&mut field, &name).await?;
+                request.language = clean_language(&raw).map_err(|message| ApiError::invalid("invalid_language", message))?;
+            }
             "response_format" => format = ResponseFormat::parse(&text_field(&mut field, &name).await?)?,
             "stream" => {
                 if text_field(&mut field, &name).await?.trim().eq_ignore_ascii_case("true") {

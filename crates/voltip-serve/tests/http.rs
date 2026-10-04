@@ -282,6 +282,32 @@ async fn malformed_and_oversized_requests_are_refused() {
     assert_eq!(std::fs::read_dir(dir.path().join("uploads")).unwrap().count(), 0, "no file left behind");
 }
 
+#[tokio::test]
+async fn regression_a_malformed_language_is_refused_as_a_language_not_as_a_model() {
+    // The field went through to the core, whose refusal was `invalid_model`: a client could not
+    // tell which of its fields was wrong.
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Fake::answering(outcome("你好"));
+    let h = handle(&fake, dir.path());
+    let before: Vec<Part> = vec![("language", b"zh_CN".to_vec(), false), ("file", wav(16_000, 1, 1.0), true)];
+    let after: Vec<Part> = vec![("file", wav(16_000, 1, 1.0), true), ("language", "中文".as_bytes().to_vec(), false)];
+    for parts in [before, after] {
+        let (got, _, body) = call(&h, post(&parts, Some(TOKEN))).await;
+        let error = &json(&body)["error"];
+        assert_eq!((got, error["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_language")));
+        assert!(error["message"].as_str().unwrap().contains("语言代码"), "{error}");
+    }
+    assert!(fake.seen.lock().is_empty(), "refused before the service");
+    assert_eq!(std::fs::read_dir(dir.path().join("uploads")).unwrap().count(), 0, "no file left behind");
+    // A code in any case, `auto`, and an empty field go through (`auto` is resolved by the core).
+    for (sent, seen) in [("ZH", Some("zh")), ("auto", Some("auto")), (" ", None)] {
+        let parts: Vec<Part> = vec![("file", wav(16_000, 1, 1.0), true), ("language", sent.as_bytes().to_vec(), false)];
+        let (got, _, _) = call(&h, post(&parts, Some(TOKEN))).await;
+        assert_eq!(got, StatusCode::OK, "{sent:?}");
+        assert_eq!(fake.seen.lock().last().unwrap().0.language.as_deref(), seen, "{sent:?}");
+    }
+}
+
 /// Waits (bounded) until `cond` holds.
 async fn until(cond: impl Fn() -> bool) {
     let started = std::time::Instant::now();
