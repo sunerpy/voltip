@@ -20,24 +20,13 @@ const NOTHING_YET: FallbackStatus = {
 };
 
 /** `settings.asr_fallback` / `llm_fallback`, or off with nothing listed (the core omits that). */
-export function fallbackSettingsOf(
-  settings: EngineSettings,
-  kind: ServiceKind,
-): FallbackSettings {
-  return (
-    (kind === "asr" ? settings.asr_fallback : settings.llm_fallback) ?? OFF
-  );
+export function fallbackSettingsOf(settings: EngineSettings, kind: ServiceKind): FallbackSettings {
+  return (kind === "asr" ? settings.asr_fallback : settings.llm_fallback) ?? OFF;
 }
 
 /** `engines.asr_fallback` / `llm_fallback`, or nothing resolved yet. */
-export function fallbackStatusOf(
-  engines: EngineStatus,
-  kind: ServiceKind,
-): FallbackStatus {
-  return (
-    (kind === "asr" ? engines.asr_fallback : engines.llm_fallback) ??
-    NOTHING_YET
-  );
+export function fallbackStatusOf(engines: EngineStatus, kind: ServiceKind): FallbackStatus {
+  return (kind === "asr" ? engines.asr_fallback : engines.llm_fallback) ?? NOTHING_YET;
 }
 
 /** `settings` with `kind`'s fallback settings replaced (what `settings_set_engines` sends). */
@@ -62,8 +51,7 @@ export function fallbackAddProblem(
   if (model.length === 0 && entry.provider !== "builtin") return "blank";
   const listed = list.some(
     (m) =>
-      m.provider === entry.provider &&
-      (entry.provider === "builtin" || m.model.trim() === model),
+      m.provider === entry.provider && (entry.provider === "builtin" || m.model.trim() === model),
   );
   return listed ? "listed" : undefined;
 }
@@ -75,8 +63,7 @@ export function moveFallback(
   by: -1 | 1,
 ): FallbackModel[] {
   const to = index + by;
-  if (index < 0 || index >= list.length || to < 0 || to >= list.length)
-    return [...list];
+  if (index < 0 || index >= list.length || to < 0 || to >= list.length) return [...list];
   const next = [...list];
   const [moved] = next.splice(index, 1);
   if (moved !== undefined) next.splice(to, 0, moved);
@@ -150,9 +137,7 @@ export function fallbackRows(
       ...(m.retry_at_ms === undefined ? {} : { retryAtMs: m.retry_at_ms }),
     });
   });
-  const active = status.in_use
-    ? rows.find((r) => r.state === "ready")
-    : undefined;
+  const active = status.in_use ? rows.find((r) => r.state === "ready") : undefined;
   if (active !== undefined) active.state = "active";
   return { rows, active };
 }

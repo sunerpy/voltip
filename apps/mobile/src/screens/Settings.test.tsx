@@ -89,6 +89,8 @@ describe("the phone's settings", () => {
     await waitFor(() => {
       expect(backend.peek().settings.engines.chinese_script).toBe("traditional");
     });
+    // docs/dictation.md §3.5: the recognition's fallback models, as on the desktop.
+    expect(within(page).getByTestId("fallback-asr")).toBeInTheDocument();
     backend.destroy();
   });
 
@@ -99,9 +101,15 @@ describe("the phone's settings", () => {
     const page = screen.getByTestId("phone-ai");
     expect(within(page).getByTestId("presets-section")).toBeInTheDocument();
     expect(within(page).getByTestId("provider-llm-groq")).toBeInTheDocument();
-    await user.click(within(page).getByRole("switch"));
+    await user.click(within(page).getByRole("switch", { name: "AI 润色" }));
     await waitFor(() => {
       expect(backend.peek().settings.engines.refine_enabled).toBe(false);
+    });
+    // docs/dictation.md §3.5: the clean-up's fallback models, as on the desktop.
+    expect(within(page).getByTestId("fallback-llm")).toBeInTheDocument();
+    await user.click(within(page).getByRole("switch", { name: "额度用完后改用其他模型" }));
+    await waitFor(() => {
+      expect(backend.peek().settings.engines.llm_fallback?.enabled).toBe(true);
     });
     await user.click(screen.getByRole("button", { name: "返回" }));
     expect(screen.getByTestId("settings-ai")).toHaveTextContent("未开启 AI 润色");

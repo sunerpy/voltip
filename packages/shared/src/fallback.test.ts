@@ -20,10 +20,7 @@ import {
   MAX_FALLBACK_MODELS,
 } from "./schema";
 
-const entry = (
-  provider: FallbackModel["provider"],
-  model: string,
-): FallbackModel => ({
+const entry = (provider: FallbackModel["provider"], model: string): FallbackModel => ({
   provider,
   model,
 });
@@ -47,10 +44,7 @@ function studio(): EngineSettings {
   };
 }
 
-function resolve(
-  settings: EngineSettings,
-  keys: string[] = ["provider-key.aliyun"],
-): EngineStatus {
+function resolve(settings: EngineSettings, keys: string[] = ["provider-key.aliyun"]): EngineStatus {
   return resolveEngineStatus({
     settings,
     userKeys: new Set(keys),
@@ -86,10 +80,9 @@ describe("fallback models (docs/dictation.md §3.5)", () => {
     const tooMany = Array.from({ length: MAX_FALLBACK_MODELS + 1 }, (_, i) =>
       entry("groq", `m${i}`),
     );
-    expect(
-      engineSettingsSchema.safeParse({ asr_fallback: { models: tooMany } })
-        .success,
-    ).toBe(false);
+    expect(engineSettingsSchema.safeParse({ asr_fallback: { models: tooMany } }).success).toBe(
+      false,
+    );
     const status = engineStatusSchema.parse({
       asr_fallback: {
         enabled: true,
@@ -120,10 +113,9 @@ describe("fallback models (docs/dictation.md §3.5)", () => {
       { provider: "local", model: "qwen3-asr-0.6b", issue: "unavailable" },
     ]);
     // On-device recognition never runs out: the chain does not run; nor without the key.
-    expect(
-      fallbackStatusOf(resolve({ ...studio(), asr_provider: "local" }), "asr")
-        .in_use,
-    ).toBe(false);
+    expect(fallbackStatusOf(resolve({ ...studio(), asr_provider: "local" }), "asr").in_use).toBe(
+      false,
+    );
     expect(fallbackStatusOf(resolve(studio(), []), "asr").in_use).toBe(false);
     const off = withFallback(studio(), "asr", {
       ...fallbackSettingsOf(studio(), "asr"),
@@ -164,9 +156,7 @@ describe("fallback models (docs/dictation.md §3.5)", () => {
       state: "active",
     });
     // Every model ran out: nothing is in use (the core asks the selected one again).
-    const models = asr.models.map((m, i) =>
-      i === 0 ? { ...m, retry_at_ms: 2_000 } : m,
-    );
+    const models = asr.models.map((m, i) => (i === 0 ? { ...m, retry_at_ms: 2_000 } : m));
     const allOut: EngineStatus = {
       ...status,
       asr_fallback: { ...asr, selected_retry_at_ms: 1_000, models },
@@ -188,30 +178,16 @@ describe("fallback models (docs/dictation.md §3.5)", () => {
   });
 
   it("list edits: what may be added, and moves within the list", () => {
-    const list = [
-      entry("aliyun", "a"),
-      entry("builtin", ""),
-      entry("groq", "b"),
-    ];
+    const list = [entry("aliyun", "a"), entry("builtin", ""), entry("groq", "b")];
     expect(fallbackAddProblem(list, entry("aliyun", " a "))).toBe("listed");
     expect(fallbackAddProblem(list, entry("builtin", "x"))).toBe("listed");
     expect(fallbackAddProblem(list, entry("groq", "  "))).toBe("blank");
     expect(fallbackAddProblem([], entry("builtin", ""))).toBeUndefined();
     expect(fallbackAddProblem(list, entry("aliyun", "c"))).toBeUndefined();
-    const full = Array.from({ length: MAX_FALLBACK_MODELS }, (_, i) =>
-      entry("groq", `m${i}`),
-    );
+    const full = Array.from({ length: MAX_FALLBACK_MODELS }, (_, i) => entry("groq", `m${i}`));
     expect(fallbackAddProblem(full, entry("aliyun", "c"))).toBe("full");
-    expect(moveFallback(list, 0, 1).map((m) => m.model)).toEqual([
-      "",
-      "a",
-      "b",
-    ]);
-    expect(moveFallback(list, 2, -1).map((m) => m.model)).toEqual([
-      "a",
-      "b",
-      "",
-    ]);
+    expect(moveFallback(list, 0, 1).map((m) => m.model)).toEqual(["", "a", "b"]);
+    expect(moveFallback(list, 2, -1).map((m) => m.model)).toEqual(["a", "b", ""]);
     expect(moveFallback(list, 0, -1)).toEqual(list);
     expect(moveFallback(list, 2, 1)).toEqual(list);
     expect(moveFallback(list, 7, 1)).toEqual(list);
@@ -227,8 +203,7 @@ describe("fallback models (docs/dictation.md §3.5)", () => {
     const backend = new MockBackend();
     const seen: string[] = [];
     const stop = backend.on((event) => {
-      if (event.type === "engines")
-        seen.push(JSON.stringify(event.asr_fallback ?? null));
+      if (event.type === "engines") seen.push(JSON.stringify(event.asr_fallback ?? null));
     });
     await backend.invoke("provider_key_set", {
       provider: "aliyun",

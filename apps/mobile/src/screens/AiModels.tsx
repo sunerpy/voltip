@@ -1,6 +1,7 @@
 import { providersFor } from "@voltip/shared";
 import {
   Card,
+  FallbackSection,
   PresetsSection,
   ProviderCard,
   SettingsSection,
@@ -67,6 +68,7 @@ export function AiModels() {
           ))}
         </div>
       </SettingsSection>
+      <FallbackSection kind="llm" toggleClassName={TOUCH_TOGGLE} />
     </div>
   );
 }

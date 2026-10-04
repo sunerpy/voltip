@@ -12,22 +12,12 @@
 // status and the history name). Used by `pnpm dev` without Tauri and by every functional test.
 // Timers are plain `setTimeout`/`setInterval` so fake timers drive it.
 import { z } from "zod";
-import type {
-  Backend,
-  EventListener,
-  FrameListener,
-  Unsubscribe,
-} from "./backend";
+import type { Backend, EventListener, FrameListener, Unsubscribe } from "./backend";
 import { type SampleHistoryRow, historyEntries } from "./fixtures/history";
 import builtinPresetTexts from "./fixtures/ipc/presets-builtin.json";
 import builtinSceneRows from "./fixtures/ipc/scenes-builtin.json";
 import { joinLiveText, livePreviewText } from "./labels";
-import {
-  type BuiltInService,
-  keyEntry,
-  providerSpec,
-  resolveEngineStatus,
-} from "./providers";
+import { type BuiltInService, keyEntry, providerSpec, resolveEngineStatus } from "./providers";
 import {
   type AppRef,
   type ArgsOf,
@@ -169,11 +159,7 @@ import {
   recentApps as recentAppsOf,
   validateSceneDraft,
 } from "./scenes";
-import {
-  historyHitsOf,
-  historyPageOf,
-  historyStatsOf,
-} from "./history-queries";
+import { historyHitsOf, historyPageOf, historyStatsOf } from "./history-queries";
 import {
   Vocabulary,
   checkDictionary,
@@ -280,9 +266,7 @@ export interface MockMirror {
 /** A computer's settings as a phone shows them, from settings and lists (the copy's `profile`). */
 export function mockMirrorProfile(
   settings: Settings = defaultSettings(),
-  lists: Partial<
-    Pick<MirrorProfile, "presets" | "dictionary" | "rules" | "scenes">
-  > = {},
+  lists: Partial<Pick<MirrorProfile, "presets" | "dictionary" | "rules" | "scenes">> = {},
 ): MirrorProfile {
   return {
     locale: settings.locale,
@@ -367,8 +351,7 @@ export const MOCK_UPDATE_TICKS = 3;
 export const MOCK_UPDATE_TOTAL_BYTES = 48_000_000;
 export const MOCK_CURRENT_VERSION = "0.0.1";
 /** The phone's `update_install` before a check found a newer release (`update.rs` `NOTHING_TO_INSTALL`). */
-export const PHONE_NOTHING_TO_INSTALL =
-  "updater: 没有可下载的新版本，请先检查更新";
+export const PHONE_NOTHING_TO_INSTALL = "updater: 没有可下载的新版本，请先检查更新";
 export const MOCK_AVAILABLE_VERSION = "0.0.2";
 /** Release notes as release-please writes them into `latest.json`. */
 export const MOCK_UPDATE_NOTES = [
@@ -391,26 +374,25 @@ export const MOCK_STREAMING_MODEL_ID = "zipformer-stream-zh-en";
 export const MOCK_MODELS_ROOT = "~/.local/share/voltip/models";
 
 /** The real catalogue's files, name and size (`voltip_asr_local::catalogue`). */
-const MOCK_MODEL_FILES: Record<string, readonly (readonly [string, number])[]> =
-  {
-    "qwen3-asr-0.6b": [["Qwen3-ASR-0.6B-Q6_K.gguf", 690_417_824]],
-    "qwen3-asr-1.7b": [["Qwen3-ASR-1.7B-Q6_K.gguf", 1_692_554_208]],
-    "sense-voice-small": [
-      ["model.int8.onnx", 239_233_841],
-      ["tokens.txt", 315_894],
-    ],
-    "paraformer-zh": [
-      ["model.int8.onnx", 227_330_205],
-      ["tokens.txt", 75_354],
-    ],
-    "zipformer-stream-zh-en": [
-      ["encoder.int8.onnx", 155_278_641],
-      ["decoder.onnx", 11_309_084],
-      ["joiner.int8.onnx", 2_581_422],
-      ["tokens.txt", 58_806],
-      ["bpe.model", 119_265],
-    ],
-  };
+const MOCK_MODEL_FILES: Record<string, readonly (readonly [string, number])[]> = {
+  "qwen3-asr-0.6b": [["Qwen3-ASR-0.6B-Q6_K.gguf", 690_417_824]],
+  "qwen3-asr-1.7b": [["Qwen3-ASR-1.7B-Q6_K.gguf", 1_692_554_208]],
+  "sense-voice-small": [
+    ["model.int8.onnx", 239_233_841],
+    ["tokens.txt", 315_894],
+  ],
+  "paraformer-zh": [
+    ["model.int8.onnx", 227_330_205],
+    ["tokens.txt", 75_354],
+  ],
+  "zipformer-stream-zh-en": [
+    ["encoder.int8.onnx", 155_278_641],
+    ["decoder.onnx", 11_309_084],
+    ["joiner.int8.onnx", 2_581_422],
+    ["tokens.txt", 58_806],
+    ["bpe.model", 119_265],
+  ],
+};
 
 /** A catalogue row with its directory and its files' public addresses, as the core reports them. */
 function withFiles(
@@ -432,10 +414,7 @@ function withFiles(
 /** The local model catalogue the preview pretends was compiled in (docs/dictation.md §10: the
  *  five product tiers, sizes as the real files, names and descriptions in the core's own words —
  *  the UI localises both by id). `MOCK_MODEL_CATALOGUE[0]` is the default. */
-const MOCK_MODEL_ROWS: readonly Omit<
-  ModelState,
-  "active" | "state" | "dir" | "files"
->[] = [
+const MOCK_MODEL_ROWS: readonly Omit<ModelState, "active" | "state" | "dir" | "files">[] = [
   {
     id: "qwen3-asr-0.6b",
     name: "均衡",
@@ -456,8 +435,7 @@ const MOCK_MODEL_ROWS: readonly Omit<
     capabilities: ["offline"],
     languages: ["zh", "en", "ja", "ko", "yue", "de", "fr", "es", "ru", "ar"],
     size_bytes: 1_692_554_208,
-    description:
-      "Qwen3-ASR 1.7B，精度最高的档位，30 语种自动识别，自带标点；1.7 GB",
+    description: "Qwen3-ASR 1.7B，精度最高的档位，30 语种自动识别，自带标点；1.7 GB",
     recommended: false,
     repo: "handy-computer/Qwen3-ASR-1.7B-gguf",
   },
@@ -469,8 +447,7 @@ const MOCK_MODEL_ROWS: readonly Omit<
     capabilities: ["offline"],
     languages: ["zh", "en", "ja", "ko", "yue"],
     size_bytes: 239_549_735,
-    description:
-      "SenseVoice Small，中英日韩粤，自带标点与数字规整（ITN）；240 MB",
+    description: "SenseVoice Small，中英日韩粤，自带标点与数字规整（ITN）；240 MB",
     recommended: false,
     repo: "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
   },
@@ -482,8 +459,7 @@ const MOCK_MODEL_ROWS: readonly Omit<
     capabilities: ["offline"],
     languages: ["zh", "en"],
     size_bytes: 227_405_559,
-    description:
-      "Paraformer 中文（含方言）更准，中英混读；无标点，开启 AI 润色可补；227 MB",
+    description: "Paraformer 中文（含方言）更准，中英混读；无标点，开启 AI 润色可补；227 MB",
     recommended: false,
     repo: "csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09",
   },
@@ -501,10 +477,8 @@ const MOCK_MODEL_ROWS: readonly Omit<
     repo: "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
   },
 ];
-export const MOCK_MODEL_CATALOGUE: readonly Omit<
-  ModelState,
-  "active" | "state"
->[] = MOCK_MODEL_ROWS.map(withFiles);
+export const MOCK_MODEL_CATALOGUE: readonly Omit<ModelState, "active" | "state">[] =
+  MOCK_MODEL_ROWS.map(withFiles);
 /** Simulated download: `MOCK_MODEL_TICKS` progress events `MOCK_MODEL_TICK_MS` apart, then a
  *  `verifying` beat of the same length, then `installed`. */
 export const MOCK_MODEL_TICK_MS = 200;
@@ -515,8 +489,9 @@ export const MOCK_MODEL_FILE = "model.int8.onnx";
 export const PRESET_TRY_UNCONFIGURED = "尚未配置 AI 润色服务，无法试运行预设";
 /** The built-in presets' texts (`presets_builtin`), the bytes the desktop shell answers with (the
  *  Rust side keeps the fixture equal to them). */
-export const MOCK_BUILTIN_PRESET_TEXTS: readonly BuiltinPresetText[] =
-  builtinPresetTextSchema.array().parse(builtinPresetTexts);
+export const MOCK_BUILTIN_PRESET_TEXTS: readonly BuiltinPresetText[] = builtinPresetTextSchema
+  .array()
+  .parse(builtinPresetTexts);
 /** The built-in scenes (docs/dictation.md §18.10) as the core fills them in: each category's defaults
  *  on the three desktops and on a phone (no applications), and its term pack (the Rust side keeps
  *  the fixture equal to the core). */
@@ -540,13 +515,11 @@ export const MOCK_PRESET_SAMPLES: Readonly<
   Partial<Record<BuiltinPreset, { input: string; output: string }>>
 > = {
   proofread: {
-    input:
-      "嗯那个明天上午十点我们开个会吧然后把上周的数据带过来啊不对是上上周的",
+    input: "嗯那个明天上午十点我们开个会吧然后把上周的数据带过来啊不对是上上周的",
     output: "明天上午十点我们开个会吧，然后把上上周的数据带过来。",
   },
   prompt: {
-    input:
-      "帮我写个脚本就是把那个日志目录里面超过七天的文件删掉然后每天跑一次对了要能在linux上跑",
+    input: "帮我写个脚本就是把那个日志目录里面超过七天的文件删掉然后每天跑一次对了要能在linux上跑",
     output:
       "请写一个在 Linux 上运行的脚本：\n1. 删除日志目录中超过 7 天的文件；\n2. 每天自动运行一次。",
   },
@@ -575,8 +548,7 @@ export const MOCK_GPU_HARDWARE: HardwareStatus = {
 };
 
 /** `voltip_desktop_lib::PHONE_TAKE_UNAVAILABLE`: the desktop records phone takes, it sends none. */
-export const PHONE_TAKE_UNAVAILABLE =
-  "phone_take: 电脑接收手机的录音，不向其他设备推送";
+export const PHONE_TAKE_UNAVAILABLE = "phone_take: 电脑接收手机的录音，不向其他设备推送";
 /** `voltip_desktop_lib::SHARE_UNAVAILABLE`: 「分享」 is the phone's system share sheet. */
 export const SHARE_UNAVAILABLE = "share: 电脑端没有系统分享";
 /** `feedback::clean_name` in the desktop shell: the last path component, trimmed, control
@@ -586,18 +558,14 @@ export function cleanAttachmentName(name: string): string | undefined {
   const base = (name.split(/[/\\]/u).pop() ?? "").trim();
   // Characters as Rust counts them (`chars()`): code points.
   // oxlint-disable-next-line no-control-regex -- control characters are what is replaced
-  const cleaned = Array.from(base, (c) =>
-    /[\u0000-\u001f\u007f-\u009f"]/u.test(c) ? "_" : c,
-  );
+  const cleaned = Array.from(base, (c) => (/[\u0000-\u001f\u007f-\u009f"]/u.test(c) ? "_" : c));
   if (cleaned.length === 0) return undefined;
   if (cleaned.length <= 120) return cleaned.join("");
   const text = cleaned.join("");
   const dot = text.lastIndexOf(".");
-  const ext =
-    dot >= 0 && Array.from(text.slice(dot)).length <= 10 ? text.slice(dot) : "";
+  const ext = dot >= 0 && Array.from(text.slice(dot)).length <= 10 ? text.slice(dot) : "";
   let stem = cleaned.slice(0, 120 - Array.from(ext).length).join("");
-  while (ext.length > 0 && stem.endsWith(ext))
-    stem = stem.slice(0, -ext.length);
+  while (ext.length > 0 && stem.endsWith(ext)) stem = stem.slice(0, -ext.length);
   return `${stem}${ext}`;
 }
 
@@ -632,8 +600,7 @@ export const MOCK_TEXT_MS = 200;
 /** What the preview phone's clipboard holds. */
 export const MOCK_PHONE_CLIPBOARD = "https://example.test/voltip";
 /** `voltip_desktop_lib::PHONE_TEXT_UNAVAILABLE`: the desktop inserts phones' texts, it sends none. */
-export const PHONE_TEXT_UNAVAILABLE =
-  "phone_text: 电脑接收手机发来的文字，不向其他设备发送";
+export const PHONE_TEXT_UNAVAILABLE = "phone_text: 电脑接收手机发来的文字，不向其他设备发送";
 /** `live_error` of a take whose scene asked for a streaming mode the live preview cannot serve
  *  (the core's `SCENE_MODE_NOT_READY`, §18.4). */
 export const MOCK_SCENE_MODE_NOT_READY =
@@ -643,10 +610,8 @@ export const MOCK_SCENE_MODE_NOT_READY =
 export const MOCK_NO_SPEECH = "没有听到声音";
 
 /** What every simulated dictation "hears" (raw ASR) and what the LLM pass turns it into. */
-export const MOCK_DICTATION_RAW =
-  "把这段逻辑抽成一个 helper 然后在 session assembly 里复用";
-export const MOCK_DICTATION_TEXT =
-  "把这段逻辑抽成一个 helper，然后在 session_assembly 里复用。";
+export const MOCK_DICTATION_RAW = "把这段逻辑抽成一个 helper 然后在 session assembly 里复用";
+export const MOCK_DICTATION_TEXT = "把这段逻辑抽成一个 helper，然后在 session_assembly 里复用。";
 
 /** Voice edit (docs/dictation.md §19): what the mock hears as the instruction, what its LLM answers
  *  for any selection, and how long the selection copy at the press takes. */
@@ -655,10 +620,8 @@ export const MOCK_EDIT_TEXT = "各位同事：会议改至周四上午十点，�
 export const MOCK_COPY_MS = 60;
 /** The core's texts for the edit refusals (`DictationError` display, §19.4). */
 export const MOCK_NO_SELECTION = "没有选中文本";
-export const MOCK_EDIT_UNAVAILABLE =
-  "edit: 语音编辑需要 AI 润色服务：请先配置润色的 API 密钥";
-export const MOCK_EDIT_IN_TERMINAL =
-  "终端里不支持语音编辑：终端里的选区不能被替换";
+export const MOCK_EDIT_UNAVAILABLE = "edit: 语音编辑需要 AI 润色服务：请先配置润色的 API 密钥";
+export const MOCK_EDIT_IN_TERMINAL = "终端里不支持语音编辑：终端里的选区不能被替换";
 
 /** Simulated device start-up (docs/dictation.md §11 `CaptureReady`): the first samples arrive this
  *  long after `dictation_start`; `listening.ready` flips and `started_at` is re-taken. */
@@ -677,23 +640,17 @@ export const MOCK_LIVE_SCRIPT: readonly LiveText[] = [
   { committed: [], current: "把这段逻辑抽成", injected: 0 },
   { committed: [], current: "把这段逻辑抽成一个 helper", injected: 0 },
   {
-    committed: [
-      { text: "把这段逻辑抽成一个 helper，", start_ms: 0, end_ms: 1600 },
-    ],
+    committed: [{ text: "把这段逻辑抽成一个 helper，", start_ms: 0, end_ms: 1600 }],
     current: "",
     injected: 0,
   },
   {
-    committed: [
-      { text: "把这段逻辑抽成一个 helper，", start_ms: 0, end_ms: 1600 },
-    ],
+    committed: [{ text: "把这段逻辑抽成一个 helper，", start_ms: 0, end_ms: 1600 }],
     current: "然后在 session",
     injected: 0,
   },
   {
-    committed: [
-      { text: "把这段逻辑抽成一个 helper，", start_ms: 0, end_ms: 1600 },
-    ],
+    committed: [{ text: "把这段逻辑抽成一个 helper，", start_ms: 0, end_ms: 1600 }],
     current: "然后在 session assembly 里复用",
     injected: 0,
   },
@@ -733,8 +690,7 @@ export function hostOsOf(platform: DeviceIdentityPublic["platform"]): HostOs {
  *  Windows has granted the microphone (its only gate), Linux and phones gate nothing. */
 export function mockPermissions(host: HostOs): PermissionReport {
   const report = notApplicablePermissions(host);
-  if (host === "macos")
-    return { ...report, microphone: "granted", accessibility: "granted" };
+  if (host === "macos") return { ...report, microphone: "granted", accessibility: "granted" };
   if (host === "windows") return { ...report, microphone: "granted" };
   return report;
 }
@@ -797,9 +753,7 @@ export const MOCK_HOTKEY_CAPABILITIES: HotkeyCapabilities = {
 };
 
 /** The lone-key half of the mock's hotkey status: watched when the session offers the key. */
-function mockSoloStatus(
-  key: SoloKey | null,
-): Pick<HotkeyStatus, "solo_registered" | "solo_error"> {
+function mockSoloStatus(key: SoloKey | null): Pick<HotkeyStatus, "solo_registered" | "solo_error"> {
   if (key === null) return {};
   return MOCK_HOTKEY_CAPABILITIES.solo_keys.includes(key)
     ? { solo_registered: key }
@@ -854,8 +808,7 @@ export function mockLevel(seq: number): {
   peak_dbfs: number;
 } {
   const phase = seq / 18;
-  const rms =
-    -34 + 14 * Math.abs(Math.sin(phase)) + 3 * Math.abs(Math.sin(phase * 2.7));
+  const rms = -34 + 14 * Math.abs(Math.sin(phase)) + 3 * Math.abs(Math.sin(phase * 2.7));
   return { rms_dbfs: rms, peak_dbfs: rms + 8 };
 }
 
@@ -892,11 +845,7 @@ function mockChordProblem(hotkey: string): string | undefined {
   const parts = hotkey.split("+").map((p) => p.trim());
   const modifiers = parts.filter((p) => MOCK_MODIFIERS.has(p.toLowerCase()));
   const keys = parts.filter((p) => !MOCK_MODIFIERS.has(p.toLowerCase()));
-  if (
-    parts.some((p) => p.length === 0) ||
-    modifiers.length === 0 ||
-    keys.length !== 1
-  )
+  if (parts.some((p) => p.length === 0) || modifiers.length === 0 || keys.length !== 1)
     return "不是可用的组合键（需要至少一个修饰键和一个按键）";
   return undefined;
 }
@@ -980,9 +929,11 @@ export class MockBackend implements Backend {
   /** Secret-store entries holding a user key (`keyEntry`). */
   private readonly userKeys = new Set<string>();
   private readonly builtIn: { asr?: BuiltInService; llm?: BuiltInService };
-  private readonly probeModels:
-    Partial<Record<ProviderId, readonly string[]>> | false;
+  private readonly probeModels: Partial<Record<ProviderId, readonly string[]>> | false;
   private readonly engineOverrides: Partial<EngineStatus>;
+  /** docs/dictation.md §3.5: the selected model of a service that ran out of quota, and when it
+   *  is tried again (`simulateQuotaExhausted`); `engines_quota_reset` forgets it. */
+  private readonly quotaOut = new Map<ServiceKind, number>();
   /** Every `providerConsoleOpen` made, in order (tests). */
   readonly consolesOpened: ProviderId[] = [];
   /** `project_link_open` calls, for tests. */
@@ -994,10 +945,7 @@ export class MockBackend implements Backend {
   /** `model_link_open` calls, the addresses opened, for tests. */
   readonly modelLinksOpened: string[] = [];
   /** What imports find wrong per model id (`simulateImportProblems`). */
-  private readonly importProblems = new Map<
-    string,
-    { missing: string[]; mismatched: string[] }
-  >();
+  private readonly importProblems = new Map<string, { missing: string[]; mismatched: string[] }>();
   /** Reports `feedbackSubmit` accepted, in order. */
   readonly feedbackSent: FeedbackDraft[] = [];
   /** The files staged for the next report (`feedback_attachment_add`), in order. */
@@ -1032,8 +980,7 @@ export class MockBackend implements Backend {
     this.now = options.now ?? (() => Date.now());
     this.random = options.random ?? seededRandom(0x5eed);
     const identity =
-      options.identity ??
-      (this.role === "phone" ? phoneIdentity() : desktopIdentity());
+      options.identity ?? (this.role === "phone" ? phoneIdentity() : desktopIdentity());
     // The built-in service is compiled in for the preview unless a test says otherwise.
     this.builtIn = options.builtIn ?? {
       asr: { model: MOCK_ENGINE_BUILTIN.asr_model, key: true },
@@ -1046,9 +993,7 @@ export class MockBackend implements Backend {
     this.probeModels = options.probeModels ?? {};
     this.feedback = options.feedback ?? "configured";
     this.phoneClipboard =
-      options.phoneClipboard === undefined
-        ? MOCK_PHONE_CLIPBOARD
-        : options.phoneClipboard;
+      options.phoneClipboard === undefined ? MOCK_PHONE_CLIPBOARD : options.phoneClipboard;
     this.outputs =
       options.audioOutputs ??
       (this.role === "phone"
@@ -1065,9 +1010,7 @@ export class MockBackend implements Backend {
     this.pasteOutcome = options.pasteOutcome ?? { kind: "pasted" };
     // The phone's own history starts empty: it holds the takes it recognises itself (§20.7); the
     // samples are a computer's dictations.
-    this.history =
-      options.history ??
-      (this.role === "phone" ? [] : sampleHistory(this.now()));
+    this.history = options.history ?? (this.role === "phone" ? [] : sampleHistory(this.now()));
     const settings: Settings = { ...defaultSettings(), ...options.settings };
     // The phone has no local models (docs/dictation.md §10): an empty catalogue, commands refused.
     const models: ModelState[] =
@@ -1081,8 +1024,7 @@ export class MockBackend implements Backend {
     this.state = {
       identity,
       settings,
-      secret_backend:
-        this.role === "phone" ? "android-keystore" : "credential-manager",
+      secret_backend: this.role === "phone" ? "android-keystore" : "credential-manager",
       app_version: MOCK_CURRENT_VERSION,
       relay: options.relay ?? {
         state: "disconnected",
@@ -1094,14 +1036,10 @@ export class MockBackend implements Backend {
       hotkey: {
         ...emptyHotkeyStatus(),
         registered: options.settings?.hotkey ?? DEFAULT_HOTKEY,
-        ...(settings.edit_hotkey === null
-          ? {}
-          : { edit_registered: settings.edit_hotkey }),
+        ...(settings.edit_hotkey === null ? {} : { edit_registered: settings.edit_hotkey }),
         ...(this.role === "phone" ? {} : mockSoloStatus(settings.solo_key)),
         backend: MOCK_HOTKEY_BACKEND,
-        ...(this.role === "phone"
-          ? {}
-          : { capabilities: { ...MOCK_HOTKEY_CAPABILITIES } }),
+        ...(this.role === "phone" ? {} : { capabilities: { ...MOCK_HOTKEY_CAPABILITIES } }),
       },
       dictation: idleDictation(),
       sent_texts: [],
@@ -1119,15 +1057,12 @@ export class MockBackend implements Backend {
       presets: [...(options.presets ?? [])],
       // What the desktop shell reports about the machine (§10.6); nothing on the phone.
       hardware:
-        this.role === "phone"
-          ? { cpu_threads: 0, gpus: [] }
-          : (options.hardware ?? MOCK_HARDWARE),
+        this.role === "phone" ? { cpu_threads: 0, gpus: [] } : (options.hardware ?? MOCK_HARDWARE),
       connectivity: { running: false },
       mirrors: (options.mirrors ?? []).map((m) => structuredClone(m.view)),
       phone_outbox_too_large: [],
     };
-    for (const m of options.mirrors ?? [])
-      this.mirrors.set(m.view.desktop, structuredClone(m));
+    for (const m of options.mirrors ?? []) this.mirrors.set(m.view.desktop, structuredClone(m));
     this.state.engines = this.resolveEngines(settings.engines);
     this.state.models = this.modelsFor(settings.engines);
     this.state.scenes = this.withBuiltinScenes(this.state.scenes);
@@ -1162,10 +1097,7 @@ export class MockBackend implements Backend {
    *  chosen microphone may be unplugged). The phone's shell opens no microphone to meter: its
    *  frames are those of its own take — streamed to a computer, or recognised on the phone
    *  (§20.7) — so the phone role only sends them while one listens. */
-  meter(
-    deviceId: string | undefined,
-    onFrame: FrameListener,
-  ): Promise<Unsubscribe> {
+  meter(deviceId: string | undefined, onFrame: FrameListener): Promise<Unsubscribe> {
     const phone = this.role === "phone";
     const device =
       MOCK_AUDIO_DEVICES.find((d) => d.id === deviceId) ??
@@ -1200,17 +1132,9 @@ export class MockBackend implements Backend {
   }
 
   /** `vocabulary_preview` with the core's semantics (regex rules on the JavaScript engine). */
-  async vocabularyPreview(
-    text: string,
-    draft?: PreviewDraft,
-  ): Promise<VocabularyPreview> {
+  async vocabularyPreview(text: string, draft?: PreviewDraft): Promise<VocabularyPreview> {
     await Promise.resolve();
-    return previewVocabulary(
-      this.state.dictionary,
-      this.state.rules,
-      text,
-      draft,
-    );
+    return previewVocabulary(this.state.dictionary, this.state.rules, text, draft);
   }
 
   /** `rules_export`: the rules as the core's TOML text. */
@@ -1235,11 +1159,7 @@ export class MockBackend implements Backend {
 
   /** `history_export` (docs/dictation.md §22): the preview's save dialog takes the offered name,
    *  the phone's share sheet opens (`shared`); what was asked for is kept in `exports`. */
-  async historyExport(
-    id: string,
-    format: ExportFormat,
-    fileName: string,
-  ): Promise<ExportOutcome> {
+  async historyExport(id: string, format: ExportFormat, fileName: string): Promise<ExportOutcome> {
     await Promise.resolve();
     const entry = this.history.find((e) => e.id === id);
     if (entry === undefined)
@@ -1248,10 +1168,7 @@ export class MockBackend implements Backend {
         code: "gone",
         detail: "the entry is not in the history",
       };
-    if (
-      format === "srt" &&
-      !(entry.segments ?? []).some((s) => s.text.trim().length > 0)
-    )
+    if (format === "srt" && !(entry.segments ?? []).some((s) => s.text.trim().length > 0))
       return {
         kind: "failed",
         code: "empty",
@@ -1263,8 +1180,7 @@ export class MockBackend implements Backend {
   }
 
   /** Every `historyExport` that saved or was shared, in order (tests). */
-  readonly exports: { id: string; format: ExportFormat; fileName: string }[] =
-    [];
+  readonly exports: { id: string; format: ExportFormat; fileName: string }[] = [];
 
   /** `history_entry`: one entry, `null` once it is gone. */
   async historyEntry(id: string): Promise<HistoryEntry | null> {
@@ -1276,19 +1192,13 @@ export class MockBackend implements Backend {
   private readonly mirrors = new Map<string, MockMirror>();
 
   /** `mirror_history_query`: a page of the copy, read like the phone's own; empty without one. */
-  async mirrorHistoryQuery(
-    desktop: string,
-    args: HistoryQueryArgs,
-  ): Promise<HistoryPage> {
+  async mirrorHistoryQuery(desktop: string, args: HistoryQueryArgs): Promise<HistoryPage> {
     await Promise.resolve();
     return historyPageOf(this.mirrors.get(desktop)?.history ?? [], args);
   }
 
   /** `mirror_history_entry`: one entry of the copy and whether it arrived shortened. */
-  async mirrorHistoryEntry(
-    desktop: string,
-    id: string,
-  ): Promise<MirrorEntry | null> {
+  async mirrorHistoryEntry(desktop: string, id: string): Promise<MirrorEntry | null> {
     await Promise.resolve();
     const mirror = this.mirrors.get(desktop);
     const entry = mirror?.history.find((e) => e.id === id);
@@ -1354,10 +1264,7 @@ export class MockBackend implements Backend {
   /** The seeded report, or the seeded probe's answer (a throwing probe rejects, like a failed IPC). */
   permissionsStatus(): Promise<PermissionReport> {
     try {
-      const report =
-        typeof this.permissions === "function"
-          ? this.permissions()
-          : this.permissions;
+      const report = typeof this.permissions === "function" ? this.permissions() : this.permissions;
       return Promise.resolve(structuredClone(report));
     } catch (e: unknown) {
       return Promise.reject(e instanceof Error ? e : new Error(String(e)));
@@ -1390,10 +1297,7 @@ export class MockBackend implements Backend {
    *  way, not queued), then the seeded outcome. The phone has no window to paste into: it puts the
    *  text on its clipboard (docs/dictation.md §20.7). Writes no history. */
   pasteText(text: string): Promise<PasteOutcome> {
-    if (
-      text.trim().length === 0 ||
-      Array.from(text).length > MAX_PASTE_TEXT_CHARS
-    ) {
+    if (text.trim().length === 0 || Array.from(text).length > MAX_PASTE_TEXT_CHARS) {
       return pasteFailed("invalid");
     }
     if (this.role === "phone") {
@@ -1401,8 +1305,7 @@ export class MockBackend implements Backend {
       return Promise.resolve({ kind: "copied", reason: "clipboard_only" });
     }
     const phase = this.state.dictation.phase.phase;
-    if (phase === "listening" || phase === "processing")
-      return pasteFailed("busy");
+    if (phase === "listening" || phase === "processing") return pasteFailed("busy");
     this.pastes.push(text);
     return Promise.resolve(structuredClone(this.pasteOutcome));
   }
@@ -1434,9 +1337,7 @@ export class MockBackend implements Backend {
     pairing_join_nearby: (args) => {
       // Mirrors `PairingJoinNearby`: only a nearby device that waits for a pairing can be joined.
       const { fingerprint } = required(args);
-      const device = this.state.nearby.find(
-        (d) => d.fingerprint === fingerprint,
-      );
+      const device = this.state.nearby.find((d) => d.fingerprint === fingerprint);
       if (device === undefined) {
         this.emit({ type: "error", message: "pairing: 附近没有找到此设备" });
         return;
@@ -1464,10 +1365,7 @@ export class MockBackend implements Backend {
       const phase = this.state.pairing.state.state;
       if (enabled && (phase === "idle" || phase === "expired")) {
         this.startPairing();
-      } else if (
-        !enabled &&
-        (phase === "creating_session" || phase === "waiting_for_peer")
-      ) {
+      } else if (!enabled && (phase === "creating_session" || phase === "waiting_for_peer")) {
         // Nobody joined yet: the window closes. A pairing under way runs to its end.
         this.clearTimers();
         this.emit({ type: "pairing", ...idleSnapshot() });
@@ -1508,16 +1406,12 @@ export class MockBackend implements Backend {
       const { publicKey } = required(args);
       this.emit({
         type: "devices",
-        devices: this.state.devices.filter(
-          (d) => d.device.public_key !== publicKey,
-        ),
+        devices: this.state.devices.filter((d) => d.device.public_key !== publicKey),
       });
     },
     device_sync_set: (args) => {
       const { publicKey, on } = required(args);
-      const target = this.state.devices.find(
-        (d) => d.device.public_key === publicKey,
-      );
+      const target = this.state.devices.find((d) => d.device.public_key === publicKey);
       if (target === undefined) throw new Error("未知设备");
       if (target.device.sync === on) return;
       const syncing = this.state.devices.filter(
@@ -1544,14 +1438,11 @@ export class MockBackend implements Backend {
     },
     device_rename: (args) => {
       const { name } = required(args);
-      if (this.state.identity)
-        this.emit({ type: "identity", ...this.state.identity, name });
+      if (this.state.identity) this.emit({ type: "identity", ...this.state.identity, name });
     },
     send_text: (args) => {
       const { publicKey, body } = required(args);
-      const target = this.state.devices.find(
-        (d) => d.device.public_key === publicKey,
-      );
+      const target = this.state.devices.find((d) => d.device.public_key === publicKey);
       if (target?.connection.state !== "online") {
         this.emit({ type: "error", message: "设备当前不在线，消息未发送" });
         return;
@@ -1612,13 +1503,11 @@ export class MockBackend implements Backend {
       const { device } = required(args);
       if (
         device !== null &&
-        (device.trim().length === 0 ||
-          new TextEncoder().encode(device).length > 1024)
+        (device.trim().length === 0 || new TextEncoder().encode(device).length > 1024)
       ) {
         this.emit({
           type: "error",
-          message:
-            "microphone: 麦克风标识须为 1–1024 字节，留空则使用系统默认输入",
+          message: "microphone: 麦克风标识须为 1–1024 字节，留空则使用系统默认输入",
         });
         return;
       }
@@ -1632,11 +1521,7 @@ export class MockBackend implements Backend {
       // Mirrors `SetRecording` (docs/dictation.md §22): a length outside the choices or an output
       // device id that is not 1–1024 bytes is refused with an `error` event, the setting kept.
       const { recording } = required(args);
-      if (
-        !(MAX_MINUTES_CHOICES as readonly number[]).includes(
-          recording.max_minutes,
-        )
-      ) {
+      if (!(MAX_MINUTES_CHOICES as readonly number[]).includes(recording.max_minutes)) {
         this.emit({
           type: "error",
           message: `recording.max_minutes: 最长录音时长须为 ${MAX_MINUTES_CHOICES.join(" / ")} 分钟之一`,
@@ -1646,13 +1531,11 @@ export class MockBackend implements Backend {
       const device = recording.output_device;
       if (
         device !== null &&
-        (device.trim().length === 0 ||
-          new TextEncoder().encode(device).length > 1024)
+        (device.trim().length === 0 || new TextEncoder().encode(device).length > 1024)
       ) {
         this.emit({
           type: "error",
-          message:
-            "recording.output_device: 输出设备标识须为 1–1024 字节，留空则使用系统默认输出",
+          message: "recording.output_device: 输出设备标识须为 1–1024 字节，留空则使用系统默认输出",
         });
         return;
       }
@@ -1733,17 +1616,13 @@ export class MockBackend implements Backend {
         });
         return;
       }
-      const target = this.state.devices.find(
-        (d) => d.device.public_key === publicKey,
-      );
+      const target = this.state.devices.find((d) => d.device.public_key === publicKey);
       if (target?.connection.state !== "online") {
         this.emit({ type: "error", message: "设备不在线" });
         return;
       }
       // Like the core's counter: it outlives 清空, so the desktop never sees an id twice.
-      this.lastTextId =
-        Math.max(this.lastTextId, ...this.state.sent_texts.map((t) => t.id)) +
-        1;
+      this.lastTextId = Math.max(this.lastTextId, ...this.state.sent_texts.map((t) => t.id)) + 1;
       const id = this.lastTextId;
       const text: SentText = {
         id,
@@ -1776,10 +1655,7 @@ export class MockBackend implements Backend {
       // The shell's own command (docs/dictation.md §20.7): the share sheet opens, nothing in the
       // core changes. The phone refuses what a paste would refuse.
       const { text } = required(args);
-      if (
-        text.trim().length === 0 ||
-        Array.from(text).length > MAX_PASTE_TEXT_CHARS
-      )
+      if (text.trim().length === 0 || Array.from(text).length > MAX_PASTE_TEXT_CHARS)
         throw new Error(`share: 文字为空或超过 ${MAX_PASTE_TEXT_CHARS} 字`);
       this.shared.push(text);
     },
@@ -1791,9 +1667,7 @@ export class MockBackend implements Backend {
         this.emit({ type: "error", message: "phone take: 已有一次录音在进行" });
         return;
       }
-      const target = this.state.devices.find(
-        (d) => d.device.public_key === publicKey,
-      );
+      const target = this.state.devices.find((d) => d.device.public_key === publicKey);
       if (target?.connection.state !== "online") {
         this.emit({ type: "error", message: "设备不在线" });
         return;
@@ -1837,9 +1711,7 @@ export class MockBackend implements Backend {
           });
           // The phone keeps its own record of a delivered take, marked with the computer it went
           // to (docs/dictation.md §20.7, user decision 2026-10-03), as the core does.
-          const computer = this.state.devices.find(
-            (d) => d.device.public_key === t.device,
-          );
+          const computer = this.state.devices.find((d) => d.device.public_key === t.device);
           this.recordHistory({
             id: this.uuid(),
             at_ms: this.now(),
@@ -1878,10 +1750,7 @@ export class MockBackend implements Backend {
     settings_set_engines: (args) => {
       const { engines } = required(args);
       // Mirrors `SetEngines`: an unknown local model id is refused, nothing changes.
-      if (
-        engines.local_model != null &&
-        !this.catalogueRow(engines.local_model)
-      ) {
+      if (engines.local_model != null && !this.catalogueRow(engines.local_model)) {
         this.emit({
           type: "error",
           message: `engines: 未知的本地模型 ${engines.local_model}`,
@@ -1930,8 +1799,8 @@ export class MockBackend implements Backend {
       this.probe(provider, kind, baseUrl ?? undefined, key ?? undefined);
     },
     engines_quota_reset: (args) => {
-      required(args);
-      // The preview keeps no quota records (docs/dictation.md §3.5): nothing ran out to forget.
+      const { kind } = required(args);
+      this.quotaOut.delete(kind);
       this.emit({
         type: "engines",
         ...this.resolveEngines(this.state.settings.engines),
@@ -1946,9 +1815,7 @@ export class MockBackend implements Backend {
     },
     history_star: (args) => {
       const { id, starred } = required(args);
-      this.setHistory(
-        this.history.map((e) => (e.id === id ? { ...e, starred } : e)),
-      );
+      this.setHistory(this.history.map((e) => (e.id === id ? { ...e, starred } : e)));
     },
     history_process: (args) => {
       const { requestId, id, preset } = required(args);
@@ -1982,11 +1849,7 @@ export class MockBackend implements Backend {
     settings_set_history: (args) => {
       const { enabled, keep } = required(args);
       // Mirrors `SetHistory`: out of range is refused, a smaller keep trims at once.
-      if (
-        !Number.isInteger(keep) ||
-        keep < HISTORY_MIN_KEEP ||
-        keep > HISTORY_LIMIT
-      ) {
+      if (!Number.isInteger(keep) || keep < HISTORY_MIN_KEEP || keep > HISTORY_LIMIT) {
         this.emit({
           type: "error",
           message: `history.keep: ${HISTORY_MIN_KEEP}–${HISTORY_LIMIT}`,
@@ -1998,8 +1861,7 @@ export class MockBackend implements Backend {
         ...this.state.settings,
         history: { enabled, keep },
       });
-      if (this.history.length > keep)
-        this.setHistory(this.history.slice(0, keep));
+      if (this.history.length > keep) this.setHistory(this.history.slice(0, keep));
     },
     settings_set_overlay: (args) => {
       const { placement } = required(args);
@@ -2015,10 +1877,7 @@ export class MockBackend implements Backend {
     settings_set_activation: (args) => {
       const { activation, holdThresholdMs, extraRecordingMs } = required(args);
       // Mirrors `SetActivation`: both timings are capped, the settings stay as they were.
-      if (
-        holdThresholdMs > MAX_ACTIVATION_MS ||
-        extraRecordingMs > MAX_ACTIVATION_MS
-      ) {
+      if (holdThresholdMs > MAX_ACTIVATION_MS || extraRecordingMs > MAX_ACTIVATION_MS) {
         this.emit({
           type: "error",
           message: `activation: 时长不能超过 ${MAX_ACTIVATION_MS} ms（hold_threshold_ms ${holdThresholdMs}，extra_recording_ms ${extraRecordingMs}）`,
@@ -2105,10 +1964,7 @@ export class MockBackend implements Backend {
       const { rule } = required(args);
       const draft = validateRuleDraft(rule);
       const now = this.now();
-      this.commitRules([
-        ...this.state.rules,
-        this.ruleFrom(draft, this.uuid(), now),
-      ]);
+      this.commitRules([...this.state.rules, this.ruleFrom(draft, this.uuid(), now)]);
     },
     rules_update: (args) => {
       const { id, rule } = required(args);
@@ -2120,9 +1976,7 @@ export class MockBackend implements Backend {
         return;
       }
       this.commitRules(
-        this.state.rules.map((r) =>
-          r.id === id ? this.ruleFrom(draft, id, r.created_at_ms) : r,
-        ),
+        this.state.rules.map((r) => (r.id === id ? this.ruleFrom(draft, id, r.created_at_ms) : r)),
       );
     },
     rules_remove: (args) => {
@@ -2161,11 +2015,7 @@ export class MockBackend implements Backend {
       // Before the first built-in scene: the user's scenes match first unless moved.
       const scenes = [...this.state.scenes];
       const at = scenes.findIndex((s) => s.builtin !== undefined);
-      scenes.splice(
-        at < 0 ? scenes.length : at,
-        0,
-        this.sceneFrom(draft, this.uuid(), now),
-      );
+      scenes.splice(at < 0 ? scenes.length : at, 0, this.sceneFrom(draft, this.uuid(), now));
       this.commitScenes(scenes);
     },
     scenes_update: (args) => {
@@ -2185,11 +2035,7 @@ export class MockBackend implements Backend {
         this.emit({ type: "error", message: "scenes: 内置场景不能改名" });
         return;
       }
-      if (
-        this.role !== "phone" &&
-        current.builtin === undefined &&
-        draft.match.apps.length === 0
-      ) {
+      if (this.role !== "phone" && current.builtin === undefined && draft.match.apps.length === 0) {
         this.emit({
           type: "error",
           message: `scenes: 场景「${draft.name}」至少要有一个应用`,
@@ -2198,9 +2044,7 @@ export class MockBackend implements Backend {
       }
       this.commitScenes(
         this.state.scenes.map((s) =>
-          s.id === id
-            ? this.sceneFrom(draft, id, s.created_at_ms, s.builtin)
-            : s,
+          s.id === id ? this.sceneFrom(draft, id, s.created_at_ms, s.builtin) : s,
         ),
       );
     },
@@ -2276,10 +2120,7 @@ export class MockBackend implements Backend {
       const { preset } = required(args);
       const draft = validatePresetDraft(preset);
       const now = this.now();
-      this.commitPresets([
-        ...this.state.presets,
-        this.presetFrom(draft, this.uuid(), now),
-      ]);
+      this.commitPresets([...this.state.presets, this.presetFrom(draft, this.uuid(), now)]);
     },
     presets_update: (args) => {
       const { id, preset } = required(args);
@@ -2338,14 +2179,11 @@ export class MockBackend implements Backend {
   // ---- scenes (docs/dictation.md §18) ------------------------------------------------------------
 
   /** Which desktop's default applications the built-in scenes get (the identity's). */
-  private builtinPlatform():
-    "windows" | "macos" | "linux" | "android" | undefined {
+  private builtinPlatform(): "windows" | "macos" | "linux" | "android" | undefined {
     // The phone keeps the built-in scenes without applications (user decision 2026-10-01).
     if (this.role === "phone") return "android";
     const platform = this.state.identity?.platform;
-    return platform === "windows" ||
-      platform === "macos" ||
-      platform === "linux"
+    return platform === "windows" || platform === "macos" || platform === "linux"
       ? platform
       : undefined;
   }
@@ -2422,11 +2260,7 @@ export class MockBackend implements Backend {
     this.emit({ type: "presets", presets });
   }
 
-  private presetFrom(
-    draft: PresetDraft,
-    id: string,
-    createdAtMs: number,
-  ): CustomPreset {
+  private presetFrom(draft: PresetDraft, id: string, createdAtMs: number): CustomPreset {
     return {
       id,
       ...draft,
@@ -2446,13 +2280,9 @@ export class MockBackend implements Backend {
     const entry = this.history.find((e) => e.id === id);
     if (!this.state.engines.refine_ready)
       return event({ state: "failed", reason: MOCK_PROCESS_UNCONFIGURED });
-    if (entry === undefined)
-      return event({ state: "failed", reason: MOCK_PROCESS_ENTRY_GONE });
+    if (entry === undefined) return event({ state: "failed", reason: MOCK_PROCESS_ENTRY_GONE });
     const resolved = resolvePreset(preset, this.state.presets).preset;
-    const parts = Math.max(
-      1,
-      Math.ceil(Array.from(entry.text).length / MOCK_PART_MAX_CHARS),
-    );
+    const parts = Math.max(1, Math.ceil(Array.from(entry.text).length / MOCK_PART_MAX_CHARS));
     const total = parts + (resolved.id === "notes" && parts > 1 ? 1 : 0);
     let done = 0;
     event({ state: "running", done, total });
@@ -2468,8 +2298,7 @@ export class MockBackend implements Backend {
       }
       this.processing.delete(requestId);
       const current = this.history.find((e) => e.id === id);
-      if (current === undefined)
-        return event({ state: "failed", reason: MOCK_PROCESS_ENTRY_GONE });
+      if (current === undefined) return event({ state: "failed", reason: MOCK_PROCESS_ENTRY_GONE });
       const processed = {
         text: mockPresetOutput(
           isBuiltinPreset(resolved.id) ? resolved.id : undefined,
@@ -2478,9 +2307,7 @@ export class MockBackend implements Backend {
         preset: resolved,
         at_ms: this.now(),
       };
-      this.setHistory(
-        this.history.map((e) => (e.id === id ? { ...e, processed } : e)),
-      );
+      this.setHistory(this.history.map((e) => (e.id === id ? { ...e, processed } : e)));
       event({ state: "done", processed });
     };
     this.processing.set(requestId, {
@@ -2500,9 +2327,7 @@ export class MockBackend implements Backend {
       return;
     }
     const builtin =
-      "preset" in trial
-        ? resolvePreset(trial.preset, this.state.presets).preset.id
-        : undefined;
+      "preset" in trial ? resolvePreset(trial.preset, this.state.presets).preset.id : undefined;
     const handle = setTimeout(() => {
       this.probeTimers.delete(handle);
       const outcome: PresetTryOutcome = {
@@ -2551,11 +2376,7 @@ export class MockBackend implements Backend {
     this.emit({ type: "rules", rules });
   }
 
-  private ruleFrom(
-    draft: RuleDraft,
-    id: string,
-    createdAtMs: number,
-  ): ReplacementRule {
+  private ruleFrom(draft: RuleDraft, id: string, createdAtMs: number): ReplacementRule {
     return {
       id,
       ...draft,
@@ -2575,24 +2396,18 @@ export class MockBackend implements Backend {
     for (const draft of drafts) {
       const at = rules.findIndex((r) => r.name === draft.name);
       const existing = rules[at];
-      if (existing === undefined)
-        rules.push(this.ruleFrom(draft, this.uuid(), now));
-      else
-        rules[at] = this.ruleFrom(draft, existing.id, existing.created_at_ms);
+      if (existing === undefined) rules.push(this.ruleFrom(draft, this.uuid(), now));
+      else rules[at] = this.ruleFrom(draft, existing.id, existing.created_at_ms);
     }
     this.commitRules(rules);
   }
 
-  async invoke<C extends MutationCommand>(
-    name: C,
-    ...args: ArgsOf<C>
-  ): Promise<void> {
+  async invoke<C extends MutationCommand>(name: C, ...args: ArgsOf<C>): Promise<void> {
     // Like the desktop shell: the desktop records a phone's takes and streams none itself (§20),
     // and has no share sheet (§20.7).
     if (this.role === "desktop" && name.startsWith("phone_take_"))
       throw new Error(PHONE_TAKE_UNAVAILABLE);
-    if (this.role === "desktop" && name === "phone_share_text")
-      throw new Error(SHARE_UNAVAILABLE);
+    if (this.role === "desktop" && name === "phone_share_text") throw new Error(SHARE_UNAVAILABLE);
     const payload: CommandArgs[C] | undefined = args[0];
     this.handlers[name](payload);
     await Promise.resolve();
@@ -2601,9 +2416,7 @@ export class MockBackend implements Backend {
   // ---- remote-side simulation ------------------------------------------------------------------
 
   /** The other device joined the session: Noise XX runs, then both sides see the safety code. */
-  simulatePeerJoined(
-    peer: DeviceInfo = this.role === "phone" ? desktopPeer() : phonePeer(),
-  ) {
+  simulatePeerJoined(peer: DeviceInfo = this.role === "phone" ? desktopPeer() : phonePeer()) {
     const phase = this.state.pairing.state.state;
     if (phase !== "waiting_for_peer" && phase !== "creating_session") return;
     this.stopCountdown();
@@ -2637,6 +2450,13 @@ export class MockBackend implements Backend {
     this.finish({ state: "failed", reason: { kind: "peer_left" } });
   }
 
+  /** The selected model of `kind` ran out of quota (docs/dictation.md §3.5): the engines' status
+   *  says it is tried again at `retryAtMs` while its fallback models run. */
+  simulateQuotaExhausted(kind: ServiceKind, retryAtMs: number) {
+    this.quotaOut.set(kind, retryAtMs);
+    this.emit({ type: "engines", ...this.resolveEngines(this.state.settings.engines) });
+  }
+
   simulateRelay(patch: Partial<RelayStatus>) {
     this.emit({ type: "relay", ...this.state.relay, ...patch });
   }
@@ -2663,9 +2483,7 @@ export class MockBackend implements Backend {
 
   /** A trusted device presented a different key: flag it, never auto-trust (R-PR-6). */
   simulateIdentityChanged(publicKey: string, presentedFingerprint: string) {
-    const previous = this.state.devices.find(
-      (d) => d.device.public_key === publicKey,
-    );
+    const previous = this.state.devices.find((d) => d.device.public_key === publicKey);
     if (!previous) return;
     this.emit({
       type: "identity_changed",
@@ -2733,9 +2551,7 @@ export class MockBackend implements Backend {
   }
 
   private setModelState(id: string, state: ModelInstallState) {
-    const models = this.state.models.map((m) =>
-      m.id === id ? { ...m, state } : m,
-    );
+    const models = this.state.models.map((m) => (m.id === id ? { ...m, state } : m));
     this.emit({ type: "models", models });
     // Readiness and the on-device card follow the install state of the selected model and of the
     // streaming model, whichever provider is in use (the core's rescan re-reports the engines);
@@ -2752,9 +2568,7 @@ export class MockBackend implements Backend {
       this.emit({
         type: "error",
         message:
-          this.role === "phone"
-            ? "models: 手机端不支持本地模型"
-            : `models: 未知的本地模型 ${id}`,
+          this.role === "phone" ? "models: 手机端不支持本地模型" : `models: 未知的本地模型 ${id}`,
       });
       return;
     }
@@ -2802,8 +2616,7 @@ export class MockBackend implements Backend {
 
   private cancelModel(id: string) {
     const current = this.modelState(id);
-    if (current?.kind !== "downloading" && current?.kind !== "verifying")
-      return;
+    if (current?.kind !== "downloading" && current?.kind !== "verifying") return;
     this.stopModelTimer(id);
     this.setModelState(id, { kind: "not_installed" });
   }
@@ -2823,9 +2636,7 @@ export class MockBackend implements Backend {
       this.emit({
         type: "error",
         message:
-          this.role === "phone"
-            ? "models: 手机端不支持本地模型"
-            : `models: 未知的本地模型 ${id}`,
+          this.role === "phone" ? "models: 手机端不支持本地模型" : `models: 未知的本地模型 ${id}`,
       });
       return;
     }
@@ -2887,8 +2698,7 @@ export class MockBackend implements Backend {
   private checkForUpdate() {
     const current = this.state.update.state;
     // From a store, the store updates (docs/dictation.md §20.9): nothing to ask.
-    if (current === "disabled" || current === "checking" || current === "store")
-      return;
+    if (current === "disabled" || current === "checking" || current === "store") return;
     if (current === "downloading" || current === "installing") return;
     this.clearUpdateTimers();
     this.emit({ type: "update", state: "checking" });
@@ -2910,8 +2720,7 @@ export class MockBackend implements Backend {
       // docs/dictation.md §20.9: the phone downloads nothing itself. The page that installs the
       // update opens in the browser: the store listing, or the APK of the newer release.
       if (current.state === "store") this.updatePagesOpened.push("store");
-      else if (current.state === "available")
-        this.updatePagesOpened.push(current.version);
+      else if (current.state === "available") this.updatePagesOpened.push(current.version);
       else throw new Error(PHONE_NOTHING_TO_INSTALL);
       return;
     }
@@ -2992,13 +2801,10 @@ export class MockBackend implements Backend {
   }
 
   modelLinkOpen(id: string, file: string, source: number): Promise<void> {
-    const url = this.state.models
-      .find((m) => m.id === id)
-      ?.files.find((f) => f.name === file)?.urls[source];
+    const url = this.state.models.find((m) => m.id === id)?.files.find((f) => f.name === file)
+      ?.urls[source];
     if (url === undefined)
-      return Promise.reject(
-        new Error(`model_link_open: ${id} ${file} ${source}`),
-      );
+      return Promise.reject(new Error(`model_link_open: ${id} ${file} ${source}`));
     this.modelLinksOpened.push(url);
     return Promise.resolve();
   }
@@ -3021,9 +2827,7 @@ export class MockBackend implements Backend {
       ...(onDevice && typeof engines.local_model === "string"
         ? { local_model: engines.local_model }
         : {}),
-      ...(onDevice
-        ? { compute: this.state.settings.engines.local_device }
-        : {}),
+      ...(onDevice ? { compute: this.state.settings.engines.local_device } : {}),
       ...(engines.refine_enabled && engines.llm_provider !== undefined
         ? { llm_provider: engines.llm_provider }
         : {}),
@@ -3047,10 +2851,8 @@ export class MockBackend implements Backend {
     if (!ids.every((id) => this.feedbackStaged.some((a) => a.id === id)))
       return Promise.reject(new Error("invalid"));
     // What only a report with files can meet (the endpoint's 507, an unfinished upload).
-    const onlyWithFiles =
-      this.feedback === "storage_full" || this.feedback === "attachments";
-    const failure =
-      onlyWithFiles && ids.length === 0 ? "configured" : this.feedback;
+    const onlyWithFiles = this.feedback === "storage_full" || this.feedback === "attachments";
+    const failure = onlyWithFiles && ids.length === 0 ? "configured" : this.feedback;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.probeTimers.delete(timer);
@@ -3113,19 +2915,13 @@ export class MockBackend implements Backend {
   }
 
   phoneClipboardRead(): Promise<string | null> {
-    if (this.role !== "phone")
-      return Promise.reject(new Error(PHONE_TEXT_UNAVAILABLE));
+    if (this.role !== "phone") return Promise.reject(new Error(PHONE_TEXT_UNAVAILABLE));
     return Promise.resolve(this.phoneClipboard);
   }
 
   /** `provider_probe`: the same refusals as the core before any request, then the preset list (or
    *  `probeModels`) after `MOCK_PROBE_MS`. */
-  private probe(
-    provider: ProviderId,
-    kind: ServiceKind,
-    baseUrl?: string,
-    key?: string,
-  ) {
+  private probe(provider: ProviderId, kind: ServiceKind, baseUrl?: string, key?: string) {
     const failed = (reason: ProbeFailure) =>
       this.emit({
         type: "provider_probe",
@@ -3136,22 +2932,18 @@ export class MockBackend implements Backend {
       });
     const spec = providerSpec(provider);
     const preset = spec[kind];
-    if (preset === undefined || provider === "local")
-      return failed("unsupported");
-    if (provider === "builtin" && this.builtIn[kind] === undefined)
-      return failed("unsupported");
+    if (preset === undefined || provider === "local") return failed("unsupported");
+    if (provider === "builtin" && this.builtIn[kind] === undefined) return failed("unsupported");
     if (provider !== "builtin") {
       const saved = this.state.settings.engines.providers?.[provider];
       const url =
         baseUrl?.trim() ||
         (kind === "asr" ? saved?.asr_url : saved?.llm_url) ||
         (preset.baseUrl.length > 0 ? preset.baseUrl : undefined);
-      if (url === undefined || !/^https?:\/\/[^/]+/.test(url))
-        return failed("invalid_url");
+      if (url === undefined || !/^https?:\/\/[^/]+/.test(url)) return failed("invalid_url");
       const entry = keyEntry(provider, kind);
       const hasKey =
-        (key?.trim().length ?? 0) > 0 ||
-        (entry !== undefined && this.userKeys.has(entry));
+        (key?.trim().length ?? 0) > 0 || (entry !== undefined && this.userKeys.has(entry));
       if (spec.key === "required" && !hasKey) return failed("key_missing");
     }
     const handle = setTimeout(() => {
@@ -3159,9 +2951,7 @@ export class MockBackend implements Backend {
       if (this.probeModels === false) return failed("unreachable");
       const models = [
         ...(this.probeModels[provider] ??
-          (provider === "builtin"
-            ? [this.builtIn[kind]?.model ?? ""]
-            : preset.models)),
+          (provider === "builtin" ? [this.builtIn[kind]?.model ?? ""] : preset.models)),
       ];
       models.sort();
       this.emit({
@@ -3194,16 +2984,23 @@ export class MockBackend implements Backend {
         installed: this.modelState(localId)?.kind === "installed",
       },
       liveReady:
-        settings.live_preview &&
-        this.modelState(MOCK_STREAMING_MODEL_ID)?.kind === "installed",
+        settings.live_preview && this.modelState(MOCK_STREAMING_MODEL_ID)?.kind === "installed",
     });
-    return { ...status, ...this.engineOverrides };
+    const marked = (kind: ServiceKind, fallback: EngineStatus["asr_fallback"]) => {
+      const retry = this.quotaOut.get(kind);
+      return fallback === undefined || retry === undefined || !fallback.in_use
+        ? fallback
+        : { ...fallback, selected_retry_at_ms: retry };
+    };
+    return {
+      ...status,
+      asr_fallback: marked("asr", status.asr_fallback),
+      llm_fallback: marked("llm", status.llm_fallback),
+      ...this.engineOverrides,
+    };
   }
 
-  private emitPhase(
-    phase: DictationPhase,
-    session = this.state.dictation.session,
-  ) {
+  private emitPhase(phase: DictationPhase, session = this.state.dictation.session) {
     // The take's context rides next to the phase until the take is over (§18.6), and so does the
     // phone a take's audio comes from (§20).
     if (phase.phase === "idle") {
@@ -3212,18 +3009,12 @@ export class MockBackend implements Backend {
       this.takePreset = undefined;
       this.takeSource = undefined;
     }
-    if (phase.phase !== "listening" && phase.phase !== "processing")
-      this.takeSegments = undefined;
-    const context =
-      this.takeContext === undefined ? {} : { context: this.takeContext };
-    const remote =
-      this.takeRemote === undefined ? {} : { remote: this.takeRemote };
-    const preset =
-      this.takePreset === undefined ? {} : { preset: this.takePreset };
-    const source =
-      this.takeSource === undefined ? {} : { source: this.takeSource };
-    const segments =
-      this.takeSegments === undefined ? {} : { segments: this.takeSegments };
+    if (phase.phase !== "listening" && phase.phase !== "processing") this.takeSegments = undefined;
+    const context = this.takeContext === undefined ? {} : { context: this.takeContext };
+    const remote = this.takeRemote === undefined ? {} : { remote: this.takeRemote };
+    const preset = this.takePreset === undefined ? {} : { preset: this.takePreset };
+    const source = this.takeSource === undefined ? {} : { source: this.takeSource };
+    const segments = this.takeSegments === undefined ? {} : { segments: this.takeSegments };
     this.emit({
       type: "dictation",
       session,
@@ -3276,9 +3067,7 @@ export class MockBackend implements Backend {
     const { hotkey, edit_hotkey, solo_key } = this.state.settings;
     return {
       ...(capturing ? {} : { registered: hotkey }),
-      ...(capturing || edit_hotkey === null
-        ? {}
-        : { edit_registered: edit_hotkey }),
+      ...(capturing || edit_hotkey === null ? {} : { edit_registered: edit_hotkey }),
       ...(capturing ? {} : mockSoloStatus(solo_key)),
       pressed: false,
       capturing,
@@ -3296,29 +3085,22 @@ export class MockBackend implements Backend {
       checked_at: this.now(),
       lan: {
         listening: true,
-        addresses: [
-          this.role === "phone" ? "192.168.1.52:47831" : "192.168.1.30:47831",
-        ],
+        addresses: [this.role === "phone" ? "192.168.1.52:47831" : "192.168.1.30:47831"],
       },
       relay: {
         configured: this.state.relay.source !== "none",
         ...(this.state.relay.source === "none"
           ? {}
           : {
-              result: relayUp
-                ? { result: "ok" as const, ms: 48 }
-                : { result: "timeout" as const },
+              result: relayUp ? { result: "ok" as const, ms: 48 } : { result: "timeout" as const },
             }),
       },
       peers: this.state.devices.map((d) => {
-        const online =
-          d.connection.state === "online" ? d.connection.via : undefined;
+        const online = d.connection.state === "online" ? d.connection.via : undefined;
         return {
           public_key: d.device.public_key,
           name: d.device.name,
-          ...(online === undefined
-            ? {}
-            : { via: online, rtt_ms: online === "direct" ? 6 : 61 }),
+          ...(online === undefined ? {} : { via: online, rtt_ms: online === "direct" ? 6 : 61 }),
           addresses: (d.device.direct_hints ?? []).map((address) => ({
             address,
             same_subnet: address.startsWith("192.168.1."),
@@ -3351,8 +3133,7 @@ export class MockBackend implements Backend {
     // Like the core, the output mode is decided when the take starts (§12) — by the scene the
     // foreground app matches, if any (§18.4): its overrides apply to this take only. A voice edit
     // (§19) is always one whole take and matches no scene; it keeps the app as its context.
-    this.takeMode =
-      kind === "edit" ? "whole_take" : this.state.engines.effective_output_mode;
+    this.takeMode = kind === "edit" ? "whole_take" : this.state.engines.effective_output_mode;
     this.injectedChars = 0;
     this.takeContext = undefined;
     this.takeScene = undefined;
@@ -3362,8 +3143,7 @@ export class MockBackend implements Backend {
     this.takePresets = this.state.presets;
     this.takePreset = undefined;
     // §22: a voice edit's instruction is spoken into the microphone.
-    this.takeSource =
-      kind === "edit" ? "microphone" : this.state.settings.recording.source;
+    this.takeSource = kind === "edit" ? "microphone" : this.state.settings.recording.source;
     this.takeSegments = undefined;
     if (kind === "edit" && !this.state.engines.refine_ready) {
       // §19.4: no LLM, no edit — refused at the press, the microphone never opens.
@@ -3379,10 +3159,7 @@ export class MockBackend implements Backend {
       return;
     }
     // The core keeps the probe's answer sanitised (§18.2): a normalised id, one-line names.
-    const app =
-      this.foregroundApp === null
-        ? undefined
-        : sanitizeForegroundApp(this.foregroundApp);
+    const app = this.foregroundApp === null ? undefined : sanitizeForegroundApp(this.foregroundApp);
     const host = hostOsOf(this.state.identity?.platform ?? "other");
     if (kind === "edit" && app !== undefined && isTerminalApp(host, app.id)) {
       // §19.2: the copy chord is a terminal's interrupt; refused once the probe answered — no
@@ -3413,9 +3190,7 @@ export class MockBackend implements Backend {
         : app !== undefined
           ? matchScene(this.state.scenes, app)
           : this.role === "phone"
-            ? this.state.scenes.find(
-                (s) => s.id === this.state.settings.pinned_scene,
-              )
+            ? this.state.scenes.find((s) => s.id === this.state.settings.pinned_scene)
             : undefined;
     this.takeScene = scene;
     if (app !== undefined)
@@ -3425,8 +3200,7 @@ export class MockBackend implements Backend {
       };
     const mode = scene?.overrides.output_mode;
     if (mode != null) {
-      const serviceable =
-        mode === "whole_take" || this.state.engines.live_preview_ready;
+      const serviceable = mode === "whole_take" || this.state.engines.live_preview_ready;
       this.takeMode = serviceable ? mode : "whole_take";
       if (!serviceable) this.takeModeError = MOCK_SCENE_MODE_NOT_READY;
     }
@@ -3455,19 +3229,13 @@ export class MockBackend implements Backend {
       const step = (n: number) => {
         const live = MOCK_LIVE_SCRIPT[n];
         const phase = this.state.dictation.phase;
-        if (
-          live === undefined ||
-          !this.listeningIn(session) ||
-          phase.phase !== "listening"
-        )
-          return;
+        if (live === undefined || !this.listeningIn(session) || phase.phase !== "listening") return;
         // A degraded preview keeps what it showed and ignores later partials, like the core.
         if (phase.live?.degraded !== undefined) return;
         // `live_inject` pastes every committed sentence the moment it closes (§12): the mock's
         // paste is instant, so `injected` follows `committed` and the cancel count follows both.
         const injected = injecting ? live.committed.length : 0;
-        if (injecting)
-          this.injectedChars = injectedChars(live.committed, injected);
+        if (injecting) this.injectedChars = injectedChars(live.committed, injected);
         this.emitPhase({
           ...phase,
           live: { ...structuredClone(live), injected },
@@ -3513,8 +3281,7 @@ export class MockBackend implements Backend {
   /** Whether `session` is still the one listening (a stale timer must not touch a later take). */
   private listeningIn(session: number): boolean {
     return (
-      this.state.dictation.session === session &&
-      this.state.dictation.phase.phase === "listening"
+      this.state.dictation.session === session && this.state.dictation.phase.phase === "listening"
     );
   }
 
@@ -3560,10 +3327,7 @@ export class MockBackend implements Backend {
     if (edge.pressed) {
       if (phase.phase === "listening") {
         // The second press ends a toggle or a locked take; under hold it is auto-repeat noise.
-        if (
-          activation === "toggle" ||
-          (activation === "hold_or_toggle" && phase.locked)
-        )
+        if (activation === "toggle" || (activation === "hold_or_toggle" && phase.locked))
           this.stopDictation();
         return;
       }
@@ -3643,15 +3407,11 @@ export class MockBackend implements Backend {
     const context = this.takeContext;
     const modeError = this.takeModeError;
     const refine =
-      (scene?.overrides.refine_enabled ?? engines.refine_enabled) &&
-      mode !== "live_inject";
+      (scene?.overrides.refine_enabled ?? engines.refine_enabled) && mode !== "live_inject";
     const asrMs = streaming ? MOCK_FINALIZE_MS : MOCK_ASR_MS;
     const raw = streaming ? preview : MOCK_DICTATION_RAW;
     const durationMs = Math.max(0, stoppedAt - startedAt);
-    const segments =
-      streaming && live !== undefined
-        ? streamSegments(live, durationMs)
-        : undefined;
+    const segments = streaming && live !== undefined ? streamSegments(live, durationMs) : undefined;
     // The status names the clean-up's preset from the start of processing (§21).
     const preset = refine ? this.resolveTakePreset() : undefined;
     this.takePreset = preset;
@@ -3666,19 +3426,12 @@ export class MockBackend implements Backend {
       if (this.state.dictation.session !== session) return;
       // The phone's result goes to its clipboard (docs/dictation.md §20.7), whatever the setting.
       const via =
-        this.role === "phone" || engines.inject === "clipboard_only"
-          ? "clipboard"
-          : "paste";
+        this.role === "phone" || engines.inject === "clipboard_only" ? "clipboard" : "paste";
       // docs/dictation.md §16.3: the dictionary corrects the transcript, the (canned) LLM keeps the
       // glossary terms, the rules run last; an emptied text is no speech, nothing is inserted.
-      const vocabulary = Vocabulary.compile(
-        this.state.dictionary,
-        this.state.rules,
-      );
+      const vocabulary = Vocabulary.compile(this.state.dictionary, this.state.rules);
       const corrected = vocabulary.correct(raw);
-      const refined = refine
-        ? vocabulary.correct(MOCK_DICTATION_TEXT).text
-        : corrected.text;
+      const refined = refine ? vocabulary.correct(MOCK_DICTATION_TEXT).text : corrected.text;
       const ruled = vocabulary.applyRules(refined);
       const text = ruled.text;
       if (text.trim().length === 0) {
@@ -3723,13 +3476,9 @@ export class MockBackend implements Backend {
         starred: false,
         mode,
         ...extra,
-        ...(hits.corrections.length + hits.rules.length > 0
-          ? { vocabulary: hits }
-          : {}),
+        ...(hits.corrections.length + hits.rules.length > 0 ? { vocabulary: hits } : {}),
         ...(context === undefined ? {} : { app: context.app }),
-        ...(scene === undefined
-          ? {}
-          : { scene: context?.scene ?? sceneRefOf(scene) }),
+        ...(scene === undefined ? {} : { scene: context?.scene ?? sceneRefOf(scene) }),
         ...(preset === undefined ? {} : { preset }),
         kind: "dictation",
       };
@@ -3787,10 +3536,7 @@ export class MockBackend implements Backend {
       if (this.state.dictation.session !== session) return;
       const selection = this.copiedSelection;
       if (selection === undefined) return; // refused by the copy
-      const vocabulary = Vocabulary.compile(
-        this.state.dictionary,
-        this.state.rules,
-      );
+      const vocabulary = Vocabulary.compile(this.state.dictionary, this.state.rules);
       const instruction = vocabulary.correct(MOCK_EDIT_INSTRUCTION);
       if (instruction.text.trim().length === 0) {
         this.emitPhase({
@@ -3817,8 +3563,7 @@ export class MockBackend implements Backend {
         });
         this.laterDictation(MOCK_FINALIZE_MS, () => {
           if (this.state.dictation.session !== session) return;
-          const via =
-            engines.inject === "clipboard_only" ? "clipboard" : "paste";
+          const via = engines.inject === "clipboard_only" ? "clipboard" : "paste";
           const text = MOCK_EDIT_TEXT;
           const entry: HistoryEntry = {
             id: this.uuid(),
@@ -3878,22 +3623,17 @@ export class MockBackend implements Backend {
     this.clearLiveTimers();
     const session = this.state.dictation.session;
     this.emitPhase(
-      text === undefined
-        ? { phase: "failed", message }
-        : { phase: "failed", message, text },
+      text === undefined ? { phase: "failed", message } : { phase: "failed", message, text },
     );
     this.dwell(
-      text === undefined
-        ? MOCK_DICTATION_DWELL_MS
-        : MOCK_DICTATION_FAILED_DWELL_MS,
+      text === undefined ? MOCK_DICTATION_DWELL_MS : MOCK_DICTATION_FAILED_DWELL_MS,
       session,
     );
   }
 
   private dwell(ms: number, session: number) {
     this.laterDictation(ms, () => {
-      if (this.state.dictation.session === session)
-        this.emitPhase({ phase: "idle" });
+      if (this.state.dictation.session === session) this.emitPhase({ phase: "idle" });
     });
   }
 
@@ -3969,10 +3709,7 @@ export class MockBackend implements Backend {
       });
       return;
     }
-    if (
-      this.expectedCode !== undefined &&
-      this.expectedCode.replace(/\s+/g, "") !== digits
-    ) {
+    if (this.expectedCode !== undefined && this.expectedCode.replace(/\s+/g, "") !== digits) {
       this.finish({
         state: "failed",
         reason: { kind: "relay", code: "invalid_code" },
@@ -3989,10 +3726,7 @@ export class MockBackend implements Backend {
     } catch (_error) {
       parsed = undefined;
     }
-    if (
-      parsed?.protocol !== "voltip:" ||
-      parsed.searchParams.get("t") === null
-    ) {
+    if (parsed?.protocol !== "voltip:" || parsed.searchParams.get("t") === null) {
       this.finish({ state: "failed", reason: { kind: "protocol" } });
       return;
     }
@@ -4035,9 +3769,7 @@ export class MockBackend implements Backend {
       name: peer.name,
       platform: peer.platform,
       public_key: publicKey,
-      fingerprint:
-        this.state.pairing.safety_code?.fingerprint ??
-        fingerprintOf(this.random),
+      fingerprint: this.state.pairing.safety_code?.fingerprint ?? fingerprintOf(this.random),
       trusted_at: trustedAt,
       last_seen: trustedAt,
       last_connection: "direct",
@@ -4047,15 +3779,10 @@ export class MockBackend implements Backend {
     this.emitPairing({ state: { state: "trusted" } });
     this.openNextIfAlwaysOn();
     this.emit({ type: "trusted", ...device });
-    const others = this.state.devices.filter(
-      (d) => d.device.public_key !== publicKey,
-    );
+    const others = this.state.devices.filter((d) => d.device.public_key !== publicKey);
     this.emit({
       type: "devices",
-      devices: [
-        ...others,
-        { device, connection: { state: "online", via: "direct" } },
-      ],
+      devices: [...others, { device, connection: { state: "online", via: "direct" } }],
     });
   }
 
@@ -4083,10 +3810,7 @@ export class MockBackend implements Backend {
   private startCountdown() {
     this.stopCountdown();
     this.countdown = setInterval(() => {
-      const remaining = Math.max(
-        0,
-        (this.state.pairing.remaining_secs ?? 0) - 1,
-      );
+      const remaining = Math.max(0, (this.state.pairing.remaining_secs ?? 0) - 1);
       if (this.alwaysOn() && remaining <= MOCK_ALWAYS_ON_RENEW_SECS) {
         this.startPairing();
         return;
@@ -4156,8 +3880,7 @@ export class MockBackend implements Backend {
   }
 
   private safetyCode(): SafetyCode {
-    const pick = () =>
-      SAFETY_WORDS[Math.floor(this.random() * SAFETY_WORDS.length)] ?? "amber";
+    const pick = () => SAFETY_WORDS[Math.floor(this.random() * SAFETY_WORDS.length)] ?? "amber";
     return {
       words: [pick(), pick(), pick(), pick()],
       fingerprint: fingerprintOf(this.random),
@@ -4243,8 +3966,7 @@ function permute<T extends { id: string }>(
   items: readonly T[],
   ids: readonly string[],
 ): T[] | undefined {
-  if (ids.length !== items.length || new Set(ids).size !== ids.length)
-    return undefined;
+  if (ids.length !== items.length || new Set(ids).size !== ids.length) return undefined;
   const out: T[] = [];
   for (const id of ids) {
     const item = items.find((x) => x.id === id);
@@ -4255,13 +3977,8 @@ function permute<T extends { id: string }>(
 }
 
 /** Characters (code points) of the first `injected` committed sentences, joined like the paste. */
-function injectedChars(
-  committed: readonly LiveSegment[],
-  injected: number,
-): number {
-  return Array.from(
-    joinLiveText(committed.slice(0, injected).map((s) => s.text)),
-  ).length;
+function injectedChars(committed: readonly LiveSegment[], injected: number): number {
+  return Array.from(joinLiveText(committed.slice(0, injected).map((s) => s.text))).length;
 }
 
 /** `Done.segments` of a streaming take (§12): the committed sentences plus the tail as the last
@@ -4270,16 +3987,11 @@ function streamSegments(live: LiveText, durationMs: number): LiveSegment[] {
   const tail = live.current.trim();
   if (tail.length === 0) return [...live.committed];
   const start = live.committed.at(-1)?.end_ms ?? 0;
-  return [
-    ...live.committed,
-    { text: tail, start_ms: start, end_ms: Math.max(start, durationMs) },
-  ];
+  return [...live.committed, { text: tail, start_ms: start, end_ms: Math.max(start, durationMs) }];
 }
 
 /** Ready-made device rows for demos and page tests. */
-export function sampleDevices(
-  now = Math.floor(Date.now() / 1000),
-): DeviceView[] {
+export function sampleDevices(now = Math.floor(Date.now() / 1000)): DeviceView[] {
   const phone = phoneIdentity();
   const laptop: TrustedDevice = {
     device_id: "b08f44e7-5a91-4e2d-8c3f-071b5c3f071b",
@@ -4353,11 +4065,9 @@ export function sampleHistory(nowMs: number): HistoryEntry[] {
   return historyEntries
     .filter((row) => row.text.length > 0)
     .map((row) => {
-      const [, h = "0", m = "0", sec = "0"] =
-        /(\d+):(\d+):(\d+)$/.exec(row.timestamp) ?? [];
+      const [, h = "0", m = "0", sec = "0"] = /(\d+):(\d+):(\d+)$/.exec(row.timestamp) ?? [];
       const dayStart = today - sampleRowDayOffset(row) * DAY_MS;
-      let at =
-        dayStart + (Number(h) * 3600 + Number(m) * 60 + Number(sec)) * 1000;
+      let at = dayStart + (Number(h) * 3600 + Number(m) * 60 + Number(sec)) * 1000;
       // Today's rows must not sit in the future, and every row stays older than the one before.
       if (at > nowMs) at = nowMs - 5 * 60_000;
       if (at >= previous) at = previous - 5 * 60_000;

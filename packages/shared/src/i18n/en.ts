@@ -94,16 +94,11 @@ export const en: Messages = {
         armed: "armed · ready · shortcut active",
         listening: "listening · recording · release to finish",
         locked: "locked · hands-free · press again to finish",
-        processing:
-          "processing · transcribing → polishing · waveform frozen and faded + shimmer",
-        inserted:
-          "inserted · accent border flashes one frame · fades after 600 ms",
-        error:
-          "error · not inserted · target window lost focus · collapses after 10 s",
-        "cancel-armed":
-          "cancel-armed · release to cancel · recording will be discarded",
-        blocked:
-          "blocked · secure input active · the system blocks the shortcut for now",
+        processing: "processing · transcribing → polishing · waveform frozen and faded + shimmer",
+        inserted: "inserted · accent border flashes one frame · fades after 600 ms",
+        error: "error · not inserted · target window lost focus · collapses after 10 s",
+        "cancel-armed": "cancel-armed · release to cancel · recording will be discarded",
+        blocked: "blocked · secure input active · the system blocks the shortcut for now",
       },
       tier: { preview: "PREVIEW", final: "FINAL" },
       livePreview: "Preview",
@@ -215,13 +210,10 @@ export const en: Messages = {
       refine: "Polishing failed",
       inject: "Could not insert into the target window",
       no_selection: "Nothing is selected",
-      selection_too_long:
-        "The selection is too long (2,000 characters at most)",
+      selection_too_long: "The selection is too long (2,000 characters at most)",
       selection: "Could not read the selection: {reason}",
-      edit_unavailable:
-        "Editing needs the AI polishing service; set its key first",
-      edit_in_terminal:
-        "Voice edit is off in terminals: a terminal's selection cannot be replaced",
+      edit_unavailable: "Editing needs the AI polishing service; set its key first",
+      edit_in_terminal: "Voice edit is off in terminals: a terminal's selection cannot be replaced",
       quota: "The model's quota is used up",
     },
     /** Voice edit (docs/dictation.md §19): the phase line of an edit take. */
@@ -263,13 +255,11 @@ export const en: Messages = {
       live_inject:
         "Each sentence is typed into the current window once it settles. Polish is not available in this mode, and cancelling does not remove text already typed.",
     },
-    fallback:
-      "Live transcription model not downloaded · running as All at once",
+    fallback: "Live transcription model not downloaded · running as All at once",
     streamed:
       "The selected model is a realtime model: it transcribes while you speak, so takes run as “While you speak”, and the text is still inserted once on release.",
     effective: "In effect",
-    liveError:
-      "Live transcription stopped; the whole recording was transcribed instead: {reason}",
+    liveError: "Live transcription stopped; the whole recording was transcribed instead: {reason}",
   },
   recordingSource: {
     name: {
@@ -286,8 +276,7 @@ export const en: Messages = {
     },
     description: {
       hold: "Hold the shortcut to record; release to stop and transcribe.",
-      toggle:
-        "Press once to start recording, press again to stop; releasing does not stop.",
+      toggle: "Press once to start recording, press again to stop; releasing does not stop.",
       hold_or_toggle:
         "Hold to talk and release to stop; a short press locks the take, press again to stop.",
     },
@@ -336,8 +325,7 @@ export const en: Messages = {
     },
     confirm: {
       clearTitle: "Delete all {n} history entries?",
-      clearBody:
-        "All history saved on this computer will be deleted. This cannot be undone.",
+      clearBody: "All history saved on this computer will be deleted. This cannot be undone.",
       clearConfirm: "Delete all",
     },
     readout: {
@@ -474,14 +462,12 @@ export const en: Messages = {
       enumerating: "Detecting microphones…",
       systemDefault: "system default",
       selected: "selected",
-      missing:
-        "The chosen microphone is not connected · using the system default",
+      missing: "The chosen microphone is not connected · using the system default",
       test: "Test microphone",
       stopTest: "Stop test",
       idleHint:
         "The microphone stays closed while idle. Press Test microphone and say a few words to check that the strength bar moves.",
-      testingHint:
-        "Say a few words; the strength bar should move · stops automatically in {n} s",
+      testingHint: "Say a few words; the strength bar should move · stops automatically in {n} s",
       recordingHint: "Strength of this dictation's recording",
       devices: { one: "{n} input device", other: "{n} input devices" },
       peak: "Peak {value}",
@@ -582,10 +568,8 @@ export const en: Messages = {
     },
     banner: {
       title: "History · stored only on this computer",
-      titleSynced:
-        "History · stored on this computer and synced to paired phones",
-      retention:
-        "Keeps the newest {keep}; older entries are deleted automatically.",
+      titleSynced: "History · stored on this computer and synced to paired phones",
+      retention: "Keeps the newest {keep}; older entries are deleted automatically.",
       off: "History off · new dictations are not saved; the {n} saved entries remain until cleared.",
       settings: "Retention settings",
       saved: "Saved",
@@ -624,13 +608,11 @@ export const en: Messages = {
         "Could not paste at the cursor: the target window runs as administrator. The text is on the clipboard; press {keys} to paste it.",
       too_long:
         "The text is over 5,000 characters, so it was not pasted directly. It is on the clipboard; press {keys} to paste it.",
-      other:
-        "Could not paste directly. The text is on the clipboard; press {keys} to paste it.",
+      other: "Could not paste directly. The text is on the clipboard; press {keys} to paste it.",
       openAccessibility: "Open Accessibility settings",
       details: "Technical details",
     },
-    liveError:
-      "Live transcription stopped; the whole recording was transcribed instead: {reason}",
+    liveError: "Live transcription stopped; the whole recording was transcribed instead: {reason}",
     /** Voice edit rows (docs/dictation.md §19.5): instruction → result, the original expandable. */
     edit: {
       badge: "Edit",
@@ -683,8 +665,7 @@ export const en: Messages = {
       failed: "Processing failed: {reason}",
       cancelled: "Cancelled; nothing was saved.",
       note: "The text is processed in parts of up to 1,500 characters, cut at sentence ends. The result is saved as a processed text; the original stays as it is.",
-      builtinNote:
-        "The built-in AI service runs on a free quota, so long texts take a while.",
+      builtinNote: "The built-in AI service runs on a free quota, so long texts take a while.",
       exportSrt: "Export subtitles (SRT)",
       exportTxt: "Export text (TXT)",
       txtUsesProcessed: "The text export uses the processed text.",
@@ -721,8 +702,7 @@ export const en: Messages = {
       deleteTitle: "Delete this entry?",
       deleteBody: "{when} · {excerpt}. This cannot be undone.",
       clearTitle: "Clear {n} history entries?",
-      clearBody:
-        "All history saved on this computer will be cleared. This cannot be undone.",
+      clearBody: "All history saved on this computer will be cleared. This cannot be undone.",
       clear: "Clear",
     },
   },
@@ -857,8 +837,7 @@ export const en: Messages = {
       kind: "Type",
       from: "Match",
       to: "Replace",
-      toHelp:
-        "Leave empty to delete the match; a regex may use $1 / ${name} / $$",
+      toHelp: "Leave empty to delete the match; a regex may use $1 / ${name} / $$",
       caseSensitive: "Case sensitive",
       checking: "Checking…",
       ok: "✓ The rule is valid",
@@ -963,8 +942,7 @@ export const en: Messages = {
         "Model Studio's speech recognition and Qwen models; its realtime models transcribe while you speak.",
       deepseek: "DeepSeek's chat models, for polish only.",
       ollama: "Models in Ollama on this computer; text never leaves it.",
-      custom:
-        "Any OpenAI-compatible endpoint: vLLM, LocalAI or your own gateway.",
+      custom: "Any OpenAI-compatible endpoint: vLLM, LocalAI or your own gateway.",
     },
     ready: "Ready",
     onDevice: "On this computer",
@@ -993,10 +971,8 @@ export const en: Messages = {
       keyOptional: "API key (optional)",
       keyPlaceholderSet: "Saved · leave empty to keep",
       keyPlaceholderUnset: "Not set yet",
-      keyHelp:
-        "Stored only in the system keychain; the app never shows a saved key.",
-      keyShared:
-        "{provider} uses the same key for transcription and AI polish.",
+      keyHelp: "Stored only in the system keychain; the app never shows a saved key.",
+      keyShared: "{provider} uses the same key for transcription and AI polish.",
       keyState: "Key",
       showKey: "Show key",
       hideKey: "Hide key",
@@ -1064,8 +1040,7 @@ export const en: Messages = {
         duplicate: "Already in the list, not used",
       },
       notInUse: {
-        local:
-          "The selected model runs on this computer, so fallback models are not used.",
+        local: "The selected model runs on this computer, so fallback models are not used.",
         notReady:
           "The selected service is not available. Fallback models only take over when a quota runs out, not for a service that is not set up.",
       },
@@ -1082,8 +1057,7 @@ export const en: Messages = {
         listed: "This model is already in the list",
       },
       recheck: "Check again",
-      recheckDone:
-        "Quota records cleared; the next request starts with the selected model",
+      recheckDone: "Quota records cleared; the next request starts with the selected model",
       aliyunNote:
         "Alibaba Cloud Model Studio: turn on Free Quota Only for these models in the Model Studio console. Then the service refuses requests once the free quota is used up and Voltip moves on to the next model; without it, the service starts charging instead. Voltip cannot read the remaining quota.",
     },
@@ -1096,8 +1070,7 @@ export const en: Messages = {
       pasteLong: "Paste at cursor (Ctrl V)",
     },
     languageLabel: "Language",
-    languageHelp:
-      "The language you speak; choose Auto-detect when you mix languages.",
+    languageHelp: "The language you speak; choose Auto-detect when you mix languages.",
     localModels: "Local models",
     compute: {
       title: "Compute device",
@@ -1107,8 +1080,7 @@ export const en: Messages = {
       auto: "Auto",
       cpu: "CPU",
       gpu: "GPU",
-      autoHelp:
-        "Auto: the GPU when there is one, the CPU when it is not available.",
+      autoHelp: "Auto: the GPU when there is one, the CPU when it is not available.",
       noGpu:
         "No GPU usable by local models was found (Windows and Linux need a Vulkan-capable graphics driver); models run on the CPU.",
       whichGpu: "GPU",
@@ -1249,8 +1221,7 @@ export const en: Messages = {
     path: "{path}",
     useTitle: "Switch to local recognition with {name}",
     removeTitle: "Delete model {name}?",
-    removeBody:
-      "Deletes every file under {path} ({size}); using it again means downloading again.",
+    removeBody: "Deletes every file under {path} ({size}); using it again means downloading again.",
     removeConfirm: "Delete",
     removed: "Deleted · {name}",
     activated: "Switched · local recognition · {name}",
@@ -1280,8 +1251,7 @@ export const en: Messages = {
     limits: {
       notIme:
         "The phone is not an input method: it never appears in the system keyboard or input source list.",
-      relayBlind:
-        "The relay forwards encrypted data only and never has the keys to decrypt it.",
+      relayBlind: "The relay forwards encrypted data only and never has the keys to decrypt it.",
       identityAlert:
         "If a device's identity key changes, Voltip warns you and does not trust it automatically.",
       oneMic:
@@ -1411,8 +1381,7 @@ export const en: Messages = {
     alwaysOnHelp:
       "While on, this computer keeps waiting for a phone: the QR code renews before it expires and the next pairing opens after each one, until you turn it off. Every pairing still needs the safety code checked and confirmed here.",
     alwaysOnOpen: "Always on · this code {remaining}",
-    alwaysOnIdle:
-      "Always-on pairing is on; it starts once the relay or the LAN is available.",
+    alwaysOnIdle: "Always-on pairing is on; it starts once the relay or the LAN is available.",
     alwaysOnNext: "Always-on pairing: the next pairing opens in a moment.",
     validity: "Valid for",
     warning: "Do not screenshot this QR code or show it on a shared screen.",
@@ -1421,8 +1390,7 @@ export const en: Messages = {
     copyLink: "Copy link",
     linkWhat: "pairing link",
     cancel: "Cancel",
-    expiredNote:
-      "Expired · the QR code expires after {ttl} seconds, regenerate it.",
+    expiredNote: "Expired · the QR code expires after {ttl} seconds, regenerate it.",
     phone: "The phone",
     joined: "{name} joined, establishing the encrypted connection…",
     peerDone: "{name} · {platform} established the encrypted connection.",
@@ -1435,8 +1403,7 @@ export const en: Messages = {
     peerConfirmed: "The other device confirmed",
     trusted: "Trusted · {name}",
     newDevice: "new device",
-    trustedNote:
-      "The device is on the list; its identity key is checked on every connection.",
+    trustedNote: "The device is on the list; its identity key is checked on every connection.",
     done: "Done",
     another: "Pair another",
     rejected: "Pairing was rejected and cancelled.",
@@ -1474,8 +1441,7 @@ export const en: Messages = {
     lede: {
       permissions:
         "Voltip asks only for the permissions it needs and shows their actual state in the system.",
-      hotkey:
-        "Which shortcuts can be set depends on this computer's system, not on Voltip.",
+      hotkey: "Which shortcuts can be set depends on this computer's system, not on Voltip.",
       engine:
         "Every option states its cost first: where audio goes and whether a large language model processes the text too. The choice applies at once and can be changed on the Speech models page.",
       trial:
@@ -1503,8 +1469,7 @@ export const en: Messages = {
         microphone: { name: "Microphone", purpose: "To hear you speak" },
         accessibility: {
           name: "Accessibility",
-          purpose:
-            "Required · finds the focused field and inserts text; works as soon as it is on",
+          purpose: "Required · finds the focused field and inserts text; works as soon as it is on",
         },
       },
       micDenied:
@@ -1542,8 +1507,7 @@ export const en: Messages = {
       local: "On this computer (offline)",
       localSubtitle: "Download a local model; audio never leaves this computer",
       provider: "Another provider",
-      providerSubtitle:
-        "OpenAI, Groq, SiliconFlow or any OpenAI-compatible endpoint",
+      providerSubtitle: "OpenAI, Groq, SiliconFlow or any OpenAI-compatible endpoint",
       recommended: "Recommended",
       providerLabel: "Provider",
       modelLabel: "Model",
@@ -1551,16 +1515,13 @@ export const en: Messages = {
       keyPlaceholder: "Stored only in the system keychain",
       baseUrl: "Endpoint",
       refine: "Polish with AI too",
-      refineHelp:
-        "Proofreads punctuation, typos and filler words by default; provider: {provider}",
-      refineNone:
-        "This choice has no polish service; set one up later on the AI models page.",
+      refineHelp: "Proofreads punctuation, typos and filler words by default; provider: {provider}",
+      refineNone: "This choice has no polish service; set one up later on the AI models page.",
       localDownload:
         "Dictation works once the download finishes; you can continue now, it downloads in the background.",
       note: "“Save and continue” writes the settings; change them any time on the Speech models page.",
       needKey: "This provider needs an API key",
-      needUrl:
-        "A custom endpoint needs an address starting with http:// or https://",
+      needUrl: "A custom endpoint needs an address starting with http:// or https://",
       needModel: "Enter a model name",
     },
     trial: {
@@ -1568,15 +1529,13 @@ export const en: Messages = {
         proceed: "Target window {process} · text can be inserted",
         elevated_target:
           "Target window {process} runs as administrator · text can only be copied to the clipboard",
-        secure_desktop:
-          "Secure desktop (UAC / lock screen) · text cannot be inserted",
+        secure_desktop: "Secure desktop (UAC / lock screen) · text cannot be inserted",
         unknown: "Target window unknown · Voltip will try to insert anyway",
         unknownProcess: "unknown process",
       },
       label: "Try it here",
       idle: "Ready",
-      placeholder:
-        "Hold {hotkey}, or press the button below, and say: {sentence}",
+      placeholder: "Hold {hotkey}, or press the button below, and say: {sentence}",
       sentence: "Merge the fix for issue 128 into main at three this afternoon",
       heard:
         "Transcribed · {refined} · the text was also inserted via “{via}” where the cursor was.",
@@ -1744,8 +1703,7 @@ export const en: Messages = {
       outputMissingNote:
         "The chosen output device is not connected, so dictation records the system default output for now and goes back to it once it is plugged in.",
       device: "Input device",
-      deviceHelp:
-        "Dictation, the test and the home page's strength bar all use this device.",
+      deviceHelp: "Dictation, the test and the home page's strength bar all use this device.",
       followDefault: "System default ({name})",
       followDefaultNone: "System default",
       disconnected: "{name} · not connected",
@@ -1794,8 +1752,7 @@ export const en: Messages = {
       title: "Appearance",
       lede: "Theme, density, font size and where the overlay sits while dictating. These options affect only how Voltip looks on this computer, never the transcription.",
       themeTitle: "Theme · 4 built in",
-      themeLede:
-        "All themes share the same components and layout; only the colours change.",
+      themeLede: "All themes share the same components and layout; only the colours change.",
       followingSystem: "Following system · {theme}",
       themeGroup: "Theme",
       lightCaption: "default",
@@ -1806,13 +1763,11 @@ export const en: Messages = {
         "Follows the operating system's light / dark setting: Light when the system is light, Dark when it is dark. System now: {scheme}.",
       followingNow: "Following the system",
       density: "Density",
-      densityHelp:
-        "Compact shrinks table rows from 32 to 28 and card padding from 16 to 12.",
+      densityHelp: "Compact shrinks table rows from 32 to 28 and card padding from 16 to 12.",
       compact: "Compact",
       default: "Default",
       fontSize: "Font size",
-      fontSizeHelp:
-        "Applies to window text and tables, 12–18 px; the overlay is unchanged.",
+      fontSizeHelp: "Applies to window text and tables, 12–18 px; the overlay is unchanged.",
       fontSmaller: "Smaller font",
       fontLarger: "Larger font",
       overlay: "Overlay position",
@@ -1881,8 +1836,7 @@ export const en: Messages = {
       regOk: "Active",
       regWaiting: "Waiting",
       shortcut: "Shortcut",
-      shortcutHelp:
-        "The shortcut in use. While recording, press a key combination; Esc cancels.",
+      shortcutHelp: "The shortcut in use. While recording, press a key combination; Esc cancels.",
       recording: "Recording… hold a key combination, then release",
       savedFailed: "Saved · not active",
       savedOk: "Saved · shortcut active",
@@ -1891,8 +1845,7 @@ export const en: Messages = {
       record: "Record again",
       restore: "Restore default",
       activation: "Recording mode",
-      activationHelp:
-        "Sets how pressing and releasing the shortcut starts and stops recording.",
+      activationHelp: "Sets how pressing and releasing the shortcut starts and stops recording.",
       holdThreshold: "Short-press threshold",
       holdThresholdHelp:
         "A release before holding this long counts as a short press and locks the take; 50–5000 ms.",
@@ -1942,15 +1895,12 @@ export const en: Messages = {
         },
         note: {
           alt: "On many European layouts Right Alt is AltGr, which types @, € and the like; pick another key there.",
-          shift:
-            "Right Shift types capitals and may be your input method's language switch.",
+          shift: "Right Shift types capitals and may be your input method's language switch.",
           fn: "Set System Settings › Keyboard › “Press 🌐 key to” to “Do Nothing”, or every press switches the input source or opens the emoji picker.",
           mouse:
             "Voltip takes this button for itself: it no longer does its usual job in other apps (going back in the browser, say).",
-          macPermission:
-            "Needs the Accessibility permission, the same as pasting.",
-          x11Only:
-            "Under XWayland it works only while an X11 window has the focus.",
+          macPermission: "Needs the Accessibility permission, the same as pasting.",
+          x11Only: "Under XWayland it works only while an X11 window has the focus.",
         },
       },
     },
@@ -1961,8 +1911,7 @@ export const en: Messages = {
         title: "Context sent to AI polish",
         lede: "Sent with the polish request only while AI polish is on; the recognition service never receives it. A scene's extra instruction always goes with the polish request.",
         appName: "App name",
-        appNameHelp:
-          "For example “Current app: Slack”, so the AI can judge terms and tone.",
+        appNameHelp: "For example “Current app: Slack”, so the AI can judge terms and tone.",
         windowTitle: "Window title",
         windowTitleHelp:
           "For example a document or channel name; it may be private, so it is off by default. Not read on macOS.",
@@ -2017,8 +1966,7 @@ export const en: Messages = {
         textHelp:
           "With polish on, the recognition result goes to the polish provider; voice edits go there too.",
         context: "Foreground app",
-        contextHelp:
-          "Sent with the polish only, never to recognition; switch it under Scenes.",
+        contextHelp: "Sent with the polish only, never to recognition; switch it under Scenes.",
         contextNone: "Not sent",
         history: "History and settings",
         historyHelp:
@@ -2033,15 +1981,13 @@ export const en: Messages = {
         historyTitle: "Dictation history",
         historyCount: "{n} / {keep} entries",
         record: "Keep dictation history",
-        recordHelp:
-          "Off records nothing new; what is already there stays until you clear it.",
+        recordHelp: "Off records nothing new; what is already there stays until you clear it.",
         keep: "Keep the latest",
         keepHelp:
           "Older entries are deleted past this; a smaller number deletes the extra ones at once.",
         keepOption: "{n} entries",
         clear: "Clear history",
-        clearHelp:
-          "Deletes every dictation entry on this computer; cannot be undone.",
+        clearHelp: "Deletes every dictation entry on this computer; cannot be undone.",
         clearConfirmTitle: "Clear all dictation history?",
         clearConfirmBody:
           "The {n} entries on this computer will be deleted. This cannot be undone.",
@@ -2073,8 +2019,7 @@ export const en: Messages = {
           "Model files download from these Hugging Face repositories, each under the license on its page.",
         modelsNone: "No local models in the catalogue",
         update: "Updates",
-        updateHelp:
-          "The update source and the automatic update switch are under General.",
+        updateHelp: "The update source and the automatic update switch are under General.",
         source: "Source code",
         sourceHelp: "Open the project repository in the browser.",
         feedback: "Feedback",
@@ -2097,18 +2042,15 @@ export const en: Messages = {
     },
     intent: {
       name: "Clarify intent",
-      description:
-        "Keeps the corrected wording, removes repetition and lists multiple points.",
+      description: "Keeps the corrected wording, removes repetition and lists multiple points.",
     },
     chat: {
       name: "Casual chat",
-      description:
-        "Short conversational sentences without a closing full stop.",
+      description: "Short conversational sentences without a closing full stop.",
     },
     translate: {
       name: "Chinese ⇄ English",
-      description:
-        "Corrects recognition errors, then translates between Chinese and English.",
+      description: "Corrects recognition errors, then translates between Chinese and English.",
     },
     notes: {
       name: "Key points",
@@ -2116,8 +2058,7 @@ export const en: Messages = {
     },
     punctuation: {
       name: "Punctuation only",
-      description:
-        "Adds punctuation and sentence breaks without changing the words.",
+      description: "Adds punctuation and sentence breaks without changing the words.",
     },
     formal: {
       name: "Formal",
@@ -2174,8 +2115,7 @@ export const en: Messages = {
         running: "Processing…",
         result: "Result · {model} · {time}",
         failed: "Trial run failed: {reason}",
-        unavailable:
-          "No AI polish service is set up, so the trial run is not available.",
+        unavailable: "No AI polish service is set up, so the trial run is not available.",
         timeout: "No answer in time. Try again later.",
       },
       error: {
@@ -2192,8 +2132,7 @@ export const en: Messages = {
   builtinScenes: {
     coding: {
       name: "Coding",
-      description:
-        "Code editors and terminals: code, commands and identifiers stay as they are.",
+      description: "Code editors and terminals: code, commands and identifiers stay as they are.",
     },
     office: {
       name: "Office writing",
@@ -2205,31 +2144,26 @@ export const en: Messages = {
     },
     legal: {
       name: "Legal",
-      description:
-        "Strict proofreading; legal terms, statutes and case numbers stay as they are.",
+      description: "Strict proofreading; legal terms, statutes and case numbers stay as they are.",
     },
     medical: {
       name: "Medical",
-      description:
-        "Strict proofreading; drug names, doses and tests stay as they are.",
+      description: "Strict proofreading; drug names, doses and tests stay as they are.",
     },
     finance: {
       name: "Finance",
-      description:
-        "Strict proofreading; amounts, ratios and security codes stay as they are.",
+      description: "Strict proofreading; amounts, ratios and security codes stay as they are.",
     },
     academic: {
       name: "Academic",
-      description:
-        "Strict proofreading; citations and proper names stay as they are.",
+      description: "Strict proofreading; citations and proper names stay as they are.",
     },
   },
   sceneEditor: {
     titleNew: "New scene",
     titleEdit: "Edit scene",
     builtinName: "A built-in scene keeps its name.",
-    builtinApps:
-      "A built-in scene may list no app for now; it applies once you add one.",
+    builtinApps: "A built-in scene may list no app for now; it applies once you add one.",
     restore: "Restore defaults",
     restoreTitle: "Restore the defaults of “{name}”?",
     restoreBody:
@@ -2263,8 +2197,7 @@ export const en: Messages = {
     promptHelp:
       "Sent only with AI polish, for example “This is a chat message: casual, no full stop at the end”.",
     promptCount: "{n} / {max}",
-    streamingNotReady:
-      "Without the live transcription model this scene runs as All at once",
+    streamingNotReady: "Without the live transcription model this scene runs as All at once",
     saved: "Scene saved · {name}",
     error: {
       name: "Enter a name",
@@ -2293,8 +2226,7 @@ export const en: Messages = {
     size: "{received} / {total}",
     speed: "{speed}/s",
     eta: { seconds: "About {s} s left", minutes: "About {m} min {s} s left" },
-    ready:
-      "Downloaded and verified; it finishes installing when the app restarts.",
+    ready: "Downloaded and verified; it finishes installing when the app restarts.",
     restart: "Restart and update",
     installing: "Installing; the app restarts in a moment…",
     failed: "The update failed: {message}",
@@ -2317,8 +2249,7 @@ export const en: Messages = {
     messagePlaceholder: "What happened, or how you would like it to work.",
     count: "{n} / {max}",
     contactLabel: "Contact (optional)",
-    contactPlaceholder:
-      "An email or other way to reach you, if you want a reply",
+    contactPlaceholder: "An email or other way to reach you, if you want a reply",
     attached: "Sent along",
     attachedHelp:
       "Only these facts, what you wrote and the files you added are sent: no host name, no key, no dictation.",
@@ -2336,8 +2267,7 @@ export const en: Messages = {
         "“{name}” cannot be attached: images up to {image}, videos up to {video}, and not empty.",
       attachment_too_many: "At most {count} files.",
       attachment_total: "The attachments cannot add up to more than {total}.",
-      attachment_name:
-        "The name of “{name}” cannot be used; rename the file and try again.",
+      attachment_name: "The name of “{name}” cannot be used; rename the file and try again.",
     },
     diag: {
       app_version: "Version",
@@ -2356,23 +2286,19 @@ export const en: Messages = {
     sending: "Sending…",
     discard: "Clear",
     sent: "Feedback sent, thank you",
-    notConfigured:
-      "This build has no feedback address; you can open an issue on GitHub instead.",
+    notConfigured: "This build has no feedback address; you can open an issue on GitHub instead.",
     openIssue: "Give feedback on GitHub",
     error: {
       not_configured: "This build has no feedback address.",
       invalid: "The feedback cannot be empty or longer than {max} characters.",
       rate_limited: "Too many reports in a short time; try again later.",
-      unauthorized:
-        "The feedback service refused this version; update and try again.",
-      network:
-        "Cannot reach the feedback service; check the connection and retry.",
+      unauthorized: "The feedback service refused this version; update and try again.",
+      network: "Cannot reach the feedback service; check the connection and retry.",
       timeout: "The feedback service did not answer in time; retry later.",
       server: "The feedback service failed; retry later.",
       storage_full:
         "The feedback service cannot take more attachments right now; send without them.",
-      attachments:
-        "The feedback was sent, but an attachment did not finish uploading.",
+      attachments: "The feedback was sent, but an attachment did not finish uploading.",
     },
   },
   commands: {
@@ -2387,8 +2313,7 @@ export const en: Messages = {
     startDictation: "Start dictating",
     stopDictation: "Stop dictating",
     processing: "Processing…",
-    processingHint:
-      "The previous recording is still being transcribed or inserted",
+    processingHint: "The previous recording is still being transcribed or inserted",
     newRule: "New rule",
     copyLast: "Copy the last result",
     charsHint: "{n} chars",
@@ -2409,8 +2334,7 @@ export const en: Messages = {
     unpaired: "“{name}” unpaired from this device",
     unknownDevice: "Unknown device",
     message: "{from}: {body}",
-    identityChanged:
-      "The identity key of {name} changed; not trusted automatically",
+    identityChanged: "The identity key of {name} changed; not trusted automatically",
   },
   notFound: {
     title: "No such page",
@@ -2425,8 +2349,7 @@ export const en: Messages = {
   chord: {
     modifiersOnly: "Only modifiers were pressed; add a key",
     oneKey: "Only one key can be bound at a time",
-    needModifier:
-      "This system does not accept a single key as a shortcut; add a modifier",
+    needModifier: "This system does not accept a single key as a shortcut; add a modifier",
   },
   mirror: {
     source: "Whose history",
@@ -2438,16 +2361,14 @@ export const en: Messages = {
       offline: "Computer offline · {n} synced · {when}",
       revoked: "This computer stopped syncing",
       needs_upgrade: "Voltip on the computer needs an update to sync",
-      limit:
-        "This phone syncs with up to {max} computers; this one is not synced",
+      limit: "This phone syncs with up to {max} computers; this one is not synced",
     },
     empty: "No history yet",
     emptyBody:
       "This computer's history appears here once it has synced. It is read-only on the phone.",
     shortened:
       "This entry is too long; the phone shows only part of it. See the computer for the whole text.",
-    tooLong:
-      "Longer than 50,000 characters: it cannot be copied or shared in one piece.",
+    tooLong: "Longer than 50,000 characters: it cannot be copied or shared in one piece.",
     readOnly:
       "A computer's entries are read-only on the phone: they cannot be starred or deleted here.",
     settingsRow: "{name}'s settings",
@@ -2532,15 +2453,13 @@ export const en: Messages = {
       goneBody: "This entry was deleted or the history was cleared.",
       tooLarge: "This entry is too large and was not uploaded to the computer.",
       time: "Time taken",
-      sentNote:
-        "The recognition and polish details are in the computer's history.",
+      sentNote: "The recognition and polish details are in the computer's history.",
       shareSrt: "Share subtitles (SRT)",
       shareTxt: "Share text (TXT)",
     },
     historySettings: {
       lede: "What this phone transcribes and the takes it sends to a computer are kept on this phone. While it syncs with a paired computer, a copy of what it transcribes goes to the computer and the phone keeps its own.",
-      clearBody:
-        "The {n} entries on this phone will be deleted. This cannot be undone.",
+      clearBody: "The {n} entries on this phone will be deleted. This cannot be undone.",
     },
     feedback: {
       lede: "Describe the problem, or what you would like improved. What goes along with the report is listed below, to check before you send it.",
@@ -2548,8 +2467,7 @@ export const en: Messages = {
         "Up to {count}: images (PNG, JPEG, GIF, WebP) up to {image}, videos (MP4, WebM, MOV) up to {video}, {total} in all.",
     },
     dictionary: {
-      emptyBody:
-        "Create an entry: the correct spelling, and how recognition tends to hear it.",
+      emptyBody: "Create an entry: the correct spelling, and how recognition tends to hear it.",
       editTitle: "Edit entry",
       order: "{n} of {total} in matching order",
       deleteBody: "The spelling is no longer corrected. This cannot be undone.",
@@ -2557,8 +2475,7 @@ export const en: Messages = {
     rules: {
       intro:
         "Fixed replacements, run in list order after recognition and polish and before the text is copied: literal rules match the text as written (whole words in English and other spaced scripts), regex rules use regular expressions, and the replacement may use $1 / ${name}.",
-      emptyBody:
-        "Without rules the text is copied as it is. Create one, or import a TOML file.",
+      emptyBody: "Without rules the text is copied as it is. Create one, or import a TOML file.",
       editTitle: "Edit rule",
       test: "Try it",
       testPlaceholder: "Type some text to see it after the rules",
@@ -2580,8 +2497,7 @@ export const en: Messages = {
       update: {
         title: "Updates",
         storeTitle: "Updated by Google Play",
-        storeBody:
-          "This copy of Voltip was installed from Google Play, which keeps it up to date.",
+        storeBody: "This copy of Voltip was installed from Google Play, which keeps it up to date.",
         openStore: "Open in Google Play",
         directBody:
           "This copy of Voltip was not installed from Google Play. Checking for updates asks GitHub for the latest release.",
@@ -2605,8 +2521,7 @@ export const en: Messages = {
       trusted: "Trusted · {name}",
       unpaired: "“{name}” unpaired from this device",
       message: "Message received: {body}",
-      identityChanged:
-        "The identity key of {name} changed; not trusted automatically",
+      identityChanged: "The identity key of {name} changed; not trusted automatically",
     },
     cancel: "Cancel",
     welcome: {
@@ -2654,8 +2569,7 @@ export const en: Messages = {
       aim: "Point at the QR code on the computer screen",
       openCamera: "Open camera to scan",
       noCamera: "No camera available on this device",
-      pasteLink:
-        "Paste the voltip://pair?… link from “Copy link” on the computer.",
+      pasteLink: "Paste the voltip://pair?… link from “Copy link” on the computer.",
       link: "Pairing link",
       notLink: "Not a Voltip pairing link",
       join: "Join",
@@ -2670,8 +2584,7 @@ export const en: Messages = {
       nearby: {
         title: "Computers nearby",
         searching: "Looking for computers on this network…",
-        empty:
-          "Open the Phone page on the computer and click Start pairing; it appears here.",
+        empty: "Open the Phone page on the computer and click Start pairing; it appears here.",
         off: "LAN discovery is off. Turn it on under This device, and computers waiting to pair on this network appear here.",
         join: "Pair",
         joinLabel: "Pair with {name}",
@@ -2701,8 +2614,7 @@ export const en: Messages = {
       body: "Hold the button and speak; let go and the text lands at the computer's cursor. Slide off the button before letting go to cancel.",
       localBody:
         "Hold the button and speak; let go and the built-in service transcribes and polishes it, and the result is copied to this phone's clipboard. Slide off the button before letting go to cancel.",
-      offline:
-        "No paired computer is online, so the phone transcribes for now.",
+      offline: "No paired computer is online, so the phone transcribes for now.",
       scene: "Scene",
       noScene: "No scene",
       target: "Send to",
@@ -2749,8 +2661,7 @@ export const en: Messages = {
     send: {
       title: "Send text to the computer",
       body: "Type or paste some text and the computer inserts it at its cursor, or send the clipboard as it is. While the computer is dictating, the text waits for the dictation to end.",
-      noDesktop:
-        "Once a paired computer is online you can send it text from here.",
+      noDesktop: "Once a paired computer is online you can send it text from here.",
       target: "Send to",
       draft: "Text to send",
       placeholder: "Type or paste here",
@@ -2799,8 +2710,7 @@ export const en: Messages = {
       count: "{paired} paired · {online} online",
       relay: "Relay · {state}",
       emptyTitle: "No computer paired yet",
-      emptyBody:
-        "Open the Phone page on the computer, then scan or enter the 6-digit code.",
+      emptyBody: "Open the Phone page on the computer, then scan or enter the 6-digit code.",
       pairNew: "Pair a new computer",
     },
   },

@@ -68,11 +68,7 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     },
     llm: {
       baseUrl: "https://api.groq.com/openai/v1",
-      models: [
-        "qwen/qwen3.8-27b",
-        "openai/gpt-oss-20b",
-        "llama-3.3-70b-versatile",
-      ],
+      models: ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"],
     },
     key: "required",
     onDevice: false,
@@ -139,8 +135,7 @@ export function providerSpec(id: ProviderId): ProviderSpec {
 }
 
 /** The catalogue in display order. */
-export const PROVIDER_CATALOGUE: readonly ProviderSpec[] =
-  PROVIDER_IDS.map(providerSpec);
+export const PROVIDER_CATALOGUE: readonly ProviderSpec[] = PROVIDER_IDS.map(providerSpec);
 
 export function offers(id: ProviderId, kind: ServiceKind): boolean {
   return providerSpec(id)[kind] !== undefined;
@@ -169,10 +164,7 @@ export function asrStreams(url: string, model: string): boolean {
 
 /** The secret-store entry of the user's key (`voltip_core::providers::key_entry`): a vendor's two
  *  services share one, the custom endpoint keeps one per service, key-less providers have none. */
-export function keyEntry(
-  provider: ProviderId,
-  kind: ServiceKind,
-): string | undefined {
+export function keyEntry(provider: ProviderId, kind: ServiceKind): string | undefined {
   switch (provider) {
     case "builtin":
     case "local":
@@ -235,8 +227,7 @@ function target(
 ): { ok: Target } | { issue: EngineIssue; model: string } {
   const spec = providerSpec(provider);
   const preset = spec[kind];
-  if (preset === undefined || provider === "local")
-    return { issue: "unavailable", model: "" };
+  if (preset === undefined || provider === "local") return { issue: "unavailable", model: "" };
   if (provider === "builtin") {
     const service = input.builtIn[kind];
     return service === undefined
@@ -248,15 +239,12 @@ function target(
     trimmed(kind === "asr" ? choice?.asr_url : choice?.llm_url) ??
     (preset.baseUrl.length > 0 ? preset.baseUrl : undefined);
   const model =
-    asked ??
-    trimmed(kind === "asr" ? choice?.asr_model : choice?.llm_model) ??
-    preset.models[0];
+    asked ?? trimmed(kind === "asr" ? choice?.asr_model : choice?.llm_model) ?? preset.models[0];
   const entry = keyEntry(provider, kind);
   const key = entry !== undefined && input.userKeys.has(entry);
   const shown = model ?? "";
   if (url === undefined) return { issue: "url_missing", model: shown };
-  if (spec.key === "required" && !key)
-    return { issue: "key_missing", model: shown };
+  if (spec.key === "required" && !key) return { issue: "key_missing", model: shown };
   if (model === undefined) return { issue: "model_missing", model: shown };
   return { ok: { url, model, key } };
 }
@@ -287,9 +275,7 @@ function serviceStatus(
       model: input.local.id,
       presets: [],
       key: NO_KEY,
-      ...(input.local.installed
-        ? {}
-        : { issue: "model_not_installed" as const }),
+      ...(input.local.installed ? {} : { issue: "model_not_installed" as const }),
       active,
     };
   }
@@ -298,8 +284,7 @@ function serviceStatus(
   const entry = keyEntry(provider, kind);
   const userKey = entry !== undefined && input.userKeys.has(entry);
   const defaultBase = preset.baseUrl.length > 0 ? preset.baseUrl : undefined;
-  const baseUrl =
-    trimmed(kind === "asr" ? choice?.asr_url : choice?.llm_url) ?? defaultBase;
+  const baseUrl = trimmed(kind === "asr" ? choice?.asr_url : choice?.llm_url) ?? defaultBase;
   return {
     model: "ok" in resolved ? resolved.ok.model : resolved.model,
     presets: [...preset.models],
@@ -320,12 +305,9 @@ function fallbackStatus(
   selected: { provider: ProviderId; target: Target } | undefined,
 ): FallbackStatus {
   const config = fallbackSettingsOf(input.settings, kind);
-  const keyOf = (provider: ProviderId, t: Target) =>
-    JSON.stringify([provider, t.model, t.url]);
+  const keyOf = (provider: ProviderId, t: Target) => JSON.stringify([provider, t.model, t.url]);
   const selectedKey =
-    selected === undefined
-      ? undefined
-      : keyOf(selected.provider, selected.target);
+    selected === undefined ? undefined : keyOf(selected.provider, selected.target);
   const seen = new Set<string>();
   const models = config.models.map((entry): FallbackModelStatus => {
     const asked = trimmed(entry.model);
@@ -338,10 +320,8 @@ function fallbackStatus(
       };
     const key = keyOf(entry.provider, r.ok);
     const model = r.ok.model;
-    if (key === selectedKey)
-      return { provider: entry.provider, model, skip: "same_as_selected" };
-    if (seen.has(key))
-      return { provider: entry.provider, model, skip: "duplicate" };
+    if (key === selectedKey) return { provider: entry.provider, model, skip: "same_as_selected" };
+    if (seen.has(key)) return { provider: entry.provider, model, skip: "duplicate" };
     seen.add(key);
     return { provider: entry.provider, model };
   });
@@ -364,10 +344,7 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
       ? undefined
       : settings.llm_provider;
   const userHost = (provider: ProviderId | undefined, t: Target | undefined) =>
-    provider === undefined ||
-    provider === "builtin" ||
-    provider === "local" ||
-    t === undefined
+    provider === undefined || provider === "builtin" || provider === "local" || t === undefined
       ? ""
       : hostOf(t.url);
 
@@ -421,9 +398,7 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
   // itself, else the local model.
   const liveSource: LiveSource | undefined = !settings.live_preview
     ? undefined
-    : asrProvider === "builtin" &&
-        asrTarget !== undefined &&
-        input.builtIn.asr?.preview === true
+    : asrProvider === "builtin" && asrTarget !== undefined && input.builtIn.asr?.preview === true
       ? "cloud"
       : asrTarget !== undefined && asrStreams(asrTarget.url, asrTarget.model)
         ? "stream"

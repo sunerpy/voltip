@@ -184,9 +184,7 @@ const argSchemas = {
   pairing_join_code: z.object({ code: z.string() }),
   pairing_join_ticket: z.object({ uri: z.string() }),
   device_forget: z.object({ publicKey: hexKeySchema }),
-  device_sync_set: z
-    .object({ publicKey: hexKeySchema, on: z.boolean() })
-    .strict(),
+  device_sync_set: z.object({ publicKey: hexKeySchema, on: z.boolean() }).strict(),
   device_rename: z.object({ name: z.string() }),
   send_text: z.object({ publicKey: hexKeySchema, body: z.string() }),
   phone_take_start: z.object({ publicKey: hexKeySchema }).strict(),
@@ -210,14 +208,10 @@ const argSchemas = {
     followSystem: z.boolean(),
   }),
   settings_set_hotkey: z.object({ hotkey: z.string() }),
-  settings_set_edit_hotkey: z
-    .object({ hotkey: z.string().nullable() })
-    .strict(),
+  settings_set_edit_hotkey: z.object({ hotkey: z.string().nullable() }).strict(),
   settings_set_solo_key: z.object({ key: soloKeySchema.nullable() }).strict(),
   settings_set_microphone: z.object({ device: z.string().nullable() }).strict(),
-  settings_set_recording: z
-    .object({ recording: recordingSettingsSchema.strict() })
-    .strict(),
+  settings_set_recording: z.object({ recording: recordingSettingsSchema.strict() }).strict(),
   hotkey_capture: z.object({ active: z.boolean() }),
   settings_set_engines: z.object({ engines: engineSettingsSchema }),
   provider_key_set: z
@@ -245,17 +239,11 @@ const argSchemas = {
       preset: presetIdSchema,
     })
     .strict(),
-  history_process_cancel: z
-    .object({ requestId: z.number().int().nonnegative() })
-    .strict(),
+  history_process_cancel: z.object({ requestId: z.number().int().nonnegative() }).strict(),
   settings_set_locale: z.object({ locale: localeSettingSchema }),
   settings_set_auto_update: z.object({ enabled: z.boolean() }),
-  settings_set_history: z
-    .object({ enabled: z.boolean(), keep: z.number().int() })
-    .strict(),
-  settings_set_overlay: z
-    .object({ placement: overlayPlacementSchema })
-    .strict(),
+  settings_set_history: z.object({ enabled: z.boolean(), keep: z.number().int() }).strict(),
+  settings_set_overlay: z.object({ placement: overlayPlacementSchema }).strict(),
   hotkey_edge: z.object({
     pressed: z.boolean(),
     atMs: z.number().int().nonnegative().optional(),
@@ -278,29 +266,21 @@ const argSchemas = {
       historyId: z.string().nullable().optional(),
     })
     .strict(),
-  dictionary_update: z
-    .object({ id: z.string(), entry: dictionaryDraftSchema.strict() })
-    .strict(),
+  dictionary_update: z.object({ id: z.string(), entry: dictionaryDraftSchema.strict() }).strict(),
   dictionary_remove: z.object({ id: z.string() }).strict(),
   dictionary_reorder: z.object({ ids: z.array(z.string()) }).strict(),
   rules_add: z.object({ rule: ruleDraftSchema.strict() }).strict(),
-  rules_update: z
-    .object({ id: z.string(), rule: ruleDraftSchema.strict() })
-    .strict(),
+  rules_update: z.object({ id: z.string(), rule: ruleDraftSchema.strict() }).strict(),
   rules_remove: z.object({ id: z.string() }).strict(),
   rules_reorder: z.object({ ids: z.array(z.string()) }).strict(),
   rules_import: z.object({ toml: z.string(), mode: importModeSchema }).strict(),
   scenes_add: z.object({ scene: sceneDraftSchema.strict() }).strict(),
-  scenes_update: z
-    .object({ id: z.string(), scene: sceneDraftSchema.strict() })
-    .strict(),
+  scenes_update: z.object({ id: z.string(), scene: sceneDraftSchema.strict() }).strict(),
   scenes_remove: z.object({ id: z.string() }).strict(),
   scenes_reorder: z.object({ ids: z.array(z.string()) }).strict(),
   scenes_restore: z.object({ id: z.string() }).strict(),
   presets_add: z.object({ preset: presetDraftSchema.strict() }).strict(),
-  presets_update: z
-    .object({ id: z.string(), preset: presetDraftSchema.strict() })
-    .strict(),
+  presets_update: z.object({ id: z.string(), preset: presetDraftSchema.strict() }).strict(),
   presets_remove: z.object({ id: z.string() }).strict(),
   presets_try: z
     .object({
@@ -315,17 +295,11 @@ const argSchemas = {
     .strict(),
   settings_set_pinned_scene: z.object({ id: z.string().nullable() }).strict(),
 } satisfies {
-  [
-    C in MutationCommand as CommandArgs[C] extends undefined ? never : C
-  ]: z.ZodType<CommandArgs[C]>;
+  [C in MutationCommand as CommandArgs[C] extends undefined ? never : C]: z.ZodType<CommandArgs[C]>;
 };
 
 /** Replay one fixture entry through the typed `Backend.invoke`, validating its args on the way. */
-function replay(
-  backend: TauriBackend,
-  name: MutationCommand,
-  args: unknown,
-): Promise<void> {
+function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Promise<void> {
   switch (name) {
     case "pairing_start":
     case "pairing_confirm":
@@ -341,9 +315,7 @@ function replay(
     case "update_check":
     case "update_install":
       if (args !== null)
-        throw new Error(
-          `${name} takes no args, fixture has ${JSON.stringify(args)}`,
-        );
+        throw new Error(`${name} takes no args, fixture has ${JSON.stringify(args)}`);
       return backend.invoke(name);
     case "pairing_join_code":
       return backend.invoke(name, argSchemas.pairing_join_code.parse(args));
@@ -364,15 +336,9 @@ function replay(
     case "phone_share_text":
       return backend.invoke(name, argSchemas.phone_share_text.parse(args));
     case "settings_set_lan_discovery":
-      return backend.invoke(
-        name,
-        argSchemas.settings_set_lan_discovery.parse(args),
-      );
+      return backend.invoke(name, argSchemas.settings_set_lan_discovery.parse(args));
     case "settings_set_pairing_always_on":
-      return backend.invoke(
-        name,
-        argSchemas.settings_set_pairing_always_on.parse(args),
-      );
+      return backend.invoke(name, argSchemas.settings_set_pairing_always_on.parse(args));
     case "pairing_join_nearby":
       return backend.invoke(name, argSchemas.pairing_join_nearby.parse(args));
     case "phone_take_stop":
@@ -386,22 +352,13 @@ function replay(
     case "settings_set_hotkey":
       return backend.invoke(name, argSchemas.settings_set_hotkey.parse(args));
     case "settings_set_edit_hotkey":
-      return backend.invoke(
-        name,
-        argSchemas.settings_set_edit_hotkey.parse(args),
-      );
+      return backend.invoke(name, argSchemas.settings_set_edit_hotkey.parse(args));
     case "settings_set_solo_key":
       return backend.invoke(name, argSchemas.settings_set_solo_key.parse(args));
     case "settings_set_microphone":
-      return backend.invoke(
-        name,
-        argSchemas.settings_set_microphone.parse(args),
-      );
+      return backend.invoke(name, argSchemas.settings_set_microphone.parse(args));
     case "settings_set_recording":
-      return backend.invoke(
-        name,
-        argSchemas.settings_set_recording.parse(args),
-      );
+      return backend.invoke(name, argSchemas.settings_set_recording.parse(args));
     case "hotkey_capture":
       return backend.invoke(name, argSchemas.hotkey_capture.parse(args));
     case "settings_set_engines":
@@ -419,10 +376,7 @@ function replay(
     case "settings_set_locale":
       return backend.invoke(name, argSchemas.settings_set_locale.parse(args));
     case "settings_set_auto_update":
-      return backend.invoke(
-        name,
-        argSchemas.settings_set_auto_update.parse(args),
-      );
+      return backend.invoke(name, argSchemas.settings_set_auto_update.parse(args));
     case "settings_set_history":
       return backend.invoke(name, argSchemas.settings_set_history.parse(args));
     case "settings_set_overlay":
@@ -430,10 +384,7 @@ function replay(
     case "hotkey_edge":
       return backend.invoke(name, argSchemas.hotkey_edge.parse(args));
     case "settings_set_activation":
-      return backend.invoke(
-        name,
-        argSchemas.settings_set_activation.parse(args),
-      );
+      return backend.invoke(name, argSchemas.settings_set_activation.parse(args));
     case "model_download":
       return backend.invoke(name, argSchemas.model_download.parse(args));
     case "model_cancel":
@@ -481,34 +432,20 @@ function replay(
     case "history_process":
       return backend.invoke(name, argSchemas.history_process.parse(args));
     case "history_process_cancel":
-      return backend.invoke(
-        name,
-        argSchemas.history_process_cancel.parse(args),
-      );
+      return backend.invoke(name, argSchemas.history_process_cancel.parse(args));
     case "settings_set_context_sharing":
-      return backend.invoke(
-        name,
-        argSchemas.settings_set_context_sharing.parse(args),
-      );
+      return backend.invoke(name, argSchemas.settings_set_context_sharing.parse(args));
     case "settings_set_pinned_scene":
-      return backend.invoke(
-        name,
-        argSchemas.settings_set_pinned_scene.parse(args),
-      );
+      return backend.invoke(name, argSchemas.settings_set_pinned_scene.parse(args));
   }
 }
 
 /** Deep copy with `path` replaced by `value` (or removed when `value` is `undefined`). */
-function mutate(
-  input: unknown,
-  path: readonly string[],
-  value: unknown,
-): unknown {
+function mutate(input: unknown, path: readonly string[], value: unknown): unknown {
   const copy: unknown = JSON.parse(JSON.stringify(input));
   let cursor: unknown = copy;
   for (const key of path.slice(0, -1)) {
-    if (typeof cursor !== "object" || cursor === null)
-      throw new Error(`no ${key} in fixture`);
+    if (typeof cursor !== "object" || cursor === null) throw new Error(`no ${key} in fixture`);
     cursor = Reflect.get(cursor, key);
   }
   const last = path.at(-1);
@@ -585,9 +522,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       .parse(Reflect.get(Object(state), "settings"));
     for (const key of ["activation", "hold_threshold_ms", "extra_recording_ms"])
       expect(Object.hasOwn(rawSettings, key)).toBe(true);
-    const rawEngines = z
-      .record(z.string(), z.unknown())
-      .parse(rawSettings.engines);
+    const rawEngines = z.record(z.string(), z.unknown()).parse(rawSettings.engines);
     for (const key of ["output_mode", "vad_trim"])
       expect(Object.hasOwn(rawEngines, key)).toBe(true);
     const rawStatus = z
@@ -598,9 +533,9 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(parsed.history_recent.map((e) => e.mode)).toEqual(
       parsed.history_recent.map(() => "whole_take"),
     );
-    expect(
-      parsed.dictation.phase.phase === "done" && parsed.dictation.phase.mode,
-    ).toBe("whole_take");
+    expect(parsed.dictation.phase.phase === "done" && parsed.dictation.phase.mode).toBe(
+      "whole_take",
+    );
     expect(parsed.relay).toEqual({
       endpoint: "wss://relay.example.test/ws",
       source: "user",
@@ -608,12 +543,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       attempts: 2,
     });
     expect(parsed.pairing.state).toEqual({ state: "awaiting_verification" });
-    expect(parsed.pairing.safety_code?.words).toEqual([
-      "amber",
-      "canyon",
-      "lantern",
-      "orbit",
-    ]);
+    expect(parsed.pairing.safety_code?.words).toEqual(["amber", "canyon", "lantern", "orbit"]);
     expect(parsed.pairing.peer?.platform).toBe("android");
     expect(parsed.devices.map((d) => d.connection)).toEqual([
       { state: "online", via: "relay" },
@@ -629,10 +559,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
   it("state.json is not accepted once a field is wrong or missing", () => {
     const broken: [string, unknown][] = [
       ["bad key", mutate(state, ["identity", "public_key"], "not-hex")],
-      [
-        "unknown pairing phase",
-        mutate(state, ["pairing", "state", "state"], "dancing"),
-      ],
+      ["unknown pairing phase", mutate(state, ["pairing", "state", "state"], "dancing")],
       ["future settings schema", mutate(state, ["settings", "schema"], 2)],
       ["unknown theme", mutate(state, ["settings", "theme"], "neon")],
       ["missing relay", mutate(state, ["relay"], undefined)],
@@ -652,29 +579,24 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
 
   it("events.json parses with the UiEvent schema and covers every variant", () => {
     const results = events.map((raw) => uiEventSchema.safeParse(raw));
-    expect(results.map((r) => r.error?.issues ?? "ok")).toEqual(
-      events.map(() => "ok"),
-    );
+    expect(results.map((r) => r.error?.issues ?? "ok")).toEqual(events.map(() => "ok"));
     const parsed = results.map((r) => r.data);
     const seen = new Set<string>(parsed.flatMap((e) => (e ? [e.type] : [])));
     expect(EVENT_TYPES.filter((type) => !seen.has(type))).toEqual([]);
-    const failed = parsed.find(
-      (e) => e?.type === "pairing" && e.state.state === "failed",
-    );
+    const failed = parsed.find((e) => e?.type === "pairing" && e.state.state === "failed");
     expect(
-      failed &&
-        failed.type === "pairing" &&
-        failed.state.state === "failed" &&
-        failed.state.reason,
+      failed && failed.type === "pairing" && failed.state.state === "failed" && failed.state.reason,
     ).toEqual({
       kind: "relay",
       code: "session_expired",
     });
     const devices = parsed.find((e) => e?.type === "devices");
-    expect(
-      devices?.type === "devices" &&
-        devices.devices.map((d) => d.connection.state),
-    ).toEqual(["offline", "connecting", "online", "identity_changed"]);
+    expect(devices?.type === "devices" && devices.devices.map((d) => d.connection.state)).toEqual([
+      "offline",
+      "connecting",
+      "online",
+      "identity_changed",
+    ]);
   });
 
   it("regression: section 12 and 13 dictation fields survive parsing: locked, live.injected, finalizing, done.mode / segments / live_error, cancelled.injected_chars, history.mode, engines.effective_output_mode", () => {
@@ -682,46 +604,35 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       const r = uiEventSchema.safeParse(raw);
       return r.success ? [r.data] : [];
     });
-    const dictation = parsed.flatMap((e) =>
-      e.type === "dictation" ? [e.phase] : [],
-    );
-    const listening = dictation.flatMap((p) =>
-      p.phase === "listening" ? [p] : [],
-    );
+    const dictation = parsed.flatMap((e) => (e.type === "dictation" ? [e.phase] : []));
+    const listening = dictation.flatMap((p) => (p.phase === "listening" ? [p] : []));
     // `locked` is always on the wire: both values appear, none is defaulted.
     expect(listening.map((p) => p.locked)).toContain(true);
     expect(listening.map((p) => p.locked)).toContain(false);
     const rawListening = events.filter(
       (raw) =>
-        z.object({ phase: z.object({ phase: z.string() }) }).safeParse(raw).data
-          ?.phase.phase === "listening",
+        z.object({ phase: z.object({ phase: z.string() }) }).safeParse(raw).data?.phase.phase ===
+        "listening",
     );
     for (const raw of rawListening)
       expect(
         Object.hasOwn(
-          z.object({ phase: z.record(z.string(), z.unknown()) }).parse(raw)
-            .phase,
+          z.object({ phase: z.record(z.string(), z.unknown()) }).parse(raw).phase,
           "locked",
         ),
       ).toBe(true);
     // `live.injected` counts pasted sentences (0 and 1 in the fixture).
-    const injected = listening.flatMap((p) =>
-      p.live === undefined ? [] : [p.live.injected],
-    );
+    const injected = listening.flatMap((p) => (p.live === undefined ? [] : [p.live.injected]));
     expect(injected).toContain(0);
     expect(injected).toContain(1);
     // The streaming modes' `finalizing` stage carries the preview.
-    const finalizing = dictation.find(
-      (p) => p.phase === "processing" && p.stage === "finalizing",
-    );
+    const finalizing = dictation.find((p) => p.phase === "processing" && p.stage === "finalizing");
     expect(finalizing?.phase === "processing" && finalizing.preview).toBe(
       "把 fetchUser 改成 async，然后加上错误",
     );
     // `done` names its mode; a streaming take carries the sentences, a degraded one the reason.
     const done = dictation.flatMap((p) => (p.phase === "done" ? [p] : []));
-    expect(new Set(done.map((p) => p.mode))).toEqual(
-      new Set(["whole_take", "streaming_final"]),
-    );
+    expect(new Set(done.map((p) => p.mode))).toEqual(new Set(["whole_take", "streaming_final"]));
     const streamed = done.find((p) => p.mode === "streaming_final");
     expect(streamed?.segments?.map((s) => s.text)).toEqual([
       "把 fetchUser 改成 async，",
@@ -731,25 +642,19 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       "open: asr: 实时识别模型未下载：实时预览",
     );
     // `cancelled.injected_chars`: 0 for every other mode, the pasted count under live_inject.
-    const cancelled = dictation.flatMap((p) =>
-      p.phase === "cancelled" ? [p.injected_chars] : [],
-    );
+    const cancelled = dictation.flatMap((p) => (p.phase === "cancelled" ? [p.injected_chars] : []));
     expect(cancelled).toEqual([0, 21]);
     // History rows carry the same three fields.
     const rows = parsed.flatMap((e) => (e.type === "history" ? e.recent : []));
     const live = rows.find((r) => r.mode === "live_inject");
     expect(live?.segments).toHaveLength(2);
-    expect(live?.live_error).toBe(
-      "live tap overrun: the decoder fell behind the microphone",
-    );
+    expect(live?.live_error).toBe("live tap overrun: the decoder fell behind the microphone");
     expect(rows.every((r) => OUTPUT_MODES.includes(r.mode))).toBe(true);
     // `engines.effective_output_mode`: every value the core can report.
     const effective = parsed.flatMap((e) =>
       e.type === "engines" ? [e.effective_output_mode] : [],
     );
-    expect(new Set(effective)).toEqual(
-      new Set(["whole_take", "streaming_final", "live_inject"]),
-    );
+    expect(new Set(effective)).toEqual(new Set(["whole_take", "streaming_final", "live_inject"]));
     // Mutations of the new fields are refused.
     const cancelledRaw = events.find(
       (raw) =>
@@ -757,37 +662,25 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
         JSON.stringify(raw).includes('"injected_chars":21'),
     );
     expect(
-      uiEventSchema.safeParse(
-        mutate(cancelledRaw, ["phase", "injected_chars"], -1),
-      ).success,
+      uiEventSchema.safeParse(mutate(cancelledRaw, ["phase", "injected_chars"], -1)).success,
     ).toBe(false);
-    const finalizingRaw = events.find((raw) =>
-      JSON.stringify(raw).includes('"finalizing"'),
-    );
+    const finalizingRaw = events.find((raw) => JSON.stringify(raw).includes('"finalizing"'));
     expect(
-      uiEventSchema.safeParse(
-        mutate(finalizingRaw, ["phase", "stage"], "thinking"),
-      ).success,
+      uiEventSchema.safeParse(mutate(finalizingRaw, ["phase", "stage"], "thinking")).success,
     ).toBe(false);
-    const enginesRaw = events.find(
-      (raw) => uiEventSchema.safeParse(raw).data?.type === "engines",
-    );
+    const enginesRaw = events.find((raw) => uiEventSchema.safeParse(raw).data?.type === "engines");
     expect(
-      uiEventSchema.safeParse(
-        mutate(enginesRaw, ["effective_output_mode"], "batch"),
-      ).success,
+      uiEventSchema.safeParse(mutate(enginesRaw, ["effective_output_mode"], "batch")).success,
     ).toBe(false);
     const settingsRaw = events.find(
       (raw) => uiEventSchema.safeParse(raw).data?.type === "settings",
     );
-    expect(
-      uiEventSchema.safeParse(mutate(settingsRaw, ["activation"], "press"))
-        .success,
-    ).toBe(false);
-    expect(
-      uiEventSchema.safeParse(mutate(settingsRaw, ["hold_threshold_ms"], -5))
-        .success,
-    ).toBe(false);
+    expect(uiEventSchema.safeParse(mutate(settingsRaw, ["activation"], "press")).success).toBe(
+      false,
+    );
+    expect(uiEventSchema.safeParse(mutate(settingsRaw, ["hold_threshold_ms"], -5)).success).toBe(
+      false,
+    );
   });
 
   it("regression: the dictionary and rules events and the history hits and chinese_script survive parsing from the Rust fixtures", () => {
@@ -795,20 +688,16 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       const r = uiEventSchema.safeParse(raw);
       return r.success ? [r.data] : [];
     });
-    const dictionaries = parsed.flatMap((e) =>
-      e.type === "dictionary" ? [e.entries] : [],
-    );
+    const dictionaries = parsed.flatMap((e) => (e.type === "dictionary" ? [e.entries] : []));
     expect(dictionaries.map((d) => d.length)).toEqual([2, 0]);
     const [manual, fromHistory] = dictionaries[0] ?? [];
     expect(manual?.source).toEqual({ kind: "manual" });
     expect(manual?.heard_as).toEqual(["fetch user", "费驰优瑟"]);
-    expect(
-      fromHistory?.source.kind === "history" && fromHistory.source.history_id,
-    ).toBe("9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d");
-    expect(fromHistory?.enabled).toBe(false);
-    const ruleLists = parsed.flatMap((e) =>
-      e.type === "rules" ? [e.rules] : [],
+    expect(fromHistory?.source.kind === "history" && fromHistory.source.history_id).toBe(
+      "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
     );
+    expect(fromHistory?.enabled).toBe(false);
+    const ruleLists = parsed.flatMap((e) => (e.type === "rules" ? [e.rules] : []));
     expect(ruleLists.map((r) => r.map((x) => `${x.kind}:${x.name}`))).toEqual([
       ["literal:git push", "regex:PR 编号"],
       [],
@@ -832,29 +721,21 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(rawRows.some((r) => !Object.hasOwn(r, "vocabulary"))).toBe(true);
     // `chinese_script` is always serialised in settings (§17).
     const settings = parsed.find((e) => e.type === "settings");
-    expect(
-      settings?.type === "settings" && settings.engines.chinese_script,
-    ).toBe("simplified");
+    expect(settings?.type === "settings" && settings.engines.chinese_script).toBe("simplified");
     const rawSettings = z
       .object({ engines: z.record(z.string(), z.unknown()) })
-      .parse(
-        events.find(
-          (raw) => uiEventSchema.safeParse(raw).data?.type === "settings",
-        ),
-      );
+      .parse(events.find((raw) => uiEventSchema.safeParse(raw).data?.type === "settings"));
     expect(rawSettings.engines.chinese_script).toBe("simplified");
     const setEngines = commands.find((c) => c.name === "settings_set_engines");
-    expect(
-      argSchemas.settings_set_engines.parse(setEngines?.args).engines
-        .chinese_script,
-    ).toBe("traditional");
+    expect(argSchemas.settings_set_engines.parse(setEngines?.args).engines.chinese_script).toBe(
+      "traditional",
+    );
     const dictionaryRaw = events.find(
       (raw) => uiEventSchema.safeParse(raw).data?.type === "dictionary",
     );
     expect(
-      uiEventSchema.safeParse(
-        mutate(dictionaryRaw, ["entries", "0", "source", "kind"], "learned"),
-      ).success,
+      uiEventSchema.safeParse(mutate(dictionaryRaw, ["entries", "0", "source", "kind"], "learned"))
+        .success,
     ).toBe(false);
   });
 
@@ -876,71 +757,48 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       ["Wayland", false, false, false],
     ]);
     const parsedState = uiStateSchema.parse(state);
-    expect(parsedState.hotkey.capabilities?.toggle_command).toBe(
-      "voltip-desktop --toggle",
-    );
+    expect(parsedState.hotkey.capabilities?.toggle_command).toBe("voltip-desktop --toggle");
     expect(parsedState.hotkey.capabilities?.edit_toggle_command).toBe(
       "voltip-desktop --edit-toggle",
     );
-    const raw = events.find(
-      (e) => uiEventSchema.safeParse(e).data?.type === "hotkey",
+    const raw = events.find((e) => uiEventSchema.safeParse(e).data?.type === "hotkey");
+    expect(uiEventSchema.safeParse(mutate(raw, ["capabilities", "hold"], "yes")).success).toBe(
+      false,
     );
-    expect(
-      uiEventSchema.safeParse(mutate(raw, ["capabilities", "hold"], "yes"))
-        .success,
-    ).toBe(false);
   });
 
   it("regression: LAN discovery survives parsing: the nearby list, the switch, and a tap on a pairing desktop", () => {
     const parsedState = uiStateSchema.parse(state);
-    expect(
-      parsedState.nearby.map((d) => [d.name, d.pairing, d.trusted]),
-    ).toEqual([
+    expect(parsedState.nearby.map((d) => [d.name, d.pairing, d.trusted])).toEqual([
       ["Studio", true, false],
       ["MacBook Pro", false, true],
     ]);
     const lists = events.flatMap((raw) => {
       const r = uiEventSchema.safeParse(raw);
-      return r.success && r.data.type === "nearby"
-        ? [r.data.devices.length]
-        : [];
+      return r.success && r.data.type === "nearby" ? [r.data.devices.length] : [];
     });
     expect(lists).toEqual([0, 2]);
     // A state without it (an older core) lists nothing and has discovery on.
-    const { nearby: _gone, ...older } = z
-      .record(z.string(), z.unknown())
-      .parse(state);
+    const { nearby: _gone, ...older } = z.record(z.string(), z.unknown()).parse(state);
     expect(uiStateSchema.parse(older).nearby).toEqual([]);
     const join = commands.find((c) => c.name === "pairing_join_nearby");
-    expect(argSchemas.pairing_join_nearby.parse(join?.args).fingerprint).toBe(
-      "A7C4198E3DF26109",
-    );
+    expect(argSchemas.pairing_join_nearby.parse(join?.args).fingerprint).toBe("A7C4198E3DF26109");
     const off = commands.find((c) => c.name === "settings_set_lan_discovery");
-    expect(argSchemas.settings_set_lan_discovery.parse(off?.args).enabled).toBe(
-      false,
-    );
+    expect(argSchemas.settings_set_lan_discovery.parse(off?.args).enabled).toBe(false);
   });
 
   it("regression: always-on pairing survives parsing, and an older settings file reads it off", () => {
     expect(uiStateSchema.parse(state).settings.pairing_always_on).toBe(true);
-    const settings = z
-      .record(z.string(), z.unknown())
-      .parse(uiStateSchema.parse(state).settings);
+    const settings = z.record(z.string(), z.unknown()).parse(uiStateSchema.parse(state).settings);
     const { pairing_always_on: _gone, ...older } = settings;
     expect(settingsSchema.parse(older).pairing_always_on).toBe(false);
-    const on = commands.find(
-      (c) => c.name === "settings_set_pairing_always_on",
-    );
-    expect(
-      argSchemas.settings_set_pairing_always_on.parse(on?.args).enabled,
-    ).toBe(true);
+    const on = commands.find((c) => c.name === "settings_set_pairing_always_on");
+    expect(argSchemas.settings_set_pairing_always_on.parse(on?.args).enabled).toBe(true);
   });
 
   it("regression: section 20.6 the phone's sent texts and a history entry's origin survive parsing", () => {
     const parsedState = uiStateSchema.parse(state);
-    expect(
-      parsedState.sent_texts.map((t) => [t.id, t.source, t.state.state]),
-    ).toEqual([
+    expect(parsedState.sent_texts.map((t) => [t.id, t.source, t.state.state])).toEqual([
       [5, "clipboard", "sending"],
       [4, "typed", "queued"],
       [3, "typed", "delivered"],
@@ -948,9 +806,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       [1, "typed", "failed"],
     ]);
     const failed = parsedState.sent_texts.at(-1)?.state;
-    expect(failed?.state === "failed" ? failed.code : undefined).toBe(
-      "no_answer",
-    );
+    expect(failed?.state === "failed" ? failed.code : undefined).toBe("no_answer");
     expect(parsedState.history_recent.at(-1)?.origin).toEqual({
       device: "Pixel 8",
       kind: "typed",
@@ -958,25 +814,20 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(parsedState.history_recent[0]?.origin).toBeUndefined();
     const lists = events.flatMap((raw) => {
       const r = uiEventSchema.safeParse(raw);
-      return r.success && r.data.type === "sent_texts"
-        ? [r.data.texts.length]
-        : [];
+      return r.success && r.data.type === "sent_texts" ? [r.data.texts.length] : [];
     });
     expect(lists).toEqual([0, 5]);
     // A state without the list (the desktop, an older phone) reads as empty.
-    const { sent_texts: _gone, ...older } = z
-      .record(z.string(), z.unknown())
-      .parse(state);
+    const { sent_texts: _gone, ...older } = z.record(z.string(), z.unknown()).parse(state);
     expect(uiStateSchema.parse(older).sent_texts).toEqual([]);
     const raw = events.find(
       (e) =>
         uiEventSchema.safeParse(e).data?.type === "sent_texts" &&
         JSON.stringify(e).includes("no_answer"),
     );
-    expect(
-      uiEventSchema.safeParse(mutate(raw, ["texts", "0", "source"], "voice"))
-        .success,
-    ).toBe(false);
+    expect(uiEventSchema.safeParse(mutate(raw, ["texts", "0", "source"], "voice")).success).toBe(
+      false,
+    );
     const send = commands.find((c) => c.name === "phone_text_send");
     expect(argSchemas.phone_text_send.parse(send?.args).source).toBe("typed");
   });
@@ -1011,20 +862,15 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       settings: olderSettings,
     });
     expect(older.settings.solo_key).toBeNull();
-    const raw = events.find(
-      (e) => uiEventSchema.safeParse(e).data?.type === "hotkey",
+    const raw = events.find((e) => uiEventSchema.safeParse(e).data?.type === "hotkey");
+    expect(uiEventSchema.safeParse(mutate(raw, ["solo_registered"], "caps_lock")).success).toBe(
+      false,
     );
-    expect(
-      uiEventSchema.safeParse(mutate(raw, ["solo_registered"], "caps_lock"))
-        .success,
-    ).toBe(false);
     const setSolo = commands.find((c) => c.name === "settings_set_solo_key");
     expect(argSchemas.settings_set_solo_key.parse(setSolo?.args)).toEqual({
       key: "mouse_back",
     });
-    expect(
-      argSchemas.hotkey_edge.parse({ pressed: false, chorded: true }).chorded,
-    ).toBe(true);
+    expect(argSchemas.hotkey_edge.parse({ pressed: false, chorded: true }).chorded).toBe(true);
   });
 
   it("regression: section 19 voice edit fields survive parsing: the edit hotkey and the take kind and the edit record and the four failure codes and the edit registration and the edge purpose", () => {
@@ -1033,32 +879,21 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       return r.success ? [r.data] : [];
     });
     // `edit_hotkey` is always serialised: the chord, and `null` once switched off.
-    const editHotkeys = parsed.flatMap((e) =>
-      e.type === "settings" ? [e.edit_hotkey] : [],
-    );
+    const editHotkeys = parsed.flatMap((e) => (e.type === "settings" ? [e.edit_hotkey] : []));
     expect(editHotkeys).toEqual(["Ctrl+Alt+E", null]);
     const rawSettings = events.filter(
       (raw) => uiEventSchema.safeParse(raw).data?.type === "settings",
     );
     for (const raw of rawSettings)
-      expect(
-        Object.hasOwn(
-          z.record(z.string(), z.unknown()).parse(raw),
-          "edit_hotkey",
-        ),
-      ).toBe(true);
+      expect(Object.hasOwn(z.record(z.string(), z.unknown()).parse(raw), "edit_hotkey")).toBe(true);
     // `kind` rides on every dictation event (never defaulted) and names both kinds.
-    const kinds = parsed.flatMap((e) =>
-      e.type === "dictation" ? [e.kind] : [],
-    );
+    const kinds = parsed.flatMap((e) => (e.type === "dictation" ? [e.kind] : []));
     expect(new Set(kinds)).toEqual(new Set(["dictation", "edit"]));
     const rawDictation = events.filter(
       (raw) => uiEventSchema.safeParse(raw).data?.type === "dictation",
     );
     for (const raw of rawDictation)
-      expect(
-        Object.hasOwn(z.record(z.string(), z.unknown()).parse(raw), "kind"),
-      ).toBe(true);
+      expect(Object.hasOwn(z.record(z.string(), z.unknown()).parse(raw), "kind")).toBe(true);
     const edits = parsed.flatMap((e) =>
       e.type === "dictation" && e.kind === "edit" ? [e.phase] : [],
     );
@@ -1072,9 +907,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       "failed",
       "failed",
     ]);
-    expect(
-      edits.flatMap((p) => (p.phase === "failed" ? [p.code] : [])),
-    ).toEqual([
+    expect(edits.flatMap((p) => (p.phase === "failed" ? [p.code] : []))).toEqual([
       "no_selection",
       "selection_too_long",
       "selection",
@@ -1089,15 +922,10 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       selection: "大家好，会议改到周四十点哈",
     });
     // An edit names the app it ran in, never a scene (§19 with §18.6).
-    expect([edit?.app, edit?.scene]).toEqual([
-      { id: "slack", name: "Slack" },
-      undefined,
-    ]);
-    expect(
-      rows
-        .filter((r) => r.kind === "dictation")
-        .every((r) => r.edit === undefined),
-    ).toBe(true);
+    expect([edit?.app, edit?.scene]).toEqual([{ id: "slack", name: "Slack" }, undefined]);
+    expect(rows.filter((r) => r.kind === "dictation").every((r) => r.edit === undefined)).toBe(
+      true,
+    );
     const parsedState = uiStateSchema.parse(state);
     expect(parsedState.dictation.kind).toBe("dictation");
     expect(parsedState.hotkey.edit_registered).toBe("Ctrl+Alt+E");
@@ -1126,35 +954,22 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
         uiEventSchema.safeParse(raw).data?.type === "dictation" &&
         JSON.stringify(raw).includes('"kind":"edit"'),
     );
-    expect(
-      uiEventSchema.safeParse(mutate(editRaw, ["kind"], "rewrite")).success,
-    ).toBe(false);
-    expect(
-      uiEventSchema.safeParse(mutate(rawSettings[0], ["edit_hotkey"], 5))
-        .success,
-    ).toBe(false);
-    const historyRaw = events.find((raw) =>
-      JSON.stringify(raw).includes('"kind":"edit","edit"'),
-    );
+    expect(uiEventSchema.safeParse(mutate(editRaw, ["kind"], "rewrite")).success).toBe(false);
+    expect(uiEventSchema.safeParse(mutate(rawSettings[0], ["edit_hotkey"], 5)).success).toBe(false);
+    const historyRaw = events.find((raw) => JSON.stringify(raw).includes('"kind":"edit","edit"'));
     expect(historyRaw).toBeDefined();
     expect(
-      uiEventSchema.safeParse(
-        mutate(historyRaw, ["recent", "2", "edit", "instruction"], undefined),
-      ).success,
-    ).toBe(false);
-    expect(
-      argSchemas.hotkey_edge.safeParse({ pressed: true, purpose: "rewrite" })
+      uiEventSchema.safeParse(mutate(historyRaw, ["recent", "2", "edit", "instruction"], undefined))
         .success,
     ).toBe(false);
+    expect(argSchemas.hotkey_edge.safeParse({ pressed: true, purpose: "rewrite" }).success).toBe(
+      false,
+    );
   });
 
   it("regression: the scenes events, the take context, the history app and scene and the context switches survive parsing from the Rust fixtures", () => {
     const parsedState = uiStateSchema.parse(state);
-    expect(parsedState.scenes.map((s) => s.name)).toEqual([
-      "代码评审",
-      "聊天",
-      "legal",
-    ]);
+    expect(parsedState.scenes.map((s) => s.name)).toEqual(["代码评审", "聊天", "legal"]);
     const [review, chat, legal] = parsedState.scenes;
     // docs/dictation.md §18.10: a built-in scene carries its category and may list no application.
     expect(legal?.builtin).toBe("legal");
@@ -1194,15 +1009,11 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       const r = uiEventSchema.safeParse(raw);
       return r.success ? [r.data] : [];
     });
-    const lists = parsed.flatMap((e) =>
-      e.type === "scenes" ? [e.scenes] : [],
-    );
+    const lists = parsed.flatMap((e) => (e.type === "scenes" ? [e.scenes] : []));
     expect(lists.map((l) => l.length)).toEqual([3, 0]);
     const builtinRefs = parsed.flatMap((e) =>
       e.type === "history"
-        ? e.recent.flatMap((h) =>
-            h.scene?.builtin === undefined ? [] : [h.scene],
-          )
+        ? e.recent.flatMap((h) => (h.scene?.builtin === undefined ? [] : [h.scene]))
         : [],
     );
     expect(builtinRefs).toContainEqual({
@@ -1220,9 +1031,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     ]);
     // The command samples parse with the draft schema and carry every override key.
     const add = commands.find((c) => c.name === "scenes_add");
-    const overrideKeys = Object.keys(
-      argSchemas.scenes_add.parse(add?.args).scene.overrides,
-    );
+    const overrideKeys = Object.keys(argSchemas.scenes_add.parse(add?.args).scene.overrides);
     overrideKeys.sort();
     expect(overrideKeys).toEqual([
       "chinese_script",
@@ -1232,50 +1041,33 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       "refine_enabled",
       "refine_preset",
     ]);
-    const sharing = commands.find(
-      (c) => c.name === "settings_set_context_sharing",
-    );
-    expect(
-      argSchemas.settings_set_context_sharing.parse(sharing?.args),
-    ).toEqual({
+    const sharing = commands.find((c) => c.name === "settings_set_context_sharing");
+    expect(argSchemas.settings_set_context_sharing.parse(sharing?.args)).toEqual({
       appName: true,
       windowTitle: false,
     });
     // Mutations of the new fields are refused.
-    const scenesRaw = events.find(
-      (raw) => uiEventSchema.safeParse(raw).data?.type === "scenes",
-    );
+    const scenesRaw = events.find((raw) => uiEventSchema.safeParse(raw).data?.type === "scenes");
     expect(
       uiEventSchema.safeParse(
-        mutate(
-          scenesRaw,
-          ["scenes", "0", "overrides", "refine_preset"],
-          "casual",
-        ),
+        mutate(scenesRaw, ["scenes", "0", "overrides", "refine_preset"], "casual"),
       ).success,
     ).toBe(false);
     expect(
-      uiEventSchema.safeParse(
-        mutate(scenesRaw, ["scenes", "0", "match", "apps"], "chrome"),
-      ).success,
-    ).toBe(false);
-    const contextRaw = events.find((raw) =>
-      JSON.stringify(raw).includes('"context":{"app"'),
-    );
-    expect(
-      uiEventSchema.safeParse(mutate(contextRaw, ["context", "app"], undefined))
+      uiEventSchema.safeParse(mutate(scenesRaw, ["scenes", "0", "match", "apps"], "chrome"))
         .success,
     ).toBe(false);
+    const contextRaw = events.find((raw) => JSON.stringify(raw).includes('"context":{"app"'));
+    expect(uiEventSchema.safeParse(mutate(contextRaw, ["context", "app"], undefined)).success).toBe(
+      false,
+    );
   });
 
   it("regression: the TypeScript provider catalogue matches the Rust one card for card", () => {
     const fixture = uiStateSchema.parse(loadFixture("state.json"));
     // The sample build compiles the built-in service in, so every provider is listed. The built-in
     // card's presets are the build's own model, not catalogue data, so they are left out.
-    const services = (
-      id: string,
-      service?: { presets: string[]; default_base_url?: string },
-    ) =>
+    const services = (id: string, service?: { presets: string[]; default_base_url?: string }) =>
       service === undefined
         ? undefined
         : {
@@ -1324,19 +1116,17 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     // preview keeps none. Everything else about the fallback models is resolved the same way.
     const selectedRetry = fixture.engines.asr_fallback?.selected_retry_at_ms;
     expect(selectedRetry).toBeGreaterThan(0);
-    const { selected_retry_at_ms: _retry, ...asrFallback } = fixture.engines
-      .asr_fallback ?? {
+    const { selected_retry_at_ms: _retry, ...asrFallback } = fixture.engines.asr_fallback ?? {
       enabled: false,
       in_use: false,
       models: [],
     };
     expect(resolved).toEqual({ ...fixture.engines, asr_fallback: asrFallback });
-    expect(
-      resolved.asr_fallback?.models.map((m) => m.skip ?? m.issue ?? "ready"),
-    ).toEqual(["ready", "same_as_selected"]);
-    expect(resolved.llm_fallback?.models.map((m) => m.issue)).toEqual([
-      "key_missing",
+    expect(resolved.asr_fallback?.models.map((m) => m.skip ?? m.issue ?? "ready")).toEqual([
+      "ready",
+      "same_as_selected",
     ]);
+    expect(resolved.llm_fallback?.models.map((m) => m.issue)).toEqual(["key_missing"]);
   });
 
   it("events.json entries are rejected once mutated", () => {
@@ -1344,25 +1134,12 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       (raw) => uiEventSchema.safeParse(mutate(raw, ["type"], "bogus")).success,
     );
     expect(retagged).toEqual(events.map(() => false));
-    const devices = events.find(
-      (e) => uiEventSchema.safeParse(e).data?.type === "devices",
-    );
-    expect(
-      uiEventSchema.safeParse(mutate(devices, ["devices"], "not-a-list"))
-        .success,
-    ).toBe(false);
-    const message = events.find(
-      (e) => uiEventSchema.safeParse(e).data?.type === "message",
-    );
-    expect(
-      uiEventSchema.safeParse(mutate(message, ["body"], undefined)).success,
-    ).toBe(false);
-    const identity = events.find(
-      (e) => uiEventSchema.safeParse(e).data?.type === "identity",
-    );
-    expect(
-      uiEventSchema.safeParse(mutate(identity, ["platform"], "amiga")).success,
-    ).toBe(false);
+    const devices = events.find((e) => uiEventSchema.safeParse(e).data?.type === "devices");
+    expect(uiEventSchema.safeParse(mutate(devices, ["devices"], "not-a-list")).success).toBe(false);
+    const message = events.find((e) => uiEventSchema.safeParse(e).data?.type === "message");
+    expect(uiEventSchema.safeParse(mutate(message, ["body"], undefined)).success).toBe(false);
+    const identity = events.find((e) => uiEventSchema.safeParse(e).data?.type === "identity");
+    expect(uiEventSchema.safeParse(mutate(identity, ["platform"], "amiga")).success).toBe(false);
   });
 
   it("commands.json names exactly the mutation commands the UI can dispatch", () => {
@@ -1402,16 +1179,10 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
 
 describe("history queries (docs/dictation.md section 4.4)", () => {
   it("the answers the Rust side writes parse with the schemas", () => {
-    const fixture = z
-      .record(z.string(), z.unknown())
-      .parse(loadFixture("history-queries.json"));
+    const fixture = z.record(z.string(), z.unknown()).parse(loadFixture("history-queries.json"));
     const page = historyPageSchema.parse(fixture.page);
-    expect([page.entries.length, page.matching, page.total]).toEqual([
-      1, 12, 312,
-    ]);
-    expect(historyEntrySchema.parse(fixture.entry).id).toBe(
-      page.entries[0]?.id,
-    );
+    expect([page.entries.length, page.matching, page.total]).toEqual([1, 12, 312]);
+    expect(historyEntrySchema.parse(fixture.entry).id).toBe(page.entries[0]?.id);
     expect(historyEntrySchema.nullable().parse(fixture.missing)).toBeNull();
     const stats = historyStatsSchema.parse(fixture.stats);
     expect(stats.buckets.map((b) => b.count)).toEqual([0, 2]);
@@ -1426,15 +1197,11 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
     expect(Object.values(hits.dictionary)).toEqual([3]);
     expect(Object.values(hits.rules)).toEqual([1]);
     // A bucket without a field, or a negative count, is refused rather than drawn.
-    expect(historyStatsBucketSchema.safeParse({ count: -1 }).success).toBe(
-      false,
-    );
+    expect(historyStatsBucketSchema.safeParse({ count: -1 }).success).toBe(false);
   });
 
   it("TauriBackend sends the four queries with the arguments the shell's commands take", async () => {
-    const fixture = z
-      .record(z.string(), z.unknown())
-      .parse(loadFixture("history-queries.json"));
+    const fixture = z.record(z.string(), z.unknown()).parse(loadFixture("history-queries.json"));
     const answers: Record<string, unknown> = {
       history_query: fixture.page,
       history_entry: fixture.missing,
@@ -1459,13 +1226,9 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
         })
       ).total,
     ).toBe(312);
-    expect(
-      await backend.historyEntry("9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"),
-    ).toBeNull();
+    expect(await backend.historyEntry("9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d")).toBeNull();
     expect((await backend.historyStats([1, 2, 3])).buckets).toHaveLength(2);
-    expect((await backend.historyHits()).rules).toEqual(
-      hits(fixture.hits).rules,
-    );
+    expect((await backend.historyHits()).rules).toEqual(hits(fixture.hits).rules);
     expect(calls).toStrictEqual([
       {
         command: "history_query",
@@ -1484,18 +1247,14 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
   });
 
   it("a phone's copy of a computer: the answers parse and the commands name the computer (section 20.8)", async () => {
-    const fixture = z
-      .record(z.string(), z.unknown())
-      .parse(loadFixture("history-queries.json"));
+    const fixture = z.record(z.string(), z.unknown()).parse(loadFixture("history-queries.json"));
     const entry = mirrorEntrySchema.parse(fixture.mirror_entry);
     expect(entry.shortened).toBe(true);
     expect(entry.entry.origin).toEqual({
       device: "Pixel 8",
       kind: "standalone",
     });
-    expect(
-      mirrorEntrySchema.nullable().parse(fixture.mirror_missing),
-    ).toBeNull();
+    expect(mirrorEntrySchema.nullable().parse(fixture.mirror_missing)).toBeNull();
     const profile = mirrorProfileSchema.parse(fixture.mirror_profile);
     expect([profile.theme, profile.locale, profile.local_model]).toEqual([
       "dark",
@@ -1517,13 +1276,10 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
       listen: () => Promise.resolve(() => undefined),
     });
     const desktop = "ab".repeat(32);
-    expect(
-      (await backend.mirrorHistoryQuery(desktop, { query: "会议", limit: 50 }))
-        .total,
-    ).toBe(312);
-    expect(
-      (await backend.mirrorHistoryEntry(desktop, entry.entry.id))?.shortened,
-    ).toBe(true);
+    expect((await backend.mirrorHistoryQuery(desktop, { query: "会议", limit: 50 })).total).toBe(
+      312,
+    );
+    expect((await backend.mirrorHistoryEntry(desktop, entry.entry.id))?.shortened).toBe(true);
     expect((await backend.mirrorProfile(desktop))?.theme).toBe("dark");
     expect(calls).toStrictEqual([
       {
@@ -1549,12 +1305,8 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
       .parse(loadFixture("scenes-builtin.json"));
     expect(rows).toHaveLength(7);
     for (const row of rows) {
-      expect(translate("zh-CN", `builtinScenes.${row.id}.name`)).toBe(
-        row.names["zh-CN"],
-      );
-      expect(translate("en", `builtinScenes.${row.id}.name`)).toBe(
-        row.names.en,
-      );
+      expect(translate("zh-CN", `builtinScenes.${row.id}.name`)).toBe(row.names["zh-CN"]);
+      expect(translate("en", `builtinScenes.${row.id}.name`)).toBe(row.names.en);
     }
   });
 });

@@ -2,6 +2,7 @@ import { type ProviderId, languageOptions, providersFor } from "@voltip/shared";
 import {
   Card,
   ChineseScript,
+  FallbackSection,
   ProviderCard,
   Select,
   SettingsSection,
@@ -11,7 +12,7 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { useState } from "react";
-import { Lede } from "../app/phone-ui";
+import { Lede, TOUCH_TOGGLE } from "../app/phone-ui";
 
 /** Which provider cards are open: the one in use unless the user closed it, any other once the
  *  user opened it (as the desktop's engines pane). */
@@ -56,6 +57,8 @@ export function SpeechModels() {
           ))}
         </div>
       </SettingsSection>
+      {/* docs/dictation.md §3.5: the models to move on to when the selected one runs out. */}
+      <FallbackSection kind="asr" toggleClassName={TOUCH_TOGGLE} />
       <Card padding="none" className="px-4">
         <StatusRow label={t("engines.languageLabel")} help={t("engines.languageHelp")}>
           <Select

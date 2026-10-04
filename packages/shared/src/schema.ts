@@ -7,14 +7,7 @@ export const THEME_IDS = ["light", "dark", "warm", "graphite"] as const;
 export const themeIdSchema = z.enum(THEME_IDS);
 export type ThemeId = z.infer<typeof themeIdSchema>;
 
-export const platformSchema = z.enum([
-  "windows",
-  "macos",
-  "linux",
-  "android",
-  "ios",
-  "other",
-]);
+export const platformSchema = z.enum(["windows", "macos", "linux", "android", "ios", "other"]);
 export type Platform = z.infer<typeof platformSchema>;
 
 export const connectionStateSchema = z.enum([
@@ -31,9 +24,7 @@ export const connectionKindSchema = z.enum(["direct", "relay"]);
 export type ConnectionKind = z.infer<typeof connectionKindSchema>;
 
 /** 64 lower-case hex characters: an X25519 public key. */
-export const hexKeySchema = z
-  .string()
-  .regex(/^[0-9a-f]{64}$/, "expected 64 lower-case hex chars");
+export const hexKeySchema = z.string().regex(/^[0-9a-f]{64}$/, "expected 64 lower-case hex chars");
 
 /** How the core hands the finished text to the front application (`voltip_core::engines::InjectMode`). */
 export const injectModeSchema = z.enum(["paste", "clipboard_only"]);
@@ -63,12 +54,7 @@ export const serviceKindSchema = z.enum(SERVICE_KINDS);
 export type ServiceKind = z.infer<typeof serviceKindSchema>;
 
 /** Where a provider's credential comes from (`voltip_core::providers::KeyPolicy`). */
-export const keyPolicySchema = z.enum([
-  "builtin",
-  "required",
-  "optional",
-  "none",
-]);
+export const keyPolicySchema = z.enum(["builtin", "required", "optional", "none"]);
 export type KeyPolicy = z.infer<typeof keyPolicySchema>;
 
 /** Where on-device models run (`voltip_core::engines::LocalDevice`, docs/dictation.md §10.4). */
@@ -93,11 +79,7 @@ export type EngineIssue = z.infer<typeof engineIssueSchema>;
 /** How the final text is produced and delivered (`voltip_core::engines::OutputMode`,
  *  docs/dictation.md §12): the whole take recognised after release (default), the streaming
  *  recogniser's final text (no second pass), or every sentence pasted the moment it closes. */
-export const OUTPUT_MODES = [
-  "whole_take",
-  "streaming_final",
-  "live_inject",
-] as const;
+export const OUTPUT_MODES = ["whole_take", "streaming_final", "live_inject"] as const;
 export const outputModeSchema = z.enum(OUTPUT_MODES);
 export type OutputMode = z.infer<typeof outputModeSchema>;
 
@@ -237,9 +219,7 @@ export const engineSettingsSchema = z.object({
   /** What the clean-up does (docs/dictation.md §21); a custom preset that is gone refines with 校对. */
   refine_preset: presetIdSchema.default(DEFAULT_PRESET),
   /** Per-provider choices; Rust omits the map when empty. */
-  providers: z
-    .partialRecord(providerIdSchema, providerSettingsSchema)
-    .optional(),
+  providers: z.partialRecord(providerIdSchema, providerSettingsSchema).optional(),
   /** Catalogue id of the local model (`qwen3-asr-0.6b`); absent / `null` = the catalogue default. */
   local_model: z.string().nullable().optional(),
   /** Where local models run; `auto` picks a GPU when the build has a backend for it. */
@@ -247,13 +227,7 @@ export const engineSettingsSchema = z.object({
   /** The GPU `local_device = gpu` asks for (a device name from `UiState.hardware`). */
   local_gpu: z.string().nullable().optional(),
   /** Inference threads for local models; absent = decided per engine. */
-  local_threads: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_LOCAL_THREADS)
-    .nullable()
-    .optional(),
+  local_threads: z.number().int().min(1).max(MAX_LOCAL_THREADS).nullable().optional(),
   /** ISO language hint (`zh`, `en`); absent = auto-detect. */
   language: z.string().optional(),
   /** Live preview while listening (docs/dictation.md §11): on by default; only takes effect once
@@ -406,8 +380,7 @@ export const FEEDBACK_ATTACHMENT_ERRORS = [
   "attachment_total",
   "attachment_name",
 ] as const;
-export type FeedbackAttachmentError =
-  (typeof FEEDBACK_ATTACHMENT_ERRORS)[number];
+export type FeedbackAttachmentError = (typeof FEEDBACK_ATTACHMENT_ERRORS)[number];
 
 /** A file the shell staged for the next report (`feedback_attachment_add`'s answer). */
 export const stagedAttachmentSchema = z.object({
@@ -519,11 +492,7 @@ export const settingsSchema = z.object({
    *  always serialised, so an older `settings.json` or core reads as hold / 300 / 0. */
   activation: activationSchema.default("hold"),
   /** `hold_or_toggle`: a release before this many ms of holding locks the take. */
-  hold_threshold_ms: z
-    .number()
-    .int()
-    .nonnegative()
-    .default(DEFAULT_HOLD_THRESHOLD_MS),
+  hold_threshold_ms: z.number().int().nonnegative().default(DEFAULT_HOLD_THRESHOLD_MS),
   /** Keep recording this long after the stop edge (0 = stop at once). */
   extra_recording_ms: z.number().int().nonnegative().default(0),
   /** docs/dictation.md §18.5; an older `settings.json` or core reads as app name on, title off. */
@@ -566,12 +535,7 @@ export const viaSchema = z.enum(["paste", "clipboard"]);
 export type Via = z.infer<typeof viaSchema>;
 
 /** `finalizing` (docs/dictation.md §12): a streaming mode waiting for the recogniser's final text. */
-export const PROCESSING_STAGES = [
-  "transcribing",
-  "finalizing",
-  "refining",
-  "inserting",
-] as const;
+export const PROCESSING_STAGES = ["transcribing", "finalizing", "refining", "inserting"] as const;
 export const processingStageSchema = z.enum(PROCESSING_STAGES);
 export type ProcessingStage = z.infer<typeof processingStageSchema>;
 
@@ -988,13 +952,7 @@ export type EditRecord = z.infer<typeof editRecordSchema>;
 /** `standalone`: the phone recognised it on its own and uploaded a copy (docs/dictation.md §20.8).
  *  `sent`, on the phone only: its audio went to that computer, which delivered it; the phone keeps
  *  what the computer reported (§20.7, user decision 2026-10-03). */
-export const ORIGIN_KINDS = [
-  "take",
-  "typed",
-  "clipboard",
-  "standalone",
-  "sent",
-] as const;
+export const ORIGIN_KINDS = ["take", "typed", "clipboard", "standalone", "sent"] as const;
 /** The other device of a history entry (`voltip_core::EntryOrigin`): on a computer the phone it
  *  came from, on a phone the computer it went to. */
 export const entryOriginSchema = z.object({
@@ -1283,10 +1241,7 @@ export function enginesReported(status: EngineStatus): boolean {
 }
 
 /** The provider card of `id`, if this build offers it. */
-export function providerStatus(
-  status: EngineStatus,
-  id: ProviderId,
-): ProviderStatus | undefined {
+export function providerStatus(status: EngineStatus, id: ProviderId): ProviderStatus | undefined {
   return status.providers.find((p) => p.id === id);
 }
 
@@ -1335,13 +1290,7 @@ export type ModelEngine = z.infer<typeof modelEngineSchema>;
 /** Product tiers the settings dialog groups by (docs/dictation.md §10), in display order; the
  *  streaming tier is the live-preview model, not a recognition choice. `auxiliary` is the hidden
  *  `silero-vad` entry (§12): the core keeps it out of `UiState.models`, the wire still names it. */
-export const MODEL_TIERS = [
-  "balanced",
-  "accurate",
-  "light",
-  "streaming",
-  "auxiliary",
-] as const;
+export const MODEL_TIERS = ["balanced", "accurate", "light", "streaming", "auxiliary"] as const;
 export const modelTierSchema = z.enum(MODEL_TIERS);
 export type ModelTier = z.infer<typeof modelTierSchema>;
 
@@ -1416,16 +1365,12 @@ export const modelStateSchema = z.object({
 export type ModelState = z.infer<typeof modelStateSchema>;
 
 /** A model the user can pick for recognition (the streaming preview model is not one). */
-export function isRecognitionModel(
-  model: Pick<ModelState, "capabilities">,
-): boolean {
+export function isRecognitionModel(model: Pick<ModelState, "capabilities">): boolean {
   return model.capabilities.includes("offline");
 }
 
 /** The model that feeds the live preview (`capabilities: ["streaming"]`). */
-export function isStreamingModel(
-  model: Pick<ModelState, "capabilities">,
-): boolean {
+export function isStreamingModel(model: Pick<ModelState, "capabilities">): boolean {
   return model.capabilities.includes("streaming");
 }
 
@@ -1619,12 +1564,7 @@ export const permissionSchema = z.enum(PERMISSIONS);
 export type Permission = z.infer<typeof permissionSchema>;
 
 /** `voltip_platform::PermissionState`. */
-export const PERMISSION_STATES = [
-  "granted",
-  "denied",
-  "not_determined",
-  "not_applicable",
-] as const;
+export const PERMISSION_STATES = ["granted", "denied", "not_determined", "not_applicable"] as const;
 export const permissionStateSchema = z.enum(PERMISSION_STATES);
 export type PermissionState = z.infer<typeof permissionStateSchema>;
 
@@ -1728,13 +1668,7 @@ export const copyReasonSchema = z.enum(COPY_REASONS);
 export type CopyReason = z.infer<typeof copyReasonSchema>;
 
 /** `voltip_core::paste::PasteFailure`: why a paste neither pasted nor copied. */
-export const PASTE_FAILURES = [
-  "busy",
-  "invalid",
-  "timeout",
-  "inject",
-  "unsupported",
-] as const;
+export const PASTE_FAILURES = ["busy", "invalid", "timeout", "inject", "unsupported"] as const;
 export const pasteFailureSchema = z.enum(PASTE_FAILURES);
 export type PasteFailure = z.infer<typeof pasteFailureSchema>;
 
@@ -1899,11 +1833,7 @@ export function sentTextFinal(state: SentTextState): boolean {
 
 /** The take is over (delivered, refused, cancelled). */
 export function phoneTakeFinal(state: PhoneTakeState): boolean {
-  return (
-    state.state === "done" ||
-    state.state === "failed" ||
-    state.state === "cancelled"
-  );
+  return state.state === "done" || state.state === "failed" || state.state === "cancelled";
 }
 
 /** A GPU the local engines can run on (`voltip_core::ui::GpuDevice`, docs/dictation.md §10.6). */
