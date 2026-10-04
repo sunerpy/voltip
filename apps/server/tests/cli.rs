@@ -9,9 +9,9 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use voltip_core::BuiltIn;
 use voltip_core::dictation::fakes::{FakeRefiner, FakeTranscriber};
 use voltip_core::dictation::{EngineFactory, Refiner, Transcriber};
-use voltip_core::{BuiltIn, ProviderId, ProviderSettings, Settings, SettingsStore};
 use voltip_server::cli::{Action, Cli, ServeOptions};
 use voltip_server::{APP_VERSION, Wiring, check, run};
 
@@ -251,6 +251,8 @@ fn the_binary_reports_its_version_usage_errors_and_its_check() {
 #[cfg(target_os = "linux")]
 #[test]
 fn regression_without_ca_certificates_cloud_recognition_is_unavailable_and_says_why() {
+    use voltip_core::{ProviderId, ProviderSettings, Settings, SettingsStore};
+
     // In an ubuntu:24.04 container without ca-certificates every HTTPS client failed to build:
     // `--check` still said 可用, the service started, and each request failed with "builder error".
     let dir = tempfile::tempdir().unwrap();
