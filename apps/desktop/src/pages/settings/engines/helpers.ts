@@ -152,15 +152,18 @@ export function streamingModel(models: readonly ModelState[]): ModelState | unde
 }
 
 /** What the 实时预览 block says: the switch is off, or the model is missing, or it is ready — on
- *  the downloaded model, through the built-in service, or from the realtime model itself. */
-export type LivePreviewState = "ready" | "cloud" | "stream" | "missing" | "off";
+ *  the downloaded model, through the built-in service, or from the realtime model itself — or it
+ *  pauses while a fallback model taking whole recordings stands in for the realtime model. */
+export type LivePreviewState = "ready" | "cloud" | "stream" | "paused" | "missing" | "off";
 
 export function livePreviewState(
   settings: Pick<EngineSettings, "live_preview">,
   status: Pick<EngineStatus, "live_preview_ready" | "live_source">,
 ): LivePreviewState {
   if (!settings.live_preview) return "off";
-  if (!status.live_preview_ready) return "missing";
+  // docs/dictation.md §3.5: the realtime model ran out and a model taking whole recordings only
+  // stands in for it; downloading a model would not help.
+  if (!status.live_preview_ready) return status.live_source === "stream" ? "paused" : "missing";
   // docs/dictation.md §11.8, §11.9: the built-in service and a realtime model preview themselves,
   // no model needed.
   if (status.live_source === "cloud" || status.live_source === "stream") return status.live_source;

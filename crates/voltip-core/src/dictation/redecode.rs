@@ -479,6 +479,14 @@ mod tests {
                     events.push(event);
                 }
             }
+            // The preview's task may not have started on a busy machine yet (a stress run saw 0
+            // calls here): wait for it. Only this thread's polls send the next request, so the
+            // count cannot move on meanwhile.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while t.calls() == 0 {
+                assert!(Instant::now() < deadline, "the preview never went out");
+                std::thread::sleep(Duration::from_millis(1));
+            }
             assert_eq!(t.calls(), 1, "nothing overtakes the request out");
             settle(&mut s, &mut events);
             (events, Box::new(s).finish().unwrap())

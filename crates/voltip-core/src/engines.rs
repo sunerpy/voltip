@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::dictation::fallback::{QuotaKey, QuotaLedger};
+use crate::dictation::fallback::{QuotaKey, QuotaLedger, open_order};
 use crate::models::{DEFAULT_LOCAL_MODEL_ID, ModelState};
 use crate::presets::PresetId;
 pub use crate::providers::{AsrProtocol, KeyPolicy, ProviderId, ServiceKind};
@@ -829,11 +829,27 @@ impl ResolvedEngines {
     /// realtime model's own stream turns `WholeTake` into `StreamingFinal` (§11.9): the same text,
     /// inserted at the end, without recognising the take a second time.
     pub fn effective_output_mode(&self) -> OutputMode {
+        self.output_mode_with(self.live_preview_ready())
+    }
+
+    /// [`ResolvedEngines::effective_output_mode`] with the live preview usable (`ready`) or not.
+    fn output_mode_with(&self, ready: bool) -> OutputMode {
         match self.output_mode {
-            OutputMode::WholeTake if self.live_source() == Some(LiveSource::Stream) => OutputMode::StreamingFinal,
-            mode if mode.is_streaming() && !self.live_preview_ready() => OutputMode::WholeTake,
+            OutputMode::WholeTake if ready && self.live_source() == Some(LiveSource::Stream) => OutputMode::StreamingFinal,
+            mode if mode.is_streaming() && !ready => OutputMode::WholeTake,
             mode => mode,
         }
+    }
+
+    /// The recognition fallback model that takes the next request in the selected model's place,
+    /// if one does (docs/dictation.md §3.5): while the chain runs, the first model with quota left
+    /// as `ledger` sees it, in the order the engine's chain asks them.
+    fn asr_stand_in(&self, ledger: &QuotaLedger) -> Option<&FallbackTarget> {
+        let selected = self.asr_fallback.selected.as_ref()?;
+        let targets: Vec<&FallbackTarget> = self.asr_fallback.targets().collect();
+        let keys: Vec<&QuotaKey> = std::iter::once(selected).chain(targets.iter().map(|t| &t.key)).collect();
+        let first = *open_order(&keys, ledger).first()?;
+        first.checked_sub(1).map(|i| targets[i])
     }
 
     /// The UI projection without a ledger: no model is known to have run out of quota.
@@ -848,6 +864,11 @@ impl ResolvedEngines {
             (ProviderId::Builtin | ProviderId::Local, _) | (_, None) => String::new(),
             (_, Some(r)) => host_of(&r.url),
         };
+        // §3.5, §11.9: a realtime model's stream comes from the first model with quota left. While
+        // a model that takes whole recordings only stands in for it, no take previews or streams
+        // (the engine's `live_enabled`); the live source stays the realtime model.
+        let stand_in_streams = self.asr_stand_in(ledger).is_none_or(|t| AsrProtocol::of(&t.remote.url, &t.remote.model).streams());
+        let live_preview_ready = self.live_preview_ready() && (self.live_source() != Some(LiveSource::Stream) || stand_in_streams);
         EngineStatus {
             asr_provider: self.asr_provider,
             asr_ready: self.asr_issue.is_none(),
@@ -856,9 +877,9 @@ impl ResolvedEngines {
             asr_host: user_host(self.asr_provider, &self.asr_remote),
             local_model: self.local_model.as_ref().map(|m| m.id.clone()),
             local_ready: self.local_model.as_ref().is_some_and(|m| m.installed),
-            live_preview_ready: self.live_preview_ready(),
+            live_preview_ready,
             live_source: self.live_source(),
-            effective_output_mode: self.effective_output_mode(),
+            effective_output_mode: self.output_mode_with(live_preview_ready),
             language: self.language.clone(),
             refine_enabled: self.refine_enabled,
             llm_provider: self.llm_provider,
@@ -1078,7 +1099,8 @@ pub struct EngineStatus {
     /// On-device and the model's files are on disk and verified.
     pub local_ready: bool,
     /// `live_preview` is on and has a source ([`EngineStatus::live_source`]), so the pill shows
-    /// partial text while recording.
+    /// partial text while recording. `false` with the source `stream` while a fallback model that
+    /// takes whole recordings only stands in for the realtime model (docs/dictation.md §3.5).
     pub live_preview_ready: bool,
     /// Where the live preview comes from; `None` when it is off or has no source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1835,6 +1857,44 @@ mod tests {
         assert_eq!(json["models"][1], serde_json::json!({ "provider": "aliyun", "model": "qwen-audio-3.1-asr-flash-streaming", "skip": "same_as_selected" }));
         assert_eq!(json["models"][2]["issue"], "key_missing");
         assert_eq!(serde_json::to_value(FallbackStatus::default()).unwrap(), serde_json::json!({ "enabled": false, "in_use": false }));
+    }
+
+    /// docs/dictation.md §3.5, §11.9: the live preview and the output mode the pages show follow
+    /// the ledger as the engine's chain does. Once the realtime selected model ran out, the next
+    /// model with quota left decides: a realtime one streams too; one taking whole recordings only
+    /// leaves the takes whole and the preview unavailable, with the realtime model still the live
+    /// source. With every model out the selected one is asked again; with the switch off the
+    /// ledger does not count.
+    #[test]
+    fn the_status_follows_the_model_that_stands_in_for_a_realtime_one() {
+        let (settings, secrets) = studio_with_fallbacks();
+        let resolved = ResolvedEngines::resolve(&settings, &secrets, &BUILT);
+        let shown = |resolved: &ResolvedEngines, ledger: &QuotaLedger| {
+            let status = resolved.status_with(ledger);
+            (status.live_source, status.live_preview_ready, status.effective_output_mode)
+        };
+        let streaming = (Some(LiveSource::Stream), true, OutputMode::StreamingFinal);
+        let whole = (Some(LiveSource::Stream), false, OutputMode::WholeTake);
+        let ledger = QuotaLedger::with_clock(|| 1_000);
+        assert_eq!(shown(&resolved, &ledger), streaming);
+        // The selected model, then -message, Groq's whisper-large-v3 and the built-in service.
+        let keys: Vec<QuotaKey> =
+            std::iter::once(resolved.asr_fallback.selected.clone().unwrap()).chain(resolved.asr_fallback.targets().map(|t| t.key.clone())).collect();
+        assert_eq!(keys.len(), 4);
+        ledger.mark(&keys[0]);
+        assert_eq!(shown(&resolved, &ledger), streaming, "-message is a realtime model too");
+        ledger.mark(&keys[1]);
+        assert_eq!(shown(&resolved, &ledger), whole, "Groq takes whole recordings");
+        ledger.mark(&keys[2]);
+        assert_eq!(shown(&resolved, &ledger), whole, "and so does the built-in service");
+        ledger.mark(&keys[3]);
+        assert_eq!(shown(&resolved, &ledger), streaming, "every model out: the selected one is asked again");
+        ledger.unmark(&keys[2]);
+        let inject = ResolvedEngines::resolve(&EngineSettings { output_mode: OutputMode::LiveInject, ..settings.clone() }, &secrets, &BUILT);
+        assert_eq!(shown(&inject, &ledger), (Some(LiveSource::Stream), false, OutputMode::WholeTake), "a streaming mode runs whole");
+        assert_eq!(inject.status().effective_output_mode, OutputMode::LiveInject);
+        let off = EngineSettings { asr_fallback: FallbackSettings { enabled: false, ..settings.asr_fallback.clone() }, ..settings.clone() };
+        assert_eq!(shown(&ResolvedEngines::resolve(&off, &secrets, &BUILT), &ledger), streaming, "no chain, no stand-in");
     }
 
     /// The view the engine hands the client factory for one fallback model: only that service changes.

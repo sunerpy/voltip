@@ -6187,6 +6187,40 @@ mod tests {
         assert_eq!(realtime.calls(), 0);
     }
 
+    /// Regression (goal review 2026-10-04): the pages showed 边说边识别 in effect after a realtime
+    /// selected model ran out and a model taking whole recordings only stood in, while the takes
+    /// ran whole. The status projected through the engine's ledger says what the next take runs
+    /// with — the stand-in's mode, a realtime stand-in's stream, the selected model again after
+    /// 重新检查 — and keeps the realtime model as the live source.
+    #[tokio::test(start_paused = true)]
+    async fn regression_the_status_shows_the_mode_the_next_take_runs_with() {
+        for (stand_in, streams) in [("qwen-audio-3.1-asr-flash", false), ("qwen-audio-3.1-asr-flash-message", true)] {
+            let engines = resolved_fallback(&["qwen-audio-3.1-asr-flash-streaming", stand_in], &[], true, OutputMode::WholeTake);
+            let realtime = Arc::new(FakeTranscriber::quota().with_stream(Arc::new(FakeStreaming::failing_open("task-failed: AllocationQuota.FreeTierOnly"))));
+            let next = FakeTranscriber::ok("候补模型的文字");
+            let next = Arc::new(if streams { next.with_stream(Arc::new(FakeStreaming::script())) } else { next });
+            let mut r = rig_fallback(&engines, &[("qwen-audio-3.1-asr-flash-streaming", realtime), (stand_in, next)], &[], FakeInjector::paste());
+            let agrees = |r: &Rig, mode: OutputMode| {
+                let status = engines.status_with(r.engine.quota());
+                assert_eq!(
+                    (status.effective_output_mode, status.live_preview_ready),
+                    (r.engine.effective_output_mode().0, r.engine.live_enabled()),
+                    "{stand_in}"
+                );
+                assert_eq!((status.effective_output_mode, status.live_source), (mode, Some(LiveSource::Stream)), "{stand_in}");
+            };
+            agrees(&r, OutputMode::StreamingFinal);
+            r.start_open().await;
+            r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.degraded.is_some())).await;
+            r.engine.stop().unwrap();
+            let fx = r.run_to_terminal().await;
+            assert!(matches!(phase(&fx), DictationPhase::Done { text, .. } if text == "候补模型的文字"), "{fx:?}");
+            agrees(&r, if streams { OutputMode::StreamingFinal } else { OutputMode::WholeTake });
+            r.engine.quota().clear(ServiceKind::Asr);
+            agrees(&r, OutputMode::StreamingFinal);
+        }
+    }
+
     /// Regression (plan review 2026-10-04): a fallback model's stream pastes a sentence in
     /// `live_inject`, then fails, and the remainder finds every model out of quota. The take ends
     /// with what was pasted and says why — and the history names the fallback stream's model, not

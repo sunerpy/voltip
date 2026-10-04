@@ -142,6 +142,12 @@ export function serviceTarget(
   return host.length > 0 ? host : t(`engines.provider.${provider}`);
 }
 
+/** `Qwen/Qwen3-ASR-1.7B` → `Qwen3-ASR-1.7B`: the model id without its vendor prefix. */
+export function shortModel(model: string): string {
+  const tail = model.split("/").at(-1) ?? model;
+  return tail.length > 0 ? tail : model;
+}
+
 export const LANGUAGE_CODES = ["", "zh", "en", "yue", "ja", "ko"] as const;
 
 /** Recognition language hints: the auto-detect label is localized, the language names are their own. */

@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 pub use crate::engines::OutputMode;
 pub use crate::scenes::TakeContext;
 pub use engine::{DictationEngine, DictationPorts, EngineFactory};
-pub use fallback::{FallbackRefiner, FallbackTranscriber, Link, QUOTA_RETRY_AFTER, QuotaKey, QuotaLedger, first_with_quota};
+pub use fallback::{FallbackRefiner, FallbackTranscriber, Link, QUOTA_RETRY_AFTER, QuotaKey, QuotaLedger, first_with_quota, open_order};
 pub use ports::{
     AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection,
     Injector, LIVE_CHUNK_SAMPLES, LIVE_SAMPLE_RATE_HZ, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MAX_RECORDING_STREAMING, MIN_RECORDING,

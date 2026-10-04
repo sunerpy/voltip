@@ -2985,19 +2985,9 @@ export class MockBackend implements Backend {
       },
       liveReady:
         settings.live_preview && this.modelState(MOCK_STREAMING_MODEL_ID)?.kind === "installed",
+      quotaOut: Object.fromEntries(this.quotaOut),
     });
-    const marked = (kind: ServiceKind, fallback: EngineStatus["asr_fallback"]) => {
-      const retry = this.quotaOut.get(kind);
-      return fallback === undefined || retry === undefined || !fallback.in_use
-        ? fallback
-        : { ...fallback, selected_retry_at_ms: retry };
-    };
-    return {
-      ...status,
-      asr_fallback: marked("asr", status.asr_fallback),
-      llm_fallback: marked("llm", status.llm_fallback),
-      ...this.engineOverrides,
-    };
+    return { ...status, ...this.engineOverrides };
   }
 
   private emitPhase(phase: DictationPhase, session = this.state.dictation.session) {

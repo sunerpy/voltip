@@ -1,5 +1,5 @@
 import { MockBackend, sampleDevices } from "@voltip/shared/mock";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
 import { chooseOption, selectTrigger } from "../test/select";
@@ -113,6 +113,50 @@ describe("the phone's settings", () => {
     });
     await user.click(screen.getByRole("button", { name: "返回" }));
     expect(screen.getByTestId("settings-ai")).toHaveTextContent("未开启 AI 润色");
+    backend.destroy();
+  });
+
+  it("regression: both engines pages say which model is in use and who gets the audio or text, a fallback model standing in too", async () => {
+    // Goal review 2026-10-04: the phone's pages had the fallback lists without the desktop's 当前
+    // and privacy lines (docs/dictation.md §3.5).
+    const user = userEvent.setup();
+    const backend = new MockBackend({
+      role: "phone",
+      providerKeys: [
+        { provider: "groq", kind: "asr" },
+        { provider: "groq", kind: "llm" },
+      ],
+    });
+    const state = await backend.getState();
+    await backend.invoke("settings_set_engines", {
+      engines: {
+        ...state.settings.engines,
+        asr_fallback: { enabled: true, models: [{ provider: "groq", model: "whisper-large-v3" }] },
+      },
+    });
+    renderApp({ backend });
+    await user.click(within(await openSettings(user)).getByTestId("settings-speech"));
+    const speech = screen.getByTestId("phone-speech");
+    expect(within(speech).getByTestId("current-asr")).toHaveTextContent(
+      "当前：内置服务 · Qwen3-ASR-1.7B",
+    );
+    expect(within(speech).getByTestId("privacy-asr")).toHaveTextContent(
+      "音频发送到内置服务；额度用完时改发给Groq",
+    );
+    act(() => {
+      backend.simulateQuotaExhausted("asr", Date.now() + 86_400_000);
+    });
+    await waitFor(() => {
+      expect(within(speech).getByTestId("current-asr")).toHaveTextContent(
+        "当前：Groq · whisper-large-v3（候补）",
+      );
+    });
+    await user.click(screen.getByRole("button", { name: "返回" }));
+    await user.click(screen.getByTestId("settings-ai"));
+    const ai = screen.getByTestId("phone-ai");
+    expect(within(ai).getByTestId("current-llm")).toHaveTextContent("当前：内置服务 · qwen3.8-27b");
+    expect(within(ai).getByTestId("privacy-llm")).toHaveTextContent("文本发送到内置服务");
+    expect(within(ai).getByTestId("privacy-llm")).not.toHaveTextContent("额度用完");
     backend.destroy();
   });
 

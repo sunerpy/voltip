@@ -44,7 +44,11 @@ function studio(): EngineSettings {
   };
 }
 
-function resolve(settings: EngineSettings, keys: string[] = ["provider-key.aliyun"]): EngineStatus {
+function resolve(
+  settings: EngineSettings,
+  keys: string[] = ["provider-key.aliyun"],
+  quotaOut?: { asr?: number; llm?: number },
+): EngineStatus {
   return resolveEngineStatus({
     settings,
     userKeys: new Set(keys),
@@ -54,6 +58,7 @@ function resolve(settings: EngineSettings, keys: string[] = ["provider-key.aliyu
     },
     local: { id: "qwen3-asr-0.6b", name: "Qwen3-ASR 0.6B", installed: true },
     liveReady: false,
+    ...(quotaOut === undefined ? {} : { quotaOut }),
   });
 }
 
@@ -197,6 +202,48 @@ describe("fallback models (docs/dictation.md §3.5)", () => {
     });
     expect(settings.llm_fallback?.models).toHaveLength(3);
     expect(settings.asr_fallback).toBeUndefined();
+  });
+
+  it("regression: the preview's live state and output mode follow the model standing in for a used-up realtime one", () => {
+    // Goal review 2026-10-04, as `ResolvedEngines::status_with`: the selected model's retry time
+    // while the chain runs; a stand-in taking whole recordings only leaves the takes whole.
+    const shown = (s: EngineStatus) => [
+      s.live_source,
+      s.live_preview_ready,
+      s.effective_output_mode,
+      s.asr_fallback?.selected_retry_at_ms,
+    ];
+    const realtimeFirst = studio();
+    expect(shown(resolve(realtimeFirst))).toEqual(["stream", true, "streaming_final", undefined]);
+    expect(shown(resolve(realtimeFirst, undefined, { asr: 99 }))).toEqual([
+      "stream",
+      true,
+      "streaming_final",
+      99,
+    ]);
+    const wholeFirst: EngineSettings = {
+      ...realtimeFirst,
+      asr_fallback: { enabled: true, models: [entry("aliyun", "qwen-audio-3.1-asr-flash")] },
+    };
+    expect(shown(resolve(wholeFirst, undefined, { asr: 99 }))).toEqual([
+      "stream",
+      false,
+      "whole_take",
+      99,
+    ]);
+    const live: EngineSettings = { ...wholeFirst, output_mode: "live_inject" };
+    expect(resolve(live, undefined, { asr: 99 }).effective_output_mode).toBe("whole_take");
+    expect(resolve(live).effective_output_mode).toBe("live_inject");
+    const off: EngineSettings = {
+      ...wholeFirst,
+      asr_fallback: { enabled: false, models: wholeFirst.asr_fallback?.models ?? [] },
+    };
+    expect(shown(resolve(off, undefined, { asr: 99 }))).toEqual([
+      "stream",
+      true,
+      "streaming_final",
+      undefined,
+    ]);
   });
 
   it("the preview takes the lists and answers 重新检查 with the engines' status", async () => {

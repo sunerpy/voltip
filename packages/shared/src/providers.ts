@@ -195,6 +195,9 @@ export interface EngineResolveInput {
   local: { id: string; name: string; installed: boolean };
   /** The switch is on and the library's streaming model is installed (the local source). */
   liveReady: boolean;
+  /** The selected models that ran out of quota, by service, and when they are tried again (the
+   *  mock's ledger: it only ever marks the selected model, docs/dictation.md §3.5). */
+  quotaOut?: Partial<Record<ServiceKind, number>>;
 }
 
 function trimmed(value: string | null | undefined): string | undefined {
@@ -303,12 +306,13 @@ function fallbackStatus(
   kind: ServiceKind,
   input: EngineResolveInput,
   selected: { provider: ProviderId; target: Target } | undefined,
-): FallbackStatus {
+): { status: FallbackStatus; standIn: Target | undefined } {
   const config = fallbackSettingsOf(input.settings, kind);
   const keyOf = (provider: ProviderId, t: Target) => JSON.stringify([provider, t.model, t.url]);
   const selectedKey =
     selected === undefined ? undefined : keyOf(selected.provider, selected.target);
   const seen = new Set<string>();
+  const ready: Target[] = [];
   const models = config.models.map((entry): FallbackModelStatus => {
     const asked = trimmed(entry.model);
     const r = target(entry.provider, kind, input, asked);
@@ -323,12 +327,21 @@ function fallbackStatus(
     if (key === selectedKey) return { provider: entry.provider, model, skip: "same_as_selected" };
     if (seen.has(key)) return { provider: entry.provider, model, skip: "duplicate" };
     seen.add(key);
+    ready.push(r.ok);
     return { provider: entry.provider, model };
   });
+  const inUse = config.enabled && selectedKey !== undefined;
+  // `status_with(ledger)`: the selected model's retry time while the chain runs, and the model
+  // standing in for it — the first fallback model, as the mock marks no other.
+  const retry = inUse ? input.quotaOut?.[kind] : undefined;
   return {
-    enabled: config.enabled,
-    in_use: config.enabled && selectedKey !== undefined,
-    models,
+    status: {
+      enabled: config.enabled,
+      in_use: inUse,
+      ...(retry === undefined ? {} : { selected_retry_at_ms: retry }),
+      models,
+    },
+    standIn: retry === undefined ? undefined : ready[0],
   };
 }
 
@@ -405,11 +418,24 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
         : input.liveReady
           ? "local"
           : undefined;
+  const asrFallback = fallbackStatus(
+    "asr",
+    input,
+    asrProvider !== "local" && asrTarget !== undefined
+      ? { provider: asrProvider, target: asrTarget }
+      : undefined,
+  );
+  // §3.5: while a model taking whole recordings only stands in for the realtime one, no take
+  // previews or streams; the live source stays the realtime model.
+  const standIn = asrFallback.standIn;
+  const liveReady =
+    liveSource !== undefined &&
+    (liveSource !== "stream" || standIn === undefined || asrStreams(standIn.url, standIn.model));
   // `effective_output_mode`: a realtime model's stream is the take's text (§11.9).
   const effective =
-    settings.output_mode === "whole_take" && liveSource === "stream"
+    settings.output_mode === "whole_take" && liveReady && liveSource === "stream"
       ? "streaming_final"
-      : settings.output_mode !== "whole_take" && liveSource === undefined
+      : settings.output_mode !== "whole_take" && !liveReady
         ? "whole_take"
         : settings.output_mode;
   const language = trimmed(settings.language);
@@ -421,7 +447,7 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
     asr_host: userHost(asrProvider, asrTarget),
     ...(asrProvider === "local" ? { local_model: input.local.id } : {}),
     local_ready: asrProvider === "local" && input.local.installed,
-    live_preview_ready: liveSource !== undefined,
+    live_preview_ready: liveReady,
     ...(liveSource === undefined ? {} : { live_source: liveSource }),
     effective_output_mode: effective,
     ...(language === undefined ? {} : { language }),
@@ -433,19 +459,13 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
     refine_host: userHost(llmProvider, refineTarget),
     inject: settings.inject,
     providers,
-    asr_fallback: fallbackStatus(
-      "asr",
-      input,
-      asrProvider !== "local" && asrTarget !== undefined
-        ? { provider: asrProvider, target: asrTarget }
-        : undefined,
-    ),
+    asr_fallback: asrFallback.status,
     llm_fallback: fallbackStatus(
       "llm",
       input,
       llmProvider !== undefined && refineTarget !== undefined
         ? { provider: llmProvider, target: refineTarget }
         : undefined,
-    ),
+    ).status,
   };
 }

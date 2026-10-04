@@ -38,7 +38,11 @@ export function OutputMode() {
   const engines = state.engines;
   const effective = engines.effective_output_mode;
   const fallback = isStreamingOutputMode(settings.output_mode) && effective === "whole_take";
-  const streamed = settings.output_mode === "whole_take" && engines.live_source === "stream";
+  const streamed = settings.output_mode === "whole_take" && effective === "streaming_final";
+  // docs/dictation.md §3.5: a fallback model taking whole recordings only stands in for the
+  // realtime model: no model to download.
+  const paused = !engines.live_preview_ready && engines.live_source === "stream";
+  const fallbackText = paused ? t("outputMode.fallbackPaused") : t("outputMode.fallback");
   const setMode = (output_mode: OutputModeId) => {
     if (output_mode === settings.output_mode) return;
     void backend.invoke("settings_set_engines", { engines: { ...settings, output_mode } });
@@ -52,14 +56,14 @@ export function OutputMode() {
       aside={
         <LampText tone={fallback ? "warn" : "ok"} size="sm">
           <span data-testid="output-mode-state">
-            {fallback ? t("outputMode.fallback") : outputModeLabel(effective, locale)}
+            {fallback ? fallbackText : outputModeLabel(effective, locale)}
           </span>
         </LampText>
       }>
       <CardGrid min={220} role="listbox" aria-label={t("engines.outputMode.label")}>
         {OUTPUT_MODES.map((mode) => {
           const selected = settings.output_mode === mode;
-          const needsModel = isStreamingOutputMode(mode) && !engines.live_preview_ready;
+          const needsModel = isStreamingOutputMode(mode) && !engines.live_preview_ready && !paused;
           return (
             <OptionCard
               key={mode}
@@ -85,7 +89,7 @@ export function OutputMode() {
                 <p
                   className="text-[12px] leading-4 text-warning"
                   data-testid="output-mode-fallback">
-                  {t("outputMode.fallback")}
+                  {fallbackText}
                 </p>
               )}
               {selected && streamed && (

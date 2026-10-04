@@ -256,6 +256,8 @@ export const en: Messages = {
         "Each sentence is typed into the current window once it settles. Polish is not available in this mode, and cancelling does not remove text already typed.",
     },
     fallback: "Live transcription model not downloaded · running as All at once",
+    fallbackPaused:
+      "The fallback model in use does not transcribe in real time · running as All at once",
     streamed:
       "The selected model is a realtime model: it transcribes while you speak, so takes run as “While you speak”, and the text is still inserted once on release.",
     effective: "In effect",
@@ -1104,6 +1106,7 @@ export const en: Messages = {
         ready: "Ready",
         cloud: "Ready · built-in service",
         stream: "Ready · realtime model",
+        paused: "Unavailable · the fallback model does not transcribe in real time",
         missing: "Model not downloaded",
         off: "Off",
       },

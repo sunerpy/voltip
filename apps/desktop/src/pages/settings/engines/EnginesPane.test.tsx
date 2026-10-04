@@ -1383,6 +1383,86 @@ describe("fallback models on the engines pages (docs/dictation.md §3.5)", () =>
     });
   });
 
+  it("regression: with the switch off, or a selected service the chain does not run for, the privacy line names nobody else", async () => {
+    // Goal review 2026-10-04: the line named the fallback providers whatever the switch said.
+    const backend = new MockBackend({ providerKeys: [{ provider: "groq", kind: "asr" }] });
+    const state = await backend.getState();
+    const listed = { provider: "groq" as const, model: "whisper-large-v3" };
+    await backend.invoke("settings_set_engines", {
+      engines: { ...state.settings.engines, asr_fallback: { enabled: false, models: [listed] } },
+    });
+    renderApp({ path: "/speech", backend });
+    expect(await screen.findByTestId("fallback-asr")).toHaveAttribute("data-enabled", "false");
+    expect(screen.getByTestId("privacy-asr")).toHaveTextContent("音频发送到内置服务");
+    expect(screen.getByTestId("privacy-asr")).not.toHaveTextContent("额度用完");
+    // On, with the selected provider lacking its key: the chain does not run either.
+    await act(async () => {
+      await backend.invoke("settings_set_engines", {
+        engines: {
+          ...state.settings.engines,
+          asr_provider: "openai",
+          asr_fallback: { enabled: true, models: [listed] },
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("fallback-asr-not-in-use")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("privacy-asr")).toHaveTextContent("音频发送到OpenAI");
+    expect(screen.getByTestId("privacy-asr")).not.toHaveTextContent("额度用完");
+  });
+
+  it("regression: a realtime model that ran out, with a whole-recording model standing in, pauses the preview and runs whole takes", async () => {
+    // Goal review 2026-10-04: 边说边识别 stayed 当前生效 while the takes ran whole.
+    const user = userEvent.setup();
+    const backend = new MockBackend({ providerKeys: [{ provider: "aliyun", kind: "asr" }] });
+    const state = await backend.getState();
+    await backend.invoke("settings_set_engines", {
+      engines: {
+        ...state.settings.engines,
+        asr_provider: "aliyun",
+        asr_fallback: {
+          enabled: true,
+          models: [{ provider: "aliyun", model: "qwen-audio-3.1-asr-flash" }],
+        },
+      },
+    });
+    renderApp({ path: "/speech", backend });
+    await openTab(user, "识别设置");
+    const live = await screen.findByTestId("live-preview");
+    const mode = screen.getByTestId("output-mode");
+    expect(live).toHaveAttribute("data-state", "stream");
+    expect(mode).toHaveAttribute("data-effective", "streaming_final");
+    act(() => {
+      backend.simulateQuotaExhausted("asr", Date.now() + 86_400_000);
+    });
+    await waitFor(() => {
+      expect(live).toHaveAttribute("data-state", "paused");
+    });
+    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent(
+      "暂不可用 · 候补模型不支持实时识别",
+    );
+    expect(mode).toHaveAttribute("data-effective", "whole_take");
+    expect(within(mode).getByTestId("output-mode-state")).toHaveTextContent("整段输出");
+    expect(screen.queryByTestId("output-mode-streamed")).toBeNull();
+    expect(within(mode).queryByText("模型未下载")).toBeNull();
+    // A streaming mode asked for runs whole too, and says why without asking for a download.
+    await user.click(within(mode).getByRole("option", { name: "边说边识别" }));
+    await waitFor(() => {
+      expect(within(mode).getByTestId("output-mode-fallback")).toHaveTextContent(
+        "当前使用的候补模型不支持实时识别，按整段输出运行",
+      );
+    });
+    // 重新检查: the realtime model streams again.
+    await act(async () => {
+      await backend.invoke("engines_quota_reset", { kind: "asr" });
+    });
+    await waitFor(() => {
+      expect(live).toHaveAttribute("data-state", "stream");
+    });
+    expect(mode).toHaveAttribute("data-effective", "streaming_final");
+  });
+
   it("the AI page carries the clean-up's list", async () => {
     renderApp({ path: "/ai" });
     expect(await screen.findByTestId("fallback-llm")).toBeInTheDocument();
