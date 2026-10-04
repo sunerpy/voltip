@@ -30,7 +30,7 @@ description: 让这台电脑上的其他程序（例如 Paseo 的手机听写）
 curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install.sh | sh -s -- --server
 ```
 
-脚本按发布附带的 `SHA256SUMS` 校验下载的文件，解压到 `~/.local/share/voltip-server/<版本>`，并把命令链接为 `~/.local/bin/voltip-server`。缺少系统库时，脚本会列出需要安装的软件包，例如 `sudo apt-get install libblas3`，但不会自行安装。升级时重新运行脚本即可。
+脚本按发布附带的 `SHA256SUMS` 校验下载的文件，解压到 `~/.local/share/voltip-server/<版本>`，并把命令链接为 `~/.local/bin/voltip-server`。缺少系统库时，脚本会列出需要安装的软件包，例如 `sudo apt-get install libblas3`，但不会自行安装。升级时重新运行脚本即可；带上 `--systemd-user --enable` 时脚本会同时重启服务，否则请用 `systemctl --user restart voltip-server` 重启正在运行的服务。
 
 然后检查配置并启动服务：
 

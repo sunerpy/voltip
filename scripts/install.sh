@@ -243,13 +243,19 @@ UNIT
 		if command -v systemctl >/dev/null 2>&1; then
 			systemctl --user daemon-reload || info "systemctl --user daemon-reload failed (no user session?)"
 			if [ "${VOLTIP_SYSTEMD_ENABLE:-}" = 1 ]; then
-				systemctl --user enable --now voltip-server || err "could not start the voltip-server user service"
-				info "voltip-server is running as a systemd user service"
+				# Restart, not start: on an upgrade the service still runs the earlier version.
+				systemctl --user enable voltip-server >/dev/null 2>&1 || err "could not enable the voltip-server user service"
+				systemctl --user restart voltip-server || err "could not start the voltip-server user service"
+				info "voltip-server ${version} is running as a systemd user service"
 			else
 				info "start it with: systemctl --user enable --now voltip-server"
 			fi
 		fi
 		info "to keep it running after you log out: loginctl enable-linger $(id -un)"
+	fi
+	if [ "${VOLTIP_SYSTEMD_ENABLE:-}" != 1 ] && command -v systemctl >/dev/null 2>&1 &&
+		systemctl --user is-active --quiet voltip-server 2>/dev/null; then
+		info "the voltip-server user service still runs the earlier version; restart it with: systemctl --user restart voltip-server"
 	fi
 	info "installed voltip-server ${version} to $root/$version, command $bindir/voltip-server"
 	info "check it with: voltip-server --check (the token: voltip-server --print-token)"

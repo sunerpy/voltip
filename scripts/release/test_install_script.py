@@ -197,7 +197,8 @@ class ServerInstall(unittest.TestCase):
         fakes = {
             **FAKES,
             "ldd": '#!/bin/sh\nfor lib in $FAKE_MISSING; do printf "\\t%s => not found\\n" "$lib"; done\n',
-            "systemctl": '#!/bin/sh\necho "$*" >>"$SYSTEMCTL_LOG"\n',
+            # `is-active` answers from FAKE_ACTIVE and is not logged; every other call is.
+            "systemctl": '#!/bin/sh\nif [ "$2" = is-active ]; then [ -n "$FAKE_ACTIVE" ]; exit; fi\necho "$*" >>"$SYSTEMCTL_LOG"\n',
         }
         for name, text in fakes.items():
             path = self.bin / name
@@ -225,7 +226,7 @@ class ServerInstall(unittest.TestCase):
     def write_sums(self, digest: str) -> None:
         (self.fixtures / "SHA256SUMS").write_text(f"{'0' * 64}  {DEB}\n{digest}  {SERVER}\n", encoding="utf-8")
 
-    def install(self, *args: str, missing: str = "") -> tuple[int, str]:
+    def install(self, *args: str, missing: str = "", active: bool = False) -> tuple[int, str]:
         done = subprocess.run(
             ["sh", str(SCRIPT), *args],
             env={
@@ -235,6 +236,7 @@ class ServerInstall(unittest.TestCase):
                 "APT_LOG": str(self.root / "apt.log"),
                 "SYSTEMCTL_LOG": str(self.systemctl),
                 "FAKE_MISSING": missing,
+                "FAKE_ACTIVE": "1" if active else "",
                 "VOLTIP_VERSION": "0.0.4",
             },
             capture_output=True,
@@ -267,8 +269,25 @@ class ServerInstall(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
         unit = (self.home / ".config/systemd/user/voltip-server.service").read_text(encoding="utf-8")
         self.assertIn(f"ExecStart={self.home}/.local/bin/voltip-server\n", unit)
-        self.assertEqual(self.systemctl.read_text(encoding="utf-8").splitlines(), ["--user daemon-reload", "--user enable --now voltip-server"])
+        self.assertEqual(
+            self.systemctl.read_text(encoding="utf-8").splitlines(),
+            ["--user daemon-reload", "--user enable voltip-server", "--user restart voltip-server"],
+        )
+        self.assertIn("voltip-server 0.0.4 is running as a systemd user service", stderr)
         self.assertIn("loginctl enable-linger", stderr)
+
+    def test_regression_an_upgrade_restarts_the_running_service_or_says_to(self) -> None:
+        # `enable --now` started nothing when the service ran: after an upgrade it kept running
+        # the earlier version while the script said it was running.
+        code, stderr = self.install("--server", "--systemd-user", "--enable", active=True)
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("--user restart voltip-server", self.systemctl.read_text(encoding="utf-8").splitlines())
+        self.assertNotIn("still runs the earlier version", stderr)
+        self.systemctl.unlink()
+        code, stderr = self.install("--server", active=True)
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("still runs the earlier version; restart it with: systemctl --user restart voltip-server", stderr)
+        self.assertFalse(self.systemctl.exists(), "nothing is restarted unless asked")
 
     def test_a_checksum_mismatch_or_an_unknown_option_installs_nothing(self) -> None:
         self.write_sums("f" * 64)
