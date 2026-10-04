@@ -390,6 +390,8 @@ pub struct FakeTranscriber {
     stream_glossaries: Mutex<Vec<Vec<String>>>,
     /// The model its transcripts report ([`FakeTranscriber::with_model`]); `None` by default.
     model: Option<String>,
+    /// Calls past this many fail as a used-up quota ([`FakeTranscriber::quota_after`]).
+    quota_after: Option<usize>,
 }
 
 impl FakeTranscriber {
@@ -418,6 +420,12 @@ impl FakeTranscriber {
         Self { model: Some(model.to_owned()), ..self }
     }
 
+    /// Answers its first `calls` calls as configured; every later one fails as a model whose quota
+    /// ran out meanwhile (docs/dictation.md §3.5).
+    pub fn quota_after(self, calls: usize) -> Self {
+        Self { quota_after: Some(calls), ..self }
+    }
+
     /// Answers call `n` with 「第n段」 plus `pad` times 「字」 and a full stop, failing the calls
     /// numbered in `fail` (1-based), each after `delay` (tokio time).
     pub fn numbered(pad: usize, fail: &[usize], delay: Duration) -> Self {
@@ -435,6 +443,7 @@ impl FakeTranscriber {
             stream: None,
             stream_glossaries: Mutex::new(Vec::new()),
             model: None,
+            quota_after: None,
         }
     }
 
@@ -483,6 +492,9 @@ impl Transcriber for FakeTranscriber {
         self.durations.lock().push(wav::pcm_data(wav).map_or(0, |pcm| pcm.len() as u64 / 2 * 1000 / u64::from(SAMPLE_RATE_HZ)));
         if wav::pcm_data(wav).is_none() {
             return Err(DictationError::Asr("not a wav file".into()));
+        }
+        if self.quota_after.is_some_and(|n| self.calls.load(Ordering::SeqCst) > n) {
+            return Err(DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Asr, detail: FAKE_QUOTA_DETAIL.into() });
         }
         match &self.reply {
             Reply::Ok(text) => Ok(Transcript { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone() }),
@@ -959,6 +971,8 @@ pub struct FakeStreaming {
     hold: Option<(usize, Arc<Gate>)>,
     /// The model its sessions report ([`FakeStreaming::with_model`]); `None` by default.
     model: Option<String>,
+    /// Its sessions' flush fails ([`FakeStreaming::failing_finish`]).
+    finish_fails: bool,
 }
 
 /// The words the default [`FakeStreaming::script`] session emits, one per 100 ms chunk.
@@ -982,12 +996,18 @@ impl FakeStreaming {
             fed: Arc::new(AtomicUsize::new(0)),
             hold: None,
             model: None,
+            finish_fails: false,
         }
     }
 
     /// Its sessions report `model` as the model their text came from (docs/dictation.md §3.5).
     pub fn with_model(self, model: &str) -> Self {
         Self { model: Some(model.to_owned()), ..self }
+    }
+
+    /// Its sessions' flush fails (after their sentences were reported).
+    pub fn failing_finish(self) -> Self {
+        Self { finish_fails: true, ..self }
     }
 
     /// Sessions wait before word `index` (from 0) until [`FakeStreaming::release_hold`]: the decode
@@ -1063,6 +1083,7 @@ impl StreamingTranscriber for FakeStreaming {
                 fed: self.fed.clone(),
                 hold: self.hold.clone(),
                 model: self.model.clone(),
+                finish_fails: self.finish_fails,
             })),
         }
     }
@@ -1087,6 +1108,7 @@ struct FakeSession {
     fed: Arc<AtomicUsize>,
     hold: Option<(usize, Arc<Gate>)>,
     model: Option<String>,
+    finish_fails: bool,
 }
 
 impl Drop for FakeSession {
@@ -1135,6 +1157,9 @@ impl StreamingSession for FakeSession {
 
     fn finish(mut self: Box<Self>) -> Result<StreamFinal, DictationError> {
         self.finishes.fetch_add(1, Ordering::SeqCst);
+        if self.finish_fails {
+            return Err(DictationError::Asr("fake flush failed".into()));
+        }
         let tail =
             if self.word.is_multiple_of(self.endpoint_every) { String::new() } else { self.words.get(self.word.wrapping_sub(1)).cloned().unwrap_or_default() };
         Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail, model: self.model.clone() })
@@ -1206,6 +1231,21 @@ pub fn ports_with(audio: Arc<FakeAudio>, transcriber: Arc<FakeTranscriber>, refi
         service_probe: None,
         segmenter: None,
     }
+}
+
+/// A client factory that hands every model its own fake, as a shell builds every model's client
+/// (docs/dictation.md §3.5): the recognition fake named after `ResolvedEngines.asr_model` (a model
+/// without one is a test bug and panics), the clean-up fake after `refine_model` (none without one).
+pub fn factory_by_model(transcribers: &[(&str, Arc<FakeTranscriber>)], refiners: &[(&str, Arc<FakeRefiner>)]) -> crate::dictation::EngineFactory {
+    let transcribers: Vec<(String, Arc<dyn Transcriber>)> = transcribers.iter().map(|(m, t)| ((*m).to_owned(), t.clone() as Arc<dyn Transcriber>)).collect();
+    let refiners: Vec<(String, Arc<dyn Refiner>)> = refiners.iter().map(|(m, r)| ((*m).to_owned(), r.clone() as Arc<dyn Refiner>)).collect();
+    Arc::new(move |engines: &crate::engines::ResolvedEngines| {
+        let transcriber = match transcribers.iter().find(|(m, _)| *m == engines.asr_model) {
+            Some((_, t)) => t.clone(),
+            None => panic!("no fake recogniser for {:?}", engines.asr_model),
+        };
+        (transcriber, refiners.iter().find(|(m, _)| *m == engines.refine_model).map(|(_, r)| r.clone()))
+    })
 }
 
 /// [`ports`] plus a streaming recogniser and a library with the streaming model installed, so
