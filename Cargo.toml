@@ -18,6 +18,8 @@ members = [
     "crates/voltip-inject",
     "crates/voltip-platform",
     "crates/voltip-hooks",
+    "crates/voltip-serve",
+    "apps/server",
     "apps/desktop/src-tauri",
     "apps/mobile/src-tauri",
 ]
@@ -53,7 +55,7 @@ aho-corasick = "=1.1.5"
 # arboard falls back to X11 by itself where the compositor lacks the protocol (GNOME).
 arboard = { version = "=3.6.1", default-features = false, features = ["wayland-data-control"] }
 async-trait = "=0.1.92"
-axum = { version = "=0.8.9", features = ["ws"] }
+axum = { version = "=0.8.9", features = ["ws", "multipart"] }
 base64 = "=0.23.1"
 bytes = "=1.12.1"
 ciborium = "=0.2.2"
@@ -165,6 +167,7 @@ voltip-asr-local = { path = "crates/voltip-asr-local" }
 voltip-refine = { path = "crates/voltip-refine" }
 voltip-cloud = { path = "crates/voltip-cloud" }
 voltip-inject = { path = "crates/voltip-inject" }
+voltip-serve = { path = "crates/voltip-serve" }
 
 # The bundled SQLite (the history, docs/dictation.md §4) is C code that is not debugged here:
 # optimised even in dev builds, so tests and `make desktop-dev` see a realistic database.

@@ -1,0 +1,11 @@
+[package]
+name = "voltip-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Voltip's headless local speech service for servers without a desktop (docs/dictation.md §23)."
+
+[dependencies]
+voltip-serve.workspace = true
