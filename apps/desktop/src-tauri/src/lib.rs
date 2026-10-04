@@ -52,7 +52,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 107] = [
+pub const COMMANDS: [&str; 108] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -96,6 +96,7 @@ pub const COMMANDS: [&str; 107] = [
     "settings_set_activation",
     "settings_set_engines",
     "provider_key_set",
+    "engines_quota_reset",
     "provider_probe",
     "provider_console_open",
     "project_link_open",
@@ -468,6 +469,13 @@ fn settings_set_engines(bridge: tauri::State<'_, Bridge>, engines: EngineSetting
 #[tauri::command]
 fn provider_key_set(bridge: tauri::State<'_, Bridge>, provider: ProviderId, kind: ServiceKind, value: Option<String>) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::ProviderKeySet { provider, kind, value })?)
+}
+
+/// 重新检查 (docs/dictation.md §3.5): forget which models of `kind` ran out of quota; the core
+/// answers with an `engines` event.
+#[tauri::command]
+fn engines_quota_reset(bridge: tauri::State<'_, Bridge>, kind: ServiceKind) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::EnginesQuotaReset { kind })?)
 }
 
 /// List a provider's models with the form's values; answered by a `provider_probe` event.
@@ -1251,6 +1259,7 @@ pub fn build_app<R: Runtime>(
             settings_set_activation,
             settings_set_engines,
             provider_key_set,
+            engines_quota_reset,
             provider_probe,
             provider_console_open,
             project_link_open,

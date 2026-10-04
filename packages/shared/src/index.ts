@@ -6,6 +6,7 @@ export * from "./refine";
 export * from "./vocabulary";
 export * from "./scenes";
 export * from "./engine-drafts";
+export * from "./fallback";
 export * from "./preset-drafts";
 export * from "./vocabulary-drafts";
 export * from "./scene-drafts";

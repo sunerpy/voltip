@@ -585,6 +585,22 @@ fn copies_of_computers_answer_empty_and_the_switch_is_refused() {
 
 /// 测试连接 on the phone (user decision 2026-10-01: it configures its own providers): the phone's
 /// HTTP probe lists a provider's models, with the key typed in the draft (docs/dictation.md §3.3).
+/// 重新检查 (docs/dictation.md §3.5) reaches the phone's core: the command is wired, the fallback
+/// settings come back resolved, an unknown service is refused at the boundary.
+#[test]
+fn engines_quota_reset_is_wired_on_the_phone() {
+    with_running_app(|_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        let engines = json!({ "asr_fallback": { "enabled": true, "models": [{ "provider": "groq", "model": "whisper-large-v3" }] } });
+        assert_eq!(invoke(webview, "settings_set_engines", json!({ "engines": engines })), Ok(Value::Null));
+        let st = wait_state(webview, |s| s.engines.asr_fallback.enabled);
+        let row = &st.engines.asr_fallback.models[0];
+        assert_eq!((row.provider, row.issue), (voltip_core::ProviderId::Groq, Some(voltip_core::EngineIssue::KeyMissing)));
+        assert_eq!(invoke(webview, "engines_quota_reset", json!({ "kind": "llm" })), Ok(Value::Null));
+        assert!(invoke(webview, "engines_quota_reset", json!({})).is_err());
+    });
+}
+
 #[test]
 fn provider_probe_lists_the_models_through_the_http_probe() {
     use wiremock::matchers::{method, path};

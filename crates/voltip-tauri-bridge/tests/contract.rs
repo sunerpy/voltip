@@ -266,9 +266,15 @@ fn engine_settings() -> EngineSettings {
         vad_trim: false,
         chinese_script: ChineseScript::Simplified,
         inject: InjectMode::Paste,
-        // docs/dictation.md §3.5: a ready fallback model for the recognition, one without its key
-        // for the clean-up.
-        asr_fallback: FallbackSettings { enabled: true, models: vec![FallbackModel { provider: ProviderId::Custom, model: "qwen3-asr-flash".into() }] },
+        // docs/dictation.md §3.5: a ready fallback model for the recognition (and the selected one,
+        // listed again: skipped), one without its key for the clean-up.
+        asr_fallback: FallbackSettings {
+            enabled: true,
+            models: vec![
+                FallbackModel { provider: ProviderId::Custom, model: "qwen3-asr-flash".into() },
+                FallbackModel { provider: ProviderId::Builtin, model: String::new() },
+            ],
+        },
         llm_fallback: FallbackSettings { enabled: true, models: vec![FallbackModel { provider: ProviderId::Openai, model: "gpt-6-luna".into() }] },
     }
 }
@@ -787,7 +793,12 @@ fn models_not_installed() -> Vec<ModelState> {
 }
 
 fn engine_status() -> EngineStatus {
-    ResolvedEngines::resolve_with_models(&engine_settings(), &user_keys(), &BUILT, &models_installed_and_downloading()).status()
+    let resolved = ResolvedEngines::resolve_with_models(&engine_settings(), &user_keys(), &BUILT, &models_installed_and_downloading());
+    // docs/dictation.md §3.5: the built-in recognition ran out of quota at the sample's time, so it
+    // is tried again a day later and the fallback model is in use.
+    let ledger = voltip_core::dictation::QuotaLedger::with_clock(|| AT_MS);
+    ledger.mark(resolved.asr_fallback.selected.as_ref().expect("the sample's fallback models run"));
+    resolved.status_with(&ledger)
 }
 
 fn devices() -> Vec<DeviceView> {
@@ -1705,6 +1716,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::SettingsSetActivation { .. } => "SettingsSetActivation",
         UiCommand::SettingsSetEngines { .. } => "SettingsSetEngines",
         UiCommand::ProviderKeySet { .. } => "ProviderKeySet",
+        UiCommand::EnginesQuotaReset { .. } => "EnginesQuotaReset",
         UiCommand::ProviderProbe { .. } => "ProviderProbe",
         UiCommand::HistoryDelete { .. } => "HistoryDelete",
         UiCommand::HistoryClear => "HistoryClear",
@@ -1798,6 +1810,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("settings_set_engines", json!({ "engines": local_engine_settings() }), "SettingsSetEngines"),
         ("provider_key_set", json!({ "provider": "groq", "kind": "llm", "value": "gsk_example_not_a_real_key" }), "ProviderKeySet"),
         ("provider_probe", json!({ "provider": "custom", "kind": "asr", "baseUrl": "http://192.168.1.20:8000/v1", "key": null }), "ProviderProbe"),
+        // 重新检查 on the fallback models (docs/dictation.md §3.5).
+        ("engines_quota_reset", json!({ "kind": "asr" }), "EnginesQuotaReset"),
         ("history_delete", json!({ "id": HISTORY_ID }), "HistoryDelete"),
         ("history_clear", Value::Null, "HistoryClear"),
         ("history_star", json!({ "id": HISTORY_ID, "starred": true }), "HistoryStar"),

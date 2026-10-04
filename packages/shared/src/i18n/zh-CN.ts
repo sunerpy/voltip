@@ -214,6 +214,7 @@ export const zhCN = {
       selection: "读取选中文本失败：{reason}",
       edit_unavailable: "编辑需要 AI 润色服务，请先配置润色密钥",
       edit_in_terminal: "终端里不支持语音编辑：终端里的选区不能被替换",
+      quota: "模型额度已用完",
     },
     /** Voice edit (docs/dictation.md §19): the phase line of an edit take. */
     edit: {
@@ -241,11 +242,17 @@ export const zhCN = {
   },
   /** Output modes (docs/dictation.md §12): name, one-line description, and the fallback note. */
   outputMode: {
-    name: { whole_take: "整段输出", streaming_final: "边说边识别", live_inject: "边说边输入" },
+    name: {
+      whole_take: "整段输出",
+      streaming_final: "边说边识别",
+      live_inject: "边说边输入",
+    },
     description: {
       whole_take: "松开快捷键后一次性完成识别、润色和插入。",
-      streaming_final: "边说边确定句子，松开后只补最后一句；润色仍在最后一次做。",
-      live_inject: "每句确定后立即输入到当前窗口；此方式不进行润色，取消后已输入的文字不会撤回。",
+      streaming_final:
+        "边说边确定句子，松开后只补最后一句；润色仍在最后一次做。",
+      live_inject:
+        "每句确定后立即输入到当前窗口；此方式不进行润色，取消后已输入的文字不会撤回。",
     },
     fallback: "实时识别模型未下载，当前按整段输出运行",
     streamed:
@@ -260,7 +267,11 @@ export const zhCN = {
   /** Activation (docs/dictation.md §13): name, description, the home chip, the footer shortcut and
    *  the one-sentence hint with the hotkey. */
   activation: {
-    name: { hold: "按住说话", toggle: "按一下开始，再按一下结束", hold_or_toggle: "按住或按一下" },
+    name: {
+      hold: "按住说话",
+      toggle: "按一下开始，再按一下结束",
+      hold_or_toggle: "按住或按一下",
+    },
     description: {
       hold: "按住快捷键录音，松开即结束并识别。",
       toggle: "按一下开始录音，再按一下结束；松开不会停止。",
@@ -271,7 +282,11 @@ export const zhCN = {
       toggle: "按一下开始 · 再按结束",
       hold_or_toggle: "按住说话 · 短按锁定",
     },
-    shortcut: { hold: "按住听写", toggle: "按一下听写", hold_or_toggle: "按住或按一下听写" },
+    shortcut: {
+      hold: "按住听写",
+      toggle: "按一下听写",
+      hold_or_toggle: "按住或按一下听写",
+    },
     hint: {
       hold: "按住 {hotkey} 说一句，松开即插入",
       toggle: "按一下 {hotkey} 开始，再按一下结束",
@@ -445,7 +460,8 @@ export const zhCN = {
       missing: "所选麦克风未连接 · 使用系统默认",
       test: "测试麦克风",
       stopTest: "停止测试",
-      idleHint: "空闲时不打开麦克风。点击「测试麦克风」并说几句话，查看强度条是否随之变化。",
+      idleHint:
+        "空闲时不打开麦克风。点击「测试麦克风」并说几句话，查看强度条是否随之变化。",
       testingHint: "说几句话，强度条应跟着跳动 · {n} 秒后自动停止",
       recordingHint: "强度来自这次听写的录音",
       devices: { one: "{n} 个输入设备", other: "{n} 个输入设备" },
@@ -580,12 +596,14 @@ export const zhCN = {
         "无法粘贴到光标处：Voltip 尚未获得「辅助功能」权限。文字已复制到剪贴板，可按 {keys} 粘贴。",
       no_tool:
         "无法粘贴到光标处：当前会话没有可用的粘贴工具（wtype、dotool 或 ydotool）。文字已复制到剪贴板，可按 {keys} 粘贴。",
-      no_display: "无法粘贴到光标处：无法连接显示服务。文字已复制到剪贴板，可按 {keys} 粘贴。",
+      no_display:
+        "无法粘贴到光标处：无法连接显示服务。文字已复制到剪贴板，可按 {keys} 粘贴。",
       secure_input:
         "无法粘贴到光标处：密码框或系统安全界面正在接收输入。文字已复制到剪贴板，可按 {keys} 粘贴。",
       elevated_target:
         "无法粘贴到光标处：目标窗口以管理员身份运行。文字已复制到剪贴板，可按 {keys} 粘贴。",
-      too_long: "全文超过 5000 字，未直接粘贴。文字已复制到剪贴板，可按 {keys} 粘贴。",
+      too_long:
+        "全文超过 5000 字，未直接粘贴。文字已复制到剪贴板，可按 {keys} 粘贴。",
       other: "无法直接粘贴，文字已复制到剪贴板，可按 {keys} 粘贴。",
       openAccessibility: "打开辅助功能设置",
       details: "技术细节",
@@ -751,7 +769,8 @@ export const zhCN = {
       body: "新建一条，或在历史记录里选中听错的片段后点「加入词典」。",
     },
     noMatch: "没有匹配的词条",
-    legend: "按列表顺序匹配 · 同一位置取最长的曾听成 · 英文等按词边界匹配，中文不需要",
+    legend:
+      "按列表顺序匹配 · 同一位置取最长的曾听成 · 英文等按词边界匹配，中文不需要",
     test: {
       title: "试一试",
       inputLabel: "识别文本",
@@ -855,7 +874,8 @@ export const zhCN = {
     },
     dryRun: {
       title: "试运行",
-      intro: "不使用麦克风：文本依次经过词典纠正和全部已启用的规则，结果不会插入任何窗口。",
+      intro:
+        "不使用麦克风：文本依次经过词典纠正和全部已启用的规则，结果不会插入任何窗口。",
       inputLabel: "识别原文",
       placeholder: "粘贴一句识别原文，或使用最近一次听写",
       run: "运行",
@@ -892,6 +912,7 @@ export const zhCN = {
       note: "识别后用大模型按所选预设处理文字；语音编辑也用这里选的服务商。",
     },
     current: "当前：{provider} · {model}",
+    currentFallback: "当前：{provider} · {model}（候补）",
     currentNone: "当前：未选择",
     inUse: "使用中",
     use: "使用",
@@ -915,7 +936,8 @@ export const zhCN = {
       openai: "OpenAI 的语音转写与对话模型。",
       groq: "Groq 托管的 Whisper 与开源大模型，响应快。",
       siliconflow: "硅基流动托管的 SenseVoice 与开源大模型。",
-      aliyun: "阿里云百炼的语音识别与千问大模型；实时识别模型在说话时就完成识别。",
+      aliyun:
+        "阿里云百炼的语音识别与千问大模型；实时识别模型在说话时就完成识别。",
       deepseek: "DeepSeek 的对话模型，只用于润色。",
       ollama: "本机 Ollama 里的模型，文本不离开这台电脑。",
       custom: "任意 OpenAI 兼容接口，例如 vLLM、LocalAI 或自建网关。",
@@ -990,9 +1012,52 @@ export const zhCN = {
       audioSent: "音频发送到{target}",
       textLocal: "文本不离开本机",
       textSent: "文本发送到{target}",
+      fallbackTargets: "；额度用完时改发给{targets}",
+    },
+    /** docs/dictation.md §3.5: the models to move on to when the selected one's quota runs out. */
+    fallback: {
+      title: "额度用完后改用其他模型",
+      description: {
+        asr: "所选模型的额度用完时，按顺序改用下面的模型识别。网络、密钥等其他错误不会切换模型。",
+        llm: "所选模型的额度用完时，按顺序改用下面的模型润色和编辑。网络、密钥等其他错误不会切换模型。",
+      },
+      toggle: "额度用完后改用其他模型",
+      on: "已开启",
+      off: "已关闭",
+      listLabel: "模型顺序",
+      selected: "当前选择",
+      state: {
+        active: "使用中",
+        ready: "可用",
+        exhausted: "额度已用完 · {time} 再试",
+        same: "与当前选择相同，不会用到",
+        duplicate: "已在列表中，不会用到",
+      },
+      notInUse: {
+        local: "当前选择的是本机模型，不会用到候补模型。",
+        notReady:
+          "当前选择不可用。候补模型只在额度用完时启用，不替代未配置好的服务商。",
+      },
+      empty: "尚未添加候补模型。",
+      provider: "服务商",
+      model: "模型",
+      add: "添加",
+      moveUp: "上移 {model}",
+      moveDown: "下移 {model}",
+      remove: "移除 {model}",
+      problem: {
+        full: "最多添加 {n} 个候补模型",
+        blank: "请选择或填写模型",
+        listed: "这个模型已在列表中",
+      },
+      recheck: "重新检查",
+      recheckDone: "已清除额度记录，之后的请求从所选模型开始",
+      aliyunNote:
+        "阿里云百炼：请在百炼控制台为这些模型打开「免费额度用完即停」。打开后，额度用完时服务会拒绝请求，Voltip 随即改用下一个模型；未打开时服务会直接按量计费。Voltip 无法读取剩余额度。",
     },
     injectLabel: "插入方式",
-    injectHelp: "粘贴会临时占用剪贴板，完成后恢复原内容；选择「仅复制到剪贴板」时需要手动粘贴。",
+    injectHelp:
+      "粘贴会临时占用剪贴板，完成后恢复原内容；选择「仅复制到剪贴板」时需要手动粘贴。",
     inject: {
       paste: "粘贴到光标处",
       clipboard: "仅复制到剪贴板",
@@ -1021,7 +1086,8 @@ export const zhCN = {
       threadsAuto: "自动（由模型决定）",
       threadsHelp: "这台电脑有 {n} 个逻辑处理器。",
     },
-    localModelsNote: "模型文件下载到本机，音频不离开本机 · 下载来源 huggingface.co / hf-mirror.com",
+    localModelsNote:
+      "模型文件下载到本机，音频不离开本机 · 下载来源 huggingface.co / hf-mirror.com",
     modelLibrary: "本地模型库",
     installedCount: "{installed} / {total} 已安装",
     livePreview: {
@@ -1087,7 +1153,8 @@ export const zhCN = {
       linkCopied: "已复制链接",
       import: "检查并导入",
       missing: "缺少文件：{files}",
-      mismatched: "校验不通过：{files}。文件不完整，或不是这个模型的文件，请重新下载。",
+      mismatched:
+        "校验不通过：{files}。文件不完整，或不是这个模型的文件，请重新下载。",
     },
     action: {
       download: "下载",
@@ -1130,10 +1197,14 @@ export const zhCN = {
       "zipformer-stream-zh-en": "实时预览",
     },
     description: {
-      "qwen3-asr-0_6b": "推荐；Qwen3-ASR 0.6B，30 语种自动识别，自带标点；690 MB",
-      "qwen3-asr-1_7b": "Qwen3-ASR 1.7B，精度最高的档位，30 语种自动识别，自带标点；1.7 GB",
-      "sense-voice-small": "SenseVoice Small，支持中英日韩粤，自带标点和数字格式规整；240 MB",
-      "paraformer-zh": "Paraformer 中文（含方言）更准，中英混读；无标点，开启 AI 润色可补；227 MB",
+      "qwen3-asr-0_6b":
+        "推荐；Qwen3-ASR 0.6B，30 语种自动识别，自带标点；690 MB",
+      "qwen3-asr-1_7b":
+        "Qwen3-ASR 1.7B，精度最高的档位，30 语种自动识别，自带标点；1.7 GB",
+      "sense-voice-small":
+        "SenseVoice Small，支持中英日韩粤，自带标点和数字格式规整；240 MB",
+      "paraformer-zh":
+        "Paraformer 中文（含方言）更准，中英混读；无标点，开启 AI 润色可补；227 MB",
       "zipformer-stream-zh-en":
         "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选的语音模型识别；169 MB",
     },
@@ -1176,7 +1247,8 @@ export const zhCN = {
       notIme: "手机不是输入法：不出现在系统键盘或输入源列表里。",
       relayBlind: "中继只转发加密数据，没有解密所需的密钥。",
       identityAlert: "设备身份发生变化时会明确提示，不会自动信任。",
-      oneMic: "同一时刻只进行一次录音：手机录音时，电脑上的快捷键录音需等待其结束。",
+      oneMic:
+        "同一时刻只进行一次录音：手机录音时，电脑上的快捷键录音需等待其结束。",
     },
     confirm: {
       forgetTitle: "忘记「{name}」？",
@@ -1202,7 +1274,11 @@ export const zhCN = {
       toggle: "与 {name} 同步记录",
       limit: "最多与 {max} 部手机同步",
     },
-    action: { sendTest: "发测试消息", testBody: "来自电脑的测试消息", forget: "忘记" },
+    action: {
+      sendTest: "发测试消息",
+      testBody: "来自电脑的测试消息",
+      forget: "忘记",
+    },
     copied: "已复制{what}",
     identityBanner: {
       title: "「{name}」出示了不同的身份密钥",
@@ -1246,13 +1322,15 @@ export const zhCN = {
       inSync: "已连接",
       localOnly: "未连接",
       body: "只有下面几项会经端到端加密通道在手机与电脑之间传输。历史记录和设置只同步到开启「同步」的手机，在手机上只能查看。一方解除配对时，如果另一方在线，也会同时删除这台设备的记录。",
-      crypto: "技术细节：Noise XX · X25519 · ChaCha20-Poly1305；中继无法读取明文",
+      crypto:
+        "技术细节：Noise XX · X25519 · ChaCha20-Poly1305；中继无法读取明文",
     },
     limitsTitle: "限制",
   },
   connectivity: {
     title: "连接自检",
-    intro: "检查本机当前的连接状况：中继、每台已配对设备的局域网地址，以及加密通道的往返时间。",
+    intro:
+      "检查本机当前的连接状况：中继、每台已配对设备的局域网地址，以及加密通道的往返时间。",
     run: "开始自检",
     running: "自检中…",
     runAgain: "重新自检",
@@ -1273,7 +1351,8 @@ export const zhCN = {
       failed: "连接失败 · {reason}",
       failedBare: "连接失败",
     },
-    blocked: "同一网段却连不上：可能是对方的防火墙拦住了这个端口，或者 Wi-Fi 开启了客户端隔离。",
+    blocked:
+      "同一网段却连不上：可能是对方的防火墙拦住了这个端口，或者 Wi-Fi 开启了客户端隔离。",
     checkedAt: "检查于 {at}",
   },
   pairing: {
@@ -1291,7 +1370,8 @@ export const zhCN = {
     copyFingerprint: "复制指纹",
     fingerprintWhat: "指纹",
     scanNote: "手机扫码后会直接获取配对信息，无需手动输入。",
-    lanNote: "同一局域网里的手机也可以在配对页的「附近的电脑」里直接点选这台电脑。",
+    lanNote:
+      "同一局域网里的手机也可以在配对页的「附近的电脑」里直接点选这台电脑。",
     alwaysOn: "常开配对",
     alwaysOnHelp:
       "开启后，这台电脑会持续等待手机配对：二维码到期前自动更新，完成一台后继续等待下一台，直到关闭。每次配对仍需在这里核对安全码并确认。",
@@ -1310,7 +1390,8 @@ export const zhCN = {
     joined: "{name} 已加入，正在建立加密连接…",
     peerDone: "{name} · {platform} 已建立加密连接。",
     peerDoneAnon: "对方设备已建立加密连接。",
-    verifyNote: "两台设备会显示同一组安全码。核对一致后，在两边都点「确认配对」；不一致就拒绝。",
+    verifyNote:
+      "两台设备会显示同一组安全码。核对一致后，在两边都点「确认配对」；不一致就拒绝。",
     waitingPeer: "等待对方确认…",
     confirm: "确认配对",
     reject: "拒绝",
@@ -1329,7 +1410,12 @@ export const zhCN = {
     relay: "中继 · {state}",
   },
   onboarding: {
-    steps: { permissions: "权限", hotkey: "快捷键", engine: "语音模型", trial: "试说" },
+    steps: {
+      permissions: "权限",
+      hotkey: "快捷键",
+      engine: "语音模型",
+      trial: "试说",
+    },
     stepsLabel: "步骤",
     eyebrow: {
       permissions: "权限 · {platform}",
@@ -1359,7 +1445,8 @@ export const zhCN = {
       polling: "每秒自动检查",
       pollStopped: "连续 {n} 次读取失败 · 已停止自动检查",
       readErrorTitle: "无法读取权限状态",
-      readError: "系统查询失败：{message}。问题解决后，点击「重新检查」恢复每秒自动检查。",
+      readError:
+        "系统查询失败：{message}。问题解决后，点击「重新检查」恢复每秒自动检查。",
       nothingToGrant: "{platform} 上没有需要授权的项目，可以直接继续。",
       request: "请求授权",
       table: "系统权限",
@@ -1378,13 +1465,15 @@ export const zhCN = {
           purpose: "必需 · 定位光标所在的输入框并插入文本；开启后立即生效",
         },
       },
-      micDenied: "麦克风未授权，无法录音；点「请求授权」没有弹窗时，到系统设置的隐私页面里打开。",
+      micDenied:
+        "麦克风未授权，无法录音；点「请求授权」没有弹窗时，到系统设置的隐私页面里打开。",
       unsignedBody:
         "授权后仍显示未允许？从早期版本升级或重新安装后，系统可能无法识别之前的授权。请先在系统设置里关闭再重新开启；仍然无效时，执行下面对应的命令后重新授权。今后的更新会保留这些授权。",
       copyAccessibilityCommand: "复制辅助功能的重置命令",
       copyMicrophoneCommand: "复制麦克风的重置命令",
       copiedCommand: "已复制修复命令",
-      axMissing: "未授予辅助功能权限，文本无法插入到光标处，只会保存在历史记录中。",
+      axMissing:
+        "未授予辅助功能权限，文本无法插入到光标处，只会保存在历史记录中。",
       unsignedTitle: "授权没有生效时",
     },
     hotkey: {
@@ -1430,7 +1519,8 @@ export const zhCN = {
     trial: {
       preflight: {
         proceed: "目标窗口 {process} · 可以插入",
-        elevated_target: "目标窗口 {process} 以管理员身份运行 · 文本只能复制到剪贴板",
+        elevated_target:
+          "目标窗口 {process} 以管理员身份运行 · 文本只能复制到剪贴板",
         secure_desktop: "当前是安全桌面（UAC / 锁屏）· 无法插入文本",
         unknown: "目标窗口未知 · 将直接尝试插入",
         unknownProcess: "未知进程",
@@ -1442,7 +1532,8 @@ export const zhCN = {
       heard: "听到了 · {refined} · 文本也已按「{via}」送到当时光标所在的位置。",
       refined: "已润色",
       notRefined: "未润色",
-      pending: "识别 {model} · {provider}{refine}；结果会显示在上面的框里，也会插入到光标处。",
+      pending:
+        "识别 {model} · {provider}{refine}；结果会显示在上面的框里，也会插入到光标处。",
       pendingRefine: " · 润色 {model}",
       pendingNoRefine: " · 不润色",
       stop: "停止",
@@ -1521,7 +1612,8 @@ export const zhCN = {
       editDonePaste: "已替换 {n} 字",
       editDoneClipboard: "改写结果已复制 {n} 字",
     },
-    heading: "悬浮胶囊 · 八态 · 一个胶囊随状态连续变形（灵动岛语法），波形为密集细条镜像",
+    heading:
+      "悬浮胶囊 · 八态 · 一个胶囊随状态连续变形（灵动岛语法），波形为密集细条镜像",
     captionEngine: "实时 · Zipformer · 本地",
     captionCommitted: "把 fetchUser 改成 async",
     captionTail: "然后加三次 retry",
@@ -1544,7 +1636,12 @@ export const zhCN = {
       copy: "复制文本",
       openHistory: "打开历史",
     },
-    failures: { title: "失败原因与去向", cause: "原因", code: "代码", dest: "去向" },
+    failures: {
+      title: "失败原因与去向",
+      cause: "原因",
+      code: "代码",
+      dest: "去向",
+    },
   },
   settings: {
     title: "设置",
@@ -1566,7 +1663,8 @@ export const zhCN = {
       lede: "设置识别结果如何插入正在使用的应用，以及单次录音的最长时长。",
       /** docs/dictation.md §22: `settings.recording.max_minutes`. */
       maxLabel: "最长录音时长",
-      maxHelp: "录音到达这个时长后自动停止。超过 2 分钟的录音在录制过程中分段识别。",
+      maxHelp:
+        "录音到达这个时长后自动停止。超过 2 分钟的录音在录制过程中分段识别。",
       minutes: { one: "{n} 分钟", other: "{n} 分钟" },
       hours: { one: "{n} 小时", other: "{n} 小时" },
     },
@@ -1577,11 +1675,14 @@ export const zhCN = {
       source: "录制内容",
       sourceHelp: "电脑声音用于转写会议、视频等电脑正在播放的内容。",
       unavailable: {
-        macos_too_old: "录制电脑声音需要 macOS 14.6 或更高版本，当前为 {version}。",
-        no_sound_server: "录制电脑声音需要 PulseAudio 或 PipeWire 音频服务，当前未检测到。",
+        macos_too_old:
+          "录制电脑声音需要 macOS 14.6 或更高版本，当前为 {version}。",
+        no_sound_server:
+          "录制电脑声音需要 PulseAudio 或 PipeWire 音频服务，当前未检测到。",
         unsupported: "此设备不支持录制电脑声音。",
       },
-      mixedHint: "混合录制时请佩戴耳机，否则扬声器的声音会被麦克风再次录入，出现回声。",
+      mixedHint:
+        "混合录制时请佩戴耳机，否则扬声器的声音会被麦克风再次录入，出现回声。",
       /** docs/dictation.md §22.6: `settings.recording.echo_cancel`, only for `mixed`. */
       mixedEchoHint: "已消除扬声器回声。外放音量很大时，仍建议佩戴耳机。",
       echoCancel: "消除扬声器回声",
@@ -1592,7 +1693,8 @@ export const zhCN = {
       outputDefault: "跟随系统默认（{name}）",
       outputDefaultNone: "跟随系统默认",
       outputDisconnected: "{name} · 未连接",
-      outputMissingNote: "所选输出设备未连接，听写会先录制系统默认输出；接回后自动恢复。",
+      outputMissingNote:
+        "所选输出设备未连接，听写会先录制系统默认输出；接回后自动恢复。",
       device: "输入设备",
       deviceHelp: "听写、测试和首页的强度条都用这个设备。",
       followDefault: "跟随系统默认（{name}）",
@@ -1609,14 +1711,16 @@ export const zhCN = {
       title: "通用",
       lede: "界面语言、设置向导与自动更新。语言和更新设置由主窗口、悬浮窗和手机端共用。",
       language: "语言",
-      languageHelp: "「跟随系统」按操作系统的语言选择：中文环境用简体中文，其他环境用英文。",
+      languageHelp:
+        "「跟随系统」按操作系统的语言选择：中文环境用简体中文，其他环境用英文。",
       locale: { system: "跟随系统", "zh-cn": "简体中文", en: "English" },
       guide: "设置向导",
       guideHelp:
         "逐步检查权限、快捷键和语音模型，再试说一句。默认设置开箱即用，首次启动不再自动打开。",
       guideRun: "打开向导",
       autoUpdate: "自动更新",
-      autoUpdateHelp: "启动时检查更新并在后台下载；关闭后仅在点击「检查更新」时联网。",
+      autoUpdateHelp:
+        "启动时检查更新并在后台下载；关闭后仅在点击「检查更新」时联网。",
       checkUpdate: "检查更新",
       checking: "检查中…",
       installNow: "立即更新",
@@ -1650,7 +1754,8 @@ export const zhCN = {
         "开启后跟随操作系统的明暗设置：系统为浅色时用「明亮」，深色时用「暗黑」。当前系统：{scheme}。",
       followingNow: "正在跟随系统",
       density: "密度",
-      densityHelp: "「紧凑」将表格行高从 32 缩小到 28，卡片内边距从 16 缩小到 12。",
+      densityHelp:
+        "「紧凑」将表格行高从 32 缩小到 28，卡片内边距从 16 缩小到 12。",
       compact: "紧凑",
       default: "默认",
       fontSize: "字号",
@@ -1658,12 +1763,14 @@ export const zhCN = {
       fontSmaller: "减小字号",
       fontLarger: "增大字号",
       overlay: "悬浮窗位置",
-      overlayHelp: "录音时悬浮窗显示在屏幕底部或顶部居中；关闭后只在主窗口与托盘显示状态。",
+      overlayHelp:
+        "录音时悬浮窗显示在屏幕底部或顶部居中；关闭后只在主窗口与托盘显示状态。",
       overlayOff: "关闭",
       overlayTop: "顶部",
       overlayBottom: "底部",
       accent: "强调色",
-      accentHelp: "开关、链接、焦点框和选中状态使用的颜色；「默认」跟随主题。只影响本机。",
+      accentHelp:
+        "开关、链接、焦点框和选中状态使用的颜色；「默认」跟随主题。只影响本机。",
       accentGroup: "强调色",
       accentName: {
         default: "默认",
@@ -1705,7 +1812,8 @@ export const zhCN = {
         holdYes: "支持",
         holdNo: "不支持，只能按一次开始、再按一次结束",
         command: "快捷键命令",
-        commandHelp: "在系统或合成器的快捷键设置里绑定它：按一次开始听写，再按一次结束。",
+        commandHelp:
+          "在系统或合成器的快捷键设置里绑定它：按一次开始听写，再按一次结束。",
         editCommand: "语音编辑",
         copyDictation: "复制听写命令",
         copyEdit: "复制语音编辑命令",
@@ -1731,7 +1839,8 @@ export const zhCN = {
       activation: "录音方式",
       activationHelp: "设置按下与松开快捷键时如何开始和结束录音。",
       holdThreshold: "短按判定阈值",
-      holdThresholdHelp: "松开时按住不足这个时长算短按，录音锁定继续；范围 50–5000 毫秒。",
+      holdThresholdHelp:
+        "松开时按住不足这个时长算短按，录音锁定继续；范围 50–5000 毫秒。",
       extraRecording: "松开后继续录音",
       extraRecordingHelp:
         "停止后继续录音的时长，用于录全最后几个字；0 为立即停止；范围 0–5000 毫秒。",
@@ -1778,7 +1887,8 @@ export const zhCN = {
           alt: "很多欧洲键盘布局的右 Alt 是 AltGr，用来输入 @、€ 等字符；用这类布局时请换一个键。",
           shift: "右 Shift 常用来输入大写字母，也可能是输入法的中英文切换键。",
           fn: "请在「系统设置 › 键盘」把「按下 🌐 键时」设为「不执行任何操作」，否则每次按下都会切换输入法或弹出表情。",
-          mouse: "这个鼠标键由 Voltip 独占，在其他应用里不再有原来的作用（例如浏览器后退）。",
+          mouse:
+            "这个鼠标键由 Voltip 独占，在其他应用里不再有原来的作用（例如浏览器后退）。",
           macPermission: "需要「辅助功能」权限，与粘贴相同。",
           x11Only: "XWayland 下只在 X11 窗口获得焦点时有效。",
         },
@@ -1793,13 +1903,16 @@ export const zhCN = {
         appName: "应用名称",
         appNameHelp: "例如「当前应用：Slack」，帮助 AI 判断术语与语气。",
         windowTitle: "窗口标题",
-        windowTitleHelp: "例如文档名或聊天频道名，可能含私人信息，默认不发送；macOS 上不读取。",
+        windowTitleHelp:
+          "例如文档名或聊天频道名，可能含私人信息，默认不发送；macOS 上不读取。",
       },
       listLabel: "场景列表",
       emptyTitle: "暂无场景",
-      emptyBody: "新建一个场景，例如在聊天软件里只加标点，或在代码编辑器里保留英文标识符。",
+      emptyBody:
+        "新建一个场景，例如在聊天软件里只加标点，或在代码编辑器里保留英文标识符。",
       /** The phone, where a scene is picked by hand (user decision 2026-10-01). */
-      emptyBodyPicked: "新建一个场景，例如「会议纪要」或「客户邮件」，然后在说话卡片上选择它。",
+      emptyBodyPicked:
+        "新建一个场景，例如「会议纪要」或「客户邮件」，然后在说话卡片上选择它。",
       add: "新建场景",
       edit: "编辑 {name}",
       remove: "删除 {name}",
@@ -1839,7 +1952,8 @@ export const zhCN = {
         lede: "哪些内容会离开这台电脑，听写历史保存多少。",
         sentTitle: "发送出去的内容",
         audio: "录音",
-        audioHelp: "识别服务商会收到整段录音；使用本地识别时，录音不离开这台电脑。",
+        audioHelp:
+          "识别服务商会收到整段录音；使用本地识别时，录音不离开这台电脑。",
         text: "识别出的文字",
         textHelp: "开启润色时，识别结果发给润色服务商修正；语音编辑也发给它。",
         context: "前台应用信息",
@@ -1889,14 +2003,16 @@ export const zhCN = {
         licenceHelp:
           "Voltip 以这个许可证开源发布；安装包里的 THIRD-PARTY-NOTICES.txt 列出它包含的第三方组件及其许可证。",
         models: "本地模型来源",
-        modelsHelp: "模型文件从这些 Hugging Face 仓库下载，各自遵循其发布页上的许可证。",
+        modelsHelp:
+          "模型文件从这些 Hugging Face 仓库下载，各自遵循其发布页上的许可证。",
         modelsNone: "目录中没有本地模型",
         update: "更新",
         updateHelp: "更新源与自动更新开关在「通用」分组。",
         source: "源代码",
         sourceHelp: "在浏览器打开项目仓库。",
         feedback: "反馈",
-        feedbackHelp: "在应用里写反馈，可以附上截图或录屏；和侧栏的「反馈」是同一个页面。",
+        feedbackHelp:
+          "在应用里写反馈，可以附上截图或录屏；和侧栏的「反馈」是同一个页面。",
         writeFeedback: "写反馈",
         open: "打开",
       },
@@ -1904,13 +2020,34 @@ export const zhCN = {
   },
   /** The AI presets (docs/dictation.md §21): the built-in ones by id, a custom one by its own name. */
   presets: {
-    proofread: { name: "校对", description: "修正错字、标点和断句，删去口头禅，其余保持原样。" },
-    prompt: { name: "提示词优化", description: "把口述的需求改写成清晰的 AI 提示词。" },
-    intent: { name: "意图整理", description: "采纳改口，去掉重复，把多个要点整理成列表。" },
-    chat: { name: "口语聊天", description: "整理成口语化的短句，句末不加句号。" },
-    translate: { name: "中英互译", description: "修正识别错误后，在中文和英文之间互译。" },
-    notes: { name: "要点纪要", description: "整理成「要点」和「待办」两组列表。" },
-    punctuation: { name: "只加标点", description: "只补标点和断句，不改动文字。" },
+    proofread: {
+      name: "校对",
+      description: "修正错字、标点和断句，删去口头禅，其余保持原样。",
+    },
+    prompt: {
+      name: "提示词优化",
+      description: "把口述的需求改写成清晰的 AI 提示词。",
+    },
+    intent: {
+      name: "意图整理",
+      description: "采纳改口，去掉重复，把多个要点整理成列表。",
+    },
+    chat: {
+      name: "口语聊天",
+      description: "整理成口语化的短句，句末不加句号。",
+    },
+    translate: {
+      name: "中英互译",
+      description: "修正识别错误后，在中文和英文之间互译。",
+    },
+    notes: {
+      name: "要点纪要",
+      description: "整理成「要点」和「待办」两组列表。",
+    },
+    punctuation: {
+      name: "只加标点",
+      description: "只补标点和断句，不改动文字。",
+    },
     formal: { name: "书面语", description: "改写成通顺、完整的书面表达。" },
     /** A custom preset the settings or a scene name that was deleted since: takes use 校对. */
     missing: "已删除的预设（按校对处理）",
@@ -1929,7 +2066,8 @@ export const zhCN = {
       current: "当前：{name}",
       builtin: "内置预设",
       custom: "自定义预设",
-      customEmpty: "暂无自定义预设。可以新建一个，或把内置预设复制为自定义预设后修改。",
+      customEmpty:
+        "暂无自定义预设。可以新建一个，或把内置预设复制为自定义预设后修改。",
       add: "新建预设",
       use: "使用",
       inUse: "使用中",
@@ -1951,7 +2089,8 @@ export const zhCN = {
       name: "名称",
       namePlaceholder: "例如：周报",
       prompt: "提示词",
-      promptHelp: "说明 AI 如何处理识别出的文字。输出格式由 Voltip 统一约定，无需写在这里。",
+      promptHelp:
+        "说明 AI 如何处理识别出的文字。输出格式由 Voltip 统一约定，无需写在这里。",
       count: "{n} / {max}",
       save: "保存",
       saved: "已保存预设 · {name}",
@@ -1959,7 +2098,8 @@ export const zhCN = {
         title: "试运行",
         help: "用当前的 AI 服务处理一段示例文字，结果不会保存。",
         sample: "示例文字",
-        sampleText: "嗯那个明天上午十点我们开个会吧然后把上周的数据带过来啊不对是上上周的",
+        sampleText:
+          "嗯那个明天上午十点我们开个会吧然后把上周的数据带过来啊不对是上上周的",
         run: "运行",
         running: "正在处理…",
         result: "结果 · {model} · {time}",
@@ -1980,13 +2120,31 @@ export const zhCN = {
   },
   /** The built-in scenes by category (docs/dictation.md §18.10). */
   builtinScenes: {
-    coding: { name: "编程开发", description: "代码编辑器与终端：保留代码、命令和英文标识符。" },
-    office: { name: "办公写作", description: "邮件与文档：书面表达，句子完整。" },
+    coding: {
+      name: "编程开发",
+      description: "代码编辑器与终端：保留代码、命令和英文标识符。",
+    },
+    office: {
+      name: "办公写作",
+      description: "邮件与文档：书面表达，句子完整。",
+    },
     chat: { name: "即时聊天", description: "聊天软件：口语化的短句。" },
-    legal: { name: "法律", description: "严格校对，法律术语、法条和案号照原样保留。" },
-    medical: { name: "医疗", description: "严格校对，药名、剂量和检查项目照原样保留。" },
-    finance: { name: "金融", description: "严格校对，金额、比例和证券代码照原样保留。" },
-    academic: { name: "学术", description: "严格校对，引用和专有名词照原样保留。" },
+    legal: {
+      name: "法律",
+      description: "严格校对，法律术语、法条和案号照原样保留。",
+    },
+    medical: {
+      name: "医疗",
+      description: "严格校对，药名、剂量和检查项目照原样保留。",
+    },
+    finance: {
+      name: "金融",
+      description: "严格校对，金额、比例和证券代码照原样保留。",
+    },
+    academic: {
+      name: "学术",
+      description: "严格校对，引用和专有名词照原样保留。",
+    },
   },
   sceneEditor: {
     titleNew: "新建场景",
@@ -2008,7 +2166,8 @@ export const zhCN = {
     recent: "最近的应用",
     recentEmpty: "历史记录中暂无应用；完成一次听写后会显示在这里。",
     keywords: "窗口标题关键词",
-    keywordsHelp: "留空表示这些应用的任何窗口；填写后标题含任一关键词才匹配，只在本机比较。",
+    keywordsHelp:
+      "留空表示这些应用的任何窗口；填写后标题含任一关键词才匹配，只在本机比较。",
     keywordPlaceholder: "输入关键词后回车",
     removeKeyword: "移除 {keyword}",
     overrides: "这一次怎么处理",
@@ -2021,7 +2180,8 @@ export const zhCN = {
     language: "语言",
     script: "中文字形",
     prompt: "给 AI 的补充要求",
-    promptHelp: "只在 AI 润色时发送，例如「这是聊天消息：口语化，句末不加句号」。",
+    promptHelp:
+      "只在 AI 润色时发送，例如「这是聊天消息：口语化，句末不加句号」。",
     promptCount: "{n} / {max}",
     streamingNotReady: "实时识别模型未下载时，本场景按整段输出运行",
     saved: "已保存场景 · {name}",
@@ -2077,7 +2237,8 @@ export const zhCN = {
     contactLabel: "联系方式（可选）",
     contactPlaceholder: "邮箱或其他方式，需要回复时用",
     attached: "随反馈附带",
-    attachedHelp: "只有这些信息、你写的内容和你添加的附件会发出；不含主机名、密钥和听写内容。",
+    attachedHelp:
+      "只有这些信息、你写的内容和你添加的附件会发出；不含主机名、密钥和听写内容。",
     attachLabel: "附件（可选）",
     attachAdd: "添加截图或录屏",
     attachAdding: "正在添加…",
@@ -2264,7 +2425,8 @@ export const zhCN = {
     history: {
       search: "搜索文本或原文",
       failed: "未完成",
-      emptyBody: "在手机上识别的结果会出现在这里；发送到电脑的录音记录在电脑上。",
+      emptyBody:
+        "在手机上识别的结果会出现在这里；发送到电脑的录音记录在电脑上。",
       starHint: "在记录详情中点「收藏」。",
     },
     entry: {
@@ -2311,16 +2473,19 @@ export const zhCN = {
       license: "许可证",
       licenseBody:
         "Voltip 是自由软件，以 GNU Affero 通用公共许可证 3.0 或更高版本发布；0.0.20 及之前的版本以 Apache License 2.0 发布。",
-      notices: "应用所含第三方软件的声明随安装包附带（THIRD-PARTY-NOTICES.txt）。",
+      notices:
+        "应用所含第三方软件的声明随安装包附带（THIRD-PARTY-NOTICES.txt）。",
       source: "源代码",
       releases: "发布版本",
       /** Updates on the phone (docs/dictation.md §20.9). */
       update: {
         title: "软件更新",
         storeTitle: "由 Google Play 更新",
-        storeBody: "这份 Voltip 由 Google Play 安装，Google Play 会自动更新它。",
+        storeBody:
+          "这份 Voltip 由 Google Play 安装，Google Play 会自动更新它。",
         openStore: "在 Google Play 中打开",
-        directBody: "这份 Voltip 不是从 Google Play 安装的。检查更新时会查询 GitHub 上的最新发布。",
+        directBody:
+          "这份 Voltip 不是从 Google Play 安装的。检查更新时会查询 GitHub 上的最新发布。",
         check: "检查更新",
         notes: "更新说明",
         download: "下载新版本",

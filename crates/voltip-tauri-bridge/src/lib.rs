@@ -230,6 +230,12 @@ pub enum UiCommand {
         /// New value or `null`.
         value: Option<String>,
     },
+    /// Forget which models of a service ran out of quota (docs/dictation.md §3.5, 重新检查): the
+    /// next request starts from the selected model again; answered by an `engines` event.
+    EnginesQuotaReset {
+        /// `asr` | `llm`.
+        kind: ServiceKind,
+    },
     /// List a provider's models with the form's values (`null` = the saved ones); answered by a
     /// `provider_probe` event.
     ProviderProbe {
@@ -473,6 +479,7 @@ impl UiCommand {
             }
             Self::SettingsSetEngines { engines } => CoreCommand::SetEngines(engines),
             Self::ProviderKeySet { provider, kind, value } => CoreCommand::SetProviderKey { provider, kind, value },
+            Self::EnginesQuotaReset { kind } => CoreCommand::ResetQuota(kind),
             Self::ProviderProbe { provider, kind, base_url, key } => CoreCommand::ProbeProvider { provider, kind, base_url, key },
             Self::HistoryDelete { id } => CoreCommand::HistoryDelete(parse_id(&id)?),
             Self::HistoryClear => CoreCommand::HistoryClear,
@@ -1047,6 +1054,7 @@ mod tests {
             (r#"{"command":"dictation_stop"}"#, "DictationStop"),
             (r#"{"command":"dictation_cancel"}"#, "DictationCancel"),
             (r#"{"command":"history_clear"}"#, "HistoryClear"),
+            (r#"{"command":"engines_quota_reset","kind":"llm"}"#, "ResetQuota(Llm)"),
             (r#"{"command":"pairing_start"}"#, "StartPairing"),
             (r#"{"command":"pairing_confirm"}"#, "ConfirmPairing"),
             (r#"{"command":"pairing_reject"}"#, "RejectPairing"),
