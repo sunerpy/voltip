@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.44](https://github.com/sunerpy/voltip/compare/v0.0.43...v0.0.44) (2026-10-05)
+
+
+### Features
+
+* **refine:** 自定义服务商的 AI 润色支持 Responses 接口 ([#112](https://github.com/sunerpy/voltip/issues/112)) ([6d542cf](https://github.com/sunerpy/voltip/commit/6d542cf270dea5c7c3f83f8e200800689e63551a))
+
 ## [0.0.43](https://github.com/sunerpy/voltip/compare/v0.0.42...v0.0.43) (2026-10-05)
 
 
