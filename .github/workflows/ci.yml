@@ -406,6 +406,9 @@ jobs:
       - name: Cache Cargo registry and target/
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          # v1 (2026-10-05): the desktop lib became an rlib (#115), and the cache restored from v0
+          # kept both kinds of dependency artefacts (792 MB → 1126 MB). A new prefix starts clean.
+          prefix-key: v1-rust
           shared-key: ci-windows-cross
           cache-on-failure: true
           # Tools come prebuilt from install-action; ~/.cargo/bin need not ride in the cache.
@@ -986,6 +989,8 @@ jobs:
       - name: Cache Cargo registry and target/
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          # v1 (2026-10-05): as for windows-cross (732 MB → 997 MB from v0's leftovers).
+          prefix-key: v1-rust
           shared-key: macos-${{ matrix.arch }}
           cache-on-failure: true
           cache-bin: false

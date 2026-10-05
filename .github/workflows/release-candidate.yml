@@ -452,11 +452,15 @@ jobs:
       - name: Tauri CLI (`cargo tauri`, pinned tarball + SHA-256)
         run: .release-tooling/.github/scripts/install-cargo-tauri.sh
 
-      # target/ is retained per leg: build scripts and C/C++ dependencies dominate Tauri rebuilds.
-      - name: Cache Cargo registry and target/
+      # The registry only, no target/ (in every leg): the legs' target/ caches took the repository
+      # past GitHub's 10 GB cache limit, which evicted ci.yml's macOS caches first; main's Intel
+      # Mac leg then built cold and ran past the source gate's 45 minutes (v0.0.44, 2026-10-05).
+      # A cold leg only makes the candidate later: the source gate waits for main's CI, not the legs.
+      - name: Cache the Cargo registry
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: release-windows-x64
+          cache-targets: false
           cache-on-failure: true
 
       # rust-cache prunes the runtime sherpa-onnx-sys's build script downloaded and copied, but
@@ -651,10 +655,12 @@ jobs:
         with:
           tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
 
-      - name: Cache Cargo registry and target/
+      # The registry only, no target/ (see the Windows leg).
+      - name: Cache the Cargo registry
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: release-linux-x64
+          cache-targets: false
           cache-on-failure: true
 
       # rust-cache prunes the runtime sherpa-onnx-sys's build script downloaded and copied, but
@@ -877,10 +883,12 @@ jobs:
       - name: Tauri CLI (`cargo tauri`, pinned zip + SHA-256)
         run: .release-tooling/.github/scripts/install-cargo-tauri.sh
 
-      - name: Cache Cargo registry and target/
+      # The registry only, no target/ (see the Windows leg).
+      - name: Cache the Cargo registry
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: release-macos-${{ matrix.arch }}
+          cache-targets: false
           cache-on-failure: true
 
       # install-action has no prebuilt cargo-about for every macOS runner and falls back to
@@ -1103,10 +1111,12 @@ jobs:
         with:
           tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
 
-      - name: Cache Cargo registry and target/
+      # The registry only, no target/ (see the Windows leg).
+      - name: Cache the Cargo registry
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: release-android-arm64
+          cache-targets: false
           cache-on-failure: true
 
       - name: pnpm (packageManager in package.json)
