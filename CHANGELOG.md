@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.43](https://github.com/sunerpy/voltip/compare/v0.0.42...v0.0.43) (2026-10-05)
+
+
+### Features
+
+* **overlay:** 插入后注明未润色的原因 ([#110](https://github.com/sunerpy/voltip/issues/110)) ([d25db09](https://github.com/sunerpy/voltip/commit/d25db090baf5bb70b2f9e6c406dfd01824b78398))
+
 ## [0.0.42](https://github.com/sunerpy/voltip/compare/v0.0.41...v0.0.42) (2026-10-05)
 
 
