@@ -144,6 +144,23 @@ describe("the phone's history", () => {
     backend.destroy();
   });
 
+  it("docs/dictation.md section 3.6: an entry whose clean-up was turned down says why it is not polished", async () => {
+    const user = userEvent.setup();
+    const busy = take(1, {
+      refined: false,
+      refine_model: undefined,
+      refine_ms: undefined,
+      text: "原文 1",
+      refine_failure: "quota",
+    });
+    const backend = new MockBackend({ role: "phone", history: [busy] });
+    renderApp({ backend, initialScreen: "history" });
+    await user.click((await screen.findAllByTestId("phone-history-row"))[0] as HTMLElement);
+    const entry = await screen.findByTestId("phone-entry");
+    expect(within(entry).getByText("未润色 · 额度已用完")).toBeInTheDocument();
+    backend.destroy();
+  });
+
   it("an entry copies, shares, stars and deletes after a confirmation", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend({ role: "phone", history: [take(1), take(2)] });

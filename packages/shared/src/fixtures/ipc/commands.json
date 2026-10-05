@@ -547,6 +547,10 @@
     "name": "serve_rotate_token"
   },
   {
+    "args": null,
+    "name": "refine_notice_close"
+  },
+  {
     "args": {
       "active": true
     },

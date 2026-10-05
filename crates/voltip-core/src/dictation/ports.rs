@@ -63,6 +63,15 @@ pub enum DictationError {
         /// The adapter's explanation: the service's code and message.
         detail: String,
     },
+    /// The service turned the request down for now: too many requests (HTTP 429, docs/dictation.md
+    /// §3.6). Not a used-up quota: a fallback model list does not move on for it.
+    #[error("请求过于频繁：{detail}")]
+    RateLimited {
+        /// The service that refused.
+        service: crate::providers::ServiceKind,
+        /// The adapter's explanation.
+        detail: String,
+    },
     /// The text could not be handed to the foreground application.
     #[error("inject: {0}")]
     Inject(String),

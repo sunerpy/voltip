@@ -37,7 +37,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`, less the
 /// desktop-only commands (the local speech service's, docs/dictation.md §23.6) that
 /// `tests/ipc.rs` lists as `DESKTOP_ONLY`.
-pub const COMMANDS: [&str; 109] = [
+pub const COMMANDS: [&str; 110] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -134,6 +134,7 @@ pub const COMMANDS: [&str; 109] = [
     "presets_builtin",
     "settings_set_context_sharing",
     "settings_set_pinned_scene",
+    "refine_notice_close",
     "recent_apps",
     "history_query",
     "history_entry",
@@ -950,6 +951,12 @@ fn presets_try(bridge: tauri::State<'_, Bridge>, id: u64, preset: Option<String>
     Ok(bridge.dispatch(UiCommand::PresetsTry { id, preset, prompt, text })?)
 }
 
+/// Close the built-in AI polish service's notice (docs/dictation.md §3.6); it stays away a day.
+#[tauri::command]
+fn refine_notice_close(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::RefineNoticeClose)?)
+}
+
 /// Query: every built-in preset's text, what 复制为自定义 starts from.
 #[tauri::command]
 fn presets_builtin() -> Vec<voltip_cloud::BuiltinPresetText> {
@@ -1192,6 +1199,7 @@ pub fn build_app<R: Runtime>(
             presets_remove,
             presets_try,
             presets_builtin,
+            refine_notice_close,
             scenes_add,
             scenes_update,
             scenes_remove,

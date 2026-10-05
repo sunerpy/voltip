@@ -524,6 +524,7 @@ impl Runtime {
             duration_ms: samples.saturating_mul(1000) / u64::from(TAKE_SAMPLE_RATE_HZ),
             asr_ms: 0,
             refine_ms: None,
+            refine_failure: None,
             outcome: Outcome::Inserted { via: if pasted { crate::dictation::Via::Paste } else { crate::dictation::Via::Clipboard } },
             starred: false,
             mode: crate::dictation::OutputMode::WholeTake,

@@ -146,6 +146,7 @@ impl Runtime {
             duration_ms: 0,
             asr_ms: 0,
             refine_ms: None,
+            refine_failure: None,
             outcome,
             starred: false,
             mode: OutputMode::WholeTake,

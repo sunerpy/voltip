@@ -33,6 +33,7 @@ import {
   Panel,
   Popover,
   Readout,
+  RefineNotice,
   Table,
   type TableColumn,
   Toggle,
@@ -41,7 +42,7 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { useRef } from "react";
-import { SPEECH_ROUTE, useRouter } from "../app/router";
+import { AI_ROUTE, SPEECH_ROUTE, useRouter } from "../app/router";
 import { serviceTarget } from "./settings/engines/helpers";
 import { MicrophoneStrength } from "../features/audio/MicrophoneStrength";
 import { SourceSwitch, useRecordingSource } from "../features/audio/RecordingSource";
@@ -432,6 +433,11 @@ export function Home() {
       </Card>
 
       <PermissionNotice />
+      <RefineNotice
+        onOpen={() => {
+          navigate(AI_ROUTE);
+        }}
+      />
 
       {/* The 2×2 dashboard: one column below `lg`, two fluid columns above; each panel keeps
           its 144 px minimum height while the width follows the window. */}

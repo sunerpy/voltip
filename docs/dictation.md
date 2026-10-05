@@ -185,6 +185,22 @@ pub struct EngineSettings {                                  // Settings.engines
 - **界面**（`packages/ui` `FallbackSection`，桌面「语音模型」「AI 模型」两页与手机两页）：开关、模型顺序（当前选择在第一行）、每行的状态（使用中 / 可用 / 额度已用完 · 何时再试 / 缺少密钥等 / 与当前选择相同 / 已在列表中）、上移下移移除、添加、「重新检查」；有百炼时说明「免费额度用完即停」。「当前：服务商 · 模型」在候补顶替时注明「（候补）」；隐私说明在候补链运行时（`in_use`：开关打开且当前选择可用）列出额度用完时会收到音频或文字的其他服务商，开关关闭或当前选择不可用时不列。两者是 `packages/ui` 的 `CurrentService` / `ServicePrivacy`：桌面在服务商区块的标题旁与列表下方，手机在服务商卡片下方。
 - **不做**：读取剩余额度、替用户改控制台开关；把本机模型作为候补；欠费（`Arrearage`）、限流、网络错误时切换；账本持久化与同步到手机；一次听写记多个识别模型。
 
+### 3.6 润色未生效的原因与内置服务繁忙提示（2026-10-05）
+
+用户需求（2026-10-05）：内置润色服务限流时，界面要有提示，并引导用户改用自己的服务商（例如免费的 Groq 密钥）。此前润色失败只是少了「· 已润色」，原因只以英文字符串存在 `refine_error` 里，界面不显示。内置润色服务用 Groq 免费层，限额按组织计算（`qwen/qwen3.8-27b` 每天 20 万 token），所有用户共用。
+
+- **原因分类**：`voltip_core::RefineFailure { rate_limited, quota, unconfigured, too_long, empty, failed }`，是 `refine_error` 的类别，`refine_error` 仍保留详细说明。`DictationError::RateLimited { service, detail }` 表示服务暂时拒绝（HTTP 429），由 `voltip_cloud::refine_error` 从 `RefineError::RateLimited` 转换而来（识别的 429 不变，仍为 `Asr`）。它不是额度用完，候补模型列表不会因它切换（§3.5）。失败码对应 `asr` / `refine`。`steps::run_refine` 按错误给出类别，`RefinePlan::Skip` 携带 `unconfigured` / `too_long`，空结果为 `empty`。
+- **记录**：`DictationPhase::Done.refine_failure`、`HistoryEntry.refine_failure`、本机服务的 `ServeOutcome.refine_failure`（`verbose_json` 的 `voltip` 对象），均可省略；旧记录没有这一项。
+- **提示**（`runtime/notice.rs`，`UiState.refine_notice: Option<RefineNotice { failure, at_ms }>`，事件 `refine_notice { notice }`）：
+  - 出现：一次听写结束为 `Done`，`refine_failure` 为 `rate_limited` 或 `quota`，且润色服务商是内置服务。同一类别再次出现时不重复发事件。
+  - 消失：之后有一次听写润色成功；润色服务商改为内置服务以外的服务商；用户关闭（命令 `refine_notice_close`，两个壳都注册）。关闭后 `REFINE_NOTICE_SNOOZE_MS = 24 h` 内不再出现，这一记录只在内存里，重启后可能再次出现。
+  - 判断由纯函数 `notice::after_take` 完成，单元测试覆盖。运行时测试用 `TestHooks.built_in` 换上一个内置服务（测试构建没有内置服务）。
+- **界面**：
+  - `packages/ui` 的 `RefineNotice` 横幅显示在桌面首页（权限提示下方）和手机的两个说话页（说话卡片下方），按钮「打开 AI 模型」进入 AI 模型页，Groq 卡片上有「获取密钥」。
+  - 状态栏在要求润色但未生效时显示「· 未润色」。
+  - 历史详情的「润色模型」显示「未润色 · 服务繁忙」等原因（`refineModelText`），桌面与手机相同。
+- **Groq 预设模型**：`llama-3.3-70b-versatile` 已只对企业账号开放（console.groq.com/docs/models，2026-10-05），列表改为 `qwen/qwen3.8-27b`、`openai/gpt-oss-120b`、`openai/gpt-oss-20b`。
+
 ## 4. 历史记录（`voltip_core::history`）
 
 ```rust

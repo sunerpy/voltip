@@ -12,6 +12,8 @@ Release packages come with a built-in service, so dictation and AI polish work b
 
 With the built-in service, the overlay shows the words while you speak (live preview), with no live transcription model to download: the sentence you are saying is sent about every second, and the preview updates about every 2 seconds. The final text is still the transcript of the whole recording after you release the shortcut. **Live preview** can be turned off under **Speech models → Recognition**.
 
+The built-in service is shared by everyone who uses it. When it has too many requests, or its quota is used up, it may skip AI polish for a while: the dictation still inserts the recognised text, the home page (on the phone, the talk screen) shows a notice, and the history's details say why the text was not polished. For AI polish you can rely on, use a provider of your own, for example with a free Groq key, set up as described under [Setting up a provider](#setting-up-a-provider). The notice goes away once a dictation is polished again or another provider is in use; once closed, it stays away for a day.
+
 ## Providers
 
 | Provider | Recognition | AI polish | Key |

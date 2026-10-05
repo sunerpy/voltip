@@ -200,6 +200,15 @@ export const en: Messages = {
     donePaste: "Inserted {n} chars · {via}",
     doneClipboard: "Copied {n} chars · {via}",
     refinedSuffix: " · polished",
+    notRefinedSuffix: " · not polished",
+    refineFailure: {
+      rate_limited: "service busy",
+      quota: "quota used up",
+      unconfigured: "no AI service set up",
+      too_long: "over 2,000 characters",
+      empty: "empty answer",
+      failed: "request failed",
+    },
     failed: "Failed · {reason}",
     notInserted: "Not inserted · {reason}",
     cancelled: "Cancelled",
@@ -240,6 +249,14 @@ export const en: Messages = {
     inserted: "Inserted · {via}",
     clipboard: "Copied to clipboard",
     failed: "Failed · {reason}",
+  },
+  refineNotice: {
+    title: {
+      rate_limited: "The built-in AI polish service is busy",
+      quota: "The built-in AI polish service has used up its quota",
+    },
+    body: "Your last dictation was not polished: the recognised text went in. Under AI models you can use a provider of your own, for example with a free Groq key.",
+    open: "Open AI models",
   },
   outputMode: {
     name: {
@@ -684,6 +701,7 @@ export const en: Messages = {
       refineModel: "Polish model",
       preset: "AI preset",
       notRefined: "Not polished",
+      notRefinedBecause: "Not polished · {reason}",
       outcome: "Result",
       duration: "Audio length",
       chars: "Characters",

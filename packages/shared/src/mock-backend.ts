@@ -32,6 +32,7 @@ import {
   type EntrySource,
   type ImportMode,
   type PreviewDraft,
+  type RefineFailure,
   type ReplacementRule,
   type RuleDraft,
   type VocabularyPreview,
@@ -1242,6 +1243,15 @@ export class MockBackend implements Backend {
     this.emit({ type: "phone_outbox", too_large: [...ids] });
   }
 
+  /** The built-in clean-up service turned a take down (`null`: the notice went; tests and the dev
+   *  pages, docs/dictation.md §3.6). */
+  simulateRefineNotice(failure: RefineFailure | null) {
+    this.emit({
+      type: "refine_notice",
+      notice: failure === null ? null : { failure, at_ms: Date.now() },
+    });
+  }
+
   /** `history_stats`: the dictations between the page's local midnights, and in total. */
   async historyStats(boundaries: readonly number[]): Promise<HistoryStats> {
     await Promise.resolve();
@@ -2220,6 +2230,10 @@ export class MockBackend implements Backend {
     serve_rotate_token: () => {
       this.requireServe();
       this.serveTokenRotations += 1;
+    },
+    refine_notice_close: () => {
+      if (this.state.refine_notice !== undefined)
+        this.emit({ type: "refine_notice", notice: null });
     },
   };
 

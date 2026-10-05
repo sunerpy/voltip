@@ -3,6 +3,7 @@
 //! The engine's pipeline and the local speech service (§23) both run them, so the same audio with
 //! the same settings gives the same text whichever of the two received it.
 
+use super::RefineFailure;
 use super::long;
 use super::ports::{DictationError, RefineHints, Refiner, Transcriber};
 use crate::engines::ChineseScript;
@@ -13,6 +14,8 @@ use crate::vocabulary::{Step, Vocabulary};
 pub const REFINE_UNCONFIGURED: &str = "润色未配置：缺少 API 密钥";
 /// Why a clean-up's text was not used: the service answered with nothing.
 pub const REFINE_EMPTY: &str = "润色返回空文本，已使用原文";
+/// Why a clean-up's text was not used, when no explanation came with the failure.
+pub const REFINE_FAILED: &str = "润色失败，已使用原文";
 
 /// What recognition gave: the text in the take's script (trimmed), the round trip and the model
 /// the client reports.
@@ -66,10 +69,11 @@ pub fn apply_rules(vocabulary: &Vocabulary, text: &str) -> Step {
 pub enum RefinePlan {
     /// Ask the refiner.
     Run,
-    /// Leave the text as it is; `error` says why when a clean-up was asked for.
+    /// Leave the text as it is; `failure` says why when a clean-up was asked for.
     Skip {
-        /// [`long::REFINE_SKIPPED`] or [`REFINE_UNCONFIGURED`]; `None` when none was asked for.
-        error: Option<String>,
+        /// [`RefineFailure::TooLong`] or [`RefineFailure::Unconfigured`]; `None` when none was
+        /// asked for.
+        failure: Option<RefineFailure>,
     },
 }
 
@@ -79,12 +83,12 @@ pub enum RefinePlan {
 pub fn plan_refine(refiner_present: bool, requested: bool, long_take: bool, text: &str) -> RefinePlan {
     let too_long = long_take && text.chars().count() > long::REFINE_MAX_CHARS;
     if too_long {
-        return RefinePlan::Skip { error: requested.then(|| long::REFINE_SKIPPED.to_owned()) };
+        return RefinePlan::Skip { failure: requested.then_some(RefineFailure::TooLong) };
     }
     if refiner_present {
         return RefinePlan::Run;
     }
-    RefinePlan::Skip { error: requested.then(|| REFINE_UNCONFIGURED.to_owned()) }
+    RefinePlan::Skip { failure: requested.then_some(RefineFailure::Unconfigured) }
 }
 
 /// What the clean-up did to a text.
@@ -98,14 +102,24 @@ pub struct CleanUp {
     pub refine_ms: Option<u64>,
     /// Why the input was kept.
     pub refine_error: Option<String>,
+    /// The kind of `refine_error` (docs/dictation.md §3.6).
+    pub refine_failure: Option<RefineFailure>,
     /// The model that answered with the text in `text`.
     pub refine_model: Option<String>,
 }
 
 impl CleanUp {
-    /// `text` kept as it is, for `error` (none: no clean-up was asked for).
-    pub fn skipped(text: &str, error: Option<String>) -> Self {
-        Self { text: text.to_owned(), refine_error: error, ..Self::default() }
+    /// `text` kept as it is, for `failure` (none: no clean-up was asked for); `refine_error` is the
+    /// sentence that says so.
+    pub fn skipped(text: &str, failure: Option<RefineFailure>) -> Self {
+        let reason = |failure: RefineFailure| match failure {
+            RefineFailure::TooLong => long::REFINE_SKIPPED,
+            RefineFailure::Empty => REFINE_EMPTY,
+            RefineFailure::Unconfigured => REFINE_UNCONFIGURED,
+            // A failed request carries the service's own explanation (`run_refine`).
+            RefineFailure::RateLimited | RefineFailure::Quota | RefineFailure::Failed => REFINE_FAILED,
+        };
+        Self { text: text.to_owned(), refine_error: failure.map(|f| reason(f).to_owned()), refine_failure: failure, ..Self::default() }
     }
 }
 
@@ -116,14 +130,21 @@ pub async fn run_refine(refiner: &dyn Refiner, text: &str, hints: &RefineHints) 
         Ok(out) => {
             let cleaned = out.text.trim();
             if cleaned.is_empty() {
-                CleanUp { text: text.to_owned(), refine_ms: Some(out.latency_ms), refine_error: Some(REFINE_EMPTY.to_owned()), ..CleanUp::default() }
+                CleanUp { refine_ms: Some(out.latency_ms), ..CleanUp::skipped(text, Some(RefineFailure::Empty)) }
             } else {
-                CleanUp { text: cleaned.to_owned(), refined: true, refine_ms: Some(out.latency_ms), refine_error: None, refine_model: Some(out.model) }
+                CleanUp {
+                    text: cleaned.to_owned(),
+                    refined: true,
+                    refine_ms: Some(out.latency_ms),
+                    refine_error: None,
+                    refine_failure: None,
+                    refine_model: Some(out.model),
+                }
             }
         }
         Err(e) => {
             tracing::warn!(error = %e, "refine failed; keeping the raw transcript");
-            CleanUp::skipped(text, Some(e.to_string()))
+            CleanUp { text: text.to_owned(), refine_error: Some(e.to_string()), refine_failure: Some(RefineFailure::of(&e)), ..CleanUp::default() }
         }
     }
 }
@@ -147,11 +168,11 @@ mod tests {
     #[test]
     fn the_plan_follows_the_request_the_refiner_and_the_length() {
         assert_eq!(plan_refine(true, true, false, "短"), RefinePlan::Run);
-        assert_eq!(plan_refine(false, true, false, "短"), RefinePlan::Skip { error: Some(REFINE_UNCONFIGURED.to_owned()) });
-        assert_eq!(plan_refine(false, false, false, "短"), RefinePlan::Skip { error: None });
+        assert_eq!(plan_refine(false, true, false, "短"), RefinePlan::Skip { failure: Some(RefineFailure::Unconfigured) });
+        assert_eq!(plan_refine(false, false, false, "短"), RefinePlan::Skip { failure: None });
         let long_text = "字".repeat(long::REFINE_MAX_CHARS + 1);
-        assert_eq!(plan_refine(true, true, true, &long_text), RefinePlan::Skip { error: Some(long::REFINE_SKIPPED.to_owned()) });
-        assert_eq!(plan_refine(false, true, true, &long_text), RefinePlan::Skip { error: Some(long::REFINE_SKIPPED.to_owned()) });
+        assert_eq!(plan_refine(true, true, true, &long_text), RefinePlan::Skip { failure: Some(RefineFailure::TooLong) });
+        assert_eq!(plan_refine(false, true, true, &long_text), RefinePlan::Skip { failure: Some(RefineFailure::TooLong) });
         assert_eq!(plan_refine(true, true, false, &long_text), RefinePlan::Run, "only a long take has the limit");
     }
 
@@ -165,5 +186,18 @@ mod tests {
         let failed = run_refine(&FakeRefiner::err("down"), "原文", &hints).await;
         assert_eq!((failed.text.as_str(), failed.refined, failed.refine_ms), ("原文", false, None));
         assert!(failed.refine_error.is_some());
+        // docs/dictation.md §3.6: each kept text says why by kind, the detail stays the sentence.
+        assert_eq!((ok.refine_failure, empty.refine_failure, failed.refine_failure), (None, Some(RefineFailure::Empty), Some(RefineFailure::Failed)));
+        let busy = run_refine(&FakeRefiner::rate_limited(), "原文", &hints).await;
+        assert_eq!((busy.text.as_str(), busy.refined, busy.refine_failure), ("原文", false, Some(RefineFailure::RateLimited)));
+        assert!(busy.refine_error.as_deref().is_some_and(|e| e.starts_with("请求过于频繁")), "{busy:?}");
+        let quota = run_refine(&FakeRefiner::quota(), "原文", &hints).await;
+        assert_eq!(quota.refine_failure, Some(RefineFailure::Quota));
+        let skipped = CleanUp::skipped("原文", Some(RefineFailure::TooLong));
+        assert_eq!((skipped.refine_error.as_deref(), skipped.refine_failure), (Some(long::REFINE_SKIPPED), Some(RefineFailure::TooLong)));
+        let unconfigured = CleanUp::skipped("原文", Some(RefineFailure::Unconfigured));
+        assert_eq!(unconfigured.refine_error.as_deref(), Some(REFINE_UNCONFIGURED));
+        assert_eq!(CleanUp::skipped("原文", Some(RefineFailure::Failed)).refine_error.as_deref(), Some(REFINE_FAILED));
+        assert_eq!(CleanUp::skipped("原文", None), CleanUp { text: "原文".into(), ..CleanUp::default() });
     }
 }

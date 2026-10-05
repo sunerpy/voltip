@@ -68,7 +68,7 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     },
     llm: {
       baseUrl: "https://api.groq.com/openai/v1",
-      models: ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"],
+      models: ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
     },
     key: "required",
     onDevice: false,

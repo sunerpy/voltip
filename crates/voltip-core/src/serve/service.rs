@@ -60,6 +60,8 @@ pub struct ServeOutcome {
     pub refined: bool,
     /// Why a requested clean-up's text is not in `text`.
     pub refine_error: Option<String>,
+    /// Its kind (docs/dictation.md §3.6).
+    pub refine_failure: Option<crate::dictation::RefineFailure>,
     /// The preset of a requested clean-up.
     pub preset: Option<PresetRef>,
     /// The scene the take ran with.
@@ -500,7 +502,7 @@ impl Service {
                 Some(refiner) => steps::run_refine(refiner.as_ref(), &corrected.text, &recipe.hints).await,
                 None => steps::CleanUp::skipped(&corrected.text, None),
             },
-            steps::RefinePlan::Skip { error } => steps::CleanUp::skipped(&corrected.text, error),
+            steps::RefinePlan::Skip { failure } => steps::CleanUp::skipped(&corrected.text, failure),
         };
         let ruled = steps::apply_rules(&recipe.vocabulary, &cleaned.text);
         let text = if ruled.text.trim().is_empty() { String::new() } else { ruled.text };
@@ -509,6 +511,7 @@ impl Service {
             raw_text,
             refined: cleaned.refined,
             refine_error: cleaned.refine_error,
+            refine_failure: cleaned.refine_failure,
             preset: recipe.preset_ref(),
             refine_model: cleaned.refine_model,
             refine_ms: cleaned.refine_ms,

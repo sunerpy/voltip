@@ -1,4 +1,4 @@
-import { Button, Card, Icon, type IconName, useT } from "@voltip/ui";
+import { Button, Card, Icon, type IconName, RefineNotice, cx, useT } from "@voltip/ui";
 import { Lede, PAGE, TOUCH } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 import { PhoneMic } from "./PhoneMic";
@@ -21,6 +21,12 @@ export function Welcome() {
     <div className={PAGE}>
       <Lede>{t("mobile.welcome.intro")}</Lede>
       <PhoneMic desktops={[]} />
+      <RefineNotice
+        onOpen={() => {
+          shell.go("ai");
+        }}
+        buttonClassName={cx(TOUCH, "mt-2")}
+      />
       <RecentResults />
       <section aria-labelledby="welcome-pairing">
         <Card className="flex flex-col gap-4">

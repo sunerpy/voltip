@@ -1,4 +1,5 @@
 import {
+  refineModelText,
   activationChip,
   activationDescription,
   activationHint,
@@ -231,6 +232,13 @@ describe("labels", () => {
     expect(dictationPhaseLabel({ ...done, via: "clipboard", refined: false }, now).text).toBe(
       "已复制 42 字 · 剪贴板",
     );
+    // docs/dictation.md §3.6: a clean-up that was asked for and not used says so.
+    expect(
+      dictationPhaseLabel({ ...done, refined: false, refine_failure: "rate_limited" }, now).text,
+    ).toBe("已插入 42 字 · 粘贴 · 未润色");
+    expect(
+      dictationPhaseLabel({ ...done, refined: false, refine_failure: "quota" }, now, "en").text,
+    ).toBe("Inserted 42 chars · Paste · not polished");
     expect(dictationPhaseLabel({ phase: "failed", message: "没有听到声音" }, now)).toEqual({
       text: "失败 · 没有听到声音",
       tone: "danger",
@@ -654,6 +662,22 @@ describe("voice edit labels (section 19)", () => {
     );
     expect(takeFailureText(edit(failed("selection", "selection: clipboard: busy")), "en")).toBe(
       "Could not read the selection: clipboard: busy",
+    );
+  });
+});
+
+describe("refineModelText", () => {
+  it("names the model, or why the clean-up's text was not used (docs/dictation.md §3.6)", () => {
+    expect(refineModelText({ refined: true, refine_model: "qwen/qwen3.8-27b" })).toBe(
+      "qwen/qwen3.8-27b",
+    );
+    expect(refineModelText({ refined: true })).toBe("—");
+    expect(refineModelText({ refined: false })).toBe("未润色");
+    expect(refineModelText({ refined: false, refine_failure: "rate_limited" })).toBe(
+      "未润色 · 服务繁忙",
+    );
+    expect(refineModelText({ refined: false, refine_failure: "too_long" }, "en")).toBe(
+      "Not polished · over 2,000 characters",
     );
   });
 });

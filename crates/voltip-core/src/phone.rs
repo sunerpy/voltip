@@ -429,6 +429,7 @@ mod tests {
             duration_ms: 900,
             asr_ms: 300,
             refine_ms: None,
+            refine_failure: None,
             refine_error: None,
             mode: OutputMode::WholeTake,
             segments: None,

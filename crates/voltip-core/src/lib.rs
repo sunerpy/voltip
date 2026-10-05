@@ -34,7 +34,7 @@ pub use channel::{is_initiator, rendezvous_channel};
 pub use dictation::activation::{Activation, ActivationConfig, ActivationMachine, Edge, EdgeSource, Intent, PhaseHint};
 pub use dictation::{
     DictationError, DictationPhase, DictationPorts, DictationStatus, FailureCode, ForegroundApp, ForegroundProbe, LiveText, MAX_EDIT_SELECTION_CHARS,
-    ProcessingStage, Segment, SelectionTiming, TakeKind,
+    ProcessingStage, RefineFailure, Segment, SelectionTiming, TakeKind,
 };
 pub use engines::{
     BuiltIn, ChineseScript, EngineIssue, EngineSettings, EngineStatus, FallbackModel, FallbackModelStatus, FallbackPlan, FallbackRow, FallbackRowState,

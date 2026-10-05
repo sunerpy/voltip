@@ -262,6 +262,7 @@
       "asr_model": "Qwen/Qwen3-ASR-1.7B",
       "duration_ms": 900,
       "asr_ms": 410,
+      "refine_failure": "rate_limited",
       "outcome": {
         "kind": "clipboard",
         "reason": "没有可粘贴的前台窗口"
@@ -424,7 +425,7 @@
         },
         "llm": {
           "model": "openai/gpt-oss-20b",
-          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"],
+          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
           "base_url": "https://api.groq.com/openai/v1",
           "default_base_url": "https://api.groq.com/openai/v1",
           "key": {
@@ -1130,5 +1131,9 @@
     "available": true,
     "phase": "running",
     "address": "http://127.0.0.1:47840/v1"
+  },
+  "refine_notice": {
+    "failure": "rate_limited",
+    "at_ms": 1727400000000
   }
 }

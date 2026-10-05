@@ -59,6 +59,7 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   serve: null,
   mirrors: null,
   phone_outbox: null,
+  refine_notice: null,
   identity: null,
   settings: null,
   relay: null,
@@ -170,6 +171,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   settings_set_serve: null,
   serve_copy_token: null,
   serve_rotate_token: null,
+  refine_notice_close: null,
 };
 const MUTATION_COMMANDS = Object.keys(MUTATION_COMMAND_SET);
 
@@ -328,6 +330,7 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
     case "update_install":
     case "serve_copy_token":
     case "serve_rotate_token":
+    case "refine_notice_close":
       if (args !== null)
         throw new Error(`${name} takes no args, fixture has ${JSON.stringify(args)}`);
       return backend.invoke(name);

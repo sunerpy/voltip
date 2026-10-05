@@ -52,7 +52,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 112] = [
+pub const COMMANDS: [&str; 113] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -152,6 +152,7 @@ pub const COMMANDS: [&str; 112] = [
     "settings_set_serve",
     "serve_copy_token",
     "serve_rotate_token",
+    "refine_notice_close",
     "recent_apps",
     "history_query",
     "history_entry",
@@ -898,6 +899,12 @@ fn serve_rotate_token(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::ServeRotateToken)?)
 }
 
+/// Close the built-in AI polish service's notice (docs/dictation.md §3.6); it stays away a day.
+#[tauri::command]
+fn refine_notice_close(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::RefineNoticeClose)?)
+}
+
 /// Query: the applications the history saw, newest first (the scene editor's picker, §18.6).
 /// Run a history read off the main thread: SQLite blocks (docs/dictation.md §4.4).
 async fn history_read<T: Send + 'static>(
@@ -1345,6 +1352,7 @@ pub fn build_app<R: Runtime>(
             settings_set_serve,
             serve_copy_token,
             serve_rotate_token,
+            refine_notice_close,
             recent_apps,
             history_query,
             history_entry,

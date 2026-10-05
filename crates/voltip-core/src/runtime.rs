@@ -45,6 +45,7 @@ use crate::{CoreError, is_initiator, rendezvous_channel};
 mod always_on;
 mod check;
 mod nearby;
+mod notice;
 mod processing;
 mod serve;
 pub use serve::SERVE_UNAVAILABLE;
@@ -176,6 +177,8 @@ pub struct TestHooks {
     pub answer_delay: Duration,
     /// A payload from a peer this returns `true` for is dropped before it is read.
     pub drop_peer_payload: Option<DropPayload>,
+    /// The built-in service the core runs with instead of the build's (`BuiltIn::from_build`).
+    pub built_in: Option<BuiltIn>,
 }
 
 impl std::fmt::Debug for TestHooks {
@@ -185,6 +188,7 @@ impl std::fmt::Debug for TestHooks {
             .field("relay_write_gate", &self.relay_write_gate.is_some())
             .field("answer_delay", &self.answer_delay)
             .field("drop_peer_payload", &self.drop_peer_payload.is_some())
+            .field("built_in", &self.built_in.is_some())
             .finish()
     }
 }
@@ -531,6 +535,8 @@ pub enum CoreCommand {
     ServeCopyToken,
     /// Replace the service's token; clients need the new one from now on.
     ServeRotateToken,
+    /// Close the built-in clean-up service's notice (docs/dictation.md §3.6); it stays away a day.
+    RefineNoticeClose,
     /// Stop the core.
     Shutdown,
 }
@@ -660,6 +666,8 @@ pub enum CoreEvent {
     Connectivity(crate::connectivity::ConnectivityStatus),
     /// The local speech service started, stopped or failed to start (docs/dictation.md §23.6).
     Serve(crate::ui::ServeStatus),
+    /// The built-in clean-up service's notice came (`Some`) or went (docs/dictation.md §3.6).
+    RefineNotice(Option<crate::ui::RefineNotice>),
     /// Non-fatal error for the UI.
     Error(String),
 }
@@ -731,7 +739,7 @@ impl AppCore {
         };
         let (scenes, scenes_notice) = SceneStore::open_on(&config.data_dir, scene_host, now_ms());
         let (presets, presets_notice) = PresetStore::open(&config.data_dir);
-        let mut built_in = BuiltIn::from_build();
+        let mut built_in = config.test_hooks.built_in.unwrap_or_else(BuiltIn::from_build);
         built_in.asr_live_preview &= config.shows_live_preview;
         let user_secrets = load_user_secrets(secrets.as_ref());
         let models = ports.models.clone();
@@ -827,6 +835,7 @@ impl AppCore {
             history_dirty: std::sync::atomic::AtomicBool::new(true),
             profile_dirty: std::sync::atomic::AtomicBool::new(true),
             serve: serve::ServeRuntime::new(serve_host),
+            notice: notice::NoticeRuntime::default(),
         };
         rt.connect_relay()?;
         let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, disc_rx, process_rx };
@@ -1092,6 +1101,8 @@ struct Runtime {
     profile_dirty: std::sync::atomic::AtomicBool,
     /// The local speech service the app hosts (docs/dictation.md §23.6).
     serve: serve::ServeRuntime,
+    /// The built-in clean-up service's notice (docs/dictation.md §3.6).
+    notice: notice::NoticeRuntime,
 }
 
 impl Runtime {
@@ -1515,6 +1526,10 @@ impl Runtime {
             CoreCommand::SetServe(serve) => self.set_serve(serve).await,
             CoreCommand::ServeCopyToken => self.copy_serve_token().await,
             CoreCommand::ServeRotateToken => self.rotate_serve_token(),
+            CoreCommand::RefineNoticeClose => {
+                self.close_refine_notice();
+                Ok(())
+            }
             CoreCommand::Shutdown => Ok(()),
         };
         if let Err(e) = result {
@@ -1534,6 +1549,7 @@ impl Runtime {
         let resolved = self.resolved_engines();
         self.dictation.configure(&resolved);
         self.emit(CoreEvent::Engines(resolved.status_with(self.dictation.quota())));
+        self.check_refine_notice_provider();
     }
 
     /// `UiState.engines`: the configuration, and which fallback models ran out of quota
@@ -2233,6 +2249,7 @@ impl Runtime {
                     }
                     let hint = if self.activation.deferred_stop.is_some() { PhaseHint::Processing } else { PhaseHint::from(&status.phase) };
                     let kind = status.kind;
+                    self.follow_refine_notice(&status.phase);
                     self.emit(CoreEvent::Dictation(status));
                     // A phone's text waits for the take to end (docs/dictation.md §20.6).
                     if hint == PhaseHint::Idle {

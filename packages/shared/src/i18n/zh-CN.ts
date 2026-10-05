@@ -200,6 +200,17 @@ export const zhCN = {
     donePaste: "已插入 {n} 字 · {via}",
     doneClipboard: "已复制 {n} 字 · {via}",
     refinedSuffix: " · 已润色",
+    /** docs/dictation.md §3.6: a clean-up was asked for and its text was not used. */
+    notRefinedSuffix: " · 未润色",
+    /** Why a clean-up's text was not used (`RefineFailure`), as the history detail names it. */
+    refineFailure: {
+      rate_limited: "服务繁忙",
+      quota: "额度已用完",
+      unconfigured: "未配置 AI 服务",
+      too_long: "全文超过 2000 字",
+      empty: "返回了空结果",
+      failed: "请求失败",
+    },
     failed: "失败 · {reason}",
     notInserted: "未插入 · {reason}",
     cancelled: "已取消",
@@ -241,6 +252,16 @@ export const zhCN = {
     failed: "失败 · {reason}",
   },
   /** Output modes (docs/dictation.md §12): name, one-line description, and the fallback note. */
+  /** docs/dictation.md §3.6: the built-in AI polish service turned a take down; the home pages
+   *  of both apps show it until a take is polished again or it is closed. */
+  refineNotice: {
+    title: {
+      rate_limited: "内置 AI 润色服务当前繁忙",
+      quota: "内置 AI 润色服务的额度已用完",
+    },
+    body: "最近一次听写未经 AI 润色，插入的是识别结果。可以在「AI 模型」中改用自己的服务商，例如申请一个免费的 Groq 密钥。",
+    open: "打开 AI 模型",
+  },
   outputMode: {
     name: {
       whole_take: "整段输出",
@@ -676,6 +697,7 @@ export const zhCN = {
       refineModel: "润色模型",
       preset: "AI 预设",
       notRefined: "未润色",
+      notRefinedBecause: "未润色 · {reason}",
       outcome: "插入结果",
       duration: "音频时长",
       chars: "字数",

@@ -11,6 +11,7 @@ import {
   sceneLabel,
   shortClockLabel,
   textChars,
+  refineModelText,
 } from "@voltip/shared";
 import {
   Button,
@@ -191,7 +192,7 @@ export function MirrorEntry() {
         </Fact>
         <Fact label={t("history.detail.refineModel")}>
           {entry.refine_model === undefined ? (
-            t("history.detail.notRefined")
+            refineModelText(entry, locale)
           ) : (
             <span className="mono">{entry.refine_model}</span>
           )}

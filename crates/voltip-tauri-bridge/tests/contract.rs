@@ -22,14 +22,14 @@ use voltip_core::paste::{CopyReason, PasteFailure, PasteOutcome};
 use voltip_core::phone::{PhoneTakeFailure, PhoneTakeState, PhoneTakeView};
 use voltip_core::phone::{PhoneTextSource, SentText, SentTextFailure, SentTextState};
 use voltip_core::presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetId, PresetRef, PresetTryOutcome};
-use voltip_core::ui::{GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, ServePhase, ServeStatus, UiEvent, UiState, UpdateStatus};
+use voltip_core::ui::{GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, RefineNotice, ServePhase, ServeStatus, UiEvent, UiState, UpdateStatus};
 use voltip_core::{
     Activation, AppRef, BuiltIn, BuiltinScene, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ContextSharing, DeviceConnection, DeviceView,
     DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, FallbackModel, FallbackSettings,
     HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryStats, HistoryStatsBucket, ImportMode, InjectMode, LiveText, LocalDevice, Locale,
-    ModelFileView, ModelInstallState, ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSettings, RelaySource,
-    RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef, Segment, ServiceKind,
-    Settings, SoloKey, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
+    ModelFileView, ModelInstallState, ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSettings, RefineFailure,
+    RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef, Segment,
+    ServiceKind, Settings, SoloKey, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
 };
 use voltip_core::{EntryOrigin, OriginKind};
 use voltip_crypto::{PublicKey, SafetyCode};
@@ -397,6 +397,7 @@ fn done_phase() -> DictationPhase {
         duration_ms: 3200,
         asr_ms: 640,
         refine_ms: Some(2400),
+        refine_failure: None,
         refine_error: None,
         mode: OutputMode::WholeTake,
         segments: None,
@@ -416,6 +417,7 @@ fn streamed_done_phase() -> DictationPhase {
         duration_ms: 3200,
         asr_ms: 45,
         refine_ms: Some(2400),
+        refine_failure: None,
         refine_error: None,
         mode: OutputMode::StreamingFinal,
         segments: Some(stream_segments()),
@@ -427,20 +429,23 @@ fn streamed_done_phase() -> DictationPhase {
 /// `mode` reads `whole_take`, `live_error` says why.
 fn fallen_back_done_phase() -> DictationPhase {
     match done_phase() {
-        DictationPhase::Done { text, raw_text, chars, via, refined, duration_ms, asr_ms, refine_ms, refine_error, .. } => DictationPhase::Done {
-            text,
-            raw_text,
-            chars,
-            via,
-            refined,
-            duration_ms,
-            asr_ms,
-            refine_ms,
-            refine_error,
-            mode: OutputMode::WholeTake,
-            segments: None,
-            live_error: Some("open: asr: 实时识别模型未下载：实时预览".into()),
-        },
+        DictationPhase::Done { text, raw_text, chars, via, refined, duration_ms, asr_ms, refine_ms, refine_error, refine_failure, .. } => {
+            DictationPhase::Done {
+                text,
+                raw_text,
+                chars,
+                via,
+                refined,
+                duration_ms,
+                asr_ms,
+                refine_ms,
+                refine_error,
+                refine_failure,
+                mode: OutputMode::WholeTake,
+                segments: None,
+                live_error: Some("open: asr: 实时识别模型未下载：实时预览".into()),
+            }
+        }
         other => other,
     }
 }
@@ -472,6 +477,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             duration_ms: 3200,
             asr_ms: 640,
             refine_ms: Some(2400),
+            refine_failure: None,
             outcome: Outcome::Inserted { via: Via::Paste },
             starred: true,
             mode: OutputMode::WholeTake,
@@ -497,6 +503,8 @@ fn history_entries() -> Vec<HistoryEntry> {
             duration_ms: 900,
             asr_ms: 410,
             refine_ms: None,
+            // docs/dictation.md §3.6: the clean-up was turned down, the raw text went in.
+            refine_failure: Some(RefineFailure::RateLimited),
             // Written before the fallback codes (2026-09-29): no `code`.
             outcome: Outcome::Clipboard { reason: "没有可粘贴的前台窗口".into(), code: None },
             starred: false,
@@ -524,6 +532,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             duration_ms: 1400,
             asr_ms: 380,
             refine_ms: Some(900),
+            refine_failure: None,
             outcome: Outcome::Inserted { via: Via::Paste },
             starred: false,
             mode: OutputMode::WholeTake,
@@ -551,6 +560,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             duration_ms: 0,
             asr_ms: 0,
             refine_ms: None,
+            refine_failure: None,
             outcome: Outcome::Inserted { via: Via::Paste },
             starred: false,
             mode: OutputMode::WholeTake,
@@ -879,6 +889,8 @@ fn full_state() -> UiState {
         phone_outbox_too_large: vec![uuid(HISTORY_ID)],
         // docs/dictation.md §23.6: the app's local speech service, running.
         serve: ServeStatus { available: true, phase: ServePhase::Running, address: Some("http://127.0.0.1:47840/v1".into()), error: None },
+        // docs/dictation.md §3.6: the built-in clean-up service turned a take down.
+        refine_notice: Some(RefineNotice { failure: RefineFailure::RateLimited, at_ms: 1_727_400_000_000 }),
     }
 }
 
@@ -929,10 +941,11 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::PasteResult { .. } => "paste_result",
         UiEvent::Mirrors { .. } => "mirrors",
         UiEvent::PhoneOutbox { .. } => "phone_outbox",
+        UiEvent::RefineNotice { .. } => "refine_notice",
     }
 }
 
-const ALL_EVENT_TAGS: [&str; 27] = [
+const ALL_EVENT_TAGS: [&str; 28] = [
     "state",
     "identity",
     "settings",
@@ -960,6 +973,7 @@ const ALL_EVENT_TAGS: [&str; 27] = [
     "paste_result",
     "mirrors",
     "phone_outbox",
+    "refine_notice",
 ];
 
 /// The computer's settings as a phone shows them (docs/dictation.md §20.8): every `Option` set.
@@ -1098,6 +1112,8 @@ fn all_events() -> Vec<UiEvent> {
         UiEvent::State(Box::default()),
         UiEvent::Mirrors { mirrors: mirror_views() },
         UiEvent::PhoneOutbox { too_large: vec![uuid(HISTORY_ID)] },
+        UiEvent::RefineNotice { notice: Some(RefineNotice { failure: RefineFailure::Quota, at_ms: 1_727_400_000_000 }) },
+        UiEvent::RefineNotice { notice: None },
         UiEvent::Identity(desktop_identity()),
         UiEvent::Settings(settings()),
         UiEvent::Relay(RelayStatus {
@@ -1321,7 +1337,8 @@ fn all_events() -> Vec<UiEvent> {
                 duration_ms: 3200,
                 asr_ms: 640,
                 refine_ms: None,
-                refine_error: Some("refine: 429 rate limited".into()),
+                refine_failure: Some(RefineFailure::RateLimited),
+                refine_error: Some("请求过于频繁：refine service rate limited (retry after 355000 ms)".into()),
                 mode: OutputMode::WholeTake,
                 segments: None,
                 live_error: None,
@@ -1579,6 +1596,7 @@ fn all_events() -> Vec<UiEvent> {
                 duration_ms: 1400,
                 asr_ms: 380,
                 refine_ms: Some(900),
+                refine_failure: None,
                 refine_error: None,
                 mode: OutputMode::WholeTake,
                 segments: None,
@@ -1769,6 +1787,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::SettingsSetServe { .. } => "SettingsSetServe",
         UiCommand::ServeCopyToken => "ServeCopyToken",
         UiCommand::ServeRotateToken => "ServeRotateToken",
+        UiCommand::RefineNoticeClose => "RefineNoticeClose",
     }
 }
 
@@ -1905,6 +1924,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("settings_set_serve", json!({ "enabled": true, "port": 47840, "preset": "prompt", "scene": SCENE_ID }), "SettingsSetServe"),
         ("serve_copy_token", Value::Null, "ServeCopyToken"),
         ("serve_rotate_token", Value::Null, "ServeRotateToken"),
+        // docs/dictation.md §3.6.
+        ("refine_notice_close", Value::Null, "RefineNoticeClose"),
     ]
 }
 

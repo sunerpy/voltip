@@ -229,6 +229,17 @@
     "too_large": ["9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"]
   },
   {
+    "type": "refine_notice",
+    "notice": {
+      "failure": "quota",
+      "at_ms": 1727400000000
+    }
+  },
+  {
+    "type": "refine_notice",
+    "notice": null
+  },
+  {
     "type": "identity",
     "device_id": "0f3f1a1e-8d4b-4c8e-9f7a-1c2d3e4f5a6b",
     "name": "Surface-Laptop",
@@ -770,7 +781,8 @@
       "refined": false,
       "duration_ms": 3200,
       "asr_ms": 640,
-      "refine_error": "refine: 429 rate limited",
+      "refine_error": "请求过于频繁：refine service rate limited (retry after 355000 ms)",
+      "refine_failure": "rate_limited",
       "mode": "whole_take"
     },
     "session": 8,
@@ -977,6 +989,7 @@
         "asr_model": "Qwen/Qwen3-ASR-1.7B",
         "duration_ms": 900,
         "asr_ms": 410,
+        "refine_failure": "rate_limited",
         "outcome": {
           "kind": "clipboard",
           "reason": "没有可粘贴的前台窗口"
@@ -1158,6 +1171,7 @@
         "asr_model": "Qwen/Qwen3-ASR-1.7B",
         "duration_ms": 900,
         "asr_ms": 410,
+        "refine_failure": "rate_limited",
         "outcome": {
           "kind": "clipboard",
           "reason": "enigo: the application does not have the permission to simulate input",
@@ -1241,6 +1255,7 @@
         "asr_model": "Qwen/Qwen3-ASR-1.7B",
         "duration_ms": 900,
         "asr_ms": 410,
+        "refine_failure": "rate_limited",
         "outcome": {
           "kind": "clipboard",
           "reason": "全文超过 5000 字，已复制到剪贴板，未直接粘贴。",
@@ -1363,7 +1378,7 @@
         },
         "llm": {
           "model": "openai/gpt-oss-20b",
-          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"],
+          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
           "base_url": "https://api.groq.com/openai/v1",
           "default_base_url": "https://api.groq.com/openai/v1",
           "key": {
@@ -1635,7 +1650,7 @@
         },
         "llm": {
           "model": "openai/gpt-oss-20b",
-          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"],
+          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
           "base_url": "https://api.groq.com/openai/v1",
           "default_base_url": "https://api.groq.com/openai/v1",
           "key": {
@@ -1907,7 +1922,7 @@
         },
         "llm": {
           "model": "openai/gpt-oss-20b",
-          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"],
+          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
           "base_url": "https://api.groq.com/openai/v1",
           "default_base_url": "https://api.groq.com/openai/v1",
           "key": {
@@ -2204,7 +2219,7 @@
         },
         "llm": {
           "model": "openai/gpt-oss-20b",
-          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"],
+          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
           "base_url": "https://api.groq.com/openai/v1",
           "default_base_url": "https://api.groq.com/openai/v1",
           "key": {
@@ -2476,7 +2491,7 @@
         },
         "llm": {
           "model": "openai/gpt-oss-20b",
-          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"],
+          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
           "base_url": "https://api.groq.com/openai/v1",
           "default_base_url": "https://api.groq.com/openai/v1",
           "key": {

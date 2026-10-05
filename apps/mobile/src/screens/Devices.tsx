@@ -16,6 +16,7 @@ import {
   IconButton,
   LampText,
   Panel,
+  RefineNotice,
   cx,
   useBackend,
   useI18n,
@@ -156,6 +157,12 @@ export function Devices() {
         </span>
       </div>
       <PhoneMic desktops={devices} />
+      <RefineNotice
+        onOpen={() => {
+          shell.go("ai");
+        }}
+        buttonClassName={cx(TOUCH, "mt-2")}
+      />
       <RecentResults />
       {devices.length === 0 ? (
         <Card padding="none">
