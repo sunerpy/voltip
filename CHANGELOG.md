@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.41](https://github.com/sunerpy/voltip/compare/v0.0.40...v0.0.41) (2026-10-05)
+
+
+### Features
+
+* **refine:** 内置润色服务繁忙时提示改用自己的服务商 ([#106](https://github.com/sunerpy/voltip/issues/106)) ([2059356](https://github.com/sunerpy/voltip/commit/2059356e48125f2456f87afe398c65c2556c6414))
+
 ## [0.0.40](https://github.com/sunerpy/voltip/compare/v0.0.39...v0.0.40) (2026-10-04)
 
 
