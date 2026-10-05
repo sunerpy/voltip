@@ -63,6 +63,47 @@ impl ProviderId {
     }
 }
 
+/// Which OpenAI interface a clean-up service speaks (docs/dictation.md §3.7); the custom provider
+/// alone lets the user choose, every other one speaks chat completions.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmApi {
+    /// `POST {base}/chat/completions` (the default).
+    #[default]
+    ChatCompletions,
+    /// `POST {base}/responses`.
+    Responses,
+}
+
+/// A Responses request's `reasoning.effort` (docs/dictation.md §3.7).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    /// `minimal`.
+    Minimal,
+    /// `low`.
+    Low,
+    /// `medium`.
+    Medium,
+    /// `high`.
+    High,
+    /// `xhigh`.
+    Xhigh,
+}
+
+impl ReasoningEffort {
+    /// The wire value (`minimal` … `xhigh`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Xhigh => "xhigh",
+        }
+    }
+}
+
 /// The two services a provider may offer.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -70,7 +111,7 @@ pub enum ServiceKind {
     /// Speech recognition (`POST {base}/audio/transcriptions`, or the endpoint's own protocol:
     /// [`AsrProtocol`]).
     Asr,
-    /// Text clean-up and voice edit (`POST {base}/chat/completions`).
+    /// Text clean-up and voice edit (`POST {base}/chat/completions`, or `/responses`: [`LlmApi`]).
     Llm,
 }
 
@@ -286,6 +327,14 @@ pub fn key_entry(provider: ProviderId, kind: ServiceKind) -> Option<&'static str
         (ProviderId::Custom, ServiceKind::Asr) => Some("provider-key.custom-asr"),
         (ProviderId::Custom, ServiceKind::Llm) => Some("provider-key.custom-llm"),
     }
+}
+
+/// The environment variable the local speech service reads a key from (docs/dictation.md §23.5):
+/// `provider-key.custom-llm` → `VOLTIP_KEY_CUSTOM_LLM`. The app itself reads keys from the
+/// keychain only.
+pub fn key_env_var(entry: &str) -> String {
+    let name = entry.strip_prefix("provider-key.").unwrap_or(entry);
+    format!("VOLTIP_KEY_{}", name.to_ascii_uppercase().replace(['-', '.'], "_"))
 }
 
 /// Every secret-store entry a user key may live in (loaded at startup).

@@ -972,6 +972,13 @@ export const zhCN = {
       modelOther: "其他模型…",
       modelCustom: "模型 ID",
       modelHelp: "从列表里选；测试连接后，服务商返回的模型也会出现在列表里。",
+      /** docs/dictation.md §3.7: the custom provider's clean-up interface. */
+      api: "接口类型",
+      apiHelp:
+        "大多数服务使用 Chat Completions；kiro-provider、OpenAI 的推理模型等也支持 Responses。",
+      reasoning: "推理强度",
+      reasoningNone: "不设置",
+      reasoningHelp: "只随 Responses 请求发送；不设置时使用服务的默认值。",
       baseUrl: "接口地址",
       baseUrlHelpVendor: "留空使用官方地址；需要代理或中转时再填写。",
       baseUrlHelpCustom:

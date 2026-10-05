@@ -95,3 +95,5 @@ voltip-desktop --transcribe-file meeting-note.wav --model sense-voice-small --js
 | 0 | 服务正常停止，或 `--check` 判定可以识别 |
 | 1 | 服务无法启动，或无法识别 |
 | 2 | 选项不能同时使用，或选项未知 |
+
+没有系统钥匙串时，服务商的密钥可以用环境变量提供，环境变量优先于钥匙串：`VOLTIP_KEY_OPENAI`、`VOLTIP_KEY_GROQ`、`VOLTIP_KEY_SILICONFLOW`、`VOLTIP_KEY_ALIYUN`、`VOLTIP_KEY_DEEPSEEK`、`VOLTIP_KEY_CUSTOM_ASR`、`VOLTIP_KEY_CUSTOM_LLM`。见[本机服务](/zh/recognition/service#在没有桌面的服务器上运行)。

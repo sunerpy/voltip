@@ -202,6 +202,22 @@ pub struct EngineSettings {                                  // Settings.engines
   - 历史详情的「润色模型」显示「未润色 · 服务繁忙」等原因（`refineModelText`），桌面与手机相同。
 - **Groq 预设模型**：`llama-3.3-70b-versatile` 已只对企业账号开放（console.groq.com/docs/models，2026-10-05），列表改为 `qwen/qwen3.8-27b`、`openai/gpt-oss-120b`、`openai/gpt-oss-20b`。
 
+### 3.7 Responses 接口（2026-10-05）
+
+用户需求（2026-10-05）：润色支持 OpenAI Responses 接口（例如本机 kiro-provider 上的 Claude Opus 5.5，`claude-opus-5-5`），并能设置推理强度。用户决定（AskUserQuestion）：只有「自定义」服务商可以选择接口类型；提供「推理强度」；voltip-server 在没有钥匙串时可以从环境变量读取密钥（见 §23.5，修改了 2026-10-04「只读系统钥匙串」的决定）。
+
+- **设置**：`ProviderSettings.llm_api: Option<LlmApi { chat_completions, responses }>`（不写时为 chat completions）和 `llm_reasoning: Option<ReasoningEffort { minimal, low, medium, high, xhigh }>`。只在 `custom` 上生效，`Runtime::set_engines` 拒绝其他服务商带这两项（`<id>.llm_api: 只有自定义服务商可以选择接口类型`），解析时也只对 custom 的润色生效。推理强度只随 Responses 生效。解析结果写在 `RemoteService.api` / `reasoning` 上，候补模型沿用各自服务商卡片的设置。
+- **请求**（`voltip_refine::RefineApi::Responses`）：
+  - `POST {base}/responses`，请求体为 `{ model, instructions: 系统提示, input: 文字, store: false, reasoning?: { effort } }`。
+  - 不带 `temperature` 和 `max_output_tokens`。2026-10-05 实测：kiro-provider 遇到 `temperature` 返回 403；对 Opus 只接受 1024–128000 的输出上限，对 GPT 模型完全不接受 `max_output_tokens`；OpenAI 的推理模型也拒收 `temperature`，并且输出上限包含推理 token，Voltip 的输出预算对它们太小。
+  - 不发 `enable_thinking`。
+- **答复**：
+  - 取 `output` 中 `type: message` 各项里 `type: output_text` 的文字，按顺序拼接，推理项忽略。
+  - `status: incomplete` 视为截断（`finish_reason: length`），语音编辑因此拒绝使用；`status: failed` 视为 `BadResponse`，并附上 `error.message`。
+  - 2xx 但没有文字时为 `EmptyAnswer`。错误码映射与 chat completions 相同，包括 429 视为 `RateLimited`、额度用完视为 `QuotaExhausted`。
+- **界面**：自定义服务商的 AI 润色卡片多两项。「接口类型」可选 Chat Completions 或 Responses；选 Responses 时出现「推理强度」，默认「不设置」。其他卡片没有这两项。草稿逻辑在 `engine-drafts.ts`（`choosesInterface`）；手机用同一张卡片。
+- **测试**：`voltip-refine` 的 `the_responses_interface_*`、`voltip-core` 的 `the_custom_clean_up_speaks_the_interface_its_card_chooses` 与 `only_the_custom_provider_chooses_its_clean_up_interface`、`voltip-cloud` 的映射断言、`engine-drafts.test.ts`、`ProviderCard.test.tsx`。
+
 ## 4. 历史记录（`voltip_core::history`）
 
 ```rust
@@ -1717,7 +1733,12 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
   | `settings.json` | 用缺省设置 | 退出码 1，`--check` 给出原因 | 保留上一次能用的内容并记警告；文件恢复后的下一个请求重新读取 |
   | 预设、场景、词典、规则 | 空列表（场景在内存里补齐内置场景） | 空列表并提示；启动参数选中的自定义条目因此找不到时退出码 1 | 同上 |
 
-- **密钥**：启动时用 `SecretStore::peek` 从系统钥匙串读一次，只读：不写入、不删除、不弹授权框（签名的 macOS 构建的 `PerBuildStore` 用 `Ask::Never`，跳过会弹窗的条目）。没有桌面会话、钥匙串不可用时，需要密钥的服务商按未配置处理，内置服务不受影响；`--check` 会说明。
+- **密钥**：
+  - **钥匙串**：启动时用 `SecretStore::peek` 从系统钥匙串读一次，只读：不写入、不删除、不弹授权框（签名的 macOS 构建的 `PerBuildStore` 用 `Ask::Never`，跳过会弹窗的条目）。
+  - **环境变量**：2026-10-05 用户决定，再从每个密钥条目对应的环境变量读取（`voltip_core::key_env_var`：`provider-key.custom-llm` → `VOLTIP_KEY_CUSTOM_LLM`），非空时优先于钥匙串（`voltip_server::with_env_keys`）。
+  - **报告**：`--check` 列出用到的变量名，启动日志只记变量名，从不打印密钥。
+  - 两种方式都没有提供密钥时，需要密钥的服务商按未配置处理，内置服务不受影响。
+  - App 本身仍只读钥匙串。用户文档建议用 systemd 的 `EnvironmentFile=` 加 0600 文件，并说明同一用户的其他进程能读到服务进程的环境变量。
 - **`--check`** 打印数据目录、地址、令牌文件、识别与润色服务（`内置服务 · <模型>`）、默认处理方式、语言与字形、上限、提示（如 Paseo 不设 `language` 时会发 `en`、所选模型是流式模型时整段上传按实时速度处理）和状态。
 - **CA 证书**（`https_unavailable`）：云端识别与润色（包括内置服务）由 rustls-platform-verifier 用系统的证书库验证，没有装 `ca-certificates` 的精简系统（如 `ubuntu:24.04` 容器镜像）上每个 HTTPS 客户端都建不起来（2026-10-04 容器验收发现：`--check` 仍说可用，每个请求都失败）。服务端启动时试建一次客户端：识别走云端时，`--check` 判定不可用（退出码 1）、服务不启动，并说明要安装 `ca-certificates`；只有润色走云端时记一条警告，识别结果按原文返回。不改信任来源：没有回退到内置的 Mozilla 根证书。
 - **退出**：收到信号后停止接收新请求，排队的请求返回 503；在途的请求最多再等 30 s，仍未结束的直接放弃（`Runtime::shutdown_timeout(1 s)` 不等无法中断的推理线程），删除 `serve/uploads/` 里剩下的临时文件，日志里记下放弃了几个请求，以退出码 0 结束。每条退出路径都先刷新 stdout 和 stderr，再调用 `exit_process`（`src/exit.rs`，与桌面壳的相同）：Linux 上是 `_exit`，不运行 C/C++ 的退出处理器，原因见 §10.6。crate 的 lint 与桌面壳相同：`unsafe_code = "deny"`，唯一的例外是这个函数。

@@ -1576,6 +1576,10 @@ impl Runtime {
                     check_http_url(url).map_err(|e| CoreError::Invalid(format!("{}.{}_url: {e}", provider.as_str(), kind_name(kind))))?;
                 }
             }
+            // docs/dictation.md §3.7: only the custom provider chooses its clean-up interface.
+            if *provider != ProviderId::Custom && (choice.llm_api.is_some() || choice.llm_reasoning.is_some()) {
+                return Err(CoreError::Invalid(format!("{}.llm_api: 只有自定义服务商可以选择接口类型", provider.as_str())));
+            }
         }
         if let Some(threads) = engines.local_threads
             && !(1..=MAX_LOCAL_THREADS).contains(&threads)

@@ -33,7 +33,7 @@ async fn real_service_previews_a_spoken_sample() {
     let samples: Vec<f32> = pcm.as_chunks::<2>().0.iter().map(|b| f32::from(i16::from_le_bytes(*b)) / f32::from(i16::MAX)).collect();
     let mut engines = ResolvedEngines::resolve(&Default::default(), &Default::default(), &voltip_core::BuiltIn::EMPTY);
     engines.asr_provider = ProviderId::Custom;
-    engines.asr_remote = Some(voltip_core::RemoteService { url, model, key: token });
+    engines.asr_remote = Some(voltip_core::RemoteService { url, model, key: token, ..voltip_core::RemoteService::default() });
     let transcriber = voltip_cloud::remote_transcriber(&engines);
     let streaming = Arc::new(RedecodeStreaming::new(transcriber, Vec::new()).flushing(true));
     let (events, fin, total) = tokio::task::spawn_blocking(move || {

@@ -37,6 +37,14 @@ description: 内置服务、Voltip 支持的云端识别与 AI 润色服务商�
 3. 填写你的密钥。「测试连接」会检查地址和密钥，并列出该服务商提供的模型。
 4. 选择「使用」切换到这个服务商。
 
+## Responses 接口
+
+自定义服务商的 AI 润色可以在「接口类型」中选择 Chat Completions（默认）或 Responses。OpenAI 的推理模型和一些网关（例如 kiro-provider）支持 Responses 接口。
+
+- 选择 Responses 后，可以设置「推理强度」（minimal、low、medium、high、xhigh）；选择「不设置」时使用服务的默认值。
+- 请求不带温度和输出长度上限：推理模型和这些网关通常不接受这两项。请求会要求服务不保存这次的内容。
+- 例如使用本机的 kiro-provider：接口地址 `http://127.0.0.1:8787/v1`，模型 `claude-opus-5-5`，接口类型 Responses，推理强度 high。推理强度越高，润色越慢；一次润色超过 30 秒时，Voltip 插入未经润色的识别结果。
+
 ## 阿里云百炼
 
 阿里云百炼的语音识别模型使用百炼自己的接口，Voltip 按模型名称选择对应的接口：

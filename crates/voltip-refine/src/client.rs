@@ -6,7 +6,7 @@ use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{MAX_ERROR_BODY_CHARS, RefineConfig, normalize_base_url};
+use crate::config::{MAX_ERROR_BODY_CHARS, RefineApi, RefineConfig, normalize_base_url};
 use crate::error::{RefineError, error_fields, is_quota_exhausted};
 use crate::presets::{BUILTIN_OUTPUT_CAP, output_token_budget};
 use crate::prompt::{PromptHints, TEMPERATURE, edit_nonce, edit_system_prompt, edit_user_message, system_prompt};
@@ -51,6 +51,58 @@ struct ChatRequest<'a> {
     messages: [Message<'a>; 2],
     #[serde(skip_serializing_if = "Option::is_none")]
     enable_thinking: Option<bool>,
+}
+
+/// A Responses request (docs/dictation.md §3.7): no temperature and no output limit.
+#[derive(Serialize)]
+struct ResponsesRequest<'a> {
+    model: &'a str,
+    instructions: &'a str,
+    input: &'a str,
+    /// The service keeps no copy of the dictation.
+    store: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<Reasoning>,
+}
+
+#[derive(Serialize)]
+struct Reasoning {
+    effort: &'static str,
+}
+
+/// The parts of a Responses answer this crate reads.
+#[derive(Deserialize)]
+struct ResponsesAnswer {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    output: Vec<OutputItem>,
+    #[serde(default)]
+    error: Option<ResponsesError>,
+}
+
+#[derive(Deserialize)]
+struct OutputItem {
+    #[serde(default, rename = "type")]
+    kind: String,
+    #[serde(default)]
+    content: Vec<OutputContent>,
+}
+
+#[derive(Deserialize)]
+struct OutputContent {
+    #[serde(default, rename = "type")]
+    kind: String,
+    #[serde(default)]
+    text: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ResponsesError {
+    #[serde(default)]
+    message: Option<String>,
 }
 
 /// Smallest `max_tokens` of an edit (docs/dictation.md §19): room for a short selection rewritten
@@ -103,7 +155,7 @@ struct ChoiceMessage {
     content: Option<String>,
 }
 
-/// One connection pool to one chat-completions service. Cheap to clone; share it.
+/// One connection pool to one clean-up service. Cheap to clone; share it.
 #[derive(Clone, Debug)]
 pub struct RefineClient {
     config: RefineConfig,
@@ -126,7 +178,10 @@ impl RefineClient {
             .user_agent(concat!("voltip-refine/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| RefineError::InvalidConfig(format!("http client: {e}")))?;
-        let endpoint = format!("{base}/chat/completions");
+        let endpoint = match config.api {
+            RefineApi::ChatCompletions => format!("{base}/chat/completions"),
+            RefineApi::Responses => format!("{base}/responses"),
+        };
         Ok(Self { config, endpoint, http })
     }
 
@@ -206,18 +261,18 @@ impl RefineClient {
         Ok(Refined { text, latency_ms: answer.latency_ms, model: answer.model, input_chars, output_chars })
     }
 
-    /// One chat completion (`system` + `user`, [`TEMPERATURE`], `max_tokens`): status mapping,
-    /// body parsing, the first choice's content and finish reason.
+    /// One request (`system` + `user`) on the configured interface: status mapping, body parsing,
+    /// the answer's text and whether it was cut off (`finish_reason: length`).
     async fn complete(&self, system: &str, user: &str, max_tokens: u32) -> Result<Completion, RefineError> {
-        let started = Instant::now();
-        let payload = ChatRequest {
-            model: &self.config.model,
-            temperature: TEMPERATURE,
-            max_tokens,
-            messages: [Message { role: "system", content: system }, Message { role: "user", content: user }],
-            enable_thinking: self.config.enable_thinking,
-        };
-        let mut request = self.http.post(&self.endpoint).json(&payload);
+        match self.config.api {
+            RefineApi::ChatCompletions => self.complete_chat(system, user, max_tokens).await,
+            RefineApi::Responses => self.complete_responses(system, user).await,
+        }
+    }
+
+    /// POST `body` with the key; the body of a 2xx answer, or the refusal sorted.
+    async fn post(&self, body: &impl Serialize) -> Result<String, RefineError> {
+        let mut request = self.http.post(&self.endpoint).json(body);
         if let Some(key) = &self.config.api_key {
             request = request.bearer_auth(key);
         }
@@ -229,13 +284,59 @@ impl RefineClient {
             let body = response.text().await.unwrap_or_default();
             return Err(completion_error(status, retry_after_ms, &body));
         }
-        let body = response.text().await.map_err(map_reqwest)?;
+        response.text().await.map_err(map_reqwest)
+    }
+
+    /// One chat completion ([`TEMPERATURE`], `max_tokens`): the first choice's content and finish
+    /// reason.
+    async fn complete_chat(&self, system: &str, user: &str, max_tokens: u32) -> Result<Completion, RefineError> {
+        let started = Instant::now();
+        let payload = ChatRequest {
+            model: &self.config.model,
+            temperature: TEMPERATURE,
+            max_tokens,
+            messages: [Message { role: "system", content: system }, Message { role: "user", content: user }],
+            enable_thinking: self.config.enable_thinking,
+        };
+        let body = self.post(&payload).await?;
         let parsed: ChatResponse =
             serde_json::from_str(&body).map_err(|e| RefineError::BadResponse(format!("{e}: {}", truncate_chars(&body, MAX_ERROR_BODY_CHARS))))?;
         let choice = parsed.choices.into_iter().next().ok_or_else(|| RefineError::BadResponse("no choices in response".into()))?;
         let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let model = parsed.model.filter(|m| !m.trim().is_empty()).unwrap_or_else(|| self.config.model.clone());
         Ok(Completion { content: choice.message.content.unwrap_or_default(), finish_reason: choice.finish_reason, latency_ms, model })
+    }
+
+    /// One Responses request (docs/dictation.md §3.7): the message items' `output_text` parts, in
+    /// order; `status: incomplete` reads as a cut-off answer, a 2xx `failed` as a bad response.
+    async fn complete_responses(&self, system: &str, user: &str) -> Result<Completion, RefineError> {
+        let started = Instant::now();
+        let payload = ResponsesRequest {
+            model: &self.config.model,
+            instructions: system,
+            input: user,
+            store: false,
+            reasoning: self.config.reasoning_effort.map(|e| Reasoning { effort: e.as_str() }),
+        };
+        let body = self.post(&payload).await?;
+        let parsed: ResponsesAnswer =
+            serde_json::from_str(&body).map_err(|e| RefineError::BadResponse(format!("{e}: {}", truncate_chars(&body, MAX_ERROR_BODY_CHARS))))?;
+        if parsed.status.as_deref() == Some("failed") {
+            let message = parsed.error.and_then(|e| e.message).unwrap_or_else(|| "the response failed".into());
+            return Err(RefineError::BadResponse(truncate_chars(&message, MAX_ERROR_BODY_CHARS)));
+        }
+        let content: String = parsed
+            .output
+            .iter()
+            .filter(|item| item.kind == "message")
+            .flat_map(|item| item.content.iter())
+            .filter(|part| part.kind == "output_text")
+            .filter_map(|part| part.text.as_deref())
+            .collect();
+        let finish_reason = (parsed.status.as_deref() == Some("incomplete")).then(|| "length".to_owned());
+        let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let model = parsed.model.filter(|m| !m.trim().is_empty()).unwrap_or_else(|| self.config.model.clone());
+        Ok(Completion { content, finish_reason, latency_ms, model })
     }
 }
 
@@ -439,7 +540,7 @@ mod tests {
         assert_eq!(log_path("https://host.example.test"), "/");
         assert_eq!(log_path("/v1/models"), "/v1/models");
     }
-    use crate::{Preset, PromptContext, USER_OUTPUT_CAP};
+    use crate::{Preset, PromptContext, ReasoningEffort, USER_OUTPUT_CAP};
 
     /// The plain prompt: 校对 and nothing after it.
     fn base() -> String {
@@ -461,6 +562,105 @@ mod tests {
 
     async fn mount(server: &MockServer, response: ResponseTemplate) {
         Mock::given(method("POST")).and(path("/v1/chat/completions")).respond_with(response).mount(server).await;
+    }
+
+    /// A Responses answer: a reasoning item, then the message whose `output_text` parts are the text.
+    fn responses_answer(status: &str, text: &str) -> ResponseTemplate {
+        ResponseTemplate::new(200).set_body_json(json!({
+            "id": "resp_1",
+            "object": "response",
+            "status": status,
+            "model": "claude-opus-5-5",
+            "output": [
+                { "type": "reasoning", "id": "rs_1", "summary": [] },
+                { "type": "message", "role": "assistant", "content": [
+                    { "type": "output_text", "text": text, "annotations": [] },
+                    { "type": "refusal", "refusal": "ignored" }
+                ] }
+            ],
+            "incomplete_details": if status == "incomplete" { json!({ "reason": "max_output_tokens" }) } else { Value::Null },
+            "usage": { "input_tokens": 10, "output_tokens": 5 }
+        }))
+    }
+
+    fn responses_client(server: &MockServer, effort: Option<ReasoningEffort>) -> RefineClient {
+        let config = RefineConfig::new(server.uri(), "claude-opus-5-5")
+            .with_api_key(Some("sk-kiro".into()))
+            .with_api(RefineApi::Responses)
+            .with_reasoning_effort(effort)
+            .with_enable_thinking(Some(false));
+        RefineClient::new(config).unwrap()
+    }
+
+    /// docs/dictation.md §3.7: the Responses interface gets `instructions` + `input` and
+    /// `store: false`, never a temperature or an output limit (a gateway refuses both), and the
+    /// reasoning effort only when one is set; the answer is the message's `output_text`.
+    #[tokio::test]
+    async fn the_responses_interface_sends_instructions_and_input_and_reads_output_text() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).and(path("/v1/responses")).respond_with(responses_answer("completed", "你好，今天天气不错。")).mount(&server).await;
+        let client = responses_client(&server, Some(ReasoningEffort::High));
+        assert_eq!(client.endpoint(), format!("{}/v1/responses", server.uri()));
+        let refined = client.refine("你好今天天气不错", Some("zh")).await.unwrap();
+        assert_eq!((refined.text.as_str(), refined.model.as_str()), ("你好，今天天气不错。", "claude-opus-5-5"));
+        let request = &server.received_requests().await.unwrap()[0];
+        assert_eq!(request.headers.get("authorization").unwrap(), "Bearer sk-kiro");
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        assert_eq!(body["model"], "claude-opus-5-5");
+        assert!(body["instructions"].as_str().unwrap().starts_with(&base()), "{body}");
+        assert_eq!(body["input"], "你好今天天气不错");
+        assert_eq!(body["store"], false);
+        assert_eq!(body["reasoning"], json!({ "effort": "high" }));
+        for absent in ["temperature", "max_output_tokens", "max_tokens", "messages", "enable_thinking"] {
+            assert!(body.get(absent).is_none(), "{absent} is not sent: {body}");
+        }
+        // Without an effort, no `reasoning` at all.
+        let quiet = responses_client(&server, None);
+        quiet.refine("再来一次", None).await.unwrap();
+        let body: Value = serde_json::from_slice(&server.received_requests().await.unwrap()[1].body).unwrap();
+        assert!(body.get("reasoning").is_none(), "{body}");
+        for (effort, wire) in [
+            (ReasoningEffort::Minimal, "minimal"),
+            (ReasoningEffort::Low, "low"),
+            (ReasoningEffort::Medium, "medium"),
+            (ReasoningEffort::High, "high"),
+            (ReasoningEffort::Xhigh, "xhigh"),
+        ] {
+            assert_eq!(effort.as_str(), wire);
+        }
+    }
+
+    /// An incomplete answer is cut off: a voice edit refuses it; a refusal maps as the chat
+    /// interface's does; a 2xx body without a message is a bad response, not an empty text.
+    #[tokio::test]
+    async fn the_responses_interface_maps_cut_off_answers_and_refusals() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).and(path("/v1/responses")).respond_with(responses_answer("incomplete", "改写到一半")).up_to_n_times(1).mount(&server).await;
+        let client = responses_client(&server, None);
+        let err = client.edit("原来的文字", "改成正式一点", &PromptHints::default()).await.unwrap_err();
+        assert_eq!(err, RefineError::Truncated);
+        server.reset().await;
+        Mock::given(method("POST")).and(path("/v1/responses")).respond_with(ResponseTemplate::new(429).insert_header("retry-after", "7")).mount(&server).await;
+        assert_eq!(client.refine("x", None).await.unwrap_err(), RefineError::RateLimited { retry_after_ms: Some(7000) });
+        server.reset().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/responses"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "status": "completed", "output": [{ "type": "reasoning" }] })))
+            .mount(&server)
+            .await;
+        assert_eq!(client.refine("x", None).await.unwrap_err(), RefineError::EmptyAnswer, "no message, nothing to use");
+        server.reset().await;
+        Mock::given(method("POST")).and(path("/v1/responses")).respond_with(ResponseTemplate::new(200).set_body_string("not json")).mount(&server).await;
+        assert!(matches!(client.refine("x", None).await.unwrap_err(), RefineError::BadResponse(_)));
+        server.reset().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/responses"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "status": "failed", "error": { "code": "server_error", "message": "boom" }, "output": [] })),
+            )
+            .mount(&server)
+            .await;
+        assert!(matches!(client.refine("x", None).await.unwrap_err(), RefineError::BadResponse(m) if m.contains("boom")));
     }
 
     #[tokio::test]

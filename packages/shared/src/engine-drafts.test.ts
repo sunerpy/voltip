@@ -1,4 +1,5 @@
 import {
+  choosesInterface,
   applyProviderDraft,
   checkProviderDraft,
   languageOptions,
@@ -10,6 +11,7 @@ import {
   shortModel,
   withProvider,
 } from "./engine-drafts";
+import { defaultEngineSettings } from "./schema";
 import { createTranslator, zhT } from "./i18n";
 import type { EngineSettings, EngineStatus, ProviderStatus, ServiceStatus } from "./schema";
 
@@ -85,6 +87,52 @@ describe("engine drafts (provider cards, desktop and phone)", () => {
     expect(cleared.providers).toBeUndefined();
     const kept = applyProviderDraft(SETTINGS, "openai", "asr", { model: "", baseUrl: "" });
     expect(kept.providers).toEqual(SETTINGS.providers);
+  });
+
+  it("docs/dictation.md §3.7: the custom clean-up card keeps its interface and the Responses effort", () => {
+    const base = defaultEngineSettings();
+    expect(providerDraft(base, "custom", "llm")).toEqual({
+      model: "",
+      baseUrl: "",
+      key: "",
+      api: "chat_completions",
+    });
+    expect(providerDraft(base, "custom", "asr").api).toBeUndefined();
+    expect(providerDraft(base, "openai", "llm").api).toBeUndefined();
+    const responses = applyProviderDraft(base, "custom", "llm", {
+      model: "claude-opus-5-5",
+      baseUrl: "http://127.0.0.1:8787/v1",
+      api: "responses",
+      reasoning: "high",
+    });
+    expect(responses.providers?.custom).toEqual({
+      llm_model: "claude-opus-5-5",
+      llm_url: "http://127.0.0.1:8787/v1",
+      llm_api: "responses",
+      llm_reasoning: "high",
+    });
+    expect(providerDraft(responses, "custom", "llm")).toMatchObject({
+      api: "responses",
+      reasoning: "high",
+    });
+    // Chat completions is not written, and takes no effort with it.
+    const chat = applyProviderDraft(responses, "custom", "llm", {
+      model: "m",
+      baseUrl: "http://127.0.0.1:8787/v1",
+      api: "chat_completions",
+      reasoning: "high",
+    });
+    expect(chat.providers?.custom).toEqual({ llm_model: "m", llm_url: "http://127.0.0.1:8787/v1" });
+    // Another card never writes the fields.
+    const vendor = applyProviderDraft(base, "openai", "llm", {
+      model: "gpt-5",
+      baseUrl: "",
+      api: "responses",
+      reasoning: "low",
+    });
+    expect(vendor.providers?.openai).toEqual({ llm_model: "gpt-5" });
+    expect(choosesInterface("custom", "llm")).toBe(true);
+    expect(choosesInterface("custom", "asr")).toBe(false);
   });
 
   it("switches the provider of one service only", () => {

@@ -31,6 +31,7 @@ fn resolved(asr_url: Option<&str>, refine_url: Option<&str>, asr_token: Option<&
         asr_model: Some("whisper".into()),
         llm_url: refine_url.map(str::to_owned),
         llm_model: Some("m".into()),
+        ..ProviderSettings::default()
     };
     let settings = EngineSettings {
         asr_provider: ProviderId::Custom,

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::dictation::fallback::{QuotaKey, QuotaLedger, open_order};
 use crate::models::{DEFAULT_LOCAL_MODEL_ID, ModelState};
 use crate::presets::PresetId;
-pub use crate::providers::{AsrProtocol, KeyPolicy, ProviderId, ServiceKind};
+pub use crate::providers::{AsrProtocol, KeyPolicy, LlmApi, ProviderId, ReasoningEffort, ServiceKind};
 use crate::providers::{PROVIDERS, key_entry};
 
 /// The built-in recognition model's name when the build names none (`VOLTIP_ASR_MODEL`).
@@ -134,6 +134,13 @@ pub struct ProviderSettings {
     /// Clean-up base URL (required for the custom provider).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_url: Option<String>,
+    /// The custom provider's clean-up interface (docs/dictation.md §3.7); `None` = chat
+    /// completions. Other providers do not take one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_api: Option<LlmApi>,
+    /// The custom provider's reasoning effort for the Responses interface; `None` sends none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_reasoning: Option<ReasoningEffort>,
 }
 
 impl ProviderSettings {
@@ -359,7 +366,7 @@ impl BuiltIn {
             ServiceKind::Asr => (self.asr_url, self.asr_token, self.asr_model),
             ServiceKind::Llm => (self.refine_url, self.refine_api_key, self.refine_model),
         };
-        url.map(|url| RemoteService { url: url.to_owned(), model: model.to_owned(), key: key.map(str::to_owned) })
+        url.map(|url| RemoteService { url: url.to_owned(), model: model.to_owned(), key: key.map(str::to_owned), ..RemoteService::default() })
     }
 }
 
@@ -452,20 +459,30 @@ pub struct LocalModelRef {
 
 /// A remote service in effect: where requests go, the model, the key. Holds the real key;
 /// `Debug` shows its presence only.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct RemoteService {
-    /// Base URL (the client appends `/audio/transcriptions` or `/chat/completions`, or derives the
-    /// endpoint of the model's protocol: [`AsrProtocol`]).
+    /// Base URL (the client appends `/audio/transcriptions`, `/chat/completions` or `/responses`,
+    /// or derives the endpoint of the model's protocol: [`AsrProtocol`]).
     pub url: String,
     /// Model id.
     pub model: String,
     /// Bearer key.
     pub key: Option<String>,
+    /// A clean-up service's interface (docs/dictation.md §3.7); chat completions for recognition
+    /// and for every provider but the custom one.
+    pub api: LlmApi,
+    /// The Responses interface's reasoning effort, when set.
+    pub reasoning: Option<ReasoningEffort>,
 }
 
 impl std::fmt::Debug for RemoteService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RemoteService").field("model", &self.model).field("key", &self.key.is_some()).finish_non_exhaustive()
+        f.debug_struct("RemoteService")
+            .field("model", &self.model)
+            .field("key", &self.key.is_some())
+            .field("api", &self.api)
+            .field("reasoning", &self.reasoning)
+            .finish_non_exhaustive()
     }
 }
 
@@ -953,7 +970,14 @@ fn service_target_for(
         return Err((EngineIssue::KeyMissing, shown));
     }
     let Some(model) = model else { return Err((EngineIssue::ModelMissing, shown)) };
-    Ok(RemoteService { url, model, key })
+    // docs/dictation.md §3.7: the custom provider's clean-up may speak the Responses interface;
+    // the effort only goes with it.
+    let api = match (provider, kind) {
+        (ProviderId::Custom, ServiceKind::Llm) => choice.and_then(|c| c.llm_api).unwrap_or_default(),
+        _ => LlmApi::ChatCompletions,
+    };
+    let reasoning = if api == LlmApi::Responses { choice.and_then(|c| c.llm_reasoning) } else { None };
+    Ok(RemoteService { url, model, key, api, reasoning })
 }
 
 fn provider_statuses(
@@ -1331,6 +1355,7 @@ mod tests {
                     asr_model: Some("whisper".into()),
                     llm_url: Some("https://my-llm.test/v1".into()),
                     llm_model: Some("m".into()),
+                    ..ProviderSettings::default()
                 },
             ),
             ..EngineSettings::default()
@@ -1414,6 +1439,7 @@ mod tests {
                     asr_url: Some("https://proxy.example.test/v1".into()),
                     llm_model: Some("  ".into()),
                     llm_url: None,
+                    ..ProviderSettings::default()
                 },
             ),
             ..openai.clone()
@@ -1942,5 +1968,47 @@ mod tests {
         assert!(written.get("llm_fallback").is_none(), "a default list is not written");
         let on_without_models: EngineSettings = serde_json::from_str(r#"{"llm_fallback":{"enabled":true}}"#).unwrap();
         assert_eq!(serde_json::to_value(&on_without_models).unwrap()["llm_fallback"], serde_json::json!({ "enabled": true }));
+    }
+
+    /// docs/dictation.md §3.7: the custom provider's clean-up may speak the Responses interface,
+    /// with its reasoning effort; chat completions carries no effort, and no other provider or
+    /// service takes either.
+    #[test]
+    fn the_custom_clean_up_speaks_the_interface_its_card_chooses() {
+        let custom = |api: Option<LlmApi>, reasoning: Option<ReasoningEffort>| EngineSettings {
+            llm_provider: ProviderId::Custom,
+            providers: with_provider(
+                ProviderId::Custom,
+                ProviderSettings {
+                    llm_url: Some("http://127.0.0.1:8787/v1".into()),
+                    llm_model: Some("claude-opus-5-5".into()),
+                    llm_api: api,
+                    llm_reasoning: reasoning,
+                    ..ProviderSettings::default()
+                },
+            ),
+            ..EngineSettings::default()
+        };
+        let resolve =
+            |settings: &EngineSettings| ResolvedEngines::resolve(settings, &UserSecrets::default(), &BuiltIn::EMPTY).refine.expect("custom clean-up resolves");
+        let responses = resolve(&custom(Some(LlmApi::Responses), Some(ReasoningEffort::High)));
+        assert_eq!((responses.api, responses.reasoning, responses.model.as_str()), (LlmApi::Responses, Some(ReasoningEffort::High), "claude-opus-5-5"));
+        let chat = resolve(&custom(None, Some(ReasoningEffort::High)));
+        assert_eq!((chat.api, chat.reasoning), (LlmApi::ChatCompletions, None), "chat completions carries no effort");
+        // Another provider's card cannot choose: its settings are ignored.
+        let mut openai = custom(Some(LlmApi::Responses), Some(ReasoningEffort::Low));
+        openai.llm_provider = ProviderId::Openai;
+        let settings = openai.providers.remove(&ProviderId::Custom).unwrap();
+        openai.providers.insert(ProviderId::Openai, settings);
+        let mut secrets = UserSecrets::default();
+        secrets.set(ProviderId::Openai, ServiceKind::Llm, Some("sk-test".into()));
+        let vendor = ResolvedEngines::resolve(&openai, &secrets, &BuiltIn::EMPTY).refine.unwrap();
+        assert_eq!((vendor.api, vendor.reasoning), (LlmApi::ChatCompletions, None));
+        // The wire names.
+        assert_eq!(serde_json::to_string(&LlmApi::Responses).unwrap(), "\"responses\"");
+        assert_eq!(serde_json::to_string(&ReasoningEffort::Xhigh).unwrap(), "\"xhigh\"");
+        let saved = serde_json::to_value(&custom(Some(LlmApi::Responses), Some(ReasoningEffort::Medium)).providers[&ProviderId::Custom]).unwrap();
+        assert_eq!((saved["llm_api"].as_str(), saved["llm_reasoning"].as_str()), (Some("responses"), Some("medium")));
+        assert!(serde_json::to_value(ProviderSettings::default()).unwrap().as_object().unwrap().is_empty(), "unset choices are not written");
     }
 }

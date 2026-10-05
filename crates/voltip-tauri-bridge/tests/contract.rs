@@ -252,7 +252,15 @@ fn engine_settings() -> EngineSettings {
             (ProviderId::Groq, ProviderSettings { llm_model: Some("openai/gpt-oss-20b".into()), ..Default::default() }),
             (
                 ProviderId::Custom,
-                ProviderSettings { asr_url: Some("https://asr.example.test".into()), asr_model: Some(ASR_MODEL.into()), ..Default::default() },
+                ProviderSettings {
+                    asr_url: Some("https://asr.example.test".into()),
+                    asr_model: Some(ASR_MODEL.into()),
+                    // docs/dictation.md §3.7: the custom clean-up on the Responses interface.
+                    llm_url: Some("http://127.0.0.1:8787/v1".into()),
+                    llm_model: Some("claude-opus-5-5".into()),
+                    llm_api: Some(voltip_core::LlmApi::Responses),
+                    llm_reasoning: Some(voltip_core::ReasoningEffort::High),
+                },
             ),
         ]
         .into(),
