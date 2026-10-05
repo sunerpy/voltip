@@ -21,7 +21,7 @@ A preset tells AI polish what to do with the recognised text. Choose the one in 
 | Preset | What it does |
 | --- | --- |
 | **Proofread** (default) | Fixes typos, homophones and punctuation, splits paragraphs, removes filler words and stutters. When you correct yourself ("no, I mean…"), only the corrected wording is kept |
-| **Prompt optimizer** | Rewrites a spoken request into a clear prompt for another AI: one precise instruction for a simple request, a numbered list when there are several points |
+| **Prompt optimizer** | Rewrites a spoken request into a clear prompt for another AI: one precise instruction for a simple request, a numbered list when there are several points. A question is rewritten, never answered; a statement is only proofread; English stays English |
 | **Clarify intent** | Keeps the corrections, removes repetition and turns several points into a list |
 | **Casual chat** | Short, conversational sentences without a closing full stop |
 | **Chinese ⇄ English** | Fixes recognition errors, then translates between Chinese and English |
