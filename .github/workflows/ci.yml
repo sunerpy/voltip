@@ -1086,20 +1086,22 @@ jobs:
         timeout-minutes: 10
         run: .github/scripts/check-keychain-migration.sh "$APP"
 
-      # The harness of the hand-over below, built in a step of its own: on a cold cache it is a
+      # The harness of the hand-over below, built in a step of its own: on a cold cache it was a
       # whole release build (2026-10-01, main: 14 min 32 s on the Intel Mac, which left the check
-      # no time inside its 15 minutes, and the release candidate waited on the rerun). With the
-      # app's deployment target it reuses the app build's crates; only the `test` variant of
-      # tauri (a dev-dependency feature) and the crates above it are its own.
+      # no time inside its 15 minutes, and the release candidate waited on the rerun). It is a bin
+      # behind its own feature, not an example: an example brings the dev-dependencies, whose
+      # features recompiled some sixty crates of the app build (2026-10-05: 11 min 12 s of the
+      # Intel Mac's 47-minute cold run). With the app's deployment target and the feature the
+      # Tauri CLI gives tauri, it builds on the app build's crates.
       - name: Build the keychain pre-install harness
         timeout-minutes: 45
-        run: cargo build --release -p voltip-desktop --example keychain_preinstall --target "$MACOS_TARGET"
+        run: cargo build --release -p voltip-desktop --bin keychain_preinstall --features keychain-harness,tauri/custom-protocol --target "$MACOS_TARGET"
 
       # The updater-verified new app persists its own cdhash items before installation. This uses
       # real mutual code-signature checks and then starts the installed B; a foreign B fails closed.
       - name: Keychain pre-install hand-over (login keychain)
         timeout-minutes: 15
-        run: .github/scripts/check-keychain-preinstall.sh "$APP" "target/$MACOS_TARGET/release/examples/keychain_preinstall"
+        run: .github/scripts/check-keychain-preinstall.sh "$APP" "target/$MACOS_TARGET/release/keychain_preinstall"
 
       - name: Headless native run (download a model, transcribe a public sample)
         shell: pwsh

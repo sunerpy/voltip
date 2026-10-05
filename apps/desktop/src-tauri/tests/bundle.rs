@@ -244,6 +244,26 @@ fn regression_the_sherpa_onnx_build_script_runs_before_build_rs_stages_its_runti
 /// release candidate's 45-minute source gate.
 #[test]
 fn regression_the_desktop_library_is_an_rlib_only() {
+    let lib = desktop_target("voltip_desktop_lib");
+    assert_eq!(lib["crate_types"], serde_json::json!(["rlib"]));
+}
+
+/// The keychain pre-install harness of the macOS CI legs (`.github/scripts/check-keychain-preinstall.sh`)
+/// is a bin behind a feature of its own, not an example. An example brings the dev-dependencies,
+/// and their features (tauri's `test`, wiremock's hyper) recompiled some sixty crates of the app
+/// build: 11 min 12 s of the Intel Mac's 47-minute cold run (2026-10-05). `cargo tauri build`
+/// skips a bin whose required features are off, so the bundle never carries it.
+#[test]
+fn regression_the_keychain_harness_is_a_bin_behind_its_own_feature() {
+    let harness = desktop_target("keychain_preinstall");
+    assert_eq!(harness["kind"], serde_json::json!(["bin"]));
+    assert_eq!(harness["required-features"], serde_json::json!(["keychain-harness"]));
+    assert!(harness["src_path"].as_str().unwrap().ends_with("src/bin/keychain_preinstall.rs"), "{}", harness["src_path"]);
+}
+
+/// A target of the desktop shell as `cargo metadata` describes it (the workspace's own
+/// declarations only, as in the sherpa-onnx test above).
+fn desktop_target(name: &str) -> serde_json::Value {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let out = std::process::Command::new(cargo)
         .args(["metadata", "--format-version", "1", "--no-deps", "--offline", "--manifest-path"])
@@ -253,8 +273,7 @@ fn regression_the_desktop_library_is_an_rlib_only() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let desktop = meta["packages"].as_array().unwrap().iter().find(|p| p["name"] == "voltip-desktop").expect("voltip-desktop in the workspace");
-    let lib = desktop["targets"].as_array().unwrap().iter().find(|t| t["name"] == "voltip_desktop_lib").expect("the voltip_desktop_lib target");
-    assert_eq!(lib["crate_types"], serde_json::json!(["rlib"]));
+    desktop["targets"].as_array().unwrap().iter().find(|t| t["name"] == name).cloned().unwrap_or_else(|| panic!("no {name} target"))
 }
 
 /// The skill's Tauri version model (github-project-scaffold tauri-release.md): release-please bumps

@@ -1,6 +1,8 @@
 //! macOS harness for `.github/scripts/check-keychain-preinstall.sh`: act as the running build,
 //! create an identity under the caller's isolated `USER`, and drive the production staged-update
 //! hand-over against an already verified `.app.tar.gz`. It never prints secret values.
+//!
+//! Built only with the `keychain-harness` feature (Cargo.toml says why it is not an example).
 
 #[cfg(target_os = "macos")]
 fn main() -> std::process::ExitCode {

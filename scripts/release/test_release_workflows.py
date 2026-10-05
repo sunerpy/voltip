@@ -358,9 +358,23 @@ class ContinuousIntegration(unittest.TestCase):
         steps = re.split(r"\n      - name: ", body)
         build = next(s for s in steps if s.startswith("Build the keychain pre-install harness"))
         check = next(s for s in steps if s.startswith("Keychain pre-install hand-over"))
-        self.assertIn("--example keychain_preinstall", build)
+        self.assertIn("--bin keychain_preinstall", build)
         self.assertNotIn("cargo build", check)
         self.assertLess(body.index("Build the keychain pre-install harness"), body.index("Keychain pre-install hand-over"))
+
+    def test_regression_the_keychain_harness_builds_on_the_app_builds_crates(self) -> None:
+        # 2026-10-05 (main CI 37293351063, Intel Mac): as an example the harness brought the
+        # dev-dependencies, whose features (tauri's `test`, wiremock's hyper) recompiled some sixty
+        # crates of the app build, 11 min 12 s of a 47-minute cold run that ran past the release
+        # candidate's 45-minute source gate. A bin behind its own feature, with the feature the
+        # Tauri CLI gives tauri, builds on the app's crates.
+        steps = re.split(r"\n      - name: ", self.jobs["macos"])
+        build = "\n".join(code_lines(next(s for s in steps if s.startswith("Build the keychain pre-install harness"))))
+        self.assertIn("--bin keychain_preinstall", build)
+        self.assertIn("--features keychain-harness,tauri/custom-protocol", build)
+        self.assertNotIn("--example", build)
+        check = next(s for s in steps if s.startswith("Keychain pre-install hand-over"))
+        self.assertIn('"target/$MACOS_TARGET/release/keychain_preinstall"', check)
 
     def test_regression_every_macos_build_shares_the_apps_deployment_target(self) -> None:
         # 2026-10-02 (main CI 36982316309, Intel Mac): `cargo tauri build` exports the app's
@@ -377,7 +391,7 @@ class ContinuousIntegration(unittest.TestCase):
 
     def test_macos_exercises_the_preinstall_keychain_boundary(self) -> None:
         body = self.jobs["macos"]
-        self.assertIn("--example keychain_preinstall", body)
+        self.assertIn("--bin keychain_preinstall", body)
         self.assertIn(".github/scripts/check-keychain-preinstall.sh", body)
         self.assertNotIn("check-keychain-handoff.sh", body)
         script = (ROOT / ".github/scripts/check-keychain-preinstall.sh").read_text(encoding="utf-8")
