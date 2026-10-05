@@ -197,7 +197,8 @@ pub struct EngineSettings {                                  // Settings.engines
   - 判断由纯函数 `notice::after_take` 完成，单元测试覆盖。运行时测试用 `TestHooks.built_in` 换上一个内置服务（测试构建没有内置服务）。
 - **界面**：
   - `packages/ui` 的 `RefineNotice` 横幅显示在桌面首页（权限提示下方）和手机的两个说话页（说话卡片下方），按钮「打开 AI 模型」进入 AI 模型页，Groq 卡片上有「获取密钥」。
-  - 状态栏在要求润色但未生效时显示「· 未润色」。
+  - `dictationPhaseLabel`（首次设置的试听写结果行）在要求润色但未生效时加上「· 未润色」。
+  - 悬浮窗：插入后的胶囊在标签后注明「未润色 · 服务繁忙」等原因（`Pill` 的 `note`，带黄色指示灯，文字用胶囊自己的颜色），与胶囊一起在 2.5 秒后消失（2026-10-05 用户要求）。
   - 历史详情的「润色模型」显示「未润色 · 服务繁忙」等原因（`refineModelText`），桌面与手机相同。
 - **Groq 预设模型**：`llama-3.3-70b-versatile` 已只对企业账号开放（console.groq.com/docs/models，2026-10-05），列表改为 `qwen/qwen3.8-27b`、`openai/gpt-oss-120b`、`openai/gpt-oss-20b`。
 

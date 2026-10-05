@@ -274,6 +274,47 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
     }
   });
 
+  it("docs/dictation.md section 3.6: a take whose polish was turned down says why on the inserted pill", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const backend = new MockBackend({ now: () => Date.now() });
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      const take = async () => {
+        await act(async () => {
+          await backend.invoke("dictation_start");
+        });
+        await screen.findByRole("status");
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(MOCK_MIC_READY_MS + MOCK_METER_INTERVAL_MS * 2);
+        });
+        await act(async () => {
+          await backend.invoke("dictation_stop");
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(MOCK_ASR_MS + MOCK_REFINE_MS);
+        });
+        const done = screen.getByRole("status");
+        expect(done).toHaveAttribute("data-state", "inserted");
+        return done;
+      };
+      backend.simulateRefineFailure("rate_limited");
+      const busy = await take();
+      expect(screen.getByTestId("pill-note")).toHaveTextContent("未润色 · 服务繁忙");
+      expect(busy).toHaveTextContent("粘贴");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS);
+      });
+      expect(screen.getByTestId("overlay-window")).toHaveAttribute("data-state", "blank");
+      // Polished again: no note.
+      backend.simulateRefineFailure(null);
+      await take();
+      expect(screen.queryByTestId("pill-note")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("regression: the live pill paints nothing while idle, then listening with the real meter, the processing stage, and the inserted count", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

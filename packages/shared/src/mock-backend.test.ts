@@ -46,6 +46,7 @@ import {
   MOCK_PRESET_SAMPLES,
   MOCK_BUILTIN_SCENES,
   MOCK_PUBLIC_KEYS,
+  MOCK_REFINE_FAILED,
   MOCK_REFINE_MS,
   MOCK_NO_SPEECH,
   MOCK_SCENE_MODE_NOT_READY,
@@ -545,6 +546,31 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     clock += ms;
     vi.advanceTimersByTime(ms);
   };
+
+  it("docs/dictation.md §3.6: a turned-down clean-up keeps the raw text and says why, on the phase and in the history", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    backend.simulateRefineFailure("rate_limited");
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + 3200);
+    await backend.invoke("dictation_stop");
+    tick(MOCK_ASR_MS);
+    expect(backend.peek().dictation.phase).toMatchObject({
+      phase: "processing",
+      stage: "refining",
+    });
+    tick(MOCK_REFINE_MS);
+    expect(backend.peek().dictation.phase).toMatchObject({
+      phase: "done",
+      text: MOCK_DICTATION_RAW,
+      refined: false,
+      refine_failure: "rate_limited",
+      refine_error: MOCK_REFINE_FAILED,
+    });
+    const entry = backend.peek().history_recent[0];
+    expect(entry).toMatchObject({ refined: false, refine_failure: "rate_limited" });
+    expect(entry?.refine_model).toBeUndefined();
+    expect(entry?.preset).toBeUndefined();
+  });
 
   it("regression: 开始听写 starts a real session and shows the phase; 停止 finishes with the inserted text", async () => {
     const backend = new MockBackend({ now: () => clock, history: [] });

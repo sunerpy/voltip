@@ -327,6 +327,8 @@ const MESSAGE_ECHO_MS = 150;
  *  dwell before the phase returns to idle. */
 export const MOCK_ASR_MS = 400;
 export const MOCK_REFINE_MS = 300;
+/** The detail a turned-down clean-up carries (`simulateRefineFailure`). */
+export const MOCK_REFINE_FAILED = "请求过于频繁：mock: the clean-up was turned down";
 /** `voltip_core::history::process::PART_MAX_CHARS`: the preview's 用 AI 预设处理 counts its parts
  *  the same way (docs/dictation.md §22). */
 export const MOCK_PART_MAX_CHARS = 1_500;
@@ -1241,6 +1243,12 @@ export class MockBackend implements Backend {
   /** The core reported records too large to upload (tests). */
   simulateTooLarge(ids: readonly string[]) {
     this.emit({ type: "phone_outbox", too_large: [...ids] });
+  }
+
+  /** From now on a take's clean-up fails with `failure` (`null`: it works again), as the core
+   *  reports it on `done` and in the history (tests and the dev pages, docs/dictation.md §3.6). */
+  simulateRefineFailure(failure: RefineFailure | null) {
+    this.refineFailure = failure ?? undefined;
   }
 
   /** The built-in clean-up service turned a take down (`null`: the notice went; tests and the dev
@@ -2236,6 +2244,9 @@ export class MockBackend implements Backend {
         this.emit({ type: "refine_notice", notice: null });
     },
   };
+
+  /** `simulateRefineFailure`: how the next takes' clean-up fails, if it does. */
+  private refineFailure: RefineFailure | undefined;
 
   /** How often 复制令牌 was pressed (tests; the token itself never reaches the interface). */
   serveTokenCopies = 0;
@@ -3487,6 +3498,9 @@ export class MockBackend implements Backend {
     const modeError = this.takeModeError;
     const refine =
       (scene?.overrides.refine_enabled ?? engines.refine_enabled) && mode !== "live_inject";
+    // docs/dictation.md §3.6: a clean-up that ran and was turned down keeps the raw text.
+    const refineFailure = refine ? this.refineFailure : undefined;
+    const polished = refine && refineFailure === undefined;
     const asrMs = streaming ? MOCK_FINALIZE_MS : MOCK_ASR_MS;
     const raw = streaming ? preview : MOCK_DICTATION_RAW;
     const durationMs = Math.max(0, stoppedAt - startedAt);
@@ -3510,7 +3524,7 @@ export class MockBackend implements Backend {
       // glossary terms, the rules run last; an emptied text is no speech, nothing is inserted.
       const vocabulary = Vocabulary.compile(this.state.dictionary, this.state.rules);
       const corrected = vocabulary.correct(raw);
-      const refined = refine ? vocabulary.correct(MOCK_DICTATION_TEXT).text : corrected.text;
+      const refined = polished ? vocabulary.correct(MOCK_DICTATION_TEXT).text : corrected.text;
       const ruled = vocabulary.applyRules(refined);
       const text = ruled.text;
       if (text.trim().length === 0) {
@@ -3525,7 +3539,7 @@ export class MockBackend implements Backend {
       const hits = { corrections: corrected.hits, rules: ruled.hits };
       const failedOver = liveError ?? modeError;
       const extra = {
-        ...(refine ? { refine_ms: MOCK_REFINE_MS } : {}),
+        ...(polished ? { refine_ms: MOCK_REFINE_MS } : {}),
         ...(segments === undefined ? {} : { segments }),
         ...(failedOver === undefined ? {} : { live_error: failedOver }),
       };
@@ -3535,20 +3549,24 @@ export class MockBackend implements Backend {
         raw_text: raw,
         chars: Array.from(text).length,
         via,
-        refined: refine,
+        refined: polished,
         duration_ms: durationMs,
         asr_ms: asrMs,
         mode,
         ...extra,
+        ...(refineFailure === undefined
+          ? {}
+          : { refine_failure: refineFailure, refine_error: MOCK_REFINE_FAILED }),
       };
       const entry: HistoryEntry = {
         id: this.uuid(),
         at_ms: this.now(),
         raw_text: raw,
         text,
-        refined: refine,
+        refined: polished,
         asr_model: engines.asr_model,
-        ...(refine ? { refine_model: engines.refine_model } : {}),
+        ...(polished ? { refine_model: engines.refine_model } : {}),
+        ...(refineFailure === undefined ? {} : { refine_failure: refineFailure }),
         duration_ms: durationMs,
         asr_ms: asrMs,
         outcome: { kind: "inserted", via },
@@ -3558,7 +3576,7 @@ export class MockBackend implements Backend {
         ...(hits.corrections.length + hits.rules.length > 0 ? { vocabulary: hits } : {}),
         ...(context === undefined ? {} : { app: context.app }),
         ...(scene === undefined ? {} : { scene: context?.scene ?? sceneRefOf(scene) }),
-        ...(preset === undefined ? {} : { preset }),
+        ...(preset === undefined || !polished ? {} : { preset }),
         kind: "dictation",
       };
       this.recordHistory(entry);

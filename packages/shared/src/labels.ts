@@ -14,6 +14,7 @@ import type {
   DeviceConnection,
   DictationPhase,
   HistoryEntry,
+  RefineFailure,
   DictationStatus,
   FailureReason,
   HistoryOutcome,
@@ -263,6 +264,14 @@ export function formatCount(n: number): string {
 // the history list all read the same words.
 
 /** `paste` → `粘贴`, `clipboard` → `剪贴板`. */
+/** 「未润色 · 服务繁忙」: why a requested clean-up's text was not used (docs/dictation.md §3.6), as
+ *  the history detail and the overlay say it. */
+export function notRefinedText(failure: RefineFailure, locale: Locale = DEFAULT_LOCALE): string {
+  return translate(locale, "history.detail.notRefinedBecause", {
+    reason: translate(locale, `dictation.refineFailure.${failure}`),
+  });
+}
+
 /** The history detail's 润色模型 line (docs/dictation.md §3.6): the model that polished the text,
  *  or 「未润色」 with the reason a requested clean-up's text was not used. */
 export function refineModelText(
@@ -271,9 +280,7 @@ export function refineModelText(
 ): string {
   if (entry.refined) return entry.refine_model ?? "—";
   if (entry.refine_failure === undefined) return translate(locale, "history.detail.notRefined");
-  return translate(locale, "history.detail.notRefinedBecause", {
-    reason: translate(locale, `dictation.refineFailure.${entry.refine_failure}`),
-  });
+  return notRefinedText(entry.refine_failure, locale);
 }
 
 export function viaLabel(via: Via, locale: Locale = DEFAULT_LOCALE): string {
