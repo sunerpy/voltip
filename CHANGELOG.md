@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.42](https://github.com/sunerpy/voltip/compare/v0.0.41...v0.0.42) (2026-10-05)
+
+
+### Features
+
+* **refine:** 提示词优化改用通用写法 ([#108](https://github.com/sunerpy/voltip/issues/108)) ([46e6227](https://github.com/sunerpy/voltip/commit/46e622732b13fca140f7abb60b927901e6c4107d))
+
 ## [0.0.41](https://github.com/sunerpy/voltip/compare/v0.0.40...v0.0.41) (2026-10-05)
 
 
