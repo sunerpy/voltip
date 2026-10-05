@@ -60,7 +60,9 @@ use super::ports::{
     StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
 };
 use super::redecode::RedecodeStreaming;
-use super::{DictationPhase, DictationStatus, FailureCode, LiveText, OutputMode, ProcessingStage, SegmentProgress, TakeKind, inject_separator, join_text};
+use super::{
+    DictationPhase, DictationStatus, FailureCode, LiveText, OutputMode, ProcessingStage, RefineFailure, SegmentProgress, TakeKind, inject_separator, join_text,
+};
 use super::{steps, wav};
 use crate::engines::{ChineseScript, FallbackTarget, LiveSource, ResolvedEngines};
 use crate::history::{EditRecord, HistoryEntry, Outcome};
@@ -322,6 +324,8 @@ pub struct PipelineOutcome {
     pub refine_ms: Option<u64>,
     /// Refine skip / failure reason.
     pub refine_error: Option<String>,
+    /// Its kind (docs/dictation.md §3.6).
+    pub refine_failure: Option<RefineFailure>,
     /// Model the refiner reported.
     pub refine_model: Option<String>,
     /// Which dictionary entries and rules fired (docs/dictation.md §16.3).
@@ -1915,6 +1919,7 @@ impl DictationEngine {
             asr_model: None,
             refine_ms: None,
             refine_error: None,
+            refine_failure: None,
             refine_model: None,
             vocabulary,
             injection,
@@ -2466,7 +2471,8 @@ impl DictationEngine {
 
     /// Enter `Done` (or `Failed` with `undelivered` when the injection failed) and record the run.
     fn finish_with(&mut self, outcome: PipelineOutcome, undelivered: Option<String>) -> Vec<Effect> {
-        let PipelineOutcome { raw_text, text, refined, asr_ms, asr_model, refine_ms, refine_error, refine_model, vocabulary, injection, edit } = outcome;
+        let PipelineOutcome { raw_text, text, refined, asr_ms, asr_model, refine_ms, refine_error, refine_failure, refine_model, vocabulary, injection, edit } =
+            outcome;
         let mode = self.take.mode;
         // A long take's recording file goes with the take (`terminal`), whichever text it took.
         let segments =
@@ -2484,6 +2490,7 @@ impl DictationEngine {
             duration_ms: self.recording_ms,
             asr_ms,
             refine_ms,
+            refine_failure,
             outcome: Outcome::Failed { reason: String::new() },
             starred: false,
             mode,
@@ -2516,6 +2523,7 @@ impl DictationEngine {
                     asr_ms,
                     refine_ms,
                     refine_error,
+                    refine_failure,
                     mode,
                     segments,
                     live_error,
@@ -2820,10 +2828,10 @@ async fn run_pipeline(job: PipelineJob) {
             let _ = tx.send(Internal::Stage { session, stage: ProcessingStage::Refining }).await;
             steps::run_refine(refiner.as_ref(), &corrected.text, &hints).await
         }
-        (steps::RefinePlan::Skip { error }, _) => steps::CleanUp::skipped(&corrected.text, error),
+        (steps::RefinePlan::Skip { failure }, _) => steps::CleanUp::skipped(&corrected.text, failure),
         (steps::RefinePlan::Run, None) => steps::CleanUp::skipped(&corrected.text, None),
     };
-    let steps::CleanUp { text, refined, refine_ms, refine_error, refine_model } = cleaned;
+    let steps::CleanUp { text, refined, refine_ms, refine_error, refine_failure, refine_model } = cleaned;
     let ruled = steps::apply_rules(&vocabulary, &text);
     let text = ruled.text;
     let hits = VocabularyHits { corrections: corrected.hits, rules: ruled.hits };
@@ -2849,8 +2857,20 @@ async fn run_pipeline(job: PipelineJob) {
         Ok(result) => result,
         Err(e) => Err(DictationError::Inject(format!("injector task failed: {e}"))),
     };
-    let outcome =
-        PipelineOutcome { raw_text, text, refined, asr_ms, asr_model, refine_ms, refine_error, refine_model, vocabulary: hits, injection, edit: None };
+    let outcome = PipelineOutcome {
+        raw_text,
+        text,
+        refined,
+        asr_ms,
+        asr_model,
+        refine_ms,
+        refine_error,
+        refine_failure,
+        refine_model,
+        vocabulary: hits,
+        injection,
+        edit: None,
+    };
     let _ = tx.send(Internal::Finished { session, result: Ok(outcome) }).await;
 }
 
@@ -2920,6 +2940,7 @@ async fn run_edit(job: EditJob) {
         asr_model,
         refine_ms: Some(out.latency_ms),
         refine_error: None,
+        refine_failure: None,
         refine_model: Some(out.model),
         // The dictionary corrected the instruction; the rules never run on an edit.
         vocabulary: VocabularyHits { corrections: corrected.hits, rules: Vec::new() },
@@ -3154,8 +3175,23 @@ mod tests {
         assert!(matches!(phase(&fx), DictationPhase::Processing { stage: ProcessingStage::Inserting, .. }));
         let fx = r.next().await;
         match phase(&fx) {
-            DictationPhase::Done { text, raw_text, chars, via, refined, duration_ms, asr_ms, refine_ms, refine_error, mode, segments, live_error } => {
+            DictationPhase::Done {
+                text,
+                raw_text,
+                chars,
+                via,
+                refined,
+                duration_ms,
+                asr_ms,
+                refine_ms,
+                refine_error,
+                refine_failure,
+                mode,
+                segments,
+                live_error,
+            } => {
                 assert_eq!(text, "你好，世界。");
+                assert_eq!(*refine_failure, None, "a clean-up that ran names no failure");
                 assert_eq!(raw_text, FAKE_TRANSCRIPT);
                 assert_eq!(*chars, 6);
                 assert_eq!(*via, Via::Paste);
@@ -3316,6 +3352,28 @@ mod tests {
         assert_eq!(r.injector.injected(), vec!["原文".to_owned()]);
     }
 
+    /// docs/dictation.md §3.6: the take says why its clean-up's text was not used by kind, on the
+    /// phase and in the history; a take that asked for none names nothing.
+    #[tokio::test(start_paused = true)]
+    async fn the_kind_of_a_failed_clean_up_reaches_the_phase_and_the_history() {
+        for (refiner, refine, kind) in [
+            (Some(FakeRefiner::rate_limited()), true, Some(RefineFailure::RateLimited)),
+            (Some(FakeRefiner::quota()), true, Some(RefineFailure::Quota)),
+            (Some(FakeRefiner::err("down")), true, Some(RefineFailure::Failed)),
+            (Some(FakeRefiner::ok("  ")), true, Some(RefineFailure::Empty)),
+            (None, true, Some(RefineFailure::Unconfigured)),
+            (Some(FakeRefiner::ok("b")), false, None),
+            (Some(FakeRefiner::ok("整理过。")), true, None),
+        ] {
+            let mut r = rig(FakeAudio::speech(), FakeTranscriber::ok("原文"), refiner, FakeInjector::paste(), refine);
+            r.start_open().await;
+            r.engine.stop().unwrap();
+            let fx = r.run_to_terminal().await;
+            assert!(matches!(phase(&fx), DictationPhase::Done { refine_failure, .. } if *refine_failure == kind), "{kind:?}: {fx:?}");
+            assert_eq!(record(&fx).unwrap().refine_failure, kind);
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn refine_is_skipped_when_disabled_missing_or_empty() {
         let mut r = rig(FakeAudio::speech(), FakeTranscriber::ok("a"), Some(FakeRefiner::ok("b")), FakeInjector::paste(), false);
@@ -3468,6 +3526,7 @@ mod tests {
                 asr_model: None,
                 refine_ms: None,
                 refine_error: None,
+                refine_failure: None,
                 refine_model: None,
                 vocabulary: VocabularyHits::default(),
                 injection: Ok(Injection { via: Via::Paste, note: None }),

@@ -267,6 +267,28 @@ describe("History page", () => {
     expect(screen.queryByTestId("deferred-badge")).toBeNull();
   });
 
+  it("docs/dictation.md section 3.6: an entry whose clean-up was turned down says why it is not polished", async () => {
+    const user = userEvent.setup();
+    const now = Date.now();
+    const base = new MockBackend({ now: () => now }).peek().history_recent[0];
+    if (!base) throw new Error("fixture");
+    const busy: HistoryEntry = {
+      ...base,
+      id: "00000000-0000-4000-8000-0000000000b1",
+      at_ms: now - 1_000,
+      raw_text: "把重试次数改成三次",
+      text: "把重试次数改成三次",
+      refined: false,
+      refine_model: undefined,
+      refine_ms: undefined,
+      refine_failure: "rate_limited",
+      preset: undefined,
+    };
+    renderApp({ path: "/history", mock: { now: () => now, history: [busy] } });
+    await user.click(await screen.findByText(/把重试次数改成三次/, { selector: "li *" }));
+    expect(await screen.findByText("未润色 · 服务繁忙")).toBeInTheDocument();
+  });
+
   it("regression: section 20.6 a phone's text and a phone's take are badged with the phone, and a text shows no model or timings", async () => {
     const now = Date.now();
     const base = new MockBackend({ now: () => now }).peek().history_recent[0];

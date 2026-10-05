@@ -442,6 +442,8 @@ pub enum UiCommand {
     ServeCopyToken,
     /// Replace the service's token.
     ServeRotateToken,
+    /// Close the built-in clean-up service's notice (docs/dictation.md §3.6).
+    RefineNoticeClose,
 }
 
 impl UiCommand {
@@ -559,6 +561,7 @@ impl UiCommand {
             }),
             Self::ServeCopyToken => CoreCommand::ServeCopyToken,
             Self::ServeRotateToken => CoreCommand::ServeRotateToken,
+            Self::RefineNoticeClose => CoreCommand::RefineNoticeClose,
         })
     }
 }

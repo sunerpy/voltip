@@ -13,6 +13,7 @@ import type {
   CustomPreset,
   DeviceConnection,
   DictationPhase,
+  HistoryEntry,
   DictationStatus,
   FailureReason,
   HistoryOutcome,
@@ -262,6 +263,19 @@ export function formatCount(n: number): string {
 // the history list all read the same words.
 
 /** `paste` → `粘贴`, `clipboard` → `剪贴板`. */
+/** The history detail's 润色模型 line (docs/dictation.md §3.6): the model that polished the text,
+ *  or 「未润色」 with the reason a requested clean-up's text was not used. */
+export function refineModelText(
+  entry: Pick<HistoryEntry, "refined" | "refine_model" | "refine_failure">,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  if (entry.refined) return entry.refine_model ?? "—";
+  if (entry.refine_failure === undefined) return translate(locale, "history.detail.notRefined");
+  return translate(locale, "history.detail.notRefinedBecause", {
+    reason: translate(locale, `dictation.refineFailure.${entry.refine_failure}`),
+  });
+}
+
 export function viaLabel(via: Via, locale: Locale = DEFAULT_LOCALE): string {
   return translate(locale, `via.${via}`);
 }
@@ -463,7 +477,12 @@ function phaseLabel(
               n: phase.chars,
               via: viaLabel(phase.via, locale),
             },
-          ) + (phase.refined ? translate(locale, "dictation.refinedSuffix") : ""),
+          ) +
+          (phase.refined
+            ? translate(locale, "dictation.refinedSuffix")
+            : phase.refine_failure !== undefined
+              ? translate(locale, "dictation.notRefinedSuffix")
+              : ""),
         tone: "ok",
       };
     case "failed":

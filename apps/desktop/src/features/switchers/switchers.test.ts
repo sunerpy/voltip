@@ -117,7 +117,7 @@ describe("the AI 润色模型 menu", () => {
     expect(rows(sections)[0]).toEqual({ label: "内置服务", items: ["qwen3.8-27b"] });
     expect(rows(sections)[1]).toEqual({
       label: "Groq",
-      items: ["✓ qwen3.8-27b", "gpt-oss-20b", "llama-3.3-70b-versatile"],
+      items: ["✓ qwen3.8-27b", "gpt-oss-120b", "gpt-oss-20b"],
     });
     // OpenAI, SiliconFlow, DeepSeek, Ollama and the custom endpoint are not set up: not listed.
     expect(rows(sections).map((s) => s.label)).toEqual(["内置服务", "Groq", undefined]);

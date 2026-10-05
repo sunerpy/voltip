@@ -182,8 +182,46 @@ impl From<&DictationError> for FailureCode {
             DictationError::EditUnavailable(_) => Self::EditUnavailable,
             DictationError::EditInTerminal => Self::EditInTerminal,
             DictationError::QuotaExhausted { .. } => Self::Quota,
+            DictationError::RateLimited { service: crate::providers::ServiceKind::Asr, .. } => Self::Asr,
+            DictationError::RateLimited { service: crate::providers::ServiceKind::Llm, .. } => Self::Refine,
             DictationError::Busy | DictationError::Idle => Self::Unknown,
         }
+    }
+}
+
+/// Why a requested clean-up's text was not used (docs/dictation.md §3.6), by kind: what the
+/// interface explains (`refine_error` keeps the detail). The raw text goes on either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefineFailure {
+    /// The service turned the request down for now: too many requests (HTTP 429).
+    RateLimited,
+    /// The model's quota is used up and no fallback model had any left (§3.5).
+    Quota,
+    /// No clean-up service is configured (a key is missing).
+    Unconfigured,
+    /// A long take's text is past [`long::REFINE_MAX_CHARS`] (§22).
+    TooLong,
+    /// The service answered with nothing.
+    Empty,
+    /// Anything else: network, timeout, credentials, a server error.
+    Failed,
+}
+
+impl RefineFailure {
+    /// The kind of a clean-up that failed with `error`.
+    pub fn of(error: &DictationError) -> Self {
+        match error {
+            DictationError::RateLimited { .. } => Self::RateLimited,
+            DictationError::QuotaExhausted { .. } => Self::Quota,
+            _ => Self::Failed,
+        }
+    }
+
+    /// The service refused for want of capacity (too many requests, or the quota is used up):
+    /// what the built-in service's notice is about (§3.6).
+    pub fn is_capacity(self) -> bool {
+        matches!(self, Self::RateLimited | Self::Quota)
     }
 }
 
@@ -249,6 +287,10 @@ pub enum DictationPhase {
         /// Why refinement was skipped or failed (the raw text was injected).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         refine_error: Option<String>,
+        /// The kind of `refine_error` (docs/dictation.md §3.6); absent when the clean-up ran or
+        /// none was asked for, and from a core that did not send it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refine_failure: Option<RefineFailure>,
         /// Where the text came from (docs/dictation.md §12): the mode that produced it — a
         /// streaming mode that degraded reads `whole_take` here, with the reason in `live_error`.
         #[serde(default)]
@@ -408,6 +450,7 @@ mod tests {
             asr_ms: 400,
             refine_ms: Some(300),
             refine_error: None,
+            refine_failure: None,
             mode: OutputMode::WholeTake,
             segments: None,
             live_error: None,
@@ -434,6 +477,7 @@ mod tests {
             asr_ms: 400,
             refine_ms: Some(300),
             refine_error: None,
+            refine_failure: None,
             mode: OutputMode::StreamingFinal,
             segments: Some(vec![Segment { text: "你好。".into(), start_ms: 0, end_ms: 900 }]),
             live_error: Some("flush: asr: x".into()),
@@ -511,6 +555,33 @@ mod tests {
         assert_eq!(inject_separator("Hello. "), " ", "trailing whitespace is ignored when deciding");
     }
 
+    /// docs/dictation.md §3.6: a clean-up that failed says why by kind, on the wire in snake_case;
+    /// only a rate limit and a used-up quota are about the service's capacity.
+    #[test]
+    fn refine_failures_sort_the_error_and_serialize_snake_case() {
+        use crate::providers::ServiceKind::Llm;
+        assert_eq!(RefineFailure::of(&DictationError::RateLimited { service: Llm, detail: "429".into() }), RefineFailure::RateLimited);
+        assert_eq!(RefineFailure::of(&DictationError::QuotaExhausted { service: Llm, detail: "x".into() }), RefineFailure::Quota);
+        assert_eq!(RefineFailure::of(&DictationError::Refine("timed out".into())), RefineFailure::Failed);
+        let wire = [
+            (RefineFailure::RateLimited, "rate_limited", true),
+            (RefineFailure::Quota, "quota", true),
+            (RefineFailure::Unconfigured, "unconfigured", false),
+            (RefineFailure::TooLong, "too_long", false),
+            (RefineFailure::Empty, "empty", false),
+            (RefineFailure::Failed, "failed", false),
+        ];
+        for (failure, name, capacity) in wire {
+            assert_eq!(serde_json::to_string(&failure).unwrap(), format!("\"{name}\""));
+            assert_eq!(failure.is_capacity(), capacity, "{name}");
+        }
+        let done: DictationPhase = serde_json::from_str(
+            r#"{"phase":"done","text":"原文","raw_text":"原文","chars":2,"via":"paste","refined":false,"duration_ms":1,"asr_ms":1,"refine_error":"请求过于频繁：x","refine_failure":"rate_limited"}"#,
+        )
+        .unwrap();
+        assert!(matches!(done, DictationPhase::Done { refine_failure: Some(RefineFailure::RateLimited), .. }));
+    }
+
     /// Every error the ports can raise maps to a stable, snake_case code the webview localises.
     #[test]
     fn failure_codes_follow_the_error_kind_and_serialize_snake_case() {
@@ -527,6 +598,8 @@ mod tests {
             (DictationError::EditInTerminal, FailureCode::EditInTerminal, "edit_in_terminal"),
             (DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Asr, detail: "x".into() }, FailureCode::Quota, "quota"),
             (DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Llm, detail: "x".into() }, FailureCode::Quota, "quota"),
+            (DictationError::RateLimited { service: crate::providers::ServiceKind::Asr, detail: "x".into() }, FailureCode::Asr, "asr"),
+            (DictationError::RateLimited { service: crate::providers::ServiceKind::Llm, detail: "x".into() }, FailureCode::Refine, "refine"),
             (DictationError::Busy, FailureCode::Unknown, "unknown"),
             (DictationError::Idle, FailureCode::Unknown, "unknown"),
         ];

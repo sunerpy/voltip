@@ -8,7 +8,8 @@ use voltip_pairing::{PairingState, Snapshot};
 use crate::phone::{PhoneTakeView, SentText};
 use crate::presets::{CustomPreset, PresetTryOutcome};
 use crate::{
-    CoreEvent, DeviceView, DictationStatus, DictionaryEntry, EngineStatus, HistoryEntry, ModelState, ProbeReport, RelayStatus, ReplacementRule, Scene, Settings,
+    CoreEvent, DeviceView, DictationStatus, DictionaryEntry, EngineStatus, HistoryEntry, ModelState, ProbeReport, RefineFailure, RelayStatus, ReplacementRule,
+    Scene, Settings,
 };
 
 /// Event name used on the Tauri event bus.
@@ -150,6 +151,11 @@ pub enum UiEvent {
     Connectivity(crate::connectivity::ConnectivityStatus),
     /// The local speech service started, stopped or failed to start (docs/dictation.md §23.6).
     Serve(ServeStatus),
+    /// The built-in clean-up service's notice came or went (docs/dictation.md §3.6).
+    RefineNotice {
+        /// The notice; `None` once it is gone.
+        notice: Option<RefineNotice>,
+    },
     /// The answer to a paste from the history (`crate::paste`): the desktop shell waits for it; the
     /// webview reads the `paste_text` command's answer instead and ignores the event.
     PasteResult {
@@ -472,6 +478,21 @@ pub struct UiState {
     /// where the shell cannot host it (the phone).
     #[serde(default)]
     pub serve: ServeStatus,
+    /// The built-in clean-up service turned a take down for want of capacity (docs/dictation.md
+    /// §3.6); `None` when there is nothing to say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refine_notice: Option<RefineNotice>,
+}
+
+/// The built-in clean-up service turned a take's clean-up down for want of capacity
+/// (docs/dictation.md §3.6): the raw text went in, and the interface suggests a provider of the
+/// user's own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefineNotice {
+    /// What the service said: [`RefineFailure::RateLimited`] or [`RefineFailure::Quota`].
+    pub failure: RefineFailure,
+    /// When the take ended, Unix milliseconds.
+    pub at_ms: u64,
 }
 
 impl Default for UiState {
@@ -503,6 +524,7 @@ impl Default for UiState {
             mirrors: Vec::new(),
             phone_outbox_too_large: Vec::new(),
             serve: ServeStatus::default(),
+            refine_notice: None,
         }
     }
 }
@@ -604,6 +626,10 @@ impl UiState {
             CoreEvent::Connectivity(status) => {
                 self.connectivity = status.clone();
                 UiEvent::Connectivity(status)
+            }
+            CoreEvent::RefineNotice(notice) => {
+                self.refine_notice = notice;
+                UiEvent::RefineNotice { notice }
             }
             CoreEvent::Serve(status) => {
                 self.serve = status.clone();
@@ -737,6 +763,7 @@ mod tests {
             duration_ms: 2,
             asr_ms: 3,
             refine_ms: Some(4),
+            refine_failure: None,
             outcome: crate::Outcome::Inserted { via: crate::dictation::Via::Paste },
             starred: false,
             mode: crate::OutputMode::WholeTake,

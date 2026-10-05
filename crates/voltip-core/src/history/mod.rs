@@ -108,6 +108,10 @@ pub struct HistoryEntry {
     /// Refine round trip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refine_ms: Option<u64>,
+    /// Why a requested clean-up's text was not used, by kind (docs/dictation.md §3.6); absent when
+    /// it was, when none was asked for, and in entries written before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refine_failure: Option<crate::dictation::RefineFailure>,
     /// How it ended.
     pub outcome: Outcome,
     /// User flag.

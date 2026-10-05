@@ -163,7 +163,8 @@ async fn http_refiner_maps_results_and_errors() {
     server.reset().await;
     Mock::given(method("POST")).respond_with(ResponseTemplate::new(429)).mount(&server).await;
     let err = r.refine("x", &RefineHints::default()).await.unwrap_err();
-    assert!(matches!(&err, DictationError::Refine(m) if m.contains("rate limited")), "{err}");
+    // docs/dictation.md §3.6: a 429 keeps its kind (the interface says the service is busy).
+    assert!(matches!(&err, DictationError::RateLimited { service: voltip_core::ServiceKind::Llm, detail } if detail.contains("rate limited")), "{err}");
     assert!(matches!(HttpRefiner::new(RefineConfig::new(server.uri(), "")), Err(DictationError::Refine(_))));
     // The stand-in for a client that could not be built.
     let u = Unconfigured("未配置".into());

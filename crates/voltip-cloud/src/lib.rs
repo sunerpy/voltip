@@ -146,13 +146,14 @@ pub fn asr_error(error: voltip_asr::AsrError) -> DictationError {
     DictationError::Asr(error.to_string())
 }
 
-/// The core's error for a failed clean-up or edit: a used-up quota keeps its kind (docs/dictation.md
-/// §3.5); anything else is `Refine` with the reason.
+/// The core's error for a failed clean-up or edit: a used-up quota (docs/dictation.md §3.5) and a
+/// rate limit (§3.6) keep their kind; anything else is `Refine` with the reason.
 pub fn refine_error(error: voltip_refine::RefineError) -> DictationError {
-    if matches!(error, voltip_refine::RefineError::QuotaExhausted { .. }) {
-        return DictationError::QuotaExhausted { service: ServiceKind::Llm, detail: error.to_string() };
+    match error {
+        voltip_refine::RefineError::QuotaExhausted { .. } => DictationError::QuotaExhausted { service: ServiceKind::Llm, detail: error.to_string() },
+        voltip_refine::RefineError::RateLimited { .. } => DictationError::RateLimited { service: ServiceKind::Llm, detail: error.to_string() },
+        _ => DictationError::Refine(error.to_string()),
     }
-    DictationError::Refine(error.to_string())
 }
 
 /// Stands in for a client that could not be built: every call fails with the reason, so the
@@ -406,6 +407,12 @@ mod tests {
         let llm = refine_error(RefineError::QuotaExhausted { code: "insufficient_quota".into(), message: "m".into() });
         assert!(matches!(&llm, DictationError::QuotaExhausted { service: ServiceKind::Llm, .. }), "{llm:?}");
         assert_eq!(refine_error(RefineError::Timeout), DictationError::Refine("refine request timed out".into()));
+        // docs/dictation.md §3.6: a clean-up's 429 keeps its kind (the interface says the service is
+        // busy), and it is not a used-up quota: no fallback model is tried for it.
+        let busy = refine_error(RefineError::RateLimited { retry_after_ms: Some(355_000) });
+        assert_eq!(busy, DictationError::RateLimited { service: ServiceKind::Llm, detail: "refine service rate limited (retry after 355000 ms)".into() });
+        assert!(!busy.is_quota_exhausted());
+        assert_eq!(asr_error(AsrError::RateLimited { retry_after_ms: None }), DictationError::Asr("ASR rate limited".into()), "recognition's is unchanged");
 
         let used_up = serde_json::json!({ "error": { "code": "insufficient_quota", "message": "You exceeded your current quota" } });
         let server = MockServer::start().await;

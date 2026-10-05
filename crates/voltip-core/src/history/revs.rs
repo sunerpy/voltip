@@ -267,6 +267,7 @@ fn shallow(entry: &HistoryEntry) -> HistoryEntry {
         duration_ms: entry.duration_ms,
         asr_ms: entry.asr_ms,
         refine_ms: entry.refine_ms,
+        refine_failure: None,
         outcome: Outcome::Failed { reason: String::new() },
         starred: entry.starred,
         mode: entry.mode,

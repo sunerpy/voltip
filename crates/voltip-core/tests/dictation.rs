@@ -396,3 +396,106 @@ async fn the_chosen_microphone_reaches_the_recorder_and_persists() {
     assert_eq!(audio.devices(), vec![None, Some("fake:usb-mic".to_owned()), None]);
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
+
+/// A clean-up that the test turns busy or well: 429 while `busy`, else the text tidied.
+struct Switchable {
+    busy: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl Refiner for Switchable {
+    async fn refine(&self, text: &str, _hints: &voltip_core::dictation::RefineHints) -> Result<voltip_core::dictation::Refined, voltip_core::DictationError> {
+        if self.busy.load(Ordering::SeqCst) {
+            return Err(voltip_core::DictationError::RateLimited { service: ServiceKind::Llm, detail: "429".into() });
+        }
+        Ok(voltip_core::dictation::Refined { text: format!("{text}。"), latency_ms: 1, model: "builtin/model".into() })
+    }
+
+    async fn edit(
+        &self,
+        selection: &str,
+        _instruction: &str,
+        hints: &voltip_core::dictation::RefineHints,
+    ) -> Result<voltip_core::dictation::Refined, voltip_core::DictationError> {
+        self.refine(selection, hints).await
+    }
+}
+
+/// One take start to finish, and every event on the way.
+async fn take_events(node: &mut Node) -> Vec<CoreEvent> {
+    let mut seen = Vec::new();
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    wait_phase(node, |p| matches!(p, DictationPhase::Listening { .. })).await;
+    node.handle.send(CoreCommand::DictationStop).await.unwrap();
+    loop {
+        let ev = tokio::time::timeout(STEP, node.events.recv()).await.expect("event within 10 s").expect("core alive");
+        let terminal = matches!(&ev, CoreEvent::Dictation(s) if s.phase.is_terminal());
+        seen.push(ev);
+        if terminal {
+            return seen;
+        }
+    }
+}
+
+fn notices(events: &[CoreEvent]) -> Vec<Option<voltip_core::ui::RefineNotice>> {
+    events.iter().filter_map(|e| if let CoreEvent::RefineNotice(n) = e { Some(*n) } else { None }).collect()
+}
+
+/// A core whose clean-up runs on a built-in service (the test build has none) behind a
+/// [`Switchable`] refiner.
+fn built_in_core(dir: &std::path::Path, busy: &Arc<std::sync::atomic::AtomicBool>) -> Node {
+    let mut cfg = CoreConfig::new(dir.to_path_buf());
+    cfg.direct_enabled = false;
+    cfg.test_hooks.built_in = Some(voltip_core::BuiltIn {
+        refine_url: Some("https://<refine-host>/v1"),
+        refine_api_key: Some("k"),
+        refine_model: "builtin/model",
+        ..voltip_core::BuiltIn::EMPTY
+    });
+    let switch = busy.clone();
+    let built_in_ports = DictationPorts {
+        factory: Arc::new(move |engines: &ResolvedEngines| {
+            let refiner: Option<Arc<dyn Refiner>> = engines.refine.as_ref().map(|_| Arc::new(Switchable { busy: switch.clone() }) as Arc<dyn Refiner>);
+            (Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT)) as Arc<dyn Transcriber>, refiner)
+        }),
+        ..ports(Arc::new(AtomicUsize::new(0)), Arc::new(FakeInjector::paste()))
+    };
+    let (handle, events) = AppCore::start_with(cfg, Arc::new(MemorySecretStore::new()), built_in_ports).unwrap();
+    Node { handle, events }
+}
+
+/// docs/dictation.md §3.6: a take the built-in clean-up service turns down for too many requests
+/// raises the notice; a cleaned-up take clears it; closed, it stays away; a clean-up off the
+/// built-in service clears it too.
+#[tokio::test]
+async fn the_built_in_services_notice_comes_and_goes() {
+    let dir = tempfile::tempdir().unwrap();
+    let engines = EngineSettings { llm_provider: ProviderId::Builtin, ..remote_engines() };
+    SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, engines: engines.clone(), ..Settings::default() }).unwrap();
+    let busy = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let mut node = built_in_core(dir.path(), &busy);
+    wait(&mut node, |e| matches!(e, CoreEvent::Ready { .. }).then_some(())).await;
+
+    let raised = notices(&take_events(&mut node).await);
+    assert!(matches!(raised.as_slice(), [Some(n)] if n.failure == voltip_core::RefineFailure::RateLimited), "{raised:?}");
+    assert!(notices(&take_events(&mut node).await).is_empty(), "the same kind again changes nothing");
+
+    busy.store(false, Ordering::SeqCst);
+    assert_eq!(notices(&take_events(&mut node).await), vec![None], "a cleaned-up take clears it");
+
+    busy.store(true, Ordering::SeqCst);
+    assert_eq!(notices(&take_events(&mut node).await).len(), 1);
+    node.handle.send(CoreCommand::RefineNoticeClose).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::RefineNotice(None)).then_some(())).await;
+    assert!(notices(&take_events(&mut node).await).is_empty(), "closed: it stays away");
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+
+    // A clean-up off the built-in service has no notice (raised again by a fresh core first: the
+    // closed state lives in memory).
+    let mut node = built_in_core(dir.path(), &busy);
+    wait(&mut node, |e| matches!(e, CoreEvent::Ready { .. }).then_some(())).await;
+    assert_eq!(notices(&take_events(&mut node).await).len(), 1);
+    node.handle.send(CoreCommand::SetEngines(EngineSettings { llm_provider: ProviderId::Groq, ..engines })).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::RefineNotice(None)).then_some(())).await;
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}

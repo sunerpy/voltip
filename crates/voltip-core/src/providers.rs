@@ -219,7 +219,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
     ProviderSpec {
         id: ProviderId::Groq,
         asr: Some(ServicePreset { base_url: "https://api.groq.com/openai/v1", models: &["whisper-large-v3-turbo", "whisper-large-v3"] }),
-        llm: Some(ServicePreset { base_url: "https://api.groq.com/openai/v1", models: &["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"] }),
+        llm: Some(ServicePreset { base_url: "https://api.groq.com/openai/v1", models: &["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"] }),
         key: KeyPolicy::Required,
         on_device: false,
         console_url: Some("https://console.groq.com/keys"),

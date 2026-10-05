@@ -21,6 +21,7 @@ pub(super) fn entry(text: &str) -> HistoryEntry {
         duration_ms: 1500,
         asr_ms: 420,
         refine_ms: Some(300),
+        refine_failure: None,
         outcome: Outcome::Inserted { via: Via::Paste },
         starred: false,
         mode: OutputMode::WholeTake,

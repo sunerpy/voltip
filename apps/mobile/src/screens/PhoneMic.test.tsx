@@ -370,3 +370,18 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
     expect(await screen.findByText("出错了 · share: 这个平台没有系统分享")).toBeInTheDocument();
   });
 });
+
+describe("the built-in AI polish service's notice on the phone (docs/dictation.md §3.6)", () => {
+  it("shows under the talk card on the first screen and leads to AI 模型", async () => {
+    const { backend } = renderApp();
+    await screen.findByTestId("phone-mic");
+    expect(screen.queryByTestId("refine-notice")).toBeNull();
+    act(() => {
+      backend.simulateRefineNotice("rate_limited");
+    });
+    expect(await screen.findByText("内置 AI 润色服务当前繁忙")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "打开 AI 模型" }));
+    expect(await screen.findByTestId("phone-ai")).toBeInTheDocument();
+    backend.destroy();
+  });
+});

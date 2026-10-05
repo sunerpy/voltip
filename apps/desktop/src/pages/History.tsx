@@ -14,6 +14,7 @@ import {
   presetRefLabel,
   sceneLabel,
   syncsToPhones,
+  refineModelText,
 } from "@voltip/shared";
 import {
   Badge,
@@ -608,11 +609,7 @@ export function History({ initialFilter }: HistoryProps) {
                 />
                 <Readout
                   label={t("history.detail.refineModel")}
-                  value={
-                    selected.refined
-                      ? (selected.refine_model ?? "—")
-                      : t("history.detail.notRefined")
-                  }
+                  value={refineModelText(selected, locale)}
                   size="sm"
                   muted={!selected.refined}
                 />

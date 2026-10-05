@@ -603,6 +603,29 @@ export const DICTATION_FAILURE_CODES = [
 export const dictationFailureCodeSchema = z.enum(DICTATION_FAILURE_CODES);
 export type DictationFailureCode = z.infer<typeof dictationFailureCodeSchema>;
 
+/** Why a requested clean-up's text was not used (`voltip_core::RefineFailure`, docs/dictation.md
+ *  §3.6): `rate_limited` the service had too many requests, `quota` its quota is used up (no
+ *  fallback model had any left), `unconfigured` no service is set up, `too_long` a long take past
+ *  2000 characters, `empty` the service answered with nothing, `failed` anything else. */
+export const REFINE_FAILURES = [
+  "rate_limited",
+  "quota",
+  "unconfigured",
+  "too_long",
+  "empty",
+  "failed",
+] as const;
+export const refineFailureSchema = z.enum(REFINE_FAILURES);
+export type RefineFailure = z.infer<typeof refineFailureSchema>;
+
+/** The built-in clean-up service turned a take down for want of capacity (§3.6): the interface
+ *  suggests a provider of the user's own (`voltip_core::ui::RefineNotice`). */
+export const refineNoticeSchema = z.object({
+  failure: refineFailureSchema,
+  at_ms: z.number().nonnegative(),
+});
+export type RefineNotice = z.infer<typeof refineNoticeSchema>;
+
 /** One sentence the streaming recogniser closed at an endpoint (`voltip_core::dictation::Segment`),
  *  with stream timestamps in milliseconds. */
 export const liveSegmentSchema = z.object({
@@ -661,6 +684,8 @@ export const dictationPhaseSchema = z.discriminatedUnion("phase", [
     asr_ms: z.number().nonnegative(),
     refine_ms: z.number().nonnegative().optional(),
     refine_error: z.string().optional(),
+    /** The kind of `refine_error` (§3.6); absent when the clean-up ran or none was asked for. */
+    refine_failure: refineFailureSchema.optional(),
     /** Where the final text came from (§12); a streaming take that degraded reads `whole_take`
      *  here with the reason in `live_error`. */
     mode: outputModeSchema.default("whole_take"),
@@ -1036,6 +1061,8 @@ export const historyEntrySchema = z.object({
   duration_ms: z.number().nonnegative(),
   asr_ms: z.number().nonnegative(),
   refine_ms: z.number().nonnegative().optional(),
+  /** Why a requested clean-up's text was not used (§3.6); absent in entries written before it. */
+  refine_failure: refineFailureSchema.optional(),
   outcome: historyOutcomeSchema,
   starred: z.boolean(),
   /** Same meaning as `done.mode` / `segments` / `live_error` (§12); an older `history.json` reads
@@ -2040,6 +2067,9 @@ export const uiStateSchema = z.object({
   phone_outbox_too_large: z.array(z.string()).default(() => []),
   /** The local speech service the app hosts (docs/dictation.md §23.6); not available on the phone. */
   serve: serveStatusSchema.default(() => ({ available: false, phase: "off" as const })),
+  /** The built-in clean-up service's notice (docs/dictation.md §3.6); absent when there is
+   *  nothing to say. */
+  refine_notice: refineNoticeSchema.optional(),
 });
 export type UiState = z.infer<typeof uiStateSchema>;
 
@@ -2117,6 +2147,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("mirrors"), mirrors: z.array(mirrorViewSchema) }),
   /** Phone: its records too large to upload. */
   z.object({ type: z.literal("phone_outbox"), too_large: z.array(z.string()) }),
+  /** The built-in clean-up service's notice came or went (§3.6). */
+  z.object({ type: z.literal("refine_notice"), notice: refineNoticeSchema.nullable() }),
   /** What the local models can run on (§10.6), reported once by the desktop shell. */
   hardwareStatusSchema.extend({ type: z.literal("hardware") }),
   /** The core's answer to a paste from the history: the desktop shell waits for it, the webview
@@ -2422,6 +2454,8 @@ export interface CommandArgs {
   serve_copy_token: undefined;
   /** Replace the service's token. */
   serve_rotate_token: undefined;
+  /** Close the built-in clean-up service's notice (§3.6); it stays away a day. */
+  refine_notice_close: undefined;
   /** Query: the apps the history saw, newest first (`Backend.recentApps`, the scene editor). */
   recent_apps: undefined;
   /** Query (docs/dictation.md §4.4): a page of the history (`Backend.historyQuery`). */
@@ -2653,6 +2687,13 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
       return { ...state, mirrors: event.mirrors };
     case "phone_outbox":
       return { ...state, phone_outbox_too_large: event.too_large };
+    case "refine_notice": {
+      if (event.notice === null) {
+        const { refine_notice: _gone, ...rest } = state;
+        return rest;
+      }
+      return { ...state, refine_notice: event.notice };
+    }
     case "trusted":
     case "unpaired":
     case "identity_changed":

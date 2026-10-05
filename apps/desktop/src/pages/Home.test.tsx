@@ -176,6 +176,27 @@ describe("Home page", () => {
     expect(screen.getByTestId("polish-model")).toHaveTextContent("qwen3.8-27b");
   });
 
+  it("docs/dictation.md section 3.6: the built-in AI polish service's notice leads to AI 模型 and closes", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ mock: liveClock() });
+    await screen.findByTestId("home-inject-link");
+    expect(screen.queryByTestId("refine-notice")).toBeNull();
+    act(() => {
+      backend.simulateRefineNotice("rate_limited");
+    });
+    expect(await screen.findByText("内置 AI 润色服务当前繁忙")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await waitFor(() => {
+      expect(screen.queryByTestId("refine-notice")).toBeNull();
+    });
+    act(() => {
+      backend.simulateRefineNotice("quota");
+    });
+    expect(await screen.findByText("内置 AI 润色服务的额度已用完")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "打开 AI 模型" }));
+    expect(await screen.findByTestId("page-ai")).toBeInTheDocument();
+  });
+
   it("the engine card's insert readout opens Settings › Dictation", async () => {
     const user = userEvent.setup();
     renderApp({ mock: liveClock() });

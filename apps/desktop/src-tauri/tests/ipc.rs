@@ -1134,6 +1134,7 @@ fn overlay_pill_and_hotkey_edges_follow_the_dictation_contract() {
         duration_ms: 1,
         asr_ms: 1,
         refine_ms: None,
+        refine_failure: None,
         refine_error: None,
         mode: voltip_core::OutputMode::WholeTake,
         segments: None,
