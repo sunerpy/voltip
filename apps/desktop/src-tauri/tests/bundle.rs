@@ -235,6 +235,28 @@ fn regression_the_sherpa_onnx_build_script_runs_before_build_rs_stages_its_runti
     assert_eq!(dependency("voltip-asr-local", "sherpa-onnx-sys"), direct);
 }
 
+/// The desktop shell's library is linked only into its own binary, tests and examples, so it is
+/// an rlib alone. With Tauri's mobile `staticlib` and `cdylib` (the phone has a crate of its own)
+/// Cargo compiled every dependency of a release build to machine code as well as to the bitcode
+/// the thin-LTO link uses: a dependency of an rlib-only library gets `-C linker-plugin-lto`. A
+/// cold 32-core Linux release build (2026-10-05): the app 224 s → 156 s, the keychain harness
+/// 113 s → 88 s, target/ 3.3 → 2.4 GB. The cold Intel Mac leg of CI took 47 min and ran past the
+/// release candidate's 45-minute source gate.
+#[test]
+fn regression_the_desktop_library_is_an_rlib_only() {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let out = std::process::Command::new(cargo)
+        .args(["metadata", "--format-version", "1", "--no-deps", "--offline", "--manifest-path"])
+        .arg(tauri_dir().join("Cargo.toml"))
+        .output()
+        .expect("cargo metadata");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let desktop = meta["packages"].as_array().unwrap().iter().find(|p| p["name"] == "voltip-desktop").expect("voltip-desktop in the workspace");
+    let lib = desktop["targets"].as_array().unwrap().iter().find(|t| t["name"] == "voltip_desktop_lib").expect("the voltip_desktop_lib target");
+    assert_eq!(lib["crate_types"], serde_json::json!(["rlib"]));
+}
+
 /// The skill's Tauri version model (github-project-scaffold tauri-release.md): release-please bumps
 /// the root `package.json` (plus the two app package.json files), both `tauri.conf.json` files name
 /// that root file, and the Cargo version stays static — so a release commit never touches

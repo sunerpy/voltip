@@ -23,7 +23,10 @@ expect_used = "warn"
 
 [lib]
 name = "voltip_desktop_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Only the desktop binary, the tests and the examples link it. Tauri's mobile `staticlib` and
+# `cdylib` made every dependency of a release build compile to machine code as well as to bitcode
+# (tests/bundle.rs, regression_the_desktop_library_is_an_rlib_only).
+crate-type = ["rlib"]
 
 [build-dependencies]
 # build.rs reads the app version from package.json (already in the graph through tauri-build).
