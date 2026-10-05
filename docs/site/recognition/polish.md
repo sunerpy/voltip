@@ -12,7 +12,7 @@ Turn it on or off with the **AI Polish** switch in the title bar. The two menus 
 
 AI polish uses the service and model chosen on the **AI models** page, or from the model menu next to the **AI Polish** switch: the built-in service, OpenAI, Groq, SiliconFlow, Alibaba Cloud Model Studio, DeepSeek, a local Ollama, or any OpenAI-compatible endpoint. The same menu is on the home page; it lists the models of the built-in service and of each provider that is set up. See [Cloud services](/recognition/cloud) for setting one up.
 
-If the service does not answer, the recognised text is inserted without polish, and the dictation is not lost; the history's details say why, for example **service busy**. For the notice the built-in service shows when it is busy, see [The built-in service](/recognition/cloud#the-built-in-service). When the selected model's quota is used up, AI polish can move on to other models in order: see **When a model's quota runs out** in [Cloud services](/recognition/cloud).
+If the service does not answer, the recognised text is inserted without polish, and the dictation is not lost; once it is in, the overlay says it was not polished and why, for example **service busy**, and so do the history's details. For the notice the built-in service shows when it is busy, see [The built-in service](/recognition/cloud#the-built-in-service). When the selected model's quota is used up, AI polish can move on to other models in order: see **When a model's quota runs out** in [Cloud services](/recognition/cloud).
 
 ## Presets
 

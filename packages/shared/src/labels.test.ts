@@ -1,4 +1,5 @@
 import {
+  notRefinedText,
   refineModelText,
   activationChip,
   activationDescription,
@@ -679,5 +680,6 @@ describe("refineModelText", () => {
     expect(refineModelText({ refined: false, refine_failure: "too_long" }, "en")).toBe(
       "Not polished · over 2,000 characters",
     );
+    expect(notRefinedText("empty")).toBe("未润色 · 返回了空结果");
   });
 });

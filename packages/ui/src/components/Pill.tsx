@@ -112,6 +112,9 @@ export interface PillProps {
   keys?: string;
   /** Target app shown after `→` in the inserted state. */
   via?: string;
+  /** `inserted` only: why the text went in without AI polish (docs/dictation.md §3.6), a tag with a
+   *  warning lamp after the label; absent when the polish ran or none was asked for. */
+  note?: string;
   onCopy?: () => void;
   onStop?: () => void;
   className?: string;
@@ -212,6 +215,20 @@ const TAGGED_STATES: ReadonlySet<PillState> = new Set<PillState>([
   "cancel-armed",
 ]);
 
+/** Why the inserted text is not polished: a warning lamp and the reason, in the pill's own
+ *  colours (the warning colour alone is too faint for 10 px text on the light pill). */
+function NoteTag({ text }: { text: string | undefined }) {
+  if (text === undefined || text.length === 0) return null;
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded-6 border border-warning px-1.5 py-0.5 text-[10px] text-pill-fg"
+      data-testid="pill-note">
+      <Lamp tone="warn" size={6} />
+      {text}
+    </span>
+  );
+}
+
 /** The take's kind (`编辑`), leading the capsule in the accent colour. */
 function KindTag({ label }: { label: string }) {
   return (
@@ -245,6 +262,7 @@ export function Pill({
   progress,
   keys,
   via,
+  note,
   onCopy,
   onStop,
   className,
@@ -413,6 +431,7 @@ export function Pill({
             <Icon name="check" size={10} strokeWidth={3} />
           </span>
           <span>{text}</span>
+          <NoteTag text={note} />
           <Waveform levels={levels} state="collapsed" height={8} bars={12} />
           {via && <span className="mono text-[11px] text-pill-muted">→ {via}</span>}
           {readout && <span className="mono text-[11px] text-pill-muted">{readout}</span>}

@@ -12,6 +12,7 @@ import {
   takeFailureText,
   takePhaseLabel,
   viaLabel,
+  notRefinedText,
 } from "@voltip/shared";
 import {
   PILL_STATES,
@@ -228,6 +229,12 @@ export function Overlay({ state }: OverlayProps) {
         progress={
           phase.phase === "listening" && dictation.segments !== undefined
             ? segmentsDoneLabel(dictation.segments, locale)
+            : undefined
+        }
+        // docs/dictation.md §3.6: a take whose polish was asked for and not used says why.
+        note={
+          phase.phase === "done" && !phase.refined && phase.refine_failure !== undefined
+            ? notRefinedText(phase.refine_failure, locale)
             : undefined
         }
         onCopy={phase.phase === "failed" && phase.text !== undefined ? copyLive : undefined}

@@ -55,6 +55,7 @@ describe("Pill", () => {
       <Pill state="inserted" label="已插入 · 42 字" via="VS Code" readout="0.8 s · WM_PASTE" />,
     );
     expect(screen.getByText("→ VS Code")).toBeInTheDocument();
+    expect(screen.queryByTestId("pill-note")).toBeNull();
     render(<Pill state="cancel-armed" readout="Esc 已按下 · 00:07" />);
     expect(screen.getByText("Esc 已按下 · 00:07")).toBeInTheDocument();
     render(<Pill state="listening" readout="00:07" keys="Esc" />);
@@ -386,5 +387,19 @@ describe("Pill width", () => {
       }
       unmount();
     }
+  });
+});
+
+describe("the inserted pill's note (docs/dictation.md §3.6)", () => {
+  it("says why the text went in without polish, and only once the text is in", () => {
+    const { rerender } = render(
+      <Pill state="inserted" label="已插入 9 字" note="未润色 · 服务繁忙" />,
+    );
+    expect(screen.getByTestId("pill-note")).toHaveTextContent("未润色 · 服务繁忙");
+    expect(screen.getByRole("status")).toHaveTextContent("已插入 9 字未润色 · 服务繁忙");
+    rerender(<Pill state="processing" label="润色中…" note="未润色 · 服务繁忙" />);
+    expect(screen.queryByTestId("pill-note")).toBeNull();
+    rerender(<Pill state="inserted" label="已插入 9 字" note="" />);
+    expect(screen.queryByTestId("pill-note")).toBeNull();
   });
 });
