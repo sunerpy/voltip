@@ -23,7 +23,19 @@ expect_used = "warn"
 
 [lib]
 name = "voltip_desktop_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Only the desktop binaries, the tests and the examples link it. Tauri's mobile `staticlib` and
+# `cdylib` made every dependency of a release build compile to machine code as well as to bitcode
+# (tests/bundle.rs, regression_the_desktop_library_is_an_rlib_only).
+crate-type = ["rlib"]
+
+# The keychain pre-install harness of the macOS CI legs. Not an example: an example brings the
+# dev-dependencies, and their features recompiled the app build's crates
+# (tests/bundle.rs, regression_the_keychain_harness_is_a_bin_behind_its_own_feature). `cargo tauri
+# build` skips a bin whose required features are off.
+[[bin]]
+name = "keychain_preinstall"
+path = "src/bin/keychain_preinstall.rs"
+required-features = ["keychain-harness"]
 
 [build-dependencies]
 # build.rs reads the app version from package.json (already in the graph through tauri-build).
@@ -160,3 +172,5 @@ custom-protocol = ["tauri/custom-protocol"]
 # build with it (scripts/build-{linux,windows}-x64.sh); it needs the Vulkan SDK at build time, see
 # `voltip-asr-local`'s `vulkan` feature.
 gpu-vulkan = ["voltip-asr-local/vulkan"]
+# Builds the keychain pre-install harness (the `keychain_preinstall` bin above).
+keychain-harness = []

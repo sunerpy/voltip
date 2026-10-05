@@ -102,7 +102,17 @@ for signed in "$work/harness" "$work/good/Voltip.app"; do
 done
 
 # Positive: staged B persists before ACK; normal B startup reads its own items and removes old.
+# The harness's own status and output go to the log: under `set -e` a failed start left nothing.
+set +e
 USER="$user" "$work/harness" "$work/B.app.tar.gz" >"$work/prepare.log" 2>&1
+prepare_status=$?
+set -e
+if [ "$prepare_status" -ne 0 ]; then
+	tail -20 "$work/prepare.log"
+	file "$work/harness"
+	codesign -dv "$work/harness" 2>&1 | tail -6
+	fail "the harness exited with $prepare_status"
+fi
 grep -q 'prepared 2 entries' "$work/prepare.log" || fail "staged B did not persist: $(tail -5 "$work/prepare.log")"
 for entry in "${entries[@]}"; do
 	got=$(accounts "$entry" "$user")

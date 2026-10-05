@@ -235,6 +235,47 @@ fn regression_the_sherpa_onnx_build_script_runs_before_build_rs_stages_its_runti
     assert_eq!(dependency("voltip-asr-local", "sherpa-onnx-sys"), direct);
 }
 
+/// The desktop shell's library is linked only into its own binary, tests and examples, so it is
+/// an rlib alone. With Tauri's mobile `staticlib` and `cdylib` (the phone has a crate of its own)
+/// Cargo compiled every dependency of a release build to machine code as well as to the bitcode
+/// the thin-LTO link uses: a dependency of an rlib-only library gets `-C linker-plugin-lto`. A
+/// cold 32-core Linux release build (2026-10-05): the app 224 s → 156 s, the keychain harness
+/// 113 s → 88 s, target/ 3.3 → 2.4 GB. The cold Intel Mac leg of CI took 47 min and ran past the
+/// release candidate's 45-minute source gate.
+#[test]
+fn regression_the_desktop_library_is_an_rlib_only() {
+    let lib = desktop_target("voltip_desktop_lib");
+    assert_eq!(lib["crate_types"], serde_json::json!(["rlib"]));
+}
+
+/// The keychain pre-install harness of the macOS CI legs (`.github/scripts/check-keychain-preinstall.sh`)
+/// is a bin behind a feature of its own, not an example. An example brings the dev-dependencies,
+/// and their features (tauri's `test`, wiremock's hyper) recompiled some sixty crates of the app
+/// build: 11 min 12 s of the Intel Mac's 47-minute cold run (2026-10-05). `cargo tauri build`
+/// skips a bin whose required features are off, so the bundle never carries it.
+#[test]
+fn regression_the_keychain_harness_is_a_bin_behind_its_own_feature() {
+    let harness = desktop_target("keychain_preinstall");
+    assert_eq!(harness["kind"], serde_json::json!(["bin"]));
+    assert_eq!(harness["required-features"], serde_json::json!(["keychain-harness"]));
+    assert!(harness["src_path"].as_str().unwrap().ends_with("src/bin/keychain_preinstall.rs"), "{}", harness["src_path"]);
+}
+
+/// A target of the desktop shell as `cargo metadata` describes it (the workspace's own
+/// declarations only, as in the sherpa-onnx test above).
+fn desktop_target(name: &str) -> serde_json::Value {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let out = std::process::Command::new(cargo)
+        .args(["metadata", "--format-version", "1", "--no-deps", "--offline", "--manifest-path"])
+        .arg(tauri_dir().join("Cargo.toml"))
+        .output()
+        .expect("cargo metadata");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let desktop = meta["packages"].as_array().unwrap().iter().find(|p| p["name"] == "voltip-desktop").expect("voltip-desktop in the workspace");
+    desktop["targets"].as_array().unwrap().iter().find(|t| t["name"] == name).cloned().unwrap_or_else(|| panic!("no {name} target"))
+}
+
 /// The skill's Tauri version model (github-project-scaffold tauri-release.md): release-please bumps
 /// the root `package.json` (plus the two app package.json files), both `tauri.conf.json` files name
 /// that root file, and the Cargo version stays static — so a release commit never touches
