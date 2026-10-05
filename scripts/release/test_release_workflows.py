@@ -109,6 +109,17 @@ class CandidateBuild(unittest.TestCase):
         self.text = self.path.read_text(encoding="utf-8")
         self.jobs = jobs(self.path)
 
+    def test_regression_the_legs_cache_no_target_directory(self) -> None:
+        # 2026-10-05: the legs' target/ caches (release-*, about 4 GB) took the repository past
+        # GitHub's 10 GB Actions cache limit, which evicts the least recently used entries first:
+        # the macOS caches of ci.yml, which no pull request reads. The Intel Mac leg of main's CI
+        # then built cold (47 min) and the v0.0.44 candidate's 45-minute source gate gave up on it.
+        for leg in self.LEGS:
+            body = "\n".join(code_lines(self.jobs[leg]))
+            with self.subTest(leg=leg):
+                self.assertIn("Swatinem/rust-cache@", body)
+                self.assertIn("cache-targets: false", body)
+
     def test_the_delta_proof_has_no_escape(self) -> None:
         self.assertNotRegex(self.text, r"allow[_-]unproven")
         self.assertIn("check-release-delta.py", self.jobs["prepare"])
