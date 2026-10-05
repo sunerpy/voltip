@@ -106,7 +106,7 @@ Paseo 可以把本机服务用于手机应用中的听写。在 Paseo 的 `~/.pa
 
 - 请设置 `language`：不设置时，Paseo 会按英文请求识别。
 - Paseo 在守护进程启动时读取这些设置，`paseo daemon reload` 不会使它们生效。修改文件后请重新启动守护进程：`paseo daemon restart`。重新启动也会结束守护进程中正在运行的智能体。
-- Paseo 每收到 15 秒音频就切出一段，不考虑说话的停顿，并用空格连接各段文字。在 Paseo 守护进程的环境中设置 `PASEO_DICTATION_AUTO_COMMIT_SECONDS=0`，口述结束后会整段发送；守护进程使用启动它的命令的环境，例如 `PASEO_DICTATION_AUTO_COMMIT_SECONDS=0 paseo daemon restart`。如果使用较慢的本地模型且口述较长，可以设为 `110`，让每段在说话过程中就开始识别。
+- Paseo 每收到 15 秒音频就切出一段，不考虑说话的停顿，并用空格连接各段文字。在 Paseo 守护进程的环境中设置 `PASEO_DICTATION_AUTO_COMMIT_SECONDS=0`，口述结束后会整段发送。`paseo daemon restart` 沿用守护进程启动时的环境，不会带上新设置的变量，所以要先停止守护进程，再带着这个变量启动：`paseo daemon stop`，然后 `PASEO_DICTATION_AUTO_COMMIT_SECONDS=0 paseo daemon start`。如果使用较慢的本地模型且口述较长，可以设为 `110`，让每段在说话过程中就开始识别。
 - `model` 可以填写 `GET /v1/models` 中的任何一项，例如 `voltip:scene=coding`。
 
 ## 限制

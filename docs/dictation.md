@@ -1780,7 +1780,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
   `model` 也可以写 `/v1/models` 里的任何一项，例如 `voltip:scene=coding`。
 - `language`：Paseo 不设时发送 `en`，中文会被当作英文识别。在 Paseo 里设为 `zh`，或者用 `voltip-server --language`。
-- 生效：Paseo 0.10.3 的 `paseo daemon reload` 不应用 `features.dictation.*` 与 `providers.openai.stt.*`（它列出这些键并要求重启），要 `paseo daemon restart`；守护进程沿用启动命令的环境（`local-daemon.js` 以 `process.env` 启动），环境变量随重启一起给出。重启会结束守护进程中正在运行的 Agent（2026-10-05 本机验收时，执行验收的会话本身就在其中，所以重启留给用户）。
+- 生效：Paseo 0.10.3 的 `paseo daemon reload` 不应用 `features.dictation.*` 与 `providers.openai.stt.*`（它列出这些键并要求重启），要 `paseo daemon restart`。`restart` 只通过连接让 supervisor 换一个 worker，命令自己的环境不会传过去；worker 的环境是 supervisor 启动时复制的那一份（`supervisor-entrypoint.js` 的 `workerEnv = { ...process.env }`）。所以新的环境变量要先 `paseo daemon stop`，再带着变量 `paseo daemon start`（`local-daemon.js` 用启动命令的 `process.env` 启动 supervisor）。重启和停止都会结束守护进程中正在运行的 Agent（2026-10-05 本机验收时，执行验收的会话本身就在其中，所以重启留给用户）。
 - 分段：Paseo 默认每满 15 s 的音频就按字节数切一段，不看停顿，各段文字用空格拼接，中文里会多出空格，句子也可能断在中间。建议在 Paseo daemon 的环境里设 `PASEO_DICTATION_AUTO_COMMIT_SECONDS=0`，口述结束后整段提交；本地模型较慢而口述又很长时，可以设为 110，让每段在说话时就开始识别，每段仍在 2 分钟的整段路径内。Paseo 等结果的上限是 10 s + 每个待处理段 15 s + 每秒待处理音频 1.5 s，最多 5 分钟。
 - Paseo 只在模型名为 `gpt-4o-transcribe` / `gpt-4o-mini-transcribe` 时请求 `logprobs` 做置信度过滤，`voltip` 不受影响。
 
