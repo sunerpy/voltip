@@ -179,11 +179,25 @@ export const presetTryOutcomeSchema = z.discriminatedUnion("status", [
 export type PresetTryOutcome = z.infer<typeof presetTryOutcomeSchema>;
 
 /** One provider's choices (`voltip_core::engines::ProviderSettings`): absent = the preset. */
+/** The OpenAI interface a clean-up service speaks (`voltip_core::LlmApi`, docs/dictation.md
+ *  §3.7); only the custom provider chooses one. */
+export const LLM_APIS = ["chat_completions", "responses"] as const;
+export const llmApiSchema = z.enum(LLM_APIS);
+export type LlmApi = z.infer<typeof llmApiSchema>;
+/** A Responses request's `reasoning.effort` (`voltip_core::ReasoningEffort`). */
+export const REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"] as const;
+export const reasoningEffortSchema = z.enum(REASONING_EFFORTS);
+export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
+
 export const providerSettingsSchema = z.object({
   asr_model: z.string().optional(),
   asr_url: z.string().optional(),
   llm_model: z.string().optional(),
   llm_url: z.string().optional(),
+  /** The custom provider only: `responses`, or absent for chat completions (§3.7). */
+  llm_api: llmApiSchema.optional(),
+  /** The custom provider's Responses effort; absent sends none. */
+  llm_reasoning: reasoningEffortSchema.optional(),
 });
 export type ProviderSettings = z.infer<typeof providerSettingsSchema>;
 

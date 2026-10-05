@@ -334,6 +334,7 @@ fn a_take_on_the_phone_runs_through_the_cloud_clients_onto_its_clipboard() {
                 asr_model: Some("asr".into()),
                 llm_url: Some(format!("{}/v1", server.uri())),
                 llm_model: Some("clean-up".into()),
+                ..ProviderSettings::default()
             },
         )]
         .into(),

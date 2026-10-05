@@ -499,3 +499,34 @@ async fn the_built_in_services_notice_comes_and_goes() {
     wait(&mut node, |e| matches!(e, CoreEvent::RefineNotice(None)).then_some(())).await;
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
+
+/// docs/dictation.md §3.7: the custom provider's card may choose the Responses interface and an
+/// effort; another provider's settings may not carry them.
+#[tokio::test]
+async fn only_the_custom_provider_chooses_its_clean_up_interface() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut node = start(dir.path(), Arc::new(MemorySecretStore::new()), Arc::new(AtomicUsize::new(0)), Arc::new(FakeInjector::paste()));
+    wait(&mut node, |e| matches!(e, CoreEvent::Ready { .. }).then_some(())).await;
+    let with = |provider: ProviderId| {
+        let mut engines = remote_engines();
+        engines.providers.insert(
+            provider,
+            ProviderSettings {
+                llm_url: Some("http://127.0.0.1:8787/v1".into()),
+                llm_model: Some("claude-opus-5-5".into()),
+                llm_api: Some(voltip_core::LlmApi::Responses),
+                llm_reasoning: Some(voltip_core::ReasoningEffort::High),
+                ..Default::default()
+            },
+        );
+        engines
+    };
+    node.handle.send(CoreCommand::SetEngines(with(ProviderId::Groq))).await.unwrap();
+    let err = wait(&mut node, |e| if let CoreEvent::Error(m) = e { Some(m.clone()) } else { None }).await;
+    assert!(err.contains("groq.llm_api") && err.contains("自定义"), "{err}");
+    node.handle.send(CoreCommand::SetEngines(with(ProviderId::Custom))).await.unwrap();
+    let saved = wait(&mut node, |e| if let CoreEvent::Settings(s) = e { Some(s.clone()) } else { None }).await;
+    let custom = &saved.engines.providers[&ProviderId::Custom];
+    assert_eq!((custom.llm_api, custom.llm_reasoning), (Some(voltip_core::LlmApi::Responses), Some(voltip_core::ReasoningEffort::High)));
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}

@@ -52,8 +52,8 @@ pub use models::{
 };
 pub use presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetError, PresetId, PresetRef, PresetTrial, PresetTryOutcome, TakePreset};
 pub use providers::{
-    AsrProtocol, KeyPolicy, PROVIDERS, ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSpec, ServiceKind, ServicePreset, key_entries,
-    load_user_secrets, peek_user_secrets,
+    AsrProtocol, KeyPolicy, LlmApi, PROVIDERS, ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSpec, ReasoningEffort, ServiceKind,
+    ServicePreset, key_entries, key_env_var, load_user_secrets, peek_user_secrets,
 };
 pub use runtime::{
     AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED, SERVE_UNAVAILABLE, TestHooks,

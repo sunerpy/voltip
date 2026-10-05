@@ -58,6 +58,8 @@ pub struct Wiring {
     pub secrets: UserSecrets,
     /// Why the keys could not be read, when they could not.
     pub secrets_notice: Option<String>,
+    /// The environment variables keys were taken from (names only, never the values).
+    pub secrets_from_env: Vec<String>,
     /// The service compiled into the build.
     pub built_in: BuiltIn,
 }
@@ -97,9 +99,29 @@ fn secret_store() -> Arc<dyn SecretStore> {
 pub fn read_secrets(store: &dyn SecretStore) -> (UserSecrets, Option<String>) {
     let probe = voltip_core::key_entries().into_iter().next().map(|entry| store.peek(entry));
     match probe {
-        Some(Err(e)) => (UserSecrets::default(), Some(format!("系统钥匙串无法读取（{e}）：需要 API 密钥的服务商视为未配置，内置服务与本地模型不受影响"))),
+        Some(Err(e)) => (
+            UserSecrets::default(),
+            Some(format!(
+                "系统钥匙串无法读取（{e}）：只有环境变量 VOLTIP_KEY_…（见 --help）提供的密钥可用，其余需要 API 密钥的服务商视为未配置；内置服务与本地模型不受影响"
+            )),
+        ),
         _ => (voltip_core::peek_user_secrets(store), None),
     }
+}
+
+/// `secrets` with the keys the environment gives (docs/dictation.md §23.5): each key entry's
+/// [`voltip_core::key_env_var`], when set and not blank, wins over the keychain. Returns the names
+/// of the variables used; the values are never logged or printed.
+pub fn with_env_keys(mut secrets: UserSecrets, env: impl Fn(&str) -> Option<String>) -> (UserSecrets, Vec<String>) {
+    let mut used = Vec::new();
+    for entry in voltip_core::key_entries() {
+        let name = voltip_core::key_env_var(entry);
+        if let Some(value) = env(&name).map(|v| v.trim().to_owned()).filter(|v| !v.is_empty()) {
+            secrets.set_entry(entry, Some(value));
+            used.push(name);
+        }
+    }
+    (secrets, used)
 }
 
 /// The production wiring over `data_dir`'s model library.
@@ -107,6 +129,7 @@ pub fn production_wiring(data_dir: &Path) -> Wiring {
     let models_root = CoreConfig::new(data_dir.to_path_buf()).models_root;
     let store = ModelStore::new(models_root.clone());
     let (secrets, secrets_notice) = read_secrets(secret_store().as_ref());
+    let (secrets, secrets_from_env) = with_env_keys(secrets, |name| std::env::var(name).ok());
     Wiring {
         factory: engine_factory(LocalTranscriber::new(models_root.clone())),
         models: Some(Arc::new(store)),
@@ -114,7 +137,18 @@ pub fn production_wiring(data_dir: &Path) -> Wiring {
         segmenter: Some(Arc::new(VadSegmenterFactory::new(models_root, None))),
         secrets,
         secrets_notice,
+        secrets_from_env,
         built_in: BuiltIn::from_build(),
+    }
+}
+
+/// `（Responses · 推理强度 high）` after a clean-up model on the Responses interface
+/// (docs/dictation.md §3.7); nothing for chat completions.
+fn interface(remote: &voltip_core::RemoteService) -> String {
+    match (remote.api, remote.reasoning) {
+        (voltip_core::LlmApi::ChatCompletions, _) => String::new(),
+        (voltip_core::LlmApi::Responses, None) => "（Responses）".to_owned(),
+        (voltip_core::LlmApi::Responses, Some(effort)) => format!("（Responses · 推理强度 {}）", effort.as_str()),
     }
 }
 
@@ -146,7 +180,11 @@ pub fn https_unavailable() -> Option<String> {
 
 /// Read the data directory and check the options against it.
 pub fn prepare(options: &ServeOptions, data_dir: &Path, wiring: Wiring) -> Result<Prepared, String> {
-    let Wiring { factory, models, segmenter, secrets, secrets_notice, built_in } = wiring;
+    let Wiring { factory, models, segmenter, secrets, secrets_notice, secrets_from_env, built_in } = wiring;
+    if !secrets_from_env.is_empty() {
+        // Names only: a key's value is never logged.
+        tracing::info!(variables = ?secrets_from_env, "engine keys from the environment");
+    }
     let config = FileSourceConfig {
         data_dir: data_dir.to_path_buf(),
         platform: voltip_protocol::Platform::current(),
@@ -185,6 +223,7 @@ fn provider(id: ProviderId) -> &'static str {
 
 /// `--check`: what the service would run with; 0 when recognition can run.
 pub fn check(options: &ServeOptions, data_dir: &Path, wiring: Wiring, out: &mut dyn Write) -> i32 {
+    let from_env = wiring.secrets_from_env.clone();
     let prepared = match prepare(options, data_dir, wiring) {
         Ok(p) => p,
         Err(e) => {
@@ -204,10 +243,13 @@ pub fn check(options: &ServeOptions, data_dir: &Path, wiring: Wiring, out: &mut 
     };
     let _ = writeln!(out, "语音识别：{asr}");
     let llm = match (&engines.refine, engines.llm_provider) {
-        (Some(remote), Some(id)) => format!("{} · {}", provider(id), remote.model),
+        (Some(remote), Some(id)) => format!("{} · {}{}", provider(id), remote.model, interface(remote)),
         _ => "未配置".to_owned(),
     };
     let _ = writeln!(out, "AI 润色：{llm}");
+    if !from_env.is_empty() {
+        let _ = writeln!(out, "密钥：取自环境变量 {}", from_env.join("、"));
+    }
     let defaults = &prepared.defaults;
     let scene = match (defaults.scene, &defaults.app) {
         (Some(id), _) => state

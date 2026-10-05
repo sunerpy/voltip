@@ -16,6 +16,11 @@ use voltip_core::{ChineseScript, ProviderId};
     name = "voltip-server",
     version = crate::APP_VERSION,
     about = "Voltip's local speech service: an OpenAI-compatible transcription endpoint for other programs on this computer.",
+    after_help = "Provider keys come from the system keychain the app writes to. Where there is none (a server \
+without a desktop session), a key can come from the environment instead, and wins over the keychain: \
+VOLTIP_KEY_OPENAI, VOLTIP_KEY_GROQ, VOLTIP_KEY_SILICONFLOW, VOLTIP_KEY_ALIYUN, VOLTIP_KEY_DEEPSEEK, \
+VOLTIP_KEY_CUSTOM_ASR, VOLTIP_KEY_CUSTOM_LLM. Prefer a systemd EnvironmentFile readable by your user only; \
+the values are never logged.",
     disable_help_subcommand = true
 )]
 pub struct Cli {

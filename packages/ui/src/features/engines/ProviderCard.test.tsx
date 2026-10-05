@@ -140,6 +140,53 @@ describe("ProviderCard (desktop engines pane and phone settings)", () => {
     backend.destroy();
   });
 
+  it("docs/dictation.md §3.7: the custom clean-up card chooses Responses and an effort; others have no such fields", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    const invoke = vi.spyOn(backend, "invoke");
+    renderCard(backend, { id: "custom", kind: "llm" });
+    const form = await screen.findByTestId("provider-form");
+    const api = within(form).getByRole("combobox", { name: t("engines.field.api") });
+    expect(api).toHaveValue("chat_completions");
+    expect(within(form).queryByRole("combobox", { name: t("engines.field.reasoning") })).toBeNull();
+    await user.selectOptions(api, "Responses");
+    const effort = within(form).getByRole("combobox", { name: t("engines.field.reasoning") });
+    expect(effort).toHaveValue("");
+    expect(screen.getByTestId("provider-api-help")).toHaveTextContent(
+      t("engines.field.reasoningHelp"),
+    );
+    await user.selectOptions(effort, "high");
+    await user.type(
+      within(form).getByLabelText(t("engines.field.baseUrl")),
+      "http://127.0.0.1:8787/v1",
+    );
+    // The custom provider has no model list: the field is a plain one.
+    await user.type(within(form).getByLabelText(t("engines.field.modelCustom")), "claude-opus-5-5");
+    await user.click(within(form).getByRole("button", { name: t("engines.save") }));
+    expect(invoke).toHaveBeenCalledWith("settings_set_engines", {
+      engines: expect.objectContaining({
+        providers: expect.objectContaining({
+          custom: {
+            llm_url: "http://127.0.0.1:8787/v1",
+            llm_model: "claude-opus-5-5",
+            llm_api: "responses",
+            llm_reasoning: "high",
+          },
+        }),
+      }),
+    });
+    backend.destroy();
+  });
+
+  it("shows no interface choice on a vendor's clean-up card or the custom recognition card", async () => {
+    const backend = new MockBackend();
+    renderCard(backend, { id: "openai", kind: "llm" });
+    const form = await screen.findByTestId("provider-form");
+    expect(within(form).queryByRole("combobox", { name: t("engines.field.api") })).toBeNull();
+    expect(screen.queryByTestId("provider-api-help")).toBeNull();
+    backend.destroy();
+  });
+
   it("refuses a draft the checks reject and saves nothing", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend();

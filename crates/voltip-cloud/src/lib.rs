@@ -276,6 +276,27 @@ pub fn refine_config(remote: &RemoteService, builtin: bool) -> RefineConfig {
         .with_timeout(REFINE_TIMEOUT)
         .with_output_cap(cap)
         .with_enable_thinking(is_dashscope(&remote.url).then_some(false))
+        .with_api(refine_api(remote.api))
+        .with_reasoning_effort(remote.reasoning.map(reasoning_effort))
+}
+
+/// The core's interface choice as the refine crate's (docs/dictation.md §3.7).
+fn refine_api(api: voltip_core::LlmApi) -> voltip_refine::RefineApi {
+    match api {
+        voltip_core::LlmApi::ChatCompletions => voltip_refine::RefineApi::ChatCompletions,
+        voltip_core::LlmApi::Responses => voltip_refine::RefineApi::Responses,
+    }
+}
+
+fn reasoning_effort(effort: voltip_core::ReasoningEffort) -> voltip_refine::ReasoningEffort {
+    use voltip_core::ReasoningEffort as E;
+    match effort {
+        E::Minimal => voltip_refine::ReasoningEffort::Minimal,
+        E::Low => voltip_refine::ReasoningEffort::Low,
+        E::Medium => voltip_refine::ReasoningEffort::Medium,
+        E::High => voltip_refine::ReasoningEffort::High,
+        E::Xhigh => voltip_refine::ReasoningEffort::Xhigh,
+    }
 }
 
 /// The engines pane's 测试连接 over HTTP (docs/dictation.md §3.3): `GET {base}/models` with the
@@ -328,6 +349,7 @@ mod tests {
             asr_model: Some("whisper".into()),
             llm_url: llm_url.map(str::to_owned),
             llm_model: Some("m".into()),
+            ..ProviderSettings::default()
         };
         let settings = EngineSettings {
             asr_provider: ProviderId::Custom,
@@ -361,7 +383,7 @@ mod tests {
     /// else keeps OpenAI's multipart.
     #[tokio::test]
     async fn the_protocol_picks_the_client() {
-        let remote = |url: &str, model: &str| RemoteService { url: url.into(), model: model.into(), key: Some("sk-test".into()) };
+        let remote = |url: &str, model: &str| RemoteService { url: url.into(), model: model.into(), key: Some("sk-test".into()), ..RemoteService::default() };
         let studio = "https://dashscope.aliyuncs.com/compatible-mode/v1";
         let pick = |url: &str, model: &str| transcriber_for(AsrProtocol::of(url, model), &remote(url, model));
         assert!(pick(studio, "qwen-audio-3.1-asr-flash-streaming").streaming(&[]).is_some());
@@ -422,7 +444,7 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("POST")).and(path("/v1/chat/completions")).respond_with(ResponseTemplate::new(403).set_body_json(used_up)).mount(&server).await;
-        let remote = RemoteService { url: server.uri(), model: "whisper-1".into(), key: Some("sk-test".into()) };
+        let remote = RemoteService { url: server.uri(), model: "whisper-1".into(), key: Some("sk-test".into()), ..RemoteService::default() };
         let err = transcriber_for(AsrProtocol::OpenaiTranscriptions, &remote).transcribe(b"RIFF", None, &[]).await.unwrap_err();
         assert!(matches!(&err, DictationError::QuotaExhausted { service: ServiceKind::Asr, .. }), "{err:?}");
         let refiner = HttpRefiner::new(refine_config(&remote, false)).unwrap();
@@ -435,16 +457,41 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"text":"你好"}"#))
             .mount(&server)
             .await;
-        let remote = RemoteService { url: server.uri(), model: "whisper-1".into(), key: None };
+        let remote = RemoteService { url: server.uri(), model: "whisper-1".into(), key: None, ..RemoteService::default() };
         let t = transcriber_for(AsrProtocol::OpenaiTranscriptions, &remote).transcribe(b"RIFF", None, &[]).await.unwrap();
         assert_eq!((t.text.as_str(), t.model.as_deref()), ("你好", Some("whisper-1")));
     }
 
     /// Regression (2026-10-04): a Model Studio clean-up runs without thinking, at the compatible
     /// base; every other service is asked as before.
+    /// docs/dictation.md §3.7: the custom card's interface and effort reach the client.
+    #[test]
+    fn the_custom_interface_and_effort_reach_the_client() {
+        let responses = RemoteService {
+            url: "http://127.0.0.1:8787/v1".into(),
+            model: "claude-opus-5-5".into(),
+            key: Some("sk-test".into()),
+            api: voltip_core::LlmApi::Responses,
+            reasoning: Some(voltip_core::ReasoningEffort::Xhigh),
+        };
+        let config = refine_config(&responses, false);
+        assert_eq!((config.api, config.reasoning_effort), (voltip_refine::RefineApi::Responses, Some(voltip_refine::ReasoningEffort::Xhigh)));
+        assert_eq!(config.enable_thinking, None);
+        for (core, wire) in [
+            (voltip_core::ReasoningEffort::Minimal, "minimal"),
+            (voltip_core::ReasoningEffort::Low, "low"),
+            (voltip_core::ReasoningEffort::Medium, "medium"),
+            (voltip_core::ReasoningEffort::High, "high"),
+        ] {
+            assert_eq!(reasoning_effort(core).as_str(), wire);
+        }
+        let vendor = RemoteService { url: "https://api.openai.com/v1".into(), model: "gpt-5".into(), key: Some("sk-test".into()), ..RemoteService::default() };
+        assert_eq!(refine_config(&vendor, false).api, voltip_refine::RefineApi::ChatCompletions);
+    }
+
     #[test]
     fn regression_a_model_studio_clean_up_does_not_think() {
-        let remote = |url: &str| RemoteService { url: url.into(), model: "qwen3.8-flash".into(), key: Some("sk-test".into()) };
+        let remote = |url: &str| RemoteService { url: url.into(), model: "qwen3.8-flash".into(), key: Some("sk-test".into()), ..RemoteService::default() };
         let studio = refine_config(&remote("https://ws-1.cn-beijing.maas.aliyuncs.com"), false);
         assert_eq!(studio.enable_thinking, Some(false));
         assert_eq!(studio.base_url, "https://ws-1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1");

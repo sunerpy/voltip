@@ -1788,6 +1788,17 @@ export class MockBackend implements Backend {
         });
         return;
       }
+      // Mirrors `SetEngines` (docs/dictation.md §3.7): only the custom provider chooses its
+      // clean-up interface.
+      for (const [id, choice] of Object.entries(engines.providers ?? {})) {
+        if (
+          id !== "custom" &&
+          (choice?.llm_api !== undefined || choice?.llm_reasoning !== undefined)
+        ) {
+          this.emit({ type: "error", message: `${id}.llm_api: 只有自定义服务商可以选择接口类型` });
+          return;
+        }
+      }
       const settings: Settings = {
         ...this.state.settings,
         engines: { ...engines },

@@ -95,3 +95,5 @@ These options print their result and exit:
 | 0 | The service stopped normally, or `--check` found that recognition can run |
 | 1 | The service could not start, or recognition is not available |
 | 2 | Options that do not go together, or an unknown option |
+
+Without a system keychain, provider keys can come from the environment, which wins over the keychain: `VOLTIP_KEY_OPENAI`, `VOLTIP_KEY_GROQ`, `VOLTIP_KEY_SILICONFLOW`, `VOLTIP_KEY_ALIYUN`, `VOLTIP_KEY_DEEPSEEK`, `VOLTIP_KEY_CUSTOM_ASR`, `VOLTIP_KEY_CUSTOM_LLM`. See [Local service](/recognition/service#on-a-server-without-a-desktop).

@@ -13,7 +13,49 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Longest error body kept in [`RefineError::Server`].
 pub const MAX_ERROR_BODY_CHARS: usize = 200;
 
-/// How to reach the chat-completions service.
+/// Which OpenAI interface the service speaks (docs/dictation.md §3.7).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RefineApi {
+    /// `POST {base}/chat/completions` with a system and a user message, `temperature` and
+    /// `max_tokens`: every OpenAI-compatible service (the default).
+    #[default]
+    ChatCompletions,
+    /// `POST {base}/responses` with `instructions`, `input` and `store: false`, and no
+    /// `temperature` or `max_output_tokens`: reasoning models and gateways such as kiro-provider
+    /// refuse them (a gateway accepted Opus's limit only from 1 024 tokens, and none at all for
+    /// its GPT models; measured 2026-10-05).
+    Responses,
+}
+
+/// `reasoning.effort` of a Responses request (docs/dictation.md §3.7); not sent when unset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReasoningEffort {
+    /// `minimal`.
+    Minimal,
+    /// `low`.
+    Low,
+    /// `medium`.
+    Medium,
+    /// `high`.
+    High,
+    /// `xhigh`.
+    Xhigh,
+}
+
+impl ReasoningEffort {
+    /// The wire value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Xhigh => "xhigh",
+        }
+    }
+}
+
+/// How to reach the clean-up service.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RefineConfig {
     /// Service root; `https://api.groq.com/openai/v1`, `https://api.openai.com/v1` and
@@ -32,13 +74,27 @@ pub struct RefineConfig {
     /// answers with its Qwen3 and DeepSeek models in thinking mode by default: ten times slower
     /// for a clean-up, and a short `max_tokens` is spent on the reasoning, leaving the answer
     /// empty (measured 2026-10-04). `Some(false)` there; `None` (the default) sends nothing.
+    /// Chat completions only.
     pub enable_thinking: Option<bool>,
+    /// The interface ([`RefineApi::ChatCompletions`] unless set).
+    pub api: RefineApi,
+    /// A Responses request's `reasoning.effort`; `None` (the default) sends nothing.
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl RefineConfig {
     /// A configuration without a key, the default timeout and the built-in service's output ceiling.
     pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Self {
-        Self { base_url: base_url.into(), api_key: None, model: model.into(), timeout: DEFAULT_TIMEOUT, output_cap: BUILTIN_OUTPUT_CAP, enable_thinking: None }
+        Self {
+            base_url: base_url.into(),
+            api_key: None,
+            model: model.into(),
+            timeout: DEFAULT_TIMEOUT,
+            output_cap: BUILTIN_OUTPUT_CAP,
+            enable_thinking: None,
+            api: RefineApi::ChatCompletions,
+            reasoning_effort: None,
+        }
     }
 
     /// Set the bearer key.
@@ -64,6 +120,18 @@ impl RefineConfig {
         self.enable_thinking = enable_thinking;
         self
     }
+
+    /// Set the interface.
+    pub fn with_api(mut self, api: RefineApi) -> Self {
+        self.api = api;
+        self
+    }
+
+    /// Set a Responses request's `reasoning.effort` (`None` sends nothing).
+    pub fn with_reasoning_effort(mut self, reasoning_effort: Option<ReasoningEffort>) -> Self {
+        self.reasoning_effort = reasoning_effort;
+        self
+    }
 }
 
 impl fmt::Debug for RefineConfig {
@@ -75,6 +143,8 @@ impl fmt::Debug for RefineConfig {
             .field("timeout", &self.timeout)
             .field("output_cap", &self.output_cap)
             .field("enable_thinking", &self.enable_thinking)
+            .field("api", &self.api)
+            .field("reasoning_effort", &self.reasoning_effort)
             .finish()
     }
 }

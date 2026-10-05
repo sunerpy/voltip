@@ -2,8 +2,11 @@ import {
   type ProviderStatus,
   type ServiceKind,
   type ServiceStatus,
+  REASONING_EFFORTS,
+  type ReasoningEffort,
   applyProviderDraft,
   checkProviderDraft,
+  choosesInterface,
   modelChoices,
   modelDisplayName,
   probeText,
@@ -55,6 +58,9 @@ export interface ProviderCardProps {
  *  explains itself, the on-device card holds the shell's `localBody`, and every other card is the
  *  form for its model, endpoint and key plus 测试连接. The desktop's engines pane and the phone's
  *  settings both use it. */
+/** The effort select's "not set" choice (no `reasoning` in the request). */
+const NO_EFFORT = "";
+
 export function ProviderCard({ provider, kind, open, onToggle, localBody }: ProviderCardProps) {
   const { backend } = useBackend();
   const { notify } = useFeatureShell();
@@ -231,7 +237,11 @@ function ProviderForm({
         baseUrl: "",
       }),
     });
-    setDraft({ model: "", baseUrl: "", key: "" });
+    setDraft(
+      choosesInterface(provider.id, kind)
+        ? { model: "", baseUrl: "", key: "", api: "chat_completions" }
+        : { model: "", baseUrl: "", key: "" },
+    );
     setTyping(false);
     setProblem(undefined);
     notify(t("engines.resetDone", { provider: name }));
@@ -292,6 +302,47 @@ function ProviderForm({
           }
         />
       </div>
+      {choosesInterface(provider.id, kind) && (
+        // docs/dictation.md §3.7: the custom clean-up's interface, and the Responses effort.
+        <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]">
+          <Select
+            label={t("engines.field.api")}
+            size="sm"
+            value={draft.api ?? "chat_completions"}
+            onChange={(value) => {
+              setDraft({ ...draft, api: value === "responses" ? "responses" : "chat_completions" });
+            }}
+            options={[
+              { value: "chat_completions", label: "Chat Completions" },
+              { value: "responses", label: "Responses" },
+            ]}
+          />
+          {draft.api === "responses" && (
+            <Select
+              label={t("engines.field.reasoning")}
+              size="sm"
+              value={draft.reasoning ?? NO_EFFORT}
+              onChange={(value) => {
+                const reasoning = REASONING_EFFORTS.find((e) => e === value);
+                const next = { ...draft };
+                if (reasoning === undefined) delete next.reasoning;
+                else next.reasoning = reasoning;
+                setDraft(next);
+              }}
+              options={[
+                { value: NO_EFFORT, label: t("engines.field.reasoningNone") },
+                ...REASONING_EFFORTS.map((e: ReasoningEffort) => ({ value: e, label: e })),
+              ]}
+            />
+          )}
+        </div>
+      )}
+      {choosesInterface(provider.id, kind) && (
+        <p className="text-[12px] leading-4 text-fg-muted" data-testid="provider-api-help">
+          {t("engines.field.apiHelp")}
+          {draft.api === "responses" ? ` ${t("engines.field.reasoningHelp")}` : ""}
+        </p>
+      )}
       <p className="text-[12px] leading-4 text-fg-muted">{t("engines.field.modelHelp")}</p>
       {takesKey && (
         <div className="flex items-end gap-1">

@@ -81,7 +81,15 @@ fn wiring(transcriber: FakeTranscriber, refiner: Option<FakeRefiner>) -> Wiring 
     let transcriber = Arc::new(transcriber);
     let refiner = refiner.map(Arc::new);
     let factory: EngineFactory = Arc::new(move |_| (transcriber.clone() as Arc<dyn Transcriber>, refiner.clone().map(|r| r as Arc<dyn Refiner>)));
-    Wiring { factory, models: None, segmenter: None, secrets: voltip_core::UserSecrets::default(), secrets_notice: None, built_in: BUILT_IN }
+    Wiring {
+        factory,
+        models: None,
+        segmenter: None,
+        secrets: voltip_core::UserSecrets::default(),
+        secrets_notice: None,
+        secrets_from_env: Vec::new(),
+        built_in: BUILT_IN,
+    }
 }
 
 #[test]
@@ -111,6 +119,57 @@ fn check_reports_the_configuration_and_whether_recognition_can_run() {
     let text = String::from_utf8(out).unwrap();
     assert_eq!(not_ready, 1);
     assert!(text.contains("状态：不可用：识别服务未配置"), "{text}");
+}
+
+/// docs/dictation.md §23.5: a key may come from the environment (a server with no keychain); it
+/// wins over the keychain, blank ones are ignored, and only the variable's name is reported.
+#[test]
+fn keys_from_the_environment_win_over_the_keychain_and_are_named_never_printed() {
+    use voltip_core::{ProviderId, ServiceKind, UserSecrets};
+    assert_eq!(voltip_core::key_env_var("provider-key.custom-llm"), "VOLTIP_KEY_CUSTOM_LLM");
+    assert_eq!(voltip_core::key_env_var("provider-key.openai"), "VOLTIP_KEY_OPENAI");
+    let mut keychain = UserSecrets::default();
+    keychain.set(ProviderId::Openai, ServiceKind::Llm, Some("from-keychain".into()));
+    keychain.set(ProviderId::Groq, ServiceKind::Llm, Some("groq-keychain".into()));
+    let env = |name: &str| match name {
+        "VOLTIP_KEY_CUSTOM_LLM" => Some(" sk-from-env ".to_owned()),
+        "VOLTIP_KEY_OPENAI" => Some("sk-env-openai".to_owned()),
+        "VOLTIP_KEY_GROQ" => Some("   ".to_owned()),
+        _ => None,
+    };
+    let (secrets, used) = voltip_server::with_env_keys(keychain, env);
+    assert_eq!(secrets.get(ProviderId::Custom, ServiceKind::Llm), Some("sk-from-env"));
+    assert_eq!(secrets.get(ProviderId::Openai, ServiceKind::Llm), Some("sk-env-openai"), "the environment wins");
+    assert_eq!(secrets.get(ProviderId::Groq, ServiceKind::Llm), Some("groq-keychain"), "a blank variable changes nothing");
+    assert_eq!(secrets.get(ProviderId::Custom, ServiceKind::Asr), None);
+    let mut used = used;
+    used.sort();
+    assert_eq!(used, ["VOLTIP_KEY_CUSTOM_LLM", "VOLTIP_KEY_OPENAI"]);
+
+    // --check names the variable and the clean-up's interface, and never the key.
+    let dir = tempfile::tempdir().unwrap();
+    let custom = voltip_core::ProviderSettings {
+        llm_url: Some("http://127.0.0.1:8787/v1".into()),
+        llm_model: Some("claude-opus-5-5".into()),
+        llm_api: Some(voltip_core::LlmApi::Responses),
+        llm_reasoning: Some(voltip_core::ReasoningEffort::High),
+        ..Default::default()
+    };
+    let settings = voltip_core::Settings {
+        engines: voltip_core::EngineSettings { llm_provider: ProviderId::Custom, providers: [(ProviderId::Custom, custom)].into(), ..Default::default() },
+        ..Default::default()
+    };
+    voltip_core::SettingsStore::new(dir.path()).save(&settings).unwrap();
+    let mut w = wiring(FakeTranscriber::ok("x"), Some(FakeRefiner::ok("y")));
+    w.secrets = secrets;
+    w.secrets_from_env = vec!["VOLTIP_KEY_CUSTOM_LLM".to_owned()];
+    let mut out = Vec::new();
+    let code = check(&options(&[]), dir.path(), w, &mut out);
+    let text = String::from_utf8(out).unwrap();
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("AI 润色：custom · claude-opus-5-5（Responses · 推理强度 high）"), "{text}");
+    assert!(text.contains("密钥：取自环境变量 VOLTIP_KEY_CUSTOM_LLM"), "{text}");
+    assert!(!text.contains("sk-from-env"), "the key is never printed: {text}");
 }
 
 #[test]

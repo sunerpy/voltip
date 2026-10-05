@@ -251,7 +251,11 @@
         "providers": {
           "custom": {
             "asr_model": "Qwen/Qwen3-ASR-1.7B",
-            "asr_url": "https://asr.example.test"
+            "asr_url": "https://asr.example.test",
+            "llm_api": "responses",
+            "llm_model": "claude-opus-5-5",
+            "llm_reasoning": "high",
+            "llm_url": "http://127.0.0.1:8787/v1"
           },
           "groq": {
             "llm_model": "openai/gpt-oss-20b"

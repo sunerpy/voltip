@@ -32,7 +32,7 @@ mod presets;
 mod prompt;
 
 pub use client::{RefineClient, Refined, clean_answer, clean_edit_answer, edit_token_budget, list_models};
-pub use config::{DEFAULT_TIMEOUT, MAX_ERROR_BODY_CHARS, RefineConfig, normalize_base_url};
+pub use config::{DEFAULT_TIMEOUT, MAX_ERROR_BODY_CHARS, ReasoningEffort, RefineApi, RefineConfig, normalize_base_url};
 pub use error::{RefineError, is_quota_exhausted};
 pub use presets::{BUILTIN_OUTPUT_CAP, MIN_OUTPUT_TOKENS, OUTPUT_CONTRACT, Preset, USER_OUTPUT_CAP, output_token_budget};
 pub use prompt::{

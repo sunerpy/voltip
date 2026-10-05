@@ -45,7 +45,7 @@ fn models(var: &str, default: &str) -> Vec<String> {
 }
 
 fn transcriber(real: &Real, model: &str) -> Arc<dyn Transcriber> {
-    let remote = RemoteService { url: real.url.clone(), model: model.to_owned(), key: Some(real.key.clone()) };
+    let remote = RemoteService { url: real.url.clone(), model: model.to_owned(), key: Some(real.key.clone()), ..RemoteService::default() };
     voltip_cloud::transcriber_for(AsrProtocol::of(&real.url, model), &remote)
 }
 

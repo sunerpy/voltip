@@ -7,10 +7,12 @@ import { zhT, type TFunction } from "./i18n";
 import type {
   EngineSettings,
   EngineStatus,
+  LlmApi,
   ProbeReport,
   ProviderId,
   ProviderSettings,
   ProviderStatus,
+  ReasoningEffort,
   ServiceKind,
   ServiceStatus,
 } from "./schema";
@@ -20,11 +22,20 @@ export function providersFor(status: EngineStatus, kind: ServiceKind): ProviderS
   return status.providers.filter((p) => p[kind] !== undefined);
 }
 
-/** What one provider card edits for one service; `key` is never prefilled. */
+/** What one provider card edits for one service; `key` is never prefilled. `api` and
+ *  `reasoning` belong to the custom provider's clean-up card alone (docs/dictation.md §3.7). */
 export interface ProviderDraft {
   model: string;
   baseUrl: string;
   key: string;
+  api?: LlmApi;
+  /** `undefined` sends no effort. */
+  reasoning?: ReasoningEffort;
+}
+
+/** Whether a card chooses its interface: the custom provider's clean-up (§3.7). */
+export function choosesInterface(provider: ProviderId, kind: ServiceKind): boolean {
+  return provider === "custom" && kind === "llm";
 }
 
 /** The draft a card opens with: the user's saved choices (never the presets, which are the
@@ -35,11 +46,16 @@ export function providerDraft(
   kind: ServiceKind,
 ): ProviderDraft {
   const saved = settings.providers?.[provider];
-  return {
+  const draft: ProviderDraft = {
     model: (kind === "asr" ? saved?.asr_model : saved?.llm_model) ?? "",
     baseUrl: (kind === "asr" ? saved?.asr_url : saved?.llm_url) ?? "",
     key: "",
   };
+  if (choosesInterface(provider, kind)) {
+    draft.api = saved?.llm_api ?? "chat_completions";
+    if (saved?.llm_reasoning !== undefined) draft.reasoning = saved.llm_reasoning;
+  }
+  return draft;
 }
 
 /** Fold one card's draft into the full `EngineSettings` (`settings_set_engines` is all or nothing).
@@ -48,7 +64,7 @@ export function applyProviderDraft(
   settings: EngineSettings,
   provider: ProviderId,
   kind: ServiceKind,
-  draft: Pick<ProviderDraft, "model" | "baseUrl">,
+  draft: Pick<ProviderDraft, "model" | "baseUrl" | "api" | "reasoning">,
 ): EngineSettings {
   const current: ProviderSettings = { ...settings.providers?.[provider] };
   const model = draft.model.trim();
@@ -59,6 +75,14 @@ export function applyProviderDraft(
   else delete current[modelKey];
   if (url.length > 0) current[urlKey] = url;
   else delete current[urlKey];
+  if (choosesInterface(provider, kind)) {
+    // Chat completions is the default and is not written; the effort goes with Responses only.
+    if (draft.api === "responses") current.llm_api = "responses";
+    else delete current.llm_api;
+    if (draft.api === "responses" && draft.reasoning !== undefined)
+      current.llm_reasoning = draft.reasoning;
+    else delete current.llm_reasoning;
+  }
   const providers: Partial<Record<ProviderId, ProviderSettings>> = { ...settings.providers };
   if (Object.keys(current).length > 0) providers[provider] = current;
   else delete providers[provider];

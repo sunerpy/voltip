@@ -37,6 +37,14 @@ A provider that offers both services uses one key for both.
 3. Enter your key. **Test connection** checks the address and the key and lists the models the provider offers.
 4. Choose **Use** to switch to the provider.
 
+## The Responses interface
+
+For AI polish, the custom provider's **Interface** can be Chat Completions (the default) or Responses. OpenAI's reasoning models and some gateways (kiro-provider, for example) speak the Responses interface.
+
+- With Responses, **Reasoning effort** can be set (minimal, low, medium, high, xhigh); **Not set** leaves the service's default.
+- The request carries no temperature and no output length limit: reasoning models and these gateways usually refuse both. It asks the service not to store the text.
+- For example, a kiro-provider on this computer: endpoint `http://127.0.0.1:8787/v1`, model `claude-opus-5-5`, interface Responses, reasoning effort high. A higher effort polishes more slowly; when one polish takes longer than 30 seconds, Voltip inserts the recognised text without polish.
+
 ## Alibaba Cloud Model Studio
 
 Model Studio's speech models use Model Studio's own interfaces, and Voltip picks the right one from the model's name:

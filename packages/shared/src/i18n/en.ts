@@ -980,6 +980,13 @@ export const en: Messages = {
       modelCustom: "Model ID",
       modelHelp:
         "Pick from the list; after a connection test the provider's own models show up in it too.",
+      api: "Interface",
+      apiHelp:
+        "Most services speak Chat Completions; kiro-provider, OpenAI's reasoning models and others also speak Responses.",
+      reasoning: "Reasoning effort",
+      reasoningNone: "Not set",
+      reasoningHelp:
+        "Sent with Responses requests only; when not set, the service uses its default.",
       baseUrl: "Endpoint",
       baseUrlHelpVendor:
         "Leave empty for the official endpoint; fill in only for a proxy or relay.",
