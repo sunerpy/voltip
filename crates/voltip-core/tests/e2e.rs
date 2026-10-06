@@ -880,6 +880,34 @@ async fn pair_ordered<'a>(
     }
 }
 
+/// Until the initiator has heard the responder on its newest channel. The initiator shows the
+/// device online as soon as its channel is up, but tears the channel down when it has not heard the
+/// responder by the handshake deadline, and then drops what comes on it (docs/dictation.md §20.8).
+/// On a slow machine (CI's coverage run, 2026-10-05) the responder's first message on the new
+/// channel came after the deadline and the test's next text went with it. A probe the initiator
+/// opens is heard, so the channel stays; "ready" then comes after any probe still on the way.
+async fn heard_by_initiator(initiator: &mut Node, responder: &mut Node, initiator_on_responder: &voltip_identity::TrustedDevice) {
+    let to = initiator_on_responder.public_key;
+    let probed = async {
+        loop {
+            responder.handle.send(CoreCommand::SendText { to, body: "probe".into() }).await.unwrap();
+            let got = wait(initiator, |e| matches!(e, CoreEvent::Message { body, .. } if body == "probe").then_some(()));
+            if tokio::time::timeout(Duration::from_secs(2), got).await.is_ok() {
+                return;
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(30), probed).await.expect("a probe from the responder gets through");
+    responder.handle.send(CoreCommand::SendText { to, body: "ready".into() }).await.unwrap();
+    wait(initiator, |e| match e {
+        CoreEvent::Message { body, .. } if body == "ready" => Some(()),
+        CoreEvent::Message { body, .. } if body == "probe" => None,
+        CoreEvent::Message { body, .. } => panic!("unexpected text {body:?}"),
+        _ => None,
+    })
+    .await;
+}
+
 /// Text from each side reaches the other.
 async fn texts_both_ways(a: &mut Node, a_peer: &voltip_identity::TrustedDevice, b: &mut Node, b_peer: &voltip_identity::TrustedDevice) {
     async fn text(from: &mut Node, to: &mut Node, peer: &voltip_identity::TrustedDevice, body: &str) {
@@ -913,6 +941,7 @@ async fn regression_a_responder_that_missed_the_last_handshake_message_is_asked_
     let ((initiator, initiator_peer), (responder, responder_peer)) = pair_ordered(&mut desk, &mut phone).await;
     // The responder has a channel only from a second handshake on.
     tokio::time::timeout(Duration::from_secs(30), wait_online(responder)).await.expect("the responder is asked again");
+    heard_by_initiator(initiator, responder, &responder_peer).await;
     texts_both_ways(initiator, &initiator_peer, responder, &responder_peer).await;
 }
 
@@ -942,6 +971,7 @@ async fn regression_a_responder_with_a_channel_answers_an_initiator_that_starts_
         wait_online(initiator).await;
     };
     tokio::time::timeout(Duration::from_secs(30), restarted).await.expect("the second handshake is answered");
+    heard_by_initiator(initiator, responder, &responder_peer).await;
     texts_both_ways(initiator, &initiator_peer, responder, &responder_peer).await;
 }
 
