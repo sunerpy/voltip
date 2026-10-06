@@ -28,6 +28,13 @@
 .PARAMETER Models
   Catalogue ids to download and run, as an array or one comma-separated string (default:
   sense-voice-small, the smallest offline model; CI adds qwen3-asr-0.6b, the default one).
+.PARAMETER ModelCache
+  A directory holding the model files of an earlier run, one subdirectory per catalogue id (CI keeps
+  it in the Actions cache). Before the downloads they are copied into the library without their
+  manifest, so the app's downloader checks each file's size and sha256 instead of fetching it; after
+  a good run the verified files are copied back. A model the cache lacks, or a file that fails the
+  check, is downloaded as before. huggingface.co and hf-mirror.com both unreachable for a minute
+  then no longer fails the run (2026-10-06, main CI 37401697547).
 .NOTES
   Data directory: on Linux and macOS the run is isolated (XDG_* / HOME point into <OutDir>). On
   Windows the app resolves its data directory through the Known Folder API (roaming AppData), which
@@ -38,6 +45,7 @@ param(
   [Parameter(Mandatory = $true)] [string] $Binary,
   [string] $OutDir = 'smoke-native-cli',
   [string[]] $Models = @('sense-voice-small'),
+  [string] $ModelCache = '',
   # Tried in order, like the app's own model sources (huggingface.co, then its mirror for networks
   # that cannot reach it); the sha256 pin makes the source irrelevant.
   [string[]] $SampleUrl = @(
@@ -60,6 +68,10 @@ $SampleUrl = @($SampleUrl | ForEach-Object { $_ -split ',' } | ForEach-Object { 
 $Binary = (Resolve-Path -LiteralPath $Binary).Path
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $OutDir = (Resolve-Path -LiteralPath $OutDir).Path
+if ($ModelCache) {
+  New-Item -ItemType Directory -Force -Path $ModelCache | Out-Null
+  $ModelCache = (Resolve-Path -LiteralPath $ModelCache).Path
+}
 $summary = Join-Path $OutDir 'summary.txt'
 $appData = Join-Path $OutDir 'appdata'
 if (Test-Path $appData) { Remove-Item -Recurse -Force $appData }
@@ -135,6 +147,22 @@ function Invoke-Voltip([string] $step, [string[]] $arguments, [int] $timeoutSec)
   return [pscustomobject]@{ Code = $process.ExitCode; Stdout = $stdout; Stderr = $stderr; Seconds = $elapsed }
 }
 
+# Where the app keeps its models: `ProjectDirs::from("dev", "voltip", "Voltip")`'s data directory
+# (lib.rs `data_dir`) plus `models` (`CoreConfig::models_root`), under the per-user directories set
+# above. Windows resolves roaming AppData through the Known Folder API, as the app does.
+function Get-ModelsRoot {
+  if ($IsWindows) { return Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'voltip\Voltip\data\models' }
+  if ($IsMacOS) { return Join-Path $env:HOME 'Library/Application Support/dev.voltip.Voltip/models' }
+  return Join-Path $env:XDG_DATA_HOME 'voltip/models'
+}
+
+# Copy a model directory's files without its manifest (and without a `.part` left mid-download).
+function Copy-ModelFiles([string] $from, [string] $to) {
+  New-Item -ItemType Directory -Force -Path $to | Out-Null
+  Copy-Item -Path (Join-Path $from '*') -Destination $to -Recurse -Force
+  Get-ChildItem -LiteralPath $to -Recurse -File | Where-Object { $_.Name -eq 'manifest.json' -or $_.Name -like '*.part' } | Remove-Item -Force
+}
+
 function Assert-That([bool] $condition, [string] $message) {
   if (-not $condition) {
     Write-Summary "FAILED: $message"
@@ -166,12 +194,31 @@ foreach ($m in $Models) {
   Assert-That (@($rows | Where-Object { ($_ -split "`t")[0] -eq $m }).Count -eq 1) "catalogue has no row for $m"
 }
 
-# 3. Models through the app's own downloader (resumes, verifies sha256, writes the manifest).
+# 3. Models through the app's own downloader (resumes, verifies sha256, writes the manifest). Files
+#    from -ModelCache go in first; the downloader checks them and fetches only what is missing.
+$modelsRoot = Get-ModelsRoot
+if ($ModelCache) {
+  $seeded = @()
+  foreach ($m in $Models) {
+    $cached = Join-Path $ModelCache $m
+    $target = Join-Path $modelsRoot $m
+    if ((Test-Path -LiteralPath $cached) -and -not (Test-Path -LiteralPath (Join-Path $target 'manifest.json'))) {
+      Copy-ModelFiles $cached $target
+      $seeded += $m
+    }
+  }
+  Write-Summary "model cache: $(if ($seeded) { "$($seeded -join ', ') from $ModelCache" } else { "nothing usable in $ModelCache" })"
+}
+$installed = @{}
 foreach ($m in $Models) {
   $dl = Invoke-Voltip "download-$m" @('--download-model', $m) $DownloadTimeoutSec
   Assert-That ($dl.Code -eq 0) "--download-model $m failed"
   $fields = @($dl.Stdout.TrimEnd() -split "`t")
   Assert-That ($fields.Count -eq 3 -and $fields[0] -eq $m -and $fields[1] -eq 'installed') "--download-model $m printed '$($dl.Stdout.TrimEnd())'"
+  $installed[$m] = $fields[2]
+  if ($ModelCache -and [System.IO.Path]::GetFullPath($fields[2]).TrimEnd('/', '\') -ne [System.IO.Path]::GetFullPath((Join-Path $modelsRoot $m)).TrimEnd('/', '\')) {
+    Write-Summary "model cache: the app installed $m in $($fields[2]), not under $modelsRoot; the cache cannot seed it"
+  }
 }
 
 # 4. The public sample, pinned by revision and sha256: each source in turn, three attempts each.
@@ -212,6 +259,16 @@ foreach ($m in $Models) {
 $after = Invoke-Voltip 'list-models-after' @('--list-models') $StepTimeoutSec
 foreach ($m in $Models) {
   Assert-That (@($after.Stdout -split "`n" | Where-Object { $_ -match "^$([regex]::Escape($m))`tinstalled`t" }).Count -eq 1) "$m not listed as installed afterwards"
+}
+
+# The verified files go back to -ModelCache for the next run.
+if ($ModelCache) {
+  foreach ($m in $Models) {
+    $dest = Join-Path $ModelCache $m
+    if (Test-Path -LiteralPath $dest) { Remove-Item -Recurse -Force -LiteralPath $dest }
+    Copy-ModelFiles $installed[$m] $dest
+  }
+  Write-Summary "model cache: $($Models -join ', ') kept in $ModelCache"
 }
 
 Write-Summary ''

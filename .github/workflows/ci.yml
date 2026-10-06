@@ -525,6 +525,18 @@ jobs:
           name: voltip-windows-x64
           path: dist-windows
 
+      # The headless runs' two models (930 MB) from the Actions cache: huggingface.co and its mirror
+      # both unreachable for a minute failed main's Intel Mac leg (2026-10-06, run 37401697547). One
+      # entry for every OS, written from main only; the app's downloader still checks each file's
+      # sha256 and fetches what the cache lacks (scripts/smoke-native-cli.ps1 -ModelCache).
+      - name: Restore the smoke test's models
+        id: smoke-models
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: smoke-models
+          key: smoke-models-${{ hashFiles('crates/voltip-asr-local/src/catalogue.rs') }}
+          enableCrossOsArchive: true
+
       - name: Portable zip — unpack, headless native run
         run: |
           $zip = Get-ChildItem dist-windows -Filter '*_x64-portable.zip' | Select-Object -First 1
@@ -533,7 +545,7 @@ jobs:
           $exe = Get-ChildItem portable -Recurse -Filter 'voltip-desktop.exe' | Select-Object -First 1
           if (-not $exe) { throw 'no voltip-desktop.exe in the portable zip' }
           Get-ChildItem $exe.DirectoryName | ForEach-Object { "  $($_.Name) $($_.Length)" }
-          ./scripts/smoke-native-cli.ps1 -Binary $exe.FullName -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-windows
+          ./scripts/smoke-native-cli.ps1 -Binary $exe.FullName -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-windows -ModelCache smoke-models
 
       # The runner has an interactive desktop (the lone-key hook tests rely on it too). Its own
       # timeout keeps the log when a window step hangs.
@@ -590,7 +602,15 @@ jobs:
           if (-not $exe) { throw "installed voltip-desktop.exe not found in: $($candidates -join '; ')" }
           "installed at: $($exe.DirectoryName)"
           Get-ChildItem $exe.DirectoryName -Filter '*.dll' | ForEach-Object { "  $($_.Name) $($_.Length)" }
-          ./scripts/smoke-native-cli.ps1 -Binary $exe.FullName -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-windows-installed
+          ./scripts/smoke-native-cli.ps1 -Binary $exe.FullName -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-windows-installed -ModelCache smoke-models
+
+      - name: Save the smoke test's models
+        if: github.ref == 'refs/heads/main' && steps.smoke-models.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: smoke-models
+          key: smoke-models-${{ hashFiles('crates/voltip-asr-local/src/catalogue.rs') }}
+          enableCrossOsArchive: true
 
       - name: Upload the run summaries
         if: always()
@@ -735,12 +755,29 @@ jobs:
       - name: make smoke-wayland (headless weston + sway, --toggle, wtype paste, clipboard restore)
         run: make smoke-wayland
 
+      # The headless run's models from the Actions cache (see windows-native).
+      - name: Restore the smoke test's models
+        id: smoke-models
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: smoke-models
+          key: smoke-models-${{ hashFiles('crates/voltip-asr-local/src/catalogue.rs') }}
+          enableCrossOsArchive: true
+
       # Same headless check the Windows job runs, on the binary the smoke just built.
       - name: Headless native run (download a model, transcribe a public sample)
         run: |
           set -euo pipefail
           command -v pwsh >/dev/null || { echo "::error::pwsh (PowerShell 7) is not on this runner image"; exit 1; }
-          pwsh -NoProfile -File scripts/smoke-native-cli.ps1 -Binary target/debug/voltip-desktop -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-linux
+          pwsh -NoProfile -File scripts/smoke-native-cli.ps1 -Binary target/debug/voltip-desktop -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-linux -ModelCache smoke-models
+
+      - name: Save the smoke test's models
+        if: github.ref == 'refs/heads/main' && steps.smoke-models.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: smoke-models
+          key: smoke-models-${{ hashFiles('crates/voltip-asr-local/src/catalogue.rs') }}
+          enableCrossOsArchive: true
 
       - name: Upload screenshots
         if: always()
@@ -1108,11 +1145,28 @@ jobs:
         timeout-minutes: 15
         run: .github/scripts/check-keychain-preinstall.sh "$APP" "target/$MACOS_TARGET/release/keychain_preinstall"
 
+      # The headless run's models from the Actions cache (see windows-native).
+      - name: Restore the smoke test's models
+        id: smoke-models
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: smoke-models
+          key: smoke-models-${{ hashFiles('crates/voltip-asr-local/src/catalogue.rs') }}
+          enableCrossOsArchive: true
+
       - name: Headless native run (download a model, transcribe a public sample)
         shell: pwsh
         # Both engines: sherpa-onnx (SenseVoice, the bundled dylibs) and transcribe.cpp (Qwen3-ASR
         # GGUF, ggml built for Apple silicon), as the Windows job does.
-        run: ./scripts/smoke-native-cli.ps1 -Binary "$env:APP/Contents/MacOS/voltip-desktop" -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-macos-${{ matrix.arch }}
+        run: ./scripts/smoke-native-cli.ps1 -Binary "$env:APP/Contents/MacOS/voltip-desktop" -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-macos-${{ matrix.arch }} -ModelCache smoke-models
+
+      - name: Save the smoke test's models
+        if: github.ref == 'refs/heads/main' && steps.smoke-models.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: smoke-models
+          key: smoke-models-${{ hashFiles('crates/voltip-asr-local/src/catalogue.rs') }}
+          enableCrossOsArchive: true
 
       # The desktop around the app (scripts/smoke-tray-macos.sh): the title bar's left end keeps
       # the brand clear of the traffic lights (user feedback 2026-09-29), and the menu bar item, its
