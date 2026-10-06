@@ -373,6 +373,24 @@ class ContinuousIntegration(unittest.TestCase):
         self.assertNotIn("cargo build", check)
         self.assertLess(body.index("Build the keychain pre-install harness"), body.index("Keychain pre-install hand-over"))
 
+    def test_regression_the_smoke_models_come_from_the_actions_cache(self) -> None:
+        # 2026-10-06 (main CI 37401697547): huggingface.co and hf-mirror.com were both unreachable
+        # for a minute and the Intel Mac's headless run failed on the model download. Every job that
+        # runs the headless smoke seeds the library from one cross-OS cache entry that main writes.
+        key = "key: smoke-models-${{ hashFiles('crates/voltip-asr-local/src/catalogue.rs') }}"
+        for name in ("windows-native", "smoke-desktop", "macos"):
+            code = "\n".join(code_lines(self.jobs[name]))
+            with self.subTest(job=name):
+                runs = re.findall(r"smoke-native-cli\.ps1[^\n]*", code)
+                self.assertTrue(runs)
+                for run in runs:
+                    self.assertIn("-ModelCache smoke-models", run)
+                self.assertLess(code.index("actions/cache/restore@"), code.index("smoke-native-cli.ps1"))
+                self.assertLess(code.rindex("smoke-native-cli.ps1"), code.index("actions/cache/save@"))
+                self.assertIn("if: github.ref == 'refs/heads/main' && steps.smoke-models.outputs.cache-hit != 'true'", code)
+                self.assertEqual(code.count(key), 2)
+                self.assertEqual(code.count("enableCrossOsArchive: true"), 2)
+
     def test_regression_the_keychain_harness_builds_on_the_app_builds_crates(self) -> None:
         # 2026-10-05 (main CI 37293351063, Intel Mac): as an example the harness brought the
         # dev-dependencies, whose features (tauri's `test`, wiremock's hyper) recompiled some sixty
