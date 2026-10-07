@@ -61,7 +61,7 @@ curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install
 | Linux 服务器，x64 | `voltip-server-*-linux-x64.tar.gz` | 用于没有桌面的电脑的[本机服务](/zh/recognition/service)。与 Linux 安装包一样在 Ubuntu 22.04 上构建；自带运行所需的库，缺少系统库时 `install.sh --server` 会列出 |
 | macOS 11 及以上，Apple 芯片 | `*_aarch64.dmg` | M1 及更新的芯片 |
 | macOS 11 及以上，Intel 芯片 | `*_x64.dmg` | Intel 芯片的 Mac |
-| Android 8.0 及以上，64 位 Arm | `*_android_arm64.apk` | 见下面的 [Android](#android) 和[手机端](/zh/phone/) |
+| Android 8.0 及以上，64 位 Arm | `Voltip_*_android_arm64.apk`；`Voltip-RN_*_android_arm64.apk`，即 Voltip RN，界面使用 Android 原生控件的同一应用 | 见下面的 [Android](#android) 和[手机端](/zh/phone/) |
 
 ### Windows
 
@@ -88,6 +88,8 @@ dmg 安装包使用项目自己的证书签名，但未经 Apple 公证。打开
 在手机上下载 `Voltip_<版本>_android_arm64.apk` 并打开。Android 会询问是否允许浏览器或文件管理器安装应用，为这次安装选择允许即可。应用需要 Android 8.0 或更高版本，以及 64 位 Arm 处理器。
 
 新版本可以直接覆盖安装，配对关系会保留，因为每个版本都使用同一把密钥签名。发布中的 `.aab` 文件是提交给 Google Play 的安装包，手机上安装的是 `.apk`。
+
+`Voltip-RN_<版本>_android_arm64.apk` 是 Voltip RN：手机端的另一个版本，界面使用 Android 原生控件。安装方法相同，它作为单独的应用与 Voltip 同时安装，配对、设置和记录各自独立。它不检查更新：打开新版本中的这个文件即可覆盖安装，配对、设置和记录都会保留。
 
 ## 核对下载的文件
 

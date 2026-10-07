@@ -5,22 +5,39 @@
 # check passed; nothing had started the app. CI runs this against an emulator (`android-device` in
 # ci.yml); it runs the same against a phone over adb.
 #
-# Usage: android-device-smoke.sh <apk or directory holding one> <out dir>
-# Needs `adb` on PATH with one device online. Writes into <out>: install.txt, start.txt,
-# logcat.txt, crash.txt, events.txt, exit-info.txt, ui.xml and screen.png, whatever the outcome, and
-# app-logcat.txt (the app's process alone) when it came up.
+# With `--app mobile-rn` it starts the React Native phone app instead (docs/mobile-rn.md §6):
+# installed, first screen up, still up 20 s later, nothing fatal in its log. Its back navigation is
+# React Navigation's own, which the Device Farm acceptance walks (apps/mobile-rn/devicefarm).
+#
+# Usage: android-device-smoke.sh [--app mobile-rn] <apk or directory holding one> <out dir>
+# A directory is searched for the app's own release name (Voltip_*.apk, or Voltip-RN_*.apk): the
+# release candidate's Android leg holds both apps. Needs `adb` on PATH with one device online.
+# Writes into <out>: install.txt, start.txt, logcat.txt, crash.txt, events.txt, exit-info.txt,
+# ui.xml and screen.png, whatever the outcome, and app-logcat.txt (the app's process alone) when it
+# came up.
 set -euo pipefail
 
-if [ "$#" -ne 2 ]; then
-  echo "usage: $0 <apk or directory> <out dir>" >&2
+app=mobile
+if [ "${1:-}" = --app ]; then
+  app=${2:-}
+  shift 2 || true
+fi
+case "$app" in
+  mobile) package=dev.voltip.mobile name='Voltip_*.apk' ;;
+  mobile-rn) package=dev.voltip.mobile.rn name='Voltip-RN_*.apk' ;;
+  *) app="" ;;
+esac
+if [ -z "$app" ] || [ "$#" -ne 2 ]; then
+  echo "usage: $0 [--app mobile-rn] <apk or directory> <out dir>" >&2
   exit 2
 fi
 apk=$1 out=$2
 if [ -d "$apk" ]; then
-  apk=$(find "$apk" -name '*.apk' | sort | head -1)
+  found=$(find "$apk" -name "$name" | sort)
+  [ "$(grep -c . <<<"$found")" -le 1 ] || { echo "android-device-smoke: more than one $name in $1" >&2; exit 2; }
+  apk=$found
 fi
-[ -f "$apk" ] || { echo "android-device-smoke: no APK at $1" >&2; exit 2; }
-package=dev.voltip.mobile
+[ -f "$apk" ] || { echo "android-device-smoke: no APK for $package at $1" >&2; exit 2; }
 mkdir -p "$out"
 
 collect() {
@@ -113,6 +130,10 @@ pid=$(adb shell pidof "$package" | tr -d '\r')
 adb logcat -d --pid="$pid" >"$out/app-logcat.txt" 2>&1 || true
 if grep -qE "FATAL EXCEPTION|panicked at|Fatal signal" "$out/app-logcat.txt" || grep -q "$package" "$out/crash.txt"; then
   fail "the app logged a fatal error although it is still running"
+fi
+if [ "$app" = mobile-rn ]; then
+  echo "android-device-smoke: $package came up and stayed up ($(basename "$apk"))"
+  exit 0
 fi
 
 # Android's back (user request 2026-10-02, docs/acceptance/android/manual-checklist.md item 17):

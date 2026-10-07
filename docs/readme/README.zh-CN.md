@@ -76,7 +76,7 @@ curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install
 | Linux x64 服务器 | `voltip-server-*-linux-x64.tar.gz` | 用于没有桌面的服务器的本机语音服务（见下文）；`install.sh --server` 安装，不需要 root。 |
 | macOS 11+（Apple 芯片） | .dmg | M1 及更新 |
 | macOS 11+（Intel 芯片） | .dmg | Intel 芯片的 Mac |
-| Android 8.0+（64 位 Arm） | `*_android_arm64.apk` | 在手机上打开即可安装。`.aab` 是上架 Google Play 用的安装包。 |
+| Android 8.0+（64 位 Arm） | `Voltip_*_android_arm64.apk` | 在手机上打开即可安装。`.aab` 是上架 Google Play 用的安装包。`Voltip-RN_*_android_arm64.apk` 是 Voltip RN，界面使用 Android 原生控件的同一应用，可以与 Voltip 同时安装。 |
 
 Mac 的安装包是 `*_aarch64.dmg`（Apple 芯片）和 `*_x64.dmg`（Intel 芯片），用项目自己的自签名证书签名，没有公证。在 Mac 上手动安装：打开 dmg，把 Voltip 拖到「应用程序」。应用没有公证，第一次打开会被拦下：macOS 15 起到「系统设置 → 隐私与安全性」里点「仍要打开」；macOS 11 到 14 在「应用程序」里按住 Control 点 Voltip，选「打开」。也可以在终端执行 `xattr -dr com.apple.quarantine /Applications/Voltip.app`。之后的更新在应用里完成，麦克风和辅助功能的授权会保留。0.0.15 和 0.0.16 在安装后交接钥匙串条目的做法没有生效，所以 0.0.16 安装第一个带安装前交接修复的版本时，会为每个钥匙串条目各询问一次；两个都带修复的版本之间在应用内更新时不再询问。听写无效时，在系统设置的「辅助功能」和「麦克风」里把 Voltip 关掉再打开。
 

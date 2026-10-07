@@ -1106,6 +1106,10 @@ jobs:
       - name: Tauri CLI (`cargo tauri`, pinned tarball + SHA-256)
         run: .release-tooling/.github/scripts/install-cargo-tauri.sh
 
+      # For the React Native phone app's Rust shell (scripts/build-android-rn.sh).
+      - name: cargo-ndk (pinned tarball + SHA-256)
+        run: .release-tooling/.github/scripts/install-cargo-ndk.sh
+
       - name: cargo-about (prebuilt, pinned)
         uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
@@ -1144,6 +1148,16 @@ jobs:
         working-directory: apps/mobile
         run: cargo tauri android build --ci --target aarch64 --apk --aab --config src-tauri/tauri.package-android.conf.json
 
+      # The React Native phone app (docs/mobile-rn.md §6), with the same built-in engine values and
+      # no signing material either: the source's build script (the Rust shell through cargo-ndk,
+      # its UniFFI bindings, Expo's Android project, Gradle), its release build left unsigned by
+      # app.config.js. React Native's Gradle plugin compiles against the runner's JDK 17.
+      - name: Build the React Native app (unsigned APK)
+        run: |
+          set -euo pipefail
+          [ -x "${JAVA_HOME_17_X64:-}/bin/java" ] || { echo "::error title=Candidate build::the runner image has no JDK 17 (JAVA_HOME_17_X64)"; exit 1; }
+          JAVA_TOOLCHAINS=$JAVA_HOME_17_X64 scripts/build-android-rn.sh --unsigned
+
       # Phase 2: the release key, decoded into this job's temporary directory for this step alone.
       # The alias only names the key inside the keystore, so release-targets.json holds it: as a
       # secret, its value (the project's name) was masked in every log line of the job.
@@ -1164,11 +1178,15 @@ jobs:
           .release-tooling/.github/scripts/sign-android-package.sh \
             "$out/apk/universal/release/app-universal-release-unsigned.apk" \
             "$out/bundle/universalRelease/app-universal-release.aab" android-bundle "$VERSION"
+          # The React Native app with the same key, outside android-bundle/: collect ships it as an
+          # extra file, not as a second apk bundle of the leg.
+          .release-tooling/.github/scripts/sign-android-package.sh --app mobile-rn \
+            "dist/android-rn/Voltip-RN_${VERSION}_android_arm64-unsigned.apk" android-rn-bundle "$VERSION"
 
-      # What a phone that installs the APK, and what Google Play, meet: the one certificate
-      # release-targets.json pins on both, 16 KB page alignment, this release's version and code,
-      # the licence texts, and no provider key in the native library.
-      - name: Check the APK and the AAB
+      # What a phone that installs an APK, and what Google Play, meet: the one certificate
+      # release-targets.json pins on every package, 16 KB page alignment, this release's version
+      # and code, the licence texts, and no provider key in the native library.
+      - name: Check the APKs and the AAB
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
@@ -1177,8 +1195,12 @@ jobs:
           .release-tooling/.github/scripts/check-android-package.sh \
             "android-bundle/apk/Voltip_${VERSION}_android_arm64.apk" \
             "android-bundle/aab/Voltip_${VERSION}_android_arm64.aab" "$certificate" "$VERSION"
+          .release-tooling/.github/scripts/check-android-package.sh --app mobile-rn \
+            "android-rn-bundle/apk/Voltip-RN_${VERSION}_android_arm64.apk" "$certificate" "$VERSION"
 
       - name: Collect bundles and evidence
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: >-
           python3 .release-tooling/scripts/release/updater-json.py collect
           --target "$ANDROID_TARGET"
@@ -1186,6 +1208,7 @@ jobs:
           --bundles apk,aab
           --updater-bundle none
           --updater false
+          --extra "Voltip-RN_${VERSION}_android_arm64.apk=android-rn-bundle/apk/Voltip-RN_${VERSION}_android_arm64.apk"
           --out candidate-leg/dist
           --evidence "candidate-leg/evidence/$ANDROID_TARGET.json"
 
@@ -1197,12 +1220,12 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The release APK on a device before it is sealed (2026-10-01: 0.0.18 and 0.0.19 closed at once on
-  # the user's phone although every package check passed). The bytes the Android leg signed run on
-  # an Android 15 emulator (x86_64 with ARM translation, KVM on the hosted runner): installed,
+  # The release APKs on a device before they are sealed (2026-10-01: 0.0.18 and 0.0.19 closed at
+  # once on the user's phone although every package check passed). The bytes the Android leg signed
+  # run on an Android 15 emulator (x86_64 with ARM translation, KVM on the hosted runner): installed,
   # first screen up, still up 20 s later, nothing fatal in the app's log
-  # (.github/scripts/android-device-smoke.sh, from the tooling). A job of its own: no secret reaches
-  # the emulator action.
+  # (.github/scripts/android-device-smoke.sh, from the tooling), the Tauri app and then the React
+  # Native one. A job of its own: no secret reaches the emulator action.
   device-android:
     name: Run aarch64-linux-android on an emulator
     needs: [prepare, bundle-android]
@@ -1239,15 +1262,19 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: .release-tooling/.github/scripts/android-device-smoke.sh android-leg/dist device
+          script: |
+            .release-tooling/.github/scripts/android-device-smoke.sh android-leg/dist device
+            .release-tooling/.github/scripts/android-device-smoke.sh --app mobile-rn android-leg/dist device-rn
 
       # Not `candidate-*`: the aggregate merges those into the sealed candidate.
-      - name: Upload the device logs and screenshot
+      - name: Upload the device logs and screenshots
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: android-device-candidate
-          path: device/
+          path: |
+            device/
+            device-rn/
           if-no-files-found: warn
           retention-days: 14
 

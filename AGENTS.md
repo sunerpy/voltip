@@ -9,6 +9,8 @@ How to work in this repository, for coding agents and people alike. `CONTRIBUTIN
   on-device recognition, clean-up, injection, platform tables, protocol, crypto, identity, pairing,
   transport, relay, the local speech service's HTTP layer (`voltip-serve`), and the Tauri bridge.
 - `apps/desktop`, `apps/mobile` — the Tauri 2 shells (`src-tauri/`) and their React front ends.
+- `apps/mobile-rn` — the phone app on React Native (Expo, `docs/mobile-rn.md`): its own Rust shell
+  (`rust/`, UniFFI), shipped beside the Tauri phone app as `Voltip-RN_<version>_android_arm64.apk`.
 - `apps/server` — `voltip-server`, the headless local speech service (`docs/dictation.md` §23.5): no
   webview and no audio stack, shipped as a Linux x64 tar.gz (`scripts/build-server-linux-x64.sh`).
 - `packages/shared` (IPC contract, i18n, labels, mock backend), `packages/ui` (design system).

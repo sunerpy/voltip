@@ -1,0 +1,99 @@
+"""Tests for .github/scripts/android-device-smoke.sh: which APK it installs and which app it starts,
+with a fake `adb` that records every call and refuses the install, so the script stops there.
+
+Run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
+"""
+
+from __future__ import annotations
+
+import os
+import stat
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / ".github/scripts/android-device-smoke.sh"
+
+
+class DeviceSmoke(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        self.calls = self.root / "adb-calls.txt"
+        adb = bin_dir / "adb"
+        adb.write_text(
+            "#!/usr/bin/env bash\n"
+            f'echo "$*" >>"{self.calls}"\n'
+            '[ "$1" = install ] && { echo "Failure [fake adb]"; exit 1; }\n'
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        adb.chmod(adb.stat().st_mode | stat.S_IXUSR)
+        # The hosted runners' locale (C.UTF-8): `sort` orders by code point there, so `-` comes before
+        # `_`. A locale such as en_US orders the two names the other way round.
+        self.env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "LC_ALL": "C.UTF-8"}
+        # The Android leg of a release candidate: both apps, the AAB and nothing else.
+        self.leg = self.root / "dist"
+        self.leg.mkdir()
+        for name in ("Voltip-RN_0.0.46_android_arm64.apk", "Voltip_0.0.46_android_arm64.apk", "Voltip_0.0.46_android_arm64.aab"):
+            (self.leg / name).write_bytes(b"package")
+
+    def smoke(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(SCRIPT), *args, str(self.root / "out")],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def adb_calls(self) -> list[str]:
+        return self.calls.read_text(encoding="utf-8").splitlines() if self.calls.exists() else []
+
+    def test_regression_the_tauri_app_is_the_one_installed_from_a_leg_with_both(self) -> None:
+        # `Voltip-RN_` sorts before `Voltip_`: taking the first *.apk installed the React Native app
+        # and then started dev.voltip.mobile, which was not there.
+        result = self.smoke(str(self.leg))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("the APK did not install", result.stderr)
+        calls = self.adb_calls()
+        self.assertIn("uninstall dev.voltip.mobile", calls)
+        self.assertIn(f"install -r -g {self.leg}/Voltip_0.0.46_android_arm64.apk", calls)
+
+    def test_the_react_native_app_is_installed_with_its_own_package(self) -> None:
+        result = self.smoke("--app", "mobile-rn", str(self.leg))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        calls = self.adb_calls()
+        self.assertIn("uninstall dev.voltip.mobile.rn", calls)
+        self.assertIn(f"install -r -g {self.leg}/Voltip-RN_0.0.46_android_arm64.apk", calls)
+
+    def test_an_apk_named_on_the_command_line_is_installed_as_it_is(self) -> None:
+        apk = self.leg / "Voltip-RN_0.0.46_android_arm64.apk"
+        self.smoke("--app", "mobile-rn", str(apk))
+        self.assertIn(f"install -r -g {apk}", self.adb_calls())
+
+    def test_a_directory_without_the_app_or_with_two_of_it_is_refused(self) -> None:
+        (self.leg / "Voltip-RN_0.0.46_android_arm64.apk").unlink()
+        result = self.smoke("--app", "mobile-rn", str(self.leg))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("no APK for dev.voltip.mobile.rn", result.stderr)
+        (self.leg / "Voltip_0.0.45_android_arm64.apk").write_bytes(b"older")
+        result = self.smoke(str(self.leg))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("more than one Voltip_*.apk", result.stderr)
+        self.assertEqual(self.adb_calls(), [])
+
+    def test_an_unknown_app_is_a_usage_error(self) -> None:
+        result = self.smoke("--app", "desktop", str(self.leg))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage:", result.stderr)
+        self.assertEqual(self.adb_calls(), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,6 +1,6 @@
 {
   "name": "@voltip/mobile-rn",
-  "version": "0.0.44",
+  "version": "0.0.0",
   "private": true,
   "description": "Voltip phone app on React Native (Android, acceptance build; docs/mobile-rn.md).",
   "license": "AGPL-3.0-or-later",

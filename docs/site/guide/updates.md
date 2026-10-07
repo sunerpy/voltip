@@ -28,6 +28,8 @@ On the phone, updates are under **Settings → About → Updates**, and how they
 
 Android only installs an update signed like the version you have. GitHub answers a limited number of queries per hour from each network address; when the message says so, try again later.
 
+Voltip RN does not check for updates, and its **About** page has no **Updates** section. Download `Voltip-RN_<version>_android_arm64.apk` from the new release and open it: it installs over the old version and keeps the settings and history.
+
 ### If a check fails
 
 The text after **Update failed** names the cause, for example that the connection timed out, was refused or could not be secured. Voltip gives up when a connection to the update server takes longer than 15 seconds to open, or when the server sends nothing for 30 seconds.

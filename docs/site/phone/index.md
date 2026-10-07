@@ -12,6 +12,8 @@ With the Voltip app for Android, a phone becomes a microphone and a keyboard for
 
 Every [release](https://github.com/sunerpy/voltip/releases) carries the app as `Voltip_<version>_android_arm64.apk`, for phones with Android 8.0 or later and a 64-bit Arm processor. Open the file on the phone to install it. [Install](/guide/install#android) describes the steps and how to check the download, and [Updates](/guide/updates#on-an-android-phone) how to update it later.
 
+Every release also carries `Voltip-RN_<version>_android_arm64.apk`, Voltip RN: the same app with screens built from Android's own controls. It installs beside Voltip as a separate app; see [Install](/guide/install#android).
+
 In the app, the system back gesture or back button goes up one level. From **History** and **Settings** it goes to **Talk**, and two backs in a row on **Talk** leave the app. An open dialog closes first.
 
 ## Using the phone on its own

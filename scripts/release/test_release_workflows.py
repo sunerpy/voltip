@@ -226,7 +226,7 @@ class CandidateBuild(unittest.TestCase):
         body = self.jobs["bundle-android"]
         built = body.index("- name: Build (unsigned APK and AAB)")
         signed = body.index("- name: Sign with the release key")
-        checked = body.index("- name: Check the APK and the AAB")
+        checked = body.index("- name: Check the APKs and the AAB")
         collected = body.index("- name: Collect bundles and evidence")
         self.assertLess(built, signed)
         self.assertLess(signed, checked)
@@ -252,6 +252,47 @@ class CandidateBuild(unittest.TestCase):
         targets = json.loads((ROOT / ".github/release-targets.json").read_text(encoding="utf-8"))
         self.assertRegex(targets["android_signing"]["certificate_sha256"], r"^[0-9a-f]{64}$")
 
+    def test_the_android_leg_ships_the_react_native_app_signed_like_the_tauri_one(self) -> None:
+        # docs/mobile-rn.md §6: the React Native phone app comes from the source's build script,
+        # unsigned and before the key exists, then the signing step signs it with the same key and
+        # the trusted checks hold it to the pinned certificate. It ships as an extra file of the
+        # Android leg, outside android-bundle/, so the leg keeps one apk bundle.
+        body = self.jobs["bundle-android"]
+        built = body.index("- name: Build the React Native app (unsigned APK)")
+        signed = body.index("- name: Sign with the release key")
+        checked = body.index("- name: Check the APKs and the AAB")
+        collected = body.index("- name: Collect bundles and evidence")
+        self.assertLess(body.index("- name: Build (unsigned APK and AAB)"), built)
+        self.assertLess(built, signed, "nothing is compiled after the signing step")
+        step = "\n".join(code_lines(body[built:signed]))
+        self.assertIn("scripts/build-android-rn.sh --unsigned", step)
+        self.assertNotIn(".release-tooling/scripts/build-android-rn.sh", step)
+        self.assertNotIn("secrets.", step)
+        self.assertIn(".release-tooling/.github/scripts/install-cargo-ndk.sh", body[:built])
+        self.assertIn(
+            '.release-tooling/.github/scripts/sign-android-package.sh --app mobile-rn \\\n'
+            '            "dist/android-rn/Voltip-RN_${VERSION}_android_arm64-unsigned.apk" android-rn-bundle "$VERSION"',
+            body[signed:checked],
+        )
+        self.assertIn(
+            '.release-tooling/.github/scripts/check-android-package.sh --app mobile-rn \\\n'
+            '            "android-rn-bundle/apk/Voltip-RN_${VERSION}_android_arm64.apk" "$certificate" "$VERSION"',
+            body[checked:collected],
+        )
+        gather = body[collected:]
+        self.assertIn("VERSION: ${{ needs.prepare.outputs.version }}", gather)
+        self.assertIn(
+            '--extra "Voltip-RN_${VERSION}_android_arm64.apk=android-rn-bundle/apk/Voltip-RN_${VERSION}_android_arm64.apk"',
+            gather,
+        )
+        self.assertIn("--bundle-dir android-bundle", gather)
+        # The app takes its version from the repository, which release-please writes.
+        config = (ROOT / "apps/mobile-rn/app.config.js").read_text(encoding="utf-8")
+        self.assertIn('require("../../package.json")', config)
+        app = json.loads((ROOT / "apps/mobile-rn/app.json").read_text(encoding="utf-8"))["expo"]
+        self.assertNotIn("version", app)
+        self.assertNotIn("versionCode", app["android"])
+
     def test_regression_the_release_apk_starts_on_a_device_before_it_is_sealed(self) -> None:
         # 2026-10-01: 0.0.18 and 0.0.19 closed at once on the user's phone although every package
         # check passed; nothing had started the APK. The signed leg runs on an emulator in a job
@@ -259,7 +300,8 @@ class CandidateBuild(unittest.TestCase):
         body = self.jobs["device-android"]
         self.assertIn("needs: [prepare, bundle-android]", body)
         self.assertIn("name: candidate-aarch64-linux-android", body)
-        self.assertIn(".release-tooling/.github/scripts/android-device-smoke.sh android-leg/dist", body)
+        self.assertIn(".release-tooling/.github/scripts/android-device-smoke.sh android-leg/dist device\n", body)
+        self.assertIn(".release-tooling/.github/scripts/android-device-smoke.sh --app mobile-rn android-leg/dist device-rn", body)
         self.assertNotIn("secrets.", body)
         self.assertNotRegex(body, r"name: candidate-(?!aarch64-linux-android)")
         for job in ("aggregate", "gate"):
@@ -284,7 +326,7 @@ class CandidateBuild(unittest.TestCase):
         self.assertNotIn("secrets.ANDROID_KEY_ALIAS", self.text)
         body = self.jobs["bundle-android"]
         signed = body.index("- name: Sign with the release key")
-        checked = body.index("- name: Check the APK and the AAB")
+        checked = body.index("- name: Check the APKs and the AAB")
         self.assertIn(".android_signing.key_alias .release-tooling/.github/release-targets.json", body[signed:checked])
         targets = json.loads((ROOT / ".github/release-targets.json").read_text(encoding="utf-8"))
         self.assertEqual(targets["android_signing"]["key_alias"], "voltip")
@@ -351,6 +393,56 @@ class ContinuousIntegration(unittest.TestCase):
         self.assertIn("needs: [android]", body)
         self.assertIn(".github/scripts/android-device-smoke.sh android-apk device", body)
         self.assertIn("name: voltip-android-apk", self.jobs["android"])
+
+    def test_the_react_native_app_is_built_signed_checked_and_started_as_the_candidate_does(self) -> None:
+        body = self.jobs["android-rn"]
+        self.assertIn("if: needs.changes.outputs.code == 'true'", body)
+        self.assertNotIn("secrets.", body)
+        built = body.index("- name: Build the unsigned release APK (scripts/build-android-rn.sh --unsigned)")
+        signed = body.index("- name: Sign with a key made for this run")
+        checked = body.index("- name: Check the package")
+        self.assertLess(built, signed)
+        self.assertLess(signed, checked)
+        self.assertIn("scripts/build-android-rn.sh --unsigned", body[built:signed])
+        self.assertIn('VOLTIP_ALLOW_NO_BUILTIN_ENGINES: "1"', body[built:signed])
+        self.assertIn(".github/scripts/sign-android-package.sh --app mobile-rn", body[signed:checked])
+        self.assertIn(".github/scripts/check-android-package.sh --app mobile-rn", body[checked:])
+        self.assertIn('"$CI_ANDROID_CERT_SHA256"', body[checked:])
+        self.assertIn(".github/scripts/install-cargo-ndk.sh", body[:built])
+        # Read only: a target/ cache of its own would push the repository past the cache limit.
+        cache = "\n".join(code_lines(body))
+        self.assertIn("shared-key: ci-android", cache)
+        self.assertIn("save-if: false", cache)
+        device = self.jobs["android-rn-device"]
+        self.assertIn("needs: [android-rn]", device)
+        self.assertIn(".github/scripts/android-device-smoke.sh --app mobile-rn android-rn-apk device-rn", device)
+        self.assertIn("name: voltip-android-rn-apk", body)
+        self.assertIn("name: voltip-android-rn-apk", device)
+
+    def test_regression_the_react_native_build_compiles_nothing_for_the_build_host(self) -> None:
+        # PR #123's first CI run: the UniFFI bindings came from a debug build of the shell for the
+        # build host, and on the Android runner, which has no ALSA headers, alsa-sys stopped it.
+        # The bindings now come from the Android library itself, which keeps its symbols out of
+        # cargo, and the script strips the packaged copy.
+        script = (ROOT / "scripts/build-android-rn.sh").read_text(encoding="utf-8")
+        code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+        self.assertNotRegex(code, r"cargo build[^\n]*-p voltip-mobile-rn")
+        self.assertIn('generate --library "$lib" --language kotlin', code)
+        self.assertLess(code.index('generate --library "$lib"'), code.index('llvm-strip" --strip-all "$lib"'))
+        self.assertLess(code.index('llvm-strip" --strip-all "$lib"'), code.index('voltip_scan_provider_keys "$lib"'))
+        cargo = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+        self.assertIn('[profile.release.package.voltip-mobile-rn]\nstrip = false', cargo)
+
+    def test_regression_the_device_smoke_starts_the_app_it_was_asked_for(self) -> None:
+        # The candidate's Android leg holds Voltip_*.apk and Voltip-RN_*.apk, and `Voltip-RN_` sorts
+        # first: the smoke took the first *.apk of the directory, so it would have installed the
+        # React Native app and then failed to start dev.voltip.mobile. It now looks for the app's
+        # own release name, and refuses a directory with more than one.
+        script = (ROOT / ".github/scripts/android-device-smoke.sh").read_text(encoding="utf-8")
+        self.assertNotIn("-name '*.apk'", script)
+        self.assertIn("mobile) package=dev.voltip.mobile name='Voltip_*.apk' ;;", script)
+        self.assertIn("mobile-rn) package=dev.voltip.mobile.rn name='Voltip-RN_*.apk' ;;", script)
+        self.assertIn('found=$(find "$apk" -name "$name" | sort)', script)
 
     def test_ci_success_decides_with_the_tested_script_and_the_event(self) -> None:
         # `.github/scripts/ci-success.sh` holds the rule (scripts/release/test_ci_success.py): the
