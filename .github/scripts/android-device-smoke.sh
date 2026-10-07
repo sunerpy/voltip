@@ -98,11 +98,23 @@ print((x1 + x2) // 2, (y1 + y2) // 2)
 PY
 }
 
-adb wait-for-device
+# The device answering as a device, for at most two minutes. A freshly booted emulator's adb link
+# can still drop to `offline` and come back (main CI 2026-10-07: `adb: device offline` the moment the
+# smoke began, after the boot had completed), and `adb wait-for-device` gives up on that state.
+online() {
+  local deadline=$((SECONDS + 120))
+  until [ "$(adb get-state 2>/dev/null | tr -d '\r')" = device ]; do
+    [ "$SECONDS" -lt "$deadline" ] || fail "the device stayed offline for 120 s"
+    sleep 1
+  done
+}
+
+online
 # A freshly booted emulator is still delivering the broadcasts of its own setup (packages enabled,
 # settings synced), which is what keeps its launcher too busy to answer: let them drain first, for
 # at most two minutes (Android 13 and later; elsewhere this ends at once).
 timeout 120 adb shell am wait-for-broadcast-idle >/dev/null 2>&1 || echo "android-device-smoke: the broadcast queues were still busy; going on" >&2
+online
 # A build signed with another key cannot replace the installed one.
 adb uninstall "$package" >/dev/null 2>&1 || true
 adb install -r -g "$apk" >"$out/install.txt" 2>&1 || fail "the APK did not install: $(tail -3 "$out/install.txt")"

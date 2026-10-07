@@ -26,10 +26,19 @@ class DeviceSmoke(unittest.TestCase):
         bin_dir.mkdir()
         self.calls = self.root / "adb-calls.txt"
         adb = bin_dir / "adb"
+        # `get-state` answers `offline` FAKE_OFFLINE_FOR times first, and `wait-for-device` fails
+        # while it does, as adb did on CI's emulator.
+        polls = self.root / "get-state-calls"
         adb.write_text(
             "#!/usr/bin/env bash\n"
             f'echo "$*" >>"{self.calls}"\n'
-            '[ "$1" = install ] && { echo "Failure [fake adb]"; exit 1; }\n'
+            'case "$1" in\n'
+            "  get-state)\n"
+            f'    n=$(cat "{polls}" 2>/dev/null || echo 0); echo $((n + 1)) >"{polls}"\n'
+            '    if [ "$n" -lt "${FAKE_OFFLINE_FOR:-0}" ]; then echo offline; else echo device; fi ;;\n'
+            '  wait-for-device) [ "${FAKE_OFFLINE_FOR:-0}" -gt 0 ] && { echo "adb: device offline" >&2; exit 1; } ;;\n'
+            '  install) echo "Failure [fake adb]"; exit 1 ;;\n'
+            "esac\n"
             "exit 0\n",
             encoding="utf-8",
         )
@@ -64,6 +73,14 @@ class DeviceSmoke(unittest.TestCase):
         calls = self.adb_calls()
         self.assertIn("uninstall dev.voltip.mobile", calls)
         self.assertIn(f"install -r -g {self.leg}/Voltip_0.0.46_android_arm64.apk", calls)
+
+    def test_regression_a_device_that_drops_offline_after_boot_is_waited_for(self) -> None:
+        # main CI 2026-10-07 (run 37688703262): `adb: device offline` the moment the smoke began,
+        # after the emulator had booted, and the smoke stopped there without a word.
+        self.env["FAKE_OFFLINE_FOR"] = "2"
+        result = self.smoke("--app", "mobile-rn", str(self.leg))
+        self.assertIn(f"install -r -g {self.leg}/Voltip-RN_0.0.46_android_arm64.apk", self.adb_calls(), result.stderr)
+        self.assertIn("the APK did not install", result.stderr)
 
     def test_the_react_native_app_is_installed_with_its_own_package(self) -> None:
         result = self.smoke("--app", "mobile-rn", str(self.leg))
