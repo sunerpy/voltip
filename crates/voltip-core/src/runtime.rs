@@ -3356,10 +3356,7 @@ mod tests {
         assert!(pairing_running(rt.pairing_state()), "{:?}", rt.pairing_state());
         let lost = StateChange { from: ConnectionState::Connected, to: ConnectionState::Reconnecting };
         rt.handle_link_event(LinkId::Host, LinkEvent::State(lost)).await;
-        assert_eq!(
-            rt.pairing_state(),
-            Some(PairingState::Failed { reason: FailureReason::Relay { code: RelayErrorCode::SessionExpired } })
-        );
+        assert_eq!(rt.pairing_state(), Some(PairingState::Failed { reason: FailureReason::Relay { code: RelayErrorCode::SessionExpired } }));
     }
 
     #[test]
