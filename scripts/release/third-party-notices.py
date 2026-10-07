@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Write THIRD-PARTY-NOTICES.txt for a desktop package, or with --app mobile for the Android app.
 
+With --app mobile-rn it is the React Native phone app's (docs/mobile-rn.md): its Rust shell for
+Android and the npm packages of apps/mobile-rn.
+
 Three sources, each with the licence texts themselves, since most of these licences ask for the text
 to travel with the binary:
 
@@ -12,7 +15,7 @@ to travel with the binary:
   the transcribe-cpp-sys sources), sherpa-onnx, ONNX Runtime and the Khronos Vulkan loader (texts in
   scripts/release/licenses/). The Android app links none of them.
 
-Usage: third-party-notices.py --out FILE [--app desktop|mobile] [--version V] [--about-json FILE]
+Usage: third-party-notices.py --out FILE [--app desktop|mobile|mobile-rn] [--version V] [--about-json FILE]
                               [--pnpm-json FILE]
 The two JSON options replace running cargo-about / pnpm (tests, or a CI step that ran them already).
 """
@@ -29,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[2]
 LICENSES = Path(__file__).resolve().parent / "licenses"
 DESKTOP_MANIFEST = ROOT / "apps" / "desktop" / "src-tauri" / "Cargo.toml"
 MOBILE_MANIFEST = ROOT / "apps" / "mobile" / "src-tauri" / "Cargo.toml"
+MOBILE_RN_MANIFEST = ROOT / "apps" / "mobile-rn" / "rust" / "Cargo.toml"
 ANDROID_TARGET = "aarch64-linux-android"
 LICENSE_FILE_PREFIXES = ("license", "licence", "copying", "notice", "ofl", "unlicense")
 RULE = "=" * 78
@@ -53,6 +57,8 @@ def run_json(argv: list[str], cwd: Path) -> object:
 def cargo_about(app: str) -> dict:
     if app == "mobile":
         scope = ["-m", str(MOBILE_MANIFEST), "--target", ANDROID_TARGET]
+    elif app == "mobile-rn":
+        scope = ["-m", str(MOBILE_RN_MANIFEST), "--target", ANDROID_TARGET]
     else:
         scope = ["-m", str(DESKTOP_MANIFEST), "--features", "gpu-vulkan"]
     return run_json(["cargo", "about", "generate", "--format", "json", *scope, "--locked", "--fail"], ROOT)
@@ -98,7 +104,7 @@ def native_components(transcribe_dir: Path | None) -> list[tuple[str, str, str, 
     return out
 
 
-def render(version: str, about: dict, pnpm: dict, natives: list[tuple[str, str, str, str]]) -> str:
+def render(version: str, about: dict, pnpm: dict, natives: list[tuple[str, str, str, str]], packages_heading: str = "Web frontend packages") -> str:
     lines = [
         f"Voltip {version} — third-party notices",
         "",
@@ -142,7 +148,7 @@ def render(version: str, about: dict, pnpm: dict, natives: list[tuple[str, str, 
         lines += ["-" * 78, f"{licence['name']} ({licence['id']})", "Used by: " + ", ".join(users), "", text, ""]
 
     packages = [(lic, p) for lic, group in pnpm.items() for p in group]
-    lines += [RULE, f"Web frontend packages ({len(packages)})", RULE, ""]
+    lines += [RULE, f"{packages_heading} ({len(packages)})", RULE, ""]
     for licence, p in sorted(packages, key=lambda item: item[1]["name"]):
         versions = ", ".join(p.get("versions") or [])
         lines += ["-" * 78, f"{p['name']} {versions} — {licence}"]
@@ -156,7 +162,7 @@ def render(version: str, about: dict, pnpm: dict, natives: list[tuple[str, str, 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--app", choices=("desktop", "mobile"), default="desktop", help="the package: the desktop shell or the Android app")
+    parser.add_argument("--app", choices=("desktop", "mobile", "mobile-rn"), default="desktop", help="the package: the desktop shell, the Android app, or the React Native phone app")
     parser.add_argument("--version", default=None, help="the app version (default: package.json)")
     parser.add_argument("--about-json", type=Path, help="cargo-about JSON instead of running it")
     parser.add_argument("--pnpm-json", type=Path, help="`pnpm licenses list --prod --json` output instead of running it")
@@ -166,11 +172,13 @@ def main(argv: list[str]) -> int:
         version = args.version or json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
         about = json.loads(args.about_json.read_text(encoding="utf-8")) if args.about_json else cargo_about(args.app)
         pnpm = json.loads(args.pnpm_json.read_text(encoding="utf-8")) if args.pnpm_json else pnpm_licenses(args.app)
-        if args.app == "mobile":
+        if args.app in ("mobile", "mobile-rn"):
             natives = []
         else:
             natives = native_components(None if args.no_crate_sources else crate_dir("transcribe-cpp-sys"))
-        text = render(version, about, pnpm, natives)
+        # The React Native app has no web frontend: its packages are the app's own JavaScript.
+        heading = "JavaScript packages" if args.app == "mobile-rn" else "Web frontend packages"
+        text = render(version, about, pnpm, natives, heading)
     except Failure as e:
         print(f"third-party-notices: {e}", file=sys.stderr)
         return 1

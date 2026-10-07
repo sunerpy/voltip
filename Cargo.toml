@@ -22,8 +22,10 @@ members = [
     "apps/server",
     "apps/desktop/src-tauri",
     "apps/mobile/src-tauri",
+    "apps/mobile-rn/rust",
+    "apps/mobile-rn/rust/bindgen",
 ]
-exclude = ["apps/desktop/node_modules", "apps/mobile/node_modules", "packages"]
+exclude = ["apps/desktop/node_modules", "apps/mobile/node_modules", "apps/mobile-rn/node_modules", "packages"]
 
 [workspace.package]
 # Static on purpose. The app version is package.json's: release-please bumps it, tauri.conf.json
@@ -143,6 +145,10 @@ transcribe-cpp = { version = "=0.2.3", default-features = false }
 rustls = { version = "=0.23.45", default-features = false, features = ["aws-lc-rs", "std", "tls12"] }
 tower = { version = "=0.5.3", features = ["util"] }
 tracing = "=0.1.44"
+# The React Native phone shell's foreign interface (docs/mobile-rn.md §3): Kotlin bindings today,
+# Swift for iOS later, generated from the Rust definitions. The `cli` feature only in the bindgen
+# tool (apps/mobile-rn/rust/bindgen).
+uniffi = "=0.32.2"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
 url = { version = "=2.5.8", features = ["serde"] }
 # Mozilla's root store as DER certificates: what the HTTP clients trust on Android, where reqwest's

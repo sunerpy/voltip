@@ -1,0 +1,5 @@
+# The generated bindings (docs/mobile-rn.md §3): scripts/build-android-rn.sh writes the Kotlin into
+# the Expo module's sources (git-ignored); Swift for iOS will follow the same interface.
+[bindings.kotlin]
+package_name = "dev.voltip.rn.uniffi"
+cdylib_name = "voltip_rn"

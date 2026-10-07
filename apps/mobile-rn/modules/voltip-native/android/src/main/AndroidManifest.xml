@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The phone as the computer's microphone (docs/dictation.md §20). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- LAN discovery (docs/pairing.md 「局域网发现」): the multicast lock VoltipHost.multicast holds. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
+    <application>
+        <!-- History exports go to the share sheet as files (VoltipHost.shareFile). -->
+        <provider
+            android:name="dev.voltip.rn.VoltipFileProvider"
+            android:authorities="${applicationId}.voltip.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/voltip_file_paths" />
+        </provider>
+    </application>
+</manifest>

@@ -118,6 +118,32 @@ class Notices(unittest.TestCase):
         self.assertNotIn("gpu-vulkan", about)
         self.assertEqual(cwd, notices.ROOT / "apps" / "mobile")
 
+    def test_the_react_native_app_lists_its_shell_and_its_javascript_packages(self) -> None:
+        out = self.root / "android-rn" / "THIRD-PARTY-NOTICES.txt"
+        code = notices.main(["--out", str(out), "--app", "mobile-rn", "--version", "0.0.1", "--about-json", str(self.root / "about.json"), "--pnpm-json", str(self.root / "pnpm.json")])
+        self.assertEqual(code, 0)
+        text = out.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("Voltip 0.0.1 — third-party notices\n"))
+        self.assertIn("Rust crates (2)", text)
+        self.assertIn("JavaScript packages (2)", text)
+        self.assertNotIn("Web frontend", text)
+        for desktop_only in ("Native libraries", "ONNX Runtime", "Vulkan", "WebView2", "transcribe.cpp"):
+            self.assertNotIn(desktop_only, text)
+
+    def test_the_react_native_app_is_scanned_for_its_own_crate_and_target(self) -> None:
+        calls = []
+        original = notices.run_json
+        notices.run_json = lambda argv, cwd: calls.append((argv, cwd)) or {}
+        try:
+            notices.cargo_about("mobile-rn")
+            notices.pnpm_licenses("mobile-rn")
+        finally:
+            notices.run_json = original
+        (about, _), (pnpm, cwd) = calls
+        self.assertIn(str(notices.MOBILE_RN_MANIFEST), about)
+        self.assertEqual(about[about.index("--target") + 1], "aarch64-linux-android")
+        self.assertEqual(cwd, notices.ROOT / "apps" / "mobile-rn")
+
     def test_a_tool_that_fails_is_an_error_not_an_empty_notice(self) -> None:
         with self.assertRaises(notices.Failure):
             notices.run_json(["false"], self.root)
