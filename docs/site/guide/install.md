@@ -61,7 +61,7 @@ Every [release](https://github.com/sunerpy/voltip/releases) carries the packages
 | Linux server, x64 | `voltip-server-*-linux-x64.tar.gz` | The [local service](/recognition/service) for a computer without a desktop. Built on Ubuntu 22.04, like the Linux packages; it carries its own runtime libraries, and `install.sh --server` names any system library that is missing |
 | macOS 11 or later, Apple silicon | `*_aarch64.dmg` | M1 or newer |
 | macOS 11 or later, Intel | `*_x64.dmg` | Intel Macs |
-| Android 8.0 or later, 64-bit Arm | `*_android_arm64.apk` | See [Android](#android) below and [the phone page](/phone/) |
+| Android 8.0 or later, 64-bit Arm | `Voltip_*_android_arm64.apk`; `Voltip-RN_*_android_arm64.apk`, Voltip RN, the same app with Android's own controls | See [Android](#android) below and [the phone page](/phone/) |
 
 ### Windows
 
@@ -88,6 +88,8 @@ Updates install from inside the app. Updating from version 0.0.6 or earlier asks
 Download `Voltip_<version>_android_arm64.apk` on the phone and open it. Android asks whether the browser or the file manager may install apps; allow it for this installation. The app needs Android 8.0 or later and a 64-bit Arm processor.
 
 A new version installs over the old one and keeps the pairing, because every release is signed with the same key. The `.aab` file in the release is the package for Google Play; phones install the `.apk`.
+
+`Voltip-RN_<version>_android_arm64.apk` is Voltip RN, another version of the phone app whose screens use Android's own controls. It installs the same way, as a separate app beside Voltip, with its own pairing, settings and history. It does not check for updates: open the new release's file to install it over the old version, which keeps its pairing, settings and history.
 
 ## Check a download
 

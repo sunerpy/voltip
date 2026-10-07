@@ -2,14 +2,12 @@
   "expo": {
     "name": "Voltip RN",
     "slug": "voltip-mobile-rn",
-    "version": "0.0.44",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#f2f3f6",
     "android": {
       "package": "dev.voltip.mobile.rn",
-      "versionCode": 44,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundImage": "./assets/adaptive-icon-background.png",

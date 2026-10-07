@@ -1,8 +1,9 @@
-# 手机端 React Native 版（验收版设计，2026-10-07）
+# 手机端 React Native 版（2026-10-07 设计）
 
-> 状态：验收版。`apps/mobile`（Tauri + WebView）照常是发布的手机端；本文的 `apps/mobile-rn` 是并行的
-> 第二个外壳，供用户比较原生感后决定去留。两者共用 Rust 核心与 `@voltip/shared` 的 IPC 契约，
-> applicationId 不同（`dev.voltip.mobile.rn`），可以和现有手机端同时安装。
+> 状态：2026-10-08 起随每个发布版本附带（`Voltip-RN_<版本>_android_arm64.apk`，用户要求「同时发布 RN 版
+> APK」），与 Tauri 手机端用同一把密钥签名。`apps/mobile`（Tauri + WebView）照常是主要的手机端；本文的
+> `apps/mobile-rn` 是并行的第二个外壳，供用户比较原生感后决定去留。两者共用 Rust 核心与 `@voltip/shared` 的
+> IPC 契约，applicationId 不同（`dev.voltip.mobile.rn`），可以和现有手机端同时安装。
 
 ## 1. 为什么、做什么
 
@@ -11,9 +12,9 @@
   树和 Android 的返回手势也是原生的。
 - 目标：功能与 `apps/mobile` 0.0.44 对齐的 RN 版，界面按 Material Design 3 重新设计，先在 AWS Device
   Farm 真机上跑通，再交给用户安装验收。
-- 不在本次范围：iOS、Google Play 上架、替换 `apps/mobile`、CI 接入、用发布密钥签名、本地模型（手机本来
-  就没有）、应用内更新（验收版没有发布渠道，更新状态固定为 `disabled`，关于页因此不显示更新卡片）。验收版用
-  Android 调试密钥签名。
+- 不在本次范围：iOS、Google Play 上架、替换 `apps/mobile`、本地模型（手机本来就没有）、应用内更新（更新状态
+  固定为 `disabled`，关于页因此不显示更新卡片；新版本从发布页下载 APK 覆盖安装）。2026-10-08 起接入 CI 与发布
+  候选，发布的 APK 用发布密钥签名（§6）；本机构建默认仍用 Android 调试密钥签名，这样的包不能被发布版覆盖，要先卸载。
 
 ## 2. 总体结构
 
@@ -131,8 +132,13 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
 ## 6. 构建
 
 ```bash
-scripts/build-android-rn.sh            # 产物 dist/android-rn/Voltip-RN_<version>_android_arm64.apk
+scripts/build-android-rn.sh             # 调试密钥签名：dist/android-rn/Voltip-RN_<version>_android_arm64.apk
+scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned.apk，CI 与发布候选随后自己签名
 ```
+
+版本号是仓库的版本（根目录 `package.json`，release-please 写它，Tauri 两端也读它）：`app.config.js` 在
+`app.json` 之上填 `version` 和 `versionCode`（主版本 × 1000000 + 次版本 × 1000 + 补丁号，与 Tauri 手机端相同），
+`apps/mobile-rn/package.json` 的版本不用（`0.0.0`）。
 
 1. `cargo ndk -t arm64-v8a --platform 26 build --release -p voltip-mobile-rn`（`.env.build` 经
    `scripts/lib/build-env.sh` 注入内置服务地址，与现手机端相同），`.so` 放进本地模块的 `jniLibs`；cargo-ndk 顺带
@@ -144,12 +150,20 @@ scripts/build-android-rn.sh            # 产物 dist/android-rn/Voltip-RN_<versi
    `RECORD_AUDIO` / `CAMERA`，所以不传这两项。第三方许可证文本由
    `scripts/release/third-party-notices.py --app mobile-rn`（Rust 外壳的 crate 与 `apps/mobile-rn` 的 npm 包）生成到
    `assets/THIRD-PARTY-NOTICES.txt`，与 Tauri 手机端一样随 APK 附带（关于页提到这个文件），打包后脚本核对它的首行版本。
-3. `gradlew assembleRelease`（Hermes 字节码、只打 arm64-v8a），用 Android 调试密钥签名。React Native 的 Gradle
-   插件要 JDK 17 工具链：`JAVA_TOOLCHAINS` 指向一个 JDK 17（Gradle 自动下载会去 GitHub，不可用）。
+3. `gradlew assembleRelease`（Hermes 字节码、只打 arm64-v8a），默认用 Android 调试密钥签名；`--unsigned` 时
+   `app.config.js` 的配置插件（`plugins/release.js`）去掉模板给 release 构建类型配的调试签名，模板变了就报错，
+   不会悄悄出一个调试签名的包。React Native 的 Gradle 插件要 JDK 17 工具链：`JAVA_TOOLCHAINS` 指向一个 JDK 17
+   （Gradle 自动下载会去 GitHub，本机不可用）。
 4. 发布前扫描：APK 的每个条目都过 `voltip_scan_provider_keys`；JS 包是 Hermes 字节码，字符串表首尾相接，图标名
    （`task-outline` 等）会被误认成 `sk-…`，所以它改为扫描 Metro 打包前的源码（packager source map 的
    `sourcesContent`），并检查构建环境里的密钥值不在字节码中。`.env.build` 以外的生产主机名不得出现在源码树里
    （`check-no-production-hosts.sh` 照常覆盖 `apps/mobile-rn`）。
+5. 发布（2026-10-08 起，`docs/runbook.md` 发布 · Android）：发布候选的 `bundle-android` 腿在 Tauri 的包之后、
+   签名之前运行 `build-android-rn.sh --unsigned`（内置服务的值与 Tauri 手机端相同），签名一步用同一把密钥签它
+   （`.github/scripts/sign-android-package.sh --app mobile-rn`），`check-android-package.sh --app mobile-rn` 检查
+   证书、16 KB 对齐、版本、targetSdk、许可声明和原生库里的密钥，`updater-json.py collect --extra` 把它作为这条腿的
+   附加文件封存；`device-android` 在模拟器上启动它（`android-device-smoke.sh --app mobile-rn`）。CI 的 `android-rn`
+   与 `android-rn-device` 对每个改了代码的 PR 走同一条路，用当次生成的临时密钥签名，不注入内置服务。
 
 ## 7. 测试
 
@@ -182,7 +196,8 @@ scripts/build-android-rn.sh            # 产物 dist/android-rn/Voltip-RN_<versi
 
 ## 8. 验收（用户）
 
-安装 `dist/android-rn/` 下的 APK（与现手机端并存），对比：
+安装发布页的 `Voltip-RN_<版本>_android_arm64.apk`（或本机构建的 `dist/android-rn/` 下的 APK；两者签名不同，
+换装要先卸载），与现手机端并存，对比：
 
 1. 观感：MD3 控件、水波纹、转场、深浅色、状态栏和导航栏、字体缩放后的布局。
 2. 手势：返回手势逐级返回、说话页两次返回退出。
@@ -201,6 +216,7 @@ scripts/build-android-rn.sh            # 产物 dist/android-rn/Voltip-RN_<versi
 
 ## 10. 如果 RN 版胜出
 
-- `apps/mobile-rn` 接替 `apps/mobile` 的 applicationId 和发布密钥，加入 `release-candidate.yml` 的 Android 腿；
+- `apps/mobile-rn` 接替 `apps/mobile` 的 applicationId（发布密钥和 `release-candidate.yml` 的 Android 腿已经共用），
+  补上应用内更新与 AAB；
 - 合并复制的 Rust 模块与 hooks；
 - `docs/site` 的手机端页面与截图重拍。

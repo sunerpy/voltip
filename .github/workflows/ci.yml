@@ -952,6 +952,156 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # The React Native phone app (docs/mobile-rn.md §6), arm64: its release APK built as the release
+  # candidate builds it (scripts/build-android-rn.sh --unsigned: the Rust shell through cargo-ndk,
+  # its UniFFI bindings, Expo's Android project, Gradle), signed with a key made for this run and put
+  # through the candidate's checks (.github/scripts/check-android-package.sh --app mobile-rn).
+  # Engine-less, like every CI package.
+  android-rn:
+    name: android-arm64 RN · release build + package checks
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Android toolchain (JDK 21; SDK platform, build tools and NDK pinned)
+        run: .github/scripts/android-toolchain.sh
+
+      - name: Rust toolchain (rust-toolchain.toml) + aarch64-linux-android
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          rustup target add aarch64-linux-android
+          rustc --version && cargo --version
+
+      # THIRD-PARTY-NOTICES.txt for the app (third-party-notices.py --app mobile-rn).
+      - name: cargo-about (prebuilt, pinned)
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        with:
+          tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
+
+      - name: cargo-ndk (pinned tarball + SHA-256)
+        run: .github/scripts/install-cargo-ndk.sh
+
+      # The `android` job's cache, read only: both apps build the workspace crates for the same
+      # target, and one more target/ cache would take the repository past the Actions cache limit,
+      # which evicts the macOS caches first (2026-10-05).
+      - name: Restore the Android job's Cargo cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-android
+          cache-bin: false
+          save-if: false
+
+      - name: pnpm (packageManager in package.json)
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: package.json
+
+      - name: Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_MAJOR }}
+          cache: pnpm
+
+      - name: Install web dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # Unsigned, as the candidate builds it; React Native's Gradle plugin compiles against the
+      # runner's JDK 17.
+      - name: Build the unsigned release APK (scripts/build-android-rn.sh --unsigned)
+        env:
+          VOLTIP_ALLOW_NO_BUILTIN_ENGINES: "1"
+        run: |
+          set -euo pipefail
+          [ -x "${JAVA_HOME_17_X64:-}/bin/java" ] || { echo "::error::the runner image has no JDK 17 (JAVA_HOME_17_X64)"; exit 1; }
+          JAVA_TOOLCHAINS=$JAVA_HOME_17_X64 scripts/build-android-rn.sh --unsigned
+
+      # The candidate's signing step with a key made here, as the `android` job does.
+      - name: Sign with a key made for this run
+        run: |
+          set -euo pipefail
+          ANDROID_KEYSTORE_PASSWORD=$(openssl rand -hex 24)
+          echo "::add-mask::$ANDROID_KEYSTORE_PASSWORD"
+          export ANDROID_KEYSTORE=$RUNNER_TEMP/ci-android.jks ANDROID_KEY_ALIAS=voltip-ci ANDROID_KEYSTORE_PASSWORD
+          export ANDROID_KEY_PASSWORD=$ANDROID_KEYSTORE_PASSWORD
+          keytool -genkeypair -noprompt -keystore "$ANDROID_KEYSTORE" -storetype PKCS12 -alias "$ANDROID_KEY_ALIAS" \
+            -keyalg RSA -keysize 2048 -validity 2 -dname "CN=Voltip CI" \
+            -storepass:env ANDROID_KEYSTORE_PASSWORD -keypass:env ANDROID_KEY_PASSWORD
+          digest=$(keytool -list -v -keystore "$ANDROID_KEYSTORE" -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS" |
+            sed -n 's/^[[:space:]]*SHA256: //p' | head -1)
+          [ -n "$digest" ] || { echo "::error::no certificate digest for the CI key"; exit 1; }
+          echo "CI_ANDROID_CERT_SHA256=$digest" >>"$GITHUB_ENV"
+          version=$(jq -r .version package.json)
+          .github/scripts/sign-android-package.sh --app mobile-rn \
+            "dist/android-rn/Voltip-RN_${version}_android_arm64-unsigned.apk" android-rn-bundle "$version"
+
+      - name: Check the package (the candidate's checks, against this run's key)
+        run: |
+          set -euo pipefail
+          version=$(jq -r .version package.json)
+          .github/scripts/check-android-package.sh --app mobile-rn \
+            "android-rn-bundle/apk/Voltip-RN_${version}_android_arm64.apk" "$CI_ANDROID_CERT_SHA256" "$version"
+
+      # For `android-rn-device`: the APK runs on an emulator there.
+      - name: Upload the APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: voltip-android-rn-apk
+          path: android-rn-bundle/apk/
+          if-no-files-found: error
+          retention-days: 3
+
+  # The React Native app on the emulator the `android-device` job uses: installed, first screen up,
+  # still up 20 s later, nothing fatal in its log (android-device-smoke.sh --app mobile-rn).
+  android-rn-device:
+    name: android-arm64 RN · runs on an emulator
+    needs: [android-rn]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout (the smoke script)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Download the APK
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: voltip-android-rn-apk
+          path: android-rn-apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run on an emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: .github/scripts/android-device-smoke.sh --app mobile-rn android-rn-apk device-rn
+
+      - name: Upload the device logs and screenshot
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-rn-device
+          path: device-rn/
+          if-no-files-found: warn
+          retention-days: 7
+
   # macOS on both processors (moved here from macos.yml, 2026-09-28): the app and the dmg, signed
   # ad hoc as the release signs them and checked the same way (.github/scripts/
   # check-macos-bundle.sh), the macOS-only unit tests, the real event tap on Apple silicon, and the
@@ -1205,7 +1355,7 @@ jobs:
   # or cancellation, fails.
   ci-success:
     name: CI Success
-    needs: [changes, verify-rust, verify-web, windows-cross, windows-native, hooks-windows, smoke-desktop, android, android-device, macos]
+    needs: [changes, verify-rust, verify-web, windows-cross, windows-native, hooks-windows, smoke-desktop, android, android-device, android-rn, android-rn-device, macos]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

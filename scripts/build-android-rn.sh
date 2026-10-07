@@ -1,28 +1,41 @@
 #!/usr/bin/env bash
 # Build the React Native phone app's APK (docs/mobile-rn.md §6): the Rust shell for arm64 with
 # cargo-ndk into the native module's jniLibs and its UniFFI Kotlin bindings beside the module's
-# own Kotlin, the Android project from app.json with
-# `expo prebuild` (generated every time, never committed), and Gradle's release build: Hermes
-# bytecode, arm64-v8a only, signed with the Android debug key. An acceptance build, not a release.
+# own Kotlin, the Android project from app.json and app.config.js with `expo prebuild` (generated
+# every time, never committed), and Gradle's release build: Hermes bytecode, arm64-v8a only. The
+# version is the repository's (the root package.json).
 #
-# Needs ANDROID_HOME (platforms 36), NDK_HOME (the NDK app.json names), JAVA_HOME (17+), the Rust
-# target aarch64-linux-android, cargo-ndk, and `pnpm install` at the root. React Native's Gradle
-# plugin compiles against a JDK 17 toolchain: JAVA_TOOLCHAINS (comma-separated JDK homes) names one
-# when JAVA_HOME is another version, since Gradle's own download of it comes from GitHub. Writes
-# dist/android-rn/Voltip-RN_<version>_android_arm64.apk and build-info.txt beside it.
+# Usage: build-android-rn.sh [--unsigned]
+#   (default)   signed with the Android debug key: a build to install and try, not a release.
+#   --unsigned  signed with nothing (app.config.js leaves Gradle's release build type unsigned):
+#               the release candidate and CI sign it in a step of their own
+#               (.github/scripts/sign-android-package.sh --app mobile-rn).
+#
+# Needs ANDROID_HOME (platforms 36), NDK_HOME (clang for the Rust shell), JAVA_HOME (17+), the
+# Rust target aarch64-linux-android, cargo-ndk, and `pnpm install` at the root. React Native's
+# Gradle plugin compiles against a JDK 17 toolchain: JAVA_TOOLCHAINS (comma-separated JDK homes)
+# names one when JAVA_HOME is another version, since Gradle's own download of it comes from GitHub.
+# Writes dist/android-rn/Voltip-RN_<version>_android_arm64.apk (with --unsigned
+# Voltip-RN_<version>_android_arm64-unsigned.apk) and build-info.txt beside it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+unsigned=0
+case "${1:-}" in
+  "") ;;
+  --unsigned) unsigned=1 ;;
+  *) echo "usage: $0 [--unsigned]" >&2; exit 2 ;;
+esac
 for v in ANDROID_HOME NDK_HOME JAVA_HOME; do
   [ -n "${!v:-}" ] || { echo "build-android-rn: $v is not set" >&2; exit 2; }
 done
 rustup target list --installed | grep -q '^aarch64-linux-android$' || { echo "build-android-rn: run: rustup target add aarch64-linux-android" >&2; exit 2; }
-command -v cargo-ndk >/dev/null || { echo "build-android-rn: run: cargo install cargo-ndk" >&2; exit 2; }
+command -v cargo-ndk >/dev/null || { echo "build-android-rn: run: cargo install cargo-ndk (CI: .github/scripts/install-cargo-ndk.sh)" >&2; exit 2; }
 . scripts/lib/build-env.sh && voltip_load_build_env
 . scripts/lib/require-builtin-engines.sh && voltip_require_builtin_engines
 . scripts/lib/artefact-checks.sh
 
 app=apps/mobile-rn
-version=$(node -p "require('./$app/package.json').version")
+version=$(node -p "require('./package.json').version")
 out=dist/android-rn
 mkdir -p "$out"
 
@@ -51,9 +64,9 @@ cargo run -q -p voltip-uniffi-bindgen --bin uniffi-bindgen -- \
   generate --library "$target_dir/debug/libvoltip_rn.so" --language kotlin --out-dir "$bindings" --no-format
 [ -s "$bindings/dev/voltip/rn/uniffi/voltip_rn.kt" ] || { echo "build-android-rn: UniFFI wrote no Kotlin bindings" >&2; exit 1; }
 
-# 2. The Android project, regenerated from app.json and the local module, with the licence texts
-# in its assets, as the Tauri phone app carries them (the About page names the file).
-(cd "$app" && CI=1 npx expo prebuild --platform android --clean --no-install)
+# 2. The Android project, regenerated from app.json, app.config.js and the local module, with the
+# licence texts in its assets, as the Tauri phone app carries them (the About page names the file).
+(cd "$app" && CI=1 VOLTIP_RN_UNSIGNED=$unsigned npx expo prebuild --platform android --clean --no-install)
 python3 scripts/release/third-party-notices.py --app mobile-rn --version "$version" --out "$app/android/app/src/main/assets/THIRD-PARTY-NOTICES.txt"
 
 # 3. Gradle. Four workers and a 4 GB heap: the Kotlin and C++ compiles of the RN libraries are heavy.
@@ -61,8 +74,13 @@ python3 scripts/release/third-party-notices.py --app mobile-rn --version "$versi
   -Porg.gradle.java.installations.paths="$JAVA_HOME${JAVA_TOOLCHAINS:+,$JAVA_TOOLCHAINS}" \
   -Porg.gradle.java.installations.auto-download=false \
   -PreactNativeArchitectures=arm64-v8a assembleRelease)
-apk=$out/Voltip-RN_${version}_android_arm64.apk
-cp "$app/android/app/build/outputs/apk/release/app-release.apk" "$apk"
+if [ "$unsigned" = 1 ]; then
+  apk=$out/Voltip-RN_${version}_android_arm64-unsigned.apk
+  cp "$app/android/app/build/outputs/apk/release/app-release-unsigned.apk" "$apk"
+else
+  apk=$out/Voltip-RN_${version}_android_arm64.apk
+  cp "$app/android/app/build/outputs/apk/release/app-release.apk" "$apk"
+fi
 notices=$(unzip -p "$apk" assets/THIRD-PARTY-NOTICES.txt | head -1) || true
 [ "$notices" = "Voltip $version — third-party notices" ] || { echo "build-android-rn: the APK's assets/THIRD-PARTY-NOTICES.txt is missing or not this version's: $notices" >&2; exit 1; }
 
