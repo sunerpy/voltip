@@ -74,6 +74,7 @@ Pages may use these components and no others:
 | `<VideoFigure src poster width height title caption? />` | a video with its poster; nothing loads until it plays |
 | `<QrCode src alt caption? size? />` | a QR code on a white plate in both themes |
 | `<Badge>` | VitePress's own badge |
+| `<TryVoltip />` | the online try page (`guide/try.md`) only; its API is firlab's `voltip/functions/` |
 | `HomeIndex`, `HomeSteps`, `SplitBlock`, `HomeModels`, `HomePlatforms`, `HomePrivacy`, `HomeRoadmap` | the home pages only; they render the `home:` frontmatter |
 
 ## The home pages
