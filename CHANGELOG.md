@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.46](https://github.com/sunerpy/voltip/compare/v0.0.45...v0.0.46) (2026-10-07)
+
+
+### Features
+
+* **release:** 发布包加入 React Native 版手机端 APK ([#123](https://github.com/sunerpy/voltip/issues/123)) ([3f9fe2e](https://github.com/sunerpy/voltip/commit/3f9fe2e3a4b01f48d6167d838cf68bc34e9ead28))
+
 ## [0.0.45](https://github.com/sunerpy/voltip/compare/v0.0.44...v0.0.45) (2026-10-07)
 
 
