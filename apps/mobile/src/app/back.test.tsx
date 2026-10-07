@@ -137,7 +137,8 @@ describe("Android's back on the phone", () => {
     await screen.findByRole("heading", { name: "配对电脑" });
     let afterBack: unknown;
     const observer = new MutationObserver(() => {
-      if (afterBack !== undefined || screen.queryByRole("heading", { name: "核对安全码" }) === null) return;
+      if (afterBack !== undefined || screen.queryByRole("heading", { name: "核对安全码" }) === null)
+        return;
       system.pressNow();
       afterBack = backend.peek().pairing.state;
     });
