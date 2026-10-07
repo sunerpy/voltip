@@ -46,7 +46,9 @@ describe("the release config", () => {
   });
 
   it("refuses a template whose release build type it does not know", () => {
-    expect(() => unsignedReleaseGradle(unsignedReleaseGradle(TEMPLATE))).toThrow("the template changed");
+    expect(() => unsignedReleaseGradle(unsignedReleaseGradle(TEMPLATE))).toThrow(
+      "the template changed",
+    );
     expect(() => unsignedReleaseGradle("android {\n}\n")).toThrow("no release build type");
   });
 
@@ -61,7 +63,9 @@ describe("the release config", () => {
     expect(signed.mods).toBeUndefined();
     process.env.VOLTIP_RN_UNSIGNED = "1";
     try {
-      expect(appConfig({ config: appJson }).mods.android.appBuildGradle).toEqual(expect.any(Function));
+      expect(appConfig({ config: appJson }).mods.android.appBuildGradle).toEqual(
+        expect.any(Function),
+      );
     } finally {
       delete process.env.VOLTIP_RN_UNSIGNED;
     }

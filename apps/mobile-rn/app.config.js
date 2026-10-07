@@ -6,6 +6,10 @@ const { version } = require("../../package.json");
 const { versionCode, withUnsignedRelease } = require("./plugins/release");
 
 module.exports = ({ config }) => {
-  const app = { ...config, version, android: { ...config.android, versionCode: versionCode(version) } };
+  const app = {
+    ...config,
+    version,
+    android: { ...config.android, versionCode: versionCode(version) },
+  };
   return process.env.VOLTIP_RN_UNSIGNED === "1" ? withUnsignedRelease(app) : app;
 };

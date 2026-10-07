@@ -31,7 +31,9 @@ function unsignedReleaseGradle(text) {
   const block = text.slice(release, end);
   const signing = /^[ \t]*signingConfig signingConfigs\.debug[ \t]*\r?\n/m;
   if (!signing.test(block)) {
-    throw new Error("app/build.gradle: the release build type does not sign with the debug key; the template changed");
+    throw new Error(
+      "app/build.gradle: the release build type does not sign with the debug key; the template changed",
+    );
   }
   return text.slice(0, release) + block.replace(signing, "") + text.slice(end);
 }
