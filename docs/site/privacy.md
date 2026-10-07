@@ -38,6 +38,10 @@ The built-in service's server keeps a record of each request: the time, your IP 
 
 The records are kept for 30 days. They are used to limit how many requests one address can make, so that no single address uses up the shared service, and to count how much the service is used; after that only daily totals without IP addresses are kept. Over the limit, the built-in service answers that it is busy, and AI polish then suggests your own provider. People who share one internet connection, for example in an office, share the limit.
 
+## Try it online
+
+The [try page](/guide/try) on this website sends what you record or upload to the built-in service for recognition, and the text you polish to the built-in service for AI polish. The built-in service keeps the same record of these requests as of the app's, with your IP address, and does not keep the recording or the text. To keep the page's limits, the website counts your requests under a one-way hash of your IP address; the counts are removed after the hour they cover. Before you start, Cloudflare Turnstile checks that a person is using the page, under Cloudflare's privacy policy. After the check, your browser keeps a cookie for 30 minutes so that the check is not repeated; the page keeps nothing else.
+
 ## The microphone and computer audio
 
 The microphone is open only while you record, or for the 15 seconds of a microphone test. Computer audio is recorded only during a dictation with it chosen as the source. Voltip does not listen in the background.
