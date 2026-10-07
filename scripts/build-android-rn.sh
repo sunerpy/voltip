@@ -40,7 +40,7 @@ out=dist/android-rn
 mkdir -p "$out"
 
 # 1. The Rust shell and its bindings. cargo-ndk names the NDK's clang for the cc crate and strips
-# nothing.
+# nothing; the release profile leaves this crate's symbols in too (the root Cargo.toml).
 export ANDROID_NDK_HOME=$NDK_HOME
 jni=$app/modules/voltip-native/android/src/main/jniLibs
 rm -rf "$jni"
@@ -50,19 +50,18 @@ lib=$jni/arm64-v8a/libvoltip_rn.so
 # cargo-ndk copies every cdylib of the build; android-native-keyring-store is one of its own, and
 # its JNI entries are linked into libvoltip_rn.so already (Keyring.kt loads that library).
 find "$jni" -name '*.so' ! -name libvoltip_rn.so -print -delete
-voltip_scan_provider_keys "$lib" build-android-rn
 # The Kotlin bindings of the shell's UniFFI interface (rust/src/ffi.rs), generated from the
-# metadata UniFFI embeds in the library; the native module compiles them with its own Kotlin. The
-# release profile strips that metadata, so it is read from a debug build of the same crate for the
-# build host: the interface has no platform-specific items, and the generated Kotlin checks every
-# function's checksum against the phone's library when it loads it.
-cargo build -q -p voltip-mobile-rn --lib
-target_dir=$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')
+# metadata UniFFI embeds in this very library (its symbols name it); the native module compiles
+# them with its own Kotlin, and they check every function's checksum against the library when it
+# loads. Then the packaged copy loses its symbols, as the release profile strips every other
+# library: nothing is built for the build host, so it needs none of the host's audio libraries.
 bindings=$app/modules/voltip-native/android/src/main/java
 rm -rf "$bindings/dev/voltip/rn/uniffi"
 cargo run -q -p voltip-uniffi-bindgen --bin uniffi-bindgen -- \
-  generate --library "$target_dir/debug/libvoltip_rn.so" --language kotlin --out-dir "$bindings" --no-format
+  generate --library "$lib" --language kotlin --out-dir "$bindings" --no-format
 [ -s "$bindings/dev/voltip/rn/uniffi/voltip_rn.kt" ] || { echo "build-android-rn: UniFFI wrote no Kotlin bindings" >&2; exit 1; }
+"$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-all "$lib"
+voltip_scan_provider_keys "$lib" build-android-rn
 
 # 2. The Android project, regenerated from app.json, app.config.js and the local module, with the
 # licence texts in its assets, as the Tauri phone app carries them (the About page names the file).

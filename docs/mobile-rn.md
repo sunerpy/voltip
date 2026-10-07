@@ -57,8 +57,10 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
     - `PlatformHost`：由 Kotlin 的 `VoltipHost` 实现的外部 trait（事件、电平帧、剪贴板、分享、组播锁、打开网址），
       失败以 `HostError` 返回；Kotlin 抛出的其他异常经 `UnexpectedUniFFICallbackError` 变成同一个错误，不会 panic。
     - 绑定由 `scripts/build-android-rn.sh` 在编出 `.so` 之后用 `voltip-uniffi-bindgen` 从库里的元数据生成
-      （`uniffi.toml`：包名 `dev.voltip.rn.uniffi`），写进模块的 Kotlin 源码目录，不提交。Kotlin 侧经 JNA
-      调用（`net.java.dev.jna:jna` 5.19.1）。
+      （`uniffi.toml`：包名 `dev.voltip.rn.uniffi`），写进模块的 Kotlin 源码目录，不提交。元数据在符号表里，所以
+      release 配置为这个 crate 保留符号（根目录 `Cargo.toml`），生成绑定后脚本再用 NDK 的 `llvm-strip` 去掉；
+      不为构建主机另编一份（2026-10-08：CI 的 Android runner 没有 ALSA 的开发包，主机构建在 `alsa-sys` 停下）。
+      Kotlin 侧经 JNA 调用（`net.java.dev.jna:jna` 5.19.1）。
     - FFI 胶水全由 UniFFI 生成，这个 crate 自己没有 unsafe 代码，所以继承 workspace 的 lint 表，
       `unsafe_code = "forbid"` 照样生效；调用里的 panic 由 UniFFI 转成错误，不会越过 FFI 边界。
     - iOS 用同一套接口：生成 Swift 绑定、把库编成静态库，再写一个 Swift 版的 Expo 模块即可，不必再手写一层桥。
@@ -143,7 +145,8 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
 1. `cargo ndk -t arm64-v8a --platform 26 build --release -p voltip-mobile-rn`（`.env.build` 经
    `scripts/lib/build-env.sh` 注入内置服务地址，与现手机端相同），`.so` 放进本地模块的 `jniLibs`；cargo-ndk 顺带
    复制的 `android-native-keyring-store` 自己的 cdylib 删掉（它的 JNI 入口已链接进 `libvoltip_rn.so`）。随后
-   `cargo run -p voltip-uniffi-bindgen` 从这个库生成 UniFFI 的 Kotlin 绑定，写进模块源码（§3）。
+   `cargo run -p voltip-uniffi-bindgen` 从这个库生成 UniFFI 的 Kotlin 绑定，写进模块源码（§3），然后用 NDK 的
+   `llvm-strip --strip-all` 去掉打包那份的符号。
 2. `expo prebuild --platform android --clean`：Android 工程每次生成，不提交（`android/` 被 git 忽略）；
    需要的原生配置都写在 `app.json` 与本地模块里（权限、FileProvider、minSdk 26、targetSdk 36）。注意相机和图片
    选择插件的 `recordAudioAndroid: false` / `cameraPermission: false` 会以 `tools:node="remove"` 删掉

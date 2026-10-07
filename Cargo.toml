@@ -197,3 +197,9 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# The React Native shell's library keeps its symbols out of cargo: UniFFI's Kotlin bindings are
+# generated from the metadata they carry, and scripts/build-android-rn.sh strips the copy it
+# packages (docs/mobile-rn.md §6).
+[profile.release.package.voltip-mobile-rn]
+strip = false

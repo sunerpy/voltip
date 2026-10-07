@@ -419,6 +419,20 @@ class ContinuousIntegration(unittest.TestCase):
         self.assertIn("name: voltip-android-rn-apk", body)
         self.assertIn("name: voltip-android-rn-apk", device)
 
+    def test_regression_the_react_native_build_compiles_nothing_for_the_build_host(self) -> None:
+        # PR #123's first CI run: the UniFFI bindings came from a debug build of the shell for the
+        # build host, and on the Android runner, which has no ALSA headers, alsa-sys stopped it.
+        # The bindings now come from the Android library itself, which keeps its symbols out of
+        # cargo, and the script strips the packaged copy.
+        script = (ROOT / "scripts/build-android-rn.sh").read_text(encoding="utf-8")
+        code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+        self.assertNotRegex(code, r"cargo build[^\n]*-p voltip-mobile-rn")
+        self.assertIn('generate --library "$lib" --language kotlin', code)
+        self.assertLess(code.index('generate --library "$lib"'), code.index('llvm-strip" --strip-all "$lib"'))
+        self.assertLess(code.index('llvm-strip" --strip-all "$lib"'), code.index('voltip_scan_provider_keys "$lib"'))
+        cargo = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+        self.assertIn('[profile.release.package.voltip-mobile-rn]\nstrip = false', cargo)
+
     def test_regression_the_device_smoke_starts_the_app_it_was_asked_for(self) -> None:
         # The candidate's Android leg holds Voltip_*.apk and Voltip-RN_*.apk, and `Voltip-RN_` sorts
         # first: the smoke took the first *.apk of the directory, so it would have installed the
