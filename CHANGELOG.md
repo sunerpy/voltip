@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.45](https://github.com/sunerpy/voltip/compare/v0.0.44...v0.0.45) (2026-10-07)
+
+
+### Features
+
+* **mobile-rn:** 新增 React Native 版手机端（验收版） ([#121](https://github.com/sunerpy/voltip/issues/121)) ([fa9b7d0](https://github.com/sunerpy/voltip/commit/fa9b7d096fd3dcc26c708d1a5c0047bd5230b993))
+
 ## [0.0.44](https://github.com/sunerpy/voltip/compare/v0.0.43...v0.0.44) (2026-10-05)
 
 
