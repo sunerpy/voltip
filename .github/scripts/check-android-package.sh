@@ -11,7 +11,10 @@
 #   7. both carry this release's licence texts (third-party-notices.py --app mobile, put in the
 #      assets by tauri.package-android.conf.json).
 # The React Native phone app (`--app mobile-rn`, docs/mobile-rn.md §6) is an APK alone: the same
-# checks without the AAB, for its package dev.voltip.mobile.rn and its library libvoltip_rn.so.
+# checks without the AAB, for its package dev.voltip.mobile.rn and its library libvoltip_rn.so, and
+#   8. its native libraries are extracted at install: React Native's SoLoader looks for them inside
+#      the APK under the device's first ABI, which on an x86_64 device that runs Arm code (the
+#      emulator the release candidate starts it on) is not where they are.
 #
 # Usage: check-android-package.sh <apk> <aab> <certificate SHA-256, hex, colons optional> <version>
 #        check-android-package.sh --app mobile-rn <apk> <certificate SHA-256> <version>
@@ -29,11 +32,11 @@ usage() {
 if [ "${1:-}" = --app ]; then
   [ "$#" -eq 5 ] && [ "$2" = mobile-rn ] || usage
   apk=$3 aab="" certificate=$4 version=$5
-  expected_package=dev.voltip.mobile.rn app_library=libvoltip_rn.so
+  expected_package=dev.voltip.mobile.rn app_library=libvoltip_rn.so extracted_libraries=required
 else
   [ "$#" -eq 4 ] || usage
   apk=$1 aab=$2 certificate=$3 version=$4
-  expected_package=dev.voltip.mobile app_library=libvoltip_mobile_lib.so
+  expected_package=dev.voltip.mobile app_library=libvoltip_mobile_lib.so extracted_libraries=""
 fi
 expected=$(tr -d ':' <<<"$certificate" | tr 'A-F' 'a-f')
 fail() {
@@ -100,6 +103,12 @@ target_sdk=$(sed -n "s/^targetSdkVersion:'\([^']*\)'/\1/p" <<<"$badging")
 [ "$version_name" = "$version" ] || fail "version name $version_name, expected $version"
 [ "$version_code" = "$code" ] || fail "version code $version_code, expected $code"
 [ "$target_sdk" = 36 ] || fail "target SDK $target_sdk, expected 36"
+if [ -n "$extracted_libraries" ]; then
+  # Read whole, then matched: `aapt2 … | grep -q` fails under pipefail when grep stops early.
+  manifest=$("$tools/aapt2" dump xmltree --file AndroidManifest.xml "$apk") || fail "aapt2 cannot read the APK's manifest"
+  grep -q 'android:extractNativeLibs([^)]*)=true' <<<"$manifest" ||
+    fail "the APK does not extract its native libraries at install (useLegacyPackaging in app.json)"
+fi
 
 # 6. No provider key inside the native library.
 # shellcheck source=scripts/lib/artefact-checks.sh

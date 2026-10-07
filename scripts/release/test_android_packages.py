@@ -47,6 +47,13 @@ ZIPALIGN = """#!/usr/bin/env bash
 cp "${@: -2:1}" "${@: -1}"
 """
 AAPT2 = """#!/usr/bin/env bash
+if [ "$1 $2" = "dump xmltree" ]; then
+  # A manifest as long as a real one prints, the attribute early: a reader that stops at the first
+  # match must not fail the check.
+  echo "        A: http://schemas.android.com/apk/res/android:extractNativeLibs(0x010104ea)=$FAKE_EXTRACT"
+  for i in $(seq 1 100000); do echo "        E: meta-data (line=$i)"; done
+  exit 0
+fi
 echo "package: name='$FAKE_PACKAGE' versionCode='$FAKE_CODE' versionName='$FAKE_VERSION' platformBuildVersionName='16'"
 echo "targetSdkVersion:'36'"
 """
@@ -100,6 +107,7 @@ class AndroidPackages(unittest.TestCase):
             "FAKE_DIGEST": DIGEST,
             "FAKE_VERSION": VERSION,
             "FAKE_CODE": "46",
+            "FAKE_EXTRACT": "true",
         }
 
     def package(self, name: str, prefix: str, library: str) -> Path:
@@ -161,6 +169,30 @@ class AndroidPackages(unittest.TestCase):
         missing = self.run_script(CHECK, "--app", "mobile-rn", self.root / f"other/apk/Voltip-RN_{VERSION}_android_arm64.apk", DIGEST, VERSION, package="dev.voltip.mobile.rn")
         self.assertEqual(missing.returncode, 1)
         self.assertIn("the APK has no arm64-v8a libvoltip_rn.so", missing.stderr)
+
+    def test_regression_the_react_native_app_must_extract_its_native_libraries(self) -> None:
+        # PR #123's emulator run: with the libraries left in the APK, React Native's SoLoader looked
+        # for libreactnative.so under lib/x86_64 on the x86_64 emulator that runs the arm64 app, and
+        # the app closed on start. The Tauri app loads its library through Android's own linker.
+        apk = self.package("unsigned.apk", "", "libvoltip_rn.so")
+        out = self.root / "android-rn-bundle"
+        self.assertEqual(self.run_script(SIGN, "--app", "mobile-rn", apk, out, VERSION).returncode, 0)
+        signed = out / f"apk/Voltip-RN_{VERSION}_android_arm64.apk"
+        self.env["FAKE_EXTRACT"] = "false"
+        kept = self.run_script(CHECK, "--app", "mobile-rn", signed, DIGEST, VERSION, package="dev.voltip.mobile.rn")
+        self.assertEqual(kept.returncode, 1)
+        self.assertIn("does not extract its native libraries", kept.stderr)
+        tauri = self.package("tauri.apk", "", "libvoltip_mobile_lib.so")
+        aab = self.package("tauri.aab", "base/", "libvoltip_mobile_lib.so")
+        self.assertEqual(self.run_script(SIGN, tauri, aab, self.root / "android-bundle", VERSION).returncode, 0)
+        checked = self.run_script(
+            CHECK,
+            self.root / f"android-bundle/apk/Voltip_{VERSION}_android_arm64.apk",
+            self.root / f"android-bundle/aab/Voltip_{VERSION}_android_arm64.aab",
+            DIGEST,
+            VERSION,
+        )
+        self.assertEqual(checked.returncode, 0, checked.stderr)
 
     def test_a_signed_input_another_certificate_or_another_version_is_refused(self) -> None:
         apk = self.package("unsigned.apk", "", "libvoltip_rn.so")

@@ -153,7 +153,11 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
    `RECORD_AUDIO` / `CAMERA`，所以不传这两项。第三方许可证文本由
    `scripts/release/third-party-notices.py --app mobile-rn`（Rust 外壳的 crate 与 `apps/mobile-rn` 的 npm 包）生成到
    `assets/THIRD-PARTY-NOTICES.txt`，与 Tauri 手机端一样随 APK 附带（关于页提到这个文件），打包后脚本核对它的首行版本。
-3. `gradlew assembleRelease`（Hermes 字节码、只打 arm64-v8a），默认用 Android 调试密钥签名；`--unsigned` 时
+3. `gradlew assembleRelease`（Hermes 字节码、只打 arm64-v8a，原生库在 APK 里压缩存放、安装时解压），默认用
+   Android 调试密钥签名。解压是 `app.json` 里 `expo-build-properties` 的 `useLegacyPackaging`：库不解压时，React
+   Native 的 SoLoader 按设备的首选 ABI 在 APK 里找库，x86_64 模拟器经 ARM 翻译运行这个 arm64 应用时它去找
+   `lib/x86_64`，加载不到 `libreactnative.so`，应用打开即退出（2026-10-08 CI 的模拟器冒烟）；代价是安装后多占一份
+   解压出来的库，APK 本身反而更小。`--unsigned` 时
    `app.config.js` 的配置插件（`plugins/release.js`）去掉模板给 release 构建类型配的调试签名，模板变了就报错，
    不会悄悄出一个调试签名的包。React Native 的 Gradle 插件要 JDK 17 工具链：`JAVA_TOOLCHAINS` 指向一个 JDK 17
    （Gradle 自动下载会去 GitHub，本机不可用）。
