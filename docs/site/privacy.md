@@ -32,6 +32,12 @@ When AI polish is on, the recognised text is sent to the AI service you chose. F
 
 The switches are under **Settings → Scenes**, in **Context sent to AI polish**. With AI polish off, or in the **Type as you speak** output mode, no text is sent for polishing.
 
+## The built-in service
+
+The built-in service's server keeps a record of each request: the time, your IP address, whether it was recognition or AI polish, whether it succeeded, how large it was and how long it took, and the app name and version the app sends with it. It does not keep the recording or the text.
+
+The records are kept for 30 days. They are used to limit how many requests one address can make, so that no single address uses up the shared service, and to count how much the service is used; after that only daily totals without IP addresses are kept. Over the limit, the built-in service answers that it is busy, and AI polish then suggests your own provider. People who share one internet connection, for example in an office, share the limit.
+
 ## The microphone and computer audio
 
 The microphone is open only while you record, or for the 15 seconds of a microphone test. Computer audio is recorded only during a dictation with it chosen as the source. Voltip does not listen in the background.
