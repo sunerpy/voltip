@@ -1,0 +1,48 @@
+[package]
+name = "voltip-mobile-rn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Voltip phone app, React Native shell: the phone's command surface behind one UniFFI interface (docs/mobile-rn.md)."
+
+# UniFFI writes the FFI scaffolding; this crate itself has no unsafe code, so the workspace's
+# `unsafe_code = "forbid"` holds here too.
+[lints]
+workspace = true
+
+[lib]
+name = "voltip_rn"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uniffi.workspace = true
+uuid.workspace = true
+# The phone as the desktop's microphone (docs/dictation.md §20): cpal (AAudio on Android).
+voltip-audio.workspace = true
+# A take the phone recognises itself (docs/dictation.md §20.7): the built-in cloud services.
+voltip-cloud.workspace = true
+voltip-core.workspace = true
+voltip-identity = { workspace = true, features = ["android-keystore"] }
+# Wire types of the platform queries (docs/dictation.md §15); the phone answers `not_applicable`.
+voltip-platform = { path = "../../../crates/voltip-platform" }
+voltip-tauri-bridge.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+# `android-log`: `KeyringLog.setLog` installs a tracing subscriber that writes to logcat, which the
+# Kotlin module calls before it starts the shell. Its JNI entries (Keyring.kt) are linked in here.
+android-native-keyring-store = { version = "=1.0.0", features = ["android-log"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+voltip-audio = { workspace = true, features = ["test-support"] }
+voltip-pairing.workspace = true

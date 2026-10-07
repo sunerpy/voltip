@@ -1,0 +1,114 @@
+diff --git a/lib/commonjs/components/Menu/Menu.js b/lib/commonjs/components/Menu/Menu.js
+index dea22ecd5960f77463b27196ec1d2fb892f44d50..3c348494a812258669ebc9fc38777b3028669600 100644
+--- a/lib/commonjs/components/Menu/Menu.js
++++ b/lib/commonjs/components/Menu/Menu.js
+@@ -133,6 +133,11 @@ const Menu = ({
+   const anchorRef = React.useRef(null);
+   const menuRef = React.useRef(null);
+   const prevRendered = React.useRef(false);
++  // Voltip patch: the latest `visible`, read when a hide animation ends (see `hide`).
++  const visibleRef = React.useRef(visible);
++  React.useEffect(() => {
++    visibleRef.current = visible;
++  }, [visible]);
+   const keyboardDidShow = React.useCallback(e => {
+     const keyboardHeight = e.endCoordinates.height;
+     keyboardHeightRef.current = keyboardHeight;
+@@ -252,6 +257,8 @@ const Menu = ({
+   }, [anchor, attachListeners, measureAnchorLayout, theme]);
+   const hide = React.useCallback(() => {
+     removeListeners();
++    // Voltip patch: a menu shown again while this animation runs is shown afresh (`updateVisibility`).
++    prevRendered.current = false;
+     const {
+       animation
+     } = theme;
+@@ -261,6 +268,12 @@ const Menu = ({
+       easing: EASING,
+       useNativeDriver: true
+     }).start(() => {
++      // Voltip patch: shown again before the animation ended (or as it ended): the open menu keeps
++      // its items. Without this the menu unmounted them while open, e.g. a menu opened during the
++      // hide animation it runs when it mounts closed.
++      if (visibleRef.current) {
++        return;
++      }
+       setMenuLayout({
+         width: 0,
+         height: 0
+diff --git a/lib/module/components/Menu/Menu.js b/lib/module/components/Menu/Menu.js
+index f0c9330d3809654b404bf2f65950905667935ac4..48943309bd9b0f7d460ad22f7affeec0a081ec6f 100644
+--- a/lib/module/components/Menu/Menu.js
++++ b/lib/module/components/Menu/Menu.js
+@@ -125,6 +125,11 @@ const Menu = ({
+   const anchorRef = React.useRef(null);
+   const menuRef = React.useRef(null);
+   const prevRendered = React.useRef(false);
++  // Voltip patch: the latest `visible`, read when a hide animation ends (see `hide`).
++  const visibleRef = React.useRef(visible);
++  React.useEffect(() => {
++    visibleRef.current = visible;
++  }, [visible]);
+   const keyboardDidShow = React.useCallback(e => {
+     const keyboardHeight = e.endCoordinates.height;
+     keyboardHeightRef.current = keyboardHeight;
+@@ -244,6 +249,8 @@ const Menu = ({
+   }, [anchor, attachListeners, measureAnchorLayout, theme]);
+   const hide = React.useCallback(() => {
+     removeListeners();
++    // Voltip patch: a menu shown again while this animation runs is shown afresh (`updateVisibility`).
++    prevRendered.current = false;
+     const {
+       animation
+     } = theme;
+@@ -253,6 +260,12 @@ const Menu = ({
+       easing: EASING,
+       useNativeDriver: true
+     }).start(() => {
++      // Voltip patch: shown again before the animation ended (or as it ended): the open menu keeps
++      // its items. Without this the menu unmounted them while open, e.g. a menu opened during the
++      // hide animation it runs when it mounts closed.
++      if (visibleRef.current) {
++        return;
++      }
+       setMenuLayout({
+         width: 0,
+         height: 0
+diff --git a/src/components/Menu/Menu.tsx b/src/components/Menu/Menu.tsx
+index 669656ca652799f9a377acf68eb2d281c45fb9c4..fa3e3aaa3f6894409b80844e3720324e2b327971 100644
+--- a/src/components/Menu/Menu.tsx
++++ b/src/components/Menu/Menu.tsx
+@@ -217,6 +217,11 @@ const Menu = ({
+   const anchorRef = React.useRef<View | null>(null);
+   const menuRef = React.useRef<View | null>(null);
+   const prevRendered = React.useRef(false);
++  // Voltip patch: the latest `visible`, read when a hide animation ends (see `hide`).
++  const visibleRef = React.useRef(visible);
++  React.useEffect(() => {
++    visibleRef.current = visible;
++  }, [visible]);
+ 
+   const keyboardDidShow = React.useCallback((e: RNKeyboardEvent) => {
+     const keyboardHeight = e.endCoordinates.height;
+@@ -369,6 +374,8 @@ const Menu = ({
+ 
+   const hide = React.useCallback(() => {
+     removeListeners();
++    // Voltip patch: a menu shown again while this animation runs is shown afresh (`updateVisibility`).
++    prevRendered.current = false;
+ 
+     const { animation } = theme;
+ 
+@@ -378,6 +385,12 @@ const Menu = ({
+       easing: EASING,
+       useNativeDriver: true,
+     }).start(() => {
++      // Voltip patch: shown again before the animation ended (or as it ended): the open menu keeps
++      // its items. Without this the menu unmounted them while open, e.g. a menu opened during the
++      // hide animation it runs when it mounts closed.
++      if (visibleRef.current) {
++        return;
++      }
+       setMenuLayout({ width: 0, height: 0 });
+       setRendered(false);
+       prevRendered.current = false;

@@ -26,5 +26,10 @@
     "node": ">=20.19.0",
     "pnpm": ">=9"
   },
-  "packageManager": "pnpm@9.15.9"
+  "packageManager": "pnpm@9.15.9",
+  "pnpm": {
+    "patchedDependencies": {
+      "react-native-paper@5.15.3": "patches/react-native-paper@5.15.3.patch"
+    }
+  }
 }

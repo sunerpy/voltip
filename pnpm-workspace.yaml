@@ -2,4 +2,5 @@ packages:
   - "packages/*"
   - "apps/desktop"
   - "apps/mobile"
+  - "apps/mobile-rn"
   - "services/*"

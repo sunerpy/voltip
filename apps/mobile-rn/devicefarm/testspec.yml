@@ -1,0 +1,29 @@
+# AWS Device Farm custom test environment for the React Native phone app (docs/mobile-rn.md §7).
+# The test package is a plain zip of shell scripts uploaded as APPIUM_NODE_TEST_PACKAGE; the host
+# drives the phone over adb, the way .github/scripts/android-device-smoke.sh drives an emulator.
+# `acceptance.sh` never stops at a failed step: every measurement is collected, and the verdict is
+# read from summary.txt on the build host (scripts/devicefarm-rn.sh).
+version: 0.1
+android_test_host: amazon_linux_2
+
+phases:
+  install:
+    commands:
+      - python3 --version || true
+
+  pre_test:
+    commands:
+      - cd $DEVICEFARM_TEST_PACKAGE_PATH
+      - ls -la
+
+  test:
+    commands:
+      - cd $DEVICEFARM_TEST_PACKAGE_PATH
+      - bash acceptance.sh "$DEVICEFARM_LOG_DIR" 2>&1 | tee $DEVICEFARM_LOG_DIR/acceptance.log
+
+  post_test:
+    commands:
+      - adb logcat -d > $DEVICEFARM_LOG_DIR/logcat-all.txt 2>&1 || true
+
+artifacts:
+  - $DEVICEFARM_LOG_DIR

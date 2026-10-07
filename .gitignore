@@ -35,3 +35,10 @@ apps/desktop/src-tauri/resources/macos/
 # The feedback endpoint's deployment is the owner's local tooling (docs/feedback.md): the account,
 # the domain and the tokens live in .env.build and the GitHub secrets, never in the tree.
 /scripts/deploy-feedback.sh
+# React Native phone app (docs/mobile-rn.md §6): `expo prebuild` regenerates the Android project on
+# every build, and scripts/build-android-rn.sh writes the Rust shell into the module's jniLibs.
+apps/mobile-rn/android/
+apps/mobile-rn/.expo/
+apps/mobile-rn/modules/voltip-native/android/src/main/jniLibs/
+apps/mobile-rn/modules/voltip-native/android/src/main/java/dev/voltip/rn/uniffi/
+apps/mobile-rn/modules/voltip-native/android/build/
