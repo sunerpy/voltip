@@ -466,11 +466,15 @@ jobs:
             echo "attested: ${subject}"
           done
 
+      # Through the mirror-safe installer (2026-10-07: a bare apt-get sat on the Azure mirror until
+      # the job's 20 minutes ran out, and 0.0.45 was published by a rerun). Its downloads get
+      # 3 minutes each, so a slow mirror gives way to archive.ubuntu.com well inside the job.
       - name: Install minisign
+        env:
+          APT_ATTEMPT_SECONDS: "180"
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends minisign
+          .release-tooling/.github/scripts/apt-install.sh minisign
           minisign -v
 
       # Decodes the base64 pubkey and each base64 .sig exactly as tauri-plugin-updater does, then

@@ -73,9 +73,9 @@ class Promote(unittest.TestCase):
         for pattern in forbidden:
             with self.subTest(pattern=pattern):
                 self.assertIsNone(re.search(pattern, body), f"promote matches {pattern}")
-        # Its one package: minisign, for verify-signatures.
-        installs = re.findall(r"apt-get install ([^\n]*)", body)
-        self.assertEqual(installs, ["--yes --no-install-recommends minisign"])
+        # Its one package: minisign, for verify-signatures, through the mirror-safe installer.
+        installs = re.findall(r"apt-install\.sh ([^\n]*)", body)
+        self.assertEqual(installs, ["minisign"])
         actions = set(re.findall(r"uses: ([^@\s]+)@", body))
         self.assertEqual(
             actions, {"actions/checkout", "actions/download-artifact", "actions/attest"}
@@ -529,9 +529,11 @@ class AptInstalls(unittest.TestCase):
     minutes, twice in one day, and stalled the release candidates waiting for CI Success."""
 
     def test_regression_ci_and_the_candidate_install_packages_through_the_mirror_safe_script(self) -> None:
+        # release.yml too: its promote job sat on the Azure mirror until it timed out (2026-10-07).
         for name, script in (
             ("ci.yml", ".github/scripts/apt-install.sh"),
             ("release-candidate.yml", ".release-tooling/.github/scripts/apt-install.sh"),
+            ("release.yml", ".release-tooling/.github/scripts/apt-install.sh"),
         ):
             with self.subTest(workflow=name):
                 code = "\n".join(code_lines((WORKFLOWS / name).read_text(encoding="utf-8")))

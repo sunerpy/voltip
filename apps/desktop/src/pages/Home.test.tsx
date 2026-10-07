@@ -504,13 +504,15 @@ describe("Home page", () => {
     });
     const switcher = await screen.findByTestId("home-mic-source");
     const system = within(switcher).getByRole("radio", { name: "电脑声音" });
+    // Wait for the reason, not for the disabled state: the choice is disabled while the outputs
+    // load too, without one (main CI 2026-10-07, run 37667845434).
     await waitFor(() => {
-      expect(system).toBeDisabled();
+      expect(system).toHaveAttribute(
+        "title",
+        "录制电脑声音需要 macOS 14.6 或更高版本，当前为 14.5。",
+      );
     });
-    expect(system).toHaveAttribute(
-      "title",
-      "录制电脑声音需要 macOS 14.6 或更高版本，当前为 14.5。",
-    );
+    expect(system).toBeDisabled();
     expect(within(switcher).getByRole("radio", { name: "混合" })).toBeDisabled();
     expect(within(switcher).getByRole("radio", { name: "麦克风" })).toBeEnabled();
   });
