@@ -126,9 +126,7 @@ impl Started {
         let shell = self.shell.clone();
         let (command, args) = (command.to_owned(), args.to_owned());
         let driver = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        driver.block_on(async move {
-            tokio::time::timeout(STEP_TIMEOUT, shell.invoke(command, args)).await.expect("the shell answered in time")
-        })
+        driver.block_on(async move { tokio::time::timeout(STEP_TIMEOUT, shell.invoke(command, args)).await.expect("the shell answered in time") })
     }
 
     fn state(&self) -> Value {

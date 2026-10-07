@@ -234,11 +234,8 @@ fn runtime() -> Result<&'static Runtime, ShellError> {
     if let Some(runtime) = RUNTIME.get() {
         return Ok(runtime);
     }
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_name("voltip-rn")
-        .build()
-        .map_err(|e| ShellError::Start(format!("runtime: {e}")))?;
+    let runtime =
+        tokio::runtime::Builder::new_multi_thread().enable_all().thread_name("voltip-rn").build().map_err(|e| ShellError::Start(format!("runtime: {e}")))?;
     Ok(RUNTIME.get_or_init(|| runtime))
 }
 
