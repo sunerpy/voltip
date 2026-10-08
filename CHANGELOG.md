@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.49](https://github.com/sunerpy/voltip/compare/v0.0.48...v0.0.49) (2026-10-08)
+
+
+### Features
+
+* **mobile:** 关于页可以打开隐私政策 ([#131](https://github.com/sunerpy/voltip/issues/131)) ([72415fe](https://github.com/sunerpy/voltip/commit/72415fe44907388352e9cef223f47251a8b48212))
+
 ## [0.0.48](https://github.com/sunerpy/voltip/compare/v0.0.47...v0.0.48) (2026-10-08)
 
 
