@@ -146,7 +146,10 @@ async fn fallback_lists_are_checked_before_they_are_saved() {
         (with(vec![entry(ProviderId::Deepseek, "deepseek-chat")]), "不能作为候补模型"),
         (with(vec![entry(ProviderId::Groq, "  ")]), "未填写模型"),
         (with(vec![entry(ProviderId::Groq, "whisper-large-v3"), entry(ProviderId::Groq, " whisper-large-v3 ")]), "已在列表中"),
-        (with(vec![entry(ProviderId::Builtin, ""), entry(ProviderId::Builtin, "other")]), "已在列表中"),
+        // The built-in service's models are told apart like any other provider's (it may offer
+        // several, user request 2026-10-08): the same one twice is refused.
+        (with(vec![entry(ProviderId::Builtin, "openai/gpt-oss-20b"), entry(ProviderId::Builtin, " openai/gpt-oss-20b ")]), "已在列表中"),
+        (with(vec![entry(ProviderId::Builtin, ""), entry(ProviderId::Builtin, " ")]), "已在列表中"),
         (with((0..9).map(|i| entry(ProviderId::Groq, &format!("m{i}"))).collect()), "最多 8 个候补模型"),
     ];
     for (settings, says) in refused {

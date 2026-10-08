@@ -424,6 +424,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       "内置服务",
       "OpenAI",
       "Groq",
+      "Google AI Studio",
       "硅基流动",
       "阿里云百炼",
       "DeepSeek",

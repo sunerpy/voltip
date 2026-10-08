@@ -249,11 +249,21 @@ export function engineSettingsFor(
   settings: EngineSettings,
   kind: ServiceKind,
   choice: SwitchChoice,
+  status: EngineStatus,
 ): EngineSettings | undefined {
   if (choice.kind === "local")
     return kind === "asr" ? activateLocalModel(settings, choice.id) : undefined;
   if (choice.kind !== "remote" || choice.provider === "local") return undefined;
-  if (choice.provider === "builtin") return withProvider(settings, kind, "builtin");
+  if (choice.provider === "builtin") {
+    // The built-in service may offer several models (user request 2026-10-08); its first is the
+    // default, kept as no choice, as its card does.
+    const first = status.providers.find((p) => p.id === "builtin")?.[kind]?.presets[0];
+    const next = applyProviderDraft(settings, "builtin", kind, {
+      model: choice.model === first ? "" : choice.model,
+      baseUrl: "",
+    });
+    return withProvider(next, kind, "builtin");
+  }
   const saved = settings.providers?.[choice.provider];
   const baseUrl = (kind === "asr" ? saved?.asr_url : saved?.llm_url) ?? "";
   const next = applyProviderDraft(settings, choice.provider, kind, {

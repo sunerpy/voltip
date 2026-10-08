@@ -98,7 +98,8 @@ export function SpeechModelMenu({
           navigate(SPEECH_ROUTE);
           return;
         }
-        const engines = choice && engineSettingsFor(state.settings.engines, "asr", choice);
+        const engines =
+          choice && engineSettingsFor(state.settings.engines, "asr", choice, state.engines);
         if (engines !== undefined) void backend.invoke("settings_set_engines", { engines });
       }}
     />
@@ -143,7 +144,8 @@ export function PolishModelMenu({
           navigate(AI_ROUTE);
           return;
         }
-        const engines = choice && engineSettingsFor(state.settings.engines, "llm", choice);
+        const engines =
+          choice && engineSettingsFor(state.settings.engines, "llm", choice, state.engines);
         if (engines !== undefined) void backend.invoke("settings_set_engines", { engines });
       }}
     />

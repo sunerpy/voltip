@@ -111,7 +111,11 @@ describe("switcher menus", () => {
     const menu = menuOf("polish-model");
     // OpenAI, SiliconFlow, DeepSeek, Ollama and the custom endpoint have no key: not listed.
     expect(within(menu).queryByRole("group", { name: "OpenAI" })).toBeNull();
-    await user.click(within(menu).getByRole("menuitemradio", { name: "gpt-oss-20b" }));
+    await user.click(
+      within(within(menu).getByRole("group", { name: "Groq" })).getByRole("menuitemradio", {
+        name: "gpt-oss-20b",
+      }),
+    );
     await waitFor(() => {
       expect(backend.peek().settings.engines.llm_provider).toBe("groq");
     });
@@ -131,5 +135,18 @@ describe("switcher menus", () => {
     await waitFor(() => {
       expect(backend.peek().settings.engines.llm_provider).toBe("builtin");
     });
+    // Another of the built-in service's models is picked there too; its first is no choice.
+    expect(backend.peek().settings.engines.providers?.builtin).toBeUndefined();
+    await user.click(home);
+    const builtinGroup = within(menuOf("home-refine-model")).getByRole("group", {
+      name: "内置服务",
+    });
+    await user.click(within(builtinGroup).getByRole("menuitemradio", { name: "gpt-oss-120b" }));
+    await waitFor(() => {
+      expect(backend.peek().settings.engines.providers?.builtin?.llm_model).toBe(
+        "openai/gpt-oss-120b",
+      );
+    });
+    expect(backend.peek().settings.engines.llm_provider).toBe("builtin");
   });
 });
