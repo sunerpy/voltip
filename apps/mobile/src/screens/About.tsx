@@ -177,21 +177,23 @@ function UpdateCard() {
 }
 
 /** 关于 on the phone: the version, the licence (AGPL-3.0-or-later after 0.0.20, user decision
- *  2026-10-01) and the project's pages, opened in the phone's browser (`project_link_open`). */
+ *  2026-10-01), the project's pages (`project_link_open`) and the privacy policy (`guide_open`;
+ *  Google Play asks for it in the app as well as in the listing), opened in the phone's browser. */
 export function About() {
   const { backend } = useBackend();
   const shell = useMobileShell();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { app_version: version } = useUiState();
+  const fail = (e: unknown) => {
+    shell.toast(
+      t("mobile.toast.error", {
+        message: coreMessageText(e instanceof Error ? e.message : String(e)),
+      }),
+      "danger",
+    );
+  };
   const open = (link: ProjectLink) => {
-    backend.projectLinkOpen(link).catch((e: unknown) => {
-      shell.toast(
-        t("mobile.toast.error", {
-          message: coreMessageText(e instanceof Error ? e.message : String(e)),
-        }),
-        "danger",
-      );
-    });
+    backend.projectLinkOpen(link).catch(fail);
   };
   return (
     <div className="flex flex-col gap-4 p-4" data-testid="phone-about">
@@ -229,6 +231,15 @@ export function About() {
                 open("releases");
               }}>
               {t("mobile.about.releases")}
+            </Button>
+            <Button
+              variant="outline"
+              icon="external"
+              className={TOUCH}
+              onClick={() => {
+                backend.guideOpen("privacy", locale).catch(fail);
+              }}>
+              {t("mobile.about.privacy")}
             </Button>
           </div>
         </div>

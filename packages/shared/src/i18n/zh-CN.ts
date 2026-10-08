@@ -2494,6 +2494,8 @@ export const zhCN = {
       notices: "应用所含第三方软件的声明随安装包附带（THIRD-PARTY-NOTICES.txt）。",
       source: "源代码",
       releases: "发布版本",
+      /** The privacy policy on the guide site (`GuidePage::Privacy`): Google Play asks for it in the app. */
+      privacy: "隐私政策",
       /** Updates on the phone (docs/dictation.md §20.9). */
       update: {
         title: "软件更新",

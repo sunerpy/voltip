@@ -35,6 +35,8 @@ These settings apply to recordings the phone recognises itself. A recording sent
 
 **Settings** › **Feedback** reports a problem or suggests an idea, with screenshots or screen recordings from the gallery; before anything is sent, the page lists everything that goes along. See [Privacy](/privacy).
 
+**Settings** › **About Voltip** shows the version and the license, and opens the source code, the releases and the [privacy policy](/privacy) in the browser.
+
 When a paired computer is online, the button reads **Send to** and the computer's name instead, and the recording goes to the computer as described below. A recording keeps its route until it ends, even if a computer comes online or goes offline in the meantime.
 
 ## Pairing

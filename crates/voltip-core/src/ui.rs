@@ -267,6 +267,9 @@ pub const GUIDE_SITE: &str = "https://voltip.firlab.app";
 pub enum GuidePage {
     /// 本机服务 (docs/site/recognition/service.md; docs/dictation.md §23.6).
     Service,
+    /// 隐私 (docs/site/privacy.md): the phone's 关于 links it, as Google Play asks of an app that
+    /// records audio (the Play listing, 2026-10-08).
+    Privacy,
 }
 
 impl GuidePage {
@@ -275,6 +278,7 @@ impl GuidePage {
     pub fn url(self, locale: &str) -> String {
         let path = match self {
             Self::Service => "recognition/service",
+            Self::Privacy => "privacy",
         };
         let zh = locale.trim().to_ascii_lowercase().starts_with("zh");
         format!("{GUIDE_SITE}/{}{path}", if zh { "zh/" } else { "" })
@@ -681,6 +685,9 @@ mod tests {
         assert_eq!(GuidePage::Service.url("en"), "https://voltip.firlab.app/recognition/service");
         assert_eq!(GuidePage::Service.url("ZH-tw"), "https://voltip.firlab.app/zh/recognition/service");
         assert_eq!(serde_json::to_string(&GuidePage::Service).unwrap(), r#""service""#);
+        assert_eq!(GuidePage::Privacy.url("zh-CN"), "https://voltip.firlab.app/zh/privacy");
+        assert_eq!(GuidePage::Privacy.url("en"), "https://voltip.firlab.app/privacy");
+        assert_eq!(serde_json::to_string(&GuidePage::Privacy).unwrap(), r#""privacy""#);
         assert_eq!(serde_json::to_string(&ProjectLink::Feedback).unwrap(), r#""feedback""#);
         assert_eq!(serde_json::from_str::<ProjectLink>(r#""source""#).unwrap(), ProjectLink::Source);
     }

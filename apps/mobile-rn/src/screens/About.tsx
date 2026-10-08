@@ -1,6 +1,7 @@
-// 关于 (apps/mobile's About): the version, the licence and the project's pages, opened in the
-// phone's browser by URLs the shell builds (`project_link_open`). This build has no update source
-// (docs/mobile-rn.md §1): its update status is `disabled`, so there is no update card.
+// 关于 (apps/mobile's About): the version, the licence, the project's pages and the privacy
+// policy, opened in the phone's browser by URLs the shell builds (`project_link_open`,
+// `guide_open`). This build has no update source (docs/mobile-rn.md §1): its update status is
+// `disabled`, so there is no update card.
 import { APP_LICENSE, type ProjectLink, coreMessageText } from "@voltip/shared";
 import { View } from "react-native";
 import { Text } from "react-native-paper";
@@ -16,17 +17,18 @@ export function About() {
   const theme = useAppTheme();
   const { backend } = useBackend();
   const shell = useShell();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { app_version: version } = useUiState();
+  const fail = (e: unknown) => {
+    shell.toast(
+      t("mobile.toast.error", {
+        message: coreMessageText(e instanceof Error ? e.message : String(e)),
+      }),
+      "danger",
+    );
+  };
   const open = (link: ProjectLink) => {
-    backend.projectLinkOpen(link).catch((e: unknown) => {
-      shell.toast(
-        t("mobile.toast.error", {
-          message: coreMessageText(e instanceof Error ? e.message : String(e)),
-        }),
-        "danger",
-      );
-    });
+    backend.projectLinkOpen(link).catch(fail);
   };
   return (
     <Page testID="phone-about">
@@ -63,6 +65,14 @@ export function About() {
                 open("releases");
               }}>
               {t("mobile.about.releases")}
+            </Button>
+            <Button
+              mode="outlined"
+              icon="open-in-new"
+              onPress={() => {
+                backend.guideOpen("privacy", locale).catch(fail);
+              }}>
+              {t("mobile.about.privacy")}
             </Button>
           </View>
         </View>

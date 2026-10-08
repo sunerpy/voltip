@@ -90,6 +90,16 @@ describe("the phone app on React Native", () => {
     });
   });
 
+  it("关于 opens the privacy policy in the phone's language", async () => {
+    // Google Play asks an app that records audio to link its privacy policy inside the app too
+    // (the Play listing, 2026-10-08).
+    const { backend } = await renderApp();
+    await openTab("settings");
+    await fireEvent.press(await screen.findByTestId("settings-about"));
+    await fireEvent.press(await screen.findByText("隐私政策"));
+    expect(backend.guidesOpened).toEqual([{ page: "privacy", locale: "zh-CN" }]);
+  });
+
   it("外观 changes the theme through the core", async () => {
     const { backend } = await renderApp({
       mock: { settings: { follow_system_theme: false, theme: "light" } },
