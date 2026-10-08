@@ -51,14 +51,14 @@ jobs:
       # X11: the ones below are what 0.0.4's AppImage links and does not carry). The runner is a
       # headless server without libEGL and friends, so it gets them here; the .deb pulls its own
       # through apt.
+      # Through the mirror-safe installer (2026-10-07: a bare apt-get sat on the Azure mirror until
+      # the job timed out, after the 0.0.45 release).
       - name: The desktop libraries an AppImage expects from the host
         if: matrix.package == 'appimage'
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install --yes --no-install-recommends \
-            libasound2t64 libdrm2 libegl1 libgl1 libgbm1 libexpat1 libfontconfig1 libfreetype6 \
-            libfribidi0 libharfbuzz0b libx11-6 libx11-xcb1 libxcb1
+        run: >-
+          .github/scripts/apt-install.sh
+          libasound2t64 libdrm2 libegl1 libgl1 libgbm1 libexpat1 libfontconfig1 libfreetype6
+          libfribidi0 libharfbuzz0b libx11-6 libx11-xcb1 libxcb1
 
       - name: The installed app answers
         env:

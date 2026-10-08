@@ -1,5 +1,5 @@
 import { sampleDevices, sampleHistory } from "@voltip/shared/mock";
-import { act, screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type * as TauriCore from "@tauri-apps/api/core";
 import { EXIT_WINDOW_MS } from "../App";
@@ -36,6 +36,10 @@ function fakeBack() {
       act(() => {
         handler?.();
       });
+    },
+    /** A swipe the app takes the moment it arrives, wherever the test is (no act()). */
+    pressNow() {
+      handler?.();
     },
     listening: () => handler !== undefined,
   };
@@ -121,6 +125,39 @@ describe("Android's back on the phone", () => {
       state: "failed",
       reason: { kind: "cancelled" },
     });
+    backend.destroy();
+  });
+
+  it("regression: a back the moment 核对安全码 shows cancels the pairing", async () => {
+    // main CI 2026-10-07 (run 37660547036): the test above saw 返回 go up a level without the
+    // cancel. The handler for the screen on show was set after the screen was drawn, so a back
+    // in between ran the previous screen's handler. Here the back arrives as the heading appears.
+    const system = fakeBack();
+    const { backend } = renderApp({ initialScreen: "pair", systemBack: system.back });
+    await screen.findByRole("heading", { name: "配对电脑" });
+    let afterBack: unknown;
+    const observer = new MutationObserver(() => {
+      if (afterBack !== undefined || screen.queryByRole("heading", { name: "核对安全码" }) === null)
+        return;
+      system.pressNow();
+      afterBack = backend.peek().pairing.state;
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    try {
+      await act(async () => {
+        await backend.invoke("pairing_join_code", { code: "483921" });
+      });
+      await waitFor(
+        () => {
+          expect(afterBack).toBeDefined();
+        },
+        { timeout: 5000 },
+      );
+    } finally {
+      observer.disconnect();
+    }
+    expect(afterBack).toEqual({ state: "failed", reason: { kind: "cancelled" } });
+    expect(await screen.findByRole("heading", { name: "配对电脑" })).toBeInTheDocument();
     backend.destroy();
   });
 });

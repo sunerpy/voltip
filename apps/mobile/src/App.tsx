@@ -319,7 +319,9 @@ function Frame({
   // first, then a screen goes up a level, and 记录 or 设置 go to 说话; at 说话 a first back says a
   // second one leaves, and lets that one through to the system, which does what it always does.
   const onSystemBack = useRef<() => void>(() => undefined);
-  useEffect(() => {
+  // Set as the screen is drawn, not after it: a back that arrives in between acts on the screen
+  // the user sees (main CI 2026-10-07: from 核对安全码 it went up a level without the cancel).
+  useLayoutEffect(() => {
     onSystemBack.current = () => {
       if (dismissTopDialog()) return;
       if (canGoBack) goUp();

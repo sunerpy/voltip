@@ -109,10 +109,12 @@ runs landed in a row on 2026-09-30, and one of them stalled a release for an hou
 - A CI job that runs twice its usual time is a hung test. The Rust gates step stops at 25 minutes
   by itself; cancel the run to learn sooner. Either way the gate logs still upload, and the hung
   test is the one "running for over 60 seconds".
-- Ubuntu packages in `ci.yml` and `release-candidate.yml` go through `.github/scripts/apt-install.sh`,
-  never a bare `apt-get`: each download attempt has a deadline, and a later attempt fetches from
-  archive.ubuntu.com instead of the Azure mirror (2026-10-01: that mirror kept the desktop smoke in
-  its package step for 48 and 35 minutes, twice in one day, and stalled two release candidates).
+- Ubuntu packages in `ci.yml`, `release-candidate.yml` and `release.yml` go through
+  `.github/scripts/apt-install.sh`, never a bare `apt-get`: each download attempt has a deadline,
+  and a later attempt fetches from archive.ubuntu.com instead of the Azure mirror (2026-10-01: that
+  mirror kept the desktop smoke in its package step for 48 and 35 minutes, twice in one day, and
+  stalled two release candidates; 2026-10-07: it held the promotion of 0.0.45 until the job timed
+  out).
 - Keychain checks on macOS use the runner's login keychain. A keychain made with `security
   create-keychain` skips the partition check, so a test there cannot see the dialog a user gets
   when one build reads an item another build created (2026-09-30: every such check passed, and

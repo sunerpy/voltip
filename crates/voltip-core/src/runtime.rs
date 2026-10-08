@@ -23,7 +23,7 @@ use voltip_protocol::app::AppMessage;
 use voltip_protocol::relay::{RelayErrorCode, RelayFrame};
 use voltip_protocol::ticket::PairingTicket;
 use voltip_protocol::{PairCode, ProtocolVersion, SessionId};
-use voltip_transport::{ConnectionState, DirectHost, LinkConfig, LinkEvent, ReconnectPolicy, RelayEndpoint, RelayLink};
+use voltip_transport::{ConnectionState, DirectHost, LinkConfig, LinkEvent, ReconnectPolicy, RelayEndpoint, RelayLink, StateChange};
 
 use crate::dictation::activation::{Activation, ActivationConfig, ActivationMachine, Edge, EdgeSource, Intent, PhaseHint};
 use crate::dictation::engine::{Effect, Internal};
@@ -717,6 +717,18 @@ impl AppCore {
         secret_store: Arc<dyn SecretStore>,
         ports: DictationPorts,
     ) -> Result<(CoreHandle, mpsc::Receiver<CoreEvent>), CoreError> {
+        let (rt, inbox, handle, events) = Self::build(config, secret_store, ports)?;
+        tokio::spawn(async move { rt.run(inbox).await });
+        Ok((handle, events))
+    }
+
+    /// The runtime and its inbox, not running yet: [`AppCore::start_with`] spawns its loop, and
+    /// tests drive it a step at a time.
+    fn build(
+        config: CoreConfig,
+        secret_store: Arc<dyn SecretStore>,
+        ports: DictationPorts,
+    ) -> Result<(Runtime, Inbox, CoreHandle, mpsc::Receiver<CoreEvent>), CoreError> {
         let secrets = secret_store.clone();
         let manager = IdentityManager::new(secret_store);
         let identity = manager.load_or_create(&config.default_device_name)?;
@@ -839,8 +851,7 @@ impl AppCore {
         };
         rt.connect_relay()?;
         let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, disc_rx, process_rx };
-        tokio::spawn(async move { rt.run(inbox).await });
-        Ok((CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
+        Ok((rt, inbox, CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
 }
 
@@ -2753,12 +2764,18 @@ impl Runtime {
         }
         match ev {
             LinkEvent::Warning(w) => tracing::warn!(warning = %w, link = ?id, "link"),
-            LinkEvent::State(change) => self.on_state(id, change.to).await,
+            LinkEvent::State(change) => self.on_state(id, change).await,
             LinkEvent::Frame(frame) => self.on_frame(id, frame).await,
         }
     }
 
-    async fn on_state(&mut self, id: LinkId, to: ConnectionState) {
+    /// A link's report of its state. The commands read a link's state as it is when they run,
+    /// while its reports wait in the inbox, so a report can be older than what a command already
+    /// acted on: a pairing started on the loopback link that is up has its link's `Connecting`
+    /// and `Authenticating` still to come. Only a report that leaves `Connected` loses the link.
+    async fn on_state(&mut self, id: LinkId, change: StateChange) {
+        let to = change.to;
+        let lost = change.from.is_connected() && !to.is_connected();
         match id {
             LinkId::Relay => {
                 let attempts = match to {
@@ -2771,7 +2788,7 @@ impl Runtime {
                 self.emit(CoreEvent::Relay(self.relay_status.clone()));
                 if to.is_connected() {
                     self.attach_all(LinkId::Relay).await;
-                } else {
+                } else if lost {
                     // Every relay-borne session is gone; LAN paths are untouched.
                     self.drop_link_state(LinkId::Relay);
                     self.fail_pairing_on(LinkId::Relay).await;
@@ -2793,9 +2810,11 @@ impl Runtime {
                         self.pairing_link = None;
                         self.emit(CoreEvent::Error("the LAN host is not reachable; cannot start pairing".into()));
                     }
-                    self.drop_link_state(LinkId::Host);
-                    self.fail_pairing_on(LinkId::Host).await;
-                    self.emit_devices();
+                    if lost {
+                        self.drop_link_state(LinkId::Host);
+                        self.fail_pairing_on(LinkId::Host).await;
+                        self.emit_devices();
+                    }
                 }
             }
             LinkId::Dial(n) => {
@@ -3270,6 +3289,75 @@ enum JoinSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use voltip_pairing::FailureReason;
+
+    /// A runtime on a temporary directory with the LAN host on an ephemeral loopback port and no
+    /// relay, built but not running: the test hands it its link events itself.
+    fn offline_runtime(dir: &std::path::Path) -> (Runtime, Inbox) {
+        SettingsStore::new(dir).save(&Settings { relay_enabled: false, ..Settings::default() }).unwrap();
+        let mut config = CoreConfig::new(dir.to_path_buf());
+        config.direct_bind = "127.0.0.1:0".parse().unwrap();
+        config.discovery = None;
+        let store: Arc<dyn SecretStore> = Arc::new(voltip_identity::MemorySecretStore::new());
+        let (rt, inbox, _handle, _events) = AppCore::build(config, store, crate::dictation::fakes::ports()).unwrap();
+        (rt, inbox)
+    }
+
+    /// The LAN host's loopback link, up: everything it reported on the way, held back.
+    async fn host_link_up(rt: &mut Runtime, inbox: &mut Inbox) -> Vec<(LinkId, LinkEvent)> {
+        rt.start_host().await;
+        let mut held = Vec::new();
+        loop {
+            let (id, ev) = tokio::time::timeout(Duration::from_secs(15), inbox.link_rx.recv())
+                .await
+                .expect("the loopback link reported within 15 s")
+                .expect("the link events stay open");
+            let up = id == LinkId::Host && matches!(&ev, LinkEvent::State(change) if change.to.is_connected());
+            held.push((id, ev));
+            if up {
+                return held;
+            }
+        }
+    }
+
+    fn pairing_running(state: Option<PairingState>) -> bool {
+        matches!(state, Some(PairingState::CreatingSession | PairingState::WaitingForPeer))
+    }
+
+    /// Regression (main CI 2026-10-07, run 37660547036, `pairing_start_leaves_idle_and_cancel_reset_returns_to_it`
+    /// of the desktop shell): a pairing started right after launch failed at once with
+    /// `SessionExpired`. The command reads the link's state as it is now, connected, while the
+    /// link's own reports of getting there (`Connecting`, `Authenticating`, `Connected`) still wait
+    /// in the inbox; handled after the command, the stale `Connecting` counted as losing the link
+    /// the pairing runs on.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn regression_a_pairing_outlives_the_link_reports_queued_before_it_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut rt, mut inbox) = offline_runtime(dir.path());
+        let held = host_link_up(&mut rt, &mut inbox).await;
+        assert!(held.iter().any(|(_, ev)| matches!(ev, LinkEvent::State(change) if !change.to.is_connected())), "{held:?}");
+        rt.start_pairing().await.unwrap();
+        assert!(pairing_running(rt.pairing_state()), "{:?}", rt.pairing_state());
+        for (id, ev) in held {
+            rt.handle_link_event(id, ev).await;
+        }
+        assert!(pairing_running(rt.pairing_state()), "{:?}", rt.pairing_state());
+    }
+
+    /// Losing the link the pairing runs on still ends it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_pairing_ends_when_its_link_is_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut rt, mut inbox) = offline_runtime(dir.path());
+        for (id, ev) in host_link_up(&mut rt, &mut inbox).await {
+            rt.handle_link_event(id, ev).await;
+        }
+        rt.start_pairing().await.unwrap();
+        assert!(pairing_running(rt.pairing_state()), "{:?}", rt.pairing_state());
+        let lost = StateChange { from: ConnectionState::Connected, to: ConnectionState::Reconnecting };
+        rt.handle_link_event(LinkId::Host, LinkEvent::State(lost)).await;
+        assert_eq!(rt.pairing_state(), Some(PairingState::Failed { reason: FailureReason::Relay { code: RelayErrorCode::SessionExpired } }));
+    }
 
     #[test]
     fn summary_never_hides_an_identity_mismatch_and_prefers_direct() {
