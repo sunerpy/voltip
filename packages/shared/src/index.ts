@@ -13,3 +13,4 @@ export * from "./scene-drafts";
 export * from "./history-stats";
 export * from "./feedback-drafts";
 export * from "./i18n";
+export * from "./logo";

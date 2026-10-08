@@ -276,8 +276,8 @@ fn show<R: Runtime>(app: &AppHandle<R>, next: Shown) {
     };
     let previous = std::mem::replace(&mut *state.shown.lock(), next);
     if previous.glyph != next.glyph {
-        // `set_icon` alone would drop the template flag on macOS (the V turns black on a dark menu
-        // bar); the combined call keeps it and falls back to `set_icon` elsewhere.
+        // `set_icon` alone would drop the template flag on macOS (the mark turns black on a dark
+        // menu bar); the combined call keeps it and falls back to `set_icon` elsewhere.
         if let Err(e) = tray.set_icon_with_as_template(Some(image(next.glyph)), cfg!(target_os = "macos")) {
             tracing::warn!(error = %e, glyph = ?next.glyph, "tray icon update failed");
         }

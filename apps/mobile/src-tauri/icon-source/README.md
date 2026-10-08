@@ -12,7 +12,12 @@ foreground, background and monochrome layers, and the plain icons) and `icons/ic
 writes desktop and iOS icons into `icons/` that the phone app does not use: delete them.
 
 - `voltip.svg`: the whole mark.
-- `voltip-background.svg`: the mark's navy, full bleed; the launcher masks the shape.
-- `voltip-foreground.svg`, `voltip-monochrome.svg`: the V alone, scaled to two thirds so that it
-  stays inside the 66 dp safe circle of the 108 dp canvas. The generator draws an SVG canvas
-  whole and ignores `android_fg_scale` for it, so the scale lives in the sources.
+- `voltip-background.svg`: the mark's ink gradient, full bleed; the launcher masks the shape.
+- `voltip-foreground.svg`, `voltip-monochrome.svg`: the sound bars and the cursor alone (white in
+  the monochrome one), scaled to two thirds so that they stay inside the 66 dp safe circle of the
+  108 dp canvas. The generator draws an SVG canvas whole and ignores `android_fg_scale` for it,
+  so the scale lives in the sources.
+
+Launchers scale these layers to their own icon size, so they keep the design's geometry. The
+desktop icons, which Windows, macOS and Linux show at exact small sizes, and the React Native
+app's icons come from `scripts/render-icons.py`, which fits the mark to each size's pixels.
