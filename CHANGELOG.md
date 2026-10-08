@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.48](https://github.com/sunerpy/voltip/compare/v0.0.47...v0.0.48) (2026-10-08)
+
+
+### Features
+
+* **engines:** 内置服务可选多个润色模型，新增 Google AI Studio ([#130](https://github.com/sunerpy/voltip/issues/130)) ([cc04a9f](https://github.com/sunerpy/voltip/commit/cc04a9fef39f5c8d81f0f6983ad6b69e6bb085d2))
+* 换用新标志「声波光标」 ([#128](https://github.com/sunerpy/voltip/issues/128)) ([a9b4687](https://github.com/sunerpy/voltip/commit/a9b468722f0a5207721e2cd4d70da29041a6c307))
+
 ## [0.0.47](https://github.com/sunerpy/voltip/compare/v0.0.46...v0.0.47) (2026-10-08)
 
 
