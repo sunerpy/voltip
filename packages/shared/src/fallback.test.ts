@@ -185,7 +185,10 @@ describe("fallback models (docs/dictation.md §3.5)", () => {
   it("list edits: what may be added, and moves within the list", () => {
     const list = [entry("aliyun", "a"), entry("builtin", ""), entry("groq", "b")];
     expect(fallbackAddProblem(list, entry("aliyun", " a "))).toBe("listed");
-    expect(fallbackAddProblem(list, entry("builtin", "x"))).toBe("listed");
+    // The built-in service's models are told apart like any other's (user request 2026-10-08:
+    // it may offer several); the empty one is the model its card uses.
+    expect(fallbackAddProblem(list, entry("builtin", " "))).toBe("listed");
+    expect(fallbackAddProblem(list, entry("builtin", "openai/gpt-oss-20b"))).toBeUndefined();
     expect(fallbackAddProblem(list, entry("groq", "  "))).toBe("blank");
     expect(fallbackAddProblem([], entry("builtin", ""))).toBeUndefined();
     expect(fallbackAddProblem(list, entry("aliyun", "c"))).toBeUndefined();

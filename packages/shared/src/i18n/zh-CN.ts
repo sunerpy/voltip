@@ -940,6 +940,7 @@ export const zhCN = {
       local: "本机",
       openai: "OpenAI",
       groq: "Groq",
+      google: "Google AI Studio",
       siliconflow: "硅基流动",
       aliyun: "阿里云百炼",
       deepseek: "DeepSeek",
@@ -951,6 +952,8 @@ export const zhCN = {
       local: "模型在这台电脑上运行，音频不离开本机。",
       openai: "OpenAI 的语音转写与对话模型。",
       groq: "Groq 托管的 Whisper 与开源大模型，响应快。",
+      google:
+        "Google AI Studio 的 Gemini 模型，只用于润色；免费额度内的内容可能被 Google 用于改进产品。",
       siliconflow: "硅基流动托管的 SenseVoice 与开源大模型。",
       aliyun: "阿里云百炼的语音识别与千问大模型；实时识别模型在说话时就完成识别。",
       deepseek: "DeepSeek 的对话模型，只用于润色。",

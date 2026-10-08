@@ -868,8 +868,9 @@ fn check_http_url(url: &str) -> Result<(), String> {
 }
 
 /// `EngineSettings.*_fallback` (docs/dictation.md §3.5): at most [`MAX_FALLBACK_MODELS`] models,
-/// each of a provider that offers the service remotely, with a model named (the built-in service
-/// has its own), none listed twice. The selected model may be listed: it is skipped.
+/// each of a provider that offers the service remotely, with a model named (for the built-in
+/// service an empty one is the model its card uses), none listed twice. The selected model may be
+/// listed: it is skipped.
 fn check_fallback_models(kind: ServiceKind, fallback: &FallbackSettings) -> Result<(), CoreError> {
     let field = |i: usize| format!("{}_fallback.models[{i}]", kind_name(kind));
     if fallback.models.len() > MAX_FALLBACK_MODELS {
@@ -883,7 +884,7 @@ fn check_fallback_models(kind: ServiceKind, fallback: &FallbackSettings) -> Resu
         if model.is_empty() && entry.provider != ProviderId::Builtin {
             return Err(CoreError::Invalid(format!("{}: 未填写模型", field(i))));
         }
-        let repeated = fallback.models[..i].iter().any(|e| e.provider == entry.provider && (e.provider == ProviderId::Builtin || e.model.trim() == model));
+        let repeated = fallback.models[..i].iter().any(|e| e.provider == entry.provider && e.model.trim() == model);
         if repeated {
             return Err(CoreError::Invalid(format!("{}: {} 已在列表中", field(i), if model.is_empty() { entry.provider.as_str() } else { model })));
         }
@@ -2132,7 +2133,8 @@ impl Runtime {
         tokio::spawn(async move {
             let started = Instant::now();
             let outcome = match probe.list_models(&url, key.as_deref()).await {
-                Ok(mut models) => {
+                Ok(models) => {
+                    let mut models = crate::providers::usable_models(provider, kind, models);
                     models.sort_unstable();
                     models.dedup();
                     ProbeOutcome::Ok { models, latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX) }

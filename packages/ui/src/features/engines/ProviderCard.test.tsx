@@ -233,6 +233,83 @@ describe("ProviderCard (desktop engines pane and phone settings)", () => {
     backend.destroy();
   });
 
+  it("picks one of the built-in clean-up's models, the first kept as no choice", async () => {
+    // User request 2026-10-08: the built-in service offers the Qwen and GPT-OSS models its
+    // gateway serves.
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    const invoke = vi.spyOn(backend, "invoke");
+    const notify = renderCard(backend, { id: "builtin", kind: "llm" });
+    const select = await screen.findByRole("combobox", { name: t("engines.field.model") });
+    expect([...select.querySelectorAll("option")].map((o) => o.value)).toEqual([
+      "qwen/qwen3.8-27b",
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-20b",
+    ]);
+    await user.selectOptions(select, "openai/gpt-oss-120b");
+    expect(invoke).toHaveBeenLastCalledWith("settings_set_engines", {
+      engines: expect.objectContaining({
+        providers: { builtin: { llm_model: "openai/gpt-oss-120b" } },
+      }),
+    });
+    expect(notify).toHaveBeenLastCalledWith(
+      t("engines.saved", { provider: t("engines.provider.builtin") }),
+    );
+    await waitFor(async () => {
+      expect((await backend.getState()).engines.refine_model).toBe("openai/gpt-oss-120b");
+    });
+    expect(screen.getByRole("combobox", { name: t("engines.field.model") })).toHaveValue(
+      "openai/gpt-oss-120b",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: t("engines.field.model") }),
+      "qwen/qwen3.8-27b",
+    );
+    expect(invoke).toHaveBeenLastCalledWith("settings_set_engines", {
+      engines: expect.not.objectContaining({ providers: expect.anything() }),
+    });
+    // Recognition offers one model: named, not chosen.
+    backend.destroy();
+    const one = new MockBackend();
+    renderCard(one, { id: "builtin", kind: "asr" });
+    expect(
+      await screen.findByText(t("engines.model", { model: "Qwen/Qwen3-ASR-1.7B" })),
+    ).toBeInTheDocument();
+    one.destroy();
+  });
+
+  it("offers Google AI Studio's Gemini models for polish, with the user's own key", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    const invoke = vi.spyOn(backend, "invoke");
+    renderCard(backend, { id: "google", kind: "llm" });
+    const form = await screen.findByTestId("provider-form");
+    const select = within(form).getByRole("combobox", { name: t("engines.field.model") });
+    expect([...select.querySelectorAll("option")].map((o) => o.value)).toEqual([
+      "gemini-3.8-flash",
+      "gemini-3.5-flash-lite",
+      "gemini-3.1-flash-lite",
+      "gemini-2.5-flash",
+      "gemini-2.5-pro",
+      "__other__",
+    ]);
+    expect(screen.getByText(t("engines.providerNote.google"))).toBeInTheDocument();
+    await user.selectOptions(select, "gemini-3.5-flash-lite");
+    await user.type(within(form).getByLabelText(t("engines.field.key")), "AIza-test");
+    await user.click(within(form).getByRole("button", { name: t("engines.save") }));
+    expect(invoke).toHaveBeenCalledWith("settings_set_engines", {
+      engines: expect.objectContaining({
+        providers: expect.objectContaining({ google: { llm_model: "gemini-3.5-flash-lite" } }),
+      }),
+    });
+    expect(invoke).toHaveBeenCalledWith("provider_key_set", {
+      provider: "google",
+      kind: "llm",
+      value: "AIza-test",
+    });
+    backend.destroy();
+  });
+
   it("explains the built-in service and shows the shell's body for the on-device card", async () => {
     const backend = new MockBackend();
     renderCard(backend, { id: "builtin", kind: "asr" });

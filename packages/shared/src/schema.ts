@@ -39,6 +39,7 @@ export const PROVIDER_IDS = [
   "local",
   "openai",
   "groq",
+  "google",
   "siliconflow",
   "aliyun",
   "deepseek",

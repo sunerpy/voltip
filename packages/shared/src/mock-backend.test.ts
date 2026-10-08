@@ -1173,6 +1173,7 @@ describe("MockBackend history, engines and secrets", () => {
       "local",
       "openai",
       "groq",
+      "google",
       "siliconflow",
       "aliyun",
       "deepseek",

@@ -124,8 +124,16 @@ function AddFallback({
   const [problem, setProblem] = useState<string | undefined>(undefined);
   if (provider === undefined || service === undefined) return null;
   const builtin = provider.id === "builtin";
+  // A built-in service with several models offers them, no other id; with one, it is the card's.
+  const builtinChoice = builtin && choices.length > 1;
   const selectValue = picked ?? choices[0] ?? OTHER_MODEL;
-  const model = builtin ? "" : selectValue === OTHER_MODEL ? typed.trim() : selectValue;
+  const model = builtin
+    ? builtinChoice
+      ? selectValue
+      : ""
+    : selectValue === OTHER_MODEL
+      ? typed.trim()
+      : selectValue;
   const add = () => {
     const entry: FallbackModel = { provider: provider.id, model };
     const why = fallbackAddProblem(list, entry);
@@ -150,7 +158,17 @@ function AddFallback({
         }}
         options={candidates.map((p) => ({ value: p.id, label: t(`engines.provider.${p.id}`) }))}
       />
-      {builtin ? (
+      {builtinChoice ? (
+        <SelectField
+          label={t("engines.fallback.model")}
+          value={selectValue}
+          onChange={(value) => {
+            setPicked(value);
+            setProblem(undefined);
+          }}
+          options={choices.map((m) => ({ value: m, label: m }))}
+        />
+      ) : builtin ? (
         <TextInput
           mode="outlined"
           label={t("engines.fallback.model")}

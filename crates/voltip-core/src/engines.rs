@@ -171,12 +171,12 @@ fn trimmed(value: Option<&str>) -> Option<&str> {
 pub const MAX_FALLBACK_MODELS: usize = 8;
 
 /// One fallback model (docs/dictation.md §3.5): a provider and one of its models. The endpoint and
-/// the key are the provider's own, as its card configures them; the built-in service has one model.
+/// the key are the provider's own, as its card configures them.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct FallbackModel {
     /// Whose model.
     pub provider: ProviderId,
-    /// The model id (ignored for `builtin`).
+    /// The model id; for `builtin` one of [`BuiltIn::models`], or empty for the one its card uses.
     #[serde(default)]
     pub model: String,
 }
@@ -302,13 +302,15 @@ pub struct BuiltIn {
     pub asr_url: Option<&'static str>,
     /// `VOLTIP_ASR_TOKEN`.
     pub asr_token: Option<&'static str>,
-    /// `VOLTIP_ASR_MODEL` or [`DEFAULT_ASR_MODEL`].
+    /// `VOLTIP_ASR_MODEL` or [`DEFAULT_ASR_MODEL`]: one model, or several separated by commas
+    /// ([`BuiltIn::models`]).
     pub asr_model: &'static str,
     /// `VOLTIP_REFINE_URL`; `None` = no built-in clean-up.
     pub refine_url: Option<&'static str>,
     /// `VOLTIP_REFINE_API_KEY`.
     pub refine_api_key: Option<&'static str>,
-    /// `VOLTIP_REFINE_MODEL` or [`DEFAULT_REFINE_MODEL`].
+    /// `VOLTIP_REFINE_MODEL` or [`DEFAULT_REFINE_MODEL`]: one model, or several separated by
+    /// commas, the default first ([`BuiltIn::models`]).
     pub refine_model: &'static str,
     /// The built-in recognition previews while recording: the sentence is decoded again as it
     /// grows (docs/dictation.md §11.8). On in every build that carries the built-in recognition.
@@ -361,12 +363,29 @@ impl BuiltIn {
         }
     }
 
-    fn service(&self, kind: ServiceKind) -> Option<RemoteService> {
-        let (url, key, model) = match kind {
-            ServiceKind::Asr => (self.asr_url, self.asr_token, self.asr_model),
-            ServiceKind::Llm => (self.refine_url, self.refine_api_key, self.refine_model),
+    /// The models the built-in `kind` service offers, the default first: the build's variable may
+    /// list several, separated by commas (user request 2026-10-08: the built-in clean-up offers
+    /// Qwen and the GPT-OSS models its gateway serves).
+    pub fn models(&self, kind: ServiceKind) -> Vec<&'static str> {
+        let (listed, default) = match kind {
+            ServiceKind::Asr => (self.asr_model, DEFAULT_ASR_MODEL),
+            ServiceKind::Llm => (self.refine_model, DEFAULT_REFINE_MODEL),
         };
-        url.map(|url| RemoteService { url: url.to_owned(), model: model.to_owned(), key: key.map(str::to_owned), ..RemoteService::default() })
+        let models: Vec<&'static str> = listed.split(',').map(str::trim).filter(|m| !m.is_empty()).collect();
+        if models.is_empty() { vec![default] } else { models }
+    }
+
+    /// The built-in `kind` service with `model` when it is one of [`BuiltIn::models`], otherwise
+    /// with the default: a choice a newer build no longer offers falls back quietly.
+    fn service(&self, kind: ServiceKind, model: Option<&str>) -> Option<RemoteService> {
+        let (url, key) = match kind {
+            ServiceKind::Asr => (self.asr_url, self.asr_token),
+            ServiceKind::Llm => (self.refine_url, self.refine_api_key),
+        };
+        let models = self.models(kind);
+        let default = models.first().copied().unwrap_or_default();
+        let chosen = model.map(str::trim).and_then(|m| models.iter().copied().find(|&known| known == m)).unwrap_or(default);
+        url.map(|url| RemoteService { url: url.to_owned(), model: chosen.to_owned(), key: key.map(str::to_owned), ..RemoteService::default() })
     }
 }
 
@@ -944,7 +963,8 @@ fn service_target(
 }
 
 /// [`service_target`] with `model` instead of the provider card's (a fallback model, docs/dictation.md
-/// §3.5); the endpoint and the key stay the provider's. The built-in service has only its own model.
+/// §3.5); the endpoint and the key stay the provider's. The built-in service takes only its own
+/// models ([`BuiltIn::models`]).
 fn service_target_for(
     provider: ProviderId,
     kind: ServiceKind,
@@ -957,10 +977,10 @@ fn service_target_for(
     let Some(preset) = spec.service(kind).filter(|_| provider != ProviderId::Local) else {
         return Err((EngineIssue::Unavailable, String::new()));
     };
-    if provider == ProviderId::Builtin {
-        return built_in.service(kind).ok_or((EngineIssue::Unavailable, String::new()));
-    }
     let choice = settings.providers.get(&provider);
+    if provider == ProviderId::Builtin {
+        return built_in.service(kind, model.or_else(|| choice.and_then(|c| c.model(kind)))).ok_or((EngineIssue::Unavailable, String::new()));
+    }
     let url = choice.and_then(|c| c.url(kind)).map(str::to_owned).or_else(|| (!preset.base_url.is_empty()).then(|| preset.base_url.to_owned()));
     let model = model.or_else(|| choice.and_then(|c| c.model(kind))).map(str::to_owned).or_else(|| preset.models.first().map(|m| (*m).to_owned()));
     let key = secrets.get(provider, kind).map(str::to_owned);
@@ -997,11 +1017,11 @@ fn provider_statuses(
         };
         match provider {
             ProviderId::Builtin => {
-                let remote = built_in.service(kind)?;
+                let remote = built_in.service(kind, settings.provider(provider).model(kind))?;
                 let key = SecretState { set: remote.key.is_some(), source: if remote.key.is_some() { SecretSource::Builtin } else { SecretSource::None } };
                 Some(ServiceStatus {
-                    model: remote.model.clone(),
-                    presets: vec![remote.model],
+                    model: remote.model,
+                    presets: built_in.models(kind).into_iter().map(str::to_owned).collect(),
                     base_url: None,
                     default_base_url: None,
                     key,
@@ -1338,6 +1358,45 @@ mod tests {
         assert!(asr.active && asr.base_url.is_none() && asr.issue.is_none());
         assert_eq!(asr.key, SecretState { set: true, source: SecretSource::Builtin });
         assert_eq!(asr.presets, ["Qwen/Qwen3-ASR-1.7B"]);
+    }
+
+    /// User request 2026-10-08: the built-in clean-up offers every model its gateway serves. The
+    /// build lists them, the card picks one, a choice the build does not list falls back to the
+    /// default, and a fallback model may be another built-in one.
+    #[test]
+    fn the_built_in_service_offers_every_model_its_build_lists() {
+        let built = BuiltIn { refine_model: "qwen/qwen3.8-27b, openai/gpt-oss-120b,,openai/gpt-oss-20b ", ..BUILT };
+        assert_eq!(built.models(ServiceKind::Llm), ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]);
+        assert_eq!(built.models(ServiceKind::Asr), ["Qwen/Qwen3-ASR-1.7B"]);
+        assert_eq!(BuiltIn { refine_model: " , ", ..BUILT }.models(ServiceKind::Llm), [DEFAULT_REFINE_MODEL], "an empty list is the default");
+        let choose = |model: &str| EngineSettings {
+            providers: with_provider(ProviderId::Builtin, ProviderSettings { llm_model: Some(model.into()), ..ProviderSettings::default() }),
+            ..EngineSettings::default()
+        };
+        let resolved = |settings: &EngineSettings| ResolvedEngines::resolve(settings, &UserSecrets::default(), &built);
+        assert_eq!(resolved(&EngineSettings::default()).refine.unwrap().model, "qwen/qwen3.8-27b", "the first is the default");
+        let r = resolved(&choose("openai/gpt-oss-120b"));
+        let refine = r.refine.clone().unwrap();
+        assert_eq!(
+            (refine.model.as_str(), refine.url.as_str(), refine.key.as_deref()),
+            ("openai/gpt-oss-120b", "https://llm.builtin.test/v1", Some("built-refine-key"))
+        );
+        let st = r.status();
+        assert_eq!(st.refine_model, "openai/gpt-oss-120b");
+        let card = st.providers.iter().find(|p| p.id == ProviderId::Builtin).unwrap().llm.clone().unwrap();
+        assert_eq!(card.model, "openai/gpt-oss-120b");
+        assert_eq!(card.presets, ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]);
+        assert_eq!(resolved(&choose("llama-3.3-70b-versatile")).refine.unwrap().model, "qwen/qwen3.8-27b", "a model the build does not list");
+        // Fallback: another built-in model is a candidate; the empty model is the card's own.
+        let fallback = |models: Vec<FallbackModel>| EngineSettings { llm_fallback: FallbackSettings { enabled: true, models }, ..EngineSettings::default() };
+        let plan =
+            resolved(&fallback(vec![fallback_entry(ProviderId::Builtin, "openai/gpt-oss-20b"), fallback_entry(ProviderId::Builtin, "")])).refine_fallback;
+        assert!(plan.in_use);
+        assert!(
+            matches!(&plan.rows[0].state, FallbackRowState::Ready(target) if target.remote.model == "openai/gpt-oss-20b" && target.remote.key.as_deref() == Some("built-refine-key"))
+        );
+        assert_eq!(plan.rows[0].model, "openai/gpt-oss-20b");
+        assert_eq!(plan.rows[1].state, FallbackRowState::SameAsSelected);
     }
 
     /// Regression (2026-09-25, carried over to providers): a key never travels to a

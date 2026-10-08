@@ -999,7 +999,11 @@ export class MockBackend implements Backend {
     // The built-in service is compiled in for the preview unless a test says otherwise.
     this.builtIn = options.builtIn ?? {
       asr: { model: MOCK_ENGINE_BUILTIN.asr_model, key: true },
-      llm: { model: MOCK_ENGINE_BUILTIN.refine_model, key: true },
+      llm: {
+        model: MOCK_ENGINE_BUILTIN.refine_model,
+        models: [MOCK_ENGINE_BUILTIN.refine_model, "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+        key: true,
+      },
     };
     for (const { provider, kind } of options.providerKeys ?? []) {
       const entry = keyEntry(provider, kind);
@@ -3062,7 +3066,9 @@ export class MockBackend implements Backend {
       if (this.probeModels === false) return failed("unreachable");
       const models = [
         ...(this.probeModels[provider] ??
-          (provider === "builtin" ? [this.builtIn[kind]?.model ?? ""] : preset.models)),
+          (provider === "builtin"
+            ? (this.builtIn[kind]?.models ?? [this.builtIn[kind]?.model ?? ""])
+            : preset.models)),
       ];
       models.sort();
       this.emit({

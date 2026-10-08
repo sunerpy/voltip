@@ -41,7 +41,7 @@ export function withFallback(
 }
 
 /** Why a model cannot be added to the list, if it cannot: the list is full, the model is blank
- *  (the built-in service has its own), or it is listed already. */
+ *  (for the built-in service a blank model is the one its card uses), or it is listed already. */
 export function fallbackAddProblem(
   list: readonly FallbackModel[],
   entry: FallbackModel,
@@ -49,10 +49,7 @@ export function fallbackAddProblem(
   if (list.length >= MAX_FALLBACK_MODELS) return "full";
   const model = entry.model.trim();
   if (model.length === 0 && entry.provider !== "builtin") return "blank";
-  const listed = list.some(
-    (m) =>
-      m.provider === entry.provider && (entry.provider === "builtin" || m.model.trim() === model),
-  );
+  const listed = list.some((m) => m.provider === entry.provider && m.model.trim() === model);
   return listed ? "listed" : undefined;
 }
 
