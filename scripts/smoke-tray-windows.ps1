@@ -9,8 +9,8 @@
     1. the GUI starts, the tray is installed (the app's log names the menu's language and whether
        the build has an update source), and the main window hides on WM_CLOSE;
     2. the notification area (or its overflow flyout) holds a button named after the tray tooltip,
-       and its pixels are the colour mark: the navy square with the pale and the orange arm
-       (saved as tray-icon.png), not a blank or foreign icon;
+       and its pixels are the colour mark: the ink square with the white sound bars and the cyan
+       cursor (saved as tray-icon.png), not a blank or foreign icon;
     3. a right click opens the native menu with exactly the build's entries in the UI's language
        (tray-menu.png);
     4. Open shows the main window; Settings shows it with the Settings dialog open (found in the
@@ -337,11 +337,12 @@ try {
   # 2. The icon in the notification area is the colour mark.
   $tray = Wait-For { Find-TrayButton } $StepTimeoutSec 'the tray button'
   $shot = Save-Shot $tray[0] 'tray-icon.png'
-  $navy = Count-Near $shot @(0x0B, 0x12, 0x20) 60
-  $pale = Count-Near $shot @(0xE7, 0xED, 0xF5) 45
-  $orange = Count-Near $shot @(0xF9, 0x73, 0x16) 90
-  Note "tray button in the $($tray[1]) ($($shot.Width)x$($shot.Height) px): navy $navy, pale $pale, orange $orange pixels"
-  if ($navy -lt 30 -or $pale -lt 4 -or $orange -lt 4) { throw 'smoke-tray-windows: the tray icon is not the Voltip mark (see tray-icon.png)' }
+  # The bars sit on whole pixels, so their insides are pure white: a light taskbar does not count.
+  $ink = Count-Near $shot @(0x0B, 0x12, 0x20) 60
+  $white = Count-Near $shot @(0xFF, 0xFF, 0xFF) 15
+  $cyan = Count-Near $shot @(0x22, 0xD3, 0xEE) 90
+  Note "tray button in the $($tray[1]) ($($shot.Width)x$($shot.Height) px): ink $ink, white $white, cyan $cyan pixels"
+  if ($ink -lt 30 -or $white -lt 4 -or $cyan -lt 4) { throw 'smoke-tray-windows: the tray icon is not the Voltip mark (see tray-icon.png)' }
   $shot.Dispose()
 
   # 3. The menu.
