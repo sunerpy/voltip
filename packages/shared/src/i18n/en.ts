@@ -2565,6 +2565,7 @@ export const en: Messages = {
         "The notices of the third-party software in the app come with the package (THIRD-PARTY-NOTICES.txt).",
       source: "Source code",
       releases: "Releases",
+      privacy: "Privacy policy",
       update: {
         title: "Updates",
         storeTitle: "Updated by Google Play",

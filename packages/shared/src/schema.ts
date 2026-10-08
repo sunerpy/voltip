@@ -322,7 +322,7 @@ export const projectLinkSchema = z.enum(PROJECT_LINKS);
 export type ProjectLink = z.infer<typeof projectLinkSchema>;
 /** Pages of the user guide the shell opens (`voltip_core::ui::GuidePage`), in the language the
  *  webview names. */
-export const GUIDE_PAGES = ["service"] as const;
+export const GUIDE_PAGES = ["service", "privacy"] as const;
 export const guidePageSchema = z.enum(GUIDE_PAGES);
 export type GuidePage = z.infer<typeof guidePageSchema>;
 

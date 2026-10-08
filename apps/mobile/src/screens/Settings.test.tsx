@@ -253,4 +253,19 @@ describe("the phone's settings", () => {
     expect(await screen.findByText("出错了 · 没有浏览器")).toBeInTheDocument();
     backend.destroy();
   });
+
+  it("about opens the privacy policy in the interface's language", async () => {
+    // Google Play asks an app that records audio to link its privacy policy inside the app too
+    // (the Play listing, 2026-10-08).
+    const user = userEvent.setup();
+    const { backend } = renderApp();
+    await user.click(within(await openSettings(user)).getByTestId("settings-about"));
+    const page = screen.getByTestId("phone-about");
+    await user.click(within(page).getByRole("button", { name: "隐私政策" }));
+    expect(backend.guidesOpened).toEqual([{ page: "privacy", locale: "zh-CN" }]);
+    vi.spyOn(backend, "guideOpen").mockRejectedValueOnce(new Error("opener: 没有浏览器"));
+    await user.click(within(page).getByRole("button", { name: "隐私政策" }));
+    expect(await screen.findByText("出错了 · 没有浏览器")).toBeInTheDocument();
+    backend.destroy();
+  });
 });
