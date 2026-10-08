@@ -827,7 +827,7 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
 ### 15.4 托盘
 
 - 仅 macOS / Windows 有托盘（`tray-icon` feature 按目标开启）；Linux 本增量没有。
-- 图标就是应用标志：按 `Logo.tsx` 的几何（圆角方块、左浅右橙的 V）运行时渲染为 RGBA（`voltip_platform::tray::render_tray_icon`，每像素 4×4 超采样抗锯齿），不随包附带图标文件。Windows 画彩色标志，尺寸取系统小图标尺寸 `GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem())`（限定 16–64 px，读不到时 32 px），通知区不必再缩放。macOS 画模板图：只有 V，放大到填满 36 px（菜单栏 18 pt 的 Retina 尺寸），明暗由菜单栏着色；换图走 `set_icon_with_as_template`，单用 `set_icon` 会丢掉模板标记。
+- 图标就是应用标志「声波光标」：按 `Logo.tsx` 的几何（墨蓝圆角方块、三道白色声波、青色光标）运行时渲染为 RGBA（`voltip_platform::tray::render_tray_icon`），不随包附带图标文件。几何先按图标尺寸对齐整像素（`Mark::fitted`，与 `scripts/render-icons.py` 的 `fit` 同一规则）：声波宽度、间距、高度都取整像素，直边落在像素边界上，各部分仍居中，只有圆头和方块圆角做抗锯齿（每像素 8×8 超采样）。照原样缩小时 16–36 px 的声波只有 1–3 px 宽，边缘落在像素中间，糊成灰条（2026-10-08 用户反馈「清晰度要提高下」）。Windows 画彩色标志，尺寸取系统小图标尺寸 `GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem())`（限定 16–64 px，读不到时 32 px），通知区不必再缩放。macOS 画模板图：只有声波和光标，放大到填满 36 px（菜单栏 18 pt 的 Retina 尺寸），明暗由菜单栏着色；换图走 `set_icon_with_as_template`，单用 `set_icon` 会丢掉模板标记。
 - 听写状态用右下角的角标表示（跟随 `UiEvent::Dictation`，`platform::glyph_for`）：空闲时没有角标（done / failed / cancelled 的停留也算空闲），录音时是红点（macOS 为实心圆点），处理中是蓝点（macOS 为圆环）。角标外有一圈白色间隔（macOS 为镂空）。提示文字同步变化：`Voltip`、`Voltip · 正在听写`、`Voltip · 正在处理`。
 - 菜单依次为：打开 Voltip、设置…、检查更新…（仅在构建带更新源时出现）、分隔线、退出 Voltip。语言跟随 `settings.locale`。设为 `system` 时按系统显示语言解析：Windows 用 `GetUserDefaultUILanguage`，macOS 用 `NSLocale.preferredLanguages` 首项，与 webview 的 `navigator.language` 同源；读不到时用中文。
 - 「设置…」和「检查更新…」先显示主窗，再向主窗发 `voltip://tray`（`{ action: "settings" | "update" }`），由界面打开设置对话框或更新对话框；更新状态为空闲、已是最新或失败时，顺带检查一次。

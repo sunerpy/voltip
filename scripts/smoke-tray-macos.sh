@@ -8,8 +8,8 @@
 #      space measured between the traffic lights and whatever is drawn next (at least 12 pt, a hard
 #      check with VOLTIP_CHECK_CHROME=1 as CI sets for the build under test; user feedback
 #      2026-09-29: they crowded the app mark), and the main window's close button hides it;
-#   2. the status item's pixels are the template V (tray-icon.png): strokes that stand out from
-#      the menu bar, and no colour icon;
+#   2. the status item's pixels are the template mark (tray-icon.png), the sound bars and the
+#      cursor: strokes that stand out from the menu bar, and no colour icon;
 #   3. its menu holds exactly the build's entries in the UI's language;
 #   4. Open shows the main window; Settings shows it with the Settings dialog open (the webview's
 #      role=dialog in the accessibility tree); Check for Updates asks the update source and gets
@@ -128,7 +128,7 @@ ax close Voltip
 wait_for 30 'the window to hide' window_hidden
 note 'main window hidden by its close button; the process keeps running'
 
-# 2. The status item is the template V.
+# 2. The status item is the template mark.
 read -r x y w h <<<"$(ax frame)"
 screencapture -x -R "$x,$y,$w,$h" "$out/tray-icon.png"
 stats=$("$helper" ink "$out/tray-icon.png")
@@ -136,7 +136,7 @@ note "status item at $x,$y ${w}x${h} pt: $stats"
 ink=$(sed -n 's/.*ink=\([0-9.]*\).*/\1/p' <<<"$stats")
 blue=$(sed -n 's/.*blue=\([0-9.]*\).*/\1/p' <<<"$stats")
 awk -v ink="$ink" -v blue="$blue" 'BEGIN { exit !(ink >= 0.03 && blue < 0.02) }' ||
-  fail "the status item is not the Voltip V (see tray-icon.png)"
+  fail "the status item is not the Voltip mark (see tray-icon.png)"
 
 # 3. The menu.
 menu=$(ax menu)

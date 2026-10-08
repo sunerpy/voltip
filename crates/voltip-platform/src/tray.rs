@@ -1,12 +1,12 @@
 //! The tray icon and its menu (docs/dictation.md §15.4).
 //!
-//! The icon is the app mark, drawn to RGBA at runtime from the geometry of
-//! `packages/ui/src/components/Logo.tsx` (a navy rounded square, a V whose left arm is pale and
-//! right arm orange), so it is crisp at whatever size the platform draws and no per-state asset
-//! has to be shipped or kept in sync. A badge in the square's bottom-right corner shows the
+//! The icon is the app mark 「声波光标」, drawn to RGBA at runtime from the geometry of
+//! `packages/ui/src/components/Logo.tsx` (on a deep ink rounded square, three white sound bars run
+//! into a cyan text cursor), so it is crisp at whatever size the platform draws and no per-state
+//! asset has to be shipped or kept in sync. A badge in the square's bottom-right corner shows the
 //! dictation phase. Windows gets the colour mark, the same the window icon shows; macOS gets a
-//! *template* (the V alone, black on transparent) that the menu bar tints for its light and dark
-//! appearance. The menu's labels come in the UI's two languages.
+//! *template* (the bars and the cursor alone, black on transparent) that the menu bar tints for its
+//! light and dark appearance. The menu's labels come in the UI's two languages.
 
 use crate::HostOs;
 
@@ -39,8 +39,8 @@ impl TrayGlyph {
 pub enum TrayStyle {
     /// The full-colour mark (the Windows notification area).
     Color,
-    /// A template image (the macOS menu bar): the V alone in black; the menu bar keeps only the
-    /// alpha and tints it.
+    /// A template image (the macOS menu bar): the bars and the cursor alone in black; the menu bar
+    /// keeps only the alpha and tints it.
     Template,
 }
 
@@ -75,43 +75,156 @@ pub fn tray_icon_size(os: HostOs, system_small_icon: Option<u32>) -> u32 {
     }
 }
 
-// The mark in the 100 × 100 space of `Logo.tsx`.
-const NAVY: [u8; 3] = [0x0B, 0x12, 0x20];
-const PALE: [u8; 3] = [0xE7, 0xED, 0xF5];
-const ORANGE: [u8; 3] = [0xF9, 0x73, 0x16];
+// The image is a 100 × 100 space: `Logo.tsx`'s 1024 canvas scaled by 100 / 1024.
+const K: f64 = 100.0 / 1024.0;
+/// The tile's gradient, top left to bottom right.
+const TILE_FROM: [u8; 3] = [0x0B, 0x12, 0x20];
+const TILE_TO: [u8; 3] = [0x1B, 0x2A, 0x4A];
+const WAVE: [u8; 3] = [0xFF, 0xFF, 0xFF];
+/// The cursor's gradient, top to bottom.
+const CURSOR_FROM: [u8; 3] = [0x38, 0xBD, 0xF8];
+const CURSOR_TO: [u8; 3] = [0x22, 0xD3, 0xEE];
 const WHITE: [u8; 3] = [0xFF, 0xFF, 0xFF];
 const INK: [u8; 3] = [0, 0, 0];
 /// The listening badge on the colour mark: a recording red.
 pub const LISTENING_RGB: [u8; 3] = [0xEF, 0x44, 0x44];
 /// The processing badge on the colour mark: the app accent.
 pub const PROCESSING_RGB: [u8; 3] = [0x2F, 0x6F, 0xED];
-const SQUARE_RADIUS: f64 = 22.0;
-const PALE_ARM: [(f64, f64); 4] = [(22.5, 22.0), (39.5, 22.0), (50.0, 46.0), (50.0, 79.0)];
-const ORANGE_ARM: [(f64, f64); 4] = [(60.5, 22.0), (77.5, 22.0), (50.0, 79.0), (50.0, 46.0)];
+const SQUARE_RADIUS: f64 = 232.0 * K;
+// The bars and the cursor on the 1024 canvas: three bars 84 wide, 48 apart, then 116 to the
+// cursor, 72 wide; every part is centred on the canvas's middle.
+const BAR_WIDTH: f64 = 84.0;
+const BAR_GAP: f64 = 48.0;
+const CURSOR_WIDTH: f64 = 72.0;
+const CURSOR_GAP: f64 = 116.0;
+/// The bars' heights, left to right.
+const BAR_HEIGHTS: [f64; 3] = [220.0, 420.0, 300.0];
+const CURSOR_HEIGHT: f64 = 560.0;
+/// A bar or the cursor: left, top, width, height in the 100-unit image; both ends fully round.
+type Pill = (f64, f64, f64, f64);
 /// The colour badge is centred where the square's bottom-right corner arc is, so badge plus its
-/// white gap fill that corner exactly.
+/// white gap fill that corner exactly (it covers the cursor's lower end while it shows).
 const BADGE_CENTRE: (f64, f64) = (100.0 - SQUARE_RADIUS, 100.0 - SQUARE_RADIUS);
 const BADGE_RADIUS: f64 = 16.0;
 const BADGE_GAP_RADIUS: f64 = SQUARE_RADIUS;
-/// Without the square the template's V is scaled up about the centre of its box (the mark's
-/// 22.5–77.5 × 22–79 becomes 9–91 × 8–93 of the image), so it fills the menu bar's height like
-/// other status items.
-const TEMPLATE_SCALE: f64 = 1.5;
-const TEMPLATE_V_CENTRE: (f64, f64) = (50.0, 50.5);
-/// The template badge sits in the image's bottom-right corner, clear of the right arm; its gap is
-/// cut out of whatever it overlaps.
+/// Without the square the template's bars and cursor are scaled up about the image's centre (the
+/// mark's 23.8–76.2 × 22.7–77.3 becomes about 9.5–90.5 × 7.6–92.4 of the image), so they fill the
+/// menu bar's height like other status items.
+const TEMPLATE_SCALE: f64 = 1.55;
+/// The template badge sits in the image's bottom-right corner, over the cursor's lower end; its gap
+/// is cut out of whatever it overlaps.
 const TEMPLATE_BADGE_CENTRE: (f64, f64) = (81.0, 81.0);
 const TEMPLATE_BADGE_RADIUS: f64 = 17.0;
 /// The hole of the template's processing ring.
 const TEMPLATE_BADGE_HOLE_RADIUS: f64 = 9.5;
 const TEMPLATE_BADGE_GAP_RADIUS: f64 = 23.0;
-/// Samples per pixel side (4 × 4 per pixel) for anti-aliased edges.
-const SUBSAMPLES: u32 = 4;
+/// Samples per pixel side (8 × 8 per pixel) for the anti-aliased round ends and corners.
+const SUBSAMPLES: u32 = 8;
+
+/// The bars and the cursor of one image size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Mark {
+    bars: [Pill; 3],
+    cursor: Pill,
+}
+
+impl Mark {
+    /// The mark scaled by `scale` about the centre of a `size`-pixel image and fitted to its whole
+    /// pixels, as `fit` in `scripts/render-icons.py` fits the app icon: the bar width, the gaps and
+    /// the heights are whole pixels, every straight edge lies on a pixel boundary and each part
+    /// stays centred. Drawn as designed, a bar one to three pixels wide has its edges between
+    /// pixels and smears into a grey band (user 2026-10-08: 清晰度要提高下); fitted, only its round
+    /// ends are anti-aliased. At 1024 px the fit is the design itself.
+    fn fitted(size: u32, scale: f64) -> Self {
+        let side = i64::from(size);
+        let px = f64::from(size) / 1024.0 * scale;
+        let (w_t, g_t, c_t, g2_t) = (BAR_WIDTH * px, BAR_GAP * px, CURSOR_WIDTH * px, CURSOR_GAP * px);
+        let span = (3.0 * BAR_WIDTH + 2.0 * BAR_GAP + CURSOR_GAP + CURSOR_WIDTH) * px;
+        // Bar width, bar gap, cursor width, cursor gap, total width.
+        let mut best: Option<(f64, [i64; 5])> = None;
+        for w in near(w_t) {
+            for g in near(g_t) {
+                for wc in near(c_t).filter(|&wc| wc <= w) {
+                    let low = (g + 1).max(whole(g2_t.floor()) - 1);
+                    for g2 in low..=(low + 1).max(whole(g2_t.ceil()) + 1) {
+                        let total = 3 * w + 2 * g + g2 + wc;
+                        if (side - total) % 2 != 0 {
+                            continue; // it could not sit centred on whole pixels
+                        }
+                        let [wf, gf, wcf, g2f, totalf] = [w, g, wc, g2, total].map(|n| n as f64);
+                        // The bar width against its target, the gap and the cursor's width as
+                        // shares of the bar width (what the eye compares), the cursor's distance,
+                        // and the whole span.
+                        let cost = 3.0 * ((wf - w_t) / w_t).powi(2)
+                            + 2.0 * ((gf / wf - BAR_GAP / BAR_WIDTH) / (BAR_GAP / BAR_WIDTH)).powi(2)
+                            + ((wcf / wf - CURSOR_WIDTH / BAR_WIDTH) / (CURSOR_WIDTH / BAR_WIDTH)).powi(2)
+                            + ((g2f - g2_t) / g2_t).powi(2)
+                            + 8.0 * ((totalf - span) / span).powi(2);
+                        if best.is_none_or(|(least, _)| cost < least) {
+                            best = Some((cost, [w, g, wc, g2, total]));
+                        }
+                    }
+                }
+            }
+        }
+        // Some cursor gap of the two or more tried always has the image's parity.
+        let [w, g, wc, g2, total] = best.map_or([1, 1, 1, 2, 7], |(_, fit)| fit);
+        // Heights take the image's parity, so each part is centred on whole pixels, and keep their
+        // order: short bar < middle bar < tall bar < cursor.
+        let mut order = [BAR_HEIGHTS[0], BAR_HEIGHTS[2], BAR_HEIGHTS[1], CURSOR_HEIGHT];
+        order.sort_by(f64::total_cmp);
+        let floors = [w, w, w, wc];
+        let options: Vec<Vec<i64>> = order
+            .iter()
+            .zip(floors)
+            .map(|(&height, floor)| {
+                let t = whole((height * px).floor());
+                (floor.max(t - 4)..=t + 5).filter(|v| (v - side) % 2 == 0).collect()
+            })
+            .collect();
+        let mut best_heights: Option<(f64, [i64; 4])> = None;
+        for &a in &options[0] {
+            for &b in options[1].iter().filter(|&&b| b > a) {
+                for &c in options[2].iter().filter(|&&c| c > b) {
+                    for &d in options[3].iter().filter(|&&d| d > c) {
+                        let heights = [a, b, c, d];
+                        let cost: f64 = heights.iter().zip(order).map(|(&h, target)| ((h as f64 - target * px) / (target * px)).powi(2)).sum();
+                        if best_heights.is_none_or(|(least, _)| cost < least) {
+                            best_heights = Some((cost, heights));
+                        }
+                    }
+                }
+            }
+        }
+        let heights = best_heights.map_or([w, w + 2, w + 4, w + 6], |(_, heights)| heights);
+        let height_of = |design: f64| order.iter().position(|&h| h == design).map_or(w, |i| heights[i]);
+        let k = 100.0 / f64::from(size);
+        let pill = |left: i64, width: i64, height: i64| (left as f64 * k, ((side - height) / 2) as f64 * k, width as f64 * k, height as f64 * k);
+        let left = (side - total) / 2;
+        let bars = [0, 1, 2].map(|i| pill(left + i * (w + g), w, height_of(BAR_HEIGHTS[i as usize])));
+        Self { bars, cursor: pill(left + 3 * w + 2 * g + g2, wc, height_of(CURSOR_HEIGHT)) }
+    }
+
+    fn contains(&self, u: f64, v: f64) -> bool {
+        in_pill(u, v, self.cursor) || self.bars.iter().any(|&bar| in_pill(u, v, bar))
+    }
+}
+
+/// The whole numbers either side of `target`, at least 1.
+fn near(target: f64) -> std::ops::RangeInclusive<i64> {
+    whole(target.floor()).max(1)..=whole(target.ceil()).max(1)
+}
+
+/// An already whole `f64` (a floor or a ceiling of a pixel count) as an `i64`.
+fn whole(value: f64) -> i64 {
+    value as i64
+}
 
 /// Render the mark with `glyph`'s badge as a `size × size` RGBA buffer (row-major, top to bottom,
 /// straight alpha). `size` is clamped to 1..=256.
 pub fn render_tray_icon(glyph: TrayGlyph, size: u32, style: TrayStyle) -> Vec<u8> {
     let size = size.clamp(1, 256);
+    let mark = Mark::fitted(size, if style == TrayStyle::Template { TEMPLATE_SCALE } else { 1.0 });
     let scale = 100.0 / f64::from(size);
     let step = 1.0 / f64::from(SUBSAMPLES);
     let total = SUBSAMPLES * SUBSAMPLES;
@@ -124,7 +237,11 @@ pub fn render_tray_icon(glyph: TrayGlyph, size: u32, style: TrayStyle) -> Vec<u8
                 for i in 0..SUBSAMPLES {
                     let u = (f64::from(x) + (f64::from(i) + 0.5) * step) * scale;
                     let v = (f64::from(y) + (f64::from(j) + 0.5) * step) * scale;
-                    if let Some(rgb) = paint(u, v, glyph, style) {
+                    let rgb = match style {
+                        TrayStyle::Color => paint_colour(u, v, glyph, &mark),
+                        TrayStyle::Template => paint_template(u, v, glyph, &mark),
+                    };
+                    if let Some(rgb) = rgb {
                         painted += 1;
                         for (acc, channel) in sum.iter_mut().zip(rgb) {
                             *acc += u32::from(channel);
@@ -143,16 +260,8 @@ pub fn render_tray_icon(glyph: TrayGlyph, size: u32, style: TrayStyle) -> Vec<u8
     out
 }
 
-/// The colour at `(u, v)` of the 100-unit image, or `None` where it is transparent.
-fn paint(u: f64, v: f64, glyph: TrayGlyph, style: TrayStyle) -> Option<[u8; 3]> {
-    match style {
-        TrayStyle::Color => paint_colour(u, v, glyph),
-        TrayStyle::Template => paint_template(u, v, glyph),
-    }
-}
-
-/// Top to bottom: the badge and its white gap, the two arms, the square.
-fn paint_colour(u: f64, v: f64, glyph: TrayGlyph) -> Option<[u8; 3]> {
+/// Top to bottom: the badge and its white gap, the cursor, the bars, the square.
+fn paint_colour(u: f64, v: f64, glyph: TrayGlyph, mark: &Mark) -> Option<[u8; 3]> {
     if glyph != TrayGlyph::Idle {
         let d = distance(u, v, BADGE_CENTRE);
         if d <= BADGE_RADIUS {
@@ -162,18 +271,20 @@ fn paint_colour(u: f64, v: f64, glyph: TrayGlyph) -> Option<[u8; 3]> {
             return in_rounded_square(u, v).then_some(WHITE);
         }
     }
-    if in_polygon(u, v, &ORANGE_ARM) {
-        Some(ORANGE)
-    } else if in_polygon(u, v, &PALE_ARM) {
-        Some(PALE)
+    if in_pill(u, v, mark.cursor) {
+        let (_, top, _, height) = mark.cursor;
+        Some(mix(CURSOR_FROM, CURSOR_TO, (v - top) / height))
+    } else if mark.bars.iter().any(|&bar| in_pill(u, v, bar)) {
+        Some(WAVE)
     } else {
-        in_rounded_square(u, v).then_some(NAVY)
+        // The tile's gradient runs along the diagonal: 0 at the top left, 1 at the bottom right.
+        in_rounded_square(u, v).then(|| mix(TILE_FROM, TILE_TO, (u + v) / 200.0))
     }
 }
 
 /// Top to bottom: the badge (a disc, or a ring while processing) and the gap cut around it, the
-/// scaled V.
-fn paint_template(u: f64, v: f64, glyph: TrayGlyph) -> Option<[u8; 3]> {
+/// scaled-up bars and cursor.
+fn paint_template(u: f64, v: f64, glyph: TrayGlyph, mark: &Mark) -> Option<[u8; 3]> {
     if glyph != TrayGlyph::Idle {
         let d = distance(u, v, TEMPLATE_BADGE_CENTRE);
         if d <= TEMPLATE_BADGE_RADIUS {
@@ -184,9 +295,28 @@ fn paint_template(u: f64, v: f64, glyph: TrayGlyph) -> Option<[u8; 3]> {
             return None;
         }
     }
-    let mu = TEMPLATE_V_CENTRE.0 + (u - TEMPLATE_V_CENTRE.0) / TEMPLATE_SCALE;
-    let mv = TEMPLATE_V_CENTRE.1 + (v - TEMPLATE_V_CENTRE.1) / TEMPLATE_SCALE;
-    (in_polygon(mu, mv, &ORANGE_ARM) || in_polygon(mu, mv, &PALE_ARM)).then_some(INK)
+    mark.contains(u, v).then_some(INK)
+}
+
+/// `from` blended toward `to` by `t` (clamped to 0..=1), per channel.
+fn mix(from: [u8; 3], to: [u8; 3], t: f64) -> [u8; 3] {
+    let t = t.clamp(0.0, 1.0);
+    let mut out = [0u8; 3];
+    for ((o, a), b) in out.iter_mut().zip(from).zip(to) {
+        let c = f64::from(a) + (f64::from(b) - f64::from(a)) * t;
+        *o = u8::try_from(c.round() as i64).unwrap_or(u8::MAX);
+    }
+    out
+}
+
+/// A vertical bar with fully round ends: a rectangle `(left, top, width, height)` whose top and
+/// bottom are half circles of the width.
+fn in_pill(u: f64, v: f64, (left, top, width, height): Pill) -> bool {
+    let r = width / 2.0;
+    let cx = left + r;
+    // The nearest point of the bar's centre line, from the top cap's centre to the bottom one's.
+    let cy = v.clamp(top + r, top + height - r);
+    distance(u, v, (cx, cy)) <= r
 }
 
 fn distance(u: f64, v: f64, (cu, cv): (f64, f64)) -> f64 {
@@ -201,20 +331,6 @@ fn in_rounded_square(u: f64, v: f64) -> bool {
     let dx = (SQUARE_RADIUS - u).max(u - (100.0 - SQUARE_RADIUS)).max(0.0);
     let dy = (SQUARE_RADIUS - v).max(v - (100.0 - SQUARE_RADIUS)).max(0.0);
     dx * dx + dy * dy <= SQUARE_RADIUS * SQUARE_RADIUS
-}
-
-/// Even-odd rule.
-fn in_polygon(u: f64, v: f64, polygon: &[(f64, f64)]) -> bool {
-    let mut inside = false;
-    let mut previous = polygon.last().copied().unwrap_or_default();
-    for &(x, y) in polygon {
-        let (px, py) = previous;
-        if (y > v) != (py > v) && u < (px - x) * (v - y) / (py - y) + x {
-            inside = !inside;
-        }
-        previous = (x, y);
-    }
-    inside
 }
 
 /// The tray menu's language: the UI's two locales (`packages/shared/src/i18n`).
@@ -650,34 +766,134 @@ mod tests {
         [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]
     }
 
-    /// The pixel under a point of the 100-unit mark.
+    /// The pixel under a point of the 100-unit image.
     fn at(buf: &[u8], size: u32, u: f64, v: f64) -> [u8; 4] {
         let to_px = |c: f64| ((c / 100.0 * f64::from(size)).floor() as u32).min(size - 1);
         pixel(buf, size, to_px(u), to_px(v))
     }
 
-    /// Deep inside each arm (the arms are mirror images about u = 50).
-    const PALE_INSIDE: (f64, f64) = (38.0, 42.0);
-    const ORANGE_INSIDE: (f64, f64) = (62.0, 42.0);
+    /// The middle of a bar or of the cursor.
+    fn middle((left, top, width, height): Pill) -> (f64, f64) {
+        (left + width / 2.0, top + height / 2.0)
+    }
 
-    /// Where a point of the mark lands in the scaled-up template.
-    fn template_point((u, v): (f64, f64)) -> (f64, f64) {
-        (TEMPLATE_V_CENTRE.0 + (u - TEMPLATE_V_CENTRE.0) * TEMPLATE_SCALE, TEMPLATE_V_CENTRE.1 + (v - TEMPLATE_V_CENTRE.1) * TEMPLATE_SCALE)
+    /// High on the cursor, clear of the badge in the bottom-right corner.
+    fn cursor_upper(mark: &Mark) -> (f64, f64) {
+        let (left, top, width, height) = mark.cursor;
+        (left + width / 2.0, top + height * 0.15)
+    }
+
+    /// Between the last bar and the cursor.
+    fn before_cursor(mark: &Mark) -> (f64, f64) {
+        let (left, _, width, _) = mark.bars[2];
+        ((left + width + mark.cursor.0) / 2.0, 50.0)
+    }
+
+    /// Between the first two bars.
+    fn between_bars(mark: &Mark) -> (f64, f64) {
+        let (left, _, width, _) = mark.bars[0];
+        ((left + width + mark.bars[1].0) / 2.0, 50.0)
     }
 
     fn colour_distance(a: [u8; 4], b: [u8; 3]) -> u32 {
         a.iter().zip(b).map(|(&x, y)| u32::from(x.abs_diff(y)).pow(2)).sum()
     }
 
-    /// At 16–24 px an arm is two or three pixels wide, so the pixel under a point inside it may
-    /// be partly square: it must still be opaque and nearer the arm's colour than the navy's.
-    fn arm_colour(buf: &[u8], size: u32, (u, v): (f64, f64), colour: [u8; 3]) {
-        let p = at(buf, size, u, v);
-        if size >= 32 {
-            assert_eq!(p, [colour[0], colour[1], colour[2], 255], "{size}: ({u}, {v})");
-        } else {
-            assert_eq!(p[3], 255, "{size}: ({u}, {v}) {p:?}");
-            assert!(colour_distance(p, colour) < colour_distance(p, NAVY), "{size}: ({u}, {v}) {p:?} is not {colour:?}");
+    /// Opaque and within the tile's gradient, channel by channel.
+    fn is_tile(p: [u8; 4]) -> bool {
+        p[3] == 255 && (0..3).all(|c| (TILE_FROM[c].min(TILE_TO[c])..=TILE_FROM[c].max(TILE_TO[c])).contains(&p[c]))
+    }
+
+    /// The cursor's gradient where `v` is.
+    fn cursor_colour(mark: &Mark, v: f64) -> [u8; 3] {
+        let (_, top, _, height) = mark.cursor;
+        mix(CURSOR_FROM, CURSOR_TO, (v - top) / height)
+    }
+
+    /// In pixels: (left, top, width, height).
+    fn in_pixels(size: u32, (left, top, width, height): Pill) -> [f64; 4] {
+        [left, top, width, height].map(|c| c * f64::from(size) / 100.0)
+    }
+
+    #[test]
+    fn the_fit_keeps_the_design_at_1024_and_puts_every_edge_on_a_pixel_below() {
+        let design = Mark::fitted(1024, 1.0);
+        let expected = [(244.0, 402.0, 84.0, 220.0), (376.0, 302.0, 84.0, 420.0), (508.0, 362.0, 84.0, 300.0), (708.0, 232.0, 72.0, 560.0)];
+        for (part, want) in design.bars.into_iter().chain([design.cursor]).zip(expected) {
+            assert_eq!(in_pixels(1024, part).map(f64::round), [want.0, want.1, want.2, want.3]);
+        }
+        // The fits scripts/render-icons.py prints (`--fit 16 24 32 48`): the app icon and the tray
+        // fit the mark alike.
+        let fits: [(u32, [[f64; 4]; 4]); 4] = [
+            (16, [[4.0, 6.0, 1.0, 4.0], [6.0, 4.0, 1.0, 8.0], [8.0, 5.0, 1.0, 6.0], [11.0, 3.0, 1.0, 10.0]]),
+            (24, [[6.0, 9.0, 2.0, 6.0], [9.0, 7.0, 2.0, 10.0], [12.0, 8.0, 2.0, 8.0], [16.0, 5.0, 2.0, 14.0]]),
+            (32, [[7.0, 13.0, 3.0, 6.0], [12.0, 9.0, 3.0, 14.0], [17.0, 11.0, 3.0, 10.0], [23.0, 7.0, 2.0, 18.0]]),
+            (48, [[12.0, 19.0, 4.0, 10.0], [18.0, 14.0, 4.0, 20.0], [24.0, 17.0, 4.0, 14.0], [33.0, 11.0, 3.0, 26.0]]),
+        ];
+        for (size, want) in fits {
+            let mark = Mark::fitted(size, 1.0);
+            let got: Vec<[f64; 4]> = mark.bars.into_iter().chain([mark.cursor]).map(|part| in_pixels(size, part).map(f64::round)).collect();
+            assert_eq!(got, want, "{size}");
+        }
+        for scale in [1.0, TEMPLATE_SCALE] {
+            for size in 16..=64 {
+                let mark = Mark::fitted(size, scale);
+                let parts: Vec<[f64; 4]> = mark.bars.into_iter().chain([mark.cursor]).map(|part| in_pixels(size, part)).collect();
+                for part in &parts {
+                    assert!(part.iter().all(|c| (c - c.round()).abs() < 1e-9), "{size} × {scale}: {part:?} is not on whole pixels");
+                    // Centred on the image's middle row.
+                    assert!((part[1] + part[3] / 2.0 - f64::from(size) / 2.0).abs() < 1e-9, "{size} × {scale}: {part:?}");
+                    assert!(part[2] >= 1.0, "{size} × {scale}: {part:?}");
+                }
+                // Left to right with a gap of at least a pixel, and centred as a whole.
+                for pair in parts.windows(2) {
+                    assert!(pair[1][0] - (pair[0][0] + pair[0][2]) >= 1.0 - 1e-9, "{size} × {scale}: {pair:?}");
+                }
+                let right = parts[3][0] + parts[3][2];
+                assert!((parts[0][0] + right - f64::from(size)).abs() < 1e-9, "{size} × {scale}: {parts:?}");
+                // Short, tall, middle; the cursor tallest; never narrower than a bar's... cursor.
+                let heights = parts.iter().map(|p| p[3]).collect::<Vec<_>>();
+                assert!(heights[0] < heights[2] && heights[2] < heights[1] && heights[1] < heights[3], "{size} × {scale}: {heights:?}");
+                assert!(parts[3][2] <= parts[0][2], "{size} × {scale}: the cursor is no wider than a bar");
+            }
+        }
+    }
+
+    /// Regression (user 2026-10-08, 清晰度要提高下): drawn as designed, a bar one to three pixels
+    /// wide had its sides between pixels and smeared into grey columns. Fitted, across the middle
+    /// row every bar and the cursor are solid and the pixels beside them are the plain tile
+    /// (transparent in the template).
+    #[test]
+    fn regression_the_bars_and_the_cursor_have_sharp_sides_at_every_size() {
+        for size in SIZES.into_iter().chain([18, 22, 28, 40, 48, 64]) {
+            for (style, scale) in [(TrayStyle::Color, 1.0), (TrayStyle::Template, TEMPLATE_SCALE)] {
+                let mark = Mark::fitted(size, scale);
+                let icon = render_tray_icon(TrayGlyph::Idle, size, style);
+                for part in mark.bars.into_iter().chain([mark.cursor]) {
+                    let [left, top, width, height] = in_pixels(size, part).map(|c| c.round() as u32);
+                    let y = top + height / 2;
+                    for x in left..left + width {
+                        let p = pixel(&icon, size, x, y);
+                        assert_eq!(p[3], 255, "{size} {style:?}: ({x}, {y}) {p:?}");
+                        if style == TrayStyle::Color && part == mark.cursor {
+                            let v = (f64::from(y) + 0.5) * 100.0 / f64::from(size);
+                            assert!(colour_distance(p, cursor_colour(&mark, v)) <= 3 * 2 * 2, "{size}: ({x}, {y}) {p:?}");
+                        } else if style == TrayStyle::Color {
+                            assert_eq!(p[..3], WAVE, "{size}: ({x}, {y})");
+                        }
+                    }
+                    for x in [left - 1, left + width] {
+                        let p = pixel(&icon, size, x, y);
+                        if style == TrayStyle::Template {
+                            assert_eq!(p[3], 0, "{size} template: ({x}, {y}) {p:?}");
+                        } else {
+                            let (u, v) = ((f64::from(x) + 0.5) * 100.0 / f64::from(size), (f64::from(y) + 0.5) * 100.0 / f64::from(size));
+                            let tile = mix(TILE_FROM, TILE_TO, (u + v) / 200.0);
+                            assert!(p[3] == 255 && colour_distance(p, tile) <= 3, "{size}: ({x}, {y}) {p:?} is not the tile {tile:?}");
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -691,72 +907,94 @@ mod tests {
     }
 
     /// Regression (user report 2026-09-28): the Windows tray showed a blue ring instead of the
-    /// logo. The colour icon is the mark: navy square, pale left arm, orange right arm, and
-    /// transparent only outside the rounded corners.
+    /// logo. The colour icon is the mark: the ink tile with its gradient, three white bars, the cyan
+    /// cursor, and transparent only outside the rounded corners.
     #[test]
     fn the_colour_icon_is_the_logo() {
         for size in SIZES {
+            let mark = Mark::fitted(size, 1.0);
             let idle = render_tray_icon(TrayGlyph::Idle, size, TrayStyle::Color);
             assert_eq!(idle.len(), (size * size * 4) as usize);
-            assert_eq!(at(&idle, size, 50.0, 10.0), [NAVY[0], NAVY[1], NAVY[2], 255], "{size}: square");
-            arm_colour(&idle, size, PALE_INSIDE, PALE);
-            arm_colour(&idle, size, ORANGE_INSIDE, ORANGE);
+            assert!(is_tile(at(&idle, size, 50.0, 10.0)), "{size}: tile");
+            // The gradient runs from the top left to the bottom right.
+            let (light, dark) = (at(&idle, size, 92.0, 50.0), at(&idle, size, 8.0, 50.0));
+            assert!(colour_distance(dark, TILE_FROM) < colour_distance(light, TILE_FROM), "{size}: {dark:?} {light:?}");
+            for bar in mark.bars {
+                let (u, v) = middle(bar);
+                assert_eq!(at(&idle, size, u, v), [255, 255, 255, 255], "{size}: ({u}, {v})");
+            }
+            let (u, v) = cursor_upper(&mark);
+            let cursor = at(&idle, size, u, v);
+            assert!(cursor[3] == 255 && colour_distance(cursor, cursor_colour(&mark, v)) <= 3 * 6 * 6, "{size}: {cursor:?}");
+            for (u, v) in [before_cursor(&mark), between_bars(&mark)] {
+                assert!(is_tile(at(&idle, size, u, v)), "{size}: the gap at ({u}, {v})");
+            }
             assert_eq!(pixel(&idle, size, 0, 0)[3], 0, "{size}: the rounded corner is transparent");
             assert_eq!(pixel(&idle, size, size - 1, size - 1)[3], 0, "{size}");
-            // The old ring was one colour everywhere; the mark has three.
-            let colours: std::collections::HashSet<[u8; 3]> = idle.as_chunks::<4>().0.iter().filter(|p| p[3] == 255).map(|p| [p[0], p[1], p[2]]).collect();
-            for colour in [NAVY, PALE, ORANGE] {
-                assert!(colours.contains(&colour), "{size}: {colour:?} missing");
-            }
-            assert!(!colours.contains(&PROCESSING_RGB), "{size}: no accent-blue ring any more");
+            // The old ring was one colour everywhere; the mark has the tile, white and cyan.
+            let opaque: Vec<[u8; 4]> = idle.as_chunks::<4>().0.iter().copied().filter(|p| p[3] == 255).collect();
+            assert!(opaque.iter().any(|&p| is_tile(p)), "{size}: no tile");
+            assert!(opaque.iter().any(|&p| p[..3] == WAVE), "{size}: no white bar");
+            assert!(opaque.iter().any(|&p| colour_distance(p, CURSOR_TO) < 40 * 40), "{size}: no cyan cursor");
+            assert!(!opaque.iter().any(|&p| p[..3] == PROCESSING_RGB), "{size}: no accent-blue ring any more");
         }
     }
 
     #[test]
     fn the_colour_badge_shows_the_phase_in_the_corner() {
         for size in SIZES {
+            let mark = Mark::fitted(size, 1.0);
             let idle = render_tray_icon(TrayGlyph::Idle, size, TrayStyle::Color);
             let listening = render_tray_icon(TrayGlyph::Listening, size, TrayStyle::Color);
             let processing = render_tray_icon(TrayGlyph::Processing, size, TrayStyle::Color);
             let (cu, cv) = BADGE_CENTRE;
-            assert_eq!(at(&idle, size, cu, cv), [NAVY[0], NAVY[1], NAVY[2], 255], "{size}");
+            // Idle, the corner shows the mark (the tile or the cursor's cyan end), no badge colour.
+            let corner = at(&idle, size, cu, cv);
+            assert_eq!(corner[3], 255, "{size}");
+            assert!(colour_distance(corner, LISTENING_RGB) > 40 * 40 && colour_distance(corner, PROCESSING_RGB) > 40 * 40, "{size}: {corner:?}");
             assert_eq!(at(&listening, size, cu, cv), [LISTENING_RGB[0], LISTENING_RGB[1], LISTENING_RGB[2], 255], "{size}");
             assert_eq!(at(&processing, size, cu, cv), [PROCESSING_RGB[0], PROCESSING_RGB[1], PROCESSING_RGB[2], 255], "{size}");
-            // The white gap separates the badge from the navy square (sampled halfway between the
-            // badge edge and the corner arc, above the centre).
-            if size >= 24 {
+            // The white gap separates the badge from the tile (sampled halfway between the badge
+            // edge and the corner arc, above the centre; below 32 px no whole pixel fits in it).
+            if size >= 32 {
                 assert_eq!(at(&listening, size, cu, cv - (BADGE_RADIUS + BADGE_GAP_RADIUS) / 2.0), [255, 255, 255, 255], "{size}");
             }
             // Away from the corner nothing changes.
-            for (u, v) in [(50.0, 10.0), PALE_INSIDE, ORANGE_INSIDE, (10.0, 90.0)] {
+            for (u, v) in [(50.0, 10.0), middle(mark.bars[0]), middle(mark.bars[1]), middle(mark.bars[2]), cursor_upper(&mark), (10.0, 90.0)] {
                 assert_eq!(at(&listening, size, u, v), at(&idle, size, u, v), "{size}: ({u}, {v})");
             }
         }
     }
 
     #[test]
-    fn the_template_is_the_v_alone_in_ink() {
+    fn the_template_is_the_bars_and_the_cursor_alone_in_ink() {
         for size in SIZES {
+            let mark = Mark::fitted(size, TEMPLATE_SCALE);
             let idle = render_tray_icon(TrayGlyph::Idle, size, TrayStyle::Template);
             // Only alpha counts in a template: every pixel is ink or transparent.
             assert!(idle.as_chunks::<4>().0.iter().all(|p| p[..3] == INK || p[3] == 0), "{size}");
-            for (u, v) in [PALE_INSIDE, ORANGE_INSIDE].map(template_point) {
-                let alpha = at(&idle, size, u, v)[3];
-                assert!(if size >= 32 { alpha == 255 } else { alpha >= 192 }, "{size}: arm at ({u}, {v}) alpha {alpha}");
+            for (u, v) in [middle(mark.bars[0]), middle(mark.bars[1]), middle(mark.bars[2]), cursor_upper(&mark)] {
+                assert_eq!(at(&idle, size, u, v)[3], 255, "{size}: ink at ({u}, {v})");
             }
-            // No square: the background between and around the arms is clear.
-            assert_eq!(at(&idle, size, 50.0, 12.0)[3], 0, "{size}");
-            assert_eq!(at(&idle, size, 8.0, 92.0)[3], 0, "{size}");
-            // Scaled up: the arms reach close to the top edge and the tip close to the bottom.
+            // No tile: the background above, below and around the mark is clear, and so are the gaps.
+            assert_eq!(at(&idle, size, 50.0, 3.0)[3], 0, "{size}");
+            assert_eq!(at(&idle, size, 3.0, 97.0)[3], 0, "{size}");
+            for (u, v) in [between_bars(&mark), before_cursor(&mark)] {
+                assert_eq!(at(&idle, size, u, v)[3], 0, "{size}: the gap at ({u}, {v})");
+            }
+            // Scaled up: the cursor reaches close to the top edge and the bottom one.
             let rows_with_ink: Vec<u32> = (0..size).filter(|&y| (0..size).any(|x| pixel(&idle, size, x, y)[3] > 0)).collect();
             let (top, bottom) = (rows_with_ink[0], rows_with_ink[rows_with_ink.len() - 1]);
-            assert!(f64::from(bottom - top + 1) >= 0.8 * f64::from(size), "{size}: the V spans {top}..={bottom}");
+            assert!(f64::from(bottom - top + 1) >= 0.8 * f64::from(size), "{size}: the mark spans {top}..={bottom}");
             let listening = render_tray_icon(TrayGlyph::Listening, size, TrayStyle::Template);
             let processing = render_tray_icon(TrayGlyph::Processing, size, TrayStyle::Template);
             let (cu, cv) = TEMPLATE_BADGE_CENTRE;
-            assert_eq!(at(&idle, size, cu, cv)[3], 0, "{size}");
             assert_eq!(at(&listening, size, cu, cv)[3], 255, "{size}: filled badge");
             if size >= 32 {
+                // The badge sits over the cursor's lower end, its gap cut out of the cursor.
+                let (gu, gv) = (cursor_upper(&mark).0, cv - 19.0);
+                assert_eq!(at(&idle, size, gu, gv)[3], 255, "{size}: the cursor at ({gu}, {gv})");
+                assert_eq!(at(&listening, size, gu, gv)[3], 0, "{size}: the gap at ({gu}, {gv})");
                 assert_eq!(at(&processing, size, cu, cv)[3], 0, "{size}: the ring's hole");
                 let ring = (TEMPLATE_BADGE_RADIUS + TEMPLATE_BADGE_HOLE_RADIUS) / 2.0;
                 assert_eq!(at(&processing, size, cu, cv - ring)[3], 255, "{size}: the ring");
@@ -767,7 +1005,7 @@ mod tests {
     #[test]
     fn edges_are_anti_aliased() {
         let icon = render_tray_icon(TrayGlyph::Idle, 32, TrayStyle::Template);
-        assert!(icon.as_chunks::<4>().0.iter().any(|p| p[3] > 0 && p[3] < 255), "partial coverage on the arms' slanted edges");
+        assert!(icon.as_chunks::<4>().0.iter().any(|p| p[3] > 0 && p[3] < 255), "partial coverage on the round ends");
     }
 
     #[test]

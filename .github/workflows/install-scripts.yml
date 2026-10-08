@@ -196,7 +196,7 @@ jobs:
           echo "$out"
           case "$out" in "voltip ${VERSION#v}"*) ;; *) echo "::error::unexpected --version: $out"; exit 1 ;; esac
 
-      # The release's menu bar item on this Mac's desktop: the V, the menu, and every entry
+      # The release's menu bar item on this Mac's desktop: the mark, the menu, and every entry
       # (scripts/smoke-tray-macos.sh).
       - name: The menu bar item shows the mark, and every menu entry works
         env:
