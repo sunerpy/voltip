@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.47](https://github.com/sunerpy/voltip/compare/v0.0.46...v0.0.47) (2026-10-08)
+
+
+### Bug Fixes
+
+* **pairing:** 刚启动就开始的配对不再立即失败 ([#125](https://github.com/sunerpy/voltip/issues/125)) ([3371b04](https://github.com/sunerpy/voltip/commit/3371b0416763ca970bdb55152916637e7601454e))
+
 ## [0.0.46](https://github.com/sunerpy/voltip/compare/v0.0.45...v0.0.46) (2026-10-07)
 
 
