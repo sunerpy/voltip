@@ -51,7 +51,8 @@ make desktop-vnc-stop
 - 轮换令牌：生成新令牌（例如 `openssl rand -hex 24`），网关同时接受新旧两个一段时间，更新 secrets / `.env.build` 后重新打包，旧版本淘汰后再删旧令牌。
 - 健康检查：`curl -H "Authorization: Bearer $VOLTIP_ASR_TOKEN" https://<asr-host>/v1/models`。
 - 限流与记录（2026-10-07 起在网关上）：按客户端 IP，识别每秒 3 次、突发 30、同时 4 个请求；润色每分钟 10 次、突发 10，另有全站每分钟 40 次的上限，保护服务商的免费额度。超限由网关自己回 429 和 `Retry-After`（识别 5 s、润色 30 s），润色的 429 在客户端显示为「内置服务繁忙」。网关另写一份 JSON 访问日志：时间、IP、路径、状态、大小、耗时、上游状态、UA、限流结果，不记令牌和请求内容，保留 30 天；每天 00:15 汇总前一天的请求数、独立 IP 数、被拒数、上游 429 与耗时，汇总不含 IP。隐私页「内置服务」一节写的就是这些。
-- 网站的在线体验与统计（2026-10-07 起）：网关另开 `/try/v1/`（识别）、`/try/refine/v1/`（润色）和 `/stats/`（每日汇总的 JSON），各用一枚独立令牌，应用令牌访问不了。`/try/` 只由 voltip.firlab.app 的 Pages Functions 调用，它在 `X-Voltip-Client` 里带上访客的 IP，网关按这个地址每分钟限流，并记进访问日志；站点自己再按地址每小时、全体每天限额（firlab `voltip/README.md`「The try page and the admin page」）。汇总脚本每小时刷新当天的数字。两枚令牌只存在网关与 Pages 项目的 secrets 中。
+- 网站的在线体验与统计（2026-10-07 起）：网关另开 `/try/v1/`（识别）、`/try/refine/v1/`（润色）和 `/stats/`（每日汇总的 JSON），各用一枚独立令牌，应用令牌访问不了。`/try/` 只由 voltip.firlab.app 的 Pages Functions 调用，它在 `X-Voltip-Client` 里带上访客的 IP，网关按这个地址每分钟限流，并记进访问日志；站点自己再按地址每小时、全体每天限额（firlab `voltip/README.md`「The try page and the admin page」）。汇总脚本每小时刷新当天的数字，并把汇总推送给站点（管理页读站点收到的这份，不再跨境实时拉取）。两枚令牌只存在网关与 Pages 项目的 secrets 中。
+- 当前部署（2026-10-08 起）：网关、识别模型与中继在同一台 GPU 主机上，前面是云厂商的应用负载均衡器（ALB），TLS 证书由负载均衡器托管。负载均衡器的 443 把 `<asr-host>` 和 `<relay-host>` 都转到主机 nginx 的 8080（安全组只放行负载均衡器）：`<asr-host>` 走上面的网关规则，识别转本机 vLLM，润色直连服务商；`<relay-host>` 的 `/ws` 转本机中继。nginx 只信任 VPC 内负载均衡器带来的 `X-Forwarded-For`，限流和日志按真实客户端 IP。负载均衡器的空闲超时设为 3600 s，中继的长连接才不会被切断。客户端里编译进去的主机名不变，迁移时只改 DNS（CNAME 指向负载均衡器），GitHub secrets 与 `.env.build` 都不用动。
 
 已知取舍：应用令牌是所有客户端共享的静态令牌，任何拿到安装包的人都能从二进制里提取出来，然后直接调用网关。它只授予识别和润色两类转发，可以随时在网关吊销；公开分发时应在网关上做限流与用量上限，或者换成按用户签发的短期令牌。令牌**不会**跟随用户自定义的地址发出（`docs/dictation.md` §3）。
 
@@ -66,6 +67,7 @@ scp target/x86_64-unknown-linux-musl/release/voltip-relay <host>:/usr/local/bin/
 一种部署方式：
 
 - systemd `voltip-relay.service`：`ExecStart=/usr/local/bin/voltip-relay --bind 127.0.0.1:47830`，`Environment=VOLTIP_RELAY_JSON_LOGS=1`，`DynamicUser=yes`，`Restart=always`；`journalctl -u voltip-relay -f` 看 `pairing session created / peer joined` 等结构化日志。
+- 放在负载均衡器后面时（当前做法，见上文「当前部署」），TLS 在负载均衡器上，nginx 只做 `/ws` 的升级转发，负载均衡器空闲超时不低于 3600 s。单独一台主机时：
 - nginx vhost `<relay-host>`（Let's Encrypt，acme.sh）：`location /ws` 走 `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade"; proxy_read_timeout 3600s;` 到 `127.0.0.1:47830`；`location /healthz` 直通。中继只监听回环，外网只见 443。
 - 校验：`curl https://<relay-host>/healthz` → `ok`；再用真实客户端过一遍握手、配对与双向 E2EE 消息：
 
@@ -73,7 +75,7 @@ scp target/x86_64-unknown-linux-musl/release/voltip-relay <host>:/usr/local/bin/
 VOLTIP_LIVE_RELAY_URL=wss://<relay-host>/ws cargo test -p voltip-core --test e2e live_relay -- --nocapture
 ```
 
-该测试未设置变量时自动跳过，离线套件保持封闭。2026-09-25 对一台线上中继实测：TLS + WebSocket 升级 + 会合 + 配对 + 双向消息 0.8 s，nginx 记录两条 `GET /ws … 101`。同一天发现并修复：`voltip-transport` 的 rustls 没有绑定加密 provider，不链接 reqwest 的二进制（移动端、core 测试）拨 `wss://` 会 panic（`crates/voltip-transport/src/endpoint.rs@regression_wss_dial_has_exactly_one_crypto_provider`）。
+该测试未设置变量时自动跳过，离线套件保持封闭。2026-09-25 对一台线上中继实测：TLS + WebSocket 升级 + 会合 + 配对 + 双向消息 0.8 s，nginx 记录两条 `GET /ws … 101`；2026-10-08 迁到负载均衡器后面再测一次通过（3.0 s，客户端在国内）。同一天发现并修复：`voltip-transport` 的 rustls 没有绑定加密 provider，不链接 reqwest 的二进制（移动端、core 测试）拨 `wss://` 会 panic（`crates/voltip-transport/src/endpoint.rs@regression_wss_dial_has_exactly_one_crypto_provider`）。
 
 Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前提是同一对设备落在同一实例（按 `channel` / `session_id` 做粘性路由）。
 
