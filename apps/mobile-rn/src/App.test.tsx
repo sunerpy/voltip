@@ -71,6 +71,25 @@ describe("the phone app on React Native", () => {
     expect(screen.queryByTestId("provider-asr-local")).toBeNull();
   });
 
+  it("AI 模型 picks one of the built-in service's models", async () => {
+    // User request 2026-10-08: the built-in AI polish offers several models.
+    const { backend } = await renderApp();
+    const invoke = jest.spyOn(backend, "invoke");
+    await openTab("settings");
+    await fireEvent.press(await screen.findByTestId("settings-ai"));
+    await fireEvent.press(await screen.findByTestId("builtin-llm-model"));
+    await fireEvent.press(
+      await screen.findByTestId("builtin-llm-model-option-openai/gpt-oss-120b"),
+    );
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("settings_set_engines", {
+        engines: expect.objectContaining({
+          providers: { builtin: { llm_model: "openai/gpt-oss-120b" } },
+        }),
+      });
+    });
+  });
+
   it("外观 changes the theme through the core", async () => {
     const { backend } = await renderApp({
       mock: { settings: { follow_system_theme: false, theme: "light" } },

@@ -946,6 +946,7 @@ export const en: Messages = {
       local: "This computer",
       openai: "OpenAI",
       groq: "Groq",
+      google: "Google AI Studio",
       siliconflow: "SiliconFlow",
       aliyun: "Alibaba Cloud Model Studio",
       deepseek: "DeepSeek",
@@ -957,6 +958,8 @@ export const en: Messages = {
       local: "Models run on this computer; audio never leaves it.",
       openai: "OpenAI's transcription and chat models.",
       groq: "Whisper and open models hosted by Groq; fast.",
+      google:
+        "Gemini models from Google AI Studio, for polish only; on the free tier Google may use what you send to improve its products.",
       siliconflow: "SenseVoice and open models hosted by SiliconFlow.",
       aliyun:
         "Model Studio's speech recognition and Qwen models; its realtime models transcribe while you speak.",

@@ -50,6 +50,7 @@ const ICONS: Readonly<Record<ProviderId, string>> = {
   local: "chip",
   openai: "cloud-outline",
   groq: "cloud-outline",
+  google: "cloud-outline",
   siliconflow: "cloud-outline",
   aliyun: "cloud-outline",
   deepseek: "cloud-outline",
@@ -277,12 +278,36 @@ function BuiltinBody({
   kind: ServiceKind;
   service: ServiceStatus;
 }) {
+  const { backend } = useBackend();
+  const shell = useShell();
   const { t } = useI18n();
+  const state = useUiState();
   const probe = useProviderProbe(provider.id, kind);
+  // The build may offer several models (user request 2026-10-08); the first is its default, kept
+  // as no choice at all so that a newer build's default follows.
+  const choose = (model: string) => {
+    void backend.invoke("settings_set_engines", {
+      engines: applyProviderDraft(state.settings.engines, provider.id, kind, {
+        model: model === service.presets[0] ? "" : model,
+        baseUrl: "",
+      }),
+    });
+    shell.toast(t("engines.saved", { provider: t(`engines.provider.${provider.id}`) }));
+  };
   return (
     <View style={{ gap: 12 }}>
       <Hint>{t("engines.builtinBody")}</Hint>
-      <Mono>{t("engines.model", { model: service.model })}</Mono>
+      {service.presets.length > 1 ? (
+        <SelectField
+          label={t("engines.field.model")}
+          value={service.model}
+          onChange={choose}
+          options={service.presets.map((m) => ({ value: m, label: m }))}
+          testID={`builtin-${kind}-model`}
+        />
+      ) : (
+        <Mono>{t("engines.model", { model: service.model })}</Mono>
+      )}
       <ProbeRow
         probe={probe}
         onRun={() => {

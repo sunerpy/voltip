@@ -32,6 +32,8 @@ When AI polish is on, the recognised text is sent to the AI service you chose. F
 
 The switches are under **Settings → Scenes**, in **Context sent to AI polish**. With AI polish off, or in the **Type as you speak** output mode, no text is sent for polishing.
 
+With Google AI Studio and a key on its free tier, Google may use the text it receives to improve its products, as its terms for unpaid services say; a key from a Google Cloud project with billing turned on is not used that way.
+
 ## The built-in service
 
 The built-in service's server keeps a record of each request: the time, your IP address, whether it was recognition or AI polish, whether it succeeded, how large it was and how long it took, and the app name and version the app sends with it. It does not keep the recording or the text.

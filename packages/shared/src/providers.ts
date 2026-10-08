@@ -74,6 +74,21 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     onDevice: false,
     console: true,
   },
+  google: {
+    llm: {
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      models: [
+        "gemini-3.8-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+      ],
+    },
+    key: "required",
+    onDevice: false,
+    console: true,
+  },
   siliconflow: {
     asr: {
       baseUrl: "https://api.siliconflow.cn/v1",
@@ -180,6 +195,9 @@ export function keyEntry(provider: ProviderId, kind: ServiceKind): string | unde
 /** The built-in service a (preview) build carries: its model and whether a key is compiled in. */
 export interface BuiltInService {
   model: string;
+  /** Every model it offers, `model` (the default) first (`BuiltIn::models`); just `model` when
+   *  absent. */
+  models?: readonly string[];
   key: boolean;
   /** Recognition only: the built-in service previews while recording, the sentence decoded
    *  again as it grows (`BuiltIn::asr_live_preview`, docs/dictation.md §11.8). */
@@ -231,13 +249,13 @@ function target(
   const spec = providerSpec(provider);
   const preset = spec[kind];
   if (preset === undefined || provider === "local") return { issue: "unavailable", model: "" };
+  const choice = input.settings.providers?.[provider];
   if (provider === "builtin") {
     const service = input.builtIn[kind];
-    return service === undefined
-      ? { issue: "unavailable", model: "" }
-      : { ok: { url: "", model: service.model, key: service.key } };
+    if (service === undefined) return { issue: "unavailable", model: "" };
+    const chosen = asked ?? trimmed(kind === "asr" ? choice?.asr_model : choice?.llm_model);
+    return { ok: { url: "", model: builtInModel(service, chosen), key: service.key } };
   }
-  const choice = input.settings.providers?.[provider];
   const url =
     trimmed(kind === "asr" ? choice?.asr_url : choice?.llm_url) ??
     (preset.baseUrl.length > 0 ? preset.baseUrl : undefined);
@@ -254,6 +272,19 @@ function target(
 
 const NO_KEY: SecretState = { set: false, source: "none" };
 
+/** `BuiltIn::models`: the built-in service's models, the default first. */
+function builtInModels(service: BuiltInService): readonly string[] {
+  return service.models !== undefined && service.models.length > 0
+    ? service.models
+    : [service.model];
+}
+
+/** `BuiltIn::service`: `chosen` when the built-in service offers it, otherwise its default. */
+function builtInModel(service: BuiltInService, chosen: string | undefined): string {
+  const models = builtInModels(service);
+  return chosen !== undefined && models.includes(chosen) ? chosen : (models[0] ?? service.model);
+}
+
 function serviceStatus(
   provider: ProviderId,
   kind: ServiceKind,
@@ -266,9 +297,10 @@ function serviceStatus(
   if (provider === "builtin") {
     const service = input.builtIn[kind];
     if (service === undefined) return undefined;
+    const choice = input.settings.providers?.builtin;
     return {
-      model: service.model,
-      presets: [service.model],
+      model: builtInModel(service, trimmed(kind === "asr" ? choice?.asr_model : choice?.llm_model)),
+      presets: [...builtInModels(service)],
       key: service.key ? { set: true, source: "builtin" } : NO_KEY,
       active,
     };

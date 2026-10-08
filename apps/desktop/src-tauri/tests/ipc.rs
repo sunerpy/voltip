@@ -639,6 +639,21 @@ fn provider_probe_answers_with_a_reason_or_the_model_list() {
         assert_eq!(ev["models"], json!(["a-model", "b-model"]));
         let seen = rt.block_on(server.received_requests()).unwrap();
         assert_eq!(seen[0].headers.get("authorization").unwrap(), "Bearer k", "the draft key is used for the request");
+        // Google AI Studio names its models `models/…` and lists embedding and video models too: the
+        // card is offered the text models under the names its chat completions take.
+        rt.block_on(
+            wiremock::Mock::given(wiremock::matchers::method("GET"))
+                .and(wiremock::matchers::path("/google/v1/models"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({ "data": [
+                    { "id": "models/gemini-3.8-flash" }, { "id": "models/gemini-embedding-001" },
+                    { "id": "models/gemini-2.5-pro" }, { "id": "models/veo-3.1-generate-preview" },
+                ] })))
+                .mount(&server),
+        );
+        let google = format!("{}/google", server.uri());
+        assert_eq!(invoke(webview, "provider_probe", json!({ "provider": "google", "kind": "llm", "baseUrl": google, "key": "k" })), Ok(Value::Null));
+        let ev = wait_event(rx, "probe (google)", |e| e["type"] == "provider_probe" && e["provider"] == "google" && e["result"] == "ok");
+        assert_eq!(ev["models"], json!(["gemini-2.5-pro", "gemini-3.8-flash"]));
         // A probe saves nothing: the settings are the seeded ones and the draft key was not stored.
         let st = wait_state(webview, |_| true);
         assert_eq!(st.settings.engines, fake_engines());

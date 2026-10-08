@@ -23,6 +23,8 @@ pub enum ProviderId {
     Openai,
     /// Groq.
     Groq,
+    /// Google AI Studio (the Gemini API through its OpenAI-compatible endpoint; clean-up only).
+    Google,
     /// SiliconFlow (硅基流动).
     Siliconflow,
     /// Alibaba Cloud Model Studio (阿里云百炼, the DashScope API): its own recognition protocols
@@ -39,8 +41,8 @@ pub enum ProviderId {
 
 impl ProviderId {
     /// Every provider in display order.
-    pub const ALL: [Self; 9] =
-        [Self::Builtin, Self::Local, Self::Openai, Self::Groq, Self::Siliconflow, Self::Aliyun, Self::Deepseek, Self::Ollama, Self::Custom];
+    pub const ALL: [Self; 10] =
+        [Self::Builtin, Self::Local, Self::Openai, Self::Groq, Self::Google, Self::Siliconflow, Self::Aliyun, Self::Deepseek, Self::Ollama, Self::Custom];
 
     /// Wire name.
     pub fn as_str(self) -> &'static str {
@@ -49,6 +51,7 @@ impl ProviderId {
             Self::Local => "local",
             Self::Openai => "openai",
             Self::Groq => "groq",
+            Self::Google => "google",
             Self::Siliconflow => "siliconflow",
             Self::Aliyun => "aliyun",
             Self::Deepseek => "deepseek",
@@ -265,6 +268,19 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://console.groq.com/keys"),
     },
+    // Google AI Studio (checked 2026-10-08): the Gemini models with a free tier, the newest Flash
+    // first. Its `GET /models` names them `models/gemini-…` (see `usable_models`).
+    ProviderSpec {
+        id: ProviderId::Google,
+        asr: None,
+        llm: Some(ServicePreset {
+            base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+            models: &["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"],
+        }),
+        key: KeyPolicy::Required,
+        on_device: false,
+        console_url: Some("https://aistudio.google.com/apikey"),
+    },
     ProviderSpec {
         id: ProviderId::Siliconflow,
         asr: Some(ServicePreset { base_url: "https://api.siliconflow.cn/v1", models: &["FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR"] }),
@@ -313,6 +329,25 @@ pub const PROVIDERS: &[ProviderSpec] = &[
     ProviderSpec { id: ProviderId::Custom, asr: Some(NO_PRESET), llm: Some(NO_PRESET), key: KeyPolicy::Optional, on_device: false, console_url: None },
 ];
 
+/// What `provider`'s `GET /models` listed, as the model select offers it (the engines pane's
+/// 测试连接). Google AI Studio names its models `models/gemini-…` and lists embedding, image,
+/// speech and video models beside the text ones: only the Gemini and Gemma text models are kept,
+/// under the names its chat completions take. Every other list passes unchanged.
+pub fn usable_models(provider: ProviderId, kind: ServiceKind, ids: Vec<String>) -> Vec<String> {
+    if provider != ProviderId::Google || kind != ServiceKind::Llm {
+        return ids;
+    }
+    const NOT_TEXT: [&str; 13] =
+        ["embedding", "-tts", "-image", "-live", "native-audio", "transcribe", "robotics", "computer-use", "imagen", "veo", "lyria", "omni", "aqa"];
+    ids.into_iter()
+        .map(|id| match id.strip_prefix("models/") {
+            Some(name) => name.to_owned(),
+            None => id,
+        })
+        .filter(|id| (id.starts_with("gemini-") || id.starts_with("gemma-")) && !NOT_TEXT.iter().any(|word| id.contains(word)))
+        .collect()
+}
+
 /// The secret-store entry holding the user's key for `provider`'s `kind` service, or `None` when
 /// the provider takes no user key (built-in, on-device, Ollama). A vendor's services share one key;
 /// the custom provider keeps one per service.
@@ -321,6 +356,7 @@ pub fn key_entry(provider: ProviderId, kind: ServiceKind) -> Option<&'static str
         (ProviderId::Builtin | ProviderId::Local | ProviderId::Ollama, _) => None,
         (ProviderId::Openai, _) => Some("provider-key.openai"),
         (ProviderId::Groq, _) => Some("provider-key.groq"),
+        (ProviderId::Google, _) => Some("provider-key.google"),
         (ProviderId::Siliconflow, _) => Some("provider-key.siliconflow"),
         (ProviderId::Aliyun, _) => Some("provider-key.aliyun"),
         (ProviderId::Deepseek, _) => Some("provider-key.deepseek"),
@@ -514,7 +550,7 @@ mod tests {
         assert_eq!(key_entry(ProviderId::Aliyun, ServiceKind::Asr), Some("provider-key.aliyun"));
         assert_eq!(key_entry(ProviderId::Aliyun, ServiceKind::Asr), key_entry(ProviderId::Aliyun, ServiceKind::Llm));
         let entries = key_entries();
-        assert_eq!(entries.len(), 7, "{entries:?}");
+        assert_eq!(entries.len(), 8, "{entries:?}");
         assert!(entries.iter().all(|e| e.starts_with("provider-key.")));
     }
 
@@ -576,6 +612,32 @@ mod tests {
         let aliyun = ProviderId::Aliyun.spec().asr.expect("Model Studio recognises");
         assert!(aliyun.models.iter().all(|m| AsrProtocol::of(aliyun.base_url, m) != DashscopeUnsupported), "{aliyun:?}");
         assert!(AsrProtocol::of(aliyun.base_url, aliyun.models[0]).streams());
+    }
+
+    #[test]
+    fn google_lists_its_text_models_under_the_names_chat_completions_take() {
+        let listed = [
+            "models/gemini-3.8-flash",
+            "models/gemini-3.8-flash-tts",
+            "models/gemini-embedding-001",
+            "models/gemini-3.1-flash-image",
+            "models/gemini-3.8-live",
+            "models/gemma-4-27b-it",
+            "models/veo-3.1-generate-preview",
+            "models/gemini-2.5-flash-native-audio-preview-12-2025",
+            "models/gemini-3.5-transcribe",
+            "gemini-2.5-pro",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        assert_eq!(usable_models(ProviderId::Google, ServiceKind::Llm, listed.clone()), ["gemini-3.8-flash", "gemma-4-27b-it", "gemini-2.5-pro"]);
+        // Every other provider's list, and any recognition list, is left as it came.
+        assert_eq!(usable_models(ProviderId::Groq, ServiceKind::Llm, listed.clone()), listed);
+        assert_eq!(usable_models(ProviderId::Google, ServiceKind::Asr, listed.clone()), listed);
+        let google = ProviderId::Google.spec();
+        assert!(google.asr.is_none() && google.key == KeyPolicy::Required && google.console_url.is_some());
+        assert_eq!(key_entry(ProviderId::Google, ServiceKind::Llm), Some("provider-key.google"));
+        assert_eq!(key_env_var("provider-key.google"), "VOLTIP_KEY_GOOGLE");
     }
 
     #[test]

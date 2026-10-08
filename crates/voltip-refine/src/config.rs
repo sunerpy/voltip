@@ -149,9 +149,13 @@ impl fmt::Debug for RefineConfig {
     }
 }
 
+/// Google AI Studio's API host: its OpenAI-compatible root has no `/v1` (`/v1beta/openai`).
+const GOOGLE_AI_STUDIO_HOST: &str = "generativelanguage.googleapis.com";
+
 /// Normalise a service root: trim whitespace, require `http`/`https`, drop query and fragment,
-/// strip trailing slashes and make sure the path ends in `/v1`. Returns the URL without a
-/// trailing slash so endpoints can be appended with `format!("{base}/chat/completions")`.
+/// strip trailing slashes and make sure the path ends in `/v1` (Google AI Studio's OpenAI API is
+/// `/v1beta/openai` and keeps its path). Returns the URL without a trailing slash so endpoints can
+/// be appended with `format!("{base}/chat/completions")`.
 pub fn normalize_base_url(raw: &str) -> Result<String, RefineError> {
     let raw = raw.trim();
     if raw.is_empty() {
@@ -165,7 +169,8 @@ pub fn normalize_base_url(raw: &str) -> Result<String, RefineError> {
         return Err(RefineError::InvalidConfig(format!("base_url {raw:?}: missing host")));
     }
     let mut path = url.path().trim_end_matches('/').to_string();
-    if !path.ends_with("/v1") {
+    let google = url.host_str().is_some_and(|host| host.eq_ignore_ascii_case(GOOGLE_AI_STUDIO_HOST));
+    if !path.ends_with("/v1") && !google {
         path.push_str("/v1");
     }
     url.set_path(&path);
@@ -183,6 +188,7 @@ mod tests {
         let cases = [
             ("https://api.groq.com/openai/v1", "https://api.groq.com/openai/v1"),
             ("https://api.groq.com/openai/v1/", "https://api.groq.com/openai/v1"),
+            ("https://generativelanguage.googleapis.com/v1beta/openai/", "https://generativelanguage.googleapis.com/v1beta/openai"),
             ("https://api.groq.com/openai", "https://api.groq.com/openai/v1"),
             ("https://api.openai.com", "https://api.openai.com/v1"),
             ("https://host/", "https://host/v1"),

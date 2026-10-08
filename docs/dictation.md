@@ -114,6 +114,7 @@ pub struct DictationStatus { pub phase: DictationPhase, pub session: u64 /* 递�
 | `builtin` | ✓ | ✓ | 构建时写入，界面看不到也改不了 |
 | `local` | ✓（§10） | — | 无 |
 | `openai`、`groq`、`siliconflow`、`aliyun` | ✓ | ✓ | 必填，同一家的两项服务共用一把 |
+| `google`（Google AI Studio，2026-10-08） | — | ✓（Gemini，OpenAI 兼容接口 `…/v1beta/openai`） | 必填 |
 | `deepseek` | — | ✓ | 必填 |
 | `ollama` | — | ✓（`http://127.0.0.1:11434/v1`） | 无 |
 | `custom` | ✓ | ✓ | 可选，识别与润色各一把；接口地址必填 |
@@ -141,7 +142,11 @@ pub struct EngineSettings {                                  // Settings.engines
 | 变量 | 含义 |
 |---|---|
 | `VOLTIP_ASR_URL` / `VOLTIP_ASR_TOKEN` / `VOLTIP_ASR_MODEL` | 识别接口基址（不含 `/v1`）、应用令牌、模型（缺省 `Qwen/Qwen3-ASR-1.7B`） |
-| `VOLTIP_REFINE_URL` / `VOLTIP_REFINE_API_KEY` / `VOLTIP_REFINE_MODEL` | 润色接口基址（OpenAI 兼容）、应用令牌、模型（缺省 `qwen/qwen3.8-27b`） |
+| `VOLTIP_REFINE_URL` / `VOLTIP_REFINE_API_KEY` / `VOLTIP_REFINE_MODEL` | 润色接口基址（OpenAI 兼容）、应用令牌、模型（缺省 `qwen/qwen3.8-27b`）；可用逗号列出多个，第一个是默认 |
+
+**内置服务的多个模型**（2026-10-08 用户要求：内置润色提供 Qwen 与 GPT-OSS 等多个模型）：`VOLTIP_REFINE_MODEL`（识别的 `VOLTIP_ASR_MODEL` 同理）可以是逗号分隔的列表，`BuiltIn::models` 按顺序给出，第一个是默认。内置服务卡片在列表多于一个时显示模型下拉框，选中的存为 `providers.builtin.llm_model`；选回第一个时不保存，以后的构建换了默认也跟着走。设置里的模型不在本构建的列表中时用默认模型。候补模型（§3.5）可以是内置服务的另一个模型；内置服务的候补项模型为空时指它卡片上选的那个。内置网关把请求原样转给 Groq，列表里的模型由网关所在账户的免费层提供（2026-10-08 经首尔网关实测 `qwen/qwen3.8-27b`、`openai/gpt-oss-120b`、`openai/gpt-oss-20b` 都回 200）。
+
+**Google AI Studio**（2026-10-08 用户决定：作为独立服务商，用户填自己的密钥，从列表里选模型而不是手填）：只做润色，基址 `https://generativelanguage.googleapis.com/v1beta/openai`，预设为有免费额度的 `gemini-3.8-flash`、`gemini-3.5-flash-lite`、`gemini-3.1-flash-lite`、`gemini-2.5-flash`、`gemini-2.5-pro`（ai.google.dev 的定价页，2026-10-08）。这个基址没有 `/v1`，`voltip_refine::normalize_base_url` 对这个主机不追加。它的 `GET /models` 把模型写成 `models/gemini-…`，还列出嵌入、图像、语音、视频模型：测试连接后 `providers::usable_models` 只留 Gemini 与 Gemma 的文本模型，并去掉前缀，下拉框里就是可选的模型。卡片说明写明免费层的内容可能被 Google 用于改进产品。
 
 两个令牌都是服务端可随时吊销的应用令牌，不是任何服务商的 API 密钥：服务商密钥只放在服务端，打包脚本扫描二进制，发现 `gsk_…` / `sk-…` 形式的密钥就拒绝出包。
 

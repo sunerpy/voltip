@@ -36,6 +36,7 @@ const ICONS: Readonly<Record<ProviderStatus["id"], IconName>> = {
   local: "cpu",
   openai: "cloud",
   groq: "cloud",
+  google: "cloud",
   siliconflow: "cloud",
   aliyun: "cloud",
   deepseek: "cloud",
@@ -145,12 +146,42 @@ function BuiltinBody({
   kind: ServiceKind;
   service: ServiceStatus;
 }) {
+  const { backend } = useBackend();
+  const { notify } = useFeatureShell();
   const { t } = useI18n();
+  const state = useUiState();
   const probe = useProviderProbe(provider.id, kind);
+  // The build may offer several models (user request 2026-10-08); the first is its default, kept
+  // as no choice at all so that a newer build's default follows.
+  const choose = (model: string) => {
+    void backend.invoke("settings_set_engines", {
+      engines: applyProviderDraft(state.settings.engines, provider.id, kind, {
+        model: model === service.presets[0] ? "" : model,
+        baseUrl: "",
+      }),
+    });
+    notify(t("engines.saved", { provider: t(`engines.provider.${provider.id}`) }));
+  };
   return (
     <div className="flex flex-col gap-3">
       <p className="text-[12px] leading-4 text-fg-muted">{t("engines.builtinBody")}</p>
-      <div className="mono text-[12px] text-fg">{t("engines.model", { model: service.model })}</div>
+      {service.presets.length > 1 ? (
+        <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]">
+          <Select
+            label={t("engines.field.model")}
+            size="sm"
+            mono
+            value={service.model}
+            onChange={choose}
+            options={service.presets.map((m) => ({ value: m, label: m }))}
+            data-testid={`builtin-${kind}-model`}
+          />
+        </div>
+      ) : (
+        <div className="mono text-[12px] text-fg">
+          {t("engines.model", { model: service.model })}
+        </div>
+      )}
       <ProbeRow probe={probe} onRun={() => probe.run({})} />
     </div>
   );

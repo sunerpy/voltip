@@ -68,7 +68,7 @@ no-built-in state.
 | `VOLTIP_ASR_MODEL` | Model name the built-in endpoint serves. | your ASR edge |
 | `VOLTIP_ASR_TOKEN` | Application token the edge checks before forwarding. Revocable at the edge; never a provider key. | your ASR edge |
 | `VOLTIP_REFINE_URL` | Base URL of the built-in clean-up endpoint (OpenAI-compatible, `…/v1`). | your edge |
-| `VOLTIP_REFINE_MODEL` | Clean-up model name. | your edge |
+| `VOLTIP_REFINE_MODEL` | Clean-up model name, or several separated by commas: the built-in card offers them all and the first is the default (`BuiltIn::models`). | your edge |
 | `VOLTIP_REFINE_API_KEY` | Credential for the clean-up endpoint: an application token, never a provider key. The Windows build script and the Linux release leg scan the binary and refuse `gsk_…` / `sk-…` keys. | your edge |
 | `VOLTIP_MODEL_BASE_URL` | Optional first download source for the local models (`<base>/<hf-repo>/<file>`); without it the app uses huggingface.co, then hf-mirror.com. | your mirror |
 

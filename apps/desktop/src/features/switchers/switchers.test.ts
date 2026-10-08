@@ -5,6 +5,7 @@ import {
   type UiState,
   createTranslator,
   defaultEngineSettings,
+  emptyEngineStatus,
 } from "@voltip/shared";
 import { MockBackend } from "@voltip/shared/mock";
 import type { MenuSection } from "@voltip/ui";
@@ -114,7 +115,11 @@ describe("the AI 润色模型 menu", () => {
   it("lists every model of the providers that can run, checks the one in use, and ends with the page", async () => {
     const ui = await state({ ...defaultEngineSettings(), llm_provider: "groq" }, { groq: true });
     const sections = polishMenuSections(ui.engines);
-    expect(rows(sections)[0]).toEqual({ label: "内置服务", items: ["qwen3.8-27b"] });
+    // The built-in service offers every model its build lists (user request 2026-10-08).
+    expect(rows(sections)[0]).toEqual({
+      label: "内置服务",
+      items: ["qwen3.8-27b", "gpt-oss-120b", "gpt-oss-20b"],
+    });
     expect(rows(sections)[1]).toEqual({
       label: "Groq",
       items: ["✓ qwen3.8-27b", "gpt-oss-120b", "gpt-oss-20b"],
@@ -167,17 +172,23 @@ describe("the 麦克风 menu", () => {
 });
 
 describe("engineSettingsFor", () => {
-  it("switches the provider, keeps the endpoint the user saved, and leaves the built-in service without settings", () => {
+  it("switches the provider, keeps the endpoint the user saved, and leaves the built-in service without settings", async () => {
+    const status = (await state(defaultEngineSettings())).engines;
     const saved: EngineSettings = {
       ...defaultEngineSettings(),
       providers: { groq: { asr_url: "https://proxy.example.test/v1" } },
     };
     expect(
-      engineSettingsFor(saved, "asr", {
-        kind: "remote",
-        provider: "groq",
-        model: "whisper-large-v3",
-      }),
+      engineSettingsFor(
+        saved,
+        "asr",
+        {
+          kind: "remote",
+          provider: "groq",
+          model: "whisper-large-v3",
+        },
+        status,
+      ),
     ).toEqual({
       ...saved,
       asr_provider: "groq",
@@ -186,46 +197,72 @@ describe("engineSettingsFor", () => {
       },
     });
     expect(
-      engineSettingsFor(saved, "llm", {
-        kind: "remote",
-        provider: "deepseek",
-        model: "deepseek-flash",
-      }),
+      engineSettingsFor(
+        saved,
+        "llm",
+        {
+          kind: "remote",
+          provider: "deepseek",
+          model: "deepseek-flash",
+        },
+        status,
+      ),
     ).toEqual({
       ...saved,
       llm_provider: "deepseek",
       providers: { ...saved.providers, deepseek: { llm_model: "deepseek-flash" } },
     });
     expect(
-      engineSettingsFor(saved, "llm", {
-        kind: "remote",
-        provider: "builtin",
-        model: "qwen/qwen3.8-27b",
-      }),
+      engineSettingsFor(
+        saved,
+        "llm",
+        {
+          kind: "remote",
+          provider: "builtin",
+          model: "qwen/qwen3.8-27b",
+        },
+        status,
+      ),
     ).toEqual({
       ...saved,
       llm_provider: "builtin",
+    });
+    // Another of the built-in service's models is a choice of its own (user request 2026-10-08).
+    expect(
+      engineSettingsFor(
+        saved,
+        "llm",
+        { kind: "remote", provider: "builtin", model: "openai/gpt-oss-120b" },
+        status,
+      ),
+    ).toEqual({
+      ...saved,
+      llm_provider: "builtin",
+      providers: { ...saved.providers, builtin: { llm_model: "openai/gpt-oss-120b" } },
     });
   });
 
   it("turns a local model into on-device recognition, and refuses what is not a model of the service", () => {
     const settings = defaultEngineSettings();
-    expect(engineSettingsFor(settings, "asr", { kind: "local", id: "sense-voice-small" })).toEqual({
+    const status = emptyEngineStatus();
+    expect(
+      engineSettingsFor(settings, "asr", { kind: "local", id: "sense-voice-small" }, status),
+    ).toEqual({
       ...settings,
       asr_provider: "local",
       local_model: "sense-voice-small",
     });
     expect(
-      engineSettingsFor(settings, "llm", { kind: "local", id: "sense-voice-small" }),
+      engineSettingsFor(settings, "llm", { kind: "local", id: "sense-voice-small" }, status),
     ).toBeUndefined();
     expect(
-      engineSettingsFor(settings, "asr", { kind: "remote", provider: "local", model: "x" }),
+      engineSettingsFor(settings, "asr", { kind: "remote", provider: "local", model: "x" }, status),
     ).toBeUndefined();
     expect(
-      engineSettingsFor(settings, "asr", { kind: "microphone", device: null }),
+      engineSettingsFor(settings, "asr", { kind: "microphone", device: null }, status),
     ).toBeUndefined();
     expect(
-      engineSettingsFor(settings, "asr", { kind: "manage", target: "speech" }),
+      engineSettingsFor(settings, "asr", { kind: "manage", target: "speech" }, status),
     ).toBeUndefined();
   });
 });

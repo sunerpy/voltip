@@ -105,7 +105,7 @@ describe("FallbackSection (docs/dictation.md §3.5)", () => {
     unmount();
   });
 
-  it("moves and removes models, and shows the built-in service's own model", async () => {
+  it("moves and removes models, and offers the built-in service's own models", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend({ providerKeys: [{ provider: "groq", kind: "llm" }] });
     const state = await backend.getState();
@@ -163,15 +163,46 @@ describe("FallbackSection (docs/dictation.md §3.5)", () => {
         { provider: "groq", model: "llama-3.3-70b-versatile" },
       ]);
     });
-    // The built-in service: its own model, nothing to type.
+    // The built-in service: the models its build offers, nothing to type.
     const add = screen.getByTestId("fallback-llm-add");
     await user.selectOptions(
       within(add).getByRole("combobox", { name: t("engines.fallback.provider") }),
       "builtin",
     );
-    expect(within(add).getByRole("textbox", { name: t("engines.fallback.model") })).toHaveAttribute(
-      "readonly",
+    const model = within(add).getByRole("combobox", { name: t("engines.fallback.model") });
+    expect([...model.querySelectorAll("option")].map((o) => o.value)).toEqual([
+      "qwen/qwen3.8-27b",
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-20b",
+    ]);
+    await user.selectOptions(model, "openai/gpt-oss-20b");
+    await user.click(within(add).getByRole("button", { name: t("engines.fallback.add") }));
+    await waitFor(async () => {
+      expect((await settingsFallback(backend, "llm"))?.models).toEqual([
+        { provider: "groq", model: "llama-3.3-70b-versatile" },
+        { provider: "builtin", model: "openai/gpt-oss-20b" },
+      ]);
+    });
+    unmount();
+  });
+
+  it("names the built-in service's model when its build has only one", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({
+      builtIn: {
+        asr: { model: "Qwen/Qwen3-ASR-1.7B", key: true },
+        llm: { model: "qwen/qwen3.8-27b", key: true },
+      },
+    });
+    const { unmount } = renderSection(backend, "llm");
+    const add = await screen.findByTestId("fallback-llm-add");
+    await user.selectOptions(
+      within(add).getByRole("combobox", { name: t("engines.fallback.provider") }),
+      "builtin",
     );
+    const model = within(add).getByRole("textbox", { name: t("engines.fallback.model") });
+    expect(model).toHaveAttribute("readonly");
+    expect(model).toHaveValue("qwen/qwen3.8-27b");
     unmount();
   });
 
