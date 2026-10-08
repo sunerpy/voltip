@@ -34,6 +34,8 @@ function useDevicePixelRatio(): number {
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return undefined;
     const query = window.matchMedia(`(resolution: ${ratio}dppx)`);
+    // A partial MediaQueryList (an old engine, a test's stand-in) just stops following the ratio.
+    if (typeof query.addEventListener !== "function") return undefined;
     const update = () => setRatio(currentRatio());
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
