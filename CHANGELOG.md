@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.52](https://github.com/sunerpy/voltip/compare/v0.0.51...v0.0.52) (2026-10-09)
+
+
+### Features
+
+* 手机选择框改为底部面板，识别与润色在连接断开时重试 ([#137](https://github.com/sunerpy/voltip/issues/137)) ([34384d5](https://github.com/sunerpy/voltip/commit/34384d5d1a7ff16b81c1a8a71eb19a18d745bf2b))
+
 ## [0.0.51](https://github.com/sunerpy/voltip/compare/v0.0.50...v0.0.51) (2026-10-09)
 
 
