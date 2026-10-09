@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.51](https://github.com/sunerpy/voltip/compare/v0.0.50...v0.0.51) (2026-10-09)
+
+
+### Features
+
+* **mobile:** Android 应用可以检查更新 ([#135](https://github.com/sunerpy/voltip/issues/135)) ([bb80a53](https://github.com/sunerpy/voltip/commit/bb80a53a454a020462cfa78a934b0f099aa89350))
+
 ## [0.0.50](https://github.com/sunerpy/voltip/compare/v0.0.49...v0.0.50) (2026-10-09)
 
 
