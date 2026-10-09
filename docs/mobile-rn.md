@@ -115,14 +115,15 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
 
 ## 5. 界面
 
-- **组件库**：react-native-paper 5 的 MD3 组件（`Appbar`、`List.Item`、`Switch`、`TextInput`、`Menu`、
+- **组件库**：react-native-paper 5 的 MD3 组件（`Appbar`、`List.Item`、`Switch`、`TextInput`、
   `Dialog`、`Snackbar`、`SegmentedButtons`、`Card`、`ProgressBar`、`Chip`），水波纹和按压态由原生提供。
-  下拉选择用 `Menu` 锚定在字段下方，不出现老式单选对话框。Paper 5.15.3 的 `Menu` 有一个竞态：它以关闭状态挂载时
-  会跑一次 250 ms 的隐藏动画，动画结束时无条件卸载菜单项；在这段时间里（页面刚打开，或刚关上又马上打开）展开的
-  菜单因此只剩一个“已展开”的字段。`patches/react-native-paper@5.15.3.patch`（pnpm `patchedDependencies`）让隐藏动画
-  结束时先看菜单是否又被打开，打开了就保留菜单项，并让动画期间的再次打开重新播放展开动画；回归测试
-  `regression: a dropdown opened while its page is still settling stays open` 用假时钟复现。升级 Paper 时先检查上游
-  是否已修复，再决定去掉补丁。
+- **选择框（2026-10-09 用户要求「下拉框都应优化为底部弹出的抽屉」）**：`SelectField`（表单字段）和 `SelectRow`
+  （设置行）点开后从底部滑出 Material 3 的模态底部面板（`ui/Select.tsx` 的 `OptionSheet`）：遮罩、拖动条、标题（字段名），
+  选项每行至少 56 dp，当前项用主色并在行尾打勾，选项多时面板内滚动，最高为屏幕的 80%，底部留出手势条的安全区。
+  点选项、点遮罩、在拖动条上向下滑或按返回键都会关闭面板，返回键只关闭面板，不会退出页面。不出现老式单选对话框。
+  原先锚定在字段下方的 Paper `Menu` 不再使用；为它的竞态（以关闭状态挂载时的隐藏动画卸载了刚打开的菜单项）打的
+  `patches/react-native-paper@5.15.3.patch` 暂时保留，下次升级 Paper 时去掉。回归测试
+  `regression: a dropdown opened while its page is still settling stays open` 现在检查面板在页面动画期间打开后不会消失。
 - **配色（2026-10-07 用户选定「简约中性」）**：表面接近纯中性色，白卡片加 1 dp 细描边、14 dp 圆角，分组标题用
   灰色小字，强调色只用在能点的东西和选中态上：按住说话是实心主色圆形按钮（带同色阴影），按钮 12 dp 圆角
   （`ui/Button.tsx`），底栏是卡片白加顶部细线、选中的标签直接变成主色、不画胶囊指示器，顶栏和页面同色。

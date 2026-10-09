@@ -378,7 +378,9 @@ export function Lamp({
   );
 }
 
-/** A status line that may wrap: the lamp beside its first line. */
+/** A status line that may wrap: the lamp beside its first line. It is as wide as its text, and
+ *  narrower when the row it sits in needs the room (it wraps then): beside a title that takes the
+ *  rest of a row, it must not take the row itself. */
 export function StateLine({
   tone,
   pulse,
@@ -408,7 +410,7 @@ export function StateLine({
       <Text
         variant={small ? "bodySmall" : "bodyMedium"}
         numberOfLines={numberOfLines}
-        style={{ flex: 1, color: theme.colors.onSurface }}>
+        style={{ flexShrink: 1, color: theme.colors.onSurface }}>
         {children}
       </Text>
     </View>
@@ -603,7 +605,7 @@ export const styles = StyleSheet.create({
   },
   factValue: { flexShrink: 1, textAlign: "right" },
   factValueBox: { flexShrink: 1, alignItems: "flex-end" },
-  stateLine: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  stateLine: { flexDirection: "row", alignItems: "flex-start", gap: 8, flexShrink: 1 },
   empty: { alignItems: "center", gap: 8, paddingHorizontal: 24, paddingVertical: 32 },
   notice: {
     flexDirection: "row",

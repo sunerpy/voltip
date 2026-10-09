@@ -15,6 +15,8 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# The pause before a request whose connection failed goes again (client.rs `send`).
+tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
 
