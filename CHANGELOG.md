@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.50](https://github.com/sunerpy/voltip/compare/v0.0.49...v0.0.50) (2026-10-09)
+
+
+### Features
+
+* **mobile:** Android 应用改为 React Native 版 ([#133](https://github.com/sunerpy/voltip/issues/133)) ([a567551](https://github.com/sunerpy/voltip/commit/a5675518809bcfbe10f941125501cbcf0ece1b2b))
+
 ## [0.0.49](https://github.com/sunerpy/voltip/compare/v0.0.48...v0.0.49) (2026-10-08)
 
 
