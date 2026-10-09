@@ -18,8 +18,9 @@ use voltip_tauri_bridge::Bridge;
 use crate::host::Host;
 use crate::meter::Meters;
 
-/// Keystore service id, the Tauri phone shell's (the Keystore is the app's own, so the two apps
-/// never see each other's entries).
+/// Keystore service id, the Tauri phone shell's. Since 0.0.50 this app is the Android app under that
+/// app's package (user decision 2026-10-09), so an update from it finds the device identity and the
+/// provider keys where that app left them (`legacy` moves its files).
 pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// The running shell; cheap to clone.

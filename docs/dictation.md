@@ -1417,7 +1417,7 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 
 ### 20.5 未验证
 
-真机：Android 麦克风采集与权限弹窗、蓝牙耳机、后台切换时的采集行为，`PhoneClipboardPlugin.kt` 读写剪贴板，`SharePlugin.kt` 的分享面板，以及手机单独识别时对内置服务的 HTTPS 请求（§20.7），只能在手机上验证；`cargo check` / `clippy --target aarch64-linux-android` 通过，APK 构建见 `scripts/build-android-debug.sh`。
+真机：Android 麦克风采集与权限弹窗、蓝牙耳机、后台切换时的采集行为，`PhoneClipboardPlugin.kt` 读写剪贴板，`SharePlugin.kt` 的分享面板，以及手机单独识别时对内置服务的 HTTPS 请求（§20.7），只能在手机上验证；`cargo check` / `clippy --target aarch64-linux-android` 通过，APK 构建见 `scripts/build-android-debug.sh`（Tauri 版；0.0.50 起发布的是 React Native 版，见 `scripts/build-android-rn.sh`）。
 
 ### 20.6 手机发文字到电脑（2026-09-28）
 
@@ -1469,6 +1469,8 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 
 ### 20.9 手机更新（2026-10-02 用户要求）
 
+> 0.0.50 起 Android 应用是 React Native 版（`docs/mobile-rn.md` §1.1），它暂不检查更新：更新状态固定为 `disabled`，「关于」不显示「软件更新」；从 Google Play 安装的由 Play 更新。用户 2026-10-09 选择在下一个 PR 里把下面的检查更新移植过去。本节描述 Tauri 版（0.0.49 及更早），它的检查会找到 0.0.50 的 `Voltip_<版本>_android_arm64.apk`，覆盖安装即升级为 React Native 版。
+
 - **来源**：`UpdatePlugin.kt` 读取系统记录的安装来源（Android 11 起 `getInstallSourceInfo`，之前 `getInstallerPackageName`），启动时读一次。`com.android.vending`（Google Play）为 `InstallSource::Store`；其他情况（打开 GitHub 发布页安装包的浏览器或文件管理器、`adb`、没有记录）为 `Direct`。
 - **Google Play 安装**：从第一帧起就是 `UpdateStatus::Store { version }`（`store`）。`update_check` 不访问任何地方，`Settings.auto_update` 也不触发检查；`update_install` 在浏览器中打开 `https://play.google.com/store/apps/details?id=<包名>`，Android 会交给 Play 应用。不引入 Play Core 的应用内更新库：它是专有许可，与 AGPL 不兼容，而 Google Play 本身会自动更新应用。
 - **其他安装**：状态从 `idle` 开始。`update_check` 在后台查询 `https://api.github.com/repos/<owner>/<repo>/releases/latest`（由 `REPOSITORY` 得出，带 User-Agent，连接 10 s、读取 30 s）。标签 `vX.Y.Z` 按数字比较：更新则为 `available { version, current, notes（发布说明）, date（published_at） }`，并记下资产 `Voltip_<版本>_android_arm64.apk` 的地址；不更新则为 `up_to_date`；新版本缺少 APK、版本号无法识别、403/429（GitHub 每小时的查询次数有限）或其他失败为 `failed { message }`。检查进行中再次检查会被拒（`updater: 正在检查更新`）。
@@ -1477,6 +1479,8 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 - **界面**：设置 › 关于 的「软件更新」卡片。Google Play 安装显示「由 Google Play 更新」和「在 Google Play 中打开」；其他安装显示状态行（与电脑的措辞相同）、有新版本时的更新说明和「下载新版本」、「检查更新」，以及「自动检查更新」开关。
 
 ### 20.10 手机的返回（2026-10-02 用户要求）
+
+> 本节的通道与门禁是 Tauri 版的（0.0.49 及更早）。React Native 版的返回由 React Navigation 与 `BackHandler` 处理，顺序相同，门禁是 `apps/mobile-rn/src/App.test.tsx` 与 Device Farm 验收（`apps/mobile-rn/devicefarm`）；CI 的 `android-device` 只检查它启动后不退出。
 
 - **顺序**：系统的返回手势或返回键先关闭最上层的对话框（与 Esc 相同），再回到上一级页面（与页头「返回」相同，核对安全码时取消配对）；在「记录」「设置」中回到「说话」；在「说话」中第一次返回提示「再返回一次即可退出」，之后两秒内的返回交给系统，即退出应用，超过两秒再返回则重新提示（`apps/mobile/src/App.tsx`）。
 - **通道**：应用自己的插件 `BackPlugin.kt`，Rust 侧（`src/back.rs`）只负责注册。页面经插件的 `register_listener` 监听 `back`，经 `release { ms }` 让之后 `ms` 毫秒内的返回交给系统（`apps/mobile/src/app/back.ts`）；这三条命令在 `build.rs` 中声明，由 `capabilities/default.json` 允许。没有监听者时，返回也交给系统。

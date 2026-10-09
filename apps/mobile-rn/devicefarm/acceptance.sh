@@ -13,7 +13,7 @@ set -uo pipefail
 
 out=${1:?usage: acceptance.sh <out dir>}
 mkdir -p "$out"
-PKG=dev.voltip.mobile.rn
+PKG=dev.voltip.mobile
 summary=$out/summary.txt
 : >"$summary"
 

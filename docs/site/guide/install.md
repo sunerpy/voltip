@@ -61,7 +61,7 @@ Every [release](https://github.com/sunerpy/voltip/releases) carries the packages
 | Linux server, x64 | `voltip-server-*-linux-x64.tar.gz` | The [local service](/recognition/service) for a computer without a desktop. Built on Ubuntu 22.04, like the Linux packages; it carries its own runtime libraries, and `install.sh --server` names any system library that is missing |
 | macOS 11 or later, Apple silicon | `*_aarch64.dmg` | M1 or newer |
 | macOS 11 or later, Intel | `*_x64.dmg` | Intel Macs |
-| Android 8.0 or later, 64-bit Arm | `Voltip_*_android_arm64.apk`; `Voltip-RN_*_android_arm64.apk`, Voltip RN, the same app with Android's own controls | See [Android](#android) below and [the phone page](/phone/) |
+| Android 8.0 or later, 64-bit Arm | `Voltip_*_android_arm64.apk` | See [Android](#android) below and [the phone page](/phone/) |
 
 ### Windows
 
@@ -89,7 +89,7 @@ Download `Voltip_<version>_android_arm64.apk` on the phone and open it. Android 
 
 A new version installs over the old one and keeps the pairing, because every release is signed with the same key. The `.aab` file in the release is the package for Google Play; phones install the `.apk`.
 
-`Voltip-RN_<version>_android_arm64.apk` is Voltip RN, another version of the phone app whose screens use Android's own controls. It installs the same way, as a separate app beside Voltip, with its own pairing, settings and history. It does not check for updates: open the new release's file to install it over the old version, which keeps its pairing, settings and history.
+From 0.0.50 the Android app is the new version whose screens use Android's own controls (released on its own as Voltip RN from 0.0.46 to 0.0.49). Install it over Voltip 0.0.49 or earlier to update; the pairing, settings and history stay. A Voltip RN installed before is another app: its pairing, settings and history do not move to the new version, and once the new version works you can uninstall it.
 
 ## Check a download
 

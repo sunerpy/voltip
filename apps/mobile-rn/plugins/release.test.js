@@ -59,7 +59,7 @@ describe("the release config", () => {
     const signed = appConfig({ config: appJson });
     expect(signed.version).toBe(version);
     expect(signed.android.versionCode).toBe(versionCode(version));
-    expect(signed.android.package).toBe("dev.voltip.mobile.rn");
+    expect(signed.android.package).toBe("dev.voltip.mobile");
     expect(signed.mods).toBeUndefined();
     process.env.VOLTIP_RN_UNSIGNED = "1";
     try {

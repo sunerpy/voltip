@@ -1,5 +1,6 @@
-"""Tests for .github/scripts/android-device-smoke.sh: which APK it installs and which app it starts,
-with a fake `adb` that records every call and refuses the install, so the script stops there.
+"""Tests for .github/scripts/android-device-smoke.sh: which APK it installs and which package it
+starts, with a fake `adb` that records every call and refuses the install, so the script stops
+there.
 
 Run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
 """
@@ -46,10 +47,10 @@ class DeviceSmoke(unittest.TestCase):
         # The hosted runners' locale (C.UTF-8): `sort` orders by code point there, so `-` comes before
         # `_`. A locale such as en_US orders the two names the other way round.
         self.env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "LC_ALL": "C.UTF-8"}
-        # The Android leg of a release candidate: both apps, the AAB and nothing else.
+        # The Android leg of a release candidate: the APK and the AAB, nothing else.
         self.leg = self.root / "dist"
         self.leg.mkdir()
-        for name in ("Voltip-RN_0.0.46_android_arm64.apk", "Voltip_0.0.46_android_arm64.apk", "Voltip_0.0.46_android_arm64.aab"):
+        for name in ("Voltip_0.0.50_android_arm64.apk", "Voltip_0.0.50_android_arm64.aab"):
             (self.leg / name).write_bytes(b"package")
 
     def smoke(self, *args: str) -> subprocess.CompletedProcess[str]:
@@ -64,49 +65,45 @@ class DeviceSmoke(unittest.TestCase):
     def adb_calls(self) -> list[str]:
         return self.calls.read_text(encoding="utf-8").splitlines() if self.calls.exists() else []
 
-    def test_regression_the_tauri_app_is_the_one_installed_from_a_leg_with_both(self) -> None:
-        # `Voltip-RN_` sorts before `Voltip_`: taking the first *.apk installed the React Native app
-        # and then started dev.voltip.mobile, which was not there.
+    def test_the_app_is_installed_from_the_leg_under_the_package_it_took_over(self) -> None:
+        # Since 0.0.50 the React Native app is the Android app, under the Tauri phone app's package
+        # (user decision 2026-10-09), so an installed Tauri app updates to it.
         result = self.smoke(str(self.leg))
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("the APK did not install", result.stderr)
         calls = self.adb_calls()
         self.assertIn("uninstall dev.voltip.mobile", calls)
-        self.assertIn(f"install -r -g {self.leg}/Voltip_0.0.46_android_arm64.apk", calls)
+        self.assertIn(f"install -r -g {self.leg}/Voltip_0.0.50_android_arm64.apk", calls)
 
     def test_regression_a_device_that_drops_offline_after_boot_is_waited_for(self) -> None:
         # main CI 2026-10-07 (run 37688703262): `adb: device offline` the moment the smoke began,
         # after the emulator had booted, and the smoke stopped there without a word.
         self.env["FAKE_OFFLINE_FOR"] = "2"
-        result = self.smoke("--app", "mobile-rn", str(self.leg))
-        self.assertIn(f"install -r -g {self.leg}/Voltip-RN_0.0.46_android_arm64.apk", self.adb_calls(), result.stderr)
+        result = self.smoke(str(self.leg))
+        self.assertIn(f"install -r -g {self.leg}/Voltip_0.0.50_android_arm64.apk", self.adb_calls(), result.stderr)
         self.assertIn("the APK did not install", result.stderr)
 
-    def test_the_react_native_app_is_installed_with_its_own_package(self) -> None:
-        result = self.smoke("--app", "mobile-rn", str(self.leg))
-        self.assertEqual(result.returncode, 1, result.stderr)
-        calls = self.adb_calls()
-        self.assertIn("uninstall dev.voltip.mobile.rn", calls)
-        self.assertIn(f"install -r -g {self.leg}/Voltip-RN_0.0.46_android_arm64.apk", calls)
-
     def test_an_apk_named_on_the_command_line_is_installed_as_it_is(self) -> None:
-        apk = self.leg / "Voltip-RN_0.0.46_android_arm64.apk"
-        self.smoke("--app", "mobile-rn", str(apk))
+        apk = self.leg / "Voltip_0.0.50_android_arm64.apk"
+        self.smoke(str(apk))
         self.assertIn(f"install -r -g {apk}", self.adb_calls())
 
     def test_a_directory_without_the_app_or_with_two_of_it_is_refused(self) -> None:
-        (self.leg / "Voltip-RN_0.0.46_android_arm64.apk").unlink()
-        result = self.smoke("--app", "mobile-rn", str(self.leg))
+        (self.leg / "Voltip_0.0.50_android_arm64.apk").unlink()
+        result = self.smoke(str(self.leg))
         self.assertEqual(result.returncode, 2)
-        self.assertIn("no APK for dev.voltip.mobile.rn", result.stderr)
-        (self.leg / "Voltip_0.0.45_android_arm64.apk").write_bytes(b"older")
+        self.assertIn("no APK for dev.voltip.mobile", result.stderr)
+        (self.leg / "Voltip_0.0.50_android_arm64.apk").write_bytes(b"package")
+        (self.leg / "Voltip_0.0.49_android_arm64.apk").write_bytes(b"older")
         result = self.smoke(str(self.leg))
         self.assertEqual(result.returncode, 2)
         self.assertIn("more than one Voltip_*.apk", result.stderr)
         self.assertEqual(self.adb_calls(), [])
 
-    def test_an_unknown_app_is_a_usage_error(self) -> None:
-        result = self.smoke("--app", "desktop", str(self.leg))
+    def test_the_second_apps_option_is_gone(self) -> None:
+        # `--app mobile-rn` chose the React Native app while the Tauri app was the default; there is
+        # one Android app now.
+        result = self.smoke("--app", "mobile-rn", str(self.leg))
         self.assertEqual(result.returncode, 2)
         self.assertIn("usage:", result.stderr)
         self.assertEqual(self.adb_calls(), [])

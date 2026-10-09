@@ -1,9 +1,10 @@
 # 手机端 React Native 版（2026-10-07 设计）
 
-> 状态：2026-10-08 起随每个发布版本附带（`Voltip-RN_<版本>_android_arm64.apk`，用户要求「同时发布 RN 版
-> APK」），与 Tauri 手机端用同一把密钥签名。`apps/mobile`（Tauri + WebView）照常是主要的手机端；本文的
-> `apps/mobile-rn` 是并行的第二个外壳，供用户比较原生感后决定去留。两者共用 Rust 核心与 `@voltip/shared` 的
-> IPC 契约，applicationId 不同（`dev.voltip.mobile.rn`），可以和现有手机端同时安装。
+> 状态：0.0.50 起是 Android 应用本身（用户 2026-10-09 决定：Google Play 上架 RN 版，GitHub 发布不再构建、发布
+> Tauri 的手机包，RN 改用 Tauri 版的包名 `dev.voltip.mobile`），发布为 `Voltip_<版本>_android_arm64.apk` 与上架
+> Google Play 用的 `.aab`，名称 Voltip。0.0.46 至 0.0.49 它以 `Voltip-RN_<版本>_android_arm64.apk`（包名
+> `dev.voltip.mobile.rn`）与 Tauri 手机端并行发布。`apps/mobile`（Tauri + WebView）的代码还在仓库里，但不再构建
+> Android 包。两者共用 Rust 核心与 `@voltip/shared` 的 IPC 契约。从 Tauri 版升级见 §1.1。
 
 ## 1. 为什么、做什么
 
@@ -12,9 +13,24 @@
   树和 Android 的返回手势也是原生的。
 - 目标：功能与 `apps/mobile` 0.0.44 对齐的 RN 版，界面按 Material Design 3 重新设计，先在 AWS Device
   Farm 真机上跑通，再交给用户安装验收。
-- 不在本次范围：iOS、Google Play 上架、替换 `apps/mobile`、本地模型（手机本来就没有）、应用内更新（更新状态
-  固定为 `disabled`，关于页因此不显示更新卡片；新版本从发布页下载 APK 覆盖安装）。2026-10-08 起接入 CI 与发布
-  候选，发布的 APK 用发布密钥签名（§6）；本机构建默认仍用 Android 调试密钥签名，这样的包不能被发布版覆盖，要先卸载。
+- 不在本次范围：iOS、本地模型（手机本来就没有）、应用内更新（更新状态固定为 `disabled`，关于页因此不显示更新
+  卡片；从 Google Play 安装的由 Play 更新，从发布页安装的下载新版本的 APK 覆盖安装。用户 2026-10-09 选择在 0.0.50
+  之后的下一个 PR 里补上 Tauri 版那样的检查更新）。2026-10-08 起接入 CI 与发布候选，发布的 APK 与 AAB 用发布密钥
+  签名（§6）；本机构建默认仍用 Android 调试密钥签名，这样的包不能被发布版覆盖，要先卸载。
+
+### 1.1 从 Tauri 手机端升级（0.0.50）
+
+- 包名、签名密钥、versionCode 规则（主版本 × 1000000 + 次版本 × 1000 + 补丁号）都与 Tauri 版一致，所以 0.0.49 及
+  更早的 Tauri 版覆盖安装 0.0.50 就是一次普通的应用更新：Android 保留应用的数据目录、Keystore 条目和已授予的权限。
+  Tauri 版检查更新时找的正是 `Voltip_<版本>_android_arm64.apk`，所以它的「软件更新」会把 0.0.50 当作新版本。
+- Keystore：两个外壳都用服务名 `dev.voltip.mobile`、用户 `voltip`（`android-native-keyring-store`），设备身份与
+  服务商密钥原样可用，电脑一侧不必重新配对。
+- 数据目录不同：Tauri 的 `app_data_dir` 在 Android 上是应用数据目录的根（`Context.getDataDir()`），本应用用
+  `files/voltip`。`rust/src/legacy.rs` 在首次启动、新目录里还没有 `settings.json` 时，把根上的核心文件移过去：
+  设置、预设、场景、规则、词典、已信任设备、已发送文字、`history.json*` 与 `history.sqlite3*`、`uploads`、
+  `recordings`、`mirror`。Android 自己的目录（`shared_prefs`、`cache` 等）和 Tauri 的 WebView 数据不碰；
+  移不动的文件留在原处并写日志，核心当作新装启动。测试：`rust/tests/legacy.rs`、`rust/tests/upgrade.rs`。
+- 0.0.46 至 0.0.49 单独安装的 `dev.voltip.mobile.rn` 是另一个应用，数据不会转过来，用户确认新版本可用后卸载即可。
 
 ## 2. 总体结构
 
@@ -134,8 +150,8 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
 ## 6. 构建
 
 ```bash
-scripts/build-android-rn.sh             # 调试密钥签名：dist/android-rn/Voltip-RN_<version>_android_arm64.apk
-scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned.apk，CI 与发布候选随后自己签名
+scripts/build-android-rn.sh             # 调试密钥签名：dist/android-rn/Voltip_<version>_android_arm64.apk 与 .aab（make android-apk）
+scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned.apk 与 .aab，CI 与发布候选随后自己签名
 ```
 
 版本号是仓库的版本（根目录 `package.json`，release-please 写它，Tauri 两端也读它）：`app.config.js` 在
@@ -153,24 +169,25 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
    `RECORD_AUDIO` / `CAMERA`，所以不传这两项。第三方许可证文本由
    `scripts/release/third-party-notices.py --app mobile-rn`（Rust 外壳的 crate 与 `apps/mobile-rn` 的 npm 包）生成到
    `assets/THIRD-PARTY-NOTICES.txt`，与 Tauri 手机端一样随 APK 附带（关于页提到这个文件），打包后脚本核对它的首行版本。
-3. `gradlew assembleRelease`（Hermes 字节码、只打 arm64-v8a，原生库在 APK 里压缩存放、安装时解压），默认用
-   Android 调试密钥签名。解压是 `app.json` 里 `expo-build-properties` 的 `useLegacyPackaging`：库不解压时，React
+3. `gradlew assembleRelease bundleRelease`：一次构建出 APK 和上架 Google Play 用的 AAB（Hermes 字节码、只打
+   arm64-v8a，原生库在 APK 里压缩存放、安装时解压），默认用 Android 调试密钥签名。解压是 `app.json` 里 `expo-build-properties` 的 `useLegacyPackaging`：库不解压时，React
    Native 的 SoLoader 按设备的首选 ABI 在 APK 里找库，x86_64 模拟器经 ARM 翻译运行这个 arm64 应用时它去找
    `lib/x86_64`，加载不到 `libreactnative.so`，应用打开即退出（2026-10-08 CI 的模拟器冒烟）；代价是安装后多占一份
    解压出来的库，APK 本身反而更小。`--unsigned` 时
    `app.config.js` 的配置插件（`plugins/release.js`）去掉模板给 release 构建类型配的调试签名，模板变了就报错，
    不会悄悄出一个调试签名的包。React Native 的 Gradle 插件要 JDK 17 工具链：`JAVA_TOOLCHAINS` 指向一个 JDK 17
    （Gradle 自动下载会去 GitHub，本机不可用）。
-4. 发布前扫描：APK 的每个条目都过 `voltip_scan_provider_keys`；JS 包是 Hermes 字节码，字符串表首尾相接，图标名
+4. 发布前扫描：APK 和 AAB 的每个条目都过 `voltip_scan_provider_keys`；JS 包是 Hermes 字节码，字符串表首尾相接，图标名
    （`task-outline` 等）会被误认成 `sk-…`，所以它改为扫描 Metro 打包前的源码（packager source map 的
    `sourcesContent`），并检查构建环境里的密钥值不在字节码中。`.env.build` 以外的生产主机名不得出现在源码树里
    （`check-no-production-hosts.sh` 照常覆盖 `apps/mobile-rn`）。
-5. 发布（2026-10-08 起，`docs/runbook.md` 发布 · Android）：发布候选的 `bundle-android` 腿在 Tauri 的包之后、
-   签名之前运行 `build-android-rn.sh --unsigned`（内置服务的值与 Tauri 手机端相同），签名一步用同一把密钥签它
-   （`.github/scripts/sign-android-package.sh --app mobile-rn`），`check-android-package.sh --app mobile-rn` 检查
-   证书、16 KB 对齐、版本、targetSdk、许可声明和原生库里的密钥，`updater-json.py collect --extra` 把它作为这条腿的
-   附加文件封存；`device-android` 在模拟器上启动它（`android-device-smoke.sh --app mobile-rn`）。CI 的 `android-rn`
-   与 `android-rn-device` 对每个改了代码的 PR 走同一条路，用当次生成的临时密钥签名，不注入内置服务。
+5. 发布（`docs/runbook.md` 发布 · Android；0.0.50 起是这条腿唯一的应用）：发布候选的 `bundle-android` 腿在签名之前
+   运行 `build-android-rn.sh --unsigned`（注入内置服务的值），签名一步用发布密钥签 APK 和 AAB
+   （`.github/scripts/sign-android-package.sh`），`check-android-package.sh` 检查证书、16 KB 对齐、包名
+   `dev.voltip.mobile`、版本、targetSdk、安装时解压原生库、许可声明和原生库里的密钥，`updater-json.py collect` 把两者
+   作为这条腿的 apk 与 aab 封存；`device-android` 在模拟器上启动它（`android-device-smoke.sh`）。CI 的 `android` 与
+   `android-device` 对每个改了代码的 PR 走同一条路，用当次生成的临时密钥签名，不注入内置服务。2026-10-08 至 0.0.49
+   它以 `--app mobile-rn` 作为附加文件 `Voltip-RN_<版本>_android_arm64.apk` 与 Tauri 的包一起发布。
 
 ## 7. 测试
 
@@ -203,8 +220,8 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
 
 ## 8. 验收（用户）
 
-安装发布页的 `Voltip-RN_<版本>_android_arm64.apk`（或本机构建的 `dist/android-rn/` 下的 APK；两者签名不同，
-换装要先卸载），与现手机端并存，对比：
+安装发布页的 `Voltip_<版本>_android_arm64.apk`（或本机构建的 `dist/android-rn/` 下的 APK；两者签名不同，
+换装要先卸载），在装过 0.0.49 及更早 Tauri 版的手机上直接覆盖安装，确认配对、设置和记录都在，再看：
 
 1. 观感：MD3 控件、水波纹、转场、深浅色、状态栏和导航栏、字体缩放后的布局。
 2. 手势：返回手势逐级返回、说话页两次返回退出。

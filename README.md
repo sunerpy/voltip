@@ -113,7 +113,7 @@ build attestations:
 | Linux x64 server | `voltip-server-*-linux-x64.tar.gz` | The local speech service for a server without a desktop (below); `install.sh --server` installs it without root. |
 | macOS 11+ (Apple silicon) | .dmg | M1 or newer |
 | macOS 11+ (Intel) | .dmg | Intel Macs |
-| Android 8.0+ (64-bit Arm) | `Voltip_*_android_arm64.apk` | Open it on the phone to install. The `.aab` is the package for Google Play. `Voltip-RN_*_android_arm64.apk` is Voltip RN, the same app with Android's own controls; it installs beside Voltip. |
+| Android 8.0+ (64-bit Arm) | `Voltip_*_android_arm64.apk` | Open it on the phone to install. The `.aab` is the package for Google Play. From 0.0.50 the app's screens use Android's own controls; it installs over 0.0.49 and earlier and keeps the pairing, settings and history. |
 
 The Mac packages are `*_aarch64.dmg` (Apple silicon) and `*_x64.dmg` (Intel), signed with the
 project's own self-signed certificate and not notarized. On a Mac, open the dmg and drag Voltip onto

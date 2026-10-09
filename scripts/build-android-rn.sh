@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
-# Build the React Native phone app's APK (docs/mobile-rn.md §6): the Rust shell for arm64 with
-# cargo-ndk into the native module's jniLibs and its UniFFI Kotlin bindings beside the module's
-# own Kotlin, the Android project from app.json and app.config.js with `expo prebuild` (generated
-# every time, never committed), and Gradle's release build: Hermes bytecode, arm64-v8a only. The
-# version is the repository's (the root package.json).
+# Build the Android app's APK and AAB (docs/mobile-rn.md §6): the React Native app, which since
+# 0.0.50 is the Android app under the Tauri phone app's package (user decision 2026-10-09). The
+# Rust shell for arm64 with cargo-ndk into the native module's jniLibs and its UniFFI Kotlin
+# bindings beside the module's own Kotlin, the Android project from app.json and app.config.js
+# with `expo prebuild` (generated every time, never committed), and Gradle's release build:
+# Hermes bytecode, arm64-v8a only. The version is the repository's (the root package.json).
 #
 # Usage: build-android-rn.sh [--unsigned]
 #   (default)   signed with the Android debug key: a build to install and try, not a release.
 #   --unsigned  signed with nothing (app.config.js leaves Gradle's release build type unsigned):
-#               the release candidate and CI sign it in a step of their own
-#               (.github/scripts/sign-android-package.sh --app mobile-rn).
+#               the release candidate and CI sign both in a step of their own
+#               (.github/scripts/sign-android-package.sh).
 #
 # Needs ANDROID_HOME (platforms 36), NDK_HOME (clang for the Rust shell), JAVA_HOME (17+), the
 # Rust target aarch64-linux-android, cargo-ndk, and `pnpm install` at the root. React Native's
 # Gradle plugin compiles against a JDK 17 toolchain: JAVA_TOOLCHAINS (comma-separated JDK homes)
 # names one when JAVA_HOME is another version, since Gradle's own download of it comes from GitHub.
-# Writes dist/android-rn/Voltip-RN_<version>_android_arm64.apk (with --unsigned
-# Voltip-RN_<version>_android_arm64-unsigned.apk) and build-info.txt beside it.
+# Writes dist/android-rn/Voltip_<version>_android_arm64.apk and .aab (with --unsigned
+# Voltip_<version>_android_arm64-unsigned.apk and .aab) and build-info.txt beside them.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 unsigned=0
@@ -38,6 +39,7 @@ app=apps/mobile-rn
 version=$(node -p "require('./package.json').version")
 out=dist/android-rn
 mkdir -p "$out"
+rm -f "$out"/Voltip*_android_arm64*.apk "$out"/Voltip*_android_arm64*.aab
 
 # 1. The Rust shell and its bindings. cargo-ndk names the NDK's clang for the cc crate and strips
 # nothing; the release profile leaves this crate's symbols in too (the root Cargo.toml).
@@ -68,20 +70,25 @@ voltip_scan_provider_keys "$lib" build-android-rn
 (cd "$app" && CI=1 VOLTIP_RN_UNSIGNED=$unsigned npx expo prebuild --platform android --clean --no-install)
 python3 scripts/release/third-party-notices.py --app mobile-rn --version "$version" --out "$app/android/app/src/main/assets/THIRD-PARTY-NOTICES.txt"
 
-# 3. Gradle. Four workers and a 4 GB heap: the Kotlin and C++ compiles of the RN libraries are heavy.
+# 3. Gradle: the APK to install from the release and the AAB for Google Play, from one build. Four
+# workers and a 4 GB heap: the Kotlin and C++ compiles of the RN libraries are heavy.
 (cd "$app/android" && ./gradlew --no-daemon --max-workers=4 -Dorg.gradle.jvmargs=-Xmx4g \
   -Porg.gradle.java.installations.paths="$JAVA_HOME${JAVA_TOOLCHAINS:+,$JAVA_TOOLCHAINS}" \
   -Porg.gradle.java.installations.auto-download=false \
-  -PreactNativeArchitectures=arm64-v8a assembleRelease)
+  -PreactNativeArchitectures=arm64-v8a assembleRelease bundleRelease)
+outputs=$app/android/app/build/outputs
 if [ "$unsigned" = 1 ]; then
-  apk=$out/Voltip-RN_${version}_android_arm64-unsigned.apk
-  cp "$app/android/app/build/outputs/apk/release/app-release-unsigned.apk" "$apk"
+  apk=$out/Voltip_${version}_android_arm64-unsigned.apk aab=$out/Voltip_${version}_android_arm64-unsigned.aab
+  cp "$outputs/apk/release/app-release-unsigned.apk" "$apk"
 else
-  apk=$out/Voltip-RN_${version}_android_arm64.apk
-  cp "$app/android/app/build/outputs/apk/release/app-release.apk" "$apk"
+  apk=$out/Voltip_${version}_android_arm64.apk aab=$out/Voltip_${version}_android_arm64.aab
+  cp "$outputs/apk/release/app-release.apk" "$apk"
 fi
-notices=$(unzip -p "$apk" assets/THIRD-PARTY-NOTICES.txt | head -1) || true
-[ "$notices" = "Voltip $version — third-party notices" ] || { echo "build-android-rn: the APK's assets/THIRD-PARTY-NOTICES.txt is missing or not this version's: $notices" >&2; exit 1; }
+cp "$outputs/bundle/release/app-release.aab" "$aab"
+for package in "$apk:assets" "$aab:base/assets"; do
+  notices=$(unzip -p "${package%%:*}" "${package#*:}/THIRD-PARTY-NOTICES.txt" | head -1) || true
+  [ "$notices" = "Voltip $version — third-party notices" ] || { echo "build-android-rn: ${package%%:*} has no ${package#*:}/THIRD-PARTY-NOTICES.txt of this version: $notices" >&2; exit 1; }
+done
 
 # 4. No provider key in the package. Every entry is scanned as it is, except the JS bundle: it is
 # Hermes bytecode, whose string table packs strings back to back, so icon names such as
@@ -91,10 +98,11 @@ notices=$(unzip -p "$apk" assets/THIRD-PARTY-NOTICES.txt | head -1) || true
 scan=$(mktemp -d)
 trap 'rm -rf "$scan"' EXIT
 unzip -q "$apk" -d "$scan/apk"
+unzip -q "$aab" -d "$scan/aab"
 while IFS= read -r -d '' entry; do
-  [ "${entry#"$scan/apk/"}" = assets/index.android.bundle ] && continue
+  case "${entry#"$scan/"}" in apk/assets/index.android.bundle | aab/base/assets/index.android.bundle) continue ;; esac
   voltip_scan_provider_keys "$entry" build-android-rn
-done < <(find "$scan/apk" -type f -print0)
+done < <(find "$scan/apk" "$scan/aab" -type f -print0)
 map=$app/android/app/build/intermediates/sourcemaps/react/release/index.android.bundle.packager.map
 python3 - "$map" >"$scan/bundled-sources.txt" <<'PY'
 import json, sys
@@ -124,6 +132,8 @@ aapt2=$(printf '%s\n' "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
   echo "ndk: $(basename "$NDK_HOME")  java: $("$JAVA_HOME/bin/java" -version 2>&1 | head -1)"
   echo "apk: $apk"
   echo "size: $(stat -c %s "$apk") bytes  sha256: $(sha256sum "$apk" | cut -d' ' -f1)"
+  echo "aab: $aab"
+  echo "size: $(stat -c %s "$aab") bytes  sha256: $(sha256sum "$aab" | cut -d' ' -f1)"
   "$aapt2" dump badging "$apk" | grep -E "^package:|^sdkVersion|^targetSdkVersion|^native-code|^application-label:"
   echo "native libs:"; unzip -l "$apk" | awk '/lib\//{print "  " $4 " (" $1 " bytes)"}'
 } | tee "$out/build-info.txt"

@@ -98,8 +98,8 @@ smoke-desktop: ## Build and run the real Tauri desktop app under Xvfb, screensho
 	./scripts/smoke-desktop-linux.sh docs/acceptance/screens/tauri/desktop-linux-xvfb.png
 
 .PHONY: android-apk
-android-apk: ## Build the arm64 debug APK of the mobile shell (needs ANDROID_HOME, NDK_HOME, JAVA_HOME)
-	./scripts/build-android-debug.sh dist/android/build-info.txt
+android-apk: ## Build the Android app's arm64 APK and AAB, debug-signed (the React Native app; needs ANDROID_HOME, NDK_HOME, JAVA_HOME, cargo-ndk)
+	./scripts/build-android-rn.sh
 
 .PHONY: android-clippy
 android-clippy: frontend-dist-dirs ## clippy -D warnings for aarch64-linux-android: every workspace crate the phone links (needs NDK_HOME)

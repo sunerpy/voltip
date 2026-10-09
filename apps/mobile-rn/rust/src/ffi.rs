@@ -154,7 +154,12 @@ impl VoltipShell {
         RUNNING
             .get_or_start(host, |host| {
                 let store = platform_store()?;
-                let config = phone_config(PathBuf::from(data_dir), &app_version);
+                let data_dir = PathBuf::from(data_dir);
+                // An update from the Tauri phone app (0.0.49 and earlier): its files first.
+                if let Some(root) = crate::legacy::app_root_of(&data_dir) {
+                    crate::legacy::adopt_tauri_data(root, &data_dir);
+                }
+                let config = phone_config(data_dir, &app_version);
                 let shell = Self::start_in(runtime()?.handle().clone(), config, store, phone_ports, host)?;
                 tracing::info!(version = %app_version, "voltip shell started");
                 Ok(shell)
