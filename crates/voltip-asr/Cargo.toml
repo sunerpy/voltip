@@ -1,0 +1,36 @@
+[package]
+name = "voltip-asr"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Speech-to-text clients for the dictation pipeline: OpenAI-compatible multipart /v1/audio/transcriptions, and Alibaba Cloud Model Studio's chat, multimodal and realtime WebSocket protocols."
+
+[lints]
+workspace = true
+
+[dependencies]
+# Model Studio (src/dashscope.rs, src/duplex.rs): the WAV as a base64 data URI, the realtime
+# models' WebSocket task protocol (tokio-tungstenite, Mozilla's roots on every target like the relay
+# connection; rustls pinned to aws-lc-rs, reqwest's provider), task ids.
+base64.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+webpki-root-certs.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+webpki-root-certs.workspace = true
+wiremock.workspace = true

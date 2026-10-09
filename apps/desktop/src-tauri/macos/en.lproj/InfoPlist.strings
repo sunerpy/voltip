@@ -1,0 +1,4 @@
+/* Shown by macOS in the microphone consent prompt (Info.plist NSMicrophoneUsageDescription). */
+"NSMicrophoneUsageDescription" = "Voltip records only while you dictate, to turn your speech into text.";
+/* Shown by macOS 14.2+ in the consent prompt for recording other apps' sound (Info.plist NSAudioCaptureUsageDescription, docs/dictation.md §22). */
+"NSAudioCaptureUsageDescription" = "Voltip records the sound your computer plays only while you dictate with computer audio chosen as the source.";

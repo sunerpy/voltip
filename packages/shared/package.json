@@ -1,0 +1,33 @@
+{
+  "name": "@voltip/shared",
+  "version": "0.0.0",
+  "private": true,
+  "description": "IPC contract (zod), Backend interface, the Tauri backend; the in-memory mock (./mock) and typed fixtures for the browser preview and tests.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./mock": "./src/mock-backend.ts",
+    "./fixtures": "./src/fixtures/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --type-aware src && tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check ."
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.2",
+    "@vitest/coverage-v8": "5.0.1",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
+  }
+}

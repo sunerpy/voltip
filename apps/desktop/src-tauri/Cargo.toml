@@ -1,0 +1,176 @@
+[package]
+name = "voltip-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Voltip desktop shell (Windows, macOS, Linux)."
+build = "build.rs"
+
+# The workspace forbids `unsafe_code`. This crate lowers that to `deny` for two FFI modules, since
+# `forbid` cannot be relaxed per module: the Win32 token / desktop / registry queries behind
+# `inject_preflight` and the microphone consent check (`src/platform/windows.rs`), and `_exit` on
+# Linux (`src/exit.rs`). lib.rs keeps `forbid` on macOS; each module carries `#![allow(unsafe_code)]`
+# with a SAFETY comment on every block. The clippy lints mirror `[workspace.lints.clippy]`.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+
+[lib]
+name = "voltip_desktop_lib"
+# Only the desktop binaries, the tests and the examples link it. Tauri's mobile `staticlib` and
+# `cdylib` made every dependency of a release build compile to machine code as well as to bitcode
+# (tests/bundle.rs, regression_the_desktop_library_is_an_rlib_only).
+crate-type = ["rlib"]
+
+# The keychain pre-install harness of the macOS CI legs. Not an example: an example brings the
+# dev-dependencies, and their features recompiled the app build's crates
+# (tests/bundle.rs, regression_the_keychain_harness_is_a_bin_behind_its_own_feature). `cargo tauri
+# build` skips a bin whose required features are off.
+[[bin]]
+name = "keychain_preinstall"
+path = "src/bin/keychain_preinstall.rs"
+required-features = ["keychain-harness"]
+
+[build-dependencies]
+# build.rs reads the app version from package.json (already in the graph through tauri-build).
+serde_json.workspace = true
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+async-trait.workspace = true
+directories.workspace = true
+uuid.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# `macos-private-api`: the pill window (src/overlay.rs) is transparent, which on macOS needs the
+# private NSWindow API (`app.macOSPrivateApi` in tauri.conf.json; tauri-build requires the two to
+# agree, and it reads only this table). No effect on the other platforms. The app is not meant for
+# the Mac App Store, which rejects private API use.
+tauri = { version = "=2.11.6", default-features = false, features = ["wry", "macos-private-api"] }
+tauri-plugin-opener = "=2.5.4"
+tauri-plugin-global-shortcut = "=2.3.2"
+# The save dialog of 导出字幕 / 导出文本 (src/export.rs, docs/dictation.md §22); called from Rust
+# only. 2.7.3 is the newest release for tauri 2.11 (2.8 needs tauri 2.12).
+tauri-plugin-dialog = "=2.7.3"
+# `voltip --toggle` / `--cancel` reach the running instance (docs/dictation.md §13). No default
+# features: `semver` (version comparison between instances) and `deep-link` are not needed.
+tauri-plugin-single-instance = { version = "=2.4.3", default-features = false }
+clap.workspace = true
+# In-app updates (src/update.rs). No default features: TLS comes from the workspace's reqwest
+# `rustls` feature (aws-lc-rs) through feature unification; the plugin's own `rustls-tls` default
+# would add a second rustls provider (ring) and make every `reqwest::Client::builder()` in the
+# process panic until one is installed explicitly. `zip` (Tauri v1 compressed bundles) is not needed:
+# the CLI's v2 artefacts are the raw NSIS installer / `.app.tar.gz` / AppImage.
+tauri-plugin-updater = { version = "=2.12.0", default-features = false }
+parking_lot.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+voltip-asr.workspace = true
+voltip-cloud.workspace = true
+voltip-asr-local.workspace = true
+voltip-audio.workspace = true
+voltip-core = { workspace = true, features = ["keyring"] }
+voltip-identity = { workspace = true, features = ["keyring"] }
+voltip-inject.workspace = true
+# Permission / activation-policy / preflight tables (docs/dictation.md §15); the OS calls live in
+# src/platform/. Path dependency: the leaf crate is checked for the darwin and Windows targets on
+# its own, so it is deliberately not part of the shared workspace table.
+voltip-platform = { path = "../../../crates/voltip-platform" }
+# The lone-key trigger's low-level input hooks (docs/dictation.md §13.1).
+voltip-hooks = { path = "../../../crates/voltip-hooks" }
+voltip-refine.workspace = true
+# The local speech service's HTTP layer (docs/dictation.md §23.6).
+voltip-serve.workspace = true
+voltip-tauri-bridge.workspace = true
+# Not used from Rust (voltip-asr-local → sherpa-onnx links it): named here for build order only.
+# build.rs stages the sherpa-onnx runtime that this crate's build script downloads and copies into
+# the profile directory, and Cargo runs a dependency's build script first only for an *immediate*
+# dependency with a `links` key (sherpa-onnx-sys has `links = "sherpa-onnx"`). Without this line a
+# fresh build raced it and lost whenever the download was slow (native Windows, 2026-09-26:
+# "resource path `resources\windows\onnxruntime_providers_shared.dll` doesn't exist").
+sherpa-onnx-sys.workspace = true
+
+# The tray (src/platform/tray.rs) exists where the shell is a background utility. Linux keeps the
+# base feature set: `tray-icon` there needs libayatana-appindicator at link time, and the Linux
+# shell has no tray.
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri = { version = "=2.11.6", default-features = false, features = ["wry", "tray-icon"] }
+# TCC checks / requests for the microphone and Accessibility (docs/dictation.md §15.1). Called
+# from Rust (`src/platform/macos.rs`); the plugin's own webview commands are not
+# registered, so no capability grants them.
+tauri-plugin-macos-permissions = "=2.3.0"
+# The frontmost application for scenes (docs/dictation.md §18.2): `NSWorkspace.frontmostApplication`.
+# The exact versions tray-icon / muda already pull; only the two AppKit classes the probe touches.
+objc2 = "=0.6.4"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSEvent", "NSRunningApplication", "NSWorkspace"] }
+# The tray menu's language when `settings.locale` is `system` (`NSLocale.preferredLanguages`); the
+# version objc2-app-kit already pulls.
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSLocale", "NSString"] }
+# The keychain hand-over of an in-app update (src/keychain_handoff.rs): this build's designated
+# requirement and cdhash, and the other process's code; the versions voltip-identity already pulls.
+core-foundation = "=0.10.1"
+core-foundation-sys = "=0.8.7"
+security-framework = "=3.7.0"
+security-framework-sys = "=2.17.0"
+# The updater has already minisign-verified these bytes. Before replacing the running bundle,
+# keychain_handoff expands its macOS `.app.tar.gz` to start the staged build and persist secrets in
+# that build's cdhash partition. Keep the exact versions already in tauri-plugin-updater's graph.
+flate2 = "=1.1.10"
+tar = "=0.4.46"
+tempfile.workspace = true
+
+# The foreground application on X11 / XWayland (docs/dictation.md §18.2, `src/platform/linux.rs`);
+# the version enigo already pulls.
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "=0.14.0", features = ["xinput"] }
+# `_exit` (src/exit.rs); the version the graph already has.
+libc = "=0.2.189"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+tauri = { version = "=2.11.6", default-features = false, features = ["wry", "tray-icon"] }
+# Same version tokio / tempfile / mio already pull, so the cross-build compiles it once. Feature
+# set = exactly what src/platform/windows.rs calls: foreground window → process → token integrity
+# level, the input desktop name, the CapabilityAccessManager consent store in the registry, for
+# the tray the display language and the small-icon size at the system DPI, and for the history
+# paste the Z order below Voltip's window (DWM's cloaked flag).
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Dwm",
+    "Win32_Security",
+    "Win32_System_Registry",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tauri = { version = "=2.11.6", default-features = false, features = ["wry", "test"] }
+# tests/bundle.rs: the merged per-target tauri.*.conf.json through Tauri's own config schema (the
+# version tauri-build already resolves, so nothing new is compiled).
+tauri-utils = { version = "=2.9.3", default-features = false }
+# tests/bundle.rs: merges a --config overlay the way the Tauri CLI does (the version tauri-utils
+# already uses).
+json-patch = { version = "=4.2.0", default-features = false }
+tempfile.workspace = true
+voltip-audio = { workspace = true, features = ["test-support"] }
+voltip-pairing.workspace = true
+wiremock.workspace = true
+
+[features]
+# Enabled by `tauri build`: serve the bundled frontend instead of the dev server URL.
+custom-protocol = ["tauri/custom-protocol"]
+# Local models on the GPU through Vulkan (Linux / Windows; macOS always has Metal). The packages
+# build with it (scripts/build-{linux,windows}-x64.sh); it needs the Vulkan SDK at build time, see
+# `voltip-asr-local`'s `vulkan` feature.
+gpu-vulkan = ["voltip-asr-local/vulkan"]
+# Builds the keychain pre-install harness (the `keychain_preinstall` bin above).
+keychain-harness = []

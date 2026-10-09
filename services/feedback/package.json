@@ -1,0 +1,23 @@
+{
+  "name": "@voltip/feedback-worker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Voltip feedback endpoint: a Cloudflare Worker that validates in-app feedback and stores it in D1.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --type-aware src && tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check ."
+  },
+  "devDependencies": {
+    "@types/node": "26.6.2",
+    "@vitest/coverage-v8": "5.0.1",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
+  }
+}

@@ -1,0 +1,41 @@
+[package]
+name = "voltip-cloud"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The cloud recognition and clean-up clients (voltip-asr, voltip-refine) as the core's Transcriber and Refiner ports, shared by the desktop and the phone."
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+# In-app feedback (src/feedback.rs): the attachments' SHA-256 and staging ids, the report to the
+# endpoint; the versions and features the ASR and refine clients already build.
+hex.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+# A realtime model's stream (src/dashscope.rs): its WebSocket task on the core's runtime.
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+voltip-asr.workspace = true
+voltip-core.workspace = true
+voltip-refine.workspace = true
+
+# Android: Mozilla's root store for the shells' own requests (feedback, the phone's update check),
+# as voltip-asr and voltip-refine.
+[target.'cfg(target_os = "android")'.dependencies]
+webpki-root-certs.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+webpki-root-certs.workspace = true
+wiremock.workspace = true

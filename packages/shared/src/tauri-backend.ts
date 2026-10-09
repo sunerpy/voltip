@@ -1,0 +1,302 @@
+import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { z } from "zod";
+import { listen as tauriListen } from "@tauri-apps/api/event";
+
+import type { Backend, EventListener, FrameListener, Unsubscribe } from "./backend";
+import {
+  type ArgsOf,
+  type AttachmentFile,
+  type ExportFormat,
+  type FeedbackDraft,
+  type HistoryQueryArgs,
+  type MutationCommand,
+  type PreviewDraft,
+  type Permission,
+  type GuidePage,
+  type ProjectLink,
+  type ProviderId,
+  UI_EVENT_NAME,
+  appRefSchema,
+  audioDeviceSchema,
+  audioOutputsSchema,
+  builtinPresetTextSchema,
+  exportOutcomeSchema,
+  builtinSceneTermsSchema,
+  feedbackInfoSchema,
+  feedbackReceiptSchema,
+  historyEntrySchema,
+  historyHitsSchema,
+  mirrorEntrySchema,
+  mirrorProfileSchema,
+  historyPageSchema,
+  historyStatsSchema,
+  injectPreflightSchema,
+  levelFrameSchema,
+  pasteOutcomeSchema,
+  permissionReportSchema,
+  stagedAttachmentSchema,
+  uiEventSchema,
+  uiStateSchema,
+  updateStatusSchema,
+  vocabularyPreviewSchema,
+} from "./schema";
+
+/** The part of `@tauri-apps/api/core` `Channel` the backend needs; injectable because the real one
+ *  registers itself with the Tauri runtime on construction and cannot exist in a plain browser. */
+export interface ChannelLike {
+  onmessage: (raw: unknown) => void;
+}
+
+type InvokeFn = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+/** A command whose argument is the raw IPC body (bytes), with its metadata in headers. */
+type InvokeRawFn = (
+  command: string,
+  bytes: Uint8Array,
+  headers: Record<string, string>,
+) => Promise<unknown>;
+type ListenFn = (
+  event: string,
+  handler: (event: { payload: unknown }) => void,
+) => Promise<() => void>;
+
+export interface TauriTransport {
+  invoke: InvokeFn;
+  /** Raw-body commands (`feedback_attachment_add`): the bytes are the body, the rest headers. */
+  invokeRaw: InvokeRawFn;
+  listen: ListenFn;
+  /** Creates the streaming channel handed to `audio_meter_start`; defaults to Tauri's `Channel`. */
+  channel?: () => ChannelLike;
+  /** Where dropped events are reported; defaults to `console.warn`. */
+  warn?: (message: string, detail: unknown) => void;
+}
+
+const newChannel = (): ChannelLike => new Channel();
+
+const defaultTransport: TauriTransport = {
+  invoke: (command, args) => tauriInvoke(command, args),
+  invokeRaw: (command, bytes, headers) => tauriInvoke(command, bytes, { headers }),
+  listen: (event, handler) => tauriListen<unknown>(event, handler),
+  channel: newChannel,
+};
+
+/** Real backend over `@tauri-apps/api`. Payloads are validated with zod before they reach the UI. */
+export class TauriBackend implements Backend {
+  private readonly transport: TauriTransport;
+
+  constructor(transport: Partial<TauriTransport> = {}) {
+    this.transport = { ...defaultTransport, ...transport };
+  }
+
+  async getState() {
+    const raw = await this.transport.invoke("core_state");
+    return uiStateSchema.parse(raw);
+  }
+
+  async invoke<C extends MutationCommand>(name: C, ...args: ArgsOf<C>): Promise<void> {
+    const [payload] = args;
+    await this.transport.invoke(name, payload);
+  }
+
+  async audioDevices() {
+    const raw = await this.transport.invoke("audio_devices");
+    return audioDeviceSchema.array().parse(raw);
+  }
+
+  async audioOutputs() {
+    const raw = await this.transport.invoke("audio_outputs");
+    return audioOutputsSchema.parse(raw);
+  }
+
+  async historyExport(id: string, format: ExportFormat, fileName: string) {
+    const raw = await this.transport.invoke("history_export", { id, format, fileName });
+    return exportOutcomeSchema.parse(raw);
+  }
+
+  async updateStatus() {
+    const raw = await this.transport.invoke("update_status");
+    return updateStatusSchema.parse(raw);
+  }
+
+  async vocabularyPreview(text: string, draft?: PreviewDraft) {
+    const raw = await this.transport.invoke("vocabulary_preview", { text, draft: draft ?? null });
+    return vocabularyPreviewSchema.parse(raw);
+  }
+
+  async rulesExport() {
+    const raw = await this.transport.invoke("rules_export");
+    return z.string().parse(raw);
+  }
+
+  async recentApps() {
+    const raw = await this.transport.invoke("recent_apps");
+    return appRefSchema.array().parse(raw);
+  }
+
+  async historyQuery(args: HistoryQueryArgs) {
+    const raw = await this.transport.invoke("history_query", { ...args });
+    return historyPageSchema.parse(raw);
+  }
+
+  async historyEntry(id: string) {
+    const raw = await this.transport.invoke("history_entry", { id });
+    return historyEntrySchema.nullable().parse(raw);
+  }
+
+  async historyStats(boundaries: readonly number[]) {
+    const raw = await this.transport.invoke("history_stats", { boundaries: [...boundaries] });
+    return historyStatsSchema.parse(raw);
+  }
+
+  async historyHits() {
+    const raw = await this.transport.invoke("history_hits");
+    return historyHitsSchema.parse(raw);
+  }
+
+  async mirrorHistoryQuery(desktop: string, args: HistoryQueryArgs) {
+    const raw = await this.transport.invoke("mirror_history_query", { desktop, ...args });
+    return historyPageSchema.parse(raw);
+  }
+
+  async mirrorHistoryEntry(desktop: string, id: string) {
+    const raw = await this.transport.invoke("mirror_history_entry", { desktop, id });
+    return mirrorEntrySchema.nullable().parse(raw);
+  }
+
+  async mirrorProfile(desktop: string) {
+    const raw = await this.transport.invoke("mirror_profile", { desktop });
+    return mirrorProfileSchema.nullable().parse(raw);
+  }
+
+  async permissionsStatus() {
+    const raw = await this.transport.invoke("permissions_status");
+    return permissionReportSchema.parse(raw);
+  }
+
+  async permissionsRequest(permission: Permission): Promise<void> {
+    await this.transport.invoke("permissions_request", { permission });
+  }
+
+  async providerConsoleOpen(provider: ProviderId): Promise<void> {
+    await this.transport.invoke("provider_console_open", { provider });
+  }
+
+  async guideOpen(page: GuidePage, locale: string): Promise<void> {
+    await this.transport.invoke("guide_open", { page, locale });
+  }
+
+  async projectLinkOpen(link: ProjectLink): Promise<void> {
+    await this.transport.invoke("project_link_open", { link });
+  }
+
+  async modelFolderOpen(id: string): Promise<void> {
+    await this.transport.invoke("model_folder_open", { id });
+  }
+
+  async modelLinkOpen(id: string, file: string, source: number): Promise<void> {
+    await this.transport.invoke("model_link_open", { id, file, source });
+  }
+
+  async feedbackDiagnostics(locale: string) {
+    const raw = await this.transport.invoke("feedback_diagnostics", { locale });
+    return feedbackInfoSchema.parse(raw);
+  }
+
+  async feedbackSubmit(draft: FeedbackDraft) {
+    const raw = await this.transport.invoke("feedback_submit", { ...draft });
+    return feedbackReceiptSchema.parse(raw);
+  }
+
+  async feedbackAttachmentAdd(file: AttachmentFile) {
+    const raw = await this.transport.invokeRaw("feedback_attachment_add", file.bytes, {
+      "x-voltip-name": encodeURIComponent(file.name),
+      "x-voltip-type": file.type,
+    });
+    return stagedAttachmentSchema.parse(raw);
+  }
+
+  async feedbackAttachmentRemove(id: string) {
+    await this.transport.invoke("feedback_attachment_remove", { id });
+  }
+
+  async feedbackAttachmentsClear() {
+    await this.transport.invoke("feedback_attachments_clear");
+  }
+
+  async phoneClipboardRead() {
+    const raw = await this.transport.invoke("phone_clipboard_read");
+    return z.object({ text: z.string().nullable() }).parse(raw).text;
+  }
+
+  async presetsBuiltin() {
+    const raw = await this.transport.invoke("presets_builtin");
+    return builtinPresetTextSchema.array().parse(raw);
+  }
+
+  async scenesBuiltin() {
+    const raw = await this.transport.invoke("scenes_builtin");
+    return builtinSceneTermsSchema.array().parse(raw);
+  }
+
+  async injectPreflight() {
+    const raw = await this.transport.invoke("inject_preflight");
+    return injectPreflightSchema.parse(raw);
+  }
+
+  async pasteText(text: string) {
+    const raw = await this.transport.invoke("paste_text", { text });
+    return pasteOutcomeSchema.parse(raw);
+  }
+
+  async meter(deviceId: string | undefined, onFrame: FrameListener): Promise<Unsubscribe> {
+    const warn = this.warn();
+    const channel = (this.transport.channel ?? newChannel)();
+    let stopped = false;
+    // Tauri's `Channel` is not an EventTarget: `onmessage` is its only delivery hook.
+    // oxlint-disable-next-line unicorn/prefer-add-event-listener
+    channel.onmessage = (raw) => {
+      if (stopped) return;
+      const parsed = levelFrameSchema.safeParse(raw);
+      if (parsed.success) onFrame(parsed.data);
+      else warn("audio meter frame dropped: payload failed validation", parsed.error.issues);
+    };
+    // The shell owns the microphone (one hub, many subscribers): the id names this subscription.
+    const raw = await this.transport.invoke("audio_meter_start", {
+      deviceId: deviceId ?? null,
+      onFrame: channel,
+    });
+    const id = z.number().int().nonnegative().parse(raw);
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      void this.transport.invoke("audio_meter_stop", { id }).catch((e: unknown) => {
+        warn("audio_meter_stop failed", e);
+      });
+    };
+  }
+
+  private warn(): (message: string, detail: unknown) => void {
+    return (
+      this.transport.warn ??
+      ((m, d) => {
+        console.warn(m, d);
+      })
+    );
+  }
+
+  on(listener: EventListener): Unsubscribe {
+    let disposed = false;
+    const warn = this.warn();
+    const ready = this.transport.listen(UI_EVENT_NAME, ({ payload }) => {
+      if (disposed) return;
+      const parsed = uiEventSchema.safeParse(payload);
+      if (parsed.success) listener(parsed.data);
+      else warn("voltip://event dropped: payload failed validation", parsed.error.issues);
+    });
+    return () => {
+      disposed = true;
+      void ready.then((unlisten) => {
+        unlisten();
+      });
+    };
+  }
+}

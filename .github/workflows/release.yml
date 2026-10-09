@@ -1,0 +1,559 @@
+# Release controller for the Voltip desktop app: build once on the release PR, promote the exact
+# bytes after the merge (skill github-project-scaffold, references/release-candidate-promotion.md).
+#
+#   push to main -> release-please -> dispatch_candidate: release-candidate.yml builds, signs,
+#                   attests and seals every package for the release PR head and writes the
+#                   `Release candidate` status the main ruleset requires before that PR can merge
+#   the merge    -> release-please tags it and opens a DRAFT Release -> resolve_release finds the
+#                   one successful candidate for the merged head -> promote verifies it, writes
+#                   latest.json and SHA256SUMS, uploads, checks the remote bytes and publishes
+#
+# Nothing compiles here: promote downloads, verifies, uploads and publishes (contract-tested,
+# scripts/release/test_release_workflows.py). Nothing listens on `push: tags` or `release:`,
+# because events created with GITHUB_TOKEN start no workflows; the candidate is started with
+# `gh workflow run`, which they do start. Recovery (docs/runbook.md): `mode=orchestrate` re-runs
+# release-please and the dispatch; `mode=promote` with a candidate run, or after a backfill run of
+# release-candidate.yml, promotes an existing draft.
+#
+# Voltip's seams in the scaffold template: the version is package.json's (tauri.conf.json reads it,
+# the crates stay at 0.0.0); the candidate is the per-leg evidence updater-json.py collect writes,
+# sealed by scripts/release/candidate.py; the updater is optional (on exactly when the
+# VOLTIP_UPDATE_PUBKEY secret is set), and promote writes latest.json from the release's own asset
+# URLs once every .sig verifies against that pubkey. A pre-release is never marked latest.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "orchestrate re-runs release-please and the candidate dispatch; promote publishes an existing draft"
+        required: true
+        default: orchestrate
+        type: choice
+        options:
+          - orchestrate
+          - promote
+      candidate_run_id:
+        description: "promote: the successful release-candidate.yml run (default: the one the gate status names)"
+        required: false
+        type: string
+      release_pr_number:
+        description: "promote: the merged release PR the candidate certified"
+        required: false
+        type: string
+      candidate_head_sha:
+        description: "promote: the exact commit the candidate built"
+        required: false
+        type: string
+      release_tag:
+        description: "promote: the draft's tag, for example v0.0.4"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-controller
+  cancel-in-progress: false
+
+env:
+  GATE_CONTEXT: Release candidate
+
+jobs:
+  trust:
+    name: Validate controller identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the workflow of protected main
+        env:
+          REF_PROTECTED: ${{ github.ref_protected }}
+          RUN_REF: ${{ github.ref }}
+          RUN_SHA: ${{ github.sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_PROTECTED" != true ] || [ "$RUN_REF" != refs/heads/main ] || [ "$WORKFLOW_SHA" != "$RUN_SHA" ]; then
+            echo "::error title=Release controller::run this workflow only from protected main"
+            exit 1
+          fi
+
+  release_please:
+    name: Release Please
+    needs: trust
+    if: github.event_name == 'push' || inputs.mode == 'orchestrate'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      pr: ${{ steps.release.outputs.pr }}
+      release_created: ${{ steps.release.outputs.release_created }}
+      sha: ${{ steps.release.outputs.sha }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  dispatch_candidate:
+    name: Dispatch release candidate
+    needs: [trust, release_please]
+    if: needs.release_please.result == 'success' && needs.release_please.outputs.release_created != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Resolve the one open release PR and check it sits on main
+        id: release_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR_JSON: ${{ needs.release_please.outputs.pr }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # release-please reports the PR it created or updated; when the PR body did not change it
+          # reports nothing and the open-PR search below finds the existing one.
+          number=""
+          if [ -n "$RELEASE_PR_JSON" ]; then
+            number=$(jq -r '.number // empty' <<<"$RELEASE_PR_JSON")
+          fi
+          if [ -z "$number" ]; then
+            prs=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=main&per_page=100")
+            mapfile -t rows < <(jq -r '.[]
+              | select(.head.repo.full_name == env.GITHUB_REPOSITORY)
+              | select(.head.ref | startswith("release-please--branches--main--"))
+              | select([.labels[].name] | index("autorelease: pending") != null)
+              | .number' <<<"$prs")
+            if [ "${#rows[@]}" -eq 0 ]; then
+              echo "::notice title=Release controller::no release PR needs a candidate"
+              echo "dispatch=false" >>"$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "${#rows[@]}" -ne 1 ]; then
+              echo "::error title=Release controller::expected one open release PR, found ${#rows[@]}"
+              exit 1
+            fi
+            number=${rows[0]}
+          fi
+          [[ "$number" =~ ^[1-9][0-9]*$ ]] || { echo "::error title=Release controller::release PR number is invalid"; exit 1; }
+
+          pr=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${number}")
+          head_sha=$(jq -r '.head.sha' <<<"$pr")
+          if [ "$(jq -r '.state' <<<"$pr")" != open ] || [ "$(jq -r '.base.ref' <<<"$pr")" != main ] ||
+            [ "$(jq -r '.head.repo.full_name' <<<"$pr")" != "$GITHUB_REPOSITORY" ] ||
+            [ "$(jq -r '.user.login' <<<"$pr")" != "github-actions[bot]" ] ||
+            [[ "$(jq -r '.head.ref' <<<"$pr")" != release-please--branches--main--* ]] ||
+            [ "$(jq -r '[.labels[].name] | index("autorelease: pending") != null' <<<"$pr")" != true ] ||
+            ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Release controller::release PR #${number} identity is invalid"
+            exit 1
+          fi
+
+          # A candidate is promotable only when the squash-merged tree equals the head's tree, so
+          # the head must sit on the current main. release-please leaves the PR alone when its body
+          # would not change (a ci: or docs: push), and the head is then behind.
+          compare=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${RUN_SHA}...${head_sha}")
+          behind_by=$(jq -r '.behind_by' <<<"$compare")
+          ahead_by=$(jq -r '.ahead_by' <<<"$compare")
+          if [ "$behind_by" != 0 ] || [ "$ahead_by" -lt 1 ]; then
+            echo "::notice title=Release controller::release PR #${number} head ${head_sha} is behind main by ${behind_by}; no candidate dispatched"
+            {
+              echo "### Release PR head is stale"
+              echo
+              echo "Release PR #${number} at \`${head_sha}\` does not sit on main \`${RUN_SHA}\`"
+              echo "(behind by ${behind_by} commit(s)); a candidate built from it could never be promoted."
+              echo
+              echo "Press **Update branch** on the pull request (or \`gh api -X PUT repos/${GITHUB_REPOSITORY}/pulls/${number}/update-branch\`),"
+              echo "then run this workflow with mode \`orchestrate\`, or wait for the next push that changes the release notes."
+            } >>"$GITHUB_STEP_SUMMARY"
+            echo "dispatch=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "dispatch=true"
+            echo "number=${number}"
+            echo "head_sha=${head_sha}"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Dispatch the candidate for the exact head
+        if: steps.release_pr.outputs.dispatch == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.release_pr.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.release_pr.outputs.number }}
+          RUN_SHA: ${{ github.sha }}
+        run: >-
+          gh workflow run release-candidate.yml --repo "$GITHUB_REPOSITORY" --ref main
+          -f release_pr_number="$PR_NUMBER" -f expected_head_sha="$HEAD_SHA"
+          -f expected_base_sha="$RUN_SHA" -f mode=automatic
+
+      - name: Record the merge boundary
+        if: steps.release_pr.outputs.dispatch == 'true'
+        env:
+          HEAD_SHA: ${{ steps.release_pr.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.release_pr.outputs.number }}
+        run: |
+          {
+            echo "### Release candidate dispatched"
+            echo
+            echo "Release PR #${PR_NUMBER} is being built and certified at \`${HEAD_SHA}\`."
+            echo "Merge it (squash) once \`${GATE_CONTEXT}\` is green on that exact head; the merge"
+            echo "then publishes these bytes without another build."
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  resolve_release:
+    name: Resolve release and candidate
+    needs: [trust, release_please]
+    if: >-
+      always() && !cancelled() && needs.trust.result == 'success' &&
+      ((needs.release_please.result == 'success' && needs.release_please.outputs.release_created == 'true') ||
+       (github.event_name == 'workflow_dispatch' && inputs.mode == 'promote'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      # Drafts are invisible to a read-only contents token. This job inspects the draft and
+      # mutates nothing; `gh release view` resolves drafts through GraphQL (REST releases/tags/TAG
+      # returns published releases only).
+      contents: write
+      pull-requests: read
+      statuses: read
+    outputs:
+      candidate_head_sha: ${{ steps.candidate.outputs.head_sha }}
+      candidate_run_attempt: ${{ steps.candidate.outputs.run_attempt }}
+      candidate_run_id: ${{ steps.candidate.outputs.run_id }}
+      candidate_workflow_sha: ${{ steps.candidate.outputs.workflow_sha }}
+      release_pr_head_sha: ${{ steps.candidate.outputs.pr_head_sha }}
+      release_pr_number: ${{ steps.candidate.outputs.pr_number }}
+      tag: ${{ steps.identity.outputs.tag }}
+      tree_sha: ${{ steps.identity.outputs.tree_sha }}
+      version: ${{ steps.identity.outputs.version }}
+    steps:
+      - name: Checkout trusted release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-tooling
+          persist-credentials: false
+
+      - name: Resolve the tag
+        id: release_input
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECOVERY_TAG: ${{ inputs.release_tag }}
+          RELEASE_CREATED: ${{ needs.release_please.outputs.release_created }}
+          RELEASE_SHA: ${{ needs.release_please.outputs.sha }}
+          RELEASE_TAG: ${{ needs.release_please.outputs.tag_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$RELEASE_CREATED" = true ]; then tag=$RELEASE_TAG; else tag=$RECOVERY_TAG; fi
+          sha=$(bash .release-tooling/.github/scripts/resolve-release-gate.sh --peel-tag "$tag")
+          if [ "$RELEASE_CREATED" = true ] && [ "$RELEASE_SHA" != "$sha" ]; then
+            echo "::error title=Release identity::release-please sha ${RELEASE_SHA} differs from the peeled tag ${sha}"
+            exit 1
+          fi
+          {
+            echo "tag=${tag}"
+            echo "sha=${sha}"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Checkout the exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.release_input.outputs.tag }}
+          path: source
+          persist-credentials: false
+
+      - name: Cross-check tag, package version, tree and draft
+        id: identity
+        env:
+          EXPECTED_RELEASE_SHA: ${{ steps.release_input.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release_input.outputs.tag }}
+        run: |
+          set -euo pipefail
+          release_sha=$(git -C source rev-parse HEAD)
+          if [ "$release_sha" != "$EXPECTED_RELEASE_SHA" ]; then
+            echo "::error title=Release identity::the tag resolved to an unexpected commit"
+            exit 1
+          fi
+          version=$(jq -r '.version' source/package.json)
+          if [ "v${version}" != "$TAG" ]; then
+            echo "::error title=Release identity::tag ${TAG} and package.json version ${version} disagree"
+            exit 1
+          fi
+          release=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,tagName)
+          if [ "$(jq -r '.isDraft' <<<"$release")" != true ] || [ "$(jq -r '.tagName' <<<"$release")" != "$TAG" ]; then
+            echo "::error title=Release identity::${TAG} does not own a draft Release"
+            exit 1
+          fi
+          {
+            echo "tag=${TAG}"
+            echo "version=${version}"
+            echo "release_sha=${release_sha}"
+            echo "tree_sha=$(git -C source rev-parse 'HEAD^{tree}')"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Resolve and validate the exact candidate run
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_HEAD_SHA: ${{ inputs.candidate_head_sha }}
+          INPUT_PR_NUMBER: ${{ inputs.release_pr_number }}
+          INPUT_RUN_ID: ${{ inputs.candidate_run_id }}
+          RELEASE_SHA: ${{ steps.identity.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=Candidate resolution::$*"; exit 1; }
+          run_id=$INPUT_RUN_ID
+          pr_number=$INPUT_PR_NUMBER
+          head_sha=$INPUT_HEAD_SHA
+          if [ -z "$pr_number" ] || [ -z "$head_sha" ]; then
+            prs=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}/pulls")
+            mapfile -t candidates < <(jq -r '.[]
+              | select(.merged_at != null and .base.ref == "main")
+              | select(.head.ref | startswith("release-please--branches--main--"))
+              | "\(.number)\t\(.head.sha)"' <<<"$prs")
+            [ "${#candidates[@]}" -eq 1 ] || fail "expected one merged release PR for ${RELEASE_SHA}, found ${#candidates[@]}"
+            pr_number=${candidates[0]%%$'\t'*}
+            head_sha=${candidates[0]#*$'\t'}
+          fi
+
+          pr=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")
+          pr_head_sha=$(jq -r '.head.sha' <<<"$pr")
+          if [ "$(jq -r '.merged' <<<"$pr")" != true ] || [ "$(jq -r '.base.ref' <<<"$pr")" != main ] ||
+            [ "$(jq -r '.head.repo.full_name' <<<"$pr")" != "$GITHUB_REPOSITORY" ] ||
+            [[ "$(jq -r '.head.ref' <<<"$pr")" != release-please--branches--main--* ]]; then
+            fail "pull request #${pr_number} is not the merged release PR"
+          fi
+
+          if [ -z "$run_id" ]; then
+            # Any writer can post a status with this context: only the GitHub Actions bot's count,
+            # and only one that names a run (checked below to be a release-candidate.yml run).
+            statuses=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/commits/${head_sha}/statuses?per_page=100" | jq -s 'add')
+            target_url=$(jq -r --arg context "$GATE_CONTEXT" '
+              map(select(.context == $context and .creator.login == "github-actions[bot]" and .creator.type == "Bot"))
+              | sort_by(.created_at) | last
+              | if . != null and .state == "success" then .target_url else "" end' <<<"$statuses")
+            run_prefix="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/"
+            run_id=${target_url#"$run_prefix"}
+            if [ -z "$target_url" ] || [ "$run_id" = "$target_url" ] || ! [[ "$run_id" =~ ^[1-9][0-9]*$ ]]; then
+              fail "no successful ${GATE_CONTEXT} status from github-actions[bot] names a run for ${head_sha}"
+            fi
+          fi
+          if ! [[ "$run_id" =~ ^[1-9][0-9]*$ ]] || ! [[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            fail "candidate identifiers are invalid"
+          fi
+
+          run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")
+          run_attempt=$(jq -r '.run_attempt' <<<"$run")
+          workflow_sha=$(jq -r '.head_sha' <<<"$run")
+          if [ "$(jq -r '.path' <<<"$run")" != .github/workflows/release-candidate.yml ] ||
+            [ "$(jq -r '.event' <<<"$run")" != workflow_dispatch ] ||
+            [ "$(jq -r '.head_branch' <<<"$run")" != main ] ||
+            [ "$(jq -r '.head_repository.full_name' <<<"$run")" != "$GITHUB_REPOSITORY" ] ||
+            [ "$(jq -r '.status' <<<"$run")" != completed ] || [ "$(jq -r '.conclusion' <<<"$run")" != success ] ||
+            ! [[ "$run_attempt" =~ ^[1-9][0-9]*$ ]] || ! [[ "$workflow_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            fail "run ${run_id} is not a successful release-candidate.yml run of main"
+          fi
+          {
+            echo "run_id=${run_id}"
+            echo "run_attempt=${run_attempt}"
+            echo "pr_number=${pr_number}"
+            echo "head_sha=${head_sha}"
+            echo "pr_head_sha=${pr_head_sha}"
+            echo "workflow_sha=${workflow_sha}"
+          } >>"$GITHUB_OUTPUT"
+
+  promote:
+    name: Promote sealed candidate
+    needs: [trust, release_please, resolve_release]
+    if: always() && !cancelled() && needs.trust.result == 'success' && needs.resolve_release.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    # Downloads, verifies, uploads, publishes: no compiler, no package manager, no project code
+    # (contract-tested). id-token is for the two files written here, latest.json and SHA256SUMS.
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout trusted release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-tooling
+          persist-credentials: false
+
+      - name: Download the candidate by its run id
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-candidate
+          path: candidate
+          run-id: ${{ needs.resolve_release.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+
+      # Every identity, target, size and digest; then the promotable files, from the verified
+      # manifest only (nothing below globs the downloaded directory).
+      - name: Verify the candidate against the release
+        id: verify
+        env:
+          CANDIDATE_HEAD_SHA: ${{ needs.resolve_release.outputs.candidate_head_sha }}
+          CANDIDATE_RUN_ATTEMPT: ${{ needs.resolve_release.outputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ needs.resolve_release.outputs.candidate_run_id }}
+          CANDIDATE_WORKFLOW_SHA: ${{ needs.resolve_release.outputs.candidate_workflow_sha }}
+          RELEASE_PR_HEAD_SHA: ${{ needs.resolve_release.outputs.release_pr_head_sha }}
+          RELEASE_PR_NUMBER: ${{ needs.resolve_release.outputs.release_pr_number }}
+          TAG: ${{ needs.resolve_release.outputs.tag }}
+          TREE_SHA: ${{ needs.resolve_release.outputs.tree_sha }}
+          UPDATER_EXPECTED: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' }}
+          VERSION: ${{ needs.resolve_release.outputs.version }}
+        run: |
+          set -euo pipefail
+          verify=(
+            python3 .release-tooling/scripts/release/candidate.py verify
+            --candidate-root candidate
+            --targets-file .release-tooling/.github/release-targets.json
+            --expected-repository "$GITHUB_REPOSITORY"
+            --expected-workflow-path .github/workflows/release-candidate.yml
+            --expected-workflow-ref refs/heads/main
+            --expected-workflow-sha "$CANDIDATE_WORKFLOW_SHA"
+            --expected-run-id "$CANDIDATE_RUN_ID"
+            --expected-run-attempt "$CANDIDATE_RUN_ATTEMPT"
+            --expected-pr-number "$RELEASE_PR_NUMBER"
+            --expected-head-sha "$CANDIDATE_HEAD_SHA"
+            --expected-pr-head-sha "$RELEASE_PR_HEAD_SHA"
+            --expected-tree-sha "$TREE_SHA"
+            --expected-version "$VERSION"
+            --expected-tag "$TAG"
+            --expected-updater "$UPDATER_EXPECTED"
+          )
+          "${verify[@]}"
+          "${verify[@]}" --print-files >"$RUNNER_TEMP/candidate-files.txt"
+          cat "$RUNNER_TEMP/candidate-files.txt"
+          # The candidate and the release agree on the updater (verified above); the steps below
+          # cannot read secrets in `if:`.
+          echo "updater_enabled=${UPDATER_EXPECTED}" >>"$GITHUB_OUTPUT"
+
+      - name: Verify the provenance of every candidate file
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_SHA: ${{ needs.resolve_release.outputs.candidate_workflow_sha }}
+        run: |
+          set -euo pipefail
+          signer="${GITHUB_REPOSITORY}/.github/workflows/release-candidate.yml"
+          mapfile -t subjects <"$RUNNER_TEMP/candidate-files.txt"
+          [ "${#subjects[@]}" -ge 2 ] || { echo "::error title=Provenance::no candidate files listed"; exit 1; }
+          for subject in "${subjects[@]}"; do
+            gh attestation verify "candidate/${subject}" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$signer" --signer-digest "$WORKFLOW_SHA" --source-digest "$WORKFLOW_SHA" \
+              --deny-self-hosted-runners >/dev/null
+            echo "attested: ${subject}"
+          done
+
+      # Through the mirror-safe installer (2026-10-07: a bare apt-get sat on the Azure mirror until
+      # the job's 20 minutes ran out, and 0.0.45 was published by a rerun). Its downloads get
+      # 3 minutes each, so a slow mirror gives way to archive.ubuntu.com well inside the job.
+      - name: Install minisign
+        env:
+          APT_ATTEMPT_SECONDS: "180"
+        run: |
+          set -euo pipefail
+          .release-tooling/.github/scripts/apt-install.sh minisign
+          minisign -v
+
+      # Decodes the base64 pubkey and each base64 .sig exactly as tauri-plugin-updater does, then
+      # verifies with minisign against the pubkey compiled into the app (VOLTIP_UPDATE_PUBKEY). A
+      # signature from a rotated or wrong key stops the release here, not on user devices.
+      - name: Verify every updater signature against the pubkey the app trusts
+        if: steps.verify.outputs.updater_enabled == 'true'
+        env:
+          PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
+        run: >-
+          python3 .release-tooling/.github/scripts/tauri-release.py verify-signatures
+          --dist candidate/dist --pubkey "$PUBKEY" --expect-updater
+
+      - name: Read the release notes from the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve_release.outputs.tag }}
+        run: gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body >"$RUNNER_TEMP/notes.md"
+
+      # publish/: the verified candidate files, latest.json (single writer; every URL an asset of
+      # this release, all four platforms required, bytes cross-checked with the evidence) and
+      # SHA256SUMS over all of them.
+      - name: Stage the release assets
+        env:
+          TAG: ${{ needs.resolve_release.outputs.tag }}
+          UPDATER_ENABLED: ${{ steps.verify.outputs.updater_enabled }}
+          VERSION: ${{ needs.resolve_release.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir publish
+          while IFS= read -r path; do
+            cp "candidate/${path}" publish/
+          done <"$RUNNER_TEMP/candidate-files.txt"
+          if [ "$UPDATER_ENABLED" = true ]; then
+            python3 .release-tooling/scripts/release/updater-json.py write \
+              --dist candidate/dist --evidence-dir candidate/evidence \
+              --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download" \
+              --tag "$TAG" --version "$VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
+              --require-platform windows-x86_64 --require-platform linux-x86_64 \
+              --require-platform darwin-aarch64 --require-platform darwin-x86_64 \
+              --out publish/latest.json
+          fi
+          (cd publish && find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort | xargs sha256sum >"$RUNNER_TEMP/SHA256SUMS")
+          mv "$RUNNER_TEMP/SHA256SUMS" publish/SHA256SUMS
+          cat publish/SHA256SUMS
+
+      - name: Attest latest.json
+        if: steps.verify.outputs.updater_enabled == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: publish/latest.json
+
+      - name: Attest SHA256SUMS
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: publish/SHA256SUMS
+
+      - name: Upload the assets while the release is a draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve_release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # The staged set: the candidate files by name, then latest.json (with the updater) and SHA256SUMS.
+          uploads=()
+          while IFS= read -r path; do
+            uploads+=("publish/${path##*/}")
+          done <"$RUNNER_TEMP/candidate-files.txt"
+          if [ -f publish/latest.json ]; then uploads+=(publish/latest.json); fi
+          uploads+=(publish/SHA256SUMS)
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${uploads[@]}"
+
+      # Re-verifies every remote asset (name, size, sha256 digest), exactly the staged set, then
+      # flips draft=false and adds --latest unless the release is a prerelease.
+      - name: Verify the remote bytes and publish the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.resolve_release.outputs.tag }}
+        run: >-
+          bash .release-tooling/.github/scripts/publish-release-draft.sh --publish
+          --checksums publish/SHA256SUMS --expect-name SHA256SUMS --exact

@@ -1,0 +1,26 @@
+# cargo-about (scripts/release/third-party-notices.py): the licences a shipped Rust crate may carry,
+# the same allow-list as deny.toml. Build and dev dependencies do not ship.
+accepted = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# The workspace's own crates (`publish = false`) are Voltip itself, under its own licence (LICENSE), not
+# third-party software.
+[private]
+ignore = true

@@ -1,0 +1,32 @@
+[package]
+name = "voltip-transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Transport abstraction for Voltip: connection state machine, reconnect policy, WebSocket relay client, direct LAN host, and the Noise secure channel."
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+futures-util.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
+rustls.workspace = true
+tracing.workspace = true
+url.workspace = true
+voltip-crypto.workspace = true
+voltip-protocol.workspace = true
+voltip-relay.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+voltip-relay = { workspace = true, features = ["server"] }
+tokio = { workspace = true, features = ["test-util"] }

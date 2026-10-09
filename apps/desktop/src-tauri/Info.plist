@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Voltip records only while you dictate, to turn your speech into text.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Voltip records the sound your computer plays only while you dictate with computer audio chosen as the source.</string>
+</dict>
+</plist>

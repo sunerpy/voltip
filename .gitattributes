@@ -1,0 +1,7 @@
+# Every text file checks out with LF on every OS. Git for Windows defaults to core.autocrlf=true,
+# and the IPC contract fixtures (packages/shared/src/fixtures/ipc/) are compared byte for byte with
+# serde's output: a CRLF checkout failed all three fixture tests on native Windows (2026-09-26).
+* text=auto eol=lf
+# cmd.exe mis-parses labels in LF-only batch files.
+*.bat text eol=crlf
+*.cmd text eol=crlf

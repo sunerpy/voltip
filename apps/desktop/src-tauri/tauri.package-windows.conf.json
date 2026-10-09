@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "resources/windows/vulkan-1.dll": "vulkan-1.dll",
+      "resources/windows/vulkan-1-LICENSE.txt": "vulkan-1-LICENSE.txt",
+      "resources/THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt"
+    }
+  }
+}

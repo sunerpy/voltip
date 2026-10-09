@@ -1,0 +1,4 @@
+/* macOS 麦克风授权弹窗里的说明（Info.plist NSMicrophoneUsageDescription）。 */
+"NSMicrophoneUsageDescription" = "Voltip 只在你听写时录音，用来把语音转成文字。";
+/* macOS 14.2 起录制其他应用声音的授权弹窗里的说明（Info.plist NSAudioCaptureUsageDescription，docs/dictation.md §22）。 */
+"NSAudioCaptureUsageDescription" = "Voltip 只在你选择录制电脑声音并开始听写时，录制电脑播放的声音。";

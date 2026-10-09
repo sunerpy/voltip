@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "resources/windows/sherpa-onnx-c-api.dll": "sherpa-onnx-c-api.dll",
+      "resources/windows/onnxruntime.dll": "onnxruntime.dll",
+      "resources/windows/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll"
+    },
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper", "silent": true },
+      "allowDowngrades": false,
+      "nsis": { "installMode": "currentUser" }
+    }
+  }
+}

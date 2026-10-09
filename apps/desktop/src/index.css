@@ -1,0 +1,14 @@
+@import "tailwindcss";
+@import "../../../packages/ui/src/tokens.css";
+@source "../../../packages/ui/src";
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* The overlay window is transparent; only the pill paints. */
+body[data-window="overlay"] {
+  background: transparent;
+}

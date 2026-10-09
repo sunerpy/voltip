@@ -1,0 +1,60 @@
+[package]
+name = "voltip-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Voltip's headless local speech service, for servers without a desktop (docs/dictation.md §23)."
+build = "build.rs"
+
+# The workspace forbids `unsafe_code`. This crate lowers that to `deny` for one FFI module, since
+# `forbid` cannot be relaxed per module: `_exit` on Linux (`src/exit.rs`, the same as the desktop
+# shell's). That module carries `#![allow(unsafe_code)]` on Linux with a SAFETY comment. The clippy
+# lints mirror `[workspace.lints.clippy]`.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+
+[lib]
+name = "voltip_server"
+
+[[bin]]
+name = "voltip-server"
+path = "src/main.rs"
+
+[features]
+default = []
+# The local models' Vulkan backend (docs/dictation.md §10.6); the package build turns it on.
+gpu-vulkan = ["voltip-asr-local/vulkan"]
+
+[dependencies]
+clap.workspace = true
+directories.workspace = true
+tokio = { workspace = true, features = ["signal"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+voltip-asr-local.workspace = true
+voltip-cloud.workspace = true
+voltip-core = { workspace = true, features = ["keyring"] }
+voltip-identity = { workspace = true, features = ["keyring"] }
+voltip-protocol.workspace = true
+voltip-serve.workspace = true
+
+# `_exit` (src/exit.rs); the version the graph already has.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "=0.2.189"
+
+[build-dependencies]
+# build.rs reads the app version from the root package.json.
+serde_json.workspace = true
+
+[dev-dependencies]
+hound.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

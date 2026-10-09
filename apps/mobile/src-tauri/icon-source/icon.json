@@ -1,0 +1,7 @@
+{
+  "default": "voltip.svg",
+  "bg_color": "#0B1220",
+  "android_bg": "voltip-background.svg",
+  "android_fg": "voltip-foreground.svg",
+  "android_monochrome": "voltip-monochrome.svg"
+}

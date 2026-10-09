@@ -1,0 +1,41 @@
+[package]
+name = "voltip-hooks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The lone-key trigger's low-level input hooks (docs/dictation.md §13.1): WH_KEYBOARD_LL / WH_MOUSE_LL on Windows, an active CGEventTap on macOS, XInput 2 raw events on X11. Kept apart from the desktop shell so CI can run them on real Windows and macOS desktops without building the app."
+
+# The Windows hook procedures are Win32 callbacks: unsafe is denied, and allowed in that one module
+# (`#![allow(unsafe_code)]` in src/windows.rs), as in the desktop shell it comes from.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+
+[dependencies]
+tracing.workspace = true
+voltip-platform = { path = "../voltip-platform" }
+
+# The event tap and its run loop: the versions tao and enigo already pull.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "=0.10.1"
+core-graphics = "=0.25.0"
+
+# XInput 2 raw events and the passive button grab: the version enigo already pulls.
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "=0.14.0", features = ["xinput"] }
+
+# The low-level keyboard / mouse hooks, their message loop, and SendInput (the mask key; the tests'
+# input): the version tokio / mio already pull.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }

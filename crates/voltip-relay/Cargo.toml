@@ -1,0 +1,44 @@
+[package]
+name = "voltip-relay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Optional Voltip relay: pairing sessions, six-digit codes, rendezvous channels and ciphertext forwarding. Never sees plaintext."
+
+[lints]
+workspace = true
+
+[features]
+default = ["server"]
+# The axum/tokio WebSocket server. Off for consumers that only want `RelayCore`
+# (the direct LAN transport embeds it).
+server = ["dep:axum", "dep:tokio", "dep:futures-util", "dep:tower"]
+
+[[bin]]
+name = "voltip-relay"
+path = "src/main.rs"
+required-features = ["server"]
+
+[dependencies]
+axum = { workspace = true, optional = true }
+clap.workspace = true
+futures-util = { workspace = true, optional = true }
+parking_lot.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, optional = true, features = ["signal"] }
+tower = { workspace = true, optional = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+voltip-protocol.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+tower.workspace = true
+serde_json.workspace = true

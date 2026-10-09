@@ -1,0 +1,62 @@
+{
+  "expo": {
+    "name": "Voltip",
+    "slug": "voltip-mobile-rn",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#f2f3f6",
+    "android": {
+      "package": "dev.voltip.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundImage": "./assets/adaptive-icon-background.png",
+        "monochromeImage": "./assets/adaptive-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.CHANGE_WIFI_MULTICAST_STATE"
+      ],
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26,
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36,
+            "buildArchs": ["arm64-v8a"],
+            "useLegacyPackaging": true
+          }
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/icon.png",
+          "imageWidth": 96,
+          "backgroundColor": "#f2f3f6",
+          "dark": {
+            "backgroundColor": "#0c0d11"
+          }
+        }
+      ],
+      "expo-localization",
+      "expo-font"
+    ]
+  }
+}

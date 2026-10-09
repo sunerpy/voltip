@@ -1,0 +1,15 @@
+dist/
+coverage/
+node_modules/
+src-tauri/gen/
+target/
+.ruff_cache/
+docs/
+crates/
+*.toml
+*.yml
+*.yaml
+*.md
+.github/
+scripts/
+deploy/

@@ -1,0 +1,70 @@
+@import "tailwindcss";
+@import "../../../packages/ui/src/tokens.css";
+@source "../../../packages/ui/src";
+
+/* The phone's scale: a 16 px rem, so the shared components' sizes are their nominal ones (h-11 is
+   44 px, the smallest touch target; p-4 is the 16 px page padding). The desktop's 13–14 px rem is
+   its density, which 设置 › 外观 sets there; text sizes are pixels on both. */
+:root {
+  --ui-font-size: 16px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+@layer base {
+  html {
+    /* No double-tap zoom: a second tap is a second tap. */
+    touch-action: manipulation;
+    /* No grey flash on a tap: every control draws its own pressed state. */
+    -webkit-tap-highlight-color: transparent;
+  }
+  html,
+  body {
+    /* No glow (Android 11 and earlier), no stretch or bounce (Android 12 and later) and no
+       pull-to-refresh at the ends of a scroll: the page is an app, not a document. The scrolling
+       `main` says the same (App.tsx). */
+    overscroll-behavior: none;
+  }
+  body {
+    font-size: 14px;
+    /* Edge to edge (MainActivity.kt): the header and the tab bar pad themselves by the top and
+       bottom insets, so the status and navigation bars show their surface; the sides pad here. */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    /* Text is selected where it is content (below), not on labels and controls. */
+    user-select: none;
+  }
+  /* No long-press callout on a control. */
+  :where(
+    a,
+    button,
+    img,
+    label,
+    summary,
+    svg,
+    [role="button"],
+    [role="link"],
+    [role="radio"],
+    [role="switch"],
+    [role="tab"]
+  ) {
+    -webkit-touch-callout: none;
+  }
+  /* A native picker is a touch target too: 44 px tall whatever its size (`Select` keeps its own
+     height class; the minimum wins over it). */
+  select {
+    min-height: 2.75rem;
+  }
+  /* What can be selected: the fields, and the text people said (`data-user-text`). */
+  :where(input, textarea, [contenteditable="true"], [data-user-text]) {
+    user-select: text;
+  }
+  /* A result inside a row that opens it is part of that control. */
+  :where(button, [role="button"]) [data-user-text] {
+    user-select: none;
+  }
+}

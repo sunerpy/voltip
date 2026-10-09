@@ -1,0 +1,22 @@
+Local model on the GPU through Vulkan, packaged Windows build (docs/dictation.md §10.6), 2026-09-27.
+
+Package: a pre-release build of Voltip 0.0.1 (then numbered 0.1.0-alpha.0), from scripts/build-windows-x64.sh (cross-built on Linux with the
+Vulkan SDK 1.4.357.1 headers and the Khronos loader vulkan-1.dll 1.4.357.0 shipped beside the exe;
+no built-in engines), run through scripts/smoke-native-cli.ps1.
+Host: Windows Server 2025 Datacenter (build 26100), Intel Xeon Platinum 8259CL, 16 logical CPUs,
+NVIDIA Tesla T4 (driver 32.0.15.8180).
+Sample: the smoke's public zh.wav (5.6 s of Mandarin, sha256 b77f1794…a7ad8e373).
+
+[list-compute] exit=0: voltip-desktop --list-compute
+    cpu	16
+    gpu	Vulkan0	Tesla T4	vulkan	15295
+[transcribe-sense-voice-small] exit=0: voltip-desktop --transcribe-file zh.wav --model sense-voice-small --json
+    {"text":"开饭时间早上9点至下午5点。","model":"sense-voice-small","latency_ms":2211,"backend":"CPU"}
+[transcribe-qwen3-asr-0.6b] exit=0: voltip-desktop --transcribe-file zh.wav --model qwen3-asr-0.6b --json
+    {"text":"开放时间：早上九点至下午五点。","model":"qwen3-asr-0.6b","latency_ms":1930,"backend":"Vulkan0"}
+    log: backend=Vulkan0 load_ms=1645 infer_ms=282
+
+Reading: the exe starts with the bundled loader, `auto` puts Qwen3-ASR on the T4, and SenseVoice
+stays on the CPU as designed. The very first GPU run on this host took 133 s (load 111 s, first
+inference 22 s): the driver compiled every Vulkan pipeline once and cached them; the run above is
+the next one.

@@ -1,0 +1,29 @@
+[package]
+name = "voltip-refine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "OpenAI-compatible chat-completions client that post-processes dictated text (punctuation, fillers, obvious mis-recognitions)."
+
+[lints]
+workspace = true
+
+[dependencies]
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# The pause before a request whose connection failed goes again (client.rs `send`).
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+webpki-root-certs.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+webpki-root-certs.workspace = true
+wiremock.workspace = true

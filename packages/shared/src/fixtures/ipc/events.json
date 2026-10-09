@@ -1,0 +1,4122 @@
+[
+  {
+    "type": "state",
+    "identity": null,
+    "settings": {
+      "schema": 1,
+      "theme": "light",
+      "follow_system_theme": false,
+      "relay_enabled": true,
+      "hotkey": "Ctrl+Alt+Space",
+      "engines": {
+        "asr_provider": "builtin",
+        "llm_provider": "builtin",
+        "refine_enabled": true,
+        "refine_preset": "proofread",
+        "local_device": "auto",
+        "live_preview": true,
+        "output_mode": "whole_take",
+        "vad_trim": false,
+        "chinese_script": "simplified",
+        "inject": "paste"
+      },
+      "locale": "system",
+      "auto_update": false,
+      "activation": "hold",
+      "hold_threshold_ms": 300,
+      "extra_recording_ms": 0,
+      "context_sharing": {
+        "app_name": true,
+        "window_title": false
+      },
+      "edit_hotkey": "Ctrl+Alt+E",
+      "solo_key": null,
+      "lan_discovery": true,
+      "pairing_always_on": false,
+      "history": {
+        "enabled": true,
+        "keep": 20000
+      },
+      "overlay": "bottom",
+      "microphone": null,
+      "recording": {
+        "source": "microphone",
+        "output_device": null,
+        "max_minutes": 10,
+        "echo_cancel": true
+      },
+      "serve": {
+        "enabled": false,
+        "port": 47840
+      }
+    },
+    "secret_backend": "",
+    "app_version": "",
+    "relay": {
+      "source": "none",
+      "state": "disconnected",
+      "attempts": 0
+    },
+    "pairing": {
+      "state": {
+        "state": "idle"
+      },
+      "local_confirmed": false,
+      "peer_confirmed": false
+    },
+    "devices": [],
+    "hotkey": {
+      "pressed": false,
+      "capturing": false,
+      "backend": "",
+      "capabilities": {
+        "global": false,
+        "everywhere": false,
+        "hold": false,
+        "toggle_command": "",
+        "edit_toggle_command": "",
+        "solo_keys": []
+      },
+      "solo_pressed": false
+    },
+    "dictation": {
+      "phase": {
+        "phase": "idle"
+      },
+      "session": 0,
+      "kind": "dictation"
+    },
+    "history_recent": [],
+    "history_total": 0,
+    "engines": {
+      "asr_provider": "builtin",
+      "asr_ready": false,
+      "asr_model": "",
+      "asr_host": "",
+      "local_ready": false,
+      "live_preview_ready": false,
+      "effective_output_mode": "whole_take",
+      "refine_enabled": true,
+      "refine_ready": false,
+      "refine_model": "",
+      "refine_host": "",
+      "inject": "paste",
+      "providers": [],
+      "asr_fallback": {
+        "enabled": false,
+        "in_use": false
+      },
+      "llm_fallback": {
+        "enabled": false,
+        "in_use": false
+      }
+    },
+    "update": {
+      "state": "idle"
+    },
+    "models": [],
+    "dictionary": [],
+    "rules": [],
+    "scenes": [],
+    "presets": [],
+    "nearby": [],
+    "hardware": {
+      "cpu_threads": 0,
+      "gpus": []
+    },
+    "connectivity": {
+      "running": false
+    },
+    "serve": {
+      "available": false,
+      "phase": "off"
+    }
+  },
+  {
+    "type": "mirrors",
+    "mirrors": [
+      {
+        "desktop": "1111111111111111111111111111111111111111111111111111111111111111",
+        "name": "MacBook Pro",
+        "state": "syncing",
+        "entries": 1200,
+        "synced_at_ms": 1758700600000,
+        "profile": {
+          "locale": "system",
+          "theme": "dark",
+          "follow_system_theme": true,
+          "asr_provider": "builtin",
+          "asr_model": "Qwen/Qwen3-ASR-1.7B",
+          "local_model": "qwen3-asr-0.6b",
+          "refine_enabled": true,
+          "llm_provider": "builtin",
+          "refine_model": "qwen/qwen3.8-27b",
+          "preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+          "presets": [],
+          "dictionary": [],
+          "rules": [],
+          "scenes": []
+        }
+      },
+      {
+        "desktop": "1111111111111111111111111111111111111111111111111111111111111111",
+        "name": "Surface",
+        "state": "up_to_date",
+        "entries": 312,
+        "synced_at_ms": 1758700600000,
+        "profile": {
+          "locale": "system",
+          "theme": "dark",
+          "follow_system_theme": true,
+          "asr_provider": "builtin",
+          "asr_model": "Qwen/Qwen3-ASR-1.7B",
+          "local_model": "qwen3-asr-0.6b",
+          "refine_enabled": true,
+          "llm_provider": "builtin",
+          "refine_model": "qwen/qwen3.8-27b",
+          "preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+          "presets": [],
+          "dictionary": [],
+          "rules": [],
+          "scenes": []
+        }
+      },
+      {
+        "desktop": "1111111111111111111111111111111111111111111111111111111111111111",
+        "name": "Studio",
+        "state": "offline",
+        "entries": 87,
+        "synced_at_ms": 1758700600000,
+        "profile": {
+          "locale": "system",
+          "theme": "dark",
+          "follow_system_theme": true,
+          "asr_provider": "builtin",
+          "asr_model": "Qwen/Qwen3-ASR-1.7B",
+          "local_model": "qwen3-asr-0.6b",
+          "refine_enabled": true,
+          "llm_provider": "builtin",
+          "refine_model": "qwen/qwen3.8-27b",
+          "preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+          "presets": [],
+          "dictionary": [],
+          "rules": [],
+          "scenes": []
+        }
+      },
+      {
+        "desktop": "1111111111111111111111111111111111111111111111111111111111111111",
+        "name": "Office",
+        "state": "revoked",
+        "entries": 0
+      },
+      {
+        "desktop": "1111111111111111111111111111111111111111111111111111111111111111",
+        "name": "Old Desk",
+        "state": "needs_upgrade",
+        "entries": 0
+      },
+      {
+        "desktop": "1111111111111111111111111111111111111111111111111111111111111111",
+        "name": "Sixth",
+        "state": "limit",
+        "entries": 0
+      }
+    ]
+  },
+  {
+    "type": "phone_outbox",
+    "too_large": ["9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"]
+  },
+  {
+    "type": "refine_notice",
+    "notice": {
+      "failure": "quota",
+      "at_ms": 1727400000000
+    }
+  },
+  {
+    "type": "refine_notice",
+    "notice": null
+  },
+  {
+    "type": "identity",
+    "device_id": "0f3f1a1e-8d4b-4c8e-9f7a-1c2d3e4f5a6b",
+    "name": "Surface-Laptop",
+    "platform": "windows",
+    "public_key": "1111111111111111111111111111111111111111111111111111111111111111",
+    "fingerprint": "02:D4:49:A3 · 1F:BB:26:7C"
+  },
+  {
+    "type": "settings",
+    "schema": 1,
+    "theme": "graphite",
+    "follow_system_theme": true,
+    "relay_url": "wss://relay.example.test/ws",
+    "relay_enabled": true,
+    "hotkey": "Ctrl+Alt+Space",
+    "engines": {
+      "asr_provider": "builtin",
+      "llm_provider": "groq",
+      "refine_enabled": true,
+      "refine_preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+      "providers": {
+        "groq": {
+          "llm_model": "openai/gpt-oss-20b"
+        },
+        "custom": {
+          "asr_model": "Qwen/Qwen3-ASR-1.7B",
+          "asr_url": "https://asr.example.test",
+          "llm_model": "claude-opus-5-5",
+          "llm_url": "http://127.0.0.1:8787/v1",
+          "llm_api": "responses",
+          "llm_reasoning": "high"
+        }
+      },
+      "local_device": "auto",
+      "language": "zh",
+      "live_preview": true,
+      "output_mode": "whole_take",
+      "vad_trim": false,
+      "chinese_script": "simplified",
+      "inject": "paste",
+      "asr_fallback": {
+        "enabled": true,
+        "models": [
+          {
+            "provider": "custom",
+            "model": "qwen3-asr-flash"
+          },
+          {
+            "provider": "builtin",
+            "model": ""
+          }
+        ]
+      },
+      "llm_fallback": {
+        "enabled": true,
+        "models": [
+          {
+            "provider": "openai",
+            "model": "gpt-6-luna"
+          }
+        ]
+      }
+    },
+    "locale": "zh-cn",
+    "auto_update": true,
+    "activation": "hold_or_toggle",
+    "hold_threshold_ms": 300,
+    "extra_recording_ms": 150,
+    "context_sharing": {
+      "app_name": false,
+      "window_title": true
+    },
+    "edit_hotkey": "Ctrl+Alt+E",
+    "solo_key": "right_ctrl",
+    "lan_discovery": true,
+    "pairing_always_on": true,
+    "history": {
+      "enabled": true,
+      "keep": 200
+    },
+    "overlay": "top",
+    "microphone": "wasapi:{0.0.1.00000000}.{c2}",
+    "recording": {
+      "source": "mixed",
+      "output_device": "wasapi:{0.0.0.00000000}.{a1}",
+      "max_minutes": 60,
+      "echo_cancel": false
+    },
+    "serve": {
+      "enabled": true,
+      "port": 47840,
+      "preset": "prompt",
+      "scene": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f"
+    }
+  },
+  {
+    "type": "relay",
+    "endpoint": "wss://relay.example.test/ws",
+    "source": "user",
+    "state": "reconnecting",
+    "attempts": 2
+  },
+  {
+    "type": "relay",
+    "source": "builtin",
+    "state": "connected",
+    "attempts": 0
+  },
+  {
+    "type": "pairing",
+    "state": {
+      "state": "awaiting_verification"
+    },
+    "session_id": "5eed5eed-0000-4000-8000-00000000c0de",
+    "code": "483 921",
+    "ticket_uri": "voltip://pair?v=1&t=QUJDREVGR0g",
+    "expires_at": 1758700120,
+    "remaining_secs": 87,
+    "safety_code": {
+      "words": ["amber", "canyon", "lantern", "orbit"],
+      "fingerprint": "9F:72:EA:0C · F4:95:36:E3"
+    },
+    "peer": {
+      "device_id": "7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d",
+      "name": "Pixel 10",
+      "platform": "android"
+    },
+    "local_confirmed": true,
+    "peer_confirmed": false
+  },
+  {
+    "type": "pairing",
+    "state": {
+      "state": "failed",
+      "reason": {
+        "kind": "relay",
+        "code": "session_expired"
+      }
+    },
+    "local_confirmed": false,
+    "peer_confirmed": false
+  },
+  {
+    "type": "pairing",
+    "state": {
+      "state": "failed",
+      "reason": {
+        "kind": "timeout"
+      }
+    },
+    "local_confirmed": false,
+    "peer_confirmed": false
+  },
+  {
+    "type": "devices",
+    "devices": [
+      {
+        "device": {
+          "device_id": "7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d",
+          "name": "Pixel 10",
+          "platform": "android",
+          "public_key": "2222222222222222222222222222222222222222222222222222222222222222",
+          "fingerprint": "9F:72:EA:0C · F4:95:36:E3",
+          "trusted_at": 1758700000,
+          "last_seen": 1758700600,
+          "last_connection": "relay",
+          "direct_hints": ["192.168.1.20:47831"],
+          "sync": true,
+          "sync_gen": 3
+        },
+        "connection": {
+          "state": "offline"
+        }
+      },
+      {
+        "device": {
+          "device_id": "c0ffee00-1234-4abc-9def-0123456789ab",
+          "name": "iPad",
+          "platform": "ios",
+          "public_key": "3333333333333333333333333333333333333333333333333333333333333333",
+          "fingerprint": "DE:B0:E3:8C · ED:1E:41:DE",
+          "trusted_at": 1758700000,
+          "sync": false,
+          "sync_gen": 1
+        },
+        "connection": {
+          "state": "connecting"
+        }
+      },
+      {
+        "device": {
+          "device_id": "7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d",
+          "name": "Pixel 10",
+          "platform": "android",
+          "public_key": "2222222222222222222222222222222222222222222222222222222222222222",
+          "fingerprint": "9F:72:EA:0C · F4:95:36:E3",
+          "trusted_at": 1758700000,
+          "last_seen": 1758700600,
+          "last_connection": "relay",
+          "direct_hints": ["192.168.1.20:47831"],
+          "sync": true,
+          "sync_gen": 3
+        },
+        "connection": {
+          "state": "online",
+          "via": "direct"
+        }
+      },
+      {
+        "device": {
+          "device_id": "c0ffee00-1234-4abc-9def-0123456789ab",
+          "name": "iPad",
+          "platform": "ios",
+          "public_key": "3333333333333333333333333333333333333333333333333333333333333333",
+          "fingerprint": "DE:B0:E3:8C · ED:1E:41:DE",
+          "trusted_at": 1758700000,
+          "sync": false,
+          "sync_gen": 1
+        },
+        "connection": {
+          "state": "identity_changed",
+          "presented_fingerprint": "02:D4:49:A3 · 1F:BB:26:7C"
+        }
+      }
+    ]
+  },
+  {
+    "type": "devices",
+    "devices": []
+  },
+  {
+    "type": "trusted",
+    "device_id": "7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d",
+    "name": "Pixel 10",
+    "platform": "android",
+    "public_key": "2222222222222222222222222222222222222222222222222222222222222222",
+    "fingerprint": "9F:72:EA:0C · F4:95:36:E3",
+    "trusted_at": 1758700000,
+    "last_seen": 1758700600,
+    "last_connection": "relay",
+    "direct_hints": ["192.168.1.20:47831"],
+    "sync": true,
+    "sync_gen": 3
+  },
+  {
+    "type": "unpaired",
+    "device_id": "7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d",
+    "name": "Pixel 10",
+    "platform": "android",
+    "public_key": "2222222222222222222222222222222222222222222222222222222222222222",
+    "fingerprint": "9F:72:EA:0C · F4:95:36:E3",
+    "trusted_at": 1758700000,
+    "last_seen": 1758700600,
+    "last_connection": "relay",
+    "direct_hints": ["192.168.1.20:47831"],
+    "sync": true,
+    "sync_gen": 3
+  },
+  {
+    "type": "identity_changed",
+    "previous": {
+      "device_id": "7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d",
+      "name": "Pixel 10",
+      "platform": "android",
+      "public_key": "2222222222222222222222222222222222222222222222222222222222222222",
+      "fingerprint": "9F:72:EA:0C · F4:95:36:E3",
+      "trusted_at": 1758700000,
+      "last_seen": 1758700600,
+      "last_connection": "relay",
+      "direct_hints": ["192.168.1.20:47831"],
+      "sync": true,
+      "sync_gen": 3
+    },
+    "presented_fingerprint": "DE:B0:E3:8C · ED:1E:41:DE"
+  },
+  {
+    "type": "message",
+    "from": "2222222222222222222222222222222222222222222222222222222222222222",
+    "body": "把 fetchUser 改成 async"
+  },
+  {
+    "type": "error",
+    "message": "relay refused: session_expired"
+  },
+  {
+    "type": "hotkey",
+    "registered": "Ctrl+Alt+Space",
+    "pressed": true,
+    "capturing": false,
+    "backend": "global-shortcut · Windows · RegisterHotKey",
+    "edit_registered": "Ctrl+Alt+E",
+    "capabilities": {
+      "global": true,
+      "everywhere": true,
+      "hold": true,
+      "toggle_command": "voltip-desktop --toggle",
+      "edit_toggle_command": "voltip-desktop --edit-toggle",
+      "solo_keys": [
+        "right_ctrl",
+        "right_alt",
+        "right_shift",
+        "right_meta",
+        "mouse_middle",
+        "mouse_back",
+        "mouse_forward"
+      ]
+    },
+    "solo_registered": "mouse_back",
+    "solo_pressed": true
+  },
+  {
+    "type": "hotkey",
+    "error": "Ctrl+Alt+Space 注册失败：already registered",
+    "pressed": false,
+    "capturing": false,
+    "backend": "global-shortcut · Linux · XWayland",
+    "edit_error": "Ctrl+Alt+E 注册失败：already registered",
+    "capabilities": {
+      "global": true,
+      "everywhere": false,
+      "hold": true,
+      "toggle_command": "voltip-desktop --toggle",
+      "edit_toggle_command": "voltip-desktop --edit-toggle",
+      "solo_keys": [
+        "right_ctrl",
+        "right_alt",
+        "right_shift",
+        "right_meta",
+        "mouse_middle",
+        "mouse_back",
+        "mouse_forward"
+      ]
+    },
+    "solo_registered": "right_alt",
+    "solo_pressed": false
+  },
+  {
+    "type": "hotkey",
+    "error": "Ctrl+Alt+Space 未能生效：纯 Wayland 会话不允许应用设置全局快捷键",
+    "pressed": false,
+    "capturing": false,
+    "backend": "global-shortcut · Linux · Wayland",
+    "capabilities": {
+      "global": false,
+      "everywhere": false,
+      "hold": false,
+      "toggle_command": "voltip-desktop --toggle",
+      "edit_toggle_command": "voltip-desktop --edit-toggle",
+      "solo_keys": []
+    },
+    "solo_error": "右 Ctrl 无法单独触发：纯 Wayland 会话不允许应用监听全局按键",
+    "solo_pressed": false
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "idle"
+    },
+    "session": 6,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "listening",
+      "started_at": 1758700600000,
+      "ready": false,
+      "locked": false
+    },
+    "session": 7,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "listening",
+      "started_at": 1758700600180,
+      "ready": true,
+      "live": {
+        "committed": [
+          {
+            "text": "把 fetchUser 改成 async，",
+            "start_ms": 0,
+            "end_ms": 1480
+          }
+        ],
+        "current": "然后加上错误",
+        "injected": 0
+      },
+      "locked": false
+    },
+    "session": 7,
+    "kind": "dictation",
+    "source": "mixed",
+    "segments": {
+      "done": 5,
+      "total": 6
+    }
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "listening",
+      "started_at": 1758700600180,
+      "ready": true,
+      "live": {
+        "committed": [
+          {
+            "text": "把 fetchUser 改成 async，",
+            "start_ms": 0,
+            "end_ms": 1480
+          }
+        ],
+        "current": "然后加上错误",
+        "degraded": "live tap overrun: the decoder fell behind the microphone",
+        "injected": 0
+      },
+      "locked": false
+    },
+    "session": 7,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "listening",
+      "started_at": 1758700600180,
+      "ready": true,
+      "locked": true
+    },
+    "session": 7,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "listening",
+      "started_at": 1758700600180,
+      "ready": true,
+      "live": {
+        "committed": [
+          {
+            "text": "把 fetchUser 改成 async，",
+            "start_ms": 0,
+            "end_ms": 1480
+          }
+        ],
+        "current": "然后加上错误",
+        "injected": 1
+      },
+      "locked": false
+    },
+    "session": 7,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "processing",
+      "stage": "finalizing",
+      "started_at": 1758700603200,
+      "stage_started_at": 1758700603200,
+      "preview": "把 fetchUser 改成 async，然后加上错误"
+    },
+    "session": 7,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "processing",
+      "stage": "transcribing",
+      "started_at": 1758700603200,
+      "stage_started_at": 1758700603200,
+      "preview": "把 fetchUser 改成 async，然后加上错误"
+    },
+    "session": 7,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "processing",
+      "stage": "transcribing",
+      "started_at": 1758700603200,
+      "stage_started_at": 1758700603200
+    },
+    "session": 7,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "processing",
+      "stage": "refining",
+      "started_at": 1758700603200,
+      "stage_started_at": 1758700604100,
+      "preview": "把 fetchUser 改成 async，然后加上错误"
+    },
+    "session": 7,
+    "kind": "dictation",
+    "preset": {
+      "id": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+      "name": "周报"
+    }
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "processing",
+      "stage": "inserting",
+      "started_at": 1758700603200,
+      "stage_started_at": 1758700603200
+    },
+    "session": 7,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "done",
+      "text": "把 fetchUser 改成 async，然后加上错误处理。",
+      "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+      "chars": 30,
+      "via": "paste",
+      "refined": true,
+      "duration_ms": 3200,
+      "asr_ms": 640,
+      "refine_ms": 2400,
+      "mode": "whole_take"
+    },
+    "session": 7,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "done",
+      "text": "把 fetchUser 改成 async 然后加上错误处理",
+      "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+      "chars": 29,
+      "via": "clipboard",
+      "refined": false,
+      "duration_ms": 3200,
+      "asr_ms": 640,
+      "refine_error": "请求过于频繁：refine service rate limited (retry after 355000 ms)",
+      "refine_failure": "rate_limited",
+      "mode": "whole_take"
+    },
+    "session": 8,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "done",
+      "text": "把 fetchUser 改成 async，然后加上错误处理。",
+      "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+      "chars": 30,
+      "via": "paste",
+      "refined": true,
+      "duration_ms": 3200,
+      "asr_ms": 45,
+      "refine_ms": 2400,
+      "mode": "streaming_final",
+      "segments": [
+        {
+          "text": "把 fetchUser 改成 async，",
+          "start_ms": 0,
+          "end_ms": 1480
+        },
+        {
+          "text": "然后加上错误处理",
+          "start_ms": 1480,
+          "end_ms": 3200
+        }
+      ]
+    },
+    "session": 14,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "done",
+      "text": "把 fetchUser 改成 async，然后加上错误处理。",
+      "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+      "chars": 30,
+      "via": "paste",
+      "refined": true,
+      "duration_ms": 3200,
+      "asr_ms": 640,
+      "refine_ms": 2400,
+      "mode": "whole_take",
+      "live_error": "open: asr: 实时识别模型未下载：实时预览"
+    },
+    "session": 15,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "failed",
+      "code": "no_speech",
+      "message": "没有听到声音"
+    },
+    "session": 9,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "failed",
+      "code": "inject",
+      "message": "inject: 前台窗口拒绝了粘贴",
+      "text": "把 fetchUser 改成 async，然后加上错误处理。"
+    },
+    "session": 10,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "failed",
+      "code": "asr",
+      "message": "asr: 401 unauthorized"
+    },
+    "session": 12,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "failed",
+      "code": "audio",
+      "message": "audio: no input device"
+    },
+    "session": 13,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "cancelled",
+      "injected_chars": 0
+    },
+    "session": 11,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "cancelled",
+      "injected_chars": 21
+    },
+    "session": 16,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "listening",
+      "started_at": 1758700600000,
+      "ready": false,
+      "locked": false
+    },
+    "session": 17,
+    "context": {
+      "app": {
+        "id": "code",
+        "name": "Code"
+      },
+      "scene": {
+        "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+        "name": "代码评审"
+      }
+    },
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "processing",
+      "stage": "transcribing",
+      "started_at": 1758700603200,
+      "stage_started_at": 1758700603200
+    },
+    "session": 18,
+    "context": {
+      "app": {
+        "id": "winword",
+        "name": "WINWORD"
+      }
+    },
+    "kind": "dictation"
+  },
+  {
+    "type": "history",
+    "recent": [
+      {
+        "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+        "at_ms": 1758700600000,
+        "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+        "text": "把 fetchUser 改成 async，然后加上错误处理。",
+        "refined": true,
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "refine_model": "qwen/qwen3.8-27b",
+        "duration_ms": 3200,
+        "asr_ms": 640,
+        "refine_ms": 2400,
+        "outcome": {
+          "kind": "inserted",
+          "via": "paste"
+        },
+        "starred": true,
+        "mode": "whole_take",
+        "vocabulary": {
+          "corrections": [
+            {
+              "id": "3b241101-e2bb-4255-8caf-4136c566a962",
+              "count": 1
+            }
+          ],
+          "rules": [
+            {
+              "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+              "count": 2
+            }
+          ]
+        },
+        "kind": "dictation",
+        "app": {
+          "id": "code",
+          "name": "Code"
+        },
+        "scene": {
+          "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+          "name": "代码评审"
+        },
+        "preset": {
+          "id": "formal",
+          "name": "书面语"
+        }
+      },
+      {
+        "id": "1c2d3e4f-5a6b-4c8e-9f7a-0f3f1a1e8d4b",
+        "at_ms": 1758700540000,
+        "raw_text": "测试一下",
+        "text": "测试一下",
+        "refined": false,
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "duration_ms": 900,
+        "asr_ms": 410,
+        "refine_failure": "rate_limited",
+        "outcome": {
+          "kind": "clipboard",
+          "reason": "没有可粘贴的前台窗口"
+        },
+        "starred": false,
+        "mode": "whole_take",
+        "kind": "dictation"
+      },
+      {
+        "id": "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+        "at_ms": 1758700480000,
+        "raw_text": "改得更正式",
+        "text": "各位同事：会议改至周四上午十点。",
+        "refined": true,
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "refine_model": "qwen/qwen3.8-27b",
+        "duration_ms": 1400,
+        "asr_ms": 380,
+        "refine_ms": 900,
+        "outcome": {
+          "kind": "inserted",
+          "via": "paste"
+        },
+        "starred": false,
+        "mode": "whole_take",
+        "kind": "edit",
+        "edit": {
+          "instruction": "改得更正式",
+          "selection": "大家好，会议改到周四十点哈"
+        },
+        "app": {
+          "id": "slack",
+          "name": "Slack"
+        }
+      },
+      {
+        "id": "6a0c1f5e-2b7d-4c3a-9e8f-0d1c2b3a4f56",
+        "at_ms": 1758700420000,
+        "raw_text": "会议改到三点",
+        "text": "会议改到三点",
+        "refined": false,
+        "asr_model": "",
+        "duration_ms": 0,
+        "asr_ms": 0,
+        "outcome": {
+          "kind": "inserted",
+          "via": "paste"
+        },
+        "starred": false,
+        "mode": "whole_take",
+        "kind": "dictation",
+        "origin": {
+          "device": "Pixel 8",
+          "kind": "typed"
+        }
+      }
+    ],
+    "total": 4
+  },
+  {
+    "type": "history",
+    "recent": [
+      {
+        "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+        "at_ms": 1758700600000,
+        "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+        "text": "把 fetchUser 改成 async 然后加上错误处理",
+        "refined": false,
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "duration_ms": 3200,
+        "asr_ms": 380,
+        "outcome": {
+          "kind": "inserted",
+          "via": "paste"
+        },
+        "starred": true,
+        "mode": "live_inject",
+        "segments": [
+          {
+            "text": "把 fetchUser 改成 async，",
+            "start_ms": 0,
+            "end_ms": 1480
+          },
+          {
+            "text": "然后加上错误处理",
+            "start_ms": 1480,
+            "end_ms": 3200
+          }
+        ],
+        "live_error": "live tap overrun: the decoder fell behind the microphone",
+        "vocabulary": {
+          "corrections": [
+            {
+              "id": "3b241101-e2bb-4255-8caf-4136c566a962",
+              "count": 1
+            }
+          ],
+          "rules": [
+            {
+              "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+              "count": 2
+            }
+          ]
+        },
+        "kind": "dictation",
+        "app": {
+          "id": "winword",
+          "name": "Word"
+        },
+        "scene": {
+          "id": "b0117e1e-5ce0-4e5e-8a1e-000000000003",
+          "name": "legal",
+          "builtin": "legal"
+        }
+      }
+    ],
+    "total": 1
+  },
+  {
+    "type": "history",
+    "recent": [
+      {
+        "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+        "at_ms": 1758700600000,
+        "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+        "text": "把 fetchUser 改成 async，然后加上错误处理。",
+        "refined": true,
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "refine_model": "qwen/qwen3.8-27b",
+        "duration_ms": 3200,
+        "asr_ms": 640,
+        "refine_ms": 2400,
+        "outcome": {
+          "kind": "failed",
+          "reason": "inject: 前台窗口拒绝了粘贴"
+        },
+        "starred": true,
+        "mode": "whole_take",
+        "vocabulary": {
+          "corrections": [
+            {
+              "id": "3b241101-e2bb-4255-8caf-4136c566a962",
+              "count": 1
+            }
+          ],
+          "rules": [
+            {
+              "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+              "count": 2
+            }
+          ]
+        },
+        "kind": "dictation",
+        "app": {
+          "id": "code",
+          "name": "Code"
+        },
+        "scene": {
+          "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+          "name": "代码评审"
+        },
+        "preset": {
+          "id": "formal",
+          "name": "书面语"
+        }
+      }
+    ],
+    "total": 1
+  },
+  {
+    "type": "history",
+    "recent": [
+      {
+        "id": "1c2d3e4f-5a6b-4c8e-9f7a-0f3f1a1e8d4b",
+        "at_ms": 1758700540000,
+        "raw_text": "测试一下",
+        "text": "测试一下",
+        "refined": false,
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "duration_ms": 900,
+        "asr_ms": 410,
+        "refine_failure": "rate_limited",
+        "outcome": {
+          "kind": "clipboard",
+          "reason": "enigo: the application does not have the permission to simulate input",
+          "code": "no_permission"
+        },
+        "starred": false,
+        "mode": "whole_take",
+        "kind": "dictation"
+      }
+    ],
+    "total": 1
+  },
+  {
+    "type": "history",
+    "recent": [
+      {
+        "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+        "at_ms": 1758700600000,
+        "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+        "text": "把 fetchUser 改成 async，然后加上错误处理。",
+        "refined": true,
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "refine_model": "qwen/qwen3.8-27b",
+        "duration_ms": 3200,
+        "asr_ms": 640,
+        "refine_ms": 2400,
+        "outcome": {
+          "kind": "inserted",
+          "via": "paste"
+        },
+        "starred": true,
+        "mode": "whole_take",
+        "vocabulary": {
+          "corrections": [
+            {
+              "id": "3b241101-e2bb-4255-8caf-4136c566a962",
+              "count": 1
+            }
+          ],
+          "rules": [
+            {
+              "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+              "count": 2
+            }
+          ]
+        },
+        "kind": "dictation",
+        "app": {
+          "id": "code",
+          "name": "Code"
+        },
+        "scene": {
+          "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+          "name": "代码评审"
+        },
+        "preset": {
+          "id": "formal",
+          "name": "书面语"
+        },
+        "processed": {
+          "text": "- 预算已批准\n- 下周三前提交方案",
+          "preset": {
+            "id": "notes",
+            "name": "要点纪要"
+          },
+          "at_ms": 1758700660000
+        }
+      }
+    ],
+    "total": 1
+  },
+  {
+    "type": "history",
+    "recent": [
+      {
+        "id": "1c2d3e4f-5a6b-4c8e-9f7a-0f3f1a1e8d4b",
+        "at_ms": 1758700540000,
+        "raw_text": "测试一下",
+        "text": "测试一下",
+        "refined": false,
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "duration_ms": 900,
+        "asr_ms": 410,
+        "refine_failure": "rate_limited",
+        "outcome": {
+          "kind": "clipboard",
+          "reason": "全文超过 5000 字，已复制到剪贴板，未直接粘贴。",
+          "code": "too_long"
+        },
+        "starred": false,
+        "mode": "whole_take",
+        "kind": "dictation"
+      }
+    ],
+    "total": 1
+  },
+  {
+    "type": "history",
+    "recent": [],
+    "total": 0
+  },
+  {
+    "type": "engines",
+    "asr_provider": "builtin",
+    "asr_ready": true,
+    "asr_model": "Qwen/Qwen3-ASR-1.7B",
+    "asr_host": "",
+    "local_ready": false,
+    "live_preview_ready": true,
+    "live_source": "cloud",
+    "effective_output_mode": "whole_take",
+    "language": "zh",
+    "refine_enabled": true,
+    "llm_provider": "groq",
+    "refine_ready": true,
+    "refine_model": "openai/gpt-oss-20b",
+    "refine_host": "api.groq.com",
+    "inject": "paste",
+    "providers": [
+      {
+        "id": "builtin",
+        "key": "builtin",
+        "on_device": false,
+        "console": false,
+        "asr": {
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "presets": ["Qwen/Qwen3-ASR-1.7B"],
+          "key": {
+            "set": true,
+            "source": "builtin"
+          },
+          "active": true
+        },
+        "llm": {
+          "model": "qwen/qwen3.8-27b",
+          "presets": ["qwen/qwen3.8-27b"],
+          "key": {
+            "set": true,
+            "source": "builtin"
+          },
+          "active": false
+        }
+      },
+      {
+        "id": "local",
+        "key": "none",
+        "on_device": true,
+        "console": false,
+        "asr": {
+          "model": "qwen3-asr-0.6b",
+          "presets": [],
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        }
+      },
+      {
+        "id": "openai",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "gpt-transcribe",
+          "presets": ["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
+          "base_url": "https://api.openai.com/v1",
+          "default_base_url": "https://api.openai.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "gpt-6-luna",
+          "presets": ["gpt-6-luna", "gpt-6-sol"],
+          "base_url": "https://api.openai.com/v1",
+          "default_base_url": "https://api.openai.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "groq",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "whisper-large-v3-turbo",
+          "presets": ["whisper-large-v3-turbo", "whisper-large-v3"],
+          "base_url": "https://api.groq.com/openai/v1",
+          "default_base_url": "https://api.groq.com/openai/v1",
+          "key": {
+            "set": true,
+            "source": "user"
+          },
+          "active": false
+        },
+        "llm": {
+          "model": "openai/gpt-oss-20b",
+          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+          "base_url": "https://api.groq.com/openai/v1",
+          "default_base_url": "https://api.groq.com/openai/v1",
+          "key": {
+            "set": true,
+            "source": "user"
+          },
+          "active": true
+        }
+      },
+      {
+        "id": "google",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "gemini-3.8-flash",
+          "presets": [
+            "gemini-3.8-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash",
+            "gemini-2.5-pro"
+          ],
+          "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "siliconflow",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "FunAudioLLM/SenseVoiceSmall",
+          "presets": ["FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR"],
+          "base_url": "https://api.siliconflow.cn/v1",
+          "default_base_url": "https://api.siliconflow.cn/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "Qwen/Qwen3-8B",
+          "presets": ["Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-V3"],
+          "base_url": "https://api.siliconflow.cn/v1",
+          "default_base_url": "https://api.siliconflow.cn/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "aliyun",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "qwen-audio-3.1-asr-flash-streaming",
+          "presets": [
+            "qwen-audio-3.1-asr-flash-streaming",
+            "qwen-audio-3.1-asr-flash",
+            "qwen-audio-3.1-asr-flash-message",
+            "qwen3-asr-flash",
+            "fun-asr-realtime"
+          ],
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "qwen3.8-flash",
+          "presets": ["qwen3.8-flash", "qwen3.8-max", "qwen3.7-flash"],
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "deepseek",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "deepseek-flash",
+          "presets": ["deepseek-flash", "deepseek-v4-pro"],
+          "base_url": "https://api.deepseek.com",
+          "default_base_url": "https://api.deepseek.com",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "ollama",
+        "key": "none",
+        "on_device": true,
+        "console": false,
+        "llm": {
+          "model": "",
+          "presets": [],
+          "base_url": "http://127.0.0.1:11434/v1",
+          "default_base_url": "http://127.0.0.1:11434/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "model_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "custom",
+        "key": "optional",
+        "on_device": false,
+        "console": false,
+        "asr": {
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "presets": [],
+          "base_url": "https://asr.example.test",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        },
+        "llm": {
+          "model": "claude-opus-5-5",
+          "presets": [],
+          "base_url": "http://127.0.0.1:8787/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        }
+      }
+    ],
+    "asr_fallback": {
+      "enabled": true,
+      "in_use": true,
+      "selected_retry_at_ms": 1758787000000,
+      "models": [
+        {
+          "provider": "custom",
+          "model": "qwen3-asr-flash"
+        },
+        {
+          "provider": "builtin",
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "skip": "same_as_selected"
+        }
+      ]
+    },
+    "llm_fallback": {
+      "enabled": true,
+      "in_use": true,
+      "models": [
+        {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "issue": "key_missing"
+        }
+      ]
+    }
+  },
+  {
+    "type": "engines",
+    "asr_provider": "builtin",
+    "asr_ready": true,
+    "asr_model": "Qwen/Qwen3-ASR-1.7B",
+    "asr_host": "",
+    "local_ready": false,
+    "live_preview_ready": false,
+    "live_source": "cloud",
+    "effective_output_mode": "whole_take",
+    "language": "zh",
+    "refine_enabled": true,
+    "llm_provider": "groq",
+    "refine_ready": true,
+    "refine_model": "openai/gpt-oss-20b",
+    "refine_host": "api.groq.com",
+    "inject": "paste",
+    "providers": [
+      {
+        "id": "builtin",
+        "key": "builtin",
+        "on_device": false,
+        "console": false,
+        "asr": {
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "presets": ["Qwen/Qwen3-ASR-1.7B"],
+          "key": {
+            "set": true,
+            "source": "builtin"
+          },
+          "active": true
+        },
+        "llm": {
+          "model": "qwen/qwen3.8-27b",
+          "presets": ["qwen/qwen3.8-27b"],
+          "key": {
+            "set": true,
+            "source": "builtin"
+          },
+          "active": false
+        }
+      },
+      {
+        "id": "local",
+        "key": "none",
+        "on_device": true,
+        "console": false,
+        "asr": {
+          "model": "qwen3-asr-0.6b",
+          "presets": [],
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        }
+      },
+      {
+        "id": "openai",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "gpt-transcribe",
+          "presets": ["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
+          "base_url": "https://api.openai.com/v1",
+          "default_base_url": "https://api.openai.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "gpt-6-luna",
+          "presets": ["gpt-6-luna", "gpt-6-sol"],
+          "base_url": "https://api.openai.com/v1",
+          "default_base_url": "https://api.openai.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "groq",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "whisper-large-v3-turbo",
+          "presets": ["whisper-large-v3-turbo", "whisper-large-v3"],
+          "base_url": "https://api.groq.com/openai/v1",
+          "default_base_url": "https://api.groq.com/openai/v1",
+          "key": {
+            "set": true,
+            "source": "user"
+          },
+          "active": false
+        },
+        "llm": {
+          "model": "openai/gpt-oss-20b",
+          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+          "base_url": "https://api.groq.com/openai/v1",
+          "default_base_url": "https://api.groq.com/openai/v1",
+          "key": {
+            "set": true,
+            "source": "user"
+          },
+          "active": true
+        }
+      },
+      {
+        "id": "google",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "gemini-3.8-flash",
+          "presets": [
+            "gemini-3.8-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash",
+            "gemini-2.5-pro"
+          ],
+          "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "siliconflow",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "FunAudioLLM/SenseVoiceSmall",
+          "presets": ["FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR"],
+          "base_url": "https://api.siliconflow.cn/v1",
+          "default_base_url": "https://api.siliconflow.cn/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "Qwen/Qwen3-8B",
+          "presets": ["Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-V3"],
+          "base_url": "https://api.siliconflow.cn/v1",
+          "default_base_url": "https://api.siliconflow.cn/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "aliyun",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "qwen-audio-3.1-asr-flash-streaming",
+          "presets": [
+            "qwen-audio-3.1-asr-flash-streaming",
+            "qwen-audio-3.1-asr-flash",
+            "qwen-audio-3.1-asr-flash-message",
+            "qwen3-asr-flash",
+            "fun-asr-realtime"
+          ],
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "qwen3.8-flash",
+          "presets": ["qwen3.8-flash", "qwen3.8-max", "qwen3.7-flash"],
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "deepseek",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "deepseek-flash",
+          "presets": ["deepseek-flash", "deepseek-v4-pro"],
+          "base_url": "https://api.deepseek.com",
+          "default_base_url": "https://api.deepseek.com",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "ollama",
+        "key": "none",
+        "on_device": true,
+        "console": false,
+        "llm": {
+          "model": "",
+          "presets": [],
+          "base_url": "http://127.0.0.1:11434/v1",
+          "default_base_url": "http://127.0.0.1:11434/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "model_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "custom",
+        "key": "optional",
+        "on_device": false,
+        "console": false,
+        "asr": {
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "presets": [],
+          "base_url": "https://asr.example.test",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        },
+        "llm": {
+          "model": "claude-opus-5-5",
+          "presets": [],
+          "base_url": "http://127.0.0.1:8787/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        }
+      }
+    ],
+    "asr_fallback": {
+      "enabled": true,
+      "in_use": true,
+      "selected_retry_at_ms": 1758787000000,
+      "models": [
+        {
+          "provider": "custom",
+          "model": "qwen3-asr-flash"
+        },
+        {
+          "provider": "builtin",
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "skip": "same_as_selected"
+        }
+      ]
+    },
+    "llm_fallback": {
+      "enabled": true,
+      "in_use": true,
+      "models": [
+        {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "issue": "key_missing"
+        }
+      ]
+    }
+  },
+  {
+    "type": "engines",
+    "asr_provider": "builtin",
+    "asr_ready": true,
+    "asr_model": "Qwen/Qwen3-ASR-1.7B",
+    "asr_host": "",
+    "local_ready": false,
+    "live_preview_ready": true,
+    "live_source": "cloud",
+    "effective_output_mode": "live_inject",
+    "language": "zh",
+    "refine_enabled": true,
+    "llm_provider": "groq",
+    "refine_ready": true,
+    "refine_model": "openai/gpt-oss-20b",
+    "refine_host": "api.groq.com",
+    "inject": "paste",
+    "providers": [
+      {
+        "id": "builtin",
+        "key": "builtin",
+        "on_device": false,
+        "console": false,
+        "asr": {
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "presets": ["Qwen/Qwen3-ASR-1.7B"],
+          "key": {
+            "set": true,
+            "source": "builtin"
+          },
+          "active": true
+        },
+        "llm": {
+          "model": "qwen/qwen3.8-27b",
+          "presets": ["qwen/qwen3.8-27b"],
+          "key": {
+            "set": true,
+            "source": "builtin"
+          },
+          "active": false
+        }
+      },
+      {
+        "id": "local",
+        "key": "none",
+        "on_device": true,
+        "console": false,
+        "asr": {
+          "model": "qwen3-asr-0.6b",
+          "presets": [],
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        }
+      },
+      {
+        "id": "openai",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "gpt-transcribe",
+          "presets": ["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
+          "base_url": "https://api.openai.com/v1",
+          "default_base_url": "https://api.openai.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "gpt-6-luna",
+          "presets": ["gpt-6-luna", "gpt-6-sol"],
+          "base_url": "https://api.openai.com/v1",
+          "default_base_url": "https://api.openai.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "groq",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "whisper-large-v3-turbo",
+          "presets": ["whisper-large-v3-turbo", "whisper-large-v3"],
+          "base_url": "https://api.groq.com/openai/v1",
+          "default_base_url": "https://api.groq.com/openai/v1",
+          "key": {
+            "set": true,
+            "source": "user"
+          },
+          "active": false
+        },
+        "llm": {
+          "model": "openai/gpt-oss-20b",
+          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+          "base_url": "https://api.groq.com/openai/v1",
+          "default_base_url": "https://api.groq.com/openai/v1",
+          "key": {
+            "set": true,
+            "source": "user"
+          },
+          "active": true
+        }
+      },
+      {
+        "id": "google",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "gemini-3.8-flash",
+          "presets": [
+            "gemini-3.8-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash",
+            "gemini-2.5-pro"
+          ],
+          "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "siliconflow",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "FunAudioLLM/SenseVoiceSmall",
+          "presets": ["FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR"],
+          "base_url": "https://api.siliconflow.cn/v1",
+          "default_base_url": "https://api.siliconflow.cn/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "Qwen/Qwen3-8B",
+          "presets": ["Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-V3"],
+          "base_url": "https://api.siliconflow.cn/v1",
+          "default_base_url": "https://api.siliconflow.cn/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "aliyun",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "qwen-audio-3.1-asr-flash-streaming",
+          "presets": [
+            "qwen-audio-3.1-asr-flash-streaming",
+            "qwen-audio-3.1-asr-flash",
+            "qwen-audio-3.1-asr-flash-message",
+            "qwen3-asr-flash",
+            "fun-asr-realtime"
+          ],
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "qwen3.8-flash",
+          "presets": ["qwen3.8-flash", "qwen3.8-max", "qwen3.7-flash"],
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "deepseek",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "deepseek-flash",
+          "presets": ["deepseek-flash", "deepseek-v4-pro"],
+          "base_url": "https://api.deepseek.com",
+          "default_base_url": "https://api.deepseek.com",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "ollama",
+        "key": "none",
+        "on_device": true,
+        "console": false,
+        "llm": {
+          "model": "",
+          "presets": [],
+          "base_url": "http://127.0.0.1:11434/v1",
+          "default_base_url": "http://127.0.0.1:11434/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "model_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "custom",
+        "key": "optional",
+        "on_device": false,
+        "console": false,
+        "asr": {
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "presets": [],
+          "base_url": "https://asr.example.test",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        },
+        "llm": {
+          "model": "claude-opus-5-5",
+          "presets": [],
+          "base_url": "http://127.0.0.1:8787/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        }
+      }
+    ],
+    "asr_fallback": {
+      "enabled": true,
+      "in_use": true,
+      "selected_retry_at_ms": 1758787000000,
+      "models": [
+        {
+          "provider": "custom",
+          "model": "qwen3-asr-flash"
+        },
+        {
+          "provider": "builtin",
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "skip": "same_as_selected"
+        }
+      ]
+    },
+    "llm_fallback": {
+      "enabled": true,
+      "in_use": true,
+      "models": [
+        {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "issue": "key_missing"
+        }
+      ]
+    }
+  },
+  {
+    "type": "engines",
+    "asr_provider": "builtin",
+    "asr_ready": false,
+    "asr_model": "",
+    "asr_host": "",
+    "local_ready": false,
+    "live_preview_ready": false,
+    "effective_output_mode": "whole_take",
+    "refine_enabled": true,
+    "refine_ready": false,
+    "refine_model": "",
+    "refine_host": "",
+    "inject": "paste",
+    "providers": [],
+    "asr_fallback": {
+      "enabled": false,
+      "in_use": false
+    },
+    "llm_fallback": {
+      "enabled": false,
+      "in_use": false
+    }
+  },
+  {
+    "type": "engines",
+    "asr_provider": "local",
+    "asr_ready": true,
+    "asr_model": "轻量 · 中文",
+    "asr_host": "",
+    "local_model": "paraformer-zh",
+    "local_ready": true,
+    "live_preview_ready": true,
+    "live_source": "local",
+    "effective_output_mode": "streaming_final",
+    "language": "zh",
+    "refine_enabled": true,
+    "llm_provider": "groq",
+    "refine_ready": true,
+    "refine_model": "openai/gpt-oss-20b",
+    "refine_host": "api.groq.com",
+    "inject": "paste",
+    "providers": [
+      {
+        "id": "builtin",
+        "key": "builtin",
+        "on_device": false,
+        "console": false,
+        "asr": {
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "presets": ["Qwen/Qwen3-ASR-1.7B"],
+          "key": {
+            "set": true,
+            "source": "builtin"
+          },
+          "active": false
+        },
+        "llm": {
+          "model": "qwen/qwen3.8-27b",
+          "presets": ["qwen/qwen3.8-27b"],
+          "key": {
+            "set": true,
+            "source": "builtin"
+          },
+          "active": false
+        }
+      },
+      {
+        "id": "local",
+        "key": "none",
+        "on_device": true,
+        "console": false,
+        "asr": {
+          "model": "paraformer-zh",
+          "presets": [],
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": true
+        }
+      },
+      {
+        "id": "openai",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "gpt-transcribe",
+          "presets": ["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
+          "base_url": "https://api.openai.com/v1",
+          "default_base_url": "https://api.openai.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "gpt-6-luna",
+          "presets": ["gpt-6-luna", "gpt-6-sol"],
+          "base_url": "https://api.openai.com/v1",
+          "default_base_url": "https://api.openai.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "groq",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "whisper-large-v3-turbo",
+          "presets": ["whisper-large-v3-turbo", "whisper-large-v3"],
+          "base_url": "https://api.groq.com/openai/v1",
+          "default_base_url": "https://api.groq.com/openai/v1",
+          "key": {
+            "set": true,
+            "source": "user"
+          },
+          "active": false
+        },
+        "llm": {
+          "model": "openai/gpt-oss-20b",
+          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+          "base_url": "https://api.groq.com/openai/v1",
+          "default_base_url": "https://api.groq.com/openai/v1",
+          "key": {
+            "set": true,
+            "source": "user"
+          },
+          "active": true
+        }
+      },
+      {
+        "id": "google",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "gemini-3.8-flash",
+          "presets": [
+            "gemini-3.8-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash",
+            "gemini-2.5-pro"
+          ],
+          "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "siliconflow",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "FunAudioLLM/SenseVoiceSmall",
+          "presets": ["FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR"],
+          "base_url": "https://api.siliconflow.cn/v1",
+          "default_base_url": "https://api.siliconflow.cn/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "Qwen/Qwen3-8B",
+          "presets": ["Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-V3"],
+          "base_url": "https://api.siliconflow.cn/v1",
+          "default_base_url": "https://api.siliconflow.cn/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "aliyun",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "qwen-audio-3.1-asr-flash-streaming",
+          "presets": [
+            "qwen-audio-3.1-asr-flash-streaming",
+            "qwen-audio-3.1-asr-flash",
+            "qwen-audio-3.1-asr-flash-message",
+            "qwen3-asr-flash",
+            "fun-asr-realtime"
+          ],
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "qwen3.8-flash",
+          "presets": ["qwen3.8-flash", "qwen3.8-max", "qwen3.7-flash"],
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "deepseek",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "deepseek-flash",
+          "presets": ["deepseek-flash", "deepseek-v4-pro"],
+          "base_url": "https://api.deepseek.com",
+          "default_base_url": "https://api.deepseek.com",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "ollama",
+        "key": "none",
+        "on_device": true,
+        "console": false,
+        "llm": {
+          "model": "",
+          "presets": [],
+          "base_url": "http://127.0.0.1:11434/v1",
+          "default_base_url": "http://127.0.0.1:11434/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "model_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "custom",
+        "key": "optional",
+        "on_device": false,
+        "console": false,
+        "asr": {
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "presets": [],
+          "base_url": "https://asr.example.test",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        },
+        "llm": {
+          "model": "claude-opus-5-5",
+          "presets": [],
+          "base_url": "http://127.0.0.1:8787/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        }
+      }
+    ],
+    "asr_fallback": {
+      "enabled": true,
+      "in_use": false,
+      "models": [
+        {
+          "provider": "custom",
+          "model": "qwen3-asr-flash"
+        },
+        {
+          "provider": "builtin",
+          "model": "Qwen/Qwen3-ASR-1.7B"
+        }
+      ]
+    },
+    "llm_fallback": {
+      "enabled": true,
+      "in_use": true,
+      "models": [
+        {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "issue": "key_missing"
+        }
+      ]
+    }
+  },
+  {
+    "type": "engines",
+    "asr_provider": "local",
+    "asr_ready": false,
+    "asr_issue": "model_not_installed",
+    "asr_model": "轻量 · 中文",
+    "asr_host": "",
+    "local_model": "paraformer-zh",
+    "local_ready": false,
+    "live_preview_ready": false,
+    "effective_output_mode": "whole_take",
+    "language": "zh",
+    "refine_enabled": true,
+    "llm_provider": "groq",
+    "refine_ready": true,
+    "refine_model": "openai/gpt-oss-20b",
+    "refine_host": "api.groq.com",
+    "inject": "paste",
+    "providers": [
+      {
+        "id": "builtin",
+        "key": "builtin",
+        "on_device": false,
+        "console": false,
+        "asr": {
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "presets": ["Qwen/Qwen3-ASR-1.7B"],
+          "key": {
+            "set": true,
+            "source": "builtin"
+          },
+          "active": false
+        },
+        "llm": {
+          "model": "qwen/qwen3.8-27b",
+          "presets": ["qwen/qwen3.8-27b"],
+          "key": {
+            "set": true,
+            "source": "builtin"
+          },
+          "active": false
+        }
+      },
+      {
+        "id": "local",
+        "key": "none",
+        "on_device": true,
+        "console": false,
+        "asr": {
+          "model": "paraformer-zh",
+          "presets": [],
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "model_not_installed",
+          "active": true
+        }
+      },
+      {
+        "id": "openai",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "gpt-transcribe",
+          "presets": ["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
+          "base_url": "https://api.openai.com/v1",
+          "default_base_url": "https://api.openai.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "gpt-6-luna",
+          "presets": ["gpt-6-luna", "gpt-6-sol"],
+          "base_url": "https://api.openai.com/v1",
+          "default_base_url": "https://api.openai.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "groq",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "whisper-large-v3-turbo",
+          "presets": ["whisper-large-v3-turbo", "whisper-large-v3"],
+          "base_url": "https://api.groq.com/openai/v1",
+          "default_base_url": "https://api.groq.com/openai/v1",
+          "key": {
+            "set": true,
+            "source": "user"
+          },
+          "active": false
+        },
+        "llm": {
+          "model": "openai/gpt-oss-20b",
+          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+          "base_url": "https://api.groq.com/openai/v1",
+          "default_base_url": "https://api.groq.com/openai/v1",
+          "key": {
+            "set": true,
+            "source": "user"
+          },
+          "active": true
+        }
+      },
+      {
+        "id": "google",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "gemini-3.8-flash",
+          "presets": [
+            "gemini-3.8-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash",
+            "gemini-2.5-pro"
+          ],
+          "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "siliconflow",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "FunAudioLLM/SenseVoiceSmall",
+          "presets": ["FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR"],
+          "base_url": "https://api.siliconflow.cn/v1",
+          "default_base_url": "https://api.siliconflow.cn/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "Qwen/Qwen3-8B",
+          "presets": ["Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-V3"],
+          "base_url": "https://api.siliconflow.cn/v1",
+          "default_base_url": "https://api.siliconflow.cn/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "aliyun",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "qwen-audio-3.1-asr-flash-streaming",
+          "presets": [
+            "qwen-audio-3.1-asr-flash-streaming",
+            "qwen-audio-3.1-asr-flash",
+            "qwen-audio-3.1-asr-flash-message",
+            "qwen3-asr-flash",
+            "fun-asr-realtime"
+          ],
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "qwen3.8-flash",
+          "presets": ["qwen3.8-flash", "qwen3.8-max", "qwen3.7-flash"],
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "deepseek",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "deepseek-flash",
+          "presets": ["deepseek-flash", "deepseek-v4-pro"],
+          "base_url": "https://api.deepseek.com",
+          "default_base_url": "https://api.deepseek.com",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "ollama",
+        "key": "none",
+        "on_device": true,
+        "console": false,
+        "llm": {
+          "model": "",
+          "presets": [],
+          "base_url": "http://127.0.0.1:11434/v1",
+          "default_base_url": "http://127.0.0.1:11434/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "model_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "custom",
+        "key": "optional",
+        "on_device": false,
+        "console": false,
+        "asr": {
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "presets": [],
+          "base_url": "https://asr.example.test",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        },
+        "llm": {
+          "model": "claude-opus-5-5",
+          "presets": [],
+          "base_url": "http://127.0.0.1:8787/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        }
+      }
+    ],
+    "asr_fallback": {
+      "enabled": true,
+      "in_use": false,
+      "models": [
+        {
+          "provider": "custom",
+          "model": "qwen3-asr-flash"
+        },
+        {
+          "provider": "builtin",
+          "model": "Qwen/Qwen3-ASR-1.7B"
+        }
+      ]
+    },
+    "llm_fallback": {
+      "enabled": true,
+      "in_use": true,
+      "models": [
+        {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "issue": "key_missing"
+        }
+      ]
+    }
+  },
+  {
+    "type": "provider_probe",
+    "provider": "groq",
+    "kind": "llm",
+    "result": "ok",
+    "models": ["llama-3.3-70b-versatile", "openai/gpt-oss-20b"],
+    "latency_ms": 184
+  },
+  {
+    "type": "provider_probe",
+    "provider": "builtin",
+    "kind": "asr",
+    "result": "failed",
+    "reason": "http_status",
+    "status": 502
+  },
+  {
+    "type": "hardware",
+    "cpu_threads": 8,
+    "gpus": []
+  },
+  {
+    "type": "hardware",
+    "cpu_threads": 16,
+    "gpus": [
+      {
+        "name": "Vulkan0",
+        "description": "NVIDIA L40S",
+        "kind": "vulkan",
+        "memory_mb": 46068,
+        "integrated": false
+      },
+      {
+        "name": "Vulkan1",
+        "description": "Intel(R) UHD Graphics 770",
+        "kind": "vulkan",
+        "memory_mb": 0,
+        "integrated": true
+      }
+    ]
+  },
+  {
+    "type": "phone_take",
+    "take": null
+  },
+  {
+    "type": "phone_take",
+    "take": {
+      "device": "1111111111111111111111111111111111111111111111111111111111111111",
+      "take": 3,
+      "started_at": 1758700000000,
+      "state": {
+        "state": "starting"
+      },
+      "opus": false
+    }
+  },
+  {
+    "type": "phone_take",
+    "take": {
+      "device": "1111111111111111111111111111111111111111111111111111111111111111",
+      "take": 3,
+      "started_at": 1758700000000,
+      "state": {
+        "state": "listening"
+      },
+      "opus": true
+    }
+  },
+  {
+    "type": "phone_take",
+    "take": {
+      "device": "1111111111111111111111111111111111111111111111111111111111111111",
+      "take": 3,
+      "started_at": 1758700000000,
+      "state": {
+        "state": "processing"
+      },
+      "opus": true
+    }
+  },
+  {
+    "type": "phone_take",
+    "take": {
+      "device": "1111111111111111111111111111111111111111111111111111111111111111",
+      "take": 3,
+      "started_at": 1758700000000,
+      "state": {
+        "state": "done",
+        "text": "把 fetchUser 改成 async",
+        "pasted": true
+      },
+      "opus": false
+    }
+  },
+  {
+    "type": "phone_take",
+    "take": {
+      "device": "1111111111111111111111111111111111111111111111111111111111111111",
+      "take": 3,
+      "started_at": 1758700000000,
+      "state": {
+        "state": "failed",
+        "code": "busy",
+        "message": "正在听写"
+      },
+      "opus": false
+    }
+  },
+  {
+    "type": "phone_take",
+    "take": {
+      "device": "1111111111111111111111111111111111111111111111111111111111111111",
+      "take": 3,
+      "started_at": 1758700000000,
+      "state": {
+        "state": "failed",
+        "code": "microphone",
+        "message": "microphone: 权限被拒绝"
+      },
+      "opus": false
+    }
+  },
+  {
+    "type": "phone_take",
+    "take": {
+      "device": "1111111111111111111111111111111111111111111111111111111111111111",
+      "take": 3,
+      "started_at": 1758700000000,
+      "state": {
+        "state": "cancelled"
+      },
+      "opus": false
+    }
+  },
+  {
+    "type": "sent_texts",
+    "texts": []
+  },
+  {
+    "type": "sent_texts",
+    "texts": [
+      {
+        "id": 5,
+        "device": "1111111111111111111111111111111111111111111111111111111111111111",
+        "device_name": "MacBook Pro",
+        "body": "https://example.test/a",
+        "source": "clipboard",
+        "sent_at": 1758700000005,
+        "state": {
+          "state": "sending"
+        }
+      },
+      {
+        "id": 4,
+        "device": "1111111111111111111111111111111111111111111111111111111111111111",
+        "device_name": "MacBook Pro",
+        "body": "会议改到三点",
+        "source": "typed",
+        "sent_at": 1758700000004,
+        "state": {
+          "state": "queued"
+        }
+      },
+      {
+        "id": 3,
+        "device": "1111111111111111111111111111111111111111111111111111111111111111",
+        "device_name": "MacBook Pro",
+        "body": "收到",
+        "source": "typed",
+        "sent_at": 1758700000003,
+        "state": {
+          "state": "delivered",
+          "pasted": true
+        }
+      },
+      {
+        "id": 2,
+        "device": "1111111111111111111111111111111111111111111111111111111111111111",
+        "device_name": "MacBook Pro",
+        "body": "地址在群里",
+        "source": "clipboard",
+        "sent_at": 1758700000002,
+        "state": {
+          "state": "delivered",
+          "pasted": false
+        }
+      },
+      {
+        "id": 1,
+        "device": "1111111111111111111111111111111111111111111111111111111111111111",
+        "device_name": "MacBook Pro",
+        "body": "晚点回电",
+        "source": "typed",
+        "sent_at": 1758700000001,
+        "state": {
+          "state": "failed",
+          "code": "no_answer",
+          "message": "电脑没有回应"
+        }
+      }
+    ]
+  },
+  {
+    "type": "nearby",
+    "devices": []
+  },
+  {
+    "type": "nearby",
+    "devices": [
+      {
+        "fingerprint": "A7C4198E3DF26109",
+        "name": "Studio",
+        "platform": "macos",
+        "pairing": true,
+        "trusted": false
+      },
+      {
+        "fingerprint": "0B1C2D3E4F506172",
+        "name": "MacBook Pro",
+        "platform": "macos",
+        "pairing": false,
+        "trusted": true
+      }
+    ]
+  },
+  {
+    "type": "connectivity",
+    "running": true
+  },
+  {
+    "type": "connectivity",
+    "running": false,
+    "report": {
+      "checked_at": 1758700600000,
+      "lan": {
+        "listening": true,
+        "addresses": ["192.168.1.30:47831"]
+      },
+      "relay": {
+        "configured": true,
+        "result": {
+          "result": "ok",
+          "ms": 48
+        }
+      },
+      "peers": [
+        {
+          "public_key": "1111111111111111111111111111111111111111111111111111111111111111",
+          "name": "Surface-Laptop",
+          "via": "relay",
+          "rtt_ms": 61,
+          "addresses": [
+            {
+              "address": "192.168.1.24:47831",
+              "same_subnet": true,
+              "result": {
+                "result": "timeout"
+              }
+            },
+            {
+              "address": "10.0.0.7:47831",
+              "same_subnet": false,
+              "result": {
+                "result": "refused"
+              }
+            },
+            {
+              "address": "172.16.0.2:47831",
+              "same_subnet": false,
+              "result": {
+                "result": "failed",
+                "reason": "not a Voltip host"
+              }
+            },
+            {
+              "address": "192.168.1.25:47831",
+              "same_subnet": true,
+              "result": {
+                "result": "ok",
+                "ms": 7
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "type": "serve",
+    "available": true,
+    "phase": "starting"
+  },
+  {
+    "type": "serve",
+    "available": true,
+    "phase": "failed",
+    "address": "http://127.0.0.1:47840/v1",
+    "error": "无法监听 127.0.0.1:47840：Address already in use"
+  },
+  {
+    "type": "models",
+    "models": [
+      {
+        "id": "qwen3-asr-0.6b",
+        "name": "均衡",
+        "engine": "transcribe_cpp",
+        "tier": "balanced",
+        "capabilities": ["offline"],
+        "languages": ["zh", "en", "ja", "ko", "yue", "de", "fr", "es", "ru", "ar"],
+        "size_bytes": 690417824,
+        "description": "推荐；Qwen3-ASR 0.6B，30 语种自动识别，自带标点；690 MB",
+        "recommended": true,
+        "repo": "handy-computer/Qwen3-ASR-0.6B-gguf",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\qwen3-asr-0.6b",
+        "files": [
+          {
+            "name": "Qwen3-ASR-0.6B-Q6_K.gguf",
+            "size_bytes": 690417824,
+            "urls": [
+              "https://huggingface.co/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/main/Qwen3-ASR-0.6B-Q6_K.gguf",
+              "https://hf-mirror.com/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/main/Qwen3-ASR-0.6B-Q6_K.gguf"
+            ]
+          }
+        ],
+        "active": true,
+        "state": {
+          "kind": "installed",
+          "path": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\qwen3-asr-0.6b",
+          "installed_at": 1758700000
+        }
+      },
+      {
+        "id": "sense-voice-small",
+        "name": "轻量",
+        "engine": "sense_voice",
+        "tier": "light",
+        "capabilities": ["offline"],
+        "languages": ["zh", "en", "ja", "ko", "yue"],
+        "size_bytes": 239549735,
+        "description": "SenseVoice Small，中英日韩粤，自带标点与数字规整（ITN）；240 MB",
+        "recommended": false,
+        "repo": "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\sense-voice-small",
+        "files": [
+          {
+            "name": "model.int8.onnx",
+            "size_bytes": 239233841,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 315894,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt"
+            ]
+          }
+        ],
+        "active": false,
+        "state": {
+          "kind": "not_installed"
+        }
+      },
+      {
+        "id": "paraformer-zh",
+        "name": "轻量 · 中文",
+        "engine": "paraformer",
+        "tier": "light",
+        "capabilities": ["offline"],
+        "languages": ["zh", "en"],
+        "size_bytes": 227405559,
+        "description": "Paraformer 中文（含方言）更准，中英混读；无标点，开启 AI 润色可补；227 MB",
+        "recommended": false,
+        "repo": "csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\paraformer-zh",
+        "files": [
+          {
+            "name": "model.int8.onnx",
+            "size_bytes": 227330205,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 75354,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/tokens.txt"
+            ]
+          }
+        ],
+        "active": false,
+        "state": {
+          "kind": "downloading",
+          "received": 104857600,
+          "total": 227330205,
+          "file": "model.int8.onnx"
+        }
+      },
+      {
+        "id": "zipformer-stream-zh-en",
+        "name": "实时预览",
+        "engine": "zipformer_streaming",
+        "tier": "streaming",
+        "capabilities": ["streaming"],
+        "languages": ["zh", "en"],
+        "size_bytes": 169347218,
+        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
+        "recommended": false,
+        "repo": "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\zipformer-stream-zh-en",
+        "files": [
+          {
+            "name": "encoder.int8.onnx",
+            "size_bytes": 155278641,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/encoder.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/encoder.int8.onnx"
+            ]
+          },
+          {
+            "name": "decoder.onnx",
+            "size_bytes": 11309084,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/decoder.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/decoder.onnx"
+            ]
+          },
+          {
+            "name": "joiner.int8.onnx",
+            "size_bytes": 2581422,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/joiner.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/joiner.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 58806,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/tokens.txt"
+            ]
+          },
+          {
+            "name": "bpe.model",
+            "size_bytes": 119265,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/bpe.model",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/bpe.model"
+            ]
+          }
+        ],
+        "active": false,
+        "state": {
+          "kind": "installed",
+          "path": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\zipformer-stream-zh-en",
+          "installed_at": 1758700000
+        }
+      }
+    ]
+  },
+  {
+    "type": "models",
+    "models": [
+      {
+        "id": "qwen3-asr-0.6b",
+        "name": "均衡",
+        "engine": "transcribe_cpp",
+        "tier": "balanced",
+        "capabilities": ["offline"],
+        "languages": ["zh", "en", "ja", "ko", "yue", "de", "fr", "es", "ru", "ar"],
+        "size_bytes": 690417824,
+        "description": "推荐；Qwen3-ASR 0.6B，30 语种自动识别，自带标点；690 MB",
+        "recommended": true,
+        "repo": "handy-computer/Qwen3-ASR-0.6B-gguf",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\qwen3-asr-0.6b",
+        "files": [
+          {
+            "name": "Qwen3-ASR-0.6B-Q6_K.gguf",
+            "size_bytes": 690417824,
+            "urls": [
+              "https://huggingface.co/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/main/Qwen3-ASR-0.6B-Q6_K.gguf",
+              "https://hf-mirror.com/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/main/Qwen3-ASR-0.6B-Q6_K.gguf"
+            ]
+          }
+        ],
+        "active": false,
+        "state": {
+          "kind": "verifying"
+        }
+      },
+      {
+        "id": "sense-voice-small",
+        "name": "轻量",
+        "engine": "sense_voice",
+        "tier": "light",
+        "capabilities": ["offline"],
+        "languages": ["zh", "en", "ja", "ko", "yue"],
+        "size_bytes": 239549735,
+        "description": "SenseVoice Small，中英日韩粤，自带标点与数字规整（ITN）；240 MB",
+        "recommended": false,
+        "repo": "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\sense-voice-small",
+        "files": [
+          {
+            "name": "model.int8.onnx",
+            "size_bytes": 239233841,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 315894,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt"
+            ]
+          }
+        ],
+        "active": false,
+        "state": {
+          "kind": "import_incomplete",
+          "missing": ["tokens.txt"],
+          "mismatched": ["model.int8.onnx"]
+        }
+      },
+      {
+        "id": "paraformer-zh",
+        "name": "轻量 · 中文",
+        "engine": "paraformer",
+        "tier": "light",
+        "capabilities": ["offline"],
+        "languages": ["zh", "en"],
+        "size_bytes": 227405559,
+        "description": "Paraformer 中文（含方言）更准，中英混读；无标点，开启 AI 润色可补；227 MB",
+        "recommended": false,
+        "repo": "csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\paraformer-zh",
+        "files": [
+          {
+            "name": "model.int8.onnx",
+            "size_bytes": 227330205,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 75354,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/tokens.txt"
+            ]
+          }
+        ],
+        "active": true,
+        "state": {
+          "kind": "failed",
+          "message": "sha256 mismatch: model.int8.onnx"
+        }
+      },
+      {
+        "id": "zipformer-stream-zh-en",
+        "name": "实时预览",
+        "engine": "zipformer_streaming",
+        "tier": "streaming",
+        "capabilities": ["streaming"],
+        "languages": ["zh", "en"],
+        "size_bytes": 169347218,
+        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
+        "recommended": false,
+        "repo": "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\zipformer-stream-zh-en",
+        "files": [
+          {
+            "name": "encoder.int8.onnx",
+            "size_bytes": 155278641,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/encoder.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/encoder.int8.onnx"
+            ]
+          },
+          {
+            "name": "decoder.onnx",
+            "size_bytes": 11309084,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/decoder.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/decoder.onnx"
+            ]
+          },
+          {
+            "name": "joiner.int8.onnx",
+            "size_bytes": 2581422,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/joiner.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/joiner.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 58806,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/tokens.txt"
+            ]
+          },
+          {
+            "name": "bpe.model",
+            "size_bytes": 119265,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/bpe.model",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/bpe.model"
+            ]
+          }
+        ],
+        "active": false,
+        "state": {
+          "kind": "downloading",
+          "received": 52428800,
+          "total": 155278641,
+          "file": "encoder.int8.onnx"
+        }
+      }
+    ]
+  },
+  {
+    "type": "models",
+    "models": [
+      {
+        "id": "qwen3-asr-0.6b",
+        "name": "均衡",
+        "engine": "transcribe_cpp",
+        "tier": "balanced",
+        "capabilities": ["offline"],
+        "languages": ["zh", "en", "ja", "ko", "yue", "de", "fr", "es", "ru", "ar"],
+        "size_bytes": 690417824,
+        "description": "推荐；Qwen3-ASR 0.6B，30 语种自动识别，自带标点；690 MB",
+        "recommended": true,
+        "repo": "handy-computer/Qwen3-ASR-0.6B-gguf",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\qwen3-asr-0.6b",
+        "files": [
+          {
+            "name": "Qwen3-ASR-0.6B-Q6_K.gguf",
+            "size_bytes": 690417824,
+            "urls": [
+              "https://huggingface.co/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/main/Qwen3-ASR-0.6B-Q6_K.gguf",
+              "https://hf-mirror.com/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/main/Qwen3-ASR-0.6B-Q6_K.gguf"
+            ]
+          }
+        ],
+        "active": false,
+        "state": {
+          "kind": "not_installed"
+        }
+      },
+      {
+        "id": "sense-voice-small",
+        "name": "轻量",
+        "engine": "sense_voice",
+        "tier": "light",
+        "capabilities": ["offline"],
+        "languages": ["zh", "en", "ja", "ko", "yue"],
+        "size_bytes": 239549735,
+        "description": "SenseVoice Small，中英日韩粤，自带标点与数字规整（ITN）；240 MB",
+        "recommended": false,
+        "repo": "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\sense-voice-small",
+        "files": [
+          {
+            "name": "model.int8.onnx",
+            "size_bytes": 239233841,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 315894,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt"
+            ]
+          }
+        ],
+        "active": false,
+        "state": {
+          "kind": "not_installed"
+        }
+      },
+      {
+        "id": "paraformer-zh",
+        "name": "轻量 · 中文",
+        "engine": "paraformer",
+        "tier": "light",
+        "capabilities": ["offline"],
+        "languages": ["zh", "en"],
+        "size_bytes": 227405559,
+        "description": "Paraformer 中文（含方言）更准，中英混读；无标点，开启 AI 润色可补；227 MB",
+        "recommended": false,
+        "repo": "csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\paraformer-zh",
+        "files": [
+          {
+            "name": "model.int8.onnx",
+            "size_bytes": 227330205,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 75354,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/tokens.txt"
+            ]
+          }
+        ],
+        "active": false,
+        "state": {
+          "kind": "not_installed"
+        }
+      },
+      {
+        "id": "zipformer-stream-zh-en",
+        "name": "实时预览",
+        "engine": "zipformer_streaming",
+        "tier": "streaming",
+        "capabilities": ["streaming"],
+        "languages": ["zh", "en"],
+        "size_bytes": 169347218,
+        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
+        "recommended": false,
+        "repo": "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
+        "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\zipformer-stream-zh-en",
+        "files": [
+          {
+            "name": "encoder.int8.onnx",
+            "size_bytes": 155278641,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/encoder.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/encoder.int8.onnx"
+            ]
+          },
+          {
+            "name": "decoder.onnx",
+            "size_bytes": 11309084,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/decoder.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/decoder.onnx"
+            ]
+          },
+          {
+            "name": "joiner.int8.onnx",
+            "size_bytes": 2581422,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/joiner.int8.onnx",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/joiner.int8.onnx"
+            ]
+          },
+          {
+            "name": "tokens.txt",
+            "size_bytes": 58806,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/tokens.txt",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/tokens.txt"
+            ]
+          },
+          {
+            "name": "bpe.model",
+            "size_bytes": 119265,
+            "urls": [
+              "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/bpe.model",
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/bpe.model"
+            ]
+          }
+        ],
+        "active": false,
+        "state": {
+          "kind": "not_installed"
+        }
+      }
+    ]
+  },
+  {
+    "type": "models",
+    "models": []
+  },
+  {
+    "type": "update",
+    "state": "idle"
+  },
+  {
+    "type": "update",
+    "state": "checking"
+  },
+  {
+    "type": "update",
+    "state": "up_to_date",
+    "version": "0.0.1",
+    "checked_at": 1758700000
+  },
+  {
+    "type": "update",
+    "state": "available",
+    "version": "2.1.0",
+    "current": "0.0.1",
+    "notes": "修复听写热键冲突",
+    "date": "2026-09-25T08:00:00Z"
+  },
+  {
+    "type": "update",
+    "state": "available",
+    "version": "2.1.0",
+    "current": "0.0.1"
+  },
+  {
+    "type": "update",
+    "state": "downloading",
+    "version": "2.1.0",
+    "received": 4194304,
+    "total": 15728640
+  },
+  {
+    "type": "update",
+    "state": "downloading",
+    "version": "2.1.0",
+    "received": 4194304
+  },
+  {
+    "type": "update",
+    "state": "ready",
+    "version": "2.1.0"
+  },
+  {
+    "type": "update",
+    "state": "installing",
+    "version": "2.1.0"
+  },
+  {
+    "type": "update",
+    "state": "failed",
+    "message": "updater: 无法连接更新源"
+  },
+  {
+    "type": "update",
+    "state": "store",
+    "version": "0.0.1"
+  },
+  {
+    "type": "update",
+    "state": "disabled"
+  },
+  {
+    "type": "dictionary",
+    "entries": [
+      {
+        "id": "3b241101-e2bb-4255-8caf-4136c566a962",
+        "term": "fetchUser",
+        "heard_as": ["fetch user", "费驰优瑟"],
+        "enabled": true,
+        "source": {
+          "kind": "manual"
+        },
+        "created_at_ms": 1758614200000,
+        "updated_at_ms": 1758697000000
+      },
+      {
+        "id": "6f1c2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "term": "good idea",
+        "heard_as": ["谷歌IDR"],
+        "enabled": false,
+        "source": {
+          "kind": "history",
+          "history_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        },
+        "created_at_ms": 1758700600000,
+        "updated_at_ms": 1758700600000
+      }
+    ]
+  },
+  {
+    "type": "dictionary",
+    "entries": []
+  },
+  {
+    "type": "rules",
+    "rules": [
+      {
+        "id": "8d7e6f5a-4b3c-4d2e-9f1a-0b9c8d7e6f5a",
+        "name": "git push",
+        "kind": "literal",
+        "pattern": "给他push",
+        "replacement": "git push",
+        "case_sensitive": true,
+        "enabled": true,
+        "created_at_ms": 1758614200000,
+        "updated_at_ms": 1758614200000
+      },
+      {
+        "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "PR 编号",
+        "kind": "regex",
+        "pattern": "\\bpr (\\d+)",
+        "replacement": "PR #$1",
+        "case_sensitive": false,
+        "enabled": false,
+        "created_at_ms": 1758700600000,
+        "updated_at_ms": 1758700600000
+      }
+    ]
+  },
+  {
+    "type": "rules",
+    "rules": []
+  },
+  {
+    "type": "settings",
+    "schema": 1,
+    "theme": "graphite",
+    "follow_system_theme": true,
+    "relay_url": "wss://relay.example.test/ws",
+    "relay_enabled": true,
+    "hotkey": "Ctrl+Alt+Space",
+    "engines": {
+      "asr_provider": "builtin",
+      "llm_provider": "groq",
+      "refine_enabled": true,
+      "refine_preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+      "providers": {
+        "groq": {
+          "llm_model": "openai/gpt-oss-20b"
+        },
+        "custom": {
+          "asr_model": "Qwen/Qwen3-ASR-1.7B",
+          "asr_url": "https://asr.example.test",
+          "llm_model": "claude-opus-5-5",
+          "llm_url": "http://127.0.0.1:8787/v1",
+          "llm_api": "responses",
+          "llm_reasoning": "high"
+        }
+      },
+      "local_device": "auto",
+      "language": "zh",
+      "live_preview": true,
+      "output_mode": "whole_take",
+      "vad_trim": false,
+      "chinese_script": "simplified",
+      "inject": "paste",
+      "asr_fallback": {
+        "enabled": true,
+        "models": [
+          {
+            "provider": "custom",
+            "model": "qwen3-asr-flash"
+          },
+          {
+            "provider": "builtin",
+            "model": ""
+          }
+        ]
+      },
+      "llm_fallback": {
+        "enabled": true,
+        "models": [
+          {
+            "provider": "openai",
+            "model": "gpt-6-luna"
+          }
+        ]
+      }
+    },
+    "locale": "zh-cn",
+    "auto_update": true,
+    "activation": "hold_or_toggle",
+    "hold_threshold_ms": 300,
+    "extra_recording_ms": 150,
+    "context_sharing": {
+      "app_name": false,
+      "window_title": true
+    },
+    "edit_hotkey": null,
+    "solo_key": "right_ctrl",
+    "lan_discovery": true,
+    "pairing_always_on": true,
+    "history": {
+      "enabled": true,
+      "keep": 200
+    },
+    "overlay": "top",
+    "microphone": "wasapi:{0.0.1.00000000}.{c2}",
+    "recording": {
+      "source": "mixed",
+      "output_device": "wasapi:{0.0.0.00000000}.{a1}",
+      "max_minutes": 60,
+      "echo_cancel": false
+    },
+    "serve": {
+      "enabled": true,
+      "port": 47840,
+      "preset": "prompt",
+      "scene": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f"
+    }
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "listening",
+      "started_at": 1758700600180,
+      "ready": true,
+      "live": {
+        "committed": [],
+        "current": "改得更正式",
+        "injected": 0
+      },
+      "locked": false
+    },
+    "session": 20,
+    "kind": "edit"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "processing",
+      "stage": "refining",
+      "started_at": 1758700601400,
+      "stage_started_at": 1758700601400,
+      "preview": "改得更正式"
+    },
+    "session": 20,
+    "kind": "edit"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "done",
+      "text": "各位同事：会议改至周四上午十点。",
+      "raw_text": "改得更正式",
+      "chars": 16,
+      "via": "paste",
+      "refined": true,
+      "duration_ms": 1400,
+      "asr_ms": 380,
+      "refine_ms": 900,
+      "mode": "whole_take"
+    },
+    "session": 20,
+    "context": {
+      "app": {
+        "id": "slack",
+        "name": "Slack"
+      }
+    },
+    "kind": "edit"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "failed",
+      "code": "no_selection",
+      "message": "没有选中文本"
+    },
+    "session": 21,
+    "kind": "edit"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "failed",
+      "code": "selection_too_long",
+      "message": "选中文本过长：2400 字（上限 2000 字）"
+    },
+    "session": 22,
+    "kind": "edit"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "failed",
+      "code": "selection",
+      "message": "selection: keystroke: no copy tool on Wayland · GNOME"
+    },
+    "session": 23,
+    "kind": "edit"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "failed",
+      "code": "edit_unavailable",
+      "message": "edit: 语音编辑需要 AI 润色服务：请先配置润色的 API 密钥"
+    },
+    "session": 24,
+    "kind": "edit"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "failed",
+      "code": "edit_in_terminal",
+      "message": "终端里不支持语音编辑：终端里的选区不能被替换"
+    },
+    "session": 25,
+    "kind": "edit"
+  },
+  {
+    "type": "scenes",
+    "scenes": [
+      {
+        "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+        "name": "代码评审",
+        "enabled": true,
+        "match": {
+          "apps": ["chrome", "code"],
+          "title_contains": ["Pull request"]
+        },
+        "overrides": {
+          "refine_enabled": true,
+          "refine_preset": "formal",
+          "output_mode": "streaming_final",
+          "language": "en",
+          "chinese_script": "as_is",
+          "prompt": "这是代码评审意见：保留代码标识符原样。"
+        },
+        "created_at_ms": 1758614200000,
+        "updated_at_ms": 1758697000000
+      },
+      {
+        "id": "e0e1e2e3-e4e5-4e6e-8e7e-8e9eaebecede",
+        "name": "聊天",
+        "enabled": false,
+        "match": {
+          "apps": ["slack", "wechat"],
+          "title_contains": []
+        },
+        "overrides": {
+          "refine_preset": "punctuation"
+        },
+        "created_at_ms": 1758700600000,
+        "updated_at_ms": 1758700600000
+      },
+      {
+        "id": "b0117e1e-5ce0-4e5e-8a1e-000000000003",
+        "name": "legal",
+        "enabled": false,
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "overrides": {
+          "refine_preset": "proofread",
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是法律文本：法条、案号和当事人名称照原样保留。"
+        },
+        "created_at_ms": 1758700600000,
+        "updated_at_ms": 1758700600000,
+        "builtin": "legal"
+      }
+    ]
+  },
+  {
+    "type": "scenes",
+    "scenes": []
+  },
+  {
+    "type": "presets",
+    "presets": [
+      {
+        "id": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+        "name": "周报",
+        "prompt": "把正文整理成周报：本周完成、下周计划、风险三部分。",
+        "created_at_ms": 1758614200000,
+        "updated_at_ms": 1758700600000
+      }
+    ]
+  },
+  {
+    "type": "presets",
+    "presets": []
+  },
+  {
+    "type": "preset_try",
+    "id": 3,
+    "outcome": {
+      "status": "ok",
+      "text": "Meeting at 10 a.m. tomorrow.",
+      "latency_ms": 820,
+      "model": "qwen/qwen3.8-27b"
+    }
+  },
+  {
+    "type": "preset_try",
+    "id": 4,
+    "outcome": {
+      "status": "failed",
+      "reason": "尚未配置 AI 润色服务，无法试运行预设"
+    }
+  },
+  {
+    "type": "history_process",
+    "request_id": 5,
+    "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "state": {
+      "state": "running",
+      "done": 2,
+      "total": 5
+    }
+  },
+  {
+    "type": "history_process",
+    "request_id": 5,
+    "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "state": {
+      "state": "done",
+      "processed": {
+        "text": "- 预算已批准\n- 下周三前提交方案",
+        "preset": {
+          "id": "notes",
+          "name": "要点纪要"
+        },
+        "at_ms": 1758700660000
+      }
+    }
+  },
+  {
+    "type": "history_process",
+    "request_id": 6,
+    "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "state": {
+      "state": "failed",
+      "reason": "尚未配置 AI 润色服务，无法用预设处理"
+    }
+  },
+  {
+    "type": "history_process",
+    "request_id": 7,
+    "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "state": {
+      "state": "cancelled"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 1,
+    "outcome": {
+      "kind": "pasted"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 2,
+    "outcome": {
+      "kind": "copied",
+      "reason": "no_probe"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 3,
+    "outcome": {
+      "kind": "copied",
+      "reason": "timeout"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 4,
+    "outcome": {
+      "kind": "copied",
+      "reason": "target_changed"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 5,
+    "outcome": {
+      "kind": "copied",
+      "reason": "clipboard_only"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 6,
+    "outcome": {
+      "kind": "copied",
+      "reason": "paste_failed"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 7,
+    "outcome": {
+      "kind": "failed",
+      "reason": "busy"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 8,
+    "outcome": {
+      "kind": "failed",
+      "reason": "invalid"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 9,
+    "outcome": {
+      "kind": "failed",
+      "reason": "timeout"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 10,
+    "outcome": {
+      "kind": "failed",
+      "reason": "inject"
+    }
+  },
+  {
+    "type": "paste_result",
+    "request_id": 11,
+    "outcome": {
+      "kind": "failed",
+      "reason": "unsupported"
+    }
+  }
+]

@@ -1,0 +1,43 @@
+[package]
+name = "voltip-identity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Long-term device identity, platform secret storage abstraction and the trusted-device registry."
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Platform secret storage through the `keyring` crate (Windows Credential Manager, macOS
+# Keychain, Linux Secret Service). Off by default so tests and mobile builds never link it.
+keyring = ["dep:keyring", "dep:security-framework"]
+# Android Keystore-backed store (SharedPreferences encrypted with an AES key that lives in the
+# Keystore). Only meaningful when compiling for `target_os = "android"`; a no-op elsewhere.
+android-keystore = ["dep:keyring-core", "dep:android-native-keyring-store"]
+
+[dependencies]
+keyring = { workspace = true, optional = true }
+keyring-core = { version = "=1.0.0", optional = true }
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+voltip-crypto.workspace = true
+voltip-protocol.workspace = true
+zeroize.workspace = true
+
+# macOS: whether this build is signed with a certificate (the releases keep their keychain items
+# in items they created themselves; see `KeyringSecretStore`).
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { version = "=3.7.0", optional = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-native-keyring-store = { version = "=1.0.0", optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true

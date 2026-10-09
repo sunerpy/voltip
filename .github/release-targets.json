@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "profile": "tauri",
+  "android_signing": {
+    "certificate_sha256": "6cb470461043982d88d74a6894c4cfb21e2529bc01ac1e5e6acc7ac841788613",
+    "key_alias": "voltip"
+  },
+  "macos_signing": {
+    "certificate_sha1": "3571B3B4C8596B9731392EEFC280664E66234288",
+    "designated_requirement": "identifier \"dev.voltip.desktop\" and certificate leaf = H\"3571B3B4C8596B9731392EEFC280664E66234288\""
+  },
+  "targets": [
+    {
+      "bundles": ["deb", "appimage"],
+      "cross": false,
+      "platform": "linux",
+      "runner": "ubuntu-22.04",
+      "target": "x86_64-unknown-linux-gnu",
+      "updater_bundle": "appimage",
+      "updater_platform": "linux-x86_64"
+    },
+    {
+      "bundles": ["nsis"],
+      "cross": true,
+      "platform": "windows",
+      "runner": "ubuntu-24.04",
+      "target": "x86_64-pc-windows-msvc",
+      "updater_bundle": "nsis",
+      "updater_platform": "windows-x86_64"
+    },
+    {
+      "bundles": ["dmg", "app"],
+      "cross": false,
+      "platform": "macos",
+      "runner": "macos-15",
+      "target": "aarch64-apple-darwin",
+      "updater_bundle": "app",
+      "updater_platform": "darwin-aarch64"
+    },
+    {
+      "bundles": ["dmg", "app"],
+      "cross": false,
+      "platform": "macos",
+      "runner": "macos-15-intel",
+      "target": "x86_64-apple-darwin",
+      "updater_bundle": "app",
+      "updater_platform": "darwin-x86_64"
+    },
+    {
+      "bundles": ["apk", "aab"],
+      "cross": true,
+      "platform": "android",
+      "runner": "ubuntu-24.04",
+      "target": "aarch64-linux-android",
+      "updater_bundle": null,
+      "updater_platform": null
+    }
+  ]
+}

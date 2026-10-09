@@ -1,0 +1,36 @@
+[package]
+name = "voltip-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Microphone enumeration and a live input level meter on top of cpal (WASAPI / CoreAudio / ALSA)."
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# In-process `FakeBackend` that plays a synthetic signal into the meter, so shells can test the
+# meter wiring without a capture device. Always compiled for this crate's own tests.
+test-support = []
+
+[dependencies]
+cpal.workspace = true
+# Lock-free SPSC ring for the live tap (docs/dictation.md §11); nothing above this crate sees it.
+rtrb.workspace = true
+rubato.workspace = true
+serde.workspace = true
+# The mixed recording's echo canceller (docs/dictation.md §22.6).
+sonora.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# Linux: the computer's sound is recorded from the PulseAudio (or PipeWire's PulseAudio server)
+# monitor source of an output device (docs/dictation.md §22). The microphone stays on ALSA.
+[target.'cfg(target_os = "linux")'.dependencies]
+cpal = { workspace = true, features = ["pulseaudio"] }
+
+[dev-dependencies]
+serde_json.workspace = true

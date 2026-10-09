@@ -1,0 +1,314 @@
+{
+  "entry": {
+    "app": {
+      "id": "code",
+      "name": "Code"
+    },
+    "asr_model": "Qwen/Qwen3-ASR-1.7B",
+    "asr_ms": 640,
+    "at_ms": 1758700600000,
+    "duration_ms": 3200,
+    "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "kind": "dictation",
+    "mode": "whole_take",
+    "outcome": {
+      "kind": "inserted",
+      "via": "paste"
+    },
+    "preset": {
+      "id": "formal",
+      "name": "书面语"
+    },
+    "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+    "refine_model": "qwen/qwen3.8-27b",
+    "refine_ms": 2400,
+    "refined": true,
+    "scene": {
+      "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+      "name": "代码评审"
+    },
+    "starred": true,
+    "text": "把 fetchUser 改成 async，然后加上错误处理。",
+    "vocabulary": {
+      "corrections": [
+        {
+          "count": 1,
+          "id": "3b241101-e2bb-4255-8caf-4136c566a962"
+        }
+      ],
+      "rules": [
+        {
+          "count": 2,
+          "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+        }
+      ]
+    }
+  },
+  "hits": {
+    "dictionary": {
+      "3b241101-e2bb-4255-8caf-4136c566a962": 3
+    },
+    "rules": {
+      "8d7e6f5a-4b3c-4d2e-9f1a-0b9c8d7e6f5a": 1
+    }
+  },
+  "mirror_entry": {
+    "entry": {
+      "app": {
+        "id": "code",
+        "name": "Code"
+      },
+      "asr_model": "Qwen/Qwen3-ASR-1.7B",
+      "asr_ms": 640,
+      "at_ms": 1758700600000,
+      "duration_ms": 3200,
+      "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      "kind": "dictation",
+      "mode": "whole_take",
+      "origin": {
+        "device": "Pixel 8",
+        "kind": "standalone"
+      },
+      "outcome": {
+        "kind": "inserted",
+        "via": "paste"
+      },
+      "preset": {
+        "id": "formal",
+        "name": "书面语"
+      },
+      "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+      "refine_model": "qwen/qwen3.8-27b",
+      "refine_ms": 2400,
+      "refined": true,
+      "scene": {
+        "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+        "name": "代码评审"
+      },
+      "starred": true,
+      "text": "把 fetchUser 改成 async，然后加上错误处理。",
+      "vocabulary": {
+        "corrections": [
+          {
+            "count": 1,
+            "id": "3b241101-e2bb-4255-8caf-4136c566a962"
+          }
+        ],
+        "rules": [
+          {
+            "count": 2,
+            "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+          }
+        ]
+      }
+    },
+    "shortened": true
+  },
+  "mirror_missing": null,
+  "mirror_profile": {
+    "asr_model": "Qwen/Qwen3-ASR-1.7B",
+    "asr_provider": "builtin",
+    "dictionary": [
+      {
+        "created_at_ms": 1758614200000,
+        "enabled": true,
+        "heard_as": ["fetch user", "费驰优瑟"],
+        "id": "3b241101-e2bb-4255-8caf-4136c566a962",
+        "source": {
+          "kind": "manual"
+        },
+        "term": "fetchUser",
+        "updated_at_ms": 1758697000000
+      },
+      {
+        "created_at_ms": 1758700600000,
+        "enabled": false,
+        "heard_as": ["谷歌IDR"],
+        "id": "6f1c2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "source": {
+          "history_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+          "kind": "history"
+        },
+        "term": "good idea",
+        "updated_at_ms": 1758700600000
+      }
+    ],
+    "follow_system_theme": true,
+    "llm_provider": "builtin",
+    "local_model": "qwen3-asr-0.6b",
+    "locale": "system",
+    "preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+    "presets": [
+      {
+        "created_at_ms": 1758614200000,
+        "id": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+        "name": "周报",
+        "prompt": "把正文整理成周报：本周完成、下周计划、风险三部分。",
+        "updated_at_ms": 1758700600000
+      }
+    ],
+    "refine_enabled": true,
+    "refine_model": "qwen/qwen3.8-27b",
+    "rules": [
+      {
+        "case_sensitive": true,
+        "created_at_ms": 1758614200000,
+        "enabled": true,
+        "id": "8d7e6f5a-4b3c-4d2e-9f1a-0b9c8d7e6f5a",
+        "kind": "literal",
+        "name": "git push",
+        "pattern": "给他push",
+        "replacement": "git push",
+        "updated_at_ms": 1758614200000
+      },
+      {
+        "case_sensitive": false,
+        "created_at_ms": 1758700600000,
+        "enabled": false,
+        "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "kind": "regex",
+        "name": "PR 编号",
+        "pattern": "\\bpr (\\d+)",
+        "replacement": "PR #$1",
+        "updated_at_ms": 1758700600000
+      }
+    ],
+    "scenes": [
+      {
+        "created_at_ms": 1758614200000,
+        "enabled": true,
+        "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+        "match": {
+          "apps": ["chrome", "code"],
+          "title_contains": ["Pull request"]
+        },
+        "name": "代码评审",
+        "overrides": {
+          "chinese_script": "as_is",
+          "language": "en",
+          "output_mode": "streaming_final",
+          "prompt": "这是代码评审意见：保留代码标识符原样。",
+          "refine_enabled": true,
+          "refine_preset": "formal"
+        },
+        "updated_at_ms": 1758697000000
+      },
+      {
+        "created_at_ms": 1758700600000,
+        "enabled": false,
+        "id": "e0e1e2e3-e4e5-4e6e-8e7e-8e9eaebecede",
+        "match": {
+          "apps": ["slack", "wechat"],
+          "title_contains": []
+        },
+        "name": "聊天",
+        "overrides": {
+          "refine_preset": "punctuation"
+        },
+        "updated_at_ms": 1758700600000
+      },
+      {
+        "builtin": "legal",
+        "created_at_ms": 1758700600000,
+        "enabled": false,
+        "id": "b0117e1e-5ce0-4e5e-8a1e-000000000003",
+        "match": {
+          "apps": [],
+          "title_contains": []
+        },
+        "name": "legal",
+        "overrides": {
+          "prompt": "严格校对，保持专业术语原样；数字、单位、日期写规范。这是法律文本：法条、案号和当事人名称照原样保留。",
+          "refine_preset": "proofread"
+        },
+        "updated_at_ms": 1758700600000
+      }
+    ],
+    "theme": "dark"
+  },
+  "missing": null,
+  "page": {
+    "entries": [
+      {
+        "app": {
+          "id": "code",
+          "name": "Code"
+        },
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "asr_ms": 640,
+        "at_ms": 1758700600000,
+        "duration_ms": 3200,
+        "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+        "kind": "dictation",
+        "mode": "whole_take",
+        "outcome": {
+          "kind": "inserted",
+          "via": "paste"
+        },
+        "preset": {
+          "id": "formal",
+          "name": "书面语"
+        },
+        "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+        "refine_model": "qwen/qwen3.8-27b",
+        "refine_ms": 2400,
+        "refined": true,
+        "scene": {
+          "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+          "name": "代码评审"
+        },
+        "starred": true,
+        "text": "把 fetchUser 改成 async，然后加上错误处理。",
+        "vocabulary": {
+          "corrections": [
+            {
+              "count": 1,
+              "id": "3b241101-e2bb-4255-8caf-4136c566a962"
+            }
+          ],
+          "rules": [
+            {
+              "count": 2,
+              "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+            }
+          ]
+        }
+      }
+    ],
+    "matching": 12,
+    "total": 312
+  },
+  "query": {
+    "failed": true,
+    "limit": 100,
+    "offset": 100,
+    "query": "会议",
+    "since_ms": 1758697000000,
+    "starred": false
+  },
+  "stats": {
+    "buckets": [
+      {
+        "corrected_chars": 0,
+        "count": 0,
+        "latency_ms": 0,
+        "raw_chars": 0,
+        "spoken_ms": 0
+      },
+      {
+        "corrected_chars": 14,
+        "count": 2,
+        "latency_ms": 2462,
+        "raw_chars": 116,
+        "spoken_ms": 22000
+      }
+    ],
+    "total": {
+      "corrected_chars": 42,
+      "count": 6,
+      "latency_ms": 7386,
+      "raw_chars": 348,
+      "spoken_ms": 66000
+    }
+  }
+}

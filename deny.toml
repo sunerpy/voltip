@@ -1,0 +1,151 @@
+# cargo-deny configuration — supply-chain and licence policy for the Voltip workspace.
+#
+# Checked in CI by `cargo deny check licenses bans advisories` (.github/workflows/ci.yml).
+# Run locally with the same command.
+#
+# Voltip is released under AGPL-3.0-or-later (from the release after 0.0.20; Apache-2.0 before)
+# and its packages bundle every dependency. Every dependency must be under a licence that lets the
+# combined binaries be distributed under those terms, and the allow-list stays permissive-only on
+# top of that, so that the author can still offer Voltip under another licence (a commercial one, say),
+# which a copyleft dependency (GPL-family, or AGPL itself) would rule out. Non-commercial licences are out as
+# well. They are absent from `licenses.allow` below so they fail the build rather than being
+# caught by memory.
+
+[graph]
+# Evaluate every platform, not just the host. A dependency that is GPL on Android and absent
+# on Linux is still a licence problem for the shipped Android app, and restricting the graph
+# to the host triple would hide it.
+all-features = true
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# The allow-list is deliberately forward-looking: it names licences the project accepts, not
+# only the ones present today. Warning about the not-yet-encountered ones would train people
+# to ignore this check's output.
+unused-allowed-license = "allow"
+
+# Allow-list only. Anything not named here fails, which is the point: a new dependency under
+# GPL-3.0-only, SSPL, BUSL-1.1, Elastic-2.0, Commons-Clause or CC-BY-NC-* is rejected on
+# arrival instead of being discovered at release time.
+allow = [
+    "Apache-2.0",                     # sherpa-onnx, ONNX Runtime, hound
+    "Apache-2.0 WITH LLVM-exception", # wasi / compiler-builtins family
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0", # webpki-roots — Mozilla's CA root store, shipped as DATA rather than
+                           # code, which is why it carries a data licence. Read from the SPDX text
+                           # on 2026-08-07: s1.1 grants use/modify/share; s3.1 states the agreement
+                           # "does not impose any restriction or obligations with respect to the
+                           # use, modification, or sharing of Results", so there is no copyleft
+                           # reaching the application; s2.1 is the ONE condition — when sharing the
+                           # Data, make the agreement text available with it. Since the root store
+                           # is compiled into every shipped binary, that condition is an
+                           # ATTRIBUTION DUTY the release artefacts must satisfy: the licence-notice
+                           # surface has to carry the CDLA-Permissive-2.0 text next to the CA bundle.
+                           # Unavoidable for TLS: ureq's default `rustls` pulls webpki-roots, and
+                           # the `platform-verifier` alternative pulls webpki-root-certs under the
+                           # same licence, so there is no rustls trust source that avoids it.
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",     # option-ext (via directories). File-level copyleft; MPL-2.0 s3.3 permits
+                   # distribution of the larger work under other terms as long as the MPL files
+                   # themselves stay MPL, so a closed application may link it. Modifications to
+                   # the MPL files stay MPL.
+    "Unicode-3.0", # unicode-ident
+    "Unlicense",
+    "Zlib",
+]
+
+# Deliberately NOT allowed, recorded so the omission reads as a decision rather than an
+# oversight. Adding any of these to `allow` is a licensing decision, not a build fix:
+#   GPL-2.0-only / GPL-2.0-or-later / GPL-3.0-only / GPL-3.0-or-later / AGPL-3.0-*
+#     Copyleft. GPL-3.0 and AGPL-3.0 code could be combined with Voltip's AGPL-3.0, but
+#     the author could no longer offer Voltip under another licence (code they do not own
+#     would be in it), and GPL-2.0-only cannot be combined at all. `rlx-funasr` is
+#     GPL-3.0-only and is banned by name under [bans] below.
+#   LGPL-2.1-* / LGPL-3.0-*
+#     Static linking is what Rust does by default, which triggers LGPL's relinking duty. Note
+#     `r-efi` offers "MIT OR Apache-2.0 OR LGPL-2.1-or-later"; the permissive arm is chosen
+#     automatically because it appears in `allow` and LGPL does not.
+#   SSPL-1.0 / BUSL-1.1 / Elastic-2.0 / Commons-Clause / CC-BY-NC-4.0 / CC-BY-NC-SA-4.0
+#     Non-commercial or source-available-but-not-free. Incompatible with a commercial release.
+#
+# SCOPE BOUNDARY, stated so nobody mistakes a green run for more than it is: cargo-deny reads
+# *crate* metadata. It cannot see the licence of a downloaded MODEL WEIGHT. Moonshine's
+# non-English weights are non-commercial and no cargo-deny rule can catch that. Model licences
+# are policed by the model manifest in the model manager (todo 17), not here.
+
+# The workspace's own crates (`publish = false` in Cargo.toml) carry the project's licence; the
+# allow-list above is for third-party code.
+[licenses.private]
+ignore = true
+
+[bans]
+# Duplicate versions are a warning, not an error: cpal's Android backend already pulls two
+# jni-sys majors and keyring pulls two getrandom majors, neither of which this project can fix.
+multiple-versions = "warn"
+
+# `wildcards` is "warn" rather than "deny" for one specific reason. Every intra-workspace
+# dependency is a `version`-less path dependency, which cargo-deny classifies as a wildcard.
+# `allow-wildcard-paths = true` does not exempt them, because it only applies to crates marked
+# `publish = false` and these crates are publishable. Compensating controls: external versions
+# are pinned exactly (`=0.18.1` style) in the workspace manifest and Cargo.lock is committed.
+# To tighten this to "deny", add `publish = false` to the internal library crates first — that
+# is a packaging decision owned by the release todo, not by CI.
+wildcards = "warn"
+allow-wildcard-paths = true
+
+[[bans.deny]]
+name = "rlx-funasr"
+reason = "GPL-3.0-only. Linking it would put the whole application under GPL-3.0 instead of Apache-2.0. Use the Apache-2.0 sherpa-onnx SenseVoice path instead."
+
+[[bans.deny]]
+name = "sherpa-rs"
+reason = "Deprecated/archived third-party binding. Use the official k2-fsa `sherpa-onnx` crate."
+
+[[bans.deny]]
+name = "tauri-plugin-stronghold"
+reason = "Demands a password on every launch, which is fatal for an autostart hotkey app. Secrets belong in the OS keychain via voltip-identity's SecretStore."
+
+[advisories]
+version = 2
+yanked = "deny"
+# cargo-deny 0.19 changed the default scope of `unmaintained` from `all` to `workspace`
+# (direct dependencies only), which silently stopped reporting the transitive GTK3 notices below
+# and made every ignore "unused". The gate wants the transitive ones too, so the scope is explicit.
+unmaintained = "all"
+# Every entry is a specific RustSec `unmaintained` notice whose report says
+# "No safe upgrade is available". We keep `unmaintained = "all"`
+# rather than weakening the category: a new advisory still fails this gate.
+# `unused-ignored-advisory = "deny"` is the removal condition in executable form:
+# as soon as an upstream migration removes one dependency, its stale exception
+# fails CI until it is deleted here.
+unused-ignored-advisory = "deny"
+ignore = [
+    # The gtk3-rs `unmaintained` notices (RUSTSEC-2024-0411 … 0420) were withdrawn upstream on
+    # 2026-08-14 and no longer match anything; their exceptions were removed the day the gate
+    # reported them unused (2026-09-25).
+
+    # proc-macro-error arrives only through the same archived GTK3 bindings.
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is transitive through gtk3-rs macros and has no safe upgrade in this graph; remove with the Tauri GTK4 migration" },
+
+    # Tauri's urlpattern dependency currently resolves through rust-unic 0.9.
+    { id = "RUSTSEC-2025-0075", reason = "unic-char-range is transitive through tauri-utils -> urlpattern -> rust-unic; remove when that upstream chain migrates" },
+    { id = "RUSTSEC-2025-0080", reason = "unic-common is transitive through tauri-utils -> urlpattern -> rust-unic; remove when that upstream chain migrates" },
+    { id = "RUSTSEC-2025-0081", reason = "unic-char-property is transitive through tauri-utils -> urlpattern -> rust-unic; remove when that upstream chain migrates" },
+    { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version is transitive through tauri-utils -> urlpattern -> rust-unic; remove when that upstream chain migrates" },
+    { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident is transitive through tauri-utils -> urlpattern -> rust-unic; remove when that upstream chain migrates" },
+
+]
+
+[sources]
+# Not part of the CI command (`check licenses bans advisories`) because local development
+# commonly resolves through a registry mirror, which this would reject. Configured so that
+# `cargo deny check sources` is meaningful when run deliberately on a release checkout.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

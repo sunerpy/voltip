@@ -1,0 +1,36 @@
+[package]
+name = "voltip-serve"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Voltip's local speech service over HTTP: an OpenAI-compatible transcription endpoint on this computer (docs/dictation.md §23)."
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+# The HTTP layer; `multipart` reads the OpenAI-style upload as it arrives.
+axum.workspace = true
+hound.workspace = true
+parking_lot.workspace = true
+# The upload is brought to 16 kHz as it is decoded (the app's recording rate). Not through
+# voltip-audio: that crate links cpal (ALSA on Linux), which a headless server does not have.
+rubato.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+voltip-core.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+reqwest.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tower.workspace = true

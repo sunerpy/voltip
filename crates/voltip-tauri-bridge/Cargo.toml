@@ -1,0 +1,36 @@
+[package]
+name = "voltip-tauri-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Tauri-independent glue shared by the desktop and mobile shells: command dispatch, UiState cache, event fan-out."
+
+[lints]
+workspace = true
+
+# Stdio JSON-lines driver for `packages/shared/src/ipc-e2e.test.ts` (TypeScript → real Rust core).
+[[bin]]
+name = "voltip-bridge-harness"
+path = "src/bin/voltip-bridge-harness.rs"
+
+[dependencies]
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+voltip-core.workspace = true
+voltip-crypto.workspace = true
+voltip-identity.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+voltip-pairing.workspace = true
+voltip-protocol.workspace = true
+voltip-transport.workspace = true
