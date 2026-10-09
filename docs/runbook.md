@@ -83,7 +83,7 @@ Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前�
 
 工作流都跑在 GitHub 托管的 runner 上：
 
-- `ci.yml`：push `main` / PR → `changes`（`.github/scripts/changed-code.sh`：只改了 `docs/**`、`*.md`、`LICENSE*` 时 `code=false`；新分支、API 失败或一次推送 300 个以上文件都算改了代码）→ 并行的 `verify-rust`（`VERIFY_GATES=rust`：格式、features、clippy、交叉检查、覆盖率下跑一遍测试、cargo-deny、IPC e2e）与 `verify-web`（`VERIFY_GATES=web`：web 门禁、台账、主机名守卫、发布脚本测试，外加带 `VOLTIP_PRODUCTION_HOSTS` 的守卫；fork 与 Dependabot 的 PR 没有 secrets，跳过这一步）、`codecov`（上传覆盖率，只做报告，不阻塞）、`windows-cross`（`make windows-x64`，无内置服务）→ `windows-native`（Windows Server 上无头运行便携包与安装后的 exe）、`hooks-windows`（Windows 桌面上真实的单键钩子）、`smoke-desktop`（Xvfb 与纯 Wayland 冒烟、X11 真实钩子、无头识别）、`android`（对 Android 目标跑 clippy；构建未签名的 release APK 与 AAB，用当次生成的临时密钥签名，再跑与候选相同的包检查）→ `android-device`（把这个 APK 装进 Android 15 模拟器并启动：首屏出现、20 秒内不退出、日志里没有致命错误，`.github/scripts/android-device-smoke.sh`）、`android-rn`（React Native 版手机端：`scripts/build-android-rn.sh --unsigned` 构建未签名的 release APK，同样用临时密钥签名、跑候选的包检查；只读取 `android` job 的 Cargo 缓存，不另存一份）→ `android-rn-device`（同样的模拟器冒烟，`--app mobile-rn`）、`ci-success` 聚合（CI 的总结论）；另有 `candidate-status` 给不是发布 PR 的 PR head 写 `Release candidate = success`（见下面的 ruleset）。只改文档时 `verify-web` 照常跑，其余构建、测试、平台 job 跳过；`ci-success` 只在 `changes` 判定为只改文档时接受跳过，其他任何跳过、失败或取消都判失败。CI 不注入任何内置引擎值。
+- `ci.yml`：push `main` / PR → `changes`（`.github/scripts/changed-code.sh`：只改了 `docs/**`、`*.md`、`LICENSE*` 时 `code=false`；新分支、API 失败或一次推送 300 个以上文件都算改了代码）→ 并行的 `verify-rust`（`VERIFY_GATES=rust`：格式、features、clippy、交叉检查、覆盖率下跑一遍测试、cargo-deny、IPC e2e）与 `verify-web`（`VERIFY_GATES=web`：web 门禁、台账、主机名守卫、发布脚本测试，外加带 `VOLTIP_PRODUCTION_HOSTS` 的守卫；fork 与 Dependabot 的 PR 没有 secrets，跳过这一步）、`codecov`（上传覆盖率，只做报告，不阻塞）、`windows-cross`（`make windows-x64`，无内置服务）→ `windows-native`（Windows Server 上无头运行便携包与安装后的 exe）、`hooks-windows`（Windows 桌面上真实的单键钩子）、`smoke-desktop`（Xvfb 与纯 Wayland 冒烟、X11 真实钩子、无头识别）、`android`（对 Android 目标跑 clippy；用 `scripts/build-android-rn.sh --unsigned` 构建 React Native 版未签名的 release APK 与 AAB，用当次生成的临时密钥签名，再跑与候选相同的包检查）→ `android-device`（把这个 APK 装进 Android 15 模拟器并启动：首屏出现、20 秒内不退出、日志里没有致命错误，`.github/scripts/android-device-smoke.sh`）、`ci-success` 聚合（CI 的总结论）；另有 `candidate-status` 给不是发布 PR 的 PR head 写 `Release candidate = success`（见下面的 ruleset）。只改文档时 `verify-web` 照常跑，其余构建、测试、平台 job 跳过；`ci-success` 只在 `changes` 判定为只改文档时接受跳过，其他任何跳过、失败或取消都判失败。CI 不注入任何内置引擎值。
 - CI 的速度（2026-09-28 实测后调整）：Rust 测试只在覆盖率门禁里跑一遍（原先 `cargo test` 与 `cargo llvm-cov` 各编一遍、各跑一遍，各约 170 秒）；`verify` 拆成可并行的两半；Cargo 缓存只从 `main` 保存（PR 的缓存只有同一个 PR 能用，而仓库 10 GB 的上限会把 `main` 的挤掉），不缓存 `~/.cargo/bin`；dev / test 构建只留行号表（`CARGO_PROFILE_DEV_DEBUG=line-tables-only`）；清理预装 SDK 只在剩余空间不足 40 GB 时做（`.github/scripts/free-disk-space.sh`，托管 runner 实测开跑时有 86 GB）；CI 的 Windows 包复用按全部输入（锁文件、清单、`about.toml`、生成脚本与许可证文本）缓存的第三方声明，省掉约两分钟的 cargo-about（`VOLTIP_NOTICES_CACHED=1`，发布总是重新生成）；下载失败重试（`CARGO_NET_RETRY`、`RUSTUP_MAX_RETRIES`）；桌面壳的 lib 只编成 `rlib`（2026-10-05）：Tauri 模板为手机准备的 `staticlib` 和 `cdylib` 让 release 构建的每个依赖都同时生成机器码和 bitcode，去掉后依赖只生成 thin LTO 用的 bitcode（`-C linker-plugin-lto`），本机 32 核冷构建 224 → 156 秒，target/ 3.3 → 2.4 GB；macOS 腿的钥匙串测试程序是带 `keychain-harness` feature 的 bin 而不是 example（example 会带上 dev-dependencies，它们的 feature 让应用构建的 60 多个 crate 重编一遍，Intel Mac 冷跑时 11 分钟），应用构建之后只需再编这个包本身。`verify-*.log` 里每道门都记了耗时（`secs=`）。
 - `ci.yml` 的 `macos` job（2026-09-28 从 `macos.yml` 并入）：推送 `main` 或手动运行时在 `macos-15`（Apple 芯片）与 `macos-15-intel`（Intel）上构建 ad-hoc 签名的 `.app` 和 `.dmg`（发布包用固定证书，见下面「macOS 签名」），用 `.github/scripts/check-macos-bundle.sh` 检查，并确认发布用的检查会拒绝这个 ad-hoc 包，跑 macOS 单元测试、真实的事件 tap（仅 Apple 芯片，先在 TCC 里给测试程序授予辅助功能）、无头识别，以及桌面上的 `scripts/smoke-tray-macos.sh`（标题栏左端的内容离红绿灯至少 12 pt，菜单栏图标、菜单与各项操作，截图随产物保存）；不跑在 pull request 上。在 push 和手动运行时 `CI Success` 等它（规则在 `.github/scripts/ci-success.sh`，只有 pull request 上允许它被跳过），所以 `main` 上任何一台 Mac 失败，下一个候选都过不了 `source-gate`；Cargo 缓存从 `main` 保存。
 - release-please 的 PR（作者 `github-actions[bot]`、分支 `release-please--branches--main--*`、标签 `autorelease: pending`）和它合并到 `main` 的发布提交只改版本号和 CHANGELOG，只跑 `verify-web`：候选在同一个 head 上构建并检查每个安装包，而 head 的基点已经通过 CI（`.github/scripts/changed-code.sh`）。同样的改动换个作者或没有标签，照常跑完整 CI。
@@ -151,10 +151,10 @@ Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前�
   - 0.0.7 过渡时的另两项：辅助功能在系统设置里把 Voltip 关掉再打开，不行就 `tccutil reset Accessibility dev.voltip.desktop` 后重新授权；麦克风同样关掉再打开，没有再弹授权时 `tccutil reset Microphone dev.voltip.desktop`。发布说明要写这两项和钥匙串的变化。
 - Android 签名（2026-10-01 起）：GitHub Release 里的 APK 与上传 Google Play 的 AAB 用同一把密钥签名（RSA 4096，有效期 100 年，别名 `voltip`，证书 `CN=Voltip, O=Voltip`）。Play 应用签名保存的也是这把密钥（用户 2026-09-30 选定），所以从 GitHub 安装的应用与从 Play 安装的应用可以互相覆盖升级。
   - 位置：PKCS12 密钥库和它的密码只在所有者的密码管理器与仓库 secrets（`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_PASSWORD`，见 `.github/README-secrets.md`）里；仓库只记证书的 SHA-256 和密钥别名（`.github/release-targets.json` 的 `android_signing`）。别名不是秘密，只是密钥在密钥库里的名字；0.0.18 的候选把它当作 secret，它的值就是项目名，于是 `prepare` 和 Android 腿日志里的每个 `voltip` 都被遮成了 `***`。`prepare` 要求三个 secrets 都存在。
-  - 构建：候选的 `bundle-android` 腿先用 Gradle 构建未签名的 APK 和 AAB。这一步运行全部依赖的构建代码，所以不接触密钥。然后在单独一步把密钥库解码到本 job 的临时目录，用 `.github/scripts/sign-android-package.sh` 签名，步骤结束即删除：APK 先 `zipalign -P 16`，再用 apksigner 做 v2 与 v3 签名（minSdk 26 不需要 v1）；AAB 用 jarsigner 签名。
-  - 检查（`.github/scripts/check-android-package.sh`）：两个包都由 `android_signing` 的证书签名，且只有一个签名者；APK 按 16 KB 页对齐，每个 `.so` 的 LOAD 段按 16 KB 对齐（Google Play 要求面向 Android 15 及以上的应用支持 16 KB 页）；包名 `dev.voltip.mobile`，versionName 等于发布版本，versionCode 等于 主版本 × 1000000 + 次版本 × 1000 + 补丁号（Tauri 的算法，所以每次发布都更大）；targetSdk 36；原生库里没有服务商密钥；带本版本的第三方许可声明（`assets/THIRD-PARTY-NOTICES.txt`）。CI 的 `android` job 用当次生成的临时密钥走同一条签名与检查路径。
+  - 构建：0.0.50 起这条腿只有一个应用，即 React Native 版（用户 2026-10-09 决定，`docs/mobile-rn.md` §1.1）：候选的 `bundle-android` 腿先用源码里的 `scripts/build-android-rn.sh --unsigned` 构建未签名的 APK 和 AAB（cargo-ndk 由 `.github/scripts/install-cargo-ndk.sh` 按版本和 SHA-256 安装；React Native 的 Gradle 插件用 runner 自带的 JDK 17；`app.config.js` 让 Gradle 的 release 构建不签名）。这一步运行全部依赖的构建代码，所以不接触密钥。然后在单独一步把密钥库解码到本 job 的临时目录，用 `.github/scripts/sign-android-package.sh` 签名，步骤结束即删除：APK 先 `zipalign -P 16`，再用 apksigner 做 v2 与 v3 签名（minSdk 26 不需要 v1）；AAB 用 jarsigner 签名。Tauri 手机端（`apps/mobile`）不再构建 Android 包。
+  - 检查（`.github/scripts/check-android-package.sh`）：两个包都由 `android_signing` 的证书签名，且只有一个签名者；APK 按 16 KB 页对齐，每个 `.so` 的 LOAD 段按 16 KB 对齐（Google Play 要求面向 Android 15 及以上的应用支持 16 KB 页）；包名 `dev.voltip.mobile`（0.0.49 及更早的 Tauri 版的包名，所以它们覆盖安装即升级），versionName 等于发布版本，versionCode 等于 主版本 × 1000000 + 次版本 × 1000 + 补丁号（与 Tauri 版相同的算法，所以每次发布都更大）；原生库 `libvoltip_rn.so`，安装时解压原生库；targetSdk 36；原生库里没有服务商密钥；带本版本的第三方许可声明（`assets/THIRD-PARTY-NOTICES.txt`）。CI 的 `android` job 用当次生成的临时密钥走同一条签名与检查路径。
   - 启动（2026-10-01 起）：0.0.18 与 0.0.19 通过了全部包检查，在用户的小米 HyperOS 3 上却打开即闪退，因为从没有人启动过发布的 APK。现在候选的 `device-android` 在封存之前把 Android 腿签好的 APK 装进 Android 15 模拟器（x86_64，经 ARM 翻译运行 arm64 代码）启动：首屏的「按住说话」出现，20 秒内不退出，应用自己的日志里没有致命错误（`.github/scripts/android-device-smoke.sh`；CI 的 `android-device` 对 PR 的构建做同样的事）。它失败时候选不封存；日志、崩溃缓冲区、退出原因、界面树和截图在 `android-device-candidate` 工件里，先看 `crash.txt` 和 `logcat.txt` 里的 `panicked at` / `FATAL EXCEPTION`。同一个脚本经 adb 也能对一部真机运行。模拟器没有真实的麦克风、相机和定制系统：改动了手机端的版本发布后，按 `docs/acceptance/android/manual-checklist.md` 在真机上至少走第 1–5 项。
-  - React Native 版（2026-10-08 起，`docs/mobile-rn.md` §6）：同一条 Android 腿在 Tauri 的包之后、签名之前用源码里的 `scripts/build-android-rn.sh --unsigned` 构建它（cargo-ndk 由 `.github/scripts/install-cargo-ndk.sh` 按版本和 SHA-256 安装；React Native 的 Gradle 插件用 runner 自带的 JDK 17；`app.config.js` 让 Gradle 的 release 构建不签名），签名那一步用同一把密钥签它（`sign-android-package.sh --app mobile-rn`，只有 APK，不上 Play），检查（`check-android-package.sh --app mobile-rn`）要求同样的证书、16 KB 对齐、versionName / versionCode、targetSdk 36、许可声明，包名 `dev.voltip.mobile.rn`，原生库 `libvoltip_rn.so`。它作为 Android 腿的附加文件进候选（`collect --extra`，放在 `android-bundle/` 之外，所以这条腿仍只有一个 apk 包），发布为 `Voltip-RN_<版本>_android_arm64.apk`，同样进 `SHA256SUMS` 和构建证明。`device-android` 在 Tauri 的冒烟之后再启动它一次（`--app mobile-rn`，日志在工件的 `device-rn/`）；冒烟脚本按各自的发布文件名找 APK（腿里两个 APK 并存，`Voltip-RN_` 按字节序排在 `Voltip_` 前面）。它没有应用内更新：用户下载新版本的 APK 覆盖安装，签名相同，数据保留；用调试密钥签名的验收版不能被覆盖，要先卸载。
+  - React Native 版的来历：2026-10-08 至 0.0.49，它作为第二个应用 `Voltip-RN_<版本>_android_arm64.apk`（包名 `dev.voltip.mobile.rn`，只有 APK）在同一条腿上随 Tauri 的包发布；0.0.50 起它取代 Tauri 版，用上面的包名和文件名，签名、检查、模拟器冒烟的脚本都去掉了 `--app mobile-rn`。
   - 丢失：GitHub 上的 APK 再也无法用同一签名发布，已安装的用户只能卸载后重装（配对随之丢失）；Play 上的应用可以在 Play Console 申请重置上传密钥，Play 继续用它保存的密钥签名。所以密钥库必须另存一份。
   - 泄露：轮换要用 APK 签名方案 v3 的密钥轮换（`apksigner rotate`）和 Play Console 的应用签名密钥升级，届时单独设计；Android 8.x 不支持 v3 轮换，这些设备只能重装。
 - 还没进工作流的：上传 Google Play；macOS 包没有公证（见 `docs/roadmap.md`）。
@@ -183,32 +183,23 @@ Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前�
 ```bash
 export ANDROID_HOME=<sdk> NDK_HOME=<sdk>/ndk/<27+> JAVA_HOME=<jdk17+>
 rustup target add aarch64-linux-android
-make android-apk        # scripts/build-android-debug.sh：arm64 debug APK + aapt badging 写入 dist/android/build-info.txt
+cargo install cargo-ndk  # CI：.github/scripts/install-cargo-ndk.sh
+make android-apk        # scripts/build-android-rn.sh：调试密钥签名的 APK 与 AAB，build-info.txt 写入 dist/android-rn/
 make android-clippy     # 对 aarch64-linux-android 跑 clippy：手机壳链接的每个工作区 crate，含只在 Android 上编译的代码
 ```
 
-发布用的包与 CI 的 `android` job 走同一条路（CI 上的工具链由 `.github/scripts/android-toolchain.sh` 固定：JDK 21、platform 36、build-tools 35.0.0、NDK 30.0.16248370（r30，当前的 LTS））：
+发布用的包与 CI 的 `android` job 走同一条路（CI 上的工具链由 `.github/scripts/android-toolchain.sh` 固定：JDK 21、platform 36、build-tools 35.0.0、NDK 30.0.16248370（r30，当前的 LTS）；React Native 的 Gradle 插件另需 JDK 17 工具链）：
 
 ```bash
-python3 scripts/release/third-party-notices.py --app mobile --out apps/mobile/src-tauri/resources/THIRD-PARTY-NOTICES.txt
-(cd apps/mobile && cargo tauri android build --ci --target aarch64 --apk --aab --config src-tauri/tauri.package-android.conf.json)
-out=apps/mobile/src-tauri/gen/android/app/build/outputs
+JAVA_TOOLCHAINS=<jdk17> scripts/build-android-rn.sh --unsigned   # dist/android-rn/Voltip_<版本>_android_arm64-unsigned.apk 与 .aab
 # 四个 ANDROID_* 环境变量指向密钥库与它的密码（.github/README-secrets.md），不要写进命令历史
-.github/scripts/sign-android-package.sh "$out/apk/universal/release/app-universal-release-unsigned.apk" \
-  "$out/bundle/universalRelease/app-universal-release.aab" dist/android <版本>
+.github/scripts/sign-android-package.sh dist/android-rn/Voltip_<版本>_android_arm64-unsigned.apk \
+  dist/android-rn/Voltip_<版本>_android_arm64-unsigned.aab dist/android <版本>
 .github/scripts/check-android-package.sh dist/android/apk/Voltip_<版本>_android_arm64.apk \
   dist/android/aab/Voltip_<版本>_android_arm64.aab <证书 SHA-256> <版本>
 ```
 
-React Native 版（`docs/mobile-rn.md` §6）另需 cargo-ndk 和 JDK 17 工具链；不带 `--unsigned` 时用调试密钥签名，装上就能试：
-
-```bash
-JAVA_TOOLCHAINS=<jdk17> scripts/build-android-rn.sh --unsigned   # dist/android-rn/Voltip-RN_<版本>_android_arm64-unsigned.apk
-.github/scripts/sign-android-package.sh --app mobile-rn dist/android-rn/Voltip-RN_<版本>_android_arm64-unsigned.apk dist/android-rn <版本>
-.github/scripts/check-android-package.sh --app mobile-rn dist/android-rn/apk/Voltip-RN_<版本>_android_arm64.apk <证书 SHA-256> <版本>
-```
-
-Gradle 工程 `apps/mobile/src-tauri/gen/android` 已提交（`cargo tauri android init --ci` 可重建）；`app/build`、`.gradle`、`jniLibs` 符号链接和 CLI 复制进 `app/src/main/assets/` 的文件不入库，CLI 每次构建都重新生成它们（2026-10-01 在删掉这些文件后从头构建验证过）。release 构建开着 R8，Tauri 生成的 `proguard-tauri.pro` 保留插件类和 `@Command` 方法（同日在 release 的 DEX 里核对过三个插件及其命令）。`MainActivity` 在 `super.onCreate` 启动 Rust 之前调用 `io.crates.keyring.Keyring.initializeNdkContext`（`android-native-keyring-store` 导出的 JNI 入口，类名因此固定），把应用 context 交给 `ndk-context`：Tauri 2.11 用的 tao 0.35 不初始化它，没有这一步，Rust 打开 Android Keystore 时 panic，应用打开即退出（0.0.18、0.0.19）。`proguard-rules.pro` 保留这个类的 native 方法。以后 Tauri 换用会自己初始化 `ndk-context` 的 tao（0.37.1 已经这样做）时，这一步要重新设计：`ndk-context` 第二次初始化会 panic，CI 的模拟器冒烟会先失败。
+Android 工程由 `expo prebuild` 每次生成，不提交（`docs/mobile-rn.md` §6）。Tauri 手机端的 Gradle 工程 `apps/mobile/src-tauri/gen/android` 仍在仓库里，`scripts/build-android-debug.sh` 还能构建它的调试包，但它不再进 CI 和发布。
 
 ## Windows 交叉构建（Linux 主机）
 

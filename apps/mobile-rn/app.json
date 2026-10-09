@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "Voltip RN",
+    "name": "Voltip",
     "slug": "voltip-mobile-rn",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#f2f3f6",
     "android": {
-      "package": "dev.voltip.mobile.rn",
+      "package": "dev.voltip.mobile",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundImage": "./assets/adaptive-icon-background.png",

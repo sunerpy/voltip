@@ -12,7 +12,7 @@ description: 把 Android 手机当作电脑的麦克风和键盘使用，或单�
 
 每个[发布版本](https://github.com/sunerpy/voltip/releases)都附带应用安装包 `Voltip_<版本>_android_arm64.apk`，适用于 Android 8.0 及以上、64 位 Arm 处理器的手机。在手机上打开这个文件即可安装；具体步骤和核对下载文件的方法见[安装](/zh/guide/install#android)，之后如何更新见[更新](/zh/guide/updates#android-手机)。
 
-每个发布版本还附带 `Voltip-RN_<版本>_android_arm64.apk`，即 Voltip RN：同一应用，界面使用 Android 原生控件。它作为单独的应用与 Voltip 同时安装，见[安装](/zh/guide/install#android)。
+从 0.0.50 起，应用的界面使用 Android 原生控件。在旧版本上覆盖安装即可升级，配对、设置和记录都会保留，见[安装](/zh/guide/install#android)。
 
 在应用中，系统的返回手势或返回键回到上一级页面：在「记录」和「设置」中返回会回到「说话」；在「说话」中连续返回两次即可退出应用。打开的对话框会先被关闭。
 

@@ -21,14 +21,12 @@ On a Mac, updating from 0.0.6 or earlier asks for the permissions once more; see
 
 ### On an Android phone
 
-On the phone, updates are under **Settings → About → Updates**, and how they work depends on where the app came from:
+From 0.0.50 the Android app does not check for updates itself, and its **About** page has no **Updates** section:
 
-- Installed from Google Play, it is updated by Google Play. **Open in Google Play** opens its page there.
-- Installed from a GitHub release, **Check for updates** asks GitHub for the latest release. When there is a newer one, **Download the new version** downloads its installer in the browser; open it when it is done to update. Your settings and history are kept. **Check automatically**, off by default, checks each time Voltip starts.
+- Installed from Google Play, it is updated by Google Play.
+- Installed from a GitHub release, download `Voltip_<version>_android_arm64.apk` from the new release and open it: it installs over the old version and keeps the pairing, settings and history.
 
-Android only installs an update signed like the version you have. GitHub answers a limited number of queries per hour from each network address; when the message says so, try again later.
-
-Voltip RN does not check for updates, and its **About** page has no **Updates** section. Download `Voltip-RN_<version>_android_arm64.apk` from the new release and open it: it installs over the old version and keeps the settings and history.
+Voltip 0.0.49 and earlier check under **Settings → About → Updates**: **Check for updates** finds 0.0.50 and **Download the new version** downloads it in the browser; open it when it is done to update to the new app. Android only installs an update signed like the version you have. GitHub answers a limited number of queries per hour from each network address; when the message says so, try again later.
 
 ### If a check fails
 

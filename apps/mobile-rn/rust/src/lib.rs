@@ -13,6 +13,7 @@ pub mod clipboard;
 pub mod commands;
 pub mod ffi;
 pub mod host;
+pub mod legacy;
 pub mod meter;
 pub mod microphone;
 pub mod shell;
