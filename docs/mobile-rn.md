@@ -13,9 +13,9 @@
   树和 Android 的返回手势也是原生的。
 - 目标：功能与 `apps/mobile` 0.0.44 对齐的 RN 版，界面按 Material Design 3 重新设计，先在 AWS Device
   Farm 真机上跑通，再交给用户安装验收。
-- 不在本次范围：iOS、本地模型（手机本来就没有）、应用内更新（更新状态固定为 `disabled`，关于页因此不显示更新
-  卡片；从 Google Play 安装的由 Play 更新，从发布页安装的下载新版本的 APK 覆盖安装。用户 2026-10-09 选择在 0.0.50
-  之后的下一个 PR 里补上 Tauri 版那样的检查更新）。2026-10-08 起接入 CI 与发布候选，发布的 APK 与 AAB 用发布密钥
+- 不在本次范围：iOS、本地模型（手机本来就没有）。0.0.50 没有检查更新（更新状态固定为 `disabled`，关于页不显示
+  更新卡片）；用户 2026-10-09 选择在之后的下一个 PR 里补上，0.0.51 起 `rust/src/update.rs` 移植了 Tauri 版的检查
+  更新（docs/dictation.md §20.9）。2026-10-08 起接入 CI 与发布候选，发布的 APK 与 AAB 用发布密钥
   签名（§6）；本机构建默认仍用 Android 调试密钥签名，这样的包不能被发布版覆盖，要先卸载。
 
 ### 1.1 从 Tauri 手机端升级（0.0.50）
@@ -70,7 +70,7 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
       外壳并换上新的 host；`invoke(command, args)` 是异步方法，在 Kotlin 里是挂起函数（Expo 的 `Coroutine`
       异步函数直接调用），命令在外壳自己的 tokio 运行时上执行，返回 JSON 或与 Tauri 版相同的错误文本
       （`ShellError`，Kotlin 里的 `ShellException.message` 就是这段文本）。
-    - `PlatformHost`：由 Kotlin 的 `VoltipHost` 实现的外部 trait（事件、电平帧、剪贴板、分享、组播锁、打开网址），
+    - `PlatformHost`：由 Kotlin 的 `VoltipHost` 实现的外部 trait（事件、电平帧、剪贴板、分享、组播锁、打开网址、安装来源），
       失败以 `HostError` 返回；Kotlin 抛出的其他异常经 `UnexpectedUniFFICallbackError` 变成同一个错误，不会 panic。
     - 绑定由 `scripts/build-android-rn.sh` 在编出 `.so` 之后用 `voltip-uniffi-bindgen` 从库里的元数据生成
       （`uniffi.toml`：包名 `dev.voltip.rn.uniffi`），写进模块的 Kotlin 源码目录，不提交。元数据在符号表里，所以
@@ -98,14 +98,14 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
 | 类别 | 命令 | RN 版做法 |
 | --- | --- | --- |
 | 通用 | 所有映射到 `UiCommand` 的命令（配对、设备、设置、听写、词典、规则、场景、预设、历史增删…） | `{command, ...args}` → `UiCommand` → `bridge.dispatch` |
-| 状态 | `core_state`、`update_status` | `bridge.state()`；更新状态固定为 `disabled` |
+| 状态 | `core_state`、`update_status` | `bridge.state()`；更新器（`rust/src/update.rs`）的当前状态 |
 | 查询 | `history_query/entry/stats/hits`、`mirror_*`、`recent_apps`、`rules_export`、`vocabulary_preview`、`presets_builtin`、`scenes_builtin`、`feedback_diagnostics` | 阻塞线程上读，与 Tauri 版同一函数 |
 | 手机专有 | `phone_take_start`、`dictation_start` | JS 先申请 `RECORD_AUDIO`，Rust 再 dispatch |
 |  | `phone_clipboard_read`、`paste_text`、`phone_share_text`、`history_export` | `Host` 回调 Kotlin（剪贴板 / 分享面板 / 分享文件） |
 |  | `settings_set_lan_discovery` | dispatch 后按开关持有或释放组播锁 |
 |  | `audio_meter_start/stop` | 订阅 `bridge.levels()`，帧按订阅 id 发往 JS |
 |  | `provider_console_open`、`project_link_open`、`guide_open` | Rust 拼出网址，Kotlin `ACTION_VIEW` 打开；JS 从不打开收到的网址 |
-|  | `update_check`、`update_install` | 固定错误（验收版没有更新渠道），`update_status` 为 `disabled` |
+|  | `update_check`、`update_install` | `rust/src/update.rs`，Tauri 版更新器的移植（docs/dictation.md §20.9）：Kotlin 的 `installer()` 给出安装来源；Google Play 安装只打开 Play 页面，其他安装查询 GitHub 最新发布，`update_install` 在浏览器中打开新版本的 APK |
 |  | `feedback_submit`、`feedback_attachment_*` | 与 Tauri 版相同；附件字节经 base64 传入 |
 | 拒绝 | `hotkey_edge`、`model_*` | 同样的错误文本（手机没有快捷键和本地模型） |
 | 空答 | `audio_devices`、`audio_outputs`、`overlay_state`、`permissions_*`、`inject_preflight`、`hotkey_capture` | 与 Tauri 版相同的固定回答 |

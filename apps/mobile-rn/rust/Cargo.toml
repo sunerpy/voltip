@@ -46,3 +46,5 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 voltip-audio = { workspace = true, features = ["test-support"] }
 voltip-pairing.workspace = true
+# The update check against a local stand-in for GitHub's API (tests/update.rs).
+wiremock.workspace = true

@@ -339,10 +339,12 @@ export function Lamp({
   tone,
   pulse = false,
   size = 8,
+  testID,
 }: {
   tone: Tone;
   pulse?: boolean;
   size?: number;
+  testID?: string;
 }) {
   const theme = useAppTheme();
   const [opacity] = useState(() => new Animated.Value(1));
@@ -364,6 +366,7 @@ export function Lamp({
   }, [pulse, opacity]);
   return (
     <Animated.View
+      testID={testID}
       style={{
         width: size,
         height: size,
@@ -395,7 +398,12 @@ export function StateLine({
   return (
     <View style={styles.stateLine} testID={testID}>
       <View style={{ paddingTop: small ? 5 : 7 }}>
-        <Lamp tone={tone} {...(pulse === undefined ? {} : { pulse })} size={small ? 6 : 8} />
+        <Lamp
+          tone={tone}
+          {...(pulse === undefined ? {} : { pulse })}
+          size={small ? 6 : 8}
+          {...(testID === undefined ? {} : { testID: `${testID}-lamp` })}
+        />
       </View>
       <Text
         variant={small ? "bodySmall" : "bodyMedium"}

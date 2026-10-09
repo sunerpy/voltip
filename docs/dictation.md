@@ -1469,10 +1469,10 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 
 ### 20.9 手机更新（2026-10-02 用户要求）
 
-> 0.0.50 起 Android 应用是 React Native 版（`docs/mobile-rn.md` §1.1），它暂不检查更新：更新状态固定为 `disabled`，「关于」不显示「软件更新」；从 Google Play 安装的由 Play 更新。用户 2026-10-09 选择在下一个 PR 里把下面的检查更新移植过去。本节描述 Tauri 版（0.0.49 及更早），它的检查会找到 0.0.50 的 `Voltip_<版本>_android_arm64.apk`，覆盖安装即升级为 React Native 版。
+> 0.0.50 起 Android 应用是 React Native 版（`docs/mobile-rn.md` §1.1）。0.0.50 不检查更新（更新状态固定为 `disabled`，「关于」不显示「软件更新」）；用户 2026-10-09 选择在之后的下一个 PR 里移植下面的检查更新，0.0.51 起由 `apps/mobile-rn/rust/src/update.rs` 实现，与 Tauri 版（0.0.49 及更早，`apps/mobile/src-tauri/src/update.rs`）的行为相同。Tauri 版的检查找的也是 `Voltip_<版本>_android_arm64.apk`，覆盖安装即升级为 React Native 版。
 
-- **来源**：`UpdatePlugin.kt` 读取系统记录的安装来源（Android 11 起 `getInstallSourceInfo`，之前 `getInstallerPackageName`），启动时读一次。`com.android.vending`（Google Play）为 `InstallSource::Store`；其他情况（打开 GitHub 发布页安装包的浏览器或文件管理器、`adb`、没有记录）为 `Direct`。
-- **Google Play 安装**：从第一帧起就是 `UpdateStatus::Store { version }`（`store`）。`update_check` 不访问任何地方，`Settings.auto_update` 也不触发检查；`update_install` 在浏览器中打开 `https://play.google.com/store/apps/details?id=<包名>`，Android 会交给 Play 应用。不引入 Play Core 的应用内更新库：它是专有许可，与 AGPL 不兼容，而 Google Play 本身会自动更新应用。
+- **来源**：启动后读一次系统记录的安装来源（Android 11 起 `getInstallSourceInfo`，之前 `getInstallerPackageName`；React Native 版在 `VoltipHost.kt` 的 `installer()`，Tauri 版在 `UpdatePlugin.kt`），读到之前 `update_check` 与 `update_install` 被拒（`updater: 正在读取安装来源，请稍后再试`）。`com.android.vending`（Google Play）为 `InstallSource::Store`；其他情况（打开 GitHub 发布页安装包的浏览器或文件管理器、`adb`、没有记录）为 `Direct`。
+- **Google Play 安装**：读到安装来源后即为 `UpdateStatus::Store { version }`（`store`）。`update_check` 不访问任何地方，`Settings.auto_update` 也不触发检查；`update_install` 在浏览器中打开 `https://play.google.com/store/apps/details?id=<包名>`，Android 会交给 Play 应用。不引入 Play Core 的应用内更新库：它是专有许可，与 AGPL 不兼容，而 Google Play 本身会自动更新应用。
 - **其他安装**：状态从 `idle` 开始。`update_check` 在后台查询 `https://api.github.com/repos/<owner>/<repo>/releases/latest`（由 `REPOSITORY` 得出，带 User-Agent，连接 10 s、读取 30 s）。标签 `vX.Y.Z` 按数字比较：更新则为 `available { version, current, notes（发布说明）, date（published_at） }`，并记下资产 `Voltip_<版本>_android_arm64.apk` 的地址；不更新则为 `up_to_date`；新版本缺少 APK、版本号无法识别、403/429（GitHub 每小时的查询次数有限）或其他失败为 `failed { message }`。检查进行中再次检查会被拒（`updater: 正在检查更新`）。
 - **安装**：`update_install` 在浏览器中打开新版本的 APK，由浏览器下载，用户打开后由系统安装；Android 只接受与已安装版本签名相同的安装包。应用本身不下载、不安装：Google Play 不允许上架的应用绕过 Play 自行更新，所需的 `REQUEST_INSTALL_PACKAGES` 权限也不能用于这个目的，而 APK 与 Google Play 的 AAB 来自同一份清单。没有检查到新版本时，`update_install` 被拒（`updater: 没有可下载的新版本，请先检查更新`）。
 - **自动检查**：跟随 `Settings.auto_update`（默认关闭，与电脑相同）：启动时已开启，10 s 后检查一次；之后开启，立即检查一次。

@@ -17,6 +17,7 @@ use voltip_core::{Settings, SettingsStore};
 use voltip_identity::MemorySecretStore;
 use voltip_rn::Shell;
 use voltip_rn::host::RecordingHost;
+use voltip_rn::update::{AUTO_CHECK_DELAY, PACKAGE, UpdateConfig, store_listing};
 
 const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -33,7 +34,15 @@ impl Running {
         config.discovery = None;
         config.direct_bind = "127.0.0.1:0".parse().unwrap();
         let host = Arc::new(RecordingHost::default());
-        let shell = Shell::start(runtime.handle().clone(), config, store, fakes::ports(), host).unwrap();
+        // The Tauri app's settings have 自动检查更新 on: its check goes to a closed local port, never
+        // to GitHub.
+        let updates = UpdateConfig {
+            source: None,
+            latest_release: "http://127.0.0.1:9/releases/latest".into(),
+            listing: store_listing(PACKAGE),
+            auto_check_delay: AUTO_CHECK_DELAY,
+        };
+        let shell = Shell::start_with_updates(runtime.handle().clone(), config, store, fakes::ports(), host, updates).unwrap();
         let running = Self { shell, runtime: Some(runtime) };
         running.wait(|s| s["identity"].is_object());
         running

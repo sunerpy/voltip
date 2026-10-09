@@ -17,6 +17,7 @@ pub mod legacy;
 pub mod meter;
 pub mod microphone;
 pub mod shell;
+pub mod update;
 
 pub use ffi::{HostError, PlatformHost, ShellError, VoltipShell};
 pub use host::Host;
