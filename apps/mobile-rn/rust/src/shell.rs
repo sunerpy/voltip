@@ -11,12 +11,13 @@ use tokio::sync::broadcast::error::RecvError;
 use voltip_cloud::feedback;
 use voltip_core::CoreConfig;
 use voltip_core::dictation::DictationPorts;
-use voltip_core::ui::{UiEvent, UpdateStatus};
+use voltip_core::ui::UiEvent;
 use voltip_identity::SecretStore;
 use voltip_tauri_bridge::Bridge;
 
 use crate::host::Host;
 use crate::meter::Meters;
+use crate::update::{PhoneUpdater, UpdateConfig};
 
 /// Keystore service id, the Tauri phone shell's. Since 0.0.50 this app is the Android app under that
 /// app's package (user decision 2026-10-09), so an update from it finds the device identity and the
@@ -41,6 +42,7 @@ pub(crate) struct Inner {
     pub(crate) host: Arc<dyn Host>,
     pub(crate) meters: Meters,
     pub(crate) attachments: feedback::Attachments,
+    pub(crate) updater: Arc<PhoneUpdater>,
 }
 
 /// The phone's core configuration, the Tauri phone shell's (`production_config`): `<platform> 手机`
@@ -87,11 +89,23 @@ pub fn phone_ports(host: Arc<dyn Host>) -> DictationPorts {
 }
 
 impl Shell {
-    /// Start the core on `runtime` with `ports`, hand every `UiEvent` to `host`, and take the Wi-Fi
-    /// multicast lock when the saved settings have LAN discovery on (docs/pairing.md 「局域网发现」).
-    /// The phone has no update source of its own yet (docs/mobile-rn.md §1): its update status is
-    /// `disabled`.
+    /// Start the core on `runtime` with `ports`, hand every `UiEvent` to `host`, take the Wi-Fi
+    /// multicast lock when the saved settings have LAN discovery on (docs/pairing.md 「局域网发现」),
+    /// and start the updater on the repository's releases (docs/dictation.md §20.9).
     pub fn start(runtime: Handle, config: CoreConfig, store: Arc<dyn SecretStore>, ports: DictationPorts, host: Arc<dyn Host>) -> Result<Self, String> {
+        Self::start_with_updates(runtime, config, store, ports, host, UpdateConfig::production())
+    }
+
+    /// [`Shell::start`] with `updates` for where updates come from (tests point it elsewhere).
+    pub fn start_with_updates(
+        runtime: Handle,
+        config: CoreConfig,
+        store: Arc<dyn SecretStore>,
+        ports: DictationPorts,
+        host: Arc<dyn Host>,
+        updates: UpdateConfig,
+    ) -> Result<Self, String> {
+        let updater = Arc::new(PhoneUpdater::new(updates, &config.app_version));
         let discovering = voltip_core::SettingsStore::new(&config.data_dir).load().map_or(true, |s| s.lan_discovery);
         let started = {
             // The core spawns its tasks with `tokio::spawn`: start it inside the runtime.
@@ -119,8 +133,10 @@ impl Shell {
                 }
             }
         });
-        bridge.publish(UiEvent::Update(UpdateStatus::Disabled));
-        let shell = Self { inner: Arc::new(Inner { runtime, bridge, host, meters: Meters::default(), attachments: feedback::Attachments::default() }) };
+        bridge.publish(UiEvent::Update(updater.status()));
+        crate::update::start(&runtime, bridge.clone(), updater.clone(), host.clone());
+        let shell =
+            Self { inner: Arc::new(Inner { runtime, bridge, host, meters: Meters::default(), attachments: feedback::Attachments::default(), updater }) };
         shell.hold_multicast(discovering);
         Ok(shell)
     }

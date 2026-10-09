@@ -14,8 +14,9 @@ use voltip_core::dictation::fakes::{self, FakeAudio, FakeInjector, FakeTranscrib
 use voltip_core::{CoreConfig, EngineSettings, ProviderId, ProviderSettings, Settings, SettingsStore};
 use voltip_identity::MemorySecretStore;
 use voltip_rn::Shell;
-use voltip_rn::commands::{CHANNEL_KEY, COMMANDS, HOTKEY_UNAVAILABLE, MODELS_UNAVAILABLE, UPDATES_UNAVAILABLE};
+use voltip_rn::commands::{CHANNEL_KEY, COMMANDS, HOTKEY_UNAVAILABLE, MODELS_UNAVAILABLE};
 use voltip_rn::host::{HostCall, RecordingHost};
+use voltip_rn::update::{InstallSource, NOTHING_TO_INSTALL, PACKAGE, UpdateConfig, store_listing};
 
 const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL: Duration = Duration::from_millis(20);
@@ -53,9 +54,15 @@ impl Running {
         let dir = tempfile::tempdir().unwrap();
         let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().worker_threads(2).build().unwrap();
         let host = Arc::new(host);
-        let shell =
-            Shell::start(runtime.handle().clone(), offline_config(dir.path(), settings), Arc::new(MemorySecretStore::new()), ports(host.clone()), host.clone())
-                .unwrap();
+        let shell = Shell::start_with_updates(
+            runtime.handle().clone(),
+            offline_config(dir.path(), settings),
+            Arc::new(MemorySecretStore::new()),
+            ports(host.clone()),
+            host.clone(),
+            offline_updates(),
+        )
+        .unwrap();
         let running = Self { shell, host, runtime: Some(runtime), _dir: dir };
         running.wait(|s| s["identity"].is_object());
         running
@@ -85,6 +92,17 @@ impl Running {
             assert!(Instant::now() < deadline, "no {phases:?} within {STEP_TIMEOUT:?}: {}", state["dictation"]);
             std::thread::sleep(POLL);
         }
+    }
+}
+
+/// An install from a release whose update source answers nothing: a closed local port, so no test
+/// asks GitHub.
+fn offline_updates() -> UpdateConfig {
+    UpdateConfig {
+        source: Some(InstallSource::Direct),
+        latest_release: "http://127.0.0.1:9/releases/latest".into(),
+        listing: store_listing(PACKAGE),
+        auto_check_delay: Duration::ZERO,
     }
 }
 
@@ -164,7 +182,8 @@ fn every_fixture_command_is_answered() {
             continue;
         }
         match name.as_str() {
-            "update_check" | "update_install" => assert_eq!(answer, Err(UPDATES_UNAVAILABLE.to_owned()), "{name}"),
+            "update_check" => assert_eq!(answer, Ok(Value::Null), "{name}"),
+            "update_install" => assert_eq!(answer, Err(NOTHING_TO_INSTALL.to_owned()), "{name}"),
             "hotkey_edge" => assert_eq!(answer, Err(HOTKEY_UNAVAILABLE.to_owned())),
             n if n.starts_with("model_") => assert_eq!(answer, Err(MODELS_UNAVAILABLE.to_owned()), "{name}"),
             _ => {
@@ -172,6 +191,11 @@ fn every_fixture_command_is_answered() {
                     assert!(!e.starts_with("unknown command") && !e.starts_with("invalid args"), "{name}({args}): {e}");
                 }
             }
+        }
+        if name == "settings_set_auto_update" {
+            // Turned on, 自动检查更新 checks at once, and the closed port fails that check. Wait for
+            // it to end: while it runs, the list's own update_check is refused as busy.
+            wait_for(|| (running.invoke("update_status", Value::Null).unwrap()["state"] == "failed").then_some(()));
         }
     }
     assert!(running.host.calls().contains(&HostCall::ShareText("今天下午三点开会。".into())), "phone_share_text reached the share sheet");
@@ -190,17 +214,17 @@ fn unknown_commands_and_malformed_arguments_are_refused() {
 }
 
 /// The state the app reads first: the phone's identity and the default name, every event handed to
-/// the host as JSON, the update status `disabled` (no update source), and the multicast lock taken
-/// because LAN discovery is on by default.
+/// the host as JSON, the update status `idle` (an install from a release, nothing checked yet), and
+/// the multicast lock taken because LAN discovery is on by default.
 #[test]
 fn the_shell_starts_the_phone_core_and_forwards_its_events() {
     let running = Running::start(RecordingHost::default());
     let state = running.state();
     assert_eq!(state["identity"]["name"], "Voltip 手机");
-    assert_eq!(state["update"]["state"], "disabled");
-    assert_eq!(running.invoke("update_status", Value::Null).unwrap(), json!({ "state": "disabled" }));
+    assert_eq!(state["update"]["state"], "idle");
+    assert_eq!(running.invoke("update_status", Value::Null).unwrap(), json!({ "state": "idle" }));
     wait_for(|| running.host.events().iter().any(|e| e["type"] == "state").then_some(()));
-    assert!(running.host.events().iter().any(|e| e["type"] == "update" && e["state"] == "disabled"), "the shell's own status went out");
+    assert!(running.host.events().iter().any(|e| e["type"] == "update" && e["state"] == "idle"), "the shell's own status went out");
     wait_for(|| running.host.calls().contains(&HostCall::Multicast(true)).then_some(()));
     running.invoke("device_rename", json!({ "name": "Pixel" })).unwrap();
     running.wait(|s| s["identity"]["name"] == "Pixel");

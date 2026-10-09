@@ -76,4 +76,4 @@ description: 在各种使用方式下 Voltip 把哪些内容发送到哪里，�
 
 ## 更新
 
-Voltip 在你点击「检查更新」时检查更新；开启自动更新后，也会在启动时检查。检查时读取 GitHub 上发布的版本信息。从 0.0.50 起，Android 应用不做这项检查；从 Google Play 安装的由 Google Play 更新。
+Voltip 在你点击「检查更新」时检查更新；开启自动更新后，也会在启动时检查。检查时读取 GitHub 上发布的版本信息。在 Android 上，从 Google Play 安装的不做这项检查，由 Google Play 更新；Android 版 0.0.50 完全不做这项检查。

@@ -135,8 +135,6 @@ pub const COMMANDS: [&str; 110] = [
 pub const HOTKEY_UNAVAILABLE: &str = "hotkey: 手机端没有快捷键";
 /// Phones carry no local speech models (docs/dictation.md §10). The Tauri shell's text.
 pub const MODELS_UNAVAILABLE: &str = "models: 手机端不支持本地模型";
-/// This build has no update source (docs/mobile-rn.md §1): its status stays `disabled`.
-pub const UPDATES_UNAVAILABLE: &str = "updater: 这个版本没有更新渠道";
 /// The repository this build comes from (`Cargo.toml` `repository`): what 关于 opens.
 pub const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 /// The argument `audio_meter_start`'s `onFrame` arrives as: the stream's id on the app side.
@@ -237,8 +235,14 @@ pub async fn run(shell: &Shell, command: &str, args: Value) -> Result<Value, Str
             Ok(Value::Null)
         }
         "history_export" => history_export(shell, command, &args).await,
-        "update_check" | "update_install" => Err(UPDATES_UNAVAILABLE.to_owned()),
-        "update_status" => to_json(&bridge.state().update),
+        // docs/dictation.md §20.9: Google Play updates what it installed; an APK from a release asks
+        // GitHub, and the newer release's APK opens in the browser.
+        "update_check" => shell.inner.updater.check(&shell.inner.runtime, bridge).map(|()| Value::Null),
+        "update_install" => {
+            let url = shell.inner.updater.install_url()?;
+            open(shell, url).await
+        }
+        "update_status" => to_json(&shell.inner.updater.status()),
         "model_download" | "model_cancel" | "model_remove" | "model_import" | "model_folder_open" | "model_link_open" => Err(MODELS_UNAVAILABLE.to_owned()),
         "rules_export" => to_json(&bridge.rules_export().map_err(String::from)?),
         "vocabulary_preview" => {

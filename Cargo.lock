@@ -7571,6 +7571,7 @@ dependencies = [
  "voltip-pairing",
  "voltip-platform",
  "voltip-tauri-bridge",
+ "wiremock",
 ]
 
 [[package]]

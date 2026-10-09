@@ -83,6 +83,10 @@ impl PlatformHost for FakePlatform {
     fn open_url(&self, url: String) -> Result<(), HostError> {
         self.outcome(format!("open_url {url}"))
     }
+
+    fn installer(&self) -> Result<Option<String>, HostError> {
+        Ok(None)
+    }
 }
 
 /// An offline phone: no relay, no mDNS, the LAN host on an ephemeral port.
@@ -167,11 +171,12 @@ fn commands_answer_json_or_the_tauri_shells_error_text() {
     assert!(err.to_string().starts_with("invalid args for device_rename"), "{err}");
 }
 
-/// The core's events reach the platform as JSON, the update status `disabled` among them.
+/// The core's events reach the platform as JSON, the update status among them: `idle` for an app
+/// no store installed (docs/dictation.md §20.9).
 #[test]
 fn events_reach_the_platform_as_json() {
     let started = Started::new(FakePlatform::default());
-    started.wait(|| started.platform.events().iter().any(|e| e["type"] == "update" && e["state"] == "disabled"));
+    started.wait(|| started.platform.events().iter().any(|e| e["type"] == "update" && e["state"] == "idle"));
 }
 
 /// A host that cannot take an event (the JavaScript side not listening yet) misses only that one:

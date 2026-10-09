@@ -42,6 +42,9 @@ pub trait PlatformHost: Send + Sync {
     fn multicast(&self, held: bool) -> Result<(), HostError>;
     /// Open `url` in the browser (or the app that handles it).
     fn open_url(&self, url: String) -> Result<(), HostError>;
+    /// The package that installed the app, as the system recorded it (`PackageManager`); `None`
+    /// when it recorded none.
+    fn installer(&self) -> Result<Option<String>, HostError>;
 }
 
 /// Why the platform could not do what the shell asked.
@@ -127,6 +130,13 @@ impl Host for ForeignHost {
 
     fn open_url(&self, url: &str) -> Result<(), String> {
         self.current().open_url(url.to_owned()).map_err(|e| e.to_string())
+    }
+
+    fn installer(&self) -> Option<String> {
+        self.current().installer().unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "install source unknown; looking for releases on GitHub");
+            None
+        })
     }
 }
 
@@ -304,6 +314,10 @@ mod tests {
         }
         fn open_url(&self, _url: String) -> Result<(), HostError> {
             Ok(())
+        }
+
+        fn installer(&self) -> Result<Option<String>, HostError> {
+            Ok(None)
         }
     }
 

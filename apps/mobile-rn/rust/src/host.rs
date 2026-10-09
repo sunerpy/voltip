@@ -26,6 +26,12 @@ pub trait Host: Send + Sync + 'static {
     fn multicast(&self, held: bool);
     /// Open `url` in the browser (or the app that handles it).
     fn open_url(&self, url: &str) -> Result<(), String>;
+    /// The package that installed the app (`com.android.vending` for Google Play), as the system
+    /// recorded it; `None` when it recorded none (`adb`) or cannot say. Updates follow it
+    /// (`crate::update`).
+    fn installer(&self) -> Option<String> {
+        None
+    }
 }
 
 /// One call a [`RecordingHost`] saw.
@@ -64,6 +70,8 @@ pub struct RecordingHost {
     clipboard: Mutex<Option<String>>,
     /// When set, every capability call fails with this text (events still arrive).
     refuse: Mutex<Option<String>>,
+    /// What [`Host::installer`] answers.
+    installer: Mutex<Option<String>>,
 }
 
 impl RecordingHost {
@@ -93,6 +101,11 @@ impl RecordingHost {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Who [`Host::installer`] says installed the app.
+    pub fn set_installer(&self, installer: Option<&str>) {
+        *self.installer.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = installer.map(str::to_owned);
     }
 
     /// Put `text` on the recorded clipboard.
@@ -153,5 +166,9 @@ impl Host for RecordingHost {
     fn open_url(&self, url: &str) -> Result<(), String> {
         self.record(HostCall::OpenUrl(url.to_owned()));
         self.outcome()
+    }
+
+    fn installer(&self) -> Option<String> {
+        self.installer.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
 }

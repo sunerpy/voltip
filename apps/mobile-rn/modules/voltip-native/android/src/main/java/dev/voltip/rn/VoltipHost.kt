@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import androidx.core.content.FileProvider
@@ -107,6 +108,21 @@ class VoltipHost(
 
     /** A page the shell built (a key page, the repository, the guide) in the browser. */
     override fun openUrl(url: String) = platform { start(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+
+    /**
+     * Who installed the app, as the system recorded it (docs/dictation.md §20.9): Google Play
+     * (`com.android.vending`) updates what it installed; anything else (a browser or a file manager
+     * with a release's APK, `adb`, nothing recorded) takes its updates from the releases.
+     */
+    override fun installer(): String? = platform {
+        val manager = context.packageManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            manager.getInstallSourceInfo(context.packageName).installingPackageName
+        } else {
+            @Suppress("DEPRECATION")
+            manager.getInstallerPackageName(context.packageName)
+        }
+    }
 
     /** Start [intent] from the activity in front, or as a new task when there is none. */
     private fun start(intent: Intent) {
