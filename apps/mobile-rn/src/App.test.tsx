@@ -116,7 +116,7 @@ describe("the phone app on React Native", () => {
     });
   });
 
-  it("录音 picks the longest take from a dropdown menu, not a dialog of radio buttons", async () => {
+  it("录音 picks the longest take from a bottom sheet, not a dialog of radio buttons", async () => {
     const { backend } = await renderApp();
     const invoke = jest.spyOn(backend, "invoke");
     await openTab("settings");
@@ -129,6 +129,29 @@ describe("the phone app on React Native", () => {
         expect.objectContaining({ recording: expect.objectContaining({ max_minutes: 30 }) }),
       );
     });
+  });
+
+  it("a picker opens a sheet from the bottom: its title, the current choice checked, the scrim closes it", async () => {
+    // User request 2026-10-09: 下拉框都应优化为底部弹出的抽屉.
+    const { backend } = await renderApp();
+    const invoke = jest.spyOn(backend, "invoke");
+    await openTab("settings");
+    await fireEvent.press(await screen.findByTestId("settings-recording"));
+    await fireEvent.press(await screen.findByTestId("recording-max-minutes"));
+    const sheet = await screen.findByTestId("recording-max-minutes-sheet");
+    expect(within(sheet).getByText("最长录音时长")).toBeOnTheScreen();
+    expect(within(sheet).getByTestId("recording-max-minutes-option-10")).toBeChecked();
+    expect(within(sheet).getByTestId("recording-max-minutes-option-30")).not.toBeChecked();
+    // The sheet is modal for screen readers, so the scrim behind it is hidden from them (they close
+    // it with back); a finger can still tap it.
+    await fireEvent.press(
+      screen.getByTestId("recording-max-minutes-scrim", { includeHiddenElements: true }),
+    );
+    await waitFor(() => {
+      expect(screen.queryByTestId("recording-max-minutes-sheet")).toBeNull();
+    });
+    expect(invoke).not.toHaveBeenCalledWith("settings_set_recording", expect.anything());
+    expect(screen.getByTestId("phone-recording")).toBeOnTheScreen();
   });
 
   it("regression: Android back closes an open dropdown and leaves the page where it is", async () => {

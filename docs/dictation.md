@@ -223,6 +223,17 @@ pub struct EngineSettings {                                  // Settings.engines
 - **界面**：自定义服务商的 AI 润色卡片多两项。「接口类型」可选 Chat Completions 或 Responses；选 Responses 时出现「推理强度」，默认「不设置」。其他卡片没有这两项。草稿逻辑在 `engine-drafts.ts`（`choosesInterface`）；手机用同一张卡片。
 - **测试**：`voltip-refine` 的 `the_responses_interface_*`、`voltip-core` 的 `the_custom_clean_up_speaks_the_interface_its_card_chooses` 与 `only_the_custom_provider_chooses_its_clean_up_interface`、`voltip-cloud` 的映射断言、`engine-drafts.test.ts`、`ProviderCard.test.tsx`。
 
+### 3.8 连接失败时重试（2026-10-09）
+
+用户报告（2026-10-09）：手机与电脑配对后，手机发到电脑的语音没有插入，原因是 `asr: ASR network error: error sending request: client error (Connect): tls handshake eof`。这条消息表示 TLS 握手进行到一半，对方关闭了连接。
+
+- **排查结论**：
+  - 报告问题的电脑在中国大陆。在这台电脑上，用与桌面端相同的 TLS 实现（reqwest 0.13 + rustls/aws-lc-rs，包含和去掉 X25519MLKEM768 两种配置）连接内置服务，几百次全部成功；在北京的一台主机上测试也全部成功。
+  - 在这台电脑上连续监测两小时，约 900 次握手中出现了 1 次同样的 `tls handshake eof`。首尔的 ALB 全天都有成批的 `ClientTLSNegotiationErrorCount`。
+  - 结论：内置服务 10-08 迁到首尔后，从中国大陆过去的跨境线路偶尔会在握手阶段断开。这不是配置错误，也和后量子密钥交换无关。
+- **处理**：`voltip-asr`（OpenAI 兼容接口与百炼的 REST 请求）和 `voltip-refine`（润色、语音编辑、测试连接时的模型列表）在连接阶段失败时自动重发请求，最多再试两次，两次之间分别间隔 0.3 s 和 1 s。连接阶段的失败包括 DNS、TCP 和 TLS 握手（reqwest 的 `is_connect()`），这时请求还没有发出，任何请求都可以安全重发。超时不重试：调用方给的时间已经用完，服务也可能正在处理。重试后仍然失败时，消息末尾会注明尝试次数，例如 `(3 attempts)`。实时识别的 WebSocket 不在此列，它出错时会改为整段识别（§11）。
+- **测试**：`voltip-asr` 与 `voltip-refine` 的 `regression_a_handshake_cut_short_is_tried_again_before_the_*_fails`、`a_connection_refused_once_is_tried_again_and_the_*_goes_through`、`a_timeout_is_not_tried_again`。
+
 ## 4. 历史记录（`voltip_core::history`）
 
 ```rust

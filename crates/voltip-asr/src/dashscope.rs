@@ -20,7 +20,7 @@ use reqwest::{Client, StatusCode};
 use serde_json::{Map, Value, json};
 use url::Url;
 
-use crate::client::{Transcript, client_builder, map_reqwest, retry_after_ms, truncate_chars};
+use crate::client::{Transcript, client_builder, map_reqwest, retry_after_ms, send, truncate_chars};
 use crate::config::{AsrConfig, MAX_ERROR_BODY_CHARS};
 use crate::duplex::{self, DuplexOptions};
 use crate::error::{AsrError, error_fields, quota_error};
@@ -192,15 +192,18 @@ impl DashscopeClient {
     }
 
     async fn post(&self, url: &str, body: &Value, native: bool) -> Result<Value, AsrError> {
-        let mut request = self.http.post(url).json(body);
-        if native {
-            request = request.header("X-DashScope-SSE", "disable");
-        }
-        if let Some(token) = &self.config.token {
-            request = request.bearer_auth(token);
-        }
+        let request = || {
+            let mut request = self.http.post(url).json(body);
+            if native {
+                request = request.header("X-DashScope-SSE", "disable");
+            }
+            Ok(match &self.config.token {
+                Some(token) => request.bearer_auth(token),
+                None => request,
+            })
+        };
         tracing::debug!(mode = ?self.mode, model = %self.config.model, "transcribing");
-        let response = request.send().await.map_err(map_reqwest)?;
+        let response = send(request).await?;
         let status = response.status();
         let retry = retry_after_ms(response.headers());
         let text = response.text().await.map_err(map_reqwest)?;

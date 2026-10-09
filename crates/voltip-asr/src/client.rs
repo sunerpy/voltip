@@ -1,6 +1,6 @@
 //! The HTTP client.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::multipart::{Form, Part};
@@ -19,6 +19,36 @@ pub(crate) fn client_builder() -> reqwest::ClientBuilder {
     #[cfg(target_os = "android")]
     let builder = builder.tls_certs_only(mozilla_roots());
     builder
+}
+
+/// The pauses before a request goes again after its connection failed: DNS, TCP or the TLS
+/// handshake, so nothing reached the service and any request may be sent again. A timeout is not
+/// tried again: the time the caller allowed is spent, and the service may be working on it.
+/// 2026-10-09: computers and phones in China lose the odd handshake to the built-in service in
+/// Seoul (`client error (Connect): tls handshake eof`); one more try a moment later gets through.
+pub(crate) const CONNECT_RETRY_PAUSES: [Duration; 2] = [Duration::from_millis(300), Duration::from_millis(1000)];
+
+/// Send the request `build` makes, and a new one after each of [`CONNECT_RETRY_PAUSES`] while the
+/// connection fails; the answer, or the last failure (with the number of attempts).
+pub(crate) async fn send(build: impl Fn() -> Result<reqwest::RequestBuilder, AsrError>) -> Result<reqwest::Response, AsrError> {
+    let mut pauses = CONNECT_RETRY_PAUSES.iter();
+    let mut attempts = 1usize;
+    loop {
+        let error = match build()?.send().await {
+            Ok(response) => return Ok(response),
+            Err(error) => error,
+        };
+        let pause = if error.is_connect() && !error.is_timeout() { pauses.next() } else { None };
+        match (pause, map_reqwest(error)) {
+            (Some(pause), failure) => {
+                tracing::info!(attempt = attempts, error = %failure, ?pause, "could not connect; trying again");
+                tokio::time::sleep(*pause).await;
+                attempts += 1;
+            }
+            (None, AsrError::Network(message)) if attempts > 1 => return Err(AsrError::Network(format!("{message} ({attempts} attempts)"))),
+            (None, failure) => return Err(failure),
+        }
+    }
 }
 
 /// Mozilla's root store (webpki-root-certs) as reqwest certificates.
@@ -68,8 +98,13 @@ impl AsrClient {
             .user_agent(concat!("voltip-asr/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| AsrError::InvalidConfig(format!("http client: {e}")))?;
+        Ok(Self::with_http(config, &base, http))
+    }
+
+    /// The client of `config` (base URL `base`, normalised) on the HTTP client `http`.
+    fn with_http(config: AsrConfig, base: &str, http: Client) -> Self {
         let endpoint = format!("{base}/audio/transcriptions");
-        Ok(Self { config, endpoint, http })
+        Self { config, endpoint, http }
     }
 
     /// The configuration this client was built from (token still redacted in `Debug`).
@@ -93,21 +128,27 @@ impl AsrClient {
     /// system turn as recognition context; Whisper-style endpoints read it as preceding text.
     pub async fn transcribe_with_prompt(&self, wav: &[u8], language: Option<&str>, prompt: Option<&str>) -> Result<Transcript, AsrError> {
         let started = Instant::now();
-        let file = Part::bytes(wav.to_vec()).file_name("audio.wav").mime_str("audio/wav").map_err(|e| AsrError::InvalidConfig(e.to_string()))?;
-        let mut form = Form::new().part("file", file).text("model", self.config.model.clone()).text("response_format", "json");
-        if let Some(language) = language.map(str::trim).filter(|l| !l.is_empty()) {
-            form = form.text("language", language.to_string());
-        }
-        if let Some(prompt) = prompt.map(str::trim).filter(|p| !p.is_empty()) {
-            form = form.text("prompt", prompt.to_string());
-        }
-        let mut request = self.http.post(&self.endpoint).multipart(form);
-        if let Some(token) = &self.config.token {
-            request = request.bearer_auth(token);
-        }
+        let language = language.map(str::trim).filter(|l| !l.is_empty());
+        let prompt = prompt.map(str::trim).filter(|p| !p.is_empty());
+        // A multipart form is sent once: each attempt builds its own.
+        let request = || {
+            let file = Part::bytes(wav.to_vec()).file_name("audio.wav").mime_str("audio/wav").map_err(|e| AsrError::InvalidConfig(e.to_string()))?;
+            let mut form = Form::new().part("file", file).text("model", self.config.model.clone()).text("response_format", "json");
+            if let Some(language) = language {
+                form = form.text("language", language.to_string());
+            }
+            if let Some(prompt) = prompt {
+                form = form.text("prompt", prompt.to_string());
+            }
+            let request = self.http.post(&self.endpoint).multipart(form);
+            Ok(match &self.config.token {
+                Some(token) => request.bearer_auth(token),
+                None => request,
+            })
+        };
         // The prompt is the user's vocabulary: its length goes to the log, never its words.
         tracing::debug!(path = log_path(&self.endpoint), model = %self.config.model, bytes = wav.len(), ?language, prompt_chars = prompt.map_or(0, |p| p.chars().count()), "transcribing");
-        let response = request.send().await.map_err(map_reqwest)?;
+        let response = send(request).await?;
         let status = response.status();
         if !status.is_success() {
             let retry_after_ms = retry_after_ms(response.headers());
@@ -212,6 +253,90 @@ mod tests {
     }
 
     const WAV: &[u8] = b"RIFF\x24\0\0\0WAVEfmt \x10\0\0\0\x01\0\x01\0\x80\x3e\0\0\0\x7d\0\0\x02\0\x10\0data\0\0\0\0";
+
+    /// A listener that takes every connection, reads the client's hello and closes its side, so a
+    /// TLS client sees the peer leave during the handshake (`tls handshake eof`; closing before
+    /// reading would reset the connection instead); the number of connections it took.
+    async fn closing_listener() -> (std::net::SocketAddr, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let taken = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = taken.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut hello = [0u8; 4096];
+                let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut hello).await;
+                let _ = tokio::io::AsyncWriteExt::shutdown(&mut socket).await;
+            }
+        });
+        (addr, taken)
+    }
+
+    /// Regression (2026-10-09, a phone's take recognised on the computer): `ASR network error:
+    /// error sending request: client error (Connect): tls handshake eof` ended the take at once.
+    /// A handshake the network cuts short is now tried twice more before the take fails, and the
+    /// failure says how many attempts it made. The listener counts each connection before it
+    /// closes it, so the count is final once the last attempt has failed.
+    #[tokio::test]
+    async fn regression_a_handshake_cut_short_is_tried_again_before_the_take_fails() {
+        let (addr, taken) = closing_listener().await;
+        let client = AsrClient::new(AsrConfig::new(format!("https://{addr}"), "m").with_timeout(Duration::from_secs(30))).unwrap();
+        match client.transcribe(WAV, None).await.unwrap_err() {
+            AsrError::Network(message) => {
+                assert!(message.contains("tls handshake eof"), "{message}");
+                assert!(message.ends_with("(3 attempts)"), "{message}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(taken.load(std::sync::atomic::Ordering::SeqCst), 1 + CONNECT_RETRY_PAUSES.len());
+    }
+
+    /// A resolver that sends the first connection to `first` and every later one to `then`.
+    struct Moving {
+        calls: std::sync::atomic::AtomicUsize,
+        first: std::net::SocketAddr,
+        then: std::net::SocketAddr,
+    }
+
+    impl reqwest::dns::Resolve for Moving {
+        fn resolve(&self, _name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let addr = if call == 0 { self.first } else { self.then };
+            Box::pin(async move { Ok(Box::new(std::iter::once(addr)) as reqwest::dns::Addrs) })
+        }
+    }
+
+    /// A connection refused once (nobody listens where the first address points) is tried again,
+    /// and the second connection reaches the service: the take goes through, with one request.
+    #[tokio::test]
+    async fn a_connection_refused_once_is_tried_again_and_the_take_goes_through() {
+        let server = MockServer::start().await;
+        mount(&server, ResponseTemplate::new(200).set_body_json(json!({ "text": "好" }))).await;
+        // Bound and dropped: nobody listens on this port any more.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        let resolver = std::sync::Arc::new(Moving { calls: std::sync::atomic::AtomicUsize::new(0), first: closed, then: *server.address() });
+        // No proxy: an HTTP(S)_PROXY of the machine running the test would take `asr.test` away.
+        let http = client_builder().no_proxy().dns_resolver(resolver.clone()).build().unwrap();
+        let client = AsrClient::with_http(AsrConfig::new("http://asr.test", "m"), "http://asr.test/v1", http);
+        assert_eq!(client.transcribe(WAV, None).await.unwrap().text, "好");
+        assert_eq!(resolver.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    /// A timeout is not tried again: the request may have reached the service, and the time the
+    /// caller allowed is spent. The listener accepts nothing, so every connection the client
+    /// opened is still in its queue when the call returns; it holds exactly one.
+    #[tokio::test]
+    async fn a_timeout_is_not_tried_again() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = AsrClient::new(AsrConfig::new(format!("https://{addr}"), "m").with_timeout(Duration::from_millis(300))).unwrap();
+        assert_eq!(client.transcribe(WAV, None).await.unwrap_err(), AsrError::Timeout);
+        listener.set_nonblocking(true).unwrap();
+        let queued = std::iter::from_fn(|| listener.accept().ok()).count();
+        assert_eq!(queued, 1);
+    }
 
     fn client(server: &MockServer, token: Option<&str>) -> AsrClient {
         AsrClient::new(AsrConfig::new(server.uri(), "Qwen/Qwen3-ASR-1.7B").with_token(token.map(str::to_string))).unwrap()

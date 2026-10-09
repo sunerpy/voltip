@@ -15,6 +15,36 @@ use crate::prompt::{PromptHints, TEMPERATURE, edit_nonce, edit_system_prompt, ed
 /// the system's own store (rustls-platform-verifier); on Android that verifier needs a JNI context
 /// the app never hands it and panics on the first request, so the requests there trust Mozilla's
 /// root store, as the relay connection does (`voltip-transport`). voltip-asr does the same.
+/// The pauses before a request goes again after its connection failed: DNS, TCP or the TLS
+/// handshake, so nothing reached the service and any request may be sent again. A timeout is not
+/// tried again: the time the caller allowed is spent, and the service may be working on it.
+/// 2026-10-09: computers and phones in China lose the odd handshake to the built-in service in
+/// Seoul (`client error (Connect): tls handshake eof`); one more try a moment later gets through.
+pub(crate) const CONNECT_RETRY_PAUSES: [Duration; 2] = [Duration::from_millis(300), Duration::from_millis(1000)];
+
+/// Send the request `build` makes, and a new one after each of [`CONNECT_RETRY_PAUSES`] while the
+/// connection fails; the answer, or the last failure (with the number of attempts).
+async fn send(build: impl Fn() -> reqwest::RequestBuilder) -> Result<reqwest::Response, RefineError> {
+    let mut pauses = CONNECT_RETRY_PAUSES.iter();
+    let mut attempts = 1usize;
+    loop {
+        let error = match build().send().await {
+            Ok(response) => return Ok(response),
+            Err(error) => error,
+        };
+        let pause = if error.is_connect() && !error.is_timeout() { pauses.next() } else { None };
+        match (pause, map_reqwest(error)) {
+            (Some(pause), failure) => {
+                tracing::info!(attempt = attempts, error = %failure, ?pause, "could not connect; trying again");
+                tokio::time::sleep(*pause).await;
+                attempts += 1;
+            }
+            (None, RefineError::Network(message)) if attempts > 1 => return Err(RefineError::Network(format!("{message} ({attempts} attempts)"))),
+            (None, failure) => return Err(failure),
+        }
+    }
+}
+
 fn client_builder() -> reqwest::ClientBuilder {
     let builder = Client::builder();
     #[cfg(target_os = "android")]
@@ -178,11 +208,16 @@ impl RefineClient {
             .user_agent(concat!("voltip-refine/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| RefineError::InvalidConfig(format!("http client: {e}")))?;
+        Ok(Self::with_http(config, &base, http))
+    }
+
+    /// The client of `config` (base URL `base`, normalised) on the HTTP client `http`.
+    fn with_http(config: RefineConfig, base: &str, http: Client) -> Self {
         let endpoint = match config.api {
             RefineApi::ChatCompletions => format!("{base}/chat/completions"),
             RefineApi::Responses => format!("{base}/responses"),
         };
-        Ok(Self { config, endpoint, http })
+        Self { config, endpoint, http }
     }
 
     /// The configuration this client was built from (key still redacted in `Debug`).
@@ -272,11 +307,14 @@ impl RefineClient {
 
     /// POST `body` with the key; the body of a 2xx answer, or the refusal sorted.
     async fn post(&self, body: &impl Serialize) -> Result<String, RefineError> {
-        let mut request = self.http.post(&self.endpoint).json(body);
-        if let Some(key) = &self.config.api_key {
-            request = request.bearer_auth(key);
-        }
-        let response = request.send().await.map_err(map_reqwest)?;
+        let request = || {
+            let request = self.http.post(&self.endpoint).json(body);
+            match &self.config.api_key {
+                Some(key) => request.bearer_auth(key),
+                None => request,
+            }
+        };
+        let response = send(request).await?;
         let status = response.status();
         if !status.is_success() {
             let retry_after_ms = retry_after_ms(response.headers());
@@ -377,11 +415,16 @@ pub async fn list_models(base_url: &str, api_key: Option<&str>, timeout: Duratio
         .user_agent(concat!("voltip-refine/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| RefineError::InvalidConfig(format!("http client: {e}")))?;
-    let mut request = http.get(format!("{base}/models"));
-    if let Some(key) = api_key.map(str::trim).filter(|k| !k.is_empty()) {
-        request = request.bearer_auth(key);
-    }
-    let response = request.send().await.map_err(map_reqwest)?;
+    let url = format!("{base}/models");
+    let key = api_key.map(str::trim).filter(|k| !k.is_empty());
+    let request = || {
+        let request = http.get(&url);
+        match key {
+            Some(key) => request.bearer_auth(key),
+            None => request,
+        }
+    };
+    let response = send(request).await?;
     let status = response.status();
     if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
         return Err(RefineError::Unauthorized);
@@ -882,6 +925,87 @@ mod tests {
             let err = client(&server, None).refine("x", None).await.unwrap_err();
             assert!(matches!(err, RefineError::BadResponse(_)), "{body:?} -> {err:?}");
         }
+    }
+
+    /// A listener that takes every connection, reads the client's hello and closes its side, so a
+    /// TLS client sees the peer leave during the handshake (`tls handshake eof`); the number of
+    /// connections it took.
+    async fn closing_listener() -> (std::net::SocketAddr, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let taken = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = taken.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut hello = [0u8; 4096];
+                let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut hello).await;
+                let _ = tokio::io::AsyncWriteExt::shutdown(&mut socket).await;
+            }
+        });
+        (addr, taken)
+    }
+
+    /// Regression (2026-10-09, a phone's take polished on the computer): a TLS handshake the
+    /// network cut short (`client error (Connect): tls handshake eof`) failed the polish at once.
+    /// It is now tried twice more, and the failure says how many attempts it made.
+    #[tokio::test]
+    async fn regression_a_handshake_cut_short_is_tried_again_before_the_polish_fails() {
+        let (addr, taken) = closing_listener().await;
+        let client = RefineClient::new(RefineConfig::new(format!("https://{addr}"), "m").with_timeout(Duration::from_secs(30))).unwrap();
+        match client.refine("x", None).await.unwrap_err() {
+            RefineError::Network(message) => {
+                assert!(message.contains("tls handshake eof"), "{message}");
+                assert!(message.ends_with("(3 attempts)"), "{message}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(taken.load(std::sync::atomic::Ordering::SeqCst), 1 + CONNECT_RETRY_PAUSES.len());
+    }
+
+    /// A resolver that sends the first connection to `first` and every later one to `then`.
+    struct Moving {
+        calls: std::sync::atomic::AtomicUsize,
+        first: std::net::SocketAddr,
+        then: std::net::SocketAddr,
+    }
+
+    impl reqwest::dns::Resolve for Moving {
+        fn resolve(&self, _name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let addr = if call == 0 { self.first } else { self.then };
+            Box::pin(async move { Ok(Box::new(std::iter::once(addr)) as reqwest::dns::Addrs) })
+        }
+    }
+
+    /// A connection refused once is tried again, and the second one reaches the service: the
+    /// polish goes through, with one request.
+    #[tokio::test]
+    async fn a_connection_refused_once_is_tried_again_and_the_polish_goes_through() {
+        let server = MockServer::start().await;
+        mount(&server, answer("好。")).await;
+        // Bound and dropped: nobody listens on this port any more.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        let resolver = std::sync::Arc::new(Moving { calls: std::sync::atomic::AtomicUsize::new(0), first: closed, then: *server.address() });
+        // No proxy: an HTTP(S)_PROXY of the machine running the test would take `refine.test` away.
+        let http = client_builder().no_proxy().dns_resolver(resolver.clone()).build().unwrap();
+        let client = RefineClient::with_http(RefineConfig::new("http://refine.test", "m"), "http://refine.test/v1", http);
+        assert_eq!(client.refine("好", None).await.unwrap().text, "好。");
+        assert_eq!(resolver.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    /// A timeout is not tried again. The listener accepts nothing, so every connection the client
+    /// opened is still in its queue when the call returns; it holds exactly one.
+    #[tokio::test]
+    async fn a_timeout_is_not_tried_again() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = RefineClient::new(RefineConfig::new(format!("https://{addr}"), "m").with_timeout(Duration::from_millis(300))).unwrap();
+        assert_eq!(client.refine("x", None).await.unwrap_err(), RefineError::Timeout);
+        listener.set_nonblocking(true).unwrap();
+        let queued = std::iter::from_fn(|| listener.accept().ok()).count();
+        assert_eq!(queued, 1);
     }
 
     #[tokio::test]
