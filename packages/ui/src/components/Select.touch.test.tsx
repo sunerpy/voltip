@@ -565,6 +565,36 @@ describe("Select under the touch presentation", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
+  it("with wrap the trigger shows a long label on more lines, without the sizer", async () => {
+    const user = userEvent.setup();
+    const long = "FunAudioLLM/SenseVoiceSmall-2026-09-preview-int8-streaming";
+    const onChange = vi.fn();
+    const { container } = touch(
+      <Select
+        label="模型"
+        mono
+        wrap
+        options={[
+          { value: long, label: long },
+          { value: "whisper-1", label: "whisper-1" },
+        ]}
+        value={long}
+        onChange={onChange}
+      />,
+    );
+    expect(container.querySelector("[data-select-sizer]")).toBeNull();
+    const trigger = screen.getByRole("button", { name: "模型" });
+    for (const cls of ["break-all", "whitespace-normal", "min-h-8", "mono"])
+      expect(trigger.className).toContain(cls);
+    expect(trigger.className).not.toContain(" h-8");
+    const value = trigger.querySelector("span");
+    expect(value).toHaveTextContent(long);
+    expect(value?.className).not.toContain("truncate");
+    await user.click(trigger);
+    await user.click(screen.getByRole("option", { name: "whisper-1" }));
+    expect(onChange).toHaveBeenCalledWith("whisper-1");
+  });
+
   it("drops the touch states of the trigger and the tap flash of the whole field", () => {
     const { container, trigger } = renderLanguages();
     expect(trigger).toHaveClass("touch-manipulation", "relative", "after:h-[max(100%,44px)]");

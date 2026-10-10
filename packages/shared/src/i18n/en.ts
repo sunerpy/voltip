@@ -54,6 +54,7 @@ export const en: Messages = {
     },
     themeSwitch: { label: "Theme", next: "Switch to {theme}" },
     dialog: { escCancel: "Cancel" },
+    drawer: { close: "Close" },
     palette: {
       placeholder: "Type a command or page…",
       label: "Command menu",
@@ -924,7 +925,7 @@ export const en: Messages = {
     tab: { asr: "Providers and models", options: "Recognition" },
     asrSection: {
       title: "Speech recognition provider",
-      note: "Pick the provider that turns your recording into text; expand a card to choose a model and enter a key.",
+      note: "Pick the provider that turns your recording into text; open a card to choose a model and enter a key.",
     },
     llmSection: {
       title: "AI polish provider",
@@ -934,10 +935,17 @@ export const en: Messages = {
     currentFallback: "Now: {provider} · {model} (fallback)",
     currentNone: "Now: none",
     inUse: "In use",
-    use: "Use",
+    setCurrent: "Set as current",
+    isCurrent: "Current",
     useTitle: "Use {provider} for {service}",
     used: "Switched to {provider}",
     service: { asr: "speech recognition", llm: "AI polish" },
+    tagline: {
+      builtin: "Included with the app, no key needed",
+      local: "Runs on this computer",
+      custom: "OpenAI-compatible endpoint",
+    },
+    detail: { connection: "Connection" },
     provider: {
       builtin: "Built-in service",
       local: "This computer",
@@ -965,7 +973,6 @@ export const en: Messages = {
       custom: "Any OpenAI-compatible endpoint: vLLM, LocalAI or your own gateway.",
     },
     ready: "Ready",
-    onDevice: "On this computer",
     issue: {
       unavailable: "Unavailable",
       key_missing: "Key missing",
@@ -1017,6 +1024,7 @@ export const en: Messages = {
     resetDone: "{provider} is back to its defaults",
     probe: "Test connection",
     probing: "Connecting…",
+    probeIdle: "Not tested yet",
     probeResult: {
       ok: "Connected · {n} models · {ms} ms",
       unsupported: "This service cannot be tested",

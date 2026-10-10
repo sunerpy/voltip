@@ -1,4 +1,4 @@
-import { type ProviderId, type ServiceKind } from "@voltip/shared";
+import { type ServiceKind } from "@voltip/shared";
 import {
   CurrentService,
   FallbackSection,
@@ -20,11 +20,12 @@ import { type SpeechTab, SPEECH_TABS, languageOptions, providersFor } from "./he
 import { LivePreview } from "./LivePreview";
 import { OutputMode, VadTrim } from "./OutputMode";
 import { PresetsSection } from "./PresetsSection";
-import { ProviderCard } from "./ProviderCard";
+import { ProviderCards } from "./ProviderCard";
 
 /** The 语音模型 group of the settings dialog (docs/dictation.md §3), in two views: 服务商与模型
- *  lists the recognition providers as expandable cards (the one in use is ringed and expanded
- *  first; 使用 switches, the body configures model, endpoint and key, 本机 holds the model library),
+ *  lists the recognition providers as a grid of cards (the one in use tinted and marked 使用中;
+ *  设为当前 switches, a click opens the drawer that configures model, endpoint and key, and 本机's
+ *  holds the model library; user decision 2026-10-10),
  *  识别设置 holds what applies whatever the provider (language, script, live preview, output mode,
  *  silence trimming; how the text is inserted moved to 设置 › 听写 on 2026-09-29). Everything writes
  *  `settings_set_engines` / `provider_key_set`;
@@ -51,7 +52,7 @@ export function SpeechModelsPane() {
 }
 
 /** The AI 模型 group: whether the clean-up runs, and the LLM providers behind it and voice edit, as
- *  the same expandable cards. */
+ *  the same cards. */
 export function AiModelsPane() {
   const { t } = useI18n();
   return (
@@ -67,15 +68,8 @@ function ProviderList({ kind }: { kind: ServiceKind }) {
   const state = useUiState();
   const engines = state.engines;
   const providers = providersFor(engines, kind);
-  const active = kind === "asr" ? engines.asr_provider : engines.llm_provider;
-  // The provider in use is open unless the user closed it; any other card is open once the user
-  // opened it. Derived during render, so a provider that becomes active opens by itself.
-  const [toggled, setToggled] = useState<ReadonlyMap<ProviderId, boolean>>(() => new Map());
-  const isOpen = (id: ProviderId) => toggled.get(id) ?? id === active;
   const settings = state.settings.engines;
-  const toggle = (id: ProviderId, next: boolean) => {
-    setToggled((prev) => new Map(prev).set(id, next));
-  };
+  const title = t(kind === "asr" ? "engines.asrSection.title" : "engines.llmSection.title");
   return (
     <>
       {kind === "llm" && (
@@ -110,7 +104,7 @@ function ProviderList({ kind }: { kind: ServiceKind }) {
       )}
       {kind === "llm" && <PresetsSection />}
       <SettingsSection
-        title={t(kind === "asr" ? "engines.asrSection.title" : "engines.llmSection.title")}
+        title={title}
         description={t(kind === "asr" ? "engines.asrSection.note" : "engines.llmSection.note")}
         data-testid={`providers-${kind}`}
         // docs/dictation.md §3.5: a fallback model standing in for the selected one says so.
@@ -118,25 +112,7 @@ function ProviderList({ kind }: { kind: ServiceKind }) {
         {providers.length === 0 ? (
           <p className="text-[12px] text-fg-muted">{t("engines.waiting")}</p>
         ) : (
-          <div
-            className="flex flex-col gap-3"
-            role="list"
-            aria-label={t(
-              kind === "asr" ? "engines.asrSection.title" : "engines.llmSection.title",
-            )}>
-            {providers.map((p) => (
-              <div role="listitem" key={p.id}>
-                <ProviderCard
-                  provider={p}
-                  kind={kind}
-                  open={isOpen(p.id)}
-                  onToggle={(next) => {
-                    toggle(p.id, next);
-                  }}
-                />
-              </div>
-            ))}
-          </div>
+          <ProviderCards kind={kind} providers={providers} label={title} />
         )}
         <ServicePrivacy kind={kind} />
       </SettingsSection>

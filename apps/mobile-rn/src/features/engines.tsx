@@ -1,11 +1,13 @@
-// The recognition and clean-up providers (docs/dictation.md §3), `@voltip/ui`'s ProviderCard,
-// CurrentService, ServicePrivacy and ChineseScript on native views: one card per provider that names
-// it, the model in effect and whether it can run, with 使用 beside it; opened, the built-in card
-// explains itself and every other card is the form for its model, endpoint and key plus 测试连接.
-// The drafts, checks and labels are `@voltip/shared`'s, as on the desktop.
+// The recognition and clean-up providers (docs/dictation.md §3), `@voltip/ui`'s ProviderCards,
+// CurrentService, ServicePrivacy and ChineseScript on native views: the providers as cards two to a
+// row that name each one, whether it can run and the model in effect; a tap opens a sheet from the
+// bottom where the built-in service explains itself and every other provider is the form for its
+// model, endpoint and key plus 测试连接, with 保存 and 设为当前. The drafts, checks and labels are
+// `@voltip/shared`'s, as on the desktop.
 import {
   CHINESE_SCRIPTS,
   type ProbeReport,
+  type ProviderBadgeTone,
   type ProviderId,
   type ProviderStatus,
   REASONING_EFFORTS,
@@ -18,6 +20,7 @@ import {
   fallbackStatusOf,
   modelChoices,
   probeText,
+  providerBadges,
   providerDraft,
   secretStateLabel,
   serviceTarget,
@@ -25,22 +28,17 @@ import {
   withProvider,
 } from "@voltip/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { View } from "react-native";
-import {
-  Icon,
-  IconButton,
-  SegmentedButtons,
-  Text,
-  TextInput,
-  TouchableRipple,
-} from "react-native-paper";
+import { ScrollView, View } from "react-native";
+import { Icon, SegmentedButtons, Text, TextInput, TouchableRipple } from "react-native-paper";
 
 import { useBackend, useUiState } from "../backend/BackendProvider";
 import { useI18n } from "../backend/i18n";
 import { useShell } from "../shell";
 import { Button } from "../ui/Button";
-import { CARD_RADIUS, Hint, Mono, StateLine, type Tone, useAppTheme } from "../ui/kit";
+import { CARD_RADIUS, Hint, Lamp, Mono, StateLine, type Tone, useAppTheme } from "../ui/kit";
 import { SelectField } from "../ui/Select";
+import { BottomSheet } from "../ui/Sheet";
+import { mix } from "../ui/statTile";
 
 /** The model select's last option: type any other model id. */
 export const OTHER_MODEL = "__other__";
@@ -114,50 +112,56 @@ export function useProviderProbe(provider: ProviderId, kind: ServiceKind) {
   return { pending, report, run };
 }
 
-function ProbeRow({
+/** 测试连接 and what it answered, or that it has not run yet, on a block of its own. */
+function ProbePanel({
   probe,
   onRun,
 }: {
   probe: ReturnType<typeof useProviderProbe>;
   onRun: () => void;
 }) {
+  const theme = useAppTheme();
   const { t } = useI18n();
   const result = probe.report ? probeText(probe.report, t) : undefined;
   return (
-    <View style={{ gap: 8 }}>
-      <Button
-        mode="outlined"
-        icon="refresh"
-        loading={probe.pending}
-        style={{ alignSelf: "flex-start" }}
-        onPress={onRun}>
+    <View
+      style={{
+        flexDirection: "row",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 12,
+        borderRadius: 12,
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+        backgroundColor: theme.voltip.inset,
+      }}>
+      <Button icon="refresh" loading={probe.pending} onPress={onRun} testID="provider-probe">
         {probe.pending ? t("engines.probing") : t("engines.probe")}
       </Button>
-      {result !== undefined && !probe.pending && (
-        <View testID="probe-result" accessibilityLiveRegion="polite">
+      {result !== undefined && !probe.pending ? (
+        <View testID="probe-result" accessibilityLiveRegion="polite" style={{ flexShrink: 1 }}>
           <StateLine tone={result.ok ? "ok" : "danger"} small>
             {result.text}
           </StateLine>
         </View>
+      ) : (
+        !probe.pending && (
+          <Text variant="bodySmall" style={{ color: theme.voltip.subtle }}>
+            {t("engines.probeIdle")}
+          </Text>
+        )
       )}
     </View>
   );
 }
 
 /** A small status label in a soft shade (使用中, 就绪, a provider's problem). */
-function Tag({
-  tone,
-  children,
-}: {
-  tone: "accent" | "ok" | "warning" | "neutral";
-  children: string;
-}) {
+function Tag({ tone, children }: { tone: ProviderBadgeTone; children: string }) {
   const theme = useAppTheme();
-  const shades: Record<"accent" | "ok" | "warning" | "neutral", readonly [string, string]> = {
+  const shades: Record<ProviderBadgeTone, readonly [string, string]> = {
     accent: [theme.colors.primaryContainer, theme.colors.onPrimaryContainer],
     ok: [theme.voltip.okSoft, theme.voltip.okText],
-    warning: [theme.voltip.warningSoft, theme.colors.onSurface],
-    neutral: [theme.colors.surfaceVariant, theme.colors.onSurfaceVariant],
+    warn: [theme.voltip.warningSoft, theme.colors.onSurface],
   };
   const [bg, fg] = shades[tone];
   return (
@@ -170,102 +174,238 @@ function Tag({
   );
 }
 
-export function ProviderCard({
-  provider,
-  kind,
-  open,
-  onToggle,
+/** The provider's icon on a block: a soft accent one for the provider in use, never a solid one
+ *  (user feedback 2026-10-10 on the drafts). */
+function ProviderIcon({
+  id,
+  active,
+  size = 40,
 }: {
-  provider: ProviderStatus;
-  kind: ServiceKind;
-  open: boolean;
-  onToggle: (open: boolean) => void;
+  id: ProviderId;
+  active: boolean;
+  size?: number;
 }) {
   const theme = useAppTheme();
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 12,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: active ? theme.colors.primaryContainer : theme.colors.surfaceVariant,
+      }}>
+      <Icon
+        source={ICONS[id]}
+        size={Math.round(size * 0.55)}
+        color={active ? theme.colors.onPrimaryContainer : theme.colors.onSurfaceVariant}
+      />
+    </View>
+  );
+}
+
+/** Switches `kind` to `provider`. */
+function useSwitch(provider: ProviderStatus, kind: ServiceKind) {
   const { backend } = useBackend();
   const shell = useShell();
   const { t } = useI18n();
   const state = useUiState();
-  const service = provider[kind];
-  if (service === undefined) return null;
-  const name = t(`engines.provider.${provider.id}`);
-  const ready = service.issue === undefined;
-  const use = () => {
+  return () => {
     void backend.invoke("settings_set_engines", {
       engines: withProvider(state.settings.engines, kind, provider.id),
     });
-    shell.toast(t("engines.used", { provider: name }));
+    shell.toast(t("engines.used", { provider: t(`engines.provider.${provider.id}`) }));
   };
+}
+
+/** The providers of one service (docs/dictation.md §3) as cards two to a row (user decision
+ *  2026-10-10, Penpot 「Voltip 服务商设置」): each names the provider, whether it can run and the
+ *  model in effect; a tap opens its settings in a sheet from the bottom. The on-device provider is
+ *  never listed: a phone has no local models. */
+export function ProviderCards({
+  kind,
+  providers,
+  label,
+}: {
+  kind: ServiceKind;
+  providers: readonly ProviderStatus[];
+  label: string;
+}) {
+  const [openId, setOpenId] = useState<ProviderId | undefined>(undefined);
+  // The provider the sheet shows: it stays while the sheet slides away, and each opening is a
+  // fresh form.
+  const [shown, setShown] = useState<{ id: ProviderId; opening: number } | undefined>(undefined);
+  const rows: ProviderStatus[][] = [];
+  for (let at = 0; at < providers.length; at += 2) rows.push(providers.slice(at, at + 2));
+  const provider = providers.find((p) => p.id === shown?.id);
+  return (
+    <View style={{ gap: 12 }} accessibilityLabel={label}>
+      {rows.map((row) => (
+        <View key={row.map((p) => p.id).join("+")} style={{ flexDirection: "row", gap: 12 }}>
+          {row.map((p) => (
+            <ProviderTile
+              key={p.id}
+              provider={p}
+              kind={kind}
+              open={p.id === openId}
+              onOpen={() => {
+                setOpenId(p.id);
+                setShown((prev) => ({ id: p.id, opening: (prev?.opening ?? 0) + 1 }));
+              }}
+            />
+          ))}
+          {row.length === 1 && <View style={{ flex: 1 }} />}
+        </View>
+      ))}
+      {provider !== undefined && shown !== undefined && (
+        <ProviderSheet
+          key={`${provider.id}-${kind}-${shown.opening}`}
+          provider={provider}
+          kind={kind}
+          open={openId !== undefined}
+          onClose={() => {
+            setOpenId(undefined);
+          }}
+        />
+      )}
+    </View>
+  );
+}
+
+function ProviderTile({
+  provider,
+  kind,
+  open,
+  onOpen,
+}: {
+  provider: ProviderStatus;
+  kind: ServiceKind;
+  open: boolean;
+  onOpen: () => void;
+}) {
+  const theme = useAppTheme();
+  const { t } = useI18n();
+  const service = provider[kind];
+  if (service === undefined) return null;
+  const name = t(`engines.provider.${provider.id}`);
+  const badges = providerBadges(service, t);
+  // The dot and the line take the most pressing state: a problem before 使用中.
+  const tone: ProviderBadgeTone = badges.some((b) => b.tone === "warn")
+    ? "warn"
+    : (badges[0]?.tone ?? "ok");
+  const lamp: Tone = tone === "warn" ? "warning" : tone;
+  const ink = { accent: theme.colors.primary, ok: theme.voltip.okText, warn: theme.voltip.warning };
+  const status = badges.map((b) => b.text).join(" · ");
   return (
     <View
       testID={`provider-${kind}-${provider.id}`}
       style={{
+        flex: 1,
         borderRadius: CARD_RADIUS,
-        borderWidth: service.active ? 2 : 1,
-        borderColor: service.active ? theme.colors.primary : theme.colors.outlineVariant,
-        backgroundColor: theme.colors.surface,
+        borderWidth: open ? 2 : 1,
+        borderColor: open
+          ? theme.colors.primary
+          : service.active
+            ? mix(theme.colors.outlineVariant, theme.colors.primary, 0.45)
+            : theme.colors.outlineVariant,
+        backgroundColor: service.active
+          ? mix(theme.colors.surface, theme.colors.primary, theme.dark ? 0.1 : 0.05)
+          : theme.colors.surface,
         overflow: "hidden",
       }}>
       <TouchableRipple
-        onPress={() => {
-          onToggle(!open);
-        }}
+        onPress={onOpen}
         accessibilityRole="button"
         accessibilityLabel={name}
-        accessibilityState={{ expanded: open, selected: service.active }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 12, padding: 16 }}>
-          <Icon
-            source={ICONS[provider.id]}
-            size={24}
-            color={service.active ? theme.colors.primary : theme.colors.onSurfaceVariant}
-          />
-          <View style={{ flex: 1, gap: 4 }}>
-            <Text variant="titleMedium">{name}</Text>
-            <Mono numberOfLines={1}>
-              {service.model.length > 0 ? service.model : t(`engines.providerNote.${provider.id}`)}
-            </Mono>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-              {service.active && <Tag tone="accent">{t("engines.inUse")}</Tag>}
-              <Tag tone={ready ? "ok" : "warning"}>
-                {ready ? t("engines.ready") : t(`engines.issue.${service.issue ?? "unavailable"}`)}
-              </Tag>
-            </View>
+        accessibilityHint={status}
+        accessibilityState={{ expanded: open, selected: service.active }}
+        style={{ flex: 1, padding: 14 }}>
+        <View style={{ gap: 10 }}>
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+            }}>
+            <ProviderIcon id={provider.id} active={service.active} />
+            <Lamp tone={lamp} testID={`provider-${kind}-${provider.id}-lamp`} />
           </View>
-          {!service.active && (
-            <Button
-              mode="outlined"
-              compact
-              onPress={use}
-              accessibilityLabel={t("engines.useTitle", {
-                provider: name,
-                service: t(`engines.service.${kind}`),
-              })}>
-              {t("engines.use")}
-            </Button>
-          )}
-          <Icon
-            source={open ? "chevron-up" : "chevron-down"}
-            size={24}
-            color={theme.colors.onSurfaceVariant}
-          />
+          <View style={{ gap: 2 }}>
+            <Text variant="titleSmall" numberOfLines={1} style={{ fontWeight: "700" }}>
+              {name}
+            </Text>
+            <Text variant="labelMedium" numberOfLines={2} style={{ color: ink[tone] }}>
+              {status}
+            </Text>
+          </View>
+          <Mono numberOfLines={2} testID={`provider-${kind}-${provider.id}-model`}>
+            {service.model.length > 0 ? service.model : "—"}
+          </Mono>
         </View>
       </TouchableRipple>
-      {open && (
-        <View style={{ paddingHorizontal: 16, paddingBottom: 16, gap: 12 }}>
-          <Hint>{t(`engines.providerNote.${provider.id}`)}</Hint>
-          {provider.id === "builtin" ? (
-            <BuiltinBody provider={provider} kind={kind} service={service} />
-          ) : (
-            <ProviderForm
-              key={`${provider.id}-${kind}`}
-              provider={provider}
-              kind={kind}
-              service={service}
-            />
-          )}
-        </View>
-      )}
     </View>
+  );
+}
+
+/** One provider's settings for one service, in the sheet a card opens. */
+function ProviderSheet({
+  provider,
+  kind,
+  open,
+  onClose,
+}: {
+  provider: ProviderStatus;
+  kind: ServiceKind;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const service = provider[kind];
+  if (service === undefined) return null;
+  const name = t(`engines.provider.${provider.id}`);
+  return (
+    <BottomSheet
+      open={open}
+      close={onClose}
+      maxHeight={0.9}
+      testID="provider-sheet"
+      header={
+        <View
+          style={{
+            alignSelf: "stretch",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 12,
+            paddingHorizontal: 24,
+            paddingTop: 12,
+          }}>
+          <ProviderIcon id={provider.id} active={service.active} size={44} />
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text variant="titleLarge" accessibilityRole="header" numberOfLines={2}>
+              {name}
+            </Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+              {providerBadges(service, t).map((b) => (
+                <Tag key={b.text} tone={b.tone}>
+                  {b.text}
+                </Tag>
+              ))}
+            </View>
+          </View>
+        </View>
+      }>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 8, paddingBottom: 8, gap: 16 }}>
+        <Hint>{t(`engines.providerNote.${provider.id}`)}</Hint>
+        {provider.id === "builtin" ? (
+          <BuiltinBody provider={provider} kind={kind} service={service} onClose={onClose} />
+        ) : (
+          <ProviderForm provider={provider} kind={kind} service={service} onClose={onClose} />
+        )}
+      </ScrollView>
+    </BottomSheet>
   );
 }
 
@@ -273,16 +413,19 @@ function BuiltinBody({
   provider,
   kind,
   service,
+  onClose,
 }: {
   provider: ProviderStatus;
   kind: ServiceKind;
   service: ServiceStatus;
+  onClose: () => void;
 }) {
   const { backend } = useBackend();
   const shell = useShell();
   const { t } = useI18n();
   const state = useUiState();
   const probe = useProviderProbe(provider.id, kind);
+  const use = useSwitch(provider, kind);
   // The build may offer several models (user request 2026-10-08); the first is its default, kept
   // as no choice at all so that a newer build's default follows.
   const choose = (model: string) => {
@@ -295,7 +438,7 @@ function BuiltinBody({
     shell.toast(t("engines.saved", { provider: t(`engines.provider.${provider.id}`) }));
   };
   return (
-    <View style={{ gap: 12 }}>
+    <View style={{ gap: 16 }}>
       <Hint>{t("engines.builtinBody")}</Hint>
       {service.presets.length > 1 ? (
         <SelectField
@@ -308,12 +451,23 @@ function BuiltinBody({
       ) : (
         <Mono>{t("engines.model", { model: service.model })}</Mono>
       )}
-      <ProbeRow
+      <ProbePanel
         probe={probe}
         onRun={() => {
           probe.run({});
         }}
       />
+      {!service.active && (
+        <Button
+          mode="contained"
+          testID="provider-use"
+          onPress={() => {
+            use();
+            onClose();
+          }}>
+          {t("engines.setCurrent")}
+        </Button>
+      )}
     </View>
   );
 }
@@ -322,10 +476,12 @@ function ProviderForm({
   provider,
   kind,
   service,
+  onClose,
 }: {
   provider: ProviderStatus;
   kind: ServiceKind;
   service: ServiceStatus;
+  onClose: () => void;
 }) {
   const theme = useAppTheme();
   const { backend } = useBackend();
@@ -349,20 +505,31 @@ function ProviderForm({
     provider.asr !== undefined && provider.llm !== undefined && provider.id !== "custom";
   const secret = secretStateLabel(service.key, locale);
 
-  const save = () => {
+  /** Checks the draft and writes it, with `provider` serving `kind` when `use`; false when the
+   *  checks refused it. The key goes to the keystore only. */
+  const write = (use: boolean): string | false => {
     const issue = checkProviderDraft(draft, provider, kind, t);
     setProblem(issue);
-    if (issue !== undefined) return;
+    if (issue !== undefined) return false;
+    const engines = applyProviderDraft(state.settings.engines, provider.id, kind, draft);
     void backend.invoke("settings_set_engines", {
-      engines: applyProviderDraft(state.settings.engines, provider.id, kind, draft),
+      engines: use ? withProvider(engines, kind, provider.id) : engines,
     });
     const key = draft.key.trim();
     if (key.length > 0)
       void backend.invoke("provider_key_set", { provider: provider.id, kind, value: key });
     setDraft({ ...draft, key: "" });
-    shell.toast(
-      `${t("engines.saved", { provider: name })}${key.length > 0 ? t("engines.savedKey") : ""}`,
-    );
+    return key.length > 0 ? t("engines.savedKey") : "";
+  };
+  const save = () => {
+    const keyNote = write(false);
+    if (keyNote !== false) shell.toast(`${t("engines.saved", { provider: name })}${keyNote}`);
+  };
+  const saveAndUse = () => {
+    const keyNote = write(true);
+    if (keyNote === false) return;
+    shell.toast(`${t("engines.used", { provider: name })}${keyNote}`);
+    onClose();
   };
   const deleteKey = () => {
     void backend.invoke("provider_key_set", { provider: provider.id, kind, value: null });
@@ -387,59 +554,43 @@ function ProviderForm({
   const keyTone: Tone = secret.tone === "ok" ? "ok" : secret.tone === "warn" ? "warning" : "idle";
 
   return (
-    <View style={{ gap: 12 }} testID="provider-form">
-      {choices.length > 0 && (
-        <SelectField
-          label={t("engines.field.model")}
-          value={selectValue}
-          onChange={(value) => {
-            if (value === OTHER_MODEL) {
-              setTyping(true);
-              setDraft({ ...draft, model: "" });
-              return;
-            }
-            setTyping(false);
-            setDraft({ ...draft, model: value });
-          }}
-          options={[
-            ...choices.map((m) => ({ value: m, label: m })),
-            { value: OTHER_MODEL, label: t("engines.field.modelOther") },
-          ]}
-        />
-      )}
-      {selectValue === OTHER_MODEL && (
-        <TextInput
-          mode="outlined"
-          label={t("engines.field.modelCustom")}
-          value={draft.model}
-          placeholder={service.model}
-          autoCapitalize="none"
-          autoCorrect={false}
-          onChangeText={(model) => {
-            setDraft({ ...draft, model });
-          }}
-        />
-      )}
-      <View style={{ gap: 4 }}>
-        <TextInput
-          mode="outlined"
-          label={t("engines.field.baseUrl")}
-          value={draft.baseUrl}
-          placeholder={service.default_base_url ?? "http://127.0.0.1:8000/v1"}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          onChangeText={(baseUrl) => {
-            setDraft({ ...draft, baseUrl });
-          }}
-        />
-        <Hint>
-          {service.default_base_url === undefined
-            ? t("engines.field.baseUrlHelpCustom")
-            : provider.id === "aliyun"
-              ? t("engines.field.baseUrlHelpAliyun")
-              : t("engines.field.baseUrlHelpVendor")}
-        </Hint>
+    <View style={{ gap: 16 }} testID="provider-form">
+      <View style={{ gap: 8 }}>
+        {choices.length > 0 && (
+          <SelectField
+            label={t("engines.field.model")}
+            value={selectValue}
+            onChange={(value) => {
+              if (value === OTHER_MODEL) {
+                setTyping(true);
+                setDraft({ ...draft, model: "" });
+                return;
+              }
+              setTyping(false);
+              setDraft({ ...draft, model: value });
+            }}
+            options={[
+              ...choices.map((m) => ({ value: m, label: m })),
+              { value: OTHER_MODEL, label: t("engines.field.modelOther") },
+            ]}
+            testID="provider-model"
+          />
+        )}
+        {selectValue === OTHER_MODEL && (
+          <TextInput
+            mode="outlined"
+            label={t("engines.field.modelCustom")}
+            value={draft.model}
+            placeholder={service.model}
+            autoCapitalize="none"
+            autoCorrect={false}
+            testID="provider-model-id"
+            onChangeText={(model) => {
+              setDraft({ ...draft, model });
+            }}
+          />
+        )}
+        <Hint>{t("engines.field.modelHelp")}</Hint>
       </View>
       {choosesInterface(provider.id, kind) && (
         // docs/dictation.md §3.7: the custom clean-up's interface, and the Responses effort.
@@ -477,7 +628,28 @@ function ProviderForm({
           </Hint>
         </View>
       )}
-      <Hint>{t("engines.field.modelHelp")}</Hint>
+      <View style={{ gap: 4 }}>
+        <TextInput
+          mode="outlined"
+          label={t("engines.field.baseUrl")}
+          value={draft.baseUrl}
+          placeholder={service.default_base_url ?? "http://127.0.0.1:8000/v1"}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          testID="provider-url"
+          onChangeText={(baseUrl) => {
+            setDraft({ ...draft, baseUrl });
+          }}
+        />
+        <Hint>
+          {service.default_base_url === undefined
+            ? t("engines.field.baseUrlHelpCustom")
+            : provider.id === "aliyun"
+              ? t("engines.field.baseUrlHelpAliyun")
+              : t("engines.field.baseUrlHelpVendor")}
+        </Hint>
+      </View>
       {takesKey && (
         <View style={{ gap: 4 }}>
           <TextInput
@@ -495,6 +667,7 @@ function ProviderForm({
             autoCapitalize="none"
             autoCorrect={false}
             autoComplete="off"
+            testID="provider-key"
             onChangeText={(key) => {
               setDraft({ ...draft, key });
             }}
@@ -530,10 +703,20 @@ function ProviderForm({
                 {t("engines.getKey")}
               </Button>
             )}
+            {service.key.source === "user" && (
+              <Button
+                compact
+                icon="trash-can-outline"
+                textColor={theme.colors.error}
+                onPress={deleteKey}
+                testID="provider-delete-key">
+                {t("engines.deleteKey")}
+              </Button>
+            )}
           </View>
         </View>
       )}
-      <ProbeRow
+      <ProbePanel
         probe={probe}
         onRun={() => {
           probe.run({ baseUrl: draft.baseUrl, key: draft.key });
@@ -548,41 +731,27 @@ function ProviderForm({
           {problem}
         </Text>
       )}
-      <View
-        style={{
-          flexDirection: "row",
-          flexWrap: "wrap",
-          justifyContent: "flex-end",
-          alignItems: "center",
-          gap: 8,
-        }}>
-        {takesKey && service.key.source === "user" && (
-          <IconButton
-            icon="trash-can-outline"
-            iconColor={theme.colors.error}
-            accessibilityLabel={t("engines.deleteKey")}
-            onPress={deleteKey}
-          />
-        )}
-        <Button onPress={reset}>{t("engines.reset")}</Button>
-        <Button mode="contained" onPress={save} testID="provider-save">
-          {t("engines.save")}
+      <View style={{ gap: 8 }}>
+        <Button compact onPress={reset} style={{ alignSelf: "flex-end" }} testID="provider-reset">
+          {t("engines.reset")}
         </Button>
+        <View style={{ flexDirection: "row", gap: 12 }}>
+          <Button
+            mode={service.active ? "contained" : "outlined"}
+            onPress={save}
+            testID="provider-save"
+            style={{ flex: 1 }}>
+            {t("engines.save")}
+          </Button>
+          {!service.active && (
+            <Button mode="contained" onPress={saveAndUse} testID="provider-use" style={{ flex: 1 }}>
+              {t("engines.setCurrent")}
+            </Button>
+          )}
+        </View>
       </View>
     </View>
   );
-}
-
-/** Which provider cards are open: the one in use unless the user closed it, any other once the
- *  user opened it. */
-export function useOpenCards(active: ProviderId | undefined) {
-  const [toggled, setToggled] = useState<ReadonlyMap<ProviderId, boolean>>(() => new Map());
-  return {
-    isOpen: (id: ProviderId) => toggled.get(id) ?? id === active,
-    toggle: (id: ProviderId, open: boolean) => {
-      setToggled((prev) => new Map(prev).set(id, open));
-    },
-  };
 }
 
 /** 当前：… for `kind`: the provider and model requests go to now — the fallback model, marked as

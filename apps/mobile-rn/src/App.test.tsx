@@ -78,6 +78,12 @@ describe("the phone app on React Native", () => {
     const invoke = jest.spyOn(backend, "invoke");
     await openTab("settings");
     await fireEvent.press(await screen.findByTestId("settings-ai"));
+    // The card opens the built-in service's sheet, with the model picker in it.
+    await fireEvent.press(
+      within(await screen.findByTestId("provider-llm-builtin")).getByRole("button", {
+        name: "内置服务",
+      }),
+    );
     await fireEvent.press(await screen.findByTestId("builtin-llm-model"));
     await fireEvent.press(
       await screen.findByTestId("builtin-llm-model-option-openai/gpt-oss-120b"),
@@ -89,6 +95,102 @@ describe("the phone app on React Native", () => {
         }),
       });
     });
+  });
+
+  it("语音模型 lists the providers as cards; one opens its settings in a sheet, and 设为当前 saves its key and switches", async () => {
+    // User decision 2026-10-10 (Penpot 「Voltip 服务商设置」): cards two to a row, a provider's
+    // settings in a sheet from the bottom.
+    const { backend } = await renderApp();
+    const invoke = jest.spyOn(backend, "invoke");
+    await openTab("settings");
+    await fireEvent.press(await screen.findByTestId("settings-speech"));
+    const builtin = await screen.findByTestId("provider-asr-builtin");
+    expect(within(builtin).getByText("使用中")).toBeOnTheScreen();
+    expect(within(builtin).getByText("Qwen/Qwen3-ASR-1.7B")).toBeOnTheScreen();
+    const groq = screen.getByTestId("provider-asr-groq");
+    expect(within(groq).getByText("缺少密钥")).toBeOnTheScreen();
+    expect(within(groq).getByText("whisper-large-v3-turbo")).toBeOnTheScreen();
+    // A problem colours the card's dot, before 使用中 would.
+    expect(screen.getByTestId("provider-asr-groq-lamp")).toHaveStyle({
+      backgroundColor: appTheme("light").voltip.warning,
+    });
+    expect(screen.queryByTestId("provider-sheet-sheet")).toBeNull();
+    await fireEvent.press(within(groq).getByRole("button", { name: "Groq" }));
+    const sheet = await screen.findByTestId("provider-sheet-sheet");
+    expect(within(sheet).getByText("Groq")).toBeOnTheScreen();
+    expect(within(sheet).getByText("缺少密钥")).toBeOnTheScreen();
+    // Groq needs its key: 设为当前 refuses first and switches nothing.
+    await fireEvent.press(within(sheet).getByTestId("provider-use"));
+    expect(within(sheet).getByTestId("provider-problem")).toHaveTextContent("请填写 API 密钥");
+    expect(invoke).not.toHaveBeenCalledWith("settings_set_engines", expect.anything());
+    await fireEvent.changeText(within(sheet).getByTestId("provider-key"), "gsk_test");
+    await fireEvent.press(within(sheet).getByTestId("provider-use"));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("settings_set_engines", {
+        engines: expect.objectContaining({ asr_provider: "groq" }),
+      });
+    });
+    expect(invoke).toHaveBeenCalledWith("provider_key_set", {
+      provider: "groq",
+      kind: "asr",
+      value: "gsk_test",
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("provider-sheet-sheet")).toBeNull();
+    });
+    await waitFor(() => {
+      expect(within(screen.getByTestId("provider-asr-groq")).getByText("使用中")).toBeOnTheScreen();
+    });
+    expect(within(screen.getByTestId("provider-asr-builtin")).queryByText("使用中")).toBeNull();
+  });
+
+  it("a provider's sheet saves its model and stays, Android's back closes it, and it opens afresh", async () => {
+    const { backend } = await renderApp();
+    const invoke = jest.spyOn(backend, "invoke");
+    await openTab("settings");
+    await fireEvent.press(await screen.findByTestId("settings-speech"));
+    const custom = await screen.findByTestId("provider-asr-custom");
+    expect(within(custom).getByText("缺少接口地址")).toBeOnTheScreen();
+    await fireEvent.press(within(custom).getByRole("button", { name: "自定义接口" }));
+    const sheet = await screen.findByTestId("provider-sheet-sheet");
+    // No model list: the model is a free field.
+    await fireEvent.changeText(within(sheet).getByTestId("provider-model-id"), "whisper-large-v3");
+    await fireEvent.changeText(
+      within(sheet).getByTestId("provider-url"),
+      "http://192.168.1.20:8000/v1",
+    );
+    await fireEvent.press(within(sheet).getByTestId("provider-save"));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("settings_set_engines", {
+        engines: expect.objectContaining({
+          providers: {
+            custom: { asr_model: "whisper-large-v3", asr_url: "http://192.168.1.20:8000/v1" },
+          },
+        }),
+      });
+    });
+    expect(invoke).not.toHaveBeenCalledWith("settings_set_engines", {
+      engines: expect.objectContaining({ asr_provider: "custom" }),
+    });
+    expect(screen.getByTestId("provider-sheet-sheet")).toBeOnTheScreen();
+    await waitFor(() => {
+      expect(within(screen.getByTestId("provider-asr-custom")).getByText("就绪")).toBeOnTheScreen();
+    });
+    await fireEvent.changeText(within(sheet).getByTestId("provider-url"), "draft");
+    await act(async () => {
+      DeviceEventEmitter.emit("hardwareBackPress");
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("provider-sheet-sheet")).toBeNull();
+    });
+    // The page stays where it was, and the next opening forgets the unsaved draft.
+    expect(screen.getByTestId("phone-speech")).toBeOnTheScreen();
+    await fireEvent.press(
+      within(screen.getByTestId("provider-asr-custom")).getByRole("button", { name: "自定义接口" }),
+    );
+    expect(await screen.findByTestId("provider-sheet-sheet")).toBeOnTheScreen();
+    expect(screen.getByTestId("provider-url")).toHaveDisplayValue("http://192.168.1.20:8000/v1");
   });
 
   it("关于 opens the privacy policy in the phone's language", async () => {

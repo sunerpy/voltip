@@ -1,10 +1,10 @@
-import { type ProviderId, languageOptions, providersFor } from "@voltip/shared";
+import { languageOptions, providersFor } from "@voltip/shared";
 import {
   Card,
   ChineseScript,
   CurrentService,
   FallbackSection,
-  ProviderCard,
+  ProviderCards,
   Select,
   ServicePrivacy,
   SettingsSection,
@@ -13,20 +13,7 @@ import {
   useI18n,
   useUiState,
 } from "@voltip/ui";
-import { useState } from "react";
 import { Lede, TOUCH_TOGGLE } from "../app/phone-ui";
-
-/** Which provider cards are open: the one in use unless the user closed it, any other once the
- *  user opened it (as the desktop's engines pane). */
-export function useOpenCards(active: ProviderId | undefined) {
-  const [toggled, setToggled] = useState<ReadonlyMap<ProviderId, boolean>>(() => new Map());
-  return {
-    isOpen: (id: ProviderId) => toggled.get(id) ?? id === active,
-    toggle: (id: ProviderId, open: boolean) => {
-      setToggled((prev) => new Map(prev).set(id, open));
-    },
-  };
-}
 
 /** 语音模型 on the phone (user decision 2026-10-01): the recognition providers as the desktop's
  *  cards (`@voltip/ui`), without the on-device one — the phone has no local models — with the
@@ -38,27 +25,13 @@ export function SpeechModels() {
   const state = useUiState();
   const settings = state.settings.engines;
   const providers = providersFor(state.engines, "asr").filter((p) => !p.on_device);
-  const cards = useOpenCards(state.engines.asr_provider);
   return (
     <div className="flex flex-col gap-6 p-4" data-testid="phone-speech">
       <Lede>{t("mobile.settings.own")}</Lede>
       <SettingsSection
         title={t("engines.asrSection.title")}
         description={t("engines.asrSection.note")}>
-        <div className="flex flex-col gap-3" role="list" aria-label={t("engines.asrSection.title")}>
-          {providers.map((p) => (
-            <div role="listitem" key={p.id}>
-              <ProviderCard
-                provider={p}
-                kind="asr"
-                open={cards.isOpen(p.id)}
-                onToggle={(open) => {
-                  cards.toggle(p.id, open);
-                }}
-              />
-            </div>
-          ))}
-        </div>
+        <ProviderCards kind="asr" providers={providers} label={t("engines.asrSection.title")} />
         {/* docs/dictation.md §3.5: the model in use (a fallback model says so) and who gets the audio. */}
         <div className="flex flex-col gap-1">
           <CurrentService kind="asr" />

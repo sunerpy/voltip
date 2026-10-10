@@ -2,10 +2,13 @@ import {
   choosesInterface,
   applyProviderDraft,
   checkProviderDraft,
+  endpointHost,
   languageOptions,
   modelChoices,
   probeText,
+  providerBadges,
   providerDraft,
+  providerTagline,
   providersFor,
   serviceTarget,
   shortModel,
@@ -229,6 +232,57 @@ describe("engine drafts (provider cards, desktop and phone)", () => {
     expect(shortModel("Qwen/Qwen3-ASR-1.7B")).toBe("Qwen3-ASR-1.7B");
     expect(shortModel("whisper-large-v3")).toBe("whisper-large-v3");
     expect(shortModel("vendor/")).toBe("vendor/");
+  });
+
+  it("takes the host of an http(s) address and nothing else", () => {
+    expect(endpointHost("https://api.groq.com/openai/v1")).toBe("api.groq.com");
+    expect(endpointHost(" http://127.0.0.1:11434/v1 ")).toBe("127.0.0.1:11434");
+    expect(endpointHost("https://user:secret@asr.example.test/v1")).toBe("asr.example.test");
+    expect(endpointHost("HTTPS://ASR.example.test")).toBe("ASR.example.test");
+    expect(endpointHost("asr.example.test")).toBeUndefined();
+    expect(endpointHost("ftp://asr.example.test")).toBeUndefined();
+    expect(endpointHost("")).toBeUndefined();
+  });
+
+  it("puts the host under a card's name, or what the provider is when it has none to show", () => {
+    const en = createTranslator("en").t;
+    const groq = provider({ asr: service({ base_url: "https://api.groq.com/openai/v1" }) });
+    expect(providerTagline(groq, "asr", t)).toBe("api.groq.com");
+    // The service the card is for: Groq has no clean-up address here.
+    expect(providerTagline(groq, "llm", t)).toBe(t("engines.tagline.custom"));
+    // The built-in service's host is never shown, even if a status carried one.
+    const builtin = provider({
+      id: "builtin",
+      key: "none",
+      asr: service({ base_url: "https://hidden.example.test/v1" }),
+    });
+    expect(providerTagline(builtin, "asr", t)).toBe(t("engines.tagline.builtin"));
+    expect(providerTagline(provider({ id: "local", asr: service() }), "asr", en)).toBe(
+      "Runs on this computer",
+    );
+    const custom = provider({ id: "custom", key: "optional", asr: service() });
+    expect(providerTagline(custom, "asr", t)).toBe("OpenAI 兼容接口");
+    const filled = provider({
+      id: "custom",
+      asr: service({ base_url: "http://192.168.1.20:8000/v1" }),
+    });
+    expect(providerTagline(filled, "asr")).toBe("192.168.1.20:8000");
+  });
+
+  it("says 使用中 on the provider in use, then why one cannot run, or 就绪", () => {
+    expect(providerBadges(service({ active: true }), t)).toEqual([
+      { tone: "accent", text: "使用中" },
+    ]);
+    expect(providerBadges(service({ active: true, issue: "key_missing" }), t)).toEqual([
+      { tone: "accent", text: "使用中" },
+      { tone: "warn", text: "缺少密钥" },
+    ]);
+    expect(providerBadges(service({ issue: "url_missing" }))).toEqual([
+      { tone: "warn", text: "缺少接口地址" },
+    ]);
+    expect(providerBadges(service(), createTranslator("en").t)).toEqual([
+      { tone: "ok", text: "Ready" },
+    ]);
   });
 
   it("offers the recognition languages with a localised auto entry", () => {

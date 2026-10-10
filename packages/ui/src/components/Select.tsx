@@ -32,6 +32,10 @@ export interface SelectProps<V extends string> extends Omit<
   mono?: boolean;
   label?: string;
   size?: "sm" | "md";
+  /** The chosen label wraps onto more lines instead of setting the select's width: for values
+   *  as long as a model id, in a field as wide as its container (user report 2026-10-10: a long
+   *  model id pushed the select over the endpoint field beside it). */
+  wrap?: boolean;
 }
 
 /** A select with the design's chrome: hairline, radius 6, chevron, optional mono value. Under
@@ -40,7 +44,8 @@ export interface SelectProps<V extends string> extends Omit<
  *  It is never narrower than its longest option (user feedback 2026-09-29: callers' fixed widths
  *  clipped the chosen label): a hidden copy of every label shares the select's grid cell and sets
  *  the column's width. CSS `field-sizing` would do the same, but WebKitGTK and WKWebView do not
- *  all support it. Callers pass no width; a container narrower than the longest label still wins. */
+ *  all support it. Callers pass no width; a container narrower than the longest label still wins.
+ *  With `wrap` it takes its container's width instead, and the chosen label wraps. */
 export function Select<V extends string>(props: SelectProps<V>) {
   return usePresentation() === "touch" ? <TouchSelect {...props} /> : <NativeSelect {...props} />;
 }
@@ -85,6 +90,15 @@ function Sizer<V extends string>({
   );
 }
 
+/** The chosen label on more lines than one (`wrap`), drawn where the select is. */
+function wrapClass(size: "sm" | "md", mono: boolean): string {
+  return cx(
+    "py-1 break-all whitespace-normal",
+    size === "sm" ? "min-h-7 text-[12px] leading-[18px]" : "min-h-8 text-[13px] leading-5",
+    mono && "mono",
+  );
+}
+
 function NativeSelect<V extends string>({
   options,
   value,
@@ -92,6 +106,7 @@ function NativeSelect<V extends string>({
   mono = false,
   label,
   size = "md",
+  wrap = false,
   className,
   id,
   ...rest
@@ -99,6 +114,8 @@ function NativeSelect<V extends string>({
   const autoId = useId();
   const selectId = id ?? autoId;
   const markers = pickProps(rest, true);
+  // What a native select shows: the option with the value, else the first one that can be chosen.
+  const shown = options.find((o) => o.value === value) ?? options.find((o) => o.disabled !== true);
   return (
     <div className={cx("flex flex-col gap-1", className)}>
       {label && (
@@ -107,7 +124,7 @@ function NativeSelect<V extends string>({
         </label>
       )}
       <div className="relative grid">
-        <Sizer options={options} size={size} mono={mono} markers={markers} />
+        {!wrap && <Sizer options={options} size={size} mono={mono} markers={markers} />}
         <select
           id={selectId}
           value={value}
@@ -117,7 +134,13 @@ function NativeSelect<V extends string>({
           }}
           className={cx(
             "col-start-1 row-start-1 w-full min-w-0 appearance-none rounded-6 bg-surface pr-7 pl-2.5 hairline outline-none transition-colors hover:border-fg-subtle focus:border-fg disabled:opacity-50 disabled:hover:border-border",
-            size === "sm" ? "h-7 text-[12px]" : "h-8 text-[13px]",
+            // `wrap`: the platform's select stays the control (keyboard, screen readers, its list)
+            // but is not seen; the face after it shows the label on as many lines as it takes.
+            wrap
+              ? "peer absolute inset-0 h-full cursor-pointer opacity-0"
+              : size === "sm"
+                ? "h-7 text-[12px]"
+                : "h-8 text-[13px]",
             mono && "mono",
           )}
           {...rest}>
@@ -127,6 +150,19 @@ function NativeSelect<V extends string>({
             </option>
           ))}
         </select>
+        {wrap && (
+          <span
+            aria-hidden
+            data-select-face=""
+            {...markers}
+            className={cx(
+              "col-start-1 row-start-1 flex min-w-0 items-center rounded-6 bg-surface pr-7 pl-2.5 text-fg hairline transition-colors",
+              "peer-hover:border-fg-subtle peer-focus:border-fg peer-disabled:opacity-50",
+              wrapClass(size, mono),
+            )}>
+            {shown?.label}
+          </span>
+        )}
         <Icon
           name="chevronDown"
           size={14}
@@ -164,6 +200,7 @@ function TouchSelect<V extends string>({
   mono = false,
   label,
   size = "md",
+  wrap = false,
   className,
   id,
   ...rest
@@ -340,7 +377,7 @@ function TouchSelect<V extends string>({
           // Tab leaves from the trigger: the focus moves on to whatever follows the select.
           if (e.key === "Tab" && open) close(true);
         }}>
-        <Sizer options={options} size={size} mono={mono} markers={markers} />
+        {!wrap && <Sizer options={options} size={size} mono={mono} markers={markers} />}
         <button
           {...forwarded}
           ref={trigger}
@@ -364,13 +401,13 @@ function TouchSelect<V extends string>({
           }}
           className={cx(
             "col-start-1 row-start-1 flex w-full min-w-0 items-center rounded-6 bg-surface pr-7 pl-2.5 text-left hairline outline-none transition-colors select-none hover:border-fg-subtle focus:border-fg disabled:opacity-50 disabled:hover:border-border aria-expanded:border-fg",
-            size === "sm" ? "h-7 text-[12px]" : "h-8 text-[13px]",
-            mono && "mono",
+            wrap ? wrapClass(size, mono) : size === "sm" ? "h-7 text-[12px]" : "h-8 text-[13px]",
+            !wrap && mono && "mono",
             TOUCH_CONTROL,
             TOUCH_TARGET,
             !disabled && "active:bg-inset",
           )}>
-          <span id={valueId} className="min-w-0 truncate" {...markers}>
+          <span id={valueId} className={cx("min-w-0", !wrap && "truncate")} {...markers}>
             {options[current]?.label}
           </span>
         </button>

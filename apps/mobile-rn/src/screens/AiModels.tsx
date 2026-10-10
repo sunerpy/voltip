@@ -6,7 +6,7 @@ import { Text } from "react-native-paper";
 
 import { useBackend, useUiState } from "../backend/BackendProvider";
 import { useI18n } from "../backend/i18n";
-import { CurrentService, ProviderCard, ServicePrivacy, useOpenCards } from "../features/engines";
+import { CurrentService, ProviderCards, ServicePrivacy } from "../features/engines";
 import { FallbackSection } from "../features/Fallback";
 import { PresetsSection } from "../features/Presets";
 import { Lede, Page, Section, SectionTitle, SwitchRow, useAppTheme } from "../ui/kit";
@@ -19,7 +19,6 @@ export function AiModels() {
   const settings = state.settings.engines;
   const engines = state.engines;
   const providers = providersFor(engines, "llm");
-  const cards = useOpenCards(engines.llm_provider);
   return (
     <Page testID="phone-ai" gap={20}>
       <Lede>{t("mobile.settings.own")}</Lede>
@@ -51,19 +50,7 @@ export function AiModels() {
         <SectionTitle style={{ paddingHorizontal: 4 }}>
           {t("engines.llmSection.title")}
         </SectionTitle>
-        <View style={{ gap: 12 }} accessibilityLabel={t("engines.llmSection.title")}>
-          {providers.map((p) => (
-            <ProviderCard
-              key={p.id}
-              provider={p}
-              kind="llm"
-              open={cards.isOpen(p.id)}
-              onToggle={(open) => {
-                cards.toggle(p.id, open);
-              }}
-            />
-          ))}
-        </View>
+        <ProviderCards kind="llm" providers={providers} label={t("engines.llmSection.title")} />
         <View style={{ gap: 4, paddingHorizontal: 4 }}>
           <CurrentService kind="llm" />
           <ServicePrivacy kind="llm" />

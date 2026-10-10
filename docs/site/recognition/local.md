@@ -7,7 +7,7 @@ description: The speech models that run on your computer, how to download them, 
 With a local model, your recordings are recognised on your computer and no audio leaves it. Open **Speech models** in the sidebar, choose **This computer**, and download a model. Once it is downloaded, you can also switch to it from the speech model name in the title bar or on the home page.
 
 <ScreenFigure src="/screens/local-en-light.webp" width="1440" height="900"
-  alt="The This computer card on the Speech models page: four local models, one of them installed and in use, and the compute device settings below."
+  alt="The This computer settings on the Speech models page: four local models, one of them installed and in use, and the compute device settings below."
   caption="Speech models › This computer, with Qwen3-ASR 0.6B installed." />
 
 ## The models

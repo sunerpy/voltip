@@ -46,8 +46,9 @@ describe("stat tile colours", () => {
       const total = statTileColors(theme, "total");
       expect(total.gradient?.from).toBe(theme.colors.primaryContainer);
       expect(total.gradient?.to).toBe(theme.colors.surface);
-      expect(total.chip).toBe(theme.colors.primary);
-      expect(total.icon).toBe(theme.colors.onPrimary);
+      // A soft accent block, never a solid one.
+      expect(total.chip).toBe(alpha(theme.colors.primary, 0.22));
+      expect(total.icon).toBe(theme.colors.primary);
       expect(total.fg).toBe(theme.colors.onSurface);
     }
   });

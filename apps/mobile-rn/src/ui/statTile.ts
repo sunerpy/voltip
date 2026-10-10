@@ -55,8 +55,9 @@ export function statTileColors(theme: AppTheme, span: StatSpan): StatTileColors 
     if (theme.dark) {
       return {
         border: mix(c.surface, c.primary, 0.35),
-        chip: c.primary,
-        icon: c.onPrimary,
+        // A soft accent block, never a solid one (user feedback 2026-10-10 on the provider drafts).
+        chip: alpha(c.primary, 0.22),
+        icon: c.primary,
         fg: c.onSurface,
         muted: c.onSurfaceVariant,
         subtle: v.subtle,

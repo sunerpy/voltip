@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { cx } from "../cx";
+import { PresentationProvider } from "../presentation/PresentationProvider";
 import { Badge } from "./Badge";
 import { Banner } from "./Banner";
 import { Button } from "./Button";
@@ -238,6 +239,32 @@ describe("Input / Textarea / Keycap", () => {
     expect(screen.getByText("端口被占用")).toBeInTheDocument();
     expect(screen.getByText("≤ 64 字符")).toBeInTheDocument();
     expect(screen.getByLabelText("识别原文")).toHaveValue("voltip");
+  });
+
+  it("puts a trailing control inside the field, and a press on it is that control's", async () => {
+    const user = userEvent.setup();
+    const onShow = vi.fn();
+    render(
+      <PresentationProvider value="touch">
+        <Input
+          label="API 密钥"
+          type="password"
+          trailing={<IconButton icon="eye" label="显示密钥" onClick={onShow} />}
+        />
+      </PresentationProvider>,
+    );
+    const input = screen.getByLabelText("API 密钥");
+    const show = screen.getByRole("button", { name: "显示密钥" });
+    // Inside the field's box, after the input.
+    expect(show.parentElement).toBe(input.parentElement);
+    expect(input.parentElement?.className).toContain("pr-1");
+    await user.click(show);
+    expect(onShow).toHaveBeenCalledTimes(1);
+    // The press did not move the caret into the field (the phone would raise its keyboard).
+    expect(input).not.toHaveFocus();
+    // A press elsewhere on the field's box still does.
+    await user.click(input.parentElement as HTMLElement);
+    expect(input).toHaveFocus();
   });
 
   it("splits key strings on + and whitespace", () => {

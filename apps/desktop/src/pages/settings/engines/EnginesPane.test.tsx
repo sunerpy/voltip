@@ -63,12 +63,9 @@ function providerCard(kind: ServiceKind, id: ProviderId) {
   return screen.getByTestId(`provider-${kind}-${id}`);
 }
 
-/** The header toggle of a provider card (its accessible name starts with the provider's name). */
-function cardToggle(kind: ServiceKind, id: ProviderId) {
-  const card = providerCard(kind, id);
-  const toggle = card.querySelector("button[aria-expanded]");
-  if (!(toggle instanceof HTMLElement)) throw new Error(`no toggle on ${id}`);
-  return toggle;
+/** The drawer a provider card opens: the provider's settings. */
+function providerDetail(kind: ServiceKind, id: ProviderId) {
+  return screen.getByTestId(`provider-${kind}-${id}-detail`);
 }
 
 /** The views these tests move between: the 语音模型 page's two tabs (by their names in either
@@ -86,10 +83,15 @@ async function openTab(user: User, name: string) {
   await user.click(await screen.findByRole("radio", { name }));
 }
 
+/** Opens a provider's drawer with a click on its card, as a user would; the drawer. */
 async function openCard(user: User, kind: ServiceKind, id: ProviderId) {
-  await screen.findByTestId(`provider-${kind}-${id}`);
-  const toggle = cardToggle(kind, id);
-  if (toggle.getAttribute("aria-expanded") !== "true") await user.click(toggle);
+  const card = await screen.findByTestId(`provider-${kind}-${id}`);
+  if (card.getAttribute("data-open") !== "true") {
+    const open = card.querySelector("button[aria-haspopup='dialog']");
+    if (!(open instanceof HTMLElement)) throw new Error(`no way to open ${id}`);
+    await user.click(open);
+  }
+  return screen.findByTestId(`provider-${kind}-${id}-detail`);
 }
 
 async function openLocalCard(user: User) {
@@ -198,7 +200,8 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     }
   });
 
-  it("lists the recognition providers as cards in catalogue order, the one in use ringed, open and marked 使用中", async () => {
+  it("lists the recognition providers as cards in catalogue order, the one in use tinted and marked 使用中", async () => {
+    const user = userEvent.setup();
     renderApp({ path: "/speech" });
     const list = await screen.findByRole("list", { name: "语音识别服务商" });
     const cards = within(list).getAllByRole("article");
@@ -213,17 +216,21 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     ]);
     const builtin = providerCard("asr", "builtin");
     expect(builtin).toHaveAttribute("data-selected", "true");
-    expect(builtin).toHaveAttribute("data-open", "true");
     expect(within(builtin).getByText("使用中")).toBeInTheDocument();
-    expect(within(builtin).getByText("就绪")).toBeInTheDocument();
-    expect(within(builtin).queryByRole("button", { name: "使用" })).toBeNull();
-    expect(within(builtin).getByText(/内置服务的地址和密钥已包含在应用中/)).toBeInTheDocument();
-    // Vendors without a key say so; nothing but the built-in card is open.
+    expect(within(builtin).getByText("当前使用")).toBeInTheDocument();
+    expect(within(builtin).queryByRole("button", { name: "设为当前" })).toBeNull();
+    expect(within(builtin).getByText("随应用提供，无需密钥")).toBeInTheDocument();
+    // Vendors without a key say so, under the host their requests go to; nothing is open until a
+    // card is clicked.
     const groq = providerCard("asr", "groq");
     expect(within(groq).getByText("缺少密钥")).toBeInTheDocument();
+    expect(within(groq).getByText("api.groq.com")).toBeInTheDocument();
     expect(within(groq).getByText("whisper-large-v3-turbo")).toBeInTheDocument();
-    expect(groq).not.toHaveAttribute("data-open");
-    expect(within(providerCard("asr", "local")).getByText("本机运行")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(within(providerCard("asr", "local")).getByText("在这台电脑上运行")).toBeInTheDocument();
+    // The built-in service's drawer explains itself.
+    const detail = await openCard(user, "asr", "builtin");
+    expect(within(detail).getByText(/内置服务的地址和密钥已包含在应用中/)).toBeInTheDocument();
     expect(screen.getByTestId("current-asr")).toHaveTextContent("当前：内置服务 · Qwen3-ASR-1.7B");
     expect(screen.getByTestId("privacy-asr")).toHaveTextContent("音频发送到内置服务");
     // No provider card for services a provider does not offer.
@@ -249,11 +256,11 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(providerStatus(backend.peek().engines, "builtin")?.asr?.base_url).toBeUndefined();
   });
 
-  it("使用 switches the recognition provider; a vendor needs its key, which goes to provider_key_set and is never echoed", async () => {
+  it("设为当前 switches the recognition provider; a vendor needs its key, which goes to provider_key_set and is never echoed", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/speech" });
     await screen.findByTestId("provider-asr-groq");
-    await user.click(within(providerCard("asr", "groq")).getByRole("button", { name: "使用" }));
+    await user.click(within(providerCard("asr", "groq")).getByRole("button", { name: "设为当前" }));
     await waitFor(() => {
       expect(backend.peek().settings.engines).toEqual({
         ...defaultEngineSettings(),
@@ -267,8 +274,8 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     );
     const groq = providerCard("asr", "groq");
     expect(groq).toHaveAttribute("data-selected", "true");
-    await openCard(user, "asr", "groq");
-    const form = within(groq).getByTestId("provider-form");
+    const detail = await openCard(user, "asr", "groq");
+    const form = within(detail).getByTestId("provider-form");
     // The key field opens empty and stays a password field; saving without a key is refused.
     const key = within(form).getByLabelText("API 密钥");
     expect(key).toHaveValue("");
@@ -285,7 +292,10 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       expect(engineReady(backend.peek().engines)).toBe(true);
     });
     expect(await screen.findByText(/已保存 · Groq · 密钥已写入系统钥匙串/)).toBeInTheDocument();
-    expect(within(groq).getByText("就绪")).toBeInTheDocument();
+    // In use and able to run: the card and the drawer say 使用中 and nothing else.
+    expect(within(groq).queryByText("缺少密钥")).toBeNull();
+    expect(within(detail).queryByText("缺少密钥")).toBeNull();
+    expect(within(detail).getByText("使用中")).toBeInTheDocument();
     expect(within(form).getByTestId("provider-key-state")).toHaveTextContent("已设置");
     expect(key).toHaveValue("");
     expect(key).toHaveAttribute("placeholder", "已保存 · 留空则不改");
@@ -312,8 +322,8 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
         path: "/speech",
         mock: { probeModels: { openai: ["whisper-2", "gpt-transcribe"] } },
       });
-      await openCard(user, "asr", "openai");
-      const form = within(providerCard("asr", "openai")).getByTestId("provider-form");
+      const detail = await openCard(user, "asr", "openai");
+      const form = within(detail).getByTestId("provider-form");
       const select = within(form).getByLabelText("模型");
       expect(
         within(select)
@@ -372,10 +382,11 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
   it("regression: a custom endpoint needs an http(s) address and takes an optional key; the built-in key never follows it", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/speech" });
-    await openCard(user, "asr", "custom");
+    const detail = await openCard(user, "asr", "custom");
     const card = providerCard("asr", "custom");
     expect(within(card).getByText("缺少接口地址")).toBeInTheDocument();
-    const form = within(card).getByTestId("provider-form");
+    expect(within(card).getByText("OpenAI 兼容接口")).toBeInTheDocument();
+    const form = within(detail).getByTestId("provider-form");
     expect(within(form).getByLabelText("API 密钥（可选）")).toBeInTheDocument();
     expect(within(form).queryByRole("button", { name: "获取密钥" })).toBeNull();
     // No presets: the model is a free field right away.
@@ -399,10 +410,14 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       });
     });
     expect(within(card).getByText("就绪")).toBeInTheDocument();
-    await user.click(within(card).getByRole("button", { name: "使用" }));
+    // The card names the address now, by its host.
+    expect(within(card).getByText("192.168.1.20:8000")).toBeInTheDocument();
+    // 设为当前 in the drawer saves what it holds and switches; the drawer closes.
+    await user.click(within(form).getByRole("button", { name: "设为当前" }));
     await waitFor(() => {
       expect(backend.peek().engines.asr_provider).toBe("custom");
     });
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(backend.peek().engines.asr_host).toBe("192.168.1.20");
     expect(screen.getByTestId("privacy-asr")).toHaveTextContent("音频发送到192.168.1.20");
     expect(providerStatus(backend.peek().engines, "custom")?.asr?.key).toEqual({
@@ -435,17 +450,22 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(screen.getByTestId("current-llm")).toHaveTextContent("当前：内置服务 · qwen3.8-27b");
     expect(screen.getByTestId("privacy-llm")).toHaveTextContent("文本发送到内置服务");
     // Ollama: no key at all, but a model must be chosen.
-    await openCard(user, "llm", "ollama");
+    const detail = await openCard(user, "llm", "ollama");
     const ollama = providerCard("llm", "ollama");
     expect(within(ollama).getByText("未选择模型")).toBeInTheDocument();
-    expect(within(ollama).queryByLabelText(/API 密钥/)).toBeNull();
+    expect(within(ollama).getByText("127.0.0.1:11434")).toBeInTheDocument();
+    expect(within(detail).queryByLabelText(/API 密钥/)).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
     const toggle = screen.getByRole("switch", { name: /已开启/ });
     await user.click(toggle);
     await waitFor(() => {
       expect(backend.peek().settings.engines.refine_enabled).toBe(false);
     });
     expect(screen.getByRole("switch", { name: /已关闭/ })).not.toBeChecked();
-    await user.click(within(providerCard("llm", "deepseek")).getByRole("button", { name: "使用" }));
+    await user.click(
+      within(providerCard("llm", "deepseek")).getByRole("button", { name: "设为当前" }),
+    );
     await waitFor(() => {
       expect(backend.peek().settings.engines.llm_provider).toBe("deepseek");
     });
@@ -501,8 +521,9 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     const card = await screen.findByTestId("provider-asr-local");
     expect(engineReady(backend.peek().engines)).toBe(false);
     expect(within(card).getByText("模型未下载")).toBeInTheDocument();
-    expect(card).toHaveAttribute("data-open", "true");
-    await screen.findByTestId("local-models");
+    expect(within(card).getByText("轻量 · 中文")).toBeInTheDocument();
+    await openLocalCard(user);
+    expect(within(providerDetail("asr", "local")).getByText("模型未下载")).toBeInTheDocument();
     const readout = screen.getByTestId("title-bar-readout");
     expect(within(readout).getByText("轻量 · 中文")).toBeInTheDocument();
     expect(within(readout).getByTestId("title-bar-readout-badge")).toHaveTextContent("本机");
@@ -521,6 +542,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       expect(within(readout).getByTitle("本机 · 轻量 · 中文 · 就绪")).toBeInTheDocument();
     });
     expect(readout.querySelector("[data-tone='ok']")).not.toBeNull();
+    await user.keyboard("{Escape}");
     await openTab(user, "识别设置");
     expect(screen.getByTestId("vad-trim")).toHaveAttribute("data-state", "off");
   });
@@ -1086,7 +1108,9 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     );
     expect(within(vad).getByText(/本地识别前用 Silero VAD 去掉首尾静音/)).toBeInTheDocument();
     await openTab(user, "服务商与模型");
-    await user.click(within(providerCard("asr", "local")).getByRole("button", { name: "使用" }));
+    await user.click(
+      within(providerCard("asr", "local")).getByRole("button", { name: "设为当前" }),
+    );
     await waitFor(() => {
       expect(backend.peek().settings.engines.asr_provider).toBe("local");
     });

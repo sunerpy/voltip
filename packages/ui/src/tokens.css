@@ -137,8 +137,9 @@
   --total-fg: var(--fg);
   --total-muted: #a9b8cc;
   --total-subtle: #7d8da3;
-  --total-chip: var(--accent);
-  --total-icon: var(--accent-fg);
+  /* A soft accent block, never a solid one (user feedback 2026-10-10 on the provider drafts). */
+  --total-chip: color-mix(in srgb, var(--accent) 22%, transparent);
+  --total-icon: var(--accent-text);
   --total-border: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
@@ -267,8 +268,9 @@
   --total-fg: var(--fg);
   --total-muted: #b2c2d6;
   --total-subtle: #8796aa;
-  --total-chip: var(--accent);
-  --total-icon: var(--accent-fg);
+  /* A soft accent block, never a solid one (user feedback 2026-10-10 on the provider drafts). */
+  --total-chip: color-mix(in srgb, var(--accent) 22%, transparent);
+  --total-icon: var(--accent-text);
   --total-border: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
@@ -771,5 +773,16 @@
   }
   to {
     width: 0%;
+  }
+}
+/* The drawer's panel (`Drawer`) comes in from the right edge. */
+@keyframes vt-drawer-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
   }
 }
