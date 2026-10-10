@@ -135,7 +135,9 @@ pnpm -C apps/desktop dev --host 127.0.0.1 --port 1430
    changes.
 4. Look at every image before committing it. The host guard does not read images.
 
-Capture again when the interface's text or layout changes.
+Capture again when the interface's text or layout changes. The READMEs show
+`home-en-light.webp` and `home-zh-light.webp` too: a new capture updates them as well, and a
+rename has to change both READMEs.
 
 ## Videos and QR codes
 

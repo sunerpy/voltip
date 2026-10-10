@@ -21,7 +21,7 @@
 
 Voltip 是 Windows、Linux 和 macOS 上的语音输入工具。按住热键时录音，松开后交给云端或本机模型识别，可选用 LLM 润色，再粘贴到当前有焦点的应用里。Android 应用可以单独使用，也可以当电脑的麦克风和键盘。
 
-![Voltip 首页：就绪状态、麦克风与测试、识别引擎、已配对手机和最近的结果](../acceptance/screens/desktop/home-1440-light.png)
+![Voltip 首页：就绪状态、麦克风与测试、识别引擎、已配对手机和最近的结果](../site/public/screens/home-zh-light.webp)
 
 ## 视频
 
