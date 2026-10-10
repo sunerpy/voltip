@@ -110,9 +110,6 @@ sherpa-onnx = { version = "=1.13.8", default-features = false, features = ["shar
 # Opus for a phone take's audio (docs/dictation.md §20.1): a pure-Rust port of libopus 1.6, no C
 # toolchain on any target (Android, the Windows cross-build); BSD-3-Clause.
 opus-rs = "=0.1.34"
-# LAN discovery (docs/pairing.md 「局域网发现」): multicast DNS in pure Rust, every desktop and
-# mobile target.
-mdns-sd = { version = "=0.21.4", default-features = false }
 # The same crate's `-sys` half, named only by the desktop shell: see apps/desktop/src-tauri/Cargo.toml.
 sherpa-onnx-sys = { version = "=1.13.8", default-features = false, features = ["shared"] }
 snow = "=0.10.0"

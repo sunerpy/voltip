@@ -47,7 +47,7 @@ The design documents are written in Chinese and are the contracts the code follo
 | [Architecture](/zh/dev/architecture) | The Rust core, the two Tauri apps and how they communicate |
 | [The dictation pipeline](/zh/dev/dictation) | Recording, recognition, models, shortcuts and insertion |
 | [Interface and IPC contract](/zh/dev/frontend) | The front end and the messages it exchanges with Rust |
-| [Pairing](/zh/dev/pairing) | Pairing, LAN discovery and the connection check |
+| [Pairing](/zh/dev/pairing) | Pairing, reconnecting and the connection check |
 | [Wire protocol](/zh/dev/protocol) | The messages between devices |
 | [Threat model](/zh/dev/threat-model) | What the encrypted link protects against |
 | [State machines](/zh/dev/state-machines) | The states of pairing and of a connection |

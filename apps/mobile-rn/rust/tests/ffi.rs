@@ -76,10 +76,6 @@ impl PlatformHost for FakePlatform {
         self.outcome(format!("share_file {name} {mime} {}", text.len()))
     }
 
-    fn multicast(&self, held: bool) -> Result<(), HostError> {
-        self.outcome(format!("multicast {held}"))
-    }
-
     fn open_url(&self, url: String) -> Result<(), HostError> {
         self.outcome(format!("open_url {url}"))
     }
@@ -89,13 +85,10 @@ impl PlatformHost for FakePlatform {
     }
 }
 
-/// An offline phone: no relay, no mDNS, the LAN host on an ephemeral port.
+/// An offline phone: no relay.
 fn offline_config(dir: &Path) -> CoreConfig {
     SettingsStore::new(dir).save(&Settings { relay_enabled: false, ..Settings::default() }).unwrap();
-    let mut config = voltip_rn::shell::phone_config(dir.to_path_buf(), "0.0.44");
-    config.discovery = None;
-    config.direct_bind = "127.0.0.1:0".parse().unwrap();
-    config
+    voltip_rn::shell::phone_config(dir.to_path_buf(), "0.0.44")
 }
 
 struct Started {

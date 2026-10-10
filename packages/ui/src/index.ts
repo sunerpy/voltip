@@ -47,6 +47,7 @@ export * from "./components/Pill";
 export * from "./components/CodeInput";
 export * from "./components/SafetyCodeView";
 export * from "./hooks/useNow";
+export * from "./hooks/useRelayRecheck";
 export * from "./features/engines/useProviderProbe";
 export * from "./features/engines/ProviderCard";
 export * from "./features/engines/ChineseScript";

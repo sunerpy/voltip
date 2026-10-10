@@ -2,6 +2,12 @@
 //!
 //! One task per connection reads frames and hands them to the shared core; deliveries are
 //! pushed to per-connection channels. A housekeeping task ticks the core every second.
+//!
+//! Every connection is pinged (`RelayConfig::ping_interval`) and closed once nothing has come from
+//! it for `RelayConfig::idle_timeout` (docs/pairing.md 「中继侧的连接检测」): a device that went
+//! away without closing its socket (another network, a frozen app, a broken path) is noticed,
+//! its peers are told it is offline, and its place on the rendezvous channels is free for the
+//! connection it opens next.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -141,22 +147,37 @@ async fn handle_socket(socket: WebSocket, addr: SocketAddr, h: RelayHandle) {
     let conn = ConnId(h.inner.next_id.fetch_add(1, Ordering::Relaxed));
     let (tx, mut rx) = mpsc::channel::<Outbound>(OUTBOUND_QUEUE);
     h.inner.outbound.lock().insert(conn, tx);
-    h.inner.core.lock().on_connect(conn, addr.ip());
+    let (ping_interval, idle_timeout) = {
+        let mut core = h.inner.core.lock();
+        core.on_connect(conn, addr.ip());
+        (core.config().ping_interval, core.config().idle_timeout)
+    };
     tracing::debug!(?conn, %addr, "connection opened");
 
     let (mut sink, mut stream) = socket.split();
     let writer = tokio::spawn(async move {
-        while let Some(item) = rx.recv().await {
-            match item {
-                Outbound::Frame(f) => {
-                    let Ok(text) = f.encode() else { continue };
-                    if sink.send(Message::Text(text.into())).await.is_err() {
+        let mut ping = tokio::time::interval(ping_interval);
+        ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ping.tick().await; // the first tick is immediate
+        loop {
+            tokio::select! {
+                item = rx.recv() => match item {
+                    Some(Outbound::Frame(f)) => {
+                        let Ok(text) = f.encode() else { continue };
+                        if sink.send(Message::Text(text.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Outbound::Close) => {
+                        let _ = sink.send(Message::Close(None)).await;
                         break;
                     }
-                }
-                Outbound::Close => {
-                    let _ = sink.send(Message::Close(None)).await;
-                    break;
+                    None => break,
+                },
+                _ = ping.tick() => {
+                    if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                        break;
+                    }
                 }
             }
         }
@@ -164,8 +185,16 @@ async fn handle_socket(socket: WebSocket, addr: SocketAddr, h: RelayHandle) {
 
     let mut first = true;
     loop {
-        let next = if first { tokio::time::timeout(HELLO_TIMEOUT, stream.next()).await.ok().flatten() } else { stream.next().await };
+        // Any message counts as a sign of life, a pong included.
+        let wait = if first { HELLO_TIMEOUT.min(idle_timeout) } else { idle_timeout };
         first = false;
+        let next = match tokio::time::timeout(wait, stream.next()).await {
+            Ok(next) => next,
+            Err(_) => {
+                tracing::info!(?conn, %addr, silent_for = ?wait, "connection silent; closing it");
+                break;
+            }
+        };
         let Some(Ok(msg)) = next else { break };
         let deliveries = match msg {
             Message::Text(text) => h.inner.core.lock().on_text(conn, &text, Instant::now()),

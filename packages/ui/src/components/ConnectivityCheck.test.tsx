@@ -1,22 +1,14 @@
 import { type ConnectivityReport, zhT } from "@voltip/shared";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ConnectivityCheck, blockedOnSubnet, peerText, probeText } from "./ConnectivityCheck";
+import { ConnectivityCheck, peerText, probeText } from "./ConnectivityCheck";
 
 const REPORT: ConnectivityReport = {
   checked_at: 1_758_700_600_000,
-  lan: { listening: false, addresses: [] },
   relay: { configured: true, result: { result: "failed", reason: "" } },
   peers: [
-    {
-      public_key: "1".repeat(64),
-      name: "Surface-Laptop",
-      via: "relay",
-      addresses: [
-        { address: "192.168.1.24:47831", same_subnet: true, result: { result: "timeout" } },
-        { address: "10.0.0.7:47831", same_subnet: false, result: { result: "refused" } },
-      ],
-    },
+    { public_key: "1".repeat(64), name: "Surface-Laptop", online: true },
+    { public_key: "2".repeat(64), name: "iPad", online: false },
   ],
 };
 
@@ -28,34 +20,26 @@ describe("ConnectivityCheck", () => {
     expect(probeText({ result: "refused" }, t)).toBe("拒绝连接");
     expect(probeText({ result: "failed", reason: "tls" }, t)).toBe("连接失败 · tls");
     expect(probeText({ result: "failed", reason: "" }, t)).toBe("连接失败");
-    const peer = { public_key: "1".repeat(64), name: "Pixel 8", addresses: [] };
-    expect(peerText(peer, t, "zh-CN")).toBe("Pixel 8 · 离线");
-    expect(peerText({ ...peer, via: "direct", rtt_ms: 9 }, t, "zh-CN")).toBe(
-      "Pixel 8 · 直连 · 加密往返 9 ms",
+    const peer = { public_key: "1".repeat(64), name: "Pixel 8", online: false };
+    expect(peerText(peer, t)).toBe("Pixel 8 · 离线");
+    expect(peerText({ ...peer, online: true, rtt_ms: 9 }, t)).toBe(
+      "Pixel 8 · 在线 · 加密往返 9 ms",
     );
-    expect(peerText({ ...peer, via: "relay" }, t, "zh-CN")).toBe(
-      "Pixel 8 · 中继 · 加密通道没有回应",
-    );
-    expect(blockedOnSubnet(REPORT.peers[0]?.addresses ?? [])).toBe(true);
-    expect(
-      blockedOnSubnet([
-        { address: "10.0.0.7:47831", same_subnet: false, result: { result: "refused" } },
-      ]),
-    ).toBe(false);
+    expect(peerText({ ...peer, online: true }, t)).toBe("Pixel 8 · 在线 · 加密通道没有回应");
   });
 
-  it("regression: a failed LAN address on the same subnet points at a firewall or Wi-Fi isolation; the built-in relay's failure names no host", async () => {
+  it("regression: the built-in relay's failure names no host, and each device has its own line", async () => {
     const user = userEvent.setup();
     const onRun = vi.fn();
     render(<ConnectivityCheck status={{ running: false, report: REPORT }} onRun={onRun} />);
     const check = screen.getByTestId("connectivity");
-    expect(within(check).getByTestId("connectivity-lan")).toHaveTextContent("本机未开启局域网服务");
     expect(within(check).getByTestId("connectivity-relay")).toHaveTextContent(/^中继 · 连接失败$/);
-    const peer = within(check).getByTestId("connectivity-peer");
-    expect(peer).toHaveTextContent("Surface-Laptop · 中继 · 加密通道没有回应");
-    expect(peer).toHaveTextContent("192.168.1.24:47831 · 没有响应");
-    expect(peer).toHaveTextContent("10.0.0.7:47831 · 拒绝连接");
-    expect(peer).toHaveTextContent("同一网段却连不上");
+    const peers = within(check).getAllByTestId("connectivity-peer");
+    expect(peers.map((p) => p.textContent)).toEqual([
+      "Surface-Laptop · 在线 · 加密通道没有回应",
+      "iPad · 离线",
+    ]);
+    expect(within(check).queryByText(/局域网/)).toBeNull();
     await user.click(within(check).getByRole("button", { name: "重新自检" }));
     expect(onRun).toHaveBeenCalledTimes(1);
   });

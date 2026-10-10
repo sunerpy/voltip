@@ -9,7 +9,7 @@ make desktop-dev                # apps/desktop：Vite 1420 + Tauri 窗口
 cd apps/mobile && pnpm tauri android dev   # 需要 Android SDK + NDK
 ```
 
-无 Relay 时（设置 › 关闭 Relay，或未配置 `VOLTIP_RELAY_URL` 的 release 构建）：桌面端「配对」会在局域网起一个 `DirectHost`，手机扫码即可；6 位码需要 Relay。
+无 Relay 时（设置 › 关闭 Relay，或未配置 `VOLTIP_RELAY_URL` 的 release 构建）不能配对，已配对的设备也连不上：0.1.0 起只走中继（`docs/pairing.md`「只走中继」）。本地开发用 `make relay` 起一个 127.0.0.1:47830 的中继，debug 构建默认连它。
 
 ### 无显示器主机上的交互测试（`make desktop-vnc`）
 
@@ -33,7 +33,7 @@ make desktop-vnc-stop
 
 | 变量 | 含义 |
 |---|---|
-| `VOLTIP_RELAY_URL` | 中继 `wss://<relay-host>/ws`；release 构建没有它就没有中继（只剩局域网直连），debug 默认 `ws://127.0.0.1:47830/ws` |
+| `VOLTIP_RELAY_URL` | 中继 `wss://<relay-host>/ws`；release 构建没有它就没有中继，手机无法配对和连接（除非用户在设置里填自己的中继），debug 默认 `ws://127.0.0.1:47830/ws` |
 | `VOLTIP_ASR_URL` / `VOLTIP_ASR_TOKEN` / `VOLTIP_ASR_MODEL` | 内置识别服务：`https://<asr-host>`、应用令牌、模型名 |
 | `VOLTIP_REFINE_URL` / `VOLTIP_REFINE_API_KEY` / `VOLTIP_REFINE_MODEL` | 内置润色服务：OpenAI 兼容基址、应用令牌、模型名 |
 | `VOLTIP_UPDATE_PUBKEY` | 更新器公钥；发布工作流据此打开更新器，更新地址由仓库推出（`docs/dictation.md` §9） |
@@ -168,11 +168,11 @@ Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前�
 - 合并到 `main` 后，`publish-site.yml` 用 `FIRLAB_DOCS_TOKEN` 签出 firlab，运行 `voltip/scripts/sync-voltip-docs.sh`，把 `voltip/src` 的变化提交为 `docs(voltip): sync from voltip@<sha>` 并推送；firlab 的 `deploy-voltip.yml` 接着构建并部署到 Cloudflare Pages（项目 `voltip-docs`）。页脚写着内容来自哪个提交。
 - `publish-site` 签出 firlab 失败（401 / 403）：token 过期或权限不对，按 `.github/README-secrets.md` 重建。同步脚本报错时，信息会指出哪一页哪一行（缺另一种语言的页面、未注册的组件、禁用词），在本仓库修正。同步成功但站点没变：看 firlab 的 `deploy-voltip` 运行记录。
 
-## 局域网直连
+## 中继连接与重连
 
-- 每台设备常驻一个 LAN 主机（默认 TCP 47831，被占用退到临时端口）；配对设备优先在这里重逢，Relay 只是回退。首次运行时 Windows / macOS 防火墙会询问是否允许监听，拒绝只会失去直连（回退 Relay），不影响配对。
-- 可信设备的局域网地址持久化在 `trusted-devices.json` 的 `direct_hints`，每次握手成功后由对端在加密通道内刷新；`RUST_LOG=voltip=debug` 可看到 `announcing device info` / `device info from peer`。
-- 关掉 Relay 后同一局域网内仍可用；不同网络之间没有 Relay 就没有连接（没有 NAT 穿透）。
+- 0.1.0 起手机和电脑只经中继连接，App 不再监听局域网端口，首次运行也不再触发防火墙询问（`docs/pairing.md`「只走中继」）。
+- 断线后的恢复见 `docs/pairing.md`「重连」与「中继侧的连接检测」。`RUST_LOG=voltip=debug` 时可看到 `reconnecting`、`checking the relay link now`（网络变化、回到前台、睡眠唤醒、连接自检触发的立即检查）、`the relay refused an attach; asking again`（频道被旧连接占着，稍后重试）。
+- 中继服务器 25 秒收不到某条连接的消息就关闭它，日志 `connection silent; closing it`；它和客户端的心跳一起决定无声断线后多久恢复。
 
 ## 无头冒烟（Linux）
 
@@ -218,7 +218,6 @@ scripts/windows-remote.sh sync            # HEAD 打成 git bundle，scp 过去�
 scripts/windows-remote.sh gate test       # 原生 cargo test --workspace --all-targets（MSVC），日志拷回 target/windows-remote/
 scripts/windows-remote.sh gate clippy     # 原生 cargo clippy --workspace --all-targets -D warnings
 scripts/windows-remote.sh gate real       # 真实模型用例（整段 + 流式 + 热词 + VAD）在该机 CPU 上跑；VOLTIP_LOCAL_* 同本机，文件会拷过去
-scripts/windows-remote.sh gate mdns       # 局域网发现：两个真实 mDNS 守护进程经 Windows 自己的网络栈互相看到
 scripts/windows-remote.sh gate echo       # 混合录音的回声消除（release）：合成房间的指标与每帧耗时（docs/dictation.md §22.6）
 make windows-x64 && scripts/windows-remote.sh smoke   # 便携包的无头运行：列出计算设备、下载模型、识别公开样音（smoke-native-cli.ps1）
 make windows-remote                       # 以上四步依次执行
@@ -236,4 +235,4 @@ make windows-remote                       # 以上四步依次执行
 - 「身份已变化」横幅：对端换了设备身份（重装或攻击）。先在两端「忘记设备」，再重新配对并核对 Safety Code。
 - 配对总是过期：核对两端时钟（票据 `expires_at` 用 Unix 秒）。
 - CI / Release 的 Windows 包报 ``resource path `resources/windows/onnxruntime_providers_shared.dll` doesn't exist``、Linux 包缺 `libsherpa-onnx-c-api.so`：rust-cache 恢复 `target/` 时保留了 sherpa-onnx-sys 的指纹，却删掉了它的构建脚本下载的运行时（`target/sherpa-onnx-prebuilt/`）和拷到二进制旁边的副本，cargo 认为构建脚本不用再跑。每个 rust-cache 步骤后的 `.github/scripts/forget-sherpa-onnx-build.sh` 删掉它的指纹与下载目录，让它重新下载（约 10 MB）。
-- 设备列表显示 `Relay` 而不是 `直连`：两台设备不在同一网段，或 LAN 主机端口被防火墙拦住；`直连` 需要至少一方能连到另一方的 `direct_hints`。
+- 已配对设备一直显示离线：先在两端看中继状态（「手机」页 / 设置），未连上时检查网络或中继地址；都已连上却不在线时点「连接自检」，它会让中继连接立即检查一次；日志里反复出现 `the relay refused an attach` 说明中继还留着旧连接，最多约半分钟后会放开。

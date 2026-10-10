@@ -127,9 +127,9 @@ pub enum JoinMethod {
 pub enum Event {
     /// Begin (initiator: create a session; responder: join).
     Start,
-    /// A control frame from the relay (or synthesized by a direct transport).
+    /// A control frame from the relay.
     Relay(RelayFrame),
-    /// Bytes from the peer (payload of a `forward`, or a direct-transport message).
+    /// Bytes from the peer (the payload of a `forward`).
     Peer(Vec<u8>),
     /// Periodic clock tick — drives every timeout.
     Tick,
@@ -220,7 +220,7 @@ impl std::fmt::Debug for Established {
 pub enum Action {
     /// Send a control frame to the relay.
     SendRelay(RelayFrame),
-    /// Send bytes to the peer (wrap in `forward` on a relay, or write to a direct socket).
+    /// Send bytes to the peer (wrapped in a `forward` to the relay).
     SendPeer(Vec<u8>),
     /// State changed; re-render.
     Emit(Box<Snapshot>),

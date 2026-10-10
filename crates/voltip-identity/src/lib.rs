@@ -29,7 +29,7 @@ pub use secret_store::AndroidKeystoreSecretStore;
 #[cfg(feature = "keyring")]
 pub use secret_store::{KeyringSecretStore, signed_with_a_certificate};
 pub use secret_store::{MemorySecretStore, SECRET_KEY_ENTRY, SIGNED_ACCOUNT_SUFFIX, SecretStore};
-pub use trusted::{ConnectionKind, IdentityCheck, MAX_SYNC_PEERS, SyncChange, TrustedDevice, TrustedDeviceStore, TrustedDevicesFile};
+pub use trusted::{IdentityCheck, MAX_SYNC_PEERS, SyncChange, TrustedDevice, TrustedDeviceStore, TrustedDevicesFile};
 
 /// Errors from the identity layer.
 #[derive(Debug, thiserror::Error)]

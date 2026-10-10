@@ -1,23 +1,12 @@
 import { platformLabel, shortKey } from "@voltip/shared";
-import {
-  Button,
-  Card,
-  Input,
-  Lamp,
-  Readout,
-  StatusRow,
-  Toggle,
-  useBackend,
-  useI18n,
-  useUiState,
-} from "@voltip/ui";
+import { Button, Card, Input, Lamp, Readout, useBackend, useI18n, useUiState } from "@voltip/ui";
 import { useState } from "react";
-import { Lede, PAGE, TOUCH, TOUCH_TOGGLE } from "../app/phone-ui";
+import { Lede, PAGE, TOUCH } from "../app/phone-ui";
 import { useMobileShell } from "../app/shell";
 
 export function ThisDevice() {
   const { backend } = useBackend();
-  const { identity, secret_backend, settings } = useUiState();
+  const { identity, secret_backend } = useUiState();
   const shell = useMobileShell();
   const { t, locale } = useI18n();
   const [name, setName] = useState(identity?.name ?? "");
@@ -111,18 +100,6 @@ export function ThisDevice() {
         )}
       </Card>
       <Lede>{t("mobile.device.note")}</Lede>
-      <Card padding="none" className="px-4" data-testid="lan-discovery">
-        <StatusRow label={t("mobile.device.lan")} help={t("mobile.device.lanHelp")}>
-          <Toggle
-            checked={settings.lan_discovery}
-            ariaLabel={t("mobile.device.lan")}
-            className={TOUCH_TOGGLE}
-            onChange={(enabled) => {
-              void backend.invoke("settings_set_lan_discovery", { enabled });
-            }}
-          />
-        </StatusRow>
-      </Card>
       <div className="mt-auto flex flex-col gap-2">
         <Button
           variant="primary"

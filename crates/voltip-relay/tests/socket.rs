@@ -15,7 +15,11 @@ use voltip_relay::server::RelayHandle;
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 async fn start() -> (RelayHandle, String, tokio::sync::oneshot::Sender<()>) {
-    let handle = RelayHandle::new(RelayConfig::default());
+    start_with(RelayConfig::default()).await
+}
+
+async fn start_with(config: RelayConfig) -> (RelayHandle, String, tokio::sync::oneshot::Sender<()>) {
+    let handle = RelayHandle::new(config);
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
     let (addr, _task) = handle
         .clone()
@@ -147,5 +151,71 @@ async fn healthz_reports_json() {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["connections"], 1);
     assert!(base.starts_with("http://127.0.0.1:"));
+    let _ = stop.send(());
+}
+
+/// The server pings: a client that only answers pings (it sends nothing of its own) stays
+/// connected well past the idle limit.
+#[tokio::test]
+async fn a_client_that_only_answers_pings_stays_connected() {
+    let config = RelayConfig { ping_interval: Duration::from_millis(100), idle_timeout: Duration::from_millis(800), ..RelayConfig::default() };
+    let (handle, url, stop) = start_with(config).await;
+    let mut a = connect(&url).await;
+    hello(&mut a).await;
+    let mut pings = 0;
+    let quiet = tokio::time::Instant::now() + Duration::from_millis(2_500);
+    while let Ok(msg) = tokio::time::timeout_at(quiet, a.next()).await {
+        match msg {
+            // tungstenite answers each ping itself.
+            Some(Ok(Message::Ping(_))) => pings += 1,
+            other => panic!("the relay closed a connection that answers its pings: {other:?}"),
+        }
+    }
+    assert!(pings >= 5, "{pings} pings in 2.5 s");
+    assert_eq!(handle.stats().connections, 1);
+    let _ = stop.send(());
+}
+
+/// Regression (2026-10-10, 「配对后断开」): a device that went away without closing its socket (it
+/// changed networks, its app was frozen) kept its place on the rendezvous channel for as long as
+/// the proxies in front kept the dead connection, an hour behind the ALB; the connection it opened
+/// next was refused with `channel_full` and the two devices stayed apart. The relay now closes a
+/// connection it hears nothing from, pongs included, and tells the other party.
+#[tokio::test]
+async fn regression_a_connection_gone_silent_gives_up_its_place_on_the_channel() {
+    let config = RelayConfig { ping_interval: Duration::from_millis(200), idle_timeout: Duration::from_millis(1_500), ..RelayConfig::default() };
+    let (_handle, url, stop) = start_with(config).await;
+    let ch = "ab".repeat(32);
+    let mut desk = connect(&url).await;
+    hello(&mut desk).await;
+    send(&mut desk, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: ch.clone() }).await;
+    assert!(matches!(recv(&mut desk).await, RelayFrame::Attached { peer_online: false, .. }));
+    let mut gone = connect(&url).await;
+    hello(&mut gone).await;
+    send(&mut gone, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: ch.clone() }).await;
+    assert!(matches!(recv(&mut gone).await, RelayFrame::Attached { peer_online: true, .. }));
+    assert!(matches!(recv(&mut desk).await, RelayFrame::PeerPresence { online: true, .. }));
+    // `gone` is never read again, so it answers no ping: the socket is open and silent.
+    let mut back = connect(&url).await;
+    hello(&mut back).await;
+    send(&mut back, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: ch.clone() }).await;
+    assert!(
+        matches!(recv(&mut back).await, RelayFrame::Error { code: RelayErrorCode::ChannelFull, channel: Some(c), .. } if c == ch),
+        "the old connection still holds its place"
+    );
+    // `desk` answers the pings (it is read) and hears the silent one leave.
+    let left = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let RelayFrame::PeerPresence { online: false, .. } = recv(&mut desk).await {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(left.is_ok(), "the silent connection was closed and its peer told");
+    send(&mut back, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: ch.clone() }).await;
+    assert!(matches!(recv(&mut back).await, RelayFrame::Attached { peer_online: true, channel: Some(c), .. } if c == ch));
+    assert!(matches!(recv(&mut desk).await, RelayFrame::PeerPresence { online: true, .. }));
+    drop(gone);
     let _ = stop.send(());
 }

@@ -65,9 +65,8 @@ describe("Mobile app flow", () => {
     expect(screen.getByText("1 台已配对 · 1 在线")).toBeInTheDocument();
     const card = screen.getByTestId("device-card");
     expect(within(card).getByText("Windows")).toBeInTheDocument();
-    expect(within(card).getAllByText("在线 · 直连")).toHaveLength(2);
-    expect(within(card).getByText("直连")).toBeInTheDocument();
-    for (const col of ["设备", "平台", "在线状态", "最近在线", "信任于", "连接方式"]) {
+    expect(within(card).getAllByText("在线")).toHaveLength(2);
+    for (const col of ["设备", "平台", "在线状态", "最近在线", "信任于"]) {
       expect(within(card).getByText(col)).toBeInTheDocument();
     }
     expect(backend.peek().pairing.state).toEqual({ state: "idle" });
@@ -163,12 +162,12 @@ describe("Mobile app flow", () => {
     const now = Math.floor(Date.now() / 1000);
     const desktop = sampleDevices(now)[1];
     if (!desktop) throw new Error("fixture");
-    const online = { ...desktop, connection: { state: "online" as const, via: "relay" as const } };
+    const online = { ...desktop, connection: { state: "online" as const } };
     const backend = new MockBackend({ role: "phone", devices: [online] });
     renderApp({ backend });
     expect(await screen.findByRole("heading", { name: "已配对设备" })).toBeInTheDocument();
     expect(screen.getAllByText("MacBook Pro").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("在线 · 经中继")).toHaveLength(2);
+    expect(screen.getAllByText("在线")).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "发测试消息" }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(200);
@@ -402,7 +401,7 @@ describe("locale", () => {
     expect(screen.getByRole("heading", { name: "已配对设备", level: 1 })).toBeInTheDocument();
     sweep("devices");
     expect(screen.getByText("中继 · 未配置")).toBeInTheDocument();
-    for (const col of ["设备", "平台", "在线状态", "最近在线", "信任于", "连接方式"]) {
+    for (const col of ["设备", "平台", "在线状态", "最近在线", "信任于"]) {
       expect(screen.getAllByText(col).length).toBeGreaterThan(0);
     }
     expect(screen.queryByText(/Last Seen|Connection Type|^relay /)).toBeNull();

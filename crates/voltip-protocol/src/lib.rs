@@ -109,7 +109,7 @@ impl std::fmt::Display for PairCode {
     }
 }
 
-/// Identifier of a pairing session, minted by the relay (or by the initiator in direct mode).
+/// Identifier of a pairing session, minted by the relay.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct SessionId(pub uuid::Uuid);
@@ -219,26 +219,6 @@ impl DeviceInfo {
     }
 }
 
-/// Most LAN endpoints a device advertises (ticket `direct_hints`, `device_info_update`).
-pub const MAX_DIRECT_HINTS: usize = 4;
-/// Longest accepted `ip:port` hint (an IPv6 literal with brackets and port fits comfortably).
-pub const MAX_DIRECT_HINT_CHARS: usize = 64;
-
-/// Validate a list of LAN hints: bounded count, bounded length, each a parseable `ip:port`
-/// (`std::net::SocketAddr` syntax). Hostnames are refused on purpose — a peer must not be able
-/// to make us resolve arbitrary names.
-pub fn validate_direct_hints(hints: &[String]) -> Result<(), CodecError> {
-    if hints.len() > MAX_DIRECT_HINTS {
-        return Err(CodecError::InvalidField { field: "direct_hints", reason: format!("{} hints exceeds {MAX_DIRECT_HINTS}", hints.len()) });
-    }
-    for h in hints {
-        if h.chars().count() > MAX_DIRECT_HINT_CHARS || h.parse::<std::net::SocketAddr>().is_err() {
-            return Err(CodecError::InvalidField { field: "direct_hints", reason: format!("{h:?} is not an ip:port") });
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,16 +289,5 @@ mod tests {
         let err: CodecError = serde_json::from_str::<u8>("nope").unwrap_err().into();
         assert!(matches!(err, CodecError::Malformed(_)));
         assert!(err.to_string().starts_with("malformed frame"));
-    }
-
-    #[test]
-    fn direct_hints_are_bounded_and_must_be_socket_addrs() {
-        assert!(validate_direct_hints(&[]).is_ok());
-        assert!(validate_direct_hints(&["192.168.1.24:47831".into(), "[fe80::1]:47831".into()]).is_ok());
-        let too_many: Vec<String> = (0..=MAX_DIRECT_HINTS).map(|i| format!("10.0.0.{i}:1")).collect();
-        assert!(matches!(validate_direct_hints(&too_many).unwrap_err(), CodecError::InvalidField { field: "direct_hints", .. }));
-        for bad in ["relay.example.org:47831", "192.168.1.24", "", "http://10.0.0.1:1"] {
-            assert!(matches!(validate_direct_hints(&[bad.to_string()]).unwrap_err(), CodecError::InvalidField { field: "direct_hints", .. }), "{bad}");
-        }
     }
 }

@@ -162,6 +162,10 @@ pub enum RelayFrame {
         session_id: SessionId,
         /// Whether the other party is currently attached.
         peer_online: bool,
+        /// The `attach.channel` this answers (relays from 0.1.0 on; older ones leave it out and
+        /// answer every `attach` in order).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        channel: Option<String>,
     },
     /// The other party of a channel attached (`true`) or detached (`false`).
     PeerPresence {
@@ -188,6 +192,9 @@ pub enum RelayFrame {
         /// Present for `rate_limited`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         retry_after_secs: Option<u32>,
+        /// The `attach.channel` when this refuses an `attach` (relays from 0.1.0 on).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        channel: Option<String>,
     },
     /// Graceful close.
     Bye {
@@ -239,12 +246,20 @@ impl RelayFrame {
 
     /// Convenience constructor for an error frame.
     pub fn error(code: RelayErrorCode) -> Self {
-        Self::Error { version: ProtocolVersion::CURRENT, code, retry_after_secs: None }
+        Self::Error { version: ProtocolVersion::CURRENT, code, retry_after_secs: None, channel: None }
     }
 
     /// Convenience constructor for a rate-limit error.
     pub fn rate_limited(retry_after_secs: u32) -> Self {
-        Self::Error { version: ProtocolVersion::CURRENT, code: RelayErrorCode::RateLimited, retry_after_secs: Some(retry_after_secs) }
+        Self::Error { version: ProtocolVersion::CURRENT, code: RelayErrorCode::RateLimited, retry_after_secs: Some(retry_after_secs), channel: None }
+    }
+
+    /// This frame refusing the `attach` to `channel` ([`RelayFrame::Error`] only).
+    pub fn for_channel(self, channel: &str) -> Self {
+        match self {
+            Self::Error { version, code, retry_after_secs, .. } => Self::Error { version, code, retry_after_secs, channel: Some(channel.to_owned()) },
+            other => other,
+        }
     }
 
     /// Convenience constructor for a forward frame.
@@ -284,7 +299,8 @@ mod tests {
         let v = ProtocolVersion::CURRENT;
         roundtrip(RelayFrame::Hello { version: v, client_version: "2.0.0".into() });
         roundtrip(RelayFrame::Attach { version: v, channel: "ab".repeat(32) });
-        roundtrip(RelayFrame::Attached { version: v, session_id: sid, peer_online: false });
+        roundtrip(RelayFrame::Attached { version: v, session_id: sid, peer_online: false, channel: None });
+        roundtrip(RelayFrame::Attached { version: v, session_id: sid, peer_online: true, channel: Some("ab".repeat(32)) });
         roundtrip(RelayFrame::PeerPresence { version: v, session_id: sid, online: true });
         roundtrip(RelayFrame::HelloAck {
             version: v,
@@ -303,7 +319,27 @@ mod tests {
         roundtrip(RelayFrame::PeerLeft { version: v, session_id: sid });
         roundtrip(RelayFrame::error(RelayErrorCode::InvalidCode));
         roundtrip(RelayFrame::rate_limited(30));
+        roundtrip(RelayFrame::error(RelayErrorCode::ChannelFull).for_channel(&"ab".repeat(32)));
+        roundtrip(RelayFrame::rate_limited(3).for_channel(&"cd".repeat(32)));
         roundtrip(RelayFrame::Bye { version: v });
+    }
+
+    /// The `channel` an attach answer names (relays from 0.1.0 on) is optional both ways: an
+    /// older relay's answers decode, and an older client reads a newer relay's (it ignores the
+    /// field it does not know).
+    #[test]
+    fn attach_answers_name_their_channel_only_when_they_can() {
+        let ch = "ab".repeat(32);
+        let older = r#"{"type":"attached","version":1,"session_id":"00000000-0000-0000-0000-000000000000","peer_online":true}"#;
+        assert!(matches!(RelayFrame::decode(older).unwrap(), RelayFrame::Attached { channel: None, peer_online: true, .. }));
+        let older = r#"{"type":"error","version":1,"code":"channel_full"}"#;
+        assert!(matches!(RelayFrame::decode(older).unwrap(), RelayFrame::Error { code: RelayErrorCode::ChannelFull, channel: None, .. }));
+        let text = RelayFrame::error(RelayErrorCode::ChannelFull).for_channel(&ch).encode().unwrap();
+        assert_eq!(text, format!(r#"{{"type":"error","version":1,"code":"channel_full","channel":"{ch}"}}"#));
+        assert!(!RelayFrame::error(RelayErrorCode::NotJoined).encode().unwrap().contains("channel"));
+        // Only an error names a channel this way.
+        let bye = RelayFrame::Bye { version: ProtocolVersion::CURRENT };
+        assert_eq!(bye.clone().for_channel(&ch), bye);
     }
 
     #[test]

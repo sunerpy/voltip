@@ -21,7 +21,7 @@ use crate::host::Host;
 use crate::shell::{Shell, phone_config, phone_ports};
 
 /// What only the platform can do for the shell: hand the app the core's events and the level
-/// meter's frames, and reach the clipboard, the share sheet, Wi-Fi multicast and the browser.
+/// meter's frames, and reach the clipboard, the share sheet and the browser.
 /// `VoltipHost.kt` implements it; Rust calls it from its own threads, never the main thread, and a
 /// call may wait for the main thread.
 #[uniffi::export(foreign)]
@@ -38,8 +38,6 @@ pub trait PlatformHost: Send + Sync {
     fn share_text(&self, text: String) -> Result<(), HostError>;
     /// The system share sheet with `text` as the file `name` of type `mime`.
     fn share_file(&self, name: String, text: String, mime: String) -> Result<(), HostError>;
-    /// Hold (`true`) or release the Wi-Fi multicast lock LAN discovery needs.
-    fn multicast(&self, held: bool) -> Result<(), HostError>;
     /// Open `url` in the browser (or the app that handles it).
     fn open_url(&self, url: String) -> Result<(), HostError>;
     /// The package that installed the app, as the system recorded it (`PackageManager`); `None`
@@ -122,12 +120,6 @@ impl Host for ForeignHost {
         self.current().share_file(name.to_owned(), text.to_owned(), mime.to_owned()).map_err(|e| e.to_string())
     }
 
-    fn multicast(&self, held: bool) {
-        if let Err(e) = self.current().multicast(held) {
-            tracing::warn!(error = %e, held, "multicast: the lock call failed; LAN discovery may hear nothing");
-        }
-    }
-
     fn open_url(&self, url: &str) -> Result<(), String> {
         self.current().open_url(url.to_owned()).map_err(|e| e.to_string())
     }
@@ -194,6 +186,13 @@ impl VoltipShell {
             Ok(answer) => answer.map(|value| value.to_string()).map_err(ShellError::Command),
             Err(_) => Err(ShellError::Command(format!("{command}: the shell stopped before it answered"))),
         }
+    }
+
+    /// The network changed or the app came to the front (docs/pairing.md 「重连」): the relay link
+    /// checks its socket now. `VoltipNativeModule.kt` calls it from Android's network callback and
+    /// from the activity coming to the front; it never waits.
+    pub fn reconnect_relay(&self) {
+        self.shell.reconnect_relay();
     }
 }
 
@@ -307,9 +306,6 @@ mod tests {
             Ok(())
         }
         fn share_file(&self, _name: String, _text: String, _mime: String) -> Result<(), HostError> {
-            Ok(())
-        }
-        fn multicast(&self, _held: bool) -> Result<(), HostError> {
             Ok(())
         }
         fn open_url(&self, _url: String) -> Result<(), HostError> {

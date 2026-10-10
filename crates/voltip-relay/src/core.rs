@@ -34,10 +34,12 @@ pub struct RelayConfig {
     pub max_forward_bytes: usize,
     /// Build string returned in `hello_ack`.
     pub relay_version: String,
-    /// Single-session mode: at most one pairing session at a time (the embedded LAN host).
-    pub single_session: bool,
-    /// Whether `attach` (rendezvous channels between paired devices) is served at all.
-    pub channels_enabled: bool,
+    /// The server pings every connection this often (docs/pairing.md 「中继侧的连接检测」).
+    pub ping_interval: Duration,
+    /// A connection the relay hears nothing from for this long (no frame, no pong) is closed: a
+    /// device that left without closing (another network, a frozen app) must not keep its place
+    /// on a rendezvous channel, or its next connection finds the channel full.
+    pub idle_timeout: Duration,
 }
 
 impl Default for RelayConfig {
@@ -52,24 +54,13 @@ impl Default for RelayConfig {
             attach_rate: RateWindow::new(30, Duration::from_secs(60)),
             max_forward_bytes: 70 * 1024,
             relay_version: format!("voltip-relay/{}", env!("CARGO_PKG_VERSION")),
-            single_session: false,
-            channels_enabled: true,
+            ping_interval: Duration::from_secs(10),
+            idle_timeout: Duration::from_secs(25),
         }
     }
 }
 
 impl RelayConfig {
-    /// Configuration for an embedded pairing-only LAN relay: one session, no channels.
-    pub fn single_session() -> Self {
-        Self { single_session: true, channels_enabled: false, ..Self::default() }
-    }
-
-    /// Configuration for a device's persistent LAN host: one pairing session at a time, plus
-    /// rendezvous channels so paired devices can meet again without any public relay.
-    pub fn lan_host() -> Self {
-        Self { single_session: true, channels_enabled: true, ..Self::default() }
-    }
-
     fn limits(&self) -> RelayLimits {
         RelayLimits {
             code_attempts_per_connection: self.code_attempts_per_connection,
@@ -285,10 +276,6 @@ impl RelayCore {
             out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::SessionAlreadyActive)));
             return;
         }
-        if self.config.single_session && !self.sessions.is_empty() {
-            out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::SessionAlreadyActive)));
-            return;
-        }
         let ip = c.ip;
         if let Err(retry) = self.create_limiter.check(ip, now) {
             out.push(Delivery::Send(conn, RelayFrame::rate_limited(secs(retry))));
@@ -445,11 +432,9 @@ impl RelayCore {
         ch.members.iter().copied().find(|m| *m != conn)
     }
 
+    /// Every answer names the channel (`attached.channel`, `error.channel`), so a client with
+    /// several attaches under way knows which one each answers; an invalid label is not echoed.
     fn attach(&mut self, conn: ConnId, channel: String, now: Instant, out: &mut Vec<Delivery>) {
-        if !self.config.channels_enabled {
-            out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::InvalidChannel)));
-            return;
-        }
         if validate_channel(&channel).is_err() {
             out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::InvalidChannel)));
             return;
@@ -458,30 +443,30 @@ impl RelayCore {
         if let Some(existing) = self.channels.get(&channel)
             && existing.members.contains(&conn)
         {
-            out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::SessionAlreadyActive)));
+            out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::SessionAlreadyActive).for_channel(&channel)));
             return;
         }
         let ip = c.ip;
         if let Err(retry) = self.attach_limiter.check(ip, now) {
-            out.push(Delivery::Send(conn, RelayFrame::rate_limited(secs(retry))));
+            out.push(Delivery::Send(conn, RelayFrame::rate_limited(secs(retry)).for_channel(&channel)));
+            return;
+        }
+        if self.channels.get(&channel).is_some_and(|ch| ch.members.len() >= 2) {
+            out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::ChannelFull).for_channel(&channel)));
             return;
         }
         let entry = self.channels.entry(channel.clone()).or_insert_with(|| Channel { session_id: SessionId::random(), members: Vec::new() });
-        if entry.members.len() >= 2 {
-            out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::ChannelFull)));
-            return;
-        }
         let session_id = entry.session_id;
         let peer_online = !entry.members.is_empty();
         for m in &entry.members {
             out.push(Delivery::Send(*m, RelayFrame::PeerPresence { version: ProtocolVersion::CURRENT, session_id, online: true }));
         }
         entry.members.push(conn);
-        self.channel_by_session.insert(session_id, channel);
+        self.channel_by_session.insert(session_id, channel.clone());
         if let Some(c) = self.conns.get_mut(&conn) {
             c.channel_sessions.push(session_id);
         }
-        out.push(Delivery::Send(conn, RelayFrame::Attached { version: ProtocolVersion::CURRENT, session_id, peer_online }));
+        out.push(Delivery::Send(conn, RelayFrame::Attached { version: ProtocolVersion::CURRENT, session_id, peer_online, channel: Some(channel) }));
     }
 
     fn remove_session(&mut self, sid: SessionId) {
@@ -779,7 +764,10 @@ mod tests {
         // B attaches: A gets presence, B learns peer is online with the same session id.
         let out = r.on_frame(B, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: ch.clone() }, t0);
         assert_eq!(out[0], Delivery::Send(A, RelayFrame::PeerPresence { version: ProtocolVersion::CURRENT, session_id, online: true }));
-        assert_eq!(out[1], Delivery::Send(B, RelayFrame::Attached { version: ProtocolVersion::CURRENT, session_id, peer_online: true }));
+        assert_eq!(
+            out[1],
+            Delivery::Send(B, RelayFrame::Attached { version: ProtocolVersion::CURRENT, session_id, peer_online: true, channel: Some(ch.clone()) })
+        );
         assert_eq!(r.stats().channels, 2);
         // Third party is refused.
         r.on_connect(C, IP_B);
@@ -810,41 +798,27 @@ mod tests {
         assert_ne!(fresh, session_id);
     }
 
+    /// Every answer to an `attach` names its channel (an invalid label excepted), so a client
+    /// with several attaches under way knows which one a refusal is for.
     #[test]
-    fn single_session_mode_refuses_second_session_and_channels() {
-        let mut r = RelayCore::new(RelayConfig::single_session());
-        assert!(r.config().single_session);
-        let t0 = Instant::now();
-        for (c, ip) in [(A, IP_A), (B, IP_B), (C, IP_B)] {
-            r.on_connect(c, ip);
-            r.on_frame(c, hello(), t0);
-        }
-        created(&r.on_frame(A, RelayFrame::CreateSession { version: ProtocolVersion::CURRENT, ttl_secs: None }, t0));
-        let out = r.on_frame(B, RelayFrame::CreateSession { version: ProtocolVersion::CURRENT, ttl_secs: None }, t0);
-        assert_eq!(err_code(&out[0]), Some(RelayErrorCode::SessionAlreadyActive));
-        let out = r.on_frame(C, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: "ab".repeat(32) }, t0);
-        assert_eq!(err_code(&out[0]), Some(RelayErrorCode::InvalidChannel));
-    }
-
-    #[test]
-    fn lan_host_mode_keeps_one_pairing_session_but_serves_channels() {
-        let mut r = RelayCore::new(RelayConfig::lan_host());
-        assert!(r.config().single_session && r.config().channels_enabled);
-        let t0 = Instant::now();
-        for (c, ip) in [(A, IP_A), (B, IP_B), (C, IP_B)] {
-            r.on_connect(c, ip);
-            r.on_frame(c, hello(), t0);
-        }
-        created(&r.on_frame(A, RelayFrame::CreateSession { version: ProtocolVersion::CURRENT, ttl_secs: None }, t0));
-        let out = r.on_frame(B, RelayFrame::CreateSession { version: ProtocolVersion::CURRENT, ttl_secs: None }, t0);
-        assert_eq!(err_code(&out[0]), Some(RelayErrorCode::SessionAlreadyActive));
-        // The host's own loopback connection and a LAN peer meet on a rendezvous channel.
-        let ch = "ab".repeat(32);
+    fn attach_answers_name_their_channel() {
+        let (mut r, t0) = relay();
+        let ch = "0f".repeat(32);
         let out = r.on_frame(A, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: ch.clone() }, t0);
-        assert!(matches!(out[0], Delivery::Send(A, RelayFrame::Attached { peer_online: false, .. })), "{out:?}");
-        let out = r.on_frame(C, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: ch }, t0);
-        assert!(out.iter().any(|d| matches!(d, Delivery::Send(C, RelayFrame::Attached { peer_online: true, .. }))), "{out:?}");
-        assert!(out.iter().any(|d| matches!(d, Delivery::Send(A, RelayFrame::PeerPresence { online: true, .. }))), "{out:?}");
+        assert!(matches!(&out[0], Delivery::Send(A, RelayFrame::Attached { channel: Some(c), .. }) if *c == ch), "{out:?}");
+        let out = r.on_frame(A, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: ch.clone() }, t0);
+        assert!(
+            matches!(&out[0], Delivery::Send(A, RelayFrame::Error { code: RelayErrorCode::SessionAlreadyActive, channel: Some(c), .. }) if *c == ch),
+            "{out:?}"
+        );
+        r.on_frame(B, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: ch.clone() }, t0);
+        r.on_connect(C, IP_B);
+        r.on_frame(C, hello(), t0);
+        let out = r.on_frame(C, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: ch.clone() }, t0);
+        assert!(matches!(&out[0], Delivery::Send(C, RelayFrame::Error { code: RelayErrorCode::ChannelFull, channel: Some(c), .. }) if *c == ch), "{out:?}");
+        let out = r.on_frame(C, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: "xyz".into() }, t0);
+        assert_eq!(out, vec![Delivery::Send(C, RelayFrame::error(RelayErrorCode::InvalidChannel))]);
+        // A refused attach leaves the channel as it was.
         assert_eq!(r.stats().channels, 1);
     }
 

@@ -35,7 +35,6 @@ struct Node {
 fn config(dir: &std::path::Path) -> CoreConfig {
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = "Edit Test".into();
-    cfg.direct_enabled = false;
     cfg
 }
 

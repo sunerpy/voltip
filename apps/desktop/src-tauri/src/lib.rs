@@ -52,7 +52,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 113] = [
+pub const COMMANDS: [&str; 112] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -71,9 +71,8 @@ pub const COMMANDS: [&str; 113] = [
     "phone_text_send",
     "sent_texts_clear",
     "phone_clipboard_read",
-    "settings_set_lan_discovery",
     "settings_set_pairing_always_on",
-    "pairing_join_nearby",
+    "relay_reconnect",
     "settings_set_relay",
     "settings_set_theme",
     "settings_set_hotkey",
@@ -303,12 +302,6 @@ fn phone_text_send(_public_key: String, _body: String, _source: voltip_core::pho
     Err(PHONE_TEXT_UNAVAILABLE.into())
 }
 
-/// LAN discovery (docs/pairing.md 「局域网发现」): announce this device and browse for the others.
-#[tauri::command]
-fn settings_set_lan_discovery(bridge: tauri::State<'_, Bridge>, enabled: bool) -> Result<(), String> {
-    Ok(bridge.dispatch(UiCommand::SettingsSetLanDiscovery { enabled })?)
-}
-
 /// Always-on pairing (docs/pairing.md 「常开配对」): keep a session waiting for a phone until
 /// turned off. The phone's core refuses it.
 #[tauri::command]
@@ -316,10 +309,11 @@ fn settings_set_pairing_always_on(bridge: tauri::State<'_, Bridge>, enabled: boo
     Ok(bridge.dispatch(UiCommand::SettingsSetPairingAlwaysOn { enabled })?)
 }
 
-/// Join the pairing the nearby device `fingerprint` waits for (a tap under 「附近的电脑」).
+/// The network came back or the window came to the front (docs/pairing.md 「重连」): the relay
+/// link checks its socket now.
 #[tauri::command]
-fn pairing_join_nearby(bridge: tauri::State<'_, Bridge>, fingerprint: String) -> Result<(), String> {
-    Ok(bridge.dispatch(UiCommand::PairingJoinNearby { fingerprint })?)
+fn relay_reconnect(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::RelayReconnect)?)
 }
 
 #[tauri::command]
@@ -1271,9 +1265,8 @@ pub fn build_app<R: Runtime>(
             phone_text_send,
             sent_texts_clear,
             phone_clipboard_read,
-            settings_set_lan_discovery,
             settings_set_pairing_always_on,
-            pairing_join_nearby,
+            relay_reconnect,
             settings_set_relay,
             settings_set_theme,
             settings_set_hotkey,
@@ -1423,15 +1416,6 @@ pub fn run() {
     // The phones get this computer's history and settings and upload their own records
     // (docs/dictation.md §20.8).
     config.sync_role = voltip_core::sync::SyncRole::Computer;
-    // LAN discovery (docs/pairing.md 「局域网发现」): phones find this desktop, and each other's
-    // address after it changed, without a relay.
-    config.discovery = match voltip_core::discovery::MdnsDiscovery::new() {
-        Ok(mdns) => Some(mdns),
-        Err(e) => {
-            tracing::warn!(error = %e, "LAN discovery unavailable");
-            None
-        }
-    };
     // docs/dictation.md §23.6: the local speech service listens through the HTTP layer when it is
     // switched on in the settings.
     config.serve_host = Some(std::sync::Arc::new(voltip_serve::HttpHost));

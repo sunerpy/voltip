@@ -39,7 +39,6 @@ fn start_with(dir: &std::path::Path, probe: Arc<FakeProbe>, refiner: Arc<FakeRef
     }
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = "Scenes Test".into();
-    cfg.direct_enabled = false;
     cfg.builtin_scenes = builtin_scenes;
     let ports = DictationPorts {
         audio: Arc::new(FakeAudio::speech()),

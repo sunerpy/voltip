@@ -1,14 +1,11 @@
 // The paired computers, the connection self-check and the built-in polish service's notice, as
 // apps/mobile's 说话 screen shows them once a computer is paired.
 import {
-  type AddressCheck,
   type ConnectivityStatus,
   type DeviceView,
-  type Locale,
   type PeerCheck,
   type ProbeResult,
   type TFunction,
-  connectionKindLabel,
   connectionLabel,
   formatDate,
   formatDateTime,
@@ -28,7 +25,7 @@ import { Button } from "../ui/Button";
 import { Mono, Notice, Section, StateLine, type Tone, useAppTheme } from "../ui/kit";
 
 /** Detail cells of a device card; the labels come from `mobile.devices.column.*`. */
-const COLUMNS = ["device", "platform", "online", "lastSeen", "trusted", "connection"] as const;
+const COLUMNS = ["device", "platform", "online", "lastSeen", "trusted"] as const;
 
 function lampTone(tone: string): Tone {
   return tone === "ok" || tone === "accent" || tone === "danger" || tone === "warning"
@@ -52,10 +49,6 @@ export function DeviceCard({ view }: { view: DeviceView }) {
     online: online.text,
     lastSeen: relativeTime(view.device.last_seen, now, locale),
     trusted: formatDate(view.device.trusted_at),
-    connection: connectionKindLabel(
-      view.connection.state === "online" ? view.connection.via : view.device.last_connection,
-      locale,
-    ),
   };
   return (
     <Section padded testID="device-card">
@@ -147,18 +140,12 @@ export function probeText(result: ProbeResult, t: TFunction): string {
   }
 }
 
-/** The line for one paired device: how its channel runs and the encrypted round trip. */
-export function peerText(peer: PeerCheck, t: TFunction, locale: Locale): string {
-  if (peer.via === undefined) return t("connectivity.peerOffline", { name: peer.name });
-  const via = connectionKindLabel(peer.via, locale);
+/** The line for one paired device: online or not, and the encrypted round trip. */
+export function peerText(peer: PeerCheck, t: TFunction): string {
+  if (!peer.online) return t("connectivity.peerOffline", { name: peer.name });
   return peer.rtt_ms === undefined
-    ? t("connectivity.peerNoAnswer", { name: peer.name, via })
-    : t("connectivity.peerOnline", { name: peer.name, via, ms: peer.rtt_ms });
-}
-
-/** A failed address on this device's own subnet: the port is blocked, not the route. */
-export function blockedOnSubnet(addresses: readonly AddressCheck[]): boolean {
-  return addresses.some((a) => a.same_subnet && a.result.result !== "ok");
+    ? t("connectivity.peerNoAnswer", { name: peer.name })
+    : t("connectivity.peerOnline", { name: peer.name, ms: peer.rtt_ms });
 }
 
 /** The connectivity self-check (docs/pairing.md): what this phone could reach when asked. */
@@ -188,11 +175,6 @@ export function ConnectivityCheck({ status }: { status: ConnectivityStatus }) {
       </Button>
       {report !== undefined && (
         <View style={{ gap: 8 }} accessibilityLabel={t("connectivity.results")}>
-          <StateLine tone={report.lan.listening ? "ok" : "idle"} small>
-            {report.lan.listening
-              ? t("connectivity.lanListening", { addresses: report.lan.addresses.join(" / ") })
-              : t("connectivity.lanOff")}
-          </StateLine>
           {report.relay.result === undefined ? (
             <StateLine tone="idle" small>
               {t("connectivity.relayNone")}
@@ -205,39 +187,10 @@ export function ConnectivityCheck({ status }: { status: ConnectivityStatus }) {
           {report.peers.map((peer) => (
             <View key={peer.public_key} style={{ gap: 4 }}>
               <StateLine
-                tone={
-                  peer.via === undefined ? "idle" : peer.rtt_ms === undefined ? "warning" : "ok"
-                }
+                tone={!peer.online ? "idle" : peer.rtt_ms === undefined ? "warning" : "ok"}
                 small>
-                {peerText(peer, t, locale)}
+                {peerText(peer, t)}
               </StateLine>
-              {peer.addresses.length === 0 ? (
-                <Text variant="bodySmall" style={{ paddingLeft: 14, color: theme.voltip.subtle }}>
-                  {t("connectivity.noAddress")}
-                </Text>
-              ) : (
-                peer.addresses.map((a) => (
-                  <Mono
-                    key={a.address}
-                    style={{
-                      paddingLeft: 14,
-                      color:
-                        a.result.result === "ok"
-                          ? theme.colors.onSurfaceVariant
-                          : theme.colors.error,
-                    }}>
-                    {t("connectivity.address", {
-                      address: a.address,
-                      result: probeText(a.result, t),
-                    })}
-                  </Mono>
-                ))
-              )}
-              {blockedOnSubnet(peer.addresses) && (
-                <Text variant="bodySmall" style={{ paddingLeft: 14, color: theme.voltip.subtle }}>
-                  {t("connectivity.blocked")}
-                </Text>
-              )}
             </View>
           ))}
           <Text variant="bodySmall" style={{ color: theme.voltip.subtle }}>

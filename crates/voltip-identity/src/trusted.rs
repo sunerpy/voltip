@@ -18,17 +18,9 @@ pub const TRUSTED_FILE_NAME: &str = "trusted-devices.json";
 /// per-connection queue.
 pub const MAX_SYNC_PEERS: usize = 5;
 
-/// How the peer was last reached.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectionKind {
-    /// Same LAN, no relay.
-    Direct,
-    /// Through a relay.
-    Relay,
-}
-
-/// A paired peer.
+/// A paired peer. Files from builds before 0.1.0 may also hold `last_connection` (`direct` or
+/// `relay`) and `direct_hints` (the peer's LAN addresses): every connection goes through the relay
+/// now (docs/pairing.md 「只走中继」), so both are ignored on load and gone after the next write.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct TrustedDevice {
     /// Peer's stable id (self-reported at pairing, informational).
@@ -46,13 +38,6 @@ pub struct TrustedDevice {
     /// Unix seconds of the last completed connection, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seen: Option<u64>,
-    /// Transport used at `last_seen`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_connection: Option<ConnectionKind>,
-    /// Last known `ip:port` endpoints of the peer's LAN host — tried first on every reconnect,
-    /// before falling back to the relay. Refreshed by the peer over the encrypted channel.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub direct_hints: Vec<String>,
     /// On a computer: this phone gets the computer's history and settings and may upload its own
     /// records (docs/dictation.md §20.8). On by default; a record from before reads as on.
     #[serde(default = "sync_on")]
@@ -197,8 +182,6 @@ impl TrustedDeviceStore {
             fingerprint: key.fingerprint(),
             trusted_at: now_unix,
             last_seen: None,
-            last_connection: None,
-            direct_hints: Vec::new(),
             sync: true,
             sync_gen: 0,
         };
@@ -209,14 +192,7 @@ impl TrustedDeviceStore {
             if let Some(existing) = state.devices.iter_mut().find(|d| d.public_key == key) {
                 // A re-pair: the generation only ever goes up, so the phone (which starts over
                 // from 0 when a pairing completes) accepts what the computer sends from now on.
-                *existing = TrustedDevice {
-                    last_seen: existing.last_seen,
-                    last_connection: existing.last_connection,
-                    direct_hints: std::mem::take(&mut existing.direct_hints),
-                    sync,
-                    sync_gen: existing.sync_gen.wrapping_add(1),
-                    ..record
-                };
+                *existing = TrustedDevice { last_seen: existing.last_seen, sync, sync_gen: existing.sync_gen.wrapping_add(1), ..record };
                 existing.clone()
             } else {
                 let record = TrustedDevice { sync, ..record };
@@ -252,13 +228,12 @@ impl TrustedDeviceStore {
     }
 
     /// Update presence metadata after a successful connection.
-    pub fn mark_seen(&self, key: &PublicKey, now_unix: u64, via: ConnectionKind) -> Result<bool, IdentityError> {
+    pub fn mark_seen(&self, key: &PublicKey, now_unix: u64) -> Result<bool, IdentityError> {
         let updated = {
             let mut state = self.state.lock();
             match state.devices.iter_mut().find(|d| &d.public_key == key) {
                 Some(d) => {
                     d.last_seen = Some(now_unix);
-                    d.last_connection = Some(via);
                     true
                 }
                 None => false,
@@ -288,26 +263,6 @@ impl TrustedDeviceStore {
             self.flush()?;
         }
         Ok(updated)
-    }
-
-    /// Replace the peer's LAN endpoints. Returns `Ok(true)` when the stored list changed.
-    /// Hints are validated (bounded count, `ip:port` only) so a peer cannot plant garbage.
-    pub fn update_hints(&self, key: &PublicKey, hints: &[String]) -> Result<bool, IdentityError> {
-        voltip_protocol::validate_direct_hints(hints)?;
-        let changed = {
-            let mut state = self.state.lock();
-            match state.devices.iter_mut().find(|d| &d.public_key == key) {
-                Some(d) if d.direct_hints != hints => {
-                    d.direct_hints = hints.to_vec();
-                    true
-                }
-                _ => false,
-            }
-        };
-        if changed {
-            self.flush()?;
-        }
-        Ok(changed)
     }
 
     /// Remove a peer. Returns whether anything was removed.
@@ -374,37 +329,34 @@ mod tests {
         assert_eq!(store.list().len(), 1);
         assert_eq!(store.get_by_key(&key).unwrap().name, "Pixel 10");
         assert!(matches!(store.check(&key, phone.device_id), IdentityCheck::Trusted(_)));
-        assert!(store.mark_seen(&key, 2_000, ConnectionKind::Relay).unwrap());
-        let seen = store.get_by_key(&key).unwrap();
-        assert_eq!(seen.last_seen, Some(2_000));
-        assert_eq!(seen.last_connection, Some(ConnectionKind::Relay));
-        assert!(!store.mark_seen(&PublicKey([9u8; 32]), 3_000, ConnectionKind::Direct).unwrap());
+        assert!(store.mark_seen(&key, 2_000).unwrap());
+        assert_eq!(store.get_by_key(&key).unwrap().last_seen, Some(2_000));
+        assert!(!store.mark_seen(&PublicKey([9u8; 32]), 3_000).unwrap());
         assert!(store.forget(&key).unwrap());
         assert!(!store.forget(&key).unwrap());
         assert!(store.list().is_empty());
         assert!(format!("{store:?}").contains("count"));
     }
 
+    /// A record written before 0.1.0 names how the peer was last reached (`direct` included) and
+    /// its LAN addresses: the file still loads, and the next write leaves both out.
     #[test]
-    fn direct_hints_persist_survive_retrust_and_are_validated() {
+    fn regression_a_file_with_the_old_lan_fields_still_loads() {
         let dir = tempfile::tempdir().unwrap();
+        let k = PublicKey([1u8; 32]);
+        let device = serde_json::json!({
+            "device_id": DeviceId::random(), "name": "Pixel 10", "platform": "android", "public_key": k,
+            "fingerprint": k.fingerprint(), "trusted_at": 1_000, "last_seen": 2_000, "last_connection": "direct",
+            "direct_hints": ["192.168.1.24:47831"], "sync": true, "sync_gen": 0
+        });
+        std::fs::write(dir.path().join(TRUSTED_FILE_NAME), serde_json::to_vec(&serde_json::json!({ "schema": 1, "devices": [device] })).unwrap()).unwrap();
         let store = TrustedDeviceStore::open(dir.path()).unwrap();
-        let phone = info("Pixel 10");
-        let key = PublicKey([1u8; 32]);
-        store.trust(&phone, key, 1_000).unwrap();
-        assert!(store.get_by_key(&key).unwrap().direct_hints.is_empty());
-        let hints = vec!["192.168.1.24:47831".to_string()];
-        assert!(store.update_hints(&key, &hints).unwrap());
-        assert!(!store.update_hints(&key, &hints).unwrap(), "same hints are not a change");
-        assert!(!store.update_hints(&PublicKey([9u8; 32]), &hints).unwrap(), "unknown key is a no-op");
-        assert!(store.update_hints(&key, &["relay.example.org:1".to_string()]).is_err(), "hostnames are refused");
-        // Re-trusting the same key (re-pair) keeps the hints we already learned.
-        store.trust(&phone, key, 2_000).unwrap();
-        assert_eq!(store.get_by_key(&key).unwrap().direct_hints, hints);
-        let reopened = TrustedDeviceStore::open(dir.path()).unwrap();
-        assert_eq!(reopened.get_by_key(&key).unwrap().direct_hints, hints);
-        assert!(store.update_hints(&key, &[]).unwrap());
-        assert!(!std::fs::read_to_string(dir.path().join(TRUSTED_FILE_NAME)).unwrap().contains("direct_hints"), "empty list is not serialized");
+        let loaded = store.get_by_key(&k).unwrap();
+        assert_eq!((loaded.name.as_str(), loaded.last_seen), ("Pixel 10", Some(2_000)));
+        assert!(store.mark_seen(&k, 3_000).unwrap());
+        let written = std::fs::read_to_string(dir.path().join(TRUSTED_FILE_NAME)).unwrap();
+        assert!(!written.contains("last_connection") && !written.contains("direct_hints"), "{written}");
+        assert_eq!(TrustedDeviceStore::open(dir.path()).unwrap().get_by_key(&k).unwrap().last_seen, Some(3_000));
     }
 
     #[test]
@@ -432,7 +384,7 @@ mod tests {
         let key = PublicKey([1u8; 32]);
         let phone = info("Pixel 10");
         store.trust(&phone, key, 1).unwrap();
-        store.mark_seen(&key, 5, ConnectionKind::Direct).unwrap();
+        store.mark_seen(&key, 5).unwrap();
         let renamed = DeviceInfo { name: "Pixel 10 Pro".into(), ..phone.clone() };
         store.trust(&renamed, key, 9).unwrap();
         let rec = store.get_by_key(&key).unwrap();
@@ -553,8 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn connection_kind_serializes_snake_case() {
-        assert_eq!(serde_json::to_string(&ConnectionKind::Direct).unwrap(), r#""direct""#);
+    fn a_new_file_has_the_current_schema() {
         let file = TrustedDevicesFile::default();
         assert_eq!(file.schema, TRUSTED_FILE_SCHEMA);
     }

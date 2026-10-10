@@ -17,7 +17,9 @@ pub struct ReconnectPolicy {
 
 impl Default for ReconnectPolicy {
     fn default() -> Self {
-        Self { base: Duration::from_millis(500), max: Duration::from_secs(30), jitter: 0.2, max_attempts: None }
+        // A short ceiling: once the network is back the link is back within seconds (the relay is
+        // the only way the devices reach each other, docs/pairing.md 「重连」).
+        Self { base: Duration::from_millis(500), max: Duration::from_secs(10), jitter: 0.2, max_attempts: None }
     }
 }
 
@@ -59,8 +61,9 @@ mod tests {
         assert_eq!(p.delay_for(1), Some(Duration::from_millis(500)));
         assert_eq!(p.delay_for(2), Some(Duration::from_secs(1)));
         assert_eq!(p.delay_for(3), Some(Duration::from_secs(2)));
-        assert_eq!(p.delay_for(7), Some(Duration::from_secs(30)), "capped at max");
-        assert_eq!(p.delay_for(200), Some(Duration::from_secs(30)), "no overflow for huge attempts");
+        assert_eq!(p.delay_for(5), Some(Duration::from_secs(8)));
+        assert_eq!(p.delay_for(6), Some(Duration::from_secs(10)), "capped at max");
+        assert_eq!(p.delay_for(200), Some(Duration::from_secs(10)), "no overflow for huge attempts");
     }
 
     #[test]

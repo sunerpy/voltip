@@ -12,8 +12,7 @@ workspace = true
 
 [features]
 default = ["server"]
-# The axum/tokio WebSocket server. Off for consumers that only want `RelayCore`
-# (the direct LAN transport embeds it).
+# The axum/tokio WebSocket server. Off for consumers that only want `RelayCore`.
 server = ["dep:axum", "dep:tokio", "dep:futures-util", "dep:tower"]
 
 [[bin]]

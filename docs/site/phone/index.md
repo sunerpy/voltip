@@ -44,12 +44,12 @@ When a paired computer is online, the button reads **Send to** and the computer'
 Pairing connects one phone and one computer, once:
 
 1. On the computer, open the **Phone** page and start pairing. It shows a QR code and a 6-digit code, valid for 120 seconds.
-2. On the phone, scan the QR code, enter the 6-digit code, or tap the computer under **Computers nearby** when both are on the same network.
+2. On the phone, scan the QR code or enter the 6-digit code.
 3. Both screens show the same safety code. Check that they match, then confirm on both devices. If they do not match, reject the pairing.
 
 **Always-on pairing** on the computer keeps a pairing open for the next phone, renewing the QR code before it expires, until you turn it off. Every pairing still needs the safety code confirmed on the computer.
 
-**LAN discovery**, on by default, lets phones on the same network find the computer by name and lets paired devices find each other again after an address change. Turned off, pairing works by QR code or 6-digit code only.
+The phone and the computer meet through a relay, the built-in one unless the computer is set to another, so pairing and the connection work on any network. Turning the relay off on the computer disconnects its phones. After a network drop, or a switch between Wi-Fi and mobile data, the two reconnect on their own, usually within seconds.
 
 ## Talking on the phone
 
@@ -78,9 +78,9 @@ A paired computer syncs its history and settings to the phone, where you can rea
 ## How the connection is protected
 
 - Pairing creates an encrypted connection and asks you to compare the safety code, so that nobody in between can pretend to be one of the devices.
-- Afterwards, the devices connect directly on the same network. On different networks, an optional relay forwards their traffic. Everything is encrypted end to end, so the relay cannot read audio or text.
+- Afterwards, the devices connect through the relay, which forwards their traffic. Everything is encrypted end to end, so the relay cannot read audio or text.
 - Audio is compressed with Opus before it is sent.
 - **Forget device** removes a pairing on both sides when the other device is online. The two can be paired again straight away.
-- **Connection check** tests the network path to each paired device and reports where it fails.
+- **Connection check** tests the connection to the relay and the encrypted round trip to each paired device.
 
 The phone's own dictionary, rules and scenes apply only to what the phone recognises itself; the computer's settings synced to the phone are for reading and are never used to recognise on the phone.

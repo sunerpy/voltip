@@ -59,8 +59,8 @@ describe("Devices page", () => {
   });
 
   it("regression: last seen and state are as wide as their text, and a cut device name reads whole on hover", async () => {
-    // The 1440 px English check (plan 1.2): 「14 minutes ago」 and 「Online · direct」 were cut in
-    // 76 and 92 px columns; 「在线 · 经中继」 did not fit either.
+    // The 1440 px English check (plan 1.2): 「14 minutes ago」 and 「Online · direct」 (the state's
+    // text then) were cut in 76 and 92 px columns.
     mount();
     const table = await screen.findByRole("table", { name: "已配对设备" });
     const header = (name: string) =>
@@ -82,10 +82,10 @@ describe("Devices page", () => {
       .getAllByRole("columnheader")
       .map((h) => h.textContent);
     // 同步 (docs/dictation.md §20.8, M7 design 2026-10-02): the switch per phone.
-    expect(headers).toEqual(["设备", "局域网地址", "最近在线", "状态", "同步", ""]);
+    expect(headers).toEqual(["设备", "最近在线", "状态", "同步", ""]);
     // The table exists before `core_state` resolves (empty placeholder); wait for the first row.
     expect(await within(table).findByText("Pixel 8 · Android")).toBeInTheDocument();
-    expect(within(table).getByText("在线 · 直连")).toBeInTheDocument();
+    expect(within(table).getByText("在线")).toBeInTheDocument();
     expect(within(table).getByText("离线")).toBeInTheDocument();
     expect(within(table).getByText("3 分钟前")).toBeInTheDocument();
     expect(screen.getByText("2 台已配对 · 1 在线")).toBeInTheDocument();
@@ -181,7 +181,6 @@ describe("Devices page", () => {
     const meter = within(panel).getByRole("meter", { name: "来自手机的声音强度" });
     expect(meter).toHaveAttribute("aria-valuenow", "0");
     expect(within(panel).getByText("Opus · 16 kHz 单声道")).toBeInTheDocument();
-    expect(within(panel).getByText("直连")).toBeInTheDocument();
     act(() => {
       backend.simulatePhoneTake("Pixel 8");
     });
@@ -218,14 +217,14 @@ describe("Devices page", () => {
     mount();
     const footer = await screen.findByTestId("pairing-connect");
     expect(footer).toHaveTextContent(
-      "使用二维码或 6 位验证码配对；之后在同一局域网内直接连接，跨网络时经中继连接，中继只转发加密数据。",
+      "使用二维码或 6 位验证码配对；之后两台设备经中继连接，中继只转发加密数据。网络中断或切换后会自动重新连接。",
     );
     expect(within(footer).getByText(/^中继 · /)).toBeInTheDocument();
     expect(screen.queryByTestId("self-check")).toBeNull();
     expect(document.body.textContent).not.toMatch(/mDNS|防火墙规则|AP 客户端隔离/);
   });
 
-  it("regression: the connection check probes and reports this computer's LAN host, the relay, and each phone's channel and LAN addresses", async () => {
+  it("regression: the connection check reports the relay and each phone's channel, and nothing of a LAN", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     const { backend } = mount();
     const check = await screen.findByTestId("connectivity");
@@ -235,16 +234,14 @@ describe("Devices page", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(MOCK_CONNECTIVITY_MS);
     });
-    expect(within(check).getByTestId("connectivity-lan")).toHaveTextContent(
-      "本机局域网服务 · 192.168.1.30:47831",
-    );
+    expect(within(check).queryByTestId("connectivity-lan")).toBeNull();
     expect(within(check).getByTestId("connectivity-relay")).toHaveTextContent("未配置中继");
     const peers = within(check).getAllByTestId("connectivity-peer");
-    expect(peers).toHaveLength(2);
-    expect(peers[0]).toHaveTextContent("Pixel 8 · 直连 · 加密往返 6 ms");
-    expect(peers[0]).toHaveTextContent("192.168.1.37:47831 · 可连接 · 5 ms");
-    expect(peers[1]).toHaveTextContent("MacBook Pro · 离线");
-    expect(peers[1]).toHaveTextContent("没有记录它的局域网地址");
+    expect(peers.map((p) => p.textContent)).toEqual([
+      "Pixel 8 · 在线 · 加密往返 61 ms",
+      "MacBook Pro · 离线",
+    ]);
+    expect(check.textContent).not.toMatch(/局域网|47831/);
     expect(within(check).getByRole("button", { name: "重新自检" })).toBeEnabled();
     expect(backend.peek().connectivity.report?.peers).toHaveLength(2);
   });
@@ -289,7 +286,7 @@ describe("Devices page", () => {
     expect(screen.getByTestId("pairing-panel")).toHaveAttribute("data-phase", "trusted");
     expect(screen.getAllByText("已信任 · Pixel 8").length).toBeGreaterThan(0);
     const table = screen.getByRole("table", { name: "已配对设备" });
-    expect(within(table).getByText("在线 · 直连")).toBeInTheDocument();
+    expect(within(table).getByText("在线")).toBeInTheDocument();
     expect(screen.getByText("1 台已配对 · 1 在线")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "完成" }));
     expect(screen.getByTestId("pairing-panel")).toHaveAttribute("data-phase", "idle");
@@ -461,31 +458,25 @@ describe("Devices page", () => {
     expect(screen.getAllByText("中继 · 未配置").length).toBeGreaterThan(0);
   });
 
-  it("regression: the LAN discovery switch drives settings, and while it is on a waiting pairing says phones nearby can pick this computer", async () => {
+  it("regression: only the relay connects phones (docs/pairing.md 「只走中继」): no LAN switch or note, and switching the relay off says phones cannot connect", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     const { backend } = mount();
     await screen.findByRole("table", { name: "已配对设备" });
-    expect(screen.getByRole("switch", { name: /局域网发现/ })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(
-      screen.getByText(/开启局域网发现后，这台电脑会在同一局域网内公布自己的名称/),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /局域网发现/ })).toBeNull();
     await user.click(screen.getByRole("button", { name: "开始配对" }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
-    expect(screen.getByTestId("pairing-lan-note")).toHaveTextContent("「附近的电脑」");
-    await user.click(screen.getByRole("switch", { name: /局域网发现/ }));
-    await waitFor(() => {
-      expect(backend.peek().settings.lan_discovery).toBe(false);
-    });
-    expect(screen.getByRole("switch", { name: /局域网发现/ })).toHaveAttribute(
-      "aria-checked",
-      "false",
-    );
     expect(screen.queryByTestId("pairing-lan-note")).toBeNull();
+    expect(screen.queryByTestId("devices-relay-off-note")).toBeNull();
+    await user.click(screen.getByRole("switch", { name: /允许经中继连接/ }));
+    await waitFor(() => {
+      expect(backend.peek().settings.relay_enabled).toBe(false);
+    });
+    expect(screen.getByTestId("devices-relay-off-note")).toHaveTextContent(
+      "关闭中继后，手机无法与这台电脑配对或连接。",
+    );
+    expect(document.body.textContent).not.toMatch(/局域网|附近的电脑/);
   });
 
   it("regression: always-on pairing keeps the window open: the switch drives settings, the code renews before it lapses, the switch replaces 取消, and turning it off closes the window", async () => {
@@ -535,7 +526,7 @@ describe("Devices page", () => {
       expect(panel).toHaveAttribute("data-phase", "idle");
     });
     expect(backend.peek().settings.pairing_always_on).toBe(false);
-    expect(within(panel).queryByText("常开配对已打开，连上中继或局域网后自动开始。")).toBeNull();
+    expect(within(panel).queryByText("常开配对已打开，连上中继后自动开始。")).toBeNull();
   });
 
   it("sends a test message to an online device and forgets through the confirm dialog", async () => {

@@ -30,8 +30,6 @@ export interface PairingPanelProps {
   /** The relay link, for the connection footer. */
   relay: RelayStatus;
   ttlSecs: number;
-  /** `Settings.lan_discovery`: phones on the LAN see the waiting session under 「附近的电脑」. */
-  lanDiscovery?: boolean;
   /** `Settings.pairing_always_on` (docs/pairing.md 「常开配对」): the core keeps a session waiting. */
   alwaysOn?: boolean;
   /** The always-on switch; no switch without it. */
@@ -54,7 +52,6 @@ export function PairingPanel({
   identity,
   relay: relayStatus,
   ttlSecs,
-  lanDiscovery = false,
   alwaysOn = false,
   onAlwaysOn,
   onStart,
@@ -157,11 +154,6 @@ export function PairingPanel({
                 )}
               </div>
               <div className="mt-0.5 text-[11px] text-fg-muted">{t("pairing.scanNote")}</div>
-              {lanDiscovery && phase === "waiting_for_peer" && (
-                <div className="mt-0.5 text-[11px] text-fg-muted" data-testid="pairing-lan-note">
-                  {t("pairing.lanNote")}
-                </div>
-              )}
             </div>
             <div>
               <div className="text-[11px] text-fg-subtle">{t("pairing.validity")}</div>

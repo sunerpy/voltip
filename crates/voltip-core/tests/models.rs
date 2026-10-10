@@ -26,7 +26,6 @@ fn config(dir: &std::path::Path, engines: EngineSettings) -> CoreConfig {
     SettingsStore::new(dir).save(&Settings { relay_enabled: false, engines, ..Settings::default() }).unwrap();
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = "Models Test".into();
-    cfg.direct_enabled = false;
     cfg
 }
 

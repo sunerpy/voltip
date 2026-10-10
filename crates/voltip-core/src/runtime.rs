@@ -1,14 +1,12 @@
 //! The core task: owns all state, consumes commands and link events, emits UI events.
 //!
-//! Connectivity model (direct first, relay as fallback): every device runs a small LAN host for as long as
-//! the core runs. Paired devices meet on rendezvous channels — on a peer's LAN host when one is
-//! reachable (direct), on the public relay otherwise (fallback) — and traffic always takes the
-//! best secure path that exists. LAN endpoints are learned from the pairing ticket and refreshed
-//! over the encrypted channel, then persisted with the trusted record so a restart without any
-//! relay still finds the other device.
+//! Connectivity model (docs/pairing.md 「只走中继」): every device keeps one link to the relay.
+//! Pairing runs on it, and paired devices meet again on a rendezvous channel there, with a Noise
+//! session of their own on top. The link notices a dead socket and reconnects by itself, and is
+//! told to check at once when a dead socket is likely ([`CoreCommand::ReconnectRelay`], a wake-up
+//! from sleep); an `attach` the relay refuses is asked again ([`CoreConfig::attach_retry`]).
 
 use std::collections::{HashMap, VecDeque};
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,13 +15,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 use voltip_crypto::{PublicKey, Role};
-use voltip_identity::{ConnectionKind, DeviceIdentity, DeviceIdentityPublic, IdentityCheck, IdentityManager, SecretStore, TrustedDevice, TrustedDeviceStore};
+use voltip_identity::{DeviceIdentity, DeviceIdentityPublic, IdentityCheck, IdentityManager, SecretStore, TrustedDevice, TrustedDeviceStore};
 use voltip_pairing::{Action, Event, Initiator, JoinMethod, NonceLedger, Now, PairingState, Reachability, Responder, Snapshot, Timeouts};
 use voltip_protocol::app::AppMessage;
 use voltip_protocol::relay::{RelayErrorCode, RelayFrame};
 use voltip_protocol::ticket::PairingTicket;
 use voltip_protocol::{PairCode, ProtocolVersion, SessionId};
-use voltip_transport::{ConnectionState, DirectHost, LinkConfig, LinkEvent, ReconnectPolicy, RelayEndpoint, RelayLink, StateChange};
+use voltip_transport::{ConnectionState, LinkConfig, LinkEvent, ReconnectPolicy, RelayEndpoint, RelayLink, StateChange};
 
 use crate::dictation::activation::{Activation, ActivationConfig, ActivationMachine, Edge, EdgeSource, Intent, PhaseHint};
 use crate::dictation::engine::{Effect, Internal};
@@ -44,7 +42,6 @@ use crate::{CoreError, is_initiator, rendezvous_channel};
 
 mod always_on;
 mod check;
-mod nearby;
 mod notice;
 mod processing;
 mod serve;
@@ -53,10 +50,6 @@ mod sync;
 mod take_codec;
 mod takes;
 mod texts;
-
-/// Default TCP port of the LAN host. A fixed port keeps stored LAN hints valid across restarts;
-/// when it is taken the host falls back to an ephemeral port and peers learn the new one.
-pub const DEFAULT_LAN_PORT: u16 = 47831;
 
 /// Directory under the app data dir that holds the local model library.
 pub const MODELS_DIR_NAME: &str = "models";
@@ -94,18 +87,20 @@ pub struct CoreConfig {
     pub pairing_timeouts: Timeouts,
     /// Relay reconnect policy.
     pub reconnect: ReconnectPolicy,
-    /// Tick cadence (drives pairing timeouts and LAN retries).
+    /// The relay link's heartbeat (`LinkConfig::ping_interval`): a dead socket is noticed within
+    /// this plus `relay_pong_timeout`.
+    pub relay_ping_interval: Duration,
+    /// `LinkConfig::pong_timeout`.
+    pub relay_pong_timeout: Duration,
+    /// `LinkConfig::probe_timeout`: how long the ping of [`CoreCommand::ReconnectRelay`] may go
+    /// unanswered before the link reconnects.
+    pub relay_probe_timeout: Duration,
+    /// An `attach` the relay refused is asked again after this long (docs/pairing.md 「重连」): a
+    /// connection of this device that died without closing can still hold its place on the channel
+    /// (`channel_full`) until the relay notices it is gone.
+    pub attach_retry: Duration,
+    /// Tick cadence (drives pairing timeouts and retries).
     pub tick: Duration,
-    /// Master switch for the LAN host and for dialling peers' LAN hosts.
-    pub direct_enabled: bool,
-    /// Preferred bind address of the LAN host (port 0 = ephemeral).
-    pub direct_bind: SocketAddr,
-    /// Initial backoff between attempts to reach one peer's LAN host.
-    pub direct_retry: Duration,
-    /// Backoff ceiling for LAN attempts.
-    pub direct_retry_max: Duration,
-    /// TCP + WebSocket deadline for one LAN attempt.
-    pub direct_connect_timeout: Duration,
     /// A trusted-peer re-handshake that has not finished within this long is abandoned
     /// (the peer shows as offline again instead of "connecting" forever).
     pub peer_handshake_timeout: Duration,
@@ -126,9 +121,6 @@ pub struct CoreConfig {
     /// so the scene list follows a phone's rules — built-in scenes without applications, and a scene
     /// of the user's need not name one — whatever host the tests run on.
     pub manual_scenes: bool,
-    /// LAN discovery (docs/pairing.md 「局域网发现」): the shells pass [`crate::discovery::MdnsDiscovery`],
-    /// the tests an in-memory LAN; `None` announces and browses nothing.
-    pub discovery: Option<Arc<dyn crate::discovery::Discovery>>,
     /// Starts the local speech service's listener (docs/dictation.md §23.6); `None` on shells that
     /// cannot host it (the phone), whose service commands are then refused.
     pub serve_host: Option<Arc<dyn crate::serve::ServeHost>>,
@@ -205,18 +197,16 @@ impl CoreConfig {
             app_version: env!("CARGO_PKG_VERSION").to_owned(),
             pairing_timeouts: Timeouts::default(),
             reconnect: ReconnectPolicy::default(),
+            relay_ping_interval: Duration::from_secs(15),
+            relay_pong_timeout: Duration::from_secs(10),
+            relay_probe_timeout: Duration::from_secs(5),
+            attach_retry: Duration::from_secs(4),
             tick: Duration::from_secs(1),
-            direct_enabled: true,
-            direct_bind: SocketAddr::from(([0, 0, 0, 0], DEFAULT_LAN_PORT)),
-            direct_retry: Duration::from_secs(5),
-            direct_retry_max: Duration::from_secs(60),
-            direct_connect_timeout: Duration::from_secs(3),
             peer_handshake_timeout: Duration::from_secs(15),
             accepts_phone_takes: true,
             shows_live_preview: true,
             builtin_scenes: true,
             manual_scenes: false,
-            discovery: None,
             serve_host: None,
             sync_role: crate::sync::SyncRole::Off,
             sync_request_timeout: Duration::from_secs(30),
@@ -242,9 +232,9 @@ fn default_device_name() -> String {
 /// Commands from the UI.
 #[derive(Debug, Clone)]
 pub enum CoreCommand {
-    /// Desktop: create a pairing session (relay if configured, else LAN host).
+    /// Desktop: create a pairing session on the relay.
     StartPairing,
-    /// Phone: join by six digits (relay only).
+    /// Phone: join by six digits.
     JoinWithCode(String),
     /// Phone: join by scanned `voltip://pair?...` URI.
     JoinWithTicket(String),
@@ -258,9 +248,6 @@ pub enum CoreCommand {
     ResetPairing,
     /// Remove a trusted device.
     ForgetDevice(PublicKey),
-    /// Tests only: close every outgoing LAN connection (they are dialled again after the backoff).
-    #[doc(hidden)]
-    DropDirectLinks,
     /// Computer: sync with this phone or not (docs/dictation.md §20.8).
     SetDeviceSync {
         /// The phone.
@@ -340,13 +327,12 @@ pub enum CoreCommand {
         /// The window the shell found, or why there is none.
         target: crate::paste::PasteTarget,
     },
-    /// Announce this device on the LAN and browse for the others (persisted,
-    /// `Settings.lan_discovery`).
-    SetLanDiscovery(bool),
     /// Keep a pairing open until turned off (persisted, `Settings.pairing_always_on`; desktop only).
     SetPairingAlwaysOn(bool),
-    /// Join the pairing the nearby device `fingerprint` (its LAN tag) waits for.
-    PairingJoinNearby(String),
+    /// The network changed or the app came back to the front (docs/pairing.md 「重连」): the relay
+    /// link checks its socket at once and reconnects at once when it is gone, instead of waiting
+    /// for its heartbeat or its backoff.
+    ReconnectRelay,
     /// Send text to an online trusted device.
     SendText {
         /// Recipient.
@@ -356,8 +342,7 @@ pub enum CoreCommand {
     },
     /// Re-emit the device list.
     RefreshDevices,
-    /// Probe the relay and every paired device's LAN addresses, ping the online ones, and report
-    /// ([`crate::connectivity`]).
+    /// Probe the relay, ping the online devices, and report ([`crate::connectivity`]).
     CheckConnectivity,
     /// Open the microphone (hotkey pressed / "开始听写").
     DictationStart,
@@ -553,7 +538,6 @@ struct Inbox {
     act_rx: mpsc::Receiver<ActivationTimer>,
     phone_rx: mpsc::Receiver<takes::PhoneEvent>,
     check_rx: mpsc::Receiver<check::Probed>,
-    disc_rx: mpsc::Receiver<crate::discovery::DiscoveryEvent>,
     process_rx: mpsc::Receiver<processing::Processed>,
 }
 
@@ -660,8 +644,6 @@ pub enum CoreEvent {
         /// What became of the text.
         outcome: crate::paste::PasteOutcome,
     },
-    /// What the LAN browse sees (docs/pairing.md 「局域网发现」), whole; after every change.
-    Nearby(Vec<crate::discovery::NearbyDevice>),
     /// The connectivity self-check started or finished ([`crate::connectivity`]).
     Connectivity(crate::connectivity::ConnectivityStatus),
     /// The local speech service started, stopped or failed to start (docs/dictation.md §23.6).
@@ -782,7 +764,6 @@ impl AppCore {
         let (act_tx, act_rx) = mpsc::channel(16);
         let (phone_tx, phone_rx) = mpsc::channel(64);
         let (check_tx, check_rx) = mpsc::channel(4);
-        let (disc_tx, disc_rx) = mpsc::channel(64);
         let (process_tx, process_rx) = mpsc::channel(8);
         let activation = ActivationState::new(ActivationConfig::from(&settings));
         let serve_host = config.serve_host.clone();
@@ -814,18 +795,14 @@ impl AppCore {
             link_tx,
             relay: None,
             relay_status: RelayStatus { endpoint: None, source: RelaySource::None, state: ConnectionState::Disconnected, attempts: 0 },
-            host: None,
-            dials: HashMap::new(),
-            next_dial: 1,
             pairing: Pairing::None,
             pairing_link: None,
             pairing_session: None,
-            pairing_peer_hints: Vec::new(),
-            pending_start: None,
             ledger: NonceLedger::default(),
             peers: HashMap::new(),
             session_to_peer: HashMap::new(),
             pending_attach: HashMap::new(),
+            attach_retry: HashMap::new(),
             parked: HashMap::new(),
             remote_take: None,
             phone_take: None,
@@ -838,8 +815,7 @@ impl AppCore {
             next_check: 0,
             last_check: None,
             check_tx,
-            disc_tx,
-            lan: nearby::Lan::default(),
+            last_tick_wall: SystemTime::now(),
             always_on_at: None,
             processing: HashMap::new(),
             process_tx,
@@ -850,7 +826,7 @@ impl AppCore {
             notice: notice::NoticeRuntime::default(),
         };
         rt.connect_relay()?;
-        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, disc_rx, process_rx };
+        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx };
         Ok((rt, inbox, CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
 }
@@ -903,27 +879,6 @@ enum Pairing {
     None,
     Initiator(Box<Initiator>),
     Responder(Box<Responder>),
-}
-
-/// A pairing that waits for its LAN link to come up before the state machine starts.
-enum PendingStart {
-    /// `StartPairing` issued while the loopback link to our own LAN host was still connecting.
-    Initiator,
-    /// A ticket join whose outgoing LAN connection is still connecting.
-    Responder(JoinMethod),
-}
-
-/// This device's LAN host and the loopback link through which the core itself is attached to it.
-struct Host {
-    host: DirectHost,
-    link: RelayLink,
-}
-
-/// An outgoing LAN connection.
-struct Dial {
-    link: RelayLink,
-    /// The trusted peer whose host this is; `None` while it only carries a pairing joined by ticket.
-    peer: Option<PublicKey>,
 }
 
 /// A running model download.
@@ -1056,21 +1011,17 @@ struct Runtime {
     link_tx: mpsc::Sender<(LinkId, LinkEvent)>,
     relay: Option<(RelayLink, RelayEndpoint)>,
     relay_status: RelayStatus,
-    host: Option<Host>,
-    dials: HashMap<u64, Dial>,
-    next_dial: u64,
     pairing: Pairing,
     /// Link the current pairing runs on.
     pairing_link: Option<LinkId>,
     /// Last relay session id seen for the current pairing (survives terminal states).
     pairing_session: Option<SessionId>,
-    /// LAN endpoints from the ticket we joined with; stored on the trusted record once trusted.
-    pairing_peer_hints: Vec<String>,
-    pending_start: Option<PendingStart>,
     ledger: NonceLedger,
     peers: HashMap<PublicKey, PeerState>,
     session_to_peer: HashMap<(LinkId, SessionId), PublicKey>,
     pending_attach: HashMap<LinkId, VecDeque<PublicKey>>,
+    /// Peers whose `attach` the relay refused, and when to ask again ([`CoreConfig::attach_retry`]).
+    attach_retry: HashMap<PublicKey, Instant>,
     /// Channels still held on a link for devices this one forgot ([`ParkedChannel`]).
     parked: HashMap<(LinkId, PublicKey), ParkedChannel>,
     /// Desktop: the take a paired phone streams (docs/dictation.md §20).
@@ -1095,10 +1046,8 @@ struct Runtime {
     last_check: Option<crate::connectivity::ConnectivityReport>,
     /// The probe task reports here.
     check_tx: mpsc::Sender<check::Probed>,
-    /// The LAN browse reports here (docs/pairing.md 「局域网发现」).
-    disc_tx: mpsc::Sender<crate::discovery::DiscoveryEvent>,
-    /// What the LAN browse sees, and what this device announces.
-    lan: nearby::Lan,
+    /// The wall clock at the last tick: a jump means the machine slept ([`woke_up`]).
+    last_tick_wall: SystemTime,
     /// Always-on pairing (docs/pairing.md 「常开配对」): when the next session opens.
     always_on_at: Option<Instant>,
     /// 用 AI 预设处理 requests running, by request id (docs/dictation.md §22).
@@ -1156,8 +1105,6 @@ impl Runtime {
     fn link(&self, id: LinkId) -> Option<&RelayLink> {
         match id {
             LinkId::Relay => self.relay.as_ref().map(|(l, _)| l),
-            LinkId::Host => self.host.as_ref().map(|h| &h.link),
-            LinkId::Dial(n) => self.dials.get(&n).map(|d| &d.link),
         }
     }
 
@@ -1196,58 +1143,15 @@ impl Runtime {
         let mut cfg = LinkConfig::new(endpoint.clone());
         cfg.client_version = self.config.client_version.clone();
         cfg.reconnect = self.config.reconnect;
+        cfg.ping_interval = self.config.relay_ping_interval;
+        cfg.pong_timeout = self.config.relay_pong_timeout;
+        cfg.probe_timeout = self.config.relay_probe_timeout;
         cfg.write_gate = self.config.test_hooks.relay_write_gate.clone();
         let link = self.spawn_link(LinkId::Relay, cfg);
         self.relay_status = RelayStatus { endpoint: shown, source, state: ConnectionState::Connecting, attempts: 0 };
         self.emit(CoreEvent::Relay(self.relay_status.clone()));
         self.relay = Some((link, endpoint));
         Ok(())
-    }
-
-    /// Bind the LAN host and attach the core to it over loopback.
-    async fn start_host(&mut self) {
-        if !self.config.direct_enabled {
-            return;
-        }
-        let host = match DirectHost::bind_lan_host(self.config.direct_bind).await {
-            Ok(h) => h,
-            Err(e) => {
-                tracing::warn!(error = %e, "LAN host unavailable; direct connections disabled");
-                self.emit(CoreEvent::Error(format!("LAN host unavailable: {e}")));
-                return;
-            }
-        };
-        let endpoint = match host.loopback_endpoint() {
-            Ok(e) => e,
-            Err(e) => {
-                self.emit(CoreEvent::Error(format!("LAN host unavailable: {e}")));
-                return;
-            }
-        };
-        let mut cfg = LinkConfig::new(endpoint);
-        cfg.client_version = self.config.client_version.clone();
-        cfg.reconnect = self.config.reconnect;
-        let link = self.spawn_link(LinkId::Host, cfg);
-        self.host = Some(Host { host, link });
-    }
-
-    fn lan_hints(&self) -> Vec<String> {
-        self.host.as_ref().map(|h| h.host.lan_hints()).unwrap_or_default()
-    }
-
-    /// Open an outgoing LAN connection to `hint` (`ip:port`).
-    fn dial(&mut self, hint: &str, peer: Option<PublicKey>) -> Result<LinkId, CoreError> {
-        let endpoint = RelayEndpoint::parse(&format!("ws://{hint}/ws"))?;
-        let mut cfg = LinkConfig::new(endpoint);
-        cfg.client_version = self.config.client_version.clone();
-        cfg.reconnect = ReconnectPolicy::never();
-        cfg.connect_timeout = self.config.direct_connect_timeout;
-        let n = self.next_dial;
-        self.next_dial += 1;
-        let id = LinkId::Dial(n);
-        let link = self.spawn_link(id, cfg);
-        self.dials.insert(n, Dial { link, peer });
-        Ok(id)
     }
 
     /// Forget every rendezvous session that lived on `id` (the link is gone or being replaced).
@@ -1258,19 +1162,14 @@ impl Runtime {
         self.session_to_peer.retain(|(l, _), _| *l != id);
         self.pending_attach.remove(&id);
         self.parked.retain(|(l, _), _| *l != id);
-    }
-
-    async fn close_dial(&mut self, n: u64) {
-        self.drop_link_state(LinkId::Dial(n));
-        if let Some(d) = self.dials.remove(&n) {
-            d.link.close().await;
-        }
+        // A new connection attaches to every channel anyway.
+        self.attach_retry.clear();
     }
 
     // ---------------- main loop ----------------
 
     async fn run(mut self, inbox: Inbox) {
-        let Inbox { mut cmd_rx, mut link_rx, mut dict_rx, mut model_rx, mut act_rx, mut phone_rx, mut check_rx, mut disc_rx, mut process_rx } = inbox;
+        let Inbox { mut cmd_rx, mut link_rx, mut dict_rx, mut model_rx, mut act_rx, mut phone_rx, mut check_rx, mut process_rx } = inbox;
         self.emit(CoreEvent::Ready {
             identity: self.identity.public(),
             settings: self.settings.clone(),
@@ -1289,8 +1188,6 @@ impl Runtime {
             self.emit(CoreEvent::Error(notice));
         }
         self.emit_devices();
-        self.start_host().await;
-        self.start_discovery();
         self.emit(CoreEvent::Serve(self.serve.status()));
         self.apply_serve().await;
         let mut ticker = tokio::time::interval(self.config.tick);
@@ -1313,16 +1210,9 @@ impl Runtime {
                 Some(timer) = act_rx.recv() => self.on_activation_timer(timer),
                 Some(event) = phone_rx.recv() => self.on_phone_event(event),
                 Some(probed) = check_rx.recv() => self.on_probed(probed),
-                Some(seen) = disc_rx.recv() => self.on_discovery(seen),
                 Some(processed) = process_rx.recv() => self.on_processed(processed),
                 Ok(()) = quota_rx.changed() => self.emit(CoreEvent::Engines(self.engine_status())),
                 _ = ticker.tick() => self.tick().await,
-            }
-            // A rename or a pairing that started or ended changes what the LAN hears; a device
-            // trusted or forgotten changes the nearby list.
-            self.refresh_announcement();
-            if self.lan_running() {
-                self.emit_nearby();
             }
             // Take messages queued by the handler above (docs/dictation.md §20).
             if !self.take_outbox.is_empty() {
@@ -1341,19 +1231,9 @@ impl Runtime {
         if let Some(t) = self.activation.grace.take() {
             t.abort();
         }
-        self.stop_discovery();
         self.stop_serve();
-        // The LAN host stops first: once a peer sees this device go offline (its relay or direct
-        // link closed), the LAN address it was told about must not answer any more.
-        if let Some(h) = self.host.take() {
-            h.host.shutdown().await;
-            h.link.close().await;
-        }
         if let Some((l, _)) = self.relay.take() {
             l.close().await;
-        }
-        for (_, d) in self.dials.drain() {
-            d.link.close().await;
         }
     }
 
@@ -1368,14 +1248,6 @@ impl Runtime {
             CoreCommand::ResetPairing => self.reset_pairing().await,
             CoreCommand::ForgetDevice(key) => self.forget(key, true).await,
             CoreCommand::SetDeviceSync { key, on } => self.set_device_sync(key, on).await,
-            CoreCommand::DropDirectLinks => {
-                let dials: Vec<u64> = self.dials.keys().copied().collect();
-                for n in dials {
-                    self.close_dial(n).await;
-                }
-                self.emit_devices();
-                Ok(())
-            }
             CoreCommand::CheckConnectivity => self.check_connectivity().await,
             CoreCommand::RenameDevice(name) => self.rename(name).await,
             CoreCommand::SetRelay { url, enabled } => self.set_relay(url, enabled),
@@ -1413,14 +1285,15 @@ impl Runtime {
                 self.paste_text(request_id, text, target);
                 Ok(())
             }
-            CoreCommand::SetLanDiscovery(enabled) => self.set_lan_discovery(enabled),
             CoreCommand::SetPairingAlwaysOn(enabled) => self.set_pairing_always_on(enabled).await,
-            CoreCommand::PairingJoinNearby(fingerprint) => self.join_nearby(&fingerprint).await,
+            CoreCommand::ReconnectRelay => {
+                self.reconnect_relay("asked");
+                Ok(())
+            }
             CoreCommand::PhoneTakeStop => self.phone_take_stop(),
             CoreCommand::PhoneTakeCancel => self.phone_take_cancel(),
             CoreCommand::RefreshDevices => {
                 self.emit_devices();
-                self.resend_nearby();
                 Ok(())
             }
             CoreCommand::DictationStart => self.dictation_start(),
@@ -2339,31 +2212,26 @@ impl Runtime {
         if !matches!(self.pairing, Pairing::None) {
             return Err(CoreError::Invalid("pairing: 已有配对正在进行，请先取消".into()));
         }
+        self.require_relay()?;
+        self.pairing_link = Some(LinkId::Relay);
+        self.begin_initiator().await
+    }
+
+    /// Pairing runs on the relay, the only way there is (docs/pairing.md 「只走中继」).
+    fn require_relay(&self) -> Result<(), CoreError> {
         if self.relay_connected() {
-            self.pairing_link = Some(LinkId::Relay);
-            return self.begin_initiator().await;
+            return Ok(());
         }
-        if self.host.is_none() {
-            return Err(CoreError::Invalid("pairing: 未连接中继，局域网服务也未开启".into()));
-        }
-        self.pairing_link = Some(LinkId::Host);
-        if self.link_connected(LinkId::Host) {
-            self.begin_initiator().await
-        } else {
-            // The loopback link to our own host is still coming up (typically right after start).
-            self.pending_start = Some(PendingStart::Initiator);
-            Ok(())
-        }
+        let why = match self.relay_status.source {
+            RelaySource::None => "pairing: 配对需要中继，请先在设置中开启中继",
+            RelaySource::Builtin | RelaySource::User => "pairing: 尚未连上中继，请检查网络后再试",
+        };
+        Err(CoreError::Invalid(why.into()))
     }
 
     async fn begin_initiator(&mut self) -> Result<(), CoreError> {
-        let relay_hint = match self.pairing_link {
-            Some(LinkId::Relay) => self.relay.as_ref().map(|(_, e)| e.url().clone()),
-            _ => None,
-        };
-        // The ticket always carries the LAN endpoint too, so a phone that scans it can come
-        // straight over the local network later even when the pairing itself ran on the relay.
-        let reach = Reachability { relay_hint, direct_hints: self.lan_hints() };
+        let relay_hint = self.relay.as_ref().map(|(_, e)| e.url().clone());
+        let reach = Reachability { relay_hint };
         let mut init = Initiator::new(self.identity.clone(), self.config.pairing_timeouts, reach);
         let actions = init.step(Event::Start, Self::now())?;
         self.pairing = Pairing::Initiator(Box::new(init));
@@ -2380,30 +2248,14 @@ impl Runtime {
             JoinSpec::Code(text) => JoinMethod::Code(PairCode::parse_user_input(&text)?),
             JoinSpec::Ticket(uri) => JoinMethod::Ticket(PairingTicket::from_uri(&uri)?),
         };
-        let ticket_hints = match &method {
-            JoinMethod::Ticket(t) => t.direct_hints.clone(),
-            JoinMethod::Code(_) => Vec::new(),
-        };
-        // A ticket without a relay hint names a session on the initiator's LAN host (it had no
-        // relay): only a direct connection reaches it, whatever relay this device has.
-        let lan_only = matches!(&method, JoinMethod::Ticket(t) if t.relay_hint.is_none() && !t.direct_hints.is_empty());
-        if self.relay_connected() && !lan_only {
-            self.pairing_link = Some(LinkId::Relay);
-            self.pairing_peer_hints = ticket_hints;
-            return self.begin_responder(method).await;
+        // A ticket without a relay hint comes from a computer that waited on its own LAN host (a
+        // build before 0.1.0 without a relay): nothing on the relay answers it.
+        if matches!(&method, JoinMethod::Ticket(t) if t.relay_hint.is_none()) {
+            return Err(CoreError::Invalid("pairing: 这个二维码来自旧版本的局域网配对，请把电脑上的 Voltip 更新到最新版本后重新显示二维码".into()));
         }
-        // No relay: a ticket may carry LAN hints; a code alone cannot be used.
-        if matches!(method, JoinMethod::Code(_)) {
-            return Err(CoreError::Invalid("pairing: 使用验证码配对需要连接中继，请改用扫码".into()));
-        }
-        let Some(hint) = ticket_hints.first().cloned() else {
-            return Err(CoreError::Invalid("pairing: 此配对信息需要经过中继，但未配置中继".into()));
-        };
-        let link = self.dial(&hint, None)?;
-        self.pairing_link = Some(link);
-        self.pairing_peer_hints = ticket_hints;
-        self.pending_start = Some(PendingStart::Responder(method));
-        Ok(())
+        self.require_relay()?;
+        self.pairing_link = Some(LinkId::Relay);
+        self.begin_responder(method).await
     }
 
     async fn begin_responder(&mut self, method: JoinMethod) -> Result<(), CoreError> {
@@ -2418,7 +2270,6 @@ impl Runtime {
             Err(state) => {
                 // Expired / replayed ticket: show the terminal state without touching the network.
                 self.pairing_link = None;
-                self.pairing_peer_hints.clear();
                 let snap = Snapshot {
                     state,
                     session_id: None,
@@ -2465,14 +2316,7 @@ impl Runtime {
         let _ = self.leave_pairing_session().await;
         self.pairing = Pairing::None;
         self.pairing_session = None;
-        self.pending_start = None;
-        self.pairing_peer_hints.clear();
-        // A connection opened only to reach a ticket's LAN host is not needed any more.
-        if let Some(LinkId::Dial(n)) = self.pairing_link.take()
-            && self.dials.get(&n).is_some_and(|d| d.peer.is_none())
-        {
-            self.close_dial(n).await;
-        }
+        self.pairing_link = None;
         let snap = Snapshot {
             state: PairingState::Idle,
             session_id: None,
@@ -2532,32 +2376,17 @@ impl Runtime {
     async fn on_trusted(&mut self, est: voltip_pairing::Established) -> Result<(), CoreError> {
         let key = est.remote_static;
         let record = self.trusted.trust(&est.peer, key, Self::now().unix_secs)?;
-        // The ticket told us where the initiator's LAN host is: remember it for the next time.
-        let hints = std::mem::take(&mut self.pairing_peer_hints);
-        if !hints.is_empty() {
-            self.trusted.update_hints(&key, &hints)?;
-        }
         tracing::info!(peer = %est.peer.name, "device trusted");
         self.emit(CoreEvent::Trusted(record));
         self.on_sync_paired(key).await;
-        let backoff = self.config.direct_retry;
-        self.peers.entry(key).or_insert_with(|| PeerState::new(backoff));
+        self.peers.entry(key).or_default();
         // Long-lived presence and traffic move to the rendezvous channel on the same link; the
-        // one-shot pairing session is released so the host's slot is free for the next pairing.
+        // one-shot pairing session is released.
         if let Some(link) = self.pairing_link {
-            if let LinkId::Dial(n) = link
-                && let Some(d) = self.dials.get_mut(&n)
-            {
-                d.peer = Some(key);
-            }
             self.attach(link, key).await;
             if self.link_connected(link) {
                 self.send_on(link, RelayFrame::Leave { version: ProtocolVersion::CURRENT, session_id: est.session_id }).await?;
             }
-        }
-        // Be reachable on our own LAN host as well, so the peer can dial us later.
-        if self.pairing_link != Some(LinkId::Host) && self.link_connected(LinkId::Host) {
-            self.attach(LinkId::Host, key).await;
         }
         self.emit_devices();
         Ok(())
@@ -2581,7 +2410,7 @@ impl Runtime {
         self.emit(CoreEvent::Devices(views));
     }
 
-    /// Drop `key`'s record, sessions and dials. With `notify` the peer is told first
+    /// Drop `key`'s record and sessions. With `notify` the peer is told first
     /// (`AppMessage::Unpair`) when it is online, so it forgets this device too; offline it keeps
     /// its record until the next time it tries to connect.
     async fn forget(&mut self, key: PublicKey, notify: bool) -> Result<(), CoreError> {
@@ -2592,20 +2421,15 @@ impl Runtime {
             tracing::debug!(peer = %key.fingerprint(), error = %e, "unpair notice not sent");
         }
         self.trusted.forget(&key)?;
+        self.attach_retry.remove(&key);
         if let Some(st) = self.peers.remove(&key) {
             for p in &st.paths {
                 if let Some(sid) = p.session_id {
                     self.session_to_peer.remove(&(p.link, sid));
-                    // Still on the channel there until the link drops; a dial is closed below.
-                    if !matches!(p.link, LinkId::Dial(_)) {
-                        self.parked.insert((p.link, key), ParkedChannel { session_id: sid, present: p.present, early: None });
-                    }
+                    // Still on the channel there until the link drops.
+                    self.parked.insert((p.link, key), ParkedChannel { session_id: sid, present: p.present, early: None });
                 }
             }
-        }
-        let dials: Vec<u64> = self.dials.iter().filter(|(_, d)| d.peer == Some(key)).map(|(n, _)| *n).collect();
-        for n in dials {
-            self.close_dial(n).await;
         }
         self.on_sync_forgotten(key).await;
         self.emit_devices();
@@ -2729,15 +2553,14 @@ impl Runtime {
         self.send_app(to, &AppMessage::text(body)).await
     }
 
-    /// Tell `key` who we are and where our LAN host listens, over the best secure path.
+    /// Tell `key` who we are, over its secure path.
     async fn announce_self(&mut self, key: PublicKey) {
         let msg = AppMessage::DeviceInfoUpdate {
             version: ProtocolVersion::CURRENT,
             device: self.identity.info(),
-            direct_hints: self.lan_hints(),
             mirror: self.config.sync_role == crate::sync::SyncRole::Computer,
         };
-        tracing::debug!(peer = %key.fingerprint(), hints = ?self.lan_hints(), "announcing device info");
+        tracing::debug!(peer = %key.fingerprint(), "announcing device info");
         if self.config.test_hooks.drop_app.as_ref().is_some_and(|drop| drop(&msg)) {
             return;
         }
@@ -2773,8 +2596,8 @@ impl Runtime {
 
     /// A link's report of its state. The commands read a link's state as it is when they run,
     /// while its reports wait in the inbox, so a report can be older than what a command already
-    /// acted on: a pairing started on the loopback link that is up has its link's `Connecting`
-    /// and `Authenticating` still to come. Only a report that leaves `Connected` loses the link.
+    /// acted on: a pairing started on the link that is up has its link's `Connecting` and
+    /// `Authenticating` still to come. Only a report that leaves `Connected` loses the link.
     async fn on_state(&mut self, id: LinkId, change: StateChange) {
         let to = change.to;
         let lost = change.from.is_connected() && !to.is_connected();
@@ -2791,62 +2614,21 @@ impl Runtime {
                 if to.is_connected() {
                     self.attach_all(LinkId::Relay).await;
                 } else if lost {
-                    // Every relay-borne session is gone; LAN paths are untouched.
+                    // Every relay-borne session is gone.
                     self.drop_link_state(LinkId::Relay);
                     self.fail_pairing_on(LinkId::Relay).await;
                     self.emit_devices();
                 }
             }
-            LinkId::Host => {
-                if to.is_connected() {
-                    self.attach_all(LinkId::Host).await;
-                    if matches!(self.pending_start, Some(PendingStart::Initiator)) {
-                        self.pending_start = None;
-                        if let Err(e) = self.begin_initiator().await {
-                            self.emit(CoreEvent::Error(e.to_string()));
-                        }
-                    }
-                } else {
-                    if matches!(self.pending_start, Some(PendingStart::Initiator)) && (to.is_closed() || to == ConnectionState::Reconnecting) {
-                        self.pending_start = None;
-                        self.pairing_link = None;
-                        self.emit(CoreEvent::Error("the LAN host is not reachable; cannot start pairing".into()));
-                    }
-                    if lost {
-                        self.drop_link_state(LinkId::Host);
-                        self.fail_pairing_on(LinkId::Host).await;
-                        self.emit_devices();
-                    }
-                }
-            }
-            LinkId::Dial(n) => {
-                let peer = self.dials.get(&n).and_then(|d| d.peer);
-                if to.is_connected() {
-                    match peer {
-                        Some(key) => self.attach(id, key).await,
-                        None => {
-                            if let Some(PendingStart::Responder(method)) = self.pending_start.take()
-                                && let Err(e) = self.begin_responder(method).await
-                            {
-                                self.emit(CoreEvent::Error(e.to_string()));
-                            }
-                        }
-                    }
-                } else if to.is_closed() || to == ConnectionState::Reconnecting {
-                    if peer.is_none() && self.pending_start.take().is_some() {
-                        self.emit(CoreEvent::Error("could not reach the other device on the local network".into()));
-                    }
-                    self.fail_pairing_on(id).await;
-                    self.close_dial(n).await;
-                    if let Some(key) = peer
-                        && let Some(st) = self.peers.get_mut(&key)
-                    {
-                        // Next attempt after the current backoff; the backoff itself grows in `maintain_direct`.
-                        st.next_dial_at = Some(Instant::now() + st.dial_backoff);
-                    }
-                    self.emit_devices();
-                }
-            }
+        }
+    }
+
+    /// The network changed, the app came back to the front, or the machine woke up (`why`): the
+    /// relay link checks its socket now ([`RelayLink::reconnect_now`]).
+    fn reconnect_relay(&self, why: &str) {
+        if let Some((link, _)) = &self.relay {
+            tracing::info!(why, state = ?link.state(), "checking the relay link now");
+            link.reconnect_now();
         }
     }
 
@@ -2860,8 +2642,8 @@ impl Runtime {
     /// Attach to the rendezvous channel with `key` on `link`. A channel this device is already on
     /// there is used as it is: the relay refuses a second attach on the same connection.
     async fn attach(&mut self, link: LinkId, key: PublicKey) {
-        let backoff = self.config.direct_retry;
-        let path = self.peers.entry(key).or_insert_with(|| PeerState::new(backoff)).path_or_insert(link);
+        self.attach_retry.remove(&key);
+        let path = self.peers.entry(key).or_default().path_or_insert(link);
         let held = match (path.session_id, self.parked.remove(&(link, key))) {
             // Paired again while this side still trusted the peer: the same channel. A handshake
             // under way is left to finish; an idle path or an old channel starts a new one.
@@ -2904,10 +2686,59 @@ impl Runtime {
         }
     }
 
+    /// The peer whose `attach` an answer is for: the one whose channel it names (relays from 0.1.0
+    /// on), or the oldest one waiting (older relays answer in order).
+    fn answered_attach(&mut self, link: LinkId, channel: Option<&str>) -> Option<PublicKey> {
+        let local = self.identity.keypair.public;
+        let waiting = self.pending_attach.get_mut(&link)?;
+        let at = match channel {
+            Some(channel) => waiting.iter().position(|key| rendezvous_channel(&local, key) == channel)?,
+            None => 0,
+        };
+        waiting.remove(at)
+    }
+
+    /// The relay refused an `attach` (docs/pairing.md 「重连」). `channel_full` means a connection of
+    /// this device or of the peer that died without closing still holds a place on the channel
+    /// until the relay notices it is gone; a rate limit says when to come back. Either way the
+    /// attach is asked again later, while the relay link lasts.
+    fn on_attach_refused(&mut self, link: LinkId, code: RelayErrorCode, retry_after_secs: Option<u32>, channel: Option<&str>) {
+        let Some(key) = self.answered_attach(link, channel) else { return };
+        let wait = match code {
+            RelayErrorCode::ChannelFull => self.config.attach_retry,
+            RelayErrorCode::RateLimited => Duration::from_secs(u64::from(retry_after_secs.unwrap_or(1).max(1))),
+            // Already on the channel (an attach that crossed another one) or a label the relay
+            // cannot read: asking again changes nothing.
+            _ => {
+                tracing::warn!(?code, peer = %key.fingerprint(), "the relay refused an attach");
+                return;
+            }
+        };
+        if self.trusted.get_by_key(&key).is_some() {
+            tracing::info!(?code, peer = %key.fingerprint(), ?wait, "the relay refused an attach; asking again");
+            self.attach_retry.insert(key, Instant::now() + wait);
+        }
+    }
+
+    /// Ask again for the attaches the relay refused, once each is due.
+    async fn retry_attaches(&mut self, now: Instant) {
+        if !self.relay_connected() {
+            return;
+        }
+        let due: Vec<PublicKey> = self.attach_retry.iter().filter(|(_, at)| now >= **at).map(|(key, _)| *key).collect();
+        for key in due {
+            self.attach_retry.remove(&key);
+            let attached = self.peers.get_mut(&key).and_then(|st| st.path(LinkId::Relay)).is_some_and(|p| p.session_id.is_some());
+            if self.trusted.get_by_key(&key).is_some() && !attached {
+                self.attach(LinkId::Relay, key).await;
+            }
+        }
+    }
+
     async fn on_frame(&mut self, id: LinkId, frame: RelayFrame) {
         match frame {
-            RelayFrame::Attached { session_id, peer_online, .. } => {
-                let Some(key) = self.pending_attach.get_mut(&id).and_then(VecDeque::pop_front) else { return };
+            RelayFrame::Attached { session_id, peer_online, channel, .. } => {
+                let Some(key) = self.answered_attach(id, channel.as_deref()) else { return };
                 if !self.peers.contains_key(&key) {
                     // Forgotten while the attach was on its way: the channel is held all the same.
                     self.parked.insert((id, key), ParkedChannel { session_id, present: peer_online, early: None });
@@ -2961,6 +2792,12 @@ impl Runtime {
                 } else if let Some(parked) = self.parked_on(id, session_id) {
                     parked.early = Some(payload);
                 }
+            }
+            // An attach refused: the relay names the channel (from 0.1.0 on). An older relay names
+            // none, and only `channel_full` and `invalid_channel` are sure to answer an attach.
+            RelayFrame::Error { code, retry_after_secs, channel: Some(channel), .. } => self.on_attach_refused(id, code, retry_after_secs, Some(&channel)),
+            RelayFrame::Error { code: code @ (RelayErrorCode::ChannelFull | RelayErrorCode::InvalidChannel), retry_after_secs, channel: None, .. } => {
+                self.on_attach_refused(id, code, retry_after_secs, None);
             }
             RelayFrame::SessionCreated { .. }
             | RelayFrame::Joined { .. }
@@ -3062,8 +2899,8 @@ impl Runtime {
                     }
                 }
                 Ok(AppMessage::Text { body, .. }) => self.emit(CoreEvent::Message { from: key, body }),
-                Ok(AppMessage::DeviceInfoUpdate { device, direct_hints, mirror, .. }) => {
-                    self.on_device_info(key, &device, &direct_hints);
+                Ok(AppMessage::DeviceInfoUpdate { device, mirror, .. }) => {
+                    self.on_device_info(key, &device);
                     self.on_sync_announce(key, mirror).await;
                 }
                 // Sync (docs/dictation.md §20.8).
@@ -3115,23 +2952,11 @@ impl Runtime {
         }
     }
 
-    /// A trusted peer (authenticated by the channel it came in on) told us its name and where
-    /// its LAN host listens.
-    fn on_device_info(&mut self, key: PublicKey, device: &voltip_protocol::DeviceInfo, hints: &[String]) {
+    /// A trusted peer (authenticated by the channel it came in on) told us its name.
+    fn on_device_info(&mut self, key: PublicKey, device: &voltip_protocol::DeviceInfo) {
         let renamed = self.trusted.update_info(&key, device).unwrap_or(false);
-        let moved = match self.trusted.update_hints(&key, hints) {
-            Ok(changed) => changed,
-            Err(e) => {
-                tracing::warn!(error = %e, "peer sent unusable LAN hints");
-                false
-            }
-        };
-        tracing::debug!(peer = %key.fingerprint(), ?hints, renamed, moved, "device info from peer");
-        if moved && let Some(st) = self.peers.get_mut(&key) {
-            let initial = self.config.direct_retry;
-            st.reset_dial_backoff(initial);
-        }
-        if renamed || moved {
+        tracing::debug!(peer = %key.fingerprint(), renamed, "device info from peer");
+        if renamed {
             self.emit_devices();
         }
     }
@@ -3150,15 +2975,8 @@ impl Runtime {
         let claimed = self.trusted.get_by_key(&key).map(|d| d.device_id);
         match self.trusted.check(&remote, claimed.unwrap_or(voltip_protocol::DeviceId(uuid_nil()))) {
             IdentityCheck::Trusted(_) if remote == key => {
-                let via = if link.is_direct() { ConnectionKind::Direct } else { ConnectionKind::Relay };
-                let _ = self.trusted.mark_seen(&key, Self::now().unix_secs, via);
-                if via == ConnectionKind::Direct
-                    && let Some(st) = self.peers.get_mut(&key)
-                {
-                    let initial = self.config.direct_retry;
-                    st.reset_dial_backoff(initial);
-                }
-                tracing::info!(peer = %key.fingerprint(), ?via, "secure channel established");
+                let _ = self.trusted.mark_seen(&key, Self::now().unix_secs);
+                tracing::info!(peer = %key.fingerprint(), "secure channel established");
                 self.announce_self(key).await;
             }
             _ => {
@@ -3178,6 +2996,12 @@ impl Runtime {
 
     async fn tick(&mut self) {
         let now = Instant::now();
+        let wall = SystemTime::now();
+        if woke_up(self.last_tick_wall, wall, self.config.tick) {
+            // The relay's socket rarely survives a sleep; the heartbeat would take its time.
+            self.reconnect_relay("woke up");
+        }
+        self.last_tick_wall = wall;
         let limit = self.config.peer_handshake_timeout;
         let local = self.identity.keypair.public;
         let mut stalled = false;
@@ -3210,8 +3034,8 @@ impl Runtime {
             tracing::info!(peer = %key.fingerprint(), "retrying the peer handshake");
             self.start_peer_handshake(key, link).await;
         }
+        self.retry_attaches(now).await;
         self.sync_tick().await;
-        self.maintain_direct(now);
         self.check_takes();
         self.check_texts();
         self.check_deadline();
@@ -3224,54 +3048,23 @@ impl Runtime {
         }
         self.keep_pairing_open().await;
     }
+}
 
-    /// Direct first: for every trusted device with known LAN endpoints and no live LAN path,
-    /// open one outgoing connection at a time, backing off between failures.
-    fn maintain_direct(&mut self, now: Instant) {
-        if !self.config.direct_enabled || self.host.is_none() {
-            return;
-        }
-        for d in self.trusted.list() {
-            // Where the LAN browse saw it first (docs/pairing.md 「局域网发现」), then what it told us.
-            let mut hints = self.lan.hints.get(&d.public_key).cloned().unwrap_or_default();
-            for h in &d.direct_hints {
-                if !hints.contains(h) {
-                    hints.push(h.clone());
-                }
-            }
-            if hints.is_empty() {
-                continue;
-            }
-            let backoff = self.config.direct_retry;
-            let st = self.peers.entry(d.public_key).or_insert_with(|| PeerState::new(backoff));
-            if st.has_active_direct_path() || self.dials.values().any(|dl| dl.peer == Some(d.public_key)) {
-                continue;
-            }
-            if st.next_dial_at.is_some_and(|t| now < t) {
-                continue;
-            }
-            let hint = hints[st.hint_cursor % hints.len()].clone();
-            st.hint_cursor = st.hint_cursor.wrapping_add(1);
-            st.next_dial_at = Some(now + st.dial_backoff);
-            st.dial_backoff = (st.dial_backoff * 2).min(self.config.direct_retry_max);
-            if let Err(e) = self.dial(&hint, Some(d.public_key)) {
-                tracing::debug!(error = %e, hint, "dial failed to start");
-            }
-        }
-    }
+/// Whether the wall clock moved much further than the ticks did: the machine slept (or was
+/// suspended) in between. The ticks run on a monotonic clock, which some systems stop while
+/// asleep, so the wall clock is what shows the gap; a clock set back shows nothing.
+fn woke_up(last: SystemTime, now: SystemTime, tick: Duration) -> bool {
+    now.duration_since(last).is_ok_and(|gap| gap > (tick * 10).max(Duration::from_secs(15)))
 }
 
 /// Collapse a device's paths into what the UI shows. An identity mismatch is never hidden
-/// behind a healthy path; otherwise a LAN path beats the relay.
+/// behind a healthy path.
 fn summarize(paths: &[PeerPath]) -> DeviceConnection {
     if let Some(presented) = paths.iter().find_map(|p| if let PeerPhase::IdentityChanged { presented } = &p.phase { Some(*presented) } else { None }) {
         return DeviceConnection::IdentityChanged { presented_fingerprint: presented.fingerprint() };
     }
-    if paths.iter().any(|p| p.is_secure() && p.link.is_direct()) {
-        return DeviceConnection::Online { via: ConnectionKind::Direct };
-    }
     if paths.iter().any(PeerPath::is_secure) {
-        return DeviceConnection::Online { via: ConnectionKind::Relay };
+        return DeviceConnection::Online;
     }
     if paths.iter().any(|p| matches!(p.phase, PeerPhase::Handshaking(_))) {
         return DeviceConnection::Connecting;
@@ -3293,28 +3086,32 @@ mod tests {
     use super::*;
     use voltip_pairing::FailureReason;
 
-    /// A runtime on a temporary directory with the LAN host on an ephemeral loopback port and no
-    /// relay, built but not running: the test hands it its link events itself.
-    fn offline_runtime(dir: &std::path::Path) -> (Runtime, Inbox) {
-        SettingsStore::new(dir).save(&Settings { relay_enabled: false, ..Settings::default() }).unwrap();
-        let mut config = CoreConfig::new(dir.to_path_buf());
-        config.direct_bind = "127.0.0.1:0".parse().unwrap();
-        config.discovery = None;
+    /// A relay on an ephemeral loopback port, and a runtime on a temporary directory that uses
+    /// it, built but not running: the test hands it its link events itself.
+    async fn relay_runtime(dir: &std::path::Path) -> (Runtime, Inbox, tokio::sync::oneshot::Sender<()>) {
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let (addr, _task) = voltip_relay::server::RelayHandle::new(voltip_relay::RelayConfig::default())
+            .serve("127.0.0.1:0".parse().unwrap(), async move {
+                let _ = stopped.await;
+            })
+            .await
+            .unwrap();
+        let settings = Settings { relay_enabled: true, relay_url: Some(format!("ws://{addr}/ws")), ..Settings::default() };
+        SettingsStore::new(dir).save(&settings).unwrap();
         let store: Arc<dyn SecretStore> = Arc::new(voltip_identity::MemorySecretStore::new());
-        let (rt, inbox, _handle, _events) = AppCore::build(config, store, crate::dictation::fakes::ports()).unwrap();
-        (rt, inbox)
+        let (rt, inbox, _handle, _events) = AppCore::build(CoreConfig::new(dir.to_path_buf()), store, crate::dictation::fakes::ports()).unwrap();
+        (rt, inbox, stop)
     }
 
-    /// The LAN host's loopback link, up: everything it reported on the way, held back.
-    async fn host_link_up(rt: &mut Runtime, inbox: &mut Inbox) -> Vec<(LinkId, LinkEvent)> {
-        rt.start_host().await;
+    /// The relay link, up: everything it reported on the way, held back.
+    async fn relay_link_up(inbox: &mut Inbox) -> Vec<(LinkId, LinkEvent)> {
         let mut held = Vec::new();
         loop {
             let (id, ev) = tokio::time::timeout(Duration::from_secs(15), inbox.link_rx.recv())
                 .await
-                .expect("the loopback link reported within 15 s")
+                .expect("the relay link reported within 15 s")
                 .expect("the link events stay open");
-            let up = id == LinkId::Host && matches!(&ev, LinkEvent::State(change) if change.to.is_connected());
+            let up = id == LinkId::Relay && matches!(&ev, LinkEvent::State(change) if change.to.is_connected());
             held.push((id, ev));
             if up {
                 return held;
@@ -3335,8 +3132,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn regression_a_pairing_outlives_the_link_reports_queued_before_it_started() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut rt, mut inbox) = offline_runtime(dir.path());
-        let held = host_link_up(&mut rt, &mut inbox).await;
+        let (mut rt, mut inbox, _relay) = relay_runtime(dir.path()).await;
+        let held = relay_link_up(&mut inbox).await;
         assert!(held.iter().any(|(_, ev)| matches!(ev, LinkEvent::State(change) if !change.to.is_connected())), "{held:?}");
         rt.start_pairing().await.unwrap();
         assert!(pairing_running(rt.pairing_state()), "{:?}", rt.pairing_state());
@@ -3350,43 +3147,79 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_pairing_ends_when_its_link_is_lost() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut rt, mut inbox) = offline_runtime(dir.path());
-        for (id, ev) in host_link_up(&mut rt, &mut inbox).await {
+        let (mut rt, mut inbox, _relay) = relay_runtime(dir.path()).await;
+        for (id, ev) in relay_link_up(&mut inbox).await {
             rt.handle_link_event(id, ev).await;
         }
         rt.start_pairing().await.unwrap();
         assert!(pairing_running(rt.pairing_state()), "{:?}", rt.pairing_state());
         let lost = StateChange { from: ConnectionState::Connected, to: ConnectionState::Reconnecting };
-        rt.handle_link_event(LinkId::Host, LinkEvent::State(lost)).await;
+        rt.handle_link_event(LinkId::Relay, LinkEvent::State(lost)).await;
         assert_eq!(rt.pairing_state(), Some(PairingState::Failed { reason: FailureReason::Relay { code: RelayErrorCode::SessionExpired } }));
     }
 
+    /// Pairing needs the relay (docs/pairing.md 「只走中继」): without one, starting or joining says
+    /// so instead of waiting; a ticket from a computer that waited on its LAN host is refused.
+    #[tokio::test]
+    async fn pairing_without_the_relay_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, ..Settings::default() }).unwrap();
+        let store: Arc<dyn SecretStore> = Arc::new(voltip_identity::MemorySecretStore::new());
+        let (mut rt, _inbox, _handle, _events) = AppCore::build(CoreConfig::new(dir.path().to_path_buf()), store, crate::dictation::fakes::ports()).unwrap();
+        let refused = |r: Result<(), CoreError>| match r {
+            Err(CoreError::Invalid(why)) => why,
+            other => panic!("{other:?}"),
+        };
+        assert!(refused(rt.start_pairing().await).contains("开启中继"));
+        assert!(refused(rt.join(JoinSpec::Code("483921".into())).await).contains("开启中继"));
+        let lan_only = PairingTicket {
+            version: ProtocolVersion::CURRENT,
+            session_id: SessionId::random(),
+            ephemeral_pub: [7; 32],
+            nonce: [9; 16],
+            expires_at: u64::MAX,
+            relay_hint: None,
+        };
+        assert!(refused(rt.join(JoinSpec::Ticket(lan_only.to_uri().unwrap())).await).contains("旧版本的局域网配对"));
+        assert!(matches!(rt.pairing, Pairing::None));
+    }
+
     #[test]
-    fn summary_never_hides_an_identity_mismatch_and_prefers_direct() {
+    fn summary_never_hides_an_identity_mismatch() {
         assert_eq!(summarize(&[]), DeviceConnection::Offline);
         let idle = PeerPath::new(LinkId::Relay);
         assert_eq!(summarize(&[idle]), DeviceConnection::Offline);
         let mut flagged = PeerPath::new(LinkId::Relay);
         flagged.phase = PeerPhase::IdentityChanged { presented: PublicKey([3; 32]) };
-        let mut direct = PeerPath::new(LinkId::Host);
-        direct.phase =
+        let mut busy = PeerPath::new(LinkId::Relay);
+        busy.phase =
             PeerPhase::Handshaking(Box::new(voltip_crypto::Handshake::new(Role::Initiator, &voltip_crypto::StaticKeypair::generate().unwrap(), None).unwrap()));
-        assert_eq!(summarize(&[direct]), DeviceConnection::Connecting);
-        let mut direct = PeerPath::new(LinkId::Host);
-        direct.phase =
-            PeerPhase::Handshaking(Box::new(voltip_crypto::Handshake::new(Role::Initiator, &voltip_crypto::StaticKeypair::generate().unwrap(), None).unwrap()));
-        assert!(matches!(summarize(&[direct, flagged]), DeviceConnection::IdentityChanged { .. }));
+        assert_eq!(summarize(std::slice::from_ref(&busy)), DeviceConnection::Connecting);
+        assert!(matches!(summarize(&[busy, flagged]), DeviceConnection::IdentityChanged { .. }));
+    }
+
+    /// A gap in the wall clock far longer than the ticks is a sleep; a tick on time, a late tick
+    /// under load, or a clock set back is not.
+    #[test]
+    fn a_long_gap_in_the_wall_clock_is_a_wake_up() {
+        let tick = Duration::from_secs(1);
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        assert!(!woke_up(t0, t0 + tick, tick));
+        assert!(!woke_up(t0, t0 + Duration::from_secs(9), tick), "a busy machine is late, not asleep");
+        assert!(woke_up(t0, t0 + Duration::from_secs(16), tick));
+        assert!(woke_up(t0, t0 + Duration::from_secs(8 * 3600), tick));
+        assert!(!woke_up(t0, t0 - Duration::from_secs(3600), tick), "a clock set back");
+        assert!(woke_up(t0, t0 + Duration::from_secs(21), Duration::from_secs(2)) && !woke_up(t0, t0 + Duration::from_secs(19), Duration::from_secs(2)));
     }
 
     #[test]
-    fn config_defaults_pin_the_lan_port_and_direct_first() {
+    fn config_defaults() {
         let cfg = CoreConfig::new(PathBuf::from("/data"));
         assert_eq!(cfg.models_root, PathBuf::from("/data").join(MODELS_DIR_NAME));
         assert_eq!(MODELS_DIR_NAME, "models");
         assert!(MODEL_PROGRESS_INTERVAL >= Duration::from_millis(250) && MODEL_PROGRESS_BYTES >= 1024 * 1024);
-        let cfg = CoreConfig::new(std::env::temp_dir());
-        assert!(cfg.direct_enabled);
-        assert_eq!(cfg.direct_bind.port(), DEFAULT_LAN_PORT);
-        assert!(cfg.direct_retry < cfg.direct_retry_max);
+        // A dead relay socket is noticed within 25 s, a refused attach is asked again within 5 s.
+        assert!(cfg.relay_ping_interval + cfg.relay_pong_timeout <= Duration::from_secs(25));
+        assert!(cfg.relay_probe_timeout < cfg.relay_pong_timeout && cfg.attach_retry <= Duration::from_secs(5));
     }
 }

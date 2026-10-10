@@ -2,6 +2,9 @@
 //! A computer's history and settings on its phones, and the phones' own records on the computer
 //! (docs/dictation.md §20.8): real cores, a real relay, real sockets.
 
+#[path = "support/net_cut.rs"]
+mod net_cut;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -32,8 +35,12 @@ struct Node {
 }
 
 async fn relay() -> (String, tokio::sync::oneshot::Sender<()>, RelayHandle) {
+    relay_with(RelayConfig::default()).await
+}
+
+async fn relay_with(config: RelayConfig) -> (String, tokio::sync::oneshot::Sender<()>, RelayHandle) {
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-    let handle = RelayHandle::new(RelayConfig::default());
+    let handle = RelayHandle::new(config);
     let (addr, _task) = handle
         .clone()
         .serve("127.0.0.1:0".parse().unwrap(), async move {
@@ -50,7 +57,7 @@ fn trace_init() {
     }
 }
 
-/// A relay-only node (the LAN side off: one path per peer, the relay's).
+/// A node on the relay `url`.
 fn start(dir: tempfile::TempDir, store: Arc<MemorySecretStore>, name: &str, url: &str, role: SyncRole, tune: impl FnOnce(&mut CoreConfig)) -> Node {
     trace_init();
     let settings = Settings { relay_url: Some(url.to_owned()), relay_enabled: true, ..Settings::default() };
@@ -58,7 +65,6 @@ fn start(dir: tempfile::TempDir, store: Arc<MemorySecretStore>, name: &str, url:
     let mut cfg = CoreConfig::new(dir.path().to_path_buf());
     cfg.default_device_name = name.into();
     cfg.tick = Duration::from_millis(50);
-    cfg.direct_enabled = false;
     // Six busy cores share one test process: a handshake may take longer than e2e.rs's 600 ms.
     cfg.peer_handshake_timeout = Duration::from_secs(5);
     cfg.sync_role = role;
@@ -628,46 +634,34 @@ async fn regression_five_phones_at_once_stay_within_the_windows() {
     assert_eq!(relay.stats().dropped, 0);
 }
 
-/// Relay and LAN both (the in-memory LAN finds the peer, the LAN host takes its dial).
-fn relay_and_lan(lan: &voltip_core::discovery::fake::LocalLan) -> impl FnOnce(&mut CoreConfig) + use<> {
-    let discovery: Arc<dyn voltip_core::discovery::Discovery> = lan.join();
-    move |cfg: &mut CoreConfig| {
-        cfg.direct_enabled = true;
-        cfg.direct_bind = "127.0.0.1:0".parse().unwrap();
-        cfg.direct_retry = Duration::from_millis(100);
-        cfg.direct_retry_max = Duration::from_millis(400);
-        cfg.direct_connect_timeout = Duration::from_secs(2);
-        cfg.discovery = Some(discovery);
-    }
-}
-
-/// regression (M7 design): with a LAN path and a relay path, a batch travels on the LAN; the LAN
-/// path drops halfway, the request goes unanswered and is asked again, and the history completes
-/// without a duplicate.
+/// regression (M7 design; the relay is the only path since 0.1.0): the phone's path to the relay
+/// breaks without a word halfway through a batch (docs/pairing.md 「重连」). The phone's heartbeat
+/// notices, it connects again, the relay lets go of the silent connection, the request that went
+/// unanswered is asked again, and the history completes without a duplicate.
 #[tokio::test]
-async fn regression_a_lan_path_that_drops_mid_transfer_is_made_up() {
-    let (url, _stop, relay) = relay().await;
-    let lan = voltip_core::discovery::fake::LocalLan::default();
+async fn regression_a_relay_path_that_breaks_mid_transfer_is_made_up() {
+    let config = RelayConfig { ping_interval: Duration::from_millis(200), idle_timeout: Duration::from_millis(1_500), ..RelayConfig::default() };
+    let (url, _stop, relay) = relay_with(config).await;
+    let addr: std::net::SocketAddr = url.trim_start_matches("ws://").trim_end_matches("/ws").parse().unwrap();
+    let cut = net_cut::NetCut::start(addr).await;
     let dir = tempfile::tempdir().unwrap();
     seed(dir.path(), 3000, 300, "条");
-    let mut desk = start(dir, Arc::new(MemorySecretStore::new()), "Desk", &url, SyncRole::Computer, relay_and_lan(&lan));
-    let tune = relay_and_lan(&lan);
-    let mut phone = start(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel", &url, SyncRole::Phone, move |cfg| {
-        tune(cfg);
+    let mut desk = start(dir, Arc::new(MemorySecretStore::new()), "Desk", &url, SyncRole::Computer, |_| {});
+    let mut phone = start(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel", &cut.url(), SyncRole::Phone, |cfg| {
         cfg.sync_request_timeout = Duration::from_secs(1);
         cfg.sync_apply_delay = Duration::from_millis(100);
+        cfg.relay_ping_interval = Duration::from_millis(300);
+        cfg.relay_pong_timeout = Duration::from_millis(600);
+        cfg.attach_retry = Duration::from_millis(200);
+        cfg.reconnect = voltip_transport::ReconnectPolicy { base: Duration::from_millis(50), max: Duration::from_millis(300), jitter: 0.0, max_attempts: None };
     });
     connected(&mut desk).await;
     connected(&mut phone).await;
     let (_, td) = pair(&mut desk, &mut phone).await;
     let key = td.public_key.to_hex();
-    wait(&mut phone, |e| match e {
-        CoreEvent::Devices(l) => l.iter().any(|d| d.connection == DeviceConnection::Online { via: voltip_identity::ConnectionKind::Direct }).then_some(()),
-        _ => None,
-    })
-    .await;
     wait_mirror(&mut phone, &key, |v| v.entries > 0 && v.entries < 3000).await;
-    phone.handle.send(CoreCommand::DropDirectLinks).await.unwrap();
+    cut.cut();
+    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Reconnecting).then_some(())).await;
     until(&mut phone, "the history completes", |n| copy(n, &key).len() == 3000).await;
     let mut ids: Vec<Uuid> = copy(&phone, &key).into_iter().map(|(id, _)| id).collect();
     ids.sort_unstable();

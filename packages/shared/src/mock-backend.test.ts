@@ -8,7 +8,6 @@ import {
   MOCK_PROCESS_ENTRY_GONE,
   MOCK_PROCESS_UNCONFIGURED,
   MOCK_AUDIO_DEVICES,
-  MOCK_NEARBY,
   MOCK_TAKEN_PORTS,
   MOCK_TEXT_MS,
   PHONE_TEXT_UNAVAILABLE,
@@ -162,7 +161,7 @@ describe("MockBackend pairing (desktop role)", () => {
     const done = backend.peek();
     expect(done.pairing.state).toEqual({ state: "trusted" });
     expect(done.devices).toHaveLength(1);
-    expect(done.devices[0]?.connection).toEqual({ state: "online", via: "direct" });
+    expect(done.devices[0]?.connection).toEqual({ state: "online" });
     expect(done.devices[0]?.device.public_key).toBe(MOCK_PUBLIC_KEYS.phone);
     expect(done.devices[0]?.device.trusted_at).toBe(1_700_000_000);
     expect(events.some((e) => e.type === "trusted")).toBe(true);
@@ -383,12 +382,11 @@ describe("MockBackend devices, relay, identity and messages", () => {
       devices: sampleDevices(1_700_000_000),
       now: () => 1_700_000_500_000,
     });
-    backend.simulateDeviceConnection(MOCK_PUBLIC_KEYS.laptop, { state: "online", via: "relay" });
+    backend.simulateDeviceConnection(MOCK_PUBLIC_KEYS.laptop, { state: "online" });
     const laptop = backend
       .peek()
       .devices.find((d) => d.device.public_key === MOCK_PUBLIC_KEYS.laptop);
     expect(laptop?.device.last_seen).toBe(1_700_000_500);
-    expect(laptop?.device.last_connection).toBe("relay");
     backend.simulateDeviceConnection(MOCK_PUBLIC_KEYS.laptop, { state: "offline" });
     expect(backend.peek().devices[1]?.connection).toEqual({ state: "offline" });
   });
@@ -3368,31 +3366,19 @@ describe("MockBackend LAN pairing, always-on pairing and the phone's commands", 
   function onlineDesktop(now: number) {
     const desktop = sampleDevices(now)[1];
     if (!desktop) throw new Error("fixture");
-    return { ...desktop, connection: { state: "online" as const, via: "direct" as const } };
+    return { ...desktop, connection: { state: "online" as const } };
   }
 
-  it("regression: a nearby desktop is joined only while it waits; discovery off lists nothing, and the desktop lists none", async () => {
+  it("counts the relay checks the app asks for (docs/pairing.md 「重连」), and the LAN commands are gone", async () => {
     const phone = new MockBackend({ role: "phone" });
-    const events = collect(phone);
-    expect(phone.peek().nearby).toEqual([...MOCK_NEARBY]);
-    await phone.invoke("pairing_join_nearby", { fingerprint: "0000000000000000" });
-    expect(events.at(-1)).toEqual({ type: "error", message: "pairing: 附近没有找到此设备" });
-    const waiting = MOCK_NEARBY[0];
-    if (!waiting) throw new Error("fixture");
-    phone.publish({ type: "nearby", devices: [{ ...waiting, pairing: false }] });
-    await phone.invoke("pairing_join_nearby", { fingerprint: waiting.fingerprint });
-    expect(events.at(-1)).toEqual({ type: "error", message: "pairing: 此设备当前没有等待配对" });
-    phone.publish({ type: "nearby", devices: [...MOCK_NEARBY] });
-    await phone.invoke("pairing_join_nearby", { fingerprint: waiting.fingerprint });
-    expect(phone.peek().pairing.state).toEqual({ state: "creating_session" });
-    await phone.invoke("settings_set_lan_discovery", { enabled: false });
-    expect(phone.peek().settings.lan_discovery).toBe(false);
-    expect(phone.peek().nearby).toEqual([]);
+    await phone.invoke("relay_reconnect");
+    await phone.invoke("relay_reconnect");
+    expect(phone.relayChecks).toBe(2);
+    const unknown = "pairing_join_nearby" as Parameters<MockBackend["invoke"]>[0];
+    await expect(
+      phone.invoke(unknown, { fingerprint: "0000000000000000" } as never),
+    ).rejects.toThrow("is not a function");
     phone.destroy();
-    const desktop = new MockBackend();
-    await desktop.invoke("settings_set_lan_discovery", { enabled: true });
-    expect(desktop.peek().nearby).toEqual([]);
-    desktop.destroy();
   });
 
   it("regression: always-on pairing renews before the code lapses, opens the next window after a pairing or a cancel, and closes the waiting one when off; the phone refuses it", async () => {

@@ -85,7 +85,6 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   provider_probe: null,
   phone_take: null,
   sent_texts: null,
-  nearby: null,
   hardware: null,
   connectivity: null,
   paste_result: null,
@@ -111,9 +110,8 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   phone_text_send: null,
   sent_texts_clear: null,
   phone_share_text: null,
-  settings_set_lan_discovery: null,
   settings_set_pairing_always_on: null,
-  pairing_join_nearby: null,
+  relay_reconnect: null,
   settings_set_relay: null,
   settings_set_theme: null,
   settings_set_hotkey: null,
@@ -202,9 +200,7 @@ const argSchemas = {
     })
     .strict(),
   phone_share_text: z.object({ text: z.string() }).strict(),
-  settings_set_lan_discovery: z.object({ enabled: z.boolean() }).strict(),
   settings_set_pairing_always_on: z.object({ enabled: z.boolean() }).strict(),
-  pairing_join_nearby: z.object({ fingerprint: z.string() }).strict(),
   settings_set_relay: z.object({
     url: z.string().nullable(),
     enabled: z.boolean(),
@@ -352,15 +348,12 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.phone_text_send.parse(args));
     case "phone_share_text":
       return backend.invoke(name, argSchemas.phone_share_text.parse(args));
-    case "settings_set_lan_discovery":
-      return backend.invoke(name, argSchemas.settings_set_lan_discovery.parse(args));
     case "settings_set_pairing_always_on":
       return backend.invoke(name, argSchemas.settings_set_pairing_always_on.parse(args));
-    case "pairing_join_nearby":
-      return backend.invoke(name, argSchemas.pairing_join_nearby.parse(args));
     case "phone_take_stop":
     case "phone_take_cancel":
     case "sent_texts_clear":
+    case "relay_reconnect":
       return backend.invoke(name);
     case "settings_set_relay":
       return backend.invoke(name, argSchemas.settings_set_relay.parse(args));
@@ -500,7 +493,6 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       extra_recording_ms: 150,
       edit_hotkey: "Ctrl+Alt+E",
       solo_key: "right_ctrl",
-      lan_discovery: true,
       pairing_always_on: true,
       context_sharing: { app_name: false, window_title: true },
       history: { enabled: true, keep: 200 },
@@ -577,13 +569,13 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(parsed.pairing.safety_code?.words).toEqual(["amber", "canyon", "lantern", "orbit"]);
     expect(parsed.pairing.peer?.platform).toBe("android");
     expect(parsed.devices.map((d) => d.connection)).toEqual([
-      { state: "online", via: "relay" },
+      { state: "online" },
       {
         state: "identity_changed",
         presented_fingerprint: "DE:B0:E3:8C · ED:1E:41:DE",
       },
     ]);
-    expect(parsed.devices[0]?.device.last_connection).toBe("relay");
+    expect(parsed.devices[0]?.device.last_seen).toBeGreaterThan(0);
     expect(parsed.devices[1]?.device.last_seen).toBeUndefined();
   });
 
@@ -798,24 +790,30 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     );
   });
 
-  it("regression: LAN discovery survives parsing: the nearby list, the switch, and a tap on a pairing desktop", () => {
-    const parsedState = uiStateSchema.parse(state);
-    expect(parsedState.nearby.map((d) => [d.name, d.pairing, d.trusted])).toEqual([
-      ["Studio", true, false],
-      ["MacBook Pro", false, true],
-    ]);
-    const lists = events.flatMap((raw) => {
+  it("regression: only the relay is left (docs/pairing.md 「只走中继」): no LAN command, list or report part, and the relay check takes no arguments", () => {
+    const names = commands.map((c) => c.name);
+    expect(names).toContain("relay_reconnect");
+    expect(names).not.toContain("pairing_join_nearby");
+    expect(names).not.toContain("settings_set_lan_discovery");
+    expect(commands.find((c) => c.name === "relay_reconnect")?.args ?? null).toBeNull();
+    expect(JSON.stringify(state)).not.toMatch(/nearby|lan_discovery|direct_hints|last_connection/);
+    const reports = events.flatMap((raw) => {
       const r = uiEventSchema.safeParse(raw);
-      return r.success && r.data.type === "nearby" ? [r.data.devices.length] : [];
+      return r.success && r.data.type === "connectivity" && r.data.report !== undefined
+        ? [r.data.report]
+        : [];
     });
-    expect(lists).toEqual([0, 2]);
-    // A state without it (an older core) lists nothing and has discovery on.
-    const { nearby: _gone, ...older } = z.record(z.string(), z.unknown()).parse(state);
-    expect(uiStateSchema.parse(older).nearby).toEqual([]);
-    const join = commands.find((c) => c.name === "pairing_join_nearby");
-    expect(argSchemas.pairing_join_nearby.parse(join?.args).fingerprint).toBe("A7C4198E3DF26109");
-    const off = commands.find((c) => c.name === "settings_set_lan_discovery");
-    expect(argSchemas.settings_set_lan_discovery.parse(off?.args).enabled).toBe(false);
+    expect(reports.map((r) => r.relay.result?.result ?? "none")).toEqual([
+      "ok",
+      "timeout",
+      "refused",
+      "failed",
+      "none",
+    ]);
+    expect(reports[0]?.peers.map((p) => [p.name, p.online, p.rtt_ms])).toEqual([
+      ["Surface-Laptop", true, 61],
+      ["iPad", false, undefined],
+    ]);
   });
 
   it("regression: always-on pairing survives parsing, and an older settings file reads it off", () => {

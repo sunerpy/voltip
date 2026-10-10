@@ -98,21 +98,14 @@ pub enum UiCommand {
     },
     /// Phone: forget the list of sent texts.
     SentTextsClear,
-    /// Announce this device on the LAN and browse for the others (docs/pairing.md 「局域网发现」).
-    SettingsSetLanDiscovery {
-        /// On / off.
-        enabled: bool,
-    },
     /// Keep a pairing open until turned off (docs/pairing.md 「常开配对」; desktop only).
     SettingsSetPairingAlwaysOn {
         /// On / off.
         enabled: bool,
     },
-    /// Join the pairing a nearby device waits for (its LAN tag from `nearby`).
-    PairingJoinNearby {
-        /// `NearbyDevice.fingerprint`.
-        fingerprint: String,
-    },
+    /// The network changed or the app came back to the front: the relay link checks its socket
+    /// now (docs/pairing.md 「重连」).
+    RelayReconnect,
     /// Relay settings.
     SettingsSetRelay {
         /// URL or null.
@@ -473,9 +466,8 @@ impl UiCommand {
             Self::PhoneTakeCancel => CoreCommand::PhoneTakeCancel,
             Self::PhoneTextSend { public_key, body, source } => CoreCommand::PhoneTextSend { to: parse_key(&public_key)?, body, source },
             Self::SentTextsClear => CoreCommand::SentTextsClear,
-            Self::SettingsSetLanDiscovery { enabled } => CoreCommand::SetLanDiscovery(enabled),
             Self::SettingsSetPairingAlwaysOn { enabled } => CoreCommand::SetPairingAlwaysOn(enabled),
-            Self::PairingJoinNearby { fingerprint } => CoreCommand::PairingJoinNearby(fingerprint),
+            Self::RelayReconnect => CoreCommand::ReconnectRelay,
             Self::SettingsSetRelay { url, enabled } => CoreCommand::SetRelay { url, enabled },
             Self::SettingsSetTheme { theme, follow_system } => CoreCommand::SetTheme { theme, follow_system },
             Self::SettingsSetHotkey { hotkey } => CoreCommand::SetHotkey(hotkey),
@@ -1113,6 +1105,7 @@ mod tests {
             (r#"{"command":"pairing_reset"}"#, "ResetPairing"),
             (r#"{"command":"devices_refresh"}"#, "RefreshDevices"),
             (r#"{"command":"connectivity_check"}"#, "CheckConnectivity"),
+            (r#"{"command":"relay_reconnect"}"#, "ReconnectRelay"),
             (r#"{"command":"device_rename","name":"X"}"#, "RenameDevice"),
             (r#"{"command":"pairing_join_ticket","uri":"voltip://pair?v=1&t=AA"}"#, "JoinWithTicket"),
         ] {

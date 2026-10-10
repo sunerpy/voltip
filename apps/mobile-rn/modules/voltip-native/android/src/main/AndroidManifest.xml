@@ -3,8 +3,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- The phone as the computer's microphone (docs/dictation.md §20). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <!-- LAN discovery (docs/pairing.md 「局域网发现」): the multicast lock VoltipHost.multicast holds. -->
-    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- The relay link checks its socket when the network changes (docs/pairing.md 「重连」):
+         VoltipNativeModule's network callback. A normal permission, no prompt. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application>
         <!-- History exports go to the share sheet as files (VoltipHost.shareFile). -->

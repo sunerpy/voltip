@@ -150,7 +150,6 @@ fn with_tuned_updater_app(
     SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, ..settings }).unwrap();
     let mut core = CoreConfig::new(dir.path().to_path_buf());
     core.default_device_name = "Update Test".into();
-    core.direct_bind = "127.0.0.1:0".parse().unwrap();
     let mut config = UpdaterConfig {
         endpoint: format!("{}{MANIFEST_PATH}", server.uri()).parse().unwrap(),
         pubkey: PUBKEY.into(),

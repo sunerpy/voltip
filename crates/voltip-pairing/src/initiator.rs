@@ -15,8 +15,6 @@ use crate::engine::{Engine, Step};
 pub struct Reachability {
     /// Relay the initiator is connected to, if any.
     pub relay_hint: Option<url::Url>,
-    /// LAN listeners (`ip:port`) for a direct connection.
-    pub direct_hints: Vec<String>,
 }
 
 struct Waiting {
@@ -141,7 +139,6 @@ impl Initiator {
                     nonce,
                     expires_at,
                     relay_hint: self.reach.relay_hint.clone(),
-                    direct_hints: self.reach.direct_hints.clone(),
                 };
                 let ticket_uri = ticket.to_uri()?;
                 self.last_expires_at = Some(expires_at);

@@ -16,10 +16,7 @@ function desktops(state: "online" | "offline") {
   return [
     {
       ...desktop,
-      connection:
-        state === "online"
-          ? { state: "online" as const, via: "direct" as const }
-          : { state: "offline" as const },
+      connection: state === "online" ? { state: "online" as const } : { state: "offline" as const },
     },
   ];
 }

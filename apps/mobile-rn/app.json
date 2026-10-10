@@ -17,7 +17,7 @@
         "android.permission.INTERNET",
         "android.permission.RECORD_AUDIO",
         "android.permission.CAMERA",
-        "android.permission.CHANGE_WIFI_MULTICAST_STATE"
+        "android.permission.ACCESS_NETWORK_STATE"
       ],
       "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",

@@ -6,7 +6,6 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -31,8 +30,6 @@ class VoltipHost(
     private val activity: () -> Activity?,
     private val emit: (String, Map<String, Any?>) -> Unit,
 ) : PlatformHost {
-    private var multicastLock: WifiManager.MulticastLock? = null
-
     /** One `UiEvent` (`voltip://event`). */
     override fun event(json: String) = platform { emit("onEvent", mapOf("json" to json)) }
 
@@ -84,26 +81,6 @@ class VoltipHost(
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         start(Intent.createChooser(send, null))
-    }
-
-    /**
-     * LAN discovery (docs/pairing.md 「局域网发现」): without a multicast lock the Wi-Fi driver drops
-     * the mDNS packets. Needs CHANGE_WIFI_MULTICAST_STATE (a normal permission, no prompt).
-     */
-    @Synchronized
-    override fun multicast(held: Boolean) {
-        platform {
-            if (held) {
-                val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-                val lock = multicastLock ?: wifi.createMulticastLock("voltip-lan-discovery").also {
-                    it.setReferenceCounted(false)
-                    multicastLock = it
-                }
-                if (!lock.isHeld) lock.acquire()
-            } else {
-                multicastLock?.let { if (it.isHeld) it.release() }
-            }
-        }
     }
 
     /** A page the shell built (a key page, the repository, the guide) in the browser. */

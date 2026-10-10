@@ -44,7 +44,6 @@ fn start(dir: &std::path::Path, selected: FakeTranscriber, fallback: FakeTranscr
     SettingsStore::new(dir).save(&Settings { relay_enabled: false, engines: engines(), ..Settings::default() }).unwrap();
     let mut config = CoreConfig::new(dir.to_path_buf());
     config.default_device_name = "Fallback Test".into();
-    config.direct_enabled = false;
     let (selected, fallback) = (Arc::new(selected), Arc::new(fallback));
     let mut ports = ports_with(Arc::new(FakeAudio::speech()), selected.clone(), None, Arc::new(FakeInjector::paste()));
     ports.factory = factory_by_model(&[("qwen-audio-3.1-asr-flash", selected.clone()), ("qwen3-asr-flash", fallback.clone())], &[]);

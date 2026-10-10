@@ -800,15 +800,12 @@ describe("Home page", () => {
       screen.queryByRole("button", { name: /复制 MCP 配置|复制 Hook 命令|待批准/ }),
     ).toBeNull();
     const card = screen.getByTestId("home-devices");
-    // renderApp's core: Pixel 8 online over LAN, MacBook Pro offline, relay not configured.
+    // renderApp's core: Pixel 8 online, MacBook Pro offline, relay not configured.
     // Header lamp (first online phone) and the Pixel 8 row both read the core's connection label.
-    expect(within(card).getAllByText("在线 · 直连")).toHaveLength(2);
+    expect(within(card).getAllByText("在线")).toHaveLength(2);
     expect(within(card).getByText("2 台已配对")).toBeInTheDocument();
     const rows = within(card).getAllByRole("listitem");
-    expect(rows.map((r) => r.textContent)).toEqual([
-      "Pixel 8Android在线 · 直连",
-      "MacBook PromacOS离线",
-    ]);
+    expect(rows.map((r) => r.textContent)).toEqual(["Pixel 8Android在线", "MacBook PromacOS离线"]);
     expect(within(card).getByText("中继 · 未配置")).toBeInTheDocument();
     expect(within(card).queryByText("尚未配对手机 · 去配对")).toBeNull();
     await user.click(within(card).getByRole("button", { name: "打开「手机」页" }));

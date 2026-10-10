@@ -28,7 +28,6 @@ fn start(dir: &std::path::Path, injector: Arc<FakeInjector>) -> Node {
     SettingsStore::new(dir).save(&Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Settings::default() }).unwrap();
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = "Vocabulary Test".into();
-    cfg.direct_enabled = false;
     let ports = DictationPorts {
         audio: Arc::new(FakeAudio::speech()),
         injector,

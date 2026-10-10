@@ -58,10 +58,10 @@ https://github.com/user-attachments/assets/64e1fdc2-1ab0-42a6-a8c9-740a1efa2ecb
   soon after you stop. In the history, an AI preset processes a long text in parts (Chinese ⇄
   English gives a translation, Key points a summary), and a take exports as SRT subtitles or as
   plain text.
-- Phone as microphone and keyboard: pair an Android phone by QR code, a 6-digit code, or a tap on
-  the computer it finds on the same network. Hold to talk on the phone (the audio goes end-to-end
-  encrypted, compressed with Opus), or type or send the clipboard, and the text appears at the
-  computer's cursor. The computer can keep pairing open for the next phone.
+- Phone as microphone and keyboard: pair an Android phone by QR code or a 6-digit code. Hold to
+  talk on the phone (the audio goes end-to-end encrypted, compressed with Opus), or type or send
+  the clipboard, and the text appears at the computer's cursor. The computer can keep pairing open
+  for the next phone.
 - The phone on its own: with no computer online, the phone recognises and cleans up the speech
   itself and copies the text. It has its own speech and AI providers, presets, dictionary, rules,
   scenes and history: every feature but the local models. A paired computer's history and
@@ -178,8 +178,8 @@ keychain (Windows Credential Manager, macOS Keychain, Secret Service on Linux) a
 again after you save them. History stays on the computer and can be limited or turned off.
 
 The phone and the computer pair with a Noise XX handshake and a safety code you compare on both
-screens. On the same network they talk directly; otherwise an optional relay forwards their
-traffic, which is end-to-end encrypted, so the relay never sees audio or text.
+screens. They connect through a relay, which forwards their traffic end-to-end encrypted, so the
+relay never sees audio or text; after a network drop they reconnect on their own.
 [docs/threat-model.md](./docs/threat-model.md) lists what this protects against.
 
 ## Build from source

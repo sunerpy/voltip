@@ -1,5 +1,5 @@
 // 本机 (apps/mobile's ThisDevice): this phone's name (renamed here), where its keys live, its
-// fingerprint, LAN discovery, and the ways to pair a computer and to the paired ones.
+// fingerprint, and the ways to pair a computer and to the paired ones.
 import { platformLabel, shortKey } from "@voltip/shared";
 import { useState } from "react";
 import { View } from "react-native";
@@ -10,24 +10,14 @@ import { useI18n } from "../backend/i18n";
 import { useRootNavigation } from "../routes";
 import { useShell } from "../shell";
 import { Button } from "../ui/Button";
-import {
-  FactRow,
-  Lede,
-  Mono,
-  Page,
-  RowDivider,
-  Section,
-  StateLine,
-  SwitchRow,
-  useAppTheme,
-} from "../ui/kit";
+import { FactRow, Lede, Mono, Page, RowDivider, Section, StateLine, useAppTheme } from "../ui/kit";
 
 const NAME_MAX = 64;
 
 export function ThisDevice() {
   const theme = useAppTheme();
   const { backend } = useBackend();
-  const { identity, secret_backend, settings } = useUiState();
+  const { identity, secret_backend } = useUiState();
   const shell = useShell();
   const navigation = useRootNavigation();
   const { t, locale } = useI18n();
@@ -117,17 +107,6 @@ export function ThisDevice() {
         </Section>
       )}
       <Lede>{t("mobile.device.note")}</Lede>
-      <Section testID="lan-discovery">
-        <SwitchRow
-          icon="lan"
-          title={t("mobile.device.lan")}
-          description={t("mobile.device.lanHelp")}
-          value={settings.lan_discovery}
-          onValueChange={(enabled) => {
-            void backend.invoke("settings_set_lan_discovery", { enabled });
-          }}
-        />
-      </Section>
       <Button
         mode="contained"
         icon="qrcode-scan"

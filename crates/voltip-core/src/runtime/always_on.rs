@@ -1,9 +1,8 @@
 //! Always-on pairing (docs/pairing.md 「常开配对」): with `Settings.pairing_always_on`, a desktop
 //! always has a session waiting for a phone. A waiting session is renewed shortly before it
-//! lapses, and moved onto the relay once the relay connects; a finished one (trusted, rejected,
-//! failed) is followed by the next after a pause that leaves its outcome on screen; a start that
-//! finds nothing to open a session on (no relay, no LAN host) is tried again. Every pairing still
-//! needs the safety code confirmed on this desktop.
+//! lapses; a finished one (trusted, rejected, failed) is followed by the next after a pause that
+//! leaves its outcome on screen; a start that finds no relay to open a session on is tried again.
+//! Every pairing still needs the safety code confirmed on this desktop.
 
 use std::time::{Duration, Instant};
 
@@ -11,7 +10,6 @@ use voltip_pairing::PairingState;
 
 use super::Runtime;
 use crate::CoreError;
-use crate::peer::LinkId;
 
 /// A waiting session this close to its end is replaced, so a phone never gets a code that dies
 /// in its hands.
@@ -45,14 +43,10 @@ impl Runtime {
             return;
         }
         let wait = match self.pairing_snapshot() {
-            // Nothing running, and no start waiting for the loopback link: open one.
-            None if self.pending_start.is_none() => Duration::ZERO,
-            None => return,
+            // Nothing running: open one.
+            None => Duration::ZERO,
             Some(s) => match s.state {
                 PairingState::WaitingForPeer if s.remaining_secs.is_some_and(|r| r <= RENEW_BEFORE_SECS) => Duration::ZERO,
-                // Opened on the LAN host while the relay was not there yet: phones elsewhere
-                // could not reach it.
-                PairingState::WaitingForPeer if self.relay_connected() && self.pairing_link != Some(LinkId::Relay) => Duration::ZERO,
                 PairingState::Expired => Duration::ZERO,
                 PairingState::Trusted | PairingState::Rejected | PairingState::Failed { .. } => FINISHED_PAUSE,
                 // Opening, waiting, a phone joining or comparing codes: leave it alone.

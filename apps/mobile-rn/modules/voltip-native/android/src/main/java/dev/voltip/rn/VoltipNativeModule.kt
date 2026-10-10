@@ -1,5 +1,8 @@
 package dev.voltip.rn
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import dev.voltip.rn.uniffi.ShellException
 import dev.voltip.rn.uniffi.VoltipShell
@@ -19,10 +22,16 @@ import java.io.File
  * the UniFFI object [VoltipShell] (`apps/mobile-rn/rust/src/ffi.rs`); [VoltipHost] is its platform.
  * `systemAccent()` is the wallpaper's colour the system themes itself with (Android 12+), which
  * the app's colours follow while its appearance follows the system (docs/mobile-rn.md §5).
+ *
+ * The phone's only link to its computers is the relay (docs/pairing.md 「只走中继」), and its socket
+ * rarely survives a change of network or a long stay in the background: when Android reports
+ * another network, or the app comes to the front, the shell checks it at once
+ * ([VoltipShell.reconnectRelay]) instead of waiting for the heartbeat (docs/pairing.md 「重连」).
  */
 class VoltipNativeModule : Module() {
     @Volatile
     private var shell: VoltipShell? = null
+    private var network: ConnectivityManager.NetworkCallback? = null
 
     override fun definition() = ModuleDefinition {
         Name("VoltipNative")
@@ -44,11 +53,16 @@ class VoltipNativeModule : Module() {
                 // A second start (the JavaScript reloaded) hands back the running shell with this
                 // host in place of the old one.
                 shell = VoltipShell.start(dataDir, version, host)
+                watchNetwork(context)
                 null
             } catch (e: ShellException) {
                 e.message
             }
         }
+
+        OnActivityEntersForeground { shell?.reconnectRelay() }
+
+        OnDestroy { unwatchNetwork() }
 
         /** `#rrggbb` of the system's accent (Material You), or `null` before Android 12. */
         Function("systemAccent") {
@@ -67,6 +81,42 @@ class VoltipNativeModule : Module() {
                 throw CodedException(ERROR_CODE, e.message, e)
             }
         }
+    }
+
+    /** The default network came or went (another Wi-Fi, mobile data, none): check the relay socket. */
+    @Synchronized
+    private fun watchNetwork(context: Context) {
+        if (network != null) return
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                shell?.reconnectRelay()
+            }
+
+            override fun onLost(network: Network) {
+                shell?.reconnectRelay()
+            }
+        }
+        try {
+            manager.registerDefaultNetworkCallback(callback)
+            network = callback
+        } catch (e: RuntimeException) {
+            // Too many callbacks registered, or no permission: the heartbeat still notices.
+            android.util.Log.w("VoltipNative", "network callback not registered: ${e.message}")
+        }
+    }
+
+    @Synchronized
+    private fun unwatchNetwork() {
+        val callback = network ?: return
+        val context = appContext.reactContext?.applicationContext ?: return
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        try {
+            manager.unregisterNetworkCallback(callback)
+        } catch (_: IllegalArgumentException) {
+            // Not registered any more.
+        }
+        network = null
     }
 
     private companion object {

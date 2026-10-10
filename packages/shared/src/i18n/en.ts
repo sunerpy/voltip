@@ -126,13 +126,10 @@ export const en: Messages = {
   },
   platform: { other: "Other" },
   connection: {
-    onlineDirect: "Online · direct",
-    onlineRelay: "Online · via relay",
+    online: "Online",
     connecting: "Connecting",
     offline: "Offline",
     identityChanged: "Identity changed",
-    direct: "Direct",
-    relay: "Relay",
   },
   relay: {
     disconnected: "Disconnected",
@@ -1301,7 +1298,6 @@ export const en: Messages = {
     column: {
       device: "Device",
       pairedOn: "{fingerprint} · paired on {date}",
-      lan: "LAN address",
       lastSeen: "Last seen",
       state: "State",
       sync: "Sync",
@@ -1325,15 +1321,13 @@ export const en: Messages = {
     panel: {
       paired: "Paired devices",
       allowRelay: "Allow relay connections",
-      lanDiscovery: "LAN discovery",
       noRelay: "No relay configured",
       builtinRelay: "Built-in relay",
       count: "{paired} paired · {online} online",
       emptyTitle: "No phone paired yet",
       emptyBody: "Start with the QR code above.",
       note: "A forgotten device has to scan again and compare the safety code; a device whose identity key changed is marked red here until you deal with it.",
-      lanNote:
-        "LAN discovery announces this computer's name on the local network: a phone pairs with one tap, and paired devices find it again after its address changes. With it off, pair by QR code or code only.",
+      relayOffNote: "With the relay off, phones cannot pair with or connect to this computer.",
       syncNote:
         "Sync history with a phone: the history and the settings such as models and the dictionary go to the phone, read-only there; what the phone transcribes on its own is copied to this computer. Turned off, this computer's history is deleted from the phone.",
     },
@@ -1350,7 +1344,6 @@ export const en: Messages = {
       audio: "Audio",
       audioValue: "Opus · 16 kHz mono",
       phone: "Phone",
-      link: "Connection",
       note: "Hold to talk on the phone: the audio reaches this computer live over the end-to-end encrypted channel, this computer's recognition transcribes it, the text lands at its cursor, and the result goes back to the phone.",
     },
     syncPanel: {
@@ -1366,20 +1359,16 @@ export const en: Messages = {
   connectivity: {
     title: "Connection check",
     intro:
-      "What this device can reach right now: the relay, each paired device's LAN addresses, and the round trip on the encrypted channel.",
+      "What this device can reach right now: whether the relay answers, and the round trip on the encrypted channel to each paired device.",
     run: "Run the check",
     running: "Checking…",
     runAgain: "Check again",
     results: "Check results",
-    lanListening: "This computer's LAN service · {addresses}",
-    lanOff: "This computer's LAN service is off",
     relayNone: "No relay configured",
     relay: "Relay · {result}",
-    peerOnline: "{name} · {via} · encrypted round trip {ms} ms",
-    peerNoAnswer: "{name} · {via} · no answer on the encrypted channel",
+    peerOnline: "{name} · online · encrypted round trip {ms} ms",
+    peerNoAnswer: "{name} · online · no answer on the encrypted channel",
     peerOffline: "{name} · offline",
-    address: "{address} · {result}",
-    noAddress: "No LAN address on record",
     result: {
       ok: "reachable · {ms} ms",
       timeout: "no answer",
@@ -1387,8 +1376,6 @@ export const en: Messages = {
       failed: "failed · {reason}",
       failedBare: "failed",
     },
-    blocked:
-      "Same network, yet unreachable: the other device's firewall may block the port, or the Wi-Fi isolates its clients.",
     checkedAt: "Checked {at}",
   },
   pairing: {
@@ -1406,13 +1393,11 @@ export const en: Messages = {
     copyFingerprint: "Copy fingerprint",
     fingerprintWhat: "fingerprint",
     scanNote: "Scanning gives the phone the pairing info; nothing to type.",
-    lanNote:
-      "Phones on this network can also pick this computer under “Computers nearby” on their pairing screen.",
     alwaysOn: "Always-on pairing",
     alwaysOnHelp:
       "While on, this computer keeps waiting for a phone: the QR code renews before it expires and the next pairing opens after each one, until you turn it off. Every pairing still needs the safety code checked and confirmed here.",
     alwaysOnOpen: "Always on · this code {remaining}",
-    alwaysOnIdle: "Always-on pairing is on; it starts once the relay or the LAN is available.",
+    alwaysOnIdle: "Always-on pairing is on; it starts once the relay is connected.",
     alwaysOnNext: "Always-on pairing: the next pairing opens in a moment.",
     validity: "Valid for",
     warning: "Do not screenshot this QR code or show it on a shared screen.",
@@ -1442,7 +1427,7 @@ export const en: Messages = {
     restart: "Start over",
     connectTitle: "Connection",
     connect:
-      "Pair with the QR code or the 6-digit code; afterwards the devices connect directly on the same LAN and through the relay across networks, which forwards encrypted data only.",
+      "Pair with the QR code or the 6-digit code; afterwards the devices connect through the relay, which forwards encrypted data only. After a network drop or change they reconnect on their own.",
     relay: "Relay · {state}",
   },
   onboarding: {
@@ -2601,7 +2586,7 @@ export const en: Messages = {
         "Hold to talk and let go to get text: with no computer connected the phone transcribes and polishes it and copies the result; paired with a computer, the text appears at the computer's cursor.",
       pairing: "Connect a computer",
       pairingBody:
-        "Once paired, this phone works as the computer's microphone and keyboard. Audio is end-to-end encrypted and goes directly over the LAN; keys stay between the two devices.",
+        "Once paired, this phone works as the computer's microphone and keyboard. Audio is end-to-end encrypted and goes through the relay; keys stay between the two devices.",
       e2ee: "End-to-end encrypted",
       e2eeBody:
         "Only the two paired devices can decrypt the content; the relay sees ciphertext only.",
@@ -2627,13 +2612,10 @@ export const en: Messages = {
       note: "The private key lives only in this phone's system keystore; it never goes into config files, logs or the relay. The other device sees this fingerprint while pairing.",
       pair: "Pair a computer",
       viewDevices: "View paired devices",
-      lan: "LAN discovery",
-      lanHelp:
-        "Announces this phone's name on the local network and looks for computers: pairing takes one tap, and a paired computer is found again after its address changes.",
     },
     pair: {
       intro:
-        "Open the Phone page on the computer and start pairing, then pick it under Computers nearby, scan its QR code, or enter the 6-digit code it shows. Whichever way you use, establishing the encrypted connection and checking the safety code are the same afterwards.",
+        "Open the Phone page on the computer and start pairing, then scan its QR code or enter the 6-digit code it shows. Either way, establishing the encrypted connection and checking the safety code are the same afterwards.",
       method: "Pairing method",
       scan: "Scan",
       code: "Enter 6-digit code",
@@ -2653,15 +2635,6 @@ export const en: Messages = {
       scanCancelled: "Scan cancelled or camera permission not granted",
       retry: "Retry",
       clearRetry: "Clear and retry",
-      nearby: {
-        title: "Computers nearby",
-        searching: "Looking for computers on this network…",
-        empty: "Open the Phone page on the computer and click Start pairing; it appears here.",
-        off: "LAN discovery is off. Turn it on under This device, and computers waiting to pair on this network appear here.",
-        join: "Pair",
-        joinLabel: "Pair with {name}",
-        idle: "Not pairing yet",
-      },
     },
     verify: {
       rejected: "Pairing was rejected and cancelled.",
@@ -2767,7 +2740,6 @@ export const en: Messages = {
         online: "Online",
         lastSeen: "Last seen",
         trusted: "Trusted",
-        connection: "Connection",
       },
       identityChanged:
         "This computer presented a different identity key ({fingerprint}). Not trusted automatically; if you reinstalled the system, forget it and pair again.",

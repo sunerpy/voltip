@@ -29,7 +29,6 @@ fn config(dir: &std::path::Path) -> CoreConfig {
     SettingsStore::new(dir).save(&Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Settings::default() }).unwrap();
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = "Activation Test".into();
-    cfg.direct_enabled = false;
     cfg
 }
 

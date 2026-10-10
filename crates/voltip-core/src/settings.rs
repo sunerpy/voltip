@@ -197,10 +197,7 @@ pub struct Settings {
     /// written before it) = off.
     #[serde(default)]
     pub solo_key: Option<SoloKey>,
-    /// Announce this device on the LAN and browse for the others (docs/pairing.md 「局域网发现」);
-    /// on by default, and in files written before it.
-    #[serde(default = "default_true")]
-    pub lan_discovery: bool,
+    // Builds before 0.1.0 also wrote `lan_discovery` (docs/pairing.md 「只走中继」): ignored on load.
     /// Keep a pairing open on this desktop until turned off (docs/pairing.md 「常开配对」): a
     /// session always waits for a phone and is renewed before it lapses. Off by default.
     #[serde(default)]
@@ -270,10 +267,6 @@ fn default_edit_hotkey() -> Option<String> {
     Some(crate::hotkey::DEFAULT_EDIT_HOTKEY.to_string())
 }
 
-fn default_true() -> bool {
-    true
-}
-
 fn default_hold_threshold_ms() -> u32 {
     DEFAULT_HOLD_THRESHOLD_MS
 }
@@ -296,7 +289,6 @@ impl Default for Settings {
             context_sharing: ContextSharing::default(),
             edit_hotkey: default_edit_hotkey(),
             solo_key: None,
-            lan_discovery: true,
             pairing_always_on: false,
             pinned_scene: None,
             history: HistorySettings::default(),
@@ -601,8 +593,25 @@ mod tests {
     #[test]
     fn settings_written_before_always_on_pairing_read_it_off() {
         let old: Settings = serde_json::from_str(r#"{"schema":1,"theme":"light","follow_system_theme":false,"relay_enabled":true}"#).unwrap();
-        assert!(!old.pairing_always_on && old.lan_discovery);
+        assert!(!old.pairing_always_on);
         assert!(!Settings::default().pairing_always_on);
+    }
+
+    /// A settings file from before 0.1.0 carries `lan_discovery` (docs/pairing.md 「只走中继」): it
+    /// loads as before, and the next save leaves it out.
+    #[test]
+    fn regression_settings_with_the_old_lan_discovery_switch_still_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore::new(dir.path());
+        store.save(&Settings { relay_enabled: true, pairing_always_on: true, ..Settings::default() }).unwrap();
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+        let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        value["lan_discovery"] = serde_json::Value::Bool(false);
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        let loaded = store.load().unwrap();
+        assert!(loaded.relay_enabled && loaded.pairing_always_on);
+        store.save(&loaded).unwrap();
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("lan_discovery"));
     }
 
     #[test]

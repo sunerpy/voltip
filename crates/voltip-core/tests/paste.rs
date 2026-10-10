@@ -46,7 +46,6 @@ fn start() -> Node {
     };
     let mut config = CoreConfig::new(dir.path().to_path_buf());
     config.default_device_name = "Paste Test".into();
-    config.direct_enabled = false;
     let (handle, events) = AppCore::start_with(config, Arc::new(MemorySecretStore::new()), ports).unwrap();
     Node { handle, events, injector, probe, _dir: dir }
 }

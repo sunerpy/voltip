@@ -47,9 +47,7 @@ impl Phone {
         let dir = tempfile::tempdir().unwrap();
         SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, ..settings }).unwrap();
         let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().worker_threads(2).build().unwrap();
-        let mut config = voltip_rn::shell::phone_config(dir.path().to_path_buf(), "0.0.51");
-        config.discovery = None;
-        config.direct_bind = "127.0.0.1:0".parse().unwrap();
+        let config = voltip_rn::shell::phone_config(dir.path().to_path_buf(), "0.0.51");
         let host = RecordingHost::default();
         host.set_installer(installer);
         let host = Arc::new(host);

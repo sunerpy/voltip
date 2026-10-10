@@ -34,13 +34,12 @@ const POLL: Duration = Duration::from_millis(20);
 const DEVICE_NAME: &str = "Desk Test";
 const NOT_FOUND: &str = "not found";
 
-/// Offline core: relay disabled, LAN host on an ephemeral loopback port, recognition on the fakes'
-/// custom endpoint (a test build has no built-in service).
+/// Offline core: relay disabled, recognition on the fakes' custom endpoint (a test build has no
+/// built-in service).
 fn offline_config(dir: &Path) -> CoreConfig {
     SettingsStore::new(dir).save(&Settings { relay_enabled: false, engines: fake_engines(), ..Settings::default() }).unwrap();
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = DEVICE_NAME.into();
-    cfg.direct_bind = "127.0.0.1:0".parse().unwrap();
     // As in the shell's own configuration (docs/dictation.md §20.8).
     cfg.sync_role = voltip_core::sync::SyncRole::Computer;
     cfg
@@ -231,20 +230,18 @@ fn always_on_pairing_opens_a_session_and_closes_it_when_off() {
     });
 }
 
-/// docs/pairing.md 「局域网发现」: the switch persists and comes back in `settings`; joining a
-/// device the LAN browse has not seen is the core's error; both need their argument.
+/// docs/pairing.md 「重连」: `relay_reconnect` reaches the core, which asks the relay link to check
+/// its socket (with the relay off there is none, and nothing goes wrong); the LAN commands are
+/// gone (docs/pairing.md 「只走中继」).
 #[test]
-fn lan_discovery_commands_reach_the_core() {
-    with_running_app(|_, webview, rx| {
+fn relay_reconnect_reaches_the_core_and_the_lan_commands_are_gone() {
+    with_running_app(|_, webview, _| {
         wait_state(webview, |s| s.identity.is_some());
-        assert!(core_state(webview).settings.lan_discovery, "on by default");
-        assert!(invoke(webview, "settings_set_lan_discovery", json!({})).is_err(), "enabled is required");
-        assert_eq!(invoke(webview, "settings_set_lan_discovery", json!({ "enabled": false })), Ok(Value::Null));
-        wait_event(rx, "settings", |e| e["type"] == "settings" && e["lan_discovery"] == false);
-        assert!(!wait_state(webview, |s| !s.settings.lan_discovery).settings.lan_discovery);
-        assert!(invoke(webview, "pairing_join_nearby", json!({})).is_err(), "fingerprint is required");
-        assert_eq!(invoke(webview, "pairing_join_nearby", json!({ "fingerprint": "0000000000000000" })), Ok(Value::Null));
-        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("附近没有找到此设备")));
+        assert_eq!(invoke(webview, "relay_reconnect", json!({})), Ok(Value::Null));
+        assert!(core_state(webview).identity.is_some(), "the core still answers");
+        for gone in ["settings_set_lan_discovery", "pairing_join_nearby"] {
+            assert!(invoke(webview, gone, json!({ "enabled": false, "fingerprint": "0000000000000000" })).is_err(), "{gone}");
+        }
     });
 }
 

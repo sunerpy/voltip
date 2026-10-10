@@ -46,7 +46,6 @@ fn config(dir: &std::path::Path) -> CoreConfig {
     SettingsStore::new(dir).save(&Settings { relay_enabled: false, engines: remote_engines(), ..Settings::default() }).unwrap();
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = "Dictation Test".into();
-    cfg.direct_enabled = false;
     cfg
 }
 
@@ -445,7 +444,6 @@ fn notices(events: &[CoreEvent]) -> Vec<Option<voltip_core::ui::RefineNotice>> {
 /// [`Switchable`] refiner.
 fn built_in_core(dir: &std::path::Path, busy: &Arc<std::sync::atomic::AtomicBool>) -> Node {
     let mut cfg = CoreConfig::new(dir.to_path_buf());
-    cfg.direct_enabled = false;
     cfg.test_hooks.built_in = Some(voltip_core::BuiltIn {
         refine_url: Some("https://<refine-host>/v1"),
         refine_api_key: Some("k"),
