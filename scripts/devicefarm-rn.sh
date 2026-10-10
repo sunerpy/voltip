@@ -38,7 +38,7 @@ fetch() {
     cat "$summary"
     # What apps/mobile-rn/devicefarm/acceptance.sh must have seen for the device to pass.
     for want in installed=yes first_screen=ok stays_up=yes talk_finished=yes 03-history=ok 04-settings=ok \
-      05-speech=ok 06-ai=ok 07-appearance=ok theme_dark=ok 09-recording=ok dropdown=ok back_closes_menu_first=ok \
+      05-speech=ok provider_sheet=ok back_closes_sheet_first=ok 06-ai=ok 07-appearance=ok theme_dark=ok 09-recording=ok dropdown=ok back_closes_menu_first=ok \
       11-dictionary=ok editor=ok 12b-rules=ok 12c-scenes=ok 12d-history-settings=ok \
       12e-feedback=ok 12f-about=ok follow_system=ok back_to_talk=ok 13-device=ok 14-pair=ok pair_code=ok talk_again=ok back_once_stays=ok \
       back_twice_leaves=ok fatal=none; do

@@ -123,6 +123,13 @@ describe("the phone app on React Native", () => {
     await fireEvent.press(within(sheet).getByTestId("provider-use"));
     expect(within(sheet).getByTestId("provider-problem")).toHaveTextContent("请填写 API 密钥");
     expect(invoke).not.toHaveBeenCalledWith("settings_set_engines", expect.anything());
+    // Regression (Device Farm 2026-10-11): the fields filled themselves with the page's grey.
+    const outlines = within(sheet).getAllByTestId("text-input-outline");
+    expect(outlines.length).toBeGreaterThanOrEqual(2);
+    for (const outline of outlines)
+      expect(outline).toHaveStyle({
+        backgroundColor: appTheme("light").colors.elevation.level1,
+      });
     await fireEvent.changeText(within(sheet).getByTestId("provider-key"), "gsk_test");
     await fireEvent.press(within(sheet).getByTestId("provider-use"));
     await waitFor(() => {

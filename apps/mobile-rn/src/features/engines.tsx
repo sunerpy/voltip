@@ -37,7 +37,7 @@ import { useShell } from "../shell";
 import { Button } from "../ui/Button";
 import { CARD_RADIUS, Hint, Lamp, Mono, StateLine, type Tone, useAppTheme } from "../ui/kit";
 import { SelectField } from "../ui/Select";
-import { BottomSheet } from "../ui/Sheet";
+import { BottomSheet, sheetColor } from "../ui/Sheet";
 import { mix } from "../ui/statTile";
 
 /** The model select's last option: type any other model id. */
@@ -585,6 +585,7 @@ function ProviderForm({
             autoCapitalize="none"
             autoCorrect={false}
             testID="provider-model-id"
+            style={{ backgroundColor: sheetColor(theme) }}
             onChangeText={(model) => {
               setDraft({ ...draft, model });
             }}
@@ -638,6 +639,7 @@ function ProviderForm({
           autoCorrect={false}
           keyboardType="url"
           testID="provider-url"
+          style={{ backgroundColor: sheetColor(theme) }}
           onChangeText={(baseUrl) => {
             setDraft({ ...draft, baseUrl });
           }}
@@ -668,6 +670,7 @@ function ProviderForm({
             autoCorrect={false}
             autoComplete="off"
             testID="provider-key"
+            style={{ backgroundColor: sheetColor(theme) }}
             onChangeText={(key) => {
               setDraft({ ...draft, key });
             }}

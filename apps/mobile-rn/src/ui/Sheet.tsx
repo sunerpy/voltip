@@ -20,6 +20,7 @@ import { Text } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useT } from "../backend/i18n";
+import type { AppTheme } from "../theme/themes";
 import { useAppTheme } from "./kit";
 
 /** How far a swipe down on the handle takes the sheet away, or how fast. */
@@ -27,6 +28,12 @@ const DISMISS_DISTANCE = 80;
 const DISMISS_VELOCITY = 0.8;
 const OPEN_MS = 240;
 const CLOSE_MS = 180;
+
+/** The sheet's own colour. A field on it takes it too: Paper's outlined field fills itself with
+ *  the page's background by default, a grey box on the sheet (Device Farm 2026-10-11). */
+export function sheetColor(theme: AppTheme): string {
+  return theme.colors.elevation.level1;
+}
 
 /** While the sheet is open, Android's back closes it and nothing else. On a phone the modal's
  *  `onRequestClose` takes the press; this listener is for the cases where the press reaches the
@@ -156,7 +163,7 @@ export function BottomSheet({
           style={[
             styles.sheet,
             {
-              backgroundColor: theme.colors.elevation.level1,
+              backgroundColor: sheetColor(theme),
               paddingBottom: insets.bottom + 12,
               maxHeight: height * maxHeight,
               transform: [{ translateY }],
