@@ -1,10 +1,15 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! End-to-end: two cores, a real relay, real sockets. Pairing by code and by ticket, E2EE
-//! messaging, presence, reconnect, forget, and the identity-changed regression.
+//! messaging, presence, reconnect (a path that breaks without a word included), forget, and the
+//! identity-changed regression.
+
+#[path = "support/net_cut.rs"]
+mod net_cut;
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use net_cut::NetCut;
 use tokio::sync::mpsc;
 use voltip_core::{AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DeviceConnection, Settings, SettingsStore};
 use voltip_identity::MemorySecretStore;
@@ -22,8 +27,14 @@ struct Node {
 }
 
 async fn relay() -> (String, tokio::sync::oneshot::Sender<()>, RelayHandle) {
+    let (url, _addr, stop, handle) = relay_with(RelayConfig::default()).await;
+    (url, stop, handle)
+}
+
+/// A relay with `config`, and the address it listens on.
+async fn relay_with(config: RelayConfig) -> (String, std::net::SocketAddr, tokio::sync::oneshot::Sender<()>, RelayHandle) {
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-    let handle = RelayHandle::new(RelayConfig::default());
+    let handle = RelayHandle::new(config);
     let (addr, _task) = handle
         .clone()
         .serve("127.0.0.1:0".parse().unwrap(), async move {
@@ -31,41 +42,12 @@ async fn relay() -> (String, tokio::sync::oneshot::Sender<()>, RelayHandle) {
         })
         .await
         .unwrap();
-    (format!("ws://{addr}/ws"), stop_tx, handle)
+    (format!("ws://{addr}/ws"), addr, stop_tx, handle)
 }
 
 fn node_with(dir: tempfile::TempDir, store: Arc<MemorySecretStore>, name: &str, relay_url: Option<&str>) -> Node {
-    node_opts(dir, store, name, relay_url, true)
-}
-
-/// `direct_enabled = false` simulates a device whose LAN is unreachable: no LAN host, no dialing.
-fn node_opts(dir: tempfile::TempDir, store: Arc<MemorySecretStore>, name: &str, relay_url: Option<&str>, direct_enabled: bool) -> Node {
     let settings = Settings { relay_url: relay_url.map(str::to_owned), relay_enabled: relay_url.is_some(), ..Settings::default() };
-    node_settings(dir, store, name, &settings, direct_enabled)
-}
-
-fn node_settings(dir: tempfile::TempDir, store: Arc<MemorySecretStore>, name: &str, settings: &Settings, direct_enabled: bool) -> Node {
-    node_config(dir, store, name, settings, direct_enabled, None)
-}
-
-/// A node on the in-memory LAN `lan` (docs/pairing.md 「局域网发现」): LAN host on, no relay.
-fn node_on_lan(dir: tempfile::TempDir, store: Arc<MemorySecretStore>, name: &str, lan: &voltip_core::discovery::fake::LocalLan) -> Node {
-    let settings = Settings { relay_url: None, relay_enabled: false, ..Settings::default() };
-    node_config(dir, store, name, &settings, true, Some(lan.join()))
-}
-
-fn node_config(
-    dir: tempfile::TempDir,
-    store: Arc<MemorySecretStore>,
-    name: &str,
-    settings: &Settings,
-    direct_enabled: bool,
-    discovery: Option<Arc<dyn voltip_core::discovery::Discovery>>,
-) -> Node {
-    node_tuned(dir, store, name, settings, |cfg| {
-        cfg.direct_enabled = direct_enabled;
-        cfg.discovery = discovery;
-    })
+    node_tuned(dir, store, name, &settings, |_| {})
 }
 
 /// A node with the test timings, `settings` saved first, and `tune` applied last.
@@ -76,32 +58,10 @@ fn node_tuned(dir: tempfile::TempDir, store: Arc<MemorySecretStore>, name: &str,
     let mut cfg = CoreConfig::new(dir_path.clone());
     cfg.default_device_name = name.into();
     cfg.tick = Duration::from_millis(50);
-    cfg.direct_bind = "127.0.0.1:0".parse().unwrap();
-    cfg.direct_retry = Duration::from_millis(100);
-    cfg.direct_retry_max = Duration::from_millis(400);
-    cfg.direct_connect_timeout = Duration::from_secs(2);
     cfg.peer_handshake_timeout = Duration::from_millis(600);
     tune(&mut cfg);
     let (handle, events) = AppCore::start(cfg, store.clone()).unwrap();
     Node { handle, events, _dir: dir, store, dir_path }
-}
-
-async fn wait_online_via(node: &mut Node, via: voltip_identity::ConnectionKind) {
-    wait(node, |e| match e {
-        CoreEvent::Devices(list) if list.iter().any(|d| d.connection == DeviceConnection::Online { via }) => Some(()),
-        _ => None,
-    })
-    .await;
-}
-
-/// Wait until the device list shows a persisted LAN endpoint for the (single) trusted peer.
-async fn wait_hints_learned(node: &mut Node) {
-    node.handle.send(CoreCommand::RefreshDevices).await.unwrap();
-    wait(node, |e| match e {
-        CoreEvent::Devices(list) if list.iter().any(|d| !d.device.direct_hints.is_empty()) => Some(()),
-        _ => None,
-    })
-    .await;
 }
 
 async fn pair_by_code(desk: &mut Node, phone: &mut Node) -> (voltip_identity::TrustedDevice, voltip_identity::TrustedDevice) {
@@ -150,7 +110,7 @@ async fn wait_pairing(node: &mut Node, state: PairingState) -> Snapshot {
 
 async fn wait_online(node: &mut Node) {
     wait(node, |e| match e {
-        CoreEvent::Devices(list) if list.iter().any(|d| matches!(d.connection, DeviceConnection::Online { .. })) => Some(()),
+        CoreEvent::Devices(list) if list.iter().any(|d| matches!(d.connection, DeviceConnection::Online)) => Some(()),
         _ => None,
     })
     .await;
@@ -164,13 +124,12 @@ async fn wait_offline(node: &mut Node) {
     .await;
 }
 
-/// Relay-only scenario (devices on different networks): presence, reconnect and forget all
-/// happen through the relay, so both nodes run with the LAN side disabled.
+/// Presence, reconnect and forget, all through the relay.
 #[tokio::test]
 async fn pair_by_code_message_presence_reconnect_forget() {
     let (url, _stop, relay) = relay().await;
-    let mut desk = node_opts(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Surface-Laptop", Some(&url), false);
-    let mut phone = node_opts(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 10", Some(&url), false);
+    let mut desk = node_with(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Surface-Laptop", Some(&url));
+    let mut phone = node_with(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 10", Some(&url));
     let ready =
         wait(&mut desk, |e| if let CoreEvent::Ready { identity, secret_backend, .. } = e { Some((identity.clone(), *secret_backend)) } else { None }).await;
     assert_eq!(ready.0.name, "Surface-Laptop");
@@ -385,122 +344,64 @@ async fn regression_relay_compromise_impostor_on_channel_is_flagged_not_trusted(
     wait(&mut desk, |e| matches!(e, CoreEvent::Error(m) if m.contains("不在线")).then_some(())).await;
 }
 
+/// Without a relay there is no pairing (docs/pairing.md 「只走中继」): starting one or joining with
+/// a code says why at once.
 #[tokio::test]
-async fn pair_over_lan_without_any_relay() {
+async fn pairing_without_a_relay_is_refused_with_the_reason() {
     let mut desk = node("Desk", None);
     let mut phone = node("Phone", None);
     let r = wait(&mut desk, |e| if let CoreEvent::Relay(r) = e { Some(r.clone()) } else { None }).await;
     assert_eq!(r.state, ConnectionState::Disconnected);
     assert!(r.endpoint.is_none());
-    // A code cannot be used without a relay.
-    phone.handle.send(CoreCommand::JoinWithCode("483921".into())).await.unwrap();
-    wait(&mut phone, |e| matches!(e, CoreEvent::Error(m) if m.contains("中继")).then_some(())).await;
     desk.handle.send(CoreCommand::StartPairing).await.unwrap();
-    let waiting = wait_pairing(&mut desk, PairingState::WaitingForPeer).await;
-    let ticket = voltip_protocol::ticket::PairingTicket::from_uri(waiting.ticket_uri.as_deref().unwrap()).unwrap();
-    assert!(ticket.relay_hint.is_none());
-    assert_eq!(ticket.direct_hints.len(), 1);
-    phone.handle.send(CoreCommand::JoinWithTicket(waiting.ticket_uri.clone().unwrap())).await.unwrap();
-    let vd = wait_pairing(&mut desk, PairingState::AwaitingVerification).await;
-    let vp = wait_pairing(&mut phone, PairingState::AwaitingVerification).await;
-    assert_eq!(vd.safety_code, vp.safety_code);
-    desk.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
-    phone.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
-    wait_pairing(&mut desk, PairingState::Trusted).await;
-    wait_pairing(&mut phone, PairingState::Trusted).await;
-    // The live channel is re-established on the desktop's LAN host; nothing else is involved.
-    wait_online_via(&mut desk, voltip_identity::ConnectionKind::Direct).await;
-    wait_online_via(&mut phone, voltip_identity::ConnectionKind::Direct).await;
-    // Each side announces its LAN endpoint inside the channel; the desktop learns the phone's.
-    wait_hints_learned(&mut desk).await;
-    desk.handle.send(CoreCommand::RefreshDevices).await.unwrap();
-    let list = wait(&mut desk, |e| if let CoreEvent::Devices(l) = e { Some(l.clone()) } else { None }).await;
-    assert!(matches!(list[0].connection, DeviceConnection::Online { via: voltip_identity::ConnectionKind::Direct }), "{list:?}");
-    // Trusted devices survive a restart of the core (same data dir + same secret store).
+    wait(&mut desk, |e| matches!(e, CoreEvent::Error(m) if m.contains("配对需要中继")).then_some(())).await;
+    phone.handle.send(CoreCommand::JoinWithCode("483921".into())).await.unwrap();
+    wait(&mut phone, |e| matches!(e, CoreEvent::Error(m) if m.contains("配对需要中继")).then_some(())).await;
     desk.handle.send(CoreCommand::Shutdown).await.unwrap();
-    let dir = desk._dir;
-    let store = desk.store.clone();
-    let mut desk2 = node_with(dir, store, "ignored", None);
-    let list = wait(&mut desk2, |e| if let CoreEvent::Devices(l) = e { Some(l.clone()) } else { None }).await;
-    assert_eq!(list.len(), 1);
-    assert_eq!(list[0].device.name, "Phone");
-    let file = std::fs::read_to_string(desk2.dir_path.join("trusted-devices.json")).unwrap();
-    assert!(file.contains("Phone"));
-    // The phone's LAN endpoint was learned over the encrypted channel and persisted, so the
-    // restarted desktop dials it: both sides are online again with no relay anywhere.
-    assert!(file.contains("direct_hints"), "{file}");
-    wait_online_via(&mut desk2, voltip_identity::ConnectionKind::Direct).await;
-    wait_online_via(&mut phone, voltip_identity::ConnectionKind::Direct).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    desk2.handle.send(CoreCommand::SendText { to: list[0].device.public_key, body: "still here".into() }).await.unwrap();
-    assert_eq!(wait(&mut phone, |e| if let CoreEvent::Message { body, .. } = e { Some(body.clone()) } else { None }).await, "still here");
-    // Now the phone restarts on a new ephemeral port: its stored hint for the desktop was refreshed
-    // during the last session, so this time it is the phone that dials.
     phone.handle.send(CoreCommand::Shutdown).await.unwrap();
-    wait_offline(&mut desk2).await;
-    let dir = phone._dir;
-    let store = phone.store.clone();
-    let mut phone2 = node_with(dir, store, "ignored", None);
-    wait_online_via(&mut phone2, voltip_identity::ConnectionKind::Direct).await;
-    wait_online_via(&mut desk2, voltip_identity::ConnectionKind::Direct).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    phone2.handle.send(CoreCommand::RefreshDevices).await.unwrap();
-    let desk_key = wait(&mut phone2, |e| if let CoreEvent::Devices(l) = e { l.first().map(|d| d.device.public_key) } else { None }).await;
-    phone2.handle.send(CoreCommand::SendText { to: desk_key, body: "phone is back".into() }).await.unwrap();
-    assert_eq!(wait(&mut desk2, |e| if let CoreEvent::Message { body, .. } = e { Some(body.clone()) } else { None }).await, "phone is back");
 }
 
-/// docs/pairing.md 「局域网发现」: with no relay and nothing typed, a phone finds the desktop that
-/// waits for a pairing on the LAN, joins it with one tap (the safety codes still match), and once
-/// both restart on new ports, where no stored address answers any more, they find each other again.
+/// Trusted devices survive a restart of the core (same data directory, same secret store), and
+/// the restarted side meets the other again on their channel, whichever of the two restarts.
 #[tokio::test]
-async fn regression_lan_discovery_pairs_by_tap_and_finds_a_trusted_device_on_its_new_port() {
-    use voltip_core::discovery::NearbyDevice;
-    let lan = voltip_core::discovery::fake::LocalLan::default();
-    let mut desk = node_on_lan(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Studio", &lan);
-    let mut phone = node_on_lan(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 8", &lan);
-    let nearby = |pick: fn(&NearbyDevice) -> bool| {
-        move |e: &CoreEvent| match e {
-            CoreEvent::Nearby(list) => list.iter().find(|d| pick(d)).cloned(),
-            _ => None,
-        }
-    };
-    // Seen before any pairing: not pairing, not trusted.
-    let seen = wait(&mut phone, nearby(|d| d.name == "Studio")).await;
-    assert!(!seen.pairing && !seen.trusted, "{seen:?}");
-    desk.handle.send(CoreCommand::StartPairing).await.unwrap();
-    wait_pairing(&mut desk, PairingState::WaitingForPeer).await;
-    let studio = wait(&mut phone, nearby(|d| d.name == "Studio" && d.pairing)).await;
-    phone.handle.send(CoreCommand::PairingJoinNearby(studio.fingerprint.clone())).await.unwrap();
-    let vd = wait_pairing(&mut desk, PairingState::AwaitingVerification).await;
-    let vp = wait_pairing(&mut phone, PairingState::AwaitingVerification).await;
-    assert_eq!(vd.safety_code, vp.safety_code, "a tap pairs like a scan: both screens show the same code");
-    desk.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
-    phone.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
-    wait_pairing(&mut desk, PairingState::Trusted).await;
-    wait_pairing(&mut phone, PairingState::Trusted).await;
-    wait_online_via(&mut desk, voltip_identity::ConnectionKind::Direct).await;
-    wait_online_via(&mut phone, voltip_identity::ConnectionKind::Direct).await;
-    // The desktop stops offering the pairing; the phone lists it as its own now.
-    phone.handle.send(CoreCommand::RefreshDevices).await.unwrap();
-    wait(&mut phone, nearby(|d| d.name == "Studio" && d.trusted && !d.pairing)).await;
-    // An unknown or no longer pairing device cannot be joined.
-    phone.handle.send(CoreCommand::PairingJoinNearby("0000000000000000".into())).await.unwrap();
-    wait(&mut phone, |e| matches!(e, CoreEvent::Error(m) if m.contains("附近没有")).then_some(())).await;
-
-    // Both restart: new ephemeral ports, so the addresses they told each other are stale.
+async fn restarted_cores_keep_their_devices_and_meet_again_over_the_relay() {
+    let (url, _stop, _relay) = relay().await;
+    let mut desk = node("Desk", Some(&url));
+    let mut phone = node("Phone", Some(&url));
+    for n in [&mut desk, &mut phone] {
+        wait(n, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    }
+    let (phone_on_desk, desk_on_phone) = pair_by_code(&mut desk, &mut phone).await;
+    wait_online(&mut desk).await;
+    wait_online(&mut phone).await;
     desk.handle.send(CoreCommand::Shutdown).await.unwrap();
+    wait_offline(&mut phone).await;
+    let mut desk = node_with(desk._dir, desk.store.clone(), "ignored", Some(&url));
+    let list = wait(&mut desk, |e| if let CoreEvent::Devices(l) = e { Some(l.clone()) } else { None }).await;
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].device.name, "Phone");
+    let file = std::fs::read_to_string(desk.dir_path.join("trusted-devices.json")).unwrap();
+    assert!(file.contains("Phone") && !file.contains("direct_hints") && !file.contains("last_connection"), "{file}");
+    let online = async {
+        wait_online(&mut desk).await;
+        wait_online(&mut phone).await;
+    };
+    tokio::time::timeout(Duration::from_secs(30), online).await.expect("the restarted computer is back");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    desk.handle.send(CoreCommand::SendText { to: phone_on_desk.public_key, body: "still here".into() }).await.unwrap();
+    assert_eq!(wait(&mut phone, |e| if let CoreEvent::Message { body, .. } = e { Some(body.clone()) } else { None }).await, "still here");
+    // Now the phone restarts.
     phone.handle.send(CoreCommand::Shutdown).await.unwrap();
-    let (desk_dir, desk_store) = (desk._dir, desk.store.clone());
-    let (phone_dir, phone_store) = (phone._dir, phone.store.clone());
-    let mut desk = node_on_lan(desk_dir, desk_store, "ignored", &lan);
-    let mut phone = node_on_lan(phone_dir, phone_store, "ignored", &lan);
-    wait_online_via(&mut desk, voltip_identity::ConnectionKind::Direct).await;
-    wait_online_via(&mut phone, voltip_identity::ConnectionKind::Direct).await;
-    // Discovery can be switched off: nothing is announced or listed any more.
-    phone.handle.send(CoreCommand::SetLanDiscovery(false)).await.unwrap();
-    wait(&mut phone, |e| matches!(e, CoreEvent::Settings(s) if !s.lan_discovery).then_some(())).await;
-    wait(&mut phone, |e| matches!(e, CoreEvent::Nearby(list) if list.is_empty()).then_some(())).await;
+    wait_offline(&mut desk).await;
+    let mut phone = node_with(phone._dir, phone.store.clone(), "ignored", Some(&url));
+    let online = async {
+        wait_online(&mut phone).await;
+        wait_online(&mut desk).await;
+    };
+    tokio::time::timeout(Duration::from_secs(30), online).await.expect("the restarted phone is back");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    phone.handle.send(CoreCommand::SendText { to: desk_on_phone.public_key, body: "phone is back".into() }).await.unwrap();
+    assert_eq!(wait(&mut desk, |e| if let CoreEvent::Message { body, .. } = e { Some(body.clone()) } else { None }).await, "phone is back");
     desk.handle.send(CoreCommand::Shutdown).await.unwrap();
     phone.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
@@ -522,8 +423,9 @@ async fn next_pairing_within(node: &mut Node, within: Duration) -> Option<Snapsh
 
 /// docs/pairing.md 「常开配对」: with always-on pairing a desktop keeps a session waiting (from the
 /// switch, and on its own at start), renews it before it lapses (it never shows expired), opens
-/// the next one shortly after a phone paired, and closes the waiting one when switched off. A
-/// session opened before the relay was there moves onto it. A phone cannot turn it on.
+/// the next one shortly after a phone paired, and closes the waiting one when switched off. On at
+/// start before the relay is there, it opens a session once the relay is. A phone cannot turn it
+/// on.
 #[tokio::test]
 async fn always_on_pairing_keeps_a_session_waiting_until_switched_off() {
     use voltip_protocol::ticket::PairingTicket;
@@ -564,16 +466,14 @@ async fn always_on_pairing_keeps_a_session_waiting_until_switched_off() {
     desk.handle.send(CoreCommand::Shutdown).await.unwrap();
     phone.handle.send(CoreCommand::Shutdown).await.unwrap();
 
-    // On at start, before the relay is there: a LAN session at once, moved onto the relay once it
-    // connects.
+    // On at start, before the relay is there: nothing to open a session on until it is.
     let spare = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = spare.local_addr().unwrap().port();
     drop(spare);
     let later = Settings { relay_url: Some(format!("ws://127.0.0.1:{port}/ws")), relay_enabled: true, pairing_always_on: true, ..Settings::default() };
     let fast = |cfg: &mut CoreConfig| cfg.reconnect.max = Duration::from_millis(500);
     let mut desk = node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Desk", &later, fast);
-    let lan = wait_pairing(&mut desk, PairingState::WaitingForPeer).await;
-    assert!(PairingTicket::from_uri(lan.ticket_uri.as_deref().unwrap()).unwrap().relay_hint.is_none(), "opened on the LAN host");
+    assert!(next_pairing_within(&mut desk, Duration::from_secs(1)).await.is_none(), "no session without a relay");
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
     let (_addr, _task) = RelayHandle::new(RelayConfig::default())
         .serve(format!("127.0.0.1:{port}").parse().unwrap(), async move {
@@ -581,12 +481,8 @@ async fn always_on_pairing_keeps_a_session_waiting_until_switched_off() {
         })
         .await
         .unwrap();
-    let relayed = wait(&mut desk, |e| match e {
-        CoreEvent::Pairing(s) if s.state == PairingState::WaitingForPeer && s.session_id != lan.session_id => Some(s.clone()),
-        _ => None,
-    })
-    .await;
-    assert!(PairingTicket::from_uri(relayed.ticket_uri.as_deref().unwrap()).unwrap().relay_hint.is_some(), "moved onto the relay");
+    let relayed = wait_pairing(&mut desk, PairingState::WaitingForPeer).await;
+    assert!(PairingTicket::from_uri(relayed.ticket_uri.as_deref().unwrap()).unwrap().relay_hint.is_some(), "opened on the relay");
     desk.handle.send(CoreCommand::Shutdown).await.unwrap();
     drop(stop_tx);
 }
@@ -616,97 +512,6 @@ async fn regression_a_new_pairing_starts_straight_from_a_finished_one() {
     wait_pairing(&mut desk, PairingState::WaitingForPeer).await;
     desk.handle.send(CoreCommand::Shutdown).await.unwrap();
     phone.handle.send(CoreCommand::Shutdown).await.unwrap();
-}
-
-/// Regression (docs/pairing.md 「局域网发现」): with a relay on both sides, as shipped, the pairing
-/// desktop still shows under 「附近的电脑」 and a tap pairs it (on the relay, where its session
-/// waits, as after a scan). The announced ticket leaves the relay out, so the record fits one TXT
-/// string whatever the relay's URL, and the relay's address is not broadcast to the LAN.
-#[tokio::test]
-async fn regression_a_relay_connected_desktop_offers_its_pairing_on_the_lan_without_its_relay() {
-    use voltip_core::discovery::{MAX_TXT_VALUE_BYTES, txt};
-    use voltip_protocol::ticket::PairingTicket;
-    let (url, _stop, relay) = relay().await;
-    // A long relay URL (the relay routes on the path): with it, the ticket would not fit.
-    let url = format!("{url}?pad={}", "p".repeat(64));
-    let lan = voltip_core::discovery::fake::LocalLan::default();
-    let settings = Settings { relay_url: Some(url), relay_enabled: true, ..Settings::default() };
-    let mut desk = node_config(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Studio", &settings, true, Some(lan.join()));
-    let mut phone = node_config(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 8", &settings, true, Some(lan.join()));
-    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
-    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
-    desk.handle.send(CoreCommand::StartPairing).await.unwrap();
-    let shown = wait_pairing(&mut desk, PairingState::WaitingForPeer).await;
-    assert!(PairingTicket::from_uri(shown.ticket_uri.as_deref().unwrap()).unwrap().relay_hint.is_some(), "the QR code keeps the relay");
-    let studio = wait(&mut phone, |e| match e {
-        CoreEvent::Nearby(list) => list.iter().find(|d| d.name == "Studio" && d.pairing).cloned(),
-        _ => None,
-    })
-    .await;
-    let record = lan.announced().into_iter().find(|a| a.name == "Studio").unwrap();
-    let ticket = PairingTicket::from_uri(record.ticket.as_deref().unwrap()).unwrap();
-    assert!(ticket.relay_hint.is_none() && ticket.direct_hints.is_empty() && record.on_relay, "{ticket:?}");
-    assert!(txt(&record).iter().any(|(k, v)| k == "t" && v.len() <= MAX_TXT_VALUE_BYTES));
-    phone.handle.send(CoreCommand::PairingJoinNearby(studio.fingerprint)).await.unwrap();
-    let vd = wait_pairing(&mut desk, PairingState::AwaitingVerification).await;
-    let vp = wait_pairing(&mut phone, PairingState::AwaitingVerification).await;
-    assert_eq!(vd.safety_code, vp.safety_code);
-    desk.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
-    phone.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
-    wait_pairing(&mut desk, PairingState::Trusted).await;
-    wait_pairing(&mut phone, PairingState::Trusted).await;
-    // Then straight over the LAN, at the address the phone saw.
-    wait_online_via(&mut phone, voltip_identity::ConnectionKind::Direct).await;
-    drop(relay);
-    desk.handle.send(CoreCommand::Shutdown).await.unwrap();
-    phone.handle.send(CoreCommand::Shutdown).await.unwrap();
-}
-
-/// Requirement: paired devices talk directly when they can and fall back to the relay when they
-/// cannot; the relay is never required once devices are paired.
-#[tokio::test]
-async fn regression_paired_devices_prefer_direct_and_fall_back_to_relay() {
-    use voltip_identity::ConnectionKind;
-    let (url, _stop, relay) = relay().await;
-    let mut desk = node("Desk", Some(&url));
-    let mut phone = node("Phone", Some(&url));
-    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
-    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
-    let (td, tp) = pair_by_code(&mut desk, &mut phone).await;
-    // Paired over the relay (a 6-digit code needs one), yet both end up connected directly: each
-    // side announced its LAN endpoint inside the encrypted channel and the other dialled it.
-    wait_online_via(&mut desk, ConnectionKind::Direct).await;
-    wait_online_via(&mut phone, ConnectionKind::Direct).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let forwarded_before = relay.stats().forwarded;
-    desk.handle.send(CoreCommand::SendText { to: td.public_key, body: "over the lan".into() }).await.unwrap();
-    assert_eq!(wait(&mut phone, |e| if let CoreEvent::Message { body, .. } = e { Some(body.clone()) } else { None }).await, "over the lan");
-    phone.handle.send(CoreCommand::SendText { to: tp.public_key, body: "back over the lan".into() }).await.unwrap();
-    assert_eq!(wait(&mut desk, |e| if let CoreEvent::Message { body, .. } = e { Some(body.clone()) } else { None }).await, "back over the lan");
-    assert_eq!(relay.stats().forwarded, forwarded_before, "traffic between directly connected devices must not touch the relay");
-    // Hints are persisted on both sides.
-    wait_hints_learned(&mut desk).await;
-    wait_hints_learned(&mut phone).await;
-    assert!(std::fs::read_to_string(desk.dir_path.join("trusted-devices.json")).unwrap().contains("direct_hints"));
-    assert!(std::fs::read_to_string(phone.dir_path.join("trusted-devices.json")).unwrap().contains("direct_hints"));
-
-    // The phone moves to a network where its LAN host is unreachable (simulated: direct disabled).
-    phone.handle.send(CoreCommand::Shutdown).await.unwrap();
-    wait_offline(&mut desk).await;
-    let dir = phone._dir;
-    let store = phone.store.clone();
-    let mut phone2 = node_opts(dir, store, "ignored", Some(&url), false);
-    wait_online_via(&mut desk, ConnectionKind::Relay).await;
-    wait_online_via(&mut phone2, ConnectionKind::Relay).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let forwarded_before = relay.stats().forwarded;
-    desk.handle.send(CoreCommand::SendText { to: td.public_key, body: "via relay now".into() }).await.unwrap();
-    assert_eq!(wait(&mut phone2, |e| if let CoreEvent::Message { body, .. } = e { Some(body.clone()) } else { None }).await, "via relay now");
-    assert!(relay.stats().forwarded > forwarded_before, "fallback traffic goes through the relay");
-    // The desktop stops dialling a LAN endpoint the phone no longer advertises.
-    assert!(!std::fs::read_to_string(desk.dir_path.join("trusted-devices.json")).unwrap().contains("direct_hints"));
-    desk.handle.send(CoreCommand::Shutdown).await.unwrap();
-    phone2.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 
 /// Threat model §"Relay 读取用户数据": intercept every frame the relay carries and assert that
@@ -852,15 +657,12 @@ async fn regression_stalled_peer_handshake_times_out() {
 /// A relay-only node whose test hooks `hooks` sets.
 fn relay_node(name: &str, url: &str, hooks: impl FnOnce(&mut voltip_core::TestHooks)) -> Node {
     let settings = Settings { relay_url: Some(url.to_owned()), relay_enabled: true, ..Settings::default() };
-    node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), name, &settings, |cfg| {
-        cfg.direct_enabled = false;
-        hooks(&mut cfg.test_hooks);
-    })
+    node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), name, &settings, |cfg| hooks(&mut cfg.test_hooks))
 }
 
 async fn wait_not_online(node: &mut Node) {
     wait(node, |e| match e {
-        CoreEvent::Devices(list) if !list.is_empty() && !list.iter().any(|d| matches!(d.connection, DeviceConnection::Online { .. })) => Some(()),
+        CoreEvent::Devices(list) if !list.is_empty() && !list.iter().any(|d| matches!(d.connection, DeviceConnection::Online)) => Some(()),
         _ => None,
     })
     .await;
@@ -1019,10 +821,7 @@ async fn regression_a_device_forgotten_while_offline_and_paired_again_comes_onli
     // A handshake nobody answers stays open long after this test would give up: only an answer to
     // the one already sent brings the two online.
     let settings = Settings { relay_url: Some(url.clone()), relay_enabled: true, ..Settings::default() };
-    let patient = |cfg: &mut CoreConfig| {
-        cfg.direct_enabled = false;
-        cfg.peer_handshake_timeout = Duration::from_secs(120);
-    };
+    let patient = |cfg: &mut CoreConfig| cfg.peer_handshake_timeout = Duration::from_secs(120);
     let mut desk = node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Desk", &settings, patient);
     let mut phone = node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Phone", &settings, patient);
     for n in [&mut desk, &mut phone] {
@@ -1046,38 +845,6 @@ async fn regression_a_device_forgotten_while_offline_and_paired_again_comes_onli
     texts_both_ways(initiator, &responder_on_initiator, responder, &initiator_on_responder).await;
 }
 
-/// The same on the LAN, with no relay at all: the desktop's link to its own LAN host never
-/// reconnects by itself, so a device forgotten and paired again there stayed offline until the app
-/// restarted.
-#[tokio::test]
-async fn regression_a_device_forgotten_and_paired_again_at_once_comes_online_on_the_lan() {
-    async fn pair_by_ticket(desk: &mut Node, phone: &mut Node) -> (voltip_identity::TrustedDevice, voltip_identity::TrustedDevice) {
-        desk.handle.send(CoreCommand::StartPairing).await.unwrap();
-        let ticket = wait_pairing(desk, PairingState::WaitingForPeer).await.ticket_uri.unwrap();
-        phone.handle.send(CoreCommand::JoinWithTicket(ticket)).await.unwrap();
-        wait_pairing(desk, PairingState::AwaitingVerification).await;
-        wait_pairing(phone, PairingState::AwaitingVerification).await;
-        desk.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
-        phone.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
-        let on_desk = wait(desk, |e| if let CoreEvent::Trusted(d) = e { Some(d.clone()) } else { None }).await;
-        let on_phone = wait(phone, |e| if let CoreEvent::Trusted(d) = e { Some(d.clone()) } else { None }).await;
-        (on_desk, on_phone)
-    }
-    let mut desk = node("Desk", None);
-    let mut phone = node("Phone", None);
-    let (phone_on_desk, _) = pair_by_ticket(&mut desk, &mut phone).await;
-    wait_online_via(&mut desk, voltip_identity::ConnectionKind::Direct).await;
-    wait_online_via(&mut phone, voltip_identity::ConnectionKind::Direct).await;
-    forget_both_ways(&mut desk, &mut phone, &phone_on_desk).await;
-    let (phone_on_desk, desk_on_phone) = pair_by_ticket(&mut desk, &mut phone).await;
-    let online = async {
-        wait_online_via(&mut desk, voltip_identity::ConnectionKind::Direct).await;
-        wait_online_via(&mut phone, voltip_identity::ConnectionKind::Direct).await;
-    };
-    tokio::time::timeout(Duration::from_secs(30), online).await.expect("both come online on the desktop's LAN host");
-    texts_both_ways(&mut desk, &phone_on_desk, &mut phone, &desk_on_phone).await;
-}
-
 /// A desktop whose recogniser is ready: the custom endpoint (the fake factory answers for it).
 fn desktop_ready(name: &str, relay_url: &str) -> Node {
     let mut settings = Settings { relay_url: Some(relay_url.to_owned()), relay_enabled: true, ..Settings::default() };
@@ -1086,7 +853,7 @@ fn desktop_ready(name: &str, relay_url: &str) -> Node {
         voltip_core::ProviderId::Custom,
         voltip_core::ProviderSettings { asr_url: Some("http://127.0.0.1:9/v1".into()), asr_model: Some("fake".into()), ..Default::default() },
     );
-    node_settings(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), name, &settings, false)
+    node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), name, &settings, |_| {})
 }
 
 fn phone_take(e: &CoreEvent) -> Option<voltip_core::phone::PhoneTakeState> {
@@ -1115,7 +882,7 @@ async fn a_phone_streams_a_take_the_desktop_delivers() {
     use voltip_core::phone::{PhoneTakeFailure, PhoneTakeState};
     let (url, _stop, _relay) = relay().await;
     let mut desk = desktop_ready("Studio", &url);
-    let mut phone = node_opts(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 8", Some(&url), false);
+    let mut phone = node_with(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 8", Some(&url));
     wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
     wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
     let (_, desktop) = pair_by_code(&mut desk, &mut phone).await;
@@ -1201,7 +968,7 @@ async fn regression_a_take_the_phone_streamed_is_in_the_phones_own_history_and_c
     use voltip_core::phone::PhoneTakeState;
     let (url, _stop, _relay) = relay().await;
     let mut desk = desktop_ready("Studio", &url);
-    let mut phone = node_opts(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 8", Some(&url), false);
+    let mut phone = node_with(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 8", Some(&url));
     wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
     wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
     let (_, desktop) = pair_by_code(&mut desk, &mut phone).await;
@@ -1261,7 +1028,7 @@ async fn a_phone_sends_text_the_desktop_inserts_now_or_after_its_take() {
     use voltip_core::{OriginKind, Outcome};
     let (url, _stop, _relay) = relay().await;
     let mut desk = desktop_ready("Studio", &url);
-    let mut phone = node_opts(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 8", Some(&url), false);
+    let mut phone = node_with(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 8", Some(&url));
     wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
     wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
     let (_, desktop) = pair_by_code(&mut desk, &mut phone).await;
@@ -1340,24 +1107,24 @@ async fn a_phone_sends_text_the_desktop_inserts_now_or_after_its_take() {
 }
 
 /// Opt-in check against a **deployed** relay: `VOLTIP_LIVE_RELAY_URL=wss://host/ws cargo test -p
-/// voltip-core --test e2e live_relay`. Two cores with the LAN side disabled pair by code through
-/// that relay (TLS handshake, WebSocket upgrade through the reverse proxy, rendezvous, E2EE
-/// message both ways). Skipped when the variable is unset so the offline suite stays hermetic.
+/// voltip-core --test e2e live_relay`. Two cores pair by code through that relay (TLS handshake,
+/// WebSocket upgrade through the reverse proxy, rendezvous, E2EE message both ways). Skipped when
+/// the variable is unset so the offline suite stays hermetic.
 #[tokio::test]
 async fn live_relay_round_trip_when_configured() {
     let Some(url) = std::env::var("VOLTIP_LIVE_RELAY_URL").ok().filter(|u| !u.trim().is_empty()) else {
         eprintln!("live_relay_round_trip_when_configured: VOLTIP_LIVE_RELAY_URL unset, skipped");
         return;
     };
-    let mut desk = node_opts(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Live-Desk", Some(&url), false);
-    let mut phone = node_opts(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Live-Phone", Some(&url), false);
+    let mut desk = node_with(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Live-Desk", Some(&url));
+    let mut phone = node_with(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Live-Phone", Some(&url));
     wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
     wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
     let (td, tp) = pair_by_code(&mut desk, &mut phone).await;
     assert_eq!(td.name, "Live-Phone");
     assert_eq!(tp.name, "Live-Desk");
-    wait_online_via(&mut desk, voltip_identity::ConnectionKind::Relay).await;
-    wait_online_via(&mut phone, voltip_identity::ConnectionKind::Relay).await;
+    wait_online(&mut desk).await;
+    wait_online(&mut phone).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     desk.handle.send(CoreCommand::SendText { to: td.public_key, body: "live relay ping".into() }).await.unwrap();
     let body = wait(&mut phone, |e| if let CoreEvent::Message { body, .. } = e { Some(body.clone()) } else { None }).await;
@@ -1378,12 +1145,11 @@ async fn connectivity_report(node: &mut Node) -> voltip_core::connectivity::Conn
     .await
 }
 
-/// The connectivity self-check (docs/pairing.md): the phone probes the relay and the computer's
-/// LAN address (both answer `hello`), pings the computer over the live channel, and reports all
-/// of it; a second check while one runs is refused. Once the computer is gone, its address no
-/// longer answers and it has no round trip.
+/// The connectivity self-check (docs/pairing.md): the phone probes the relay (it answers `hello`),
+/// pings the computer over their channel, and reports both; a second check while one runs is
+/// refused. Once the computer is gone, it is offline with no round trip.
 #[tokio::test]
-async fn the_connectivity_check_reports_the_relay_the_lan_and_each_device() {
+async fn the_connectivity_check_reports_the_relay_and_each_device() {
     use voltip_core::connectivity::{ConnectivityStatus, ProbeResult};
     let (url, _stop, _relay) = relay().await;
     let mut desk = node("Desk", Some(&url));
@@ -1392,28 +1158,105 @@ async fn the_connectivity_check_reports_the_relay_the_lan_and_each_device() {
     wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
     let (_, desktop) = pair_by_code(&mut desk, &mut phone).await;
     wait_online(&mut phone).await;
-    wait_hints_learned(&mut phone).await;
 
     phone.handle.send(CoreCommand::CheckConnectivity).await.unwrap();
     phone.handle.send(CoreCommand::CheckConnectivity).await.unwrap();
     wait(&mut phone, |e| matches!(e, CoreEvent::Connectivity(ConnectivityStatus { running: true, .. })).then_some(())).await;
     wait(&mut phone, |e| matches!(e, CoreEvent::Error(m) if m.contains("自检正在进行")).then_some(())).await;
     let first = connectivity_report(&mut phone).await;
-    assert!(first.lan.listening && !first.lan.addresses.is_empty(), "{:?}", first.lan);
     assert!(first.relay.configured && matches!(first.relay.result, Some(ProbeResult::Ok { .. })), "{:?}", first.relay);
     assert_eq!(first.peers.len(), 1);
     let peer = &first.peers[0];
     assert_eq!((peer.public_key.as_str(), peer.name.as_str()), (desktop.public_key.to_hex().as_str(), "Desk"));
-    assert!(peer.via.is_some() && peer.rtt_ms.is_some(), "{peer:?}");
-    assert!(!peer.addresses.is_empty() && peer.addresses.iter().all(|a| matches!(a.result, ProbeResult::Ok { .. })), "{:?}", peer.addresses);
+    assert!(peer.online && peer.rtt_ms.is_some(), "{peer:?}");
 
-    // The computer shuts down: its LAN host stops answering and there is no live channel.
+    // The computer shuts down: there is no channel any more.
     desk.handle.send(CoreCommand::Shutdown).await.unwrap();
     wait_offline(&mut phone).await;
     phone.handle.send(CoreCommand::CheckConnectivity).await.unwrap();
     let second = connectivity_report(&mut phone).await;
     let peer = &second.peers[0];
-    assert!(peer.via.is_none() && peer.rtt_ms.is_none(), "{peer:?}");
-    assert!(peer.addresses.iter().all(|a| !matches!(a.result, ProbeResult::Ok { .. })), "{:?}", peer.addresses);
+    assert!(!peer.online && peer.rtt_ms.is_none(), "{peer:?}");
+    assert!(matches!(second.relay.result, Some(ProbeResult::Ok { .. })), "{:?}", second.relay);
     phone.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// A relay that notices silent connections quickly, a proxy whose path can break in front of it
+/// for the phone, and the phone's settings: a short heartbeat, fast reconnects, and quick attach
+/// retries (docs/pairing.md 「重连」).
+async fn breakable(phone_tune: impl FnOnce(&mut CoreConfig)) -> (Node, Node, NetCut, tokio::sync::oneshot::Sender<()>) {
+    let config = RelayConfig { ping_interval: Duration::from_millis(200), idle_timeout: Duration::from_millis(1_500), ..RelayConfig::default() };
+    let (url, addr, stop, _relay) = relay_with(config).await;
+    let cut = NetCut::start(addr).await;
+    let desk = node("Desk", Some(&url));
+    let settings = Settings { relay_url: Some(cut.url()), relay_enabled: true, ..Settings::default() };
+    let phone = node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Phone", &settings, |cfg| {
+        cfg.reconnect = voltip_transport::ReconnectPolicy { base: Duration::from_millis(50), max: Duration::from_millis(300), jitter: 0.0, max_attempts: None };
+        cfg.attach_retry = Duration::from_millis(200);
+        phone_tune(cfg);
+    });
+    (desk, phone, cut, stop)
+}
+
+/// Wait up to 30 s for both nodes to show their device online, then until texts get through.
+async fn both_back(desk: &mut Node, phone: &mut Node, phone_on_desk: &voltip_identity::TrustedDevice, desk_on_phone: &voltip_identity::TrustedDevice) {
+    let online = async {
+        wait_online(desk).await;
+        wait_online(phone).await;
+    };
+    tokio::time::timeout(Duration::from_secs(30), online).await.expect("both are back on their own");
+    let (initiator, responder, responder_peer) =
+        if phone_on_desk.public_key.0 < desk_on_phone.public_key.0 { (phone, desk, phone_on_desk) } else { (desk, phone, desk_on_phone) };
+    heard_by_initiator(initiator, responder, responder_peer).await;
+}
+
+/// Regression (2026-10-10, 「配对后断开」): the phone's path to the relay breaks without a word, as
+/// when it changes networks. Its heartbeat notices and it connects again, but the relay still holds
+/// its old connection on their channel and refuses the attach (`channel_full`); the refusal used
+/// to be dropped, and the two devices stayed apart until an app restarted. Now the relay closes the
+/// silent connection and the phone asks again until it is let in (docs/pairing.md 「重连」).
+#[tokio::test]
+async fn regression_a_path_that_breaks_without_a_word_heals_on_its_own() {
+    let (mut desk, mut phone, cut, _stop) = breakable(|cfg| {
+        cfg.relay_ping_interval = Duration::from_millis(300);
+        cfg.relay_pong_timeout = Duration::from_millis(600);
+    })
+    .await;
+    for n in [&mut desk, &mut phone] {
+        wait(n, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    }
+    let (phone_on_desk, desk_on_phone) = pair_by_code(&mut desk, &mut phone).await;
+    both_back(&mut desk, &mut phone, &phone_on_desk, &desk_on_phone).await;
+    cut.cut();
+    // The phone's heartbeat finds the socket dead and it connects again.
+    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Reconnecting).then_some(())).await;
+    // The computer hears the phone leave once the relay gave up on the silent connection…
+    tokio::time::timeout(Duration::from_secs(30), wait_not_online(&mut desk)).await.expect("the relay let the silent connection go");
+    // …and the phone, refused while it was still there, is let in.
+    both_back(&mut desk, &mut phone, &phone_on_desk, &desk_on_phone).await;
+    texts_both_ways(&mut desk, &phone_on_desk, &mut phone, &desk_on_phone).await;
+}
+
+/// docs/pairing.md 「重连」: told that the network changed (`ReconnectRelay`, what the phone app sends
+/// when Android reports a new network or the app comes to the front), the phone checks its relay
+/// socket at once and connects again, long before its heartbeat would have noticed anything.
+#[tokio::test]
+async fn reconnect_relay_checks_the_socket_at_once_after_the_network_changed() {
+    let (mut desk, mut phone, cut, _stop) = breakable(|cfg| {
+        cfg.relay_ping_interval = Duration::from_secs(600);
+        cfg.relay_pong_timeout = Duration::from_secs(600);
+        cfg.relay_probe_timeout = Duration::from_millis(300);
+    })
+    .await;
+    for n in [&mut desk, &mut phone] {
+        wait(n, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    }
+    let (phone_on_desk, desk_on_phone) = pair_by_code(&mut desk, &mut phone).await;
+    both_back(&mut desk, &mut phone, &phone_on_desk, &desk_on_phone).await;
+    cut.cut();
+    phone.handle.send(CoreCommand::ReconnectRelay).await.unwrap();
+    let noticed = wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Reconnecting).then_some(()));
+    tokio::time::timeout(Duration::from_secs(10), noticed).await.expect("the probe found the socket dead");
+    both_back(&mut desk, &mut phone, &phone_on_desk, &desk_on_phone).await;
+    texts_both_ways(&mut desk, &phone_on_desk, &mut phone, &desk_on_phone).await;
 }

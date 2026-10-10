@@ -74,7 +74,6 @@ import {
   MAX_PHONE_TEXT_CHARS,
   MAX_PASTE_TEXT_CHARS,
   type SentText,
-  type NearbyDevice,
   applyEvent,
   DEFAULT_HOTKEY,
   defaultSettings,
@@ -586,17 +585,6 @@ function refuseAttachment(reason: FeedbackAttachmentError): Promise<never> {
 
 /** How long the preview's feedback endpoint takes to answer. */
 export const MOCK_FEEDBACK_MS = 300;
-/** What the preview phone's LAN browse sees (docs/pairing.md 「局域网发现」). */
-export const MOCK_NEARBY: readonly NearbyDevice[] = [
-  {
-    fingerprint: "A7C4198E3DF26109",
-    name: "Studio",
-    platform: "macos",
-    pairing: true,
-    trusted: false,
-  },
-];
-
 /** Always-on pairing in the preview (docs/pairing.md 「常开配对」, the core's `RENEW_BEFORE_SECS`
  *  and `FINISHED_PAUSE`): a waiting session this close to its end is renewed, and a finished one
  *  is followed by the next after this pause. */
@@ -957,6 +945,8 @@ export class MockBackend implements Backend {
   readonly modelFoldersOpened: string[] = [];
   /** What the phone's `update_install` opened: `store` for the listing, else the release's version. */
   readonly updatePagesOpened: string[] = [];
+  /** `relay_reconnect` calls (docs/pairing.md 「重连」), for tests. */
+  relayChecks = 0;
   /** `model_link_open` calls, the addresses opened, for tests. */
   readonly modelLinksOpened: string[] = [];
   /** What imports find wrong per model id (`simulateImportProblems`). */
@@ -1062,8 +1052,6 @@ export class MockBackend implements Backend {
       },
       dictation: idleDictation(),
       sent_texts: [],
-      // A desktop on the LAN waiting for a pairing (docs/pairing.md 「局域网发现」): the phone lists it.
-      nearby: this.role === "phone" ? [...MOCK_NEARBY] : [],
       history_recent: this.history.slice(0, HISTORY_RECENT),
       history_total: this.history.length,
       engines: emptyEngineStatus(),
@@ -1369,23 +1357,6 @@ export class MockBackend implements Backend {
     pairing_join_ticket: (args) => {
       this.joinWithTicket(required(args).uri);
     },
-    pairing_join_nearby: (args) => {
-      // Mirrors `PairingJoinNearby`: only a nearby device that waits for a pairing can be joined.
-      const { fingerprint } = required(args);
-      const device = this.state.nearby.find((d) => d.fingerprint === fingerprint);
-      if (device === undefined) {
-        this.emit({ type: "error", message: "pairing: 附近没有找到此设备" });
-        return;
-      }
-      if (!device.pairing) {
-        this.emit({
-          type: "error",
-          message: "pairing: 此设备当前没有等待配对",
-        });
-        return;
-      }
-      this.joinSession();
-    },
     settings_set_pairing_always_on: (args) => {
       const { enabled } = required(args);
       if (this.role === "phone") {
@@ -1406,17 +1377,9 @@ export class MockBackend implements Backend {
         this.emit({ type: "pairing", ...idleSnapshot() });
       }
     },
-    settings_set_lan_discovery: (args) => {
-      const { enabled } = required(args);
-      this.emit({
-        type: "settings",
-        ...this.state.settings,
-        lan_discovery: enabled,
-      });
-      this.emit({
-        type: "nearby",
-        devices: enabled && this.role === "phone" ? [...MOCK_NEARBY] : [],
-      });
+    relay_reconnect: () => {
+      // The core's link checks its socket; nothing to show unless it was gone.
+      this.relayChecks += 1;
     },
     pairing_confirm: () => {
       this.confirmLocal();
@@ -2579,11 +2542,7 @@ export class MockBackend implements Backend {
             connection,
             device:
               connection.state === "online"
-                ? {
-                    ...d.device,
-                    last_seen: Math.floor(this.now() / 1000),
-                    last_connection: connection.via,
-                  }
+                ? { ...d.device, last_seen: Math.floor(this.now() / 1000) }
                 : d.device,
           }
         : d,
@@ -3184,16 +3143,12 @@ export class MockBackend implements Backend {
     };
   }
 
-  /** A self-check against the mock's own state: the relay answers when its link is up, an online
-   *  device has a round trip, and its LAN addresses answer only when it is connected directly. */
+  /** A self-check against the mock's own state: the relay answers when its link is up, and an
+   *  online device has a round trip. */
   private connectivityReport(): ConnectivityReport {
     const relayUp = this.state.relay.state === "connected";
     return {
       checked_at: this.now(),
-      lan: {
-        listening: true,
-        addresses: [this.role === "phone" ? "192.168.1.52:47831" : "192.168.1.30:47831"],
-      },
       relay: {
         configured: this.state.relay.source !== "none",
         ...(this.state.relay.source === "none"
@@ -3203,19 +3158,12 @@ export class MockBackend implements Backend {
             }),
       },
       peers: this.state.devices.map((d) => {
-        const online = d.connection.state === "online" ? d.connection.via : undefined;
+        const online = d.connection.state === "online";
         return {
           public_key: d.device.public_key,
           name: d.device.name,
-          ...(online === undefined ? {} : { via: online, rtt_ms: online === "direct" ? 6 : 61 }),
-          addresses: (d.device.direct_hints ?? []).map((address) => ({
-            address,
-            same_subnet: address.startsWith("192.168.1."),
-            result:
-              online === "direct"
-                ? { result: "ok" as const, ms: 5 }
-                : { result: "timeout" as const },
-          })),
+          online,
+          ...(online ? { rtt_ms: 61 } : {}),
         };
       }),
     };
@@ -3886,7 +3834,6 @@ export class MockBackend implements Backend {
       fingerprint: this.state.pairing.safety_code?.fingerprint ?? fingerprintOf(this.random),
       trusted_at: trustedAt,
       last_seen: trustedAt,
-      last_connection: "direct",
       sync: true,
       sync_gen: 0,
     };
@@ -3896,7 +3843,7 @@ export class MockBackend implements Backend {
     const others = this.state.devices.filter((d) => d.device.public_key !== publicKey);
     this.emit({
       type: "devices",
-      devices: [...others, { device, connection: { state: "online", via: "direct" } }],
+      devices: [...others, { device, connection: { state: "online" } }],
     });
   }
 
@@ -4115,7 +4062,6 @@ export function sampleDevices(now = Math.floor(Date.now() / 1000)): DeviceView[]
     fingerprint: "B0:8F:44:E7 · 5A:91:E2:D8",
     trusted_at: now - 86_400 * 12,
     last_seen: now - 86_400 * 2,
-    last_connection: "relay",
     sync: true,
     sync_gen: 0,
   };
@@ -4129,12 +4075,10 @@ export function sampleDevices(now = Math.floor(Date.now() / 1000)): DeviceView[]
         fingerprint: phone.fingerprint,
         trusted_at: now - 86_400 * 3,
         last_seen: now - 200,
-        last_connection: "direct",
-        direct_hints: ["192.168.1.37:47831"],
         sync: true,
         sync_gen: 0,
       },
-      connection: { state: "online", via: "direct" },
+      connection: { state: "online" },
     },
     { device: laptop, connection: { state: "offline" } },
   ];

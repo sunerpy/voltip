@@ -13,6 +13,9 @@ hero:
       text: Download
       link: /guide/install
     - theme: alt
+      text: Try it online
+      link: /guide/try
+    - theme: alt
       text: Quick start
       link: /guide/quick-start
     - theme: alt
@@ -110,7 +113,7 @@ home:
       - name: Phone, history and long recordings
         items:
           - title: Your phone as a microphone and keyboard
-            body: Pair an Android phone by QR code, a 6-digit code or a tap on the same network. Hold to talk or type on the phone, and the text appears at the computer's cursor.
+            body: Pair an Android phone by QR code or a 6-digit code. Hold to talk or type on the phone, and the text appears at the computer's cursor.
             status: available
             link: /phone/
           - title: An iOS app
@@ -183,13 +186,13 @@ home:
   phone:
     items:
       - title: Pair once
-        body: Scan the QR code on the computer, enter its 6-digit code, or tap the computer in the phone's list of computers nearby. Both screens then show the same safety code for you to confirm.
+        body: Scan the QR code on the computer or enter its 6-digit code. Both screens then show the same safety code for you to confirm.
       - title: Hold to talk on the phone
         body: The audio streams to the computer, compressed with Opus and encrypted end to end. The computer recognises it and inserts the text at its own cursor.
       - title: Send text or the clipboard
         body: Type on the phone or send its clipboard. The computer inserts it like a dictation result.
       - title: On any network
-        body: On the same network the devices connect directly. Elsewhere, an optional relay forwards the encrypted data without being able to read it.
+        body: The devices connect through a relay, on the same network or not. It forwards the encrypted data without being able to read it, and after a network drop or a switch of networks they reconnect on their own.
 
   platforms:
     title: Platforms

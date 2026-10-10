@@ -53,7 +53,6 @@ function baseState(): UiState {
   return {
     serve: { available: true, phase: "off" },
     sent_texts: [],
-    nearby: [],
     mirrors: [],
     phone_outbox_too_large: [],
     identity: desktopIdentity(),
@@ -209,7 +208,7 @@ describe("applyEvent", () => {
     expect(applyEvent(state, { type: "devices", devices: [] }).devices).toEqual([]);
   });
 
-  it("folds the hardware, connectivity, phone take, sent texts and nearby events; a null take clears it", () => {
+  it("folds the hardware, connectivity, phone take and sent texts events; a null take clears it", () => {
     const hardware = applyEvent(state, { type: "hardware", cpu_threads: 16, gpus: [] });
     expect(hardware.hardware).toEqual({ cpu_threads: 16, gpus: [] });
     expect(applyEvent(state, { type: "connectivity", running: true }).connectivity.running).toBe(
@@ -234,14 +233,6 @@ describe("applyEvent", () => {
       state: { state: "sending" as const },
     };
     expect(applyEvent(state, { type: "sent_texts", texts: [text] }).sent_texts).toEqual([text]);
-    const nearby = {
-      fingerprint: "AB",
-      name: "Studio",
-      platform: "macos" as const,
-      pairing: true,
-      trusted: false,
-    };
-    expect(applyEvent(state, { type: "nearby", devices: [nearby] }).nearby).toEqual([nearby]);
   });
 
   it("a sent text and a phone take know when no further answer comes", () => {

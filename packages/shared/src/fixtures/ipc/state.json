@@ -72,7 +72,6 @@
     },
     "edit_hotkey": "Ctrl+Alt+E",
     "solo_key": "right_ctrl",
-    "lan_discovery": true,
     "pairing_always_on": true,
     "history": {
       "enabled": true,
@@ -132,14 +131,11 @@
         "fingerprint": "9F:72:EA:0C · F4:95:36:E3",
         "trusted_at": 1758700000,
         "last_seen": 1758700600,
-        "last_connection": "relay",
-        "direct_hints": ["192.168.1.20:47831"],
         "sync": true,
         "sync_gen": 3
       },
       "connection": {
-        "state": "online",
-        "via": "relay"
+        "state": "online"
       }
     },
     {
@@ -973,22 +969,6 @@
       }
     }
   ],
-  "nearby": [
-    {
-      "fingerprint": "A7C4198E3DF26109",
-      "name": "Studio",
-      "platform": "macos",
-      "pairing": true,
-      "trusted": false
-    },
-    {
-      "fingerprint": "0B1C2D3E4F506172",
-      "name": "MacBook Pro",
-      "platform": "macos",
-      "pairing": false,
-      "trusted": true
-    }
-  ],
   "hardware": {
     "cpu_threads": 16,
     "gpus": [
@@ -1012,10 +992,6 @@
     "running": false,
     "report": {
       "checked_at": 1758700600000,
-      "lan": {
-        "listening": true,
-        "addresses": ["192.168.1.30:47831"]
-      },
       "relay": {
         "configured": true,
         "result": {
@@ -1027,40 +1003,13 @@
         {
           "public_key": "1111111111111111111111111111111111111111111111111111111111111111",
           "name": "Surface-Laptop",
-          "via": "relay",
-          "rtt_ms": 61,
-          "addresses": [
-            {
-              "address": "192.168.1.24:47831",
-              "same_subnet": true,
-              "result": {
-                "result": "timeout"
-              }
-            },
-            {
-              "address": "10.0.0.7:47831",
-              "same_subnet": false,
-              "result": {
-                "result": "refused"
-              }
-            },
-            {
-              "address": "172.16.0.2:47831",
-              "same_subnet": false,
-              "result": {
-                "result": "failed",
-                "reason": "not a Voltip host"
-              }
-            },
-            {
-              "address": "192.168.1.25:47831",
-              "same_subnet": true,
-              "result": {
-                "result": "ok",
-                "ms": 7
-              }
-            }
-          ]
+          "online": true,
+          "rtt_ms": 61
+        },
+        {
+          "public_key": "3333333333333333333333333333333333333333333333333333333333333333",
+          "name": "iPad",
+          "online": false
         }
       ]
     }

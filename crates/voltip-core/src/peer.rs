@@ -1,9 +1,9 @@
 //! Post-pairing secure sessions with trusted peers (re-handshake on every rendezvous).
 //!
-//! A peer may be reachable over several links at once — the public relay, our own LAN host
-//! (the peer dialled us) and an outgoing LAN connection (we dialled the peer). Each of those is
-//! a [`PeerPath`] with its own rendezvous session and Noise handshake; [`PeerState`] groups the
-//! paths of one trusted device and answers "how is this device connected right now".
+//! Paired devices meet on a rendezvous channel of the relay, the only link there is since 0.1.0
+//! (docs/pairing.md 「只走中继」). The channel is a [`PeerPath`] with its own rendezvous session and
+//! Noise handshake; [`PeerState`] holds the path of one trusted device and answers "how is this
+//! device connected right now".
 
 use std::time::{Duration, Instant};
 
@@ -13,22 +13,12 @@ use voltip_transport::SecureChannel;
 
 use crate::sync::BulkPath;
 
-/// Which connection a frame arrived on / should leave on.
+/// Which connection a frame arrived on / should leave on: the relay's (builds before 0.1.0 also
+/// had LAN connections).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum LinkId {
-    /// The configured public relay.
+    /// The configured relay.
     Relay,
-    /// Loopback connection to this device's own LAN host.
-    Host,
-    /// Outgoing LAN connection number `n` (to a peer's host, or to a ticket's host while pairing).
-    Dial(u64),
-}
-
-impl LinkId {
-    /// Whether frames on this link stay on the local network.
-    pub(crate) fn is_direct(self) -> bool {
-        !matches!(self, Self::Relay)
-    }
 }
 
 /// Where a path is.
@@ -46,7 +36,7 @@ pub(crate) enum PeerPhase {
 /// First wait before a failed relay handshake is tried again (docs/dictation.md §20.8).
 pub(crate) const HANDSHAKE_RETRY_MIN: Duration = Duration::from_secs(2);
 /// Longest wait between two tries; the wait doubles up to this.
-pub(crate) const HANDSHAKE_RETRY_MAX: Duration = Duration::from_secs(60);
+pub(crate) const HANDSHAKE_RETRY_MAX: Duration = Duration::from_secs(30);
 
 /// What to do with a payload that arrived on a path whose channel is not up (docs/dictation.md
 /// §20.8). Handshake messages have fixed lengths and no transport frame shares them, so the
@@ -80,8 +70,8 @@ pub(crate) struct SecureSession {
     pub(crate) since: Instant,
 }
 
-/// A rendezvous channel this device is still on after forgetting the peer. The relay (and our
-/// own LAN host) keeps a connection on a channel until the connection drops, and refuses a second
+/// A rendezvous channel this device is still on after forgetting the peer. The relay keeps a
+/// connection on a channel until the connection drops, and refuses a second
 /// `attach` to it on the same connection (`SessionAlreadyActive`), so pairing the same device
 /// again takes this up instead of attaching (docs/pairing.md 「忘记设备后重新配对」).
 pub(crate) struct ParkedChannel {
@@ -155,13 +145,13 @@ impl PeerPath {
         }
     }
 
-    /// The handshake failed or stalled: back to idle and, on a relay path where this side
-    /// initiates and the peer is on the channel, try again after the backoff (docs/dictation.md
-    /// §20.8). Without this the path would wait for the next presence event.
+    /// The handshake failed or stalled: back to idle and, when this side initiates and the peer
+    /// is on the channel, try again after the backoff (docs/dictation.md §20.8). Without this the
+    /// path would wait for the next presence event.
     pub(crate) fn handshake_failed(&mut self, now: Instant, initiator: bool) {
         self.phase = PeerPhase::Idle;
         self.handshake_started = None;
-        if self.link == LinkId::Relay && self.session_id.is_some() && self.present && initiator {
+        if self.session_id.is_some() && self.present && initiator {
             self.retry_at = Some(now + self.retry_backoff);
             self.retry_backoff = (self.retry_backoff * 2).min(HANDSHAKE_RETRY_MAX);
         } else {
@@ -224,21 +214,12 @@ impl PeerPath {
 }
 
 /// Everything the runtime tracks about one trusted device.
+#[derive(Default)]
 pub(crate) struct PeerState {
     pub(crate) paths: Vec<PeerPath>,
-    /// Earliest time for the next outgoing LAN attempt (`None` = whenever the next tick comes).
-    pub(crate) next_dial_at: Option<Instant>,
-    /// Current backoff between LAN attempts.
-    pub(crate) dial_backoff: Duration,
-    /// Which of the peer's hints to try next (rotates on failure).
-    pub(crate) hint_cursor: usize,
 }
 
 impl PeerState {
-    pub(crate) fn new(initial_backoff: Duration) -> Self {
-        Self { paths: Vec::new(), next_dial_at: None, dial_backoff: initial_backoff, hint_cursor: 0 }
-    }
-
     /// The path on `link`, if any.
     pub(crate) fn path(&mut self, link: LinkId) -> Option<&mut PeerPath> {
         self.paths.iter_mut().find(|p| p.link == link)
@@ -260,28 +241,9 @@ impl PeerState {
         self.paths.retain(|p| p.link != link);
     }
 
-    /// Any LAN path that is doing something (handshaking, secure, or flagged) — while one exists
-    /// there is no point dialling.
-    pub(crate) fn has_active_direct_path(&self) -> bool {
-        self.paths.iter().any(|p| p.link.is_direct() && !matches!(p.phase, PeerPhase::Idle))
-    }
-
-    /// Best path for outgoing traffic: a secure LAN path first, then a secure relay path.
+    /// The path outgoing traffic takes: a secure one with its session.
     pub(crate) fn best_secure_path(&mut self) -> Option<&mut PeerPath> {
-        let idx = self
-            .paths
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| p.is_secure() && p.session_id.is_some())
-            .min_by_key(|(_, p)| if p.link.is_direct() { 0 } else { 1 })
-            .map(|(i, _)| i)?;
-        self.paths.get_mut(idx)
-    }
-
-    /// Reset the LAN backoff after a success or after learning fresh hints.
-    pub(crate) fn reset_dial_backoff(&mut self, initial: Duration) {
-        self.dial_backoff = initial;
-        self.next_dial_at = None;
+        self.paths.iter_mut().find(|p| p.is_secure() && p.session_id.is_some())
     }
 }
 
@@ -386,8 +348,8 @@ mod tests {
     }
 
     /// regression (plan gate, M7 design round 7): a relay handshake that failed is tried again by
-    /// the initiator after 2 s, then 4, 8 … 60 s; success resets the wait; nothing is retried on
-    /// the responder side, off the relay, or while the peer is away.
+    /// the initiator after 2 s, then 4, 8 … 30 s; success resets the wait; nothing is retried on
+    /// the responder side, unattached, or while the peer is away.
     #[test]
     fn regression_failed_relay_handshakes_are_retried_with_backoff() {
         let (ka, kb) = keys();
@@ -405,7 +367,7 @@ mod tests {
             assert!(!p.retry_due(at - Duration::from_millis(1)));
             assert!(p.retry_due(at));
         }
-        assert_eq!(waits, [2, 4, 8, 16, 32, 60, 60]);
+        assert_eq!(waits, [2, 4, 8, 16, 30, 30, 30]);
         // A completed handshake resets the wait.
         let mut q = PeerPath::new(LinkId::Relay);
         let m1 = p.begin(&ka, Role::Initiator).unwrap().unwrap();
@@ -417,11 +379,11 @@ mod tests {
         p.finish().unwrap();
         assert!(p.retry_at.is_none());
         assert_eq!(p.retry_backoff, HANDSHAKE_RETRY_MIN);
-        // No retry for the responder, off the relay, unattached, or with the peer away.
-        let mut cases = [PeerPath::new(LinkId::Relay), PeerPath::new(LinkId::Host), PeerPath::new(LinkId::Relay), PeerPath::new(LinkId::Relay)];
+        // No retry for the responder, unattached, or with the peer away.
+        let mut cases = [PeerPath::new(LinkId::Relay), PeerPath::new(LinkId::Relay), PeerPath::new(LinkId::Relay)];
         for (i, c) in cases.iter_mut().enumerate() {
-            c.session_id = (i != 2).then(SessionId::random);
-            c.present = i != 3;
+            c.session_id = (i != 1).then(SessionId::random);
+            c.present = i != 2;
         }
         cases[0].handshake_failed(now, false);
         for c in &mut cases[1..] {
@@ -438,26 +400,26 @@ mod tests {
     }
 
     #[test]
-    fn best_path_prefers_direct_and_ignores_idle_paths() {
-        let mut st = PeerState::new(Duration::from_secs(1));
+    fn traffic_takes_the_secure_path_only() {
+        let (ka, kb) = keys();
+        let mut st = PeerState::default();
         st.path_or_insert(LinkId::Relay);
-        assert!(st.best_secure_path().is_none());
-        assert!(!st.has_active_direct_path());
-        st.path_or_insert(LinkId::Host).session_id = Some(SessionId::random());
-        st.path_or_insert(LinkId::Dial(1)).session_id = Some(SessionId::random());
-        // Fake "secure" phases via a real handshake is heavy; use IdentityChanged to prove that a
-        // non-idle direct path counts as active while never being selected for traffic.
-        st.path_or_insert(LinkId::Dial(1)).phase = PeerPhase::IdentityChanged { presented: PublicKey([9; 32]) };
-        assert!(st.has_active_direct_path());
-        assert!(st.best_secure_path().is_none());
-        st.drop_link(LinkId::Dial(1));
-        assert!(!st.has_active_direct_path());
-        assert_eq!(st.paths.len(), 2);
-        assert!(LinkId::Host.is_direct() && LinkId::Dial(7).is_direct() && !LinkId::Relay.is_direct());
-        st.dial_backoff = Duration::from_secs(9);
-        st.next_dial_at = Some(Instant::now());
-        st.reset_dial_backoff(Duration::from_secs(1));
-        assert_eq!(st.dial_backoff, Duration::from_secs(1));
-        assert!(st.next_dial_at.is_none());
+        assert!(st.best_secure_path().is_none(), "an idle path carries nothing");
+        st.path_or_insert(LinkId::Relay).phase = PeerPhase::IdentityChanged { presented: PublicKey([9; 32]) };
+        assert!(st.best_secure_path().is_none(), "nor a flagged one");
+        let mut other = PeerPath::new(LinkId::Relay);
+        let path = st.path_or_insert(LinkId::Relay);
+        path.phase = PeerPhase::Idle;
+        let m1 = path.begin(&ka, Role::Initiator).unwrap().unwrap();
+        other.begin(&kb, Role::Responder).unwrap();
+        let (m2, _) = other.handshake_input(&m1).unwrap();
+        path.handshake_input(&m2.unwrap()).unwrap();
+        path.finish().unwrap();
+        assert!(st.best_secure_path().is_none(), "secure but not attached");
+        st.path_or_insert(LinkId::Relay).session_id = Some(SessionId::random());
+        assert!(st.best_secure_path().is_some());
+        assert_eq!(st.paths.len(), 1);
+        st.drop_link(LinkId::Relay);
+        assert!(st.paths.is_empty());
     }
 }

@@ -5,6 +5,11 @@
 //! when it is signed with the same key, and asks the person first. The app installs nothing itself:
 //! an app from Google Play may not update itself outside Play, and the permission it would need
 //! (`REQUEST_INSTALL_PACKAGES`) is not allowed there for that.
+//!
+//! The latest release is asked from the docs site's mirror first (`VOLTIP_UPDATE_MIRROR`, built
+//! in; `<mirror>/android.json` answers in GitHub's shape with the APK on the mirror) and from
+//! GitHub's API when the mirror cannot answer: many networks in China reach GitHub slowly or not
+//! at all (user request 2026-10-10: updates should not depend on one host).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -52,8 +57,9 @@ impl InstallSource {
 pub struct UpdateConfig {
     /// Who installed the app; `None`: ask the host once the app runs ([`start`]).
     pub source: Option<InstallSource>,
-    /// GitHub's latest-release endpoint for the repository ([`latest_release_api`]).
-    pub latest_release: String,
+    /// Where the latest release is asked, in order: the mirror's `android.json`
+    /// ([`mirror_release`]) when the build has one, then GitHub's API ([`latest_release_api`]).
+    pub sources: Vec<String>,
     /// The app's Google Play listing ([`store_listing`]).
     pub listing: String,
     /// Delay of the automatic check after start ([`AUTO_CHECK_DELAY`] in production).
@@ -66,7 +72,7 @@ impl UpdateConfig {
     pub fn production() -> Self {
         Self {
             source: None,
-            latest_release: latest_release_api(crate::commands::REPOSITORY),
+            sources: mirror_release(option_env!("VOLTIP_UPDATE_MIRROR")).into_iter().chain([latest_release_api(crate::commands::REPOSITORY)]).collect(),
             listing: store_listing(PACKAGE),
             auto_check_delay: AUTO_CHECK_DELAY,
         }
@@ -80,6 +86,13 @@ pub const PACKAGE: &str = "dev.voltip.mobile";
 pub fn latest_release_api(repository: &str) -> String {
     let path = repository.trim().trim_end_matches('/').trim_start_matches("https://github.com/");
     format!("https://api.github.com/repos/{path}/releases/latest")
+}
+
+/// The mirror's answer for the latest release (`https://host/updates` → `…/updates/android.json`);
+/// `None` without a mirror or with one that is not an http(s) address.
+pub fn mirror_release(base: Option<&str>) -> Option<String> {
+    let base = base.map(str::trim).filter(|b| b.starts_with("https://") || b.starts_with("http://"))?;
+    Some(format!("{}/android.json", base.trim_end_matches('/')))
 }
 
 /// The Google Play page of `package`; Android hands it to the Play app when it is there.
@@ -143,8 +156,10 @@ fn version_of(text: &str) -> Option<(u64, u64, u64)> {
     parts.next().is_none().then_some(version)
 }
 
-/// Ask GitHub for the latest release.
+/// Ask `url` for the latest release: GitHub's API, or the mirror that answers in its shape.
 async fn fetch(url: &str) -> Result<Release, String> {
+    let github = url.starts_with("https://api.github.com/");
+    let host = if github { "GitHub" } else { "更新服务器" };
     // Not a bare reqwest client: its verifier panics on Android at the first HTTPS request.
     let client = voltip_cloud::http_client_builder()
         .connect_timeout(CONNECT_TIMEOUT)
@@ -153,16 +168,32 @@ async fn fetch(url: &str) -> Result<Release, String> {
         .user_agent(concat!("voltip-android/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| e.to_string())?;
-    let response = client.get(url).header("Accept", "application/vnd.github+json").send().await.map_err(|e| format!("无法连接 GitHub：{e}"))?;
+    let response = client.get(url).header("Accept", "application/vnd.github+json").send().await.map_err(|e| format!("无法连接{host}：{e}"))?;
     let status = response.status();
-    if status.as_u16() == 403 || status.as_u16() == 429 {
+    if github && (status.as_u16() == 403 || status.as_u16() == 429) {
         return Err("GitHub 暂时不接受查询（每小时的查询次数有限），请稍后再试".into());
     }
     if !status.is_success() {
-        return Err(format!("GitHub 返回 {status}"));
+        return Err(format!("{host}返回 {status}"));
     }
-    let body = response.text().await.map_err(|e| format!("GitHub 的回答无法读取：{e}"))?;
-    serde_json::from_str::<Release>(&body).map_err(|e| format!("GitHub 的回答无法读取：{e}"))
+    let body = response.text().await.map_err(|e| format!("{host}的回答无法读取：{e}"))?;
+    serde_json::from_str::<Release>(&body).map_err(|e| format!("{host}的回答无法读取：{e}"))
+}
+
+/// The latest release from the first of `sources` that answers. When none does, the first one's
+/// error: the mirror's, which is the one the person's network decides.
+async fn latest(sources: &[String]) -> Result<Release, String> {
+    let mut first = None;
+    for url in sources {
+        match fetch(url).await {
+            Ok(release) => return Ok(release),
+            Err(message) => {
+                tracing::warn!(error = %message, "update source failed");
+                first.get_or_insert(message);
+            }
+        }
+    }
+    Err(first.unwrap_or_else(|| "updater: 没有可查询的更新来源".to_owned()))
 }
 
 /// The phone's updater: the status `update_status` answers and the release a check found.
@@ -226,8 +257,8 @@ impl PhoneUpdater {
         bridge.publish(UiEvent::Update(status));
     }
 
-    /// `update_check`: Play checks by itself, so nothing happens there; otherwise GitHub is asked in
-    /// the background and the outcome arrives as an `update` event.
+    /// `update_check`: Play checks by itself, so nothing happens there; otherwise the mirror, then
+    /// GitHub, is asked in the background and the outcome arrives as an `update` event.
     pub fn check(self: &Arc<Self>, runtime: &Handle, bridge: &Bridge) -> Result<(), String> {
         match self.source() {
             None => return Err(SOURCE_PENDING.into()),
@@ -241,7 +272,7 @@ impl PhoneUpdater {
         let (updater, bridge) = (self.clone(), bridge.clone());
         runtime.spawn(async move {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            let outcome = fetch(&updater.config.latest_release).await.and_then(|release| read_release(&release, &updater.current, now));
+            let outcome = latest(&updater.config.sources).await.and_then(|release| read_release(&release, &updater.current, now));
             let status = match outcome {
                 Ok((status, apk)) => {
                     *updater.apk.lock().unwrap_or_else(PoisonError::into_inner) = apk;
@@ -408,7 +439,9 @@ mod tests {
     fn regression_the_phone_asks_its_own_repository_and_points_to_its_own_listing() {
         assert_eq!(crate::commands::REPOSITORY, "https://github.com/sunerpy/voltip");
         let production = UpdateConfig::production();
-        assert_eq!(production.latest_release, "https://api.github.com/repos/sunerpy/voltip/releases/latest");
+        // GitHub's API is always the last source; a build with a mirror asks that one first.
+        assert_eq!(production.sources.last().map(String::as_str), Some("https://api.github.com/repos/sunerpy/voltip/releases/latest"));
+        assert_eq!(production.sources.len(), if mirror_release(option_env!("VOLTIP_UPDATE_MIRROR")).is_some() { 2 } else { 1 });
         assert_eq!(production.listing, "https://play.google.com/store/apps/details?id=dev.voltip.mobile");
         assert_eq!(production.source, None);
         assert_eq!(production.auto_check_delay, AUTO_CHECK_DELAY);
@@ -426,11 +459,21 @@ mod tests {
         }
     }
 
+    /// docs/dictation.md §20.9: the mirror's `android.json`, from the base of its `/updates/`.
+    #[test]
+    fn the_mirror_answers_from_its_base_and_only_an_http_one_counts() {
+        assert_eq!(mirror_release(Some("https://mirror.example.test/updates")).as_deref(), Some("https://mirror.example.test/updates/android.json"));
+        assert_eq!(mirror_release(Some(" https://mirror.example.test/updates/ ")).as_deref(), Some("https://mirror.example.test/updates/android.json"));
+        for none in [None, Some(""), Some("  "), Some("mirror.example.test/updates"), Some("ftp://mirror.example.test/updates")] {
+            assert_eq!(mirror_release(none), None, "{none:?}");
+        }
+    }
+
     #[test]
     fn a_play_install_points_to_its_listing_and_a_direct_one_needs_a_newer_release_first() {
         let config = |source| UpdateConfig {
             source: Some(source),
-            latest_release: "https://example.test/latest".into(),
+            sources: vec!["https://example.test/latest".into()],
             listing: store_listing("dev.voltip.mobile"),
             auto_check_delay: Duration::ZERO,
         };
@@ -449,7 +492,7 @@ mod tests {
     fn until_the_system_names_the_installer_nothing_is_checked_or_opened() {
         let config = UpdateConfig {
             source: None,
-            latest_release: "https://example.test/latest".into(),
+            sources: vec!["https://example.test/latest".into()],
             listing: store_listing("dev.voltip.mobile"),
             auto_check_delay: Duration::ZERO,
         };

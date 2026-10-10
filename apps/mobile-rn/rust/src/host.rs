@@ -22,8 +22,6 @@ pub trait Host: Send + Sync + 'static {
     fn share_text(&self, text: &str) -> Result<(), String>;
     /// Open the system share sheet with `text` as the file `name` of type `mime`.
     fn share_file(&self, name: &str, text: &str, mime: &str) -> Result<(), String>;
-    /// Hold (`true`) or release the Wi-Fi multicast lock LAN discovery needs.
-    fn multicast(&self, held: bool);
     /// Open `url` in the browser (or the app that handles it).
     fn open_url(&self, url: &str) -> Result<(), String>;
     /// The package that installed the app (`com.android.vending` for Google Play), as the system
@@ -56,8 +54,6 @@ pub enum HostCall {
         /// MIME type.
         mime: String,
     },
-    /// [`Host::multicast`].
-    Multicast(bool),
     /// [`Host::open_url`].
     OpenUrl(String),
 }
@@ -157,10 +153,6 @@ impl Host for RecordingHost {
     fn share_file(&self, name: &str, text: &str, mime: &str) -> Result<(), String> {
         self.record(HostCall::ShareFile { name: name.to_owned(), text: text.to_owned(), mime: mime.to_owned() });
         self.outcome()
-    }
-
-    fn multicast(&self, held: bool) {
-        self.record(HostCall::Multicast(held));
     }
 
     fn open_url(&self, url: &str) -> Result<(), String> {

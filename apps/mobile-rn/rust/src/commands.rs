@@ -17,7 +17,7 @@ use crate::shell::Shell;
 
 /// Every command the app may invoke: the Tauri phone shell's `COMMANDS`, in its order (a test reads
 /// that list and compares).
-pub const COMMANDS: [&str; 110] = [
+pub const COMMANDS: [&str; 109] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -36,9 +36,8 @@ pub const COMMANDS: [&str; 110] = [
     "phone_text_send",
     "sent_texts_clear",
     "phone_clipboard_read",
-    "settings_set_lan_discovery",
     "settings_set_pairing_always_on",
-    "pairing_join_nearby",
+    "relay_reconnect",
     "settings_set_relay",
     "settings_set_theme",
     "settings_set_hotkey",
@@ -159,12 +158,6 @@ pub async fn run(shell: &Shell, command: &str, args: Value) -> Result<Value, Str
         "phone_clipboard_read" => {
             let text = blocking(shell, |host| host.clipboard_read()).await?;
             Ok(json!({ "text": text.filter(|t| !t.is_empty()) }))
-        }
-        "settings_set_lan_discovery" => {
-            let enabled: bool = arg(command, &args, "enabled")?;
-            bridge.dispatch(UiCommand::SettingsSetLanDiscovery { enabled }).map_err(String::from)?;
-            shell.hold_multicast(enabled);
-            Ok(Value::Null)
         }
         // Phones register no OS hotkey; the recorder's suspend request is accepted and ignored so
         // the shared code needs no platform branch.

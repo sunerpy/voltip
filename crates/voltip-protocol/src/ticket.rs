@@ -24,7 +24,7 @@ pub const PUBLIC_KEY_LEN: usize = 32;
 pub struct PairingTicket {
     /// Protocol version.
     pub version: ProtocolVersion,
-    /// Session to join at the relay (or to quote to a direct peer).
+    /// Session to join at the relay.
     pub session_id: SessionId,
     /// Initiator's Noise ephemeral public key. The first handshake message MUST carry
     /// exactly this key, which is what binds the QR code to the key exchange.
@@ -38,9 +38,8 @@ pub struct PairingTicket {
     /// Relay the initiator is waiting on, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relay_hint: Option<url::Url>,
-    /// LAN endpoints the initiator listens on for a direct connection (`ip:port`).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub direct_hints: Vec<String>,
+    // Builds before 0.1.0 also wrote `direct_hints`, the initiator's LAN addresses: they are
+    // ignored on decode (docs/pairing.md 「只走中继」).
 }
 
 impl PairingTicket {
@@ -80,7 +79,6 @@ impl PairingTicket {
         let cbor = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload).map_err(|e| CodecError::Malformed(e.to_string()))?;
         let ticket: Self = ciborium::from_reader(cbor.as_slice()).map_err(|e| CodecError::Malformed(e.to_string()))?;
         ticket.version.check()?;
-        crate::validate_direct_hints(&ticket.direct_hints)?;
         Ok(ticket)
     }
 
@@ -102,7 +100,6 @@ mod tests {
             nonce: [9; NONCE_LEN],
             expires_at: 1_800_000_120,
             relay_hint: Some(url::Url::parse("wss://relay.example/ws").unwrap()),
-            direct_hints: vec!["192.168.1.24:47830".into()],
         }
     }
 
@@ -116,10 +113,9 @@ mod tests {
     }
 
     #[test]
-    fn ticket_without_hints_roundtrips() {
+    fn ticket_without_a_relay_hint_roundtrips() {
         let mut t = sample();
         t.relay_hint = None;
-        t.direct_hints.clear();
         let uri = t.to_uri().unwrap();
         assert_eq!(PairingTicket::from_uri(&uri).unwrap(), t);
     }
@@ -150,7 +146,7 @@ mod tests {
     #[test]
     fn oversize_ticket_is_refused_at_encode_time() {
         let mut t = sample();
-        t.direct_hints = (0..40).map(|i| format!("192.168.100.{i}:47830")).collect();
+        t.relay_hint = Some(url::Url::parse(&format!("wss://relay.example/{}", "w".repeat(MAX_TICKET_CHARS))).unwrap());
         assert!(matches!(t.to_uri().unwrap_err(), CodecError::InvalidField { field: "ticket", .. }));
     }
 
@@ -173,6 +169,22 @@ mod tests {
             ciborium::Value::Map(m) => m.into_iter().map(|(k, _)| k.into_text().unwrap()).collect(),
             other => panic!("expected map, got {other:?}"),
         };
-        assert_eq!(keys, ["version", "session_id", "ephemeral_pub", "nonce", "expires_at", "relay_hint", "direct_hints"]);
+        assert_eq!(keys, ["version", "session_id", "ephemeral_pub", "nonce", "expires_at", "relay_hint"]);
+    }
+
+    /// A ticket from a build before 0.1.0 carries the initiator's LAN addresses as well
+    /// (`direct_hints`): it still decodes, and the addresses are dropped.
+    #[test]
+    fn regression_a_ticket_with_the_old_lan_hints_still_decodes() {
+        let t = sample();
+        let mut cbor = Vec::new();
+        ciborium::into_writer(&t, &mut cbor).unwrap();
+        let mut value: ciborium::Value = ciborium::from_reader(cbor.as_slice()).unwrap();
+        let ciborium::Value::Map(fields) = &mut value else { panic!("a map") };
+        fields.push((ciborium::Value::Text("direct_hints".into()), ciborium::Value::Array(vec![ciborium::Value::Text("192.168.1.24:47831".into())])));
+        let mut old = Vec::new();
+        ciborium::into_writer(&value, &mut old).unwrap();
+        let uri = format!("{TICKET_SCHEME}://{TICKET_HOST}?v=1&t={}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(old));
+        assert_eq!(PairingTicket::from_uri(&uri).unwrap(), t);
     }
 }

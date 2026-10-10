@@ -1,6 +1,5 @@
 import {
   type DeviceView,
-  connectionKindLabel,
   connectionLabel,
   formatDate,
   mirrorStateText,
@@ -30,7 +29,7 @@ import { RecentResults } from "./RecentResults";
 import { SendText } from "./SendText";
 
 /** Detail rows of a device card; the labels come from `mobile.devices.column.*`. */
-const COLUMNS = ["device", "platform", "online", "lastSeen", "trusted", "connection"] as const;
+const COLUMNS = ["device", "platform", "online", "lastSeen", "trusted"] as const;
 
 /** One paired computer, as a row of the desktop's device table reads on a phone: its name and
  *  state, then the table's columns as label-over-value readouts. */
@@ -47,10 +46,6 @@ function DeviceRow({ view, now }: { view: DeviceView; now: number }) {
     online: online.text,
     lastSeen: relativeTime(view.device.last_seen, now, locale),
     trusted: formatDate(view.device.trusted_at),
-    connection: connectionKindLabel(
-      view.connection.state === "online" ? view.connection.via : view.device.last_connection,
-      locale,
-    ),
   };
   return (
     <Card

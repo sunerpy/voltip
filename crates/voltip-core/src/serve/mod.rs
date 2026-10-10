@@ -28,8 +28,7 @@ pub use token::{
     SERVE_DIR, TOKEN_FILE, UPLOADS_DIR, create_private_dir, default_token_path, load_or_create_token, new_token, rotate_token, serve_dir, uploads_dir,
 };
 
-/// The port the service listens on unless told otherwise (not the LAN host's
-/// [`crate::DEFAULT_LAN_PORT`]).
+/// The port the service listens on unless told otherwise.
 pub const DEFAULT_PORT: u16 = 47840;
 /// Takes processed at the same time unless told otherwise.
 pub const DEFAULT_CONCURRENCY: usize = 2;

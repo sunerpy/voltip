@@ -15,6 +15,9 @@ async function createBackend(): Promise<Backend> {
     return new MockBackend({
       autoPeer: { joinAfterMs: 20_000, confirmAfterMs: 6000 },
       devices: sampleDevices(),
+      // As in a release build: phones meet this computer on the built-in relay (docs/pairing.md
+      // 「只走中继」).
+      relay: { state: "connected", attempts: 0, source: "builtin" },
       // As in a release build, the built-in service previews while recording (docs/dictation.md §11.8).
       builtIn: {
         asr: { model: MOCK_ENGINE_BUILTIN.asr_model, key: true, preview: true },

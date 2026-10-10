@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use voltip_core::connectivity::{AddressCheck, ConnectivityReport, ConnectivityStatus, LanHostCheck, PeerCheck, ProbeResult, RelayCheck};
+use voltip_core::connectivity::{ConnectivityReport, ConnectivityStatus, PeerCheck, ProbeResult, RelayCheck};
 use voltip_core::dictation::{ClipboardCode, FailureCode, ProcessingStage, Via};
 use voltip_core::history::ProcessedText;
 use voltip_core::history::process::ProcessState;
@@ -33,7 +33,7 @@ use voltip_core::{
 };
 use voltip_core::{EntryOrigin, OriginKind};
 use voltip_crypto::{PublicKey, SafetyCode};
-use voltip_identity::{ConnectionKind, DeviceIdentityPublic, TrustedDevice};
+use voltip_identity::{DeviceIdentityPublic, TrustedDevice};
 use voltip_pairing::{FailureReason, PairingState, Snapshot};
 use voltip_protocol::relay::RelayErrorCode;
 use voltip_protocol::{DeviceId, DeviceInfo, Platform, SessionId};
@@ -56,7 +56,6 @@ const PHONE_DEVICE_ID: &str = "7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d";
 const TABLET_DEVICE_ID: &str = "c0ffee00-1234-4abc-9def-0123456789ab";
 const SESSION_ID: &str = "5eed5eed-0000-4000-8000-00000000c0de";
 const RELAY_URL: &str = "wss://relay.example.test/ws";
-const LAN_HINT: &str = "192.168.1.20:47831";
 const TRUSTED_AT: u64 = 1_758_700_000;
 const LAST_SEEN: u64 = 1_758_700_600;
 const EXPIRES_AT: u64 = 1_758_700_120;
@@ -103,26 +102,26 @@ fn uuid<T: DeserializeOwned>(text: &str) -> T {
     serde_json::from_value(Value::String(text.to_owned())).unwrap()
 }
 
-/// A self-check from the phone: the relay answers, the computer is online over the relay with an
-/// encrypted round trip, one of its LAN addresses answers and one on the same /24 does not.
+/// A self-check from the phone: the relay answers, the computer is online with an encrypted round
+/// trip, the tablet is offline.
 fn connectivity_report() -> ConnectivityReport {
     ConnectivityReport {
         checked_at: AT_MS,
-        lan: LanHostCheck { listening: true, addresses: vec!["192.168.1.30:47831".into()] },
         relay: RelayCheck { configured: true, result: Some(ProbeResult::Ok { ms: 48 }) },
-        peers: vec![PeerCheck {
-            public_key: DESKTOP_KEY.to_hex(),
-            name: "Surface-Laptop".into(),
-            via: Some(ConnectionKind::Relay),
-            rtt_ms: Some(61),
-            addresses: vec![
-                AddressCheck { address: "192.168.1.24:47831".into(), same_subnet: true, result: ProbeResult::Timeout },
-                AddressCheck { address: "10.0.0.7:47831".into(), same_subnet: false, result: ProbeResult::Refused },
-                AddressCheck { address: "172.16.0.2:47831".into(), same_subnet: false, result: ProbeResult::Failed { reason: "not a Voltip host".into() } },
-                AddressCheck { address: "192.168.1.25:47831".into(), same_subnet: true, result: ProbeResult::Ok { ms: 7 } },
-            ],
-        }],
+        peers: vec![
+            PeerCheck { public_key: DESKTOP_KEY.to_hex(), name: "Surface-Laptop".into(), online: true, rtt_ms: Some(61) },
+            PeerCheck { public_key: TABLET_KEY.to_hex(), name: "iPad".into(), online: false, rtt_ms: None },
+        ],
     }
+}
+
+/// A self-check whose relay probe did not get through, one way after the other.
+fn failed_connectivity_reports() -> Vec<ConnectivityReport> {
+    [ProbeResult::Timeout, ProbeResult::Refused, ProbeResult::Failed { reason: "tls handshake eof".into() }]
+        .into_iter()
+        .map(|result| ConnectivityReport { checked_at: AT_MS, relay: RelayCheck { configured: true, result: Some(result) }, peers: Vec::new() })
+        .chain([ConnectivityReport { checked_at: AT_MS, relay: RelayCheck { configured: false, result: None }, peers: Vec::new() }])
+        .collect()
 }
 
 /// What the hotkey can do in a session: `global` registers, `everywhere` fires over any window.
@@ -169,8 +168,6 @@ fn phone_device() -> TrustedDevice {
         fingerprint: PHONE_KEY.fingerprint(),
         trusted_at: TRUSTED_AT,
         last_seen: Some(LAST_SEEN),
-        last_connection: Some(ConnectionKind::Relay),
-        direct_hints: vec![LAN_HINT.into()],
         sync: true,
         sync_gen: 3,
     }
@@ -185,8 +182,6 @@ fn tablet_device() -> TrustedDevice {
         fingerprint: TABLET_KEY.fingerprint(),
         trusted_at: TRUSTED_AT,
         last_seen: None,
-        last_connection: None,
-        direct_hints: Vec::new(),
         sync: false,
         sync_gen: 1,
     }
@@ -828,7 +823,7 @@ fn engine_status() -> EngineStatus {
 
 fn devices() -> Vec<DeviceView> {
     vec![
-        DeviceView { device: phone_device(), connection: DeviceConnection::Online { via: ConnectionKind::Relay } },
+        DeviceView { device: phone_device(), connection: DeviceConnection::Online },
         DeviceView { device: tablet_device(), connection: DeviceConnection::IdentityChanged { presented_fingerprint: TABLET_KEY.fingerprint() } },
     ]
 }
@@ -890,7 +885,6 @@ fn full_state() -> UiState {
             opus: true,
         }),
         sent_texts: sent_texts(),
-        nearby: nearby(),
         hardware: hardware_status(),
         connectivity: ConnectivityStatus { running: false, report: Some(connectivity_report()) },
         mirrors: mirror_views(),
@@ -942,7 +936,6 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::ProviderProbe(_) => "provider_probe",
         UiEvent::PhoneTake { .. } => "phone_take",
         UiEvent::SentTexts { .. } => "sent_texts",
-        UiEvent::Nearby { .. } => "nearby",
         UiEvent::Hardware(_) => "hardware",
         UiEvent::Connectivity(_) => "connectivity",
         UiEvent::Serve(_) => "serve",
@@ -1045,27 +1038,6 @@ fn sent_texts() -> Vec<SentText> {
     ]
 }
 
-/// What the LAN browse sees (docs/pairing.md 「局域网发现」): a desktop waiting for a pairing and a
-/// trusted one.
-fn nearby() -> Vec<voltip_core::discovery::NearbyDevice> {
-    vec![
-        voltip_core::discovery::NearbyDevice {
-            fingerprint: "A7C4198E3DF26109".into(),
-            name: "Studio".into(),
-            platform: Platform::Macos,
-            pairing: true,
-            trusted: false,
-        },
-        voltip_core::discovery::NearbyDevice {
-            fingerprint: "0B1C2D3E4F506172".into(),
-            name: "MacBook Pro".into(),
-            platform: Platform::Macos,
-            pairing: false,
-            trusted: true,
-        },
-    ]
-}
-
 /// A phone take to the desktop in `state`, through the fold.
 fn phone_take_event(state: PhoneTakeState) -> UiEvent {
     UiState::default().apply(voltip_core::CoreEvent::PhoneTake(Some(PhoneTakeView {
@@ -1138,7 +1110,7 @@ fn all_events() -> Vec<UiEvent> {
         devices_event(vec![
             DeviceView { device: phone_device(), connection: DeviceConnection::Offline },
             DeviceView { device: tablet_device(), connection: DeviceConnection::Connecting },
-            DeviceView { device: phone_device(), connection: DeviceConnection::Online { via: ConnectionKind::Direct } },
+            DeviceView { device: phone_device(), connection: DeviceConnection::Online },
             DeviceView { device: tablet_device(), connection: DeviceConnection::IdentityChanged { presented_fingerprint: DESKTOP_KEY.fingerprint() } },
         ]),
         devices_event(Vec::new()),
@@ -1517,12 +1489,12 @@ fn all_events() -> Vec<UiEvent> {
         // Text the phone sent (§20.6): the list, empty and full.
         UiEvent::SentTexts { texts: Vec::new() },
         UiEvent::SentTexts { texts: sent_texts() },
-        // LAN discovery (docs/pairing.md): nothing seen, then a pairing desktop and a trusted one.
-        UiEvent::Nearby { devices: Vec::new() },
-        UiEvent::Nearby { devices: nearby() },
         // The connectivity self-check (docs/pairing.md): running, then a report with every probe outcome.
         UiEvent::Connectivity(ConnectivityStatus { running: true, report: None }),
         UiEvent::Connectivity(ConnectivityStatus { running: false, report: Some(connectivity_report()) }),
+    ];
+    events.extend(failed_connectivity_reports().into_iter().map(|report| UiEvent::Connectivity(ConnectivityStatus { running: false, report: Some(report) })));
+    events.extend([
         // docs/dictation.md §23.6: the listener being started, then one that could not start (every
         // key of the status present).
         UiEvent::Serve(ServeStatus { available: true, phase: ServePhase::Starting, address: None, error: None }),
@@ -1699,7 +1671,7 @@ fn all_events() -> Vec<UiEvent> {
             state: ProcessState::Failed { reason: voltip_core::history::process::PROCESS_UNCONFIGURED.into() },
         },
         UiEvent::HistoryProcess { request_id: 7, id: uuid(HISTORY_ID), state: ProcessState::Cancelled },
-    ];
+    ]);
     events.extend(paste_results());
     events
 }
@@ -1749,9 +1721,8 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::PhoneTakeCancel => "PhoneTakeCancel",
         UiCommand::PhoneTextSend { .. } => "PhoneTextSend",
         UiCommand::SentTextsClear => "SentTextsClear",
-        UiCommand::SettingsSetLanDiscovery { .. } => "SettingsSetLanDiscovery",
         UiCommand::SettingsSetPairingAlwaysOn { .. } => "SettingsSetPairingAlwaysOn",
-        UiCommand::PairingJoinNearby { .. } => "PairingJoinNearby",
+        UiCommand::RelayReconnect => "RelayReconnect",
         UiCommand::DevicesRefresh => "DevicesRefresh",
         UiCommand::ConnectivityCheck => "ConnectivityCheck",
         UiCommand::DictationStart => "DictationStart",
@@ -1839,9 +1810,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         // docs/dictation.md §20.6: text from the phone, and forgetting the list.
         ("phone_text_send", json!({ "publicKey": DESKTOP_KEY.to_hex(), "body": "会议改到三点", "source": "typed" }), "PhoneTextSend"),
         ("sent_texts_clear", Value::Null, "SentTextsClear"),
-        // LAN discovery (docs/pairing.md): the switch, and a tap on a nearby pairing desktop.
-        ("settings_set_lan_discovery", json!({ "enabled": false }), "SettingsSetLanDiscovery"),
-        ("pairing_join_nearby", json!({ "fingerprint": "A7C4198E3DF26109" }), "PairingJoinNearby"),
+        // The network changed: check the relay socket now (docs/pairing.md 「重连」).
+        ("relay_reconnect", Value::Null, "RelayReconnect"),
         // Always-on pairing (docs/pairing.md 「常开配对」).
         ("settings_set_pairing_always_on", json!({ "enabled": true }), "SettingsSetPairingAlwaysOn"),
         ("devices_refresh", Value::Null, "DevicesRefresh"),
@@ -2048,7 +2018,7 @@ fn state_fixture_matches_serde_output() {
     let json: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(json["identity"]["public_key"], Value::String(DESKTOP_KEY.to_hex()), "keys are lower-case hex on the wire");
     assert_eq!(json["pairing"]["state"]["state"], "awaiting_verification");
-    assert_eq!(json["devices"][0]["connection"], json!({ "state": "online", "via": "relay" }));
+    assert_eq!(json["devices"][0]["connection"], json!({ "state": "online" }));
     assert_eq!(json["dictation"]["phase"]["phase"], "done");
     assert_eq!(json["dictation"]["session"], 7);
     assert_eq!(json["history_recent"][1]["outcome"]["kind"], "clipboard");
@@ -2300,9 +2270,8 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "PhoneTakeCancel",
         "PhoneTextSend",
         "SentTextsClear",
-        "SettingsSetLanDiscovery",
         "SettingsSetPairingAlwaysOn",
-        "PairingJoinNearby",
+        "RelayReconnect",
         "DevicesRefresh",
         "ConnectivityCheck",
         "DictationStart",

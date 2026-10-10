@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CodecError, DeviceInfo, ProtocolVersion, validate_direct_hints};
+use crate::{CodecError, DeviceInfo, ProtocolVersion};
 
 /// Why a peer rejected pairing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -204,15 +204,13 @@ pub enum AppMessage {
         /// Body.
         body: String,
     },
-    /// Announce updated device info (rename) and current LAN endpoints to a trusted peer.
+    /// Announce updated device info (rename) to a trusted peer. Builds before 0.1.0 also sent
+    /// `direct_hints`, their LAN addresses: ignored on decode (docs/pairing.md 「只走中继」).
     DeviceInfoUpdate {
         /// Protocol version.
         version: ProtocolVersion,
         /// New info.
         device: DeviceInfo,
-        /// `ip:port` endpoints where this device's LAN host listens right now (may be empty).
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        direct_hints: Vec<String>,
         /// This computer offers its history and settings to its phones and takes the phones'
         /// own records (docs/dictation.md §20.8). Absent from older builds and from phones.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -420,10 +418,7 @@ impl AppMessage {
         msg.version().check()?;
         match &msg {
             Self::PairConfirm { device, .. } => device.validate()?,
-            Self::DeviceInfoUpdate { device, direct_hints, .. } => {
-                device.validate()?;
-                validate_direct_hints(direct_hints)?;
-            }
+            Self::DeviceInfoUpdate { device, .. } => device.validate()?,
             Self::TakeStart { sample_rate_hz, .. } if *sample_rate_hz != TAKE_SAMPLE_RATE_HZ => {
                 return Err(CodecError::InvalidField { field: "sample_rate_hz", reason: format!("{sample_rate_hz} Hz, only {TAKE_SAMPLE_RATE_HZ}") });
             }
@@ -523,8 +518,8 @@ mod tests {
             AppMessage::ping(1),
             AppMessage::pong(1),
             AppMessage::text("把 fetchUser 改成 async"),
-            AppMessage::DeviceInfoUpdate { version: v, device: device(), direct_hints: vec!["192.168.1.24:47831".into()], mirror: false },
-            AppMessage::DeviceInfoUpdate { version: v, device: device(), direct_hints: Vec::new(), mirror: true },
+            AppMessage::DeviceInfoUpdate { version: v, device: device(), mirror: false },
+            AppMessage::DeviceInfoUpdate { version: v, device: device(), mirror: true },
             AppMessage::unpair(),
         ] {
             let bytes = m.encode().unwrap();
@@ -668,8 +663,8 @@ mod tests {
     #[test]
     fn device_info_update_mirror_flag_is_optional() {
         let v = ProtocolVersion::CURRENT;
-        let plain = AppMessage::DeviceInfoUpdate { version: v, device: device(), direct_hints: Vec::new(), mirror: false }.encode().unwrap();
-        let flagged = AppMessage::DeviceInfoUpdate { version: v, device: device(), direct_hints: Vec::new(), mirror: true }.encode().unwrap();
+        let plain = AppMessage::DeviceInfoUpdate { version: v, device: device(), mirror: false }.encode().unwrap();
+        let flagged = AppMessage::DeviceInfoUpdate { version: v, device: device(), mirror: true }.encode().unwrap();
         assert!(flagged.len() > plain.len(), "the flag is left out when false");
         assert!(matches!(AppMessage::decode(&plain).unwrap(), AppMessage::DeviceInfoUpdate { mirror: false, .. }));
         assert!(matches!(AppMessage::decode(&flagged).unwrap(), AppMessage::DeviceInfoUpdate { mirror: true, .. }));
@@ -696,17 +691,23 @@ mod tests {
         assert!(matches!(AppMessage::decode(&bytes).unwrap_err(), CodecError::InvalidField { field: "name", .. }));
     }
 
+    /// A device info update from a build before 0.1.0 carries its LAN addresses too
+    /// (`direct_hints`), checked or not: it still decodes, and the addresses are dropped.
     #[test]
-    fn device_info_update_hints_are_validated_on_decode() {
-        let bytes = AppMessage::DeviceInfoUpdate {
-            version: ProtocolVersion::CURRENT,
-            device: device(),
-            direct_hints: vec!["relay.example.org:1".into()],
-            mirror: false,
+    fn regression_a_device_info_update_with_the_old_lan_hints_still_decodes() {
+        let message = AppMessage::DeviceInfoUpdate { version: ProtocolVersion::CURRENT, device: device(), mirror: true };
+        let bytes = message.encode().unwrap();
+        for hints in [vec!["192.168.1.24:47831"], vec!["relay.example.org:1"]] {
+            let mut value: ciborium::Value = ciborium::from_reader(bytes.as_slice()).unwrap();
+            let ciborium::Value::Map(fields) = &mut value else { panic!("a map") };
+            fields.push((
+                ciborium::Value::Text("direct_hints".into()),
+                ciborium::Value::Array(hints.into_iter().map(|h| ciborium::Value::Text(h.into())).collect()),
+            ));
+            let mut old = Vec::new();
+            ciborium::into_writer(&value, &mut old).unwrap();
+            assert_eq!(AppMessage::decode(&old).unwrap(), message);
         }
-        .encode()
-        .unwrap();
-        assert!(matches!(AppMessage::decode(&bytes).unwrap_err(), CodecError::InvalidField { field: "direct_hints", .. }));
     }
 
     #[test]

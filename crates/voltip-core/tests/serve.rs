@@ -90,7 +90,6 @@ fn start(dir: &Path, host: Option<Arc<FakeHost>>) -> Node {
     }
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = "Serve Test".into();
-    cfg.direct_enabled = false;
     cfg.serve_host = host.map(|h| h as Arc<dyn ServeHost>);
     let injector = Arc::new(FakeInjector::paste());
     let ports = DictationPorts {

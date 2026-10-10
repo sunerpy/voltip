@@ -24,9 +24,9 @@ On a Mac, updating from 0.0.6 or earlier asks for the permissions once more; see
 On the phone, updates are under **Settings → About**, and how they work depends on where the app came from:
 
 - Installed from Google Play, it is updated by Google Play. **Open in Google Play**, under **Updated by Google Play**, opens its page there.
-- Installed from a GitHub release, **Check for updates**, under **Updates**, asks GitHub for the latest release. When there is a newer one, **Download the new version** downloads its installer in the browser; open it when it is done to update. Your pairing, settings and history are kept. **Check automatically**, off by default, checks each time Voltip starts.
+- Installed from a GitHub release, **Check for updates**, under **Updates**, looks for the latest release on this site and then on GitHub. When there is a newer one, **Download the new version** downloads its installer in the browser; open it when it is done to update. Your pairing, settings and history are kept. **Check automatically**, off by default, checks each time Voltip starts.
 
-Android only installs an update signed like the version you have. GitHub answers a limited number of queries per hour from each network address; when the message says so, try again later.
+Android only installs an update signed like the version you have. When this site cannot be reached, Voltip asks GitHub, which answers a limited number of queries per hour from each network address; when the message says so, try again later.
 
 Voltip 0.0.50 does not check for updates, and its **About** page has no **Updates** section. Google Play updates a copy it installed; for a copy from a GitHub release, download `Voltip_<version>_android_arm64.apk` from the new release and open it: it installs over the old version. Voltip 0.0.49 and earlier find the new version with **Check for updates** as above.
 
@@ -34,7 +34,9 @@ Voltip 0.0.50 does not check for updates, and its **About** page has no **Update
 
 The text after **Update failed** names the cause, for example that the connection timed out, was refused or could not be secured. Voltip gives up when a connection to the update server takes longer than 15 seconds to open, or when the server sends nothing for 30 seconds.
 
-Updates are downloaded from GitHub. Voltip does not use the proxy set in the Windows or macOS settings. If you reach GitHub through a proxy tool, use its TUN mode, or set the `HTTPS_PROXY` environment variable and start Voltip again.
+Voltip looks for updates on this site first and downloads them from here; this site serves the same files as the GitHub release, and Voltip checks every package against its signature before installing it. When this site cannot be reached, Voltip asks GitHub instead. Voltip does not use the proxy set in the Windows or macOS settings. If you reach the internet through a proxy tool, use its TUN mode, or set the `HTTPS_PROXY` environment variable and start Voltip again.
+
+Voltip 0.0.52 and earlier ask GitHub only.
 
 ## Where your data is kept
 

@@ -6,7 +6,6 @@ import {
   activationHint,
   activationLabel,
   activationShortcut,
-  connectionKindLabel,
   connectionLabel,
   dictationFailureText,
   dictationPhaseLabel,
@@ -98,19 +97,12 @@ describe("hotkeyMethodText", () => {
 describe("labels", () => {
   it("labels platforms and connections", () => {
     expect(platformLabel("macos")).toBe("macOS");
-    expect(connectionLabel({ state: "online", via: "direct" })).toEqual({
-      text: "在线 · 直连",
-      tone: "ok",
-    });
-    expect(connectionLabel({ state: "online", via: "relay" }).text).toBe("在线 · 经中继");
+    expect(connectionLabel({ state: "online" })).toEqual({ text: "在线", tone: "ok" });
     expect(connectionLabel({ state: "connecting" }).tone).toBe("accent");
     expect(connectionLabel({ state: "offline" }).text).toBe("离线");
     expect(connectionLabel({ state: "identity_changed", presented_fingerprint: "x" }).tone).toBe(
       "danger",
     );
-    expect(connectionKindLabel("direct")).toBe("直连");
-    expect(connectionKindLabel("relay")).toBe("中继");
-    expect(connectionKindLabel(undefined)).toBe("—");
   });
 
   it("labels relay states including reconnect attempts", () => {
@@ -324,13 +316,10 @@ describe("labels in English", () => {
       themeSubtitle("graphite", "en"),
       platformLabel("other", "en"),
       platformLabel("macos", "en"),
-      connectionLabel({ state: "online", via: "direct" }, "en").text,
-      connectionLabel({ state: "online", via: "relay" }, "en").text,
+      connectionLabel({ state: "online" }, "en").text,
       connectionLabel({ state: "connecting" }, "en").text,
       connectionLabel({ state: "offline" }, "en").text,
       connectionLabel({ state: "identity_changed", presented_fingerprint: "x" }, "en").text,
-      connectionKindLabel("direct", "en"),
-      connectionKindLabel("relay", "en"),
       relayLabel({ state: "reconnecting", attempts: 3, source: "builtin" }, "en").text,
       relayLabel({ state: "disconnected", attempts: 0, source: "none" }, "en").text,
       relayLabel({ state: "connected", attempts: 0, endpoint: "wss://r", source: "user" }, "en")

@@ -62,6 +62,9 @@ const PATHS = {
   gauge: "M4 14a8 8 0 1 1 16 0M12 14l4-4M12 14h.01",
   drag: "M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01",
   clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2",
+  calendar: "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4M8 14h4",
+  calendarGrid:
+    "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01M16 17h.01",
   link: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
   railCollapse: "M4 4h16v16H4zM9 4v16M16 9l-3 3 3 3",
   railExpand: "M4 4h16v16H4zM9 4v16M13 9l3 3-3 3",

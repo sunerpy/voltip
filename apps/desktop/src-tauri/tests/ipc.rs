@@ -34,13 +34,18 @@ const POLL: Duration = Duration::from_millis(20);
 const DEVICE_NAME: &str = "Desk Test";
 const NOT_FOUND: &str = "not found";
 
-/// Offline core: relay disabled, LAN host on an ephemeral loopback port, recognition on the fakes'
-/// custom endpoint (a test build has no built-in service).
+/// Offline core: relay disabled, recognition on the fakes' custom endpoint (a test build has no
+/// built-in service).
 fn offline_config(dir: &Path) -> CoreConfig {
-    SettingsStore::new(dir).save(&Settings { relay_enabled: false, engines: fake_engines(), ..Settings::default() }).unwrap();
+    core_config(dir, None)
+}
+
+/// [`offline_config`], on the relay `relay_url` when there is one.
+fn core_config(dir: &Path, relay_url: Option<&str>) -> CoreConfig {
+    let settings = Settings { relay_enabled: relay_url.is_some(), relay_url: relay_url.map(str::to_owned), engines: fake_engines(), ..Settings::default() };
+    SettingsStore::new(dir).save(&settings).unwrap();
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = DEVICE_NAME.into();
-    cfg.direct_bind = "127.0.0.1:0".parse().unwrap();
     // As in the shell's own configuration (docs/dictation.md §20.8).
     cfg.sync_role = voltip_core::sync::SyncRole::Computer;
     cfg
@@ -98,6 +103,39 @@ fn wait_event(rx: &mpsc::Receiver<String>, what: &str, mut pred: impl FnMut(&Val
     }
 }
 
+/// A relay on an ephemeral loopback port for as long as it lives: pairing runs only on a relay
+/// (docs/pairing.md 「只走中继」).
+struct TestRelay {
+    url: String,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    runtime: Option<tokio::runtime::Runtime>,
+}
+
+impl TestRelay {
+    fn start() -> Self {
+        let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let relay = voltip_relay::server::RelayHandle::new(voltip_relay::RelayConfig::default());
+        let (addr, _task) = runtime
+            .block_on(relay.serve("127.0.0.1:0".parse().unwrap(), async move {
+                let _ = stopped.await;
+            }))
+            .unwrap();
+        Self { url: format!("ws://{addr}/ws"), stop: Some(stop), runtime: Some(runtime) }
+    }
+}
+
+impl Drop for TestRelay {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
+    }
+}
+
 /// Build the app on the mock runtime, run its event loop on this thread (which is where Tauri
 /// executes the `setup` hook) and drive it from `body` on a helper thread.
 fn with_running_app(body: impl FnOnce(&AppHandle<MockRuntime>, &WebviewWindow<MockRuntime>, &mpsc::Receiver<String>) + Send + 'static) {
@@ -109,10 +147,27 @@ fn with_running_app_on(
     ports: DictationPorts,
     body: impl FnOnce(&AppHandle<MockRuntime>, &WebviewWindow<MockRuntime>, &mpsc::Receiver<String>) + Send + 'static,
 ) {
+    run_app(None, ports, body);
+}
+
+/// [`with_running_app`] on a relay of the test's own, connected before `body` runs.
+fn with_running_app_on_a_relay(body: impl FnOnce(&AppHandle<MockRuntime>, &WebviewWindow<MockRuntime>, &mpsc::Receiver<String>) + Send + 'static) {
+    let relay = TestRelay::start();
+    run_app(Some(&relay.url), fakes::ports(), |handle, webview, rx| {
+        wait_state(webview, |s| s.identity.is_some() && s.relay.state.is_connected());
+        body(handle, webview, rx);
+    });
+}
+
+fn run_app(
+    relay_url: Option<&str>,
+    ports: DictationPorts,
+    body: impl FnOnce(&AppHandle<MockRuntime>, &WebviewWindow<MockRuntime>, &mpsc::Receiver<String>) + Send + 'static,
+) {
     let dir = tempfile::tempdir().unwrap();
     let app = build_app(
         mock_builder(),
-        offline_config(dir.path()),
+        core_config(dir.path(), relay_url),
         Arc::new(MemorySecretStore::new()),
         ShellOptions::HEADLESS,
         voltip_desktop_lib::dictation::ShellPorts::headless(ports),
@@ -156,26 +211,24 @@ fn core_state_reports_identity_and_the_setup_hook_forwards_events() {
 
 #[test]
 fn pairing_start_leaves_idle_and_cancel_reset_returns_to_it() {
-    with_running_app(|_, webview, rx| {
-        wait_state(webview, |s| s.identity.is_some());
+    with_running_app_on_a_relay(|_, webview, rx| {
         assert_eq!(invoke(webview, "pairing_start", json!({})), Ok(Value::Null));
         let st = wait_state(webview, |s| s.pairing.state != PairingState::Idle);
         assert!(matches!(st.pairing.state, PairingState::CreatingSession | PairingState::WaitingForPeer), "{:?}", st.pairing.state);
         let waiting = wait_state(webview, |s| s.pairing.state == PairingState::WaitingForPeer);
-        assert!(waiting.pairing.code.is_some(), "LAN pairing still shows a code");
+        assert!(waiting.pairing.code.is_some(), "the pairing shows a code");
         assert!(waiting.pairing.ticket_uri.as_deref().unwrap_or_default().starts_with("voltip://pair?"));
         wait_event(rx, "pairing/waiting_for_peer", |e| e["type"] == "pairing" && e["state"]["state"] == "waiting_for_peer");
         assert_eq!(invoke(webview, "pairing_cancel", json!({})), Ok(Value::Null));
         wait_state(webview, |s| s.pairing.state.is_terminal());
         assert_eq!(invoke(webview, "pairing_reset", json!({})), Ok(Value::Null));
         wait_state(webview, |s| s.pairing.state == PairingState::Idle);
-        // Without a relay a bare code cannot be joined: the command is accepted, the core reports.
+        // A code nobody waits for: the command is accepted, the relay answers, the pairing fails.
         assert_eq!(invoke(webview, "pairing_join_code", json!({ "code": "483 921" })), Ok(Value::Null));
-        let err = wait_event(rx, "error", |e| e["type"] == "error");
-        assert!(err["message"].as_str().unwrap().contains("中继"), "{err}");
+        wait_state(webview, |s| matches!(s.pairing.state, PairingState::Failed { .. }));
         // A ticket is accepted by the IPC layer too; a malformed one is reported by the core.
         assert_eq!(invoke(webview, "pairing_join_ticket", json!({ "uri": "voltip://pair?v=1&t=AA" })), Ok(Value::Null));
-        wait_event(rx, "error (bad ticket)", |e| e["type"] == "error" && e["message"] != err["message"]);
+        wait_event(rx, "error (bad ticket)", |e| e["type"] == "error");
     });
 }
 
@@ -219,8 +272,7 @@ fn settings_and_identity_commands_change_state() {
 /// here, there is no relay), and switching it off closes the waiting one.
 #[test]
 fn always_on_pairing_opens_a_session_and_closes_it_when_off() {
-    with_running_app(|_, webview, rx| {
-        wait_state(webview, |s| s.identity.is_some());
+    with_running_app_on_a_relay(|_, webview, rx| {
         assert!(invoke(webview, "settings_set_pairing_always_on", json!({})).is_err(), "enabled is required");
         assert_eq!(invoke(webview, "settings_set_pairing_always_on", json!({ "enabled": true })), Ok(Value::Null));
         wait_event(rx, "settings", |e| e["type"] == "settings" && e["pairing_always_on"] == true);
@@ -231,20 +283,22 @@ fn always_on_pairing_opens_a_session_and_closes_it_when_off() {
     });
 }
 
-/// docs/pairing.md 「局域网发现」: the switch persists and comes back in `settings`; joining a
-/// device the LAN browse has not seen is the core's error; both need their argument.
+/// docs/pairing.md 「重连」: `relay_reconnect` reaches the core, which asks the relay link to check
+/// its socket (with the relay off there is none, and nothing goes wrong); the LAN commands are
+/// gone (docs/pairing.md 「只走中继」).
 #[test]
-fn lan_discovery_commands_reach_the_core() {
+fn relay_reconnect_reaches_the_core_and_the_lan_commands_are_gone() {
     with_running_app(|_, webview, rx| {
         wait_state(webview, |s| s.identity.is_some());
-        assert!(core_state(webview).settings.lan_discovery, "on by default");
-        assert!(invoke(webview, "settings_set_lan_discovery", json!({})).is_err(), "enabled is required");
-        assert_eq!(invoke(webview, "settings_set_lan_discovery", json!({ "enabled": false })), Ok(Value::Null));
-        wait_event(rx, "settings", |e| e["type"] == "settings" && e["lan_discovery"] == false);
-        assert!(!wait_state(webview, |s| !s.settings.lan_discovery).settings.lan_discovery);
-        assert!(invoke(webview, "pairing_join_nearby", json!({})).is_err(), "fingerprint is required");
-        assert_eq!(invoke(webview, "pairing_join_nearby", json!({ "fingerprint": "0000000000000000" })), Ok(Value::Null));
-        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("附近没有找到此设备")));
+        // Without a relay there is no pairing, and the core says why.
+        assert_eq!(invoke(webview, "pairing_start", json!({})), Ok(Value::Null));
+        let err = wait_event(rx, "error", |e| e["type"] == "error");
+        assert!(err["message"].as_str().unwrap().contains("配对需要中继"), "{err}");
+        assert_eq!(invoke(webview, "relay_reconnect", json!({})), Ok(Value::Null));
+        assert!(core_state(webview).identity.is_some(), "the core still answers");
+        for gone in ["settings_set_lan_discovery", "pairing_join_nearby"] {
+            assert!(invoke(webview, gone, json!({ "enabled": false, "fingerprint": "0000000000000000" })).is_err(), "{gone}");
+        }
     });
 }
 
@@ -1604,7 +1658,8 @@ fn production_wiring_helpers_are_well_formed() {
     // The update source is a build-time affair: the variable names are the documented ones and a
     // build without them has no updater.
     assert_eq!(voltip_desktop_lib::update::UPDATE_URL_ENV, "VOLTIP_UPDATE_URL");
+    assert_eq!(voltip_desktop_lib::update::UPDATE_MIRROR_ENV, "VOLTIP_UPDATE_MIRROR");
     assert_eq!(voltip_desktop_lib::update::UPDATE_PUBKEY_ENV, "VOLTIP_UPDATE_PUBKEY");
-    assert!(voltip_desktop_lib::update::UpdaterConfig::from_values(None, Some("key")).is_none());
+    assert!(voltip_desktop_lib::update::UpdaterConfig::from_values(None, None, Some("key")).is_none());
     assert!(voltip_desktop_lib::update::AUTO_CHECK_DELAY >= Duration::from_secs(5), "the window settles before the automatic check");
 }

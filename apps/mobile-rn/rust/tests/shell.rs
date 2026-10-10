@@ -27,14 +27,10 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
-/// An offline phone with `settings`: `phone_config` with no relay, no mDNS, and the LAN host on an
-/// ephemeral port.
+/// An offline phone with `settings`: `phone_config` with no relay.
 fn offline_config(dir: &Path, settings: Settings) -> CoreConfig {
     SettingsStore::new(dir).save(&Settings { relay_enabled: false, ..settings }).unwrap();
-    let mut config = voltip_rn::shell::phone_config(dir.to_path_buf(), "0.0.44");
-    config.discovery = None;
-    config.direct_bind = "127.0.0.1:0".parse().unwrap();
-    config
+    voltip_rn::shell::phone_config(dir.to_path_buf(), "0.0.44")
 }
 
 struct Running {
@@ -100,7 +96,7 @@ impl Running {
 fn offline_updates() -> UpdateConfig {
     UpdateConfig {
         source: Some(InstallSource::Direct),
-        latest_release: "http://127.0.0.1:9/releases/latest".into(),
+        sources: vec!["http://127.0.0.1:9/releases/latest".into()],
         listing: store_listing(PACKAGE),
         auto_check_delay: Duration::ZERO,
     }
@@ -214,8 +210,7 @@ fn unknown_commands_and_malformed_arguments_are_refused() {
 }
 
 /// The state the app reads first: the phone's identity and the default name, every event handed to
-/// the host as JSON, the update status `idle` (an install from a release, nothing checked yet), and
-/// the multicast lock taken because LAN discovery is on by default.
+/// the host as JSON, and the update status `idle` (an install from a release, nothing checked yet).
 #[test]
 fn the_shell_starts_the_phone_core_and_forwards_its_events() {
     let running = Running::start(RecordingHost::default());
@@ -225,18 +220,24 @@ fn the_shell_starts_the_phone_core_and_forwards_its_events() {
     assert_eq!(running.invoke("update_status", Value::Null).unwrap(), json!({ "state": "idle" }));
     wait_for(|| running.host.events().iter().any(|e| e["type"] == "state").then_some(()));
     assert!(running.host.events().iter().any(|e| e["type"] == "update" && e["state"] == "idle"), "the shell's own status went out");
-    wait_for(|| running.host.calls().contains(&HostCall::Multicast(true)).then_some(()));
     running.invoke("device_rename", json!({ "name": "Pixel" })).unwrap();
     running.wait(|s| s["identity"]["name"] == "Pixel");
     wait_for(|| running.host.events().iter().any(|e| e["type"] == "identity" || e["identity"]["name"] == "Pixel").then_some(()));
 }
 
+/// docs/pairing.md 「重连」: the app tells the shell that the network changed, as a command and
+/// straight from the platform; with the relay off there is no link to check, and nothing goes
+/// wrong. The LAN commands are gone (docs/pairing.md 「只走中继」).
 #[test]
-fn lan_discovery_follows_the_switch_and_holds_the_lock() {
+fn relay_reconnect_reaches_the_core_and_the_lan_commands_are_gone() {
     let running = Running::start(RecordingHost::default());
-    running.invoke("settings_set_lan_discovery", json!({ "enabled": false })).unwrap();
-    wait_for(|| running.host.calls().contains(&HostCall::Multicast(false)).then_some(()));
-    running.wait(|s| s["settings"]["lan_discovery"] == false);
+    assert_eq!(running.invoke("relay_reconnect", Value::Null).unwrap(), Value::Null);
+    running.shell.reconnect_relay();
+    for gone in ["settings_set_lan_discovery", "pairing_join_nearby"] {
+        assert!(running.invoke(gone, json!({ "enabled": false, "fingerprint": "0000000000000000" })).is_err(), "{gone}");
+    }
+    running.invoke("device_rename", json!({ "name": "Still here" })).unwrap();
+    running.wait(|s| s["identity"]["name"] == "Still here");
 }
 
 /// 发送剪贴板, the history's copy button and 分享 go through the host; the clipboard's empty text is

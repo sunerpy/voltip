@@ -85,11 +85,7 @@ export function connectionLabel(
   const t = (key: MessageKey) => translate(locale, key);
   switch (connection.state) {
     case "online":
-      return {
-        text:
-          connection.via === "direct" ? t("connection.onlineDirect") : t("connection.onlineRelay"),
-        tone: "ok",
-      };
+      return { text: t("connection.online"), tone: "ok" };
     case "connecting":
       return { text: t("connection.connecting"), tone: "accent" };
     case "offline":
@@ -97,15 +93,6 @@ export function connectionLabel(
     case "identity_changed":
       return { text: t("connection.identityChanged"), tone: "danger" };
   }
-}
-
-export function connectionKindLabel(
-  kind: "direct" | "relay" | undefined,
-  locale: Locale = DEFAULT_LOCALE,
-): string {
-  if (kind === "direct") return translate(locale, "connection.direct");
-  if (kind === "relay") return translate(locale, "connection.relay");
-  return "—";
 }
 
 function connectionStateText(state: ConnectionState, locale: Locale): string {

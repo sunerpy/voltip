@@ -30,15 +30,13 @@ impl Running {
     /// The shell on `data_dir` with `store`, offline.
     fn start(data_dir: &Path, store: Arc<MemorySecretStore>) -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().worker_threads(2).build().unwrap();
-        let mut config = voltip_rn::shell::phone_config(data_dir.to_path_buf(), "0.0.50");
-        config.discovery = None;
-        config.direct_bind = "127.0.0.1:0".parse().unwrap();
+        let config = voltip_rn::shell::phone_config(data_dir.to_path_buf(), "0.0.50");
         let host = Arc::new(RecordingHost::default());
         // The Tauri app's settings have 自动检查更新 on: its check goes to a closed local port, never
         // to GitHub.
         let updates = UpdateConfig {
             source: None,
-            latest_release: "http://127.0.0.1:9/releases/latest".into(),
+            sources: vec!["http://127.0.0.1:9/releases/latest".into()],
             listing: store_listing(PACKAGE),
             auto_check_delay: AUTO_CHECK_DELAY,
         };
@@ -95,7 +93,7 @@ fn an_update_from_the_tauri_app_keeps_its_settings_history_and_identity() {
     let root = tempfile::tempdir().unwrap();
     let store = Arc::new(MemorySecretStore::new());
     // The Tauri app's phone: its own settings, a take in the history, and the identity it made.
-    let settings = Settings { relay_enabled: false, auto_update: true, lan_discovery: false, ..Settings::default() };
+    let settings = Settings { relay_enabled: false, auto_update: true, locale: voltip_core::Locale::En, ..Settings::default() };
     SettingsStore::new(root.path()).save(&settings).unwrap();
     HistoryStore::open(root.path()).push(entry(), 100).unwrap();
     let identity = {
@@ -114,7 +112,7 @@ fn an_update_from_the_tauri_app_keeps_its_settings_history_and_identity() {
     let state = app.invoke("core_state", Value::Null);
     assert_eq!(state["identity"], identity, "the phone keeps its device identity");
     assert_eq!(state["settings"]["auto_update"], json!(true));
-    assert_eq!(state["settings"]["lan_discovery"], json!(false));
+    assert_eq!(state["settings"]["locale"], json!("en"));
     let page = app.invoke("history_query", json!({ "limit": 20 }));
     let texts: Vec<&str> = page["entries"].as_array().unwrap().iter().filter_map(|e| e["text"].as_str()).collect();
     assert_eq!(texts, ["明天下午三点开会。"], "{page}");

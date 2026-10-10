@@ -53,7 +53,8 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
   `UiCommand`（`crates/voltip-tauri-bridge/tests/contract.rs` 与 `voltip-bridge-harness` 已证明这条映射对
   每个变体成立）；其余的查询和外壳命令逐个实现，行为照搬 Tauri 手机端（见 §4）。
 - **原生优先不变**（`docs/architecture.md` §1.1）：音频、识别、剪贴板、密钥、网络、配对都在 Rust；
-  Kotlin 只做必须调用 Android API 的部分（剪贴板、分享面板、组播锁、打开网址、系统强调色）；JS 只
+  Kotlin 只做必须调用 Android API 的部分（剪贴板、分享面板、打开网址、系统强调色、网络变化与回到前台时通知
+  外壳检查中继连接）；JS 只
   渲染 `UiState`、发命令。两项只涉及交互、不经手数据的能力放在 JS：扫码时的相机取景（扫到的字符串原样交给
   Rust 的 `pairing_join_ticket`）和触感反馈。麦克风的运行时权限由 JS 在开始录音前申请（系统对话框），
   录音本身仍是 Rust 的 cpal/AAudio。
@@ -64,13 +65,16 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
 - 一个 crate，两层：
   - 外壳（`shell.rs`、`commands.rs`，与平台无关，可在 Linux 上测试）：`Shell` 持有 `Bridge`、tokio 运行时、
     电平订阅、反馈附件；`Shell::invoke(command, args)` 的答复是 `Result<Value, String>`。平台能力经 `Host`
-    trait 注入（剪贴板读写、分享文本/文件、组播锁、打开网址），测试用假实现。
+    trait 注入（剪贴板读写、分享文本/文件、打开网址），测试用假实现。
   - 对外接口（`ffi.rs`，UniFFI 0.32 的 proc-macro，2026-10-08 由手写 JNI 改来）：
     - `VoltipShell`：`start(dataDir, appVersion, host)` 每个进程只启动一次，JS 重新加载后再调用会交回正在运行的
       外壳并换上新的 host；`invoke(command, args)` 是异步方法，在 Kotlin 里是挂起函数（Expo 的 `Coroutine`
       异步函数直接调用），命令在外壳自己的 tokio 运行时上执行，返回 JSON 或与 Tauri 版相同的错误文本
-      （`ShellError`，Kotlin 里的 `ShellException.message` 就是这段文本）。
-    - `PlatformHost`：由 Kotlin 的 `VoltipHost` 实现的外部 trait（事件、电平帧、剪贴板、分享、组播锁、打开网址、安装来源），
+      （`ShellError`，Kotlin 里的 `ShellException.message` 就是这段文本）；`reconnectRelay()` 是同步方法，
+      让中继连接立即检查一次（`docs/pairing.md`「重连」），`VoltipNativeModule` 在 Android 报告默认网络变化
+      （`ConnectivityManager.registerDefaultNetworkCallback` 的 `onAvailable` / `onLost`）和应用回到前台
+      （Expo 的 `OnActivityEntersForeground`）时调用，需要普通权限 `ACCESS_NETWORK_STATE`。
+    - `PlatformHost`：由 Kotlin 的 `VoltipHost` 实现的外部 trait（事件、电平帧、剪贴板、分享、打开网址、安装来源），
       失败以 `HostError` 返回；Kotlin 抛出的其他异常经 `UnexpectedUniFFICallbackError` 变成同一个错误，不会 panic。
     - 绑定由 `scripts/build-android-rn.sh` 在编出 `.so` 之后用 `voltip-uniffi-bindgen` 从库里的元数据生成
       （`uniffi.toml`：包名 `dev.voltip.rn.uniffi`），写进模块的 Kotlin 源码目录，不提交。元数据在符号表里，所以
@@ -85,7 +89,8 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
 - 日志：`android-native-keyring-store` 的 `android-log` 特性提供 `KeyringLog.setLog`，Kotlin 在启动前调用一次，
   Rust 的 `tracing` 输出进 logcat（按 target 分 tag）。
 - `CoreConfig` 与 Tauri 手机端相同（数据目录改为 RN 应用自己的 `filesDir`）：`accepts_phone_takes = false`、
-  `shows_live_preview = false`、`manual_scenes = true`、`SyncRole::Phone`、mDNS 发现。
+  `shows_live_preview = false`、`manual_scenes = true`、`SyncRole::Phone`。0.1.0 起没有 mDNS 发现和组播锁
+  （`docs/pairing.md`「只走中继」）。
 - 密钥：`AndroidKeystoreSecretStore("dev.voltip.mobile", "voltip")`，Keystore 不可用时拒绝启动，绝不退回不安全
   的存储；其他平台目前没有安全存储，`VoltipShell::start` 直接拒绝。`Keyring.initializeNdkContext(applicationContext)`
   （`android-native-keyring-store` 自带的 JNI 函数，同在 `libvoltip_rn.so` 里）在 Rust 启动前由 Kotlin 调用，
@@ -102,7 +107,6 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
 | 查询 | `history_query/entry/stats/hits`、`mirror_*`、`recent_apps`、`rules_export`、`vocabulary_preview`、`presets_builtin`、`scenes_builtin`、`feedback_diagnostics` | 阻塞线程上读，与 Tauri 版同一函数 |
 | 手机专有 | `phone_take_start`、`dictation_start` | JS 先申请 `RECORD_AUDIO`，Rust 再 dispatch |
 |  | `phone_clipboard_read`、`paste_text`、`phone_share_text`、`history_export` | `Host` 回调 Kotlin（剪贴板 / 分享面板 / 分享文件） |
-|  | `settings_set_lan_discovery` | dispatch 后按开关持有或释放组播锁 |
 |  | `audio_meter_start/stop` | 订阅 `bridge.levels()`，帧按订阅 id 发往 JS |
 |  | `provider_console_open`、`project_link_open`、`guide_open` | Rust 拼出网址，Kotlin `ACTION_VIEW` 打开；JS 从不打开收到的网址 |
 |  | `update_check`、`update_install` | `rust/src/update.rs`，Tauri 版更新器的移植（docs/dictation.md §20.9）：Kotlin 的 `installer()` 给出安装来源；Google Play 安装只打开 Play 页面，其他安装查询 GitHub 最新发布，`update_install` 在浏览器中打开新版本的 APK |
@@ -139,7 +143,7 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
   React Navigation 处理：先关菜单和对话框，再退一级；记录、设置回到说话；在说话页第一次返回提示、两秒内
   第二次返回退出。
 - **页面**：与 `apps/mobile/src/screens` 一一对应——说话（未配对时的欢迎页 / 已配对的设备页，含按住说话、
-  发送文字、最近结果、连接自检）、配对（扫码 / 6 位码 / 附近的电脑）与核对安全码、本机、记录（搜索、筛选、
+  发送文字、最近结果、连接自检）、配对（扫码 / 6 位码）与核对安全码、本机、记录（搜索、筛选、
   统计）、记录详情、电脑记录的副本与详情、设置首页、语音模型、AI 模型（服务商卡片、候补模型、预设）、外观、
   录音、词典、规则（导入 / 导出）、场景、记录设置、电脑设置、关于、反馈。
 - **文字**：全部走 `@voltip/shared` 的类型化字典（`zh-CN.ts` 定义键，`en.ts` 对应），新增文案两种语言同时加；

@@ -27,7 +27,7 @@ use voltip_identity::MemorySecretStore;
 use voltip_tauri_bridge::{Bridge, UiCommand};
 
 const STATE_COMMAND: &str = "core_state";
-const USAGE: &str = "usage: voltip-bridge-harness --data-dir <dir> [--relay-url <ws url>] [--device-name <name>] [--direct-bind <ip:port>]";
+const USAGE: &str = "usage: voltip-bridge-harness --data-dir <dir> [--relay-url <ws url>] [--device-name <name>]";
 const REQUEST_QUEUE: usize = 64;
 const EXIT_USAGE: u8 = 2;
 const EXIT_START: u8 = 1;
@@ -37,11 +37,10 @@ struct Options {
     data_dir: PathBuf,
     relay_url: Option<String>,
     device_name: Option<String>,
-    direct_bind: Option<std::net::SocketAddr>,
 }
 
 fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
-    let (mut data_dir, mut relay_url, mut device_name, mut direct_bind) = (None, None, None, None);
+    let (mut data_dir, mut relay_url, mut device_name) = (None, None, None);
     let mut args = args.into_iter();
     while let Some(flag) = args.next() {
         let value = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -49,11 +48,10 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Options, Stri
             "--data-dir" => data_dir = Some(PathBuf::from(value)),
             "--relay-url" => relay_url = Some(value),
             "--device-name" => device_name = Some(value),
-            "--direct-bind" => direct_bind = Some(value.parse().map_err(|e| format!("--direct-bind: {e}"))?),
             other => return Err(format!("unknown flag {other}")),
         }
     }
-    Ok(Options { data_dir: data_dir.ok_or("--data-dir is required")?, relay_url, device_name, direct_bind })
+    Ok(Options { data_dir: data_dir.ok_or("--data-dir is required")?, relay_url, device_name })
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,9 +130,6 @@ fn start(opts: Options) -> Result<Bridge, String> {
     if let Some(name) = opts.device_name {
         config.default_device_name = name;
     }
-    if let Some(bind) = opts.direct_bind {
-        config.direct_bind = bind;
-    }
     Bridge::start(config, Arc::new(MemorySecretStore::new())).map_err(|e| e.to_string())
 }
 
@@ -204,18 +199,16 @@ mod tests {
 
     #[test]
     fn options_parse_every_flag_and_reject_bad_input() {
-        let o = parse_options(args(&["--data-dir", "/tmp/x", "--relay-url", "ws://127.0.0.1:1/ws", "--device-name", "Desk", "--direct-bind", "127.0.0.1:0"]))
-            .unwrap();
+        let o = parse_options(args(&["--data-dir", "/tmp/x", "--relay-url", "ws://127.0.0.1:1/ws", "--device-name", "Desk"])).unwrap();
         assert_eq!(o.data_dir, PathBuf::from("/tmp/x"));
         assert_eq!(o.relay_url.as_deref(), Some("ws://127.0.0.1:1/ws"));
         assert_eq!(o.device_name.as_deref(), Some("Desk"));
-        assert_eq!(o.direct_bind, Some("127.0.0.1:0".parse().unwrap()));
         let o = parse_options(args(&["--data-dir", "d"])).unwrap();
-        assert_eq!(o, Options { data_dir: "d".into(), relay_url: None, device_name: None, direct_bind: None });
+        assert_eq!(o, Options { data_dir: "d".into(), relay_url: None, device_name: None });
         assert!(parse_options(args(&[])).unwrap_err().contains("--data-dir"));
         assert!(parse_options(args(&["--data-dir"])).unwrap_err().contains("needs a value"));
         assert!(parse_options(args(&["--data-dir", "d", "--nope", "1"])).unwrap_err().contains("unknown flag"));
-        assert!(parse_options(args(&["--data-dir", "d", "--direct-bind", "nope"])).unwrap_err().contains("--direct-bind"));
+        assert!(parse_options(args(&["--data-dir", "d", "--direct-bind", "127.0.0.1:0"])).unwrap_err().contains("unknown flag"), "gone with the LAN host");
     }
 
     #[test]
@@ -244,13 +237,7 @@ mod tests {
     #[tokio::test]
     async fn execute_answers_state_and_dispatch_results() {
         let dir = tempfile::tempdir().unwrap();
-        let bridge = start(Options {
-            data_dir: dir.path().to_path_buf(),
-            relay_url: None,
-            device_name: Some("Harness".into()),
-            direct_bind: Some("127.0.0.1:0".parse().unwrap()),
-        })
-        .unwrap();
+        let bridge = start(Options { data_dir: dir.path().to_path_buf(), relay_url: None, device_name: Some("Harness".into()) }).unwrap();
         let saved = SettingsStore::new(dir.path()).load().unwrap();
         assert!(!saved.relay_enabled, "no relay flag → relay disabled");
         let mut events = bridge.events();

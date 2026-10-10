@@ -305,8 +305,8 @@ impl PhoneUpdater {
 }
 
 /// Start the updater. When the config does not say who installed the app, ask the system first:
-/// a plugin call, so off the setup thread, which holds the main thread the call waits for (as in
-/// `multicast.rs`). Then follow `Settings.auto_update`.
+/// a plugin call, so off the setup thread, which holds the main thread the call waits for. Then
+/// follow `Settings.auto_update`.
 pub fn start<R: Runtime>(app: &AppHandle<R>, bridge: Bridge, updater: Arc<PhoneUpdater>) {
     if updater.source().is_some() {
         follow_settings(bridge, updater);

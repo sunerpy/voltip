@@ -30,13 +30,12 @@ const POLL: Duration = Duration::from_millis(20);
 const DEVICE_NAME: &str = "Phone Test";
 const NOT_FOUND: &str = "not found";
 
-/// Offline core with `settings` written first: LAN host on an ephemeral loopback port, a phone as
-/// in `production_config` (the callers turn the relay off in `settings`).
+/// Offline core with `settings` written first, a phone as in `production_config` (the callers turn
+/// the relay off in `settings`).
 fn offline_config(dir: &Path, settings: Settings) -> CoreConfig {
     SettingsStore::new(dir).save(&settings).unwrap();
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = DEVICE_NAME.into();
-    cfg.direct_bind = "127.0.0.1:0".parse().unwrap();
     cfg.accepts_phone_takes = false;
     cfg.shows_live_preview = false;
     cfg.manual_scenes = true;
@@ -100,6 +99,39 @@ fn wait_event(rx: &mpsc::Receiver<String>, what: &str, mut pred: impl FnMut(&Val
 /// executes the `setup` hook) and drive it from `body` on a helper thread.
 fn with_running_app(body: impl FnOnce(&AppHandle<MockRuntime>, &WebviewWindow<MockRuntime>, &mpsc::Receiver<String>) + Send + 'static) {
     with_app(Settings { relay_enabled: false, ..Settings::default() }, |_| voltip_core::dictation::fakes::ports(), body);
+}
+
+/// A relay on an ephemeral loopback port for as long as it lives: pairing runs only on a relay
+/// (docs/pairing.md 「只走中继」).
+struct TestRelay {
+    url: String,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    runtime: Option<tokio::runtime::Runtime>,
+}
+
+impl TestRelay {
+    fn start() -> Self {
+        let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let relay = voltip_relay::server::RelayHandle::new(voltip_relay::RelayConfig::default());
+        let (addr, _task) = runtime
+            .block_on(relay.serve("127.0.0.1:0".parse().unwrap(), async move {
+                let _ = stopped.await;
+            }))
+            .unwrap();
+        Self { url: format!("ws://{addr}/ws"), stop: Some(stop), runtime: Some(runtime) }
+    }
+}
+
+impl Drop for TestRelay {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
+    }
 }
 
 /// An install from outside Google Play whose release endpoint is `latest_release`; the automatic
@@ -172,27 +204,32 @@ fn core_state_reports_identity_and_the_setup_hook_forwards_events() {
 
 #[test]
 fn pairing_start_leaves_idle_and_cancel_reset_returns_to_it() {
-    with_running_app(|_, webview, rx| {
-        wait_state(webview, |s| s.identity.is_some());
-        assert_eq!(invoke(webview, "pairing_start", json!({})), Ok(Value::Null));
-        let st = wait_state(webview, |s| s.pairing.state != PairingState::Idle);
-        assert!(matches!(st.pairing.state, PairingState::CreatingSession | PairingState::WaitingForPeer), "{:?}", st.pairing.state);
-        let waiting = wait_state(webview, |s| s.pairing.state == PairingState::WaitingForPeer);
-        assert!(waiting.pairing.code.is_some(), "LAN pairing still shows a code");
-        assert!(waiting.pairing.ticket_uri.as_deref().unwrap_or_default().starts_with("voltip://pair?"));
-        wait_event(rx, "pairing/waiting_for_peer", |e| e["type"] == "pairing" && e["state"]["state"] == "waiting_for_peer");
-        assert_eq!(invoke(webview, "pairing_cancel", json!({})), Ok(Value::Null));
-        wait_state(webview, |s| s.pairing.state.is_terminal());
-        assert_eq!(invoke(webview, "pairing_reset", json!({})), Ok(Value::Null));
-        wait_state(webview, |s| s.pairing.state == PairingState::Idle);
-        // Without a relay a bare code cannot be joined: the command is accepted, the core reports.
-        assert_eq!(invoke(webview, "pairing_join_code", json!({ "code": "483 921" })), Ok(Value::Null));
-        let err = wait_event(rx, "error", |e| e["type"] == "error");
-        assert!(err["message"].as_str().unwrap().contains("中继"), "{err}");
-        // A ticket is accepted by the IPC layer too; a malformed one is reported by the core.
-        assert_eq!(invoke(webview, "pairing_join_ticket", json!({ "uri": "voltip://pair?v=1&t=AA" })), Ok(Value::Null));
-        wait_event(rx, "error (bad ticket)", |e| e["type"] == "error" && e["message"] != err["message"]);
-    });
+    let relay = TestRelay::start();
+    let settings = Settings { relay_enabled: true, relay_url: Some(relay.url.clone()), ..Settings::default() };
+    with_app(
+        settings,
+        |_| voltip_core::dictation::fakes::ports(),
+        |_, webview, rx| {
+            wait_state(webview, |s| s.identity.is_some() && s.relay.state.is_connected());
+            assert_eq!(invoke(webview, "pairing_start", json!({})), Ok(Value::Null));
+            let st = wait_state(webview, |s| s.pairing.state != PairingState::Idle);
+            assert!(matches!(st.pairing.state, PairingState::CreatingSession | PairingState::WaitingForPeer), "{:?}", st.pairing.state);
+            let waiting = wait_state(webview, |s| s.pairing.state == PairingState::WaitingForPeer);
+            assert!(waiting.pairing.code.is_some(), "the pairing shows a code");
+            assert!(waiting.pairing.ticket_uri.as_deref().unwrap_or_default().starts_with("voltip://pair?"));
+            wait_event(rx, "pairing/waiting_for_peer", |e| e["type"] == "pairing" && e["state"]["state"] == "waiting_for_peer");
+            assert_eq!(invoke(webview, "pairing_cancel", json!({})), Ok(Value::Null));
+            wait_state(webview, |s| s.pairing.state.is_terminal());
+            assert_eq!(invoke(webview, "pairing_reset", json!({})), Ok(Value::Null));
+            wait_state(webview, |s| s.pairing.state == PairingState::Idle);
+            // A code nobody waits for: the command is accepted, the relay answers, the pairing fails.
+            assert_eq!(invoke(webview, "pairing_join_code", json!({ "code": "483 921" })), Ok(Value::Null));
+            wait_state(webview, |s| matches!(s.pairing.state, PairingState::Failed { .. }));
+            // A ticket is accepted by the IPC layer too; a malformed one is reported by the core.
+            assert_eq!(invoke(webview, "pairing_join_ticket", json!({ "uri": "voltip://pair?v=1&t=AA" })), Ok(Value::Null));
+            wait_event(rx, "error (bad ticket)", |e| e["type"] == "error");
+        },
+    );
 }
 
 #[test]
@@ -242,20 +279,21 @@ fn always_on_pairing_is_refused_on_the_phone() {
     });
 }
 
-/// docs/pairing.md 「局域网发现」: the switch persists and comes back in `settings`; joining a
-/// device the LAN browse has not seen is the core's error; both need their argument.
+/// docs/pairing.md 「重连」: `relay_reconnect` reaches the core (with the relay off there is no link
+/// to check, and nothing goes wrong); the LAN commands are gone (docs/pairing.md 「只走中继」).
 #[test]
-fn lan_discovery_commands_reach_the_core() {
+fn relay_reconnect_reaches_the_core_and_the_lan_commands_are_gone() {
     with_running_app(|_, webview, rx| {
         wait_state(webview, |s| s.identity.is_some());
-        assert!(core_state(webview).settings.lan_discovery, "on by default");
-        assert!(invoke(webview, "settings_set_lan_discovery", json!({})).is_err(), "enabled is required");
-        assert_eq!(invoke(webview, "settings_set_lan_discovery", json!({ "enabled": false })), Ok(Value::Null));
-        wait_event(rx, "settings", |e| e["type"] == "settings" && e["lan_discovery"] == false);
-        assert!(!wait_state(webview, |s| !s.settings.lan_discovery).settings.lan_discovery);
-        assert!(invoke(webview, "pairing_join_nearby", json!({})).is_err(), "fingerprint is required");
-        assert_eq!(invoke(webview, "pairing_join_nearby", json!({ "fingerprint": "0000000000000000" })), Ok(Value::Null));
-        wait_event(rx, "error", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("附近没有找到此设备")));
+        // Without a relay there is no pairing, and the core says why.
+        assert_eq!(invoke(webview, "pairing_join_code", json!({ "code": "483 921" })), Ok(Value::Null));
+        let err = wait_event(rx, "error", |e| e["type"] == "error");
+        assert!(err["message"].as_str().unwrap().contains("配对需要中继"), "{err}");
+        assert_eq!(invoke(webview, "relay_reconnect", json!({})), Ok(Value::Null));
+        assert!(core_state(webview).identity.is_some(), "the core still answers");
+        for gone in ["settings_set_lan_discovery", "pairing_join_nearby"] {
+            assert!(invoke(webview, gone, json!({ "enabled": false, "fingerprint": "0000000000000000" })).is_err(), "{gone}");
+        }
     });
 }
 

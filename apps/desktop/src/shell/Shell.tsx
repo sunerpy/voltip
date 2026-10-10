@@ -2,6 +2,7 @@ import { isBuiltinPreset, presetLabel } from "@voltip/shared";
 import {
   Button,
   CommandPalette,
+  cx,
   Dialog,
   Icon,
   Keycaps,
@@ -9,9 +10,9 @@ import {
   type ThemeChoice,
   TitleBar,
   ToastViewport,
-  cx,
   useBackend,
   useI18n,
+  useRelayRecheck,
   useUiState,
 } from "@voltip/ui";
 import { type ReactNode, useCallback, useEffect, useMemo } from "react";
@@ -133,6 +134,8 @@ export function Shell({
   const { backend } = useBackend();
   const shell = useShell();
   const i18n = useI18n();
+  // The main window only (the pill shows and hides with every take).
+  useRelayRecheck(backend);
   const { t } = i18n;
   const appearance = useAppearance();
   const microphone = useMicrophoneReadout();

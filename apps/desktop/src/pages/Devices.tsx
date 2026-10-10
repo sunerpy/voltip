@@ -5,7 +5,6 @@ import {
   MAX_SYNC_PEERS,
   type MutationCommand,
   type TFunction,
-  connectionKindLabel,
   connectionLabel,
   errorText,
   formatDate,
@@ -170,12 +169,6 @@ export function Devices() {
       }),
     },
     {
-      id: "lan",
-      header: t("devices.column.lan"),
-      width: 156,
-      cell: (r) => ({ type: "mono", text: r.device.direct_hints?.[0] ?? "—", muted: true }),
-    },
-    {
       id: "seen",
       header: t("devices.column.lastSeen"),
       fit: true,
@@ -286,8 +279,6 @@ export function Devices() {
       ? undefined
       : online.find((d) => d.device.name === dictation.remote)) ?? online[0];
   const live = phoneTakeText(dictation, phone?.device.name, tick, t, locale);
-  const phoneLink =
-    phone?.connection.state === "online" ? connectionKindLabel(phone.connection.via, locale) : "—";
 
   return (
     // pairing + device table left, LIVE / SYNC / LIMITS right. The right column follows
@@ -301,7 +292,6 @@ export function Devices() {
           identity={state.identity}
           relay={state.relay}
           ttlSecs={PAIRING_TTL_SECS}
-          lanDiscovery={state.settings.lan_discovery}
           alwaysOn={state.settings.pairing_always_on}
           onAlwaysOn={(enabled) => {
             invoke("settings_set_pairing_always_on", { enabled });
@@ -367,13 +357,6 @@ export function Devices() {
           right={
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Toggle
-                checked={state.settings.lan_discovery}
-                onChange={(enabled) => {
-                  invoke("settings_set_lan_discovery", { enabled });
-                }}
-                label={t("devices.panel.lanDiscovery")}
-              />
-              <Toggle
                 checked={state.settings.relay_enabled}
                 onChange={(enabled) => {
                   invoke("settings_set_relay", { url: state.settings.relay_url ?? null, enabled });
@@ -407,7 +390,11 @@ export function Devices() {
             }
           />
           <p className="mt-2 text-[11px] text-fg-subtle">{t("devices.panel.note")}</p>
-          <p className="mt-1 text-[11px] text-fg-subtle">{t("devices.panel.lanNote")}</p>
+          {!state.settings.relay_enabled && (
+            <p className="mt-1 text-[11px] text-warning" data-testid="devices-relay-off-note">
+              {t("devices.panel.relayOffNote")}
+            </p>
+          )}
           <p className="mt-1 text-[11px] text-fg-subtle" data-testid="devices-sync-note">
             {t("devices.panel.syncNote")}
             {syncing >= MAX_SYNC_PEERS &&
@@ -440,7 +427,7 @@ export function Devices() {
             <span>-6</span>
             <span>0 dBFS</span>
           </div>
-          <div className="mt-3 grid grid-cols-3 gap-2">
+          <div className="mt-3 grid grid-cols-2 gap-2">
             <Readout
               label={t("devices.live.audio")}
               value={t("devices.live.audioValue")}
@@ -449,12 +436,6 @@ export function Devices() {
             <Readout
               label={t("devices.live.phone")}
               value={phone?.device.name ?? "—"}
-              size="sm"
-              muted={phone === undefined}
-            />
-            <Readout
-              label={t("devices.live.link")}
-              value={phoneLink}
               size="sm"
               muted={phone === undefined}
             />

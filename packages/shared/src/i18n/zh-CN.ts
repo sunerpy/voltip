@@ -125,13 +125,10 @@ export const zhCN = {
   },
   platform: { other: "其他" },
   connection: {
-    onlineDirect: "在线 · 直连",
-    onlineRelay: "在线 · 经中继",
+    online: "在线",
     connecting: "连接中",
     offline: "离线",
     identityChanged: "身份已变化",
-    direct: "直连",
-    relay: "中继",
   },
   relay: {
     disconnected: "未连接",
@@ -1281,7 +1278,6 @@ export const zhCN = {
     column: {
       device: "设备",
       pairedOn: "{fingerprint} · 配对于 {date}",
-      lan: "局域网地址",
       lastSeen: "最近在线",
       state: "状态",
       sync: "同步",
@@ -1306,15 +1302,13 @@ export const zhCN = {
     panel: {
       paired: "已配对设备",
       allowRelay: "允许经中继连接",
-      lanDiscovery: "局域网发现",
       noRelay: "未配置中继",
       builtinRelay: "内置中继",
       count: "{paired} 台已配对 · {online} 在线",
       emptyTitle: "尚未配对手机",
       emptyBody: "用上方二维码开始配对。",
       note: "忘记后，此设备需要重新扫码并核对安全码；身份密钥发生变化的设备会标为红色，直到处理为止。",
-      lanNote:
-        "开启局域网发现后，这台电脑会在同一局域网内公布自己的名称：手机点选即可配对，地址变化后已配对的设备也能找到它。关闭后只能通过扫码或输入验证码配对。",
+      relayOffNote: "关闭中继后，手机无法与这台电脑配对或连接。",
       syncNote:
         "与这部手机同步记录：历史记录和模型、词典等设置同步到这部手机，手机上只能查看；手机单独识别的记录会把副本上传到这台电脑。关闭后，手机上这台电脑的记录会被删除。",
     },
@@ -1331,7 +1325,6 @@ export const zhCN = {
       audio: "音频",
       audioValue: "Opus · 16 kHz 单声道",
       phone: "手机",
-      link: "连接方式",
       note: "在手机上按住说话：音频经端到端加密通道实时传到这台电脑，由这台电脑的语音模型转写，文字插入这台电脑的光标处，结果同时回传给手机。",
     },
     syncPanel: {
@@ -1345,20 +1338,16 @@ export const zhCN = {
   },
   connectivity: {
     title: "连接自检",
-    intro: "检查本机当前的连接状况：中继、每台已配对设备的局域网地址，以及加密通道的往返时间。",
+    intro: "检查本机当前的连接状况：能否连上中继，以及与每台已配对设备之间加密通道的往返时间。",
     run: "开始自检",
     running: "自检中…",
     runAgain: "重新自检",
     results: "自检结果",
-    lanListening: "本机局域网服务 · {addresses}",
-    lanOff: "本机未开启局域网服务",
     relayNone: "未配置中继",
     relay: "中继 · {result}",
-    peerOnline: "{name} · {via} · 加密往返 {ms} ms",
-    peerNoAnswer: "{name} · {via} · 加密通道没有回应",
+    peerOnline: "{name} · 在线 · 加密往返 {ms} ms",
+    peerNoAnswer: "{name} · 在线 · 加密通道没有回应",
     peerOffline: "{name} · 离线",
-    address: "{address} · {result}",
-    noAddress: "没有记录它的局域网地址",
     result: {
       ok: "可连接 · {ms} ms",
       timeout: "没有响应",
@@ -1366,7 +1355,6 @@ export const zhCN = {
       failed: "连接失败 · {reason}",
       failedBare: "连接失败",
     },
-    blocked: "同一网段却连不上：可能是对方的防火墙拦住了这个端口，或者 Wi-Fi 开启了客户端隔离。",
     checkedAt: "检查于 {at}",
   },
   pairing: {
@@ -1384,12 +1372,11 @@ export const zhCN = {
     copyFingerprint: "复制指纹",
     fingerprintWhat: "指纹",
     scanNote: "手机扫码后会直接获取配对信息，无需手动输入。",
-    lanNote: "同一局域网里的手机也可以在配对页的「附近的电脑」里直接点选这台电脑。",
     alwaysOn: "常开配对",
     alwaysOnHelp:
       "开启后，这台电脑会持续等待手机配对：二维码到期前自动更新，完成一台后继续等待下一台，直到关闭。每次配对仍需在这里核对安全码并确认。",
     alwaysOnOpen: "常开 · 本码剩余 {remaining}",
-    alwaysOnIdle: "常开配对已打开，连上中继或局域网后自动开始。",
+    alwaysOnIdle: "常开配对已打开，连上中继后自动开始。",
     alwaysOnNext: "常开配对：稍后自动开始下一次配对。",
     validity: "有效期",
     warning: "不要截图或在共享屏幕上展示此二维码。",
@@ -1418,7 +1405,7 @@ export const zhCN = {
     restart: "重新开始",
     connectTitle: "连接",
     connect:
-      "使用二维码或 6 位验证码配对；之后在同一局域网内直接连接，跨网络时经中继连接，中继只转发加密数据。",
+      "使用二维码或 6 位验证码配对；之后两台设备经中继连接，中继只转发加密数据。网络中断或切换后会自动重新连接。",
     relay: "中继 · {state}",
   },
   onboarding: {
@@ -2531,7 +2518,7 @@ export const zhCN = {
         "按住说话，松开后得到文字：未连接电脑时在手机上识别并润色，结果自动复制；配对电脑后，文字直接出现在电脑的光标处。",
       pairing: "连接电脑",
       pairingBody:
-        "配对后可以把这部手机用作电脑的麦克风和键盘。音频端到端加密，同一局域网内直连，密钥只在两台设备之间。",
+        "配对后可以把这部手机用作电脑的麦克风和键盘。音频端到端加密后经中继传输，密钥只在两台设备之间。",
       e2ee: "端到端加密",
       e2eeBody: "只有配对的两台设备能解密内容，中继只能看到密文。",
       safety: "双端核对安全码",
@@ -2554,13 +2541,10 @@ export const zhCN = {
       note: "私钥只保存在这部手机的系统密钥库中，不会写入配置文件、日志或中继。配对时对方设备看到的就是这串指纹。",
       pair: "配对电脑",
       viewDevices: "查看已配对设备",
-      lan: "局域网发现",
-      lanHelp:
-        "在同一局域网内公布这部手机的名称并查找电脑：配对时点选即可，已配对的电脑地址变化后也能找到。",
     },
     pair: {
       intro:
-        "在电脑上打开「手机」页并开始配对，然后在「附近的电脑」中点选它，或扫描它的二维码、输入它显示的 6 位验证码。无论使用哪种方式，之后建立加密连接和核对安全码的步骤都相同。",
+        "在电脑上打开「手机」页并开始配对，然后扫描它的二维码，或输入它显示的 6 位验证码。两种方式之后建立加密连接和核对安全码的步骤相同。",
       method: "配对方式",
       scan: "扫码",
       code: "输入 6 位验证码",
@@ -2580,15 +2564,6 @@ export const zhCN = {
       scanCancelled: "已取消扫码或未授予相机权限",
       retry: "重试",
       clearRetry: "清除并重试",
-      nearby: {
-        title: "附近的电脑",
-        searching: "正在查找同一局域网里的电脑…",
-        empty: "在电脑上打开「手机」页并点「开始配对」，它就会出现在这里。",
-        off: "局域网发现已关闭。在「本机」页打开后，同一局域网里等待配对的电脑会出现在这里。",
-        join: "配对",
-        joinLabel: "与 {name} 配对",
-        idle: "尚未开始配对",
-      },
     },
     verify: {
       rejected: "配对已被拒绝，本次配对已取消。",
@@ -2694,7 +2669,6 @@ export const zhCN = {
         online: "在线状态",
         lastSeen: "最近在线",
         trusted: "信任于",
-        connection: "连接方式",
       },
       identityChanged:
         "这台电脑出示了不同的身份密钥（{fingerprint}），未自动信任；如果重装了系统，请忘记后重新配对。",

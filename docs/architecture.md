@@ -14,7 +14,7 @@ crates/voltip-protocol   版本化线协议（version 字段、tagged enum、CBO
 crates/voltip-crypto     Noise_XX_25519_ChaChaPoly_SHA256 握手/传输、指纹与 Safety Code、随机数
 crates/voltip-identity   长期 Device Identity、SecretStore trait（keyring / 内存 / 加密文件）、TrustedDevice 存储
 crates/voltip-pairing    配对状态机（sans-IO）：会话、二维码票据、6 位短码、过期、一次性、防重放
-crates/voltip-transport  Transport trait、连接状态机、重连策略、Direct(WS over LAN：每台设备常驻的 DirectHost) 与 WsRelay 两种实现、SecureChannel
+crates/voltip-transport  连接状态机、重连策略、到中继的 WebSocket 链路（心跳、reconnect_now）、SecureChannel
 crates/voltip-relay      可选中继服务（axum WS）：会话/短码索引、限流、失败计数、只转发密文
 crates/voltip-core       应用外观层：把 identity + pairing + transport + trusted store 组合成 CoreCommand → CoreEvent；Hotkey 解析/规范化与 Settings.hotkey
 crates/voltip-tauri-bridge  UiCommand / UiEvent / UiState：webview 看到的唯一契约；Bridge::publish 让 shell 自己产生的状态（热键注册结果）并入同一状态流

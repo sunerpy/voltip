@@ -1,11 +1,10 @@
-import { type NearbyDevice, failureLabel, platformLabel } from "@voltip/shared";
+import { failureLabel } from "@voltip/shared";
 import {
   Button,
   Card,
   CodeInput,
   Input,
   LampText,
-  Panel,
   Progress,
   Segmented,
   useBackend,
@@ -20,72 +19,6 @@ type Method = "scan" | "code";
 
 export function isPairingLink(value: string): boolean {
   return value.trim().startsWith("voltip://pair?");
-}
-
-/** The computers 「附近的电脑」 lists: not phones, not already paired; waiting ones first. */
-export function nearbyComputers(nearby: readonly NearbyDevice[]): NearbyDevice[] {
-  const computers = nearby.filter(
-    (d) => d.platform !== "android" && d.platform !== "ios" && !d.trusted,
-  );
-  computers.sort((a, b) => Number(b.pairing) - Number(a.pairing) || a.name.localeCompare(b.name));
-  return computers;
-}
-
-/** 附近的电脑 (docs/pairing.md 「局域网发现」): the computers the LAN browse sees; one that waits
- *  for a pairing is joined with a tap, and the safety code is compared as after a scan. */
-function Nearby({ busy }: { busy: boolean }) {
-  const { backend } = useBackend();
-  const { nearby, settings } = useUiState();
-  const { t, locale } = useI18n();
-  const computers = nearbyComputers(nearby);
-  return (
-    <Panel eyebrow={t("mobile.pair.nearby.title")} data-testid="nearby">
-      {!settings.lan_discovery ? (
-        <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.pair.nearby.off")}</p>
-      ) : computers.length === 0 ? (
-        <div className="flex flex-col gap-1.5">
-          <LampText tone="idle" pulse>
-            {t("mobile.pair.nearby.searching")}
-          </LampText>
-          <p className="text-[12px] leading-5 text-fg-muted">{t("mobile.pair.nearby.empty")}</p>
-        </div>
-      ) : (
-        <ul
-          className="-my-2 flex flex-col divide-y divide-border"
-          aria-label={t("mobile.pair.nearby.title")}>
-          {computers.map((d) => (
-            <li
-              key={d.fingerprint}
-              className="flex min-h-14 items-center justify-between gap-3 py-2"
-              data-testid="nearby-computer"
-              data-pairing={d.pairing}>
-              <div className="flex min-w-0 flex-col gap-0.5">
-                <span className="truncate text-[14px] font-medium text-fg" data-user-text>
-                  {d.name}
-                </span>
-                <span className="text-[12px] text-fg-muted">
-                  {platformLabel(d.platform, locale)}
-                  {!d.pairing && ` · ${t("mobile.pair.nearby.idle")}`}
-                </span>
-              </div>
-              {d.pairing && (
-                <Button
-                  variant="primary"
-                  className={TOUCH}
-                  aria-label={t("mobile.pair.nearby.joinLabel", { name: d.name })}
-                  disabled={busy}
-                  onClick={() => {
-                    void backend.invoke("pairing_join_nearby", { fingerprint: d.fingerprint });
-                  }}>
-                  {t("mobile.pair.nearby.join")}
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </Panel>
-  );
 }
 
 export function PairDevice() {
@@ -133,7 +66,6 @@ export function PairDevice() {
   return (
     <div className={PAGE}>
       <Lede>{t("mobile.pair.intro")}</Lede>
-      <Nearby busy={busy} />
       <Segmented
         label={t("mobile.pair.method")}
         value={method}

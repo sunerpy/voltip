@@ -285,6 +285,36 @@ describe("Home page", () => {
     expect(notes[3]).toHaveTextContent(/^[\d,]+ 字$/);
   });
 
+  it("regression: 今天 leads the stat tiles in the accent, each with its icon and the time saved large", async () => {
+    // User request 2026-10-10: the 今天 / 本周 / 本月 / 总计 tiles should bring out what matters.
+    renderApp({ mock: liveClock() });
+    const values = await screen.findAllByTestId("home-tile-value");
+    expect(values).toHaveLength(4);
+    const tiles = values.map((value) => value.closest('[role="button"]'));
+    expect(tiles[0]).toHaveAttribute("data-current", "true");
+    expect(tiles[0]).toHaveClass("bg-accent-soft");
+    expect(tiles[0]).toHaveAccessibleName(/^今天 节省 /);
+    expect(tiles[0]).toHaveClass("min-h-[116px]", "inset-ring-accent/40");
+    expect(values[0]).toHaveClass("text-[30px]", "font-semibold", "text-accent-text");
+    const icons = screen.getAllByTestId("home-tile-icon");
+    expect(icons.map((icon) => icon.querySelector("svg")?.dataset.icon)).toEqual([
+      "sun",
+      "calendar",
+      "calendarGrid",
+      "clock",
+    ]);
+    expect(icons[0]).toHaveClass("bg-accent");
+    const captions = screen.getAllByTestId("home-tile-caption");
+    for (const caption of captions)
+      expect(caption).toHaveTextContent(/^节省时间 · 听写 [\d,]+ 次$/);
+    for (const tile of tiles.slice(1)) {
+      expect(tile).not.toHaveAttribute("data-current");
+      expect(tile).toHaveClass("bg-surface", "min-h-[116px]");
+    }
+    for (const value of values.slice(1)) expect(value).toHaveClass("text-[30px]", "text-fg");
+    for (const icon of icons.slice(1)) expect(icon).toHaveClass("bg-inset");
+  });
+
   it("regression: the recent table's timing columns are as wide as their headers", async () => {
     // The 1440 px English check (plan 1.2): 「Transcription」 ran past its 84 px column.
     renderApp({ mock: liveClock() });
@@ -800,15 +830,12 @@ describe("Home page", () => {
       screen.queryByRole("button", { name: /复制 MCP 配置|复制 Hook 命令|待批准/ }),
     ).toBeNull();
     const card = screen.getByTestId("home-devices");
-    // renderApp's core: Pixel 8 online over LAN, MacBook Pro offline, relay not configured.
+    // renderApp's core: Pixel 8 online, MacBook Pro offline, relay not configured.
     // Header lamp (first online phone) and the Pixel 8 row both read the core's connection label.
-    expect(within(card).getAllByText("在线 · 直连")).toHaveLength(2);
+    expect(within(card).getAllByText("在线")).toHaveLength(2);
     expect(within(card).getByText("2 台已配对")).toBeInTheDocument();
     const rows = within(card).getAllByRole("listitem");
-    expect(rows.map((r) => r.textContent)).toEqual([
-      "Pixel 8Android在线 · 直连",
-      "MacBook PromacOS离线",
-    ]);
+    expect(rows.map((r) => r.textContent)).toEqual(["Pixel 8Android在线", "MacBook PromacOS离线"]);
     expect(within(card).getByText("中继 · 未配置")).toBeInTheDocument();
     expect(within(card).queryByText("尚未配对手机 · 去配对")).toBeNull();
     await user.click(within(card).getByRole("button", { name: "打开「手机」页" }));

@@ -1,7 +1,7 @@
-// 配对电脑 (docs/pairing.md), apps/mobile's PairDevice on native views: the computers the LAN
-// browse sees (one waiting for a pairing is joined with a tap), or the QR code the computer shows
-// (the camera page), or its six-digit code. The safety code is compared on the next page.
-import { type NearbyDevice, failureLabel, platformLabel } from "@voltip/shared";
+// 配对电脑 (docs/pairing.md), apps/mobile's PairDevice on native views: the QR code the computer
+// shows (the camera page), or its six-digit code; both meet the computer on the relay (docs/
+// pairing.md 「只走中继」). The safety code is compared on the next page.
+import { failureLabel } from "@voltip/shared";
 import { useCameraPermissions } from "expo-camera";
 import { useState } from "react";
 import { View } from "react-native";
@@ -12,86 +12,12 @@ import { useI18n } from "../backend/i18n";
 import { useRootNavigation } from "../routes";
 import { Button } from "../ui/Button";
 import { CodeInput } from "../ui/CodeInput";
-import { Lede, Notice, Page, RowDivider, Section, StateLine, useAppTheme } from "../ui/kit";
+import { Lede, Notice, Page, Section, StateLine, useAppTheme } from "../ui/kit";
 
 type Method = "scan" | "code";
 
 export function isPairingLink(value: string): boolean {
   return value.trim().startsWith("voltip://pair?");
-}
-
-/** The computers 「附近的电脑」 lists: not phones, not already paired; waiting ones first. */
-export function nearbyComputers(nearby: readonly NearbyDevice[]): NearbyDevice[] {
-  const computers = nearby.filter(
-    (d) => d.platform !== "android" && d.platform !== "ios" && !d.trusted,
-  );
-  computers.sort((a, b) => Number(b.pairing) - Number(a.pairing) || a.name.localeCompare(b.name));
-  return computers;
-}
-
-function Nearby({ busy }: { busy: boolean }) {
-  const theme = useAppTheme();
-  const { backend } = useBackend();
-  const { nearby, settings } = useUiState();
-  const { t, locale } = useI18n();
-  const computers = nearbyComputers(nearby);
-  return (
-    <Section
-      title={t("mobile.pair.nearby.title")}
-      padded={!settings.lan_discovery || computers.length === 0}
-      testID="nearby">
-      {!settings.lan_discovery ? (
-        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-          {t("mobile.pair.nearby.off")}
-        </Text>
-      ) : computers.length === 0 ? (
-        <View style={{ gap: 6 }}>
-          <StateLine tone="idle" pulse>
-            {t("mobile.pair.nearby.searching")}
-          </StateLine>
-          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-            {t("mobile.pair.nearby.empty")}
-          </Text>
-        </View>
-      ) : (
-        computers.map((d, i) => (
-          <View key={d.fingerprint} testID="nearby-computer">
-            {i > 0 && <RowDivider />}
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 12,
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                minHeight: 64,
-              }}>
-              <View style={{ flex: 1, gap: 2 }}>
-                <Text variant="titleSmall" numberOfLines={1}>
-                  {d.name}
-                </Text>
-                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                  {platformLabel(d.platform, locale)}
-                  {!d.pairing && ` · ${t("mobile.pair.nearby.idle")}`}
-                </Text>
-              </View>
-              {d.pairing && (
-                <Button
-                  mode="contained"
-                  accessibilityLabel={t("mobile.pair.nearby.joinLabel", { name: d.name })}
-                  disabled={busy}
-                  onPress={() =>
-                    void backend.invoke("pairing_join_nearby", { fingerprint: d.fingerprint })
-                  }>
-                  {t("mobile.pair.nearby.join")}
-                </Button>
-              )}
-            </View>
-          </View>
-        ))
-      )}
-    </Section>
-  );
 }
 
 export function Pair() {
@@ -131,7 +57,6 @@ export function Pair() {
   return (
     <Page testID="phone-pair">
       <Lede>{t("mobile.pair.intro")}</Lede>
-      <Nearby busy={busy} />
       <SegmentedButtons
         value={method}
         onValueChange={(v) => {

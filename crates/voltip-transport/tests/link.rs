@@ -1,14 +1,14 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-//! Link + host tests over real sockets.
+//! Link tests over real sockets.
 
 use std::time::Duration;
 
 use tokio::sync::mpsc;
-use voltip_protocol::relay::{RelayErrorCode, RelayFrame};
-use voltip_protocol::{ProtocolVersion, SessionId};
+use voltip_protocol::ProtocolVersion;
+use voltip_protocol::relay::RelayFrame;
 use voltip_relay::RelayConfig;
 use voltip_relay::server::RelayHandle;
-use voltip_transport::{ConnectionState, DirectHost, LinkConfig, LinkEvent, ReconnectPolicy, RelayEndpoint, RelayLink, TransportError};
+use voltip_transport::{ConnectionState, LinkConfig, LinkEvent, ReconnectPolicy, RelayEndpoint, RelayLink, TransportError};
 
 async fn next_state(rx: &mut mpsc::Receiver<LinkEvent>, want: ConnectionState) {
     loop {
@@ -127,48 +127,9 @@ async fn link_reconnects_after_relay_restart_and_gives_up_when_told() {
     next_state(&mut e, ConnectionState::Closed).await;
 }
 
-#[tokio::test]
-async fn direct_host_pairs_phone_and_desktop_without_a_relay() {
-    let host = DirectHost::bind("127.0.0.1:0".parse().unwrap()).await.unwrap();
-    assert!(host.local_addr().port() != 0);
-    let hints = host.lan_hints();
-    for h in &hints {
-        assert!(h.ends_with(&format!(":{}", host.local_addr().port())));
-    }
-    assert!(format!("{host:?}").contains("DirectHost"));
-    let ep = host.loopback_endpoint().unwrap();
-    let (desk, mut ed) = RelayLink::spawn(LinkConfig::new(ep.clone()));
-    let (phone, mut ep_) = RelayLink::spawn(LinkConfig::new(ep));
-    next_state(&mut ed, ConnectionState::Connected).await;
-    next_state(&mut ep_, ConnectionState::Connected).await;
-    desk.send(RelayFrame::CreateSession { version: ProtocolVersion::CURRENT, ttl_secs: None }).await.unwrap();
-    let RelayFrame::SessionCreated { session_id, .. } = next_frame(&mut ed).await else { panic!() };
-    phone.send(RelayFrame::JoinBySession { version: ProtocolVersion::CURRENT, session_id }).await.unwrap();
-    assert!(matches!(next_frame(&mut ep_).await, RelayFrame::Joined { .. }));
-    assert!(matches!(next_frame(&mut ed).await, RelayFrame::PeerJoined { .. }));
-    phone.send(RelayFrame::forward(session_id, vec![42])).await.unwrap();
-    assert!(matches!(next_frame(&mut ed).await, RelayFrame::Forward { payload, .. } if payload == vec![42]));
-    // Single-session mode: channels are refused on a direct host.
-    phone.send(RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: "ab".repeat(32) }).await.unwrap();
-    assert!(matches!(next_frame(&mut ep_).await, RelayFrame::Error { code: RelayErrorCode::InvalidChannel, .. }));
-    // A forward to a bogus session is refused.
-    desk.send(RelayFrame::forward(SessionId::random(), vec![1])).await.unwrap();
-    assert!(matches!(next_frame(&mut ed).await, RelayFrame::Error { code: RelayErrorCode::NotJoined, .. }));
-    assert_eq!(host.stats().connections, 2);
-    let addr = host.local_addr();
-    host.shutdown().await;
-    // Regression (Windows native gate, 2026-09-28): the host stops accepting before `shutdown`
-    // returns, so a peer that saw this device go offline gets no answer from its LAN address.
-    assert!(tokio::net::TcpStream::connect(addr).await.is_err(), "the port is closed once shutdown returns");
-    // Links notice the host going away.
-    next_state(&mut ed, ConnectionState::Reconnecting).await;
-    desk.close().await;
-    phone.close().await;
-}
-
-/// A relay that answers `hello` but never pongs must be detected by the heartbeat.
-#[tokio::test]
-async fn heartbeat_detects_a_silent_relay() {
+/// A relay that answers `hello` and then stops reading altogether: a wedged relay, or the far end
+/// of a path that broke without a word. It never sees our pings, so no pong ever comes back.
+async fn silent_relay() -> RelayEndpoint {
     use futures_util::{SinkExt as _, StreamExt as _};
     use tokio_tungstenite::tungstenite::Message;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -177,8 +138,6 @@ async fn heartbeat_detects_a_silent_relay() {
         while let Ok((stream, _)) = listener.accept().await {
             tokio::spawn(async move {
                 let Ok(mut ws) = tokio_tungstenite::accept_async(stream).await else { return };
-                // Answer hello, then stop reading altogether: a wedged relay never sees our pings,
-                // so no protocol-level pong ever comes back.
                 if let Some(Ok(Message::Text(t))) = ws.next().await
                     && t.contains(r#""type":"hello""#)
                 {
@@ -193,8 +152,13 @@ async fn heartbeat_detects_a_silent_relay() {
             });
         }
     });
-    let endpoint = RelayEndpoint::parse(&format!("ws://{addr}/ws")).unwrap();
-    let mut cfg = LinkConfig::new(endpoint);
+    RelayEndpoint::parse(&format!("ws://{addr}/ws")).unwrap()
+}
+
+/// A relay that answers `hello` but never pongs must be detected by the heartbeat.
+#[tokio::test]
+async fn heartbeat_detects_a_silent_relay() {
+    let mut cfg = LinkConfig::new(silent_relay().await);
     cfg.ping_interval = Duration::from_millis(100);
     cfg.pong_timeout = Duration::from_millis(200);
     cfg.reconnect = ReconnectPolicy { base: Duration::from_millis(50), max: Duration::from_millis(50), jitter: 0.0, max_attempts: Some(1) };
@@ -209,19 +173,15 @@ async fn heartbeat_detects_a_silent_relay() {
     assert_eq!(link.state(), ConnectionState::Closed);
 }
 
-/// The connectivity self-check's probe: a relay and a LAN host both answer `hello`; a closed port
-/// is `Refused`, an HTTP server that is not Voltip is `Failed`, and an address that swallows the
-/// connection is `Timeout` within the deadline.
+/// The connectivity self-check's probe: a relay answers `hello`; a closed port is `Refused`, an
+/// HTTP server that is not Voltip is `Failed`, and an address that swallows the connection is
+/// `Timeout` within the deadline.
 #[tokio::test]
 async fn probe_tells_a_voltip_endpoint_from_a_closed_port_a_stranger_and_silence() {
     use voltip_transport::{ProbeFailure, probe};
     let (relay_ep, _stop) = relay().await;
     let took = probe(&LinkConfig::new(relay_ep)).await.unwrap();
     assert!(took < Duration::from_secs(5), "{took:?}");
-
-    let host = DirectHost::bind("127.0.0.1:0".parse().unwrap()).await.unwrap();
-    let lan = RelayEndpoint::parse(&format!("ws://127.0.0.1:{}/ws", host.local_addr().port())).unwrap();
-    probe(&LinkConfig::new(lan)).await.unwrap();
 
     // A port that was just freed: nothing listens.
     let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
@@ -252,4 +212,66 @@ async fn probe_tells_a_voltip_endpoint_from_a_closed_port_a_stranger_and_silence
     let mut cfg = LinkConfig::new(RelayEndpoint::parse(&format!("ws://{silent_addr}/ws")).unwrap());
     cfg.connect_timeout = Duration::from_millis(300);
     assert_eq!(probe(&cfg).await, Err(ProbeFailure::Timeout));
+}
+
+/// `reconnect_now` while the link waits out a long backoff (docs/pairing.md 「重连」): it tries again
+/// at once, and reaches the relay that has come back since, long before the backoff would end.
+#[tokio::test]
+async fn reconnect_now_cuts_a_backoff_short() {
+    let addr = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    let mut cfg = LinkConfig::new(RelayEndpoint::parse(&format!("ws://{addr}/ws")).unwrap());
+    cfg.reconnect = ReconnectPolicy { base: Duration::from_secs(600), max: Duration::from_secs(600), jitter: 0.0, max_attempts: None };
+    let (link, mut ev) = RelayLink::spawn(cfg);
+    next_state(&mut ev, ConnectionState::Reconnecting).await;
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let (_addr, _task) = RelayHandle::new(RelayConfig::default())
+        .serve(addr, async move {
+            let _ = stop_rx.await;
+        })
+        .await
+        .unwrap();
+    link.reconnect_now();
+    next_state(&mut ev, ConnectionState::Connected).await;
+    link.send(RelayFrame::CreateSession { version: ProtocolVersion::CURRENT, ttl_secs: None }).await.unwrap();
+    assert!(matches!(next_frame(&mut ev).await, RelayFrame::SessionCreated { .. }));
+    link.close().await;
+    let _ = stop_tx.send(());
+}
+
+/// `reconnect_now` on a connected link whose socket died without a word (the path broke when the
+/// network changed): the ping it sends at once goes unanswered, and the link reconnects after
+/// `probe_timeout` instead of after the heartbeat's next ping and its pong timeout.
+#[tokio::test]
+async fn reconnect_now_drops_a_socket_that_no_longer_answers() {
+    let mut cfg = LinkConfig::new(silent_relay().await);
+    cfg.ping_interval = Duration::from_secs(600);
+    cfg.pong_timeout = Duration::from_secs(600);
+    cfg.probe_timeout = Duration::from_millis(200);
+    let (link, mut ev) = RelayLink::spawn(cfg);
+    next_state(&mut ev, ConnectionState::Connected).await;
+    let asked = tokio::time::Instant::now();
+    link.reconnect_now();
+    next_state(&mut ev, ConnectionState::Reconnecting).await;
+    assert!(asked.elapsed() < Duration::from_secs(60), "the probe, not the heartbeat: {:?}", asked.elapsed());
+    link.close().await;
+}
+
+/// `reconnect_now` on a healthy link: the relay answers the ping and nothing else happens.
+#[tokio::test]
+async fn reconnect_now_leaves_a_working_link_alone() {
+    let (endpoint, stop) = relay().await;
+    let mut cfg = LinkConfig::new(endpoint);
+    cfg.probe_timeout = Duration::from_millis(300);
+    let (link, mut ev) = RelayLink::spawn(cfg);
+    next_state(&mut ev, ConnectionState::Connected).await;
+    for _ in 0..3 {
+        link.reconnect_now();
+    }
+    // Well past the probe's deadline the link is still the same one.
+    let lost = tokio::time::timeout(Duration::from_millis(1_500), next_state(&mut ev, ConnectionState::Reconnecting)).await;
+    assert!(lost.is_err(), "a link whose relay answers stays up");
+    link.send(RelayFrame::CreateSession { version: ProtocolVersion::CURRENT, ttl_secs: None }).await.unwrap();
+    assert!(matches!(next_frame(&mut ev).await, RelayFrame::SessionCreated { .. }));
+    link.close().await;
+    let _ = stop.send(());
 }

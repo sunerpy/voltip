@@ -8,6 +8,8 @@ export interface CardProps extends HTMLAttributes<HTMLDivElement> {
   /** Hover affordance for clickable cards (border darkens). */
   interactive?: boolean;
   selected?: boolean;
+  /** `accent`: the accent's soft fill in place of the surface, for the card a row puts first. */
+  tone?: "surface" | "accent";
 }
 
 /** Surface + 1 px hairline + radius 10, no shadow. The only container in the app. */
@@ -17,13 +19,15 @@ export function Card({
   radius = 10,
   interactive = false,
   selected = false,
+  tone = "surface",
   className,
   ...rest
 }: CardProps) {
   return (
     <div
       className={cx(
-        "bg-surface hairline",
+        tone === "accent" ? "bg-accent-soft" : "bg-surface",
+        "hairline",
         radius === 10 ? "rounded-10" : "rounded-14",
         padding === "md" && "p-[var(--card-pad)]",
         padding === "sm" && "p-3",

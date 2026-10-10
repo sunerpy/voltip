@@ -75,11 +75,8 @@ fn exchange(a: &mut Initiator, b: &mut Responder, mut pending_a: Vec<Vec<u8>>, m
 fn to_verification(use_ticket: bool) -> (Initiator, Responder, FakeRelay, Now, PairingTicket) {
     let now = now();
     let relay = FakeRelay::new(now);
-    let mut a = Initiator::new(
-        identity("Surface-Laptop"),
-        Timeouts::default(),
-        Reachability { relay_hint: Some(url::Url::parse("wss://relay.example/ws").unwrap()), direct_hints: vec!["192.168.1.24:47830".into()] },
-    );
+    let mut a =
+        Initiator::new(identity("Surface-Laptop"), Timeouts::default(), Reachability { relay_hint: Some(url::Url::parse("wss://relay.example/ws").unwrap()) });
     let acts = a.step(Event::Start, now).unwrap();
     assert!(matches!(acts[0], Action::SendRelay(RelayFrame::CreateSession { ttl_secs: Some(120), .. })));
     assert!(has_emit_state(&acts, PairingState::CreatingSession));
@@ -92,7 +89,7 @@ fn to_verification(use_ticket: bool) -> (Initiator, Responder, FakeRelay, Now, P
     let ticket = PairingTicket::from_uri(&ticket_uri).unwrap();
     assert_eq!(ticket.session_id, relay.session_id);
     assert_eq!(&ticket, a.ticket().unwrap());
-    assert_eq!(ticket.direct_hints, ["192.168.1.24:47830"]);
+    assert_eq!(ticket.relay_hint.as_ref().map(url::Url::as_str), Some("wss://relay.example/ws"));
 
     let method = if use_ticket { JoinMethod::Ticket(ticket.clone()) } else { JoinMethod::Code(relay.code.clone()) };
     let mut ledger = NonceLedger::default();

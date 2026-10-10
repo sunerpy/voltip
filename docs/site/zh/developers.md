@@ -47,7 +47,7 @@ VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1 make windows-x64   # 在 Linux 上交叉构建
 | [架构](/zh/dev/architecture) | Rust 核心、两个 Tauri 应用，以及它们之间的通信方式 |
 | [听写流水线](/zh/dev/dictation) | 录音、识别、模型、快捷键和文字插入 |
 | [界面与 IPC 契约](/zh/dev/frontend) | 前端界面，以及它与 Rust 之间交换的消息 |
-| [配对](/zh/dev/pairing) | 配对、局域网发现和连接自检 |
+| [配对](/zh/dev/pairing) | 配对、重连和连接自检 |
 | [线协议](/zh/dev/protocol) | 设备之间的消息格式 |
 | [威胁模型](/zh/dev/threat-model) | 加密连接能防范哪些威胁 |
 | [状态机](/zh/dev/state-machines) | 配对和连接的各个状态 |

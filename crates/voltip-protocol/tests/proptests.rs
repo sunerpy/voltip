@@ -18,11 +18,10 @@ proptest! {
     }
 
     #[test]
-    fn tickets_roundtrip(e in proptest::array::uniform32(any::<u8>()), nonce in proptest::array::uniform16(any::<u8>()), exp in any::<u64>(), hints in proptest::collection::vec((any::<[u8; 4]>(), any::<u16>()), 0..3)) {
-        let hints: Vec<String> = hints.into_iter().map(|(ip, port)| std::net::SocketAddr::from((ip, port)).to_string()).collect();
+    fn tickets_roundtrip(e in proptest::array::uniform32(any::<u8>()), nonce in proptest::array::uniform16(any::<u8>()), exp in any::<u64>()) {
         let _: [u8; PUBLIC_KEY_LEN] = e;
         let _: [u8; NONCE_LEN] = nonce;
-        let t = PairingTicket { version: ProtocolVersion::CURRENT, session_id: SessionId::random(), ephemeral_pub: e, nonce, expires_at: exp, relay_hint: None, direct_hints: hints };
+        let t = PairingTicket { version: ProtocolVersion::CURRENT, session_id: SessionId::random(), ephemeral_pub: e, nonce, expires_at: exp, relay_hint: None };
         let uri = t.to_uri().unwrap();
         prop_assert_eq!(PairingTicket::from_uri(&uri).unwrap(), t);
     }

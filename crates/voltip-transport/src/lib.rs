@@ -3,10 +3,8 @@
 //! * [`ConnectionState`] + [`ConnectionMachine`] — the explicit lifecycle every transport
 //!   reports (`Disconnected → Connecting → Authenticating → Connected → Reconnecting → Closed`).
 //! * [`ReconnectPolicy`] — exponential backoff with jitter.
-//! * [`RelayLink`] — a WebSocket link to a relay (or to a direct host, which speaks the same
-//!   frames), with automatic reconnect and typed frame I/O.
-//! * [`DirectHost`] — a LAN WebSocket listener that embeds `RelayCore` in single-session mode,
-//!   so a phone on the same network can pair without any server.
+//! * [`RelayLink`] — a WebSocket link to the relay, with a heartbeat, automatic reconnect,
+//!   [`RelayLink::reconnect_now`] for the moment the network changes, and typed frame I/O.
 //! * [`SecureChannel`] — Noise transport mode over any framed link.
 //!
 //! Endpoints are always injected ([`RelayEndpoint`]); nothing here knows a production URL.
@@ -15,14 +13,12 @@
 #![warn(missing_docs)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
-mod direct;
 mod endpoint;
 mod link;
 mod reconnect;
 mod secure;
 mod state;
 
-pub use direct::{DirectHost, primary_lan_ip};
 pub use endpoint::{DEFAULT_DEV_RELAY, RelayEndpoint};
 pub use link::{LinkConfig, LinkEvent, ProbeFailure, RelayLink, probe};
 pub use reconnect::ReconnectPolicy;

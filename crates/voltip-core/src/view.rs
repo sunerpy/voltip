@@ -1,7 +1,7 @@
 //! UI-facing read models.
 
 use serde::{Deserialize, Serialize};
-use voltip_identity::{ConnectionKind, TrustedDevice};
+use voltip_identity::TrustedDevice;
 use voltip_transport::ConnectionState;
 
 /// Live connectivity of a trusted device.
@@ -13,10 +13,7 @@ pub enum DeviceConnection {
     /// Peer is attached to the same channel; secure channel is being (re)established.
     Connecting,
     /// Secure channel up.
-    Online {
-        /// How.
-        via: ConnectionKind,
-    },
+    Online,
     /// Peer presented a different identity key than the trusted record. Never auto-trusted.
     IdentityChanged {
         /// `A7:C4:…` of the key that was presented.
@@ -68,8 +65,8 @@ mod tests {
 
     #[test]
     fn connection_serializes_tagged() {
-        let j = serde_json::to_string(&DeviceConnection::Online { via: ConnectionKind::Relay }).unwrap();
-        assert_eq!(j, r#"{"state":"online","via":"relay"}"#);
+        let j = serde_json::to_string(&DeviceConnection::Online).unwrap();
+        assert_eq!(j, r#"{"state":"online"}"#);
         let j = serde_json::to_string(&DeviceConnection::IdentityChanged { presented_fingerprint: "AA".into() }).unwrap();
         assert!(j.contains("identity_changed"));
         let s = RelayStatus { endpoint: None, source: RelaySource::Builtin, state: ConnectionState::Disconnected, attempts: 0 };

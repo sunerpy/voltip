@@ -49,11 +49,10 @@ const COMPUTER: DeviceView = {
     public_key: DESK,
     fingerprint: "B0:8F:44:E7 · 5A:91:E2:D8",
     trusted_at: Math.floor(NOW / 1000) - 86_400,
-    last_connection: "relay",
     sync: true,
     sync_gen: 0,
   },
-  connection: { state: "online", via: "relay" },
+  connection: { state: "online" },
 };
 
 function mirror(extra: Partial<MockMirror> = {}): MockMirror {

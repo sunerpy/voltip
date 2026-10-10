@@ -9,7 +9,6 @@
 #                                                crates/voltip-asr-local/tests/real.rs; the files are copied over)
 #   scripts/windows-remote.sh gate hooks         the lone-key trigger's input hooks, fed with SendInput (the
 #                                                logged-on user's session must be unlocked)
-#   scripts/windows-remote.sh gate mdns          two real mDNS daemons on the machine see each other (LAN discovery)
 #   scripts/windows-remote.sh gate echo          the mixed take's echo canceller, optimised, on the machine's CPU: the
 #                                                synthetic rooms and the per-frame timing (docs/dictation.md §22.6)
 #   scripts/windows-remote.sh gate loopback      a tone played through the default output is recorded back as the
@@ -179,15 +178,13 @@ gate() {
     # The lone-key trigger's low-level hooks (docs/dictation.md §13.1), fed with SendInput: they need
     # the interactive session the scheduled task runs in, never an SSH one.
     hooks) args='test -p voltip-hooks --lib -- --ignored --nocapture --test-threads=1' ;;
-    # LAN discovery (docs/pairing.md 「局域网发现」): real multicast DNS through Windows' own stack.
-    mdns) args='test -p voltip-core --lib discovery -- --ignored --nocapture --test-threads=1' ;;
     # Recording the computer's sound (docs/dictation.md §22): WASAPI loopback of the default output,
     # in the logged-on user's session where the audio engine runs.
     loopback) args='test -p voltip-audio --test loopback -- --ignored --nocapture --test-threads=1' ;;
     # Echo cancellation of the mixed take (docs/dictation.md §22.6): its timing means something only
     # in an optimised build on the machine being judged.
     echo) args='test --release -p voltip-audio --test echo -- --include-ignored --nocapture --test-threads=1' ;;
-    *) echo "usage: $0 gate test|clippy|real|hooks|mdns|loopback|echo [test-name filter]" >&2; exit 2 ;;
+    *) echo "usage: $0 gate test|clippy|real|hooks|loopback|echo [test-name filter]" >&2; exit 2 ;;
   esac
   if [ "$name" = real ]; then stage_real_models; fi
   if [ "$name" = loopback ]; then stage_loopback; fi
@@ -254,8 +251,8 @@ case "${1:-}" in
     case "${2:-}" in
       test | clippy | real) wait_log "$2" "voltip-gate-$2" ;;
       smoke) wait_log smoke voltip-smoke-native ;;
-      hooks | mdns | loopback | echo) wait_log "$2" "voltip-gate-$2" ;;
-      *) echo "usage: $0 wait test|clippy|real|hooks|mdns|loopback|echo|smoke" >&2; exit 2 ;;
+      hooks | loopback | echo) wait_log "$2" "voltip-gate-$2" ;;
+      *) echo "usage: $0 wait test|clippy|real|hooks|loopback|echo|smoke" >&2; exit 2 ;;
     esac
     ;;
   ps) remote_ps ;;

@@ -20,9 +20,6 @@ export const connectionStateSchema = z.enum([
 ]);
 export type ConnectionState = z.infer<typeof connectionStateSchema>;
 
-export const connectionKindSchema = z.enum(["direct", "relay"]);
-export type ConnectionKind = z.infer<typeof connectionKindSchema>;
-
 /** 64 lower-case hex characters: an X25519 public key. */
 export const hexKeySchema = z.string().regex(/^[0-9a-f]{64}$/, "expected 64 lower-case hex chars");
 
@@ -558,9 +555,6 @@ export const settingsSchema = z.object({
   /** The lone-key trigger (docs/dictation.md §13.1), next to `hotkey`; `null` = off. Always
    *  serialised; an older `settings.json` or core reads as off. */
   solo_key: soloKeySchema.nullable().default(null),
-  /** Announce this device on the LAN and browse for the others (docs/pairing.md 「局域网发现」);
-   *  on by default and in an older `settings.json`. */
-  lan_discovery: z.boolean().default(true),
   /** Keep a pairing open on this desktop until turned off (docs/pairing.md 「常开配对」); off by
    *  default and in an older `settings.json`. */
   pairing_always_on: z.boolean().default(false),
@@ -1548,9 +1542,6 @@ export const trustedDeviceSchema = z.object({
   fingerprint: z.string(),
   trusted_at: z.number(),
   last_seen: z.number().optional(),
-  last_connection: connectionKindSchema.optional(),
-  /** Last known `ip:port` endpoints of the peer's LAN host; omitted by the core when empty. */
-  direct_hints: z.array(z.string()).optional(),
   /** On a computer: this phone gets the history and settings and uploads its own records
    *  (docs/dictation.md §20.8). Records from before the switch read as on. */
   sync: z.boolean().default(true),
@@ -1565,7 +1556,7 @@ export const MAX_SYNC_PEERS = 5;
 
 export const deviceConnectionSchema = z.union([
   z.object({ state: z.enum(["offline", "connecting"]) }),
-  z.object({ state: z.literal("online"), via: connectionKindSchema }),
+  z.object({ state: z.literal("online") }),
   z.object({
     state: z.literal("identity_changed"),
     presented_fingerprint: z.string(),
@@ -1897,19 +1888,6 @@ export const sentTextSchema = z.object({
 });
 export type SentText = z.infer<typeof sentTextSchema>;
 
-/** A device the LAN browse sees (`voltip_core::discovery::NearbyDevice`, docs/pairing.md). */
-export const nearbyDeviceSchema = z.object({
-  /** Its LAN tag; `pairing_join_nearby` names it. */
-  fingerprint: z.string(),
-  name: z.string(),
-  platform: platformSchema,
-  /** It waits for a peer to pair: a tap joins it. */
-  pairing: z.boolean(),
-  /** It is one of this device's trusted devices. */
-  trusted: z.boolean(),
-});
-export type NearbyDevice = z.infer<typeof nearbyDeviceSchema>;
-
 /** No further answer is expected for this text. */
 export function sentTextFinal(state: SentTextState): boolean {
   return state.state === "delivered" || state.state === "failed";
@@ -1941,7 +1919,7 @@ export type HardwareStatus = z.infer<typeof hardwareStatusSchema>;
 
 // ---- connectivity self-check (docs/pairing.md; `voltip_core::connectivity`) -------------
 
-/** One probe: a Voltip relay or LAN host answered `hello`, or why not. */
+/** The relay probe: a Voltip relay answered `hello`, or why not. */
 export const probeResultSchema = z.discriminatedUnion("result", [
   z.object({ result: z.literal("ok"), ms: z.number().int().nonnegative() }),
   z.object({ result: z.literal("timeout") }),
@@ -1950,29 +1928,19 @@ export const probeResultSchema = z.discriminatedUnion("result", [
 ]);
 export type ProbeResult = z.infer<typeof probeResultSchema>;
 
-export const addressCheckSchema = z.object({
-  address: z.string(),
-  /** On this device's own IPv4 /24: a failure points at a firewall or Wi-Fi client isolation. */
-  same_subnet: z.boolean(),
-  result: probeResultSchema,
-});
-export type AddressCheck = z.infer<typeof addressCheckSchema>;
-
 export const peerCheckSchema = z.object({
   public_key: hexKeySchema,
   name: z.string(),
-  /** How the live channel runs; absent while the device is offline. */
-  via: connectionKindSchema.optional(),
+  /** Its secure channel is up. */
+  online: z.boolean(),
   /** Round trip of an encrypted ping on that channel. */
   rtt_ms: z.number().int().nonnegative().optional(),
-  addresses: z.array(addressCheckSchema),
 });
 export type PeerCheck = z.infer<typeof peerCheckSchema>;
 
 export const connectivityReportSchema = z.object({
   /** Unix milliseconds. */
   checked_at: z.number(),
-  lan: z.object({ listening: z.boolean(), addresses: z.array(z.string()) }),
   relay: z.object({
     configured: z.boolean(),
     result: probeResultSchema.optional(),
@@ -2070,8 +2038,6 @@ export const uiStateSchema = z.object({
   phone_take: phoneTakeViewSchema.optional(),
   /** The texts this phone sent (§20.6), newest first; always empty on the desktop. */
   sent_texts: z.array(sentTextSchema).default(() => []),
-  /** Devices the LAN browse sees (docs/pairing.md 「局域网发现」). */
-  nearby: z.array(nearbyDeviceSchema).default(() => []),
   /** What the local models can run on (§10.6); empty until the desktop shell reports. */
   hardware: hardwareStatusSchema.default(() => ({ cpu_threads: 0, gpus: [] })),
   /** The connectivity self-check: running, and the last report. */
@@ -2156,8 +2122,6 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   }),
   /** The phone's list of sent texts, whole (§20.6). */
   z.object({ type: z.literal("sent_texts"), texts: z.array(sentTextSchema) }),
-  /** What the LAN browse sees, whole (docs/pairing.md). */
-  z.object({ type: z.literal("nearby"), devices: z.array(nearbyDeviceSchema) }),
   /** Phone: its copies of its computers, whole (docs/dictation.md §20.8). */
   z.object({ type: z.literal("mirrors"), mirrors: z.array(mirrorViewSchema) }),
   /** Phone: its records too large to upload. */
@@ -2372,12 +2336,11 @@ export interface CommandArgs {
   phone_text_send: { publicKey: string; body: string; source: PhoneTextSource };
   /** Phone: forget the list of sent texts. */
   sent_texts_clear: undefined;
-  /** LAN discovery (docs/pairing.md 「局域网发现」): announce this device and browse for others. */
-  settings_set_lan_discovery: { enabled: boolean };
   /** Always-on pairing (docs/pairing.md 「常开配对」; desktop only, the phone's core refuses). */
   settings_set_pairing_always_on: { enabled: boolean };
-  /** Join the pairing a nearby device waits for (`NearbyDevice.fingerprint`). */
-  pairing_join_nearby: { fingerprint: string };
+  /** The network came back or the app came to the front: the relay link checks its socket now
+   *  (docs/pairing.md 「重连」). */
+  relay_reconnect: undefined;
   /** Query (phone): the phone's clipboard text, `null` when it holds none. */
   phone_clipboard_read: undefined;
   /** Phone (docs/dictation.md §20.7): hand `text` to another app through the system share sheet;
@@ -2608,7 +2571,6 @@ export function defaultSettings(): Settings {
     context_sharing: defaultContextSharing(),
     edit_hotkey: DEFAULT_EDIT_HOTKEY,
     solo_key: null,
-    lan_discovery: true,
     pairing_always_on: false,
     history: { enabled: true, keep: 20_000 },
     overlay: "bottom",
@@ -2696,8 +2658,6 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
     }
     case "sent_texts":
       return { ...state, sent_texts: event.texts };
-    case "nearby":
-      return { ...state, nearby: event.devices };
     case "mirrors":
       return { ...state, mirrors: event.mirrors };
     case "phone_outbox":

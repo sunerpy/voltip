@@ -1,4 +1,6 @@
-//! A WebSocket link to a relay (or a [`crate::DirectHost`]) with automatic reconnect.
+//! A WebSocket link to the relay: a heartbeat that notices a dead socket, automatic reconnect,
+//! and [`RelayLink::reconnect_now`] for the moments a dead socket is likely (docs/pairing.md
+//! 「重连」).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,6 +31,8 @@ pub struct LinkConfig {
     pub ping_interval: Duration,
     /// Time allowed for a pong before the socket is declared dead.
     pub pong_timeout: Duration,
+    /// After [`RelayLink::reconnect_now`]: time allowed for the pong of the ping it sends at once.
+    pub probe_timeout: Duration,
     /// Tests only: the writer takes this shared before it writes a frame, so a test that holds it
     /// exclusively keeps the queued frames waiting (docs/dictation.md §20.8, frames of an ended
     /// session left in the queue).
@@ -44,8 +48,10 @@ impl LinkConfig {
             connect_timeout: Duration::from_secs(8),
             hello_timeout: Duration::from_secs(5),
             reconnect: ReconnectPolicy::default(),
-            ping_interval: Duration::from_secs(20),
+            // A dead socket is noticed within 25 s at most; `reconnect_now` checks at once.
+            ping_interval: Duration::from_secs(15),
             pong_timeout: Duration::from_secs(10),
+            probe_timeout: Duration::from_secs(5),
             write_gate: None,
         }
     }
@@ -65,6 +71,8 @@ pub enum LinkEvent {
 enum Cmd {
     Send(RelayFrame),
     Close,
+    /// [`RelayLink::reconnect_now`].
+    Now,
 }
 
 /// Handle to a running link task.
@@ -103,6 +111,15 @@ impl RelayLink {
             return Err(TransportError::NotConnected(st));
         }
         self.cmd.send(Cmd::Send(frame)).await.map_err(|_| TransportError::Closed)
+    }
+
+    /// The network changed, the device woke up or the app came back to the front (docs/pairing.md
+    /// 「重连」): a socket from before is likely dead, and waiting for the heartbeat or the backoff
+    /// would keep the devices apart for many seconds. A link waiting out its backoff tries again at
+    /// once; a connected one pings at once and reconnects when no pong comes within
+    /// `probe_timeout`. Never waits; a link that is closed ignores it.
+    pub fn reconnect_now(&self) {
+        let _ = self.cmd.try_send(Cmd::Now);
     }
 
     /// Free places in the queue of frames waiting to be written (docs/dictation.md §20.8: the
@@ -151,14 +168,24 @@ async fn run(config: LinkConfig, mut cmd_rx: mpsc::Receiver<Cmd>, evt: mpsc::Sen
                 match config.reconnect.delay_for(attempts) {
                     Some(delay) => {
                         tracing::info!(attempt = attempts, ?delay, "reconnecting");
-                        tokio::select! {
-                            _ = tokio::time::sleep(delay) => {}
-                            cmd = cmd_rx.recv() => {
-                                if matches!(cmd, Some(Cmd::Close) | None) {
-                                    let change = state.lock().closed();
-                                    emit_state(change, &evt);
-                                    return;
-                                }
+                        let until = tokio::time::Instant::now() + delay;
+                        loop {
+                            tokio::select! {
+                                () = tokio::time::sleep_until(until) => break,
+                                cmd = cmd_rx.recv() => match cmd {
+                                    Some(Cmd::Close) | None => {
+                                        let change = state.lock().closed();
+                                        emit_state(change, &evt);
+                                        return;
+                                    }
+                                    Some(Cmd::Now) => {
+                                        tracing::info!(attempt = attempts, "reconnecting at once");
+                                        break;
+                                    }
+                                    // Queued just before the link went down: the owner sends its
+                                    // state again on `Connected`.
+                                    Some(Cmd::Send(_)) => {}
+                                },
                             }
                         }
                     }
@@ -178,11 +205,11 @@ enum Outcome {
     Lost(String),
 }
 
-/// Why a [`probe`] did not reach a Voltip relay or LAN host.
+/// Why a [`probe`] did not reach a Voltip relay.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProbeFailure {
-    /// Nothing answered within the deadline (a firewall that drops, Wi-Fi client isolation, a host
-    /// that is gone).
+    /// Nothing answered within the deadline (a firewall that drops, a broken path, a host that is
+    /// gone).
     Timeout,
     /// The address answered but refused the connection (nothing listens on that port, or a
     /// firewall that rejects).
@@ -192,8 +219,8 @@ pub enum ProbeFailure {
 }
 
 /// Open a fresh connection to `config.endpoint`, exchange `hello` / `hello_ack` and close it:
-/// whether a Voltip relay (or LAN host, which speaks the same frames) answers there, and how long
-/// that took. Nothing else is sent. `config.connect_timeout` bounds the whole exchange.
+/// whether a Voltip relay answers there, and how long that took. Nothing else is sent.
+/// `config.connect_timeout` bounds the whole exchange.
 pub async fn probe(config: &LinkConfig) -> Result<Duration, ProbeFailure> {
     let started = tokio::time::Instant::now();
     let url = config.endpoint.url().as_str().to_owned();
@@ -276,9 +303,11 @@ async fn connect_and_run(
 
     let mut ping = tokio::time::interval(config.ping_interval);
     ping.tick().await; // first tick is immediate; skip it
-    let mut awaiting_pong: Option<tokio::time::Instant> = None;
+    // The ping in flight (its payload) and when its pong is due. A pong that answers an older ping
+    // does not count: after `reconnect_now` only the newest one says the socket works now.
+    let mut pings: u64 = 0;
+    let mut pong_deadline: Option<tokio::time::Instant> = None;
     loop {
-        let pong_deadline = awaiting_pong.map(|t| t + config.pong_timeout);
         tokio::select! {
             cmd = cmd_rx.recv() => match cmd {
                 Some(Cmd::Send(frame)) => {
@@ -298,6 +327,15 @@ async fn connect_and_run(
                     let _ = sink.send(Message::Close(None)).await;
                     return Outcome::Closed;
                 }
+                Some(Cmd::Now) => {
+                    pings += 1;
+                    let due = tokio::time::Instant::now() + config.probe_timeout;
+                    pong_deadline = Some(pong_deadline.map_or(due, |d| d.min(due)));
+                    tracing::debug!(timeout = ?config.probe_timeout, "checking the socket");
+                    if let Err(e) = sink.send(Message::Ping(pings.to_be_bytes().to_vec().into())).await {
+                        return Outcome::Lost(format!("ping: {e}"));
+                    }
+                }
             },
             msg = stream.next() => match msg {
                 Some(Ok(Message::Text(t))) => match RelayFrame::decode(&t) {
@@ -308,16 +346,21 @@ async fn connect_and_run(
                     }
                     Err(e) => { let _ = evt.try_send(LinkEvent::Warning(format!("bad frame: {e}"))); }
                 },
-                Some(Ok(Message::Pong(_))) => { awaiting_pong = None; }
+                Some(Ok(Message::Pong(p))) => {
+                    if p.as_ref() == pings.to_be_bytes() {
+                        pong_deadline = None;
+                    }
+                }
                 Some(Ok(Message::Ping(p))) => { let _ = sink.send(Message::Pong(p)).await; }
                 Some(Ok(Message::Close(_))) | None => return Outcome::Lost("socket closed by peer".into()),
                 Some(Ok(_)) => {}
                 Some(Err(e)) => return Outcome::Lost(format!("read: {e}")),
             },
             _ = ping.tick() => {
-                if awaiting_pong.is_none() {
-                    awaiting_pong = Some(tokio::time::Instant::now());
-                    if let Err(e) = sink.send(Message::Ping(Vec::new().into())).await {
+                if pong_deadline.is_none() {
+                    pings += 1;
+                    pong_deadline = Some(tokio::time::Instant::now() + config.pong_timeout);
+                    if let Err(e) = sink.send(Message::Ping(pings.to_be_bytes().to_vec().into())).await {
                         return Outcome::Lost(format!("ping: {e}"));
                     }
                 }

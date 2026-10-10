@@ -21,10 +21,7 @@ function desktops(state: "online" | "offline") {
   return [
     {
       ...desktop,
-      connection:
-        state === "online"
-          ? { state: "online" as const, via: "direct" as const }
-          : { state: "offline" as const },
+      connection: state === "online" ? { state: "online" as const } : { state: "offline" as const },
     },
   ];
 }
@@ -105,18 +102,16 @@ describe("Phone as microphone (docs/dictation.md §20)", () => {
     expect(backend.activeMeters()).toBe(0);
   });
 
-  it("regression: the phone runs the connection check and sees the computer's channel and LAN addresses", async () => {
+  it("regression: the phone runs the connection check and sees the computer's channel", async () => {
     const backend = new MockBackend({ role: "phone", devices: desktops("online") });
     renderApp({ backend });
     const check = await screen.findByTestId("connectivity");
     fireEvent.click(within(check).getByRole("button", { name: "开始自检" }));
     await advance(MOCK_CONNECTIVITY_MS);
-    expect(within(check).getByTestId("connectivity-lan")).toHaveTextContent(
-      "本机局域网服务 · 192.168.1.52:47831",
-    );
+    expect(within(check).queryByTestId("connectivity-lan")).toBeNull();
     const peers = within(check).getAllByTestId("connectivity-peer");
     expect(peers).toHaveLength(1);
-    expect(peers[0]).toHaveTextContent("MacBook Pro · 直连 · 加密往返 6 ms");
+    expect(peers[0]).toHaveTextContent("MacBook Pro · 在线 · 加密往返 61 ms");
   });
 
   it("slide off the button before letting go cancels; a quick tap still stops what it started", async () => {

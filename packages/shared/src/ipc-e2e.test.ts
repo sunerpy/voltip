@@ -112,16 +112,7 @@ class Device {
     this.dataDir = mkdtempSync(join(tmpdir(), `voltip-e2e-${name}-`));
     const proc = spawn(
       harness,
-      [
-        "--data-dir",
-        this.dataDir,
-        "--relay-url",
-        relayUrl,
-        "--device-name",
-        name,
-        "--direct-bind",
-        "127.0.0.1:0",
-      ],
+      ["--data-dir", this.dataDir, "--relay-url", relayUrl, "--device-name", name],
       { stdio: "pipe" },
     );
     this.proc = proc;

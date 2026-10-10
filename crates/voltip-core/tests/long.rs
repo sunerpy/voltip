@@ -80,7 +80,6 @@ fn start_with(
     }
     let mut config = CoreConfig::new(dir.path().to_path_buf());
     config.default_device_name = "Long Test".into();
-    config.direct_enabled = false;
     let (handle, events) = AppCore::start_with(config, Arc::new(MemorySecretStore::new()), ports).unwrap();
     Node { handle, events, transcriber, refiner, injector, dir }
 }
@@ -535,7 +534,6 @@ fn start_fallback(audio: FakeAudio, selected: FakeTranscriber, fallback: FakeTra
     ports.factory = factory_by_model(&[(voltip_core::engines::DEFAULT_ASR_MODEL, selected.clone()), ("fallback-asr", fallback.clone())], &[]);
     let mut config = CoreConfig::new(dir.path().to_path_buf());
     config.default_device_name = "Long Test".into();
-    config.direct_enabled = false;
     let (handle, events) = AppCore::start_with(config, Arc::new(MemorySecretStore::new()), ports).unwrap();
     (Node { handle, events, transcriber: selected, refiner, injector, dir }, fallback)
 }

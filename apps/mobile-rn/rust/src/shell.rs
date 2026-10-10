@@ -13,7 +13,7 @@ use voltip_core::CoreConfig;
 use voltip_core::dictation::DictationPorts;
 use voltip_core::ui::UiEvent;
 use voltip_identity::SecretStore;
-use voltip_tauri_bridge::Bridge;
+use voltip_tauri_bridge::{Bridge, UiCommand};
 
 use crate::host::Host;
 use crate::meter::Meters;
@@ -47,7 +47,7 @@ pub(crate) struct Inner {
 
 /// The phone's core configuration, the Tauri phone shell's (`production_config`): `<platform> 手机`
 /// as the first name, the app version for the client string, no phone takes received, no live
-/// preview, scenes picked by hand, the phone's side of the sync, and mDNS discovery.
+/// preview, scenes picked by hand, and the phone's side of the sync.
 pub fn phone_config(data_dir: PathBuf, app_version: &str) -> CoreConfig {
     let mut config = CoreConfig::new(data_dir);
     config.default_device_name = format!("{} 手机", platform_label());
@@ -61,13 +61,6 @@ pub fn phone_config(data_dir: PathBuf, app_version: &str) -> CoreConfig {
     config.manual_scenes = true;
     // Copies of the computers' histories and settings, read-only (docs/dictation.md §20.8).
     config.sync_role = voltip_core::sync::SyncRole::Phone;
-    config.discovery = match voltip_core::discovery::MdnsDiscovery::new() {
-        Ok(mdns) => Some(mdns),
-        Err(e) => {
-            tracing::warn!(error = %e, "LAN discovery unavailable");
-            None
-        }
-    };
     config
 }
 
@@ -89,9 +82,8 @@ pub fn phone_ports(host: Arc<dyn Host>) -> DictationPorts {
 }
 
 impl Shell {
-    /// Start the core on `runtime` with `ports`, hand every `UiEvent` to `host`, take the Wi-Fi
-    /// multicast lock when the saved settings have LAN discovery on (docs/pairing.md 「局域网发现」),
-    /// and start the updater on the repository's releases (docs/dictation.md §20.9).
+    /// Start the core on `runtime` with `ports`, hand every `UiEvent` to `host`, and start the
+    /// updater on the repository's releases (docs/dictation.md §20.9).
     pub fn start(runtime: Handle, config: CoreConfig, store: Arc<dyn SecretStore>, ports: DictationPorts, host: Arc<dyn Host>) -> Result<Self, String> {
         Self::start_with_updates(runtime, config, store, ports, host, UpdateConfig::production())
     }
@@ -106,7 +98,6 @@ impl Shell {
         updates: UpdateConfig,
     ) -> Result<Self, String> {
         let updater = Arc::new(PhoneUpdater::new(updates, &config.app_version));
-        let discovering = voltip_core::SettingsStore::new(&config.data_dir).load().map_or(true, |s| s.lan_discovery);
         let started = {
             // The core spawns its tasks with `tokio::spawn`: start it inside the runtime.
             let _entered = runtime.enter();
@@ -135,10 +126,7 @@ impl Shell {
         });
         bridge.publish(UiEvent::Update(updater.status()));
         crate::update::start(&runtime, bridge.clone(), updater.clone(), host.clone());
-        let shell =
-            Self { inner: Arc::new(Inner { runtime, bridge, host, meters: Meters::default(), attachments: feedback::Attachments::default(), updater }) };
-        shell.hold_multicast(discovering);
-        Ok(shell)
+        Ok(Self { inner: Arc::new(Inner { runtime, bridge, host, meters: Meters::default(), attachments: feedback::Attachments::default(), updater }) })
     }
 
     /// The bridge, for the platform layer and tests.
@@ -164,11 +152,12 @@ impl Shell {
         rx.recv().map_err(|_| format!("{command}: the shell stopped before it answered"))?
     }
 
-    /// Take or release the multicast lock, off the calling thread (the host call waits for
-    /// Android); mDNS keeps asking, so answers arrive once it is held.
-    pub(crate) fn hold_multicast(&self, held: bool) {
-        let host = self.inner.host.clone();
-        drop(self.inner.runtime.spawn_blocking(move || host.multicast(held)));
+    /// The network changed or the app came to the front (docs/pairing.md 「重连」): the relay link
+    /// checks its socket now. Never waits.
+    pub fn reconnect_relay(&self) {
+        if let Err(e) = self.inner.bridge.dispatch(UiCommand::RelayReconnect) {
+            tracing::warn!(error = %e, "the relay check was not passed on");
+        }
     }
 
     /// Stop the core.

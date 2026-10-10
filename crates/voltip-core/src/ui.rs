@@ -132,11 +132,6 @@ pub enum UiEvent {
         /// The whole list.
         texts: Vec<SentText>,
     },
-    /// What the LAN browse sees (docs/pairing.md 「局域网发现」).
-    Nearby {
-        /// The whole list.
-        devices: Vec<crate::discovery::NearbyDevice>,
-    },
     /// Phone: its copies of its computers changed (docs/dictation.md §20.8).
     Mirrors {
         /// The whole list.
@@ -462,9 +457,6 @@ pub struct UiState {
     /// on the desktop.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sent_texts: Vec<SentText>,
-    /// Devices the LAN browse sees (docs/pairing.md 「局域网发现」).
-    #[serde(default)]
-    pub nearby: Vec<crate::discovery::NearbyDevice>,
     /// The machine as the local engines see it (shell-owned; empty until reported).
     #[serde(default)]
     pub hardware: HardwareStatus,
@@ -522,7 +514,6 @@ impl Default for UiState {
             presets: Vec::new(),
             phone_take: None,
             sent_texts: Vec::new(),
-            nearby: Vec::new(),
             hardware: HardwareStatus::default(),
             connectivity: crate::connectivity::ConnectivityStatus::default(),
             mirrors: Vec::new(),
@@ -647,10 +638,6 @@ impl UiState {
                 self.sent_texts = texts.clone();
                 UiEvent::SentTexts { texts }
             }
-            CoreEvent::Nearby(devices) => {
-                self.nearby = devices.clone();
-                UiEvent::Nearby { devices }
-            }
             CoreEvent::PasteResult { request_id, outcome } => UiEvent::PasteResult { request_id, outcome },
             CoreEvent::Error(message) => UiEvent::Error { message },
         }
@@ -738,8 +725,6 @@ mod tests {
             fingerprint: "f".into(),
             trusted_at: 1,
             last_seen: None,
-            last_connection: None,
-            direct_hints: vec!["192.168.1.24:47831".into()],
             sync: true,
             sync_gen: 0,
         };
