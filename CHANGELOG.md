@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.0](https://github.com/sunerpy/voltip/compare/v0.0.52...v0.1.0) (2026-10-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* 只走中继，断线后自动重连 ([#140](https://github.com/sunerpy/voltip/issues/140))
+* 去掉局域网连接与「附近的电脑」，手机与电脑只通过中继连接；不带中继地址的旧二维码需要先更新电脑上的 Voltip。
+
+### Features
+
+* 今天、本周、本月、总计四张统计卡加高，突出节省的时间 ([463c1a0](https://github.com/sunerpy/voltip/commit/463c1a0e0ce2565a209d4f685dc5878d23672027))
+* 只走中继，断线后自动重连 ([#140](https://github.com/sunerpy/voltip/issues/140)) ([463c1a0](https://github.com/sunerpy/voltip/commit/463c1a0e0ce2565a209d4f685dc5878d23672027))
+* 服务商改为卡片网格，点开后在抽屉里设置 ([#142](https://github.com/sunerpy/voltip/issues/142)) ([69ee77b](https://github.com/sunerpy/voltip/commit/69ee77b1442ec076277a635450b58dadaf4c40a3))
+* 检查更新先连接 voltip.firlab.app，连不上再连接 GitHub ([463c1a0](https://github.com/sunerpy/voltip/commit/463c1a0e0ce2565a209d4f685dc5878d23672027))
+* 统计卡按时间范围着色，总计卡改为墨色渐变 ([69ee77b](https://github.com/sunerpy/voltip/commit/69ee77b1442ec076277a635450b58dadaf4c40a3))
+
 ## [0.0.52](https://github.com/sunerpy/voltip/compare/v0.0.51...v0.0.52) (2026-10-09)
 
 
