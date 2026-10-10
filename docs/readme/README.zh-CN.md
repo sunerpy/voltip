@@ -11,7 +11,7 @@
 [![codecov](https://codecov.io/gh/sunerpy/voltip/branch/main/graph/badge.svg)](https://codecov.io/gh/sunerpy/voltip)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](../../LICENSE)
 
-[网站](https://voltip.firlab.app/zh/) · [视频](#视频) · [功能](#功能) · [安装](#安装) · [快速开始](#快速开始) · [隐私](#隐私) · [从源码构建](#从源码构建) · [文档](#文档) · [交流与反馈](#交流与反馈)
+[网站](https://voltip.firlab.app/zh/) · [在线体验](https://voltip.firlab.app/zh/guide/try) · [视频](#视频) · [功能](#功能) · [安装](#安装) · [快速开始](#快速开始) · [隐私](#隐私) · [从源码构建](#从源码构建) · [文档](#文档) · [交流与反馈](#交流与反馈)
 
 [English](../../README.md) · [**简体中文**](./README.zh-CN.md)
 

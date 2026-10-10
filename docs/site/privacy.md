@@ -76,4 +76,4 @@ The **Feedback** dialog on the computer and the **Feedback** page on the phone s
 
 ## Updates
 
-Voltip checks for updates when you press **Check for updates**, or at start-up when automatic updates are on. The check reads the release information published on GitHub. On Android, a copy installed from Google Play makes no such check: Google Play updates it. Voltip 0.0.50 for Android makes none at all.
+Voltip checks for updates when you press **Check for updates**, or at start-up when automatic updates are on. The check reads the release information published on GitHub, from this site first and from GitHub when this site cannot be reached; an update is downloaded from the same place. This site runs on Cloudflare, which, like GitHub, sees the network address of the request; the check sends nothing about you or your recordings. On Android, a copy installed from Google Play makes no such check: Google Play updates it. Voltip 0.0.50 for Android makes none at all.

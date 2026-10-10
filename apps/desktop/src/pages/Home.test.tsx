@@ -285,6 +285,36 @@ describe("Home page", () => {
     expect(notes[3]).toHaveTextContent(/^[\d,]+ 字$/);
   });
 
+  it("regression: 今天 leads the stat tiles in the accent, each with its icon and the time saved large", async () => {
+    // User request 2026-10-10: the 今天 / 本周 / 本月 / 总计 tiles should bring out what matters.
+    renderApp({ mock: liveClock() });
+    const values = await screen.findAllByTestId("home-tile-value");
+    expect(values).toHaveLength(4);
+    const tiles = values.map((value) => value.closest('[role="button"]'));
+    expect(tiles[0]).toHaveAttribute("data-current", "true");
+    expect(tiles[0]).toHaveClass("bg-accent-soft");
+    expect(tiles[0]).toHaveAccessibleName(/^今天 节省 /);
+    expect(tiles[0]).toHaveClass("min-h-[116px]", "inset-ring-accent/40");
+    expect(values[0]).toHaveClass("text-[30px]", "font-semibold", "text-accent-text");
+    const icons = screen.getAllByTestId("home-tile-icon");
+    expect(icons.map((icon) => icon.querySelector("svg")?.dataset.icon)).toEqual([
+      "sun",
+      "calendar",
+      "calendarGrid",
+      "clock",
+    ]);
+    expect(icons[0]).toHaveClass("bg-accent");
+    const captions = screen.getAllByTestId("home-tile-caption");
+    for (const caption of captions)
+      expect(caption).toHaveTextContent(/^节省时间 · 听写 [\d,]+ 次$/);
+    for (const tile of tiles.slice(1)) {
+      expect(tile).not.toHaveAttribute("data-current");
+      expect(tile).toHaveClass("bg-surface", "min-h-[116px]");
+    }
+    for (const value of values.slice(1)) expect(value).toHaveClass("text-[30px]", "text-fg");
+    for (const icon of icons.slice(1)) expect(icon).toHaveClass("bg-inset");
+  });
+
   it("regression: the recent table's timing columns are as wide as their headers", async () => {
     // The 1440 px English check (plan 1.2): 「Transcription」 ran past its 84 px column.
     renderApp({ mock: liveClock() });

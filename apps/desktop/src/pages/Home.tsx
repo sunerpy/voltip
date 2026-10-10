@@ -23,10 +23,12 @@ import {
   Button,
   Card,
   Chip,
+  cx,
   EmptyState,
   Eyebrow,
   Heatmap,
   Icon,
+  type IconName,
   Keycaps,
   Lamp,
   LampText,
@@ -77,31 +79,17 @@ const RECENT_ROWS = 6;
 
 /** A span of time in the session panel: each number with its unit smaller, as the character
  *  counts beside it show theirs (docs/dictation.md §4.5). */
-function Duration({ ms }: { ms: number }) {
+function Duration({ ms, unitClassName = "text-[11px]" }: { ms: number; unitClassName?: string }) {
   const { locale } = useI18n();
   return (
     <span data-testid="home-duration">
       {durationParts(ms, locale).map((part, i) => (
         <span key={part.unit} className={i > 0 ? "ml-1.5" : undefined}>
           {part.value}
-          <span className="ml-1 text-[11px] text-fg-muted">{part.unit}</span>
+          <span className={cx("ml-1 font-normal text-fg-muted", unitClassName)}>{part.unit}</span>
         </span>
       ))}
     </span>
-  );
-}
-
-/** 「节省 {time}」 of a stat tile with the time drawn as a [`Duration`]: the words around it stay
- *  small, before or after it as the language puts them (`{time} saved`). */
-function SavedTime({ ms }: { ms: number }) {
-  const { t } = useI18n();
-  const [before = "", after = ""] = t("home.tiles.saved", { time: "\u0000" }).split("\u0000");
-  return (
-    <>
-      {before.trim() && <span className="mr-1 text-[11px] text-fg-muted">{before.trim()}</span>}
-      <Duration ms={ms} />
-      {after.trim() && <span className="ml-1 text-[11px] text-fg-muted">{after.trim()}</span>}
-    </>
   );
 }
 
@@ -209,35 +197,45 @@ export function Home() {
 
   const tiles: {
     eyebrow: string;
+    icon: IconName;
     savedMs: number;
+    count: number;
     value: string;
     secondary: string;
     filter: HistoryFilter;
   }[] = [
     {
       eyebrow: t("home.tiles.today"),
+      icon: "sun",
       savedMs: stats.today.savedMs,
+      count: stats.today.count,
       value: t("home.tiles.saved", { time: formatDuration(stats.today.savedMs, locale) }),
       secondary: t("count.chars", { n: formatCount(stats.today.rawChars) }),
       filter: "today",
     },
     {
       eyebrow: t("home.tiles.week"),
+      icon: "calendar",
       savedMs: stats.week.savedMs,
+      count: stats.week.count,
       value: t("home.tiles.saved", { time: formatDuration(stats.week.savedMs, locale) }),
       secondary: t("count.chars", { n: formatCount(stats.week.rawChars) }),
       filter: "week",
     },
     {
       eyebrow: t("home.tiles.month"),
+      icon: "calendarGrid",
       savedMs: stats.month.savedMs,
+      count: stats.month.count,
       value: t("home.tiles.saved", { time: formatDuration(stats.month.savedMs, locale) }),
       secondary: t("count.chars", { n: formatCount(stats.month.rawChars) }),
       filter: "month",
     },
     {
       eyebrow: t("home.tiles.total"),
+      icon: "clock",
       savedMs: stats.total.savedMs,
+      count: stats.total.count,
       value: t("home.tiles.saved", { time: formatDuration(stats.total.savedMs, locale) }),
       secondary: state.settings.history.enabled
         ? t("count.chars", { n: formatCount(stats.total.rawChars) })
@@ -788,39 +786,78 @@ export function Home() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {tiles.map((tile) => (
-          <Card
-            key={tile.filter}
-            padding="none"
-            interactive
-            role="button"
-            tabIndex={0}
-            aria-label={`${tile.eyebrow} ${tile.value}`}
-            onClick={() => {
-              openHistory(tile.filter);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") openHistory(tile.filter);
-            }}
-            className="flex h-[52px] cursor-pointer flex-col justify-center px-3">
-            {/* The note (characters) sits beside the span's name, so the time saved has the whole
-                second line: a long history saves hours (「节省 79 小时 10 分」). */}
-            <span className="flex items-baseline justify-between gap-2">
-              <span className="text-[10px] text-fg-subtle">{tile.eyebrow}</span>
-              <span
-                className="mono truncate text-[11px] text-fg-muted"
-                title={tile.secondary}
-                data-testid="home-tile-note">
-                {tile.secondary}
+        {tiles.map((tile) => {
+          // The time saved is what a tile is for (user request 2026-10-10: 突出重点, and taller): a
+          // large figure under the span's name and icon, and today's tile in the accent, so it is
+          // read first.
+          const today = tile.filter === "today";
+          return (
+            <Card
+              key={tile.filter}
+              padding="none"
+              interactive
+              tone={today ? "accent" : "surface"}
+              role="button"
+              tabIndex={0}
+              aria-label={`${tile.eyebrow} ${tile.value}`}
+              data-current={today ? "true" : undefined}
+              onClick={() => {
+                openHistory(tile.filter);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") openHistory(tile.filter);
+              }}
+              className={cx(
+                "flex min-h-[116px] cursor-pointer flex-col justify-between gap-3 p-4",
+                today && "inset-ring-1 inset-ring-accent/40",
+              )}>
+              {/* The note (characters) sits beside the span's name, so the time saved has a line
+                  of its own: a long history saves hours (「79 小时 10 分」). */}
+              <span className="flex items-center justify-between gap-2">
+                <span className="inline-flex min-w-0 items-center gap-2.5">
+                  <span
+                    aria-hidden
+                    data-testid="home-tile-icon"
+                    className={cx(
+                      "grid size-7 shrink-0 place-items-center rounded-6",
+                      today ? "bg-accent text-accent-fg" : "bg-inset text-fg-muted",
+                    )}>
+                    <Icon name={tile.icon} size={15} />
+                  </span>
+                  <span
+                    className={cx(
+                      "truncate text-[13px] font-medium",
+                      today ? "text-accent-text" : "text-fg",
+                    )}>
+                    {tile.eyebrow}
+                  </span>
+                </span>
+                <span
+                  className="mono truncate text-[11px] text-fg-subtle"
+                  title={tile.secondary}
+                  data-testid="home-tile-note">
+                  {tile.secondary}
+                </span>
               </span>
-            </span>
-            <span
-              className="mono text-[16px] whitespace-nowrap text-fg"
-              data-testid="home-tile-value">
-              <SavedTime ms={tile.savedMs} />
-            </span>
-          </Card>
-        ))}
+              <span className="flex flex-col gap-1.5">
+                <span
+                  className={cx(
+                    "mono text-[30px] leading-none font-semibold tracking-tight whitespace-nowrap",
+                    today ? "text-accent-text" : "text-fg",
+                  )}
+                  data-testid="home-tile-value">
+                  <Duration ms={tile.savedMs} unitClassName="text-[14px]" />
+                </span>
+                <span
+                  className="truncate text-[12px] text-fg-muted"
+                  data-testid="home-tile-caption">
+                  {t("home.session.saved")} ·{" "}
+                  {t("home.session.count", { n: formatCount(tile.count) })}
+                </span>
+              </span>
+            </Card>
+          );
+        })}
       </div>
 
       <div ref={recentRef}>

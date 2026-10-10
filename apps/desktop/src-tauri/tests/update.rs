@@ -151,7 +151,7 @@ fn with_tuned_updater_app(
     let mut core = CoreConfig::new(dir.path().to_path_buf());
     core.default_device_name = "Update Test".into();
     let mut config = UpdaterConfig {
-        endpoint: format!("{}{MANIFEST_PATH}", server.uri()).parse().unwrap(),
+        endpoints: vec![format!("{}{MANIFEST_PATH}", server.uri()).parse().unwrap()],
         pubkey: PUBKEY.into(),
         auto_check_delay: Duration::from_millis(200),
         connect_timeout: voltip_desktop_lib::update::CONNECT_TIMEOUT,
@@ -228,7 +228,7 @@ fn regression_a_check_that_cannot_connect_says_why() {
     drop(closed);
     with_tuned_updater_app(
         no_update,
-        move |config| config.endpoint = format!("http://127.0.0.1:{port}{MANIFEST_PATH}").parse().unwrap(),
+        move |config| config.endpoints = vec![format!("http://127.0.0.1:{port}{MANIFEST_PATH}").parse().unwrap()],
         |_| Settings::default(),
         Box::new(|_, webview, rx| {
             wait_state(webview, |s| s.identity.is_some());
@@ -239,6 +239,34 @@ fn regression_a_check_that_cannot_connect_says_why() {
             assert!(message.starts_with("error sending request for url ("), "{message}");
             assert!(message.contains("tcp connect error"), "the connection is named: {message}");
             assert!(message.contains("os error"), "and the operating system's reason: {message}");
+        }),
+    );
+}
+
+/// docs/dictation.md §9 (user request 2026-10-10: updates should not hang on one host): the
+/// mirror is asked first, and when it cannot be reached or answers an error, the release's own
+/// manifest answers the check.
+#[test]
+fn regression_a_mirror_that_cannot_answer_leaves_the_check_to_the_release_manifest() {
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = closed.local_addr().unwrap().port();
+    drop(closed);
+    with_tuned_updater_app(
+        manifest,
+        move |config| {
+            let release = config.endpoints[0].clone();
+            // A mirror that refuses the connection, then one that answers 404 (nothing is mounted there).
+            let refused = format!("http://127.0.0.1:{port}/updates/latest.json").parse().unwrap();
+            let missing = release.join("/updates/latest.json").unwrap();
+            config.endpoints = vec![refused, missing, release];
+        },
+        |_| Settings::default(),
+        Box::new(|_, webview, rx| {
+            wait_state(webview, |s| s.identity.is_some());
+            assert_eq!(invoke(webview, "update_check", json!({})), Ok(Value::Null));
+            wait_update(rx, "checking", &[]);
+            let ev = wait_update(rx, "available", &["checking"]);
+            assert_eq!(ev["version"], NEW_VERSION);
         }),
     );
 }

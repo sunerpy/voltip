@@ -13,6 +13,9 @@ hero:
       text: Download
       link: /guide/install
     - theme: alt
+      text: Try it online
+      link: /guide/try
+    - theme: alt
       text: Quick start
       link: /guide/quick-start
     - theme: alt

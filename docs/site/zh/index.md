@@ -13,6 +13,9 @@ hero:
       text: 下载安装
       link: /zh/guide/install
     - theme: alt
+      text: 在线体验
+      link: /zh/guide/try
+    - theme: alt
       text: 快速开始
       link: /zh/guide/quick-start
     - theme: alt

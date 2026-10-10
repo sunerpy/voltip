@@ -377,6 +377,9 @@ jobs:
       # The updater endpoint follows the repository; empty (no updater) without the pubkey.
       VOLTIP_UPDATE_URL: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' && format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) || '' }}
       VOLTIP_UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
+      # The docs site's copy of the release's update files, asked before GitHub (docs/dictation.md
+      # §9); a repository variable, so a fork without it asks only its own releases.
+      VOLTIP_UPDATE_MIRROR: ${{ vars.VOLTIP_UPDATE_MIRROR }}
       VOLTIP_MODEL_BASE_URL: ${{ secrets.VOLTIP_MODEL_BASE_URL }}
       # The 反馈 dialog's endpoint and its app token (docs/feedback.md); unset, the dialog offers the
       # repository's issue page instead.
@@ -589,6 +592,9 @@ jobs:
       # The updater endpoint follows the repository; empty (no updater) without the pubkey.
       VOLTIP_UPDATE_URL: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' && format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) || '' }}
       VOLTIP_UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
+      # The docs site's copy of the release's update files, asked before GitHub (docs/dictation.md
+      # §9); a repository variable, so a fork without it asks only its own releases.
+      VOLTIP_UPDATE_MIRROR: ${{ vars.VOLTIP_UPDATE_MIRROR }}
       VOLTIP_MODEL_BASE_URL: ${{ secrets.VOLTIP_MODEL_BASE_URL }}
       # The 反馈 dialog's endpoint and its app token (docs/feedback.md); unset, the dialog offers the
       # repository's issue page instead.
@@ -831,6 +837,9 @@ jobs:
       # The updater endpoint follows the repository; empty (no updater) without the pubkey.
       VOLTIP_UPDATE_URL: ${{ secrets.VOLTIP_UPDATE_PUBKEY != '' && format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) || '' }}
       VOLTIP_UPDATE_PUBKEY: ${{ secrets.VOLTIP_UPDATE_PUBKEY }}
+      # The docs site's copy of the release's update files, asked before GitHub (docs/dictation.md
+      # §9); a repository variable, so a fork without it asks only its own releases.
+      VOLTIP_UPDATE_MIRROR: ${{ vars.VOLTIP_UPDATE_MIRROR }}
       VOLTIP_MODEL_BASE_URL: ${{ secrets.VOLTIP_MODEL_BASE_URL }}
       # The 反馈 dialog's endpoint and its app token (docs/feedback.md).
       VOLTIP_FEEDBACK_URL: ${{ secrets.VOLTIP_FEEDBACK_URL }}
@@ -1043,7 +1052,8 @@ jobs:
   # 2026-10-09). Gradle builds both unsigned; a step of its own then signs them with the project's
   # one key (Play's app signing holds the same one), so the key never sits in the step that runs the
   # dependencies' build code, and the checks require the certificate release-targets.json pins. The
-  # in-app updater serves no Android target: no .sig, no latest.json entry.
+  # in-app updater serves no Android target: no .sig, no latest.json entry; the phone reads the
+  # release itself (GitHub's API, or the mirror's android.json).
   bundle-android:
     name: Bundle aarch64-linux-android
     needs: prepare
@@ -1061,6 +1071,9 @@ jobs:
       # The phone sends feedback of its own (docs/feedback.md, user decision 2026-10-01).
       VOLTIP_FEEDBACK_URL: ${{ secrets.VOLTIP_FEEDBACK_URL }}
       VOLTIP_FEEDBACK_TOKEN: ${{ secrets.VOLTIP_FEEDBACK_TOKEN }}
+      # An APK from a release asks the docs site's mirror for the latest release before GitHub
+      # (docs/dictation.md §20.9).
+      VOLTIP_UPDATE_MIRROR: ${{ vars.VOLTIP_UPDATE_MIRROR }}
     steps:
       - name: Checkout exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

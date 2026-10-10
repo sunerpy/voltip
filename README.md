@@ -11,7 +11,7 @@
 [![codecov](https://codecov.io/gh/sunerpy/voltip/branch/main/graph/badge.svg)](https://codecov.io/gh/sunerpy/voltip)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](./LICENSE)
 
-[Website](https://voltip.firlab.app) · [Video](#video) · [Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Privacy](#privacy) · [Build from source](#build-from-source) · [Documentation](#documentation) · [Community](#community)
+[Website](https://voltip.firlab.app) · [Try it online](https://voltip.firlab.app/guide/try) · [Video](#video) · [Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Privacy](#privacy) · [Build from source](#build-from-source) · [Documentation](#documentation) · [Community](#community)
 
 [**English**](./README.md) · [简体中文](./docs/readme/README.zh-CN.md)
 

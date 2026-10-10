@@ -267,6 +267,27 @@ describe("the phone app on React Native", () => {
     expect(await screen.findByTestId("phone-entry-text")).toHaveTextContent(history[0]?.text ?? "");
   });
 
+  it("regression: 今天 leads the stat tiles in the accent, each with its icon and the time saved large", async () => {
+    // User request 2026-10-10: the 今天 / 本周 / 本月 / 总计 tiles should bring out what matters.
+    const history = historyEntrySchema.array().parse(state.history_recent);
+    await renderApp({ backend: new MockBackend({ role: "phone", history }) });
+    await openTab("history");
+    const theme = appTheme("light");
+    const today = await screen.findByTestId("phone-history-stat-today");
+    expect(today).toHaveStyle({ backgroundColor: theme.colors.primaryContainer });
+    expect(today.props.accessibilityState).toEqual({ selected: true });
+    expect(within(today).getByTestId("phone-history-stat-current")).toBeOnTheScreen();
+    for (const id of ["week", "month", "total"]) {
+      const tile = screen.getByTestId(`phone-history-stat-${id}`);
+      expect(tile).toHaveStyle({ backgroundColor: theme.colors.surface });
+      expect(within(tile).queryByTestId("phone-history-stat-current")).toBeNull();
+    }
+    expect(within(today).getByTestId("phone-history-stat-saved")).toHaveTextContent(/^\d/);
+    expect(within(today).getByTestId("phone-history-stat-caption")).toHaveTextContent(
+      /^节省时间 · 听写 \d+ 次$/,
+    );
+  });
+
   it("a toast says what the core reports", async () => {
     const { backend } = await renderApp();
     await screen.findByTestId("phone-welcome");

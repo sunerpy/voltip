@@ -32,62 +32,104 @@ import { CARD_RADIUS, EmptyState, Mono, Page, RowDivider, Section, useAppTheme }
 /** How long the search waits after the last keystroke, as on the desktop. */
 const SEARCH_DEBOUNCE_MS = 200;
 
-function SavedTime({ ms }: { ms: number }) {
+/** The time saved as a figure: the numbers large, the units small beside them, in `ink`. */
+function Saved({ ms, ink }: { ms: number; ink: string }) {
   const theme = useAppTheme();
-  const { t, locale } = useI18n();
-  const [before = "", after = ""] = t("home.tiles.saved", { time: "\u0000" }).split("\u0000");
+  const { locale } = useI18n();
   return (
-    <Text>
-      {before.trim().length > 0 && (
-        <Text
-          variant="labelSmall"
-          style={{ color: theme.colors.onSurfaceVariant }}>{`${before.trim()} `}</Text>
-      )}
+    <Text testID="phone-history-stat-saved" numberOfLines={1}>
       {durationParts(ms, locale).map((part, i) => (
         <Text key={part.unit}>
           {i > 0 ? " " : ""}
-          <Text variant="titleMedium">{part.value}</Text>
+          <Text variant="headlineSmall" style={{ color: ink, fontWeight: "600" }}>
+            {part.value}
+          </Text>
           <Text
-            variant="labelSmall"
+            variant="labelLarge"
             style={{ color: theme.colors.onSurfaceVariant }}>{` ${part.unit}`}</Text>
         </Text>
       ))}
-      {after.trim().length > 0 && (
-        <Text
-          variant="labelSmall"
-          style={{ color: theme.colors.onSurfaceVariant }}>{` ${after.trim()}`}</Text>
-      )}
     </Text>
   );
 }
 
-function Tile({ id, label, bucket }: { id: string; label: string; bucket: HistoryBucket }) {
+/** Each span's mark, from the icon set the app uses (Material Design Icons). */
+const TILE_ICONS = {
+  today: "white-balance-sunny",
+  week: "calendar-week",
+  month: "calendar-month",
+  total: "clock-outline",
+} as const;
+
+/** One span's time saved. The time saved is what a tile is for (user request 2026-10-10: 突出重点,
+ *  and taller): a large figure under the span's name and icon, and the `current` span (today) in
+ *  the accent, so it is read first. */
+function Tile({
+  id,
+  label,
+  bucket,
+  current = false,
+}: {
+  id: keyof typeof TILE_ICONS;
+  label: string;
+  bucket: HistoryBucket;
+  current?: boolean;
+}) {
   const theme = useAppTheme();
   const { t } = useI18n();
   return (
     <View
       testID={`phone-history-stat-${id}`}
+      accessibilityState={{ selected: current }}
       style={{
         width: "48.5%",
-        gap: 4,
-        padding: 12,
+        minHeight: 116,
+        justifyContent: "space-between",
+        gap: 12,
+        padding: 14,
         borderRadius: CARD_RADIUS,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: current ? theme.colors.primaryContainer : theme.colors.surface,
         borderWidth: 1,
-        borderColor: theme.colors.outlineVariant,
+        borderColor: current ? theme.colors.primaryContainer : theme.colors.outlineVariant,
       }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
-        <Text variant="labelSmall" style={{ color: theme.voltip.subtle }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <View
+          testID={current ? "phone-history-stat-current" : undefined}
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 8,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: current ? theme.colors.primary : theme.colors.surfaceVariant,
+          }}>
+          <Icon
+            source={TILE_ICONS[id]}
+            size={16}
+            color={current ? theme.colors.onPrimary : theme.colors.onSurfaceVariant}
+          />
+        </View>
+        <Text
+          variant="labelLarge"
+          numberOfLines={1}
+          style={{
+            flexShrink: 1,
+            fontWeight: "600",
+            color: current ? theme.colors.primary : theme.colors.onSurface,
+          }}>
           {label}
         </Text>
+      </View>
+      <View style={{ gap: 4 }}>
+        <Saved ms={bucket.savedMs} ink={current ? theme.colors.primary : theme.colors.onSurface} />
         <Text
           variant="labelSmall"
+          numberOfLines={1}
           style={{ color: theme.colors.onSurfaceVariant }}
-          numberOfLines={1}>
-          {t("home.session.count", { n: formatCount(bucket.count) })}
+          testID="phone-history-stat-caption">
+          {`${t("home.session.saved")} · ${t("home.session.count", { n: formatCount(bucket.count) })}`}
         </Text>
       </View>
-      <SavedTime ms={bucket.savedMs} />
     </View>
   );
 }
@@ -157,7 +199,7 @@ export function History() {
               rowGap: 8,
             }}
             testID="phone-history-stats">
-            <Tile id="today" label={t("home.tiles.today")} bucket={stats.today} />
+            <Tile id="today" label={t("home.tiles.today")} bucket={stats.today} current />
             <Tile id="week" label={t("home.tiles.week")} bucket={stats.week} />
             <Tile id="month" label={t("home.tiles.month")} bucket={stats.month} />
             <Tile id="total" label={t("home.tiles.total")} bucket={stats.total} />

@@ -96,7 +96,7 @@ impl Running {
 fn offline_updates() -> UpdateConfig {
     UpdateConfig {
         source: Some(InstallSource::Direct),
-        latest_release: "http://127.0.0.1:9/releases/latest".into(),
+        sources: vec!["http://127.0.0.1:9/releases/latest".into()],
         listing: store_listing(PACKAGE),
         auto_check_delay: Duration::ZERO,
     }

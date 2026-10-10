@@ -90,6 +90,15 @@ signs the NSIS installer and the AppImage, verifies every `.sig` against the pub
 `latest.json` (URLs pinned to that release's assets) to the release. A pre-release is never marked
 latest, so installed copies are offered an update only when a stable release is published.
 
+The repository **variable** (not a secret) `VOLTIP_UPDATE_MIRROR` adds the docs site's update
+channel in front of GitHub: the desktop asks `<mirror>/latest.json` first, the phone
+`<mirror>/android.json` (docs/dictation.md §9, §20.9). A fork without the variable asks only its
+own releases.
+
+```sh
+gh variable set VOLTIP_UPDATE_MIRROR --repo "$repo" --body https://voltip.firlab.app/updates
+```
+
 | Secret | Meaning | Source |
 |---|---|---|
 | `VOLTIP_UPDATE_PUBKEY` | Updater public key: the full base64 content of the `.pub` file. `apps/desktop/src-tauri/src/update.rs` injects it into `plugins.updater` at run time; `tauri.conf.json` does not carry it. | `cargo tauri signer generate -w ~/.tauri/voltip.key` |

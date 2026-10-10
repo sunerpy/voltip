@@ -8,7 +8,10 @@
 //! carries them. A build without both values has no updater: the status is [`UpdateStatus::Disabled`]
 //! and every update command answers [`NOT_CONFIGURED`]. The URL is a static `latest.json`-style
 //! manifest (the format the Tauri CLI writes); the `{{target}}`, `{{arch}}`, `{{current_version}}`
-//! and `{{bundle_type}}` placeholders the plugin understands are allowed in it. The plugin refuses to
+//! and `{{bundle_type}}` placeholders the plugin understands are allowed in it. An optional mirror
+//! ([`UPDATE_MIRROR_ENV`], the base of the docs site's `/updates/`) is asked first and the URL
+//! second: the plugin moves on to the next address when one fails or does not answer 2xx, and the
+//! packages come from wherever the manifest that answered points. The plugin refuses to
 //! initialise without a `plugins.updater` block, so [`run`](crate::run) injects
 //! [`UpdaterConfig::plugin_config`] into the Tauri context at startup instead of shipping one.
 //!
@@ -52,6 +55,10 @@ use voltip_tauri_bridge::Bridge;
 
 /// Compile-time environment variable carrying the manifest URL (`https://host/updates/latest.json`).
 pub const UPDATE_URL_ENV: &str = "VOLTIP_UPDATE_URL";
+/// Compile-time environment variable carrying the base of a mirror of the release's update files
+/// (`https://host/updates`, docs/dictation.md §9): its `latest.json` is asked first, the manifest of
+/// [`UPDATE_URL_ENV`] when the mirror cannot answer. Optional.
+pub const UPDATE_MIRROR_ENV: &str = "VOLTIP_UPDATE_MIRROR";
 /// Compile-time environment variable carrying the minisign public key the packages are signed with.
 pub const UPDATE_PUBKEY_ENV: &str = "VOLTIP_UPDATE_PUBKEY";
 /// Error every update command returns when the build has no update source.
@@ -76,8 +83,9 @@ pub const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// the build's (`tests/update.rs` points it at a local manifest server).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpdaterConfig {
-    /// Manifest URL (placeholders allowed).
-    pub endpoint: Url,
+    /// Manifest URLs in the order they are asked (placeholders allowed): the mirror's, then the
+    /// build's. Never empty.
+    pub endpoints: Vec<Url>,
     /// minisign public key (the `dW50cnVzdGVk…` text the Tauri CLI prints).
     pub pubkey: String,
     /// Delay before the automatic check at startup ([`AUTO_CHECK_DELAY`] in production).
@@ -89,23 +97,29 @@ pub struct UpdaterConfig {
 }
 
 impl UpdaterConfig {
-    /// The values baked into this binary, or `None` when either is missing.
+    /// The values baked into this binary, or `None` when the URL or the key is missing.
     pub fn from_build() -> Option<Self> {
-        Self::from_values(option_env!("VOLTIP_UPDATE_URL"), option_env!("VOLTIP_UPDATE_PUBKEY"))
+        Self::from_values(option_env!("VOLTIP_UPDATE_URL"), option_env!("VOLTIP_UPDATE_MIRROR"), option_env!("VOLTIP_UPDATE_PUBKEY"))
     }
 
-    /// Both values present, trimmed and non-empty, and the URL parses; anything else is "no updater".
-    pub fn from_values(url: Option<&str>, pubkey: Option<&str>) -> Option<Self> {
+    /// The URL and the key present, trimmed and non-empty, and the URL parses; anything else is
+    /// "no updater". A mirror that is set and parses is asked first (`<mirror>/latest.json`); one
+    /// that does not parse is left out, so a bad optional value never takes the updater away.
+    pub fn from_values(url: Option<&str>, mirror: Option<&str>, pubkey: Option<&str>) -> Option<Self> {
+        let web = |text: &str| Url::parse(text).ok().filter(|u| matches!(u.scheme(), "https" | "http"));
         let url = url.map(str::trim).filter(|s| !s.is_empty())?;
         let pubkey = pubkey.map(str::trim).filter(|s| !s.is_empty())?;
-        let endpoint = Url::parse(url).ok().filter(|u| matches!(u.scheme(), "https" | "http"))?;
-        Some(Self { endpoint, pubkey: pubkey.to_owned(), auto_check_delay: AUTO_CHECK_DELAY, connect_timeout: CONNECT_TIMEOUT, read_timeout: READ_TIMEOUT })
+        let endpoint = web(url)?;
+        let mirror = mirror.map(str::trim).filter(|s| !s.is_empty()).and_then(|base| web(&format!("{}/latest.json", base.trim_end_matches('/'))));
+        let endpoints = mirror.into_iter().chain([endpoint]).collect();
+        Some(Self { endpoints, pubkey: pubkey.to_owned(), auto_check_delay: AUTO_CHECK_DELAY, connect_timeout: CONNECT_TIMEOUT, read_timeout: READ_TIMEOUT })
     }
 
     /// The `plugins.updater` block the plugin deserialises at initialisation (injected into the
     /// Tauri context by [`crate::run`], so `tauri.conf.json` never holds the key).
     pub fn plugin_config(&self) -> serde_json::Value {
-        serde_json::json!({ "pubkey": self.pubkey, "endpoints": [self.endpoint.as_str()] })
+        let endpoints: Vec<&str> = self.endpoints.iter().map(Url::as_str).collect();
+        serde_json::json!({ "pubkey": self.pubkey, "endpoints": endpoints })
     }
 }
 
@@ -353,7 +367,7 @@ async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateS
             // `Update` it returns.
             let updater = app
                 .updater_builder()
-                .endpoints(vec![config.endpoint])
+                .endpoints(config.endpoints)
                 .map_err(|e| describe(&e))?
                 .pubkey(config.pubkey)
                 .configure_client(move |client| client.connect_timeout(connect).read_timeout(read))
@@ -520,19 +534,21 @@ mod tests {
 
     #[test]
     fn config_needs_both_values_and_a_parsable_url() {
-        assert_eq!(UpdaterConfig::from_values(None, None), None);
-        assert_eq!(UpdaterConfig::from_values(Some("https://updates.example.test/latest.json"), None), None);
-        assert_eq!(UpdaterConfig::from_values(None, Some("key")), None);
-        assert_eq!(UpdaterConfig::from_values(Some("  "), Some("key")), None, "blank URL is unset");
-        assert_eq!(UpdaterConfig::from_values(Some("https://x.example"), Some("\n")), None, "blank key is unset");
-        assert_eq!(UpdaterConfig::from_values(Some("not a url"), Some("key")), None);
-        assert_eq!(UpdaterConfig::from_values(Some("ftp://x.example/latest.json"), Some("key")), None, "http(s) only");
-        let cfg = UpdaterConfig::from_values(Some(" https://updates.example.test/{{target}}/{{arch}}/{{current_version}} "), Some(" dW50cnVzdGVk ")).unwrap();
+        assert_eq!(UpdaterConfig::from_values(None, None, None), None);
+        assert_eq!(UpdaterConfig::from_values(Some("https://updates.example.test/latest.json"), None, None), None);
+        assert_eq!(UpdaterConfig::from_values(None, None, Some("key")), None);
+        assert_eq!(UpdaterConfig::from_values(Some("  "), None, Some("key")), None, "blank URL is unset");
+        assert_eq!(UpdaterConfig::from_values(Some("https://x.example"), None, Some("\n")), None, "blank key is unset");
+        assert_eq!(UpdaterConfig::from_values(Some("not a url"), None, Some("key")), None);
+        assert_eq!(UpdaterConfig::from_values(Some("ftp://x.example/latest.json"), None, Some("key")), None, "http(s) only");
+        let cfg =
+            UpdaterConfig::from_values(Some(" https://updates.example.test/{{target}}/{{arch}}/{{current_version}} "), None, Some(" dW50cnVzdGVk ")).unwrap();
         assert_eq!(cfg.pubkey, "dW50cnVzdGVk");
         assert_eq!(cfg.auto_check_delay, AUTO_CHECK_DELAY);
         assert_eq!((cfg.connect_timeout, cfg.read_timeout), (CONNECT_TIMEOUT, READ_TIMEOUT));
         // url::Url percent-encodes the braces in the path; the plugin replaces both spellings.
-        assert!(cfg.endpoint.as_str().contains("%7B%7Btarget%7D%7D"), "{}", cfg.endpoint);
+        assert_eq!(cfg.endpoints.len(), 1);
+        assert!(cfg.endpoints[0].as_str().contains("%7B%7Btarget%7D%7D"), "{}", cfg.endpoints[0]);
         let json = cfg.plugin_config();
         assert_eq!(json["pubkey"], "dW50cnVzdGVk");
         assert_eq!(json["endpoints"].as_array().unwrap().len(), 1);
@@ -540,6 +556,22 @@ mod tests {
         // The build-time values are whatever the environment held when this test binary compiled;
         // only the shape of the answer is fixed.
         let _ = UpdaterConfig::from_build();
+    }
+
+    /// docs/dictation.md §9: the mirror's manifest is asked first, the build's URL second, and a
+    /// mirror that is blank or does not parse leaves only the URL; it never takes the updater away.
+    #[test]
+    fn the_mirror_is_asked_before_the_release_manifest() {
+        let github = "https://github.com/owner/repo/releases/latest/download/latest.json";
+        let both = UpdaterConfig::from_values(Some(github), Some(" https://mirror.example.test/updates/ "), Some("key")).unwrap();
+        let asked: Vec<&str> = both.endpoints.iter().map(Url::as_str).collect();
+        assert_eq!(asked, ["https://mirror.example.test/updates/latest.json", github]);
+        assert_eq!(both.plugin_config()["endpoints"], serde_json::json!(asked));
+        for mirror in [None, Some(""), Some("  "), Some("not a url"), Some("ftp://mirror.example.test/updates")] {
+            let only = UpdaterConfig::from_values(Some(github), mirror, Some("key")).unwrap();
+            assert_eq!(only.endpoints.iter().map(Url::as_str).collect::<Vec<_>>(), [github], "{mirror:?}");
+        }
+        assert_eq!(UpdaterConfig::from_values(None, Some("https://mirror.example.test/updates"), Some("key")), None, "a mirror alone is no updater");
     }
 
     #[test]
@@ -646,7 +678,7 @@ mod tests {
         // 「安装」 right after 「已是最新」 was refused as busy, because the run published its last
         // status and only then released the slot.
         let dir = tempfile::tempdir().unwrap();
-        let slot = UpdateSlot::new(UpdaterConfig::from_values(Some("https://x.example/latest.json"), Some("k")), dir.path());
+        let slot = UpdateSlot::new(UpdaterConfig::from_values(Some("https://x.example/latest.json"), None, Some("k")), dir.path());
         assert!(slot.try_begin());
         let status = UpdateStatus::UpToDate { version: "1.0.0".into(), checked_at: 1 };
         let mut free_when_sent = None;
@@ -686,7 +718,7 @@ mod tests {
         std::fs::write(dir.path().join(MARKER_FILE_NAME), b"{").unwrap();
         assert_eq!(slot.read_marker(), None);
         // A missing parent directory is created on write.
-        let nested = UpdateSlot::new(UpdaterConfig::from_values(Some("https://x.example/latest.json"), Some("k")), &dir.path().join("a/b"));
+        let nested = UpdateSlot::new(UpdaterConfig::from_values(Some("https://x.example/latest.json"), None, Some("k")), &dir.path().join("a/b"));
         assert!(nested.enabled());
         assert_eq!(nested.auto_check_delay(), AUTO_CHECK_DELAY);
         assert_eq!(nested.status(), UpdateStatus::Idle);

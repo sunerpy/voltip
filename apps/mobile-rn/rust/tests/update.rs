@@ -3,7 +3,8 @@
 //! stand-in for GitHub's latest-release API: Google Play updates what it installed, so its install
 //! checks nothing and points to the listing; an APK from a release asks GitHub and opens the newer
 //! release's APK; 自动检查更新 checks by itself. The Tauri phone app had this up to 0.0.49; this app
-//! has it again from the version after 0.0.50 (user decision 2026-10-09).
+//! has it again from the version after 0.0.50 (user decision 2026-10-09). The docs site's mirror is
+//! asked before GitHub (user request 2026-10-10).
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -44,6 +45,11 @@ struct Phone {
 impl Phone {
     /// The app at version 0.0.51, installed by `installer`, with `settings`, asking `server`.
     fn start(installer: Option<&str>, settings: Settings, server: &MockServer) -> Self {
+        Self::start_with(installer, settings, vec![format!("{}/repos/sunerpy/voltip/releases/latest", server.uri())])
+    }
+
+    /// [`Phone::start`] asking `sources` in order.
+    fn start_with(installer: Option<&str>, settings: Settings, sources: Vec<String>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, ..settings }).unwrap();
         let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().worker_threads(2).build().unwrap();
@@ -52,12 +58,7 @@ impl Phone {
         host.set_installer(installer);
         let host = Arc::new(host);
         // As in production, the installer is the host's to say.
-        let updates = UpdateConfig {
-            source: None,
-            latest_release: format!("{}/repos/sunerpy/voltip/releases/latest", server.uri()),
-            listing: store_listing(PACKAGE),
-            auto_check_delay: Duration::ZERO,
-        };
+        let updates = UpdateConfig { source: None, sources, listing: store_listing(PACKAGE), auto_check_delay: Duration::ZERO };
         let shell =
             Shell::start_with_updates(runtime.handle().clone(), config, Arc::new(MemorySecretStore::new()), fakes::ports(), host.clone(), updates).unwrap();
         Self { shell, host, runtime: Some(runtime), _dir: dir }
@@ -117,6 +118,24 @@ fn github(tag: &str) -> (tokio::runtime::Runtime, MockServer) {
             .mount(&server),
     );
     (runtime, server)
+}
+
+/// The docs site's mirror on a runtime of its own: `/updates/android.json` answers with `tag`, in
+/// GitHub's shape, with the APK on the mirror.
+fn mirror(tag: &str) -> (tokio::runtime::Runtime, MockServer) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = runtime.block_on(MockServer::start());
+    let body = release(&server, tag);
+    runtime.block_on(Mock::given(method("GET")).and(path("/updates/android.json")).respond_with(ResponseTemplate::new(200).set_body_json(body)).mount(&server));
+    (runtime, server)
+}
+
+/// An address nothing listens on.
+fn refused() -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    format!("http://127.0.0.1:{port}/updates")
 }
 
 fn requests(runtime: &tokio::runtime::Runtime, server: &MockServer) -> usize {
@@ -180,4 +199,47 @@ fn automatic_checks_follow_the_setting() {
     phone.shell.invoke_blocking("settings_set_auto_update", json!({ "enabled": true })).unwrap();
     phone.wait_status(|s| s["state"] == "available");
     assert_eq!(requests(&gh, &server), 1);
+}
+
+/// docs/dictation.md §20.9: the mirror answers first, its APK opens, and GitHub is not asked.
+#[test]
+fn regression_the_mirror_answers_before_github() {
+    let (mirror_rt, mirror) = mirror("v0.0.52");
+    let (gh, server) = github("v0.0.52");
+    let sources = vec![format!("{}/updates/android.json", mirror.uri()), format!("{}/repos/sunerpy/voltip/releases/latest", server.uri())];
+    let phone = Phone::start_with(None, Settings::default(), sources);
+    phone.wait_source().unwrap_err();
+    phone.invoke("update_check").unwrap();
+    assert_eq!(phone.wait_status(|s| s["state"] == "available")["version"], "0.0.52");
+    phone.invoke("update_install").unwrap();
+    let apk = format!("{}/download/0.0.52.apk", mirror.uri());
+    assert!(phone.host.calls().contains(&HostCall::OpenUrl(apk)), "{:?}", phone.host.calls());
+    assert_eq!((requests(&mirror_rt, &mirror), requests(&gh, &server)), (1, 0));
+}
+
+/// A mirror that cannot be reached leaves the check to GitHub, whose APK opens.
+#[test]
+fn regression_github_answers_when_the_mirror_cannot() {
+    let (gh, server) = github("v0.0.52");
+    let sources = vec![format!("{}/android.json", refused()), format!("{}/repos/sunerpy/voltip/releases/latest", server.uri())];
+    let phone = Phone::start_with(None, Settings::default(), sources);
+    phone.wait_source().unwrap_err();
+    phone.invoke("update_check").unwrap();
+    assert_eq!(phone.wait_status(|s| s["state"] == "available")["version"], "0.0.52");
+    phone.invoke("update_install").unwrap();
+    let apk = format!("{}/download/0.0.52.apk", server.uri());
+    assert!(phone.host.calls().contains(&HostCall::OpenUrl(apk)), "{:?}", phone.host.calls());
+    assert_eq!(requests(&gh, &server), 1);
+}
+
+/// With no source answering, the check fails with the mirror's reason, the one the network decides.
+#[test]
+fn when_no_source_answers_the_check_names_the_mirror() {
+    let sources = vec![format!("{}/android.json", refused()), format!("{}/repos/sunerpy/voltip/releases/latest", refused())];
+    let phone = Phone::start_with(None, Settings::default(), sources);
+    phone.wait_source().unwrap_err();
+    phone.invoke("update_check").unwrap();
+    let failed = phone.wait_status(|s| s["state"] == "failed");
+    let message = failed["message"].as_str().unwrap();
+    assert!(message.starts_with("无法连接更新服务器："), "{message}");
 }

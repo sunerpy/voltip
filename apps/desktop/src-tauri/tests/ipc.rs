@@ -1658,7 +1658,8 @@ fn production_wiring_helpers_are_well_formed() {
     // The update source is a build-time affair: the variable names are the documented ones and a
     // build without them has no updater.
     assert_eq!(voltip_desktop_lib::update::UPDATE_URL_ENV, "VOLTIP_UPDATE_URL");
+    assert_eq!(voltip_desktop_lib::update::UPDATE_MIRROR_ENV, "VOLTIP_UPDATE_MIRROR");
     assert_eq!(voltip_desktop_lib::update::UPDATE_PUBKEY_ENV, "VOLTIP_UPDATE_PUBKEY");
-    assert!(voltip_desktop_lib::update::UpdaterConfig::from_values(None, Some("key")).is_none());
+    assert!(voltip_desktop_lib::update::UpdaterConfig::from_values(None, None, Some("key")).is_none());
     assert!(voltip_desktop_lib::update::AUTO_CHECK_DELAY >= Duration::from_secs(5), "the window settles before the automatic check");
 }

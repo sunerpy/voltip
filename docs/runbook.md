@@ -37,6 +37,8 @@ make desktop-vnc-stop
 | `VOLTIP_ASR_URL` / `VOLTIP_ASR_TOKEN` / `VOLTIP_ASR_MODEL` | 内置识别服务：`https://<asr-host>`、应用令牌、模型名 |
 | `VOLTIP_REFINE_URL` / `VOLTIP_REFINE_API_KEY` / `VOLTIP_REFINE_MODEL` | 内置润色服务：OpenAI 兼容基址、应用令牌、模型名 |
 | `VOLTIP_UPDATE_PUBKEY` | 更新器公钥；发布工作流据此打开更新器，更新地址由仓库推出（`docs/dictation.md` §9） |
+| `VOLTIP_UPDATE_URL` | 本机构建的更新清单地址，与发布相同：`https://github.com/<owner>/<repo>/releases/latest/download/latest.json`（发布构建由工作流算出） |
+| `VOLTIP_UPDATE_MIRROR` | 可选：文档站更新通道的根地址（`https://voltip.firlab.app/updates`），桌面与手机都先问它、再问 GitHub；发布构建取仓库变量 `vars.VOLTIP_UPDATE_MIRROR` |
 | `VOLTIP_MODEL_BASE_URL` | 可选：本地模型的第一下载源 |
 
 打包脚本（`make windows-x64` / `make linux-x64` / `make android-apk`）与发布候选（`release-candidate.yml` 的 `prepare`）在任一内置引擎值为空时拒绝出包（`scripts/lib/require-builtin-engines.sh`），显式 `VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1` 才放行，CI 的打包 job 就是这样出无内置服务的包。客户端里唯一的凭据是应用令牌；`scripts/build-windows-x64.sh`、release 的 Linux 腿与 Android 包检查（`.github/scripts/check-android-package.sh`）用 `strings` 扫描二进制，出现 `gsk_…` / `sk-…` 即拒绝出包。生产主机名守卫（`.github/scripts/check-no-production-hosts.sh`）从 `VOLTIP_PRODUCTION_HOSTS` 读要找的词，扫描整棵树，命中时只打印 `文件:行号`。
@@ -119,6 +121,7 @@ Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前�
     backfill 构建的是标签提交本身，所以不做 delta 证明，也不写 `Release candidate`。
   - 退回同轮发布：revert 这组工作流提交，并删除 `release-candidate` ruleset。
 - 更新器是可选的：设置了 `VOLTIP_UPDATE_PUBKEY` 才打开。应用的更新地址是本仓库的 `releases/latest/download/latest.json`，`latest.json` 里的下载地址固定到该次 Release 的资产。预发布不会被标成 latest，所以只有正式版才会推给已安装的用户。
+- 更新镜像（`docs/dictation.md` §9）：仓库变量 `VOLTIP_UPDATE_MIRROR`（`gh variable set VOLTIP_UPDATE_MIRROR --repo sunerpy/voltip --body https://voltip.firlab.app/updates`）让发布构建先问文档站的 `/updates/`。镜像是 `sunerpy/firlab` 的 Pages Functions，从 GitHub 的最新 Release 生成，发版后不需要任何操作；新版本最多 5 分钟后出现在镜像上。核对：`curl -s https://voltip.firlab.app/updates/latest.json | jq .version` 应为刚发布的版本，`/updates/android.json` 的 `tag_name` 同理。镜像故障时应用自动回落到 GitHub；要停用镜像，删掉仓库变量后，之后的构建就只问 GitHub。
 - 版本模型：release-please（`node` 策略）只改根 `package.json` 与两份应用 `package.json`；两份 `tauri.conf.json` 写 `"version": "../../../package.json"` 指向根文件，安装包、更新器、`voltip --version` 与中继握手里的 `client_version` 读的都是它；Cargo 版本固定为 `0.0.0`，发版提交不改 `Cargo.toml` / `Cargo.lock`。候选 `prepare` 的 `check-config --package-json package.json` 校验这条链。1.0 之前 `feat` 和 `fix` 都只加补丁号（`0.0.1` → `0.0.2`，`bump-patch-for-minor-pre-major`），破坏性变更（`feat!` / `BREAKING CHANGE`）才加次版本号（`bump-minor-pre-major`）；要跳到别的版本，在提交的 footer 写 `Release-As: <版本>`。
 - 仓库设置：默认分支要有 ruleset（控制器和候选只在受保护的默认分支上运行）；打开「Allow GitHub Actions to create and approve pull requests」让 release-please 能开 PR。release-please 用 `GITHUB_TOKEN` 开的 PR 由 `github-actions[bot]` 提交，GitHub 把它的 CI 停在 `action_required`，要有写权限的人批准才会跑；它只跑 `verify-web`，合并看的是候选写的 `Release candidate`，批准与否不影响合并：
 

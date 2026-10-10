@@ -36,7 +36,7 @@ impl Running {
         // to GitHub.
         let updates = UpdateConfig {
             source: None,
-            latest_release: "http://127.0.0.1:9/releases/latest".into(),
+            sources: vec!["http://127.0.0.1:9/releases/latest".into()],
             listing: store_listing(PACKAGE),
             auto_check_delay: AUTO_CHECK_DELAY,
         };

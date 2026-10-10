@@ -76,4 +76,4 @@ description: 在各种使用方式下 Voltip 把哪些内容发送到哪里，�
 
 ## 更新
 
-Voltip 在你点击「检查更新」时检查更新；开启自动更新后，也会在启动时检查。检查时读取 GitHub 上发布的版本信息。在 Android 上，从 Google Play 安装的不做这项检查，由 Google Play 更新；Android 版 0.0.50 完全不做这项检查。
+Voltip 在你点击「检查更新」时检查更新；开启自动更新后，也会在启动时检查。检查时读取 GitHub 上发布的版本信息：先从本站读取，本站无法访问时再从 GitHub 读取，更新也从同一处下载。本站运行在 Cloudflare 上，与 GitHub 一样能看到请求的网络地址；检查更新不发送任何关于你或你的录音的信息。在 Android 上，从 Google Play 安装的不做这项检查，由 Google Play 更新；Android 版 0.0.50 完全不做这项检查。
