@@ -1,17 +1,17 @@
 import {
-  ProviderCard as SharedProviderCard,
-  type ProviderCardProps as SharedProviderCardProps,
+  ProviderCards as SharedProviderCards,
+  type ProviderCardsProps as SharedProviderCardsProps,
 } from "@voltip/ui";
 import { LocalCompute } from "./LocalCompute";
 import { LocalModels } from "./LocalModels";
 
-export type ProviderCardProps = Omit<SharedProviderCardProps, "localBody">;
+export type ProviderCardsProps = Omit<SharedProviderCardsProps, "localBody">;
 
-/** The shared provider card (`@voltip/ui`, also on the phone) with the desktop's model library as
- *  the on-device card's body. */
-export function ProviderCard(props: ProviderCardProps) {
+/** The shared provider cards (`@voltip/ui`, also on the phone) with the desktop's model library
+ *  and compute settings in the on-device provider's drawer. */
+export function ProviderCards(props: ProviderCardsProps) {
   return (
-    <SharedProviderCard
+    <SharedProviderCards
       {...props}
       localBody={
         <>

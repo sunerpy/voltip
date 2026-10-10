@@ -1,4 +1,10 @@
-import { type Backend, type ProviderId, type ServiceKind, zhT } from "@voltip/shared";
+import {
+  type Backend,
+  type ProviderId,
+  type ServiceKind,
+  defaultEngineSettings,
+  zhT,
+} from "@voltip/shared";
 import { MOCK_PROBE_MS, MockBackend } from "@voltip/shared/mock";
 import { act, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -6,45 +12,43 @@ import type { ReactNode } from "react";
 import { BackendProvider, useUiState } from "../../backend/BackendProvider";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { FeatureShellProvider } from "../shell";
-import { ProviderCard } from "./ProviderCard";
+import { ProviderCards, ProviderDetail } from "./ProviderCard";
 import { PROBE_WAIT_MS, useProviderProbe } from "./useProviderProbe";
 
 const t = zhT.t;
 
-/** The card for `id` once the backend's state has loaded. */
-function Card({
+/** The settings drawer of `id` once the backend's state has loaded, as a card opens it. */
+function Detail({
   id,
   kind,
   localBody,
+  onClose,
 }: {
   id: ProviderId;
   kind: ServiceKind;
   localBody?: ReactNode;
+  onClose: () => void;
 }) {
   const state = useUiState();
   const provider = state.engines.providers.find((p) => p.id === id);
   if (provider === undefined) return null;
-  return (
-    <ProviderCard
-      provider={provider}
-      kind={kind}
-      open
-      onToggle={() => undefined}
-      localBody={localBody}
-    />
-  );
+  return <ProviderDetail provider={provider} kind={kind} localBody={localBody} onClose={onClose} />;
 }
 
-function renderCard(
-  backend: Backend,
-  props: { id: ProviderId; kind: ServiceKind; localBody?: ReactNode },
-) {
+/** The cards of every provider of `kind`. */
+function Cards({ kind }: { kind: ServiceKind }) {
+  const state = useUiState();
+  const providers = state.engines.providers.filter((p) => p[kind] !== undefined);
+  return <ProviderCards kind={kind} providers={providers} label="服务商" />;
+}
+
+function shell(backend: Backend, ui: ReactNode) {
   const notify = vi.fn<(message: string, tone?: "neutral" | "danger") => void>();
   render(
     <BackendProvider backend={backend}>
       <I18nProvider locale="zh-CN">
         <FeatureShellProvider shell={{ notify, confirm: () => undefined }}>
-          <Card {...props} />
+          {ui}
         </FeatureShellProvider>
       </I18nProvider>
     </BackendProvider>,
@@ -52,7 +56,16 @@ function renderCard(
   return notify;
 }
 
-describe("ProviderCard (desktop engines pane and phone settings)", () => {
+function renderCard(
+  backend: Backend,
+  props: { id: ProviderId; kind: ServiceKind; localBody?: ReactNode },
+) {
+  const onClose = vi.fn();
+  const notify = shell(backend, <Detail {...props} onClose={onClose} />);
+  return Object.assign(notify, { onClose });
+}
+
+describe("ProviderCards (desktop model pages and phone settings)", () => {
   it("saves a vendor's model and key, deletes the key and resets the card", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend();
@@ -200,20 +213,141 @@ describe("ProviderCard (desktop engines pane and phone settings)", () => {
     backend.destroy();
   });
 
-  it("switches the service to a provider and opens its key page", async () => {
+  it("设为当前 in the drawer saves the draft, switches the service to the provider and closes", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend();
     const invoke = vi.spyOn(backend, "invoke");
     const notify = renderCard(backend, { id: "groq", kind: "llm" });
-    await user.click(await screen.findByRole("button", { name: t("engines.use") }));
+    const form = await screen.findByTestId("provider-form");
+    // Groq needs its key: the checks refuse first, and nothing is switched.
+    await user.click(within(form).getByRole("button", { name: t("engines.setCurrent") }));
+    expect(within(form).getByTestId("provider-problem")).toHaveTextContent(
+      t("engines.check.missingKey"),
+    );
+    expect(invoke).not.toHaveBeenCalledWith("settings_set_engines", expect.anything());
+    expect(notify.onClose).not.toHaveBeenCalled();
+    await user.type(within(form).getByLabelText(t("engines.field.key")), "gsk_test");
+    await user.click(within(form).getByRole("button", { name: t("engines.setCurrent") }));
     expect(invoke).toHaveBeenCalledWith("settings_set_engines", {
       engines: expect.objectContaining({ llm_provider: "groq" }),
     });
-    expect(notify).toHaveBeenCalledWith(
-      t("engines.used", { provider: t("engines.provider.groq") }),
+    expect(invoke).toHaveBeenCalledWith("provider_key_set", {
+      provider: "groq",
+      kind: "llm",
+      value: "gsk_test",
+    });
+    expect(notify).toHaveBeenLastCalledWith(
+      `${t("engines.used", { provider: t("engines.provider.groq") })}${t("engines.savedKey")}`,
     );
+    expect(notify.onClose).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: t("engines.getKey") }));
     expect(backend.consolesOpened).toEqual(["groq"]);
+    backend.destroy();
+  });
+
+  it("a card names the provider, its host or what it is, its state and its model; 设为当前 switches without opening it", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    const invoke = vi.spyOn(backend, "invoke");
+    const notify = shell(backend, <Cards kind="asr" />);
+    const list = await screen.findByRole("list", { name: "服务商" });
+    const cards = within(list).getAllByRole("article");
+    expect(cards.map((c) => c.getAttribute("aria-label"))).toEqual([
+      "内置服务",
+      "本机",
+      "OpenAI",
+      "Groq",
+      "硅基流动",
+      "阿里云百炼",
+      "自定义接口",
+    ]);
+    const builtin = screen.getByTestId("provider-asr-builtin");
+    expect(builtin).toHaveAttribute("data-selected", "true");
+    expect(builtin).toHaveTextContent("随应用提供，无需密钥");
+    expect(within(builtin).getByText("使用中")).toBeInTheDocument();
+    expect(within(builtin).queryByText("就绪")).toBeNull();
+    expect(within(builtin).getByText(t("engines.isCurrent"))).toBeInTheDocument();
+    expect(within(builtin).getByTestId("provider-model")).toHaveTextContent("Qwen/Qwen3-ASR-1.7B");
+    // The in-use block is a soft accent one, never a solid fill (user feedback 2026-10-10).
+    const block = builtin.querySelector("svg")?.parentElement;
+    expect(block?.className).toContain("bg-accent-soft");
+    expect(block?.className).not.toMatch(/(^|\s)bg-accent(\s|$)/);
+    const groq = screen.getByTestId("provider-asr-groq");
+    expect(groq).toHaveTextContent("api.groq.com");
+    expect(within(groq).getByText("缺少密钥")).toBeInTheDocument();
+    expect(within(groq).getByTestId("provider-model")).toHaveTextContent("whisper-large-v3-turbo");
+    expect(screen.getByTestId("provider-asr-custom")).toHaveTextContent("OpenAI 兼容接口");
+    expect(
+      within(screen.getByTestId("provider-asr-local")).getByText("模型未下载"),
+    ).toBeInTheDocument();
+    await user.click(within(groq).getByRole("button", { name: t("engines.setCurrent") }));
+    expect(invoke).toHaveBeenCalledWith("settings_set_engines", {
+      engines: expect.objectContaining({ asr_provider: "groq" }),
+    });
+    expect(notify).toHaveBeenCalledWith(t("engines.used", { provider: "Groq" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByTestId("provider-asr-groq")).toHaveAttribute("data-selected", "true");
+    });
+    expect(screen.getByTestId("provider-asr-builtin")).not.toHaveAttribute("data-selected");
+    backend.destroy();
+  });
+
+  it("a click on a card opens its drawer, which Esc closes, back on the card", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    shell(backend, <Cards kind="asr" />);
+    const groq = await screen.findByTestId("provider-asr-groq");
+    const open = within(groq).getByRole("button", { name: "Groq" });
+    expect(open).toHaveAttribute("aria-haspopup", "dialog");
+    expect(open).toHaveAttribute("aria-expanded", "false");
+    await user.click(open);
+    const drawer = screen.getByRole("dialog", { name: "Groq" });
+    expect(drawer).toHaveAttribute("data-testid", "provider-asr-groq-detail");
+    expect(drawer).toHaveAccessibleDescription(t("engines.providerNote.groq"));
+    expect(within(drawer).getByText("缺少密钥")).toBeInTheDocument();
+    expect(groq).toHaveAttribute("data-open", "true");
+    expect(open).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(groq).not.toHaveAttribute("data-open");
+    expect(open).toHaveFocus();
+    // The on-device drawer is wider: its model cards come two to a row.
+    await user.click(
+      within(screen.getByTestId("provider-asr-local")).getByRole("button", { name: "本机" }),
+    );
+    const local = screen.getByRole("dialog", { name: "本机" });
+    expect(local.style.width).toMatch(/^min\(720px, .*100vw/);
+    // 设为当前 there switches to the on-device models.
+    await user.click(within(local).getByRole("button", { name: t("engines.setCurrent") }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(async () => {
+      expect((await backend.getState()).settings.engines.asr_provider).toBe("local");
+    });
+    backend.destroy();
+  });
+
+  it("regression: a long model id wraps in its own row, never beside the endpoint field", async () => {
+    // User report 2026-10-10: the model select was never narrower than its longest option and
+    // sat beside the endpoint field in one grid row, so a long id covered part of the address.
+    const long = "FunAudioLLM/SenseVoiceSmall-2026-09-preview-int8-streaming";
+    const backend = new MockBackend({
+      settings: {
+        engines: { ...defaultEngineSettings(), providers: { siliconflow: { asr_model: long } } },
+      },
+    });
+    renderCard(backend, { id: "siliconflow", kind: "asr" });
+    const form = await screen.findByTestId("provider-form");
+    const model = within(form).getByRole("combobox", { name: t("engines.field.model") });
+    expect(model).toHaveValue(long);
+    // The chosen id is drawn in full on as many lines as it takes; no copy sets a width.
+    expect(form.querySelector("[data-select-face]")).toHaveTextContent(long);
+    expect(form.querySelector("[data-select-sizer]")).toBeNull();
+    // One field per row: nothing in the drawer lays fields out in columns.
+    for (const el of [form, ...form.querySelectorAll("[class]")])
+      expect(el.getAttribute("class") ?? "").not.toMatch(/grid-template-columns|grid-cols-/);
+    const url = within(form).getByLabelText(t("engines.field.baseUrl"));
+    expect(model.closest("section")).not.toBe(url.closest("section"));
     backend.destroy();
   });
 

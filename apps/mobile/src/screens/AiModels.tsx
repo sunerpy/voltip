@@ -4,7 +4,7 @@ import {
   CurrentService,
   FallbackSection,
   PresetsSection,
-  ProviderCard,
+  ProviderCards,
   ServicePrivacy,
   SettingsSection,
   StatusRow,
@@ -14,7 +14,6 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { Lede, TOUCH_TOGGLE } from "../app/phone-ui";
-import { useOpenCards } from "./SpeechModels";
 
 /** AI 模型与预设 on the phone (user decision 2026-10-01): whether a take the phone recognises is
  *  cleaned up, the presets (the desktop's section, `@voltip/ui`) and the LLM providers. */
@@ -25,7 +24,6 @@ export function AiModels() {
   const settings = state.settings.engines;
   const engines = state.engines;
   const providers = providersFor(engines, "llm");
-  const cards = useOpenCards(engines.llm_provider);
   return (
     <div className="flex flex-col gap-6 p-4" data-testid="phone-ai">
       <Lede>{t("mobile.settings.own")}</Lede>
@@ -55,20 +53,7 @@ export function AiModels() {
       <PresetsSection />
       {/* No description: the desktop's names 语音编辑, which the phone does not have. */}
       <SettingsSection title={t("engines.llmSection.title")}>
-        <div className="flex flex-col gap-3" role="list" aria-label={t("engines.llmSection.title")}>
-          {providers.map((p) => (
-            <div role="listitem" key={p.id}>
-              <ProviderCard
-                provider={p}
-                kind="llm"
-                open={cards.isOpen(p.id)}
-                onToggle={(open) => {
-                  cards.toggle(p.id, open);
-                }}
-              />
-            </div>
-          ))}
-        </div>
+        <ProviderCards kind="llm" providers={providers} label={t("engines.llmSection.title")} />
         {/* docs/dictation.md §3.5: the model in use (a fallback model says so) and who gets the text. */}
         <div className="flex flex-col gap-1">
           <CurrentService kind="llm" />

@@ -1,13 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { useState } from "react";
-import {
-  CardGrid,
-  DisclosureCard,
-  SettingsPane,
-  SettingsRows,
-  SettingsSection,
-} from "./SettingsLayout";
+import { CardGrid, SettingsPane, SettingsRows, SettingsSection } from "./SettingsLayout";
 import { StatusRow } from "./StatusRow";
 
 describe("settings layout", () => {
@@ -49,41 +41,5 @@ describe("settings layout", () => {
     );
     const grid = screen.getByRole("list", { name: "模型" });
     expect(grid.style.gridTemplateColumns).toBe("repeat(auto-fill, minmax(240px, 1fr))");
-  });
-
-  it("a disclosure card toggles its region from the header button and keeps actions outside it", async () => {
-    const user = userEvent.setup();
-    function Harness() {
-      const [open, setOpen] = useState(false);
-      return (
-        <DisclosureCard
-          open={open}
-          onToggle={setOpen}
-          icon="cloud"
-          title="Groq"
-          subtitle="whisper-large-v3-turbo"
-          badge={<span>使用中</span>}
-          actions={<button type="button">使用</button>}
-          selected
-          aria-label="Groq">
-          <p>body</p>
-        </DisclosureCard>
-      );
-    }
-    render(<Harness />);
-    const card = screen.getByRole("article", { name: "Groq" });
-    expect(card).toHaveAttribute("data-selected", "true");
-    const toggle = screen.getByRole("button", { name: /Groq/ });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByText("body")).toBeNull();
-    await user.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("region", { name: /Groq/ })).toHaveTextContent("body");
-    expect(card).toHaveAttribute("data-open", "true");
-    // The action is not part of the toggle.
-    const use = screen.getByRole("button", { name: "使用" });
-    expect(toggle.contains(use)).toBe(false);
-    await user.click(toggle);
-    expect(screen.queryByText("body")).toBeNull();
   });
 });

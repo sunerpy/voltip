@@ -53,6 +53,7 @@ export const zhCN = {
     },
     themeSwitch: { label: "主题", next: "切换到{theme}" },
     dialog: { escCancel: "取消" },
+    drawer: { close: "关闭" },
     palette: {
       placeholder: "输入命令或页面…",
       label: "命令菜单",
@@ -918,7 +919,7 @@ export const zhCN = {
     tab: { asr: "服务商与模型", options: "识别设置" },
     asrSection: {
       title: "语音识别服务商",
-      note: "选一家服务商把录音转成文字；展开卡片选择模型、填写密钥。",
+      note: "选一家服务商把录音转成文字；打开卡片选择模型、填写密钥。",
     },
     llmSection: {
       title: "AI 润色服务商",
@@ -928,10 +929,19 @@ export const zhCN = {
     currentFallback: "当前：{provider} · {model}（候补）",
     currentNone: "当前：未选择",
     inUse: "使用中",
-    use: "使用",
+    /** The provider cards (user decision 2026-10-10): switch to this one, or it is the one. */
+    setCurrent: "设为当前",
+    isCurrent: "当前使用",
     useTitle: "用{provider}做{service}",
     used: "已切换到{provider}",
     service: { asr: "语音识别", llm: "AI 润色" },
+    /** Under a card's name when the provider has no address to show. */
+    tagline: {
+      builtin: "随应用提供，无需密钥",
+      local: "在这台电脑上运行",
+      custom: "OpenAI 兼容接口",
+    },
+    detail: { connection: "连接" },
     provider: {
       builtin: "内置服务",
       local: "本机",
@@ -958,7 +968,6 @@ export const zhCN = {
       custom: "任意 OpenAI 兼容接口，例如 vLLM、LocalAI 或自建网关。",
     },
     ready: "就绪",
-    onDevice: "本机运行",
     issue: {
       unavailable: "不可用",
       key_missing: "缺少密钥",
@@ -1006,6 +1015,7 @@ export const zhCN = {
     resetDone: "已恢复{provider}的默认设置",
     probe: "测试连接",
     probing: "正在连接…",
+    probeIdle: "尚未测试",
     probeResult: {
       ok: "连接正常 · {n} 个模型 · {ms} ms",
       unsupported: "这个服务不能测试连接",

@@ -36,6 +36,7 @@ export * from "./components/Table";
 export * from "./components/QrCode";
 export * from "./components/ThemeTile";
 export * from "./components/Dialog";
+export * from "./components/Drawer";
 export * from "./components/Toast";
 export * from "./components/CommandPalette";
 export * from "./components/Sidebar";

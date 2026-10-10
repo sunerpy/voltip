@@ -253,6 +253,20 @@ page 04-settings '^tab-settings$' '语音模型|Speech models'
 
 step "SETTINGS PAGES"
 page 05-speech '^语音模型$|^Speech models$' '内置服务|Built-in service'
+# A provider's card opens its settings in a sheet from the bottom (user decision 2026-10-10), and
+# back closes the sheet, not the page.
+if tap_text '^provider-asr-groq$' && wait_text '^provider-form$' 10; then
+  measure provider_sheet ok
+else
+  measure provider_sheet missing
+fi
+shot 05a-provider-sheet
+back
+if wait_text '^语音模型$|^Speech models$' 5 && ! find_node '^provider-form$' >/dev/null; then
+  measure back_closes_sheet_first ok
+else
+  measure back_closes_sheet_first no
+fi
 scroll_down
 shot 05b-speech-more
 back

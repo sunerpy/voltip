@@ -6,13 +6,7 @@ import { View } from "react-native";
 
 import { useBackend, useUiState } from "../backend/BackendProvider";
 import { useI18n } from "../backend/i18n";
-import {
-  ChineseScript,
-  CurrentService,
-  ProviderCard,
-  ServicePrivacy,
-  useOpenCards,
-} from "../features/engines";
+import { ChineseScript, CurrentService, ProviderCards, ServicePrivacy } from "../features/engines";
 import { FallbackSection } from "../features/Fallback";
 import { Hint, Lede, Page, Section, SectionTitle } from "../ui/kit";
 import { SelectRow } from "../ui/Select";
@@ -23,7 +17,6 @@ export function SpeechModels() {
   const state = useUiState();
   const settings = state.settings.engines;
   const providers = providersFor(state.engines, "asr").filter((p) => !p.on_device);
-  const cards = useOpenCards(state.engines.asr_provider);
   return (
     <Page testID="phone-speech" gap={20}>
       <Lede>{t("mobile.settings.own")}</Lede>
@@ -32,19 +25,7 @@ export function SpeechModels() {
           <SectionTitle>{t("engines.asrSection.title")}</SectionTitle>
           <Hint>{t("engines.asrSection.note")}</Hint>
         </View>
-        <View style={{ gap: 12 }} accessibilityLabel={t("engines.asrSection.title")}>
-          {providers.map((p) => (
-            <ProviderCard
-              key={p.id}
-              provider={p}
-              kind="asr"
-              open={cards.isOpen(p.id)}
-              onToggle={(open) => {
-                cards.toggle(p.id, open);
-              }}
-            />
-          ))}
-        </View>
+        <ProviderCards kind="asr" providers={providers} label={t("engines.asrSection.title")} />
         <View style={{ gap: 4, paddingHorizontal: 4 }}>
           <CurrentService kind="asr" />
           <ServicePrivacy kind="asr" />

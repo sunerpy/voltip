@@ -172,6 +172,44 @@ export function shortModel(model: string): string {
   return tail.length > 0 ? tail : model;
 }
 
+/** `https://api.groq.com/openai/v1` → `api.groq.com`, `http://127.0.0.1:11434/v1` →
+ *  `127.0.0.1:11434`: the host and port of an http(s) address, without a user name; `undefined`
+ *  for anything else. Unlike `labels.ts`' `hostOf`, a user name and password in the address never
+ *  come out (React Native's `URL` throws on `host`, and its fallback would keep them). */
+export function endpointHost(url: string): string | undefined {
+  return /^https?:\/\/(?:[^@/?#\s]*@)?([^/?#\s]+)/i.exec(url.trim())?.[1];
+}
+
+/** The line under a provider card's name: the host its requests go to, or what it is when it has
+ *  no address to show — the built-in service (its host is never shown), the on-device models, and
+ *  a custom endpoint not filled in yet. */
+export function providerTagline(
+  provider: ProviderStatus,
+  kind: ServiceKind,
+  t: TFunction = zhT.t,
+): string {
+  if (provider.id === "builtin") return t("engines.tagline.builtin");
+  if (provider.id === "local") return t("engines.tagline.local");
+  const url = provider[kind]?.base_url;
+  return (url === undefined ? undefined : endpointHost(url)) ?? t("engines.tagline.custom");
+}
+
+export type ProviderBadgeTone = "accent" | "ok" | "warn";
+
+/** What a provider card says of one service: 使用中 on the one in use, then why it cannot run, or
+ *  就绪 on one that can and is not in use. */
+export function providerBadges(
+  service: ServiceStatus,
+  t: TFunction = zhT.t,
+): { tone: ProviderBadgeTone; text: string }[] {
+  const out: { tone: ProviderBadgeTone; text: string }[] = [];
+  if (service.active) out.push({ tone: "accent", text: t("engines.inUse") });
+  if (service.issue !== undefined)
+    out.push({ tone: "warn", text: t(`engines.issue.${service.issue}`) });
+  else if (!service.active) out.push({ tone: "ok", text: t("engines.ready") });
+  return out;
+}
+
 export const LANGUAGE_CODES = ["", "zh", "en", "yue", "ja", "ko"] as const;
 
 /** Recognition language hints: the auto-detect label is localized, the language names are their own. */

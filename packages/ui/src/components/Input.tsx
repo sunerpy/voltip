@@ -1,4 +1,9 @@
-import { type InputHTMLAttributes, type TextareaHTMLAttributes, useId } from "react";
+import {
+  type InputHTMLAttributes,
+  type ReactNode,
+  type TextareaHTMLAttributes,
+  useId,
+} from "react";
 import { cx } from "../cx";
 import { usePresentation } from "../presentation/PresentationProvider";
 import { NO_TAP_HIGHLIGHT, TOUCH_FIELD_TARGET } from "../presentation/touch";
@@ -14,6 +19,8 @@ export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 
   label?: string;
   help?: string;
   size?: "sm" | "md" | "lg";
+  /** A control inside the field at its right edge (a key field's show / hide button). */
+  trailing?: ReactNode;
 }
 
 const SIZE_CLASS = {
@@ -30,6 +37,7 @@ export function Input({
   label,
   help,
   size = "md",
+  trailing,
   className,
   id,
   ...rest
@@ -54,12 +62,16 @@ export function Input({
           SIZE_CLASS[size],
           // The phone: the field takes taps 44 px tall, around its icon and keycaps too.
           touch && cx("touch-manipulation", TOUCH_FIELD_TARGET),
+          trailing !== undefined && "pr-1",
         )}
         onClick={
           touch
             ? (e) => {
                 const input = e.currentTarget.querySelector("input");
-                if (input !== null && e.target !== input) input.focus();
+                // A press on the trailing control is that control's, not the field's.
+                const onControl =
+                  e.target instanceof Element && e.target.closest("button") !== null;
+                if (input !== null && e.target !== input && !onControl) input.focus();
               }
             : undefined
         }>
@@ -77,6 +89,7 @@ export function Input({
           {...rest}
         />
         {keys && <Keycaps keys={keys} />}
+        {trailing}
       </div>
       {error ? (
         <p id={errorId} className="text-[12px] text-danger">

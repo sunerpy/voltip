@@ -17,8 +17,9 @@ import {
   shortClockLabel,
 } from "@voltip/shared";
 import { useMemo, useState } from "react";
-import { ScrollView, View } from "react-native";
+import { ScrollView, StyleSheet, View } from "react-native";
 import { Chip, Icon, Searchbar, Text, TouchableRipple } from "react-native-paper";
+import Svg, { Defs, LinearGradient, RadialGradient, Rect, Stop } from "react-native-svg";
 
 import { useUiState } from "../backend/BackendProvider";
 import { useI18n } from "../backend/i18n";
@@ -28,13 +29,13 @@ import { useHomeStats } from "../hooks/useHomeStats";
 import { type TabParams, useRootNavigation } from "../routes";
 import { Button } from "../ui/Button";
 import { CARD_RADIUS, EmptyState, Mono, Page, RowDivider, Section, useAppTheme } from "../ui/kit";
+import { type StatSpan, type StatTileColors, statTileColors } from "../ui/statTile";
 
 /** How long the search waits after the last keystroke, as on the desktop. */
 const SEARCH_DEBOUNCE_MS = 200;
 
-/** The time saved as a figure: the numbers large, the units small beside them, in `ink`. */
-function Saved({ ms, ink }: { ms: number; ink: string }) {
-  const theme = useAppTheme();
+/** The time saved as a figure: the numbers large, the units small beside them. */
+function Saved({ ms, ink, quiet }: { ms: number; ink: string; quiet: string }) {
   const { locale } = useI18n();
   return (
     <Text testID="phone-history-stat-saved" numberOfLines={1}>
@@ -44,9 +45,7 @@ function Saved({ ms, ink }: { ms: number; ink: string }) {
           <Text variant="headlineSmall" style={{ color: ink, fontWeight: "600" }}>
             {part.value}
           </Text>
-          <Text
-            variant="labelLarge"
-            style={{ color: theme.colors.onSurfaceVariant }}>{` ${part.unit}`}</Text>
+          <Text variant="labelLarge" style={{ color: quiet }}>{` ${part.unit}`}</Text>
         </Text>
       ))}
     </Text>
@@ -54,78 +53,87 @@ function Saved({ ms, ink }: { ms: number; ink: string }) {
 }
 
 /** Each span's mark, from the icon set the app uses (Material Design Icons). */
-const TILE_ICONS = {
+const TILE_ICONS: Record<StatSpan, string> = {
   today: "white-balance-sunny",
   week: "calendar-week",
   month: "calendar-month",
   total: "clock-outline",
-} as const;
+};
 
-/** One span's time saved. The time saved is what a tile is for (user request 2026-10-10: 突出重点,
- *  and taller): a large figure under the span's name and icon, and the `current` span (today) in
- *  the accent, so it is read first. */
-function Tile({
-  id,
-  label,
-  bucket,
-  current = false,
-}: {
-  id: keyof typeof TILE_ICONS;
-  label: string;
-  bucket: HistoryBucket;
-  current?: boolean;
-}) {
+/** The total's card: the gradient and the accent's glow in its top right corner. */
+function TotalBackdrop({ gradient }: { gradient: NonNullable<StatTileColors["gradient"]> }) {
+  return (
+    <Svg
+      testID="phone-history-stat-glow"
+      style={StyleSheet.absoluteFill}
+      width="100%"
+      height="100%"
+      accessible={false}
+      pointerEvents="none">
+      <Defs>
+        <LinearGradient id="total-ink" x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor={gradient.from} />
+          <Stop offset="1" stopColor={gradient.to} />
+        </LinearGradient>
+        <RadialGradient id="total-glow" cx="88%" cy="12%" rx="85%" ry="85%" fx="88%" fy="12%">
+          <Stop offset="0" stopColor={gradient.glow} stopOpacity={gradient.glowOpacity} />
+          <Stop offset="1" stopColor={gradient.glow} stopOpacity={0} />
+        </RadialGradient>
+      </Defs>
+      <Rect width="100%" height="100%" fill="url(#total-ink)" />
+      <Rect width="100%" height="100%" fill="url(#total-glow)" />
+    </Svg>
+  );
+}
+
+/** One span's time saved, in its own hue (`statTileColors`; user decision 2026-10-10, Penpot
+ *  「Voltip 统计卡」 option C with total ①): a large figure under the span's name and icon. */
+function Tile({ id, label, bucket }: { id: StatSpan; label: string; bucket: HistoryBucket }) {
   const theme = useAppTheme();
   const { t } = useI18n();
+  const colors = statTileColors(theme, id);
   return (
     <View
       testID={`phone-history-stat-${id}`}
-      accessibilityState={{ selected: current }}
       style={{
         width: "48.5%",
-        minHeight: 116,
+        minHeight: 120,
         justifyContent: "space-between",
         gap: 12,
         padding: 14,
         borderRadius: CARD_RADIUS,
-        backgroundColor: current ? theme.colors.primaryContainer : theme.colors.surface,
+        overflow: "hidden",
+        backgroundColor: colors.background ?? colors.border,
         borderWidth: 1,
-        borderColor: current ? theme.colors.primaryContainer : theme.colors.outlineVariant,
+        borderColor: colors.border,
       }}>
+      {colors.gradient && <TotalBackdrop gradient={colors.gradient} />}
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
         <View
-          testID={current ? "phone-history-stat-current" : undefined}
+          testID="phone-history-stat-chip"
           style={{
             width: 28,
             height: 28,
             borderRadius: 8,
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: current ? theme.colors.primary : theme.colors.surfaceVariant,
+            backgroundColor: colors.chip,
           }}>
-          <Icon
-            source={TILE_ICONS[id]}
-            size={16}
-            color={current ? theme.colors.onPrimary : theme.colors.onSurfaceVariant}
-          />
+          <Icon source={TILE_ICONS[id]} size={16} color={colors.icon} />
         </View>
         <Text
           variant="labelLarge"
           numberOfLines={1}
-          style={{
-            flexShrink: 1,
-            fontWeight: "600",
-            color: current ? theme.colors.primary : theme.colors.onSurface,
-          }}>
+          style={{ flexShrink: 1, fontWeight: "700", color: colors.fg }}>
           {label}
         </Text>
       </View>
       <View style={{ gap: 4 }}>
-        <Saved ms={bucket.savedMs} ink={current ? theme.colors.primary : theme.colors.onSurface} />
+        <Saved ms={bucket.savedMs} ink={colors.fg} quiet={colors.muted} />
         <Text
           variant="labelSmall"
           numberOfLines={1}
-          style={{ color: theme.colors.onSurfaceVariant }}
+          style={{ color: colors.muted }}
           testID="phone-history-stat-caption">
           {`${t("home.session.saved")} · ${t("home.session.count", { n: formatCount(bucket.count) })}`}
         </Text>
@@ -199,7 +207,7 @@ export function History() {
               rowGap: 8,
             }}
             testID="phone-history-stats">
-            <Tile id="today" label={t("home.tiles.today")} bucket={stats.today} current />
+            <Tile id="today" label={t("home.tiles.today")} bucket={stats.today} />
             <Tile id="week" label={t("home.tiles.week")} bucket={stats.week} />
             <Tile id="month" label={t("home.tiles.month")} bucket={stats.month} />
             <Tile id="total" label={t("home.tiles.total")} bucket={stats.total} />

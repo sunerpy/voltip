@@ -10,7 +10,7 @@ Instead of a local model, recognition and AI polish can use a service on the int
 
 Release packages come with a built-in service, so dictation and AI polish work before you set anything up. It is run by the Voltip project and needs no key. Builds from source have no built-in service.
 
-For AI polish the built-in service offers several models: Qwen3.8 27B (the default), GPT-OSS 120B and GPT-OSS 20B. Choose one on the built-in service's card on the **AI models** page. They are also offered as fallback models (see [When a model's quota runs out](#when-a-model-s-quota-runs-out)): each model has its own quota.
+For AI polish the built-in service offers several models: Qwen3.8 27B (the default), GPT-OSS 120B and GPT-OSS 20B. Choose one in the built-in service's settings on the **AI models** page. They are also offered as fallback models (see [When a model's quota runs out](#when-a-model-s-quota-runs-out)): each model has its own quota.
 
 With the built-in service, the overlay shows the words while you speak (live preview), with no live transcription model to download: the sentence you are saying is sent about every second, and the preview updates about every 2 seconds. The final text is still the transcript of the whole recording after you release the shortcut. **Live preview** can be turned off under **Speech models → Recognition**.
 
@@ -37,14 +37,14 @@ A provider that offers both services uses one key for both.
 
 ## Setting up a provider
 
-1. On the Speech models or AI models page, expand the provider's card.
+1. On the Speech models or AI models page, select the provider's card. Its settings open in a panel on the right, or from the bottom on the phone.
 2. Choose a model, and for a custom endpoint enter its address.
 3. Enter your key. **Test connection** checks the address and the key and lists the models the provider offers.
-4. Choose **Use** to switch to the provider.
+4. Choose **Set as current** to save what you entered and switch to the provider. **Set as current** on a card switches to the provider without opening its settings.
 
 ## Google AI Studio
 
-Google AI Studio offers Gemini models for AI polish. Create a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (the card's **Get a key** opens it) and enter it on the Google AI Studio card on the **AI models** page. The model list offers Gemini models with a free tier; **Test connection** adds every text model your key can use, so you choose from the list instead of typing a name.
+Google AI Studio offers Gemini models for AI polish. Create a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (**Get a key** in the provider's settings opens it) and enter it in the Google AI Studio settings on the **AI models** page. The model list offers Gemini models with a free tier; **Test connection** adds every text model your key can use, so you choose from the list instead of typing a name.
 
 On the free tier, Google may use what you send to improve its products; a key from a Google Cloud project with billing turned on is not used that way. See [Privacy](/privacy).
 
