@@ -61,6 +61,20 @@
   --shadow-pop: 0 8px 24px 0 rgb(27 29 34 / 0.08), 0 0 0 1px rgb(27 29 34 / 0.06);
   --shadow-pill: 0 1px 2px 0 rgb(0 0 0 / 0.12), 0 8px 24px 0 rgb(0 0 0 / 0.14);
   --shadow-win: 0 24px 64px -20px rgb(27 29 34 / 0.22), 0 0 0 1px rgb(27 29 34 / 0.08);
+  /* Stat tiles (home page and 记录, docs/dictation.md §4.5): how much of a span's hue a tile
+     takes, and the total tile: an ink card lit by the accent in the light themes, an
+     accent-washed card in the dark ones. */
+  --tile-tint: 5%;
+  --tile-edge: 22%;
+  --total-from: #262c3a;
+  --total-to: #1b1d22;
+  --total-glow: 55%;
+  --total-fg: #ffffff;
+  --total-muted: #b4bcc8;
+  --total-subtle: #8790a0;
+  --total-chip: rgb(255 255 255 / 0.12);
+  --total-icon: color-mix(in srgb, var(--accent) 55%, #ffffff);
+  --total-border: transparent;
 }
 
 /* 暗黑 · 夜灯 */
@@ -114,6 +128,18 @@
   --shadow-pop: 0 8px 24px 0 rgb(0 0 0 / 0.5);
   --shadow-pill: 0 8px 24px -6px rgb(0 0 0 / 0.5);
   --shadow-win: 0 24px 64px -20px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(0 0 0 / 0.08);
+  /* Stat tiles (see the light theme). */
+  --tile-tint: 8%;
+  --tile-edge: 28%;
+  --total-from: var(--accent-soft);
+  --total-to: var(--surface);
+  --total-glow: 45%;
+  --total-fg: var(--fg);
+  --total-muted: #a9b8cc;
+  --total-subtle: #7d8da3;
+  --total-chip: var(--accent);
+  --total-icon: var(--accent-fg);
+  --total-border: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 /* 暖纸 · 手稿 */
@@ -167,6 +193,18 @@
   --shadow-pop: 0 12px 32px 0 rgb(42 37 33 / 0.12);
   --shadow-pill: 0 2px 6px 0 rgb(42 37 33 / 0.14);
   --shadow-win: 0 24px 64px -20px rgb(42 37 33 / 0.18), 0 0 0 1px rgb(42 37 33 / 0.08);
+  /* Stat tiles (see the light theme). */
+  --tile-tint: 5%;
+  --tile-edge: 22%;
+  --total-from: #3d3129;
+  --total-to: #2a2521;
+  --total-glow: 60%;
+  --total-fg: #fdfaf4;
+  --total-muted: #d2c5b6;
+  --total-subtle: #a99a8a;
+  --total-chip: rgb(253 250 244 / 0.12);
+  --total-icon: color-mix(in srgb, var(--accent) 45%, #fdfaf4);
+  --total-border: transparent;
 }
 
 /* 石墨 · 仪表 */
@@ -220,6 +258,18 @@
   --shadow-pop: 0 8px 24px 0 rgb(0 0 0 / 0.35);
   --shadow-pill: 0 8px 24px 0 rgb(0 0 0 / 0.35);
   --shadow-win: 0 24px 64px -20px rgb(0 0 0 / 0.45), 0 0 0 1px rgb(0 0 0 / 0.08);
+  /* Stat tiles (see the light theme). */
+  --tile-tint: 8%;
+  --tile-edge: 28%;
+  --total-from: var(--accent-soft);
+  --total-to: var(--surface);
+  --total-glow: 40%;
+  --total-fg: var(--fg);
+  --total-muted: #b2c2d6;
+  --total-subtle: #8796aa;
+  --total-chip: var(--accent);
+  --total-icon: var(--accent-fg);
+  --total-border: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 /* 强调色（设置 › 外观，本机）：ChatGPT / Codex 的强调色，浅色主题取浅档、深色主题取深档；
@@ -630,6 +680,47 @@
 
 @utility hairline {
   border: 1px solid var(--border);
+}
+/* The stat tiles (docs/dictation.md §4.5): today, this week and this month each mix their own hue
+   (the accent, ok, warning) into the surface; the total is the ink or accent-washed card the theme
+   defines (--total-*). Text inside reads --tile-fg / --tile-muted / --tile-subtle, the icon chip
+   --tile-soft / --tile-ink. */
+@utility stat-tile {
+  background: color-mix(in srgb, var(--tile-hue) var(--tile-tint), var(--surface));
+  border: 1px solid color-mix(in srgb, var(--tile-hue) var(--tile-edge), var(--surface));
+  --tile-fg: var(--fg);
+  --tile-muted: var(--fg-muted);
+  --tile-subtle: var(--fg-subtle);
+}
+@utility stat-tile-today {
+  --tile-hue: var(--accent);
+  --tile-soft: var(--accent-soft);
+  --tile-ink: var(--accent-text);
+}
+@utility stat-tile-week {
+  --tile-hue: var(--ok);
+  --tile-soft: var(--ok-soft);
+  --tile-ink: var(--ok-text);
+}
+@utility stat-tile-month {
+  --tile-hue: var(--warning);
+  --tile-soft: var(--warning-soft);
+  --tile-ink: var(--warning);
+}
+@utility stat-tile-total {
+  background:
+    radial-gradient(
+      circle at 88% 12%,
+      color-mix(in srgb, var(--accent) var(--total-glow), transparent),
+      transparent 70%
+    ),
+    linear-gradient(135deg, var(--total-from), var(--total-to));
+  border: 1px solid var(--total-border);
+  --tile-fg: var(--total-fg);
+  --tile-muted: var(--total-muted);
+  --tile-subtle: var(--total-subtle);
+  --tile-soft: var(--total-chip);
+  --tile-ink: var(--total-icon);
 }
 @utility eyebrow {
   font-family: var(--font-mono);

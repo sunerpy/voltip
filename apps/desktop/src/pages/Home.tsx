@@ -72,6 +72,13 @@ const CHIP_MENU =
 const TITLE_MENU =
   "-mx-1 inline-flex min-w-0 items-center gap-1.5 rounded-6 px-1 text-[13px] font-medium text-fg transition-colors hover:bg-inset";
 
+/** The hue each span's stat tile takes (tokens.css); the total has a card of its own. */
+const TILE_HUE: Partial<Record<HistoryFilter, string>> = {
+  today: "stat-tile-today",
+  week: "stat-tile-week",
+  month: "stat-tile-month",
+};
+
 /** How many paired phones the phone-microphone card lists before pointing at the devices page. */
 const HOME_DEVICE_ROWS = 3;
 /** Rows of the recent-results table at the least; a taller window shows more (`useRowsThatFit`). */
@@ -79,14 +86,20 @@ const RECENT_ROWS = 6;
 
 /** A span of time in the session panel: each number with its unit smaller, as the character
  *  counts beside it show theirs (docs/dictation.md §4.5). */
-function Duration({ ms, unitClassName = "text-[11px]" }: { ms: number; unitClassName?: string }) {
+function Duration({
+  ms,
+  unitClassName = "text-[11px] text-fg-muted",
+}: {
+  ms: number;
+  unitClassName?: string;
+}) {
   const { locale } = useI18n();
   return (
     <span data-testid="home-duration">
       {durationParts(ms, locale).map((part, i) => (
         <span key={part.unit} className={i > 0 ? "ml-1.5" : undefined}>
           {part.value}
-          <span className={cx("ml-1 font-normal text-fg-muted", unitClassName)}>{part.unit}</span>
+          <span className={cx("ml-1 font-normal", unitClassName)}>{part.unit}</span>
         </span>
       ))}
     </span>
@@ -786,78 +799,65 @@ export function Home() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {tiles.map((tile) => {
-          // The time saved is what a tile is for (user request 2026-10-10: 突出重点, and taller): a
-          // large figure under the span's name and icon, and today's tile in the accent, so it is
-          // read first.
-          const today = tile.filter === "today";
-          return (
-            <Card
-              key={tile.filter}
-              padding="none"
-              interactive
-              tone={today ? "accent" : "surface"}
-              role="button"
-              tabIndex={0}
-              aria-label={`${tile.eyebrow} ${tile.value}`}
-              data-current={today ? "true" : undefined}
-              onClick={() => {
-                openHistory(tile.filter);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") openHistory(tile.filter);
-              }}
-              className={cx(
-                "flex min-h-[116px] cursor-pointer flex-col justify-between gap-3 p-4",
-                today && "inset-ring-1 inset-ring-accent/40",
-              )}>
-              {/* The note (characters) sits beside the span's name, so the time saved has a line
-                  of its own: a long history saves hours (「79 小时 10 分」). */}
-              <span className="flex items-center justify-between gap-2">
-                <span className="inline-flex min-w-0 items-center gap-2.5">
-                  <span
-                    aria-hidden
-                    data-testid="home-tile-icon"
-                    className={cx(
-                      "grid size-7 shrink-0 place-items-center rounded-6",
-                      today ? "bg-accent text-accent-fg" : "bg-inset text-fg-muted",
-                    )}>
-                    <Icon name={tile.icon} size={15} />
-                  </span>
-                  <span
-                    className={cx(
-                      "truncate text-[13px] font-medium",
-                      today ? "text-accent-text" : "text-fg",
-                    )}>
-                    {tile.eyebrow}
-                  </span>
-                </span>
+        {tiles.map((tile) => (
+          // Each span in its own hue, the total an ink card lit by the accent (user decision
+          // 2026-10-10, Penpot 「Voltip 统计卡」 page 02, option C with total ①; tokens.css
+          // `stat-tile-*`): the four themes and the chosen accent decide the colours.
+          <div
+            key={tile.filter}
+            role="button"
+            tabIndex={0}
+            aria-label={`${tile.eyebrow} ${tile.value}`}
+            data-span={tile.filter}
+            onClick={() => {
+              openHistory(tile.filter);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") openHistory(tile.filter);
+            }}
+            className={cx(
+              "flex min-h-[138px] cursor-pointer flex-col justify-between gap-3 rounded-10 p-[18px] transition-shadow hover:shadow-pop",
+              tile.filter === "all"
+                ? "stat-tile-total"
+                : `stat-tile ${TILE_HUE[tile.filter] ?? ""}`,
+            )}>
+            <span className="flex items-center justify-between gap-2">
+              <span className="inline-flex min-w-0 items-center gap-2.5">
                 <span
-                  className="mono truncate text-[11px] text-fg-subtle"
-                  title={tile.secondary}
-                  data-testid="home-tile-note">
+                  aria-hidden
+                  data-testid="home-tile-icon"
+                  className="grid size-8 shrink-0 place-items-center rounded-6 bg-[var(--tile-soft)] text-[var(--tile-ink)]">
+                  <Icon name={tile.icon} size={17} />
+                </span>
+                <span className="truncate text-[14px] font-semibold text-[var(--tile-fg)]">
+                  {tile.eyebrow}
+                </span>
+              </span>
+              <span
+                className="truncate text-[11px] text-[var(--tile-subtle)]"
+                data-testid="home-tile-count">
+                {t("home.session.count", { n: formatCount(tile.count) })}
+              </span>
+            </span>
+            <span className="flex flex-col gap-2">
+              <span
+                className="mono text-[32px] leading-none font-semibold tracking-tight whitespace-nowrap text-[var(--tile-fg)]"
+                data-testid="home-tile-value">
+                <Duration ms={tile.savedMs} unitClassName="text-[14px] text-[var(--tile-muted)]" />
+              </span>
+              {/* The note (characters) closes the caption, so the time saved has a line of its
+                  own: a long history saves hours (「79 小时 10 分」). */}
+              <span
+                className="truncate text-[12px] text-[var(--tile-muted)]"
+                data-testid="home-tile-caption">
+                {t("home.session.saved")} ·{" "}
+                <span title={tile.secondary} data-testid="home-tile-note">
                   {tile.secondary}
                 </span>
               </span>
-              <span className="flex flex-col gap-1.5">
-                <span
-                  className={cx(
-                    "mono text-[30px] leading-none font-semibold tracking-tight whitespace-nowrap",
-                    today ? "text-accent-text" : "text-fg",
-                  )}
-                  data-testid="home-tile-value">
-                  <Duration ms={tile.savedMs} unitClassName="text-[14px]" />
-                </span>
-                <span
-                  className="truncate text-[12px] text-fg-muted"
-                  data-testid="home-tile-caption">
-                  {t("home.session.saved")} ·{" "}
-                  {t("home.session.count", { n: formatCount(tile.count) })}
-                </span>
-              </span>
-            </Card>
-          );
-        })}
+            </span>
+          </div>
+        ))}
       </div>
 
       <div ref={recentRef}>

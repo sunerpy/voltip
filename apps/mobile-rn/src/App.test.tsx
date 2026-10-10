@@ -6,6 +6,7 @@ import { MockBackend } from "@voltip/shared/mock";
 import state from "../../../packages/shared/src/fixtures/ipc/state.json";
 
 import { appTheme } from "./theme/themes";
+import { statTileColors } from "./ui/statTile";
 import { openTab, renderApp } from "./test/render";
 
 /** Press and release the hold-to-talk button, the finger staying on it. */
@@ -267,21 +268,23 @@ describe("the phone app on React Native", () => {
     expect(await screen.findByTestId("phone-entry-text")).toHaveTextContent(history[0]?.text ?? "");
   });
 
-  it("regression: 今天 leads the stat tiles in the accent, each with its icon and the time saved large", async () => {
-    // User request 2026-10-10: the 今天 / 本周 / 本月 / 总计 tiles should bring out what matters.
+  it("regression: each stat tile takes its span's hue and the total is the lit ink card", async () => {
+    // User decision 2026-10-10 (Penpot 「Voltip 统计卡」, option C with total ①).
     const history = historyEntrySchema.array().parse(state.history_recent);
     await renderApp({ backend: new MockBackend({ role: "phone", history }) });
     await openTab("history");
     const theme = appTheme("light");
-    const today = await screen.findByTestId("phone-history-stat-today");
-    expect(today).toHaveStyle({ backgroundColor: theme.colors.primaryContainer });
-    expect(today.props.accessibilityState).toEqual({ selected: true });
-    expect(within(today).getByTestId("phone-history-stat-current")).toBeOnTheScreen();
-    for (const id of ["week", "month", "total"]) {
-      const tile = screen.getByTestId(`phone-history-stat-${id}`);
-      expect(tile).toHaveStyle({ backgroundColor: theme.colors.surface });
-      expect(within(tile).queryByTestId("phone-history-stat-current")).toBeNull();
+    for (const id of ["today", "week", "month"] as const) {
+      const tile = await screen.findByTestId(`phone-history-stat-${id}`);
+      expect(tile).toHaveStyle({ backgroundColor: statTileColors(theme, id).background });
+      expect(within(tile).queryByTestId("phone-history-stat-glow")).toBeNull();
     }
+    const total = screen.getByTestId("phone-history-stat-total");
+    expect(within(total).getByTestId("phone-history-stat-glow")).toBeOnTheScreen();
+    expect(within(total).getByTestId("phone-history-stat-chip")).toHaveStyle({
+      backgroundColor: statTileColors(theme, "total").chip,
+    });
+    const today = screen.getByTestId("phone-history-stat-today");
     expect(within(today).getByTestId("phone-history-stat-saved")).toHaveTextContent(/^\d/);
     expect(within(today).getByTestId("phone-history-stat-caption")).toHaveTextContent(
       /^节省时间 · 听写 \d+ 次$/,
