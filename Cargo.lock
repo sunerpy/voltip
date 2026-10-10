@@ -7423,6 +7423,7 @@ dependencies = [
  "voltip-pairing",
  "voltip-platform",
  "voltip-refine",
+ "voltip-relay",
  "voltip-serve",
  "voltip-tauri-bridge",
  "windows-sys 0.61.2",
@@ -7498,6 +7499,7 @@ dependencies = [
  "voltip-identity",
  "voltip-pairing",
  "voltip-platform",
+ "voltip-relay",
  "voltip-tauri-bridge",
  "wiremock",
 ]

@@ -163,6 +163,9 @@ json-patch = { version = "=4.2.0", default-features = false }
 tempfile.workspace = true
 voltip-audio = { workspace = true, features = ["test-support"] }
 voltip-pairing.workspace = true
+# tests/ipc.rs: pairing runs only on a relay (docs/pairing.md 「只走中继」), so the pairing tests
+# start one in the process.
+voltip-relay = { workspace = true, features = ["server"] }
 wiremock.workspace = true
 
 [features]
