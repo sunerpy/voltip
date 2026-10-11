@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2](https://github.com/sunerpy/voltip/compare/v0.1.1...v0.1.2) (2026-10-11)
+
+
+### Bug Fixes
+
+* 最大化窗口的首页最近结果不再反复闪烁 ([#150](https://github.com/sunerpy/voltip/issues/150)) ([11f5f86](https://github.com/sunerpy/voltip/commit/11f5f867fec093dbd6841fb649d15a13e326aa72))
+* 小窗口里「依据」说明与首页菜单不再超出窗口 ([#152](https://github.com/sunerpy/voltip/issues/152)) ([f3c715b](https://github.com/sunerpy/voltip/commit/f3c715bb08710fa17ed3dd117ef400161540205b))
+
 ## [0.1.1](https://github.com/sunerpy/voltip/compare/v0.1.0...v0.1.1) (2026-10-11)
 
 
