@@ -12,6 +12,7 @@ import {
   durationParts,
   formatTakeLength,
   groupByDay,
+  startOfDay,
   isBuiltinPreset,
   modelDisplayName,
   outcomeLabel,
@@ -202,13 +203,12 @@ export function Home() {
   const stats = useHomeStats(now);
   const pageRef = useRef<HTMLDivElement>(null);
   const recentRef = useRef<HTMLDivElement>(null);
-  const recentRows = useRowsThatFit(
-    pageRef,
-    recentRef,
-    RECENT_ROWS,
-    state.history_recent.length,
-    "[data-recent-row]",
+  // Which entries open a new day: each brings its day's heading into the list.
+  const opensDay = state.history_recent.map(
+    (entry, i) =>
+      i === 0 || startOfDay(entry.at_ms) !== startOfDay(state.history_recent[i - 1]?.at_ms ?? 0),
   );
+  const recentRows = useRowsThatFit(pageRef, recentRef, RECENT_ROWS, opensDay);
   const recent = state.history_recent.slice(0, recentRows);
   const openHistory = (filter?: string) => {
     navigate(filter === undefined ? { name: "history" } : { name: "history", filter });
@@ -666,7 +666,7 @@ export function Home() {
             {t("home.recent.all")}
           </Button>
         </div>
-        <div ref={recentRef} className="mt-1">
+        <div ref={recentRef} className="mt-1" data-testid="home-recent-list">
           {recent.length === 0 ? (
             <EmptyState
               icon="mic"
@@ -678,7 +678,9 @@ export function Home() {
           ) : (
             groupByDay(recent, now, locale).map((group) => (
               <section key={group.day} aria-label={group.day}>
-                <h3 className="px-4 pt-2 pb-1 text-[12px] font-medium text-fg-subtle">
+                <h3
+                  data-recent-day
+                  className="px-4 pt-2 pb-1 text-[12px] font-medium text-fg-subtle">
                   {group.day}
                 </h3>
                 <ul className="flex flex-col">

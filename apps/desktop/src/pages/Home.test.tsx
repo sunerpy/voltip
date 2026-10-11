@@ -37,6 +37,91 @@ function fixedSizeOffenders(root: HTMLElement): string[] {
     .filter((cls) => FIXED_SIZE.test(cls));
 }
 
+/** The recent results' layout, which jsdom does not do: one row 60 px, a day heading 28 px, the
+ *  rest of the page 500 px. */
+const RECENT_ROW = 60;
+const RECENT_HEADING = 28;
+const RECENT_REST = 500;
+
+/** Stubs the scroll area's height and the page's boxes; `resize` sets the area and measures. */
+function recentLayout() {
+  let area = 0;
+  const observers = new Set<() => void>();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private readonly callback: () => void) {}
+      observe() {
+        observers.add(this.callback);
+      }
+      unobserve() {}
+      disconnect() {
+        observers.delete(this.callback);
+      }
+    },
+  );
+  const list = () => {
+    const box = document.querySelector('[data-testid="home-recent-list"]');
+    if (box === null) return 0;
+    return (
+      box.querySelectorAll("[data-recent-row]").length * RECENT_ROW +
+      box.querySelectorAll("[data-recent-day]").length * RECENT_HEADING
+    );
+  };
+  const clientHeight = vi
+    .spyOn(Element.prototype, "clientHeight", "get")
+    .mockImplementation(function (this: Element) {
+      return this.querySelector(':scope > [data-testid="page-home"]') === null ? 0 : area;
+    });
+  const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: Element,
+  ) {
+    const el = this as HTMLElement;
+    const height =
+      el.dataset.testid === "page-home"
+        ? RECENT_REST + list()
+        : el.dataset.testid === "home-recent-list"
+          ? list()
+          : el.hasAttribute("data-recent-row")
+            ? RECENT_ROW
+            : el.hasAttribute("data-recent-day")
+              ? RECENT_HEADING
+              : 0;
+    return new DOMRect(0, 0, 1000, height);
+  });
+  return {
+    resize(height: number) {
+      area = height;
+      act(() => {
+        for (const measure of observers) measure();
+      });
+    },
+    restore() {
+      clientHeight.mockRestore();
+      rect.mockRestore();
+      vi.unstubAllGlobals();
+    },
+  };
+}
+
+/** `count` dictations a minute apart, the newest at `at`; ids from `from`. */
+function takes(at: number, count: number, from = 0): HistoryEntry[] {
+  return Array.from({ length: count }, (_, i) => ({
+    id: `00000000-0000-4000-8000-${String(from + i).padStart(12, "0")}`,
+    at_ms: at - i * 60_000,
+    raw_text: `第${from + i}句`,
+    text: `第${from + i}句。`,
+    refined: false,
+    asr_model: "Qwen/Qwen3-ASR-1.7B",
+    duration_ms: 1000,
+    asr_ms: 100,
+    outcome: { kind: "inserted", via: "paste" },
+    starred: false,
+    mode: "whole_take",
+    kind: "dictation",
+  }));
+}
+
 /** The home statistics are "today / this week" by the real clock, so the sample history must be
  *  dated relative to the same clock as the page. */
 function liveClock() {
@@ -116,75 +201,59 @@ describe("Home page", () => {
 
   // User request 2026-10-01: on a tall window the rows left a large blank space under the list.
   it("regression: the recent results fill a tall window with more rows and give them back when the window shrinks", async () => {
-    const ROW = 26;
-    /** The page without the list's rows. */
-    const PAGE = 759 - 6 * ROW;
-    let area = 841;
-    const observers = new Set<() => void>();
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        constructor(private readonly callback: () => void) {}
-        observe() {
-          observers.add(this.callback);
-        }
-        unobserve() {}
-        disconnect() {
-          observers.delete(this.callback);
-        }
-      },
-    );
-    const rows = (root: ParentNode) => root.querySelectorAll("[data-recent-row]").length;
-    // The layout jsdom does not do: the scroll area is `area` tall, the page as tall as its rows
-    // make it, every row 26 px.
-    vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (this: Element) {
-      return this.querySelector(':scope > [data-testid="page-home"]') === null ? 0 : area;
-    });
-    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
-      this: HTMLElement,
-    ) {
-      return this.dataset.testid === "page-home" ? PAGE + ROW * rows(this) : 0;
-    });
-    vi.spyOn(HTMLLIElement.prototype, "getBoundingClientRect").mockReturnValue(
-      new DOMRect(0, 0, 1000, ROW),
-    );
-    const now = Date.now();
-    const history: HistoryEntry[] = Array.from({ length: 30 }, (_, i) => ({
-      id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
-      at_ms: now - i * 60_000,
-      raw_text: `第${i}句`,
-      text: `第${i}句。`,
-      refined: false,
-      asr_model: "Qwen/Qwen3-ASR-1.7B",
-      duration_ms: 1000,
-      asr_ms: 100,
-      outcome: { kind: "inserted", via: "paste" },
-      starred: false,
-      mode: "whole_take",
-      kind: "dictation",
-    }));
+    const layout = recentLayout();
     try {
+      const now = new Date(2026, 9, 11, 12).getTime();
+      renderApp({ mock: { now: () => now, history: takes(now, 30) } });
+      const card = await screen.findByTestId("home-recent");
+      const rows = () => card.querySelectorAll("[data-recent-row]").length;
+      // One day: its heading, then as many 60 px rows as the rest of the window holds.
+      layout.resize(841);
+      expect(rows()).toBe(5);
+      layout.resize(1021);
+      expect(rows()).toBe(8);
+      // Taller than thirty rows need: all thirty, the most the core sends.
+      layout.resize(2600);
+      expect(rows()).toBe(30);
+      // Back to a short window: the four rows of the board, the page scrolls as before.
+      layout.resize(600);
+      expect(rows()).toBe(4);
+    } finally {
+      layout.restore();
+    }
+  });
+
+  // User report 2026-10-11: a maximized window flickered for ever. With room for one row more, the
+  // 17th row came in and opened 昨天; its heading took the page past the bottom, the row went, the
+  // heading with it, and there was room again.
+  it("regression: at a day boundary the recent results settle on one count instead of flickering", async () => {
+    const layout = recentLayout();
+    try {
+      const now = new Date(2026, 9, 11, 12).getTime();
+      const history = [...takes(now, 16), ...takes(now - 24 * 3_600_000, 14, 16)];
       renderApp({ mock: { now: () => now, history } });
       const card = await screen.findByTestId("home-recent");
-      const resize = (height: number) => {
-        area = height;
-        act(() => {
-          for (const measure of observers) measure();
-        });
-      };
-      // 82 px under the rows hold three more.
-      resize(841);
-      expect(rows(card)).toBe(9);
-      resize(1021);
-      expect(rows(card)).toBe(16);
-      // Taller than thirty rows need: all thirty, the most the core sends.
-      resize(1600);
-      expect(rows(card)).toBe(30);
-      // Back to a short window: the four rows of the board, the page scrolls as before.
-      resize(600);
-      expect(rows(card)).toBe(4);
+      const rows = () => card.querySelectorAll("[data-recent-row]").length;
+      // Room for the heading, sixteen rows and 70 px: the 17th row would fit, 昨天 above it not.
+      const area = RECENT_REST + 1 + RECENT_HEADING + 16 * RECENT_ROW + 70;
+      const seen = new Set<number>();
+      for (let i = 0; i < 6; i++) {
+        // The browser measures again after every change of the page's height.
+        layout.resize(area);
+        seen.add(rows());
+      }
+      expect([...seen]).toEqual([16]);
+      expect(card.querySelectorAll("[data-recent-day]")).toHaveLength(1);
+      // With the heading's room too, the 17th row comes in under 昨天, and stays.
+      seen.clear();
+      for (let i = 0; i < 6; i++) {
+        layout.resize(area + RECENT_HEADING);
+        seen.add(rows());
+      }
+      expect([...seen]).toEqual([17]);
+      expect(card.querySelectorAll("[data-recent-day]")).toHaveLength(2);
     } finally {
-      vi.unstubAllGlobals();
+      layout.restore();
     }
   });
 
