@@ -809,7 +809,9 @@ mod tests {
         // A state serialized before the dictation fields existed still parses.
         let legacy = r#"{"identity":null,"settings":{"schema":1,"theme":"light","follow_system_theme":false,"relay_enabled":true},"secret_backend":"","relay":{"state":"disconnected","attempts":0},"pairing":{"state":{"state":"idle"},"local_confirmed":false,"peer_confirmed":false},"devices":[]}"#;
         let back: UiState = serde_json::from_str(legacy).unwrap();
-        assert_eq!(back, UiState::default());
+        // The stored theme stays (new installs start on 澄空, 0.1.1); everything else defaults.
+        let settings = Settings { theme: crate::ThemeId::Light, ..Settings::default() };
+        assert_eq!(back, UiState { settings, ..UiState::default() });
     }
 
     /// docs/dictation.md §16.4: the dictionary and the rules fold as lists (struct variants, like
