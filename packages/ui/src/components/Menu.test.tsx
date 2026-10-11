@@ -2,6 +2,21 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Menu, type MenuSection } from "./Menu";
 
+/** A box as `getBoundingClientRect()` reports it. */
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    top,
+    left,
+    width,
+    height,
+    bottom: top + height,
+    right: left + width,
+    x: left,
+    y: top,
+    toJSON: () => ({}),
+  };
+}
+
 const SECTIONS: MenuSection[] = [
   {
     label: "内置预设",
@@ -195,5 +210,70 @@ describe("Menu", () => {
     await user.click(within(menu).getByRole("menuitemradio", { name: "校对" }));
     expect(onSelect).toHaveBeenCalledWith("proofread");
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  // User report 2026-10-11: in a small window the home page's preset and microphone menus opened
+  // under their triggers and ran past the window's bottom, their last rows out of sight.
+  it("regression: a menu low in a short window opens above its trigger and scrolls inside the room the page's scroll area leaves it", async () => {
+    const user = userEvent.setup();
+    render(
+      // The page's scroll area: under the title bar and right of the sidebar of a 960 × 600 window.
+      <div data-testid="page" style={{ overflowY: "auto" }}>
+        <Menu
+          trigger="校对"
+          label="AI 预设"
+          sections={SECTIONS}
+          onSelect={vi.fn()}
+          data-testid="presets"
+        />
+      </div>,
+    );
+    const trigger = screen.getByRole("button", { name: "AI 预设" });
+    const page = screen.getByTestId("page");
+    const content = { width: 157, height: 290 };
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(960);
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(600);
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      if (this === page) return rect(246, 95, 714, 505);
+      return this === trigger.parentElement ? rect(378, 433, 90, 20) : rect(0, 0, 0, 0);
+    });
+    vi.spyOn(Element.prototype, "clientWidth", "get").mockImplementation(function (this: Element) {
+      return this === page ? 714 : 0;
+    });
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (this: Element) {
+      return this === page ? 505 : 0;
+    });
+    const isMenu = (el: Element) => el.getAttribute("role") === "menu";
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return isMenu(this) ? content.width : 0;
+    });
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: Element) {
+      return isMenu(this) ? content.height : 0;
+    });
+
+    // 135 px under the trigger, 326 above it: above, where all 290 px fit.
+    await user.click(trigger);
+    const menu = screen.getByTestId("presets-menu");
+    expect(menu).toHaveClass("bottom-full", "mb-1", "overflow-y-auto", "overflow-x-hidden");
+    expect(menu).not.toHaveClass("top-full");
+    expect(menu.style.maxHeight).toBe(`${433 - 4 - (95 + 8)}px`);
+    expect(menu.style.transform).toBe("");
+    await user.keyboard("{Escape}");
+
+    // Taller than either side: above, as tall as the room there, and it scrolls.
+    content.height = 480;
+    await user.click(trigger);
+    expect(screen.getByTestId("presets-menu")).toHaveClass("bottom-full");
+    expect(screen.getByTestId("presets-menu").style.maxHeight).toBe("326px");
+    await user.keyboard("{Escape}");
+
+    // Short enough for the room under the trigger: under it, as before.
+    content.height = 120;
+    await user.click(trigger);
+    expect(screen.getByTestId("presets-menu")).toHaveClass("top-full", "mt-1");
   });
 });

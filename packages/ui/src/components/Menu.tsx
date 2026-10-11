@@ -10,6 +10,7 @@ import {
 import { cx } from "../cx";
 import { usePresentation } from "../presentation/PresentationProvider";
 import { TOUCH_CONTROL, TOUCH_TARGET } from "../presentation/touch";
+import { fitStyle, useFitPanel } from "./fit-panel";
 import { Icon, type IconName } from "./Icon";
 
 /** One row of a `Menu`: a choice of a set (`radio`) or a command (`action`). */
@@ -45,7 +46,8 @@ export interface MenuProps {
   /** Which edge of the trigger the menu lines up with. */
   align?: "start" | "end";
   /** Where the list opens: under the trigger, or above it (a trigger at the window's bottom edge,
-   *  the sidebar's theme button). */
+   *  the sidebar's theme button). It takes the other side when it does not fit on this one and
+   *  the other has more room (`fitPanel`). */
   side?: "bottom" | "top";
   /** Classes of the wrapper around the trigger and the list (`flex-1` in a row of buttons). */
   className?: string;
@@ -60,7 +62,11 @@ export interface MenuProps {
 /** A button that opens a list of choices under it (the WAI-ARIA menu button): Enter, Space or ↓
  *  open it with the checked choice (else the first) focused; ↑ ↓ Home End move; Enter or a click
  *  picks; Esc, Tab or a click elsewhere close it and give the focus back to the button. Rows never
- *  wrap: the list is as wide as its longest row (docs/frontend.md, one line when there is room). */
+ *  wrap: the list is as wide as its longest row (docs/frontend.md, one line when there is room).
+ *  The list stays in the window: it opens above the trigger when it does not fit under it and
+ *  there is more room above, scrolls inside when it is taller than the room it has, and moves
+ *  back from the window's edge (user report 2026-10-11: in a short window the home page's menus
+ *  ran past its bottom). */
 export function Menu({
   trigger,
   label,
@@ -81,6 +87,7 @@ export function Menu({
   const menuId = useId();
   const wrapper = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLDivElement>(null);
   const items = useRef<(HTMLButtonElement | null)[]>([]);
   /** The row the menu focuses once it is open: the checked choice, else the first one that can be
    *  chosen. */
@@ -95,6 +102,7 @@ export function Menu({
     setOpen(false);
     if (refocus) button.current?.focus();
   }, []);
+  const fit = useFitPanel(open, wrapper, list, side, align);
 
   const openMenu = () => {
     const checked = flat.findIndex((i, at) => i.kind === "radio" && i.checked && choosable(at));
@@ -205,6 +213,7 @@ export function Menu({
       </button>
       {open && (
         <div
+          ref={list}
           id={menuId}
           role="menu"
           aria-label={label}
@@ -213,10 +222,12 @@ export function Menu({
           data-tauri-drag-region="false"
           onKeyDown={onMenuKey}
           data-testid={testId === undefined ? undefined : `${testId}-menu`}
-          // The UI font whatever the trigger sits in (the title bar's readout is mono).
+          style={fitStyle(fit)}
+          // The UI font whatever the trigger sits in (the title bar's readout is mono). Capped to
+          // the room it has, the list scrolls up and down only: it is as wide as its rows.
           className={cx(
-            "absolute z-50 flex w-max min-w-full flex-col rounded-10 border border-raised-edge bg-raised py-1 font-ui whitespace-nowrap shadow-win glass-blur",
-            side === "top" ? "bottom-full mb-1" : "top-full mt-1",
+            "absolute z-50 flex w-max min-w-full flex-col overflow-x-hidden overflow-y-auto overscroll-contain rounded-10 border border-raised-edge bg-raised py-1 font-ui whitespace-nowrap shadow-win glass-blur",
+            (fit?.side ?? side) === "top" ? "bottom-full mb-1" : "top-full mt-1",
             align === "end" ? "right-0" : "left-0",
           )}>
           {sections.map((section, s) => (

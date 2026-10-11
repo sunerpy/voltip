@@ -90,3 +90,59 @@ export function revealScrollTop(
     next = row.top + row.height - view.height;
   return Math.min(Math.max(next, 0), Math.max(view.scrollHeight - view.height, 0));
 }
+
+/** Which side of its trigger an absolutely placed panel opens on (`Menu`'s list, `Popover`'s
+ *  explanation). */
+export type PanelSide = "bottom" | "top";
+
+export interface PanelFitInput {
+  trigger: Box;
+  /** The panel's width, and the height its content needs (all of it, not what a cap shows). */
+  panel: Size;
+  /** The panel's left edge where its alignment puts it, before any shift. */
+  left: number;
+  /** What the panel must stay inside: the window, less what a scrolling ancestor hides. */
+  bounds: Box;
+  /** The side the panel is asked to open on. */
+  side: PanelSide;
+  gap?: number;
+  margin?: number;
+}
+
+/** Where the panel ends up: its side, how far it moves sideways from where its alignment put it
+ *  (px, negative to the left) and the tallest it may be, past which it scrolls inside. */
+export interface PanelFit {
+  side: PanelSide;
+  shift: number;
+  maxHeight: number;
+}
+
+/** Keeps a panel that opens next to its trigger inside `bounds` (user report 2026-10-11: in a
+ *  small window the 依据 explanation ran off the window, and the home page's menus past its
+ *  bottom). It opens on the side it is asked to unless its content does not fit there and the
+ *  other side has more room, it is at most as tall as the room on its side, and it moves sideways
+ *  as little as keeps it inside: back from the right edge first, and never past the left one (a
+ *  panel wider than the bounds starts at the left edge). */
+export function fitPanel({
+  trigger,
+  panel,
+  left,
+  bounds,
+  side,
+  gap = LIST_GAP,
+  margin = LIST_MARGIN,
+}: PanelFitInput): PanelFit {
+  const below = Math.max(bounds.bottom - margin - (trigger.bottom + gap), 0);
+  const above = Math.max(trigger.top - gap - (bounds.top + margin), 0);
+  const [room, other] = side === "bottom" ? [below, above] : [above, below];
+  const flip = panel.height > room && other > room;
+  const shift = Math.max(
+    bounds.left + margin - left,
+    Math.min(0, bounds.right - margin - (left + panel.width)),
+  );
+  return {
+    side: flip ? (side === "bottom" ? "top" : "bottom") : side,
+    shift,
+    maxHeight: flip ? other : room,
+  };
+}
