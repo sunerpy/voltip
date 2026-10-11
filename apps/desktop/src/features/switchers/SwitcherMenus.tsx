@@ -21,6 +21,8 @@ export interface SwitcherMenuProps {
   /** What the button shows; each menu has a title-bar default (the compact mono readout). */
   trigger?: ReactNode;
   triggerClassName?: string;
+  /** Classes of the menu's wrapper (hidden below a breakpoint in the title bar's polish chip). */
+  className?: string;
   align?: "start" | "end";
   title?: string;
   "data-testid"?: string;
@@ -63,6 +65,7 @@ export function ReadoutTrigger({
 export function SpeechModelMenu({
   trigger,
   triggerClassName,
+  className,
   align,
   title,
   "data-testid": testId,
@@ -90,6 +93,7 @@ export function SpeechModelMenu({
       title={title ?? readout.title}
       sections={speechMenuSections(state.engines, state.models, t, locale)}
       align={align}
+      className={className}
       triggerClassName={triggerClassName ?? BAR_TRIGGER}
       data-testid={testId}
       onSelect={(id) => {
@@ -119,6 +123,7 @@ export function usePolishModelName(): string {
 export function PolishModelMenu({
   trigger,
   triggerClassName,
+  className,
   align,
   title,
   "data-testid": testId,
@@ -136,6 +141,7 @@ export function PolishModelMenu({
       title={title ?? (state.engines.refine_model || name)}
       sections={polishMenuSections(state.engines, t)}
       align={align}
+      className={className}
       triggerClassName={triggerClassName ?? BAR_TRIGGER}
       data-testid={testId}
       onSelect={(id) => {
@@ -183,6 +189,7 @@ export function useMicrophoneName(devices: readonly AudioDevice[]): string {
 export function MicrophoneMenu({
   trigger,
   triggerClassName,
+  className,
   align,
   title,
   withSource = false,
@@ -225,6 +232,7 @@ export function MicrophoneMenu({
         locale,
       )}
       align={align}
+      className={className}
       onOpen={load}
       triggerClassName={triggerClassName ?? BAR_TRIGGER}
       data-testid={testId}

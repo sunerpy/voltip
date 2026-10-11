@@ -108,6 +108,8 @@ describe("tokens.css", () => {
       "sidebar",
       "sidebar-edge",
       "sidebar-shadow",
+      "field-shadow",
+      "row-active-shadow",
       "glass-blur",
       "primary-glow",
       "r-panel",

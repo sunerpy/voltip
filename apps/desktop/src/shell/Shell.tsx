@@ -1,18 +1,21 @@
-import { isBuiltinPreset, presetLabel } from "@voltip/shared";
+import { formatCount, formatDuration, isBuiltinPreset, presetLabel } from "@voltip/shared";
 import {
   Button,
   CommandPalette,
   cx,
   Dialog,
+  floatingTheme,
   Icon,
   isThemeId,
-  Keycaps,
   Lamp,
+  Popover,
   type ThemeChoice,
   TitleBar,
   ToastViewport,
   useBackend,
+  useHomeStats,
   useI18n,
+  useNow,
   useRelayRecheck,
   useUiState,
 } from "@voltip/ui";
@@ -50,7 +53,14 @@ export function PolishToggle({ className }: { className?: string }) {
   const tooltip = on ? t("shell.polish.tooltipOn") : t("shell.polish.tooltipOff");
   const preset = state.settings.engines.refine_preset;
   return (
-    <div className={cx("inline-flex items-center", className)}>
+    // A pill on the header's line (Penpot 「澄空 Glass · Voltip」 board 01): the switch, a rule, the
+    // preset and, where the window is wide enough, the model.
+    <div
+      data-testid="polish-chip"
+      className={cx(
+        "inline-flex h-12 items-center gap-1 rounded-pill border border-field-edge bg-field px-3 shadow-field",
+        className,
+      )}>
       <button
         type="button"
         data-testid="polish-toggle"
@@ -62,20 +72,24 @@ export function PolishToggle({ className }: { className?: string }) {
             engines: { ...state.settings.engines, refine_enabled: !on },
           });
         }}
-        className="inline-flex h-7 items-center gap-1.5 rounded-6 px-1.5 text-fg-muted transition-colors hover:bg-inset hover:text-fg">
-        <Icon name="wand" size={16} className={on ? "text-accent-text" : "text-fg-subtle"} />
+        className="inline-flex h-9 items-center gap-2 rounded-pill px-2 text-fg-muted transition-colors hover:bg-inset hover:text-fg">
+        <Icon name="wand" size={18} className={on ? "text-primary" : "text-fg-subtle"} />
         <span
           data-testid="polish-toggle-label"
-          className={cx("text-[12px] whitespace-nowrap", on ? "text-fg" : "text-fg-muted")}>
+          className={cx(
+            "text-[14px] font-medium whitespace-nowrap",
+            on ? "text-fg" : "text-fg-muted",
+          )}>
           {t("shell.polish.label")}
         </span>
         <Lamp tone={on ? "ok" : "idle"} size={6} />
       </button>
+      <span aria-hidden className="mx-1 h-5 w-px bg-border" />
       <PresetMenu
         align="end"
         data-testid="polish-preset"
         triggerClassName={cx(
-          "inline-flex h-7 items-center gap-1 rounded-6 px-1.5 text-[12px] whitespace-nowrap transition-colors hover:bg-inset hover:text-fg",
+          "inline-flex h-9 items-center gap-1 rounded-pill px-2 text-[13px] font-medium whitespace-nowrap transition-colors hover:bg-inset hover:text-fg",
           on ? "text-fg" : "text-fg-muted",
         )}
         trigger={
@@ -92,8 +106,9 @@ export function PolishToggle({ className }: { className?: string }) {
       <PolishModelMenu
         align="end"
         data-testid="polish-model"
+        className="hidden xl:inline-flex"
         triggerClassName={cx(
-          "mono inline-flex h-7 max-w-[160px] min-w-0 items-center gap-1 rounded-6 px-1.5 text-[11px] transition-colors hover:bg-inset hover:text-fg",
+          "mono inline-flex h-9 max-w-[160px] min-w-0 items-center gap-1 rounded-pill px-2 text-[11px] transition-colors hover:bg-inset hover:text-fg",
           on ? "text-fg-muted" : "text-fg-subtle",
         )}
       />
@@ -101,27 +116,14 @@ export function PolishToggle({ className }: { className?: string }) {
   );
 }
 
-export function FooterShortcuts({ items }: { items: readonly (readonly [string, string])[] }) {
-  return (
-    <footer className="mono flex h-7 shrink-0 items-center gap-1 overflow-hidden border-t border-border px-6 text-[11px] text-fg-subtle whitespace-nowrap">
-      {items.map(([keys, label], i) => (
-        <span key={`${keys}-${label}`} className="flex items-center gap-1.5">
-          {i > 0 && <span className="px-1">·</span>}
-          <Keycaps keys={keys} />
-          <span>{label}</span>
-        </span>
-      ))}
-    </footer>
-  );
-}
-
-/** Sidebar 224 + title bar 40 + content, plus the global palette, confirm dialog and toasts. The
+/** The floating sidebar (232, inset 16) + the page header + content on the canvas, plus the global
+ *  palette, confirm dialog and toasts (Penpot 「澄空 Glass · Voltip」 board 01, every theme). The
  *  main window is frameless (tauri.conf.json `decorations: false`; macOS keeps its traffic lights
- *  via tauri.macos.conf.json), so the 40 px strip formed by the sidebar brand row and the title
- *  bar *is* the window title bar: one continuous drag region with the window controls at the far
- *  right on Windows / Linux. The title bar carries the title, the compact speech model · microphone
- *  readout right after it (two menus that switch them in place, user request 2026-09-30), the
- *  search icon and the AI 润色 toggle with its preset and model; there is no second header row. */
+ *  via tauri.macos.conf.json), so the sidebar's brand row and the page header *are* the window
+ *  title bar: drag regions, with the window controls in the top-right corner on Windows / Linux.
+ *  The header carries the title over its subtitle (home: today's summary; other pages: the speech
+ *  model and microphone menus, user request 2026-09-30), the `Ctrl K` command field and the AI 润色
+ *  chip with its preset and model. */
 export function Shell({
   children,
   traySource,
@@ -143,6 +145,9 @@ export function Shell({
   const chrome = useWindowChrome(state.identity?.platform);
   const dictation = useDictation();
   const sidebar = useSidebarLayout();
+  // The home page's subtitle counts today's takes (the same query as the page's tiles); `useNow`
+  // is in seconds.
+  const today = useHomeStats(useNow() * 1000);
 
   const meta = useMemo(
     () =>
@@ -275,7 +280,7 @@ export function Shell({
   }, [shell, appearance]);
 
   return (
-    <div className="flex h-full min-h-0 bg-canvas text-fg">
+    <div className="app-canvas flex h-full min-h-0 text-fg">
       {!sheet && (
         <ShellSidebar
           route={route}
@@ -312,14 +317,37 @@ export function Shell({
         ) : (
           <TitleBar
             title={meta.title}
-            readout={
-              // The speech model (with its lamp) and the microphone, each a menu that switches it.
-              <>
-                <SpeechModelMenu data-testid="title-bar-speech" />
-                <span aria-hidden>·</span>
-                <MicrophoneMenu withSource data-testid="title-bar-mic" />
-              </>
+            subtitle={
+              route.name === "home" ? (
+                // Board 01: today's takes and time saved, and the size of the history; 依据 says
+                // how the time saved is estimated (docs/dictation.md §4.5).
+                <span className="flex min-w-0 items-baseline gap-1.5">
+                  <span data-testid="title-bar-summary" className="truncate">
+                    {t("shell.subtitle.home", {
+                      n: formatCount(today.today.count),
+                      saved: formatDuration(today.today.savedMs, i18n.locale),
+                      total: formatCount(state.history_total),
+                    })}
+                  </span>
+                  <Popover
+                    trigger={t("home.session.basis")}
+                    label={t("home.session.basisLabel")}
+                    data-testid="home-saved-basis"
+                    triggerClassName="shrink-0 text-accent-text underline decoration-accent/40 underline-offset-2 hover:decoration-accent">
+                    {t("home.session.basisText")}
+                  </Popover>
+                </span>
+              ) : (
+                // Every other page keeps the speech model (with its lamp) and the microphone, each
+                // a menu that switches it (user request 2026-09-30).
+                <span className="mono flex min-w-0 items-center gap-1.5 text-[11px]">
+                  <SpeechModelMenu data-testid="title-bar-speech" />
+                  <span aria-hidden>·</span>
+                  <MicrophoneMenu withSource data-testid="title-bar-mic" />
+                </span>
+              )
             }
+            subtitleLabel={route.name === "home" ? undefined : t("ui.titleBar.readout")}
             left={
               sidebar.layout.hidden ? <RevealSidebarButton onReveal={sidebar.reveal} /> : undefined
             }
@@ -343,9 +371,6 @@ export function Shell({
           />
         )}
         <main className="min-h-0 flex-1 overflow-auto">{children}</main>
-        {!sheet && (
-          <FooterShortcuts items={[["Ctrl K", t("shell.footer.command")], ...meta.shortcuts]} />
-        )}
       </div>
       <CommandPalette
         open={shell.paletteOpen}
@@ -387,7 +412,11 @@ export function Shell({
           shell.setUpdateOpen(false);
         }}
       />
-      <ToastViewport toasts={shell.toasts.toasts} onDismiss={shell.toasts.dismiss} />
+      <ToastViewport
+        toasts={shell.toasts.toasts}
+        onDismiss={shell.toasts.dismiss}
+        theme={floatingTheme(appearance.resolvedTheme)}
+      />
     </div>
   );
 }

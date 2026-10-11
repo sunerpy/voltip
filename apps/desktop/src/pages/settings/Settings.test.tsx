@@ -484,7 +484,7 @@ describe("Settings · 热键", () => {
     );
   });
 
-  it("regression: the activation cards write settings_set_activation with all three values; the threshold field appears only for 按住或按一下, the tail field always, both snap to the 50 ms grid and clamp to the core's cap; the hint, the home chip and the footer follow the mode", async () => {
+  it("regression: the activation cards write settings_set_activation with all three values; the threshold field appears only for 按住或按一下, the tail field always, both snap to the 50 ms grid and clamp to the core's cap; the hint, the home chip and the home hint follow the mode", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/settings/hotkey" });
     await screen.findByTestId("hotkey-recorder");
@@ -556,11 +556,13 @@ describe("Settings · 热键", () => {
     expect(screen.getByTestId("activation-hint")).toHaveTextContent(
       "按住 Ctrl Alt Space 说话，短按锁定",
     );
-    // The chip on the home page and the footer follow the mode (the dialog floats over home).
+    // The 听写 card's chip and hint follow the mode (the dialog floats over home).
     await user.keyboard("{Escape}");
     expect(screen.getByRole("button", { name: "按住说话 · 短按锁定" })).toBeInTheDocument();
-    expect(screen.getByText("按住或按一下听写")).toBeInTheDocument();
-    expect(screen.queryByText("按住听写")).toBeNull();
+    expect(screen.getByTestId("home-hint")).toHaveTextContent(
+      "松开即结束，短按锁定继续录音 · 文字插入到当前光标处",
+    );
+    expect(screen.queryByText("按住说话")).toBeNull();
     // Pure helper: snap, clamp, fall back.
     expect(clampActivationMs("470", HOLD_THRESHOLD_RANGE, 300)).toBe(450);
     expect(clampActivationMs("10", HOLD_THRESHOLD_RANGE, 300)).toBe(50);

@@ -46,6 +46,13 @@ export const SYSTEM_DARK_THEME: ThemeId = "glass_dark";
 /** A new install's theme (`voltip_core::Settings::default()`), and what an unknown value reads as. */
 export const DEFAULT_THEME: ThemeId = "glass";
 
+/** The theme a surface floating over the page or over other windows takes (the dictation pill,
+ *  toasts): in 澄空 its dark twin 夜空, dark glass that reads on any background (Penpot 「澄空 Glass
+ *  · Voltip」 board 02); every other theme keeps its own. */
+export function floatingTheme(theme: ThemeId): ThemeId {
+  return theme === "glass" ? "glass_dark" : theme;
+}
+
 /** Whether `theme` is one of the dark themes (`color-scheme: dark`). */
 export function isDarkTheme(theme: ThemeId): boolean {
   return theme === "dark" || theme === "graphite" || theme === "glass_dark";

@@ -52,7 +52,7 @@ export const en: Messages = {
       pin: "Pin the sidebar",
       edge: "Show the sidebar",
     },
-    themeSwitch: { label: "Theme", next: "Switch to {theme}" },
+    themeSwitch: { label: "Theme" },
     dialog: { escCancel: "Cancel" },
     drawer: { close: "Close" },
     palette: {
@@ -343,7 +343,16 @@ export const en: Messages = {
       tooltipOn: "AI polish · on · click to turn it off",
       tooltipOff: "AI polish · off · click to turn it on",
     },
-    footer: { command: "Commands" },
+    /** The sidebar's status card (Penpot 「澄空 Glass · Voltip」 board 01). */
+    status: {
+      relay: "Relay · {state}",
+      phones: "Phones · {paired} paired · {online} online",
+      none: "No phone paired yet · pair one",
+      e2ee: "End-to-end encrypted with your phones",
+      open: "Open the Phone page",
+    },
+    /** The home page's line under its title: today and the whole history. */
+    subtitle: { home: "Today {n} takes · {saved} saved · {total} in history" },
     backHome: "Back to home",
     toast: {
       historyEmpty: "History is empty · nothing to copy",
@@ -375,23 +384,6 @@ export const en: Messages = {
       onboarding: "Setup guide / step {n}",
       overlay: "Overlay",
       notfound: "Not found",
-    },
-    shortcut: {
-      history: "History",
-      settings: "Settings",
-      search: "Search",
-      copy: "Copy",
-      delete: "Delete",
-      newEntry: "New entry",
-      newRule: "New rule",
-      runDryRun: "Test run",
-      save: "Save",
-      cancel: "Cancel",
-      regenerateQr: "Regenerate QR code",
-      continue: "Continue",
-      previous: "Previous",
-      later: "Set up later",
-      dictate: "Dictate",
     },
     readout: {
       history: "History",
@@ -432,6 +424,17 @@ export const en: Messages = {
     },
   },
   home: {
+    /** The 听写 card (Penpot 「澄空 Glass · Voltip」 board 01): how the chord drives a take and where the
+     *  text goes. */
+    hero: {
+      eyebrow: "Dictation",
+      hint: {
+        hold: "Release to finish: the text {target} · Esc cancels",
+        toggle: "Press again to finish: the text {target} · Esc cancels",
+        hold_or_toggle: "Release to finish, a short press keeps recording · the text {target}",
+      },
+      target: { paste: "goes to the cursor", clipboard: "is copied to the clipboard" },
+    },
     permission: {
       title: "One system permission is missing",
       accessibility:
@@ -456,11 +459,6 @@ export const en: Messages = {
       readyDetail: "Microphone, shortcut and recognition ready",
       readyDetailLocal: "Microphone, shortcut and local model ready",
     },
-    chip: {
-      provider: "{provider} · {model}",
-      local: "This device · {model}",
-      notReady: "not ready",
-    },
     button: {
       cancel: "Cancel",
       stop: "Stop",
@@ -469,38 +467,19 @@ export const en: Messages = {
       processingTitle: "The previous recording is still being processed",
     },
     mic: {
-      eyebrow: "Recording source",
-      source: "Record",
-      systemDevice: "Computer audio · {name}",
-      systemDefaultDevice: "Computer audio · system default output",
-      systemFacts: "microphone not used",
-      alsoSystem: "Also recording computer audio · {name}",
-      systemHint:
-        "Dictation records the sound your computer plays; nothing is recorded while idle.",
-      mixedHint:
-        "Wear headphones if you use speakers, so the microphone does not pick them up again.",
-      mixedEchoHint:
-        "Speaker echo is removed. At high speaker volume, headphones are still recommended.",
       unavailable: "Unavailable",
       recording: "Recording",
       testing: "Testing · {n} s",
       idle: "Idle · microphone closed",
       enumerating: "Detecting microphones…",
-      systemDefault: "system default",
-      selected: "selected",
       missing: "The chosen microphone is not connected · using the system default",
       test: "Test microphone",
       stopTest: "Stop test",
-      idleHint:
-        "The microphone stays closed while idle. Press Test microphone and say a few words to check that the strength bar moves.",
-      testingHint: "Say a few words; the strength bar should move · stops automatically in {n} s",
-      recordingHint: "Strength of this dictation's recording",
-      devices: { one: "{n} input device", other: "{n} input devices" },
       peak: "Peak {value}",
     },
     engine: {
-      eyebrow: "Speech model",
-      configure: "Configure speech models",
+      cardTitle: "Recognition and polish",
+      configureShort: "Configure",
       waiting: "Loading the speech model…",
       detail: "{provider} · language {language}",
       local: "Local",
@@ -508,45 +487,20 @@ export const en: Messages = {
       localReady: "model ready",
       localMissing: "model not downloaded",
       auto: "auto",
-      refineModel: "Polish model",
-      preset: "AI preset",
-      inject: "Insert method",
-      injectPaste: "Paste at the cursor",
-      injectClipboard: "Copy to clipboard only",
-      injectChange: "Change it in Settings › Dictation",
       refineOn: "AI polish on · {model}",
       refineOff: "AI polish off",
-      privacyAudio: "Audio goes to {target}",
-      privacyLocal: "Audio never leaves this machine",
       privacyText: " · text goes to {target}",
       livePreview: "Live preview",
       liveDegraded: "Live preview stopped · the final text is unaffected",
     },
-    devices: {
-      eyebrow: "Phone · devices",
-      unpaired: "Not paired",
-      offline: "Offline",
-      paired: "{n} paired",
-      none: "No phone paired yet · pair one",
-      more: "{n} more · see the Phone page",
-      relay: "Relay · {state}",
-      open: "Open the Phone page",
-    },
     session: {
-      eyebrow: "Today",
-      raw: "Characters transcribed",
-      corrected: "Characters corrected",
-      charsUnit: "",
-      spoken: "Speaking time",
       saved: "Time saved",
       /** The session panel's secondary line, two parts that each stay on one line. */
       count: "Dictations: {n}",
-      latency: "average latency {latency}",
       basis: "Basis",
       basisLabel: "How time saved is estimated",
       basisText:
         "Time saved = speaking time × 1.9. Basis: in the experiments of Ruan et al. 2016 (arXiv:1608.07323), speaking was about 2.9 times as fast as typing on a phone (English 153 vs 52 words per minute, Chinese 123 vs 43). Only dictations kept in the history are counted.",
-      heatmap: "Last 6 weeks · by day",
     },
     tiles: {
       today: "Today",
@@ -556,20 +510,12 @@ export const en: Messages = {
       saved: "{time} saved",
       recordingOff: "History off",
     },
-    table: {
-      actions: "Actions",
-      time: "Time",
-      text: "Text",
-      engine: "Model",
-      duration: "Length",
-      asr: "Transcription",
-      refine: "Polish",
-    },
     recent: {
       title: "Recent results",
       all: "View all →",
       emptyTitle: "No dictation yet",
       emptyBody: "Finished dictations show up here, newest first.",
+      details: "Details",
     },
   },
   history: {

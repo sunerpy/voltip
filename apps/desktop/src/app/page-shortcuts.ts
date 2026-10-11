@@ -28,9 +28,9 @@ export function withCommand(e: KeyboardEvent): boolean {
   return e.ctrlKey || e.metaKey;
 }
 
-/** The page's own keyboard shortcuts (the ones its footer lists). `handler` returns `true` when it
- *  used the key, which then does nothing else (no browser find, reload or copy). Skipped while a
- *  modal is open and for key repeats. */
+/** The page's own keyboard shortcuts (its buttons show them as keycaps). `handler` returns `true`
+ *  when it used the key, which then does nothing else (no browser find, reload or copy). Skipped
+ *  while a modal is open and for key repeats. */
 export function usePageShortcuts(handler: (e: KeyboardEvent) => boolean): void {
   const latest = useRef(handler);
   useEffect(() => {

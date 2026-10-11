@@ -48,7 +48,7 @@ describe("Devices page", () => {
     expect(page.className).toMatch(/lg:grid-cols-\[minmax\(0,1fr\)_minmax\(300px,380px\)\]/);
     expect(fixedSizeOffenders(page)).toEqual([]);
     // The pairing panel's QR / code / countdown state and the key-exchange state are fluid too.
-    await user.click(screen.getByRole("button", { name: "开始配对" }));
+    await user.click(screen.getByRole("button", { name: /^开始配对/ }));
     expect(fixedSizeOffenders(page)).toEqual([]);
     expect(page.querySelector('[aria-label="正在生成二维码"]')).toHaveClass("w-[168px]");
     await act(async () => {
@@ -250,7 +250,7 @@ describe("Devices page", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     const { backend } = mount({ devices: [] });
     expect(await screen.findByText("尚未配对手机")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "开始配对" }));
+    await user.click(screen.getByRole("button", { name: /^开始配对/ }));
     expect(screen.getByTestId("pairing-panel")).toHaveAttribute("data-phase", "creating_session");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
@@ -295,7 +295,7 @@ describe("Devices page", () => {
   it("regression: countdown reaching zero shows the expired state with a 重新生成 action that restarts", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     mount({ devices: [] });
-    await user.click(await screen.findByRole("button", { name: "开始配对" }));
+    await user.click(await screen.findByRole("button", { name: /^开始配对/ }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300 + 119_000);
     });
@@ -307,7 +307,7 @@ describe("Devices page", () => {
     expect(screen.getByTestId("pairing-countdown")).toHaveTextContent("00:00 / 02:00");
     expect(screen.getAllByText("已过期").length).toBeGreaterThan(0);
     expect(screen.getByRole("img", { name: "配对二维码" })).toHaveClass("opacity-40");
-    await user.click(screen.getByRole("button", { name: "重新生成" }));
+    await user.click(screen.getByRole("button", { name: /^重新生成/ }));
     expect(screen.getByTestId("pairing-panel")).toHaveAttribute("data-phase", "creating_session");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
@@ -320,12 +320,19 @@ describe("Devices page", () => {
     const { backend } = mount({ devices: [] });
     await screen.findByText("尚未配对手机");
     const panel = () => screen.getByTestId("pairing-panel");
+    // With the shell's shortcut footer gone (board 01, 0.1.1) the buttons the key presses show it.
+    expect(
+      within(screen.getByRole("button", { name: /^开始配对/ })).getByLabelText("Ctrl R"),
+    ).toBeInTheDocument();
     await user.keyboard("{Control>}r{/Control}");
     expect(panel()).toHaveAttribute("data-phase", "creating_session");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
     expect(panel()).toHaveAttribute("data-phase", "waiting_for_peer");
+    expect(
+      within(screen.getByRole("button", { name: /^重新生成二维码/ })).getByLabelText("Ctrl R"),
+    ).toBeInTheDocument();
     const code = screen.getByTestId("pairing-code").textContent;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
@@ -351,7 +358,7 @@ describe("Devices page", () => {
   it("regression: rejection ends the session and the peer's rejection is reflected too", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     const { backend } = mount({ devices: [] });
-    await user.click(await screen.findByRole("button", { name: "开始配对" }));
+    await user.click(await screen.findByRole("button", { name: /^开始配对/ }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
@@ -363,13 +370,13 @@ describe("Devices page", () => {
     });
     await user.click(screen.getByRole("button", { name: "拒绝" }));
     expect(screen.getByText("配对已被拒绝，本次配对已取消。")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "重新开始" }));
+    await user.click(screen.getByRole("button", { name: /^重新开始/ }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
     await user.click(screen.getByRole("button", { name: "取消" }));
     expect(screen.getByText(/配对失败 · 已取消/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "重新开始" }));
+    await user.click(screen.getByRole("button", { name: /^重新开始/ }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
@@ -384,7 +391,7 @@ describe("Devices page", () => {
     const writeText = vi.fn(() => Promise.resolve());
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     mount({ devices: [] });
-    await user.click(await screen.findByRole("button", { name: "开始配对" }));
+    await user.click(await screen.findByRole("button", { name: /^开始配对/ }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
@@ -463,7 +470,7 @@ describe("Devices page", () => {
     const { backend } = mount();
     await screen.findByRole("table", { name: "已配对设备" });
     expect(screen.queryByRole("switch", { name: /局域网发现/ })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "开始配对" }));
+    await user.click(screen.getByRole("button", { name: /^开始配对/ }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });

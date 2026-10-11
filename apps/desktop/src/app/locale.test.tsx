@@ -43,6 +43,11 @@ const ROUTES = [
  *  English below. */
 const ENGLISH_ROUTES = ROUTES.filter(([path]) => path !== "/overlay");
 
+/** Routes whose page and dialog carry no eyebrow at all: home (Penpot 「澄空 Glass · Voltip」 board
+ *  01 titles its cards instead) and the two settings groups that float over it with none of their
+ *  own. Every other route must have some, so the eyebrow checks never pass by finding nothing. */
+const PAGES_WITHOUT_EYEBROWS = ["/", "/settings/general", "/settings/about"];
+
 /** An eyebrow that is only ASCII capitals / punctuation: `SETTINGS`, `DRY RUN`, `SELF-CHECK`. */
 const ASCII_CAPS = /^[A-Z][A-Z0-9 &·/'-]{2,}$/;
 /** A Chinese phrase followed by an English gloss: `语音识别 · ASR`, `访问令牌 · Bearer`. */
@@ -221,11 +226,13 @@ function uiText(root: HTMLElement): string {
 
 describe("locale", () => {
   it("regression: switching the locale to English re-renders the shell, home, history, engines, settings and onboarding without CJK text", async () => {
+    const bare: string[] = [];
     for (const [path, , title] of ENGLISH_ROUTES) {
       const { unmount } = renderApp({ path, backend: englishBackend() });
       expect(await screen.findByRole("heading", { name: title, level: 1 })).toBeInTheDocument();
-      // The microphone readout resolves asynchronously; wait so its text is part of the sweep.
-      await screen.findByText("Fifine K669");
+      // The microphone resolves asynchronously (the title bar's short name, the home card's full
+      // one); wait so its text is part of the sweep.
+      await screen.findAllByText(/^Fifine K669/);
       await waitFor(() => expect(document.documentElement.lang).toBe("en-US"));
       const shell = document.body;
       const text = uiText(shell);
@@ -235,7 +242,7 @@ describe("locale", () => {
       ).toBeUndefined();
       // Eyebrows are UI copy too: every one of them is English under `en`.
       const eyebrows = eyebrowTexts(shell);
-      expect(eyebrows.length).toBeGreaterThan(0);
+      if (eyebrows.length === 0) bare.push(path);
       expect(eyebrows.filter((e) => CJK.test(e)).map((e) => `${path}: ${e}`)).toEqual([]);
       // Every title / aria-label / placeholder attribute is UI copy too.
       const attributes = [...shell.querySelectorAll("[title], [aria-label], [placeholder]")]
@@ -246,20 +253,24 @@ describe("locale", () => {
       expect(attributes.filter((value) => CJK.test(value)).map((v) => `${path}: ${v}`)).toEqual([]);
       unmount();
     }
+    // The sweep is not vacuous: every page has eyebrows to check but the ones board 01 drew
+    // without any.
+    expect(bare).toEqual(PAGES_WITHOUT_EYEBROWS);
   });
 
   it("regression: under zh-CN no page shows an ASCII-caps eyebrow or an English gloss after a Chinese title", async () => {
     // User 2026-09-25: with a language switch in place the UI must not mix the two languages —
     // no `SETTINGS` over 设置, no `LOCAL MODELS · 本地模型`, no `语音识别 · ASR`.
     const offending: string[] = [];
+    const bare: string[] = [];
     for (const [path, title] of ROUTES) {
       const { unmount } = renderApp({ path, systemLanguage: "zh-CN" });
       expect(await screen.findByRole("heading", { name: title, level: 1 })).toBeInTheDocument();
       if (path === "/overlay") await screen.findByTestId("page-overlay");
-      else await screen.findByText("Fifine K669");
+      else await screen.findAllByText(/^Fifine K669/);
       await waitFor(() => expect(document.documentElement.lang).toBe("zh-CN"));
       const labels = eyebrowTexts(document.body);
-      expect(labels.length).toBeGreaterThan(0);
+      if (labels.length === 0) bare.push(path);
       // The settings dialog's group nav: the tabs carry the Chinese group name and nothing else.
       const nav = document.querySelector('[role="dialog"] nav');
       if (nav) {
@@ -287,6 +298,7 @@ describe("locale", () => {
       unmount();
     }
     expect(offending).toEqual([]);
+    expect(bare).toEqual(PAGES_WITHOUT_EYEBROWS);
   });
 
   it("regression: dictation failure codes are localized on the home page and the live pill", async () => {

@@ -290,7 +290,7 @@ export function Onboarding({ step }: OnboardingProps) {
       : gate.includes("microphone")
         ? t("onboarding.permission.micDenied")
         : t("onboarding.permission.axMissing");
-  // The footer's keys: Enter is the step's primary button (when it is enabled), Shift Enter goes
+  // The page's keys: Enter is the step's primary button (when it is enabled), Shift Enter goes
   // back, Esc is 稍后. Fields and focused buttons keep their own Enter / Esc.
   const primary = (): (() => void) | undefined => {
     if (current === 1) return gate.length > 0 ? undefined : () => go(2);

@@ -102,7 +102,7 @@ export function PairingPanel({
               {t("pairing.alwaysOnIdle")}
             </LampText>
           )}
-          <Button variant="primary" onClick={onStart} icon="qr">
+          <Button variant="primary" onClick={onStart} icon="qr" keys="Ctrl R">
             {t("pairing.start")}
           </Button>
         </div>
@@ -173,7 +173,7 @@ export function PairingPanel({
               {t("pairing.warning")}
             </div>
             <div className="mt-auto flex flex-wrap items-center gap-2">
-              <Button variant="primary" onClick={onRegenerate} icon="refresh">
+              <Button variant="primary" onClick={onRegenerate} icon="refresh" keys="Ctrl R">
                 {phase === "expired" ? t("pairing.regenerate") : t("pairing.regenerateQr")}
               </Button>
               {phase === "waiting_for_peer" && (
@@ -274,7 +274,7 @@ export function PairingPanel({
                 })}
           </LampText>
           {alwaysOn && <p className="text-[12px] text-fg-muted">{t("pairing.alwaysOnNext")}</p>}
-          <Button variant="primary" onClick={onStart} icon="refresh">
+          <Button variant="primary" onClick={onStart} icon="refresh" keys="Ctrl R">
             {t("pairing.restart")}
           </Button>
         </div>

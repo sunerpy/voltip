@@ -1,16 +1,16 @@
 import { THEME_IDS, type ThemeId } from "@voltip/shared";
-import { useId } from "react";
-import { cx } from "../cx";
 import { useT } from "../i18n/I18nProvider";
 import { Icon, type IconName } from "./Icon";
-import { SIDEBAR_GLYPH_SLOT_CLASS, SIDEBAR_ROW_CLASS } from "./Sidebar";
+import { Menu } from "./Menu";
+import { SIDEBAR_FOOTER_BUTTON_CLASS } from "./Sidebar";
 
 /** A theme, or following the system's light / dark preference. */
 export type ThemeChoice = ThemeId | "system";
 
-/** The order the glyph steps through, and the menu's order. */
+/** The menu's order: following the system, then 澄空 and 夜空, then the classic four. */
 export const THEME_CHOICES: readonly ThemeChoice[] = ["system", ...THEME_IDS];
 
+/** The choice after `choice` in the menu's order, wrapping around (the command palette's 下一个). */
 export function nextThemeChoice(choice: ThemeChoice): ThemeChoice {
   const i = THEME_CHOICES.indexOf(choice);
   return THEME_CHOICES[(i + 1) % THEME_CHOICES.length] ?? "system";
@@ -29,72 +29,40 @@ const GLYPH: Record<ThemeChoice, IconName> = {
 export interface ThemeSwitchProps {
   value: ThemeChoice;
   onChange: (choice: ThemeChoice) => void;
-  /** In the icon rail only the glyph is left. */
-  collapsed?: boolean;
 }
 
-/** The sidebar's theme entry: two controls in one sidebar row. The glyph steps to the next theme
- *  at a click (its name says which one comes next); the name next to it is a menu of all seven choices.
- *  They stay two elements because one element with two gestures would open the menu at every
- *  step. The row has the box of every other entry (`SIDEBAR_ROW_CLASS`) and one hover surface;
- *  the glyph button covers exactly the glyph slot, so the glyph and the name line up with 反馈 and
- *  设置 (user feedback 2026-09-28). */
-export function ThemeSwitch({ value, onChange, collapsed = false }: ThemeSwitchProps) {
+/** The sidebar's theme button (board 01, between 反馈 and 设置): the glyph of the current choice,
+ *  opening a menu of the seven choices above it (the button sits at the window's bottom edge). Its
+ *  name says the current choice, so the glyph alone never has to. */
+export function ThemeSwitch({ value, onChange }: ThemeSwitchProps) {
   const t = useT();
-  const menuId = useId();
   const name = (choice: ThemeChoice) =>
     choice === "system" ? t("theme.followSystem") : t(`theme.name.${choice}`);
-  const next = nextThemeChoice(value);
-  const stepLabel = t("ui.themeSwitch.next", { theme: name(next) });
+  const label = `${t("ui.themeSwitch.label")} · ${name(value)}`;
   return (
-    <div
+    <Menu
       data-testid="theme-switch"
-      data-theme-choice={value}
-      className={cx(
-        SIDEBAR_ROW_CLASS,
-        "group text-fg-muted hover:bg-nav-active hover:text-fg",
-        collapsed && "justify-center",
-      )}>
-      <button
-        type="button"
-        aria-label={stepLabel}
-        title={stepLabel}
-        data-testid="theme-switch-step"
-        onClick={() => {
-          onChange(next);
-        }}
-        className={cx(
-          "flex h-9 shrink-0 items-center rounded-6 text-fg-subtle outline-none group-hover:text-fg focus-visible:bg-nav-active",
-          collapsed ? "w-full justify-center" : SIDEBAR_GLYPH_SLOT_CLASS,
-        )}>
-        <Icon name={GLYPH[value]} size={16} />
-      </button>
-      {!collapsed && (
-        <div className="relative flex h-9 min-w-0 flex-1 items-center">
-          <label htmlFor={menuId} className="sr-only">
-            {t("ui.themeSwitch.label")}
-          </label>
-          <select
-            id={menuId}
-            value={value}
-            onChange={(e) => {
-              const choice = THEME_CHOICES.find((c) => c === e.target.value);
-              if (choice !== undefined) onChange(choice);
-            }}
-            className="h-9 w-full appearance-none truncate rounded-6 bg-transparent pr-8 pl-0 text-[13px] text-inherit outline-none focus-visible:bg-nav-active">
-            {THEME_CHOICES.map((c) => (
-              <option key={c} value={c}>
-                {name(c)}
-              </option>
-            ))}
-          </select>
-          <Icon
-            name="chevronDown"
-            size={14}
-            className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-fg-subtle"
-          />
-        </div>
-      )}
-    </div>
+      label={t("ui.themeSwitch.label")}
+      triggerLabel={label}
+      title={label}
+      side="top"
+      className="w-full"
+      triggerClassName={SIDEBAR_FOOTER_BUTTON_CLASS}
+      trigger={<Icon name={GLYPH[value]} size={18} />}
+      sections={[
+        {
+          items: THEME_CHOICES.map((choice) => ({
+            kind: "radio" as const,
+            id: choice,
+            label: name(choice),
+            checked: choice === value,
+          })),
+        },
+      ]}
+      onSelect={(id) => {
+        const choice = THEME_CHOICES.find((c) => c === id);
+        if (choice !== undefined) onChange(choice);
+      }}
+    />
   );
 }

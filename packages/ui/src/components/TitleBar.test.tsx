@@ -3,13 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { Mock } from "vitest";
 import { I18nProvider } from "../i18n/I18nProvider";
 import { TRAFFIC_LIGHTS_CLEARANCE } from "./Sidebar";
-import {
-  TITLE_BAR_HEIGHT,
-  TITLE_BAR_READOUT_MAX,
-  TITLE_BAR_SEARCH_LABEL,
-  TitleBar,
-  type TitleBarControls,
-} from "./TitleBar";
+import { TITLE_BAR_SEARCH_LABEL, TitleBar, type TitleBarControls } from "./TitleBar";
 
 function controls(): TitleBarControls & {
   [K in keyof TitleBarControls]-?: Mock<() => void>;
@@ -22,25 +16,14 @@ function controls(): TitleBarControls & {
   };
 }
 
-const READOUTS = [
-  { label: "引擎", value: "精确 · SenseVoice", lamp: "ok" as const },
-  { label: "麦克风", value: "Fifine K669" },
-  {
-    label: "Bridge",
-    value: "运行中 · 2 客户端",
-    lamp: "ok" as const,
-    mono: true,
-    title: "127.0.0.1:47823",
-  },
-];
-
 describe("TitleBar", () => {
-  it("regression: the title bar carries only the title, search icon, polish icon and window controls", async () => {
+  it("is the page header of board 01: the title over its subtitle, the command field, the right slot and the window controls", async () => {
     const user = userEvent.setup();
     const onSearch = vi.fn();
     render(
       <TitleBar
         title="首页"
+        subtitle="今天听写 6 次 · 节省 3 分 16 秒 · 历史记录 1,286 条"
         onSearch={onSearch}
         right={<button type="button" aria-label="AI 润色 · 开/关" />}
         platform="windows"
@@ -48,22 +31,27 @@ describe("TitleBar", () => {
         className="extra"
       />,
     );
-    expect(TITLE_BAR_HEIGHT).toBe(40);
     const bar = screen.getByTestId("title-bar");
-    expect(bar).toHaveClass("h-10", "extra");
-    expect(screen.getByRole("heading", { name: "首页", level: 1 })).toBeInTheDocument();
-    // User feedback 2026-09-25: no readouts, no 220 px search field, no sample-data chip here.
-    expect(bar.querySelectorAll("[data-tone]")).toHaveLength(0);
-    expect(screen.queryByText("Ctrl K")).toBeNull();
-    expect(screen.queryByText(/示例/)).toBeNull();
+    expect(bar).toHaveClass("extra");
+    expect(bar.tagName).toBe("HEADER");
+    const heading = screen.getByRole("heading", { name: "首页", level: 1 });
+    expect(heading).toHaveClass("text-[26px]", "font-bold");
+    expect(screen.getByTestId("title-bar-subtitle")).toHaveTextContent(
+      "今天听写 6 次 · 节省 3 分 16 秒 · 历史记录 1,286 条",
+    );
+    // The subtitle is text here, so it is no group.
+    expect(screen.getByTestId("title-bar-subtitle")).not.toHaveAttribute("role");
+    // The command field is a pill naming what it does, with the shortcut in keycaps.
     const search = screen.getByTestId("title-bar-search");
     expect(search).toHaveAttribute("aria-label", TITLE_BAR_SEARCH_LABEL);
     expect(search).toHaveAttribute("title", "搜索或输入命令 · Ctrl K");
+    expect(search).toHaveClass("rounded-pill", "bg-field", "h-12");
+    expect(search).toHaveTextContent("输入命令或页面…");
+    expect(within(search).getByLabelText("Ctrl K")).toBeInTheDocument();
     expect(search.querySelector("svg[data-icon='search']")).toBeInTheDocument();
-    expect(search).toHaveStyle({ width: "28px", height: "28px" });
-    await user.click(screen.getByRole("button", { name: /搜索或输入命令/ }));
+    await user.click(search);
     expect(onSearch).toHaveBeenCalledOnce();
-    // Exactly: search · polish · minimize · maximize · close.
+    // Exactly: search · polish · minimize · maximize · close, all inside the one header.
     expect([...bar.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual([
       TITLE_BAR_SEARCH_LABEL,
       "AI 润色 · 开/关",
@@ -71,9 +59,10 @@ describe("TitleBar", () => {
       "最大化",
       "关闭",
     ]);
+    expect(bar.nextElementSibling).toBeNull();
   });
 
-  it("marks the whole bar as a deep Tauri drag region and tags the platform", () => {
+  it("marks the whole header as a deep Tauri drag region and tags the platform", () => {
     render(<TitleBar title="首页" platform="windows" />);
     const bar = screen.getByTestId("title-bar");
     // `deep` (not the bare attribute): the bare form only drags on the container's own pixels,
@@ -83,8 +72,9 @@ describe("TitleBar", () => {
     expect(bar.querySelectorAll("[data-tauri-drag-region]")).toHaveLength(0);
     // Tauri's injected script toggles maximize on double-click; a second handler would undo it.
     expect(bar).not.toHaveAttribute("ondblclick");
-    // No search, no right slot, no controls: nothing clickable.
+    // No search, no right slot, no controls: nothing clickable, and no subtitle line.
     expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.queryByTestId("title-bar-subtitle")).toBeNull();
   });
 
   it("hides the window controls without a Tauri window (plain browser) and on macOS", () => {
@@ -99,29 +89,33 @@ describe("TitleBar", () => {
   });
 
   it("regression: at the window's left edge on macOS the title starts clear of the traffic lights", () => {
-    // User feedback 2026-09-29 (the lights crowded what sat next to them): the same 80 px, in px,
-    // as the sidebar brand row, whatever the 字号 setting makes a rem.
+    // User feedback 2026-09-29 (the lights crowded what sat next to them): the same clearance, in
+    // px, as the sidebar brand row, whatever the 字号 setting makes a rem.
     const { rerender } = render(<TitleBar title="首页" platform="macos" trafficLights />);
-    const row = screen.getByRole("heading", { name: "首页" }).parentElement;
-    expect(row).toHaveClass(`pl-[${TRAFFIC_LIGHTS_CLEARANCE}px]`);
+    expect(screen.getByTestId("title-bar")).toHaveClass(`pl-[${TRAFFIC_LIGHTS_CLEARANCE}px]`);
     rerender(<TitleBar title="首页" platform="macos" />);
-    expect(screen.getByRole("heading", { name: "首页" }).parentElement).toHaveClass("pl-6");
+    expect(screen.getByTestId("title-bar")).toHaveClass("pl-6");
+    rerender(
+      <TitleBar title="首页" platform="macos" left={<button type="button">显示侧栏</button>} />,
+    );
+    expect(screen.getByTestId("title-bar")).toHaveClass("pl-3");
   });
 
   it.each(["windows", "linux", "unknown"] as const)(
-    "draws minimize · maximize · close on %s and forwards each click once",
+    "draws minimize · maximize · close in the top-right corner on %s and forwards each click once",
     async (platform) => {
       const user = userEvent.setup();
       const c = controls();
       render(<TitleBar title="首页" platform={platform} controls={c} />);
       const cluster = screen.getByTestId("window-controls");
+      expect(cluster).toHaveClass("absolute", "top-0", "right-0");
       const buttons = cluster.querySelectorAll("button");
       expect([...buttons].map((b) => b.getAttribute("aria-label"))).toEqual([
         "最小化",
         "最大化",
         "关闭",
       ]);
-      for (const b of buttons) expect(b).toHaveClass("w-11.5", "h-full");
+      for (const b of buttons) expect(b).toHaveClass("w-10", "h-full");
       expect(cluster.querySelector("svg[data-icon='minimize']")).toBeInTheDocument();
       expect(cluster.querySelector("svg[data-icon='maximize']")).toBeInTheDocument();
       expect(cluster.querySelector("svg[data-icon='close']")).toBeInTheDocument();
@@ -163,35 +157,40 @@ describe("TitleBar", () => {
     expect(c.startDragging).toHaveBeenCalledTimes(2);
   });
 
-  it("regression: the title bar shows the compact engine and microphone readout inline and no second header row", () => {
-    const { rerender } = render(<TitleBar title="首页" readouts={READOUTS} platform="windows" />);
-    expect(TITLE_BAR_READOUT_MAX).toBe(2);
-    const bar = screen.getByTestId("title-bar");
-    // Inline, inside the drag strip, mono and subtle, hidden below `md`, at most two items.
-    const readout = screen.getByTestId("title-bar-readout");
-    expect(bar).toContainElement(readout);
-    expect(readout).toHaveClass(
-      "mono",
-      "text-[11px]",
-      "text-fg-subtle",
-      "hidden",
-      "md:flex",
-      "truncate",
+  it("regression: the speech model and microphone menus sit on the subtitle line, a named group that does not clip the menus they open", () => {
+    // User request 2026-09-30 (switch them in place, on the title bar); board 01 puts them under
+    // the title, in the same header.
+    render(
+      <TitleBar
+        title="历史记录"
+        subtitle={
+          <>
+            <button type="button">Qwen3-ASR-1.7B</button>
+            <button type="button">Fifine K669</button>
+          </>
+        }
+        subtitleLabel="语音模型与麦克风"
+        platform="windows"
+      />,
     );
-    expect(readout).toHaveAttribute("aria-label", "语音模型与麦克风");
-    expect(readout).toHaveTextContent("精确 · SenseVoice·Fifine K669");
-    expect(screen.queryByText(/运行中/)).toBeNull();
-    expect(readout.querySelectorAll("[data-tone='ok']")).toHaveLength(1);
-    expect(screen.getByTitle("引擎 · 精确 · SenseVoice")).toBeInTheDocument();
-    // Labels stay in the tooltip: the bar itself never prints them.
-    expect(screen.queryByText("引擎")).toBeNull();
-    expect(screen.queryByTestId("page-header")).toBeNull();
+    const bar = screen.getByTestId("title-bar");
+    const line = screen.getByTestId("title-bar-subtitle");
+    expect(bar).toContainElement(line);
+    expect(line).toHaveAttribute("role", "group");
+    expect(line).toHaveAttribute("aria-label", "语音模型与麦克风");
+    // A menu opens below its button: the box must not hide what overflows it.
+    expect(line).not.toHaveClass("truncate");
+    expect(line).not.toHaveClass("overflow-hidden");
+    expect(
+      within(line)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Qwen3-ASR-1.7B", "Fifine K669"]);
     expect(bar.nextElementSibling).toBeNull();
-    // No readout: nothing but the title (and the flexible spacer).
-    rerender(<TitleBar title="首页" readouts={[]} platform="windows" />);
-    expect(screen.queryByTestId("title-bar-readout")).toBeNull();
-    // The window control labels follow the locale.
-    rerender(
+  });
+
+  it("follows the locale", () => {
+    render(
       <I18nProvider locale="en">
         <TitleBar title="Home" onSearch={vi.fn()} platform="windows" controls={controls()} />
       </I18nProvider>,
@@ -202,39 +201,6 @@ describe("TitleBar", () => {
       "Maximize",
       "Close",
     ]);
-  });
-
-  it("puts controls in the readout's place when given, inline, without clipping the menus they open", () => {
-    render(
-      <TitleBar
-        title="首页"
-        readouts={READOUTS}
-        readout={
-          <>
-            <button type="button">Qwen3-ASR-1.7B</button>
-            <button type="button">Fifine K669</button>
-          </>
-        }
-        platform="windows"
-      />,
-    );
-    const bar = screen.getByTestId("title-bar");
-    const readout = screen.getByTestId("title-bar-readout");
-    expect(bar).toContainElement(readout);
-    expect(readout).toHaveAttribute("role", "group");
-    expect(readout).toHaveAttribute("aria-label", "语音模型与麦克风");
-    expect(readout).toHaveClass("mono", "text-[11px]", "hidden", "md:flex");
-    // A menu opens below its button: the box must not hide what overflows it.
-    expect(readout).not.toHaveClass("truncate");
-    expect(readout).not.toHaveClass("overflow-hidden");
-    expect(
-      within(readout)
-        .getAllByRole("button")
-        .map((b) => b.textContent),
-    ).toEqual(["Qwen3-ASR-1.7B", "Fifine K669"]);
-    // The slot replaces the text readouts; there is still only one strip.
-    expect(screen.queryByText("精确 · SenseVoice")).toBeNull();
-    expect(bar.nextElementSibling).toBeNull();
   });
 
   it("tolerates controls without a drag fallback", () => {

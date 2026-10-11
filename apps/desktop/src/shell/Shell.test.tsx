@@ -20,18 +20,20 @@ describe("Shell", () => {
     expect(await screen.findByText(`「${phone.name}」解除了与这台设备的配对`)).toBeInTheDocument();
   });
 
-  it("renders sidebar, title-bar readouts and footer shortcuts; navigates via the sidebar", async () => {
+  it("renders the sidebar and the page header, and no footer; navigates via the sidebar", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp();
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "首页", level: 1 })).toBeInTheDocument();
     });
-    // The compact readout sits on the title bar and names the core's engine, never a fixture.
-    const header = await screen.findByTestId("title-bar-readout");
-    expect(within(header).getByText("Qwen3-ASR-1.7B")).toBeInTheDocument();
-    expect(within(header).getByTitle("内置服务 · Qwen/Qwen3-ASR-1.7B · 就绪")).toBeInTheDocument();
-    // The 麦克风 readout is the device the native meter enumerated (async), not a fixture.
-    expect(await within(header).findByText("Fifine K669")).toBeInTheDocument();
+    // Board 01 (Penpot 「澄空 Glass · Voltip」): home's subtitle sums up today, the other pages' names
+    // the speech model and the microphone (below). The shortcut footer is gone; the buttons a page
+    // key presses show their keycaps.
+    expect(screen.getByTestId("title-bar-summary")).toHaveTextContent(
+      /^今天听写 [\d,]+ 次 · 节省 .+ · 历史记录 [\d,]+ 条$/,
+    );
+    expect(screen.queryByTestId("title-bar-speech")).toBeNull();
+    expect(document.querySelector("footer")).toBeNull();
     expect(screen.queryByText(/精确 · SenseVoice/)).toBeNull();
     // regression (2026-09-25): Bridge & MCP was removed — no nav item, no readout, no shortcut.
     expect(screen.queryByRole("button", { name: /Bridge/ })).toBeNull();
@@ -44,6 +46,13 @@ describe("Shell", () => {
     await user.click(screen.getByRole("button", { name: /^语音模型$/ }));
     expect(await screen.findByTestId("page-speech")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
+    // The subtitle names the core's engine and the device the native meter enumerated (async),
+    // never a fixture.
+    const readout = screen.getByTestId("title-bar-subtitle");
+    expect(readout).toHaveAccessibleName("语音模型与麦克风");
+    expect(within(readout).getByText("Qwen3-ASR-1.7B")).toBeInTheDocument();
+    expect(within(readout).getByTitle("内置服务 · Qwen/Qwen3-ASR-1.7B · 就绪")).toBeInTheDocument();
+    expect(await within(readout).findByText("Fifine K669")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "语音模型", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "语音模型", level: 2 })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^语音模型$/ })).toHaveAttribute(
@@ -183,26 +192,93 @@ describe("Shell", () => {
     window.localStorage.removeItem("voltip.sidebar");
   });
 
-  it("regression: the footer's theme switch steps through the themes at the glyph and picks one from its menu", async () => {
+  it("regression: the sidebar's theme button opens the seven choices above it and picks one", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp();
     await screen.findByRole("heading", { name: "首页", level: 1 });
     const footer = screen.getByTestId("sidebar-footer");
-    // A new install is on 澄空; the glyph steps to its dark twin 夜空.
-    await user.click(within(footer).getByRole("button", { name: "切换到夜空" }));
+    // Board 01: 反馈 · 主题 · 设置, three square buttons; the theme's names the current choice. A
+    // new install is on 澄空.
+    expect(
+      within(footer)
+        .getAllByRole("button")
+        .map((b) => b.getAttribute("aria-label")),
+    ).toEqual(["反馈", "主题 · 澄空", "设置"]);
+    const open = async () => {
+      await user.click(within(footer).getByTestId("theme-switch"));
+      return within(footer).getByRole("menu", { name: "主题" });
+    };
+    let menu = await open();
+    expect(
+      within(menu)
+        .getAllByRole("menuitemradio")
+        .map((item) => item.textContent),
+    ).toEqual(["跟随系统", "澄空", "夜空", "明亮", "暗黑", "暖纸", "石墨"]);
+    expect(within(menu).getByRole("menuitemradio", { name: "澄空" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await user.click(within(menu).getByRole("menuitemradio", { name: "夜空" }));
     await waitFor(() => {
       expect(backend.peek().settings.theme).toBe("glass_dark");
     });
     expect(document.documentElement.dataset.theme).toBe("glass_dark");
-    await user.selectOptions(within(footer).getByRole("combobox", { name: "主题" }), "system");
+    expect(within(footer).getByTestId("theme-switch")).toHaveAccessibleName("主题 · 夜空");
+    menu = await open();
+    await user.click(within(menu).getByRole("menuitemradio", { name: "跟随系统" }));
     await waitFor(() => {
       expect(backend.peek().settings.follow_system_theme).toBe(true);
     });
     expect(backend.peek().settings.theme).toBe("glass_dark");
-    await user.selectOptions(within(footer).getByRole("combobox", { name: "主题" }), "warm");
+    expect(within(footer).getByTestId("theme-switch")).toHaveAccessibleName("主题 · 跟随系统");
+    menu = await open();
+    await user.click(within(menu).getByRole("menuitemradio", { name: "暖纸" }));
     await waitFor(() => {
       expect(backend.peek().settings).toMatchObject({ theme: "warm", follow_system_theme: false });
     });
+  });
+
+  it("regression: the sidebar's status card reads the core's relay and phones and opens 手机", async () => {
+    // Board 01 moved the home page's 手机 card into the sidebar, over 反馈 · 主题 · 设置.
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByRole("heading", { name: "首页", level: 1 });
+    // renderApp's core: Pixel 8 online, MacBook Pro offline, relay not configured.
+    const card = screen.getByTestId("sidebar-status-card");
+    expect(card).toHaveTextContent("中继 · 未配置");
+    expect(card).toHaveTextContent("手机 · 2 台已配对 · 1 台在线");
+    expect(card).toHaveTextContent("与手机之间端到端加密");
+    expect(card).toHaveAttribute("title", "打开「手机」页");
+    expect(card.querySelector("[data-tone]")).toHaveAttribute("data-tone", "idle");
+    await user.click(card);
+    expect(screen.getByRole("heading", { name: "手机", level: 1 })).toBeInTheDocument();
+    // The icon rail has no room for it.
+    await user.click(screen.getByRole("button", { name: "收起为图标栏" }));
+    expect(screen.queryByTestId("sidebar-status-card")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "展开侧栏" }));
+    expect(screen.getByTestId("sidebar-status-card")).toBeInTheDocument();
+    window.localStorage.removeItem("voltip.sidebar");
+  });
+
+  it("regression: with no paired phone the status card leads to pairing, and its lamp follows the relay", async () => {
+    const user = userEvent.setup();
+    renderApp({
+      backend: new MockBackend({
+        devices: [],
+        relay: {
+          state: "reconnecting",
+          attempts: 2,
+          endpoint: "wss://relay.example.test",
+          source: "user",
+        },
+      }),
+    });
+    const card = await screen.findByTestId("sidebar-status-card");
+    expect(card).toHaveTextContent("尚未配对手机 · 去配对");
+    expect(card).toHaveTextContent("中继 · 重连中 · 第 2 次");
+    expect(card.querySelector("[data-tone]")).toHaveAttribute("data-tone", "warn");
+    await user.click(card);
+    expect(screen.getByRole("heading", { name: "手机", level: 1 })).toBeInTheDocument();
   });
 
   it("opens the command palette with Ctrl K, previews and applies a theme, and navigates", async () => {
@@ -360,20 +436,52 @@ describe("Shell", () => {
     expect(await screen.findByText("Pixel 8：hi from pixel")).toBeInTheDocument();
   });
 
-  it("regression: the title bar shows the compact engine and microphone readout inline and no second header row", async () => {
+  it("regression: the page header is board 01's (the title over its subtitle, the Ctrl K field, the AI 润色 chip) and there is no second header row", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp();
     await screen.findByRole("heading", { name: "首页", level: 1 });
-    // Windows test 2026-09-24: the app drew its own toolbar under the native title bar. The strip
-    // now *is* the title bar: one `deep` drag region continued by the sidebar brand row. User
-    // feedback 2026-09-25 (round two): the facts come back, but simplified and on the bar itself —
-    // a compact engine · microphone readout right after the title — never as a second header row.
-    const bar = screen.getByTestId("title-bar");
+    // Windows test 2026-09-24: the app drew its own toolbar under the native title bar. The header
+    // *is* the title bar: one `deep` drag region, and the sidebar's brand row another.
+    let bar = screen.getByTestId("title-bar");
     expect(bar).toHaveAttribute("data-tauri-drag-region", "deep");
-    expect(bar).toHaveClass("h-10");
-    expect(within(bar).getByRole("heading", { name: "首页", level: 1 })).toBeInTheDocument();
-    // User request 2026-09-30: the speech model and the microphone are menus in the readout, and
-    // the model the clean-up runs on follows the preset (option A of the design, 2026-10-01).
+    expect(within(bar).getByRole("heading", { name: "首页", level: 1 })).toHaveClass(
+      "text-[26px]",
+      "font-bold",
+    );
+    // Home: the summary's 依据, the command field, then the chip's switch, preset and model (the
+    // model the clean-up runs on follows the preset, option A of the design, 2026-10-01).
+    expect(
+      within(bar)
+        .getAllByRole("button")
+        .map((b) => b.getAttribute("aria-label")),
+    ).toEqual([
+      "节省时间的依据",
+      TITLE_BAR_SEARCH_LABEL,
+      "AI 润色 · 开/关",
+      "AI 预设：校对",
+      "AI 润色模型：qwen3.8-27b",
+    ]);
+    // The command field names its shortcut in keycaps.
+    expect(
+      within(screen.getByTestId("title-bar-search")).getByLabelText("Ctrl K"),
+    ).toBeInTheDocument();
+    expect(within(bar).queryByText(/SenseVoice|示例/)).toBeNull();
+    expect(screen.queryByTestId("sample-data-notice")).toBeNull();
+    expect(bar.querySelectorAll("[data-tone]")).toHaveLength(1); // the polish lamp
+    // No second header row: the content follows the header directly.
+    expect(screen.queryByTestId("page-header")).toBeNull();
+    expect(bar.nextElementSibling?.tagName).toBe("MAIN");
+    const brand = screen.getByTestId("sidebar-brand");
+    expect(brand).toHaveAttribute("data-tauri-drag-region", "deep");
+    // Every other page (user request 2026-09-30): the speech model, with its lamp, and the
+    // microphone, each a menu, as a named group under the title.
+    await user.click(
+      within(screen.getByRole("navigation", { name: "主导航" })).getByRole("button", {
+        name: /^历史记录/,
+      }),
+    );
+    await screen.findByRole("heading", { name: "历史记录", level: 1 });
+    bar = screen.getByTestId("title-bar");
     expect(
       within(bar)
         .getAllByRole("button")
@@ -386,23 +494,14 @@ describe("Shell", () => {
       "AI 预设：校对",
       "AI 润色模型：qwen3.8-27b",
     ]);
-    expect(within(bar).queryByText("Ctrl K")).toBeNull();
-    expect(within(bar).queryByText(/SenseVoice|示例/)).toBeNull();
-    expect(screen.queryByTestId("sample-data-notice")).toBeNull();
-    const readout = within(bar).getByTestId("title-bar-readout");
-    expect(readout).toHaveClass("mono", "text-[11px]", "text-fg-subtle", "hidden", "md:flex");
+    const readout = within(bar).getByTestId("title-bar-subtitle");
+    expect(readout).toHaveAttribute("role", "group");
     expect(within(readout).getByText("Qwen3-ASR-1.7B")).toBeInTheDocument();
     expect(await within(readout).findByText("Fifine K669")).toBeInTheDocument();
     expect(readout).toHaveTextContent("Qwen3-ASR-1.7B·Fifine K669");
     expect(within(readout).queryByText("语音模型")).toBeNull();
     expect(within(readout).queryByText("麦克风")).toBeNull();
     expect(bar.querySelectorAll("[data-tone]")).toHaveLength(2); // engine lamp + polish lamp
-    // No second header row: the content follows the bar directly.
-    expect(screen.queryByTestId("page-header")).toBeNull();
-    expect(bar.nextElementSibling?.tagName).toBe("MAIN");
-    const brand = screen.getByTestId("sidebar-brand");
-    expect(brand).toHaveAttribute("data-tauri-drag-region", "deep");
-    expect(brand).toHaveClass("h-10");
     // jsdom is a plain browser (no Tauri window handle) whose UA says linux: no window controls,
     // no macOS traffic-light inset, and the identity hint ("windows") does not override the UA.
     expect(screen.queryByTestId("window-controls")).toBeNull();
@@ -435,7 +534,7 @@ describe("Shell", () => {
     for (const path of ["/", "/history", "/settings/hotkey", "/onboarding?step=4"]) {
       const { unmount } = renderApp({ path });
       await screen.findByTestId("title-bar");
-      await screen.findByTestId("title-bar-readout");
+      await screen.findByTestId("title-bar-subtitle");
       expect(screen.queryByTestId("sample-data-notice")).toBeNull();
       expect(screen.queryByTestId("deferred-badge")).toBeNull();
       expect(screen.queryByTestId("sample-footnote")).toBeNull();
@@ -445,7 +544,7 @@ describe("Shell", () => {
     // The engines group of the settings dialog is real end to end: no footnote, no "planned".
     {
       const { unmount } = renderApp({ path: "/settings/engine" });
-      await screen.findByTestId("title-bar-readout");
+      await screen.findByTestId("title-bar-subtitle");
       await screen.findByTestId("providers-asr");
       expect(screen.queryByTestId("sample-data-notice")).toBeNull();
       expect(screen.queryByTestId("deferred-badge")).toBeNull();
@@ -472,7 +571,7 @@ describe("Shell", () => {
     const toggle = screen.getByTestId("polish-toggle");
     const label = within(toggle).getByTestId("polish-toggle-label");
     expect(label).toHaveTextContent("AI 润色");
-    expect(label).toHaveClass("text-[12px]");
+    expect(label).toHaveClass("text-[14px]");
     // Icon, then label, then lamp: the words sit between the wand and the status dot.
     const children = [...toggle.children];
     expect(children[0]?.tagName.toLowerCase()).toBe("svg");
@@ -517,21 +616,21 @@ describe("Shell", () => {
     expect(screen.getByTestId("presets-section")).toBeInTheDocument();
   });
 
-  it("regression: the title-bar readout stays on every page and the footer hotkey follows settings", async () => {
-    const { backend } = renderApp({ path: "/nowhere" });
+  it("regression: the speech model and microphone menus stay on every page but home, and the 听写 card shows the core's chord", async () => {
+    const { backend, unmount } = renderApp({ path: "/nowhere" });
     await screen.findByText("没有这个页面");
-    expect(screen.getByTestId("title-bar-readout")).toBeInTheDocument();
+    const readout = screen.getByTestId("title-bar-subtitle");
+    expect(within(readout).getByTestId("title-bar-speech")).toBeInTheDocument();
+    expect(within(readout).getByTestId("title-bar-mic")).toBeInTheDocument();
     expect(screen.queryByTestId("page-header")).toBeNull();
-    renderApp({ backend: new MockBackend({ settings: { hotkey: "Ctrl+Shift+D" } }) });
-    // The footer re-keys its items when the core's settings arrive, so wait for the loaded chord.
-    await waitFor(() => {
-      const footer = [...document.querySelectorAll("footer")].at(-1);
-      if (!footer) throw new Error("no footer");
-      expect(within(footer).getByLabelText("Ctrl Shift D")).toBeInTheDocument();
-      expect(within(footer).getByText("按住听写")).toBeInTheDocument();
-      expect(within(footer).queryByLabelText("Ctrl Alt Space")).toBeNull();
-    });
     expect(backend.peek().settings.hotkey).toBe("Ctrl+Alt+Space");
+    unmount();
+    renderApp({ backend: new MockBackend({ settings: { hotkey: "Ctrl+Shift+D" } }) });
+    // The keycaps follow the core's settings when they arrive, so wait for the loaded chord.
+    await waitFor(() => {
+      expect(screen.getByTestId("home-hotkey")).toHaveAccessibleName("Ctrl Shift D");
+    });
+    expect(screen.queryByLabelText("Ctrl Alt Space")).toBeNull();
   });
 
   it("renders the not-found page and gets back home", async () => {

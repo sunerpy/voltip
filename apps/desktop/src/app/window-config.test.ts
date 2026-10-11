@@ -55,15 +55,18 @@ describe("tauri window configuration", () => {
   });
 
   it("positions the traffic lights where the sidebar and title bar leave their slot", () => {
-    // y 14 centres the 12 px buttons in the 40 px strip; from x 12 the three of them (20 px apart)
-    // end at 64 px. The brand row and the title bar start 16 px after that (user feedback
-    // 2026-09-29: at 8 px the lights crowded the mark), and the collapsed rail holds them with
-    // 12 px on either side.
-    expect(macos.trafficLightPosition).toEqual({ x: 12, y: 14 });
-    const { x } = macos.trafficLightPosition as { x: number; y: number };
+    // From 0.1.1 the sidebar floats 16 px from the window's edges (Penpot board 01) and the lights
+    // sit in its 64 px brand row: y 42 centres the 12 px buttons on it (16 + 32 − 6), and from x 32
+    // the three of them (20 px apart) end at 84 px. The brand row and the title bar start 16 px
+    // after that (user feedback 2026-09-29: at 8 px the lights crowded the mark), and the collapsed
+    // rail holds them with 16 px on either side.
+    expect(macos.trafficLightPosition).toEqual({ x: 32, y: 42 });
+    const { x, y } = macos.trafficLightPosition as { x: number; y: number };
+    const inset = 16;
+    expect(y).toBe(inset + 64 / 2 - 12 / 2);
     const end = x + 2 * 20 + 12;
     expect(TRAFFIC_LIGHTS_CLEARANCE).toBe(end + 16);
-    expect(SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS).toBe(end + x);
+    expect(SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS).toBe(end - inset + (x - inset));
   });
 
   it("regression: restates the shared geometry identically, because RFC 7396 replaces the array", () => {

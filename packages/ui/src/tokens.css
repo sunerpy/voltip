@@ -93,6 +93,8 @@
   --sidebar: rgb(255 255 255 / 0.58);
   --sidebar-edge: rgb(255 255 255 / 0.9);
   --sidebar-shadow: 0 16px 40px 0 rgb(42 51 102 / 0.1);
+  --field-shadow: 0 8px 24px 0 rgb(42 51 102 / 0.08);
+  --row-active-shadow: 0 4px 14px 0 rgb(42 51 102 / 0.08);
   --glass-blur: blur(24px) saturate(1.4);
   --primary-glow: 0 10px 24px 0 rgb(51 156 255 / 0.38);
   --r-panel: 24px;
@@ -179,6 +181,8 @@
   --sidebar: rgb(255 255 255 / 0.05);
   --sidebar-edge: rgb(255 255 255 / 0.1);
   --sidebar-shadow: 0 16px 40px 0 rgb(0 0 0 / 0.35);
+  --field-shadow: 0 8px 24px 0 rgb(0 0 0 / 0.25);
+  --row-active-shadow: 0 4px 14px 0 rgb(0 0 0 / 0.3);
   --glass-blur: blur(24px) saturate(1.4);
   --primary-glow: 0 10px 24px 0 rgb(51 156 255 / 0.45);
   --r-panel: 24px;
@@ -264,6 +268,8 @@
   --sidebar: var(--nav);
   --sidebar-edge: var(--border);
   --sidebar-shadow: 0 0 #0000;
+  --field-shadow: 0 0 #0000;
+  --row-active-shadow: 0 0 #0000;
   --glass-blur: none;
   --primary-glow: 0 0 #0000;
   --r-panel: 10px;
@@ -348,6 +354,8 @@
   --sidebar: var(--nav);
   --sidebar-edge: var(--border);
   --sidebar-shadow: 0 0 #0000;
+  --field-shadow: 0 0 #0000;
+  --row-active-shadow: 0 0 #0000;
   --glass-blur: none;
   --primary-glow: 0 0 #0000;
   --r-panel: 10px;
@@ -431,6 +439,8 @@
   --sidebar: var(--nav);
   --sidebar-edge: var(--border);
   --sidebar-shadow: 0 0 #0000;
+  --field-shadow: 0 0 #0000;
+  --row-active-shadow: 0 0 #0000;
   --glass-blur: none;
   --primary-glow: 0 0 #0000;
   --r-panel: 10px;
@@ -515,6 +525,8 @@
   --sidebar: var(--nav);
   --sidebar-edge: var(--border);
   --sidebar-shadow: 0 0 #0000;
+  --field-shadow: 0 0 #0000;
+  --row-active-shadow: 0 0 #0000;
   --glass-blur: none;
   --primary-glow: 0 0 #0000;
   --r-panel: 10px;
@@ -991,6 +1003,8 @@
   --shadow-panel: var(--panel-shadow);
   --shadow-sidebar: var(--sidebar-shadow);
   --shadow-primary: var(--primary-glow);
+  --shadow-field: var(--field-shadow);
+  --shadow-row: var(--row-active-shadow);
   /* The switch thumb (Codex's), the same in every theme. */
   --shadow-thumb: 0 1px 2px 0 rgb(0 0 0 / 0.2);
 }

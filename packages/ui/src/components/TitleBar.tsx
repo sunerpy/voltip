@@ -2,20 +2,11 @@ import type { PointerEvent, ReactNode } from "react";
 import { cx } from "../cx";
 import { useT } from "../i18n/I18nProvider";
 import { Icon } from "./Icon";
-import { IconButton } from "./IconButton";
-import { Lamp } from "./Lamp";
-import type { ToolbarReadout } from "./Toolbar";
+import { Keycaps } from "./Keycap";
 
-/** Accessible name (and tooltip) of the search icon button in the default locale; components read
- *  it through `useT()`, this constant stays for callers and tests. */
+/** Accessible name (and tooltip) of the search field in the default locale; components read it
+ *  through `useT()`, this constant stays for callers and tests. */
 export const TITLE_BAR_SEARCH_LABEL = "搜索或输入命令 · Ctrl K";
-
-/** Height of the title bar and of the sidebar brand row, in px: together they form one
- *  continuous drag strip across the top of the window. */
-export const TITLE_BAR_HEIGHT = 40;
-
-/** The compact readout shows at most this many items (engine, microphone). */
-export const TITLE_BAR_READOUT_MAX = 2;
 
 /** Host platform as the desktop app resolves it (user agent first, core identity as the hint). */
 export type TitleBarPlatform = "macos" | "windows" | "linux" | "unknown";
@@ -30,23 +21,20 @@ export interface TitleBarControls {
 
 export interface TitleBarProps {
   title: ReactNode;
-  /** Compact inline readout after the title (engine model with its lamp, microphone short name):
-   *  mono 11 px, subtle, ` · ` separated, truncated when narrow, hidden below `md`. At most
-   *  `TITLE_BAR_READOUT_MAX` items are drawn. */
-  readouts?: readonly ToolbarReadout[];
-  /** The same place for controls instead of text (the 语音模型 and 麦克风 menu buttons, plan
-   *  2026-09-30): replaces `readouts` when given. Hidden below `md` like them; the box does not clip,
-   *  so a menu that opens from it is not cut off, and the buttons truncate their own text. */
-  readout?: ReactNode;
-  /** Renders the `Ctrl K` search as a single icon button (the 220 px field is gone). */
+  /** The line under the title (Penpot 「澄空 Glass · Voltip」 board 01): a summary of the page, or
+   *  the speech model and microphone menus. The box does not clip, so a menu that opens from it is
+   *  not cut off; the buttons truncate their own text. */
+  subtitle?: ReactNode;
+  /** Names the subtitle as a group when it holds controls (the switch menus). */
+  subtitleLabel?: string;
+  /** The `Ctrl K` command field: a pill that opens the command palette. */
   onSearch?: () => void;
-  /** Right-most content slot (the 润色 toggle); sits left of the window controls. */
+  /** Right of the search field (the AI 润色 chip, the update badge); left of the window controls. */
   right?: ReactNode;
   /** Before the title: the button that brings a hidden sidebar back. */
   left?: ReactNode;
   /** The bar starts at the window's left edge on macOS (no sidebar beside it): its content starts
-   *  `TRAFFIC_LIGHTS_CLEARANCE` (80) px in, clear of the traffic lights, as the sidebar brand
-   *  row does. */
+   *  `TRAFFIC_LIGHTS_CLEARANCE` (100) px in, clear of the traffic lights. */
   trafficLights?: boolean;
   platform?: TitleBarPlatform;
   /** Window controls bound to the Tauri window. `null` / omitted (a plain browser: Vite dev,
@@ -61,22 +49,21 @@ export interface TitleBarProps {
 const INTERACTIVE = "a, button, input, select, textarea, label, summary, [role='button']";
 
 const CONTROL =
-  "inline-flex h-full w-11.5 items-center justify-center text-fg-muted outline-none transition-colors hover:bg-nav-active hover:text-fg focus-visible:bg-nav-active focus-visible:text-fg";
+  "inline-flex h-full w-10 items-center justify-center text-fg-subtle outline-none transition-colors hover:bg-field hover:text-fg focus-visible:bg-field focus-visible:text-fg";
 
-/** The 40 px bar that *is* the window title bar: the page title (drag region), a compact
- *  engine · microphone readout right after it (user feedback 2026-09-25: keep the facts, but on the
- *  title bar itself, not on a second row), the `Ctrl K` search icon, the right slot (润色 toggle)
- *  and, on Windows / Linux under Tauri, the window controls.
+/** The page header that *is* the window title bar (board 01): the page title over a one-line
+ *  subtitle, the `Ctrl K` command field, the right slot (AI 润色) and, on Windows / Linux under
+ *  Tauri, the window controls in the top-right corner.
  *
- *  `data-tauri-drag-region="deep"` on the root makes the whole strip draggable, title and readout
+ *  `data-tauri-drag-region="deep"` on the root makes the whole header draggable, title and subtitle
  *  included; Tauri's injected script already excludes buttons and inputs and toggles maximize on
  *  double-click by itself, so there is deliberately no `onDoubleClick` here (a second handler
  *  would flip the window straight back). macOS keeps its native traffic lights
- *  (`titleBarStyle: "Overlay"`), so the in-bar controls are hidden there. */
+ *  (`titleBarStyle: "Overlay"`), so the controls are hidden there. */
 export function TitleBar({
   title,
-  readouts = [],
-  readout,
+  subtitle,
+  subtitleLabel,
   onSearch,
   right,
   left,
@@ -88,7 +75,6 @@ export function TitleBar({
 }: TitleBarProps) {
   const t = useT();
   const showControls = platform !== "macos" && controls !== null;
-  const shown = readouts.slice(0, TITLE_BAR_READOUT_MAX);
 
   const onPointerDown = (e: PointerEvent<HTMLElement>) => {
     // Mouse drags stay with Tauri's native script; only touch and pen need the fallback.
@@ -104,70 +90,50 @@ export function TitleBar({
       data-platform={platform}
       onPointerDown={onPointerDown}
       className={cx(
-        "flex h-10 shrink-0 items-center border-b border-border bg-surface select-none",
+        "relative flex shrink-0 items-start gap-4 pt-[38px] pr-6 select-none",
+        trafficLights ? "pl-[100px]" : left !== undefined ? "pl-3" : "pl-6",
         className,
       )}>
-      <div
-        className={cx(
-          "flex min-w-0 flex-1 items-center gap-3 pr-6",
-          trafficLights ? "pl-[80px]" : left !== undefined ? "pl-3" : "pl-6",
-        )}>
-        {left}
-        <h1 className="shrink-0 truncate text-[14px] font-semibold text-fg">{title}</h1>
-        {readout !== undefined && (
+      {left !== undefined && <div className="mt-1 shrink-0">{left}</div>}
+      <div className="min-w-0 flex-1">
+        <h1 className="truncate text-[26px] leading-[34px] font-bold text-fg">{title}</h1>
+        {subtitle !== undefined && (
           <div
-            data-testid="title-bar-readout"
-            role="group"
-            aria-label={t("ui.titleBar.readout")}
-            className="mono hidden min-w-0 flex-1 items-center gap-1.5 text-[11px] text-fg-subtle md:flex">
-            {readout}
+            data-testid="title-bar-subtitle"
+            role={subtitleLabel === undefined ? undefined : "group"}
+            aria-label={subtitleLabel}
+            className="mt-1 flex min-w-0 items-center gap-1.5 text-[13px] whitespace-nowrap text-fg-muted">
+            {subtitle}
           </div>
         )}
-        {readout === undefined && shown.length > 0 && (
-          <div
-            data-testid="title-bar-readout"
-            aria-label={t("ui.titleBar.readout")}
-            className="mono hidden min-w-0 flex-1 items-center gap-1.5 truncate text-[11px] text-fg-subtle md:flex">
-            {shown.map((r, i) => (
-              <span
-                key={`${r.label}-${i}`}
-                title={r.title ?? `${r.label} · ${r.value}`}
-                className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
-                {i > 0 && <span aria-hidden>·</span>}
-                {r.lamp && <Lamp tone={r.lamp} size={6} />}
-                <span className="truncate">{r.value}</span>
-                {r.badge !== undefined && (
-                  <span
-                    data-testid="title-bar-readout-badge"
-                    className="rounded-6 bg-inset px-1 text-[10px] leading-4 text-fg-muted">
-                    {r.badge}
-                  </span>
-                )}
-              </span>
-            ))}
-          </div>
-        )}
-        {readout === undefined && shown.length === 0 && <span className="min-w-0 flex-1" />}
-        {onSearch && (
-          <IconButton
-            icon="search"
-            label={t("ui.titleBar.search")}
-            size={28}
-            onClick={onSearch}
-            data-testid="title-bar-search"
-          />
-        )}
-        {right !== undefined && <div className="flex shrink-0 items-center gap-1">{right}</div>}
       </div>
+      {onSearch && (
+        <button
+          type="button"
+          data-testid="title-bar-search"
+          aria-label={t("ui.titleBar.search")}
+          title={t("ui.titleBar.search")}
+          onClick={onSearch}
+          className="mt-0.5 flex h-12 w-[clamp(180px,26vw,372px)] min-w-0 shrink items-center gap-2.5 rounded-pill border border-field-edge bg-field pr-3 pl-[18px] text-left text-[14px] text-fg-subtle shadow-field transition-colors hover:border-fg-subtle">
+          <Icon name="search" size={18} className="shrink-0" />
+          <span className="min-w-0 flex-1 truncate">{t("ui.palette.placeholder")}</span>
+          <Keycaps keys="Ctrl K" />
+        </button>
+      )}
+      {right !== undefined && (
+        <div className="mt-0.5 flex h-12 shrink-0 items-center gap-3">{right}</div>
+      )}
       {showControls && (
-        <div data-testid="window-controls" className="flex h-full shrink-0 items-stretch">
+        <div
+          data-testid="window-controls"
+          className="absolute top-0 right-0 flex h-9 items-stretch">
           <button
             type="button"
             aria-label={t("ui.titleBar.minimize")}
             title={t("ui.titleBar.minimize")}
             onClick={controls.minimize}
             className={CONTROL}>
-            <Icon name="minimize" size={16} />
+            <Icon name="minimize" size={14} />
           </button>
           <button
             type="button"
@@ -176,7 +142,7 @@ export function TitleBar({
             title={maximized ? t("ui.titleBar.restore") : t("ui.titleBar.maximize")}
             onClick={controls.toggleMaximize}
             className={CONTROL}>
-            <Icon name={maximized ? "restore" : "maximize"} size={16} />
+            <Icon name={maximized ? "restore" : "maximize"} size={14} />
           </button>
           <button
             type="button"
@@ -187,7 +153,7 @@ export function TitleBar({
               CONTROL,
               "hover:bg-danger hover:text-primary-fg focus-visible:bg-danger focus-visible:text-primary-fg",
             )}>
-            <Icon name="close" size={16} />
+            <Icon name="close" size={14} />
           </button>
         </div>
       )}

@@ -51,7 +51,7 @@ export const zhCN = {
       pin: "固定侧栏",
       edge: "显示侧栏",
     },
-    themeSwitch: { label: "主题", next: "切换到{theme}" },
+    themeSwitch: { label: "主题" },
     dialog: { escCancel: "取消" },
     drawer: { close: "关闭" },
     palette: {
@@ -346,7 +346,17 @@ export const zhCN = {
       tooltipOn: "AI 润色 · 已开启 · 点击关闭",
       tooltipOff: "AI 润色 · 已关闭 · 点击开启",
     },
-    footer: { command: "命令" },
+    /** The sidebar's status card (Penpot 「澄空 Glass · Voltip」 board 01): the relay, the phones and
+     *  a way to the 手机 page. */
+    status: {
+      relay: "中继 · {state}",
+      phones: "手机 · {paired} 台已配对 · {online} 台在线",
+      none: "尚未配对手机 · 去配对",
+      e2ee: "与手机之间端到端加密",
+      open: "打开「手机」页",
+    },
+    /** The home page's line under its title: today and the whole history. */
+    subtitle: { home: "今天听写 {n} 次 · 节省 {saved} · 历史记录 {total} 条" },
     backHome: "返回首页",
     toast: {
       historyEmpty: "历史记录为空 · 没有可复制的结果",
@@ -378,23 +388,6 @@ export const zhCN = {
       onboarding: "设置向导 / 第 {n} 步",
       overlay: "悬浮窗",
       notfound: "未找到",
-    },
-    shortcut: {
-      history: "历史记录",
-      settings: "设置",
-      search: "搜索",
-      copy: "复制",
-      delete: "删除",
-      newEntry: "新词条",
-      newRule: "新规则",
-      runDryRun: "试运行",
-      save: "保存",
-      cancel: "取消",
-      regenerateQr: "重新生成二维码",
-      continue: "继续",
-      previous: "上一步",
-      later: "稍后设置",
-      dictate: "听写",
     },
     readout: {
       history: "历史记录",
@@ -435,6 +428,17 @@ export const zhCN = {
     },
   },
   home: {
+    /** The 听写 card (Penpot 「澄空 Glass · Voltip」 board 01): how the chord drives a take and where the
+     *  text goes. */
+    hero: {
+      eyebrow: "听写",
+      hint: {
+        hold: "松开后，文字{target} · 按 Esc 取消",
+        toggle: "再按一次结束，文字{target} · 按 Esc 取消",
+        hold_or_toggle: "松开即结束，短按锁定继续录音 · 文字{target}",
+      },
+      target: { paste: "插入到当前光标处", clipboard: "复制到剪贴板" },
+    },
     permission: {
       title: "还差一个系统权限",
       accessibility:
@@ -458,11 +462,6 @@ export const zhCN = {
       readyDetail: "麦克风、快捷键和识别服务已就绪",
       readyDetailLocal: "麦克风、快捷键和本地模型已就绪",
     },
-    chip: {
-      provider: "{provider} · {model}",
-      local: "本机 · {model}",
-      notReady: "未就绪",
-    },
     button: {
       cancel: "取消",
       stop: "停止",
@@ -471,36 +470,19 @@ export const zhCN = {
       processingTitle: "上一段录音仍在处理，请稍候",
     },
     mic: {
-      eyebrow: "录音来源",
-      /** docs/dictation.md §22: the source switch on the card. */
-      source: "录制内容",
-      systemDevice: "电脑声音 · {name}",
-      systemDefaultDevice: "电脑声音 · 系统默认输出",
-      systemFacts: "不使用麦克风",
-      alsoSystem: "同时录制电脑声音 · {name}",
-      systemHint: "听写录制电脑播放的声音；空闲时不录制。",
-      mixedHint: "外放时请佩戴耳机，以免扬声器的声音被麦克风再次录入。",
-      /** docs/dictation.md §22.6: mixed with the speaker echo removed. */
-      mixedEchoHint: "已消除扬声器回声；外放音量很大时，仍建议佩戴耳机。",
       unavailable: "不可用",
       recording: "录音中",
       testing: "测试中 · {n} 秒",
       idle: "空闲 · 未打开麦克风",
       enumerating: "正在检测麦克风…",
-      systemDefault: "系统默认",
-      selected: "已选择",
       missing: "所选麦克风未连接 · 使用系统默认",
       test: "测试麦克风",
       stopTest: "停止测试",
-      idleHint: "空闲时不打开麦克风。点击「测试麦克风」并说几句话，查看强度条是否随之变化。",
-      testingHint: "说几句话，强度条应跟着跳动 · {n} 秒后自动停止",
-      recordingHint: "强度来自这次听写的录音",
-      devices: { one: "{n} 个输入设备", other: "{n} 个输入设备" },
       peak: "峰值 {value}",
     },
     engine: {
-      eyebrow: "语音模型",
-      configure: "配置语音模型",
+      cardTitle: "识别与润色",
+      configureShort: "配置",
       waiting: "正在加载语音模型…",
       detail: "{provider} · 语言 {language}",
       local: "本地",
@@ -508,45 +490,20 @@ export const zhCN = {
       localReady: "模型已就绪",
       localMissing: "模型未下载",
       auto: "自动",
-      refineModel: "润色模型",
-      preset: "AI 预设",
-      inject: "插入方式",
-      injectPaste: "粘贴到光标处",
-      injectClipboard: "仅复制到剪贴板",
-      injectChange: "在「设置 › 听写」中更改",
       refineOn: "AI 润色 开 · {model}",
       refineOff: "AI 润色 关",
-      privacyAudio: "音频发送到{target}",
-      privacyLocal: "音频不离开本机",
       privacyText: " · 文本发送到{target}",
       livePreview: "实时预览",
       liveDegraded: "实时预览已中断 · 最终文本不受影响",
     },
-    devices: {
-      eyebrow: "手机 · 设备",
-      unpaired: "未配对",
-      offline: "离线",
-      paired: "{n} 台已配对",
-      none: "尚未配对手机 · 去配对",
-      more: "还有 {n} 台 · 在「手机」页查看",
-      relay: "中继 · {state}",
-      open: "打开「手机」页",
-    },
     session: {
-      eyebrow: "今日听写",
-      raw: "转录字数",
-      corrected: "修正字数",
-      charsUnit: "字",
-      spoken: "说话时长",
       saved: "节省时间",
       /** The session panel's secondary line, two parts that each stay on one line. */
       count: "听写 {n} 次",
-      latency: "平均延迟 {latency}",
       basis: "依据",
       basisLabel: "节省时间的依据",
       basisText:
         "节省时间 = 说话时长 × 1.9。依据：Ruan 等 2016（arXiv:1608.07323）的实验里，说话输入比手机打字快约 2.9 倍（英文 153 vs 52 词/分，中文 123 vs 43）。只统计保存在历史记录里的听写。",
-      heatmap: "近 6 周 · 按日",
     },
     tiles: {
       today: "今天",
@@ -556,20 +513,12 @@ export const zhCN = {
       saved: "节省 {time}",
       recordingOff: "历史记录已关闭",
     },
-    table: {
-      actions: "操作",
-      time: "时间",
-      text: "文本",
-      engine: "模型",
-      duration: "时长",
-      asr: "识别",
-      refine: "润色",
-    },
     recent: {
       title: "最近的结果",
       all: "查看全部 →",
       emptyTitle: "暂无听写结果",
       emptyBody: "完成的听写会出现在这里，最新的在最前面。",
+      details: "查看详情",
     },
   },
   history: {
