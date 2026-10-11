@@ -33,6 +33,8 @@ describe("Settings · 外观", () => {
         .getAllByRole("radio")
         .map((r) => r.getAttribute("aria-label")),
     ).toEqual(["澄空", "夜空", "明亮", "暗黑", "暖纸", "石墨"]);
+    // Two rows of three, never five and one.
+    expect(group).toHaveClass("grid", "grid-cols-3");
     expect(within(group).getByRole("radio", { name: "澄空" })).toHaveAttribute(
       "aria-checked",
       "true",

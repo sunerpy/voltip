@@ -57,7 +57,8 @@ export function Appearance() {
         <div
           role="radiogroup"
           aria-label={t("settings.appearance.themeGroup")}
-          className="flex flex-wrap gap-4">
+          // Six tiles in two rows of three: a five-wide row left 石墨 alone under 澄空.
+          className="grid w-fit grid-cols-3 gap-4">
           {THEME_IDS.map((id) => (
             <ThemeTile
               key={id}
