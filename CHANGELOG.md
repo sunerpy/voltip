@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.1](https://github.com/sunerpy/voltip/compare/v0.1.0...v0.1.1) (2026-10-11)
+
+
+### Features
+
+* 手机说话页可以选择发送到电脑或在手机上识别 ([20da452](https://github.com/sunerpy/voltip/commit/20da452a736b12328c49d23aa251bc4bc743d91a))
+* 新增澄空与夜空主题，界面按画板改版 ([#148](https://github.com/sunerpy/voltip/issues/148)) ([20da452](https://github.com/sunerpy/voltip/commit/20da452a736b12328c49d23aa251bc4bc743d91a))
+
+
+### Bug Fixes
+
+* 手机记录页总计卡的渐变铺满整张卡片 ([20da452](https://github.com/sunerpy/voltip/commit/20da452a736b12328c49d23aa251bc4bc743d91a))
+
 ## [0.1.0](https://github.com/sunerpy/voltip/compare/v0.0.52...v0.1.0) (2026-10-10)
 
 
