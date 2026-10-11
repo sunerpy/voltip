@@ -60,14 +60,14 @@ PY
 
 # Settings for a take that ends in the injector: the custom provider's recognition at <asr_url>
 # (the mock; the custom endpoint needs no key), no refine; every
-# other value is the app default (light theme, system locale, hold Ctrl+Alt+Space), so screenshots
+# other value is the app default (澄空 theme, system locale, hold Ctrl+Alt+Space), so screenshots
 # look like a first start. voltip_smoke_settings <settings.json> <asr_url> [paste|clipboard_only] [relay: true|false]
 voltip_smoke_settings() {
   mkdir -p "$(dirname "$1")"
   cat >"$1" <<JSON
 {
   "schema": 1,
-  "theme": "light",
+  "theme": "glass",
   "follow_system_theme": false,
   "relay_enabled": ${4:-false},
   "engines": {

@@ -103,15 +103,18 @@ export function PolishToggle({ className }: { className?: string }) {
           </>
         }
       />
-      <PolishModelMenu
-        align="end"
-        data-testid="polish-model"
-        className="hidden xl:inline-flex"
-        triggerClassName={cx(
-          "mono inline-flex h-9 max-w-[160px] min-w-0 items-center gap-1 rounded-pill px-2 text-[11px] transition-colors hover:bg-inset hover:text-fg",
-          on ? "text-fg-muted" : "text-fg-subtle",
-        )}
-      />
+      {/* Only where the window is wide enough (xl): the menu's own `inline-flex` would win over a
+          `hidden` beside it, so a wrapper hides it (1152 px window, 2026-10-11). */}
+      <span className="hidden xl:contents">
+        <PolishModelMenu
+          align="end"
+          data-testid="polish-model"
+          triggerClassName={cx(
+            "mono inline-flex h-9 max-w-[160px] min-w-0 items-center gap-1 rounded-pill px-2 text-[11px] transition-colors hover:bg-inset hover:text-fg",
+            on ? "text-fg-muted" : "text-fg-subtle",
+          )}
+        />
+      </span>
     </div>
   );
 }

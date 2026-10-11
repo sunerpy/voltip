@@ -463,6 +463,14 @@ describe("Shell", () => {
       "AI 预设：校对",
       "AI 润色模型：qwen3.8-27b",
     ]);
+    // Regression (1152 px window, 2026-10-11): the polish model menu leaves the header below xl. A
+    // `hidden` on the menu itself lost to its own `inline-flex`, so a wrapper does the hiding.
+    const modelSlot = within(bar)
+      .getByTestId("polish-model")
+      .closest(String.raw`.xl\:contents`);
+    expect(modelSlot?.tagName).toBe("SPAN");
+    expect(modelSlot).toHaveClass("hidden");
+    expect(within(bar).getByTestId("polish-model").closest(".hidden")).toBe(modelSlot);
     // The command field names its shortcut in keycaps.
     expect(
       within(screen.getByTestId("title-bar-search")).getByLabelText("Ctrl K"),
