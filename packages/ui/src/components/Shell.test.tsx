@@ -154,13 +154,18 @@ describe("ThemeSwitch", () => {
     const { rerender } = render(<ThemeSwitch value="light" onChange={onChange} />);
     expect(nextThemeChoice("light")).toBe("dark");
     expect(nextThemeChoice("graphite")).toBe("system");
-    expect(nextThemeChoice("system")).toBe("light");
+    // 澄空 and its dark twin 夜空 come first (the default since 0.1.1).
+    expect(nextThemeChoice("system")).toBe("glass");
+    expect(nextThemeChoice("glass")).toBe("glass_dark");
+    expect(nextThemeChoice("glass_dark")).toBe("light");
     await user.click(screen.getByRole("button", { name: "切换到暗黑" }));
     expect(onChange).toHaveBeenLastCalledWith("dark");
     const menu = screen.getByRole("combobox", { name: "主题" });
     expect(menu).toHaveValue("light");
     expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
       "跟随系统",
+      "澄空",
+      "夜空",
       "明亮",
       "暗黑",
       "暖纸",

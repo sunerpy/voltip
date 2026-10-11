@@ -88,11 +88,12 @@ describe("AppearanceProvider", () => {
     await act(async () => {
       await backend.invoke("settings_set_theme", { theme: "dark", followSystem: true });
     });
-    expect(document.documentElement.dataset.theme).toBe("light");
+    // Following a light system paints 澄空 (user decision 2026-10-11).
+    expect(document.documentElement.dataset.theme).toBe("glass");
     await user.click(screen.getByText("preview"));
     expect(document.documentElement.dataset.theme).toBe("graphite");
     await user.click(screen.getByText("restore"));
-    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(document.documentElement.dataset.theme).toBe("glass");
     await user.click(screen.getByText("compact"));
     expect(document.documentElement.dataset.density).toBe("compact");
     expect(document.documentElement.style.getPropertyValue("--ui-font-size")).toBe("16px");

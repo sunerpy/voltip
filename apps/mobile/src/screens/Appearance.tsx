@@ -56,7 +56,7 @@ export function Appearance() {
                 theme={id}
                 selected={shown === id}
                 disabled={settings.follow_system_theme}
-                caption={id === "light" ? t("settings.appearance.lightCaption") : id}
+                caption={id === "glass" ? t("settings.appearance.defaultCaption") : id}
                 onSelect={(theme) => {
                   setTheme(theme, false);
                 }}

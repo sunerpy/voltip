@@ -39,12 +39,24 @@ export function isThemeId(value: string): value is ThemeId {
   return (THEME_IDS as readonly string[]).includes(value);
 }
 
-/** Which theme the settings resolve to, honouring follow-system (light ↔ dark only). */
+/** The pair following the system switches between (user decision 2026-10-11): 澄空 for a light
+ *  system, its dark twin 夜空 for a dark one. */
+export const SYSTEM_LIGHT_THEME: ThemeId = "glass";
+export const SYSTEM_DARK_THEME: ThemeId = "glass_dark";
+/** A new install's theme (`voltip_core::Settings::default()`), and what an unknown value reads as. */
+export const DEFAULT_THEME: ThemeId = "glass";
+
+/** Whether `theme` is one of the dark themes (`color-scheme: dark`). */
+export function isDarkTheme(theme: ThemeId): boolean {
+  return theme === "dark" || theme === "graphite" || theme === "glass_dark";
+}
+
+/** Which theme the settings resolve to, honouring follow-system (澄空 ↔ 夜空). */
 export function resolveTheme(
   settings: Pick<Settings, "theme" | "follow_system_theme">,
   systemDark: boolean,
 ): ThemeId {
-  if (settings.follow_system_theme) return systemDark ? "dark" : "light";
+  if (settings.follow_system_theme) return systemDark ? SYSTEM_DARK_THEME : SYSTEM_LIGHT_THEME;
   return settings.theme;
 }
 
@@ -80,6 +92,6 @@ export function applyAppearance(
 }
 
 export function readTheme(root: HTMLElement = document.documentElement): ThemeId {
-  const current = root.dataset.theme ?? "light";
-  return isThemeId(current) ? current : "light";
+  const current = root.dataset.theme ?? DEFAULT_THEME;
+  return isThemeId(current) ? current : DEFAULT_THEME;
 }

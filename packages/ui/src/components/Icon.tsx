@@ -72,6 +72,11 @@ const PATHS = {
   pin: "M9 3h6l-1 6 4 4H6l4-4zM12 13v8",
   sun: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4",
   moon: "M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z",
+  /** 澄空: the sun over the horizon (the theme switch's glyph). */
+  sky: "M8 15a4 4 0 0 1 8 0M3 19h18M12 5v2M5.6 8.6l1.4 1.4M18.4 8.6 17 10M3 15h2M19 15h2",
+  /** 夜空: the moon and a star. */
+  nightSky:
+    "M18 14.5A6.5 6.5 0 1 1 10 6.5a5 5 0 0 0 8 8zM18 3l.6 1.4L20 5l-1.4.6L18 7l-.6-1.4L16 5l1.4-.6z",
   paper: "M6 3h9l3 3v15H6zM15 3v3h3M9 11h6M9 15h6",
   image: "M4 5h16v14H4zM4 16l5-5 4 4 2.5-2.5L20 16M15 9h.01",
   video: "M3 6h12v12H3zM15 10l6-3v10l-6-3z",

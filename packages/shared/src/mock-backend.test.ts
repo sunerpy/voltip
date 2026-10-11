@@ -348,7 +348,7 @@ describe("MockBackend devices, relay, identity and messages", () => {
     expect((await backend.mirrorHistoryQuery("0".repeat(64), { limit: 200 })).total).toBe(0);
     expect((await backend.mirrorHistoryEntry(desktop, first.id))?.shortened).toBe(true);
     expect(await backend.mirrorHistoryEntry(desktop, "missing")).toBeNull();
-    expect((await backend.mirrorProfile(desktop))?.theme).toBe("light");
+    expect((await backend.mirrorProfile(desktop))?.theme).toBe("glass");
     const events = collect(backend);
     backend.simulateMirror({
       view: { desktop, name: "MacBook Pro", state: "revoked", entries: 0 },

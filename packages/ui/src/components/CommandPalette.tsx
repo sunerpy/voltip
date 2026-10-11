@@ -106,7 +106,7 @@ function PaletteBody({ items, onClose, onHighlight, placeholder }: CommandPalett
         onClick={(e) => {
           e.stopPropagation();
         }}
-        className="flex w-[560px] max-h-[424px] flex-col overflow-hidden rounded-14 bg-surface hairline shadow-pop"
+        className="flex w-[560px] max-h-[424px] flex-col overflow-hidden rounded-14 border border-raised-edge bg-raised shadow-pop glass-blur"
         onKeyDown={(e) => {
           if (e.key === "ArrowDown") {
             e.preventDefault();

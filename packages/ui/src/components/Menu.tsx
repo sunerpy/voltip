@@ -204,7 +204,7 @@ export function Menu({
           data-testid={testId === undefined ? undefined : `${testId}-menu`}
           // The UI font whatever the trigger sits in (the title bar's readout is mono).
           className={cx(
-            "absolute top-full z-50 mt-1 flex w-max min-w-full flex-col rounded-10 bg-surface py-1 font-ui whitespace-nowrap shadow-win hairline",
+            "absolute top-full z-50 mt-1 flex w-max min-w-full flex-col rounded-10 border border-raised-edge bg-raised py-1 font-ui whitespace-nowrap shadow-win glass-blur",
             align === "end" ? "right-0" : "left-0",
           )}>
           {sections.map((section, s) => (

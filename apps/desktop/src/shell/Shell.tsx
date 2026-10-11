@@ -5,6 +5,7 @@ import {
   cx,
   Dialog,
   Icon,
+  isThemeId,
   Keycaps,
   Lamp,
   type ThemeChoice,
@@ -353,8 +354,7 @@ export function Shell({
         onHighlight={(item) => {
           if (item?.id.startsWith("theme-") && item.id !== "theme-system") {
             const theme = item.id.slice("theme-".length);
-            if (theme === "light" || theme === "dark" || theme === "warm" || theme === "graphite")
-              appearance.preview(theme);
+            if (isThemeId(theme)) appearance.preview(theme);
           } else appearance.preview(undefined);
         }}
       />

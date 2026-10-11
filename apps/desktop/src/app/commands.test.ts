@@ -26,15 +26,16 @@ describe("buildCommands", () => {
     const d = deps({ toast });
     const items = buildCommands(d);
     expect(items.slice(0, 4).map((i) => i.group)).toEqual(["主题", "主题", "主题", "主题"]);
-    expect(items.find((i) => i.id === "theme-light")?.hint).toBe("当前");
+    expect(items.find((i) => i.id === "theme-glass")?.hint).toBe("当前");
+    expect(items.find((i) => i.id === "theme-light")?.hint).toBeUndefined();
     expect(items.find((i) => i.id === "theme-dark")?.hint).toBeUndefined();
-    expect(items.find((i) => i.id === "theme-system")?.hint).toBe("系统：明亮");
+    expect(items.find((i) => i.id === "theme-system")?.hint).toBe("系统：澄空");
     for (const item of items) item.run();
     expect(d.dictate).toHaveBeenCalledTimes(1);
     expect(d.copyLast).toHaveBeenCalledTimes(1);
     expect(d.clearHistory).toHaveBeenCalledTimes(1);
     expect(d.setTheme).toHaveBeenCalledWith("graphite", false);
-    expect(d.setTheme).toHaveBeenCalledWith("light", true);
+    expect(d.setTheme).toHaveBeenCalledWith("glass", true);
     expect(d.navigate).toHaveBeenCalledWith({ name: "rules", compose: true });
     expect(d.navigate).toHaveBeenCalledWith({ name: "history" });
     expect(d.navigate).toHaveBeenCalledWith({ name: "devices" });
@@ -89,7 +90,7 @@ describe("buildCommands", () => {
     for (const item of items)
       expect(`${item.hint ?? ""} ${item.disabledHint ?? ""}`).not.toMatch(/第二阶段|尚未接入/);
     expect(d.toast).not.toHaveBeenCalled();
-    expect(items.find((i) => i.id === "theme-system")?.hint).toBe("系统：暗黑 · 当前");
+    expect(items.find((i) => i.id === "theme-system")?.hint).toBe("系统：夜空 · 当前");
     expect(items.find((i) => i.id === "theme-light")?.hint).toBeUndefined();
     // While listening the entry becomes 停止听写; while processing it is disabled with a reason.
     const listening = buildCommands(
@@ -138,8 +139,8 @@ describe("buildCommands in English", () => {
     const d = deps({ toast, i18n: createTranslator("en"), systemDark: true });
     const items = buildCommands(d);
     expect(items.slice(0, 4).map((i) => i.group)).toEqual(["Theme", "Theme", "Theme", "Theme"]);
-    expect(items.find((i) => i.id === "theme-light")?.hint).toBe("current");
-    expect(items.find((i) => i.id === "theme-system")?.hint).toBe("System: Dark");
+    expect(items.find((i) => i.id === "theme-glass")?.hint).toBe("current");
+    expect(items.find((i) => i.id === "theme-system")?.hint).toBe("System: Night Sky");
     expect(items.find((i) => i.id === "dictate")?.label).toBe("Start dictating");
     expect(items.find((i) => i.id === "clear-history")?.hint).toMatch(/^\d+ entries$/);
     for (const item of items) item.run();

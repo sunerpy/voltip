@@ -33,8 +33,8 @@ const BAR_CLASS: Record<BannerTone, string> = {
   info: "border-l-accent",
 };
 const SOFT_CLASS: Record<BannerTone, string> = {
-  neutral: "bg-surface",
-  ok: "bg-surface",
+  neutral: "bg-panel",
+  ok: "bg-panel",
   danger: "bg-danger-soft",
   warn: "bg-warning-soft",
   info: "bg-info-soft",
@@ -55,8 +55,8 @@ export function Banner({
       role={tone === "danger" ? "alert" : "status"}
       data-tone={tone}
       className={cx(
-        "flex items-start gap-3 rounded-10 px-4 py-3 text-[13px] hairline",
-        marker === "bar" ? cx("border-l-[3px]", BAR_CLASS[tone], SOFT_CLASS[tone]) : "bg-surface",
+        "flex items-start gap-3 rounded-panel border border-panel-edge px-4 py-3 text-[13px] shadow-panel",
+        marker === "bar" ? cx("border-l-[3px]", BAR_CLASS[tone], SOFT_CLASS[tone]) : "bg-panel",
         className,
       )}>
       {marker === "lamp" && <Lamp tone={LAMP_TONE[tone]} className="mt-[6px]" />}

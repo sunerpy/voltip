@@ -55,7 +55,7 @@ export function Input({
       )}
       <div
         className={cx(
-          "flex items-center gap-2 rounded-6 bg-surface px-2.5 hairline transition-colors",
+          "flex items-center gap-2 rounded-control border border-field-edge bg-field px-2.5 transition-colors",
           "focus-within:border-fg focus-within:shadow-[0_0_0_1px_var(--fg)]",
           error &&
             "border-danger focus-within:border-danger focus-within:shadow-[0_0_0_1px_var(--danger)]",
@@ -123,7 +123,7 @@ export function Textarea({ mono = false, label, className, id, ...rest }: Textar
       <textarea
         id={inputId}
         className={cx(
-          "w-full resize-none rounded-10 bg-surface p-3 text-[13px] leading-5 hairline outline-none",
+          "w-full resize-none rounded-10 border border-field-edge bg-field p-3 text-[13px] leading-5 outline-none",
           "placeholder:text-fg-subtle focus:border-fg focus:shadow-[0_0_0_1px_var(--fg)]",
           mono && "mono",
           touch && "touch-manipulation",

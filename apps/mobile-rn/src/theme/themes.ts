@@ -24,12 +24,20 @@ import {
 import type { Settings, ThemeId } from "@voltip/shared";
 import { MD3DarkTheme, MD3LightTheme, type MD3Theme } from "react-native-paper";
 
-/** Voltip's accent (packages/ui/src/tokens.css): the seed of 明亮, 暗黑 and 石墨. */
+/** Voltip's accent (packages/ui/src/tokens.css): the seed of 澄空, 夜空, 明亮, 暗黑 and 石墨. */
 export const VOLTIP_SEED = "#339cff";
 /** 暖纸's accent, terracotta (tokens.css `--accent` of the warm theme). */
 const WARM_SEED = "#b85c38";
 /** 暖纸's paper: the hue (and a little of the chroma) of its cream. */
 const PAPER = "#f5efe4";
+/** 澄空's canvas and 夜空's night (tokens.css `--canvas`): the hue of the glass themes' neutrals. */
+const CLEAR_SKY = "#eef2fa";
+const NIGHT_SKY = "#0b1020";
+
+/** Whether `id` is one of the glass pair (an aurora behind translucent cards, docs/mobile-rn.md). */
+export function isGlassTheme(id: ThemeId): boolean {
+  return id === "glass" || id === "glass_dark";
+}
 
 /** The colours the screens use beyond MD3's roles (status lamps, the meter, notices). */
 export interface VoltipColors {
@@ -55,7 +63,8 @@ export function themeId(
   settings: Pick<Settings, "theme" | "follow_system_theme">,
   systemDark: boolean,
 ): ThemeId {
-  if (settings.follow_system_theme) return systemDark ? "dark" : "light";
+  // User decision 2026-10-11: following the system switches between 澄空 and 夜空.
+  if (settings.follow_system_theme) return systemDark ? "glass_dark" : "glass";
   return settings.theme;
 }
 
@@ -136,6 +145,38 @@ function surfaces(id: ThemeId, seed: Hct): Surfaces {
         fg: 12,
         fgMuted: 32,
         subtle: 45,
+      };
+    }
+    case "glass": {
+      const sky = Hct.fromInt(argbFromHex(CLEAR_SKY));
+      return {
+        dark: false,
+        neutral: [sky.hue, 6],
+        page: 95,
+        card: 100,
+        inset: 96,
+        levels: [100, 100, 100, 98, 96],
+        hairline: 88,
+        outline: 50,
+        fg: 10,
+        fgMuted: 38,
+        subtle: 46,
+      };
+    }
+    case "glass_dark": {
+      const night = Hct.fromInt(argbFromHex(NIGHT_SKY));
+      return {
+        dark: true,
+        neutral: [night.hue, 10],
+        page: 5,
+        card: 12,
+        inset: 16,
+        levels: [12, 14, 17, 20, 22],
+        hairline: 24,
+        outline: 60,
+        fg: 94,
+        fgMuted: 72,
+        subtle: 62,
       };
     }
     case "graphite":

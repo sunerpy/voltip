@@ -1,4 +1,4 @@
-/* Voltip design tokens: four themes share one component set; switching `data-theme` on <html> (or
+/* Voltip design tokens: six themes share one component set; switching `data-theme` on <html> (or
  * any subtree) swaps the palette. Components must only ever reference these variables through the Tailwind utilities
  * declared in `@theme inline` below — no hex literals in TSX. */
 
@@ -9,8 +9,184 @@
 @import "@fontsource-variable/jetbrains-mono/index.css";
 @import "@fontsource-variable/noto-sans-sc/index.css";
 
-/* 明亮 · 白瓷 */
+/* 澄空 · 玻璃 (the default since 0.1.1, Penpot 「澄空 Glass · Voltip」 board 01–05): white glass over
+ * an aurora canvas. The roles are the opaque colours text is checked against; the glass itself
+ * (`--panel`, `--sidebar`, …) is translucent over `--canvas-image`. The aurora is fainter than the
+ * board's (35–40 % instead of 45–85 %) so that muted text on the canvas keeps 4.5:1 where the blue
+ * light is strongest (theme.test.ts). */
 :root,
+:root[data-theme="glass"],
+[data-theme="glass"] {
+  color-scheme: light;
+  --canvas: #eef2fa;
+  --surface: #f9fafd;
+  --inset: #f3f6fc;
+  --inset2: #e8edf8;
+  --border: #dfe5f1;
+  --border-strong: #cdd5e6;
+  --fg: #151826;
+  --fg-muted: #5b6280;
+  --fg-subtle: #6b7290;
+  --primary: #1667e8;
+  --primary-fg: #ffffff;
+  --accent: #339cff;
+  --accent-fg: #000000;
+  --accent-soft: #e4f0ff;
+  --accent-text: #0062b8;
+  --accent-text-hover: #004f99;
+  --thumb: #ffffff;
+  --ok: #22c55e;
+  --ok-soft: #e1f5e6;
+  --ok-text: #1f7a4a;
+  --danger: #c93a33;
+  --danger-soft: #fde8e7;
+  --warning: #b45309;
+  --warning-soft: #fdf0d9;
+  --info: #0062b8;
+  --info-soft: #e4f0ff;
+  --nav: #f4f7fd;
+  --nav-active: #ffffff;
+  --led-off: #e3e8f4;
+  --led-on: #151826;
+  --led-peak: #339cff;
+  --pill-bg: #1f2638;
+  --pill-border: #343c52;
+  --pill-fg: #ffffff;
+  --pill-muted: #a9b0c6;
+  --wave: #151826;
+  --desktop: #d9dde8;
+  --desktop-field: #ffffff;
+  --keycap-bg: #ffffff;
+  --keycap-border: #d8deea;
+  --scrim: #151826;
+  --diff-add: #e1f5e6;
+  --diff-del: #fde8e7;
+  --mark: #fff1b8;
+  --shadow-pop: 0 16px 40px 0 rgb(42 51 102 / 0.14), 0 0 0 1px rgb(255 255 255 / 0.6);
+  --shadow-pill: 0 12px 32px 0 rgb(21 24 38 / 0.28), 0 2px 6px 0 rgb(21 24 38 / 0.16);
+  --shadow-win: 0 24px 64px -20px rgb(42 51 102 / 0.32), 0 0 0 1px rgb(255 255 255 / 0.7);
+  /* Stat tiles: each span's hue tints the glass; the total is the ink card lit by the accent. */
+  --tile-tint: 8%;
+  --tile-edge: 10%;
+  --total-from: #262c3a;
+  --total-to: #151826;
+  --total-glow: 55%;
+  --total-fg: #ffffff;
+  --total-muted: #b4bcc8;
+  --total-subtle: #8790a0;
+  --total-chip: rgb(255 255 255 / 0.12);
+  --total-icon: color-mix(in srgb, var(--accent) 55%, #ffffff);
+  --total-border: transparent;
+  /* The glass (board 05: white 62 % · 1 px white 90 % · 0 16 40 #2A3366 10 %). */
+  --canvas-image:
+    radial-gradient(42% 46% at 17% 8%, rgb(156 195 255 / 0.35), transparent 100%),
+    radial-gradient(40% 50% at 76% 4%, rgb(215 194 255 / 0.4), transparent 100%),
+    radial-gradient(38% 46% at 86% 88%, rgb(159 240 220 / 0.4), transparent 100%),
+    radial-gradient(30% 40% at 24% 96%, rgb(255 214 232 / 0.35), transparent 100%);
+  --panel: rgb(255 255 255 / 0.62);
+  --panel-edge: rgb(255 255 255 / 0.9);
+  --panel-shadow: 0 16px 40px 0 rgb(42 51 102 / 0.1);
+  --raised: rgb(255 255 255 / 0.94);
+  --raised-edge: rgb(255 255 255 / 0.9);
+  --field: rgb(255 255 255 / 0.72);
+  --field-edge: rgb(255 255 255 / 0.9);
+  --sidebar: rgb(255 255 255 / 0.58);
+  --sidebar-edge: rgb(255 255 255 / 0.9);
+  --sidebar-shadow: 0 16px 40px 0 rgb(42 51 102 / 0.1);
+  --glass-blur: blur(24px) saturate(1.4);
+  --primary-glow: 0 10px 24px 0 rgb(51 156 255 / 0.38);
+  --r-panel: 24px;
+  --r-control: 14px;
+  --r-row: 14px;
+}
+
+/* 夜空 · 深色玻璃 (board 06–10): the dark twin of 澄空, which following a dark system picks. White glass
+ * at 6–14 % over a night canvas; muted text keeps 4.5:1 on 12 % glass where the aurora is strongest. */
+:root[data-theme="glass_dark"],
+[data-theme="glass_dark"] {
+  color-scheme: dark;
+  --canvas: #0b1020;
+  --surface: #1a1e2d;
+  --inset: #212634;
+  --inset2: #282d3b;
+  --border: #2d313f;
+  --border-strong: #3c404d;
+  --fg: #eef1f8;
+  --fg-muted: #a3acc2;
+  --fg-subtle: #7e88a0;
+  --primary: #1667e8;
+  --primary-fg: #ffffff;
+  --accent: #339cff;
+  --accent-fg: #000000;
+  --accent-soft: #1e3553;
+  --accent-text: #6cb6ff;
+  --accent-text-hover: #8cc6ff;
+  --thumb: #ffffff;
+  --ok: #4ade80;
+  --ok-soft: #1b3935;
+  --ok-text: #4ade80;
+  --danger: #f87171;
+  --danger-soft: #3f2633;
+  --warning: #fbbf24;
+  --warning-soft: #3d3228;
+  --info: #6cb6ff;
+  --info-soft: #1e324f;
+  --nav: #141a2b;
+  --nav-active: #282d3b;
+  --led-off: #2d313f;
+  --led-on: #eef1f8;
+  --led-peak: #339cff;
+  --pill-bg: #1f2638;
+  --pill-border: #343c52;
+  --pill-fg: #ffffff;
+  --pill-muted: #a9b0c6;
+  --wave: #eef1f8;
+  --desktop: #1e2230;
+  --desktop-field: #1a1e2d;
+  --keycap-bg: #212634;
+  --keycap-border: #343a4e;
+  --scrim: #000000;
+  --diff-add: #1b3935;
+  --diff-del: #3f2633;
+  --mark: #3b3418;
+  --shadow-pop: 0 16px 40px 0 rgb(0 0 0 / 0.45), 0 0 0 1px rgb(255 255 255 / 0.08);
+  --shadow-pill: 0 12px 32px 0 rgb(0 0 0 / 0.45), 0 2px 6px 0 rgb(0 0 0 / 0.3);
+  --shadow-win: 0 24px 64px -20px rgb(0 0 0 / 0.6), 0 0 0 1px rgb(255 255 255 / 0.08);
+  /* Stat tiles (see the dark theme). */
+  --tile-tint: 14%;
+  --tile-edge: 28%;
+  --total-from: var(--accent-soft);
+  --total-to: #121a2e;
+  --total-glow: 45%;
+  --total-fg: var(--fg);
+  --total-muted: #a9b8cc;
+  --total-subtle: #7d8da3;
+  --total-chip: color-mix(in srgb, var(--accent) 22%, transparent);
+  --total-icon: var(--accent-text);
+  --total-border: color-mix(in srgb, var(--accent) 35%, transparent);
+  --canvas-image:
+    radial-gradient(42% 46% at 17% 8%, rgb(43 92 255 / 0.22), transparent 100%),
+    radial-gradient(40% 50% at 76% 4%, rgb(124 77 255 / 0.2), transparent 100%),
+    radial-gradient(38% 46% at 86% 88%, rgb(20 184 166 / 0.16), transparent 100%),
+    radial-gradient(30% 40% at 24% 96%, rgb(219 39 119 / 0.12), transparent 100%);
+  --panel: rgb(255 255 255 / 0.06);
+  --panel-edge: rgb(255 255 255 / 0.1);
+  --panel-shadow: 0 16px 40px 0 rgb(0 0 0 / 0.35);
+  --raised: rgb(31 38 56 / 0.96);
+  --raised-edge: rgb(255 255 255 / 0.12);
+  --field: rgb(255 255 255 / 0.08);
+  --field-edge: rgb(255 255 255 / 0.1);
+  --sidebar: rgb(255 255 255 / 0.05);
+  --sidebar-edge: rgb(255 255 255 / 0.1);
+  --sidebar-shadow: 0 16px 40px 0 rgb(0 0 0 / 0.35);
+  --glass-blur: blur(24px) saturate(1.4);
+  --primary-glow: 0 10px 24px 0 rgb(51 156 255 / 0.45);
+  --r-panel: 24px;
+  --r-control: 14px;
+  --r-row: 14px;
+}
+
+/* 明亮 · 白瓷 */
 :root[data-theme="light"],
 [data-theme="light"] {
   color-scheme: light;
@@ -75,6 +251,24 @@
   --total-chip: rgb(255 255 255 / 0.12);
   --total-icon: color-mix(in srgb, var(--accent) 55%, #ffffff);
   --total-border: transparent;
+  /* Shell surfaces (the board layout of 0.1.1): opaque here; 澄空 / 夜空 make them glass. A shadow
+     that is not there is `0 0 #0000`, never `none`, which would void Tailwind's shadow list. */
+  --canvas-image: none;
+  --panel: var(--surface);
+  --panel-edge: var(--border);
+  --panel-shadow: 0 0 #0000;
+  --raised: var(--surface);
+  --raised-edge: var(--border);
+  --field: var(--surface);
+  --field-edge: var(--border);
+  --sidebar: var(--nav);
+  --sidebar-edge: var(--border);
+  --sidebar-shadow: 0 0 #0000;
+  --glass-blur: none;
+  --primary-glow: 0 0 #0000;
+  --r-panel: 10px;
+  --r-control: 6px;
+  --r-row: 6px;
 }
 
 /* 暗黑 · 夜灯 */
@@ -141,6 +335,24 @@
   --total-chip: color-mix(in srgb, var(--accent) 22%, transparent);
   --total-icon: var(--accent-text);
   --total-border: color-mix(in srgb, var(--accent) 35%, transparent);
+  /* Shell surfaces (the board layout of 0.1.1): opaque here; 澄空 / 夜空 make them glass. A shadow
+     that is not there is `0 0 #0000`, never `none`, which would void Tailwind's shadow list. */
+  --canvas-image: none;
+  --panel: var(--surface);
+  --panel-edge: var(--border);
+  --panel-shadow: 0 0 #0000;
+  --raised: var(--surface);
+  --raised-edge: var(--border);
+  --field: var(--surface);
+  --field-edge: var(--border);
+  --sidebar: var(--nav);
+  --sidebar-edge: var(--border);
+  --sidebar-shadow: 0 0 #0000;
+  --glass-blur: none;
+  --primary-glow: 0 0 #0000;
+  --r-panel: 10px;
+  --r-control: 6px;
+  --r-row: 6px;
 }
 
 /* 暖纸 · 手稿 */
@@ -206,6 +418,24 @@
   --total-chip: rgb(253 250 244 / 0.12);
   --total-icon: color-mix(in srgb, var(--accent) 45%, #fdfaf4);
   --total-border: transparent;
+  /* Shell surfaces (the board layout of 0.1.1): opaque here; 澄空 / 夜空 make them glass. A shadow
+     that is not there is `0 0 #0000`, never `none`, which would void Tailwind's shadow list. */
+  --canvas-image: none;
+  --panel: var(--surface);
+  --panel-edge: var(--border);
+  --panel-shadow: 0 0 #0000;
+  --raised: var(--surface);
+  --raised-edge: var(--border);
+  --field: var(--surface);
+  --field-edge: var(--border);
+  --sidebar: var(--nav);
+  --sidebar-edge: var(--border);
+  --sidebar-shadow: 0 0 #0000;
+  --glass-blur: none;
+  --primary-glow: 0 0 #0000;
+  --r-panel: 10px;
+  --r-control: 6px;
+  --r-row: 6px;
 }
 
 /* 石墨 · 仪表 */
@@ -272,6 +502,24 @@
   --total-chip: color-mix(in srgb, var(--accent) 22%, transparent);
   --total-icon: var(--accent-text);
   --total-border: color-mix(in srgb, var(--accent) 40%, transparent);
+  /* Shell surfaces (the board layout of 0.1.1): opaque here; 澄空 / 夜空 make them glass. A shadow
+     that is not there is `0 0 #0000`, never `none`, which would void Tailwind's shadow list. */
+  --canvas-image: none;
+  --panel: var(--surface);
+  --panel-edge: var(--border);
+  --panel-shadow: 0 0 #0000;
+  --raised: var(--surface);
+  --raised-edge: var(--border);
+  --field: var(--surface);
+  --field-edge: var(--border);
+  --sidebar: var(--nav);
+  --sidebar-edge: var(--border);
+  --sidebar-shadow: 0 0 #0000;
+  --glass-blur: none;
+  --primary-glow: 0 0 #0000;
+  --r-panel: 10px;
+  --r-control: 6px;
+  --r-row: 6px;
 }
 
 /* 强调色（设置 › 外观，本机）：ChatGPT / Codex 的强调色，浅色主题取浅档、深色主题取深档；
@@ -316,6 +564,24 @@
   --accent-text-hover: #add4fe;
   --led-peak: #339cff;
 }
+[data-accent="blue"][data-theme="glass_dark"],
+[data-accent="blue"] [data-theme="glass_dark"]:not([data-accent]) {
+  --accent: #339cff;
+  --accent-fg: #000000;
+  --accent-soft: #1c3956;
+  --accent-text: #4fa6fd;
+  --accent-text-hover: #80bdfd;
+  --led-peak: #339cff;
+}
+[data-accent="blue"][data-theme="glass"],
+[data-accent="blue"] [data-theme="glass"]:not([data-accent]) {
+  --accent: #0285ff;
+  --accent-fg: #000000;
+  --accent-soft: #e1f0ff;
+  --accent-text: #076acb;
+  --accent-text-hover: #0056a9;
+  --led-peak: #0285ff;
+}
 [data-accent="green"][data-theme="light"],
 [data-accent="green"] [data-theme="light"]:not([data-accent]) {
   --accent: #04b84c;
@@ -351,6 +617,24 @@
   --accent-text: #55da87;
   --accent-text-hover: #6ff19d;
   --led-peak: #40c977;
+}
+[data-accent="green"][data-theme="glass_dark"],
+[data-accent="green"] [data-theme="glass_dark"]:not([data-accent]) {
+  --accent: #40c977;
+  --accent-fg: #000000;
+  --accent-soft: #1f4533;
+  --accent-text: #40c977;
+  --accent-text-hover: #5be08d;
+  --led-peak: #40c977;
+}
+[data-accent="green"][data-theme="glass"],
+[data-accent="green"] [data-theme="glass"]:not([data-accent]) {
+  --accent: #04b84c;
+  --accent-fg: #000000;
+  --accent-soft: #e1f6ea;
+  --accent-text: #097630;
+  --accent-text-hover: #016627;
+  --led-peak: #04b84c;
 }
 [data-accent="yellow"][data-theme="light"],
 [data-accent="yellow"] [data-theme="light"]:not([data-accent]) {
@@ -388,6 +672,24 @@
   --accent-text-hover: #ffedbc;
   --led-peak: #ffd240;
 }
+[data-accent="yellow"][data-theme="glass_dark"],
+[data-accent="yellow"] [data-theme="glass_dark"]:not([data-accent]) {
+  --accent: #ffd240;
+  --accent-fg: #000000;
+  --accent-soft: #514725;
+  --accent-text: #ffd240;
+  --accent-text-hover: #ffedbc;
+  --led-peak: #ffd240;
+}
+[data-accent="yellow"][data-theme="glass"],
+[data-accent="yellow"] [data-theme="glass"]:not([data-accent]) {
+  --accent: #ffc300;
+  --accent-fg: #000000;
+  --accent-soft: #fff8e0;
+  --accent-text: #826304;
+  --accent-text-hover: #705400;
+  --led-peak: #ffc300;
+}
 [data-accent="pink"][data-theme="light"],
 [data-accent="pink"] [data-theme="light"]:not([data-accent]) {
   --accent: #ff66ad;
@@ -423,6 +725,24 @@
   --accent-text: #ffa8ce;
   --accent-text-hover: #fecde1;
   --led-peak: #ff8cc1;
+}
+[data-accent="pink"][data-theme="glass_dark"],
+[data-accent="pink"] [data-theme="glass_dark"]:not([data-accent]) {
+  --accent: #ff8cc1;
+  --accent-fg: #000000;
+  --accent-soft: #513546;
+  --accent-text: #ff8cc1;
+  --accent-text-hover: #ffb4d4;
+  --led-peak: #ff8cc1;
+}
+[data-accent="pink"][data-theme="glass"],
+[data-accent="pink"] [data-theme="glass"]:not([data-accent]) {
+  --accent: #ff66ad;
+  --accent-fg: #000000;
+  --accent-soft: #ffedf5;
+  --accent-text: #c32b7a;
+  --accent-text-hover: #aa0366;
+  --led-peak: #ff66ad;
 }
 [data-accent="orange"][data-theme="light"],
 [data-accent="orange"] [data-theme="light"]:not([data-accent]) {
@@ -460,6 +780,24 @@
   --accent-text-hover: #ffcbb4;
   --led-peak: #ff8549;
 }
+[data-accent="orange"][data-theme="glass_dark"],
+[data-accent="orange"] [data-theme="glass_dark"]:not([data-accent]) {
+  --accent: #ff8549;
+  --accent-fg: #000000;
+  --accent-soft: #513327;
+  --accent-text: #ff8549;
+  --accent-text-hover: #feab85;
+  --led-peak: #ff8549;
+}
+[data-accent="orange"][data-theme="glass"],
+[data-accent="orange"] [data-theme="glass"]:not([data-accent]) {
+  --accent: #fb6a22;
+  --accent-fg: #000000;
+  --accent-soft: #ffede4;
+  --accent-text: #b14404;
+  --accent-text-hover: #9b3900;
+  --led-peak: #fb6a22;
+}
 [data-accent="purple"][data-theme="light"],
 [data-accent="purple"] [data-theme="light"]:not([data-accent]) {
   --accent: #924ff7;
@@ -496,6 +834,24 @@
   --accent-text-hover: #dac8fe;
   --led-peak: #ad7bf9;
 }
+[data-accent="purple"][data-theme="glass_dark"],
+[data-accent="purple"] [data-theme="glass_dark"]:not([data-accent]) {
+  --accent: #ad7bf9;
+  --accent-fg: #000000;
+  --accent-soft: #3c3055;
+  --accent-text: #b68afd;
+  --accent-text-hover: #c7a9fe;
+  --led-peak: #ad7bf9;
+}
+[data-accent="purple"][data-theme="glass"],
+[data-accent="purple"] [data-theme="glass"]:not([data-accent]) {
+  --accent: #924ff7;
+  --accent-fg: #000000;
+  --accent-soft: #f2eafe;
+  --accent-text: #853fe8;
+  --accent-text-hover: #7122d0;
+  --led-peak: #924ff7;
+}
 [data-accent="ink"][data-theme="light"],
 [data-accent="ink"] [data-theme="light"]:not([data-accent]) {
   --accent: #1b1d22;
@@ -531,6 +887,24 @@
   --accent-text: #eceef1;
   --accent-text-hover: #eceef1;
   --led-peak: #eceef1;
+}
+[data-accent="ink"][data-theme="glass_dark"],
+[data-accent="ink"] [data-theme="glass_dark"]:not([data-accent]) {
+  --accent: #eef1f8;
+  --accent-fg: #14161b;
+  --accent-soft: #2f3445;
+  --accent-text: #eef1f8;
+  --accent-text-hover: #a3acc2;
+  --led-peak: #eef1f8;
+}
+[data-accent="ink"][data-theme="glass"],
+[data-accent="ink"] [data-theme="glass"]:not([data-accent]) {
+  --accent: #151826;
+  --accent-fg: #ffffff;
+  --accent-soft: #e8ebf3;
+  --accent-text: #151826;
+  --accent-text-hover: #5b6280;
+  --led-peak: #151826;
 }
 
 @theme inline {
@@ -580,6 +954,15 @@
   --color-diff-add: var(--diff-add);
   --color-diff-del: var(--diff-del);
   --color-mark: var(--mark);
+  /* Shell surfaces (opaque in the classic themes, glass in 澄空 / 夜空). */
+  --color-panel: var(--panel);
+  --color-panel-edge: var(--panel-edge);
+  --color-raised: var(--raised);
+  --color-raised-edge: var(--raised-edge);
+  --color-field: var(--field);
+  --color-field-edge: var(--field-edge);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-edge: var(--sidebar-edge);
 
   --font-ui:
     "Instrument Sans Variable", "Instrument Sans", "Noto Sans SC Variable", "Noto Sans SC",
@@ -597,11 +980,17 @@
   --radius-14: 14px;
   --radius-20: 20px;
   --radius-pill: 999px;
+  --radius-panel: var(--r-panel);
+  --radius-control: var(--r-control);
+  --radius-row: var(--r-row);
 
   --shadow-*: initial;
   --shadow-pop: var(--shadow-pop);
   --shadow-pill: var(--shadow-pill);
   --shadow-win: var(--shadow-win);
+  --shadow-panel: var(--panel-shadow);
+  --shadow-sidebar: var(--sidebar-shadow);
+  --shadow-primary: var(--primary-glow);
   /* The switch thumb (Codex's), the same in every theme. */
   --shadow-thumb: 0 1px 2px 0 rgb(0 0 0 / 0.2);
 }
@@ -683,12 +1072,26 @@
 @utility hairline {
   border: 1px solid var(--border);
 }
+/* The window's backdrop: the canvas colour and, in 澄空 / 夜空, the aurora painted with four radial
+   gradients (cheap to composite: no filter, fixed to the window so it does not move on scroll). */
+@utility app-canvas {
+  background-color: var(--canvas);
+  background-image: var(--canvas-image);
+  background-attachment: fixed;
+}
+/* Frosted glass for surfaces that float over content (menus, popovers, dialogs, the palette, toasts);
+   `none` outside the glass themes. Panels stay unblurred: the aurora behind them is already smooth. */
+@utility glass-blur {
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
 /* The stat tiles (docs/dictation.md §4.5): today, this week and this month each mix their own hue
    (the accent, ok, warning) into the surface; the total is the ink or accent-washed card the theme
    defines (--total-*). Text inside reads --tile-fg / --tile-muted / --tile-subtle, the icon chip
    --tile-soft / --tile-ink. */
 @utility stat-tile {
-  background: color-mix(in srgb, var(--tile-hue) var(--tile-tint), var(--surface));
+  /* Over the panel colour: opaque in the classic themes, the tile's own tinted glass in 澄空 / 夜空. */
+  background: color-mix(in srgb, var(--tile-hue) var(--tile-tint), var(--panel));
   border: 1px solid color-mix(in srgb, var(--tile-hue) var(--tile-edge), var(--surface));
   --tile-fg: var(--fg);
   --tile-muted: var(--fg-muted);

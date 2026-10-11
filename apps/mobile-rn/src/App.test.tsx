@@ -112,7 +112,7 @@ describe("the phone app on React Native", () => {
     expect(within(groq).getByText("whisper-large-v3-turbo")).toBeOnTheScreen();
     // A problem colours the card's dot, before 使用中 would.
     expect(screen.getByTestId("provider-asr-groq-lamp")).toHaveStyle({
-      backgroundColor: appTheme("light").voltip.warning,
+      backgroundColor: appTheme("glass").voltip.warning,
     });
     expect(screen.queryByTestId("provider-sheet-sheet")).toBeNull();
     await fireEvent.press(within(groq).getByRole("button", { name: "Groq" }));
@@ -128,7 +128,7 @@ describe("the phone app on React Native", () => {
     expect(outlines.length).toBeGreaterThanOrEqual(2);
     for (const outline of outlines)
       expect(outline).toHaveStyle({
-        backgroundColor: appTheme("light").colors.elevation.level1,
+        backgroundColor: appTheme("glass").colors.elevation.level1,
       });
     await fireEvent.changeText(within(sheet).getByTestId("provider-key"), "gsk_test");
     await fireEvent.press(within(sheet).getByTestId("provider-use"));
@@ -382,7 +382,7 @@ describe("the phone app on React Native", () => {
     const history = historyEntrySchema.array().parse(state.history_recent);
     await renderApp({ backend: new MockBackend({ role: "phone", history }) });
     await openTab("history");
-    const theme = appTheme("light");
+    const theme = appTheme("glass");
     for (const id of ["today", "week", "month"] as const) {
       const tile = await screen.findByTestId(`phone-history-stat-${id}`);
       expect(tile).toHaveStyle({ backgroundColor: statTileColors(theme, id).background });

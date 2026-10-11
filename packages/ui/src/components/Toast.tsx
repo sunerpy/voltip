@@ -28,7 +28,7 @@ export function Toast({ toast, onDismiss }: ToastProps) {
     <div
       role={toast.tone === "danger" ? "alert" : "status"}
       data-tone={toast.tone ?? "neutral"}
-      className="relative flex h-11 w-80 items-center justify-between gap-3 overflow-hidden rounded-10 bg-surface px-3.5 text-[13px] hairline shadow-pop">
+      className="relative flex h-11 w-80 items-center justify-between gap-3 overflow-hidden rounded-panel border border-raised-edge bg-raised px-3.5 text-[13px] shadow-pop glass-blur">
       <span className={cx("truncate", toast.tone === "danger" ? "text-danger" : "text-fg")}>
         {toast.message}
       </span>

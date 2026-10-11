@@ -2,10 +2,12 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   ACCENT_IDS,
+  DEFAULT_THEME,
   FONT_SIZE_MAX,
   applyAppearance,
   applyTheme,
   isAccentId,
+  isDarkTheme,
   isThemeId,
   readTheme,
   resolveTheme,
@@ -73,7 +75,7 @@ function themeBlock(id: string): string {
 }
 
 describe("tokens.css", () => {
-  it.each(["light", "dark", "warm", "graphite"])(
+  it.each(["glass", "glass_dark", "light", "dark", "warm", "graphite"])(
     "theme %s carries every role as a six-digit hex",
     (id) => {
       const block = themeBlock(id);
@@ -86,11 +88,61 @@ describe("tokens.css", () => {
     },
   );
 
-  it("the four themes differ from each other on the canvas role", () => {
-    const canvases = ["light", "dark", "warm", "graphite"].map((id) =>
+  it("the six themes differ from each other on the canvas role", () => {
+    const canvases = ["glass", "glass_dark", "light", "dark", "warm", "graphite"].map((id) =>
       /--canvas: (#[0-9A-Fa-f]{6});/.exec(themeBlock(id))?.[1]?.toLowerCase(),
     );
-    expect(new Set(canvases).size).toBe(4);
+    expect(new Set(canvases).size).toBe(6);
+  });
+
+  it("every theme defines the shell surfaces, and only the glass pair makes them translucent", () => {
+    const extras = [
+      "canvas-image",
+      "panel",
+      "panel-edge",
+      "panel-shadow",
+      "raised",
+      "raised-edge",
+      "field",
+      "field-edge",
+      "sidebar",
+      "sidebar-edge",
+      "sidebar-shadow",
+      "glass-blur",
+      "primary-glow",
+      "r-panel",
+      "r-control",
+      "r-row",
+    ];
+    for (const id of ["glass", "glass_dark", "light", "dark", "warm", "graphite"]) {
+      const block = themeBlock(id);
+      for (const name of extras) expect(block, `${id} --${name}`).toMatch(new RegExp(`--${name}:`));
+      const glass = id.startsWith("glass");
+      expect(block.includes("--canvas-image: none;"), `${id} canvas`).toBe(!glass);
+      expect(block.includes("--panel: var(--surface);"), `${id} panel`).toBe(!glass);
+      expect(block.includes("--glass-blur: none;"), `${id} blur`).toBe(!glass);
+    }
+    // A missing shadow is `0 0 #0000`: `none` would void Tailwind's comma-separated shadow list.
+    expect(tokens).not.toMatch(/--(panel|sidebar)-shadow: none/);
+    expect(tokens).not.toMatch(/--primary-glow: none/);
+    for (const name of [
+      "panel",
+      "panel-edge",
+      "raised",
+      "raised-edge",
+      "field",
+      "field-edge",
+      "sidebar",
+      "sidebar-edge",
+    ])
+      expect(tokens).toContain(`--color-${name}: var(--${name});`);
+    expect(tokens).toContain("--radius-panel: var(--r-panel);");
+    expect(tokens).toContain("--shadow-panel: var(--panel-shadow);");
+  });
+
+  it("the bare :root is 澄空, the default of a new install", () => {
+    expect(tokens).toMatch(/:root,\s*:root\[data-theme="glass"\],\s*\[data-theme="glass"\] \{/);
+    expect(DEFAULT_THEME).toBe("glass");
   });
 
   it("exposes every role to Tailwind through @theme inline and never hardcodes hex in components", () => {
@@ -115,8 +167,8 @@ describe("tokens.css", () => {
   });
 });
 
-const THEMES = ["light", "dark", "warm", "graphite"] as const;
-const DARK_THEMES: ReadonlySet<string> = new Set(["dark", "graphite"]);
+const THEMES = ["glass", "glass_dark", "light", "dark", "warm", "graphite"] as const;
+const DARK_THEMES: ReadonlySet<string> = new Set(["dark", "graphite", "glass_dark"]);
 
 function roleIn(block: string, role: string): string | undefined {
   return new RegExp(`--${kebab(role)}: (#[0-9A-Fa-f]{6});`).exec(block)?.[1]?.toLowerCase();
@@ -165,7 +217,7 @@ function contrast(a: string, b: string): number {
 describe("accent colours (Codex's blue, ChatGPT's accent choices)", () => {
   it("the blue themes default to Codex's #339cff; the warm theme keeps its own accent", () => {
     // User decisions 2026-09-29: Codex's blue for the blue roles, the desktop app's #339cff.
-    for (const theme of ["light", "dark", "graphite"])
+    for (const theme of ["glass", "glass_dark", "light", "dark", "graphite"])
       expect(palette(theme, "default").accent).toBe("#339cff");
     expect(palette("warm", "default").accent).toBe("#b85c38");
     expect(tokens).toMatch(/:focus-visible \{\s*outline: 2px solid var\(--accent-text\);/);
@@ -239,11 +291,64 @@ describe("accent colours (Codex's blue, ChatGPT's accent choices)", () => {
   });
 });
 
+describe("the glass pair over its aurora", () => {
+  const rgba = (text: string) =>
+    [...text.matchAll(/rgb\((\d+) (\d+) (\d+) \/ ([\d.]+)\)/g)].map((m) => ({
+      rgb: [Number(m[1]), Number(m[2]), Number(m[3])],
+      alpha: Number(m[4]),
+    }));
+  /** `rgb` at `alpha` over the opaque `base`, as a six-digit hex. */
+  const over = (rgb: readonly number[], alpha: number, base: string) =>
+    `#${rgb
+      .map((c, i) => {
+        const under = Number.parseInt(base.slice(1 + 2 * i, 3 + 2 * i), 16);
+        return Math.round(c * alpha + under * (1 - alpha))
+          .toString(16)
+          .padStart(2, "0");
+      })
+      .join("")}`;
+
+  it.each(["glass", "glass_dark"])(
+    "muted and accent text keep 4.5:1 where the %s aurora is strongest, on the canvas and on panel glass",
+    (theme) => {
+      const block = themeBlock(theme);
+      const image = /--canvas-image:([^;]+);/.exec(block)?.[1] ?? "";
+      const panel = rgba(/--panel: ([^;]+);/.exec(block)?.[1] ?? "")[0];
+      const p = palette(theme, "default");
+      const lights = rgba(image);
+      expect(lights.length, `${theme} lights`).toBe(4);
+      if (panel === undefined || p.canvas === undefined) throw new Error(`${theme}: no panel`);
+      for (const light of lights) {
+        const lit = over(light.rgb, light.alpha, p.canvas);
+        const glass = over(panel.rgb, panel.alpha, lit);
+        for (const role of ["fgMuted", "accentText", "fg"]) {
+          const text = p[role] ?? "";
+          expect(contrast(text, lit), `${theme} ${role} on ${lit}`).toBeGreaterThanOrEqual(4.5);
+          expect(contrast(text, glass), `${theme} ${role} on ${glass}`).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    },
+  );
+
+  it("the primary button's label reads on its fill in both glass themes", () => {
+    for (const theme of ["glass", "glass_dark"]) {
+      const p = palette(theme, "default");
+      expect(
+        contrast(p.primaryFg ?? "", p.primary ?? ""),
+        `${theme} primary`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});
+
 describe("theme helpers", () => {
   it("resolves follow-system and writes data attributes on <html>", () => {
     expect(resolveTheme({ theme: "warm", follow_system_theme: false }, true)).toBe("warm");
-    expect(resolveTheme({ theme: "warm", follow_system_theme: true }, true)).toBe("dark");
-    expect(resolveTheme({ theme: "warm", follow_system_theme: true }, false)).toBe("light");
+    // User decision 2026-10-11: following the system switches between 澄空 and 夜空.
+    expect(resolveTheme({ theme: "warm", follow_system_theme: true }, true)).toBe("glass_dark");
+    expect(resolveTheme({ theme: "warm", follow_system_theme: true }, false)).toBe("glass");
+    expect(isDarkTheme("glass_dark") && isDarkTheme("dark") && isDarkTheme("graphite")).toBe(true);
+    expect(isDarkTheme("glass") || isDarkTheme("light") || isDarkTheme("warm")).toBe(false);
     applyTheme("graphite");
     expect(document.documentElement.dataset.theme).toBe("graphite");
     expect(readTheme()).toBe("graphite");
@@ -271,9 +376,9 @@ describe("theme helpers", () => {
     expect(document.documentElement.dataset.accent).toBe("default");
     expect(document.documentElement.style.getPropertyValue("--ui-font-size")).toBe("14px");
     document.documentElement.dataset.theme = "sepia";
-    expect(readTheme()).toBe("light");
+    expect(readTheme()).toBe("glass");
     delete document.documentElement.dataset.theme;
-    expect(readTheme()).toBe("light");
+    expect(readTheme()).toBe("glass");
     expect(isThemeId("dark")).toBe(true);
     expect(isThemeId("x")).toBe(false);
     expect(isAccentId("purple")).toBe(true);

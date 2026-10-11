@@ -28,8 +28,8 @@ export function Chip({
   round = false,
 }: ChipProps) {
   const classes = cx(
-    "inline-flex h-7 items-center gap-1.5 bg-surface px-2.5 text-[12px] whitespace-nowrap hairline",
-    round ? "rounded-pill" : "rounded-6",
+    "inline-flex h-7 items-center gap-1.5 border border-field-edge bg-field px-2.5 text-[12px] whitespace-nowrap",
+    round ? "rounded-pill" : "rounded-control",
     active && "border-primary bg-primary text-primary-fg",
     onClick && !disabled && "cursor-pointer hover:border-fg-subtle",
     disabled && "opacity-50",

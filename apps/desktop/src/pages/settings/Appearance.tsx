@@ -22,7 +22,7 @@ import { useAppearance } from "../../app/appearance";
 import { useShell } from "../../app/shell-context";
 import { entryLatencyMs } from "../../features/history/stats";
 
-/** Settings · Appearance: four theme tiles, follow-system, density, font size, overlay position, motion, preview. */
+/** Settings · Appearance: six theme tiles, follow-system, density, font size, overlay position, motion, preview. */
 export function Appearance() {
   const { backend } = useBackend();
   const { settings, engines, history_recent: history } = useUiState();
@@ -64,7 +64,7 @@ export function Appearance() {
               theme={id}
               selected={appearance.resolvedTheme === id}
               disabled={settings.follow_system_theme}
-              caption={id === "light" ? t("settings.appearance.lightCaption") : id}
+              caption={id === "glass" ? t("settings.appearance.defaultCaption") : id}
               onSelect={(theme) => {
                 const previous = settings.theme;
                 setTheme(theme, false);

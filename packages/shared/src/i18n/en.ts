@@ -115,8 +115,17 @@ export const en: Messages = {
     },
   },
   theme: {
-    name: { light: "Light", dark: "Dark", warm: "Warm", graphite: "Graphite" },
+    name: {
+      glass: "Clear Sky",
+      glass_dark: "Night Sky",
+      light: "Light",
+      dark: "Dark",
+      warm: "Warm",
+      graphite: "Graphite",
+    },
     subtitle: {
+      glass: "Glass",
+      glass_dark: "Dark glass",
       light: "Porcelain",
       dark: "Night",
       warm: "Manuscript",
@@ -1776,16 +1785,17 @@ export const en: Messages = {
     appearance: {
       title: "Appearance",
       lede: "Theme, density, font size and where the overlay sits while dictating. These options affect only how Voltip looks on this computer, never the transcription.",
-      themeTitle: "Theme · 4 built in",
-      themeLede: "All themes share the same components and layout; only the colours change.",
+      themeTitle: "Theme · 6 built in",
+      themeLede:
+        "All themes share the same components and layout. Clear Sky and Night Sky use translucent glass over an aurora backdrop; the other four change only the colours.",
       followingSystem: "Following system · {theme}",
       themeGroup: "Theme",
-      lightCaption: "default",
+      defaultCaption: "default",
       themeSwitched: "Theme switched: {theme}",
       undo: "Undo",
       followSystem: "Follow system",
       followSystemHelp:
-        "Follows the operating system's light / dark setting: Light when the system is light, Dark when it is dark. System now: {scheme}.",
+        "Follows the operating system's light / dark setting: Clear Sky when the system is light, Night Sky when it is dark. System now: {scheme}.",
       followingNow: "Following the system",
       density: "Density",
       densityHelp: "Compact shrinks table rows from 32 to 28 and card padding from 16 to 12.",

@@ -188,16 +188,17 @@ describe("Shell", () => {
     const { backend } = renderApp();
     await screen.findByRole("heading", { name: "首页", level: 1 });
     const footer = screen.getByTestId("sidebar-footer");
-    await user.click(within(footer).getByRole("button", { name: "切换到暗黑" }));
+    // A new install is on 澄空; the glyph steps to its dark twin 夜空.
+    await user.click(within(footer).getByRole("button", { name: "切换到夜空" }));
     await waitFor(() => {
-      expect(backend.peek().settings.theme).toBe("dark");
+      expect(backend.peek().settings.theme).toBe("glass_dark");
     });
-    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(document.documentElement.dataset.theme).toBe("glass_dark");
     await user.selectOptions(within(footer).getByRole("combobox", { name: "主题" }), "system");
     await waitFor(() => {
       expect(backend.peek().settings.follow_system_theme).toBe(true);
     });
-    expect(backend.peek().settings.theme).toBe("dark");
+    expect(backend.peek().settings.theme).toBe("glass_dark");
     await user.selectOptions(within(footer).getByRole("combobox", { name: "主题" }), "warm");
     await waitFor(() => {
       expect(backend.peek().settings).toMatchObject({ theme: "warm", follow_system_theme: false });
@@ -234,8 +235,9 @@ describe("Shell", () => {
     await user.keyboard("{Control>}k{/Control}");
     await user.type(paletteInput(), "明亮");
     await user.keyboard("{Escape}");
+    // The preview ends: following a light system paints 澄空.
     await waitFor(() => {
-      expect(document.documentElement.dataset.theme).toBe("light");
+      expect(document.documentElement.dataset.theme).toBe("glass");
     });
   });
 

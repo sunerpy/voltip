@@ -4,7 +4,7 @@
 import { Hct, argbFromHex } from "@material/material-color-utilities";
 import { THEME_IDS } from "@voltip/shared";
 
-import { VOLTIP_SEED, appTheme, themeId, themeSeed } from "./themes";
+import { VOLTIP_SEED, appTheme, isGlassTheme, themeId, themeSeed } from "./themes";
 
 /** WCAG 2's relative luminance of a `#rrggbb` colour. */
 function luminance(hex: string): number {
@@ -74,7 +74,26 @@ describe("the 简约中性 themes", () => {
     // A theme picked by hand keeps its own accent.
     expect(themeSeed({ theme: "dark", follow_system_theme: false }, wallpaper)).toBe(VOLTIP_SEED);
     expect(themeSeed({ theme: "warm", follow_system_theme: false }, wallpaper)).not.toBe(wallpaper);
-    expect(themeId({ theme: "warm", follow_system_theme: true }, true)).toBe("dark");
+    // User decision 2026-10-11: following the system switches between 澄空 and 夜空.
+    expect(themeId({ theme: "warm", follow_system_theme: true }, true)).toBe("glass_dark");
+    expect(themeId({ theme: "warm", follow_system_theme: true }, false)).toBe("glass");
+    expect(themeId({ theme: "light", follow_system_theme: false }, true)).toBe("light");
+  });
+
+  it("draws 澄空 on a blue-tinted light page and 夜空 on a night one, both with Voltip's accent", () => {
+    const clear = appTheme("glass");
+    const night = appTheme("glass_dark");
+    expect([clear.dark, night.dark]).toEqual([false, true]);
+    expect(isGlassTheme("glass") && isGlassTheme("glass_dark")).toBe(true);
+    expect(isGlassTheme("light") || isGlassTheme("dark")).toBe(false);
+    expect(hueDistance(hct(clear.colors.background).hue, hct("#eef2fa").hue)).toBeLessThan(25);
+    expect(hct(clear.colors.background).tone).toBeGreaterThan(90);
+    expect(hct(night.colors.background).tone).toBeLessThan(10);
+    for (const t of [clear, night]) {
+      expect(contrast(t.colors.onSurface, t.colors.surface)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(t.colors.onSurfaceVariant, t.colors.surface)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(t.colors.onPrimary, t.colors.primary)).toBeGreaterThanOrEqual(4.5);
+    }
   });
 
   it("keeps 暖纸 cream and 石墨 a grey lifted off black", () => {

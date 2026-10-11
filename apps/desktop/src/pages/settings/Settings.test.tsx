@@ -27,7 +27,13 @@ describe("Settings · 外观", () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/settings/appearance" });
     const group = await screen.findByRole("radiogroup", { name: "主题" });
-    expect(within(group).getByRole("radio", { name: "明亮" })).toHaveAttribute(
+    // A new install starts on 澄空 (0.1.1), the first of the six tiles.
+    expect(
+      within(group)
+        .getAllByRole("radio")
+        .map((r) => r.getAttribute("aria-label")),
+    ).toEqual(["澄空", "夜空", "明亮", "暗黑", "暖纸", "石墨"]);
+    expect(within(group).getByRole("radio", { name: "澄空" })).toHaveAttribute(
       "aria-checked",
       "true",
     );
@@ -39,14 +45,14 @@ describe("Settings · 外观", () => {
     expect(await screen.findByText("主题已切换：暖纸")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^撤销$/ }));
     await waitFor(() => {
-      expect(backend.peek().settings.theme).toBe("light");
+      expect(backend.peek().settings.theme).toBe("glass");
     });
     await user.click(screen.getAllByRole("switch")[0] as HTMLElement);
     await waitFor(() => {
       expect(backend.peek().settings.follow_system_theme).toBe(true);
     });
     expect(within(group).getByRole("radio", { name: "石墨" })).toBeDisabled();
-    expect(screen.getByText(/跟随系统 · 明亮/)).toBeInTheDocument();
+    expect(screen.getByText(/跟随系统 · 澄空/)).toBeInTheDocument();
     expect(screen.getByText("prefers-color-scheme: light")).toBeInTheDocument();
   });
 
@@ -244,7 +250,7 @@ describe("Settings · 对话框", () => {
     expect(within(dialog).getByRole("tab", { name: /外观/, selected: true })).toHaveFocus();
     expect(within(dialog).getByRole("heading", { name: "外观", level: 2 })).toBeInTheDocument();
     expect(within(dialog).getByTestId("settings-readouts")).toHaveTextContent(
-      "主题 明亮 · 不跟随系统 · 密度 默认 · 14 px",
+      "主题 澄空 · 不跟随系统 · 密度 默认 · 14 px",
     );
 
     // ↑/↓ move between groups through the route; the content follows.
