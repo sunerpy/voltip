@@ -69,29 +69,32 @@ const TILE_ICONS: Record<StatSpan, string> = {
   total: "clock-outline",
 };
 
-/** The total's card: the gradient and the accent's glow in its top right corner. */
+/** The total's card: the gradient and the accent's glow in its top right corner, on a layer of
+ *  its own over the whole card. The Svg's own 100 % width and height, on the card itself,
+ *  measured the card's padded content box and left the padding uncovered at the right and the
+ *  bottom (Device Farm Pixel 8, 2026-10-11). */
 function TotalBackdrop({ gradient }: { gradient: NonNullable<StatTileColors["gradient"]> }) {
   return (
-    <Svg
+    <View
       testID="phone-history-stat-glow"
       style={StyleSheet.absoluteFill}
-      width="100%"
-      height="100%"
       accessible={false}
       pointerEvents="none">
-      <Defs>
-        <LinearGradient id="total-ink" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor={gradient.from} />
-          <Stop offset="1" stopColor={gradient.to} />
-        </LinearGradient>
-        <RadialGradient id="total-glow" cx="88%" cy="12%" rx="85%" ry="85%" fx="88%" fy="12%">
-          <Stop offset="0" stopColor={gradient.glow} stopOpacity={gradient.glowOpacity} />
-          <Stop offset="1" stopColor={gradient.glow} stopOpacity={0} />
-        </RadialGradient>
-      </Defs>
-      <Rect width="100%" height="100%" fill="url(#total-ink)" />
-      <Rect width="100%" height="100%" fill="url(#total-glow)" />
-    </Svg>
+      <Svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <Defs>
+          <LinearGradient id="total-ink" x1="0" y1="0" x2="1" y2="1">
+            <Stop offset="0" stopColor={gradient.from} />
+            <Stop offset="1" stopColor={gradient.to} />
+          </LinearGradient>
+          <RadialGradient id="total-glow" cx="88%" cy="12%" rx="85%" ry="85%" fx="88%" fy="12%">
+            <Stop offset="0" stopColor={gradient.glow} stopOpacity={gradient.glowOpacity} />
+            <Stop offset="1" stopColor={gradient.glow} stopOpacity={0} />
+          </RadialGradient>
+        </Defs>
+        <Rect x={0} y={0} width={100} height={100} fill="url(#total-ink)" />
+        <Rect x={0} y={0} width={100} height={100} fill="url(#total-glow)" />
+      </Svg>
+    </View>
   );
 }
 

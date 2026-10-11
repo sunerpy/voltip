@@ -145,13 +145,14 @@ describe("the 简约中性 themes", () => {
   });
 
   it.each(["glass", "glass_dark"] as const)(
-    "%s puts translucent cards with board 03's corners on the aurora, under a nearly opaque dock",
+    "%s puts translucent cards with board 03's corners on the aurora, under an opaque dock",
     (id) => {
       const t = appTheme(id);
       expect(t.voltip.card).toMatch(/^rgba\(255, 255, 255, 0\.\d+\)$/);
       expect(t.voltip.radius).toEqual({ card: 20, hero: 28 });
-      // Nothing blurs what scrolls under the dock, so it is nearly opaque.
-      expect(rgba(t.voltip.dock)[3]).toBeGreaterThanOrEqual(0.95);
+      // Regression (Pixel 8, 2026-10-11): nothing blurs what scrolls under the dock, and at 96 %
+      // the text under it showed through.
+      expect(t.voltip.dock).toMatch(/^#[0-9a-f]{6}$/);
     },
   );
 

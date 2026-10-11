@@ -111,7 +111,8 @@ export interface VoltipColors {
   /** The segmented control: its track and the selected segment on it. */
   track: string;
   thumb: string;
-  /** The tab dock floating over the page: nearly opaque, as nothing blurs what scrolls under it. */
+  /** The tab dock floating over the page: opaque, as nothing blurs what scrolls under it (a
+   *  96 % white let the text under it show through on a Pixel 8, 2026-10-11). */
   dock: string;
   dockEdge: string;
   /** The tint of the soft shadows under cards, the dock and the talk button. */
@@ -452,7 +453,7 @@ function materials(id: ThemeId, c: ReturnType<typeof schemeColours>) {
       controlEdge: "rgba(255, 255, 255, 0.9)",
       track: "rgba(255, 255, 255, 0.55)",
       thumb: "#ffffff",
-      dock: "rgba(255, 255, 255, 0.96)",
+      dock: "#ffffff",
       dockEdge: "rgba(255, 255, 255, 0.9)",
       shadow: "#2a3366",
       radius: { card: 20, hero: 28 },
@@ -467,7 +468,7 @@ function materials(id: ThemeId, c: ReturnType<typeof schemeColours>) {
       controlEdge: "rgba(255, 255, 255, 0.1)",
       track: "rgba(255, 255, 255, 0.05)",
       thumb: "rgba(255, 255, 255, 0.14)",
-      dock: "rgba(26, 31, 46, 0.97)",
+      dock: "#1a1f2e",
       dockEdge: "rgba(255, 255, 255, 0.1)",
       shadow: "#000000",
       radius: { card: 20, hero: 28 },

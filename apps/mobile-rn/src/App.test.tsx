@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
-import { DeviceEventEmitter } from "react-native";
+import { DeviceEventEmitter, type StyleProp, StyleSheet, type ViewStyle } from "react-native";
 import { historyEntrySchema } from "@voltip/shared";
 import { MockBackend } from "@voltip/shared/mock";
 
@@ -389,7 +389,12 @@ describe("the phone app on React Native", () => {
       expect(within(tile).queryByTestId("phone-history-stat-glow")).toBeNull();
     }
     const total = screen.getByTestId("phone-history-stat-total");
-    expect(within(total).getByTestId("phone-history-stat-glow")).toBeOnTheScreen();
+    const glow = within(total).getByTestId("phone-history-stat-glow");
+    expect(glow).toBeOnTheScreen();
+    // Regression (Device Farm Pixel 8, 2026-10-11): the drawing sat on the card itself, whose
+    // padding its 100 % size left uncovered; it is a layer of its own over the whole card now.
+    expect(glow).toHaveStyle({ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 });
+    expect(StyleSheet.flatten(glow.props.style as StyleProp<ViewStyle>).width).toBeUndefined();
     expect(within(total).getByTestId("phone-history-stat-chip")).toHaveStyle({
       backgroundColor: statTileColors(theme, "total").chip,
     });
