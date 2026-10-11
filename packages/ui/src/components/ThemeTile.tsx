@@ -12,7 +12,8 @@ export interface ThemeTileProps {
   caption?: string;
 }
 
-/** 148×104 mini shell painted with the target theme's own tokens (`data-theme` on the preview). */
+/** 148×104 mini shell painted with the target theme's own tokens (`data-theme` on the preview):
+ *  its canvas (the aurora in 澄空 / 夜空), the floating sidebar and a panel. */
 export function ThemeTile({
   theme,
   selected,
@@ -39,16 +40,16 @@ export function ThemeTile({
       <span
         data-theme={theme}
         className={cx(
-          "relative flex h-[104px] w-[148px] overflow-hidden rounded-10 border bg-canvas transition-colors",
+          "app-canvas relative flex h-[104px] w-[148px] overflow-hidden rounded-10 border [background-attachment:scroll] transition-colors",
           selected
             ? "border-primary ring-1 ring-primary"
             : "border-border group-hover:border-fg-subtle",
         )}>
-        <span className="h-full w-7 bg-nav" />
+        <span className="m-1 mr-0 w-6 rounded-[6px] border border-sidebar-edge bg-sidebar" />
         <span className="flex flex-1 flex-col">
-          <span className="h-2.5 w-full border-b border-border bg-surface" />
+          <span className="h-2.5 w-full" />
           <span className="flex flex-1 items-center justify-center p-2">
-            <span className="flex w-full flex-col gap-1.5 rounded-[8px] border border-border bg-surface p-2">
+            <span className="flex w-full flex-col gap-1.5 rounded-[8px] border border-panel-edge bg-panel p-2 shadow-panel">
               <span className="flex items-center gap-1.5">
                 <span className="h-1.5 w-1.5 rounded-full bg-ok" />
                 <span className="h-1 w-10 rounded-pill bg-fg" />

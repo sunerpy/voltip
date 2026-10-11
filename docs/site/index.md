@@ -107,7 +107,7 @@ home:
             status: available
             link: /recognition/scenes
           - title: AI presets and built-in scenes
-            body: Proofread, prompt, intent, chat, translation and notes presets and presets of your own, switched from the home page, the title bar or the tray, plus ready-made scenes for coding, office writing, chat and professional fields.
+            body: Proofread, prompt, intent, chat, translation and notes presets and presets of your own, switched from the home page, the AI Polish switch or the tray, plus ready-made scenes for coding, office writing, chat and professional fields.
             status: available
             link: /recognition/polish#presets
       - name: Phone, history and long recordings
@@ -291,7 +291,7 @@ Release packages also include a default cloud service, so dictation works before
 
 Recognition gets the words; the next steps make them read right. The dictionary corrects the names and terms a recogniser tends to mishear. AI polish removes filler words and fixes the punctuation. Replacement rules rewrite phrases exactly as you specify, and scenes adjust all of this to the app you are writing in.
 
-Presets decide what AI polish does: proofreading by default, or a prompt, intent, chat, translation or notes, chosen from the home page, the title bar or the tray, and presets you write yourself.
+Presets decide what AI polish does: proofreading by default, or a prompt, intent, chat, translation or notes, chosen from the home page, the **AI Polish** switch or the tray, and presets you write yourself.
 
 [AI polish](/recognition/polish) · [Dictionary and rules](/recognition/dictionary) · [Scenes](/recognition/scenes)
 

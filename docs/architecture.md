@@ -7,7 +7,7 @@
 ```
 apps/desktop  (Tauri 2 · Windows / macOS · React 19 + TS + Tailwind 4)
 apps/mobile   (Tauri 2 · Android · 同一套 React 代码，移动端路由)
-packages/ui       设计系统：四套主题令牌、原子组件
+packages/ui       设计系统：六套主题令牌（澄空、夜空与四套经典主题）、原子组件
 packages/shared   TS 侧协议类型 / IPC 契约 / 状态机类型（与 Rust `voltip-protocol` 一一对应）
 
 crates/voltip-protocol   版本化线协议（version 字段、tagged enum、CBOR/JSON 编解码、PairingTicket）

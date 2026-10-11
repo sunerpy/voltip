@@ -108,6 +108,29 @@ describe("Overlay page", () => {
     vi.useRealTimers();
   });
 
+  // 2026-10-11: in 澄空 the sheet drew its pills, caption and toasts in the page's light theme
+  // (dim caption text, white toasts) while the real pill window and toasts use 夜空.
+  it("regression: the spec sheet draws its pills, caption and toasts in the theme the real ones float in", async () => {
+    const themeOf = (el: Element) => el.closest("[data-theme]")?.getAttribute("data-theme");
+    const { unmount } = renderApp({ path: "/overlay" });
+    const page = await screen.findByTestId("page-overlay");
+    expect(themeOf(page)).toBe("glass");
+    const pills = screen.getAllByRole("status").filter((el) => el.hasAttribute("data-state"));
+    expect(pills).toHaveLength(8);
+    for (const pill of pills) expect(themeOf(pill)).toBe("glass_dark");
+    expect(themeOf(screen.getByText("预览"))).toBe("glass_dark");
+    expect(themeOf(screen.getByText("已取消 · 录音已丢弃"))).toBe("glass_dark");
+    // The fallback card is part of the page, not a floating window.
+    expect(themeOf(screen.getByText("文字没有送进目标窗口"))).toBe("glass");
+    unmount();
+    // A classic theme floats in itself.
+    renderApp({ path: "/overlay", mock: { settings: { theme: "light" } } });
+    await screen.findByTestId("page-overlay");
+    await waitFor(() => {
+      expect(themeOf(screen.getByText("已取消 · 录音已丢弃"))).toBe("light");
+    });
+  });
+
   it("regression: copy is real, the locked pill's 结束录音 is the real dictation_stop, demo undo does nothing and 打开历史 navigates", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn(() => Promise.resolve());
@@ -330,6 +353,8 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       const pill = await screen.findByRole("status");
       expect(pill).toHaveAttribute("data-state", "listening");
       expect(screen.getByTestId("overlay-window")).toHaveAttribute("data-session", "1");
+      // Over 澄空 (a new install's theme) the pill is dark glass (board 02).
+      expect(screen.getByTestId("overlay-window")).toHaveAttribute("data-theme", "glass_dark");
       // Before the device delivered samples: the timer is parked and the hint says so (§11).
       expect(pill).toHaveTextContent("00:00");
       expect(pill).toHaveTextContent("等待麦克风");

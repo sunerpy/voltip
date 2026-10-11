@@ -22,7 +22,7 @@ import { useAppearance } from "../../app/appearance";
 import { useShell } from "../../app/shell-context";
 import { entryLatencyMs } from "../../features/history/stats";
 
-/** Settings · Appearance: four theme tiles, follow-system, density, font size, overlay position, motion, preview. */
+/** Settings · Appearance: six theme tiles, follow-system, density, font size, overlay position, motion, preview. */
 export function Appearance() {
   const { backend } = useBackend();
   const { settings, engines, history_recent: history } = useUiState();
@@ -57,14 +57,15 @@ export function Appearance() {
         <div
           role="radiogroup"
           aria-label={t("settings.appearance.themeGroup")}
-          className="flex flex-wrap gap-4">
+          // Six tiles in two rows of three: a five-wide row left 石墨 alone under 澄空.
+          className="grid w-fit grid-cols-3 gap-4">
           {THEME_IDS.map((id) => (
             <ThemeTile
               key={id}
               theme={id}
               selected={appearance.resolvedTheme === id}
               disabled={settings.follow_system_theme}
-              caption={id === "light" ? t("settings.appearance.lightCaption") : id}
+              caption={id === "glass" ? t("settings.appearance.defaultCaption") : id}
               onSelect={(theme) => {
                 const previous = settings.theme;
                 setTheme(theme, false);

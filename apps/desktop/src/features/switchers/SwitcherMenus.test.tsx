@@ -12,11 +12,16 @@ function menuOf(testId: string): HTMLElement {
 }
 
 // User request 2026-09-30 (items 2–5): the speech model, the AI 润色 model and the microphone are
-// switched in place, from the title bar and from the home page, without opening a page.
+// switched in place, from the title bar and from the home page, without opening a page. Board 01
+// (0.1.1) puts the title bar's speech model and microphone under the title of every page but home,
+// whose 识别与润色 card has them: the title-bar tests open 历史记录.
 describe("switcher menus", () => {
   it("regression: the title bar's 语音模型 menu switches to an installed local model and back to the built-in service", async () => {
     const user = userEvent.setup();
-    const { backend } = renderApp({ mock: { models: { "qwen3-asr-0.6b": INSTALLED } } });
+    const { backend } = renderApp({
+      path: "/history",
+      mock: { models: { "qwen3-asr-0.6b": INSTALLED } },
+    });
     const trigger = await screen.findByTestId("title-bar-speech");
     expect(trigger).toHaveAccessibleName("语音模型：Qwen3-ASR-1.7B");
     await user.click(trigger);
@@ -53,7 +58,7 @@ describe("switcher menus", () => {
 
   it("regression: the 麦克风 menu reads the devices again each time it opens, records from the one chosen, and switches the recording source", async () => {
     const user = userEvent.setup();
-    const { backend } = renderApp();
+    const { backend } = renderApp({ path: "/history" });
     const devices = vi.spyOn(backend, "audioDevices");
     const trigger = await screen.findByTestId("title-bar-mic");
     await waitFor(() => {
@@ -93,7 +98,7 @@ describe("switcher menus", () => {
   // Overflow check 2026-10-01: in English at 960 px the setup guide's longer title leaves the
   // title bar's microphone too little room, and its short name was cut with nothing to read it by.
   it("regression: the title bar's 麦克风 and AI 润色模型 buttons read whole on hover", async () => {
-    renderApp({ mock: { engines: { refine_model: "" } } });
+    renderApp({ path: "/history", mock: { engines: { refine_model: "" } } });
     const mic = await screen.findByTestId("title-bar-mic");
     await waitFor(() => {
       expect(mic).toHaveAttribute("title", "Fifine K669 USB Microphone");

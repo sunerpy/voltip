@@ -6,7 +6,7 @@ description: What AI polish changes in the recognised text, how to turn it on or
 
 AI polish tidies the recognised text before it is inserted. What it does depends on the [preset](#presets) in use. The default preset, **Proofread**, fixes punctuation and typos and removes filler words and repetitions; it does not change what you said, translate it or add to it.
 
-Turn it on or off with the **AI Polish** switch in the title bar. The two menus next to it choose the preset and the model that polishes the text. A [scene](/recognition/scenes) can turn it on or off, and choose a preset, for a particular app.
+Turn it on or off with the **AI Polish** switch at the top right of the window. The two menus next to it choose the preset and the model that polishes the text; the **Recognition and polish** card on the home page has the same switch and menus. A [scene](/recognition/scenes) can turn it on or off, and choose a preset, for a particular app.
 
 ## Services
 
@@ -16,7 +16,7 @@ If the service does not answer, the recognised text is inserted without polish, 
 
 ## Presets
 
-A preset tells AI polish what to do with the recognised text. Choose the one in use from the **AI preset** menu on the home page or in the title bar, from **AI Polish** in the tray menu, or under **Presets** on the **AI models** page. While AI polish runs, the overlay shows the name of the preset, and each history entry records it.
+A preset tells AI polish what to do with the recognised text. Choose the one in use from the preset menu on the home page or next to the **AI Polish** switch, from **AI Polish** in the tray menu, or under **Presets** on the **AI models** page. While AI polish runs, the overlay shows the name of the preset, and each history entry records it.
 
 | Preset | What it does |
 | --- | --- |

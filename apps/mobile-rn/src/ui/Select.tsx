@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
 import { Icon, List, Text, TouchableRipple } from "react-native-paper";
 
-import { useAppTheme } from "./kit";
+import { Chip, useAppTheme } from "./kit";
 import { BottomSheet, useBackCloses } from "./Sheet";
 
 export interface SelectOption<V extends string> {
@@ -180,6 +180,36 @@ export function SelectField<V extends string>(props: SelectProps<V>) {
           <Icon source="chevron-down" size={24} color={theme.colors.onSurfaceVariant} />
         </View>
       </TouchableRipple>
+      <OptionSheet
+        open={open && disabled !== true}
+        title={label}
+        options={options}
+        value={current?.value}
+        choose={choose}
+        close={close}
+        {...(testID === undefined ? {} : { testID })}
+      />
+    </>
+  );
+}
+
+/** A chip on the page (board 03's 场景 · 不使用场景 ⌄): the label and the chosen value; the choices
+ *  open in a sheet. */
+export function SelectChip<V extends string>(props: SelectProps<V> & { icon?: string }) {
+  const { label, options, disabled, testID, icon } = props;
+  const { open, setOpen, close, current, choose } = usePicker(props);
+  return (
+    <>
+      <Chip
+        {...(icon === undefined ? {} : { icon })}
+        label={`${label} · ${current?.label ?? ""}`}
+        {...(disabled === undefined ? {} : { disabled })}
+        {...(testID === undefined ? {} : { testID })}
+        onPress={() => {
+          setOpen(true);
+        }}>
+        {`${label} · ${current?.label ?? ""}`}
+      </Chip>
       <OptionSheet
         open={open && disabled !== true}
         title={label}

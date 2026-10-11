@@ -37,6 +37,8 @@ import type {
 } from "./schema";
 
 export const THEME_NAMES: Readonly<Record<ThemeId, string>> = {
+  glass: "澄空",
+  glass_dark: "夜空",
   light: "明亮",
   dark: "暗黑",
   warm: "暖纸",
@@ -44,6 +46,8 @@ export const THEME_NAMES: Readonly<Record<ThemeId, string>> = {
 };
 
 export const THEME_SUBTITLES: Readonly<Record<ThemeId, string>> = {
+  glass: "玻璃",
+  glass_dark: "深色玻璃",
   light: "白瓷",
   dark: "夜灯",
   warm: "手稿",

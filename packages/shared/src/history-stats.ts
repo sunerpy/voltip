@@ -1,6 +1,6 @@
 // Pure helpers of the history pages and the desktop's home page, shared by the desktop and the
 // phone (user decision 2026-10-01: the phone has the desktop's history): the home statistics from
-// the core's `history_stats` (docs/dictation.md §4.5), the 6-week heatmap, the list filters as
+// the core's `history_stats` (docs/dictation.md §4.5), the list filters as
 // `history_query` arguments, the day grouping and the labels. Every calendar boundary is the local
 // one, computed with `Date` so the numbers match what the user sees on the clock; `now` is
 // injected so tests stay deterministic. Moved here from
@@ -53,8 +53,6 @@ export interface HomeStats {
   /** Since the 1st of the local month. */
   month: HistoryBucket;
   total: HistoryBucket;
-  /** `values[week][weekday]` for the last 6 weeks (oldest column first), levels 0..3. */
-  heatmap: number[][];
 }
 
 export type HistoryFilter = "today" | "week" | "month" | "all" | "starred" | "failed";
@@ -85,7 +83,9 @@ export function isHistoryFilter(value: string | undefined): value is HistoryFilt
 }
 
 const DAY_MS = 86_400_000;
-const HEATMAP_WEEKS = 6;
+/** How many weeks of daily buckets `statsBoundaries` asks for: this week and the five before it,
+ *  which always reach back to the start of this month. */
+const STATS_WEEKS = 6;
 
 /** Local midnight of the day containing `ms`. */
 export function startOfDay(ms: number): number {
@@ -126,7 +126,7 @@ export function entryLatencyMs(entry: HistoryEntry): number {
 export function statsBoundaries(now: number): number[] {
   const out: number[] = [];
   const day = new Date(startOfWeek(now));
-  day.setDate(day.getDate() - 7 * (HEATMAP_WEEKS - 1));
+  day.setDate(day.getDate() - 7 * (STATS_WEEKS - 1));
   const tomorrow = new Date(startOfDay(now));
   tomorrow.setDate(tomorrow.getDate() + 1);
   while (day.getTime() <= tomorrow.getTime()) {
@@ -151,24 +151,18 @@ function toBucket(parts: readonly HistoryStatsBucket[]): HistoryBucket {
 }
 
 /** The home page's numbers from the core's answer for `boundaries = statsBoundaries(now)`:
- *  today, this week and this month are sums of daily buckets, the heatmap is one cell per day. */
+ *  today, this week and this month are sums of daily buckets. */
 export function homeStats(
   stats: HistoryStats,
   boundaries: readonly number[],
   now: number,
 ): HomeStats {
   const since = (from: number) => stats.buckets.filter((_, i) => (boundaries[i] ?? 0) >= from);
-  const heatmap = Array.from({ length: HEATMAP_WEEKS }, () => Array.from({ length: 7 }, () => 0));
-  stats.buckets.forEach((bucket, i) => {
-    const column = heatmap[Math.floor(i / 7)];
-    if (column) column[i % 7] = Math.min(3, bucket.count);
-  });
   return {
     today: toBucket(since(startOfDay(now))),
     week: toBucket(since(startOfWeek(now))),
     month: toBucket(since(startOfMonth(now))),
     total: toBucket([stats.total]),
-    heatmap,
   };
 }
 

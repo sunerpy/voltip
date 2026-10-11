@@ -88,7 +88,7 @@ Recognition and AI polish can each list fallback models: when the selected model
 
 ## Switching models
 
-The title bar and the home page show the speech model and the AI polish model in use, and whether they are ready. Click either name to switch without opening its page:
+The **Recognition and polish** card on the home page shows the speech model and the AI polish model in use, and whether they are ready; on the other pages the speech model is under the page title and the polish model next to the **AI Polish** switch. Click either name to switch without opening its page:
 
 - The speech model menu lists the built-in service, each provider you have set up, and the local models you have downloaded.
 - The AI polish model menu, to the right of the **AI Polish** switch, lists the models of the built-in service and of each provider you have set up.

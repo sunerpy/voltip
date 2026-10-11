@@ -17,33 +17,32 @@ export interface SidebarGroup {
   items: SidebarItem[];
 }
 
-/** Width of the expanded sidebar and of the collapsed icon rail, in px. */
-export const SIDEBAR_WIDTH = 224;
-export const SIDEBAR_RAIL_WIDTH = 56;
+/** Width of the expanded sidebar and of the collapsed icon rail, in px (Penpot 「澄空 Glass ·
+ *  Voltip」 board 01: a 232 px panel floating 16 px from the window's edges). */
+export const SIDEBAR_WIDTH = 232;
+export const SIDEBAR_RAIL_WIDTH = 72;
 
-/** macOS draws its native traffic lights over the window's top-left corner (`titleBarStyle:
- *  "Overlay"`, `trafficLightPosition` x 12, y 14 in tauri.macos.conf.json): three 12 px buttons
- *  20 px apart, ending 64 px from the left edge. Whatever sits next to them starts 16 px later, in
- *  px so the 字号 setting (which scales rem) cannot slide it back under them (user feedback
- *  2026-09-29: with 8 px of air the lights crowded the app mark). */
-export const TRAFFIC_LIGHTS_CLEARANCE = 80;
-/** The brand row's left padding beside the traffic lights: the clearance less the nav's `px-3`. */
-export const TRAFFIC_LIGHTS_BRAND_INSET = "pl-[calc(80px_-_0.75rem)]";
-/** The collapsed rail on macOS holds the lights with 12 px on either side; the 56 px rail is
- *  narrower than they are, and its border cut through the green button. */
-export const SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS = 76;
+/** macOS draws its native traffic lights at `trafficLightPosition` x 32, y 42 (tauri.macos.conf.json):
+ *  inside the floating sidebar's brand row, three 12 px buttons 20 px apart, ending 84 px from the
+ *  window's left edge. Whatever sits next to them starts 16 px later, in px so the 字号 setting
+ *  (which scales rem) cannot slide it back under them (user feedback 2026-09-29: with 8 px of air
+ *  the lights crowded the app mark). */
+export const TRAFFIC_LIGHTS_CLEARANCE = 100;
+/** The brand row's left padding beside the traffic lights: the clearance less the sidebar's 16 px
+ *  margin and its 12 px padding. */
+export const TRAFFIC_LIGHTS_BRAND_INSET = "pl-[72px]";
+/** The collapsed rail on macOS holds the lights with 16 px on either side. */
+export const SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS = 84;
 
-/** One 36 px sidebar row, shared by the nav items, the footer entries and the theme switch so
- *  their glyphs and labels line up (user feedback 2026-09-28: the theme row's glyph sat 2 px and
- *  its name 10 px right of the others, with two separate hover patches). */
+/** One 44 px sidebar row, shared by the nav items so their glyphs and labels line up. */
 export const SIDEBAR_ROW_CLASS =
-  "flex h-9 w-full items-center rounded-6 text-[13px] transition-colors";
-/** An expanded row: the glyph 8 px from the edge, the label 10 px after the 16 px glyph. */
-export const SIDEBAR_ROW_EXPANDED_CLASS = "gap-2.5 px-2";
-/** A control that covers exactly the glyph's slot of an expanded row: the row's `px-2` inset
- *  (0.5 rem), the 16 px glyph and the `gap-2.5` (0.625 rem), so whatever follows it starts where a
- *  row's label does. Spacing is in rem (it follows 设置 › 外观 › 字号), the glyph in px. */
-export const SIDEBAR_GLYPH_SLOT_CLASS = "w-[calc(1.125rem_+_16px)] pl-2";
+  "flex h-11 w-full items-center rounded-row text-[14px] font-medium transition-colors";
+/** An expanded row: the glyph 14 px from the edge, the label 12 px after the 18 px glyph. */
+export const SIDEBAR_ROW_EXPANDED_CLASS = "gap-3 px-3.5";
+/** The square buttons under the nav (反馈, the theme menu, 设置): a third of the row each, or the
+ *  rail's width when collapsed. */
+export const SIDEBAR_FOOTER_BUTTON_CLASS =
+  "flex h-11 w-full items-center justify-center rounded-row border border-field-edge bg-field text-fg-muted transition-colors hover:bg-nav-active hover:text-fg disabled:cursor-not-allowed disabled:opacity-40";
 
 export interface SidebarProps {
   groups: readonly SidebarGroup[];
@@ -53,21 +52,23 @@ export interface SidebarProps {
   disabledIds?: readonly string[];
   /** Brand lamp: green when the core is ready. */
   statusTone?: LampTone;
-  /** The 56 px icon rail: glyphs only; every entry keeps its label as its name and tooltip. */
+  /** The icon rail: glyphs only; every entry keeps its label as its name and tooltip. */
   collapsed?: boolean;
   /** Layout controls (collapse, hide, pin): in the brand row, or stacked under it in the rail. */
   controls?: ReactNode;
-  /** Entries pinned to the bottom (feedback, the theme switch, settings), drawn with
-   *  {@link SidebarEntry} so they follow `collapsed` like the nav items. */
+  /** A card over the footer (the relay and the phones); the rail leaves it out. */
+  status?: ReactNode;
+  /** The square buttons at the bottom (feedback, the theme menu, settings), drawn with
+   *  {@link SidebarButton} so they follow `collapsed`. */
   footer?: ReactNode;
-  /** Drawn over the page (the edge preview of a hidden sidebar): a shadow instead of the border. */
+  /** Drawn over the page (the edge preview of a hidden sidebar): the window shadow. */
   floating?: boolean;
   brand?: string;
-  /** macOS keeps its native traffic lights over the top-left corner (`titleBarStyle: "Overlay"`):
-   *  the brand row starts {@link TRAFFIC_LIGHTS_CLEARANCE} px from the window's edge and shows the
-   *  wordmark without the mark (the Dock, the menu bar and the tray already show it), and the
-   *  collapsed rail widens to {@link SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS} px. Keep in sync with
-   *  `trafficLightPosition` in tauri.macos.conf.json. */
+  /** macOS keeps its native traffic lights in the brand row (`titleBarStyle: "Overlay"`): the row
+   *  starts clear of them and shows the wordmark without the mark (the Dock, the menu bar and the
+   *  tray already show it), and the collapsed rail widens to
+   *  {@link SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS} px. Keep in sync with `trafficLightPosition` in
+   *  tauri.macos.conf.json. */
   trafficLights?: boolean;
   className?: string;
 }
@@ -87,8 +88,8 @@ export interface SidebarEntryProps {
   "data-testid"?: string;
 }
 
-/** One 36 px sidebar row: a glyph and, while expanded, the label. Collapsed, the label stays as
- *  the accessible name and the tooltip, since nothing else on screen says what the glyph is. */
+/** One 44 px nav row: a glyph and, while expanded, the label. Collapsed, the label stays as the
+ *  accessible name and the tooltip, since nothing else on screen says what the glyph is. */
 export function SidebarEntry({
   icon,
   label,
@@ -114,16 +115,16 @@ export function SidebarEntry({
         SIDEBAR_ROW_CLASS,
         collapsed ? "justify-center" : SIDEBAR_ROW_EXPANDED_CLASS,
         current
-          ? "bg-nav-active font-medium text-fg"
+          ? "bg-nav-active text-fg shadow-row"
           : "text-fg-muted hover:bg-nav-active hover:text-fg",
         disabled && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-fg-muted",
       )}>
-      <Icon name={icon} size={16} className={current ? "text-fg" : "text-fg-subtle"} />
+      <Icon name={icon} size={18} className={current ? "text-primary" : "text-fg-subtle"} />
       {!collapsed && (
         <>
           <span className="flex-1 truncate text-left">{label}</span>
           {trailing !== undefined && (
-            <span className="mono text-[11px] text-fg-subtle">{trailing}</span>
+            <span className="text-[12px] font-medium text-fg-subtle">{trailing}</span>
           )}
         </>
       )}
@@ -131,9 +132,43 @@ export function SidebarEntry({
   );
 }
 
-/** The nav rail: a 40 px brand row (part of the window drag strip) with the layout controls,
- *  the grouped items (36 px) and the footer entries pinned to the bottom. 224 px wide, or the
- *  56 px icon rail when `collapsed`. */
+export interface SidebarButtonProps {
+  icon: IconName;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  /** The button opens a dialog (settings, feedback). */
+  opensDialog?: boolean;
+  "data-testid"?: string;
+}
+
+/** A square footer button: its label is its accessible name and tooltip. */
+export function SidebarButton({
+  icon,
+  label,
+  onClick,
+  disabled = false,
+  opensDialog = false,
+  "data-testid": testId,
+}: SidebarButtonProps) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      aria-haspopup={opensDialog ? "dialog" : undefined}
+      disabled={disabled}
+      onClick={onClick}
+      data-testid={testId}
+      className={SIDEBAR_FOOTER_BUTTON_CLASS}>
+      <Icon name={icon} size={18} />
+    </button>
+  );
+}
+
+/** The nav panel, floating 16 px from the window's edges (board 01): a brand row (part of the
+ *  window's drag area) with the layout controls, the grouped 44 px items, an optional status card
+ *  and the square footer buttons. 232 px wide, or the 72 px icon rail when `collapsed`. */
 export function Sidebar({
   groups,
   activeId,
@@ -142,6 +177,7 @@ export function Sidebar({
   statusTone = "ok",
   collapsed = false,
   controls,
+  status,
   footer,
   floating = false,
   brand = "Voltip",
@@ -157,33 +193,32 @@ export function Sidebar({
       data-collapsed={collapsed}
       data-floating={floating}
       // A flex item's automatic minimum is its content: pin all three so a long label can never
-      // hold the rail open wider than 56 px.
+      // hold the rail open wider than it is.
       style={{ width, minWidth: width, maxWidth: width }}
       className={cx(
-        "flex h-full shrink-0 flex-col bg-nav pb-4",
+        "flex h-full shrink-0 flex-col rounded-panel border border-sidebar-edge bg-sidebar pb-3",
         collapsed ? "px-2" : "px-3",
-        floating ? "shadow-win" : "border-r border-border",
+        floating ? "shadow-win glass-blur" : "shadow-sidebar",
         className,
       )}>
-      {/* Brand row: exactly 40 px, flush with the top edge, so it and the TitleBar form one
-          continuous drag strip. `deep` lets the brand text drag too (Tauri's drag script leaves
+      {/* Brand row: `deep` lets the brand text drag the window too (Tauri's drag script leaves
           buttons alone); the lamp is not clickable. */}
       <div
         data-tauri-drag-region="deep"
         data-testid="sidebar-brand"
         className={cx(
-          "flex h-10 shrink-0 items-center gap-2.5 select-none",
+          "flex h-16 shrink-0 items-center gap-2.5 select-none",
           collapsed
             ? "justify-center"
             : trafficLights
-              ? cx(TRAFFIC_LIGHTS_BRAND_INSET, "pr-2")
+              ? cx(TRAFFIC_LIGHTS_BRAND_INSET, "pr-1")
               : "px-2",
           collapsed && trafficLights && "invisible",
         )}>
-        {!trafficLights && <Logo size={24} className="shrink-0" />}
+        {!trafficLights && <Logo size={28} className="shrink-0" />}
         {!collapsed && (
           <>
-            <span className="text-[15px] font-semibold text-fg">{brand}</span>
+            <span className="text-[17px] font-semibold text-fg">{brand}</span>
             <Lamp tone={statusTone} size={6} label={t("ui.sidebar.coreStatus")} />
             {controls !== undefined && (
               <div
@@ -206,16 +241,15 @@ export function Sidebar({
           {controls}
         </div>
       )}
-      <div
-        className={cx("flex flex-1 flex-col gap-5 overflow-y-auto", collapsed ? "mt-3" : "mt-6")}>
+      <div className="mt-2 flex flex-1 flex-col gap-5 overflow-y-auto">
         {groups.map((g) => (
           <div key={g.title} role="group" aria-label={g.title}>
             {collapsed ? (
               <div aria-hidden className="mx-2 mb-1 h-px bg-border first:hidden" />
             ) : (
-              <div className="mb-1 px-2 text-[11px] text-fg-subtle">{g.title}</div>
+              <div className="mb-1.5 px-2 text-[11px] font-medium text-fg-subtle">{g.title}</div>
             )}
-            <ul className="flex flex-col gap-0.5">
+            <ul className="flex flex-col gap-1">
               {g.items.map((item) => (
                 <li key={item.id}>
                   <SidebarEntry
@@ -239,8 +273,15 @@ export function Sidebar({
           </div>
         ))}
       </div>
+      {status !== undefined && !collapsed && (
+        <div data-testid="sidebar-status" className="mt-3">
+          {status}
+        </div>
+      )}
       {footer !== undefined && (
-        <div data-testid="sidebar-footer" className="mt-4 flex flex-col gap-0.5">
+        <div
+          data-testid="sidebar-footer"
+          className={cx("mt-3 grid gap-2", collapsed ? "grid-cols-1" : "grid-cols-3")}>
           {footer}
         </div>
       )}

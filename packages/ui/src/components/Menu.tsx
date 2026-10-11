@@ -44,6 +44,11 @@ export interface MenuProps {
   onSelect: (id: string) => void;
   /** Which edge of the trigger the menu lines up with. */
   align?: "start" | "end";
+  /** Where the list opens: under the trigger, or above it (a trigger at the window's bottom edge,
+   *  the sidebar's theme button). */
+  side?: "bottom" | "top";
+  /** Classes of the wrapper around the trigger and the list (`flex-1` in a row of buttons). */
+  className?: string;
   triggerClassName?: string;
   title?: string;
   disabled?: boolean;
@@ -63,6 +68,8 @@ export function Menu({
   sections,
   onSelect,
   align = "start",
+  side = "bottom",
+  className,
   triggerClassName,
   title,
   disabled = false,
@@ -165,7 +172,11 @@ export function Menu({
     // truncates instead of running over what follows it.
     <div
       ref={wrapper}
-      className={cx("relative inline-flex min-w-0", touch && cx(TOUCH_CONTROL, "select-none"))}>
+      className={cx(
+        "relative inline-flex min-w-0",
+        touch && cx(TOUCH_CONTROL, "select-none"),
+        className,
+      )}>
       <button
         ref={button}
         type="button"
@@ -204,7 +215,8 @@ export function Menu({
           data-testid={testId === undefined ? undefined : `${testId}-menu`}
           // The UI font whatever the trigger sits in (the title bar's readout is mono).
           className={cx(
-            "absolute top-full z-50 mt-1 flex w-max min-w-full flex-col rounded-10 bg-surface py-1 font-ui whitespace-nowrap shadow-win hairline",
+            "absolute z-50 flex w-max min-w-full flex-col rounded-10 border border-raised-edge bg-raised py-1 font-ui whitespace-nowrap shadow-win glass-blur",
+            side === "top" ? "bottom-full mb-1" : "top-full mt-1",
             align === "end" ? "right-0" : "left-0",
           )}>
           {sections.map((section, s) => (

@@ -7,11 +7,13 @@ import {
   Pill,
   type PillState,
   Toast,
+  floatingTheme,
   pillCaption,
   useBackend,
   useI18n,
 } from "@voltip/ui";
 import { useEffect, useState } from "react";
+import { useAppearance } from "../app/appearance";
 import { useRouter } from "../app/router";
 import { copyWithToast, useShell } from "../app/shell-context";
 import { isPillState } from "./Overlay";
@@ -74,6 +76,8 @@ export default function OverlaySheet({ state }: OverlaySheetProps) {
   const single = state !== undefined && isPillState(state) ? state : undefined;
   const tick = useTicker(single !== undefined);
   const levels = fakeLevels(tick);
+  // The pill and the toasts float over other windows in the theme the real ones use (澄空 → 夜空).
+  const pillTheme = floatingTheme(useAppearance().resolvedTheme);
 
   const fallbackText = t("overlay.fallbackText");
   // While AI polish runs the pill names the preset in use (docs/dictation.md §21), the default one here.
@@ -94,7 +98,8 @@ export default function OverlaySheet({ state }: OverlaySheetProps) {
     return (
       <div
         className="flex h-full items-start justify-center bg-transparent pt-2"
-        data-testid="overlay-window">
+        data-testid="overlay-window"
+        data-theme={pillTheme}>
         <Pill
           state={single}
           levels={levels}
@@ -126,33 +131,37 @@ export default function OverlaySheet({ state }: OverlaySheetProps) {
                 aria-hidden>
                 <span className="h-3 w-px bg-fg-muted" />
               </span>
-              <Pill
-                state={s}
-                levels={levels}
-                readout={READOUTS[s]}
-                label={sampleLabels[s]}
-                via={s === "inserted" ? "VS Code" : undefined}
-                mode={s === "processing" ? refineTag : undefined}
-                source={source(s)}
-                onCopy={copyFallback}
-                onStop={() => {
-                  void backend.invoke("dictation_stop");
-                }}
-              />
+              <div data-theme={pillTheme} className="contents">
+                <Pill
+                  state={s}
+                  levels={levels}
+                  readout={READOUTS[s]}
+                  label={sampleLabels[s]}
+                  via={s === "inserted" ? "VS Code" : undefined}
+                  mode={s === "processing" ? refineTag : undefined}
+                  source={source(s)}
+                  onCopy={copyFallback}
+                  onStop={() => {
+                    void backend.invoke("dictation_stop");
+                  }}
+                />
+              </div>
             </div>
             <span className="mono text-[11px] text-fg-subtle">{pillCaption(s, t)}</span>
           </div>
         ))}
         <div className="flex min-w-0 flex-col gap-1.5">
           <div className="flex h-[100px] items-center justify-center rounded-14 bg-desktop p-3">
-            <LiveCaption
-              committed={t("overlay.captionCommitted")}
-              tail={t("overlay.captionTail")}
-              tier="preview"
-              elapsed="00:12"
-              engine={t("overlay.captionEngine")}
-              levels={levels}
-            />
+            <div data-theme={pillTheme} className="contents">
+              <LiveCaption
+                committed={t("overlay.captionCommitted")}
+                tail={t("overlay.captionTail")}
+                tier="preview"
+                elapsed="00:12"
+                engine={t("overlay.captionEngine")}
+                levels={levels}
+              />
+            </div>
           </div>
           <span className="mono text-[11px] text-fg-subtle">{t("overlay.expanded")}</span>
         </div>
@@ -168,28 +177,41 @@ export default function OverlaySheet({ state }: OverlaySheetProps) {
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <Eyebrow>{t("overlay.toastTitle")}</Eyebrow>
-            <Toast
-              toast={{
-                id: "t1",
-                message: t("overlay.toast.cancelled"),
-                duration: 5000,
-                action: { label: t("overlay.toast.undo"), keys: "Z", onClick: () => undefined },
-              }}
-              onDismiss={() => undefined}
-            />
-            <Toast
-              toast={{
-                id: "t2",
-                message: t("overlay.toast.theme"),
-                duration: 5000,
-                action: { label: t("overlay.toast.undo"), onClick: () => undefined },
-              }}
-              onDismiss={() => undefined}
-            />
-            <Toast
-              toast={{ id: "t3", message: t("overlay.toast.copied"), duration: 2000 }}
-              onDismiss={() => undefined}
-            />
+            <div data-theme={pillTheme} className="contents">
+              <Toast
+                toast={{
+                  id: "t1",
+                  message: t("overlay.toast.cancelled"),
+                  duration: 5000,
+                  action: {
+                    label: t("overlay.toast.undo"),
+                    keys: "Z",
+                    onClick: () => undefined,
+                  },
+                }}
+                onDismiss={() => undefined}
+              />
+              <Toast
+                toast={{
+                  id: "t2",
+                  message: t("overlay.toast.theme"),
+                  duration: 5000,
+                  action: {
+                    label: t("overlay.toast.undo"),
+                    onClick: () => undefined,
+                  },
+                }}
+                onDismiss={() => undefined}
+              />
+              <Toast
+                toast={{
+                  id: "t3",
+                  message: t("overlay.toast.copied"),
+                  duration: 2000,
+                }}
+                onDismiss={() => undefined}
+              />
+            </div>
           </div>
           <Card radius={14} className="flex flex-col gap-2">
             <div className="eyebrow">{t("overlay.fallback.title")}</div>

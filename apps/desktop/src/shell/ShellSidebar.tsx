@@ -1,14 +1,16 @@
 import {
+  Icon,
   IconButton,
+  Lamp,
   Sidebar,
-  SidebarEntry,
+  SidebarButton,
   type SidebarGroup,
   ThemeSwitch,
   type ThemeChoice,
   useI18n,
   useUiState,
 } from "@voltip/ui";
-import { type TFunction, formatCount } from "@voltip/shared";
+import { type TFunction, formatCount, relayLabel } from "@voltip/shared";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { AI_ROUTE, type Route, SPEECH_ROUTE, isDialogRoute } from "../app/router";
 import type { SidebarLayoutControls } from "./sidebar-layout";
@@ -103,7 +105,8 @@ export function ShellSidebar({
   onboarding,
   trafficLights,
 }: ShellSidebarProps) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const state = useUiState();
   const { layout, toggleCollapsed, toggleHidden, reveal } = sidebar;
   const [preview, setPreview] = useState(false);
@@ -141,6 +144,35 @@ export function ShellSidebar({
   const settings = state.settings;
   // A dialog route floats over the page beneath (`background`), whose entry stays lit.
   const activeId = navIdFor(isDialogRoute(route) ? background : route);
+  // The status card over the footer (board 01): the relay and the phones, a way to 手机.
+  const relay = relayLabel(state.relay, i18n.locale);
+  const online = state.devices.filter((d) => d.connection.state === "online").length;
+  const status = (
+    <button
+      type="button"
+      data-testid="sidebar-status-card"
+      title={t("shell.status.open")}
+      disabled={onboarding}
+      onClick={() => {
+        navigate({ name: "devices" });
+        setPreview(false);
+      }}
+      className="flex w-full flex-col gap-1.5 rounded-row border border-field-edge bg-field px-3.5 py-3 text-left transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-40">
+      <span className="flex items-center gap-2 text-[13px] font-medium text-fg">
+        <Lamp tone={relay.tone === "neutral" ? "idle" : relay.tone} size={8} />
+        <span className="truncate">{t("shell.status.relay", { state: relay.text })}</span>
+      </span>
+      <span className="truncate text-[12px] text-fg-muted">
+        {state.devices.length === 0
+          ? t("shell.status.none")
+          : t("shell.status.phones", { paired: state.devices.length, online })}
+      </span>
+      <span className="flex items-center gap-1.5 text-[12px] text-fg-muted">
+        <Icon name="shield" size={14} className="shrink-0 text-fg-subtle" />
+        <span className="truncate">{t("shell.status.e2ee")}</span>
+      </span>
+    </button>
+  );
   const rail = (floating: boolean): ReactNode => (
     <Sidebar
       groups={navGroups(
@@ -186,12 +218,12 @@ export function ShellSidebar({
           )}
         </>
       }
+      status={status}
       footer={
         <>
-          <SidebarEntry
+          <SidebarButton
             icon="chat"
             label={t("shell.nav.feedback")}
-            collapsed={collapsed}
             opensDialog
             disabled={onboarding}
             data-testid="sidebar-feedback"
@@ -202,13 +234,11 @@ export function ShellSidebar({
           />
           <ThemeSwitch
             value={settings.follow_system_theme ? "system" : settings.theme}
-            collapsed={collapsed}
             onChange={onTheme}
           />
-          <SidebarEntry
+          <SidebarButton
             icon="settings"
             label={t("shell.nav.settings")}
-            collapsed={collapsed}
             opensDialog
             disabled={onboarding}
             data-testid="sidebar-settings"
@@ -222,7 +252,8 @@ export function ShellSidebar({
     />
   );
 
-  if (!layout.hidden) return rail(false);
+  // Docked, the panel floats 16 px from the window's top, left and bottom edges (board 01).
+  if (!layout.hidden) return <div className="flex h-full shrink-0 py-4 pl-4">{rail(false)}</div>;
   return (
     <>
       <div
@@ -234,7 +265,10 @@ export function ShellSidebar({
         className="fixed inset-y-0 left-0 z-40 w-2.5 border-r-2 border-border hover:border-accent"
       />
       {previewing && (
-        <div ref={panel} data-testid="sidebar-preview" className="fixed inset-y-0 left-0 z-40">
+        <div
+          ref={panel}
+          data-testid="sidebar-preview"
+          className="fixed inset-y-0 left-0 z-40 flex py-4 pl-4">
           {rail(true)}
         </div>
       )}

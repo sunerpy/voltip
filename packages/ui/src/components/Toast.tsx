@@ -1,3 +1,4 @@
+import type { ThemeId } from "@voltip/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cx } from "../cx";
 import { Keycap } from "./Keycap";
@@ -28,7 +29,7 @@ export function Toast({ toast, onDismiss }: ToastProps) {
     <div
       role={toast.tone === "danger" ? "alert" : "status"}
       data-tone={toast.tone ?? "neutral"}
-      className="relative flex h-11 w-80 items-center justify-between gap-3 overflow-hidden rounded-10 bg-surface px-3.5 text-[13px] hairline shadow-pop">
+      className="relative flex h-11 w-80 items-center justify-between gap-3 overflow-hidden rounded-panel border border-raised-edge bg-raised px-3.5 text-[13px] shadow-pop glass-blur">
       <span className={cx("truncate", toast.tone === "danger" ? "text-danger" : "text-fg")}>
         {toast.message}
       </span>
@@ -55,14 +56,19 @@ export function Toast({ toast, onDismiss }: ToastProps) {
 export interface ToastViewportProps {
   toasts: readonly ToastItem[];
   onDismiss: (id: string) => void;
+  /** The toasts' own theme (`floatingTheme`: 夜空's dark glass in 澄空); the page's otherwise. */
+  theme?: ThemeId;
 }
 
-/** Bottom-right stack, newest at the bottom, max 3 visible. */
-export function ToastViewport({ toasts, onDismiss }: ToastViewportProps) {
+/** Bottom-centre stack (Penpot 「澄空 Glass · Voltip」 board 01), newest at the bottom, max 3 visible. */
+export function ToastViewport({ toasts, onDismiss, theme }: ToastViewportProps) {
   const visible = toasts.slice(-3);
   if (visible.length === 0) return null;
   return (
-    <div className="pointer-events-none fixed right-6 bottom-6 z-40 flex flex-col items-end gap-2">
+    <div
+      data-theme={theme}
+      data-testid="toast-viewport"
+      className="pointer-events-none fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 flex-col items-center gap-2 bg-transparent">
       {visible.map((t) => (
         <div key={t.id} className="pointer-events-auto">
           <Toast toast={t} onDismiss={onDismiss} />

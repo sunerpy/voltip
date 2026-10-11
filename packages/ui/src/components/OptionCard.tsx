@@ -47,8 +47,8 @@ export function OptionCard({
   // `ring-inset` as a ring *colour* (var(--inset)) that beats `ring-accent`. The inset ring
   // utilities carry their own colour variable.
   const classes = cx(
-    "flex flex-col gap-3 rounded-10 p-4 text-left hairline transition-colors",
-    selected ? "bg-accent-soft/40 inset-ring-2 inset-ring-accent" : "bg-surface",
+    "flex flex-col gap-3 rounded-panel border border-panel-edge p-4 text-left shadow-panel transition-colors",
+    selected ? "bg-accent-soft/40 inset-ring-2 inset-ring-accent" : "bg-panel",
     selectable && !disabled && "cursor-pointer",
     selectable && !disabled && !selected && "hover:border-border-strong",
     disabled && "cursor-not-allowed opacity-60",

@@ -1,6 +1,8 @@
-// 说话, the first tab (apps/mobile's Welcome and Devices): until a computer is paired, talk on the
-// phone right away and what pairing adds; after, the paired computers too, the keyboard and the
-// connection check. A first Android back here says a second one within two seconds leaves.
+// 说话, the first tab (apps/mobile's Welcome and Devices; Penpot 「澄空 Glass · Voltip」 board 03):
+// its title over the pairing and relay state, the way to this phone's own page, the talk card and
+// the recent results. Until a computer is paired, what pairing adds; after, the paired computers
+// too, the keyboard and the connection check. A first Android back here says a second one within
+// two seconds leaves.
 import { useFocusEffect } from "@react-navigation/native";
 import { relayLabel } from "@voltip/shared";
 import { useCallback, useRef } from "react";
@@ -16,7 +18,17 @@ import { SendText } from "../features/SendText";
 import { useRootNavigation } from "../routes";
 import { useShell } from "../shell";
 import { Button } from "../ui/Button";
-import { EmptyState, Lede, Page, Section, StateLine, useAppTheme } from "../ui/kit";
+import {
+  EmptyState,
+  Lamp,
+  Lede,
+  Page,
+  RoundButton,
+  Section,
+  TabTitle,
+  type Tone,
+  useAppTheme,
+} from "../ui/kit";
 
 /** How long the second back at 说话 has to leave the app: the usual two seconds on Android. */
 export const EXIT_WINDOW_MS = 2000;
@@ -43,6 +55,43 @@ function useBackToLeave() {
   );
 }
 
+/** 说话 over its state line, and the round button to this phone's own page (board 03). */
+function TalkTitle({ tone, line }: { tone: Tone; line: string }) {
+  const theme = useAppTheme();
+  const t = useT();
+  const navigation = useRootNavigation();
+  return (
+    <TabTitle
+      title={t("mobile.tab.talk")}
+      subtitle={
+        <View testID="talk-status" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <Lamp tone={tone} />
+          <Text
+            numberOfLines={1}
+            style={{
+              flexShrink: 1,
+              fontSize: 13,
+              lineHeight: 18,
+              color: theme.colors.onSurfaceVariant,
+            }}>
+            {line}
+          </Text>
+        </View>
+      }
+      right={
+        <RoundButton
+          icon="cellphone"
+          label={t("mobile.thisDevice")}
+          testID="open-this-device"
+          onPress={() => {
+            navigation.navigate("ThisDevice");
+          }}
+        />
+      }
+    />
+  );
+}
+
 /** What pairing a computer brings, each with its mark. */
 const POINTS = [
   { id: "e2ee", icon: "lock-outline" },
@@ -55,7 +104,9 @@ function Welcome() {
   const t = useT();
   const navigation = useRootNavigation();
   return (
-    <Page testID="phone-welcome">
+    <Page
+      testID="phone-welcome"
+      title={<TalkTitle tone="idle" line={t("mobile.welcome.status")} />}>
       <Lede>{t("mobile.welcome.intro")}</Lede>
       <PhoneMic desktops={[]} />
       <RefineNotice />
@@ -95,22 +146,18 @@ function Paired() {
   const navigation = useRootNavigation();
   const online = devices.filter((d) => d.connection.state === "online").length;
   return (
-    <Page testID="phone-devices">
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          paddingHorizontal: 4,
-        }}>
-        <StateLine tone={online > 0 ? "ok" : "idle"} small>
-          {t("mobile.devices.count", { paired: devices.length, online })}
-        </StateLine>
-        <Text variant="bodySmall" numberOfLines={1} style={{ flexShrink: 1 }}>
-          {t("mobile.devices.relay", { state: relayLabel(relay, locale).text })}
-        </Text>
-      </View>
+    <Page
+      testID="phone-devices"
+      title={
+        <TalkTitle
+          tone={online > 0 ? "ok" : "idle"}
+          line={t("mobile.devices.status", {
+            paired: devices.length,
+            online,
+            state: relayLabel(relay, locale).text,
+          })}
+        />
+      }>
       <PhoneMic desktops={devices} />
       <RefineNotice />
       <RecentResults />

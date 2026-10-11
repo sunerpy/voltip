@@ -14,7 +14,7 @@ These steps take you from a fresh install to text at your cursor, and then to re
 
 The text appears at the cursor, and the result is listed under the latest results on the home page.
 
-If nothing arrives, press **Test microphone** on the home page and say a few words: the strength bar should move. To record from another microphone, click its name on the home page or in the title bar and choose the device. [Questions and troubleshooting](/reference/faq) covers the usual causes.
+If nothing arrives, press **Test microphone** in the **Recognition and polish** card on the home page and say a few words: the ring around **Start dictation** should grow and shrink with your voice. To record from another microphone, click its name in that card, or under the page title on the other pages, and choose the device. [Questions and troubleshooting](/reference/faq) covers the usual causes.
 
 The setup guide under **Settings → General** walks through the shortcut, the recognition service and a test dictation.
 
@@ -26,7 +26,7 @@ To keep the audio on your computer:
 2. Download a model. **Qwen3-ASR 0.6B** (690 MB) is the recommended one; **SenseVoice Small** (240 MB) is the smallest.
 3. Select the model when the download is finished.
 
-From then on, no audio leaves the computer. To switch between the downloaded models, or back to the built-in service, click the speech model name in the title bar or on the home page. [Local recognition](/recognition/local) compares the models and explains when the graphics card is used.
+From then on, no audio leaves the computer. To switch between the downloaded models, or back to the built-in service, click the speech model name on the home page, or under the page title on the other pages. [Local recognition](/recognition/local) compares the models and explains when the graphics card is used.
 
 ## On Linux with Wayland
 
@@ -35,5 +35,5 @@ A pure Wayland session does not let apps register global shortcuts. Bind a short
 ## Next steps
 
 - Choose how recording starts and stops: [Shortcuts and recording modes](/dictation/shortcuts)
-- Turn AI polish on or off with the **AI polish** switch in the title bar: [AI polish](/recognition/polish)
+- Turn AI polish on or off with the **AI Polish** switch at the top right of the window: [AI polish](/recognition/polish)
 - Teach Voltip your names and terms: [Dictionary and rules](/recognition/dictionary)

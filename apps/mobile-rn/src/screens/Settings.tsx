@@ -13,7 +13,7 @@ import { useUiState } from "../backend/BackendProvider";
 import { useI18n } from "../backend/i18n";
 import { useNow } from "../backend/useNow";
 import { type RootParams, useRootNavigation } from "../routes";
-import { Lede, NavRow, Page, Rows, Section } from "../ui/kit";
+import { Lede, NavRow, Page, Rows, Section, TabTitle } from "../ui/kit";
 
 /** `60` → 「1 小时」, `30` → 「30 分钟」 (as 设置 › 听写 on the desktop says it). */
 export function lengthLabel(minutes: number, t: TFunction): string {
@@ -51,7 +51,7 @@ export function Settings() {
     ? t("theme.followSystem")
     : t(`theme.name.${settings.theme}`);
   return (
-    <Page testID="phone-settings" gap={20}>
+    <Page testID="phone-settings" gap={20} title={<TabTitle title={t("mobile.tab.settings")} />}>
       <Lede>{t("mobile.settings.own")}</Lede>
       <Section title={t("mobile.settings.engines")}>
         <Rows>

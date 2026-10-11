@@ -1,5 +1,4 @@
 import { render, screen } from "@testing-library/react";
-import { Heatmap, levelClass } from "./Heatmap";
 import { LedMeter, clamp01 } from "./LedMeter";
 import { Progress } from "./Progress";
 import { Sparkline, sparklinePoints } from "./Sparkline";
@@ -44,27 +43,7 @@ describe("Waveform", () => {
   });
 });
 
-describe("Heatmap / Sparkline / Progress", () => {
-  it("heatmap maps levels to four accent classes with legend and headers", () => {
-    const { container } = render(
-      <Heatmap
-        values={[
-          [0, 1],
-          [2, 3],
-        ]}
-        columnLabels={["W-1", "W0"]}
-      />,
-    );
-    expect(container.querySelectorAll('[data-level="3"]')).toHaveLength(1);
-    expect(container.querySelector('[data-level="3"]')).toHaveClass("bg-accent");
-    expect(screen.getByText("W0")).toBeInTheDocument();
-    expect(screen.getByText("少")).toBeInTheDocument();
-    expect(levelClass(9)).toBe("bg-accent");
-    expect(levelClass(-2)).toBe("bg-inset2");
-    render(<Heatmap values={[[1]]} legend={false} />);
-    expect(screen.getAllByText("少")).toHaveLength(1);
-  });
-
+describe("Sparkline / Progress", () => {
   it("sparkline builds points and progress reports value / segments / indeterminate", () => {
     expect(sparklinePoints([], 10, 10)).toBe("");
     expect(sparklinePoints([1], 10, 10)).toBe("0.0,1.0");

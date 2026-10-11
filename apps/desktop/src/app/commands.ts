@@ -1,4 +1,5 @@
 import { THEME_IDS, type ThemeId, type Translator, type UiState, themeName } from "@voltip/shared";
+import { SYSTEM_DARK_THEME, SYSTEM_LIGHT_THEME } from "@voltip/ui";
 import type { CommandItem } from "@voltip/ui";
 import { AI_ROUTE, SPEECH_ROUTE, type Route } from "./router";
 
@@ -49,7 +50,7 @@ export function buildCommands(deps: CommandDeps): CommandItem[] {
       group: t("commands.group.theme"),
       label: t("commands.followSystem"),
       icon: "monitor",
-      hint: `${t("commands.systemHint", { theme: themeName(deps.systemDark ? "dark" : "light", locale) })}${state.settings.follow_system_theme ? t("commands.currentSuffix") : ""}`,
+      hint: `${t("commands.systemHint", { theme: themeName(deps.systemDark ? SYSTEM_DARK_THEME : SYSTEM_LIGHT_THEME, locale) })}${state.settings.follow_system_theme ? t("commands.currentSuffix") : ""}`,
       run: () => {
         setTheme(state.settings.theme, true);
         toast(t("commands.followSystemToast"));

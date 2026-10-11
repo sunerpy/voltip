@@ -26,8 +26,9 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
-  primary: "bg-primary text-primary-fg hover:opacity-90",
-  outline: "bg-surface text-fg hairline hover:bg-inset",
+  // The glass themes light the fill with the accent (`--primary-glow`); elsewhere no shadow.
+  primary: "bg-primary text-primary-fg shadow-primary hover:opacity-90",
+  outline: "border border-field-edge bg-field text-fg hover:bg-inset",
   ghost: "bg-transparent text-fg hover:bg-inset",
   danger: "bg-danger text-surface hover:opacity-90",
   // Links as Codex draws them: the accent text colour, no underline, a stronger shade on hover.
@@ -75,7 +76,7 @@ export function Button({
       aria-busy={loading || undefined}
       data-variant={variant}
       className={cx(
-        "inline-flex shrink-0 items-center justify-center rounded-6 font-medium whitespace-nowrap transition-colors select-none",
+        "inline-flex shrink-0 items-center justify-center rounded-control font-medium whitespace-nowrap transition-colors select-none",
         "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50",
         VARIANT_CLASS[variant],
         SIZE_CLASS[size],

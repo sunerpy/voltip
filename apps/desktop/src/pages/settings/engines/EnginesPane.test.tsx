@@ -524,7 +524,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(within(card).getByText("轻量 · 中文")).toBeInTheDocument();
     await openLocalCard(user);
     expect(within(providerDetail("asr", "local")).getByText("模型未下载")).toBeInTheDocument();
-    const readout = screen.getByTestId("title-bar-readout");
+    const readout = screen.getByTestId("title-bar-subtitle");
     expect(within(readout).getByText("轻量 · 中文")).toBeInTheDocument();
     expect(within(readout).getByTestId("title-bar-readout-badge")).toHaveTextContent("本机");
     expect(within(readout).getByTitle("本机 · 轻量 · 中文 · 模型未下载")).toBeInTheDocument();

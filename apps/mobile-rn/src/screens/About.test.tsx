@@ -52,7 +52,7 @@ describe("updates on the phone", () => {
     const status = () => within(card).getByTestId("phone-update-status");
     const lamp = (tone: Parameters<typeof toneColor>[1]) => {
       expect(within(card).getByTestId("phone-update-status-lamp")).toHaveStyle({
-        backgroundColor: toneColor(appTheme("light"), tone),
+        backgroundColor: toneColor(appTheme("glass"), tone),
       });
     };
     lamp("idle");

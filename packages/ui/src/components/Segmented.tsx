@@ -38,7 +38,7 @@ export function Segmented<V extends string>({
       role="radiogroup"
       aria-label={label}
       className={cx(
-        "inline-flex items-center rounded-6 bg-inset p-0.5 hairline",
+        "inline-flex items-center rounded-control border border-field-edge bg-field p-0.5",
         size === "sm" ? "h-7" : "h-8",
         touch && cx(TOUCH_CONTROL, "select-none"),
         className,

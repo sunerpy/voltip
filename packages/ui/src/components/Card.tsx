@@ -10,7 +10,9 @@ export interface CardProps extends HTMLAttributes<HTMLDivElement> {
   selected?: boolean;
 }
 
-/** Surface + 1 px hairline + radius 10, no shadow. The only container in the app. */
+/** The only container in the app: the panel surface with its edge and shadow (opaque, a 1 px
+ *  hairline, radius 10 and no shadow in the classic themes; white glass, a white edge, radius 24 and
+ *  a soft shadow in 澄空 / 夜空, tokens.css). */
 export function Card({
   children,
   padding = "md",
@@ -23,8 +25,8 @@ export function Card({
   return (
     <div
       className={cx(
-        "bg-surface hairline",
-        radius === 10 ? "rounded-10" : "rounded-14",
+        "border border-panel-edge bg-panel shadow-panel",
+        radius === 10 ? "rounded-panel" : "rounded-14",
         padding === "md" && "p-[var(--card-pad)]",
         padding === "sm" && "p-3",
         interactive && "transition-colors hover:border-fg-subtle",

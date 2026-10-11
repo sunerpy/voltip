@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
-import { DeviceEventEmitter } from "react-native";
+import { DeviceEventEmitter, type StyleProp, StyleSheet, type ViewStyle } from "react-native";
 import { historyEntrySchema } from "@voltip/shared";
 import { MockBackend } from "@voltip/shared/mock";
 
@@ -112,7 +112,7 @@ describe("the phone app on React Native", () => {
     expect(within(groq).getByText("whisper-large-v3-turbo")).toBeOnTheScreen();
     // A problem colours the card's dot, before 使用中 would.
     expect(screen.getByTestId("provider-asr-groq-lamp")).toHaveStyle({
-      backgroundColor: appTheme("light").voltip.warning,
+      backgroundColor: appTheme("glass").voltip.warning,
     });
     expect(screen.queryByTestId("provider-sheet-sheet")).toBeNull();
     await fireEvent.press(within(groq).getByRole("button", { name: "Groq" }));
@@ -128,7 +128,7 @@ describe("the phone app on React Native", () => {
     expect(outlines.length).toBeGreaterThanOrEqual(2);
     for (const outline of outlines)
       expect(outline).toHaveStyle({
-        backgroundColor: appTheme("light").colors.elevation.level1,
+        backgroundColor: appTheme("glass").colors.elevation.level1,
       });
     await fireEvent.changeText(within(sheet).getByTestId("provider-key"), "gsk_test");
     await fireEvent.press(within(sheet).getByTestId("provider-use"));
@@ -382,14 +382,19 @@ describe("the phone app on React Native", () => {
     const history = historyEntrySchema.array().parse(state.history_recent);
     await renderApp({ backend: new MockBackend({ role: "phone", history }) });
     await openTab("history");
-    const theme = appTheme("light");
+    const theme = appTheme("glass");
     for (const id of ["today", "week", "month"] as const) {
       const tile = await screen.findByTestId(`phone-history-stat-${id}`);
       expect(tile).toHaveStyle({ backgroundColor: statTileColors(theme, id).background });
       expect(within(tile).queryByTestId("phone-history-stat-glow")).toBeNull();
     }
     const total = screen.getByTestId("phone-history-stat-total");
-    expect(within(total).getByTestId("phone-history-stat-glow")).toBeOnTheScreen();
+    const glow = within(total).getByTestId("phone-history-stat-glow");
+    expect(glow).toBeOnTheScreen();
+    // Regression (Device Farm Pixel 8, 2026-10-11): the drawing sat on the card itself, whose
+    // padding its 100 % size left uncovered; it is a layer of its own over the whole card now.
+    expect(glow).toHaveStyle({ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 });
+    expect(StyleSheet.flatten(glow.props.style as StyleProp<ViewStyle>).width).toBeUndefined();
     expect(within(total).getByTestId("phone-history-stat-chip")).toHaveStyle({
       backgroundColor: statTileColors(theme, "total").chip,
     });
@@ -435,5 +440,179 @@ describe("the phone app on React Native", () => {
     const card = await screen.findByTestId("device-card");
     expect(within(card).getAllByText("Studio").length).toBeGreaterThan(0);
     expect(screen.getByTestId("pair-new")).toBeOnTheScreen();
+  });
+});
+
+/** A paired computer, online or not. */
+function computer(online: boolean) {
+  return {
+    device: {
+      device_id: "0f3f1a1e-8d4b-4c8e-9f7a-1c2d3e4f5a6b",
+      public_key: "1".repeat(64),
+      name: "Studio",
+      platform: "windows",
+      fingerprint: "AB:CD",
+      trusted_at: 1_758_700_000,
+      last_seen: 1_758_700_600,
+    },
+    connection: { state: online ? "online" : "offline" },
+  } as never;
+}
+
+/** One finished take in the phone's own history. */
+function result(id: number, text: string, sentTo?: string) {
+  return historyEntrySchema.parse({
+    id: `00000000-0000-4000-8000-${String(id).padStart(12, "0")}`,
+    at_ms: Date.now() - id * 60_000,
+    raw_text: text,
+    text,
+    refined: false,
+    asr_model: "Qwen/Qwen3-ASR-1.7B",
+    duration_ms: 1200,
+    asr_ms: 300,
+    outcome: { kind: "inserted", via: "paste" },
+    starred: false,
+    mode: "whole_take",
+    kind: "dictation",
+    ...(sentTo === undefined ? {} : { origin: { device: sentTo, kind: "sent" } }),
+  });
+}
+
+const PRESS = { nativeEvent: { locationX: 60, locationY: 60 } };
+
+describe("说话 (Penpot 「澄空 Glass · Voltip」 boards 03/04)", () => {
+  it("is titled 说话 over the pairing state, with the way to this phone's page and the dock of three tabs", async () => {
+    await renderApp();
+    expect(await screen.findByRole("header", { name: "说话" })).toBeOnTheScreen();
+    expect(screen.getByTestId("talk-status")).toHaveTextContent("尚未配对电脑 · 在手机上识别");
+    const dock = screen.getByTestId("tab-dock");
+    expect(
+      within(dock)
+        .getAllByRole("tab")
+        .map((tab) => tab.props.accessibilityLabel as string),
+    ).toEqual(["说话", "记录", "设置"]);
+    expect(within(dock).getByRole("tab", { name: "说话" })).toBeSelected();
+    // Before a computer is paired there is nowhere else to send a take: no 识别方式 segment.
+    expect(screen.queryByTestId("phone-route")).toBeNull();
+    await fireEvent.press(screen.getByTestId("open-this-device"));
+    expect(await screen.findByTestId("phone-device")).toBeOnTheScreen();
+  });
+
+  it("with a computer online a take goes to it unless 在手机上识别 is picked, and the scene chip is the phone's own", async () => {
+    const { backend } = await renderApp({ mock: { devices: [computer(true)] } });
+    const invoke = jest.spyOn(backend, "invoke");
+    expect(await screen.findByTestId("talk-status")).toHaveTextContent(
+      /^1 台已配对 · 1 台在线 · 中继/,
+    );
+    expect(screen.getByTestId("phone-route-computer")).toBeChecked();
+    expect(within(screen.getByTestId("phone-route")).getByText("发送到 Studio")).toBeOnTheScreen();
+    expect(screen.getByTestId("phone-mic-route")).toHaveTextContent(
+      "松开后，文字出现在电脑的光标处",
+    );
+    // The computer picks the scene for its front app: no chip for a take sent to it.
+    expect(screen.queryByTestId("phone-scene")).toBeNull();
+    await holdAndRelease(screen.getByTestId("phone-mic-hold"));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("phone_take_start", { publicKey: "1".repeat(64) });
+    });
+    // While the take runs its route stays.
+    expect(screen.getByTestId("phone-route-phone")).toBeDisabled();
+    expect(await screen.findByText(/^已插入电脑：/)).toBeOnTheScreen();
+    await fireEvent.press(screen.getByTestId("phone-route-phone"));
+    expect(screen.getByTestId("phone-route-phone")).toBeChecked();
+    expect(screen.getByTestId("phone-mic-route")).toHaveTextContent(
+      "松开后在手机上识别并润色，结果自动复制",
+    );
+    expect(screen.getByTestId("phone-scene")).toBeOnTheScreen();
+    invoke.mockClear();
+    await holdAndRelease(screen.getByTestId("phone-mic-hold"));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("dictation_start");
+    });
+    expect(invoke).not.toHaveBeenCalledWith("phone_take_start", expect.anything());
+  });
+
+  it("with every paired computer offline the phone transcribes the take and says why", async () => {
+    const { backend } = await renderApp({ mock: { devices: [computer(false)] } });
+    const invoke = jest.spyOn(backend, "invoke");
+    const toComputer = await screen.findByTestId("phone-route-computer");
+    expect(toComputer).toBeDisabled();
+    expect(within(screen.getByTestId("phone-route")).getByText("发送到电脑")).toBeOnTheScreen();
+    expect(screen.getByTestId("phone-route-phone")).toBeChecked();
+    expect(screen.getByTestId("phone-mic-offline")).toHaveTextContent(
+      "已配对的电脑都不在线，现在在手机上识别。",
+    );
+    await holdAndRelease(screen.getByTestId("phone-mic-hold"));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("dictation_start");
+    });
+  });
+
+  it("while held the card says it records and for how long, shows the wave and what letting go does (board 04)", async () => {
+    await renderApp({ mock: { devices: [computer(true)] } });
+    const button = await screen.findByTestId("phone-mic-hold");
+    expect(screen.getByTestId("phone-mic-eyebrow")).toHaveTextContent("用手机说话");
+    expect(screen.getAllByTestId("phone-mic-halo")).toHaveLength(2);
+    expect(screen.getByTestId("phone-mic-label")).toHaveTextContent("按住说话");
+    await fireEvent(button, "responderGrant", PRESS);
+    await waitFor(() => {
+      expect(screen.getByTestId("phone-mic-eyebrow")).toHaveTextContent(/^正在录音 · 00:0\d$/);
+    });
+    expect(screen.getByTestId("phone-mic-wave")).toBeOnTheScreen();
+    expect(screen.getAllByTestId("phone-mic-halo")).toHaveLength(3);
+    expect(screen.getByTestId("phone-mic-label")).toHaveTextContent("松开发送到 Studio");
+    // The first line of the hint said what releasing does; the label says it now.
+    expect(screen.queryByTestId("phone-mic-route")).toBeNull();
+    expect(screen.getByText("手指滑出按钮再松开则取消")).toBeOnTheScreen();
+    await fireEvent(button, "responderRelease", PRESS);
+    await waitFor(() => {
+      expect(screen.getByTestId("phone-mic-eyebrow")).toHaveTextContent("用手机说话");
+    });
+    expect(screen.queryByTestId("phone-mic-wave")).toBeNull();
+    expect(screen.getAllByTestId("phone-mic-halo")).toHaveLength(2);
+  });
+
+  it("lists the three newest results on cards with where each went; copying one says so on its card", async () => {
+    const { backend } = await renderApp({
+      mock: {
+        history: [
+          result(1, "把这段逻辑抽成一个 helper。", "Studio"),
+          result(2, "会议改到周四下午三点，地点不变。"),
+          result(3, "第三条。"),
+          result(4, "第四条。"),
+        ],
+      },
+    });
+    const rows = await screen.findAllByTestId("phone-recent-row");
+    expect(rows).toHaveLength(3);
+    const meta = screen.getAllByTestId("phone-recent-meta");
+    expect(meta[0]).toHaveTextContent(/ · 已插入 Studio$/);
+    expect(meta[1]).toHaveTextContent(/ · 在手机上识别$/);
+    const first = rows[0];
+    if (first === undefined) throw new Error("no row");
+    await fireEvent.press(within(first).getByTestId("phone-recent-copy"));
+    expect(await within(first).findByTestId("phone-recent-copied")).toHaveTextContent(/已复制$/);
+    expect(within(first).queryByTestId("phone-recent-copy")).toBeNull();
+    expect((backend as unknown as { phoneClipboard: string }).phoneClipboard).toBe(
+      "把这段逻辑抽成一个 helper。",
+    );
+    // 全部记录 opens the 记录 tab.
+    await fireEvent.press(screen.getByTestId("phone-recent-all"));
+    expect(await screen.findByTestId("phone-history")).toBeOnTheScreen();
+  });
+
+  it("draws the aurora behind the tab pages on 澄空 and 夜空 only", async () => {
+    const { backend } = await renderApp();
+    expect(await screen.findByTestId("aurora")).toBeOnTheScreen();
+    await act(async () => {
+      await backend.invoke("settings_set_theme", { theme: "glass_dark", followSystem: false });
+    });
+    expect(screen.getByTestId("aurora")).toBeOnTheScreen();
+    await act(async () => {
+      await backend.invoke("settings_set_theme", { theme: "light", followSystem: false });
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("aurora")).toBeNull();
+    });
   });
 });

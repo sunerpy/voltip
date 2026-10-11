@@ -133,7 +133,7 @@ function NativeSelect<V extends string>({
             if (next) onChange(next.value);
           }}
           className={cx(
-            "col-start-1 row-start-1 w-full min-w-0 appearance-none rounded-6 bg-surface pr-7 pl-2.5 hairline outline-none transition-colors hover:border-fg-subtle focus:border-fg disabled:opacity-50 disabled:hover:border-border",
+            "col-start-1 row-start-1 w-full min-w-0 appearance-none rounded-control border border-field-edge bg-field pr-7 pl-2.5 outline-none transition-colors hover:border-fg-subtle focus:border-fg disabled:opacity-50 disabled:hover:border-border",
             // `wrap`: the platform's select stays the control (keyboard, screen readers, its list)
             // but is not seen; the face after it shows the label on as many lines as it takes.
             wrap
@@ -156,7 +156,7 @@ function NativeSelect<V extends string>({
             data-select-face=""
             {...markers}
             className={cx(
-              "col-start-1 row-start-1 flex min-w-0 items-center rounded-6 bg-surface pr-7 pl-2.5 text-fg hairline transition-colors",
+              "col-start-1 row-start-1 flex min-w-0 items-center rounded-control border border-field-edge bg-field pr-7 pl-2.5 text-fg transition-colors",
               "peer-hover:border-fg-subtle peer-focus:border-fg peer-disabled:opacity-50",
               wrapClass(size, mono),
             )}>
@@ -400,7 +400,7 @@ function TouchSelect<V extends string>({
             }
           }}
           className={cx(
-            "col-start-1 row-start-1 flex w-full min-w-0 items-center rounded-6 bg-surface pr-7 pl-2.5 text-left hairline outline-none transition-colors select-none hover:border-fg-subtle focus:border-fg disabled:opacity-50 disabled:hover:border-border aria-expanded:border-fg",
+            "col-start-1 row-start-1 flex w-full min-w-0 items-center rounded-control border border-field-edge bg-field pr-7 pl-2.5 text-left outline-none transition-colors select-none hover:border-fg-subtle focus:border-fg disabled:opacity-50 disabled:hover:border-border aria-expanded:border-fg",
             wrap ? wrapClass(size, mono) : size === "sm" ? "h-7 text-[12px]" : "h-8 text-[13px]",
             !wrap && mono && "mono",
             TOUCH_CONTROL,
@@ -440,7 +440,7 @@ function TouchSelect<V extends string>({
               aria-label={label ? undefined : rest["aria-label"]}
               onKeyDown={onListKey}
               style={placementStyle(placement)}
-              className="fixed z-50 w-max overflow-y-auto overscroll-contain rounded-10 bg-surface py-1 font-ui whitespace-normal text-fg outline-none hairline shadow-pop">
+              className="fixed z-50 w-max overflow-y-auto overscroll-contain rounded-10 border border-raised-edge bg-raised py-1 font-ui whitespace-normal text-fg outline-none shadow-pop glass-blur">
               {options.map((o, i) => {
                 const off = o.disabled === true;
                 return (

@@ -113,7 +113,9 @@ ax wait-text Voltip Voltip >/dev/null
 read -r wx wy ww wh zoom_right <<<"$(ax chrome Voltip)"
 strip_w=$((ww < 480 ? ww : 480))
 measure_strip() {
-  screencapture -x -R "$wx,$wy,$strip_w,40" "$out/window-top.png"
+  # From 0.1.1 the lights sit in the floating sidebar's brand row (trafficLightPosition y 42, 12 pt
+  # tall): picture the 32 pt band around them, which the sidebar's glass fills on both sides.
+  screencapture -x -R "$wx,$((wy + 32)),$strip_w,32" "$out/window-top.png"
   scale=$(sips -g pixelWidth "$out/window-top.png" | awk -v w="$strip_w" '/pixelWidth/ { printf "%d", $2 / w }')
   gap=$("$helper" gap "$out/window-top.png" $(((zoom_right - wx) * scale)) 2>/dev/null | sed -n 's/^gap=//p')
   [ -n "$gap" ]

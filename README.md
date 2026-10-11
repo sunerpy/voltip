@@ -24,7 +24,7 @@ recognises the speech in the cloud or on your own machine, optionally cleans the
 LLM, and pastes it into whatever app has the focus. The Android app works on its own, or as the
 computer's microphone and keyboard.
 
-![Voltip's home screen: readiness, the microphone and its test, speech engine, paired phones and recent results](./docs/site/public/screens/home-en-light.webp)
+![Voltip's home page: the dictation card with the shortcut, recognition and polish with the microphone, time saved and the recent results; the relay and the paired phones in the sidebar](./docs/site/public/screens/home-en-light.webp)
 
 ## Video
 

@@ -51,7 +51,7 @@ export const zhCN = {
       pin: "固定侧栏",
       edge: "显示侧栏",
     },
-    themeSwitch: { label: "主题", next: "切换到{theme}" },
+    themeSwitch: { label: "主题" },
     dialog: { escCancel: "取消" },
     drawer: { close: "关闭" },
     palette: {
@@ -65,9 +65,6 @@ export const zhCN = {
     banner: { close: "关闭" },
     a11y: {
       level: "强度",
-      heatmap: "活动热力图",
-      less: "少",
-      more: "多",
       sparkline: "趋势",
       waveform: "波形",
       progress: "进度",
@@ -119,8 +116,22 @@ export const zhCN = {
     },
   },
   theme: {
-    name: { light: "明亮", dark: "暗黑", warm: "暖纸", graphite: "石墨" },
-    subtitle: { light: "白瓷", dark: "夜灯", warm: "手稿", graphite: "仪表" },
+    name: {
+      glass: "澄空",
+      glass_dark: "夜空",
+      light: "明亮",
+      dark: "暗黑",
+      warm: "暖纸",
+      graphite: "石墨",
+    },
+    subtitle: {
+      glass: "玻璃",
+      glass_dark: "深色玻璃",
+      light: "白瓷",
+      dark: "夜灯",
+      warm: "手稿",
+      graphite: "仪表",
+    },
     followSystem: "跟随系统",
     notFollowing: "不跟随系统",
   },
@@ -332,7 +343,17 @@ export const zhCN = {
       tooltipOn: "AI 润色 · 已开启 · 点击关闭",
       tooltipOff: "AI 润色 · 已关闭 · 点击开启",
     },
-    footer: { command: "命令" },
+    /** The sidebar's status card (Penpot 「澄空 Glass · Voltip」 board 01): the relay, the phones and
+     *  a way to the 手机 page. */
+    status: {
+      relay: "中继 · {state}",
+      phones: "手机 · {paired} 台已配对 · {online} 台在线",
+      none: "尚未配对手机 · 去配对",
+      e2ee: "与手机之间端到端加密",
+      open: "打开「手机」页",
+    },
+    /** The home page's line under its title: today and the whole history. */
+    subtitle: { home: "今天听写 {n} 次 · 节省 {saved} · 历史记录 {total} 条" },
     backHome: "返回首页",
     toast: {
       historyEmpty: "历史记录为空 · 没有可复制的结果",
@@ -364,23 +385,6 @@ export const zhCN = {
       onboarding: "设置向导 / 第 {n} 步",
       overlay: "悬浮窗",
       notfound: "未找到",
-    },
-    shortcut: {
-      history: "历史记录",
-      settings: "设置",
-      search: "搜索",
-      copy: "复制",
-      delete: "删除",
-      newEntry: "新词条",
-      newRule: "新规则",
-      runDryRun: "试运行",
-      save: "保存",
-      cancel: "取消",
-      regenerateQr: "重新生成二维码",
-      continue: "继续",
-      previous: "上一步",
-      later: "稍后设置",
-      dictate: "听写",
     },
     readout: {
       history: "历史记录",
@@ -421,6 +425,17 @@ export const zhCN = {
     },
   },
   home: {
+    /** The 听写 card (Penpot 「澄空 Glass · Voltip」 board 01): how the chord drives a take and where the
+     *  text goes. */
+    hero: {
+      eyebrow: "听写",
+      hint: {
+        hold: "松开后，文字{target} · 按 Esc 取消",
+        toggle: "再按一次结束，文字{target} · 按 Esc 取消",
+        hold_or_toggle: "松开即结束，短按锁定继续录音 · 文字{target}",
+      },
+      target: { paste: "插入到当前光标处", clipboard: "复制到剪贴板" },
+    },
     permission: {
       title: "还差一个系统权限",
       accessibility:
@@ -444,11 +459,6 @@ export const zhCN = {
       readyDetail: "麦克风、快捷键和识别服务已就绪",
       readyDetailLocal: "麦克风、快捷键和本地模型已就绪",
     },
-    chip: {
-      provider: "{provider} · {model}",
-      local: "本机 · {model}",
-      notReady: "未就绪",
-    },
     button: {
       cancel: "取消",
       stop: "停止",
@@ -457,36 +467,19 @@ export const zhCN = {
       processingTitle: "上一段录音仍在处理，请稍候",
     },
     mic: {
-      eyebrow: "录音来源",
-      /** docs/dictation.md §22: the source switch on the card. */
-      source: "录制内容",
-      systemDevice: "电脑声音 · {name}",
-      systemDefaultDevice: "电脑声音 · 系统默认输出",
-      systemFacts: "不使用麦克风",
-      alsoSystem: "同时录制电脑声音 · {name}",
-      systemHint: "听写录制电脑播放的声音；空闲时不录制。",
-      mixedHint: "外放时请佩戴耳机，以免扬声器的声音被麦克风再次录入。",
-      /** docs/dictation.md §22.6: mixed with the speaker echo removed. */
-      mixedEchoHint: "已消除扬声器回声；外放音量很大时，仍建议佩戴耳机。",
       unavailable: "不可用",
       recording: "录音中",
       testing: "测试中 · {n} 秒",
       idle: "空闲 · 未打开麦克风",
       enumerating: "正在检测麦克风…",
-      systemDefault: "系统默认",
-      selected: "已选择",
       missing: "所选麦克风未连接 · 使用系统默认",
       test: "测试麦克风",
       stopTest: "停止测试",
-      idleHint: "空闲时不打开麦克风。点击「测试麦克风」并说几句话，查看强度条是否随之变化。",
-      testingHint: "说几句话，强度条应跟着跳动 · {n} 秒后自动停止",
-      recordingHint: "强度来自这次听写的录音",
-      devices: { one: "{n} 个输入设备", other: "{n} 个输入设备" },
       peak: "峰值 {value}",
     },
     engine: {
-      eyebrow: "语音模型",
-      configure: "配置语音模型",
+      cardTitle: "识别与润色",
+      configureShort: "配置",
       waiting: "正在加载语音模型…",
       detail: "{provider} · 语言 {language}",
       local: "本地",
@@ -494,45 +487,20 @@ export const zhCN = {
       localReady: "模型已就绪",
       localMissing: "模型未下载",
       auto: "自动",
-      refineModel: "润色模型",
-      preset: "AI 预设",
-      inject: "插入方式",
-      injectPaste: "粘贴到光标处",
-      injectClipboard: "仅复制到剪贴板",
-      injectChange: "在「设置 › 听写」中更改",
       refineOn: "AI 润色 开 · {model}",
       refineOff: "AI 润色 关",
-      privacyAudio: "音频发送到{target}",
-      privacyLocal: "音频不离开本机",
       privacyText: " · 文本发送到{target}",
       livePreview: "实时预览",
       liveDegraded: "实时预览已中断 · 最终文本不受影响",
     },
-    devices: {
-      eyebrow: "手机 · 设备",
-      unpaired: "未配对",
-      offline: "离线",
-      paired: "{n} 台已配对",
-      none: "尚未配对手机 · 去配对",
-      more: "还有 {n} 台 · 在「手机」页查看",
-      relay: "中继 · {state}",
-      open: "打开「手机」页",
-    },
     session: {
-      eyebrow: "今日听写",
-      raw: "转录字数",
-      corrected: "修正字数",
-      charsUnit: "字",
-      spoken: "说话时长",
       saved: "节省时间",
       /** The session panel's secondary line, two parts that each stay on one line. */
       count: "听写 {n} 次",
-      latency: "平均延迟 {latency}",
       basis: "依据",
       basisLabel: "节省时间的依据",
       basisText:
         "节省时间 = 说话时长 × 1.9。依据：Ruan 等 2016（arXiv:1608.07323）的实验里，说话输入比手机打字快约 2.9 倍（英文 153 vs 52 词/分，中文 123 vs 43）。只统计保存在历史记录里的听写。",
-      heatmap: "近 6 周 · 按日",
     },
     tiles: {
       today: "今天",
@@ -542,20 +510,12 @@ export const zhCN = {
       saved: "节省 {time}",
       recordingOff: "历史记录已关闭",
     },
-    table: {
-      actions: "操作",
-      time: "时间",
-      text: "文本",
-      engine: "模型",
-      duration: "时长",
-      asr: "识别",
-      refine: "润色",
-    },
     recent: {
       title: "最近的结果",
       all: "查看全部 →",
       emptyTitle: "暂无听写结果",
       emptyBody: "完成的听写会出现在这里，最新的在最前面。",
+      details: "查看详情",
     },
   },
   history: {
@@ -1739,16 +1699,17 @@ export const zhCN = {
     appearance: {
       title: "外观",
       lede: "主题、密度、字号，以及听写时悬浮窗的位置。这些选项只影响本机上 Voltip 的外观，不改变识别结果。",
-      themeTitle: "主题 · 4 套内置",
-      themeLede: "各主题的组件和布局相同，只替换配色。",
+      themeTitle: "主题 · 6 套内置",
+      themeLede:
+        "各主题的组件和布局相同。澄空与夜空使用半透明的玻璃表面和极光背景，其余四套只替换配色。",
       followingSystem: "跟随系统 · {theme}",
       themeGroup: "主题",
-      lightCaption: "默认",
+      defaultCaption: "默认",
       themeSwitched: "主题已切换：{theme}",
       undo: "撤销",
       followSystem: "跟随系统",
       followSystemHelp:
-        "开启后跟随操作系统的明暗设置：系统为浅色时用「明亮」，深色时用「暗黑」。当前系统：{scheme}。",
+        "开启后跟随操作系统的明暗设置：系统为浅色时用「澄空」，深色时用「夜空」。当前系统：{scheme}。",
       followingNow: "正在跟随系统",
       density: "密度",
       densityHelp: "「紧凑」将表格行高从 32 缩小到 28，卡片内边距从 16 缩小到 12。",
@@ -2536,6 +2497,8 @@ export const zhCN = {
       identity: "身份变化即告警",
       identityBody: "已信任的电脑更换密钥时会标红提示，不会自动信任。",
       start: "连接电脑",
+      /** The line under 说话 before a computer is paired. */
+      status: "尚未配对电脑 · 在手机上识别",
     },
     device: {
       generating: "正在生成设备身份…",
@@ -2599,6 +2562,14 @@ export const zhCN = {
       localBody:
         "按住按钮说话，松开后由内置服务识别并润色，结果自动复制到这部手机的剪贴板。手指滑出按钮再松开则取消。",
       offline: "已配对的电脑都不在线，现在在手机上识别。",
+      /** The talk card (Penpot 「澄空 Glass · Voltip」 boards 03/04): where a take goes, and what
+       *  happens on release. */
+      route: "识别方式",
+      toComputer: "发送到电脑",
+      afterComputer: "松开后，文字出现在电脑的光标处",
+      afterPhone: "松开后在手机上识别并润色，结果自动复制",
+      slideCancel: "手指滑出按钮再松开则取消",
+      releaseTo: "松开发送到 {name}",
       scene: "场景",
       noScene: "不使用场景",
       target: "发送到",
@@ -2636,6 +2607,10 @@ export const zhCN = {
       copy: "复制",
       copied: "已复制",
       copyFailed: "复制失败",
+      /** Where a result went (board 03's line under it). */
+      inserted: "已插入 {name}",
+      sent: "已发送到 {name}",
+      onPhone: "在手机上识别",
       share: "分享",
       all: "全部记录",
       openLabel: "打开「{text}」",
@@ -2692,6 +2667,8 @@ export const zhCN = {
       forgotten: "已忘记 {name}",
       count: "{paired} 台已配对 · {online} 在线",
       relay: "中继 · {state}",
+      /** The line under 说话 (board 03). */
+      status: "{paired} 台已配对 · {online} 台在线 · 中继{state}",
       emptyTitle: "尚未配对电脑",
       emptyBody: "在电脑上打开「手机」页，然后扫码或输入 6 位验证码。",
       pairNew: "配对新电脑",

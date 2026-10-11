@@ -30,12 +30,11 @@ pub enum OverlayPlacement {
     Off,
 }
 
-/// The four built-in themes of the design system.
+/// The six built-in themes of the design system.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeId {
-    /// 明亮 · 白瓷 (default).
-    #[default]
+    /// 明亮 · 白瓷.
     Light,
     /// 暗黑 · 夜灯.
     Dark,
@@ -43,6 +42,12 @@ pub enum ThemeId {
     Warm,
     /// 石墨 · 仪表.
     Graphite,
+    /// 澄空 · 玻璃: light glass over an aurora canvas (default for new installs from 0.1.1; a
+    /// stored theme is kept, there is no migration). Following the system picks it for light.
+    #[default]
+    Glass,
+    /// 夜空 · 玻璃: the dark glass twin of 澄空, which following the system picks for dark.
+    GlassDark,
 }
 
 /// UI language. `System` follows the OS / webview language; the webview does the resolution,
@@ -275,7 +280,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             schema: SETTINGS_SCHEMA,
-            theme: ThemeId::Light,
+            theme: ThemeId::Glass,
             follow_system_theme: false,
             relay_url: None,
             relay_enabled: true,
@@ -404,6 +409,23 @@ mod tests {
         assert!(store.load().unwrap_err().to_string().contains("schema"));
         assert_eq!(serde_json::to_string(&ThemeId::Warm).unwrap(), r#""warm""#);
         assert!(format!("{store:?}").contains("settings.json"));
+    }
+
+    /// 0.1.1 (user decision 2026-10-11): a new install starts on 澄空; a file that names a theme
+    /// keeps it (there is no migration), the old default 明亮 included.
+    #[test]
+    fn new_installs_start_on_glass_and_a_stored_theme_is_kept() {
+        assert_eq!(Settings::default().theme, ThemeId::Glass);
+        assert_eq!(ThemeId::default(), ThemeId::Glass);
+        assert_eq!(serde_json::to_string(&ThemeId::Glass).unwrap(), r#""glass""#);
+        assert_eq!(serde_json::to_string(&ThemeId::GlassDark).unwrap(), r#""glass_dark""#);
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore::new(dir.path());
+        std::fs::write(dir.path().join(SETTINGS_FILE_NAME), br#"{"schema":1,"theme":"light","follow_system_theme":false,"relay_enabled":true}"#).unwrap();
+        assert_eq!(store.load().unwrap().theme, ThemeId::Light);
+        std::fs::write(dir.path().join(SETTINGS_FILE_NAME), br#"{"schema":1,"theme":"glass_dark","follow_system_theme":true,"relay_enabled":true}"#).unwrap();
+        let s = store.load().unwrap();
+        assert_eq!((s.theme, s.follow_system_theme), (ThemeId::GlassDark, true));
     }
 
     /// A `settings.json` the app cannot parse (a hand edit, a crash mid-write, a value from a newer

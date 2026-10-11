@@ -119,9 +119,10 @@ describe("Select under the touch presentation", () => {
     );
     const trigger = screen.getByRole("button", { name: "模型" });
     expect(trigger).toHaveClass(
-      "hairline",
-      "rounded-6",
-      "bg-surface",
+      "border",
+      "border-field-edge",
+      "rounded-control",
+      "bg-field",
       "h-7",
       "text-[12px]",
       "mono",
@@ -137,7 +138,14 @@ describe("Select under the touch presentation", () => {
     expect(container.querySelector('[data-icon="chevronDown"]')).not.toBeNull();
     await user.click(trigger);
     const list = screen.getByRole("listbox");
-    expect(list).toHaveClass("fixed", "hairline", "shadow-pop", "rounded-10", "overflow-y-auto");
+    expect(list).toHaveClass(
+      "fixed",
+      "border-raised-edge",
+      "bg-raised",
+      "shadow-pop",
+      "rounded-10",
+      "overflow-y-auto",
+    );
     for (const option of within(list).getAllByRole("option")) {
       expect(option).toHaveClass("min-h-[44px]");
       expect(option.lastElementChild).toHaveClass("mono");

@@ -87,7 +87,7 @@ export function Popover({
           data-tauri-drag-region="false"
           data-testid={testId === undefined ? undefined : `${testId}-panel`}
           className={cx(
-            "absolute top-full z-50 mt-1 w-80 max-w-[calc(100vw-2rem)] rounded-10 bg-surface p-3 text-[12px] leading-5 text-fg shadow-win hairline",
+            "absolute top-full z-50 mt-1 w-80 max-w-[calc(100vw-2rem)] rounded-10 border border-raised-edge bg-raised p-3 text-[12px] leading-5 text-fg shadow-win glass-blur",
             align === "end" ? "right-0" : "left-0",
           )}>
           {children}

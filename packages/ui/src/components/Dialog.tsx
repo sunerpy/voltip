@@ -89,7 +89,7 @@ export function Dialog({
           e.stopPropagation();
         }}
         className={cx(
-          "flex flex-col gap-4 rounded-14 bg-surface p-6 outline-none hairline shadow-pop",
+          "flex flex-col gap-4 rounded-14 border border-raised-edge bg-raised p-6 outline-none shadow-pop glass-blur",
         )}
         // Never wider than the screen (a 720 px editor on a phone).
         style={{ width, maxWidth: "calc(100vw - 24px)" }}>

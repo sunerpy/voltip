@@ -6,7 +6,7 @@ description: The dictation history on your computer, what each entry shows, how 
 
 Every dictation, voice edit and text sent from a paired phone, and every copy a phone uploads of what it transcribed on its own, is listed on the **History** page. The history is stored on your computer; paired phones can read it, see [The computer's history and settings](/phone/#the-computer-s-history-and-settings).
 
-The latest results are also listed on the home page: six, or more when the window is taller, up to 30.
+The latest results are also listed on the home page: four, or more when the window is taller, up to 30.
 
 ## What an entry shows
 

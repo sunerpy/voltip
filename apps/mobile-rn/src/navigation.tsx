@@ -1,19 +1,23 @@
 // The phone's screens (docs/mobile-rn.md §5): a native stack whose first screen holds the three
-// tabs (说话 / 记录 / 设置, Material 3's navigation bar), with every other page pushed on top of it,
-// so a detail page has the whole screen and the system's own transition. Android's back pops the
-// stack; 记录 and 设置 go back to 说话; 说话 says a second back leaves (Talk.tsx).
-import { type BottomTabBarProps, createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+// tabs (说话 / 记录 / 设置, a dock floating over the page, Penpot 「澄空 Glass · Voltip」 board 03),
+// with every other page pushed on top of it, so a detail page has the whole screen and the
+// system's own transition. Android's back pops the stack; 记录 and 设置 go back to 说话; 说话 says a
+// second back leaves (Talk.tsx).
+import {
+  BottomTabBarHeightCallbackContext,
+  type BottomTabBarProps,
+  createBottomTabNavigator,
+} from "@react-navigation/bottom-tabs";
 import { CommonActions } from "@react-navigation/native";
 import {
   type NativeStackHeaderProps,
   createNativeStackNavigator,
 } from "@react-navigation/native-stack";
 import type { MessageKey } from "@voltip/shared";
-import type { ComponentType, ReactNode } from "react";
-import { View } from "react-native";
-import { Appbar, BottomNavigation, Icon } from "react-native-paper";
+import { type ComponentType, useContext } from "react";
+import { StyleSheet, View } from "react-native";
+import { Appbar, Icon, Text, TouchableRipple } from "react-native-paper";
 
-import { useUiState } from "./backend/BackendProvider";
 import { useT } from "./backend/i18n";
 import { About } from "./screens/About";
 import { AiModels } from "./screens/AiModels";
@@ -35,9 +39,8 @@ import { SpeechModels } from "./screens/SpeechModels";
 import { Talk } from "./screens/Talk";
 import { ThisDevice } from "./screens/ThisDevice";
 import { Verify } from "./screens/Verify";
-import { type RootParams, type TabParams, useRootNavigation } from "./routes";
-import { useAppTheme } from "./ui/kit";
-import { Logo } from "./ui/Logo";
+import { type RootParams, type TabParams } from "./routes";
+import { cardShadow, useAppTheme } from "./ui/kit";
 
 const Stack = createNativeStackNavigator<RootParams>();
 const Tab = createBottomTabNavigator<TabParams>();
@@ -71,111 +74,105 @@ function StackHeader({ navigation, options, back }: NativeStackHeaderProps) {
   );
 }
 
-/** The navigation bar under the tabs (Material 3's NavigationBar), on the cards' white with a
- *  hairline above it; the selected tab is the accent itself, without the pill behind its icon. */
-function TabBar({ state, descriptors, navigation, insets }: BottomTabBarProps) {
+/** The dock's height and its gap to the bottom inset and to a snackbar above it (board 03). */
+export const DOCK_HEIGHT = 64;
+export const DOCK_GAP = 8;
+
+/** How far the dock's bottom edge sits above the screen's: clear of the system's inset, and of
+ *  the edge itself where there is none. */
+export function dockBottom(inset: number): number {
+  return Math.max(inset, 12) + DOCK_GAP;
+}
+
+/** Where a snackbar goes so that it clears the dock. */
+export function aboveDock(inset: number): number {
+  return dockBottom(inset) + DOCK_HEIGHT + DOCK_GAP;
+}
+
+/** The tabs' dock (board 03): a pill floating over the page, 24 dp from the sides and clear of the
+ *  system's bottom inset, the chosen tab on a pill of the accent's soft tone. It tells the pages
+ *  how tall it is, so their ends scroll clear of it. */
+function TabDock({ state, descriptors, navigation, insets }: BottomTabBarProps) {
   const theme = useAppTheme();
+  const t = useT();
+  const reportHeight = useContext(BottomTabBarHeightCallbackContext);
   return (
-    <BottomNavigation.Bar
-      navigationState={state}
-      safeAreaInsets={insets}
-      shifting={false}
-      style={{
-        backgroundColor: theme.colors.surface,
-        borderTopWidth: 1,
-        borderTopColor: theme.colors.outlineVariant,
+    <View
+      pointerEvents="box-none"
+      onLayout={(e) => {
+        reportHeight?.(e.nativeEvent.layout.height);
       }}
-      activeColor={theme.colors.primary}
-      inactiveColor={theme.colors.onSurfaceVariant}
-      activeIndicatorStyle={{ backgroundColor: "transparent" }}
-      onTabPress={(press) => {
-        const { route } = press;
-        const event = navigation.emit({
-          type: "tabPress",
-          target: route.key,
-          canPreventDefault: true,
-        });
-        if (event.defaultPrevented) {
-          press.preventDefault();
-          return;
-        }
-        navigation.dispatch({
-          ...CommonActions.navigate(route.name, route.params),
-          target: state.key,
-        });
-      }}
-      renderIcon={({ route, focused, color }) =>
-        descriptors[route.key]?.options.tabBarIcon?.({ focused, color, size: 24 }) ?? null
-      }
-      getLabelText={({ route }) => {
-        const label = descriptors[route.key]?.options.title;
-        return typeof label === "string" ? label : route.name;
-      }}
-      getTestID={({ route }) => `tab-${route.name.toLowerCase()}`}
-    />
+      style={[styles.dockWrap, { paddingBottom: dockBottom(insets.bottom), paddingTop: DOCK_GAP }]}>
+      <View
+        testID="tab-dock"
+        accessibilityRole="tablist"
+        accessibilityLabel={t("mobile.tab.label")}
+        style={[
+          styles.dock,
+          { backgroundColor: theme.voltip.dock, borderColor: theme.voltip.dockEdge },
+          theme.voltip.glass ? cardShadow(theme, 16, 40, 0.16) : styles.dockFlat,
+        ]}>
+        {state.routes.map((route, index) => {
+          const focused = state.index === index;
+          const options = descriptors[route.key]?.options;
+          const label = typeof options?.title === "string" ? options.title : route.name;
+          const color = focused ? theme.colors.primary : theme.voltip.subtle;
+          return (
+            <View key={route.key} style={styles.tabCell}>
+              <TouchableRipple
+                testID={`tab-${route.name.toLowerCase()}`}
+                accessibilityRole="tab"
+                accessibilityLabel={label}
+                accessibilityState={{ selected: focused }}
+                borderless
+                onPress={() => {
+                  const event = navigation.emit({
+                    type: "tabPress",
+                    target: route.key,
+                    canPreventDefault: true,
+                  });
+                  if (focused || event.defaultPrevented) return;
+                  navigation.dispatch({
+                    ...CommonActions.navigate(route.name, route.params),
+                    target: state.key,
+                  });
+                }}
+                style={[styles.tab, focused && { backgroundColor: theme.colors.primaryContainer }]}>
+                <View style={styles.tabInner}>
+                  {options?.tabBarIcon?.({ focused, color, size: 22 })}
+                  <Text style={[styles.tabLabel, { color }]} numberOfLines={1}>
+                    {label}
+                  </Text>
+                </View>
+              </TouchableRipple>
+            </View>
+          );
+        })}
+      </View>
+    </View>
   );
 }
 
 function tabIcon(name: string, focusedName: string) {
   return ({ focused, color }: { focused: boolean; color: string }) => (
-    <Icon source={focused ? focusedName : name} size={24} color={color} />
+    <Icon source={focused ? focusedName : name} size={22} color={color} />
   );
 }
 
-/** The talk tab's title: the mark and the name until a computer is paired, then 已配对设备 with
- *  the way to this phone's own page. */
-function TalkHeader({ right }: { right?: ReactNode }) {
-  const t = useT();
-  const style = useHeaderStyle();
-  const { devices } = useUiState();
-  return (
-    <Appbar.Header mode="small" style={style}>
-      {devices.length === 0 && (
-        <View style={{ marginLeft: 12 }}>
-          <Logo size={26} />
-        </View>
-      )}
-      <Appbar.Content title={devices.length === 0 ? "Voltip" : t("mobile.title.devices")} />
-      {right}
-    </Appbar.Header>
-  );
-}
-
+/** The three tabs. Each page draws its own title ([TabTitle]), so the aurora runs behind it. */
 function Tabs() {
   const t = useT();
-  const style = useHeaderStyle();
-  const navigation = useRootNavigation();
   return (
     <Tab.Navigator
       backBehavior="firstRoute"
-      tabBar={(props) => <TabBar {...props} />}
-      screenOptions={{
-        header: ({ options }) => (
-          <Appbar.Header mode="small" style={style}>
-            <Appbar.Content title={typeof options.title === "string" ? options.title : ""} />
-          </Appbar.Header>
-        ),
-      }}>
+      tabBar={(props) => <TabDock {...props} />}
+      screenOptions={{ headerShown: false }}>
       <Tab.Screen
         name="Talk"
         component={Talk}
         options={{
           title: t("mobile.tab.talk"),
           tabBarIcon: tabIcon("microphone-outline", "microphone"),
-          header: () => (
-            <TalkHeader
-              right={
-                <Appbar.Action
-                  icon="cellphone"
-                  testID="open-this-device"
-                  accessibilityLabel={t("mobile.thisDevice")}
-                  onPress={() => {
-                    navigation.navigate("ThisDevice");
-                  }}
-                />
-              }
-            />
-          ),
         }}
       />
       <Tab.Screen
@@ -191,6 +188,22 @@ function Tabs() {
     </Tab.Navigator>
   );
 }
+
+const styles = StyleSheet.create({
+  dockWrap: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: 24 },
+  dock: {
+    height: DOCK_HEIGHT,
+    borderRadius: DOCK_HEIGHT / 2,
+    borderWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  dockFlat: { elevation: 3 },
+  tabCell: { flex: 1, alignItems: "center" },
+  tab: { width: 82, height: 52, borderRadius: 26, justifyContent: "center" },
+  tabInner: { alignItems: "center", gap: 2 },
+  tabLabel: { fontSize: 11, lineHeight: 15, fontWeight: "500" },
+});
 
 /** Every pushed page, with the title key of apps/mobile's header. */
 const PAGES: {

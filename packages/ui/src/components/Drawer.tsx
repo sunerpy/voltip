@@ -120,7 +120,7 @@ export function Drawer({
         onClick={(e) => {
           e.stopPropagation();
         }}
-        className="flex h-full flex-col border-l border-border bg-surface shadow-win outline-none motion-safe:[animation:vt-drawer-in_180ms_cubic-bezier(0.2,0,0,1)]"
+        className="flex h-full flex-col border-l border-raised-edge bg-raised shadow-win outline-none glass-blur motion-safe:[animation:vt-drawer-in_180ms_cubic-bezier(0.2,0,0,1)]"
         style={{ width: `min(${width}px, calc(100vw - 24px))` }}>
         <header className="flex shrink-0 items-start gap-3 border-b border-border px-6 pt-5 pb-4">
           {icon !== undefined && (

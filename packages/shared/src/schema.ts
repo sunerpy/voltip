@@ -3,7 +3,9 @@
 // dropped by the backends rather than half-applied.
 import { z } from "zod";
 
-export const THEME_IDS = ["light", "dark", "warm", "graphite"] as const;
+/** The built-in themes, in the order 设置 › 外观 and the theme menu list them: 澄空 (the default
+ *  since 0.1.1) and its dark twin 夜空 first. */
+export const THEME_IDS = ["glass", "glass_dark", "light", "dark", "warm", "graphite"] as const;
 export const themeIdSchema = z.enum(THEME_IDS);
 export type ThemeId = z.infer<typeof themeIdSchema>;
 
@@ -2558,7 +2560,7 @@ export function idleSnapshot(): Snapshot {
 export function defaultSettings(): Settings {
   return {
     schema: 1,
-    theme: "light",
+    theme: "glass",
     follow_system_theme: false,
     relay_enabled: true,
     hotkey: DEFAULT_HOTKEY,

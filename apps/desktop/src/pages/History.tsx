@@ -177,7 +177,7 @@ export function History({ initialFilter }: HistoryProps) {
     void copyWithToast(shell, text, t("history.detail.copied", { n: textChars(text) }));
   };
 
-  // The footer's keys: Ctrl F searches, Ctrl C copies the entry in the detail (unless text is
+  // The page's keys: Ctrl F searches, Ctrl C copies the entry in the detail (unless text is
   // selected or a field has the focus: then the copy is the text's), Del deletes it (confirmed).
   const searchId = useId();
   usePageShortcuts((e) => {

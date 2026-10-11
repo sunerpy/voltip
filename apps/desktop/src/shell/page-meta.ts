@@ -1,5 +1,4 @@
 import {
-  type Activation,
   type DeviceView,
   type EngineStatus,
   type HotkeyStatus,
@@ -7,7 +6,6 @@ import {
   type ThemeId,
   type Translator,
   type UiState,
-  activationShortcut,
   engineReady,
   formatCount,
   enginesReported,
@@ -28,7 +26,6 @@ export { shortModel };
 export interface PageMeta {
   title: string;
   readouts: ToolbarReadout[];
-  shortcuts: readonly (readonly [string, string])[];
 }
 
 /** Title-bar readout for the resolved recognition (`state.engines`), or a pending marker before
@@ -98,16 +95,6 @@ function aiReadouts(engines: EngineStatus, i18n: Translator): ToolbarReadout[] {
 /** Title-bar readout for the microphone the native meter is on (`microphoneReadoutValue`). */
 export function microphoneReadout(value: string, i18n: Translator = zhT): ToolbarReadout {
   return { label: i18n.t("shell.readout.microphone"), value };
-}
-
-/** Footer line for the dictation chord: the saved hotkey, never a fixture, captioned by the
- *  activation mode (docs/dictation.md §13): 按住听写 / 按一下听写 / 按住或按一下听写. */
-export function hotkeyShortcut(
-  hotkey: string,
-  activation: Activation = "hold",
-  i18n: Translator = zhT,
-): readonly [string, string] {
-  return [hotkey.replaceAll("+", " "), activationShortcut(activation, i18n.locale)];
 }
 
 /** Toolbar readout for the hotkey pane: the shell's shortcut method, or the registration failure. */
@@ -204,10 +191,10 @@ export interface PageMetaExtras {
   microphone: string;
 }
 
-/** Title, human-readable readouts and footer shortcuts for each route. The settings and feedback
- *  dialogs float over `background`, so a dialog route describes that page, not itself. The title bar itself
- *  shows only the compact engine · microphone pair (`engineReadout` + `microphoneReadout`); the
- *  page readouts here feed the settings header and tests. */
+/** Title and human-readable readouts for each route. The settings and feedback dialogs float over
+ *  `background`, so a dialog route describes that page, not itself. The title bar's subtitle shows
+ *  only the speech model and the microphone (home: today's summary instead); the page readouts here
+ *  feed the settings header and tests. */
 export function pageMeta(
   route: Route,
   state: UiState,
@@ -216,17 +203,11 @@ export function pageMeta(
   i18n: Translator = zhT,
 ): PageMeta {
   const { t, locale } = i18n;
-  const sc = (key: Parameters<typeof t>[0]) => t(key);
   switch (route.name) {
     case "home":
       return {
         title: t("page.title.home"),
         readouts: [engineReadout(state.engines, i18n), microphoneReadout(extras.microphone, i18n)],
-        shortcuts: [
-          hotkeyShortcut(state.settings.hotkey, state.settings.activation, i18n),
-          ["Ctrl H", sc("page.shortcut.history")],
-          ["Ctrl ,", sc("page.shortcut.settings")],
-        ],
       };
     case "history":
       return {
@@ -242,11 +223,6 @@ export function pageMeta(
           },
           { label: t("page.readout.storage"), value: "history.sqlite3", mono: true },
         ],
-        shortcuts: [
-          ["Ctrl F", sc("page.shortcut.search")],
-          ["Ctrl C", sc("page.shortcut.copy")],
-          ["Del", sc("page.shortcut.delete")],
-        ],
       };
     case "dictionary": {
       const enabled = state.dictionary.filter((e) => e.enabled).length;
@@ -260,11 +236,6 @@ export function pageMeta(
             lamp: enabled > 0 ? "ok" : "idle",
           },
           { label: t("page.readout.storage"), value: "dictionary.json", mono: true },
-        ],
-        shortcuts: [
-          ["Ctrl N", sc("page.shortcut.newEntry")],
-          ["Enter", sc("page.shortcut.save")],
-          ["Esc", sc("page.shortcut.cancel")],
         ],
       };
     }
@@ -281,40 +252,22 @@ export function pageMeta(
           { label: t("page.readout.storage"), value: "rules.json", mono: true },
           engineReadout(state.engines, i18n),
         ],
-        shortcuts: [
-          ["Ctrl N", sc("page.shortcut.newRule")],
-          ["Ctrl ↵", sc("page.shortcut.runDryRun")],
-          ["Ctrl S", sc("page.shortcut.save")],
-          ["Esc", sc("page.shortcut.cancel")],
-        ],
       };
     }
     case "devices":
       return {
         title: t("page.title.devices"),
         readouts: devicesReadouts(state.devices, state.relay, i18n),
-        shortcuts: [
-          ["Ctrl R", sc("page.shortcut.regenerateQr")],
-          ["Ctrl ,", sc("page.shortcut.settings")],
-        ],
       };
     case "speech":
       return {
         title: t("page.title.speech"),
         readouts: speechReadouts(state.engines, i18n),
-        shortcuts: [
-          hotkeyShortcut(state.settings.hotkey, state.settings.activation, i18n),
-          ["Ctrl ,", sc("page.shortcut.settings")],
-        ],
       };
     case "ai":
       return {
         title: t("page.title.ai"),
         readouts: aiReadouts(state.engines, i18n),
-        shortcuts: [
-          hotkeyShortcut(state.settings.hotkey, state.settings.activation, i18n),
-          ["Ctrl ,", sc("page.shortcut.settings")],
-        ],
       };
     case "feedback":
     case "settings":
@@ -338,12 +291,6 @@ export function pageMeta(
               : t("common.unknown"),
           },
         ],
-        shortcuts: [
-          ["Enter", sc("page.shortcut.continue")],
-          ["Shift Enter", sc("page.shortcut.previous")],
-          ["Esc", sc("page.shortcut.later")],
-          ["Ctrl ,", sc("page.shortcut.settings")],
-        ],
       };
     }
     case "overlay":
@@ -357,13 +304,8 @@ export function pageMeta(
           },
           engineReadout(state.engines, i18n),
         ],
-        shortcuts: [
-          [state.settings.hotkey.replaceAll("+", " "), sc("page.shortcut.dictate")],
-          ["Esc", sc("page.shortcut.cancel")],
-          ["Ctrl ,", sc("page.shortcut.settings")],
-        ],
       };
     case "notfound":
-      return { title: t("page.title.notfound"), readouts: [], shortcuts: [] };
+      return { title: t("page.title.notfound"), readouts: [] };
   }
 }

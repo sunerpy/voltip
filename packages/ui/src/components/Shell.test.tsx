@@ -1,13 +1,14 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
-  SIDEBAR_GLYPH_SLOT_CLASS,
+  SIDEBAR_FOOTER_BUTTON_CLASS,
   SIDEBAR_RAIL_WIDTH,
   SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS,
   SIDEBAR_ROW_CLASS,
   SIDEBAR_ROW_EXPANDED_CLASS,
+  SIDEBAR_WIDTH,
   Sidebar,
-  SidebarEntry,
+  SidebarButton,
   TRAFFIC_LIGHTS_BRAND_INSET,
   TRAFFIC_LIGHTS_CLEARANCE,
 } from "./Sidebar";
@@ -26,7 +27,7 @@ describe("Sidebar", () => {
     { title: "语音输入", items: [{ id: "speech", label: "语音模型", icon: "wave" as const }] },
   ];
 
-  it("renders groups, counts, active and disabled items, footer entries", async () => {
+  it("renders groups, counts, active and disabled items, the status card and footer buttons", async () => {
     const user = userEvent.setup();
     const onNavigate = vi.fn();
     const onFooter = vi.fn();
@@ -36,24 +37,34 @@ describe("Sidebar", () => {
         onNavigate={onNavigate}
         disabledIds={["history"]}
         groups={groups}
-        footer={<SidebarEntry icon="settings" label="设置" opensDialog onClick={onFooter} />}
+        status={<span>中继 · 已连接</span>}
+        footer={<SidebarButton icon="settings" label="设置" opensDialog onClick={onFooter} />}
       />,
     );
-    expect(screen.getByRole("button", { name: /首页/ })).toHaveAttribute("aria-current", "page");
+    const home = screen.getByRole("button", { name: /首页/ });
+    expect(home).toHaveAttribute("aria-current", "page");
+    // Board 01: the current row is the raised one, its glyph in the primary colour.
+    expect(home).toHaveClass("bg-nav-active", "shadow-row");
+    expect(home.querySelector("svg")).toHaveClass("text-primary");
     expect(screen.getByRole("button", { name: /历史记录/ })).toBeDisabled();
     expect(screen.getByText("128")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /语音模型/ }));
     expect(onNavigate).toHaveBeenCalledWith("speech");
+    expect(screen.getByTestId("sidebar-status")).toHaveTextContent("中继 · 已连接");
     const settings = screen.getByRole("button", { name: "设置" });
     expect(settings).toHaveAttribute("aria-haspopup", "dialog");
+    expect(settings).toHaveAttribute("title", "设置");
     expect(settings).not.toHaveAttribute("aria-current");
+    for (const cls of SIDEBAR_FOOTER_BUTTON_CLASS.split(" ")) expect(settings).toHaveClass(cls);
+    expect(screen.getByTestId("sidebar-footer")).toHaveClass("grid-cols-3");
     await user.click(settings);
     expect(onFooter).toHaveBeenCalled();
     expect(screen.getByText("Voltip")).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "主导航" })).toHaveStyle({ width: "224px" });
+    expect(SIDEBAR_WIDTH).toBe(232);
+    expect(screen.getByRole("navigation", { name: "主导航" })).toHaveStyle({ width: "232px" });
   });
 
-  it("regression: the collapsed rail is 56 px of glyphs whose labels stay as names and tooltips", () => {
+  it("regression: the collapsed rail is 72 px of glyphs whose labels stay as names and tooltips", () => {
     render(
       <Sidebar
         activeId="home"
@@ -61,12 +72,14 @@ describe("Sidebar", () => {
         groups={groups}
         collapsed
         controls={<button type="button">展开侧栏</button>}
-        footer={<SidebarEntry icon="chat" label="反馈" collapsed onClick={vi.fn()} />}
+        status={<span>中继 · 已连接</span>}
+        footer={<SidebarButton icon="chat" label="反馈" onClick={vi.fn()} />}
       />,
     );
     const nav = screen.getByRole("navigation", { name: "主导航" });
     expect(nav).toHaveAttribute("data-collapsed", "true");
-    expect(nav).toHaveStyle({ width: "56px", minWidth: "56px", maxWidth: "56px" });
+    expect(SIDEBAR_RAIL_WIDTH).toBe(72);
+    expect(nav).toHaveStyle({ width: "72px", minWidth: "72px", maxWidth: "72px" });
     expect(screen.queryByText("Voltip")).toBeNull();
     expect(screen.queryByText("首页")).toBeNull();
     const home = screen.getByRole("button", { name: "首页" });
@@ -78,7 +91,10 @@ describe("Sidebar", () => {
       "历史记录 · 128",
     );
     expect(screen.getByRole("button", { name: "反馈" })).toHaveAttribute("title", "反馈");
-    // The layout controls move out of the 40 px brand row, under it.
+    // The status card needs the room of the expanded panel; the footer stacks.
+    expect(screen.queryByTestId("sidebar-status")).toBeNull();
+    expect(screen.getByTestId("sidebar-footer")).toHaveClass("grid-cols-1");
+    // The layout controls move out of the brand row, under it.
     expect(screen.getByTestId("sidebar-brand")).not.toContainElement(
       screen.getByRole("button", { name: "展开侧栏" }),
     );
@@ -87,29 +103,35 @@ describe("Sidebar", () => {
     );
   });
 
-  it("regression: the brand row is a 40 px deep drag region flush with the top edge, with a macOS traffic-light inset", () => {
+  it("regression: the panel floats with the glass surface, and its brand row drags the window", () => {
     const props = { activeId: "home", onNavigate: vi.fn(), groups: [] };
     const { rerender } = render(<Sidebar {...props} className="extra" />);
     const nav = screen.getByRole("navigation", { name: "主导航" });
-    expect(nav).toHaveClass("pb-4", "extra", "border-r");
-    expect(nav).not.toHaveClass("py-4");
+    expect(nav).toHaveClass(
+      "extra",
+      "rounded-panel",
+      "border",
+      "border-sidebar-edge",
+      "bg-sidebar",
+      "shadow-sidebar",
+    );
     const brand = screen.getByTestId("sidebar-brand");
     expect(brand).toHaveAttribute("data-tauri-drag-region", "deep");
-    expect(brand).toHaveClass("h-10", "px-2");
+    expect(brand).toHaveClass("h-16", "px-2");
     expect(brand).not.toHaveClass(TRAFFIC_LIGHTS_BRAND_INSET);
     // The lamp is a status, not a control.
     expect(brand.querySelector("button")).toBeNull();
     rerender(<Sidebar {...props} trafficLights />);
     expect(screen.getByTestId("sidebar-brand")).toHaveClass(
-      "h-10",
+      "h-16",
       TRAFFIC_LIGHTS_BRAND_INSET,
-      "pr-2",
+      "pr-1",
     );
     expect(screen.getByTestId("sidebar-brand")).not.toHaveClass("px-2");
-    // Floating (the hover preview of a hidden sidebar): a shadow, no border.
+    // Floating over the page (the hover preview of a hidden sidebar): the window's shadow.
     rerender(<Sidebar {...props} floating />);
     expect(screen.getByRole("navigation", { name: "主导航" })).toHaveClass("shadow-win");
-    expect(screen.getByRole("navigation", { name: "主导航" })).not.toHaveClass("border-r");
+    expect(screen.getByRole("navigation", { name: "主导航" })).not.toHaveClass("shadow-sidebar");
   });
 });
 
@@ -117,14 +139,16 @@ describe("Sidebar on macOS", () => {
   const props = { activeId: "home", onNavigate: vi.fn(), groups: [] };
 
   it("regression: the traffic lights get a slot of their own, clear of the brand", () => {
-    // User feedback 2026-09-29: on macOS the red, yellow and green buttons crowded the app mark
-    // at the left of the title bar. The brand row starts 80 px from the window's left edge (the
-    // lights end at 64 px; 16 px of air), in px so the 字号 setting cannot shrink it, and draws the
-    // wordmark without the mark (the Dock, the menu bar and the tray already show it).
+    // User feedback 2026-09-29: on macOS the red, yellow and green buttons crowded the app mark.
+    // From 0.1.1 the lights sit in the floating panel's brand row (trafficLightPosition x 32): they
+    // end 84 px from the window's edge and the wordmark starts 16 px later, 100 px in, in px so the
+    // 字号 setting cannot shrink it, without the mark (the Dock, the menu bar and the tray show it).
     const { rerender } = render(<Sidebar {...props} trafficLights />);
     const brand = screen.getByTestId("sidebar-brand");
     expect(brand).toHaveClass(TRAFFIC_LIGHTS_BRAND_INSET);
-    expect(TRAFFIC_LIGHTS_BRAND_INSET).toBe(`pl-[calc(${TRAFFIC_LIGHTS_CLEARANCE}px_-_0.75rem)]`);
+    expect(TRAFFIC_LIGHTS_CLEARANCE).toBe(100);
+    // 100 px less the panel's 16 px margin and its 12 px padding.
+    expect(TRAFFIC_LIGHTS_BRAND_INSET).toBe("pl-[72px]");
     expect(within(brand).queryByTestId("app-logo")).toBeNull();
     expect(within(brand).getByText("Voltip")).toBeInTheDocument();
     // Elsewhere the mark stays.
@@ -133,12 +157,12 @@ describe("Sidebar on macOS", () => {
   });
 
   it("regression: the collapsed rail holds the traffic lights instead of cutting through them", () => {
-    // 56 px was narrower than the lights (they end at 64 px), so the rail's border crossed the
-    // green button; on macOS the rail is 76 px: the lights with 12 px on either side.
+    // The lights are 52 px wide from x 32: on macOS the rail is 84 px, the lights with 16 px on
+    // either side, and the brand row stays invisible under them.
     const { rerender } = render(<Sidebar {...props} collapsed trafficLights />);
     const nav = screen.getByRole("navigation", { name: "主导航" });
     expect(nav.style.width).toBe(`${SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS}px`);
-    expect(SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS).toBe(76);
+    expect(SIDEBAR_RAIL_WIDTH_TRAFFIC_LIGHTS).toBe(84);
     expect(screen.getByTestId("sidebar-brand")).toHaveClass("invisible");
     rerender(<Sidebar {...props} collapsed />);
     expect(screen.getByRole("navigation", { name: "主导航" }).style.width).toBe(
@@ -148,66 +172,72 @@ describe("Sidebar on macOS", () => {
 });
 
 describe("ThemeSwitch", () => {
-  it("steps through the themes at the glyph and picks one from the menu", async () => {
+  it("is a square footer button whose menu, above it, lists every choice and picks one", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     const { rerender } = render(<ThemeSwitch value="light" onChange={onChange} />);
     expect(nextThemeChoice("light")).toBe("dark");
     expect(nextThemeChoice("graphite")).toBe("system");
-    expect(nextThemeChoice("system")).toBe("light");
-    await user.click(screen.getByRole("button", { name: "切换到暗黑" }));
-    expect(onChange).toHaveBeenLastCalledWith("dark");
-    const menu = screen.getByRole("combobox", { name: "主题" });
-    expect(menu).toHaveValue("light");
-    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
-      "跟随系统",
-      "明亮",
-      "暗黑",
-      "暖纸",
-      "石墨",
-    ]);
-    await user.selectOptions(menu, "warm");
-    expect(onChange).toHaveBeenLastCalledWith("warm");
-    rerender(<ThemeSwitch value="graphite" onChange={onChange} collapsed />);
-    expect(screen.getByTestId("theme-switch")).toHaveClass("justify-center");
-    expect(screen.queryByRole("combobox")).toBeNull();
-    expect(screen.getByRole("button", { name: "切换到跟随系统" })).toHaveAttribute(
-      "title",
-      "切换到跟随系统",
+    // 澄空 and its dark twin 夜空 come first (the default since 0.1.1).
+    expect(nextThemeChoice("system")).toBe("glass");
+    expect(nextThemeChoice("glass")).toBe("glass_dark");
+    expect(nextThemeChoice("glass_dark")).toBe("light");
+    // The button says what is chosen; the glyph is the theme's.
+    const button = screen.getByRole("button", { name: "主题 · 明亮" });
+    expect(button).toHaveAttribute("title", "主题 · 明亮");
+    expect(button).toHaveAttribute("aria-haspopup", "menu");
+    expect(button.querySelector("svg")).toHaveAttribute("data-icon", "sun");
+    for (const cls of SIDEBAR_FOOTER_BUTTON_CLASS.split(" ")) expect(button).toHaveClass(cls);
+    await user.click(button);
+    const menu = screen.getByRole("menu", { name: "主题" });
+    // It opens above the button: the button sits at the window's bottom edge.
+    expect(menu).toHaveClass("bottom-full");
+    expect(
+      within(menu)
+        .getAllByRole("menuitemradio")
+        .map((o) => o.textContent),
+    ).toEqual(["跟随系统", "澄空", "夜空", "明亮", "暗黑", "暖纸", "石墨"]);
+    expect(within(menu).getByRole("menuitemradio", { name: "明亮" })).toHaveAttribute(
+      "aria-checked",
+      "true",
     );
+    await user.click(within(menu).getByRole("menuitemradio", { name: "暖纸" }));
+    expect(onChange).toHaveBeenLastCalledWith("warm");
+    rerender(<ThemeSwitch value="glass_dark" onChange={onChange} />);
+    expect(
+      screen.getByRole("button", { name: "主题 · 夜空" }).querySelector("svg"),
+    ).toHaveAttribute("data-icon", "nightSky");
+    rerender(<ThemeSwitch value="system" onChange={onChange} />);
+    await user.click(screen.getByRole("button", { name: "主题 · 跟随系统" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "澄空" }));
+    expect(onChange).toHaveBeenLastCalledWith("glass");
   });
 });
 
 describe("the sidebar's rows line up", () => {
-  it("regression: the theme row has the box of the other entries, its glyph fills the glyph slot and its menu text starts where a label does, with one hover surface", () => {
+  it("regression: every nav row has the same 44 px box, glyph inset and label gap", () => {
     render(
-      <div>
-        <SidebarEntry icon="chat" label="反馈" onClick={() => undefined} />
-        <ThemeSwitch value="light" onChange={() => undefined} />
-        <SidebarEntry icon="settings" label="设置" onClick={() => undefined} />
-      </div>,
+      <Sidebar
+        activeId="home"
+        onNavigate={vi.fn()}
+        groups={[
+          {
+            title: "工作台",
+            items: [
+              { id: "home", label: "首页", icon: "home" },
+              { id: "rules", label: "规则", icon: "sparkles", count: 6 },
+            ],
+          },
+        ]}
+      />,
     );
-    const entry = screen.getByRole("button", { name: "设置" });
-    const row = screen.getByTestId("theme-switch");
-    // The same 36 px row box as every entry.
-    for (const cls of SIDEBAR_ROW_CLASS.split(" ")) {
-      expect(entry).toHaveClass(cls);
-      expect(row).toHaveClass(cls);
+    expect(SIDEBAR_ROW_CLASS).toContain("h-11");
+    for (const name of [/首页/, /规则/]) {
+      const row = screen.getByRole("button", { name });
+      for (const cls of SIDEBAR_ROW_CLASS.split(" ")) expect(row).toHaveClass(cls);
+      for (const cls of SIDEBAR_ROW_EXPANDED_CLASS.split(" ")) expect(row).toHaveClass(cls);
+      expect(row.querySelector("svg")).toHaveAttribute("width", "18");
     }
-    // An entry puts its glyph 0.5 rem in and its label 0.625 rem after the 16 px glyph; the theme
-    // row's glyph button is exactly that slot, and the menu text starts with no padding of its own.
-    for (const cls of SIDEBAR_ROW_EXPANDED_CLASS.split(" ")) expect(entry).toHaveClass(cls);
-    const step = screen.getByTestId("theme-switch-step");
-    for (const cls of SIDEBAR_GLYPH_SLOT_CLASS.split(" ")) expect(step).toHaveClass(cls);
-    // 0.5 rem + 0.625 rem (the row's inset and gap) + the 16 px glyph.
-    expect(SIDEBAR_GLYPH_SLOT_CLASS).toBe("w-[calc(1.125rem_+_16px)] pl-2");
-    const menu = screen.getByRole("combobox", { name: "主题" });
-    expect(menu).toHaveClass("pl-0");
-    // One hover surface for the whole row, like an entry; neither half paints its own.
-    expect(row).toHaveClass("hover:bg-nav-active");
-    expect(entry.className).toMatch(/hover:bg-nav-active/);
-    expect(step.className).not.toMatch(/hover:bg-/);
-    expect(menu.className).not.toMatch(/hover:bg-/);
   });
 });
 

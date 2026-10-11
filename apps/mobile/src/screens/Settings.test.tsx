@@ -195,7 +195,7 @@ describe("the phone's settings", () => {
       expect(backend.peek().settings.follow_system_theme).toBe(false);
     });
     const group = within(page).getByRole("radiogroup", { name: "主题" });
-    await user.click(within(group).getAllByRole("radio")[1] as HTMLElement);
+    await user.click(within(group).getByRole("radio", { name: "暗黑" }));
     await waitFor(() => {
       expect(backend.peek().settings.theme).toBe("dark");
     });
@@ -216,8 +216,9 @@ describe("the phone's settings", () => {
       });
       await user.click(within(await openSettings(user)).getByTestId("settings-appearance"));
       expect(screen.getByTestId("phone-appearance")).toHaveTextContent("当前系统：深色");
+      // Following a dark system paints 夜空 (user decision 2026-10-11).
       await waitFor(() => {
-        expect(document.documentElement.dataset.theme).toBe("dark");
+        expect(document.documentElement.dataset.theme).toBe("glass_dark");
       });
       backend.destroy();
     } finally {

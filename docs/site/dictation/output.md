@@ -44,7 +44,7 @@ The details of the original error are available under **Technical details** in t
 
 ## Copy or paste a result again
 
-On the home page's latest results and on the History page, every row has two buttons:
+On the home page's latest results (the buttons appear when you point at a row or move to it with the keyboard) and on the History page, every row has two buttons:
 
 - **Copy this result** puts the text on the clipboard.
 - **Paste into the previous window** hides Voltip, waits for the window you used before to come back to the front, and pastes the text there. If a different window comes to the front, the text is only copied.

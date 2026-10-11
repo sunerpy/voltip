@@ -18,7 +18,7 @@ In the app, the system back gesture or back button goes up one level. From **His
 
 ## Using the phone on its own
 
-Before any computer is paired, and whenever no paired computer is online, **Hold to talk** works on the phone alone, and the button reads **Transcribe on the phone**. The built-in service transcribes and polishes what you said, and the text is copied to the phone's clipboard, ready to paste into any app.
+Before any computer is paired, and whenever no paired computer is online, **Hold to talk** works on the phone alone, and the card says *Let go and the phone transcribes and polishes it, then copies the result*. The built-in service transcribes and polishes what you said, and the text is copied to the phone's clipboard, ready to paste into any app.
 
 The phone has settings of its own, under **Settings** at the bottom:
 
@@ -31,13 +31,13 @@ The phone cannot tell which app you are typing in, so scenes are not matched by 
 
 These settings apply to recordings the phone recognises itself. A recording sent to a computer follows the computer's settings.
 
-**Recent results** lists what the phone transcribed and the takes it sent to a computer, newest first: open one to see its details, or **Copy** or **Share** it directly. **History** at the bottom lists everything: search it, filter it by time or by star, and see how many takes you made today, this week, this month and in total, and the time they saved, takes sent to a computer included. Open an entry to read the polished text and the transcript, and to copy, share, star or delete it; a long recording can also be processed again with an AI preset, and its subtitles (SRT) or text (TXT) shared to another app as a file. **Settings** › **History** turns saving off, sets how many entries are kept, or clears them all. These results are kept on the phone; while it syncs with a paired computer, a copy of what the phone recognised itself goes to the computer, see [The computer's history and settings](#the-computer-s-history-and-settings).
+**Recent results** shows the newest three of what the phone transcribed and the takes it sent to a computer, each with its time and where it went: inserted on a computer, or transcribed on the phone. Open one to see its details and share it, or copy it with the button at its end. **History** at the bottom lists everything: search it, filter it by time or by star, and see how many takes you made today, this week, this month and in total, and the time they saved, takes sent to a computer included. Open an entry to read the polished text and the transcript, and to copy, share, star or delete it; a long recording can also be processed again with an AI preset, and its subtitles (SRT) or text (TXT) shared to another app as a file. **Settings** › **History** turns saving off, sets how many entries are kept, or clears them all. These results are kept on the phone; while it syncs with a paired computer, a copy of what the phone recognised itself goes to the computer, see [The computer's history and settings](#the-computer-s-history-and-settings).
 
 **Settings** › **Feedback** reports a problem or suggests an idea, with screenshots or screen recordings from the gallery; before anything is sent, the page lists everything that goes along. See [Privacy](/privacy).
 
 **Settings** › **About Voltip** shows the version and the license, and opens the source code, the releases and the [privacy policy](/privacy) in the browser.
 
-When a paired computer is online, the button reads **Send to** and the computer's name instead, and the recording goes to the computer as described below. A recording keeps its route until it ends, even if a computer comes online or goes offline in the meantime.
+When a paired computer is online, **Where to transcribe** at the top of **Talk** is set to **Send to** and the computer's name, and the recording goes to the computer as described below; choose **Transcribe on the phone** to have the phone transcribe it instead. A recording keeps its route until it ends, even if a computer comes online or goes offline in the meantime.
 
 ## Pairing
 
@@ -53,7 +53,7 @@ The phone and the computer meet through a relay, the built-in one unless the com
 
 ## Talking on the phone
 
-Hold **Hold to talk** on the phone, speak, and release. The audio streams to the computer while you speak. The computer recognises it with its own settings — its recognition service, dictionary, AI polish, rules and scenes — and inserts the text at its own cursor. The phone shows each step and the result. Slide your finger off the button before releasing to cancel.
+Hold **Hold to talk** on the phone, speak, and release. The audio streams to the computer while you speak. The computer recognises it with its own settings — its recognition service, dictionary, AI polish, rules and scenes — and inserts the text at its own cursor. While you hold it, the card shows how long you have been recording and the sound level, and says which computer the text goes to when you let go; then the phone shows each step and the result. Slide your finger off the button before releasing to cancel.
 
 Once the computer has inserted the text, the phone also keeps an entry in its own **History**, marked **Sent to** and the computer's name: the text the computer reported (up to 2,000 characters) and the length of the recording. The recognition and polish details stay in the computer's history. This entry is never uploaded to the computer. With saving turned off under **Settings** › **History** on the phone, the phone keeps none.
 

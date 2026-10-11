@@ -23,6 +23,7 @@ import {
   type TextStyle,
   View,
   type ViewStyle,
+  useWindowDimensions,
 } from "react-native";
 import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
 import {
@@ -36,6 +37,7 @@ import {
   useTheme,
 } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Defs, Ellipse, RadialGradient, Stop } from "react-native-svg";
 
 import type { AppTheme } from "../theme/themes";
 
@@ -44,34 +46,90 @@ export const useAppTheme = () => useTheme<AppTheme>();
 /** The corner of a card (Sections, tiles, notices). */
 export const CARD_RADIUS = 14;
 
+/** The glass pair's aurora (themes.ts `auroraOf`): soft lights fixed behind a tab page, as wide and
+ *  tall as the window. Nothing on the other themes. */
+export function Aurora() {
+  const theme = useAppTheme();
+  const { width, height } = useWindowDimensions();
+  const spots = theme.voltip.aurora;
+  if (spots.length === 0) return null;
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill} testID="aurora">
+      <Svg width={width} height={height}>
+        <Defs>
+          {spots.map((spot, i) => (
+            <RadialGradient key={spot.color} id={`aurora-${i}`} cx="50%" cy="50%" r="50%">
+              <Stop offset="0" stopColor={spot.color} stopOpacity={spot.opacity} />
+              <Stop offset="1" stopColor={spot.color} stopOpacity={0} />
+            </RadialGradient>
+          ))}
+        </Defs>
+        {spots.map((spot, i) => (
+          <Ellipse
+            key={spot.color}
+            cx={spot.cx * width}
+            cy={spot.cy * height}
+            rx={spot.rx * width}
+            ry={spot.ry * height}
+            fill={`url(#aurora-${i})`}
+          />
+        ))}
+      </Svg>
+    </View>
+  );
+}
+
+/** A soft shadow under a card on the glass pair (board 03); the flat themes draw none. */
+export function cardShadow(theme: AppTheme, y = 8, blur = 24, opacity = 0.07): ViewStyle {
+  if (!theme.voltip.glass) return {};
+  const alpha = theme.dark ? Math.min(0.45, opacity * 3.5) : opacity;
+  return { boxShadow: `0 ${y}px ${blur}px ${rgba(theme.voltip.shadow, alpha)}` };
+}
+
+/** `#rrggbb` at `alpha`. */
+export function rgba(hex: string, alpha: number): string {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 /** A screen's scrolling body: 16 dp from the edges, its blocks 16 dp apart, scrolled clear of the
- *  keyboard. */
+ *  keyboard. A tab's page (board 03) starts under the status bar with its own title, runs under
+ *  the floating tab dock, and on the glass pair shows the aurora behind it. */
 export function Page({
   children,
   testID,
   onEndReached,
   gap = 16,
+  title,
 }: {
   children: ReactNode;
   testID?: string;
   /** Called when the end of the content scrolls into view (paged lists). */
   onEndReached?: () => void;
   gap?: number;
+  /** A tab's own title block ([TabTitle]), first on the page. */
+  title?: ReactNode;
 }) {
   const theme = useAppTheme();
   // A page pushed on the stack runs to the bottom of the screen (edge to edge): its end stays above
-  // the navigation bar. Under the tabs the tab bar takes that inset.
-  const inTabs = useContext(BottomTabBarHeightContext) !== undefined;
+  // the navigation bar. Under the tabs the dock floats over the page: its end scrolls clear of it.
+  const dock = useContext(BottomTabBarHeightContext);
+  const inTabs = dock !== undefined;
   const insets = useSafeAreaInsets();
-  const bottom = inTabs ? 0 : insets.bottom;
+  const bottom = inTabs ? dock : insets.bottom;
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1 }}
+      style={{ flex: 1, backgroundColor: theme.colors.background }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      {inTabs && <Aurora />}
       <ScrollView
         testID={testID}
-        style={{ flex: 1, backgroundColor: theme.colors.background }}
-        contentContainerStyle={[styles.page, { gap, paddingBottom: 32 + bottom }]}
+        style={{ flex: 1 }}
+        contentContainerStyle={[
+          styles.page,
+          { gap, paddingBottom: 32 + bottom },
+          inTabs && { paddingTop: insets.top + 8 },
+        ]}
         keyboardShouldPersistTaps="handled"
         scrollEventThrottle={64}
         onScroll={
@@ -82,9 +140,213 @@ export function Page({
                   onEndReached();
               }
         }>
+        {title}
         {children}
       </ScrollView>
     </KeyboardAvoidingView>
+  );
+}
+
+/** A tab's title (board 03): 30 dp bold over a line of its state, a round button at its right.
+ *  It scrolls with the page. */
+export function TabTitle({
+  title,
+  subtitle,
+  right,
+}: {
+  title: string;
+  subtitle?: ReactNode;
+  right?: ReactNode;
+}) {
+  const theme = useAppTheme();
+  return (
+    <View style={styles.tabTitle}>
+      <View style={{ flex: 1, gap: 4, paddingTop: 8 }}>
+        <Text
+          accessibilityRole="header"
+          numberOfLines={1}
+          style={{
+            fontSize: 30,
+            lineHeight: 38,
+            fontWeight: "700",
+            color: theme.colors.onBackground,
+          }}>
+          {title}
+        </Text>
+        {subtitle}
+      </View>
+      {right}
+    </View>
+  );
+}
+
+/** A round button on the page (board 03's 本机 beside the title): 44 dp, glass on the pair. */
+export function RoundButton({
+  icon,
+  label,
+  onPress,
+  testID,
+}: {
+  icon: string;
+  label: string;
+  onPress: () => void;
+  testID?: string;
+}) {
+  const theme = useAppTheme();
+  return (
+    <TouchableRipple
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      borderless
+      hitSlop={2}
+      style={[
+        styles.round,
+        { backgroundColor: theme.voltip.control, borderColor: theme.voltip.controlEdge },
+        cardShadow(theme, 6, 16, 0.08),
+      ]}>
+      <Icon source={icon} size={22} color={theme.colors.onSurfaceVariant} />
+    </TouchableRipple>
+  );
+}
+
+export interface SegmentOption<T extends string> {
+  value: T;
+  label: string;
+  icon: string;
+  disabled?: boolean;
+  testID?: string;
+}
+
+/** Two or three choices in a pill (board 03's 发送到 MacBook Pro / 在手机上识别): the chosen one
+ *  raised on its track. */
+export function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  label,
+  disabled = false,
+  testID,
+}: {
+  options: readonly SegmentOption<T>[];
+  value: T;
+  onChange: (value: T) => void;
+  label: string;
+  disabled?: boolean;
+  testID?: string;
+}) {
+  const theme = useAppTheme();
+  return (
+    <View
+      testID={testID}
+      accessibilityRole="radiogroup"
+      accessibilityLabel={label}
+      style={[
+        styles.segmented,
+        { backgroundColor: theme.voltip.track, borderColor: theme.voltip.controlEdge },
+      ]}>
+      {options.map((option) => {
+        const chosen = option.value === value;
+        const off = disabled || option.disabled === true;
+        return (
+          <TouchableRipple
+            key={option.value}
+            testID={option.testID}
+            accessibilityRole="radio"
+            accessibilityLabel={option.label}
+            accessibilityState={{ checked: chosen, disabled: off }}
+            disabled={off}
+            borderless
+            // 36 dp drawn, 48 dp to touch.
+            hitSlop={{ top: 6, bottom: 6 }}
+            onPress={() => {
+              if (!chosen) onChange(option.value);
+            }}
+            style={[
+              styles.segment,
+              chosen && { backgroundColor: theme.voltip.thumb },
+              chosen && (theme.voltip.glass ? cardShadow(theme, 2, 8, 0.12) : styles.thumbFlat),
+              chosen && !theme.voltip.glass && { borderColor: theme.voltip.controlEdge },
+              off && !chosen && { opacity: 0.5 },
+            ]}>
+            <View style={styles.segmentInner}>
+              <Icon
+                source={option.icon}
+                size={16}
+                color={chosen ? theme.colors.primary : theme.voltip.subtle}
+              />
+              <Text
+                numberOfLines={1}
+                style={{
+                  flexShrink: 1,
+                  fontSize: 13,
+                  lineHeight: 18,
+                  fontWeight: "500",
+                  color: chosen ? theme.colors.onSurface : theme.colors.onSurfaceVariant,
+                }}>
+                {option.label}
+              </Text>
+            </View>
+          </TouchableRipple>
+        );
+      })}
+    </View>
+  );
+}
+
+/** A quiet pill on the page that opens a choice (board 03's 场景 · 不使用场景 ⌄). */
+export function Chip({
+  icon,
+  children,
+  onPress,
+  label,
+  disabled,
+  testID,
+}: {
+  icon?: string;
+  children: ReactNode;
+  onPress?: () => void;
+  label?: string;
+  disabled?: boolean;
+  testID?: string;
+}) {
+  const theme = useAppTheme();
+  return (
+    <TouchableRipple
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: disabled === true }}
+      disabled={disabled}
+      onPress={onPress}
+      borderless
+      hitSlop={{ top: 8, bottom: 8 }}
+      style={[
+        styles.chip,
+        { backgroundColor: theme.voltip.control, borderColor: theme.voltip.controlEdge },
+        disabled === true && { opacity: 0.5 },
+      ]}>
+      <View style={styles.chipInner}>
+        {icon !== undefined && (
+          <Icon source={icon} size={14} color={theme.colors.onSurfaceVariant} />
+        )}
+        <Text
+          numberOfLines={1}
+          style={{
+            flexShrink: 1,
+            fontSize: 13,
+            lineHeight: 18,
+            fontWeight: "500",
+            color: theme.colors.onSurface,
+          }}>
+          {children}
+        </Text>
+        {onPress !== undefined && (
+          <Icon source="chevron-down" size={14} color={theme.voltip.subtle} />
+        )}
+      </View>
+    </TouchableRipple>
   );
 }
 
@@ -167,7 +429,12 @@ export function Section({
         elevation={0}
         style={[
           styles.group,
-          { backgroundColor: theme.colors.surface, borderColor: theme.colors.outlineVariant },
+          {
+            backgroundColor: theme.voltip.card,
+            borderColor: theme.voltip.cardEdge,
+            borderRadius: theme.voltip.radius.card,
+          },
+          cardShadow(theme),
           padded && styles.groupPadded,
         ]}>
         {children}
@@ -591,6 +858,33 @@ export function widthOf(e: LayoutChangeEvent): number {
 
 export const styles = StyleSheet.create({
   page: { padding: 16, paddingBottom: 32 },
+  tabTitle: { flexDirection: "row", alignItems: "flex-start", gap: 12, paddingHorizontal: 4 },
+  round: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  segmented: { flexDirection: "row", borderRadius: 22, borderWidth: 1, padding: 3, gap: 4 },
+  segment: { flex: 1, minHeight: 36, borderRadius: 18, justifyContent: "center" },
+  segmentInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+  },
+  thumbFlat: { borderWidth: StyleSheet.hairlineWidth },
+  chip: {
+    alignSelf: "flex-start",
+    minHeight: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    justifyContent: "center",
+  },
+  chipInner: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12 },
   sectionHead: { flexDirection: "row", alignItems: "center", paddingHorizontal: 4, minHeight: 24 },
   group: { borderRadius: CARD_RADIUS, overflow: "hidden", borderWidth: 1 },
   groupPadded: { padding: 16, gap: 12 },

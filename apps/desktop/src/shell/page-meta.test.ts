@@ -5,7 +5,6 @@ import {
   type PageMetaExtras,
   engineReadout,
   hotkeyBackendReadout,
-  hotkeyShortcut,
   pageMeta,
   settingsReadouts,
   shortModel,
@@ -41,11 +40,9 @@ describe("pageMeta", () => {
     ).toBe("手机");
   });
 
-  it("regression: the hotkey line and the engine readouts come from state, never from a fixture", () => {
-    const state = stateWith({ settings: { ...stateWith().settings, hotkey: "Ctrl+Shift+D" } });
+  it("regression: the engine readouts come from state, never from a fixture", () => {
+    const state = stateWith();
     const home = pageMeta({ name: "home" }, state, extras);
-    expect(home.shortcuts[0]).toEqual(["Ctrl Shift D", "按住听写"]);
-    expect(home.shortcuts.flat()).not.toContain("Ctrl Alt Space");
     expect(home.readouts[0]).toEqual({
       label: "语音模型",
       value: "Qwen3-ASR-1.7B",
@@ -53,10 +50,6 @@ describe("pageMeta", () => {
       title: "内置服务 · Qwen/Qwen3-ASR-1.7B · 就绪",
     });
     expect(home.readouts[1]).toEqual({ label: "麦克风", value: "Fifine K669" });
-    expect(pageMeta({ name: "overlay" }, state, extras).shortcuts[0]).toEqual([
-      "Ctrl Shift D",
-      "听写",
-    ]);
     // Before the core reported its engines the readout says so instead of inventing one.
     expect(engineReadout(emptyEngineStatus())).toEqual({
       label: "语音模型",
@@ -68,13 +61,6 @@ describe("pageMeta", () => {
     ).toMatchObject({ lamp: "danger", title: "内置服务 · Qwen/Qwen3-ASR-1.7B · 缺少密钥" });
     // Regression (public release, 2026-09-27): no readout names the built-in service's host.
     expect(JSON.stringify(engineReadout(state.engines))).not.toMatch(/https?:|\.example/);
-    expect(hotkeyShortcut("Ctrl+Alt+Space")).toEqual(["Ctrl Alt Space", "按住听写"]);
-    // docs/dictation.md §13: the footer caption follows the activation mode.
-    expect(hotkeyShortcut("Ctrl+Alt+Space", "toggle")).toEqual(["Ctrl Alt Space", "按一下听写"]);
-    expect(hotkeyShortcut("Ctrl+Alt+Space", "hold_or_toggle")).toEqual([
-      "Ctrl Alt Space",
-      "按住或按一下听写",
-    ]);
     expect(shortModel("Qwen/Qwen3-ASR-1.7B")).toBe("Qwen3-ASR-1.7B");
     expect(shortModel("whisper")).toBe("whisper");
     expect(shortModel("vendor/")).toBe("vendor/");
@@ -193,13 +179,12 @@ describe("pageMeta", () => {
     expect(pageMeta({ name: "notfound", path: "/x" }, state, extras)).toEqual({
       title: "未找到",
       readouts: [],
-      shortcuts: [],
     });
   });
 });
 
 describe("pageMeta in English", () => {
-  it("regression: titles, readouts and shortcuts follow the translator without CJK", () => {
+  it("regression: titles and readouts follow the translator without CJK", () => {
     const state = stateWith();
     const routes: Route[] = [
       { name: "home" },
@@ -237,7 +222,6 @@ describe("pageMeta in English", () => {
     );
     const home = pageMeta({ name: "home" }, state, extras, undefined, EN);
     expect(home.title).toBe("Home");
-    expect(home.shortcuts[0]).toEqual(["Ctrl Alt Space", "Hold to dictate"]);
     expect(home.readouts[0]).toMatchObject({
       label: "Speech model",
       title: "Built-in service · Qwen/Qwen3-ASR-1.7B · Ready",
@@ -365,7 +349,7 @@ describe("settingsReadouts", () => {
 });
 
 describe("pageMeta for the dictionary and rules pages", () => {
-  it("regression: the dictionary and rules readouts count the core lists and every listed shortcut is one the page handles", () => {
+  it("regression: the dictionary and rules readouts count the core lists", () => {
     const base = stateWith();
     const entry = {
       id: "e1",
@@ -398,25 +382,12 @@ describe("pageMeta for the dictionary and rules pages", () => {
     });
     const dictionary = pageMeta({ name: "dictionary" }, state, extras);
     expect(dictionary.readouts[1]).toEqual({ label: "词典", value: "1 / 2 启用", lamp: "ok" });
-    expect(dictionary.shortcuts.map(([keys]) => keys)).toEqual(["Ctrl N", "Enter", "Esc"]);
     const rules = pageMeta({ name: "rules" }, state, extras);
     expect(rules.readouts.slice(0, 2)).toEqual([
       { label: "规则", value: "2 / 3 启用", lamp: "ok" },
       { label: "存储", value: "rules.json", mono: true },
     ]);
-    expect(rules.shortcuts.map(([keys]) => keys)).toEqual(["Ctrl N", "Ctrl ↵", "Ctrl S", "Esc"]);
     expect(pageMeta({ name: "rules" }, base, extras).readouts[0]?.lamp).toBe("idle");
-    // Every key a footer lists has a handler behind it (History / Devices / Onboarding tests); the
-    // manual-address hint had none and is gone.
-    expect(pageMeta({ name: "devices" }, base, extras).shortcuts.map(([keys]) => keys)).toEqual([
-      "Ctrl R",
-      "Ctrl ,",
-    ]);
-    expect(pageMeta({ name: "history" }, base, extras).shortcuts.map(([keys]) => keys)).toEqual([
-      "Ctrl F",
-      "Ctrl C",
-      "Del",
-    ]);
     expect(
       pageMeta(
         { name: "history" },

@@ -17,6 +17,7 @@ import {
 import {
   PILL_STATES,
   Pill,
+  floatingTheme,
   type PillLiveCaption,
   type PillState,
   useI18n,
@@ -27,6 +28,7 @@ import { useChosenMicrophone } from "../features/audio/useMicrophoneTest";
 import { useLevelHistory, useStageNow, useTickingNow } from "../features/dictation/useDictation";
 import { useOverlayWindowState } from "../features/overlay/useOverlayWindowState";
 import { copyWithToast, useShell } from "../app/shell-context";
+import { useAppearance } from "../app/appearance";
 
 export interface OverlayProps {
   /** The pill window's route state: `live` follows the core's `state.dictation` (the real pill
@@ -98,6 +100,7 @@ export function pillLiveCaption(live: LiveText | undefined): PillLiveCaption | u
 /** The transparent pill window. The shell loads it on `state=live` and only shows / hides it; the
  *  pill itself follows `state.dictation`, the meter channel and the live preview. */
 export function Overlay({ state }: OverlayProps) {
+  const pillTheme = floatingTheme(useAppearance().resolvedTheme);
   const shell = useShell();
   const { t, locale } = useI18n();
   const uiState = useUiState();
@@ -139,6 +142,8 @@ export function Overlay({ state }: OverlayProps) {
     <div
       className="flex h-full items-start justify-center bg-transparent pt-2"
       data-testid="overlay-window"
+      // In 澄空 the pill is 夜空's dark glass, legible over any window (board 02).
+      data-theme={pillTheme}
       data-session={dictation.session}>
       <Pill
         state={pill}

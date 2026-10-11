@@ -32,13 +32,14 @@ function scrollArea(page: HTMLElement): HTMLElement | null {
   return page.parentElement;
 }
 
-/** `rowsThatFit` for the table inside `table` on the page `page`, measured after layout and again
- *  whenever the window, the scroll area or anything on the page changes size. */
+/** `rowsThatFit` for the rows (`rowSelector`) inside `table` on the page `page`, measured after
+ *  layout and again whenever the window, the scroll area or anything on the page changes size. */
 export function useRowsThatFit(
   page: RefObject<HTMLElement | null>,
   table: RefObject<HTMLElement | null>,
   min: number,
   max: number,
+  rowSelector: string = "tbody tr",
 ): number {
   const [rows, setRows] = useState(min);
   useLayoutEffect(() => {
@@ -46,7 +47,7 @@ export function useRowsThatFit(
     const area = root === null ? null : scrollArea(root);
     if (root === null || area === null) return undefined;
     const measure = () => {
-      const shown = table.current?.querySelectorAll("tbody tr") ?? [];
+      const shown = table.current?.querySelectorAll(rowSelector) ?? [];
       setRows(
         rowsThatFit({
           shown: shown.length,
@@ -65,6 +66,6 @@ export function useRowsThatFit(
     return () => {
       observer.disconnect();
     };
-  }, [page, table, min, max]);
+  }, [page, table, min, max, rowSelector]);
   return rows;
 }

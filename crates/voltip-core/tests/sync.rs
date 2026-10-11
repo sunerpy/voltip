@@ -301,7 +301,7 @@ async fn the_computers_settings_reach_the_phone_and_the_phone_keeps_its_own_look
     }
     // The phone's own look is its own.
     let own = SettingsStore::new(phone.dir.path()).load().unwrap();
-    assert_eq!((own.theme, own.locale), (voltip_core::ThemeId::Light, voltip_core::Locale::System));
+    assert_eq!((own.theme, own.locale), (voltip_core::ThemeId::Glass, voltip_core::Locale::System));
 }
 
 #[tokio::test]

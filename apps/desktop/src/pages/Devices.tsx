@@ -257,7 +257,7 @@ export function Devices() {
     invoke("pairing_reset");
     invoke("pairing_start");
   };
-  // Ctrl R (the footer's 重新生成二维码): a new code while one is shown or expired, a first one
+  // Ctrl R (the keycaps on 重新生成二维码): a new code while one is shown or expired, a first one
   // when nothing is running; a handshake in progress is never interrupted by a key.
   usePageShortcuts((e) => {
     if (!withCommand(e) || e.key.toLowerCase() !== "r") return false;
