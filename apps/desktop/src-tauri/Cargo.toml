@@ -40,7 +40,7 @@ required-features = ["keychain-harness"]
 [build-dependencies]
 # build.rs reads the app version from package.json (already in the graph through tauri-build).
 serde_json.workspace = true
-tauri-build = { version = "=2.6.3", features = [] }
+tauri-build = { version = "=2.7.1", features = [] }
 
 [dependencies]
 async-trait.workspace = true
@@ -53,14 +53,14 @@ serde_json.workspace = true
 # agree, and it reads only this table). No effect on the other platforms. The app is not meant for
 # the Mac App Store, which rejects private API use.
 tauri = { version = "=2.11.6", default-features = false, features = ["wry", "macos-private-api"] }
-tauri-plugin-opener = "=2.5.4"
+tauri-plugin-opener = "=2.5.5"
 tauri-plugin-global-shortcut = "=2.3.2"
 # The save dialog of 导出字幕 / 导出文本 (src/export.rs, docs/dictation.md §22); called from Rust
 # only. 2.7.3 is the newest release for tauri 2.11 (2.8 needs tauri 2.12).
 tauri-plugin-dialog = "=2.7.3"
 # `voltip --toggle` / `--cancel` reach the running instance (docs/dictation.md §13). No default
 # features: `semver` (version comparison between instances) and `deep-link` are not needed.
-tauri-plugin-single-instance = { version = "=2.4.3", default-features = false }
+tauri-plugin-single-instance = { version = "=2.4.5", default-features = false }
 clap.workspace = true
 # In-app updates (src/update.rs). No default features: TLS comes from the workspace's reqwest
 # `rustls` feature (aws-lc-rs) through feature unification; the plugin's own `rustls-tls` default
@@ -108,7 +108,7 @@ tauri = { version = "=2.11.6", default-features = false, features = ["wry", "tra
 tauri-plugin-macos-permissions = "=2.3.0"
 # The frontmost application for scenes (docs/dictation.md §18.2): `NSWorkspace.frontmostApplication`.
 # The exact versions tray-icon / muda already pull; only the two AppKit classes the probe touches.
-objc2 = "=0.6.4"
+objc2 = "=0.6.5"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSEvent", "NSRunningApplication", "NSWorkspace"] }
 # The tray menu's language when `settings.locale` is `system` (`NSLocale.preferredLanguages`); the
 # version objc2-app-kit already pulls.
@@ -131,7 +131,7 @@ tempfile.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "=0.14.0", features = ["xinput"] }
 # `_exit` (src/exit.rs); the version the graph already has.
-libc = "=0.2.189"
+libc = "=0.2.190"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 tauri = { version = "=2.11.6", default-features = false, features = ["wry", "tray-icon"] }
@@ -156,7 +156,7 @@ windows-sys = { version = "=0.61.2", features = [
 tauri = { version = "=2.11.6", default-features = false, features = ["wry", "test"] }
 # tests/bundle.rs: the merged per-target tauri.*.conf.json through Tauri's own config schema (the
 # version tauri-build already resolves, so nothing new is compiled).
-tauri-utils = { version = "=2.9.3", default-features = false }
+tauri-utils = { version = "=2.10.1", default-features = false }
 # tests/bundle.rs: merges a --config overlay the way the Tauri CLI does (the version tauri-utils
 # already uses).
 json-patch = { version = "=4.2.0", default-features = false }
