@@ -29,7 +29,6 @@ export * from "./components/SettingsLayout";
 export * from "./components/EmptyState";
 export * from "./components/LedMeter";
 export * from "./components/Waveform";
-export * from "./components/Heatmap";
 export * from "./components/Sparkline";
 export * from "./components/Progress";
 export * from "./components/Table";

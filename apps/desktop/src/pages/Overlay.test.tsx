@@ -353,6 +353,8 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       const pill = await screen.findByRole("status");
       expect(pill).toHaveAttribute("data-state", "listening");
       expect(screen.getByTestId("overlay-window")).toHaveAttribute("data-session", "1");
+      // Over 澄空 (a new install's theme) the pill is dark glass (board 02).
+      expect(screen.getByTestId("overlay-window")).toHaveAttribute("data-theme", "glass_dark");
       // Before the device delivered samples: the timer is parked and the hint says so (§11).
       expect(pill).toHaveTextContent("00:00");
       expect(pill).toHaveTextContent("等待麦克风");

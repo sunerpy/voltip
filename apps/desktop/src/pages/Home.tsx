@@ -296,6 +296,13 @@ export function Home() {
     target:
       engines.inject === "paste" ? t("home.hero.target.paste") : t("home.hero.target.clipboard"),
   });
+  const micState = meter.error
+    ? t("home.mic.unavailable")
+    : dictation.listening
+      ? t("home.mic.recording")
+      : micTest.testing
+        ? t("home.mic.testing", { n: micTest.remaining })
+        : t("home.mic.idle");
   const micDevice = meter.device;
 
   return (
@@ -413,16 +420,12 @@ export function Home() {
                   ? t("home.button.processing")
                   : t("home.button.start")}
             </span>
+            {/* Two centred lines at most: 「Idle · microphone closed」 is wider than the column. */}
             <span
-              className="mt-0.5 max-w-full truncate text-[11px] text-fg-subtle"
+              className="mt-0.5 line-clamp-2 max-w-full text-center text-[11px] leading-4 text-fg-subtle"
+              title={micState}
               data-testid="home-mic-state">
-              {meter.error
-                ? t("home.mic.unavailable")
-                : dictation.listening
-                  ? t("home.mic.recording")
-                  : micTest.testing
-                    ? t("home.mic.testing", { n: micTest.remaining })
-                    : t("home.mic.idle")}
+              {micState}
             </span>
             {dictation.listening && (
               <Button variant="text" size="sm" onClick={dictation.cancel} className="mt-1">

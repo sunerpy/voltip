@@ -1,7 +1,6 @@
 import { render, renderHook, screen } from "@testing-library/react";
 import { CommandPalette } from "../components/CommandPalette";
 import { Dialog } from "../components/Dialog";
-import { Heatmap } from "../components/Heatmap";
 import {
   LiveCaption,
   PILL_CAPTIONS,
@@ -71,7 +70,6 @@ describe("I18nProvider", () => {
         <Pill state="locked" levels={[0.2]} onStop={() => undefined} />
         <Pill state="error" onCopy={() => undefined} />
         <LiveCaption committed="" tail="" tier="failed" elapsed="00:01" engine="e" queueDepth={2} />
-        <Heatmap values={[[0, 1]]} />
         <SafetyCodeView code={{ words: ["a", "b", "c", "d"], fingerprint: "AA" }} />
         <ThemeTile theme="warm" selected={false} onSelect={() => undefined} />
         <ToolbarSearch onSearch={() => undefined} />
@@ -94,7 +92,6 @@ describe("I18nProvider", () => {
     expect(screen.getByRole("button", { name: "Copy text" })).toBeInTheDocument();
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
     expect(screen.getByText("2 queued")).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "Activity heatmap" })).toHaveTextContent("LessMore");
     expect(screen.getByRole("list", { name: "Safety code" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Warm" })).toBeInTheDocument();
     expect(screen.getByText("Search or type a command…")).toBeInTheDocument();

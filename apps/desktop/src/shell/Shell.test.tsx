@@ -422,6 +422,8 @@ describe("Shell", () => {
     });
     const toast = await screen.findByRole("alert");
     expect(toast).toHaveTextContent("出错了 · relay refused the ticket");
+    // Toasts float in dark glass over 澄空, like the pill (board 02).
+    expect(screen.getByTestId("toast-viewport")).toHaveAttribute("data-theme", "glass_dark");
     act(() => {
       backend.simulateMessage(
         "9f0c2b1e6a4d3c5f7e8a9b0c1d2e3f405162738495a6b7c8d9e0f1a2b3c4d5e6",

@@ -66,9 +66,6 @@ export const en: Messages = {
     banner: { close: "Close" },
     a11y: {
       level: "Strength",
-      heatmap: "Activity heatmap",
-      less: "Less",
-      more: "More",
       sparkline: "Trend",
       waveform: "Waveform",
       progress: "Progress",
@@ -348,7 +345,7 @@ export const en: Messages = {
       relay: "Relay · {state}",
       phones: "Phones · {paired} paired · {online} online",
       none: "No phone paired yet · pair one",
-      e2ee: "End-to-end encrypted with your phones",
+      e2ee: "End-to-end encrypted",
       open: "Open the Phone page",
     },
     /** The home page's line under its title: today and the whole history. */

@@ -278,6 +278,16 @@ describe("Home page", () => {
     );
   });
 
+  it("regression: the line under the dictation button wraps instead of being cut, and reads whole on hover", async () => {
+    // The 1440 px English capture (2026-10-11) cut 「Idle · microphone closed」 to 「Idle · microphone clos…」.
+    renderApp({ mock: { settings: { locale: "en" } } });
+    const line = await screen.findByTestId("home-mic-state");
+    expect(line).toHaveTextContent("Idle · microphone closed");
+    expect(line).toHaveAttribute("title", "Idle · microphone closed");
+    expect(line).toHaveClass("line-clamp-2", "text-center");
+    expect(line).not.toHaveClass("truncate");
+  });
+
   it("regression: a stat tile's note reads whole on hover when the default window cuts it", async () => {
     // The 1152 px check (the default window, plan 1.2): 「Keeps the newest 500」 was cut with no way
     // to read it.

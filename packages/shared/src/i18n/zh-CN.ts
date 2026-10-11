@@ -65,9 +65,6 @@ export const zhCN = {
     banner: { close: "关闭" },
     a11y: {
       level: "强度",
-      heatmap: "活动热力图",
-      less: "少",
-      more: "多",
       sparkline: "趋势",
       waveform: "波形",
       progress: "进度",

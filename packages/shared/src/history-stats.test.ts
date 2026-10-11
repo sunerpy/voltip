@@ -57,9 +57,9 @@ const ENTRIES: HistoryEntry[] = [
   entry({ at_ms: NOW - 2 * DAY, outcome: { kind: "failed", reason: "ASR 500" } }),
   // Last week (Thursday 2026-09-17): in the month, not the week.
   entry({ at_ms: NOW - 7 * DAY }),
-  // 2026-08-30: neither this week nor this month, but within six weeks.
+  // 2026-08-30: neither this week nor this month, but within the six weeks the core is asked for.
   entry({ at_ms: NOW - 25 * DAY }),
-  // Far outside the heatmap window.
+  // Far outside those six weeks: the total only.
   entry({ at_ms: NOW - 60 * DAY }),
 ];
 
@@ -100,23 +100,6 @@ describe("history stats", () => {
     expect(boundaries).toHaveLength(40);
     expect(new Date(boundaries[0] ?? 0).getDay()).toBe(1);
     expect(boundaries.at(-1)).toBe(startOfDay(NOW) + 24 * HOUR);
-  });
-
-  it("builds the 6-week × 7-day heatmap from the daily buckets, quantised to four levels", async () => {
-    const grid = (await statsOf(ENTRIES)).heatmap;
-    expect(grid).toHaveLength(6);
-    for (const col of grid) expect(col).toHaveLength(7);
-    const thisWeek = grid[5];
-    // Thursday = row 3 (Mon 0 … Sun 6): two entries today, one yesterday (Wed), one Tuesday.
-    expect(thisWeek?.[3]).toBe(2);
-    expect(thisWeek?.[2]).toBe(1);
-    expect(thisWeek?.[1]).toBe(1);
-    expect(grid[4]?.[3]).toBe(1);
-    // 25 days back is Sunday 2026-08-30: week column 5 - 4 = 1, row 6.
-    expect(grid[1]?.[6]).toBe(1);
-    expect(grid.flat().reduce((a, b) => a + b, 0)).toBe(6);
-    const busy = Array.from({ length: 5 }, (_, i) => entry({ at_ms: NOW - i * 60_000 }));
-    expect((await statsOf(busy)).heatmap[5]?.[3]).toBe(3);
   });
 
   it("filters by tile, star and outcome; recognises filter names", async () => {

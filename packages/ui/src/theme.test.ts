@@ -6,6 +6,7 @@ import {
   FONT_SIZE_MAX,
   applyAppearance,
   applyTheme,
+  floatingTheme,
   isAccentId,
   isDarkTheme,
   isThemeId,
@@ -386,6 +387,13 @@ describe("theme helpers", () => {
     expect(isAccentId("purple")).toBe(true);
     expect(isAccentId("red")).toBe(false);
     expect(isAccentId(undefined)).toBe(false);
+  });
+
+  it("floats the pill and the toasts in 夜空 over 澄空, and in the page's own theme otherwise", () => {
+    // Penpot 「澄空 Glass · Voltip」 boards 02 and 09: dark glass over a light desktop.
+    expect(floatingTheme("glass")).toBe("glass_dark");
+    for (const theme of ["glass_dark", "light", "dark", "warm", "graphite"] as const)
+      expect(floatingTheme(theme)).toBe(theme);
   });
 
   it("reads system preferences defensively", () => {
