@@ -83,7 +83,7 @@ hound = "=3.5.1"
 keyring = "=4.2.0"
 parking_lot = "=0.12.5"
 proptest = "=1.11.0"
-rand = "=0.10.2"
+rand = "=0.10.3"
 # Regex replacement rules (docs/dictation.md §16): linear-time matching, compiled size capped per rule.
 regex = "=1.13.1"
 # rustls (aws-lc-rs provider + platform verifier) so the Windows cross-build needs no OpenSSL.
@@ -91,7 +91,7 @@ reqwest = { version = "=0.13.5", default-features = false, features = ["rustls",
 # Lock-free SPSC ring for the recorder's live tap (docs/dictation.md §11): the audio callback
 # pushes 16 kHz mono frames, the decode thread pops them; no lock and no allocation on the audio thread.
 rtrb = "=0.4.0"
-rubato = "=5.0.0"
+rubato = "=5.0.1"
 # The history database (docs/dictation.md §4): `bundled` compiles SQLite itself from C for every
 # target (the Windows cross-build, Android), so no system library is needed anywhere.
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
@@ -109,7 +109,7 @@ sha2 = "=0.11.0"
 sherpa-onnx = { version = "=1.13.8", default-features = false, features = ["shared"] }
 # Opus for a phone take's audio (docs/dictation.md §20.1): a pure-Rust port of libopus 1.6, no C
 # toolchain on any target (Android, the Windows cross-build); BSD-3-Clause.
-opus-rs = "=0.1.34"
+opus-rs = "=0.1.37"
 # The same crate's `-sys` half, named only by the desktop shell: see apps/desktop/src-tauri/Cargo.toml.
 sherpa-onnx-sys = { version = "=1.13.8", default-features = false, features = ["shared"] }
 snow = "=0.10.0"
@@ -119,7 +119,7 @@ strsim = "=0.11.1"
 subtle = "=2.6.1"
 tempfile = "=3.27.0"
 thiserror = "=2.0.21"
-tokio = { version = "=1.53.1", features = [
+tokio = { version = "=1.53.2", features = [
     "macros",
     "net",
     "rt-multi-thread",
@@ -129,7 +129,7 @@ tokio = { version = "=1.53.1", features = [
 ] }
 tokio-tungstenite = "=0.30.0"
 # TOML import / export of the replacement rules (docs/dictation.md §16); the version Tauri already uses.
-toml = "=1.1.6"
+toml = "=1.1.7"
 # transcribe.cpp (ggml) bindings for the Qwen3-ASR GGUF models (docs/dictation.md §10). MIT.
 # `default-features = false` drops the `metal` default here; crates/voltip-asr-local turns Metal on
 # for macOS and Vulkan on behind its `vulkan` feature (§10.6), which the Windows and Linux packages
@@ -152,9 +152,9 @@ url = { version = "=2.5.8", features = ["serde"] }
 # platform verifier needs a JNI context the app never hands it (voltip-asr, voltip-refine). Already
 # in the graph through rustls-platform-verifier; CDLA-Permissive-2.0 like webpki-roots (deny.toml).
 webpki-root-certs = "=1.0.9"
-uuid = { version = "=1.26.1", features = ["v4", "serde"] }
+uuid = { version = "=1.27.0", features = ["v4", "serde"] }
 wiremock = "=0.6.5"
-zeroize = { version = "=1.9.0", features = ["derive"] }
+zeroize = { version = "=1.9.1", features = ["derive"] }
 
 voltip-protocol = { path = "crates/voltip-protocol" }
 voltip-crypto = { path = "crates/voltip-crypto" }
