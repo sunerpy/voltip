@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import { cx } from "../cx";
+import { fitStyle, useFitPanel } from "./fit-panel";
 
 export interface PopoverProps {
   /** What the trigger button shows (a short word such as 「依据」). */
@@ -17,7 +18,10 @@ export interface PopoverProps {
 
 /** A button that shows a short explanation under it (a disclosure, drawn as a floating panel):
  *  a click, Enter or Space open and close it; Esc closes it and gives the focus back to the
- *  button; Tab or a click elsewhere close it. The panel is a non-modal dialog named `label`. */
+ *  button; Tab or a click elsewhere close it. The panel is a non-modal dialog named `label`.
+ *  The explanation wraps inside the panel whatever the trigger sits in, and the panel stays in
+ *  the window (`fitPanel`; user report 2026-10-11: under the title bar's one-line subtitle the
+ *  依据 explanation ran on one line past the window and the screen). */
 export function Popover({
   trigger,
   label,
@@ -31,6 +35,8 @@ export function Popover({
   const panelId = useId();
   const wrapper = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const fit = useFitPanel(open, wrapper, panel, "bottom", align);
 
   const close = useCallback((refocus: boolean) => {
     setOpen(false);
@@ -81,13 +87,18 @@ export function Popover({
       </button>
       {open && (
         <div
+          ref={panel}
           id={panelId}
           role="dialog"
           aria-label={label}
           data-tauri-drag-region="false"
           data-testid={testId === undefined ? undefined : `${testId}-panel`}
+          style={fitStyle(fit)}
+          // Prose in the UI font, left-aligned and wrapping, whatever the trigger sits in: the
+          // title bar's subtitle is one line that does not wrap.
           className={cx(
-            "absolute top-full z-50 mt-1 w-80 max-w-[calc(100vw-2rem)] rounded-10 border border-raised-edge bg-raised p-3 text-[12px] leading-5 text-fg shadow-win glass-blur",
+            "absolute z-50 w-80 max-w-[calc(100vw-2rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-10 border border-raised-edge bg-raised p-3 text-left font-ui text-[12px] leading-5 font-normal whitespace-normal break-words text-fg shadow-win glass-blur",
+            fit?.side === "top" ? "bottom-full mb-1" : "top-full mt-1",
             align === "end" ? "right-0" : "left-0",
           )}>
           {children}

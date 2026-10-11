@@ -1,4 +1,4 @@
-import { LIST_MAX_HEIGHT, placeList, revealScrollTop } from "./placement";
+import { LIST_MAX_HEIGHT, fitPanel, placeList, revealScrollTop } from "./placement";
 
 // A 375 × 667 phone screen and a trigger 28 px tall, 200 px wide.
 const VIEWPORT = { width: 375, height: 667 };
@@ -131,5 +131,117 @@ describe("revealScrollTop", () => {
         "center",
       ),
     ).toBe(0);
+  });
+});
+
+describe("fitPanel", () => {
+  // The smallest main window (960 × 600) with the sidebar open: the page's scroll area starts
+  // under the title bar and right of the sidebar.
+  const WINDOW = { top: 0, left: 0, bottom: 600, right: 960 };
+  const PAGE = { top: 95, left: 246, bottom: 600, right: 960 };
+  const at = (top: number, left: number, width = 90, height = 20) => ({
+    top,
+    left,
+    bottom: top + height,
+    right: left + width,
+  });
+
+  it("keeps the side it is asked for and its edge when the panel fits there", () => {
+    expect(
+      fitPanel({
+        trigger: at(379, 314),
+        panel: { width: 143, height: 95 },
+        left: 314,
+        bounds: PAGE,
+        side: "bottom",
+      }),
+    ).toEqual({ side: "bottom", shift: 0, maxHeight: 600 - 8 - (399 + 4) });
+    // The sidebar's theme button asks for the top, and there is room there.
+    expect(
+      fitPanel({
+        trigger: at(518, 103, 62, 50),
+        panel: { width: 138, height: 261 },
+        left: 103,
+        bounds: WINDOW,
+        side: "top",
+      }),
+    ).toEqual({ side: "top", shift: 0, maxHeight: 518 - 4 - 8 });
+  });
+
+  // User report 2026-10-11: in a small window the home page's preset and microphone menus opened
+  // under their triggers and ran past the window's bottom, their last rows out of sight.
+  it("regression: a menu low in a short window opens above its trigger, inside the page's scroll area", () => {
+    expect(
+      fitPanel({
+        trigger: at(433, 378),
+        panel: { width: 157, height: 290 },
+        left: 378,
+        bounds: PAGE,
+        side: "bottom",
+      }),
+    ).toEqual({ side: "top", shift: 0, maxHeight: 433 - 4 - (95 + 8) });
+  });
+
+  it("takes the side with more room when the panel fits on neither, and scrolls inside it", () => {
+    const tall = { width: 184, height: 400 };
+    // 326 px above the trigger, 135 below: above, 326 tall.
+    expect(
+      fitPanel({ trigger: at(433, 378), panel: tall, left: 378, bounds: PAGE, side: "bottom" }),
+    ).toMatchObject({ side: "top", maxHeight: 326 });
+    // Higher up there is more room below: it stays there and scrolls.
+    expect(
+      fitPanel({ trigger: at(200, 378), panel: tall, left: 378, bounds: PAGE, side: "bottom" }),
+    ).toMatchObject({ side: "bottom", maxHeight: 600 - 8 - 224 });
+    // Asked for the top with less room there than below: below.
+    expect(
+      fitPanel({ trigger: at(120, 378), panel: tall, left: 378, bounds: PAGE, side: "top" }),
+    ).toMatchObject({ side: "bottom", maxHeight: 600 - 8 - 144 });
+  });
+
+  it("regression: a panel that would run past the window's right edge moves back inside it, and never past the left edge", () => {
+    // The 依据 explanation, 280 px wide, under a trigger 800 px in: back by 128 px.
+    expect(
+      fitPanel({
+        trigger: at(77, 800, 30),
+        panel: { width: 280, height: 93 },
+        left: 800,
+        bounds: WINDOW,
+        side: "bottom",
+      }),
+    ).toEqual({ side: "bottom", shift: 952 - 1080, maxHeight: 600 - 8 - 101 });
+    // Lined up with the trigger's end (`align="end"`) and starting left of the window: forward.
+    expect(
+      fitPanel({
+        trigger: at(77, 4, 30),
+        panel: { width: 280, height: 93 },
+        left: -246,
+        bounds: WINDOW,
+        side: "bottom",
+      }),
+    ).toMatchObject({ shift: 8 + 246 });
+    // Wider than the window: it starts at the left edge.
+    expect(
+      fitPanel({
+        trigger: at(77, 100, 30),
+        panel: { width: 1000, height: 93 },
+        left: 100,
+        bounds: WINDOW,
+        side: "bottom",
+      }),
+    ).toMatchObject({ shift: 8 - 100 });
+  });
+
+  it("honours a custom gap and margin", () => {
+    expect(
+      fitPanel({
+        trigger: at(100, 900, 30),
+        panel: { width: 100, height: 50 },
+        left: 900,
+        bounds: WINDOW,
+        side: "bottom",
+        gap: 8,
+        margin: 16,
+      }),
+    ).toEqual({ side: "bottom", shift: 944 - 1000, maxHeight: 600 - 16 - 128 });
   });
 });

@@ -1081,6 +1081,15 @@
   ::selection {
     background: var(--accent-soft);
   }
+  /* Thin scroll bars in the theme's colours. A small window is where they show (the sidebar at a
+     large type size, the page, a menu taller than the room it has), and the platform's wide grey
+     bars with arrow buttons crowded those boxes (2026-10-11). */
+  :root {
+    scrollbar-color: color-mix(in srgb, var(--fg-subtle) 45%, transparent) transparent;
+  }
+  * {
+    scrollbar-width: thin;
+  }
 }
 
 @utility hairline {
