@@ -4,7 +4,7 @@
 import { Hct, argbFromHex } from "@material/material-color-utilities";
 import { THEME_IDS } from "@voltip/shared";
 
-import { VOLTIP_SEED, appTheme, isGlassTheme, themeId, themeSeed } from "./themes";
+import { VOLTIP_SEED, appTheme, auroraOf, isGlassTheme, themeId, themeSeed } from "./themes";
 
 /** WCAG 2's relative luminance of a `#rrggbb` colour. */
 function luminance(hex: string): number {
@@ -22,6 +22,25 @@ function contrast(a: string, b: string): number {
 }
 
 const hct = (hex: string) => Hct.fromInt(argbFromHex(hex));
+
+/** `#rrggbb` or `rgba(r, g, b, a)` → channels and alpha. */
+function rgba(colour: string): [number, number, number, number] {
+  const m = /^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/.exec(colour);
+  if (m) return [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
+  return [1, 3, 5].map((i) => parseInt(colour.slice(i, i + 2), 16)).concat(1) as never;
+}
+
+/** `top` (with its alpha, or `alpha`) laid over the opaque `bottom`. */
+function over(top: string, bottom: string, alpha?: number): string {
+  const [r, g, b, a] = rgba(top);
+  const [R, G, B] = rgba(bottom);
+  const k = alpha ?? a;
+  const mix = (x: number, y: number) =>
+    Math.round(x * k + y * (1 - k))
+      .toString(16)
+      .padStart(2, "0");
+  return `#${mix(r, R)}${mix(g, G)}${mix(b, B)}`;
+}
 
 /** The angle between two hues, 0–180. */
 function hueDistance(a: number, b: number): number {
@@ -95,6 +114,56 @@ describe("the 简约中性 themes", () => {
       expect(contrast(t.colors.onPrimary, t.colors.primary)).toBeGreaterThanOrEqual(4.5);
     }
   });
+
+  // Board 03's aurora at its own 40–85 % put muted text on the page under 3:1 where the blue light
+  // is strongest; the phone's is as faint as the desktop's.
+  it.each(["glass", "glass_dark"] as const)(
+    "regression: %s keeps 4.5:1 for text on the page where each light of the aurora is strongest, and on a card over it (the quietest text sits on cards only)",
+    (id) => {
+      const t = appTheme(id);
+      const spots = auroraOf(id);
+      expect(spots).toHaveLength(4);
+      for (const spot of spots) {
+        const lit = over(spot.color, t.colors.background, spot.opacity);
+        const card = over(t.voltip.card, lit);
+        // On the page: titles, the line under them, section titles, links (全部记录).
+        for (const text of [t.colors.onBackground, t.colors.onSurfaceVariant, t.colors.primary])
+          expect(contrast(text, lit)).toBeGreaterThanOrEqual(4.5);
+        // On a card the quietest text too (a result's time, a tile's caption).
+        for (const text of [t.colors.onSurface, t.colors.onSurfaceVariant, t.voltip.subtle])
+          expect(contrast(text, card)).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(t.colors.primary, card)).toBeGreaterThanOrEqual(4.5);
+      }
+    },
+  );
+
+  it.each(THEME_IDS)("%s: the talk button's icon keeps 3:1 on it, held or not", (id) => {
+    const t = appTheme(id);
+    expect(contrast(t.voltip.onHero, t.voltip.hero)).toBeGreaterThanOrEqual(3);
+    expect(contrast(t.voltip.onHero, t.voltip.heroPressed)).toBeGreaterThanOrEqual(3);
+    expect(t.voltip.glass).toBe(isGlassTheme(id));
+  });
+
+  it.each(["glass", "glass_dark"] as const)(
+    "%s puts translucent cards with board 03's corners on the aurora, under a nearly opaque dock",
+    (id) => {
+      const t = appTheme(id);
+      expect(t.voltip.card).toMatch(/^rgba\(255, 255, 255, 0\.\d+\)$/);
+      expect(t.voltip.radius).toEqual({ card: 20, hero: 28 });
+      // Nothing blurs what scrolls under the dock, so it is nearly opaque.
+      expect(rgba(t.voltip.dock)[3]).toBeGreaterThanOrEqual(0.95);
+    },
+  );
+
+  it.each(["light", "dark", "warm", "graphite"] as const)(
+    "%s keeps its flat page: no aurora, cards on the surface with the classic corners",
+    (id) => {
+      const t = appTheme(id);
+      expect(auroraOf(id)).toEqual([]);
+      expect(t.voltip.card).toBe(t.colors.surface);
+      expect(t.voltip.radius).toEqual({ card: 14, hero: 14 });
+    },
+  );
 
   it("keeps 暖纸 cream and 石墨 a grey lifted off black", () => {
     const warm = hct(appTheme("warm").colors.background);

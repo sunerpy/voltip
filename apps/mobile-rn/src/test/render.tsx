@@ -37,11 +37,7 @@ export async function renderApp({
   return { ...view, backend: core };
 }
 
-/** Open a tab. Paper's navigation bar takes no touches until it has measured itself, which under
- *  jest nothing does: the layout event is sent first. */
+/** Open a tab from the dock. */
 export async function openTab(tab: "talk" | "history" | "settings") {
-  await fireEvent(screen.getByTestId("bottom-navigation-bar"), "layout", {
-    nativeEvent: { layout: { x: 0, y: 0, width: METRICS.frame.width, height: 80 } },
-  });
   await fireEvent.press(await screen.findByTestId(`tab-${tab}`));
 }

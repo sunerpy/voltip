@@ -2561,6 +2561,7 @@ export const en: Messages = {
       identityBody:
         "A trusted computer with a new key is marked red and not trusted automatically.",
       start: "Connect a computer",
+      status: "No computer paired · transcribed on the phone",
     },
     device: {
       generating: "Generating the device identity…",
@@ -2624,6 +2625,12 @@ export const en: Messages = {
       localBody:
         "Hold the button and speak; let go and the built-in service transcribes and polishes it, and the result is copied to this phone's clipboard. Slide off the button before letting go to cancel.",
       offline: "No paired computer is online, so the phone transcribes for now.",
+      route: "Where to transcribe",
+      toComputer: "Send to a computer",
+      afterComputer: "Let go and the text appears at the computer's cursor",
+      afterPhone: "Let go and the phone transcribes and polishes it, then copies the result",
+      slideCancel: "Slide off the button before letting go to cancel",
+      releaseTo: "Release to send to {name}",
       scene: "Scene",
       noScene: "No scene",
       target: "Send to",
@@ -2661,6 +2668,9 @@ export const en: Messages = {
       copy: "Copy",
       copied: "Copied",
       copyFailed: "Could not copy",
+      inserted: "Inserted on {name}",
+      sent: "Sent to {name}",
+      onPhone: "Transcribed on the phone",
       share: "Share",
       all: "All history",
       openLabel: "Open “{text}”",
@@ -2717,6 +2727,7 @@ export const en: Messages = {
       forgotten: "Forgot {name}",
       count: "{paired} paired · {online} online",
       relay: "Relay · {state}",
+      status: "{paired} paired · {online} online · Relay: {state}",
       emptyTitle: "No computer paired yet",
       emptyBody: "Open the Phone page on the computer, then scan or enter the 6-digit code.",
       pairNew: "Pair a new computer",

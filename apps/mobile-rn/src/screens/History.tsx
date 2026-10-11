@@ -28,7 +28,16 @@ import { useDebounced, useHistoryList } from "../hooks/useHistoryList";
 import { useHomeStats } from "../hooks/useHomeStats";
 import { type TabParams, useRootNavigation } from "../routes";
 import { Button } from "../ui/Button";
-import { CARD_RADIUS, EmptyState, Mono, Page, RowDivider, Section, useAppTheme } from "../ui/kit";
+import {
+  CARD_RADIUS,
+  EmptyState,
+  Mono,
+  Page,
+  RowDivider,
+  Section,
+  TabTitle,
+  useAppTheme,
+} from "../ui/kit";
 import { type StatSpan, type StatTileColors, statTileColors } from "../ui/statTile";
 
 /** How long the search waits after the last keystroke, as on the desktop. */
@@ -171,7 +180,10 @@ export function History() {
   };
 
   return (
-    <Page testID="phone-history" onEndReached={list.more ? list.loadMore : undefined}>
+    <Page
+      testID="phone-history"
+      title={<TabTitle title={t("mobile.tab.history")} />}
+      onEndReached={list.more ? list.loadMore : undefined}>
       {state.mirrors.length > 0 && (
         <ScrollView
           horizontal

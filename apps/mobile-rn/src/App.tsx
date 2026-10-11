@@ -26,7 +26,7 @@ import {
 
 import { BackendProvider, useBackend, useUiState } from "./backend/BackendProvider";
 import { I18nProvider, useT } from "./backend/i18n";
-import { RootNavigator } from "./navigation";
+import { RootNavigator, aboveDock } from "./navigation";
 import type { RootParams } from "./routes";
 import { ShellProvider, useShell } from "./shell";
 import { type AppTheme, appTheme, themeId, themeSeed } from "./theme/themes";
@@ -59,9 +59,6 @@ function navigationTheme(theme: AppTheme): NavigationTheme {
     },
   };
 }
-
-/** The bottom of the snackbar: above the navigation bar of the tabs. */
-const TAB_BAR_HEIGHT = 80;
 
 function Themed({
   accent,
@@ -155,7 +152,7 @@ function Shell({
 }) {
   const insets = useSafeAreaInsets();
   return (
-    <ShellProvider bottomInset={insets.bottom + TAB_BAR_HEIGHT}>
+    <ShellProvider bottomInset={aboveDock(insets.bottom)}>
       <NavigationContainer ref={navigation} theme={navigationTheme(theme)}>
         <Gate register={register} />
       </NavigationContainer>

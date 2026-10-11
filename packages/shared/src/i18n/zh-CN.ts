@@ -2500,6 +2500,8 @@ export const zhCN = {
       identity: "身份变化即告警",
       identityBody: "已信任的电脑更换密钥时会标红提示，不会自动信任。",
       start: "连接电脑",
+      /** The line under 说话 before a computer is paired. */
+      status: "尚未配对电脑 · 在手机上识别",
     },
     device: {
       generating: "正在生成设备身份…",
@@ -2563,6 +2565,14 @@ export const zhCN = {
       localBody:
         "按住按钮说话，松开后由内置服务识别并润色，结果自动复制到这部手机的剪贴板。手指滑出按钮再松开则取消。",
       offline: "已配对的电脑都不在线，现在在手机上识别。",
+      /** The talk card (Penpot 「澄空 Glass · Voltip」 boards 03/04): where a take goes, and what
+       *  happens on release. */
+      route: "识别方式",
+      toComputer: "发送到电脑",
+      afterComputer: "松开后，文字出现在电脑的光标处",
+      afterPhone: "松开后在手机上识别并润色，结果自动复制",
+      slideCancel: "手指滑出按钮再松开则取消",
+      releaseTo: "松开发送到 {name}",
       scene: "场景",
       noScene: "不使用场景",
       target: "发送到",
@@ -2600,6 +2610,10 @@ export const zhCN = {
       copy: "复制",
       copied: "已复制",
       copyFailed: "复制失败",
+      /** Where a result went (board 03's line under it). */
+      inserted: "已插入 {name}",
+      sent: "已发送到 {name}",
+      onPhone: "在手机上识别",
       share: "分享",
       all: "全部记录",
       openLabel: "打开「{text}」",
@@ -2656,6 +2670,8 @@ export const zhCN = {
       forgotten: "已忘记 {name}",
       count: "{paired} 台已配对 · {online} 在线",
       relay: "中继 · {state}",
+      /** The line under 说话 (board 03). */
+      status: "{paired} 台已配对 · {online} 台在线 · 中继{state}",
       emptyTitle: "尚未配对电脑",
       emptyBody: "在电脑上打开「手机」页，然后扫码或输入 6 位验证码。",
       pairNew: "配对新电脑",
