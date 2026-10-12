@@ -36,7 +36,7 @@ AI 工具接入让这台电脑上的 AI 工具（例如 Claude Code、Codex）�
 
 其他支持 Streamable HTTP 的 MCP 客户端，填写同样的地址，并在请求头中加上 `Authorization: Bearer <令牌>`。
 
-连接后可以直接向工具提出要求，例如「看看最近一个月 Voltip 把哪些词听错了，结合这个项目的术语给出词典建议，确认后再添加」。工具还可以使用 Voltip 提供的提示 `review_misrecognitions`：先汇总替换，再逐条回测，把建议列给你确认后再写入。
+连接后可以直接向工具提出要求，例如「检查最近一个月 Voltip 听错了哪些词，结合这个项目的术语给出词典建议，经我确认后再添加」。工具还可以使用 Voltip 提供的提示 `review_misrecognitions`：先汇总替换，再逐条回测，把建议列给你确认后再写入。
 
 ## 读取范围
 

@@ -1072,6 +1072,15 @@ Rust：`vocabulary` 单测（上限、校验、字面 vs 正则、大小写、�
 
 结论：热词只在「列表里只有这一个词且束宽加到 10」时修正了已知错误，每块解码时间 +47%、p95 +50%；换成更贴近真实的三词列表、同样的束宽与分数就不再生效，还会顺带改动别处的大小写。它还要求目录额外带 `bpe.vocab`（现在只有 `bpe.model`）与中文逐字加空格的约定。因此**不开热词**，流式路径与其他本地引擎一样只靠识别后的词典纠正——它对已知误识别是确定的，对任何引擎都一样。
 
+### 16.9 历史详情快速纠错（2026-10-13）
+
+**目标**：在历史记录里选中识别错的词语，一两步建好词条或替换规则（用户要求 2026-10-12，设计 2026-10-13：`voltip-design/history-vocab/设计方案.md` 与 Penpot「快速纠错 · AI 工具接入」画板 01–06、10–13）。App 内不做 AI 分析（用户决定 2026-10-13）：需要分析时由用户自己的 AI 工具经 MCP 完成（§25）。已经保存的历史记录从不改写，词典与规则只作用于之后的听写。
+
+- **回测**（`voltip_core::vocabulary::backtest`）：`backtest(dictionary, history, draft, exclude) -> Backtest { scanned, matched, kept, examples }`。`history` 是 `HistoryReader::recent_texts(limit)` 读到的最新识别记录（只有 `kind = dictation`，没有手机发来的文字；`limit` 1–`MAX_RECENT_TEXTS` = 2000），`exclude` 是卡片所在的那条。
+  - 词典草稿（`BacktestDraft::Dictionary { id?, entry }`）：当前词典与「假如草稿已保存」（`id` 相同的词条被替换，否则追加）分别编译，对每条 `raw_text` 做纠正这一步，结果不同即 `matched`；`kept` 是其中最终 `text` 仍含草稿某个曾听成写法的条数（同一个字面匹配器，ASCII 大小写不敏感、非 CJK 词边界），说明润色认为它在那里是对的，界面据此提示「可能是正确用法」。某个写法已被前面的词条占用时草稿什么也不改（保存时也会被拒绝）。
+  - 规则草稿（`BacktestDraft::Rule { id?, rule }`）：只把草稿规则作用于每条最终 `text`（`text` 已经过当时的全部规则），`kept` 恒为 0。
+  - 示例最多 `MAX_BACKTEST_EXAMPLES` = 3 条，`kept` 的在前，各自按新到旧；每条是首个改动前后各 `BACKTEST_SNIPPET_CHARS` = 12 个字符的片段，截断处为 `…`。草稿本身先校验（`validate_*_draft`），与其他词条的冲突留给保存。
+
 ## 17. 中文字形统一（2026-09-26）
 
 **问题**（主工作区实测）：默认本地模型 Qwen3-ASR 0.6B（transcribe.cpp，不接受语言提示）把公开样音 `zh.wav`（`csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17` 的 `test_wavs/zh.wav`，sha256 `b77f1794fe374a0ba1ee1dc458bfaf9349496cbbfc32780c50ba3c5a7ad8e373`）识别成繁体「開放時間：早上九點至下午五點。」，SenseVoice 对同一文件给出简体。zh-CN 用户不应收到繁体。
