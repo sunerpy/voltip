@@ -8,20 +8,20 @@ Voltip is a dictation app for Windows, macOS and Linux. You hold a shortcut, spe
 
 ## Watch the tutorial
 
-<VideoFigure src="/media/voltip-tutorial-en.mp4" poster="/media/voltip-tutorial-en.webp" width="1920" height="1080" title="Voltip tutorial" caption="2 min 52 s, recorded with Voltip 0.0.14. The Chinese version is on the Chinese page." />
+<VideoFigure src="/media/voltip-tutorial-en.mp4" poster="/media/voltip-tutorial-en.webp" width="1920" height="1080" title="Voltip tutorial" caption="2 min 50 s, recorded with Voltip 0.1.3. The Chinese version is on the Chinese page." />
 
 | Time | Chapter |
 | --- | --- |
 | 0:00 | Introduction |
-| 0:07 | Install |
-| 0:22 | The home page and the microphone test |
-| 0:41 | The first dictation |
-| 1:01 | AI polish |
+| 0:10 | Install |
+| 0:27 | The home page and the microphone test |
+| 0:45 | The first dictation |
+| 1:04 | AI polish |
 | 1:27 | Voice edit |
-| 1:47 | Recognition on this computer |
-| 2:19 | Dictionary and rules |
-| 2:30 | History |
-| 2:40 | Where to find more |
+| 1:46 | Recognition on this computer |
+| 2:17 | Dictionary and rules |
+| 2:28 | History |
+| 2:38 | Where to find more |
 
 ## How a dictation works
 

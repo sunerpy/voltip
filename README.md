@@ -28,8 +28,8 @@ its own, or as the computer's microphone and keyboard; an iOS app is planned for
 
 ## Video
 
-Voltip in 2 minutes 52 seconds: installing it, the first dictation, AI polish, voice edit,
-recognition on this computer, the dictionary and the history. Recorded with 0.0.14; the
+Voltip in 2 minutes 50 seconds: installing it, the first dictation, AI polish, voice edit,
+recognition on this computer, the dictionary and the history. Recorded with 0.1.3; the
 [Chinese version](./docs/readme/README.zh-CN.md#视频) is in the Chinese README.
 
 https://github.com/user-attachments/assets/64e1fdc2-1ab0-42a6-a8c9-740a1efa2ecb
