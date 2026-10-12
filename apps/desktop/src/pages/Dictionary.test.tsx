@@ -232,6 +232,8 @@ describe("Dictionary page", () => {
       enabled: true,
       created_at_ms: NOW,
       updated_at_ms: NOW,
+      source: { kind: "manual" },
+      pending: false,
     };
     renderApp({ path: "/dictionary", backend: seeded([rule]) });
     await screen.findByRole("table", { name: "词条表" });

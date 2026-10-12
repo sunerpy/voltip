@@ -683,6 +683,8 @@ describe("Shell", () => {
             enabled: true,
             created_at_ms: 1,
             updated_at_ms: 1,
+            source: { kind: "manual" },
+            pending: false,
           },
         ],
       });

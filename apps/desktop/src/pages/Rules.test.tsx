@@ -36,6 +36,8 @@ function rule(
     enabled: true,
     created_at_ms: NOW,
     updated_at_ms: NOW,
+    source: { kind: "manual" } as ReplacementRule["source"],
+    pending: false,
     ...extra,
   };
 }
