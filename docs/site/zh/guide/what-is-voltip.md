@@ -8,20 +8,20 @@ Voltip 是 Windows、macOS 和 Linux 上的语音输入工具。按住快捷键�
 
 ## 观看教程视频
 
-<VideoFigure src="/media/voltip-tutorial-zh.mp4" poster="/media/voltip-tutorial-zh.webp" width="1920" height="1080" title="Voltip 使用教程" caption="时长 2 分 38 秒，使用 Voltip 0.0.14 录制。英文版见英文页面。" />
+<VideoFigure src="/media/voltip-tutorial-zh.mp4" poster="/media/voltip-tutorial-zh.webp" width="1920" height="1080" title="Voltip 使用教程" caption="时长 2 分 38 秒，使用 Voltip 0.1.3 录制。英文版见英文页面。" />
 
 | 时间 | 章节 |
 | --- | --- |
 | 0:00 | 简介 |
-| 0:08 | 安装 |
-| 0:19 | 首页与麦克风测试 |
-| 0:36 | 第一次听写 |
-| 0:59 | AI 润色 |
-| 1:22 | 语音编辑 |
-| 1:40 | 本地识别 |
-| 2:10 | 词典与规则 |
-| 2:20 | 历史记录 |
-| 2:32 | 更多信息 |
+| 0:10 | 安装 |
+| 0:22 | 首页与麦克风测试 |
+| 0:40 | 第一次听写 |
+| 1:02 | AI 润色 |
+| 1:25 | 语音编辑 |
+| 1:42 | 本地识别 |
+| 2:11 | 词典与规则 |
+| 2:21 | 历史记录 |
+| 2:31 | 更多信息 |
 
 ## 一次听写的过程
 

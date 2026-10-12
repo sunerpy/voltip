@@ -25,9 +25,9 @@ Voltip 是 Windows、Linux、macOS 和 Android 上的语音输入工具。在电
 
 ## 视频
 
-2 分 38 秒的使用教程：安装、第一次听写、AI 润色、语音编辑、本地识别、词典与规则，以及历史记录。使用 0.0.14 录制；[英文版](../../README.md#video)见英文 README。
+2 分 38 秒的使用教程：安装、第一次听写、AI 润色、语音编辑、本地识别、词典与规则，以及历史记录。使用 0.1.3 录制；[英文版](../../README.md#video)见英文 README。
 
-https://github.com/user-attachments/assets/f1a0fcf0-e5f0-4c21-b487-f91299a59ce9
+https://github.com/user-attachments/assets/e5262be3-e140-43eb-bfc1-edf38dc53fff
 
 ## 功能
 
