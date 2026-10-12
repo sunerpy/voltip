@@ -5,6 +5,7 @@ import type {
   AudioDevice,
   AudioOutputs,
   BuiltinPresetText,
+  ConsolePage,
   ExportFormat,
   ExportOutcome,
   BuiltinSceneTerms,
@@ -97,9 +98,10 @@ export interface Backend {
   /** 「粘贴到上一个窗口」 (`paste_text`): paste `text` into the window the user came from, or copy
    *  it; resolves with what became of it (a refusal is an outcome, not a rejection). */
   pasteText(text: string): Promise<PasteOutcome>;
-  /** Open the vendor's API-key page in the browser (`provider_console_open`); the shell only opens
-   *  catalogue URLs, so the webview names the provider, never a URL. */
-  providerConsoleOpen(provider: ProviderId): Promise<void>;
+  /** Open the vendor's API-key page, or with `page: "quota"` its page of free quota and usage, in
+   *  the browser (`provider_console_open`); the shell only opens catalogue URLs, so the webview
+   *  names the provider and the page, never a URL. */
+  providerConsoleOpen(provider: ProviderId, page?: ConsolePage): Promise<void>;
   /** Open a project page in the browser (`project_link_open`): the repository or its new-issue
    *  page; the shell builds the URL from its own repository. */
   projectLinkOpen(link: ProjectLink): Promise<void>;

@@ -279,6 +279,13 @@
   },
   {
     "args": {
+      "kind": "asr",
+      "provider": "aliyun"
+    },
+    "name": "provider_models_refresh"
+  },
+  {
+    "args": {
       "kind": "asr"
     },
     "name": "engines_quota_reset"

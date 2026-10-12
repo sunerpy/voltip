@@ -36,8 +36,8 @@ pub mod update;
 use tauri::{Emitter as _, Manager as _, Runtime};
 use voltip_core::ui::{GuidePage, ProjectLink, UI_EVENT_NAME, UiEvent, UiState, UpdateStatus};
 use voltip_core::{
-    Activation, AppRef, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PresetDraft, PreviewDraft, ProviderId,
-    RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
+    Activation, AppRef, ConsolePage, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PresetDraft, PreviewDraft,
+    ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
 };
 use voltip_identity::{KeyringSecretStore, SecretStore};
 use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
@@ -52,7 +52,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 114] = [
+pub const COMMANDS: [&str; 115] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -97,6 +97,7 @@ pub const COMMANDS: [&str; 114] = [
     "provider_key_set",
     "engines_quota_reset",
     "provider_probe",
+    "provider_models_refresh",
     "provider_console_open",
     "project_link_open",
     "guide_open",
@@ -491,11 +492,18 @@ fn provider_probe(
     Ok(bridge.dispatch(UiCommand::ProviderProbe { provider, kind, base_url, key })?)
 }
 
-/// Open the vendor's API-key page in the browser. Only catalogue URLs can be opened: the
-/// webview names a provider, never a URL.
+/// List a provider's models with the saved endpoint and key as a model list opens; the list
+/// arrives in an `engines` event.
 #[tauri::command]
-fn provider_console_open(provider: ProviderId) -> Result<(), String> {
-    let url = provider.spec().console_url.ok_or_else(|| format!("{}: no key page", provider.as_str()))?;
+fn provider_models_refresh(bridge: tauri::State<'_, Bridge>, provider: ProviderId, kind: ServiceKind) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ProviderModelsRefresh { provider, kind })?)
+}
+
+/// Open the vendor's API-key page, or its page of free quota and usage, in the browser. Only
+/// catalogue URLs can be opened: the webview names a provider and a page, never a URL.
+#[tauri::command]
+fn provider_console_open(provider: ProviderId, page: Option<ConsolePage>) -> Result<(), String> {
+    let url = provider.console_page(page.unwrap_or_default())?;
     tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -1318,6 +1326,7 @@ pub fn build_app<R: Runtime>(
             provider_key_set,
             engines_quota_reset,
             provider_probe,
+            provider_models_refresh,
             provider_console_open,
             project_link_open,
             guide_open,

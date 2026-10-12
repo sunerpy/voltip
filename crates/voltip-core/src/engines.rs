@@ -1027,6 +1027,7 @@ fn provider_statuses(
                     key,
                     issue: None,
                     active,
+                    listed: Vec::new(),
                 })
             }
             ProviderId::Local => Some(ServiceStatus {
@@ -1037,6 +1038,7 @@ fn provider_statuses(
                 key: SecretState::default(),
                 issue: (!local.installed).then_some(EngineIssue::ModelNotInstalled),
                 active,
+                listed: Vec::new(),
             }),
             _ => {
                 let target = service_target(provider, kind, settings, secrets, built_in);
@@ -1055,6 +1057,7 @@ fn provider_statuses(
                     key: SecretState { set: user_key, source: if user_key { SecretSource::User } else { SecretSource::None } },
                     issue,
                     active,
+                    listed: Vec::new(),
                 })
             }
         }
@@ -1069,6 +1072,7 @@ fn provider_statuses(
                 key: spec.key,
                 on_device: spec.on_device,
                 console: spec.console_url.is_some(),
+                quota: spec.quota_url.is_some(),
                 asr,
                 llm,
             })
@@ -1088,6 +1092,10 @@ pub struct ProviderStatus {
     /// The shell can open the vendor's key page (`provider_console_open`; the phone too since
     /// 2026-10-01).
     pub console: bool,
+    /// The shell can open the vendor's page of free quota and usage (`provider_console_open` with
+    /// `page: quota`, docs/dictation.md §3.5).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub quota: bool,
     /// Recognition, when the provider offers it in this build.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asr: Option<ServiceStatus>,
@@ -1118,6 +1126,11 @@ pub struct ServiceStatus {
     pub issue: Option<EngineIssue>,
     /// The provider in use for this service.
     pub active: bool,
+    /// The models the provider lists for the saved endpoint and key that can serve this service
+    /// (docs/dictation.md §3.3): fetched when a model list opens, and by a 测试连接 with the saved
+    /// values; empty until a list arrived. Every model select offers them after `presets`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub listed: Vec<String>,
 }
 
 /// `UiState.engines`: the resolved configuration without any key, and without the built-in

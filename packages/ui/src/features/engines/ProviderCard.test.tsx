@@ -367,6 +367,140 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
     backend.destroy();
   });
 
+  it("regression: with a saved key the model list has every model the provider lists, under 测试连接's count", async () => {
+    // User report 2026-10-12: the select offered the few suggested models while 测试连接 counted
+    // many, and the user had to type a model id.
+    const user = userEvent.setup();
+    const listed = [
+      "qwen/qwen3.8-27b",
+      "openai/gpt-oss-120b",
+      "moonshotai/kimi-k3",
+      "meta/llama-5",
+    ];
+    const backend = new MockBackend({ probeModels: { groq: listed } });
+    await backend.invoke("provider_key_set", { provider: "groq", kind: "llm", value: "gsk_saved" });
+    const invoke = vi.spyOn(backend, "invoke");
+    renderCard(backend, { id: "groq", kind: "llm" });
+    const form = await screen.findByTestId("provider-form");
+    // The drawer asks for the latest list as it opens.
+    expect(invoke).toHaveBeenCalledWith("provider_models_refresh", {
+      provider: "groq",
+      kind: "llm",
+    });
+    const select = within(form).getByTestId("provider-model-select");
+    const offered = await within(select).findByRole(
+      "group",
+      { name: t("engines.field.modelOffered", { n: 4 }) },
+      { timeout: MOCK_PROBE_MS * 20 },
+    );
+    expect(
+      within(offered)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["meta/llama-5", "moonshotai/kimi-k3", "openai/gpt-oss-120b", "qwen/qwen3.8-27b"]);
+    expect(
+      within(within(select).getByRole("group", { name: t("engines.field.modelSuggested") }))
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]);
+    expect(within(form).getByTestId("provider-model-help")).toHaveTextContent(
+      "列表包含服务商提供的 4 个可用模型，每次打开列表时更新。",
+    );
+    // 测试连接 counts the same models.
+    await user.click(within(form).getByRole("button", { name: t("engines.probe") }));
+    expect(
+      await screen.findByTestId("probe-result", {}, { timeout: MOCK_PROBE_MS * 20 }),
+    ).toHaveTextContent(t("engines.probeResult.ok", { n: 4, ms: MOCK_PROBE_MS }));
+    // Each time the list opens it is asked again, and a listed model can be chosen and saved.
+    invoke.mockClear();
+    await user.pointer({ keys: "[MouseLeft>]", target: select });
+    expect(invoke).toHaveBeenCalledWith("provider_models_refresh", {
+      provider: "groq",
+      kind: "llm",
+    });
+    await user.selectOptions(select, "moonshotai/kimi-k3");
+    await user.click(within(form).getByRole("button", { name: t("engines.save") }));
+    expect(invoke).toHaveBeenCalledWith("settings_set_engines", {
+      engines: expect.objectContaining({
+        providers: expect.objectContaining({ groq: { llm_model: "moonshotai/kimi-k3" } }),
+      }),
+    });
+    backend.destroy();
+  });
+
+  it("a saved key's list follows a save, and Model Studio's drawer links its quota page", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({
+      probeModels: { aliyun: ["qwen3.8-flash", "qwen-plus-latest"] },
+    });
+    const invoke = vi.spyOn(backend, "invoke");
+    renderCard(backend, { id: "aliyun", kind: "llm" });
+    const form = await screen.findByTestId("provider-form");
+    // No key yet: the select has the suggestions only, and says where the rest come from.
+    expect(within(form).getByTestId("provider-model-help")).toHaveTextContent(
+      t("engines.field.modelHelp"),
+    );
+    await user.type(within(form).getByLabelText(t("engines.field.key")), "sk-test");
+    invoke.mockClear();
+    await user.click(within(form).getByRole("button", { name: t("engines.save") }));
+    // The list is asked for once the key is stored, after it.
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("provider_models_refresh", {
+        provider: "aliyun",
+        kind: "llm",
+      });
+    });
+    const order = invoke.mock.calls.map(([name]) => name);
+    expect(order.indexOf("provider_key_set")).toBeLessThan(
+      order.indexOf("provider_models_refresh"),
+    );
+    expect(
+      await within(form).findByRole(
+        "group",
+        { name: t("engines.field.modelOffered", { n: 2 }) },
+        { timeout: MOCK_PROBE_MS * 20 },
+      ),
+    ).toBeInTheDocument();
+    // docs/dictation.md §3.5: the quota is read in the console; the drawer says so and links it.
+    expect(within(form).getByTestId("provider-quota-help")).toHaveTextContent(
+      t("engines.quotaHelp"),
+    );
+    await user.click(within(form).getByTestId("provider-quota"));
+    expect(backend.quotaPagesOpened).toEqual(["aliyun"]);
+    backend.destroy();
+  });
+
+  it("a vendor's card and drawer show its own mark; the built-in, on-device and custom ones the app's icons", async () => {
+    // User request 2026-10-12: the providers' real icons.
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    shell(backend, <Cards kind="asr" />);
+    const list = await screen.findByRole("list", { name: "服务商" });
+    const marks = within(list)
+      .getAllByRole("article")
+      .map((card) => [
+        card.getAttribute("aria-label"),
+        card.querySelector("[data-mark]")?.getAttribute("data-mark") ??
+          card.querySelector("[data-icon]")?.getAttribute("data-icon"),
+      ]);
+    expect(marks).toEqual([
+      ["内置服务", "sparkles"],
+      ["本机", "cpu"],
+      ["OpenAI", "openai"],
+      ["Groq", "groq"],
+      ["硅基流动", "siliconflow"],
+      ["阿里云百炼", "aliyun"],
+      ["自定义接口", "link"],
+    ]);
+    // The marks are decorative: the provider's name says who it is.
+    const groq = within(list).getByRole("article", { name: "Groq" });
+    expect(groq.querySelector("[data-mark]")).toHaveAttribute("aria-hidden", "true");
+    await user.click(within(groq).getByRole("button", { name: "Groq" }));
+    const drawer = await screen.findByTestId("provider-asr-groq-detail");
+    expect(drawer.querySelector("header [data-mark='groq']")).not.toBeNull();
+    backend.destroy();
+  });
+
   it("picks one of the built-in clean-up's models, the first kept as no choice", async () => {
     // User request 2026-10-08: the built-in service offers the Qwen and GPT-OSS models its
     // gateway serves.

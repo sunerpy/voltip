@@ -3,16 +3,12 @@ import {
   type EngineStatus,
   type ProviderId,
   type TFunction,
+  modelOptions,
   providerStatus,
 } from "@voltip/shared";
-import { Badge, Input, Select, Toggle, useI18n, useUiState } from "@voltip/ui";
+import { Badge, Input, Select, Toggle, useI18n, useModelRefresh, useUiState } from "@voltip/ui";
 import { shortModel } from "../shell/page-meta";
-import {
-  applyProviderDraft,
-  modelChoices,
-  providerDraft,
-  providersFor,
-} from "./settings/engines/helpers";
+import { applyProviderDraft, providerDraft, providersFor } from "./settings/engines/helpers";
 import { ModelCard } from "./settings/engines/LocalModels";
 
 /** Step 3 choices: the build's own service, an on-device model, or another provider. */
@@ -167,6 +163,8 @@ export function OnboardingEngineStep({
   const vendor = providerStatus(engines, draft.provider);
   const vendorAsr = vendor?.asr;
   const refiner = refineProviderFor(choice, draft, engines);
+  // docs/dictation.md §3.3: with a key saved before, the vendor's own models as the list opens.
+  const refreshModels = useModelRefresh(draft.provider, "asr");
   return (
     <div className="flex flex-col gap-3">
       <div
@@ -236,7 +234,8 @@ export function OnboardingEngineStep({
                 onChange={(model) => {
                   onDraft({ ...draft, model });
                 }}
-                options={modelChoices(vendorAsr).map((m) => ({ value: m, label: m }))}
+                onOpen={refreshModels}
+                options={modelOptions(vendorAsr, [], t)}
               />
             ) : (
               <Input

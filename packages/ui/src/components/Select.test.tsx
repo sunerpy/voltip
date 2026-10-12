@@ -118,4 +118,42 @@ describe("Select", () => {
     await user.selectOptions(screen.getByLabelText("语言"), "zh");
     expect(onChange).toHaveBeenCalledWith("zh");
   });
+
+  it("groups options under their headings, a value in two groups chosen once, and says when it opens", async () => {
+    // docs/dictation.md §3.3: a provider's models follow the suggested ones as a group.
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const onOpen = vi.fn();
+    render(
+      <Select
+        label="模型"
+        value="b"
+        onChange={onChange}
+        onOpen={onOpen}
+        options={[
+          { value: "b", label: "b", group: "推荐" },
+          { value: "a", label: "a", group: "推荐" },
+          { value: "a", label: "a", group: "服务商提供（2）" },
+          { value: "c", label: "c", group: "服务商提供（2）" },
+          { value: "other", label: "其他模型…" },
+        ]}
+      />,
+    );
+    const select = screen.getByLabelText("模型");
+    expect(
+      screen.getAllByRole("group").map((g) => [g.getAttribute("label"), g.children.length]),
+    ).toEqual([
+      ["推荐", 2],
+      ["服务商提供（2）", 2],
+    ]);
+    expect(select.lastElementChild).toHaveTextContent("其他模型…");
+    await user.pointer({ keys: "[MouseLeft>]", target: select });
+    expect(onOpen).toHaveBeenCalled();
+    onOpen.mockClear();
+    select.blur();
+    await user.tab();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    await user.selectOptions(select, "c");
+    expect(onChange).toHaveBeenLastCalledWith("c");
+  });
 });

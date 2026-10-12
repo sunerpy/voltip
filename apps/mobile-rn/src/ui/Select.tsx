@@ -16,6 +16,9 @@ export interface SelectOption<V extends string> {
   /** A second line under the label. */
   description?: string;
   disabled?: boolean;
+  /** The heading of the group the option is in: consecutive options with the same one form a
+   *  group. A value may then appear in two groups; the first one is the current one. */
+  group?: string;
 }
 
 interface SelectProps<V extends string> {
@@ -25,6 +28,9 @@ interface SelectProps<V extends string> {
   onChange: (value: V) => void;
   disabled?: boolean;
   testID?: string;
+  /** The sheet opens: for options that change as they are shown, such as a provider's models
+   *  (docs/dictation.md §3.3). */
+  onOpen?: () => void;
 }
 
 /** The option `value` names, or the first one that can be chosen (as a native select shows it). */
@@ -37,7 +43,7 @@ function shown<V extends string>(
 
 /** The open state of a picker and what choosing does: the sheet closes, and a different value (or
  *  the first option standing in for a value no option has) goes to `onChange`. */
-function usePicker<V extends string>({ value, options, onChange }: SelectProps<V>) {
+function usePicker<V extends string>({ value, options, onChange, onOpen }: SelectProps<V>) {
   const [open, setOpen] = useState(false);
   const close = useMemo(() => () => setOpen(false), []);
   useBackCloses(open, close);
@@ -46,7 +52,11 @@ function usePicker<V extends string>({ value, options, onChange }: SelectProps<V
     setOpen(false);
     if (next !== value || current?.value !== value) onChange(next);
   };
-  return { open, setOpen, close, current, choose };
+  const openSheet = () => {
+    setOpen(true);
+    onOpen?.();
+  };
+  return { open, openSheet, close, current, choose };
 }
 
 /** One choice in the sheet: its label (and description), a check at the end when it is the
@@ -123,15 +133,23 @@ export function OptionSheet<V extends string>({
       title={title}
       {...(testID === undefined ? {} : { testID })}>
       <ScrollView bounces={false} contentContainerStyle={{ paddingBottom: 4 }}>
-        {options.map((o) => (
-          <OptionRow
-            key={o.value}
-            option={o}
-            selected={o.value === value}
-            choose={choose}
-            {...(testID === undefined ? {} : { testID })}
-          />
-        ))}
+        {options.map((o, i) => {
+          // A value in two groups is the current one, and has its test id, where it first appears.
+          const first = options.findIndex((x) => x.value === o.value) === i;
+          return (
+            <View key={`${i}:${o.value}`}>
+              {o.group !== undefined && o.group !== options[i - 1]?.group && (
+                <List.Subheader accessibilityRole="header">{o.group}</List.Subheader>
+              )}
+              <OptionRow
+                option={o}
+                selected={first && o.value === value}
+                choose={choose}
+                {...(testID === undefined ? {} : { testID: first ? testID : `${testID}-again` })}
+              />
+            </View>
+          );
+        })}
       </ScrollView>
     </BottomSheet>
   );
@@ -141,15 +159,13 @@ export function OptionSheet<V extends string>({
 export function SelectField<V extends string>(props: SelectProps<V>) {
   const { label, options, disabled, testID } = props;
   const theme = useAppTheme();
-  const { open, setOpen, close, current, choose } = usePicker(props);
+  const { open, openSheet, close, current, choose } = usePicker(props);
   return (
     <>
       <TouchableRipple
         testID={testID}
         disabled={disabled}
-        onPress={() => {
-          setOpen(true);
-        }}
+        onPress={openSheet}
         accessibilityRole="button"
         accessibilityLabel={label}
         accessibilityHint={current?.label}
@@ -197,7 +213,7 @@ export function SelectField<V extends string>(props: SelectProps<V>) {
  *  open in a sheet. */
 export function SelectChip<V extends string>(props: SelectProps<V> & { icon?: string }) {
   const { label, options, disabled, testID, icon } = props;
-  const { open, setOpen, close, current, choose } = usePicker(props);
+  const { open, openSheet, close, current, choose } = usePicker(props);
   return (
     <>
       <Chip
@@ -205,9 +221,7 @@ export function SelectChip<V extends string>(props: SelectProps<V> & { icon?: st
         label={`${label} · ${current?.label ?? ""}`}
         {...(disabled === undefined ? {} : { disabled })}
         {...(testID === undefined ? {} : { testID })}
-        onPress={() => {
-          setOpen(true);
-        }}>
+        onPress={openSheet}>
         {`${label} · ${current?.label ?? ""}`}
       </Chip>
       <OptionSheet
@@ -226,7 +240,7 @@ export function SelectChip<V extends string>(props: SelectProps<V> & { icon?: st
 /** A settings row: the title, the chosen value under it; the choices open in a sheet. */
 export function SelectRow<V extends string>(props: SelectProps<V> & { icon?: string }) {
   const { label, options, disabled, testID, icon } = props;
-  const { open, setOpen, close, current, choose } = usePicker(props);
+  const { open, openSheet, close, current, choose } = usePicker(props);
   return (
     <>
       <List.Item
@@ -234,9 +248,7 @@ export function SelectRow<V extends string>(props: SelectProps<V> & { icon?: str
         title={label}
         description={current?.label}
         disabled={disabled}
-        onPress={() => {
-          setOpen(true);
-        }}
+        onPress={openSheet}
         accessibilityRole="button"
         accessibilityState={{ expanded: open, disabled: disabled === true }}
         left={icon === undefined ? undefined : (p) => <List.Icon {...p} icon={icon} />}

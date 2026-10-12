@@ -636,4 +636,41 @@ describe("Select under the native presentation", () => {
     await user.selectOptions(native, "en");
     expect(onChange).toHaveBeenCalledWith("en");
   });
+
+  it("groups rows under their headings, checks a value once, and says when the list opens", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const onOpen = vi.fn();
+    touch(
+      <Select
+        label="模型"
+        value="a"
+        onChange={onChange}
+        onOpen={onOpen}
+        options={[
+          { value: "b", label: "b", group: "推荐" },
+          { value: "a", label: "a", group: "推荐" },
+          { value: "a", label: "a", group: "服务商提供（2）" },
+          { value: "c", label: "c", group: "服务商提供（2）" },
+          { value: "other", label: "其他模型…" },
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "模型" }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    const list = screen.getByRole("listbox", { name: "模型" });
+    const offered = within(list).getByRole("group", { name: "服务商提供（2）" });
+    expect(
+      within(offered)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["a", "c"]);
+    expect(
+      within(list)
+        .getAllByRole("option")
+        .map((o) => o.getAttribute("aria-selected")),
+    ).toEqual(["false", "true", "false", "false", "false"]);
+    await user.click(within(offered).getByRole("option", { name: "c" }));
+    expect(onChange).toHaveBeenCalledWith("c");
+  });
 });

@@ -5,6 +5,8 @@ import {
   endpointHost,
   languageOptions,
   modelChoices,
+  modelListHelp,
+  modelOptions,
   probeText,
   providerBadges,
   providerDraft,
@@ -154,6 +156,53 @@ describe("engine drafts (provider cards, desktop and phone)", () => {
     expect(modelChoices(s)).toEqual(["b", "a"]);
     expect(modelChoices(s, ["c", "a", ""])).toEqual(["b", "a", "c"]);
     expect(modelChoices(service())).toEqual([]);
+    // The quick menus keep to the suggested models: a provider's list can run to hundreds.
+    expect(modelChoices(service({ model: "b", presets: ["a"], listed: ["z", "y"] }))).toEqual([
+      "b",
+      "a",
+    ]);
+  });
+
+  it("regression: the select offers the provider's models under the count 测试连接 reports", () => {
+    // User report 2026-10-12: the select had the few suggested models while 测试连接 counted many.
+    const plain = (ids: string[]) => ids.map((m) => ({ value: m, label: m }));
+    const vendor = service({ model: "b", presets: ["a", "b"] });
+    expect(modelOptions(vendor)).toEqual(plain(["b", "a"]));
+    const listed = service({ model: "b", presets: ["a", "b"], listed: ["c", "a", "d"] });
+    const suggested = (m: string) => ({ value: m, label: m, group: "推荐" });
+    const offered = (m: string) => ({ value: m, label: m, group: "服务商提供（3）" });
+    expect(modelOptions(listed)).toEqual([
+      suggested("b"),
+      suggested("a"),
+      offered("a"),
+      offered("c"),
+      offered("d"),
+    ]);
+    // What a 测试连接 in the form found stands in for the saved list.
+    expect(modelOptions(listed, ["e", "e", ""])).toEqual([
+      suggested("b"),
+      suggested("a"),
+      { value: "e", label: "e", group: "服务商提供（1）" },
+    ]);
+    // A provider without suggestions (Ollama, a custom endpoint) has one plain list.
+    expect(modelOptions(service({ model: "x", listed: ["y", "x"] }))).toEqual(plain(["x", "y"]));
+    expect(modelOptions(service())).toEqual([]);
+    const en = createTranslator("en").t;
+    expect(modelOptions(listed, [], en)[2]?.group).toBe("From the provider (3)");
+  });
+
+  it("says how many models the provider lists, or where the list comes from", () => {
+    const vendor = provider({ key: "required" });
+    const keyless = provider({ id: "ollama", key: "none" });
+    expect(modelListHelp(vendor, service(), t)).toBe(t("engines.field.modelHelp"));
+    expect(modelListHelp(keyless, service(), t)).toBe(t("engines.field.modelHelpKeyless"));
+    expect(modelListHelp(vendor, service({ listed: ["a", "b"] }), t)).toBe(
+      "列表包含服务商提供的 2 个可用模型，每次打开列表时更新。",
+    );
+    const en = createTranslator("en").t;
+    expect(modelListHelp(vendor, service({ listed: ["a"] }), en)).toBe(
+      "The list includes the model the provider offers for this service, updated each time the list opens.",
+    );
   });
 
   it("checks a draft before it is saved", () => {

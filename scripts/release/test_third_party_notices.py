@@ -84,6 +84,22 @@ class Notices(unittest.TestCase):
         self.assertIn("https://github.com/sunerpy/voltip/tree/v0.0.1", text)
         self.assertLess(text.index(licence), text.index("Rust crates (2)"), "Voltip's own licence comes first")
 
+    def test_every_app_carries_the_vendors_marks_licence(self) -> None:
+        # User request 2026-10-12: the providers' real icons, from LobeHub Icons (MIT), whose notice
+        # asks to travel with every copy.
+        texts = [self.generate()]
+        for app in ("mobile", "mobile-rn"):
+            out = self.root / app / "THIRD-PARTY-NOTICES.txt"
+            code = notices.main(["--out", str(out), "--app", app, "--version", "0.0.1", "--about-json", str(self.root / "about.json"), "--pnpm-json", str(self.root / "pnpm.json")])
+            self.assertEqual(code, 0)
+            texts.append(out.read_text(encoding="utf-8"))
+        for text in texts:
+            self.assertIn("Bundled artwork", text)
+            self.assertIn("LobeHub Icons", text)
+            self.assertIn("Copyright (c) 2023 LobeHub", text)
+        marks = (notices.ROOT / "packages" / "shared" / "src" / "provider-marks.ts").read_text(encoding="utf-8")
+        self.assertIn("lobehub/lobe-icons", marks)
+
     def test_the_native_libraries_carry_their_own_texts(self) -> None:
         text = self.generate()
         self.assertIn("ONNX Runtime 1.28.2", text)

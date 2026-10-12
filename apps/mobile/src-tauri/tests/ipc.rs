@@ -569,6 +569,12 @@ fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
         // a key page is refused before any browser is asked.
         assert_eq!(invoke(webview, "provider_console_open", json!({ "provider": "groq" })), Err(Value::String(BROWSER_UNAVAILABLE.into())));
         assert!(invoke(webview, "provider_console_open", json!({ "provider": "local" })).unwrap_err().as_str().unwrap().contains("no key page"));
+        // docs/dictation.md §3.5: Model Studio's page of free quota and usage, nobody else's.
+        assert_eq!(invoke(webview, "provider_console_open", json!({ "provider": "aliyun", "page": "quota" })), Err(Value::String(BROWSER_UNAVAILABLE.into())));
+        assert!(
+            invoke(webview, "provider_console_open", json!({ "provider": "groq", "page": "quota" })).unwrap_err().as_str().unwrap().contains("no quota page")
+        );
+        assert_eq!(invoke(webview, "provider_models_refresh", json!({ "provider": "groq", "kind": "llm" })), Ok(Value::Null));
         assert_eq!(invoke(webview, "guide_open", json!({ "page": "service", "locale": "zh-CN" })), Err(Value::String(BROWSER_UNAVAILABLE.into())));
         assert_eq!(invoke(webview, "project_link_open", json!({ "link": "source" })), Err(Value::String(BROWSER_UNAVAILABLE.into())));
         // Feedback goes from the phone too (docs/feedback.md; user decision 2026-10-01, it was

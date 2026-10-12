@@ -1294,6 +1294,57 @@ describe("MockBackend history, engines and secrets", () => {
       await backend.providerConsoleOpen("groq");
       expect(backend.consolesOpened).toEqual(["groq"]);
       await expect(backend.providerConsoleOpen("custom")).rejects.toThrow("custom: no key page");
+      // docs/dictation.md §3.5: Model Studio's page of free quota and usage, nobody else's.
+      await backend.providerConsoleOpen("aliyun", "quota");
+      expect(backend.quotaPagesOpened).toEqual(["aliyun"]);
+      await expect(backend.providerConsoleOpen("groq", "quota")).rejects.toThrow(
+        "groq: no quota page",
+      );
+      expect(
+        backend
+          .peek()
+          .engines.providers.filter((p) => p.quota === true)
+          .map((p) => p.id),
+      ).toEqual(["aliyun"]);
+      backend.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("provider_models_refresh lists the saved endpoint's models for the selects, as the core does (docs/dictation.md §3.3)", async () => {
+    vi.useFakeTimers();
+    try {
+      const backend = new MockBackend({ now: () => NOW, probeModels: { groq: ["b", "a"] } });
+      const listed = () => providerStatus(backend.peek().engines, "groq")?.llm?.listed;
+      // Nothing to ask without a key, or of the built-in and on-device providers.
+      await backend.invoke("provider_models_refresh", { provider: "groq", kind: "llm" });
+      await backend.invoke("provider_models_refresh", { provider: "builtin", kind: "llm" });
+      await backend.invoke("provider_models_refresh", { provider: "local", kind: "asr" });
+      expect(backend.modelRefreshes).toBe(0);
+      await backend.invoke("provider_key_set", { provider: "groq", kind: "llm", value: "gsk_a" });
+      await backend.invoke("provider_models_refresh", { provider: "groq", kind: "llm" });
+      expect(listed()).toBeUndefined();
+      vi.advanceTimersByTime(MOCK_PROBE_MS);
+      expect(listed()).toEqual(["a", "b"]);
+      expect(providerStatus(backend.peek().engines, "groq")?.asr?.listed).toBeUndefined();
+      // Another endpoint hides it; a new key drops it.
+      const engines = backend.peek().settings.engines;
+      await backend.invoke("settings_set_engines", {
+        engines: { ...engines, providers: { groq: { llm_url: "https://relay.example.test/v1" } } },
+      });
+      expect(listed()).toBeUndefined();
+      await backend.invoke("settings_set_engines", { engines });
+      expect(listed()).toEqual(["a", "b"]);
+      await backend.invoke("provider_key_set", { provider: "groq", kind: "llm", value: "gsk_b" });
+      expect(listed()).toBeUndefined();
+      // A 测试连接 with the saved values fills it too; one with a typed key does not.
+      await backend.invoke("provider_probe", { provider: "groq", kind: "llm", key: "gsk_draft" });
+      vi.advanceTimersByTime(MOCK_PROBE_MS);
+      expect(listed()).toBeUndefined();
+      await backend.invoke("provider_probe", { provider: "groq", kind: "llm" });
+      vi.advanceTimersByTime(MOCK_PROBE_MS);
+      expect(listed()).toEqual(["a", "b"]);
       backend.destroy();
     } finally {
       vi.useRealTimers();

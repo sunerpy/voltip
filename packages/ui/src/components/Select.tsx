@@ -20,6 +20,20 @@ export interface SelectOption<V extends string> {
   value: V;
   label: string;
   disabled?: boolean;
+  /** The heading of the group the option is in: consecutive options with the same one form a
+   *  group (`<optgroup>`). A value may then appear in two groups; the first one is chosen. */
+  group?: string;
+}
+
+/** `options` cut into runs of the same `group`, with each option's index. */
+function groupRuns<V extends string>(options: readonly SelectOption<V>[]) {
+  const runs: { group: string | undefined; rows: { option: SelectOption<V>; at: number }[] }[] = [];
+  options.forEach((option, at) => {
+    const last = runs.at(-1);
+    if (last !== undefined && last.group === option.group) last.rows.push({ option, at });
+    else runs.push({ group: option.group, rows: [{ option, at }] });
+  });
+  return runs;
 }
 
 export interface SelectProps<V extends string> extends Omit<
@@ -36,6 +50,10 @@ export interface SelectProps<V extends string> extends Omit<
    *  as long as a model id, in a field as wide as its container (user report 2026-10-10: a long
    *  model id pushed the select over the endpoint field beside it). */
   wrap?: boolean;
+  /** The list is about to open: the native select takes the pointer or the focus, the touch list
+   *  opens. For options that change as they are shown, such as a provider's models
+   *  (docs/dictation.md §3.3). */
+  onOpen?: () => void;
 }
 
 /** A select with the design's chrome: hairline, radius 6, chevron, optional mono value. Under
@@ -83,8 +101,8 @@ function Sizer<V extends string>({
         size === "sm" ? "text-[12px]" : "text-[13px]",
         mono && "mono",
       )}>
-      {options.map((o) => (
-        <span key={o.value}>{o.label}</span>
+      {options.map((o, i) => (
+        <span key={`${i}:${o.value}`}>{o.label}</span>
       ))}
     </span>
   );
@@ -109,6 +127,9 @@ function NativeSelect<V extends string>({
   wrap = false,
   className,
   id,
+  onOpen,
+  onFocus,
+  onPointerDown,
   ...rest
 }: SelectProps<V>) {
   const autoId = useId();
@@ -143,12 +164,30 @@ function NativeSelect<V extends string>({
                 : "h-8 text-[13px]",
             mono && "mono",
           )}
+          onFocus={(e) => {
+            onOpen?.();
+            onFocus?.(e);
+          }}
+          onPointerDown={(e) => {
+            onOpen?.();
+            onPointerDown?.(e);
+          }}
           {...rest}>
-          {options.map((o) => (
-            <option key={o.value} value={o.value} disabled={o.disabled}>
-              {o.label}
-            </option>
-          ))}
+          {groupRuns(options).map((run) => {
+            const rows = run.rows.map(({ option: o, at }) => (
+              <option key={`${at}:${o.value}`} value={o.value} disabled={o.disabled}>
+                {o.label}
+              </option>
+            ));
+            const first = run.rows[0]?.at ?? 0;
+            return run.group === undefined ? (
+              rows
+            ) : (
+              <optgroup key={`${first}:${run.group}`} label={run.group}>
+                {rows}
+              </optgroup>
+            );
+          })}
         </select>
         {wrap && (
           <span
@@ -203,6 +242,7 @@ function TouchSelect<V extends string>({
   wrap = false,
   className,
   id,
+  onOpen,
   ...rest
 }: SelectProps<V>) {
   const autoId = useId();
@@ -246,6 +286,7 @@ function TouchSelect<V extends string>({
     focusOnOpen.current = choosable(current) ? current : firstChoosable;
     setPlacement(undefined);
     setOpen(true);
+    onOpen?.();
   };
 
   const choose = (at: number, next: V) => {
@@ -441,43 +482,58 @@ function TouchSelect<V extends string>({
               onKeyDown={onListKey}
               style={placementStyle(placement)}
               className="fixed z-50 w-max overflow-y-auto overscroll-contain rounded-10 border border-raised-edge bg-raised py-1 font-ui whitespace-normal text-fg outline-none shadow-pop glass-blur">
-              {options.map((o, i) => {
-                const off = o.disabled === true;
-                return (
-                  <button
-                    key={o.value}
-                    ref={(el) => {
-                      rows.current[i] = el;
-                    }}
-                    type="button"
-                    role="option"
-                    // What `user.selectOptions(listbox, value)` matches in a test.
-                    value={o.value}
-                    aria-selected={i === current}
-                    aria-disabled={off ? true : undefined}
-                    disabled={off}
-                    tabIndex={-1}
-                    onClick={
-                      off
-                        ? undefined
-                        : () => {
-                            choose(i, o.value);
-                          }
-                    }
-                    // 44 px in pixels: rem follows the type-size setting (13 px by default).
-                    className={cx(
-                      "flex min-h-[44px] w-full items-center gap-2 px-3 py-2 text-left text-[13px] outline-none touch-manipulation select-none",
-                      off
-                        ? "cursor-default text-fg-subtle"
-                        : "text-fg focus:bg-inset active:bg-inset2",
-                    )}>
-                    <span className="flex w-4 shrink-0 justify-center text-accent-text">
-                      {i === current && <Icon name="check" size={14} />}
-                    </span>
-                    <span className={cx("min-w-0 break-words", mono && "mono")} {...markers}>
-                      {o.label}
-                    </span>
-                  </button>
+              {groupRuns(options).map((run) => {
+                const rowsOf = run.rows.map(({ option: o, at: i }) => {
+                  const off = o.disabled === true;
+                  return (
+                    <button
+                      key={`${i}:${o.value}`}
+                      ref={(el) => {
+                        rows.current[i] = el;
+                      }}
+                      type="button"
+                      role="option"
+                      // What `user.selectOptions(listbox, value)` matches in a test.
+                      value={o.value}
+                      aria-selected={i === current}
+                      aria-disabled={off ? true : undefined}
+                      disabled={off}
+                      tabIndex={-1}
+                      onClick={
+                        off
+                          ? undefined
+                          : () => {
+                              choose(i, o.value);
+                            }
+                      }
+                      // 44 px in pixels: rem follows the type-size setting (13 px by default).
+                      className={cx(
+                        "flex min-h-[44px] w-full items-center gap-2 px-3 py-2 text-left text-[13px] outline-none touch-manipulation select-none",
+                        off
+                          ? "cursor-default text-fg-subtle"
+                          : "text-fg focus:bg-inset active:bg-inset2",
+                      )}>
+                      <span className="flex w-4 shrink-0 justify-center text-accent-text">
+                        {i === current && <Icon name="check" size={14} />}
+                      </span>
+                      <span className={cx("min-w-0 break-words", mono && "mono")} {...markers}>
+                        {o.label}
+                      </span>
+                    </button>
+                  );
+                });
+                const first = run.rows[0]?.at ?? 0;
+                return run.group === undefined ? (
+                  rowsOf
+                ) : (
+                  <div key={`${first}:${run.group}`} role="group" aria-label={run.group}>
+                    <div
+                      aria-hidden
+                      className="px-3 pt-2 pb-1 text-[11px] font-medium text-fg-subtle select-none">
+                      {run.group}
+                    </div>
+                    {rowsOf}
+                  </div>
                 );
               })}
             </div>

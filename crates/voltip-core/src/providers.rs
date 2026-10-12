@@ -64,6 +64,15 @@ impl ProviderId {
     pub fn spec(self) -> &'static ProviderSpec {
         PROVIDERS.iter().find(|p| p.id == self).unwrap_or(&PROVIDERS[0])
     }
+
+    /// The vendor page `provider_console_open` opens, or the shells' answer when there is none.
+    /// Only catalogue URLs are opened: the webview names a provider and a page, never a URL.
+    pub fn console_page(self, page: ConsolePage) -> Result<&'static str, String> {
+        self.spec().console(page).ok_or_else(|| match page {
+            ConsolePage::Key => format!("{}: no key page", self.as_str()),
+            ConsolePage::Quota => format!("{}: no quota page", self.as_str()),
+        })
+    }
 }
 
 /// Which OpenAI interface a clean-up service speaks (docs/dictation.md §3.7); the custom provider
@@ -158,9 +167,31 @@ pub struct ProviderSpec {
     pub on_device: bool,
     /// The vendor page where an API key is created (opened by the desktop shell on request).
     pub console_url: Option<&'static str>,
+    /// The vendor page that shows the free quota left and the usage, for a vendor whose API does
+    /// not tell (Model Studio, docs/dictation.md §3.5).
+    pub quota_url: Option<&'static str>,
+}
+
+/// Which vendor page `provider_console_open` opens.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsolePage {
+    /// Where an API key is created ([`ProviderSpec::console_url`]).
+    #[default]
+    Key,
+    /// Where the free quota and the usage are shown ([`ProviderSpec::quota_url`]).
+    Quota,
 }
 
 impl ProviderSpec {
+    /// The vendor's `page`, if it has one.
+    pub fn console(&self, page: ConsolePage) -> Option<&'static str> {
+        match page {
+            ConsolePage::Key => self.console_url,
+            ConsolePage::Quota => self.quota_url,
+        }
+    }
+
     /// The preset of `kind`, if the provider offers it.
     pub fn service(&self, kind: ServiceKind) -> Option<&ServicePreset> {
         match kind {
@@ -197,8 +228,8 @@ pub enum AsrProtocol {
     /// a whole file sent at once may take as long as it plays.
     DashscopeDuplex,
     /// A Model Studio model dictation cannot use: the ones that only transcribe files by URL, in
-    /// the background (`…-filetrans`, `fun-asr`, `fun-asr-mtl`, `paraformer-v2`), and
-    /// `qwen3-asr-flash-realtime`, whose realtime protocol this client does not speak.
+    /// the background (`…-filetrans`, `fun-asr`, `fun-asr-mtl`, `paraformer-v2`, `sensevoice-v1`),
+    /// and `qwen3-asr-flash-realtime`, whose realtime protocol this client does not speak.
     DashscopeUnsupported,
 }
 
@@ -214,7 +245,7 @@ impl AsrProtocol {
         }
         let model = model.trim().to_ascii_lowercase();
         let realtime = model.contains("realtime");
-        if model.contains("filetrans") || model.starts_with("qwen3-asr-flash-realtime") {
+        if model.contains("filetrans") || model.starts_with("qwen3-asr-flash-realtime") || model.starts_with("sensevoice") {
             Self::DashscopeUnsupported
         } else if model.starts_with("qwen3-asr") {
             Self::DashscopeChat
@@ -250,8 +281,16 @@ pub fn is_dashscope(url: &str) -> bool {
 /// The catalogue, in display order. Model ids checked against the vendors' documentation on
 /// 2026-09-27; lists go stale, so the UI also offers the provider's own `GET /models`.
 pub const PROVIDERS: &[ProviderSpec] = &[
-    ProviderSpec { id: ProviderId::Builtin, asr: Some(NO_PRESET), llm: Some(NO_PRESET), key: KeyPolicy::Builtin, on_device: false, console_url: None },
-    ProviderSpec { id: ProviderId::Local, asr: Some(NO_PRESET), llm: None, key: KeyPolicy::None, on_device: true, console_url: None },
+    ProviderSpec {
+        id: ProviderId::Builtin,
+        asr: Some(NO_PRESET),
+        llm: Some(NO_PRESET),
+        key: KeyPolicy::Builtin,
+        on_device: false,
+        console_url: None,
+        quota_url: None,
+    },
+    ProviderSpec { id: ProviderId::Local, asr: Some(NO_PRESET), llm: None, key: KeyPolicy::None, on_device: true, console_url: None, quota_url: None },
     ProviderSpec {
         id: ProviderId::Openai,
         asr: Some(ServicePreset { base_url: "https://api.openai.com/v1", models: &["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"] }),
@@ -259,6 +298,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         key: KeyPolicy::Required,
         on_device: false,
         console_url: Some("https://platform.openai.com/api-keys"),
+        quota_url: None,
     },
     ProviderSpec {
         id: ProviderId::Groq,
@@ -267,6 +307,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         key: KeyPolicy::Required,
         on_device: false,
         console_url: Some("https://console.groq.com/keys"),
+        quota_url: None,
     },
     // Google AI Studio (checked 2026-10-08): the Gemini models with a free tier, the newest Flash
     // first. Its `GET /models` names them `models/gemini-…` (see `usable_models`).
@@ -280,6 +321,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         key: KeyPolicy::Required,
         on_device: false,
         console_url: Some("https://aistudio.google.com/apikey"),
+        quota_url: None,
     },
     ProviderSpec {
         id: ProviderId::Siliconflow,
@@ -288,6 +330,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         key: KeyPolicy::Required,
         on_device: false,
         console_url: Some("https://cloud.siliconflow.cn/account/ak"),
+        quota_url: None,
     },
     // Model Studio (checked 2026-10-04): the realtime `…-streaming` model first, since it recognises
     // while the user speaks (§3.4); `…-asr-flash` takes a whole file over HTTP. A workspace's own
@@ -309,6 +352,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         key: KeyPolicy::Required,
         on_device: false,
         console_url: Some("https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key"),
+        quota_url: Some("https://bailian.console.aliyun.com/cn-beijing/costing-balance/free-quota"),
     },
     ProviderSpec {
         id: ProviderId::Deepseek,
@@ -317,6 +361,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         key: KeyPolicy::Required,
         on_device: false,
         console_url: Some("https://platform.deepseek.com/api_keys"),
+        quota_url: None,
     },
     ProviderSpec {
         id: ProviderId::Ollama,
@@ -325,18 +370,88 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         key: KeyPolicy::None,
         on_device: true,
         console_url: None,
+        quota_url: None,
     },
-    ProviderSpec { id: ProviderId::Custom, asr: Some(NO_PRESET), llm: Some(NO_PRESET), key: KeyPolicy::Optional, on_device: false, console_url: None },
+    ProviderSpec {
+        id: ProviderId::Custom,
+        asr: Some(NO_PRESET),
+        llm: Some(NO_PRESET),
+        key: KeyPolicy::Optional,
+        on_device: false,
+        console_url: None,
+        quota_url: None,
+    },
 ];
 
-/// What `provider`'s `GET /models` listed, as the model select offers it (the engines pane's
-/// 测试连接). Google AI Studio names its models `models/gemini-…` and lists embedding, image,
+/// Words in the id of a model that turns speech into text.
+const SPEECH_TO_TEXT: [&str; 5] = ["whisper", "transcribe", "asr", "sensevoice", "paraformer"];
+
+/// Words in the id of a model that does not chat in text: speech in or out, embeddings and
+/// reranking, moderation, images and video, realtime sessions, the models only the Responses
+/// interface serves, and the omni models, which answer only as a stream.
+const NOT_CHAT: [&str; 30] = [
+    "whisper",
+    "transcribe",
+    "asr",
+    "sensevoice",
+    "paraformer",
+    "tts",
+    "speech",
+    "audio",
+    "cosyvoice",
+    "sambert",
+    "embed",
+    "bge-",
+    "rerank",
+    "moderation",
+    "guard",
+    "image",
+    "dall-e",
+    "flux",
+    "stable-diffusion",
+    "kolors",
+    "wanx",
+    "t2i",
+    "t2v",
+    "i2v",
+    "video",
+    "realtime",
+    "codex",
+    "computer-use",
+    "deep-research",
+    "omni",
+];
+
+/// What `provider`'s `GET /models` at `url` listed, as the model selects offer it for `kind`
+/// (docs/dictation.md §3.3): sorted, without duplicates, only the models that can serve `kind`. A
+/// vendor lists every model it hosts, so recognition keeps the speech-to-text models
+/// ([`SPEECH_TO_TEXT`], and on Model Studio only those this client speaks to,
+/// [`AsrProtocol::DashscopeUnsupported`]) and clean-up drops the ones that do not chat in text
+/// ([`NOT_CHAT`]). Google AI Studio names its models `models/gemini-…` and lists embedding, image,
 /// speech and video models beside the text ones: only the Gemini and Gemma text models are kept,
-/// under the names its chat completions take. Every other list passes unchanged.
-pub fn usable_models(provider: ProviderId, kind: ServiceKind, ids: Vec<String>) -> Vec<String> {
-    if provider != ProviderId::Google || kind != ServiceKind::Llm {
-        return ids;
-    }
+/// under the names its chat completions take. The custom endpoint's list passes whole: it serves
+/// what its owner put there; so does the built-in service's, which runs only the build's models
+/// (the runtime keeps those).
+pub fn usable_models(provider: ProviderId, kind: ServiceKind, url: &str, ids: Vec<String>) -> Vec<String> {
+    let has = |id: &str, words: &[&str]| {
+        let id = id.to_ascii_lowercase();
+        words.iter().any(|word| id.contains(word))
+    };
+    let mut out: Vec<String> = match (provider, kind) {
+        (ProviderId::Custom | ProviderId::Builtin, _) => ids,
+        (ProviderId::Google, ServiceKind::Llm) => google_text_models(ids),
+        (_, ServiceKind::Asr) => {
+            ids.into_iter().filter(|id| has(id, &SPEECH_TO_TEXT) && AsrProtocol::of(url, id) != AsrProtocol::DashscopeUnsupported).collect()
+        }
+        (_, ServiceKind::Llm) => ids.into_iter().filter(|id| !has(id, &NOT_CHAT)).collect(),
+    };
+    out.retain(|id| !id.trim().is_empty());
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+fn google_text_models(ids: Vec<String>) -> Vec<String> {
     const NOT_TEXT: [&str; 13] =
         ["embedding", "-tts", "-image", "-live", "native-audio", "transcribe", "robotics", "computer-use", "imagen", "veo", "lyria", "omni", "aqa"];
     ids.into_iter()
@@ -584,6 +699,7 @@ mod tests {
             ("fun-asr", DashscopeUnsupported),
             ("fun-asr-mtl", DashscopeUnsupported),
             ("paraformer-v2", DashscopeUnsupported),
+            ("sensevoice-v1", DashscopeUnsupported),
             ("qwen3.8-omni-flash", DashscopeChat),
         ];
         for url in [public, workspace, intl] {
@@ -630,14 +746,108 @@ mod tests {
         ]
         .map(str::to_owned)
         .to_vec();
-        assert_eq!(usable_models(ProviderId::Google, ServiceKind::Llm, listed.clone()), ["gemini-3.8-flash", "gemma-4-27b-it", "gemini-2.5-pro"]);
-        // Every other provider's list, and any recognition list, is left as it came.
-        assert_eq!(usable_models(ProviderId::Groq, ServiceKind::Llm, listed.clone()), listed);
-        assert_eq!(usable_models(ProviderId::Google, ServiceKind::Asr, listed.clone()), listed);
+        let url = "https://generativelanguage.googleapis.com/v1beta/openai";
+        assert_eq!(usable_models(ProviderId::Google, ServiceKind::Llm, url, listed.clone()), ["gemini-2.5-pro", "gemini-3.8-flash", "gemma-4-27b-it"]);
+        // The custom endpoint's list is left as it came, sorted.
+        let mut sorted = listed.clone();
+        sorted.sort_unstable();
+        assert_eq!(usable_models(ProviderId::Custom, ServiceKind::Llm, url, listed), sorted);
         let google = ProviderId::Google.spec();
         assert!(google.asr.is_none() && google.key == KeyPolicy::Required && google.console_url.is_some());
         assert_eq!(key_entry(ProviderId::Google, ServiceKind::Llm), Some("provider-key.google"));
         assert_eq!(key_env_var("provider-key.google"), "VOLTIP_KEY_GOOGLE");
+    }
+
+    /// docs/dictation.md §3.3: a vendor lists every model it hosts; recognition offers the
+    /// speech-to-text ones this client can use, clean-up the ones that chat in text, so 测试连接's
+    /// count is the select's.
+    #[test]
+    fn each_service_offers_the_listed_models_it_can_use() {
+        let ids = |list: &[&str]| list.iter().map(|m| (*m).to_owned()).collect::<Vec<String>>();
+        let openai = ids(&[
+            "gpt-6-luna",
+            "gpt-4o-mini-transcribe",
+            "whisper-1",
+            "tts-1",
+            "gpt-4o-mini-tts",
+            "text-embedding-3-small",
+            "omni-moderation-latest",
+            "dall-e-3",
+            "gpt-image-1",
+            "gpt-4o-realtime-preview",
+            "gpt-4o-audio-preview",
+            "gpt-5-codex",
+            "gpt-6-luna",
+            "",
+        ]);
+        let base = "https://api.openai.com/v1";
+        assert_eq!(usable_models(ProviderId::Openai, ServiceKind::Asr, base, openai.clone()), ["gpt-4o-mini-transcribe", "whisper-1"]);
+        assert_eq!(usable_models(ProviderId::Openai, ServiceKind::Llm, base, openai), ["gpt-6-luna"], "one entry per model, none empty");
+
+        let siliconflow = ids(&[
+            "FunAudioLLM/SenseVoiceSmall",
+            "TeleAI/TeleSpeechASR",
+            "FunAudioLLM/CosyVoice2-0.5B",
+            "fishaudio/fish-speech-1.5",
+            "BAAI/bge-m3",
+            "BAAI/bge-reranker-v2-m3",
+            "black-forest-labs/FLUX.1-schnell",
+            "Kwai-Kolors/Kolors",
+            "Wan-AI/Wan2.2-T2V-A14B",
+            "Qwen/Qwen3-8B",
+            "deepseek-ai/DeepSeek-V3",
+        ]);
+        let base = "https://api.siliconflow.cn/v1";
+        assert_eq!(
+            usable_models(ProviderId::Siliconflow, ServiceKind::Asr, base, siliconflow.clone()),
+            ["FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR"]
+        );
+        assert_eq!(usable_models(ProviderId::Siliconflow, ServiceKind::Llm, base, siliconflow), ["Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-V3"]);
+
+        let groq = ids(&["whisper-large-v3-turbo", "distil-whisper-large-v3-en", "openai/gpt-oss-120b", "meta-llama/llama-guard-4-12b", "playai-tts"]);
+        let base = "https://api.groq.com/openai/v1";
+        assert_eq!(usable_models(ProviderId::Groq, ServiceKind::Asr, base, groq.clone()), ["distil-whisper-large-v3-en", "whisper-large-v3-turbo"]);
+        assert_eq!(usable_models(ProviderId::Groq, ServiceKind::Llm, base, groq), ["openai/gpt-oss-120b"]);
+
+        // Model Studio: only the recognition models this client speaks to.
+        let studio = ids(&[
+            "qwen-audio-3.1-asr-flash-streaming",
+            "qwen-audio-3.1-asr-flash",
+            "qwen3-asr-flash",
+            "qwen3-asr-flash-realtime",
+            "qwen-audio-3.1-asr-flash-filetrans",
+            "paraformer-realtime-v2",
+            "paraformer-v2",
+            "fun-asr",
+            "sensevoice-v1",
+            "qwen3.8-flash",
+            "qwen3-omni-flash",
+            "qwen-tts",
+            "cosyvoice-v2",
+            "text-embedding-v4",
+            "gte-rerank-v2",
+            "wanx2.1-t2i-turbo",
+            "qwen-image",
+        ]);
+        let base = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+        assert_eq!(
+            usable_models(ProviderId::Aliyun, ServiceKind::Asr, base, studio.clone()),
+            ["paraformer-realtime-v2", "qwen-audio-3.1-asr-flash", "qwen-audio-3.1-asr-flash-streaming", "qwen3-asr-flash"]
+        );
+        assert_eq!(usable_models(ProviderId::Aliyun, ServiceKind::Llm, base, studio), ["qwen3.8-flash"]);
+
+        // Ollama's pulled models, without the embedding ones.
+        let ollama = ids(&["qwen3:8b", "nomic-embed-text:latest", "llava:7b"]);
+        assert_eq!(usable_models(ProviderId::Ollama, ServiceKind::Llm, "http://127.0.0.1:11434/v1", ollama), ["llava:7b", "qwen3:8b"]);
+        // The catalogue's own presets survive their own filter.
+        for spec in PROVIDERS.iter().filter(|s| s.id != ProviderId::Custom) {
+            for kind in [ServiceKind::Asr, ServiceKind::Llm] {
+                let Some(preset) = spec.service(kind) else { continue };
+                let mut want = ids(preset.models);
+                want.sort_unstable();
+                assert_eq!(usable_models(spec.id, kind, preset.base_url, ids(preset.models)), want, "{:?} {kind:?}", spec.id);
+            }
+        }
     }
 
     #[test]

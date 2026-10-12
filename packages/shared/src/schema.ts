@@ -1241,6 +1241,10 @@ export const serviceStatusSchema = z.object({
   issue: engineIssueSchema.optional(),
   /** The provider in use for this service. */
   active: z.boolean(),
+  /** The models the provider lists for the saved endpoint and key that can serve this service
+   *  (docs/dictation.md §3.3), fetched when a model list opens (`provider_models_refresh`) and by
+   *  a 测试连接 with the saved values; absent until a list arrived. */
+  listed: z.array(z.string()).optional(),
 });
 export type ServiceStatus = z.infer<typeof serviceStatusSchema>;
 
@@ -1252,10 +1256,16 @@ export const providerStatusSchema = z.object({
   /** The shell can open the vendor's key page (`provider_console_open`; the phone too since
    *  2026-10-01). */
   console: z.boolean(),
+  /** The shell can open the vendor's page of free quota and usage (`provider_console_open` with
+   *  `page: "quota"`, docs/dictation.md §3.5); absent = no such page. */
+  quota: z.boolean().optional(),
   asr: serviceStatusSchema.optional(),
   llm: serviceStatusSchema.optional(),
 });
 export type ProviderStatus = z.infer<typeof providerStatusSchema>;
+
+/** Which vendor page `provider_console_open` opens (`voltip_core::ConsolePage`). */
+export type ConsolePage = "key" | "quota";
 
 /** Why a fallback model that could run is left out of the chain (`FallbackSkip`). */
 export const fallbackSkipSchema = z.enum(["same_as_selected", "duplicate"]);
@@ -2371,8 +2381,12 @@ export interface CommandArgs {
     baseUrl?: string | null;
     key?: string | null;
   };
-  /** Open the vendor's API-key page in the browser (catalogue URLs only). */
-  provider_console_open: { provider: ProviderId };
+  /** List a provider's models with the saved endpoint and key as a model list opens
+   *  (docs/dictation.md §3.3); the list arrives in an `engines` event (`ServiceStatus.listed`). */
+  provider_models_refresh: { provider: ProviderId; kind: ServiceKind };
+  /** Open the vendor's API-key page (`page` absent or `key`) or its page of free quota and usage
+   *  (`quota`) in the browser (catalogue URLs only). */
+  provider_console_open: { provider: ProviderId; page?: ConsolePage };
   /** Open a project page in the browser; the shell builds the URL from its repository. */
   project_link_open: { link: ProjectLink };
   guide_open: { page: GuidePage; locale: string };

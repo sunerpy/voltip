@@ -270,6 +270,8 @@ fn pages_open_from_urls_the_shell_builds() {
     running.invoke("project_link_open", json!({ "link": "releases" })).unwrap();
     running.invoke("guide_open", json!({ "page": "service", "locale": "zh-CN" })).unwrap();
     running.invoke("provider_console_open", json!({ "provider": "groq" })).unwrap();
+    // docs/dictation.md §3.5: Model Studio's page of free quota and usage.
+    running.invoke("provider_console_open", json!({ "provider": "aliyun", "page": "quota" })).unwrap();
     let opened: Vec<String> = running
         .host
         .calls()
@@ -279,11 +281,15 @@ fn pages_open_from_urls_the_shell_builds() {
             _ => None,
         })
         .collect();
-    assert_eq!(opened.len(), 3, "{opened:?}");
+    assert_eq!(opened.len(), 4, "{opened:?}");
     assert_eq!(opened[0], "https://github.com/sunerpy/voltip/releases");
     assert!(opened[1].starts_with("https://"), "{}", opened[1]);
     assert!(opened[2].starts_with("https://") && opened[2].contains("groq"), "{}", opened[2]);
+    assert_eq!(opened[3], voltip_core::ProviderId::Aliyun.spec().quota_url.unwrap());
     assert!(running.invoke("provider_console_open", json!({ "provider": "custom" })).unwrap_err().contains("no key page"));
+    assert!(running.invoke("provider_console_open", json!({ "provider": "groq", "page": "quota" })).unwrap_err().contains("no quota page"));
+    // A model list opening: the generic path takes it to the core.
+    running.invoke("provider_models_refresh", json!({ "provider": "groq", "kind": "llm" })).unwrap();
 }
 
 /// A history export goes to the share sheet as a file, or says why it cannot.

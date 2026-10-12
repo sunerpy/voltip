@@ -103,13 +103,70 @@ export function withProvider(
     : { ...settings, llm_provider: provider };
 }
 
-/** The models a card's select offers: the one in effect, the presets, then what the provider
- *  listed (`probed`), without duplicates. */
+/** The suggested models of a service: the one in effect, the presets, then `probed`, without
+ *  duplicates. The title bar's quick menus offer these; the card's select also offers every model
+ *  the provider lists (`modelOptions`). */
 export function modelChoices(service: ServiceStatus, probed: readonly string[] = []): string[] {
   const out: string[] = [];
   for (const m of [service.model, ...service.presets, ...probed])
     if (m.length > 0 && !out.includes(m)) out.push(m);
   return out;
+}
+
+/** One option of a card's model select; `group` heads the options of one kind. */
+export interface ModelOption {
+  value: string;
+  label: string;
+  group?: string;
+}
+
+/** The options of a card's model select (docs/dictation.md §3.3). Once the provider has listed its
+ *  models (`ServiceStatus.listed`, or what a 测试连接 in the form found, `probed`), they follow
+ *  the suggested ones as a group headed with their count, the count 测试连接 reports: a suggested
+ *  model the provider lists shows in both groups. Before that, or for a provider without
+ *  suggestions, a plain list. */
+export function modelOptions(
+  service: ServiceStatus,
+  probed: readonly string[] = [],
+  t: TFunction = zhT.t,
+): ModelOption[] {
+  const offered = uniqueIds(probed.length > 0 ? probed : (service.listed ?? []));
+  offered.sort();
+  const suggested = uniqueIds([service.model, ...service.presets]);
+  if (offered.length === 0) return suggested.map((m) => modelOption(m));
+  if (service.presets.length === 0)
+    return uniqueIds([service.model, ...offered]).map((m) => modelOption(m));
+  const suggestedGroup = t("engines.field.modelSuggested");
+  const offeredGroup = t("engines.field.modelOffered", { n: offered.length });
+  return [
+    ...suggested.map((m) => modelOption(m, suggestedGroup)),
+    ...offered.map((m) => modelOption(m, offeredGroup)),
+  ];
+}
+
+/** `ids` without blanks and repeats, in their order. */
+function uniqueIds(ids: readonly string[]): string[] {
+  return ids.filter((m, i) => m.length > 0 && ids.indexOf(m) === i);
+}
+
+function modelOption(model: string, group?: string): ModelOption {
+  return group === undefined
+    ? { value: model, label: model }
+    : { value: model, label: model, group };
+}
+
+/** The line under a card's model select (docs/dictation.md §3.3): how many models the provider
+ *  lists for this service (测试连接's count), or where the list's models come from. */
+export function modelListHelp(
+  provider: ProviderStatus,
+  service: ServiceStatus,
+  t: TFunction = zhT.t,
+): string {
+  const n = service.listed?.length ?? 0;
+  if (n > 0) return t("engines.field.modelListed", { n });
+  return provider.key === "required"
+    ? t("engines.field.modelHelp")
+    : t("engines.field.modelHelpKeyless");
 }
 
 /** Client-side checks before a save (the core validates again). */

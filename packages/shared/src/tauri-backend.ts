@@ -6,6 +6,7 @@ import type { Backend, EventListener, FrameListener, Unsubscribe } from "./backe
 import {
   type ArgsOf,
   type AttachmentFile,
+  type ConsolePage,
   type ExportFormat,
   type FeedbackDraft,
   type HistoryQueryArgs,
@@ -176,8 +177,11 @@ export class TauriBackend implements Backend {
     await this.transport.invoke("permissions_request", { permission });
   }
 
-  async providerConsoleOpen(provider: ProviderId): Promise<void> {
-    await this.transport.invoke("provider_console_open", { provider });
+  async providerConsoleOpen(provider: ProviderId, page?: ConsolePage): Promise<void> {
+    await this.transport.invoke(
+      "provider_console_open",
+      page === undefined ? { provider } : { provider, page },
+    );
   }
 
   async guideOpen(page: GuidePage, locale: string): Promise<void> {

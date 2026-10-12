@@ -14,12 +14,12 @@ import {
   fallbackSettingsOf,
   fallbackStatusOf,
   formatDateTime,
-  modelChoices,
+  modelOptions,
   moveFallback,
   providersFor,
   withFallback,
 } from "@voltip/shared";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { View } from "react-native";
 import { IconButton, Text, TextInput } from "react-native-paper";
 
@@ -38,7 +38,7 @@ import {
   useAppTheme,
 } from "../ui/kit";
 import { SelectField } from "../ui/Select";
-import { OTHER_MODEL } from "./engines";
+import { OTHER_MODEL, useModelRefresh } from "./engines";
 
 const TONE: Readonly<Record<FallbackRowView["state"], Tone>> = {
   active: "ok",
@@ -118,10 +118,16 @@ function AddFallback({
   const [providerId, setProviderId] = useState<ProviderId | undefined>(undefined);
   const provider = candidates.find((p) => p.id === providerId) ?? candidates[0];
   const service = provider?.[kind];
-  const choices = service === undefined ? [] : modelChoices(service);
+  const options = service === undefined ? [] : modelOptions(service, [], t);
+  const choices = options.map((o) => o.value);
   const [picked, setPicked] = useState<string | undefined>(undefined);
   const [typed, setTyped] = useState("");
   const [problem, setProblem] = useState<string | undefined>(undefined);
+  // docs/dictation.md §3.3: the chosen provider's latest models, and again as the list opens.
+  const refreshModels = useModelRefresh(provider?.id, kind);
+  useEffect(() => {
+    refreshModels();
+  }, [refreshModels]);
   if (provider === undefined || service === undefined) return null;
   const builtin = provider.id === "builtin";
   // A built-in service with several models offers them, no other id; with one, it is the card's.
@@ -185,10 +191,9 @@ function AddFallback({
                 setPicked(value);
                 setProblem(undefined);
               }}
-              options={[
-                ...choices.map((m) => ({ value: m, label: m })),
-                { value: OTHER_MODEL, label: t("engines.field.modelOther") },
-              ]}
+              onOpen={refreshModels}
+              options={[...options, { value: OTHER_MODEL, label: t("engines.field.modelOther") }]}
+              testID={`fallback-${kind}-model`}
             />
           )}
           {selectValue === OTHER_MODEL && (
@@ -365,7 +370,19 @@ export function FallbackSection({ kind }: { kind: ServiceKind }) {
           {t("engines.fallback.recheck")}
         </Button>
       )}
-      {studio && <Hint>{t("engines.fallback.aliyunNote")}</Hint>}
+      {studio && (
+        <View style={{ gap: 4 }}>
+          <Hint>{t("engines.fallback.aliyunNote")}</Hint>
+          <Button
+            compact
+            icon="open-in-new"
+            style={{ alignSelf: "flex-start" }}
+            testID={`fallback-${kind}-quota`}
+            onPress={() => void backend.providerConsoleOpen("aliyun", "quota")}>
+            {t("engines.viewQuota")}
+          </Button>
+        </View>
+      )}
     </View>
   );
 }

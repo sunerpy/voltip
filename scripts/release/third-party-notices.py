@@ -13,7 +13,9 @@ to travel with the binary:
   with the licence file each package ships (the three fonts are OFL-1.1);
 - the native libraries that ship inside or beside the desktop binary: transcribe.cpp and ggml (from
   the transcribe-cpp-sys sources), sherpa-onnx, ONNX Runtime and the Khronos Vulkan loader (texts in
-  scripts/release/licenses/). The Android app links none of them.
+  scripts/release/licenses/). The Android app links none of them;
+- the artwork copied into the source, which every app's interface carries: the vendors' marks from
+  LobeHub Icons (packages/shared/src/provider-marks.ts, text in scripts/release/licenses/).
 
 Usage: third-party-notices.py --out FILE [--app desktop|mobile|mobile-rn] [--version V] [--about-json FILE]
                               [--pnpm-json FILE]
@@ -104,6 +106,18 @@ def native_components(transcribe_dir: Path | None) -> list[tuple[str, str, str, 
     return out
 
 
+def bundled_artwork() -> list[tuple[str, str, str, str]]:
+    """(name, licence, where it comes from, text) for the artwork copied into the source."""
+    return [
+        (
+            "LobeHub Icons (the vendors' marks on the engines pages)",
+            "MIT",
+            "https://github.com/lobehub/lobe-icons (packages/shared/src/provider-marks.ts)",
+            (LICENSES / "lobe-icons-LICENSE.txt").read_text(encoding="utf-8").strip(),
+        )
+    ]
+
+
 def render(version: str, about: dict, pnpm: dict, natives: list[tuple[str, str, str, str]], packages_heading: str = "Web frontend packages") -> str:
     lines = [
         f"Voltip {version} — third-party notices",
@@ -129,6 +143,10 @@ def render(version: str, about: dict, pnpm: dict, natives: list[tuple[str, str, 
     if natives:
         lines += [RULE, "Native libraries", RULE, ""]
     for name, licence, origin, text in natives:
+        lines += [f"{name}", f"Licence: {licence}", f"Source: {origin}", "", text, "", "-" * 78, ""]
+
+    lines += [RULE, "Bundled artwork", RULE, ""]
+    for name, licence, origin, text in bundled_artwork():
         lines += [f"{name}", f"Licence: {licence}", f"Source: {origin}", "", text, "", "-" * 78, ""]
 
     crates = about.get("crates", [])

@@ -717,6 +717,40 @@ fn provider_probe_answers_with_a_reason_or_the_model_list() {
     });
 }
 
+/// A model list opening (docs/dictation.md §3.3): with a saved endpoint and key, the provider's
+/// models reach the engines state for every select, asked with the saved key.
+#[test]
+fn provider_models_refresh_brings_the_saved_endpoints_models_to_the_state() {
+    let ports =
+        DictationPorts { service_probe: Some(Arc::new(voltip_desktop_lib::dictation::HttpServiceProbe::new(&voltip_net::Network::new()))), ..fakes::ports() };
+    with_running_app_on(ports, |_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let server = rt.block_on(wiremock::MockServer::start());
+        rt.block_on(
+            wiremock::Mock::given(wiremock::matchers::method("GET"))
+                .and(wiremock::matchers::path("/v1/models"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({ "data": [{ "id": "b-model" }, { "id": "a-model" }] })))
+                .mount(&server),
+        );
+        let mut engines = serde_json::to_value(fake_engines()).unwrap();
+        engines["providers"]["custom"] = json!({ "llm_url": format!("{}/v1", server.uri()), "llm_model": "a-model" });
+        assert_eq!(invoke(webview, "settings_set_engines", json!({ "engines": engines })), Ok(Value::Null));
+        assert_eq!(invoke(webview, "provider_key_set", json!({ "provider": "custom", "kind": "llm", "value": "k-saved" })), Ok(Value::Null));
+        assert_eq!(invoke(webview, "provider_models_refresh", json!({ "provider": "custom", "kind": "llm" })), Ok(Value::Null));
+        let listed = |s: &UiState| {
+            s.engines.providers.iter().find(|p| p.id == voltip_core::ProviderId::Custom).and_then(|p| p.llm.clone()).map(|l| l.listed).unwrap_or_default()
+        };
+        let st = wait_state(webview, |s| !listed(s).is_empty());
+        assert_eq!(listed(&st), ["a-model", "b-model"]);
+        let seen = rt.block_on(server.received_requests()).unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].headers.get("authorization").unwrap(), "Bearer k-saved", "the saved key is used");
+        // Unknown providers and services are refused at the IPC layer.
+        assert!(invoke(webview, "provider_models_refresh", json!({ "provider": "azure", "kind": "llm" })).is_err());
+    });
+}
+
 /// Engine settings round-trip through `settings` + `engines`; history verbs mutate the list.
 #[test]
 fn engine_settings_and_history_commands_change_state() {
