@@ -43,6 +43,8 @@ pub(crate) struct Inner {
     pub(crate) meters: Meters,
     pub(crate) attachments: feedback::Attachments,
     pub(crate) updater: Arc<PhoneUpdater>,
+    /// The proxy plan every connection follows (`CoreConfig::network`, docs/dictation.md §24).
+    pub(crate) network: Arc<voltip_net::Network>,
 }
 
 /// The phone's core configuration, the Tauri phone shell's (`production_config`): `<platform> 手机`
@@ -66,17 +68,21 @@ pub fn phone_config(data_dir: PathBuf, app_version: &str) -> CoreConfig {
 
 /// The phone's dictation ports: its microphone, the cloud clients of the resolved engines (the
 /// built-in services unless the settings name others; no local models on a phone), the clipboard
-/// for the result, and the HTTP provider probe (测试连接). No live preview, no foreground probe, no
-/// VAD: the core's fallbacks apply. The Tauri phone shell's `phone_ports`.
-pub fn phone_ports(host: Arc<dyn Host>) -> DictationPorts {
+/// for the result, and the HTTP provider probe (测试连接), the clients through `network`. No live
+/// preview, no foreground probe, no VAD: the core's fallbacks apply. The Tauri phone shell's
+/// `phone_ports`.
+pub fn phone_ports(host: Arc<dyn Host>, network: &Arc<voltip_net::Network>) -> DictationPorts {
+    let clients = Arc::clone(network);
     DictationPorts {
         audio: Arc::new(crate::microphone::PhoneMicrophone::cpal()),
         injector: Arc::new(crate::clipboard::ClipboardInjector(host)),
-        factory: Arc::new(|engines: &voltip_core::ResolvedEngines| (voltip_cloud::remote_transcriber(engines), voltip_cloud::refiner(engines))),
+        factory: Arc::new(move |engines: &voltip_core::ResolvedEngines| {
+            (voltip_cloud::remote_transcriber(engines, &clients), voltip_cloud::refiner(engines, &clients))
+        }),
         models: None,
         streaming: None,
         probe: None,
-        service_probe: Some(Arc::new(voltip_cloud::HttpServiceProbe)),
+        service_probe: Some(Arc::new(voltip_cloud::HttpServiceProbe::new(network))),
         segmenter: None,
     }
 }
@@ -97,7 +103,8 @@ impl Shell {
         host: Arc<dyn Host>,
         updates: UpdateConfig,
     ) -> Result<Self, String> {
-        let updater = Arc::new(PhoneUpdater::new(updates, &config.app_version));
+        let updater = Arc::new(PhoneUpdater::new(updates, &config.app_version).with_network(&config.network));
+        let network = Arc::clone(&config.network);
         let started = {
             // The core spawns its tasks with `tokio::spawn`: start it inside the runtime.
             let _entered = runtime.enter();
@@ -126,7 +133,30 @@ impl Shell {
         });
         bridge.publish(UiEvent::Update(updater.status()));
         crate::update::start(&runtime, bridge.clone(), updater.clone(), host.clone());
-        Ok(Self { inner: Arc::new(Inner { runtime, bridge, host, meters: Meters::default(), attachments: feedback::Attachments::default(), updater }) })
+        Ok(Self {
+            inner: Arc::new(Inner { runtime, bridge, host, meters: Meters::default(), attachments: feedback::Attachments::default(), updater, network }),
+        })
+    }
+
+    /// The proxy of the phone's network (docs/dictation.md §24): Android's `LinkProperties.httpProxy`
+    /// of the default network, `host` empty for none. Following the system means it from the next
+    /// request on; when it changed, the core reads it again and reconnects what used the old route.
+    pub fn set_platform_proxy(&self, host: &str, port: u16, exclusions: &str) {
+        let proxy = match host.trim() {
+            "" => None,
+            host => voltip_net::PlatformProxy::new(host, port, exclusions)
+                .inspect_err(|e| tracing::warn!(error = %e, "the network's proxy cannot be used; connections go direct"))
+                .ok(),
+        };
+        let network = &self.inner.network;
+        if network.platform_proxy() == proxy {
+            return;
+        }
+        tracing::info!(proxy = proxy.is_some(), "the network's proxy changed");
+        network.set_platform_proxy(proxy);
+        if let Err(e) = self.inner.bridge.dispatch(UiCommand::NetworkRefresh) {
+            tracing::warn!(error = %e, "network refresh not sent");
+        }
     }
 
     /// The bridge, for the platform layer and tests.

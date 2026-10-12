@@ -101,6 +101,18 @@ Providers that are not set up do not appear in these menus. **Manage speech mode
 - Each key is sent only to the provider it belongs to. When you switch providers or change a custom address, the old key does not follow.
 - On Linux, Voltip needs a running Secret Service, such as GNOME Keyring or KWallet. It does not fall back to storing keys in a file.
 
+## Network proxy
+
+Speech recognition, AI polish, model downloads, update checks and downloads, feedback, and the connection to your phone all reach the network through the proxy set under **Settings → Network**. On the phone, the same setting is under **Settings → General → Network**.
+
+- **Follow the system** (the default) uses the system's proxy settings. On a computer, Voltip reads the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` environment variables first, then macOS's network settings or Windows' Internet Options; on Linux it reads the environment variables only. On the phone, it uses the proxy of the current network (Wi-Fi). The settings page shows the system's current proxy; after you change the system's settings, **Read again** reads them at once.
+- **No proxy** connects directly.
+- **Manual** uses the proxy server you enter, such as `http://127.0.0.1:7890` or `socks5h://127.0.0.1:1080`. `http`, `socks5` and `socks5h` (the proxy server resolves host names) are supported; a host and port alone means `http`, and the port is required. If the proxy needs a sign-in, enter the user name and password; the password is stored only in the system keychain and is never shown after you save it. **No proxy for** takes a comma-separated list of hosts, domains (with their subdomains), IP addresses or networks, such as `corp.example.com, 10.0.0.0/8`.
+
+Addresses on this device (`localhost`, `127.0.0.1`), such as Ollama running locally and the local service, are always reached directly. After a change, every new connection follows the new setting.
+
+Voltip does not support PAC files, automatic proxy detection (WPAD) or `https://` proxies, and it does not read the proxy settings of Linux desktop environments such as GNOME or KDE; enter the proxy under **Manual**, or set the environment variables above. Pages opened in the browser, such as a provider's console or the phone's installer download, use the browser's own proxy settings.
+
 ## What is sent
 
 - **Recognition**: the recording, the model name and your key. If your [dictionary](/recognition/dictionary) has entries, their correct spellings go along as a hint. With a realtime model, the recording is sent while you speak.

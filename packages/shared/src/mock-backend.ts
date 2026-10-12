@@ -18,6 +18,7 @@ import builtinPresetTexts from "./fixtures/ipc/presets-builtin.json";
 import builtinSceneRows from "./fixtures/ipc/scenes-builtin.json";
 import { joinLiveText, livePreviewText } from "./labels";
 import { type BuiltInService, keyEntry, providerSpec, resolveEngineStatus } from "./providers";
+import { checkProxySettings, proxyPasswordProblem, proxyProblemCoreText } from "./proxy";
 import {
   type AppRef,
   type ArgsOf,
@@ -54,6 +55,7 @@ import {
   type RelayStatus,
   type SafetyCode,
   type Scene,
+  type NetworkStatus,
   type ServeSettings,
   type ServeStatus,
   type SceneDraft,
@@ -202,6 +204,9 @@ export interface MockBackendOptions {
   /** The local service's status at start, instead of the one the settings give (tests that need
    *  a status the preview passes through only for a moment, such as `starting`). */
   serve?: ServeStatus;
+  /** What the preview's system proxy is (`network_refresh` reads it again; default: none), and
+   *  whether a proxy password starts saved. */
+  network?: NetworkStatus;
   /** Which built-in services the preview pretends were compiled in (default: both, with keys);
    *  `{}` is a build without them. */
   builtIn?: { asr?: BuiltInService; llm?: BuiltInService };
@@ -1069,7 +1074,9 @@ export class MockBackend implements Backend {
       mirrors: (options.mirrors ?? []).map((m) => structuredClone(m.view)),
       phone_outbox_too_large: [],
       serve: options.serve ?? this.serveStatusFor(settings.serve),
+      network: { ...(options.network ?? { proxy_password: false }) },
     };
+    this.proxyPassword = options.network?.proxy_password === true ? "saved" : undefined;
     for (const m of options.mirrors ?? []) this.mirrors.set(m.view.desktop, structuredClone(m));
     this.state.engines = this.resolveEngines(settings.engines);
     this.state.models = this.modelsFor(settings.engines);
@@ -2221,7 +2228,39 @@ export class MockBackend implements Backend {
       if (this.state.refine_notice !== undefined)
         this.emit({ type: "refine_notice", notice: null });
     },
+    settings_set_proxy: (args) => {
+      const { mode, server, username, noProxy, password } = required(args);
+      const checked = checkProxySettings({ mode, server, username, no_proxy: noProxy });
+      if ("problem" in checked) throw new Error(proxyProblemCoreText(checked.problem));
+      const problem =
+        password === null ? undefined : proxyPasswordProblem(password, checked.proxy.username);
+      if (problem !== undefined) throw new Error(proxyProblemCoreText(problem));
+      if (password !== null) this.proxyPassword = password === "" ? undefined : password;
+      this.emit({ type: "settings", ...this.state.settings, proxy: checked.proxy });
+      this.emit({
+        type: "network",
+        ...this.state.network,
+        proxy_password: this.proxyPassword !== undefined,
+      });
+    },
+    network_refresh: () => {
+      this.emit({ type: "network", ...this.state.network });
+    },
   };
+
+  /** The manual proxy's password as the preview's keychain holds it (never in the state). */
+  private proxyPassword: string | undefined;
+
+  /** Tests: what the preview's keychain holds for the proxy. */
+  savedProxyPassword(): string | undefined {
+    return this.proxyPassword;
+  }
+
+  /** Tests and the preview: the system's proxy changes; `network_refresh` reports it. */
+  setSystemProxy(proxy: string | undefined) {
+    const { system_proxy: _old, ...rest } = this.state.network;
+    this.state.network = { ...rest, ...(proxy === undefined ? {} : { system_proxy: proxy }) };
+  }
 
   /** `simulateRefineFailure`: how the next takes' clean-up fails, if it does. */
   private refineFailure: RefineFailure | undefined;

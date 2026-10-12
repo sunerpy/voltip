@@ -1,9 +1,11 @@
 //! Client configuration and base-URL normalisation.
 
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use url::Url;
+use voltip_net::{Network, NetworkRef};
 
 use crate::RefineError;
 use crate::presets::BUILTIN_OUTPUT_CAP;
@@ -80,6 +82,9 @@ pub struct RefineConfig {
     pub api: RefineApi,
     /// A Responses request's `reasoning.effort`; `None` (the default) sends nothing.
     pub reasoning_effort: Option<ReasoningEffort>,
+    /// The proxy plan the requests follow (docs/dictation.md §24); the process's system-following
+    /// network unless one is handed in.
+    pub network: NetworkRef,
 }
 
 impl RefineConfig {
@@ -94,7 +99,14 @@ impl RefineConfig {
             enable_thinking: None,
             api: RefineApi::ChatCompletions,
             reasoning_effort: None,
+            network: NetworkRef::default(),
         }
+    }
+
+    /// Go through `network`'s proxy plan.
+    pub fn with_network(mut self, network: &Arc<Network>) -> Self {
+        self.network = NetworkRef::new(network);
+        self
     }
 
     /// Set the bearer key.
@@ -145,6 +157,7 @@ impl fmt::Debug for RefineConfig {
             .field("enable_thinking", &self.enable_thinking)
             .field("api", &self.api)
             .field("reasoning_effort", &self.reasoning_effort)
+            .field("network", &self.network)
             .finish()
     }
 }

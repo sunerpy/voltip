@@ -1,0 +1,325 @@
+//! The plan, the reqwest proxy and the tunnels, against proxies that record what they were asked.
+
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+
+use hyper_util::client::proxy::matcher::Matcher;
+use parking_lot::Mutex;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+
+use super::*;
+
+fn url(text: &str) -> Url {
+    Url::parse(text).unwrap()
+}
+
+fn manual(server: &str, user: Option<&str>, pass: Option<&str>, no_proxy: &str) -> ProxyPlan {
+    ProxyPlan::Manual(ManualProxy::new(server, user, pass, no_proxy).unwrap())
+}
+
+/// The plan decides for each URL; this device's own addresses always go direct.
+#[test]
+fn the_plan_routes_each_url() {
+    let network = Network::with_plan(manual("127.0.0.1:7890", Some("alice"), Some("s3cr:et@"), "corp.test, 10.0.0.0/8, 192.168.1.5"));
+    let via = network.proxy_for(&url("https://api.example.com/v1/x")).unwrap();
+    assert_eq!(via.as_str(), "http://alice:s3cr%3Aet%40@127.0.0.1:7890/", "credentials percent-encoded for reqwest");
+    for direct in [
+        "https://corp.test/",
+        "https://a.b.corp.test:8443/",
+        "http://10.1.2.3/",
+        "http://192.168.1.5:11434/",
+        "http://localhost:11434/",
+        "http://app.localhost/",
+        "http://127.0.0.1:47840/v1",
+        "http://127.8.9.10/",
+        "http://[::1]:47840/",
+        "http://0.0.0.0/",
+    ] {
+        assert_eq!(network.proxy_for(&url(direct)), None, "{direct}");
+    }
+    assert!(network.proxy_for(&url("http://notcorp.test/")).is_some(), "a domain matches itself and its subdomains, nothing else");
+    assert!(network.proxy_for(&url("http://192.168.1.6/")).is_some());
+    assert!(network.proxy_for(&url("wss://ws.example.com/ws")).is_some(), "WebSocket URLs count as HTTP(S)");
+    assert_eq!(network.proxy_for(&url("file:///tmp/x")), None);
+    network.set(ProxyPlan::Off);
+    assert_eq!(network.proxy_for(&url("https://api.example.com/")), None);
+    network.set(manual("socks5h://gw.example.com:1080", None, None, "*"));
+    assert_eq!(network.proxy_for(&url("https://api.example.com/")), None, "`*` sends everything direct");
+    network.set(manual("socks5h://gw.example.com:1080", None, None, ""));
+    assert_eq!(network.proxy_for(&url("https://api.example.com/")).unwrap().as_str(), "socks5h://gw.example.com:1080");
+    assert_eq!(network.plan().describe(), "manual socks5h", "the log names no host");
+}
+
+/// Following the system: the system's matcher (environment, OS settings), or on Android the
+/// network's proxy the shell handed in, with its exclusions.
+#[test]
+fn following_the_system_reads_it_for_each_request() {
+    let seen = Arc::new(Mutex::new(0usize));
+    let reads = Arc::clone(&seen);
+    let network = Network::with_system_matcher(move || {
+        *reads.lock() += 1;
+        Matcher::builder().https("http://bob:p%40ss@10.0.0.1:3128".to_owned()).no("intranet.test".to_owned()).build()
+    });
+    assert_eq!(network.plan(), ProxyPlan::System, "the default");
+    let via = network.proxy_for(&url("https://api.example.com/")).unwrap();
+    assert_eq!((via.host_str(), via.port(), via.username(), via.password()), (Some("10.0.0.1"), Some(3128), "bob", Some("p%40ss")));
+    assert_eq!(network.proxy_for(&url("http://api.example.com/")), None, "only HTTPS has a proxy here");
+    assert_eq!(network.proxy_for(&url("https://intranet.test/")), None);
+    assert_eq!(*seen.lock(), 3, "read again for each request");
+    assert_eq!(network.system_proxy_for(&url("https://api.example.com/")).unwrap().as_str(), "http://10.0.0.1:3128/", "without credentials");
+    assert_eq!(network.system_https_proxy().unwrap().as_str(), "http://10.0.0.1:3128/");
+    network.set(ProxyPlan::Off);
+    assert!(network.system_proxy_for(&url("https://api.example.com/")).is_some(), "what the system says, whatever the plan");
+
+    network.set(ProxyPlan::System);
+    network.set_platform_proxy(Some(PlatformProxy::new("10.0.2.2", 8080, "*.corp.test").unwrap()));
+    assert_eq!(network.proxy_for(&url("http://api.example.com/")).unwrap().as_str(), "http://10.0.2.2:8080/", "the platform's proxy takes both schemes");
+    assert_eq!(network.proxy_for(&url("https://x.corp.test/")), None);
+    assert_eq!(network.platform_proxy().map(|p| p.server().to_string()), Some("http://10.0.2.2:8080/".into()));
+    network.set_platform_proxy(None);
+    assert!(network.platform_proxy().is_none());
+}
+
+/// What an HTTP proxy was asked: the request line and its `Proxy-Authorization`.
+type Asked = Arc<Mutex<Vec<(String, Option<String>)>>>;
+
+/// An HTTP proxy: answers a plain request itself (`via proxy`), and opens a `CONNECT` tunnel to
+/// the address `routes` gives the target.
+async fn http_proxy(routes: HashMap<String, SocketAddr>) -> (SocketAddr, Asked) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let asked: Asked = Arc::default();
+    let log = Arc::clone(&asked);
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let (log, routes) = (Arc::clone(&log), routes.clone());
+            tokio::spawn(async move {
+                let head = read_head(&mut socket).await;
+                let line = head.lines().next().unwrap_or_default().to_owned();
+                let auth =
+                    head.lines().find_map(|l| l.strip_prefix("Proxy-Authorization: ").or_else(|| l.strip_prefix("proxy-authorization: "))).map(str::to_owned);
+                log.lock().push((line.clone(), auth));
+                if let Some(target) = line.strip_prefix("CONNECT ").and_then(|rest| rest.split(' ').next()) {
+                    let Some(to) = routes.get(target) else {
+                        let _ = socket.write_all(b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\n\r\n").await;
+                        return;
+                    };
+                    let mut upstream = TcpStream::connect(to).await.unwrap();
+                    socket.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n").await.unwrap();
+                    let _ = tokio::io::copy_bidirectional(&mut socket, &mut upstream).await;
+                } else {
+                    let _ = socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 9\r\nconnection: close\r\n\r\nvia proxy").await;
+                }
+            });
+        }
+    });
+    (addr, asked)
+}
+
+async fn read_head(socket: &mut TcpStream) -> String {
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") && head.len() < 16_384 {
+        if socket.read(&mut byte).await.unwrap_or(0) == 0 {
+            break;
+        }
+        head.push(byte[0]);
+    }
+    String::from_utf8_lossy(&head).into_owned()
+}
+
+/// What a SOCKS5 proxy was asked: the target as sent (a name, or an address) and the credentials.
+type SocksAsked = Arc<Mutex<Vec<(String, Option<(String, String)>)>>>;
+
+/// A SOCKS5 proxy (RFC 1928, user name and password per RFC 1929 when `credentials`): `CONNECT`
+/// only, to the address `routes` gives the target.
+async fn socks_proxy(credentials: bool, routes: HashMap<String, SocketAddr>) -> (SocketAddr, SocksAsked) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let asked: SocksAsked = Arc::default();
+    let log = Arc::clone(&asked);
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = listener.accept().await {
+            let (log, routes) = (Arc::clone(&log), routes.clone());
+            tokio::spawn(async move {
+                let mut head = [0u8; 2];
+                s.read_exact(&mut head).await.unwrap();
+                let mut methods = vec![0u8; usize::from(head[1])];
+                s.read_exact(&mut methods).await.unwrap();
+                let wanted = if credentials { 2 } else { 0 };
+                assert!(methods.contains(&wanted), "offered {methods:?}");
+                s.write_all(&[5, wanted]).await.unwrap();
+                let mut signed_in = None;
+                if credentials {
+                    let mut version = [0u8; 2];
+                    s.read_exact(&mut version).await.unwrap();
+                    let mut user = vec![0u8; usize::from(version[1])];
+                    s.read_exact(&mut user).await.unwrap();
+                    let mut len = [0u8; 1];
+                    s.read_exact(&mut len).await.unwrap();
+                    let mut pass = vec![0u8; usize::from(len[0])];
+                    s.read_exact(&mut pass).await.unwrap();
+                    signed_in = Some((String::from_utf8(user).unwrap(), String::from_utf8(pass).unwrap()));
+                    s.write_all(&[1, 0]).await.unwrap();
+                }
+                let mut request = [0u8; 4];
+                s.read_exact(&mut request).await.unwrap();
+                let target = match request[3] {
+                    1 => {
+                        let mut ip = [0u8; 4];
+                        s.read_exact(&mut ip).await.unwrap();
+                        std::net::Ipv4Addr::from(ip).to_string()
+                    }
+                    3 => {
+                        let mut len = [0u8; 1];
+                        s.read_exact(&mut len).await.unwrap();
+                        let mut name = vec![0u8; usize::from(len[0])];
+                        s.read_exact(&mut name).await.unwrap();
+                        String::from_utf8(name).unwrap()
+                    }
+                    other => panic!("address type {other}"),
+                };
+                let mut port = [0u8; 2];
+                s.read_exact(&mut port).await.unwrap();
+                let target = format!("{target}:{}", u16::from_be_bytes(port));
+                log.lock().push((target.clone(), signed_in));
+                let to = routes[&target];
+                let mut upstream = TcpStream::connect(to).await.unwrap();
+                s.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap();
+                let _ = tokio::io::copy_bidirectional(&mut s, &mut upstream).await;
+            });
+        }
+    });
+    (addr, asked)
+}
+
+/// Echoes what it reads.
+async fn echo() -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let (mut read, mut write) = socket.split();
+                let _ = tokio::io::copy(&mut read, &mut write).await;
+            });
+        }
+    });
+    addr
+}
+
+async fn round_trip(mut stream: TcpStream) -> String {
+    stream.write_all(b"ping").await.unwrap();
+    let mut answer = [0u8; 4];
+    stream.read_exact(&mut answer).await.unwrap();
+    String::from_utf8_lossy(&answer).into_owned()
+}
+
+const TIMEOUT: Duration = Duration::from_secs(10);
+
+/// A WebSocket connection's stream through an HTTP proxy: `CONNECT host:port` with the user's
+/// `Proxy-Authorization`, then the tunnel carries the bytes.
+#[tokio::test]
+async fn a_stream_tunnels_through_an_http_proxy_with_its_credentials() {
+    let target = echo().await;
+    let (proxy, asked) = http_proxy([("relay.test:443".to_owned(), target)].into()).await;
+    let network = Network::with_plan(manual(&format!("http://{proxy}"), Some("alice"), Some("s3cr:et@"), ""));
+    let stream = network.connect(&url("wss://relay.test/ws"), TIMEOUT).await.unwrap();
+    assert_eq!(round_trip(stream).await, "ping");
+    let asked = asked.lock().clone();
+    assert_eq!(asked[0].0, "CONNECT relay.test:443 HTTP/1.1");
+    let token = base64::engine::general_purpose::STANDARD.encode("alice:s3cr:et@");
+    assert_eq!(asked[0].1.as_deref(), Some(format!("Basic {token}").as_str()));
+}
+
+/// SOCKS5 with remote names (socks5h) sends the name; SOCKS5 sends an address as it is; the user
+/// name and password go in the RFC 1929 exchange.
+#[tokio::test]
+async fn a_stream_tunnels_through_socks5_with_its_credentials() {
+    let target = echo().await;
+    let (proxy, asked) = socks_proxy(true, [("relay.test:8443".to_owned(), target), ("192.0.2.10:443".to_owned(), target)].into()).await;
+    let network = Network::with_plan(manual(&format!("socks5h://{proxy}"), Some("alice"), Some("pw"), ""));
+    assert_eq!(round_trip(network.connect(&url("wss://relay.test:8443/"), TIMEOUT).await.unwrap()).await, "ping");
+    network.set(manual(&format!("socks5://{proxy}"), Some("alice"), Some("pw"), ""));
+    assert_eq!(round_trip(network.connect(&url("wss://192.0.2.10/"), TIMEOUT).await.unwrap()).await, "ping");
+    let asked = asked.lock().clone();
+    assert_eq!(
+        asked,
+        [
+            ("relay.test:8443".to_owned(), Some(("alice".to_owned(), "pw".to_owned()))),
+            ("192.0.2.10:443".to_owned(), Some(("alice".to_owned(), "pw".to_owned())))
+        ]
+    );
+    let (open, asked) = socks_proxy(false, [("relay.test:443".to_owned(), target)].into()).await;
+    network.set(manual(&format!("socks5h://{open}"), None, None, ""));
+    assert_eq!(round_trip(network.connect(&url("wss://relay.test/"), TIMEOUT).await.unwrap()).await, "ping");
+    assert_eq!(asked.lock()[0], ("relay.test:443".to_owned(), None), "no credentials offered when none are set");
+}
+
+/// A local host is dialled directly whatever the plan; a refused tunnel says so, naming neither the
+/// proxy nor its credentials (the text reaches log lines).
+#[tokio::test]
+async fn a_local_stream_goes_direct_and_a_refused_tunnel_names_no_host() {
+    let target = echo().await;
+    let (proxy, asked) = http_proxy(HashMap::new()).await;
+    let network = Network::with_plan(manual(&format!("http://{proxy}"), Some("alice"), Some("secret"), ""));
+    let direct = network.connect(&url(&format!("ws://127.0.0.1:{}/", target.port())), TIMEOUT).await.unwrap();
+    assert_eq!(round_trip(direct).await, "ping");
+    assert!(asked.lock().is_empty(), "the proxy saw nothing");
+    let err = network.connect(&url("wss://elsewhere.test/"), TIMEOUT).await.unwrap_err();
+    let text = err.to_string();
+    assert!(matches!(err, ConnectError::Proxy(_)), "{text}");
+    assert!(!text.contains(&proxy.ip().to_string()) && !text.contains("secret") && !text.contains("alice"), "{text}");
+    let https = Network::with_system_matcher(|| Matcher::builder().https("https://10.9.9.9:443".to_owned()).build());
+    let err = https.connect(&url("wss://elsewhere.test/"), TIMEOUT).await.unwrap_err();
+    assert!(matches!(&err, ConnectError::Unsupported(scheme) if scheme == "https"), "{err}");
+    assert!(!err.to_string().contains("10.9.9.9"), "{err}");
+}
+
+/// A reqwest client asks the plan on every request: through the proxy (with its credentials),
+/// direct once the plan says off, through it again after; this device's own server never via it.
+#[tokio::test]
+async fn a_client_follows_the_plan_from_one_request_to_the_next() {
+    let (proxy, asked) = http_proxy(HashMap::new()).await;
+    let network = Network::with_plan(manual(&format!("http://{proxy}"), Some("alice"), Some("s3cr:et@"), ""));
+    let client = network.apply(reqwest::Client::builder().timeout(TIMEOUT)).build().unwrap();
+    let body = client.get("http://api.test/v1/models").send().await.unwrap().text().await.unwrap();
+    assert_eq!(body, "via proxy");
+    {
+        let asked = asked.lock();
+        assert_eq!(asked[0].0, "GET http://api.test/v1/models HTTP/1.1");
+        let token = base64::engine::general_purpose::STANDARD.encode("alice:s3cr:et@");
+        assert_eq!(asked[0].1.as_deref(), Some(format!("Basic {token}").as_str()));
+    }
+    network.set(ProxyPlan::Off);
+    assert!(client.get("http://api.test/v1/models").send().await.is_err(), "direct: the name does not resolve");
+    assert_eq!(asked.lock().len(), 1);
+    network.set(manual(&format!("http://{proxy}"), None, None, "api.test"));
+    assert!(client.get("http://api.test/v1/models").send().await.is_err(), "no-proxy hosts go direct");
+    assert_eq!(asked.lock().len(), 1);
+    network.set(manual(&format!("http://{proxy}"), None, None, ""));
+    assert_eq!(client.get("http://api.test/").send().await.unwrap().text().await.unwrap(), "via proxy");
+    assert_eq!(asked.lock()[1].1, None, "no credentials set, none sent");
+    let local = local_http().await;
+    assert_eq!(client.get(format!("http://127.0.0.1:{}/", local.port())).send().await.unwrap().text().await.unwrap(), "local");
+    assert_eq!(client.get(format!("http://localhost:{}/", local.port())).send().await.unwrap().text().await.unwrap(), "local");
+    assert_eq!(asked.lock().len(), 2, "this device's own servers never reach the proxy");
+}
+
+/// An HTTP server on this device that answers `local`.
+async fn local_http() -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let _ = read_head(&mut socket).await;
+                let _ = socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nlocal").await;
+            });
+        }
+    });
+    addr
+}

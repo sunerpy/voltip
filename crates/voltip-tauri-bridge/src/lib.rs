@@ -435,6 +435,23 @@ pub enum UiCommand {
     ServeCopyToken,
     /// Replace the service's token.
     ServeRotateToken,
+    /// The proxy Voltip's connections go through (docs/dictation.md §24): follow the system, none,
+    /// or the manual proxy below, whose fields are kept in the other modes too. Persisted and in
+    /// force from the next request; the core re-emits `settings` and `network`.
+    SettingsSetProxy {
+        /// `system` | `off` | `manual`.
+        mode: voltip_core::ProxyMode,
+        /// `http://host:port`, `socks5://…` or `socks5h://…`; `host:port` is HTTP.
+        server: Option<String>,
+        /// The user name the proxy wants, if any.
+        username: Option<String>,
+        /// The hosts that go direct, comma-separated.
+        no_proxy: String,
+        /// The password for the keychain: `null` keeps the saved one, `""` removes it.
+        password: Option<String>,
+    },
+    /// Read the system's proxy again (the settings opened); answered by a `network` event.
+    NetworkRefresh,
     /// Close the built-in clean-up service's notice (docs/dictation.md §3.6).
     RefineNoticeClose,
 }
@@ -553,6 +570,10 @@ impl UiCommand {
             }),
             Self::ServeCopyToken => CoreCommand::ServeCopyToken,
             Self::ServeRotateToken => CoreCommand::ServeRotateToken,
+            Self::SettingsSetProxy { mode, server, username, no_proxy, password } => {
+                CoreCommand::SetProxy { proxy: voltip_core::ProxySettings { mode, server, username, no_proxy }, password }
+            }
+            Self::NetworkRefresh => CoreCommand::RefreshNetwork,
             Self::RefineNoticeClose => CoreCommand::RefineNoticeClose,
         })
     }
@@ -1069,6 +1090,23 @@ mod tests {
             let c: UiCommand = serde_json::from_str(&json).unwrap();
             assert_eq!(String::from(c.into_core().unwrap_err()), want, "{json}");
         }
+        // docs/dictation.md §24: `password: null` keeps the saved one; the core checks the rest.
+        let c: UiCommand =
+            serde_json::from_str(r#"{"command":"settings_set_proxy","mode":"off","server":"127.0.0.1:7890","username":null,"noProxy":"","password":null}"#)
+                .unwrap();
+        assert!(matches!(
+            c.into_core().unwrap(),
+            CoreCommand::SetProxy {
+                proxy: voltip_core::ProxySettings { mode: voltip_core::ProxyMode::Off, server: Some(ref s), username: None, ref no_proxy },
+                password: None,
+            } if s == "127.0.0.1:7890" && no_proxy.is_empty()
+        ));
+        assert!(
+            serde_json::from_str::<UiCommand>(r#"{"command":"settings_set_proxy","mode":"socks","server":null,"username":null,"noProxy":"","password":null}"#)
+                .is_err(),
+            "an unknown mode is refused"
+        );
+        assert!(matches!(serde_json::from_str::<UiCommand>(r#"{"command":"network_refresh"}"#).unwrap().into_core().unwrap(), CoreCommand::RefreshNetwork));
         let c: UiCommand = serde_json::from_str(r#"{"command":"settings_set_serve","enabled":true,"port":47840,"preset":"prompt","scene":null}"#).unwrap();
         assert!(matches!(
             c.into_core().unwrap(),

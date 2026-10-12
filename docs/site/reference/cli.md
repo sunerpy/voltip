@@ -86,7 +86,7 @@ These options print their result and exit:
 
 | Option | Output |
 | --- | --- |
-| `--check` | The services, the default processing, the limits and any warnings |
+| `--check` | The services, the network proxy, the default processing, the limits and any warnings |
 | `--print-token` | The access token, created the first time |
 | `--list-models`, `--download-model <id>`, `--list-compute` | The same as for `voltip-desktop` |
 
@@ -97,3 +97,5 @@ These options print their result and exit:
 | 2 | Options that do not go together, or an unknown option |
 
 Without a system keychain, provider keys can come from the environment, which wins over the keychain: `VOLTIP_KEY_OPENAI`, `VOLTIP_KEY_GROQ`, `VOLTIP_KEY_SILICONFLOW`, `VOLTIP_KEY_ALIYUN`, `VOLTIP_KEY_DEEPSEEK`, `VOLTIP_KEY_CUSTOM_ASR`, `VOLTIP_KEY_CUSTOM_LLM`. See [Local service](/recognition/service#on-a-server-without-a-desktop).
+
+`voltip-server` connects through the [network proxy](/recognition/cloud#network-proxy) set in the app, and applies a change when the settings change; the proxy's password is read from the keychain once, at start. Following the system, it reads the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` environment variables, which on a server without a keychain can also carry the user name and password: `HTTPS_PROXY=http://<user>:<password>@<host>:<port>`. `--download-model` uses the same proxy.

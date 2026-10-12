@@ -46,6 +46,7 @@ impl Runtime {
             let mut cfg = LinkConfig::new(endpoint.clone());
             cfg.client_version = self.config.client_version.clone();
             cfg.connect_timeout = PROBE_TIMEOUT;
+            cfg.network = voltip_net::NetworkRef::new(&self.config.network);
             cfg
         });
         let relay_configured = relay.is_some();

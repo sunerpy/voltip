@@ -16,6 +16,7 @@
 | `voltip-inject` | `inject(text) -> Injection`：备份剪贴板 → 写入文本 → 发 `Ctrl+V`（macOS `Cmd+V`）→ 600 ms 后恢复剪贴板；任何一步失败都把文本留在剪贴板并返回 `Via::Clipboard` + 原因；`Injector` trait + `FakeInjector` | arboard 3.6、enigo 0.6（x11rb / SendInput / CGEvent） | trait 假实现；真实实现只在有显示器时冒烟 |
 | `voltip-asr-local` | 本地引擎（§10）：`catalogue`（6 条目录，含隐藏的 `silero-vad`）、`store`（下载 / 校验 / 安装，§12 辅助条目随首个模型下载）、`transcriber`（`LocalTranscriber`，按条目引擎分派：`gguf.rs` transcribe.cpp、`sherpa.rs` sherpa-onnx；`vad_trim` 时先经 `vad.rs` 裁剪）、`streaming`（`LocalStreamingTranscriber`，§11 实时预览）、`vad`（`VadTrimmer`，§12 Silero VAD 首尾裁剪）、`segmenter`（`VadSegmenterFactory`，§22 长录音在停顿处切段） | transcribe-cpp 0.2.3（静态，CPU）、sherpa-onnx 1.13.8（动态）、rubato | 假加载器 / 假 VAD 单测；`tests/real.rs` 四条 `#[ignore]` 真模型测试 |
 | `voltip-core` | `dictation` 模块：状态机 + 编排（含 §11 的解码线程 `run_live` 与 `Listening.live` / `Processing.preview`，§22 长录音 `long.rs`）；`history` 模块：`history.sqlite3`（§4.3，上限 2 万条）、用 AI 预设处理与导出（§22）；`engines` 模块：默认值解析（`option_env!`）与 `EngineSettings`；`models` 模块：模型库端口；秘密经 `SecretStore` | 只依赖 trait（`AudioSource` / `Capture` / `LivePcm` / `Transcriber` / `StreamingTranscriber` / `Refiner` / `Injector` / `ModelManager`），不依赖 cpal / rtrb / reqwest / enigo / sherpa | 假实现驱动完整状态机（`fakes.rs`：`FakeAudio` 带假 tap、`FakeStreaming` 脚本会话、`FakeModels`） |
+| `voltip-net` | 网络代理（§24）：`Network`（进程内的代理计划：跟随系统 / 不使用 / 手动）、`apply`（给 reqwest 客户端加一个每个请求都问计划的代理）、`connect`（为 WebSocket 打开直连、HTTP CONNECT 或 SOCKS5 的 TCP 流） | reqwest、hyper-util（`client-proxy-system`：系统代理读取，CONNECT 与 SOCKS5 连接器） | 记录请求的假 HTTP / SOCKS5 代理 |
 | `voltip-serve` | 本机语音服务的 HTTP 层（§23）：`ServeHandle`（路由、令牌、准入、边收边解码的 WAV 上传、OpenAI 的返回与错误格式）与 `HttpHost`（核心 `ServeHost` 端口的实现，桌面 App 用）；处理本身在 `voltip_core::serve` | axum 0.8（`multipart`）、hound、rubato、subtle | `tower::ServiceExt::oneshot` 加假 `SpeechService`；真实 socket |
 | `apps/server` | 无头服务端 `voltip-server`（§23.5）：命令行、读 App 的数据目录、只读钥匙串、信号与退出 | voltip-core、voltip-cloud、voltip-asr-local、voltip-serve；不依赖 voltip-audio、voltip-inject 和 Tauri | 假工厂下的各命令；真实二进制收到 SIGTERM 后的退出 |
 | `apps/desktop/src-tauri` | 把真实实现注入核心；热键按下 / 释放 → `DictationStart` / `DictationStop`；悬浮胶囊跟随 `DictationPhase` | 全部 crate | mock runtime IPC |
@@ -1849,3 +1850,76 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - TTS；流式返回部分结果（Realtime / WebSocket），以及 Paseo 原生的 provider。
 - 写入历史和统计；WAV 以外的格式；时间戳与字幕格式。
 - 密钥文件；macOS 和 Windows 的独立服务端，deb 包和容器镜像；服务端的自动更新。
+
+## 24. 网络代理（2026-10-12）
+
+**目标**：Voltip 自己发起的每个连接（语音识别、AI 润色、模型下载、检查与下载更新、反馈、与手机或电脑的中继连接）都按同一个代理设置连接网络。缺省跟随系统，也可以不使用代理，或手动设置代理服务器。代理计划在 `crates/voltip-net`，核心把 `Settings.proxy` 放到它上面，各个 shell 把同一个计划交给自己建的每个客户端。
+
+### 24.1 起因与决定
+
+- 用户要求（2026-10-12）：为语音模型和 AI 润色加入代理设置，可以在全局设置中启用或停用，可以设置代理地址与不使用代理的地址（no_proxy），检查更新和升级版本也走这个代理；缺省跟随系统，允许手动设置。
+- 方式：跟随系统（缺省）、不使用代理、手动设置。手动设置的代理只支持 `http://`、`socks5://` 与 `socks5h://`：中继和实时识别的 WebSocket 连接要在代理上开隧道（HTTP `CONNECT` 或 SOCKS5），到代理本身再套一层 TLS 的 `https://` 代理不在其列（§24.9）。
+
+### 24.2 范围
+
+| 连接 | 桌面 | 手机 | `voltip-server` |
+|---|---|---|---|
+| 云端语音识别（HTTP；阿里云百炼的实时 WebSocket，§3.4） | 是 | 是 | 是 |
+| AI 润色、语音编辑 | 是 | 是 | 是 |
+| 服务商的「测试连接」（`provider_probe`） | 是 | 是 | — |
+| 本地模型下载（含 `--download-model`） | 是 | — | 是 |
+| 反馈（`feedback_submit`） | 是 | 是 | — |
+| 检查更新、下载更新包 | 是（tauri-plugin-updater 的检查与下载） | 检查更新（安装包由浏览器下载） | — |
+| 中继连接与连接自检（§20，`docs/pairing.md`） | 是 | 是 | — |
+
+- 这台设备自己的地址始终直连，不管哪种方式：`localhost`、`*.localhost`、`127.0.0.0/8`、`::1`、`0.0.0.0`。本机的 Ollama、本机语音服务（§23）不会被发给代理。
+- 不在其内：浏览器打开的页面（服务商控制台、使用指南、手机安装包的下载）按浏览器自己的代理设置；Google Play 的更新由 Play 负责。
+
+### 24.3 设置与密码
+
+- `Settings.proxy: ProxySettings { mode: system | off | manual（缺省 system）, server?, username?, no_proxy }`，`#[serde(default)]`，旧的设置文件读作跟随系统。换成其他方式时，手动代理的地址、用户名和不使用代理的地址保留，换回来不必重填。
+- 密码只在钥匙串里（`network-proxy-password`，`voltip_core::PROXY_PASSWORD_ENTRY`），不写进 `settings.json`，界面只知道有没有保存（`UiState.network.proxy_password`）。App 启动时不管哪种方式都读一次，与服务商密钥一样，macOS 应用内更新时随交接带给新版本（`voltip_identity::PerBuildStore`）；`voltip-server` 与桌面 CLI 的 `--download-model` 用 `peek` 读，不弹窗、不移动条目。
+- 保存前的检查（`ProxySettings::checked`、`voltip_net::parse_server` / `parse_no_proxy`；界面用 `packages/shared/src/proxy.ts` 的同样规则先检查，用例与 Rust 相同）：
+  - 代理地址：`scheme://host:port`，只写 `host:port` 时按 `http`；必须写端口；不能带用户名和密码（它们有自己的字段）、路径、查询或片段。保存为 `scheme://host:port`，端口总是写出（`http://localhost:80` 保存后仍是它）。
+  - 不使用代理的地址：用逗号、分号或空白分隔；每一项是主机、域名（包括它的子域名，前缀 `*.` 与 `.` 同义）、IP 地址、网段（`10.0.0.0/8`）或 `*`（全部直连）。保存为逗号分隔的小写列表，最长 4096 字节。
+  - 用户名最长 256 字节、不含控制字符；密码最长 1024 字节；设置密码时必须有用户名。
+  - 手动方式必须有代理地址；其他方式下保留的字段同样要检查。
+- 被手工改坏的设置文件（界面不会保存这样的设置）：跟随系统，启动时提示「代理设置无法使用，已改为跟随系统：<原因>」，设置文件保持原样，等用户改正。
+
+### 24.4 跟随系统
+
+- 桌面：每个请求都重新读系统的代理设置（hyper-util `Matcher::from_system`，`client-proxy-system`）：先读环境变量 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY`、`NO_PROXY`（大小写均可，环境变量里的用户名密码照常使用），环境变量没有给出的，macOS 读网络设置（SCDynamicStore 的 HTTP / HTTPS 代理），Windows 读 Internet 选项（注册表的 `ProxyServer` 与 `ProxyOverride`）。Linux 只读环境变量，不读 GNOME、KDE 的代理设置；PAC 与 WPAD 都不读。
+- 手机（Android）：Rust 读不到系统的代理。`VoltipNativeModule.kt` 的默认网络回调在 `onLinkPropertiesChanged`（网络连上后立即回调一次，属性变化时再回调）把代理交给 shell：设备级代理（`ConnectivityManager.getDefaultProxy()`，由管理员设置）优先，否则用 `LinkProperties.httpProxy`；`VoltipShell.setNetworkProxy(host, port, exclusions)` → `Shell::set_platform_proxy` → `Network::set_platform_proxy`。排除列表里读不懂的项被略过，代理照常生效；只给了 PAC 文件的代理按没有代理处理（记一条日志）。
+- 界面显示跟随系统现在意味着什么：`UiState.network.system_proxy`，即一个 `https://` 请求现在会经过的代理（不含用户名和密码），没有代理时为空。打开设置页（`network_refresh`）、点「重新读取」、手机的网络代理变化时重新读取；跟随系统且读到的代理变了时，核心重建识别与润色的客户端并重连中继。
+
+### 24.5 实现（`crates/voltip-net`）
+
+- `Network`：一个进程的代理计划（`ProxyPlan::{System, Off, Manual}`）加上手机交进来的平台代理，读写锁保护，`Arc` 共享。`CoreConfig::network` 由 shell 创建并交给核心，同一个 `Arc` 交给识别与润色的工厂、模型库、服务商探测、反馈、更新。客户端配置里存的是 `NetworkRef`（按指针比较，缺省是进程内一个跟随系统的计划，供工具和测试用）。
+- HTTP：`Network::apply(reqwest::ClientBuilder)` 加一个 `Proxy::custom`，每个请求都问一次计划，改设置不必重建客户端；返回的代理地址带着百分号编码的用户名和密码，reqwest 据此发 `Proxy-Authorization`（HTTP 代理）或做 SOCKS5 的用户名密码认证（RFC 1929）。加了它就不再用 reqwest 自己读环境变量的系统代理。连接池里已经打开的连接仍走旧路线，所以计划变化时核心调用 `reconfigure_engines()`（新客户端，空连接池）并重连中继；`voltip-server` 重读设置后若计划变了，重建客户端（`FileSource`）。
+- WebSocket：`Network::connect(url, timeout)` 打开到目标的 TCP 流：直连；HTTP 代理用 `CONNECT host:port`（hyper-util `Tunnel`，带 `Proxy-Authorization`）；SOCKS5 用 hyper-util `SocksV5`，`socks5` 在本机解析域名，`socks5h` 让代理解析。TLS 和 WebSocket 握手在这条流上进行（`tokio_tungstenite::client_async_tls_with_config`）。用于阿里云百炼的实时识别（`voltip-asr` `duplex.rs`）和中继链路（`voltip-transport` `link.rs`，含 `probe` 与连接自检）。系统给出的 `https://` 代理在这里不能用，连接以 `ConnectError::Unsupported` 失败。
+- 更新：桌面的 `tauri-plugin-updater` 在它自己的客户端设置之后调用 `configure_client`，Voltip 在那里加上代理，检查和下载都经过它（`update.rs`，`UpdateSlot::with_network`）。手机的检查更新用 `voltip_cloud::http_client_builder(network)`。
+- 日志：`proxy plan` 只记方式和代理的类型（`manual socks5h (signs in)`），不记地址；连接错误的文本不含代理的主机和用户名密码（AGENTS.md：主机名不进日志）。设置页和 `voltip-server --check` 显示用户自己设置的地址，从不显示密码。
+
+### 24.6 命令与状态
+
+- `settings_set_proxy { mode, server, username, noProxy, password }`（`CoreCommand::SetProxy`）：`password` 为 `null` 时保留已保存的，为 `""` 时删除。先检查全部字段，再写钥匙串、保存设置、生效；计划变了才重建客户端、重连中继。被拒绝时什么也不保存，`error` 事件以 `proxy.<字段>: <原因>` 开头。
+- `network_refresh`（`CoreCommand::RefreshNetwork`）：重新读取系统的代理，发 `network` 事件。
+- `UiState.network: NetworkStatus { proxy_password, system_proxy? }`，启动时和每次变化时发 `network` 事件。
+- 界面：桌面「设置 › 网络」（`/settings/network`）；手机「设置 › 通用 › 网络」。选「跟随系统」或「不使用代理」立即生效；选「手动设置」时，已经保存过代理地址的立即生效，否则等填好后「保存」。密码框只用来输入新密码，已保存时提示「已保存，输入新密码可替换」，旁边是「清除密码」。旧的 Tauri 手机应用（`apps/mobile`，不再发布）注册了这两个命令，没有界面。
+
+### 24.7 `voltip-server`
+
+- 读 App 的 `settings.json` 里的代理设置，设置文件变化时重新应用；密码在启动时随密钥从钥匙串读一次，钥匙串完全不能读时没有密码。
+- `--check` 多一行「网络代理：跟随系统（http://127.0.0.1:7890）」「不使用代理」或「手动设置（socks5h://127.0.0.1:1080，需要登录）；不使用代理：corp.example.com」；设置不能用时在警告里说明。`--download-model` 同样经过代理。
+- 没有桌面会话的服务器上，跟随系统时设置 `HTTPS_PROXY=http://<user>:<password>@<host>:<port>` 即可，不必用钥匙串。
+
+### 24.8 门禁
+
+- `voltip-net`：计划与匹配（不使用代理的地址、本机直连、`ws` / `wss` 按 `http` / `https`）、跟随系统时每个请求重读与环境里的用户名密码、平台代理与排除列表、HTTP `CONNECT` 与 SOCKS5（有无用户名密码，`socks5` 与 `socks5h`）、reqwest 客户端逐个请求跟随计划、本机地址从不经过代理、错误不含主机与用户名密码、地址与列表的规整。
+- `voltip-core/tests/network.rs`（真实核心任务、真实中继、记录请求的假代理）：中继按保存的计划经手动代理连接、带钥匙串里的密码；被拒绝的改动不保存；保存规整后的设置、密码保留与删除、重建客户端并经新的代理重连；跟随系统的重新读取（变了才重建，手动方式下只显示）；手工改坏的设置；旧设置文件。`serve::tests`：服务端随设置切换计划，路线变了才重建客户端。
+- bridge 单测与 IPC 夹具（`settings_set_proxy`、`network_refresh`、`network` 事件、`Settings.proxy`、`UiState.network`）。
+- TS：`proxy.test.ts`（与 Rust 相同的用例、中英文文案、`MockBackend`），桌面「设置 › 网络」4 条（含英文界面），手机网络页 2 条。
+
+### 24.9 未做
+
+- PAC 与 WPAD 自动配置；Linux 桌面环境（GNOME、KDE）自己的代理设置；`https://` 代理（到代理本身也走 TLS）；按服务分别设置代理；代理的 NTLM、Kerberos 认证。

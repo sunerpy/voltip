@@ -1,6 +1,6 @@
 // 设置, the third tab (apps/mobile's Settings): the phone's own recognition and clean-up, its
-// vocabulary, appearance, history and recording length, this device and its pairings, and About.
-// A take sent to a computer still follows the computer's settings.
+// vocabulary, appearance, history and recording length, its network proxy, this device and its
+// pairings, and About. A take sent to a computer still follows the computer's settings.
 import {
   type TFunction,
   formatCount,
@@ -132,6 +132,19 @@ export function Settings() {
             })}
             onPress={open("Recording")}
             testID="settings-recording"
+          />
+          <NavRow
+            icon="web"
+            title={t("mobile.title.network")}
+            description={
+              settings.proxy.mode === "manual"
+                ? t("mobile.settings.networkManual", { server: settings.proxy.server ?? "—" })
+                : settings.proxy.mode === "off"
+                  ? t("mobile.settings.networkOff")
+                  : t("mobile.settings.networkSystem")
+            }
+            onPress={open("Network")}
+            testID="settings-network"
           />
         </Rows>
       </Section>

@@ -119,7 +119,7 @@ fn ready_settings() -> Settings {
 /// recogniser in place of the device's and the cloud's.
 fn phone_ports_recognising(host: Arc<RecordingHost>, transcriber: FakeTranscriber) -> DictationPorts {
     let fake = fakes::ports_with(Arc::new(FakeAudio::speech()), Arc::new(transcriber), None, Arc::new(FakeInjector::paste()));
-    DictationPorts { audio: fake.audio, factory: fake.factory, ..voltip_rn::shell::phone_ports(host) }
+    DictationPorts { audio: fake.audio, factory: fake.factory, ..voltip_rn::shell::phone_ports(host, &voltip_net::Network::new()) }
 }
 
 impl Drop for Running {

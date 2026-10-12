@@ -10,6 +10,7 @@ import { General } from "./General";
 import { Dictation } from "./Dictation";
 import { Hotkey } from "./Hotkey";
 import { Microphone } from "./Microphone";
+import { NetworkPane } from "./NetworkPane";
 import { PrivacyPane } from "./PrivacyPane";
 import { ServicePane } from "./ServicePane";
 import { ScenesPane } from "./scenes/ScenesPane";
@@ -25,7 +26,8 @@ function tabId(section: string): string {
  *  nav and the panes carry no English eyebrows or key suffixes: one language per locale (user
  *  2026-09-25, docs/frontend.md §6.4). 通用, 热键, 麦克风 (the input device and its test), 场景 (the
  *  scenes and the context switches,
- *  docs/dictation.md §18), 隐私 (what leaves the computer, the history switch and retention), 外观
+ *  docs/dictation.md §18), 隐私 (what leaves the computer, the history switch and retention), 网络
+ *  (the proxy every connection goes through, §24), 外观
  *  and 关于 (version, license, model sources, updates) are all backed by the core. 语音模型 and AI
  *  模型 are pages of the main layout (user feedback 2026-09-28). Esc and the scrim close back to
  *  the router's `background`; ↑/↓ move between groups. */
@@ -172,6 +174,7 @@ export function SettingsDialog({ section }: { section: SettingsSection }) {
               {section === "scene" && <ScenesPane />}
               {section === "privacy" && <PrivacyPane />}
               {section === "service" && <ServicePane />}
+              {section === "network" && <NetworkPane />}
               {section === "about" && <AboutPane />}
             </div>
           </div>

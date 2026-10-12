@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("asr model: {}  refine model: {}  (hosts come from the build; see docs/runbook.md)", resolved.asr_model, resolved.refine_model);
     // The example only exercises the cloud path; the local transcriber needs no model here.
     let local = voltip_asr_local::LocalTranscriber::new(std::env::temp_dir().join("voltip-example-models"));
-    let (asr, refiner) = build_clients(&resolved, &local);
+    let (asr, refiner) = build_clients(&resolved, &local, &voltip_net::Network::new());
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     rt.block_on(async {
         let t = tokio::time::timeout(Duration::from_secs(90), asr.transcribe(&wav, Some("zh"), &[])).await??;

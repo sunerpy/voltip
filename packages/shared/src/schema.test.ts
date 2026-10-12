@@ -52,6 +52,7 @@ import type { EngineStatus, HistoryEntry, UiState } from "./schema";
 function baseState(): UiState {
   return {
     serve: { available: true, phase: "off" },
+    network: { proxy_password: false },
     sent_texts: [],
     mirrors: [],
     phone_outbox_too_large: [],

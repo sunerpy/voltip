@@ -232,6 +232,139 @@ pub struct Settings {
     /// and in files written before it.
     #[serde(default)]
     pub serve: ServeSettings,
+    /// The proxy Voltip's connections go through (docs/dictation.md §24); absent in files written
+    /// before it (= follow the system).
+    #[serde(default)]
+    pub proxy: ProxySettings,
+}
+
+/// The keychain entry of the manual proxy's password (docs/dictation.md §24).
+pub const PROXY_PASSWORD_ENTRY: &str = "network-proxy-password";
+
+/// `Settings.proxy` (docs/dictation.md §24): how recognition, AI polish, model downloads,
+/// feedback, update checks and downloads, and the WebSocket connections reach the network. The
+/// password is in the keychain ([`PROXY_PASSWORD_ENTRY`]), never here.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProxySettings {
+    /// Follow the system (the default), go direct, or use the proxy below.
+    pub mode: ProxyMode,
+    /// The manual proxy: `http://host:port`, `socks5://…` or `socks5h://…` (`host:port` is HTTP).
+    /// Kept while another mode is chosen, so switching back finds it.
+    pub server: Option<String>,
+    /// The user name the manual proxy wants, if any.
+    pub username: Option<String>,
+    /// The hosts the manual proxy is not used for (comma-separated: hosts, domains with their
+    /// subdomains, IP addresses, networks). This device's own addresses are never proxied.
+    pub no_proxy: String,
+}
+
+/// `ProxySettings.mode`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProxyMode {
+    /// The system's proxy: the environment, macOS's network settings, Windows' Internet Options,
+    /// Android's network proxy.
+    #[default]
+    System,
+    /// Direct, whatever the system says.
+    Off,
+    /// [`ProxySettings::server`].
+    Manual,
+}
+
+impl ProxySettings {
+    /// These settings checked and tidied as they are saved: the server as `scheme://host:port`,
+    /// the user name trimmed, the no-proxy list comma-separated. The manual mode needs a server;
+    /// the others keep the manual proxy's fields for later, checked all the same.
+    pub fn checked(&self) -> Result<Self, voltip_net::ProxyError> {
+        let username = self.username.as_deref().map(str::trim).filter(|u| !u.is_empty());
+        if username.is_some_and(|u| u.len() > voltip_net::MAX_USERNAME_BYTES || u.contains(char::is_control)) {
+            return Err(voltip_net::ProxyError::Username);
+        }
+        let no_proxy = voltip_net::parse_no_proxy(&self.no_proxy)?;
+        let server = match self.server.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(server) => Some(voltip_net::ManualProxy::new(server, username, None, &no_proxy)?.address()),
+            None if self.mode == ProxyMode::Manual => return Err(voltip_net::ProxyError::Empty),
+            None => None,
+        };
+        Ok(Self { mode: self.mode, server, username: username.map(str::to_owned), no_proxy })
+    }
+
+    /// The plan these settings ask for, with the keychain's `password` for a manual proxy that
+    /// signs in. A manual proxy that cannot be used says why ([`proxy_error_text`]).
+    pub fn plan(&self, password: Option<&str>) -> Result<voltip_net::ProxyPlan, voltip_net::ProxyError> {
+        Ok(match self.mode {
+            ProxyMode::System => voltip_net::ProxyPlan::System,
+            ProxyMode::Off => voltip_net::ProxyPlan::Off,
+            ProxyMode::Manual => voltip_net::ProxyPlan::Manual(voltip_net::ManualProxy::new(
+                self.server.as_deref().unwrap_or_default(),
+                self.username.as_deref(),
+                password,
+                &self.no_proxy,
+            )?),
+        })
+    }
+
+    /// [`Self::plan`], or following the system when these settings cannot be used (a settings
+    /// file edited by hand: the interface saves none such), with the reason to tell the user.
+    pub fn plan_or_system(&self, password: Option<&str>) -> (voltip_net::ProxyPlan, Option<String>) {
+        match self.plan(password) {
+            Ok(plan) => (plan, None),
+            Err(e) => {
+                tracing::warn!(error = %e, "the proxy settings cannot be used; following the system's proxy");
+                (voltip_net::ProxyPlan::System, Some(format!("代理设置无法使用，已改为跟随系统：{}", proxy_error(&e).1)))
+            }
+        }
+    }
+}
+
+/// Why a proxy setting cannot be used: the field (`proxy.server` …) and the reason, as the
+/// settings pane shows it.
+pub fn proxy_error(error: &voltip_net::ProxyError) -> (&'static str, String) {
+    use voltip_net::ProxyError as E;
+    match error {
+        E::Empty => ("proxy.server", "手动代理需要填写代理地址".into()),
+        E::Invalid(_) => ("proxy.server", "代理地址无效".into()),
+        E::Scheme(scheme) => ("proxy.server", format!("不支持 {scheme} 代理，可以使用 http、socks5、socks5h")),
+        E::Credentials => ("proxy.server", "地址中不要包含用户名或密码，请填写在用户名和密码中".into()),
+        E::Port => ("proxy.server", "代理地址缺少端口，例如 127.0.0.1:7890".into()),
+        E::Path => ("proxy.server", "代理地址只需要协议、主机和端口".into()),
+        E::NoProxyEntry(entry) => ("proxy.no_proxy", format!("「{entry}」不是有效的主机、域名、IP 地址或网段")),
+        E::NoProxyTooLong => ("proxy.no_proxy", "不使用代理的地址过多".into()),
+        E::Username => ("proxy.username", "用户名无效".into()),
+        E::Password => ("proxy.password", "密码过长".into()),
+    }
+}
+
+/// [`proxy_error`] as one line, `field: reason`.
+pub fn proxy_error_text(error: &voltip_net::ProxyError) -> String {
+    let (field, reason) = proxy_error(error);
+    format!("{field}: {reason}")
+}
+
+/// The manual proxy's password from the keychain ([`PROXY_PASSWORD_ENTRY`]). The app reads it at
+/// start whatever the mode, so that an update hands it to the next build like the provider keys
+/// (`voltip_identity::PerBuildStore`). A store that cannot be read leaves it unset (and logs).
+pub fn load_proxy_password(store: &dyn voltip_identity::SecretStore) -> Option<String> {
+    read_proxy_password(store, false)
+}
+
+/// [`load_proxy_password`] with no side effect ([`voltip_identity::SecretStore::peek`]), for the
+/// local speech service, which shares the app's keychain items (docs/dictation.md §23).
+pub fn peek_proxy_password(store: &dyn voltip_identity::SecretStore) -> Option<String> {
+    read_proxy_password(store, true)
+}
+
+fn read_proxy_password(store: &dyn voltip_identity::SecretStore, read_only: bool) -> Option<String> {
+    let read = if read_only { store.peek(PROXY_PASSWORD_ENTRY) } else { store.get(PROXY_PASSWORD_ENTRY) };
+    match read {
+        Ok(value) => value.and_then(|bytes| String::from_utf8(bytes.to_vec()).ok()).filter(|p| !p.is_empty()),
+        Err(e) => {
+            tracing::warn!(error = %e, secret = PROXY_PASSWORD_ENTRY, backend = store.backend_name(), "secret store read failed; treating as unset");
+            None
+        }
+    }
 }
 
 /// `Settings.serve`: whether the app serves other programs on this computer, on which port, and
@@ -301,6 +434,7 @@ impl Default for Settings {
             microphone: None,
             recording: RecordingSettings::default(),
             serve: ServeSettings::default(),
+            proxy: ProxySettings::default(),
         }
     }
 }

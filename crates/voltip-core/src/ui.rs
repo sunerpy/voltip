@@ -146,6 +146,9 @@ pub enum UiEvent {
     Connectivity(crate::connectivity::ConnectivityStatus),
     /// The local speech service started, stopped or failed to start (docs/dictation.md §23.6).
     Serve(ServeStatus),
+    /// The proxy's password was saved or removed, or the system's proxy was read again
+    /// (docs/dictation.md §24).
+    Network(NetworkStatus),
     /// The built-in clean-up service's notice came or went (docs/dictation.md §3.6).
     RefineNotice {
         /// The notice; `None` once it is gone.
@@ -327,6 +330,20 @@ pub struct ServeStatus {
     pub error: Option<String>,
 }
 
+/// `UiState.network` (docs/dictation.md §24): what the proxy settings (`Settings.proxy`) cannot
+/// show by themselves.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NetworkStatus {
+    /// A password for the manual proxy is in the keychain (the password itself never leaves it).
+    pub proxy_password: bool,
+    /// The proxy following the system means now for an `https://` request (`scheme://host:port`,
+    /// without credentials); `None`: the system sets none, requests go direct. Read at start, when
+    /// the proxy settings change, and on `RefreshNetwork`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_proxy: Option<String>,
+}
+
 /// The machine as the local engines see it (docs/dictation.md §10.6). Shell-owned: empty until the
 /// desktop shell reports, always empty on the phone.
 #[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
@@ -474,6 +491,9 @@ pub struct UiState {
     /// where the shell cannot host it (the phone).
     #[serde(default)]
     pub serve: ServeStatus,
+    /// The proxy's password and the system's proxy (docs/dictation.md §24).
+    #[serde(default)]
+    pub network: NetworkStatus,
     /// The built-in clean-up service turned a take down for want of capacity (docs/dictation.md
     /// §3.6); `None` when there is nothing to say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -519,6 +539,7 @@ impl Default for UiState {
             mirrors: Vec::new(),
             phone_outbox_too_large: Vec::new(),
             serve: ServeStatus::default(),
+            network: NetworkStatus::default(),
             refine_notice: None,
         }
     }
@@ -629,6 +650,10 @@ impl UiState {
             CoreEvent::Serve(status) => {
                 self.serve = status.clone();
                 UiEvent::Serve(status)
+            }
+            CoreEvent::Network(status) => {
+                self.network = status.clone();
+                UiEvent::Network(status)
             }
             CoreEvent::PhoneTake(take) => {
                 self.phone_take = take.clone();

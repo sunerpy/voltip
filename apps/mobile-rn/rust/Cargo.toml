@@ -30,6 +30,9 @@ uuid.workspace = true
 voltip-audio.workspace = true
 # A take the phone recognises itself (docs/dictation.md §20.7): the built-in cloud services.
 voltip-cloud.workspace = true
+# The proxy every connection follows; Android's network proxy comes from the Kotlin side
+# (docs/dictation.md §24).
+voltip-net.workspace = true
 voltip-core.workspace = true
 voltip-identity = { workspace = true, features = ["android-keystore"] }
 # Wire types of the platform queries (docs/dictation.md §15); the phone answers `not_applicable`.

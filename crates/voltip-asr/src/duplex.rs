@@ -48,6 +48,8 @@ pub struct DuplexOptions {
     pub model: String,
     /// `payload.parameters` of `run-task`.
     pub parameters: Map<String, Value>,
+    /// The proxy plan the WebSocket follows (docs/dictation.md §24).
+    pub network: voltip_net::NetworkRef,
 }
 
 impl std::fmt::Debug for DuplexOptions {
@@ -151,7 +153,11 @@ async fn open(options: &DuplexOptions) -> Result<(DuplexSender, DuplexReceiver),
         let value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| AsrError::InvalidConfig("the key is not a valid header value".into()))?;
         headers.insert("authorization", value);
     }
-    let (socket, _) = tokio_tungstenite::connect_async(request).await.map_err(map_ws)?;
+    // The TCP stream comes through the proxy when the plan says so; TLS and the handshake run on it
+    // as `connect_async` would run them.
+    let url = url::Url::parse(&options.url).map_err(|e| AsrError::InvalidConfig(format!("realtime endpoint: {e}")))?;
+    let stream = options.network.connect(&url, CONNECT_TIMEOUT).await.map_err(|e| AsrError::Network(format!("realtime connection: {e}")))?;
+    let (socket, _) = tokio_tungstenite::client_async_tls_with_config(request, stream, None, None).await.map_err(map_ws)?;
     let (mut sink, mut stream) = socket.split();
     let task_id = uuid::Uuid::new_v4().to_string();
     let run = json!({
@@ -421,7 +427,13 @@ pub(crate) mod tests {
     pub(crate) fn options(url: &str, token: Option<&str>) -> DuplexOptions {
         let mut parameters = Map::new();
         parameters.insert("format".into(), json!("pcm"));
-        DuplexOptions { url: url.to_owned(), token: token.map(str::to_owned), model: "qwen-audio-3.1-asr-flash-streaming".into(), parameters }
+        DuplexOptions {
+            url: url.to_owned(),
+            token: token.map(str::to_owned),
+            model: "qwen-audio-3.1-asr-flash-streaming".into(),
+            parameters,
+            network: voltip_net::NetworkRef::default(),
+        }
     }
 
     fn client_at(url: &str, model: &str) -> DashscopeClient {

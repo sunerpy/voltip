@@ -62,6 +62,11 @@ pub struct Wiring {
     pub secrets_from_env: Vec<String>,
     /// The service compiled into the build.
     pub built_in: BuiltIn,
+    /// The proxy plan of the process (docs/dictation.md §24): the factory's clients and the model
+    /// downloads go through it, and the settings' proxy is put in force on it as they are read.
+    pub network: Arc<voltip_net::Network>,
+    /// The manual proxy's password, read once with the keys.
+    pub proxy_password: Option<String>,
 }
 
 /// Where the local recogniser runs, from the engine settings (as the desktop shell's `compute_of`).
@@ -70,16 +75,17 @@ fn compute_of(engines: &ResolvedEngines) -> Compute {
 }
 
 /// The clients for a configuration, built as the desktop shell's `build_clients` builds them: the
-/// one local recogniser pointed at the selected model, or the cloud client; the cloud clean-up.
-pub fn engine_factory(local: LocalTranscriber) -> EngineFactory {
+/// one local recogniser pointed at the selected model, or the cloud client; the cloud clean-up. The
+/// cloud clients go through `network`.
+pub fn engine_factory(local: LocalTranscriber, network: Arc<voltip_net::Network>) -> EngineFactory {
     Arc::new(move |engines: &ResolvedEngines| {
         let transcriber: Arc<dyn Transcriber> = if engines.is_local() {
             let id = engines.local_model.as_ref().map_or(voltip_asr_local::DEFAULT_MODEL_ID, |m| m.id.as_str());
             Arc::new(local.select(id).with_vad_trim(engines.vad_trim).with_compute(compute_of(engines)))
         } else {
-            voltip_cloud::remote_transcriber(engines)
+            voltip_cloud::remote_transcriber(engines, &network)
         };
-        let refiner: Option<Arc<dyn Refiner>> = voltip_cloud::refiner(engines);
+        let refiner: Option<Arc<dyn Refiner>> = voltip_cloud::refiner(engines, &network);
         (transcriber, refiner)
     })
 }
@@ -127,11 +133,15 @@ pub fn with_env_keys(mut secrets: UserSecrets, env: impl Fn(&str) -> Option<Stri
 /// The production wiring over `data_dir`'s model library.
 pub fn production_wiring(data_dir: &Path) -> Wiring {
     let models_root = CoreConfig::new(data_dir.to_path_buf()).models_root;
-    let store = ModelStore::new(models_root.clone());
-    let (secrets, secrets_notice) = read_secrets(secret_store().as_ref());
+    let network = voltip_net::Network::new();
+    let store = ModelStore::new(models_root.clone()).with_network(&network);
+    let keychain = secret_store();
+    let (secrets, secrets_notice) = read_secrets(keychain.as_ref());
+    // The proxy's password, when the keychain can be read at all (docs/dictation.md §24).
+    let proxy_password = if secrets_notice.is_none() { voltip_core::peek_proxy_password(keychain.as_ref()) } else { None };
     let (secrets, secrets_from_env) = with_env_keys(secrets, |name| std::env::var(name).ok());
     Wiring {
-        factory: engine_factory(LocalTranscriber::new(models_root.clone())),
+        factory: engine_factory(LocalTranscriber::new(models_root.clone()), Arc::clone(&network)),
         models: Some(Arc::new(store)),
         // No store: a missing VAD model is never downloaded; the core's own cutter runs instead.
         segmenter: Some(Arc::new(VadSegmenterFactory::new(models_root, None))),
@@ -139,6 +149,8 @@ pub fn production_wiring(data_dir: &Path) -> Wiring {
         secrets_notice,
         secrets_from_env,
         built_in: BuiltIn::from_build(),
+        network,
+        proxy_password,
     }
 }
 
@@ -172,7 +184,7 @@ pub struct Prepared {
 /// system — a container image without ca-certificates — has none: every client then fails to
 /// build, and each request with it.
 pub fn https_unavailable() -> Option<String> {
-    voltip_cloud::http_client_builder()
+    voltip_cloud::http_client_builder(&voltip_net::Network::new())
         .build()
         .err()
         .map(|e| format!("无法建立 HTTPS 连接（{e}）：系统中没有可用的 CA 证书，请安装 ca-certificates（例如 sudo apt-get install ca-certificates）后重新启动"))
@@ -180,7 +192,7 @@ pub fn https_unavailable() -> Option<String> {
 
 /// Read the data directory and check the options against it.
 pub fn prepare(options: &ServeOptions, data_dir: &Path, wiring: Wiring) -> Result<Prepared, String> {
-    let Wiring { factory, models, segmenter, secrets, secrets_notice, secrets_from_env, built_in } = wiring;
+    let Wiring { factory, models, segmenter, secrets, secrets_notice, secrets_from_env, built_in, network, proxy_password } = wiring;
     if !secrets_from_env.is_empty() {
         // Names only: a key's value is never logged.
         tracing::info!(variables = ?secrets_from_env, "engine keys from the environment");
@@ -194,6 +206,8 @@ pub fn prepare(options: &ServeOptions, data_dir: &Path, wiring: Wiring) -> Resul
         models,
         factory,
         segmenter,
+        network,
+        proxy_password,
     };
     let (source, mut notices) = FileSource::open(config)?;
     notices.extend(secrets_notice);
@@ -213,6 +227,23 @@ pub fn prepare(options: &ServeOptions, data_dir: &Path, wiring: Wiring) -> Resul
     Ok(Prepared { service, defaults, notices, token_file, unavailable })
 }
 
+/// The proxy in force, as `--check` prints it (docs/dictation.md §24): the user's own settings, on
+/// the user's terminal, so the address is shown; never the password.
+fn proxy_text(network: &voltip_net::Network) -> String {
+    match network.plan() {
+        voltip_net::ProxyPlan::System => match network.system_https_proxy() {
+            Some(proxy) => format!("跟随系统（{}）", proxy.as_str().trim_end_matches('/')),
+            None => "跟随系统（系统未设置代理）".to_owned(),
+        },
+        voltip_net::ProxyPlan::Off => "不使用代理".to_owned(),
+        voltip_net::ProxyPlan::Manual(proxy) => {
+            let signs_in = if proxy.username().is_some() { "，需要登录" } else { "" };
+            let direct = if proxy.no_proxy().is_empty() { String::new() } else { format!("；不使用代理：{}", proxy.no_proxy()) };
+            format!("手动设置（{}{signs_in}）{direct}", proxy.address())
+        }
+    }
+}
+
 fn provider(id: ProviderId) -> &'static str {
     match id {
         ProviderId::Builtin => "内置服务",
@@ -224,6 +255,7 @@ fn provider(id: ProviderId) -> &'static str {
 /// `--check`: what the service would run with; 0 when recognition can run.
 pub fn check(options: &ServeOptions, data_dir: &Path, wiring: Wiring, out: &mut dyn Write) -> i32 {
     let from_env = wiring.secrets_from_env.clone();
+    let network = Arc::clone(&wiring.network);
     let prepared = match prepare(options, data_dir, wiring) {
         Ok(p) => p,
         Err(e) => {
@@ -250,6 +282,7 @@ pub fn check(options: &ServeOptions, data_dir: &Path, wiring: Wiring, out: &mut 
     if !from_env.is_empty() {
         let _ = writeln!(out, "密钥：取自环境变量 {}", from_env.join("、"));
     }
+    let _ = writeln!(out, "网络代理：{}", proxy_text(&network));
     let defaults = &prepared.defaults;
     let scene = match (defaults.scene, &defaults.app) {
         (Some(id), _) => state
@@ -443,7 +476,18 @@ pub fn run(action: &Action, data_dir: &Path, out: &mut dyn Write, err: &mut dyn 
     let models_root = CoreConfig::new(data_dir.to_path_buf()).models_root;
     match action {
         Action::ListModels => voltip_asr_local::cli::list_models(&models_root, out).code(),
-        Action::DownloadModel { id } => voltip_asr_local::cli::download_model(&ModelStore::new(models_root), id, out, err).code(),
+        Action::DownloadModel { id } => {
+            // The download follows the settings' proxy like the service's own (docs/dictation.md §24).
+            let wiring = production_wiring(data_dir);
+            if let Ok(settings) = voltip_core::SettingsStore::new(data_dir).load() {
+                let (plan, notice) = settings.proxy.plan_or_system(wiring.proxy_password.as_deref());
+                if let Some(notice) = notice {
+                    let _ = writeln!(err, "警告：{notice}");
+                }
+                wiring.network.set(plan);
+            }
+            voltip_asr_local::cli::download_model(&ModelStore::new(models_root).with_network(&wiring.network), id, out, err).code()
+        }
         Action::ListCompute => voltip_asr_local::cli::list_compute(out).code(),
         Action::PrintToken { token_file } => {
             let path = token_file.clone().unwrap_or_else(|| default_token_path(data_dir));

@@ -86,7 +86,7 @@ voltip-desktop --transcribe-file meeting-note.wav --model sense-voice-small --js
 
 | 选项 | 输出 |
 | --- | --- |
-| `--check` | 使用的服务、默认处理方式、各项上限和提示 |
+| `--check` | 使用的服务、网络代理、默认处理方式、各项上限和提示 |
 | `--print-token` | 访问令牌，第一次运行时生成 |
 | `--list-models`、`--download-model <id>`、`--list-compute` | 与 `voltip-desktop` 相同 |
 
@@ -97,3 +97,5 @@ voltip-desktop --transcribe-file meeting-note.wav --model sense-voice-small --js
 | 2 | 选项不能同时使用，或选项未知 |
 
 没有系统钥匙串时，服务商的密钥可以用环境变量提供，环境变量优先于钥匙串：`VOLTIP_KEY_OPENAI`、`VOLTIP_KEY_GROQ`、`VOLTIP_KEY_SILICONFLOW`、`VOLTIP_KEY_ALIYUN`、`VOLTIP_KEY_DEEPSEEK`、`VOLTIP_KEY_CUSTOM_ASR`、`VOLTIP_KEY_CUSTOM_LLM`。见[本机服务](/zh/recognition/service#在没有桌面的服务器上运行)。
+
+`voltip-server` 按应用中的[网络代理](/zh/recognition/cloud#网络代理)设置连接，设置变化时随之应用；代理的密码在启动时从钥匙串读取一次。跟随系统时，它读取环境变量 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY` 和 `NO_PROXY`；在没有钥匙串的服务器上，用户名和密码也可以写在其中：`HTTPS_PROXY=http://<用户名>:<密码>@<主机>:<端口>`。`--download-model` 使用同一个代理。

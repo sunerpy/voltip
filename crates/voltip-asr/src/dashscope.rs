@@ -69,7 +69,9 @@ impl DashscopeClient {
         if config.timeout.is_zero() {
             return Err(AsrError::InvalidConfig("timeout must be greater than zero".into()));
         }
-        let http = client_builder()
+        let http = config
+            .network
+            .apply(client_builder())
             .timeout(config.timeout)
             .user_agent(concat!("voltip-asr/", env!("CARGO_PKG_VERSION")))
             .build()
@@ -135,7 +137,7 @@ impl DashscopeClient {
                 parameters.insert("heartbeat".into(), json!(true));
             }
         }
-        DuplexOptions { url: duplex_url(&self.origin), token: self.config.token.clone(), model, parameters }
+        DuplexOptions { url: duplex_url(&self.origin), token: self.config.token.clone(), model, parameters, network: self.config.network.clone() }
     }
 
     /// `qwen3-asr-flash`: one chat completion with the audio as the user's `input_audio` part.

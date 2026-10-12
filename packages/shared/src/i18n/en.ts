@@ -1639,6 +1639,7 @@ export const en: Messages = {
       scene: "Scenes",
       privacy: "Privacy and history",
       service: "Local service",
+      network: "Network",
       appearance: "Appearance",
       about: "About",
     },
@@ -1970,6 +1971,58 @@ export const en: Messages = {
         "The old token stops working at once. Programs set up with it need the new one.",
       rotateConfirm: "Generate",
       rotated: "New token generated",
+    },
+    /** docs/dictation.md §24: the proxy every connection goes through. */
+    network: {
+      title: "Network",
+      lede: "Speech recognition, AI polish, model downloads, update checks and downloads, feedback, and the connection to your phone all reach the network as set here. Addresses on this computer (localhost, 127.0.0.1) are always reached directly.",
+      proxyTitle: "Proxy",
+      mode: "Proxy",
+      modeSystem: "Follow the system",
+      modeOff: "No proxy",
+      modeManual: "Manual",
+      systemHelp:
+        "Uses the system's proxy settings: the HTTPS_PROXY, HTTP_PROXY, ALL_PROXY and NO_PROXY environment variables, and macOS's network settings or Windows' Internet Options.",
+      systemNow: "System proxy: {proxy}",
+      systemNone: "The system sets no proxy; connections go direct.",
+      systemProxy: "Current system proxy",
+      systemProxyNone: "None",
+      refresh: "Read again",
+      offHelp: "Every connection goes direct, whatever the system's proxy settings say.",
+      manualHelp:
+        "Every connection goes through the proxy server below, except for the addresses under No proxy for.",
+      manualPending: "Takes effect once you enter a proxy server and save.",
+      server: "Proxy server",
+      serverHelp:
+        "http, socks5 and socks5h (the proxy server resolves host names) are supported. A host and port alone means http.",
+      username: "User name",
+      usernameHelp: "Leave empty if the proxy server needs no sign-in.",
+      password: "Password",
+      passwordHelp: "Stored only in the system keychain; the app never shows a saved password.",
+      passwordSaved: "Saved; enter a new one to replace it",
+      passwordUnset: "Not set",
+      passwordClear: "Clear password",
+      passwordCleared: "Proxy password cleared",
+      noProxy: "No proxy for",
+      noProxyHelp:
+        "Separate entries with commas: hosts, domains (with their subdomains), IP addresses or networks, such as corp.example.com, 10.0.0.0/8.",
+      save: "Save",
+      revert: "Revert",
+      saved: "Proxy settings saved",
+      problem: {
+        serverEmpty: "Enter a proxy server",
+        serverInvalid: "This is not a valid proxy server address",
+        serverScheme: "{scheme} proxies are not supported; use http, socks5 or socks5h",
+        serverCredentials:
+          "Leave the user name and password out of the address and enter them below",
+        serverPort: "Add the port, such as 127.0.0.1:7890",
+        serverPath: "Enter only the scheme, host and port",
+        noProxyEntry: "“{entry}” is not a valid host, domain, IP address or network",
+        noProxyTooLong: "Too many addresses",
+        usernameInvalid: "This user name is not valid",
+        passwordTooLong: "The password is too long",
+        passwordNeedsUsername: "A password needs a user name as well",
+      },
     },
     brief: {
       privacy: {
@@ -2432,6 +2485,7 @@ export const en: Messages = {
       computerSettings: "Computer settings",
       historySettings: "History",
       feedback: "Feedback",
+      network: "Network",
     },
     tab: {
       label: "Main navigation",
@@ -2458,6 +2512,14 @@ export const en: Messages = {
       historyDetail: "Keeps the latest {keep}",
       historyOff: "New takes are not saved",
       feedbackDetail: "Report a problem or suggest an idea",
+      networkSystem: "Follow the system",
+      networkOff: "No proxy",
+      networkManual: "Proxy {server}",
+    },
+    /** docs/dictation.md §24: what the phone's network page says differently. */
+    network: {
+      lede: "Recognition and AI polish on the phone, update checks, feedback, and the connection to your computers all reach the network as set here.",
+      systemHelp: "Uses the proxy settings of the current network (Wi-Fi).",
     },
     history: {
       search: "Search the text or the transcript",

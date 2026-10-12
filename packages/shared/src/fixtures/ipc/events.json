@@ -47,6 +47,12 @@
       "serve": {
         "enabled": false,
         "port": 47840
+      },
+      "proxy": {
+        "mode": "system",
+        "server": null,
+        "username": null,
+        "no_proxy": ""
       }
     },
     "secret_backend": "",
@@ -128,6 +134,9 @@
     "serve": {
       "available": false,
       "phase": "off"
+    },
+    "network": {
+      "proxy_password": false
     }
   },
   {
@@ -330,6 +339,12 @@
       "port": 47840,
       "preset": "prompt",
       "scene": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f"
+    },
+    "proxy": {
+      "mode": "manual",
+      "server": "http://proxy.example.com:3128",
+      "username": "alice",
+      "no_proxy": "corp.example.com,10.0.0.0/8"
     }
   },
   {
@@ -3067,6 +3082,15 @@
     "error": "无法监听 127.0.0.1:47840：Address already in use"
   },
   {
+    "type": "network",
+    "proxy_password": true,
+    "system_proxy": "socks5h://127.0.0.1:1080"
+  },
+  {
+    "type": "network",
+    "proxy_password": false
+  },
+  {
     "type": "models",
     "models": [
       {
@@ -3779,6 +3803,12 @@
       "port": 47840,
       "preset": "prompt",
       "scene": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f"
+    },
+    "proxy": {
+      "mode": "manual",
+      "server": "http://proxy.example.com:3128",
+      "username": "alice",
+      "no_proxy": "corp.example.com,10.0.0.0/8"
     }
   },
   {

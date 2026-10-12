@@ -238,6 +238,22 @@ pub struct FileSourceConfig {
     pub factory: EngineFactory,
     /// Where long takes are cut.
     pub segmenter: Option<Arc<dyn SegmenterFactory>>,
+    /// The process's proxy plan (docs/dictation.md §24): `Settings.proxy` is put in force on it each
+    /// time the settings are read; the clients `factory` builds go through it.
+    pub network: Arc<voltip_net::Network>,
+    /// The manual proxy's password, read once when the server starts, like the keys.
+    pub proxy_password: Option<String>,
+}
+
+/// `Settings.proxy` in force on the process's network: whether the plan changed, and why the
+/// setting cannot be used when it cannot (the system's proxy is followed then).
+fn apply_proxy(config: &FileSourceConfig, settings: &Settings) -> (bool, Option<String>) {
+    let (plan, notice) = settings.proxy.plan_or_system(config.proxy_password.as_deref());
+    let changed = plan != config.network.plan();
+    if changed {
+        config.network.set(plan);
+    }
+    (changed, notice)
 }
 
 /// A file's identity as far as reloading goes: its modification time and length.
@@ -288,6 +304,7 @@ impl FileSource {
         let dir = &config.data_dir;
         let settings = SettingsStore::new(dir).load().map_err(|e| format!("settings.json 无法使用（{e}）"))?;
         let mut notices = Vec::new();
+        notices.extend(apply_proxy(&config, &settings).1);
         let presets = usable(PresetStore::read(dir), &mut notices);
         let scenes = usable(SceneStore::read_on(dir, config.platform, crate::now_ms()), &mut notices);
         let dictionary = usable(DictionaryStore::read(dir), &mut notices);
@@ -295,7 +312,7 @@ impl FileSource {
         let library = config.models.as_ref().map(|m| m.scan()).unwrap_or_default();
         let stamps = FILES.map(|name| stamp(&dir.join(name)));
         let quota = QuotaLedger::default();
-        let state = build_state(&config, &quota, &settings, Arc::new(presets.clone()), Arc::new(scenes.clone()), &dictionary, &rules, &library, None);
+        let state = build_state(&config, &quota, &settings, Arc::new(presets.clone()), Arc::new(scenes.clone()), &dictionary, &rules, &library, None, false);
         let loaded = Loaded { stamps, settings, presets: Arc::new(presets), scenes: Arc::new(scenes), dictionary, rules, library, state: Arc::new(state) };
         Ok((Self { config, quota, loaded: Mutex::new(loaded) }, notices))
     }
@@ -312,9 +329,17 @@ impl FileSource {
         let before = loaded.stamps;
         let changed = |i: usize| stamps[i] != before[i];
         let keep = |what: &str, why: &str| tracing::warn!(file = what, %why, "a file the service reads is unusable; keeping its last usable content");
+        let mut rerouted = false;
         if changed(0) {
             match SettingsStore::new(dir).load() {
-                Ok(settings) => loaded.settings = settings,
+                Ok(settings) => {
+                    let (changed, notice) = apply_proxy(&self.config, &settings);
+                    if let Some(notice) = notice {
+                        tracing::warn!(%notice, "the proxy settings cannot be used");
+                    }
+                    rerouted = changed;
+                    loaded.settings = settings;
+                }
                 Err(e) => keep("settings.json", &e.to_string()),
             }
         }
@@ -353,6 +378,7 @@ impl FileSource {
             &loaded.rules,
             &library,
             Some(&previous),
+            rerouted,
         );
         loaded.stamps = stamps;
         loaded.library = library;
@@ -377,7 +403,8 @@ fn usable<T>(result: Result<Vec<T>, String>, notices: &mut Vec<String>) -> Vec<T
 }
 
 /// The state for the files' contents; the clients of `previous` are kept when the resolved engines
-/// did not change (a loaded local model stays loaded).
+/// did not change (a loaded local model stays loaded) and the proxy plan did not either
+/// (`rerouted`: their pooled connections were opened on the old route).
 #[allow(clippy::too_many_arguments)]
 fn build_state(
     config: &FileSourceConfig,
@@ -389,11 +416,12 @@ fn build_state(
     rules: &[ReplacementRule],
     library: &[ModelState],
     previous: Option<&ServeState>,
+    rerouted: bool,
 ) -> ServeState {
     let mut settings = settings.clone();
     config.overrides.apply(&mut settings.engines);
     let engines = ResolvedEngines::resolve_with_models(&settings.engines, &config.secrets, &config.built_in, library);
-    let (transcriber, refiner) = match previous.filter(|p| p.engines == engines) {
+    let (transcriber, refiner) = match previous.filter(|p| !rerouted && p.engines == engines) {
         Some(p) => (p.transcriber.clone(), p.refiner.clone()),
         None => engine_clients(&config.factory, &engines, quota),
     };

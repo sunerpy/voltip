@@ -530,6 +530,42 @@ export const serveStatusSchema = z.object({
 });
 export type ServeStatus = z.infer<typeof serveStatusSchema>;
 
+// ---- the proxy (docs/dictation.md §24; `voltip_core::ProxySettings`) -------------------------
+
+/** `voltip_core::ProxyMode`: follow the system, none, or the proxy the user set. */
+export const PROXY_MODES = ["system", "off", "manual"] as const;
+export const proxyModeSchema = z.enum(PROXY_MODES);
+export type ProxyMode = z.infer<typeof proxyModeSchema>;
+/** `voltip_net::PROXY_SCHEMES`: the kinds of proxy the user can set. */
+export const PROXY_SCHEMES = ["http", "socks5", "socks5h"] as const;
+/** `voltip_net::MAX_NO_PROXY_BYTES`, `MAX_USERNAME_BYTES`, `MAX_PASSWORD_BYTES`. */
+export const MAX_NO_PROXY_BYTES = 4096;
+export const MAX_PROXY_USERNAME_BYTES = 256;
+export const MAX_PROXY_PASSWORD_BYTES = 1024;
+/** `Settings.proxy`: the mode, and the manual proxy's address, user name and the hosts that go
+ *  direct, kept in the other modes too. Its password is in the keychain
+ *  (`UiState.network.proxy_password`). */
+export const proxySettingsSchema = z.object({
+  mode: proxyModeSchema.default("system"),
+  server: z.string().nullable().default(null),
+  username: z.string().nullable().default(null),
+  no_proxy: z.string().default(""),
+});
+export type ProxySettings = z.infer<typeof proxySettingsSchema>;
+export const defaultProxySettings = (): ProxySettings => ({
+  mode: "system",
+  server: null,
+  username: null,
+  no_proxy: "",
+});
+/** `UiState.network`: whether the manual proxy's password is saved, and the proxy following the
+ *  system means now for `https://` (`scheme://host:port`; absent = the system sets none). */
+export const networkStatusSchema = z.object({
+  proxy_password: z.boolean().default(false),
+  system_proxy: z.string().optional(),
+});
+export type NetworkStatus = z.infer<typeof networkStatusSchema>;
+
 export const settingsSchema = z.object({
   schema: z.literal(1),
   theme: themeIdSchema,
@@ -575,6 +611,8 @@ export const settingsSchema = z.object({
   recording: recordingSettingsSchema.default(defaultRecordingSettings),
   /** docs/dictation.md §23.6; an older `settings.json` or core reads as off on the default port. */
   serve: serveSettingsSchema.default(defaultServeSettings),
+  /** docs/dictation.md §24; an older `settings.json` or core reads as following the system. */
+  proxy: proxySettingsSchema.default(defaultProxySettings),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -2050,6 +2088,8 @@ export const uiStateSchema = z.object({
   phone_outbox_too_large: z.array(z.string()).default(() => []),
   /** The local speech service the app hosts (docs/dictation.md §23.6); not available on the phone. */
   serve: serveStatusSchema.default(() => ({ available: false, phase: "off" as const })),
+  /** The proxy's password and the system's proxy (docs/dictation.md §24). */
+  network: networkStatusSchema.default(() => ({ proxy_password: false })),
   /** The built-in clean-up service's notice (docs/dictation.md §3.6); absent when there is
    *  nothing to say. */
   refine_notice: refineNoticeSchema.optional(),
@@ -2072,6 +2112,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   connectivityStatusSchema.extend({ type: z.literal("connectivity") }),
   /** The local speech service started, stopped or failed to start (§23.6). */
   serveStatusSchema.extend({ type: z.literal("serve") }),
+  /** The proxy's password was saved or removed, or the system's proxy read again (§24). */
+  networkStatusSchema.extend({ type: z.literal("network") }),
   z.object({
     type: z.literal("identity_changed"),
     previous: trustedDeviceSchema,
@@ -2241,6 +2283,16 @@ export type SetServeArgs = {
   port: number;
   preset: PresetId | null;
   scene: string | null;
+};
+
+/** `settings_set_proxy` arguments: the whole proxy setting, and the password for the keychain
+ *  (`null` keeps the saved one, `""` removes it). */
+export type SetProxyArgs = {
+  mode: ProxyMode;
+  server: string | null;
+  username: string | null;
+  noProxy: string;
+  password: string | null;
 };
 
 /** `settings_set_context_sharing` arguments: both switches together. */
@@ -2434,6 +2486,11 @@ export interface CommandArgs {
   serve_copy_token: undefined;
   /** Replace the service's token. */
   serve_rotate_token: undefined;
+  /** The proxy (§24): the mode, the manual proxy's fields and its password; the core re-emits
+   *  `settings` and `network`. */
+  settings_set_proxy: SetProxyArgs;
+  /** Read the system's proxy again (the settings opened); answered by a `network` event. */
+  network_refresh: undefined;
   /** Close the built-in clean-up service's notice (§3.6); it stays away a day. */
   refine_notice_close: undefined;
   /** Query: the apps the history saw, newest first (`Backend.recentApps`, the scene editor). */
@@ -2579,6 +2636,7 @@ export function defaultSettings(): Settings {
     microphone: null,
     recording: defaultRecordingSettings(),
     serve: defaultServeSettings(),
+    proxy: defaultProxySettings(),
   };
 }
 
@@ -2650,6 +2708,10 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
     case "serve": {
       const { type: _type, ...serve } = event;
       return { ...state, serve };
+    }
+    case "network": {
+      const { type: _type, ...network } = event;
+      return { ...state, network };
     }
     case "phone_take": {
       if (event.take === null) {

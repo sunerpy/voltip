@@ -17,7 +17,7 @@ use crate::shell::Shell;
 
 /// Every command the app may invoke: the Tauri phone shell's `COMMANDS`, in its order (a test reads
 /// that list and compares).
-pub const COMMANDS: [&str; 109] = [
+pub const COMMANDS: [&str; 111] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -113,6 +113,8 @@ pub const COMMANDS: [&str; 109] = [
     "presets_builtin",
     "settings_set_context_sharing",
     "settings_set_pinned_scene",
+    "settings_set_proxy",
+    "network_refresh",
     "refine_notice_close",
     "recent_apps",
     "history_query",
@@ -372,7 +374,7 @@ async fn feedback_submit(shell: &Shell, command: &str, args: &Args) -> Result<Va
     let state = shell.inner.bridge.state();
     let diagnostics = feedback::diagnostics(&state, &locale, None, &state.app_version);
     let agent = format!("voltip-mobile/{}", state.app_version);
-    let sent = feedback::send(url, feedback::feedback_token(), &agent, kind, &message, contact.as_deref(), &diagnostics, &files).await;
+    let sent = feedback::send(url, feedback::feedback_token(), &agent, kind, &message, contact.as_deref(), &diagnostics, &files, &shell.inner.network).await;
     if matches!(sent, Ok(_) | Err(feedback::SendError::Attachments)) {
         staged.forget(&ids);
     }

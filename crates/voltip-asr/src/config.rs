@@ -1,9 +1,11 @@
 //! Client configuration and base-URL normalisation.
 
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use url::Url;
+use voltip_net::{Network, NetworkRef};
 
 use crate::AsrError;
 
@@ -27,6 +29,9 @@ pub struct AsrConfig {
     /// What the OpenAI-compatible multipart's `file` carries (Model Studio's protocols always send
     /// the WAV).
     pub upload: AudioUpload,
+    /// The proxy plan the requests and the realtime WebSocket follow (docs/dictation.md §24); the
+    /// process's system-following network unless one is handed in.
+    pub network: NetworkRef,
 }
 
 /// The audio a transcription request uploads (docs/dictation.md §3.9).
@@ -43,7 +48,13 @@ pub enum AudioUpload {
 impl AsrConfig {
     /// A configuration without a token, with the default timeout, uploading the WAV.
     pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Self {
-        Self { base_url: base_url.into(), token: None, model: model.into(), timeout: DEFAULT_TIMEOUT, upload: AudioUpload::Wav }
+        Self { base_url: base_url.into(), token: None, model: model.into(), timeout: DEFAULT_TIMEOUT, upload: AudioUpload::Wav, network: NetworkRef::default() }
+    }
+
+    /// Go through `network`'s proxy plan.
+    pub fn with_network(mut self, network: &Arc<Network>) -> Self {
+        self.network = NetworkRef::new(network);
+        self
     }
 
     /// Set what the requests upload.
@@ -73,6 +84,7 @@ impl fmt::Debug for AsrConfig {
             .field("model", &self.model)
             .field("timeout", &self.timeout)
             .field("upload", &self.upload)
+            .field("network", &self.network)
             .finish()
     }
 }

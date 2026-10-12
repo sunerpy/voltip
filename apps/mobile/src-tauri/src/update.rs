@@ -178,9 +178,9 @@ fn version_of(text: &str) -> Option<(u64, u64, u64)> {
 }
 
 /// Ask GitHub for the latest release.
-async fn fetch(url: &str) -> Result<Release, String> {
+async fn fetch(url: &str, network: &Arc<voltip_net::Network>) -> Result<Release, String> {
     // Not a bare reqwest client: its verifier panics on Android at the first HTTPS request.
-    let client = voltip_cloud::http_client_builder()
+    let client = voltip_cloud::http_client_builder(network)
         .connect_timeout(CONNECT_TIMEOUT)
         .read_timeout(READ_TIMEOUT)
         // GitHub's API refuses requests without one.
@@ -207,6 +207,8 @@ pub struct PhoneUpdater {
     /// The APK of the newer release the last check found.
     apk: Mutex<Option<String>>,
     busy: AtomicBool,
+    /// The proxy the check goes through (docs/dictation.md §24).
+    network: voltip_net::NetworkRef,
 }
 
 impl std::fmt::Debug for PhoneUpdater {
@@ -230,7 +232,14 @@ impl PhoneUpdater {
             status: Mutex::new(status),
             apk: Mutex::new(None),
             busy: AtomicBool::new(false),
+            network: voltip_net::NetworkRef::default(),
         }
+    }
+
+    /// The check goes through `network` (`CoreConfig::network`).
+    pub fn with_network(mut self, network: &Arc<voltip_net::Network>) -> Self {
+        self.network = voltip_net::NetworkRef::new(network);
+        self
     }
 
     /// Record who installed the app; the status to send when that changes it (`store`).
@@ -274,7 +283,7 @@ impl PhoneUpdater {
         let (updater, bridge) = (self.clone(), bridge.clone());
         tauri::async_runtime::spawn(async move {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            let outcome = fetch(&updater.config.latest_release).await.and_then(|release| read_release(&release, &updater.current, now));
+            let outcome = fetch(&updater.config.latest_release, updater.network.get()).await.and_then(|release| read_release(&release, &updater.current, now));
             let status = match outcome {
                 Ok((status, apk)) => {
                     *updater.apk.lock().unwrap_or_else(PoisonError::into_inner) = apk;
@@ -428,9 +437,9 @@ mod tests {
     #[test]
     fn regression_the_update_check_takes_the_client_that_works_on_android() {
         let code: String = include_str!("update.rs").lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n");
-        assert!(code.contains("voltip_cloud::http_client_builder()"));
+        assert!(code.contains("voltip_cloud::http_client_builder(network)"));
         assert!(!code.contains(concat!("reqwest::Client", "::builder()")), "a bare client panics on Android");
-        assert!(voltip_cloud::http_client_builder().build().is_ok());
+        assert!(voltip_cloud::http_client_builder(&voltip_net::Network::new()).build().is_ok());
     }
 
     /// Regression (user report 2026-10-03, 「更新失败 · GitHub 返回 404 Not Found」): the phone

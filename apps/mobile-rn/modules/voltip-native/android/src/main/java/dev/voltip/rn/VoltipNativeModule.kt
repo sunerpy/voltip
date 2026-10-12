@@ -2,7 +2,9 @@ package dev.voltip.rn
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
+import android.net.ProxyInfo
 import android.os.Build
 import dev.voltip.rn.uniffi.ShellException
 import dev.voltip.rn.uniffi.VoltipShell
@@ -27,6 +29,8 @@ import java.io.File
  * rarely survives a change of network or a long stay in the background: when Android reports
  * another network, or the app comes to the front, the shell checks it at once
  * ([VoltipShell.reconnectRelay]) instead of waiting for the heartbeat (docs/pairing.md 「重连」).
+ * The same callback hands the shell the network's HTTP proxy, which following the system means on
+ * the phone ([VoltipShell.setNetworkProxy], docs/dictation.md §24): Rust's clients cannot read it.
  */
 class VoltipNativeModule : Module() {
     @Volatile
@@ -83,7 +87,11 @@ class VoltipNativeModule : Module() {
         }
     }
 
-    /** The default network came or went (another Wi-Fi, mobile data, none): check the relay socket. */
+    /**
+     * The default network came or went (another Wi-Fi, mobile data, none): check the relay socket.
+     * Its link properties (reported right after it comes, and whenever they change) carry its
+     * proxy, which goes to the shell.
+     */
     @Synchronized
     private fun watchNetwork(context: Context) {
         if (network != null) return
@@ -91,6 +99,11 @@ class VoltipNativeModule : Module() {
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 shell?.reconnectRelay()
+            }
+
+            override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) {
+                // A device-wide proxy (set by an administrator) wins over the network's own.
+                handProxy(manager.defaultProxy ?: properties.httpProxy)
             }
 
             override fun onLost(network: Network) {
@@ -104,6 +117,22 @@ class VoltipNativeModule : Module() {
             // Too many callbacks registered, or no permission: the heartbeat still notices.
             android.util.Log.w("VoltipNative", "network callback not registered: ${e.message}")
         }
+    }
+
+    /**
+     * The network's HTTP proxy to the shell: its host, port and excluded hosts; none as an empty
+     * host. A proxy given only as a PAC file cannot be followed and counts as none.
+     */
+    private fun handProxy(proxy: ProxyInfo?) {
+        val host = proxy?.host
+        if (proxy == null || host.isNullOrBlank() || proxy.port !in 1..65535) {
+            if (proxy?.pacFileUrl?.let { it != android.net.Uri.EMPTY } == true) {
+                android.util.Log.w("VoltipNative", "the network's proxy is a PAC file; connections go direct")
+            }
+            shell?.setNetworkProxy("", 0u, "")
+            return
+        }
+        shell?.setNetworkProxy(host, proxy.port.toUShort(), proxy.exclusionList.joinToString(","))
     }
 
     @Synchronized

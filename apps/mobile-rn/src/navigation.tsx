@@ -28,6 +28,7 @@ import { Entry } from "./screens/Entry";
 import { Feedback } from "./screens/Feedback";
 import { History } from "./screens/History";
 import { HistorySettings } from "./screens/HistorySettings";
+import { Network } from "./screens/Network";
 import { MirrorEntry } from "./screens/MirrorEntry";
 import { Pair } from "./screens/Pair";
 import { Recording } from "./screens/Recording";
@@ -223,6 +224,7 @@ const PAGES: {
   { name: "Rules", title: "mobile.title.rules", component: Rules },
   { name: "Scenes", title: "mobile.title.scenes", component: Scenes },
   { name: "HistorySettings", title: "mobile.title.historySettings", component: HistorySettings },
+  { name: "Network", title: "mobile.title.network", component: Network },
   { name: "Feedback", title: "mobile.title.feedback", component: Feedback },
   { name: "ComputerSettings", title: "mobile.title.computerSettings", component: ComputerSettings },
   { name: "Entry", title: "mobile.title.entry", component: Entry },

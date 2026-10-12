@@ -384,7 +384,10 @@ fn a_take_on_the_phone_runs_through_the_cloud_clients_onto_its_clipboard() {
     let ports = move |_: &AppHandle<MockRuntime>| DictationPorts {
         audio: Arc::new(FakeAudio::speech()),
         injector,
-        factory: Arc::new(|engines: &voltip_core::ResolvedEngines| (voltip_cloud::remote_transcriber(engines), voltip_cloud::refiner(engines))),
+        factory: Arc::new(|engines: &voltip_core::ResolvedEngines| {
+            let network = voltip_net::Network::new();
+            (voltip_cloud::remote_transcriber(engines, &network), voltip_cloud::refiner(engines, &network))
+        }),
         ..voltip_core::dictation::fakes::ports()
     };
     with_app(Settings { relay_enabled: false, engines, ..Settings::default() }, ports, move |_, webview, _| {
@@ -659,8 +662,10 @@ fn provider_probe_lists_the_models_through_the_http_probe() {
         server
     });
     let base = format!("{}/v1", server.uri());
-    let ports =
-        |_: &AppHandle<MockRuntime>| DictationPorts { service_probe: Some(Arc::new(voltip_cloud::HttpServiceProbe)), ..voltip_core::dictation::fakes::ports() };
+    let ports = |_: &AppHandle<MockRuntime>| DictationPorts {
+        service_probe: Some(Arc::new(voltip_cloud::HttpServiceProbe::new(&voltip_net::Network::new()))),
+        ..voltip_core::dictation::fakes::ports()
+    };
     with_app(Settings { relay_enabled: false, ..Settings::default() }, ports, move |_, webview, rx| {
         wait_state(webview, |s| s.identity.is_some());
         assert_eq!(invoke(webview, "provider_probe", json!({ "provider": "custom", "kind": "asr", "baseUrl": base, "key": "k" })), Ok(Value::Null));

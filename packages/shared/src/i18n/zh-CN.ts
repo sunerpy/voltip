@@ -1619,6 +1619,7 @@ export const zhCN = {
       scene: "场景",
       privacy: "隐私与历史",
       service: "本机服务",
+      network: "网络",
       appearance: "外观",
       about: "关于",
     },
@@ -1931,6 +1932,56 @@ export const zhCN = {
       rotateConfirmBody: "旧令牌立即失效，已配置的程序需要改用新令牌。",
       rotateConfirm: "重新生成",
       rotated: "已生成新令牌",
+    },
+    /** docs/dictation.md §24: the proxy every connection goes through. */
+    network: {
+      title: "网络",
+      lede: "语音识别、AI 润色、模型下载、检查与下载更新、反馈，以及与手机的连接，都按这里的代理设置连接网络。本机地址（localhost、127.0.0.1）始终直接连接。",
+      proxyTitle: "代理",
+      mode: "代理方式",
+      modeSystem: "跟随系统",
+      modeOff: "不使用代理",
+      modeManual: "手动设置",
+      systemHelp:
+        "使用系统的代理设置：环境变量 HTTPS_PROXY、HTTP_PROXY、ALL_PROXY 与 NO_PROXY，以及 macOS 的网络设置或 Windows 的 Internet 选项。",
+      systemNow: "当前系统代理：{proxy}",
+      systemNone: "系统未设置代理，直接连接。",
+      systemProxy: "当前系统代理",
+      systemProxyNone: "未设置",
+      refresh: "重新读取",
+      offHelp: "所有连接都直接连接，不使用系统的代理设置。",
+      manualHelp: "所有连接都通过下面的代理服务器，「不使用代理的地址」除外。",
+      manualPending: "填写代理服务器并保存后生效。",
+      server: "代理服务器",
+      serverHelp:
+        "支持 http、socks5 和 socks5h（由代理服务器解析域名）。只填写主机和端口时按 http 处理。",
+      username: "用户名",
+      usernameHelp: "代理服务器不需要登录时留空。",
+      password: "密码",
+      passwordHelp: "仅保存在系统钥匙串中，界面不显示已保存的密码。",
+      passwordSaved: "已保存，输入新密码可替换",
+      passwordUnset: "未设置",
+      passwordClear: "清除密码",
+      passwordCleared: "代理密码已清除",
+      noProxy: "不使用代理的地址",
+      noProxyHelp:
+        "用逗号分隔，可以填写主机、域名（包括其子域名）、IP 地址或网段，例如 corp.example.com, 10.0.0.0/8。",
+      save: "保存",
+      revert: "还原",
+      saved: "代理设置已保存",
+      problem: {
+        serverEmpty: "请填写代理服务器",
+        serverInvalid: "代理服务器地址无效",
+        serverScheme: "不支持 {scheme} 代理，可以使用 http、socks5、socks5h",
+        serverCredentials: "地址中不要包含用户名或密码，请分别填写在下方",
+        serverPort: "请填写端口，例如 127.0.0.1:7890",
+        serverPath: "只需填写协议、主机和端口",
+        noProxyEntry: "「{entry}」不是有效的主机、域名、IP 地址或网段",
+        noProxyTooLong: "地址过多",
+        usernameInvalid: "用户名无效",
+        passwordTooLong: "密码过长",
+        passwordNeedsUsername: "填写密码时也需要填写用户名",
+      },
     },
     brief: {
       privacy: {
@@ -2376,6 +2427,7 @@ export const zhCN = {
       computerSettings: "电脑设置",
       historySettings: "历史记录",
       feedback: "反馈",
+      network: "网络",
     },
     tab: { label: "主导航", talk: "说话", history: "记录", settings: "设置" },
     settings: {
@@ -2397,6 +2449,14 @@ export const zhCN = {
       historyDetail: "保留最近 {keep} 条",
       historyOff: "不保存新的记录",
       feedbackDetail: "报告问题或提出建议",
+      networkSystem: "跟随系统",
+      networkOff: "不使用代理",
+      networkManual: "代理 {server}",
+    },
+    /** docs/dictation.md §24: what the phone's network page says differently. */
+    network: {
+      lede: "在手机上识别和润色、检查更新、反馈，以及与电脑的连接，都按这里的代理设置连接网络。",
+      systemHelp: "使用当前网络（Wi-Fi）的代理设置。",
     },
     /** The phone's history (user decision 2026-10-01: the phone has the desktop's history). */
     history: {

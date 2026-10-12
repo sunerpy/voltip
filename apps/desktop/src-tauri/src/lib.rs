@@ -52,7 +52,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 112] = [
+pub const COMMANDS: [&str; 114] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -151,6 +151,8 @@ pub const COMMANDS: [&str; 112] = [
     "settings_set_serve",
     "serve_copy_token",
     "serve_rotate_token",
+    "settings_set_proxy",
+    "network_refresh",
     "refine_notice_close",
     "recent_apps",
     "history_query",
@@ -530,9 +532,11 @@ fn feedback_diagnostics(bridge: tauri::State<'_, Bridge>, locale: String) -> fee
 /// endpoint. The staged files are forgotten once the report went out (`attachments`: it did, but
 /// a file's bytes did not all follow).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn feedback_submit(
     bridge: tauri::State<'_, Bridge>,
     staged: tauri::State<'_, feedback::Attachments>,
+    network: tauri::State<'_, Arc<voltip_net::Network>>,
     kind: feedback::FeedbackKind,
     message: String,
     contact: Option<String>,
@@ -546,7 +550,7 @@ async fn feedback_submit(
     let session = hotkey::linux_session().map(|s| s.kind.to_string());
     let diagnostics = feedback::diagnostics(&bridge.state(), &locale, session, APP_VERSION);
     let agent = concat!("voltip-desktop/", env!("VOLTIP_APP_VERSION"));
-    let sent = feedback::send(url, feedback::feedback_token(), agent, kind, &message, contact.as_deref(), &diagnostics, &files).await;
+    let sent = feedback::send(url, feedback::feedback_token(), agent, kind, &message, contact.as_deref(), &diagnostics, &files, &network).await;
     // `Attachments`: the report itself went out, so its files are done with too.
     if matches!(sent, Ok(_) | Err(feedback::SendError::Attachments)) {
         staged.forget(&ids);
@@ -893,6 +897,27 @@ fn serve_rotate_token(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::ServeRotateToken)?)
 }
 
+/// The proxy every connection goes through (docs/dictation.md §24): the mode, the manual proxy's
+/// fields, and its password for the keychain (`null` keeps the saved one, `""` removes it). The
+/// core re-emits `settings` and `network`.
+#[tauri::command]
+fn settings_set_proxy(
+    bridge: tauri::State<'_, Bridge>,
+    mode: voltip_core::ProxyMode,
+    server: Option<String>,
+    username: Option<String>,
+    no_proxy: String,
+    password: Option<String>,
+) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetProxy { mode, server, username, no_proxy, password })?)
+}
+
+/// Read the system's proxy again (the 网络 pane opened); answered by a `network` event.
+#[tauri::command]
+fn network_refresh(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::NetworkRefresh)?)
+}
+
 /// Close the built-in AI polish service's notice (docs/dictation.md §3.6); it stays away a day.
 #[tauri::command]
 fn refine_notice_close(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
@@ -1151,8 +1176,10 @@ pub fn attach_bridge<R: Runtime>(
         .try_state::<update::UpdaterConfig>()
         .map(|c| c.inner().clone())
         .or_else(|| if options.global_hotkey { update::UpdaterConfig::from_build() } else { None });
-    let updater = Arc::new(update::UpdateSlot::new(updater_config, &config.data_dir));
+    let updater = Arc::new(update::UpdateSlot::new(updater_config, &config.data_dir).with_network(&config.network));
     app.manage(restart::Restart::new(store.clone()));
+    // docs/dictation.md §24: feedback goes through the same proxy as everything else.
+    app.manage(Arc::clone(&config.network));
     // Tauri runs `setup` on the UI thread, outside any Tokio context; the core spawns its tasks
     // with `tokio::spawn`, so it has to be started from Tauri's own runtime.
     // Subscribed before the core starts: the first `state` event must reach the webview bus even
@@ -1345,6 +1372,8 @@ pub fn build_app<R: Runtime>(
             settings_set_serve,
             serve_copy_token,
             serve_rotate_token,
+            settings_set_proxy,
+            network_refresh,
             refine_notice_close,
             recent_apps,
             history_query,
@@ -1419,7 +1448,7 @@ pub fn run() {
     // docs/dictation.md §23.6: the local speech service listens through the HTTP layer when it is
     // switched on in the settings.
     config.serve_host = Some(std::sync::Arc::new(voltip_serve::HttpHost));
-    let ports = dictation::production_ports(config.models_root.clone());
+    let ports = dictation::production_ports(config.models_root.clone(), &config.network);
     let mut app = match build_app(tauri::Builder::default(), config, secret_store(), ShellOptions::PRODUCTION.hidden(start_hidden), ports).build(context) {
         Ok(app) => app,
         Err(e) => {

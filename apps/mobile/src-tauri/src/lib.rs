@@ -36,7 +36,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`, less the
 /// desktop-only commands (the local speech service's, docs/dictation.md §23.6) that
 /// `tests/ipc.rs` lists as `DESKTOP_ONLY`.
-pub const COMMANDS: [&str; 109] = [
+pub const COMMANDS: [&str; 111] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -132,6 +132,8 @@ pub const COMMANDS: [&str; 109] = [
     "presets_builtin",
     "settings_set_context_sharing",
     "settings_set_pinned_scene",
+    "settings_set_proxy",
+    "network_refresh",
     "refine_notice_close",
     "recent_apps",
     "history_query",
@@ -535,9 +537,11 @@ fn feedback_diagnostics(bridge: tauri::State<'_, Bridge>, locale: String) -> fee
 /// the desktop does: the error is the reason's wire name, never the endpoint, and the staged files
 /// are forgotten once the report went out.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn feedback_submit(
     bridge: tauri::State<'_, Bridge>,
     staged: tauri::State<'_, feedback::Attachments>,
+    network: tauri::State<'_, Arc<voltip_net::Network>>,
     kind: feedback::FeedbackKind,
     message: String,
     contact: Option<String>,
@@ -551,7 +555,7 @@ async fn feedback_submit(
     let state = bridge.state();
     let diagnostics = feedback::diagnostics(&state, &locale, None, &state.app_version);
     let agent = format!("voltip-mobile/{}", state.app_version);
-    let sent = feedback::send(url, feedback::feedback_token(), &agent, kind, &message, contact.as_deref(), &diagnostics, &files).await;
+    let sent = feedback::send(url, feedback::feedback_token(), &agent, kind, &message, contact.as_deref(), &diagnostics, &files, &network).await;
     if matches!(sent, Ok(_) | Err(feedback::SendError::Attachments)) {
         staged.forget(&ids);
     }
@@ -930,6 +934,26 @@ fn presets_try(bridge: tauri::State<'_, Bridge>, id: u64, preset: Option<String>
     Ok(bridge.dispatch(UiCommand::PresetsTry { id, preset, prompt, text })?)
 }
 
+/// The proxy every connection goes through (docs/dictation.md §24), and its password for the
+/// keychain (`null` keeps the saved one, `""` removes it).
+#[tauri::command]
+fn settings_set_proxy(
+    bridge: tauri::State<'_, Bridge>,
+    mode: voltip_core::ProxyMode,
+    server: Option<String>,
+    username: Option<String>,
+    no_proxy: String,
+    password: Option<String>,
+) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetProxy { mode, server, username, no_proxy, password })?)
+}
+
+/// Read the system's proxy again; answered by a `network` event.
+#[tauri::command]
+fn network_refresh(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::NetworkRefresh)?)
+}
+
 /// Close the built-in AI polish service's notice (docs/dictation.md §3.6); it stays away a day.
 #[tauri::command]
 fn refine_notice_close(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
@@ -1009,17 +1033,22 @@ async fn phone_share_text<R: Runtime>(app: AppHandle<R>, text: String) -> Result
 /// The phone's dictation ports: its microphone (the takes it streams, docs/dictation.md §20, and
 /// the ones it recognises itself, §20.7), the cloud clients of the resolved engines — the built-in
 /// services unless the settings name others; the phone has no local models — and its clipboard
-/// for the result, and the HTTP provider probe (测试连接). No live preview, no foreground probe,
-/// no VAD: the core's fallbacks apply.
+/// for the result, and the HTTP provider probe (测试连接), the clients through the process's
+/// network (`CoreConfig::network`, managed before the ports are built). No live preview, no
+/// foreground probe, no VAD: the core's fallbacks apply.
 pub fn phone_ports<R: Runtime>(app: &AppHandle<R>) -> voltip_core::dictation::DictationPorts {
+    let network = app.try_state::<Arc<voltip_net::Network>>().map_or_else(voltip_net::Network::new, |n| Arc::clone(n.inner()));
+    let clients = Arc::clone(&network);
     voltip_core::dictation::DictationPorts {
         audio: Arc::new(microphone::PhoneMicrophone::cpal()),
         injector: Arc::new(clipboard::PhoneClipboardInjector(app.clone())),
-        factory: Arc::new(|engines: &voltip_core::ResolvedEngines| (voltip_cloud::remote_transcriber(engines), voltip_cloud::refiner(engines))),
+        factory: Arc::new(move |engines: &voltip_core::ResolvedEngines| {
+            (voltip_cloud::remote_transcriber(engines, &clients), voltip_cloud::refiner(engines, &clients))
+        }),
         models: None,
         streaming: None,
         probe: None,
-        service_probe: Some(Arc::new(voltip_cloud::HttpServiceProbe)),
+        service_probe: Some(Arc::new(voltip_cloud::HttpServiceProbe::new(&network))),
         segmenter: None,
     }
 }
@@ -1078,10 +1107,13 @@ pub fn build_app<R: Runtime>(
         .manage(meter::Meters::default())
         .setup(move |app| {
             let config = config(app.handle());
+            // docs/dictation.md §24: the ports, feedback and the updater share the core's network.
+            let network = Arc::clone(&config.network);
+            app.manage(Arc::clone(&network));
             let ports = ports(app.handle());
             attach_bridge(app.handle(), config, store, ports).map_err(|e| std::io::Error::other(e.to_string()))?;
             // docs/dictation.md §20.9: Play installs are Play's to update, others ask GitHub.
-            let updater = Arc::new(update::PhoneUpdater::new(updates(app.handle()), &app.package_info().version.to_string()));
+            let updater = Arc::new(update::PhoneUpdater::new(updates(app.handle()), &app.package_info().version.to_string()).with_network(&network));
             let bridge = app.state::<Bridge>().inner().clone();
             bridge.publish(voltip_core::ui::UiEvent::Update(updater.status()));
             app.manage(updater.clone());
@@ -1185,6 +1217,8 @@ pub fn build_app<R: Runtime>(
             scenes_builtin,
             settings_set_context_sharing,
             settings_set_pinned_scene,
+            settings_set_proxy,
+            network_refresh,
             recent_apps,
             history_query,
             history_entry,

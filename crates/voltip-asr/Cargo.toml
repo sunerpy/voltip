@@ -28,6 +28,8 @@ tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 tracing.workspace = true
 url.workspace = true
 uuid.workspace = true
+# The proxy of the requests and of the realtime models' WebSocket (docs/dictation.md §24).
+voltip-net.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 webpki-root-certs.workspace = true

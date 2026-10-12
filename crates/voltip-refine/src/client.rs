@@ -221,7 +221,9 @@ impl RefineClient {
         if config.timeout.is_zero() {
             return Err(RefineError::InvalidConfig("timeout must be greater than zero".into()));
         }
-        let http = client_builder()
+        let http = config
+            .network
+            .apply(client_builder())
             .timeout(config.timeout)
             .user_agent(concat!("voltip-refine/", env!("CARGO_PKG_VERSION")))
             .build()
@@ -424,8 +426,14 @@ fn completion_error(status: StatusCode, retry_after_ms: Option<u64>, body: &str)
 
 /// The models an OpenAI-compatible service lists (`GET {base}/models`, each `data[].id`): the
 /// engines pane's 测试连接 (docs/dictation.md §3.3). Same status mapping as a completion; any 2xx
-/// JSON with a `data` array counts, so vLLM, Ollama and the vendors all answer.
-pub async fn list_models(base_url: &str, api_key: Option<&str>, timeout: Duration) -> Result<Vec<String>, RefineError> {
+/// JSON with a `data` array counts, so vLLM, Ollama and the vendors all answer. The request
+/// follows `network`'s proxy plan (docs/dictation.md §24).
+pub async fn list_models(
+    base_url: &str,
+    api_key: Option<&str>,
+    timeout: Duration,
+    network: &std::sync::Arc<voltip_net::Network>,
+) -> Result<Vec<String>, RefineError> {
     #[derive(serde::Deserialize)]
     struct ModelList {
         data: Vec<ModelEntry>,
@@ -438,7 +446,8 @@ pub async fn list_models(base_url: &str, api_key: Option<&str>, timeout: Duratio
     if timeout.is_zero() {
         return Err(RefineError::InvalidConfig("timeout must be greater than zero".into()));
     }
-    let http = client_builder()
+    let http = network
+        .apply(client_builder())
         .timeout(timeout)
         .user_agent(concat!("voltip-refine/", env!("CARGO_PKG_VERSION")))
         .build()
@@ -1073,24 +1082,27 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        let models = list_models(&server.uri(), Some(" gsk_key "), Duration::from_secs(5)).await.unwrap();
+        let models = list_models(&server.uri(), Some(" gsk_key "), Duration::from_secs(5), &voltip_net::Network::new()).await.unwrap();
         assert_eq!(models, ["openai/gpt-oss-20b", "llama-3.3-70b-versatile"]);
         let requests = server.received_requests().await.unwrap();
         assert_eq!(requests[0].headers.get("authorization").unwrap(), "Bearer gsk_key");
-        let no_key = list_models(&format!("{}/v1/", server.uri()), None, Duration::from_secs(5)).await.unwrap();
+        let no_key = list_models(&format!("{}/v1/", server.uri()), None, Duration::from_secs(5), &voltip_net::Network::new()).await.unwrap();
         assert_eq!(no_key.len(), 2, "a trailing /v1/ is the same base");
         assert!(server.received_requests().await.unwrap()[1].headers.get("authorization").is_none());
 
         let denied = MockServer::start().await;
         Mock::given(method("GET")).respond_with(ResponseTemplate::new(401)).mount(&denied).await;
-        assert_eq!(list_models(&denied.uri(), Some("bad"), Duration::from_secs(5)).await.unwrap_err(), RefineError::Unauthorized);
+        assert_eq!(list_models(&denied.uri(), Some("bad"), Duration::from_secs(5), &voltip_net::Network::new()).await.unwrap_err(), RefineError::Unauthorized);
         let broken = MockServer::start().await;
         Mock::given(method("GET")).respond_with(ResponseTemplate::new(502).set_body_string("bad gateway")).mount(&broken).await;
-        assert!(matches!(list_models(&broken.uri(), None, Duration::from_secs(5)).await.unwrap_err(), RefineError::Server { status: 502, .. }));
+        assert!(matches!(
+            list_models(&broken.uri(), None, Duration::from_secs(5), &voltip_net::Network::new()).await.unwrap_err(),
+            RefineError::Server { status: 502, .. }
+        ));
         let html = MockServer::start().await;
         Mock::given(method("GET")).respond_with(ResponseTemplate::new(200).set_body_string("<html>")).mount(&html).await;
-        assert!(matches!(list_models(&html.uri(), None, Duration::from_secs(5)).await.unwrap_err(), RefineError::BadResponse(_)));
-        assert!(matches!(list_models("ftp://x", None, Duration::from_secs(5)).await.unwrap_err(), RefineError::InvalidConfig(_)));
+        assert!(matches!(list_models(&html.uri(), None, Duration::from_secs(5), &voltip_net::Network::new()).await.unwrap_err(), RefineError::BadResponse(_)));
+        assert!(matches!(list_models("ftp://x", None, Duration::from_secs(5), &voltip_net::Network::new()).await.unwrap_err(), RefineError::InvalidConfig(_)));
     }
 
     #[test]
