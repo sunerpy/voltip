@@ -20,7 +20,7 @@ From an entry you can:
 
 - copy it, or paste it into the window you used before (see [Where the text goes](/dictation/output#copy-or-paste-a-result-again));
 - star it, so that it is easy to find;
-- add a misheard word to the [dictionary](/recognition/dictionary) with **Add to dictionary**;
+- select a misheard word in the original text and add it to the [dictionary](/recognition/dictionary) or create a rule, see [Correct from the history](/recognition/dictionary#correct-from-the-history);
 - delete it.
 
 The search box finds text, apps, scenes and models. Filters narrow the list to today, this week or this month, to starred entries, or entries whose text was not inserted. The list shows 100 entries at a time; scroll to the end, or select **Load more**, to see the next ones.
