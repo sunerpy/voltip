@@ -37,6 +37,10 @@ describe("the phone's network page", () => {
     const page = await openNetwork();
     await chooseMode("manual");
     const manual = await within(page).findByTestId("network-manual");
+    expect(within(manual).getByTestId("network-no-proxy")).toHaveProp(
+      "value",
+      "local, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16",
+    );
     expect(within(manual).getByText("填写代理服务器并保存后生效。")).toBeOnTheScreen();
     await fireEvent.changeText(within(manual).getByTestId("network-server"), "127.0.0.1");
     await fireEvent.press(within(manual).getByTestId("network-save"));

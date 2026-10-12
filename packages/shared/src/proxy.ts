@@ -13,6 +13,11 @@ import {
   type SetProxyArgs,
 } from "./schema";
 
+/** What 不使用代理的地址 starts with for a first manual proxy: the local network, so a model
+ *  service on another computer of the network is not sent to a proxy that cannot reach it. This
+ *  device's own addresses go direct whatever the list says. */
+export const DEFAULT_NO_PROXY = "local, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16";
+
 /** Why a manual proxy cannot be saved: the field and what is wrong with it. */
 export type ProxyProblem =
   | {

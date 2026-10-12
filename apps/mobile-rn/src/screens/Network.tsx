@@ -4,6 +4,7 @@
 // manual proxy is checked as the core checks it and applies on 保存. Its password goes to the
 // keystore and never comes back: the page only says whether one is saved.
 import {
+  DEFAULT_NO_PROXY,
   MAX_NO_PROXY_BYTES,
   MAX_PROXY_PASSWORD_BYTES,
   MAX_PROXY_USERNAME_BYTES,
@@ -40,7 +41,8 @@ function draftOf(proxy: ProxySettings): Draft {
     server: proxy.server ?? "",
     username: proxy.username ?? "",
     password: "",
-    noProxy: proxy.no_proxy,
+    // Saved as `a,b`; shown as `a, b`.
+    noProxy: proxy.no_proxy.split(",").filter(Boolean).join(", "),
   };
 }
 
@@ -80,6 +82,9 @@ export function Network() {
   const choose = (next: ProxyMode) => {
     setMode(next);
     setTried(false);
+    // A first manual proxy starts with the local network in its no-proxy list.
+    if (next === "manual" && proxy.server === null && draft.server === "" && draft.noProxy === "")
+      setDraft({ ...draft, noProxy: DEFAULT_NO_PROXY });
     if (next === proxy.mode || (next === "manual" && proxy.server === null)) return;
     send({ ...proxy, mode: next }, null).catch(fail);
   };

@@ -1,4 +1,5 @@
 import {
+  DEFAULT_NO_PROXY,
   MAX_NO_PROXY_BYTES,
   MAX_PROXY_PASSWORD_BYTES,
   MAX_PROXY_USERNAME_BYTES,
@@ -40,7 +41,8 @@ function draftOf(proxy: ProxySettings): Draft {
     server: proxy.server ?? "",
     username: proxy.username ?? "",
     password: "",
-    noProxy: proxy.no_proxy,
+    // Saved as `a,b`; shown as `a, b`.
+    noProxy: proxy.no_proxy.split(",").filter(Boolean).join(", "),
   };
 }
 
@@ -95,6 +97,9 @@ export function NetworkPane() {
     setMode(next);
     setTried(false);
     // A manual proxy needs a server before it can apply; until then the form waits for 保存.
+    // A first manual proxy starts with the local network in its no-proxy list.
+    if (next === "manual" && proxy.server === null && draft.server === "" && draft.noProxy === "")
+      setDraft({ ...draft, noProxy: DEFAULT_NO_PROXY });
     if (next === proxy.mode || (next === "manual" && proxy.server === null)) return;
     send({ ...proxy, mode: next }, null).catch(fail);
   };
@@ -184,7 +189,7 @@ export function NetworkPane() {
                 <Input
                   size="sm"
                   mono
-                  className="w-72"
+                  className="w-[420px]"
                   aria-label={t("settings.network.server")}
                   placeholder="http://127.0.0.1:7890"
                   autoComplete="off"
@@ -205,7 +210,7 @@ export function NetworkPane() {
                 help={t("settings.network.usernameHelp")}>
                 <Input
                   size="sm"
-                  className="w-72"
+                  className="w-[420px]"
                   aria-label={t("settings.network.username")}
                   autoComplete="off"
                   spellCheck={false}
@@ -225,7 +230,7 @@ export function NetworkPane() {
                   <Input
                     size="sm"
                     type="password"
-                    className="w-72"
+                    className="w-[420px]"
                     aria-label={t("settings.network.password")}
                     autoComplete="new-password"
                     maxLength={MAX_PROXY_PASSWORD_BYTES}
@@ -258,7 +263,7 @@ export function NetworkPane() {
                 <Input
                   size="sm"
                   mono
-                  className="w-72"
+                  className="w-[420px]"
                   aria-label={t("settings.network.noProxy")}
                   placeholder="localhost, corp.example.com, 10.0.0.0/8"
                   autoComplete="off"

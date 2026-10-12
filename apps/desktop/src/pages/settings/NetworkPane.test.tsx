@@ -36,6 +36,10 @@ describe("Settings · 网络", () => {
 
     // 手动设置 without a saved server waits for one.
     await user.click(within(pane).getByRole("radio", { name: "手动设置" }));
+    // A first manual proxy starts with the local network in its no-proxy list.
+    expect(within(pane).getByTestId("network-no-proxy")).toHaveValue(
+      "local, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16",
+    );
     expect(within(pane).getByTestId("network-pending")).toHaveTextContent(
       "填写代理服务器并保存后生效。",
     );
@@ -49,6 +53,7 @@ describe("Settings · 网络", () => {
     await user.type(within(pane).getByTestId("network-password"), "s3cret");
     expect(await within(pane).findByText("填写密码时也需要填写用户名")).toBeInTheDocument();
     await user.type(within(pane).getByTestId("network-username"), " bob ");
+    await user.clear(within(pane).getByTestId("network-no-proxy"));
     await user.type(within(pane).getByTestId("network-no-proxy"), "*.corp.test; 10.0.0.0/8");
     await user.click(within(pane).getByTestId("network-save"));
     await waitFor(() => {
@@ -100,6 +105,7 @@ describe("Settings · 网络", () => {
     ).toBeInTheDocument();
     await user.clear(within(pane).getByTestId("network-server"));
     await user.type(within(pane).getByTestId("network-server"), "socks5h://127.0.0.1:1080");
+    await user.clear(within(pane).getByTestId("network-no-proxy"));
     await user.type(within(pane).getByTestId("network-no-proxy"), "ok.test, b@d");
     expect(
       await within(pane).findByText("「b@d」不是有效的主机、域名、IP 地址或网段"),
