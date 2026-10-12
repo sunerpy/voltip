@@ -24,12 +24,32 @@ pub struct AsrConfig {
     pub model: String,
     /// Whole-request timeout (connect, upload, inference, download).
     pub timeout: Duration,
+    /// What the OpenAI-compatible multipart's `file` carries (Model Studio's protocols always send
+    /// the WAV).
+    pub upload: AudioUpload,
+}
+
+/// The audio a transcription request uploads (docs/dictation.md §3.9).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AudioUpload {
+    /// The WAV as it is (`audio.wav`): every service takes it.
+    #[default]
+    Wav,
+    /// Ogg Opus at 24 kbit/s (`audio.ogg`), about a tenth of the WAV, for a service known to decode
+    /// it. A WAV Opus cannot take as it is (not 16-bit mono, another rate) still goes as the WAV.
+    OggOpus,
 }
 
 impl AsrConfig {
-    /// A configuration without a token, with the default timeout.
+    /// A configuration without a token, with the default timeout, uploading the WAV.
     pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Self {
-        Self { base_url: base_url.into(), token: None, model: model.into(), timeout: DEFAULT_TIMEOUT }
+        Self { base_url: base_url.into(), token: None, model: model.into(), timeout: DEFAULT_TIMEOUT, upload: AudioUpload::Wav }
+    }
+
+    /// Set what the requests upload.
+    pub fn with_upload(mut self, upload: AudioUpload) -> Self {
+        self.upload = upload;
+        self
     }
 
     /// Set the bearer token.
@@ -52,6 +72,7 @@ impl fmt::Debug for AsrConfig {
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
             .field("model", &self.model)
             .field("timeout", &self.timeout)
+            .field("upload", &self.upload)
             .finish()
     }
 }
@@ -120,8 +141,9 @@ mod tests {
         let config = AsrConfig::new("https://host", "whisper-1");
         assert_eq!(config.token, None);
         assert_eq!(config.timeout, DEFAULT_TIMEOUT);
-        let config = config.with_token(Some("sk-very-secret".into())).with_timeout(Duration::from_secs(5));
-        assert_eq!(config.timeout, Duration::from_secs(5));
+        assert_eq!(config.upload, AudioUpload::Wav, "the format every service takes");
+        let config = config.with_token(Some("sk-very-secret".into())).with_timeout(Duration::from_secs(5)).with_upload(AudioUpload::OggOpus);
+        assert_eq!((config.timeout, config.upload), (Duration::from_secs(5), AudioUpload::OggOpus));
         let debug = format!("{config:?}");
         assert!(!debug.contains("very-secret"), "{debug}");
         assert!(debug.contains("token: Some(\"<redacted>\")"), "{debug}");

@@ -16,6 +16,8 @@ workspace = true
 # connection; rustls pinned to aws-lc-rs, reqwest's provider), task ids.
 base64.workspace = true
 futures-util.workspace = true
+# Ogg Opus uploads to the built-in service (src/ogg_opus.rs, docs/dictation.md §3.9): the phone take's encoder.
+opus-rs.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true
