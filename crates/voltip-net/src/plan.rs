@@ -11,10 +11,10 @@ pub const PROXY_SCHEMES: [&str; 3] = ["http", "socks5", "socks5h"];
 
 /// Longest `no_proxy` list kept.
 pub const MAX_NO_PROXY_BYTES: usize = 4096;
-/// Longest user name kept.
-pub const MAX_USERNAME_BYTES: usize = 256;
-/// Longest password kept.
-pub const MAX_PASSWORD_BYTES: usize = 1024;
+/// Longest user name kept: what SOCKS5's sign-in carries (RFC 1929, one length byte).
+pub const MAX_USERNAME_BYTES: usize = 255;
+/// Longest password kept, for the same reason.
+pub const MAX_PASSWORD_BYTES: usize = 255;
 
 /// How Voltip's connections reach the network.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

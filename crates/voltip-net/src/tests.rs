@@ -83,6 +83,50 @@ fn following_the_system_reads_it_for_each_request() {
     assert!(network.platform_proxy().is_none());
 }
 
+/// The HTTPS proxy, the HTTP proxy and the exclusions a test's system settings hold.
+type SystemSettings = (Option<&'static str>, Option<&'static str>, &'static str);
+
+/// The system fingerprint changes with anything that could change a route: either proxy, its
+/// credentials, an exclusion; on Android the network's proxy or its exclusions. The same settings
+/// read again give the same one.
+#[test]
+fn the_system_fingerprint_follows_every_part_of_the_system_settings() {
+    let system: Arc<Mutex<SystemSettings>> = Arc::new(Mutex::new((Some("http://10.0.0.1:3128"), None, "")));
+    let reads = Arc::clone(&system);
+    let network = Network::with_system_matcher(move || {
+        let (https, http, no) = *reads.lock();
+        let mut builder = Matcher::builder().no(no.to_owned());
+        if let Some(https) = https {
+            builder = builder.https(https.to_owned());
+        }
+        if let Some(http) = http {
+            builder = builder.http(http.to_owned());
+        }
+        builder.build()
+    });
+    let first = network.system_fingerprint();
+    assert_eq!(network.system_fingerprint(), first, "the same settings, the same fingerprint");
+    let mut seen = vec![first];
+    for change in [
+        (Some("http://10.0.0.1:3128"), None, "intranet.test"),
+        (Some("http://10.0.0.1:3128"), Some("http://10.0.0.2:3128"), "intranet.test"),
+        (Some("http://bob:pw@10.0.0.1:3128"), Some("http://10.0.0.2:3128"), "intranet.test"),
+        (Some("http://bob:other@10.0.0.1:3128"), Some("http://10.0.0.2:3128"), "intranet.test"),
+        (None, None, ""),
+    ] {
+        *system.lock() = change;
+        let now = network.system_fingerprint();
+        assert!(!seen.contains(&now), "{change:?} changes the fingerprint");
+        seen.push(now);
+    }
+    network.set_platform_proxy(Some(PlatformProxy::new("10.0.2.2", 8080, "corp.test").unwrap()));
+    let platform = network.system_fingerprint();
+    network.set_platform_proxy(Some(PlatformProxy::new("10.0.2.2", 8080, "corp.test, other.test").unwrap()));
+    assert_ne!(network.system_fingerprint(), platform, "an exclusion of the network's proxy counts");
+    network.set_platform_proxy(Some(PlatformProxy::new("10.0.2.2", 8080, "corp.test").unwrap()));
+    assert_eq!(network.system_fingerprint(), platform);
+}
+
 /// What an HTTP proxy was asked: the request line and its `Proxy-Authorization`.
 type Asked = Arc<Mutex<Vec<(String, Option<String>)>>>;
 

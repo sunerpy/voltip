@@ -222,15 +222,16 @@ async fn a_proxy_change_is_checked_saved_and_put_in_force() {
     assert!(desk.store.get(PROXY_PASSWORD_ENTRY).unwrap().is_none());
 }
 
-/// Following the system: the settings show its proxy, read again on `RefreshNetwork`; a change
-/// rebuilds the engines' clients, the same reading does not, and with a manual proxy in force the
-/// system's proxy is only shown.
+/// Following the system: the settings show its proxy, read again on `RefreshNetwork`; any change
+/// of the system's settings rebuilds the engines' clients, the same reading does not, and with a
+/// manual proxy in force the system's proxy is only shown.
 #[tokio::test]
 async fn following_the_system_is_read_again_when_asked() {
     let system: Arc<Mutex<Option<String>>> = Arc::default();
-    let reads = Arc::clone(&system);
+    let excluded: Arc<Mutex<String>> = Arc::default();
+    let (reads, exclusions) = (Arc::clone(&system), Arc::clone(&excluded));
     let network = Network::with_system_matcher(move || {
-        let builder = hyper_util::client::proxy::matcher::Matcher::builder();
+        let builder = hyper_util::client::proxy::matcher::Matcher::builder().no(exclusions.lock().clone());
         match reads.lock().clone() {
             Some(proxy) => builder.https(proxy).build(),
             None => builder.build(),
@@ -254,6 +255,20 @@ async fn following_the_system_is_read_again_when_asked() {
     })
     .await;
     assert!(!rebuilt, "the same reading changes nothing");
+
+    // Regression (goal gate, 2026-10-12): a change the shown proxy does not reflect — an exclusion
+    // only, the credentials only — reroutes all the same.
+    for change in [0, 1] {
+        if change == 0 {
+            *excluded.lock() = "intranet.test".into();
+        } else {
+            *system.lock() = Some("http://user:other@10.0.0.1:3128".into());
+        }
+        desk.handle.send(CoreCommand::RefreshNetwork).await.unwrap();
+        let status = wait_network(&mut desk).await;
+        assert_eq!(status.system_proxy.as_deref(), Some("http://10.0.0.1:3128"), "the shown proxy is the same");
+        wait(&mut desk, |e| matches!(e, CoreEvent::Engines(_)).then_some(())).await;
+    }
 
     desk.handle.send(CoreCommand::SetProxy { proxy: manual("127.0.0.1:7890", None), password: None }).await.unwrap();
     wait(&mut desk, |e| matches!(e, CoreEvent::Engines(_)).then_some(())).await;

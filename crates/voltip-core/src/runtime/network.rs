@@ -52,6 +52,7 @@ impl Runtime {
         self.settings.proxy = proxy;
         self.save_settings()?;
         self.config.network.set(plan);
+        self.system_fingerprint = self.config.network.system_fingerprint();
         self.emit_network();
         if changed {
             self.reroute()?;
@@ -59,14 +60,16 @@ impl Runtime {
         Ok(())
     }
 
-    /// `RefreshNetwork`: read the system's proxy again; when following it now means another route,
-    /// reconnect what was opened on the old one.
+    /// `RefreshNetwork`: read the system's proxy settings again; when any part of them changed (a
+    /// proxy, its credentials, an exclusion; on the phone the network's proxy) while following
+    /// them, reconnect what was opened on the old routes.
     pub(super) fn refresh_network(&mut self) -> Result<(), CoreError> {
-        let before = self.network_status.system_proxy.clone();
+        let fingerprint = self.config.network.system_fingerprint();
+        let changed = fingerprint != self.system_fingerprint;
+        self.system_fingerprint = fingerprint;
         self.emit_network();
-        let following = self.config.network.plan() == voltip_net::ProxyPlan::System;
-        if following && self.network_status.system_proxy != before {
-            tracing::info!("the system's proxy changed; reconnecting");
+        if changed && self.config.network.plan() == voltip_net::ProxyPlan::System {
+            tracing::info!("the system's proxy settings changed; reconnecting");
             self.reroute()?;
         }
         Ok(())

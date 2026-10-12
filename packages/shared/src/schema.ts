@@ -538,10 +538,11 @@ export const proxyModeSchema = z.enum(PROXY_MODES);
 export type ProxyMode = z.infer<typeof proxyModeSchema>;
 /** `voltip_net::PROXY_SCHEMES`: the kinds of proxy the user can set. */
 export const PROXY_SCHEMES = ["http", "socks5", "socks5h"] as const;
-/** `voltip_net::MAX_NO_PROXY_BYTES`, `MAX_USERNAME_BYTES`, `MAX_PASSWORD_BYTES`. */
+/** `voltip_net::MAX_NO_PROXY_BYTES`, `MAX_USERNAME_BYTES`, `MAX_PASSWORD_BYTES` (the user name
+ *  and password fit SOCKS5's sign-in, one length byte each). */
 export const MAX_NO_PROXY_BYTES = 4096;
-export const MAX_PROXY_USERNAME_BYTES = 256;
-export const MAX_PROXY_PASSWORD_BYTES = 1024;
+export const MAX_PROXY_USERNAME_BYTES = 255;
+export const MAX_PROXY_PASSWORD_BYTES = 255;
 /** `Settings.proxy`: the mode, and the manual proxy's address, user name and the hosts that go
  *  direct, kept in the other modes too. Its password is in the keychain
  *  (`UiState.network.proxy_password`). */

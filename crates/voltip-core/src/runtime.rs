@@ -534,9 +534,9 @@ pub enum CoreCommand {
         /// The password for the keychain.
         password: Option<String>,
     },
-    /// Read the system's proxy again ([`CoreEvent::Network`]): the settings opened, or the shell
-    /// handed in the platform network's proxy. When following the system now means another
-    /// route, the engines' clients are rebuilt and the relay reconnects.
+    /// Read the system's proxy settings again ([`CoreEvent::Network`]): the settings opened, or
+    /// the shell handed in the platform network's proxy. When any part of them changed while
+    /// following them, the engines' clients are rebuilt and the relay reconnects.
     RefreshNetwork,
     /// Close the built-in clean-up service's notice (docs/dictation.md §3.6); it stays away a day.
     RefineNoticeClose,
@@ -851,7 +851,9 @@ impl AppCore {
             notice: notice::NoticeRuntime::default(),
             proxy_password,
             network_status: crate::ui::NetworkStatus::default(),
+            system_fingerprint: 0,
         };
+        rt.system_fingerprint = rt.config.network.system_fingerprint();
         rt.connect_relay()?;
         let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx };
         Ok((rt, inbox, CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
@@ -1095,6 +1097,9 @@ struct Runtime {
     proxy_password: Option<String>,
     /// `UiState.network` as last told.
     network_status: crate::ui::NetworkStatus,
+    /// What following the system meant when the routes were last decided
+    /// (`voltip_net::Network::system_fingerprint`).
+    system_fingerprint: u64,
 }
 
 impl Runtime {

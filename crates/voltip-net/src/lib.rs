@@ -167,6 +167,33 @@ impl Network {
         self.system_proxy_for(&Url::parse("https://example.com/").ok()?)
     }
 
+    /// A digest of everything following the system means now: the system's proxies for HTTP and
+    /// HTTPS with their credentials and its exclusions, or the platform network's proxy and its
+    /// exclusions. Equal digests: no connection would take another route. For telling whether
+    /// the system's settings changed; never shown or logged.
+    pub fn system_fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let state = self.state.read();
+        match &state.platform {
+            Some((proxy, _)) => {
+                "platform".hash(&mut hasher);
+                proxy.server.as_str().hash(&mut hasher);
+                proxy.no_proxy.hash(&mut hasher);
+            }
+            None => {
+                let system = (self.system)();
+                // Both proxies and every exclusion rule (the matcher's Debug leaves out credentials).
+                format!("{system:?}").hash(&mut hasher);
+                for probe in ["http://example.com/", "https://example.com/"] {
+                    let route = probe.parse::<http::Uri>().ok().and_then(|uri| system.intercept(&uri)).and_then(|i| route_of(&i));
+                    route.map(|r| (r.server.to_string(), r.credentials)).hash(&mut hasher);
+                }
+            }
+        }
+        hasher.finish()
+    }
+
     pub(crate) fn route_for(&self, url: &Url) -> Option<Route> {
         let uri = target_uri(url)?;
         let state = self.state.read();
