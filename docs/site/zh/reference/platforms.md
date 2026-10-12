@@ -64,6 +64,6 @@ Android 应用把手机当作电脑的麦克风和键盘，见[手机端](/zh/ph
 
 ## 暂不提供
 
-- iOS 尚未开始开发。
+- iOS 版计划在后续发布。
 - 暂不提供 Windows ARM 和 Linux ARM 的安装包。
 - 暂不提供适用于 32 位 Arm 或 x86 处理器手机的 Android 应用。
