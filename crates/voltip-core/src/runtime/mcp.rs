@@ -116,7 +116,8 @@ impl Runtime {
             }
             return;
         }
-        if self.mcp.running.is_some() && self.mcp.port == Some(wanted.port) {
+        // The same port (or the one a listener asked for port 0 got): nothing to restart.
+        if self.mcp.running.as_ref().is_some_and(|running| self.mcp.port == Some(wanted.port) || running.addr().port() == wanted.port) {
             return;
         }
         self.stop_mcp();
