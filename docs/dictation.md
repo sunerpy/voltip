@@ -248,6 +248,20 @@ pub struct EngineSettings {                                  // Settings.engines
 - **实测**（2026-10-12）：7 段中文、中英混合和方言样音，每种格式各识别 3 遍，与 WAV 文本相比字符差异 0.5 %，与 32、40、75 kbit/s 相同；编码复杂度降到 5 或 0 时为 1.3 %，所以保留默认的 9。37.7 s 的样音从 1.2 MB 降到约 98 KB；编码在构建主机的一个核上用时约 0.47 s。同一台主机经同一出口、每次新建连接各请求 16 次：WAV 有 3 次超过 20 s（最长 31.8 s，拥塞窗口 6–12 个报文并有重传），Ogg Opus 全部在 1.5–2.5 s；网络正常时 Opus 因为编码多约 0.4 s。Opus 的 16 次里没有出现变慢的连接，约 100 KB 的请求在慢启动阶段就已发完。由同一段样音重复拼成的 3 分钟与 5 分钟录音（7 段与 11 段，§22 的长录音路径）经 `voltip-server` 分别用时 8.7 s 与 13 s。
 - **测试**：`voltip-asr` 的 `ogg_opus` 测试（RFC 7845 页结构与 CRC、各页长度下颗粒位置递增到录音结束、`regression_a_take_stays_at_the_budgets_bitrate_and_decodes_back_to_it`、只编码 Opus 能直接接受的 WAV、扩展格式与多余块）、`an_ogg_opus_upload_sends_the_take_as_opus_and_anything_else_as_the_wav`；`voltip-cloud` 的 `regression_the_built_in_service_gets_ogg_opus_and_every_other_service_the_wav`。同一次排查修正了 `voltip-asr` 与 `voltip-refine` 中四个测试的竞争（`refused_connection_is_a_network_error`、`timeout_and_network`、`a_connection_refused_once_is_tried_again_and_the_{take,polish}_goes_through`）：先释放的端口在客户端重试的 1.3 s 内可能被另一个测试的服务占用，现在改为只绑定、不监听的套接字。
 
+### 3.10 推理模型的润色（2026-10-12）
+
+用户报告（2026-10-12）：手机上内置服务选 `openai/gpt-oss-120b` 后，润色一直失败。
+
+- **排查结论**：
+  - 网关日志里这些请求都返回 200。按客户端的请求原样调用：`finish_reason: length`，正文为空，128 个输出 token 中 126 个用于推理（Groq 的 `usage.completion_tokens_details.reasoning_tokens`）。gpt-oss 先推理再回答，推理计入 `max_tokens`；Voltip 的预算按回答的长度计算（`output_token_budget`，短句为 128），默认的推理强度就把它用完了，客户端报 `EmptyAnswer`。`openai/gpt-oss-20b` 相同；`qwen/qwen3.8-27b` 默认不推理，不受影响。
+  - 电脑、手机、`voltip-server` 和用户自己的 Groq 密钥用的是同一个客户端，都受影响：自 2026-10-08 起内置服务和 Groq 都列出了 gpt-oss（§3）。
+  - `reasoning_effort: low` 时，同一提示词下推理只用 5–86 个 token。
+- **处理**（`voltip-refine` 的 chat completions）：
+  - 模型名去掉 `openai/` 等前缀后以 `gpt-oss` 开头时，请求带 `reasoning_effort: "low"`，`max_tokens` 在原预算上再加 256，仍不超过上限（内置服务为 `BUILTIN_OUTPUT_CAP` 900，用户自己的服务为 4096）。润色和语音编辑都这样处理，其他模型的请求不变。
+  - 润色的回答在 `max_tokens` 处被截断（`finish_reason: length`）时按失败处理（`RefineError::Truncated`），插入识别原文，与语音编辑相同；此前会插入截断后的半截文字。
+- **实测**（2026-10-12，用本分支构建的 `voltip-server` 经首尔网关）：内置服务的 `openai/gpt-oss-120b`、`openai/gpt-oss-20b`、`qwen/qwen3.8-27b` 对 10 s 与 37.7 s 的样音都润色成功；`openai/gpt-oss-120b` 用 8 个内置预设各润色一次，全部成功。
+- **测试**：`voltip-refine` 的 `regression_a_model_that_reasons_first_gets_low_effort_and_room_to_reason`、`regression_a_clean_up_cut_off_at_the_limit_is_refused`（去掉修复时两者都失败）。
+
 ## 4. 历史记录（`voltip_core::history`）
 
 ```rust

@@ -81,6 +81,24 @@ struct ChatRequest<'a> {
     messages: [Message<'a>; 2],
     #[serde(skip_serializing_if = "Option::is_none")]
     enable_thinking: Option<bool>,
+    /// Only for a model that reasons first ([`reasons_first`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'static str>,
+}
+
+/// The effort a chat completion asks of a model that reasons before it answers (docs/dictation.md
+/// §3.10). Its reasoning counts against `max_tokens`: at the default effort a short clean-up's 128
+/// tokens all went to it on Groq and the answer came back empty (2026-10-12, `openai/gpt-oss-120b`,
+/// 126 reasoning tokens); at low effort the reasoning took 5–86.
+const REASONING_EFFORT: &str = "low";
+/// Tokens such a request gets on top of the answer's budget, for the reasoning, under the same
+/// ceiling.
+const REASONING_TOKENS: u32 = 256;
+
+/// `model` reasons before it answers and takes `reasoning_effort`: OpenAI's gpt-oss, with or
+/// without a vendor prefix (`openai/gpt-oss-120b` on Groq, `gpt-oss:20b` on Ollama).
+fn reasons_first(model: &str) -> bool {
+    model.trim().rsplit('/').next().is_some_and(|name| name.to_ascii_lowercase().starts_with("gpt-oss"))
 }
 
 /// A Responses request (docs/dictation.md §3.7): no temperature and no output limit.
@@ -251,6 +269,11 @@ impl RefineClient {
         let chars = input.chars().count();
         tracing::debug!(path = log_path(&self.endpoint), model = %self.config.model, chars, preset = hints.preset.name(), context = ?hints.context, "refining");
         let answer = self.complete(&prompt, input, output_token_budget(&hints.preset, chars, self.config.output_cap)).await?;
+        // Cut off at `max_tokens`, the text would lose the end of the take: it keeps its own text
+        // instead, as an edit refuses a cut-off answer.
+        if answer.finish_reason.as_deref() == Some("length") {
+            return Err(RefineError::Truncated);
+        }
         let cleaned = clean_answer(&answer.content);
         if cleaned.is_empty() {
             return Err(RefineError::EmptyAnswer);
@@ -326,15 +349,20 @@ impl RefineClient {
     }
 
     /// One chat completion ([`TEMPERATURE`], `max_tokens`): the first choice's content and finish
-    /// reason.
+    /// reason. A model that reasons first gets [`REASONING_EFFORT`] and [`REASONING_TOKENS`] more,
+    /// up to the configured ceiling (the built-in service's free tier refuses more,
+    /// [`BUILTIN_OUTPUT_CAP`]).
     async fn complete_chat(&self, system: &str, user: &str, max_tokens: u32) -> Result<Completion, RefineError> {
         let started = Instant::now();
+        let reasoning = reasons_first(&self.config.model);
+        let max_tokens = if reasoning { max_tokens.saturating_add(REASONING_TOKENS).min(self.config.output_cap.max(max_tokens)) } else { max_tokens };
         let payload = ChatRequest {
             model: &self.config.model,
             temperature: TEMPERATURE,
             max_tokens,
             messages: [Message { role: "system", content: system }, Message { role: "user", content: user }],
             enable_thinking: self.config.enable_thinking,
+            reasoning_effort: reasoning.then_some(REASONING_EFFORT),
         };
         let body = self.post(&payload).await?;
         let parsed: ChatResponse =
@@ -1114,6 +1142,55 @@ mod tests {
         let second: Value = serde_json::from_slice(&server.received_requests().await.unwrap()[1].body).unwrap();
         assert!(!second["messages"][1]["content"].as_str().unwrap().contains(nonce.as_str()));
         assert_eq!(second["messages"][0]["content"], crate::EDIT_SYSTEM_PROMPT, "no glossary, no block");
+    }
+
+    /// Regression (2026-10-12: every clean-up on the built-in `openai/gpt-oss-120b` came back
+    /// unpolished, on the phone and through voltip-server): gpt-oss reasons before it answers and
+    /// its reasoning counts against `max_tokens`; at the default effort a short take's 128 tokens
+    /// all went to it. docs/dictation.md §3.10: such a model is asked for low effort and gets 256
+    /// tokens more, under the ceiling, for a clean-up and an edit; other models are asked as before.
+    #[tokio::test]
+    async fn regression_a_model_that_reasons_first_gets_low_effort_and_room_to_reason() {
+        let server = MockServer::start().await;
+        mount(&server, answer("好。")).await;
+        let long = "很".repeat(400);
+        for model in ["openai/gpt-oss-120b", "gpt-oss-20b", "gpt-oss:20b", "qwen/qwen3.8-27b"] {
+            let client = RefineClient::new(RefineConfig::new(server.uri(), model)).unwrap();
+            client.refine("好", None).await.unwrap();
+            client.refine(&long, None).await.unwrap();
+            client.edit("好", "改一下", &PromptHints::default()).await.unwrap();
+        }
+        let bodies: Vec<Value> = server.received_requests().await.unwrap().iter().map(|r| serde_json::from_slice(&r.body).unwrap()).collect();
+        for reasoning in bodies[..9].chunks(3) {
+            assert_eq!(reasoning[0]["reasoning_effort"], "low", "{}", reasoning[0]["model"]);
+            assert_eq!(reasoning[0]["max_tokens"], 128 + 256, "a short take's budget and room for the reasoning");
+            assert_eq!(reasoning[1]["max_tokens"], BUILTIN_OUTPUT_CAP, "never past the built-in service's ceiling");
+            assert_eq!((reasoning[2]["reasoning_effort"].as_str(), reasoning[2]["max_tokens"].as_u64()), (Some("low"), Some(256 + 256)), "an edit");
+        }
+        for plain in &bodies[9..] {
+            assert!(plain.get("reasoning_effort").is_none(), "{plain}");
+        }
+        let plain_budgets: Vec<u64> = bodies[9..].iter().map(|b| b["max_tokens"].as_u64().unwrap()).collect();
+        assert_eq!(plain_budgets, [128, 864, 256]);
+        // A service of the user's own has their ceiling.
+        let client = RefineClient::new(RefineConfig::new(server.uri(), "openai/gpt-oss-120b").with_output_cap(crate::USER_OUTPUT_CAP)).unwrap();
+        client.refine(&long, None).await.unwrap();
+        let last: Value = serde_json::from_slice(&server.received_requests().await.unwrap().last().unwrap().body).unwrap();
+        assert_eq!(last["max_tokens"], 864 + 256);
+    }
+
+    /// docs/dictation.md §3.10: a clean-up cut off at `max_tokens` is refused as an edit's is, so the
+    /// take keeps its own text instead of losing its end; so is one whose reasoning took the whole
+    /// budget and left no answer.
+    #[tokio::test]
+    async fn regression_a_clean_up_cut_off_at_the_limit_is_refused() {
+        for content in ["明天上午十点我们开个会吧，把上周", ""] {
+            let server = MockServer::start().await;
+            let cut_off = json!({ "choices": [{ "message": { "content": content, "reasoning": "The user wants…" }, "finish_reason": "length" }] });
+            mount(&server, ResponseTemplate::new(200).set_body_json(cut_off)).await;
+            let err = client(&server, None).refine("嗯那个明天上午十点我们开个会吧然后把上周的数据带过来啊", None).await.unwrap_err();
+            assert_eq!(err, RefineError::Truncated, "{content:?}");
+        }
     }
 
     /// A cut-off answer (`finish_reason: length`) and an empty one are refused: the caller must not
