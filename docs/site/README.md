@@ -74,7 +74,7 @@ Pages may use these components and no others:
 | `<VideoFigure src poster width height title caption? />` | a video with its poster; nothing loads until it plays |
 | `<QrCode src alt caption? size? />` | a QR code on a white plate in both themes |
 | `<Badge>` | VitePress's own badge |
-| `<TryVoltip />` | the online try page (`guide/try.md`) only; its API is firlab's `voltip/functions/` |
+| `<TryVoltip />` | the online try page (`guide/try.md`) only, a `layout: page` with `pageClass: vt-try-page` and `sidebar: false`, so no sidebar or outline competes with it; its API is firlab's `voltip/functions/`, and its own words (buttons, the line on what is kept, the link to the app) are firlab's `try/strings.ts` |
 | `HomeIndex`, `HomeSteps`, `SplitBlock`, `HomeModels`, `HomePlatforms`, `HomePrivacy`, `HomeRoadmap` | the home pages only; they render the `home:` frontmatter |
 
 ## The home pages
@@ -86,6 +86,7 @@ on a missing field or an unknown one.
 
 | Key | Holds |
 | --- | --- |
+| `try` | the band under the hero that leads to the try page: `title`, `body`, a `heard` → `polished` sample, `action` (`text`, `link`) |
 | `facts` | the lines under the tagline: `term`, `text` |
 | `visual` | `home` (the app's home page, light and dark) and `pill` (the overlay's three states) |
 | `index` | `title`, `intro`, `groups[].items[]`: `title`, `body`, `status`, `link` |
