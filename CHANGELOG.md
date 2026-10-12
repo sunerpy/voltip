@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.3](https://github.com/sunerpy/voltip/compare/v0.1.2...v0.1.3) (2026-10-12)
+
+
+### Bug Fixes
+
+* **asr:** 长语音识别改为上传 Opus，不再因上传慢而失败 ([#154](https://github.com/sunerpy/voltip/issues/154)) ([082c29e](https://github.com/sunerpy/voltip/commit/082c29eaa2d1fe66d4be16fd1bc4e3ed051eebfa))
+* **refine:** 内置服务的 gpt-oss 润色不再因推理用完输出上限而返回空结果 ([082c29e](https://github.com/sunerpy/voltip/commit/082c29eaa2d1fe66d4be16fd1bc4e3ed051eebfa))
+
 ## [0.1.2](https://github.com/sunerpy/voltip/compare/v0.1.1...v0.1.2) (2026-10-11)
 
 
