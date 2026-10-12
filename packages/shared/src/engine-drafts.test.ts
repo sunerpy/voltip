@@ -166,29 +166,49 @@ describe("engine drafts (provider cards, desktop and phone)", () => {
   it("regression: the select offers the provider's models under the count 测试连接 reports", () => {
     // User report 2026-10-12: the select had the few suggested models while 测试连接 counted many.
     const plain = (ids: string[]) => ids.map((m) => ({ value: m, label: m }));
+    const other = { value: "__other__", label: "其他模型…" };
     const vendor = service({ model: "b", presets: ["a", "b"] });
-    expect(modelOptions(vendor)).toEqual(plain(["b", "a"]));
+    expect(modelOptions(vendor, [], t, other)).toEqual([...plain(["b", "a"]), other]);
     const listed = service({ model: "b", presets: ["a", "b"], listed: ["c", "a", "d"] });
-    const suggested = (m: string) => ({ value: m, label: m, group: "推荐" });
     const offered = (m: string) => ({ value: m, label: m, group: "服务商提供（3）" });
-    expect(modelOptions(listed)).toEqual([
-      suggested("b"),
-      suggested("a"),
+    expect(modelOptions(listed, [], t, other)).toEqual([
+      ...plain(["b", "a"]),
+      other,
       offered("a"),
       offered("c"),
       offered("d"),
     ]);
     // What a 测试连接 in the form found stands in for the saved list.
-    expect(modelOptions(listed, ["e", "e", ""])).toEqual([
-      suggested("b"),
-      suggested("a"),
+    expect(modelOptions(listed, ["e", "e", ""], t)).toEqual([
+      ...plain(["b", "a"]),
       { value: "e", label: "e", group: "服务商提供（1）" },
     ]);
-    // A provider without suggestions (Ollama, a custom endpoint) has one plain list.
-    expect(modelOptions(service({ model: "x", listed: ["y", "x"] }))).toEqual(plain(["x", "y"]));
+    // A provider without suggestions (Ollama, a custom endpoint): the model in effect, if any.
+    expect(modelOptions(service({ model: "x", listed: ["y", "x"] }), [], t)).toEqual([
+      { value: "x", label: "x" },
+      { value: "x", label: "x", group: "服务商提供（2）" },
+      { value: "y", label: "y", group: "服务商提供（2）" },
+    ]);
     expect(modelOptions(service())).toEqual([]);
     const en = createTranslator("en").t;
     expect(modelOptions(listed, [], en)[2]?.group).toBe("From the provider (3)");
+  });
+
+  it("regression: a list that arrives only adds options after the ones shown", () => {
+    // CI 2026-10-12: the list arrived while a test was choosing 其他模型… and the options it had
+    // were rebuilt under it. WebKit's native select also reports a choice by position, so the
+    // options a select shows keep their places when the provider's list comes in.
+    const other = { value: "__other__", label: "其他模型…" };
+    for (const before of [
+      service({ model: "b", presets: ["a", "b"] }),
+      service({ model: "x" }),
+      service(),
+    ]) {
+      const shown = modelOptions(before, [], t, other);
+      const after = modelOptions({ ...before, listed: ["z", "a", "b", "x"] }, [], t, other);
+      expect(after.slice(0, shown.length)).toEqual(shown);
+      expect(after.length).toBeGreaterThan(shown.length);
+    }
   });
 
   it("says how many models the provider lists, or where the list comes from", () => {

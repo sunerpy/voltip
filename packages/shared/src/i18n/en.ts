@@ -941,7 +941,6 @@ export const en: Messages = {
         "Pick from the list. Once a key is saved, the list includes every model the provider offers for this service.",
       modelHelpKeyless:
         "Pick from the list. While the service can be reached, the list includes every model it offers for this service.",
-      modelSuggested: "Suggested",
       modelOffered: "From the provider ({n})",
       modelListed: {
         one: "The list includes the model the provider offers for this service, updated each time the list opens.",

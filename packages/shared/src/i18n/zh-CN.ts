@@ -943,7 +943,6 @@ export const zhCN = {
       modelHelp: "从列表里选。保存密钥后，列表会包含服务商提供的全部可用模型。",
       modelHelpKeyless: "从列表里选。能连接到这个服务时，列表会包含它提供的全部可用模型。",
       /** docs/dictation.md §3.3: the model select's groups; the count is 测试连接's. */
-      modelSuggested: "推荐",
       modelOffered: "服务商提供（{n}）",
       modelListed: {
         one: "列表包含服务商提供的 {n} 个可用模型，每次打开列表时更新。",

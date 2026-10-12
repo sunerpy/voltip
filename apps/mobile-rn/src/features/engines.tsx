@@ -531,8 +531,11 @@ function ProviderForm({
   const [problem, setProblem] = useState<string | undefined>(undefined);
   const probe = useProviderProbe(provider.id, kind);
   const probed = probe.report?.result === "ok" ? (probe.report.models ?? []) : [];
-  const options = modelOptions(service, probed, t);
-  const choices = options.map((o) => o.value);
+  const options = modelOptions(service, probed, t, {
+    value: OTHER_MODEL,
+    label: t("engines.field.modelOther"),
+  });
+  const choices = options.filter((o) => o.value !== OTHER_MODEL).map((o) => o.value);
   const effectiveModel = draft.model.length > 0 ? draft.model : service.model;
   const [typing, setTyping] = useState(() => choices.length === 0);
   const selectValue = typing || !choices.includes(effectiveModel) ? OTHER_MODEL : effectiveModel;
@@ -616,7 +619,7 @@ function ProviderForm({
               setDraft({ ...draft, model: value });
             }}
             onOpen={refreshModels}
-            options={[...options, { value: OTHER_MODEL, label: t("engines.field.modelOther") }]}
+            options={options}
             testID="provider-model"
           />
         )}

@@ -398,11 +398,18 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
         .getAllByRole("option")
         .map((o) => o.textContent),
     ).toEqual(["meta/llama-5", "moonshotai/kimi-k3", "openai/gpt-oss-120b", "qwen/qwen3.8-27b"]);
+    // The suggested models first, then 其他模型…, then the provider's: what arrives goes last.
     expect(
-      within(within(select).getByRole("group", { name: t("engines.field.modelSuggested") }))
+      within(select)
         .getAllByRole("option")
+        .slice(0, 4)
         .map((o) => o.textContent),
-    ).toEqual(["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]);
+    ).toEqual([
+      "qwen/qwen3.8-27b",
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-20b",
+      t("engines.field.modelOther"),
+    ]);
     expect(within(form).getByTestId("provider-model-help")).toHaveTextContent(
       "列表包含服务商提供的 4 个可用模型，每次打开列表时更新。",
     );

@@ -38,7 +38,7 @@ A provider that offers both services uses one key for both. The provider cards s
 ## Setting up a provider
 
 1. On the Speech models or AI models page, select the provider's card. Its settings open in a panel on the right, or from the bottom on the phone.
-2. Choose a model, and for a custom endpoint enter its address. Once a key is saved, the model list shows every model the provider offers after the suggested ones (the **From the provider** group, with their number), updated each time the list opens, so there is no need to type a model ID.
+2. Choose a model, and for a custom endpoint enter its address. Once a key is saved, the model list shows every model the provider offers after **Other model…** (the **From the provider** group, with their number), updated each time the list opens, so there is no need to type a model ID.
 3. Enter your key. **Test connection** checks the address and the key and shows how many models the provider offers, the same number as in the model list. The Speech models page lists speech recognition models only, and the AI models page leaves out speech, image and embedding models.
 4. Choose **Set as current** to save what you entered and switch to the provider. **Set as current** on a card switches to the provider without opening its settings.
 

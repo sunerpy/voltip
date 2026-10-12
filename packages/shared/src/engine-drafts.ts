@@ -120,27 +120,26 @@ export interface ModelOption {
   group?: string;
 }
 
-/** The options of a card's model select (docs/dictation.md §3.3). Once the provider has listed its
- *  models (`ServiceStatus.listed`, or what a 测试连接 in the form found, `probed`), they follow
- *  the suggested ones as a group headed with their count, the count 测试连接 reports: a suggested
- *  model the provider lists shows in both groups. Before that, or for a provider without
- *  suggestions, a plain list. */
+/** The options of a card's model select (docs/dictation.md §3.3): the model in effect and the
+ *  presets, then `other` (其他模型…, for a select that has it), then, once the provider has listed
+ *  its models (`ServiceStatus.listed`, or what a 测试连接 in the form found, `probed`), those as a
+ *  group headed with their count, the count 测试连接 reports; a suggested model the provider lists
+ *  shows twice. A list only ever adds options after the ones shown: WebKit's native select reports
+ *  a choice by its position, so a list arriving while it is open must not move what it shows. */
 export function modelOptions(
   service: ServiceStatus,
   probed: readonly string[] = [],
   t: TFunction = zhT.t,
+  other?: ModelOption,
 ): ModelOption[] {
+  const suggested = uniqueIds([service.model, ...service.presets]).map((m) => modelOption(m));
   const offered = uniqueIds(probed.length > 0 ? probed : (service.listed ?? []));
   offered.sort();
-  const suggested = uniqueIds([service.model, ...service.presets]);
-  if (offered.length === 0) return suggested.map((m) => modelOption(m));
-  if (service.presets.length === 0)
-    return uniqueIds([service.model, ...offered]).map((m) => modelOption(m));
-  const suggestedGroup = t("engines.field.modelSuggested");
-  const offeredGroup = t("engines.field.modelOffered", { n: offered.length });
+  const group = t("engines.field.modelOffered", { n: offered.length });
   return [
-    ...suggested.map((m) => modelOption(m, suggestedGroup)),
-    ...offered.map((m) => modelOption(m, offeredGroup)),
+    ...suggested,
+    ...(other === undefined ? [] : [other]),
+    ...offered.map((m) => modelOption(m, group)),
   ];
 }
 

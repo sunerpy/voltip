@@ -309,8 +309,11 @@ function AddFallback({
   const [providerId, setProviderId] = useState<ProviderId | undefined>(undefined);
   const provider = candidates.find((p) => p.id === providerId) ?? candidates[0];
   const service = provider?.[kind];
-  const options = service === undefined ? [] : modelOptions(service, [], t);
-  const choices = options.map((o) => o.value);
+  const options =
+    service === undefined
+      ? []
+      : modelOptions(service, [], t, { value: OTHER_MODEL, label: t("engines.field.modelOther") });
+  const choices = options.filter((o) => o.value !== OTHER_MODEL).map((o) => o.value);
   const [picked, setPicked] = useState<string | undefined>(undefined);
   const [typed, setTyped] = useState("");
   const [problem, setProblem] = useState<string | undefined>(undefined);
@@ -393,7 +396,7 @@ function AddFallback({
                   setProblem(undefined);
                 }}
                 onOpen={refreshModels}
-                options={[...options, { value: OTHER_MODEL, label: t("engines.field.modelOther") }]}
+                options={options}
                 data-testid={`fallback-${kind}-model`}
               />
             )}
