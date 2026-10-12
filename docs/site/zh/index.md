@@ -1,6 +1,6 @@
 ---
 layout: home
-title: Voltip：Windows、macOS 和 Linux 上的语音输入
+title: Voltip：Windows、macOS、Linux 和 Android 上的语音输入
 titleTemplate: false
 description: 按住快捷键说话，松开后文字出现在任意应用的光标处。可以在本机识别，也可以使用你选择的云端服务，并可选 AI 润色。
 
@@ -119,7 +119,7 @@ home:
             status: available
             link: /zh/phone/
           - title: iOS 应用
-            body: 在 iOS 上同样把手机当作麦克风和键盘，尚未开始开发。
+            body: 在 iOS 上同样把手机当作麦克风和键盘，计划在后续发布。
             status: planned
             link: /zh/roadmap
           - title: 历史记录，一键复制粘贴
@@ -229,7 +229,7 @@ home:
           - 在应用里按住说话
           - 由配对的电脑完成
           - —
-    note: iOS 尚未开始开发。暂不提供 Windows ARM 和 Linux ARM 的安装包。
+    note: iOS 版计划在后续发布。暂不提供 Windows ARM 和 Linux ARM 的安装包。
 
   privacy:
     title: 哪些数据会离开这台电脑
@@ -261,7 +261,7 @@ home:
         body: 包括 Whisper 等模型，以及在 AMD 和 Intel 显卡上的实测。
       - title: iOS 应用
         status: planned
-        body: 在 iOS 上同样把手机当作麦克风和键盘，尚未开始开发。
+        body: 在 iOS 上同样把手机当作麦克风和键盘，计划在后续发布。
     notPlanned:
       title: 刻意不做的功能
       items:

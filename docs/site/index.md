@@ -1,6 +1,6 @@
 ---
 layout: home
-title: Voltip — dictation for Windows, macOS and Linux
+title: Voltip — dictation for Windows, macOS, Linux and Android
 titleTemplate: false
 description: Hold a shortcut, speak, and the text appears at your cursor in any app. Recognition on your computer or with a cloud service you choose, with optional AI polish.
 
@@ -119,7 +119,7 @@ home:
             status: available
             link: /phone/
           - title: An iOS app
-            body: The phone as a microphone and keyboard on iOS as well. Development has not started.
+            body: The phone as a microphone and keyboard on iOS as well. Planned for a later release.
             status: planned
             link: /roadmap
           - title: History with copy and paste
@@ -229,7 +229,7 @@ home:
           - Hold to talk in the app
           - Done by the paired computer
           - —
-    note: iOS has not been started. Packages for Windows on ARM and Linux on ARM are not planned for now.
+    note: An iOS app is planned for a later release. Packages for Windows on ARM and Linux on ARM are not planned for now.
 
   privacy:
     title: What leaves your computer
@@ -261,7 +261,7 @@ home:
         body: Whisper among others, and measurements on AMD and Intel graphics cards.
       - title: An iOS app
         status: planned
-        body: The phone as a microphone and keyboard on iOS as well. Development has not started.
+        body: The phone as a microphone and keyboard on iOS as well. Planned for a later release.
     notPlanned:
       title: Deliberately left out
       items:

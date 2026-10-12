@@ -64,6 +64,6 @@ The Android app turns a phone into a microphone and keyboard for the computer; s
 
 ## Not available
 
-- iOS has not been started.
+- An iOS app is planned for a later release.
 - Packages for Windows on ARM and Linux on ARM are not planned for now.
 - The Android app is not built for phones with a 32-bit Arm or an x86 processor.
