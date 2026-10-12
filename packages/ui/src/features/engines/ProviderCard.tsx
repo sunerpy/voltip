@@ -8,8 +8,9 @@ import {
   applyProviderDraft,
   checkProviderDraft,
   choosesInterface,
-  modelChoices,
   modelDisplayName,
+  modelListHelp,
+  modelOptions,
   probeText,
   providerBadges,
   providerDraft,
@@ -17,7 +18,7 @@ import {
   secretStateLabel,
   withProvider,
 } from "@voltip/shared";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useBackend, useUiState } from "../../backend/BackendProvider";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -31,6 +32,8 @@ import { CardGrid } from "../../components/SettingsLayout";
 import { cx } from "../../cx";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useFeatureShell } from "../shell";
+import { ProviderMark, hasProviderMark } from "./ProviderMark";
+import { useModelRefresh } from "./useModelRefresh";
 import { useProviderProbe } from "./useProviderProbe";
 
 /** The model select's last option: type any other model id. */
@@ -39,6 +42,8 @@ const OTHER_MODEL = "__other__";
 /** The effort select's "not set" choice (no `reasoning` in the request). */
 const NO_EFFORT = "";
 
+/** The app's own icon of each provider: the built-in, on-device and custom ones always, a vendor
+ *  when it has no mark of its own (`PROVIDER_MARKS`). */
 const ICONS: Readonly<Record<ProviderId, IconName>> = {
   builtin: "sparkles",
   local: "cpu",
@@ -108,15 +113,18 @@ export function ProviderCards({ kind, providers, label, localBody }: ProviderCar
 }
 
 /** The provider's icon on a block: a soft accent one for the provider in use, never a solid one
- *  (user feedback 2026-10-10 on the drafts). */
+ *  (user feedback 2026-10-10 on the drafts). A vendor shows its own mark in its own colours (user
+ *  request 2026-10-12); the built-in, on-device and custom providers keep the app's icons. */
 function ProviderIcon({ id, active }: { id: ProviderId; active: boolean }) {
+  const mark = hasProviderMark(id);
   return (
     <span
       className={cx(
         "flex size-8 shrink-0 items-center justify-center rounded-6",
-        active ? "bg-accent-soft text-accent-text" : "bg-inset text-fg-muted",
+        active ? "bg-accent-soft" : "bg-inset",
+        mark ? "text-fg" : active ? "text-accent-text" : "text-fg-muted",
       )}>
-      <Icon name={ICONS[id]} size={16} />
+      {mark ? <ProviderMark id={id} size={18} /> : <Icon name={ICONS[id]} size={16} />}
     </span>
   );
 }
@@ -260,6 +268,9 @@ export function ProviderDetail({ provider, kind, onClose, localBody }: ProviderD
       onClose={onClose}
       title={name}
       icon={ICONS[provider.id]}
+      {...(hasProviderMark(provider.id)
+        ? { mark: <ProviderMark id={provider.id} size={20} /> }
+        : {})}
       iconTone={service.active ? "accent" : "neutral"}
       badges={<StateBadges service={service} />}
       description={t(`engines.providerNote.${provider.id}`)}
@@ -439,7 +450,11 @@ function ProviderForm({
   const [problem, setProblem] = useState<string | undefined>(undefined);
   const probe = useProviderProbe(provider.id, kind);
   const probed = probe.report?.result === "ok" ? (probe.report.models ?? []) : [];
-  const choices = modelChoices(service, probed);
+  const options = modelOptions(service, probed, t, {
+    value: OTHER_MODEL,
+    label: t("engines.field.modelOther"),
+  });
+  const choices = options.filter((o) => o.value !== OTHER_MODEL).map((o) => o.value);
   const effectiveModel = draft.model.length > 0 ? draft.model : service.model;
   const [typing, setTyping] = useState(() => choices.length === 0);
   const selectValue = typing || !choices.includes(effectiveModel) ? OTHER_MODEL : effectiveModel;
@@ -447,6 +462,12 @@ function ProviderForm({
   const shared =
     provider.asr !== undefined && provider.llm !== undefined && provider.id !== "custom";
   const secret = secretStateLabel(service.key, locale);
+  // docs/dictation.md §3.3: the provider's latest models as the drawer opens, and again each time
+  // the model list opens.
+  const refreshModels = useModelRefresh(provider.id, kind);
+  useEffect(() => {
+    refreshModels();
+  }, [refreshModels]);
 
   /** Checks the draft and writes it, with `provider` serving `kind` when `use`; false when the
    *  checks refused it. The key goes to the keychain only. */
@@ -455,12 +476,16 @@ function ProviderForm({
     setProblem(issue);
     if (issue !== undefined) return false;
     const engines = applyProviderDraft(state.settings.engines, provider.id, kind, draft);
-    void backend.invoke("settings_set_engines", {
-      engines: use ? withProvider(engines, kind, provider.id) : engines,
-    });
+    const sent = [
+      backend.invoke("settings_set_engines", {
+        engines: use ? withProvider(engines, kind, provider.id) : engines,
+      }),
+    ];
     const key = draft.key.trim();
     if (key.length > 0)
-      void backend.invoke("provider_key_set", { provider: provider.id, kind, value: key });
+      sent.push(backend.invoke("provider_key_set", { provider: provider.id, kind, value: key }));
+    // The list for the endpoint and key just saved, once the core has them.
+    Promise.all(sent).then(refreshModels, () => undefined);
     setDraft({ ...draft, key: "" });
     return key.length > 0 ? t("engines.savedKey") : "";
   };
@@ -516,10 +541,9 @@ function ProviderForm({
                 setTyping(false);
                 setDraft({ ...draft, model: value });
               }}
-              options={[
-                ...choices.map((m) => ({ value: m, label: m })),
-                { value: OTHER_MODEL, label: t("engines.field.modelOther") },
-              ]}
+              onOpen={refreshModels}
+              options={options}
+              data-testid="provider-model-select"
             />
           )}
           {selectValue === OTHER_MODEL && (
@@ -533,7 +557,7 @@ function ProviderForm({
               }}
             />
           )}
-          <Help>{t("engines.field.modelHelp")}</Help>
+          <Help data-testid="provider-model-help">{modelListHelp(provider, service, t)}</Help>
           {choosesInterface(provider.id, kind) && (
             // docs/dictation.md §3.7: the custom clean-up's interface, and the Responses effort.
             <>
@@ -643,12 +667,27 @@ function ProviderForm({
                     {t("engines.getKey")}
                   </Button>
                 )}
+                {provider.quota === true && (
+                  <Button
+                    size="sm"
+                    variant="text"
+                    icon="external"
+                    data-testid="provider-quota"
+                    onClick={() => {
+                      void backend.providerConsoleOpen(provider.id, "quota");
+                    }}>
+                    {t("engines.viewQuota")}
+                  </Button>
+                )}
                 {service.key.source === "user" && (
                   <Button size="sm" variant="text-danger" icon="trash" onClick={deleteKey}>
                     {t("engines.deleteKey")}
                   </Button>
                 )}
               </div>
+              {provider.quota === true && (
+                <Help data-testid="provider-quota-help">{t("engines.quotaHelp")}</Help>
+              )}
             </>
           )}
           <ProbePanel

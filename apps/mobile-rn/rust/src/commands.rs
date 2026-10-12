@@ -10,14 +10,14 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use voltip_cloud::feedback;
 use voltip_core::ui::{GuidePage, ProjectLink};
-use voltip_core::{HistoryQuery, ProviderId};
+use voltip_core::{ConsolePage, HistoryQuery, ProviderId};
 use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
 
 use crate::shell::Shell;
 
 /// Every command the app may invoke: the Tauri phone shell's `COMMANDS`, in its order (a test reads
 /// that list and compares).
-pub const COMMANDS: [&str; 111] = [
+pub const COMMANDS: [&str; 112] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -62,6 +62,7 @@ pub const COMMANDS: [&str; 111] = [
     "provider_key_set",
     "engines_quota_reset",
     "provider_probe",
+    "provider_models_refresh",
     "provider_console_open",
     "project_link_open",
     "guide_open",
@@ -190,7 +191,8 @@ pub async fn run(shell: &Shell, command: &str, args: Value) -> Result<Value, Str
         "hotkey_edge" => Err(HOTKEY_UNAVAILABLE.to_owned()),
         "provider_console_open" => {
             let provider: ProviderId = arg(command, &args, "provider")?;
-            let url = provider.spec().console_url.ok_or_else(|| format!("{}: no key page", provider.as_str()))?;
+            let page: Option<ConsolePage> = arg(command, &args, "page")?;
+            let url = provider.console_page(page.unwrap_or_default())?;
             open(shell, url.to_owned()).await
         }
         "project_link_open" => {

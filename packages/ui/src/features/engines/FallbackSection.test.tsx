@@ -105,6 +105,54 @@ describe("FallbackSection (docs/dictation.md §3.5)", () => {
     unmount();
   });
 
+  it("regression: the add row offers every model the chosen provider lists, and links Model Studio's quota page", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({
+      providerKeys: [{ provider: "aliyun", kind: "llm" }],
+      probeModels: { aliyun: ["qwen3.8-flash", "qwen-plus-latest", "deepseek-v4"] },
+    });
+    const invoke = vi.spyOn(backend, "invoke");
+    const { unmount } = renderSection(backend, "llm");
+    const add = await screen.findByTestId("fallback-llm-add");
+    await user.selectOptions(
+      within(add).getByRole("combobox", { name: t("engines.fallback.provider") }),
+      "aliyun",
+    );
+    // Choosing the provider asks for its list; opening the model list asks again.
+    expect(invoke).toHaveBeenCalledWith("provider_models_refresh", {
+      provider: "aliyun",
+      kind: "llm",
+    });
+    const model = within(add).getByTestId("fallback-llm-model");
+    const offered = await within(model).findByRole(
+      "group",
+      { name: t("engines.field.modelOffered", { n: 3 }) },
+      { timeout: 3000 },
+    );
+    expect(
+      within(offered)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["deepseek-v4", "qwen-plus-latest", "qwen3.8-flash"]);
+    invoke.mockClear();
+    await user.pointer({ keys: "[MouseLeft>]", target: model });
+    expect(invoke).toHaveBeenCalledWith("provider_models_refresh", {
+      provider: "aliyun",
+      kind: "llm",
+    });
+    await user.selectOptions(model, "qwen-plus-latest");
+    await user.click(screen.getByTestId("fallback-llm-add-button"));
+    await waitFor(async () => {
+      expect((await settingsFallback(backend, "llm"))?.models).toEqual([
+        { provider: "aliyun", model: "qwen-plus-latest" },
+      ]);
+    });
+    // docs/dictation.md §3.5: Model Studio's free quota and usage are read in its console.
+    await user.click(await screen.findByTestId("fallback-llm-quota"));
+    expect(backend.quotaPagesOpened).toEqual(["aliyun"]);
+    unmount();
+  });
+
   it("moves and removes models, and offers the built-in service's own models", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend({ providerKeys: [{ provider: "groq", kind: "llm" }] });

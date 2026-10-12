@@ -17,12 +17,19 @@ import { type SampleHistoryRow, historyEntries } from "./fixtures/history";
 import builtinPresetTexts from "./fixtures/ipc/presets-builtin.json";
 import builtinSceneRows from "./fixtures/ipc/scenes-builtin.json";
 import { joinLiveText, livePreviewText } from "./labels";
-import { type BuiltInService, keyEntry, providerSpec, resolveEngineStatus } from "./providers";
+import {
+  type BuiltInService,
+  type ListedModels,
+  keyEntry,
+  providerSpec,
+  resolveEngineStatus,
+} from "./providers";
 import { checkProxySettings, proxyPasswordProblem, proxyProblemCoreText } from "./proxy";
 import {
   type AppRef,
   type ArgsOf,
   type CommandArgs,
+  type ConsolePage,
   type DeviceConnection,
   type DeviceIdentityPublic,
   type DeviceInfo,
@@ -940,8 +947,12 @@ export class MockBackend implements Backend {
   /** docs/dictation.md §3.5: the selected model of a service that ran out of quota, and when it
    *  is tried again (`simulateQuotaExhausted`); `engines_quota_reset` forgets it. */
   private readonly quotaOut = new Map<ServiceKind, number>();
-  /** Every `providerConsoleOpen` made, in order (tests). */
+  /** Every `providerConsoleOpen` of a key page, in order (tests). */
   readonly consolesOpened: ProviderId[] = [];
+  /** Every `providerConsoleOpen` of a quota page, in order (tests). */
+  readonly quotaPagesOpened: ProviderId[] = [];
+  /** How many `provider_models_refresh` requests left (tests). */
+  modelRefreshes = 0;
   /** `project_link_open` calls, for tests. */
   readonly linksOpened: ProjectLink[] = [];
   /** `guide_open` calls (page and language), for tests. */
@@ -971,6 +982,9 @@ export class MockBackend implements Backend {
   private lastTextId = 0;
   private readonly feedback: "configured" | FeedbackError;
   private readonly probeTimers = new Set<ReturnType<typeof setTimeout>>();
+  /** The models each provider listed for its saved endpoint and key, by `provider:kind`
+   *  (docs/dictation.md §3.3): `provider_models_refresh` and a 测试连接 with the saved values. */
+  private readonly listedModels = new Map<`${ProviderId}:${ServiceKind}`, ListedModels>();
   /** `history_process` requests running (docs/dictation.md §22). */
   private readonly processing = new Map<
     number,
@@ -1805,6 +1819,9 @@ export class MockBackend implements Backend {
       }
       if (value !== null && value.trim().length > 0) this.userKeys.add(entry);
       else this.userKeys.delete(entry);
+      // Another key may be another account, with its own models.
+      this.listedModels.delete(`${provider}:asr`);
+      this.listedModels.delete(`${provider}:llm`);
       this.emit({
         type: "engines",
         ...this.resolveEngines(this.state.settings.engines),
@@ -1813,6 +1830,10 @@ export class MockBackend implements Backend {
     provider_probe: (args) => {
       const { provider, kind, baseUrl, key } = required(args);
       this.probe(provider, kind, baseUrl ?? undefined, key ?? undefined);
+    },
+    provider_models_refresh: (args) => {
+      const { provider, kind } = required(args);
+      this.refreshModels(provider, kind);
     },
     engines_quota_reset: (args) => {
       const { kind } = required(args);
@@ -2887,9 +2908,14 @@ export class MockBackend implements Backend {
 
   // ---- providers (docs/dictation.md §3.3) ----------------------------------------------------------
 
-  providerConsoleOpen(provider: ProviderId): Promise<void> {
-    if (!providerSpec(provider).console)
-      return Promise.reject(new Error(`${provider}: no key page`));
+  providerConsoleOpen(provider: ProviderId, page: ConsolePage = "key"): Promise<void> {
+    const spec = providerSpec(provider);
+    if (page === "quota") {
+      if (spec.quota !== true) return Promise.reject(new Error(`${provider}: no quota page`));
+      this.quotaPagesOpened.push(provider);
+      return Promise.resolve();
+    }
+    if (!spec.console) return Promise.reject(new Error(`${provider}: no key page`));
     this.consolesOpened.push(provider);
     return Promise.resolve();
   }
@@ -3047,28 +3073,21 @@ export class MockBackend implements Backend {
     const preset = spec[kind];
     if (preset === undefined || provider === "local") return failed("unsupported");
     if (provider === "builtin" && this.builtIn[kind] === undefined) return failed("unsupported");
+    let savedUrl: string | undefined;
     if (provider !== "builtin") {
-      const saved = this.state.settings.engines.providers?.[provider];
-      const url =
-        baseUrl?.trim() ||
-        (kind === "asr" ? saved?.asr_url : saved?.llm_url) ||
-        (preset.baseUrl.length > 0 ? preset.baseUrl : undefined);
+      const saved = this.savedTarget(provider, kind);
+      const url = baseUrl?.trim() || saved.url;
       if (url === undefined || !/^https?:\/\/[^/]+/.test(url)) return failed("invalid_url");
-      const entry = keyEntry(provider, kind);
-      const hasKey =
-        (key?.trim().length ?? 0) > 0 || (entry !== undefined && this.userKeys.has(entry));
+      const hasKey = (key?.trim().length ?? 0) > 0 || saved.key;
       if (spec.key === "required" && !hasKey) return failed("key_missing");
+      // The saved values, as the core sees them: no key typed, the saved address or none.
+      if ((key?.trim().length ?? 0) === 0 && url === saved.url) savedUrl = url;
     }
     const handle = setTimeout(() => {
       this.probeTimers.delete(handle);
       if (this.probeModels === false) return failed("unreachable");
-      const models = [
-        ...(this.probeModels[provider] ??
-          (provider === "builtin"
-            ? (this.builtIn[kind]?.models ?? [this.builtIn[kind]?.model ?? ""])
-            : preset.models)),
-      ];
-      models.sort();
+      const models = this.listOf(provider, kind);
+      if (savedUrl !== undefined) this.storeList(provider, kind, savedUrl, models);
       this.emit({
         type: "provider_probe",
         provider,
@@ -3077,6 +3096,63 @@ export class MockBackend implements Backend {
         models,
         latency_ms: MOCK_PROBE_MS,
       });
+    }, MOCK_PROBE_MS);
+    this.probeTimers.add(handle);
+  }
+
+  /** The saved endpoint of a provider's service and whether its key is saved (`probe_target`
+   *  with no draft). */
+  private savedTarget(provider: ProviderId, kind: ServiceKind): { url?: string; key: boolean } {
+    const preset = providerSpec(provider)[kind];
+    const saved = this.state.settings.engines.providers?.[provider];
+    const url =
+      (kind === "asr" ? saved?.asr_url : saved?.llm_url)?.trim() ||
+      (preset !== undefined && preset.baseUrl.length > 0 ? preset.baseUrl : undefined);
+    const entry = keyEntry(provider, kind);
+    return {
+      ...(url === undefined ? {} : { url }),
+      key: entry !== undefined && this.userKeys.has(entry),
+    };
+  }
+
+  /** What the pretend provider lists: `probeModels`, else the presets (the built-in service's own
+   *  models), sorted. */
+  private listOf(provider: ProviderId, kind: ServiceKind): string[] {
+    const pretend = this.probeModels === false ? undefined : this.probeModels[provider];
+    const listed = [
+      ...(pretend ??
+        (provider === "builtin"
+          ? (this.builtIn[kind]?.models ?? [this.builtIn[kind]?.model ?? ""])
+          : (providerSpec(provider)[kind]?.models ?? []))),
+    ];
+    listed.sort();
+    return listed;
+  }
+
+  private storeList(provider: ProviderId, kind: ServiceKind, url: string, models: string[]) {
+    const slot = `${provider}:${kind}` as const;
+    const old = this.listedModels.get(slot);
+    if (old?.url === url && JSON.stringify(old.models) === JSON.stringify(models)) return;
+    this.listedModels.set(slot, { url, models });
+    this.emit({ type: "engines", ...this.resolveEngines(this.state.settings.engines) });
+  }
+
+  /** `provider_models_refresh`: the saved endpoint and key's list after `MOCK_PROBE_MS`; nothing
+   *  for the built-in and on-device providers, without a saved key or address, or while the
+   *  provider is unreachable. */
+  private refreshModels(provider: ProviderId, kind: ServiceKind) {
+    const spec = providerSpec(provider);
+    if (provider === "builtin" || provider === "local" || spec[kind] === undefined) return;
+    const saved = this.savedTarget(provider, kind);
+    const url = saved.url;
+    if (url === undefined || (spec.key === "required" && !saved.key)) return;
+    this.modelRefreshes += 1;
+    const handle = setTimeout(() => {
+      this.probeTimers.delete(handle);
+      if (this.probeModels === false) return;
+      // The address may have changed meanwhile: the list is the endpoint's it came from.
+      if (this.savedTarget(provider, kind).url !== url) return;
+      this.storeList(provider, kind, url, this.listOf(provider, kind));
     }, MOCK_PROBE_MS);
     this.probeTimers.add(handle);
   }
@@ -3101,6 +3177,7 @@ export class MockBackend implements Backend {
       liveReady:
         settings.live_preview && this.modelState(MOCK_STREAMING_MODEL_ID)?.kind === "installed",
       quotaOut: Object.fromEntries(this.quotaOut),
+      listed: Object.fromEntries(this.listedModels),
     });
     return { ...status, ...this.engineOverrides };
   }

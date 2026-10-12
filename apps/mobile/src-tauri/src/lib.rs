@@ -23,8 +23,8 @@ use tauri::{AppHandle, Emitter as _, Manager as _, Runtime};
 use voltip_cloud::feedback;
 use voltip_core::ui::{GuidePage, ProjectLink, UI_EVENT_NAME, UiState, UpdateStatus};
 use voltip_core::{
-    Activation, AppRef, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PresetDraft, PreviewDraft, ProviderId,
-    RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
+    Activation, AppRef, ConsolePage, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PresetDraft, PreviewDraft,
+    ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
 };
 use voltip_identity::SecretStore;
 use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
@@ -36,7 +36,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`, less the
 /// desktop-only commands (the local speech service's, docs/dictation.md §23.6) that
 /// `tests/ipc.rs` lists as `DESKTOP_ONLY`.
-pub const COMMANDS: [&str; 111] = [
+pub const COMMANDS: [&str; 112] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -81,6 +81,7 @@ pub const COMMANDS: [&str; 111] = [
     "provider_key_set",
     "engines_quota_reset",
     "provider_probe",
+    "provider_models_refresh",
     "provider_console_open",
     "project_link_open",
     "guide_open",
@@ -482,11 +483,19 @@ fn provider_probe(
     Ok(bridge.dispatch(UiCommand::ProviderProbe { provider, kind, base_url, key })?)
 }
 
-/// Open the vendor's API-key page in the phone's browser. Only catalogue URLs can be opened: the
-/// webview names a provider, never a URL (as on the desktop).
+/// List a provider's models with the saved endpoint and key as a model list opens (as on the
+/// desktop); the list arrives in an `engines` event.
 #[tauri::command]
-fn provider_console_open<R: Runtime>(app: AppHandle<R>, provider: ProviderId) -> Result<(), String> {
-    let url = provider.spec().console_url.ok_or_else(|| format!("{}: no key page", provider.as_str()))?;
+fn provider_models_refresh(bridge: tauri::State<'_, Bridge>, provider: ProviderId, kind: ServiceKind) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ProviderModelsRefresh { provider, kind })?)
+}
+
+/// Open the vendor's API-key page, or its page of free quota and usage, in the phone's browser.
+/// Only catalogue URLs can be opened: the webview names a provider and a page, never a URL (as on
+/// the desktop).
+#[tauri::command]
+fn provider_console_open<R: Runtime>(app: AppHandle<R>, provider: ProviderId, page: Option<ConsolePage>) -> Result<(), String> {
+    let url = provider.console_page(page.unwrap_or_default())?;
     open_in_browser(&app, url)
 }
 
@@ -1165,6 +1174,7 @@ pub fn build_app<R: Runtime>(
             provider_key_set,
             engines_quota_reset,
             provider_probe,
+            provider_models_refresh,
             provider_console_open,
             project_link_open,
             guide_open,

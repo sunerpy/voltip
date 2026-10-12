@@ -243,6 +243,14 @@ pub enum UiCommand {
         #[serde(default)]
         key: Option<String>,
     },
+    /// List a provider's models with the saved endpoint and key, as a model list opens
+    /// (docs/dictation.md §3.3); the list arrives in an `engines` event (`listed`).
+    ProviderModelsRefresh {
+        /// Provider id.
+        provider: ProviderId,
+        /// `asr` | `llm`.
+        kind: ServiceKind,
+    },
     /// Remove one history entry.
     HistoryDelete {
         /// UUID.
@@ -509,6 +517,7 @@ impl UiCommand {
             Self::ProviderKeySet { provider, kind, value } => CoreCommand::SetProviderKey { provider, kind, value },
             Self::EnginesQuotaReset { kind } => CoreCommand::ResetQuota(kind),
             Self::ProviderProbe { provider, kind, base_url, key } => CoreCommand::ProbeProvider { provider, kind, base_url, key },
+            Self::ProviderModelsRefresh { provider, kind } => CoreCommand::RefreshProviderModels { provider, kind },
             Self::HistoryDelete { id } => CoreCommand::HistoryDelete(parse_id(&id)?),
             Self::HistoryClear => CoreCommand::HistoryClear,
             Self::HistoryStar { id, starred } => CoreCommand::HistoryStar(parse_id(&id)?, starred),
@@ -950,6 +959,8 @@ mod tests {
             c.into_core().unwrap(),
             CoreCommand::ProbeProvider { provider: ProviderId::Custom, kind: ServiceKind::Asr, base_url: Some(u), key: None } if u == "http://10.0.0.2:8000/v1"
         ));
+        let c: UiCommand = serde_json::from_str(r#"{"command":"provider_models_refresh","provider":"aliyun","kind":"asr"}"#).unwrap();
+        assert!(matches!(c.into_core().unwrap(), CoreCommand::RefreshProviderModels { provider: ProviderId::Aliyun, kind: ServiceKind::Asr }));
         assert!(
             serde_json::from_str::<UiCommand>(r#"{"command":"provider_key_set","provider":"azure","kind":"llm","value":"x"}"#).is_err(),
             "unknown providers are refused at the IPC layer"

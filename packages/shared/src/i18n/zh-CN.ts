@@ -940,7 +940,14 @@ export const zhCN = {
       model: "模型",
       modelOther: "其他模型…",
       modelCustom: "模型 ID",
-      modelHelp: "从列表里选；测试连接后，服务商返回的模型也会出现在列表里。",
+      modelHelp: "从列表里选。保存密钥后，列表会包含服务商提供的全部可用模型。",
+      modelHelpKeyless: "从列表里选。能连接到这个服务时，列表会包含它提供的全部可用模型。",
+      /** docs/dictation.md §3.3: the model select's groups; the count is 测试连接's. */
+      modelOffered: "服务商提供（{n}）",
+      modelListed: {
+        one: "列表包含服务商提供的 {n} 个可用模型，每次打开列表时更新。",
+        other: "列表包含服务商提供的 {n} 个可用模型，每次打开列表时更新。",
+      },
       /** docs/dictation.md §3.7: the custom provider's clean-up interface. */
       api: "接口类型",
       apiHelp:
@@ -966,6 +973,10 @@ export const zhCN = {
     builtinBody: "内置服务的地址和密钥已包含在应用中，此处不显示，也无需填写。",
     model: "模型 {model}",
     getKey: "获取密钥",
+    /** docs/dictation.md §3.5: Model Studio's console page of free quota and usage. */
+    viewQuota: "查看额度",
+    quotaHelp:
+      "剩余额度和用量请在百炼控制台查看，百炼不提供查询接口。为模型打开「免费额度用完即停」后，额度用完时服务会拒绝请求而不是计费，Voltip 随即改用「额度用完后改用其他模型」中的下一个模型。",
     save: "保存",
     saved: "已保存 · {provider}",
     savedKey: " · 密钥已写入系统钥匙串",

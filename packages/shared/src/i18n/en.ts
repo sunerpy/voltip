@@ -938,7 +938,15 @@ export const en: Messages = {
       modelOther: "Other model…",
       modelCustom: "Model ID",
       modelHelp:
-        "Pick from the list; after a connection test the provider's own models show up in it too.",
+        "Pick from the list. Once a key is saved, the list includes every model the provider offers for this service.",
+      modelHelpKeyless:
+        "Pick from the list. While the service can be reached, the list includes every model it offers for this service.",
+      modelOffered: "From the provider ({n})",
+      modelListed: {
+        one: "The list includes the model the provider offers for this service, updated each time the list opens.",
+        other:
+          "The list includes the {n} models the provider offers for this service, updated each time the list opens.",
+      },
       api: "Interface",
       apiHelp:
         "Most services speak Chat Completions; kiro-provider, OpenAI's reasoning models and others also speak Responses.",
@@ -967,6 +975,9 @@ export const en: Messages = {
       "The built-in service's address and key are included in the app; they are not shown here and need no input.",
     model: "Model {model}",
     getKey: "Get a key",
+    viewQuota: "View quota",
+    quotaHelp:
+      "Model Studio has no API for the quota left: check the quota and the usage in its console. With Free Quota Only turned on for a model, the service refuses requests instead of charging once the free quota is used up, and Voltip moves on to the next model under “When a model's quota runs out”.",
     save: "Save",
     saved: "Saved · {provider}",
     savedKey: " · key written to the system keychain",

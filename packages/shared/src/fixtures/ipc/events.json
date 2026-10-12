@@ -1390,7 +1390,8 @@
             "set": true,
             "source": "user"
           },
-          "active": true
+          "active": true,
+          "listed": ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
         }
       },
       {
@@ -1452,6 +1453,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "quota": true,
         "asr": {
           "model": "qwen-audio-3.1-asr-flash-streaming",
           "presets": [
@@ -1686,7 +1688,8 @@
             "set": true,
             "source": "user"
           },
-          "active": true
+          "active": true,
+          "listed": ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
         }
       },
       {
@@ -1748,6 +1751,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "quota": true,
         "asr": {
           "model": "qwen-audio-3.1-asr-flash-streaming",
           "presets": [
@@ -1982,7 +1986,8 @@
             "set": true,
             "source": "user"
           },
-          "active": true
+          "active": true,
+          "listed": ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
         }
       },
       {
@@ -2044,6 +2049,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "quota": true,
         "asr": {
           "model": "qwen-audio-3.1-asr-flash-streaming",
           "presets": [
@@ -2365,6 +2371,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "quota": true,
         "asr": {
           "model": "qwen-audio-3.1-asr-flash-streaming",
           "presets": [
@@ -2661,6 +2668,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "quota": true,
         "asr": {
           "model": "qwen-audio-3.1-asr-flash-streaming",
           "presets": [

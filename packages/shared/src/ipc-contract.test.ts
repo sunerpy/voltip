@@ -131,6 +131,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   provider_key_set: null,
   engines_quota_reset: null,
   provider_probe: null,
+  provider_models_refresh: null,
   history_delete: null,
   history_clear: null,
   history_star: null,
@@ -235,6 +236,9 @@ const argSchemas = {
       baseUrl: z.string().nullable().optional(),
       key: z.string().nullable().optional(),
     })
+    .strict(),
+  provider_models_refresh: z
+    .object({ provider: providerIdSchema, kind: serviceKindSchema })
     .strict(),
   history_delete: z.object({ id: z.string() }),
   history_star: z.object({ id: z.string(), starred: z.boolean() }),
@@ -393,6 +397,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.engines_quota_reset.parse(args));
     case "provider_probe":
       return backend.invoke(name, argSchemas.provider_probe.parse(args));
+    case "provider_models_refresh":
+      return backend.invoke(name, argSchemas.provider_models_refresh.parse(args));
     case "history_delete":
       return backend.invoke(name, argSchemas.history_delete.parse(args));
     case "history_star":
@@ -1133,6 +1139,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       key: c.key,
       onDevice: c.on_device,
       console: c.console,
+      quota: c.quota === true,
       asr: services(c.id, c.asr),
       llm: services(c.id, c.llm),
     }));
@@ -1143,6 +1150,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       key: p.key,
       onDevice: p.onDevice,
       console: p.console,
+      quota: p.quota === true,
       asr: preset(p.asr),
       llm: preset(p.llm),
     }));
@@ -1165,6 +1173,13 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       },
       local: { id: "qwen3-asr-0.6b", name: local?.name ?? "", installed: true },
       liveReady: true,
+      // docs/dictation.md §3.3: the list Groq gave for its saved key (contract.rs's sample).
+      listed: {
+        "groq:llm": {
+          url: "https://api.groq.com/openai/v1",
+          models: ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"],
+        },
+      },
     });
     // docs/dictation.md §3.5: the core's ledger says when a model that ran out is tried again; the
     // preview keeps none. Everything else about the fallback models is resolved the same way.

@@ -827,7 +827,11 @@ fn engine_status() -> EngineStatus {
     // is tried again a day later and the fallback model is in use.
     let ledger = voltip_core::dictation::QuotaLedger::with_clock(|| AT_MS);
     ledger.mark(resolved.asr_fallback.selected.as_ref().expect("the sample's fallback models run"));
-    resolved.status_with(&ledger)
+    let mut status = resolved.status_with(&ledger);
+    // docs/dictation.md §3.3: the models Groq listed for its saved key.
+    let groq = status.providers.iter_mut().find(|p| p.id == ProviderId::Groq).and_then(|p| p.llm.as_mut()).expect("Groq offers clean-up");
+    groq.listed = vec!["openai/gpt-oss-120b".into(), "qwen/qwen3.8-27b".into()];
+    status
 }
 
 fn devices() -> Vec<DeviceView> {
@@ -1750,6 +1754,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::ProviderKeySet { .. } => "ProviderKeySet",
         UiCommand::EnginesQuotaReset { .. } => "EnginesQuotaReset",
         UiCommand::ProviderProbe { .. } => "ProviderProbe",
+        UiCommand::ProviderModelsRefresh { .. } => "ProviderModelsRefresh",
         UiCommand::HistoryDelete { .. } => "HistoryDelete",
         UiCommand::HistoryClear => "HistoryClear",
         UiCommand::HistoryStar { .. } => "HistoryStar",
@@ -1847,6 +1852,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("settings_set_engines", json!({ "engines": local_engine_settings() }), "SettingsSetEngines"),
         ("provider_key_set", json!({ "provider": "groq", "kind": "llm", "value": "gsk_example_not_a_real_key" }), "ProviderKeySet"),
         ("provider_probe", json!({ "provider": "custom", "kind": "asr", "baseUrl": "http://192.168.1.20:8000/v1", "key": null }), "ProviderProbe"),
+        // A model list opens (docs/dictation.md §3.3).
+        ("provider_models_refresh", json!({ "provider": "aliyun", "kind": "asr" }), "ProviderModelsRefresh"),
         // 重新检查 on the fallback models (docs/dictation.md §3.5).
         ("engines_quota_reset", json!({ "kind": "asr" }), "EnginesQuotaReset"),
         ("history_delete", json!({ "id": HISTORY_ID }), "HistoryDelete"),
@@ -2307,6 +2314,7 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "SettingsSetEngines",
         "ProviderKeySet",
         "ProviderProbe",
+        "ProviderModelsRefresh",
         "HistoryDelete",
         "HistoryClear",
         "HistoryStar",

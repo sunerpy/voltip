@@ -363,10 +363,19 @@ export function Lede({ children }: { children: ReactNode }) {
 }
 
 /** Small print under a block. */
-export function Hint({ children, tone }: { children: ReactNode; tone?: "danger" | "muted" }) {
+export function Hint({
+  children,
+  tone,
+  testID,
+}: {
+  children: ReactNode;
+  tone?: "danger" | "muted";
+  testID?: string;
+}) {
   const theme = useAppTheme();
   return (
     <Text
+      testID={testID}
       variant="bodySmall"
       style={{
         color: tone === "danger" ? theme.colors.error : theme.colors.onSurfaceVariant,

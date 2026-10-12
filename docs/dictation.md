@@ -120,6 +120,8 @@ pub struct DictationStatus { pub phase: DictationPhase, pub session: u64 /* 递�
 | `ollama` | — | ✓（`http://127.0.0.1:11434/v1`） | 无 |
 | `custom` | ✓ | ✓ | 可选，识别与润色各一把；接口地址必填 |
 
+服务商卡片和设置抽屉上，各服务商显示自己的标志（2026-10-12 用户要求「获取对应服务商的实际图标」）：取自 LobeHub Icons（MIT，`packages/shared/src/provider-marks.ts`，固定在该图标集的提交 `bcdb7c8`，许可说明随每个安装包的 `THIRD-PARTY-NOTICES.txt` 附带），打包在应用里，不联网获取：页面离线也能显示，也不向第三方发任何请求。黑白标志（OpenAI、Groq、Google AI Studio、Ollama）随主题取文字颜色，彩色标志保留原色；内置服务、本机和自定义接口仍用应用自己的图标。
+
 ```rust
 pub struct EngineSettings {                                  // Settings.engines，#[serde(default)]
     pub asr_provider: ProviderId,                            // 默认 builtin；构建里没有内置服务时回落到 local
@@ -147,13 +149,23 @@ pub struct EngineSettings {                                  // Settings.engines
 
 **内置服务的多个模型**（2026-10-08 用户要求：内置润色提供 Qwen 与 GPT-OSS 等多个模型）：`VOLTIP_REFINE_MODEL`（识别的 `VOLTIP_ASR_MODEL` 同理）可以是逗号分隔的列表，`BuiltIn::models` 按顺序给出，第一个是默认。内置服务卡片在列表多于一个时显示模型下拉框，选中的存为 `providers.builtin.llm_model`；选回第一个时不保存，以后的构建换了默认也跟着走。设置里的模型不在本构建的列表中时用默认模型。候补模型（§3.5）可以是内置服务的另一个模型；内置服务的候补项模型为空时指它卡片上选的那个。内置网关把请求原样转给 Groq，列表里的模型由网关所在账户的免费层提供（2026-10-08 经首尔网关实测 `qwen/qwen3.8-27b`、`openai/gpt-oss-120b`、`openai/gpt-oss-20b` 都回 200）。
 
-**Google AI Studio**（2026-10-08 用户决定：作为独立服务商，用户填自己的密钥，从列表里选模型而不是手填）：只做润色，基址 `https://generativelanguage.googleapis.com/v1beta/openai`，预设为有免费额度的 `gemini-3.8-flash`、`gemini-3.5-flash-lite`、`gemini-3.1-flash-lite`、`gemini-2.5-flash`、`gemini-2.5-pro`（ai.google.dev 的定价页，2026-10-08）。这个基址没有 `/v1`，`voltip_refine::normalize_base_url` 对这个主机不追加。它的 `GET /models` 把模型写成 `models/gemini-…`，还列出嵌入、图像、语音、视频模型：测试连接后 `providers::usable_models` 只留 Gemini 与 Gemma 的文本模型，并去掉前缀，下拉框里就是可选的模型。卡片说明写明免费层的内容可能被 Google 用于改进产品。
+**Google AI Studio**（2026-10-08 用户决定：作为独立服务商，用户填自己的密钥，从列表里选模型而不是手填）：只做润色，基址 `https://generativelanguage.googleapis.com/v1beta/openai`，预设为有免费额度的 `gemini-3.8-flash`、`gemini-3.5-flash-lite`、`gemini-3.1-flash-lite`、`gemini-2.5-flash`、`gemini-2.5-pro`（ai.google.dev 的定价页，2026-10-08）。这个基址没有 `/v1`，`voltip_refine::normalize_base_url` 对这个主机不追加。它的 `GET /models` 把模型写成 `models/gemini-…`，还列出嵌入、图像、语音、视频模型：服务商列出的模型（§3.3）只留 Gemini 与 Gemma 的文本模型，并去掉前缀，下拉框里就是可选的模型。卡片说明写明免费层的内容可能被 Google 用于改进产品。
 
 两个令牌都是服务端可随时吊销的应用令牌，不是任何服务商的 API 密钥：服务商密钥只放在服务端，打包脚本扫描二进制，发现 `gsk_…` / `sk-…` 形式的密钥就拒绝出包。
 
 **密钥**：`provider_key_set { provider, kind, value }`（`value: null` 删除）写进系统钥匙串（条目 `provider-key.<id>`，自定义接口为 `provider-key.custom-asr` / `-llm`）。界面只看到 `SecretState`（有没有、来自哪里），永远拿不到值。一把密钥只发给它所属的服务商：换了服务商或改了自定义地址，旧密钥不会跟过去，内置令牌也只发给内置服务（回归测试 `regression_keys_never_leave_their_provider`）。
 
-**测试连接**：`provider_probe { provider, kind, base_url?, key? }` 请求 `GET {base}/models`，结果以 `provider_probe` 事件返回模型列表或失败原因（`ProbeFailure`，不含主机名，内置服务的地址也不会借错误信息泄露）。`provider_console_open { provider }` 在浏览器里打开该服务商的密钥页。
+### 3.3 测试连接与模型列表（2026-10-12）
+
+**测试连接**：`provider_probe { provider, kind, base_url?, key? }` 请求 `GET {base}/models`，结果以 `provider_probe` 事件返回模型列表或失败原因（`ProbeFailure`，不含主机名，内置服务的地址也不会借错误信息泄露）。列表按服务筛选（见下），内置服务只计本构建提供的模型。`provider_console_open { provider, page? }` 在浏览器里打开该服务商的密钥页（`page` 省略或为 `key`）或额度页（`quota`，目前只有阿里云百炼，§3.5）；外壳只打开目录里的地址（`ProviderId::console_page`），界面只给出服务商和页面。
+
+**模型列表**（2026-10-12 用户反馈：模型下拉框只有内置的几个预设，测试连接却显示很多模型；保存密钥后，每次打开模型列表都应带出服务商最新的模型，不必手填模型 ID）：
+
+- 核心按服务商和服务各缓存一份「已保存的地址与密钥」能用的模型（`runtime/listing.rs`），随 `engines` 下发为 `ServiceStatus.listed`。`provider_models_refresh { provider, kind }`（`CoreCommand::RefreshProviderModels`）用已保存的地址和密钥请求一次 `GET {base}/models`；没有密钥或地址、内置服务和本机、外壳不能发 HTTP 请求时什么也不做，同一项同时只有一个请求在途。测试连接用的正是已保存的值时（不填密钥，地址留空或与已保存的相同），结果也写进缓存，两处数量一致。
+- 列表只在它来自的地址仍是已保存的地址时显示。换了密钥（可能是另一个账户）就丢弃该服务商的列表，换密钥前发出的请求回来也丢弃，新密钥的请求不必等旧请求结束；服务商拒绝密钥（401、403）时删除列表，其他失败（断网、超时）保留上一份。列表只在内存里，不写进设置，也不同步到手机。
+- 界面在这些时候请求刷新：打开服务商的设置；每次打开模型下拉框（桌面的原生下拉框获得焦点或按下指针，手机的底部列表打开）；保存地址或密钥之后（等这两项命令送达核心后再发）；「额度用完后改用其他模型」的添加行选中服务商、打开模型列表时；首次引导打开模型列表时。
+- 下拉框（`modelOptions`）：先是当前模型和目录预设，然后是「其他模型…」，有列表时最后是「服务商提供（N）」一组，即服务商列出的全部模型，N 与测试连接显示的数量相同；预设也在服务商列表里时出现两次，选中时只勾选第一处。新列表只在已显示的选项之后追加：WebKit（macOS、Linux）的原生下拉框按位置回报所选的项，下拉框打开时列表到达，已显示的选项位置不变，不会选错（CI 2026-10-12：列表在测试选择「其他模型…」时到达，选项被重建，回归测试 `regression: a list that arrives only adds options after the ones shown`）。模型下方的说明显示服务商提供的数量，没有列表时说明保存密钥后会列出哪些模型。标题栏的快捷菜单仍只列推荐模型（`modelChoices`），以免几百个模型挤进菜单。
+- 按服务筛选（`providers::usable_models`）：服务商的 `GET /models` 列出它托管的全部模型。识别只保留语音转文字模型（模型 ID 含 whisper、transcribe、asr、sensevoice、paraformer），阿里云百炼的地址再去掉本客户端用不了的模型（`AsrProtocol::DashscopeUnsupported`，§3.4）；润色去掉语音、嵌入与重排、审核、图像与视频、实时会话、只走 Responses 接口的模型，以及只能流式输出的 omni 模型。Google AI Studio 沿用原来的规则。自定义接口的列表不筛选：它提供的就是部署者放上去的模型。
 
 ### 3.4 阿里云百炼的识别协议（2026-10-04）
 
@@ -164,7 +176,7 @@ pub struct EngineSettings {                                  // Settings.engines
 | `qwen3-asr-flash…` | `DashscopeChat`：`POST {origin}/compatible-mode/v1/chat/completions`，用户消息的 `input_audio.data` 为 `data:audio/wav;base64,…`，`asr_options.language` | 不发（兼容模式没有写明上下文消息的格式） | 原样 |
 | `qwen-audio-…-asr-flash`、`fun-asr-flash…` | `DashscopeMultimodal`：`POST {origin}/api/v1/services/aigc/multimodal-generation/generation`，`X-DashScope-SSE: disable`，答案 `output.text` | qwen-audio 发即时热词 `parameters.vocabulary {词: 4}` | `language_hints`（zh/en/ja/ko） |
 | `…-asr-flash-streaming`、`…-asr-flash-message`、`fun-asr…realtime…`、`paraformer-realtime…` | `DashscopeDuplex`：`wss://{host}/api-ws/v1/inference`，握手带密钥，`run-task` → `task-started` → 二进制 16-bit PCM → `result-generated`（`sentence_end` 区分中间结果与整句）→ `finish-task` → `task-finished` / `task-failed` | 同上（qwen-audio） | 同上；`-message` 不收；Paraformer 另收 `yue` |
-| `…-filetrans`、`fun-asr`、`fun-asr-mtl`、`paraformer-v2` 等；`qwen3-asr-flash-realtime` | `DashscopeUnsupported`：只做异步文件转写，或是另一种实时协议（`/api-ws/v1/realtime`），听写时报「不能用于听写，请改用 …」 | — | — |
+| `…-filetrans`、`fun-asr`、`fun-asr-mtl`、`paraformer-v2`、`sensevoice-v1` 等；`qwen3-asr-flash-realtime` | `DashscopeUnsupported`：只做异步文件转写，或是另一种实时协议（`/api-ws/v1/realtime`），听写时报「不能用于听写，请改用 …」；服务商列出的模型（§3.3）不含它们 | — | — |
 
 - 端点都从基址的 origin 推出，所以 `https://host`、`…/compatible-mode/v1`、`…/api/v1` 都可以；测试连接与 AI 润色对没有 `compatible-mode` 路径的百炼地址改用 `{origin}/compatible-mode/v1`（`voltip_cloud::openai_compatible_base`）。
 - AI 润色发往百炼时带 `enable_thinking: false`（`voltip_cloud::refine_config`）：兼容模式下 Qwen3 与 DeepSeek 模型默认先思考，实测（2026-10-04）qwen3.8-flash 一次润色 6.5 s、412 个推理 token，关闭后 0.6 s；`max_tokens` 较小时 deepseek-v4-flash 把额度全用在推理上，回答为空。
@@ -174,13 +186,13 @@ pub struct EngineSettings {                                  // Settings.engines
 - 错误：`InvalidApiKey`/401 → `Unauthorized`；`AllocationQuota.FreeTierOnly`（控制台「免费额度用完即停」生效）→ `QuotaExhausted { code, message }`（§3.5）；`Throttling…`/429 → `RateLimited`；其他带 `code` 的 4xx 与 `task-failed` → `Service { code, message }`；5xx 仍可重试。
 - 实测（2026-10-04，开发机直连北京业务空间，16 s 中文样音，只用有免费额度的模型）：`qwen-audio-3.1-asr-flash` 整段 1.4 s；`qwen-audio-3.1-asr-flash-streaming` 整段一次发完 2.8 s。`crates/voltip-cloud/tests/real_dashscope.rs`（`#[ignore]`，需要 `VOLTIP_REAL_DASHSCOPE_URL` / `_KEY`）。
 
-**界面看到的**是 `EngineStatus`（`UiState.engines`）：两项服务各自的服务商、就绪状态与原因、模型、用户填写的接口主机（内置服务与本机为空字符串），`local_model` / `local_ready`、`live_preview_ready`、`effective_output_mode`、语言、润色开关、注入方式，以及每家服务商的 `ProviderStatus`（模型、预设、密钥状态、是否在用），供引擎页的服务商卡片渲染；还有两项服务的候补模型状态 `asr_fallback` / `llm_fallback`（§3.5）。
+**界面看到的**是 `EngineStatus`（`UiState.engines`）：两项服务各自的服务商、就绪状态与原因、模型、用户填写的接口主机（内置服务与本机为空字符串），`local_model` / `local_ready`、`live_preview_ready`、`effective_output_mode`、语言、润色开关、注入方式，以及每家服务商的 `ProviderStatus`（模型、预设、服务商列出的模型 `listed`（§3.3）、密钥状态、是否在用、能否打开密钥页 `console` 与额度页 `quota`），供引擎页的服务商卡片渲染；还有两项服务的候补模型状态 `asr_fallback` / `llm_fallback`（§3.5）。
 
 ### 3.5 候补模型：额度用完后改用其他模型（2026-10-04）
 
 用户需求（2026-10-04）：百炼的每个模型各有一份免费额度，希望按顺序列出多个模型，一个的额度用完就自动改用下一个，并做成可复用的能力。用户决定：识别和 AI 润色都做；**只在额度用完时切换**，缺模型、无权限、限流、网络错误都不切换。
 
-- **信号**：百炼没有用 API Key 查询剩余免费额度的接口（只有控制台页面）。额度用完的唯一可靠信号是服务拒绝请求：控制台为该模型打开「免费额度用完即停」（国际站 Free Quota Only，未实名账号强制打开）后，额度用完时 HTTP 请求回 403、实时任务回 `task-failed`，错误码 `AllocationQuota.FreeTierOnly`；没打开时用完直接计费，Voltip 收不到信号。OpenAI 兼容接口的 `insufficient_quota` 同样算额度用完。`voltip_asr::is_quota_exhausted` 与 `voltip_refine::is_quota_exhausted` 是同一条规则：错误码或消息含 `FreeTierOnly`，或错误码为 `insufficient_quota`；`Throttling…`、`rate_limit_exceeded` 仍是限流。识别与润色客户端对**所有非 2xx** 先读响应体判断，再按状态码分类（此前润色把百炼的 403 FreeTierOnly 报成密钥错误，回归测试 `regression_a_free_tier_stop_on_polish_is_not_reported_as_a_bad_key`）。核心收到的是 `DictationError::QuotaExhausted { service, detail }`（`voltip_cloud::asr_error` / `refine_error`）。
+- **信号**：百炼没有用 API Key 查询剩余免费额度的接口（只有控制台页面）。2026-10-12 复查（用户要求按模型读取额度并据此切换，在候补列表和服务商设置中显示用量与额度）：官方命令行工具（`modelstudioai/cli`，Apache-2.0）的 `bl usage free`、`bl usage stats` 能查各模型的剩余免费额度和用量，但要先在浏览器登录阿里云账号（`bl auth login --console`，或用 AccessKey 生成访问令牌），调用的是控制台网关的内部接口（`zeldaEasy.bailian-commerce.freeTrial.queryFreeTierQuota` 等）；用 API Key 只能查每分钟请求数与 token 数的限流（`bl quota list`），不是额度。Voltip 不持有账号级凭据，也不依赖控制台的内部接口，所以额度和用量在控制台查看（界面上的「查看额度」），切换仍以服务拒绝请求为信号。额度用完的唯一可靠信号是服务拒绝请求：控制台为该模型打开「免费额度用完即停」（国际站 Free Quota Only，未实名账号强制打开）后，额度用完时 HTTP 请求回 403、实时任务回 `task-failed`，错误码 `AllocationQuota.FreeTierOnly`；没打开时用完直接计费，Voltip 收不到信号。OpenAI 兼容接口的 `insufficient_quota` 同样算额度用完。`voltip_asr::is_quota_exhausted` 与 `voltip_refine::is_quota_exhausted` 是同一条规则：错误码或消息含 `FreeTierOnly`，或错误码为 `insufficient_quota`；`Throttling…`、`rate_limit_exceeded` 仍是限流。识别与润色客户端对**所有非 2xx** 先读响应体判断，再按状态码分类（此前润色把百炼的 403 FreeTierOnly 报成密钥错误，回归测试 `regression_a_free_tier_stop_on_polish_is_not_reported_as_a_bad_key`）。核心收到的是 `DictationError::QuotaExhausted { service, detail }`（`voltip_cloud::asr_error` / `refine_error`）。
 - **设置**：`EngineSettings.asr_fallback` / `llm_fallback: FallbackSettings { enabled, models: Vec<FallbackModel { provider, model }> }`，默认关闭，最多 `MAX_FALLBACK_MODELS = 8` 项。每项用该服务商卡片上的地址和**该服务商自己的密钥**（`service_target_for`），只是换了模型；内置服务只有它自己的模型。识别不能把本机模型列为候补。`Runtime::set_engines` 拒绝超出数量、不提供该服务的服务商、空模型和重复项；与当前选择相同的项不拒绝，解析时跳过。
 - **解析**：`ResolvedEngines.asr_fallback` / `refine_fallback: FallbackPlan { enabled, in_use, selected, rows }`，设置里的每一项一行（`Ready(FallbackTarget)` / `Issue(EngineIssue)` / `SameAsSelected` / `Duplicate`）。`in_use`：开关打开且当前选择就绪、是远程服务（识别不在本机，润色有服务商）。当前选择不可用时不启用候补：候补只在额度用完时接手。
 - **链与账本**（`voltip_core::dictation::fallback`，不依赖具体服务商和端口）：`QuotaLedger` 记哪些模型（`QuotaKey { kind, provider, model, url }`）何时用完，用 `tokio::sync::watch` 通知变化；`first_with_quota` 按顺序调用仍有额度的项，额度用完就记账并试下一项，其他错误原样返回，成功则清掉该项的记录；全部用完时只再试第一项（用户可能已续上）。`FallbackTranscriber` / `FallbackRefiner` 把链放在识别、润色端口后面。账本归 `DictationEngine` 所有，配置变化时客户端重建，账本不变；引擎经 `ResolvedEngines::with_candidate` 为每个候补再调一次外壳的客户端工厂，外壳不用改。
@@ -188,7 +200,7 @@ pub struct EngineSettings {                                  // Settings.engines
 - **收尾**：沿用现有规则。整段识别、语音编辑的指令、一段都没识别出来的长录音以新的失败码 `quota`（「模型额度已用完」）结束；开关关闭时额度用完同样报 `quota`。已有部分文字时保留部分结果：`live_inject` 已插入句子后补齐失败，照旧以已插入的内容结束，原因写进 `live_error`；长录音某段两次都失败，照旧留下占位、交付其余文字。润色失败照旧插入原文。旧版手机把 `quota` 当普通失败解析（`take_state_for` 的 `_ => TakeFailure::Failed`）。
 - **实时识别**：边说边识别仍只在当前选择是实时模型时启用（`asr_streams` 不变，不影响「当前选择非实时 + 本机实时预览」）。录音开始用第一个仍有额度的项：实时模型就推流，否则整段识别。实时模型在录音中报额度用完时预览降级，录音结束后整段走候补链（第一次多一次被拒请求，之后跳过它）。当前选择不是实时模型时，排在后面的实时模型只做整段识别。界面看到的状态按同一顺序计算（`status_with(ledger)` 经 `open_order` 取第一个仍有额度的项，与引擎的链一致）：顶替实时模型的是整段识别模型时，`live_preview_ready` 为 `false`、`live_source` 仍是 `stream`、`effective_output_mode` 为整段输出，「实时预览」显示「暂不可用 · 候补模型不支持实时识别」，不提示下载模型（goal 评审 2026-10-04：此前状态仍显示边说边识别生效，而实际按整段运行，回归测试 `regression_the_status_shows_the_mode_the_next_take_runs_with`）。
 - **历史里的模型**：记这次听写最后一段文字实际来自的模型，由实际执行识别的客户端报告：`Transcript.model`（HTTP、百炼、本机客户端都报告，候补链在为空时补上所用项的模型）、`StreamingSession::model()`（流降级时读）、`StreamFinal.model`（flush 完成后由会话填写：内置服务的边说边识别在 `finish()` 里还会发出最后几次请求）。`Take.served_asr_model` 只被带来非空文字的结果覆盖；没有回执时（fake、本机实时预览模型）沿用配置的模型。客户端仍在每一步取引擎当前的那个，录音中改了设置时记新客户端报告的模型。
-- **界面**（`packages/ui` `FallbackSection`，桌面「语音模型」「AI 模型」两页与手机两页）：开关、模型顺序（当前选择在第一行）、每行的状态（使用中 / 可用 / 额度已用完 · 何时再试 / 缺少密钥等 / 与当前选择相同 / 已在列表中）、上移下移移除、添加、「重新检查」；有百炼时说明「免费额度用完即停」。「当前：服务商 · 模型」在候补顶替时注明「（候补）」；隐私说明在候补链运行时（`in_use`：开关打开且当前选择可用）列出额度用完时会收到音频或文字的其他服务商，开关关闭或当前选择不可用时不列。两者是 `packages/ui` 的 `CurrentService` / `ServicePrivacy`：桌面在服务商区块的标题旁与列表下方，手机在服务商卡片下方。
+- **界面**（`packages/ui` `FallbackSection`，桌面「语音模型」「AI 模型」两页与手机两页）：开关、模型顺序（当前选择在第一行）、每行的状态（使用中 / 可用 / 额度已用完 · 何时再试 / 缺少密钥等 / 与当前选择相同 / 已在列表中）、上移下移移除、添加、「重新检查」；有百炼时说明「免费额度用完即停」。「查看额度」打开百炼控制台的免费额度页（`provider_console_open { page: quota }`），百炼的服务商设置里也有这个入口和说明。「当前：服务商 · 模型」在候补顶替时注明「（候补）」；隐私说明在候补链运行时（`in_use`：开关打开且当前选择可用）列出额度用完时会收到音频或文字的其他服务商，开关关闭或当前选择不可用时不列。两者是 `packages/ui` 的 `CurrentService` / `ServicePrivacy`：桌面在服务商区块的标题旁与列表下方，手机在服务商卡片下方。
 - **不做**：读取剩余额度、替用户改控制台开关；把本机模型作为候补；欠费（`Arrearage`）、限流、网络错误时切换；账本持久化与同步到手机；一次听写记多个识别模型。
 
 ### 3.6 润色未生效的原因与内置服务繁忙提示（2026-10-05）

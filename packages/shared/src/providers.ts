@@ -35,6 +35,8 @@ export interface ProviderSpec {
   onDevice: boolean;
   /** The shell can open the vendor's key page. */
   console: boolean;
+  /** The shell can open the vendor's page of free quota and usage (Model Studio). */
+  quota?: boolean;
 }
 
 const NO_PRESET: ServicePreset = { baseUrl: "", models: [] };
@@ -120,6 +122,7 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     key: "required",
     onDevice: false,
     console: true,
+    quota: true,
   },
   deepseek: {
     llm: {
@@ -216,6 +219,15 @@ export interface EngineResolveInput {
   /** The selected models that ran out of quota, by service, and when they are tried again (the
    *  mock's ledger: it only ever marks the selected model, docs/dictation.md §3.5). */
   quotaOut?: Partial<Record<ServiceKind, number>>;
+  /** The models each provider listed, by `provider:kind`, with the endpoint they came from
+   *  (docs/dictation.md §3.3); shown while that endpoint is the saved one. */
+  listed?: Partial<Record<`${ProviderId}:${ServiceKind}`, ListedModels>>;
+}
+
+/** One provider service's list (`runtime/listing.rs`). */
+export interface ListedModels {
+  url: string;
+  models: readonly string[];
 }
 
 function trimmed(value: string | null | undefined): string | undefined {
@@ -320,6 +332,8 @@ function serviceStatus(
   const userKey = entry !== undefined && input.userKeys.has(entry);
   const defaultBase = preset.baseUrl.length > 0 ? preset.baseUrl : undefined;
   const baseUrl = trimmed(kind === "asr" ? choice?.asr_url : choice?.llm_url) ?? defaultBase;
+  const list = input.listed?.[`${provider}:${kind}`];
+  const listed = list !== undefined && list.url === baseUrl ? list.models : [];
   return {
     model: "ok" in resolved ? resolved.ok.model : resolved.model,
     presets: [...preset.models],
@@ -328,6 +342,7 @@ function serviceStatus(
     key: userKey ? { set: true, source: "user" } : NO_KEY,
     ...("issue" in resolved ? { issue: resolved.issue } : {}),
     active,
+    ...(listed.length === 0 ? {} : { listed: [...listed] }),
   };
 }
 
@@ -435,6 +450,7 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
       key: spec.key,
       on_device: spec.onDevice,
       console: spec.console,
+      ...(spec.quota === true ? { quota: true } : {}),
       ...(asr === undefined ? {} : { asr }),
       ...(llm === undefined ? {} : { llm }),
     });

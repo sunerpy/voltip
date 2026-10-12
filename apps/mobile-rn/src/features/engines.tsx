@@ -6,6 +6,7 @@
 // `@voltip/shared`'s, as on the desktop.
 import {
   CHINESE_SCRIPTS,
+  PROVIDER_MARKS,
   type ProbeReport,
   type ProviderBadgeTone,
   type ProviderId,
@@ -18,7 +19,8 @@ import {
   choosesInterface,
   fallbackRows,
   fallbackStatusOf,
-  modelChoices,
+  modelListHelp,
+  modelOptions,
   probeText,
   providerBadges,
   providerDraft,
@@ -29,6 +31,7 @@ import {
 } from "@voltip/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ScrollView, View } from "react-native";
+import Svg, { Path } from "react-native-svg";
 import { Icon, SegmentedButtons, Text, TextInput, TouchableRipple } from "react-native-paper";
 
 import { useBackend, useUiState } from "../backend/BackendProvider";
@@ -43,6 +46,8 @@ import { mix } from "../ui/statTile";
 /** The model select's last option: type any other model id. */
 export const OTHER_MODEL = "__other__";
 
+/** The app's own icon of each provider: the built-in, on-device and custom ones always, a vendor
+ *  when it has no mark of its own (`PROVIDER_MARKS`). */
 const ICONS: Readonly<Record<ProviderId, string>> = {
   builtin: "creation-outline",
   local: "chip",
@@ -112,6 +117,17 @@ export function useProviderProbe(provider: ProviderId, kind: ServiceKind) {
   return { pending, report, run };
 }
 
+/** Asks the core for a provider's latest model list (`provider_models_refresh`, docs/dictation.md
+ *  §3.3; `@voltip/ui`'s useModelRefresh), as a model list opens; the list arrives with the engines
+ *  status (`ServiceStatus.listed`). */
+export function useModelRefresh(provider: ProviderId | undefined, kind: ServiceKind): () => void {
+  const { backend } = useBackend();
+  return useCallback(() => {
+    if (provider === undefined) return;
+    backend.invoke("provider_models_refresh", { provider, kind }).catch(() => undefined);
+  }, [backend, provider, kind]);
+}
+
 /** 测试连接 and what it answered, or that it has not run yet, on a block of its own. */
 function ProbePanel({
   probe,
@@ -175,7 +191,9 @@ function Tag({ tone, children }: { tone: ProviderBadgeTone; children: string }) 
 }
 
 /** The provider's icon on a block: a soft accent one for the provider in use, never a solid one
- *  (user feedback 2026-10-10 on the drafts). */
+ *  (user feedback 2026-10-10 on the drafts). A vendor shows its own mark in its own colours (user
+ *  request 2026-10-12, LobeHub Icons, docs/dictation.md §3); the monochrome ones take the text
+ *  colour. */
 function ProviderIcon({
   id,
   active,
@@ -186,8 +204,11 @@ function ProviderIcon({
   size?: number;
 }) {
   const theme = useAppTheme();
+  const mark = PROVIDER_MARKS[id];
+  const glyph = Math.round(size * 0.55);
   return (
     <View
+      testID={mark === undefined ? undefined : `provider-mark-${id}`}
       style={{
         width: size,
         height: size,
@@ -196,11 +217,25 @@ function ProviderIcon({
         justifyContent: "center",
         backgroundColor: active ? theme.colors.primaryContainer : theme.colors.surfaceVariant,
       }}>
-      <Icon
-        source={ICONS[id]}
-        size={Math.round(size * 0.55)}
-        color={active ? theme.colors.onPrimaryContainer : theme.colors.onSurfaceVariant}
-      />
+      {mark === undefined ? (
+        <Icon
+          source={ICONS[id]}
+          size={glyph}
+          color={active ? theme.colors.onPrimaryContainer : theme.colors.onSurfaceVariant}
+        />
+      ) : (
+        <Svg width={glyph} height={glyph} viewBox="0 0 24 24" accessible={false}>
+          {mark.paths.map((path) => (
+            <Path
+              key={path.d}
+              d={path.d}
+              fill={path.fill ?? theme.colors.onSurface}
+              fillRule={path.evenOdd === true ? "evenodd" : "nonzero"}
+              clipRule={path.evenOdd === true ? "evenodd" : "nonzero"}
+            />
+          ))}
+        </Svg>
+      )}
     </View>
   );
 }
@@ -496,7 +531,11 @@ function ProviderForm({
   const [problem, setProblem] = useState<string | undefined>(undefined);
   const probe = useProviderProbe(provider.id, kind);
   const probed = probe.report?.result === "ok" ? (probe.report.models ?? []) : [];
-  const choices = modelChoices(service, probed);
+  const options = modelOptions(service, probed, t, {
+    value: OTHER_MODEL,
+    label: t("engines.field.modelOther"),
+  });
+  const choices = options.filter((o) => o.value !== OTHER_MODEL).map((o) => o.value);
   const effectiveModel = draft.model.length > 0 ? draft.model : service.model;
   const [typing, setTyping] = useState(() => choices.length === 0);
   const selectValue = typing || !choices.includes(effectiveModel) ? OTHER_MODEL : effectiveModel;
@@ -512,12 +551,16 @@ function ProviderForm({
     setProblem(issue);
     if (issue !== undefined) return false;
     const engines = applyProviderDraft(state.settings.engines, provider.id, kind, draft);
-    void backend.invoke("settings_set_engines", {
-      engines: use ? withProvider(engines, kind, provider.id) : engines,
-    });
+    const sent = [
+      backend.invoke("settings_set_engines", {
+        engines: use ? withProvider(engines, kind, provider.id) : engines,
+      }),
+    ];
     const key = draft.key.trim();
     if (key.length > 0)
-      void backend.invoke("provider_key_set", { provider: provider.id, kind, value: key });
+      sent.push(backend.invoke("provider_key_set", { provider: provider.id, kind, value: key }));
+    // The list for the endpoint and key just saved, once the core has them.
+    Promise.all(sent).then(refreshModels, () => undefined);
     setDraft({ ...draft, key: "" });
     return key.length > 0 ? t("engines.savedKey") : "";
   };
@@ -552,6 +595,12 @@ function ProviderForm({
     shell.toast(t("engines.resetDone", { provider: name }));
   };
   const keyTone: Tone = secret.tone === "ok" ? "ok" : secret.tone === "warn" ? "warning" : "idle";
+  // docs/dictation.md §3.3: the provider's latest models as the sheet opens, and again each time
+  // the model list opens.
+  const refreshModels = useModelRefresh(provider.id, kind);
+  useEffect(() => {
+    refreshModels();
+  }, [refreshModels]);
 
   return (
     <View style={{ gap: 16 }} testID="provider-form">
@@ -569,10 +618,8 @@ function ProviderForm({
               setTyping(false);
               setDraft({ ...draft, model: value });
             }}
-            options={[
-              ...choices.map((m) => ({ value: m, label: m })),
-              { value: OTHER_MODEL, label: t("engines.field.modelOther") },
-            ]}
+            onOpen={refreshModels}
+            options={options}
             testID="provider-model"
           />
         )}
@@ -591,7 +638,7 @@ function ProviderForm({
             }}
           />
         )}
-        <Hint>{t("engines.field.modelHelp")}</Hint>
+        <Hint testID="provider-model-help">{modelListHelp(provider, service, t)}</Hint>
       </View>
       {choosesInterface(provider.id, kind) && (
         // docs/dictation.md §3.7: the custom clean-up's interface, and the Responses effort.
@@ -706,6 +753,15 @@ function ProviderForm({
                 {t("engines.getKey")}
               </Button>
             )}
+            {provider.quota === true && (
+              <Button
+                compact
+                icon="open-in-new"
+                testID="provider-quota"
+                onPress={() => void backend.providerConsoleOpen(provider.id, "quota")}>
+                {t("engines.viewQuota")}
+              </Button>
+            )}
             {service.key.source === "user" && (
               <Button
                 compact
@@ -717,6 +773,9 @@ function ProviderForm({
               </Button>
             )}
           </View>
+          {provider.quota === true && (
+            <Hint testID="provider-quota-help">{t("engines.quotaHelp")}</Hint>
+          )}
         </View>
       )}
       <ProbePanel

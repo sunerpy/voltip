@@ -33,7 +33,7 @@ use crate::history::{HistoryEntry, HistoryStore};
 use crate::models::{CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelInstallState, ModelManager, ModelState};
 use crate::peer::{Incoming, LinkId, ParkedChannel, PeerPath, PeerPhase, PeerState};
 use crate::presets::{CustomPreset, PresetDraft, PresetStore, PresetTrial, PresetTryOutcome};
-use crate::providers::{ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, key_entry, load_user_secrets};
+use crate::providers::{ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, key_entry, load_user_secrets, usable_models};
 use crate::scenes::{ContextSharing, Scene, SceneDraft, SceneStore};
 use crate::settings::{Locale, Settings, SettingsStore, ThemeId};
 use crate::view::{DeviceConnection, DeviceView, RelaySource, RelayStatus};
@@ -42,6 +42,7 @@ use crate::{CoreError, is_initiator, rendezvous_channel};
 
 mod always_on;
 mod check;
+mod listing;
 mod network;
 mod notice;
 mod processing;
@@ -408,6 +409,14 @@ pub enum CoreCommand {
         /// Key being edited (never stored by the probe).
         key: Option<String>,
     },
+    /// List a provider's service's models with the saved endpoint and key (docs/dictation.md
+    /// §3.3), as a model list opens; the list arrives in `Engines` (`ServiceStatus.listed`).
+    RefreshProviderModels {
+        /// Provider.
+        provider: ProviderId,
+        /// Service.
+        kind: ServiceKind,
+    },
     /// Remove one history entry.
     HistoryDelete(Uuid),
     /// Remove every history entry.
@@ -557,6 +566,7 @@ struct Inbox {
     phone_rx: mpsc::Receiver<takes::PhoneEvent>,
     check_rx: mpsc::Receiver<check::Probed>,
     process_rx: mpsc::Receiver<processing::Processed>,
+    listed_rx: mpsc::Receiver<listing::Listed>,
 }
 
 /// Events to the UI.
@@ -790,6 +800,7 @@ impl AppCore {
         let (phone_tx, phone_rx) = mpsc::channel(64);
         let (check_tx, check_rx) = mpsc::channel(4);
         let (process_tx, process_rx) = mpsc::channel(8);
+        let (listed_tx, listed_rx) = mpsc::channel(16);
         let activation = ActivationState::new(ActivationConfig::from(&settings));
         let serve_host = config.serve_host.clone();
         let mut rt = Runtime {
@@ -844,6 +855,8 @@ impl AppCore {
             always_on_at: None,
             processing: HashMap::new(),
             process_tx,
+            model_lists: listing::ModelLists::default(),
+            listed_tx,
             sync: sync::SyncState::default(),
             history_dirty: std::sync::atomic::AtomicBool::new(true),
             profile_dirty: std::sync::atomic::AtomicBool::new(true),
@@ -855,7 +868,7 @@ impl AppCore {
         };
         rt.system_fingerprint = rt.config.network.system_fingerprint();
         rt.connect_relay()?;
-        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx };
+        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx };
         Ok((rt, inbox, CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
 }
@@ -1083,6 +1096,10 @@ struct Runtime {
     processing: HashMap<u64, (Uuid, tokio::task::JoinHandle<()>)>,
     /// Their tasks report here.
     process_tx: mpsc::Sender<processing::Processed>,
+    /// The models each provider lists (docs/dictation.md §3.3).
+    model_lists: listing::ModelLists,
+    /// Their requests report here.
+    listed_tx: mpsc::Sender<listing::Listed>,
     /// Sync with the computer or the phones (docs/dictation.md §20.8).
     sync: sync::SyncState,
     /// The history changed since the sync last looked.
@@ -1206,7 +1223,7 @@ impl Runtime {
     // ---------------- main loop ----------------
 
     async fn run(mut self, inbox: Inbox) {
-        let Inbox { mut cmd_rx, mut link_rx, mut dict_rx, mut model_rx, mut act_rx, mut phone_rx, mut check_rx, mut process_rx } = inbox;
+        let Inbox { mut cmd_rx, mut link_rx, mut dict_rx, mut model_rx, mut act_rx, mut phone_rx, mut check_rx, mut process_rx, mut listed_rx } = inbox;
         self.emit(CoreEvent::Ready {
             identity: self.identity.public(),
             settings: self.settings.clone(),
@@ -1249,6 +1266,7 @@ impl Runtime {
                 Some(event) = phone_rx.recv() => self.on_phone_event(event),
                 Some(probed) = check_rx.recv() => self.on_probed(probed),
                 Some(processed) = process_rx.recv() => self.on_processed(processed),
+                Some(listed) = listed_rx.recv() => self.on_listed(listed),
                 Ok(()) = quota_rx.changed() => self.emit(CoreEvent::Engines(self.engine_status())),
                 _ = ticker.tick() => self.tick().await,
             }
@@ -1349,6 +1367,7 @@ impl Runtime {
                 Ok(())
             }
             CoreCommand::ProbeProvider { provider, kind, base_url, key } => self.probe_provider(provider, kind, base_url, key),
+            CoreCommand::RefreshProviderModels { provider, kind } => self.refresh_provider_models(provider, kind),
             CoreCommand::HistoryDelete(id) => self.history.delete(id).map(|_| self.emit_history()),
             CoreCommand::HistoryClear => self.history.clear().map(|()| self.emit_history()),
             CoreCommand::HistoryStar(id, starred) => self.history.star(id, starred).map(|_| self.emit_history()),
@@ -1473,14 +1492,20 @@ impl Runtime {
     fn reconfigure_engines(&mut self) {
         let resolved = self.resolved_engines();
         self.dictation.configure(&resolved);
-        self.emit(CoreEvent::Engines(resolved.status_with(self.dictation.quota())));
+        self.emit(CoreEvent::Engines(self.engine_status_of(&resolved)));
         self.check_refine_notice_provider();
     }
 
-    /// `UiState.engines`: the configuration, and which fallback models ran out of quota
-    /// (docs/dictation.md §3.5).
+    /// `UiState.engines`: the configuration, which fallback models ran out of quota
+    /// (docs/dictation.md §3.5) and the models the providers list (§3.3).
     fn engine_status(&self) -> EngineStatus {
-        self.resolved_engines().status_with(self.dictation.quota())
+        self.engine_status_of(&self.resolved_engines())
+    }
+
+    fn engine_status_of(&self, resolved: &ResolvedEngines) -> EngineStatus {
+        let mut status = resolved.status_with(self.dictation.quota());
+        self.model_lists.fill(&mut status);
+        status
     }
 
     /// The catalogue id the settings select in local mode.
@@ -2019,8 +2044,10 @@ impl Runtime {
         }
         self.user_secrets.set_entry(entry, value);
         tracing::info!(secret = entry, "provider key updated");
-        // Another key may be another account, with its own quota (docs/dictation.md §3.5).
+        // Another key may be another account, with its own quota (docs/dictation.md §3.5) and its
+        // own models (§3.3).
         self.dictation.quota().clear_provider(provider);
+        self.model_lists.forget(provider);
         self.reconfigure_engines();
         Ok(())
     }
@@ -2042,16 +2069,28 @@ impl Runtime {
             self.emit(CoreEvent::ProviderProbe(refused(ProbeFailure::Unsupported)));
             return Ok(());
         };
+        // The built-in service runs only the build's models; its count is theirs.
+        let offered = (provider == ProviderId::Builtin).then(|| self.built_in.models(kind));
+        // A test with the saved values also refreshes the selects' list (docs/dictation.md §3.3).
+        let saved = !matches!(provider, ProviderId::Builtin | ProviderId::Local)
+            && self.probe_target(provider, kind, None, None).is_ok_and(|target| target == (url.clone(), key.clone()));
+        let lists = saved.then(|| (self.listed_tx.clone(), self.model_lists.epoch));
         let evt = self.evt.clone();
         tokio::spawn(async move {
             let started = Instant::now();
-            let outcome = match probe.list_models(&url, key.as_deref()).await {
-                Ok(models) => {
-                    let mut models = crate::providers::usable_models(provider, kind, models);
-                    models.sort_unstable();
-                    models.dedup();
-                    ProbeOutcome::Ok { models, latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX) }
+            let models = probe.list_models(&url, key.as_deref()).await.map(|ids| {
+                let mut models = usable_models(provider, kind, &url, ids);
+                if let Some(offered) = &offered {
+                    models.retain(|m| offered.contains(&m.as_str()));
                 }
+                models
+            });
+            let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if let Some((tx, epoch)) = lists {
+                let _ = tx.send(listing::Listed { provider, kind, url, epoch, refresh: false, models: models.clone() }).await;
+            }
+            let outcome = match models {
+                Ok(models) => ProbeOutcome::Ok { models, latency_ms },
                 Err(ProbeError { reason, status }) => ProbeOutcome::Failed { reason, status },
             };
             if evt.send(CoreEvent::ProviderProbe(ProbeReport { provider, kind, outcome })).await.is_err() {

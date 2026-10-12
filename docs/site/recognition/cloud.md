@@ -33,18 +33,18 @@ When a connection to a recognition or polish service drops before the request is
 | Ollama, on this computer | — | Yes | Not needed |
 | Custom, any OpenAI-compatible endpoint | Yes | Yes | Optional; the endpoint address is required |
 
-A provider that offers both services uses one key for both.
+A provider that offers both services uses one key for both. The provider cards show each provider's logo.
 
 ## Setting up a provider
 
 1. On the Speech models or AI models page, select the provider's card. Its settings open in a panel on the right, or from the bottom on the phone.
-2. Choose a model, and for a custom endpoint enter its address.
-3. Enter your key. **Test connection** checks the address and the key and lists the models the provider offers.
+2. Choose a model, and for a custom endpoint enter its address. Once a key is saved, the model list shows every model the provider offers after **Other model…** (the **From the provider** group, with their number), updated each time the list opens, so there is no need to type a model ID.
+3. Enter your key. **Test connection** checks the address and the key and shows how many models the provider offers, the same number as in the model list. The Speech models page lists speech recognition models only, and the AI models page leaves out speech, image and embedding models.
 4. Choose **Set as current** to save what you entered and switch to the provider. **Set as current** on a card switches to the provider without opening its settings.
 
 ## Google AI Studio
 
-Google AI Studio offers Gemini models for AI polish. Create a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (**Get a key** in the provider's settings opens it) and enter it in the Google AI Studio settings on the **AI models** page. The model list offers Gemini models with a free tier; **Test connection** adds every text model your key can use, so you choose from the list instead of typing a name.
+Google AI Studio offers Gemini models for AI polish. Create a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (**Get a key** in the provider's settings opens it) and enter it in the Google AI Studio settings on the **AI models** page. The model list suggests Gemini models with a free tier; once the key is saved, it also shows every text model the key can use, so you choose from the list instead of typing a name.
 
 On the free tier, Google may use what you send to improve its products; a key from a Google Cloud project with billing turned on is not used that way. See [Privacy](/privacy).
 
@@ -62,13 +62,13 @@ Model Studio's speech models use Model Studio's own interfaces, and Voltip picks
 
 - **Realtime models** (the default qwen-audio-3.1-asr-flash-streaming, and qwen-audio-3.1-asr-flash-message, fun-asr-realtime, paraformer-realtime-v2 and others): the recording goes to Model Studio while you speak and is recognised as it arrives. The overlay shows the words, release only waits for the last sentence, and the whole recording is not recognised a second time. This needs **Live preview** (on by default); with it off, the recording is sent when you release the shortcut, and the wait can come close to the length of the recording. With the output mode **All at once**, takes run as **While you speak**, and the text is still inserted once on release.
 - **Whole-recording models** (qwen-audio-3.1-asr-flash, qwen3-asr-flash, fun-asr-flash): the whole recording is recognised after you release the shortcut, up to about 4 minutes per recording.
-- Models with filetrans in their names, fun-asr and paraformer-v2 only transcribe recorded files in the background and cannot be used for dictation; qwen3-asr-flash-realtime is not supported yet. With one of these selected, dictation says to pick another model.
+- Models with filetrans in their names, fun-asr, paraformer-v2 and sensevoice-v1 only transcribe recorded files in the background and cannot be used for dictation; qwen3-asr-flash-realtime is not supported yet. The model list leaves them out; with one of them typed in and selected, dictation says to pick another model.
 
 With the endpoint left empty, Voltip uses the public address `https://dashscope.aliyuncs.com/compatible-mode/v1`. For your workspace's own address, enter it under **Endpoint**, for example `https://<workspace ID>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`; the Singapore region uses `dashscope-intl.aliyuncs.com`. A Model Studio address entered for a **Custom endpoint** follows the same rules.
 
 The correct spellings in your [dictionary](/recognition/dictionary) go to the qwen-audio models as hot words. For AI polish with Model Studio's Qwen or DeepSeek models, Voltip turns off their thinking mode, which is on by default and makes polish slow.
 
-Model Studio gives newly activated models a free quota, one for each model. To use the free quota only, turn on **Free Quota Only** (免费额度用完即停 in the Chinese console) on the console's free quota page. Once the quota is used up, dictation says that the model's quota is used up, or Voltip moves on to another model: see the next section.
+Model Studio gives newly activated models a free quota, one for each model. **View quota** in the Model Studio settings opens the console's free quota page, where you see each model's remaining quota and usage: Model Studio has no API for reading the quota with an API key, so Voltip does not show it. To use the free quota only, turn on **Free Quota Only** (免费额度用完即停 in the Chinese console) on that page. Once the quota is used up, dictation says that the model's quota is used up, or Voltip moves on to another model: see the next section.
 
 ## When a model's quota runs out
 
@@ -84,7 +84,7 @@ Recognition and AI polish can each list fallback models: when the selected model
 - Fallback models are not used while the selected model is a local model, or while the selected provider cannot be used (for example, its key is missing).
 - When the selected model is a realtime model, a realtime fallback model also recognises while you speak; a whole-recording fallback model recognises the recording after you release the shortcut, and meanwhile **Live preview** shows as unavailable and the output runs as **All at once**.
 - The history shows the model that actually recognised and polished the text, and the **Now** line (above the providers on the computer, under the provider cards on the phone) notes when a fallback model stands in.
-- Model Studio needs **Free Quota Only** turned on for these models in its console: then it refuses requests once a quota is used up and Voltip moves on to the next model; without it, Model Studio starts charging instead. Voltip cannot read the remaining quota and does not change the console's settings.
+- Model Studio needs **Free Quota Only** turned on for these models in its console: then it refuses requests once a quota is used up and Voltip moves on to the next model; without it, Model Studio starts charging instead. Voltip cannot read the remaining quota and does not change the console's settings; **View quota** below the list opens the console's free quota page.
 
 ## Switching models
 
@@ -122,3 +122,4 @@ Voltip does not support PAC files, automatic proxy detection (WPAD) or `https://
 - **Recognition**: the recording, the model name and your key. If your [dictionary](/recognition/dictionary) has entries, their correct spellings go along as a hint. With a realtime model, the recording is sent while you speak.
 - **AI polish**: the recognised text, never audio, together with the app's name unless you turn that off. See [Privacy](/privacy) for the details.
 - **Fallback models**: with **When a model's quota runs out** turned on, the recording or the text goes to the provider of the next model in the list once the selected model's quota is used up.
+- **Model lists**: when a provider's settings or a model list opens, Voltip asks that provider for its models with the saved key; no recording or text goes with it.

@@ -11,6 +11,8 @@ export interface DrawerProps {
   /** Names the panel. */
   title: ReactNode;
   icon?: IconName;
+  /** Drawn on the icon's block instead of `icon`, in its own colours: a vendor's mark. */
+  mark?: ReactNode;
   /** `accent`: the item in use (a soft accent block, never a solid one). */
   iconTone?: "neutral" | "accent";
   /** Status badges after the title. */
@@ -58,6 +60,7 @@ export function Drawer({
   onClose,
   title,
   icon,
+  mark,
   iconTone = "neutral",
   badges,
   description,
@@ -123,15 +126,18 @@ export function Drawer({
         className="flex h-full flex-col border-l border-raised-edge bg-raised shadow-win outline-none glass-blur motion-safe:[animation:vt-drawer-in_180ms_cubic-bezier(0.2,0,0,1)]"
         style={{ width: `min(${width}px, calc(100vw - 24px))` }}>
         <header className="flex shrink-0 items-start gap-3 border-b border-border px-6 pt-5 pb-4">
-          {icon !== undefined && (
+          {(mark !== undefined || icon !== undefined) && (
             <span
               className={cx(
                 "flex size-9 shrink-0 items-center justify-center rounded-10",
-                iconTone === "accent"
-                  ? "bg-accent-soft text-accent-text"
-                  : "bg-inset text-fg-muted",
+                iconTone === "accent" ? "bg-accent-soft" : "bg-inset",
+                mark !== undefined
+                  ? "text-fg"
+                  : iconTone === "accent"
+                    ? "text-accent-text"
+                    : "text-fg-muted",
               )}>
-              <Icon name={icon} size={18} />
+              {mark ?? (icon !== undefined && <Icon name={icon} size={18} />)}
             </span>
           )}
           <div className="flex min-w-0 flex-1 flex-col gap-1">

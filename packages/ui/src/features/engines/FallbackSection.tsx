@@ -10,12 +10,12 @@ import {
   fallbackSettingsOf,
   fallbackStatusOf,
   formatDateTime,
-  modelChoices,
+  modelOptions,
   moveFallback,
   providersFor,
   withFallback,
 } from "@voltip/shared";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useBackend, useUiState } from "../../backend/BackendProvider";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -28,6 +28,7 @@ import { SettingsSection } from "../../components/SettingsLayout";
 import { Toggle } from "../../components/Toggle";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useFeatureShell } from "../shell";
+import { useModelRefresh } from "./useModelRefresh";
 
 /** The model select's last option: type any other model id. */
 const OTHER_MODEL = "__other__";
@@ -228,11 +229,23 @@ export function FallbackSection({ kind, toggleClassName }: FallbackSectionProps)
             </Button>
           )}
           {studio && (
-            <p
-              className="text-[12px] leading-5 text-fg-muted"
-              data-testid={`fallback-${kind}-aliyun`}>
-              {t("engines.fallback.aliyunNote")}
-            </p>
+            <div className="flex flex-col items-start gap-1">
+              <p
+                className="text-[12px] leading-5 text-fg-muted"
+                data-testid={`fallback-${kind}-aliyun`}>
+                {t("engines.fallback.aliyunNote")}
+              </p>
+              <Button
+                size="sm"
+                variant="text"
+                icon="external"
+                data-testid={`fallback-${kind}-quota`}
+                onClick={() => {
+                  void backend.providerConsoleOpen("aliyun", "quota");
+                }}>
+                {t("engines.viewQuota")}
+              </Button>
+            </div>
           )}
         </div>
       )}
@@ -296,10 +309,19 @@ function AddFallback({
   const [providerId, setProviderId] = useState<ProviderId | undefined>(undefined);
   const provider = candidates.find((p) => p.id === providerId) ?? candidates[0];
   const service = provider?.[kind];
-  const choices = service === undefined ? [] : modelChoices(service);
+  const options =
+    service === undefined
+      ? []
+      : modelOptions(service, [], t, { value: OTHER_MODEL, label: t("engines.field.modelOther") });
+  const choices = options.filter((o) => o.value !== OTHER_MODEL).map((o) => o.value);
   const [picked, setPicked] = useState<string | undefined>(undefined);
   const [typed, setTyped] = useState("");
   const [problem, setProblem] = useState<string | undefined>(undefined);
+  // docs/dictation.md §3.3: the chosen provider's latest models, and again as the list opens.
+  const refreshModels = useModelRefresh(provider?.id, kind);
+  useEffect(() => {
+    refreshModels();
+  }, [refreshModels]);
   if (provider === undefined || service === undefined) return null;
   const builtin = provider.id === "builtin";
   // A built-in service with several models offers them, no other id; with one, it is the card's.
@@ -373,10 +395,9 @@ function AddFallback({
                   setPicked(value);
                   setProblem(undefined);
                 }}
-                options={[
-                  ...choices.map((m) => ({ value: m, label: m })),
-                  { value: OTHER_MODEL, label: t("engines.field.modelOther") },
-                ]}
+                onOpen={refreshModels}
+                options={options}
+                data-testid={`fallback-${kind}-model`}
               />
             )}
             {selectValue === OTHER_MODEL && (

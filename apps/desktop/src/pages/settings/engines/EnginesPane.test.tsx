@@ -346,6 +346,18 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
           `连接正常 · 2 个模型 · ${MOCK_PROBE_MS} ms`,
         );
       });
+      // docs/dictation.md §3.3: the provider's models follow 其他模型…, headed with the count
+      // 测试连接 reported; a suggested model it lists shows twice.
+      expect(
+        within(select)
+          .getAllByRole("group")
+          .map((g) => g.getAttribute("label")),
+      ).toEqual(["服务商提供（2）"]);
+      expect(
+        within(within(select).getByRole("group", { name: "服务商提供（2）" }))
+          .getAllByRole("option")
+          .map((o) => o.textContent),
+      ).toEqual(["gpt-transcribe", "whisper-2"]);
       expect(
         within(select)
           .getAllByRole("option")
@@ -354,8 +366,9 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
         "gpt-transcribe",
         "gpt-4o-mini-transcribe",
         "whisper-1",
-        "whisper-2",
         "其他模型…",
+        "gpt-transcribe",
+        "whisper-2",
       ]);
       await user.selectOptions(select, "whisper-2");
       // 其他模型… opens a free field.
