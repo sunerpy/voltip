@@ -53,6 +53,7 @@ function baseState(): UiState {
   return {
     serve: { available: true, phase: "off" },
     network: { proxy_password: false },
+    mcp: { available: true, phase: "off", clients: [], activity: [] },
     sent_texts: [],
     mirrors: [],
     phone_outbox_too_large: [],

@@ -738,9 +738,10 @@ fn sorted(mut names: Vec<String>) -> Vec<String> {
 const PENDING_TYPESCRIPT: &[&str] = &[];
 
 /// Commands of the shared contract (schema.ts, the fixtures) that only the desktop shell registers:
-/// the local speech service runs on a computer only (docs/dictation.md §23.6), so the phone offers
-/// no command for it and an invoke is "not found".
-const DESKTOP_ONLY: &[&str] = &["settings_set_serve", "serve_copy_token", "serve_rotate_token"];
+/// the local speech service and the MCP service run on a computer only (docs/dictation.md §23.6,
+/// §25), so the phone offers no command for them and an invoke is "not found".
+const DESKTOP_ONLY: &[&str] =
+    &["settings_set_serve", "serve_copy_token", "serve_rotate_token", "settings_set_mcp", "mcp_copy_token", "mcp_rotate_token", "mcp_copy_setup", "mcp_undo"];
 
 #[test]
 fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() {

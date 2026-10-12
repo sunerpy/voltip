@@ -443,6 +443,35 @@ pub enum UiCommand {
     ServeCopyToken,
     /// Replace the service's token.
     ServeRotateToken,
+    /// The local MCP service the app hosts for the AI tools on this computer (docs/dictation.md
+    /// §25): on / off, its port, what the tools may read (and how far back the full history goes)
+    /// and change. Persisted and applied at once; the core re-emits `settings` and `mcp`.
+    SettingsSetMcp {
+        /// Serve on 127.0.0.1.
+        enabled: bool,
+        /// The port (1024–65535, not the local speech service's).
+        port: u16,
+        /// `rules` | `summary` | `full`.
+        read: voltip_core::mcp::McpRead,
+        /// `last_7_days` | `last_30_days` | `all` (with `full`).
+        history_range: voltip_core::mcp::HistoryRange,
+        /// `read_only` | `dictionary` | `enable_rules`.
+        write: voltip_core::mcp::McpWrite,
+    },
+    /// Put the MCP service's token on the clipboard (it never reaches the webview).
+    McpCopyToken,
+    /// Replace the MCP service's token.
+    McpRotateToken,
+    /// Put the command that connects an AI tool, with the real token, on the clipboard.
+    McpCopySetup {
+        /// `claude_code` | `codex`.
+        client: voltip_core::mcp::SetupClient,
+    },
+    /// Undo an AI tool's write from the recent activity.
+    McpUndo {
+        /// The activity's UUID.
+        id: String,
+    },
     /// The proxy Voltip's connections go through (docs/dictation.md §24): follow the system, none,
     /// or the manual proxy below, whose fields are kept in the other modes too. Persisted and in
     /// force from the next request; the core re-emits `settings` and `network`.
@@ -579,6 +608,13 @@ impl UiCommand {
             }),
             Self::ServeCopyToken => CoreCommand::ServeCopyToken,
             Self::ServeRotateToken => CoreCommand::ServeRotateToken,
+            Self::SettingsSetMcp { enabled, port, read, history_range, write } => {
+                CoreCommand::SetMcp(voltip_core::mcp::McpSettings { enabled, port, read, history_range, write })
+            }
+            Self::McpCopyToken => CoreCommand::McpCopyToken,
+            Self::McpRotateToken => CoreCommand::McpRotateToken,
+            Self::McpCopySetup { client } => CoreCommand::McpCopySetup(client),
+            Self::McpUndo { id } => CoreCommand::McpUndo(parse_id(&id)?),
             Self::SettingsSetProxy { mode, server, username, no_proxy, password } => {
                 CoreCommand::SetProxy { proxy: voltip_core::ProxySettings { mode, server, username, no_proxy }, password }
             }
@@ -1138,6 +1174,39 @@ mod tests {
             serde_json::from_str::<UiCommand>(r#"{"command":"serve_rotate_token"}"#).unwrap().into_core().unwrap(),
             CoreCommand::ServeRotateToken
         ));
+        // docs/dictation.md §25: the MCP service's settings, token, setup commands and undo.
+        let c: UiCommand = serde_json::from_str(
+            r#"{"command":"settings_set_mcp","enabled":true,"port":47841,"read":"full","historyRange":"last_7_days","write":"enable_rules"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            c.into_core().unwrap(),
+            CoreCommand::SetMcp(voltip_core::mcp::McpSettings {
+                enabled: true,
+                port: 47841,
+                read: voltip_core::mcp::McpRead::Full,
+                history_range: voltip_core::mcp::HistoryRange::Last7Days,
+                write: voltip_core::mcp::McpWrite::EnableRules
+            })
+        ));
+        assert!(
+            serde_json::from_str::<UiCommand>(
+                r#"{"command":"settings_set_mcp","enabled":true,"port":47841,"read":"all","historyRange":"all","write":"dictionary"}"#
+            )
+            .is_err(),
+            "an unknown read level is refused"
+        );
+        assert!(matches!(serde_json::from_str::<UiCommand>(r#"{"command":"mcp_copy_token"}"#).unwrap().into_core().unwrap(), CoreCommand::McpCopyToken));
+        assert!(matches!(serde_json::from_str::<UiCommand>(r#"{"command":"mcp_rotate_token"}"#).unwrap().into_core().unwrap(), CoreCommand::McpRotateToken));
+        assert!(matches!(
+            serde_json::from_str::<UiCommand>(r#"{"command":"mcp_copy_setup","client":"claude_code"}"#).unwrap().into_core().unwrap(),
+            CoreCommand::McpCopySetup(voltip_core::mcp::SetupClient::ClaudeCode)
+        ));
+        assert!(serde_json::from_str::<UiCommand>(r#"{"command":"mcp_copy_setup","client":"cursor"}"#).is_err());
+        let id = Uuid::new_v4();
+        let c: UiCommand = serde_json::from_str(&format!(r#"{{"command":"mcp_undo","id":"{id}"}}"#)).unwrap();
+        assert!(matches!(c.into_core().unwrap(), CoreCommand::McpUndo(u) if u == id));
+        assert!(serde_json::from_str::<UiCommand>(r#"{"command":"mcp_undo","id":"x"}"#).unwrap().into_core().is_err(), "an id is a UUID");
         let c: UiCommand = serde_json::from_str(r#"{"command":"settings_set_context_sharing","appName":false,"windowTitle":true}"#).unwrap();
         assert!(matches!(c.into_core().unwrap(), CoreCommand::SetContextSharing(ContextSharing { app_name: false, window_title: true })));
         assert!(serde_json::from_str::<UiCommand>(r#"{"command":"settings_set_context_sharing","appName":true}"#).is_err(), "both switches are required");

@@ -25,6 +25,7 @@ import {
   resolveEngineStatus,
 } from "./providers";
 import { checkProxySettings, proxyPasswordProblem, proxyProblemCoreText } from "./proxy";
+import { isMcpWrite, mcpAddress } from "./mcp";
 import {
   type AppRef,
   type ArgsOf,
@@ -64,6 +65,12 @@ import {
   type Scene,
   type NetworkStatus,
   type ServeSettings,
+  type DictionaryDraft,
+  type McpActivity,
+  type McpAction,
+  type McpSettings,
+  type McpSetupClient,
+  type McpStatus,
   type ServeStatus,
   type SceneDraft,
   type SceneRef,
@@ -211,6 +218,9 @@ export interface MockBackendOptions {
   /** The local service's status at start, instead of the one the settings give (tests that need
    *  a status the preview passes through only for a moment, such as `starting`). */
   serve?: ServeStatus;
+  /** The MCP service's status at start (docs/dictation.md §25), instead of the one the settings
+   *  give: tests that start with clients or activity. */
+  mcp?: McpStatus;
   /** What the preview's system proxy is (`network_refresh` reads it again; default: none), and
    *  whether a proxy password starts saved. */
   network?: NetworkStatus;
@@ -609,6 +619,8 @@ export const ALWAYS_ON_DESKTOP_ONLY = "pairing: 常开配对只在电脑上可�
 export const MOCK_TEXT_MS = 200;
 /** Ports the preview's local speech service cannot bind (another program has them). */
 export const MOCK_TAKEN_PORTS: readonly number[] = [47999];
+/** `voltip_core::mcp::MCP_UNAVAILABLE`: the phone has no MCP service (docs/dictation.md §25). */
+export const MCP_UNAVAILABLE = "mcp: AI 工具接入仅在电脑上提供";
 
 /** What the preview phone's clipboard holds. */
 export const MOCK_PHONE_CLIPBOARD = "https://example.test/voltip";
@@ -1089,6 +1101,7 @@ export class MockBackend implements Backend {
       phone_outbox_too_large: [],
       serve: options.serve ?? this.serveStatusFor(settings.serve),
       network: { ...(options.network ?? { proxy_password: false }) },
+      mcp: options.mcp ?? this.mcpStatusFor(settings.mcp),
     };
     this.proxyPassword = options.network?.proxy_password === true ? "saved" : undefined;
     for (const m of options.mirrors ?? []) this.mirrors.set(m.view.desktop, structuredClone(m));
@@ -2012,8 +2025,13 @@ export class MockBackend implements Backend {
         this.emit({ type: "error", message: `rules: 没有 id 为 ${id} 的规则` });
         return;
       }
+      // As the core: the source stays, and turning a rule that waits for approval on approves it.
       this.commitRules(
-        this.state.rules.map((r) => (r.id === id ? this.ruleFrom(draft, id, r.created_at_ms) : r)),
+        this.state.rules.map((r) =>
+          r.id === id
+            ? this.ruleFrom(draft, id, r.created_at_ms, r.source, r.pending && !draft.enabled)
+            : r,
+        ),
       );
     },
     rules_remove: (args) => {
@@ -2245,6 +2263,48 @@ export class MockBackend implements Backend {
       this.requireServe();
       this.serveTokenRotations += 1;
     },
+    // docs/dictation.md §25: refusals of the settings are `error` events, as the core reports them.
+    settings_set_mcp: (args) => {
+      const { enabled, port, read, historyRange, write } = required(args);
+      this.requireMcp();
+      if (!Number.isInteger(port) || port < MIN_SERVE_PORT || port > 65_535) {
+        this.emit({ type: "error", message: `mcp: 端口须在 ${MIN_SERVE_PORT}–65535 之间` });
+        return;
+      }
+      if (port === this.state.settings.serve.port) {
+        this.emit({ type: "error", message: `mcp: 端口 ${port} 已用于本机服务，请换一个端口` });
+        return;
+      }
+      const mcp: McpSettings = { enabled, port, read, history_range: historyRange, write };
+      const before = this.state.settings.mcp;
+      this.emit({ type: "settings", ...this.state.settings, mcp });
+      // As the core: a listener that (re)starts is `starting` first; the levels apply at once.
+      if (mcp.enabled && (!before.enabled || before.port !== mcp.port)) {
+        const { address: _a, error: _e, ...rest } = this.state.mcp;
+        this.emit({ type: "mcp", ...rest, phase: "starting" });
+      }
+      if (mcp.enabled !== before.enabled || mcp.port !== before.port)
+        this.emit({ type: "mcp", ...this.mcpStatusFor(mcp, this.state.mcp) });
+    },
+    mcp_copy_token: () => {
+      this.requireMcp();
+      this.mcpTokenCopies += 1;
+    },
+    mcp_rotate_token: () => {
+      this.requireMcp();
+      this.mcpTokenRotations += 1;
+    },
+    mcp_copy_setup: (args) => {
+      const { client } = required(args);
+      this.requireMcp();
+      this.mcpSetupCopies.push(client);
+    },
+    mcp_undo: (args) => {
+      const { id } = required(args);
+      uuidArg(id);
+      this.requireMcp();
+      this.undoMcp(id);
+    },
     refine_notice_close: () => {
       if (this.state.refine_notice !== undefined)
         this.emit({ type: "refine_notice", notice: null });
@@ -2290,6 +2350,178 @@ export class MockBackend implements Backend {
   serveTokenCopies = 0;
   /** How often 重新生成 was pressed (tests). */
   serveTokenRotations = 0;
+
+  /** How often the MCP service's 复制令牌 was pressed (tests; the token never reaches the page). */
+  mcpTokenCopies = 0;
+  /** How often the MCP service's 重新生成 was pressed (tests). */
+  mcpTokenRotations = 0;
+  /** Which setup commands 复制命令 put on the clipboard, in order (tests). */
+  mcpSetupCopies: McpSetupClient[] = [];
+  /** What undoing each AI tool's write puts back (the core keeps it with the activity). */
+  private mcpUndo = new Map<
+    string,
+    | { list: "entry"; before?: DictionaryEntry; after: DictionaryEntry }
+    | { list: "rule"; before?: ReplacementRule; after: ReplacementRule }
+  >();
+
+  /** The MCP service runs on a computer only (docs/dictation.md §25). */
+  private requireMcp() {
+    if (this.role === "phone") throw new Error(MCP_UNAVAILABLE);
+  }
+
+  /** What the preview's MCP service does with `mcp`: a port in `MOCK_TAKEN_PORTS` cannot be bound;
+   *  the clients and the activity stay. */
+  private mcpStatusFor(mcp: McpSettings, previous?: McpStatus): McpStatus {
+    if (this.role === "phone") return { available: false, phase: "off", clients: [], activity: [] };
+    const keep = { clients: previous?.clients ?? [], activity: previous?.activity ?? [] };
+    if (!mcp.enabled) return { available: true, phase: "off", ...keep };
+    if (MOCK_TAKEN_PORTS.includes(mcp.port))
+      return {
+        available: true,
+        phase: "failed",
+        error: `无法监听 127.0.0.1:${mcp.port}：Address already in use`,
+        ...keep,
+      };
+    return { available: true, phase: "running", address: mcpAddress(mcp.port), ...keep };
+  }
+
+  /** Note an AI tool's call in the activity, newest first, 50 at most (docs/dictation.md §25). */
+  private noteMcp(
+    client: string,
+    action: McpAction,
+    extra: Partial<Pick<McpActivity, "subject" | "count" | "range" | "pending">> = {},
+  ): McpActivity {
+    const activity: McpActivity = {
+      id: this.uuid(),
+      at_ms: this.now(),
+      client,
+      action,
+      pending: false,
+      undoable: isMcpWrite({ action }),
+      undone: false,
+      ...extra,
+    };
+    const clients = [
+      { name: client, last_seen_ms: activity.at_ms },
+      ...this.state.mcp.clients.filter((c) => c.name !== client),
+    ];
+    this.emit({
+      type: "mcp",
+      ...this.state.mcp,
+      clients,
+      activity: [activity, ...this.state.mcp.activity].slice(0, 50),
+    });
+    return activity;
+  }
+
+  /** The preview's AI tool adds an entry (docs/dictation.md §25): its source names the tool, the
+   *  activity can undo it. Returns the entry's id; throws what the dictionary refuses. */
+  simulateMcpEntry(client: string, entry: DictionaryDraft): string {
+    const draft = validateDictionaryDraft(entry);
+    const now = this.now();
+    const added: DictionaryEntry = {
+      id: this.uuid(),
+      ...draft,
+      source: { kind: "mcp", client },
+      created_at_ms: now,
+      updated_at_ms: now,
+    };
+    const entries = [...this.state.dictionary, added];
+    checkDictionary(entries);
+    this.emit({ type: "dictionary", entries });
+    const activity = this.noteMcp(client, "add_entry", { subject: added.term });
+    this.mcpUndo.set(activity.id, { list: "entry", after: added });
+    return added.id;
+  }
+
+  /** The preview's AI tool creates a rule: waiting for approval unless the settings let AI tools
+   *  turn rules on. Returns the rule's id. */
+  simulateMcpRule(client: string, rule: RuleDraft): string {
+    const draft = validateRuleDraft(rule);
+    const pending = this.state.settings.mcp.write !== "enable_rules";
+    const added = this.ruleFrom(draft, this.uuid(), this.now(), { kind: "mcp", client }, pending);
+    const rules = [...this.state.rules, added];
+    checkRules(rules);
+    this.emit({ type: "rules", rules });
+    const activity = this.noteMcp(client, "add_rule", { subject: added.name, pending });
+    this.mcpUndo.set(activity.id, { list: "rule", after: added });
+    return added.id;
+  }
+
+  /** The preview's AI tool reads something (`count` items). */
+  simulateMcpRead(client: string, action: McpAction, count?: number) {
+    const range =
+      action === "search_history" || action === "read_entry"
+        ? this.state.settings.mcp.history_range
+        : undefined;
+    this.noteMcp(client, action, {
+      ...(count === undefined ? {} : { count }),
+      ...(range === undefined ? {} : { range }),
+    });
+  }
+
+  /** `mcp_undo`: put back what a write changed while the item is as the write left it. */
+  private undoMcp(id: string) {
+    const activity = this.state.mcp.activity.find((a) => a.id === id);
+    const undo = this.mcpUndo.get(id);
+    if (activity === undefined) {
+      this.emit({ type: "error", message: "mcp: 没有这条活动记录" });
+      return;
+    }
+    if (activity.undone) {
+      this.emit({ type: "error", message: "mcp: 这条活动已经撤销" });
+      return;
+    }
+    if (undo === undefined || !activity.undoable) {
+      this.emit({ type: "error", message: "mcp: 这条活动不能撤销" });
+      return;
+    }
+    if (undo.list === "entry") {
+      const current = this.state.dictionary.find((e) => e.id === undo.after.id);
+      if (current === undefined) {
+        this.emit({ type: "error", message: "mcp: 无法撤销：这个词条已经删除" });
+        return;
+      }
+      if (JSON.stringify(current) !== JSON.stringify(undo.after)) {
+        this.emit({ type: "error", message: "mcp: 无法撤销：这个词条之后又被修改过" });
+        return;
+      }
+      const before = undo.before;
+      this.emit({
+        type: "dictionary",
+        entries:
+          before === undefined
+            ? this.state.dictionary.filter((e) => e.id !== current.id)
+            : this.state.dictionary.map((e) => (e.id === current.id ? before : e)),
+      });
+    } else {
+      const current = this.state.rules.find((r) => r.id === undo.after.id);
+      if (current === undefined) {
+        this.emit({ type: "error", message: "mcp: 无法撤销：这条规则已经删除" });
+        return;
+      }
+      if (JSON.stringify(current) !== JSON.stringify(undo.after)) {
+        this.emit({ type: "error", message: "mcp: 无法撤销：这条规则之后又被修改过" });
+        return;
+      }
+      const before = undo.before;
+      this.emit({
+        type: "rules",
+        rules:
+          before === undefined
+            ? this.state.rules.filter((r) => r.id !== current.id)
+            : this.state.rules.map((r) => (r.id === current.id ? before : r)),
+      });
+    }
+    this.mcpUndo.delete(id);
+    this.emit({
+      type: "mcp",
+      ...this.state.mcp,
+      activity: this.state.mcp.activity.map((a) =>
+        a.id === id ? { ...a, undone: true, undoable: false } : a,
+      ),
+    });
+  }
 
   /** The service runs on a computer only (docs/dictation.md §23.6). */
   private requireServe() {
@@ -2509,12 +2741,22 @@ export class MockBackend implements Backend {
     this.emit({ type: "rules", rules });
   }
 
-  private ruleFrom(draft: RuleDraft, id: string, createdAtMs: number): ReplacementRule {
+  private ruleFrom(
+    draft: RuleDraft,
+    id: string,
+    createdAtMs: number,
+    source: EntrySource = { kind: "manual" },
+    pending = false,
+  ): ReplacementRule {
     return {
       id,
       ...draft,
+      // A rule waiting for approval is off until the user turns it on (docs/dictation.md §25).
+      enabled: draft.enabled && !pending,
       created_at_ms: createdAtMs,
       updated_at_ms: this.now(),
+      source,
+      pending,
     };
   }
 
@@ -2530,7 +2772,14 @@ export class MockBackend implements Backend {
       const at = rules.findIndex((r) => r.name === draft.name);
       const existing = rules[at];
       if (existing === undefined) rules.push(this.ruleFrom(draft, this.uuid(), now));
-      else rules[at] = this.ruleFrom(draft, existing.id, existing.created_at_ms);
+      else
+        rules[at] = this.ruleFrom(
+          draft,
+          existing.id,
+          existing.created_at_ms,
+          existing.source,
+          existing.pending && !draft.enabled,
+        );
     }
     this.commitRules(rules);
   }

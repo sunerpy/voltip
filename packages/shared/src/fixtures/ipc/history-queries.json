@@ -131,6 +131,18 @@
         },
         "term": "good idea",
         "updated_at_ms": 1758700600000
+      },
+      {
+        "created_at_ms": 1758700600000,
+        "enabled": true,
+        "heard_as": ["维他命"],
+        "id": "4d0c7a1e-5b6c-4d7e-8f90-a1b2c3d4e5f6",
+        "source": {
+          "client": "claude-code",
+          "kind": "mcp"
+        },
+        "term": "Voltip",
+        "updated_at_ms": 1758700600000
       }
     ],
     "follow_system_theme": true,
@@ -158,7 +170,11 @@
         "kind": "literal",
         "name": "git push",
         "pattern": "给他push",
+        "pending": false,
         "replacement": "git push",
+        "source": {
+          "kind": "manual"
+        },
         "updated_at_ms": 1758614200000
       },
       {
@@ -169,7 +185,27 @@
         "kind": "regex",
         "name": "PR 编号",
         "pattern": "\\bpr (\\d+)",
+        "pending": false,
         "replacement": "PR #$1",
+        "source": {
+          "kind": "manual"
+        },
+        "updated_at_ms": 1758700600000
+      },
+      {
+        "case_sensitive": true,
+        "created_at_ms": 1758700600000,
+        "enabled": false,
+        "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+        "kind": "literal",
+        "name": "非书 → 飞书",
+        "pattern": "非书",
+        "pending": true,
+        "replacement": "飞书",
+        "source": {
+          "client": "claude-code",
+          "kind": "mcp"
+        },
         "updated_at_ms": 1758700600000
       }
     ],

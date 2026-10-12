@@ -1,0 +1,248 @@
+[
+  {
+    "pairs": [
+      {
+        "at": 3,
+        "heard": "维他命",
+        "polished": "Voltip"
+      }
+    ],
+    "raw": "今天用维他命测了一下",
+    "segments": [
+      {
+        "kind": "same",
+        "text": "今天用"
+      },
+      {
+        "kind": "del",
+        "text": "维他命"
+      },
+      {
+        "kind": "add",
+        "text": " Voltip "
+      },
+      {
+        "kind": "same",
+        "text": "测了一下"
+      },
+      {
+        "kind": "add",
+        "text": "。"
+      }
+    ],
+    "text": "今天用 Voltip 测了一下。"
+  },
+  {
+    "pairs": [
+      {
+        "at": 2,
+        "heard": "非",
+        "polished": "飞"
+      },
+      {
+        "at": 8,
+        "heard": "提",
+        "polished": "集"
+      },
+      {
+        "at": 11,
+        "heard": "teams",
+        "polished": "Teams"
+      }
+    ],
+    "raw": "发到非书群，然后提成在teams里面",
+    "segments": [
+      {
+        "kind": "same",
+        "text": "发到"
+      },
+      {
+        "kind": "del",
+        "text": "非"
+      },
+      {
+        "kind": "add",
+        "text": "飞"
+      },
+      {
+        "kind": "same",
+        "text": "书群"
+      },
+      {
+        "kind": "del",
+        "text": "，"
+      },
+      {
+        "kind": "add",
+        "text": "。"
+      },
+      {
+        "kind": "same",
+        "text": "然后"
+      },
+      {
+        "kind": "del",
+        "text": "提"
+      },
+      {
+        "kind": "add",
+        "text": "集"
+      },
+      {
+        "kind": "same",
+        "text": "成在"
+      },
+      {
+        "kind": "del",
+        "text": "teams"
+      },
+      {
+        "kind": "add",
+        "text": " Teams "
+      },
+      {
+        "kind": "same",
+        "text": "里面"
+      },
+      {
+        "kind": "add",
+        "text": "。"
+      }
+    ],
+    "text": "发到飞书群。然后集成在 Teams 里面。"
+  },
+  {
+    "pairs": [
+      {
+        "at": 2,
+        "heard": "fetch user",
+        "polished": "fetchUser"
+      }
+    ],
+    "raw": "把 fetch user 改成 async 然后加上错误处理",
+    "segments": [
+      {
+        "kind": "same",
+        "text": "把 "
+      },
+      {
+        "kind": "del",
+        "text": "fetch user "
+      },
+      {
+        "kind": "add",
+        "text": "fetchUser "
+      },
+      {
+        "kind": "same",
+        "text": "改成 "
+      },
+      {
+        "kind": "del",
+        "text": "async "
+      },
+      {
+        "kind": "add",
+        "text": "async，"
+      },
+      {
+        "kind": "same",
+        "text": "然后加上错误处理"
+      },
+      {
+        "kind": "add",
+        "text": "。"
+      }
+    ],
+    "text": "把 fetchUser 改成 async，然后加上错误处理。"
+  },
+  {
+    "pairs": [],
+    "raw": "嗯 那个 我们 v1.2-rc 的 PR 3 合了吗",
+    "segments": [
+      {
+        "kind": "del",
+        "text": "嗯 那个 "
+      },
+      {
+        "kind": "same",
+        "text": "我们 v1.2-rc 的 PR "
+      },
+      {
+        "kind": "del",
+        "text": "3 "
+      },
+      {
+        "kind": "add",
+        "text": "#3 "
+      },
+      {
+        "kind": "same",
+        "text": "合了吗"
+      },
+      {
+        "kind": "add",
+        "text": "？"
+      }
+    ],
+    "text": "我们 v1.2-rc 的 PR #3 合了吗？"
+  },
+  {
+    "pairs": [
+      {
+        "at": 0,
+        "heard": "a  b　c",
+        "polished": "a b c"
+      }
+    ],
+    "raw": "a  b　c  d",
+    "segments": [
+      {
+        "kind": "del",
+        "text": "a  b　c  "
+      },
+      {
+        "kind": "add",
+        "text": "a b c "
+      },
+      {
+        "kind": "same",
+        "text": "d"
+      }
+    ],
+    "text": "a b c d"
+  },
+  {
+    "pairs": [],
+    "raw": "",
+    "segments": [
+      {
+        "kind": "add",
+        "text": "全新的一句"
+      }
+    ],
+    "text": "全新的一句"
+  },
+  {
+    "pairs": [],
+    "raw": "全部删掉",
+    "segments": [
+      {
+        "kind": "del",
+        "text": "全部删掉"
+      }
+    ],
+    "text": ""
+  },
+  {
+    "pairs": [],
+    "raw": "Voltip",
+    "segments": [
+      {
+        "kind": "same",
+        "text": "Voltip"
+      }
+    ],
+    "text": "Voltip"
+  }
+]

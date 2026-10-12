@@ -29,6 +29,10 @@ import {
   importModeSchema,
   ruleDraftSchema,
   localeSettingSchema,
+  mcpHistoryRangeSchema,
+  mcpReadSchema,
+  mcpSetupClientSchema,
+  mcpWriteSchema,
   overlayPlacementSchema,
   presetDraftSchema,
   presetIdSchema,
@@ -59,6 +63,7 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   state: null,
   serve: null,
   network: null,
+  mcp: null,
   mirrors: null,
   phone_outbox: null,
   refine_notice: null,
@@ -172,6 +177,11 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   settings_set_serve: null,
   serve_copy_token: null,
   serve_rotate_token: null,
+  settings_set_mcp: null,
+  mcp_copy_token: null,
+  mcp_rotate_token: null,
+  mcp_copy_setup: null,
+  mcp_undo: null,
   settings_set_proxy: null,
   network_refresh: null,
   refine_notice_close: null,
@@ -321,6 +331,17 @@ const argSchemas = {
       password: z.string().nullable(),
     })
     .strict(),
+  settings_set_mcp: z
+    .object({
+      enabled: z.boolean(),
+      port: z.number().int(),
+      read: mcpReadSchema,
+      historyRange: mcpHistoryRangeSchema,
+      write: mcpWriteSchema,
+    })
+    .strict(),
+  mcp_copy_setup: z.object({ client: mcpSetupClientSchema }).strict(),
+  mcp_undo: z.object({ id: z.string() }).strict(),
 } satisfies {
   [C in MutationCommand as CommandArgs[C] extends undefined ? never : C]: z.ZodType<CommandArgs[C]>;
 };
@@ -343,6 +364,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
     case "update_install":
     case "serve_copy_token":
     case "serve_rotate_token":
+    case "mcp_copy_token":
+    case "mcp_rotate_token":
     case "network_refresh":
     case "refine_notice_close":
       if (args !== null)
@@ -471,6 +494,12 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.settings_set_serve.parse(args));
     case "settings_set_proxy":
       return backend.invoke(name, argSchemas.settings_set_proxy.parse(args));
+    case "settings_set_mcp":
+      return backend.invoke(name, argSchemas.settings_set_mcp.parse(args));
+    case "mcp_copy_setup":
+      return backend.invoke(name, argSchemas.mcp_copy_setup.parse(args));
+    case "mcp_undo":
+      return backend.invoke(name, argSchemas.mcp_undo.parse(args));
   }
 }
 
@@ -539,6 +568,14 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
         username: "alice",
         no_proxy: "corp.example.com,10.0.0.0/8",
       },
+      // docs/dictation.md §25: the MCP service on, sharing the full history of the last 7 days.
+      mcp: {
+        enabled: true,
+        port: 47841,
+        read: "full",
+        history_range: "last_7_days",
+        write: "dictionary",
+      },
     });
     expect(parsed.app_version).toBe("0.3.0");
     // docs/dictation.md §23.6: the app's local speech service, running.
@@ -549,6 +586,20 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     });
     // docs/dictation.md §24: the password saved (not its value), the system's proxy.
     expect(parsed.network).toEqual({ proxy_password: true, system_proxy: "http://127.0.0.1:7890" });
+    // docs/dictation.md §25: the MCP service running, a client, a write to undo, a waiting rule.
+    expect(parsed.mcp.address).toBe("http://127.0.0.1:47841/mcp");
+    expect(parsed.mcp.clients).toEqual([{ name: "claude-code", last_seen_ms: 1_758_700_600_000 }]);
+    expect(parsed.mcp.activity.map((a) => [a.action, a.undoable, a.pending])).toEqual([
+      ["add_entry", true, false],
+      ["add_rule", true, true],
+      ["search_history", false, false],
+    ]);
+    expect(parsed.dictionary.at(-1)?.source).toEqual({ kind: "mcp", client: "claude-code" });
+    expect(parsed.rules.map((r) => [r.source.kind, r.pending])).toEqual([
+      ["manual", false],
+      ["manual", false],
+      ["mcp", true],
+    ]);
     // docs/dictation.md §10.6: what the local models can run on, a discrete and an integrated GPU.
     expect(parsed.hardware.cpu_threads).toBe(16);
     expect(parsed.hardware.gpus.map((g) => [g.name, g.integrated])).toEqual([
@@ -743,8 +794,10 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       return r.success ? [r.data] : [];
     });
     const dictionaries = parsed.flatMap((e) => (e.type === "dictionary" ? [e.entries] : []));
-    expect(dictionaries.map((d) => d.length)).toEqual([2, 0]);
-    const [manual, fromHistory] = dictionaries[0] ?? [];
+    expect(dictionaries.map((d) => d.length)).toEqual([3, 0]);
+    const [manual, fromHistory, fromTool] = dictionaries[0] ?? [];
+    // docs/dictation.md §25: written by an AI tool, which it names.
+    expect(fromTool?.source).toEqual({ kind: "mcp", client: "claude-code" });
     expect(manual?.source).toEqual({ kind: "manual" });
     expect(manual?.heard_as).toEqual(["fetch user", "费驰优瑟"]);
     expect(fromHistory?.source.kind === "history" && fromHistory.source.history_id).toBe(
@@ -753,8 +806,14 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(fromHistory?.enabled).toBe(false);
     const ruleLists = parsed.flatMap((e) => (e.type === "rules" ? [e.rules] : []));
     expect(ruleLists.map((r) => r.map((x) => `${x.kind}:${x.name}`))).toEqual([
-      ["literal:git push", "regex:PR 编号"],
+      ["literal:git push", "regex:PR 编号", "literal:非书 → 飞书"],
       [],
+    ]);
+    // docs/dictation.md §25: an AI tool's rule waits for approval, off; the others are the user's.
+    expect(ruleLists[0]?.map((x) => [x.source.kind, x.pending, x.enabled])).toEqual([
+      ["manual", false, true],
+      ["manual", false, false],
+      ["mcp", true, false],
     ]);
     expect(ruleLists[0]?.[1]?.pattern).toBe("\\bpr (\\d+)");
     // History rows name what fired; a row where nothing fired has no key at all.

@@ -7536,6 +7536,7 @@ dependencies = [
  "voltip-hooks",
  "voltip-identity",
  "voltip-inject",
+ "voltip-mcp",
  "voltip-net",
  "voltip-pairing",
  "voltip-platform",

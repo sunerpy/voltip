@@ -360,7 +360,8 @@ export class Vocabulary {
       for (const variant of entry.heard_as) patterns.push([variant, target]);
     }
     const compiled: CompiledRule[] = [];
-    for (const rule of rules.filter((r) => r.enabled)) {
+    // docs/dictation.md §25: a rule waiting for the user's approval runs nowhere.
+    for (const rule of rules.filter((r) => r.enabled && !r.pending)) {
       const base = { id: rule.id, name: rule.name, kind: rule.kind, replacement: rule.replacement };
       if (rule.kind === "literal") {
         compiled.push({
@@ -462,6 +463,8 @@ export function previewVocabulary(
       id,
       created_at_ms: 0,
       updated_at_ms: 0,
+      source: { kind: "manual" },
+      pending: false,
     });
     const at = list.findIndex((r) => r.id === draft.id);
     if (at >= 0) list = list.map((r, i) => (i === at ? asRule(r.id) : r));
@@ -541,7 +544,8 @@ export function exportRulesToml(rules: readonly ReplacementRule[]): string {
       `pattern = ${tomlString(r.pattern)}`,
       `replacement = ${tomlString(r.replacement)}`,
       `case_sensitive = ${String(r.case_sensitive)}`,
-      `enabled = ${String(r.enabled)}`,
+      // A rule waiting for approval is exported as off (docs/dictation.md §25).
+      `enabled = ${String(r.enabled && !r.pending)}`,
       "",
     ].join("\n"),
   );
