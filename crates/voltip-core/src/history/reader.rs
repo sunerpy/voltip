@@ -89,6 +89,23 @@ pub struct HistoryHits {
     pub rules: BTreeMap<Uuid, u32>,
 }
 
+/// The most entries [`HistoryReader::recent_texts`] reads at once.
+pub const MAX_RECENT_TEXTS: usize = 2000;
+
+/// One recognised take's texts as [`HistoryReader::recent_texts`] reads them: what the dictionary
+/// and the rules work on in a backtest (docs/dictation.md §16.9) and in the correction summary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryText {
+    /// The entry's id.
+    pub id: Uuid,
+    /// When it was recorded.
+    pub at_ms: u64,
+    /// The recognised text, before the dictionary.
+    pub raw_text: String,
+    /// The text that was inserted.
+    pub text: String,
+}
+
 /// The bridge's connection to `history.sqlite3`, opened read-only at the first query.
 #[derive(Debug)]
 pub struct HistoryReader {
@@ -223,6 +240,31 @@ impl HistoryReader {
             Ok(out)
         })?;
         Ok(hits.unwrap_or_default())
+    }
+
+    /// The newest `limit` (1..=[`MAX_RECENT_TEXTS`]) recognised takes, newest first: dictations
+    /// only — no voice edits, and none of the texts a phone sent as text, which nothing recognised.
+    pub fn recent_texts(&self, limit: usize) -> Result<Vec<HistoryText>, CoreError> {
+        if !(1..=MAX_RECENT_TEXTS).contains(&limit) {
+            return Err(CoreError::Invalid(format!("recent_texts: limit 1–{MAX_RECENT_TEXTS}")));
+        }
+        let texts = self.read(|conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, at_ms, json_extract(json, '$.raw_text'), json_extract(json, '$.text') FROM entries \
+                 WHERE kind = 'dictation' AND COALESCE(json_extract(json, '$.origin.kind'), '') NOT IN ('typed', 'clipboard') {NEWEST_FIRST} LIMIT ?1"
+            ))?;
+            let rows = stmt.query_map([i64::try_from(limit).unwrap_or(i64::MAX)], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, Option<String>>(2)?, row.get::<_, Option<String>>(3)?))
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                let (id, at_ms, raw_text, text) = row?;
+                let Ok(id) = id.parse::<Uuid>() else { continue };
+                out.push(HistoryText { id, at_ms: u64::try_from(at_ms).unwrap_or(0), raw_text: raw_text.unwrap_or_default(), text: text.unwrap_or_default() });
+            }
+            Ok(out)
+        })?;
+        Ok(texts.unwrap_or_default())
     }
 
     /// The applications the history saw, newest first, one per id, at most `limit` — what the

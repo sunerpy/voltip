@@ -994,3 +994,37 @@ fn the_outbox_is_the_phones_own_unconfirmed_records_oldest_first() {
     assert_eq!(with_big.too_large, [big.id]);
     assert_eq!(with_big.records.len(), 3);
 }
+
+/// docs/dictation.md §16.9: the backtest reads the newest recognised takes — no voice edits, no
+/// text a phone sent — with their recognised and final texts.
+#[test]
+fn recent_texts_are_the_newest_recognised_takes() {
+    let dir = tempfile::tempdir().unwrap();
+    let reader = HistoryReader::new(dir.path());
+    assert!(reader.recent_texts(10).unwrap().is_empty(), "no database yet: empty");
+    let mut store = HistoryStore::open(dir.path());
+    let base = 1_758_700_000_000;
+    let phone = |kind| Some(EntryOrigin { device: "Pixel 8".into(), kind });
+    let rows = [
+        HistoryEntry { at_ms: base, ..entry("最早") },
+        HistoryEntry {
+            at_ms: base + 1,
+            kind: TakeKind::Edit,
+            edit: Some(EditRecord { instruction: "正式一点".into(), selection: "x".into() }),
+            ..entry("编辑")
+        },
+        HistoryEntry { at_ms: base + 2, origin: phone(OriginKind::Typed), ..entry("手机打字") },
+        HistoryEntry { at_ms: base + 3, origin: phone(OriginKind::Clipboard), ..entry("手机剪贴板") },
+        HistoryEntry { at_ms: base + 4, origin: phone(OriginKind::Take), ..entry("手机录音") },
+        HistoryEntry { at_ms: base + 5, ..entry("最新") },
+    ];
+    for row in &rows {
+        store.push(row.clone(), MAX_ENTRIES).unwrap();
+    }
+    let texts = reader.recent_texts(10).unwrap();
+    assert_eq!(texts.iter().map(|t| t.raw_text.as_str()).collect::<Vec<_>>(), vec!["最新", "手机录音", "最早"]);
+    assert_eq!(texts[0], HistoryText { id: rows[5].id, at_ms: base + 5, raw_text: "最新".into(), text: "最新。".into() });
+    assert_eq!(reader.recent_texts(1).unwrap().len(), 1);
+    assert!(reader.recent_texts(0).is_err());
+    assert!(reader.recent_texts(MAX_RECENT_TEXTS + 1).is_err());
+}

@@ -10,6 +10,7 @@
 //! fail — a problem (text over [`MAX_TEXT_BYTES`], a rule that blows the text up, a panic) comes
 //! back in [`Step::error`] together with the unchanged input.
 
+mod backtest;
 mod matcher;
 pub mod packs;
 mod store;
@@ -21,6 +22,7 @@ use std::panic::AssertUnwindSafe;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub use backtest::{BACKTEST_LIMIT, BACKTEST_SNIPPET_CHARS, Backtest, BacktestDraft, BacktestExample, MAX_BACKTEST_EXAMPLES, MAX_BACKTEST_LIMIT, backtest};
 use matcher::LiteralMatcher;
 pub use matcher::is_word_char;
 pub use store::{DICTIONARY_FILE_NAME, DictionaryStore, RULES_FILE_NAME, RuleStore, VOCABULARY_SCHEMA};
