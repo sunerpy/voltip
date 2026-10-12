@@ -1919,6 +1919,11 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - `voltip-core/tests/network.rs`（真实核心任务、真实中继、记录请求的假代理）：中继按保存的计划经手动代理连接、带钥匙串里的密码；被拒绝的改动不保存；保存规整后的设置、密码保留与删除、重建客户端并经新的代理重连；跟随系统的重新读取（变了才重建，手动方式下只显示）；手工改坏的设置；旧设置文件。`serve::tests`：服务端随设置切换计划，路线变了才重建客户端。
 - bridge 单测与 IPC 夹具（`settings_set_proxy`、`network_refresh`、`network` 事件、`Settings.proxy`、`UiState.network`）。
 - TS：`proxy.test.ts`（与 Rust 相同的用例、中英文文案、`MockBackend`），桌面「设置 › 网络」4 条（含英文界面），手机网络页 2 条。
+- 真实代理验收（2026-10-12，Linux x86_64，debug 构建，带构建自己的内置服务、中继和更新源；gost 3.2.6 作记录请求的代理）：
+  - `voltip-server` 转写一段 5.6 s 的中文录音：跟随系统、`HTTPS_PROXY` 里带用户名密码时 200，识别与润色（内置服务的两项在同一台网关上）各经 HTTP 代理开一条隧道，代理记录的登录用户正确、没有认证失败；手动 `socks5h://` 时 200，经 SOCKS5；不使用代理时 200，`HTTPS_PROXY` 被忽略；跟随系统而 `HTTPS_PROXY` 指向没有监听的端口时 502；不使用代理的地址写上网关时直连。`--check` 显示「网络代理：手动设置（socks5h://127.0.0.1:18081）」与「网络代理：跟随系统（http://127.0.0.1:3128）」；日志只有 `proxy plan proxy=manual socks5h`，没有代理的地址和用户名密码。
+  - 桌面 App（Xvfb）：手动 HTTP 代理与跟随系统（`HTTPS_PROXY`）时，中继的 WebSocket 与自动检查更新（「no update available」）都经过代理，中继隧道整段运行期间只建立一次、没有重连；不使用代理时代理上没有连接。
+  - 真实核心（`voltip-bridge-harness`）连构建的中继：先直连成功；`settings_set_proxy` 设置需要登录的手动代理和密码后，`network` 事件报告已保存密码，中继经代理带 `Proxy-Authorization` 重新连上（connecting → authenticating → connected），代理没有认证失败；`core_state` 里没有密码。
+  - 未验证：macOS 的网络设置与 Windows 的 Internet 选项的读取（hyper-util 的实现，没有在真机上改系统代理）；Android 默认网络的代理在真机上的交接（Kotlin 部分只经 CI 的 Android 构建编译）。
 
 ### 24.9 未做
 
