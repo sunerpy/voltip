@@ -86,14 +86,10 @@ fn following_the_system_reads_it_for_each_request() {
 /// The HTTPS proxy, the HTTP proxy and the exclusions a test's system settings hold.
 type SystemSettings = (Option<&'static str>, Option<&'static str>, &'static str);
 
-/// The system fingerprint changes with anything that could change a route: either proxy, its
-/// credentials, an exclusion; on Android the network's proxy or its exclusions. The same settings
-/// read again give the same one.
-#[test]
-fn the_system_fingerprint_follows_every_part_of_the_system_settings() {
-    let system: Arc<Mutex<SystemSettings>> = Arc::new(Mutex::new((Some("http://10.0.0.1:3128"), None, "")));
-    let reads = Arc::clone(&system);
-    let network = Network::with_system_matcher(move || {
+/// A network on `system`'s settings, its raw form what the environment variables would hold.
+fn network_on(system: &Arc<Mutex<SystemSettings>>) -> Arc<Network> {
+    let reads = Arc::clone(system);
+    Network::with_system_settings(move || {
         let (https, http, no) = *reads.lock();
         let mut builder = Matcher::builder().no(no.to_owned());
         if let Some(https) = https {
@@ -102,8 +98,17 @@ fn the_system_fingerprint_follows_every_part_of_the_system_settings() {
         if let Some(http) = http {
             builder = builder.http(http.to_owned());
         }
-        builder.build()
-    });
+        (builder.build(), format!("HTTPS_PROXY={https:?} HTTP_PROXY={http:?} NO_PROXY={no:?}"))
+    })
+}
+
+/// The system fingerprint changes with anything that could change a route: either proxy, its
+/// credentials, an exclusion; on Android the network's proxy or its exclusions. The same settings
+/// read again give the same one.
+#[test]
+fn the_system_fingerprint_follows_every_part_of_the_system_settings() {
+    let system: Arc<Mutex<SystemSettings>> = Arc::new(Mutex::new((Some("http://10.0.0.1:3128"), None, "")));
+    let network = network_on(&system);
     let first = network.system_fingerprint();
     assert_eq!(network.system_fingerprint(), first, "the same settings, the same fingerprint");
     let mut seen = vec![first];
@@ -125,6 +130,28 @@ fn the_system_fingerprint_follows_every_part_of_the_system_settings() {
     assert_ne!(network.system_fingerprint(), platform, "an exclusion of the network's proxy counts");
     network.set_platform_proxy(Some(PlatformProxy::new("10.0.2.2", 8080, "corp.test").unwrap()));
     assert_eq!(network.system_fingerprint(), platform);
+}
+
+/// Regression (goal gate round 2, 2026-10-12): the fingerprint once took the credentials from the
+/// routes of two fixed addresses, so an exclusion naming them hid a change of the password.
+#[test]
+fn regression_a_password_change_counts_whatever_the_exclusions_name() {
+    for excluded in ["example.com", "*"] {
+        let system: Arc<Mutex<SystemSettings>> = Arc::new(Mutex::new((Some("http://bob:pw@10.0.0.1:3128"), Some("http://bob:pw@10.0.0.1:3128"), excluded)));
+        let network = network_on(&system);
+        let before = network.system_fingerprint();
+        *system.lock() = (Some("http://bob:other@10.0.0.1:3128"), Some("http://bob:other@10.0.0.1:3128"), excluded);
+        assert_ne!(network.system_fingerprint(), before, "excluding {excluded}");
+    }
+}
+
+/// The production reader's raw settings name every variable hyper-util reads.
+#[test]
+fn the_raw_system_settings_name_the_proxy_environment() {
+    let raw = environment_settings();
+    for name in PROXY_ENVIRONMENT {
+        assert!(raw.contains(&format!("{name}=")), "{name}");
+    }
 }
 
 /// What an HTTP proxy was asked: the request line and its `Proxy-Authorization`.

@@ -230,12 +230,15 @@ async fn following_the_system_is_read_again_when_asked() {
     let system: Arc<Mutex<Option<String>>> = Arc::default();
     let excluded: Arc<Mutex<String>> = Arc::default();
     let (reads, exclusions) = (Arc::clone(&system), Arc::clone(&excluded));
-    let network = Network::with_system_matcher(move || {
-        let builder = hyper_util::client::proxy::matcher::Matcher::builder().no(exclusions.lock().clone());
-        match reads.lock().clone() {
+    let network = Network::with_system_settings(move || {
+        let (proxy, no) = (reads.lock().clone(), exclusions.lock().clone());
+        let builder = hyper_util::client::proxy::matcher::Matcher::builder().no(no.clone());
+        let matcher = match proxy.clone() {
             Some(proxy) => builder.https(proxy).build(),
             None => builder.build(),
-        }
+        };
+        // What the environment variables would hold.
+        (matcher, format!("HTTPS_PROXY={proxy:?} NO_PROXY={no:?}"))
     });
     let settings = Settings { relay_enabled: false, ..Settings::default() };
     let mut desk = node(&settings, Arc::new(MemorySecretStore::new()), network);
@@ -257,12 +260,18 @@ async fn following_the_system_is_read_again_when_asked() {
     assert!(!rebuilt, "the same reading changes nothing");
 
     // Regression (goal gate, 2026-10-12): a change the shown proxy does not reflect — an exclusion
-    // only, the credentials only — reroutes all the same.
-    for change in [0, 1] {
-        if change == 0 {
-            *excluded.lock() = "intranet.test".into();
-        } else {
-            *system.lock() = Some("http://user:other@10.0.0.1:3128".into());
+    // only, the credentials only, the credentials while the exclusions name every address the
+    // settings could probe — reroutes all the same.
+    for change in [0, 1, 2] {
+        match change {
+            0 => *excluded.lock() = "intranet.test".into(),
+            1 => *system.lock() = Some("http://user:other@10.0.0.1:3128".into()),
+            _ => {
+                *excluded.lock() = "intranet.test,example.com".into();
+                desk.handle.send(CoreCommand::RefreshNetwork).await.unwrap();
+                wait(&mut desk, |e| matches!(e, CoreEvent::Engines(_)).then_some(())).await;
+                *system.lock() = Some("http://user:third@10.0.0.1:3128".into());
+            }
         }
         desk.handle.send(CoreCommand::RefreshNetwork).await.unwrap();
         let status = wait_network(&mut desk).await;

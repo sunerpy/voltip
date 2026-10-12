@@ -39,11 +39,25 @@ pub use plan::{
 
 /// Reads the system's proxy settings: hyper-util's reader unless a test hands in its own.
 type SystemSource = Box<dyn Fn() -> Matcher + Send + Sync>;
+/// The raw settings the system's matcher is made from, credentials included, for
+/// [`Network::system_fingerprint`]: the matcher's Debug leaves the credentials out.
+type SystemRaw = Box<dyn Fn() -> String + Send + Sync>;
+
+/// The environment variables hyper-util's reader takes the proxies, their credentials and the
+/// exclusions from (`REQUEST_METHOD` makes it ignore `HTTP_PROXY`). macOS's network settings and
+/// Windows' Internet Options give it addresses and exclusions only, which the matcher shows.
+const PROXY_ENVIRONMENT: [&str; 9] =
+    ["ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy", "REQUEST_METHOD"];
+
+fn environment_settings() -> String {
+    PROXY_ENVIRONMENT.iter().map(|name| format!("{name}={:?}\n", std::env::var_os(name))).collect()
+}
 
 /// The proxy plan in force for a process, shared by its clients (`Arc<Network>`).
 pub struct Network {
     state: RwLock<State>,
     system: SystemSource,
+    system_raw: SystemRaw,
 }
 
 #[derive(Default)]
@@ -80,7 +94,7 @@ impl Route {
 impl Default for Network {
     /// The system's proxy.
     fn default() -> Self {
-        Self::with_system(Box::new(Matcher::from_system))
+        Self::with_system(Box::new(Matcher::from_system), Box::new(environment_settings))
     }
 }
 
@@ -107,11 +121,20 @@ impl Network {
     /// Tests: a network whose system proxy settings are `system` instead of this machine's.
     #[doc(hidden)]
     pub fn with_system_matcher(system: impl Fn() -> Matcher + Send + Sync + 'static) -> Arc<Self> {
-        Arc::new(Self::with_system(Box::new(system)))
+        Arc::new(Self::with_system(Box::new(system), Box::new(String::new)))
     }
 
-    fn with_system(system: SystemSource) -> Self {
-        Self { state: RwLock::new(State::default()), system }
+    /// Tests: [`Network::with_system_matcher`] with the raw settings the matcher is made from
+    /// (what the environment variables would hold), as the fingerprint reads them.
+    #[doc(hidden)]
+    pub fn with_system_settings(system: impl Fn() -> (Matcher, String) + Send + Sync + 'static) -> Arc<Self> {
+        let system = Arc::new(system);
+        let raw = Arc::clone(&system);
+        Arc::new(Self::with_system(Box::new(move || system().0), Box::new(move || raw().1)))
+    }
+
+    fn with_system(system: SystemSource, system_raw: SystemRaw) -> Self {
+        Self { state: RwLock::new(State::default()), system, system_raw }
     }
 
     /// Put `plan` in force: the next request and the next connection follow it.
@@ -161,16 +184,17 @@ impl Network {
         self.system_route(&state, &uri).map(|route| route.server)
     }
 
-    /// [`Network::system_proxy_for`] an `https://` host no exclusion list names: the proxy the
-    /// settings show next to 「跟随系统」.
+    /// [`Network::system_proxy_for`] an `https://` host no exclusion list names (a name under the
+    /// reserved `.invalid`, RFC 2606): the proxy the settings show next to 「跟随系统」.
     pub fn system_https_proxy(&self) -> Option<Url> {
-        self.system_proxy_for(&Url::parse("https://example.com/").ok()?)
+        self.system_proxy_for(&Url::parse("https://proxy-probe.voltip.invalid/").ok()?)
     }
 
     /// A digest of everything following the system means now: the system's proxies for HTTP and
     /// HTTPS with their credentials and its exclusions, or the platform network's proxy and its
     /// exclusions. Equal digests: no connection would take another route. For telling whether
-    /// the system's settings changed; never shown or logged.
+    /// the system's settings changed; never shown or logged. It reads the settings themselves, not
+    /// the route of some address, so an exclusion that happens to name that address hides nothing.
     pub fn system_fingerprint(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -182,13 +206,10 @@ impl Network {
                 proxy.no_proxy.hash(&mut hasher);
             }
             None => {
-                let system = (self.system)();
-                // Both proxies and every exclusion rule (the matcher's Debug leaves out credentials).
-                format!("{system:?}").hash(&mut hasher);
-                for probe in ["http://example.com/", "https://example.com/"] {
-                    let route = probe.parse::<http::Uri>().ok().and_then(|uri| system.intercept(&uri)).and_then(|i| route_of(&i));
-                    route.map(|r| (r.server.to_string(), r.credentials)).hash(&mut hasher);
-                }
+                // Both proxies and every exclusion rule, from wherever the reader took them; the
+                // credentials, which the matcher's Debug leaves out, from the raw settings.
+                format!("{:?}", (self.system)()).hash(&mut hasher);
+                (self.system_raw)().hash(&mut hasher);
             }
         }
         hasher.finish()
