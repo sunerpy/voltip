@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.4](https://github.com/sunerpy/voltip/compare/v0.1.3...v0.1.4) (2026-10-12)
+
+
+### Features
+
+* 模型列表随服务商更新，加入百炼额度入口与服务商标志 ([#160](https://github.com/sunerpy/voltip/issues/160)) ([cd1d1fa](https://github.com/sunerpy/voltip/commit/cd1d1fa1e2254b8861d74a48ca66a29ef6ce984f))
+* 网络代理设置：默认跟随系统，可不使用代理或手动设置 ([#158](https://github.com/sunerpy/voltip/issues/158)) ([745e2f3](https://github.com/sunerpy/voltip/commit/745e2f3642191fa6d697c6d98d33c6b8fbb69a92))
+
 ## [0.1.3](https://github.com/sunerpy/voltip/compare/v0.1.2...v0.1.3) (2026-10-12)
 
 
