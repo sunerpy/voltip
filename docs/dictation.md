@@ -1890,7 +1890,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 - 桌面：每个请求都重新读系统的代理设置（hyper-util `Matcher::from_system`，`client-proxy-system`）：先读环境变量 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY`、`NO_PROXY`（大小写均可，环境变量里的用户名密码照常使用），环境变量没有给出的，macOS 读网络设置（SCDynamicStore 的 HTTP / HTTPS 代理），Windows 读 Internet 选项（注册表的 `ProxyServer` 与 `ProxyOverride`）。Linux 只读环境变量，不读 GNOME、KDE 的代理设置；PAC 与 WPAD 都不读。
 - 手机（Android）：Rust 读不到系统的代理。`VoltipNativeModule.kt` 的默认网络回调在 `onLinkPropertiesChanged`（网络连上后立即回调一次，属性变化时再回调）把代理交给 shell：设备级代理（`ConnectivityManager.getDefaultProxy()`，由管理员设置）优先，否则用 `LinkProperties.httpProxy`；`VoltipShell.setNetworkProxy(host, port, exclusions)` → `Shell::set_platform_proxy` → `Network::set_platform_proxy`。排除列表里读不懂的项被略过，代理照常生效；只给了 PAC 文件的代理按没有代理处理（记一条日志）。
-- 界面显示跟随系统现在意味着什么：`UiState.network.system_proxy`，即一个 `https://` 请求现在会经过的代理（不含用户名和密码），没有代理时为空。打开设置页（`network_refresh`）、点「重新读取」、手机的网络代理变化时重新读取。是否变化按系统设置本身判断（`Network::system_fingerprint`：读取器给出的 HTTP 与 HTTPS 代理和每一条排除规则，加上它读取的环境变量原文，用户名密码就在其中；手机上是网络的代理与排除列表），不看某个地址的路线，所以排除列表恰好写到哪个地址也不会漏掉变化；跟随系统时有任何变化，核心就重建识别与润色的客户端并重连中继。界面显示的系统代理是一个 `https://` 请求现在会经过的代理，探测用保留域名 `.invalid` 下的主机，排除列表不会写到它。
+- 界面显示跟随系统现在意味着什么：`UiState.network.system_proxy`，即一个 `https://` 请求现在会经过的代理（不含用户名和密码），没有代理时为空。打开设置页（`network_refresh`）、点「重新读取」、手机的网络代理变化时重新读取。是否变化按系统设置本身判断（`Network::system_fingerprint`：读取器给出的 HTTP 与 HTTPS 代理和每一条排除规则，加上它读取的环境变量原文（用户名密码就在其中），以及代理地址里自带的用户名密码（Windows 的 `ProxyServer` 可以写成 `user:password@host:port`；每种协议的代理对它代理的所有地址用同一组用户名密码，取保留地址中第一个被代理的那个读出）；手机上是网络的代理与排除列表），不看某个地址的路线，所以排除列表恰好写到哪个地址也不会漏掉变化；跟随系统时有任何变化，核心就重建识别与润色的客户端并重连中继。界面显示的系统代理是一个 `https://` 请求现在会经过的代理，探测用保留域名 `.invalid` 下的主机，排除列表不会写到它。
 
 ### 24.5 实现（`crates/voltip-net`）
 

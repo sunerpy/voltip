@@ -145,6 +145,25 @@ fn regression_a_password_change_counts_whatever_the_exclusions_name() {
     }
 }
 
+/// Regression (goal gate round 3, 2026-10-12): credentials that come in the proxy's own address,
+/// as Windows' `ProxyServer` can carry them, with no environment variable behind them.
+#[test]
+fn regression_credentials_in_the_proxy_address_count_without_the_environment() {
+    for excluded in ["", "example.com"] {
+        let password: Arc<Mutex<&'static str>> = Arc::new(Mutex::new("pw"));
+        let reads = Arc::clone(&password);
+        // `with_system_matcher` has no raw settings, like the registry.
+        let network = Network::with_system_matcher(move || {
+            let proxy = format!("http://bob:{}@10.0.0.1:3128", *reads.lock());
+            Matcher::builder().http(proxy.clone()).https(proxy).no(excluded.to_owned()).build()
+        });
+        let before = network.system_fingerprint();
+        assert_eq!(network.system_fingerprint(), before);
+        *password.lock() = "other";
+        assert_ne!(network.system_fingerprint(), before, "excluding {excluded:?}");
+    }
+}
+
 /// The production reader's raw settings name every variable hyper-util reads.
 #[test]
 fn the_raw_system_settings_name_the_proxy_environment() {

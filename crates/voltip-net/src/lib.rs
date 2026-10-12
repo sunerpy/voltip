@@ -206,10 +206,24 @@ impl Network {
                 proxy.no_proxy.hash(&mut hasher);
             }
             None => {
-                // Both proxies and every exclusion rule, from wherever the reader took them; the
-                // credentials, which the matcher's Debug leaves out, from the raw settings.
-                format!("{:?}", (self.system)()).hash(&mut hasher);
+                // Both proxies and every exclusion rule, from wherever the reader took them, and
+                // the raw settings, credentials included.
+                let system = (self.system)();
+                format!("{system:?}").hash(&mut hasher);
                 (self.system_raw)().hash(&mut hasher);
+                // The credentials the matcher itself carries (Windows' `ProxyServer` can hold
+                // `user:password@`): each scheme's proxy signs every target it takes with the same
+                // ones, so the first of these targets it takes shows them. A list that excludes
+                // all three leaves no target to any proxy in practice.
+                for scheme in ["http", "https"] {
+                    let credentials = ["proxy-probe.voltip.invalid", "198.51.100.1", "[2001:db8::1]"]
+                        .iter()
+                        .filter_map(|host| format!("{scheme}://{host}/").parse::<http::Uri>().ok())
+                        .find_map(|uri| system.intercept(&uri))
+                        .and_then(|intercept| route_of(&intercept))
+                        .and_then(|route| route.credentials);
+                    credentials.hash(&mut hasher);
+                }
             }
         }
         hasher.finish()
