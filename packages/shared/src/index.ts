@@ -9,6 +9,7 @@ export * from "./engine-drafts";
 export * from "./fallback";
 export * from "./preset-drafts";
 export * from "./vocabulary-drafts";
+export * from "./quick-fix";
 export * from "./scene-drafts";
 export * from "./history-stats";
 export * from "./feedback-drafts";
