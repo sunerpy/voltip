@@ -346,8 +346,12 @@ mod tests {
     async fn a_connection_refused_once_is_tried_again_and_the_take_goes_through() {
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(200).set_body_json(json!({ "text": "好" }))).await;
-        // Bound and dropped: nobody listens on this port any more.
-        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        // Bound without `listen`: nobody answers on this port, and no other test's server can take
+        // it, as one did when the port was bound and dropped (2026-10-12: a test server that closes
+        // every connection got it, and the first attempt failed after connecting).
+        let refusing = tokio::net::TcpSocket::new_v4().unwrap();
+        refusing.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let closed = refusing.local_addr().unwrap();
         let resolver = std::sync::Arc::new(Moving { calls: std::sync::atomic::AtomicUsize::new(0), first: closed, then: *server.address() });
         // No proxy: an HTTP(S)_PROXY of the machine running the test would take `asr.test` away.
         let http = client_builder().no_proxy().dns_resolver(resolver.clone()).build().unwrap();
@@ -355,6 +359,7 @@ mod tests {
         assert_eq!(client.transcribe(WAV, None).await.unwrap().text, "好");
         assert_eq!(resolver.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        drop(refusing);
     }
 
     /// A timeout is not tried again: the request may have reached the service, and the time the

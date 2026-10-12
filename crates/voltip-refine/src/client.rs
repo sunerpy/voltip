@@ -984,8 +984,11 @@ mod tests {
     async fn a_connection_refused_once_is_tried_again_and_the_polish_goes_through() {
         let server = MockServer::start().await;
         mount(&server, answer("好。")).await;
-        // Bound and dropped: nobody listens on this port any more.
-        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        // Bound without `listen`: nobody answers on this port, and no other test's server can take
+        // it, as one took voltip-asr's when that twin of this test bound and dropped it (2026-10-12).
+        let refusing = tokio::net::TcpSocket::new_v4().unwrap();
+        refusing.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let closed = refusing.local_addr().unwrap();
         let resolver = std::sync::Arc::new(Moving { calls: std::sync::atomic::AtomicUsize::new(0), first: closed, then: *server.address() });
         // No proxy: an HTTP(S)_PROXY of the machine running the test would take `refine.test` away.
         let http = client_builder().no_proxy().dns_resolver(resolver.clone()).build().unwrap();
@@ -993,6 +996,7 @@ mod tests {
         assert_eq!(client.refine("好", None).await.unwrap().text, "好。");
         assert_eq!(resolver.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        drop(refusing);
     }
 
     /// A timeout is not tried again. The listener accepts nothing, so every connection the client
