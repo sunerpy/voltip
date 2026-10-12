@@ -146,6 +146,9 @@ pub enum UiEvent {
     Connectivity(crate::connectivity::ConnectivityStatus),
     /// The local speech service started, stopped or failed to start (docs/dictation.md §23.6).
     Serve(ServeStatus),
+    /// The local MCP service started, stopped or failed to start, a client came, or its recent
+    /// activity changed (docs/dictation.md §25).
+    Mcp(crate::mcp::McpStatus),
     /// The proxy's password was saved or removed, or the system's proxy was read again
     /// (docs/dictation.md §24).
     Network(NetworkStatus),
@@ -268,6 +271,8 @@ pub enum GuidePage {
     /// 隐私 (docs/site/privacy.md): the phone's 关于 links it, as Google Play asks of an app that
     /// records audio (the Play listing, 2026-10-08).
     Privacy,
+    /// AI 工具接入 (docs/site/recognition/mcp.md; docs/dictation.md §25).
+    Mcp,
 }
 
 impl GuidePage {
@@ -277,6 +282,7 @@ impl GuidePage {
         let path = match self {
             Self::Service => "recognition/service",
             Self::Privacy => "privacy",
+            Self::Mcp => "recognition/mcp",
         };
         let zh = locale.trim().to_ascii_lowercase().starts_with("zh");
         format!("{GUIDE_SITE}/{}{path}", if zh { "zh/" } else { "" })
@@ -494,6 +500,10 @@ pub struct UiState {
     /// The proxy's password and the system's proxy (docs/dictation.md §24).
     #[serde(default)]
     pub network: NetworkStatus,
+    /// The local MCP service the app hosts (docs/dictation.md §25); `available` is false where the
+    /// shell cannot host it (the phone).
+    #[serde(default)]
+    pub mcp: crate::mcp::McpStatus,
     /// The built-in clean-up service turned a take down for want of capacity (docs/dictation.md
     /// §3.6); `None` when there is nothing to say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -540,6 +550,7 @@ impl Default for UiState {
             phone_outbox_too_large: Vec::new(),
             serve: ServeStatus::default(),
             network: NetworkStatus::default(),
+            mcp: crate::mcp::McpStatus::default(),
             refine_notice: None,
         }
     }
@@ -655,6 +666,10 @@ impl UiState {
                 self.network = status.clone();
                 UiEvent::Network(status)
             }
+            CoreEvent::Mcp(status) => {
+                self.mcp = status.clone();
+                UiEvent::Mcp(status)
+            }
             CoreEvent::PhoneTake(take) => {
                 self.phone_take = take.clone();
                 UiEvent::PhoneTake { take }
@@ -700,6 +715,9 @@ mod tests {
         assert_eq!(GuidePage::Privacy.url("zh-CN"), "https://voltip.firlab.app/zh/privacy");
         assert_eq!(GuidePage::Privacy.url("en"), "https://voltip.firlab.app/privacy");
         assert_eq!(serde_json::to_string(&GuidePage::Privacy).unwrap(), r#""privacy""#);
+        assert_eq!(GuidePage::Mcp.url("zh-CN"), "https://voltip.firlab.app/zh/recognition/mcp");
+        assert_eq!(GuidePage::Mcp.url("en"), "https://voltip.firlab.app/recognition/mcp");
+        assert_eq!(serde_json::to_string(&GuidePage::Mcp).unwrap(), r#""mcp""#);
         assert_eq!(serde_json::to_string(&ProjectLink::Feedback).unwrap(), r#""feedback""#);
         assert_eq!(serde_json::from_str::<ProjectLink>(r#""source""#).unwrap(), ProjectLink::Source);
     }
@@ -869,6 +887,8 @@ mod tests {
             enabled: true,
             created_at_ms: 1,
             updated_at_ms: 1,
+            source: crate::EntrySource::Manual,
+            pending: false,
         };
         let ev = st.apply(CoreEvent::Rules(vec![rule.clone()]));
         assert_eq!(st.rules, vec![rule]);

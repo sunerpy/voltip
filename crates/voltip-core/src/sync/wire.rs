@@ -252,7 +252,8 @@ mod tests {
                     term: wide(MAX_TERM_CHARS),
                     heard_as: vec![wide(MAX_TERM_CHARS); MAX_HEARD_AS],
                     enabled: true,
-                    source: EntrySource::Manual,
+                    // An AI tool's entry names it (docs/dictation.md §25): the largest source.
+                    source: EntrySource::Mcp { client: wide(crate::mcp::MAX_CLIENT_CHARS) },
                     created_at_ms: u64::MAX,
                     updated_at_ms: u64::MAX,
                 })
@@ -268,6 +269,8 @@ mod tests {
                     enabled: true,
                     created_at_ms: u64::MAX,
                     updated_at_ms: u64::MAX,
+                    source: EntrySource::Mcp { client: wide(crate::mcp::MAX_CLIENT_CHARS) },
+                    pending: true,
                 })
                 .collect(),
             scenes: (0..MAX_SCENES)
