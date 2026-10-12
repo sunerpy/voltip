@@ -7,8 +7,9 @@ use reqwest::multipart::{Form, Part};
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 
-use crate::config::{AsrConfig, MAX_ERROR_BODY_CHARS, normalize_base_url};
+use crate::config::{AsrConfig, AudioUpload, MAX_ERROR_BODY_CHARS, normalize_base_url};
 use crate::error::{AsrError, quota_error};
+use crate::ogg_opus;
 
 /// The HTTP client builder with the trust roots of this platform. Elsewhere reqwest verifies with
 /// the system's own store (rustls-platform-verifier); on Android that verifier needs a JNI context
@@ -130,9 +131,10 @@ impl AsrClient {
         let started = Instant::now();
         let language = language.map(str::trim).filter(|l| !l.is_empty());
         let prompt = prompt.map(str::trim).filter(|p| !p.is_empty());
+        let upload = self.upload(wav).await;
         // A multipart form is sent once: each attempt builds its own.
         let request = || {
-            let file = Part::bytes(wav.to_vec()).file_name("audio.wav").mime_str("audio/wav").map_err(|e| AsrError::InvalidConfig(e.to_string()))?;
+            let file = Part::bytes(upload.bytes.clone()).file_name(upload.name).mime_str(upload.mime).map_err(|e| AsrError::InvalidConfig(e.to_string()))?;
             let mut form = Form::new().part("file", file).text("model", self.config.model.clone()).text("response_format", "json");
             if let Some(language) = language {
                 form = form.text("language", language.to_string());
@@ -147,7 +149,16 @@ impl AsrClient {
             })
         };
         // The prompt is the user's vocabulary: its length goes to the log, never its words.
-        tracing::debug!(path = log_path(&self.endpoint), model = %self.config.model, bytes = wav.len(), ?language, prompt_chars = prompt.map_or(0, |p| p.chars().count()), "transcribing");
+        tracing::debug!(
+            path = log_path(&self.endpoint),
+            model = %self.config.model,
+            file = upload.name,
+            bytes = upload.bytes.len(),
+            wav_bytes = wav.len(),
+            ?language,
+            prompt_chars = prompt.map_or(0, |p| p.chars().count()),
+            "transcribing"
+        );
         let response = send(request).await?;
         let status = response.status();
         if !status.is_success() {
@@ -164,6 +175,28 @@ impl AsrClient {
         tracing::debug!(latency_ms, chars = text.chars().count(), "transcribed");
         Ok(Transcript { text, latency_ms, model: self.config.model.clone() })
     }
+
+    /// The multipart `file` for `wav` ([`AsrConfig::upload`]): the WAV, or its Ogg Opus. The encoder
+    /// runs on the blocking pool: a 36 s take is about half a second of one core, and the live
+    /// preview sends its growing sentence every second (docs/dictation.md §11.8).
+    async fn upload(&self, wav: &[u8]) -> Upload {
+        if self.config.upload == AudioUpload::OggOpus {
+            let owned = wav.to_vec();
+            match tokio::task::spawn_blocking(move || ogg_opus::from_wav(&owned)).await {
+                Ok(Some(bytes)) => return Upload { bytes, name: "audio.ogg", mime: "audio/ogg" },
+                Ok(None) => tracing::debug!(bytes = wav.len(), "not a 16-bit mono WAV at a rate Opus takes; uploading the WAV"),
+                Err(error) => tracing::warn!(%error, "the Opus encoder failed; uploading the WAV"),
+            }
+        }
+        Upload { bytes: wav.to_vec(), name: "audio.wav", mime: "audio/wav" }
+    }
+}
+
+/// What one transcription request uploads.
+struct Upload {
+    bytes: Vec<u8>,
+    name: &'static str,
+    mime: &'static str,
 }
 
 /// A non-2xx answer: a used-up quota first, whatever the status (docs/dictation.md §3.5; some
@@ -375,6 +408,34 @@ mod tests {
         assert!(body.contains("name=\"language\"\r\n\r\nzh\r\n"), "{body}");
     }
 
+    /// docs/dictation.md §3.9: with [`AudioUpload::OggOpus`] the take goes up as `audio.ogg`, an Ogg
+    /// Opus file under a tenth of its WAV, the other fields as before; a WAV Opus cannot take as it
+    /// is goes up as the WAV.
+    #[tokio::test]
+    async fn an_ogg_opus_upload_sends_the_take_as_opus_and_anything_else_as_the_wav() {
+        let server = MockServer::start().await;
+        mount(&server, ResponseTemplate::new(200).set_body_json(json!({ "text": "你好" }))).await;
+        let client = AsrClient::new(AsrConfig::new(server.uri(), "Qwen/Qwen3-ASR-1.7B").with_upload(AudioUpload::OggOpus)).unwrap();
+        // Five seconds of a 220 Hz tone at 16 kHz, as the core writes takes.
+        let samples: Vec<i16> = (0..80_000).map(|i| (6000.0 * (2.0 * std::f64::consts::PI * 220.0 * f64::from(i) / 16_000.0).sin()) as i16).collect();
+        let mut take = b"RIFF".to_vec();
+        take.extend_from_slice(&(36 + samples.len() as u32 * 2).to_le_bytes());
+        take.extend_from_slice(&WAV[8..40]);
+        take.extend_from_slice(&(samples.len() as u32 * 2).to_le_bytes());
+        take.extend(samples.iter().flat_map(|s| s.to_le_bytes()));
+        assert_eq!(client.transcribe(&take, Some("zh")).await.unwrap().text, "你好");
+        client.transcribe(WAV, None).await.unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        let body = String::from_utf8_lossy(&requests[0].body);
+        assert!(body.contains("name=\"file\"; filename=\"audio.ogg\"\r\nContent-Type: audio/ogg\r\n"), "{body}");
+        assert!(body.contains("OggS") && body.contains("OpusHead") && !body.contains("RIFF"), "{body}");
+        assert!(body.contains("name=\"model\"\r\n\r\nQwen/Qwen3-ASR-1.7B") && body.contains("name=\"language\"\r\n\r\nzh\r\n"), "{body}");
+        assert!(requests[0].body.len() * 10 < take.len(), "{} bytes sent for a {}-byte WAV", requests[0].body.len(), take.len());
+        let empty = String::from_utf8_lossy(&requests[1].body);
+        assert!(empty.contains("filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n") && empty.contains("RIFF"), "no samples: the WAV as it is: {empty}");
+    }
+
     /// docs/dictation.md §16.3: the dictionary terms travel as the multipart `prompt` field, and only
     /// when there are any — no field for `None` or a blank prompt.
     #[tokio::test]
@@ -511,18 +572,21 @@ mod tests {
         assert!(err.is_retryable());
     }
 
+    /// Regression (2026-10-12, a red run): the port was freed by dropping a listener, and while the
+    /// client tried again (docs/dictation.md §3.8, 1.3 s) another test's mock server took the port.
+    /// A socket bound without `listen` keeps the port for the test and refuses every connection.
     #[tokio::test]
     async fn refused_connection_is_a_network_error() {
-        // Bind then drop a listener so the port is known to be closed.
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let port = socket.local_addr().unwrap().port();
         let client = AsrClient::new(AsrConfig::new(format!("http://127.0.0.1:{port}"), "m")).unwrap();
         let err = client.transcribe(WAV, None).await.unwrap_err();
         assert!(matches!(&err, AsrError::Network(msg) if !msg.is_empty()), "{err:?}");
         // Regression (public release, 2026-09-27): no URL in the message (it reaches the UI).
         assert!(!err.to_string().contains("127.0.0.1") && !err.to_string().contains(&port.to_string()), "{err}");
         assert!(err.is_retryable());
+        drop(socket);
     }
 
     #[test]

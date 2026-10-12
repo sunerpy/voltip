@@ -11,7 +11,7 @@
 | crate | 职责 | 依赖 | 测试方式 |
 |---|---|---|---|
 | `voltip-audio` | `Recorder`：打开输入设备（或电脑的输出、两者混合，§22），采集 → 单声道 16 kHz i16，同时产出 30 Hz `LevelFrame`；`Recording::to_wav()`；内存里最多留 120 s，长录音另出一路 16 kHz 流（`pcm.rs`，§22）；`RecorderConfig.live_tap` 时另出一路实时 16 kHz 单声道 f32（`live.rs`：rubato 异步 sinc 按块重采样 → `rtrb` 无锁环，满环置 `overrun`），`on_ready` 在首块样本到达时回调一次 | cpal、rubato（重采样）、rtrb（SPSC 环） | `FakeBackend` 播放合成信号，DSP 纯函数；分块 vs 整段重采样差 < 1e-3 RMS |
-| `voltip-asr` | `AsrClient::transcribe(wav, language) -> Transcript`：OpenAI 兼容 `POST {base}/v1/audio/transcriptions` multipart（`file`, `model`, `language?`），Bearer token；`DashscopeClient`：阿里云百炼的 chat / multimodal / 实时 WebSocket 三种协议（§3.4，`duplex` 模块供流式会话用）；错误分类 `Unauthorized / RateLimited / Server / Service / FreeQuotaExhausted / Network / Timeout / BadResponse / Audio` | reqwest 0.13（rustls，multipart，json）、tokio-tungstenite（Mozilla 根证书） | wiremock；本地 WebSocket 假服务 |
+| `voltip-asr` | `AsrClient::transcribe(wav, language) -> Transcript`：OpenAI 兼容 `POST {base}/v1/audio/transcriptions` multipart（`file`, `model`, `language?`），Bearer token；`AsrConfig.upload = OggOpus` 时 `file` 是 Ogg Opus（`ogg_opus.rs`，§3.9）；`DashscopeClient`：阿里云百炼的 chat / multimodal / 实时 WebSocket 三种协议（§3.4，`duplex` 模块供流式会话用）；错误分类 `Unauthorized / RateLimited / Server / Service / FreeQuotaExhausted / Network / Timeout / BadResponse / Audio` | reqwest 0.13（rustls，multipart，json）、tokio-tungstenite（Mozilla 根证书）、opus-rs | wiremock；本地 WebSocket 假服务 |
 | `voltip-refine` | `RefineClient::refine_with(text, PromptHints) -> Refined`：OpenAI 兼容 `POST {base}/chat/completions`，系统提示词 = 这一次的预设（§21，默认「校对」）+ 语言 + 应用上下文 + 场景要求 + 术语表；`temperature 0.2`；结果去掉包裹引号/代码块 | reqwest | wiremock |
 | `voltip-inject` | `inject(text) -> Injection`：备份剪贴板 → 写入文本 → 发 `Ctrl+V`（macOS `Cmd+V`）→ 600 ms 后恢复剪贴板；任何一步失败都把文本留在剪贴板并返回 `Via::Clipboard` + 原因；`Injector` trait + `FakeInjector` | arboard 3.6、enigo 0.6（x11rb / SendInput / CGEvent） | trait 假实现；真实实现只在有显示器时冒烟 |
 | `voltip-asr-local` | 本地引擎（§10）：`catalogue`（6 条目录，含隐藏的 `silero-vad`）、`store`（下载 / 校验 / 安装，§12 辅助条目随首个模型下载）、`transcriber`（`LocalTranscriber`，按条目引擎分派：`gguf.rs` transcribe.cpp、`sherpa.rs` sherpa-onnx；`vad_trim` 时先经 `vad.rs` 裁剪）、`streaming`（`LocalStreamingTranscriber`，§11 实时预览）、`vad`（`VadTrimmer`，§12 Silero VAD 首尾裁剪）、`segmenter`（`VadSegmenterFactory`，§22 长录音在停顿处切段） | transcribe-cpp 0.2.3（静态，CPU）、sherpa-onnx 1.13.8（动态）、rubato | 假加载器 / 假 VAD 单测；`tests/real.rs` 四条 `#[ignore]` 真模型测试 |
@@ -233,6 +233,20 @@ pub struct EngineSettings {                                  // Settings.engines
   - 结论：内置服务 10-08 迁到首尔后，从中国大陆过去的跨境线路偶尔会在握手阶段断开。这不是配置错误，也和后量子密钥交换无关。
 - **处理**：`voltip-asr`（OpenAI 兼容接口与百炼的 REST 请求）和 `voltip-refine`（润色、语音编辑、测试连接时的模型列表）在连接阶段失败时自动重发请求，最多再试两次，两次之间分别间隔 0.3 s 和 1 s。连接阶段的失败包括 DNS、TCP 和 TLS 握手（reqwest 的 `is_connect()`），这时请求还没有发出，任何请求都可以安全重发。超时不重试：调用方给的时间已经用完，服务也可能正在处理。重试后仍然失败时，消息末尾会注明尝试次数，例如 `(3 attempts)`。实时识别的 WebSocket 不在此列，它出错时会改为整段识别（§11）。
 - **测试**：`voltip-asr` 与 `voltip-refine` 的 `regression_a_handshake_cut_short_is_tried_again_before_the_*_fails`、`a_connection_refused_once_is_tried_again_and_the_*_goes_through`、`a_timeout_is_not_tried_again`。
+
+### 3.9 内置服务的识别上传改用 Ogg Opus（2026-10-12）
+
+用户报告（2026-10-12）：经本机 `voltip-server` 的 Paseo 手机听写经常失败，超过 35 秒的语音尤其明显。
+
+- **排查结论**（首尔网关的访问日志按请求记录了总耗时与上游耗时，两者之差是接收请求体的时间）：
+  - 识别本身（vLLM 上的 Qwen3-ASR）每次 0.2–0.8 s，润色 0.3–0.4 s；慢的请求全部慢在上传。运行 `voltip-server` 的主机经中国大陆的出口访问首尔，新建的连接里约五分之一在开头丢包，拥塞窗口降到 2–7 个报文，之后只有约 45 KB/s。16 kHz 的 WAV 每秒音频 32 KB，36 s 的语音是 1.15 MB，上传就要 24–27 s。
+  - Paseo 等整段结果的时间是固定的 25 s（§23.8），所以这类请求在 Voltip 返回前 1–3 s 被 Paseo 判为超时；用户在 Paseo 中重试时，`voltip-server` 在 90 s 内复用同一条慢连接（reqwest 连接池的空闲期限），同样失败。
+  - 两处都会让听写失败：上传数据量是 Voltip 的问题，固定的 25 s 是 Paseo 的问题。中国大陆的桌面端和手机端访问首尔的内置服务也走同样的跨境线路，实时预览（§11.8）每秒重发一次正在说的句子，受影响更大。
+- **处理**：发往内置服务的识别请求，`file` 改为 Ogg Opus（RFC 7845）：`voltip_cloud::asr_upload` 对 `builtin` 返回 `AudioUpload::OggOpus`，其他服务商仍发 WAV（各家都接受 WAV；没有验证过的格式不发）。编码在 `voltip-asr` 的 `ogg_opus.rs`：与手机录音相同的编码器（`opus-rs`，§20.1），VoIP、20 ms 一帧、24 kbit/s VBR；在阻塞线程池中运行。WAV 不是 16 位单声道，或采样率不是 Opus 支持的 8 / 12 / 16 / 24 / 48 kHz 时照常发 WAV。
+  - `opus-rs` 0.1.34 在 VBR 下按输出缓冲区的大小而不是 `bitrate_bps` 给 SILK 分配码率：给 1276 字节的缓冲区，语音编出来约 75 kbit/s。所以每包缓冲区按码率给 61 字节（60 字节加 TOC），实测语音约 21 kbit/s，约为 WAV 的 1/12。手机录音的 Opus（§20.1）用的是整个缓冲区，实际码率同样高于 24 kbit/s，本次未改。
+  - 内置服务的 vLLM 用 libsndfile 1.2.2 读取音频，支持 Ogg Opus，失败时改用 PyAV。
+- **实测**（2026-10-12）：7 段中文、中英混合和方言样音，每种格式各识别 3 遍，与 WAV 文本相比字符差异 0.5 %，与 32、40、75 kbit/s 相同；编码复杂度降到 5 或 0 时为 1.3 %，所以保留默认的 9。37.7 s 的样音从 1.2 MB 降到约 98 KB；编码在构建主机的一个核上用时约 0.47 s。同一台主机经同一出口、每次新建连接各请求 16 次：WAV 有 3 次超过 20 s（最长 31.8 s，拥塞窗口 6–12 个报文并有重传），Ogg Opus 全部在 1.5–2.5 s；网络正常时 Opus 因为编码多约 0.4 s。Opus 的 16 次里没有出现变慢的连接，约 100 KB 的请求在慢启动阶段就已发完。由同一段样音重复拼成的 3 分钟与 5 分钟录音（7 段与 11 段，§22 的长录音路径）经 `voltip-server` 分别用时 8.7 s 与 13 s。
+- **测试**：`voltip-asr` 的 `ogg_opus` 测试（RFC 7845 页结构与 CRC、各页长度下颗粒位置递增到录音结束、`regression_a_take_stays_at_the_budgets_bitrate_and_decodes_back_to_it`、只编码 Opus 能直接接受的 WAV、扩展格式与多余块）、`an_ogg_opus_upload_sends_the_take_as_opus_and_anything_else_as_the_wav`；`voltip-cloud` 的 `regression_the_built_in_service_gets_ogg_opus_and_every_other_service_the_wav`。同一次排查修正了 `voltip-asr` 与 `voltip-refine` 中 `refused_connection_is_a_network_error`、`timeout_and_network` 的竞争：先释放的端口在客户端重试的 1.3 s 内可能被另一个测试的模拟服务占用，现在改为只绑定、不监听的套接字。
 
 ## 4. 历史记录（`voltip_core::history`）
 
@@ -1802,7 +1816,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
   `model` 也可以写 `/v1/models` 里的任何一项，例如 `voltip:scene=coding`。
 - `language`：Paseo 不设时发送 `en`，中文会被当作英文识别。在 Paseo 里设为 `zh`，或者用 `voltip-server --language`。
 - 生效：Paseo 0.10.3 的 `paseo daemon reload` 不应用 `features.dictation.*` 与 `providers.openai.stt.*`（它列出这些键并要求重启），要 `paseo daemon restart`。`restart` 只通过连接让 supervisor 换一个 worker，命令自己的环境不会传过去；worker 的环境是 supervisor 启动时复制的那一份（`supervisor-entrypoint.js` 的 `workerEnv = { ...process.env }`）。所以新的环境变量要先 `paseo daemon stop`，再带着变量 `paseo daemon start`（`local-daemon.js` 用启动命令的 `process.env` 启动 supervisor）。重启和停止都会结束守护进程中正在运行的 Agent（2026-10-05 本机验收时，执行验收的会话本身就在其中，所以重启留给用户）。
-- 分段：Paseo 默认每满 15 s 的音频就按字节数切一段，不看停顿，各段文字用空格拼接，中文里会多出空格，句子也可能断在中间。建议在 Paseo daemon 的环境里设 `PASEO_DICTATION_AUTO_COMMIT_SECONDS=0`，口述结束后整段提交；本地模型较慢而口述又很长时，可以设为 110，让每段在说话时就开始识别，每段仍在 2 分钟的整段路径内。Paseo 等结果的上限是 10 s + 每个待处理段 15 s + 每秒待处理音频 1.5 s，最多 5 分钟。
+- 分段：Paseo 默认每满 15 s 的音频就按字节数切一段，不看停顿，各段文字用空格拼接，中文里会多出空格，句子也可能断在中间。建议在 Paseo daemon 的环境里设 `PASEO_DICTATION_AUTO_COMMIT_SECONDS=0`，口述结束后整段提交；本地模型较慢而口述又很长时，可以设为 110，让每段在说话时就开始识别，每段仍在 2 分钟的整段路径内。Paseo 等结果的上限按 10 s + 每个待处理段 15 s + 每秒未提交音频 1.5 s 计算，最多 5 分钟；但口述结束时它先提交剩下的音频再计算，未提交音频总是 0，所以整段提交（`0`）时只等 25 s，与口述长短无关（Paseo 0.11.1 与 0.11.2 的 `dictation-stream-manager.js`，2026-10-12）。超时后 Paseo 报 `Timed out waiting for final transcription`，随后返回的文字被丢弃。内置服务的上传改为 Opus 后（§3.9），37.7 s 的口述在 1.5–2.5 s 内返回，5 分钟的口述用时 13 s（逐段识别，每段约 1.1 s）；口述更长或本地模型较慢时仍可能超过 25 s，这时设为 110，让每段在说话时就开始识别。Paseo 的这个计算顺序问题需要在 Paseo 中修正。
 - Paseo 只在模型名为 `gpt-4o-transcribe` / `gpt-4o-mini-transcribe` 时请求 `logprobs` 做置信度过滤，`voltip` 不受影响。
 
 ### 23.9 门禁

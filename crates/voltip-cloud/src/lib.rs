@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use voltip_asr::{AsrClient, AsrConfig, DashscopeMode};
+use voltip_asr::{AsrClient, AsrConfig, AudioUpload, DashscopeMode};
 use voltip_core::dictation::{DictationError, RefineHints, Refined, Refiner, ServiceProbe, Transcriber, Transcript};
 use voltip_core::providers::is_dashscope;
 use voltip_core::{AsrProtocol, BuiltinPreset, ProbeError, ProbeFailure, ProviderId, RemoteService, ResolvedEngines, ServiceKind, TakePreset};
@@ -205,15 +205,28 @@ pub fn remote_transcriber(engines: &ResolvedEngines) -> Arc<dyn Transcriber> {
             Some(issue) => format!("识别服务未配置：{}", issue.message(ServiceKind::Asr)),
             None => "识别服务未配置".to_owned(),
         })),
-        Some(remote) => transcriber_for(AsrProtocol::of(&remote.url, &remote.model), remote),
+        Some(remote) => transcriber_with(AsrProtocol::of(&remote.url, &remote.model), remote, asr_upload(engines.asr_provider)),
     }
+}
+
+/// What a take is uploaded as to `provider`'s recogniser (docs/dictation.md §3.9): Ogg Opus to the
+/// built-in service, whose vLLM decodes it (libsndfile), a tenth of the WAV on the slow cross-border
+/// links most of its users reach it over; the WAV to every other service, the one format all of
+/// them take.
+pub fn asr_upload(provider: ProviderId) -> AudioUpload {
+    if provider == ProviderId::Builtin { AudioUpload::OggOpus } else { AudioUpload::Wav }
 }
 
 /// The client that speaks `protocol` to `remote` (docs/dictation.md §3.4): OpenAI's
 /// `/audio/transcriptions`, or one of Model Studio's; a Model Studio model dictation cannot use
-/// says so on use.
+/// says so on use. Takes go up as WAV.
 pub fn transcriber_for(protocol: AsrProtocol, remote: &RemoteService) -> Arc<dyn Transcriber> {
-    let config = AsrConfig::new(&remote.url, &remote.model).with_token(remote.key.clone()).with_timeout(ASR_TIMEOUT);
+    transcriber_with(protocol, remote, AudioUpload::Wav)
+}
+
+/// [`transcriber_for`] uploading takes as `upload` (Model Studio's protocols always send the WAV).
+fn transcriber_with(protocol: AsrProtocol, remote: &RemoteService, upload: AudioUpload) -> Arc<dyn Transcriber> {
+    let config = AsrConfig::new(&remote.url, &remote.model).with_token(remote.key.clone()).with_timeout(ASR_TIMEOUT).with_upload(upload);
     let built = match protocol {
         AsrProtocol::OpenaiTranscriptions => HttpTranscriber::new(config).map(|t| Arc::new(t) as Arc<dyn Transcriber>),
         AsrProtocol::DashscopeChat => DashscopeTranscriber::new(config, DashscopeMode::Chat).map(|t| Arc::new(t) as Arc<dyn Transcriber>),
@@ -460,6 +473,46 @@ mod tests {
         let remote = RemoteService { url: server.uri(), model: "whisper-1".into(), key: None, ..RemoteService::default() };
         let t = transcriber_for(AsrProtocol::OpenaiTranscriptions, &remote).transcribe(b"RIFF", None, &[]).await.unwrap();
         assert_eq!((t.text.as_str(), t.model.as_deref()), ("你好", Some("whisper-1")));
+    }
+
+    /// Regression (2026-10-12, Paseo's dictation over voltip-server): a 36 s take to the built-in
+    /// service was 1.15 MB of WAV and spent 25 s uploading on a lossy link from China, past
+    /// Paseo's 25 s wait for the text. docs/dictation.md §3.9: the built-in service's takes go up
+    /// as Ogg Opus, a tenth of the WAV; every other service gets the WAV.
+    #[tokio::test]
+    async fn regression_the_built_in_service_gets_ogg_opus_and_every_other_service_the_wav() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/audio/transcriptions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"text":"你好"}"#))
+            .mount(&server)
+            .await;
+        let tone: Vec<i16> = (0..36 * 16_000).map(|i| (6000.0 * (2.0 * std::f64::consts::PI * 180.0 * f64::from(i) / 16_000.0).sin()) as i16).collect();
+        let take = voltip_core::dictation::wav::encode_pcm16(&tone, 16_000);
+        let url: &'static str = Box::leak(server.uri().into_boxed_str());
+        let built_in = BuiltIn { asr_url: Some(url), asr_token: Some("app-token"), ..BuiltIn::EMPTY };
+        let engines = ResolvedEngines::resolve(&EngineSettings::default(), &UserSecrets::default(), &built_in);
+        assert_eq!(engines.asr_provider, ProviderId::Builtin);
+        assert_eq!(remote_transcriber(&engines).transcribe(&take, Some("zh"), &[]).await.unwrap().text, "你好");
+        remote_transcriber(&custom(Some(url), None)).transcribe(&take, Some("zh"), &[]).await.unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        let built_in_body = String::from_utf8_lossy(&requests[0].body);
+        assert!(built_in_body.contains("filename=\"audio.ogg\"\r\nContent-Type: audio/ogg") && built_in_body.contains("OggS"), "{built_in_body}");
+        assert!(requests[0].body.len() * 10 < take.len(), "{} bytes for a {}-byte WAV", requests[0].body.len(), take.len());
+        assert_eq!(requests[0].headers.get("authorization").unwrap(), "Bearer app-token");
+        let custom_body = String::from_utf8_lossy(&requests[1].body);
+        assert!(
+            custom_body.contains("filename=\"audio.wav\"\r\nContent-Type: audio/wav") && requests[1].body.len() > take.len(),
+            "the custom service gets the WAV"
+        );
+        assert_eq!(asr_upload(ProviderId::Builtin), AudioUpload::OggOpus);
+        // A fallback model's client is built for its own provider (`ResolvedEngines::with_candidate`).
+        for provider in ProviderId::ALL.into_iter().filter(|p| *p != ProviderId::Builtin) {
+            assert_eq!(asr_upload(provider), AudioUpload::Wav, "{provider:?}");
+        }
     }
 
     /// Regression (2026-10-04): a Model Studio clean-up runs without thinking, at the compatible

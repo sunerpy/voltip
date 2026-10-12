@@ -2,8 +2,8 @@
 //! `POST {base}/v1/audio/transcriptions`), and over Alibaba Cloud Model Studio's own protocols.
 //!
 //! * [`AsrConfig`] — base URL (normalised to end in `/v1`), optional bearer token, model, timeout.
-//! * [`AsrClient`] — one reqwest client; [`AsrClient::transcribe`] uploads a WAV as multipart and
-//!   returns a [`Transcript`].
+//! * [`AsrClient`] — one reqwest client; [`AsrClient::transcribe`] uploads a WAV as multipart (as
+//!   Ogg Opus with [`AudioUpload::OggOpus`]) and returns a [`Transcript`].
 //! * [`DashscopeClient`] — Model Studio (docs/dictation.md §3.4): the chat-completions form of
 //!   `qwen3-asr-flash`, the native multimodal generation of `qwen-audio-…-asr-flash`, and the
 //!   realtime models' WebSocket task protocol ([`duplex`]), live or with a whole take.
@@ -22,8 +22,9 @@ mod config;
 mod dashscope;
 pub mod duplex;
 mod error;
+mod ogg_opus;
 
 pub use client::{AsrClient, Transcript};
-pub use config::{AsrConfig, DEFAULT_TIMEOUT, MAX_ERROR_BODY_CHARS, normalize_base_url};
+pub use config::{AsrConfig, AudioUpload, DEFAULT_TIMEOUT, MAX_ERROR_BODY_CHARS, normalize_base_url};
 pub use dashscope::{DashscopeClient, DashscopeMode, HOTWORD_WEIGHT, MAX_DATA_URI_BYTES, MAX_HOTWORDS, compatible_base, origin_of};
 pub use error::{AsrError, is_quota_exhausted};

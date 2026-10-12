@@ -1015,15 +1015,19 @@ mod tests {
         let config = RefineConfig::new(server.uri(), "m").with_timeout(Duration::from_millis(200));
         assert_eq!(RefineClient::new(config).unwrap().refine("x", None).await.unwrap_err(), RefineError::Timeout);
 
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
+        // A socket bound without `listen` refuses every connection and keeps the port for the
+        // test: a freed port could go to another test's mock server while the client tries again
+        // (docs/dictation.md §3.8, 1.3 s), as voltip-asr's twin of this test saw on 2026-10-12.
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let port = socket.local_addr().unwrap().port();
         let client = RefineClient::new(RefineConfig::new(format!("http://127.0.0.1:{port}"), "m")).unwrap();
         let err = client.refine("x", None).await.unwrap_err();
         assert!(matches!(&err, RefineError::Network(msg) if !msg.is_empty()), "{err:?}");
         // Regression (public release, 2026-09-27): the message reaches the UI and the history; the
         // built-in service's host must not ride along.
         assert!(!err.to_string().contains("127.0.0.1") && !err.to_string().contains(&port.to_string()), "{err}");
+        drop(socket);
     }
 
     #[tokio::test]
