@@ -33,6 +33,8 @@ import type {
   UiEvent,
   UiState,
   UpdateStatus,
+  VocabularyBacktest,
+  VocabularyBacktestArgs,
   VocabularyPreview,
 } from "./schema";
 
@@ -66,6 +68,11 @@ export interface Backend {
    *  rule it names (or is appended). Rejects with the core's message when the draft is invalid (a
    *  regex that does not compile) or the text is over `MAX_TEXT_BYTES`. */
   vocabularyPreview(text: string, draft?: PreviewDraft): Promise<VocabularyPreview>;
+  /** What `draft`, a dictionary entry or a rule not saved yet, would change in the newest recognised
+   *  takes, leaving out `historyId` (`vocabulary_backtest`, docs/dictation.md §16.9): the history
+   *  page's quick-fix card shows it before anything is saved. Rejects with the core's message when
+   *  the draft is wrong on its own or `limit` is outside 1–`MAX_BACKTEST_LIMIT`. */
+  vocabularyBacktest(args: VocabularyBacktestArgs): Promise<VocabularyBacktest>;
   /** The replacement rules as TOML text (`rules_export`, §16.5). */
   rulesExport(): Promise<string>;
   /** The applications the history saw, newest first, one per id (`recent_apps`,

@@ -16,6 +16,7 @@ import {
   type GuidePage,
   type ProjectLink,
   type ProviderId,
+  type VocabularyBacktestArgs,
   UI_EVENT_NAME,
   appRefSchema,
   audioDeviceSchema,
@@ -39,6 +40,7 @@ import {
   uiEventSchema,
   uiStateSchema,
   updateStatusSchema,
+  vocabularyBacktestSchema,
   vocabularyPreviewSchema,
 } from "./schema";
 
@@ -121,6 +123,15 @@ export class TauriBackend implements Backend {
   async vocabularyPreview(text: string, draft?: PreviewDraft) {
     const raw = await this.transport.invoke("vocabulary_preview", { text, draft: draft ?? null });
     return vocabularyPreviewSchema.parse(raw);
+  }
+
+  async vocabularyBacktest(args: VocabularyBacktestArgs) {
+    const raw = await this.transport.invoke("vocabulary_backtest", {
+      draft: args.draft,
+      historyId: args.historyId ?? null,
+      limit: args.limit ?? null,
+    });
+    return vocabularyBacktestSchema.parse(raw);
   }
 
   async rulesExport() {

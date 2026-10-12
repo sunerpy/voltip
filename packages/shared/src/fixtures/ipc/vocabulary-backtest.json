@@ -1,0 +1,59 @@
+{
+  "answer": {
+    "examples": [
+      {
+        "after": "Voltip的安装包发给我",
+        "at_ms": 1758700600000,
+        "before": "维他命的安装包发给我",
+        "history_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+        "kept": true
+      },
+      {
+        "after": "…今天用Voltip跑了一遍回归",
+        "at_ms": 1758614200000,
+        "before": "…今天用维他命跑了一遍回归",
+        "history_id": "1c2d3e4f-5a6b-4c8e-9f7a-0f3f1a1e8d4b",
+        "kept": false
+      }
+    ],
+    "kept": 1,
+    "matched": 3,
+    "scanned": 499
+  },
+  "dictionary_draft": {
+    "entry": {
+      "enabled": true,
+      "heard_as": ["维他命"],
+      "term": "Voltip"
+    },
+    "id": null,
+    "kind": "dictionary"
+  },
+  "merge_draft": {
+    "entry": {
+      "enabled": true,
+      "heard_as": ["沃尔提普", "维他命"],
+      "term": "Voltip"
+    },
+    "id": "3b241101-e2bb-4255-8caf-4136c566a962",
+    "kind": "dictionary"
+  },
+  "nothing": {
+    "examples": [],
+    "kept": 0,
+    "matched": 0,
+    "scanned": 0
+  },
+  "rule_draft": {
+    "id": null,
+    "kind": "rule",
+    "rule": {
+      "case_sensitive": false,
+      "enabled": true,
+      "kind": "literal",
+      "name": "非书 → 飞书",
+      "pattern": "非书",
+      "replacement": "飞书"
+    }
+  }
+}

@@ -36,7 +36,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`, less the
 /// desktop-only commands (the local speech service's, docs/dictation.md §23.6) that
 /// `tests/ipc.rs` lists as `DESKTOP_ONLY`.
-pub const COMMANDS: [&str; 112] = [
+pub const COMMANDS: [&str; 113] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -120,6 +120,7 @@ pub const COMMANDS: [&str; 112] = [
     "rules_import",
     "rules_export",
     "vocabulary_preview",
+    "vocabulary_backtest",
     "scenes_add",
     "scenes_update",
     "scenes_remove",
@@ -771,6 +772,20 @@ fn vocabulary_preview(bridge: tauri::State<'_, Bridge>, text: String, draft: Opt
     Ok(bridge.vocabulary_preview(&text, draft.as_ref())?)
 }
 
+/// Query (docs/dictation.md §16.9): what an unsaved dictionary entry or rule `draft` would change
+/// in the newest `limit` takes the phone recognised itself (500 unless given, at most 2000),
+/// leaving out entry `history_id`: the entry page's correction sheet shows it before saving. Reads
+/// the database, so it runs off the main thread.
+#[tauri::command]
+async fn vocabulary_backtest(
+    bridge: tauri::State<'_, Bridge>,
+    draft: voltip_core::vocabulary::BacktestDraft,
+    history_id: Option<uuid::Uuid>,
+    limit: Option<usize>,
+) -> Result<voltip_core::vocabulary::Backtest, String> {
+    history_read(&bridge, move |b| b.vocabulary_backtest(&draft, history_id, limit)).await
+}
+
 #[tauri::command]
 fn scenes_add(bridge: tauri::State<'_, Bridge>, scene: SceneDraft) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::ScenesAdd { scene })?)
@@ -1213,6 +1228,7 @@ pub fn build_app<R: Runtime>(
             rules_import,
             rules_export,
             vocabulary_preview,
+            vocabulary_backtest,
             presets_add,
             presets_update,
             presets_remove,

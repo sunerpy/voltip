@@ -21,6 +21,7 @@ use voltip_core::paste::{PasteFailure, PasteOutcome, PasteTarget};
 use voltip_core::presets::{MAX_PRESET_TRY_CHARS, PresetDraft, PresetId, PresetTrial, clean_preset_prompt, validate_preset_draft};
 use voltip_core::scenes::{MAX_RECENT_APPS, validate_scene_draft_with};
 use voltip_core::ui::{UiEvent, UiState};
+use voltip_core::vocabulary::{BACKTEST_LIMIT, Backtest, BacktestDraft, MAX_BACKTEST_LIMIT, backtest};
 use voltip_core::vocabulary::{export_rules_toml, parse_rules_toml, preview, validate_dictionary_draft, validate_rule_draft};
 use voltip_core::{
     Activation, AppCore, AppRef, ContextSharing, CoreCommand, CoreConfig, CoreError, CoreEvent, CoreHandle, DictationPorts, DictionaryDraft, EdgeSource,
@@ -818,6 +819,21 @@ impl Bridge {
         preview(&dictionary, &rules, text, draft).map_err(bad)
     }
 
+    /// `vocabulary_backtest` (docs/dictation.md §16.9): what `draft`, a dictionary entry or a rule
+    /// not saved yet, would change in the newest `limit` recognised takes (default
+    /// [`BACKTEST_LIMIT`], 1–[`MAX_BACKTEST_LIMIT`]), leaving out `exclude` (the entry the quick-fix
+    /// card was opened on). The cached dictionary is copied out, so the state lock is not held while
+    /// it compiles. Blocks on SQLite: the shells call it off the main thread.
+    pub fn vocabulary_backtest(&self, draft: &BacktestDraft, exclude: Option<Uuid>, limit: Option<usize>) -> Result<Backtest, BridgeError> {
+        let limit = limit.unwrap_or(BACKTEST_LIMIT);
+        if !(1..=MAX_BACKTEST_LIMIT).contains(&limit) {
+            return Err(BridgeError::BadArgument(format!("vocabulary_backtest: limit 1–{MAX_BACKTEST_LIMIT}")));
+        }
+        let dictionary = self.state.lock().dictionary.clone();
+        let history = self.history.recent_texts(limit)?;
+        backtest(&dictionary, &history, draft, exclude).map_err(bad)
+    }
+
     /// `rules_export` (docs/dictation.md §16.5): the cached rules as TOML text.
     pub fn rules_export(&self) -> Result<String, BridgeError> {
         let rules = self.state.lock().rules.clone();
@@ -1235,6 +1251,76 @@ mod tests {
         let toml = bridge.rules_export().unwrap();
         assert!(toml.contains("name = \"app\"") && toml.contains("replacement = \"App\""), "{toml}");
         assert_eq!(voltip_core::vocabulary::parse_rules_toml(&toml).unwrap().len(), 1);
+        bridge.shutdown();
+    }
+
+    /// docs/dictation.md §16.9: `vocabulary_backtest` reads the newest recognised takes from the
+    /// database and tries the draft against the cached dictionary: the take the card was opened on
+    /// is left out, the limit bounds the read, and a saved entry is the baseline the next draft is
+    /// compared with. A bad limit or a draft wrong on its own is the caller's error.
+    #[tokio::test]
+    async fn vocabulary_backtest_tries_a_draft_on_the_recent_takes() {
+        let dir = tempfile::tempdir().unwrap();
+        voltip_core::SettingsStore::new(dir.path())
+            .save(&voltip_core::Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Default::default() })
+            .unwrap();
+        let takes = [("用维他命测了一下", "用 Voltip 测了一下。"), ("维他命的安装包发给我", "维他命的安装包发给我。"), ("与此无关", "与此无关。")];
+        let ids: Vec<Uuid> = takes.iter().map(|_| Uuid::new_v4()).collect();
+        {
+            let mut store = voltip_core::history::HistoryStore::open(dir.path());
+            for (i, (raw, text)) in takes.iter().enumerate().rev() {
+                let entry: HistoryEntry = serde_json::from_value(serde_json::json!({
+                    "id": ids[i], "at_ms": 1_758_700_000_000_u64 - i as u64, "raw_text": raw, "text": text, "refined": true,
+                    "asr_model": "fake", "duration_ms": 1000, "asr_ms": 100, "outcome": { "kind": "inserted", "via": "paste" },
+                }))
+                .unwrap();
+                store.push(entry, voltip_core::history::MAX_ENTRIES).unwrap();
+            }
+        }
+        let bridge = Bridge::start(CoreConfig::new(dir.path().to_path_buf()), Arc::new(MemorySecretStore::new())).unwrap();
+        let mut rx = bridge.events();
+        let draft = BacktestDraft::Dictionary { id: None, entry: DictionaryDraft { term: "Voltip".into(), heard_as: vec!["维他命".into()], enabled: true } };
+        let all = bridge.vocabulary_backtest(&draft, None, None).unwrap();
+        assert_eq!((all.scanned, all.matched, all.kept), (3, 2, 1));
+        assert_eq!(all.examples[0].history_id, ids[1], "the take whose final text kept the form comes first");
+        let others = bridge.vocabulary_backtest(&draft, Some(ids[0]), None).unwrap();
+        assert_eq!((others.scanned, others.matched, others.kept), (2, 1, 1), "the card's own take is left out");
+        assert_eq!(bridge.vocabulary_backtest(&draft, None, Some(1)).unwrap().scanned, 1, "the newest one only");
+        for limit in [0, MAX_BACKTEST_LIMIT + 1] {
+            let err = String::from(bridge.vocabulary_backtest(&draft, None, Some(limit)).unwrap_err());
+            assert!(err.starts_with("vocabulary_backtest: limit"), "{err}");
+        }
+        let empty = BacktestDraft::Dictionary { id: None, entry: DictionaryDraft { term: " ".into(), heard_as: vec![], enabled: true } };
+        let err = String::from(bridge.vocabulary_backtest(&empty, None, None).unwrap_err());
+        assert!(err.starts_with("dictionary: ") && err.contains("不能为空"), "{err}");
+        let rule = BacktestDraft::Rule {
+            id: None,
+            rule: RuleDraft {
+                name: "维他命 → Voltip".into(),
+                kind: voltip_core::RuleKind::Literal,
+                pattern: "维他命".into(),
+                replacement: "Voltip".into(),
+                case_sensitive: false,
+                enabled: true,
+            },
+        };
+        let ruled = bridge.vocabulary_backtest(&rule, None, None).unwrap();
+        assert_eq!((ruled.scanned, ruled.matched, ruled.kept), (3, 1, 0), "a rule rewrites the final texts");
+        // Saved, the entry is the baseline: the same draft changes nothing more.
+        bridge
+            .dispatch(UiCommand::DictionaryAdd {
+                entry: DictionaryDraft { term: "Voltip".into(), heard_as: vec!["维他命".into()], enabled: true },
+                history_id: None,
+            })
+            .unwrap();
+        for _ in 0..40 {
+            if !bridge.state().dictionary.is_empty() {
+                break;
+            }
+            let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+        }
+        assert_eq!(bridge.state().dictionary.len(), 1);
+        assert_eq!(bridge.vocabulary_backtest(&draft, None, None).unwrap().matched, 0);
         bridge.shutdown();
     }
 

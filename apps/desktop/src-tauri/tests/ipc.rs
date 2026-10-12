@@ -871,6 +871,40 @@ fn vocabulary_commands_and_queries_run_through_the_command_layer() {
     });
 }
 
+/// The quick-fix card's effect line (docs/dictation.md §16.9) through the command layer: after a
+/// take on the fakes, a dictionary draft for one of its words counts that take and says its final
+/// text kept the word, the card's own take (`historyId`) is left out, a rule draft rewrites the
+/// final text, and a bad limit, draft or id is the command's error.
+#[test]
+fn vocabulary_backtest_reads_the_recent_takes_through_the_command_layer() {
+    with_running_app(|_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
+        wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { .. }));
+        assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
+        let st = wait_state(webview, |s| s.history_recent.len() == 1);
+        let take = st.history_recent[0].clone();
+        assert_eq!((take.raw_text.as_str(), take.text.as_str()), (fakes::FAKE_TRANSCRIPT, fakes::FAKE_TRANSCRIPT));
+        let draft = json!({ "kind": "dictionary", "id": null, "entry": { "term": "World", "heard_as": ["世界"], "enabled": true } });
+        let all = invoke(webview, "vocabulary_backtest", json!({ "draft": draft })).unwrap();
+        assert_eq!((all["scanned"].as_u64(), all["matched"].as_u64(), all["kept"].as_u64()), (Some(1), Some(1), Some(1)), "{all}");
+        assert_eq!(all["examples"][0]["history_id"], take.id.to_string());
+        assert_eq!((all["examples"][0]["before"].as_str(), all["examples"][0]["after"].as_str()), (Some("你好，世界"), Some("你好，World")));
+        let others = invoke(webview, "vocabulary_backtest", json!({ "draft": draft, "historyId": take.id, "limit": 500 })).unwrap();
+        assert_eq!(others, json!({ "scanned": 0, "matched": 0, "kept": 0, "examples": [] }));
+        let rule = json!({ "kind": "rule", "id": null, "rule": { "name": "hello", "pattern": "你好", "replacement": "您好" } });
+        let ruled = invoke(webview, "vocabulary_backtest", json!({ "draft": rule, "historyId": null, "limit": null })).unwrap();
+        assert_eq!((ruled["matched"].as_u64(), ruled["examples"][0]["after"].as_str()), (Some(1), Some("您好，世界")), "{ruled}");
+        let err = invoke(webview, "vocabulary_backtest", json!({ "draft": draft, "limit": 0 })).unwrap_err();
+        assert!(err.as_str().unwrap().starts_with("vocabulary_backtest: limit"), "{err}");
+        let bad = json!({ "kind": "rule", "rule": { "name": "x", "kind": "regex", "pattern": "(" } });
+        let err = invoke(webview, "vocabulary_backtest", json!({ "draft": bad })).unwrap_err();
+        assert!(err.as_str().unwrap().contains("正则无法编译"), "{err}");
+        assert!(invoke(webview, "vocabulary_backtest", json!({ "draft": draft, "historyId": "nope" })).is_err(), "the id is a UUID");
+        assert!(invoke(webview, "vocabulary_backtest", json!({ "draft": { "kind": "scene" } })).is_err(), "an unknown draft kind");
+    });
+}
+
 /// Scenes and context (docs/dictation.md §18) through the command layer: a draft wrong on its own
 /// is the command's error, a name clash an `error` event; the list rides on `scenes` events and
 /// `core_state`; the context switch persists; a take on the fakes with a probe carries the scene on
@@ -1537,6 +1571,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "update_status",
             "rules_export",
             "vocabulary_preview",
+            "vocabulary_backtest",
             "recent_apps",
             "history_query",
             "history_entry",
