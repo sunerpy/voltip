@@ -18,14 +18,16 @@ hero:
     - theme: alt
       text: 快速开始
       link: /zh/guide/quick-start
-    - theme: alt
-      text: 观看视频
-      link: /zh/guide/what-is-voltip#观看教程视频
-    - theme: alt
-      text: GitHub
-      link: https://github.com/sunerpy/voltip
 
 home:
+  try:
+    title: 无需安装，在浏览器里体验 Voltip
+    body: 说一句话，几秒后就能看到识别出的文字和 AI 润色后的结果。
+    heard: 嗯那个我们周二开个会吧
+    polished: 我们周二开个会吧。
+    action:
+      text: 开始体验
+      link: /zh/guide/try
   facts:
     - term: 适用平台
       text: Windows、macOS（Apple 芯片与 Intel 芯片）和 Linux；另有 Android 应用，可把手机当作电脑的麦克风和键盘。

@@ -18,14 +18,16 @@ hero:
     - theme: alt
       text: Quick start
       link: /guide/quick-start
-    - theme: alt
-      text: Watch the video
-      link: /guide/what-is-voltip#watch-the-tutorial
-    - theme: alt
-      text: GitHub
-      link: https://github.com/sunerpy/voltip
 
 home:
+  try:
+    title: Try Voltip in your browser, with nothing to install
+    body: Say a sentence and see the recognised text and its AI-polished version a few seconds later.
+    heard: um so let's meet on tuesday
+    polished: Let's meet on Tuesday.
+    action:
+      text: Try it now
+      link: /guide/try
   facts:
     - term: Runs on
       text: Windows, macOS (Apple silicon and Intel) and Linux, with an Android app that makes a phone the computer's microphone and keyboard.
