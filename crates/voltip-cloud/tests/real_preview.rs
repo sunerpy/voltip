@@ -34,7 +34,7 @@ async fn real_service_previews_a_spoken_sample() {
     let mut engines = ResolvedEngines::resolve(&Default::default(), &Default::default(), &voltip_core::BuiltIn::EMPTY);
     engines.asr_provider = ProviderId::Custom;
     engines.asr_remote = Some(voltip_core::RemoteService { url, model, key: token, ..voltip_core::RemoteService::default() });
-    let transcriber = voltip_cloud::remote_transcriber(&engines);
+    let transcriber = voltip_cloud::remote_transcriber(&engines, &voltip_net::Network::new());
     let streaming = Arc::new(RedecodeStreaming::new(transcriber, Vec::new()).flushing(true));
     let (events, fin, total) = tokio::task::spawn_blocking(move || {
         let mut session = streaming.open(Some("zh")).unwrap();

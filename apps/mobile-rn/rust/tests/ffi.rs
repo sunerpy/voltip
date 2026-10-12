@@ -108,7 +108,7 @@ impl Started {
             runtime.handle().clone(),
             offline_config(dir.path()),
             Arc::new(MemorySecretStore::new()),
-            |_| voltip_core::dictation::fakes::ports(),
+            |_, _| voltip_core::dictation::fakes::ports(),
             host,
         )
         .unwrap();

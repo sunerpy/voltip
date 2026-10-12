@@ -46,7 +46,7 @@ fn models(var: &str, default: &str) -> Vec<String> {
 
 fn transcriber(real: &Real, model: &str) -> Arc<dyn Transcriber> {
     let remote = RemoteService { url: real.url.clone(), model: model.to_owned(), key: Some(real.key.clone()), ..RemoteService::default() };
-    voltip_cloud::transcriber_for(AsrProtocol::of(&real.url, model), &remote)
+    voltip_cloud::transcriber_for(AsrProtocol::of(&real.url, model), &remote, &voltip_net::Network::new())
 }
 
 /// The words of the sample any decent recognition gets, whatever its casing and spacing.

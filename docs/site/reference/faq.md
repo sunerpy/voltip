@@ -24,6 +24,10 @@ Another app may hold the same key combination; **Settings → Shortcuts** shows 
 
 Yes, with a [local model](/recognition/local). Download it once; recognition then works offline. AI polish needs a service, unless you run Ollama on your computer.
 
+### My network needs a proxy
+
+Choose how Voltip connects under **Settings → Network**: it follows the system's proxy settings by default, or uses a proxy server you enter, with a user name, a password and the addresses that go direct. Recognition, polish, model downloads, updates and the connection to your phone all follow this setting; see [Network proxy](/recognition/cloud#network-proxy).
+
 ### Does Voltip listen all the time?
 
 No. The microphone opens when you press the shortcut and closes when the recording ends. The microphone test on the home page runs for at most 15 seconds.

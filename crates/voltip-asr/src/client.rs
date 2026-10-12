@@ -94,7 +94,9 @@ impl AsrClient {
         if config.timeout.is_zero() {
             return Err(AsrError::InvalidConfig("timeout must be greater than zero".into()));
         }
-        let http = client_builder()
+        let http = config
+            .network
+            .apply(client_builder())
             .timeout(config.timeout)
             .user_agent(concat!("voltip-asr/", env!("CARGO_PKG_VERSION")))
             .build()

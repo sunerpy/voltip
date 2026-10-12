@@ -198,6 +198,8 @@ struct Pending {
 /// "one run at a time" flag.
 pub struct UpdateSlot {
     config: Option<UpdaterConfig>,
+    /// The proxy the check and the download go through (docs/dictation.md §24).
+    network: voltip_net::NetworkRef,
     marker_path: PathBuf,
     status: Mutex<UpdateStatus>,
     pending: Mutex<Option<Pending>>,
@@ -214,7 +216,20 @@ impl UpdateSlot {
     /// `None` config = no updater: the status starts as `Disabled` and stays there.
     pub fn new(config: Option<UpdaterConfig>, data_dir: &Path) -> Self {
         let status = if config.is_some() { UpdateStatus::Idle } else { UpdateStatus::Disabled };
-        Self { config, marker_path: data_dir.join(MARKER_FILE_NAME), status: Mutex::new(status), pending: Mutex::new(None), busy: AtomicBool::new(false) }
+        Self {
+            config,
+            network: voltip_net::NetworkRef::default(),
+            marker_path: data_dir.join(MARKER_FILE_NAME),
+            status: Mutex::new(status),
+            pending: Mutex::new(None),
+            busy: AtomicBool::new(false),
+        }
+    }
+
+    /// The check and the download go through `network` (`CoreConfig::network`).
+    pub fn with_network(mut self, network: &Arc<voltip_net::Network>) -> Self {
+        self.network = voltip_net::NetworkRef::new(network);
+        self
     }
 
     /// This build can update itself.
@@ -363,14 +378,15 @@ async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateS
         None => {
             slot.publish(bridge, UpdateStatus::Checking);
             let (connect, read) = (config.connect_timeout, config.read_timeout);
+            let network = slot.network.get().clone();
             // The client settings reach the package download too: the plugin hands them on to the
-            // `Update` it returns.
+            // `Update` it returns. The proxy goes on last: the plugin adds none of its own here.
             let updater = app
                 .updater_builder()
                 .endpoints(config.endpoints)
                 .map_err(|e| describe(&e))?
                 .pubkey(config.pubkey)
-                .configure_client(move |client| client.connect_timeout(connect).read_timeout(read))
+                .configure_client(move |client| network.apply(client.connect_timeout(connect).read_timeout(read)))
                 .build()
                 .map_err(|e| describe(&e))?;
             match updater.check().await.map_err(|e| describe(&e))? {

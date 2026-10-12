@@ -32,6 +32,7 @@ import {
   overlayPlacementSchema,
   presetDraftSchema,
   presetIdSchema,
+  proxyModeSchema,
   sceneDraftSchema,
   providerIdSchema,
   serviceKindSchema,
@@ -57,6 +58,7 @@ function loadFixture(name: string): unknown {
 const EVENT_TYPE_SET: Record<UiEventType, null> = {
   state: null,
   serve: null,
+  network: null,
   mirrors: null,
   phone_outbox: null,
   refine_notice: null,
@@ -169,6 +171,8 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   settings_set_serve: null,
   serve_copy_token: null,
   serve_rotate_token: null,
+  settings_set_proxy: null,
+  network_refresh: null,
   refine_notice_close: null,
 };
 const MUTATION_COMMANDS = Object.keys(MUTATION_COMMAND_SET);
@@ -304,6 +308,15 @@ const argSchemas = {
       scene: z.string().nullable(),
     })
     .strict(),
+  settings_set_proxy: z
+    .object({
+      mode: proxyModeSchema,
+      server: z.string().nullable(),
+      username: z.string().nullable(),
+      noProxy: z.string(),
+      password: z.string().nullable(),
+    })
+    .strict(),
 } satisfies {
   [C in MutationCommand as CommandArgs[C] extends undefined ? never : C]: z.ZodType<CommandArgs[C]>;
 };
@@ -326,6 +339,7 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
     case "update_install":
     case "serve_copy_token":
     case "serve_rotate_token":
+    case "network_refresh":
     case "refine_notice_close":
       if (args !== null)
         throw new Error(`${name} takes no args, fixture has ${JSON.stringify(args)}`);
@@ -449,6 +463,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.settings_set_pinned_scene.parse(args));
     case "settings_set_serve":
       return backend.invoke(name, argSchemas.settings_set_serve.parse(args));
+    case "settings_set_proxy":
+      return backend.invoke(name, argSchemas.settings_set_proxy.parse(args));
   }
 }
 
@@ -510,6 +526,13 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
         preset: "prompt",
         scene: "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
       },
+      // docs/dictation.md §24: a manual proxy that signs in; its password is not here.
+      proxy: {
+        mode: "manual",
+        server: "http://proxy.example.com:3128",
+        username: "alice",
+        no_proxy: "corp.example.com,10.0.0.0/8",
+      },
     });
     expect(parsed.app_version).toBe("0.3.0");
     // docs/dictation.md §23.6: the app's local speech service, running.
@@ -518,6 +541,8 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       phase: "running",
       address: "http://127.0.0.1:47840/v1",
     });
+    // docs/dictation.md §24: the password saved (not its value), the system's proxy.
+    expect(parsed.network).toEqual({ proxy_password: true, system_proxy: "http://127.0.0.1:7890" });
     // docs/dictation.md §10.6: what the local models can run on, a discrete and an integrated GPU.
     expect(parsed.hardware.cpu_threads).toBe(16);
     expect(parsed.hardware.gpus.map((g) => [g.name, g.integrated])).toEqual([

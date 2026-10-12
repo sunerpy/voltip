@@ -3,6 +3,7 @@
 resolver = "3"
 members = [
     "crates/voltip-protocol",
+    "crates/voltip-net",
     "crates/voltip-crypto",
     "crates/voltip-identity",
     "crates/voltip-pairing",
@@ -78,6 +79,13 @@ ferrous-opencc = "=0.4.0"
 fs4 = { version = "=1.1.0", default-features = false }
 futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
 hex = "=0.4.3"
+# The proxy of every connection Voltip makes (crates/voltip-net, docs/dictation.md §24): the URI type of
+# hyper-util's connectors; already in the graph through reqwest.
+http = "=1.5.0"
+# reqwest's own proxy machinery, used directly by voltip-net: the system's proxy (environment, macOS
+# System Settings, Windows Internet Options: `client-proxy-system`) and the HTTP CONNECT and SOCKS5
+# connectors the WebSocket connections tunnel through. The version reqwest resolves to.
+hyper-util = { version = "=0.1.20", features = ["client-legacy", "client-proxy", "client-proxy-system", "tokio"] }
 # WAV decoding for the local recogniser (16-bit PCM in, f32 out).
 hound = "=3.5.1"
 keyring = "=4.2.0"
@@ -86,8 +94,9 @@ proptest = "=1.11.0"
 rand = "=0.10.2"
 # Regex replacement rules (docs/dictation.md §16): linear-time matching, compiled size capped per rule.
 regex = "=1.13.1"
-# rustls (aws-lc-rs provider + platform verifier) so the Windows cross-build needs no OpenSSL.
-reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "multipart", "json", "http2"] }
+# rustls (aws-lc-rs provider + platform verifier) so the Windows cross-build needs no OpenSSL;
+# `socks`: SOCKS5 proxies (docs/dictation.md §24).
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "multipart", "json", "http2", "socks"] }
 # Lock-free SPSC ring for the recorder's live tap (docs/dictation.md §11): the audio callback
 # pushes 16 kHz mono frames, the decode thread pops them; no lock and no allocation on the audio thread.
 rtrb = "=0.4.0"
@@ -141,6 +150,7 @@ transcribe-cpp = { version = "=0.2.3", default-features = false }
 # dial. aws-lc-rs matches reqwest's choice: exactly one provider in every binary, auto-detected.
 rustls = { version = "=0.23.45", default-features = false, features = ["aws-lc-rs", "std", "tls12"] }
 tower = { version = "=0.5.3", features = ["util"] }
+tower-service = "=0.3.3"
 tracing = "=0.1.44"
 # The React Native phone shell's foreign interface (docs/mobile-rn.md §3): Kotlin bindings today,
 # Swift for iOS later, generated from the Rust definitions. The `cli` feature only in the bindgen
@@ -157,6 +167,7 @@ wiremock = "=0.6.5"
 zeroize = { version = "=1.9.0", features = ["derive"] }
 
 voltip-protocol = { path = "crates/voltip-protocol" }
+voltip-net = { path = "crates/voltip-net" }
 voltip-crypto = { path = "crates/voltip-crypto" }
 voltip-identity = { path = "crates/voltip-identity" }
 voltip-pairing = { path = "crates/voltip-pairing" }

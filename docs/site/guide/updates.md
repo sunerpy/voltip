@@ -34,7 +34,7 @@ Voltip 0.0.50 does not check for updates, and its **About** page has no **Update
 
 The text after **Update failed** names the cause, for example that the connection timed out, was refused or could not be secured. Voltip gives up when a connection to the update server takes longer than 15 seconds to open, or when the server sends nothing for 30 seconds.
 
-Voltip looks for updates on this site first and downloads them from here; this site serves the same files as the GitHub release, and Voltip checks every package against its signature before installing it. When this site cannot be reached, Voltip asks GitHub instead. Voltip does not use the proxy set in the Windows or macOS settings. If you reach the internet through a proxy tool, use its TUN mode, or set the `HTTPS_PROXY` environment variable and start Voltip again.
+Voltip looks for updates on this site first and downloads them from here; this site serves the same files as the GitHub release, and Voltip checks every package against its signature before installing it. When this site cannot be reached, Voltip asks GitHub instead. Update checks and downloads go through the [proxy](/recognition/cloud#network-proxy) set under **Settings → Network**: the system's by default, or a proxy server you enter. Voltip 0.1.3 and earlier do not use the proxy set in the Windows or macOS settings and read only environment variables such as `HTTPS_PROXY`.
 
 Voltip 0.0.52 and earlier ask GitHub only.
 

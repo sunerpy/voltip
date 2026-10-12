@@ -381,14 +381,18 @@ impl Injector for NativeInjector {
 /// come from `voltip-cloud`, which reports a provider that is not ready, or a configuration the
 /// client refuses, on use. No ready clean-up provider means no refiner (the core then explains
 /// "润色未配置").
-pub fn build_clients(engines: &ResolvedEngines, local: &LocalTranscriber) -> (Arc<dyn Transcriber>, Option<Arc<dyn Refiner>>) {
+pub fn build_clients(
+    engines: &ResolvedEngines,
+    local: &LocalTranscriber,
+    network: &Arc<voltip_net::Network>,
+) -> (Arc<dyn Transcriber>, Option<Arc<dyn Refiner>>) {
     let transcriber: Arc<dyn Transcriber> = if engines.is_local() {
         let id = engines.local_model.as_ref().map_or(voltip_asr_local::DEFAULT_MODEL_ID, |m| m.id.as_str());
         Arc::new(local.select(id).with_vad_trim(engines.vad_trim).with_compute(compute_of(engines)))
     } else {
-        voltip_cloud::remote_transcriber(engines)
+        voltip_cloud::remote_transcriber(engines, network)
     };
-    (transcriber, voltip_cloud::refiner(engines))
+    (transcriber, voltip_cloud::refiner(engines, network))
 }
 
 /// Where the local recogniser runs, from `EngineSettings.local_device / local_gpu / local_threads`
@@ -421,7 +425,7 @@ pub fn hardware_status(machine: &voltip_asr_local::HardwareInfo) -> voltip_core:
 /// a `store` — tells the model library whether the VAD is wanted (`vad_trim`, docs/dictation.md
 /// §12): it then rides along with the next model download, or is fetched right away in the
 /// background when the setting turns on later.
-pub fn engine_factory(mode: Arc<Mutex<InjectMode>>, local: LocalTranscriber, store: Option<ModelStore>) -> EngineFactory {
+pub fn engine_factory(mode: Arc<Mutex<InjectMode>>, local: LocalTranscriber, store: Option<ModelStore>, network: Arc<voltip_net::Network>) -> EngineFactory {
     Arc::new(move |engines: &ResolvedEngines| {
         *mode.lock() = engines.inject;
         if let Some(store) = &store {
@@ -430,7 +434,7 @@ pub fn engine_factory(mode: Arc<Mutex<InjectMode>>, local: LocalTranscriber, sto
                 tracing::info!("vad_trim is on and the VAD model is missing; downloading it in the background");
             }
         }
-        build_clients(engines, &local)
+        build_clients(engines, &local, &network)
     })
 }
 
@@ -453,9 +457,10 @@ impl ShellPorts {
 
 /// Production wiring: cpal microphone, HTTP clients, the local model library under
 /// `models_root` (`CoreConfig::models_root`), the streaming preview over the same library,
-/// system clipboard + paste, the platform's foreground probe.
-pub fn production_ports(models_root: PathBuf) -> ShellPorts {
-    ports_with_backend(Arc::new(CpalBackend::new()), Arc::new(AudioHub::default()), models_root)
+/// system clipboard + paste, the platform's foreground probe. The HTTP clients and the model
+/// downloads go through `network` (`CoreConfig::network`, docs/dictation.md §24).
+pub fn production_ports(models_root: PathBuf, network: &Arc<voltip_net::Network>) -> ShellPorts {
+    ports_with_backend(Arc::new(CpalBackend::new()), Arc::new(AudioHub::default()), models_root, network)
 }
 
 /// Wiring over any audio backend and hub (tests use `voltip_audio::FakeBackend`); the model
@@ -463,18 +468,18 @@ pub fn production_ports(models_root: PathBuf) -> ShellPorts {
 /// only opens it when `live_preview` is on and the streaming model is installed (docs/dictation.md
 /// §11), and it loads nothing until then. A long take is cut where the Silero VAD hears a pause
 /// (§22); the first long take without the model fetches it.
-pub fn ports_with_backend(backend: Arc<dyn Backend + Send + Sync>, hub: Arc<AudioHub>, models_root: PathBuf) -> ShellPorts {
+pub fn ports_with_backend(backend: Arc<dyn Backend + Send + Sync>, hub: Arc<AudioHub>, models_root: PathBuf, network: &Arc<voltip_net::Network>) -> ShellPorts {
     let mode = Arc::new(Mutex::new(InjectMode::default()));
-    let store = ModelStore::new(models_root.clone());
+    let store = ModelStore::new(models_root.clone()).with_network(network);
     let dictation = DictationPorts {
         audio: Arc::new(RecorderAudioSource::with_backend(backend, hub.clone())),
         injector: Arc::new(NativeInjector::system(mode.clone())),
-        factory: engine_factory(mode, LocalTranscriber::new(models_root.clone()), Some(store.clone())),
+        factory: engine_factory(mode, LocalTranscriber::new(models_root.clone()), Some(store.clone()), Arc::clone(network)),
         segmenter: Some(Arc::new(VadSegmenterFactory::new(models_root.clone(), Some(store.clone())))),
         models: Some(Arc::new(store)),
         streaming: Some(Arc::new(LocalStreamingTranscriber::new(models_root))),
         probe: Some(Arc::new(crate::platform::PlatformProbe::new())),
-        service_probe: Some(Arc::new(HttpServiceProbe)),
+        service_probe: Some(Arc::new(HttpServiceProbe::new(network))),
     };
     ShellPorts { dictation, hub }
 }

@@ -119,7 +119,7 @@ fn ready_settings() -> Settings {
 /// recogniser in place of the device's and the cloud's.
 fn phone_ports_recognising(host: Arc<RecordingHost>, transcriber: FakeTranscriber) -> DictationPorts {
     let fake = fakes::ports_with(Arc::new(FakeAudio::speech()), Arc::new(transcriber), None, Arc::new(FakeInjector::paste()));
-    DictationPorts { audio: fake.audio, factory: fake.factory, ..voltip_rn::shell::phone_ports(host) }
+    DictationPorts { audio: fake.audio, factory: fake.factory, ..voltip_rn::shell::phone_ports(host, &voltip_net::Network::new()) }
 }
 
 impl Drop for Running {
@@ -435,4 +435,20 @@ fn feedback_without_an_endpoint_and_an_unknown_mirror_entry() {
     assert_eq!(entry, Ok(Value::Null));
     assert!(format!("{:?}", running.shell).starts_with("Shell"));
     assert!(running.shell.bridge().state().identity.is_some());
+}
+
+/// docs/dictation.md §24.4: the network's proxy the Kotlin side hands in is what following the
+/// system means on the phone: the state shows it, an unreadable exclusion is left out, and a
+/// network without a proxy leaves what the host says (nothing on a phone; this build host's
+/// environment here).
+#[test]
+fn the_networks_proxy_is_what_following_the_system_means_on_the_phone() {
+    let running = Running::start(RecordingHost::default());
+    let host = running.state()["network"]["system_proxy"].clone();
+    running.shell.set_platform_proxy("10.0.2.2", 8080, "corp.test,*bad*");
+    running.wait(|s| s["network"]["system_proxy"] == "http://10.0.2.2:8080");
+    running.shell.set_platform_proxy("10.0.2.3", 3128, "");
+    running.wait(|s| s["network"]["system_proxy"] == "http://10.0.2.3:3128");
+    running.shell.set_platform_proxy("", 0, "");
+    running.wait(|s| s["network"]["system_proxy"] == host);
 }

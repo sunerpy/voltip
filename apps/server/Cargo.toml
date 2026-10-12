@@ -39,6 +39,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 voltip-asr-local.workspace = true
 voltip-cloud.workspace = true
+# The proxy the settings ask for (docs/dictation.md §24).
+voltip-net.workspace = true
 voltip-core = { workspace = true, features = ["keyring"] }
 voltip-identity = { workspace = true, features = ["keyring"] }
 voltip-protocol.workspace = true

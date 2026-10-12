@@ -37,6 +37,8 @@ pub struct LinkConfig {
     /// exclusively keeps the queued frames waiting (docs/dictation.md §20.8, frames of an ended
     /// session left in the queue).
     pub write_gate: Option<std::sync::Arc<tokio::sync::RwLock<()>>>,
+    /// The proxy plan the connection follows (docs/dictation.md §24): each attempt asks it again.
+    pub network: voltip_net::NetworkRef,
 }
 
 impl LinkConfig {
@@ -53,8 +55,29 @@ impl LinkConfig {
             pong_timeout: Duration::from_secs(10),
             probe_timeout: Duration::from_secs(5),
             write_gate: None,
+            network: voltip_net::NetworkRef::default(),
         }
     }
+}
+
+/// The WebSocket to `config.endpoint`: a TCP stream through the proxy the plan picks (direct when
+/// it picks none), then TLS and the handshake on it, as `connect_async` would run them.
+async fn open_socket(config: &LinkConfig) -> Result<Socket, OpenError> {
+    let url = config.endpoint.url();
+    let stream = config.network.connect(url, config.connect_timeout).await.map_err(OpenError::Connect)?;
+    let (ws, _) = tokio_tungstenite::client_async_tls_with_config(url.as_str(), stream, None, None).await.map_err(OpenError::Handshake)?;
+    Ok(ws)
+}
+
+type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Why [`open_socket`] failed.
+#[derive(Debug, thiserror::Error)]
+enum OpenError {
+    #[error("{0}")]
+    Connect(voltip_net::ConnectError),
+    #[error("{0}")]
+    Handshake(tokio_tungstenite::tungstenite::Error),
 }
 
 /// What the owner of a link observes.
@@ -223,10 +246,9 @@ pub enum ProbeFailure {
 /// `config.connect_timeout` bounds the whole exchange.
 pub async fn probe(config: &LinkConfig) -> Result<Duration, ProbeFailure> {
     let started = tokio::time::Instant::now();
-    let url = config.endpoint.url().as_str().to_owned();
     let exchange = async {
-        let (ws, _) = tokio_tungstenite::connect_async(url).await.map_err(|e| match &e {
-            tokio_tungstenite::tungstenite::Error::Io(io) if io.kind() == std::io::ErrorKind::ConnectionRefused => ProbeFailure::Refused,
+        let ws = open_socket(config).await.map_err(|e| match &e {
+            OpenError::Connect(voltip_net::ConnectError::Direct(io)) if io.kind() == std::io::ErrorKind::ConnectionRefused => ProbeFailure::Refused,
             _ => ProbeFailure::Failed(e.to_string()),
         })?;
         let (mut sink, mut stream) = ws.split();
@@ -260,10 +282,9 @@ async fn connect_and_run(
     evt: &mpsc::Sender<LinkEvent>,
     state: &Arc<Mutex<ConnectionMachine>>,
 ) -> Outcome {
-    let url = config.endpoint.url().as_str().to_owned();
-    let connected = tokio::time::timeout(config.connect_timeout, tokio_tungstenite::connect_async(url)).await;
-    let (ws, _) = match connected {
-        Ok(Ok(pair)) => pair,
+    let connected = tokio::time::timeout(config.connect_timeout, open_socket(config)).await;
+    let ws = match connected {
+        Ok(Ok(ws)) => ws,
         Ok(Err(e)) => return Outcome::Lost(format!("connect: {e}")),
         Err(_) => return Outcome::Lost(format!("connect timed out after {:?}", config.connect_timeout)),
     };

@@ -44,6 +44,8 @@ voltip-identity.workspace = true
 voltip-pairing.workspace = true
 voltip-protocol.workspace = true
 voltip-transport.workspace = true
+# The proxy plan the settings put in force (docs/dictation.md §24).
+voltip-net.workspace = true
 # Encodes (phone) and decodes (desktop) a phone take's 20 ms Opus packets (docs/dictation.md §20.1).
 opus-rs.workspace = true
 # `SoloKey`, the lone-key trigger of `Settings.solo_key` (docs/dictation.md §13.1): the platform
@@ -53,6 +55,8 @@ voltip-platform = { path = "../voltip-platform" }
 
 [dev-dependencies]
 futures-util.workspace = true
+# The system's proxy settings a test hands its network (`tests/network.rs`).
+hyper-util.workspace = true
 tempfile.workspace = true
 tokio-tungstenite.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

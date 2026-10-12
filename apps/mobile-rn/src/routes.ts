@@ -30,6 +30,7 @@ export type RootParams = {
   Rules: undefined;
   Scenes: undefined;
   HistorySettings: undefined;
+  Network: undefined;
   Feedback: undefined;
   ComputerSettings: { desktop: string };
   Entry: { id: string };

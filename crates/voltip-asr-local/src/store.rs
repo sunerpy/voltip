@@ -234,6 +234,8 @@ pub struct ModelStore {
     slow: SlowSourcePolicy,
     /// Where the free-space check before a download reads the disk.
     free_space: FreeSpace,
+    /// The proxy plan downloads follow (docs/dictation.md §24).
+    network: voltip_net::NetworkRef,
 }
 
 impl ModelStore {
@@ -252,7 +254,13 @@ impl ModelStore {
             auxiliary_in_flight: Arc::new(AtomicBool::new(false)),
             slow: SlowSourcePolicy::default(),
             free_space: FreeSpace::system(),
+            network: voltip_net::NetworkRef::default(),
         }
+    }
+
+    /// Download through `network`'s proxy plan.
+    pub fn with_network(self, network: &Arc<voltip_net::Network>) -> Self {
+        Self { network: voltip_net::NetworkRef::new(network), ..self }
     }
 
     /// Replace the [`SlowSourcePolicy`] (tests use millisecond windows).
@@ -456,7 +464,9 @@ impl ModelStore {
         }
         tokio::fs::create_dir_all(&dir).await?;
         self.check_space(entry, &dir)?;
-        let client = reqwest::Client::builder()
+        let client = self
+            .network
+            .apply(reqwest::Client::builder())
             .connect_timeout(CONNECT_TIMEOUT)
             .read_timeout(READ_TIMEOUT)
             .user_agent(concat!("voltip/", env!("CARGO_PKG_VERSION")))

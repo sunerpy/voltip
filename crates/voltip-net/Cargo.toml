@@ -1,0 +1,32 @@
+[package]
+name = "voltip-net"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The proxy every connection Voltip makes goes through (docs/dictation.md §24): the system's, none, or one the user sets, for reqwest clients and the WebSocket connections' TCP streams."
+
+[lints]
+workspace = true
+
+[dependencies]
+# A system proxy's user name and password come back from hyper-util as a Basic header.
+base64.workspace = true
+http.workspace = true
+hyper-util.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tower-service.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+# The Internet Options values hyper-util's reader takes the proxies from, read for the system
+# fingerprint (`ProxyServer` can hold a user name and password): the version hyper-util pulls.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-registry = "=0.6.1"
+
+[dev-dependencies]
+tokio.workspace = true

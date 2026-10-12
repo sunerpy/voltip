@@ -322,6 +322,19 @@ pub fn list_devices(out: &mut dyn Write, err: &mut dyn Write) -> ExitCode {
     }
 }
 
+/// The proxy of a headless download (docs/dictation.md §24): the settings' proxy, its password read
+/// from the keychain without a dialog when the manual proxy signs in.
+fn network(data_dir: &Path, err: &mut dyn Write) -> std::sync::Arc<voltip_net::Network> {
+    let proxy = SettingsStore::new(data_dir).load().unwrap_or_default().proxy;
+    let signs_in = proxy.mode == voltip_core::ProxyMode::Manual && proxy.username.is_some();
+    let password = if signs_in { voltip_core::peek_proxy_password(crate::secret_store().as_ref()) } else { None };
+    let (plan, notice) = proxy.plan_or_system(password.as_deref());
+    if let Some(notice) = notice {
+        let _ = writeln!(err, "{notice}");
+    }
+    voltip_net::Network::with_plan(plan)
+}
+
 /// The compute choice of `--transcribe-file`: each flag given wins over the settings' value.
 pub fn compute_for(settings: &voltip_core::EngineSettings, device: Option<LocalDevice>, gpu: Option<&str>, threads: Option<u16>) -> Compute {
     Compute {
@@ -339,7 +352,7 @@ pub fn run_headless(action: &Action, data_dir: &Path, out: &mut dyn Write, err: 
         Action::ListDevices => list_devices(out, err),
         Action::ListCompute => list_compute(out),
         Action::ListModels => list_models(&models_root, out),
-        Action::DownloadModel { id } => download_model(&ModelStore::new(models_root), id, out, err),
+        Action::DownloadModel { id } => download_model(&ModelStore::new(models_root).with_network(&network(data_dir, err)), id, out, err),
         Action::TranscribeFile { path, model, json, device, gpu, threads } => {
             let settings = SettingsStore::new(data_dir).load().unwrap_or_default();
             let model = model.clone().unwrap_or_else(|| default_model(data_dir));

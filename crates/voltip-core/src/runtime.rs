@@ -42,6 +42,7 @@ use crate::{CoreError, is_initiator, rendezvous_channel};
 
 mod always_on;
 mod check;
+mod network;
 mod notice;
 mod processing;
 mod serve;
@@ -144,6 +145,10 @@ pub struct CoreConfig {
     pub mirror_files: Arc<crate::sync::MirrorFiles>,
     /// What the bulk traffic reached (the end-to-end tests read it).
     pub sync_stats: Arc<crate::sync::SyncStats>,
+    /// The proxy plan of the process (docs/dictation.md §24): the core puts `Settings.proxy` in
+    /// force on it, and the relay link uses it; the shell hands the same value to every client it
+    /// builds (the engines, model downloads, feedback, update checks).
+    pub network: Arc<voltip_net::Network>,
     /// Tests only.
     #[doc(hidden)]
     pub test_hooks: TestHooks,
@@ -216,6 +221,7 @@ impl CoreConfig {
             sync_max_entry_bytes: crate::sync::MAX_ENTRY_BYTES,
             mirror_files: Arc::new(crate::sync::MirrorFiles::new(&data_dir_for_mirrors)),
             sync_stats: Arc::default(),
+            network: voltip_net::Network::new(),
             test_hooks: TestHooks::default(),
         }
     }
@@ -520,6 +526,18 @@ pub enum CoreCommand {
     ServeCopyToken,
     /// Replace the service's token; clients need the new one from now on.
     ServeRotateToken,
+    /// The proxy settings (docs/dictation.md §24), persisted and in force from the next request,
+    /// and the manual proxy's password: `None` keeps the saved one, an empty one removes it.
+    SetProxy {
+        /// The whole setting.
+        proxy: crate::settings::ProxySettings,
+        /// The password for the keychain.
+        password: Option<String>,
+    },
+    /// Read the system's proxy settings again ([`CoreEvent::Network`]): the settings opened, or
+    /// the shell handed in the platform network's proxy. When any part of them changed while
+    /// following them, the engines' clients are rebuilt and the relay reconnects.
+    RefreshNetwork,
     /// Close the built-in clean-up service's notice (docs/dictation.md §3.6); it stays away a day.
     RefineNoticeClose,
     /// Stop the core.
@@ -648,6 +666,9 @@ pub enum CoreEvent {
     Connectivity(crate::connectivity::ConnectivityStatus),
     /// The local speech service started, stopped or failed to start (docs/dictation.md §23.6).
     Serve(crate::ui::ServeStatus),
+    /// The proxy's password and the system's proxy (docs/dictation.md §24); on `Ready` and after
+    /// every change.
+    Network(crate::ui::NetworkStatus),
     /// The built-in clean-up service's notice came (`Some`) or went (docs/dictation.md §3.6).
     RefineNotice(Option<crate::ui::RefineNotice>),
     /// Non-fatal error for the UI.
@@ -736,6 +757,10 @@ impl AppCore {
         let mut built_in = config.test_hooks.built_in.unwrap_or_else(BuiltIn::from_build);
         built_in.asr_live_preview &= config.shows_live_preview;
         let user_secrets = load_user_secrets(secrets.as_ref());
+        // docs/dictation.md §24: in force before the relay connects and the first client runs.
+        let proxy_password = crate::settings::load_proxy_password(secrets.as_ref());
+        let (plan, proxy_notice) = settings.proxy.plan_or_system(proxy_password.as_deref());
+        config.network.set(plan);
         let models = ports.models.clone();
         let service_probe = ports.service_probe.clone();
         let library = models.as_ref().map(|m| m.scan()).unwrap_or_default();
@@ -784,7 +809,7 @@ impl AppCore {
             rules,
             scenes,
             presets,
-            startup_notices: [dictionary_notice, rules_notice, scenes_notice, presets_notice].into_iter().flatten().collect(),
+            startup_notices: [dictionary_notice, rules_notice, scenes_notice, presets_notice, proxy_notice].into_iter().flatten().collect(),
             models,
             library,
             downloads: HashMap::new(),
@@ -824,7 +849,11 @@ impl AppCore {
             profile_dirty: std::sync::atomic::AtomicBool::new(true),
             serve: serve::ServeRuntime::new(serve_host),
             notice: notice::NoticeRuntime::default(),
+            proxy_password,
+            network_status: crate::ui::NetworkStatus::default(),
+            system_fingerprint: 0,
         };
+        rt.system_fingerprint = rt.config.network.system_fingerprint();
         rt.connect_relay()?;
         let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx };
         Ok((rt, inbox, CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
@@ -1064,6 +1093,13 @@ struct Runtime {
     serve: serve::ServeRuntime,
     /// The built-in clean-up service's notice (docs/dictation.md §3.6).
     notice: notice::NoticeRuntime,
+    /// The manual proxy's password as the keychain holds it (docs/dictation.md §24).
+    proxy_password: Option<String>,
+    /// `UiState.network` as last told.
+    network_status: crate::ui::NetworkStatus,
+    /// What following the system meant when the routes were last decided
+    /// (`voltip_net::Network::system_fingerprint`).
+    system_fingerprint: u64,
 }
 
 impl Runtime {
@@ -1147,6 +1183,7 @@ impl Runtime {
         cfg.pong_timeout = self.config.relay_pong_timeout;
         cfg.probe_timeout = self.config.relay_probe_timeout;
         cfg.write_gate = self.config.test_hooks.relay_write_gate.clone();
+        cfg.network = voltip_net::NetworkRef::new(&self.config.network);
         let link = self.spawn_link(LinkId::Relay, cfg);
         self.relay_status = RelayStatus { endpoint: shown, source, state: ConnectionState::Connecting, attempts: 0 };
         self.emit(CoreEvent::Relay(self.relay_status.clone()));
@@ -1189,6 +1226,7 @@ impl Runtime {
         }
         self.emit_devices();
         self.emit(CoreEvent::Serve(self.serve.status()));
+        self.emit_network();
         self.apply_serve().await;
         let mut ticker = tokio::time::interval(self.config.tick);
         // docs/dictation.md §3.5: a model running out of quota (or 重新检查) shows on the pages.
@@ -1411,6 +1449,8 @@ impl Runtime {
             CoreCommand::SetServe(serve) => self.set_serve(serve).await,
             CoreCommand::ServeCopyToken => self.copy_serve_token().await,
             CoreCommand::ServeRotateToken => self.rotate_serve_token(),
+            CoreCommand::SetProxy { proxy, password } => self.set_proxy(proxy, password),
+            CoreCommand::RefreshNetwork => self.refresh_network(),
             CoreCommand::RefineNoticeClose => {
                 self.close_refine_notice();
                 Ok(())

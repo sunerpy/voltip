@@ -22,7 +22,9 @@ use voltip_core::paste::{CopyReason, PasteFailure, PasteOutcome};
 use voltip_core::phone::{PhoneTakeFailure, PhoneTakeState, PhoneTakeView};
 use voltip_core::phone::{PhoneTextSource, SentText, SentTextFailure, SentTextState};
 use voltip_core::presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetId, PresetRef, PresetTryOutcome};
-use voltip_core::ui::{GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, RefineNotice, ServePhase, ServeStatus, UiEvent, UiState, UpdateStatus};
+use voltip_core::ui::{
+    GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, NetworkStatus, RefineNotice, ServePhase, ServeStatus, UiEvent, UiState, UpdateStatus,
+};
 use voltip_core::{
     Activation, AppRef, BuiltIn, BuiltinScene, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ContextSharing, DeviceConnection, DeviceView,
     DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, FallbackModel, FallbackSettings,
@@ -322,6 +324,13 @@ fn settings() -> Settings {
             port: 47840,
             preset: Some(voltip_core::PresetId::Builtin(voltip_core::BuiltinPreset::Prompt)),
             scene: Some(uuid(SCENE_ID)),
+        },
+        // docs/dictation.md §24: a manual proxy that signs in, with hosts that go direct.
+        proxy: voltip_core::ProxySettings {
+            mode: voltip_core::ProxyMode::Manual,
+            server: Some("http://proxy.example.com:3128".into()),
+            username: Some("alice".into()),
+            no_proxy: "corp.example.com,10.0.0.0/8".into(),
         },
         ..Settings::default()
     }
@@ -891,6 +900,8 @@ fn full_state() -> UiState {
         phone_outbox_too_large: vec![uuid(HISTORY_ID)],
         // docs/dictation.md §23.6: the app's local speech service, running.
         serve: ServeStatus { available: true, phase: ServePhase::Running, address: Some("http://127.0.0.1:47840/v1".into()), error: None },
+        // docs/dictation.md §24: the proxy's password saved, and the system's proxy.
+        network: NetworkStatus { proxy_password: true, system_proxy: Some("http://127.0.0.1:7890".into()) },
         // docs/dictation.md §3.6: the built-in clean-up service turned a take down.
         refine_notice: Some(RefineNotice { failure: RefineFailure::RateLimited, at_ms: 1_727_400_000_000 }),
     }
@@ -939,6 +950,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::Hardware(_) => "hardware",
         UiEvent::Connectivity(_) => "connectivity",
         UiEvent::Serve(_) => "serve",
+        UiEvent::Network(_) => "network",
         UiEvent::PasteResult { .. } => "paste_result",
         UiEvent::Mirrors { .. } => "mirrors",
         UiEvent::PhoneOutbox { .. } => "phone_outbox",
@@ -946,7 +958,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
     }
 }
 
-const ALL_EVENT_TAGS: [&str; 28] = [
+const ALL_EVENT_TAGS: [&str; 29] = [
     "state",
     "identity",
     "settings",
@@ -975,6 +987,7 @@ const ALL_EVENT_TAGS: [&str; 28] = [
     "mirrors",
     "phone_outbox",
     "refine_notice",
+    "network",
 ];
 
 /// The computer's settings as a phone shows them (docs/dictation.md §20.8): every `Option` set.
@@ -1504,6 +1517,9 @@ fn all_events() -> Vec<UiEvent> {
             address: Some("http://127.0.0.1:47840/v1".into()),
             error: Some("无法监听 127.0.0.1:47840：Address already in use".into()),
         }),
+        // docs/dictation.md §24: a password saved and the system's proxy; then neither.
+        UiEvent::Network(NetworkStatus { proxy_password: true, system_proxy: Some("socks5h://127.0.0.1:1080".into()) }),
+        UiEvent::Network(NetworkStatus::default()),
         // The model library: every `ModelInstallState` variant across these three lists.
         models_event(models_installed_and_downloading()),
         models_event(models_other_states()),
@@ -1766,6 +1782,8 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::SettingsSetServe { .. } => "SettingsSetServe",
         UiCommand::ServeCopyToken => "ServeCopyToken",
         UiCommand::ServeRotateToken => "ServeRotateToken",
+        UiCommand::SettingsSetProxy { .. } => "SettingsSetProxy",
+        UiCommand::NetworkRefresh => "NetworkRefresh",
         UiCommand::RefineNoticeClose => "RefineNoticeClose",
     }
 }
@@ -1902,6 +1920,13 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("settings_set_serve", json!({ "enabled": true, "port": 47840, "preset": "prompt", "scene": SCENE_ID }), "SettingsSetServe"),
         ("serve_copy_token", Value::Null, "ServeCopyToken"),
         ("serve_rotate_token", Value::Null, "ServeRotateToken"),
+        // The proxy (docs/dictation.md §24): a manual one with a new password.
+        (
+            "settings_set_proxy",
+            json!({ "mode": "manual", "server": "http://proxy.example.com:3128", "username": "alice", "noProxy": "corp.example.com,10.0.0.0/8", "password": "example-password" }),
+            "SettingsSetProxy",
+        ),
+        ("network_refresh", Value::Null, "NetworkRefresh"),
         // docs/dictation.md §3.6.
         ("refine_notice_close", Value::Null, "RefineNoticeClose"),
     ]

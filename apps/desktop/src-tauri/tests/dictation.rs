@@ -197,7 +197,7 @@ fn native_injector_switches_on_the_mode_the_factory_saw() {
     let clipboard = Box::new(Recording { outcome: Ok(voltip_inject::Injection::clipboard(3, Some(note))), calls: AtomicUsize::new(0) });
     let injector = NativeInjector::with(mode.clone(), paste, clipboard);
     assert_eq!(injector.inject("abc").unwrap().via, Via::Paste);
-    let factory = engine_factory(mode.clone(), LocalTranscriber::new(std::env::temp_dir().join("voltip-test-models")), None);
+    let factory = engine_factory(mode.clone(), LocalTranscriber::new(std::env::temp_dir().join("voltip-test-models")), None, voltip_net::Network::new());
     factory(&resolved(None, None, None, None, InjectMode::ClipboardOnly));
     assert_eq!(*mode.lock(), InjectMode::ClipboardOnly, "the factory records the mode");
     let out = injector.inject("abc").unwrap();
@@ -218,7 +218,7 @@ fn native_injector_switches_on_the_mode_the_factory_saw() {
 async fn build_clients_follows_the_resolved_configuration() {
     let local = LocalTranscriber::new(std::env::temp_dir().join("voltip-test-models"));
     // No URLs: the transcriber explains instead of failing to build; no clean-up endpoint: no refiner.
-    let (t, r) = build_clients(&resolved(None, None, None, None, InjectMode::Paste), &local);
+    let (t, r) = build_clients(&resolved(None, None, None, None, InjectMode::Paste), &local, &voltip_net::Network::new());
     assert!(r.is_none());
     let err = t.transcribe(b"RIFF", None, &[]).await.unwrap_err();
     assert!(matches!(&err, DictationError::Asr(m) if m.contains("未配置")), "{err}");
@@ -234,12 +234,16 @@ async fn build_clients_follows_the_resolved_configuration() {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "choices": [{ "message": { "content": "ok。" } }] })))
         .mount(&server)
         .await;
-    let (t, r) = build_clients(&resolved(Some(&server.uri()), Some(&format!("{}/v1", server.uri())), Some("tok"), Some("gsk"), InjectMode::Paste), &local);
+    let (t, r) = build_clients(
+        &resolved(Some(&server.uri()), Some(&format!("{}/v1", server.uri())), Some("tok"), Some("gsk"), InjectMode::Paste),
+        &local,
+        &voltip_net::Network::new(),
+    );
     let wav = wav::encode_pcm16(&[1000; 1600], 16_000);
     assert_eq!(t.transcribe(&wav, None, &[]).await.unwrap().text, "ok");
     assert_eq!(r.unwrap().refine("ok", &RefineHints::default()).await.unwrap().text, "ok。");
     // A configuration the clients refuse is reported on use, not swallowed.
-    let (t, r) = build_clients(&resolved(Some("not a url"), Some("also not a url"), None, Some("gsk"), InjectMode::Paste), &local);
+    let (t, r) = build_clients(&resolved(Some("not a url"), Some("also not a url"), None, Some("gsk"), InjectMode::Paste), &local, &voltip_net::Network::new());
     assert!(matches!(t.transcribe(&wav, None, &[]).await.unwrap_err(), DictationError::Asr(m) if m.contains("配置无效")));
     assert!(matches!(r.unwrap().refine("x", &RefineHints::default()).await.unwrap_err(), DictationError::Refine(m) if m.contains("配置无效")));
 }
@@ -261,16 +265,21 @@ async fn build_clients_local_mode_selects_the_model_and_needs_no_endpoint() {
     secrets.set(ProviderId::Custom, ServiceKind::Asr, Some("tok".into()));
     let engines = ResolvedEngines::resolve(&settings, &secrets, &BuiltIn::EMPTY);
     assert!(engines.is_local() && engines.asr_remote.is_none(), "no endpoint and no key on-device");
-    let (t, _) = build_clients(&engines, &local);
+    let (t, _) = build_clients(&engines, &local, &voltip_net::Network::new());
     let wav = wav::encode_pcm16(&[1000; 1600], 16_000);
     let err = t.transcribe(&wav, Some("zh"), &[]).await.unwrap_err();
     assert_eq!(err, DictationError::Asr("本地模型未下载：轻量 · 中文".into()), "no library on disk: the message names the model");
     // The default model when the settings name none; the wiring's store scans the same root.
     let engines = ResolvedEngines::resolve(&EngineSettings { asr_provider: ProviderId::Local, ..EngineSettings::default() }, &secrets, &BuiltIn::EMPTY);
-    let (t, _) = build_clients(&engines, &local);
+    let (t, _) = build_clients(&engines, &local, &voltip_net::Network::new());
     let err = t.transcribe(&wav, None, &[]).await.unwrap_err();
     assert!(matches!(&err, DictationError::Asr(m) if m.contains("本地模型未下载")), "{err}");
-    let ports = voltip_desktop_lib::dictation::ports_with_backend(Arc::new(FakeBackend::new()), Arc::new(AudioHub::default()), root.path().to_path_buf());
+    let ports = voltip_desktop_lib::dictation::ports_with_backend(
+        Arc::new(FakeBackend::new()),
+        Arc::new(AudioHub::default()),
+        root.path().to_path_buf(),
+        &voltip_net::Network::new(),
+    );
     let models = ports.dictation.models.as_ref().expect("the desktop wires a model library").scan();
     assert_eq!(
         models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
@@ -325,7 +334,7 @@ async fn the_engine_warms_the_selected_local_model_before_the_first_take() {
     let loads = Arc::new(Mutex::new(Vec::new()));
     let local = LocalTranscriber::with_loader(root.path(), CATALOGUE, Arc::new(Counting(loads.clone())));
     let mut ports = voltip_core::dictation::fakes::ports();
-    ports.factory = engine_factory(Arc::new(Mutex::new(InjectMode::Paste)), local.clone(), None);
+    ports.factory = engine_factory(Arc::new(Mutex::new(InjectMode::Paste)), local.clone(), None, voltip_net::Network::new());
     let on = |id: &str| {
         ResolvedEngines::resolve(
             &EngineSettings { asr_provider: ProviderId::Local, local_model: Some(id.into()), ..EngineSettings::default() },
@@ -397,7 +406,7 @@ fn recorder_audio_source_live_tap_streams_16k_and_closes_on_stop() {
 /// constructed headlessly; the factory it carries behaves like [`build_clients`].
 #[tokio::test]
 async fn production_ports_build_headlessly() {
-    let ports = voltip_desktop_lib::dictation::production_ports(std::env::temp_dir().join("voltip-test-models"));
+    let ports = voltip_desktop_lib::dictation::production_ports(std::env::temp_dir().join("voltip-test-models"), &voltip_net::Network::new());
     assert!(ports.dictation.models.is_some(), "the desktop always carries the model library");
     let (t, r) = (ports.dictation.factory)(&resolved(None, None, None, None, InjectMode::ClipboardOnly));
     assert!(r.is_none());
@@ -425,7 +434,8 @@ fn meter_subscribers_survive_a_dictation_capture_and_get_the_device_back() {
     let before_capture = got.lock().len();
     assert!(before_capture > 0, "device meter delivers frames");
 
-    let ports = voltip_desktop_lib::dictation::ports_with_backend(backend, hub.clone(), std::env::temp_dir().join("voltip-test-models"));
+    let ports =
+        voltip_desktop_lib::dictation::ports_with_backend(backend, hub.clone(), std::env::temp_dir().join("voltip-test-models"), &voltip_net::Network::new());
     let capture = ports.dictation.audio.start(None, Box::new(|_| {}), Box::new(|| {}), CaptureOptions::default()).unwrap();
     assert!(hub.following_capture());
     std::thread::sleep(Duration::from_millis(250));

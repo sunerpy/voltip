@@ -37,6 +37,8 @@ transcribe-cpp.workspace = true
 tokio = { workspace = true, features = ["fs"] }
 tracing.workspace = true
 voltip-core.workspace = true
+# The proxy of model downloads (docs/dictation.md §24).
+voltip-net.workspace = true
 
 # Metal on macOS: the Qwen3-ASR tiers run on the Mac's GPU, with the CPU as the fallback. The
 # metallib is embedded in the static library (no sidecar file in the bundle).

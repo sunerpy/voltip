@@ -411,8 +411,9 @@ pub async fn send(
     contact: Option<&str>,
     diagnostics: &Diagnostics,
     attachments: &[Staged],
+    network: &std::sync::Arc<voltip_net::Network>,
 ) -> Result<Receipt, SendError> {
-    let http = crate::http_client_builder().user_agent(user_agent).build().map_err(|_| SendError::Network)?;
+    let http = crate::http_client_builder(network).user_agent(user_agent).build().map_err(|_| SendError::Network)?;
     let token = token.filter(|t| !t.is_empty());
     let declared = attachments.iter().map(|a| Declared { name: &a.name, mime: &a.mime, size: a.bytes.len(), sha256: &a.sha256 }).collect();
     let mut request = http.post(url).timeout(SEND_TIMEOUT).json(&Payload { kind, message, contact, diagnostics, attachments: declared });
@@ -566,7 +567,8 @@ mod tests {
             .await;
         let d = diagnostics(&state(), "en", None, VERSION);
         let url = format!("{}/v1/feedback", server.uri());
-        let receipt = send(&url, Some("app-token"), AGENT, FeedbackKind::Bug, "no paste", Some("me@example.test"), &d, &[]).await.unwrap();
+        let receipt =
+            send(&url, Some("app-token"), AGENT, FeedbackKind::Bug, "no paste", Some("me@example.test"), &d, &[], &voltip_net::Network::new()).await.unwrap();
         assert_eq!(receipt, Receipt { id: "f-1".into() });
         let seen = server.received_requests().await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&seen[0].body).unwrap();
@@ -591,19 +593,19 @@ mod tests {
         ] {
             let server = MockServer::start().await;
             Mock::given(method("POST")).respond_with(ResponseTemplate::new(status)).mount(&server).await;
-            let got = send(&server.uri(), None, AGENT, FeedbackKind::Idea, "x", None, &d, &[]).await;
+            let got = send(&server.uri(), None, AGENT, FeedbackKind::Idea, "x", None, &d, &[], &voltip_net::Network::new()).await;
             assert_eq!(got, Err(want), "HTTP {status}");
         }
         // A 201 that is not a receipt is the endpoint's failure.
         let server = MockServer::start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(201).set_body_string("ok")).mount(&server).await;
-        assert_eq!(send(&server.uri(), None, AGENT, FeedbackKind::Other, "x", None, &d, &[]).await, Err(SendError::Server));
+        assert_eq!(send(&server.uri(), None, AGENT, FeedbackKind::Other, "x", None, &d, &[], &voltip_net::Network::new()).await, Err(SendError::Server));
         // Nothing listening: a network failure, and no request went out without the token check.
         let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = closed.local_addr().unwrap().port();
         drop(closed);
         assert_eq!(
-            send(&format!("http://127.0.0.1:{port}/v1/feedback"), Some(""), AGENT, FeedbackKind::Other, "x", None, &d, &[]).await,
+            send(&format!("http://127.0.0.1:{port}/v1/feedback"), Some(""), AGENT, FeedbackKind::Other, "x", None, &d, &[], &voltip_net::Network::new()).await,
             Err(SendError::Network)
         );
     }
@@ -679,7 +681,7 @@ mod tests {
         let files = staged.pick(&[shot.id, clip.id]).unwrap();
         let d = diagnostics(&state(), "en", None, VERSION);
         let url = format!("{}/v1/feedback", server.uri());
-        let receipt = send(&url, Some("app-token"), AGENT, FeedbackKind::Bug, "look", None, &d, &files).await.unwrap();
+        let receipt = send(&url, Some("app-token"), AGENT, FeedbackKind::Bug, "look", None, &d, &files, &voltip_net::Network::new()).await.unwrap();
         assert_eq!(receipt.id, "f-2");
         let seen = server.received_requests().await.unwrap();
         let report: serde_json::Value = serde_json::from_slice(&seen[0].body).unwrap();
@@ -715,7 +717,7 @@ mod tests {
             let server = MockServer::start().await;
             Mock::given(method("POST")).respond_with(ResponseTemplate::new(201).set_body_json(answer.clone())).mount(&server).await;
             Mock::given(method("PUT")).respond_with(ResponseTemplate::new(chunk_status)).mount(&server).await;
-            let got = send(&format!("{}/v1/feedback", server.uri()), None, AGENT, FeedbackKind::Bug, "x", None, &d, &files).await;
+            let got = send(&format!("{}/v1/feedback", server.uri()), None, AGENT, FeedbackKind::Bug, "x", None, &d, &files, &voltip_net::Network::new()).await;
             assert_eq!(got, Err(SendError::Attachments), "{answer}");
         }
         // A chunk the endpoint already has counts as sent.
@@ -725,6 +727,8 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("PUT")).respond_with(ResponseTemplate::new(409)).mount(&server).await;
-        assert!(send(&format!("{}/v1/feedback", server.uri()), None, AGENT, FeedbackKind::Bug, "x", None, &d, &files).await.is_ok());
+        assert!(
+            send(&format!("{}/v1/feedback", server.uri()), None, AGENT, FeedbackKind::Bug, "x", None, &d, &files, &voltip_net::Network::new()).await.is_ok()
+        );
     }
 }

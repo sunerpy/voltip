@@ -543,6 +543,20 @@
     "name": "serve_rotate_token"
   },
   {
+    "args": {
+      "mode": "manual",
+      "noProxy": "corp.example.com,10.0.0.0/8",
+      "password": "example-password",
+      "server": "http://proxy.example.com:3128",
+      "username": "alice"
+    },
+    "name": "settings_set_proxy"
+  },
+  {
+    "args": null,
+    "name": "network_refresh"
+  },
+  {
     "args": null,
     "name": "refine_notice_close"
   },

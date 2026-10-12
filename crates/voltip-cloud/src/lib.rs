@@ -22,6 +22,7 @@ use voltip_core::providers::is_dashscope;
 use voltip_core::{AsrProtocol, BuiltinPreset, ProbeError, ProbeFailure, ProviderId, RemoteService, ResolvedEngines, ServiceKind, TakePreset};
 
 use crate::dashscope::DashscopeTranscriber;
+use voltip_net::Network;
 use voltip_refine::{PromptContext, PromptHints, RefineClient, RefineConfig};
 
 /// HTTP request deadline for one transcription (long recordings on a slow link).
@@ -183,8 +184,9 @@ impl Refiner for Unconfigured {
 /// (rustls-platform-verifier); on Android that verifier needs a JNI context the app never hands it
 /// and panics on the first request, so there the requests trust Mozilla's root store, as
 /// voltip-asr, voltip-refine and the relay connection do.
-pub fn http_client_builder() -> reqwest::ClientBuilder {
-    let builder = reqwest::Client::builder();
+/// The requests follow `network`'s proxy plan (docs/dictation.md §24).
+pub fn http_client_builder(network: &Arc<Network>) -> reqwest::ClientBuilder {
+    let builder = network.apply(reqwest::Client::builder());
     #[cfg(target_os = "android")]
     let builder = builder.tls_certs_only(mozilla_roots());
     builder
@@ -199,13 +201,13 @@ fn mozilla_roots() -> Vec<reqwest::Certificate> {
 /// The recogniser of a configuration that recognises in the cloud. A provider that is not ready,
 /// or whose configuration the client refuses, becomes an [`Unconfigured`] client that reports the
 /// problem on use.
-pub fn remote_transcriber(engines: &ResolvedEngines) -> Arc<dyn Transcriber> {
+pub fn remote_transcriber(engines: &ResolvedEngines, network: &Arc<Network>) -> Arc<dyn Transcriber> {
     match &engines.asr_remote {
         None => Arc::new(Unconfigured(match engines.asr_issue {
             Some(issue) => format!("识别服务未配置：{}", issue.message(ServiceKind::Asr)),
             None => "识别服务未配置".to_owned(),
         })),
-        Some(remote) => transcriber_with(AsrProtocol::of(&remote.url, &remote.model), remote, asr_upload(engines.asr_provider)),
+        Some(remote) => transcriber_with(AsrProtocol::of(&remote.url, &remote.model), remote, asr_upload(engines.asr_provider), network),
     }
 }
 
@@ -220,13 +222,13 @@ pub fn asr_upload(provider: ProviderId) -> AudioUpload {
 /// The client that speaks `protocol` to `remote` (docs/dictation.md §3.4): OpenAI's
 /// `/audio/transcriptions`, or one of Model Studio's; a Model Studio model dictation cannot use
 /// says so on use. Takes go up as WAV.
-pub fn transcriber_for(protocol: AsrProtocol, remote: &RemoteService) -> Arc<dyn Transcriber> {
-    transcriber_with(protocol, remote, AudioUpload::Wav)
+pub fn transcriber_for(protocol: AsrProtocol, remote: &RemoteService, network: &Arc<Network>) -> Arc<dyn Transcriber> {
+    transcriber_with(protocol, remote, AudioUpload::Wav, network)
 }
 
 /// [`transcriber_for`] uploading takes as `upload` (Model Studio's protocols always send the WAV).
-fn transcriber_with(protocol: AsrProtocol, remote: &RemoteService, upload: AudioUpload) -> Arc<dyn Transcriber> {
-    let config = AsrConfig::new(&remote.url, &remote.model).with_token(remote.key.clone()).with_timeout(ASR_TIMEOUT).with_upload(upload);
+fn transcriber_with(protocol: AsrProtocol, remote: &RemoteService, upload: AudioUpload, network: &Arc<Network>) -> Arc<dyn Transcriber> {
+    let config = AsrConfig::new(&remote.url, &remote.model).with_token(remote.key.clone()).with_timeout(ASR_TIMEOUT).with_upload(upload).with_network(network);
     let built = match protocol {
         AsrProtocol::OpenaiTranscriptions => HttpTranscriber::new(config).map(|t| Arc::new(t) as Arc<dyn Transcriber>),
         AsrProtocol::DashscopeChat => DashscopeTranscriber::new(config, DashscopeMode::Chat).map(|t| Arc::new(t) as Arc<dyn Transcriber>),
@@ -265,9 +267,9 @@ pub fn openai_compatible_base(base_url: &str) -> String {
 
 /// The clean-up client of a configuration; no ready clean-up provider means none (the core then
 /// explains "润色未配置").
-pub fn refiner(engines: &ResolvedEngines) -> Option<Arc<dyn Refiner>> {
+pub fn refiner(engines: &ResolvedEngines, network: &Arc<Network>) -> Option<Arc<dyn Refiner>> {
     engines.refine.as_ref().map(|remote| {
-        let config = refine_config(remote, engines.llm_provider == Some(ProviderId::Builtin));
+        let config = refine_config(remote, engines.llm_provider == Some(ProviderId::Builtin), network);
         match HttpRefiner::new(config) {
             Ok(r) => Arc::new(r) as Arc<dyn Refiner>,
             Err(e) => {
@@ -282,7 +284,7 @@ pub fn refiner(engines: &ResolvedEngines) -> Option<Arc<dyn Refiner>> {
 /// output limit; a service the user configured may answer a long translation or notes in full
 /// (docs/dictation.md §21). A Model Studio address gets its OpenAI-compatible base and
 /// `enable_thinking: false` (§3.4): its Qwen3 and DeepSeek models think by default there.
-pub fn refine_config(remote: &RemoteService, builtin: bool) -> RefineConfig {
+pub fn refine_config(remote: &RemoteService, builtin: bool, network: &Arc<Network>) -> RefineConfig {
     let cap = if builtin { voltip_refine::BUILTIN_OUTPUT_CAP } else { voltip_refine::USER_OUTPUT_CAP };
     RefineConfig::new(openai_compatible_base(&remote.url), &remote.model)
         .with_api_key(remote.key.clone())
@@ -291,6 +293,7 @@ pub fn refine_config(remote: &RemoteService, builtin: bool) -> RefineConfig {
         .with_enable_thinking(is_dashscope(&remote.url).then_some(false))
         .with_api(refine_api(remote.api))
         .with_reasoning_effort(remote.reasoning.map(reasoning_effort))
+        .with_network(network)
 }
 
 /// The core's interface choice as the refine crate's (docs/dictation.md §3.7).
@@ -316,13 +319,22 @@ fn reasoning_effort(effort: voltip_core::ReasoningEffort) -> voltip_refine::Reas
 /// key, answered with ids or a host-free failure. Recognition and clean-up endpoints are
 /// normalised the same way (`…/v1`), so one request serves both kinds; a Model Studio address
 /// is asked at its OpenAI-compatible base (§3.4). Both shells use it.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct HttpServiceProbe;
+#[derive(Clone, Debug)]
+pub struct HttpServiceProbe {
+    network: Arc<Network>,
+}
+
+impl HttpServiceProbe {
+    /// A probe whose requests follow `network`'s proxy plan (docs/dictation.md §24).
+    pub fn new(network: &Arc<Network>) -> Self {
+        Self { network: Arc::clone(network) }
+    }
+}
 
 #[async_trait]
 impl ServiceProbe for HttpServiceProbe {
     async fn list_models(&self, base_url: &str, key: Option<&str>) -> Result<Vec<String>, ProbeError> {
-        voltip_refine::list_models(&openai_compatible_base(base_url), key, PROBE_TIMEOUT).await.map_err(|e| {
+        voltip_refine::list_models(&openai_compatible_base(base_url), key, PROBE_TIMEOUT, &self.network).await.map_err(|e| {
             use voltip_refine::RefineError as E;
             match e {
                 E::InvalidConfig(_) => ProbeError::new(ProbeFailure::InvalidUrl),
@@ -343,6 +355,12 @@ mod tests {
     use super::*;
     use voltip_core::{BuiltIn, EngineSettings, ProviderSettings, UserSecrets};
 
+    /// The network of a test: following the system, whose proxy settings never apply to the
+    /// local mock servers.
+    fn net() -> Arc<Network> {
+        Network::new()
+    }
+
     /// Regression (2026-10-03, the goal gate on the phone's update check): on Android reqwest's
     /// platform verifier panics on the first request ("Expect rustls-platform-verifier to be
     /// initialized"). The shells' own requests take this builder, which trusts Mozilla's roots
@@ -353,7 +371,7 @@ mod tests {
         assert_eq!(roots.len(), webpki_root_certs::TLS_SERVER_ROOT_CERTS.len(), "every root parses");
         assert!(roots.len() > 100, "{} roots", roots.len());
         assert!(reqwest::Client::builder().tls_certs_only(roots).build().is_ok());
-        assert!(http_client_builder().build().is_ok());
+        assert!(http_client_builder(&net()).build().is_ok());
     }
 
     fn custom(asr_url: Option<&str>, llm_url: Option<&str>) -> ResolvedEngines {
@@ -376,17 +394,17 @@ mod tests {
     #[tokio::test]
     async fn an_unset_service_answers_with_the_reason_instead_of_a_request() {
         let engines = custom(None, None);
-        let err = remote_transcriber(&engines).transcribe(b"RIFF", None, &[]).await.unwrap_err();
+        let err = remote_transcriber(&engines, &net()).transcribe(b"RIFF", None, &[]).await.unwrap_err();
         assert!(matches!(&err, DictationError::Asr(m) if m.starts_with("识别服务未配置")), "{err}");
-        assert!(refiner(&engines).is_none(), "no clean-up provider, no refiner");
+        assert!(refiner(&engines, &net()).is_none(), "no clean-up provider, no refiner");
     }
 
     #[tokio::test]
     async fn a_url_the_client_refuses_is_reported_on_use() {
         let engines = custom(Some("not a url"), Some("ftp://nope"));
-        let err = remote_transcriber(&engines).transcribe(b"RIFF", None, &[]).await.unwrap_err();
+        let err = remote_transcriber(&engines, &net()).transcribe(b"RIFF", None, &[]).await.unwrap_err();
         assert!(matches!(&err, DictationError::Asr(m) if m.starts_with("识别服务配置无效")), "{err}");
-        let err = refiner(&engines).expect("configured").refine("x", &RefineHints::default()).await.unwrap_err();
+        let err = refiner(&engines, &net()).expect("configured").refine("x", &RefineHints::default()).await.unwrap_err();
         assert!(matches!(&err, DictationError::Refine(m) if m.starts_with("润色服务配置无效")), "{err}");
     }
 
@@ -398,7 +416,7 @@ mod tests {
     async fn the_protocol_picks_the_client() {
         let remote = |url: &str, model: &str| RemoteService { url: url.into(), model: model.into(), key: Some("sk-test".into()), ..RemoteService::default() };
         let studio = "https://dashscope.aliyuncs.com/compatible-mode/v1";
-        let pick = |url: &str, model: &str| transcriber_for(AsrProtocol::of(url, model), &remote(url, model));
+        let pick = |url: &str, model: &str| transcriber_for(AsrProtocol::of(url, model), &remote(url, model), &net());
         assert!(pick(studio, "qwen-audio-3.1-asr-flash-streaming").streaming(&[]).is_some());
         assert!(pick(studio, "qwen-audio-3.1-asr-flash-message").streaming(&["Voltip".into()]).is_some());
         assert!(pick(studio, "qwen-audio-3.1-asr-flash").streaming(&[]).is_none());
@@ -415,7 +433,7 @@ mod tests {
         }
         // A configuration the client refuses is reported on use, whatever the protocol.
         for protocol in [AsrProtocol::DashscopeChat, AsrProtocol::DashscopeMultimodal, AsrProtocol::DashscopeDuplex, AsrProtocol::OpenaiTranscriptions] {
-            let err = transcriber_for(protocol, &remote("not a url", "m")).transcribe(b"RIFF", None, &[]).await.unwrap_err();
+            let err = transcriber_for(protocol, &remote("not a url", "m"), &net()).transcribe(b"RIFF", None, &[]).await.unwrap_err();
             assert!(matches!(&err, DictationError::Asr(m) if m.starts_with("识别服务配置无效")), "{protocol:?}: {err}");
         }
         // Through the resolution: the Model Studio vendor with a key.
@@ -423,7 +441,7 @@ mod tests {
         secrets.set(ProviderId::Aliyun, ServiceKind::Asr, Some("sk-test".into()));
         let settings = EngineSettings { asr_provider: ProviderId::Aliyun, ..EngineSettings::default() };
         let engines = ResolvedEngines::resolve(&settings, &secrets, &BuiltIn::EMPTY);
-        assert!(remote_transcriber(&engines).streaming(&[]).is_some(), "the catalogue's default model streams");
+        assert!(remote_transcriber(&engines, &net()).streaming(&[]).is_some(), "the catalogue's default model streams");
     }
 
     /// docs/dictation.md §3.5: a used-up quota reaches the core as its own kind, which a fallback
@@ -458,9 +476,9 @@ mod tests {
             .await;
         Mock::given(method("POST")).and(path("/v1/chat/completions")).respond_with(ResponseTemplate::new(403).set_body_json(used_up)).mount(&server).await;
         let remote = RemoteService { url: server.uri(), model: "whisper-1".into(), key: Some("sk-test".into()), ..RemoteService::default() };
-        let err = transcriber_for(AsrProtocol::OpenaiTranscriptions, &remote).transcribe(b"RIFF", None, &[]).await.unwrap_err();
+        let err = transcriber_for(AsrProtocol::OpenaiTranscriptions, &remote, &net()).transcribe(b"RIFF", None, &[]).await.unwrap_err();
         assert!(matches!(&err, DictationError::QuotaExhausted { service: ServiceKind::Asr, .. }), "{err:?}");
-        let refiner = HttpRefiner::new(refine_config(&remote, false)).unwrap();
+        let refiner = HttpRefiner::new(refine_config(&remote, false, &net())).unwrap();
         let err = refiner.refine("x", &RefineHints::default()).await.unwrap_err();
         assert!(matches!(&err, DictationError::QuotaExhausted { service: ServiceKind::Llm, .. }), "{err:?}");
 
@@ -471,7 +489,7 @@ mod tests {
             .mount(&server)
             .await;
         let remote = RemoteService { url: server.uri(), model: "whisper-1".into(), key: None, ..RemoteService::default() };
-        let t = transcriber_for(AsrProtocol::OpenaiTranscriptions, &remote).transcribe(b"RIFF", None, &[]).await.unwrap();
+        let t = transcriber_for(AsrProtocol::OpenaiTranscriptions, &remote, &net()).transcribe(b"RIFF", None, &[]).await.unwrap();
         assert_eq!((t.text.as_str(), t.model.as_deref()), ("你好", Some("whisper-1")));
     }
 
@@ -495,8 +513,8 @@ mod tests {
         let built_in = BuiltIn { asr_url: Some(url), asr_token: Some("app-token"), ..BuiltIn::EMPTY };
         let engines = ResolvedEngines::resolve(&EngineSettings::default(), &UserSecrets::default(), &built_in);
         assert_eq!(engines.asr_provider, ProviderId::Builtin);
-        assert_eq!(remote_transcriber(&engines).transcribe(&take, Some("zh"), &[]).await.unwrap().text, "你好");
-        remote_transcriber(&custom(Some(url), None)).transcribe(&take, Some("zh"), &[]).await.unwrap();
+        assert_eq!(remote_transcriber(&engines, &net()).transcribe(&take, Some("zh"), &[]).await.unwrap().text, "你好");
+        remote_transcriber(&custom(Some(url), None), &net()).transcribe(&take, Some("zh"), &[]).await.unwrap();
 
         let requests = server.received_requests().await.unwrap();
         let built_in_body = String::from_utf8_lossy(&requests[0].body);
@@ -527,7 +545,7 @@ mod tests {
             api: voltip_core::LlmApi::Responses,
             reasoning: Some(voltip_core::ReasoningEffort::Xhigh),
         };
-        let config = refine_config(&responses, false);
+        let config = refine_config(&responses, false, &net());
         assert_eq!((config.api, config.reasoning_effort), (voltip_refine::RefineApi::Responses, Some(voltip_refine::ReasoningEffort::Xhigh)));
         assert_eq!(config.enable_thinking, None);
         for (core, wire) in [
@@ -539,19 +557,19 @@ mod tests {
             assert_eq!(reasoning_effort(core).as_str(), wire);
         }
         let vendor = RemoteService { url: "https://api.openai.com/v1".into(), model: "gpt-5".into(), key: Some("sk-test".into()), ..RemoteService::default() };
-        assert_eq!(refine_config(&vendor, false).api, voltip_refine::RefineApi::ChatCompletions);
+        assert_eq!(refine_config(&vendor, false, &net()).api, voltip_refine::RefineApi::ChatCompletions);
     }
 
     #[test]
     fn regression_a_model_studio_clean_up_does_not_think() {
         let remote = |url: &str| RemoteService { url: url.into(), model: "qwen3.8-flash".into(), key: Some("sk-test".into()), ..RemoteService::default() };
-        let studio = refine_config(&remote("https://ws-1.cn-beijing.maas.aliyuncs.com"), false);
+        let studio = refine_config(&remote("https://ws-1.cn-beijing.maas.aliyuncs.com"), false, &net());
         assert_eq!(studio.enable_thinking, Some(false));
         assert_eq!(studio.base_url, "https://ws-1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1");
         assert_eq!(studio.output_cap, voltip_refine::USER_OUTPUT_CAP);
-        let other = refine_config(&remote("https://api.groq.com/openai/v1"), false);
+        let other = refine_config(&remote("https://api.groq.com/openai/v1"), false, &net());
         assert_eq!((other.enable_thinking, other.base_url.as_str()), (None, "https://api.groq.com/openai/v1"));
-        assert_eq!(refine_config(&remote("https://llm.builtin.test/v1"), true).output_cap, voltip_refine::BUILTIN_OUTPUT_CAP);
+        assert_eq!(refine_config(&remote("https://llm.builtin.test/v1"), true, &net()).output_cap, voltip_refine::BUILTIN_OUTPUT_CAP);
     }
 
     #[test]

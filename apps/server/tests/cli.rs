@@ -89,6 +89,8 @@ fn wiring(transcriber: FakeTranscriber, refiner: Option<FakeRefiner>) -> Wiring 
         secrets_notice: None,
         secrets_from_env: Vec::new(),
         built_in: BUILT_IN,
+        network: voltip_net::Network::new(),
+        proxy_password: None,
     }
 }
 

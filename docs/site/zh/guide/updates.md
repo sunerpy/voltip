@@ -34,7 +34,7 @@ Voltip 0.0.50 不检查更新，「关于」中没有「软件更新」。从 Go
 
 「更新失败」后面的文字会说明原因，例如连接超时、连接被拒绝或无法建立安全连接。与更新服务器建立连接超过 15 秒，或服务器 30 秒内没有发送任何数据时，Voltip 停止这次检查。
 
-Voltip 先在本站检查更新并从本站下载。本站提供的文件与 GitHub 发布页上的相同，Voltip 安装前会校验每个安装包的签名。本站无法访问时，Voltip 改为连接 GitHub。Voltip 不使用 Windows 或 macOS 设置中的代理。如果你通过代理工具上网，请使用它的 TUN 模式，或设置环境变量 `HTTPS_PROXY` 后重新启动 Voltip。
+Voltip 先在本站检查更新并从本站下载。本站提供的文件与 GitHub 发布页上的相同，Voltip 安装前会校验每个安装包的签名。本站无法访问时，Voltip 改为连接 GitHub。检查和下载更新按「设置 → 网络」中的[代理设置](/zh/recognition/cloud#网络代理)连接：默认跟随系统，也可以手动填写代理服务器。0.1.3 及更早的 Voltip 不使用 Windows 和 macOS 设置中的代理，只读 `HTTPS_PROXY` 等环境变量。
 
 0.0.52 及更早的 Voltip 只连接 GitHub。
 

@@ -19,6 +19,8 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
+# The proxy of the requests (docs/dictation.md §24).
+voltip-net.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 webpki-root-certs.workspace = true

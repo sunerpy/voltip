@@ -194,6 +194,14 @@ impl VoltipShell {
     pub fn reconnect_relay(&self) {
         self.shell.reconnect_relay();
     }
+
+    /// The default network's proxy (docs/dictation.md §24): `LinkProperties.httpProxy`, `host` empty
+    /// when it has none, `exclusions` its exclusion list joined with commas. Following the system
+    /// means this proxy from the next request on. `VoltipNativeModule.kt` calls it at start and
+    /// from the network callback; it never waits.
+    pub fn set_network_proxy(&self, host: String, port: u16, exclusions: String) {
+        self.shell.set_platform_proxy(&host, port, &exclusions);
+    }
 }
 
 impl VoltipShell {
@@ -204,12 +212,13 @@ impl VoltipShell {
         runtime: Handle,
         config: CoreConfig,
         store: Arc<dyn SecretStore>,
-        ports: impl FnOnce(Arc<dyn Host>) -> DictationPorts,
+        ports: impl FnOnce(Arc<dyn Host>, &Arc<voltip_net::Network>) -> DictationPorts,
         host: Arc<dyn PlatformHost>,
     ) -> Result<Arc<Self>, ShellError> {
         let foreign = Arc::new(ForeignHost { target: RwLock::new(host) });
         let as_host: Arc<dyn Host> = foreign.clone();
-        let shell = Shell::start(runtime, config, store, ports(as_host.clone()), as_host).map_err(ShellError::Start)?;
+        let ports = ports(as_host.clone(), &config.network);
+        let shell = Shell::start(runtime, config, store, ports, as_host).map_err(ShellError::Start)?;
         Ok(Arc::new(Self { shell, host: foreign }))
     }
 

@@ -95,6 +95,7 @@ export const EMPTY: UiState = {
   mirrors: [],
   phone_outbox_too_large: [],
   serve: { available: false, phase: "off" },
+  network: { proxy_password: false },
 };
 
 export function useBackend(): BackendContextValue {

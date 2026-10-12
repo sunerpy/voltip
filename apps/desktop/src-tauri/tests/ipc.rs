@@ -669,7 +669,8 @@ fn engines_quota_reset_forgets_a_model_that_ran_out() {
 /// answered at once; a URL that answers is listed (docs/dictation.md §3.3).
 #[test]
 fn provider_probe_answers_with_a_reason_or_the_model_list() {
-    let ports = DictationPorts { service_probe: Some(Arc::new(voltip_desktop_lib::dictation::HttpServiceProbe)), ..fakes::ports() };
+    let ports =
+        DictationPorts { service_probe: Some(Arc::new(voltip_desktop_lib::dictation::HttpServiceProbe::new(&voltip_net::Network::new()))), ..fakes::ports() };
     with_running_app_on(ports, |_, webview, rx| {
         wait_state(webview, |s| s.identity.is_some());
         assert_eq!(invoke(webview, "provider_probe", json!({ "provider": "openai", "kind": "asr" })), Ok(Value::Null));
@@ -1017,7 +1018,8 @@ fn with_model_library_the_catalogue_is_listed_and_local_mode_reports_readiness()
     let dir = tempfile::tempdir().unwrap();
     let models_root = dir.path().join("models");
     let hub = Arc::new(voltip_desktop_lib::audio::AudioHub::with_opener(Box::new(|_, _| Err("no audio device on this runtime".into()))));
-    let ports = voltip_desktop_lib::dictation::ports_with_backend(Arc::new(voltip_audio::FakeBackend::new()), hub, models_root.clone());
+    let ports =
+        voltip_desktop_lib::dictation::ports_with_backend(Arc::new(voltip_audio::FakeBackend::new()), hub, models_root.clone(), &voltip_net::Network::new());
     let app = build_app(mock_builder(), offline_config(dir.path()), Arc::new(MemorySecretStore::new()), ShellOptions::HEADLESS, ports)
         .build(mock_context(noop_assets()))
         .unwrap();

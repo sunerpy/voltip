@@ -456,6 +456,8 @@ fn file_source(dir: &Path, transcriber: Arc<FakeTranscriber>) -> (FileSource, Ve
         models: None,
         factory,
         segmenter: None,
+        network: voltip_net::Network::new(),
+        proxy_password: None,
     })
     .unwrap()
 }
@@ -499,10 +501,73 @@ fn an_unusable_settings_file_stops_the_server_and_a_broken_list_is_reported() {
         models: None,
         factory,
         segmenter: None,
+        network: voltip_net::Network::new(),
+        proxy_password: None,
     })
     .unwrap_err();
     assert!(err.contains("settings.json 无法使用"), "{err}");
     assert_eq!(std::fs::read(dir.path().join("settings.json")).unwrap(), b"{", "not moved aside");
+}
+
+/// docs/dictation.md §24: the server follows the settings' proxy as it reads them, with the
+/// password read at start; a new route rebuilds the clients (their pooled connections were opened
+/// on the old one), another change does not; an unusable proxy setting follows the system and says
+/// so.
+#[test]
+fn the_server_follows_the_proxy_setting_and_rebuilds_its_clients_on_a_new_route() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let dir = tempfile::tempdir().unwrap();
+    let manual = crate::settings::ProxySettings {
+        mode: crate::settings::ProxyMode::Manual,
+        server: Some("http://127.0.0.1:7890".into()),
+        username: Some("alice".into()),
+        no_proxy: String::new(),
+    };
+    let save = |settings: &Settings| std::fs::write(dir.path().join("settings.json"), serde_json::to_vec(settings).unwrap()).unwrap();
+    save(&Settings { proxy: manual.clone(), ..Settings::default() });
+    let built = Arc::new(AtomicUsize::new(0));
+    let count = Arc::clone(&built);
+    let factory: crate::dictation::EngineFactory = Arc::new(move |_| {
+        count.fetch_add(1, Ordering::SeqCst);
+        (Arc::new(FakeTranscriber::ok("x")) as Arc<dyn Transcriber>, None)
+    });
+    let network = voltip_net::Network::new();
+    let config = FileSourceConfig {
+        data_dir: dir.path().to_path_buf(),
+        platform: Platform::Linux,
+        overrides: EngineOverrides::default(),
+        secrets: UserSecrets::default(),
+        built_in: BUILT_IN,
+        models: None,
+        factory,
+        segmenter: None,
+        network: Arc::clone(&network),
+        proxy_password: Some("s3cret".into()),
+    };
+    let (source, notices) = FileSource::open(config).unwrap();
+    assert!(notices.is_empty(), "{notices:?}");
+    assert!(matches!(network.plan(), voltip_net::ProxyPlan::Manual(p) if p.username() == Some("alice") && p.has_password()));
+    let _ = source.current();
+    assert_eq!(built.load(Ordering::SeqCst), 1);
+    // Each file below differs in length from the one before, so its stamp changes whatever the
+    // clock's resolution.
+    save(&Settings { proxy: crate::settings::ProxySettings { mode: crate::settings::ProxyMode::Off, ..manual.clone() }, ..Settings::default() });
+    let _ = source.current();
+    assert_eq!(network.plan(), voltip_net::ProxyPlan::Off);
+    assert_eq!(built.load(Ordering::SeqCst), 2, "a new route rebuilds the clients");
+    save(&Settings {
+        proxy: crate::settings::ProxySettings { mode: crate::settings::ProxyMode::Off, ..manual },
+        history: crate::settings::HistorySettings { enabled: true, keep: 77 },
+        ..Settings::default()
+    });
+    assert_eq!(source.current().settings.history.keep, 77);
+    assert_eq!(built.load(Ordering::SeqCst), 2, "the same route and engines keep them");
+
+    let broken = tempfile::tempdir().unwrap();
+    let unusable = crate::settings::ProxySettings { mode: crate::settings::ProxyMode::Manual, server: Some("no port".into()), ..Default::default() };
+    std::fs::write(broken.path().join("settings.json"), serde_json::to_vec(&Settings { proxy: unusable, ..Settings::default() }).unwrap()).unwrap();
+    let (_, notices) = file_source(broken.path(), Arc::new(FakeTranscriber::ok("x")));
+    assert!(notices.iter().any(|n| n.starts_with("代理设置无法使用，已改为跟随系统")), "{notices:?}");
 }
 
 #[test]
