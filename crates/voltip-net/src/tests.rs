@@ -145,17 +145,19 @@ fn regression_a_password_change_counts_whatever_the_exclusions_name() {
     }
 }
 
-/// Regression (goal gate round 3, 2026-10-12): credentials that come in the proxy's own address,
-/// as Windows' `ProxyServer` can carry them, with no environment variable behind them.
+/// Regression (goal gate rounds 3 and 4, 2026-10-12): credentials that come in the proxy's own
+/// address, as Windows' `ProxyServer` can carry them, count whatever the exclusions name: the raw
+/// settings hold the address as the reader read it.
 #[test]
-fn regression_credentials_in_the_proxy_address_count_without_the_environment() {
-    for excluded in ["", "example.com"] {
+fn regression_credentials_in_the_proxy_address_count_whatever_the_exclusions_name() {
+    for excluded in ["", "example.com", "proxy-probe.voltip.invalid,198.51.100.1,2001:db8::1", "*"] {
         let password: Arc<Mutex<&'static str>> = Arc::new(Mutex::new("pw"));
         let reads = Arc::clone(&password);
-        // `with_system_matcher` has no raw settings, like the registry.
-        let network = Network::with_system_matcher(move || {
+        let network = Network::with_system_settings(move || {
             let proxy = format!("http://bob:{}@10.0.0.1:3128", *reads.lock());
-            Matcher::builder().http(proxy.clone()).https(proxy).no(excluded.to_owned()).build()
+            let matcher = Matcher::builder().http(proxy.clone()).https(proxy.clone()).no(excluded.to_owned()).build();
+            // What Internet Options would hold.
+            (matcher, format!("ProxyEnable=Some(1) ProxyServer={proxy:?} ProxyOverride={excluded:?}"))
         });
         let before = network.system_fingerprint();
         assert_eq!(network.system_fingerprint(), before);
@@ -164,12 +166,17 @@ fn regression_credentials_in_the_proxy_address_count_without_the_environment() {
     }
 }
 
-/// The production reader's raw settings name every variable hyper-util reads.
+/// The production reader's raw settings name every variable hyper-util reads, and on Windows the
+/// three Internet Options values.
 #[test]
-fn the_raw_system_settings_name_the_proxy_environment() {
-    let raw = environment_settings();
+fn the_raw_system_settings_name_what_the_reader_reads() {
+    let raw = system_settings();
     for name in PROXY_ENVIRONMENT {
         assert!(raw.contains(&format!("{name}=")), "{name}");
+    }
+    if cfg!(target_os = "windows") {
+        let read = ["ProxyEnable=", "ProxyServer=", "ProxyOverride="].iter().all(|value| raw.contains(value));
+        assert!(read || raw.contains("Internet Settings: none"), "{raw}");
     }
 }
 

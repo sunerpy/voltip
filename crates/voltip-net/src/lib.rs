@@ -44,13 +44,37 @@ type SystemSource = Box<dyn Fn() -> Matcher + Send + Sync>;
 type SystemRaw = Box<dyn Fn() -> String + Send + Sync>;
 
 /// The environment variables hyper-util's reader takes the proxies, their credentials and the
-/// exclusions from (`REQUEST_METHOD` makes it ignore `HTTP_PROXY`). macOS's network settings and
-/// Windows' Internet Options give it addresses and exclusions only, which the matcher shows.
+/// exclusions from (`REQUEST_METHOD` makes it ignore `HTTP_PROXY`).
 const PROXY_ENVIRONMENT: [&str; 9] =
     ["ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy", "REQUEST_METHOD"];
 
-fn environment_settings() -> String {
-    PROXY_ENVIRONMENT.iter().map(|name| format!("{name}={:?}\n", std::env::var_os(name))).collect()
+/// What hyper-util's reader builds the system's matcher from, as it reads it: the environment,
+/// then on Windows the Internet Options values (`ProxyServer` may carry `user:password@`). macOS's
+/// network settings give it addresses and ports only, which the matcher's Debug shows.
+fn system_settings() -> String {
+    let mut raw: String = PROXY_ENVIRONMENT.iter().map(|name| format!("{name}={:?}\n", std::env::var_os(name))).collect();
+    raw.push_str(&internet_options());
+    raw
+}
+
+/// The current user's Internet Options values hyper-util reads (its `win::with_system`).
+#[cfg(target_os = "windows")]
+fn internet_options() -> String {
+    match windows_registry::CURRENT_USER.open("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings") {
+        Ok(settings) => format!(
+            "ProxyEnable={:?}\nProxyServer={:?}\nProxyOverride={:?}\n",
+            settings.get_u32("ProxyEnable").ok(),
+            settings.get_string("ProxyServer").ok(),
+            settings.get_string("ProxyOverride").ok()
+        ),
+        Err(_) => "Internet Settings: none\n".to_owned(),
+    }
+}
+
+/// Elsewhere hyper-util reads no such values.
+#[cfg(not(target_os = "windows"))]
+fn internet_options() -> String {
+    String::new()
 }
 
 /// The proxy plan in force for a process, shared by its clients (`Arc<Network>`).
@@ -94,7 +118,7 @@ impl Route {
 impl Default for Network {
     /// The system's proxy.
     fn default() -> Self {
-        Self::with_system(Box::new(Matcher::from_system), Box::new(environment_settings))
+        Self::with_system(Box::new(Matcher::from_system), Box::new(system_settings))
     }
 }
 
@@ -207,23 +231,9 @@ impl Network {
             }
             None => {
                 // Both proxies and every exclusion rule, from wherever the reader took them, and
-                // the raw settings, credentials included.
-                let system = (self.system)();
-                format!("{system:?}").hash(&mut hasher);
+                // the raw settings it took them from, credentials included.
+                format!("{:?}", (self.system)()).hash(&mut hasher);
                 (self.system_raw)().hash(&mut hasher);
-                // The credentials the matcher itself carries (Windows' `ProxyServer` can hold
-                // `user:password@`): each scheme's proxy signs every target it takes with the same
-                // ones, so the first of these targets it takes shows them. A list that excludes
-                // all three leaves no target to any proxy in practice.
-                for scheme in ["http", "https"] {
-                    let credentials = ["proxy-probe.voltip.invalid", "198.51.100.1", "[2001:db8::1]"]
-                        .iter()
-                        .filter_map(|host| format!("{scheme}://{host}/").parse::<http::Uri>().ok())
-                        .find_map(|uri| system.intercept(&uri))
-                        .and_then(|intercept| route_of(&intercept))
-                        .and_then(|route| route.credentials);
-                    credentials.hash(&mut hasher);
-                }
             }
         }
         hasher.finish()
