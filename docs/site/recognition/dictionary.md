@@ -66,15 +66,15 @@ Importing either replaces the list or merges into it, matching rules by name. Th
 
 Open an entry in **History** and switch to the **Original** view: it shows the text as the recogniser wrote it, which is where misheard words are.
 
-- Words AI polish already corrected have a dotted blue underline; hovering shows the polished spelling, for example "Polished as 「Voltip」". Selecting one opens a prefilled dictionary card.
+- Words AI polish already corrected have a dotted blue underline; hovering shows the polished spelling, for example "Polished as “Voltip”". Selecting one opens a prefilled dictionary card.
 - Words that are already the heard-as form of an entry have a solid green underline.
 - Select any other misheard word and a toolbar appears above it: **Add to dictionary** (D) or **New rule** (R). Double-click selects a word. When the selection is longer than 64 characters or spans lines, **Add to dictionary** is unavailable and says why.
 
 The card opens under the selection, without leaving the page:
 
 - **Heard as** is the selected text; **Right spelling** is prefilled from the polished text where possible, marked **From the polished text**, so Enter saves it.
-- The card tells you what the change would affect, for example "Besides this one, 3 of the last 500 entries contain 「维他命」"; **Show** lists a few of them. When some entries kept the word in their final text, the card warns that it may be correct there; it also warns about one-character forms.
-- When the right spelling is already an entry, the card merges the heard-as form into it and the button reads **Add to 「Voltip」**. When the form belongs to another entry, the card says so and cannot save.
+- The card tells you what the change would affect, for example "Besides this one, 3 of the last 499 entries contain “维他命”"; **Show** lists a few of them. When some entries kept the word in their final text, the card warns that it may be correct there; it also warns about one-character forms.
+- When the right spelling is already an entry, the card merges the heard-as form into it and the button reads **Add to “Voltip”**. When the form belongs to another entry, the card says so and cannot save.
 - The top of the card switches to **Rule**: find and replace side by side, with a preview of the rule on this entry's final text.
 
 In the **Compare** view, selecting a pair of changes first asks which spelling is right: the polished one adds the original form to the dictionary; the original one (AI polish changed it wrongly) adds it as the right spelling, so AI polish keeps it from then on.
