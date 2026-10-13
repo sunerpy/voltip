@@ -56,7 +56,6 @@ import {
 import { useHistoryPageSize } from "./history-list/page-size";
 import { useHistoryPages } from "./history-list/useHistoryPages";
 
-
 export interface HistoryProps {
   /** `today | week | month | all | starred | failed` from the home tiles, or an entry id. */
   initialFilter?: string;
