@@ -70,6 +70,10 @@ Open an entry in **History** and switch to the **Original** view: it shows the t
 - Words that are already the heard-as form of an entry have a solid green underline.
 - Select any other misheard word and a toolbar appears above it: **Add to dictionary** (D) or **New rule** (R). Double-click selects a word. When the selection is longer than 64 characters or spans lines, **Add to dictionary** is unavailable and says why.
 
+<ScreenFigure src="/screens/history-fix-en-light.webp" width="1440" height="900"
+  alt="The Original view in History: 维他命 and 酷伯内特斯 have a dotted blue underline; the card under 维他命 has it as Heard as and Voltip prefilled as Right spelling."
+  caption="Selecting a word AI polish corrected: the right spelling comes from the polished text." />
+
 The card opens under the selection, without leaving the page:
 
 - **Heard as** is the selected text; **Right spelling** is prefilled from the polished text where possible, marked **From the polished text**, so Enter saves it.

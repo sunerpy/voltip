@@ -16,6 +16,10 @@ Open **Settings → AI tools**:
 - **Port** changes the port (1024–65535); the server restarts on the new port. When the port is taken, the status shows **Could not start** and the reason.
 - The server accepts connections from this computer only, and every request needs the access token. It stops when you turn it off or quit Voltip.
 
+<ScreenFigure src="/screens/mcp-en-light.webp" width="1440" height="900"
+  alt="Settings → AI tools: the MCP server is on and running at http://127.0.0.1:47841/mcp; Correction summary is selected under What AI tools may read."
+  caption="The settings page with the MCP server on; AI tools read the correction summary by default." />
+
 ## Connect Claude Code or Codex
 
 Under **Connect**, choose **Copy command** and run it in a terminal. The copied command already contains the access token; the window never shows the token.
