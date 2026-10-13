@@ -1,30 +1,51 @@
 // One entry of the phone's history (apps/mobile's HistoryEntry, docs/dictation.md §20.7): its text
 // as polished, as recognised and, after 用 AI 预设处理, as processed; when and how it was made; copy,
-// share, star and delete (after a confirmation); and for a long entry the processing and the
-// exports, which go to the share sheet as files.
+// share, star and delete (after a confirmation); for a long entry the processing and the exports,
+// which go to the share sheet as files; and for a take this phone recognised, 纠正识别错误 (§16.9 4):
+// its original text as words to pick, and what to make of them (features/QuickFix.tsx).
+import { usePreventRemove } from "@react-navigation/native";
 import {
   BUILTIN_PRESETS,
   type ExportFormat,
+  type FixKind,
   type HistoryEntry as HistoryEntryData,
+  type TextRange,
+  type WordPiece,
   dayLabel,
   errorText,
+  fixScope,
+  fixTarget,
   formatCount,
   formatDuration,
   outcomeLabel,
+  prefillFor,
   presetLabel,
   presetRefLabel,
   refineModelText,
   sceneLabel,
   shortClockLabel,
+  tapPiece,
   textChars,
+  textMarks,
+  wordPieces,
+  wordSegmenter,
 } from "@voltip/shared";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 import { ProgressBar, SegmentedButtons, Text } from "react-native-paper";
 
 import { useBackend, useUiState } from "../backend/BackendProvider";
 import { useI18n } from "../backend/i18n";
 import { useNow } from "../backend/useNow";
+import {
+  FIX_BAR_SPACE,
+  FixBar,
+  FixLegend,
+  type FixOpen,
+  FixSheet,
+  FixWords,
+  type SavedFix,
+} from "../features/QuickFix";
 import { exportName, isLongEntry, useHistoryProcess } from "../hooks/useHistoryProcess";
 import { useRootNavigation, useRootRoute } from "../routes";
 import { useShell } from "../shell";
@@ -200,9 +221,63 @@ export function Entry() {
   const now = useNow() * 1000;
   const id = useRootRoute<"Entry">().params.id;
   const entry = useEntry(id);
-  const tooLarge = useUiState().phone_outbox_too_large.includes(id);
+  const ui = useUiState();
+  const tooLarge = ui.phone_outbox_too_large.includes(id);
   const process = useHistoryProcess(id);
   const [view, setView] = useState<TextView>("polished");
+
+  // 纠正识别错误 (§16.9 4): only for a take this phone recognised, with words in its original text.
+  const scope = entry == null ? undefined : fixScope(entry, "phone");
+  const canFix = entry != null && scope?.kind === "fix" && entry.raw_text.trim() !== "";
+  const [fixing, setFixing] = useState(false);
+  const active = fixing && canFix;
+  const [selection, setSelection] = useState<TextRange | undefined>(undefined);
+  const [sheet, setSheet] = useState<FixOpen | undefined>(undefined);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const raw = entry?.raw_text ?? "";
+  const polished = entry?.text ?? "";
+  const marks = useMemo(
+    () => (active ? textMarks(raw, polished, ui.dictionary) : []),
+    [active, raw, polished, ui.dictionary],
+  );
+  // Hermes has no `Intl.Segmenter`: on the phone the words are split by script (quick-fix.ts).
+  const pieces = useMemo(
+    () => (active ? wordPieces(raw, marks, wordSegmenter()) : []),
+    [active, raw, marks],
+  );
+  const exitFix = useCallback(() => {
+    setFixing(false);
+    setSelection(undefined);
+    setSheetOpen(false);
+  }, []);
+  const tap = useCallback((piece: WordPiece) => {
+    setSelection((was) => tapPiece(was, piece));
+  }, []);
+  // The selection made fit for the sheet (grown to a whole replacement, its default kind).
+  const target = useMemo(
+    () =>
+      entry != null && active && selection !== undefined
+        ? fixTarget(entry, "raw", selection.start, selection.end)
+        : undefined,
+    [entry, active, selection],
+  );
+  // The bar's title and 完成 while words are being picked.
+  useLayoutEffect(() => {
+    navigation.setOptions(
+      active
+        ? {
+            title: t("mobile.entry.fix"),
+            headerRight: () => (
+              <Button testID="entry-fix-done" onPress={exitFix}>
+                {t("common.done")}
+              </Button>
+            ),
+          }
+        : { title: t("mobile.title.entry"), headerRight: undefined },
+    );
+  }, [navigation, active, exitFix, t]);
+  // Back leaves the picking first (an open sheet closes before that, on its own).
+  usePreventRemove(active, exitFix);
 
   if (entry === undefined) return <Page>{null}</Page>;
   if (entry === null)
@@ -253,6 +328,30 @@ export function Entry() {
       },
     });
   };
+  const openSheet = (kind: FixKind) => {
+    if (target === undefined) return;
+    const prefill = { ...prefillFor(target), kind };
+    setSheet((was) => ({ id: (was?.id ?? 0) + 1, kind, prefill }));
+    setSheetOpen(true);
+  };
+  const closeSheet = () => {
+    setSheetOpen(false);
+  };
+  const saved = (fix: SavedFix) => {
+    setSheetOpen(false);
+    setSelection(undefined);
+    shell.toast(fix.message, "neutral", {
+      label: t("history.fix.undo"),
+      onPress: () => {
+        // The lists as they are now: the entry or rule the save made is found by what it is.
+        backend.getState().then(fix.undo).catch(fail);
+      },
+    });
+  };
+  const openDictionary = () => {
+    setSheetOpen(false);
+    navigation.navigate("Dictionary");
+  };
   const views: { value: TextView; label: string }[] = [
     { value: "polished", label: t("history.view.polished") },
     { value: "raw", label: t("history.view.raw") },
@@ -261,12 +360,46 @@ export function Entry() {
       : [{ value: "processed" as const, label: t("history.view.processed") }]),
   ];
 
+  const header = (
+    <EntryHeader
+      when={`${dayLabel(entry.at_ms, now, locale)} ${shortClockLabel(entry.at_ms)}`}
+      outcome={outcome}
+    />
+  );
+  if (active) {
+    return (
+      <View style={{ flex: 1 }}>
+        <Page testID="phone-entry-fix">
+          {header}
+          <SectionTitle style={{ paddingHorizontal: 4 }}>{t("history.view.raw")}</SectionTitle>
+          <FixWords pieces={pieces} selection={selection} onTap={tap} />
+          <FixLegend marks={marks} />
+          {target !== undefined && <View style={{ height: FIX_BAR_SPACE }} />}
+        </Page>
+        {target !== undefined && (
+          <FixBar
+            target={target}
+            onClear={() => {
+              setSelection(undefined);
+            }}
+            onOpen={openSheet}
+          />
+        )}
+        <FixSheet
+          open={sheetOpen}
+          spec={sheet}
+          entry={entry}
+          onClose={closeSheet}
+          onSaved={saved}
+          onOpenDictionary={openDictionary}
+        />
+      </View>
+    );
+  }
+
   return (
     <Page testID="phone-entry">
-      <EntryHeader
-        when={`${dayLabel(entry.at_ms, now, locale)} ${shortClockLabel(entry.at_ms)}`}
-        outcome={outcome}
-      />
+      {header}
       {entry.refined && (
         <SegmentedButtons
           value={shown}
@@ -301,12 +434,26 @@ export function Entry() {
           }>
           {entry.starred ? t("history.unstar") : t("history.star")}
         </Button>
+        {canFix && (
+          <Button
+            mode="contained-tonal"
+            icon="spellcheck"
+            testID="entry-fix"
+            onPress={() => {
+              setFixing(true);
+            }}>
+            {t("mobile.entry.fix")}
+          </Button>
+        )}
         <View style={{ flex: 1 }} />
         <Button textColor={theme.colors.error} onPress={remove}>
           {t("common.delete")}
         </Button>
       </View>
       {tooLarge && <Hint>{t("mobile.entry.tooLarge")}</Hint>}
+      {scope?.kind === "note" && (
+        <Hint testID="entry-fix-note">{t(`history.fix.notHere.${scope.note}`)}</Hint>
+      )}
       {isLongEntry(entry) && <LongTools entry={entry} process={process} />}
       <Section>
         <Rows>
