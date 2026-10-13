@@ -20,8 +20,9 @@ use voltip_rn::update::{InstallSource, NOTHING_TO_INSTALL, PACKAGE, UpdateConfig
 
 const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL: Duration = Duration::from_millis(20);
-/// Commands of the shared contract that only the desktop registers (docs/dictation.md §23.6).
-const DESKTOP_ONLY: &[&str] = &["settings_set_serve", "serve_copy_token", "serve_rotate_token"];
+/// Commands of the shared contract that only the desktop registers (docs/dictation.md §23.6, §25).
+const DESKTOP_ONLY: &[&str] =
+    &["settings_set_serve", "serve_copy_token", "serve_rotate_token", "settings_set_mcp", "mcp_copy_token", "mcp_rotate_token", "mcp_copy_setup", "mcp_undo"];
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")

@@ -48,6 +48,8 @@ const rule: ReplacementRule = {
   replacement: "",
   case_sensitive: true,
   enabled: true,
+  source: { kind: "manual" },
+  pending: false,
   created_at_ms: 1,
   updated_at_ms: 1,
 };

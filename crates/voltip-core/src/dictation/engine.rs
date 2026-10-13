@@ -4810,6 +4810,8 @@ mod tests {
             enabled: true,
             created_at_ms: 1,
             updated_at_ms: 1,
+            source: crate::vocabulary::EntrySource::Manual,
+            pending: false,
         }
     }
 

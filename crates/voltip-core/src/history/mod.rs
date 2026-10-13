@@ -21,8 +21,8 @@ mod store;
 
 pub use derived::{corrected_chars, counts_for_stats};
 pub use reader::{
-    HistoryHits, HistoryPage, HistoryQuery, HistoryReader, HistoryStats, HistoryStatsBucket, HistoryText, MAX_QUERY_LIMIT, MAX_RECENT_TEXTS,
-    MAX_STATS_BOUNDARIES,
+    HistoryHits, HistoryPage, HistoryQuery, HistoryReader, HistorySearch, HistoryStats, HistoryStatsBucket, HistoryText, MAX_QUERY_LIMIT, MAX_RECENT_TEXTS,
+    MAX_STATS_BOUNDARIES, SearchEntry, SearchPage,
 };
 pub use revs::{ChangeBatch, Outbox, SHORTENED_FIELD_CHARS, SHORTENED_TEXT_CHARS, bounded};
 pub use store::HistoryStore;

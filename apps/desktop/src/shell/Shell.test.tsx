@@ -74,6 +74,7 @@ describe("Shell", () => {
       "场景",
       "隐私与历史",
       "本机服务",
+      "AI 工具接入",
       "网络",
       "外观",
       "关于",
@@ -683,6 +684,8 @@ describe("Shell", () => {
             enabled: true,
             created_at_ms: 1,
             updated_at_ms: 1,
+            source: { kind: "manual" },
+            pending: false,
           },
         ],
       });

@@ -20,6 +20,7 @@ members = [
     "crates/voltip-platform",
     "crates/voltip-hooks",
     "crates/voltip-serve",
+    "crates/voltip-mcp",
     "apps/server",
     "apps/desktop/src-tauri",
     "apps/mobile/src-tauri",
@@ -94,6 +95,10 @@ proptest = "=1.11.0"
 rand = "=0.10.2"
 # Regex replacement rules (docs/dictation.md §16): linear-time matching, compiled size capped per rule.
 regex = "=1.13.1"
+# The local MCP service (crates/voltip-mcp, docs/dictation.md §25): the official Rust SDK of the Model
+# Context Protocol, Apache-2.0. The server and its Streamable HTTP transport only (no macros); the
+# tests add the client.
+rmcp = { version = "=3.5.1", default-features = false, features = ["server", "transport-streamable-http-server"] }
 # rustls (aws-lc-rs provider + platform verifier) so the Windows cross-build needs no OpenSSL;
 # `socks`: SOCKS5 proxies (docs/dictation.md §24).
 reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "multipart", "json", "http2", "socks"] }
@@ -137,6 +142,9 @@ tokio = { version = "=1.53.1", features = [
     "io-util",
 ] }
 tokio-tungstenite = "=0.30.0"
+# `CancellationToken`, which stops the MCP service's sessions (crates/voltip-mcp); the version rmcp
+# already pulls.
+tokio-util = "=0.7.19"
 # TOML import / export of the replacement rules (docs/dictation.md §16); the version Tauri already uses.
 toml = "=1.1.6"
 # transcribe.cpp (ggml) bindings for the Qwen3-ASR GGUF models (docs/dictation.md §10). MIT.
@@ -182,6 +190,7 @@ voltip-refine = { path = "crates/voltip-refine" }
 voltip-cloud = { path = "crates/voltip-cloud" }
 voltip-inject = { path = "crates/voltip-inject" }
 voltip-serve = { path = "crates/voltip-serve" }
+voltip-mcp = { path = "crates/voltip-mcp" }
 
 # The bundled SQLite (the history, docs/dictation.md §4) is C code that is not debugged here:
 # optimised even in dev builds, so tests and `make desktop-dev` see a realistic database.

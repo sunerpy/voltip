@@ -14,6 +14,7 @@ export * from "./scene-drafts";
 export * from "./history-stats";
 export * from "./feedback-drafts";
 export * from "./proxy";
+export * from "./mcp";
 export * from "./i18n";
 export * from "./logo";
 export * from "./provider-marks";

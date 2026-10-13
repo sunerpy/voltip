@@ -43,6 +43,7 @@ use crate::{CoreError, is_initiator, rendezvous_channel};
 mod always_on;
 mod check;
 mod listing;
+mod mcp;
 mod network;
 mod notice;
 mod processing;
@@ -126,6 +127,9 @@ pub struct CoreConfig {
     /// Starts the local speech service's listener (docs/dictation.md §23.6); `None` on shells that
     /// cannot host it (the phone), whose service commands are then refused.
     pub serve_host: Option<Arc<dyn crate::serve::ServeHost>>,
+    /// Starts the local MCP service's listener (docs/dictation.md §25); `None` on shells that cannot
+    /// host it (the phone), whose MCP commands are then refused.
+    pub mcp_host: Option<Arc<dyn crate::mcp::McpHost>>,
     /// Which side of the sync this core plays (docs/dictation.md §20.8): the desktop shell sets
     /// `Computer`, the phone shell `Phone`.
     pub sync_role: crate::sync::SyncRole,
@@ -214,6 +218,7 @@ impl CoreConfig {
             builtin_scenes: true,
             manual_scenes: false,
             serve_host: None,
+            mcp_host: None,
             sync_role: crate::sync::SyncRole::Off,
             sync_request_timeout: Duration::from_secs(30),
             sync_request_timeout_max: Duration::from_secs(300),
@@ -535,6 +540,17 @@ pub enum CoreCommand {
     ServeCopyToken,
     /// Replace the service's token; clients need the new one from now on.
     ServeRotateToken,
+    /// The local MCP service's settings (docs/dictation.md §25): persisted and applied at once (the
+    /// listener starts, stops or moves; what may be read or changed applies to the next call).
+    SetMcp(crate::mcp::McpSettings),
+    /// Put the MCP service's token on the clipboard (it never reaches the webview).
+    McpCopyToken,
+    /// Replace the MCP service's token; clients need the new one from now on.
+    McpRotateToken,
+    /// Put the command that connects an AI tool, with the real token, on the clipboard.
+    McpCopySetup(crate::mcp::SetupClient),
+    /// Undo an AI tool's write noted in the recent activity (by the activity's id).
+    McpUndo(Uuid),
     /// The proxy settings (docs/dictation.md §24), persisted and in force from the next request,
     /// and the manual proxy's password: `None` keeps the saved one, an empty one removes it.
     SetProxy {
@@ -567,6 +583,7 @@ struct Inbox {
     check_rx: mpsc::Receiver<check::Probed>,
     process_rx: mpsc::Receiver<processing::Processed>,
     listed_rx: mpsc::Receiver<listing::Listed>,
+    mcp_rx: mpsc::Receiver<crate::mcp::McpInbound>,
 }
 
 /// Events to the UI.
@@ -676,6 +693,9 @@ pub enum CoreEvent {
     Connectivity(crate::connectivity::ConnectivityStatus),
     /// The local speech service started, stopped or failed to start (docs/dictation.md §23.6).
     Serve(crate::ui::ServeStatus),
+    /// The local MCP service started, stopped or failed to start, a client came, or the activity
+    /// changed (docs/dictation.md §25).
+    Mcp(crate::mcp::McpStatus),
     /// The proxy's password and the system's proxy (docs/dictation.md §24); on `Ready` and after
     /// every change.
     Network(crate::ui::NetworkStatus),
@@ -801,8 +821,10 @@ impl AppCore {
         let (check_tx, check_rx) = mpsc::channel(4);
         let (process_tx, process_rx) = mpsc::channel(8);
         let (listed_tx, listed_rx) = mpsc::channel(16);
+        let (mcp_tx, mcp_rx) = mpsc::channel(64);
         let activation = ActivationState::new(ActivationConfig::from(&settings));
         let serve_host = config.serve_host.clone();
+        let (mcp, mcp_notice) = mcp::McpRuntime::new(config.mcp_host.clone(), &config.data_dir, mcp_tx);
         let mut rt = Runtime {
             config,
             manager,
@@ -820,7 +842,7 @@ impl AppCore {
             rules,
             scenes,
             presets,
-            startup_notices: [dictionary_notice, rules_notice, scenes_notice, presets_notice, proxy_notice].into_iter().flatten().collect(),
+            startup_notices: [dictionary_notice, rules_notice, scenes_notice, presets_notice, proxy_notice, mcp_notice].into_iter().flatten().collect(),
             models,
             library,
             downloads: HashMap::new(),
@@ -861,6 +883,7 @@ impl AppCore {
             history_dirty: std::sync::atomic::AtomicBool::new(true),
             profile_dirty: std::sync::atomic::AtomicBool::new(true),
             serve: serve::ServeRuntime::new(serve_host),
+            mcp,
             notice: notice::NoticeRuntime::default(),
             proxy_password,
             network_status: crate::ui::NetworkStatus::default(),
@@ -868,7 +891,7 @@ impl AppCore {
         };
         rt.system_fingerprint = rt.config.network.system_fingerprint();
         rt.connect_relay()?;
-        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx };
+        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx, mcp_rx };
         Ok((rt, inbox, CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
 }
@@ -1108,6 +1131,8 @@ struct Runtime {
     profile_dirty: std::sync::atomic::AtomicBool,
     /// The local speech service the app hosts (docs/dictation.md §23.6).
     serve: serve::ServeRuntime,
+    /// The local MCP service the app hosts (docs/dictation.md §25).
+    mcp: mcp::McpRuntime,
     /// The built-in clean-up service's notice (docs/dictation.md §3.6).
     notice: notice::NoticeRuntime,
     /// The manual proxy's password as the keychain holds it (docs/dictation.md §24).
@@ -1223,7 +1248,8 @@ impl Runtime {
     // ---------------- main loop ----------------
 
     async fn run(mut self, inbox: Inbox) {
-        let Inbox { mut cmd_rx, mut link_rx, mut dict_rx, mut model_rx, mut act_rx, mut phone_rx, mut check_rx, mut process_rx, mut listed_rx } = inbox;
+        let Inbox { mut cmd_rx, mut link_rx, mut dict_rx, mut model_rx, mut act_rx, mut phone_rx, mut check_rx, mut process_rx, mut listed_rx, mut mcp_rx } =
+            inbox;
         self.emit(CoreEvent::Ready {
             identity: self.identity.public(),
             settings: self.settings.clone(),
@@ -1243,8 +1269,10 @@ impl Runtime {
         }
         self.emit_devices();
         self.emit(CoreEvent::Serve(self.serve.status()));
+        self.emit(CoreEvent::Mcp(self.mcp.status()));
         self.emit_network();
         self.apply_serve().await;
+        self.apply_mcp().await;
         let mut ticker = tokio::time::interval(self.config.tick);
         // docs/dictation.md §3.5: a model running out of quota (or 重新检查) shows on the pages.
         let mut quota_rx = self.dictation.quota().subscribe();
@@ -1267,6 +1295,7 @@ impl Runtime {
                 Some(probed) = check_rx.recv() => self.on_probed(probed),
                 Some(processed) = process_rx.recv() => self.on_processed(processed),
                 Some(listed) = listed_rx.recv() => self.on_listed(listed),
+                Some(inbound) = mcp_rx.recv() => self.on_mcp(inbound),
                 Ok(()) = quota_rx.changed() => self.emit(CoreEvent::Engines(self.engine_status())),
                 _ = ticker.tick() => self.tick().await,
             }
@@ -1288,6 +1317,7 @@ impl Runtime {
             t.abort();
         }
         self.stop_serve();
+        self.stop_mcp();
         if let Some((l, _)) = self.relay.take() {
             l.close().await;
         }
@@ -1468,6 +1498,11 @@ impl Runtime {
             CoreCommand::SetServe(serve) => self.set_serve(serve).await,
             CoreCommand::ServeCopyToken => self.copy_serve_token().await,
             CoreCommand::ServeRotateToken => self.rotate_serve_token(),
+            CoreCommand::SetMcp(mcp) => self.set_mcp(mcp).await,
+            CoreCommand::McpCopyToken => self.copy_mcp_token().await,
+            CoreCommand::McpRotateToken => self.rotate_mcp_token(),
+            CoreCommand::McpCopySetup(client) => self.copy_mcp_setup(client).await,
+            CoreCommand::McpUndo(id) => self.mcp_undo(id),
             CoreCommand::SetProxy { proxy, password } => self.set_proxy(proxy, password),
             CoreCommand::RefreshNetwork => self.refresh_network(),
             CoreCommand::RefineNoticeClose => {

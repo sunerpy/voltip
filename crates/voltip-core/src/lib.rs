@@ -13,6 +13,7 @@ pub mod engines;
 pub mod history;
 pub mod hotkey;
 mod list_file;
+pub mod mcp;
 pub mod models;
 pub mod paste;
 mod peer;

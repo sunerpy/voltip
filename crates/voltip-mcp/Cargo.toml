@@ -1,0 +1,38 @@
+[package]
+name = "voltip-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Voltip's local MCP service over HTTP: Streamable HTTP on this computer for the user's AI tools (docs/dictation.md §25)."
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+# The HTTP layer around rmcp's Streamable HTTP service: the guard (Host, Origin, token, limits)
+# and `/healthz`.
+axum.workspace = true
+parking_lot.workspace = true
+# The protocol: sessions, JSON-RPC, the Streamable HTTP transport.
+rmcp.workspace = true
+serde_json.workspace = true
+# The bearer token is compared in constant time.
+subtle.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+voltip-core.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+# The tests talk to the service as Claude Code and Codex do: rmcp's own client over HTTP.
+rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+voltip-identity.workspace = true

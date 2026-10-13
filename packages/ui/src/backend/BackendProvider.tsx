@@ -6,6 +6,7 @@ import {
   defaultSettings,
   emptyEngineStatus,
   emptyHotkeyStatus,
+  emptyMcpStatus,
   idleDictation,
   idleUpdate,
 } from "@voltip/shared";
@@ -93,6 +94,7 @@ const EMPTY: UiState = {
   phone_outbox_too_large: [],
   serve: { available: false, phase: "off" },
   network: { proxy_password: false },
+  mcp: emptyMcpStatus(),
 };
 
 export function useBackend(): BackendContextValue {

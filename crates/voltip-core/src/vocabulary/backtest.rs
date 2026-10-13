@@ -109,6 +109,8 @@ pub fn backtest(dictionary: &[DictionaryEntry], history: &[HistoryText], draft: 
                 enabled: true,
                 created_at_ms: 0,
                 updated_at_ms: 0,
+                source: EntrySource::Manual,
+                pending: false,
             };
             let only = Vocabulary::compile(&[], std::slice::from_ref(&draft_rule));
             Ok(collect(takes, |take| {
