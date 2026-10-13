@@ -1158,6 +1158,127 @@ export const exportOutcomeSchema = z.discriminatedUnion("kind", [
 ]);
 export type ExportOutcome = z.infer<typeof exportOutcomeSchema>;
 
+/** docs/dictation.md §4.6: the parts of a backup (`voltip_core::backup::BackupPart`), in the order
+ *  the interface lists them. */
+export const BACKUP_PARTS = ["history", "dictionary", "rules", "scenes", "presets"] as const;
+export const backupPartSchema = z.enum(BACKUP_PARTS);
+export type BackupPart = z.infer<typeof backupPartSchema>;
+/** `voltip_core::backup::BACKUP_EXTENSION`: the extension of a backup file. */
+export const BACKUP_EXTENSION = "voltip-backup";
+/** `voltip_core::backup::MAX_BACKUP_BYTES`: the largest file an import reads (512 MiB). */
+export const MAX_BACKUP_BYTES = 512 * 1024 * 1024;
+/** `voltip_core::backup::BackupCounts`: items per part. */
+export const backupCountsSchema = z.object({
+  history: z.number().int().nonnegative(),
+  dictionary: z.number().int().nonnegative(),
+  rules: z.number().int().nonnegative(),
+  scenes: z.number().int().nonnegative(),
+  presets: z.number().int().nonnegative(),
+});
+export type BackupCounts = z.infer<typeof backupCountsSchema>;
+/** `voltip_core::backup::BackupParts`: which parts an import restores. */
+export const backupPartsSchema = z.object({
+  history: z.boolean(),
+  dictionary: z.boolean(),
+  rules: z.boolean(),
+  scenes: z.boolean(),
+  presets: z.boolean(),
+});
+export type BackupParts = z.infer<typeof backupPartsSchema>;
+/** `voltip_core::backup::BackupManifest`: what a backup says about itself (the import's preview). */
+export const backupManifestSchema = z.object({
+  format: z.string(),
+  version: z.number().int().positive(),
+  app_version: z.string(),
+  created_at_ms: z.number().int().nonnegative(),
+  device: z.string(),
+  platform: platformSchema,
+  counts: backupCountsSchema,
+});
+export type BackupManifest = z.infer<typeof backupManifestSchema>;
+/** `backup_export`'s answer (`voltip_core::backup::ExportOutcome`): written to `path`, the dialog
+ *  closed, or why nothing was written (`unsupported` on the phone). */
+export const backupExportOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("saved"),
+    path: z.string(),
+    counts: backupCountsSchema,
+    bytes: z.number().int().nonnegative(),
+  }),
+  z.object({ kind: z.literal("cancelled") }),
+  z.object({
+    kind: z.literal("failed"),
+    code: z.enum(["write", "history", "unsupported"]),
+    detail: z.string(),
+  }),
+]);
+export type BackupExportOutcome = z.infer<typeof backupExportOutcomeSchema>;
+/** Why `backup_open` has nothing to show (`voltip_core::backup::OpenFailure`). */
+export const BACKUP_OPEN_FAILURES = [
+  "unreadable",
+  "not_backup",
+  "damaged",
+  "too_new",
+  "too_large",
+  "unsupported",
+] as const;
+export type BackupOpenFailure = (typeof BACKUP_OPEN_FAILURES)[number];
+/** `backup_open`'s answer: the preview of a backup the shell holds under `token` (nothing has
+ *  changed yet), the dialog closed, or why the file cannot be imported. */
+export const backupOpenOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("preview"), token: z.string(), manifest: backupManifestSchema }),
+  z.object({ kind: z.literal("cancelled") }),
+  z.object({
+    kind: z.literal("failed"),
+    code: z.enum(BACKUP_OPEN_FAILURES),
+    detail: z.string(),
+    /** The newer format version, for `too_new`. */
+    version: z.number().int().optional(),
+  }),
+]);
+export type BackupOpenOutcome = z.infer<typeof backupOpenOutcomeSchema>;
+/** Items of a part not restored, by reason (`voltip_core::backup::Skipped`). */
+export const backupSkippedSchema = z.object({
+  /** Here already: the same id, or the same term, name or built-in scene. */
+  duplicate: z.number().int().nonnegative(),
+  /** The list was full. */
+  limit: z.number().int().nonnegative(),
+  /** Its spellings belong to a dictionary entry here. */
+  conflict: z.number().int().nonnegative(),
+  /** It does not pass the list's checks. */
+  invalid: z.number().int().nonnegative(),
+  /** History entries older than the newest `Settings.history.keep`. */
+  older: z.number().int().nonnegative(),
+});
+export type BackupSkipped = z.infer<typeof backupSkippedSchema>;
+/** What an import did with one part (`voltip_core::backup::PartReport`). */
+export const backupPartReportSchema = z.object({
+  part: backupPartSchema,
+  in_file: z.number().int().nonnegative(),
+  restored: z.number().int().nonnegative(),
+  skipped: backupSkippedSchema,
+  /** History entries that were here and are gone (replace: all; merge: the oldest past keep). */
+  removed: z.number().int().nonnegative(),
+  /** The part restored nothing and stayed as it was. */
+  error: z.enum(["unavailable", "write"]).optional(),
+});
+export type BackupPartReport = z.infer<typeof backupPartReportSchema>;
+/** `voltip_core::backup::ImportReport`: part by part, in the order the import ran them. */
+export const backupImportReportSchema = z.object({
+  mode: importModeSchema,
+  parts: z.array(backupPartReportSchema),
+});
+export type BackupImportReport = z.infer<typeof backupImportReportSchema>;
+/** `backup_import`'s answer: the report, or why nothing ran. */
+export const backupImportOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("done"), report: backupImportReportSchema }),
+  z.object({
+    kind: z.literal("failed"),
+    code: z.enum(["expired", "unavailable", "unsupported"]),
+  }),
+]);
+export type BackupImportOutcome = z.infer<typeof backupImportOutcomeSchema>;
+
 /** `voltip_core::history::MAX_ENTRIES`: older rows are dropped past this. */
 export const HISTORY_LIMIT = 20_000;
 /** `voltip_core::history::RECENT_ENTRIES`: the newest entries `UiState.history_recent` carries. */
@@ -2488,6 +2609,14 @@ export interface CommandArgs {
   history_process_cancel: { requestId: number };
   /** Query: 导出字幕 / 导出文本 through the save dialog (`Backend.historyExport`, §22). */
   history_export: { id: string; format: ExportFormat; fileName: string };
+  /** Query (§4.6): 导出备份 through the save dialog (`Backend.backupExport`). */
+  backup_export: { fileName: string };
+  /** Query: 导入备份's open dialog titled `title`, then the file checked (`Backend.backupOpen`). */
+  backup_open: { title: string };
+  /** Query: restore the chosen parts of the backup `token` names (`Backend.backupImport`). */
+  backup_import: { token: string; parts: BackupParts; mode: ImportMode };
+  /** Query: close a preview without importing (`Backend.backupDiscard`). */
+  backup_discard: { token: string };
   /** Query: every built-in preset's text (`Backend.presetsBuiltin`, 复制为自定义). */
   presets_builtin: undefined;
   /** Which parts of a take's context may go to the LLM (§18.5); the core re-emits `settings`. */
@@ -2562,6 +2691,10 @@ export type QueryCommand =
   | "permissions_request"
   | "inject_preflight"
   | "paste_text"
+  | "backup_export"
+  | "backup_open"
+  | "backup_import"
+  | "backup_discard"
   | "provider_console_open"
   | "project_link_open"
   | "guide_open"
@@ -2598,6 +2731,10 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "permissions_request",
   "inject_preflight",
   "paste_text",
+  "backup_export",
+  "backup_open",
+  "backup_import",
+  "backup_discard",
   "provider_console_open",
   "project_link_open",
   "guide_open",

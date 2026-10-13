@@ -41,6 +41,7 @@ use crate::vocabulary::{DictionaryDraft, DictionaryEntry, DictionaryStore, Entry
 use crate::{CoreError, is_initiator, rendezvous_channel};
 
 mod always_on;
+mod backup;
 mod check;
 mod listing;
 mod network;
@@ -486,6 +487,19 @@ pub enum CoreCommand {
         rules: Vec<RuleDraft>,
         /// Replace or merge.
         mode: ImportMode,
+    },
+    /// Restore the chosen parts of a backup the shell read and checked (docs/dictation.md §4.6):
+    /// the presets, the scenes, the dictionary, the rules, then the history, each written in one go
+    /// and announced by its event; `reply` gets what each part restored.
+    BackupImport {
+        /// The backup.
+        backup: Arc<crate::backup::Backup>,
+        /// Which parts.
+        parts: crate::backup::BackupParts,
+        /// Merged with what is here, or in its place.
+        mode: ImportMode,
+        /// Where the report goes.
+        reply: crate::backup::ImportReply,
     },
     /// Append a scene (docs/dictation.md §18).
     SceneAdd(SceneDraft),
@@ -1418,6 +1432,10 @@ impl Runtime {
             CoreCommand::RulesImport { rules, mode } => {
                 let result = self.rules.import(&rules, mode, now_ms());
                 self.rules_changed(result)
+            }
+            CoreCommand::BackupImport { backup, parts, mode, reply } => {
+                reply.send(self.import_backup(&backup, parts, mode));
+                Ok(())
             }
             CoreCommand::SceneAdd(draft) => {
                 let result = self.scenes.add(&draft, now_ms()).map(drop);

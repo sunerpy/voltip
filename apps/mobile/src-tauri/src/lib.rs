@@ -36,7 +36,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`, less the
 /// desktop-only commands (the local speech service's, docs/dictation.md §23.6) that
 /// `tests/ipc.rs` lists as `DESKTOP_ONLY`.
-pub const COMMANDS: [&str; 112] = [
+pub const COMMANDS: [&str; 116] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -96,6 +96,10 @@ pub const COMMANDS: [&str; 112] = [
     "history_process",
     "history_process_cancel",
     "history_export",
+    "backup_export",
+    "backup_open",
+    "backup_import",
+    "backup_discard",
     "settings_set_locale",
     "settings_set_auto_update",
     "settings_set_history",
@@ -652,6 +656,29 @@ async fn history_export<R: Runtime>(
     })
 }
 
+/// 导出备份 / 导入备份 (docs/dictation.md §4.6) are the computer's: the phone registers the commands
+/// of the shared contract and answers `unsupported`.
+#[tauri::command]
+fn backup_export() -> voltip_core::backup::ExportOutcome {
+    voltip_core::backup::ExportOutcome::unsupported()
+}
+
+/// See [`backup_export`].
+#[tauri::command]
+fn backup_open() -> voltip_core::backup::OpenOutcome {
+    voltip_core::backup::OpenOutcome::unsupported()
+}
+
+/// See [`backup_export`].
+#[tauri::command]
+fn backup_import() -> voltip_core::backup::ImportOutcome {
+    voltip_core::backup::ImportOutcome::Failed { code: voltip_core::backup::ImportFailure::Unsupported }
+}
+
+/// See [`backup_export`]: nothing is held, so there is nothing to let go of.
+#[tauri::command]
+fn backup_discard() {}
+
 /// UI language is shared state: the phone edits it like the desktop does.
 #[tauri::command]
 fn settings_set_locale(bridge: tauri::State<'_, Bridge>, locale: Locale) -> Result<(), String> {
@@ -1189,6 +1216,10 @@ pub fn build_app<R: Runtime>(
             history_process,
             history_process_cancel,
             history_export,
+            backup_export,
+            backup_open,
+            backup_import,
+            backup_discard,
             settings_set_locale,
             settings_set_auto_update,
             settings_set_history,

@@ -428,6 +428,19 @@ impl PresetStore {
         let presets = self.presets.iter().filter(|p| p.id != id).cloned().collect();
         self.commit(presets)
     }
+
+    /// Put `presets` in the place of the list, as they are (a backup's import, docs/dictation.md
+    /// §4.6): checked like a stored file (every preset in its normalised form, the list within the
+    /// rules) and written in one go. Refused whole, the file and the list unchanged.
+    pub fn restore_list(&mut self, presets: Vec<CustomPreset>) -> Result<(), PresetError> {
+        for preset in &presets {
+            let draft = PresetDraft::from(preset);
+            if validate_preset_draft(&draft)? != draft {
+                return Err(invalid(format!("预设「{}」不是规范形式", preset.name)));
+            }
+        }
+        self.commit(presets)
+    }
 }
 
 #[cfg(test)]

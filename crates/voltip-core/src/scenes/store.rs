@@ -190,4 +190,27 @@ impl SceneStore {
         let scenes = permute(&self.scenes, ids, |s| s.id).ok_or_else(|| SceneError::Invalid("新的顺序必须恰好包含现有的全部场景".into()))?;
         self.commit(scenes)
     }
+
+    /// The system whose rules the list follows and whose default applications the built-in scenes
+    /// get.
+    pub fn platform(&self) -> Platform {
+        self.platform
+    }
+
+    /// Put `scenes` in the place of the list, as they are (a backup's import, docs/dictation.md
+    /// §4.6), the built-in categories it lacks appended at `now_ms` as at startup: checked like a
+    /// stored file (every scene in its normalised form, the list within the rules) and written in
+    /// one go. Refused whole, the file and the list unchanged.
+    pub fn restore_list(&mut self, scenes: Vec<Scene>, now_ms: u64) -> Result<(), SceneError> {
+        let mut scenes = scenes;
+        let missing = missing_builtin(&scenes, self.platform);
+        scenes.extend(missing.into_iter().map(|category| builtin_scene(category, self.platform, now_ms)));
+        for scene in &scenes {
+            let draft = SceneDraft::from(scene);
+            if validate_scene_draft_with(&draft, scene.builtin.is_none() && scenes_need_apps(self.platform))? != draft {
+                return Err(SceneError::Invalid(format!("场景「{}」不是规范形式", scene.name)));
+            }
+        }
+        self.commit(scenes)
+    }
 }
