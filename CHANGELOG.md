@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/sunerpy/voltip/compare/v0.1.5...v0.1.6) (2026-10-13)
+
+
+### Bug Fixes
+
+* 中继按真实客户端地址限流，不再让所有用户共用一份额度 ([#167](https://github.com/sunerpy/voltip/issues/167)) ([a916550](https://github.com/sunerpy/voltip/commit/a916550c2a41eabb646f6176e148d9276ac09d98))
+
 ## [0.1.5](https://github.com/sunerpy/voltip/compare/v0.1.4...v0.1.5) (2026-10-13)
 
 
