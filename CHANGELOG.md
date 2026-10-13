@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.5](https://github.com/sunerpy/voltip/compare/v0.1.4...v0.1.5) (2026-10-13)
+
+
+### Features
+
+* 历史详情可快速纠正识别错误，电脑端新增 AI 工具接入（本机 MCP 服务） ([#163](https://github.com/sunerpy/voltip/issues/163)) ([8ebb42b](https://github.com/sunerpy/voltip/commit/8ebb42bcd20e2c1650b65fbf7c27998715feb2bb))
+* 电脑端数据备份与迁移，历史记录分页与搜索，手机可点按说话 ([#161](https://github.com/sunerpy/voltip/issues/161)) ([d33d1fe](https://github.com/sunerpy/voltip/commit/d33d1fea2855eb89adb4759202e8cfe40b888e05))
+
+
+### Bug Fixes
+
+* 「润色时已改正」与替换汇总不再包含词典和替换规则做的改动 ([#165](https://github.com/sunerpy/voltip/issues/165)) ([2b49c1d](https://github.com/sunerpy/voltip/commit/2b49c1d7cfba5319f8150aec0ce6886ddf7aec65))
+* 记录用过的词条或规则删改后，不再把旧改动算作润色替换 ([#166](https://github.com/sunerpy/voltip/issues/166)) ([200b263](https://github.com/sunerpy/voltip/commit/200b263a161366782d05d807a2a08b125b1c783d))
+
 ## [0.1.4](https://github.com/sunerpy/voltip/compare/v0.1.3...v0.1.4) (2026-10-12)
 
 
