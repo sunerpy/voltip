@@ -1,6 +1,11 @@
 import type {
   AppRef,
   ArgsOf,
+  BackupExportOutcome,
+  BackupImportOutcome,
+  BackupOpenOutcome,
+  BackupParts,
+  ImportMode,
   AttachmentFile,
   AudioDevice,
   AudioOutputs,
@@ -58,6 +63,18 @@ export interface Backend {
   /** 导出字幕（SRT）/ 导出文本（TXT） of entry `id` (`history_export`, docs/dictation.md §22): the
    *  shell's save dialog offers `fileName`, and the shell writes the file. */
   historyExport(id: string, format: ExportFormat, fileName: string): Promise<ExportOutcome>;
+  /** 导出备份 (`backup_export`, docs/dictation.md §4.6): the shell's save dialog offers `fileName`,
+   *  and the shell writes the history, the dictionary, the rules, the scenes and the presets into
+   *  one file. */
+  backupExport(fileName: string): Promise<BackupExportOutcome>;
+  /** 导入备份, first step (`backup_open`): the shell's open dialog, titled `title`, then the file read
+   *  and checked whole. The preview names what it holds; nothing has changed yet. */
+  backupOpen(title: string): Promise<BackupOpenOutcome>;
+  /** 导入备份, second step (`backup_import`): restore `parts` of the backup the preview's `token`
+   *  names, merged with what is here or in its place; resolves with what each part restored. */
+  backupImport(token: string, parts: BackupParts, mode: ImportMode): Promise<BackupImportOutcome>;
+  /** Close a preview without importing (`backup_discard`): the shell lets go of the backup. */
+  backupDiscard(token: string): Promise<void>;
   /** Start the native input level meter on `deviceId` (default device when `undefined`). Frames
    *  stream at ≈ 30 Hz through a Tauri `Channel`; the returned function stops the meter. */
   meter(deviceId: string | undefined, onFrame: FrameListener): Promise<Unsubscribe>;

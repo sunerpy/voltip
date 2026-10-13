@@ -47,9 +47,6 @@ describe("the phone app on React Native", () => {
     const { backend } = await renderApp();
     const invoke = jest.spyOn(backend, "invoke");
     const button = await screen.findByTestId("phone-mic-hold");
-    await fireEvent(button, "layout", {
-      nativeEvent: { layout: { x: 0, y: 0, width: 136, height: 136 } },
-    });
     await fireEvent(button, "responderGrant", { nativeEvent: { locationX: 60, locationY: 60 } });
     await fireEvent(button, "responderMove", { nativeEvent: { locationX: 60, locationY: -200 } });
     expect(await screen.findByText("松开取消")).toBeOnTheScreen();

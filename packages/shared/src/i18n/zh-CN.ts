@@ -54,6 +54,16 @@ export const zhCN = {
     themeSwitch: { label: "主题" },
     dialog: { escCancel: "取消" },
     drawer: { close: "关闭" },
+    /** `Pagination`: the page buttons of a long list (the desktop history page, user request
+     *  2026-10-13). */
+    pagination: {
+      label: "分页",
+      first: "第一页",
+      previous: "上一页",
+      next: "下一页",
+      last: "最后一页",
+      page: "第 {n} 页",
+    },
     palette: {
       placeholder: "输入命令或页面…",
       label: "命令菜单",
@@ -522,6 +532,22 @@ export const zhCN = {
     /** Below a list with more entries than loaded (docs/dictation.md §4.4). */
     loadMore: "加载更多",
     loaded: "已显示 {shown} / {n} 条",
+    /** The desktop history page's footer (docs/dictation.md §4.4, user request 2026-10-13):
+     *  where the page is, and how many entries a page shows. `n` picks the form, `count` is the
+     *  number as shown. */
+    pager: {
+      count: {
+        one: "第 {page} / {pages} 页 · 共 {count} 条",
+        other: "第 {page} / {pages} 页 · 共 {count} 条",
+      },
+      found: {
+        one: "第 {page} / {pages} 页 · 找到 {count} 条",
+        other: "第 {page} / {pages} 页 · 找到 {count} 条",
+      },
+      size: "每页显示条数",
+      sizeLabel: "每页",
+      sizeOption: "{n} 条",
+    },
     origin: {
       take: "手机 · {device}",
       typed: "手机输入 · {device}",
@@ -559,6 +585,10 @@ export const zhCN = {
       noneInFilter: "{filter}暂无结果。",
       clearSearch: "清除搜索",
       noMatchBody: "已记录的 {n} 条都不匹配。",
+      /** A search inside a filter that finds nothing (user request 2026-10-13). */
+      noMatchInFilter: "「{filter}」中没有结果匹配「{query}」",
+      noMatchInFilterBody: "可清除搜索，或在全部记录中查找。",
+      searchAll: "在全部记录中查找",
       starHint: "在任意一条上点 ★ 收藏。",
       rangeHint: "可选择其他时间范围。",
       pick: "从左侧选择一条结果",
@@ -2276,6 +2306,91 @@ export const zhCN = {
         clearConfirmBody: "这台电脑上的 {n} 条记录会被删除，不能撤销。",
         clearConfirm: "清空",
         cleared: "已清空听写历史",
+        /** 备份与迁移 (docs/dictation.md §4.6). */
+        backup: {
+          title: "备份与迁移",
+          export: "导出备份",
+          exportHelp:
+            "将历史记录、词典、规则、场景和 AI 预设保存到一个文件中，用于备份或迁移到另一台电脑。",
+          exportAction: "导出…",
+          exporting: "正在导出…",
+          import: "导入备份",
+          importHelp:
+            "从备份文件恢复。导入前会先显示文件中的内容，你可以选择要导入的部分，以及合并或替换。",
+          importAction: "导入…",
+          note: "备份不包含设置、API 密钥和已配对的设备。备份文件未加密，其中的听写内容可以直接读取，请妥善保管。",
+          fileName: "Voltip 备份 {date}",
+          openTitle: "选择要导入的 Voltip 备份",
+          exported: "已导出备份（{size}）：{path}",
+          exportFailed: {
+            write: "无法在所选位置保存备份。",
+            history: "无法读取历史记录，未导出备份。",
+            unsupported: "此设备不能导出备份。",
+          },
+          openFailed: {
+            unreadable: "无法读取所选文件。",
+            not_backup: "所选文件不是 Voltip 备份。",
+            damaged: "备份文件已损坏，无法导入。",
+            too_new: "此备份由较新版本的 Voltip 创建（格式版本 {version}），请先更新 Voltip。",
+            too_large: "备份文件超过 512 MB，无法导入。",
+            unsupported: "此设备不能导入备份。",
+          },
+          importFailed: {
+            expired: "此备份已关闭，请重新选择文件。",
+            unavailable: "导入未完成：Voltip 没有响应，请稍后重试。",
+            unsupported: "此设备不能导入备份。",
+          },
+          dialog: {
+            title: "导入备份",
+            source: "来源",
+            sourceValue: "{device} · {platform}",
+            created: "创建时间",
+            version: "版本",
+            versionValue: "Voltip {app} · 格式版本 {format}",
+            parts: "导入的内容",
+            mode: "导入方式",
+            merge: "合并",
+            replace: "替换",
+            mergeHelp:
+              "保留这台电脑上已有的内容，只添加备份中新增的部分；内置场景保留这台电脑的设置。",
+            replaceHelp: "删除这台电脑上所选部分的现有内容，替换为备份中的内容。",
+            keepNote: "历史记录最多保留最近 {keep} 条，超出部分中较早的记录不会保留。",
+            none: "备份中没有",
+            importAction: "导入",
+            replaceAction: "替换",
+            importing: "正在导入…",
+            doneTitle: "导入完成",
+          },
+          part: {
+            history: "历史记录",
+            dictionary: "词典",
+            rules: "规则",
+            scenes: "场景",
+            presets: "AI 预设",
+          },
+          count: {
+            history: { one: "{count} 条", other: "{count} 条" },
+            dictionary: { one: "{count} 条", other: "{count} 条" },
+            rules: { one: "{count} 条", other: "{count} 条" },
+            scenes: { one: "{count} 个", other: "{count} 个" },
+            presets: { one: "{count} 个", other: "{count} 个" },
+          },
+          result: {
+            restored: "已导入 {count}",
+            skipped: "跳过：{reasons}",
+            separator: "，",
+            duplicate: "已有 {count}",
+            limit: "超出上限 {count}",
+            conflict: "与现有词条冲突 {count}",
+            invalid: "内容无效 {count}",
+            older: "超出保留条数 {count}",
+            removed: "已从这台电脑删除 {count}",
+            error: {
+              unavailable: "无法打开历史记录，未导入。",
+              write: "未能保存，此项保持不变。",
+            },
+          },
+        },
         keysTitle: "密钥",
         keys: "API 密钥存放在",
         keysHelp: "服务商的密钥只写入系统的安全存储，界面和设置文件里都没有。",
@@ -2904,11 +3019,22 @@ export const zhCN = {
       release: "松开发送",
       releaseLocal: "松开识别",
       releaseCancel: "松开取消",
+      /** The choice under the talk button (user request 2026-10-13, `Settings.phone_talk`). */
+      mode: "说话方式",
+      modeHold: "按住",
+      modeTap: "点按",
+      tap: "点按开始说话",
+      tapTo: "再次点按，发送到 {name}",
+      tapLocal: "再次点按，开始识别",
+      tapHint: "点按开始录音，再次点按结束",
+      tapCancel: "取消录音",
       starting: "正在打开麦克风…",
       listening: "正在录音 · {elapsed}",
       processing: "电脑正在识别…",
       donePasted: "已插入电脑：{text}",
       doneClipboard: "已放到电脑剪贴板：{text}",
+      /** Recognised on the computer, not inserted (2026-10-13): a notice, not a failure. */
+      notInserted: "未能插入电脑当前的窗口，文字已保存在电脑的历史记录中：{text}",
       cancelled: "已取消",
       local: {
         transcribing: "正在识别…",

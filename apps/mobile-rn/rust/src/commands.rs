@@ -17,7 +17,7 @@ use crate::shell::Shell;
 
 /// Every command the app may invoke: the Tauri phone shell's `COMMANDS`, in its order (a test reads
 /// that list and compares).
-pub const COMMANDS: [&str; 113] = [
+pub const COMMANDS: [&str; 118] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -77,6 +77,10 @@ pub const COMMANDS: [&str; 113] = [
     "history_process",
     "history_process_cancel",
     "history_export",
+    "backup_export",
+    "backup_open",
+    "backup_import",
+    "backup_discard",
     "settings_set_locale",
     "settings_set_auto_update",
     "settings_set_history",
@@ -115,6 +119,7 @@ pub const COMMANDS: [&str; 113] = [
     "presets_builtin",
     "settings_set_context_sharing",
     "settings_set_pinned_scene",
+    "settings_set_phone_talk",
     "settings_set_proxy",
     "network_refresh",
     "refine_notice_close",
@@ -233,6 +238,11 @@ pub async fn run(shell: &Shell, command: &str, args: Value) -> Result<Value, Str
             Ok(Value::Null)
         }
         "history_export" => history_export(shell, command, &args).await,
+        // docs/dictation.md §4.6: backups are the computer's, as in the Tauri phone shell.
+        "backup_export" => to_json(&voltip_core::backup::ExportOutcome::unsupported()),
+        "backup_open" => to_json(&voltip_core::backup::OpenOutcome::unsupported()),
+        "backup_import" => to_json(&voltip_core::backup::ImportOutcome::Failed { code: voltip_core::backup::ImportFailure::Unsupported }),
+        "backup_discard" => Ok(Value::Null),
         // docs/dictation.md §20.9: Google Play updates what it installed; an APK from a release asks
         // GitHub, and the newer release's APK opens in the browser.
         "update_check" => shell.inner.updater.check(&shell.inner.runtime, bridge).map(|()| Value::Null),

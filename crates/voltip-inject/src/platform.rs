@@ -436,9 +436,28 @@ impl SystemKeys {
             Err(EnigoError::Connect(e)) => {
                 Err(DeliveryError::Unavailable(InjectNote::new(connect_code(), format!("{}: no input connection: {e}", self.backend.name()))))
             }
+            // docs/dictation.md §4.2: Windows turned the chord away, so nothing reached a window and
+            // the text stays on the clipboard for the user. `SendInput` refuses input while the
+            // computer is locked (a long take from the phone can leave it idle long enough to lock;
+            // the preflight then reads no window and cannot open the input desktop, so it lets the
+            // paste go ahead) as well as into a higher-integrity window it could not read; enigo
+            // blames UIPI either way, so the note names both and claims neither.
+            Err(EnigoError::Input(e)) if refused_by_uipi(&e) => Err(DeliveryError::Unavailable(InjectNote::new(
+                FallbackCode::Other,
+                format!(
+                    "Windows 拒绝了模拟按键：电脑可能已锁屏，或前台窗口以更高权限运行；文本已留在剪贴板，请手动粘贴（{}: input refused: {e}）",
+                    self.backend.name()
+                ),
+            ))),
             Err(EnigoError::Input(e)) => Err(DeliveryError::Failed(format!("{}: input refused: {e}", self.backend.name()))),
         }
     }
+}
+
+/// Whether Windows refused an input enigo tried to send: `SendInput` sent fewer events than asked,
+/// which enigo reports as "not all input events were sent. they may have been blocked by UIPI".
+pub fn refused_by_uipi(message: &str) -> bool {
+    message.contains("UIPI")
 }
 
 impl KeystrokePort for SystemKeys {
@@ -647,5 +666,24 @@ mod tests {
             matches!(keys.delivered(Err(EnigoError::Input("refused".into()))), Err(DeliveryError::Failed(_))),
             "a refused event is a failure, not a fallback"
         );
+    }
+
+    /// Regression (user report 2026-10-13, a long take from the phone on Windows): a paste Windows
+    /// refused was a failure — the clipboard went back to the old text, the phone said
+    /// 「未插入：inject: keystroke: enigo: input refused: …」 and the desktop's pill stayed as an
+    /// error — although nothing had reached a window. It is a clipboard fallback now, like the
+    /// preflight's own when it sees the lock screen or an elevated window coming.
+    #[test]
+    fn regression_a_uipi_refusal_leaves_the_text_on_the_clipboard() {
+        let reported = "simulating input failed: (not all input events were sent. they may have been blocked by UIPI)";
+        assert!(refused_by_uipi(reported));
+        assert!(!refused_by_uipi("simulating input failed: (no window has the focus)"));
+        let keys = SystemKeys::with_backend(EnigoBackend::Native);
+        let Err(DeliveryError::Unavailable(note)) = keys.delivered(Err(EnigoError::Input(reported.into()))) else {
+            panic!("a UIPI refusal leaves the text on the clipboard")
+        };
+        assert_eq!(note.code, FallbackCode::Other, "the cause is not known: locked, or an elevated window");
+        assert!(note.detail.contains("锁屏") && note.detail.contains("更高权限") && note.detail.contains("文本已留在剪贴板"), "{}", note.detail);
+        assert!(note.detail.ends_with(&format!("（enigo: input refused: {reported}）")), "the original message stays for the details");
     }
 }

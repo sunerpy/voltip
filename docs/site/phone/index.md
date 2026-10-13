@@ -53,7 +53,11 @@ The phone and the computer meet through a relay, the built-in one unless the com
 
 ## Talking on the phone
 
-Hold **Hold to talk** on the phone, speak, and release. The audio streams to the computer while you speak. The computer recognises it with its own settings — its recognition service, dictionary, AI polish, rules and scenes — and inserts the text at its own cursor. While you hold it, the card shows how long you have been recording and the sound level, and says which computer the text goes to when you let go; then the phone shows each step and the result. Slide your finger off the button before releasing to cancel.
+Hold **Hold to talk** on the phone, speak, and release. The audio streams to the computer while you speak. The computer recognises it with its own settings — its recognition service, dictionary, AI polish, rules and scenes — and inserts the text at its own cursor. While you hold it, the card shows how long you have been recording and the sound level, and says which computer the text goes to when you let go; then the phone shows each step and the result. To cancel, slide your finger away from the button and let go once it reads **Release to cancel**; a finger that moves a little while holding does not cancel.
+
+If you would rather not hold the button, set **Talk by** under it to **Tap**: tap once to start recording and again to finish and send it, and tap **Cancel recording** under the button to discard it. The choice cannot change while a recording runs, and the phone remembers it.
+
+When the computer recognises the text but cannot insert it at the cursor — the computer is locked, say, or the window in front runs as administrator — the text stays on the computer's clipboard and the phone says *Left on the computer's clipboard*. When something else keeps it from inserting, the phone says the text is in the computer's history. Either way the computer's history has the text.
 
 Once the computer has inserted the text, the phone also keeps an entry in its own **History**, marked **Sent to** and the computer's name: the text the computer reported (up to 2,000 characters) and the length of the recording. The recognition and polish details stay in the computer's history. This entry is never uploaded to the computer. With saving turned off under **Settings** › **History** on the phone, the phone keeps none.
 

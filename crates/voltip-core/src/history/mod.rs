@@ -26,6 +26,7 @@ pub use reader::{
 };
 pub use revs::{ChangeBatch, Outbox, SHORTENED_FIELD_CHARS, SHORTENED_TEXT_CHARS, bounded};
 pub use store::HistoryStore;
+pub use store::Restored;
 pub(crate) use store::{BUSY_TIMEOUT, SCHEMA as TABLES, insert_copy};
 
 /// The database inside the app data directory.

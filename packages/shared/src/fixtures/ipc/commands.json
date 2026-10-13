@@ -534,6 +534,12 @@
   },
   {
     "args": {
+      "mode": "tap"
+    },
+    "name": "settings_set_phone_talk"
+  },
+  {
+    "args": {
       "enabled": true,
       "port": 47840,
       "preset": "prompt",

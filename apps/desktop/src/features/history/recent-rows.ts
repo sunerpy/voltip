@@ -40,8 +40,9 @@ export function rowsThatFit({ budget, row, heading, starts, min }: RowFit): numb
   return Math.max(fewest, fit);
 }
 
-/** The element whose content scrolls the page: the nearest ancestor that scrolls vertically. */
-function scrollArea(page: HTMLElement): HTMLElement | null {
+/** The element whose content scrolls the page: the nearest ancestor that scrolls vertically (the
+ *  shell's `<main>`; the history page measures it too). */
+export function scrollArea(page: HTMLElement): HTMLElement | null {
   for (let el = page.parentElement; el !== null; el = el.parentElement) {
     if (/(auto|scroll)/.test(getComputedStyle(el).overflowY)) return el;
   }

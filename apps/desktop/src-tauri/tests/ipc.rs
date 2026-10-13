@@ -1565,6 +1565,10 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "audio_devices",
             "audio_outputs",
             "history_export",
+            "backup_export",
+            "backup_open",
+            "backup_import",
+            "backup_discard",
             "audio_meter_start",
             "audio_meter_stop",
             "overlay_state",
@@ -1612,6 +1616,26 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
         }
         let err = invoke(webview, "core_state_v2", json!({})).unwrap_err();
         assert!(err.as_str().unwrap().contains(NOT_FOUND));
+    });
+}
+
+/// docs/dictation.md §4.6: an import needs the token of a backup the shell opened (`expired`
+/// otherwise), a malformed token or part list is an argument error, and closing a preview is always
+/// accepted. The dialogs have no mock; `voltip-tauri-bridge`'s tests drive the bridge behind them.
+#[test]
+fn a_backup_import_needs_a_backup_the_shell_opened() {
+    with_running_app(|_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        let token = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
+        let parts = json!({ "history": true, "dictionary": true, "rules": true, "scenes": true, "presets": true });
+        assert_eq!(
+            invoke(webview, "backup_import", json!({ "token": token, "parts": parts, "mode": "merge" })),
+            Ok(json!({ "kind": "failed", "code": "expired" }))
+        );
+        assert_eq!(invoke(webview, "backup_discard", json!({ "token": token })), Ok(Value::Null));
+        assert!(invoke(webview, "backup_import", json!({ "token": "x", "parts": parts, "mode": "merge" })).is_err());
+        assert!(invoke(webview, "backup_import", json!({ "token": token, "parts": parts, "mode": "append" })).is_err());
+        assert!(invoke(webview, "backup_export", json!({})).is_err(), "the file name is required");
     });
 }
 

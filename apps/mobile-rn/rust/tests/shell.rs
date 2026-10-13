@@ -302,6 +302,21 @@ fn a_history_export_of_a_missing_entry_says_it_is_gone() {
     assert_eq!(answer["code"], "gone");
 }
 
+/// docs/dictation.md §4.6: backups are the computer's; the phone answers `unsupported`, as the
+/// Tauri phone shell does.
+#[test]
+fn backups_are_the_computers() {
+    let running = Running::start(RecordingHost::default());
+    let unsupported = json!({ "kind": "failed", "code": "unsupported", "detail": "" });
+    assert_eq!(running.invoke("backup_export", json!({ "fileName": "Voltip 备份" })).unwrap(), unsupported);
+    assert_eq!(running.invoke("backup_open", json!({ "title": "导入备份" })).unwrap(), unsupported);
+    let parts = json!({ "history": true, "dictionary": true, "rules": true, "scenes": true, "presets": true });
+    let token = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
+    let import = running.invoke("backup_import", json!({ "token": token, "parts": parts, "mode": "merge" })).unwrap();
+    assert_eq!(import, json!({ "kind": "failed", "code": "unsupported" }));
+    assert_eq!(running.invoke("backup_discard", json!({ "token": token })).unwrap(), Value::Null);
+}
+
 /// The level meter subscribes to the core's stream and names the app's channel; stopping twice is
 /// fine, and `onFrame` must be a channel.
 #[test]

@@ -23,7 +23,7 @@ import {
   useI18n,
   useUiState,
 } from "@voltip/ui";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { inTextField, usePageShortcuts, withCommand } from "../app/page-shortcuts";
 import { useRouter } from "../app/router";
 import { copyWithToast, useShell } from "../app/shell-context";
@@ -42,32 +42,24 @@ import {
   SEARCH_DEBOUNCE_MS,
   useDebounced,
   useHistoryEntry,
-  useHistoryList,
 } from "../features/history/useHistoryList";
 import { ResultActions } from "../features/history/ResultActions";
 import { shortModel } from "../shell/page-meta";
 import { HistoryDetail, type View } from "./history/HistoryDetail";
+import { HistoryPager } from "./history-list/HistoryPager";
+import {
+  DETAIL_STICKS,
+  revealTop,
+  useDetailStartsAtTop,
+  useScrollAreaHeight,
+} from "./history-list/layout";
+import { useHistoryPageSize } from "./history-list/page-size";
+import { useHistoryPages } from "./history-list/useHistoryPages";
+
 
 export interface HistoryProps {
   /** `today | week | month | all | starred | failed` from the home tiles, or an entry id. */
   initialFilter?: string;
-}
-
-/** `onSeen` whenever the returned element scrolls into view while `active` (where the webview has
- *  an `IntersectionObserver`; the element's button covers the rest). */
-function useLoadMoreWhenSeen(active: boolean, onSeen: () => void) {
-  const [element, setElement] = useState<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!active || element === null || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver((seen) => {
-      if (seen.some((e) => e.isIntersecting)) onSeen();
-    });
-    observer.observe(element);
-    return () => {
-      observer.disconnect();
-    };
-  }, [active, element, onSeen]);
-  return setElement;
 }
 
 /** A phone's text rather than a recognised take (docs/dictation.md §20.6): no model, no timings. */
@@ -75,10 +67,11 @@ function sentAsText(entry: HistoryEntry): boolean {
   return entry.origin?.kind === "typed" || entry.origin?.kind === "clipboard";
 }
 
-/** History: the core's database (docs/dictation.md §4.4, up to 20 000 entries), read a page of
- *  100 at a time through `history_query` — the filters and the search run in the core, more
- *  entries load as the list scrolls, the detail comes from the list or `history_entry`. Star,
- *  delete, clear, copy and the raw-vs-refined diff are all real;
+/** History: the core's database (docs/dictation.md §4.4, up to 20 000 entries), read one page at a
+ *  time through `history_query` — the filters and the search run in the core, the page buttons and
+ *  the page size (20 / 50 / 100 / 200, this window remembers it) are at the foot of the log, the
+ *  detail comes from the list or `history_entry` and stays in view beside a long page (user request
+ *  2026-10-13). Star, delete, clear, copy and the raw-vs-refined diff are all real;
  *  the detail names the dictionary corrections and rules that fired (`HistoryEntry.vocabulary`)
  *  and 加入词典 sends `dictionary_add` with the row's id (docs/dictation.md §16). A take with a
  *  context shows its app and scene in the row and the detail (§18.6); search matches them too. A
@@ -109,13 +102,40 @@ export function History({ initialFilter }: HistoryProps) {
   const [view, setView] = useState<View>("polished");
 
   const search = useDebounced(query, SEARCH_DEBOUNCE_MS);
-  const list = useHistoryList(filter, search, now);
+  const [pageSize, setPageSize] = useHistoryPageSize();
+  const list = useHistoryPages(filter, search, now, pageSize);
   const visible = list.entries;
   const groups = useMemo(() => groupByDay(visible, now, locale), [visible, now, locale]);
-  // Nothing picked yet, or the pick was deleted: the newest row is the detail, so the pane is never
-  // stale and a fresh dictation shows up on the right as soon as the core appends it.
+  // A pick stays while it is on the page shown. Once the list moves (another page, filter, search
+  // or page size) a pick that is not on the new page gives way to that page's first row; new
+  // entries arriving never move it, and an entry opened from the home page stays until the list
+  // moves.
+  const [pickedIn, setPickedIn] = useState(list.view);
+  if (list.settled && pickedIn !== list.view) {
+    setPickedIn(list.view);
+    if (selectedId !== undefined && !visible.some((e) => e.id === selectedId)) {
+      setSelectedId(undefined);
+    }
+  }
+  // Nothing picked yet, or the pick was deleted: the page's first row is the detail, so the pane is
+  // never stale and, on page 1, a fresh dictation shows up on the right as soon as the core
+  // appends it.
   const selected = useHistoryEntry(selectedId, visible) ?? visible[0];
-  const moreRef = useLoadMoreWhenSeen(list.more, list.loadMore);
+  // The page scrolls in the shell's <main>; the detail column reads its height, and starts at its
+  // top for each entry.
+  const pageRef = useRef<HTMLDivElement>(null);
+  useScrollAreaHeight(pageRef);
+  const splitRef = useDetailStartsAtTop(selected?.id);
+  const logId = useId();
+  // Another page or page size from the foot of a long page starts reading at the top of the log.
+  const showPage = (page: number) => {
+    list.goTo(page);
+    revealTop(document.getElementById(logId));
+  };
+  const showPageSize = (size: typeof pageSize) => {
+    setPageSize(size);
+    revealTop(document.getElementById(logId));
+  };
 
   const star = (entry: HistoryEntry) => {
     void backend.invoke("history_star", { id: entry.id, starred: !entry.starred });
@@ -182,6 +202,7 @@ export function History({ initialFilter }: HistoryProps) {
 
   return (
     <div
+      ref={pageRef}
       className="mx-auto flex w-full max-w-[1440px] flex-col gap-4 p-6"
       data-testid="page-history">
       <Card
@@ -226,12 +247,18 @@ export function History({ initialFilter }: HistoryProps) {
 
       {/* session log left, entry detail right, two parts to three: at 1440 px the log is wide
           enough for a row's model, time and result on one line (user feedback 2026-09-29, plan
-          1.6), and never narrower than 280 px; below `lg` they stack. */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,2fr)_minmax(0,3fr)]">
+          1.6), and never narrower than 280 px; below `lg` they stack. The log stretches to the
+          row and scrolls with the page; the detail, the second column, sticks beside it
+          (`DETAIL_STICKS`, user request 2026-10-13). */}
+      <div
+        ref={splitRef}
+        className={`grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,2fr)_minmax(0,3fr)] ${DETAIL_STICKS}`}>
         <Panel
+          id={logId}
+          data-testid="history-log"
           eyebrow={t("history.eyebrow.log")}
           title={formatCount(list.matching)}
-          className="min-h-[552px]"
+          className="min-h-[552px] scroll-mt-6"
           bodyClassName="flex flex-col gap-3">
           <Input
             id={searchId}
@@ -263,27 +290,47 @@ export function History({ initialFilter }: HistoryProps) {
           {/* Only for an answer to the current filter and search, and in the words of that search
               (the box may already hold newer text): no flash before the first answer. */}
           {total > 0 && list.settled && list.matching === 0 && (
+            // A search inside a filter says where it looked and can widen to all entries.
             <EmptyState
               compact
               title={
                 search
-                  ? t("history.empty.noMatch", { query: search })
+                  ? filter === "all"
+                    ? t("history.empty.noMatch", { query: search })
+                    : t("history.empty.noMatchInFilter", {
+                        filter: historyFilterLabel(filter, t),
+                        query: search,
+                      })
                   : t("history.empty.noneInFilter", { filter: historyFilterLabel(filter, t) })
               }
               actions={
                 search ? (
-                  <Button
-                    size="sm"
-                    variant="text"
-                    onClick={() => {
-                      setQuery("");
-                    }}>
-                    {t("history.empty.clearSearch")}
-                  </Button>
+                  <>
+                    <Button
+                      size="sm"
+                      variant="text"
+                      onClick={() => {
+                        setQuery("");
+                      }}>
+                      {t("history.empty.clearSearch")}
+                    </Button>
+                    {filter !== "all" && (
+                      <Button
+                        size="sm"
+                        variant="text"
+                        onClick={() => {
+                          setFilter("all");
+                        }}>
+                        {t("history.empty.searchAll")}
+                      </Button>
+                    )}
+                  </>
                 ) : undefined
               }>
               {search
-                ? t("history.empty.noMatchBody", { n: formatCount(total) })
+                ? filter === "all"
+                  ? t("history.empty.noMatchBody", { n: formatCount(total) })
+                  : t("history.empty.noMatchInFilterBody")
                 : filter === "starred"
                   ? t("history.empty.starHint")
                   : t("history.empty.rangeHint")}
@@ -306,6 +353,8 @@ export function History({ initialFilter }: HistoryProps) {
                     return (
                       <li
                         key={e.id}
+                        data-testid="history-row"
+                        data-entry-id={e.id}
                         className={`group flex items-start rounded-6 hover:bg-canvas ${active ? "bg-canvas shadow-[inset_2px_0_0_var(--primary)]" : ""}`}>
                         <button
                           type="button"
@@ -426,20 +475,17 @@ export function History({ initialFilter }: HistoryProps) {
               </li>
             ))}
           </ul>
-          {list.more && (
-            // docs/dictation.md §4.4: the next page loads when this comes into view; the button is
-            // the same for the keyboard.
-            <div ref={moreRef} className="flex items-center justify-between gap-2 pt-1">
-              <span className="mono text-[11px] text-fg-subtle" data-testid="history-loaded">
-                {t("history.loaded", {
-                  shown: formatCount(visible.length),
-                  n: formatCount(list.matching),
-                })}
-              </span>
-              <Button size="sm" variant="text" onClick={list.loadMore} data-testid="history-more">
-                {t("history.loadMore")}
-              </Button>
-            </div>
+          {list.matching > 0 && (
+            // docs/dictation.md §4.4: where the page is, the page buttons and the page size.
+            <HistoryPager
+              page={list.page}
+              pages={list.pages}
+              matching={list.matching}
+              searching={search.trim() !== ""}
+              size={pageSize}
+              onPage={showPage}
+              onSize={showPageSize}
+            />
           )}
         </Panel>
 

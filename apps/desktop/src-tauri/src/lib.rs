@@ -17,6 +17,7 @@
 use std::sync::Arc;
 
 pub mod audio;
+pub mod backup;
 pub mod cli;
 pub mod dictation;
 pub mod exit;
@@ -36,8 +37,8 @@ pub mod update;
 use tauri::{Emitter as _, Manager as _, Runtime};
 use voltip_core::ui::{GuidePage, ProjectLink, UI_EVENT_NAME, UiEvent, UiState, UpdateStatus};
 use voltip_core::{
-    Activation, AppRef, ConsolePage, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PresetDraft, PreviewDraft,
-    ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
+    Activation, AppRef, ConsolePage, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PhoneTalkMode, PresetDraft,
+    PreviewDraft, ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
 };
 use voltip_identity::{KeyringSecretStore, SecretStore};
 use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
@@ -52,7 +53,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 121] = [
+pub const COMMANDS: [&str; 126] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -112,6 +113,10 @@ pub const COMMANDS: [&str; 121] = [
     "history_process",
     "history_process_cancel",
     "history_export",
+    "backup_export",
+    "backup_open",
+    "backup_import",
+    "backup_discard",
     "settings_set_locale",
     "settings_set_auto_update",
     "settings_set_history",
@@ -150,6 +155,7 @@ pub const COMMANDS: [&str; 121] = [
     "presets_builtin",
     "settings_set_context_sharing",
     "settings_set_pinned_scene",
+    "settings_set_phone_talk",
     "settings_set_serve",
     "serve_copy_token",
     "serve_rotate_token",
@@ -644,6 +650,46 @@ async fn history_export<R: Runtime>(
     })
 }
 
+/// 导出备份 (docs/dictation.md §4.6): the save dialog offers `file_name`; the history, the dictionary,
+/// the rules, the scenes and the presets are written here, never by the webview.
+#[tauri::command]
+async fn backup_export<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    bridge: tauri::State<'_, Bridge>,
+    file_name: String,
+) -> Result<voltip_core::backup::ExportOutcome, String> {
+    Ok(backup::export(&app, bridge.inner().clone(), &file_name).await)
+}
+
+/// 导入备份, first step: the open dialog (titled `title`), then the file read and checked whole; the
+/// answer is the preview, and nothing has changed yet.
+#[tauri::command]
+async fn backup_open<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    bridge: tauri::State<'_, Bridge>,
+    title: String,
+) -> Result<voltip_core::backup::OpenOutcome, String> {
+    Ok(backup::open(&app, bridge.inner().clone(), &title).await)
+}
+
+/// 导入备份, second step: restore `parts` of the backup the preview's `token` names, merged with what
+/// is here or in its place; answers with what each part restored.
+#[tauri::command]
+async fn backup_import(
+    bridge: tauri::State<'_, Bridge>,
+    token: uuid::Uuid,
+    parts: voltip_core::backup::BackupParts,
+    mode: ImportMode,
+) -> Result<voltip_core::backup::ImportOutcome, String> {
+    Ok(bridge.backup_import(token, parts, mode, backup::IMPORT_WAIT).await)
+}
+
+/// The preview was closed without importing: the shell lets go of the backup.
+#[tauri::command]
+fn backup_discard(bridge: tauri::State<'_, Bridge>, token: uuid::Uuid) {
+    bridge.backup_discard(token);
+}
+
 /// UI language (`system` | `zh-cn` | `en`); persisted by the core, every window follows `settings`.
 #[tauri::command]
 fn settings_set_locale(bridge: tauri::State<'_, Bridge>, locale: Locale) -> Result<(), String> {
@@ -904,6 +950,13 @@ fn settings_set_context_sharing(bridge: tauri::State<'_, Bridge>, app_name: bool
 #[tauri::command]
 fn settings_set_pinned_scene(bridge: tauri::State<'_, Bridge>, id: Option<String>) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::SettingsSetPinnedScene { id })?)
+}
+
+/// How the phone's talk button records (docs/dictation.md §20.11): the desktop has no talk button
+/// and only stores it.
+#[tauri::command]
+fn settings_set_phone_talk(bridge: tauri::State<'_, Bridge>, mode: PhoneTalkMode) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetPhoneTalk { mode })?)
 }
 
 /// The local speech service (docs/dictation.md §23.6): on / off, its port, the preset and scene of
@@ -1399,6 +1452,10 @@ pub fn build_app<R: Runtime>(
             history_process,
             history_process_cancel,
             history_export,
+            backup_export,
+            backup_open,
+            backup_import,
+            backup_discard,
             settings_set_locale,
             settings_set_auto_update,
             settings_set_history,
@@ -1437,6 +1494,7 @@ pub fn build_app<R: Runtime>(
             presets_builtin,
             settings_set_context_sharing,
             settings_set_pinned_scene,
+            settings_set_phone_talk,
             settings_set_serve,
             serve_copy_token,
             serve_rotate_token,

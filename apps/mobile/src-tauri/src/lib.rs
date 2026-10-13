@@ -23,8 +23,8 @@ use tauri::{AppHandle, Emitter as _, Manager as _, Runtime};
 use voltip_cloud::feedback;
 use voltip_core::ui::{GuidePage, ProjectLink, UI_EVENT_NAME, UiState, UpdateStatus};
 use voltip_core::{
-    Activation, AppRef, ConsolePage, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PresetDraft, PreviewDraft,
-    ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
+    Activation, AppRef, ConsolePage, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PhoneTalkMode, PresetDraft,
+    PreviewDraft, ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
 };
 use voltip_identity::SecretStore;
 use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
@@ -36,7 +36,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`, less the
 /// desktop-only commands (the local speech service's and the MCP service's, docs/dictation.md
 /// §23.6, §25) that `tests/ipc.rs` lists as `DESKTOP_ONLY`.
-pub const COMMANDS: [&str; 113] = [
+pub const COMMANDS: [&str; 118] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -96,6 +96,10 @@ pub const COMMANDS: [&str; 113] = [
     "history_process",
     "history_process_cancel",
     "history_export",
+    "backup_export",
+    "backup_open",
+    "backup_import",
+    "backup_discard",
     "settings_set_locale",
     "settings_set_auto_update",
     "settings_set_history",
@@ -134,6 +138,7 @@ pub const COMMANDS: [&str; 113] = [
     "presets_builtin",
     "settings_set_context_sharing",
     "settings_set_pinned_scene",
+    "settings_set_phone_talk",
     "settings_set_proxy",
     "network_refresh",
     "refine_notice_close",
@@ -653,6 +658,29 @@ async fn history_export<R: Runtime>(
     })
 }
 
+/// 导出备份 / 导入备份 (docs/dictation.md §4.6) are the computer's: the phone registers the commands
+/// of the shared contract and answers `unsupported`.
+#[tauri::command]
+fn backup_export() -> voltip_core::backup::ExportOutcome {
+    voltip_core::backup::ExportOutcome::unsupported()
+}
+
+/// See [`backup_export`].
+#[tauri::command]
+fn backup_open() -> voltip_core::backup::OpenOutcome {
+    voltip_core::backup::OpenOutcome::unsupported()
+}
+
+/// See [`backup_export`].
+#[tauri::command]
+fn backup_import() -> voltip_core::backup::ImportOutcome {
+    voltip_core::backup::ImportOutcome::Failed { code: voltip_core::backup::ImportFailure::Unsupported }
+}
+
+/// See [`backup_export`]: nothing is held, so there is nothing to let go of.
+#[tauri::command]
+fn backup_discard() {}
+
 /// UI language is shared state: the phone edits it like the desktop does.
 #[tauri::command]
 fn settings_set_locale(bridge: tauri::State<'_, Bridge>, locale: Locale) -> Result<(), String> {
@@ -836,6 +864,13 @@ fn settings_set_context_sharing(bridge: tauri::State<'_, Bridge>, app_name: bool
 #[tauri::command]
 fn settings_set_pinned_scene(bridge: tauri::State<'_, Bridge>, id: Option<String>) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::SettingsSetPinnedScene { id })?)
+}
+
+/// How the phone's talk button records (docs/dictation.md §20.11). The talk card that offers the
+/// choice is the React Native app's; this shell keeps the command so the contract stays whole.
+#[tauri::command]
+fn settings_set_phone_talk(bridge: tauri::State<'_, Bridge>, mode: PhoneTalkMode) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetPhoneTalk { mode })?)
 }
 
 /// Query: the applications the history saw, newest first: none on a phone, which names no
@@ -1204,6 +1239,10 @@ pub fn build_app<R: Runtime>(
             history_process,
             history_process_cancel,
             history_export,
+            backup_export,
+            backup_open,
+            backup_import,
+            backup_discard,
             settings_set_locale,
             settings_set_auto_update,
             settings_set_history,
@@ -1243,6 +1282,7 @@ pub fn build_app<R: Runtime>(
             scenes_builtin,
             settings_set_context_sharing,
             settings_set_pinned_scene,
+            settings_set_phone_talk,
             settings_set_proxy,
             network_refresh,
             recent_apps,

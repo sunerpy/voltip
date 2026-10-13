@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The React Native phone app on a Device Farm phone (docs/mobile-rn.md §7), driven over adb from
-# the test host: cold start, a take on the phone, every tab and the main settings pages, a
+# the test host: cold start, a take on the phone (held, slipped, cancelled, tapped), every tab and the main settings pages, a
 # dropdown menu, a full-screen editor, the pairing pages, Android's back through the stack and the
 # second back that leaves. Every step runs whatever the one before it did, and writes what it saw:
 # the screenshots, the UI trees, the app's own logcat and summary.txt (key=value lines) go into
@@ -22,9 +22,12 @@ step() { printf '\n===== %s =====\n' "$1"; }
 
 # The screen's UI tree into $out/ui.xml, closing another app's not-responding dialog first (a
 # busy device's launcher can raise one over ours; one for Voltip is a finding, left on the screen).
+# A screen that never settles (a recording's timer and level) gets no tree: uiautomator waits for an
+# idle moment and gives up, and the file it leaves is the previous screen's, so it is removed first.
 dump() {
   local i anr
   for i in 1 2 3; do
+    adb shell rm -f /sdcard/ui.xml
     adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "$out/ui.xml" >/dev/null 2>&1 || return 1
     anr=$(python3 - "$out/ui.xml" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
@@ -53,7 +56,9 @@ screen_w=1080
 
 # The centre of the first node whose text, content-desc or resource-id (the app's testID) matches
 # the regular expression $1 and that lies on the screen (between the status bar and the
-# navigation bar). Each field is matched on its own, so `^…$` anchors a whole label.
+# navigation bar) and, unless it is one of the tabs, above the tab dock that floats over the
+# page: a tap there lands on the dock (2026-10-13: 历史记录 under the dock opened the 记录 tab).
+# Each field is matched on its own, so `^…$` anchors a whole label.
 find_node() {
   python3 - "$out/ui.xml" "$1" "$screen_h" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
@@ -62,15 +67,22 @@ try:
 except Exception:
     sys.exit(1)
 pattern, height = re.compile(sys.argv[2]), int(sys.argv[3])
+def box(n):
+    m = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", n.get("bounds", ""))
+    return tuple(map(int, m.groups())) if m else None
+dock = next((box(n) for n in nodes if n.get("resource-id") == "tab-dock"), None)
 for n in nodes:
     fields = (n.get("text"), n.get("content-desc"), n.get("resource-id"))
     if not any(f and pattern.search(f) for f in fields):
         continue
-    m = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", n.get("bounds", ""))
-    if not m:
+    b = box(n)
+    if b is None:
         continue
-    x1, y1, x2, y2 = map(int, m.groups())
+    x1, y1, x2, y2 = b
     x, y = (x1 + x2) // 2, (y1 + y2) // 2
+    tab = (n.get("resource-id") or "").startswith("tab-")
+    if dock is not None and not tab and y >= dock[1]:
+        continue
     if 80 < y < height - 140 and x2 > x1 and y2 > y1:
         print(x, y)
         sys.exit(0)
@@ -241,6 +253,105 @@ if hold_text '^按住说话$|^Hold to talk$' 4000; then
   shot 02b-talk-after
 else
   measure talk_pressed missing
+fi
+
+step "HOLD, SLIP AND TAP"
+# docs/dictation.md §20.11 (2026-10-13): a finger that slips while holding still sends, a release
+# more than the button's width (120 dp) from the press cancels, and 点按 under the card turns the
+# button into tap to start, tap again to finish. Each take is read from the core's phase lines
+# that follow the gesture; the next gesture waits for `phase=idle` (a result stays on the card for
+# its dwell, and the button ignores a press until then).
+phases() {
+  local pid
+  pid=$(adb shell pidof "$PKG" | tr -d '\r')
+  [ -n "$pid" ] && adb logcat -d --pid="$pid" 2>/dev/null | grep -E "dictation phase|take failed"
+}
+settle() {
+  local deadline=$((SECONDS + 30)) last
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    last=$(phases | grep "dictation phase" | tail -1)
+    if [ -z "$last" ] || printf '%s' "$last" | grep -q "phase=idle"; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+# The outcome of the take after the first $2 phase lines: done, failed:<code>, cancelled, or none
+# within 60 s; it waits for the core to be idle again as well.
+take_outcome() {
+  local name=$1 skip=$2 lines outcome=none code deadline=$((SECONDS + 60))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    lines=$(phases | tail -n +$((skip + 1)))
+    printf '%s\n' "$lines" >"$out/$name-phases.txt"
+    if printf '%s\n' "$lines" | grep -q "phase=cancelled"; then
+      outcome=cancelled
+    elif printf '%s\n' "$lines" | grep -q "phase=done kind=dictation"; then
+      outcome="done"
+    elif printf '%s\n' "$lines" | grep -q "phase=failed"; then
+      code=$(printf '%s\n' "$lines" | sed -n 's/.*take failed code=\([A-Za-z_]*\).*/\1/p' | tail -1)
+      outcome=failed:${code:-unknown}
+    fi
+    if [ "$outcome" != none ] && printf '%s\n' "$lines" | grep -q "phase=idle"; then break; fi
+    sleep 2
+  done
+  echo "$outcome"
+}
+density=$(adb shell wm density | tr -d '\r' | sed -n 's/.*: *\([0-9][0-9]*\).*/\1/p' | tail -1)
+measure density "${density:-unknown}"
+density=${density:-420}
+dp() { echo $(($1 * density / 160)); }
+settle || echo "acceptance: the first take did not go idle"
+if dump && xy=$(find_node '^phone-mic-hold$'); then
+  read -r x y <<<"$xy"
+  # 50 dp left and 30 dp up over four seconds, let go there: about 58 dp from the press, inside
+  # the button's reach. Before 2026-10-13 this cancelled.
+  n=$(phases | wc -l)
+  adb shell input swipe "$x" "$y" $((x - $(dp 50))) $((y - $(dp 30))) 4000
+  slip=$(take_outcome 02c-slip "$n")
+  measure slip_outcome "$slip"
+  case $slip in cancelled | none) measure slip_sends no ;; *) measure slip_sends yes ;; esac
+  # 200 dp straight up, let go there: a cancel.
+  n=$(phases | wc -l)
+  adb shell input swipe "$x" "$y" "$x" $((y - $(dp 200))) 4000
+  away=$(take_outcome 02d-away "$n")
+  measure away_outcome "$away"
+  if [ "$away" = cancelled ]; then measure away_cancels yes; else measure away_cancels no; fi
+else
+  measure slip_sends missing
+  measure away_cancels missing
+fi
+# 点按: a tap starts, letting go does not stop it, the next tap finishes it. While it records the
+# screen never settles, so there is no UI tree: the taps go to the button's place read before the
+# take, and the take is read from the core's phase lines (取消录音 is covered by the JS tests).
+if tap_text '^phone-talk-mode-tap$' && wait_text '^点按开始说话$|^Tap to talk$' 10; then
+  measure tap_mode ok
+  shot 02e-tap-mode
+  if dump && xy=$(find_node '^phone-mic-hold$'); then
+    read -r x y <<<"$xy"
+    n=$(phases | wc -l)
+    adb shell input tap "$x" "$y"
+    started=no
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      if phases | tail -n +$((n + 1)) | grep -q "phase=listening"; then started=yes; break; fi
+      sleep 1
+    done
+    measure tap_started "$started"
+    sleep 3 # recording, with the finger off the screen
+    adb exec-out screencap -p >"$out/02f-tap-recording.png" 2>/dev/null || true
+    adb shell input tap "$x" "$y"
+    tapped=$(take_outcome 02g-tap "$n")
+  else
+    tapped=missing
+  fi
+  measure tap_outcome "$tapped"
+  case $tapped in cancelled | none | missing) measure tap_finished no ;; *) measure tap_finished yes ;; esac
+else
+  measure tap_mode missing
+fi
+# Back to holding for the steps below.
+if tap_text '^phone-talk-mode-hold$' && wait_text '^按住说话$|^Hold to talk$' 10; then
+  measure hold_again ok
+else
+  measure hold_again missing
 fi
 
 # The talk page: its header is the only one with the 本机 action.

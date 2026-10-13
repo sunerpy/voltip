@@ -44,6 +44,7 @@ import {
   settingsSchema,
   recordingSettingsSchema,
   soloKeySchema,
+  PHONE_TALK_MODES,
   PHONE_TEXT_SOURCES,
   themeIdSchema,
   uiEventSchema,
@@ -176,6 +177,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   presets_try: null,
   settings_set_context_sharing: null,
   settings_set_pinned_scene: null,
+  settings_set_phone_talk: null,
   settings_set_serve: null,
   serve_copy_token: null,
   serve_rotate_token: null,
@@ -316,6 +318,7 @@ const argSchemas = {
     .object({ appName: z.boolean(), windowTitle: z.boolean() })
     .strict(),
   settings_set_pinned_scene: z.object({ id: z.string().nullable() }).strict(),
+  settings_set_phone_talk: z.object({ mode: z.enum(PHONE_TALK_MODES) }).strict(),
   settings_set_serve: z
     .object({
       enabled: z.boolean(),
@@ -492,6 +495,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.settings_set_context_sharing.parse(args));
     case "settings_set_pinned_scene":
       return backend.invoke(name, argSchemas.settings_set_pinned_scene.parse(args));
+    case "settings_set_phone_talk":
+      return backend.invoke(name, argSchemas.settings_set_phone_talk.parse(args));
     case "settings_set_serve":
       return backend.invoke(name, argSchemas.settings_set_serve.parse(args));
     case "settings_set_proxy":
@@ -578,6 +583,8 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
         history_range: "last_7_days",
         write: "dictionary",
       },
+      // docs/dictation.md §20.11: the phone's talk button tapped, away from holding.
+      phone_talk: "tap",
     });
     expect(parsed.app_version).toBe("0.3.0");
     // docs/dictation.md §23.6: the app's local speech service, running.

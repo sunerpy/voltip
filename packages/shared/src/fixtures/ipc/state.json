@@ -73,6 +73,7 @@
     "edit_hotkey": "Ctrl+Alt+E",
     "solo_key": "right_ctrl",
     "pairing_always_on": true,
+    "phone_talk": "tap",
     "history": {
       "enabled": true,
       "keep": 200

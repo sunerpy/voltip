@@ -64,6 +64,17 @@ pub enum Locale {
     En,
 }
 
+/// How the phone's talk button records (`Settings.phone_talk`, docs/dictation.md §20.11).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhoneTalkMode {
+    /// Hold the button for the take; letting go sends it, sliding away first cancels it.
+    #[default]
+    Hold,
+    /// Tap to start; tap again to send; a button beside it cancels.
+    Tap,
+}
+
 /// How much dictation history is kept (docs/dictation.md §4).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -212,6 +223,11 @@ pub struct Settings {
     /// files written before it) = no scene. A scene that is gone counts as none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_scene: Option<uuid::Uuid>,
+    /// How the phone's talk button records (docs/dictation.md §20.11, user request 2026-10-13):
+    /// held down for the take (the default, and files written before it), or tapped to start and
+    /// tapped again to stop. The desktop has no talk button and ignores it.
+    #[serde(default)]
+    pub phone_talk: PhoneTalkMode,
     /// History recording and retention.
     #[serde(default)]
     pub history: HistorySettings,
@@ -433,6 +449,7 @@ impl Default for Settings {
             solo_key: None,
             pairing_always_on: false,
             pinned_scene: None,
+            phone_talk: PhoneTalkMode::Hold,
             history: HistorySettings::default(),
             overlay: OverlayPlacement::Bottom,
             microphone: None,
