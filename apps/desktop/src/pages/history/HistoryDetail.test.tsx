@@ -149,6 +149,58 @@ describe("History detail · quick fix (docs/dictation.md section 16.9)", () => {
     expect(screen.queryByTestId("fix-tip")).toBeNull();
   });
 
+  it("regression: a change a rule made is not marked as the polish's, with the polish on or off", async () => {
+    // Codex review 2026-10-13: with the polish off, a rule's 非书 → 飞书 showed as 「润色时已改正」
+    // and as a replacement in the diff view to ask about.
+    const feishu: ReplacementRule = {
+      id: "00000000-0000-4000-a000-000000000001",
+      name: "非书 → 飞书",
+      kind: "literal",
+      pattern: "非书",
+      replacement: "飞书",
+      case_sensitive: false,
+      enabled: true,
+      source: { kind: "manual" },
+      pending: false,
+      created_at_ms: T,
+      updated_at_ms: T,
+    };
+    const vocabulary = { corrections: [], rules: [{ id: feishu.id, count: 1 }] };
+    const { user } = setup({
+      history: [
+        take(1, "结果发到非书群了", "结果发到飞书群了", { refined: false, vocabulary }),
+        take(2, "结果发到非书群了，用维他命测", "结果发到飞书群了，用 Voltip 测。", { vocabulary }),
+      ],
+      rules: [feishu],
+    });
+    await showRaw(user);
+    expect(screen.queryAllByTestId("fix-mark")).toEqual([]);
+    expect(screen.queryByTestId("fix-legend")).toBeNull();
+    // Selected, the words fill only the heard-as field: nothing comes from a polish.
+    selectWord("非书");
+    await user.keyboard("d");
+    expect(within(card()).getByLabelText("曾听成")).toHaveValue("非书");
+    expect(within(card()).getByLabelText("正确写法")).toHaveValue("");
+    expect(within(card()).queryByTestId("fix-term-from")).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("radio", { name: "对比" }));
+    expect(screen.queryAllByTestId("fix-pair")).toEqual([]);
+    expect(screen.queryByTestId("fix-diff-hint")).toBeNull();
+    // The polished take: only the polish's own replacement.
+    const second = screen
+      .getAllByTestId("history-row")
+      .find((row) => row.dataset["entryId"] === "00000000-0000-4000-8000-000000000002");
+    await user.click(within(second ?? document.body).getAllByRole("button")[0] ?? document.body);
+    await user.click(await screen.findByRole("radio", { name: "原文" }));
+    expect(screen.getAllByTestId("fix-mark").map((m) => m.getAttribute("aria-label"))).toEqual([
+      "润色时已改正：维他命，润色后为 Voltip",
+    ]);
+    await user.click(screen.getByRole("radio", { name: "对比" }));
+    expect(screen.getAllByTestId("fix-pair").map((p) => p.getAttribute("aria-label"))).toEqual([
+      "改动：维他命 → Voltip，点按选择正确写法",
+    ]);
+  });
+
   it("a mark opens the dictionary card pre-filled from the polished text, says what it would change and saves with the row's id", async () => {
     const { user, backend } = setup();
     await showRaw(user);

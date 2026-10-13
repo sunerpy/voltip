@@ -16,6 +16,7 @@ use super::store::{BUSY_TIMEOUT, NEWEST_FIRST, decode, int};
 use super::{HISTORY_DB_FILE_NAME, HistoryEntry, derived};
 use crate::CoreError;
 use crate::scenes::AppRef;
+use crate::vocabulary::VocabularyHits;
 
 /// The most entries one `history_query` returns.
 pub const MAX_QUERY_LIMIT: u32 = 200;
@@ -102,8 +103,13 @@ pub struct HistoryText {
     pub at_ms: u64,
     /// The recognised text, before the dictionary.
     pub raw_text: String,
-    /// The text that was inserted.
+    /// The text that was inserted: the polished text (when `refined`) after the corrections and
+    /// the rules.
     pub text: String,
+    /// The AI polish made the text (`HistoryEntry.refined`).
+    pub refined: bool,
+    /// The corrections and rules that fired (`HistoryEntry.vocabulary`; empty when none did).
+    pub vocabulary: VocabularyHits,
 }
 
 /// [`HistoryReader::search`]: which entries, and where the page starts (docs/dictation.md §25).
@@ -285,17 +291,32 @@ impl HistoryReader {
         }
         let texts = self.read(|conn| {
             let mut stmt = conn.prepare(&format!(
-                "SELECT id, at_ms, json_extract(json, '$.raw_text'), json_extract(json, '$.text') FROM entries \
+                "SELECT id, at_ms, json_extract(json, '$.raw_text'), json_extract(json, '$.text'), json_extract(json, '$.refined'), \
+                 json_extract(json, '$.vocabulary') FROM entries \
                  WHERE kind = 'dictation' AND COALESCE(json_extract(json, '$.origin.kind'), '') NOT IN ('typed', 'clipboard') {NEWEST_FIRST} LIMIT ?1"
             ))?;
             let rows = stmt.query_map([i64::try_from(limit).unwrap_or(i64::MAX)], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, Option<String>>(2)?, row.get::<_, Option<String>>(3)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
             })?;
             let mut out = Vec::new();
             for row in rows {
-                let (id, at_ms, raw_text, text) = row?;
+                let (id, at_ms, raw_text, text, refined, vocabulary) = row?;
                 let Ok(id) = id.parse::<Uuid>() else { continue };
-                out.push(HistoryText { id, at_ms: u64::try_from(at_ms).unwrap_or(0), raw_text: raw_text.unwrap_or_default(), text: text.unwrap_or_default() });
+                out.push(HistoryText {
+                    id,
+                    at_ms: u64::try_from(at_ms).unwrap_or(0),
+                    raw_text: raw_text.unwrap_or_default(),
+                    text: text.unwrap_or_default(),
+                    refined: refined == Some(1),
+                    vocabulary: vocabulary.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
+                });
             }
             Ok(out)
         })?;

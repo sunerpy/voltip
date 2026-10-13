@@ -20,7 +20,7 @@ import {
   type RuleKind,
   type VocabularyBacktest,
 } from "./schema";
-import { dictionaryForms } from "./vocabulary";
+import { Vocabulary, dictionaryForms } from "./vocabulary";
 import {
   type DictionaryDraftProblem,
   type RuleDraftProblem,
@@ -101,8 +101,9 @@ export function diffRuns(raw: string, text: string): DiffRun[] {
   return out;
 }
 
-/** A wording the AI polish (or the dictionary and rules) replaced: the original wording and what
- *  the final text says in its place, each without white space and punctuation at the ends. */
+/** A wording the final text replaced: the original wording and what the final text says in its
+ *  place, each without white space and punctuation at the ends. `polishPairs` finds every one;
+ *  `takePolishPairs` keeps those of the AI polish. */
 export interface PolishPair {
   /** Where the original wording is in `raw_text`. */
   start: number;
@@ -150,6 +151,40 @@ export function polishPairs(raw: string, text: string): PolishPair[] {
   return pairs;
 }
 
+/** The replacements the AI polish made in a take (docs/dictation.md §16.9): the `polishPairs` of
+ *  its original and final text without those the dictionary and the rules account for, since the
+ *  final text is the polished text after the corrections and the rules. A take that was not
+ *  polished (`refined` false) has none. A pair is the vocabulary's when the corrections and rules
+ *  that fired in the take (`vocabulary`, as defined now, even if turned off since) turn its
+ *  original wording into its final wording, or make the same replacement at the same place when
+ *  run over the whole original text. */
+export function takePolishPairs(
+  entry: Pick<HistoryEntry, "raw_text" | "text" | "refined" | "vocabulary">,
+  dictionary: readonly DictionaryEntry[],
+  rules: readonly ReplacementRule[],
+): PolishPair[] {
+  if (!entry.refined) return [];
+  const pairs = polishPairs(entry.raw_text, entry.text);
+  const fired = entry.vocabulary;
+  if (pairs.length === 0 || fired === undefined) return pairs;
+  const entryIds = new Set(fired.corrections.map((h) => h.id));
+  const ruleIds = new Set(fired.rules.map((h) => h.id));
+  const vocabulary = Vocabulary.compile(
+    dictionary.filter((e) => entryIds.has(e.id)).map((e) => ({ ...e, enabled: true })),
+    rules.filter((r) => ruleIds.has(r.id)).map((r) => ({ ...r, enabled: true, pending: false })),
+  );
+  const run = (text: string) => vocabulary.applyRules(vocabulary.correct(text).text).text;
+  const explained = polishPairs(entry.raw_text, run(entry.raw_text));
+  return pairs.filter(
+    (p) =>
+      run(p.heard) !== p.polished &&
+      !explained.some(
+        (q) =>
+          q.heard === p.heard && q.polished === p.polished && q.start < p.end && p.start < q.end,
+      ),
+  );
+}
+
 /** One thing the diff view shows: an unchanged, deleted or added run, or a replacement that can be
  *  clicked (its deletion and its addition). */
 export type DiffItem =
@@ -158,10 +193,10 @@ export type DiffItem =
   | { kind: "add"; text: string }
   | { kind: "pair"; del: string; add: string; pair: PolishPair };
 
-/** The diff view's runs with each replacement grouped (docs/dictation.md §16.9 3.5). */
-export function diffItems(raw: string, text: string): DiffItem[] {
+/** The diff view's runs with each of the polish's replacements (`pairs`, from `takePolishPairs`)
+ *  grouped (docs/dictation.md §16.9 3.5); the other changes stay plain runs. */
+export function diffItems(raw: string, text: string, pairs: readonly PolishPair[]): DiffItem[] {
   const runs = diffRuns(raw, text);
-  const pairs = polishPairs(raw, text);
   const items: DiffItem[] = [];
   for (let i = 0; i < runs.length; i += 1) {
     const run = runs[i];
@@ -197,11 +232,11 @@ export interface TextMark extends TextRange {
 }
 
 /** The marks of a take's original text, in order: every heard-as form of an enabled entry (ASCII
- *  case ignored, as the corrections find them), and every replacement the polish made where no
- *  such form is (a form the dictionary corrects shows as a polish replacement in the diff too). */
+ *  case ignored, as the corrections find them), and every replacement the polish made (`pairs`,
+ *  from `takePolishPairs`) where no such form is. */
 export function textMarks(
   raw: string,
-  text: string,
+  pairs: readonly PolishPair[],
   dictionary: readonly DictionaryEntry[],
 ): TextMark[] {
   const known: TextMark[] = [];
@@ -217,7 +252,7 @@ export function textMarks(
       });
     }
   }
-  const polish: TextMark[] = polishPairs(raw, text)
+  const polish: TextMark[] = pairs
     .filter((p) => !known.some((k) => p.start < k.end && k.start < p.end))
     .map((p) => ({ kind: "polish", start: p.start, end: p.end, text: p.heard, pair: p }));
   const marks = [...known, ...polish];
@@ -251,22 +286,22 @@ export interface FixTarget extends TextRange {
 }
 
 /** A selection of the raw or the polished view made fit for the card: white space and punctuation
- *  trimmed off both ends, grown to a whole replacement it lies in, and its default kind — a rule
- *  when the words are too long or span lines for a dictionary form, or are only in the polished
- *  text; a dictionary entry otherwise. `undefined` when nothing but white space and punctuation was
- *  selected. */
+ *  trimmed off both ends, grown to a whole replacement of the polish (`pairs`, from
+ *  `takePolishPairs`) it lies in, and its default kind — a rule when the words are too long or
+ *  span lines for a dictionary form, or are only in the polished text; a dictionary entry
+ *  otherwise. `undefined` when nothing but white space and punctuation was selected. */
 export function fixTarget(
   entry: Pick<HistoryEntry, "raw_text" | "text">,
   view: FixView,
   start: number,
   end: number,
+  pairs: readonly PolishPair[],
 ): FixTarget | undefined {
   const source = view === "raw" ? entry.raw_text : entry.text;
   const trimmed = trimRange(source, start, end);
   if (trimmed === undefined) return undefined;
   let s = trimmed.start;
   let e = trimmed.end;
-  const pairs = polishPairs(entry.raw_text, entry.text);
   let pair: PolishPair | undefined;
   let polishOnly = false;
   if (view === "raw") {

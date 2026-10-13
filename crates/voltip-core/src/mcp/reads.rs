@@ -93,7 +93,7 @@ pub fn run(request: &McpRequest, settings: &McpSettings, lists: &Lists, reader: 
         }
         McpRequest::Candidates { since_ms, limit } => {
             let texts = reader.recent_texts(MAX_RECENT_TEXTS).map_err(|e| history_unreadable(&e))?;
-            let mut answer = candidates(&lists.dictionary, &texts, *since_ms, *limit);
+            let mut answer = candidates(&lists.dictionary, &lists.rules, &texts, *since_ms, *limit);
             while !answer.pairs.is_empty() && json_len(&answer) > MAX_RESULT_BYTES {
                 answer.pairs.pop();
             }

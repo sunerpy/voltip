@@ -188,10 +188,10 @@ fn snippets(before: &str, after: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vocabulary::RuleKind;
+    use crate::vocabulary::{RuleKind, VocabularyHits};
 
     fn take(raw: &str, text: &str, at_ms: u64) -> HistoryText {
-        HistoryText { id: Uuid::new_v4(), at_ms, raw_text: raw.into(), text: text.into() }
+        HistoryText { id: Uuid::new_v4(), at_ms, raw_text: raw.into(), text: text.into(), refined: true, vocabulary: VocabularyHits::default() }
     }
 
     fn entry(term: &str, heard: &[&str]) -> DictionaryEntry {

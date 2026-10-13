@@ -6,7 +6,7 @@ use crate::CoreError;
 use crate::dictation::{ClipboardCode, InjectNote, OutputMode, Segment, TakeKind, Via};
 use crate::presets::PresetRef;
 use crate::scenes::{AppRef, BuiltinScene, MAX_RECENT_APPS, SceneRef};
-use crate::vocabulary::VocabularyHits;
+use crate::vocabulary::{VocabularyHit, VocabularyHits};
 use uuid::Uuid;
 
 pub(super) fn entry(text: &str) -> HistoryEntry {
@@ -1005,6 +1005,7 @@ fn recent_texts_are_the_newest_recognised_takes() {
     let mut store = HistoryStore::open(dir.path());
     let base = 1_758_700_000_000;
     let phone = |kind| Some(EntryOrigin { device: "Pixel 8".into(), kind });
+    let fired = VocabularyHits { corrections: vec![VocabularyHit { id: Uuid::new_v4(), count: 2 }], rules: vec![] };
     let rows = [
         HistoryEntry { at_ms: base, ..entry("最早") },
         HistoryEntry {
@@ -1015,7 +1016,7 @@ fn recent_texts_are_the_newest_recognised_takes() {
         },
         HistoryEntry { at_ms: base + 2, origin: phone(OriginKind::Typed), ..entry("手机打字") },
         HistoryEntry { at_ms: base + 3, origin: phone(OriginKind::Clipboard), ..entry("手机剪贴板") },
-        HistoryEntry { at_ms: base + 4, origin: phone(OriginKind::Take), ..entry("手机录音") },
+        HistoryEntry { at_ms: base + 4, origin: phone(OriginKind::Take), refined: false, vocabulary: Some(fired.clone()), ..entry("手机录音") },
         HistoryEntry { at_ms: base + 5, ..entry("最新") },
     ];
     for row in &rows {
@@ -1023,7 +1024,14 @@ fn recent_texts_are_the_newest_recognised_takes() {
     }
     let texts = reader.recent_texts(10).unwrap();
     assert_eq!(texts.iter().map(|t| t.raw_text.as_str()).collect::<Vec<_>>(), vec!["最新", "手机录音", "最早"]);
-    assert_eq!(texts[0], HistoryText { id: rows[5].id, at_ms: base + 5, raw_text: "最新".into(), text: "最新。".into() });
+    assert_eq!(
+        texts[0],
+        HistoryText {
+            id: rows[5].id, at_ms: base + 5, raw_text: "最新".into(), text: "最新。".into(), refined: true, vocabulary: VocabularyHits::default()
+        }
+    );
+    // Whether the polish made the text, and what fired: what the correction summary leaves out (§25).
+    assert_eq!((texts[1].refined, &texts[1].vocabulary), (false, &fired));
     assert_eq!(reader.recent_texts(1).unwrap().len(), 1);
     assert!(reader.recent_texts(0).is_err());
     assert!(reader.recent_texts(MAX_RECENT_TEXTS + 1).is_err());

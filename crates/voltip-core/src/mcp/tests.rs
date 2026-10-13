@@ -3,13 +3,13 @@ use uuid::Uuid;
 
 use super::access::{Need, check, check_rule_change, need, out_of_range};
 use super::activity::{ActivityDraft, ActivityLog, MAX_ACTIVITY, McpAction, READ_MERGE_MS, Undo, UndoError};
-use super::candidates::{MAX_DIFF_CELLS, Segment, SegmentKind, candidates, diff_segments, diff_tokens, is_mark, replacements};
+use super::candidates::{Candidates, MAX_DIFF_CELLS, Segment, SegmentKind, candidates, diff_segments, diff_tokens, is_mark, replacements};
 use super::records::{HistoryRecord, fit_record, fit_records, json_len, page};
 use super::tools::{HistoryCursor, McpRequest, REVIEW_PROMPT, Tool, parse_call, parse_instant, prompt_text, prompts, specs};
 use super::writes::{EntryAdd, new_rule_waits, plan_entry_add, plan_rule_update};
 use super::*;
 use crate::history::{HistoryEntry, HistoryText};
-use crate::vocabulary::{DictionaryDraft, DictionaryEntry, EntrySource, ReplacementRule, RuleDraft, RuleKind};
+use crate::vocabulary::{DictionaryDraft, DictionaryEntry, EntrySource, ReplacementRule, RuleDraft, RuleKind, VocabularyHit, VocabularyHits};
 
 fn settings(read: McpRead, write: McpWrite) -> McpSettings {
     McpSettings { enabled: true, read, write, ..McpSettings::default() }
@@ -51,7 +51,7 @@ fn rule(name: &str, source: EntrySource, pending: bool) -> ReplacementRule {
 }
 
 fn take(raw: &str, text: &str, at_ms: u64) -> HistoryText {
-    HistoryText { id: Uuid::new_v4(), at_ms, raw_text: raw.into(), text: text.into() }
+    HistoryText { id: Uuid::new_v4(), at_ms, raw_text: raw.into(), text: text.into(), refined: true, vocabulary: VocabularyHits::default() }
 }
 
 #[test]
@@ -315,7 +315,7 @@ fn candidates_are_counted_known_and_sorted() {
         take("维他命", "Voltip", 20),
         take("非书非书", "飞书飞书", 10),
     ];
-    let out = candidates(&dictionary, &history, None, 10);
+    let out = candidates(&dictionary, &[], &history, None, 10);
     assert_eq!((out.scanned, out.skipped), (5, 0));
     let top: Vec<(&str, &str, u32, bool, u64)> = out.pairs.iter().map(|p| (p.heard.as_str(), p.polished.as_str(), p.count, p.known, p.last_at_ms)).collect();
     assert_eq!(top, [("非", "飞", 4, false, 40), ("维他命", "Voltip", 2, true, 50)], "every occurrence counts");
@@ -323,12 +323,41 @@ fn candidates_are_counted_known_and_sorted() {
     assert_eq!(examples.iter().map(|e| e.history_id).collect::<Vec<_>>(), [history[1].id, history[2].id, history[4].id], "one per take, newest first");
     assert_eq!(examples[0].snippet, "发到非书群");
     assert_eq!(out.pairs[1].examples[0].snippet, "我们用维他命开会");
-    let recent = candidates(&dictionary, &history, Some(35), 10);
+    let recent = candidates(&dictionary, &[], &history, Some(35), 10);
     assert_eq!(recent.scanned, 2, "since");
-    assert_eq!(candidates(&dictionary, &history, None, 1).pairs.len(), 1, "limit");
+    assert_eq!(candidates(&dictionary, &[], &history, None, 1).pairs.len(), 1, "limit");
     let long = take(&"字".repeat(1001), &"子".repeat(1001), 5);
-    let out = candidates(&dictionary, &[long], None, 10);
+    let out = candidates(&dictionary, &[], &[long], None, 10);
     assert_eq!((out.scanned, out.skipped, out.pairs.len()), (1, 1, 0), "a take too long to diff is counted as skipped");
+}
+
+/// Codex review 2026-10-13: a take the clean-up did not polish, or a rule's change in one it did,
+/// was summed up as a replacement the AI clean-up made.
+#[test]
+fn regression_candidates_leave_out_what_the_dictionary_and_rules_changed() {
+    let feishu = rule("非书 → 飞书", EntrySource::Manual, false);
+    let voltip = entry("Voltip", &["维他命"]);
+    let hits = |corrections: &[Uuid], rules: &[Uuid]| VocabularyHits {
+        corrections: corrections.iter().map(|&id| VocabularyHit { id, count: 1 }).collect(),
+        rules: rules.iter().map(|&id| VocabularyHit { id, count: 1 }).collect(),
+    };
+    let unpolished = HistoryText { refined: false, vocabulary: hits(&[], &[feishu.id]), ..take("发到非书群", "发到飞书群", 30) };
+    let polished = HistoryText { vocabulary: hits(&[], &[feishu.id]), ..take("发到非书群，用维他命测", "发到飞书群，用 Voltip 测。", 20) };
+    let pairs = |out: Candidates| out.pairs.into_iter().map(|p| (p.heard, p.polished, p.count)).collect::<Vec<_>>();
+    let both = [unpolished.clone(), polished.clone()];
+    let out = candidates(&[], std::slice::from_ref(&feishu), &both, None, 10);
+    assert_eq!(out.scanned, 2, "the unpolished take was looked at");
+    assert_eq!(pairs(out), [("维他命".to_owned(), "Voltip".to_owned(), 1)], "only the polish's own replacement");
+    // A rule turned off since still made that change; with nothing fired the polish made both.
+    let off = ReplacementRule { enabled: false, ..feishu.clone() };
+    assert_eq!(pairs(candidates(&[], &[off], &both, None, 10)).len(), 1);
+    let nothing = HistoryText { vocabulary: VocabularyHits::default(), ..polished };
+    assert_eq!(pairs(candidates(&[], std::slice::from_ref(&feishu), &[nothing], None, 10)).len(), 2);
+    // A correction's change, of an entry turned off since.
+    let corrected = HistoryText { vocabulary: hits(&[voltip.id], &[]), ..take("用维他命测", "用 Voltip 测。", 10) };
+    let off_entry = DictionaryEntry { enabled: false, ..voltip };
+    assert!(candidates(&[off_entry], &[], &[corrected], None, 10).pairs.is_empty());
+    assert!(candidates(&[], &[], &[unpolished], None, 10).pairs.is_empty(), "not polished: nothing, whatever fired");
 }
 
 fn history_entry(raw: &str, text: &str) -> HistoryEntry {

@@ -81,7 +81,7 @@ The card opens under the selection, without leaving the page:
 - When the right spelling is already an entry, the card merges the heard-as form into it and the button reads **Add to “Voltip”**. When the form belongs to another entry, the card says so and cannot save.
 - The top of the card switches to **Rule**: find and replace side by side, with a preview of the rule on this entry's final text.
 
-In the **Compare** view, selecting a pair of changes first asks which spelling is right: the polished one adds the original form to the dictionary; the original one (AI polish changed it wrongly) adds it as the right spelling, so AI polish keeps it from then on.
+In the **Compare** view, selecting a pair of changes AI polish made first asks which spelling is right: the polished one adds the original form to the dictionary; the original one (AI polish changed it wrongly) adds it as the right spelling, so AI polish keeps it from then on.
 
 After saving, the bottom of the window shows "Added to the dictionary · Voltip"; **Undo** or Ctrl Z within 5 seconds takes it back. Saved history entries do not change; the dictionary and the rules apply to later dictations.
 
