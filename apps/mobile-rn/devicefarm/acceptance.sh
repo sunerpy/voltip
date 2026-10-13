@@ -22,9 +22,12 @@ step() { printf '\n===== %s =====\n' "$1"; }
 
 # The screen's UI tree into $out/ui.xml, closing another app's not-responding dialog first (a
 # busy device's launcher can raise one over ours; one for Voltip is a finding, left on the screen).
+# A screen that never settles (a recording's timer and level) gets no tree: uiautomator waits for an
+# idle moment and gives up, and the file it leaves is the previous screen's, so it is removed first.
 dump() {
   local i anr
   for i in 1 2 3; do
+    adb shell rm -f /sdcard/ui.xml
     adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "$out/ui.xml" >/dev/null 2>&1 || return 1
     anr=$(python3 - "$out/ui.xml" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
@@ -316,32 +319,31 @@ else
   measure slip_sends missing
   measure away_cancels missing
 fi
-# 点按: a tap starts, letting go does not stop it, the next tap finishes it.
+# 点按: a tap starts, letting go does not stop it, the next tap finishes it. While it records the
+# screen never settles, so there is no UI tree: the taps go to the button's place read before the
+# take, and the take is read from the core's phase lines (取消录音 is covered by the JS tests).
 if tap_text '^phone-talk-mode-tap$' && wait_text '^点按开始说话$|^Tap to talk$' 10; then
   measure tap_mode ok
   shot 02e-tap-mode
-  n=$(phases | wc -l)
-  tap_text '^phone-mic-hold$' >/dev/null
-  sleep 3 # recording, with the finger off the screen
-  shot 02f-tap-recording
-  if wait_text '^再次点按|^Tap again' 5 && tap_text '^phone-mic-hold$'; then
+  if dump && xy=$(find_node '^phone-mic-hold$'); then
+    read -r x y <<<"$xy"
+    n=$(phases | wc -l)
+    adb shell input tap "$x" "$y"
+    started=no
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      if phases | tail -n +$((n + 1)) | grep -q "phase=listening"; then started=yes; break; fi
+      sleep 1
+    done
+    measure tap_started "$started"
+    sleep 3 # recording, with the finger off the screen
+    adb exec-out screencap -p >"$out/02f-tap-recording.png" 2>/dev/null || true
+    adb shell input tap "$x" "$y"
     tapped=$(take_outcome 02g-tap "$n")
   else
     tapped=missing
   fi
   measure tap_outcome "$tapped"
   case $tapped in cancelled | none | missing) measure tap_finished no ;; *) measure tap_finished yes ;; esac
-  # 取消录音 discards a take tapped open.
-  n=$(phases | wc -l)
-  tap_text '^phone-mic-hold$' >/dev/null
-  sleep 2 # recording
-  if tap_text '^phone-mic-cancel$'; then
-    discarded=$(take_outcome 02h-tap-cancel "$n")
-  else
-    discarded=missing
-  fi
-  measure tap_cancel_outcome "$discarded"
-  if [ "$discarded" = cancelled ]; then measure tap_cancels yes; else measure tap_cancels no; fi
 else
   measure tap_mode missing
 fi
