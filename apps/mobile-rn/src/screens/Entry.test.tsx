@@ -210,6 +210,44 @@ describe("纠正识别错误 on the phone", () => {
     expect(screen.queryByText(/润色后为/)).toBeNull();
   });
 
+  describe("regression: a polished take whose rule fired (Codex review 2026-10-13, round 3)", () => {
+    // The fired rules are replayed as they are now: a rule changed after the take cannot be, so
+    // the take claims nothing for the polish.
+    const rule = (updated: number): ReplacementRule => ({
+      id: "00000000-0000-4000-a000-000000000002",
+      name: "非书 → 飞书",
+      kind: "literal",
+      pattern: "非书",
+      replacement: "飞书",
+      case_sensitive: false,
+      enabled: true,
+      source: { kind: "manual" },
+      pending: false,
+      created_at_ms: T - 3_600_000,
+      updated_at_ms: updated,
+    });
+    const raw = "结果发到非书群了，用维他命测";
+    const polished = take(1, raw, "结果发到飞书群了，用 Voltip 测。", {
+      vocabulary: { corrections: [], rules: [{ id: rule(0).id, count: 1 }] },
+    });
+
+    it("marks only the polish's own change while the rule is as it fired", async () => {
+      await openFix({ history: [polished], rules: [rule(T - 3_600_000)] });
+      expect(screen.getByTestId("fix-legend")).toHaveTextContent(
+        "润色时已改正 1 处· 点按标记可整段选中",
+      );
+      expect(word(raw.indexOf("维他命"))).toHaveAccessibleName(
+        "润色时已改正：维他命，润色后为 Voltip",
+      );
+    });
+
+    it("marks nothing for the polish once the rule changed after the take", async () => {
+      await openFix({ history: [polished], rules: [rule(T)] });
+      expect(screen.queryByTestId("fix-legend")).toBeNull();
+      expect(screen.queryAllByTestId("fix-underline-polish")).toEqual([]);
+    });
+  });
+
   it("加入词典 opens filled in, without the keyboard, and saves an entry that 撤销 removes", async () => {
     const { backend, invoke } = await openFix();
     await fireEvent.press(word(3));

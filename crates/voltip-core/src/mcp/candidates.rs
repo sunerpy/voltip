@@ -210,19 +210,31 @@ pub fn replacements(raw: &str, text: &str) -> Option<Vec<Replacement>> {
 }
 
 /// The replacements of `found` the AI clean-up made in `take`: those the take's own corrections and
-/// rules (`take.vocabulary`, as `dictionary` and `rules` define them now, on even if turned off
-/// since) account for are left out — they turn the heard wording into the polished one, or make
-/// the same replacement at the same place when run over the whole recognised text.
+/// rules (`take.vocabulary`, in their order then, on even if turned off since) account for are left
+/// out — they turn the heard wording into the polished one, or make the same replacement at the
+/// same place when run over the whole recognised text. They are replayed as `dictionary` and
+/// `rules` define them now, so a take one of whose fired entries or rules was deleted or changed
+/// after it (`updated_at_ms` past the take's `at_ms`) gives no pairs at all.
 fn polish_only(found: Vec<Replacement>, take: &HistoryText, dictionary: &[DictionaryEntry], rules: &[ReplacementRule]) -> Vec<Replacement> {
     let fired = &take.vocabulary;
     if found.is_empty() || fired.is_empty() {
         return found;
     }
-    let entries: Vec<DictionaryEntry> =
-        dictionary.iter().filter(|e| fired.corrections.iter().any(|h| h.id == e.id)).map(|e| DictionaryEntry { enabled: true, ..e.clone() }).collect();
-    let rules: Vec<ReplacementRule> =
-        rules.iter().filter(|r| fired.rules.iter().any(|h| h.id == r.id)).map(|r| ReplacementRule { enabled: true, pending: false, ..r.clone() }).collect();
-    let vocabulary = Vocabulary::compile(&entries, &rules);
+    let mut entries = Vec::with_capacity(fired.corrections.len());
+    for hit in &fired.corrections {
+        match dictionary.iter().find(|e| e.id == hit.id) {
+            Some(e) if e.updated_at_ms <= take.at_ms => entries.push(DictionaryEntry { enabled: true, ..e.clone() }),
+            _ => return Vec::new(),
+        }
+    }
+    let mut firing = Vec::with_capacity(fired.rules.len());
+    for hit in &fired.rules {
+        match rules.iter().find(|r| r.id == hit.id) {
+            Some(r) if r.updated_at_ms <= take.at_ms => firing.push(ReplacementRule { enabled: true, pending: false, ..r.clone() }),
+            _ => return Vec::new(),
+        }
+    }
+    let vocabulary = Vocabulary::compile(&entries, &firing);
     let run = |text: &str| vocabulary.apply_rules(&vocabulary.correct(text).text).text;
     let explained = replacements(&take.raw_text, &run(&take.raw_text)).unwrap_or_default();
     found

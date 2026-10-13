@@ -348,16 +348,42 @@ fn regression_candidates_leave_out_what_the_dictionary_and_rules_changed() {
     let out = candidates(&[], std::slice::from_ref(&feishu), &both, None, 10);
     assert_eq!(out.scanned, 2, "the unpolished take was looked at");
     assert_eq!(pairs(out), [("维他命".to_owned(), "Voltip".to_owned(), 1)], "only the polish's own replacement");
-    // A rule turned off since still made that change; with nothing fired the polish made both.
+    // A rule that is off now but unchanged since the take still made that change; with nothing
+    // fired the polish made both.
     let off = ReplacementRule { enabled: false, ..feishu.clone() };
     assert_eq!(pairs(candidates(&[], &[off], &both, None, 10)).len(), 1);
     let nothing = HistoryText { vocabulary: VocabularyHits::default(), ..polished };
     assert_eq!(pairs(candidates(&[], std::slice::from_ref(&feishu), &[nothing], None, 10)).len(), 2);
-    // A correction's change, of an entry turned off since.
+    // A correction's change, of an entry off now but unchanged since the take.
     let corrected = HistoryText { vocabulary: hits(&[voltip.id], &[]), ..take("用维他命测", "用 Voltip 测。", 10) };
     let off_entry = DictionaryEntry { enabled: false, ..voltip };
     assert!(candidates(&[off_entry], &[], &[corrected], None, 10).pairs.is_empty());
     assert!(candidates(&[], &[], &[unpolished], None, 10).pairs.is_empty(), "not polished: nothing, whatever fired");
+}
+
+/// Codex review 2026-10-13 (round 3): the fired entries and rules are replayed as they are now, so
+/// one deleted or changed after the take would hand its change back to the polish; such a take
+/// gives no pairs.
+#[test]
+fn regression_candidates_skip_a_take_whose_fired_vocabulary_changed_since() {
+    let feishu = rule("非书 → 飞书", EntrySource::Manual, false);
+    let voltip = entry("Voltip", &["维他命"]);
+    let fired = VocabularyHits { corrections: vec![VocabularyHit { id: voltip.id, count: 1 }], rules: vec![VocabularyHit { id: feishu.id, count: 1 }] };
+    let polished =
+        HistoryText { vocabulary: fired, ..take("发到非书群，用维他命测，跑千问", "发到飞书群，用 Voltip 测，跑 Qwen。", 20) };
+    let heard = |dictionary: &[DictionaryEntry], rules: &[ReplacementRule]| {
+        candidates(dictionary, rules, std::slice::from_ref(&polished), None, 10).pairs.into_iter().map(|p| p.heard).collect::<Vec<_>>()
+    };
+    let (dictionary, rules) = (std::slice::from_ref(&voltip), std::slice::from_ref(&feishu));
+    assert_eq!(heard(dictionary, rules), ["千问"], "as they stood at the take: only the polish's own");
+    assert!(heard(dictionary, &[]).is_empty(), "the rule deleted since");
+    assert!(heard(&[], rules).is_empty(), "the entry deleted since");
+    let edited = ReplacementRule { pattern: "非输".into(), updated_at_ms: 21, ..feishu.clone() };
+    assert!(heard(dictionary, &[edited]).is_empty(), "the rule edited since");
+    let disabled = DictionaryEntry { enabled: false, updated_at_ms: 21, ..voltip.clone() };
+    assert!(heard(&[disabled], rules).is_empty(), "the entry turned off since");
+    let at_the_take = ReplacementRule { updated_at_ms: 20, ..feishu.clone() };
+    assert_eq!(heard(dictionary, &[at_the_take]), ["千问"], "changed at the take's own instant: still as it fired");
 }
 
 fn history_entry(raw: &str, text: &str) -> HistoryEntry {

@@ -66,7 +66,7 @@ Importing either replaces the list or merges into it, matching rules by name. Th
 
 Open an entry in **History** and switch to the **Original** view: it shows the text as the recogniser wrote it, which is where misheard words are.
 
-- Words AI polish already corrected have a dotted blue underline; hovering shows the polished spelling, for example "Polished as “Voltip”". Selecting one opens a prefilled dictionary card.
+- Words AI polish already corrected have a dotted blue underline; hovering shows the polished spelling, for example "Polished as “Voltip”". Selecting one opens a prefilled dictionary card. Changes the dictionary and the rules made are not included; if an entry or rule used on the record was deleted or changed later, Voltip can no longer tell which words AI polish changed, and the record shows no such underline.
 - Words that are already the heard-as form of an entry have a solid green underline.
 - Select any other misheard word and a toolbar appears above it: **Add to dictionary** (D) or **New rule** (R). Double-click selects a word. When the selection is longer than 64 characters or spans lines, **Add to dictionary** is unavailable and says why.
 

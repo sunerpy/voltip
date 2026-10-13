@@ -162,11 +162,12 @@ describe("History detail · quick fix (docs/dictation.md section 16.9)", () => {
       enabled: true,
       source: { kind: "manual" },
       pending: false,
-      created_at_ms: T,
-      updated_at_ms: T,
+      // Before the takes: as it stood when they were made.
+      created_at_ms: T - 3_600_000,
+      updated_at_ms: T - 3_600_000,
     };
     const vocabulary = { corrections: [], rules: [{ id: feishu.id, count: 1 }] };
-    const { user } = setup({
+    const { user, backend } = setup({
       history: [
         take(1, "结果发到非书群了", "结果发到飞书群了", { refined: false, vocabulary }),
         take(2, "结果发到非书群了，用维他命测", "结果发到飞书群了，用 Voltip 测。", { vocabulary }),
@@ -199,6 +200,26 @@ describe("History detail · quick fix (docs/dictation.md section 16.9)", () => {
     expect(screen.getAllByTestId("fix-pair").map((p) => p.getAttribute("aria-label"))).toEqual([
       "改动：维他命 → Voltip，点按选择正确写法",
     ]);
+    // Codex review round 3: the rule changed after the take cannot be replayed as it fired, so the
+    // take claims nothing for the polish.
+    await act(async () => {
+      await backend.invoke("rules_update", {
+        id: feishu.id,
+        rule: {
+          name: feishu.name,
+          kind: feishu.kind,
+          pattern: "非输",
+          replacement: feishu.replacement,
+          case_sensitive: feishu.case_sensitive,
+          enabled: true,
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(screen.queryAllByTestId("fix-pair")).toEqual([]);
+    });
+    await user.click(screen.getByRole("radio", { name: "原文" }));
+    expect(screen.queryAllByTestId("fix-mark")).toEqual([]);
   });
 
   it("a mark opens the dictionary card pre-filled from the polished text, says what it would change and saves with the row's id", async () => {
