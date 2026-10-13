@@ -18,6 +18,7 @@ import {
   ruleNameFor,
   shortForm,
   snippetParts,
+  takePolishPairs,
   tapPiece,
   textMarks,
   trimRange,
@@ -41,6 +42,9 @@ const RAW =
 const TEXT =
   "下午用 Voltip 测了千问三的流式识别，延迟比上周低了一半，结果发到非书群了，记得把配置同步到 Kubernetes 集群。";
 const TAKE = { raw_text: RAW, text: TEXT };
+const PAIRS = polishPairs(RAW, TEXT);
+/** Every replacement of a take, as `takePolishPairs` leaves them when the polish made them all. */
+const pairsOf = (take: { raw_text: string; text: string }) => polishPairs(take.raw_text, take.text);
 
 let seq = 0;
 function entry(
@@ -130,7 +134,9 @@ describe("the polish's replacements (polishPairs, diffItems)", () => {
   });
 
   it("groups each replacement of the diff view and keeps the other runs as they are", () => {
-    const items = diffItems("嗯下午用维他命测，好", "下午用 Voltip 测。好");
+    const raw = "嗯下午用维他命测，好";
+    const text = "下午用 Voltip 测。好";
+    const items = diffItems(raw, text, polishPairs(raw, text));
     expect(items.map((i) => i.kind)).toEqual(["del", "same", "pair", "same", "del", "add", "same"]);
     const pair = items[2];
     expect(
@@ -141,14 +147,14 @@ describe("the polish's replacements (polishPairs, diffItems)", () => {
 
 describe("marks on the original text (textMarks)", () => {
   it("marks the polish's replacements and the enabled entries' forms; a form wins over a replacement", () => {
-    const marks = textMarks(RAW, TEXT, []);
+    const marks = textMarks(RAW, PAIRS, []);
     expect(marks.map((m) => [m.kind, m.text, m.pair?.polished])).toEqual([
       ["polish", "维他命", "Voltip"],
       ["polish", "酷伯内特斯", "Kubernetes"],
     ]);
     const voltip = entry("Voltip", ["维他命"]);
     const off = entry("飞书", ["非书"], { enabled: false });
-    const known = textMarks(RAW, TEXT, [voltip, off]);
+    const known = textMarks(RAW, PAIRS, [voltip, off]);
     expect(known.map((m) => [m.kind, m.text])).toEqual([
       ["known", "维他命"],
       ["polish", "酷伯内特斯"],
@@ -158,10 +164,97 @@ describe("marks on the original text (textMarks)", () => {
   });
 });
 
+describe("the polish's own replacements (takePolishPairs)", () => {
+  // The final text is the polished text after the dictionary and the rules (§16.9 3.1): a change
+  // the vocabulary made is not the polish's, whatever the diff of the two texts shows.
+  const literal = (pattern: string, replacement: string, extra: Partial<ReplacementRule> = {}) => ({
+    ...rule(`${pattern} → ${replacement}`),
+    pattern,
+    replacement,
+    ...extra,
+  });
+  const fired = (corrections: { id: string }[], rules: { id: string }[]) => ({
+    corrections: corrections.map(({ id }) => ({ id, count: 1 })),
+    rules: rules.map(({ id }) => ({ id, count: 1 })),
+  });
+
+  it("regression: a take that was not polished has none, so no 润色时已改正 mark and no pre-filled spelling", () => {
+    // Codex review 2026-10-13: with the polish off, a rule's 非书 → 飞书 showed as a replacement
+    // the polish made and filled the card's right spelling 「来自润色结果」.
+    const feishu = literal("非书", "飞书");
+    const take = {
+      raw_text: "结果发到非书群了",
+      text: "结果发到飞书群了",
+      refined: false,
+      vocabulary: fired([], [feishu]),
+    };
+    const pairs = takePolishPairs(take, [], [feishu]);
+    expect(pairs).toEqual([]);
+    expect(textMarks(take.raw_text, pairs, [])).toEqual([]);
+    expect(diffItems(take.raw_text, take.text, pairs).some((i) => i.kind === "pair")).toBe(false);
+    const [s, e] = at(take.raw_text, "非书");
+    const target = fixTarget(take, "raw", s, e, pairs);
+    expect(target?.pair).toBeUndefined();
+    expect(prefillFor(target ?? fail())).toEqual({ kind: "dictionary", heard: "非书", term: "" });
+    // Not polished and nothing fired: still none.
+    expect(takePolishPairs({ ...take, vocabulary: undefined }, [], [])).toEqual([]);
+  });
+
+  it("regression: in a polished take a rule's change is left out and the polish's own stays", () => {
+    const feishu = literal("非书", "飞书");
+    const take = {
+      raw_text: "结果发到非书群了，用维他命测",
+      text: "结果发到飞书群了，用 Voltip 测。",
+      refined: true,
+      vocabulary: fired([], [feishu]),
+    };
+    // Han text diffs by the character: the rule's change is 非 → 飞, which the rule's pattern
+    // never matches alone.
+    expect(polishPairs(take.raw_text, take.text).map((p) => p.heard)).toEqual(["非", "维他命"]);
+    const pairs = takePolishPairs(take, [], [feishu]);
+    expect(pairs.map((p) => [p.heard, p.polished])).toEqual([["维他命", "Voltip"]]);
+    expect(textMarks(take.raw_text, pairs, []).map((m) => [m.kind, m.text])).toEqual([
+      ["polish", "维他命"],
+    ]);
+    // A rule turned off since still made that change; a rule that did not fire made none.
+    expect(takePolishPairs(take, [], [{ ...feishu, enabled: false }])).toEqual(pairs);
+    expect(takePolishPairs({ ...take, vocabulary: fired([], []) }, [], [feishu])).toHaveLength(2);
+    expect(takePolishPairs({ ...take, vocabulary: undefined }, [], [feishu])).toHaveLength(2);
+  });
+
+  it("leaves out a correction's change, even of an entry turned off since", () => {
+    const voltip = entry("Voltip", ["维他命"], { enabled: false });
+    const take = {
+      raw_text: "用维他命测",
+      text: "用 Voltip 测。",
+      refined: true,
+      vocabulary: fired([voltip], []),
+    };
+    expect(takePolishPairs(take, [voltip], [])).toEqual([]);
+    expect(takePolishPairs(take, [], [])).toHaveLength(1);
+  });
+
+  it("leaves out a rule's change that needs the text around it", () => {
+    // `(\d+)块` never matches the pair's own wording 块: the whole original text shows the rule
+    // made the same replacement there.
+    const yuan = literal("(\\d+)块", "${1}元", { kind: "regex" });
+    const take = {
+      raw_text: "一共30块钱",
+      text: "一共30元钱。",
+      refined: true,
+      vocabulary: fired([], [yuan]),
+    };
+    expect(polishPairs(take.raw_text, take.text).map((p) => [p.heard, p.polished])).toEqual([
+      ["块", "元"],
+    ]);
+    expect(takePolishPairs(take, [], [yuan])).toEqual([]);
+  });
+});
+
 describe("the selection (fixTarget)", () => {
   it("in the original: trimmed, grown to the whole replacement it lies in, a dictionary entry by default", () => {
     const [s, e] = at(RAW, "他命");
-    const target = fixTarget(TAKE, "raw", s, e);
+    const target = fixTarget(TAKE, "raw", s, e, PAIRS);
     expect(target).toMatchObject({
       view: "raw",
       text: "维他命",
@@ -176,37 +269,37 @@ describe("the selection (fixTarget)", () => {
       termFrom: "polish",
     });
     const [fs, fe] = at(RAW, "非书群了，");
-    const fei = fixTarget(TAKE, "raw", fs, fe);
+    const fei = fixTarget(TAKE, "raw", fs, fe, PAIRS);
     expect(fei).toMatchObject({ text: "非书群了", kind: "dictionary" });
     expect(fei?.pair).toBeUndefined();
     expect(prefillFor(fei ?? fail())).toEqual({ kind: "dictionary", heard: "非书群了", term: "" });
     // Partly over a replacement: not grown.
     const [ps, pe] = at(RAW, "用维他");
-    expect(fixTarget(TAKE, "raw", ps, pe)).toMatchObject({ text: "用维他" });
-    expect(fixTarget(TAKE, "raw", 16, 17)).toBeUndefined();
+    expect(fixTarget(TAKE, "raw", ps, pe, PAIRS)).toMatchObject({ text: "用维他" });
+    expect(fixTarget(TAKE, "raw", 16, 17, PAIRS)).toBeUndefined();
   });
 
   it("in the polished text: words the original has are a dictionary entry, words only the polish wrote a rule", () => {
     const [s, e] = at(TEXT, "非书");
-    expect(fixTarget(TAKE, "polished", s, e)).toMatchObject({
+    expect(fixTarget(TAKE, "polished", s, e, PAIRS)).toMatchObject({
       text: "非书",
       polishOnly: false,
       kind: "dictionary",
     });
     const [vs, ve] = at(TEXT, "olt");
-    const voltip = fixTarget(TAKE, "polished", vs, ve);
+    const voltip = fixTarget(TAKE, "polished", vs, ve, PAIRS);
     expect(voltip).toMatchObject({ text: "Voltip", polishOnly: true, kind: "rule" });
     expect(prefillFor(voltip ?? fail())).toEqual({ kind: "rule", heard: "Voltip", term: "" });
     // Over an addition that is not a replacement: polish only.
     const added = { raw_text: "我们开会", text: "我们下午开会" };
-    expect(fixTarget(added, "polished", 1, 4)).toMatchObject({
+    expect(fixTarget(added, "polished", 1, 4, pairsOf(added))).toMatchObject({
       text: "们下午",
       polishOnly: true,
       kind: "rule",
     });
     // An added space or comma does not make the words the polish's.
     const spaced = { raw_text: "用Voltip测", text: "用 Voltip，测" };
-    expect(fixTarget(spaced, "polished", 0, 11)).toMatchObject({
+    expect(fixTarget(spaced, "polished", 0, 11, pairsOf(spaced))).toMatchObject({
       polishOnly: false,
       kind: "dictionary",
     });
@@ -214,15 +307,15 @@ describe("the selection (fixTarget)", () => {
 
   it("a selection over 64 characters or across lines cannot be a dictionary form", () => {
     const long = { raw_text: "长".repeat(70), text: "长".repeat(70) };
-    expect(fixTarget(long, "raw", 0, 65)).toMatchObject({ block: "tooLong", kind: "rule" });
-    expect(fixTarget(long, "raw", 0, 64)).toMatchObject({ kind: "dictionary" });
-    expect(fixTarget(long, "raw", 0, 64)?.block).toBeUndefined();
+    expect(fixTarget(long, "raw", 0, 65, [])).toMatchObject({ block: "tooLong", kind: "rule" });
+    expect(fixTarget(long, "raw", 0, 64, [])).toMatchObject({ kind: "dictionary" });
+    expect(fixTarget(long, "raw", 0, 64, [])?.block).toBeUndefined();
     const lines = { raw_text: "第一行\n第二行", text: "第一行\n第二行" };
-    expect(fixTarget(lines, "raw", 0, 7)).toMatchObject({ block: "oneLine", kind: "rule" });
+    expect(fixTarget(lines, "raw", 0, 7, [])).toMatchObject({ block: "oneLine", kind: "rule" });
   });
 
   it("the diff view's question pre-fills either spelling", () => {
-    const [pair] = polishPairs(RAW, TEXT);
+    const [pair] = PAIRS;
     expect(prefillPair(pair ?? fail(), "polished")).toEqual({
       kind: "dictionary",
       heard: "维他命",

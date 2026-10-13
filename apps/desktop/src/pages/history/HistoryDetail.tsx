@@ -21,6 +21,7 @@ import {
   presetRefLabel,
   refineModelText,
   sceneLabel,
+  takePolishPairs,
   textMarks,
   wordAt,
 } from "@voltip/shared";
@@ -145,14 +146,19 @@ export function HistoryDetail({
   const scope = fixScope(entry, "desktop");
   const fixing = scope.kind === "fix";
 
+  // The replacements the AI polish made: none when the take was not polished, and none that its
+  // own corrections and rules account for (§16.9 3.1).
+  const pairs = useMemo(
+    () => (fixing ? takePolishPairs(entry, state.dictionary, state.rules) : []),
+    [fixing, entry, state.dictionary, state.rules],
+  );
   const marks = useMemo(
-    () =>
-      fixing && shown === "raw" ? textMarks(entry.raw_text, entry.text, state.dictionary) : [],
-    [fixing, shown, entry.raw_text, entry.text, state.dictionary],
+    () => (fixing && shown === "raw" ? textMarks(entry.raw_text, pairs, state.dictionary) : []),
+    [fixing, shown, entry.raw_text, pairs, state.dictionary],
   );
   const items = useMemo(
-    () => (fixing && shown === "diff" ? diffItems(entry.raw_text, entry.text) : []),
-    [fixing, shown, entry.raw_text, entry.text],
+    () => (fixing && shown === "diff" ? diffItems(entry.raw_text, entry.text, pairs) : []),
+    [fixing, shown, entry.raw_text, entry.text, pairs],
   );
 
   const box = useRef<HTMLDivElement>(null);
@@ -192,7 +198,7 @@ export function HistoryDetail({
       const target =
         selected === undefined
           ? undefined
-          : fixTarget(entry, fixView, selected.start, selected.end);
+          : fixTarget(entry, fixView, selected.start, selected.end, pairs);
       if (selected === undefined || target === undefined) {
         setLive(undefined);
         return;
@@ -203,7 +209,7 @@ export function HistoryDetail({
       }
       setLive({ entryId: entry.id, target, rect: selected.rect });
     },
-    [entry],
+    [entry, pairs],
   );
 
   // The toolbar goes when the selection is gone, leaves the text, or the page scrolls.

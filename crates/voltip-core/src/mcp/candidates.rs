@@ -1,7 +1,10 @@
 //! `vocabulary_candidates` (docs/dictation.md §25): the pairs the AI clean-up changed in the recent
 //! takes — what the recogniser wrote (`heard`) and what the take's final text has instead
 //! (`polished`) — counted over the takes, most frequent first. These are the likely
-//! misrecognitions an agent drafts dictionary entries from.
+//! misrecognitions an agent drafts dictionary entries from. The final text is the polished text
+//! after the dictionary and the rules, so a take the clean-up did not polish gives no pairs, and the
+//! changes a take's own corrections and rules made are left out, as on the history page
+//! (`takePolishPairs` in `packages/shared/src/quick-fix.ts`, §16.9).
 //!
 //! The diff is the history page's: [`diff_tokens`] and [`diff_segments`] are the same
 //! tokenisation and the same token-level LCS as `packages/shared/src/refine.ts` (`diffTokens`,
@@ -18,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::history::HistoryText;
-use crate::vocabulary::{BACKTEST_SNIPPET_CHARS, DictionaryEntry, MAX_TERM_CHARS};
+use crate::vocabulary::{BACKTEST_SNIPPET_CHARS, DictionaryEntry, MAX_TERM_CHARS, ReplacementRule, Vocabulary};
 
 /// Most pairs one call returns.
 pub const MAX_PAIRS: usize = 200;
@@ -206,6 +209,31 @@ pub fn replacements(raw: &str, text: &str) -> Option<Vec<Replacement>> {
     Some(out)
 }
 
+/// The replacements of `found` the AI clean-up made in `take`: those the take's own corrections and
+/// rules (`take.vocabulary`, as `dictionary` and `rules` define them now, on even if turned off
+/// since) account for are left out — they turn the heard wording into the polished one, or make
+/// the same replacement at the same place when run over the whole recognised text.
+fn polish_only(found: Vec<Replacement>, take: &HistoryText, dictionary: &[DictionaryEntry], rules: &[ReplacementRule]) -> Vec<Replacement> {
+    let fired = &take.vocabulary;
+    if found.is_empty() || fired.is_empty() {
+        return found;
+    }
+    let entries: Vec<DictionaryEntry> =
+        dictionary.iter().filter(|e| fired.corrections.iter().any(|h| h.id == e.id)).map(|e| DictionaryEntry { enabled: true, ..e.clone() }).collect();
+    let rules: Vec<ReplacementRule> =
+        rules.iter().filter(|r| fired.rules.iter().any(|h| h.id == r.id)).map(|r| ReplacementRule { enabled: true, pending: false, ..r.clone() }).collect();
+    let vocabulary = Vocabulary::compile(&entries, &rules);
+    let run = |text: &str| vocabulary.apply_rules(&vocabulary.correct(text).text).text;
+    let explained = replacements(&take.raw_text, &run(&take.raw_text)).unwrap_or_default();
+    found
+        .into_iter()
+        .filter(|r| {
+            run(&r.heard) != r.polished
+                && !explained.iter().any(|q| q.heard == r.heard && q.polished == r.polished && q.at < r.at + r.len && r.at < q.at + q.len)
+        })
+        .collect()
+}
+
 /// One snippet of a pair: the recognised text around the heard run.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PairExample {
@@ -259,30 +287,38 @@ fn snippet(raw: &str, at: usize, len: usize) -> String {
     out
 }
 
-/// Count the pairs of `history` (newest first) at or after `since_ms`, the `limit` most frequent.
-pub fn candidates(dictionary: &[DictionaryEntry], history: &[HistoryText], since_ms: Option<u64>, limit: usize) -> Candidates {
+/// Count the pairs of `history` (newest first) at or after `since_ms`, the `limit` most frequent:
+/// only those the AI clean-up made ([`polish_only`]; `rules` are the current rules).
+pub fn candidates(dictionary: &[DictionaryEntry], rules: &[ReplacementRule], history: &[HistoryText], since_ms: Option<u64>, limit: usize) -> Candidates {
     let known: Vec<&str> = dictionary.iter().filter(|e| e.enabled).flat_map(|e| e.heard_as.iter().map(String::as_str)).collect();
     let mut out = Candidates::default();
     let mut index: HashMap<(String, String), usize> = HashMap::new();
     let mut pairs: Vec<Pair> = Vec::new();
     let mut cells = 0usize;
     for take in history.iter().filter(|t| since_ms.is_none_or(|since| t.at_ms >= since)) {
+        if !take.refined {
+            // Not polished: every change in it is a correction's or a rule's.
+            out.scanned = out.scanned.saturating_add(1);
+            continue;
+        }
         let size = (diff_tokens(&take.raw_text).len() + 1).saturating_mul(diff_tokens(&take.text).len() + 1);
         if size > MAX_DIFF_CELLS {
             out.scanned = out.scanned.saturating_add(1);
             out.skipped = out.skipped.saturating_add(1);
             continue;
         }
-        if cells.saturating_add(size) > MAX_SCAN_CELLS {
+        // A take whose corrections or rules fired is diffed a second time (`polish_only`).
+        let cost = if take.vocabulary.is_empty() { size } else { size.saturating_mul(2) };
+        if cells.saturating_add(cost) > MAX_SCAN_CELLS {
             break;
         }
-        cells += size;
+        cells += cost;
         out.scanned = out.scanned.saturating_add(1);
         let Some(found) = replacements(&take.raw_text, &take.text) else {
             out.skipped = out.skipped.saturating_add(1);
             continue;
         };
-        for r in found {
+        for r in polish_only(found, take, dictionary, rules) {
             let key = (r.heard.clone(), r.polished.clone());
             let slot = *index.entry(key).or_insert_with(|| {
                 pairs.push(Pair {

@@ -6,7 +6,12 @@
 // `Intl.Segmenter`, so these tests run without it too: Chinese is split one character a word.
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
 import { DeviceEventEmitter } from "react-native";
-import { type DictionaryEntry, type HistoryEntry, wordPieces } from "@voltip/shared";
+import {
+  type DictionaryEntry,
+  type HistoryEntry,
+  type ReplacementRule,
+  wordPieces,
+} from "@voltip/shared";
 import { MockBackend } from "@voltip/shared/mock";
 
 import { wordUnits } from "../features/QuickFix";
@@ -85,6 +90,7 @@ async function back() {
 interface Setup {
   history?: HistoryEntry[];
   dictionary?: DictionaryEntry[];
+  rules?: ReplacementRule[];
 }
 
 /** The app on the phone's in-memory core, at the first entry of 记录. */
@@ -94,6 +100,7 @@ async function openEntry(options: Setup = {}) {
     now: () => T,
     history: options.history ?? [SAMPLE, ...OTHERS],
     dictionary: options.dictionary ?? [],
+    rules: options.rules ?? [],
   });
   await renderApp({ backend });
   await openTab("history");
@@ -168,6 +175,39 @@ describe("纠正识别错误 on the phone", () => {
     expect(screen.getByTestId("fix-bar-text")).toHaveTextContent("已选择：酷伯内特斯");
     await fireEvent.press(screen.getByTestId("fix-bar-clear"));
     expect(screen.queryByTestId("fix-bar")).toBeNull();
+  });
+
+  it("regression: a change a rule made is not marked as the polish's", async () => {
+    // Codex review 2026-10-13: with the polish off, a rule's 非书 → 飞书 was marked 「润色时已改正」
+    // and the bar said what the polish wrote.
+    const feishu: ReplacementRule = {
+      id: "00000000-0000-4000-a000-000000000001",
+      name: "非书 → 飞书",
+      kind: "literal",
+      pattern: "非书",
+      replacement: "飞书",
+      case_sensitive: false,
+      enabled: true,
+      source: { kind: "manual" },
+      pending: false,
+      created_at_ms: T,
+      updated_at_ms: T,
+    };
+    const raw = "结果发到非书群了";
+    await openFix({
+      history: [
+        take(1, raw, "结果发到飞书群了", {
+          refined: false,
+          vocabulary: { corrections: [], rules: [{ id: feishu.id, count: 1 }] },
+        }),
+      ],
+      rules: [feishu],
+    });
+    expect(screen.queryByTestId("fix-legend")).toBeNull();
+    expect(screen.queryAllByTestId("fix-underline-polish")).toEqual([]);
+    await fireEvent.press(word(raw.indexOf("非")));
+    expect(screen.getByTestId("fix-bar-text")).toHaveTextContent("已选择：非");
+    expect(screen.queryByText(/润色后为/)).toBeNull();
   });
 
   it("加入词典 opens filled in, without the keyboard, and saves an entry that 撤销 removes", async () => {

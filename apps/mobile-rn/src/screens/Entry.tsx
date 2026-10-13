@@ -24,6 +24,7 @@ import {
   refineModelText,
   sceneLabel,
   shortClockLabel,
+  takePolishPairs,
   tapPiece,
   textChars,
   textMarks,
@@ -235,10 +236,15 @@ export function Entry() {
   const [sheet, setSheet] = useState<FixOpen | undefined>(undefined);
   const [sheetOpen, setSheetOpen] = useState(false);
   const raw = entry?.raw_text ?? "";
-  const polished = entry?.text ?? "";
+  // The replacements the AI polish made: none when the take was not polished, and none that its
+  // own corrections and rules account for (§16.9 3.1).
+  const pairs = useMemo(
+    () => (active && entry != null ? takePolishPairs(entry, ui.dictionary, ui.rules) : []),
+    [active, entry, ui.dictionary, ui.rules],
+  );
   const marks = useMemo(
-    () => (active ? textMarks(raw, polished, ui.dictionary) : []),
-    [active, raw, polished, ui.dictionary],
+    () => (active ? textMarks(raw, pairs, ui.dictionary) : []),
+    [active, raw, pairs, ui.dictionary],
   );
   // Hermes has no `Intl.Segmenter`: on the phone the words are split by script (quick-fix.ts).
   const pieces = useMemo(
@@ -257,9 +263,9 @@ export function Entry() {
   const target = useMemo(
     () =>
       entry != null && active && selection !== undefined
-        ? fixTarget(entry, "raw", selection.start, selection.end)
+        ? fixTarget(entry, "raw", selection.start, selection.end, pairs)
         : undefined,
-    [entry, active, selection],
+    [entry, active, selection, pairs],
   );
   // The bar's title and 完成 while words are being picked.
   useLayoutEffect(() => {
