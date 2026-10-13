@@ -859,8 +859,8 @@ export const en: Messages = {
       badge: "Needs approval",
       filter: "Needs approval {n}",
       source: "{client} · {time}",
-      enable: "Turn on",
-      enabled: "Rule turned on · {name}",
+      enable: "Enable",
+      enabled: "Rule enabled · {name}",
       dryRunNote:
         "Rules that need approval do not run in the test run; they take effect once turned on.",
       dot: "Rules need approval",
@@ -2059,7 +2059,7 @@ export const en: Messages = {
         full: "Full history",
         fullHelp:
           "The original and polished text, app and scene of every entry in the chosen period. You confirm this choice.",
-        fullWarning: "Full history of {range} is shared.",
+        fullWarning: "AI tools may read the full history of {range}.",
       },
       range: "Period",
       rangeOption: { last_7_days: "Last 7 days", last_30_days: "Last 30 days", all: "All entries" },
@@ -2072,9 +2072,8 @@ export const en: Messages = {
       revoked: "The full history is no longer shared",
       confirmFull: {
         title: "Let AI tools read the full history?",
-        body: "Connected AI tools can read the original and polished text, app and scene of every entry in {range}. This text is sent to the model service the tool uses and may stay in its conversation history.",
+        body: "Connected AI tools can read the original and polished text, app and scene of every entry in the chosen period. This text is sent to the model service the tool uses and may stay in its conversation history.",
         risk: "The history may contain personal information, account details or other sensitive content. You can withdraw this at any time here.",
-        rangeHint: "You can also pick the last 7 days or all entries",
         allow: "Allow",
       },
       writeTitle: "What AI tools may change",
@@ -2123,6 +2122,7 @@ export const en: Messages = {
         showAll: "Show all",
         showLess: "Show less",
         undo: "Undo",
+        undoLabel: "Undo: {summary}",
         undone: "Undone",
         undoDone: "Undone · {summary}",
         pending: ", needs approval",

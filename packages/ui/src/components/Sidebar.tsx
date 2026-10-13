@@ -10,6 +10,9 @@ export interface SidebarItem {
   label: string;
   icon: IconName;
   count?: number | string;
+  /** Something on the page waits for the user (rules an AI tool created, docs/dictation.md §25):
+   *  an amber dot before the count, named by this text. */
+  attention?: string;
 }
 
 export interface SidebarGroup {
@@ -83,6 +86,9 @@ export interface SidebarEntryProps {
   disabled?: boolean;
   /** Right-aligned text while expanded (a count). */
   trailing?: ReactNode;
+  /** An amber dot that says something waits for the user (its text is the dot's name): before the
+   *  count while expanded, on the glyph's corner in the rail, where `label` should say it too. */
+  attention?: string;
   /** The entry opens a dialog rather than navigating (settings, feedback). */
   opensDialog?: boolean;
   "data-testid"?: string;
@@ -98,9 +104,13 @@ export function SidebarEntry({
   current = false,
   disabled = false,
   trailing,
+  attention,
   opensDialog = false,
   "data-testid": testId,
 }: SidebarEntryProps) {
+  const glyph = (
+    <Icon name={icon} size={18} className={current ? "text-primary" : "text-fg-subtle"} />
+  );
   return (
     <button
       type="button"
@@ -119,10 +129,18 @@ export function SidebarEntry({
           : "text-fg-muted hover:bg-nav-active hover:text-fg",
         disabled && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-fg-muted",
       )}>
-      <Icon name={icon} size={18} className={current ? "text-primary" : "text-fg-subtle"} />
+      {collapsed && attention !== undefined ? (
+        <span className="relative inline-flex">
+          {glyph}
+          <Lamp tone="warn" size={6} className="absolute -top-0.5 -right-0.5" />
+        </span>
+      ) : (
+        glyph
+      )}
       {!collapsed && (
         <>
           <span className="flex-1 truncate text-left">{label}</span>
+          {attention !== undefined && <Lamp tone="warn" size={6} label={attention} />}
           {trailing !== undefined && (
             <span className="text-[12px] font-medium text-fg-subtle">{trailing}</span>
           )}
@@ -255,14 +273,17 @@ export function Sidebar({
                   <SidebarEntry
                     icon={item.icon}
                     label={
-                      collapsed && item.count !== undefined
-                        ? `${item.label} · ${item.count}`
+                      collapsed
+                        ? [item.label, item.count, item.attention]
+                            .filter((part) => part !== undefined)
+                            .join(" · ")
                         : item.label
                     }
                     collapsed={collapsed}
                     current={item.id === activeId}
                     disabled={disabledIds.includes(item.id)}
                     trailing={item.count}
+                    attention={item.attention}
                     onClick={() => {
                       onNavigate(item.id);
                     }}

@@ -293,3 +293,50 @@ describe("Dictionary page", () => {
     expect(await screen.findByText("暂无词条。")).toBeInTheDocument();
   });
 });
+
+describe("Dictionary page · entries an AI tool wrote (docs/dictation.md §25)", () => {
+  it("their source names the tool, 外部工具 shows only them, and the filter goes once none is left", async () => {
+    const user = userEvent.setup();
+    const backend = seeded();
+    renderApp({ path: "/dictionary", backend });
+    const table = await screen.findByRole("table", { name: "词条表" });
+    // No such entry yet: no such filter.
+    expect(screen.queryByRole("radio", { name: "外部工具" })).toBeNull();
+    let id = "";
+    act(() => {
+      id = backend.simulateMcpEntry("Claude Code", {
+        term: "Paseo",
+        heard_as: ["帕赛欧"],
+        enabled: true,
+      });
+    });
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(4);
+    const source = within(rows[3] ?? table).getByText("外部工具 · Claude Code");
+    expect(source).toHaveAttribute("data-user-text");
+    expect(source.closest("[title]")).toHaveAttribute("title", "外部工具 · Claude Code");
+    await user.click(screen.getByRole("radio", { name: "外部工具" }));
+    expect(
+      within(table)
+        .getAllByRole("row")
+        .slice(1)
+        .map((r) => within(r).getAllByRole("cell")[1]?.textContent),
+    ).toEqual(["Paseo"]);
+    // Undone from the settings (or deleted here): the whole list shows again.
+    await act(async () => {
+      await backend.invoke("dictionary_remove", { id });
+    });
+    expect(screen.queryByRole("radio", { name: "外部工具" })).toBeNull();
+    expect(screen.getByRole("radio", { name: "全部" })).toBeChecked();
+    expect(within(table).getAllByRole("row")).toHaveLength(4);
+  });
+
+  it("the English source reads the same", async () => {
+    const backend = seeded();
+    backend.simulateMcpEntry("Codex", { term: "Paseo", heard_as: ["帕赛欧"], enabled: true });
+    renderApp({ path: "/dictionary", backend, systemLanguage: "en-US" });
+    const table = await screen.findByRole("table", { name: "Entries" });
+    expect(within(table).getByText("External tool · Codex")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "External tools" })).toBeInTheDocument();
+  });
+});

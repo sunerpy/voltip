@@ -16,6 +16,7 @@ export type SettingsSection =
   | "scene"
   | "privacy"
   | "service"
+  | "mcp"
   | "network"
   | "appearance"
   | "about";
@@ -27,6 +28,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   "scene",
   "privacy",
   "service",
+  "mcp",
   "network",
   "appearance",
   "about",

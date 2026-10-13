@@ -4,13 +4,18 @@ import {
   type PreviewDraft,
   type ReplacementRule,
   type RuleDraft,
+  type TFunction,
   type VocabularyPreview,
+  pendingRules,
+  pendingRulesClient,
+  relativeTime,
 } from "@voltip/shared";
 import {
   Badge,
   Button,
   Card,
   EmptyState,
+  Icon,
   IconButton,
   Input,
   Lamp,
@@ -25,6 +30,7 @@ import {
   cx,
   useBackend,
   useI18n,
+  useNow,
   useUiState,
 } from "@voltip/ui";
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useState } from "react";
@@ -35,7 +41,16 @@ import { useVocabularyPreview } from "../features/vocabulary/usePreview";
 import { useHitTotals } from "../features/vocabulary/useHitTotals";
 import { errorText, movedBy, ruleDraftProblem } from "../features/vocabulary/vocabulary";
 
-type Kind = "all" | "literal" | "regex";
+/** The list's filter: every rule, one kind, or the rules an AI tool created that wait for the
+ *  user's approval (offered while there are any, docs/dictation.md §25). */
+type Kind = "all" | "literal" | "regex" | "pending";
+
+/** Who wrote a rule, as its waiting line names it. */
+function ruleSource(rule: ReplacementRule, t: TFunction): string {
+  return rule.source.kind === "mcp"
+    ? rule.source.client
+    : t(`dictionary.source.${rule.source.kind}`);
+}
 
 /** The rule being edited; `id` is absent for a new rule (the editor sits above the table). */
 interface Draft extends RuleDraft {
@@ -88,8 +103,9 @@ export function Rules({ compose = false }: RulesProps) {
   const shell = useShell();
   const { navigate } = useRouter();
   const { backend } = useBackend();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const state = useUiState();
+  const now = useNow();
   const rules = state.rules;
   const [kind, setKind] = useState<Kind>("all");
   const [query, setQuery] = useState("");
@@ -102,16 +118,24 @@ export function Rules({ compose = false }: RulesProps) {
   const [exported, setExported] = useState<string | undefined>(undefined);
 
   const hits = useHitTotals("rules");
-  const enabled = rules.filter((r) => r.enabled).length;
+  const enabled = rules.filter((r) => r.enabled && !r.pending).length;
+  // The rules an AI tool created (docs/dictation.md §25): they run once the user turns them on.
+  const pending = pendingRules(rules);
+  const pendingClient = pendingRulesClient(rules);
+  // 待确认 is offered while there are such rules; once the last one is approved or deleted the
+  // whole list shows, and stays when a tool writes the next one.
+  if (kind === "pending" && pending.length === 0) setKind("all");
+  const shownKind: Kind = kind === "pending" && pending.length === 0 ? "all" : kind;
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return rules.filter((r) => {
-      if (kind !== "all" && r.kind !== kind) return false;
+      if (shownKind === "pending" ? !r.pending : shownKind !== "all" && r.kind !== shownKind)
+        return false;
       return (
         q.length === 0 || r.name.toLowerCase().includes(q) || r.pattern.toLowerCase().includes(q)
       );
     });
-  }, [rules, kind, query]);
+  }, [rules, shownKind, query]);
   const problem = draft
     ? ruleDraftProblem(
         draft.name,
@@ -181,6 +205,23 @@ export function Rules({ compose = false }: RulesProps) {
       },
     });
   };
+  // 启用 on a waiting rule approves it: turning it on clears the wait (the core's `rules_update`).
+  const approve = (rule: ReplacementRule) => {
+    backend
+      .invoke("rules_update", { id: rule.id, rule: { ...ruleOf(draftFrom(rule)), enabled: true } })
+      .then(
+        () => {
+          shell.toast({ message: t("rules.pending.enabled", { name: rule.name }), duration: 3000 });
+        },
+        (e: unknown) => {
+          shell.toast({
+            message: t("app.error", { message: errorText(e) }),
+            duration: 5000,
+            tone: "danger",
+          });
+        },
+      );
+  };
   const move = (rule: ReplacementRule, delta: -1 | 1) => {
     const ids = rules.map((r) => r.id);
     run(backend.invoke("rules_reorder", { ids: movedBy(ids, ids.indexOf(rule.id), delta) }));
@@ -222,11 +263,28 @@ export function Rules({ compose = false }: RulesProps) {
       id: "name",
       header: t("rules.column.name"),
       width: 120,
-      cell: (r) => (
-        <span data-user-text className={cx("mono", r.enabled ? "text-fg" : "text-fg-subtle")}>
-          {r.name}
-        </span>
-      ),
+      cell: (r) =>
+        r.pending ? (
+          // A waiting rule says so and who wrote it when (board 09).
+          <span className="flex flex-col gap-1 py-1" data-testid="rule-pending">
+            <span data-user-text className="mono truncate text-fg">
+              {r.name}
+            </span>
+            <span className="flex flex-wrap items-center gap-1.5 text-[11px] text-fg-muted">
+              <Badge tone="warn">{t("rules.pending.badge")}</Badge>
+              <span data-user-text className="whitespace-normal break-words">
+                {t("rules.pending.source", {
+                  client: ruleSource(r, t),
+                  time: relativeTime(Math.floor(r.updated_at_ms / 1000), now, locale),
+                })}
+              </span>
+            </span>
+          </span>
+        ) : (
+          <span data-user-text className={cx("mono", r.enabled ? "text-fg" : "text-fg-subtle")}>
+            {r.name}
+          </span>
+        ),
     },
     {
       id: "kind",
@@ -288,19 +346,23 @@ export function Rules({ compose = false }: RulesProps) {
       width: 48,
       align: "center",
       mono: false,
-      cell: (r) => ({
-        type: "toggle",
-        checked: r.enabled,
-        label: t("rules.row.enable", { name: r.name }),
-        onChange: (next) => {
-          run(
-            backend.invoke("rules_update", {
-              id: r.id,
-              rule: { ...ruleOf(draftFrom(r)), enabled: next },
-            }),
-          );
-        },
-      }),
+      // A waiting rule has no switch: 启用 beside 删除 approves it.
+      cell: (r) =>
+        r.pending
+          ? null
+          : {
+              type: "toggle",
+              checked: r.enabled,
+              label: t("rules.row.enable", { name: r.name }),
+              onChange: (next) => {
+                run(
+                  backend.invoke("rules_update", {
+                    id: r.id,
+                    rule: { ...ruleOf(draftFrom(r)), enabled: next },
+                  }),
+                );
+              },
+            },
     },
     {
       id: "actions",
@@ -308,42 +370,66 @@ export function Rules({ compose = false }: RulesProps) {
       width: 120,
       align: "right",
       mono: false,
-      cell: (r) => (
-        <span className="inline-flex gap-0.5">
-          <IconButton
-            icon="chevronUp"
-            label={t("rules.row.up", { name: r.name })}
-            disabled={rules[0]?.id === r.id}
-            onClick={() => {
-              move(r, -1);
-            }}
-          />
-          <IconButton
-            icon="chevronDown"
-            label={t("rules.row.down", { name: r.name })}
-            disabled={rules.at(-1)?.id === r.id}
-            onClick={() => {
-              move(r, 1);
-            }}
-          />
-          <IconButton
-            icon="edit"
-            label={t("rules.row.edit", { name: r.name })}
-            onClick={() => {
-              setDraft(draftFrom(r));
-              setSaveError(undefined);
-            }}
-          />
-          <IconButton
-            icon="trash"
-            label={t("rules.row.delete", { name: r.name })}
-            tone="danger"
-            onClick={() => {
-              remove(r);
-            }}
-          />
-        </span>
-      ),
+      cell: (r) =>
+        r.pending ? (
+          // A waiting rule is approved or deleted (board 09); it can be edited once it is on.
+          <span className="inline-flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              aria-label={t("rules.row.enable", { name: r.name })}
+              data-testid="rule-approve"
+              onClick={() => {
+                approve(r);
+              }}>
+              {t("rules.pending.enable")}
+            </Button>
+            <Button
+              size="sm"
+              variant="text-danger"
+              aria-label={t("rules.row.delete", { name: r.name })}
+              onClick={() => {
+                remove(r);
+              }}>
+              {t("common.delete")}
+            </Button>
+          </span>
+        ) : (
+          <span className="inline-flex gap-0.5">
+            <IconButton
+              icon="chevronUp"
+              label={t("rules.row.up", { name: r.name })}
+              disabled={rules[0]?.id === r.id}
+              onClick={() => {
+                move(r, -1);
+              }}
+            />
+            <IconButton
+              icon="chevronDown"
+              label={t("rules.row.down", { name: r.name })}
+              disabled={rules.at(-1)?.id === r.id}
+              onClick={() => {
+                move(r, 1);
+              }}
+            />
+            <IconButton
+              icon="edit"
+              label={t("rules.row.edit", { name: r.name })}
+              onClick={() => {
+                setDraft(draftFrom(r));
+                setSaveError(undefined);
+              }}
+            />
+            <IconButton
+              icon="trash"
+              label={t("rules.row.delete", { name: r.name })}
+              tone="danger"
+              onClick={() => {
+                remove(r);
+              }}
+            />
+          </span>
+        ),
     },
   ];
 
@@ -489,6 +575,30 @@ export function Rules({ compose = false }: RulesProps) {
         </div>
       </div>
       <p className="text-[12px] text-fg-muted">{t("rules.intro")}</p>
+      {pending.length > 0 && (
+        <div
+          role="status"
+          data-testid="rules-pending-banner"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-10 border border-warning/40 bg-warning-soft px-4 py-2.5 text-[13px] text-warning">
+          <Icon name="alert" size={16} className="shrink-0" />
+          <span
+            className="min-w-0 flex-1"
+            data-user-text={pendingClient === undefined ? undefined : ""}>
+            {pendingClient === undefined
+              ? t("rules.pending.bannerTools", { n: pending.length })
+              : t("rules.pending.banner", { client: pendingClient, n: pending.length })}
+          </span>
+          <Button
+            size="sm"
+            variant="text"
+            data-testid="rules-pending-filter"
+            onClick={() => {
+              setKind(shownKind === "pending" ? "all" : "pending");
+            }}>
+            {shownKind === "pending" ? t("rules.pending.showAll") : t("rules.pending.showOnly")}
+          </Button>
+        </div>
+      )}
 
       {/* rule table 3/5, dry run 2/5 (never under 320 px); below `lg` they stack. */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(320px,2fr)]">
@@ -501,12 +611,20 @@ export function Rules({ compose = false }: RulesProps) {
                 label={t("rules.kindLabel")}
                 size="sm"
                 variant="ink"
-                value={kind}
+                value={shownKind}
                 onChange={setKind}
                 options={[
                   { value: "all", label: t("rules.kind.all") },
                   { value: "literal", label: t("rules.kind.literal") },
                   { value: "regex", label: t("rules.kind.regex") },
+                  ...(pending.length > 0
+                    ? [
+                        {
+                          value: "pending" as const,
+                          label: t("rules.pending.filter", { n: pending.length }),
+                        },
+                      ]
+                    : []),
                 ]}
               />
               <Input
@@ -545,7 +663,13 @@ export function Rules({ compose = false }: RulesProps) {
               dense
               selectedKey={draft?.id}
               expandRow={(r) => (draft?.id === r.id ? editor : null)}
-              rowClassName={(r) => (r.enabled ? undefined : "opacity-60")}
+              rowClassName={(r) =>
+                r.pending
+                  ? "bg-warning-soft/60 shadow-[inset_3px_0_0_var(--warning)]"
+                  : r.enabled
+                    ? undefined
+                    : "opacity-60"
+              }
             />
           )}
           <div className="mono mt-3 text-[11px] text-fg-subtle">
@@ -604,6 +728,14 @@ export function Rules({ compose = false }: RulesProps) {
               void copyWithToast(shell, text, t("rules.dryRun.copiedResult"));
             }}
           />
+          {pending.length > 0 && (
+            <div
+              className="flex items-start gap-1.5 text-[12px] text-warning"
+              data-testid="dry-run-pending">
+              <Icon name="info" size={14} className="mt-0.5 shrink-0" />
+              <span>{t("rules.pending.dryRunNote")}</span>
+            </div>
+          )}
         </Panel>
       </div>
       {importing && (

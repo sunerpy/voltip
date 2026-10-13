@@ -28,6 +28,7 @@ import { type TrayRequest, type TrayRequestSource, useTrayRequests } from "../ap
 import { useWindowChrome } from "../app/window";
 import { microphoneReadoutValue, useMicrophoneReadout } from "../features/audio/mic-store";
 import { useDictation } from "../features/dictation/useDictation";
+import { useMcpWriteToasts } from "../features/mcp/useMcpWriteToasts";
 import { PresetMenu } from "../features/presets/PresetMenu";
 import {
   MicrophoneMenu,
@@ -142,6 +143,8 @@ export function Shell({
   const i18n = useI18n();
   // The main window only (the pill shows and hides with every take).
   useRelayRecheck(backend);
+  // What the AI tools write (docs/dictation.md §25) is announced in the main window.
+  useMcpWriteToasts();
   const { t } = i18n;
   const appearance = useAppearance();
   const microphone = useMicrophoneReadout();

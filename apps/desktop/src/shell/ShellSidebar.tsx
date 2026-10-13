@@ -10,7 +10,7 @@ import {
   useI18n,
   useUiState,
 } from "@voltip/ui";
-import { type TFunction, formatCount, relayLabel } from "@voltip/shared";
+import { type TFunction, formatCount, pendingRules, relayLabel } from "@voltip/shared";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { AI_ROUTE, type Route, SPEECH_ROUTE, isDialogRoute } from "../app/router";
 import type { SidebarLayoutControls } from "./sidebar-layout";
@@ -22,9 +22,10 @@ function count(n: number): { count?: string } {
 }
 
 /** Sidebar groups: 工作台 (the content) and 语音输入 (where the voice comes from and what turns it
- *  into text). The history, dictionary and rule counts are the core's lists, never a fixture. */
+ *  into text). The history, dictionary and rule counts are the core's lists, never a fixture; rules
+ *  an AI tool created that wait for approval put an amber dot before the rule count (§25). */
 export function navGroups(
-  counts: { history: number; dictionary: number; rules: number },
+  counts: { history: number; dictionary: number; rules: number; pendingRules?: number },
   t: TFunction,
 ): SidebarGroup[] {
   return [
@@ -39,7 +40,13 @@ export function navGroups(
           icon: "book",
           ...count(counts.dictionary),
         },
-        { id: "rules", label: t("shell.nav.rules"), icon: "sparkles", ...count(counts.rules) },
+        {
+          id: "rules",
+          label: t("shell.nav.rules"),
+          icon: "sparkles",
+          ...count(counts.rules),
+          ...((counts.pendingRules ?? 0) > 0 ? { attention: t("rules.pending.dot") } : {}),
+        },
       ],
     },
     {
@@ -180,6 +187,7 @@ export function ShellSidebar({
           history: state.history_total,
           dictionary: state.dictionary.length,
           rules: state.rules.length,
+          pendingRules: pendingRules(state.rules).length,
         },
         t,
       )}
