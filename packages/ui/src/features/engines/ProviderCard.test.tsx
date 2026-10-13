@@ -382,10 +382,13 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
     const invoke = vi.spyOn(backend, "invoke");
     renderCard(backend, { id: "groq", kind: "llm" });
     const form = await screen.findByTestId("provider-form");
-    // The drawer asks for the latest list as it opens.
-    expect(invoke).toHaveBeenCalledWith("provider_models_refresh", {
-      provider: "groq",
-      kind: "llm",
+    // The drawer asks for the latest list as it opens: from an effect, which a slow machine runs
+    // after the form is on the page (main's CI, 2026-10-13), so the test waits for the call.
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("provider_models_refresh", {
+        provider: "groq",
+        kind: "llm",
+      });
     });
     const select = within(form).getByTestId("provider-model-select");
     const offered = await within(select).findByRole(

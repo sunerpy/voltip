@@ -118,10 +118,13 @@ describe("FallbackSection (docs/dictation.md §3.5)", () => {
       within(add).getByRole("combobox", { name: t("engines.fallback.provider") }),
       "aliyun",
     );
-    // Choosing the provider asks for its list; opening the model list asks again.
-    expect(invoke).toHaveBeenCalledWith("provider_models_refresh", {
-      provider: "aliyun",
-      kind: "llm",
+    // Choosing the provider asks for its list (from an effect, so the test waits for it); opening
+    // the model list asks again.
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("provider_models_refresh", {
+        provider: "aliyun",
+        kind: "llm",
+      });
     });
     const model = within(add).getByTestId("fallback-llm-model");
     const offered = await within(model).findByRole(
