@@ -28,10 +28,12 @@ describe("the phone's provider sheets", () => {
     ).toBeNull();
     await fireEvent.press(within(groq).getByRole("button", { name: "Groq" }));
     const sheet = await screen.findByTestId("provider-sheet-sheet");
-    // The sheet asks for the latest list as it opens.
-    expect(invoke).toHaveBeenCalledWith("provider_models_refresh", {
-      provider: "groq",
-      kind: "asr",
+    // The sheet asks for the latest list as it opens, from an effect: the test waits for the call.
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("provider_models_refresh", {
+        provider: "groq",
+        kind: "asr",
+      });
     });
     await waitFor(() => {
       expect(within(sheet).getByTestId("provider-model-help")).toHaveTextContent(
