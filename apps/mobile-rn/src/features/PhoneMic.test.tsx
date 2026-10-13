@@ -1,7 +1,7 @@
 // The phone's talk card (docs/dictation.md §20.11): holding or tapping (user request 2026-10-13),
 // how far a held finger may slip before letting go cancels, and how a take the computer recognised
 // but could not insert reads.
-import { fireEvent, screen, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 import { zhT } from "@voltip/shared";
 
 import { openTab, renderApp } from "../test/render";
@@ -48,6 +48,23 @@ describe("the talk card", () => {
       expect(invoke).toHaveBeenCalledWith("dictation_cancel");
     });
     expect(invoke).not.toHaveBeenCalledWith("dictation_stop");
+  });
+
+  it("regression: a held button keeps its gesture from the page's scroll view", async () => {
+    // React Native hands the gesture to a native responder (the page's scroll view, once the page
+    // can scroll) unless the grant returns true; a finger that moved up or down while holding then
+    // scrolled the page and the take was cancelled.
+    await renderApp();
+    const button = await screen.findByTestId("phone-mic-hold");
+    let blocks: unknown;
+    await act(async () => {
+      blocks = (button.props as { onResponderGrant: (e: unknown) => unknown }).onResponderGrant(
+        touch({ x: 200, y: 500 }),
+      );
+    });
+    expect(blocks).toBe(true);
+    expect(screen.getByTestId("phone-mic-label")).toHaveTextContent("松开识别");
+    await fireEvent(button, "responderRelease", touch({ x: 200, y: 500 }));
   });
 
   it("点按说话 under the button: a tap starts, the next tap sends, 取消录音 discards", async () => {

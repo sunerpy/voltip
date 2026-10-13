@@ -272,9 +272,9 @@ function TakeState({ state, tone, line }: { state: string; tone: Tone; line: str
  *  time), the talk button in its rings, the wave while it records, what releasing does and how to
  *  cancel, and under it the choice between holding and tapping (`Settings.phone_talk`). `start`
  *  resolves whether the take started; a release waits for it, so a quick tap still stops the take
- *  it started. Held: the button keeps the gesture while held (the page does not scroll away under
- *  the finger), and a release [CANCEL_DISTANCE] away from the press cancels. Tapped: the first tap
- *  starts, the next one finishes, 取消录音 discards. */
+ *  it started. Held: the button keeps the gesture while held (neither the page's scroll view nor
+ *  another view takes it), and a release [CANCEL_DISTANCE] away from the press cancels. Tapped:
+ *  the first tap starts, the next one finishes, 取消录音 discards. */
 function TalkCard({
   busy,
   recording,
@@ -484,6 +484,11 @@ function TalkCard({
             // Tapped: the first tap starts the take and the next one finishes it.
             if (tap && started.current !== null) finish(false);
             else begin(e);
+            // `true` keeps native responders off the gesture (Android). Without it the page's
+            // scroll view, once the page can scroll, takes a finger that moves up or down while
+            // holding: the page scrolls, the button's gesture is terminated, and the take is
+            // cancelled (2026-10-13).
+            return true;
           }}
           onResponderMove={(e) => {
             if (held && !tap) setOffButton(outside(e));

@@ -232,7 +232,8 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
 - 真机：AWS Device Farm（us-west-2），`scripts/devicefarm-rn.sh <apk> <设备池> <输出目录>`。自定义测试环境
   （`apps/mobile-rn/devicefarm/testspec.yml`）+ adb 驱动的 `acceptance.sh`（与 `.github/scripts/android-device-smoke.sh`
   同一思路），设备语言设为 zh_CN：安装、冷启动计时、首屏出现「按住说话」、授予麦克风后按住说话录 4 秒（设备
-  房间里的声音，验证录音和识别链路走到结果或原因）、三个标签页、语音模型（点服务商卡片打开底部面板，返回键先关面板）/
+  房间里的声音，验证录音和识别链路走到结果或原因）、按住时手指滑动 58 dp 照常发送、上滑 200 dp 取消、「说话方式」
+  切到「点按」后点一下开始再点一下结束、「取消录音」丢弃、切回「按住」（2026-10-13）、三个标签页、语音模型（点服务商卡片打开底部面板，返回键先关面板）/
   AI 模型 / 外观（切到暗黑）/ 录音
   （下拉菜单，返回键先关菜单）/ 词典（全屏编辑器）、本机与配对页、返回逐级、说话页两次返回退出、内存与掉帧；
   `summary.txt` 逐项记录，截图与界面树回传后逐张查看。

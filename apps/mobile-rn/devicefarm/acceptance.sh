@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The React Native phone app on a Device Farm phone (docs/mobile-rn.md §7), driven over adb from
-# the test host: cold start, a take on the phone, every tab and the main settings pages, a
+# the test host: cold start, a take on the phone (held, slipped, cancelled, tapped), every tab and the main settings pages, a
 # dropdown menu, a full-screen editor, the pairing pages, Android's back through the stack and the
 # second back that leaves. Every step runs whatever the one before it did, and writes what it saw:
 # the screenshots, the UI trees, the app's own logcat and summary.txt (key=value lines) go into
@@ -241,6 +241,106 @@ if hold_text '^按住说话$|^Hold to talk$' 4000; then
   shot 02b-talk-after
 else
   measure talk_pressed missing
+fi
+
+step "HOLD, SLIP AND TAP"
+# docs/dictation.md §20.11 (2026-10-13): a finger that slips while holding still sends, a release
+# more than the button's width (120 dp) from the press cancels, and 点按 under the card turns the
+# button into tap to start, tap again to finish. Each take is read from the core's phase lines
+# that follow the gesture; the next gesture waits for `phase=idle` (a result stays on the card for
+# its dwell, and the button ignores a press until then).
+phases() {
+  local pid
+  pid=$(adb shell pidof "$PKG" | tr -d '\r')
+  [ -n "$pid" ] && adb logcat -d --pid="$pid" 2>/dev/null | grep -E "dictation phase|take failed"
+}
+settle() {
+  local deadline=$((SECONDS + 30)) last
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    last=$(phases | grep "dictation phase" | tail -1)
+    if [ -z "$last" ] || printf '%s' "$last" | grep -q "phase=idle"; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+# The outcome of the take after the first $2 phase lines: done, failed:<code>, cancelled, or none
+# within 60 s; it waits for the core to be idle again as well.
+take_outcome() {
+  local name=$1 skip=$2 lines outcome=none code deadline=$((SECONDS + 60))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    lines=$(phases | tail -n +$((skip + 1)))
+    printf '%s\n' "$lines" >"$out/$name-phases.txt"
+    if printf '%s\n' "$lines" | grep -q "phase=cancelled"; then
+      outcome=cancelled
+    elif printf '%s\n' "$lines" | grep -q "phase=done kind=dictation"; then
+      outcome="done"
+    elif printf '%s\n' "$lines" | grep -q "phase=failed"; then
+      code=$(printf '%s\n' "$lines" | sed -n 's/.*take failed code=\([A-Za-z_]*\).*/\1/p' | tail -1)
+      outcome=failed:${code:-unknown}
+    fi
+    if [ "$outcome" != none ] && printf '%s\n' "$lines" | grep -q "phase=idle"; then break; fi
+    sleep 2
+  done
+  echo "$outcome"
+}
+density=$(adb shell wm density | tr -d '\r' | sed -n 's/.*: *\([0-9][0-9]*\).*/\1/p' | tail -1)
+measure density "${density:-unknown}"
+density=${density:-420}
+dp() { echo $(($1 * density / 160)); }
+settle || echo "acceptance: the first take did not go idle"
+if dump && xy=$(find_node '^phone-mic-hold$'); then
+  read -r x y <<<"$xy"
+  # 50 dp left and 30 dp up over four seconds, let go there: about 58 dp from the press, inside
+  # the button's reach. Before 2026-10-13 this cancelled.
+  n=$(phases | wc -l)
+  adb shell input swipe "$x" "$y" $((x - $(dp 50))) $((y - $(dp 30))) 4000
+  slip=$(take_outcome 02c-slip "$n")
+  measure slip_outcome "$slip"
+  case $slip in cancelled | none) measure slip_sends no ;; *) measure slip_sends yes ;; esac
+  # 200 dp straight up, let go there: a cancel.
+  n=$(phases | wc -l)
+  adb shell input swipe "$x" "$y" "$x" $((y - $(dp 200))) 4000
+  away=$(take_outcome 02d-away "$n")
+  measure away_outcome "$away"
+  if [ "$away" = cancelled ]; then measure away_cancels yes; else measure away_cancels no; fi
+else
+  measure slip_sends missing
+  measure away_cancels missing
+fi
+# 点按: a tap starts, letting go does not stop it, the next tap finishes it.
+if tap_text '^phone-talk-mode-tap$' && wait_text '^点按开始说话$|^Tap to talk$' 10; then
+  measure tap_mode ok
+  shot 02e-tap-mode
+  n=$(phases | wc -l)
+  tap_text '^phone-mic-hold$' >/dev/null
+  sleep 3 # recording, with the finger off the screen
+  shot 02f-tap-recording
+  if wait_text '^再次点按|^Tap again' 5 && tap_text '^phone-mic-hold$'; then
+    tapped=$(take_outcome 02g-tap "$n")
+  else
+    tapped=missing
+  fi
+  measure tap_outcome "$tapped"
+  case $tapped in cancelled | none | missing) measure tap_finished no ;; *) measure tap_finished yes ;; esac
+  # 取消录音 discards a take tapped open.
+  n=$(phases | wc -l)
+  tap_text '^phone-mic-hold$' >/dev/null
+  sleep 2 # recording
+  if tap_text '^phone-mic-cancel$'; then
+    discarded=$(take_outcome 02h-tap-cancel "$n")
+  else
+    discarded=missing
+  fi
+  measure tap_cancel_outcome "$discarded"
+  if [ "$discarded" = cancelled ]; then measure tap_cancels yes; else measure tap_cancels no; fi
+else
+  measure tap_mode missing
+fi
+# Back to holding for the steps below.
+if tap_text '^phone-talk-mode-hold$' && wait_text '^按住说话$|^Hold to talk$' 10; then
+  measure hold_again ok
+else
+  measure hold_again missing
 fi
 
 # The talk page: its header is the only one with the 本机 action.
