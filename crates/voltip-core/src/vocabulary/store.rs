@@ -152,6 +152,21 @@ impl DictionaryStore {
         let entries = permute(&self.entries, ids, |e| e.id).ok_or_else(|| VocabularyError::Dictionary("新的顺序必须恰好包含现有的全部词条".into()))?;
         self.commit(entries)
     }
+
+    /// Put `entries` in the place of the dictionary, as they are (a backup's import,
+    /// docs/dictation.md §4.6): checked like a stored file, every entry in its normalised form and
+    /// the whole list within the rules, and written in one go. Refused whole, the file and the list
+    /// unchanged.
+    pub fn restore_list(&mut self, entries: Vec<DictionaryEntry>) -> Result<(), VocabularyError> {
+        let unnormalised = entries.iter().find(|e| {
+            let draft = DictionaryDraft { term: e.term.clone(), heard_as: e.heard_as.clone(), enabled: e.enabled };
+            validate_dictionary_draft(&draft).ok().as_ref() != Some(&draft)
+        });
+        if let Some(e) = unnormalised {
+            return Err(VocabularyError::Dictionary(format!("词条「{}」不是规范形式", e.term)));
+        }
+        self.commit(entries)
+    }
 }
 
 fn unknown_entry(id: Uuid) -> VocabularyError {
@@ -240,6 +255,21 @@ impl RuleStore {
     /// Put the rules in the order of `ids`, which must be exactly the current ids.
     pub fn reorder(&mut self, ids: &[Uuid]) -> Result<(), VocabularyError> {
         let rules = permute(&self.rules, ids, |r| r.id).ok_or_else(|| VocabularyError::Rules("新的顺序必须恰好包含现有的全部规则".into()))?;
+        self.commit(rules)
+    }
+
+    /// Put `rules` in the place of the list, as they are (a backup's import, docs/dictation.md
+    /// §4.6): checked like a stored file, every rule in its normalised form (its regex compiles)
+    /// and the whole list within the rules, and written in one go. Refused whole, the file and the
+    /// list unchanged.
+    pub fn restore_list(&mut self, rules: Vec<ReplacementRule>) -> Result<(), VocabularyError> {
+        let unnormalised = rules.iter().find(|r| {
+            let draft = RuleDraft::from(*r);
+            validate_rule_draft(&draft).ok().as_ref() != Some(&draft)
+        });
+        if let Some(r) = unnormalised {
+            return Err(VocabularyError::Rules(format!("规则「{}」不是规范形式", r.name)));
+        }
         self.commit(rules)
     }
 

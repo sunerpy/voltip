@@ -323,7 +323,7 @@ pub struct HistoryEntry {
 | `no_display` | Linux 上 enigo 连不上显示服务 | 无法连接显示服务 |
 | `secure_input` | Windows 预检 `secure_desktop` | 密码框或系统安全界面正在接收输入 |
 | `elevated_target` | Windows 预检 `elevated_target` | 目标窗口以管理员身份运行 |
-| `other` | 其余情况，以及没有 `code` 的旧记录 | 无法直接粘贴 |
+| `other` | Windows 拒绝了模拟按键（`SendInput` 没有全部发出，enigo 报「blocked by UIPI」：电脑已锁屏，或前台窗口的权限更高而预检读不到；2026-10-13，此前记为插入失败）；其余情况，以及没有 `code` 的旧记录 | 无法直接粘贴 |
 
 链路：`voltip-inject` 的 `DeliveryError::Unavailable(InjectNote { code, detail })` → `Injection.note` → 桌面壳 `core_note` 换成核心的 `ClipboardCode` → `Outcome::clipboard(note)`。界面上，首页表格、历史列表和详情标题栏只显示短标签「已复制到剪贴板」；详情正文下方一张提示卡按 `code` 给出一句说明和本机的粘贴键（macOS ⌘V，其余 Ctrl+V），原文收在可展开的「技术细节」里（等宽、任意位置断行）。
 
@@ -356,7 +356,8 @@ pub struct HistoryEntry {
 - **筛选**：`sinceMs`（页面按本地时间算好的零点）、收藏、失败（留在剪贴板或失败，即 `outcome` 不是 `inserted`）都用 SQL 过滤。
 - **搜索**：关键词去掉首尾空白、转小写后，在 `search` 列里做子串匹配。`search` 列在写入时拼成：内置场景的中英文名、`text`、`raw_text`、两个模型、应用名和 id、场景名、编辑指令、选区、处理后文本（§22.4，保存结果时重算），各自 `to_lowercase` 后以 U+001F 分隔，所以一次匹配不会跨两个字段。
 - **状态与事件**：`UiState.history_recent`（最新 `RECENT_ENTRIES = 30` 条，2026-10-01 之前为 20 条）与 `history_total` 取代原来的 `UiState.history`；`UiEvent::History { recent, total }`。复制上一条、侧栏计数、规则与词典页的「用最近一次听写」读 `history_recent`。首页「最近的结果」至少显示 6 行，窗口更高时按页面下方的空白增加行数，直到页面底部不再留空，最多显示 `history_recent` 的全部条目（`useRowsThatFit`，2026-10-01 用户要求：高分辨率下表格下方空白一大片）。
-- **历史页**：每页 `HISTORY_PAGE = 100` 条，列表底部进入视野时加载下一页（也可以点「加载更多」）；搜索在停止输入 200 ms 后发出；新结果回来之前保留原来的行，第一次结果回来之前不显示空状态。收到历史事件时重新加载已加载的条数。首页表格点开的条目不在已加载的页里时，详情用 `history_entry` 取。
+- **历史页**（桌面，2026-10-13 用户要求起分页显示，`apps/desktop/src/pages/history-list/`）：每页 20 / 50 / 100 / 200 条（`HISTORY_PAGE_SIZES`），默认 50 条：比原来一次加载的 100 条少一半，翻页按钮不用往下滚很多屏，最大的历史（2 万条）也只有 400 页。每页条数是这个窗口的浏览方式，与侧栏、外观的本地选项一样存在 webview 的 `localStorage`（`voltip.historyPage`），不进 `Settings`，所以不随手机镜像的设置与备份走。一页就是一次 `history_query`（`offset` = (页码 − 1) × 每页条数，`limit` = 每页条数，都不超过 `HISTORY_QUERY_LIMIT`）。日志底部写「第 X / Y 页 · 共 N 条」，有搜索时写「找到 N 条」，旁边是每页条数；多于一页时还有第一页、上一页、页码、下一页、最后一页（`@voltip/ui` 的 `Pagination`：首末页与当前页前后各一页，其余为省略号，超过 7 页时始终 7 个位置，按钮不随翻页移动；当前页 `aria-current="page"`；到头的按钮用 `aria-disabled` 变暗、留在 Tab 顺序里，按着回车翻到最后一页时焦点不丢；日志窄于 19rem 时收起第一页与最后一页按钮）。换筛选、搜索或每页条数都回到第 1 页（清除搜索也是）；从长页面底部翻页或换每页条数时，日志顶端回到视野里。收到历史事件时重新取当前这一页，停在原来的页码：新听写只把各页的行往后推一条，第 1 页最前面是最新的一条；当前页的条目全部删除后改为显示最后一页，中间不出现空页。搜索在停止输入 200 ms 后发出，与筛选（时间范围、已收藏、未插入）一起在核心里执行；新结果回来之前保留原来的行，第一次结果回来之前不显示空状态；在某个筛选里搜索不到时，空状态写明在哪个筛选里找过，可以清除搜索或改为在全部记录中查找。选中的条目在当前页上时保持选中；翻到别的页、换筛选、搜索或每页条数之后，它不在新的一页上时，详情改为这一页的第一条；新听写不改变选中。首页表格点开的条目不在当前页时，详情用 `history_entry` 取，直到列表换页。宽度达到 `lg` 时，详情栏粘在页面滚动容器（外壳的 `<main>`）顶部下方 1.5rem 处，与页面内边距相同；高度不超过滚动区域减去上下内边距（页面把 `<main>` 的高度写在 `--scroll-area-h` 上，随窗口大小更新），原来 552 px 的最小高度在矮窗口里随之降低，内容更高时只在详情卡片里滚动，换一条记录时从卡片顶端开始；日志随页面滚动并撑满这一行。窄于 `lg` 时两栏上下排列，与之前相同。
+- **手机的「记录」页**：仍按 `HISTORY_PAGE = 100` 条一次加载，列表到底时加载下一页（也可以点「加载更多」；`@voltip/ui` 的 `useHistoryList`，React Native 版用它的副本）；收到历史事件时重新加载已加载的条数。
 
 ### 4.5 统计（2026-09-30）
 
@@ -365,6 +366,24 @@ pub struct HistoryEntry {
 - **分桶**：页面用 `statsBoundaries` 按本地时间算出零点，从本周一往前 5 周到明天零点，共 37–43 个；夏令时 23 或 25 小时的日子也按本地零点算。核心按 `[bᵢ, bᵢ₊₁)` 分桶，每个区间和总计都给出次数、转录字数、修正字数、说话时长和延迟合计。页面用这些区间拼出今天、本周和本月（本月的开头总在这 6 周里）。
 - **节省时间** = 说话时长 × 1.9（`SAVED_TIME_FACTOR`）。依据：Ruan 等 2016（arXiv:1608.07323）的实验里，说话输入比手机打字快约 2.9 倍（英文 153 vs 52 词/分，中文 123 vs 43），打出同样的字要多花约 1.9 倍的说话时长。首页的「依据」弹层写的是同一段说明。
 - **首页**（0.1.1 起按 Penpot「澄空 Glass · Voltip」画板 01）：页头的副标题写今天的听写次数、节省时间和历史记录条数，「依据」在它旁边；今天 / 本周 / 本月 / 总计四张卡（用户 2026-10-10 选定 Penpot「Voltip 统计卡」的方案 C、总计卡处理 ①）：每张卡的底色和描边是表面色混入该范围的颜色（今天跟随强调色，本周 ok 绿，本月 warning 琥珀；浅色主题混 5% / 22%，深色主题 8% / 28%），左上角是同色的图标块（太阳、日历、月历、时钟）和范围名，右上角听写次数，下面是节省时间（26 px 粗体数字）和「节省时间 · 字数」。总计卡在浅色主题里是墨色渐变加右上角强调色光晕、浅色文字，在深色主题里是强调色浅底到表面色的渐变加光晕和描边，图标块是浅强调色底配强调色图标（不用实心强调色，用户 2026-10-10 看服务商草图时提出）。颜色全部来自主题令牌（`packages/ui/src/tokens.css` 的 `--tile-*` / `--total-*` 与 `stat-tile-*`），所以每套主题和用户选的强调色都适用（澄空与夜空混入半透明的面板色）；手机「记录」页的四格由 `apps/mobile-rn/src/ui/statTile.ts` 从 MD3 主题算出同样的颜色，总计卡的渐变用 react-native-svg 画。时长按大小换单位（`durationParts`：「21 秒」「3 分 47 秒」「79 小时 10 分」），数字大、单位小；侧栏的历史计数与页面上的计数一样加千位分隔。
+
+### 4.6 备份与迁移（2026-10-13）
+
+用户要求（2026-10-13）：电脑上的历史记录（含节省时间、字数等统计）、词典、规则等可以导出和导入，用于迁移到另一台电脑和备份恢复。只做电脑端，手机不在范围内。
+
+- **内容**：全部历史记录，个人词典、替换规则、场景（含内置场景）和自定义 AI 预设。统计不单独保存：每条记录的统计列在写入时由条目算出（§4.5），恢复条目即恢复统计。**不含**：设置（`settings.json`）、服务商密钥和其他任何密钥、设备身份、已配对的设备、本地模型、手机副本（`mirror/*.sqlite3`）、本机服务的令牌。界面与用户文档写明不含设置和密钥。
+- **文件**：UTF-8 JSON，扩展名 `.voltip-backup`（`backup::BACKUP_EXTENSION`），每个顶层成员一行、每个条目一行。依次是 `format`（`"voltip-backup"`）、`version`（`BACKUP_VERSION = 1`）、`app_version`、`created_at_ms`、`device`（设备名）、`platform`，然后 `dictionary`、`rules`、`scenes`、`presets`，再是 `history`（按历史自己的顺序 `at_ms DESC, rowid DESC`），最后 `counts`（各部分条数）。各部分是存储结构体的 serde 原样输出（`HistoryEntry`、`DictionaryEntry`、`ReplacementRule`、`Scene`、`CustomPreset`），以后加在这些结构体里的字段不用改备份代码就能往返；读取时忽略不认识的字段和部分。只有旧版本会读错的改动才提高 `version`。文件不加密（与 `history.sqlite3` 一样是明文），界面提醒妥善保管；不压缩：没有为此新增依赖。
+- **导出**（`backup_export { fileName }`，桌面查询）：壳层弹出系统保存对话框，默认文件名是页面给的 `Voltip 备份 YYYY-MM-DD`（按 `history::export::file_name` 的规则清理）；所选名称没有扩展名、且加上 `.voltip-backup` 的文件不存在时补上扩展名。文件由 bridge 写入：四个列表取 bridge 缓存的 `UiState`，历史记录经只读连接用一条语句（一个快照）逐行读出，解码为 `HistoryEntry` 后直接写入 1 MiB 缓冲的文件，不在内存里拼出全文；无法解码的行跳过并记日志（与历史自己的读取一致）。先写 `<名称>.part`，`sync_all` 后改名为所选文件；失败时删除 `.part`，原有文件不变。答复 `saved { path, counts, bytes }`、`cancelled` 或 `failed { code: write | history, detail }`。
+- **导入第一步**（`backup_open { title }`）：系统打开对话框（只列出 `.voltip-backup`），bridge 读取并整体检查文件，此时什么都没有改变。大于 `MAX_BACKUP_BYTES = 512 MiB` 答 `too_large`；读不了答 `unreadable`；不是 JSON 对象或 `format` 不对答 `not_backup`（无法解析、但开头 4 KiB 里有 `"format"` 和 `voltip-backup` 的算损坏）；`version` 比本版本新答 `too_new { version }`；某部分不能解析为存储结构体、或 `counts` 与内容不符答 `damaged`。开头的 UTF-8 BOM 可以有。成功时 bridge 持有解析好的备份，答 `preview { token, manifest }`（来源设备与系统、创建时间、应用版本、格式版本、各部分条数）。同一时间只持有一个：再次打开文件、导入或 `backup_discard { token }`（预览关闭）时释放。日志只记失败的种类，不记解析器的原文（它可能引用文件内容）。
+- **导入第二步**（`backup_import { token, parts, mode }`）：用户选择部分（每部分一个开关，备份中没有的部分不能选）和方式（`merge` 合并 / `replace` 替换，沿用 `ImportMode`）。bridge 取出备份（token 只能用一次，否则答 `expired`），发 `CoreCommand::BackupImport { backup, parts, mode, reply }` 并等核心的报告（`IMPORT_WAIT` 10 分钟，只防核心不再响应，超时答 `unavailable`）。核心按 AI 预设 → 场景 → 词典 → 规则 → 历史记录的顺序处理（场景可能引用预设）：`backup::merge` 算出每部分的新列表和每个跳过条目的原因，存储的 `restore_list` 再用读取存储文件时的同一套检查（每项为规范形式，整个列表符合规则）检查一遍，然后一次原子写入。检查不通过或写入失败时这一部分保持原样，报告 `error: write`，其余部分照常进行。合并没有新增任何内容时不写入、不发事件。每部分成功后发它自己的事件（`Presets`、`Scenes`、`Dictionary` 并重新编译词汇、`Rules`、`History`），引擎从下一次听写起使用新列表；首页的统计在 `history` 事件后重新查询。
+  - **合并**：这台电脑上已有的内容不变。备份中的条目在以下情况跳过，按原因计数：id 相同，或正确写法、名称、内置场景类别相同（`duplicate`）；不符合存储的检查，例如正则无法编译（`invalid`）；误识别写法与这台电脑的词条冲突（`conflict`）；超过上限（`limit`：词典 500、规则 200、用户场景 50、自定义预设 30）。写入的条目保留原 id、时间和全部字段。规则接在这台电脑的规则之后；用户场景插在第一个内置场景之前（与新建场景相同）；内置场景保留这台电脑的。因与这台电脑的预设同名而跳过的预设，备份中引用它的场景改为引用这台电脑的同名预设。
+  - **替换**：所选部分只保留备份中的内容，检查与合并相同。内置场景按类别替换：沿用这台电脑上该内置场景的 id（设置可能引用它），换成备份中的开关、应用和覆盖项；应用列表是备份所在系统的默认值（未改过）时，换成这台电脑所在系统的默认值。备份中缺少的类别照常补上。
+  - **历史记录**：一个事务，失败时历史记录不变。合并跳过 id 已存在的条目和备份内重复的条目；替换先像 `history_clear` 一样清空（手机副本随之从头同步，§20.8）。之后历史记录保留两者合起来最新的 `Settings.history.keep` 条（与 `push` 的规则相同，同一毫秒的条目里新写入的算较新）：备份中更早的条目不写入（`older`），合并时这台电脑上超出的最旧条目被删除（`removed`；替换时 `removed` 是原有的全部条数）。统计列在写入时计算。导入不受「保存听写历史」开关影响：它是用户明确要求的操作。
+  - **跨系统迁移**：场景按应用 id 匹配，同一应用在不同系统上的 id 不同（Windows 的进程名、macOS 的 bundle id、Linux 的 WM_CLASS）。用户自建的场景在另一个系统上要重新选择应用；内置场景未改过的默认应用会换成新系统的。
+- **报告**：`done { report: { mode, parts: [{ part, in_file, restored, skipped: { duplicate, limit, conflict, invalid, older }, removed, error? }] } }`。界面按历史记录、词典、规则、场景、AI 预设的顺序列出每部分「已导入 N」「跳过：原因 N」「已从这台电脑删除 N」，或这部分未能导入的原因。
+- **手机**：两个手机壳注册同名命令，答 `failed { code: unsupported }`；`backup_discard` 什么也不做。
+- **实测**（本机，`backup/tests.rs` 的 `twenty_thousand_entries_export_and_import_in_time`；门槛只防严重退化：每一步 < 60 s，文件 < 64 MiB）：2 万条（每条约 40 个汉字）的文件 10.4 MiB；release 构建导出 0.06 s、读取并检查 0.03 s、合并导入 0.46 s（导入期间核心不处理其他命令），debug 构建分别为 0.52 s、0.26 s、1.83 s。
+- **门禁**：`backup/tests.rs`（往返与统计、文件写法与 `.part`、拒绝的每一种、四个列表的合并与替换、存储的整体检查、历史的保留与删除计数、半途失败不留痕迹、2 万条计时）；`tests/backup.rs`（真实核心任务：合并、再次导入不变、只替换部分、重启后仍在、无法打开的历史只影响这一部分）；bridge `a_backup_goes_from_one_bridge_to_another`；契约夹具 `backup.json` 与 `packages/shared/src/backup.test.ts`；桌面 `tests/ipc.rs@a_backup_import_needs_a_backup_the_shell_opened`，手机两个壳答 `unsupported`；TS：`backup-merge.test.ts`、`mock-backup.test.ts`、`BackupSection.test.tsx`。
 
 ## 5. IPC（bridge 与 TS 契约）
 
@@ -1443,7 +1462,7 @@ Rust：`voltip-platform` `cmd_c_keycode` 表与终端表（`terminal_ids_are_per
 | `take_audio` | 手机 → 电脑 | `take`、`seq`（从 0 起）、`pcm`（PCM16 LE 单声道，CBOR 字节串，偶数字节，≤ 32 000 = 1 秒） |
 | `take_opus` | 手机 → 电脑 | `take`、`seq`（与 `take_audio` 共用计数）、`packets`（1–50 个 20 ms Opus 包，16 kHz 单声道，每个 1–1275 字节） |
 | `take_stop` / `take_cancel` | 手机 → 电脑 | `take` |
-| `take_status` | 电脑 → 手机 | `take`、`state`：`listening` / `processing` / `done{text ≤ 2000 字, pasted}` / `failed{code: busy｜unavailable｜no_speech｜failed, message ≤ 200 字}` / `cancelled`；`opus`（这台电脑解码 Opus，缺省为假） |
+| `take_status` | 电脑 → 手机 | `take`、`state`：`listening` / `processing` / `done{text ≤ 2000 字, pasted}` / `failed{code: busy｜unavailable｜no_speech｜failed, message ≤ 200 字, text?}` / `cancelled`；`opus`（这台电脑解码 Opus，缺省为假）。`failed.text`（≤ 2000 字，2026-10-13）：电脑识别出了文字、只是未能插入时带上（§20.11），旧版手机忽略它 |
 | `phone_text` | 手机 → 电脑 | `id`（手机自增）、`body`（1–10 000 字）、`source`：`typed` / `clipboard`（§20.6） |
 | `phone_text_status` | 电脑 → 手机 | `id`、`state`：`queued` / `delivered{pasted}` / `failed{code: busy｜unavailable｜failed, message ≤ 200 字}` |
 
@@ -1457,6 +1476,7 @@ Rust：`voltip-platform` `cmd_c_keycode` 表与终端表（`terminal_ids_are_per
 - `CoreConfig.accepts_phone_takes`：桌面为真，手机为假（回 `unavailable`）。识别未就绪（同热键录音的 `check_recogniser`）回 `unavailable` 并附原因；电脑正在自己的录音、或另一部手机在录，回 `busy`。
 - 每个 `DictationStatus` 在发出前盖上 `remote = 手机名`，并按相位回报一次 `take_status`（`listening` 的重复状态只发一次）；回到 `Idle` 即结束。手机离线或 5 秒（`REMOTE_QUIET_LIMIT`）没有音频时取消。
 - 桌面壳：手机录音进行时，`audio::follow_phone_takes` 让电平 hub 改用核心的电平帧（来自手机流），胶囊与电平表显示手机的音频，不打开本机麦克风；胶囊标签「手机 · {名称}」。`phone_take_*` 命令在桌面壳返回 `PHONE_TAKE_UNAVAILABLE`。
+- 插入（2026-10-13）：Windows 拒绝模拟按键时文字留在剪贴板（§4.2 `other`），回报 `done{pasted: false}`；其他原因未能插入而已有文字时，回报 `failed{code: failed, text}`（`take_state_for`，§20.11）。
 
 ### 20.3 手机端
 
@@ -1539,6 +1559,15 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 - **通道**：应用自己的插件 `BackPlugin.kt`，Rust 侧（`src/back.rs`）只负责注册。页面经插件的 `register_listener` 监听 `back`，经 `release { ms }` 让之后 `ms` 毫秒内的返回交给系统（`apps/mobile/src/app/back.ts`）；这三条命令在 `build.rs` 中声明，由 `capabilities/default.json` 允许。没有监听者时，返回也交给系统。
 - **每个 Activity 都接管返回**：导航方式或壁纸配色等叠加层变化、字体或显示大小变化时，Android 会重建 `MainActivity`。Tauri 自带的返回事件（`onBackButtonPress`）只挂在第一个实例上，重建之后返回直接交给系统，应用随即退出（2026-10-03，CI `android-device`：模拟器在应用启动后应用叠加层，`MainActivity` 被重建，在「外观与语言」中第一次返回就退出了应用）。所以 `MainActivity.onCreate` 每次都调用 `BackPlugin.attach`；监听者和放行时间保存在插件里，插件的生命周期比 Activity 长。
 - **门禁**：`apps/mobile/src/app/back.test.tsx`；CI `android-device`（`.github/scripts/android-device-smoke.sh`）在 Android 15 模拟器上按返回键走一遍「外观与语言 → 设置 → 说话」（「外观与语言」被底部标签栏挡住或在屏幕外时，先把页面向上滑），把字体调大再调回，让系统两次重建 Activity（以应用日志为准，没有这个插件的构建以系统事件日志里的 `wm_relaunch_*` 为准；调回是为了第二遍的版面与第一遍相同，字体变大后「外观与语言」一行有一半在底部标签栏下面，点它的中心会点到标签栏）后再走一遍；最后在「说话」中返回，页面请求放行（以应用日志为准：提示只显示 3 秒，比模拟器上读一次界面还短），两秒后再返回仍然提示，两秒内再返回则退出应用。
+
+### 20.11 说话方式、取消与未能插入（2026-10-13 用户要求）
+
+用户的话：「在手机侧的说话按钮下方提供设置，允许直接切换说话模式，例如"按一下说话、按一下停止"或"按住说话"」「调整手机端按住说话松开时的取消判定阈值，减少因手指滑出导致的误取消」；以及手机发到电脑的长录音报「未插入：inject: keystroke: enigo: input refused: simulating input failed: (not all input events were sent. they may have been blocked by UIPI)」，而电脑上已经有这条记录和文字。
+
+- **说话方式**：`Settings.phone_talk`（`hold` 默认 / `tap`，`#[serde(default)]`，旧设置文件照常读取），命令 `settings_set_phone_talk{mode}`（`CoreCommand::SetPhoneTalk`），保存后回发 `settings`。React Native 版说话卡片的最下面是「说话方式」分段（按住 / 点按），录音进行中不能切换。点按：第一次点按开始，第二次点按结束并发送（发到电脑或在手机上识别，与松开相同），录音时按钮下方的「取消录音」丢弃这次录音；录音自己结束时（电脑离线、到了最长录音时间）按钮随之复位；手机拒绝开始时（麦克风权限被拒），下一次点按重新开始。按钮上的文字：按住时「按住说话」/「松开发送到 {电脑}」，点按时「点按开始说话」/「再次点按，发送到 {电脑}」（在手机上识别时「再次点按，开始识别」）。
+- **取消的判定**：按住时，手指离按下的位置超过 `CANCEL_DISTANCE`（120 dp，按钮本身的宽度）再松开才取消，按钮这时变成「松开取消」。距离按页面坐标（`pageX` / `pageY`）计算；原先按 `locationX` / `locationY` 判断是否离开按钮（外加 24 dp），而这两个值相对于手指下面的子视图（按钮中间 44 dp 的图标），手指从图标上向左或向上稍一滑动就算离开了按钮。按住时页面的滚动视图也不再接管手势：`onResponderGrant` 返回 `true`，React Native 在 Android 上据此让上层的原生视图不拦截这次触摸；原先页面能滚动时（已配对、有最近结果），手指上下移动超过系统的滑动阈值，页面就开始滚动，按钮的手势被终止，录音随之取消。
+- **未能插入**：Windows 的 `SendInput` 没有全部发出时（enigo 一律报「blocked by UIPI」：电脑已锁屏，或前台窗口的权限更高；锁屏时预检读不到前台窗口、也打不开输入桌面，所以照常去粘贴），`voltip-inject` 把它当作剪贴板兜底（`DeliveryError::Unavailable`，`FallbackCode::Other`）而不是失败：文字留在剪贴板，历史记录为「已复制到剪贴板」，胶囊按完成显示 2.5 秒，不再以错误停留 6 秒；手机显示「已放到电脑剪贴板：…」。其他原因未能插入、但已有文字时，电脑回报 `failed{code: failed, text}`，手机以提醒色显示「未能插入电脑当前的窗口，文字已保存在电脑的历史记录中：…」，不再显示电脑的技术原因。
+- **门禁**：Rust `voltip-inject` `regression_a_uipi_refusal_leaves_the_text_on_the_clipboard`；`voltip-protocol` `take_messages_roundtrip_and_are_validated`（`failed.text` 的往返、上限与截断）、`a_failure_with_text_reads_on_both_sides_of_an_upgrade`；`phone::desktop_phases_become_the_phones_take_states`（插入失败带文字、只有空白时照旧）；IPC 夹具（`settings_set_phone_talk`、`phone_take` 带文字的 `failed`、`Settings.phone_talk`）。TS：`apps/mobile-rn/src/features/PhoneMic.test.tsx`（滑动不取消、远离后取消，按住时不交出手势，点按开始 / 结束 / 取消与设置保存，拒绝开始后再点按，未能插入的提示）。
 
 ## 21. AI 预设（2026-09-29）
 

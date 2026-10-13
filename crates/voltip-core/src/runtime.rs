@@ -41,6 +41,7 @@ use crate::vocabulary::{DictionaryDraft, DictionaryEntry, DictionaryStore, Entry
 use crate::{CoreError, is_initiator, rendezvous_channel};
 
 mod always_on;
+mod backup;
 mod check;
 mod listing;
 mod network;
@@ -487,6 +488,19 @@ pub enum CoreCommand {
         /// Replace or merge.
         mode: ImportMode,
     },
+    /// Restore the chosen parts of a backup the shell read and checked (docs/dictation.md §4.6):
+    /// the presets, the scenes, the dictionary, the rules, then the history, each written in one go
+    /// and announced by its event; `reply` gets what each part restored.
+    BackupImport {
+        /// The backup.
+        backup: Arc<crate::backup::Backup>,
+        /// Which parts.
+        parts: crate::backup::BackupParts,
+        /// Merged with what is here, or in its place.
+        mode: ImportMode,
+        /// Where the report goes.
+        reply: crate::backup::ImportReply,
+    },
     /// Append a scene (docs/dictation.md §18).
     SceneAdd(SceneDraft),
     /// Replace a scene's name, flag, match and overrides (id and position stay).
@@ -528,6 +542,8 @@ pub enum CoreCommand {
     /// The scene a take runs with where no foreground probe picks one (persisted; the next take
     /// follows).
     SetPinnedScene(Option<Uuid>),
+    /// How the phone's talk button records (persisted; docs/dictation.md §20.11).
+    SetPhoneTalk(crate::settings::PhoneTalkMode),
     /// The local speech service's settings (persisted, applied at once: the listener starts,
     /// stops or moves; docs/dictation.md §23.6).
     SetServe(crate::settings::ServeSettings),
@@ -1419,6 +1435,10 @@ impl Runtime {
                 let result = self.rules.import(&rules, mode, now_ms());
                 self.rules_changed(result)
             }
+            CoreCommand::BackupImport { backup, parts, mode, reply } => {
+                reply.send(self.import_backup(&backup, parts, mode));
+                Ok(())
+            }
             CoreCommand::SceneAdd(draft) => {
                 let result = self.scenes.add(&draft, now_ms()).map(drop);
                 self.scenes_changed(result)
@@ -1463,6 +1483,10 @@ impl Runtime {
             CoreCommand::SetPinnedScene(id) => {
                 self.settings.pinned_scene = id;
                 self.dictation.set_pinned_scene(id);
+                self.save_settings()
+            }
+            CoreCommand::SetPhoneTalk(mode) => {
+                self.settings.phone_talk = mode;
                 self.save_settings()
             }
             CoreCommand::SetServe(serve) => self.set_serve(serve).await,

@@ -12,6 +12,7 @@
 //!    between steps 2 and 3), only step 3 is done; otherwise the file is moved aside like a file
 //!    that cannot be read, and nothing is imported twice.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -306,6 +307,91 @@ impl HistoryStore {
         let path = &self.path;
         self.conn.as_mut().map(Mutex::get_mut).ok_or_else(|| CoreError::History(format!("{} cannot be opened", path.display())))
     }
+
+    /// The database is open: reads and writes reach it.
+    pub fn is_open(&self) -> bool {
+        self.conn.is_some()
+    }
+
+    /// Restore a backup's `entries` (newest first) in one transaction (docs/dictation.md §4.6):
+    /// a failure leaves the history as it was. Merging adds the entries whose id is not here;
+    /// replacing clears the history first (like [`Self::clear`], so a phone gets it again). Either
+    /// way the history then holds the newest `keep` of all (at most [`MAX_ENTRIES`]), as after a
+    /// push: the backup's older entries are not written, and when merging the oldest entries here
+    /// past `keep` go. Each entry's statistics columns are computed as it is written, so the
+    /// statistics follow from the entries.
+    pub fn restore(&mut self, entries: &[HistoryEntry], replace: bool, keep: usize) -> Result<Restored, CoreError> {
+        let keep = keep.min(MAX_ENTRIES);
+        let previous = self.len;
+        let tx = self.conn_mut()?.transaction().map_err(err)?;
+        // The entries here, newest first: id and time.
+        let here: Vec<(String, i64)> = if replace {
+            Vec::new()
+        } else {
+            let mut stmt = tx.prepare(&format!("SELECT id, at_ms FROM entries {NEWEST_FIRST}")).map_err(err)?;
+            let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).map_err(err)?;
+            rows.collect::<rusqlite::Result<_>>().map_err(err)?
+        };
+        let known: HashSet<&str> = here.iter().map(|(id, _)| id.as_str()).collect();
+        let mut seen: HashSet<Uuid> = HashSet::with_capacity(entries.len());
+        let mut present = 0;
+        let mut new: Vec<&HistoryEntry> = Vec::with_capacity(entries.len());
+        for entry in entries {
+            if !seen.insert(entry.id) || known.contains(entry.id.to_string().as_str()) {
+                present += 1;
+            } else {
+                new.push(entry);
+            }
+        }
+        // Newest first; a stable sort keeps the backup's order within a millisecond.
+        new.sort_by_key(|entry| std::cmp::Reverse(entry.at_ms));
+        // The newest `keep` of both lists, in the history's own order: within a millisecond an entry
+        // written now is the newer one (its rowid is larger).
+        let (mut i, mut j) = (0, 0);
+        while i + j < keep {
+            let take_new = match (here.get(i), new.get(j)) {
+                (Some((_, at)), Some(entry)) => int(entry.at_ms) >= *at,
+                (None, Some(_)) => true,
+                (Some(_), None) => false,
+                (None, None) => break,
+            };
+            if take_new {
+                j += 1;
+            } else {
+                i += 1;
+            }
+        }
+        let kept = &new[..j];
+        if replace {
+            tx.execute_batch("DELETE FROM hits; DELETE FROM entries;").map_err(err)?;
+            revs::record_clear(&tx).map_err(err)?;
+        }
+        // Oldest first, so the entries of one millisecond keep the backup's order.
+        for entry in kept.iter().rev() {
+            insert(&tx, entry, false).map_err(err)?;
+            revs::record(&tx, &entry.id.to_string(), false).map_err(err)?;
+        }
+        // Exactly the entries here past the newest `keep` of both.
+        let dropped = drop_oldest(&tx, here.len() - i).map_err(err)?;
+        revs::prune(&tx).map_err(err)?;
+        tx.commit().map_err(err)?;
+        self.len = (here.len() + kept.len()).saturating_sub(dropped);
+        Ok(Restored { written: kept.len(), present, left_out: new.len() - kept.len(), removed: if replace { previous } else { dropped } })
+    }
+}
+
+/// What [`HistoryStore::restore`] did (docs/dictation.md §4.6).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Restored {
+    /// Entries written.
+    pub written: usize,
+    /// Entries of the backup the history holds already (by id), or that the backup lists twice.
+    pub present: usize,
+    /// Entries of the backup older than the newest `keep` of both: not written.
+    pub left_out: usize,
+    /// Entries that were here and are gone: every one when replacing, the oldest past `keep` when
+    /// merging.
+    pub removed: usize,
 }
 
 fn err(e: impl std::fmt::Display) -> CoreError {

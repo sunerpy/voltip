@@ -32,6 +32,7 @@
       "edit_hotkey": "Ctrl+Alt+E",
       "solo_key": null,
       "pairing_always_on": false,
+      "phone_talk": "hold",
       "history": {
         "enabled": true,
         "keep": 20000
@@ -322,6 +323,7 @@
     "edit_hotkey": "Ctrl+Alt+E",
     "solo_key": "right_ctrl",
     "pairing_always_on": true,
+    "phone_talk": "tap",
     "history": {
       "enabled": true,
       "keep": 200
@@ -2919,6 +2921,21 @@
       "take": 3,
       "started_at": 1758700000000,
       "state": {
+        "state": "failed",
+        "code": "failed",
+        "message": "inject: keystroke: refused",
+        "text": "把 fetchUser 改成 async"
+      },
+      "opus": false
+    }
+  },
+  {
+    "type": "phone_take",
+    "take": {
+      "device": "1111111111111111111111111111111111111111111111111111111111111111",
+      "take": 3,
+      "started_at": 1758700000000,
+      "state": {
         "state": "cancelled"
       },
       "opus": false
@@ -3794,6 +3811,7 @@
     "edit_hotkey": null,
     "solo_key": "right_ctrl",
     "pairing_always_on": true,
+    "phone_talk": "tap",
     "history": {
       "enabled": true,
       "keep": 200

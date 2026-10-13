@@ -53,6 +53,10 @@ const PATHS = {
   cloud: "M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z",
   download: "M12 3v12M7 10l5 5 5-5M4 21h16",
   chevronRight: "M9 6l6 6-6 6",
+  chevronLeft: "M15 6l-6 6 6 6",
+  // The first and the last page (`Pagination`).
+  chevronsLeft: "M11 7l-5 5 5 5M18 7l-5 5 5 5",
+  chevronsRight: "M6 7l5 5-5 5M13 7l5 5-5 5",
   chevronDown: "M6 9l6 6 6-6",
   chevronUp: "M6 15l6-6 6 6",
   grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",

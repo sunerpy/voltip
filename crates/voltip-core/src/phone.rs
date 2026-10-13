@@ -63,6 +63,10 @@ pub enum PhoneTakeState {
         code: PhoneTakeFailure,
         /// The explanation (the desktop's, or the phone's own).
         message: String,
+        /// What the desktop recognised but could not insert: it is in the desktop's history, so the
+        /// phone says so instead of reporting a failed take (user report 2026-10-13).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
     },
     /// Discarded.
     Cancelled,
@@ -81,7 +85,7 @@ impl From<TakeState> for PhoneTakeState {
             TakeState::Listening => Self::Listening,
             TakeState::Processing => Self::Processing,
             TakeState::Done { text, pasted } => Self::Done { text, pasted },
-            TakeState::Failed { code, message } => Self::Failed { code: code.into(), message },
+            TakeState::Failed { code, message, text } => Self::Failed { code: code.into(), message, text },
             TakeState::Cancelled => Self::Cancelled,
         }
     }
@@ -317,6 +321,11 @@ pub fn take_state_for(phase: &DictationPhase) -> Option<TakeState> {
         DictationPhase::Listening { .. } => Some(TakeState::Listening),
         DictationPhase::Processing { .. } => Some(TakeState::Processing),
         DictationPhase::Done { text, via, .. } => Some(TakeState::done(text, *via == Via::Paste)),
+        // Recognised but not inserted (docs/dictation.md §20.2): the text is in the history, and the
+        // phone shows it with what happened rather than as a failed take.
+        DictationPhase::Failed { code: FailureCode::Inject, message, text: Some(text) } if !text.trim().is_empty() => {
+            Some(TakeState::not_inserted(message, text))
+        }
         DictationPhase::Failed { code, message, .. } => {
             let failure = match code {
                 FailureCode::NoSpeech => TakeFailure::NoSpeech,
@@ -437,13 +446,20 @@ mod tests {
         };
         assert_eq!(take_state_for(&done), Some(TakeState::Done { text: "你好".into(), pasted: false }));
         let silent = DictationPhase::Failed { code: FailureCode::NoSpeech, message: "没有听到声音".into(), text: None };
-        assert_eq!(take_state_for(&silent), Some(TakeState::Failed { code: TakeFailure::NoSpeech, message: "没有听到声音".into() }));
+        assert_eq!(take_state_for(&silent), Some(TakeState::failed(TakeFailure::NoSpeech, "没有听到声音")));
         let asr = DictationPhase::Failed { code: FailureCode::Asr, message: "asr: 401".into(), text: None };
-        assert!(matches!(take_state_for(&asr), Some(TakeState::Failed { code: TakeFailure::Failed, .. })));
+        assert!(matches!(take_state_for(&asr), Some(TakeState::Failed { code: TakeFailure::Failed, text: None, .. })));
+        // Regression (user report 2026-10-13): text recognised on the computer and not inserted
+        // reached the phone as 「未插入：inject: keystroke: …」 only; the text comes along now.
+        let not_inserted =
+            DictationPhase::Failed { code: FailureCode::Inject, message: "inject: keystroke: refused".into(), text: Some("把 fetchUser 改成 async".into()) };
+        assert_eq!(take_state_for(&not_inserted), Some(TakeState::not_inserted("inject: keystroke: refused", "把 fetchUser 改成 async")));
+        let silent_inject = DictationPhase::Failed { code: FailureCode::Inject, message: "inject: denied".into(), text: Some(" ".into()) };
+        assert_eq!(take_state_for(&silent_inject), Some(TakeState::failed(TakeFailure::Failed, "inject: denied")), "no text, no text to show");
         assert_eq!(take_state_for(&DictationPhase::Cancelled { injected_chars: 0 }), Some(TakeState::Cancelled));
         // …and the phone reads them back.
         let back: PhoneTakeState = TakeState::failed(TakeFailure::Busy, "正在听写").into();
-        assert_eq!(back, PhoneTakeState::Failed { code: PhoneTakeFailure::Busy, message: "正在听写".into() });
+        assert_eq!(back, PhoneTakeState::Failed { code: PhoneTakeFailure::Busy, message: "正在听写".into(), text: None });
         assert!(back.is_final() && !PhoneTakeState::Starting.is_final());
         let json = serde_json::to_string(&PhoneTakeState::Done { text: "x".into(), pasted: true }).unwrap();
         assert_eq!(json, r#"{"state":"done","text":"x","pasted":true}"#);

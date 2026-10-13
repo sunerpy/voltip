@@ -1,5 +1,7 @@
 // The phone's talk card (docs/dictation.md §20, §20.7; Penpot 「澄空 Glass · Voltip」 boards 03/04):
-// hold to talk, release to finish, slide off the button before releasing to cancel. With a paired
+// hold to talk, release to finish, slide well away from where the finger pressed before releasing
+// to cancel; or, with 点按说话 chosen under the button (user request 2026-10-13), tap to start, tap
+// again to finish, and a button below to cancel. With a paired
 // computer online the take streams to it, and the computer recognises and inserts the text; the
 // phone can recognise it itself instead (the 识别方式 segment), and does when no computer is
 // online: the built-in service transcribes it and the result is copied. A take keeps its route
@@ -8,6 +10,7 @@ import {
   type DeviceView,
   type DictationPhase,
   type LevelFrame,
+  type PhoneTalkMode,
   type PhoneTakeState,
   type TFunction,
   coreMessageText,
@@ -18,18 +21,13 @@ import {
 } from "@voltip/shared";
 import * as Haptics from "expo-haptics";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import {
-  Animated,
-  type GestureResponderEvent,
-  type LayoutRectangle,
-  StyleSheet,
-  View,
-} from "react-native";
+import { Animated, type GestureResponderEvent, StyleSheet, View } from "react-native";
 import { Icon, Text } from "react-native-paper";
 
 import { useBackend, useUiState } from "../backend/BackendProvider";
 import { useI18n } from "../backend/i18n";
 import { useShell } from "../shell";
+import { Button } from "../ui/Button";
 import {
   Hint,
   Lamp,
@@ -60,6 +58,10 @@ export function phoneTakeLine(state: PhoneTakeState, elapsedMs: number, t: TFunc
         text: state.text,
       });
     case "failed":
+      // Recognised on the computer and kept in its history, only not inserted: say so, with the
+      // text, instead of the computer's technical reason (user report 2026-10-13).
+      if (state.text !== undefined && state.text.trim() !== "")
+        return t("mobile.mic.notInserted", { text: state.text });
       return t(`mobile.mic.failed.${state.code}`, { message: state.message });
     case "cancelled":
       return t("mobile.mic.cancelled");
@@ -96,7 +98,7 @@ function takeTone(state: PhoneTakeState): Tone {
     case "processing":
       return "accent";
     case "failed":
-      return "danger";
+      return state.text !== undefined && state.text.trim() !== "" ? "warning" : "danger";
     default:
       return "idle";
   }
@@ -193,6 +195,21 @@ function useStart(): (run: () => Promise<void>) => Promise<boolean> {
 
 /** The talk button (board 03): 120 dp. */
 const BUTTON = 120;
+/** How far the finger may move from where it pressed before letting go cancels (dp): the button's
+ *  own width, past its edge and its rings from the middle, so a finger that slips while holding
+ *  does not cancel the take (user report 2026-10-13: releases cancelled that did not mean to). */
+export const CANCEL_DISTANCE = BUTTON;
+
+/** Where a touch is on the page. `locationX` is relative to whichever child the finger is over
+ *  (the icon in the button's middle), which made a small slip to the left or up read as leaving
+ *  the button; a test's synthetic event may carry only it. */
+function touchPoint(e: GestureResponderEvent): { x: number; y: number } {
+  const { pageX, pageY, locationX, locationY } = e.nativeEvent;
+  return {
+    x: Number.isFinite(pageX) ? pageX : locationX,
+    y: Number.isFinite(pageY) ? pageY : locationY,
+  };
+}
 /** The rings around it: two at rest, three while it records, swelling with the level (board 04). */
 const HALOS_IDLE = [
   { size: 180, opacity: 0.07 },
@@ -252,10 +269,12 @@ function TakeState({ state, tone, line }: { state: string; tone: Tone; line: str
 }
 
 /** The talk card both routes share (boards 03/04): its eyebrow (用手机说话, or the recording's
- *  time), the hold-to-talk button in its rings, the wave while it records, what releasing does and
- *  how to cancel. `start` resolves whether the take started; a release waits for it, so a quick tap
- *  still stops the take it started. The button keeps the gesture while held (the page does not
- *  scroll away under the finger); a release outside it cancels. */
+ *  time), the talk button in its rings, the wave while it records, what releasing does and how to
+ *  cancel, and under it the choice between holding and tapping (`Settings.phone_talk`). `start`
+ *  resolves whether the take started; a release waits for it, so a quick tap still stops the take
+ *  it started. Held: the button keeps the gesture while held (neither the page's scroll view nor
+ *  another view takes it), and a release [CANCEL_DISTANCE] away from the press cancels. Tapped:
+ *  the first tap starts, the next one finishes, 取消录音 discards. */
 function TalkCard({
   busy,
   recording,
@@ -264,6 +283,7 @@ function TalkCard({
   levels,
   after,
   releaseLabel,
+  tapLabel,
   codec,
   start,
   stop,
@@ -279,6 +299,8 @@ function TalkCard({
   /** What releasing does (board 03's first line of the hint). */
   after: string;
   releaseLabel: string;
+  /** What the next tap does while a tapped take records. */
+  tapLabel: string;
   codec?: string | undefined;
   start: () => Promise<boolean>;
   stop: () => void;
@@ -288,10 +310,16 @@ function TalkCard({
 }) {
   const theme = useAppTheme();
   const { t } = useI18n();
+  const { backend } = useBackend();
+  const shell = useShell();
+  const { settings } = useUiState();
+  const mode: PhoneTalkMode = settings.phone_talk;
+  const tap = mode === "tap";
   const [held, setHeld] = useState(false);
   const [offButton, setOffButton] = useState(false);
   const started = useRef<Promise<boolean> | null>(null);
-  const frame = useRef<LayoutRectangle>({ x: 0, y: 0, width: BUTTON, height: BUTTON });
+  const origin = useRef<{ x: number; y: number } | null>(null);
+  const running = useRef(false);
   const [scale] = useState(() => new Animated.Value(1));
   const [swell] = useState(() => new Animated.Value(0));
 
@@ -311,24 +339,43 @@ function TalkCard({
     }).start();
   }, [held, level, swell]);
 
+  // A tapped take that ends on its own (the computer went offline, the longest recording was
+  // reached) lets go of the button, as no finger will.
+  useEffect(() => {
+    if (busy) {
+      running.current = true;
+      return;
+    }
+    if (running.current && held && tap) {
+      started.current = null;
+      setHeld(false);
+      setOffButton(false);
+    }
+    running.current = false;
+  }, [busy, held, tap]);
+
   const outside = (e: GestureResponderEvent) => {
-    const { locationX: x, locationY: y } = e.nativeEvent;
-    const { width, height } = frame.current;
-    // A margin around the button, as the platform's press retention gives one.
-    return x < -24 || y < -24 || x > width + 24 || y > height + 24;
+    const from = origin.current;
+    if (from === null) return false;
+    const at = touchPoint(e);
+    return Math.hypot(at.x - from.x, at.y - from.y) > CANCEL_DISTANCE;
   };
-  const begin = () => {
+  const begin = (e: GestureResponderEvent) => {
     if (busy || started.current !== null) return;
+    origin.current = touchPoint(e);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setHeld(true);
     setOffButton(false);
-    started.current = start().then((ok) => {
+    const pending = start().then((ok) => {
       if (!ok) {
+        // Refused: the next tap starts again rather than finishing a take that never began.
+        if (started.current === pending) started.current = null;
         setHeld(false);
         setOffButton(false);
       }
       return ok;
     });
+    started.current = pending;
   };
   const finish = (cancelled: boolean) => {
     const pending = started.current;
@@ -344,11 +391,21 @@ function TalkCard({
     });
   };
 
+  const choose = (next: PhoneTalkMode) => {
+    backend.invoke("settings_set_phone_talk", { mode: next }).catch((e: unknown) => {
+      shell.toast(t("mobile.toast.error", { message: errorText(e) }), "danger");
+    });
+  };
+
   const label = !held
-    ? t("mobile.mic.hold")
-    : offButton
-      ? t("mobile.mic.releaseCancel")
-      : releaseLabel;
+    ? tap
+      ? t("mobile.mic.tap")
+      : t("mobile.mic.hold")
+    : tap
+      ? tapLabel
+      : offButton
+        ? t("mobile.mic.releaseCancel")
+        : releaseLabel;
   // The page's one solid accent, darker while held; over a release that cancels, the danger shade.
   const fill = offButton
     ? theme.voltip.dangerSoft
@@ -419,22 +476,28 @@ function TalkCard({
           accessible
           accessibilityRole="button"
           accessibilityLabel={label}
-          accessibilityHint={held ? t("mobile.mic.slideCancel") : after}
+          accessibilityHint={held ? (tap ? tapLabel : t("mobile.mic.slideCancel")) : after}
           accessibilityState={{ disabled, selected: held }}
-          onLayout={(e) => {
-            frame.current = e.nativeEvent.layout;
-          }}
           onStartShouldSetResponder={() => !disabled}
           onResponderTerminationRequest={() => false}
-          onResponderGrant={begin}
+          onResponderGrant={(e) => {
+            // Tapped: the first tap starts the take and the next one finishes it.
+            if (tap && started.current !== null) finish(false);
+            else begin(e);
+            // `true` keeps native responders off the gesture (Android). Without it the page's
+            // scroll view, once the page can scroll, takes a finger that moves up or down while
+            // holding: the page scrolls, the button's gesture is terminated, and the take is
+            // cancelled (2026-10-13).
+            return true;
+          }}
           onResponderMove={(e) => {
-            if (held) setOffButton(outside(e));
+            if (held && !tap) setOffButton(outside(e));
           }}
           onResponderRelease={(e) => {
-            finish(outside(e));
+            if (!tap) finish(outside(e));
           }}
           onResponderTerminate={() => {
-            finish(true);
+            if (!tap) finish(true);
           }}
           style={{
             width: BUTTON,
@@ -467,11 +530,56 @@ function TalkCard({
           </Text>
         )}
         <Text style={[styles.hintText, { color: theme.voltip.subtle }]}>
-          {t("mobile.mic.slideCancel")}
+          {tap ? t("mobile.mic.tapHint") : t("mobile.mic.slideCancel")}
         </Text>
         {codec !== undefined && <Mono style={{ textAlign: "center" }}>{codec}</Mono>}
       </View>
+      {tap && held && (
+        <Button
+          compact
+          icon="close"
+          style={{ alignSelf: "center" }}
+          testID="phone-mic-cancel"
+          onPress={() => {
+            finish(true);
+          }}>
+          {t("mobile.mic.tapCancel")}
+        </Button>
+      )}
       {children}
+      {/* The segments share the width they are given: centred on their own they had none and
+          collapsed to a sliver (Device Farm, 2026-10-13). */}
+      <View style={styles.mode}>
+        <Text
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={[styles.modeLabel, { color: theme.voltip.subtle }]}>
+          {t("mobile.mic.mode")}
+        </Text>
+        <View style={styles.modeChoice}>
+          <Segmented<PhoneTalkMode>
+            testID="phone-talk-mode"
+            label={t("mobile.mic.mode")}
+            value={mode}
+            disabled={held || busy}
+            onChange={choose}
+            options={[
+              {
+                value: "hold",
+                icon: "gesture-tap-hold",
+                label: t("mobile.mic.modeHold"),
+                testID: "phone-talk-mode-hold",
+              },
+              {
+                value: "tap",
+                icon: "gesture-tap",
+                label: t("mobile.mic.modeTap"),
+                testID: "phone-talk-mode-tap",
+              },
+            ]}
+          />
+        </View>
+      </View>
     </View>
   );
 }
@@ -498,6 +606,7 @@ function ComputerTalk({ target }: { target: DeviceView }) {
       levels={levels}
       after={t("mobile.mic.afterComputer")}
       releaseLabel={t("mobile.mic.releaseTo", { name: target.device.name })}
+      tapLabel={t("mobile.mic.tapTo", { name: target.device.name })}
       codec={streaming && mine.opus === true ? t("mobile.mic.codecOpus") : undefined}
       start={() =>
         begin(() => backend.invoke("phone_take_start", { publicKey: target.device.public_key }))
@@ -540,6 +649,7 @@ function PhoneTalk() {
       levels={levels}
       after={t("mobile.mic.afterPhone")}
       releaseLabel={t("mobile.mic.releaseLocal")}
+      tapLabel={t("mobile.mic.tapLocal")}
       start={() => begin(() => backend.invoke("dictation_start"))}
       stop={() => void backend.invoke("dictation_stop")}
       cancel={() => void backend.invoke("dictation_cancel")}>
@@ -676,4 +786,14 @@ const styles = StyleSheet.create({
   label: { fontSize: 17, lineHeight: 23, fontWeight: "500", textAlign: "center" },
   hint: { gap: 2, alignItems: "center" },
   hintText: { fontSize: 12, lineHeight: 18, textAlign: "center" },
+  /** 说话方式 under the hint: its caption, then the two choices at a fixed width. */
+  mode: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    marginTop: 8,
+  },
+  modeLabel: { fontSize: 12, lineHeight: 18 },
+  modeChoice: { width: 200, flexShrink: 1 },
 });
