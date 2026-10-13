@@ -72,6 +72,7 @@ Idle → Joining(code|ticket) → KeyExchange → AwaitingVerification → Trust
 ## Relay 侧防护
 
 - 短码空间 10^6；每连接对 `join_by_code` 失败上限 5 次后断开，每 IP 每分钟 20 次；每会话失败尝试上限 10 次后会话作废（发起方收到 `error{session_expired}`，UI 提示重新生成）。
+- 「每 IP」指客户端的地址（`join` 20 次、`create_session` 10 次、`attach` 30 次，均为每分钟）。中继在反向代理后面时，每条连接的 TCP 对端都是代理，要用 `--trust-proxy` 让中继读代理转来的 `X-Forwarded-For`，否则所有用户共用一份额度（`docs/runbook.md`「中继部署」）。
 - 会话 TTL 默认 120 s，最大 300 s；成功 `join` 后短码立即从索引删除。
 - 所有计数与 TTL 都在 `voltip-relay::RelayState` 里，单测可直接推进时钟。
 

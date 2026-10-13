@@ -30,6 +30,10 @@ pub struct RelayConfig {
     pub create_rate: RateWindow,
     /// `attach` per IP.
     pub attach_rate: RateWindow,
+    /// Reverse proxies whose `X-Forwarded-For` names the client (`--trust-proxy`,
+    /// [`crate::forwarded`]). Empty: the TCP peer is the client. Behind a proxy every peer is the
+    /// proxy, and without it the per-IP limits above are one limit for all users together.
+    pub trusted_proxies: Vec<ipnet::IpNet>,
     /// Max `forward` payload the relay will carry (bytes, decoded).
     pub max_forward_bytes: usize,
     /// Build string returned in `hello_ack`.
@@ -52,6 +56,7 @@ impl Default for RelayConfig {
             join_rate: RateWindow::new(20, Duration::from_secs(60)),
             create_rate: RateWindow::new(10, Duration::from_secs(60)),
             attach_rate: RateWindow::new(30, Duration::from_secs(60)),
+            trusted_proxies: Vec::new(),
             max_forward_bytes: 70 * 1024,
             relay_version: format!("voltip-relay/{}", env!("CARGO_PKG_VERSION")),
             ping_interval: Duration::from_secs(10),

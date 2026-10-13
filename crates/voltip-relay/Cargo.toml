@@ -24,6 +24,7 @@ required-features = ["server"]
 axum = { workspace = true, optional = true }
 clap.workspace = true
 futures-util = { workspace = true, optional = true }
+ipnet.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 serde.workspace = true

@@ -6,11 +6,13 @@ use std::time::Duration;
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use voltip_protocol::relay::{RelayErrorCode, RelayFrame};
 use voltip_protocol::{ProtocolVersion, SessionId};
-use voltip_relay::RelayConfig;
+use voltip_relay::forwarded::parse_trusted_proxy;
 use voltip_relay::server::RelayHandle;
+use voltip_relay::{RateWindow, RelayConfig};
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -33,6 +35,15 @@ async fn start_with(config: RelayConfig) -> (RelayHandle, String, tokio::sync::o
 
 async fn connect(url: &str) -> Ws {
     let (ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    ws
+}
+
+/// A connection that says it comes through a proxy for `forwarded_for`; its TCP peer is 127.0.0.1
+/// like every other one here.
+async fn connect_forwarded(url: &str, forwarded_for: &str) -> Ws {
+    let mut request = url.into_client_request().unwrap();
+    request.headers_mut().insert("x-forwarded-for", forwarded_for.parse().unwrap());
+    let (ws, _) = tokio_tungstenite::connect_async(request).await.unwrap();
     ws
 }
 
@@ -217,5 +228,45 @@ async fn regression_a_connection_gone_silent_gives_up_its_place_on_the_channel()
     assert!(matches!(recv(&mut back).await, RelayFrame::Attached { peer_online: true, channel: Some(c), .. } if c == ch));
     assert!(matches!(recv(&mut desk).await, RelayFrame::PeerPresence { online: true, .. }));
     drop(gone);
+    let _ = stop.send(());
+}
+
+/// Opens a pairing session on a new connection and returns the relay's answer.
+async fn create_session(ws: &mut Ws) -> RelayFrame {
+    hello(ws).await;
+    send(ws, RelayFrame::CreateSession { version: ProtocolVersion::CURRENT, ttl_secs: Some(60) }).await;
+    recv(ws).await
+}
+
+fn one_session_a_minute() -> RelayConfig {
+    RelayConfig { create_rate: RateWindow::new(1, Duration::from_secs(60)), ..RelayConfig::default() }
+}
+
+/// Regression (2026-10-12): the relay runs behind nginx on the same host, so every connection came
+/// from 127.0.0.1 and the per-IP limits were one limit for all users together: one client could use
+/// up everyone's pairing sessions and `attach`es for the minute. Behind a trusted proxy the client
+/// is the address the proxy forwards.
+#[tokio::test]
+async fn regression_clients_behind_a_trusted_proxy_have_their_own_limits() {
+    let config = RelayConfig { trusted_proxies: vec![parse_trusted_proxy("127.0.0.1").unwrap()], ..one_session_a_minute() };
+    let (_handle, url, stop) = start_with(config).await;
+    let mut first = connect_forwarded(&url, "203.0.113.1").await;
+    assert!(matches!(create_session(&mut first).await, RelayFrame::SessionCreated { .. }));
+    let mut other = connect_forwarded(&url, "203.0.113.2").await;
+    assert!(matches!(create_session(&mut other).await, RelayFrame::SessionCreated { .. }), "another client has a limit of its own");
+    // The first client again, with an address of its own choosing in front of the proxy's entry.
+    let mut again = connect_forwarded(&url, "198.51.100.7, 203.0.113.1").await;
+    assert!(matches!(create_session(&mut again).await, RelayFrame::Error { code: RelayErrorCode::RateLimited, .. }));
+    let _ = stop.send(());
+}
+
+#[tokio::test]
+async fn a_forwarded_address_counts_only_from_a_trusted_proxy() {
+    let (_handle, url, stop) = start_with(one_session_a_minute()).await;
+    let mut first = connect_forwarded(&url, "203.0.113.1").await;
+    assert!(matches!(create_session(&mut first).await, RelayFrame::SessionCreated { .. }));
+    // No proxy is trusted, so the header is the client's own claim and changes nothing.
+    let mut other = connect_forwarded(&url, "203.0.113.2").await;
+    assert!(matches!(create_session(&mut other).await, RelayFrame::Error { code: RelayErrorCode::RateLimited, .. }));
     let _ = stop.send(());
 }

@@ -89,6 +89,9 @@ http = "=1.5.0"
 hyper-util = { version = "=0.1.20", features = ["client-legacy", "client-proxy", "client-proxy-system", "tokio"] }
 # WAV decoding for the local recogniser (16-bit PCM in, f32 out).
 hound = "=3.5.1"
+# The relay's trusted reverse proxies (`--trust-proxy`, docs/runbook.md 中继部署): addresses and
+# networks; already in the graph through hyper-util.
+ipnet = "=2.12.2"
 keyring = "=4.2.0"
 parking_lot = "=0.12.5"
 proptest = "=1.11.0"

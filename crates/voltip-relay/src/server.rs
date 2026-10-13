@@ -9,7 +9,7 @@
 //! its peers are told it is offline, and its place on the rendezvous channels is free for the
 //! connection it opens next.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -18,14 +18,16 @@ use axum::Router;
 use axum::extract::State;
 use axum::extract::connect_info::ConnectInfo;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use futures_util::{SinkExt as _, StreamExt as _};
+use ipnet::IpNet;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use voltip_protocol::relay::RelayFrame;
 
-use crate::{ConnId, Delivery, RelayConfig, RelayCore, RelayStats};
+use crate::{ConnId, Delivery, RelayConfig, RelayCore, RelayStats, forwarded};
 
 /// Outbound queue depth per connection before we consider the client stuck.
 const OUTBOUND_QUEUE: usize = 64;
@@ -33,6 +35,8 @@ const OUTBOUND_QUEUE: usize = 64;
 const TICK: Duration = Duration::from_secs(1);
 /// Longest we wait for a client's first frame.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+/// Where a reverse proxy names the client (read only from `RelayConfig::trusted_proxies`).
+const X_FORWARDED_FOR: &str = "x-forwarded-for";
 
 /// Shared state behind the axum handlers.
 #[derive(Clone)]
@@ -42,6 +46,8 @@ pub struct RelayHandle {
 
 struct Shared {
     core: Mutex<RelayCore>,
+    /// `RelayConfig::trusted_proxies`, read on every upgrade without taking the core's lock.
+    trusted_proxies: Vec<IpNet>,
     outbound: Mutex<std::collections::HashMap<ConnId, mpsc::Sender<Outbound>>>,
     next_id: AtomicU64,
     /// Frames dropped on a full outbound queue.
@@ -56,9 +62,11 @@ enum Outbound {
 impl RelayHandle {
     /// New handle around a fresh core.
     pub fn new(config: RelayConfig) -> Self {
+        let trusted_proxies = config.trusted_proxies.clone();
         Self {
             inner: Arc::new(Shared {
                 core: Mutex::new(RelayCore::new(config)),
+                trusted_proxies,
                 outbound: Mutex::new(Default::default()),
                 next_id: AtomicU64::new(1),
                 dropped: AtomicU64::new(0),
@@ -105,7 +113,7 @@ impl RelayHandle {
             ticker.abort();
             result
         });
-        tracing::info!(%addr, "relay listening");
+        tracing::info!(%addr, trusted_proxies = ?self.inner.trusted_proxies, "relay listening");
         Ok((addr, task))
     }
 
@@ -139,20 +147,24 @@ async fn healthz(State(h): State<RelayHandle>) -> impl IntoResponse {
     axum::Json(serde_json::json!({ "connections": s.connections, "sessions": s.sessions, "channels": s.channels, "forwarded": s.forwarded }))
 }
 
-async fn ws_upgrade(ws: WebSocketUpgrade, ConnectInfo(addr): ConnectInfo<SocketAddr>, State(h): State<RelayHandle>) -> impl IntoResponse {
-    ws.max_message_size(128 * 1024).on_upgrade(move |socket| handle_socket(socket, addr, h))
+async fn ws_upgrade(ws: WebSocketUpgrade, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, State(h): State<RelayHandle>) -> impl IntoResponse {
+    // The per-IP limits count against the client: behind a trusted proxy, the one it forwards.
+    // Bytes that are not text stay in place as an entry that is not an address.
+    let forwarded_for = headers.get_all(X_FORWARDED_FOR).iter().map(|v| String::from_utf8_lossy(v.as_bytes()));
+    let client = forwarded::client_ip(addr.ip(), forwarded_for, &h.inner.trusted_proxies);
+    ws.max_message_size(128 * 1024).on_upgrade(move |socket| handle_socket(socket, addr, client, h))
 }
 
-async fn handle_socket(socket: WebSocket, addr: SocketAddr, h: RelayHandle) {
+async fn handle_socket(socket: WebSocket, addr: SocketAddr, client: IpAddr, h: RelayHandle) {
     let conn = ConnId(h.inner.next_id.fetch_add(1, Ordering::Relaxed));
     let (tx, mut rx) = mpsc::channel::<Outbound>(OUTBOUND_QUEUE);
     h.inner.outbound.lock().insert(conn, tx);
     let (ping_interval, idle_timeout) = {
         let mut core = h.inner.core.lock();
-        core.on_connect(conn, addr.ip());
+        core.on_connect(conn, client);
         (core.config().ping_interval, core.config().idle_timeout)
     };
-    tracing::debug!(?conn, %addr, "connection opened");
+    tracing::debug!(?conn, %addr, %client, "connection opened");
 
     let (mut sink, mut stream) = socket.split();
     let writer = tokio::spawn(async move {

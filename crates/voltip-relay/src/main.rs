@@ -18,6 +18,10 @@ struct Args {
     /// Emit JSON logs (for container log collectors).
     #[arg(long, env = "VOLTIP_RELAY_JSON_LOGS", default_value_t = false)]
     json_logs: bool,
+    /// A reverse proxy whose X-Forwarded-For names the client, for the per-IP limits: an address
+    /// or a network; repeat it or separate with commas. Behind nginx on this host: 127.0.0.1.
+    #[arg(long = "trust-proxy", env = "VOLTIP_RELAY_TRUST_PROXY", value_delimiter = ',', value_parser = voltip_relay::forwarded::parse_trusted_proxy)]
+    trust_proxy: Vec<ipnet::IpNet>,
 }
 
 #[tokio::main]
@@ -29,7 +33,7 @@ async fn main() -> std::io::Result<()> {
     } else {
         tracing_subscriber::fmt().with_env_filter(filter).init();
     }
-    let config = RelayConfig { session_ttl: std::time::Duration::from_secs(args.session_ttl), ..RelayConfig::default() };
+    let config = RelayConfig { session_ttl: std::time::Duration::from_secs(args.session_ttl), trusted_proxies: args.trust_proxy, ..RelayConfig::default() };
     let handle = RelayHandle::new(config);
     let shutdown = async {
         let _ = tokio::signal::ctrl_c().await;
