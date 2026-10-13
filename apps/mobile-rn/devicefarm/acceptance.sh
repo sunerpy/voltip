@@ -53,7 +53,9 @@ screen_w=1080
 
 # The centre of the first node whose text, content-desc or resource-id (the app's testID) matches
 # the regular expression $1 and that lies on the screen (between the status bar and the
-# navigation bar). Each field is matched on its own, so `^…$` anchors a whole label.
+# navigation bar) and, unless it is one of the tabs, above the tab dock that floats over the
+# page: a tap there lands on the dock (2026-10-13: 历史记录 under the dock opened the 记录 tab).
+# Each field is matched on its own, so `^…$` anchors a whole label.
 find_node() {
   python3 - "$out/ui.xml" "$1" "$screen_h" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
@@ -62,15 +64,22 @@ try:
 except Exception:
     sys.exit(1)
 pattern, height = re.compile(sys.argv[2]), int(sys.argv[3])
+def box(n):
+    m = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", n.get("bounds", ""))
+    return tuple(map(int, m.groups())) if m else None
+dock = next((box(n) for n in nodes if n.get("resource-id") == "tab-dock"), None)
 for n in nodes:
     fields = (n.get("text"), n.get("content-desc"), n.get("resource-id"))
     if not any(f and pattern.search(f) for f in fields):
         continue
-    m = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", n.get("bounds", ""))
-    if not m:
+    b = box(n)
+    if b is None:
         continue
-    x1, y1, x2, y2 = map(int, m.groups())
+    x1, y1, x2, y2 = b
     x, y = (x1 + x2) // 2, (y1 + y2) // 2
+    tab = (n.get("resource-id") or "").startswith("tab-")
+    if dock is not None and not tab and y >= dock[1]:
+        continue
     if 80 < y < height - 140 and x2 > x1 and y2 > y1:
         print(x, y)
         sys.exit(0)

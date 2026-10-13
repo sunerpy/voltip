@@ -547,28 +547,38 @@ function TalkCard({
         </Button>
       )}
       {children}
-      <View style={{ alignSelf: "center", marginTop: 4 }}>
-        <Segmented<PhoneTalkMode>
-          testID="phone-talk-mode"
-          label={t("mobile.mic.mode")}
-          value={mode}
-          disabled={held || busy}
-          onChange={choose}
-          options={[
-            {
-              value: "hold",
-              icon: "gesture-tap-hold",
-              label: t("mobile.mic.modeHold"),
-              testID: "phone-talk-mode-hold",
-            },
-            {
-              value: "tap",
-              icon: "gesture-tap",
-              label: t("mobile.mic.modeTap"),
-              testID: "phone-talk-mode-tap",
-            },
-          ]}
-        />
+      {/* The segments share the width they are given: centred on their own they had none and
+          collapsed to a sliver (Device Farm, 2026-10-13). */}
+      <View style={styles.mode}>
+        <Text
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={[styles.modeLabel, { color: theme.voltip.subtle }]}>
+          {t("mobile.mic.mode")}
+        </Text>
+        <View style={styles.modeChoice}>
+          <Segmented<PhoneTalkMode>
+            testID="phone-talk-mode"
+            label={t("mobile.mic.mode")}
+            value={mode}
+            disabled={held || busy}
+            onChange={choose}
+            options={[
+              {
+                value: "hold",
+                icon: "gesture-tap-hold",
+                label: t("mobile.mic.modeHold"),
+                testID: "phone-talk-mode-hold",
+              },
+              {
+                value: "tap",
+                icon: "gesture-tap",
+                label: t("mobile.mic.modeTap"),
+                testID: "phone-talk-mode-tap",
+              },
+            ]}
+          />
+        </View>
       </View>
     </View>
   );
@@ -776,4 +786,14 @@ const styles = StyleSheet.create({
   label: { fontSize: 17, lineHeight: 23, fontWeight: "500", textAlign: "center" },
   hint: { gap: 2, alignItems: "center" },
   hintText: { fontSize: 12, lineHeight: 18, textAlign: "center" },
+  /** 说话方式 under the hint: its caption, then the two choices at a fixed width. */
+  mode: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    marginTop: 8,
+  },
+  modeLabel: { fontSize: 12, lineHeight: 18 },
+  modeChoice: { width: 200, flexShrink: 1 },
 });
