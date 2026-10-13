@@ -43,6 +43,7 @@ export * from "./components/ThemeSwitch";
 export * from "./components/Toolbar";
 export * from "./components/TitleBar";
 export * from "./components/OptionCard";
+export * from "./components/Pagination";
 export * from "./components/Pill";
 export * from "./components/CodeInput";
 export * from "./components/SafetyCodeView";
