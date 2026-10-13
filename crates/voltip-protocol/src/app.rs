@@ -134,6 +134,11 @@ pub enum TakeState {
         code: TakeFailure,
         /// The desktop's explanation (at most [`MAX_TAKE_MESSAGE_CHARS`]).
         message: String,
+        /// What the desktop recognised but could not insert (at most [`MAX_TAKE_TEXT_CHARS`]); it
+        /// is in the desktop's history. Absent when nothing was recognised, and from older desktops,
+        /// which a newer phone reads as a failure without text (2026-10-13).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
     },
     /// Discarded (by either side).
     Cancelled,
@@ -147,7 +152,14 @@ impl TakeState {
 
     /// `Failed`, with the message cut to [`MAX_TAKE_MESSAGE_CHARS`].
     pub fn failed(code: TakeFailure, message: &str) -> Self {
-        Self::Failed { code, message: clip(message, MAX_TAKE_MESSAGE_CHARS) }
+        Self::Failed { code, message: clip(message, MAX_TAKE_MESSAGE_CHARS), text: None }
+    }
+
+    /// `Failed` after recognition: `text` was recognised (and kept in the desktop's history) but
+    /// could not be inserted; cut to [`MAX_TAKE_TEXT_CHARS`] and the message to
+    /// [`MAX_TAKE_MESSAGE_CHARS`].
+    pub fn not_inserted(message: &str, text: &str) -> Self {
+        Self::Failed { code: TakeFailure::Failed, message: clip(message, MAX_TAKE_MESSAGE_CHARS), text: Some(clip(text, MAX_TAKE_TEXT_CHARS)) }
     }
 
     /// The take is over (no further status follows).
@@ -439,6 +451,9 @@ impl AppMessage {
             Self::TakeStatus { state: TakeState::Failed { message, .. }, .. } if message.chars().count() > MAX_TAKE_MESSAGE_CHARS => {
                 return Err(CodecError::InvalidField { field: "message", reason: format!("more than {MAX_TAKE_MESSAGE_CHARS} characters") });
             }
+            Self::TakeStatus { state: TakeState::Failed { text: Some(text), .. }, .. } if text.chars().count() > MAX_TAKE_TEXT_CHARS => {
+                return Err(CodecError::InvalidField { field: "text", reason: format!("more than {MAX_TAKE_TEXT_CHARS} characters") });
+            }
             Self::PhoneText { body, .. } if body.is_empty() || body.chars().count() > MAX_PHONE_TEXT_CHARS => {
                 return Err(CodecError::InvalidField { field: "body", reason: format!("expected 1..={MAX_PHONE_TEXT_CHARS} characters") });
             }
@@ -528,6 +543,27 @@ mod tests {
         }
     }
 
+    /// 2026-10-13: a failed take carries the text the desktop recognised but could not insert. A
+    /// phone that does not know the field reads the status as before, and a status from a desktop
+    /// that does not send it reads as a failure without text.
+    #[test]
+    fn a_failure_with_text_reads_on_both_sides_of_an_upgrade() {
+        #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(tag = "state", rename_all = "snake_case")]
+        enum OldTakeState {
+            Failed { code: TakeFailure, message: String },
+        }
+        let mut new = Vec::new();
+        ciborium::into_writer(&TakeState::not_inserted("inject: refused", "这句话"), &mut new).unwrap();
+        let old: OldTakeState = ciborium::from_reader(new.as_slice()).unwrap();
+        assert_eq!(old, OldTakeState::Failed { code: TakeFailure::Failed, message: "inject: refused".into() });
+        let mut from_old = Vec::new();
+        ciborium::into_writer(&OldTakeState::Failed { code: TakeFailure::Busy, message: "正在听写".into() }, &mut from_old).unwrap();
+        let read: TakeState = ciborium::from_reader(from_old.as_slice()).unwrap();
+        assert_eq!(read, TakeState::failed(TakeFailure::Busy, "正在听写"));
+        assert_eq!(read, TakeState::Failed { code: TakeFailure::Busy, message: "正在听写".into(), text: None });
+    }
+
     /// The phone-microphone messages (docs/dictation.md §20): they round-trip, the PCM travels as
     /// a CBOR byte string (not an array of numbers), and malformed takes are refused on decode.
     #[test]
@@ -544,6 +580,7 @@ mod tests {
             AppMessage::take_status(7, TakeState::Processing),
             AppMessage::take_status(7, TakeState::done("把 fetchUser 改成 async", true)),
             AppMessage::take_status(7, TakeState::failed(TakeFailure::Busy, "正在听写")),
+            AppMessage::take_status(7, TakeState::not_inserted("inject: keystroke: refused", "未能插入的这句话")),
             AppMessage::take_status(7, TakeState::Cancelled),
         ] {
             let bytes = m.encode().unwrap();
@@ -561,7 +598,17 @@ mod tests {
             (AppMessage::TakeOpus { version: v, take: 1, seq: 0, packets: vec![serde_bytes::ByteBuf::new()] }, "packets"),
             (AppMessage::TakeOpus { version: v, take: 1, seq: 0, packets: vec![serde_bytes::ByteBuf::from(vec![8; MAX_OPUS_PACKET_BYTES + 1])] }, "packets"),
             (AppMessage::take_status(1, TakeState::Done { text: "x".repeat(MAX_TAKE_TEXT_CHARS + 1), pasted: true }), "text"),
-            (AppMessage::take_status(1, TakeState::Failed { code: TakeFailure::Failed, message: "x".repeat(MAX_TAKE_MESSAGE_CHARS + 1) }), "message"),
+            (
+                AppMessage::take_status(1, TakeState::Failed { code: TakeFailure::Failed, message: "x".repeat(MAX_TAKE_MESSAGE_CHARS + 1), text: None }),
+                "message",
+            ),
+            (
+                AppMessage::take_status(
+                    1,
+                    TakeState::Failed { code: TakeFailure::Failed, message: "x".into(), text: Some("字".repeat(MAX_TAKE_TEXT_CHARS + 1)) },
+                ),
+                "text",
+            ),
         ];
         for (m, field) in bad {
             let bytes = m.encode().unwrap();
@@ -571,6 +618,12 @@ mod tests {
         let TakeState::Done { text, .. } = TakeState::done(&"字".repeat(MAX_TAKE_TEXT_CHARS + 5), false) else { unreachable!() };
         assert_eq!(text.chars().count(), MAX_TAKE_TEXT_CHARS);
         assert!(text.ends_with('…'));
+        let TakeState::Failed { text: Some(text), message, .. } =
+            TakeState::not_inserted(&"x".repeat(MAX_TAKE_MESSAGE_CHARS + 9), &"字".repeat(MAX_TAKE_TEXT_CHARS + 5))
+        else {
+            unreachable!()
+        };
+        assert_eq!((text.chars().count(), message.chars().count()), (MAX_TAKE_TEXT_CHARS, MAX_TAKE_MESSAGE_CHARS));
         assert!(TakeState::Cancelled.is_final() && !TakeState::Listening.is_final() && !TakeState::Processing.is_final());
         // docs/dictation.md §20.1: this build's desktop says it decodes Opus; a status without the
         // flag (a desktop that only takes PCM) reads as `false`, so the phone keeps sending PCM.

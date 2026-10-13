@@ -60,9 +60,9 @@ pub use runtime::{
 };
 pub use scenes::{AppRef, BuiltinScene, ContextSharing, Scene, SceneDraft, SceneError, SceneMatch, SceneOverrides, SceneRef, TakeContext};
 pub use settings::{
-    DEFAULT_MAX_MINUTES, HistorySettings, Locale, MAX_MINUTES_CHOICES, MIN_SERVE_PORT, OverlayPlacement, PROXY_PASSWORD_ENTRY, ProxyMode, ProxySettings,
-    RecordingSettings, RecordingSource, SETTINGS_FILE_NAME, ServeSettings, Settings, SettingsStore, ThemeId, load_proxy_password, peek_proxy_password,
-    proxy_error, proxy_error_text,
+    DEFAULT_MAX_MINUTES, HistorySettings, Locale, MAX_MINUTES_CHOICES, MIN_SERVE_PORT, OverlayPlacement, PROXY_PASSWORD_ENTRY, PhoneTalkMode, ProxyMode,
+    ProxySettings, RecordingSettings, RecordingSource, SETTINGS_FILE_NAME, ServeSettings, Settings, SettingsStore, ThemeId, load_proxy_password,
+    peek_proxy_password, proxy_error, proxy_error_text,
 };
 pub use view::{DeviceConnection, DeviceView, RelaySource, RelayStatus};
 pub use vocabulary::{

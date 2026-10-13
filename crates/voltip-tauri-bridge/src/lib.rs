@@ -25,7 +25,7 @@ use voltip_core::vocabulary::{export_rules_toml, parse_rules_toml, preview, vali
 use voltip_core::{
     Activation, AppCore, AppRef, ContextSharing, CoreCommand, CoreConfig, CoreError, CoreEvent, CoreHandle, DictationPorts, DictionaryDraft, EdgeSource,
     EngineSettings, EntrySource, HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryReader, HistoryStats, ImportMode, Locale, OverlayPlacement,
-    PreviewDraft, ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
+    PhoneTalkMode, PreviewDraft, ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
 };
 use voltip_crypto::PublicKey;
 use voltip_identity::SecretStore;
@@ -426,6 +426,12 @@ pub enum UiCommand {
         /// The scene's id.
         id: Option<String>,
     },
+    /// How the phone's talk button records (docs/dictation.md §20.11): `hold` or `tap`. Persisted,
+    /// the core re-emits `settings`.
+    SettingsSetPhoneTalk {
+        /// The mode.
+        mode: PhoneTalkMode,
+    },
     /// The local speech service the app hosts (docs/dictation.md §23.6): on / off, its port, the
     /// preset and scene of its `voltip` requests. Persisted and applied at once; the core
     /// re-emits `settings` and the service's status (`serve`).
@@ -568,6 +574,7 @@ impl UiCommand {
             Self::PresetsTry { id, preset, prompt, text } => CoreCommand::PresetTry { id, trial: preset_trial(preset, prompt)?, text: preset_try_text(&text)? },
             Self::SettingsSetContextSharing { app_name, window_title } => CoreCommand::SetContextSharing(ContextSharing { app_name, window_title }),
             Self::SettingsSetPinnedScene { id } => CoreCommand::SetPinnedScene(id.as_deref().map(parse_id).transpose()?),
+            Self::SettingsSetPhoneTalk { mode } => CoreCommand::SetPhoneTalk(mode),
             Self::SettingsSetServe { enabled, port, preset, scene } => CoreCommand::SetServe(voltip_core::ServeSettings {
                 enabled,
                 port,

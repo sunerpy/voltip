@@ -2201,6 +2201,12 @@ export class MockBackend implements Backend {
         context_sharing: { app_name: appName, window_title: windowTitle },
       });
     },
+    settings_set_phone_talk: (args) => {
+      const { mode } = required(args);
+      if (mode !== "hold" && mode !== "tap")
+        throw new Error(`phone talk: 未知的说话方式 ${String(mode)}`);
+      this.emit({ type: "settings", ...this.state.settings, phone_talk: mode });
+    },
     settings_set_pinned_scene: (args) => {
       const { id } = required(args);
       if (id !== null) uuidArg(id);

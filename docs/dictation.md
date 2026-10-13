@@ -323,7 +323,7 @@ pub struct HistoryEntry {
 | `no_display` | Linux 上 enigo 连不上显示服务 | 无法连接显示服务 |
 | `secure_input` | Windows 预检 `secure_desktop` | 密码框或系统安全界面正在接收输入 |
 | `elevated_target` | Windows 预检 `elevated_target` | 目标窗口以管理员身份运行 |
-| `other` | 其余情况，以及没有 `code` 的旧记录 | 无法直接粘贴 |
+| `other` | Windows 拒绝了模拟按键（`SendInput` 没有全部发出，enigo 报「blocked by UIPI」：电脑已锁屏，或前台窗口的权限更高而预检读不到；2026-10-13，此前记为插入失败）；其余情况，以及没有 `code` 的旧记录 | 无法直接粘贴 |
 
 链路：`voltip-inject` 的 `DeliveryError::Unavailable(InjectNote { code, detail })` → `Injection.note` → 桌面壳 `core_note` 换成核心的 `ClipboardCode` → `Outcome::clipboard(note)`。界面上，首页表格、历史列表和详情标题栏只显示短标签「已复制到剪贴板」；详情正文下方一张提示卡按 `code` 给出一句说明和本机的粘贴键（macOS ⌘V，其余 Ctrl+V），原文收在可展开的「技术细节」里（等宽、任意位置断行）。
 
@@ -1443,7 +1443,7 @@ Rust：`voltip-platform` `cmd_c_keycode` 表与终端表（`terminal_ids_are_per
 | `take_audio` | 手机 → 电脑 | `take`、`seq`（从 0 起）、`pcm`（PCM16 LE 单声道，CBOR 字节串，偶数字节，≤ 32 000 = 1 秒） |
 | `take_opus` | 手机 → 电脑 | `take`、`seq`（与 `take_audio` 共用计数）、`packets`（1–50 个 20 ms Opus 包，16 kHz 单声道，每个 1–1275 字节） |
 | `take_stop` / `take_cancel` | 手机 → 电脑 | `take` |
-| `take_status` | 电脑 → 手机 | `take`、`state`：`listening` / `processing` / `done{text ≤ 2000 字, pasted}` / `failed{code: busy｜unavailable｜no_speech｜failed, message ≤ 200 字}` / `cancelled`；`opus`（这台电脑解码 Opus，缺省为假） |
+| `take_status` | 电脑 → 手机 | `take`、`state`：`listening` / `processing` / `done{text ≤ 2000 字, pasted}` / `failed{code: busy｜unavailable｜no_speech｜failed, message ≤ 200 字, text?}` / `cancelled`；`opus`（这台电脑解码 Opus，缺省为假）。`failed.text`（≤ 2000 字，2026-10-13）：电脑识别出了文字、只是未能插入时带上（§20.11），旧版手机忽略它 |
 | `phone_text` | 手机 → 电脑 | `id`（手机自增）、`body`（1–10 000 字）、`source`：`typed` / `clipboard`（§20.6） |
 | `phone_text_status` | 电脑 → 手机 | `id`、`state`：`queued` / `delivered{pasted}` / `failed{code: busy｜unavailable｜failed, message ≤ 200 字}` |
 
@@ -1457,6 +1457,7 @@ Rust：`voltip-platform` `cmd_c_keycode` 表与终端表（`terminal_ids_are_per
 - `CoreConfig.accepts_phone_takes`：桌面为真，手机为假（回 `unavailable`）。识别未就绪（同热键录音的 `check_recogniser`）回 `unavailable` 并附原因；电脑正在自己的录音、或另一部手机在录，回 `busy`。
 - 每个 `DictationStatus` 在发出前盖上 `remote = 手机名`，并按相位回报一次 `take_status`（`listening` 的重复状态只发一次）；回到 `Idle` 即结束。手机离线或 5 秒（`REMOTE_QUIET_LIMIT`）没有音频时取消。
 - 桌面壳：手机录音进行时，`audio::follow_phone_takes` 让电平 hub 改用核心的电平帧（来自手机流），胶囊与电平表显示手机的音频，不打开本机麦克风；胶囊标签「手机 · {名称}」。`phone_take_*` 命令在桌面壳返回 `PHONE_TAKE_UNAVAILABLE`。
+- 插入（2026-10-13）：Windows 拒绝模拟按键时文字留在剪贴板（§4.2 `other`），回报 `done{pasted: false}`；其他原因未能插入而已有文字时，回报 `failed{code: failed, text}`（`take_state_for`，§20.11）。
 
 ### 20.3 手机端
 
@@ -1539,6 +1540,15 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 - **通道**：应用自己的插件 `BackPlugin.kt`，Rust 侧（`src/back.rs`）只负责注册。页面经插件的 `register_listener` 监听 `back`，经 `release { ms }` 让之后 `ms` 毫秒内的返回交给系统（`apps/mobile/src/app/back.ts`）；这三条命令在 `build.rs` 中声明，由 `capabilities/default.json` 允许。没有监听者时，返回也交给系统。
 - **每个 Activity 都接管返回**：导航方式或壁纸配色等叠加层变化、字体或显示大小变化时，Android 会重建 `MainActivity`。Tauri 自带的返回事件（`onBackButtonPress`）只挂在第一个实例上，重建之后返回直接交给系统，应用随即退出（2026-10-03，CI `android-device`：模拟器在应用启动后应用叠加层，`MainActivity` 被重建，在「外观与语言」中第一次返回就退出了应用）。所以 `MainActivity.onCreate` 每次都调用 `BackPlugin.attach`；监听者和放行时间保存在插件里，插件的生命周期比 Activity 长。
 - **门禁**：`apps/mobile/src/app/back.test.tsx`；CI `android-device`（`.github/scripts/android-device-smoke.sh`）在 Android 15 模拟器上按返回键走一遍「外观与语言 → 设置 → 说话」（「外观与语言」被底部标签栏挡住或在屏幕外时，先把页面向上滑），把字体调大再调回，让系统两次重建 Activity（以应用日志为准，没有这个插件的构建以系统事件日志里的 `wm_relaunch_*` 为准；调回是为了第二遍的版面与第一遍相同，字体变大后「外观与语言」一行有一半在底部标签栏下面，点它的中心会点到标签栏）后再走一遍；最后在「说话」中返回，页面请求放行（以应用日志为准：提示只显示 3 秒，比模拟器上读一次界面还短），两秒后再返回仍然提示，两秒内再返回则退出应用。
+
+### 20.11 说话方式、取消与未能插入（2026-10-13 用户要求）
+
+用户的话：「在手机侧的说话按钮下方提供设置，允许直接切换说话模式，例如"按一下说话、按一下停止"或"按住说话"」「调整手机端按住说话松开时的取消判定阈值，减少因手指滑出导致的误取消」；以及手机发到电脑的长录音报「未插入：inject: keystroke: enigo: input refused: simulating input failed: (not all input events were sent. they may have been blocked by UIPI)」，而电脑上已经有这条记录和文字。
+
+- **说话方式**：`Settings.phone_talk`（`hold` 默认 / `tap`，`#[serde(default)]`，旧设置文件照常读取），命令 `settings_set_phone_talk{mode}`（`CoreCommand::SetPhoneTalk`），保存后回发 `settings`。React Native 版说话卡片的最下面是「说话方式」分段（按住 / 点按），录音进行中不能切换。点按：第一次点按开始，第二次点按结束并发送（发到电脑或在手机上识别，与松开相同），录音时按钮下方的「取消录音」丢弃这次录音；录音自己结束时（电脑离线、到了最长录音时间）按钮随之复位；手机拒绝开始时（麦克风权限被拒），下一次点按重新开始。按钮上的文字：按住时「按住说话」/「松开发送到 {电脑}」，点按时「点按开始说话」/「再次点按，发送到 {电脑}」（在手机上识别时「再次点按，开始识别」）。
+- **取消的判定**：按住时，手指离按下的位置超过 `CANCEL_DISTANCE`（120 dp，按钮本身的宽度）再松开才取消，按钮这时变成「松开取消」。距离按页面坐标（`pageX` / `pageY`）计算；原先按 `locationX` / `locationY` 判断是否离开按钮（外加 24 dp），而这两个值相对于手指下面的子视图（按钮中间 44 dp 的图标），手指从图标上向左或向上稍一滑动就算离开了按钮。
+- **未能插入**：Windows 的 `SendInput` 没有全部发出时（enigo 一律报「blocked by UIPI」：电脑已锁屏，或前台窗口的权限更高；锁屏时预检读不到前台窗口、也打不开输入桌面，所以照常去粘贴），`voltip-inject` 把它当作剪贴板兜底（`DeliveryError::Unavailable`，`FallbackCode::Other`）而不是失败：文字留在剪贴板，历史记录为「已复制到剪贴板」，胶囊按完成显示 2.5 秒，不再以错误停留 6 秒；手机显示「已放到电脑剪贴板：…」。其他原因未能插入、但已有文字时，电脑回报 `failed{code: failed, text}`，手机以提醒色显示「未能插入电脑当前的窗口，文字已保存在电脑的历史记录中：…」，不再显示电脑的技术原因。
+- **门禁**：Rust `voltip-inject` `regression_a_uipi_refusal_leaves_the_text_on_the_clipboard`；`voltip-protocol` `take_messages_roundtrip_and_are_validated`（`failed.text` 的往返、上限与截断）、`a_failure_with_text_reads_on_both_sides_of_an_upgrade`；`phone::desktop_phases_become_the_phones_take_states`（插入失败带文字、只有空白时照旧）；IPC 夹具（`settings_set_phone_talk`、`phone_take` 带文字的 `failed`、`Settings.phone_talk`）。TS：`apps/mobile-rn/src/features/PhoneMic.test.tsx`（滑动不取消、远离后取消，点按开始 / 结束 / 取消与设置保存，拒绝开始后再点按，未能插入的提示）。
 
 ## 21. AI 预设（2026-09-29）
 

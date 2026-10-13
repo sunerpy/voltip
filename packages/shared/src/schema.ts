@@ -567,6 +567,10 @@ export const networkStatusSchema = z.object({
 });
 export type NetworkStatus = z.infer<typeof networkStatusSchema>;
 
+/** How the phone's talk button records (`voltip_core::PhoneTalkMode`, docs/dictation.md §20.11). */
+export const PHONE_TALK_MODES = ["hold", "tap"] as const;
+export type PhoneTalkMode = (typeof PHONE_TALK_MODES)[number];
+
 export const settingsSchema = z.object({
   schema: z.literal(1),
   theme: themeIdSchema,
@@ -600,6 +604,9 @@ export const settingsSchema = z.object({
   /** The scene a take runs with where no foreground probe picks one (the phone's talk card, user
    *  decision 2026-10-01); absent = no scene. */
   pinned_scene: z.string().optional(),
+  /** How the phone's talk button records (docs/dictation.md §20.11, user request 2026-10-13):
+   *  held for the take, or tapped to start and again to stop. An older core reads as `hold`. */
+  phone_talk: z.enum(PHONE_TALK_MODES).default("hold"),
   history: historySettingsSchema.default(() => ({
     enabled: true,
     keep: 20_000,
@@ -1883,6 +1890,9 @@ export const phoneTakeStateSchema = z.discriminatedUnion("state", [
     state: z.literal("failed"),
     code: phoneTakeFailureSchema,
     message: z.string(),
+    /** What the computer recognised but could not insert; it is in the computer's history
+     *  (docs/dictation.md §20.2, 2026-10-13). Absent when nothing was recognised. */
+    text: z.string().optional(),
   }),
   z.object({ state: z.literal("cancelled") }),
 ]);
@@ -2494,6 +2504,8 @@ export interface CommandArgs {
   settings_set_context_sharing: SetContextSharingArgs;
   /** The scene the phone's takes run with (its talk card, §18); `null` = no scene. */
   settings_set_pinned_scene: { id: string | null };
+  /** How the phone's talk button records (§20.11); the core re-emits `settings`. */
+  settings_set_phone_talk: { mode: PhoneTalkMode };
   /** The local speech service (§23.6): on / off, port, the preset and scene of its `voltip`
    *  requests (`null` = the engines' preset, no scene); the core re-emits `settings` and `serve`. */
   settings_set_serve: SetServeArgs;
@@ -2646,6 +2658,7 @@ export function defaultSettings(): Settings {
     edit_hotkey: DEFAULT_EDIT_HOTKEY,
     solo_key: null,
     pairing_always_on: false,
+    phone_talk: "hold",
     history: { enabled: true, keep: 20_000 },
     overlay: "bottom",
     microphone: null,

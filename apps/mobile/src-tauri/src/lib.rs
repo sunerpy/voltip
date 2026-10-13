@@ -23,8 +23,8 @@ use tauri::{AppHandle, Emitter as _, Manager as _, Runtime};
 use voltip_cloud::feedback;
 use voltip_core::ui::{GuidePage, ProjectLink, UI_EVENT_NAME, UiState, UpdateStatus};
 use voltip_core::{
-    Activation, AppRef, ConsolePage, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PresetDraft, PreviewDraft,
-    ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
+    Activation, AppRef, ConsolePage, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PhoneTalkMode, PresetDraft,
+    PreviewDraft, ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
 };
 use voltip_identity::SecretStore;
 use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
@@ -36,7 +36,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`, less the
 /// desktop-only commands (the local speech service's, docs/dictation.md §23.6) that
 /// `tests/ipc.rs` lists as `DESKTOP_ONLY`.
-pub const COMMANDS: [&str; 112] = [
+pub const COMMANDS: [&str; 113] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -133,6 +133,7 @@ pub const COMMANDS: [&str; 112] = [
     "presets_builtin",
     "settings_set_context_sharing",
     "settings_set_pinned_scene",
+    "settings_set_phone_talk",
     "settings_set_proxy",
     "network_refresh",
     "refine_notice_close",
@@ -823,6 +824,13 @@ fn settings_set_pinned_scene(bridge: tauri::State<'_, Bridge>, id: Option<String
     Ok(bridge.dispatch(UiCommand::SettingsSetPinnedScene { id })?)
 }
 
+/// How the phone's talk button records (docs/dictation.md §20.11). The talk card that offers the
+/// choice is the React Native app's; this shell keeps the command so the contract stays whole.
+#[tauri::command]
+fn settings_set_phone_talk(bridge: tauri::State<'_, Bridge>, mode: PhoneTalkMode) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetPhoneTalk { mode })?)
+}
+
 /// Query: the applications the history saw, newest first: none on a phone, which names no
 /// application (the scene editor's picker on the desktop, §18.6).
 #[tauri::command]
@@ -1227,6 +1235,7 @@ pub fn build_app<R: Runtime>(
             scenes_builtin,
             settings_set_context_sharing,
             settings_set_pinned_scene,
+            settings_set_phone_talk,
             settings_set_proxy,
             network_refresh,
             recent_apps,

@@ -2650,11 +2650,22 @@ export const zhCN = {
       release: "松开发送",
       releaseLocal: "松开识别",
       releaseCancel: "松开取消",
+      /** The choice under the talk button (user request 2026-10-13, `Settings.phone_talk`). */
+      mode: "说话方式",
+      modeHold: "按住",
+      modeTap: "点按",
+      tap: "点按开始说话",
+      tapTo: "再次点按，发送到 {name}",
+      tapLocal: "再次点按，开始识别",
+      tapHint: "点按开始录音，再次点按结束",
+      tapCancel: "取消录音",
       starting: "正在打开麦克风…",
       listening: "正在录音 · {elapsed}",
       processing: "电脑正在识别…",
       donePasted: "已插入电脑：{text}",
       doneClipboard: "已放到电脑剪贴板：{text}",
+      /** Recognised on the computer, not inserted (2026-10-13): a notice, not a failure. */
+      notInserted: "未能插入电脑当前的窗口，文字已保存在电脑的历史记录中：{text}",
       cancelled: "已取消",
       local: {
         transcribing: "正在识别…",

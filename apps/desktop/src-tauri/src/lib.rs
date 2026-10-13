@@ -36,8 +36,8 @@ pub mod update;
 use tauri::{Emitter as _, Manager as _, Runtime};
 use voltip_core::ui::{GuidePage, ProjectLink, UI_EVENT_NAME, UiEvent, UiState, UpdateStatus};
 use voltip_core::{
-    Activation, AppRef, ConsolePage, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PresetDraft, PreviewDraft,
-    ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
+    Activation, AppRef, ConsolePage, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PhoneTalkMode, PresetDraft,
+    PreviewDraft, ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
 };
 use voltip_identity::{KeyringSecretStore, SecretStore};
 use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
@@ -52,7 +52,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 115] = [
+pub const COMMANDS: [&str; 116] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -149,6 +149,7 @@ pub const COMMANDS: [&str; 115] = [
     "presets_builtin",
     "settings_set_context_sharing",
     "settings_set_pinned_scene",
+    "settings_set_phone_talk",
     "settings_set_serve",
     "serve_copy_token",
     "serve_rotate_token",
@@ -886,6 +887,13 @@ fn settings_set_pinned_scene(bridge: tauri::State<'_, Bridge>, id: Option<String
     Ok(bridge.dispatch(UiCommand::SettingsSetPinnedScene { id })?)
 }
 
+/// How the phone's talk button records (docs/dictation.md §20.11): the desktop has no talk button
+/// and only stores it.
+#[tauri::command]
+fn settings_set_phone_talk(bridge: tauri::State<'_, Bridge>, mode: PhoneTalkMode) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetPhoneTalk { mode })?)
+}
+
 /// The local speech service (docs/dictation.md §23.6): on / off, its port, the preset and scene of
 /// its `voltip` requests. The core applies it at once and re-emits `settings` and `serve`.
 #[tauri::command]
@@ -1378,6 +1386,7 @@ pub fn build_app<R: Runtime>(
             presets_builtin,
             settings_set_context_sharing,
             settings_set_pinned_scene,
+            settings_set_phone_talk,
             settings_set_serve,
             serve_copy_token,
             serve_rotate_token,

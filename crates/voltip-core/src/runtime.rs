@@ -528,6 +528,8 @@ pub enum CoreCommand {
     /// The scene a take runs with where no foreground probe picks one (persisted; the next take
     /// follows).
     SetPinnedScene(Option<Uuid>),
+    /// How the phone's talk button records (persisted; docs/dictation.md §20.11).
+    SetPhoneTalk(crate::settings::PhoneTalkMode),
     /// The local speech service's settings (persisted, applied at once: the listener starts,
     /// stops or moves; docs/dictation.md §23.6).
     SetServe(crate::settings::ServeSettings),
@@ -1463,6 +1465,10 @@ impl Runtime {
             CoreCommand::SetPinnedScene(id) => {
                 self.settings.pinned_scene = id;
                 self.dictation.set_pinned_scene(id);
+                self.save_settings()
+            }
+            CoreCommand::SetPhoneTalk(mode) => {
+                self.settings.phone_talk = mode;
                 self.save_settings()
             }
             CoreCommand::SetServe(serve) => self.set_serve(serve).await,

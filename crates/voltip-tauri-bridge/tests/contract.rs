@@ -332,6 +332,8 @@ fn settings() -> Settings {
             username: Some("alice".into()),
             no_proxy: "corp.example.com,10.0.0.0/8".into(),
         },
+        // docs/dictation.md §20.11: the phone's talk button tapped, away from holding.
+        phone_talk: voltip_core::PhoneTalkMode::Tap,
         ..Settings::default()
     }
 }
@@ -1500,8 +1502,14 @@ fn all_events() -> Vec<UiEvent> {
         phone_take_event(PhoneTakeState::Listening),
         phone_take_event(PhoneTakeState::Processing),
         phone_take_event(PhoneTakeState::Done { text: "把 fetchUser 改成 async".into(), pasted: true }),
-        phone_take_event(PhoneTakeState::Failed { code: PhoneTakeFailure::Busy, message: "正在听写".into() }),
-        phone_take_event(PhoneTakeState::Failed { code: PhoneTakeFailure::Microphone, message: "microphone: 权限被拒绝".into() }),
+        phone_take_event(PhoneTakeState::Failed { code: PhoneTakeFailure::Busy, message: "正在听写".into(), text: None }),
+        phone_take_event(PhoneTakeState::Failed { code: PhoneTakeFailure::Microphone, message: "microphone: 权限被拒绝".into(), text: None }),
+        // Recognised on the computer, not inserted (2026-10-13): the text comes along.
+        phone_take_event(PhoneTakeState::Failed {
+            code: PhoneTakeFailure::Failed,
+            message: "inject: keystroke: refused".into(),
+            text: Some("把 fetchUser 改成 async".into()),
+        }),
         phone_take_event(PhoneTakeState::Cancelled),
         // Text the phone sent (§20.6): the list, empty and full.
         UiEvent::SentTexts { texts: Vec::new() },
@@ -1784,6 +1792,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::PresetsTry { .. } => "PresetsTry",
         UiCommand::SettingsSetContextSharing { .. } => "SettingsSetContextSharing",
         UiCommand::SettingsSetPinnedScene { .. } => "SettingsSetPinnedScene",
+        UiCommand::SettingsSetPhoneTalk { .. } => "SettingsSetPhoneTalk",
         UiCommand::SettingsSetServe { .. } => "SettingsSetServe",
         UiCommand::ServeCopyToken => "ServeCopyToken",
         UiCommand::ServeRotateToken => "ServeRotateToken",
@@ -1923,6 +1932,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("presets_try", json!({ "id": 3, "preset": "translate", "prompt": null, "text": "明天上午十点开会" }), "PresetsTry"),
         ("settings_set_context_sharing", json!({ "appName": true, "windowTitle": false }), "SettingsSetContextSharing"),
         ("settings_set_pinned_scene", json!({ "id": "0f3f1a1e-8d4b-4c8e-9f7a-1c2d3e4f5a6b" }), "SettingsSetPinnedScene"),
+        // The phone's talk button (docs/dictation.md §20.11).
+        ("settings_set_phone_talk", json!({ "mode": "tap" }), "SettingsSetPhoneTalk"),
         // The local speech service (docs/dictation.md §23.6).
         ("settings_set_serve", json!({ "enabled": true, "port": 47840, "preset": "prompt", "scene": SCENE_ID }), "SettingsSetServe"),
         ("serve_copy_token", Value::Null, "ServeCopyToken"),

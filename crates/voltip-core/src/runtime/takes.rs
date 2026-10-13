@@ -206,7 +206,7 @@ impl Runtime {
         if offline && let Some(t) = &mut self.phone_take {
             tracing::warn!("the desktop went offline during the phone take");
             t.release();
-            t.view.state = PhoneTakeState::Failed { code: PhoneTakeFailure::Offline, message: "电脑已离线".into() };
+            t.view.state = PhoneTakeState::Failed { code: PhoneTakeFailure::Offline, message: "电脑已离线".into(), text: None };
             self.emit_phone_take();
         }
     }
@@ -447,7 +447,7 @@ impl Runtime {
             Ok(capture) => capture,
             Err(e) => {
                 tracing::warn!(error = %e, "phone take: the microphone did not open");
-                t.view.state = PhoneTakeState::Failed { code: PhoneTakeFailure::Microphone, message: e.to_string() };
+                t.view.state = PhoneTakeState::Failed { code: PhoneTakeFailure::Microphone, message: e.to_string(), text: None };
                 self.take_outbox.push((to, AppMessage::TakeCancel { version: ProtocolVersion::CURRENT, take }));
                 self.emit_phone_take();
                 return;
@@ -455,7 +455,7 @@ impl Runtime {
         };
         let Some(live) = capture.live_pcm() else {
             stop_capture(capture);
-            t.view.state = PhoneTakeState::Failed { code: PhoneTakeFailure::Microphone, message: "microphone: 没有实时音频".into() };
+            t.view.state = PhoneTakeState::Failed { code: PhoneTakeFailure::Microphone, message: "microphone: 没有实时音频".into(), text: None };
             self.take_outbox.push((to, AppMessage::TakeCancel { version: ProtocolVersion::CURRENT, take }));
             self.emit_phone_take();
             return;
