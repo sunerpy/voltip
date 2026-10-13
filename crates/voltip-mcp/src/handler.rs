@@ -27,6 +27,7 @@ const INSTRUCTIONS: &str = "Voltip is the user's voice input app. These tools re
 #[derive(Clone)]
 pub struct VoltipHandler {
     service: Arc<dyn McpService>,
+    version: String,
 }
 
 impl std::fmt::Debug for VoltipHandler {
@@ -36,9 +37,9 @@ impl std::fmt::Debug for VoltipHandler {
 }
 
 impl VoltipHandler {
-    /// A handler for `service`.
-    pub fn new(service: Arc<dyn McpService>) -> Self {
-        Self { service }
+    /// A handler for `service`, introducing itself as Voltip `version`.
+    pub fn new(service: Arc<dyn McpService>, version: String) -> Self {
+        Self { service, version }
     }
 }
 
@@ -68,7 +69,7 @@ impl ServerHandler for VoltipHandler {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_prompts().enable_tools().build())
             .with_protocol_version(ProtocolVersion::V_2025_11_25)
-            .with_server_info(Implementation::new("voltip", env!("CARGO_PKG_VERSION")).with_title("Voltip"))
+            .with_server_info(Implementation::new("voltip", self.version.clone()).with_title("Voltip"))
             .with_instructions(INSTRUCTIONS)
     }
 
@@ -149,7 +150,7 @@ mod tests {
 
     #[test]
     fn a_tool_is_found_by_name_with_its_hints_and_a_schema_that_is_no_object_reads_as_empty() {
-        let handler = VoltipHandler::new(Arc::new(Listed));
+        let handler = VoltipHandler::new(Arc::new(Listed), "0.1.5".into());
         assert_eq!(format!("{handler:?}"), "VoltipHandler", "nothing of the service in the logs");
         let found = handler.get_tool("history_search").expect("a tool of the core");
         let hints = found.annotations.expect("hints");

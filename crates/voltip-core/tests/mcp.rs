@@ -250,7 +250,8 @@ async fn switching_the_service_on_listens_on_its_own_port_with_its_own_token() {
     assert_eq!((status.phase, status.address.as_deref()), (ServePhase::Running, Some("http://127.0.0.1:48201/mcp")));
     let config = host.log.lock().configs[0].clone();
     assert_eq!(config.addr.to_string(), "127.0.0.1:48201", "this computer only");
-    assert_eq!((config.max_sessions, config.calls_per_second, config.max_request_bytes), (4, 10, 256 * 1024));
+    assert_eq!((config.max_sessions, config.calls_per_second, config.max_request_bytes), (16, 10, 256 * 1024));
+    assert_eq!(config.server_version, CoreConfig::new(dir.path().to_path_buf()).app_version, "the app's version, as the shell set it");
     let token = std::fs::read_to_string(dir.path().join("mcp/token")).unwrap();
     assert_eq!(config.token, token.trim());
     assert!(!dir.path().join("serve/token").exists(), "not the local speech service's token");

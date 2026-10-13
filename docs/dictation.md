@@ -1973,10 +1973,10 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 ### 25.2 服务与传输
 
-- MCP Streamable HTTP（`rmcp =3.5.1`，server 与 streamable-http-server 特性；client 特性只在测试里），路径 `/mcp`，有会话；只提供带 `initialize` 握手的协议版本（最高 2025-11-25），每个客户端因此都有会话和名称（`clientInfo.name`，清洗后最多 64 字，空名记为 `MCP`），会话上限、限速与活动记录都依赖它。`/healthz` 不要令牌，回 `{"status":"ok"}`。
+- MCP Streamable HTTP（`rmcp =3.5.1`，server 与 streamable-http-server 特性；client 特性只在测试里），路径 `/mcp`，有会话；只提供带 `initialize` 握手的协议版本（最高 2025-11-25），每个客户端因此都有会话和名称（`clientInfo.name`，清洗后最多 64 字，空名记为 `MCP`），会话上限、限速与活动记录都依赖它；`serverInfo` 是 `voltip` 与 App 的版本（`CoreConfig.app_version`，不是 crate 的 0.0.0）。`/healthz` 不要令牌，回 `{"status":"ok"}`。
 - 只监听 `127.0.0.1:{port}`。端口 1024–65535，缺省 47841，不能与本机语音服务的端口相同（「mcp: 端口 {p} 已用于本机服务，请换一个端口」）；端口被占用时重试 2 秒，之后状态为 `failed`（「无法监听 127.0.0.1:{port}：…」）。
 - 令牌 `<数据目录>/mcp/token`：32 字节随机数，43 个 base64url 字符，`create_new` + 0600，与本机语音服务的令牌分开，所以只用语音服务的程序（如 Paseo）读不到历史；`mcp_rotate_token` 原子替换，运行中的服务立即只认新令牌。
-- 请求按顺序检查，拒绝时回 JSON-RPC 错误（code −32000，消息中英双语，中文在前），从不发 CORS 头：`Host` 不是 `127.0.0.1:{port}` / `localhost:{port}` → 403（防 DNS rebinding）；带 `Origin` → 403（网页发起的请求总带 `Origin`，MCP 客户端不带）；令牌缺失或不对（`subtle` 常量时间比较）→ 401 + `WWW-Authenticate: Bearer`；已有 4 个会话时新开会话 → 503；单个会话每秒超过 10 次调用 → 429。503 与 429 带 `Retry-After: 1`。rmcp 自己另有 Host / Origin 校验，请求体上限 256 KiB。
+- 请求按顺序检查，拒绝时回 JSON-RPC 错误（code −32000，消息中英双语，中文在前），从不发 CORS 头：`Host` 不是 `127.0.0.1:{port}` / `localhost:{port}` → 403（防 DNS rebinding）；带 `Origin` → 403（网页发起的请求总带 `Origin`，MCP 客户端不带）；令牌缺失或不对（`subtle` 常量时间比较）→ 401 + `WWW-Authenticate: Bearer`；已有 16 个会话时新开会话 → 503（客户端没有关闭的会话在 rmcp 的 5 分钟空闲超时后结束；同时开几个 agent 会话是常态，所以上限放宽到 16，2026-10-13 真机验收时 4 个会被 curl 留下的会话占满）；单个会话每秒超过 10 次调用 → 429。503 与 429 带 `Retry-After: 1`。rmcp 自己另有 Host / Origin 校验，请求体上限 256 KiB。
 - 限额：单次结果最多 256 KiB（超出的记录截短并标 `truncated: true`，分页从最后一条接着往下）；单次调用 60 秒超时（「Voltip 没有及时回答，请稍后重试。」）。
 - 日志：核心记「MCP read」「MCP write」，含工具、客户端、是否成功、耗时；HTTP 层只记状态码；从不记录请求或结果中的文字（有测试）。
 

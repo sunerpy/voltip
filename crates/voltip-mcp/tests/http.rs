@@ -153,6 +153,11 @@ async fn a_real_client_lists_the_tools_and_the_prompt_and_calls_them() {
     let client = connect(&node, "claude-code").await.unwrap();
     let info = client.peer_info().unwrap();
     assert_eq!((info.server_info.as_ref().map(|s| s.name.as_str()), info.protocol_version.as_str()), (Some("voltip"), "2025-11-25"));
+    assert_eq!(
+        info.server_info.as_ref().map(|s| s.version.as_str()),
+        Some(voltip_core::CoreConfig::new(std::path::PathBuf::new()).app_version.as_str()),
+        "the app's version, not the crate's"
+    );
     assert!(info.instructions.as_deref().unwrap().contains("review_misrecognitions"));
     let tools = client.list_all_tools().await.unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
@@ -288,17 +293,19 @@ async fn a_clients_rule_waits_and_its_writes_can_be_undone() {
 async fn sessions_and_calls_are_limited() {
     let node = start().await;
     let mut clients = Vec::new();
-    for i in 0..4 {
+    for i in 0..voltip_core::mcp::MAX_SESSIONS {
         clients.push(connect(&node, &format!("tool {i}")).await.unwrap());
     }
     let refused = post(&node, &initialize_body()).bearer_auth(&node.token).send().await.unwrap();
-    assert_eq!(refused.status(), 503, "a fifth session");
+    assert_eq!(refused.status(), 503, "one session past the limit");
     assert_eq!(refused.headers()["retry-after"], "1");
-    assert!(refused.json::<Value>().await.unwrap()["error"]["message"].as_str().unwrap().contains("同时最多 4 个会话"));
-    assert!(connect(&node, "tool 5").await.is_err());
+    assert!(
+        refused.json::<Value>().await.unwrap()["error"]["message"].as_str().unwrap().contains(&format!("同时最多 {} 个会话", voltip_core::mcp::MAX_SESSIONS))
+    );
+    assert!(connect(&node, "one more").await.is_err());
     // Closing a session (rmcp's client deletes it) frees its place.
     clients.pop().unwrap().cancel().await.unwrap();
-    let fifth = connect(&node, "tool 5").await.unwrap();
+    let fifth = connect(&node, "one more").await.unwrap();
     // A burst of calls in one session: past ten in a second they are refused.
     let session = "burst-session";
     let burst = (0..20).map(|i| {
@@ -431,7 +438,14 @@ async fn a_prompt_that_is_not_there_or_a_bad_period_is_refused_with_the_reason()
 async fn a_port_another_program_holds_is_reported_after_the_retry() {
     let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = held.local_addr().unwrap();
-    let config = voltip_core::mcp::McpListenConfig { addr, token: "t".repeat(43), max_sessions: 4, calls_per_second: 10, max_request_bytes: 256 * 1024 };
+    let config = voltip_core::mcp::McpListenConfig {
+        addr,
+        token: "t".repeat(43),
+        max_sessions: 4,
+        calls_per_second: 10,
+        max_request_bytes: 256 * 1024,
+        server_version: "0.0.0".into(),
+    };
     let service: Arc<dyn voltip_core::mcp::McpService> = Arc::new(Unused);
     let started = std::time::Instant::now();
     let refused = voltip_core::mcp::McpHost::start(&HttpHost, config, service).await.err().expect("the port is held");

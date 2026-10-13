@@ -51,8 +51,10 @@ pub const MCP_PATH: &str = "/mcp";
 pub const MAX_CLIENT_CHARS: usize = 64;
 /// What a client is called when it names nobody.
 pub const UNNAMED_CLIENT: &str = "MCP";
-/// Most sessions open at the same time.
-pub const MAX_SESSIONS: usize = 4;
+/// Most sessions open at the same time. Several agent sessions at once are normal, and a session a
+/// client dropped without closing it only ends after rmcp's idle timeout (five minutes), so the
+/// limit leaves room for both.
+pub const MAX_SESSIONS: usize = 16;
 /// Most calls one session makes in a second.
 pub const MAX_CALLS_PER_SECOND: u32 = 10;
 /// Most history entries one call returns.

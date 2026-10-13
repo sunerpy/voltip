@@ -140,6 +140,7 @@ impl Runtime {
             max_sessions: MAX_SESSIONS,
             calls_per_second: MAX_CALLS_PER_SECOND,
             max_request_bytes: MAX_REQUEST_BYTES,
+            server_version: self.config.app_version.clone(),
         };
         let service: Arc<dyn McpService> = Arc::new(CoreMcp::new(self.mcp.tx.clone()));
         match host.start(config, service).await {

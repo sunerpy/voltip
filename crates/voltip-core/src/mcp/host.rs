@@ -62,6 +62,8 @@ pub struct McpListenConfig {
     pub calls_per_second: u32,
     /// Largest request body.
     pub max_request_bytes: usize,
+    /// The app's version, as `initialize` tells the client (`serverInfo.version`).
+    pub server_version: String,
 }
 
 /// A listener that is running.

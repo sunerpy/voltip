@@ -42,7 +42,8 @@ pub fn router(config: &McpListenConfig, port: u16, service: Arc<dyn McpService>,
         .with_max_request_body_bytes(config.max_request_bytes)
         .with_cancellation_token(cancel);
     let factory_service = service.clone();
-    let mcp = StreamableHttpService::new(move || Ok(VoltipHandler::new(factory_service.clone())), sessions.clone(), rmcp_config);
+    let version = config.server_version.clone();
+    let mcp = StreamableHttpService::new(move || Ok(VoltipHandler::new(factory_service.clone(), version.clone())), sessions.clone(), rmcp_config);
     let guard = Guard::new(Token::new(config.token.clone()), allowed, sessions, config.max_sessions, config.calls_per_second);
     let router =
         Router::new().route_service(MCP_PATH, mcp).route("/healthz", get(healthz)).layer(axum::middleware::from_fn_with_state(guard.clone(), guard::check));
