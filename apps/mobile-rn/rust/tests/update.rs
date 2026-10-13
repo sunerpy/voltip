@@ -83,6 +83,21 @@ impl Phone {
         }
     }
 
+    /// Wait until the host has received an event that satisfies `done`: events reach it from the
+    /// core's event pump, after the state `update_status` reads has already changed.
+    fn wait_event(&self, done: impl Fn(&Value) -> bool) -> bool {
+        let deadline = Instant::now() + STEP_TIMEOUT;
+        loop {
+            if self.host.events().iter().any(&done) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     /// Wait until `update_status` satisfies `done`; the status then.
     fn wait_status(&self, done: impl Fn(&Value) -> bool) -> Value {
         let deadline = Instant::now() + STEP_TIMEOUT;
@@ -156,7 +171,8 @@ fn an_install_from_a_release_checks_github_and_opens_the_newer_apk() {
     phone.invoke("update_install").unwrap();
     let apk = format!("{}/download/0.0.52.apk", server.uri());
     assert!(phone.host.calls().contains(&HostCall::OpenUrl(apk)), "{:?}", phone.host.calls());
-    assert!(phone.host.events().iter().any(|e| e["type"] == "update" && e["state"] == "available"), "the outcome went out as an event");
+    // Regression (make verify 2026-10-13): the event was read before the pump delivered it.
+    assert!(phone.wait_event(|e| e["type"] == "update" && e["state"] == "available"), "the outcome went out as an event");
     assert_eq!(requests(&gh, &server), 1);
 }
 

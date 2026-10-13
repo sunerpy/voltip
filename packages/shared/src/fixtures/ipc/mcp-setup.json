@@ -1,0 +1,30 @@
+[
+  {
+    "address": "http://127.0.0.1:47841/mcp",
+    "client": "claude_code",
+    "command": "claude mcp add --transport http voltip http://127.0.0.1:47841/mcp --header \"Authorization: Bearer TOKEN\"",
+    "token": "TOKEN",
+    "windows": false
+  },
+  {
+    "address": "http://127.0.0.1:47841/mcp",
+    "client": "claude_code",
+    "command": "claude mcp add --transport http voltip http://127.0.0.1:47841/mcp --header \"Authorization: Bearer TOKEN\"",
+    "token": "TOKEN",
+    "windows": true
+  },
+  {
+    "address": "http://127.0.0.1:47841/mcp",
+    "client": "codex",
+    "command": "export VOLTIP_MCP_TOKEN=TOKEN\ncodex mcp add voltip --url http://127.0.0.1:47841/mcp --bearer-token-env-var VOLTIP_MCP_TOKEN",
+    "token": "TOKEN",
+    "windows": false
+  },
+  {
+    "address": "http://127.0.0.1:47841/mcp",
+    "client": "codex",
+    "command": "$env:VOLTIP_MCP_TOKEN = \"TOKEN\"\ncodex mcp add voltip --url http://127.0.0.1:47841/mcp --bearer-token-env-var VOLTIP_MCP_TOKEN",
+    "token": "TOKEN",
+    "windows": true
+  }
+]

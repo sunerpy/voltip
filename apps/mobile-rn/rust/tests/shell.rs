@@ -20,8 +20,9 @@ use voltip_rn::update::{InstallSource, NOTHING_TO_INSTALL, PACKAGE, UpdateConfig
 
 const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL: Duration = Duration::from_millis(20);
-/// Commands of the shared contract that only the desktop registers (docs/dictation.md §23.6).
-const DESKTOP_ONLY: &[&str] = &["settings_set_serve", "serve_copy_token", "serve_rotate_token"];
+/// Commands of the shared contract that only the desktop registers (docs/dictation.md §23.6, §25).
+const DESKTOP_ONLY: &[&str] =
+    &["settings_set_serve", "serve_copy_token", "serve_rotate_token", "settings_set_mcp", "mcp_copy_token", "mcp_rotate_token", "mcp_copy_setup", "mcp_undo"];
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
@@ -348,6 +349,14 @@ fn the_fixed_answers_match_the_tauri_phone_shell() {
     assert!(running.invoke("rules_export", Value::Null).unwrap().is_string());
     let preview = running.invoke("vocabulary_preview", json!({ "text": "你好", "draft": null })).unwrap();
     assert!(preview.is_object(), "{preview}");
+    // docs/dictation.md §16.9: the correction sheet's effect line, on the phone's own takes (none).
+    let draft = json!({ "kind": "rule", "rule": { "name": "非书 → 飞书", "pattern": "非书", "replacement": "飞书" } });
+    let backtest = running.invoke("vocabulary_backtest", json!({ "draft": draft, "historyId": null, "limit": 500 })).unwrap();
+    assert_eq!(backtest, json!({ "scanned": 0, "matched": 0, "kept": 0, "examples": [] }));
+    let err = running.invoke("vocabulary_backtest", json!({ "draft": draft, "historyId": "nope" })).unwrap_err();
+    assert!(err.starts_with("invalid args `historyId`"), "{err}");
+    let err = running.invoke("vocabulary_backtest", json!({ "draft": draft, "limit": 0 })).unwrap_err();
+    assert!(err.starts_with("vocabulary_backtest: limit"), "{err}");
     let page = running.invoke("history_query", json!({ "limit": 20 })).unwrap();
     assert_eq!(page["entries"], json!([]), "{page}");
     assert_eq!(running.invoke("history_entry", json!({ "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d" })).unwrap(), Value::Null);

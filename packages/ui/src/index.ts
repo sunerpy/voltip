@@ -20,6 +20,7 @@ export * from "./components/Input";
 export * from "./components/Select";
 export * from "./components/Menu";
 export * from "./components/Popover";
+export { type PanelFit, type PanelSide, fitPanel } from "./components/placement";
 export * from "./components/Keycap";
 export * from "./components/Banner";
 export * from "./components/LampText";

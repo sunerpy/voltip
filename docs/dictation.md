@@ -1064,10 +1064,10 @@ case_sensitive = false
 
 - **词典页**（`/dictionary`）：读写 `state.dictionary`，按匹配顺序列出；新建（表上方一行）/ 行内编辑（正确写法 + 曾听成，多个写法用逗号、`·`、`、`、分号或换行分隔；Enter 保存、Esc 取消）/ 启用开关 / 上移下移 / 删除（行内确认）全部是 `dictionary_*` 命令。输入时本地先查空、超长、重复正确写法、写法过多（本地化文案）；其余由核心判定：草稿本身不合法时命令被拒、编辑器保持打开并显示核心原文，与其他词条冲突时核心发 `error` 事件（toast），列表不变。「命中」列与「历史记录里的命中」chip 来自 `history_hits` 对全部历史的汇总（§4.4）。右侧「试一试」对输入调用 `vocabulary_preview`（200 ms 防抖，列表变化时重问），列出命中的词条与次数、纠正后的文本，规则会进一步改动时另起一行显示；「用最近一次听写」取 `state.history_recent[0].raw_text`，「用剪贴板文本」读剪贴板。说明卡如实写明：词典在识别后立即纠正、启用词条的正确写法作为术语表发给云端识别和 AI 润色、本地识别模型不接收术语表。`Ctrl N` 新建。
 - **规则页**（`/rules`）：读写 `state.rules`，一张表按执行顺序（序号、名称、类型、匹配 + 不区分大小写标记 `Aa`、替换或「（删除）」、命中、启用）；新建 / 编辑（名称、字面 / 正则、匹配、替换、区分大小写）/ 上移下移 / 删除（确认对话框）；编辑器本地查空名称、重名、空匹配，其余交给核心：对草稿调用 `vocabulary_preview("", draft)`，正则按流水线同一个 Rust `regex` 编译，失败原文显示在状态行并禁用保存；`Ctrl S` 保存、`Esc` 取消、`Ctrl N` 新建。「试运行」对输入调用 `vocabulary_preview`（`Ctrl ↵`），显示词典纠正后与规则替换后的文本、命中的规则与次数；编辑器打开时「包含正在编辑的规则」开关把草稿一起带上（显示为「名称（未保存）」）。「导入 TOML」是文本对话框（粘贴 + 合并 / 替换），核心整份校验，拒绝时原文（含行号）显示在对话框里；「导出 TOML」对话框显示 `rules_export` 的文本并可复制（没有文件对话框插件）。
-- **历史页**：详情显示本次触发的词典纠正与规则（按当前列表取名称，已删除的显示「已删除的词条 / 规则」）；「加入词典」打开对话框（曾听成用条目原文或终稿里的当前选区预填，正确写法手填），提交 `dictionary_add { historyId }`；核心拒绝时对话框保持打开并显示原因。
+- **历史页**：详情显示本次触发的词典纠正与规则（按当前列表取名称，已删除的显示「已删除的词条 / 规则」）；2026-10-13 起在原文里标记、选中后用快速卡片加入词典或新建规则（§16.9），「加入词典」按钮打开同一张卡片。
 - **侧栏**：历史、词典、规则的计数都来自核心列表，为 0 时不显示。
 - 旧的示例数据与占位全部移除：`fixtures/{dictionary,rules}.ts`、`features/scope/sample-dictionary.ts`、TS 的 `runDryRun` / `matchHotwords` / `chineseNumberToInt`、所有「尚未接入」按钮（CSV 导入导出、规则集切换、复制为规则、权重、作用域、预算、逐阶段视图、CLI 命令行）。
-- **手机**（2026-10-01，用户决定手机除本地模型外功能齐全）：设置 › 「词典、规则与场景」下的「个人词典」「替换规则」两页（`apps/mobile/src/screens/{Dictionary,Rules}.tsx`）读写同一套 `dictionary_*` / `rules_*` 命令，作用于手机自己识别的录音。列表每行一个启用开关，点开是编辑对话框（词典：正确写法、曾听成、上移下移、删除；规则：名称、字面 / 正则、匹配、替换、区分大小写、「试一试」，同样由 `vocabulary_preview` 带草稿让核心判定正则）；本地检查与桌面共用 `@voltip/shared` 的 `dictionaryDraftProblem` / `ruleDraftProblem`。「导入 TOML」与「导出 TOML」用 `@voltip/ui` 的 `RulesImportDialog` / `RulesExportDialog`（与桌面相同），导出的文本在手机上可以复制（`paste_text` 写进剪贴板）或经系统分享面板发出（`phone_share_text`）。手机没有命中统计与历史页的「加入词典」（随 M6b-3 的历史页加入）。
+- **手机**（2026-10-01，用户决定手机除本地模型外功能齐全）：设置 › 「词典、规则与场景」下的「个人词典」「替换规则」两页（`apps/mobile/src/screens/{Dictionary,Rules}.tsx`）读写同一套 `dictionary_*` / `rules_*` 命令，作用于手机自己识别的录音。列表每行一个启用开关，点开是编辑对话框（词典：正确写法、曾听成、上移下移、删除；规则：名称、字面 / 正则、匹配、替换、区分大小写、「试一试」，同样由 `vocabulary_preview` 带草稿让核心判定正则）；本地检查与桌面共用 `@voltip/shared` 的 `dictionaryDraftProblem` / `ruleDraftProblem`。「导入 TOML」与「导出 TOML」用 `@voltip/ui` 的 `RulesImportDialog` / `RulesExportDialog`（与桌面相同），导出的文本在手机上可以复制（`paste_text` 写进剪贴板）或经系统分享面板发出（`phone_share_text`）。手机没有命中统计；2026-10-13 起 RN 记录页有「纠正识别错误」（§16.9）。
 - `MockBackend` 按本节语义在内存里模拟（`packages/shared/src/vocabulary.ts`：同样的上限、校验与拒绝文本、ASCII 词边界与大小写、最长优先、规则顺序、空匹配忽略、TOML 子集的导入导出与错误定位；一次模拟听写同样先纠正再润色再跑规则，并记录命中）；它的正则走 JS `RegExp`（额外拒绝环视与反向引用以贴近 Rust 方言）——桌面端永远问 Rust。
 
 ### 16.7 门禁
@@ -1090,6 +1090,27 @@ Rust：`vocabulary` 单测（上限、校验、字面 vs 正则、大小写、�
 | 10 路 + 只有「集成」，score 3.0 | 2.39 s | 6.2 / 30.4 / 35.3 ms | **是** | `APP` 变 `app` |
 
 结论：热词只在「列表里只有这一个词且束宽加到 10」时修正了已知错误，每块解码时间 +47%、p95 +50%；换成更贴近真实的三词列表、同样的束宽与分数就不再生效，还会顺带改动别处的大小写。它还要求目录额外带 `bpe.vocab`（现在只有 `bpe.model`）与中文逐字加空格的约定。因此**不开热词**，流式路径与其他本地引擎一样只靠识别后的词典纠正——它对已知误识别是确定的，对任何引擎都一样。
+
+### 16.9 历史详情快速纠错（2026-10-13）
+
+**目标**：在历史记录里选中识别错的词语，一两步建好词条或替换规则（用户要求 2026-10-12，设计 2026-10-13：`voltip-design/history-vocab/设计方案.md` 与 Penpot「快速纠错 · AI 工具接入」画板 01–06、10–13）。App 内不做 AI 分析（用户决定 2026-10-13）：需要分析时由用户自己的 AI 工具经 MCP 完成（§25）。已经保存的历史记录从不改写，词典与规则只作用于之后的听写。
+
+- **回测**（`voltip_core::vocabulary::backtest`）：`backtest(dictionary, history, draft, exclude) -> Backtest { scanned, matched, kept, examples }`。`history` 是 `HistoryReader::recent_texts(limit)` 读到的最新识别记录（只有 `kind = dictation`，没有手机发来的文字；`limit` 1–`MAX_RECENT_TEXTS` = 2000），`exclude` 是卡片所在的那条。
+  - 词典草稿（`BacktestDraft::Dictionary { id?, entry }`）：当前词典与「假如草稿已保存」（`id` 相同的词条被替换，否则追加）分别编译，对每条 `raw_text` 做纠正这一步，结果不同即 `matched`；`kept` 是其中最终 `text` 仍含草稿某个曾听成写法的条数（同一个字面匹配器，ASCII 大小写不敏感、非 CJK 词边界），说明润色认为它在那里是对的，界面据此提示「可能是正确用法」。某个写法已被前面的词条占用时草稿什么也不改（保存时也会被拒绝）。
+  - 规则草稿（`BacktestDraft::Rule { id?, rule }`）：只把草稿规则作用于每条最终 `text`（`text` 已经过当时的全部规则），`kept` 恒为 0。
+  - 示例最多 `MAX_BACKTEST_EXAMPLES` = 3 条，`kept` 的在前，各自按新到旧；每条是首个改动前后各 `BACKTEST_SNIPPET_CHARS` = 12 个字符的片段，截断处为 `…`。草稿本身先校验（`validate_*_draft`），与其他词条的冲突留给保存。
+
+- **IPC**：查询 `vocabulary_backtest { draft, historyId?, limit? }`（桌面、旧 Tauri 手机壳与 RN 壳都注册，属于 `QUERY_COMMANDS`；`limit` 缺省 `BACKTEST_LIMIT` = 500，允许 1–`MAX_BACKTEST_LIMIT` = 2000，越界是 `BadArgument`「vocabulary_backtest: limit 1–2000」）。`Bridge::vocabulary_backtest` 复制缓存的词典，读 `recent_texts(limit)`，阻塞 SQLite，各壳放到后台线程。zod：`backtestDraftSchema`、`backtestExampleSchema`、`vocabularyBacktestSchema`；夹具 `fixtures/ipc/vocabulary-backtest.json`。`MockBackend` 用 TS 的 `backtestVocabulary`（`packages/shared/src/vocabulary.ts`）按同样语义回测。写入沿用现有命令：新建 `dictionary_add { entry, historyId }`，合并 `dictionary_update`，规则 `rules_add`，撤销 `dictionary_remove` / `dictionary_update` / `rules_remove`。
+- **共享纯函数**（`packages/shared/src/quick-fix.ts`，桌面与 RN 共用）：`polishPairs` / `diffItems`（`diffSegments` 里相邻的删除段 + 新增段，去掉只有标点或空白的改动、单独的删除或新增；超过 `MAX_PAIR_DIFF_CELLS` = 1 000 000 个比较格时不显示标记）；`textMarks`（`polish` 与 `known`，`known` 是某个启用词条的曾听成写法、ASCII 大小写不敏感，两者重叠时 `known` 优先）；`trimRange`（按码点去掉首尾空白和标点）；`fixTarget`（选区落在一组改动内时扩展到整组；原文视图默认词典；润色后视图里原文没有的文字默认规则；超过 64 字或跨行不能作为词典写法）；`fixStatus` / `fixStatusLines` / `fixStatusTone`（状态行：冲突或核心拒绝单独一行，否则「影响范围 + 一项风险」或「合并 + 影响范围」，最多两行）；本地冲突检查与核心 §16.1 的规则一致（被其他词条占用、是其他词条的正确写法、与正确写法相同、超过 10 个曾听成写法、词典已满），规则名「查找 → 替换为」重名时加序号；`fixScope`（适用范围，见下）。
+- **桌面**（`apps/desktop/src/pages/history/*`：`HistoryDetail`、`FixText`、`SelectionToolbar`、`QuickFixCard`、`useBacktest`）：
+  - 原文视图：润色替换处 2 px 点状下划线（`#1667E8`），已加入词典的写法实线（`#1F7A4A`）；标记是按钮（`aria-label`「润色时已改正：维他命，润色后为 Voltip」），悬停提示「润色后为「Voltip」· 点按加入词典」，文本框底部有图例。已加入词典的标记打开一张小卡片（词条、命中次数、在词典中编辑）。
+  - 对比视图：每组替换是按钮，点按后先问「哪一种写法正确？」：选润色后的写法把原文写法加入词典；选原文写法（润色改错了）把它作为正确写法加入，之后润色会保留它。单独的删除或新增不是按钮。
+  - 选区工具条：`fitPanel` 定位在选区上方 8 px，D 加入词典、R 新建规则、Esc 清除；双击按 `Intl.Segmenter` 取词；滚动或切换视图时消失。
+  - 卡片：非模态 `role="dialog"`，宽 400 px，锚定在选区下方；焦点在「正确写法」，Tab 在卡片内循环，Enter 保存（输入法组字时不保存），Esc 关闭并把焦点还给标记或文本框；没有编辑过时点外部关闭。词典卡片：曾听成、正确写法（注明「来自润色结果」）、状态行（输入停止 200 ms 后回测，「查看」展开最多 3 条片段）、说明；合并到已有词条时主按钮为「添加到「…」」，并保留那个词条的启用状态。规则卡片：查找 → 替换为、字面 / 正则、区分大小写（缺省开启，与规则页新建时相同）、名称、「本条预览」（`vocabulary_preview` 带草稿）。影响范围显示核心返回的 `scanned`，本条在范围内时是 499。
+  - 保存后 Toast「已加入词典 · Voltip」「已新建规则 · …」，带「撤销 Ctrl Z」，5 秒；已保存的历史记录不变。
+  - 适用范围（`fixScope`）：本机识别的记录才有工具（`origin` 为空或 `take`）；手机独立识别后上传的记录显示「这条由手机识别。这里的词典只作用于这台电脑上的识别。」；手机发来的文字不显示；语音编辑没有标记和工具条，「加入词典」打开同一张卡片。
+- **手机**（RN，`apps/mobile-rn/src/features/QuickFix.tsx`、`screens/Entry.tsx`）：记录页操作行的「纠正识别错误」只对 `origin` 为空且原文非空的记录出现（`sent` 显示「这条在电脑上识别，请在电脑的历史记录中纠正。」）。选词状态：标题「纠正识别错误」、右侧「完成」；原文按词排开——Hermes 没有 `Intl.Segmenter`，所以汉字逐字、拉丁字母与数字按词（`\p{Script=Han}` 等正则由 hermesc 1.0.0 编译确认可用，将来有 `Intl.Segmenter` 时自动改用），标点贴前一个词、开括号贴后一个词、换行另起一行；点按选中，再点按另一个扩展，点按选区内取消，标记整段选中。底部操作栏显示「已选择：…」与「润色后为「…」」和两个 48 dp 的按钮；底部面板的字段、状态行、说明与桌面相同，打开时不弹键盘；保存后提示条带「撤销」，5 秒。系统返回依次关闭面板、退出选词状态、离开页面。
+- **门禁**：Rust `vocabulary::backtest` 7 条、`history::tests::recent_texts_are_the_newest_recognised_takes`、bridge `vocabulary_backtest_tries_a_draft_on_the_recent_takes`、契约 `vocabulary_backtest_fixture_matches_serde_output`、三个壳的命令层测试（`apps/desktop/src-tauri/tests/ipc.rs@vocabulary_backtest_reads_the_recent_takes_through_the_command_layer` 等）；TS `quick-fix.test.ts`（覆盖率 100 % 行）、`HistoryDetail.test.tsx` 24 条（标记、卡片、撤销、规则、对比视图、冲突与风险、键盘、适用范围）、`text-offsets.test.ts`、RN `Entry.test.tsx` 14 条（32 核上 24 个并发进程跑 96 遍全部通过）。RN 页面没有做真机视觉验收。
 
 ## 17. 中文字形统一（2026-09-26）
 
@@ -1969,3 +1990,79 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 ### 24.9 未做
 
 - PAC 与 WPAD 自动配置；Linux 桌面环境（GNOME、KDE）自己的代理设置；`https://` 代理（到代理本身也走 TLS）；按服务分别设置代理；代理的 NTLM、Kerberos 认证。
+
+## 25. AI 工具接入：本机 MCP 服务（2026-10-13）
+
+**目标**：让这台电脑上用户自己的 AI 工具（Claude Code、Codex 等）通过 MCP 读取历史记录、词典和规则，汇总反复出现的识别错误、回测草稿，并在用户授权下添加词条和规则。读取哪些内容、能否修改由用户在设置中显式决定，每次写入都有记录、可以撤销。只在桌面提供。
+
+### 25.1 起因与决定
+
+- 用户要求（2026-10-12 / 13）：历史详情的快速纠错（§16.9）之外，不在 App 内做 AI 分析，改为在 App 中提供 MCP 服务，由用户自己的 agent 结合项目经验判断，比 App 内置的通用提示词更可靠；读取全部历史（原文、润色后文本等）要能由用户显式允许，并告知风险；第一版只监听回环地址；与快速纠错放在同一个 PR 发布。
+- 设计：`voltip-design/history-vocab/设计方案.md` 第二部分与 Penpot 画板 07–11。分层照搬本机语音服务（§23）：逻辑在 `voltip_core::mcp`（权限、工具、活动记录、令牌、接入命令），HTTP 在 `crates/voltip-mcp`（`HttpHost`），桌面壳通过 `CoreConfig` 提供宿主。
+
+### 25.2 服务与传输
+
+- MCP Streamable HTTP（`rmcp =3.5.1`，server 与 streamable-http-server 特性；client 特性只在测试里），路径 `/mcp`，有会话；只提供带 `initialize` 握手的协议版本（最高 2025-11-25），每个客户端因此都有会话和名称（`clientInfo.name`，清洗后最多 64 字，空名记为 `MCP`），会话上限、限速与活动记录都依赖它；`serverInfo` 是 `voltip` 与 App 的版本（`CoreConfig.app_version`，不是 crate 的 0.0.0）。`/healthz` 不要令牌，回 `{"status":"ok"}`。
+- 只监听 `127.0.0.1:{port}`。端口 1024–65535，缺省 47841，不能与本机语音服务的端口相同（「mcp: 端口 {p} 已用于本机服务，请换一个端口」）；端口被占用时重试 2 秒，之后状态为 `failed`（「无法监听 127.0.0.1:{port}：…」）。
+- 令牌 `<数据目录>/mcp/token`：32 字节随机数，43 个 base64url 字符，`create_new` + 0600，与本机语音服务的令牌分开，所以只用语音服务的程序（如 Paseo）读不到历史；`mcp_rotate_token` 原子替换，运行中的服务立即只认新令牌。
+- 请求按顺序检查，拒绝时回 JSON-RPC 错误（code −32000，消息中英双语，中文在前），从不发 CORS 头：`Host` 不是 `127.0.0.1:{port}` / `localhost:{port}` → 403（防 DNS rebinding）；带 `Origin` → 403（网页发起的请求总带 `Origin`，MCP 客户端不带）；令牌缺失或不对（`subtle` 常量时间比较）→ 401 + `WWW-Authenticate: Bearer`；已有 16 个会话时新开会话 → 503（客户端没有关闭的会话在 rmcp 的 5 分钟空闲超时后结束；同时开几个 agent 会话是常态，所以上限放宽到 16，2026-10-13 真机验收时 4 个会被 curl 留下的会话占满）；单个会话每秒超过 10 次调用 → 429。503 与 429 带 `Retry-After: 1`。rmcp 自己另有 Host / Origin 校验，请求体上限 256 KiB。
+- 限额：单次结果最多 256 KiB（超出的记录截短并标 `truncated: true`，分页从最后一条接着往下）；单次调用 60 秒超时（「Voltip 没有及时回答，请稍后重试。」）。
+- 日志：核心记「MCP read」「MCP write」，含工具、客户端、是否成功、耗时；HTTP 层只记状态码；从不记录请求或结果中的文字（有测试）。
+
+### 25.3 读取范围与修改权限
+
+| `Settings.mcp.read` | 允许的工具 |
+|---|---|
+| `rules` | `dictionary_list`、`rules_list`、`vocabulary_preview`、`vocabulary_backtest`（不给示例，附 `examples_withheld` 说明） |
+| `summary`（缺省） | 上一级全部、回测示例、`vocabulary_candidates` |
+| `full` | 上一级全部、`history_search`、`history_get`，限于 `history_range`（`last_7_days` / `last_30_days`（缺省）/ `all`）内的记录 |
+
+| `Settings.mcp.write` | 允许 |
+|---|---|
+| `read_only` | 不能写入 |
+| `dictionary`（缺省） | `dictionary_add`、`dictionary_update`（含停用）；`rules_add` 新建的规则 `enabled = false`、`pending = true`；`rules_update` 只能改本工具新建且仍待确认的规则，改完仍待确认 |
+| `enable_rules` | 规则按请求创建，任何规则都能改 |
+
+- 每次调用时检查，阻塞读取结束时再查一次，所以收回授权对下一次调用、也对正在进行的读取生效。没有删除工具。
+- 超出授权时的说明（`crates/voltip-core/src/mcp/access.rs`），例如「当前只允许读取替换汇总；完整的历史记录需要在 Voltip 设置中授权。」「当前只允许读取，不能修改；修改词典和规则需要在 Voltip 设置中授权。」，agent 可以原样转告用户。
+- 选择「完整历史」与「也可以直接启用规则」时界面先确认（§25.6）。
+
+### 25.4 工具与 prompt
+
+- 只读（`readOnlyHint: true`、`idempotentHint: true`）：`dictionary_list`、`rules_list`（每页 100，带 cursor）、`vocabulary_preview`（文本最多 64 KiB，可带一条规则草稿）、`vocabulary_backtest`（§16.9 的 `backtest`，默认扫 500 条、最多 2000）、`vocabulary_candidates`（润色前后的替换对与次数，默认 50、最多 200，每对最多 3 个示例，片段前后各 12 字）、`history_search`（`query`、`since` / `until`（毫秒数或 RFC 3339，只写日期时按 UTC 零点）、`app`、`cursor`；每页默认 20、最多 50）、`history_get`。
+- 写入（`destructiveHint: false`）：`dictionary_add`（按正确写法 ASCII 大小写不敏感合并曾听成写法，重复调用不产生变化，`idempotentHint: true`）、`dictionary_update`（`idempotentHint: true`）、`rules_add`、`rules_update`（`idempotentHint: true`）。所有工具 `openWorldHint: false`；参数 schema 在 `crates/voltip-core/src/mcp/tools.rs`。结果里带 `activity_id`。
+- prompt `review_misrecognitions { days }`（1–3650，缺省 30）：先 `vocabulary_candidates`，再对每个草稿 `vocabulary_backtest`，把建议列给用户确认后再写入。工具与 prompt 的描述用英文（读者是模型）。
+- 替换汇总的切分与历史页的 `diffSegments` 相同（Rust 实现 `voltip_core::mcp::candidates`，夹具 `fixtures/ipc/diff.json` 让两边逐例对照），所以中文按字成对：「非书 → 飞书」汇总为「非 → 飞」。
+- `history_search` / `history_get` 的每条记录：id、时间、kind、原文、最终文本、处理后文本、是否润色、应用、场景名、预设名、识别与润色模型、时长、`outcome` 的类别、来源、`truncated`；不包含语音编辑的指令与选区、失败原因，搜索也不匹配选区。
+
+### 25.5 写入、活动记录与撤销
+
+- 写入与界面走同一套存储、校验和事件（§16.1）：词条的来源是 `EntrySource::Mcp { client }`（`{ "kind": "mcp", "client": "Claude Code" }`）；`ReplacementRule` 增加 `source`（缺省 `manual`）与 `pending`（缺省 false），旧文件照读。待确认的规则在听写、试运行和回测里都不执行，在界面里启用即清除待确认；TOML 导出时写成 `enabled = false`。
+- 活动记录 `<数据目录>/mcp/activity.json`（`schema` 1，最多 50 行，新的在前）：`McpActivity { id, at_ms, client, kind: read | write, action, subject?, count?, range?, pending, undoable, undone }`，只记名称和条数，不记文字；同一客户端对同一对象的重复读取在 10 分钟内合并为一行。撤销用的写入前快照也存在这里。
+- `mcp_undo { id }`：只在对象自写入后没被改过时还原，否则说明原因：「mcp: 没有这条活动记录」「mcp: 这条活动不能撤销」「mcp: 这条活动已经撤销」「mcp: 无法撤销：这个词条已经删除 / 之后又被修改过」「mcp: 无法撤销：这条规则已经删除 / 之后又被修改过」。
+
+### 25.6 命令、设置与状态
+
+- `Settings.mcp: McpSettings { enabled（缺省 false）, port（47841）, read, history_range, write }`，`#[serde(default)]`，旧设置文件读作缺省。
+- 命令（只在桌面；手机壳不注册，`tests/ipc.rs` 的 `DESKTOP_ONLY`；没有宿主时报「mcp: AI 工具接入仅在电脑上提供」）：`settings_set_mcp { enabled, port, read, historyRange, write }`、`mcp_copy_token`、`mcp_rotate_token`、`mcp_copy_setup { client: claude_code | codex }`、`mcp_undo { id }`。令牌与接入命令由核心经 `Injector::copy` 放进剪贴板，不经过 webview。
+- 接入命令（地址取运行中的地址，否则用保存的端口；夹具 `fixtures/ipc/mcp-setup.json`）：Claude Code `claude mcp add --transport http voltip {地址} --header "Authorization: Bearer {令牌}"`；Codex `export VOLTIP_MCP_TOKEN={令牌}`（Windows PowerShell 为 `$env:VOLTIP_MCP_TOKEN = "{令牌}"`）后 `codex mcp add voltip --url {地址} --bearer-token-env-var VOLTIP_MCP_TOKEN`。两条命令的语法 2026-10-13 按 code.claude.com/docs/en/mcp 与 openai/codex `codex-rs/cli/src/mcp_cmd.rs` 核对。
+- `UiState.mcp: McpStatus { available, phase: off | starting | running | failed, address?, error?, clients: [{ name, last_seen_ms }]（最多 8 个，服务启动后见过的）, activity }`，变化时发 `mcp` 事件。使用指南 `guide_open { page: mcp }` → `recognition/mcp`。
+- 界面：
+  - 设置 › AI 工具接入（`/settings/mcp`，在「本机服务」之后、「网络」之前）：启用开关、状态（运行中 · 地址、最近连接的工具）、端口、读取范围（选「完整历史」时确认框说明会发给哪类服务、可能包含的敏感内容，并在框内选时间范围；授权后警告行「已允许读取完整历史记录（最近 30 天）。」与「收回」）、修改权限（选「也可以直接启用规则」时确认）、接入命令（令牌用 `<令牌>` 占位，「复制命令」）、令牌（复制、重新生成需确认）、最近活动（写入可撤销，「查看全部」）。
+  - 规则页：有待确认的规则时提示条（只有一个工具时写出它的名字，否则写「外部工具」）与「只看待确认」、筛选「待确认 N」、琥珀色待确认行（「启用」「删除」在操作列）、侧栏「规则」计数前的琥珀小圆点、试运行区说明「待确认的规则不参与试运行，启用后才会生效。」。
+  - 词典页：来源「外部工具 · {client}」，有这类词条时出现「外部工具」筛选。
+  - 外部写入的 Toast（例如「Claude Code 添加了 2 个词条」）：同一工具在提示显示期间（5 秒内）的写入合并成一条；「查看」写过规则时打开规则页，否则打开词典页；窗口打开前的活动不弹出提示。
+
+### 25.7 门禁
+
+- `crates/voltip-mcp/tests/http.rs`（真实 rmcp 客户端连真实监听）：`a_real_client_lists_the_tools_and_the_prompt_and_calls_them`、`requests_without_the_token_or_from_a_web_page_are_refused`、`the_levels_of_the_moment_decide_each_call`、`a_clients_rule_waits_and_its_writes_can_be_undone`、`sessions_and_calls_are_limited`、`a_new_token_and_switching_off_take_effect_at_once`、`the_logs_hold_no_text`、`a_prompt_that_is_not_there_or_a_bad_period_is_refused_with_the_reason`、`a_port_another_program_holds_is_reported_after_the_retry`。
+- `crates/voltip-core/tests/mcp.rs`（经 `AppCore` 的命令、事件、持久化与重启）：`switching_the_service_on_listens_on_its_own_port_with_its_own_token`、`a_taken_port_is_reported_and_the_service_starts_with_the_app`、`a_shell_without_a_host_refuses_the_mcp_commands`、`the_token_and_the_setup_commands_go_to_the_clipboard_and_a_new_token_is_in_force_at_once`、`reads_follow_the_read_level_of_the_moment`、`writes_change_the_lists_as_the_interface_would_and_can_be_undone`、`a_tools_rule_waits_for_approval_and_runs_once_approved`、`the_activity_survives_a_restart_with_its_undo`、`unchanged_writes_note_nothing_and_an_undo_puts_back_a_rule_or_says_it_was_deleted`；`voltip_core::mcp` 的单元测试（权限、工具、候选替换对、活动合并、撤销）。
+- 契约：`mcp_setup_fixture_matches_the_core`、`diff_fixture_matches_the_core`、命令与事件夹具；TS `mcp.test.ts`、`diff-parity.test.ts`、桌面 `McpPane.test.tsx` 11 条、`useMcpWriteToasts.test.tsx` 6 条、规则页与词典页的待确认 / 来源测试。
+- 依赖：`rmcp =3.5.1`（Apache-2.0）、`tokio-util =0.7.19`（MIT），新增的传递依赖 `pastey`、`schemars_derive`、`serde_derive_internals`、`sse-stream`、`tokio-stream` 均在 `deny.toml` / `about.toml` 的许可名单内。
+- 真机验收（2026-10-13，Linux x86_64，debug 构建在 Xvfb 上运行，独立的数据目录，设置文件打开服务）：`/healthz` 返回 `{"status":"ok"}`，令牌文件 0600；curl：无令牌或错误令牌 401、带 `Origin` 403、`Host` 不是本机 403、`localhost` 200，响应没有 CORS 头。Claude Code（`--mcp-config` 里的 http 服务器）连接后状态 connected、列出 11 个工具，依次调用 `dictionary_list`（空）、`dictionary_add`（新建，来源 `mcp / claude-code`）、`rules_add`（待确认，附说明）、`rules_list`、`vocabulary_candidates` 成功，`history_search` 在替换汇总级别被拒绝并给出中英说明；它在写入前先征求用户确认（服务的 instructions 要求如此）。App 的侧栏、规则页提示条与待确认行随即出现，在规则页点「启用」后规则生效、待确认清除、来源不变；设置页显示运行中、地址与连接过的客户端。Codex 0.162.1：`codex mcp add voltip --url … --bearer-token-env-var VOLTIP_MCP_TOKEN` 写出的配置在 `codex mcp list` 中显示为 Bearer token，`codex exec` 的 MCP 客户端（`codex-mcp-client`）完成握手；本机的 Codex 模型服务不可用，没有经它调用工具（工具调用由同样基于 rmcp 的客户端测试覆盖）。验收中发现并修正：4 个会话的上限会被没有关闭的会话占满（rmcp 5 分钟后才回收），改为 16；`serverInfo.version` 改为 App 的版本。
+- 未验证：Windows / macOS 只经 CI。
+
+### 25.8 未做
+
+- 监听网卡地址（需要 TLS 或明确的明文风险提示、Host 白名单与单独确认）；在那之前跨机器使用请用 `ssh -L 47841:127.0.0.1:47841`。
+- 2026-07-28 版协议的无状态握手；删除工具；「最近活动」的清空；手机与 `voltip-server` 上的 MCP 服务。

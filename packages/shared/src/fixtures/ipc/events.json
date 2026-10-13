@@ -54,6 +54,13 @@
         "server": null,
         "username": null,
         "no_proxy": ""
+      },
+      "mcp": {
+        "enabled": false,
+        "port": 47841,
+        "read": "summary",
+        "history_range": "last_30_days",
+        "write": "dictionary"
       }
     },
     "secret_backend": "",
@@ -138,6 +145,12 @@
     },
     "network": {
       "proxy_password": false
+    },
+    "mcp": {
+      "available": false,
+      "phase": "off",
+      "clients": [],
+      "activity": []
     }
   },
   {
@@ -347,6 +360,13 @@
       "server": "http://proxy.example.com:3128",
       "username": "alice",
       "no_proxy": "corp.example.com,10.0.0.0/8"
+    },
+    "mcp": {
+      "enabled": true,
+      "port": 47841,
+      "read": "full",
+      "history_range": "last_7_days",
+      "write": "dictionary"
     }
   },
   {
@@ -3116,6 +3136,79 @@
     "proxy_password": false
   },
   {
+    "type": "mcp",
+    "available": true,
+    "phase": "starting",
+    "clients": [],
+    "activity": []
+  },
+  {
+    "type": "mcp",
+    "available": true,
+    "phase": "failed",
+    "address": "http://127.0.0.1:47841/mcp",
+    "error": "无法监听 127.0.0.1:47841：Address already in use",
+    "clients": [],
+    "activity": []
+  },
+  {
+    "type": "mcp",
+    "available": true,
+    "phase": "running",
+    "address": "http://127.0.0.1:47841/mcp",
+    "clients": [
+      {
+        "name": "claude-code",
+        "last_seen_ms": 1758700600000
+      }
+    ],
+    "activity": [
+      {
+        "id": "c3d4e5f6-a7b8-4c9d-8e0f-2a3b4c5d6e7f",
+        "at_ms": 1758700600000,
+        "client": "claude-code",
+        "action": "add_entry",
+        "subject": "Voltip",
+        "undoable": true,
+        "undone": false
+      },
+      {
+        "id": "d4e5f6a7-b8c9-4d0e-9f1a-3b4c5d6e7f80",
+        "at_ms": 1758700540000,
+        "client": "claude-code",
+        "action": "add_rule",
+        "subject": "非书 → 飞书",
+        "pending": true,
+        "undoable": true,
+        "undone": false
+      },
+      {
+        "id": "e5f6a7b8-c9d0-4e1f-8a2b-4c5d6e7f8091",
+        "at_ms": 1758700480000,
+        "client": "codex",
+        "action": "search_history",
+        "count": 12,
+        "range": "last_30_days",
+        "undoable": false,
+        "undone": false
+      }
+    ]
+  },
+  {
+    "type": "mcp",
+    "available": true,
+    "phase": "off",
+    "clients": [],
+    "activity": []
+  },
+  {
+    "type": "mcp",
+    "available": false,
+    "phase": "off",
+    "clients": [],
+    "activity": []
+  },
+  {
     "type": "models",
     "models": [
       {
@@ -3705,6 +3798,18 @@
         },
         "created_at_ms": 1758700600000,
         "updated_at_ms": 1758700600000
+      },
+      {
+        "id": "4d0c7a1e-5b6c-4d7e-8f90-a1b2c3d4e5f6",
+        "term": "Voltip",
+        "heard_as": ["维他命"],
+        "enabled": true,
+        "source": {
+          "kind": "mcp",
+          "client": "claude-code"
+        },
+        "created_at_ms": 1758700600000,
+        "updated_at_ms": 1758700600000
       }
     ]
   },
@@ -3724,7 +3829,11 @@
         "case_sensitive": true,
         "enabled": true,
         "created_at_ms": 1758614200000,
-        "updated_at_ms": 1758614200000
+        "updated_at_ms": 1758614200000,
+        "source": {
+          "kind": "manual"
+        },
+        "pending": false
       },
       {
         "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
@@ -3735,7 +3844,27 @@
         "case_sensitive": false,
         "enabled": false,
         "created_at_ms": 1758700600000,
-        "updated_at_ms": 1758700600000
+        "updated_at_ms": 1758700600000,
+        "source": {
+          "kind": "manual"
+        },
+        "pending": false
+      },
+      {
+        "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+        "name": "非书 → 飞书",
+        "kind": "literal",
+        "pattern": "非书",
+        "replacement": "飞书",
+        "case_sensitive": true,
+        "enabled": false,
+        "created_at_ms": 1758700600000,
+        "updated_at_ms": 1758700600000,
+        "source": {
+          "kind": "mcp",
+          "client": "claude-code"
+        },
+        "pending": true
       }
     ]
   },
@@ -3835,6 +3964,13 @@
       "server": "http://proxy.example.com:3128",
       "username": "alice",
       "no_proxy": "corp.example.com,10.0.0.0/8"
+    },
+    "mcp": {
+      "enabled": true,
+      "port": 47841,
+      "read": "full",
+      "history_range": "last_7_days",
+      "write": "dictionary"
     }
   },
   {

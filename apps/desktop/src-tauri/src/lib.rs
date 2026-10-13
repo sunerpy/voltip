@@ -53,7 +53,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 120] = [
+pub const COMMANDS: [&str; 126] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -141,6 +141,7 @@ pub const COMMANDS: [&str; 120] = [
     "rules_import",
     "rules_export",
     "vocabulary_preview",
+    "vocabulary_backtest",
     "scenes_add",
     "scenes_update",
     "scenes_remove",
@@ -158,6 +159,11 @@ pub const COMMANDS: [&str; 120] = [
     "settings_set_serve",
     "serve_copy_token",
     "serve_rotate_token",
+    "settings_set_mcp",
+    "mcp_copy_token",
+    "mcp_rotate_token",
+    "mcp_copy_setup",
+    "mcp_undo",
     "settings_set_proxy",
     "network_refresh",
     "refine_notice_close",
@@ -840,6 +846,20 @@ fn vocabulary_preview(bridge: tauri::State<'_, Bridge>, text: String, draft: Opt
     Ok(bridge.vocabulary_preview(&text, draft.as_ref())?)
 }
 
+/// Query (docs/dictation.md §16.9): what an unsaved dictionary entry or rule `draft` would change
+/// in the newest `limit` recognised takes (500 unless given, at most 2000), leaving out entry
+/// `history_id`: the history page's quick-fix card shows it before anything is saved. Reads the
+/// database, so it runs off the main thread.
+#[tauri::command]
+async fn vocabulary_backtest(
+    bridge: tauri::State<'_, Bridge>,
+    draft: voltip_core::vocabulary::BacktestDraft,
+    history_id: Option<uuid::Uuid>,
+    limit: Option<usize>,
+) -> Result<voltip_core::vocabulary::Backtest, String> {
+    history_read(&bridge, move |b| b.vocabulary_backtest(&draft, history_id, limit)).await
+}
+
 /// Append a scene (docs/dictation.md §18.6). A draft that is wrong on its own (no app, a bad
 /// language code, over a limit) is refused here; a clash with the list comes back as an `error` event.
 #[tauri::command]
@@ -956,6 +976,44 @@ fn serve_copy_token(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
 #[tauri::command]
 fn serve_rotate_token(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::ServeRotateToken)?)
+}
+
+/// The local MCP service (docs/dictation.md §25): on / off, its port, what the AI tools on this
+/// computer may read and change. The core applies it at once and re-emits `settings` and `mcp`.
+#[tauri::command]
+fn settings_set_mcp(
+    bridge: tauri::State<'_, Bridge>,
+    enabled: bool,
+    port: u16,
+    read: voltip_core::mcp::McpRead,
+    history_range: voltip_core::mcp::HistoryRange,
+    write: voltip_core::mcp::McpWrite,
+) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetMcp { enabled, port, read, history_range, write })?)
+}
+
+/// The MCP service's token goes to the clipboard; it never reaches the webview.
+#[tauri::command]
+fn mcp_copy_token(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::McpCopyToken)?)
+}
+
+/// A new token for the MCP service; the AI tools need it from now on.
+#[tauri::command]
+fn mcp_rotate_token(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::McpRotateToken)?)
+}
+
+/// The command that connects an AI tool, with the real token, goes to the clipboard.
+#[tauri::command]
+fn mcp_copy_setup(bridge: tauri::State<'_, Bridge>, client: voltip_core::mcp::SetupClient) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::McpCopySetup { client })?)
+}
+
+/// Undo an AI tool's write from the recent activity.
+#[tauri::command]
+fn mcp_undo(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::McpUndo { id })?)
 }
 
 /// The proxy every connection goes through (docs/dictation.md §24): the mode, the manual proxy's
@@ -1422,6 +1480,7 @@ pub fn build_app<R: Runtime>(
             rules_import,
             rules_export,
             vocabulary_preview,
+            vocabulary_backtest,
             scenes_add,
             scenes_update,
             scenes_remove,
@@ -1439,6 +1498,11 @@ pub fn build_app<R: Runtime>(
             settings_set_serve,
             serve_copy_token,
             serve_rotate_token,
+            settings_set_mcp,
+            mcp_copy_token,
+            mcp_rotate_token,
+            mcp_copy_setup,
+            mcp_undo,
             settings_set_proxy,
             network_refresh,
             refine_notice_close,
@@ -1515,6 +1579,8 @@ pub fn run() {
     // docs/dictation.md §23.6: the local speech service listens through the HTTP layer when it is
     // switched on in the settings.
     config.serve_host = Some(std::sync::Arc::new(voltip_serve::HttpHost));
+    // docs/dictation.md §25: the MCP service for the AI tools on this computer, likewise.
+    config.mcp_host = Some(std::sync::Arc::new(voltip_mcp::HttpHost));
     let ports = dictation::production_ports(config.models_root.clone(), &config.network);
     let mut app = match build_app(tauri::Builder::default(), config, secret_store(), ShellOptions::PRODUCTION.hidden(start_hidden), ports).build(context) {
         Ok(app) => app,

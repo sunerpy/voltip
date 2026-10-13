@@ -252,6 +252,10 @@ pub struct Settings {
     /// before it (= follow the system).
     #[serde(default)]
     pub proxy: ProxySettings,
+    /// The local MCP service the desktop app hosts for the AI tools on this computer
+    /// (docs/dictation.md §25); off by default, and in files written before it.
+    #[serde(default)]
+    pub mcp: crate::mcp::McpSettings,
 }
 
 /// The keychain entry of the manual proxy's password (docs/dictation.md §24).
@@ -452,6 +456,7 @@ impl Default for Settings {
             recording: RecordingSettings::default(),
             serve: ServeSettings::default(),
             proxy: ProxySettings::default(),
+            mcp: crate::mcp::McpSettings::default(),
         }
     }
 }

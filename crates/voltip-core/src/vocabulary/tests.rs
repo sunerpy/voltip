@@ -23,6 +23,8 @@ fn rule(name: &str, kind: RuleKind, pattern: &str, replacement: &str) -> Replace
         enabled: true,
         created_at_ms: 1,
         updated_at_ms: 1,
+        source: EntrySource::Manual,
+        pending: false,
     }
 }
 
@@ -322,6 +324,50 @@ fn hits_merge_by_id_in_first_seen_order() {
     });
     assert_eq!(total.corrections, vec![VocabularyHit { id: a, count: 4 }, VocabularyHit { id: b, count: 2 }]);
     assert_eq!(total.rules, vec![VocabularyHit { id: c, count: u32::MAX }], "saturating");
+}
+
+/// docs/dictation.md §25: a rule an AI tool created and the user has not approved runs nowhere —
+/// not in the pipeline, not in a preview, not in a TOML export (written there as off) — even when
+/// a file says it is on.
+#[test]
+fn a_rule_waiting_for_approval_never_runs() {
+    let waiting = ReplacementRule {
+        pending: true,
+        enabled: false,
+        source: EntrySource::Mcp { client: "Claude Code".into() },
+        ..rule("非书", RuleKind::Literal, "非书", "飞书")
+    };
+    let forced = ReplacementRule { enabled: true, ..waiting.clone() };
+    assert!(!waiting.runs() && !forced.runs());
+    for r in [&waiting, &forced] {
+        let vocab = Vocabulary::compile(&[], std::slice::from_ref(r));
+        assert_eq!(vocab.apply_rules("发到非书群").text, "发到非书群");
+        assert_eq!(preview(&[], std::slice::from_ref(r), "发到非书群", None).unwrap().output, "发到非书群");
+        assert!(export_rules_toml(std::slice::from_ref(r)).unwrap().contains("enabled = false"), "exported as off");
+    }
+    // Standing in for it in a preview is the user's own draft: that one runs.
+    let draft = PreviewDraft { id: Some(waiting.id), rule: RuleDraft { enabled: true, ..RuleDraft::from(&waiting) } };
+    assert_eq!(preview(&[], std::slice::from_ref(&waiting), "发到非书群", Some(&draft)).unwrap().output, "发到飞书群");
+    let approved = ReplacementRule { pending: false, enabled: true, ..waiting };
+    assert!(approved.runs());
+    assert_eq!(Vocabulary::compile(&[], &[approved]).apply_rules("发到非书群").text, "发到飞书群");
+}
+
+/// The source and the waiting flag are on the wire; files from before them read as manual and
+/// approved; an entry or rule an AI tool wrote names the tool.
+#[test]
+fn sources_and_the_waiting_flag_on_the_wire() {
+    let mcp = EntrySource::Mcp { client: "Codex".into() };
+    assert_eq!(serde_json::to_string(&mcp).unwrap(), r#"{"kind":"mcp","client":"Codex"}"#);
+    assert_eq!(EntrySource::default(), EntrySource::Manual);
+    let r = ReplacementRule { id: Uuid::nil(), source: mcp.clone(), pending: true, enabled: false, ..rule("a", RuleKind::Literal, "x", "y") };
+    let json = serde_json::to_value(&r).unwrap();
+    assert_eq!((json["source"].clone(), json["pending"].clone()), (serde_json::json!({ "kind": "mcp", "client": "Codex" }), serde_json::json!(true)));
+    let old = r#"{"id":"00000000-0000-0000-0000-000000000000","name":"a","kind":"literal","pattern":"x","replacement":"y","case_sensitive":true,"enabled":true,"created_at_ms":1,"updated_at_ms":1}"#;
+    let back: ReplacementRule = serde_json::from_str(old).unwrap();
+    assert_eq!((back.source, back.pending), (EntrySource::Manual, false), "rules.json from before reads as the user's, approved");
+    let e = DictionaryEntry { source: mcp.clone(), ..entry("Voltip", &[]) };
+    assert_eq!(serde_json::from_value::<DictionaryEntry>(serde_json::to_value(&e).unwrap()).unwrap(), e);
 }
 
 /// A rule that fails to compile at `compile` time (a store validated on save never has one) is

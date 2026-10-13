@@ -368,6 +368,8 @@ describe("pageMeta for the dictionary and rules pages", () => {
       case_sensitive: true,
       created_at_ms: 1,
       updated_at_ms: 1,
+      source: { kind: "manual" as const },
+      pending: false,
     };
     const state = stateWith({
       dictionary: [

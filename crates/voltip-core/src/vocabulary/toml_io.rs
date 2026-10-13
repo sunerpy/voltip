@@ -73,6 +73,8 @@ mod tests {
             enabled,
             created_at_ms: 1,
             updated_at_ms: 2,
+            source: crate::vocabulary::EntrySource::Manual,
+            pending: false,
         }
     }
 

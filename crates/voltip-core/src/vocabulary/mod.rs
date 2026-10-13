@@ -10,6 +10,7 @@
 //! fail — a problem (text over [`MAX_TEXT_BYTES`], a rule that blows the text up, a panic) comes
 //! back in [`Step::error`] together with the unchanged input.
 
+mod backtest;
 mod matcher;
 pub mod packs;
 mod store;
@@ -21,6 +22,7 @@ use std::panic::AssertUnwindSafe;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub use backtest::{BACKTEST_LIMIT, BACKTEST_SNIPPET_CHARS, Backtest, BacktestDraft, BacktestExample, MAX_BACKTEST_EXAMPLES, MAX_BACKTEST_LIMIT, backtest};
 use matcher::LiteralMatcher;
 pub use matcher::is_word_char;
 pub use store::{DICTIONARY_FILE_NAME, DictionaryStore, RULES_FILE_NAME, RuleStore, VOCABULARY_SCHEMA};
@@ -56,16 +58,23 @@ pub const MAX_TOML_BYTES: usize = 256 * 1024;
 /// Separator of the glossary prompt sent to the cloud recogniser.
 pub const GLOSSARY_SEPARATOR: &str = ", ";
 
-/// Where a dictionary entry came from.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Where a dictionary entry or a replacement rule came from.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EntrySource {
-    /// Typed on the dictionary page.
+    /// Typed on the dictionary or the rules page (and every rule written before rules had a source).
+    #[default]
     Manual,
     /// Added from a history entry ("加入词典").
     History {
         /// The history entry it was added from (may have been deleted since).
         history_id: Uuid,
+    },
+    /// Written by an AI tool through the local MCP service (docs/dictation.md §25).
+    Mcp {
+        /// The name the tool gave when it connected (`clientInfo.name`), cleaned to at most
+        /// [`crate::mcp::MAX_CLIENT_CHARS`] characters.
+        client: String,
     },
 }
 
@@ -140,6 +149,21 @@ pub struct ReplacementRule {
     pub created_at_ms: u64,
     /// Unix milliseconds of the last change.
     pub updated_at_ms: u64,
+    /// Who wrote it: the rules page (and every rule written before rules had a source) or an AI
+    /// tool over the local MCP service (docs/dictation.md §25).
+    #[serde(default)]
+    pub source: EntrySource,
+    /// An AI tool created it and the user has not approved it yet: it is off (`enabled` is false)
+    /// and runs nowhere until the user turns it on, which clears the flag.
+    #[serde(default)]
+    pub pending: bool,
+}
+
+impl ReplacementRule {
+    /// Whether the pipeline runs it: on, and not waiting for the user's approval.
+    pub fn runs(&self) -> bool {
+        self.enabled && !self.pending
+    }
 }
 
 /// What the UI sends to create or change a rule (`rules_add` / `rules_update`), and one
@@ -173,7 +197,8 @@ impl From<&ReplacementRule> for RuleDraft {
             pattern: rule.pattern.clone(),
             replacement: rule.replacement.clone(),
             case_sensitive: rule.case_sensitive,
-            enabled: rule.enabled,
+            // A rule waiting for approval is off wherever it goes (the TOML export, §16.5).
+            enabled: rule.runs(),
         }
     }
 }
@@ -474,7 +499,8 @@ impl Vocabulary {
         Self { corrections: None, terms: Vec::new(), rules: Vec::new(), glossary: Vec::new() }
     }
 
-    /// Compile the enabled entries and rules. An entry or rule that does not compile (a store
+    /// Compile the enabled entries and the rules that run ([`ReplacementRule::runs`]: on, and not
+    /// waiting for approval). An entry or rule that does not compile (a store
     /// validated at save time never has one) is skipped with a warning, never an error.
     pub fn compile(dictionary: &[DictionaryEntry], rules: &[ReplacementRule]) -> Self {
         let mut terms = Vec::new();
@@ -497,7 +523,7 @@ impl Vocabulary {
         };
         let compiled = rules
             .iter()
-            .filter(|r| r.enabled)
+            .filter(|r| r.runs())
             .filter_map(|rule| {
                 let matcher = match rule.kind {
                     RuleKind::Literal => LiteralMatcher::new(&[(rule.pattern.clone(), 0)], !rule.case_sensitive).map(RuleMatcher::Literal),
@@ -689,6 +715,8 @@ pub fn preview(
                 enabled: rule.enabled,
                 created_at_ms: 0,
                 updated_at_ms: 0,
+                source: EntrySource::Manual,
+                pending: false,
             };
             let mut list = rules.to_vec();
             match draft.id.and_then(|id| list.iter().position(|r| r.id == id)) {

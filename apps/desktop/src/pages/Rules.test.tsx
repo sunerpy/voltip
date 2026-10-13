@@ -1,6 +1,6 @@
 import { type DictionaryEntry, type HistoryEntry, type ReplacementRule } from "@voltip/shared";
 import { MockBackend, sampleDevices } from "@voltip/shared/mock";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
 
@@ -36,6 +36,8 @@ function rule(
     enabled: true,
     created_at_ms: NOW,
     updated_at_ms: NOW,
+    source: { kind: "manual" } as ReplacementRule["source"],
+    pending: false,
     ...extra,
   };
 }
@@ -339,5 +341,137 @@ describe("Rules page", () => {
     expect(await screen.findByTestId("dry-run-error")).toHaveTextContent(
       "试运行失败：试写文本最多 64 KiB",
     );
+  });
+});
+
+describe("Rules page · rules an AI tool created (docs/dictation.md §25)", () => {
+  /** The seeded rules plus one Claude Code created, waiting for approval; a clock that runs, so
+   *  its line reads 「刚刚」. */
+  function withTools() {
+    const backend = new MockBackend({
+      devices: sampleDevices(1_758_700_000),
+      rules: rules(),
+      history: history(),
+    });
+    backend.simulateMcpRule("Claude Code", {
+      name: "非书 → 飞书",
+      kind: "literal",
+      pattern: "非书",
+      replacement: "飞书",
+      case_sensitive: true,
+      enabled: true,
+    });
+    return backend;
+  }
+
+  it("a waiting rule has a banner, a filter, its own row, the sidebar dot and the dry-run note; 启用 approves it", async () => {
+    const user = userEvent.setup();
+    const backend = withTools();
+    renderApp({ path: "/rules", backend });
+    const page = await screen.findByTestId("page-rules");
+    expect(within(page).getByTestId("rules-pending-banner")).toHaveTextContent(
+      "Claude Code 新建了 1 条规则，确认后才会生效。",
+    );
+    expect(within(page).getByText("4 条")).toBeInTheDocument();
+    expect(within(page).getByText("2 条启用")).toBeInTheDocument();
+    const table = within(page).getByRole("table", { name: "规则" });
+    const waiting = within(table).getByTestId("rule-pending");
+    expect(waiting).toHaveTextContent("非书 → 飞书待确认Claude Code · 刚刚");
+    const row = waiting.closest("tr") as HTMLElement;
+    expect(row.className).toContain("bg-warning-soft");
+    expect(within(row).queryByRole("switch")).toBeNull();
+    expect(within(row).queryByRole("button", { name: "编辑 非书 → 飞书" })).toBeNull();
+    expect(within(row).getByRole("button", { name: "删除 非书 → 飞书" })).toBeInTheDocument();
+    // The sidebar's 规则 carries an amber dot.
+    expect(screen.getByRole("img", { name: "有待确认的规则" })).toBeInTheDocument();
+    // It does not take part in the dry run.
+    expect(within(page).getByTestId("dry-run-pending")).toHaveTextContent(
+      "待确认的规则不参与试运行，启用后才会生效。",
+    );
+    await user.type(screen.getByLabelText("识别原文"), "看非书{Control>}{Enter}{/Control}");
+    expect(await screen.findByTestId("dry-run-after")).toHaveTextContent(/^看非书$/);
+
+    // Only the waiting rules, and back.
+    await user.click(within(page).getByRole("button", { name: "只看待确认" }));
+    expect(within(page).getByRole("radio", { name: "待确认 1" })).toBeChecked();
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    await user.click(within(page).getByRole("button", { name: "显示全部" }));
+    expect(within(page).getByRole("radio", { name: "全部" })).toBeChecked();
+    await user.click(within(page).getByRole("radio", { name: "待确认 1" }));
+
+    await user.click(within(row).getByRole("button", { name: "启用 非书 → 飞书" }));
+    await waitFor(() => {
+      expect(backend.peek().rules.at(-1)).toMatchObject({
+        name: "非书 → 飞书",
+        enabled: true,
+        pending: false,
+        source: { kind: "mcp", client: "Claude Code" },
+      });
+    });
+    expect(await screen.findByText("已启用规则 · 非书 → 飞书")).toBeInTheDocument();
+    expect(within(page).queryByTestId("rules-pending-banner")).toBeNull();
+    expect(within(page).queryByRole("radio", { name: /待确认/ })).toBeNull();
+    expect(within(page).getByRole("radio", { name: "全部" })).toBeChecked();
+    expect(within(table).getAllByRole("row")).toHaveLength(5);
+    expect(within(page).getByText("3 条启用")).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "有待确认的规则" })).toBeNull();
+    expect(within(page).queryByTestId("dry-run-pending")).toBeNull();
+    await user.click(within(page).getByRole("button", { name: /^运行/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId("dry-run-after")).toHaveTextContent(/^看飞书$/);
+    });
+    // The next rule a tool writes leaves the whole list showing.
+    act(() => {
+      backend.simulateMcpRule("Claude Code", {
+        name: "推送",
+        kind: "literal",
+        pattern: "推送",
+        replacement: "push",
+        case_sensitive: true,
+        enabled: true,
+      });
+    });
+    expect(within(page).getByRole("radio", { name: "全部" })).toBeChecked();
+    expect(within(table).getAllByRole("row")).toHaveLength(6);
+  });
+
+  it("rules from several tools: the banner names none, and deleting a waiting rule asks first", async () => {
+    const user = userEvent.setup();
+    const backend = withTools();
+    backend.simulateMcpRule("Codex", {
+      name: "推送",
+      kind: "literal",
+      pattern: "推送",
+      replacement: "push",
+      case_sensitive: true,
+      enabled: true,
+    });
+    renderApp({ path: "/rules", backend });
+    const page = await screen.findByTestId("page-rules");
+    expect(within(page).getByTestId("rules-pending-banner")).toHaveTextContent(
+      "外部工具新建了 2 条规则，确认后才会生效。",
+    );
+    expect(within(page).getByRole("radio", { name: "待确认 2" })).toBeInTheDocument();
+    await user.click(within(page).getByRole("button", { name: "删除 推送" }));
+    const confirm = screen.getByRole("dialog", { name: "删除规则 推送？" });
+    await user.click(within(confirm).getByRole("button", { name: "删除" }));
+    await waitFor(() => {
+      expect(backend.peek().rules.map((r) => r.name)).not.toContain("推送");
+    });
+    expect(within(page).getByTestId("rules-pending-banner")).toHaveTextContent(
+      "Claude Code 新建了 1 条规则，确认后才会生效。",
+    );
+  });
+
+  it("the English banner and row read the same", async () => {
+    renderApp({ path: "/rules", backend: withTools(), systemLanguage: "en-US" });
+    const page = await screen.findByTestId("page-rules");
+    expect(within(page).getByTestId("rules-pending-banner")).toHaveTextContent(
+      "Claude Code created 1 rule; it applies once you approve it.",
+    );
+    expect(within(page).getByTestId("rule-pending")).toHaveTextContent("Needs approval");
+    expect(within(page).getByRole("radio", { name: "Needs approval 1" })).toBeInTheDocument();
+    expect(within(page).getByTestId("rule-approve")).toHaveTextContent("Enable");
+    expect(within(page).getByRole("button", { name: "Enable 非书 → 飞书" })).toBeInTheDocument();
   });
 });

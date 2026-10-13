@@ -5,8 +5,12 @@
 // run on the JavaScript engine here, so the Rust `regex` dialect of the core stays the reference:
 // the desktop app always asks the core (`vocabulary_preview`), never this module.
 import {
+  BACKTEST_SNIPPET_CHARS,
+  type BacktestDraft,
+  type BacktestExample,
   type DictionaryDraft,
   type DictionaryEntry,
+  MAX_BACKTEST_EXAMPLES,
   MAX_DICTIONARY_ENTRIES,
   MAX_HEARD_AS,
   MAX_PATTERN_CHARS,
@@ -21,6 +25,7 @@ import {
   type ReplacementRule,
   type RuleDraft,
   type RuleKind,
+  type VocabularyBacktest,
   type VocabularyHit,
   type VocabularyPreview,
 } from "./schema";
@@ -360,7 +365,8 @@ export class Vocabulary {
       for (const variant of entry.heard_as) patterns.push([variant, target]);
     }
     const compiled: CompiledRule[] = [];
-    for (const rule of rules.filter((r) => r.enabled)) {
+    // docs/dictation.md §25: a rule waiting for the user's approval runs nowhere.
+    for (const rule of rules.filter((r) => r.enabled && !r.pending)) {
       const base = { id: rule.id, name: rule.name, kind: rule.kind, replacement: rule.replacement };
       if (rule.kind === "literal") {
         compiled.push({
@@ -462,6 +468,8 @@ export function previewVocabulary(
       id,
       created_at_ms: 0,
       updated_at_ms: 0,
+      source: { kind: "manual" },
+      pending: false,
     });
     const at = list.findIndex((r) => r.id === draft.id);
     if (at >= 0) list = list.map((r, i) => (i === at ? asRule(r.id) : r));
@@ -477,6 +485,154 @@ export function previewVocabulary(
     corrections: corrected.hits,
     rules: ruled.hits,
     ...(error === undefined ? {} : { error }),
+  };
+}
+
+// ---- backtest and dictionary forms (docs/dictation.md §16.9) -------------------------------------
+
+/** Where the dictionary's enabled heard-as forms occur in `text`, as the corrections would find
+ *  them (ASCII case folded, word boundaries for spaced scripts, leftmost-longest): UTF-16 offsets
+ *  and the entry each form belongs to. The history page marks these in a take's original text. */
+export function dictionaryForms(
+  dictionary: readonly DictionaryEntry[],
+  text: string,
+): { start: number; end: number; entryId: string }[] {
+  const ids: string[] = [];
+  const patterns: [string, number][] = [];
+  for (const entry of dictionary.filter((e) => e.enabled)) {
+    const target = ids.length;
+    ids.push(entry.id);
+    for (const variant of entry.heard_as) patterns.push([variant, target]);
+  }
+  if (patterns.length === 0) return [];
+  return new LiteralMatcher(patterns, true)
+    .findAll(text)
+    .map(([start, end, target]) => ({ start, end, entryId: ids[target] ?? NIL_ID }));
+}
+
+/** One recognised take as a backtest reads it (`voltip_core::history::HistoryText`). */
+export interface BacktestTake {
+  id: string;
+  at_ms: number;
+  raw_text: string;
+  text: string;
+}
+
+/** The stretch of `before` and `after` around their first difference: the differing middle plus
+ *  up to `BACKTEST_SNIPPET_CHARS` characters on each side, `…` where the text goes on (the core's
+ *  `snippets`, counted in characters). */
+export function backtestSnippets(before: string, after: string): [string, string] {
+  const b = Array.from(before);
+  const a = Array.from(after);
+  let prefix = 0;
+  while (prefix < b.length && prefix < a.length && b[prefix] === a[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < b.length - prefix &&
+    suffix < a.length - prefix &&
+    b[b.length - 1 - suffix] === a[a.length - 1 - suffix]
+  )
+    suffix += 1;
+  const start = Math.max(prefix - BACKTEST_SNIPPET_CHARS, 0);
+  const cut = (chars: string[]) => {
+    const end = Math.min(chars.length - suffix + BACKTEST_SNIPPET_CHARS, chars.length);
+    return `${start > 0 ? "…" : ""}${chars.slice(start, end).join("")}${end < chars.length ? "…" : ""}`;
+  };
+  return [cut(b), cut(a)];
+}
+
+/** `vocabulary_backtest`: what `draft` would change in `history` (newest first), leaving out the
+ *  take `exclude`. A dictionary draft is compared with the current `dictionary` (in place of the
+ *  entry with its `id`, or appended) and counts the takes whose final text kept a form it replaces;
+ *  a rule draft runs alone on each final text. Throws the core's refusal for a draft wrong on its
+ *  own. */
+export function backtestVocabulary(
+  dictionary: readonly DictionaryEntry[],
+  history: readonly BacktestTake[],
+  draft: BacktestDraft,
+  exclude?: string | null,
+): VocabularyBacktest {
+  const takes = history.filter((t) => t.id !== exclude);
+  if (draft.kind === "dictionary") {
+    const entry = validateDictionaryDraft(draft.entry);
+    const base = Vocabulary.compile(dictionary, []);
+    const at = dictionary.findIndex((e) => e.id === draft.id);
+    const asEntry = (id: string, source: DictionaryEntry["source"]): DictionaryEntry => ({
+      id,
+      ...entry,
+      source,
+      created_at_ms: 0,
+      updated_at_ms: 0,
+    });
+    const list =
+      at >= 0
+        ? dictionary.map((e, i) => (i === at ? asEntry(e.id, e.source) : e))
+        : [...dictionary, asEntry(draft.id ?? NIL_ID, { kind: "manual" })];
+    const next = Vocabulary.compile(list, []);
+    const kept =
+      entry.heard_as.length === 0
+        ? undefined
+        : new LiteralMatcher(
+            entry.heard_as.map((h) => [h, 0] as const),
+            true,
+          );
+    return collectBacktest(takes, (take) => {
+      const before = base.correct(take.raw_text).text;
+      const after = next.correct(take.raw_text).text;
+      if (before === after) return undefined;
+      return [before, after, kept !== undefined && kept.findAll(take.text).length > 0];
+    });
+  }
+  const rule = validateRuleDraft(draft.rule);
+  const only = Vocabulary.compile(
+    [],
+    [
+      {
+        ...rule,
+        id: draft.id ?? NIL_ID,
+        enabled: true,
+        source: { kind: "manual" },
+        pending: false,
+        created_at_ms: 0,
+        updated_at_ms: 0,
+      },
+    ],
+  );
+  return collectBacktest(takes, (take) => {
+    const after = only.applyRules(take.text).text;
+    return after === take.text ? undefined : [take.text, after, false];
+  });
+}
+
+/** Count the takes `change` reports as changed — `[before, after, kept]` — and keep the first
+ *  examples, those with `kept` first. */
+function collectBacktest(
+  takes: readonly BacktestTake[],
+  change: (take: BacktestTake) => [string, string, boolean] | undefined,
+): VocabularyBacktest {
+  let scanned = 0;
+  let matched = 0;
+  let keptCount = 0;
+  const kept: BacktestExample[] = [];
+  const others: BacktestExample[] = [];
+  for (const take of takes) {
+    scanned += 1;
+    const changed = change(take);
+    if (changed === undefined) continue;
+    const [before, after, keptForm] = changed;
+    matched += 1;
+    if (keptForm) keptCount += 1;
+    const bucket = keptForm ? kept : others;
+    if (bucket.length < MAX_BACKTEST_EXAMPLES) {
+      const [b, a] = backtestSnippets(before, after);
+      bucket.push({ history_id: take.id, at_ms: take.at_ms, before: b, after: a, kept: keptForm });
+    }
+  }
+  return {
+    scanned,
+    matched,
+    kept: keptCount,
+    examples: [...kept, ...others].slice(0, MAX_BACKTEST_EXAMPLES),
   };
 }
 
@@ -541,7 +697,8 @@ export function exportRulesToml(rules: readonly ReplacementRule[]): string {
       `pattern = ${tomlString(r.pattern)}`,
       `replacement = ${tomlString(r.replacement)}`,
       `case_sensitive = ${String(r.case_sensitive)}`,
-      `enabled = ${String(r.enabled)}`,
+      // A rule waiting for approval is exported as off (docs/dictation.md §25).
+      `enabled = ${String(r.enabled && !r.pending)}`,
       "",
     ].join("\n"),
   );

@@ -637,6 +637,101 @@ export const en: Messages = {
       add: "Add",
       added: "Added to the dictionary · {term}",
     },
+    fix: {
+      toolbar: {
+        label: "Actions for the selected text",
+        dictionary: "Add to dictionary",
+        rule: "New rule",
+        tooLong: "Dictionary forms are up to {max} characters",
+        oneLine: "Select within one line",
+      },
+      marks: {
+        polished: "Fixed by AI polish",
+        known: "In dictionary",
+        hint: "Select a mark to add it to the dictionary",
+        tooltip: "Polished as “{polished}” · select to add to the dictionary",
+        polishedCount: "Fixed by AI polish: {n}",
+        knownCount: "In dictionary: {n}",
+        polishedLabel: "Fixed by AI polish: {heard}, polished as {polished}",
+        knownLabel: "In dictionary: {heard}, right spelling {term}",
+        knownTooltip: "Right spelling “{term}” · select to see the entry",
+      },
+      diff: {
+        hint: "Select a pair of changes to add it to the dictionary",
+        pairLabel: "Change: {del} → {add}; select to choose the right spelling",
+      },
+      known: {
+        term: "Right spelling",
+        heard: "Heard as",
+        hits: "Hits",
+        hitsValue: "{n}",
+        edit: "Edit in the dictionary",
+      },
+      card: {
+        kindLabel: "Save as",
+        kindDictionary: "Dictionary",
+        kindRule: "Rule",
+        ruleTitle: "New rule",
+        fromPolish: "From the polished text",
+        fromRaw: "From the original text",
+        heardOptional: "Heard as (optional)",
+        merge:
+          "“{term}” is already in the dictionary; “{heard}” will be added to its heard-as forms ({n} now).",
+        addTo: "Add to “{term}”",
+        impact: "Besides this one, {n} of the last {scanned} entries contain “{heard}”.",
+        impactNone: "Besides this one, none of the last {scanned} entries contain “{heard}”.",
+        ruleImpact: "Besides this one, {n} of the last {scanned} entries would change.",
+        ruleImpactNone: "Besides this one, none of the last {scanned} entries would change.",
+        kept: "In {n} of them the final text kept “{heard}”, so it may be correct there.",
+        short: "A one-character form can change other words by mistake.",
+        shortLatin: "A form of {n} letters can change other words by mistake.",
+        taken: "“{heard}” is already a heard-as form of “{term}”.",
+        isTerm:
+          "“{heard}” is the right spelling of another entry, so it cannot be a heard-as form.",
+        termTaken:
+          "“{term}” is already a heard-as form of “{owner}”, so it cannot be a right spelling.",
+        same: "The heard-as form is the same as the right spelling.",
+        tooMany: "This entry already has {max} heard-as forms.",
+        full: "The dictionary holds up to {max} entries and is full.",
+        exists: "“{term}” is already a right spelling in the dictionary.",
+        openDictionary: "Open the dictionary",
+        viewEntry: "Show the entry",
+        computing: "Checking the effect…",
+        view: "Show",
+        dictionaryNote:
+          "Corrected right after recognition; the right spelling is also sent as a term to cloud recognition and AI polish.",
+        ruleNote:
+          "Rules run after AI polish, in list order, on the final text. A new rule goes to the end of the list.",
+        polishOnly:
+          "AI polish wrote this text and the original does not have it, so a rule fits better.",
+        find: "Find",
+        replace: "Replace with",
+        name: "Name",
+        preview: "This entry",
+        previewNone: "The final text of this entry has no “{pattern}”",
+        saveRule: "Save rule",
+      },
+      which: {
+        title: "Which spelling is right?",
+        polished: "“{add}” (polished) · recognition was wrong; add “{del}” to the dictionary",
+        raw: "“{del}” (original) · polish changed it wrongly; keep it",
+        polishedTitle: "“{add}” (polished)",
+        polishedHelp: "Recognition was wrong; add “{del}” to the dictionary",
+        rawTitle: "“{del}” (original)",
+        rawHelp: "Polish changed it wrongly; keep it",
+        rawNote:
+          "The right spelling is sent to AI polish as a term, so polish keeps it from now on.",
+      },
+      done: {
+        rule: "Rule created · {name}",
+      },
+      undo: "Undo",
+      notHere: {
+        phone:
+          "The phone recognised this one. This dictionary only applies to recognition on this computer.",
+        computer: "The computer recognised this one; correct it in the computer's history.",
+      },
+    },
     view: {
       label: "Text view",
       raw: "Original",
@@ -735,7 +830,7 @@ export const en: Messages = {
     searchPlaceholder: "Search right spellings or misheard forms",
     searchLabel: "Search entries",
     filterLabel: "Entry filter",
-    filter: { all: "All", enabled: "Enabled", disabled: "Disabled" },
+    filter: { all: "All", enabled: "Enabled", disabled: "Disabled", mcp: "External tools" },
     column: {
       term: "Right spelling",
       heard: "Heard as",
@@ -744,7 +839,7 @@ export const en: Messages = {
       hits: "Hits",
       enabled: "Enabled",
     },
-    source: { manual: "Manual", history: "From history" },
+    source: { manual: "Manual", history: "From history", mcp: "External tool · {client}" },
     error: {
       empty: "Cannot be empty",
       tooLong: "Up to {max} characters (currently {n})",
@@ -868,6 +963,27 @@ export const en: Messages = {
       copied: "Copied the TOML",
       failed: "Export failed: {message}",
     },
+    /** docs/dictation.md §25: rules an AI tool created, waiting for the user's approval. */
+    pending: {
+      banner: {
+        one: "{client} created {n} rule; it applies once you approve it.",
+        other: "{client} created {n} rules; they apply once you approve them.",
+      },
+      bannerTools: {
+        one: "External tools created {n} rule; it applies once you approve it.",
+        other: "External tools created {n} rules; they apply once you approve them.",
+      },
+      showOnly: "Show only these",
+      showAll: "Show all",
+      badge: "Needs approval",
+      filter: "Needs approval {n}",
+      source: "{client} · {time}",
+      enable: "Enable",
+      enabled: "Rule enabled · {name}",
+      dryRunNote:
+        "Rules that need approval do not run in the test run; they take effect once turned on.",
+      dot: "Rules need approval",
+    },
     dryRun: {
       title: "Test run",
       intro:
@@ -888,6 +1004,24 @@ export const en: Messages = {
       copiedResult: "Copied the test-run result",
       fallback: "Could not process; showing the original: {reason}",
       failed: "Test run failed: {message}",
+    },
+  },
+  /** docs/dictation.md §25: what an AI tool wrote, as a toast says it. */
+  mcp: {
+    toast: {
+      wrote: {
+        one: "{client} added {n} dictionary entry",
+        other: "{client} added {n} dictionary entries",
+      },
+      rules: {
+        one: "{client} created {n} rule; it applies once you approve it",
+        other: "{client} created {n} rules; they apply once you approve them",
+      },
+      changed: {
+        one: "{client} made {n} change to the dictionary and rules",
+        other: "{client} made {n} changes to the dictionary and rules",
+      },
+      view: "Show",
     },
   },
   engines: {
@@ -1674,6 +1808,7 @@ export const en: Messages = {
       scene: "Scenes",
       privacy: "Privacy and history",
       service: "Local service",
+      mcp: "AI tools",
       network: "Network",
       appearance: "Appearance",
       about: "About",
@@ -2006,6 +2141,137 @@ export const en: Messages = {
         "The old token stops working at once. Programs set up with it need the new one.",
       rotateConfirm: "Generate",
       rotated: "New token generated",
+    },
+    /** docs/dictation.md §25: the local MCP service for the AI tools on this computer. */
+    mcp: {
+      title: "AI tools",
+      body: "Lets AI tools on this computer (such as Claude Code or Codex) read the history, dictionary and rules over MCP, and add entries and rules. Only connections from this computer are accepted, and every request needs the token.",
+      guide: "User guide",
+      serviceTitle: "Service",
+      enable: "Turn on the MCP server",
+      enableHelp: "When it is off, AI tools can no longer connect to Voltip.",
+      status: "Status",
+      statusOff: "Off",
+      statusStarting: "Starting",
+      statusRunning: "Running",
+      statusFailed: "Could not start: {reason}",
+      connected: "Connected: {clients}",
+      clientSeen: "{name} ({time})",
+      noClient: "No AI tool has connected yet",
+      copyAddress: "Copy address",
+      addressCopied: "Address copied",
+      port: "Port",
+      portHelp: "{min}–65535. The service restarts on the new port.",
+      portInvalid: "The port must be between {min} and 65535",
+      portTaken: "The local service uses this port; choose another one",
+      portApply: "Apply",
+      readTitle: "What AI tools may read",
+      readLede: "What an AI tool reads is sent to the model service it uses.",
+      recommended: "Recommended",
+      read: {
+        rules: "Dictionary and rules only",
+        rulesHelp:
+          "The dictionary, the rules and their hits; trial runs and backtests, which return counts only.",
+        summary: "Correction summary",
+        summaryHelp:
+          "Pairs changed by polish, how often they occur and 12 characters on each side of them, without whole entries.",
+        full: "Full history",
+        fullHelp:
+          "The original and polished text, app and scene of every entry in the chosen period. You confirm this choice.",
+        fullWarning: "AI tools may read the full history of {range}.",
+      },
+      range: "Period",
+      rangeOption: { last_7_days: "Last 7 days", last_30_days: "Last 30 days", all: "All entries" },
+      rangeText: {
+        last_7_days: "the last 7 days",
+        last_30_days: "the last 30 days",
+        all: "all entries",
+      },
+      revoke: "Withdraw",
+      revoked: "The full history is no longer shared",
+      confirmFull: {
+        title: "Let AI tools read the full history?",
+        body: "Connected AI tools can read the original and polished text, app and scene of every entry in the chosen period. This text is sent to the model service the tool uses and may stay in its conversation history.",
+        risk: "The history may contain personal information, account details or other sensitive content. You can withdraw this at any time here.",
+        allow: "Allow",
+      },
+      writeTitle: "What AI tools may change",
+      write: {
+        readOnly: "Read only",
+        readOnlyHelp: "They cannot change the dictionary or the rules.",
+        dictionary: "Edit the dictionary; new rules need approval",
+        dictionaryHelp:
+          "They can add and change entries; new rules stay off until you approve them on the rules page.",
+        rules: "Also turn rules on directly",
+        rulesHelp:
+          "Rules that external tools create or change apply to later dictation right away. You confirm this choice.",
+      },
+      writeNote:
+        "Every change is listed under Recent activity and can be undone. External tools cannot delete entries or rules.",
+      confirmRules: {
+        title: "Let external tools turn rules on directly?",
+        body: "Rules that external tools create or change apply to later dictation right away and can change the text inserted into other apps.",
+        allow: "Allow",
+      },
+      setupTitle: "Connect",
+      setup: {
+        claudeCodeHelp: "Run in a terminal:",
+        codexHelp: "Set the environment variable, then run in a terminal:",
+        copy: "Copy command",
+        copied: "Command copied, with the token filled in",
+        note: "The copied command has the token filled in; the token itself is never shown here.",
+        tokenPlaceholder: "<token>",
+      },
+      tokenTitle: "Token",
+      token: "Access token",
+      tokenHelp:
+        "AI tools must send this token with every request. It is not the local service's token.",
+      copyToken: "Copy token",
+      tokenCopied: "Token copied to the clipboard",
+      rotate: "Generate new",
+      rotateConfirmTitle: "Generate a new token?",
+      rotateConfirmBody:
+        "The old token stops working at once. Connected AI tools need the new one.",
+      rotateConfirm: "Generate",
+      rotated: "New token generated",
+      activity: {
+        title: "Recent activity",
+        empty:
+          "Nothing yet. When an AI tool reads or changes the dictionary, the rules or the history, it is listed here.",
+        showAll: "Show all",
+        showLess: "Show less",
+        undo: "Undo",
+        undoLabel: "Undo: {summary}",
+        undone: "Undone",
+        undoDone: "Undone · {summary}",
+        pending: ", needs approval",
+        read: "Read",
+        wrote: "Change",
+        action: {
+          list_dictionary: "{client} read the dictionary",
+          list_rules: "{client} read the rules",
+          preview: "{client} tried a text",
+          backtest: "{client} backtested 「{subject}」",
+          read_summary: {
+            one: "{client} read the correction summary ({n} pair)",
+            other: "{client} read the correction summary ({n} pairs)",
+          },
+          search_history: {
+            one: "{client} read the full history ({range}, {n} entry)",
+            other: "{client} read the full history ({range}, {n} entries)",
+          },
+          read_entry: "{client} read a full history entry",
+          add_entry: "{client} added the entry 「{subject}」",
+          merge_entry: {
+            one: "{client} added {n} heard-as form to 「{subject}」",
+            other: "{client} added {n} heard-as forms to 「{subject}」",
+          },
+          update_entry: "{client} changed the entry 「{subject}」",
+          add_rule: "{client} created the rule 「{subject}」",
+          update_rule: "{client} changed the rule 「{subject}」",
+        },
+      },
+      denied: "Voltip currently shares {level} only; {need} must be allowed in Voltip settings.",
     },
     /** docs/dictation.md §24: the proxy every connection goes through. */
     network: {
@@ -2659,6 +2925,12 @@ export const en: Messages = {
       sentNote: "The recognition and polish details are in the computer's history.",
       shareSrt: "Share subtitles (SRT)",
       shareTxt: "Share text (TXT)",
+      fix: "Fix recognition",
+      fixSelected: "Selected: {text}",
+      fixHint: "Tap a word to select it; tap another word to extend the selection.",
+      fixMarkHint: "Tap a mark to select it whole",
+      fixPolished: "Polished as “{polished}”",
+      fixClear: "Clear the selection",
     },
     historySettings: {
       lede: "What this phone transcribes and the takes it sends to a computer are kept on this phone. While it syncs with a paired computer, a copy of what it transcribes goes to the computer and the phone keeps its own.",

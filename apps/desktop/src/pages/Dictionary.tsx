@@ -36,7 +36,8 @@ import {
   splitHeardAs,
 } from "../features/vocabulary/vocabulary";
 
-type Filter = "all" | "enabled" | "disabled";
+/** `mcp`: the entries an AI tool wrote (docs/dictation.md §25), offered while there are any. */
+type Filter = "all" | "enabled" | "disabled" | "mcp";
 
 /** The row being edited; `id` is absent for a new entry (shown above the table). */
 interface Editing {
@@ -68,6 +69,10 @@ export function Dictionary() {
 
   const hits = useHitTotals("corrections");
   const enabled = entries.filter((e) => e.enabled).length;
+  const fromTools = entries.some((e) => e.source.kind === "mcp");
+  // 外部工具 goes with the last such entry (an undo); the whole list shows then, and stays.
+  if (filter === "mcp" && !fromTools) setFilter("all");
+  const shownFilter: Filter = filter === "mcp" && !fromTools ? "all" : filter;
   const top = useMemo(() => {
     const fired = entries.filter((e) => (hits.get(e.id) ?? 0) > 0);
     fired.sort((a, b) => (hits.get(b.id) ?? 0) - (hits.get(a.id) ?? 0));
@@ -76,15 +81,16 @@ export function Dictionary() {
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return entries.filter((e) => {
-      if (filter === "enabled" && !e.enabled) return false;
-      if (filter === "disabled" && e.enabled) return false;
+      if (shownFilter === "enabled" && !e.enabled) return false;
+      if (shownFilter === "disabled" && e.enabled) return false;
+      if (shownFilter === "mcp" && e.source.kind !== "mcp") return false;
       return (
         q.length === 0 ||
         e.term.toLowerCase().includes(q) ||
         e.heard_as.some((h) => h.toLowerCase().includes(q))
       );
     });
-  }, [entries, filter, query]);
+  }, [entries, shownFilter, query]);
 
   const startNew = useCallback(() => {
     setEditing({ id: undefined, term: "", heard: "" });
@@ -263,13 +269,21 @@ export function Dictionary() {
     {
       id: "source",
       header: t("dictionary.column.source"),
-      width: 88,
+      // 「外部工具 · Claude Code」 needs more room than 手动 and 来自历史.
+      width: fromTools ? 168 : 88,
       mono: false,
-      cell: (e) => ({
-        type: "badge",
-        text: t(`dictionary.source.${e.source.kind}`),
-        tone: "neutral",
-      }),
+      cell: (e) => {
+        if (e.source.kind !== "mcp")
+          return { type: "badge", text: t(`dictionary.source.${e.source.kind}`), tone: "neutral" };
+        const text = t("dictionary.source.mcp", { client: e.source.client });
+        return (
+          <Badge title={text} className="max-w-full">
+            <span data-user-text className="min-w-0 truncate">
+              {text}
+            </span>
+          </Badge>
+        );
+      },
     },
     {
       id: "hits",
@@ -443,12 +457,15 @@ export function Dictionary() {
                   label={t("dictionary.filterLabel")}
                   variant="ink"
                   size="sm"
-                  value={filter}
+                  value={shownFilter}
                   onChange={setFilter}
                   options={[
                     { value: "all", label: t("dictionary.filter.all") },
                     { value: "enabled", label: t("dictionary.filter.enabled") },
                     { value: "disabled", label: t("dictionary.filter.disabled") },
+                    ...(fromTools
+                      ? [{ value: "mcp" as const, label: t("dictionary.filter.mcp") }]
+                      : []),
                   ]}
                 />
               </div>

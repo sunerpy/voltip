@@ -6,6 +6,10 @@ import {
   MAX_EDIT_SELECTION_CHARS,
   TAKE_KINDS,
   hotkeyStatusSchema,
+  BACKTEST_LIMIT,
+  BACKTEST_SNIPPET_CHARS,
+  MAX_BACKTEST_EXAMPLES,
+  MAX_BACKTEST_LIMIT,
   NIL_ID,
   QUERY_COMMANDS,
   MAX_ACTIVATION_MS,
@@ -44,6 +48,8 @@ import {
   uiEventSchema,
   uiStateSchema,
   vocabularyPreviewSchema,
+  backtestDraftSchema,
+  vocabularyBacktestSchema,
   APP_LICENSE,
 } from "./schema";
 import { MOCK_PUBLIC_KEYS, desktopIdentity, sampleDevices, sampleHistory } from "./mock-backend";
@@ -53,6 +59,7 @@ function baseState(): UiState {
   return {
     serve: { available: true, phase: "off" },
     network: { proxy_password: false },
+    mcp: { available: true, phase: "off", clients: [], activity: [] },
     sent_texts: [],
     mirrors: [],
     phone_outbox_too_large: [],
@@ -924,6 +931,29 @@ describe("personal dictionary and replacement rules (docs/dictation.md section 1
     expect(vocabularyPreviewSchema.safeParse({ ...answer, output: 1 }).success).toBe(false);
     expect(QUERY_COMMANDS).toContain("rules_export");
     expect(QUERY_COMMANDS).toContain("vocabulary_preview");
+  });
+
+  it("docs/dictation.md section 16.9: a backtest draft is a dictionary entry or a rule, and the answer counts and examples", () => {
+    const form = { term: "Voltip", heard_as: ["维他命"], enabled: true };
+    expect(backtestDraftSchema.parse({ kind: "dictionary", entry: form }).id).toBeUndefined();
+    expect(backtestDraftSchema.parse({ kind: "dictionary", id: null, entry: form }).id).toBeNull();
+    expect(backtestDraftSchema.safeParse({ kind: "dictionary", rule: form }).success).toBe(false);
+    expect(backtestDraftSchema.safeParse({ kind: "scene", entry: form }).success).toBe(false);
+    const answer = {
+      scanned: 3,
+      matched: 1,
+      kept: 0,
+      examples: [{ history_id: "h", at_ms: 1, before: "a", after: "b", kept: false }],
+    };
+    expect(vocabularyBacktestSchema.parse(answer)).toEqual(answer);
+    expect(vocabularyBacktestSchema.safeParse({ ...answer, matched: 1.5 }).success).toBe(false);
+    expect([
+      BACKTEST_LIMIT,
+      MAX_BACKTEST_LIMIT,
+      MAX_BACKTEST_EXAMPLES,
+      BACKTEST_SNIPPET_CHARS,
+    ]).toEqual([500, 2000, 3, 12]);
+    expect(QUERY_COMMANDS).toContain("vocabulary_backtest");
   });
 
   it("regression: Settings engines chinese_script defaults to simplified and refuses other scripts", () => {

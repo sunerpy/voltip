@@ -74,8 +74,10 @@ import {
   MAX_PRESETS,
   type PresetsTryArgs,
   MAX_PHONE_TEXT_CHARS,
+  type BacktestDraft,
   type DictionaryDraft,
   type HistoryEntry,
+  MAX_BACKTEST_LIMIT,
   NIL_ID,
   type RuleDraft,
   type SceneDraft,
@@ -3605,6 +3607,66 @@ describe("MockBackend history queries (docs/dictation.md section 4.4)", () => {
     expect(await phone.historyHits()).toEqual({ dictionary: {}, rules: {} });
     await expect(phone.historyQuery({ limit: 0 })).rejects.toThrow(/limit/);
     phone.destroy();
+  });
+
+  it("vocabularyBacktest (section 16.9) tries a draft on the newest recognised takes with the core's semantics", async () => {
+    const take = (
+      i: number,
+      raw: string,
+      text: string,
+      extra: Partial<HistoryEntry> = {},
+    ): HistoryEntry => ({
+      ...row(i),
+      id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      raw_text: raw,
+      text,
+      ...extra,
+    });
+    const rows = [
+      take(0, "用维他命测了一下", "用 Voltip 测了一下。"),
+      take(1, "维他命的安装包", "维他命的安装包。"),
+      // Not recognised takes: a voice edit and a text the phone sent.
+      take(2, "维他命", "x", { kind: "edit", edit: { instruction: "维他命", selection: "y" } }),
+      take(3, "手机打的维他命", "手机打的维他命", { origin: { device: "Pixel 8", kind: "typed" } }),
+      take(4, "手机录的维他命", "手机录的 Voltip", { origin: { device: "Pixel 8", kind: "take" } }),
+    ];
+    const backend = new MockBackend({ now: () => T, history: rows });
+    const draft: BacktestDraft = {
+      kind: "dictionary",
+      entry: { term: "Voltip", heard_as: ["维他命"], enabled: true },
+    };
+    const all = await backend.vocabularyBacktest({ draft });
+    expect([all.scanned, all.matched, all.kept]).toEqual([3, 3, 1]);
+    expect(all.examples[0]).toMatchObject({ history_id: rows[1]?.id, kept: true });
+    const others = await backend.vocabularyBacktest({ draft, historyId: rows[0]?.id, limit: 500 });
+    expect([others.scanned, others.matched]).toEqual([2, 2]);
+    expect((await backend.vocabularyBacktest({ draft, limit: 1 })).scanned).toBe(1);
+    for (const limit of [0, MAX_BACKTEST_LIMIT + 1, 1.5]) {
+      await expect(backend.vocabularyBacktest({ draft, limit })).rejects.toThrow(
+        "vocabulary_backtest: limit 1–2000",
+      );
+    }
+    await expect(backend.vocabularyBacktest({ draft, historyId: "nope" })).rejects.toThrow(/UUID/);
+    const rule: BacktestDraft = {
+      kind: "rule",
+      rule: {
+        name: "维他命 → Voltip",
+        kind: "literal",
+        pattern: "维他命",
+        replacement: "Voltip",
+        case_sensitive: false,
+        enabled: true,
+      },
+    };
+    expect((await backend.vocabularyBacktest({ draft: rule })).matched).toBe(1);
+    await expect(
+      backend.vocabularyBacktest({ draft: { ...draft, entry: { ...draft.entry, term: " " } } }),
+    ).rejects.toThrow("dictionary: 正确写法不能为空");
+    // The phone tries a draft on the takes it recognised itself.
+    const phone = new MockBackend({ role: "phone", history: [rows[0] ?? row(0)] });
+    expect((await phone.vocabularyBacktest({ draft })).matched).toBe(1);
+    phone.destroy();
+    backend.destroy();
   });
 
   it("the phone copies instead of pasting and shares through its own sheet (§20.7)", async () => {

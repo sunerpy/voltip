@@ -89,6 +89,58 @@ pub struct HistoryHits {
     pub rules: BTreeMap<Uuid, u32>,
 }
 
+/// The most entries [`HistoryReader::recent_texts`] reads at once.
+pub const MAX_RECENT_TEXTS: usize = 2000;
+
+/// One recognised take's texts as [`HistoryReader::recent_texts`] reads them: what the dictionary
+/// and the rules work on in a backtest (docs/dictation.md §16.9) and in the correction summary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryText {
+    /// The entry's id.
+    pub id: Uuid,
+    /// When it was recorded.
+    pub at_ms: u64,
+    /// The recognised text, before the dictionary.
+    pub raw_text: String,
+    /// The text that was inserted.
+    pub text: String,
+}
+
+/// [`HistoryReader::search`]: which entries, and where the page starts (docs/dictation.md §25).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HistorySearch {
+    /// At or after this instant.
+    pub since_ms: Option<u64>,
+    /// Before this instant.
+    pub until_ms: Option<u64>,
+    /// An application's id, or part of its name (ASCII case-insensitive).
+    pub app: Option<String>,
+    /// Text the entry's texts, application or scene contain (ASCII case-insensitive).
+    pub query: Option<String>,
+    /// Start after the entry at this time with this database row (the previous page's `next`).
+    pub after: Option<(u64, i64)>,
+    /// Entries on the page, 1..=[`MAX_QUERY_LIMIT`].
+    pub limit: u32,
+}
+
+/// One entry of a [`SearchPage`] and its database row (what a cursor after it names).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchEntry {
+    /// The entry.
+    pub entry: HistoryEntry,
+    /// Its row.
+    pub row: i64,
+}
+
+/// [`HistoryReader::search`]'s answer.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SearchPage {
+    /// The page, newest first.
+    pub entries: Vec<SearchEntry>,
+    /// Where the next page starts (`None` at the end).
+    pub next: Option<(u64, i64)>,
+}
+
 /// The bridge's connection to `history.sqlite3`, opened read-only at the first query.
 #[derive(Debug)]
 pub struct HistoryReader {
@@ -223,6 +275,83 @@ impl HistoryReader {
             Ok(out)
         })?;
         Ok(hits.unwrap_or_default())
+    }
+
+    /// The newest `limit` (1..=[`MAX_RECENT_TEXTS`]) recognised takes, newest first: dictations
+    /// only — no voice edits, and none of the texts a phone sent as text, which nothing recognised.
+    pub fn recent_texts(&self, limit: usize) -> Result<Vec<HistoryText>, CoreError> {
+        if !(1..=MAX_RECENT_TEXTS).contains(&limit) {
+            return Err(CoreError::Invalid(format!("recent_texts: limit 1–{MAX_RECENT_TEXTS}")));
+        }
+        let texts = self.read(|conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, at_ms, json_extract(json, '$.raw_text'), json_extract(json, '$.text') FROM entries \
+                 WHERE kind = 'dictation' AND COALESCE(json_extract(json, '$.origin.kind'), '') NOT IN ('typed', 'clipboard') {NEWEST_FIRST} LIMIT ?1"
+            ))?;
+            let rows = stmt.query_map([i64::try_from(limit).unwrap_or(i64::MAX)], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, Option<String>>(2)?, row.get::<_, Option<String>>(3)?))
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                let (id, at_ms, raw_text, text) = row?;
+                let Ok(id) = id.parse::<Uuid>() else { continue };
+                out.push(HistoryText { id, at_ms: u64::try_from(at_ms).unwrap_or(0), raw_text: raw_text.unwrap_or_default(), text: text.unwrap_or_default() });
+            }
+            Ok(out)
+        })?;
+        Ok(texts.unwrap_or_default())
+    }
+
+    /// A page of [`HistorySearch`] for the MCP service's `history_search` (docs/dictation.md §25),
+    /// newest first: the entries in its time window, of its application, whose texts, application
+    /// or scene contain its query (ASCII case-insensitive). Unlike [`Self::query`] the query never
+    /// looks at a voice edit's selection, which the service does not share.
+    pub fn search(&self, search: &HistorySearch) -> Result<SearchPage, CoreError> {
+        if !(1..=MAX_QUERY_LIMIT).contains(&search.limit) {
+            return Err(CoreError::Invalid(format!("history search: limit 1–{MAX_QUERY_LIMIT}")));
+        }
+        let mut filter = String::from(" WHERE 1 = 1");
+        let mut args: Vec<Value> = Vec::new();
+        if let Some(since) = search.since_ms {
+            filter.push_str(" AND at_ms >= ?");
+            args.push(Value::Integer(int(since)));
+        }
+        if let Some(until) = search.until_ms {
+            filter.push_str(" AND at_ms < ?");
+            args.push(Value::Integer(int(until)));
+        }
+        if let Some((at_ms, row)) = search.after {
+            filter.push_str(" AND (at_ms < ? OR (at_ms = ? AND rowid < ?))");
+            args.extend([Value::Integer(int(at_ms)), Value::Integer(int(at_ms)), Value::Integer(row)]);
+        }
+        if let Some(app) = search.app.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+            filter.push_str(" AND (app_id = ? OR instr(lower(COALESCE(json_extract(json, '$.app.name'), '')), ?) > 0)");
+            args.extend([Value::Text(app.to_owned()), Value::Text(app.to_ascii_lowercase())]);
+        }
+        if let Some(needle) = search.query.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+            let fields = ["$.raw_text", "$.text", "$.processed.text", "$.app.name", "$.app.id", "$.scene.name"];
+            let any = fields.iter().map(|f| format!("instr(lower(COALESCE(json_extract(json, '{f}'), '')), ?) > 0")).collect::<Vec<_>>().join(" OR ");
+            filter.push_str(&format!(" AND ({any})"));
+            args.extend(fields.iter().map(|_| Value::Text(needle.to_ascii_lowercase())));
+        }
+        let page = self.read(|conn| {
+            let mut page_args = args.clone();
+            page_args.push(Value::Integer(i64::from(search.limit) + 1));
+            let mut stmt = conn.prepare(&format!("SELECT rowid, at_ms, json FROM entries{filter} {NEWEST_FIRST} LIMIT ?"))?;
+            let rows = stmt
+                .query_map(params_from_iter(&page_args), |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let more = rows.len() > search.limit as usize;
+            let mut entries = Vec::new();
+            let mut last = None;
+            for (row, at_ms, json) in rows.into_iter().take(search.limit as usize) {
+                // A row that does not decode is passed over, the page still moves past it.
+                last = Some((u64::try_from(at_ms).unwrap_or(0), row));
+                entries.extend(decode(&json).map(|entry| SearchEntry { entry, row }));
+            }
+            Ok(SearchPage { entries, next: if more { last } else { None } })
+        })?;
+        Ok(page.unwrap_or_default())
     }
 
     /// The applications the history saw, newest first, one per id, at most `limit` — what the

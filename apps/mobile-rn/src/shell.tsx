@@ -1,6 +1,7 @@
 // What every screen may ask of the app around it: a short message (Material's snackbar, above the
-// navigation bar) and a confirmation before something that cannot be undone (an MD3 dialog). The
-// apps/mobile shell's `toast` and `confirm`, on Paper.
+// navigation bar), with an action at its end when there is one (撤销), and a confirmation before
+// something that cannot be undone (an MD3 dialog). The apps/mobile shell's `toast` and `confirm`,
+// on Paper.
 import {
   type ReactNode,
   createContext,
@@ -23,8 +24,14 @@ export interface ConfirmSpec {
   onConfirm: () => void;
 }
 
+/** The button at the end of a message: what undoes what it reports (the quick fix's 撤销). */
+export interface ToastAction {
+  label: string;
+  onPress: () => void;
+}
+
 export interface Shell {
-  toast: (message: string, tone?: "neutral" | "danger") => void;
+  toast: (message: string, tone?: "neutral" | "danger", action?: ToastAction) => void;
   confirm: (spec: ConfirmSpec) => void;
 }
 
@@ -40,10 +47,18 @@ interface Toast {
   id: number;
   message: string;
   tone: "neutral" | "danger";
+  action?: ToastAction;
 }
 
 /** How long a message stays: a failure longer, as on the desktop. */
 const TOAST_MS = { neutral: 3000, danger: 5000 } as const;
+/** A message with an action stays as long as the desktop's undo toast. */
+export const ACTION_TOAST_MS = 5000;
+
+function toastMs(toast: Toast | undefined): number {
+  if (toast === undefined) return TOAST_MS.neutral;
+  return toast.action === undefined ? TOAST_MS[toast.tone] : ACTION_TOAST_MS;
+}
 
 export function ShellProvider({
   children,
@@ -57,11 +72,17 @@ export function ShellProvider({
   const [queue, setQueue] = useState<Toast[]>([]);
   const [pending, setPending] = useState<ConfirmSpec | undefined>(undefined);
   const next = useRef(0);
-  const toast = useCallback((message: string, tone: "neutral" | "danger" = "neutral") => {
-    next.current += 1;
-    const id = next.current;
-    setQueue((q) => [...q.filter((m) => m.message !== message), { id, message, tone }]);
-  }, []);
+  const toast = useCallback(
+    (message: string, tone: "neutral" | "danger" = "neutral", action?: ToastAction) => {
+      next.current += 1;
+      const id = next.current;
+      setQueue((q) => [
+        ...q.filter((m) => m.message !== message),
+        { id, message, tone, ...(action === undefined ? {} : { action }) },
+      ]);
+    },
+    [],
+  );
   const shell = useMemo<Shell>(() => ({ toast, confirm: setPending }), [toast]);
   const current = queue[0];
   return (
@@ -101,10 +122,15 @@ export function ShellProvider({
         <Snackbar
           key={current?.id}
           visible={current !== undefined}
-          duration={current === undefined ? TOAST_MS.neutral : TOAST_MS[current.tone]}
+          duration={toastMs(current)}
           onDismiss={() => {
             setQueue((q) => q.slice(1));
           }}
+          action={
+            current?.action === undefined
+              ? undefined
+              : { label: current.action.label, onPress: current.action.onPress }
+          }
           wrapperStyle={{ bottom: bottomInset }}
           style={current?.tone === "danger" ? { backgroundColor: theme.voltip.danger } : undefined}
           theme={

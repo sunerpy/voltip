@@ -273,3 +273,35 @@ describe("Toolbar", () => {
     expect(screen.getAllByRole("button")).toHaveLength(1);
   });
 });
+
+describe("Sidebar · an item that waits for the user", () => {
+  const groups = [
+    {
+      title: "工作台",
+      items: [
+        {
+          id: "rules",
+          label: "规则",
+          icon: "sparkles" as const,
+          count: 3,
+          attention: "有待确认的规则",
+        },
+        { id: "dictionary", label: "词典", icon: "book" as const, count: 2 },
+      ],
+    },
+  ];
+
+  it("puts a named amber dot before the count; the rail puts it on the glyph and in the name", () => {
+    const { rerender } = render(<Sidebar activeId="rules" onNavigate={vi.fn()} groups={groups} />);
+    const rules = screen.getByRole("button", { name: /^规则/ });
+    const dot = within(rules).getByRole("img", { name: "有待确认的规则" });
+    expect(dot).toHaveAttribute("data-tone", "warn");
+    expect(rules).toHaveTextContent(/^规则3$/);
+    expect(within(screen.getByRole("button", { name: /^词典/ })).queryByRole("img")).toBeNull();
+    rerender(<Sidebar activeId="rules" onNavigate={vi.fn()} groups={groups} collapsed />);
+    const rail = screen.getByRole("button", { name: "规则 · 3 · 有待确认的规则" });
+    expect(rail).toHaveAttribute("title", "规则 · 3 · 有待确认的规则");
+    expect(rail.querySelector('[data-tone="warn"]')).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("button", { name: "词典 · 2" })).toBeInTheDocument();
+  });
+});

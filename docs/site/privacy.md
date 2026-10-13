@@ -54,6 +54,10 @@ While a recording longer than 2 minutes runs, its audio is written to a file in 
 
 When the [local service](/recognition/service) is on, programs on this computer that have its access token can send recordings to Voltip. Each recording is processed like a dictation with the same settings: it goes to the recognition service in use, and its text to the AI service when AI polish applies. While a request is processed, its audio is kept in a temporary file in Voltip's data folder, which is deleted when the request ends. Requests are not added to the history, and the service's log records durations and the models used, never the text or the audio.
 
+## AI tools
+
+With [AI tools](/recognition/mcp) turned on, AI tools on this computer that hold its access token can read what you allowed: by default only the dictionary, the rules and the words AI polish replaced (with 12 characters on each side of each hit); only when you also allow **Full history** can they read the original and polished text of every entry in the period you chose. Whatever an AI tool reads is sent to the model service it uses and may stay in its conversation history. Voltip records which tool read or changed what, when and how many items, never the text itself. The server is off by default and accepts connections from this computer only.
+
 ## What stays on your computer
 
 - **History**: every dictation, stored in Voltip's data folder. It can be limited, turned off or cleared under **Settings → Privacy and history**.

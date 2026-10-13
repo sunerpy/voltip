@@ -520,6 +520,14 @@ fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
         let preview = invoke(webview, "vocabulary_preview", json!({ "text": "沃尔提普。。", "draft": null })).unwrap();
         assert_eq!(preview["output"], "Voltip。");
         assert!(invoke(webview, "rules_export", json!({})).unwrap().as_str().is_some_and(|t| t.contains("句号")));
+        // docs/dictation.md §16.9: the correction sheet's effect line reads the takes the phone
+        // recognised itself (none here), with the desktop's checks.
+        let draft = json!({ "kind": "dictionary", "entry": { "term": "Voltip", "heard_as": ["维他命"] } });
+        assert_eq!(
+            invoke(webview, "vocabulary_backtest", json!({ "draft": draft, "historyId": null })),
+            Ok(json!({ "scanned": 0, "matched": 0, "kept": 0, "examples": [] }))
+        );
+        assert!(invoke(webview, "vocabulary_backtest", json!({ "draft": draft, "limit": 2001 })).unwrap_err().as_str().unwrap().contains("limit"));
         assert_eq!(invoke(webview, "dictionary_remove", json!({ "id": term })), Ok(Value::Null));
         wait_state(webview, |s| s.dictionary.is_empty());
         // Scenes: the built-in ones without applications, the phone's own without one either, and
@@ -757,9 +765,10 @@ fn sorted(mut names: Vec<String>) -> Vec<String> {
 const PENDING_TYPESCRIPT: &[&str] = &[];
 
 /// Commands of the shared contract (schema.ts, the fixtures) that only the desktop shell registers:
-/// the local speech service runs on a computer only (docs/dictation.md §23.6), so the phone offers
-/// no command for it and an invoke is "not found".
-const DESKTOP_ONLY: &[&str] = &["settings_set_serve", "serve_copy_token", "serve_rotate_token"];
+/// the local speech service and the MCP service run on a computer only (docs/dictation.md §23.6,
+/// §25), so the phone offers no command for them and an invoke is "not found".
+const DESKTOP_ONLY: &[&str] =
+    &["settings_set_serve", "serve_copy_token", "serve_rotate_token", "settings_set_mcp", "mcp_copy_token", "mcp_rotate_token", "mcp_copy_setup", "mcp_undo"];
 
 #[test]
 fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() {
@@ -799,6 +808,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "update_status",
             "rules_export",
             "vocabulary_preview",
+            "vocabulary_backtest",
             "recent_apps",
             "history_query",
             "history_entry",

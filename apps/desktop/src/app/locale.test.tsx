@@ -163,6 +163,8 @@ const ENGLISH_VOCABULARY: Pick<MockBackendOptions, "dictionary" | "rules" | "sce
       enabled: true,
       created_at_ms: NOW,
       updated_at_ms: NOW,
+      source: { kind: "manual" },
+      pending: false,
     },
   ],
   scenes: [

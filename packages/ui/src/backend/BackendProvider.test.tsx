@@ -59,6 +59,7 @@ describe("BackendProvider", () => {
       meter: inner.meter.bind(inner),
       updateStatus: inner.updateStatus.bind(inner),
       vocabularyPreview: inner.vocabularyPreview.bind(inner),
+      vocabularyBacktest: inner.vocabularyBacktest.bind(inner),
       rulesExport: inner.rulesExport.bind(inner),
       recentApps: inner.recentApps.bind(inner),
       historyQuery: inner.historyQuery.bind(inner),
@@ -127,6 +128,7 @@ describe("BackendProvider", () => {
       updateStatus: () => Promise.resolve({ state: "idle" as const }),
       vocabularyPreview: () =>
         Promise.resolve({ corrected: "", output: "", corrections: [], rules: [] }),
+      vocabularyBacktest: () => Promise.resolve({ scanned: 0, matched: 0, kept: 0, examples: [] }),
       rulesExport: () => Promise.resolve("version = 1\n"),
       recentApps: () => Promise.resolve([]),
       historyQuery: () => Promise.resolve({ entries: [], matching: 0, total: 0 }),

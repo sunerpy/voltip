@@ -214,7 +214,8 @@ export function RoundButton({
 export interface SegmentOption<T extends string> {
   value: T;
   label: string;
-  icon: string;
+  /** Before the label; the quick fix's 词典 | 替换规则 has none (board 13). */
+  icon?: string;
   disabled?: boolean;
   testID?: string;
 }
@@ -271,11 +272,13 @@ export function Segmented<T extends string>({
               off && !chosen && { opacity: 0.5 },
             ]}>
             <View style={styles.segmentInner}>
-              <Icon
-                source={option.icon}
-                size={16}
-                color={chosen ? theme.colors.primary : theme.voltip.subtle}
-              />
+              {option.icon !== undefined && (
+                <Icon
+                  source={option.icon}
+                  size={16}
+                  color={chosen ? theme.colors.primary : theme.voltip.subtle}
+                />
+              )}
               <Text
                 numberOfLines={1}
                 style={{

@@ -321,7 +321,7 @@ export const projectLinkSchema = z.enum(PROJECT_LINKS);
 export type ProjectLink = z.infer<typeof projectLinkSchema>;
 /** Pages of the user guide the shell opens (`voltip_core::ui::GuidePage`), in the language the
  *  webview names. */
-export const GUIDE_PAGES = ["service", "privacy"] as const;
+export const GUIDE_PAGES = ["service", "privacy", "mcp"] as const;
 export const guidePageSchema = z.enum(GUIDE_PAGES);
 export type GuidePage = z.infer<typeof guidePageSchema>;
 
@@ -530,6 +530,109 @@ export const serveStatusSchema = z.object({
 });
 export type ServeStatus = z.infer<typeof serveStatusSchema>;
 
+// ---- the local MCP service (docs/dictation.md §25; `voltip_core::mcp`) -----------------------
+
+/** `voltip_core::mcp::DEFAULT_PORT` (the local speech service's is 47840). */
+export const DEFAULT_MCP_PORT = 47841;
+/** What the AI tools may read; each level includes the ones before it (`McpRead`). */
+export const MCP_READS = ["rules", "summary", "full"] as const;
+export const mcpReadSchema = z.enum(MCP_READS);
+export type McpRead = z.infer<typeof mcpReadSchema>;
+/** How far back the full history reaches (`HistoryRange`, only with `full`). */
+export const MCP_HISTORY_RANGES = ["last_7_days", "last_30_days", "all"] as const;
+export const mcpHistoryRangeSchema = z.enum(MCP_HISTORY_RANGES);
+export type McpHistoryRange = z.infer<typeof mcpHistoryRangeSchema>;
+/** What the AI tools may change; each level includes the ones before it (`McpWrite`). */
+export const MCP_WRITES = ["read_only", "dictionary", "enable_rules"] as const;
+export const mcpWriteSchema = z.enum(MCP_WRITES);
+export type McpWrite = z.infer<typeof mcpWriteSchema>;
+/** `Settings.mcp`: off by default, on its own port; the correction summary may be read, the
+ *  dictionary changed and rules created that wait for the user's approval. */
+export const mcpSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  port: z.number().int().min(0).max(65_535).default(DEFAULT_MCP_PORT),
+  read: mcpReadSchema.default("summary"),
+  history_range: mcpHistoryRangeSchema.default("last_30_days"),
+  write: mcpWriteSchema.default("dictionary"),
+});
+export type McpSettings = z.infer<typeof mcpSettingsSchema>;
+export const defaultMcpSettings = (): McpSettings => ({
+  enabled: false,
+  port: DEFAULT_MCP_PORT,
+  read: "summary",
+  history_range: "last_30_days",
+  write: "dictionary",
+});
+/** What a client did (`McpAction`): the first seven read, the rest write. */
+export const MCP_ACTIONS = [
+  "list_dictionary",
+  "list_rules",
+  "preview",
+  "backtest",
+  "read_summary",
+  "search_history",
+  "read_entry",
+  "add_entry",
+  "merge_entry",
+  "update_entry",
+  "add_rule",
+  "update_rule",
+] as const;
+export const mcpActionSchema = z.enum(MCP_ACTIONS);
+export type McpAction = z.infer<typeof mcpActionSchema>;
+/** The actions that change the dictionary or the rules (`McpAction::writes`). */
+export const MCP_WRITE_ACTIONS: readonly McpAction[] = [
+  "add_entry",
+  "merge_entry",
+  "update_entry",
+  "add_rule",
+  "update_rule",
+];
+/** One line of the recent activity: names and counts only, never a text of the history. */
+export const mcpActivitySchema = z.object({
+  id: z.string(),
+  at_ms: z.number().nonnegative(),
+  client: z.string(),
+  action: mcpActionSchema,
+  /** The entry's spelling or the rule's name. */
+  subject: z.string().optional(),
+  count: z.number().int().nonnegative().optional(),
+  range: mcpHistoryRangeSchema.optional(),
+  /** The rule it wrote waits for the user's approval. */
+  pending: z.boolean().default(false),
+  undoable: z.boolean().default(false),
+  undone: z.boolean().default(false),
+});
+export type McpActivity = z.infer<typeof mcpActivitySchema>;
+/** A client heard from since the service started. */
+export const mcpClientSchema = z.object({
+  name: z.string(),
+  last_seen_ms: z.number().nonnegative(),
+});
+export type McpClient = z.infer<typeof mcpClientSchema>;
+/** `UiState.mcp`: whether this app can host the service, what it is doing (the local speech
+ *  service's phases), who used it and the recent activity, newest first. */
+export const mcpStatusSchema = z.object({
+  available: z.boolean(),
+  phase: servePhaseSchema,
+  /** What a client connects to while running (`http://127.0.0.1:<port>/mcp`). */
+  address: z.string().optional(),
+  error: z.string().optional(),
+  clients: z.array(mcpClientSchema).default(() => []),
+  activity: z.array(mcpActivitySchema).default(() => []),
+});
+export type McpStatus = z.infer<typeof mcpStatusSchema>;
+export const emptyMcpStatus = (): McpStatus => ({
+  available: false,
+  phase: "off",
+  clients: [],
+  activity: [],
+});
+/** The AI tools 接入 shows a command for (`SetupClient`). */
+export const MCP_SETUP_CLIENTS = ["claude_code", "codex"] as const;
+export const mcpSetupClientSchema = z.enum(MCP_SETUP_CLIENTS);
+export type McpSetupClient = z.infer<typeof mcpSetupClientSchema>;
+
 // ---- the proxy (docs/dictation.md §24; `voltip_core::ProxySettings`) -------------------------
 
 /** `voltip_core::ProxyMode`: follow the system, none, or the proxy the user set. */
@@ -621,6 +724,8 @@ export const settingsSchema = z.object({
   serve: serveSettingsSchema.default(defaultServeSettings),
   /** docs/dictation.md §24; an older `settings.json` or core reads as following the system. */
   proxy: proxySettingsSchema.default(defaultProxySettings),
+  /** docs/dictation.md §25; an older `settings.json` or core reads as off on the default port. */
+  mcp: mcpSettingsSchema.default(defaultMcpSettings),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -958,11 +1063,14 @@ export const MAX_TEXT_BYTES = 64 * 1024;
 /** `rules_import` refuses a TOML text past this many bytes. */
 export const MAX_TOML_BYTES = 256 * 1024;
 
-/** Where a dictionary entry came from (`voltip_core::vocabulary::EntrySource`, `tag = "kind"`). */
+/** Where a dictionary entry or a rule came from (`voltip_core::vocabulary::EntrySource`,
+ *  `tag = "kind"`). */
 export const entrySourceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("manual") }),
   /** Added from a history row (「加入词典」); the row may have been deleted since. */
   z.object({ kind: z.literal("history"), history_id: z.string() }),
+  /** Written by an AI tool over the MCP service (docs/dictation.md §25), by its name. */
+  z.object({ kind: z.literal("mcp"), client: z.string() }),
 ]);
 export type EntrySource = z.infer<typeof entrySourceSchema>;
 
@@ -1006,6 +1114,11 @@ export const replacementRuleSchema = z.object({
   enabled: z.boolean(),
   created_at_ms: z.number().nonnegative(),
   updated_at_ms: z.number().nonnegative(),
+  /** Who wrote it (docs/dictation.md §25); rules from before read as the user's. */
+  source: entrySourceSchema.default(() => ({ kind: "manual" as const })),
+  /** An AI tool created it and the user has not approved it: it is off and runs nowhere until
+   *  turned on, which approves it. */
+  pending: z.boolean().default(false),
 });
 export type ReplacementRule = z.infer<typeof replacementRuleSchema>;
 
@@ -1061,6 +1174,54 @@ export type VocabularyPreview = z.infer<typeof vocabularyPreviewSchema>;
 
 /** The nil UUID: the id of a preview's unsaved draft rule in `VocabularyPreview.rules`. */
 export const NIL_ID = "00000000-0000-0000-0000-000000000000";
+
+/** `voltip_core::vocabulary::BACKTEST_LIMIT`: the recent takes a backtest reads unless asked. */
+export const BACKTEST_LIMIT = 500;
+/** `MAX_BACKTEST_LIMIT`: the most recent takes one backtest may read. */
+export const MAX_BACKTEST_LIMIT = 2000;
+/** `MAX_BACKTEST_EXAMPLES`: the examples a backtest returns at most. */
+export const MAX_BACKTEST_EXAMPLES = 3;
+/** `BACKTEST_SNIPPET_CHARS`: characters an example keeps on each side of the change. */
+export const BACKTEST_SNIPPET_CHARS = 12;
+
+/** What `vocabulary_backtest` tries (`voltip_core::vocabulary::BacktestDraft`, docs/dictation.md
+ *  §16.9): a dictionary entry or a rule as if it were saved — in place of the one with `id`, or
+ *  new when `id` is absent / `null`. */
+export const backtestDraftSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("dictionary"),
+    id: z.string().nullable().optional(),
+    entry: dictionaryDraftSchema,
+  }),
+  z.object({
+    kind: z.literal("rule"),
+    id: z.string().nullable().optional(),
+    rule: ruleDraftSchema,
+  }),
+]);
+export type BacktestDraft = z.infer<typeof backtestDraftSchema>;
+
+/** One take a backtest's draft would change (`BacktestExample`): the text around the first change
+ *  before and after (`…` marks a cut), and whether its final text kept a replaced form. */
+export const backtestExampleSchema = z.object({
+  history_id: z.string(),
+  at_ms: z.number().nonnegative(),
+  before: z.string(),
+  after: z.string(),
+  kept: z.boolean(),
+});
+export type BacktestExample = z.infer<typeof backtestExampleSchema>;
+
+/** What `vocabulary_backtest` answers (`Backtest`): the takes read (the card's own one not
+ *  counted), those the draft would change, of those (dictionary drafts) the ones whose final text
+ *  kept a replaced form, and up to `MAX_BACKTEST_EXAMPLES` examples, kept ones first. */
+export const vocabularyBacktestSchema = z.object({
+  scanned: z.number().int().nonnegative(),
+  matched: z.number().int().nonnegative(),
+  kept: z.number().int().nonnegative(),
+  examples: z.array(backtestExampleSchema),
+});
+export type VocabularyBacktest = z.infer<typeof vocabularyBacktestSchema>;
 
 /** What a voice edit worked on (`voltip_core::EditRecord`, docs/dictation.md §19.5): the
  *  instruction as sent to the LLM (after the dictionary corrections) and the selection it rewrote.
@@ -2232,6 +2393,8 @@ export const uiStateSchema = z.object({
   serve: serveStatusSchema.default(() => ({ available: false, phase: "off" as const })),
   /** The proxy's password and the system's proxy (docs/dictation.md §24). */
   network: networkStatusSchema.default(() => ({ proxy_password: false })),
+  /** The local MCP service the app hosts (docs/dictation.md §25); not available on the phone. */
+  mcp: mcpStatusSchema.default(emptyMcpStatus),
   /** The built-in clean-up service's notice (docs/dictation.md §3.6); absent when there is
    *  nothing to say. */
   refine_notice: refineNoticeSchema.optional(),
@@ -2256,6 +2419,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   serveStatusSchema.extend({ type: z.literal("serve") }),
   /** The proxy's password was saved or removed, or the system's proxy read again (§24). */
   networkStatusSchema.extend({ type: z.literal("network") }),
+  /** The MCP service started, stopped or failed, a client came, or the activity changed (§25). */
+  mcpStatusSchema.extend({ type: z.literal("mcp") }),
   z.object({
     type: z.literal("identity_changed"),
     previous: trustedDeviceSchema,
@@ -2407,6 +2572,15 @@ export type VocabularyPreviewArgs = {
   draft?: PreviewDraft | null;
 };
 
+/** `vocabulary_backtest` arguments (docs/dictation.md §16.9): the draft, the history entry the
+ *  card was opened on (left out of the count), and how many recent takes to read (1–
+ *  `MAX_BACKTEST_LIMIT`, `BACKTEST_LIMIT` when absent). */
+export type VocabularyBacktestArgs = {
+  draft: BacktestDraft;
+  historyId?: string | null;
+  limit?: number | null;
+};
+
 /** `scenes_update` arguments (docs/dictation.md §18.6). */
 export type ScenesUpdateArgs = { id: string; scene: SceneDraft };
 export type PresetsUpdateArgs = { id: string; preset: PresetDraft };
@@ -2435,6 +2609,15 @@ export type SetProxyArgs = {
   username: string | null;
   noProxy: string;
   password: string | null;
+};
+
+/** `settings_set_mcp` arguments: the whole MCP service setting (docs/dictation.md §25). */
+export type SetMcpArgs = {
+  enabled: boolean;
+  port: number;
+  read: McpRead;
+  historyRange: McpHistoryRange;
+  write: McpWrite;
 };
 
 /** `settings_set_context_sharing` arguments: both switches together. */
@@ -2596,6 +2779,9 @@ export interface CommandArgs {
   rules_export: undefined;
   /** Query: a text through the dictionary and the rules (`Backend.vocabularyPreview`). */
   vocabulary_preview: VocabularyPreviewArgs;
+  /** Query (§16.9): what an unsaved entry or rule would change in the recent takes
+   *  (`Backend.vocabularyBacktest`, the history page's quick-fix card). */
+  vocabulary_backtest: VocabularyBacktestArgs;
   /** Scenes (docs/dictation.md §18.6): append, replace, delete, reorder (every id in the new
    *  order). A draft wrong on its own rejects the call with the core's message; a clash with the
    *  list (duplicate name, cap, unknown id) comes back as an `error` event. */
@@ -2642,6 +2828,16 @@ export interface CommandArgs {
   serve_copy_token: undefined;
   /** Replace the service's token. */
   serve_rotate_token: undefined;
+  /** The local MCP service (§25): on / off, port, what AI tools may read and change. */
+  settings_set_mcp: SetMcpArgs;
+  /** Put the MCP service's token on the clipboard (it never reaches the webview). */
+  mcp_copy_token: undefined;
+  /** Replace the MCP service's token. */
+  mcp_rotate_token: undefined;
+  /** Put the command that connects `client`, with the real token, on the clipboard. */
+  mcp_copy_setup: { client: McpSetupClient };
+  /** Undo an AI tool's write from the recent activity. */
+  mcp_undo: { id: string };
   /** The proxy (§24): the mode, the manual proxy's fields and its password; the core re-emits
    *  `settings` and `network`. */
   settings_set_proxy: SetProxyArgs;
@@ -2691,6 +2887,7 @@ export type QueryCommand =
   | "update_status"
   | "rules_export"
   | "vocabulary_preview"
+  | "vocabulary_backtest"
   | "recent_apps"
   | "history_query"
   | "history_entry"
@@ -2731,6 +2928,7 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "update_status",
   "rules_export",
   "vocabulary_preview",
+  "vocabulary_backtest",
   "recent_apps",
   "history_query",
   "history_entry",
@@ -2802,6 +3000,7 @@ export function defaultSettings(): Settings {
     recording: defaultRecordingSettings(),
     serve: defaultServeSettings(),
     proxy: defaultProxySettings(),
+    mcp: defaultMcpSettings(),
   };
 }
 
@@ -2877,6 +3076,10 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
     case "network": {
       const { type: _type, ...network } = event;
       return { ...state, network };
+    }
+    case "mcp": {
+      const { type: _type, ...mcp } = event;
+      return { ...state, mcp };
     }
     case "phone_take": {
       if (event.take === null) {

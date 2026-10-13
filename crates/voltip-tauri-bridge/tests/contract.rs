@@ -18,6 +18,7 @@ use voltip_core::connectivity::{ConnectivityReport, ConnectivityStatus, PeerChec
 use voltip_core::dictation::{ClipboardCode, FailureCode, ProcessingStage, Via};
 use voltip_core::history::ProcessedText;
 use voltip_core::history::process::ProcessState;
+use voltip_core::mcp::{HistoryRange, McpAction, McpActivity, McpClient, McpRead, McpSettings, McpStatus, McpWrite};
 use voltip_core::paste::{CopyReason, PasteFailure, PasteOutcome};
 use voltip_core::phone::{PhoneTakeFailure, PhoneTakeState, PhoneTakeView};
 use voltip_core::phone::{PhoneTextSource, SentText, SentTextFailure, SentTextState};
@@ -49,6 +50,14 @@ const COMMANDS_FILE: &str = "commands.json";
 const BUILTIN_SCENES_FILE: &str = "scenes-builtin.json";
 /// The answers of the history queries (docs/dictation.md §4.4).
 const HISTORY_QUERIES_FILE: &str = "history-queries.json";
+/// The drafts and answers of `vocabulary_backtest` (docs/dictation.md §16.9).
+const VOCABULARY_BACKTEST_FILE: &str = "vocabulary-backtest.json";
+/// The commands that connect an AI tool to the MCP service (docs/dictation.md §25), as the core
+/// copies them; `packages/shared/src/mcp.ts` shows the same with a placeholder.
+const MCP_SETUP_FILE: &str = "mcp-setup.json";
+/// The history page's token diff (`refine.ts` `diffSegments`) as the MCP service's correction
+/// summary computes it in Rust (docs/dictation.md §25).
+const DIFF_FILE: &str = "diff.json";
 
 const DESKTOP_KEY: PublicKey = PublicKey([0x11; 32]);
 const PHONE_KEY: PublicKey = PublicKey([0x22; 32]);
@@ -95,6 +104,12 @@ const SCENE_ID: &str = "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f";
 const SCENE_ID_2: &str = "e0e1e2e3-e4e5-4e6e-8e7e-8e9eaebecede";
 const SCENE_ID_3: &str = "b0117e1e-5ce0-4e5e-8a1e-000000000003";
 const PRESET_ID: &str = "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e";
+/// docs/dictation.md §25: an entry and a rule an AI tool wrote, and two lines of the activity.
+const DICT_ID_3: &str = "4d0c7a1e-5b6c-4d7e-8f90-a1b2c3d4e5f6";
+const RULE_ID_3: &str = "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e";
+const MCP_ACTIVITY_ID: &str = "c3d4e5f6-a7b8-4c9d-8e0f-2a3b4c5d6e7f";
+const MCP_ACTIVITY_ID_2: &str = "d4e5f6a7-b8c9-4d0e-9f1a-3b4c5d6e7f80";
+const MCP_ACTIVITY_ID_3: &str = "e5f6a7b8-c9d0-4e1f-8a2b-4c5d6e7f8091";
 
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/shared/src/fixtures/ipc")
@@ -332,6 +347,8 @@ fn settings() -> Settings {
             username: Some("alice".into()),
             no_proxy: "corp.example.com,10.0.0.0/8".into(),
         },
+        // docs/dictation.md §25: the MCP service on, sharing the full history of the last seven days.
+        mcp: McpSettings { enabled: true, port: 47841, read: McpRead::Full, history_range: HistoryRange::Last7Days, write: McpWrite::Dictionary },
         // docs/dictation.md §20.11: the phone's talk button tapped, away from holding.
         phone_talk: voltip_core::PhoneTalkMode::Tap,
         ..Settings::default()
@@ -618,6 +635,16 @@ fn dictionary() -> Vec<DictionaryEntry> {
             created_at_ms: AT_MS,
             updated_at_ms: AT_MS,
         },
+        // docs/dictation.md §25: written by an AI tool over the MCP service.
+        DictionaryEntry {
+            id: uuid(DICT_ID_3),
+            term: "Voltip".into(),
+            heard_as: vec!["维他命".into()],
+            enabled: true,
+            source: EntrySource::Mcp { client: "claude-code".into() },
+            created_at_ms: AT_MS,
+            updated_at_ms: AT_MS,
+        },
     ]
 }
 
@@ -634,6 +661,8 @@ fn rules() -> Vec<ReplacementRule> {
             enabled: true,
             created_at_ms: AT_MS - 86_400_000,
             updated_at_ms: AT_MS - 86_400_000,
+            source: EntrySource::Manual,
+            pending: false,
         },
         ReplacementRule {
             id: uuid(RULE_ID_2),
@@ -645,8 +674,74 @@ fn rules() -> Vec<ReplacementRule> {
             enabled: false,
             created_at_ms: AT_MS,
             updated_at_ms: AT_MS,
+            source: EntrySource::Manual,
+            pending: false,
+        },
+        // docs/dictation.md §25: an AI tool's rule, off until the user approves it.
+        ReplacementRule {
+            id: uuid(RULE_ID_3),
+            name: "非书 → 飞书".into(),
+            kind: RuleKind::Literal,
+            pattern: "非书".into(),
+            replacement: "飞书".into(),
+            case_sensitive: true,
+            enabled: false,
+            created_at_ms: AT_MS,
+            updated_at_ms: AT_MS,
+            source: EntrySource::Mcp { client: "claude-code".into() },
+            pending: true,
         },
     ]
+}
+
+/// docs/dictation.md §25: the MCP service running, a client heard from, a write that can be undone,
+/// a rule waiting for approval and a read of the full history.
+fn mcp_status() -> McpStatus {
+    McpStatus {
+        available: true,
+        phase: ServePhase::Running,
+        address: Some("http://127.0.0.1:47841/mcp".into()),
+        error: None,
+        clients: vec![McpClient { name: "claude-code".into(), last_seen_ms: AT_MS }],
+        activity: vec![
+            McpActivity {
+                id: uuid(MCP_ACTIVITY_ID),
+                at_ms: AT_MS,
+                client: "claude-code".into(),
+                action: McpAction::AddEntry,
+                subject: Some("Voltip".into()),
+                count: None,
+                range: None,
+                pending: false,
+                undoable: true,
+                undone: false,
+            },
+            McpActivity {
+                id: uuid(MCP_ACTIVITY_ID_2),
+                at_ms: AT_MS - 60_000,
+                client: "claude-code".into(),
+                action: McpAction::AddRule,
+                subject: Some("非书 → 飞书".into()),
+                count: None,
+                range: None,
+                pending: true,
+                undoable: true,
+                undone: false,
+            },
+            McpActivity {
+                id: uuid(MCP_ACTIVITY_ID_3),
+                at_ms: AT_MS - 120_000,
+                client: "codex".into(),
+                action: McpAction::SearchHistory,
+                subject: None,
+                count: Some(12),
+                range: Some(HistoryRange::Last30Days),
+                pending: false,
+                undoable: false,
+                undone: false,
+            },
+        ],
+    }
 }
 
 /// A `live_inject` entry (docs/dictation.md §12): the sentences it pasted, no refinement, and the
@@ -908,6 +1003,8 @@ fn full_state() -> UiState {
         serve: ServeStatus { available: true, phase: ServePhase::Running, address: Some("http://127.0.0.1:47840/v1".into()), error: None },
         // docs/dictation.md §24: the proxy's password saved, and the system's proxy.
         network: NetworkStatus { proxy_password: true, system_proxy: Some("http://127.0.0.1:7890".into()) },
+        // docs/dictation.md §25: the MCP service running, with its clients and activity.
+        mcp: mcp_status(),
         // docs/dictation.md §3.6: the built-in clean-up service turned a take down.
         refine_notice: Some(RefineNotice { failure: RefineFailure::RateLimited, at_ms: 1_727_400_000_000 }),
     }
@@ -957,6 +1054,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::Connectivity(_) => "connectivity",
         UiEvent::Serve(_) => "serve",
         UiEvent::Network(_) => "network",
+        UiEvent::Mcp(_) => "mcp",
         UiEvent::PasteResult { .. } => "paste_result",
         UiEvent::Mirrors { .. } => "mirrors",
         UiEvent::PhoneOutbox { .. } => "phone_outbox",
@@ -964,7 +1062,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
     }
 }
 
-const ALL_EVENT_TAGS: [&str; 29] = [
+const ALL_EVENT_TAGS: [&str; 30] = [
     "state",
     "identity",
     "settings",
@@ -994,6 +1092,7 @@ const ALL_EVENT_TAGS: [&str; 29] = [
     "phone_outbox",
     "refine_notice",
     "network",
+    "mcp",
 ];
 
 /// The computer's settings as a phone shows them (docs/dictation.md §20.8): every `Option` set.
@@ -1532,6 +1631,20 @@ fn all_events() -> Vec<UiEvent> {
         // docs/dictation.md §24: a password saved and the system's proxy; then neither.
         UiEvent::Network(NetworkStatus { proxy_password: true, system_proxy: Some("socks5h://127.0.0.1:1080".into()) }),
         UiEvent::Network(NetworkStatus::default()),
+        // docs/dictation.md §25: the MCP service starting, failing (every key of the status), running
+        // with its activity, then off; and the phone, where it is not available.
+        UiEvent::Mcp(McpStatus { available: true, phase: ServePhase::Starting, ..McpStatus::default() }),
+        UiEvent::Mcp(McpStatus {
+            available: true,
+            phase: ServePhase::Failed,
+            address: Some("http://127.0.0.1:47841/mcp".into()),
+            error: Some("无法监听 127.0.0.1:47841：Address already in use".into()),
+            clients: Vec::new(),
+            activity: Vec::new(),
+        }),
+        UiEvent::Mcp(mcp_status()),
+        UiEvent::Mcp(McpStatus { available: true, ..McpStatus::default() }),
+        UiEvent::Mcp(McpStatus::default()),
         // The model library: every `ModelInstallState` variant across these three lists.
         models_event(models_installed_and_downloading()),
         models_event(models_other_states()),
@@ -1796,6 +1909,11 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::SettingsSetServe { .. } => "SettingsSetServe",
         UiCommand::ServeCopyToken => "ServeCopyToken",
         UiCommand::ServeRotateToken => "ServeRotateToken",
+        UiCommand::SettingsSetMcp { .. } => "SettingsSetMcp",
+        UiCommand::McpCopyToken => "McpCopyToken",
+        UiCommand::McpRotateToken => "McpRotateToken",
+        UiCommand::McpCopySetup { .. } => "McpCopySetup",
+        UiCommand::McpUndo { .. } => "McpUndo",
         UiCommand::SettingsSetProxy { .. } => "SettingsSetProxy",
         UiCommand::NetworkRefresh => "NetworkRefresh",
         UiCommand::RefineNoticeClose => "RefineNoticeClose",
@@ -1938,6 +2056,16 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("settings_set_serve", json!({ "enabled": true, "port": 47840, "preset": "prompt", "scene": SCENE_ID }), "SettingsSetServe"),
         ("serve_copy_token", Value::Null, "ServeCopyToken"),
         ("serve_rotate_token", Value::Null, "ServeRotateToken"),
+        // The local MCP service (docs/dictation.md §25).
+        (
+            "settings_set_mcp",
+            json!({ "enabled": true, "port": 47841, "read": "full", "historyRange": "last_7_days", "write": "enable_rules" }),
+            "SettingsSetMcp",
+        ),
+        ("mcp_copy_token", Value::Null, "McpCopyToken"),
+        ("mcp_rotate_token", Value::Null, "McpRotateToken"),
+        ("mcp_copy_setup", json!({ "client": "codex" }), "McpCopySetup"),
+        ("mcp_undo", json!({ "id": MCP_ACTIVITY_ID }), "McpUndo"),
         // The proxy (docs/dictation.md §24): a manual one with a new password.
         (
             "settings_set_proxy",
@@ -2017,7 +2145,7 @@ fn regression_text_files_check_out_with_lf_on_every_os() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.gitattributes");
     let attributes = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     assert!(attributes.lines().any(|l| l.split_whitespace().eq(["*", "text=auto", "eol=lf"])), "{attributes}");
-    for name in [STATE_FILE, EVENTS_FILE, COMMANDS_FILE, BUILTIN_SCENES_FILE] {
+    for name in [STATE_FILE, EVENTS_FILE, COMMANDS_FILE, BUILTIN_SCENES_FILE, MCP_SETUP_FILE, DIFF_FILE] {
         let fixture = std::fs::read_to_string(fixtures_dir().join(name)).unwrap();
         assert!(!fixture.contains('\r'), "{name} has CRLF line endings");
     }
@@ -2346,6 +2474,11 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "ScenesRemove",
         "ScenesReorder",
         "SettingsSetContextSharing",
+        "SettingsSetMcp",
+        "McpCopyToken",
+        "McpRotateToken",
+        "McpCopySetup",
+        "McpUndo",
     ] {
         assert!(seen.contains(variant), "commands fixture lacks {variant}");
     }
@@ -2412,6 +2545,96 @@ fn history_queries_fixture_matches_serde_output() {
         "mirror_profile": mirror_profile(),
     });
     check_fixture(HISTORY_QUERIES_FILE, &pretty(&answers));
+}
+
+/// docs/dictation.md §16.9: the drafts `vocabulary_backtest` takes (a new dictionary entry, one
+/// standing in for an existing entry, a rule) and its answers, in the shapes
+/// `packages/shared/src/schema.ts` parses.
+#[test]
+fn vocabulary_backtest_fixture_matches_serde_output() {
+    use voltip_core::vocabulary::{Backtest, BacktestDraft, BacktestExample};
+    let entry = DictionaryDraft { term: "Voltip".into(), heard_as: vec!["维他命".into()], enabled: true };
+    let rule = RuleDraft {
+        name: "非书 → 飞书".into(),
+        kind: RuleKind::Literal,
+        pattern: "非书".into(),
+        replacement: "飞书".into(),
+        case_sensitive: false,
+        enabled: true,
+    };
+    let answers = json!({
+        "dictionary_draft": BacktestDraft::Dictionary { id: None, entry: entry.clone() },
+        "merge_draft": BacktestDraft::Dictionary {
+            id: Some(uuid(DICT_ID)),
+            entry: DictionaryDraft { heard_as: vec!["沃尔提普".into(), "维他命".into()], ..entry },
+        },
+        "rule_draft": BacktestDraft::Rule { id: None, rule },
+        "answer": Backtest {
+            scanned: 499,
+            matched: 3,
+            kept: 1,
+            examples: vec![
+                BacktestExample {
+                    history_id: uuid(HISTORY_ID),
+                    at_ms: AT_MS,
+                    before: "维他命的安装包发给我".into(),
+                    after: "Voltip的安装包发给我".into(),
+                    kept: true,
+                },
+                BacktestExample {
+                    history_id: uuid(HISTORY_ID_2),
+                    at_ms: AT_MS - 86_400_000,
+                    before: "…今天用维他命跑了一遍回归".into(),
+                    after: "…今天用Voltip跑了一遍回归".into(),
+                    kept: false,
+                },
+            ],
+        },
+        "nothing": Backtest::default(),
+    });
+    check_fixture(VOCABULARY_BACKTEST_FILE, &pretty(&answers));
+}
+
+/// docs/dictation.md §25: the setup commands the core copies, for every tool and both shells'
+/// syntax, with a stand-in token; the settings build the same text around a placeholder.
+#[test]
+fn mcp_setup_fixture_matches_the_core() {
+    use voltip_core::mcp::{SetupClient, setup_command};
+    let address = "http://127.0.0.1:47841/mcp";
+    let token = "TOKEN";
+    let rows: Vec<Value> = [SetupClient::ClaudeCode, SetupClient::Codex]
+        .into_iter()
+        .flat_map(|client| {
+            [false, true].map(|windows| json!({ "client": client, "windows": windows, "address": address, "token": token, "command": setup_command(client, address, token, windows) }))
+        })
+        .collect();
+    check_fixture(MCP_SETUP_FILE, &pretty(&rows));
+}
+
+/// docs/dictation.md §25: the correction summary's diff in Rust is the history page's in
+/// TypeScript (`refine.ts`); `diff-parity.test.ts` runs `diffSegments` on the same cases.
+#[test]
+fn diff_fixture_matches_the_core() {
+    use voltip_core::mcp::candidates::{diff_segments, replacements};
+    let cases = [
+        ("今天用维他命测了一下", "今天用 Voltip 测了一下。"),
+        ("发到非书群，然后提成在teams里面", "发到飞书群。然后集成在 Teams 里面。"),
+        ("把 fetch user 改成 async 然后加上错误处理", "把 fetchUser 改成 async，然后加上错误处理。"),
+        ("嗯 那个 我们 v1.2-rc 的 PR 3 合了吗", "我们 v1.2-rc 的 PR #3 合了吗？"),
+        ("a  b\u{3000}c  d", "a b c d"),
+        ("", "全新的一句"),
+        ("全部删掉", ""),
+        ("Voltip", "Voltip"),
+    ];
+    let rows: Vec<Value> = cases
+        .iter()
+        .map(|(raw, text)| {
+            let pairs: Vec<Value> =
+                replacements(raw, text).unwrap().into_iter().map(|r| json!({ "heard": r.heard, "polished": r.polished, "at": r.at })).collect();
+            json!({ "raw": raw, "text": text, "segments": diff_segments(raw, text).unwrap(), "pairs": pairs })
+        })
+        .collect();
+    check_fixture(DIFF_FILE, &pretty(&rows));
 }
 
 /// docs/dictation.md §4.6: the answers of `backup_export`, `backup_open` and `backup_import` with

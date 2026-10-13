@@ -147,6 +147,19 @@ impl DictionaryStore {
         self.commit(entries)
     }
 
+    /// Put `entry` back exactly as it was, in its place (the undo of an AI tool's change,
+    /// docs/dictation.md §25): same id, source and timestamps. The entry must still be there.
+    pub fn restore(&mut self, entry: DictionaryEntry) -> Result<(), VocabularyError> {
+        let draft = DictionaryDraft { term: entry.term.clone(), heard_as: entry.heard_as.clone(), enabled: entry.enabled };
+        if validate_dictionary_draft(&draft)? != draft {
+            return Err(VocabularyError::Dictionary(format!("词条「{}」不是规范形式", entry.term)));
+        }
+        let mut entries = self.entries.clone();
+        let Some(slot) = entries.iter_mut().find(|e| e.id == entry.id) else { return Err(unknown_entry(entry.id)) };
+        *slot = entry;
+        self.commit(entries)
+    }
+
     /// Put the entries in the order of `ids`, which must be exactly the current ids.
     pub fn reorder(&mut self, ids: &[Uuid]) -> Result<(), VocabularyError> {
         let entries = permute(&self.entries, ids, |e| e.id).ok_or_else(|| VocabularyError::Dictionary("新的顺序必须恰好包含现有的全部词条".into()))?;
@@ -184,7 +197,14 @@ pub struct RuleStore {
     rules: Vec<ReplacementRule>,
 }
 
-fn rule_from(draft: RuleDraft, id: Uuid, created_at_ms: u64, now_ms: u64) -> ReplacementRule {
+/// Where a stored rule came from and whether it waits for the user's approval.
+#[derive(Clone, Debug, Default)]
+struct Origin {
+    source: EntrySource,
+    pending: bool,
+}
+
+fn rule_from(draft: RuleDraft, id: Uuid, created_at_ms: u64, now_ms: u64, origin: Origin) -> ReplacementRule {
     ReplacementRule {
         id,
         name: draft.name,
@@ -192,10 +212,19 @@ fn rule_from(draft: RuleDraft, id: Uuid, created_at_ms: u64, now_ms: u64) -> Rep
         pattern: draft.pattern,
         replacement: draft.replacement,
         case_sensitive: draft.case_sensitive,
-        enabled: draft.enabled,
+        // A rule waiting for approval is off until the user turns it on.
+        enabled: draft.enabled && !origin.pending,
         created_at_ms,
         updated_at_ms: now_ms,
+        source: origin.source,
+        pending: origin.pending,
     }
+}
+
+/// What a change by `draft` leaves of `rule`'s origin: the source stays; turning the rule on
+/// approves it (docs/dictation.md §25).
+fn origin_after(rule: &ReplacementRule, draft: &RuleDraft) -> Origin {
+    Origin { source: rule.source.clone(), pending: rule.pending && !draft.enabled }
 }
 
 impl RuleStore {
@@ -224,22 +253,53 @@ impl RuleStore {
         Ok(())
     }
 
-    /// Append a new rule; returns its id.
+    /// Append a new rule typed on the rules page; returns its id.
     pub fn add(&mut self, draft: &RuleDraft, now_ms: u64) -> Result<Uuid, VocabularyError> {
+        self.add_from(draft, EntrySource::Manual, false, now_ms)
+    }
+
+    /// Append a new rule written by `source`; `pending` keeps it off until the user approves it
+    /// (an AI tool's rule, docs/dictation.md §25). Returns its id.
+    pub fn add_from(&mut self, draft: &RuleDraft, source: EntrySource, pending: bool, now_ms: u64) -> Result<Uuid, VocabularyError> {
         let draft = validate_rule_draft(draft)?;
         let id = Uuid::new_v4();
         let mut rules = self.rules.clone();
-        rules.push(rule_from(draft, id, now_ms, now_ms));
+        rules.push(rule_from(draft, id, now_ms, now_ms, Origin { source, pending }));
         self.commit(rules)?;
         Ok(id)
     }
 
-    /// Replace a rule (id, position and creation time stay).
+    /// Replace a rule (id, position, creation time and source stay). Turning a rule that waits for
+    /// approval on approves it.
     pub fn update(&mut self, id: Uuid, draft: &RuleDraft, now_ms: u64) -> Result<(), VocabularyError> {
+        self.update_with(id, draft, None, now_ms)
+    }
+
+    /// [`Self::update`], keeping the rule waiting for approval (`Some(true)`, an AI tool changing a
+    /// rule it created that is still waiting) or approving it (`Some(false)`); `None` decides as
+    /// [`Self::update`] does.
+    pub fn update_with(&mut self, id: Uuid, draft: &RuleDraft, pending: Option<bool>, now_ms: u64) -> Result<(), VocabularyError> {
         let draft = validate_rule_draft(draft)?;
         let mut rules = self.rules.clone();
         let Some(rule) = rules.iter_mut().find(|r| r.id == id) else { return Err(unknown_rule(id)) };
-        *rule = rule_from(draft, id, rule.created_at_ms, now_ms);
+        let mut origin = origin_after(rule, &draft);
+        if let Some(pending) = pending {
+            origin.pending = pending;
+        }
+        *rule = rule_from(draft, id, rule.created_at_ms, now_ms, origin);
+        self.commit(rules)
+    }
+
+    /// Put `rule` back exactly as it was, in its place (the undo of an AI tool's change,
+    /// docs/dictation.md §25): same id, source, flags and timestamps. The rule must still be there.
+    pub fn restore(&mut self, rule: ReplacementRule) -> Result<(), VocabularyError> {
+        let draft = RuleDraft::from(&rule);
+        if validate_rule_draft(&draft)? != draft {
+            return Err(VocabularyError::Rules(format!("规则「{}」不是规范形式", rule.name)));
+        }
+        let mut rules = self.rules.clone();
+        let Some(slot) = rules.iter_mut().find(|r| r.id == rule.id) else { return Err(unknown_rule(rule.id)) };
+        *slot = rule;
         self.commit(rules)
     }
 
@@ -278,13 +338,16 @@ impl RuleStore {
     pub fn import(&mut self, drafts: &[RuleDraft], mode: ImportMode, now_ms: u64) -> Result<(), VocabularyError> {
         let drafts = drafts.iter().map(validate_rule_draft).collect::<Result<Vec<_>, _>>()?;
         let rules = match mode {
-            ImportMode::Replace => drafts.into_iter().map(|d| rule_from(d, Uuid::new_v4(), now_ms, now_ms)).collect(),
+            ImportMode::Replace => drafts.into_iter().map(|d| rule_from(d, Uuid::new_v4(), now_ms, now_ms, Origin::default())).collect(),
             ImportMode::Merge => {
                 let mut rules = self.rules.clone();
                 for draft in drafts {
                     match rules.iter_mut().find(|r| r.name == draft.name) {
-                        Some(rule) => *rule = rule_from(draft, rule.id, rule.created_at_ms, now_ms),
-                        None => rules.push(rule_from(draft, Uuid::new_v4(), now_ms, now_ms)),
+                        Some(rule) => {
+                            let origin = origin_after(rule, &draft);
+                            *rule = rule_from(draft, rule.id, rule.created_at_ms, now_ms, origin);
+                        }
+                        None => rules.push(rule_from(draft, Uuid::new_v4(), now_ms, now_ms, Origin::default())),
                     }
                 }
                 rules
@@ -478,6 +541,53 @@ mod tests {
         assert!(store.rules().iter().all(|r| r.id != keep), "replace gives new ids");
         store.import(&[], ImportMode::Replace, 9).unwrap();
         assert!(RuleStore::open(dir.path()).0.rules().is_empty());
+    }
+
+    /// docs/dictation.md §25: a rule an AI tool writes keeps its source through every change; one
+    /// that waits for approval is off until the user turns it on, which approves it; a merge by
+    /// name approves it the same way; an undo puts a rule or an entry back exactly, in its place.
+    #[test]
+    fn a_waiting_rule_keeps_its_source_and_turning_it_on_approves_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _) = RuleStore::open(dir.path());
+        let source = EntrySource::Mcp { client: "Claude Code".into() };
+        let manual = store.add(&rule("git push", RuleKind::Literal, "给他push", "git push"), 1).unwrap();
+        let waiting = store.add_from(&rule("飞书", RuleKind::Literal, "非书", "飞书"), source.clone(), true, 2).unwrap();
+        let r = &store.rules()[1];
+        assert_eq!((r.enabled, r.pending, &r.source), (false, true, &source), "created off and waiting");
+        assert_eq!(store.rules()[0].source, EntrySource::Manual);
+        let reopened = RuleStore::open(dir.path()).0;
+        assert_eq!(reopened.rules(), store.rules(), "persisted");
+        // Edited, still off: still waiting (as an AI tool keeps it).
+        store.update(waiting, &RuleDraft { enabled: false, ..rule("飞书", RuleKind::Literal, "非书", "飞书 Lark") }, 3).unwrap();
+        assert!(store.rules()[1].pending && store.rules()[1].source == source);
+        store.update_with(waiting, &rule("飞书", RuleKind::Literal, "非书", "飞书"), Some(true), 4).unwrap();
+        assert_eq!((store.rules()[1].enabled, store.rules()[1].pending), (false, true), "kept waiting: off whatever the draft says");
+        let before = store.rules()[1].clone();
+        store.update(waiting, &rule("飞书", RuleKind::Literal, "非书", "飞书"), 5).unwrap();
+        let r = &store.rules()[1];
+        assert_eq!((r.enabled, r.pending, &r.source, r.created_at_ms), (true, false, &source, 2), "turned on: approved, the source stays");
+        store.restore(before.clone()).unwrap();
+        assert_eq!(store.rules()[1], before, "put back exactly");
+        assert_eq!(store.rules()[0].id, manual, "in its place");
+        let gone = ReplacementRule { id: Uuid::new_v4(), ..before.clone() };
+        assert!(store.restore(gone).unwrap_err().to_string().contains("没有 id"));
+        let invalid = ReplacementRule { kind: RuleKind::Regex, pattern: "(".into(), ..before.clone() };
+        assert!(store.restore(invalid).is_err(), "a rule that does not validate is never put back");
+        store.import(&[rule("飞书", RuleKind::Literal, "非书", "飞书")], ImportMode::Merge, 6).unwrap();
+        assert_eq!(
+            (store.rules()[1].pending, store.rules()[1].enabled, &store.rules()[1].source),
+            (false, true, &source),
+            "an import that turns it on approves it"
+        );
+        let (mut dictionary, _) = DictionaryStore::open(dir.path());
+        let id = dictionary.add(&draft("Voltip", &["维他命"]), source.clone(), 1).unwrap();
+        let entry = dictionary.entries()[0].clone();
+        dictionary.update(id, &draft("Voltip", &["维他命", "沃提普"]), 2).unwrap();
+        dictionary.restore(entry.clone()).unwrap();
+        assert_eq!(dictionary.entries(), std::slice::from_ref(&entry));
+        assert!(dictionary.restore(DictionaryEntry { id: Uuid::new_v4(), ..entry.clone() }).is_err());
+        assert!(dictionary.restore(DictionaryEntry { term: " Voltip ".into(), ..entry }).unwrap_err().to_string().contains("规范形式"));
     }
 
     /// docs/dictation.md §23: the readers see what the stores saved and never touch the files; an
