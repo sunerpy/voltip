@@ -1,5 +1,7 @@
 import {
+  type BacktestDraft,
   type DictionaryEntry,
+  MAX_BACKTEST_EXAMPLES,
   MAX_RULES,
   MAX_TEXT_BYTES,
   MAX_TOML_BYTES,
@@ -8,12 +10,16 @@ import {
   type RuleDraft,
 } from "./schema";
 import {
+  type BacktestTake,
   RULES_TOML_VERSION,
   Vocabulary,
   VocabularyError,
+  backtestSnippets,
+  backtestVocabulary,
   checkDictionary,
   checkRules,
   compileRegex,
+  dictionaryForms,
   expandReplacement,
   exportRulesToml,
   isWordChar,
@@ -353,6 +359,150 @@ describe("preview (vocabulary_preview)", () => {
     );
     const grow = previewVocabulary([], [rule("g", "literal", "开", "开开")], "开".repeat(11_000));
     expect(grow.error).toBe("规则「g」让文本超过 64 KiB，本次不应用替换规则");
+  });
+});
+
+describe("backtest (vocabulary_backtest, docs/dictation.md section 16.9)", () => {
+  let takeSeq = 0;
+  function take(raw: string, text: string, atMs: number): BacktestTake {
+    takeSeq += 1;
+    return {
+      id: `00000000-0000-4000-a000-${String(takeSeq).padStart(12, "0")}`,
+      at_ms: atMs,
+      raw_text: raw,
+      text,
+    };
+  }
+  const dictDraft = (term: string, heard: string[], id: string | null = null): BacktestDraft => ({
+    kind: "dictionary",
+    id,
+    entry: { term, heard_as: heard, enabled: true },
+  });
+  const ruleDraft = (pattern: string, replacement: string): BacktestDraft => ({
+    kind: "rule",
+    rule: {
+      name: `${pattern} → ${replacement}`,
+      kind: "literal",
+      pattern,
+      replacement,
+      case_sensitive: false,
+      enabled: true,
+    },
+  });
+
+  it("a dictionary draft counts corrections and kept forms and leaves out the card's take", () => {
+    const here = take("用维他命测了一下", "用 Voltip 测了一下。", 9);
+    const history = [
+      here,
+      take("维他命的安装包发给我", "维他命的安装包发给我。", 8),
+      take("今天用维他命跑了一遍回归", "今天用 Voltip 跑了一遍回归。", 7),
+      take("与此无关", "与此无关。", 6),
+    ];
+    const out = backtestVocabulary([], history, dictDraft("Voltip", ["维他命"]), here.id);
+    expect([out.scanned, out.matched, out.kept]).toEqual([3, 2, 1]);
+    expect(out.examples).toHaveLength(2);
+    expect(out.examples[0]).toEqual({
+      history_id: history[1]?.id,
+      at_ms: 8,
+      before: "维他命的安装包发给我",
+      after: "Voltip的安装包发给我",
+      kept: true,
+    });
+    expect([out.examples[1]?.before, out.examples[1]?.after]).toEqual([
+      "今天用维他命跑了一遍回归",
+      "今天用Voltip跑了一遍回归",
+    ]);
+  });
+
+  it("the baseline is the current dictionary, and a draft for an entry stands in for it", () => {
+    const voltip = entry("Voltip", ["维他命"]);
+    const history = [take("维他命和沃尔提普", "Voltip 和沃尔提普。", 2)];
+    expect(backtestVocabulary([voltip], history, dictDraft("Voltip2", ["维他命"])).matched).toBe(0);
+    const replace = dictDraft("Voltip", ["维他命", "沃尔提普"], voltip.id);
+    const out = backtestVocabulary([voltip], history, replace);
+    expect(out.matched).toBe(1);
+    expect([out.examples[0]?.before, out.examples[0]?.after]).toEqual([
+      "Voltip和沃尔提普",
+      "Voltip和Voltip",
+    ]);
+    expect(
+      backtestVocabulary([voltip], history, dictDraft("Voltip", ["维他命"], voltip.id)).matched,
+    ).toBe(0);
+  });
+
+  it("a rule draft runs alone on the final texts and never counts kept forms", () => {
+    const history = [
+      take("发到非书群", "结果发到非书群了。", 3),
+      take("飞书已经对了", "飞书已经对了。", 2),
+      take("非书", "非书。", 1),
+    ];
+    const out = backtestVocabulary([], history, ruleDraft("非书", "飞书"));
+    expect([out.scanned, out.matched, out.kept]).toEqual([3, 2, 0]);
+    expect([out.examples[0]?.before, out.examples[0]?.after]).toEqual([
+      "结果发到非书群了。",
+      "结果发到飞书群了。",
+    ]);
+    expect(out.examples.every((e) => !e.kept)).toBe(true);
+  });
+
+  it("long texts are cut around the change and at most three examples come back, newest first", () => {
+    const raw = `${"前".repeat(30)}维他命${"后".repeat(30)}`;
+    const history = Array.from({ length: 5 }, (_, i) => take(raw, "无关。", 10 - i));
+    const out = backtestVocabulary([], history, dictDraft("Voltip", ["维他命"]));
+    expect([out.matched, out.examples.length]).toEqual([5, MAX_BACKTEST_EXAMPLES]);
+    expect(out.examples[0]?.before).toBe(`…${"前".repeat(12)}维他命${"后".repeat(12)}…`);
+    expect(out.examples[0]?.after).toBe(`…${"前".repeat(12)}Voltip${"后".repeat(12)}…`);
+    expect(out.examples.map((e) => e.at_ms)).toEqual([10, 9, 8]);
+  });
+
+  it("drafts are validated; a disabled or formless draft matches nothing", () => {
+    const history = [take("维他命", "维他命。", 1)];
+    expect(refusal(() => backtestVocabulary([], history, dictDraft("", ["维他命"])))).toBe(
+      "dictionary: 正确写法不能为空",
+    );
+    expect(refusal(() => backtestVocabulary([], history, ruleDraft("", "x")))).toMatch(/^rules: /);
+    const off: BacktestDraft = {
+      kind: "dictionary",
+      entry: { term: "Voltip", heard_as: ["维他命"], enabled: false },
+    };
+    expect(backtestVocabulary([], history, off).matched).toBe(0);
+    expect(backtestVocabulary([], history, dictDraft("Voltip", []))).toEqual({
+      scanned: 1,
+      matched: 0,
+      kept: 0,
+      examples: [],
+    });
+    expect(backtestVocabulary([], [], dictDraft("Voltip", ["维他命"]))).toEqual({
+      scanned: 0,
+      matched: 0,
+      kept: 0,
+      examples: [],
+    });
+  });
+
+  it("snippets handle the edges as the core does", () => {
+    expect(backtestSnippets("abc", "abc")).toEqual(["abc", "abc"]);
+    expect(backtestSnippets("ab", "abc")).toEqual(["ab", "abc"]);
+    expect(backtestSnippets("", "x")).toEqual(["", "x"]);
+    // Counted in characters: an astral character is one.
+    expect(backtestSnippets(`${"𠀀".repeat(14)}a`, `${"𠀀".repeat(14)}b`)).toEqual([
+      `…${"𠀀".repeat(12)}a`,
+      `…${"𠀀".repeat(12)}b`,
+    ]);
+  });
+
+  it("dictionaryForms finds the enabled entries' heard-as forms as the corrections would", () => {
+    const voltip = entry("Voltip", ["维他命", "vol tip"]);
+    const off = entry("Off", ["事实"], false);
+    const cat = entry("Cat", ["cat"]);
+    const text = "用维他命和VOL TIP测事实，concatenate 我用cat命令";
+    const forms = dictionaryForms([voltip, off, cat], text);
+    expect(forms.map((f) => [text.slice(f.start, f.end), f.entryId])).toEqual([
+      ["维他命", voltip.id],
+      ["VOL TIP", voltip.id],
+      ["cat", cat.id],
+    ]);
+    expect(dictionaryForms([off], text)).toEqual([]);
   });
 });
 

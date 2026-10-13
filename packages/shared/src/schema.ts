@@ -1055,6 +1055,54 @@ export type VocabularyPreview = z.infer<typeof vocabularyPreviewSchema>;
 /** The nil UUID: the id of a preview's unsaved draft rule in `VocabularyPreview.rules`. */
 export const NIL_ID = "00000000-0000-0000-0000-000000000000";
 
+/** `voltip_core::vocabulary::BACKTEST_LIMIT`: the recent takes a backtest reads unless asked. */
+export const BACKTEST_LIMIT = 500;
+/** `MAX_BACKTEST_LIMIT`: the most recent takes one backtest may read. */
+export const MAX_BACKTEST_LIMIT = 2000;
+/** `MAX_BACKTEST_EXAMPLES`: the examples a backtest returns at most. */
+export const MAX_BACKTEST_EXAMPLES = 3;
+/** `BACKTEST_SNIPPET_CHARS`: characters an example keeps on each side of the change. */
+export const BACKTEST_SNIPPET_CHARS = 12;
+
+/** What `vocabulary_backtest` tries (`voltip_core::vocabulary::BacktestDraft`, docs/dictation.md
+ *  §16.9): a dictionary entry or a rule as if it were saved — in place of the one with `id`, or
+ *  new when `id` is absent / `null`. */
+export const backtestDraftSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("dictionary"),
+    id: z.string().nullable().optional(),
+    entry: dictionaryDraftSchema,
+  }),
+  z.object({
+    kind: z.literal("rule"),
+    id: z.string().nullable().optional(),
+    rule: ruleDraftSchema,
+  }),
+]);
+export type BacktestDraft = z.infer<typeof backtestDraftSchema>;
+
+/** One take a backtest's draft would change (`BacktestExample`): the text around the first change
+ *  before and after (`…` marks a cut), and whether its final text kept a replaced form. */
+export const backtestExampleSchema = z.object({
+  history_id: z.string(),
+  at_ms: z.number().nonnegative(),
+  before: z.string(),
+  after: z.string(),
+  kept: z.boolean(),
+});
+export type BacktestExample = z.infer<typeof backtestExampleSchema>;
+
+/** What `vocabulary_backtest` answers (`Backtest`): the takes read (the card's own one not
+ *  counted), those the draft would change, of those (dictionary drafts) the ones whose final text
+ *  kept a replaced form, and up to `MAX_BACKTEST_EXAMPLES` examples, kept ones first. */
+export const vocabularyBacktestSchema = z.object({
+  scanned: z.number().int().nonnegative(),
+  matched: z.number().int().nonnegative(),
+  kept: z.number().int().nonnegative(),
+  examples: z.array(backtestExampleSchema),
+});
+export type VocabularyBacktest = z.infer<typeof vocabularyBacktestSchema>;
+
 /** What a voice edit worked on (`voltip_core::EditRecord`, docs/dictation.md §19.5): the
  *  instruction as sent to the LLM (after the dictionary corrections) and the selection it rewrote.
  *  The result is the entry's `text`, the instruction as recognised its `raw_text`. */
@@ -2276,6 +2324,15 @@ export type VocabularyPreviewArgs = {
   draft?: PreviewDraft | null;
 };
 
+/** `vocabulary_backtest` arguments (docs/dictation.md §16.9): the draft, the history entry the
+ *  card was opened on (left out of the count), and how many recent takes to read (1–
+ *  `MAX_BACKTEST_LIMIT`, `BACKTEST_LIMIT` when absent). */
+export type VocabularyBacktestArgs = {
+  draft: BacktestDraft;
+  historyId?: string | null;
+  limit?: number | null;
+};
+
 /** `scenes_update` arguments (docs/dictation.md §18.6). */
 export type ScenesUpdateArgs = { id: string; scene: SceneDraft };
 export type PresetsUpdateArgs = { id: string; preset: PresetDraft };
@@ -2465,6 +2522,9 @@ export interface CommandArgs {
   rules_export: undefined;
   /** Query: a text through the dictionary and the rules (`Backend.vocabularyPreview`). */
   vocabulary_preview: VocabularyPreviewArgs;
+  /** Query (§16.9): what an unsaved entry or rule would change in the recent takes
+   *  (`Backend.vocabularyBacktest`, the history page's quick-fix card). */
+  vocabulary_backtest: VocabularyBacktestArgs;
   /** Scenes (docs/dictation.md §18.6): append, replace, delete, reorder (every id in the new
    *  order). A draft wrong on its own rejects the call with the core's message; a clash with the
    *  list (duplicate name, cap, unknown id) comes back as an `error` event. */
@@ -2550,6 +2610,7 @@ export type QueryCommand =
   | "update_status"
   | "rules_export"
   | "vocabulary_preview"
+  | "vocabulary_backtest"
   | "recent_apps"
   | "history_query"
   | "history_entry"
@@ -2586,6 +2647,7 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "update_status",
   "rules_export",
   "vocabulary_preview",
+  "vocabulary_backtest",
   "recent_apps",
   "history_query",
   "history_entry",

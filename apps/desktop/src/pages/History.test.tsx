@@ -762,17 +762,26 @@ describe("History page", () => {
     } as unknown as Selection);
     await user.click(screen.getByRole("button", { name: "加入词典" }));
     selection.mockRestore();
+    // docs/dictation.md §16.9: the button opens the quick-fix card, whose save is 「加入词典」.
     const dialog = screen.getByRole("dialog", { name: "加入词典" });
     expect(within(dialog).getByLabelText("曾听成")).toHaveValue("谷歌IDR");
-    expect(within(dialog).getByRole("button", { name: "加入" })).toBeDisabled();
-    // The core refuses a draft that is wrong on its own: the dialog stays with its words.
-    await user.type(within(dialog).getByLabelText("正确写法"), "谷歌IDR");
-    await user.click(within(dialog).getByRole("button", { name: "加入" }));
-    expect(
-      await within(dialog).findByText("误识别写法「谷歌IDR」和正确写法相同"),
-    ).toBeInTheDocument();
-    await user.clear(within(dialog).getByLabelText("正确写法"));
-    await user.type(within(dialog).getByLabelText("正确写法"), "good idea{Enter}");
+    expect(within(dialog).getByRole("button", { name: "加入词典" })).toBeDisabled();
+    // The same spelling twice is refused before anything is sent (the core refuses it too).
+    const term = within(dialog).getByLabelText("正确写法");
+    await user.type(term, "谷歌IDR");
+    expect(within(dialog).getByText("曾听成写法与正确写法相同。")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "加入词典" })).toBeDisabled();
+    // The core refuses a draft that is wrong on its own: the card stays with its words.
+    await user.clear(term);
+    await user.type(term, "good idea");
+    const refuse = vi
+      .spyOn(backend, "invoke")
+      .mockRejectedValueOnce(new Error("dictionary: 误识别写法不能包含换行或控制字符"));
+    await user.click(within(dialog).getByRole("button", { name: "加入词典" }));
+    expect(await within(dialog).findByText("误识别写法不能包含换行或控制字符")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("正确写法")).toHaveValue("good idea");
+    refuse.mockRestore();
+    await user.type(term, "{Enter}");
     await waitFor(() => {
       expect(backend.peek().dictionary.at(-1)).toMatchObject({
         term: "good idea",

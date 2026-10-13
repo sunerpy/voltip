@@ -49,6 +49,8 @@ const COMMANDS_FILE: &str = "commands.json";
 const BUILTIN_SCENES_FILE: &str = "scenes-builtin.json";
 /// The answers of the history queries (docs/dictation.md §4.4).
 const HISTORY_QUERIES_FILE: &str = "history-queries.json";
+/// The drafts and answers of `vocabulary_backtest` (docs/dictation.md §16.9).
+const VOCABULARY_BACKTEST_FILE: &str = "vocabulary-backtest.json";
 
 const DESKTOP_KEY: PublicKey = PublicKey([0x11; 32]);
 const PHONE_KEY: PublicKey = PublicKey([0x22; 32]);
@@ -2401,6 +2403,54 @@ fn history_queries_fixture_matches_serde_output() {
         "mirror_profile": mirror_profile(),
     });
     check_fixture(HISTORY_QUERIES_FILE, &pretty(&answers));
+}
+
+/// docs/dictation.md §16.9: the drafts `vocabulary_backtest` takes (a new dictionary entry, one
+/// standing in for an existing entry, a rule) and its answers, in the shapes
+/// `packages/shared/src/schema.ts` parses.
+#[test]
+fn vocabulary_backtest_fixture_matches_serde_output() {
+    use voltip_core::vocabulary::{Backtest, BacktestDraft, BacktestExample};
+    let entry = DictionaryDraft { term: "Voltip".into(), heard_as: vec!["维他命".into()], enabled: true };
+    let rule = RuleDraft {
+        name: "非书 → 飞书".into(),
+        kind: RuleKind::Literal,
+        pattern: "非书".into(),
+        replacement: "飞书".into(),
+        case_sensitive: false,
+        enabled: true,
+    };
+    let answers = json!({
+        "dictionary_draft": BacktestDraft::Dictionary { id: None, entry: entry.clone() },
+        "merge_draft": BacktestDraft::Dictionary {
+            id: Some(uuid(DICT_ID)),
+            entry: DictionaryDraft { heard_as: vec!["沃尔提普".into(), "维他命".into()], ..entry },
+        },
+        "rule_draft": BacktestDraft::Rule { id: None, rule },
+        "answer": Backtest {
+            scanned: 499,
+            matched: 3,
+            kept: 1,
+            examples: vec![
+                BacktestExample {
+                    history_id: uuid(HISTORY_ID),
+                    at_ms: AT_MS,
+                    before: "维他命的安装包发给我".into(),
+                    after: "Voltip的安装包发给我".into(),
+                    kept: true,
+                },
+                BacktestExample {
+                    history_id: uuid(HISTORY_ID_2),
+                    at_ms: AT_MS - 86_400_000,
+                    before: "…今天用维他命跑了一遍回归".into(),
+                    after: "…今天用Voltip跑了一遍回归".into(),
+                    kept: false,
+                },
+            ],
+        },
+        "nothing": Backtest::default(),
+    });
+    check_fixture(VOCABULARY_BACKTEST_FILE, &pretty(&answers));
 }
 
 /// Regression (public release, 2026-09-27): the build's own service and relay never reach the

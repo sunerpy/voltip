@@ -15,6 +15,7 @@ import {
   TAKE_KINDS,
   type UiEventType,
   activationSchema,
+  backtestDraftSchema,
   builtinSceneSchema,
   dictionaryDraftSchema,
   engineSettingsSchema,
@@ -43,6 +44,7 @@ import {
   themeIdSchema,
   uiEventSchema,
   uiStateSchema,
+  vocabularyBacktestSchema,
 } from "./schema";
 import { translate } from "./i18n";
 import { PROVIDER_CATALOGUE, resolveEngineStatus } from "./providers";
@@ -1361,6 +1363,58 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
       },
       { command: "mirror_profile", args: { desktop } },
     ]);
+  });
+
+  it("vocabulary_backtest (section 16.9): the drafts and answers parse and TauriBackend sends the shell's arguments", async () => {
+    const fixture = z
+      .record(z.string(), z.unknown())
+      .parse(loadFixture("vocabulary-backtest.json"));
+    const dictionary = backtestDraftSchema.parse(fixture.dictionary_draft);
+    const merge = backtestDraftSchema.parse(fixture.merge_draft);
+    const rule = backtestDraftSchema.parse(fixture.rule_draft);
+    expect(dictionary).toEqual({
+      kind: "dictionary",
+      id: null,
+      entry: { term: "Voltip", heard_as: ["维他命"], enabled: true },
+    });
+    expect(merge.kind === "dictionary" && merge.id).toBe("3b241101-e2bb-4255-8caf-4136c566a962");
+    expect(rule.kind === "rule" && rule.rule.pattern).toBe("非书");
+    const answer = vocabularyBacktestSchema.parse(fixture.answer);
+    expect([answer.scanned, answer.matched, answer.kept]).toEqual([499, 3, 1]);
+    expect(answer.examples.map((e) => e.kept)).toEqual([true, false]);
+    expect(vocabularyBacktestSchema.parse(fixture.nothing).examples).toEqual([]);
+    expect(
+      vocabularyBacktestSchema.safeParse({ ...answer, examples: [{ before: "x" }] }).success,
+    ).toBe(false);
+    expect(backtestDraftSchema.safeParse({ kind: "scene", id: null }).success).toBe(false);
+    const calls: { command: string; args: unknown }[] = [];
+    const backend = new TauriBackend({
+      invoke: (command, args) => {
+        calls.push({ command, args });
+        return Promise.resolve(command === "vocabulary_backtest" ? fixture.answer : null);
+      },
+      listen: () => Promise.resolve(() => undefined),
+    });
+    expect(await backend.vocabularyBacktest({ draft: dictionary })).toEqual(answer);
+    await backend.vocabularyBacktest({
+      draft: rule,
+      historyId: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      limit: 200,
+    });
+    expect(calls).toStrictEqual([
+      { command: "vocabulary_backtest", args: { draft: dictionary, historyId: null, limit: null } },
+      {
+        command: "vocabulary_backtest",
+        args: { draft: rule, historyId: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d", limit: 200 },
+      },
+    ]);
+    const broken = new TauriBackend({
+      invoke: () => Promise.resolve({ scanned: -1 }),
+      listen: () => Promise.resolve(() => undefined),
+    });
+    await expect(broken.vocabularyBacktest({ draft: dictionary })).rejects.toThrow(
+      /invalid|expected/i,
+    );
   });
 
   it("the built-in scenes' names in both dictionaries are the ones the core's search finds", () => {

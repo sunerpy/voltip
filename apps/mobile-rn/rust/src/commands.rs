@@ -17,7 +17,7 @@ use crate::shell::Shell;
 
 /// Every command the app may invoke: the Tauri phone shell's `COMMANDS`, in its order (a test reads
 /// that list and compares).
-pub const COMMANDS: [&str; 112] = [
+pub const COMMANDS: [&str; 113] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -101,6 +101,7 @@ pub const COMMANDS: [&str; 112] = [
     "rules_import",
     "rules_export",
     "vocabulary_preview",
+    "vocabulary_backtest",
     "scenes_add",
     "scenes_update",
     "scenes_remove",
@@ -246,6 +247,13 @@ pub async fn run(shell: &Shell, command: &str, args: Value) -> Result<Value, Str
             let text: String = arg(command, &args, "text")?;
             let draft: Option<voltip_core::PreviewDraft> = arg(command, &args, "draft")?;
             to_json(&bridge.vocabulary_preview(&text, draft.as_ref()).map_err(String::from)?)
+        }
+        // docs/dictation.md §16.9: the correction sheet's effect on the phone's own recent takes.
+        "vocabulary_backtest" => {
+            let draft: voltip_core::vocabulary::BacktestDraft = arg(command, &args, "draft")?;
+            let history_id: Option<uuid::Uuid> = arg(command, &args, "historyId")?;
+            let limit: Option<usize> = arg(command, &args, "limit")?;
+            read(shell, move |b| b.vocabulary_backtest(&draft, history_id, limit)).await
         }
         "scenes_builtin" => {
             #[derive(Serialize)]

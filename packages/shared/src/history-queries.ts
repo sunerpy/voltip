@@ -95,6 +95,12 @@ function newestFirst(entries: readonly HistoryEntry[]): HistoryEntry[] {
   return indexed.map(({ entry }) => entry);
 }
 
+/** `HistoryReader::recent_texts` (docs/dictation.md §16.9): the newest `limit` recognised takes,
+ *  newest first — dictations only, none of the texts a phone sent. */
+export function recentTextsOf(entries: readonly HistoryEntry[], limit: number): HistoryEntry[] {
+  return newestFirst(entries).filter(countsForStats).slice(0, limit);
+}
+
 /** `history_query`. Throws the core's message for a `limit` outside 1–`HISTORY_QUERY_LIMIT`. */
 export function historyPageOf(
   entries: readonly HistoryEntry[],

@@ -43,7 +43,11 @@ import {
   type RefineFailure,
   type ReplacementRule,
   type RuleDraft,
+  type VocabularyBacktest,
+  type VocabularyBacktestArgs,
   type VocabularyPreview,
+  BACKTEST_LIMIT,
+  MAX_BACKTEST_LIMIT,
   type EngineSettings,
   type EngineStatus,
   type HistoryEntry,
@@ -172,9 +176,10 @@ import {
   recentApps as recentAppsOf,
   validateSceneDraft,
 } from "./scenes";
-import { historyHitsOf, historyPageOf, historyStatsOf } from "./history-queries";
+import { historyHitsOf, historyPageOf, historyStatsOf, recentTextsOf } from "./history-queries";
 import {
   Vocabulary,
+  backtestVocabulary,
   checkDictionary,
   checkRules,
   exportRulesToml,
@@ -1164,6 +1169,19 @@ export class MockBackend implements Backend {
   async vocabularyPreview(text: string, draft?: PreviewDraft): Promise<VocabularyPreview> {
     await Promise.resolve();
     return previewVocabulary(this.state.dictionary, this.state.rules, text, draft);
+  }
+
+  /** `vocabulary_backtest` (docs/dictation.md §16.9) with the core's semantics over the newest
+   *  recognised takes in memory: dictations only, no text a phone sent (`recent_texts`). */
+  async vocabularyBacktest(args: VocabularyBacktestArgs): Promise<VocabularyBacktest> {
+    await Promise.resolve();
+    const limit = args.limit ?? BACKTEST_LIMIT;
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_BACKTEST_LIMIT) {
+      throw new Error(`vocabulary_backtest: limit 1–${MAX_BACKTEST_LIMIT}`);
+    }
+    const exclude = args.historyId == null ? undefined : uuidArg(args.historyId);
+    const takes = recentTextsOf(this.history, limit);
+    return backtestVocabulary(this.state.dictionary, takes, args.draft, exclude);
   }
 
   /** `rules_export`: the rules as the core's TOML text. */
