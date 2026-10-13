@@ -336,7 +336,9 @@ describe("Dictionary page · entries an AI tool wrote (docs/dictation.md §25)",
     backend.simulateMcpEntry("Codex", { term: "Paseo", heard_as: ["帕赛欧"], enabled: true });
     renderApp({ path: "/dictionary", backend, systemLanguage: "en-US" });
     const table = await screen.findByRole("table", { name: "Entries" });
-    expect(within(table).getByText("External tool · Codex")).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "External tools" })).toBeInTheDocument();
+    // Regression (make verify 2026-10-13): the table can render before the core's lists arrive,
+    // so the entry and its filter are waited for, not read at once.
+    expect(await within(table).findByText("External tool · Codex")).toBeInTheDocument();
+    expect(await screen.findByRole("radio", { name: "External tools" })).toBeInTheDocument();
   });
 });
