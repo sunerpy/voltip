@@ -114,3 +114,53 @@ impl ServerHandler for VoltipHandler {
         }
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use async_trait::async_trait;
+    use serde_json::{Map, Value};
+
+    use super::*;
+
+    /// The core's tools and prompt, and no calls.
+    struct Listed;
+
+    #[async_trait]
+    impl McpService for Listed {
+        fn tools(&self) -> Vec<ToolSpec> {
+            voltip_core::mcp::tools::specs()
+        }
+
+        fn prompts(&self) -> Vec<PromptSpec> {
+            voltip_core::mcp::tools::prompts()
+        }
+
+        fn prompt(&self, name: &str, arguments: &Map<String, Value>) -> Result<String, ToolError> {
+            voltip_core::mcp::tools::prompt_text(name, arguments)
+        }
+
+        fn connected(&self, _client: &str) {}
+
+        async fn call(&self, _client: &str, tool: &str, _arguments: Map<String, Value>) -> Result<Value, ToolError> {
+            Err(ToolError::Unknown(tool.to_owned()))
+        }
+    }
+
+    #[test]
+    fn a_tool_is_found_by_name_with_its_hints_and_a_schema_that_is_no_object_reads_as_empty() {
+        let handler = VoltipHandler::new(Arc::new(Listed));
+        assert_eq!(format!("{handler:?}"), "VoltipHandler", "nothing of the service in the logs");
+        let found = handler.get_tool("history_search").expect("a tool of the core");
+        let hints = found.annotations.expect("hints");
+        assert_eq!(
+            (hints.read_only_hint, hints.destructive_hint, hints.idempotent_hint, hints.open_world_hint),
+            (Some(true), Some(false), Some(true), Some(false))
+        );
+        assert_eq!(found.title.as_deref(), Some(hints.title.as_deref().unwrap_or_default()));
+        assert!(handler.get_tool("dictionary_delete").is_none());
+        let mut spec = voltip_core::mcp::tools::specs().remove(0);
+        spec.input_schema = Value::Null;
+        assert!(tool(&spec).input_schema.is_empty());
+    }
+}

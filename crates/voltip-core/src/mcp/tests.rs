@@ -513,3 +513,105 @@ fn the_setup_commands_carry_the_address_and_the_token() {
     assert!(setup_command(SetupClient::Codex, "http://127.0.0.1:1/mcp", "tok", true).starts_with("$env:VOLTIP_MCP_TOKEN = \"tok\"\n"));
     assert_eq!(serde_json::to_value(SetupClient::ClaudeCode).unwrap(), "claude_code");
 }
+
+/// A history that cannot be read (a file that is no database) is said plainly, without the
+/// database's words or its path; the lists still answer, without hits.
+#[test]
+fn reads_say_plainly_when_the_history_cannot_be_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.sqlite3");
+    std::fs::write(&path, "this is no database, only text long enough to be read as a header of one".repeat(4)).unwrap();
+    let reader = crate::history::HistoryReader::at(&path);
+    let lists = reads::Lists { dictionary: vec![entry("Voltip", &["沃提普"])], rules: vec![rule("飞书", EntrySource::Manual, false)] };
+    let full = settings(McpRead::Full, McpWrite::Dictionary);
+    let draft = crate::vocabulary::BacktestDraft::Dictionary {
+        id: None,
+        entry: DictionaryDraft { term: "Voltip".into(), heard_as: vec!["沃提普".into()], enabled: true },
+    };
+    for request in [
+        McpRequest::Backtest { draft, exclude: None, limit: 10 },
+        McpRequest::Candidates { since_ms: None, limit: 10 },
+        McpRequest::HistorySearch { query: None, since_ms: None, until_ms: None, app: None, cursor: None, limit: 10 },
+        McpRequest::HistoryGet { id: Uuid::new_v4() },
+    ] {
+        match reads::run(&request, &full, &lists, &reader, 1_000) {
+            Err(ToolError::Failed(message)) => {
+                assert!(message.starts_with("历史记录暂时无法读取，请稍后重试。"), "{message}");
+                assert!(!message.contains(path.to_str().unwrap()) && !message.contains("database"), "{message}");
+            }
+            other => panic!("{request:?}: {other:?}"),
+        }
+    }
+    let (listed, note) = reads::run(&McpRequest::DictionaryList { offset: 0 }, &full, &lists, &reader, 1_000).unwrap();
+    assert_eq!((listed["entries"][0]["term"].clone(), listed["entries"][0]["hits"].clone(), note.count), (json!("Voltip"), json!(0), Some(1)));
+    let (listed, _) = reads::run(&McpRequest::RulesList { offset: 0 }, &full, &lists, &reader, 1_000).unwrap();
+    assert_eq!((listed["rules"][0]["name"].clone(), listed["rules"][0]["hits"].clone()), (json!("飞书"), json!(0)));
+}
+
+/// A rule's backtest is noted under the rule's name; a write never runs as a read.
+#[test]
+fn a_rule_backtest_is_noted_by_its_name_and_a_write_is_never_run_as_a_read() {
+    let dir = tempfile::tempdir().unwrap();
+    // No database yet: nothing to scan.
+    let reader = crate::history::HistoryReader::new(dir.path());
+    let lists = reads::Lists::default();
+    let rule_draft =
+        RuleDraft {
+            name: " 飞书 ".into(), kind: RuleKind::Literal, pattern: "非书".into(), replacement: "飞书".into(), case_sensitive: true, enabled: true
+        };
+    let request = McpRequest::Backtest { draft: crate::vocabulary::BacktestDraft::Rule { id: None, rule: rule_draft.clone() }, exclude: None, limit: 10 };
+    let (value, note) = reads::run(&request, &settings(McpRead::Rules, McpWrite::ReadOnly), &lists, &reader, 1).unwrap();
+    assert_eq!((note.action, note.subject.as_deref(), note.count), (McpAction::Backtest, Some("飞书"), Some(0)));
+    assert_eq!((value["scanned"].clone(), value["matched"].clone()), (json!(0), json!(0)));
+    assert!(value.get("examples_withheld").is_none(), "no example to withhold");
+    let write = McpRequest::RulesAdd { draft: rule_draft };
+    assert_eq!(reads::run(&write, &settings(McpRead::Full, McpWrite::EnableRules), &lists, &reader, 1).unwrap_err(), ToolError::Failed("not a read".into()));
+}
+
+/// A page of the full history that the size limit cut short goes on after its last record, until
+/// every entry was shown once.
+#[test]
+fn a_history_page_cut_by_the_size_limit_goes_on_after_its_last_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let big = "长".repeat(40_000);
+    let mut store = crate::history::HistoryStore::open(dir.path());
+    let mut ids = Vec::new();
+    for at_ms in [1_000, 2_000, 3_000] {
+        let mut take = history_entry(&big, &big);
+        take.at_ms = at_ms;
+        ids.push(take.id.to_string());
+        store.push(take, 100).unwrap();
+    }
+    let reader = crate::history::HistoryReader::new(dir.path());
+    let full = McpSettings { history_range: HistoryRange::All, ..settings(McpRead::Full, McpWrite::Dictionary) };
+    let mut cursor = None;
+    let mut seen = Vec::new();
+    for _ in 0..ids.len() + 1 {
+        let request = McpRequest::HistorySearch { query: None, since_ms: None, until_ms: None, app: None, cursor, limit: 50 };
+        let (page, note) = reads::run(&request, &full, &reads::Lists::default(), &reader, 10_000).unwrap();
+        let entries = page["entries"].as_array().unwrap();
+        assert!(!entries.is_empty() && json_len(&page) <= MAX_RESULT_BYTES + 1024, "{} bytes", json_len(&page));
+        assert_eq!(note.count, Some(u32::try_from(entries.len()).unwrap()));
+        seen.extend(entries.iter().map(|e| e["id"].as_str().unwrap().to_owned()));
+        match page["next_cursor"].as_str() {
+            Some(text) => {
+                let (at_ms, row) = text.split_once(':').unwrap();
+                cursor = Some(HistoryCursor { at_ms: at_ms.parse().unwrap(), row: row.parse().unwrap() });
+            }
+            None => break,
+        }
+    }
+    ids.reverse();
+    assert_eq!(seen, ids, "newest first, each entry once");
+}
+
+/// A call that comes when the core has stopped is answered: the service is off.
+#[tokio::test]
+async fn a_call_after_the_core_stopped_says_the_service_is_off() {
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    drop(rx);
+    let service = service::CoreMcp::new(tx);
+    service.connected("Claude Code");
+    let refused = service.call("Claude Code", "rules_list", Map::new()).await.unwrap_err();
+    assert_eq!(refused, ToolError::Unavailable(access::bilingual("Voltip 的 AI 工具接入已关闭。", "Voltip's AI tool access is off.")));
+}

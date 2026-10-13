@@ -412,3 +412,54 @@ async fn the_logs_hold_no_text() {
     assert!(!logs.contains(MARK), "a text reached the log:\n{logs}");
     assert!(!logs.contains(&node.token), "the token reached the log");
 }
+
+/// A prompt that is not there, or a period it cannot take, is refused with the reason.
+#[tokio::test]
+async fn a_prompt_that_is_not_there_or_a_bad_period_is_refused_with_the_reason() {
+    let node = start().await;
+    let client = connect(&node, "codex").await.unwrap();
+    let unknown = client.get_prompt(GetPromptRequestParams::new("nope")).await.unwrap_err();
+    assert!(unknown.to_string().contains("no prompt named nope"), "{unknown}");
+    let bad = client.get_prompt(GetPromptRequestParams::new("review_misrecognitions").with_arguments(args(json!({ "days": "0" })))).await.unwrap_err();
+    assert!(bad.to_string().contains("days must be a whole number of days"), "{bad}");
+    client.cancel().await.unwrap();
+}
+
+/// A port another program holds is reported once the retry for a port this app just let go of
+/// is over; the reason names the address.
+#[tokio::test]
+async fn a_port_another_program_holds_is_reported_after_the_retry() {
+    let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = held.local_addr().unwrap();
+    let config = voltip_core::mcp::McpListenConfig { addr, token: "t".repeat(43), max_sessions: 4, calls_per_second: 10, max_request_bytes: 256 * 1024 };
+    let service: Arc<dyn voltip_core::mcp::McpService> = Arc::new(Unused);
+    let started = std::time::Instant::now();
+    let refused = voltip_core::mcp::McpHost::start(&HttpHost, config, service).await.err().expect("the port is held");
+    assert!(refused.starts_with(&format!("无法监听 {addr}：")), "{refused}");
+    assert!(started.elapsed() >= Duration::from_secs(1), "it was tried again for a while first");
+    drop(held);
+}
+
+/// A service no call reaches (the listener above never starts).
+struct Unused;
+
+#[async_trait::async_trait]
+impl voltip_core::mcp::McpService for Unused {
+    fn tools(&self) -> Vec<voltip_core::mcp::ToolSpec> {
+        Vec::new()
+    }
+
+    fn prompts(&self) -> Vec<voltip_core::mcp::PromptSpec> {
+        Vec::new()
+    }
+
+    fn prompt(&self, name: &str, _arguments: &Map<String, Value>) -> Result<String, voltip_core::mcp::ToolError> {
+        Err(voltip_core::mcp::ToolError::Unknown(name.to_owned()))
+    }
+
+    fn connected(&self, _client: &str) {}
+
+    async fn call(&self, _client: &str, tool: &str, _arguments: Map<String, Value>) -> Result<Value, voltip_core::mcp::ToolError> {
+        Err(voltip_core::mcp::ToolError::Unknown(tool.to_owned()))
+    }
+}

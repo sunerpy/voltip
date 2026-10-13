@@ -567,3 +567,42 @@ async fn the_activity_survives_a_restart_with_its_undo() {
     node.handle.send(CoreCommand::McpUndo(status.activity[0].id)).await.unwrap();
     assert!(dictionary(&mut node).await.is_empty(), "the undo removed the entry");
 }
+
+/// A write that changes nothing is answered and noted nowhere; undoing a change to a waiting rule
+/// puts the rule back as it was, still waiting; an undo never brings back what the user deleted.
+#[tokio::test]
+async fn unchanged_writes_note_nothing_and_an_undo_puts_back_a_rule_or_says_it_was_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut node, _, service) = running(dir.path(), on(48210)).await;
+    let entry = call(&service, "Claude Code", "dictionary_add", json!({ "term": "飞书", "heard_as": ["非书"] })).await.unwrap();
+    let entry_id: Uuid = entry["id"].as_str().unwrap().parse().unwrap();
+    let rule = call(&service, "Claude Code", "rules_add", json!({ "name": "推送", "pattern": "推送", "replacement": "push" })).await.unwrap();
+    let rule_id: Uuid = rule["id"].as_str().unwrap().parse().unwrap();
+    activity(&mut node, 2).await;
+    // Nothing to change: the answer says so, and nothing is noted.
+    let same = call(&service, "Claude Code", "dictionary_update", json!({ "id": entry_id, "term": "飞书" })).await.unwrap();
+    assert_eq!(same["result"], "unchanged");
+    assert!(same.get("activity_id").is_none());
+    let same = call(&service, "Claude Code", "rules_update", json!({ "id": rule_id, "replacement": "push" })).await.unwrap();
+    assert_eq!((same["result"].clone(), same["pending"].clone()), (json!("unchanged"), json!(true)));
+    assert!(same.get("activity_id").is_none());
+    // A change to the waiting rule, undone: the rule as it was, still waiting.
+    let changed = call(&service, "Claude Code", "rules_update", json!({ "id": rule_id, "replacement": "git push" })).await.unwrap();
+    assert_eq!(changed["rule"]["replacement"], "git push");
+    let status = activity(&mut node, 3).await;
+    assert_eq!(status.activity[0].action, McpAction::UpdateRule);
+    node.handle.send(CoreCommand::McpUndo(status.activity[0].id)).await.unwrap();
+    let list = wait(&mut node, |e| if let CoreEvent::Rules(r) = e { r.first().filter(|r| r.replacement == "push").map(|_| r.clone()) } else { None }).await;
+    assert_eq!((list[0].id, list[0].pending, list[0].enabled), (rule_id, true, false), "still waiting");
+    // What the user deleted since stays deleted.
+    let add_rule = status.activity.iter().find(|a| a.action == McpAction::AddRule).unwrap().id;
+    let add_entry = status.activity.iter().find(|a| a.action == McpAction::AddEntry).unwrap().id;
+    node.handle.send(CoreCommand::RuleRemove(rule_id)).await.unwrap();
+    rules(&mut node).await;
+    node.handle.send(CoreCommand::McpUndo(add_rule)).await.unwrap();
+    assert!(error(&mut node).await.contains("这条规则已经删除"));
+    node.handle.send(CoreCommand::DictionaryRemove(entry_id)).await.unwrap();
+    dictionary(&mut node).await;
+    node.handle.send(CoreCommand::McpUndo(add_entry)).await.unwrap();
+    assert!(error(&mut node).await.contains("这个词条已经删除"));
+}
