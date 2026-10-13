@@ -52,6 +52,10 @@ describe("BackendProvider", () => {
       audioDevices: inner.audioDevices.bind(inner),
       audioOutputs: inner.audioOutputs.bind(inner),
       historyExport: inner.historyExport.bind(inner),
+      backupExport: inner.backupExport.bind(inner),
+      backupOpen: inner.backupOpen.bind(inner),
+      backupImport: inner.backupImport.bind(inner),
+      backupDiscard: inner.backupDiscard.bind(inner),
       meter: inner.meter.bind(inner),
       updateStatus: inner.updateStatus.bind(inner),
       vocabularyPreview: inner.vocabularyPreview.bind(inner),
@@ -115,6 +119,10 @@ describe("BackendProvider", () => {
       audioOutputs: () =>
         Promise.resolve({ system_audio: { state: "unsupported" as const }, devices: [] }),
       historyExport: () => Promise.resolve({ kind: "cancelled" as const }),
+      backupExport: () => Promise.resolve({ kind: "cancelled" as const }),
+      backupOpen: () => Promise.resolve({ kind: "cancelled" as const }),
+      backupImport: () => Promise.resolve({ kind: "failed" as const, code: "expired" as const }),
+      backupDiscard: () => Promise.resolve(),
       meter: () => Promise.resolve(() => undefined),
       updateStatus: () => Promise.resolve({ state: "idle" as const }),
       vocabularyPreview: () =>

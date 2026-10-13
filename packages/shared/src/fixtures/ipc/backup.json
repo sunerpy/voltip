@@ -1,0 +1,206 @@
+{
+  "export": [
+    {
+      "bytes": 10951433,
+      "counts": {
+        "dictionary": 12,
+        "history": 20000,
+        "presets": 2,
+        "rules": 3,
+        "scenes": 9
+      },
+      "kind": "saved",
+      "path": "C:\\Users\\me\\Documents\\Voltip 备份 2026-10-13.voltip-backup"
+    },
+    {
+      "kind": "cancelled"
+    },
+    {
+      "code": "write",
+      "detail": "No space left on device (os error 28)",
+      "kind": "failed"
+    },
+    {
+      "code": "history",
+      "detail": "database is locked",
+      "kind": "failed"
+    },
+    {
+      "code": "unsupported",
+      "detail": "",
+      "kind": "failed"
+    }
+  ],
+  "import": [
+    {
+      "kind": "done",
+      "report": {
+        "mode": "merge",
+        "parts": [
+          {
+            "in_file": 2,
+            "part": "presets",
+            "removed": 0,
+            "restored": 1,
+            "skipped": {
+              "conflict": 0,
+              "duplicate": 1,
+              "invalid": 0,
+              "limit": 0,
+              "older": 0
+            }
+          },
+          {
+            "in_file": 9,
+            "part": "scenes",
+            "removed": 0,
+            "restored": 2,
+            "skipped": {
+              "conflict": 0,
+              "duplicate": 7,
+              "invalid": 0,
+              "limit": 0,
+              "older": 0
+            }
+          },
+          {
+            "in_file": 12,
+            "part": "dictionary",
+            "removed": 0,
+            "restored": 9,
+            "skipped": {
+              "conflict": 1,
+              "duplicate": 1,
+              "invalid": 1,
+              "limit": 0,
+              "older": 0
+            }
+          },
+          {
+            "error": "write",
+            "in_file": 3,
+            "part": "rules",
+            "removed": 0,
+            "restored": 0,
+            "skipped": {
+              "conflict": 0,
+              "duplicate": 0,
+              "invalid": 0,
+              "limit": 0,
+              "older": 0
+            }
+          },
+          {
+            "in_file": 20000,
+            "part": "history",
+            "removed": 5,
+            "restored": 19000,
+            "skipped": {
+              "conflict": 0,
+              "duplicate": 10,
+              "invalid": 0,
+              "limit": 0,
+              "older": 990
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "done",
+      "report": {
+        "mode": "replace",
+        "parts": [
+          {
+            "error": "unavailable",
+            "in_file": 3,
+            "part": "history",
+            "removed": 0,
+            "restored": 0,
+            "skipped": {
+              "conflict": 0,
+              "duplicate": 0,
+              "invalid": 0,
+              "limit": 0,
+              "older": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "code": "expired",
+      "kind": "failed"
+    },
+    {
+      "code": "unavailable",
+      "kind": "failed"
+    },
+    {
+      "code": "unsupported",
+      "kind": "failed"
+    }
+  ],
+  "open": [
+    {
+      "kind": "preview",
+      "manifest": {
+        "app_version": "0.1.4",
+        "counts": {
+          "dictionary": 12,
+          "history": 20000,
+          "presets": 2,
+          "rules": 3,
+          "scenes": 9
+        },
+        "created_at_ms": 1758700600000,
+        "device": "Studio",
+        "format": "voltip-backup",
+        "platform": "windows",
+        "version": 1
+      },
+      "token": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+    },
+    {
+      "kind": "cancelled"
+    },
+    {
+      "code": "unreadable",
+      "detail": "Permission denied (os error 13)",
+      "kind": "failed"
+    },
+    {
+      "code": "not_backup",
+      "detail": "",
+      "kind": "failed"
+    },
+    {
+      "code": "damaged",
+      "detail": "EOF while parsing a list at line 8 column 0",
+      "kind": "failed"
+    },
+    {
+      "code": "too_new",
+      "detail": "",
+      "kind": "failed",
+      "version": 2
+    },
+    {
+      "code": "too_large",
+      "detail": "",
+      "kind": "failed"
+    },
+    {
+      "code": "unsupported",
+      "detail": "",
+      "kind": "failed"
+    }
+  ],
+  "parts": {
+    "dictionary": true,
+    "history": true,
+    "presets": false,
+    "rules": false,
+    "scenes": true
+  }
+}

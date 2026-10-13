@@ -16,6 +16,7 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
+use voltip_core::backup::{self, BackupError, BackupParts, ExportInput, ExportSummary, ImportFailure, ImportOutcome, ImportReply, OpenOutcome};
 use voltip_core::dictation::LevelFrame;
 use voltip_core::paste::{PasteFailure, PasteOutcome, PasteTarget};
 use voltip_core::presets::{MAX_PRESET_TRY_CHARS, PresetDraft, PresetId, PresetTrial, clean_preset_prompt, validate_preset_draft};
@@ -691,7 +692,15 @@ pub struct Bridge {
     /// A new scene must name an application: everywhere but on a phone, where the user picks a
     /// take's scene (`CoreConfig::manual_scenes`, user decision 2026-10-01).
     scenes_need_apps: bool,
+    /// The app data directory: where a backup's history comes from (docs/dictation.md §4.6).
+    data_dir: std::path::PathBuf,
+    /// The backup `backup_open` read, under its preview's token, until `backup_import` takes it,
+    /// `backup_discard` drops it or another file is opened.
+    opened_backup: Arc<Mutex<Option<OpenedBackup>>>,
 }
+
+/// A backup `backup_open` read (docs/dictation.md §4.6) and the token its preview names it by.
+type OpenedBackup = (Uuid, Arc<voltip_core::backup::Backup>);
 
 impl std::fmt::Debug for Bridge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -730,8 +739,19 @@ impl Bridge {
         let history = Arc::new(HistoryReader::new(&config.data_dir));
         let mirrors = config.mirror_files.clone();
         let scenes_need_apps = !config.manual_scenes;
+        let data_dir = config.data_dir.clone();
         let (handle, core_events) = AppCore::start_with(config, secret_store, ports)?;
-        let bridge = Self { handle, state: state.clone(), events: tx.clone(), paste_ids: Arc::new(AtomicU64::new(0)), history, mirrors, scenes_need_apps };
+        let bridge = Self {
+            handle,
+            state: state.clone(),
+            events: tx.clone(),
+            paste_ids: Arc::new(AtomicU64::new(0)),
+            history,
+            mirrors,
+            scenes_need_apps,
+            data_dir,
+            opened_backup: Arc::default(),
+        };
         tokio::spawn(pump(core_events, state, tx));
         Ok((bridge, first))
     }
@@ -878,6 +898,82 @@ impl Bridge {
     /// `mirror_profile`: the computer's settings as the copy holds them.
     pub fn mirror_profile(&self, desktop: &str) -> Result<Option<voltip_core::sync::Profile>, BridgeError> {
         Ok(self.mirrors.read(desktop, |_, path| voltip_core::sync::read_copied_profile(path)).map_err(bad_copy)?.flatten())
+    }
+
+    /// `backup_export` (docs/dictation.md §4.6): the cached dictionary, rules, scenes and presets
+    /// and every entry of the history database into a backup at `path`, written whole or not at
+    /// all. Blocks on the file and SQLite: the shells call it off the main thread.
+    pub fn backup_export(&self, path: &std::path::Path) -> Result<ExportSummary, BackupError> {
+        let (identity, app_version, dictionary, rules, scenes, presets) = {
+            let state = self.state.lock();
+            (state.identity.clone(), state.app_version.clone(), state.dictionary.clone(), state.rules.clone(), state.scenes.clone(), state.presets.clone())
+        };
+        let device = identity.as_ref().map(|i| i.name.clone()).unwrap_or_default();
+        let platform = identity.map(|i| i.platform);
+        let input = ExportInput {
+            app_version: &app_version,
+            device: &device,
+            platform,
+            created_at_ms: voltip_core::now_ms(),
+            dictionary: &dictionary,
+            rules: &rules,
+            scenes: &scenes,
+            presets: &presets,
+        };
+        backup::export(path, &self.data_dir.join(voltip_core::history::HISTORY_DB_FILE_NAME), &input)
+    }
+
+    /// `backup_open`: read and check the backup at `path` whole. Nothing changes: the bridge holds
+    /// the backup for `backup_import` under the preview's token, in place of any opened before.
+    /// Blocks on the file: the shells call it off the main thread.
+    pub fn backup_open(&self, path: &std::path::Path) -> OpenOutcome {
+        *self.opened_backup.lock() = None;
+        match backup::read(path) {
+            Ok(backup) => {
+                let token = Uuid::new_v4();
+                let manifest = backup.manifest.clone();
+                *self.opened_backup.lock() = Some((token, Arc::new(backup)));
+                OpenOutcome::Preview { token, manifest }
+            }
+            Err(e) => {
+                let outcome = OpenOutcome::failed(&e);
+                // The kind only: the parser's message may quote the file.
+                if let OpenOutcome::Failed { code, .. } = &outcome {
+                    tracing::warn!(?code, "backup not opened");
+                }
+                outcome
+            }
+        }
+    }
+
+    /// `backup_import`: restore `parts` of the backup `token` names, merged or in place, and wait at
+    /// most `within` for the core's report. The bridge lets go of the backup as the core takes it,
+    /// so a token works once.
+    pub async fn backup_import(&self, token: Uuid, parts: BackupParts, mode: ImportMode, within: Duration) -> ImportOutcome {
+        let backup = {
+            let mut opened = self.opened_backup.lock();
+            if opened.as_ref().is_some_and(|(held, _)| *held == token) { opened.take().map(|(_, backup)| backup) } else { None }
+        };
+        let Some(backup) = backup else { return ImportOutcome::Failed { code: ImportFailure::Expired } };
+        let (reply, answer) = ImportReply::channel();
+        if self.handle.send(CoreCommand::BackupImport { backup, parts, mode, reply }).await.is_err() {
+            return ImportOutcome::Failed { code: ImportFailure::Unavailable };
+        }
+        match tokio::time::timeout(within, answer).await {
+            Ok(Ok(report)) => ImportOutcome::Done { report },
+            Ok(Err(_)) | Err(_) => {
+                tracing::warn!("a backup import got no answer in time");
+                ImportOutcome::Failed { code: ImportFailure::Unavailable }
+            }
+        }
+    }
+
+    /// `backup_discard`: let go of the backup `token` names (its preview was closed).
+    pub fn backup_discard(&self, token: Uuid) {
+        let mut opened = self.opened_backup.lock();
+        if opened.as_ref().is_some_and(|(held, _)| *held == token) {
+            *opened = None;
+        }
     }
 
     /// Stop the core.
@@ -1288,6 +1384,79 @@ mod tests {
         assert!(bridge.history_query(&HistoryQuery::default()).is_err(), "a page needs a size");
         assert_eq!(bridge.history_hits().unwrap(), HistoryHits::default(), "the fakes' take fires no dictionary entry");
         bridge.shutdown();
+    }
+
+    /// docs/dictation.md §4.6: one bridge writes a backup of the lists it caches and of the history
+    /// in its database; another opens it — nothing changes yet — and holds it for `backup_import`
+    /// under the preview's token. The token works once and `backup_discard` drops it; a file that is
+    /// not a backup is refused and leaves nothing held.
+    #[tokio::test]
+    async fn a_backup_goes_from_one_bridge_to_another() {
+        use voltip_core::backup::{BackupCounts, BackupParts, ImportFailure, ImportOutcome, OpenFailure, OpenOutcome};
+        let start = |name: &str, dir: &std::path::Path| {
+            voltip_core::SettingsStore::new(dir)
+                .save(&voltip_core::Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Default::default() })
+                .unwrap();
+            let mut cfg = CoreConfig::new(dir.to_path_buf());
+            cfg.default_device_name = name.into();
+            Bridge::start(cfg, Arc::new(MemorySecretStore::new())).unwrap()
+        };
+        async fn until(bridge: &Bridge, rx: &mut broadcast::Receiver<UiEvent>, done: impl Fn(&UiState) -> bool) {
+            for _ in 0..60 {
+                if done(&bridge.state()) {
+                    return;
+                }
+                let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+            }
+            panic!("the state never got there");
+        }
+        let old = tempfile::tempdir().unwrap();
+        let mut history = voltip_core::HistoryStore::open(old.path());
+        for i in 0..3 {
+            let entry = voltip_core::dictation::fakes::history_entry(&format!("第{i}句"));
+            history.push(HistoryEntry { at_ms: 1_760_000_000_000 + i, ..entry }, 20_000).unwrap();
+        }
+        drop(history);
+        let from = start("旧电脑", old.path());
+        let mut rx = from.events();
+        from.dispatch(UiCommand::DictionaryAdd {
+            entry: DictionaryDraft { term: "Voltip".into(), heard_as: vec!["沃提普".into()], enabled: true },
+            history_id: None,
+        })
+        .unwrap();
+        until(&from, &mut rx, |s| s.identity.is_some() && s.dictionary.len() == 1 && !s.scenes.is_empty()).await;
+        let file = old.path().join("备份.voltip-backup");
+        let summary = from.backup_export(&file).unwrap();
+        let scenes = u32::try_from(from.state().scenes.len()).unwrap();
+        assert_eq!(summary.counts, BackupCounts { history: 3, dictionary: 1, rules: 0, scenes, presets: 0 });
+
+        let new = tempfile::tempdir().unwrap();
+        let to = start("新电脑", new.path());
+        let mut rx = to.events();
+        until(&to, &mut rx, |s| s.identity.is_some()).await;
+        let OpenOutcome::Preview { token, manifest } = to.backup_open(&file) else { panic!("a backup opens") };
+        assert_eq!((manifest.device.as_str(), manifest.counts, manifest.version), ("旧电脑", summary.counts, 1));
+        assert!(to.state().dictionary.is_empty() && to.state().history_total == 0, "opening changes nothing");
+        let wait = Duration::from_secs(20);
+        let expired = ImportOutcome::Failed { code: ImportFailure::Expired };
+        assert_eq!(to.backup_import(Uuid::new_v4(), BackupParts::ALL, ImportMode::Merge, wait).await, expired);
+        let ImportOutcome::Done { report } = to.backup_import(token, BackupParts::ALL, ImportMode::Merge, wait).await else { panic!("imported") };
+        assert_eq!(report.parts.iter().map(|p| p.restored).sum::<u32>(), 3 + 1);
+        until(&to, &mut rx, |s| s.dictionary.len() == 1 && s.history_total == 3).await;
+        assert_eq!(to.state().dictionary, from.state().dictionary);
+        assert_eq!(to.history_stats(&[1_760_000_000_000, 1_760_000_000_003]).unwrap().total.count, 3);
+        assert_eq!(to.backup_import(token, BackupParts::ALL, ImportMode::Merge, wait).await, expired, "a token works once");
+
+        let OpenOutcome::Preview { token, .. } = to.backup_open(&file) else { panic!("opens again") };
+        to.backup_discard(token);
+        assert_eq!(to.backup_import(token, BackupParts::ALL, ImportMode::Replace, wait).await, expired, "discarded");
+        let OpenOutcome::Preview { token, .. } = to.backup_open(&file) else { panic!("opens again") };
+        let foreign = new.path().join("notes.voltip-backup");
+        std::fs::write(&foreign, "购物清单").unwrap();
+        assert!(matches!(to.backup_open(&foreign), OpenOutcome::Failed { code: OpenFailure::NotBackup, .. }));
+        assert_eq!(to.backup_import(token, BackupParts::ALL, ImportMode::Replace, wait).await, expired, "another file replaced the one held");
+        from.shutdown();
+        to.shutdown();
     }
 
     /// Regression (CI runner, 2026-09-25): the shell used to subscribe after `start`, and a core

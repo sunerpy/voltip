@@ -58,6 +58,7 @@ When the [local service](/recognition/service) is on, programs on this computer 
 
 - **History**: every dictation, stored in Voltip's data folder. It can be limited, turned off or cleared under **Settings → Privacy and history**.
 - **Dictionary, rules, scenes and settings**: in the same folder.
+- **Backup files**: a backup exported under **Settings → Privacy and history** is saved where you choose. It holds the history, the dictionary, the rules, the scenes and your own AI presets, but no settings or keys, and it is not encrypted; see [Backup and moving to another computer](/dictation/history#backup-and-moving-to-another-computer).
 - **Keys and the device identity**: in the system keychain — Windows Credential Manager, the macOS keychain, or the Secret Service on Linux. Keys are never shown again after you save them, and each key is sent only to its provider. Voltip does not fall back to storing keys in a file.
 
 [Updates, uninstall and your data](/guide/updates#where-your-data-is-kept) lists the folders.

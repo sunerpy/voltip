@@ -634,6 +634,25 @@ fn copies_of_computers_answer_empty_and_the_switch_is_refused() {
     });
 }
 
+/// docs/dictation.md §4.6: backups are the computer's; the phone registers the shared commands and
+/// answers `unsupported`.
+#[test]
+fn backups_are_the_computers() {
+    with_running_app(|_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        let unsupported = json!({ "kind": "failed", "code": "unsupported", "detail": "" });
+        assert_eq!(invoke(webview, "backup_export", json!({ "fileName": "Voltip 备份" })), Ok(unsupported.clone()));
+        assert_eq!(invoke(webview, "backup_open", json!({ "title": "导入备份" })), Ok(unsupported));
+        let parts = json!({ "history": true, "dictionary": true, "rules": true, "scenes": true, "presets": true });
+        let token = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
+        assert_eq!(
+            invoke(webview, "backup_import", json!({ "token": token, "parts": parts, "mode": "merge" })),
+            Ok(json!({ "kind": "failed", "code": "unsupported" }))
+        );
+        assert_eq!(invoke(webview, "backup_discard", json!({ "token": token })), Ok(Value::Null));
+    });
+}
+
 /// 测试连接 on the phone (user decision 2026-10-01: it configures its own providers): the phone's
 /// HTTP probe lists a provider's models, with the key typed in the draft (docs/dictation.md §3.3).
 /// 重新检查 (docs/dictation.md §3.5) reaches the phone's core: the command is wired, the fallback
@@ -770,6 +789,10 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "audio_devices",
             "audio_outputs",
             "history_export",
+            "backup_export",
+            "backup_open",
+            "backup_import",
+            "backup_discard",
             "audio_meter_start",
             "audio_meter_stop",
             "overlay_state",

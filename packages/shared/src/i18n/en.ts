@@ -2098,6 +2098,95 @@ export const en: Messages = {
           "The {n} entries on this computer will be deleted. This cannot be undone.",
         clearConfirm: "Clear",
         cleared: "Dictation history cleared",
+        /** Backup and migration (docs/dictation.md §4.6). */
+        backup: {
+          title: "Backup and migration",
+          export: "Export a backup",
+          exportHelp:
+            "Saves the history, the dictionary, the rules, the scenes and the AI presets in one file, to keep as a backup or to move to another computer.",
+          exportAction: "Export…",
+          exporting: "Exporting…",
+          import: "Import a backup",
+          importHelp:
+            "Restores from a backup file. Before anything changes, you see what the file contains and choose which parts to import, and whether to merge or replace.",
+          importAction: "Import…",
+          note: "A backup does not include settings, API keys or paired devices. The file is not encrypted and its dictations can be read as they are, so keep it in a safe place.",
+          fileName: "Voltip backup {date}",
+          openTitle: "Choose a Voltip backup to import",
+          exported: "Backup exported ({size}): {path}",
+          exportFailed: {
+            write: "The backup could not be saved in the chosen location.",
+            history: "The history could not be read, so no backup was exported.",
+            unsupported: "This device cannot export backups.",
+          },
+          openFailed: {
+            unreadable: "The chosen file could not be read.",
+            not_backup: "The chosen file is not a Voltip backup.",
+            damaged: "The backup file is damaged and cannot be imported.",
+            too_new:
+              "This backup was made by a newer version of Voltip (format version {version}). Update Voltip first.",
+            too_large: "The backup file is larger than 512 MB and cannot be imported.",
+            unsupported: "This device cannot import backups.",
+          },
+          importFailed: {
+            expired: "This backup was closed. Choose the file again.",
+            unavailable:
+              "The import did not finish because Voltip did not respond. Try again later.",
+            unsupported: "This device cannot import backups.",
+          },
+          dialog: {
+            title: "Import a backup",
+            source: "From",
+            sourceValue: "{device} · {platform}",
+            created: "Created",
+            version: "Version",
+            versionValue: "Voltip {app} · format version {format}",
+            parts: "What to import",
+            mode: "How to import",
+            merge: "Merge",
+            replace: "Replace",
+            mergeHelp:
+              "Keeps what is on this computer and adds what is new in the backup; built-in scenes keep this computer's settings.",
+            replaceHelp:
+              "Deletes what this computer has in the chosen parts and puts the backup's content in its place.",
+            keepNote:
+              "The history keeps the latest {keep} entries; the older ones beyond that are not kept.",
+            none: "Not in the backup",
+            importAction: "Import",
+            replaceAction: "Replace",
+            importing: "Importing…",
+            doneTitle: "Import complete",
+          },
+          part: {
+            history: "History",
+            dictionary: "Dictionary",
+            rules: "Rules",
+            scenes: "Scenes",
+            presets: "AI presets",
+          },
+          count: {
+            history: { one: "{count} entry", other: "{count} entries" },
+            dictionary: { one: "{count} entry", other: "{count} entries" },
+            rules: { one: "{count} rule", other: "{count} rules" },
+            scenes: { one: "{count} scene", other: "{count} scenes" },
+            presets: { one: "{count} preset", other: "{count} presets" },
+          },
+          result: {
+            restored: "{count} imported",
+            skipped: "Skipped: {reasons}",
+            separator: ", ",
+            duplicate: "{count} already here",
+            limit: "{count} over the limit",
+            conflict: "{count} in conflict with existing entries",
+            invalid: "{count} not valid",
+            older: "{count} past the number of entries kept",
+            removed: "{count} removed from this computer",
+            error: {
+              unavailable: "The history could not be opened, so nothing was imported.",
+              write: "Could not be saved; this part is unchanged.",
+            },
+          },
+        },
         keysTitle: "Keys",
         keys: "API keys are kept in",
         keysHelp:

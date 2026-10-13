@@ -2414,6 +2414,68 @@ fn history_queries_fixture_matches_serde_output() {
     check_fixture(HISTORY_QUERIES_FILE, &pretty(&answers));
 }
 
+/// docs/dictation.md §4.6: the answers of `backup_export`, `backup_open` and `backup_import` with
+/// every outcome and every code, and the parts a page sends, in the shapes
+/// `packages/shared/src/schema.ts` parses.
+#[test]
+fn backup_fixture_matches_serde_output() {
+    use voltip_core::backup::{
+        BACKUP_FORMAT, BACKUP_VERSION, BackupCounts, BackupError, BackupManifest, BackupPart, BackupParts, ExportOutcome, ImportFailure, ImportOutcome,
+        ImportReport, OpenOutcome, PartFailure, PartReport, Skipped,
+    };
+    const BACKUP_FILE: &str = "backup.json";
+    let counts = BackupCounts { history: 20_000, dictionary: 12, rules: 3, scenes: 9, presets: 2 };
+    let manifest = BackupManifest {
+        format: BACKUP_FORMAT.into(),
+        version: BACKUP_VERSION,
+        app_version: "0.1.4".into(),
+        created_at_ms: AT_MS,
+        device: "Studio".into(),
+        platform: Platform::Windows,
+        counts,
+    };
+    let part = |part: BackupPart, in_file: u32, restored: u32, skipped: Skipped| PartReport { part, in_file, restored, skipped, removed: 0, error: None };
+    let report = ImportReport {
+        mode: ImportMode::Merge,
+        parts: vec![
+            part(BackupPart::Presets, 2, 1, Skipped { duplicate: 1, ..Skipped::default() }),
+            part(BackupPart::Scenes, 9, 2, Skipped { duplicate: 7, ..Skipped::default() }),
+            part(BackupPart::Dictionary, 12, 9, Skipped { duplicate: 1, conflict: 1, invalid: 1, ..Skipped::default() }),
+            part(BackupPart::Rules, 3, 0, Skipped::default()).failed(PartFailure::Write),
+            PartReport { removed: 5, ..part(BackupPart::History, 20_000, 19_000, Skipped { duplicate: 10, older: 990, ..Skipped::default() }) },
+        ],
+    };
+    let unavailable = PartReport::new(BackupPart::History, 3).failed(PartFailure::Unavailable);
+    let answers = json!({
+        "parts": BackupParts { history: true, dictionary: true, rules: false, scenes: true, presets: false },
+        "export": [
+            ExportOutcome::Saved { path: "C:\\Users\\me\\Documents\\Voltip 备份 2026-10-13.voltip-backup".into(), counts, bytes: 10_951_433 },
+            ExportOutcome::Cancelled,
+            ExportOutcome::failed(&BackupError::Write("No space left on device (os error 28)".into())),
+            ExportOutcome::failed(&BackupError::History("database is locked".into())),
+            ExportOutcome::unsupported(),
+        ],
+        "open": [
+            OpenOutcome::Preview { token: uuid(HISTORY_ID), manifest },
+            OpenOutcome::Cancelled,
+            OpenOutcome::failed(&BackupError::Unreadable("Permission denied (os error 13)".into())),
+            OpenOutcome::failed(&BackupError::NotBackup),
+            OpenOutcome::failed(&BackupError::Damaged("EOF while parsing a list at line 8 column 0".into())),
+            OpenOutcome::failed(&BackupError::TooNew(2)),
+            OpenOutcome::failed(&BackupError::TooLarge),
+            OpenOutcome::unsupported(),
+        ],
+        "import": [
+            ImportOutcome::Done { report },
+            ImportOutcome::Done { report: ImportReport { mode: ImportMode::Replace, parts: vec![unavailable] } },
+            ImportOutcome::Failed { code: ImportFailure::Expired },
+            ImportOutcome::Failed { code: ImportFailure::Unavailable },
+            ImportOutcome::Failed { code: ImportFailure::Unsupported },
+        ],
+    });
+    check_fixture(BACKUP_FILE, &pretty(&answers));
+}
+
 /// Regression (public release, 2026-09-27): the build's own service and relay never reach the
 /// UI. The samples compile a built-in service in; no fixture may name its hosts or keys.
 #[test]

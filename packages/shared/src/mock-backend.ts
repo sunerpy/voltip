@@ -112,6 +112,15 @@ import {
   type AudioOutputs,
   type ExportFormat,
   type ExportOutcome,
+  BACKUP_EXTENSION,
+  type BackupCounts,
+  type BackupExportOutcome,
+  type BackupImportOutcome,
+  type BackupOpenOutcome,
+  type BackupPartReport,
+  type BackupParts,
+  dictionaryEntrySchema,
+  replacementRuleSchema,
   type HostOs,
   type LevelFrame,
   type ProbeFailure,
@@ -173,6 +182,15 @@ import {
   validateSceneDraft,
 } from "./scenes";
 import { historyHitsOf, historyPageOf, historyStatsOf } from "./history-queries";
+export type { MockBackupFile } from "./backup-merge";
+import {
+  type MockBackupFile,
+  mergeDictionary,
+  mergeHistory,
+  mergePresets,
+  mergeRules,
+  mergeScenes,
+} from "./backup-merge";
 import {
   Vocabulary,
   checkDictionary,
@@ -1210,6 +1228,133 @@ export class MockBackend implements Backend {
 
   /** Every `historyExport` that saved or was shared, in order (tests). */
   readonly exports: { id: string; format: ExportFormat; fileName: string }[] = [];
+
+  // ---- backup and migration (docs/dictation.md §4.6) -------------------------------------------
+
+  /** The backups `backupExport` wrote, oldest first: the preview's files. */
+  private readonly backupFiles: MockBackupFile[] = [];
+  /** What the next `backupOpen` finds instead (tests and the dev pages). */
+  private nextBackupOpen: MockBackupFile | BackupOpenOutcome | undefined;
+  /** The backup the open dialog read, under its preview's token. */
+  private openedBackup: { token: string; file: MockBackupFile } | undefined;
+  /** The file names `backupExport` saved under, in order (tests). */
+  readonly backupExports: string[] = [];
+
+  /** `backup_export`: the save dialog takes the offered name; the file holds every part as the
+   *  state and the history hold it. The phone has no backups. */
+  async backupExport(fileName: string): Promise<BackupExportOutcome> {
+    await Promise.resolve();
+    if (this.role === "phone") return { kind: "failed", code: "unsupported", detail: "" };
+    const file = this.backupFile();
+    this.backupFiles.push(file);
+    this.backupExports.push(fileName);
+    return {
+      kind: "saved",
+      path: `${MOCK_EXPORT_DIR}/${fileName}.${BACKUP_EXTENSION}`,
+      counts: file.manifest.counts,
+      bytes: JSON.stringify(file).length,
+    };
+  }
+
+  /** The next `backupOpen` finds `next` (a file, or what the dialog answers: `cancelled`, a
+   *  refusal). Without one it finds the last backup exported, else another computer's sample. */
+  simulateBackupFile(next: MockBackupFile | BackupOpenOutcome) {
+    this.nextBackupOpen = structuredClone(next);
+  }
+
+  /** `backup_open`: the preview of the file the open dialog picked; nothing changes yet. */
+  async backupOpen(_title: string): Promise<BackupOpenOutcome> {
+    await Promise.resolve();
+    if (this.role === "phone") return { kind: "failed", code: "unsupported", detail: "" };
+    this.openedBackup = undefined;
+    const next = this.nextBackupOpen;
+    this.nextBackupOpen = undefined;
+    if (next !== undefined && "kind" in next) return next;
+    const file = next ?? this.backupFiles.at(-1) ?? sampleBackup(this.now());
+    const token = this.uuid();
+    this.openedBackup = { token, file: structuredClone(file) };
+    return { kind: "preview", token, manifest: structuredClone(file.manifest) };
+  }
+
+  /** `backup_import`: the parts restored as the core restores them (`./backup-merge`), each list's
+   *  event and the history's after a change; a token works once. */
+  async backupImport(
+    token: string,
+    parts: BackupParts,
+    mode: ImportMode,
+  ): Promise<BackupImportOutcome> {
+    await Promise.resolve();
+    if (this.role === "phone") return { kind: "failed", code: "unsupported" };
+    const opened = this.openedBackup;
+    if (opened?.token !== token) return { kind: "failed", code: "expired" };
+    this.openedBackup = undefined;
+    const { file } = opened;
+    const reports: BackupPartReport[] = [];
+    const changed = (report: BackupPartReport) => mode === "replace" || report.restored > 0;
+    let samePreset = new Map<string, string>();
+    if (parts.presets) {
+      const merged = mergePresets(this.state.presets, file.presets, mode);
+      samePreset = merged.same;
+      reports.push(merged.report);
+      if (changed(merged.report)) this.emit({ type: "presets", presets: merged.list });
+    }
+    if (parts.scenes) {
+      const merged = mergeScenes(this.state.scenes, file.scenes, mode, samePreset);
+      reports.push(merged.report);
+      if (changed(merged.report))
+        this.emit({ type: "scenes", scenes: this.withBuiltinScenes(merged.list) });
+    }
+    if (parts.dictionary) {
+      const merged = mergeDictionary(this.state.dictionary, file.dictionary, mode);
+      reports.push(merged.report);
+      if (changed(merged.report)) this.emit({ type: "dictionary", entries: merged.list });
+    }
+    if (parts.rules) {
+      const merged = mergeRules(this.state.rules, file.rules, mode);
+      reports.push(merged.report);
+      if (changed(merged.report)) this.emit({ type: "rules", rules: merged.list });
+    }
+    if (parts.history) {
+      const merged = mergeHistory(
+        this.history,
+        file.history,
+        mode,
+        this.state.settings.history.keep,
+      );
+      reports.push(merged.report);
+      if (changed(merged.report) || merged.report.removed > 0) this.setHistory(merged.list);
+    }
+    return { kind: "done", report: { mode, parts: reports } };
+  }
+
+  /** `backup_discard`: the preview was closed. */
+  async backupDiscard(token: string): Promise<void> {
+    await Promise.resolve();
+    if (this.openedBackup?.token === token) this.openedBackup = undefined;
+  }
+
+  /** What `backupExport` writes. */
+  private backupFile(): MockBackupFile {
+    const content = structuredClone({
+      history: this.history,
+      dictionary: this.state.dictionary,
+      rules: this.state.rules,
+      scenes: this.state.scenes,
+      presets: this.state.presets,
+    });
+    return {
+      manifest: {
+        format: "voltip-backup",
+        version: 1,
+        app_version: this.state.app_version,
+        created_at_ms: this.now(),
+        device: this.state.identity?.name ?? "",
+        platform: this.state.identity?.platform ?? "other",
+        counts: backupCounts(content),
+      },
+      ...content,
+    };
+  }
 
   /** `history_entry`: one entry, `null` once it is gone. */
   async historyEntry(id: string): Promise<HistoryEntry | null> {
@@ -4232,6 +4377,88 @@ function sampleRowOutcome(row: SampleHistoryRow): HistoryEntry["outcome"] {
     case "unfocused":
       return { kind: "clipboard", reason: "目标窗口没有焦点" };
   }
+}
+
+/** The ids of the sample backup's items, apart from the sample history's own. */
+function sampleBackupId(n: number): string {
+  return `00000000-0000-4000-9000-${String(n).padStart(12, "0")}`;
+}
+
+/** Items per part of a backup's content. */
+function backupCounts(content: Omit<MockBackupFile, "manifest">): BackupCounts {
+  return {
+    history: content.history.length,
+    dictionary: content.dictionary.length,
+    rules: content.rules.length,
+    scenes: content.scenes.length,
+    presets: content.presets.length,
+  };
+}
+
+/** The backup the preview's open dialog finds before anything was exported (docs/dictation.md
+ *  §4.6): another computer's, made a day before `nowMs`, with the sample history under ids of its
+ *  own, a dictionary entry, a rule, a preset and a scene that uses it. */
+export function sampleBackup(nowMs: number): MockBackupFile {
+  const made = nowMs - DAY_MS;
+  const id = sampleBackupId;
+  const history = sampleHistory(made).map((entry, i) => ({ ...entry, id: id(100 + i) }));
+  const dictionary = [
+    dictionaryEntrySchema.parse({
+      id: id(1),
+      term: "Kubernetes",
+      heard_as: ["酷伯奈提斯"],
+      enabled: true,
+      source: { kind: "manual" },
+      created_at_ms: made,
+      updated_at_ms: made,
+    }),
+  ];
+  const rules = [
+    replacementRuleSchema.parse({
+      id: id(2),
+      name: "句号",
+      kind: "literal",
+      pattern: "句号",
+      replacement: "。",
+      case_sensitive: true,
+      enabled: true,
+      created_at_ms: made,
+      updated_at_ms: made,
+    }),
+  ];
+  const presets: CustomPreset[] = [
+    {
+      id: id(3),
+      name: "周报",
+      prompt: "把口述整理成周报：本周完成、下周计划、风险。",
+      created_at_ms: made,
+      updated_at_ms: made,
+    },
+  ];
+  const scenes: Scene[] = [
+    {
+      id: id(4),
+      name: "Outlook",
+      enabled: true,
+      match: { apps: ["outlook"], title_contains: [] },
+      overrides: { refine_preset: id(3) },
+      created_at_ms: made,
+      updated_at_ms: made,
+    },
+  ];
+  const content = { history, dictionary, rules, scenes, presets };
+  return {
+    manifest: {
+      format: "voltip-backup",
+      version: 1,
+      app_version: MOCK_CURRENT_VERSION,
+      created_at_ms: made,
+      device: "Office-PC",
+      platform: "windows",
+      counts: backupCounts(content),
+    },
+    ...content,
+  };
 }
 
 /** The sample history rows as real `HistoryEntry` records, dated relative to `nowMs` (today /
