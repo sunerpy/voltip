@@ -1,30 +1,19 @@
 import {
-  type EditRecord,
   type HistoryEntry,
-  type TFunction,
-  type VocabularyHit,
-  diffSegments,
   formatCount,
   activationHint,
   formatMs,
-  formatTakeLength,
-  isBuiltinPreset,
   outcomeLabel,
   outputModeLabel,
-  presetRefLabel,
   sceneLabel,
   syncsToPhones,
-  refineModelText,
 } from "@voltip/shared";
 import {
   Badge,
   Button,
   Card,
-  Dialog,
   EmptyState,
-  IconButton,
   Input,
-  Keycaps,
   Lamp,
   LampText,
   Panel,
@@ -39,7 +28,6 @@ import { inTextField, usePageShortcuts, withCommand } from "../app/page-shortcut
 import { useRouter } from "../app/router";
 import { copyWithToast, useShell } from "../app/shell-context";
 import { useTickingNow } from "../features/dictation/useDictation";
-import { errorText, splitHeardAs } from "../features/vocabulary/vocabulary";
 import {
   HISTORY_FILTERS,
   type HistoryFilter,
@@ -56,12 +44,9 @@ import {
   useHistoryEntry,
   useHistoryList,
 } from "../features/history/useHistoryList";
-import { ClipboardNote } from "../features/history/ClipboardNote";
-import { LongEntryTools, isLongEntry, useHistoryProcess } from "../features/history/LongEntryTools";
 import { ResultActions } from "../features/history/ResultActions";
 import { shortModel } from "../shell/page-meta";
-
-type View = "raw" | "polished" | "diff" | "processed";
+import { HistoryDetail, type View } from "./history/HistoryDetail";
 
 export interface HistoryProps {
   /** `today | week | month | all | starred | failed` from the home tiles, or an entry id. */
@@ -122,7 +107,6 @@ export function History({ initialFilter }: HistoryProps) {
     isHistoryFilter(initialFilter) ? undefined : initialFilter,
   );
   const [view, setView] = useState<View>("polished");
-  const [adding, setAdding] = useState<{ entryId: string; heard: string } | undefined>(undefined);
 
   const search = useDebounced(query, SEARCH_DEBOUNCE_MS);
   const list = useHistoryList(filter, search, now);
@@ -132,10 +116,6 @@ export function History({ initialFilter }: HistoryProps) {
   // stale and a fresh dictation shows up on the right as soon as the core appends it.
   const selected = useHistoryEntry(selectedId, visible) ?? visible[0];
   const moreRef = useLoadMoreWhenSeen(list.more, list.loadMore);
-  // docs/dictation.md §22: 用 AI 预设处理 on the entry in the detail, and its result.
-  const process = useHistoryProcess(selected?.id ?? "");
-  const processed = process.view.state === "done" ? process.view.processed : selected?.processed;
-  const shown: View = view === "processed" && processed === undefined ? "polished" : view;
 
   const star = (entry: HistoryEntry) => {
     void backend.invoke("history_star", { id: entry.id, starred: !entry.starred });
@@ -504,451 +484,23 @@ export function History({ initialFilter }: HistoryProps) {
           {!selected ? (
             <EmptyState title={t("history.empty.pick")} mono={t("history.empty.pickHint")} />
           ) : (
-            <div className="flex h-full flex-col gap-4">
-              {selected.kind === "edit" && selected.edit !== undefined ? (
-                <EditDetail entry={selected} edit={selected.edit} t={t} />
-              ) : (
-                <>
-                  <div className="flex items-center justify-between">
-                    <Segmented
-                      label={t("history.view.label")}
-                      size="sm"
-                      value={shown}
-                      onChange={setView}
-                      options={[
-                        { value: "raw", label: t("history.view.raw") },
-                        {
-                          value: "polished",
-                          label: selected.refined
-                            ? t("history.view.polished")
-                            : t("history.view.inserted"),
-                        },
-                        { value: "diff", label: t("history.view.diff") },
-                        ...(processed === undefined
-                          ? []
-                          : [{ value: "processed" as const, label: t("history.view.processed") }]),
-                      ]}
-                    />
-                    {shown === "diff" && (
-                      <span className="flex gap-2">
-                        <Badge tone="danger">{t("history.view.deleted")}</Badge>
-                        <Badge tone="accent">{t("history.view.added")}</Badge>
-                      </span>
-                    )}
-                  </div>
-                  <div
-                    className="min-h-[120px] rounded-10 bg-inset p-4 text-[15px] leading-7 text-fg"
-                    data-testid="entry-text"
-                    data-user-text>
-                    {shown === "raw" && selected.raw_text}
-                    {shown === "polished" && selected.text}
-                    {shown === "processed" && processed !== undefined && (
-                      <span className="whitespace-pre-wrap" data-testid="entry-processed">
-                        {processed.text}
-                      </span>
-                    )}
-                    {shown === "diff" &&
-                      diffSegments({ rawText: selected.raw_text, text: selected.text }).map(
-                        (seg, i) =>
-                          seg.kind === "same" ? (
-                            <span key={i}>{seg.text}</span>
-                          ) : seg.kind === "del" ? (
-                            <span
-                              key={i}
-                              className="mx-0.5 rounded-4 bg-diff-del px-1 text-danger line-through">
-                              {seg.text}
-                            </span>
-                          ) : (
-                            <span
-                              key={i}
-                              className="mx-0.5 rounded-4 bg-diff-add px-1 text-ok-text">
-                              {seg.text}
-                            </span>
-                          ),
-                      )}
-                    {shown === "processed" && processed !== undefined ? (
-                      <div className="mt-3 text-[12px] text-fg-subtle">
-                        {t("history.view.processedBy", {
-                          preset: presetRefLabel(processed.preset, locale),
-                        })}
-                      </div>
-                    ) : (
-                      shown !== "raw" && (
-                        <div className="mt-3 text-[12px] text-fg-subtle">
-                          {t("history.view.rawOutput", { text: selected.raw_text })}
-                        </div>
-                      )
-                    )}
-                  </div>
-                </>
-              )}
-              {isLongEntry(selected) && <LongEntryTools entry={selected} process={process} />}
-              {selected.outcome.kind === "clipboard" && (
-                // docs/dictation.md §4.2: why the paste fell back, in words; the raw message only
-                // under the technical details (never in the header).
-                <ClipboardNote outcome={selected.outcome} />
-              )}
-              {selected.live_error !== undefined && (
-                // §12: a streaming mode was asked for but the take (or part of it) fell back to the
-                // whole-take path; the core's reason, verbatim.
-                <p
-                  className="rounded-6 bg-warning-soft px-3 py-2 text-[12px] leading-4 text-warning"
-                  data-testid="history-live-error">
-                  {t("history.liveError", { reason: selected.live_error })}
-                </p>
-              )}
-              {selected.vocabulary !== undefined && (
-                <VocabularyHits hits={selected.vocabulary} t={t} />
-              )}
-              {!sentAsText(selected) && <TimingBar entry={selected} t={t} />}
-              <div className="grid grid-cols-2 gap-x-6 gap-y-2 border-t border-border pt-3">
-                <Readout
-                  label={t("history.detail.asrModel")}
-                  value={selected.asr_model}
-                  size="sm"
-                />
-                <Readout
-                  label={t("history.detail.refineModel")}
-                  value={refineModelText(selected, locale)}
-                  size="sm"
-                  muted={!selected.refined}
-                />
-                {selected.preset !== undefined && (
-                  // docs/dictation.md §21: the preset the clean-up ran with, by the name it had.
-                  <Readout
-                    label={t("history.detail.preset")}
-                    value={
-                      <span
-                        data-testid="history-detail-preset"
-                        {...(isBuiltinPreset(selected.preset.id) ? {} : { "data-user-text": "" })}>
-                        {presetRefLabel(selected.preset, locale)}
-                      </span>
-                    }
-                    size="sm"
-                  />
-                )}
-                <Readout
-                  label={t("history.detail.outcome")}
-                  value={outcomeLabel(selected.outcome, locale).text}
-                  size="sm"
-                />
-                <Readout
-                  label={t("history.detail.duration")}
-                  value={formatTakeLength(selected.duration_ms, locale)}
-                  size="sm"
-                />
-                <Readout
-                  label={t("history.detail.chars")}
-                  value={t("count.chars", { n: textChars(selected.text) })}
-                  size="sm"
-                />
-                <Readout label={t("history.detail.id")} value={selected.id} size="sm" />
-                {selected.app !== undefined && (
-                  <>
-                    <Readout
-                      label={t("history.context.app")}
-                      value={
-                        <span data-user-text data-testid="history-detail-app">
-                          {selected.app.name} · {selected.app.id}
-                        </span>
-                      }
-                      size="sm"
-                    />
-                    <Readout
-                      label={t("history.context.scene")}
-                      value={
-                        selected.scene === undefined ? (
-                          t("history.context.noScene")
-                        ) : (
-                          <span
-                            data-testid="history-detail-scene"
-                            {...(selected.scene.builtin === undefined
-                              ? { "data-user-text": "" }
-                              : {})}>
-                            {sceneLabel(selected.scene, locale)}
-                          </span>
-                        )
-                      }
-                      muted={selected.scene === undefined}
-                      size="sm"
-                    />
-                  </>
-                )}
-              </div>
-              <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-border pt-3">
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    copy(selected);
-                  }}>
-                  {t("common.copy")}
-                </Button>
-                <Keycaps keys="Ctrl C" />
-                <IconButton
-                  icon="star"
-                  label={starLabel(selected)}
-                  onClick={() => {
-                    star(selected);
-                  }}
-                  className={selected.starred ? "text-fg" : ""}
-                />
-                <Button
-                  size="sm"
-                  icon="book"
-                  onMouseDown={(e) => {
-                    // Keep the text selection: it pre-fills the misheard form.
-                    e.preventDefault();
-                  }}
-                  onClick={() => {
-                    setAdding({ entryId: selected.id, heard: selectedFragment(selected) });
-                  }}>
-                  {t("history.addToDictionary.button")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="text-danger"
-                  className="ml-auto"
-                  onClick={() => {
-                    remove(selected);
-                  }}>
-                  {t("common.delete")}
-                </Button>
-                <Keycaps keys="Del" />
-              </div>
-            </div>
+            <HistoryDetail
+              entry={selected}
+              view={view}
+              onView={setView}
+              onCopy={() => {
+                copy(selected);
+              }}
+              onStar={() => {
+                star(selected);
+              }}
+              onRemove={() => {
+                remove(selected);
+              }}
+              starLabel={starLabel(selected)}
+            />
           )}
         </Panel>
-      </div>
-      {adding !== undefined && (
-        <AddToDictionary
-          historyId={adding.entryId}
-          heard={adding.heard}
-          onClose={() => {
-            setAdding(undefined);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-/** The text the user selected inside this entry's raw or final text (what 加入词典 pre-fills). */
-/** A voice edit's detail (docs/dictation.md §19.5): the instruction as sent to the LLM, the
- *  rewrite that was pasted, and the original selection behind a disclosure. */
-function EditDetail({ entry, edit, t }: { entry: HistoryEntry; edit: EditRecord; t: TFunction }) {
-  return (
-    <div className="flex flex-col gap-3" data-testid="history-edit">
-      <div>
-        <div className="eyebrow mb-1">{t("history.edit.instruction")}</div>
-        <div
-          className="rounded-10 bg-inset px-4 py-2 text-[14px] leading-6 text-fg"
-          data-testid="history-edit-instruction"
-          data-user-text>
-          {edit.instruction}
-        </div>
-      </div>
-      <div>
-        <div className="eyebrow mb-1">{t("history.edit.result")}</div>
-        <div
-          className="min-h-[96px] rounded-10 bg-inset p-4 text-[15px] leading-7 whitespace-pre-wrap text-fg"
-          data-testid="entry-text"
-          data-user-text>
-          {entry.text}
-        </div>
-      </div>
-      <details className="hairline rounded-10 px-3 py-2" data-testid="history-edit-selection">
-        <summary className="cursor-pointer text-[12px] text-fg-muted">
-          {t("history.edit.selection", { n: textChars(edit.selection) })}
-        </summary>
-        <div
-          className="mt-2 text-[14px] leading-6 whitespace-pre-wrap text-fg-muted"
-          data-user-text>
-          {edit.selection}
-        </div>
-      </details>
-    </div>
-  );
-}
-
-function selectedFragment(entry: HistoryEntry): string {
-  const text = window.getSelection()?.toString().trim() ?? "";
-  if (text.length === 0 || text.includes("\n")) return "";
-  return entry.raw_text.includes(text) || entry.text.includes(text) ? text : "";
-}
-
-/** Which dictionary entries and rules fired in this take, named from the current lists. */
-function VocabularyHits({
-  hits,
-  t,
-}: {
-  hits: NonNullable<HistoryEntry["vocabulary"]>;
-  t: TFunction;
-}) {
-  const state = useUiState();
-  const named = (
-    list: readonly VocabularyHit[],
-    name: (id: string) => string | undefined,
-    gone: string,
-  ) =>
-    list
-      .map((hit) => t("history.vocabulary.hit", { name: name(hit.id) ?? gone, n: hit.count }))
-      .join("、");
-  const rows = [
-    {
-      label: t("history.vocabulary.corrections"),
-      list: hits.corrections,
-      text: named(
-        hits.corrections,
-        (id) => state.dictionary.find((e) => e.id === id)?.term,
-        t("history.vocabulary.deletedEntry"),
-      ),
-    },
-    {
-      label: t("history.vocabulary.rules"),
-      list: hits.rules,
-      text: named(
-        hits.rules,
-        (id) => state.rules.find((r) => r.id === id)?.name,
-        t("history.vocabulary.deletedRule"),
-      ),
-    },
-  ].filter((row) => row.list.length > 0);
-  return (
-    <div data-testid="history-vocabulary">
-      <div className="eyebrow">{t("history.vocabulary.title")}</div>
-      <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[12px]">
-        {rows.map((row) => (
-          <div key={row.label} className="contents">
-            <dt className="text-fg-subtle">{row.label}</dt>
-            <dd className="text-fg" data-user-text>
-              {row.text}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
-}
-
-/** 加入词典: the right spelling and the misheard forms, sent as `dictionary_add { historyId }`. A
- *  draft the core refuses keeps the dialog open with the core's reason. */
-function AddToDictionary({
-  historyId,
-  heard: initialHeard,
-  onClose,
-}: {
-  historyId: string;
-  heard: string;
-  onClose: () => void;
-}) {
-  const { backend } = useBackend();
-  const shell = useShell();
-  const { t } = useI18n();
-  const [term, setTerm] = useState("");
-  const [heard, setHeard] = useState(initialHeard);
-  const [error, setError] = useState<string | undefined>(undefined);
-  const submit = async () => {
-    const entry = { term: term.trim(), heard_as: splitHeardAs(heard), enabled: true };
-    try {
-      await backend.invoke("dictionary_add", { entry, historyId });
-      shell.toast({
-        message: t("history.addToDictionary.added", { term: entry.term }),
-        duration: 3000,
-      });
-      onClose();
-    } catch (e) {
-      setError(errorText(e));
-    }
-  };
-  return (
-    <Dialog
-      open
-      title={t("history.addToDictionary.title")}
-      width={480}
-      onClose={onClose}
-      actions={
-        <>
-          <Button size="sm" variant="ghost" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button
-            size="sm"
-            variant="primary"
-            disabled={term.trim().length === 0}
-            onClick={() => {
-              void submit();
-            }}>
-            {t("history.addToDictionary.add")}
-          </Button>
-        </>
-      }>
-      <div className="flex flex-col gap-3">
-        <p>{t("history.addToDictionary.body")}</p>
-        <Input
-          label={t("history.addToDictionary.heard")}
-          mono
-          size="sm"
-          value={heard}
-          help={t("history.addToDictionary.heardHelp")}
-          onChange={(e) => {
-            setHeard(e.target.value);
-            setError(undefined);
-          }}
-        />
-        <Input
-          label={t("history.addToDictionary.term")}
-          mono
-          size="sm"
-          value={term}
-          data-autofocus
-          error={error}
-          onChange={(e) => {
-            setTerm(e.target.value);
-            setError(undefined);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && term.trim().length > 0) {
-              e.preventDefault();
-              void submit();
-            }
-          }}
-        />
-      </div>
-    </Dialog>
-  );
-}
-
-function TimingBar({ entry, t }: { entry: HistoryEntry; t: TFunction }) {
-  const asr = entry.asr_ms;
-  const refine = entry.refine_ms ?? 0;
-  const total = asr + refine;
-  if (total === 0)
-    return <div className="mono text-[11px] text-fg-subtle">{t("history.timing.none")}</div>;
-  const pct = (n: number) => `${(n / total) * 100}%`;
-  return (
-    <div>
-      <div className="eyebrow">{t("history.timing.title")}</div>
-      <div
-        className="mt-2 flex h-3 w-full overflow-hidden rounded-pill bg-led-off"
-        role="img"
-        aria-label={t("history.timing.label")}>
-        <span className="bg-primary" style={{ width: pct(asr) }} />
-        {refine > 0 && <span className="bg-accent" style={{ width: pct(refine) }} />}
-      </div>
-      <div className="mono mt-1.5 flex items-center gap-4 text-[11px] text-fg-muted">
-        <span className="flex items-center gap-1.5">
-          <Lamp tone="neutral" size={6} />
-          {t("history.timing.asr", { n: formatCount(asr) })}
-        </span>
-        <span className="flex items-center gap-1.5">
-          <Lamp tone="accent" size={6} />
-          {entry.refined
-            ? t("history.timing.refine", { n: formatCount(refine) })
-            : t("history.timing.refineOff")}
-        </span>
-        <span className="ml-auto text-fg">
-          {t("history.timing.total", { n: formatCount(total) })}
-        </span>
       </div>
     </div>
   );

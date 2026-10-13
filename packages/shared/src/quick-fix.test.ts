@@ -4,6 +4,7 @@ import {
   type WordSegmenter,
   diffItems,
   diffRuns,
+  excerptSegments,
   fixScope,
   fixStatus,
   fixTarget,
@@ -247,11 +248,26 @@ describe("risk and the checks before saving", () => {
     const plan = planDictionary(" Voltip ", "维他命, 沃尔提普 · 维他命", []);
     expect(plan).toEqual({
       heardAs: ["维他命", "沃尔提普"],
+      added: ["维他命", "沃尔提普"],
       draft: { term: "Voltip", heard_as: ["维他命", "沃尔提普"], enabled: true },
       ready: true,
     });
     expect(planDictionary("", "维他命", []).problem?.term).toBe("不能为空");
     expect(planDictionary("", "维他命", []).ready).toBe(false);
+    expect(planDictionary("", "维他命", []).conflict).toBeUndefined();
+    // Before a right spelling is typed, a form the dictionary has is said at once (5.2).
+    const voltip = entry("Voltip", ["沃尔提普"]);
+    expect(planDictionary("", "voltip", [voltip]).conflict).toEqual({
+      kind: "exists",
+      entry: voltip,
+    });
+    expect(planDictionary("", "沃尔提普", [voltip]).conflict).toEqual({
+      kind: "taken",
+      heard: "沃尔提普",
+      owner: voltip,
+    });
+    expect(planDictionary("", "长".repeat(65), [voltip]).problem?.heard).toMatch(/64/);
+    expect(planDictionary("", "长".repeat(65), [voltip]).conflict).toBeUndefined();
     const en = createTranslator("en").t;
     expect(planDictionary("x".repeat(65), "", [], en).problem?.term).toMatch(/64/);
   });
@@ -267,11 +283,9 @@ describe("risk and the checks before saving", () => {
     });
     expect(plan.ready).toBe(true);
     // Only the new forms are added; nothing new is a clash.
-    expect(planDictionary("Voltip", "维他命 · 沃提普", [voltip]).draft.heard_as).toEqual([
-      "沃尔提普",
-      "沃提普",
-      "维他命",
-    ]);
+    const some = planDictionary("Voltip", "维他命 · 沃提普", [voltip]);
+    expect(some.draft.heard_as).toEqual(["沃尔提普", "沃提普", "维他命"]);
+    expect([some.heardAs, some.added]).toEqual([["维他命", "沃提普"], ["维他命"]]);
     expect(planDictionary("Voltip", "沃提普", [voltip]).conflict).toEqual({
       kind: "taken",
       heard: "沃提普",
@@ -417,6 +431,33 @@ describe("the card's status rows (fixStatus)", () => {
       { kind: "short", short: { form: "维", chars: 1, latin: false } },
     ]);
     expect(fixStatus({ heard: "维他命" })).toEqual([]);
+  });
+
+  it("cuts the rule preview to the changes and twelve characters around them", () => {
+    const after = TEXT.replace("非书", "飞书");
+    expect(excerptSegments(TEXT, after)).toEqual([
+      { kind: "same", text: "…比上周低了一半，结果发到" },
+      { kind: "del", text: "非" },
+      { kind: "add", text: "飞" },
+      { kind: "same", text: "书群了，记得把配置同步到…" },
+    ]);
+    expect(excerptSegments("非书", "飞书")).toEqual([
+      { kind: "del", text: "非" },
+      { kind: "add", text: "飞" },
+      { kind: "same", text: "书" },
+    ]);
+    expect(excerptSegments("same", "same")).toEqual([]);
+    // Past the diff cap: one stretch from the first difference to the last.
+    const long = "维".repeat(1001);
+    expect(excerptSegments(`${long}x`, `${long}y`)).toEqual([
+      { kind: "same", text: `…${"维".repeat(12)}` },
+      { kind: "del", text: "x" },
+      { kind: "add", text: "y" },
+    ]);
+    expect(excerptSegments(`${long}x`, long)).toEqual([
+      { kind: "same", text: `…${"维".repeat(12)}` },
+      { kind: "del", text: "x" },
+    ]);
   });
 
   it("splits an example around what the draft changes", () => {

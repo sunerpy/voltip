@@ -153,7 +153,9 @@ export function polishPairs(raw: string, text: string): PolishPair[] {
 /** One thing the diff view shows: an unchanged, deleted or added run, or a replacement that can be
  *  clicked (its deletion and its addition). */
 export type DiffItem =
-  | { kind: "same" | "del" | "add"; text: string }
+  | { kind: "same"; text: string }
+  | { kind: "del"; text: string }
+  | { kind: "add"; text: string }
   | { kind: "pair"; del: string; add: string; pair: PolishPair };
 
 /** The diff view's runs with each replacement grouped (docs/dictation.md §16.9 3.5). */
@@ -386,6 +388,8 @@ export interface DictionaryPlan {
   merge?: DictionaryEntry;
   /** The forms typed into 曾听成, split at the separators, empty ones dropped. */
   heardAs: string[];
+  /** Of those, the ones the entry does not have yet: all of them for a new entry. */
+  added: string[];
   /** What is sent: a new entry, or for a merge the entry's spelling and flag with its forms and the
    *  new ones. */
   draft: DictionaryDraft;
@@ -423,18 +427,40 @@ export function planDictionary(
       ? { term: clean, heard_as: heardAs, enabled: true }
       : { term: merge.term, heard_as: [...merge.heard_as, ...added], enabled: merge.enabled };
   const problem = dictionaryDraftProblem(clean, heardAs, others, t);
+  // Before a right spelling is typed, a heard-as form the dictionary has already is said at once
+  // (§16.9 5.2): as a right spelling there is nothing to fix, as another entry's form a clash.
   const conflict =
-    problem === undefined && clean.length > 0
-      ? clashWith(draft.term, heardAs, added, merge, others, dictionary)
-      : undefined;
+    problem?.heard !== undefined
+      ? undefined
+      : clean.length === 0
+        ? heardClash(heardAs, dictionary)
+        : problem === undefined
+          ? clashWith(draft.term, heardAs, added, merge, others, dictionary)
+          : undefined;
   return {
     ...(merge === undefined ? {} : { merge }),
     heardAs,
+    added,
     draft,
     ...(problem === undefined ? {} : { problem }),
     ...(conflict === undefined ? {} : { conflict }),
     ready: clean.length > 0 && problem === undefined && conflict === undefined,
   };
+}
+
+/** The forms alone against the dictionary: one that is an entry's right spelling, or an entry's
+ *  heard-as form. */
+function heardClash(
+  heardAs: readonly string[],
+  dictionary: readonly DictionaryEntry[],
+): DictionaryConflict | undefined {
+  for (const heard of heardAs) {
+    const entry = dictionary.find((e) => sameIgnoringAsciiCase(e.term, heard));
+    if (entry !== undefined) return { kind: "exists", entry };
+    const owner = dictionary.find((e) => e.heard_as.some((h) => sameIgnoringAsciiCase(h, heard)));
+    if (owner !== undefined) return { kind: "taken", heard, owner };
+  }
+  return undefined;
 }
 
 function clashWith(
@@ -583,6 +609,50 @@ export function snippetParts(before: string, after: string): [string, string, st
     b.slice(prefix, b.length - suffix).join(""),
     b.slice(b.length - suffix).join(""),
   ];
+}
+
+/** Characters of unchanged text kept on each side of an excerpt's changes. */
+export const EXCERPT_CONTEXT_CHARS = 12;
+
+/** The diff of `before` → `after` cut to its changes and `EXCERPT_CONTEXT_CHARS` characters around
+ *  them, `…` where the text goes on: the rule card's 本条预览 (§16.9 3.4). Empty when nothing
+ *  changes. Past `MAX_PAIR_DIFF_CELLS` the changes are taken as one stretch, from the first
+ *  difference to the last. */
+export function excerptSegments(before: string, after: string): DiffSegment[] {
+  let segs: DiffSegment[];
+  if (diffTokens(before).length * diffTokens(after).length > MAX_PAIR_DIFF_CELLS) {
+    const [lead, hit, tail] = snippetParts(before, after);
+    const added = Array.from(after)
+      .slice(Array.from(lead).length, Array.from(after).length - Array.from(tail).length)
+      .join("");
+    segs = [
+      { kind: "same", text: lead },
+      { kind: "del", text: hit },
+      { kind: "add", text: added },
+      { kind: "same", text: tail },
+    ].filter((s): s is DiffSegment => s.text.length > 0);
+  } else {
+    segs = diffSegments({ rawText: before, text: after });
+  }
+  const first = segs.findIndex((s) => s.kind !== "same");
+  if (first < 0) return [];
+  let last = segs.length - 1;
+  while (segs[last]?.kind === "same") last -= 1;
+  const out: DiffSegment[] = [];
+  const lead = segs[first - 1];
+  if (lead !== undefined) {
+    const letters = Array.from(lead.text);
+    const cut = letters.length > EXCERPT_CONTEXT_CHARS ? "…" : "";
+    out.push({ kind: "same", text: `${cut}${letters.slice(-EXCERPT_CONTEXT_CHARS).join("")}` });
+  }
+  out.push(...segs.slice(first, last + 1));
+  const tail = segs[last + 1];
+  if (tail !== undefined) {
+    const letters = Array.from(tail.text);
+    const cut = letters.length > EXCERPT_CONTEXT_CHARS ? "…" : "";
+    out.push({ kind: "same", text: `${letters.slice(0, EXCERPT_CONTEXT_CHARS).join("")}${cut}` });
+  }
+  return out;
 }
 
 // ---- where the fix applies ---------------------------------------------------------------------
