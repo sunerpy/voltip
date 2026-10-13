@@ -23,7 +23,9 @@ From an entry you can:
 - add a misheard word to the [dictionary](/recognition/dictionary) with **Add to dictionary**;
 - delete it.
 
-The search box finds text, apps, scenes and models. Filters narrow the list to today, this week or this month, to starred entries, or entries whose text was not inserted. The list shows 100 entries at a time; scroll to the end, or select **Load more**, to see the next ones.
+The search box finds text, apps, scenes and models, and works together with the filters, which narrow the list to today, this week or this month, to starred entries, or to entries whose text was not inserted. After a search or a filter the list starts again at its first page, and the foot of the list shows how many entries were found.
+
+On the computer the list is shown in pages. Choose 20, 50, 100 or 200 entries per page at the foot of the list (50 at first; the page remembers your choice) and move between pages with the buttons beside it. A new dictation does not change the page you are on. While you scroll through a page, the details of the selected entry stay in view beside it; when they are longer than the window, they scroll on their own. On a phone the list shows 100 entries at a time; scroll to the end, or tap **Load more**, to see the next ones.
 
 ## Long recordings
 

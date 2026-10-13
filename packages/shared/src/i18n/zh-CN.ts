@@ -54,6 +54,16 @@ export const zhCN = {
     themeSwitch: { label: "主题" },
     dialog: { escCancel: "取消" },
     drawer: { close: "关闭" },
+    /** `Pagination`: the page buttons of a long list (the desktop history page, user request
+     *  2026-10-13). */
+    pagination: {
+      label: "分页",
+      first: "第一页",
+      previous: "上一页",
+      next: "下一页",
+      last: "最后一页",
+      page: "第 {n} 页",
+    },
     palette: {
       placeholder: "输入命令或页面…",
       label: "命令菜单",
@@ -522,6 +532,22 @@ export const zhCN = {
     /** Below a list with more entries than loaded (docs/dictation.md §4.4). */
     loadMore: "加载更多",
     loaded: "已显示 {shown} / {n} 条",
+    /** The desktop history page's footer (docs/dictation.md §4.4, user request 2026-10-13):
+     *  where the page is, and how many entries a page shows. `n` picks the form, `count` is the
+     *  number as shown. */
+    pager: {
+      count: {
+        one: "第 {page} / {pages} 页 · 共 {count} 条",
+        other: "第 {page} / {pages} 页 · 共 {count} 条",
+      },
+      found: {
+        one: "第 {page} / {pages} 页 · 找到 {count} 条",
+        other: "第 {page} / {pages} 页 · 找到 {count} 条",
+      },
+      size: "每页显示条数",
+      sizeLabel: "每页",
+      sizeOption: "{n} 条",
+    },
     origin: {
       take: "手机 · {device}",
       typed: "手机输入 · {device}",
@@ -559,6 +585,10 @@ export const zhCN = {
       noneInFilter: "{filter}暂无结果。",
       clearSearch: "清除搜索",
       noMatchBody: "已记录的 {n} 条都不匹配。",
+      /** A search inside a filter that finds nothing (user request 2026-10-13). */
+      noMatchInFilter: "「{filter}」中没有结果匹配「{query}」",
+      noMatchInFilterBody: "可清除搜索，或在全部记录中查找。",
+      searchAll: "在全部记录中查找",
       starHint: "在任意一条上点 ★ 收藏。",
       rangeHint: "可选择其他时间范围。",
       pick: "从左侧选择一条结果",

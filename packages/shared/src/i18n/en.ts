@@ -55,6 +55,14 @@ export const en: Messages = {
     themeSwitch: { label: "Theme" },
     dialog: { escCancel: "Cancel" },
     drawer: { close: "Close" },
+    pagination: {
+      label: "Pages",
+      first: "First page",
+      previous: "Previous page",
+      next: "Next page",
+      last: "Last page",
+      page: "Page {n}",
+    },
     palette: {
       placeholder: "Type a command or page…",
       label: "Command menu",
@@ -519,6 +527,19 @@ export const en: Messages = {
     /** Below a list with more entries than loaded (docs/dictation.md §4.4). */
     loadMore: "Load more",
     loaded: "Showing {shown} of {n}",
+    pager: {
+      count: {
+        one: "Page {page} of {pages} · {count} entry",
+        other: "Page {page} of {pages} · {count} entries",
+      },
+      found: {
+        one: "Page {page} of {pages} · {count} match",
+        other: "Page {page} of {pages} · {count} matches",
+      },
+      size: "Entries per page",
+      sizeLabel: "Per page",
+      sizeOption: "{n}",
+    },
     origin: {
       take: "Phone · {device}",
       typed: "Typed on {device}",
@@ -555,6 +576,9 @@ export const en: Messages = {
       noneInFilter: "No results for {filter} yet.",
       clearSearch: "Clear search",
       noMatchBody: "None of the {n} recorded entries match.",
+      noMatchInFilter: "Nothing in “{filter}” matches “{query}”",
+      noMatchInFilterBody: "Clear the search, or search all entries.",
+      searchAll: "Search all entries",
       starHint: "Click ★ on any entry to star it.",
       rangeHint: "Try another range.",
       pick: "Pick a result on the left",
