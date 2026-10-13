@@ -586,7 +586,17 @@ export function backtestVocabulary(
   const rule = validateRuleDraft(draft.rule);
   const only = Vocabulary.compile(
     [],
-    [{ ...rule, id: draft.id ?? NIL_ID, enabled: true, created_at_ms: 0, updated_at_ms: 0 }],
+    [
+      {
+        ...rule,
+        id: draft.id ?? NIL_ID,
+        enabled: true,
+        source: { kind: "manual" },
+        pending: false,
+        created_at_ms: 0,
+        updated_at_ms: 0,
+      },
+    ],
   );
   return collectBacktest(takes, (take) => {
     const after = only.applyRules(take.text).text;

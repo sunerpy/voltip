@@ -322,6 +322,8 @@ describe("History detail · quick fix (docs/dictation.md section 16.9)", () => {
       replacement: "y",
       case_sensitive: true,
       enabled: true,
+      source: { kind: "manual" },
+      pending: false,
       created_at_ms: T,
       updated_at_ms: T,
     };
