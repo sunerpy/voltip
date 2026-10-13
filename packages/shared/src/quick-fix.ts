@@ -19,6 +19,7 @@ import {
   type RuleDraft,
   type RuleKind,
   type VocabularyBacktest,
+  type VocabularyHit,
 } from "./schema";
 import { Vocabulary, dictionaryForms } from "./vocabulary";
 import {
@@ -155,11 +156,13 @@ export function polishPairs(raw: string, text: string): PolishPair[] {
  *  its original and final text without those the dictionary and the rules account for, since the
  *  final text is the polished text after the corrections and the rules. A take that was not
  *  polished (`refined` false) has none. A pair is the vocabulary's when the corrections and rules
- *  that fired in the take (`vocabulary`, as defined now, even if turned off since) turn its
+ *  that fired in the take (`vocabulary`, in their order then, even if turned off since) turn its
  *  original wording into its final wording, or make the same replacement at the same place when
- *  run over the whole original text. */
+ *  run over the whole original text. They are replayed as defined now, so a take one of whose
+ *  fired entries or rules was deleted or changed after it (`updated_at_ms` past the take's
+ *  `at_ms`) claims nothing for the polish. */
 export function takePolishPairs(
-  entry: Pick<HistoryEntry, "raw_text" | "text" | "refined" | "vocabulary">,
+  entry: Pick<HistoryEntry, "at_ms" | "raw_text" | "text" | "refined" | "vocabulary">,
   dictionary: readonly DictionaryEntry[],
   rules: readonly ReplacementRule[],
 ): PolishPair[] {
@@ -167,11 +170,26 @@ export function takePolishPairs(
   const pairs = polishPairs(entry.raw_text, entry.text);
   const fired = entry.vocabulary;
   if (pairs.length === 0 || fired === undefined) return pairs;
-  const entryIds = new Set(fired.corrections.map((h) => h.id));
-  const ruleIds = new Set(fired.rules.map((h) => h.id));
+  /** The fired ones as they stood at the take, in the order they fired; `undefined` when one is
+   *  gone or was changed since. */
+  const asThen = <T extends { id: string; updated_at_ms: number }>(
+    hits: readonly VocabularyHit[],
+    list: readonly T[],
+  ): T[] | undefined => {
+    const out: T[] = [];
+    for (const hit of hits) {
+      const item = list.find((x) => x.id === hit.id);
+      if (item === undefined || item.updated_at_ms > entry.at_ms) return undefined;
+      out.push(item);
+    }
+    return out;
+  };
+  const entries = asThen(fired.corrections, dictionary);
+  const firedRules = asThen(fired.rules, rules);
+  if (entries === undefined || firedRules === undefined) return [];
   const vocabulary = Vocabulary.compile(
-    dictionary.filter((e) => entryIds.has(e.id)).map((e) => ({ ...e, enabled: true })),
-    rules.filter((r) => ruleIds.has(r.id)).map((r) => ({ ...r, enabled: true, pending: false })),
+    entries.map((e) => ({ ...e, enabled: true })),
+    firedRules.map((r) => ({ ...r, enabled: true, pending: false })),
   );
   const run = (text: string) => vocabulary.applyRules(vocabulary.correct(text).text).text;
   const explained = polishPairs(entry.raw_text, run(entry.raw_text));

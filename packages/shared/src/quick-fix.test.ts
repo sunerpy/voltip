@@ -183,6 +183,7 @@ describe("the polish's own replacements (takePolishPairs)", () => {
     // the polish made and filled the card's right spelling 「来自润色结果」.
     const feishu = literal("非书", "飞书");
     const take = {
+      at_ms: 100,
       raw_text: "结果发到非书群了",
       text: "结果发到飞书群了",
       refined: false,
@@ -203,6 +204,7 @@ describe("the polish's own replacements (takePolishPairs)", () => {
   it("regression: in a polished take a rule's change is left out and the polish's own stays", () => {
     const feishu = literal("非书", "飞书");
     const take = {
+      at_ms: 100,
       raw_text: "结果发到非书群了，用维他命测",
       text: "结果发到飞书群了，用 Voltip 测。",
       refined: true,
@@ -225,13 +227,38 @@ describe("the polish's own replacements (takePolishPairs)", () => {
   it("leaves out a correction's change, even of an entry turned off since", () => {
     const voltip = entry("Voltip", ["维他命"], { enabled: false });
     const take = {
+      at_ms: 100,
       raw_text: "用维他命测",
       text: "用 Voltip 测。",
       refined: true,
       vocabulary: fired([voltip], []),
     };
     expect(takePolishPairs(take, [voltip], [])).toEqual([]);
-    expect(takePolishPairs(take, [], [])).toHaveLength(1);
+  });
+
+  it("regression: a take whose fired entry or rule was deleted or changed since claims nothing for the polish", () => {
+    // Codex review 2026-10-13 (round 3): the fired entries and rules are replayed as they are
+    // now, so one deleted or edited after the take would hand its change back to the polish.
+    const feishu = literal("非书", "飞书");
+    const voltip = entry("Voltip", ["维他命"]);
+    const take = {
+      at_ms: 100,
+      raw_text: "结果发到非书群了，用维他命测，跑千问",
+      text: "结果发到飞书群了，用 Voltip 测，跑 Qwen。",
+      refined: true,
+      vocabulary: fired([voltip], [feishu]),
+    };
+    // As they stood at the take: only the polish's 千问 → Qwen.
+    expect(takePolishPairs(take, [voltip], [feishu]).map((p) => p.heard)).toEqual(["千问"]);
+    // Deleted since.
+    expect(takePolishPairs(take, [voltip], [])).toEqual([]);
+    expect(takePolishPairs(take, [], [feishu])).toEqual([]);
+    // Changed since (any edit, turning it off included, moves updated_at_ms on).
+    const edited = { ...feishu, pattern: "非输", updated_at_ms: 101 };
+    expect(takePolishPairs(take, [voltip], [edited])).toEqual([]);
+    expect(takePolishPairs(take, [{ ...voltip, updated_at_ms: 101 }], [feishu])).toEqual([]);
+    // Changed at the very moment of the take still counts as before it.
+    expect(takePolishPairs(take, [voltip], [{ ...feishu, updated_at_ms: 100 }])).toHaveLength(1);
   });
 
   it("leaves out a rule's change that needs the text around it", () => {
@@ -239,6 +266,7 @@ describe("the polish's own replacements (takePolishPairs)", () => {
     // made the same replacement there.
     const yuan = literal("(\\d+)块", "${1}元", { kind: "regex" });
     const take = {
+      at_ms: 100,
       raw_text: "一共30块钱",
       text: "一共30元钱。",
       refined: true,
