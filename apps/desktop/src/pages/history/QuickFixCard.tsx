@@ -7,10 +7,10 @@
 import {
   type BacktestDraft,
   type BacktestExample,
-  type DictionaryConflict,
   type FixKind,
   type FixPrefill,
   type FixStatus,
+  type FixStatusLine,
   HEARD_AS_JOINER,
   type HistoryEntry,
   NIL_ID,
@@ -22,6 +22,8 @@ import {
   errorText,
   excerptSegments,
   fixStatus,
+  fixStatusLines,
+  fixStatusTone,
   formatDateTime,
   planDictionary,
   planRule,
@@ -690,28 +692,9 @@ function RulePreview({
   );
 }
 
-function conflictText(conflict: DictionaryConflict, t: ReturnType<typeof useI18n>["t"]): string {
-  switch (conflict.kind) {
-    case "taken":
-      return t("history.fix.card.taken", { heard: conflict.heard, term: conflict.owner.term });
-    case "isTerm":
-      return t("history.fix.card.isTerm", { heard: conflict.heard });
-    case "same":
-      return t("history.fix.card.same");
-    case "termTaken":
-      return t("history.fix.card.termTaken", { term: conflict.term, owner: conflict.owner.term });
-    case "tooMany":
-      return t("history.fix.card.tooMany", { max: conflict.max });
-    case "full":
-      return t("history.fix.card.full", { max: conflict.max });
-    case "exists":
-      return t("history.fix.card.exists", { term: conflict.entry.term });
-  }
-}
-
 /** One row: its tone, its words, and the link at its end. */
 interface RowView {
-  tone: "info" | "warn" | "error" | "busy";
+  tone: FixStatusLine["tone"];
   text: string;
   link?: { label: string; onClick: () => void; expands?: boolean };
 }
@@ -734,73 +717,23 @@ function StatusBox({
   onOpenDictionary: () => void;
 }) {
   const { t } = useI18n();
-  const show =
-    examples.length > 0
-      ? {
-          label: expanded ? t("common.collapse") : t("history.fix.card.view"),
-          onClick: onToggle,
-          expands: true,
-        }
-      : undefined;
-  const views: RowView[] = rows.map((row): RowView => {
-    switch (row.kind) {
-      case "conflict": {
-        const c = row.conflict;
-        const link =
-          c.kind === "exists"
+  const lines = fixStatusLines(rows, { heard, rule, examples: examples.length }, t);
+  const views = lines.map((line): RowView => {
+    const link =
+      line.link === "show"
+        ? {
+            label: expanded ? t("common.collapse") : t("history.fix.card.view"),
+            onClick: onToggle,
+            expands: true,
+          }
+        : line.link === "openDictionary"
+          ? { label: t("history.fix.card.openDictionary"), onClick: onOpenDictionary }
+          : line.link === "viewEntry"
             ? { label: t("history.fix.card.viewEntry"), onClick: onOpenDictionary }
-            : c.kind === "taken" || c.kind === "isTerm" || c.kind === "termTaken"
-              ? { label: t("history.fix.card.openDictionary"), onClick: onOpenDictionary }
-              : undefined;
-        return { tone: "error", text: conflictText(c, t), ...(link === undefined ? {} : { link }) };
-      }
-      case "error":
-        return { tone: "error", text: row.message };
-      case "merge":
-        return {
-          tone: "info",
-          text: t("history.fix.card.merge", {
-            term: row.entry.term,
-            heard,
-            n: row.entry.heard_as.length,
-          }),
-        };
-      case "computing":
-        return { tone: "busy", text: t("history.fix.card.computing") };
-      case "impact": {
-        const text = rule
-          ? row.matched > 0
-            ? t("history.fix.card.ruleImpact", { scanned: row.scanned, n: row.matched })
-            : t("history.fix.card.ruleImpactNone", { scanned: row.scanned })
-          : row.matched > 0
-            ? t("history.fix.card.impact", { scanned: row.scanned, n: row.matched, heard })
-            : t("history.fix.card.impactNone", { scanned: row.scanned, heard });
-        return {
-          tone: "info",
-          text,
-          ...(show === undefined || rows.some((r) => r.kind === "kept") ? {} : { link: show }),
-        };
-      }
-      case "kept":
-        return {
-          tone: "warn",
-          text: t("history.fix.card.kept", { n: row.kept, heard }),
-          ...(show === undefined ? {} : { link: show }),
-        };
-      case "short":
-        return {
-          tone: "warn",
-          text: row.short.latin
-            ? t("history.fix.card.shortLatin", { n: row.short.chars })
-            : t("history.fix.card.short"),
-        };
-    }
+            : undefined;
+    return { tone: line.tone, text: line.text, ...(link === undefined ? {} : { link }) };
   });
-  const worst = views.some((v) => v.tone === "error")
-    ? "error"
-    : views.some((v) => v.tone === "warn")
-      ? "warn"
-      : "info";
+  const worst = fixStatusTone(lines);
   return (
     <div
       role="status"

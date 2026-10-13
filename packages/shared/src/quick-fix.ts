@@ -591,6 +591,101 @@ export function fixStatus(input: FixStatusInput): FixStatus[] {
   return candidates.filter((row): row is FixStatus => row !== undefined).slice(0, 2);
 }
 
+/** A status row as it reads: its tone, its words, and the link at its end — `show` lists the
+ *  examples (查看 / 收起), `openDictionary` and `viewEntry` open the dictionary. */
+export interface FixStatusLine {
+  tone: "info" | "warn" | "error" | "busy";
+  text: string;
+  link?: "show" | "openDictionary" | "viewEntry";
+}
+
+/** Why the core would refuse the draft, in words. */
+function conflictText(conflict: DictionaryConflict, t: TFunction): string {
+  switch (conflict.kind) {
+    case "taken":
+      return t("history.fix.card.taken", { heard: conflict.heard, term: conflict.owner.term });
+    case "isTerm":
+      return t("history.fix.card.isTerm", { heard: conflict.heard });
+    case "same":
+      return t("history.fix.card.same");
+    case "termTaken":
+      return t("history.fix.card.termTaken", { term: conflict.term, owner: conflict.owner.term });
+    case "tooMany":
+      return t("history.fix.card.tooMany", { max: conflict.max });
+    case "full":
+      return t("history.fix.card.full", { max: conflict.max });
+    case "exists":
+      return t("history.fix.card.exists", { term: conflict.entry.term });
+  }
+}
+
+/** The rows of `fixStatus` in words, for the desktop's card and the phone's sheet alike. `heard`
+ *  names the forms (or the rule's pattern), `rule` says the draft is a rule, `examples` how many
+ *  takes the backtest gave as examples: the effect row (or, when there is one, the kept-forms row)
+ *  links to them. */
+export function fixStatusLines(
+  rows: readonly FixStatus[],
+  context: { heard: string; rule: boolean; examples: number },
+  t: TFunction = zhT.t,
+): FixStatusLine[] {
+  const { heard, rule, examples } = context;
+  const show = examples > 0 ? ({ link: "show" } as const) : {};
+  const kept = rows.some((r) => r.kind === "kept");
+  return rows.map((row): FixStatusLine => {
+    switch (row.kind) {
+      case "conflict": {
+        const c = row.conflict;
+        const link =
+          c.kind === "exists"
+            ? ({ link: "viewEntry" } as const)
+            : c.kind === "taken" || c.kind === "isTerm" || c.kind === "termTaken"
+              ? ({ link: "openDictionary" } as const)
+              : {};
+        return { tone: "error", text: conflictText(c, t), ...link };
+      }
+      case "error":
+        return { tone: "error", text: row.message };
+      case "merge":
+        return {
+          tone: "info",
+          text: t("history.fix.card.merge", {
+            term: row.entry.term,
+            heard,
+            n: row.entry.heard_as.length,
+          }),
+        };
+      case "computing":
+        return { tone: "busy", text: t("history.fix.card.computing") };
+      case "impact": {
+        const text = rule
+          ? row.matched > 0
+            ? t("history.fix.card.ruleImpact", { scanned: row.scanned, n: row.matched })
+            : t("history.fix.card.ruleImpactNone", { scanned: row.scanned })
+          : row.matched > 0
+            ? t("history.fix.card.impact", { scanned: row.scanned, n: row.matched, heard })
+            : t("history.fix.card.impactNone", { scanned: row.scanned, heard });
+        return { tone: "info", text, ...(kept ? {} : show) };
+      }
+      case "kept":
+        return { tone: "warn", text: t("history.fix.card.kept", { n: row.kept, heard }), ...show };
+      case "short":
+        return {
+          tone: "warn",
+          text: row.short.latin
+            ? t("history.fix.card.shortLatin", { n: row.short.chars })
+            : t("history.fix.card.short"),
+        };
+    }
+  });
+}
+
+/** The tone of the box around the rows: its worst row's (a busy row reads as information). */
+export function fixStatusTone(lines: readonly FixStatusLine[]): "info" | "warn" | "error" {
+  if (lines.some((l) => l.tone === "error")) return "error";
+  if (lines.some((l) => l.tone === "warn")) return "warn";
+  return "info";
+}
+
 /** A backtest example's `before`, split around what the draft changes there: `[lead, hit, tail]`. */
 export function snippetParts(before: string, after: string): [string, string, string] {
   const b = Array.from(before);

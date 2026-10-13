@@ -437,6 +437,35 @@ describe("History detail · quick fix (docs/dictation.md section 16.9)", () => {
     });
   });
 
+  it("the diff view: a deletion alone is no button, Enter on a replacement asks, ✕ closes the cards", async () => {
+    const { user } = setup({
+      history: [take(1, "嗯，下午用维他命测了酷伯内特斯", "下午用 Voltip 测了酷伯内特斯。")],
+      dictionary: [entry("Kubernetes", ["酷伯内特斯"])],
+    });
+    await user.click(await screen.findByRole("radio", { name: "对比" }));
+    const [pair] = screen.getAllByTestId("fix-pair");
+    if (pair === undefined) throw new Error("no pair");
+    expect(screen.getAllByTestId("fix-pair")).toHaveLength(1);
+    expect(screen.getByText("嗯，")).not.toHaveAttribute("role");
+    act(() => {
+      pair.focus();
+    });
+    await user.keyboard("{Enter}");
+    const which = screen.getByRole("dialog", { name: "哪一种写法正确？" });
+    await user.click(within(which).getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // A dictionary mark's card closes on its ✕ too.
+    await user.click(screen.getByRole("radio", { name: "原文" }));
+    const known = screen
+      .getAllByTestId("fix-mark")
+      .find((m) => m.getAttribute("data-mark") === "known");
+    if (known === undefined) throw new Error("no dictionary mark");
+    await user.click(known);
+    const knownCard = screen.getByRole("dialog", { name: "已加入词典" });
+    await user.click(within(knownCard).getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("refuses a form another entry owns, and links to the dictionary", async () => {
     const vitamin = entry("维生素", ["维他命"], { enabled: false });
     const { user } = setup({ dictionary: [vitamin] });

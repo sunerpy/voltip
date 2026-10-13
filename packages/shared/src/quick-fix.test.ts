@@ -7,6 +7,8 @@ import {
   excerptSegments,
   fixScope,
   fixStatus,
+  fixStatusLines,
+  fixStatusTone,
   fixTarget,
   planDictionary,
   planRule,
@@ -431,6 +433,133 @@ describe("the card's status rows (fixStatus)", () => {
       { kind: "short", short: { form: "维", chars: 1, latin: false } },
     ]);
     expect(fixStatus({ heard: "维他命" })).toEqual([]);
+  });
+
+  it("words the rows, links the effect to its examples and a clash to the dictionary", () => {
+    const owner = entry("维生素", ["维他命"]);
+    const lines = (rows: Parameters<typeof fixStatusLines>[0], isRule = false, examples = 2) =>
+      fixStatusLines(rows, { heard: "维他命", rule: isRule, examples });
+    expect(
+      lines([{ kind: "conflict", conflict: { kind: "taken", heard: "维他命", owner } }]),
+    ).toEqual([
+      { tone: "error", text: "「维他命」已是词条「维生素」的曾听成写法。", link: "openDictionary" },
+    ]);
+    expect(
+      lines([{ kind: "conflict", conflict: { kind: "isTerm", heard: "维他命", owner } }]),
+    ).toEqual([
+      {
+        tone: "error",
+        text: "「维他命」是另一个词条的正确写法，不能作为曾听成写法。",
+        link: "openDictionary",
+      },
+    ]);
+    expect(
+      lines([{ kind: "conflict", conflict: { kind: "termTaken", term: "维他命", owner } }]),
+    ).toEqual([
+      {
+        tone: "error",
+        text: "「维他命」已是词条「维生素」的曾听成写法，不能作为正确写法。",
+        link: "openDictionary",
+      },
+    ]);
+    expect(lines([{ kind: "conflict", conflict: { kind: "exists", entry: voltip } }])).toEqual([
+      { tone: "error", text: "「Voltip」已是词典中的正确写法。", link: "viewEntry" },
+    ]);
+    expect(
+      lines([
+        { kind: "conflict", conflict: { kind: "same", heard: "x" } },
+        { kind: "conflict", conflict: { kind: "tooMany", entry: voltip, max: MAX_HEARD_AS } },
+        { kind: "conflict", conflict: { kind: "full", max: MAX_DICTIONARY_ENTRIES } },
+        { kind: "error", message: "rules: 正则无法编译" },
+      ]),
+    ).toEqual([
+      { tone: "error", text: "曾听成写法与正确写法相同。" },
+      { tone: "error", text: `该词条的曾听成写法已达 ${MAX_HEARD_AS} 个。` },
+      { tone: "error", text: `词典最多 ${MAX_DICTIONARY_ENTRIES} 个词条，已达到上限。` },
+      { tone: "error", text: "rules: 正则无法编译" },
+    ]);
+    expect(
+      lines([
+        { kind: "merge", entry: voltip, heard: "维他命" },
+        { kind: "computing" },
+        { kind: "impact", scanned: 500, matched: 3 },
+      ]),
+    ).toEqual([
+      {
+        tone: "info",
+        text: "「Voltip」已在词典中，将把「维他命」加入它的曾听成写法（现有 1 个）。",
+      },
+      { tone: "busy", text: "正在计算影响范围…" },
+      {
+        tone: "info",
+        text: "除本条外，最近 500 条记录中有 3 条含「维他命」。",
+        link: "show",
+      },
+    ]);
+    // With a kept-forms row the link moves to it; without examples there is none.
+    expect(
+      lines([
+        { kind: "impact", scanned: 500, matched: 3 },
+        { kind: "kept", kept: 1 },
+      ]),
+    ).toEqual([
+      { tone: "info", text: "除本条外，最近 500 条记录中有 3 条含「维他命」。" },
+      {
+        tone: "warn",
+        text: "其中 1 条的最终文本仍为「维他命」，可能是正确用法。",
+        link: "show",
+      },
+    ]);
+    expect(
+      lines(
+        [
+          { kind: "impact", scanned: 500, matched: 0 },
+          { kind: "short", short: { form: "维", chars: 1, latin: false } },
+        ],
+        false,
+        0,
+      ),
+    ).toEqual([
+      { tone: "info", text: "除本条外，最近 500 条记录中都没有「维他命」。" },
+      { tone: "warn", text: "写法只有 1 个字，容易误改其他词语。" },
+    ]);
+    expect(
+      lines(
+        [
+          { kind: "impact", scanned: 499, matched: 1 },
+          { kind: "short", short: { form: "ab", chars: 2, latin: true } },
+        ],
+        true,
+      ),
+    ).toEqual([
+      { tone: "info", text: "除本条外，最近 499 条记录中有 1 条会被改动。", link: "show" },
+      { tone: "warn", text: "写法只有 2 个字母，容易误改其他词语。" },
+    ]);
+    expect(lines([{ kind: "impact", scanned: 499, matched: 0 }], true, 0)).toEqual([
+      { tone: "info", text: "除本条外，最近 499 条记录都不会被改动。" },
+    ]);
+    // In English, through the translator it is given.
+    const en = createTranslator("en").t;
+    expect(
+      fixStatusLines([{ kind: "computing" }], { heard: "x", rule: false, examples: 0 }, en),
+    ).toEqual([{ tone: "busy", text: "Checking the effect…" }]);
+  });
+
+  it("the box takes its worst row's tone", () => {
+    expect(fixStatusTone([])).toBe("info");
+    expect(fixStatusTone([{ tone: "busy", text: "" }])).toBe("info");
+    expect(
+      fixStatusTone([
+        { tone: "info", text: "" },
+        { tone: "warn", text: "" },
+      ]),
+    ).toBe("warn");
+    expect(
+      fixStatusTone([
+        { tone: "warn", text: "" },
+        { tone: "error", text: "" },
+      ]),
+    ).toBe("error");
   });
 
   it("cuts the rule preview to the changes and twelve characters around them", () => {
