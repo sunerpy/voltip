@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/sunerpy/voltip/compare/v0.1.6...v0.1.7) (2026-10-17)
+
+
+### Bug Fixes
+
+* Windows 应用内更新在后台安装，不再弹出安装程序窗口 ([#169](https://github.com/sunerpy/voltip/issues/169)) ([244d427](https://github.com/sunerpy/voltip/commit/244d42759cfc121236381c8bb2f8b7728d7b89de))
+
 ## [0.1.6](https://github.com/sunerpy/voltip/compare/v0.1.5...v0.1.6) (2026-10-13)
 
 
