@@ -131,6 +131,37 @@ fn windows_bundle_installs_per_user_refuses_downgrades_and_names_the_webview_mod
     }
 }
 
+/// docs/dictation.md §9 (user request 2026-10-17): an in-app update showed the installer's window.
+/// The Windows bundle builds its hooks into the installer, and they hide the window of a passive run
+/// the updater started (`/P` with `/UPDATE`, what 0.1.6 and earlier ask for) at GUI initialisation,
+/// before the first frame, with a second guard before the files are copied. CI runs both update
+/// runs on real Windows and counts visible frames (scripts/smoke-windows-update.ps1).
+#[test]
+fn windows_installer_hides_its_window_when_the_updater_runs_it() {
+    let config = merged(Target::Windows);
+    let hooks = config.bundle.windows.nsis.as_ref().and_then(|n| n.installer_hooks.clone()).expect("bundle.windows.nsis.installerHooks");
+    let text = read(&tauri_dir().join(&hooks));
+    let code: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with(';')).collect();
+    let function = code.iter().position(|l| *l == "Function VoltipHideUpdateWindow").expect("the GUI-init function");
+    assert!(code[..function].contains(&"!define MUI_CUSTOMFUNCTION_GUIINIT VoltipHideUpdateWindow"), "{code:?}");
+    let body = &code[function..code.iter().position(|l| *l == "FunctionEnd").unwrap()];
+    for line in [
+        r#"${GetOptions} $CMDLINE "/P" $R0"#,
+        r#"${GetOptions} $CMDLINE "/UPDATE" $R0"#,
+        "IntOp $0 $0 | 0x08080080",
+        "System::Call 'user32::SetWindowLongW(p $HWNDPARENT, i -20, i r0) i .r1'",
+        "System::Call 'user32::SetLayeredWindowAttributes(p $HWNDPARENT, i 0, i 0, i 2) i .r1'",
+        "HideWindow",
+    ] {
+        assert!(body.contains(&line), "missing {line:?} in {body:?}");
+    }
+    // The registers the function uses are given back to the installer.
+    assert_eq!(body.iter().filter(|l| l.starts_with("Push ")).count(), body.iter().filter(|l| l.starts_with("Pop ")).count());
+    assert!(code.contains(&"!macro NSIS_HOOK_PREINSTALL"), "the second guard");
+    // Not on other platforms' configurations: they have no NSIS installer.
+    assert!(merged(Target::Linux).bundle.windows.nsis.as_ref().and_then(|n| n.installer_hooks.as_ref()).is_none());
+}
+
 /// Regression (2026-09-27, native Windows gate): `tauri-build` checks every listed resource on every
 /// build, so listing the Vulkan loader in tauri.windows.conf.json broke a plain native `cargo build`
 /// with nothing staged. The Windows file lists only what build.rs stages itself; the package script

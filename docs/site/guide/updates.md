@@ -15,7 +15,7 @@ Voltip updates from inside the app. Under **Settings → General**:
 
 With automatic updates off, Voltip contacts the update server only when you press **Check for updates**. On Windows and macOS the tray menu has the same command.
 
-On Windows the installer finishes the update and restarts the app. On macOS and Linux the app is replaced in place and restarts.
+On Windows the new version installs in the background without showing the installer, and Voltip opens again when it is done, including when you update from 0.1.6 or earlier. On macOS and Linux the app is replaced in place and restarts.
 
 On a Mac, updating from 0.0.6 or earlier asks for the permissions once more; see [Install](/guide/install#macos). From version 0.0.7 every release is signed with the same certificate so that later updates keep the microphone and Accessibility permissions. The first such update, from 0.0.7 to 0.0.8, has not been checked on a real Mac yet.
 
