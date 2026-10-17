@@ -117,20 +117,23 @@ public static class VoltipInstallerWindows {
 # SYSTEM gets the 32-bit NSIS stub's file-system redirection into SysWOW64 (see ci.yml).
 function Installed-Exe {
   $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltip'
-  $location = ((Get-ItemProperty -Path $key -Name InstallLocation -ErrorAction SilentlyContinue).InstallLocation) -replace '"', ''
+  $entry = Get-ItemProperty -Path $key -Name InstallLocation -ErrorAction SilentlyContinue
+  $location = if ($entry) { $entry.InstallLocation -replace '"', '' } else { '' }
   $candidates = @($location, ($location -replace '(?i)\\system32\\', '\SysWOW64\'), (Join-Path $env:LOCALAPPDATA 'Voltip')) | Where-Object { $_ } | Select-Object -Unique
   $exe = $candidates | ForEach-Object { Join-Path $_ 'voltip-desktop.exe' } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
   if (-not $exe) { throw "smoke-windows-update: Voltip is not installed (looked in: $($candidates -join '; '))" }
   (Resolve-Path -LiteralPath $exe).Path
 }
 
+# The running instances of the installed exe. Callers wrap the call in @(): a function's empty
+# array reaches the caller as $null, which has no Count under strict mode (CI 2026-10-17).
 function Running([string] $exe) {
   @(Get-Process -Name 'voltip-desktop' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe })
 }
 
 # Ends the installed instance with `--quit`, and by force if it does not go.
 function Stop-Installed([string] $exe) {
-  $running = Running $exe
+  $running = @(Running $exe)
   if ($running.Count -eq 0) { return }
   $quit = Start-Process -FilePath $exe -ArgumentList '--quit' -PassThru
   [void]$quit.WaitForExit(30000)
@@ -176,8 +179,8 @@ try {
 
     # `/R`: the installer opens Voltip again when it is done.
     $deadline = (Get-Date).AddSeconds($RelaunchTimeoutSec)
-    while ((Running $exe).Count -eq 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
-    $reopened = Running $exe
+    while (@(Running $exe).Count -eq 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
+    $reopened = @(Running $exe)
     if ($reopened.Count -eq 0) {
       $failures.Add("$($run.Name): Voltip was not opened again within ${RelaunchTimeoutSec}s")
     } else {
@@ -185,8 +188,10 @@ try {
     }
     Stop-Installed $exe
   }
+} catch {
+  $failures.Add("the check stopped: $_")
 } finally {
-  Stop-Installed $exe
+  try { Stop-Installed $exe } catch { $failures.Add("Voltip could not be stopped afterwards: $_") }
   foreach ($failure in $failures) { Note "FAILED: $failure" }
   if ($failures.Count -eq 0) { Note 'OK' }
   $summary | Set-Content -LiteralPath (Join-Path $OutDir 'summary.txt') -Encoding utf8
