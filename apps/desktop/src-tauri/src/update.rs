@@ -18,8 +18,9 @@
 //! **Manual path.** `update_check` asks the manifest and publishes `Checking` → `UpToDate` /
 //! `Available` / `Failed`. `update_install` (the 「立即重启更新」 button) downloads the package with
 //! `Downloading` progress, verifies its signature, publishes `Ready`, then `Installing`, and hands
-//! over to the installer: on Windows the NSIS installer takes over and relaunches the app itself; on
-//! macOS / Linux the bundle is replaced in place and the shell asks Tauri to restart the process.
+//! over to the installer: on Windows the NSIS installer takes over, runs without a window
+//! ([`windows_install_mode`]) and relaunches the app itself; on macOS / Linux the bundle is replaced
+//! in place and the shell asks Tauri to restart the process.
 //!
 //! **Automatic path** (`Settings.auto_update`, off by default). When it is on and the updater is
 //! configured, the shell checks [`AUTO_CHECK_DELAY`] after start; an available package is
@@ -47,6 +48,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 use tauri::Manager as _;
+use tauri::utils::config::BundleType;
 use tauri::{AppHandle, Runtime, Url};
 use tauri_plugin_updater::{Update, UpdaterExt as _};
 use voltip_core::ui::{UiEvent, UpdateStatus};
@@ -116,10 +118,31 @@ impl UpdaterConfig {
     }
 
     /// The `plugins.updater` block the plugin deserialises at initialisation (injected into the
-    /// Tauri context by [`crate::run`], so `tauri.conf.json` never holds the key).
+    /// Tauri context by [`crate::run`], so `tauri.conf.json` never holds the key), for the package
+    /// this binary was bundled into.
     pub fn plugin_config(&self) -> serde_json::Value {
+        self.plugin_config_for(tauri::utils::platform::bundle_type())
+    }
+
+    /// [`Self::plugin_config`] for a binary bundled as `bundle`: the Windows install mode follows
+    /// the package ([`windows_install_mode`]); the plugin reads it on Windows only.
+    pub fn plugin_config_for(&self, bundle: Option<BundleType>) -> serde_json::Value {
         let endpoints: Vec<&str> = self.endpoints.iter().map(Url::as_str).collect();
-        serde_json::json!({ "pubkey": self.pubkey, "endpoints": endpoints })
+        serde_json::json!({ "pubkey": self.pubkey, "endpoints": endpoints, "windows": { "installMode": windows_install_mode(bundle) } })
+    }
+}
+
+/// How the plugin runs a Windows package (docs/dictation.md §9; user request 2026-10-17: an
+/// in-app update showed the installer's window). The NSIS installer Voltip ships installs for the
+/// current user and needs no elevation, so it runs silently (`/S`) and opens Voltip again when it
+/// is done. Anything else (an MSI, an exe the bundler never marked) keeps the plugin's passive
+/// mode, which can still show the elevation prompt a per-machine package needs; the installer
+/// hides the window of a passive update run itself (`nsis/installer-hooks.nsh`), which is also what
+/// an update from a release before this one runs.
+pub fn windows_install_mode(bundle: Option<BundleType>) -> &'static str {
+    match bundle {
+        Some(BundleType::Nsis) => "quiet",
+        _ => "passive",
     }
 }
 
@@ -588,6 +611,29 @@ mod tests {
             assert_eq!(only.endpoints.iter().map(Url::as_str).collect::<Vec<_>>(), [github], "{mirror:?}");
         }
         assert_eq!(UpdaterConfig::from_values(None, Some("https://mirror.example.test/updates"), Some("key")), None, "a mirror alone is no updater");
+    }
+
+    /// User request 2026-10-17: an in-app update on Windows showed the installer's window. The
+    /// block the plugin reads asks for its quiet mode for the NSIS package, so the installer runs
+    /// with `/S`, and keeps the passive mode (`/P`) for any other package.
+    #[test]
+    fn regression_a_windows_update_runs_the_nsis_installer_without_a_window() {
+        let cfg = UpdaterConfig::from_values(Some("https://updates.example.test/latest.json"), None, Some("key")).unwrap();
+        let read = |bundle: Option<BundleType>| -> tauri_plugin_updater::Config { serde_json::from_value(cfg.plugin_config_for(bundle)).unwrap() };
+        let nsis = read(Some(BundleType::Nsis));
+        let mode = nsis.windows.as_ref().map(|w| w.install_mode.clone()).unwrap();
+        assert_eq!(mode.to_string(), "quiet");
+        assert_eq!(mode.nsis_args(), ["/S"]);
+        assert_eq!(nsis.pubkey, "key");
+        assert_eq!(nsis.endpoints.iter().map(Url::as_str).collect::<Vec<_>>(), ["https://updates.example.test/latest.json"]);
+        for other in [Some(BundleType::Msi), None] {
+            let mode = read(other.clone()).windows.map(|w| w.install_mode).unwrap();
+            assert_eq!((mode.to_string(), mode.nsis_args()), ("passive".to_owned(), &["/P"][..]), "{other:?}");
+        }
+        assert_eq!(windows_install_mode(Some(BundleType::Nsis)), "quiet");
+        assert_eq!(windows_install_mode(Some(BundleType::Deb)), "passive");
+        // What this binary injects follows the package the bundler marked it for.
+        assert_eq!(cfg.plugin_config(), cfg.plugin_config_for(tauri::utils::platform::bundle_type()));
     }
 
     #[test]

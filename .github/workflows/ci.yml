@@ -604,6 +604,16 @@ jobs:
           Get-ChildItem $exe.DirectoryName -Filter '*.dll' | ForEach-Object { "  $($_.Name) $($_.Length)" }
           ./scripts/smoke-native-cli.ps1 -Binary $exe.FullName -Models sense-voice-small,qwen3-asr-0.6b -OutDir smoke-native-windows-installed -ModelCache smoke-models
 
+      # docs/dictation.md §9 (user request 2026-10-17: an in-app update showed the installer's
+      # window): the installer run the way the updater runs it, passively as 0.1.6 and earlier do and
+      # silently as later releases do. On this desktop each run's windows are sampled, none may be on
+      # the screen, and the installer opens Voltip again (scripts/smoke-windows-update.ps1).
+      - name: NSIS installer — an in-app update shows no window and opens Voltip again
+        timeout-minutes: 15
+        run: |
+          $setup = Get-ChildItem dist-windows -Filter '*-setup.exe' | Select-Object -First 1
+          ./scripts/smoke-windows-update.ps1 -Setup $setup.FullName -OutDir smoke-windows-update
+
       - name: Save the smoke test's models
         if: github.ref == 'refs/heads/main' && steps.smoke-models.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -631,6 +641,7 @@ jobs:
             smoke-tray-windows/*.txt
             smoke-tray-windows/*.log
             smoke-tray-windows/*.png
+            smoke-windows-update/*.txt
           if-no-files-found: warn
           retention-days: 7
 
