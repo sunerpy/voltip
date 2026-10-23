@@ -7,7 +7,7 @@ description: 按住快捷键说话，松开后文字出现在任意应用的光�
 
 hero:
   text: 按住说话，<br>松开即输入
-  tagline: 文字会出现在任意应用的光标处。识别可以在本机完成，也可以使用你选择的云端服务；AI 润色可以先把文字整理好。
+  tagline: 开源的语音输入工具，文字出现在任意应用的光标处。识别可以用本机模型离线完成，也可以交给内置服务或你自己的服务商；AI 润色按你选择的预设整理措辞。
   actions:
     - theme: brand
       text: 下载安装
@@ -20,6 +20,7 @@ home:
   checks:
     - Windows、macOS、Linux 和 Android
     - 使用本地模型时，音频不离开这台电脑
+    - 内置服务免费，不需要密钥
     - 开源，AGPL-3.0
 
   scene:
@@ -49,13 +50,38 @@ home:
       text: 开始体验
       link: /zh/guide/try
 
+  flow:
+    title: 按下快捷键之后，文字依次经过这几步
+    intro: 每一步都可以单独设置，AI 润色也可以关闭。词典、AI 润色或替换规则出错时，听写会用前一步的文字完成。
+    steps:
+      - icon: mic
+        name: 录音
+        text: 按住说话，或按一下开始、再按一下结束；可以录麦克风、电脑正在播放的声音，或两者混合。
+      - icon: audio
+        name: 语音识别
+        text: 使用本机模型、内置服务或你的服务商，整段识别或边说边识别。词典的正确写法和场景的术语会作为热词随录音发送，让云端识别保持这些写法；本地模型不使用热词。
+      - icon: book
+        name: 词典
+        text: 识别之后，把曾听成的写法替换为正确写法，本地模型和云端识别都适用。
+      - icon: wand
+        name: AI 润色
+        tag: 可关闭
+        text: 按当前的预设或场景整理文字：删去口头禅，补全标点，采纳改口。
+      - icon: replace
+        name: 替换规则
+        text: 按列表顺序改写最终文字，支持字面匹配和正则表达式。
+      - icon: cursor
+        name: 插入
+        text: 粘贴到光标处后恢复剪贴板原来的内容，并在本机的历史记录中保存一份。
+    note: 详细过程见 [Voltip 是什么](/zh/guide/what-is-voltip)。
+
   pairs:
-    title: 口头禅和改口，插入之前就整理好
+    title: 插入文字之前，先整理口头禅和改口
     intro: AI 润色删去口头禅、补全标点、采纳改口，措辞保持不变；不需要时可以关闭。
     labels:
-      said: 说的
-      inserted: 插入的
-      edit: 选中文字，按住 Ctrl+Alt+E 说
+      said: 识别出的原话
+      inserted: 插入的文字
+      edit: 选中文字后，按住 Ctrl+Alt+E 说
       selection: 选中的文字
       replaced: 替换为
       actual: 实际输出
@@ -77,12 +103,12 @@ home:
     note: 「实际输出」取自 Voltip 的录屏；「示例」是说明用的文字，实际结果取决于所选的 AI 模型。
 
   presets:
-    title: "同一段话，\n按场合选择预设"
-    intro: 预设决定 AI 润色怎样整理文字。内置 8 个预设，提示词全部公开，也可以复制为自定义预设后修改。
+    title: 选一个预设，决定文字怎样整理
+    intro: 内置 8 个预设，每个预设的提示词都可以查看，也可以复制为自定义预设后修改。
     points:
       - 默认使用「校对」，可以在首页、托盘或「AI 润色」开关旁切换
       - 开启场景后，按正在使用的应用自动选择预设
-    saidLabel: 说的
+    saidLabel: 识别出的原话
     said: 呃那个就是周四的发布先推迟到下周一吧，然后测试那边还有两个问题没修完，修完了我再通知大家
     outputs:
       - name: 校对
@@ -101,29 +127,54 @@ home:
     scenes:
       title: 场景：按应用切换预设和补充要求
       note: 内置场景开启后才生效；也可以为任意应用新建场景。
+      labels:
+        preset: 预设
+        instruction: 补充要求
       items:
         - name: 编程开发
-          body: VS Code、Cursor、Kiro、JetBrains 系列和终端。代码、命令、路径和标识符保持原样。
           preset: 校对
+          apps:
+            - { name: Cursor, mark: cursor }
+            - { name: Kiro, mark: kiro }
+            - { name: JetBrains, mark: jetbrains }
+            - { name: iTerm2, mark: iterm2 }
+            - { name: Warp, mark: warp }
+            - { name: Ghostty, mark: ghostty }
+          more: 以及 VS Code、Windows Terminal、PowerShell、Alacritty、WezTerm 和各系统自带的终端。
+          instruction: 保留代码、命令、路径、英文标识符和 Markdown，不把技术词翻译成中文。
         - name: 办公写作
-          body: Outlook、Word、WPS、OneNote、Notion 等应用中的邮件和文档。
           preset: 书面语
+          apps:
+            - { name: Notion, mark: notion }
+            - { name: Obsidian, mark: obsidian }
+            - { name: Thunderbird, mark: thunderbird }
+          more: 以及 Outlook、Word、WPS、OneNote、Typora、LibreOffice Writer，和 Mac 上的「邮件」与 Pages。
+          instruction: 邮件和文档：句子完整，自然分段，不编造称呼和事实。
         - name: 即时聊天
-          body: 微信、QQ、Slack、Teams、钉钉、飞书、Telegram、Discord 等聊天应用。
           preset: 口语聊天
+          apps:
+            - { name: 微信, mark: wechat }
+            - { name: QQ, mark: qq }
+            - { name: Telegram, mark: telegram }
+            - { name: Discord, mark: discord }
+          more: 以及企业微信、Slack、Teams、钉钉、飞书、Lark，和 Mac 上的「信息」。
+          body: 这个场景没有补充要求，由「口语聊天」预设整理：口语化的短句，句末不加句号。
         - name: 法律、医疗、金融、学术
-          body: 严格校对，专业术语保持原样。添加你使用的应用后生效。
           preset: 校对
-
+          apps:
+            - { name: 法律, icon: scale }
+            - { name: 医疗, icon: stethoscope }
+            - { name: 金融, icon: chart }
+            - { name: 学术, icon: cap }
+          more: 四个领域各是一个场景，添加你使用的应用后生效。
+          instruction: 严格校对，保持专业术语原样；数字、单位、日期写规范。每个领域另有一句，例如法律文本的法条、案号和当事人名称照原样保留。
   modes:
-    title: 识别在哪里完成，由你选择
-    intro: 录音发送到哪里、由谁的模型识别，可以在「语音模型」页随时切换。
-    scope: 这台电脑
+    title: 三种识别方式
+    intro: 本机、内置服务和你的服务商，可以在「语音模型」页随时切换。
     items:
       - icon: cpu
         label: 本机识别
-        title: 下载一次，离线可用
-        flow: { from: 你说话, to: 本地模型, icon: cpu, local: true }
+        title: 使用下载到本机的模型
         assure: 音频不离开这台电脑
         specs:
           - { term: 费用, text: 免费 }
@@ -138,8 +189,7 @@ home:
       - icon: cloud
         label: 内置服务
         badge: 默认
-        title: 安装后即可听写
-        flow: { from: 你说话, to: 内置服务, icon: cloud, local: false }
+        title: 由 Voltip 项目运营
         assure: 服务器不记录录音和文字
         specs:
           - { term: 费用, text: 免费，所有用户共用，按地址限制次数 }
@@ -152,9 +202,8 @@ home:
           - name: GPT-OSS 20B
       - icon: key
         label: 你的服务商
-        title: 使用自己的密钥
-        flow: { from: 你说话, to: 服务商, icon: server, local: false }
-        assure: 录音直接发送给你选择的服务商
+        title: 使用你自己的 API 密钥
+        assure: 录音只发给你选择的服务商
         specs:
           - { term: 费用, text: 按服务商的价格，部分有免费额度 }
           - { term: 准备, text: 服务商的 API 密钥 }
@@ -178,6 +227,38 @@ home:
         - { name: DeepSeek, mark: deepseek }
         - { name: Ollama, mark: ollama }
     note: 在 NVIDIA L40S 上实测，Qwen3-ASR 0.6B 识别一段 16 秒的中文语音，GPU 用时 0.16 秒，8 个处理器线程用时 2.87 秒。详见[本地识别](/zh/recognition/local)和[云端服务](/zh/recognition/cloud)。
+
+  more:
+    title: 按你的工作方式调整
+    intro: 以下功能都在桌面版中，默认关闭的可以在设置中开启。
+    items:
+      - title: 词典与替换规则
+        wide: true
+        body: 把识别器容易听错的词登记一次，以后都按正确写法插入；正确写法还会作为提示交给云端识别和 AI 润色。替换规则在最后改写文字，可以使用正则表达式。在历史记录中选中听错的词，就能直接加入词典或新建规则。
+        swap: { from: 酷伯 control, to: kubectl }
+        guide: "[词典与替换规则](/zh/recognition/dictionary)"
+      - title: 用单个按键开始听写
+        body: 除了组合键，也可以用右 Ctrl、右 Alt、Mac 上的 Fn 键，或鼠标的中键、侧键开始听写；按住时再按其他键会取消这次录音，右 Ctrl + C 照常可用。
+        keys: [右 Ctrl, 右 Alt, Fn]
+        guide: "[快捷键与录音方式](/zh/dictation/shortcuts)"
+      - title: 电脑声音与长录音
+        body: 可以录麦克风、电脑正在播放的声音，或两者混合，混合时去掉扬声器的回声。单次录音最长 2 小时，可以导出 SRT 字幕和文本。
+        chips: [麦克风, 电脑声音, 混合]
+        guide: "[录音来源](/zh/dictation/shortcuts#录音来源)"
+      - title: 额度用完后改用其他模型
+        wide: true
+        body: 识别和 AI 润色各有一张候补模型列表，最多 8 个模型。所选模型的额度用完时，按顺序改用下一个，这次听写照常完成；网络中断、密钥错误等其他错误照常报告，不会切换。
+        chain: [Qwen3.8 27B, GPT-OSS 120B, GPT-OSS 20B]
+        guide: "[额度用完后改用其他模型](/zh/recognition/cloud#额度用完后改用其他模型)"
+      - title: AI 工具接入
+        body: Claude Code、Codex 等 AI 工具可以通过 MCP 读取历史记录、词典和规则，汇总反复出现的识别错误，在你的授权下添加词条和规则。每次修改都可以撤销。
+        chips: [Claude Code, Codex, MCP]
+        guide: "[AI 工具接入](/zh/recognition/mcp)"
+      - title: 本机服务
+        wide: true
+        body: 其他程序通过 OpenAI 兼容接口发送录音，得到经过同样识别、词典、预设和规则处理的文字。可以在应用中开启，也可以在没有桌面的 Linux 服务器上运行 voltip-server；默认只接受来自本机的连接，每个请求都须携带访问令牌。
+        code: voltip-server --scene coding --preset prompt
+        guide: "[本机服务](/zh/recognition/service)"
 
   phone:
     title: "手机当作电脑的\n麦克风和键盘"
@@ -255,22 +336,31 @@ home:
         a: 不需要。内置服务由 Voltip 项目运营，所有用户共用，并按地址限制请求次数。需要稳定使用 AI 润色时，可以改用自己的服务商。
       - q: 网络需要经过代理怎么办？
         a: 在「设置 → 网络」中选择代理方式：默认跟随系统的代理设置，也可以手动填写代理服务器。识别、润色、模型下载、更新和与手机的连接都按这个设置连接。
+      - q: 必须一直按住快捷键吗？
+        a: 不必。可以改为按一下开始、再按一下结束，或在「按住或按一下」方式中短按锁定录音。录音达到设置的最长时长时自动停止；Voltip 没有唤醒词，也不会因为检测到静音而停止。见[快捷键与录音方式](/zh/dictation/shortcuts)。
+      - q: 安装包经过签名吗？
+        a: Windows 安装包尚未进行代码签名，首次启动时 SmartScreen 会提示；macOS 版用项目自己的证书签名，但未经 Apple 公证，首次打开时需要确认一次。安装脚本会按 SHA256SUMS 校验下载的文件，见[安装](/zh/guide/install)。
       - q: 支持 iPhone 吗？
         a: iOS 版计划在后续发布，目前提供 Android 应用。
 
   closer:
-    title: 按住快捷键，开始说话
-    body: 免费下载，支持 Windows、macOS、Linux 和 Android。
+    title: 下载 Voltip
+    body: Windows、macOS、Linux 和 Android 版均可免费下载，源代码按 AGPL-3.0 许可开放。
+    keys: [Ctrl, Alt, Space]
     actions:
       - { text: 下载安装, link: /zh/guide/install, theme: brand, icon: download }
       - { text: GitHub, link: "https://github.com/sunerpy/voltip", theme: alt, icon: github }
 ---
+
+<HomeFlow />
 
 <HomePairs />
 
 <HomePresets />
 
 <HomeModes />
+
+<HomeMore />
 
 <HomePhone />
 

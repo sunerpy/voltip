@@ -75,7 +75,7 @@ Pages may use these components and no others:
 | `<QrCode src alt caption? size? />` | a QR code on a white plate in both themes |
 | `<Badge>` | VitePress's own badge |
 | `<TryVoltip />` | the online try page (`guide/try.md`) only, a `layout: page` with `pageClass: vt-try-page` and `sidebar: false`, so no sidebar or outline competes with it; its API is firlab's `voltip/functions/`, and its own words (buttons, the line on what is kept, the link to the app) are firlab's `try/strings.ts` |
-| `HomePairs`, `HomePresets`, `HomeModes`, `HomePhone`, `HomePlatforms`, `HomeFaq`, `HomeCloser` | the home pages only, in this order; each renders its part of the `home:` frontmatter. `HomePlatforms` wraps the install commands' code group, which stays Markdown |
+| `HomeFlow`, `HomePairs`, `HomePresets`, `HomeModes`, `HomeMore`, `HomePhone`, `HomePlatforms`, `HomeFaq`, `HomeCloser` | the home pages only, in this order; each renders its part of the `home:` frontmatter. `HomePlatforms` wraps the install commands' code group, which stays Markdown |
 
 ## The home pages
 
@@ -90,17 +90,21 @@ missing field or an unknown one, and on a dead link anywhere in `hero:` or `home
 | `checks` | the short facts under the buttons, at least two |
 | `scene` | the hero's picture, one real dictation: `steps` (what the reader does), `live` (the overlay while speaking), `label` and `result` (the text inserted at the cursor), `inserted` (the overlay after inserting), `caption` |
 | `try` | the band under the hero that leads to the try page: `title`, `body`, a `heard` → `polished` sample, `action` (`text`, `link`) |
+| `flow` | how one dictation is processed, optional: `title`, `intro`, `steps[]` (`icon`, `name`, `text`, `tag`; at least three), `note` |
 | `pairs` | `title`, `intro`, `labels`, `items[]`: `kind` (`dictation`, or `edit` with a `selection`), `source` (`actual` or `example`), `said`, `result`; `note` |
-| `presets` | `title`, `intro`, `points`, `saidLabel`, `said`, `outputs[]` (`name`, `desc`, `text`; at least two), `note`, `scenes` (`title`, `note`, `items[]`: `name`, `body`, `preset`) |
+| `presets` | `title`, `intro`, `points`, `saidLabel`, `said`, `outputs[]` (`name`, `desc`, `text`; at least two), `note`, `scenes` (`title`, `note`, `labels` (`preset`, `instruction`), `items[]`: `name`, `preset`, `apps[]` (`name`, with an app `mark` or an `icon`), `more`, the apps without a mark in words, `instruction`, the scene's extra instructions word for word as the app has them, and `body`; at least one of `apps`, `instruction` and `body`) |
 | `modes` | `title`, `intro`, `scope`, `items[]`: `icon`, `label`, `badge`, `title`, `flow` (`from`, `to`, `icon`, `local`), `assure`, `specs[]` (`term`, `text`), `chipsLabel`, `chips[]` (`name`, with a `mark` or an `icon`); `polish` (`title`, `body`, `marks[]`); `note` |
+| `more` | more features, optional: `title`, `intro`, `items[]` (`title`, `body`, `wide` for a cell two columns wide, at most one of `keys[]`, `chips[]`, `chain[]`, `code` and `swap` (`from`, `to`), and `guide`, a link to the guide page); `note` |
 | `phone` | `title`, `intro`, `items[]` (`icon`, `title`, `body`), `figure` (`back`, `front`, `caption`), `links` |
 | `platforms` | `title`, `intro`, `cards[]`: `name`, `status`, `specs[]`; `install`, the line under the commands; `note` |
 | `faq` | `title`, `intro`, `items[]`: `q`, `a` |
-| `closer` | `title`, `body`, `actions[]`: `text`, `link`, `theme` (`brand` or `alt`), `icon` |
+| `closer` | `title`, `body`, `actions[]`: `text`, `link`, `theme` (`brand` or `alt`), `icon`; `keys[]`, the shortcut as key caps |
 
 An image is `src`, `dark` (the same screen in the dark theme, optional), `width`, `height` and
-`alt`. `icon` and `mark` take the names listed in `home-schema.ts` (`ICONS`, `MARKS`); a mark
-is a provider's logo, drawn in the text colour. Status is one of `available`, `building` or
+`alt`. `icon` and `mark` take the names listed in `home-schema.ts` (`ICONS`, `MARKS` for the
+providers, `APP_MARKS` for the scenes' apps). A mark is the vendor's or the app's logo in its own
+colours, from Lobe Icons or Simple Icons; an app no open icon set carries a mark for is named in
+`more`, never drawn. Status is one of `available`, `building` or
 `planned`.
 
 A few fields take marks; every other character is shown as written:
@@ -109,8 +113,8 @@ A few fields take marks; every other character is shown as written:
   and `outputs[].text`.
 - `~~words~~` strikes out what polish removes: in `said`, `selection` and `try.heard`.
 - `[text](/path)` is a link to a site path, an `#anchor` or an `https://` address: in `said`,
-  `selection`, `modes.note`, `phone.links`, `platforms.install`, `faq.intro` and
-  `faq.items[].a`.
+  `selection`, `modes.note`, `phone.links`, `platforms.install`, `faq.intro`,
+  `faq.items[].a`, `flow.note`, `more.items[].body`, `more.items[].guide` and `more.note`.
 
 A result marked `actual` is what Voltip inserted in a screen recording, word for word. The
 `scene` comes from such a recording too: its overlays are frames of it and its `result` is
