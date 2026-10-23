@@ -10,6 +10,7 @@ import worker, {
   UPLOAD_WINDOW_MS,
   handle,
 } from "./index";
+import type { Notice } from "./notify";
 import {
   type D1Like,
   type D1Statement,
@@ -627,5 +628,183 @@ describe("attachments", () => {
     expect(await files.listFor([])).toEqual([]);
     answer = [{ data: new Uint8Array([1]).buffer }, { data: [2, 3] }, { data: "no" }];
     expect(await files.read("r", 0)).toEqual([new Uint8Array([1]), new Uint8Array([2, 3])]);
+  });
+});
+
+describe("the owner's side: the notice and the 已处理 mark", () => {
+  const admin: Env = { ...ENV, ADMIN_TOKEN: "admin" };
+  const asOwner = (path: string, method = "GET", token = "admin") =>
+    new Request(`${URL_BASE}${path}`, { method, headers: { authorization: `Bearer ${token}` } });
+
+  it("announces a stored report after the answer, and a notice that fails changes nothing", async () => {
+    const notices: Notice[] = [];
+    const deferred: Promise<unknown>[] = [];
+    const d = {
+      ...deps(),
+      notify: (n: Notice) => {
+        notices.push(n);
+        return Promise.reject(new Error("telegram answered 502"));
+      },
+      defer: (task: Promise<unknown>) => deferred.push(task),
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const res = await handle(post(GOOD), ENV, d);
+    expect(res.status).toBe(201);
+    expect(d.store.rows).toHaveLength(1);
+    expect(notices).toEqual([
+      {
+        id: "id-1",
+        kind: "bug",
+        message: "松开热键后没有粘贴",
+        contact: true,
+        diagnostics: {
+          app_version: "0.0.1",
+          os: "windows",
+          arch: "x86_64",
+          locale: "zh-CN",
+          asr_provider: "builtin",
+          output_mode: "whole_take",
+        },
+        attachments: 0,
+        country: "CN",
+      },
+    ]);
+    expect(deferred).toHaveLength(1);
+    await Promise.all(deferred);
+    expect(warn).toHaveBeenCalledWith("feedback notice not sent: telegram answered 502");
+    // A refused report is never announced, and no contact reads as none.
+    expect((await handle(post({ ...GOOD, kind: "x" }), ENV, d)).status).toBe(400);
+    await handle(post({ ...GOOD, contact: null }), ENV, d);
+    expect(notices.map((n) => n.contact)).toEqual([true, false]);
+    // Without a context to keep it alive the notice still goes out, unawaited.
+    const odd = { ...deps(), notify: () => Promise.reject("not an error") };
+    await handle(post(GOOD), ENV, odd);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(warn).toHaveBeenLastCalledWith("feedback notice not sent: error");
+  });
+
+  it("counts the attachments a report declares in its notice", async () => {
+    const notices: Notice[] = [];
+    const d = { ...filesDeps(), notify: (n: Notice) => (notices.push(n), Promise.resolve()) };
+    const res = await handle(post({ ...GOOD, attachments: [SHOT, CLIP] }), ENV, d);
+    expect(res.status).toBe(201);
+    expect(notices[0]?.attachments).toBe(2);
+  });
+
+  it("marks a report handled and open again, and lists the open, the handled or all of them", async () => {
+    const d = deps();
+    await handle(post(GOOD), ENV, d);
+    await handle(post({ ...GOOD, message: "second" }), ENV, { ...d, now: () => NOW + 5 });
+    const later = { ...d, now: () => NOW + 10 };
+
+    expect((await handle(asOwner("/v1/feedback/id-1/handled", "PUT"), ENV, later)).status).toBe(
+      404,
+    );
+    expect(
+      (await handle(asOwner("/v1/feedback/id-1/handled", "PUT", "nope"), admin, later)).status,
+    ).toBe(401);
+    expect((await handle(asOwner("/v1/feedback/id-9/handled", "PUT"), admin, later)).status).toBe(
+      404,
+    );
+    const wrong = await handle(asOwner("/v1/feedback/id-1/handled", "POST"), admin, later);
+    expect(wrong.status).toBe(405);
+    expect(wrong.headers.get("allow")).toBe("PUT, DELETE");
+
+    const marked = await handle(asOwner("/v1/feedback/id-1/handled", "PUT"), admin, later);
+    expect(await marked.json()).toEqual({ id: "id-1", handled_at: NOW + 10 });
+    // Marking again keeps it marked.
+    expect((await handle(asOwner("/v1/feedback/id-1/handled", "PUT"), admin, later)).status).toBe(
+      200,
+    );
+
+    const read = async (query: string) =>
+      (await (await handle(asOwner(`/v1/feedback${query}`), admin, later)).json()) as {
+        items: { id: string; handled_at: number | null }[];
+        open: number;
+      };
+    expect(await read("")).toEqual(
+      expect.objectContaining({
+        items: [
+          expect.objectContaining({ id: "id-2", handled_at: null }),
+          expect.objectContaining({ id: "id-1", handled_at: NOW + 10 }),
+        ],
+        open: 1,
+      }),
+    );
+    expect((await read("?state=open")).items.map((i) => i.id)).toEqual(["id-2"]);
+    expect((await read("?state=handled")).items.map((i) => i.id)).toEqual(["id-1"]);
+    expect((await read("?state=whatever")).items).toHaveLength(2);
+
+    const opened = await handle(asOwner("/v1/feedback/id-1/handled", "DELETE"), admin, later);
+    expect(await opened.json()).toEqual({ id: "id-1", handled_at: null });
+    expect(await read("?state=handled")).toEqual({ items: [], open: 2 });
+  });
+
+  it("d1Store speaks the handled table's SQL", async () => {
+    const log: { sql: string; binds: unknown[] }[] = [];
+    let answer: unknown = { n: 1 };
+    const db: D1Like = {
+      prepare: (sql) => {
+        log.push({ sql, binds: [] });
+        return fakeStatement(log, answer);
+      },
+    };
+    const store = d1Store(db);
+    expect(await store.exists("a")).toBe(true);
+    expect(log.at(-1)).toEqual({ sql: "SELECT 1 AS n FROM feedback WHERE id = ?", binds: ["a"] });
+    await store.setHandled("a", NOW);
+    expect(log.at(-1)?.sql).toMatch(/^INSERT INTO feedback_handled \(id, handled_at\) VALUES/u);
+    expect(log.at(-1)?.binds).toEqual(["a", NOW]);
+    await store.setHandled("a", null);
+    expect(log.at(-1)).toEqual({ sql: "DELETE FROM feedback_handled WHERE id = ?", binds: ["a"] });
+    answer = { n: 4 };
+    expect(await store.countOpen()).toBe(4);
+    expect(log.at(-1)?.sql).toMatch(
+      /LEFT JOIN feedback_handled h ON h\.id = f\.id WHERE h\.id IS NULL$/u,
+    );
+    answer = [
+      {
+        id: "a",
+        created_at: NOW,
+        kind: "bug",
+        message: "m",
+        contact: null,
+        diagnostics: "{}",
+        ip_hash: "h",
+        country: null,
+        handled_at: NOW + 1,
+      },
+    ];
+    expect((await store.list(5, NOW + 2, "handled"))[0]?.handled_at).toBe(NOW + 1);
+    expect(log.at(-1)?.sql).toContain("WHERE f.created_at < ? AND h.id IS NOT NULL ORDER BY");
+    await store.list(5, NOW + 2, "open");
+    expect(log.at(-1)?.sql).toContain("WHERE f.created_at < ? AND h.id IS NULL ORDER BY");
+    answer = null;
+    expect(await store.exists("b")).toBe(false);
+  });
+
+  it("the Worker sends its notice through the bot and keeps itself alive until it is out", async () => {
+    const sent: string[] = [];
+    vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
+      sent.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return Promise.resolve(Response.json({ ok: true }));
+    });
+    const kept: Promise<unknown>[] = [];
+    const env: Env = {
+      DB: { prepare: () => fakeStatement([], { n: 0 }) },
+      TELEGRAM_BOT_TOKEN: "123:abc",
+      TELEGRAM_CHAT_ID: "42",
+    };
+    try {
+      const res = await worker.fetch(post(GOOD, { authorization: "" }), env, {
+        waitUntil: (task) => kept.push(task),
+      });
+      expect(res.status).toBe(201);
+      expect(kept).toHaveLength(1);
+      await Promise.all(kept);
+      expect(sent).toEqual(["https://api.telegram.org/bot123:abc/sendMessage"]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

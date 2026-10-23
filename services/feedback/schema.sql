@@ -13,3 +13,10 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 CREATE INDEX IF NOT EXISTS feedback_by_client ON feedback (ip_hash, created_at);
 CREATE INDEX IF NOT EXISTS feedback_by_time ON feedback (created_at);
+-- Reports the owner marked handled on the admin page (PUT /v1/feedback/<id>/handled); a report
+-- without a row here is still open. Its own table, so re-running this file never needs an
+-- ALTER TABLE, and DELETE puts a report back.
+CREATE TABLE IF NOT EXISTS feedback_handled (
+  id TEXT PRIMARY KEY,
+  handled_at INTEGER NOT NULL
+);
