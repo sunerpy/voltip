@@ -75,34 +75,53 @@ Pages may use these components and no others:
 | `<QrCode src alt caption? size? />` | a QR code on a white plate in both themes |
 | `<Badge>` | VitePress's own badge |
 | `<TryVoltip />` | the online try page (`guide/try.md`) only, a `layout: page` with `pageClass: vt-try-page` and `sidebar: false`, so no sidebar or outline competes with it; its API is firlab's `voltip/functions/`, and its own words (buttons, the line on what is kept, the link to the app) are firlab's `try/strings.ts` |
-| `HomeIndex`, `HomeSteps`, `SplitBlock`, `HomeModels`, `HomePlatforms`, `HomePrivacy`, `HomeRoadmap` | the home pages only; they render the `home:` frontmatter |
+| `HomePairs`, `HomePresets`, `HomeModes`, `HomePhone`, `HomePlatforms`, `HomeFaq`, `HomeCloser` | the home pages only, in this order; each renders its part of the `home:` frontmatter. `HomePlatforms` wraps the install commands' code group, which stays Markdown |
 
 ## The home pages
 
-The words of both home pages live in their frontmatter: VitePress's `hero:` (name, text,
-tagline, buttons) and a `home:` block that the components render. The build checks
-`home:` against `voltip/src/.vitepress/theme/data/home-schema.ts` in firlab and fails
-on a missing field or an unknown one.
+The words of both home pages live in their frontmatter: VitePress's `hero:` (text, tagline,
+buttons; no `name`) and a `home:` block that the components render. The pages set
+`markdownStyles: false`, because the bands below the hero are not prose. The build checks
+`home:` against `voltip/src/.vitepress/theme/data/home-schema.ts` in firlab and fails on a
+missing field or an unknown one, and on a dead link anywhere in `hero:` or `home:`.
 
 | Key | Holds |
 | --- | --- |
+| `checks` | the short facts under the buttons, at least two |
+| `scene` | the hero's picture, one real dictation: `steps` (what the reader does), `live` (the overlay while speaking), `label` and `result` (the text inserted at the cursor), `inserted` (the overlay after inserting), `caption` |
 | `try` | the band under the hero that leads to the try page: `title`, `body`, a `heard` → `polished` sample, `action` (`text`, `link`) |
-| `facts` | the lines under the tagline: `term`, `text` |
-| `visual` | `home` (the app's home page, light and dark) and `pill` (the overlay's three states) |
-| `index` | `title`, `intro`, `groups[].items[]`: `title`, `body`, `status`, `link` |
-| `steps` | `title`, `items[]`: `title`, `body`, `keys` |
-| `models`, `polish`, `phone` | the evidence beside the three split blocks |
-| `platforms` | `columns`, `rows[]`: `name`, `status`, `cells` (one fewer than `columns`), `note` |
-| `privacy` | `modes[]`: `name`, `sends`, `detail` |
-| `roadmap` | `items[]`: `title`, `body`, `status`; `notPlanned` |
+| `pairs` | `title`, `intro`, `labels`, `items[]`: `kind` (`dictation`, or `edit` with a `selection`), `source` (`actual` or `example`), `said`, `result`; `note` |
+| `presets` | `title`, `intro`, `points`, `saidLabel`, `said`, `outputs[]` (`name`, `desc`, `text`; at least two), `note`, `scenes` (`title`, `note`, `items[]`: `name`, `body`, `preset`) |
+| `modes` | `title`, `intro`, `scope`, `items[]`: `icon`, `label`, `badge`, `title`, `flow` (`from`, `to`, `icon`, `local`), `assure`, `specs[]` (`term`, `text`), `chipsLabel`, `chips[]` (`name`, with a `mark` or an `icon`); `polish` (`title`, `body`, `marks[]`); `note` |
+| `phone` | `title`, `intro`, `items[]` (`icon`, `title`, `body`), `figure` (`back`, `front`, `caption`), `links` |
+| `platforms` | `title`, `intro`, `cards[]`: `name`, `status`, `specs[]`; `install`, the line under the commands; `note` |
+| `faq` | `title`, `intro`, `items[]`: `q`, `a` |
+| `closer` | `title`, `body`, `actions[]`: `text`, `link`, `theme` (`brand` or `alt`), `icon` |
 
-Status is one of `available`, `building` or `planned`. The home pages carry no version
-number: the buttons link to the releases page.
+An image is `src`, `dark` (the same screen in the dark theme, optional), `width`, `height` and
+`alt`. `icon` and `mark` take the names listed in `home-schema.ts` (`ICONS`, `MARKS`); a mark
+is a provider's logo, drawn in the text colour. Status is one of `available`, `building` or
+`planned`.
+
+A few fields take marks; every other character is shown as written:
+
+- `\n` in a quoted string breaks the line: in the band titles, `said`, `selection`, `result`
+  and `outputs[].text`.
+- `~~words~~` strikes out what polish removes: in `said`, `selection` and `try.heard`.
+- `[text](/path)` is a link to a site path, an `#anchor` or an `https://` address: in `said`,
+  `selection`, `modes.note`, `phone.links`, `platforms.install`, `faq.intro` and
+  `faq.items[].a`.
+
+A result marked `actual` is what Voltip inserted in a screen recording, word for word. The
+`scene` comes from such a recording too: its overlays are frames of it and its `result` is
+the text it inserted. Anything written for the page is an `example` and says so. The home
+pages carry no version number: the install line links to the releases page.
 
 ## Screenshots
 
-Screenshots are WebP files in `public/screens/`, named `<page>-<lang>-<theme>.webp`, and
-come from the desktop front end running on the mock backend, which shows no real host:
+Screenshots are WebP files in `public/screens/`, named `<page>-<lang>-<theme>.webp`. They come
+from the desktop front end running on the mock backend, which shows no real host, except the
+hero's overlay frames, which come from a screen recording (step 5):
 
 ```bash
 pnpm -C apps/desktop dev --host 127.0.0.1 --port 1430
@@ -114,8 +133,9 @@ pnpm -C apps/desktop dev --host 127.0.0.1 --port 1430
    overlay sheet has no sidebar: go back home to switch, then return to `/overlay`.
 2. Page captures are viewport screenshots at device pixel ratio 1, saved as WebP at
    quality 85.
-3. The overlay comes from `/overlay` at device pixel ratio 2. For each language and
-   theme, save a viewport screenshot as `<dir>/overlay-<lang>-<theme>.png`, and the pill
+3. The overlay pills, `overlay-<state>-<lang>-<theme>.webp`, come from `/overlay` at device
+   pixel ratio 2; firlab's `og.svg` uses `overlay-inserted-en-light.webp`. For each language
+   and theme, save a viewport screenshot as `<dir>/overlay-<lang>-<theme>.png`, and the pill
    rectangles as `<dir>/overlay-<lang>-<theme>.json` from the page:
 
    ```js
@@ -128,15 +148,42 @@ pnpm -C apps/desktop dev --host 127.0.0.1 --port 1430
    })
    ```
 
-   Then cut them out onto a canvas at least as wide as the widest pill:
+   Then cut them out onto a canvas at least as wide as the widest pill, and check `og.svg`
+   after a new cut, since it gives the image a fixed size:
 
    ```bash
    python3 docs/site/tools/crop-overlay.py --width 440 --out docs/site/public/screens <dir>/overlay-*-*.png
    ```
 
-   Update `width` and `height` under `visual.pill` in both home pages if the canvas
-   changes.
-4. Look at every image before committing it. The host guard does not read images.
+4. The home pages' phone panels, `phone-pair-<lang>-<theme>.webp` and
+   `phone-mic-<lang>-<theme>.webp`, are the pairing card and the phone microphone card of
+   the 手机 page, where the mock has a paired phone online. Capture the page at device pixel
+   ratio 2 as `<dir>/phone-<lang>-<theme>.png`, read each card's `getBoundingClientRect()`,
+   double it, and cut the card with its 24 px corners:
+
+   ```bash
+   python3 docs/site/tools/crop-card.py --rect <x,y,width,height> --radius 48 \
+       <dir>/phone-zh-light.png docs/site/public/screens/phone-pair-zh-light.webp
+   ```
+
+   Update `width` and `height` under `phone.figure` in that language's home page when a
+   card changes size.
+5. The hero's overlay frames, `hero-live-<lang>.webp` and `hero-inserted-<lang>.webp`, are
+   frames of a screen recording of a real dictation at 2× scale, the kind the tutorial
+   videos are made from: one while the overlay shows the words being said, one after it
+   reports the text inserted. Save a frame with
+   `ffmpeg -ss <seconds> -i <recording> -frames:v 1 <dir>/frame.png` and cut the overlay as
+   a capsule:
+
+   ```bash
+   python3 docs/site/tools/crop-card.py --rect <x,y,width,height> --pill \
+       <dir>/frame.png docs/site/public/screens/hero-live-en.webp
+   ```
+
+   Then update `scene.live` and `scene.inserted` (size and `alt`) in that language's home
+   page, and make `scene.result` and the first `actual` pair the text that recording
+   inserted.
+6. Look at every image before committing it. The host guard does not read images.
 
 Capture again when the interface's text or layout changes. The READMEs show
 `home-en-light.webp` and `home-zh-light.webp` too: a new capture updates them as well, and a
