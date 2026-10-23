@@ -1,12 +1,12 @@
 ---
 layout: home
+markdownStyles: false
 title: Voltip：Windows、macOS、Linux 和 Android 上的语音输入
 titleTemplate: false
 description: 按住快捷键说话，松开后文字出现在任意应用的光标处。可以在本机识别，也可以使用你选择的云端服务，并可选 AI 润色。
 
 hero:
-  name: Voltip
-  text: 按住说话，松开即输入
+  text: 按住说话，<br>松开即输入
   tagline: 文字会出现在任意应用的光标处。识别可以在本机完成，也可以使用你选择的云端服务；AI 润色可以先把文字整理好。
   actions:
     - theme: brand
@@ -15,311 +15,266 @@ hero:
     - theme: alt
       text: 在线体验
       link: /zh/guide/try
-    - theme: alt
-      text: 快速开始
-      link: /zh/guide/quick-start
 
 home:
+  checks:
+    - Windows、macOS、Linux 和 Android
+    - 使用本地模型时，音频不离开这台电脑
+    - 开源，AGPL-3.0
+
+  scene:
+    steps:
+      - 按住 Ctrl+Alt+Space 说话，悬浮窗显示识别出的原话
+      - 松开按键，文字经过校对后插入光标处
+    live:
+      src: /screens/hero-live-zh.webp
+      width: 820
+      height: 98
+      alt: 说话时的悬浮窗：那个就是评审会定在周一上午十点，呃，不对，应该是下午两点。
+    label: 插入光标处的文字
+    result: 评审会定在周一下午两点，请大家带上最新的数据。
+    inserted:
+      src: /screens/hero-inserted-zh.webp
+      width: 418
+      height: 72
+      alt: 插入之后的悬浮窗：已插入 23 字，粘贴。
+    caption: 一次实际听写，使用内置服务和「校对」预设。悬浮窗为录屏截图。
+
   try:
     title: 无需安装，在浏览器里体验 Voltip
     body: 说一句话，几秒后就能看到识别出的文字和 AI 润色后的结果。
-    heard: 嗯那个我们周二开个会吧
+    heard: ~~嗯那个~~我们周二开个会吧
     polished: 我们周二开个会吧。
     action:
       text: 开始体验
       link: /zh/guide/try
-  facts:
-    - term: 适用平台
-      text: Windows、macOS（Apple 芯片与 Intel 芯片）和 Linux；另有 Android 应用，可把手机当作电脑的麦克风和键盘。
-    - term: 音频去向
-      text: 使用本地模型时，音频不会离开这台电脑；使用云端服务时，只发送给你选择的服务。
 
-  visual:
-    home:
-      light: /screens/home-zh-light.webp
-      dark: /screens/home-zh-dark.webp
-      width: 1440
-      height: 900
-      alt: Voltip 首页：快捷键、麦克风、语音模型和最近的结果。
-    pill:
-      - light: /screens/overlay-listening-zh-light.webp
-        dark: /screens/overlay-listening-zh-dark.webp
-        width: 880
-        height: 70
-        alt: 说话时的悬浮窗：显示输入音量和用于取消的 Esc 键。
-      - light: /screens/overlay-processing-zh-light.webp
-        dark: /screens/overlay-processing-zh-dark.webp
-        width: 880
-        height: 70
-        alt: AI 润色时的悬浮窗：显示所用的预设和这一步已用的时间。
-      - light: /screens/overlay-inserted-zh-light.webp
-        dark: /screens/overlay-inserted-zh-dark.webp
-        width: 880
-        height: 70
-        alt: 文字插入之后的悬浮窗：显示插入的字数和目标应用。
-
-  index:
-    title: Voltip 能做什么
-    intro: 全部功能一览。标记为「开发中」的功能正在开发，尚未包含在正式版本中。
-    groups:
-      - name: 在任何地方听写
-        items:
-          - title: 任意应用里都能用的快捷键
-            body: 按住 Ctrl+Alt+Space 说话，松开即可。也可以按一次开始、再按一次结束，或短按锁定，用于长段口述。
-            status: available
-            link: /zh/dictation/shortcuts
-          - title: 单个按键或鼠标侧键
-            body: 右 Ctrl、右 Alt、Mac 上的 Fn 键或鼠标侧键，都可以单独用来开始听写。
-            status: available
-            link: /zh/dictation/shortcuts#单个按键或鼠标键
-          - title: 边说边出字
-            body: 悬浮窗实时显示识别出的文字。文字可以整段插入、逐句确定，也可以边说边输入。
-            status: available
-            link: /zh/dictation/output
-          - title: 语音编辑
-            body: 选中文字，按住 Ctrl+Alt+E 说出修改要求，例如「改得正式一点」或「翻译成英文」，选中的内容会被直接替换。
-            status: available
-            link: /zh/dictation/voice-edit
-      - name: 识别方式由你决定
-        items:
-          - title: 本地模型，离线可用
-            body: Qwen3-ASR、SenseVoice 和 Paraformer 在本机运行。模型下载完成后，音频不再离开这台电脑。
-            status: available
-            link: /zh/recognition/local
-          - title: 有显卡时使用 GPU
-            body: Qwen3-ASR 在 Windows 和 Linux 上通过 Vulkan、在 macOS 上通过 Metal 使用显卡，没有可用的显卡时使用 CPU。
-            status: available
-            link: /zh/recognition/local#cpu-与-gpu
-          - title: 云端服务
-            body: 正式版安装包内置默认服务；也可以使用自己的密钥，改用 OpenAI、Groq、硅基流动、阿里云百炼或任意 OpenAI 兼容接口。
-            status: available
-            link: /zh/recognition/cloud
-      - name: 让文字准确易读
-        items:
-          - title: AI 润色
-            body: 修正标点、错别字和口头禅，不改变原意。可以使用默认服务、自己的服务商或本机的 Ollama。
-            status: available
-            link: /zh/recognition/polish
-          - title: 词典与替换规则
-            body: 让 Voltip 认识你常用的人名和术语，用字面或正则规则改写短语；中文可以统一为简体或繁体。
-            status: available
-            link: /zh/recognition/dictionary
-          - title: 按应用切换场景
-            body: 根据正在使用的应用，自动选择 AI 预设、输出方式、语言，以及给 AI 的补充要求。
-            status: available
-            link: /zh/recognition/scenes
-          - title: AI 预设与内置场景
-            body: 提供校对、提示词优化、意图整理、口语聊天、中英互译和要点纪要等预设，也可以自定义预设，可在首页、「AI 润色」开关旁和托盘切换；另有编程开发、办公写作、即时聊天和专业领域等内置场景。
-            status: available
-            link: /zh/recognition/polish#预设
-      - name: 手机、历史记录与长录音
-        items:
-          - title: 手机当麦克风和键盘
-            body: 通过二维码或 6 位验证码，即可与 Android 手机配对。在手机上按住说话或输入文字，内容会出现在电脑的光标处。
-            status: available
-            link: /zh/phone/
-          - title: iOS 应用
-            body: 在 iOS 上同样把手机当作麦克风和键盘，计划在后续发布。
-            status: planned
-            link: /zh/roadmap
-          - title: 历史记录，一键复制粘贴
-            body: 每条结果都保存在本机，可以搜索，也可以复制或粘贴到之前使用的窗口。
-            status: available
-            link: /zh/dictation/history
-          - title: 2 万条历史与每日统计
-            body: 按日、周、月统计转录字数、修正字数和节省的时间。
-            status: available
-            link: /zh/dictation/history#统计
-          - title: 长录音与电脑声音
-            body: 单次录音最长 2 小时，可以录制麦克风、电脑声音或两者混合；录音时分段识别，可用 AI 预设处理全文或导出 SRT 字幕。
-            status: available
-            link: /zh/dictation/shortcuts#录音来源
-
-  steps:
-    title: 一次听写的四个步骤
+  pairs:
+    title: 口头禅和改口，插入之前就整理好
+    intro: AI 润色删去口头禅、补全标点、采纳改口，措辞保持不变；不需要时可以关闭。
+    labels:
+      said: 说的
+      inserted: 插入的
+      edit: 选中文字，按住 Ctrl+Alt+E 说
+      selection: 选中的文字
+      replaced: 替换为
+      actual: 实际输出
+      example: 示例
     items:
-      - title: 按住快捷键
-        keys: [Ctrl, Alt, Space]
-        body: 此时才会打开麦克风。屏幕底部的悬浮窗显示输入音量。
-      - title: 说话
-        body: 使用内置服务时，或安装实时识别模型后，识别出的文字会随着说话显示在悬浮窗里。
-      - title: 松开按键
-        body: 语音被识别，按你的词典纠正，可选经过 AI 润色，再按替换规则改写。
-      - title: 文字出现在光标处
-        body: Voltip 把文字粘贴到你正在使用的应用里，并在历史记录中保存一份。任何时候按 Esc 都可以取消。
+      - kind: dictation
+        source: actual
+        said: ~~那个就是~~评审会定在周一~~上午十点，呃，不对，应该是~~下午两点，请大家带上最新的数据。
+        result: 评审会定在周一下午两点，请大家带上最新的数据。
+      - kind: dictation
+        source: example
+        said: ~~嗯那个~~我觉得我们周五把这个修复发出去~~然后~~下周再更新一下文档~~吧~~
+        result: 我觉得我们周五把这个修复发出去，下周再更新一下文档。
+      - kind: edit
+        source: actual
+        said: 翻译成英文。
+        selection: 评审会定在周一下午两点，请大家带上最新的数据。
+        result: The review meeting is scheduled for 2:00 PM next Monday. Please bring the latest data.
+    note: 「实际输出」取自 Voltip 的录屏；「示例」是说明用的文字，实际结果取决于所选的 AI 模型。
 
-  models:
-    columns: [模型, 大小, 语言, 运行设备]
-    rows:
-      - name: Qwen3-ASR 0.6B
-        note: 推荐
-        size: 690 MB
-        languages: 30 种语言，自动识别
-        device: GPU 或 CPU
-      - name: Qwen3-ASR 1.7B
-        note: 最准确
-        size: 1.7 GB
-        languages: 30 种语言，自动识别
-        device: GPU 或 CPU
-      - name: SenseVoice Small
-        note: 体积最小
-        size: 240 MB
-        languages: 中文、英文、日文、韩文、粤语
-        device: CPU
-      - name: Paraformer
-        note: 不带标点
-        size: 227 MB
-        languages: 中文（含方言）与英文混说
-        device: CPU
-      - name: 实时识别
-        note: 用于边说边预览
-        size: 169 MB
-        languages: 中文与英文
-        device: CPU
-    caption: 模型下载支持断点续传，使用前会校验 SHA-256。在 NVIDIA L40S 上实测，Qwen3-ASR 0.6B 识别一段 16 秒的中文语音，GPU 用时 0.16 秒，8 个处理器线程用时 2.87 秒。
+  presets:
+    title: "同一段话，\n按场合选择预设"
+    intro: 预设决定 AI 润色怎样整理文字。内置 8 个预设，提示词全部公开，也可以复制为自定义预设后修改。
+    points:
+      - 默认使用「校对」，可以在首页、托盘或「AI 润色」开关旁切换
+      - 开启场景后，按正在使用的应用自动选择预设
+    saidLabel: 说的
+    said: 呃那个就是周四的发布先推迟到下周一吧，然后测试那边还有两个问题没修完，修完了我再通知大家
+    outputs:
+      - name: 校对
+        desc: 修正错字和标点，删去口头禅
+        text: 周四的发布先推迟到下周一吧，然后测试那边还有两个问题没修完，修完了我再通知大家。
+      - name: 意图整理
+        desc: 采纳改口，把多个要点整理成列表
+        text: "- 周四的发布推迟到下周一；\n- 测试那边还有两个问题待修复，修复后通知大家。"
+      - name: 书面语
+        desc: 改写为完整、规范的书面语
+        text: 周四的发布推迟至下周一。测试方面尚有两个问题待修复，修复完成后我会通知大家。
+      - name: 中英互译
+        desc: 先修正识别错误，再中英互译
+        text: Let's push Thursday's release to next Monday. Testing still has two open issues, and I'll let everyone know once they're fixed.
+    note: 示例输出，实际结果取决于所选的 AI 模型。另有提示词优化、口语聊天、要点纪要和只加标点。
+    scenes:
+      title: 场景：按应用切换预设和补充要求
+      note: 内置场景开启后才生效；也可以为任意应用新建场景。
+      items:
+        - name: 编程开发
+          body: VS Code、Cursor、Kiro、JetBrains 系列和终端。代码、命令、路径和标识符保持原样。
+          preset: 校对
+        - name: 办公写作
+          body: Outlook、Word、WPS、OneNote、Notion 等应用中的邮件和文档。
+          preset: 书面语
+        - name: 即时聊天
+          body: 微信、QQ、Slack、Teams、钉钉、飞书、Telegram、Discord 等聊天应用。
+          preset: 口语聊天
+        - name: 法律、医疗、金融、学术
+          body: 严格校对，专业术语保持原样。添加你使用的应用后生效。
+          preset: 校对
 
-  polish:
-    heardLabel: 识别结果
-    heard: 嗯那个我觉得我们周五把这个修复发出去然后下周再更新一下文档吧
-    typedLabel: 插入到光标处
-    typed: 我觉得我们周五把这个修复发出去，下周再更新一下文档。
-    caption: AI 润色效果示例：去掉口头禅，补全标点，措辞保持不变。
+  modes:
+    title: 识别在哪里完成，由你选择
+    intro: 录音发送到哪里、由谁的模型识别，可以在「语音模型」页随时切换。
+    scope: 这台电脑
+    items:
+      - icon: cpu
+        label: 本机识别
+        title: 下载一次，离线可用
+        flow: { from: 你说话, to: 本地模型, icon: cpu, local: true }
+        assure: 音频不离开这台电脑
+        specs:
+          - { term: 费用, text: 免费 }
+          - { term: 准备, text: 下载一个模型，最小 227 MB }
+          - { term: 显卡, text: Qwen3-ASR 在 Windows 和 Linux 上使用 Vulkan，在 macOS 上使用 Metal；没有显卡时使用处理器 }
+        chipsLabel: 可选模型
+        chips:
+          - name: Qwen3-ASR 0.6B
+          - name: Qwen3-ASR 1.7B
+          - name: SenseVoice Small
+          - name: Paraformer
+      - icon: cloud
+        label: 内置服务
+        badge: 默认
+        title: 安装后即可听写
+        flow: { from: 你说话, to: 内置服务, icon: cloud, local: false }
+        assure: 服务器不记录录音和文字
+        specs:
+          - { term: 费用, text: 免费，所有用户共用，按地址限制次数 }
+          - { term: 准备, text: 不需要密钥 }
+          - { term: 预览, text: 说话时悬浮窗显示识别出的文字 }
+        chipsLabel: AI 润色模型
+        chips:
+          - name: Qwen3.8 27B
+          - name: GPT-OSS 120B
+          - name: GPT-OSS 20B
+      - icon: key
+        label: 你的服务商
+        title: 使用自己的密钥
+        flow: { from: 你说话, to: 服务商, icon: server, local: false }
+        assure: 录音直接发送给你选择的服务商
+        specs:
+          - { term: 费用, text: 按服务商的价格，部分有免费额度 }
+          - { term: 准备, text: 服务商的 API 密钥 }
+          - { term: 密钥, text: 保存在系统钥匙串中 }
+        chipsLabel: 识别服务商
+        chips:
+          - { name: OpenAI, mark: openai }
+          - { name: Groq, mark: groq }
+          - { name: 硅基流动, mark: siliconflow }
+          - { name: 阿里云百炼, mark: aliyun }
+          - { name: OpenAI 兼容接口, icon: plug }
+    polish:
+      title: AI 润色
+      body: 识别之后由大模型整理文字。可以使用内置服务、你的服务商，或在本机运行的 Ollama。
+      marks:
+        - { name: OpenAI, mark: openai }
+        - { name: Groq, mark: groq }
+        - { name: Google AI Studio, mark: google }
+        - { name: 硅基流动, mark: siliconflow }
+        - { name: 阿里云百炼, mark: aliyun }
+        - { name: DeepSeek, mark: deepseek }
+        - { name: Ollama, mark: ollama }
+    note: 在 NVIDIA L40S 上实测，Qwen3-ASR 0.6B 识别一段 16 秒的中文语音，GPU 用时 0.16 秒，8 个处理器线程用时 2.87 秒。详见[本地识别](/zh/recognition/local)和[云端服务](/zh/recognition/cloud)。
 
   phone:
+    title: "手机当作电脑的\n麦克风和键盘"
+    intro: 把 Android 手机与电脑配对后，在手机上按住说话：电脑用自己的识别设置处理语音，并把文字插入电脑的光标处。没有在线的电脑时，手机也可以单独识别。
     items:
-      - title: 配对一次
-        body: 扫描电脑上的二维码，或输入它显示的 6 位验证码。随后两台设备会显示同一组安全码，由你核对确认。
-      - title: 在手机上按住说话
-        body: 音频经 Opus 压缩、端到端加密后实时传到电脑，由电脑完成识别，并把文字插入电脑的光标处。
-      - title: 发送文字或剪贴板
-        body: 在手机上输入文字或发送手机剪贴板，电脑会像处理听写结果一样把它插入光标处。
-      - title: 不受网络限制
-        body: 无论是否在同一网络，两台设备都经中继连接。中继只转发加密数据，无法读取其中的内容；网络中断或切换后会自动重新连接。
+      - icon: qr
+        title: 配对一次
+        body: 扫描电脑上的二维码，或输入 6 位验证码，再核对两台设备显示的安全码。
+      - icon: mic
+        title: 在手机上按住说话
+        body: 音频经 Opus 压缩、端到端加密后传到电脑，由电脑识别并插入光标处。
+      - icon: keyboard
+        title: 发送文字或剪贴板
+        body: 手机上输入的文字和剪贴板内容，电脑会像听写结果一样插入光标处。
+      - icon: history
+        title: 在手机上查看电脑的记录
+        body: 电脑的历史记录和设置同步到手机，在手机上只能查看。
+      - icon: relay
+        title: 不在同一网络也能连接
+        body: 两台设备经中继连接，中继只转发加密数据；网络切换后自动重新连接。
+    figure:
+      back:
+        src: /screens/phone-pair-zh-light.webp
+        dark: /screens/phone-pair-zh-dark.webp
+        width: 1482
+        height: 584
+        alt: 电脑上的「手机」页：开始配对，生成二维码和 6 位验证码。
+      front:
+        src: /screens/phone-mic-zh-light.webp
+        dark: /screens/phone-mic-zh-dark.webp
+        width: 760
+        height: 465
+        alt: 「手机麦克风」：配对的手机在线，在手机上按住说话。
+      caption: 电脑上的「手机」页：开始配对，以及配对手机的麦克风。
+    links: "[了解手机端](/zh/phone/) · [安装 Android 应用](/zh/guide/install#android)"
 
   platforms:
-    title: 支持的平台
-    intro: Voltip 在三种桌面系统上是同一个应用，各平台之间的差异见「各平台说明」。
-    columns: [平台, 安装包, 快捷键与单键, 本地识别, GPU]
-    rows:
+    title: "Windows、macOS、Linux，\n以及 Android"
+    intro: 桌面版在三种系统上是同一个应用；Android 应用把手机当作电脑的麦克风和键盘。
+    cards:
       - name: Windows 10 和 11
         status: available
-        cells:
-          - 按用户安装的安装包或便携版 zip，x64
-          - 都支持
-          - 支持
-          - Vulkan
+        specs:
+          - { term: 安装包, text: 按用户安装的安装包或便携版 zip，x64 }
+          - { term: 显卡加速, text: Vulkan }
       - name: macOS 11 及以上
         status: available
-        cells:
-          - Apple 芯片与 Intel 芯片各一个 dmg
-          - 都支持，需要辅助功能权限
-          - 支持
-          - Metal
+        specs:
+          - { term: 安装包, text: Apple 芯片与 Intel 芯片各一个 dmg }
+          - { term: 显卡加速, text: Metal }
       - name: Linux
         status: available
-        cells:
-          - .deb 或 AppImage，x64；支持 X11 和 Wayland
-          - X11 上都支持；Wayland 上通过系统快捷键运行切换命令
-          - 支持
-          - Vulkan
-      - name: Android
+        specs:
+          - { term: 安装包, text: .deb 或 AppImage，x64；支持 X11 和 Wayland }
+          - { term: 显卡加速, text: Vulkan }
+      - name: Android 8.0 及以上
         status: available
-        cells:
-          - APK，Android 8.0 及以上，64 位 Arm
-          - 在应用里按住说话
-          - 由配对的电脑完成
-          - —
+        specs:
+          - { term: 安装包, text: APK，64 位 Arm }
+          - { term: 识别, text: 由配对的电脑完成，也可以单独使用 }
+    install: 一条命令为这台电脑选择合适的安装包，按发布附带的 SHA256SUMS 校验后安装。各平台的安装包和校验值都在[发布页面](https://github.com/sunerpy/voltip/releases)，[安装指南](/zh/guide/install)介绍了各平台的安装方法。
     note: iOS 版计划在后续发布。暂不提供 Windows ARM 和 Linux ARM 的安装包。
 
-  privacy:
-    title: 哪些数据会离开这台电脑
-    intro: 取决于你选择的服务。首页和「语音模型」页始终显示当前使用的是哪一项。
-    sendsLabel: 发送
-    modes:
-      - name: 本地识别
-        sends: 不发送任何内容
-        detail: 识别在 Voltip 内完成，使用磁盘上的模型文件。唯一的网络访问是下载模型，下载内容会按 SHA-256 校验。
-      - name: 云端识别
-        sends: 音频，发送给你选择的服务
-        detail: 录音发送给内置服务或你配置的服务商，同时附带你的密钥；如果设置了词典，词条也会作为识别提示一并发送。密钥保存在系统钥匙串中。
-      - name: AI 润色与语音编辑
-        sends: 文字，发送给你选择的 AI 服务
-        detail: 发送识别出的文字；语音编辑时发送选中的文字和你的指令。默认附带当前应用的名称，可以关闭；窗口标题仅在你开启后才会发送。不会发送音频。
-
-  roadmap:
-    title: 接下来的计划
-    intro: 按预计顺序列出，不承诺日期；每项功能发布后，本站会随之更新。
+  faq:
+    title: 常见问题
+    intro: 更多问题和故障处理，见[常见问题](/zh/reference/faq)页。
     items:
-      - title: Google Play 上架
-        status: building
-        body: Android 应用已在发布页面提供。Google Play 上架正在准备中，按 Google 的要求需要先完成封闭测试。
-      - title: 其他云端服务的流式识别
-        status: planned
-        body: 使用内置服务时，边说边出字由内置服务提供；其他云端服务的流式识别结果尚未支持。
-      - title: 更多本地模型
-        status: planned
-        body: 包括 Whisper 等模型，以及在 AMD 和 Intel 显卡上的实测。
-      - title: iOS 应用
-        status: planned
-        body: 在 iOS 上同样把手机当作麦克风和键盘，计划在后续发布。
-    notPlanned:
-      title: 刻意不做的功能
-      items:
-        - 一直监听，或检测到静音就自动停止。麦克风只在录音时打开。
-        - 说话人分离、会议检测和批量转写文件。
-        - 纯浏览器版本。全局快捷键、向其他应用输入文字和本地模型都需要原生应用。
-        - 把历史记录、词典和规则同步到手机。手机只负责麦克风和键盘，处理都在电脑上完成。
+      - q: 没有网络时能用吗？
+        a: 可以，使用[本地模型](/zh/recognition/local)即可。下载一次后，识别可以离线进行。AI 润色需要服务，除非你在本机运行 Ollama。
+      - q: Voltip 会一直监听吗？
+        a: 不会。麦克风在你按下快捷键时打开，录音结束后关闭。
+      - q: 录音和文字会发送到哪里？
+        a: 取决于你选择的服务。本地识别不发送任何内容；云端识别把录音发送给内置服务或你配置的服务商；AI 润色只发送文字，不发送音频。详见[隐私](/zh/privacy)。
+      - q: 内置服务需要付费或填写密钥吗？
+        a: 不需要。内置服务由 Voltip 项目运营，所有用户共用，并按地址限制请求次数。需要稳定使用 AI 润色时，可以改用自己的服务商。
+      - q: 网络需要经过代理怎么办？
+        a: 在「设置 → 网络」中选择代理方式：默认跟随系统的代理设置，也可以手动填写代理服务器。识别、润色、模型下载、更新和与手机的连接都按这个设置连接。
+      - q: 支持 iPhone 吗？
+        a: iOS 版计划在后续发布，目前提供 Android 应用。
+
+  closer:
+    title: 按住快捷键，开始说话
+    body: 免费下载，支持 Windows、macOS、Linux 和 Android。
+    actions:
+      - { text: 下载安装, link: /zh/guide/install, theme: brand, icon: download }
+      - { text: GitHub, link: "https://github.com/sunerpy/voltip", theme: alt, icon: github }
 ---
 
-<HomeIndex />
+<HomePairs />
 
-<HomeSteps />
+<HomePresets />
 
-<SplitBlock proof="models">
+<HomeModes />
 
-## 在本机识别，或使用云端服务
+<HomePhone />
 
-下载一次模型，听写即可离线使用。Qwen3-ASR 可识别 30 种语言并自带标点；SenseVoice 和 Paraformer 体积小，在普通处理器上也很快。电脑有显卡时，Qwen3-ASR 会通过 Vulkan 或 Metal 使用显卡，否则使用处理器。
-
-正式版安装包还内置了默认的云端服务，无需任何设置即可开始听写。你也可以随时改用 OpenAI、Groq、硅基流动、阿里云百炼或任意 OpenAI 兼容接口，并使用自己的密钥。
-
-[本地识别](/zh/recognition/local) · [云端服务](/zh/recognition/cloud)
-
-</SplitBlock>
-
-<SplitBlock proof="polish" flip>
-
-## 让文字符合你的原意
-
-识别负责听出每一个字，后续步骤负责让文字准确易读：词典纠正识别器容易听错的人名和术语，AI 润色去掉口头禅并补全标点，替换规则按你的设定改写短语，场景再根据当前使用的应用调整这些处理。
-
-预设决定 AI 润色的处理方式：默认为校对，也可以在首页、「AI 润色」开关旁或托盘中选择提示词优化、意图整理、口语聊天、中英互译和要点纪要，或使用你自己编写的预设。
-
-[AI 润色](/zh/recognition/polish) · [词典与替换规则](/zh/recognition/dictionary) · [场景](/zh/recognition/scenes)
-
-</SplitBlock>
-
-<SplitBlock proof="phone">
-
-## 手机当麦克风和键盘
-
-<StatusTag status="available" />
-
-把 Android 手机与电脑配对后，在手机上按住说话：电脑使用自己的识别设置处理语音，并把文字插入电脑的光标处。手机也可以发送输入的文字或剪贴板内容。
-
-没有在线的电脑时，手机也可以单独识别，结果自动复制到手机剪贴板。
-
-Android 应用以 APK 形式在发布页面提供。[安装方法](/zh/guide/install#android) · [了解手机端](/zh/phone/)
-
-</SplitBlock>
-
-<HomePlatforms />
-
-<HomePrivacy />
-
-## 安装
-
-一条命令即可为这台电脑选择合适的安装包，按发布附带的 `SHA256SUMS` 校验后再安装。
+<HomePlatforms>
 
 ::: code-group
 
@@ -333,6 +288,8 @@ curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install
 
 :::
 
-各平台的安装包、校验值和构建证明都在[发布页面](https://github.com/sunerpy/voltip/releases)。[安装指南](/zh/guide/install)介绍了各个平台的安装方法，包括在 Mac 上首次打开时的步骤。
+</HomePlatforms>
 
-<HomeRoadmap />
+<HomeFaq />
+
+<HomeCloser />
