@@ -7,7 +7,7 @@ description: Hold a shortcut, speak, and the text appears at your cursor in any 
 
 hero:
   text: Hold to speak,<br>release to type
-  tagline: The text appears at your cursor, in any app. Recognition runs on your computer or with a cloud service you choose, and AI polish can tidy it first.
+  tagline: Open-source dictation that types at your cursor in any app. Recognition runs offline with a local model, or on the built-in service or your own provider; AI polish tidies the wording with the preset you choose.
   actions:
     - theme: brand
       text: Download
@@ -20,6 +20,7 @@ home:
   checks:
     - Windows, macOS, Linux and Android
     - With a local model, the audio stays on your computer
+    - The built-in service is free and needs no key
     - Open source, AGPL-3.0
 
   scene:
@@ -49,12 +50,37 @@ home:
       text: Try it now
       link: /guide/try
 
+  flow:
+    title: What happens between the shortcut and the cursor
+    intro: Each step has its own settings, and AI polish can be turned off. If the dictionary, AI polish or the rules fail, the dictation completes with the text from the step before.
+    steps:
+      - icon: mic
+        name: Recording
+        text: Hold to talk, or press once to start and again to stop; record the microphone, the sound the computer plays, or both.
+      - icon: audio
+        name: Recognition
+        text: A local model, the built-in service or your provider, on the whole recording or as you speak. Your dictionary's right spellings and the scene's terms go with the recording as hotwords, so cloud recognition keeps them; local models take none.
+      - icon: book
+        name: Dictionary
+        text: After recognition, what a word is heard as is replaced with its right spelling, for local models and cloud services alike.
+      - icon: wand
+        name: AI polish
+        tag: Optional
+        text: "Tidies the text with the current preset or scene: filler words go, punctuation comes in, corrections are kept."
+      - icon: replace
+        name: Rules
+        text: Rewrite the final text in list order, by a literal match or a regular expression.
+      - icon: cursor
+        name: Insert
+        text: Pastes at your cursor and puts the clipboard back, keeping a copy in the history on this computer.
+    note: The whole process is described on [What is Voltip](/guide/what-is-voltip).
+
   pairs:
-    title: Filler words removed, corrections applied
+    title: The text is tidied before it goes in
     intro: AI polish removes filler words, fixes the punctuation and keeps the correction you made, without rewording what you said. You can turn it off.
     labels:
-      said: You said
-      inserted: Inserted
+      said: Recognised words
+      inserted: Inserted text
       edit: Select text, hold Ctrl+Alt+E and say
       selection: Selected text
       replaced: Replaced with
@@ -77,12 +103,12 @@ home:
     note: “Actual output” comes from a screen recording of Voltip. “Example” is illustrative; real results depend on the AI model you choose.
 
   presets:
-    title: One sentence, a preset for each occasion
-    intro: A preset decides how AI polish handles the text. Eight are built in, with their prompts open to read, and any of them can be copied into a preset of your own and changed.
+    title: A preset decides how the text is tidied
+    intro: Eight are built in, with their prompts open to read, and any of them can be copied into a preset of your own and changed.
     points:
       - Proofread is the default; switch from the home page, the tray or next to the AI Polish switch
       - With scenes on, the app you are writing in picks the preset
-    saidLabel: You said
+    saidLabel: Recognised words
     said: um so the thursday release let's push it to next monday and uh testing still has two open issues I'll let everyone know once they're fixed
     outputs:
       - name: Proofread
@@ -101,29 +127,54 @@ home:
     scenes:
       title: "Scenes: the preset and extra instructions follow the app"
       note: Built-in scenes apply once you turn them on; you can add a scene for any app.
+      labels:
+        preset: Preset
+        instruction: Extra instructions
       items:
         - name: Coding
-          body: VS Code, Cursor, Kiro, the JetBrains IDEs and terminals. Code, commands, paths and identifiers stay as they are.
           preset: Proofread
+          apps:
+            - { name: Cursor, mark: cursor }
+            - { name: Kiro, mark: kiro }
+            - { name: JetBrains, mark: jetbrains }
+            - { name: iTerm2, mark: iterm2 }
+            - { name: Warp, mark: warp }
+            - { name: Ghostty, mark: ghostty }
+          more: And VS Code, Windows Terminal, PowerShell, Alacritty, WezTerm and each system's own terminal.
+          body: Keeps code, commands, paths, identifiers and Markdown as they are.
         - name: Office writing
-          body: Mail and documents in Outlook, Word, WPS, OneNote, Notion and similar apps.
           preset: Formal
+          apps:
+            - { name: Notion, mark: notion }
+            - { name: Obsidian, mark: obsidian }
+            - { name: Thunderbird, mark: thunderbird }
+          more: And Outlook, Word, WPS, OneNote, Typora, LibreOffice Writer, and Mail and Pages on a Mac.
+          body: Complete sentences and natural paragraphs for mail and documents, with no invented greetings or facts.
         - name: Chat
-          body: WeChat, QQ, Slack, Teams, DingTalk, Feishu, Telegram, Discord and other messaging apps.
           preset: Casual chat
+          apps:
+            - { name: WeChat, mark: wechat }
+            - { name: QQ, mark: qq }
+            - { name: Telegram, mark: telegram }
+            - { name: Discord, mark: discord }
+          more: And WeCom, Slack, Teams, DingTalk, Feishu, Lark, and Messages on a Mac.
+          body: "No extra instructions: the Casual chat preset writes short, conversational sentences without a closing full stop."
         - name: Legal, Medical, Finance, Academic
-          body: Strict proofreading that keeps specialist terms as they are. They apply once you add the apps you use.
           preset: Proofread
-
+          apps:
+            - { name: Legal, icon: scale }
+            - { name: Medical, icon: stethoscope }
+            - { name: Finance, icon: chart }
+            - { name: Academic, icon: cap }
+          more: Each field is a scene of its own and applies once you add the apps you use.
+          body: Strict proofreading that keeps specialist terms as they are and writes numbers, units and dates correctly.
   modes:
-    title: You choose where the speech is recognised
-    intro: Where the recording goes and whose model recognises it can be changed at any time on the Speech models page.
-    scope: This computer
+    title: Three ways to recognise speech
+    intro: On this computer, with the built-in service or with your own provider; switch at any time on the Speech models page.
     items:
       - icon: cpu
         label: On this computer
-        title: Download once, work offline
-        flow: { from: You speak, to: Local model, icon: cpu, local: true }
+        title: Uses a model downloaded to this computer
         assure: The audio stays on this computer
         specs:
           - { term: Cost, text: Free }
@@ -138,8 +189,7 @@ home:
       - icon: cloud
         label: Built-in service
         badge: Default
-        title: Dictate right after installing
-        flow: { from: You speak, to: Built-in service, icon: cloud, local: false }
+        title: Run by the Voltip project
         assure: The server keeps no recordings or text
         specs:
           - { term: Cost, text: "Free, shared by all users, limited per address" }
@@ -152,8 +202,7 @@ home:
           - name: GPT-OSS 20B
       - icon: key
         label: Your provider
-        title: Use your own key
-        flow: { from: You speak, to: Provider, icon: server, local: false }
+        title: Uses your own API key
         assure: The recording goes straight to the provider you chose
         specs:
           - { term: Cost, text: "The provider's prices; some have a free allowance" }
@@ -178,6 +227,38 @@ home:
         - { name: DeepSeek, mark: deepseek }
         - { name: Ollama, mark: ollama }
     note: On an NVIDIA L40S, Qwen3-ASR 0.6B recognised 16 seconds of Chinese speech in 0.16 s on the GPU and in 2.87 s on 8 processor threads. See [Local recognition](/recognition/local) and [Cloud services](/recognition/cloud).
+
+  more:
+    title: Make it fit the way you work
+    intro: These are in the desktop app; the ones that start off can be turned on in Settings.
+    items:
+      - title: Dictionary and rules
+        wide: true
+        body: Add a word the recogniser gets wrong once, and it is spelled right from then on; cloud recognition and AI polish get the right spelling as a hint too. Rules rewrite the text last, with regular expressions if needed. In the history, select a misheard word to add it.
+        swap: { from: cube control, to: kubectl }
+        guide: "[Dictionary and rules](/recognition/dictionary)"
+      - title: Start with a single key
+        body: Right Ctrl, Right Alt, Fn on a Mac, or the middle or side mouse buttons can start dictation on their own. Pressing another key while you hold one cancels the recording, so Right Ctrl + C keeps working.
+        keys: [Right Ctrl, Right Alt, Fn]
+        guide: "[Shortcuts and recording modes](/dictation/shortcuts)"
+      - title: Computer audio and long recordings
+        body: Record the microphone, the sound the computer plays, or both, with the speakers' echo removed when mixing. A recording can run up to 2 hours and be exported as SRT subtitles or text.
+        chips: [Microphone, Computer audio, Mixed]
+        guide: "[Recording source](/dictation/shortcuts#recording-source)"
+      - title: When a model's quota runs out
+        wide: true
+        body: Recognition and AI polish each keep a list of up to 8 fallback models. When the selected model's quota is used up, Voltip moves on to the next and the dictation still goes through; other errors, such as a lost connection or a wrong key, are reported and never switch models.
+        chain: [Qwen3.8 27B, GPT-OSS 120B, GPT-OSS 20B]
+        guide: "[When a model's quota runs out](/recognition/cloud#when-a-model-s-quota-runs-out)"
+      - title: AI tools
+        body: Claude Code, Codex and other AI tools can read the history, dictionary and rules over MCP, collect the misrecognitions that keep coming back, and add entries and rules with your permission. Every change can be undone.
+        chips: [Claude Code, Codex, MCP]
+        guide: "[AI tools](/recognition/mcp)"
+      - title: Local service
+        wide: true
+        body: Other programs send a recording to an OpenAI-compatible API and get back text processed by the same recognition, dictionary, presets and rules. Turn it on in the app, or run voltip-server on a Linux server without a desktop; by default it accepts connections from this computer only, and every request needs an access token.
+        code: voltip-server --scene coding --preset prompt
+        guide: "[Local service](/recognition/service)"
 
   phone:
     title: Your phone as a microphone and keyboard
@@ -255,22 +336,31 @@ home:
         a: No. The Voltip project runs it, all users share it, and requests are limited per address. For AI polish you can rely on, use a provider of your own.
       - q: My network needs a proxy
         a: Choose how Voltip connects under Settings → Network. It follows the system's proxy settings by default, or uses a proxy server you enter. Recognition, polish, model downloads, updates and the connection to your phone all follow this setting.
+      - q: Do I have to hold the shortcut the whole time?
+        a: No. Choose Press to start, again to stop, or Hold or press, where a short press locks the recording. A recording stops on its own at the length you set; Voltip has no wake word and does not stop when it hears silence. See [Shortcuts and recording modes](/dictation/shortcuts).
+      - q: Are the packages signed?
+        a: The Windows installer is not code-signed yet, so SmartScreen warns on the first start. The macOS app is signed with the project's own certificate but not notarized by Apple, so you confirm it once on first opening. Every release comes with SHA256SUMS and build attestations, and the one-line install checks the download against SHA256SUMS. See [Install](/guide/install).
       - q: Is there an iPhone app?
         a: An iOS app is planned for a later release. An Android app is available now.
 
   closer:
-    title: Hold the shortcut and start speaking
-    body: Free to download for Windows, macOS, Linux and Android.
+    title: Download Voltip
+    body: Free for Windows, macOS, Linux and Android, with the source code under AGPL-3.0.
+    keys: [Ctrl, Alt, Space]
     actions:
       - { text: Download, link: /guide/install, theme: brand, icon: download }
       - { text: GitHub, link: "https://github.com/sunerpy/voltip", theme: alt, icon: github }
 ---
+
+<HomeFlow />
 
 <HomePairs />
 
 <HomePresets />
 
 <HomeModes />
+
+<HomeMore />
 
 <HomePhone />
 
