@@ -77,7 +77,7 @@ home:
     note: “Actual output” comes from a screen recording of Voltip. “Example” is illustrative; real results depend on the AI model you choose.
 
   presets:
-    title: "One sentence,\na preset for each occasion"
+    title: One sentence, a preset for each occasion
     intro: A preset decides how AI polish handles the text. Eight are built in, with their prompts open to read, and any of them can be copied into a preset of your own and changed.
     points:
       - Proofread is the default; switch from the home page, the tray or next to the AI Polish switch
