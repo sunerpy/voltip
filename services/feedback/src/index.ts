@@ -1,19 +1,22 @@
 /** The feedback endpoint (docs/feedback.md): the desktop app's 反馈 page posts here, a Cloudflare
  *  Worker validates the report and stores it in D1. The app sends only what the page showed the
  *  user; the client address is kept as a salted hash, for the rate limit. Screenshots and screen
- *  recordings the report declares follow in 1 MiB chunks into a files database of their own. */
+ *  recordings the report declares follow in 1 MiB chunks into a files database of their own. A
+ *  stored report is announced to the owner (notify.ts), who reads it back and marks it handled. */
+import { type Notifier, type NotifyEnv, telegramNotifier } from "./notify";
 import {
   type AttachmentRow,
   type AttachmentStore,
   type D1Like,
   type FeedbackRow,
   type FeedbackStore,
+  isListState,
   d1Files,
   d1Store,
 } from "./store";
 import { ATTACHMENT_CHUNK_BYTES, chunkCount, validate } from "./validate";
 
-export interface Env {
+export interface Env extends NotifyEnv {
   DB: D1Like;
   /** The files database (schema-files.sql); without it the endpoint takes no attachments. */
   FILES?: D1Like;
@@ -85,6 +88,29 @@ export interface Deps {
   id: () => string;
   /** The upload token a report with attachments gets back. */
   token?: () => string;
+  /** Tells the owner about a stored report; unset sends nothing. */
+  notify?: Notifier;
+  /** Keeps the Worker alive for work after the answer (the notice); unset leaves it unawaited. */
+  defer?: (task: Promise<unknown>) => void;
+}
+
+/** Sends the notice after the answer: a notice that fails is logged and changes nothing else. */
+function announce(deps: Deps, row: FeedbackRow, attachments: number): void {
+  if (deps.notify === undefined) return;
+  const task = deps
+    .notify({
+      id: row.id,
+      kind: row.kind,
+      message: row.message,
+      contact: row.contact !== null && row.contact.length > 0,
+      diagnostics: row.diagnostics,
+      attachments,
+      country: row.country,
+    })
+    .catch((error: unknown) => {
+      console.warn(`feedback notice not sent: ${error instanceof Error ? error.message : "error"}`);
+    });
+  deps.defer?.(task);
 }
 
 /** The application token check shared by the report and its uploads; `undefined` passes. */
@@ -145,6 +171,7 @@ async function submit(request: Request, env: Env, deps: Deps): Promise<Response>
     country: request.headers.get("cf-ipcountry"),
   };
   await deps.store.insert(row);
+  announce(deps, row, attachments.length);
   if (attachments.length === 0 || files === undefined) return json(201, { id: row.id });
   const token = (deps.token ?? randomToken)();
   const tokenHash = await sha256Hex(token);
@@ -261,7 +288,13 @@ async function list(request: Request, env: Env, deps: Deps): Promise<Response> {
     Math.max(1, Number.parseInt(url.searchParams.get("limit") ?? "50", 10) || 50),
   );
   const before = Number.parseInt(url.searchParams.get("before") ?? "", 10);
-  const rows = await deps.store.list(limit, Number.isFinite(before) ? before : deps.now() + 1);
+  const asked = url.searchParams.get("state") ?? "all";
+  const state = isListState(asked) ? asked : "all";
+  const rows = await deps.store.list(
+    limit,
+    Number.isFinite(before) ? before : deps.now() + 1,
+    state,
+  );
   const attachments = (await deps.files?.listFor(rows.map((r) => r.id))) ?? [];
   // The address hash is for the rate limit, not for readers.
   return json(200, {
@@ -269,11 +302,29 @@ async function list(request: Request, env: Env, deps: Deps): Promise<Response> {
       ...rest,
       attachments: attachments.filter((a) => a.report_id === rest.id).map(attachmentView),
     })),
+    open: await deps.store.countOpen(),
   });
+}
+
+/** `PUT /v1/feedback/<id>/handled` marks a report handled, `DELETE` opens it again: the admin
+ *  page's 已处理 mark. Both are idempotent and answer the report's state. */
+async function handled(
+  request: Request,
+  env: Env,
+  deps: Deps,
+  reportId: string,
+): Promise<Response> {
+  const refused = refuseAdmin(request, env);
+  if (refused !== undefined) return refused;
+  if (!(await deps.store.exists(reportId))) return json(404, { error: "not_found" });
+  const at = request.method === "PUT" ? deps.now() : null;
+  await deps.store.setHandled(reportId, at);
+  return json(200, { id: reportId, handled_at: at });
 }
 
 const CHUNK_PATH = /^\/v1\/feedback\/([0-9A-Za-z-]{1,64})\/attachments\/(\d)\/(\d{1,3})$/u;
 const ATTACHMENT_PATH = /^\/v1\/feedback\/([0-9A-Za-z-]{1,64})\/attachments\/(\d)$/u;
+const HANDLED_PATH = /^\/v1\/feedback\/([0-9A-Za-z-]{1,64})\/handled$/u;
 
 /** Routes one request; `deps` are the Worker's own unless a test passes its own. */
 export async function handle(request: Request, env: Env, deps: Deps): Promise<Response> {
@@ -291,19 +342,32 @@ export async function handle(request: Request, env: Env, deps: Deps): Promise<Re
       return json(405, { error: "method_not_allowed" }, { allow: "GET" });
     return download(request, env, deps, attachment[1] ?? "", Number(attachment[2]));
   }
+  const mark = HANDLED_PATH.exec(pathname);
+  if (mark !== null) {
+    if (request.method !== "PUT" && request.method !== "DELETE")
+      return json(405, { error: "method_not_allowed" }, { allow: "PUT, DELETE" });
+    return handled(request, env, deps, mark[1] ?? "");
+  }
   if (pathname !== "/v1/feedback") return json(404, { error: "not_found" });
   if (request.method === "POST") return submit(request, env, deps);
   if (request.method === "GET") return list(request, env, deps);
   return json(405, { error: "method_not_allowed" }, { allow: "GET, POST" });
 }
 
+/** The part of the Worker's execution context the endpoint uses. */
+export interface Context {
+  waitUntil(task: Promise<unknown>): void;
+}
+
 export default {
-  fetch(request: Request, env: Env): Promise<Response> {
+  fetch(request: Request, env: Env, context?: Context): Promise<Response> {
     return handle(request, env, {
       store: d1Store(env.DB),
       files: env.FILES === undefined ? undefined : d1Files(env.FILES),
       now: () => Date.now(),
       id: () => crypto.randomUUID(),
+      notify: telegramNotifier(env),
+      defer: context === undefined ? undefined : (task) => context.waitUntil(task),
     });
   },
 };

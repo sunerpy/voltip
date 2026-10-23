@@ -54,10 +54,19 @@
 
 - `POST /v1/feedback`：检查令牌、`Content-Type` 和体积（≤ 32 KiB），按上面的规则校验字段，多出来的诊断字段直接丢掉（新版应用加字段，旧接口也不会拒收）。同一客户端地址每小时最多 10 条，所有人合计每天最多 5000 条。客户端地址只存加盐哈希，只用于限流。成功时返回 `201 {"id": …}`；声明了附件时再带上 `upload: {"token": …, "chunk_bytes": 1048576}`。附件另有两道限额：同一客户端地址每天声明的附件合计不超过 60 MiB（超出返回 429），附件库总量不超过 400 MiB（超出返回 `507 storage_full`，报告不入库）。
 - `PUT /v1/feedback/<id>/attachments/<序号>/<块号>`：上传一个附件的一块，每块 1 MiB（最后一块是余下的部分），带应用令牌和 `x-upload-token`。重传同一块会覆盖；所有块到齐后附件标记为完整。令牌不对返回 404，已完整返回 409，报告发出一小时后返回 410，长度或块号不对返回 400。客户端对网络错误和 5xx 每块最多试 3 次。过了这一小时仍没传完的附件连同已到的块，会在下一份带附件的报告到来时删掉，不再占额度。
-- `GET /v1/feedback?limit=&before=`：用另一个管理员令牌（`ADMIN_TOKEN`）读回报告，按时间从新到旧，结果里不含地址哈希；每条带上附件列表（文件名、类型、大小、SHA-256、是否完整）。没有配置管理员令牌时返回 404。
+- `GET /v1/feedback?limit=&before=&state=`：用另一个管理员令牌（`ADMIN_TOKEN`）读回报告，按时间从新到旧，结果里不含地址哈希；每条带上附件列表（文件名、类型、大小、SHA-256、是否完整）和 `handled_at`（标记为已处理的时间，未处理为 `null`）。`state` 为 `open` 只列未处理的，为 `handled` 只列已处理的，省略或其他值列出全部；结果另带 `open`，即未处理的总数。没有配置管理员令牌时返回 404。
+- `PUT /v1/feedback/<id>/handled`：用管理员令牌把一条报告标记为已处理，`DELETE` 取消标记；两者都可以重复调用，返回 `{"id": …, "handled_at": …}`，报告不存在时返回 404。标记存在 `feedback_handled` 表里，没有这一行的报告就是未处理的。
 - `GET /v1/feedback/<id>/attachments/<序号>`：用管理员令牌下载一个完整的附件，以 `Content-Disposition: attachment` 返回，不在浏览器里直接打开。
 - `GET /healthz`：返回 `ok`。
 
 附件的字节存在另一个 D1 数据库（表结构见 `services/feedback/schema-files.sql`，绑定名 `FILES`），报告和附件各占一个数据库的容量上限。没有绑定 `FILES` 时，接口不接收附件（`503 attachments_unavailable`），纯文字反馈不受影响。
 
-Worker 需要三个 secrets：`FEEDBACK_TOKEN`（与构建里的 `VOLTIP_FEEDBACK_TOKEN` 相同）、`IP_SALT`，以及可选的 `ADMIN_TOKEN`；D1 绑定名为 `DB` 和 `FILES`。部署到哪个账号、哪个域名由运维者决定，部署配置不放进仓库。
+## 新反馈通知
+
+报告入库后，Worker 用 Telegram 机器人给运维者发一条通知（`services/feedback/src/notify.ts`）：类型、描述的前 600 个码元、应用版本与系统、界面语言、国家、附件个数、是否留了联系方式、报告 id，以及管理页面的地址。联系方式本身和附件不进通知，只在接口和管理页面里。通知在返回 `201` 之后发出（`waitUntil`），发不出去只记一行日志，不影响报告；纯文本发送，用户写的内容不会被当成格式。
+
+## 部署
+
+Worker 需要的 secrets：`FEEDBACK_TOKEN`（与构建里的 `VOLTIP_FEEDBACK_TOKEN` 相同）、`IP_SALT`、可选的 `ADMIN_TOKEN`，以及可选的通知设置 `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`（机器人和它发往的会话，两个都设才发通知；会话 id 在给机器人发过 `/start` 后从 `getUpdates` 读到）与 `ADMIN_URL`（通知里附的管理页面地址）。D1 绑定名为 `DB` 和 `FILES`。部署到哪个账号、哪个域名由运维者决定，部署配置不放进仓库；`schema.sql` 可以在线上库上重复执行，新增的表随部署一起建好。
+
+voltip.firlab.app 的管理页面（`/admin`，在 `sunerpy/firlab` 的 `voltip/` 下）用登录会话代为调用上面的读回、标记和下载接口，管理员令牌只保存在页面的服务端，不进浏览器。

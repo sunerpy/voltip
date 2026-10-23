@@ -20,6 +20,19 @@ export interface FeedbackRow {
   country: string | null;
 }
 
+/** Which reports a list holds: those still to be dealt with, those marked handled, or both. */
+export const LIST_STATES = ["all", "open", "handled"] as const;
+export type ListState = (typeof LIST_STATES)[number];
+
+export function isListState(value: string): value is ListState {
+  return (LIST_STATES as readonly string[]).includes(value);
+}
+
+/** A stored report as the owner reads it: with when it was marked handled, if it was. */
+export interface ListedRow extends FeedbackRow {
+  handled_at: number | null;
+}
+
 /** What the handler needs from storage; `d1Store` is the Worker's, tests use `memoryStore`. */
 export interface FeedbackStore {
   insert(row: FeedbackRow): Promise<void>;
@@ -27,8 +40,14 @@ export interface FeedbackStore {
   countFrom(ipHash: string, since: number): Promise<number>;
   /** All rows at or after `since`. */
   countSince(since: number): Promise<number>;
-  /** Newest first, strictly older than `before`. */
-  list(limit: number, before: number): Promise<FeedbackRow[]>;
+  /** Newest first, strictly older than `before`; `state` defaults to all of them. */
+  list(limit: number, before: number, state?: ListState): Promise<ListedRow[]>;
+  /** Whether report `id` is stored. */
+  exists(id: string): Promise<boolean>;
+  /** Marks report `id` handled at `at` (Unix ms), or open again with `null`. */
+  setHandled(id: string, at: number | null): Promise<void>;
+  /** Reports not marked handled. */
+  countOpen(): Promise<number>;
 }
 
 /** The subset of Cloudflare's D1 binding this module uses. Rows come back as `unknown` and are
@@ -78,12 +97,13 @@ function parseDiagnostics(raw: string): Diagnostics {
 }
 
 /** A stored row, or nothing when a column is not what the schema says. */
-function readRow(raw: unknown): FeedbackRow | undefined {
+function readRow(raw: unknown): ListedRow | undefined {
   const id = text(raw, "id");
   const created = field(raw, "created_at");
   const kind = text(raw, "kind");
   const message = text(raw, "message");
   const ipHash = text(raw, "ip_hash");
+  const handled = field(raw, "handled_at");
   if (id === null || typeof created !== "number" || !isKind(kind)) return undefined;
   if (message === null || ipHash === null) return undefined;
   return {
@@ -95,8 +115,16 @@ function readRow(raw: unknown): FeedbackRow | undefined {
     diagnostics: parseDiagnostics(text(raw, "diagnostics") ?? ""),
     ip_hash: ipHash,
     country: text(raw, "country"),
+    handled_at: typeof handled === "number" ? handled : null,
   };
 }
+
+/** The list's filter in SQL: the handled table joined in, and which side of it to keep. */
+const STATE_SQL: Record<ListState, string> = {
+  all: "",
+  open: " AND h.id IS NULL",
+  handled: " AND h.id IS NOT NULL",
+};
 
 /** Storage over the `feedback` table (schema.sql). */
 export function d1Store(db: D1Like): FeedbackStore {
@@ -134,22 +162,54 @@ export function d1Store(db: D1Like): FeedbackStore {
           .first(),
       );
     },
-    async list(limit, before) {
+    async list(limit, before, state = "all") {
       const { results = [] } = await db
         .prepare(
-          "SELECT id, created_at, kind, message, contact, diagnostics, ip_hash, country FROM feedback WHERE created_at < ? ORDER BY created_at DESC LIMIT ?",
+          `SELECT f.id, f.created_at, f.kind, f.message, f.contact, f.diagnostics, f.ip_hash, f.country, h.handled_at FROM feedback f LEFT JOIN feedback_handled h ON h.id = f.id WHERE f.created_at < ?${STATE_SQL[state]} ORDER BY f.created_at DESC LIMIT ?`,
         )
         .bind(before, limit)
         .all();
       return results.map(readRow).filter((r) => r !== undefined);
     },
+    async exists(id) {
+      return (
+        (await db.prepare("SELECT 1 AS n FROM feedback WHERE id = ?").bind(id).first()) !== null
+      );
+    },
+    async setHandled(id, at) {
+      if (at === null) {
+        await db.prepare("DELETE FROM feedback_handled WHERE id = ?").bind(id).run();
+        return;
+      }
+      await db
+        .prepare(
+          "INSERT INTO feedback_handled (id, handled_at) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET handled_at = excluded.handled_at",
+        )
+        .bind(id, at)
+        .run();
+    },
+    async countOpen() {
+      return count(
+        await db
+          .prepare(
+            "SELECT COUNT(*) AS n FROM feedback f LEFT JOIN feedback_handled h ON h.id = f.id WHERE h.id IS NULL",
+          )
+          .first(),
+      );
+    },
   };
 }
 
 /** An in-memory store with the same semantics (tests, local runs). */
-export function memoryStore(rows: FeedbackRow[] = []): FeedbackStore & { rows: FeedbackRow[] } {
+export function memoryStore(
+  rows: FeedbackRow[] = [],
+): FeedbackStore & { rows: FeedbackRow[]; handled: Map<string, number> } {
+  const handled = new Map<string, number>();
+  const keeps = (state: ListState, id: string) =>
+    state === "all" || (state === "handled") === handled.has(id);
   return {
     rows,
+    handled,
     insert(row) {
       rows.push(row);
       return Promise.resolve();
@@ -162,13 +222,25 @@ export function memoryStore(rows: FeedbackRow[] = []): FeedbackStore & { rows: F
     countSince(since) {
       return Promise.resolve(rows.filter((r) => r.created_at >= since).length);
     },
-    list(limit, before) {
+    list(limit, before, state = "all") {
       return Promise.resolve(
         rows
-          .filter((r) => r.created_at < before)
+          .filter((r) => r.created_at < before && keeps(state, r.id))
           .toSorted((a, b) => b.created_at - a.created_at)
-          .slice(0, limit),
+          .slice(0, limit)
+          .map((r) => ({ ...r, handled_at: handled.get(r.id) ?? null })),
       );
+    },
+    exists(id) {
+      return Promise.resolve(rows.some((r) => r.id === id));
+    },
+    setHandled(id, at) {
+      if (at === null) handled.delete(id);
+      else handled.set(id, at);
+      return Promise.resolve();
+    },
+    countOpen() {
+      return Promise.resolve(rows.filter((r) => !handled.has(r.id)).length);
     },
   };
 }
