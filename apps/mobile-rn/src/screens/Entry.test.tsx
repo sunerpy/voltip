@@ -533,6 +533,28 @@ describe("纠正识别错误 on the phone", () => {
   });
 });
 
+describe("a take whose polish failed", () => {
+  it("regression: says why in the interface's words and keeps the service's own (docs/dictation.md §3.12)", async () => {
+    // 2026-10-25: the row showed the client's English words, 「refine service overloaded (HTTP 503)」.
+    await openEntry({
+      history: [
+        take(1, RAW, RAW, {
+          refined: false,
+          refine_ms: undefined,
+          refine_failure: "rate_limited",
+          refine_error:
+            "服务繁忙：refine service overloaded (HTTP 503): This model is currently experiencing high demand.",
+        }),
+      ],
+    });
+    expect(screen.getByText("润色失败原因")).toBeOnTheScreen();
+    expect(
+      screen.getByText("服务繁忙：This model is currently experiencing high demand."),
+    ).toBeOnTheScreen();
+    expect(screen.queryByText(/refine service/)).toBeNull();
+  });
+});
+
 describe("the words' layout (wordUnits)", () => {
   it("sticks punctuation to its word, an opening bracket to the next, and breaks lines", () => {
     const text = "他说「你好」，然后 OK. (再见)\n下一行";

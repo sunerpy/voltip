@@ -76,29 +76,168 @@ pub struct Refined {
 #[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
-    temperature: f32,
+    /// Absent for a model that fixes its own ([`ChatControls::temperature`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
     max_tokens: u32,
     messages: [Message<'a>; 2],
     #[serde(skip_serializing_if = "Option::is_none")]
     enable_thinking: Option<bool>,
-    /// Only for a model that reasons first ([`reasons_first`]).
+    /// Only for a model that reasons first ([`chat_controls`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<&'static str>,
+    /// `{"type": "disabled"}` for a model that reasons unless told not to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<Thinking>,
+    /// OpenRouter's own form of the effort, in place of the vendors' fields.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<Reasoning>,
 }
 
-/// The effort a chat completion asks of a model that reasons before it answers (docs/dictation.md
-/// §3.10). Its reasoning counts against `max_tokens`: at the default effort a short clean-up's 128
-/// tokens all went to it on Groq and the answer came back empty (2026-10-12, `openai/gpt-oss-120b`,
-/// 126 reasoning tokens); at low effort the reasoning took 5–86.
+#[derive(Serialize)]
+struct Thinking {
+    #[serde(rename = "type")]
+    kind: &'static str,
+}
+
+/// The effort a chat completion asks of a model that reasons before it answers and cannot be told
+/// not to (docs/dictation.md §3.10). Its reasoning counts against `max_tokens`: at the default
+/// effort a short clean-up's 128 tokens all went to it on Groq and the answer came back empty
+/// (2026-10-12, `openai/gpt-oss-120b`, 126 reasoning tokens); at low effort the reasoning took 5–86.
+/// Gemini behaves the same: on 2026-10-24 `gemini-3.8-flash` spent 146 of a short take's 152 tokens
+/// on it and stopped at `length` after 「请问现在」; at low effort it reasoned 0–110 tokens
+/// (`gemini-3.1-flash-lite`). `minimal` is refused by `gemini-3.8-flash` and `none` by every Gemini 3
+/// model, so low it is; Kimi K3 and GLM-5.3 take `low` | `high` | `max` (default `max`).
 const REASONING_EFFORT: &str = "low";
-/// Tokens such a request gets on top of the answer's budget, for the reasoning, under the same
+/// OpenRouter's effort that turns reasoning off, for the models that allow it.
+const NO_REASONING: &str = "none";
+/// Tokens a gpt-oss request gets on top of the answer's budget, for the reasoning, under the same
 /// ceiling.
 const REASONING_TOKENS: u32 = 256;
+/// The same for the other models that reason whatever they are asked: low effort is a thinking
+/// budget of 1 024 tokens on Gemini 2.5 (ai.google.dev/gemini-api/docs/openai, 2026-10-24).
+const LONG_REASONING_TOKENS: u32 = 1024;
 
-/// `model` reasons before it answers and takes `reasoning_effort`: OpenAI's gpt-oss, with or
-/// without a vendor prefix (`openai/gpt-oss-120b` on Groq, `gpt-oss:20b` on Ollama).
-fn reasons_first(model: &str) -> bool {
-    model.trim().rsplit('/').next().is_some_and(|name| name.to_ascii_lowercase().starts_with("gpt-oss"))
+/// What a chat completion sends to make `model` answer at once (docs/dictation.md §3.10).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ChatControls {
+    /// The request carries [`TEMPERATURE`]. Kimi fixes its models' temperature and answers any
+    /// other value with 400 (platform.kimi.com/docs/api/models-overview, 2026-10-25), through
+    /// OpenRouter too.
+    temperature: bool,
+    /// Top-level `reasoning_effort`.
+    reasoning_effort: Option<&'static str>,
+    /// `thinking: {"type": "disabled"}`.
+    no_thinking: bool,
+    /// OpenRouter's `reasoning: {"effort": …}`.
+    openrouter_effort: Option<&'static str>,
+    /// Tokens on top of the answer's budget for the reasoning, under the same ceiling.
+    room: Option<u32>,
+}
+
+/// How a model reasons, by the families the vendors document (2026-10-25).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reasoner {
+    /// Answers without reasoning, or reasons in a way no request field changes.
+    No,
+    /// Always reasons and takes `reasoning_effort` (gpt-oss, Gemini, Kimi K3, GLM-5.3), with this
+    /// much room for it.
+    Effort(u32),
+    /// Always reasons and takes no effort (Kimi K2.7 Code).
+    Always,
+    /// Reasons unless told `thinking: {"type": "disabled"}` (GLM-4.5 to GLM-5.2, Kimi K2.5 and
+    /// K2.6, Xiaomi MiMo, Tencent Hy3 and Hy4, the Doubao Seed models).
+    Toggle,
+}
+
+/// What a chat completion sends for `model` at `base_url`: the vendors name their models alike
+/// wherever they are served (`moonshotai/kimi-k3` on OpenRouter, `kimi-k3` on TokenHub), so the
+/// model decides, and OpenRouter takes its own form of the effort instead of the vendors' fields.
+fn chat_controls(base_url: &str, model: &str) -> ChatControls {
+    let name = model.trim().rsplit('/').next().unwrap_or_default().to_ascii_lowercase();
+    let kimi = name.starts_with("kimi-");
+    let reasoner = reasoner(&name);
+    let mut controls = ChatControls { temperature: !kimi, ..ChatControls::default() };
+    let openrouter = url::Url::parse(base_url.trim())
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+        .is_some_and(|host| host == "openrouter.ai" || host.ends_with(".openrouter.ai"));
+    match (reasoner, openrouter) {
+        (Reasoner::No, _) => {}
+        (Reasoner::Effort(room), false) => {
+            controls.reasoning_effort = Some(REASONING_EFFORT);
+            controls.room = Some(room);
+        }
+        (Reasoner::Effort(room), true) => {
+            controls.openrouter_effort = Some(REASONING_EFFORT);
+            controls.room = Some(room);
+        }
+        (Reasoner::Always, true) => {
+            controls.openrouter_effort = Some(REASONING_EFFORT);
+            controls.room = Some(LONG_REASONING_TOKENS);
+        }
+        (Reasoner::Always, false) => controls.room = Some(LONG_REASONING_TOKENS),
+        (Reasoner::Toggle, false) => controls.no_thinking = true,
+        (Reasoner::Toggle, true) => controls.openrouter_effort = Some(NO_REASONING),
+    }
+    controls
+}
+
+/// The family of `name` (a model id without its vendor prefix, lowercase).
+fn reasoner(name: &str) -> Reasoner {
+    if name.starts_with("gpt-oss") {
+        return Reasoner::Effort(REASONING_TOKENS);
+    }
+    if name.starts_with("gemini-") || name.starts_with("kimi-k3") {
+        return Reasoner::Effort(LONG_REASONING_TOKENS);
+    }
+    if name.starts_with("kimi-k2") {
+        return if name.contains("code") {
+            Reasoner::Always
+        } else if ["kimi-k2.5", "kimi-k2.6", "kimi-k2-5", "kimi-k2-6"].iter().any(|p| name.starts_with(p)) {
+            Reasoner::Toggle
+        } else {
+            Reasoner::No
+        };
+    }
+    if let Some(version) = glm_version(name) {
+        // GLM-5.3 always reasons (docs.z.ai, thinking mode); the thinking switch came with GLM-4.5.
+        return if version >= (5, 3) {
+            Reasoner::Effort(LONG_REASONING_TOKENS)
+        } else if version >= (4, 5) {
+            Reasoner::Toggle
+        } else {
+            Reasoner::No
+        };
+    }
+    if name.starts_with("mimo-") && name != "mimo-v2.5-pro-ultraspeed" {
+        return Reasoner::Toggle;
+    }
+    if name.starts_with("hy3") || name.starts_with("hy4") {
+        return Reasoner::Toggle;
+    }
+    // Ark's `doubao-seed-…`, OpenRouter's `seed-…`; the character and translation models do not reason.
+    if (name.starts_with("doubao-seed-") || name.starts_with("seed-")) && !name.contains("character") && !name.contains("translation") {
+        return Reasoner::Toggle;
+    }
+    Reasoner::No
+}
+
+/// `glm-5.3-flash` → (5, 3), `glm-5-turbo` → (5, 0), Ark's `glm-5-3-flash-260828` → (5, 3).
+fn glm_version(name: &str) -> Option<(u32, u32)> {
+    let rest = name.strip_prefix("glm-")?;
+    let major_len = rest.bytes().take_while(u8::is_ascii_digit).count();
+    let major = rest.get(..major_len)?.parse().ok()?;
+    let after = &rest[major_len..];
+    let minor = match after.strip_prefix('.').or_else(|| after.strip_prefix('-')) {
+        Some(tail) => {
+            let digits = tail.bytes().take_while(u8::is_ascii_digit).count();
+            // Two digits at most: Ark's date suffix (`glm-5-260211`) is not a version.
+            if (1..=2).contains(&digits) { tail[..digits].parse().ok()? } else { 0 }
+        }
+        None => 0,
+    };
+    Some((major, minor))
 }
 
 /// A Responses request (docs/dictation.md §3.7): no temperature and no output limit.
@@ -345,26 +484,31 @@ impl RefineClient {
             let retry_after_ms = retry_after_ms(response.headers());
             // The body of a refusal is only read to sort it: one that cannot be read sorts by status.
             let body = response.text().await.unwrap_or_default();
-            return Err(completion_error(status, retry_after_ms, &body));
+            return Err(refusal(status, retry_after_ms, &body));
         }
         response.text().await.map_err(map_reqwest)
     }
 
     /// One chat completion ([`TEMPERATURE`], `max_tokens`): the first choice's content and finish
-    /// reason. A model that reasons first gets [`REASONING_EFFORT`] and [`REASONING_TOKENS`] more,
-    /// up to the configured ceiling (the built-in service's free tier refuses more,
-    /// [`BUILTIN_OUTPUT_CAP`]).
+    /// reason. A model that reasons first is asked not to, or to reason little, and gets room for
+    /// it ([`chat_controls`]), up to the configured ceiling (the built-in service's free tier
+    /// refuses more, [`BUILTIN_OUTPUT_CAP`]).
     async fn complete_chat(&self, system: &str, user: &str, max_tokens: u32) -> Result<Completion, RefineError> {
         let started = Instant::now();
-        let reasoning = reasons_first(&self.config.model);
-        let max_tokens = if reasoning { max_tokens.saturating_add(REASONING_TOKENS).min(self.config.output_cap.max(max_tokens)) } else { max_tokens };
+        let controls = chat_controls(&self.config.base_url, &self.config.model);
+        let max_tokens = match controls.room {
+            Some(room) => max_tokens.saturating_add(room).min(self.config.output_cap.max(max_tokens)),
+            None => max_tokens,
+        };
         let payload = ChatRequest {
             model: &self.config.model,
-            temperature: TEMPERATURE,
+            temperature: controls.temperature.then_some(TEMPERATURE),
             max_tokens,
             messages: [Message { role: "system", content: system }, Message { role: "user", content: user }],
             enable_thinking: self.config.enable_thinking,
-            reasoning_effort: reasoning.then_some(REASONING_EFFORT),
+            reasoning_effort: controls.reasoning_effort,
+            thinking: controls.no_thinking.then_some(Thinking { kind: "disabled" }),
+            reasoning: controls.openrouter_effort.map(|effort| Reasoning { effort }),
         };
         let body = self.post(&payload).await?;
         let parsed: ChatResponse =
@@ -408,20 +552,25 @@ impl RefineClient {
     }
 }
 
-/// A refused completion: a used-up quota first, whatever the status (docs/dictation.md §3.5; Model
-/// Studio answers 免费额度用完即停 with 403, which used to read as a wrong key), then by status.
-fn completion_error(status: StatusCode, retry_after_ms: Option<u64>, body: &str) -> RefineError {
+/// A refused request: a used-up quota first, whatever the status (docs/dictation.md §3.5; Model
+/// Studio answers 免费额度用完即停 with 403, which used to read as a wrong key), then by status,
+/// each with what the service said (§3.12): the pill, the history and 测试连接 show it.
+fn refusal(status: StatusCode, retry_after_ms: Option<u64>, body: &str) -> RefineError {
     let (code, message) = error_fields(body);
     if is_quota_exhausted(&code, &message) {
-        return RefineError::QuotaExhausted { code, message: truncate_chars(&message, MAX_ERROR_BODY_CHARS) };
+        return RefineError::QuotaExhausted { code, message: voltip_reply::clean(&message) };
     }
+    let message = voltip_reply::summary(body);
     if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-        return RefineError::Unauthorized;
+        return RefineError::Unauthorized { message };
     }
     if status == StatusCode::TOO_MANY_REQUESTS {
-        return RefineError::RateLimited { retry_after_ms };
+        return RefineError::RateLimited { retry_after_ms, message };
     }
-    RefineError::Server { status: status.as_u16(), body: truncate_chars(body, MAX_ERROR_BODY_CHARS) }
+    if status == StatusCode::SERVICE_UNAVAILABLE {
+        return RefineError::Overloaded { message };
+    }
+    RefineError::Server { status: status.as_u16(), body: message }
 }
 
 /// The models an OpenAI-compatible service lists (`GET {base}/models`, each `data[].id`): the
@@ -463,16 +612,17 @@ pub async fn list_models(
     };
     let response = send(request).await?;
     let status = response.status();
-    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-        return Err(RefineError::Unauthorized);
-    }
-    if status == StatusCode::TOO_MANY_REQUESTS {
-        return Err(RefineError::RateLimited { retry_after_ms: retry_after_ms(response.headers()) });
+    if !status.is_success() {
+        let retry_after_ms = retry_after_ms(response.headers());
+        // The body of a refusal is only read to say why: one that cannot be read sorts by status.
+        let message = voltip_reply::summary(&response.text().await.unwrap_or_default());
+        return Err(match status {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => RefineError::Unauthorized { message },
+            StatusCode::TOO_MANY_REQUESTS => RefineError::RateLimited { retry_after_ms, message },
+            _ => RefineError::Server { status: status.as_u16(), body: message },
+        });
     }
     let body = response.text().await.map_err(map_reqwest)?;
-    if !status.is_success() {
-        return Err(RefineError::Server { status: status.as_u16(), body: truncate_chars(&body, MAX_ERROR_BODY_CHARS) });
-    }
     let parsed: ModelList =
         serde_json::from_str(&body).map_err(|e| RefineError::BadResponse(format!("{e}: {}", truncate_chars(&body, MAX_ERROR_BODY_CHARS))))?;
     Ok(parsed.data.into_iter().map(|m| m.id).filter(|id| !id.trim().is_empty()).collect())
@@ -721,7 +871,7 @@ mod tests {
         assert_eq!(err, RefineError::Truncated);
         server.reset().await;
         Mock::given(method("POST")).and(path("/v1/responses")).respond_with(ResponseTemplate::new(429).insert_header("retry-after", "7")).mount(&server).await;
-        assert_eq!(client.refine("x", None).await.unwrap_err(), RefineError::RateLimited { retry_after_ms: Some(7000) });
+        assert_eq!(client.refine("x", None).await.unwrap_err(), RefineError::RateLimited { retry_after_ms: Some(7000), message: String::new() });
         server.reset().await;
         Mock::given(method("POST"))
             .and(path("/v1/responses"))
@@ -900,20 +1050,26 @@ mod tests {
         for status in [401_u16, 403] {
             let server = MockServer::start().await;
             mount(&server, ResponseTemplate::new(status)).await;
-            assert_eq!(client(&server, Some("k")).refine("x", None).await.unwrap_err(), RefineError::Unauthorized);
+            assert_eq!(client(&server, Some("k")).refine("x", None).await.unwrap_err(), RefineError::Unauthorized { message: String::new() });
         }
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(429).insert_header("Retry-After", "7")).await;
-        assert_eq!(client(&server, None).refine("x", None).await.unwrap_err(), RefineError::RateLimited { retry_after_ms: Some(7000) });
+        assert_eq!(client(&server, None).refine("x", None).await.unwrap_err(), RefineError::RateLimited { retry_after_ms: Some(7000), message: String::new() });
 
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(429)).await;
-        assert_eq!(client(&server, None).refine("x", None).await.unwrap_err(), RefineError::RateLimited { retry_after_ms: None });
+        assert_eq!(client(&server, None).refine("x", None).await.unwrap_err(), RefineError::RateLimited { retry_after_ms: None, message: String::new() });
+
+        let server = MockServer::start().await;
+        mount(&server, ResponseTemplate::new(502).set_body_string("y".repeat(500))).await;
+        let err = client(&server, None).refine("x", None).await.unwrap_err();
+        assert!(matches!(&err, RefineError::Server { status: 502, body } if body.chars().count() == MAX_ERROR_BODY_CHARS), "{err:?}");
+        assert!(err.is_retryable());
 
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(503).set_body_string("y".repeat(500))).await;
         let err = client(&server, None).refine("x", None).await.unwrap_err();
-        assert!(matches!(&err, RefineError::Server { status: 503, body } if body.chars().count() == MAX_ERROR_BODY_CHARS), "{err:?}");
+        assert!(matches!(&err, RefineError::Overloaded { message } if message.chars().count() == MAX_ERROR_BODY_CHARS), "{err:?}");
         assert!(err.is_retryable());
 
         let server = MockServer::start().await;
@@ -948,10 +1104,37 @@ mod tests {
         }
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(403).set_body_json(json!({ "error": { "code": "invalid_api_key", "message": "Incorrect API key" } }))).await;
-        assert_eq!(client(&server, Some("k")).refine("x", None).await.unwrap_err(), RefineError::Unauthorized);
+        assert_eq!(
+            client(&server, Some("k")).refine("x", None).await.unwrap_err(),
+            RefineError::Unauthorized { message: "Incorrect API key (invalid_api_key)".into() }
+        );
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(429).set_body_json(json!({ "code": "Throttling.RateQuota", "message": "Requests rate limit exceeded" }))).await;
-        assert_eq!(client(&server, Some("k")).refine("x", None).await.unwrap_err(), RefineError::RateLimited { retry_after_ms: None });
+        assert_eq!(
+            client(&server, Some("k")).refine("x", None).await.unwrap_err(),
+            RefineError::RateLimited { retry_after_ms: None, message: "Requests rate limit exceeded (Throttling.RateQuota)".into() }
+        );
+    }
+
+    /// Regression (2026-10-24, Google AI Studio): `gemini-3.8-flash` answered every clean-up for 40
+    /// minutes with a 503 whose body is an array (`[{"error": {"code": 503, "message": "This model
+    /// is currently experiencing high demand…"}}]`); it read as a plain server error with the raw
+    /// JSON, and the interface only said 请求失败. A 503 is now an overloaded service with the
+    /// service's own message, and every other refusal keeps the message rather than the JSON.
+    #[tokio::test]
+    async fn regression_an_overloaded_model_is_told_apart_with_the_services_message() {
+        let high_demand = "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.";
+        let server = MockServer::start().await;
+        let body = json!([{ "error": { "code": 503, "message": high_demand, "status": "UNAVAILABLE" } }]);
+        mount(&server, ResponseTemplate::new(503).set_body_json(body)).await;
+        let err = client(&server, Some("k")).refine("x", None).await.unwrap_err();
+        assert_eq!(err, RefineError::Overloaded { message: format!("{high_demand} (UNAVAILABLE)") });
+        assert_eq!(client(&server, Some("k")).edit("你好", "改成英文", &PromptHints::default()).await.unwrap_err(), err);
+
+        let gone = "This model models/gemini-2.5-flash is no longer available to new users.";
+        let server = MockServer::start().await;
+        mount(&server, ResponseTemplate::new(404).set_body_json(json!([{ "error": { "code": 404, "message": gone, "status": "NOT_FOUND" } }]))).await;
+        assert_eq!(client(&server, Some("k")).refine("x", None).await.unwrap_err(), RefineError::Server { status: 404, body: format!("{gone} (NOT_FOUND)") });
     }
 
     #[tokio::test]
@@ -1092,7 +1275,10 @@ mod tests {
 
         let denied = MockServer::start().await;
         Mock::given(method("GET")).respond_with(ResponseTemplate::new(401)).mount(&denied).await;
-        assert_eq!(list_models(&denied.uri(), Some("bad"), Duration::from_secs(5), &voltip_net::Network::new()).await.unwrap_err(), RefineError::Unauthorized);
+        assert_eq!(
+            list_models(&denied.uri(), Some("bad"), Duration::from_secs(5), &voltip_net::Network::new()).await.unwrap_err(),
+            RefineError::Unauthorized { message: String::new() }
+        );
         let broken = MockServer::start().await;
         Mock::given(method("GET")).respond_with(ResponseTemplate::new(502).set_body_string("bad gateway")).mount(&broken).await;
         assert!(matches!(
@@ -1191,6 +1377,120 @@ mod tests {
         assert_eq!(last["max_tokens"], 864 + 256);
     }
 
+    /// Regression (2026-10-24, Google AI Studio): Gemini thinks before it answers, and the thinking
+    /// counts against `max_tokens`. `gemini-3.8-flash` spent 146 of a short take's 152 tokens on it
+    /// and stopped at `length` after 「请问现在」, so the clean-up failed even when the model had
+    /// room to serve. Gemini gets low effort and room to think, with or without a prefix, on the
+    /// ceiling of the user's own service.
+    #[tokio::test]
+    async fn regression_gemini_gets_low_effort_and_room_to_think() {
+        let server = MockServer::start().await;
+        mount(&server, answer("好。")).await;
+        let long = "很".repeat(400);
+        for model in ["gemini-3.8-flash", "models/gemini-3.5-flash-lite", "google/gemini-2.5-pro"] {
+            let config = RefineConfig::new(server.uri(), model).with_output_cap(crate::USER_OUTPUT_CAP);
+            let client = RefineClient::new(config).unwrap();
+            client.refine("好", None).await.unwrap();
+            client.refine(&long, None).await.unwrap();
+            client.edit("好", "改一下", &PromptHints::default()).await.unwrap();
+        }
+        let gemma = RefineClient::new(RefineConfig::new(server.uri(), "gemma-3-27b-it").with_output_cap(crate::USER_OUTPUT_CAP)).unwrap();
+        gemma.refine("好", None).await.unwrap();
+        let bodies: Vec<Value> = server.received_requests().await.unwrap().iter().map(|r| serde_json::from_slice(&r.body).unwrap()).collect();
+        for gemini in bodies[..9].chunks(3) {
+            let budgets: Vec<u64> = gemini.iter().map(|b| b["max_tokens"].as_u64().unwrap()).collect();
+            assert_eq!(budgets, [128 + 1024, 864 + 1024, 256 + 1024], "{}", gemini[0]["model"]);
+            assert!(gemini.iter().all(|b| b["reasoning_effort"] == "low"), "{}", gemini[0]["model"]);
+        }
+        assert!(bodies[9].get("reasoning_effort").is_none(), "Gemma does not think: {}", bodies[9]);
+        assert_eq!(bodies[9]["max_tokens"], 128);
+    }
+
+    /// docs/dictation.md §3.10 (2026-10-25): each vendor's way of making its models answer at once,
+    /// by the model's name wherever it is served, and OpenRouter's own form of it.
+    #[test]
+    fn each_family_is_asked_to_answer_at_once_its_own_way() {
+        let native = "https://api.moonshot.cn/v1";
+        let openrouter = "https://openrouter.ai/api/v1";
+        let effort = |room| ChatControls { temperature: true, reasoning_effort: Some("low"), room: Some(room), ..ChatControls::default() };
+        let toggle = ChatControls { temperature: true, no_thinking: true, ..ChatControls::default() };
+        let plain = ChatControls { temperature: true, ..ChatControls::default() };
+        let kimi = |c: ChatControls| ChatControls { temperature: false, ..c };
+        let table = [
+            ("openai/gpt-oss-120b", effort(256)),
+            ("models/gemini-3.8-flash", effort(1024)),
+            ("kimi-k3", kimi(effort(1024))),
+            ("kimi-k3.1-pro-highspeed", kimi(effort(1024))),
+            ("kimi-k2.7-code", ChatControls { temperature: false, room: Some(1024), ..ChatControls::default() }),
+            ("kimi-k2.6", kimi(toggle)),
+            ("kimi-k2-0905-preview", kimi(plain)),
+            ("glm-5.3-flash", effort(1024)),
+            ("glm-5.3", effort(1024)),
+            ("glm-5.2", toggle),
+            ("glm-5-turbo", toggle),
+            ("glm-4.7-flash", toggle),
+            ("glm-4.5-air", toggle),
+            ("glm-4-plus", plain),
+            ("glm-5-3-flash-260828", effort(1024)),
+            ("glm-4-7-251222", toggle),
+            ("glm-5-260211", toggle),
+            ("mimo-v2.6-flash", toggle),
+            ("mimo-v2.5-pro-ultraspeed", plain),
+            ("hy3", toggle),
+            ("HY4-Preview", toggle),
+            ("hy-mt2-pro", plain),
+            ("doubao-seed-2-1-lite-260915", toggle),
+            ("doubao-seed-character-251128", plain),
+            ("qwen3.8-flash", plain),
+            ("deepseek-flash", plain),
+        ];
+        for (model, want) in table {
+            assert_eq!(chat_controls(native, model), want, "{model}");
+        }
+        // OpenRouter: `reasoning.effort` instead, `none` where the model can stop reasoning.
+        let routed = |effort, room| ChatControls { temperature: true, openrouter_effort: Some(effort), room, ..ChatControls::default() };
+        let table = [
+            ("moonshotai/kimi-k3", ChatControls { temperature: false, ..routed("low", Some(1024)) }),
+            ("google/gemini-3.5-flash-lite", routed("low", Some(1024))),
+            ("z-ai/glm-4.7", routed("none", None)),
+            ("bytedance-seed/seed-2.0-mini", routed("none", None)),
+            ("xiaomi/mimo-v2.6-flash", routed("none", None)),
+            ("openai/gpt-6-luna", plain),
+            ("deepseek/deepseek-v4-flash", plain),
+        ];
+        for (model, want) in table {
+            assert_eq!(chat_controls(openrouter, model), want, "{model}");
+        }
+        assert_eq!(glm_version("glm-5v-turbo"), Some((5, 0)));
+        assert_eq!(glm_version("glm-4.6v"), Some((4, 6)));
+        assert_eq!(glm_version("chatglm3-6b"), None);
+    }
+
+    /// Regression (2026-10-25, before Kimi was added): every Kimi model fixes its temperature and
+    /// answers another one with 400, and K3 reasons at `max` unless asked; GLM-4.7 reasons unless
+    /// told not to. The requests carry what each vendor documents, and nothing it refuses.
+    #[tokio::test]
+    async fn regression_kimi_gets_no_temperature_and_glm_no_thinking() {
+        let server = MockServer::start().await;
+        mount(&server, answer("好。")).await;
+        for model in ["kimi-k3.1-pro-highspeed", "kimi-k2.6", "glm-4.7-flash", "glm-5.3-flash"] {
+            let config = RefineConfig::new(server.uri(), model).with_output_cap(crate::USER_OUTPUT_CAP);
+            RefineClient::new(config).unwrap().refine("好", None).await.unwrap();
+        }
+        let bodies: Vec<Value> = server.received_requests().await.unwrap().iter().map(|r| serde_json::from_slice(&r.body).unwrap()).collect();
+        let [k3, k26, glm47, glm53] = [&bodies[0], &bodies[1], &bodies[2], &bodies[3]];
+        assert!(k3.get("temperature").is_none() && k26.get("temperature").is_none(), "{k3} {k26}");
+        assert_eq!((k3["reasoning_effort"].as_str(), k3["max_tokens"].as_u64()), (Some("low"), Some(128 + 1024)));
+        assert!(k3.get("thinking").is_none(), "K3 refuses the K2 switch: {k3}");
+        assert_eq!(k26["thinking"], json!({ "type": "disabled" }));
+        assert_eq!((glm47["thinking"].clone(), glm47["max_tokens"].as_u64()), (json!({ "type": "disabled" }), Some(128)));
+        assert!((glm47["temperature"].as_f64().unwrap() - f64::from(TEMPERATURE)).abs() < 1e-6);
+        assert_eq!((glm53["reasoning_effort"].as_str(), glm53.get("thinking")), (Some("low"), None), "GLM-5.3 cannot stop reasoning");
+        for body in &bodies {
+            assert!(body.get("reasoning").is_none(), "OpenRouter's field is for OpenRouter: {body}");
+        }
+    }
+
     /// docs/dictation.md §3.10: a clean-up cut off at `max_tokens` is refused as an edit's is, so the
     /// take keeps its own text instead of losing its end; so is one whose reasoning took the whole
     /// budget and left no answer.
@@ -1226,7 +1526,7 @@ mod tests {
         // The shared transport still classifies HTTP failures for the edit.
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(401)).await;
-        assert_eq!(client(&server, Some("k")).edit("x", "y", &PromptHints::default()).await.unwrap_err(), RefineError::Unauthorized);
+        assert_eq!(client(&server, Some("k")).edit("x", "y", &PromptHints::default()).await.unwrap_err(), RefineError::Unauthorized { message: String::new() });
         // Without a finish reason the answer is taken (older gateways omit it).
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(200).set_body_json(json!({ "choices": [{ "message": { "content": "Hello" } }] }))).await;

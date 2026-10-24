@@ -135,7 +135,13 @@ export function TimingBar({ entry, t }: { entry: HistoryEntry; t: TFunction }) {
           <Lamp tone="accent" size={6} />
           {entry.refined
             ? t("history.timing.refine", { n: formatCount(refine) })
-            : t("history.timing.refineOff")}
+            : entry.refine_failure !== undefined
+              ? // §3.6: a clean-up was asked for and failed; it was not off (2026-10-24: the row
+                // said 未启用 for a request the service turned down).
+                t("history.timing.refineFailed", {
+                  reason: t(`dictation.refineFailure.${entry.refine_failure}`),
+                })
+              : t("history.timing.refineOff")}
         </span>
         <span className="ml-auto text-fg">
           {t("history.timing.total", { n: formatCount(total) })}

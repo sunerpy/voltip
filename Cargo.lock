@@ -7367,6 +7367,7 @@ dependencies = [
  "url",
  "uuid",
  "voltip-net",
+ "voltip-reply",
  "webpki-root-certs",
  "wiremock",
 ]
@@ -7735,6 +7736,7 @@ dependencies = [
  "tracing",
  "url",
  "voltip-net",
+ "voltip-reply",
  "webpki-root-certs",
  "wiremock",
 ]
@@ -7758,6 +7760,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "voltip-protocol",
+]
+
+[[package]]
+name = "voltip-reply"
+version = "0.0.0"
+dependencies = [
+ "regex",
+ "serde_json",
 ]
 
 [[package]]

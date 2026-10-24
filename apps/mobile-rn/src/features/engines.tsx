@@ -27,6 +27,8 @@ import {
   secretStateLabel,
   serviceTarget,
   shortModel,
+  siteOf,
+  siteUrl,
   withProvider,
 } from "@voltip/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -57,6 +59,12 @@ const ICONS: Readonly<Record<ProviderId, string>> = {
   siliconflow: "cloud-outline",
   aliyun: "cloud-outline",
   deepseek: "cloud-outline",
+  kimi: "cloud-outline",
+  glm: "cloud-outline",
+  volcengine: "cloud-outline",
+  hunyuan: "cloud-outline",
+  mimo: "cloud-outline",
+  openrouter: "cloud-outline",
   ollama: "monitor",
   custom: "link-variant",
 };
@@ -543,6 +551,9 @@ function ProviderForm({
   const shared =
     provider.asr !== undefined && provider.llm !== undefined && provider.id !== "custom";
   const secret = secretStateLabel(service.key, locale);
+  // docs/dictation.md §3.2: a vendor with a Chinese and an international site.
+  const sites = service.sites ?? [];
+  const site = siteOf(service, draft.baseUrl);
 
   /** Checks the draft and writes it, with `provider` serving `kind` when `use`; false when the
    *  checks refused it. The key goes to the keystore only. */
@@ -676,6 +687,27 @@ function ProviderForm({
           </Hint>
         </View>
       )}
+      {sites.length > 1 && (
+        <View style={{ gap: 4 }} testID="provider-site">
+          <Text variant="bodySmall" style={{ color: theme.voltip.subtle }}>
+            {t("engines.field.site")}
+          </Text>
+          {/* Any other address in the field selects neither site. */}
+          <SegmentedButtons
+            value={site ?? ""}
+            onValueChange={(id) => {
+              const chosen = sites.find((s) => s.id === id)?.id;
+              if (chosen !== undefined) setDraft({ ...draft, baseUrl: siteUrl(service, chosen) });
+            }}
+            buttons={sites.map((s) => ({
+              value: s.id,
+              label: t(`engines.site.${s.id}`),
+              testID: `provider-site-${s.id}`,
+            }))}
+          />
+          <Hint>{t("engines.field.siteHelp")}</Hint>
+        </View>
+      )}
       <View style={{ gap: 4 }}>
         <TextInput
           mode="outlined"
@@ -749,7 +781,7 @@ function ProviderForm({
               <Button
                 compact
                 icon="open-in-new"
-                onPress={() => void backend.providerConsoleOpen(provider.id)}>
+                onPress={() => void backend.providerConsoleOpen(provider.id, undefined, site)}>
                 {t("engines.getKey")}
               </Button>
             )}

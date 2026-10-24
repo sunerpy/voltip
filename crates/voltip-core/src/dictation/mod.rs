@@ -184,6 +184,8 @@ impl From<&DictationError> for FailureCode {
             DictationError::QuotaExhausted { .. } => Self::Quota,
             DictationError::RateLimited { service: crate::providers::ServiceKind::Asr, .. } => Self::Asr,
             DictationError::RateLimited { service: crate::providers::ServiceKind::Llm, .. } => Self::Refine,
+            DictationError::Overloaded { service: crate::providers::ServiceKind::Asr, .. } => Self::Asr,
+            DictationError::Overloaded { service: crate::providers::ServiceKind::Llm, .. } => Self::Refine,
             DictationError::Busy | DictationError::Idle => Self::Unknown,
         }
     }
@@ -194,7 +196,8 @@ impl From<&DictationError> for FailureCode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RefineFailure {
-    /// The service turned the request down for now: too many requests (HTTP 429).
+    /// The service turned the request down for now: too many requests (HTTP 429), or more than it
+    /// can serve (HTTP 503).
     RateLimited,
     /// The model's quota is used up and no fallback model had any left (§3.5).
     Quota,
@@ -212,7 +215,7 @@ impl RefineFailure {
     /// The kind of a clean-up that failed with `error`.
     pub fn of(error: &DictationError) -> Self {
         match error {
-            DictationError::RateLimited { .. } => Self::RateLimited,
+            DictationError::RateLimited { .. } | DictationError::Overloaded { .. } => Self::RateLimited,
             DictationError::QuotaExhausted { .. } => Self::Quota,
             _ => Self::Failed,
         }
@@ -561,6 +564,7 @@ mod tests {
     fn refine_failures_sort_the_error_and_serialize_snake_case() {
         use crate::providers::ServiceKind::Llm;
         assert_eq!(RefineFailure::of(&DictationError::RateLimited { service: Llm, detail: "429".into() }), RefineFailure::RateLimited);
+        assert_eq!(RefineFailure::of(&DictationError::Overloaded { service: Llm, detail: "503".into() }), RefineFailure::RateLimited, "a busy service");
         assert_eq!(RefineFailure::of(&DictationError::QuotaExhausted { service: Llm, detail: "x".into() }), RefineFailure::Quota);
         assert_eq!(RefineFailure::of(&DictationError::Refine("timed out".into())), RefineFailure::Failed);
         let wire = [
@@ -600,6 +604,8 @@ mod tests {
             (DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Llm, detail: "x".into() }, FailureCode::Quota, "quota"),
             (DictationError::RateLimited { service: crate::providers::ServiceKind::Asr, detail: "x".into() }, FailureCode::Asr, "asr"),
             (DictationError::RateLimited { service: crate::providers::ServiceKind::Llm, detail: "x".into() }, FailureCode::Refine, "refine"),
+            (DictationError::Overloaded { service: crate::providers::ServiceKind::Asr, detail: "x".into() }, FailureCode::Asr, "asr"),
+            (DictationError::Overloaded { service: crate::providers::ServiceKind::Llm, detail: "x".into() }, FailureCode::Refine, "refine"),
             (DictationError::Busy, FailureCode::Unknown, "unknown"),
             (DictationError::Idle, FailureCode::Unknown, "unknown"),
         ];

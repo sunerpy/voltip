@@ -60,7 +60,8 @@ pub struct Cli {
     /// The speech recognition provider (builtin, local, openai, groq, siliconflow, aliyun, custom).
     #[arg(long, value_name = "PROVIDER", value_parser = parse_provider)]
     pub asr: Option<ProviderId>,
-    /// The AI polish provider (builtin, openai, groq, siliconflow, aliyun, deepseek, ollama, custom).
+    /// The AI polish provider (builtin, openai, groq, google, siliconflow, aliyun, deepseek, kimi, glm,
+    /// volcengine, hunyuan, mimo, openrouter, ollama, custom).
     #[arg(long, value_name = "PROVIDER", value_parser = parse_provider)]
     pub llm: Option<ProviderId>,
     /// Recognise with this local model (see --list-models); implies --asr local.

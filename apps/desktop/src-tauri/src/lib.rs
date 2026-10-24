@@ -38,7 +38,7 @@ use tauri::{Emitter as _, Manager as _, Runtime};
 use voltip_core::ui::{GuidePage, ProjectLink, UI_EVENT_NAME, UiEvent, UiState, UpdateStatus};
 use voltip_core::{
     Activation, AppRef, ConsolePage, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PhoneTalkMode, PresetDraft,
-    PreviewDraft, ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
+    PreviewDraft, ProviderId, RuleDraft, SceneDraft, ServiceKind, SiteId, TakeKind, ThemeId, VocabularyPreview,
 };
 use voltip_identity::{KeyringSecretStore, SecretStore};
 use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
@@ -511,11 +511,12 @@ fn provider_models_refresh(bridge: tauri::State<'_, Bridge>, provider: ProviderI
     Ok(bridge.dispatch(UiCommand::ProviderModelsRefresh { provider, kind })?)
 }
 
-/// Open the vendor's API-key page, or its page of free quota and usage, in the browser. Only
-/// catalogue URLs can be opened: the webview names a provider and a page, never a URL.
+/// Open the vendor's API-key page (the given site's, docs/dictation.md §3.2), or its page of free
+/// quota and usage, in the browser. Only catalogue URLs can be opened: the webview names a
+/// provider, a page and a site, never a URL.
 #[tauri::command]
-fn provider_console_open(provider: ProviderId, page: Option<ConsolePage>) -> Result<(), String> {
-    let url = provider.console_page(page.unwrap_or_default())?;
+fn provider_console_open(provider: ProviderId, page: Option<ConsolePage>, site: Option<SiteId>) -> Result<(), String> {
+    let url = provider.console_page(page.unwrap_or_default(), site)?;
     tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 

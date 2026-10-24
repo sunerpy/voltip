@@ -277,6 +277,7 @@
       "duration_ms": 900,
       "asr_ms": 410,
       "refine_failure": "rate_limited",
+      "refine_error": "服务繁忙：refine service overloaded (HTTP 503): This model is currently experiencing high demand.",
       "outcome": {
         "kind": "clipboard",
         "reason": "没有可粘贴的前台窗口"
@@ -456,14 +457,8 @@
         "on_device": false,
         "console": true,
         "llm": {
-          "model": "gemini-3.8-flash",
-          "presets": [
-            "gemini-3.8-flash",
-            "gemini-3.5-flash-lite",
-            "gemini-3.1-flash-lite",
-            "gemini-2.5-flash",
-            "gemini-2.5-pro"
-          ],
+          "model": "gemini-3.5-flash-lite",
+          "presets": ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.1-flash-lite"],
           "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
           "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
           "key": {
@@ -515,8 +510,6 @@
           "presets": [
             "qwen-audio-3.1-asr-flash-streaming",
             "qwen-audio-3.1-asr-flash",
-            "qwen-audio-3.1-asr-flash-message",
-            "qwen3-asr-flash",
             "fun-asr-realtime"
           ],
           "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -551,6 +544,142 @@
           "presets": ["deepseek-flash", "deepseek-v4-pro"],
           "base_url": "https://api.deepseek.com",
           "default_base_url": "https://api.deepseek.com",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "kimi",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "kimi-k3.1-pro-highspeed",
+          "presets": ["kimi-k3.1-pro-highspeed", "kimi-k3.1-pro", "kimi-k3"],
+          "base_url": "https://api.moonshot.cn/v1",
+          "default_base_url": "https://api.moonshot.cn/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false,
+          "sites": [
+            {
+              "id": "cn",
+              "base_url": "https://api.moonshot.cn/v1"
+            },
+            {
+              "id": "intl",
+              "base_url": "https://api.moonshot.ai/v1"
+            }
+          ]
+        }
+      },
+      {
+        "id": "glm",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "glm-5.3-flash",
+          "presets": ["glm-5.3-flash", "glm-4.7-flash", "glm-5.3"],
+          "base_url": "https://open.bigmodel.cn/api/paas/v4",
+          "default_base_url": "https://open.bigmodel.cn/api/paas/v4",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false,
+          "sites": [
+            {
+              "id": "cn",
+              "base_url": "https://open.bigmodel.cn/api/paas/v4"
+            },
+            {
+              "id": "intl",
+              "base_url": "https://api.z.ai/api/paas/v4"
+            }
+          ]
+        }
+      },
+      {
+        "id": "volcengine",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "doubao-seed-2-1-lite-260915",
+          "presets": [
+            "doubao-seed-2-1-lite-260915",
+            "doubao-seed-2-1-turbo-260628",
+            "doubao-seed-2-0-mini-260428"
+          ],
+          "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+          "default_base_url": "https://ark.cn-beijing.volces.com/api/v3",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "hunyuan",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "hy3",
+          "presets": ["hy3", "hy4-preview"],
+          "base_url": "https://tokenhub.tencentmaas.com/v1",
+          "default_base_url": "https://tokenhub.tencentmaas.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "mimo",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "mimo-v2.6-flash",
+          "presets": ["mimo-v2.6-flash", "mimo-v2.6-pro"],
+          "base_url": "https://api.xiaomimimo.com/v1",
+          "default_base_url": "https://api.xiaomimimo.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "openrouter",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "google/gemini-3.5-flash-lite",
+          "presets": [
+            "google/gemini-3.5-flash-lite",
+            "deepseek/deepseek-v4-flash",
+            "openai/gpt-6-luna"
+          ],
+          "base_url": "https://openrouter.ai/api/v1",
+          "default_base_url": "https://openrouter.ai/api/v1",
           "key": {
             "set": false,
             "source": "none"

@@ -2491,6 +2491,11 @@ impl DictationEngine {
             asr_ms,
             refine_ms,
             refine_failure,
+            // The fixed sentences of a clean-up that never ran (unconfigured, too long) and of an
+            // empty answer say no more than their kind; a failed request carries the service's words.
+            refine_error: refine_failure
+                .filter(|f| matches!(f, RefineFailure::RateLimited | RefineFailure::Quota | RefineFailure::Failed))
+                .and(refine_error.clone()),
             outcome: Outcome::Failed { reason: String::new() },
             starred: false,
             mode,
@@ -3350,6 +3355,33 @@ mod tests {
         let entry = record(&fx).unwrap();
         assert!(!entry.refined && entry.refine_model.is_none() && entry.refine_ms.is_none());
         assert_eq!(r.injector.injected(), vec!["原文".to_owned()]);
+    }
+
+    /// Regression (2026-10-24, Google AI Studio): a clean-up the service refused left only its kind
+    /// in the history (「未润色 · 请求失败」), and the desktop writes no log file, so nothing said
+    /// why. The entry keeps the service's explanation for a failed request; a clean-up that never
+    /// ran or came back empty has nothing to add to its kind.
+    #[tokio::test(start_paused = true)]
+    async fn regression_the_history_keeps_why_the_clean_up_failed() {
+        for (refiner, kind, reason) in [
+            (Some(FakeRefiner::overloaded()), Some(RefineFailure::RateLimited), Some("服务繁忙：fake: more demand than the model can serve")),
+            (
+                Some(FakeRefiner::err("refine server error 404: no longer available")),
+                Some(RefineFailure::Failed),
+                Some("refine: refine server error 404: no longer available"),
+            ),
+            (Some(FakeRefiner::quota()), Some(RefineFailure::Quota), Some("额度已用完：fake: the model's quota is used up")),
+            (Some(FakeRefiner::ok("  ")), Some(RefineFailure::Empty), None),
+            (None, Some(RefineFailure::Unconfigured), None),
+            (Some(FakeRefiner::ok("整理过。")), None, None),
+        ] {
+            let mut r = rig(FakeAudio::speech(), FakeTranscriber::ok("原文"), refiner, FakeInjector::paste(), true);
+            r.start_open().await;
+            r.engine.stop().unwrap();
+            let fx = r.run_to_terminal().await;
+            let entry = record(&fx).unwrap();
+            assert_eq!((entry.refine_failure, entry.refine_error.as_deref()), (kind, reason), "{fx:?}");
+        }
     }
 
     /// docs/dictation.md §3.6: the take says why its clean-up's text was not used by kind, on the

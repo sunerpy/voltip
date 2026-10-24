@@ -1,5 +1,6 @@
 import {
   notRefinedText,
+  serviceReasonText,
   refineModelText,
   activationChip,
   activationDescription,
@@ -77,6 +78,106 @@ describe("coreMessageText", () => {
     );
     expect(coreMessageText("relay refused the ticket")).toBe("relay refused the ticket");
     expect(coreMessageText("Error: boom")).toBe("Error: boom");
+  });
+});
+
+describe("serviceReasonText", () => {
+  // Regression (2026-10-25): a refusal showed the clients' own English words in a Chinese line
+  // (「识别服务出错：ASR rejected the credentials: …」), an internal term the interface never uses.
+  // The strings are the `Display` of crates/voltip-asr and crates/voltip-refine `src/error.rs`.
+  it("regression: the clients' words are the interface's, the service's words stay as they are", () => {
+    const cases: [string, string, string][] = [
+      [
+        "ASR rejected the credentials: Invalid API Key (invalid_api_key)",
+        "密钥被拒绝：Invalid API Key (invalid_api_key)",
+        "the key was refused: Invalid API Key (invalid_api_key)",
+      ],
+      ["ASR rejected the credentials", "密钥被拒绝", "the key was refused"],
+      [
+        "refine service rejected the credentials: bad key",
+        "密钥被拒绝：bad key",
+        "the key was refused: bad key",
+      ],
+      [
+        "请求过于频繁：refine service rate limited (retry after 355000 ms)",
+        "请求过于频繁（355 秒后可重试）",
+        "too many requests (try again in 355 s)",
+      ],
+      [
+        "ASR rate limited (retry after 1200 ms): Rate limit reached",
+        "请求过于频繁（2 秒后可重试）：Rate limit reached",
+        "too many requests (try again in 2 s): Rate limit reached",
+      ],
+      ["ASR rate limited", "请求过于频繁", "too many requests"],
+      [
+        "服务繁忙：refine service overloaded (HTTP 503): This model is currently experiencing high demand. (UNAVAILABLE)",
+        "服务繁忙：This model is currently experiencing high demand. (UNAVAILABLE)",
+        "the service is busy: This model is currently experiencing high demand. (UNAVAILABLE)",
+      ],
+      [
+        "ASR server error 502: 502 Bad Gateway",
+        "服务出错（HTTP 502）：502 Bad Gateway",
+        "server error (HTTP 502): 502 Bad Gateway",
+      ],
+      ["refine server error 500", "服务出错（HTTP 500）", "server error (HTTP 500)"],
+      [
+        "refine: refine network error: error sending request",
+        "网络错误：error sending request",
+        "network error: error sending request",
+      ],
+      ["ASR request timed out", "请求超时", "the request timed out"],
+      ["refine request timed out", "请求超时", "the request timed out"],
+      [
+        "ASR returned an unexpected response: missing text",
+        "无法读取服务的答复：missing text",
+        "the service's answer could not be read: missing text",
+      ],
+      [
+        "refine service returned an empty answer",
+        "服务没有返回内容",
+        "the service returned nothing",
+      ],
+      [
+        "refine answer was cut off at the output limit",
+        "结果超出输出长度上限",
+        "the answer was longer than the output limit",
+      ],
+      [
+        "额度已用完：refine quota used up (insufficient_quota): You exceeded your current quota",
+        "额度已用完（insufficient_quota）：You exceeded your current quota",
+        "the quota is used up (insufficient_quota): You exceeded your current quota",
+      ],
+      [
+        "ASR service error InvalidParameter: the audio is too long",
+        "服务返回错误 InvalidParameter：the audio is too long",
+        "the service returned error InvalidParameter: the audio is too long",
+      ],
+      [
+        "invalid ASR configuration: empty model",
+        "设置无效：empty model",
+        "invalid settings: empty model",
+      ],
+      [
+        "ASR audio: not a 16-bit PCM WAV",
+        "录音格式不受支持：not a 16-bit PCM WAV",
+        "the recording's format is not supported: not a 16-bit PCM WAV",
+      ],
+    ];
+    for (const [reason, zh, en] of cases) {
+      expect(serviceReasonText(reason)).toBe(zh);
+      expect(serviceReasonText(reason, "en")).toBe(en);
+    }
+  });
+
+  it("shows any other reason as it came, without its machine prefix", () => {
+    expect(serviceReasonText("refine: 润色服务配置无效：地址不是 http(s)")).toBe(
+      "润色服务配置无效：地址不是 http(s)",
+    );
+    expect(serviceReasonText("请求过于频繁：mock: the clean-up was turned down")).toBe(
+      "请求过于频繁：mock: the clean-up was turned down",
+    );
+    expect(serviceReasonText("429 rate limited", "en")).toBe("429 rate limited");
+    expect(serviceReasonText("")).toBe("");
   });
 });
 
@@ -633,8 +734,19 @@ describe("voice edit labels (section 19)", () => {
     expect(
       takeFailureText(edit(failed("selection", "selection: keystroke: no copy tool on Wayland"))),
     ).toBe("读取选中文本失败：keystroke: no copy tool on Wayland");
-    expect(takeFailureText(edit(failed("refine", "refine: 429")))).toBe("改写失败，选中文本未改动");
-    expect(dictationFailureText(failed("refine", "refine: 429"))).toBe("润色失败");
+    // Section 3.12: a rewrite or a recognition the service refused says what the service said.
+    expect(takeFailureText(edit(failed("refine", "refine: 429")))).toBe(
+      "改写失败，选中文本未改动：429",
+    );
+    expect(dictationFailureText(failed("refine", "refine: 429"))).toBe("润色失败：429");
+    expect(
+      dictationFailureText(
+        failed(
+          "asr",
+          "asr: ASR rejected the credentials: Incorrect API key provided (invalid_api_key)",
+        ),
+      ),
+    ).toBe("识别服务出错：密钥被拒绝：Incorrect API key provided (invalid_api_key)");
     expect(takePhaseLabel(edit(failed("no_selection")), now)).toEqual({
       text: "失败 · 没有选中文本",
       tone: "danger",
@@ -648,7 +760,7 @@ describe("voice edit labels (section 19)", () => {
       "Voice edit is off in terminals: a terminal's selection cannot be replaced",
     );
     expect(takeFailureText(edit(failed("refine")), "en")).toBe(
-      "Rewrite failed; the selection is unchanged",
+      "Rewrite failed; the selection is unchanged: x",
     );
     expect(takeFailureText(edit(failed("selection", "selection: clipboard: busy")), "en")).toBe(
       "Could not read the selection: clipboard: busy",

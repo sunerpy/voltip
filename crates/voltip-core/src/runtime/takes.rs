@@ -525,6 +525,7 @@ impl Runtime {
             asr_ms: 0,
             refine_ms: None,
             refine_failure: None,
+            refine_error: None,
             outcome: Outcome::Inserted { via: if pasted { crate::dictation::Via::Paste } else { crate::dictation::Via::Clipboard } },
             starred: false,
             mode: crate::dictation::OutputMode::WholeTake,

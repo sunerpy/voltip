@@ -72,6 +72,16 @@ pub enum DictationError {
         /// The adapter's explanation.
         detail: String,
     },
+    /// The service has more requests than it can serve right now (HTTP 503, docs/dictation.md §3.6):
+    /// Gemini's "This model is currently experiencing high demand". Like a rate limit it passes,
+    /// and it is not a used-up quota: a fallback model list does not move on for it.
+    #[error("服务繁忙：{detail}")]
+    Overloaded {
+        /// The service that refused.
+        service: crate::providers::ServiceKind,
+        /// The adapter's explanation.
+        detail: String,
+    },
     /// The text could not be handed to the foreground application.
     #[error("inject: {0}")]
     Inject(String),

@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use voltip_cloud::feedback;
 use voltip_core::ui::{GuidePage, ProjectLink};
-use voltip_core::{ConsolePage, HistoryQuery, ProviderId};
+use voltip_core::{ConsolePage, HistoryQuery, ProviderId, SiteId};
 use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
 
 use crate::shell::Shell;
@@ -198,7 +198,8 @@ pub async fn run(shell: &Shell, command: &str, args: Value) -> Result<Value, Str
         "provider_console_open" => {
             let provider: ProviderId = arg(command, &args, "provider")?;
             let page: Option<ConsolePage> = arg(command, &args, "page")?;
-            let url = provider.console_page(page.unwrap_or_default())?;
+            let site: Option<SiteId> = arg(command, &args, "site")?;
+            let url = provider.console_page(page.unwrap_or_default(), site)?;
             open(shell, url.to_owned()).await
         }
         "project_link_open" => {

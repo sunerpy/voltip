@@ -30,6 +30,12 @@ When a connection to a recognition or polish service drops before the request is
 | SiliconFlow | Yes | Yes | Required |
 | Alibaba Cloud Model Studio | Yes, realtime models included | Yes | Required |
 | DeepSeek | — | Yes | Required |
+| Kimi | — | Yes, on its China or international site | Required |
+| Zhipu GLM | — | Yes, on its China or international site (Z.ai) | Required |
+| Volcengine Ark | — | Yes, Doubao and other models | Required |
+| Tencent Hunyuan | — | Yes, through Tencent Cloud TokenHub | Required |
+| Xiaomi MiMo | — | Yes | Required |
+| OpenRouter | — | Yes, many vendors' models | Required |
 | Ollama, on this computer | — | Yes | Not needed |
 | Custom, any OpenAI-compatible endpoint | Yes | Yes | Optional; the endpoint address is required |
 
@@ -40,15 +46,36 @@ Recognition can also run on a GPU server of your own, used as the custom endpoin
 ## Setting up a provider
 
 1. On the Speech models or AI models page, select the provider's card. Its settings open in a panel on the right, or from the bottom on the phone.
-2. Choose a model, and for a custom endpoint enter its address. Once a key is saved, the model list shows every model the provider offers after **Other model…** (the **From the provider** group, with their number), updated each time the list opens, so there is no need to type a model ID.
-3. Enter your key. **Test connection** checks the address and the key and shows how many models the provider offers, the same number as in the model list. The Speech models page lists speech recognition models only, and the AI models page leaves out speech, image and embedding models.
+2. Choose a model, and for a custom endpoint enter its address. Each provider suggests two or three models, the first being the default, so a provider works as soon as its key is entered. Once a key is saved, the model list shows every model the provider offers after **Other model…** (the **From the provider** group, with their number), updated each time the list opens, so there is no need to type a model ID.
+3. Enter your key. **Test connection** checks the address and the key and shows how many models the provider offers, the same number as in the model list. When it fails, the result ends with what the service answered, for example **The key was refused: Incorrect API key provided**. The Speech models page lists speech recognition models only, and the AI models page leaves out speech, image and embedding models.
 4. Choose **Set as current** to save what you entered and switch to the provider. **Set as current** on a card switches to the provider without opening its settings.
+
+When a provider refuses a request (a wrong key, a used-up quota, an unknown model, a busy service and so on), the overlay, the home page and the history show what the service answered, for example **Speech recognition failed: the key was refused: Incorrect API key provided**. Keys, tokens and account ids in it are masked; a long answer shows its beginning, and the history's details show all of it.
 
 ## Google AI Studio
 
-Google AI Studio offers Gemini models for AI polish. Create a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (**Get a key** in the provider's settings opens it) and enter it in the Google AI Studio settings on the **AI models** page. The model list suggests Gemini models with a free tier; once the key is saved, it also shows every text model the key can use, so you choose from the list instead of typing a name.
+Google AI Studio offers Gemini models for AI polish. Create a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (**Get a key** in the provider's settings opens it) and enter it in the Google AI Studio settings on the **AI models** page. The model list suggests Gemini models with a free tier, `gemini-3.5-flash-lite` first: polish handles short texts, and Flash-Lite answers faster. Once the key is saved, the list also shows every text model the key can use, so you choose from the list instead of typing a name.
+
+A Google model is sometimes unavailable for a while because of high demand (HTTP 503); the overlay then says **Not polished · service busy**. Try again later, or pick another model.
 
 On the free tier, Google may use what you send to improve its products; a key from a Google Cloud project with billing turned on is not used that way. See [Privacy](/privacy).
+
+## China and international sites
+
+Kimi and Zhipu GLM each have a China site and an international site (Zhipu's international site is Z.ai), with separate accounts and keys. Under **Site** in the provider's settings, choose the site you signed up on; the endpoint address changes with it, and **Get a key** opens the key page of that site. The China site is the default.
+
+## Providers in China and OpenRouter
+
+These providers are for AI polish only.
+
+- **Kimi**: suggests the K3 models, `kimi-k3.1-pro-highspeed` first. Kimi's K2 models are closed to new accounts from 31 October 2026.
+- **Zhipu GLM**: suggests `glm-5.3-flash`; `glm-4.7-flash` is free on both sites.
+- **Volcengine Ark**: suggests Doubao Seed models. Enable a model under Model Activation in the Ark console first; otherwise its requests are refused.
+- **Tencent Hunyuan**: used through Tencent Cloud's model platform TokenHub, suggesting `hy3` and `hy4-preview`; TokenHub also offers other vendors' models. Enable a model in the TokenHub console first. For the Singapore site, enter its address `https://tokenhub-intl.tencentmaas.com/v1` as the endpoint address and use a key made there.
+- **Xiaomi MiMo**: suggests `mimo-v2.6-flash` and `mimo-v2.6-pro`. With a Token Plan, enter the plan's own address as the endpoint address.
+- **OpenRouter**: many vendors' models with one key, suggesting fast, inexpensive models such as `google/gemini-3.5-flash-lite`.
+
+Many of these models think before they answer. So that polish finishes quickly, Voltip turns thinking off in its requests; models that cannot stop thinking, such as Kimi K3 and GLM-5.3, are asked for a low reasoning effort.
 
 ## The Responses interface
 

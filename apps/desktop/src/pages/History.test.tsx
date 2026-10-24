@@ -291,6 +291,58 @@ describe("History page", () => {
     expect(await screen.findByText("未润色 · 服务繁忙")).toBeInTheDocument();
   });
 
+  it("regression: section 3.6 a clean-up the service turned down says so in the timings and keeps the service's words", async () => {
+    // 2026-10-24, Google AI Studio: the model answered 503 "high demand"; the timing row said
+    // 「润色 — · 未启用」 and nothing showed why.
+    const user = userEvent.setup();
+    const now = Date.now();
+    const base = new MockBackend({ now: () => now }).peek().history_recent[0];
+    if (!base) throw new Error("fixture");
+    const reason =
+      "服务繁忙：refine service overloaded (HTTP 503): This model is currently experiencing high demand.";
+    const busy: HistoryEntry = {
+      ...base,
+      id: "00000000-0000-4000-8000-0000000000b2",
+      at_ms: now - 1_000,
+      raw_text: "现在可以吗",
+      text: "现在可以吗",
+      refined: false,
+      refine_model: undefined,
+      refine_ms: undefined,
+      refine_failure: "rate_limited",
+      refine_error: reason,
+      preset: undefined,
+    };
+    const unconfigured: HistoryEntry = {
+      ...busy,
+      id: "00000000-0000-4000-8000-0000000000b3",
+      at_ms: now - 2_000,
+      raw_text: "没有配置润色",
+      text: "没有配置润色",
+      refine_failure: "unconfigured",
+      refine_error: undefined,
+    };
+    renderApp({ path: "/history", mock: { now: () => now, history: [busy, unconfigured] } });
+    await user.click(await screen.findByText(/现在可以吗/, { selector: "li *" }));
+    expect(await screen.findByText("润色 — · 服务繁忙")).toBeInTheDocument();
+    expect(screen.queryByText("润色 — · 未启用")).toBeNull();
+    const note = screen.getByTestId("history-refine-note");
+    expect(note).toHaveTextContent(
+      "润色服务繁忙，本次使用了识别原文。可以稍后再试，或在「AI 模型」页换一个模型。",
+    );
+    // The client's own words in the interface's language, the service's as it sent them (§3.12).
+    expect(within(note).getByTestId("history-refine-detail")).toHaveTextContent(
+      "原因：服务繁忙：This model is currently experiencing high demand.",
+    );
+    expect(within(note).getByTestId("history-refine-detail")).not.toHaveTextContent(
+      "refine service",
+    );
+
+    await user.click(screen.getByText(/没有配置润色/, { selector: "li *" }));
+    expect(await screen.findByText("润色 — · 未配置 AI 服务")).toBeInTheDocument();
+    expect(screen.queryByTestId("history-refine-note")).toBeNull();
+  });
+
   it("regression: section 20.6 a phone's text and a phone's take are badged with the phone, and a text shows no model or timings", async () => {
     const now = Date.now();
     const base = new MockBackend({ now: () => now }).peek().history_recent[0];

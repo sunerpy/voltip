@@ -219,12 +219,16 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
   );
 }
 
-/** The title bar's note that an update is waiting: the version, the download's progress, or the
- *  restart it needs. Nothing when there is nothing to update. */
+/** The title bar's note that an update is waiting: the version or the download's progress, which
+ *  open the dialog, or the restart a downloaded update needs, which one click starts: the dialog
+ *  opens on its install (docs/frontend.md §7). Nothing when there is nothing to update. */
 export function UpdateBadge({ onOpen }: { onOpen: () => void }) {
   const { t } = useI18n();
+  const { backend } = useBackend();
   const { update } = useUiState();
   let label: string;
+  let title = t("update.badgeTitle");
+  let onClick = onOpen;
   switch (update.state) {
     case "available":
       label = t("update.badge.available", { version: update.version });
@@ -236,6 +240,12 @@ export function UpdateBadge({ onOpen }: { onOpen: () => void }) {
       break;
     case "ready":
       label = t("update.badge.ready");
+      title = t("update.badgeRestartTitle", { version: update.version });
+      // The click is the user's go-ahead: no second question in the dialog.
+      onClick = () => {
+        onOpen();
+        void backend.invoke("update_install");
+      };
       break;
     default:
       return null;
@@ -244,8 +254,8 @@ export function UpdateBadge({ onOpen }: { onOpen: () => void }) {
     <button
       type="button"
       data-testid="update-badge"
-      title={t("update.badgeTitle")}
-      onClick={onOpen}
+      title={title}
+      onClick={onClick}
       className="inline-flex h-7 items-center gap-1.5 rounded-full bg-accent-soft px-2.5 text-[12px] whitespace-nowrap text-accent-text transition-colors hover:bg-accent hover:text-accent-fg">
       <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent" />
       {label}

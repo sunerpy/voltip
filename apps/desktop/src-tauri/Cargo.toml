@@ -165,6 +165,8 @@ tauri-utils = { version = "=2.9.3", default-features = false }
 # already uses).
 json-patch = { version = "=4.2.0", default-features = false }
 tempfile.workspace = true
+# The automatic update's looks hours apart, on a paused clock (src/update.rs).
+tokio = { workspace = true, features = ["test-util"] }
 voltip-audio = { workspace = true, features = ["test-support"] }
 voltip-pairing.workspace = true
 # tests/ipc.rs: pairing runs only on a relay (docs/pairing.md 「只走中继」), so the pairing tests

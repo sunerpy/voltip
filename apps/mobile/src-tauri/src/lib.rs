@@ -24,7 +24,7 @@ use voltip_cloud::feedback;
 use voltip_core::ui::{GuidePage, ProjectLink, UI_EVENT_NAME, UiState, UpdateStatus};
 use voltip_core::{
     Activation, AppRef, ConsolePage, CoreConfig, DictionaryDraft, EdgeSource, EngineSettings, ImportMode, Locale, OverlayPlacement, PhoneTalkMode, PresetDraft,
-    PreviewDraft, ProviderId, RuleDraft, SceneDraft, ServiceKind, TakeKind, ThemeId, VocabularyPreview,
+    PreviewDraft, ProviderId, RuleDraft, SceneDraft, ServiceKind, SiteId, TakeKind, ThemeId, VocabularyPreview,
 };
 use voltip_identity::SecretStore;
 use voltip_tauri_bridge::{Bridge, BridgeError, UiCommand};
@@ -496,12 +496,12 @@ fn provider_models_refresh(bridge: tauri::State<'_, Bridge>, provider: ProviderI
     Ok(bridge.dispatch(UiCommand::ProviderModelsRefresh { provider, kind })?)
 }
 
-/// Open the vendor's API-key page, or its page of free quota and usage, in the phone's browser.
-/// Only catalogue URLs can be opened: the webview names a provider and a page, never a URL (as on
-/// the desktop).
+/// Open the vendor's API-key page (the given site's), or its page of free quota and usage, in the
+/// phone's browser. Only catalogue URLs can be opened: the webview names a provider, a page and a
+/// site, never a URL (as on the desktop).
 #[tauri::command]
-fn provider_console_open<R: Runtime>(app: AppHandle<R>, provider: ProviderId, page: Option<ConsolePage>) -> Result<(), String> {
-    let url = provider.console_page(page.unwrap_or_default())?;
+fn provider_console_open<R: Runtime>(app: AppHandle<R>, provider: ProviderId, page: Option<ConsolePage>, site: Option<SiteId>) -> Result<(), String> {
+    let url = provider.console_page(page.unwrap_or_default(), site)?;
     open_in_browser(&app, url)
 }
 

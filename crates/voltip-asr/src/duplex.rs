@@ -215,14 +215,15 @@ fn bad_event(e: &serde_json::Error, text: &str) -> AsrError {
 fn task_failed(value: &Value) -> AsrError {
     let field = |key: &str| value.pointer(&format!("/header/{key}")).and_then(Value::as_str).unwrap_or_default().to_owned();
     let (code, message) = (field("error_code"), field("error_message"));
+    let said = || voltip_reply::clean(&if message.is_empty() { code.clone() } else { format!("{code}: {message}") });
     if is_quota_exhausted(&code, &message) {
-        AsrError::QuotaExhausted { code, message: truncate_chars(&message, MAX_ERROR_BODY_CHARS) }
+        AsrError::QuotaExhausted { message: voltip_reply::clean(&message), code }
     } else if code.starts_with("Throttling") {
-        AsrError::RateLimited { retry_after_ms: None }
+        AsrError::RateLimited { retry_after_ms: None, message: said() }
     } else if code == "InvalidApiKey" {
-        AsrError::Unauthorized
+        AsrError::Unauthorized { message: said() }
     } else {
-        AsrError::Service { code, message: truncate_chars(&message, MAX_ERROR_BODY_CHARS) }
+        AsrError::Service { message: voltip_reply::clean(&message), code }
     }
 }
 
@@ -494,7 +495,10 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn refusals_and_failures_are_sorted() {
         let (url, _) = serve(Script::Refuse(401, r#"{"code":"InvalidApiKey","message":"Invalid API-key provided."}"#)).await;
-        assert_eq!(connect(&options(&url, Some("bad"))).await.err(), Some(AsrError::Unauthorized));
+        assert_eq!(
+            connect(&options(&url, Some("bad"))).await.err(),
+            Some(AsrError::Unauthorized { message: "InvalidApiKey: Invalid API-key provided.".into() })
+        );
         let (url, _) = serve(Script::Refuse(403, r#"{"code":"AllocationQuota.FreeTierOnly","message":"free tier exhausted"}"#)).await;
         assert_eq!(
             connect(&options(&url, Some("k"))).await.err(),
@@ -506,14 +510,17 @@ pub(crate) mod tests {
             Some(AsrError::Service { code: "ModelNotFound".into(), message: "Model not found (qwen3-asr-flash-realtime)!".into() })
         );
         let (url, _) = serve(Script::FailAtStart("Throttling.RateQuota", "slow down")).await;
-        assert_eq!(connect(&options(&url, Some("k"))).await.err(), Some(AsrError::RateLimited { retry_after_ms: None }));
+        assert_eq!(
+            connect(&options(&url, Some("k"))).await.err(),
+            Some(AsrError::RateLimited { retry_after_ms: None, message: "Throttling.RateQuota: slow down".into() })
+        );
         let (url, _) = serve(Script::FailAtStart("AllocationQuota.FreeTierOnly", "x")).await;
         assert_eq!(
             connect(&options(&url, Some("k"))).await.err(),
             Some(AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "x".into() })
         );
         let (url, _) = serve(Script::FailAtStart("InvalidApiKey", "no")).await;
-        assert_eq!(connect(&options(&url, None)).await.err(), Some(AsrError::Unauthorized));
+        assert_eq!(connect(&options(&url, None)).await.err(), Some(AsrError::Unauthorized { message: "InvalidApiKey: no".into() }));
         // A whole take on a task that fails reports the task's reason.
         let (url, _) = serve(Script::FailAtStart("InvalidParameter", "sample_rate must be 16000")).await;
         let err = client_at(&url, "qwen-audio-3.1-asr-flash-message").transcribe(&crate::dashscope::tests::wav(1600, 8_000), None, &[]).await.unwrap_err();

@@ -439,8 +439,15 @@ export function Pill({
       )}
       {state === "error" && (
         <>
-          <Icon name="alert" size={14} className="text-danger" />
-          <span>{text}</span>
+          <Icon name="alert" size={14} className="shrink-0 text-danger" />
+          {/* A failure carries what the service said (docs/dictation.md §3.12): long ones are cut
+              here and read in full in the tooltip and the history. */}
+          <span
+            className="min-w-0 max-w-[380px] truncate"
+            title={text}
+            data-testid="pill-error-text">
+            {text}
+          </span>
           {/* Only when there is something to copy: a silent take has no text to offer. */}
           {onCopy && (
             <Button size="sm" variant="primary" onClick={onCopy} className="h-6">

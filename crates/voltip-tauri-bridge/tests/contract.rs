@@ -509,6 +509,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             asr_ms: 640,
             refine_ms: Some(2400),
             refine_failure: None,
+            refine_error: None,
             outcome: Outcome::Inserted { via: Via::Paste },
             starred: true,
             mode: OutputMode::WholeTake,
@@ -534,8 +535,10 @@ fn history_entries() -> Vec<HistoryEntry> {
             duration_ms: 900,
             asr_ms: 410,
             refine_ms: None,
-            // docs/dictation.md §3.6: the clean-up was turned down, the raw text went in.
+            // docs/dictation.md §3.6: the clean-up was turned down, the raw text went in; the
+            // service's words stay for the technical details.
             refine_failure: Some(RefineFailure::RateLimited),
+            refine_error: Some("服务繁忙：refine service overloaded (HTTP 503): This model is currently experiencing high demand.".into()),
             // Written before the fallback codes (2026-09-29): no `code`.
             outcome: Outcome::Clipboard { reason: "没有可粘贴的前台窗口".into(), code: None },
             starred: false,
@@ -564,6 +567,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             asr_ms: 380,
             refine_ms: Some(900),
             refine_failure: None,
+            refine_error: None,
             outcome: Outcome::Inserted { via: Via::Paste },
             starred: false,
             mode: OutputMode::WholeTake,
@@ -592,6 +596,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             asr_ms: 0,
             refine_ms: None,
             refine_failure: None,
+            refine_error: None,
             outcome: Outcome::Inserted { via: Via::Paste },
             starred: false,
             mode: OutputMode::WholeTake,
@@ -1590,7 +1595,17 @@ fn all_events() -> Vec<UiEvent> {
         UiEvent::ProviderProbe(ProbeReport {
             provider: ProviderId::Builtin,
             kind: ServiceKind::Asr,
-            outcome: ProbeOutcome::Failed { reason: ProbeFailure::HttpStatus, status: Some(502) },
+            outcome: ProbeOutcome::Failed { reason: ProbeFailure::HttpStatus, status: Some(502), detail: None },
+        }),
+        // docs/dictation.md §3.12: what the service said goes with the reason.
+        UiEvent::ProviderProbe(ProbeReport {
+            provider: ProviderId::Openai,
+            kind: ServiceKind::Llm,
+            outcome: ProbeOutcome::Failed {
+                reason: ProbeFailure::Unauthorized,
+                status: None,
+                detail: Some("Incorrect API key provided: sk-***. (invalid_api_key)".into()),
+            },
         }),
         // What the local engines can run on (§10.6): a CPU-only build and one with GPUs.
         UiEvent::Hardware(HardwareStatus { cpu_threads: 8, gpus: Vec::new() }),

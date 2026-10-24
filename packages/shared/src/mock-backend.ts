@@ -31,6 +31,7 @@ import {
   type ArgsOf,
   type CommandArgs,
   type ConsolePage,
+  type SiteId,
   type DeviceConnection,
   type DeviceIdentityPublic,
   type DeviceInfo,
@@ -984,6 +985,8 @@ export class MockBackend implements Backend {
   private readonly quotaOut = new Map<ServiceKind, number>();
   /** Every `providerConsoleOpen` of a key page, in order (tests). */
   readonly consolesOpened: ProviderId[] = [];
+  /** The site of each of `consolesOpened`, `undefined` for none (tests). */
+  readonly consoleSites: (SiteId | undefined)[] = [];
   /** Every `providerConsoleOpen` of a quota page, in order (tests). */
   readonly quotaPagesOpened: ProviderId[] = [];
   /** How many `provider_models_refresh` requests left (tests). */
@@ -3326,7 +3329,11 @@ export class MockBackend implements Backend {
 
   // ---- providers (docs/dictation.md §3.3) ----------------------------------------------------------
 
-  providerConsoleOpen(provider: ProviderId, page: ConsolePage = "key"): Promise<void> {
+  providerConsoleOpen(
+    provider: ProviderId,
+    page: ConsolePage = "key",
+    site?: SiteId,
+  ): Promise<void> {
     const spec = providerSpec(provider);
     if (page === "quota") {
       if (spec.quota !== true) return Promise.reject(new Error(`${provider}: no quota page`));
@@ -3335,6 +3342,7 @@ export class MockBackend implements Backend {
     }
     if (!spec.console) return Promise.reject(new Error(`${provider}: no key page`));
     this.consolesOpened.push(provider);
+    this.consoleSites.push(site);
     return Promise.resolve();
   }
 
@@ -4066,6 +4074,12 @@ export class MockBackend implements Backend {
         asr_model: engines.asr_model,
         ...(polished ? { refine_model: engines.refine_model } : {}),
         ...(refineFailure === undefined ? {} : { refine_failure: refineFailure }),
+        // As the core: a failed request keeps the service's words (§3.6).
+        ...(refineFailure === "rate_limited" ||
+        refineFailure === "quota" ||
+        refineFailure === "failed"
+          ? { refine_error: MOCK_REFINE_FAILED }
+          : {}),
         duration_ms: durationMs,
         asr_ms: asrMs,
         outcome: { kind: "inserted", via },

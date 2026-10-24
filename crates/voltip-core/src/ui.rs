@@ -799,6 +799,7 @@ mod tests {
             asr_ms: 3,
             refine_ms: Some(4),
             refine_failure: None,
+            refine_error: None,
             outcome: crate::Outcome::Inserted { via: crate::dictation::Via::Paste },
             starred: false,
             mode: crate::OutputMode::WholeTake,

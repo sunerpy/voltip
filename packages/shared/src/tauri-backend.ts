@@ -18,6 +18,7 @@ import {
   type GuidePage,
   type ProjectLink,
   type ProviderId,
+  type SiteId,
   type VocabularyBacktestArgs,
   UI_EVENT_NAME,
   appRefSchema,
@@ -212,11 +213,16 @@ export class TauriBackend implements Backend {
     await this.transport.invoke("permissions_request", { permission });
   }
 
-  async providerConsoleOpen(provider: ProviderId, page?: ConsolePage): Promise<void> {
-    await this.transport.invoke(
-      "provider_console_open",
-      page === undefined ? { provider } : { provider, page },
-    );
+  async providerConsoleOpen(
+    provider: ProviderId,
+    page?: ConsolePage,
+    site?: SiteId,
+  ): Promise<void> {
+    await this.transport.invoke("provider_console_open", {
+      provider,
+      ...(page === undefined ? {} : { page }),
+      ...(site === undefined ? {} : { site }),
+    });
   }
 
   async guideOpen(page: GuidePage, locale: string): Promise<void> {

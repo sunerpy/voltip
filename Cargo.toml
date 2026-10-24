@@ -15,6 +15,7 @@ members = [
     "crates/voltip-asr",
     "crates/voltip-asr-local",
     "crates/voltip-refine",
+    "crates/voltip-reply",
     "crates/voltip-cloud",
     "crates/voltip-inject",
     "crates/voltip-platform",
@@ -190,6 +191,7 @@ voltip-audio = { path = "crates/voltip-audio" }
 voltip-asr = { path = "crates/voltip-asr" }
 voltip-asr-local = { path = "crates/voltip-asr-local" }
 voltip-refine = { path = "crates/voltip-refine" }
+voltip-reply = { path = "crates/voltip-reply" }
 voltip-cloud = { path = "crates/voltip-cloud" }
 voltip-inject = { path = "crates/voltip-inject" }
 voltip-serve = { path = "crates/voltip-serve" }
