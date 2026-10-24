@@ -7,7 +7,7 @@
 # VERIFY_GATES=rust|web runs one half (CI runs the halves in parallel jobs); the default, all, is
 # `make verify`. rust: formatting, features, clippy, the cross-checks, the test suite under coverage,
 # cargo-deny and the IPC e2e (it builds Rust binaries). web: the web gates, the ledger, the host
-# guard and the release helpers.
+# guard, the release helpers and the self-hosting gateway (Docker).
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 log=${1:-verify-all.log}
@@ -65,6 +65,8 @@ gate web web-bundle      ./scripts/check-web-bundle.sh
 gate web acceptance      ./scripts/check-acceptance-ledger.sh
 gate web no-prod-hosts   .github/scripts/check-no-production-hosts.sh
 gate web release-helpers python3 -m unittest discover -s scripts/release -p "test_*.py"
+# The self-hosted recognition gateway in its nginx image (deploy/selfhost/); needs Docker, which CI has.
+gate web selfhost-gateway python3 -m unittest discover -s deploy/selfhost -p "test_*.py"
 
 echo "verify-all: overall_exit=$overall commit=$head_sha" | tee -a "$log"
 exit "$overall"

@@ -1,0 +1,102 @@
+# The gateway of Voltip's self-hosted recognition service. The nginx image renders this file at
+# start, filling in the ${VOLTIP_...} settings that compose.yaml passes from .env. It lets a request
+# through only with a token from the tokens file, limits each client address, keeps every upload in
+# memory and passes on only the endpoints Voltip uses. 40-voltip-tokens.sh writes the token map.
+
+map_hash_bucket_size 128;
+
+# "Bearer <token>" -> the token's line in the tokens file ("t1"), which the log shows instead of the
+# token; empty for anything else.
+map $http_authorization $voltip_token {
+    default "";
+    include /etc/nginx/voltip/tokens.map;
+}
+
+limit_req_zone $binary_remote_addr zone=voltip_req:10m rate=${VOLTIP_RATE}r/s;
+limit_conn_zone $binary_remote_addr zone=voltip_conn:10m;
+
+# One JSON line a request: the address, which token, the endpoint and how it went. Never the audio,
+# the text, the token or a query string.
+log_format voltip escape=json '{"time":"$time_iso8601","address":"$remote_addr","token":"$voltip_token",'
+    '"method":"$request_method","path":"$uri","status":$status,"request_bytes":$request_length,'
+    '"response_bytes":$bytes_sent,"seconds":$request_time,"upstream_seconds":"$upstream_response_time"}';
+
+upstream voltip_asr {
+    server 127.0.0.1:${VOLTIP_ASR_PORT};
+    keepalive 4;
+}
+
+server {
+    listen 127.0.0.1:${VOLTIP_GATEWAY_PORT};
+    server_tokens off;
+    access_log /dev/stdout voltip;
+
+    # Caddy runs on this machine and passes on the client's address.
+    set_real_ip_from 127.0.0.1;
+    real_ip_header X-Forwarded-For;
+
+    client_max_body_size ${VOLTIP_MAX_UPLOAD_MB}m;
+    # An upload stays in memory: a recording is never written to a temporary file.
+    client_body_buffer_size ${VOLTIP_MAX_UPLOAD_MB}m;
+    client_body_timeout 60s;
+
+    limit_req zone=voltip_req burst=${VOLTIP_BURST} nodelay;
+    limit_conn voltip_conn ${VOLTIP_CONNECTIONS};
+    limit_req_status 429;
+    limit_conn_status 429;
+
+    default_type application/json;
+    error_page 429 = @busy;
+    error_page 413 = @too_large;
+    error_page 502 = @starting;
+    error_page 504 = @timed_out;
+
+    # Ready when vLLM is; no token needed.
+    location = /healthz {
+        access_log off;
+        proxy_pass http://voltip_asr/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+
+    location = /v1/models {
+        if ($voltip_token = "") { return 401 '{"error":{"message":"missing or unknown access token","type":"authentication_error"}}'; }
+        if ($request_method != GET) { return 405 '{"error":{"message":"method not allowed","type":"invalid_request_error"}}'; }
+        proxy_pass http://voltip_asr;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Authorization "";
+    }
+
+    location = /v1/audio/transcriptions {
+        if ($voltip_token = "") { return 401 '{"error":{"message":"missing or unknown access token","type":"authentication_error"}}'; }
+        if ($request_method != POST) { return 405 '{"error":{"message":"method not allowed","type":"invalid_request_error"}}'; }
+        proxy_pass http://voltip_asr;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Authorization "";
+        proxy_read_timeout ${VOLTIP_TIMEOUT}s;
+        proxy_send_timeout ${VOLTIP_TIMEOUT}s;
+        # A streamed answer (stream=true) goes out as vLLM writes it.
+        proxy_buffering off;
+    }
+
+    location / {
+        return 404 '{"error":{"message":"not found","type":"invalid_request_error"}}';
+    }
+
+    location @busy {
+        add_header Retry-After 5 always;
+        return 429 '{"error":{"message":"too many requests from this address","type":"rate_limit"}}';
+    }
+    location @too_large {
+        return 413 '{"error":{"message":"the upload is larger than ${VOLTIP_MAX_UPLOAD_MB} MB","type":"invalid_request_error"}}';
+    }
+    location @starting {
+        add_header Retry-After 10 always;
+        return 503 '{"error":{"message":"the recognition model is starting or not running","type":"unavailable"}}';
+    }
+    location @timed_out {
+        return 504 '{"error":{"message":"recognition took longer than ${VOLTIP_TIMEOUT} seconds","type":"timeout"}}';
+    }
+}

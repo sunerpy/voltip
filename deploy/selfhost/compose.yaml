@@ -1,0 +1,98 @@
+# Voltip's self-hosted recognition service: vLLM serving Qwen3-ASR, a gateway that checks access
+# tokens and limits requests, and Caddy in front of it for HTTPS. install.sh copies this directory to
+# /opt/voltip-asr and writes .env (the settings) and tokens (the access tokens) beside it; the setup
+# is described on voltip.firlab.app (docs/site/recognition/self-host.md).
+#
+# Every service uses the host's network. vLLM and the gateway listen on 127.0.0.1 only, so Caddy is
+# the one way in: the gateway takes each client's address from the X-Forwarded-For that Caddy sets,
+# trusts it only from 127.0.0.1, and limits every address on its own.
+name: voltip-asr
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+services:
+  asr:
+    # vllm/vllm-openai with the audio decoders of vLLM's "audio" extra, which the official image ships
+    # without and Qwen3-ASR needs to read uploads. install.sh makes it from VOLTIP_VLLM_IMAGE; there is
+    # nothing to pull.
+    image: voltip-asr-vllm:local
+    pull_policy: never
+    entrypoint: ["/bin/sh", "/opt/voltip/asr-serve.sh"]
+    network_mode: host
+    # vLLM's processes share tensors through shared memory (vLLM's Docker guide).
+    ipc: host
+    environment:
+      VOLTIP_MODEL: ${VOLTIP_MODEL:-Qwen/Qwen3-ASR-1.7B}
+      VOLTIP_ASR_PORT: ${VOLTIP_ASR_PORT:-8001}
+      VOLTIP_DTYPE: ${VOLTIP_DTYPE:-auto}
+      VOLTIP_MAX_MODEL_LEN: ${VOLTIP_MAX_MODEL_LEN:-8192}
+      VOLTIP_GPU_MEMORY_UTILIZATION: ${VOLTIP_GPU_MEMORY_UTILIZATION:-0.85}
+      VOLTIP_MAX_NUM_SEQS: ${VOLTIP_MAX_NUM_SEQS:-8}
+      VOLTIP_VLLM_ARGS: ${VOLTIP_VLLM_ARGS:-}
+      VLLM_USE_MODELSCOPE: ${VOLTIP_USE_MODELSCOPE:-false}
+      # No usage statistics to vLLM or Hugging Face.
+      VLLM_NO_USAGE_STATS: "1"
+      DO_NOT_TRACK: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    volumes:
+      - ./asr-serve.sh:/opt/voltip/asr-serve.sh:ro
+      # The downloaded model and vLLM's compile cache, kept across restarts and upgrades.
+      - cache:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${VOLTIP_GPU:-0}"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/health' % os.environ['VOLTIP_ASR_PORT'], timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # The first start downloads the model.
+      start_period: 45m
+    restart: unless-stopped
+    logging: *logging
+
+  gateway:
+    image: ${VOLTIP_NGINX_IMAGE:-nginx:1.30.6-alpine}
+    network_mode: host
+    environment:
+      VOLTIP_GATEWAY_PORT: ${VOLTIP_GATEWAY_PORT:-8090}
+      VOLTIP_ASR_PORT: ${VOLTIP_ASR_PORT:-8001}
+      VOLTIP_RATE: ${VOLTIP_RATE:-3}
+      VOLTIP_BURST: ${VOLTIP_BURST:-30}
+      VOLTIP_CONNECTIONS: ${VOLTIP_CONNECTIONS:-8}
+      VOLTIP_MAX_UPLOAD_MB: ${VOLTIP_MAX_UPLOAD_MB:-32}
+      VOLTIP_TIMEOUT: ${VOLTIP_TIMEOUT:-120}
+      NGINX_ENTRYPOINT_QUIET_LOGS: "1"
+    volumes:
+      - ./gateway/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./gateway/40-voltip-tokens.sh:/docker-entrypoint.d/40-voltip-tokens.sh:ro
+      - ./tokens:/etc/voltip/tokens:ro
+    restart: unless-stopped
+    logging: *logging
+
+  caddy:
+    image: ${VOLTIP_CADDY_IMAGE:-caddy:2.11.7-alpine}
+    network_mode: host
+    environment:
+      VOLTIP_SITE: ${VOLTIP_SITE:-http://:8080}
+      VOLTIP_GATEWAY_PORT: ${VOLTIP_GATEWAY_PORT:-8090}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The certificate and the ACME account.
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  cache:
+  caddy-data:
+  caddy-config:
