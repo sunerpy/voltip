@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.8](https://github.com/sunerpy/voltip/compare/v0.1.7...v0.1.8) (2026-10-24)
+
+
+### Features
+
+* AI 润色新增 Kimi、智谱 GLM、火山方舟、腾讯混元、小米 MiMo 和 OpenRouter，Kimi 与智谱可切换中国站和国际站 ([48bda94](https://github.com/sunerpy/voltip/commit/48bda94b3038b6c78c1c5fc7acddacc7da0f8207))
+* 自动更新在运行期间每 4 小时检查一次，标题栏的「重启以更新」一键完成安装 ([#187](https://github.com/sunerpy/voltip/issues/187)) ([48bda94](https://github.com/sunerpy/voltip/commit/48bda94b3038b6c78c1c5fc7acddacc7da0f8207))
+* 识别、润色和测试连接失败时显示服务返回的原因，其中的密钥和账号已遮住 ([48bda94](https://github.com/sunerpy/voltip/commit/48bda94b3038b6c78c1c5fc7acddacc7da0f8207))
+
+
+### Bug Fixes
+
+* Google AI Studio 繁忙或思考用完输出上限时，润色会说明原因，不再只显示「请求失败」 ([48bda94](https://github.com/sunerpy/voltip/commit/48bda94b3038b6c78c1c5fc7acddacc7da0f8207))
+
 ## [0.1.7](https://github.com/sunerpy/voltip/compare/v0.1.6...v0.1.7) (2026-10-17)
 
 
