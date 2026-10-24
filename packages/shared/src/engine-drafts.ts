@@ -15,6 +15,7 @@ import type {
   ReasoningEffort,
   ServiceKind,
   ServiceStatus,
+  SiteId,
 } from "./schema";
 
 /** The providers that offer `kind` in this build, in display order. */
@@ -168,6 +169,30 @@ export function modelListHelp(
     : t("engines.field.modelHelpKeyless");
 }
 
+/** docs/dictation.md §3.2: the site a card's URL field points at — the default site while the
+ *  field is empty, the site whose address it holds, or none for any other address (a proxy, a
+ *  plan's own endpoint). `undefined` too for a vendor with one site. */
+export function siteOf(service: ServiceStatus, baseUrl: string): SiteId | undefined {
+  const sites = service.sites ?? [];
+  const url = comparableUrl(baseUrl);
+  if (sites.length === 0) return undefined;
+  if (url.length === 0) return sites[0]?.id;
+  return sites.find((site) => comparableUrl(site.base_url) === url)?.id;
+}
+
+/** What the URL field holds for `site`: nothing for the default site, whose address the catalogue
+ *  keeps up to date, the site's address otherwise. */
+export function siteUrl(service: ServiceStatus, site: SiteId): string {
+  const sites = service.sites ?? [];
+  const index = sites.findIndex((s) => s.id === site);
+  return index <= 0 ? "" : (sites[index]?.base_url ?? "");
+}
+
+/** `https://API.example.com/v1/` and `https://api.example.com/v1` are one address. */
+function comparableUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "").toLowerCase();
+}
+
 /** Client-side checks before a save (the core validates again). */
 export function checkProviderDraft(
   draft: ProviderDraft,
@@ -203,9 +228,15 @@ export function probeText(
       }),
     };
   const reason = report.reason ?? "unreachable";
+  const result = t(`engines.probeResult.${reason}`, { status: report.status ?? 0 });
+  // docs/dictation.md §3.12: what the service said, so the user knows what to fix.
+  const detail = report.detail?.trim();
   return {
     ok: false,
-    text: t(`engines.probeResult.${reason}`, { status: report.status ?? 0 }),
+    text:
+      detail === undefined || detail.length === 0
+        ? result
+        : t("engines.probeResult.withDetail", { result, detail }),
   };
 }
 

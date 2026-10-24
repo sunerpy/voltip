@@ -339,20 +339,21 @@ pub(crate) fn service_error(status: StatusCode, retry_after_ms: Option<u64>, bod
         return quota;
     }
     let (code, message) = error_fields(body);
+    // What the service said (docs/dictation.md §3.12): its code and message, else the body.
+    let said = if code.is_empty() { voltip_reply::summary(body) } else { voltip_reply::clean(&format!("{code}: {message}")) };
     if status == StatusCode::UNAUTHORIZED || code == "InvalidApiKey" {
-        return AsrError::Unauthorized;
+        return AsrError::Unauthorized { message: said };
     }
     if status == StatusCode::TOO_MANY_REQUESTS || code.starts_with("Throttling") {
-        return AsrError::RateLimited { retry_after_ms };
+        return AsrError::RateLimited { retry_after_ms, message: said };
     }
     if status.is_server_error() || code.is_empty() {
         if status == StatusCode::FORBIDDEN && code.is_empty() {
-            return AsrError::Unauthorized;
+            return AsrError::Unauthorized { message: said };
         }
-        let shown = if code.is_empty() { body.to_owned() } else { format!("{code}: {message}") };
-        return AsrError::Server { status: status.as_u16(), body: truncate_chars(&shown, MAX_ERROR_BODY_CHARS) };
+        return AsrError::Server { status: status.as_u16(), body: said };
     }
-    AsrError::Service { code, message: truncate_chars(&message, MAX_ERROR_BODY_CHARS) }
+    AsrError::Service { code, message: voltip_reply::clean(&message) }
 }
 
 /// A WAV's sample format: where its PCM is and at what rate.
@@ -604,7 +605,11 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn service_errors_are_sorted() {
         let cases = [
-            (401, json!({ "code": "InvalidApiKey", "message": "Invalid API-key provided." }), AsrError::Unauthorized),
+            (
+                401,
+                json!({ "code": "InvalidApiKey", "message": "Invalid API-key provided." }),
+                AsrError::Unauthorized { message: "InvalidApiKey: Invalid API-key provided.".into() },
+            ),
             (
                 403,
                 json!({ "code": "AllocationQuota.FreeTierOnly", "message": "The free tier of the model has been exhausted." }),
@@ -625,10 +630,14 @@ pub(crate) mod tests {
                 json!({ "code": "InvalidParameter", "message": "Model not exist.", "request_id": "r" }),
                 AsrError::Service { code: "InvalidParameter".into(), message: "Model not exist.".into() },
             ),
-            (429, json!({ "code": "Throttling.RateQuota", "message": "Requests rate limit exceeded" }), AsrError::RateLimited { retry_after_ms: None }),
-            (400, json!({ "code": "Throttling", "message": "busy" }), AsrError::RateLimited { retry_after_ms: None }),
+            (
+                429,
+                json!({ "code": "Throttling.RateQuota", "message": "Requests rate limit exceeded" }),
+                AsrError::RateLimited { retry_after_ms: None, message: "Throttling.RateQuota: Requests rate limit exceeded".into() },
+            ),
+            (400, json!({ "code": "Throttling", "message": "busy" }), AsrError::RateLimited { retry_after_ms: None, message: "Throttling: busy".into() }),
             (500, json!({ "code": "InternalError", "message": "oops" }), AsrError::Server { status: 500, body: "InternalError: oops".into() }),
-            (403, json!({}), AsrError::Unauthorized),
+            (403, json!({}), AsrError::Unauthorized { message: String::new() }),
             (
                 403,
                 json!({ "code": "Model.AccessDenied", "message": "no access" }),
@@ -650,7 +659,7 @@ pub(crate) mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "2")).mount(&server).await;
         let err = client(&server, "qwen3-asr-flash", DashscopeMode::Chat).transcribe(&wav(10, 16_000), None, &[]).await.unwrap_err();
-        assert_eq!(err, AsrError::RateLimited { retry_after_ms: Some(2000) });
+        assert_eq!(err, AsrError::RateLimited { retry_after_ms: Some(2000), message: String::new() });
         let server = MockServer::start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_string("not json")).mount(&server).await;
         let err = client(&server, "qwen3-asr-flash", DashscopeMode::Chat).transcribe(&wav(10, 16_000), None, &[]).await.unwrap_err();

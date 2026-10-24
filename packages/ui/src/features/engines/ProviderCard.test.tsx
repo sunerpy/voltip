@@ -112,6 +112,60 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
     backend.destroy();
   });
 
+  it("switches Kimi between its China and international sites, each with its own key page", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    const invoke = vi.spyOn(backend, "invoke");
+    renderCard(backend, { id: "kimi", kind: "llm" });
+    const form = await screen.findByTestId("provider-form");
+    const sites = within(form).getByRole("radiogroup", { name: t("engines.field.site") });
+    const china = within(sites).getByRole("radio", { name: t("engines.site.cn") });
+    const intl = within(sites).getByRole("radio", { name: t("engines.site.intl") });
+    // The default site while the URL field is empty.
+    expect(china).toHaveAttribute("aria-checked", "true");
+    const url = within(form).getByLabelText(t("engines.field.baseUrl"));
+    expect(url).toHaveAttribute("placeholder", "https://api.moonshot.cn/v1");
+    await user.click(intl);
+    expect(url).toHaveValue("https://api.moonshot.ai/v1");
+    expect(intl).toHaveAttribute("aria-checked", "true");
+    await user.click(within(form).getByRole("button", { name: t("engines.getKey") }));
+    expect(backend.consolesOpened).toEqual(["kimi"]);
+    expect(backend.consoleSites).toEqual(["intl"]);
+    await user.type(within(form).getByLabelText(t("engines.field.key")), "sk-test");
+    await user.click(within(form).getByRole("button", { name: t("engines.save") }));
+    expect(invoke).toHaveBeenCalledWith("settings_set_engines", {
+      engines: expect.objectContaining({
+        providers: expect.objectContaining({ kimi: { llm_url: "https://api.moonshot.ai/v1" } }),
+      }),
+    });
+    // Back to the default site: the field empties, so the catalogue's address follows.
+    await user.click(china);
+    expect(url).toHaveValue("");
+    // Any other address is neither site.
+    await user.type(url, "https://proxy.example.test/v1");
+    expect(china).toHaveAttribute("aria-checked", "false");
+    expect(intl).toHaveAttribute("aria-checked", "false");
+    backend.destroy();
+  });
+
+  it("shows no site switch for a vendor with one address", async () => {
+    const backend = new MockBackend();
+    renderCard(backend, { id: "volcengine", kind: "llm" });
+    const form = await screen.findByTestId("provider-form");
+    expect(within(form).queryByTestId("provider-site")).toBeNull();
+    expect(
+      within(within(form).getByRole("combobox", { name: t("engines.field.model") }))
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual([
+      "doubao-seed-2-1-lite-260915",
+      "doubao-seed-2-1-turbo-260628",
+      "doubao-seed-2-0-mini-260428",
+      t("engines.field.modelOther"),
+    ]);
+    backend.destroy();
+  });
+
   it("offers Model Studio's realtime model first and explains its workspace address", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend();
@@ -127,8 +181,6 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
     ).toEqual([
       "qwen-audio-3.1-asr-flash-streaming",
       "qwen-audio-3.1-asr-flash",
-      "qwen-audio-3.1-asr-flash-message",
-      "qwen3-asr-flash",
       "fun-asr-realtime",
       t("engines.field.modelOther"),
     ]);
@@ -564,20 +616,18 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
     const form = await screen.findByTestId("provider-form");
     const select = within(form).getByRole("combobox", { name: t("engines.field.model") });
     expect([...select.querySelectorAll("option")].map((o) => o.value)).toEqual([
-      "gemini-3.8-flash",
       "gemini-3.5-flash-lite",
+      "gemini-3.8-flash",
       "gemini-3.1-flash-lite",
-      "gemini-2.5-flash",
-      "gemini-2.5-pro",
       "__other__",
     ]);
     expect(screen.getByText(t("engines.providerNote.google"))).toBeInTheDocument();
-    await user.selectOptions(select, "gemini-3.5-flash-lite");
+    await user.selectOptions(select, "gemini-3.8-flash");
     await user.type(within(form).getByLabelText(t("engines.field.key")), "AIza-test");
     await user.click(within(form).getByRole("button", { name: t("engines.save") }));
     expect(invoke).toHaveBeenCalledWith("settings_set_engines", {
       engines: expect.objectContaining({
-        providers: expect.objectContaining({ google: { llm_model: "gemini-3.5-flash-lite" } }),
+        providers: expect.objectContaining({ google: { llm_model: "gemini-3.8-flash" } }),
       }),
     });
     expect(invoke).toHaveBeenCalledWith("provider_key_set", {

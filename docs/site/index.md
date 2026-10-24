@@ -229,6 +229,12 @@ home:
         - { name: SiliconFlow, mark: siliconflow }
         - { name: Model Studio, mark: aliyun }
         - { name: DeepSeek, mark: deepseek }
+        - { name: Kimi, mark: kimi }
+        - { name: Zhipu GLM, mark: glm }
+        - { name: Volcengine Ark, mark: volcengine }
+        - { name: Tencent Hunyuan, mark: hunyuan }
+        - { name: Xiaomi MiMo, mark: mimo }
+        - { name: OpenRouter, mark: openrouter }
         - { name: Ollama, mark: ollama }
     note: On an NVIDIA L40S, Qwen3-ASR 0.6B recognised 16 seconds of Chinese speech in 0.16 s on the GPU and in 2.87 s on 8 processor threads. See [Local recognition](/recognition/local) and [Cloud services](/recognition/cloud).
 

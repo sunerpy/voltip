@@ -13,7 +13,7 @@ use crate::dictation::fallback::{QuotaKey, QuotaLedger, open_order};
 use crate::models::{DEFAULT_LOCAL_MODEL_ID, ModelState};
 use crate::presets::PresetId;
 pub use crate::providers::{AsrProtocol, KeyPolicy, LlmApi, ProviderId, ReasoningEffort, ServiceKind};
-use crate::providers::{PROVIDERS, key_entry};
+use crate::providers::{PROVIDERS, SiteId, key_entry};
 
 /// The built-in recognition model's name when the build names none (`VOLTIP_ASR_MODEL`).
 pub const DEFAULT_ASR_MODEL: &str = "Qwen/Qwen3-ASR-1.7B";
@@ -1028,6 +1028,7 @@ fn provider_statuses(
                     issue: None,
                     active,
                     listed: Vec::new(),
+                    sites: Vec::new(),
                 })
             }
             ProviderId::Local => Some(ServiceStatus {
@@ -1039,6 +1040,7 @@ fn provider_statuses(
                 issue: (!local.installed).then_some(EngineIssue::ModelNotInstalled),
                 active,
                 listed: Vec::new(),
+                sites: Vec::new(),
             }),
             _ => {
                 let target = service_target(provider, kind, settings, secrets, built_in);
@@ -1058,6 +1060,7 @@ fn provider_statuses(
                     issue,
                     active,
                     listed: Vec::new(),
+                    sites: preset.sites.iter().map(|site| SiteStatus { id: site.id, base_url: site.base_url.to_owned() }).collect(),
                 })
             }
         }
@@ -1131,6 +1134,19 @@ pub struct ServiceStatus {
     /// values; empty until a list arrived. Every model select offers them after `presets`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub listed: Vec<String>,
+    /// The vendor's sites, the default first (docs/dictation.md §3.2); empty for a vendor with one
+    /// address. The card's site switch writes one of their URLs into the URL field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sites: Vec<SiteStatus>,
+}
+
+/// One of a vendor's sites, as the card's site switch offers it ([`crate::providers::ProviderSite`]).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct SiteStatus {
+    /// Which site.
+    pub id: SiteId,
+    /// The service's base URL there.
+    pub base_url: String,
 }
 
 /// `UiState.engines`: the resolved configuration without any key, and without the built-in

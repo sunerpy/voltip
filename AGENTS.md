@@ -7,8 +7,9 @@ How to work in this repository, for coding agents and people alike. `CONTRIBUTIN
 - `crates/` — the Rust workspace. `voltip-core` is the platform-free application core (commands in,
   events out, ports for everything native); the other crates are its adapters: audio, cloud and
   on-device recognition, clean-up, injection, platform tables, protocol, crypto, identity, pairing,
-  transport, relay, the network proxy every connection follows (`voltip-net`), the local speech
-  service's HTTP layer (`voltip-serve`), and the Tauri bridge.
+  transport, relay, the network proxy every connection follows (`voltip-net`), what a service said
+  when it refused a request (`voltip-reply`), the local speech service's HTTP layer
+  (`voltip-serve`), and the Tauri bridge.
 - `apps/desktop`, `apps/mobile` — the Tauri 2 shells (`src-tauri/`) and their React front ends.
 - `apps/mobile-rn` — the phone app on React Native (Expo, `docs/mobile-rn.md`): its own Rust shell
   (`rust/`, UniFFI), shipped beside the Tauri phone app as `Voltip-RN_<version>_android_arm64.apk`.
@@ -61,6 +62,10 @@ make help                        # everything else
   (`docs/site/README.md`).
 - The mock backend (`@voltip/shared/mock`) and the dev-only pages load under `import.meta.env.DEV`
   only; `scripts/check-web-bundle.sh` fails a release bundle that contains them.
+- Vendor and brand icons follow LobeHub Icons and its designs (user decision 2026-10-25): copy the
+  paths of its static SVGs at a pinned commit into `packages/shared/src/provider-marks.ts`, with the
+  MIT notice; never fetch them at run time. The brand colour tints the tile softly; no solid brand
+  blocks.
 
 ## Secrets and hosts
 

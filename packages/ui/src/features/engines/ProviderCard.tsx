@@ -3,6 +3,7 @@ import {
   type ProviderStatus,
   type ServiceKind,
   type ServiceStatus,
+  type SiteId,
   REASONING_EFFORTS,
   type ReasoningEffort,
   applyProviderDraft,
@@ -16,6 +17,8 @@ import {
   providerDraft,
   providerTagline,
   secretStateLabel,
+  siteOf,
+  siteUrl,
   withProvider,
 } from "@voltip/shared";
 import { type ReactNode, useEffect, useState } from "react";
@@ -27,6 +30,7 @@ import { Icon, type IconName } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
 import { Input } from "../../components/Input";
 import { LampText } from "../../components/LampText";
+import { Segmented } from "../../components/Segmented";
 import { Select } from "../../components/Select";
 import { CardGrid } from "../../components/SettingsLayout";
 import { cx } from "../../cx";
@@ -53,6 +57,12 @@ const ICONS: Readonly<Record<ProviderId, IconName>> = {
   siliconflow: "cloud",
   aliyun: "cloud",
   deepseek: "cloud",
+  kimi: "cloud",
+  glm: "cloud",
+  volcengine: "cloud",
+  hunyuan: "cloud",
+  mimo: "cloud",
+  openrouter: "cloud",
   ollama: "monitor",
   custom: "link",
 };
@@ -462,6 +472,9 @@ function ProviderForm({
   const shared =
     provider.asr !== undefined && provider.llm !== undefined && provider.id !== "custom";
   const secret = secretStateLabel(service.key, locale);
+  // docs/dictation.md §3.2: a vendor with a Chinese and an international site.
+  const sites = service.sites ?? [];
+  const site = siteOf(service, draft.baseUrl);
   // docs/dictation.md §3.3: the provider's latest models as the drawer opens, and again each time
   // the model list opens.
   const refreshModels = useModelRefresh(provider.id, kind);
@@ -600,6 +613,23 @@ function ProviderForm({
           )}
         </Group>
         <Group title={t("engines.detail.connection")}>
+          {sites.length > 1 && (
+            <div className="flex flex-col gap-1" data-testid="provider-site" data-site={site}>
+              <span className="text-[12px] text-fg-muted">{t("engines.field.site")}</span>
+              {/* Any other address in the field selects neither site. */}
+              <Segmented<SiteId | "other">
+                size="sm"
+                label={t("engines.field.site")}
+                value={site ?? "other"}
+                onChange={(id) => {
+                  if (id !== "other") setDraft({ ...draft, baseUrl: siteUrl(service, id) });
+                }}
+                options={sites.map((s) => ({ value: s.id, label: t(`engines.site.${s.id}`) }))}
+                className="self-start"
+              />
+              <Help>{t("engines.field.siteHelp")}</Help>
+            </div>
+          )}
           <Input
             label={t("engines.field.baseUrl")}
             mono
@@ -662,7 +692,7 @@ function ProviderForm({
                     variant="text"
                     icon="external"
                     onClick={() => {
-                      void backend.providerConsoleOpen(provider.id);
+                      void backend.providerConsoleOpen(provider.id, undefined, site);
                     }}>
                     {t("engines.getKey")}
                   </Button>

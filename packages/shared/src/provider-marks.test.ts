@@ -25,6 +25,6 @@ describe("provider marks (docs/dictation.md §3)", () => {
       .filter(([, mark]) => mark.paths.every((p) => p.fill === undefined))
       .map(([id]) => id);
     mono.sort();
-    expect(mono).toEqual(["google", "groq", "ollama", "openai"]);
+    expect(mono).toEqual(["google", "groq", "kimi", "mimo", "ollama", "openai", "openrouter"]);
   });
 });

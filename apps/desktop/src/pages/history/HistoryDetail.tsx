@@ -40,6 +40,7 @@ import { inTextField, usePageShortcuts, withCommand } from "../../app/page-short
 import { useRouter } from "../../app/router";
 import { useShell } from "../../app/shell-context";
 import { ClipboardNote } from "../../features/history/ClipboardNote";
+import { RefineNote } from "../../features/history/RefineNote";
 import {
   LongEntryTools,
   isLongEntry,
@@ -564,6 +565,11 @@ export function HistoryDetail({
         // docs/dictation.md §4.2: why the paste fell back, in words; the raw message only under the
         // technical details (never in the header).
         <ClipboardNote outcome={entry.outcome} />
+      )}
+      {!entry.refined && entry.refine_error !== undefined && (
+        // §3.6: the clean-up's request failed; why, in words, and the service's own explanation
+        // under the technical details.
+        <RefineNote entry={entry} />
       )}
       {entry.live_error !== undefined && (
         // §12: a streaming mode was asked for but the take (or part of it) fell back to the

@@ -23,6 +23,7 @@ import {
   presetRefLabel,
   refineModelText,
   sceneLabel,
+  serviceReasonText,
   shortClockLabel,
   takePolishPairs,
   tapPiece,
@@ -484,6 +485,14 @@ export function Entry() {
                   : entry.refine_model
               }
               mono={entry.refine_model !== undefined}
+            />
+          )}
+          {!sent && !entry.refined && entry.refine_error !== undefined && (
+            // docs/dictation.md §3.12: why the polish failed, with what the service said.
+            <FactRow
+              label={t("history.refineNote.reasonLabel")}
+              value={serviceReasonText(entry.refine_error, locale)}
+              mono
             />
           )}
           {!sent && entry.preset !== undefined && (

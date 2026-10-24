@@ -8,7 +8,9 @@
 //! carries them. A build without both values has no updater: the status is [`UpdateStatus::Disabled`]
 //! and every update command answers [`NOT_CONFIGURED`]. The URL is a static `latest.json`-style
 //! manifest (the format the Tauri CLI writes); the `{{target}}`, `{{arch}}`, `{{current_version}}`
-//! and `{{bundle_type}}` placeholders the plugin understands are allowed in it. An optional mirror
+//! and `{{bundle_type}}` placeholders the plugin understands are allowed in it. It is https,
+//! except in a test build whose manifest server is on this computer or the local network
+//! ([`UpdaterConfig::local_http`]). An optional mirror
 //! ([`UPDATE_MIRROR_ENV`], the base of the docs site's `/updates/`) is asked first and the URL
 //! second: the plugin moves on to the next address when one fails or does not answer 2xx, and the
 //! packages come from wherever the manifest that answered points. The plugin refuses to
@@ -25,15 +27,25 @@
 //! **Automatic path** (`Settings.auto_update`, off by default). When it is on and the updater is
 //! configured, the shell checks [`AUTO_CHECK_DELAY`] after start; an available package is
 //! downloaded in the background and published as `Ready` — nothing is installed behind the user's
-//! back: the settings page offers 「立即重启更新」, which is `update_install`. The version that
-//! reached `Ready` is remembered in [`MARKER_FILE_NAME`] inside the app data directory. When the user
-//! instead just quits and relaunches, the next startup check finds that same version again and, with
-//! auto-update still on, downloads and installs it right away and relaunches — that is the "install
-//! on next start" the toggle promises. A newer version than the remembered one goes through the
-//! `Ready` step again, so a package the user has never seen is never installed unattended. Turning
-//! the toggle on later triggers an immediate check (download only). The downloaded package is not
-//! persisted across restarts (the plugin keeps it in memory), which is why the second start
-//! downloads again.
+//! back: the title bar's 「重启以更新」 and the settings page offer the restart, which is
+//! `update_install`. The version that reached `Ready` is remembered in [`MARKER_FILE_NAME`] inside
+//! the app data directory. When the user instead just quits and relaunches, the next startup check
+//! finds that same version again and, with auto-update still on, downloads and installs it right
+//! away and relaunches — that is the "install on next start" the toggle promises. A newer version
+//! than the remembered one goes through the `Ready` step again, so a package the user has never
+//! seen is never installed unattended. Turning the toggle on later triggers an immediate check
+//! (download only). The downloaded package is not persisted across restarts (the plugin keeps it in
+//! memory), which is why the second start downloads again.
+//!
+//! **Looking again while Voltip runs** (user request 2026-10-25, after Lockra 0.16.3). An app that
+//! stays in the tray for days would otherwise hear of a release only at its next start. With the
+//! toggle on, every run that ends (a check by hand included) schedules the next look
+//! [`AUTO_CHECK_INTERVAL`] later ([`AutoSchedule`]), keeping a look that is due sooner (the one at
+//! start). These later looks only download: only the look at start may install the remembered
+//! version, so a look hours later never restarts the app under the user. A package waiting in
+//! `Ready` stops the looks until the restart; a failed look is tried again an interval later,
+//! never in a loop. Turning the toggle off drops the look that is due. The clock is monotonic, so
+//! time the computer spends asleep does not count.
 //!
 //! Everything that touches the plugin lives in [`drive`] behind the production wiring
 //! (`ShellOptions::global_hotkey`); the mock runtime used by `tests/ipc.rs` never registers the
@@ -51,6 +63,9 @@ use tauri::Manager as _;
 use tauri::utils::config::BundleType;
 use tauri::{AppHandle, Runtime, Url};
 use tauri_plugin_updater::{Update, UpdaterExt as _};
+use tokio::sync::Notify;
+use tokio::sync::broadcast::error::RecvError;
+use tokio::time::Instant;
 use voltip_core::ui::{UiEvent, UpdateStatus};
 use voltip_identity::Entries;
 use voltip_tauri_bridge::Bridge;
@@ -69,6 +84,14 @@ pub const NOT_CONFIGURED: &str = "updater: 此构建未配置更新源";
 pub const BUSY: &str = "updater: 正在检查或下载更新";
 /// How long after start the automatic check runs (lets the window and the core settle first).
 pub const AUTO_CHECK_DELAY: Duration = Duration::from_secs(10);
+/// How long after a run ends the automatic update looks again while Voltip runs.
+pub const AUTO_CHECK_INTERVAL: Duration = Duration::from_secs(4 * 60 * 60);
+/// Compile-time environment variable that makes a test build look again sooner than
+/// [`AUTO_CHECK_INTERVAL`], in seconds (at least [`MIN_AUTO_CHECK_INTERVAL`]). The release builds
+/// leave it unset.
+pub const UPDATE_INTERVAL_ENV: &str = "VOLTIP_UPDATE_INTERVAL_SECS";
+/// The shortest interval [`UPDATE_INTERVAL_ENV`] can set.
+pub const MIN_AUTO_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 /// File in the app data directory remembering the version that reached `Ready` in auto mode.
 pub const MARKER_FILE_NAME: &str = "update-ready.json";
 /// Minimum number of bytes between two `Downloading` events (keeps the event bus quiet).
@@ -92,6 +115,9 @@ pub struct UpdaterConfig {
     pub pubkey: String,
     /// Delay before the automatic check at startup ([`AUTO_CHECK_DELAY`] in production).
     pub auto_check_delay: Duration,
+    /// How long after a run the automatic update looks again ([`AUTO_CHECK_INTERVAL`] in
+    /// production, [`UPDATE_INTERVAL_ENV`] in a test build).
+    pub auto_check_interval: Duration,
     /// [`CONNECT_TIMEOUT`] in production.
     pub connect_timeout: Duration,
     /// [`READ_TIMEOUT`] in production.
@@ -102,6 +128,7 @@ impl UpdaterConfig {
     /// The values baked into this binary, or `None` when the URL or the key is missing.
     pub fn from_build() -> Option<Self> {
         Self::from_values(option_env!("VOLTIP_UPDATE_URL"), option_env!("VOLTIP_UPDATE_MIRROR"), option_env!("VOLTIP_UPDATE_PUBKEY"))
+            .map(|config| Self { auto_check_interval: auto_check_interval(option_env!("VOLTIP_UPDATE_INTERVAL_SECS")), ..config })
     }
 
     /// The URL and the key present, trimmed and non-empty, and the URL parses; anything else is
@@ -114,7 +141,14 @@ impl UpdaterConfig {
         let endpoint = web(url)?;
         let mirror = mirror.map(str::trim).filter(|s| !s.is_empty()).and_then(|base| web(&format!("{}/latest.json", base.trim_end_matches('/'))));
         let endpoints = mirror.into_iter().chain([endpoint]).collect();
-        Some(Self { endpoints, pubkey: pubkey.to_owned(), auto_check_delay: AUTO_CHECK_DELAY, connect_timeout: CONNECT_TIMEOUT, read_timeout: READ_TIMEOUT })
+        Some(Self {
+            endpoints,
+            pubkey: pubkey.to_owned(),
+            auto_check_delay: AUTO_CHECK_DELAY,
+            auto_check_interval: AUTO_CHECK_INTERVAL,
+            connect_timeout: CONNECT_TIMEOUT,
+            read_timeout: READ_TIMEOUT,
+        })
     }
 
     /// The `plugins.updater` block the plugin deserialises at initialisation (injected into the
@@ -128,8 +162,42 @@ impl UpdaterConfig {
     /// the package ([`windows_install_mode`]); the plugin reads it on Windows only.
     pub fn plugin_config_for(&self, bundle: Option<BundleType>) -> serde_json::Value {
         let endpoints: Vec<&str> = self.endpoints.iter().map(Url::as_str).collect();
-        serde_json::json!({ "pubkey": self.pubkey, "endpoints": endpoints, "windows": { "installMode": windows_install_mode(bundle) } })
+        let mut config = serde_json::json!({ "pubkey": self.pubkey, "endpoints": endpoints, "windows": { "installMode": windows_install_mode(bundle) } });
+        if self.local_http() {
+            config["dangerousInsecureTransportProtocol"] = true.into();
+        }
+        config
     }
+
+    /// The source asks a manifest server over plain http, and every such server is on this
+    /// computer or the local network: a test build pointed at a server on the LAN
+    /// (docs/dictation.md §9). The plugin refuses http in a release build unless told otherwise,
+    /// which would stop such a build from starting; a public host still needs https, and the
+    /// package's signature is checked either way.
+    pub fn local_http(&self) -> bool {
+        self.endpoints.iter().any(|url| url.scheme() == "http") && self.endpoints.iter().all(|url| url.scheme() != "http" || on_this_network(url))
+    }
+}
+
+/// `url` names this computer or an address of the local network: `localhost`, a loopback address,
+/// or a private or link-local IPv4 address. Host names other than `localhost` do not count, since
+/// any name can resolve to a public address.
+fn on_this_network(url: &Url) -> bool {
+    let Some(host) = url.host_str() else { return false };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match host.trim_start_matches('[').trim_end_matches(']').parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback(),
+        Err(_) => false,
+    }
+}
+
+/// The interval [`UPDATE_INTERVAL_ENV`] sets, in seconds and at least
+/// [`MIN_AUTO_CHECK_INTERVAL`]; [`AUTO_CHECK_INTERVAL`] when it is unset or not a number.
+pub fn auto_check_interval(secs: Option<&str>) -> Duration {
+    secs.and_then(|text| text.trim().parse::<u64>().ok()).map_or(AUTO_CHECK_INTERVAL, |secs| Duration::from_secs(secs).max(MIN_AUTO_CHECK_INTERVAL))
 }
 
 /// How the plugin runs a Windows package (docs/dictation.md §9; user request 2026-10-17: an
@@ -194,6 +262,57 @@ impl ProgressGate {
     }
 }
 
+/// When the automatic update looks next (module documentation, 「Looking again while Voltip
+/// runs」). Times are `tokio::time::Instant`, so the tests run hours on a paused clock.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AutoSchedule {
+    /// `Settings.auto_update` as last read.
+    on: bool,
+    /// When the next look is due; `None` when none is.
+    at: Option<Instant>,
+    /// The next look may install the version the marker remembers: true for the look at start
+    /// alone, which finishes what an earlier start downloaded.
+    installs: bool,
+}
+
+impl AutoSchedule {
+    /// The setting as first read after start: on → a look `delay` from `now`, which may install.
+    pub fn start(&mut self, on: bool, delay: Duration, now: Instant) {
+        *self = Self { on, at: on.then(|| now + delay), installs: on };
+    }
+
+    /// The toggle moved: on → a look at once, download only; off → no look at all.
+    pub fn switch(&mut self, on: bool, now: Instant) {
+        *self = Self { on, at: on.then_some(now), installs: false };
+    }
+
+    /// A run ended on `status`: with the toggle on, look again `interval` from `now`, or keep a look
+    /// that is due sooner (the one at start). A package waiting for the restart needs no more looks,
+    /// and an install in progress none at all.
+    pub fn look_again(&mut self, status: &UpdateStatus, interval: Duration, now: Instant) {
+        if !self.on || matches!(status, UpdateStatus::Ready { .. } | UpdateStatus::Installing { .. }) {
+            return;
+        }
+        let next = now + interval;
+        self.at = Some(self.at.map_or(next, |at| at.min(next)));
+    }
+
+    /// When the next look is due.
+    pub fn due_at(&self) -> Option<Instant> {
+        self.at
+    }
+
+    /// The look due at `now`, if one is: `Some(installs)`. Taking it spends the permission to
+    /// install, so only the look at start ever has it.
+    pub fn take_due(&mut self, now: Instant) -> Option<bool> {
+        if !self.at.is_some_and(|at| now >= at) {
+            return None;
+        }
+        self.at = None;
+        Some(std::mem::take(&mut self.installs))
+    }
+}
+
 /// Unix time in seconds.
 pub fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or_default()
@@ -227,6 +346,11 @@ pub struct UpdateSlot {
     status: Mutex<UpdateStatus>,
     pending: Mutex<Option<Pending>>,
     busy: AtomicBool,
+    /// The automatic looks ([`follow_settings`] keeps them; every run's end moves them on). Taken
+    /// after `status` when both are held.
+    schedule: Mutex<AutoSchedule>,
+    /// Wakes [`follow_settings`] when a run's end has moved the schedule.
+    wake: Notify,
 }
 
 impl std::fmt::Debug for UpdateSlot {
@@ -246,6 +370,8 @@ impl UpdateSlot {
             status: Mutex::new(status),
             pending: Mutex::new(None),
             busy: AtomicBool::new(false),
+            schedule: Mutex::new(AutoSchedule::default()),
+            wake: Notify::new(),
         }
     }
 
@@ -265,6 +391,16 @@ impl UpdateSlot {
         self.config.as_ref().map_or(Duration::ZERO, |c| c.auto_check_delay)
     }
 
+    /// How long after a run the automatic update looks again.
+    pub fn auto_check_interval(&self) -> Duration {
+        self.config.as_ref().map_or(AUTO_CHECK_INTERVAL, |c| c.auto_check_interval)
+    }
+
+    /// The automatic looks as they stand.
+    pub fn schedule(&self) -> AutoSchedule {
+        self.schedule.lock().clone()
+    }
+
     /// Last published status (what `update_status` answers).
     pub fn status(&self) -> UpdateStatus {
         self.status.lock().clone()
@@ -273,15 +409,22 @@ impl UpdateSlot {
     /// Record `status` and broadcast it like a core event. The broadcast happens under the status
     /// lock, so the events go out in the order the statuses were recorded.
     pub fn publish(&self, bridge: &Bridge, status: UpdateStatus) {
+        self.publish_with(status, |status| bridge.publish(UiEvent::Update(status)));
+    }
+
+    /// [`Self::publish`] with the broadcast handed in.
+    fn publish_with(&self, status: UpdateStatus, broadcast: impl FnOnce(UpdateStatus)) {
         let mut current = self.status.lock();
         *current = status.clone();
-        bridge.publish(UiEvent::Update(status));
+        broadcast(status);
     }
 
     /// End a run: release the slot, then broadcast the run's final status (if it has one). Whoever
     /// reacts to that status may start the next run at once (CI 2026-09-29: 「安装」 right after
     /// 「已是最新」 was refused as busy); a run that starts in between waits for the lock, so its
-    /// `checking` still goes out after this status.
+    /// `checking` still goes out after this status. With auto-update on, the next automatic look is
+    /// scheduled from here ([`AutoSchedule::look_again`]); an install schedules none, and still
+    /// releases the slot and broadcasts.
     pub fn finish(&self, bridge: &Bridge, last: Option<UpdateStatus>) {
         self.finish_with(last, |status| bridge.publish(UiEvent::Update(status)));
     }
@@ -290,8 +433,12 @@ impl UpdateSlot {
     fn finish_with(&self, last: Option<UpdateStatus>, broadcast: impl FnOnce(UpdateStatus)) {
         let mut current = self.status.lock();
         self.end();
-        if let Some(status) = last {
+        if let Some(status) = &last {
             *current = status.clone();
+        }
+        self.schedule.lock().look_again(&current, self.auto_check_interval(), Instant::now());
+        self.wake.notify_one();
+        if let Some(status) = last {
             broadcast(status);
         }
     }
@@ -517,53 +664,63 @@ fn prepare_then_install(
     install(package)
 }
 
-/// Follow `Settings.auto_update`: on at startup → check after [`AUTO_CHECK_DELAY`] (installing only
-/// the version remembered as `Ready`); turned on later → check now, download only.
+/// Follow `Settings.auto_update` and keep the automatic looks ([`AutoSchedule`]): on at startup →
+/// a look after [`AUTO_CHECK_DELAY`], the only one that may install (the version remembered as
+/// `Ready`); turned on later → a look now, download only; turned off → no look; each run that ends
+/// while it is on schedules the next look ([`UpdateSlot::finish`]). One task: it sleeps until the
+/// next look is due and wakes on every settings change and every run's end.
 pub fn follow_settings<R: Runtime>(app: AppHandle<R>, bridge: Bridge, slot: Arc<UpdateSlot>) {
     let mut events = bridge.events();
     let initial = bridge.state();
     // `Ready` may already have been folded before this subscription: read it from the cache.
     let mut current: Option<bool> = initial.identity.is_some().then_some(initial.settings.auto_update);
-    if current == Some(true) {
-        schedule_auto(&app, &bridge, &slot, true);
+    if let Some(on) = current {
+        slot.schedule.lock().start(on, slot.auto_check_delay(), Instant::now());
     }
     tauri::async_runtime::spawn(async move {
         loop {
-            let next = match events.recv().await {
-                Ok(UiEvent::Settings(s)) => Some(s.auto_update),
-                Ok(UiEvent::State(state)) => Some(state.settings.auto_update),
-                Ok(_) => None,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => None,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            let due = slot.schedule.lock().due_at();
+            let next = tokio::select! {
+                event = events.recv() => match event {
+                    Ok(UiEvent::Settings(s)) => Some(s.auto_update),
+                    Ok(UiEvent::State(state)) => Some(state.settings.auto_update),
+                    Ok(_) | Err(RecvError::Lagged(_)) => None,
+                    Err(RecvError::Closed) => break,
+                },
+                () = slot.wake.notified() => None,
+                () = sleep_until(due) => {
+                    look(&app, &bridge, &slot);
+                    None
+                }
             };
             let Some(next) = next else { continue };
-            let startup = current.is_none();
-            if current == Some(next) {
-                continue;
+            match current {
+                None => slot.schedule.lock().start(next, slot.auto_check_delay(), Instant::now()),
+                Some(was) if was != next => slot.schedule.lock().switch(next, Instant::now()),
+                Some(_) => {}
             }
             current = Some(next);
-            if next {
-                schedule_auto(&app, &bridge, &slot, startup);
-            }
         }
     });
 }
 
-/// Spawn the automatic run: delayed and marker-aware at startup, immediate after a toggle.
-fn schedule_auto<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateSlot>, startup: bool) {
-    let (app, bridge, slot) = (app.clone(), bridge.clone(), slot.clone());
-    tauri::async_runtime::spawn(async move {
-        let install_version = if startup {
-            tokio::time::sleep(slot.auto_check_delay()).await;
-            slot.read_marker()
-        } else {
-            None
-        };
-        tracing::info!(startup, ?install_version, "automatic update check");
-        if let Err(e) = request(&app, &bridge, &slot, Intent::Auto { install_version }) {
-            tracing::info!(error = %e, "automatic update check skipped");
-        }
-    });
+/// Wait until `due`; for good when nothing is.
+async fn sleep_until(due: Option<Instant>) {
+    match due {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Run the automatic look that is due, if one is. A look that falls due during another run (the
+/// user's) is dropped: that run answers the same question and schedules the next look as it ends.
+fn look<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateSlot>) {
+    let Some(installs) = slot.schedule.lock().take_due(Instant::now()) else { return };
+    let install_version = if installs { slot.read_marker() } else { None };
+    tracing::info!(installs, ?install_version, "automatic update check");
+    if let Err(e) = request(app, bridge, slot, Intent::Auto { install_version }) {
+        tracing::info!(error = %e, "automatic update check skipped");
+    }
 }
 
 #[cfg(test)]
@@ -703,6 +860,145 @@ mod tests {
         let repeated = Layer("operation timed out: deadline", Some(Box::new(Layer("deadline", Some(Box::new(Layer("", None)))))));
         assert_eq!(describe(&repeated), "operation timed out: deadline");
         assert_eq!(describe(&Layer("builder error", None)), "builder error");
+    }
+
+    /// User request 2026-10-25: with auto-update on, Voltip looks again while it runs, and only the
+    /// look at start may install.
+    #[tokio::test(start_paused = true)]
+    async fn the_automatic_looks_follow_the_toggle_and_each_runs_end() {
+        let up_to_date = UpdateStatus::UpToDate { version: "0.1.8".into(), checked_at: 1 };
+        let mut schedule = AutoSchedule::default();
+        // Off at start: nothing is due, and a run's end schedules nothing.
+        schedule.start(false, AUTO_CHECK_DELAY, Instant::now());
+        schedule.look_again(&up_to_date, AUTO_CHECK_INTERVAL, Instant::now());
+        assert_eq!(schedule.due_at(), None);
+        tokio::time::advance(3 * AUTO_CHECK_INTERVAL).await;
+        assert_eq!(schedule.take_due(Instant::now()), None);
+
+        // On at start: one look after the delay, which may install.
+        let started = Instant::now();
+        schedule.start(true, AUTO_CHECK_DELAY, started);
+        assert_eq!(schedule.due_at(), Some(started + AUTO_CHECK_DELAY));
+        // A check by hand that ends first keeps the look at start, which is due sooner.
+        schedule.look_again(&up_to_date, AUTO_CHECK_INTERVAL, started + Duration::from_secs(1));
+        assert_eq!(schedule.due_at(), Some(started + AUTO_CHECK_DELAY));
+        tokio::time::advance(AUTO_CHECK_DELAY - Duration::from_millis(1)).await;
+        assert_eq!(schedule.take_due(Instant::now()), None, "not due yet");
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert_eq!(schedule.take_due(Instant::now()), Some(true), "the look at start may install");
+        assert_eq!(schedule.take_due(Instant::now()), None, "taken once");
+
+        // Its end schedules the next look an interval later, which only downloads.
+        let ended = Instant::now();
+        schedule.look_again(&up_to_date, AUTO_CHECK_INTERVAL, ended);
+        assert_eq!(schedule.due_at(), Some(ended + AUTO_CHECK_INTERVAL));
+        tokio::time::advance(AUTO_CHECK_INTERVAL - Duration::from_secs(1)).await;
+        assert_eq!(schedule.take_due(Instant::now()), None);
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert_eq!(schedule.take_due(Instant::now()), Some(false), "a later look never installs");
+
+        // A failed look is tried again an interval later, never at once.
+        let failed = UpdateStatus::Failed { message: "offline".into() };
+        schedule.look_again(&failed, AUTO_CHECK_INTERVAL, Instant::now());
+        assert_eq!(schedule.due_at(), Some(Instant::now() + AUTO_CHECK_INTERVAL));
+
+        // A package waiting for the restart, or an install, stops the looks.
+        for waiting in [UpdateStatus::Ready { version: "0.1.9".into() }, UpdateStatus::Installing { version: "0.1.9".into() }] {
+            schedule.switch(true, Instant::now());
+            assert_eq!(schedule.take_due(Instant::now()), Some(false), "turned on: a look at once, download only");
+            schedule.look_again(&waiting, AUTO_CHECK_INTERVAL, Instant::now());
+            assert_eq!(schedule.due_at(), None, "{waiting:?}");
+        }
+
+        // Turned off: the look that is due goes, and so does the permission to install.
+        schedule.start(true, AUTO_CHECK_DELAY, Instant::now());
+        schedule.switch(false, Instant::now());
+        assert_eq!(schedule, AutoSchedule { on: false, at: None, installs: false });
+        schedule.look_again(&up_to_date, AUTO_CHECK_INTERVAL, Instant::now());
+        tokio::time::advance(3 * AUTO_CHECK_INTERVAL).await;
+        assert_eq!(schedule.take_due(Instant::now()), None);
+        schedule.switch(true, Instant::now());
+        assert_eq!(schedule.take_due(Instant::now()), Some(false), "on again: it only downloads");
+    }
+
+    /// The end of every run moves the schedule on through the slot itself: the next look an
+    /// interval later, and nothing after an install, which still frees the slot.
+    #[tokio::test(start_paused = true)]
+    async fn a_runs_end_schedules_the_next_look_through_the_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = UpdaterConfig::from_values(Some("https://x.example/latest.json"), None, Some("k")).unwrap();
+        config.auto_check_interval = Duration::from_secs(90);
+        let slot = UpdateSlot::new(Some(config), dir.path());
+        assert_eq!(slot.auto_check_interval(), Duration::from_secs(90));
+        slot.schedule.lock().start(true, AUTO_CHECK_DELAY, Instant::now());
+        tokio::time::advance(AUTO_CHECK_DELAY).await;
+        assert_eq!(slot.schedule.lock().take_due(Instant::now()), Some(true));
+        assert!(slot.try_begin());
+        slot.finish_with(Some(UpdateStatus::UpToDate { version: "0.1.8".into(), checked_at: 1 }), |_| {});
+        assert_eq!(slot.schedule().due_at(), Some(Instant::now() + Duration::from_secs(90)));
+        // A run that installed: the status stands at `installing`, nothing more is scheduled.
+        slot.schedule.lock().switch(true, Instant::now());
+        assert_eq!(slot.schedule.lock().take_due(Instant::now()), Some(false));
+        slot.publish_with(UpdateStatus::Installing { version: "0.1.9".into() }, |_| {});
+        assert!(slot.try_begin());
+        let mut sent = false;
+        slot.finish_with(None, |_| sent = true);
+        assert!(!sent, "no final status: nothing more to send");
+        assert_eq!(slot.schedule().due_at(), None);
+        assert!(slot.try_begin(), "and the slot is free");
+        // Without an updater the interval is still the production one.
+        assert_eq!(UpdateSlot::new(None, dir.path()).auto_check_interval(), AUTO_CHECK_INTERVAL);
+    }
+
+    #[test]
+    fn a_test_build_can_look_again_sooner_but_not_in_a_loop() {
+        assert_eq!(auto_check_interval(None), AUTO_CHECK_INTERVAL);
+        assert_eq!(auto_check_interval(Some("")), AUTO_CHECK_INTERVAL);
+        assert_eq!(auto_check_interval(Some("soon")), AUTO_CHECK_INTERVAL, "not a number");
+        assert_eq!(auto_check_interval(Some("-5")), AUTO_CHECK_INTERVAL);
+        assert_eq!(auto_check_interval(Some(" 120 ")), Duration::from_secs(120));
+        assert_eq!(auto_check_interval(Some("1")), MIN_AUTO_CHECK_INTERVAL, "at least a minute");
+        assert_eq!(auto_check_interval(Some("0")), MIN_AUTO_CHECK_INTERVAL);
+        let cfg = UpdaterConfig::from_values(Some("https://updates.example.test/latest.json"), None, Some("key")).unwrap();
+        assert_eq!(cfg.auto_check_interval, AUTO_CHECK_INTERVAL);
+    }
+
+    /// A test build pointed at a manifest server on the LAN starts and checks; a public host
+    /// still needs https.
+    #[test]
+    fn plain_http_is_allowed_only_on_this_computer_and_the_local_network() {
+        let source = |url: &str, mirror: Option<&str>| UpdaterConfig::from_values(Some(url), mirror, Some("key")).unwrap();
+        let insecure = |cfg: &UpdaterConfig| cfg.plugin_config().get("dangerousInsecureTransportProtocol").cloned();
+        for local in [
+            "http://192.168.157.161:18765/latest.json",
+            "http://10.0.0.2/latest.json",
+            "http://172.16.4.1/latest.json",
+            "http://127.0.0.1:8080/latest.json",
+            "http://localhost:8080/latest.json",
+            "http://LOCALHOST/latest.json",
+            "http://169.254.10.1/latest.json",
+            "http://[::1]:8080/latest.json",
+        ] {
+            let cfg = source(local, None);
+            assert!(cfg.local_http(), "{local}");
+            assert_eq!(insecure(&cfg), Some(serde_json::Value::Bool(true)), "{local}");
+            // The plugin takes the block, here and in a release build alike.
+            let read: tauri_plugin_updater::Config = serde_json::from_value(cfg.plugin_config()).unwrap();
+            assert!(read.dangerous_insecure_transport_protocol, "{local}");
+        }
+        for public in
+            ["http://8.8.8.8/latest.json", "http://updates.example.test/latest.json", "http://code-server:8080/latest.json", "http://[2001:db8::1]/latest.json"]
+        {
+            let cfg = source(public, None);
+            assert!(!cfg.local_http(), "{public}");
+            assert_eq!(insecure(&cfg), None, "{public}");
+        }
+        let https = source("https://updates.example.test/latest.json", None);
+        assert!(!https.local_http(), "https needs nothing");
+        assert_eq!(insecure(&https), None);
+        // One public http endpoint among local ones keeps the plugin's rule.
+        assert!(!source("http://192.168.1.2/latest.json", Some("http://updates.example.test/updates")).local_http());
+        assert!(source("http://192.168.1.2/latest.json", Some("https://mirror.example.test/updates")).local_http());
     }
 
     #[test]

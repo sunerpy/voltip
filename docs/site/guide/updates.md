@@ -11,7 +11,7 @@ Use this page to keep Voltip up to date, to find the files it keeps on your comp
 Voltip updates from inside the app. Under **Settings → General**:
 
 - **Check for updates** looks for a new release once, when you press it.
-- **Automatic updates**, off by default, checks when Voltip starts and downloads a new version in the background. It is installed when you choose **Restart and update**, or the next time you start Voltip.
+- **Automatic updates**, off by default, checks for updates 10 seconds after Voltip starts and every 4 hours while it runs, and downloads a new version in the background. When the download is done, the title bar shows **Restart to update**: click it to restart Voltip and finish the update. Otherwise the new version is installed the next time you start Voltip. The checks while Voltip runs only download; they never restart it on their own. Version 0.1.7 and earlier check only at start-up.
 
 With automatic updates off, Voltip contacts the update server only when you press **Check for updates**. On Windows and macOS the tray menu has the same command.
 

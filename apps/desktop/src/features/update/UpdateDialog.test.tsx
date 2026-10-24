@@ -184,6 +184,48 @@ describe("UpdateDialog", () => {
     expect(screen.getByTestId("update-badge")).toHaveTextContent("下载中 21%");
   });
 
+  it("regression: a downloaded update restarts from the title bar in one click", async () => {
+    // User request 2026-10-25: with auto-update on, the package arrives in the background; the
+    // title bar's 重启以更新 is the go-ahead, and the dialog shows the install, not a second question.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const core = backend();
+    const invoke = vi.spyOn(core, "invoke");
+    renderApp({ backend: core });
+    const user = userEvent.setup({ advanceTimers: (ms) => vi.advanceTimersByTime(ms) });
+    await screen.findByRole("heading", { name: "首页", level: 1 });
+    act(() => {
+      core.simulateUpdate({ state: "ready", version: "0.0.2" });
+    });
+    const badge = await screen.findByTestId("update-badge");
+    expect(badge).toHaveTextContent("重启以更新");
+    expect(badge).toHaveAttribute("title", "重启 Voltip，完成更新到 0.0.2");
+    invoke.mockClear();
+    await user.click(badge);
+    await waitFor(() => {
+      expect(screen.getByTestId("update-dialog")).toHaveAttribute("data-state", "installing");
+    });
+    expect(screen.getByRole("dialog", { name: "正在安装 0.0.2" })).toBeInTheDocument();
+    expect(invoke.mock.calls.filter(([command]) => command === "update_install")).toHaveLength(1);
+    expect(screen.queryByTestId("update-badge")).toBeNull();
+  });
+
+  it("the title bar's other notes only open the dialog", async () => {
+    const core = backend();
+    const invoke = vi.spyOn(core, "invoke");
+    renderApp({ backend: core });
+    const user = userEvent.setup();
+    await screen.findByRole("heading", { name: "首页", level: 1 });
+    act(() => {
+      core.simulateUpdate({ state: "available", version: "0.0.2", current: "0.0.1" });
+    });
+    const badge = await screen.findByTestId("update-badge");
+    expect(badge).toHaveAttribute("title", "查看更新");
+    invoke.mockClear();
+    await user.click(badge);
+    expect(screen.getByRole("dialog", { name: "发现新版本 0.0.2" })).toBeInTheDocument();
+    expect(invoke.mock.calls.some(([command]) => command === "update_install")).toBe(false);
+  });
+
   it("a failed update says why and retries; the settings row opens the same dialog", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const core = backend();

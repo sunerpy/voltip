@@ -30,8 +30,8 @@ export const injectModeSchema = z.enum(["paste", "clipboard_only"]);
 export type InjectMode = z.infer<typeof injectModeSchema>;
 
 /** Who serves recognition or clean-up (`voltip_core::providers::ProviderId`, docs/dictation.md
- *  §3): the build's own service, the on-device models, a few OpenAI-compatible vendors, Alibaba
- *  Cloud Model Studio (its own recognition protocols, §3.4), Ollama on this machine and a custom
+ *  §3): the build's own service, the on-device models, OpenAI-compatible vendors, Alibaba Cloud
+ *  Model Studio (its own recognition protocols, §3.4), Ollama on this machine and a custom
  *  endpoint. Display order. */
 export const PROVIDER_IDS = [
   "builtin",
@@ -42,6 +42,12 @@ export const PROVIDER_IDS = [
   "siliconflow",
   "aliyun",
   "deepseek",
+  "kimi",
+  "glm",
+  "volcengine",
+  "hunyuan",
+  "mimo",
+  "openrouter",
   "ollama",
   "custom",
 ] as const;
@@ -1281,6 +1287,9 @@ export const historyEntrySchema = z.object({
   refine_ms: z.number().nonnegative().optional(),
   /** Why a requested clean-up's text was not used (§3.6); absent in entries written before it. */
   refine_failure: refineFailureSchema.optional(),
+  /** The service's explanation when the clean-up's request failed (`rate_limited`, `quota`,
+   *  `failed`), for the technical details (§3.6); absent otherwise and in older entries. */
+  refine_error: z.string().optional(),
   outcome: historyOutcomeSchema,
   starred: z.boolean(),
   /** Same meaning as `done.mode` / `segments` / `live_error` (§12); an older `history.json` reads
@@ -1515,6 +1524,18 @@ export const secretStateSchema = z.object({
 });
 export type SecretState = z.infer<typeof secretStateSchema>;
 
+/** Which of a vendor's sites (`voltip_core::SiteId`, docs/dictation.md §3.2). */
+export const siteIdSchema = z.enum(["cn", "intl"]);
+export type SiteId = z.infer<typeof siteIdSchema>;
+
+/** One of a vendor's sites (`voltip_core::engines::SiteStatus`). */
+export const siteStatusSchema = z.object({
+  id: siteIdSchema,
+  /** The service's base URL there. */
+  base_url: z.string(),
+});
+export type SiteStatus = z.infer<typeof siteStatusSchema>;
+
 /** One service of a provider as the engines pane shows it (`voltip_core::engines::ServiceStatus`). */
 export const serviceStatusSchema = z.object({
   /** Model in effect (`""` when none is chosen); the catalogue id for the on-device provider. */
@@ -1534,6 +1555,8 @@ export const serviceStatusSchema = z.object({
    *  (docs/dictation.md §3.3), fetched when a model list opens (`provider_models_refresh`) and by
    *  a 测试连接 with the saved values; absent until a list arrived. */
   listed: z.array(z.string()).optional(),
+  /** The vendor's sites, the default first (§3.2); absent for a vendor with one address. */
+  sites: z.array(siteStatusSchema).optional(),
 });
 export type ServiceStatus = z.infer<typeof serviceStatusSchema>;
 
@@ -1687,6 +1710,9 @@ export const probeReportSchema = z.object({
   latency_ms: z.number().int().nonnegative().optional(),
   reason: probeFailureSchema.optional(),
   status: z.number().int().optional(),
+  /** What the service said, or the connection's error (docs/dictation.md §3.12); absent when it
+   *  adds nothing to the reason. */
+  detail: z.string().optional(),
 });
 export type ProbeReport = z.infer<typeof probeReportSchema>;
 
@@ -2700,7 +2726,7 @@ export interface CommandArgs {
   provider_models_refresh: { provider: ProviderId; kind: ServiceKind };
   /** Open the vendor's API-key page (`page` absent or `key`) or its page of free quota and usage
    *  (`quota`) in the browser (catalogue URLs only). */
-  provider_console_open: { provider: ProviderId; page?: ConsolePage };
+  provider_console_open: { provider: ProviderId; page?: ConsolePage; site?: SiteId };
   /** Open a project page in the browser; the shell builds the URL from its repository. */
   project_link_open: { link: ProjectLink };
   guide_open: { page: GuidePage; locale: string };

@@ -15,14 +15,18 @@ import type {
   SecretState,
   ServiceKind,
   ServiceStatus,
+  SiteId,
   LiveSource,
 } from "./schema";
 import { PROVIDER_IDS } from "./schema";
 
-/** A service a vendor offers: its public base URL and the models suggested first. */
+/** A service a vendor offers: its public base URL, the models suggested first and, for a vendor
+ *  with a Chinese and an international site, both sites (the default first, docs/dictation.md
+ *  §3.2). */
 export interface ServicePreset {
   baseUrl: string;
   models: readonly string[];
+  sites?: readonly { id: SiteId; baseUrl: string }[];
 }
 
 export interface ProviderSpec {
@@ -79,13 +83,7 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
   google: {
     llm: {
       baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-      models: [
-        "gemini-3.8-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-        "gemini-2.5-flash",
-        "gemini-2.5-pro",
-      ],
+      models: ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.1-flash-lite"],
     },
     key: "required",
     onDevice: false,
@@ -110,8 +108,6 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
       models: [
         "qwen-audio-3.1-asr-flash-streaming",
         "qwen-audio-3.1-asr-flash",
-        "qwen-audio-3.1-asr-flash-message",
-        "qwen3-asr-flash",
         "fun-asr-realtime",
       ],
     },
@@ -128,6 +124,66 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     llm: {
       baseUrl: "https://api.deepseek.com",
       models: ["deepseek-flash", "deepseek-v4-pro"],
+    },
+    key: "required",
+    onDevice: false,
+    console: true,
+  },
+  kimi: {
+    llm: {
+      baseUrl: "https://api.moonshot.cn/v1",
+      models: ["kimi-k3.1-pro-highspeed", "kimi-k3.1-pro", "kimi-k3"],
+      sites: [
+        { id: "cn", baseUrl: "https://api.moonshot.cn/v1" },
+        { id: "intl", baseUrl: "https://api.moonshot.ai/v1" },
+      ],
+    },
+    key: "required",
+    onDevice: false,
+    console: true,
+  },
+  glm: {
+    llm: {
+      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+      models: ["glm-5.3-flash", "glm-4.7-flash", "glm-5.3"],
+      sites: [
+        { id: "cn", baseUrl: "https://open.bigmodel.cn/api/paas/v4" },
+        { id: "intl", baseUrl: "https://api.z.ai/api/paas/v4" },
+      ],
+    },
+    key: "required",
+    onDevice: false,
+    console: true,
+  },
+  volcengine: {
+    llm: {
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+      models: [
+        "doubao-seed-2-1-lite-260915",
+        "doubao-seed-2-1-turbo-260628",
+        "doubao-seed-2-0-mini-260428",
+      ],
+    },
+    key: "required",
+    onDevice: false,
+    console: true,
+  },
+  hunyuan: {
+    llm: { baseUrl: "https://tokenhub.tencentmaas.com/v1", models: ["hy3", "hy4-preview"] },
+    key: "required",
+    onDevice: false,
+    console: true,
+  },
+  mimo: {
+    llm: { baseUrl: "https://api.xiaomimimo.com/v1", models: ["mimo-v2.6-flash", "mimo-v2.6-pro"] },
+    key: "required",
+    onDevice: false,
+    console: true,
+  },
+  openrouter: {
+    llm: {
+      baseUrl: "https://openrouter.ai/api/v1",
+      models: ["google/gemini-3.5-flash-lite", "deepseek/deepseek-v4-flash", "openai/gpt-6-luna"],
     },
     key: "required",
     onDevice: false,
@@ -343,6 +399,9 @@ function serviceStatus(
     ...("issue" in resolved ? { issue: resolved.issue } : {}),
     active,
     ...(listed.length === 0 ? {} : { listed: [...listed] }),
+    ...(preset.sites === undefined
+      ? {}
+      : { sites: preset.sites.map((site) => ({ id: site.id, base_url: site.baseUrl })) }),
   };
 }
 

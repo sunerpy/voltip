@@ -147,12 +147,14 @@ pub fn asr_error(error: voltip_asr::AsrError) -> DictationError {
     DictationError::Asr(error.to_string())
 }
 
-/// The core's error for a failed clean-up or edit: a used-up quota (docs/dictation.md §3.5) and a
-/// rate limit (§3.6) keep their kind; anything else is `Refine` with the reason.
+/// The core's error for a failed clean-up or edit: a used-up quota (docs/dictation.md §3.5), a
+/// rate limit and an overloaded service (§3.6) keep their kind; anything else is `Refine` with the
+/// reason.
 pub fn refine_error(error: voltip_refine::RefineError) -> DictationError {
     match error {
         voltip_refine::RefineError::QuotaExhausted { .. } => DictationError::QuotaExhausted { service: ServiceKind::Llm, detail: error.to_string() },
         voltip_refine::RefineError::RateLimited { .. } => DictationError::RateLimited { service: ServiceKind::Llm, detail: error.to_string() },
+        voltip_refine::RefineError::Overloaded { .. } => DictationError::Overloaded { service: ServiceKind::Llm, detail: error.to_string() },
         _ => DictationError::Refine(error.to_string()),
     }
 }
@@ -336,14 +338,17 @@ impl ServiceProbe for HttpServiceProbe {
     async fn list_models(&self, base_url: &str, key: Option<&str>) -> Result<Vec<String>, ProbeError> {
         voltip_refine::list_models(&openai_compatible_base(base_url), key, PROBE_TIMEOUT, &self.network).await.map_err(|e| {
             use voltip_refine::RefineError as E;
+            // What the service said, or the connection's error, goes with the reason (§3.12).
+            let status = |status: u16, said: String| ProbeError { reason: ProbeFailure::HttpStatus, status: Some(status), detail: None }.with_detail(said);
             match e {
                 E::InvalidConfig(_) => ProbeError::new(ProbeFailure::InvalidUrl),
-                E::Unauthorized => ProbeError::new(ProbeFailure::Unauthorized),
-                E::RateLimited { .. } => ProbeError { reason: ProbeFailure::HttpStatus, status: Some(429) },
-                E::Server { status, .. } => ProbeError { reason: ProbeFailure::HttpStatus, status: Some(status) },
-                E::Network(_) => ProbeError::new(ProbeFailure::Unreachable),
+                E::Unauthorized { message } => ProbeError::new(ProbeFailure::Unauthorized).with_detail(message),
+                E::RateLimited { message, .. } => status(429, message),
+                E::Overloaded { message } => status(503, message),
+                E::Server { status: code, body } => status(code, body),
+                E::Network(message) => ProbeError::new(ProbeFailure::Unreachable).with_detail(message),
                 E::Timeout => ProbeError::new(ProbeFailure::Timeout),
-                _ => ProbeError::new(ProbeFailure::BadResponse),
+                other => ProbeError::new(ProbeFailure::BadResponse).with_detail(other.to_string()),
             }
         })
     }
@@ -456,16 +461,28 @@ mod tests {
         let asr = asr_error(AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "free tier exhausted".into() });
         assert!(matches!(&asr, DictationError::QuotaExhausted { service: ServiceKind::Asr, detail } if detail.contains("FreeTierOnly")), "{asr:?}");
         assert!(asr.is_quota_exhausted());
-        assert_eq!(asr_error(AsrError::Unauthorized), DictationError::Asr("ASR rejected the credentials".into()));
+        assert_eq!(
+            asr_error(AsrError::Unauthorized { message: "Invalid API Key (invalid_api_key)".into() }),
+            DictationError::Asr("ASR rejected the credentials: Invalid API Key (invalid_api_key)".into()),
+            "the service's words reach the take's failure (§3.12)"
+        );
         let llm = refine_error(RefineError::QuotaExhausted { code: "insufficient_quota".into(), message: "m".into() });
         assert!(matches!(&llm, DictationError::QuotaExhausted { service: ServiceKind::Llm, .. }), "{llm:?}");
         assert_eq!(refine_error(RefineError::Timeout), DictationError::Refine("refine request timed out".into()));
         // docs/dictation.md §3.6: a clean-up's 429 keeps its kind (the interface says the service is
         // busy), and it is not a used-up quota: no fallback model is tried for it.
-        let busy = refine_error(RefineError::RateLimited { retry_after_ms: Some(355_000) });
+        let busy = refine_error(RefineError::RateLimited { retry_after_ms: Some(355_000), message: String::new() });
         assert_eq!(busy, DictationError::RateLimited { service: ServiceKind::Llm, detail: "refine service rate limited (retry after 355000 ms)".into() });
         assert!(!busy.is_quota_exhausted());
-        assert_eq!(asr_error(AsrError::RateLimited { retry_after_ms: None }), DictationError::Asr("ASR rate limited".into()), "recognition's is unchanged");
+        // 2026-10-24: so does a 503 (Gemini's "high demand"), as an overloaded service.
+        let overloaded = refine_error(RefineError::Overloaded { message: "high demand".into() });
+        assert_eq!(overloaded, DictationError::Overloaded { service: ServiceKind::Llm, detail: "refine service overloaded (HTTP 503): high demand".into() });
+        assert!(!overloaded.is_quota_exhausted());
+        assert_eq!(
+            asr_error(AsrError::RateLimited { retry_after_ms: None, message: String::new() }),
+            DictationError::Asr("ASR rate limited".into()),
+            "recognition's is unchanged"
+        );
 
         let used_up = serde_json::json!({ "error": { "code": "insufficient_quota", "message": "You exceeded your current quota" } });
         let server = MockServer::start().await;

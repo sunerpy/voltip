@@ -16,6 +16,7 @@
 | `voltip-inject` | `inject(text) -> Injection`：备份剪贴板 → 写入文本 → 发 `Ctrl+V`（macOS `Cmd+V`）→ 600 ms 后恢复剪贴板；任何一步失败都把文本留在剪贴板并返回 `Via::Clipboard` + 原因；`Injector` trait + `FakeInjector` | arboard 3.6、enigo 0.6（x11rb / SendInput / CGEvent） | trait 假实现；真实实现只在有显示器时冒烟 |
 | `voltip-asr-local` | 本地引擎（§10）：`catalogue`（6 条目录，含隐藏的 `silero-vad`）、`store`（下载 / 校验 / 安装，§12 辅助条目随首个模型下载）、`transcriber`（`LocalTranscriber`，按条目引擎分派：`gguf.rs` transcribe.cpp、`sherpa.rs` sherpa-onnx；`vad_trim` 时先经 `vad.rs` 裁剪）、`streaming`（`LocalStreamingTranscriber`，§11 实时预览）、`vad`（`VadTrimmer`，§12 Silero VAD 首尾裁剪）、`segmenter`（`VadSegmenterFactory`，§22 长录音在停顿处切段） | transcribe-cpp 0.2.3（静态，CPU）、sherpa-onnx 1.13.8（动态）、rubato | 假加载器 / 假 VAD 单测；`tests/real.rs` 四条 `#[ignore]` 真模型测试 |
 | `voltip-core` | `dictation` 模块：状态机 + 编排（含 §11 的解码线程 `run_live` 与 `Listening.live` / `Processing.preview`，§22 长录音 `long.rs`）；`history` 模块：`history.sqlite3`（§4.3，上限 2 万条）、用 AI 预设处理与导出（§22）；`engines` 模块：默认值解析（`option_env!`）与 `EngineSettings`；`models` 模块：模型库端口；秘密经 `SecretStore` | 只依赖 trait（`AudioSource` / `Capture` / `LivePcm` / `Transcriber` / `StreamingTranscriber` / `Refiner` / `Injector` / `ModelManager`），不依赖 cpal / rtrb / reqwest / enigo / sherpa | 假实现驱动完整状态机（`fakes.rs`：`FakeAudio` 带假 tap、`FakeStreaming` 脚本会话、`FakeModels`） |
+| `voltip-reply` | 服务拒绝请求时说了什么（§3.12）：`error_fields`（各服务商错误体的 `code` 与 `message`）、`summary`（要显示的话：消息与代码、HTML 页的标题或正文）、`clean`（合并空白、遮住密钥令牌与账号、截到 200 字） | regex、serde_json | 各服务商的错误体样本、遮盖与截断 |
 | `voltip-net` | 网络代理（§24）：`Network`（进程内的代理计划：跟随系统 / 不使用 / 手动）、`apply`（给 reqwest 客户端加一个每个请求都问计划的代理）、`connect`（为 WebSocket 打开直连、HTTP CONNECT 或 SOCKS5 的 TCP 流） | reqwest、hyper-util（`client-proxy-system`：系统代理读取，CONNECT 与 SOCKS5 连接器） | 记录请求的假 HTTP / SOCKS5 代理 |
 | `voltip-serve` | 本机语音服务的 HTTP 层（§23）：`ServeHandle`（路由、令牌、准入、边收边解码的 WAV 上传、OpenAI 的返回与错误格式）与 `HttpHost`（核心 `ServeHost` 端口的实现，桌面 App 用）；处理本身在 `voltip_core::serve` | axum 0.8（`multipart`）、hound、rubato、subtle | `tower::ServiceExt::oneshot` 加假 `SpeechService`；真实 socket |
 | `apps/server` | 无头服务端 `voltip-server`（§23.5）：命令行、读 App 的数据目录、只读钥匙串、信号与退出 | voltip-core、voltip-cloud、voltip-asr-local、voltip-serve；不依赖 voltip-audio、voltip-inject 和 Tauri | 假工厂下的各命令；真实二进制收到 SIGTERM 后的退出 |
@@ -117,10 +118,11 @@ pub struct DictationStatus { pub phase: DictationPhase, pub session: u64 /* 递�
 | `openai`、`groq`、`siliconflow`、`aliyun` | ✓ | ✓ | 必填，同一家的两项服务共用一把 |
 | `google`（Google AI Studio，2026-10-08） | — | ✓（Gemini，OpenAI 兼容接口 `…/v1beta/openai`） | 必填 |
 | `deepseek` | — | ✓ | 必填 |
+| `kimi`、`glm`（智谱 / Z.ai，两家都可切换中国站与国际站，§3.2）、`volcengine`（火山方舟）、`hunyuan`（腾讯混元，经腾讯云 TokenHub）、`mimo`（小米 MiMo）、`openrouter`（2026-10-25，§3.13） | — | ✓ | 必填 |
 | `ollama` | — | ✓（`http://127.0.0.1:11434/v1`） | 无 |
 | `custom` | ✓ | ✓ | 可选，识别与润色各一把；接口地址必填 |
 
-服务商卡片和设置抽屉上，各服务商显示自己的标志（2026-10-12 用户要求「获取对应服务商的实际图标」）：取自 LobeHub Icons（MIT，`packages/shared/src/provider-marks.ts`，固定在该图标集的提交 `bcdb7c8`，许可说明随每个安装包的 `THIRD-PARTY-NOTICES.txt` 附带），打包在应用里，不联网获取：页面离线也能显示，也不向第三方发任何请求。黑白标志（OpenAI、Groq、Google AI Studio、Ollama）随主题取文字颜色，彩色标志保留原色；内置服务、本机和自定义接口仍用应用自己的图标。
+服务商卡片和设置抽屉上，各服务商显示自己的标志（2026-10-12 用户要求「获取对应服务商的实际图标」）：取自 LobeHub Icons（MIT，`packages/shared/src/provider-marks.ts`，固定在该图标集的提交 `bcdb7c8`，许可说明随每个安装包的 `THIRD-PARTY-NOTICES.txt` 附带），打包在应用里，不联网获取：页面离线也能显示，也不向第三方发任何请求。黑白标志（OpenAI、Groq、Google AI Studio、Kimi、小米 MiMo、OpenRouter、Ollama）随主题取文字颜色，彩色标志保留原色；Kimi 的彩色标志是白色字母，在浅色背景上看不见，所以用黑白的。内置服务、本机和自定义接口仍用应用自己的图标。
 
 ```rust
 pub struct EngineSettings {                                  // Settings.engines，#[serde(default)]
@@ -138,7 +140,7 @@ pub struct EngineSettings {                                  // Settings.engines
 }
 ```
 
-没有填写的模型与地址取目录里的预设。`ResolvedEngines::resolve` 把设置、用户密钥和内置服务合成出客户端真正用的配置；识别或润色跑不了时给出 `EngineIssue`（`unavailable` / `key_missing` / `url_missing` / `model_missing` / `model_not_installed` / `no_provider`），界面按它提示，首页按钮在识别就绪前禁用。
+没有填写的模型与地址取目录里的预设。每家服务商的每项服务只带两三个推荐模型，第一个是默认（2026-10-25 用户决定：「所有的provider不需要带内置列表 而是填写了key测试通过后拉取model」「每家留2-3个模型吧」）；其余模型在保存密钥后从服务商自己的模型列表获取（§3.3），推荐模型保证填好密钥就能用，也让没有选过模型的老用户照常使用。`ResolvedEngines::resolve` 把设置、用户密钥和内置服务合成出客户端真正用的配置；识别或润色跑不了时给出 `EngineIssue`（`unavailable` / `key_missing` / `url_missing` / `model_missing` / `model_not_installed` / `no_provider`），界面按它提示，首页按钮在识别就绪前禁用。
 
 **内置服务**（`voltip_core::engines::BuiltIn`）全部来自编译期 `option_env!`，源码与文档不出现它的主机名（`.github/scripts/check-no-production-hosts.sh` 扫描整棵树；真实值只在 CI secrets 与本机 git 忽略的 `.env.build`）：
 
@@ -149,15 +151,24 @@ pub struct EngineSettings {                                  // Settings.engines
 
 **内置服务的多个模型**（2026-10-08 用户要求：内置润色提供 Qwen 与 GPT-OSS 等多个模型）：`VOLTIP_REFINE_MODEL`（识别的 `VOLTIP_ASR_MODEL` 同理）可以是逗号分隔的列表，`BuiltIn::models` 按顺序给出，第一个是默认。内置服务卡片在列表多于一个时显示模型下拉框，选中的存为 `providers.builtin.llm_model`；选回第一个时不保存，以后的构建换了默认也跟着走。设置里的模型不在本构建的列表中时用默认模型。候补模型（§3.5）可以是内置服务的另一个模型；内置服务的候补项模型为空时指它卡片上选的那个。内置网关把请求原样转给 Groq，列表里的模型由网关所在账户的免费层提供（2026-10-08 经首尔网关实测 `qwen/qwen3.8-27b`、`openai/gpt-oss-120b`、`openai/gpt-oss-20b` 都回 200）。
 
-**Google AI Studio**（2026-10-08 用户决定：作为独立服务商，用户填自己的密钥，从列表里选模型而不是手填）：只做润色，基址 `https://generativelanguage.googleapis.com/v1beta/openai`，预设为有免费额度的 `gemini-3.8-flash`、`gemini-3.5-flash-lite`、`gemini-3.1-flash-lite`、`gemini-2.5-flash`、`gemini-2.5-pro`（ai.google.dev 的定价页，2026-10-08）。这个基址没有 `/v1`，`voltip_refine::normalize_base_url` 对这个主机不追加。它的 `GET /models` 把模型写成 `models/gemini-…`，还列出嵌入、图像、语音、视频模型：服务商列出的模型（§3.3）只留 Gemini 与 Gemma 的文本模型，并去掉前缀，下拉框里就是可选的模型。卡片说明写明免费层的内容可能被 Google 用于改进产品。
+**Google AI Studio**（2026-10-08 用户决定：作为独立服务商，用户填自己的密钥，从列表里选模型而不是手填）：只做润色，基址 `https://generativelanguage.googleapis.com/v1beta/openai`，预设为有免费额度的 `gemini-3.5-flash-lite`、`gemini-3.8-flash`、`gemini-3.1-flash-lite`（ai.google.dev 的定价页，2026-10-08）。2026-10-24 复查后改为 Flash-Lite 在前，并去掉 2.5：`gemini-3.8-flash` 连续 40 分钟对润色回 503「This model is currently experiencing high demand」，`gemini-3.1-flash-lite` 也回 503，`gemini-3.5-flash-lite` 1–6 秒回答；`gemini-2.5-flash`、`gemini-2.5-pro` 回 404「no longer available to new users」（§3.6）。这个基址没有 `/v1`，`voltip_refine::normalize_base_url` 对这个主机不追加。它的 `GET /models` 把模型写成 `models/gemini-…`，还列出嵌入、图像、语音、视频模型：服务商列出的模型（§3.3）只留 Gemini 与 Gemma 的文本模型，并去掉前缀，下拉框里就是可选的模型。卡片说明写明免费层的内容可能被 Google 用于改进产品。
 
 两个令牌都是服务端可随时吊销的应用令牌，不是任何服务商的 API 密钥：服务商密钥只放在服务端，打包脚本扫描二进制，发现 `gsk_…` / `sk-…` 形式的密钥就拒绝出包。
 
 **密钥**：`provider_key_set { provider, kind, value }`（`value: null` 删除）写进系统钥匙串（条目 `provider-key.<id>`，自定义接口为 `provider-key.custom-asr` / `-llm`）。界面只看到 `SecretState`（有没有、来自哪里），永远拿不到值。一把密钥只发给它所属的服务商：换了服务商或改了自定义地址，旧密钥不会跟过去，内置令牌也只发给内置服务（回归测试 `regression_keys_never_leave_their_provider`）。
 
+### 3.2 中国站与国际站（2026-10-25）
+
+Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平台 `open.bigmodel.cn` / Z.ai `api.z.ai`）各有一个中国站和一个国际站，两站的账号和密钥不通用。用户决定一家服务商一张卡片，在卡片里切换站点（2026-10-25）：
+
+- 目录里每个站点有自己的接口地址和密钥页（`ServicePreset::sites`、`ProviderSite`），第一个是默认站点，地址与服务的默认地址相同；只有一个地址的服务商没有站点。`ServiceStatus.sites` 把站点和地址下发给界面。
+- 设置抽屉的「连接」里有「站点」切换：选默认站点时清空接口地址（之后目录里的地址变了也跟着走），选另一个站点时把它的地址填进接口地址。接口地址为空时选中默认站点，填的是某个站点的地址时选中那个站点，其他地址（代理、套餐的专属地址）两个都不选（`siteOf`、`siteUrl`）。没有新的设置项：保存的仍是 `llm_url`。
+- 「获取密钥」打开所选站点的密钥页：`provider_console_open { provider, page?, site? }`，外壳只打开目录里的地址（`ProviderId::console_page(page, site)`）；站点不属于这家服务商时打开它自己的密钥页。
+- 一家服务商仍只存一把密钥（`provider-key.kimi`、`provider-key.glm`）；切换站点后要换成那个站点的密钥，切换下方的说明写明这一点。
+
 ### 3.3 测试连接与模型列表（2026-10-12）
 
-**测试连接**：`provider_probe { provider, kind, base_url?, key? }` 请求 `GET {base}/models`，结果以 `provider_probe` 事件返回模型列表或失败原因（`ProbeFailure`，不含主机名，内置服务的地址也不会借错误信息泄露）。列表按服务筛选（见下），内置服务只计本构建提供的模型。`provider_console_open { provider, page? }` 在浏览器里打开该服务商的密钥页（`page` 省略或为 `key`）或额度页（`quota`，目前只有阿里云百炼，§3.5）；外壳只打开目录里的地址（`ProviderId::console_page`），界面只给出服务商和页面。
+**测试连接**：`provider_probe { provider, kind, base_url?, key? }` 请求 `GET {base}/models`，结果以 `provider_probe` 事件返回模型列表或失败原因（`ProbeFailure`，不含主机名，内置服务的地址也不会借错误信息泄露）。列表按服务筛选（见下），内置服务只计本构建提供的模型。`provider_console_open { provider, page?, site? }` 在浏览器里打开该服务商的密钥页（`page` 省略或为 `key`；有两个站点的服务商打开 `site` 的，§3.2）或额度页（`quota`，目前只有阿里云百炼，§3.5）；外壳只打开目录里的地址（`ProviderId::console_page`），界面只给出服务商、页面和站点。
 
 **模型列表**（2026-10-12 用户反馈：模型下拉框只有内置的几个预设，测试连接却显示很多模型；保存密钥后，每次打开模型列表都应带出服务商最新的模型，不必手填模型 ID）：
 
@@ -207,8 +218,8 @@ pub struct EngineSettings {                                  // Settings.engines
 
 用户需求（2026-10-05）：内置润色服务限流时，界面要有提示，并引导用户改用自己的服务商（例如免费的 Groq 密钥）。此前润色失败只是少了「· 已润色」，原因只以英文字符串存在 `refine_error` 里，界面不显示。内置润色服务用 Groq 免费层，限额按组织计算（`qwen/qwen3.8-27b` 每天 20 万 token），所有用户共用。
 
-- **原因分类**：`voltip_core::RefineFailure { rate_limited, quota, unconfigured, too_long, empty, failed }`，是 `refine_error` 的类别，`refine_error` 仍保留详细说明。`DictationError::RateLimited { service, detail }` 表示服务暂时拒绝（HTTP 429），由 `voltip_cloud::refine_error` 从 `RefineError::RateLimited` 转换而来（识别的 429 不变，仍为 `Asr`）。它不是额度用完，候补模型列表不会因它切换（§3.5）。失败码对应 `asr` / `refine`。`steps::run_refine` 按错误给出类别，`RefinePlan::Skip` 携带 `unconfigured` / `too_long`，空结果为 `empty`。
-- **记录**：`DictationPhase::Done.refine_failure`、`HistoryEntry.refine_failure`、本机服务的 `ServeOutcome.refine_failure`（`verbose_json` 的 `voltip` 对象），均可省略；旧记录没有这一项。
+- **原因分类**：`voltip_core::RefineFailure { rate_limited, quota, unconfigured, too_long, empty, failed }`，是 `refine_error` 的类别，`refine_error` 仍保留详细说明。`DictationError::RateLimited { service, detail }` 表示服务暂时拒绝（HTTP 429），由 `voltip_cloud::refine_error` 从 `RefineError::RateLimited` 转换而来（识别的 429 不变，仍为 `Asr`）。`DictationError::Overloaded`（「服务繁忙：…」）表示服务暂时处理不过来（HTTP 503，`RefineError::Overloaded`），类别同为 `rate_limited`。两者都不是额度用完，候补模型列表不会因它们切换（§3.5）。失败码对应 `asr` / `refine`。`steps::run_refine` 按错误给出类别，`RefinePlan::Skip` 携带 `unconfigured` / `too_long`，空结果为 `empty`。
+- **记录**：`DictationPhase::Done.refine_failure`、`HistoryEntry.refine_failure`、本机服务的 `ServeOutcome.refine_failure`（`verbose_json` 的 `voltip` 对象），均可省略；旧记录没有这一项。请求失败时（`rate_limited`、`quota`、`failed`），`HistoryEntry.refine_error` 保存客户端报告的原因；没有发出请求（`unconfigured`、`too_long`）和空结果只有类别，不保存。
 - **提示**（`runtime/notice.rs`，`UiState.refine_notice: Option<RefineNotice { failure, at_ms }>`，事件 `refine_notice { notice }`）：
   - 出现：一次听写结束为 `Done`，`refine_failure` 为 `rate_limited` 或 `quota`，且润色服务商是内置服务。同一类别再次出现时不重复发事件。
   - 消失：之后有一次听写润色成功；润色服务商改为内置服务以外的服务商；用户关闭（命令 `refine_notice_close`，两个壳都注册）。关闭后 `REFINE_NOTICE_SNOOZE_MS = 24 h` 内不再出现，这一记录只在内存里，重启后可能再次出现。
@@ -218,6 +229,7 @@ pub struct EngineSettings {                                  // Settings.engines
   - `dictationPhaseLabel`（首次设置的试听写结果行）在要求润色但未生效时加上「· 未润色」。
   - 悬浮窗：插入后的胶囊在标签后注明「未润色 · 服务繁忙」等原因（`Pill` 的 `note`，带黄色指示灯，文字用胶囊自己的颜色），与胶囊一起在 2.5 秒后消失（2026-10-05 用户要求）。
   - 历史详情的「润色模型」显示「未润色 · 服务繁忙」等原因（`refineModelText`），桌面与手机相同。
+  - 桌面历史详情：耗时一行写「润色 — · 服务繁忙」等原因，只有没有要求润色时才写「未启用」；有 `refine_error` 的记录在下方显示一句说明和「原因：…」（`RefineNote`，含服务返回的话，§3.12）；手机的记录详情多一行「润色失败原因」。
 - **Groq 预设模型**：`llama-3.3-70b-versatile` 已只对企业账号开放（console.groq.com/docs/models，2026-10-05），列表改为 `qwen/qwen3.8-27b`、`openai/gpt-oss-120b`、`openai/gpt-oss-20b`。
 
 ### 3.7 Responses 接口（2026-10-05）
@@ -274,6 +286,68 @@ pub struct EngineSettings {                                  // Settings.engines
   - 润色的回答在 `max_tokens` 处被截断（`finish_reason: length`）时按失败处理（`RefineError::Truncated`），插入识别原文，与语音编辑相同；此前会插入截断后的半截文字。
 - **实测**（2026-10-12，用本分支构建的 `voltip-server` 经首尔网关）：内置服务的 `openai/gpt-oss-120b`、`openai/gpt-oss-20b`、`qwen/qwen3.8-27b` 对 10 s 与 37.7 s 的样音都润色成功；`openai/gpt-oss-120b` 用 8 个内置预设各润色一次，全部成功。
 - **测试**：`voltip-refine` 的 `regression_a_model_that_reasons_first_gets_low_effort_and_room_to_reason`、`regression_a_clean_up_cut_off_at_the_limit_is_refused`（去掉修复时两者都失败）。
+- 2026-10-24 起 Gemini 也这样处理（§3.11），2026-10-25 起按模型系列决定请求带什么（§3.13）。
+
+### 3.11 Google AI Studio 的润色失败（2026-10-24）
+
+用户报告（2026-10-24）：选用 Google AI Studio，测试连接显示 20 个可用模型，但润色一直失败，悬浮窗显示「请求失败」，历史的耗时一行写「润色 — · 未启用」，也没有日志可以查看；怀疑没有走系统代理。
+
+- **排查结论**（在用户的 Windows 上，用保存的密钥按客户端的请求原样调用）：
+  - 系统代理生效：`GET /models` 返回 200，与测试连接一致。
+  - `gemini-3.8-flash` 连续 40 分钟回 503 `UNAVAILABLE`「This model is currently experiencing high demand」，或 40 秒无响应；`gemini-3.1-flash-lite` 也回 503，`gemini-3.5-flash-lite` 1–6 秒回答。Google 的错误体是数组 `[{"error": {...}}]`，`code` 是数字。
+  - `gemini-3.8-flash` 有余量时也失败：不带 `reasoning_effort` 时短句的 152 个 token 中 146 个用于思考，`finish_reason: length`，回答截断为「请问现在」（`RefineError::Truncated`）。`reasoning_effort: "low"` 时不思考或很少思考（`gemini-3.1-flash-lite` 用了 110 个）；`minimal` 被 `gemini-3.8-flash` 拒绝，`none` 被所有 3.x 模型拒绝。
+  - 失败原因只到达 `Done.refine_error`，历史只保存类别；桌面不写日志文件，原因无处可查。
+- **处理**：
+  - `voltip-refine`：`error_fields` 读数组形式的错误体；503 为 `RefineError::Overloaded`；其他拒绝的 `Server.body` 用服务的 `error.message`，没有时才用原始响应体。
+  - 模型名去掉前缀后以 `gemini-` 开头时，请求带 `reasoning_effort: "low"`，`max_tokens` 再加 1 024（Gemini 2.5 的 low 是 1 024 个 token 的思考预算），仍不超过上限。Gemma 不变。
+  - `voltip-core`：`DictationError::Overloaded` 归为 `rate_limited`（§3.6）；`HistoryEntry.refine_error` 保存请求失败的原因；桌面历史详情显示原因（§3.6 界面）。所有服务商的拒绝都带上服务返回的话见 §3.12。
+  - Google 的预设模型改为 Flash-Lite 在前，去掉 2.5（§3）。
+- **测试**：`voltip-refine` 的 `regression_an_overloaded_model_is_told_apart_with_the_services_message`、`regression_gemini_gets_low_effort_and_room_to_think`，`voltip-core` 的 `regression_the_history_keeps_why_the_clean_up_failed`，桌面 `History.test.tsx` 的 "a clean-up the service turned down says so in the timings"（去掉修复时都失败）。
+
+### 3.12 服务返回的错误（2026-10-24）
+
+用户要求（2026-10-24）：「所有的模型和 provider 都应返回上游的错误日志精简吧，否则用户不知道什么问题」。此前只有额度用完（`QuotaExhausted`）和百炼的服务错误（`Service`）带服务的原话；401/403 只说「密钥被拒绝」，429 只说「请求过于频繁」，其他状态码带截断的原始响应体（JSON 原样），测试连接只有状态码，识别失败的标签「识别服务出错」不带原因。
+
+- **`crates/voltip-reply`**（识别和润色客户端共用，不依赖其他 Voltip crate）：
+  - `error_fields(body)`：各服务商错误体的 `code` 与 `message`：OpenAI 的 `{"error": {"code", "message"}}`（Groq、DeepSeek、vLLM、自建网关）、百炼与 SiliconFlow 的 `{"code", "message"}`、Google AI Studio 的 `[{"error": {"code", "message", "status"}}]`、Ollama 的 `{"error": "…"}`、FastAPI 的 `{"detail": …}`。代码依次取字符串 `code`、Google 的 `status`、OpenAI 的 `type`、数字 `code`。
+  - `summary(body)`：要显示的话。JSON 取消息，消息里没有代码时在后面加「(代码)」（三位以内的数字代码与状态码重复，不加）；没有消息的 JSON 原样（空对象、空数组不显示）；HTML 取 `<title>`，没有时去掉标签；其他文本原样。
+  - `clean(text)`：合并空白；遮住 `Bearer` 令牌、`sk-` / `gsk_` / `xai-` / `AIza` 开头的密钥（含 OpenAI 回显的半遮盖密钥）、`org_` / `org-` 账号 ID（Groq 的限流消息写出组织 ID，内置服务的就是项目自己的账号）、URL 查询里的 `key=` / `token=` 等、32 位以上字母数字混合的串；截到 200 字（`MAX_SUMMARY_CHARS`，含省略号）。
+- **客户端**：`AsrError::Unauthorized { message }`、`RateLimited { retry_after_ms, message }`、`Server { status, body }`，`RefineError` 同样，另有 `Overloaded { message }`（§3.11）；`body` / `message` 都是 `summary` 的结果，`QuotaExhausted` 与 `Service` 的消息经过 `clean`。OpenAI 兼容接口、百炼的 HTTP 协议、实时识别的握手与 `task-failed`、润色与模型列表（测试连接）都这样处理。错误的显示文字是「ASR rejected the credentials: Incorrect API key provided (invalid_api_key)」这样的英文前缀加服务的原话，核心的 `DictationError` 再加前缀（「asr: 」「服务繁忙：」等）。
+- **测试连接**：`ProbeError.detail` / `ProbeOutcome::Failed.detail`（可省略）：服务返回的话，或连接错误（主机已在 `map_reqwest` 去掉）。界面写「密钥被拒绝：Incorrect API key provided (invalid_api_key)」（`engines.probeResult.withDetail`）。
+- **界面**：识别、润色、改写失败的标签带原因（`dictation.failureCode.asr`、`refine`、`dictation.edit.refineFailed` 的 `{reason}`）：悬浮窗、首页的结果行和历史记录都显示。悬浮窗里较长的原因截断显示（最宽 380 px），完整内容在提示里；润色失败的记录详情显示「原因：…」（§3.6）。原因里客户端自己的英文说法（`ASR rejected the credentials`、`refine service overloaded (HTTP 503)` 等，即两个 `error.rs` 的 `Display`）由 `serviceReasonText`（`packages/shared/src/labels.ts`）换成界面语言（「密钥被拒绝」「服务繁忙」），核心加在前面的「请求过于频繁：」「服务繁忙：」「额度已用完：」一并去掉，服务的原话照原样跟在后面：「识别服务出错：密钥被拒绝：Incorrect API key provided (invalid_api_key)」。其他形式的原因只去掉机器前缀、原样显示。改 `Display` 时同步改这张表（2026-10-25：同步文档站时发现界面把「ASR rejected the credentials」夹在中文里）。
+- **测试**：`voltip-reply` 的单元测试（各服务商的错误体、HTML、遮盖 `regression_keys_tokens_and_accounts_are_masked`、截断），`voltip-asr` / `voltip-refine` 的错误映射测试改为断言服务的原话，`voltip-core` 的 `probe_reports_are_flat_and_tagged`，`engine-drafts.test.ts` 的 "a failed probe says what the service said"，`labels.test.ts`，`Pill.test.tsx` 的 "a failure with the service's words is cut in the pill"。
+
+### 3.13 国内服务商与 OpenRouter（2026-10-25）
+
+用户要求（2026-10-24）：「润色模型中 需要加入kimi GLM（Z.AI）等系列的支持 也可以调研下国内还有哪些热门provider一并支持」。用户选定 Kimi、智谱 GLM、火山方舟（豆包）、腾讯混元、小米 MiMo 和 OpenRouter；MiniMax、阶跃星辰、百度千帆、魔搭未选。六家都只用于润色，都走 OpenAI 兼容的 chat completions，都有 `GET /models`。
+
+| 服务商 | 地址 | 推荐模型 | 说明 |
+|---|---|---|---|
+| Kimi | 中国站 `https://api.moonshot.cn/v1`，国际站 `https://api.moonshot.ai/v1`（§3.2） | `kimi-k3.1-pro-highspeed`、`kimi-k3.1-pro`、`kimi-k3` | K2 系列 2026-10-31 起不再对新用户开放，年底下线 |
+| 智谱 GLM | 中国站 `https://open.bigmodel.cn/api/paas/v4`，国际站 Z.ai `https://api.z.ai/api/paas/v4`（§3.2） | `glm-5.3-flash`、`glm-4.7-flash`（两站都免费）、`glm-5.3` | 文档没写 `GET /models`，Cherry Studio 等客户端在用 |
+| 火山方舟 | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-seed-2-1-lite-260915`、`doubao-seed-2-1-turbo-260628`、`doubao-seed-2-0-mini-260428` | 模型 ID 带发布日期；模型要先在方舟控制台的「开通管理」中开通 |
+| 腾讯混元 | `https://tokenhub.tencentmaas.com/v1`（腾讯云 TokenHub，广州） | `hy3`、`hy4-preview` | 旧的混元平台在 2026-06-22 停用了 46 个旧模型，新模型在 TokenHub，它也提供其他厂商的模型；未开通的模型回 402；新加坡站 `https://tokenhub-intl.tencentmaas.com/v1` 的密钥与广州站不通用，可以填进接口地址 |
+| 小米 MiMo | `https://api.xiaomimimo.com/v1` | `mimo-v2.6-flash`、`mimo-v2.6-pro` | 2.5 系列 2026-10-21 下线；Token Plan 的专属地址可以填进接口地址 |
+| OpenRouter | `https://openrouter.ai/api/v1` | `google/gemini-3.5-flash-lite`、`deepseek/deepseek-v4-flash`、`openai/gpt-6-luna` | 一把密钥使用多家厂商的模型 |
+
+以上于 2026-10-25 按 platform.kimi.com、docs.z.ai、docs.bigmodel.cn、docs.volcengine.com、cloud.tencent.com/document/product/1823、mimo.mi.com/docs 和 openrouter.ai/api/v1/models 核对。
+
+**让模型直接回答**（`voltip_refine` 的 `chat_controls`）：这些模型大多先推理再回答，推理计入 `max_tokens`（§3.10）。请求带什么按模型名（去掉 `moonshotai/` 等前缀）决定，在哪里调用都一样，例如 TokenHub 上的 `kimi-k3` 和 OpenRouter 上的 `moonshotai/kimi-k3`：
+
+- 不能关闭推理、接受推理强度的模型（gpt-oss、Gemini、Kimi K3 与 K3.1、GLM-5.3 系列）：`reasoning_effort: "low"`，`max_tokens` 再加推理的余量（gpt-oss 256，其余 1 024），不超过上限。
+- 能关闭推理的模型（GLM-4.5 至 GLM-5.2、Kimi K2.6、小米 MiMo、腾讯 Hy3 与 Hy4、豆包 Seed 系列）：`thinking: {"type": "disabled"}`。
+- Kimi K2.7 Code 总要推理，也不接受推理强度：只加余量。
+- Kimi 的模型都固定 temperature（K3 为 1.0），传其他值回 400，经 OpenRouter 调用也一样：请求不带 `temperature`。其他模型仍为 0.2。
+- 经 OpenRouter 时用它自己的 `reasoning: {"effort": …}`，不带厂商的字段：不能关闭推理的模型为 `low`，能关闭的为 `none`。
+- 其他模型的请求不变；阿里云百炼的地址仍带 `enable_thinking: false`（§3.4）。
+
+**模型列表**（§3.3）：火山方舟、TokenHub 和智谱还列出图像、视频和图片文字识别模型，润色另外去掉 ID 含 seedream、seedance、vidu、cogview、cogvideo、ocr 的模型。
+
+**错误里的密钥**（§3.12）：智谱的密钥形如 `<32 位十六进制>.<16 位字母数字>`，小米 MiMo 套餐的密钥以 `tp-`、`ttp-` 开头，都整段遮住。
+
+**未在真实账户上验证**：没有这几家的密钥。只用无效密钥核对了地址与 `GET /models`：Kimi、TokenHub、小米 MiMo 的 `/models` 回 401，OpenRouter 的不要密钥、回 200，无效路径都回 404；智谱和火山方舟先鉴权，`/models` 与无效路径都回 401。请求参数按各家文档。
+
+**测试**：`voltip-core` 的 `a_vendors_sites_start_with_its_default_and_have_their_own_key_pages`、`each_service_offers_the_listed_models_it_can_use`；`voltip-refine` 的 `each_family_is_asked_to_answer_at_once_its_own_way`、`regression_kimi_gets_no_temperature_and_glm_no_thinking`；`voltip-reply` 的 `regression_keys_tokens_and_accounts_are_masked`；`packages/ui` 的 `switches Kimi between its China and international sites, each with its own key page`；手机的 `Kimi's sheet switches between its China and international sites`。
 
 ## 4. 历史记录（`voltip_core::history`）
 
@@ -459,8 +533,10 @@ pub struct HistoryEntry {
 - **状态**（`UiEvent::Update` / `UiState.update`，`#[serde(tag = "state")]`）：`idle` → `checking` → `up_to_date { version, checked_at }` | `available { version, current, notes?, date? }` → `downloading { version, received, total? }` → `ready { version }` → `installing { version }`；任一步失败 → `failed { message }`；未配置 → `disabled`。由 shell 产生，经 `Bridge::publish` 折叠进状态（同热键状态）。
 - **手动路径**：`update_check` 只问清单；`update_install`（「立即重启更新」）下载（带进度）→ 验签 → `ready` → `installing` → 安装：Windows 由 NSIS 安装器在后台接管、不显示窗口，装完自行重启应用（见下一条）；macOS / Linux 原地替换后 shell 请求 Tauri 重启进程。没有待安装包时 `update_install` 先检查一次。
 - **Windows 静默安装**（用户 2026-10-17：应用内升级会弹出 Windows 的安装框，参考 winer 的做法改为后台安装并重启）：插件按 `plugins.updater.windows.installMode` 启动安装器（`/UPDATE /R /ARGS …`，`/R` 让安装器装完后重新打开应用）。`UpdaterConfig::plugin_config` 按二进制被打进的包设置它（`windows_install_mode(tauri::utils::platform::bundle_type())`）：NSIS 包为 `quiet`（`/S`，没有任何窗口；按用户安装，不需要提权），其他包（MSI，或打包器没有标记的 exe）保持插件默认的 `passive`（`/P`，进度窗口，需要提权的包仍能弹出提权确认）。0.1.6 及更早的版本仍以 `passive` 启动新版本的安装器，所以新安装器自带钩子 `src-tauri/nsis/installer-hooks.nsh`（`tauri.windows.conf.json` 的 `nsis.installerHooks`）：命令行同时有 `/P` 和 `/UPDATE` 时，在 MUI 初始化界面（`MUI_CUSTOMFUNCTION_GUIINIT`，第一帧之前）把窗口设为分层且完全透明（`WS_EX_LAYERED` + alpha 0）、不进任务栏（`WS_EX_TOOLWINDOW`）、不抢焦点（`WS_EX_NOACTIVATE`），再隐藏；复制文件前（`NSIS_HOOK_PREINSTALL`）再隐藏一次。用户自己运行的安装器不受影响。验证：`update.rs` 的 `regression_a_windows_update_runs_the_nsis_installer_without_a_window`（注入的配置经插件自己的 `Config` 解析为 `quiet`，参数 `/S`）、`tests/bundle.rs` 的 `windows_installer_hides_its_window_when_the_updater_runs_it`，以及 CI `windows-native` 在真实桌面上以两种参数各运行一次安装器（`scripts/smoke-windows-update.ps1`：每 5 ms 枚举安装器的顶层窗口，可见且不透明的一次也不允许；安装器退出码为 0，并重新打开已安装的 Voltip）。
-- **自动路径**（开关打开且构建带更新源）：启动 10 s 后检查，有新版本则后台下载到 `ready`，**不**安装；设置页显示「立即重启更新」。到达 `ready` 的版本记在 app data 目录的 `update-ready.json`；用户若直接退出再启动，下次启动检查到**同一版本**时立刻下载安装并重启（这就是「重启应用即可更新」）；比记录更新的版本仍先走 `ready`，从不悄悄安装用户没见过的包。运行中把开关打开会立即检查一次（只下载）。下载好的包不跨进程保留，所以第二次启动会重新下载。
-- **网络与失败原因**（用户报告 2026-09-29）：清单请求与安装包下载都设了连接超时 `CONNECT_TIMEOUT`（15 s，含 TCP 与 TLS）和读取超时 `READ_TIMEOUT`（30 s，任一次读取停顿超过即失败）；插件本身不设，原先要等操作系统放弃（Windows 约 20 s，其他系统更久），连接无响应时会一直停在「正在检查更新…」。`failed` 的 `message` 是完整的原因链（`update::describe`），例如 `error sending request for url (…): client error (Connect): tcp connect error: Connection refused (os error 111)`；原先只有第一段，看不出是 DNS、连接、TLS 还是超时。服务器返回非 2xx 时插件只报 `Could not fetch a valid release JSON from the remote`，不带状态码。代理：reqwest 未开 `system-proxy`，只认 `HTTP(S)_PROXY` 环境变量和 TUN，不读 Windows / macOS 的系统代理设置。
+- **自动路径**（开关打开且构建带更新源）：启动 10 s 后检查，有新版本则后台下载到 `ready`，**不**安装；标题栏显示「重启以更新」，设置页显示「重启并更新」。到达 `ready` 的版本记在 app data 目录的 `update-ready.json`；用户若直接退出再启动，下次启动检查到**同一版本**时立刻下载安装并重启（这就是「重启应用即可更新」）；比记录更新的版本仍先走 `ready`，从不悄悄安装用户没见过的包。运行中把开关打开会立即检查一次（只下载）。下载好的包不跨进程保留，所以第二次启动会重新下载。
+- **运行期间再检查**（用户 2026-10-25：开启自动更新后定时检测升级并自动下载，在标题栏提示，点击后重启完成安装；做法同 Lockra 0.16.3）：常驻托盘几天的应用只在启动时检查，就要到下次启动才知道有新版本。开关打开时，每次运行结束（手动检查也算）都把下一次检查排在 `AUTO_CHECK_INTERVAL`（4 小时）之后（`update::AutoSchedule`，在 `UpdateSlot::finish` 里，先释放占用、记下最终状态，再排下一次，最后广播）；已经排好、更早到期的检查（启动后那一次）保留。规则：只有启动后那一次检查可以安装 `update-ready.json` 记下的版本，到期时用 `std::mem::take` 取走这个许可，之后的检查只下载，所以几小时后的一次检查不会在用户工作时重启应用；结果是 `ready` 或 `installing` 时不再排下一次，等用户重启（比已下载版本更新的发布，由重启后的启动检查发现）；失败后同样 4 小时后再试，不会连续重试；关掉开关时清掉已排的检查和安装许可，重新打开时立即检查一次、只下载；开关关闭时手动检查不排任何检查。一个任务（`follow_settings`）睡到下一次到期，设置变化和每次运行结束（`Notify`）都会唤醒它；到期时正在进行的运行（用户自己的）会让这次检查以 busy 被拒并丢掉，由那次运行结束时排下一次。时钟是单调时钟（`tokio::time::Instant`），电脑睡眠的时间不计入。标题栏的「重启以更新」一次点击就开始安装（打开对话框并调用 `update_install`，对话框直接显示「正在安装」），悬停提示写明版本「重启 Voltip，完成更新到 {version}」；设置页「自动更新」的说明写明两个时间。
+- **测试构建**：编译期变量 `VOLTIP_UPDATE_INTERVAL_SECS` 把运行期间的间隔改短（秒，至少 60），发布构建不设。清单地址是 `http://` 且所有 `http://` 地址都在本机或局域网（`localhost`、回环地址、私有或链路本地 IPv4，`UpdaterConfig::local_http`）时，注入的配置带 `dangerousInsecureTransportProtocol`：插件在发布构建里拒绝 http 地址，否则这样的测试构建连启动都会失败；公网主机仍必须是 https，安装包照旧验签。用于在真机上对着局域网里的清单服务器验收更新。
+- **网络与失败原因**（用户报告 2026-09-29）：清单请求与安装包下载都设了连接超时 `CONNECT_TIMEOUT`（15 s，含 TCP 与 TLS）和读取超时 `READ_TIMEOUT`（30 s，任一次读取停顿超过即失败）；插件本身不设，原先要等操作系统放弃（Windows 约 20 s，其他系统更久），连接无响应时会一直停在「正在检查更新…」。`failed` 的 `message` 是完整的原因链（`update::describe`），例如 `error sending request for url (…): client error (Connect): tcp connect error: Connection refused (os error 111)`；原先只有第一段，看不出是 DNS、连接、TLS 还是超时。服务器返回非 2xx 时插件只报 `Could not fetch a valid release JSON from the remote`，不带状态码。代理按 §24 的设置连接（`voltip_net::Network::apply`）；0.1.3 及更早的版本只认 `HTTP(S)_PROXY` 环境变量和 TUN，不读 Windows / macOS 的系统代理设置。
 - **发布侧**：产出 `.sig` 与 `latest.json` 需要 `bundle.createUpdaterArtifacts: true` 与 CI 上的 `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`；`latest.json` 是 Release 的资产，`VOLTIP_UPDATE_URL` 即 `https://github.com/<owner>/<repo>/releases/latest/download/latest.json`（`docs/runbook.md` 发布）。本机打包取 `.env.build` 的同名变量：2026-10-10 本机测试包 0.0.53 的 `.env.build` 还是早已没有文件的旧网关镜像地址，检查更新报 403（`Could not fetch a valid release JSON from the remote`）与跨境 TLS 断开，`.env.build.example` 因此写明与发布相同的地址。
 
 

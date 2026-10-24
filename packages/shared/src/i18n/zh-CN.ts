@@ -236,8 +236,8 @@ export const zhCN = {
     failureCode: {
       no_speech: "没有听到声音",
       audio: "麦克风采集失败",
-      asr: "识别服务出错",
-      refine: "润色失败",
+      asr: "识别服务出错：{reason}",
+      refine: "润色失败：{reason}",
       inject: "未能插入到目标窗口",
       no_selection: "没有选中文本",
       selection_too_long: "选中文本过长（上限 2000 字）",
@@ -246,13 +246,32 @@ export const zhCN = {
       edit_in_terminal: "终端里不支持语音编辑：终端里的选区不能被替换",
       quota: "模型额度已用完",
     },
+    /** docs/dictation.md §3.12: the recognition and polish clients' own words before what the
+     *  service said (`serviceReasonText`); the service's words follow as they are. */
+    serviceReason: {
+      unauthorized: "密钥被拒绝",
+      rateLimited: "请求过于频繁",
+      rateLimitedRetry: "请求过于频繁（{s} 秒后可重试）",
+      overloaded: "服务繁忙",
+      server: "服务出错（HTTP {status}）",
+      network: "网络错误",
+      timeout: "请求超时",
+      badResponse: "无法读取服务的答复",
+      empty: "服务没有返回内容",
+      truncated: "结果超出输出长度上限",
+      quota: "额度已用完（{code}）",
+      service: "服务返回错误 {code}",
+      config: "设置无效",
+      audio: "录音格式不受支持",
+      said: "{reason}：{said}",
+    },
     /** Voice edit (docs/dictation.md §19): the phase line of an edit take. */
     edit: {
       listening: "正在听编辑指令… {elapsed}",
       refining: "改写中…",
       donePaste: "已替换 {n} 字 · {via}",
       doneClipboard: "改写结果已复制 {n} 字 · {via}",
-      refineFailed: "改写失败，选中文本未改动",
+      refineFailed: "改写失败，选中文本未改动：{reason}",
     },
     /** docs/dictation.md §22: the `audio` failure of a take that records more than the microphone. */
     audioFailure: {
@@ -613,6 +632,17 @@ export const zhCN = {
       openAccessibility: "打开辅助功能设置",
       details: "技术细节",
     },
+    /** Under an entry whose clean-up request failed (docs/dictation.md §3.6): the kind in words,
+     *  the service's own explanation under the technical details. */
+    refineNote: {
+      rate_limited: "润色服务繁忙，本次使用了识别原文。可以稍后再试，或在「AI 模型」页换一个模型。",
+      quota: "模型额度已用完，本次使用了识别原文。可以在「AI 模型」页换一个模型或服务商。",
+      failed: "润色请求失败，本次使用了识别原文。",
+      /** Before the reason the core reported, the service's words included (§3.12). */
+      reason: "原因：",
+      /** The phone's fact row of the same reason. */
+      reasonLabel: "润色失败原因",
+    },
     liveError: "实时识别中断，已改为整段识别：{reason}",
     /** Voice edit rows (docs/dictation.md §19.5): instruction → result, the original expandable. */
     edit: {
@@ -793,6 +823,8 @@ export const zhCN = {
       asr: "识别 {n} ms",
       refine: "润色 {n} ms",
       refineOff: "润色 — · 未启用",
+      /** A clean-up was asked for and its text was not used: why, as `dictation.refineFailure`. */
+      refineFailed: "润色 — · {reason}",
       total: "总计 {n} ms",
     },
     confirm: {
@@ -1060,6 +1092,8 @@ export const zhCN = {
       custom: "OpenAI 兼容接口",
     },
     detail: { connection: "连接" },
+    /** docs/dictation.md §3.2: a vendor's two sites. */
+    site: { cn: "中国站", intl: "国际站" },
     provider: {
       builtin: "内置服务",
       local: "本机",
@@ -1069,6 +1103,12 @@ export const zhCN = {
       siliconflow: "硅基流动",
       aliyun: "阿里云百炼",
       deepseek: "DeepSeek",
+      kimi: "Kimi",
+      glm: "智谱 GLM",
+      volcengine: "火山方舟",
+      hunyuan: "腾讯混元",
+      mimo: "小米 MiMo",
+      openrouter: "OpenRouter",
       ollama: "Ollama",
       custom: "自定义接口",
     },
@@ -1082,6 +1122,12 @@ export const zhCN = {
       siliconflow: "硅基流动托管的 SenseVoice 与开源大模型。",
       aliyun: "阿里云百炼的语音识别与千问大模型；实时识别模型在说话时就完成识别。",
       deepseek: "DeepSeek 的对话模型，只用于润色。",
+      kimi: "月之暗面的 Kimi 模型，只用于润色；可切换中国站与国际站，两个站点的账号和密钥不通用。",
+      glm: "智谱的 GLM 模型，只用于润色；中国站为智谱开放平台，国际站为 Z.ai，两个站点的账号和密钥不通用。",
+      volcengine: "火山方舟的豆包等模型，只用于润色；模型需先在方舟控制台的「开通管理」中开通。",
+      hunyuan: "腾讯云 TokenHub 上的混元等模型，只用于润色；模型需先在 TokenHub 控制台开通。",
+      mimo: "小米的 MiMo 模型，只用于润色。",
+      openrouter: "用一个密钥使用多家厂商的模型，只用于润色。",
       ollama: "本机 Ollama 里的模型，文本不离开这台电脑。",
       custom: "任意 OpenAI 兼容接口，例如 vLLM、LocalAI 或自建网关。",
     },
@@ -1115,6 +1161,8 @@ export const zhCN = {
       reasoningHelp: "只随 Responses 请求发送；不设置时使用服务的默认值。",
       baseUrl: "接口地址",
       baseUrlHelpVendor: "留空使用官方地址；需要代理或中转时再填写。",
+      site: "站点",
+      siteHelp: "两个站点的账号和密钥不通用，请使用所选站点创建的密钥。",
       baseUrlHelpCustom:
         "OpenAI 兼容地址，例如 http://192.168.1.20:8000/v1；也可以填写阿里云百炼的地址。",
       baseUrlHelpAliyun: "留空使用公共地址；使用业务空间的专属地址时在此填写。",
@@ -1155,6 +1203,8 @@ export const zhCN = {
       timeout: "连接超时",
       http_status: "服务返回错误（HTTP {status}）",
       bad_response: "返回内容不是模型列表",
+      /** A failed probe with what the service said (docs/dictation.md §3.12). */
+      withDetail: "{result}：{detail}",
     },
     check: {
       badUrl: "接口地址须以 http:// 或 https:// 开头",
@@ -1848,7 +1898,8 @@ export const zhCN = {
         "逐步检查权限、快捷键和语音模型，再试说一句。默认设置开箱即用，首次启动不再自动打开。",
       guideRun: "打开向导",
       autoUpdate: "自动更新",
-      autoUpdateHelp: "启动时检查更新并在后台下载；关闭后仅在点击「检查更新」时联网。",
+      autoUpdateHelp:
+        "启动 10 秒后检查更新，运行期间每 4 小时再检查一次，有新版本就在后台下载；下载完成后，点击标题栏的「重启以更新」即可完成安装。关闭后，仅在点击「检查更新」时联网。",
       checkUpdate: "检查更新",
       checking: "检查中…",
       installNow: "立即更新",
@@ -2626,6 +2677,7 @@ export const zhCN = {
       ready: "重启以更新",
     },
     badgeTitle: "查看更新",
+    badgeRestartTitle: "重启 Voltip，完成更新到 {version}",
   },
   feedback: {
     title: "反馈",

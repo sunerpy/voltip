@@ -97,4 +97,30 @@ describe("the phone's provider sheets", () => {
     await fireEvent.press(within(sheet).getByTestId("provider-quota"));
     expect(backend.quotaPagesOpened).toEqual(["aliyun", "aliyun"]);
   });
+
+  it("Kimi's sheet switches between its China and international sites (docs/dictation.md §3.2)", async () => {
+    const backend = new MockBackend({ role: "phone" });
+    await renderApp({ backend });
+    await openTab("settings");
+    await fireEvent.press(await screen.findByTestId("settings-ai"));
+    expect(
+      within(await screen.findByTestId("provider-llm-glm")).getByTestId("provider-mark-glm"),
+    ).toBeOnTheScreen();
+    const kimi = await screen.findByTestId("provider-llm-kimi");
+    await fireEvent.press(within(kimi).getByRole("button", { name: "Kimi" }));
+    const sheet = await screen.findByTestId("provider-sheet-sheet");
+    expect(within(sheet).getByTestId("provider-site")).toHaveTextContent(
+      /两个站点的账号和密钥不通用/,
+    );
+    await fireEvent.press(within(sheet).getByTestId("provider-site-intl"));
+    expect(within(sheet).getByTestId("provider-url")).toHaveProp(
+      "value",
+      "https://api.moonshot.ai/v1",
+    );
+    await fireEvent.press(within(sheet).getByText("获取密钥"));
+    expect(backend.consolesOpened).toEqual(["kimi"]);
+    expect(backend.consoleSites).toEqual(["intl"]);
+    await fireEvent.press(within(sheet).getByTestId("provider-site-cn"));
+    expect(within(sheet).getByTestId("provider-url")).toHaveProp("value", "");
+  });
 });

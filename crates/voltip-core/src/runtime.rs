@@ -2116,7 +2116,7 @@ impl Runtime {
     /// a task and answer with `ProviderProbe`. Problems found before any request (no URL, no key,
     /// no such service, no probe on this shell) are answered at once.
     fn probe_provider(&mut self, provider: ProviderId, kind: ServiceKind, base_url: Option<String>, key: Option<String>) -> Result<(), CoreError> {
-        let refused = |reason| ProbeReport { provider, kind, outcome: ProbeOutcome::Failed { reason, status: None } };
+        let refused = |reason| ProbeReport { provider, kind, outcome: ProbeOutcome::Failed { reason, status: None, detail: None } };
         let (url, key) = match self.probe_target(provider, kind, base_url, key) {
             Ok(target) => target,
             Err(reason) => {
@@ -2150,7 +2150,7 @@ impl Runtime {
             }
             let outcome = match models {
                 Ok(models) => ProbeOutcome::Ok { models, latency_ms },
-                Err(ProbeError { reason, status }) => ProbeOutcome::Failed { reason, status },
+                Err(ProbeError { reason, status, detail }) => ProbeOutcome::Failed { reason, status, detail },
             };
             if evt.send(CoreEvent::ProviderProbe(ProbeReport { provider, kind, outcome })).await.is_err() {
                 tracing::debug!("provider probe answered after the UI went away");

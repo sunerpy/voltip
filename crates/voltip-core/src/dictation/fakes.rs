@@ -547,6 +547,9 @@ pub const FAKE_QUOTA_DETAIL: &str = "fake: the model's quota is used up";
 /// The explanation a fake's rate limit carries (docs/dictation.md §3.6).
 pub const FAKE_RATE_LIMIT_DETAIL: &str = "fake: too many requests";
 
+/// The explanation a fake's overloaded service carries (docs/dictation.md §3.6).
+pub const FAKE_OVERLOADED_DETAIL: &str = "fake: more demand than the model can serve";
+
 impl FakeRefiner {
     fn with_reply(reply: Reply) -> Self {
         Self { reply, calls: AtomicUsize::new(0), inputs: Mutex::new(Vec::new()), edits: Mutex::new(Vec::new()), model: FAKE_REFINE_MODEL.to_owned() }
@@ -560,6 +563,12 @@ impl FakeRefiner {
     /// Always fails as a service that has too many requests for now (docs/dictation.md §3.6).
     pub fn rate_limited() -> Self {
         Self::with_reply(Reply::Err(DictationError::RateLimited { service: crate::providers::ServiceKind::Llm, detail: FAKE_RATE_LIMIT_DETAIL.into() }))
+    }
+
+    /// Always fails as a service with more requests than it can serve (HTTP 503, docs/dictation.md
+    /// §3.6).
+    pub fn overloaded() -> Self {
+        Self::with_reply(Reply::Err(DictationError::Overloaded { service: crate::providers::ServiceKind::Llm, detail: FAKE_OVERLOADED_DETAIL.into() }))
     }
 
     /// Its answers report `model` as the model that wrote them.
@@ -1204,6 +1213,7 @@ pub fn history_entry(text: &str) -> crate::HistoryEntry {
         asr_ms: FAKE_LATENCY_MS,
         refine_ms: None,
         refine_failure: None,
+        refine_error: None,
         outcome: crate::Outcome::Inserted { via: Via::Paste },
         starred: false,
         mode: crate::OutputMode::WholeTake,

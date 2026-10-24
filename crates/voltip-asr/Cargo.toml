@@ -30,6 +30,8 @@ url.workspace = true
 uuid.workspace = true
 # The proxy of the requests and of the realtime models' WebSocket (docs/dictation.md §24).
 voltip-net.workspace = true
+# What the service said when it refused a request, for the errors (docs/dictation.md §3.12).
+voltip-reply.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 webpki-root-certs.workspace = true

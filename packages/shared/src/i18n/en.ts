@@ -227,8 +227,8 @@ export const en: Messages = {
     failureCode: {
       no_speech: "No speech detected",
       audio: "Microphone capture failed",
-      asr: "Speech recognition failed",
-      refine: "Polishing failed",
+      asr: "Speech recognition failed: {reason}",
+      refine: "Polishing failed: {reason}",
       inject: "Could not insert into the target window",
       no_selection: "Nothing is selected",
       selection_too_long: "The selection is too long (2,000 characters at most)",
@@ -237,13 +237,30 @@ export const en: Messages = {
       edit_in_terminal: "Voice edit is off in terminals: a terminal's selection cannot be replaced",
       quota: "The model's quota is used up",
     },
+    serviceReason: {
+      unauthorized: "the key was refused",
+      rateLimited: "too many requests",
+      rateLimitedRetry: "too many requests (try again in {s} s)",
+      overloaded: "the service is busy",
+      server: "server error (HTTP {status})",
+      network: "network error",
+      timeout: "the request timed out",
+      badResponse: "the service's answer could not be read",
+      empty: "the service returned nothing",
+      truncated: "the answer was longer than the output limit",
+      quota: "the quota is used up ({code})",
+      service: "the service returned error {code}",
+      config: "invalid settings",
+      audio: "the recording's format is not supported",
+      said: "{reason}: {said}",
+    },
     /** Voice edit (docs/dictation.md §19): the phase line of an edit take. */
     edit: {
       listening: "Listening for the edit… {elapsed}",
       refining: "Rewriting…",
       donePaste: "Replaced with {n} chars · {via}",
       doneClipboard: "Rewrite copied, {n} chars · {via}",
-      refineFailed: "Rewrite failed; the selection is unchanged",
+      refineFailed: "Rewrite failed; the selection is unchanged: {reason}",
     },
     audioFailure: {
       system: "Computer audio could not be recorded",
@@ -605,6 +622,19 @@ export const en: Messages = {
       openAccessibility: "Open Accessibility settings",
       details: "Technical details",
     },
+    /** Under an entry whose clean-up request failed (docs/dictation.md §3.6): the kind in words,
+     *  the service's own explanation under the technical details. */
+    refineNote: {
+      rate_limited:
+        "The polish service is busy, so the transcript was used as it is. Try again later, or pick another model on the AI models page.",
+      quota:
+        "The model's quota is used up, so the transcript was used as it is. Pick another model or provider on the AI models page.",
+      failed: "The polish request failed, so the transcript was used as it is.",
+      /** Before the reason the core reported, the service's words included (§3.12). */
+      reason: "Reason: ",
+      /** The phone's fact row of the same reason. */
+      reasonLabel: "Why polish failed",
+    },
     liveError: "Live transcription stopped; the whole recording was transcribed instead: {reason}",
     /** Voice edit rows (docs/dictation.md §19.5): instruction → result, the original expandable. */
     edit: {
@@ -785,6 +815,8 @@ export const en: Messages = {
       asr: "Transcription {n} ms",
       refine: "Polish {n} ms",
       refineOff: "Polish — · off",
+      /** A clean-up was asked for and its text was not used: why, as `dictation.refineFailure`. */
+      refineFailed: "Polish — · {reason}",
       total: "Total {n} ms",
     },
     confirm: {
@@ -1056,6 +1088,7 @@ export const en: Messages = {
       custom: "OpenAI-compatible endpoint",
     },
     detail: { connection: "Connection" },
+    site: { cn: "China", intl: "International" },
     provider: {
       builtin: "Built-in service",
       local: "This computer",
@@ -1065,6 +1098,12 @@ export const en: Messages = {
       siliconflow: "SiliconFlow",
       aliyun: "Alibaba Cloud Model Studio",
       deepseek: "DeepSeek",
+      kimi: "Kimi",
+      glm: "Zhipu GLM",
+      volcengine: "Volcengine Ark",
+      hunyuan: "Tencent Hunyuan",
+      mimo: "Xiaomi MiMo",
+      openrouter: "OpenRouter",
       ollama: "Ollama",
       custom: "Custom endpoint",
     },
@@ -1079,6 +1118,14 @@ export const en: Messages = {
       aliyun:
         "Model Studio's speech recognition and Qwen models; its realtime models transcribe while you speak.",
       deepseek: "DeepSeek's chat models, for polish only.",
+      kimi: "Moonshot AI's Kimi models, for polish only; switch between the China and international sites, whose accounts and keys are separate.",
+      glm: "Zhipu's GLM models, for polish only; the China site is Zhipu's BigModel platform, the international one Z.ai, and their accounts and keys are separate.",
+      volcengine:
+        "Doubao and other models on Volcengine Ark, for polish only; enable a model under Model Activation in the Ark console first.",
+      hunyuan:
+        "Hunyuan and other models on Tencent Cloud TokenHub, for polish only; enable a model in the TokenHub console first.",
+      mimo: "Xiaomi's MiMo models, for polish only.",
+      openrouter: "Many vendors' models with one key, for polish only.",
       ollama: "Models in Ollama on this computer; text never leaves it.",
       custom: "Any OpenAI-compatible endpoint: vLLM, LocalAI or your own gateway.",
     },
@@ -1115,6 +1162,9 @@ export const en: Messages = {
       baseUrl: "Endpoint",
       baseUrlHelpVendor:
         "Leave empty for the official endpoint; fill in only for a proxy or relay.",
+      site: "Site",
+      siteHelp:
+        "The two sites have separate accounts and keys; use a key made on the selected site.",
       baseUrlHelpCustom:
         "An OpenAI-compatible endpoint, e.g. http://192.168.1.20:8000/v1; an Alibaba Cloud Model Studio address works too.",
       baseUrlHelpAliyun:
@@ -1156,6 +1206,8 @@ export const en: Messages = {
       timeout: "The connection timed out",
       http_status: "The service returned HTTP {status}",
       bad_response: "The response is not a model list",
+      /** A failed probe with what the service said (docs/dictation.md §3.12). */
+      withDetail: "{result}: {detail}",
     },
     check: {
       badUrl: "The endpoint must start with http:// or https://",
@@ -1877,7 +1929,7 @@ export const en: Messages = {
       guideRun: "Open the guide",
       autoUpdate: "Automatic updates",
       autoUpdateHelp:
-        "Check for updates at launch and download in the background; when off, the app only goes online when you press “Check for updates”.",
+        "Checks for updates 10 seconds after launch and every 4 hours while Voltip runs, and downloads a new version in the background; choose “Restart to update” in the title bar to install it. When off, Voltip goes online only when you press “Check for updates”.",
       checkUpdate: "Check for updates",
       checking: "Checking…",
       installNow: "Update now",
@@ -2698,6 +2750,7 @@ export const en: Messages = {
       ready: "Restart to update",
     },
     badgeTitle: "Show the update",
+    badgeRestartTitle: "Restart Voltip to finish updating to {version}",
   },
   feedback: {
     title: "Feedback",

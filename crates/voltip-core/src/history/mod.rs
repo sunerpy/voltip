@@ -116,6 +116,11 @@ pub struct HistoryEntry {
     /// it was, when none was asked for, and in entries written before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refine_failure: Option<crate::dictation::RefineFailure>,
+    /// The service's explanation when the clean-up's request failed (`refine_failure` is
+    /// `rate_limited`, `quota` or `failed`), as the client reported it: the history detail's
+    /// technical details (docs/dictation.md §3.6). Absent otherwise and in entries written before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refine_error: Option<String>,
     /// How it ended.
     pub outcome: Outcome,
     /// User flag.

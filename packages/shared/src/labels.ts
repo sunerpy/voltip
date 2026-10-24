@@ -357,14 +357,18 @@ function failureText(
 ): string {
   const code = phase.code;
   if (code === undefined || code === "unknown") return phase.message;
-  if (kind === "edit" && code === "refine") return translate(locale, "dictation.edit.refineFailed");
   // docs/dictation.md §22: what failed to record is not always the microphone.
   if (code === "audio" && (source === "system" || source === "mixed"))
     return translate(locale, `dictation.audioFailure.${source}`);
   const prefix = `${code}: `;
-  const reason = phase.message.startsWith(prefix)
+  // §3.12: the reason carries what the service said (a recognition or rewrite refusal), after the
+  // clients' own words in the interface's language.
+  const message = phase.message.startsWith(prefix)
     ? phase.message.slice(prefix.length)
     : phase.message;
+  const reason = code === "asr" || code === "refine" ? serviceReasonText(message, locale) : message;
+  if (kind === "edit" && code === "refine")
+    return translate(locale, "dictation.edit.refineFailed", { reason });
   return translate(locale, `dictation.failureCode.${code}`, { reason });
 }
 
@@ -701,6 +705,108 @@ const MACHINE_PREFIX = /^[a-z][a-z_]*(?:\.[a-z_]+)*(?: [a-z]+)?: /;
  *  (docs/frontend.md §8). */
 export function coreMessageText(message: string): string {
   return message.replace(MACHINE_PREFIX, "");
+}
+
+type ServiceReasonKey =
+  | "unauthorized"
+  | "rateLimited"
+  | "rateLimitedRetry"
+  | "overloaded"
+  | "server"
+  | "network"
+  | "timeout"
+  | "badResponse"
+  | "empty"
+  | "truncated"
+  | "quota"
+  | "service"
+  | "config"
+  | "audio";
+
+/** The recognition and polish clients' own words (`crates/voltip-asr/src/error.rs`,
+ *  `crates/voltip-refine/src/error.rs`, keep them in step): which phrase each opening is, the
+ *  parameters of that phrase, and what the service said after it. */
+const SERVICE_REASONS: readonly {
+  pattern: RegExp;
+  read: (m: RegExpExecArray) => {
+    key: ServiceReasonKey;
+    params?: Record<string, string>;
+    said?: string;
+  };
+}[] = [
+  {
+    pattern: /^(?:ASR|refine service) rejected the credentials(?:: ([\s\S]*))?$/,
+    read: (m) => ({ key: "unauthorized", said: m[1] }),
+  },
+  {
+    pattern: /^(?:ASR|refine service) rate limited(?: \(retry after (\d+) ms\))?(?:: ([\s\S]*))?$/,
+    read: (m) =>
+      m[1] === undefined
+        ? { key: "rateLimited", said: m[2] }
+        : {
+            key: "rateLimitedRetry",
+            params: { s: String(Math.max(1, Math.ceil(Number(m[1]) / 1000))) },
+            said: m[2],
+          },
+  },
+  {
+    pattern: /^refine service overloaded \(HTTP 503\)(?:: ([\s\S]*))?$/,
+    read: (m) => ({ key: "overloaded", said: m[1] }),
+  },
+  {
+    pattern: /^(?:ASR|refine) server error (\d{3})(?:: ([\s\S]*))?$/,
+    read: (m) => ({ key: "server", params: { status: m[1] ?? "" }, said: m[2] }),
+  },
+  {
+    pattern: /^(?:ASR|refine) network error: ([\s\S]*)$/,
+    read: (m) => ({ key: "network", said: m[1] }),
+  },
+  { pattern: /^(?:ASR|refine) request timed out$/, read: () => ({ key: "timeout" }) },
+  {
+    pattern: /^(?:ASR|refine service) returned an unexpected response: ([\s\S]*)$/,
+    read: (m) => ({ key: "badResponse", said: m[1] }),
+  },
+  { pattern: /^refine service returned an empty answer$/, read: () => ({ key: "empty" }) },
+  {
+    pattern: /^refine answer was cut off at the output limit$/,
+    read: () => ({ key: "truncated" }),
+  },
+  {
+    pattern: /^(?:ASR|refine) quota used up \(([^)]*)\): ([\s\S]*)$/,
+    read: (m) => ({ key: "quota", params: { code: m[1] ?? "" }, said: m[2] }),
+  },
+  {
+    pattern: /^ASR service error (\S+): ([\s\S]*)$/,
+    read: (m) => ({ key: "service", params: { code: m[1] ?? "" }, said: m[2] }),
+  },
+  {
+    pattern: /^invalid (?:ASR|refine) configuration: ([\s\S]*)$/,
+    read: (m) => ({ key: "config", said: m[1] }),
+  },
+  { pattern: /^ASR audio: ([\s\S]*)$/, read: (m) => ({ key: "audio", said: m[1] }) },
+];
+
+/** The core's own name for the kind of a refusal, before the client's words (`DictationError`'s
+ *  `RateLimited`, `Overloaded` and `QuotaExhausted`); the client's words name the kind again. */
+const CORE_KIND_PREFIX = /^(?:请求过于频繁|服务繁忙|额度已用完)：/;
+
+/** Why a recognition or a polish request failed, as the interface shows it (docs/dictation.md
+ *  §3.12): the clients' own English words (`ASR rejected the credentials`) in the interface's
+ *  language, and after them what the service said, as it said it. Text in any other shape is shown
+ *  as it came, without its machine prefix. */
+export function serviceReasonText(reason: string, locale: Locale = DEFAULT_LOCALE): string {
+  const text = coreMessageText(reason);
+  const words = text.replace(CORE_KIND_PREFIX, "");
+  for (const { pattern, read } of SERVICE_REASONS) {
+    const m = pattern.exec(words);
+    if (m === null) continue;
+    const { key, params, said } = read(m);
+    const label = translate(locale, `dictation.serviceReason.${key}`, params);
+    return said === undefined || said.length === 0
+      ? label
+      : translate(locale, "dictation.serviceReason.said", { reason: label, said });
+  }
+  return text;
 }
 
 /** The system calls a shortcut backend goes through: implementation, never shown. */

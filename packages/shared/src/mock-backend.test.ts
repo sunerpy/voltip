@@ -567,7 +567,11 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       refine_error: MOCK_REFINE_FAILED,
     });
     const entry = backend.peek().history_recent[0];
-    expect(entry).toMatchObject({ refined: false, refine_failure: "rate_limited" });
+    expect(entry).toMatchObject({
+      refined: false,
+      refine_failure: "rate_limited",
+      refine_error: MOCK_REFINE_FAILED,
+    });
     expect(entry?.refine_model).toBeUndefined();
     expect(entry?.preset).toBeUndefined();
   });
@@ -1177,6 +1181,12 @@ describe("MockBackend history, engines and secrets", () => {
       "siliconflow",
       "aliyun",
       "deepseek",
+      "kimi",
+      "glm",
+      "volcengine",
+      "hunyuan",
+      "mimo",
+      "openrouter",
       "ollama",
       "custom",
     ]);

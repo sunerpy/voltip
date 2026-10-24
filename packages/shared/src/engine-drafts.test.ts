@@ -14,6 +14,8 @@ import {
   providersFor,
   serviceTarget,
   shortModel,
+  siteOf,
+  siteUrl,
   withProvider,
 } from "./engine-drafts";
 import { defaultEngineSettings } from "./schema";
@@ -43,6 +45,26 @@ const SETTINGS: EngineSettings = {
 } as EngineSettings;
 
 describe("engine drafts (provider cards, desktop and phone)", () => {
+  it("docs/dictation.md §3.2: the URL field names a vendor's site, and a site fills the field", () => {
+    const kimi = service({
+      sites: [
+        { id: "cn", base_url: "https://api.moonshot.cn/v1" },
+        { id: "intl", base_url: "https://api.moonshot.ai/v1" },
+      ],
+    });
+    expect(siteOf(kimi, "")).toBe("cn");
+    expect(siteOf(kimi, "  ")).toBe("cn");
+    expect(siteOf(kimi, "https://api.moonshot.ai/v1")).toBe("intl");
+    expect(siteOf(kimi, " HTTPS://API.moonshot.AI/v1/ ")).toBe("intl");
+    expect(siteOf(kimi, "https://api.moonshot.cn/v1")).toBe("cn");
+    expect(siteOf(kimi, "https://proxy.example.test/v1")).toBeUndefined();
+    expect(siteOf(service(), "")).toBeUndefined();
+    // The default site empties the field, so the catalogue's address follows it.
+    expect(siteUrl(kimi, "cn")).toBe("");
+    expect(siteUrl(kimi, "intl")).toBe("https://api.moonshot.ai/v1");
+    expect(siteUrl(service(), "intl")).toBe("");
+  });
+
   it("lists the providers that offer a service", () => {
     const status = {
       providers: [
@@ -286,6 +308,41 @@ describe("engine drafts (provider cards, desktop and phone)", () => {
     expect(probeText({ provider: "groq", kind: "llm", result: "failed" }).text).toBe(
       t("engines.probeResult.unreachable", { status: 0 }),
     );
+  });
+
+  it("regression: section 3.12 a failed probe says what the service said", () => {
+    // 2026-10-24: a refused 测试连接 said only 密钥被拒绝 or 服务返回错误（HTTP 404）.
+    const refused = probeText(
+      {
+        provider: "openai",
+        kind: "llm",
+        result: "failed",
+        reason: "unauthorized",
+        detail: "Incorrect API key provided: sk-***. (invalid_api_key)",
+      },
+      t,
+    );
+    expect(refused).toEqual({
+      ok: false,
+      text: "密钥被拒绝：Incorrect API key provided: sk-***. (invalid_api_key)",
+    });
+    const gone = probeText(
+      {
+        provider: "google",
+        kind: "llm",
+        result: "failed",
+        reason: "http_status",
+        status: 404,
+        detail: "Not Found",
+      },
+      createTranslator("en").t,
+    );
+    expect(gone.text).toBe("The service returned HTTP 404: Not Found");
+    const blank = probeText(
+      { provider: "groq", kind: "llm", result: "failed", reason: "timeout", detail: "  " },
+      t,
+    );
+    expect(blank.text).toBe(t("engines.probeResult.timeout"));
   });
 
   it("names where a service sends its data", () => {

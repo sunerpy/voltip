@@ -46,7 +46,8 @@ https://github.com/user-attachments/assets/858ba275-ef2b-4864-ad8c-f189f354d6a9
   CPU otherwise.
 - Live preview while you speak (a streaming Zipformer model), and output as one block, sentence by
   sentence, or from the stream directly.
-- Clean-up by an LLM (the same providers, plus DeepSeek and a local Ollama), a personal dictionary
+- Clean-up by an LLM (the same providers, plus Google AI Studio, DeepSeek, Kimi, Zhipu GLM,
+  Volcengine Ark, Tencent Hunyuan, Xiaomi MiMo, OpenRouter and a local Ollama), a personal dictionary
   that fixes words the recogniser keeps getting wrong, literal and regex replacement rules, and
   Simplified / Traditional Chinese normalisation.
 - Voice edit: select text, hold `Ctrl+Alt+E`, say "make it more formal" or "translate to English",

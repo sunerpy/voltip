@@ -1,8 +1,10 @@
 //! The service providers the engines can talk to (docs/dictation.md §3): the service compiled into
-//! the build, the on-device models, a few OpenAI-compatible vendors and a custom endpoint. Each
-//! provider offers speech recognition, text clean-up (LLM) or both; the catalogue carries the
-//! public base URL and a short list of suggested models per service. A provider's key is shared by
-//! its services, except for the custom provider, whose two endpoints may be two different servers.
+//! the build, the on-device models, OpenAI-compatible vendors and a custom endpoint. Each provider
+//! offers speech recognition, text clean-up (LLM) or both; the catalogue carries the public base URL
+//! of each service, the vendor's other sites ([`ProviderSite`]) and two or three suggested models
+//! (user decision 2026-10-25: the rest comes from the provider's own list once a key is saved). A
+//! provider's key is shared by its services, except for the custom provider, whose two endpoints may
+//! be two different servers.
 //! [`AsrProtocol`] says how a recognition request reaches an endpoint: most speak OpenAI's
 //! `/audio/transcriptions`, Alibaba Cloud Model Studio speaks its own protocols (§3.4).
 
@@ -32,6 +34,18 @@ pub enum ProviderId {
     Aliyun,
     /// DeepSeek (clean-up only).
     Deepseek,
+    /// Kimi (Moonshot AI), on its Chinese or its international site (clean-up only).
+    Kimi,
+    /// Zhipu's GLM: bigmodel.cn, or Z.ai abroad (clean-up only).
+    Glm,
+    /// Volcengine Ark (火山方舟), the Doubao models (clean-up only).
+    Volcengine,
+    /// Tencent Hunyuan through Tencent Cloud's TokenHub (clean-up only).
+    Hunyuan,
+    /// Xiaomi MiMo (clean-up only).
+    Mimo,
+    /// OpenRouter, one key for many vendors' models (clean-up only).
+    Openrouter,
     /// Ollama on this machine (clean-up only, no key).
     Ollama,
     /// Any OpenAI-compatible endpoint the user enters (a Model Studio address speaks Model
@@ -41,8 +55,24 @@ pub enum ProviderId {
 
 impl ProviderId {
     /// Every provider in display order.
-    pub const ALL: [Self; 10] =
-        [Self::Builtin, Self::Local, Self::Openai, Self::Groq, Self::Google, Self::Siliconflow, Self::Aliyun, Self::Deepseek, Self::Ollama, Self::Custom];
+    pub const ALL: [Self; 16] = [
+        Self::Builtin,
+        Self::Local,
+        Self::Openai,
+        Self::Groq,
+        Self::Google,
+        Self::Siliconflow,
+        Self::Aliyun,
+        Self::Deepseek,
+        Self::Kimi,
+        Self::Glm,
+        Self::Volcengine,
+        Self::Hunyuan,
+        Self::Mimo,
+        Self::Openrouter,
+        Self::Ollama,
+        Self::Custom,
+    ];
 
     /// Wire name.
     pub fn as_str(self) -> &'static str {
@@ -55,6 +85,12 @@ impl ProviderId {
             Self::Siliconflow => "siliconflow",
             Self::Aliyun => "aliyun",
             Self::Deepseek => "deepseek",
+            Self::Kimi => "kimi",
+            Self::Glm => "glm",
+            Self::Volcengine => "volcengine",
+            Self::Hunyuan => "hunyuan",
+            Self::Mimo => "mimo",
+            Self::Openrouter => "openrouter",
             Self::Ollama => "ollama",
             Self::Custom => "custom",
         }
@@ -66,9 +102,11 @@ impl ProviderId {
     }
 
     /// The vendor page `provider_console_open` opens, or the shells' answer when there is none.
-    /// Only catalogue URLs are opened: the webview names a provider and a page, never a URL.
-    pub fn console_page(self, page: ConsolePage) -> Result<&'static str, String> {
-        self.spec().console(page).ok_or_else(|| match page {
+    /// Only catalogue URLs are opened: the webview names a provider, a page and a site, never a
+    /// URL. A site the provider does not have, or one without a page of its own, opens the
+    /// provider's own page.
+    pub fn console_page(self, page: ConsolePage, site: Option<SiteId>) -> Result<&'static str, String> {
+        self.spec().console(page, site).ok_or_else(|| match page {
             ConsolePage::Key => format!("{}: no key page", self.as_str()),
             ConsolePage::Quota => format!("{}: no quota page", self.as_str()),
         })
@@ -141,14 +179,41 @@ pub enum KeyPolicy {
     None,
 }
 
-/// A service a vendor offers: its public base URL and the models suggested first (the first one is
-/// the default). The user may type any other model id or fetch the provider's list.
+/// A service a vendor offers: its public base URL, its other sites and the two or three models
+/// suggested first (the first one is the default; docs/dictation.md §3.3). The user may type any
+/// other model id or pick one from the provider's list.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ServicePreset {
-    /// Public base URL (OpenAI-compatible, including `/v1` where the vendor uses it).
+    /// Public base URL (OpenAI-compatible, including `/v1` where the vendor uses it): the first
+    /// site's when the vendor has several.
     pub base_url: &'static str,
     /// Suggested model ids, default first.
     pub models: &'static [&'static str],
+    /// The vendor's sites, the default one first, when it has more than one (Kimi and GLM have a
+    /// Chinese and an international one, user decision 2026-10-25: one card that switches between
+    /// them). Each site has its own accounts and keys; empty for a vendor with one address.
+    pub sites: &'static [ProviderSite],
+}
+
+/// Which of a vendor's sites (docs/dictation.md §3.2).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SiteId {
+    /// The site in mainland China (moonshot.cn, bigmodel.cn).
+    Cn,
+    /// The international site (moonshot.ai, z.ai).
+    Intl,
+}
+
+/// One site of a vendor: where its requests go and where its keys are made.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ProviderSite {
+    /// Id.
+    pub id: SiteId,
+    /// The service's base URL on this site.
+    pub base_url: &'static str,
+    /// The page where a key for this site is created.
+    pub console_url: &'static str,
 }
 
 /// One provider of the catalogue.
@@ -184,12 +249,17 @@ pub enum ConsolePage {
 }
 
 impl ProviderSpec {
-    /// The vendor's `page`, if it has one.
-    pub fn console(&self, page: ConsolePage) -> Option<&'static str> {
+    /// The vendor's `page`, if it has one; the key page of `site` when that site has its own.
+    pub fn console(&self, page: ConsolePage, site: Option<SiteId>) -> Option<&'static str> {
         match page {
-            ConsolePage::Key => self.console_url,
+            ConsolePage::Key => site.and_then(|id| self.site(id)).map(|s| s.console_url).or(self.console_url),
             ConsolePage::Quota => self.quota_url,
         }
+    }
+
+    /// The site `id` of whichever service has it.
+    pub fn site(&self, id: SiteId) -> Option<&'static ProviderSite> {
+        [self.asr.as_ref(), self.llm.as_ref()].into_iter().flatten().flat_map(|preset| preset.sites.iter()).find(|s| s.id == id)
     }
 
     /// The preset of `kind`, if the provider offers it.
@@ -206,7 +276,7 @@ impl ProviderSpec {
     }
 }
 
-const NO_PRESET: ServicePreset = ServicePreset { base_url: "", models: &[] };
+const NO_PRESET: ServicePreset = ServicePreset { base_url: "", models: &[], sites: &[] };
 
 /// How a recognition request reaches a service (docs/dictation.md §3.4), decided by the endpoint and
 /// the model: an Alibaba Cloud Model Studio address serves models that speak three different
@@ -278,8 +348,9 @@ pub fn is_dashscope(url: &str) -> bool {
     url::Url::parse(url.trim()).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase)).is_some_and(|host| host.ends_with(".aliyuncs.com"))
 }
 
-/// The catalogue, in display order. Model ids checked against the vendors' documentation on
-/// 2026-09-27; lists go stale, so the UI also offers the provider's own `GET /models`.
+/// The catalogue, in display order. Two or three suggested models per service (user decision
+/// 2026-10-25), checked against the vendors' documentation on the date their comment gives; the
+/// provider's own `GET /models` lists the rest once a key is saved (docs/dictation.md §3.3).
 pub const PROVIDERS: &[ProviderSpec] = &[
     ProviderSpec {
         id: ProviderId::Builtin,
@@ -293,8 +364,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
     ProviderSpec { id: ProviderId::Local, asr: Some(NO_PRESET), llm: None, key: KeyPolicy::None, on_device: true, console_url: None, quota_url: None },
     ProviderSpec {
         id: ProviderId::Openai,
-        asr: Some(ServicePreset { base_url: "https://api.openai.com/v1", models: &["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"] }),
-        llm: Some(ServicePreset { base_url: "https://api.openai.com/v1", models: &["gpt-6-luna", "gpt-6-sol"] }),
+        asr: Some(ServicePreset { base_url: "https://api.openai.com/v1", models: &["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"], sites: &[] }),
+        llm: Some(ServicePreset { base_url: "https://api.openai.com/v1", models: &["gpt-6-luna", "gpt-6-sol"], sites: &[] }),
         key: KeyPolicy::Required,
         on_device: false,
         console_url: Some("https://platform.openai.com/api-keys"),
@@ -302,21 +373,29 @@ pub const PROVIDERS: &[ProviderSpec] = &[
     },
     ProviderSpec {
         id: ProviderId::Groq,
-        asr: Some(ServicePreset { base_url: "https://api.groq.com/openai/v1", models: &["whisper-large-v3-turbo", "whisper-large-v3"] }),
-        llm: Some(ServicePreset { base_url: "https://api.groq.com/openai/v1", models: &["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"] }),
+        asr: Some(ServicePreset { base_url: "https://api.groq.com/openai/v1", models: &["whisper-large-v3-turbo", "whisper-large-v3"], sites: &[] }),
+        llm: Some(ServicePreset {
+            base_url: "https://api.groq.com/openai/v1",
+            models: &["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+            sites: &[],
+        }),
         key: KeyPolicy::Required,
         on_device: false,
         console_url: Some("https://console.groq.com/keys"),
         quota_url: None,
     },
-    // Google AI Studio (checked 2026-10-08): the Gemini models with a free tier, the newest Flash
-    // first. Its `GET /models` names them `models/gemini-…` (see `usable_models`).
+    // Google AI Studio (checked 2026-10-08, again 2026-10-24): the Gemini models with a free tier,
+    // Flash-Lite first. On 2026-10-24 `gemini-3.8-flash` turned clean-ups down with 503 "high
+    // demand" for 40 minutes, as did `gemini-3.1-flash-lite`, while `gemini-3.5-flash-lite` answered
+    // in 1–6 s; the 2.5 models answer 404 "no longer available to new users". Its `GET /models`
+    // names them `models/gemini-…` (see `usable_models`).
     ProviderSpec {
         id: ProviderId::Google,
         asr: None,
         llm: Some(ServicePreset {
             base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
-            models: &["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"],
+            models: &["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.1-flash-lite"],
+            sites: &[],
         }),
         key: KeyPolicy::Required,
         on_device: false,
@@ -325,30 +404,30 @@ pub const PROVIDERS: &[ProviderSpec] = &[
     },
     ProviderSpec {
         id: ProviderId::Siliconflow,
-        asr: Some(ServicePreset { base_url: "https://api.siliconflow.cn/v1", models: &["FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR"] }),
-        llm: Some(ServicePreset { base_url: "https://api.siliconflow.cn/v1", models: &["Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-V3"] }),
+        asr: Some(ServicePreset { base_url: "https://api.siliconflow.cn/v1", models: &["FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR"], sites: &[] }),
+        llm: Some(ServicePreset { base_url: "https://api.siliconflow.cn/v1", models: &["Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-V3"], sites: &[] }),
         key: KeyPolicy::Required,
         on_device: false,
         console_url: Some("https://cloud.siliconflow.cn/account/ak"),
         quota_url: None,
     },
     // Model Studio (checked 2026-10-04): the realtime `…-streaming` model first, since it recognises
-    // while the user speaks (§3.4); `…-asr-flash` takes a whole file over HTTP. A workspace's own
-    // address (`https://<workspace>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`) replaces the
-    // public one in the URL field.
+    // while the user speaks (§3.4); `…-asr-flash` takes a whole file over HTTP, `fun-asr-realtime`
+    // is the other realtime engine. A workspace's own address
+    // (`https://<workspace>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`) replaces the public one
+    // in the URL field.
     ProviderSpec {
         id: ProviderId::Aliyun,
         asr: Some(ServicePreset {
             base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            models: &[
-                "qwen-audio-3.1-asr-flash-streaming",
-                "qwen-audio-3.1-asr-flash",
-                "qwen-audio-3.1-asr-flash-message",
-                "qwen3-asr-flash",
-                "fun-asr-realtime",
-            ],
+            models: &["qwen-audio-3.1-asr-flash-streaming", "qwen-audio-3.1-asr-flash", "fun-asr-realtime"],
+            sites: &[],
         }),
-        llm: Some(ServicePreset { base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1", models: &["qwen3.8-flash", "qwen3.8-max", "qwen3.7-flash"] }),
+        llm: Some(ServicePreset {
+            base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            models: &["qwen3.8-flash", "qwen3.8-max", "qwen3.7-flash"],
+            sites: &[],
+        }),
         key: KeyPolicy::Required,
         on_device: false,
         console_url: Some("https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key"),
@@ -357,16 +436,110 @@ pub const PROVIDERS: &[ProviderSpec] = &[
     ProviderSpec {
         id: ProviderId::Deepseek,
         asr: None,
-        llm: Some(ServicePreset { base_url: "https://api.deepseek.com", models: &["deepseek-flash", "deepseek-v4-pro"] }),
+        llm: Some(ServicePreset { base_url: "https://api.deepseek.com", models: &["deepseek-flash", "deepseek-v4-pro"], sites: &[] }),
         key: KeyPolicy::Required,
         on_device: false,
         console_url: Some("https://platform.deepseek.com/api_keys"),
         quota_url: None,
     },
+    // Kimi (platform.kimi.com, checked 2026-10-25): the K3 models always reason and take
+    // `reasoning_effort`; K2 closes to new accounts on 2026-10-31. The two sites keep separate
+    // accounts and keys.
+    ProviderSpec {
+        id: ProviderId::Kimi,
+        asr: None,
+        llm: Some(ServicePreset {
+            base_url: "https://api.moonshot.cn/v1",
+            models: &["kimi-k3.1-pro-highspeed", "kimi-k3.1-pro", "kimi-k3"],
+            sites: &[
+                ProviderSite { id: SiteId::Cn, base_url: "https://api.moonshot.cn/v1", console_url: "https://platform.kimi.com/console/api-keys" },
+                ProviderSite { id: SiteId::Intl, base_url: "https://api.moonshot.ai/v1", console_url: "https://platform.kimi.ai/console/api-keys" },
+            ],
+        }),
+        key: KeyPolicy::Required,
+        on_device: false,
+        console_url: Some("https://platform.kimi.com/console/api-keys"),
+        quota_url: None,
+    },
+    // GLM (docs.bigmodel.cn and docs.z.ai, checked 2026-10-25): `glm-5.3-flash` is the newest fast
+    // model, `glm-4.7-flash` costs nothing on either site. The two sites keep separate accounts and
+    // keys.
+    ProviderSpec {
+        id: ProviderId::Glm,
+        asr: None,
+        llm: Some(ServicePreset {
+            base_url: "https://open.bigmodel.cn/api/paas/v4",
+            models: &["glm-5.3-flash", "glm-4.7-flash", "glm-5.3"],
+            sites: &[
+                ProviderSite {
+                    id: SiteId::Cn,
+                    base_url: "https://open.bigmodel.cn/api/paas/v4",
+                    console_url: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
+                },
+                ProviderSite { id: SiteId::Intl, base_url: "https://api.z.ai/api/paas/v4", console_url: "https://z.ai/manage-apikey/apikey-list" },
+            ],
+        }),
+        key: KeyPolicy::Required,
+        on_device: false,
+        console_url: Some("https://bigmodel.cn/usercenter/proj-mgmt/apikeys"),
+        quota_url: None,
+    },
+    // Volcengine Ark (docs.volcengine.com/docs/ark/model-list, checked 2026-10-25): its model ids
+    // carry their release date, and a model answers only once it is enabled in the console.
+    ProviderSpec {
+        id: ProviderId::Volcengine,
+        asr: None,
+        llm: Some(ServicePreset {
+            base_url: "https://ark.cn-beijing.volces.com/api/v3",
+            models: &["doubao-seed-2-1-lite-260915", "doubao-seed-2-1-turbo-260628", "doubao-seed-2-0-mini-260428"],
+            sites: &[],
+        }),
+        key: KeyPolicy::Required,
+        on_device: false,
+        console_url: Some("https://ark.volcengine.com/region:cn-beijing/apikey"),
+        quota_url: None,
+    },
+    // Tencent Hunyuan (cloud.tencent.com/document/product/1823, checked 2026-10-25): Tencent Cloud
+    // retired the old Hunyuan platform's models on 2026-06-22 for TokenHub, which also serves other
+    // vendors' models. A model answers only once it is enabled in the console (402 otherwise).
+    ProviderSpec {
+        id: ProviderId::Hunyuan,
+        asr: None,
+        llm: Some(ServicePreset { base_url: "https://tokenhub.tencentmaas.com/v1", models: &["hy3", "hy4-preview"], sites: &[] }),
+        key: KeyPolicy::Required,
+        on_device: false,
+        console_url: Some("https://console.cloud.tencent.com/tokenhub/apikey"),
+        quota_url: None,
+    },
+    // Xiaomi MiMo (mimo.mi.com/docs, checked 2026-10-25): the 2.5 models were retired on 2026-10-21.
+    ProviderSpec {
+        id: ProviderId::Mimo,
+        asr: None,
+        llm: Some(ServicePreset { base_url: "https://api.xiaomimimo.com/v1", models: &["mimo-v2.6-flash", "mimo-v2.6-pro"], sites: &[] }),
+        key: KeyPolicy::Required,
+        on_device: false,
+        console_url: Some("https://platform.xiaomimimo.com/#/console/api-keys"),
+        quota_url: None,
+    },
+    // OpenRouter (openrouter.ai/api/v1/models, checked 2026-10-25): three fast, inexpensive models
+    // of different vendors; its model list needs no key.
+    ProviderSpec {
+        id: ProviderId::Openrouter,
+        asr: None,
+        llm: Some(ServicePreset {
+            base_url: "https://openrouter.ai/api/v1",
+            models: &["google/gemini-3.5-flash-lite", "deepseek/deepseek-v4-flash", "openai/gpt-6-luna"],
+            sites: &[],
+        }),
+        key: KeyPolicy::Required,
+        on_device: false,
+        console_url: Some("https://openrouter.ai/settings/keys"),
+        quota_url: None,
+    },
     ProviderSpec {
         id: ProviderId::Ollama,
         asr: None,
-        llm: Some(ServicePreset { base_url: "http://127.0.0.1:11434/v1", models: &[] }),
+        llm: Some(ServicePreset { base_url: "http://127.0.0.1:11434/v1", models: &[], sites: &[] }),
         key: KeyPolicy::None,
         on_device: true,
         console_url: None,
@@ -387,9 +560,9 @@ pub const PROVIDERS: &[ProviderSpec] = &[
 const SPEECH_TO_TEXT: [&str; 5] = ["whisper", "transcribe", "asr", "sensevoice", "paraformer"];
 
 /// Words in the id of a model that does not chat in text: speech in or out, embeddings and
-/// reranking, moderation, images and video, realtime sessions, the models only the Responses
-/// interface serves, and the omni models, which answer only as a stream.
-const NOT_CHAT: [&str; 30] = [
+/// reranking, moderation, images, video and text recognition in images, realtime sessions, the
+/// models only the Responses interface serves, and the omni models, which answer only as a stream.
+const NOT_CHAT: [&str; 36] = [
     "whisper",
     "transcribe",
     "asr",
@@ -415,6 +588,12 @@ const NOT_CHAT: [&str; 30] = [
     "t2v",
     "i2v",
     "video",
+    "seedream",
+    "seedance",
+    "vidu",
+    "cogview",
+    "cogvideo",
+    "ocr",
     "realtime",
     "codex",
     "computer-use",
@@ -475,6 +654,12 @@ pub fn key_entry(provider: ProviderId, kind: ServiceKind) -> Option<&'static str
         (ProviderId::Siliconflow, _) => Some("provider-key.siliconflow"),
         (ProviderId::Aliyun, _) => Some("provider-key.aliyun"),
         (ProviderId::Deepseek, _) => Some("provider-key.deepseek"),
+        (ProviderId::Kimi, _) => Some("provider-key.kimi"),
+        (ProviderId::Glm, _) => Some("provider-key.glm"),
+        (ProviderId::Volcengine, _) => Some("provider-key.volcengine"),
+        (ProviderId::Hunyuan, _) => Some("provider-key.hunyuan"),
+        (ProviderId::Mimo, _) => Some("provider-key.mimo"),
+        (ProviderId::Openrouter, _) => Some("provider-key.openrouter"),
         (ProviderId::Custom, ServiceKind::Asr) => Some("provider-key.custom-asr"),
         (ProviderId::Custom, ServiceKind::Llm) => Some("provider-key.custom-llm"),
     }
@@ -548,18 +733,27 @@ pub enum ProbeFailure {
 }
 
 /// A failed probe as the shell's [`crate::dictation::ServiceProbe`] reports it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ProbeError {
     /// Why.
     pub reason: ProbeFailure,
     /// The HTTP status of [`ProbeFailure::HttpStatus`].
     pub status: Option<u16>,
+    /// What the service said, or the connection's error, short and without credentials
+    /// (docs/dictation.md §3.12); `None` when there is nothing to add to the reason.
+    pub detail: Option<String>,
 }
 
 impl ProbeError {
     /// A failure without an HTTP status.
     pub const fn new(reason: ProbeFailure) -> Self {
-        Self { reason, status: None }
+        Self { reason, status: None, detail: None }
+    }
+
+    /// `self` with `detail` (nothing when it is blank).
+    pub fn with_detail(self, detail: impl Into<String>) -> Self {
+        let detail = detail.into();
+        Self { detail: (!detail.trim().is_empty()).then_some(detail), ..self }
     }
 }
 
@@ -581,6 +775,9 @@ pub enum ProbeOutcome {
         /// The HTTP status of [`ProbeFailure::HttpStatus`].
         #[serde(default, skip_serializing_if = "Option::is_none")]
         status: Option<u16>,
+        /// What the service said, or the connection's error ([`ProbeError::detail`]).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
     },
 }
 
@@ -642,7 +839,9 @@ mod tests {
                     _ => {
                         assert!(preset.base_url.starts_with("https://"), "{:?} {kind:?}", spec.id);
                         assert!(url::Url::parse(preset.base_url).is_ok());
-                        assert!(!preset.models.is_empty(), "{:?} {kind:?} has a default model", spec.id);
+                        // User decision 2026-10-25: two or three suggestions, the provider lists the rest.
+                        assert!((2..=3).contains(&preset.models.len()), "{:?} {kind:?} suggests 2–3 models: {:?}", spec.id, preset.models);
+                        assert!(spec.console_url.is_some(), "{:?} has a key page", spec.id);
                     }
                 }
             }
@@ -652,6 +851,39 @@ mod tests {
         assert!(!ProviderId::Deepseek.spec().offers(ServiceKind::Asr));
         assert!(!ProviderId::Ollama.spec().offers(ServiceKind::Asr));
         assert!(ProviderId::Local.spec().on_device && ProviderId::Ollama.spec().on_device);
+    }
+
+    /// docs/dictation.md §3.2: a vendor with a Chinese and an international site is one card that
+    /// switches between them; each site has its own address and key page, the first is the default.
+    #[test]
+    fn a_vendors_sites_start_with_its_default_and_have_their_own_key_pages() {
+        for spec in PROVIDERS {
+            for kind in [ServiceKind::Asr, ServiceKind::Llm] {
+                let Some(preset) = spec.service(kind) else { continue };
+                if preset.sites.is_empty() {
+                    continue;
+                }
+                assert!(preset.sites.len() >= 2, "{:?}: one site is no choice", spec.id);
+                assert_eq!(preset.sites[0].base_url, preset.base_url, "{:?}: the first site is the default", spec.id);
+                assert_eq!(Some(preset.sites[0].console_url), spec.console_url, "{:?}", spec.id);
+                let mut ids: Vec<SiteId> = preset.sites.iter().map(|s| s.id).collect();
+                ids.dedup();
+                assert_eq!(ids.len(), preset.sites.len(), "{:?}: sites are distinct", spec.id);
+                for site in preset.sites {
+                    assert!(site.base_url.starts_with("https://") && url::Url::parse(site.base_url).is_ok(), "{site:?}");
+                    assert!(site.console_url.starts_with("https://"), "{site:?}");
+                    assert_eq!(spec.console(ConsolePage::Key, Some(site.id)), Some(site.console_url));
+                }
+            }
+        }
+        let kimi = ProviderId::Kimi.spec();
+        assert_eq!(kimi.site(SiteId::Intl).map(|s| s.base_url), Some("https://api.moonshot.ai/v1"));
+        assert_eq!(ProviderId::Glm.spec().site(SiteId::Intl).map(|s| s.base_url), Some("https://api.z.ai/api/paas/v4"));
+        assert_eq!(ProviderId::Kimi.console_page(ConsolePage::Key, Some(SiteId::Intl)), Ok("https://platform.kimi.ai/console/api-keys"));
+        // A vendor with one site opens its own page whatever site is named.
+        assert_eq!(ProviderId::Groq.console_page(ConsolePage::Key, Some(SiteId::Intl)), Ok("https://console.groq.com/keys"));
+        assert!(ProviderId::Kimi.console_page(ConsolePage::Quota, Some(SiteId::Cn)).is_err());
+        assert_eq!(serde_json::to_string(&SiteId::Intl).unwrap(), r#""intl""#);
     }
 
     #[test]
@@ -665,7 +897,7 @@ mod tests {
         assert_eq!(key_entry(ProviderId::Aliyun, ServiceKind::Asr), Some("provider-key.aliyun"));
         assert_eq!(key_entry(ProviderId::Aliyun, ServiceKind::Asr), key_entry(ProviderId::Aliyun, ServiceKind::Llm));
         let entries = key_entries();
-        assert_eq!(entries.len(), 8, "{entries:?}");
+        assert_eq!(entries.len(), 14, "{entries:?}");
         assert!(entries.iter().all(|e| e.starts_with("provider-key.")));
     }
 
@@ -836,6 +1068,23 @@ mod tests {
         );
         assert_eq!(usable_models(ProviderId::Aliyun, ServiceKind::Llm, base, studio), ["qwen3.8-flash"]);
 
+        // Ark, TokenHub and Zhipu list their image, video and text-in-image models beside the chat ones
+        // (2026-10-25).
+        let ark = ids(&[
+            "doubao-seed-2-1-lite-260915",
+            "doubao-seedream-5-0-260128",
+            "doubao-seedance-2-5-260628",
+            "doubao-embedding-vision-251215",
+            "glm-5-3-flash-260828",
+        ]);
+        assert_eq!(
+            usable_models(ProviderId::Volcengine, ServiceKind::Llm, "https://ark.cn-beijing.volces.com/api/v3", ark),
+            ["doubao-seed-2-1-lite-260915", "glm-5-3-flash-260828"]
+        );
+        let tokenhub = ids(&["hy3", "hy4-preview", "hy-image-v3", "vidu-image-q2", "viduq2", "seedream-image-v5.0-pro"]);
+        assert_eq!(usable_models(ProviderId::Hunyuan, ServiceKind::Llm, "https://tokenhub.tencentmaas.com/v1", tokenhub), ["hy3", "hy4-preview"]);
+        let zhipu = ids(&["glm-5.3-flash", "cogview-4", "cogvideox-3", "glm-ocr", "glm-asr-2512", "embedding-3", "glm-realtime"]);
+        assert_eq!(usable_models(ProviderId::Glm, ServiceKind::Llm, "https://open.bigmodel.cn/api/paas/v4", zhipu), ["glm-5.3-flash"]);
         // Ollama's pulled models, without the embedding ones.
         let ollama = ids(&["qwen3:8b", "nomic-embed-text:latest", "llava:7b"]);
         assert_eq!(usable_models(ProviderId::Ollama, ServiceKind::Llm, "http://127.0.0.1:11434/v1", ollama), ["llava:7b", "qwen3:8b"]);
@@ -857,10 +1106,20 @@ mod tests {
         let failed = ProbeReport {
             provider: ProviderId::Builtin,
             kind: ServiceKind::Asr,
-            outcome: ProbeOutcome::Failed { reason: ProbeFailure::HttpStatus, status: Some(502) },
+            outcome: ProbeOutcome::Failed { reason: ProbeFailure::HttpStatus, status: Some(502), detail: None },
         };
         let json = serde_json::to_string(&failed).unwrap();
         assert_eq!(json, r#"{"provider":"builtin","kind":"asr","result":"failed","reason":"http_status","status":502}"#);
         assert_eq!(serde_json::from_str::<ProbeReport>(&json).unwrap(), failed);
+        // docs/dictation.md §3.12: what the service said goes with the reason.
+        let said = ProbeReport {
+            provider: ProviderId::Openai,
+            kind: ServiceKind::Llm,
+            outcome: ProbeOutcome::Failed { reason: ProbeFailure::Unauthorized, status: None, detail: Some("Incorrect API key provided".into()) },
+        };
+        let json = serde_json::to_string(&said).unwrap();
+        assert_eq!(json, r#"{"provider":"openai","kind":"llm","result":"failed","reason":"unauthorized","detail":"Incorrect API key provided"}"#);
+        assert_eq!(serde_json::from_str::<ProbeReport>(&json).unwrap(), said);
+        assert_eq!(ProbeError::new(ProbeFailure::Timeout).with_detail("  ").detail, None, "a blank detail adds nothing");
     }
 }

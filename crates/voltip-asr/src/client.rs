@@ -202,18 +202,20 @@ struct Upload {
 }
 
 /// A non-2xx answer: a used-up quota first, whatever the status (docs/dictation.md §3.5; some
-/// services send OpenAI's `insufficient_quota` with 403, others with 429), then by status.
+/// services send OpenAI's `insufficient_quota` with 403, others with 429), then by status, each
+/// with what the service said (§3.12).
 fn http_error(status: StatusCode, retry_after_ms: Option<u64>, body: &str) -> AsrError {
     if let Some(quota) = quota_error(body) {
         return quota;
     }
+    let message = voltip_reply::summary(body);
     if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-        return AsrError::Unauthorized;
+        return AsrError::Unauthorized { message };
     }
     if status == StatusCode::TOO_MANY_REQUESTS {
-        return AsrError::RateLimited { retry_after_ms };
+        return AsrError::RateLimited { retry_after_ms, message };
     }
-    AsrError::Server { status: status.as_u16(), body: truncate_chars(body, MAX_ERROR_BODY_CHARS) }
+    AsrError::Server { status: status.as_u16(), body: message }
 }
 
 /// A reqwest failure, split into timeout and everything else.
@@ -486,7 +488,7 @@ mod tests {
             let server = MockServer::start().await;
             mount(&server, ResponseTemplate::new(status).set_body_string("nope")).await;
             let err = client(&server, Some("bad")).transcribe(WAV, None).await.unwrap_err();
-            assert_eq!(err, AsrError::Unauthorized, "status {status}");
+            assert_eq!(err, AsrError::Unauthorized { message: "nope".into() }, "status {status}");
             assert!(!err.is_retryable());
         }
     }
@@ -512,10 +514,16 @@ mod tests {
         }
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(429).set_body_string(r#"{"error":{"code":"rate_limit_exceeded","message":"Rate limit reached"}}"#)).await;
-        assert_eq!(client(&server, None).transcribe(WAV, None).await.unwrap_err(), AsrError::RateLimited { retry_after_ms: None });
+        assert_eq!(
+            client(&server, None).transcribe(WAV, None).await.unwrap_err(),
+            AsrError::RateLimited { retry_after_ms: None, message: "Rate limit reached (rate_limit_exceeded)".into() }
+        );
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(403).set_body_string(r#"{"error":{"code":"invalid_api_key","message":"Incorrect API key provided"}}"#)).await;
-        assert_eq!(client(&server, None).transcribe(WAV, None).await.unwrap_err(), AsrError::Unauthorized);
+        assert_eq!(
+            client(&server, None).transcribe(WAV, None).await.unwrap_err(),
+            AsrError::Unauthorized { message: "Incorrect API key provided (invalid_api_key)".into() }
+        );
     }
 
     #[tokio::test]
@@ -523,17 +531,17 @@ mod tests {
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(429).insert_header("Retry-After", "3")).await;
         let err = client(&server, None).transcribe(WAV, None).await.unwrap_err();
-        assert_eq!(err, AsrError::RateLimited { retry_after_ms: Some(3000) });
+        assert_eq!(err, AsrError::RateLimited { retry_after_ms: Some(3000), message: String::new() });
         assert!(err.is_retryable());
 
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(429).insert_header("Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT")).await;
         let err = client(&server, None).transcribe(WAV, None).await.unwrap_err();
-        assert_eq!(err, AsrError::RateLimited { retry_after_ms: None });
+        assert_eq!(err, AsrError::RateLimited { retry_after_ms: None, message: String::new() });
 
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(429)).await;
-        assert_eq!(client(&server, None).transcribe(WAV, None).await.unwrap_err(), AsrError::RateLimited { retry_after_ms: None });
+        assert_eq!(client(&server, None).transcribe(WAV, None).await.unwrap_err(), AsrError::RateLimited { retry_after_ms: None, message: String::new() });
     }
 
     #[tokio::test]
@@ -554,7 +562,7 @@ mod tests {
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(400).set_body_json(json!({ "error": "unsupported audio" }))).await;
         let err = client(&server, None).transcribe(WAV, None).await.unwrap_err();
-        assert_eq!(err, AsrError::Server { status: 400, body: r#"{"error":"unsupported audio"}"#.into() });
+        assert_eq!(err, AsrError::Server { status: 400, body: "unsupported audio".into() }, "the service's words, not its JSON");
         assert!(!err.is_retryable());
     }
 

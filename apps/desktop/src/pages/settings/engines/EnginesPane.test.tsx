@@ -456,6 +456,12 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       "硅基流动",
       "阿里云百炼",
       "DeepSeek",
+      "Kimi",
+      "智谱 GLM",
+      "火山方舟",
+      "腾讯混元",
+      "小米 MiMo",
+      "OpenRouter",
       "Ollama",
       "自定义接口",
     ]);

@@ -391,6 +391,16 @@ describe("Pill width", () => {
 });
 
 describe("the inserted pill's note (docs/dictation.md §3.6)", () => {
+  it("regression: a failure with the service's words is cut in the pill and whole in its tooltip (docs/dictation.md section 3.12)", () => {
+    const text =
+      "失败 · 识别服务出错：密钥被拒绝：Incorrect API key provided: sk-***. You can find your API key at https://platform.openai.com/account/api-keys. (invalid_api_key)";
+    render(<Pill state="error" label={text} />);
+    const shown = screen.getByTestId("pill-error-text");
+    expect(shown).toHaveTextContent(text);
+    expect(shown).toHaveAttribute("title", text);
+    expect(shown.className).toContain("truncate");
+  });
+
   it("says why the text went in without polish, and only once the text is in", () => {
     const { rerender } = render(
       <Pill state="inserted" label="已插入 9 字" note="未润色 · 服务繁忙" />,

@@ -154,6 +154,8 @@ fn with_tuned_updater_app(
         endpoints: vec![format!("{}{MANIFEST_PATH}", server.uri()).parse().unwrap()],
         pubkey: PUBKEY.into(),
         auto_check_delay: Duration::from_millis(200),
+        // The looks while the app runs stay out of the way unless a test shortens them.
+        auto_check_interval: Duration::from_secs(3600),
         connect_timeout: voltip_desktop_lib::update::CONNECT_TIMEOUT,
         read_timeout: voltip_desktop_lib::update::READ_TIMEOUT,
     };
@@ -389,6 +391,55 @@ fn toggling_auto_update_on_checks_immediately_and_runs_one_at_a_time() {
             while let Ok(raw) = rx.try_recv() {
                 let json: Value = serde_json::from_str(&raw).unwrap();
                 assert!(json["type"] != "update" || json["state"] != "checking", "turning the toggle off must not check: {json}");
+            }
+        }),
+    );
+}
+
+/// User request 2026-10-25: with auto-update on, Voltip looks again while it runs, without any
+/// command, an interval after each run ends; the look at start comes first.
+#[test]
+fn regression_auto_update_looks_again_while_voltip_runs() {
+    const INTERVAL: Duration = Duration::from_millis(600);
+    with_tuned_updater_app(
+        no_update,
+        |config| config.auto_check_interval = INTERVAL,
+        |_| Settings { auto_update: true, ..Settings::default() },
+        Box::new(|_, webview, rx| {
+            wait_state(webview, |s| s.identity.is_some() && s.settings.auto_update);
+            wait_update(rx, "checking", &[]);
+            wait_update(rx, "up_to_date", &["checking"]);
+            let first = Instant::now();
+            wait_update(rx, "checking", &[]);
+            // Scheduled an interval after the first look ended, not in a loop (the exact times are
+            // the unit tests' on a paused clock; the event reached this thread after that end).
+            assert!(first.elapsed() >= INTERVAL / 4, "looked again after {:?}", first.elapsed());
+            wait_update(rx, "up_to_date", &["checking"]);
+            // And again: every look schedules the next.
+            wait_update(rx, "checking", &[]);
+            wait_update(rx, "up_to_date", &["checking"]);
+        }),
+    );
+}
+
+/// With auto-update off, a check by hand schedules nothing: Voltip goes online only when asked.
+#[test]
+fn a_check_by_hand_with_auto_update_off_schedules_no_look() {
+    const INTERVAL: Duration = Duration::from_millis(300);
+    with_tuned_updater_app(
+        no_update,
+        |config| config.auto_check_interval = INTERVAL,
+        |_| Settings::default(),
+        Box::new(|app, webview, rx| {
+            wait_state(webview, |s| s.identity.is_some());
+            assert_eq!(invoke(webview, "update_check", json!({})), Ok(Value::Null));
+            wait_update(rx, "checking", &[]);
+            wait_update(rx, "up_to_date", &["checking"]);
+            assert_eq!(app.state::<Arc<UpdateSlot>>().schedule().due_at(), None);
+            std::thread::sleep(3 * INTERVAL);
+            while let Ok(raw) = rx.try_recv() {
+                let json: Value = serde_json::from_str(&raw).unwrap();
+                assert!(json["type"] != "update" || json["state"] != "checking", "nothing looks on its own with the toggle off: {json}");
             }
         }),
     );

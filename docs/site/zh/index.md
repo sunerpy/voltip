@@ -229,6 +229,12 @@ home:
         - { name: 硅基流动, mark: siliconflow }
         - { name: 阿里云百炼, mark: aliyun }
         - { name: DeepSeek, mark: deepseek }
+        - { name: Kimi, mark: kimi }
+        - { name: 智谱 GLM, mark: glm }
+        - { name: 火山方舟, mark: volcengine }
+        - { name: 腾讯混元, mark: hunyuan }
+        - { name: 小米 MiMo, mark: mimo }
+        - { name: OpenRouter, mark: openrouter }
         - { name: Ollama, mark: ollama }
     note: 在 NVIDIA L40S 上实测，Qwen3-ASR 0.6B 识别一段 16 秒的中文语音，GPU 用时 0.16 秒，8 个处理器线程用时 2.87 秒。详见[本地识别](/zh/recognition/local)和[云端服务](/zh/recognition/cloud)。
 

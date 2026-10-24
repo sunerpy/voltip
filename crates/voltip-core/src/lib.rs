@@ -40,7 +40,7 @@ pub use dictation::{
 pub use engines::{
     BuiltIn, ChineseScript, EngineIssue, EngineSettings, EngineStatus, FallbackModel, FallbackModelStatus, FallbackPlan, FallbackRow, FallbackRowState,
     FallbackSettings, FallbackSkip, FallbackStatus, FallbackTarget, InjectMode, LiveSource, LocalDevice, LocalModelRef, MAX_FALLBACK_MODELS, MAX_LOCAL_THREADS,
-    OutputMode, ProviderSettings, ProviderStatus, RemoteService, ResolvedEngines, SecretSource, SecretState, ServiceStatus, UserSecrets,
+    OutputMode, ProviderSettings, ProviderStatus, RemoteService, ResolvedEngines, SecretSource, SecretState, ServiceStatus, SiteStatus, UserSecrets,
 };
 pub use history::{
     EditRecord, EntryOrigin, HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryReader, HistoryStats, HistoryStatsBucket, HistoryStore, OriginKind,
@@ -53,8 +53,8 @@ pub use models::{
 };
 pub use presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetError, PresetId, PresetRef, PresetTrial, PresetTryOutcome, TakePreset};
 pub use providers::{
-    AsrProtocol, ConsolePage, KeyPolicy, LlmApi, PROVIDERS, ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSpec, ReasoningEffort,
-    ServiceKind, ServicePreset, key_entries, key_env_var, load_user_secrets, peek_user_secrets,
+    AsrProtocol, ConsolePage, KeyPolicy, LlmApi, PROVIDERS, ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSite, ProviderSpec,
+    ReasoningEffort, ServiceKind, ServicePreset, SiteId, key_entries, key_env_var, load_user_secrets, peek_user_secrets,
 };
 pub use runtime::{
     AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED, SERVE_UNAVAILABLE, TestHooks,
