@@ -10,7 +10,9 @@ The next releases, in the expected order. No dates are promised. Each feature is
 
 ### Google Play <StatusTag status="building" />
 
-The Android app is on the releases page; see [the phone page](/phone/). A listing on Google Play is being prepared. Google requires a closed test before an app can be published there.
+The Android app is on the releases page; see [the phone page](/phone/). A listing on Google Play is being prepared: Google asks a personal developer account for a closed test with at least 12 testers taking part for 14 days in a row before the app can apply to be published.
+
+You can help Voltip get there sooner by joining the closed test: join the [community group](/reference/community) to sign up, and the group explains how to take part. You need an Android phone with Google Play and a Google account. Please stay in the test until it ends, since a tester who leaves early is not counted.
 
 ## Planned
 
