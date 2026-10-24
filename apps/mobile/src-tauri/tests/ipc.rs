@@ -176,6 +176,9 @@ fn with_app_updating(
     let driver = std::thread::spawn(move || {
         let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
             wait_for(|| handle.try_state::<Bridge>().map(|_| ()));
+            // `setup` manages the updater after the bridge, which publishes its first status: a
+            // command that needs it, such as `update_status`, fails until then (2026-10-24, CI).
+            wait_for(|| handle.try_state::<Arc<voltip_mobile_lib::update::PhoneUpdater>>().map(|_| ()));
             body(&handle, &webview, &rx);
         }));
         // Closing the only window ends the mock event loop, so `app.run` below returns.
