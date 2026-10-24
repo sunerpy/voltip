@@ -35,6 +35,8 @@ When a connection to a recognition or polish service drops before the request is
 
 A provider that offers both services uses one key for both. The provider cards show each provider's logo.
 
+Recognition can also run on a GPU server of your own, used as the custom endpoint; see [Self-hosted recognition](/recognition/self-host).
+
 ## Setting up a provider
 
 1. On the Speech models or AI models page, select the provider's card. Its settings open in a panel on the right, or from the bottom on the phone.

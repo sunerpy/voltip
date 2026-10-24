@@ -170,6 +170,12 @@ desktop (`curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scrip
 It listens on this computer only and every request carries a token; see
 [Local service](https://voltip.firlab.app/recognition/service).
 
+Recognition can also run on a Linux server of your own with an NVIDIA GPU: one command deploys vLLM
+with Qwen3-ASR behind a gateway that checks access tokens and limits requests, with HTTPS for a
+domain name, and Voltip uses it as the custom endpoint
+(`curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/deploy/selfhost/install.sh | sudo sh -s -- --domain asr.example.com --install-deps`);
+see [Self-hosted recognition](https://voltip.firlab.app/recognition/self-host).
+
 ## Privacy
 
 Audio goes only to the recognition service you chose, or nowhere when you use an on-device model;

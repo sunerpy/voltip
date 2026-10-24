@@ -1,0 +1,12 @@
+# The way in to the gateway. VOLTIP_SITE is the server's domain name, for HTTPS with a certificate
+# that Caddy obtains from Let's Encrypt and renews on its own (ports 80 and 443 must be reachable),
+# or http://:<port> for plain HTTP without a domain. Caddy passes each client's address to the
+# gateway in X-Forwarded-For; it keeps no access log, the gateway logs every request.
+{
+	# No admin API: with the host's network it would listen on this machine.
+	admin off
+}
+
+{$VOLTIP_SITE} {
+	reverse_proxy 127.0.0.1:{$VOLTIP_GATEWAY_PORT}
+}
