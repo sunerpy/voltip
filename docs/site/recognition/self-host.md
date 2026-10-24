@@ -11,7 +11,7 @@ The service does speech recognition only. AI polish keeps using the built-in ser
 ## Requirements
 
 - **Server**: Linux x86_64. On Ubuntu or Debian the install script can install what is missing. Tested on Ubuntu 24.04.
-- **Graphics card**: NVIDIA, compute capability 7.5 or later (Turing or a newer architecture), tested on an NVIDIA L4 and a T4. A card below compute capability 8.0, such as the T4, runs at float16 precision, which the script picks. With 8 GB of memory or more, Qwen3-ASR 1.7B is the default, otherwise 0.6B; see [GPU memory](#gpu-memory).
+- **Graphics card**: NVIDIA, compute capability 7.5 or later (Turing or a newer architecture), tested on an NVIDIA L4 and a T4 (driver 595). A card below compute capability 8.0, such as the T4, runs at float16 precision, which the script picks. With 8 GB of memory or more, Qwen3-ASR 1.7B is the default, otherwise 0.6B; see [GPU memory](#gpu-memory).
 - **Driver**: an NVIDIA driver, installed, with the server restarted since. The install script does not install drivers. On Ubuntu:
 
   ```bash
@@ -36,7 +36,7 @@ The script then:
 3. Writes the service's files to `/opt/voltip-asr`, creates an access token, downloads the images, adds the audio decoders the vLLM image lacks, and starts the service. On its first start, vLLM downloads the model.
 4. Waits for the model, sends a test recording over HTTPS, and shows what to enter in Voltip.
 
-On an AWS g6.xlarge in the Seoul region (NVIDIA L4, 24 GB), starting from Ubuntu 24.04 with only the driver installed, the whole run took 12 min 34 s, of which vLLM's first start (downloading the model, compiling and warming up) took 160 s (measured 2026-10-24).
+Measured in AWS's Seoul region (2026-10-24): on a g6.xlarge (NVIDIA L4, 24 GB), starting from Ubuntu 24.04 with only the driver installed, Docker and the rest included, the run took 12 min 34 s; on a g4dn.xlarge (NVIDIA T4, 16 GB) with Docker already there, 12 min 20 s. Most of the time goes to downloading and unpacking the vLLM image; vLLM's first start (downloading the model, compiling and warming up) took 160 s and 197 s.
 
 Without a domain name, use `--port` instead, and the service runs over HTTP on that port:
 
@@ -148,7 +148,7 @@ sudo docker compose restart             # restart
 sudo docker compose down                # stop
 ```
 
-The service starts again when the server restarts. To uninstall, run `sudo docker compose down --volumes --rmi all` in that directory, which removes the containers, the downloaded model and the images, then delete `/opt/voltip-asr`.
+The service starts again when the server restarts. To uninstall, run `sudo docker compose down --volumes --rmi all` in that directory, which removes the containers, the images, the downloaded model and the certificate, then delete `/opt/voltip-asr`.
 
 ## Troubleshooting
 

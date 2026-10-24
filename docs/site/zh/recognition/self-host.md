@@ -11,7 +11,7 @@ description: 在自己的 Linux GPU 服务器上，用一条命令部署 Qwen3-A
 ## 准备
 
 - **服务器**：Linux x86_64。使用 Ubuntu 或 Debian 时，安装脚本可以安装缺少的软件。已在 Ubuntu 24.04 上测试。
-- **显卡**：NVIDIA 显卡，计算能力 7.5 及以上（Turing 及更新的架构），已在 NVIDIA L4 和 T4 上测试。计算能力低于 8.0 的显卡（例如 T4）使用 float16 精度，脚本会自动选择。显存 8 GB 及以上时默认使用 Qwen3-ASR 1.7B，否则使用 0.6B，见[显存](#显存)。
+- **显卡**：NVIDIA 显卡，计算能力 7.5 及以上（Turing 及更新的架构），已在 NVIDIA L4 和 T4（驱动 595）上测试。计算能力低于 8.0 的显卡（例如 T4）使用 float16 精度，脚本会自动选择。显存 8 GB 及以上时默认使用 Qwen3-ASR 1.7B，否则使用 0.6B，见[显存](#显存)。
 - **驱动**：已安装 NVIDIA 驱动并重启过服务器。安装脚本不安装驱动。在 Ubuntu 上可以执行：
 
   ```bash
@@ -36,7 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/deploy/selfhost
 3. 把服务的文件写入 `/opt/voltip-asr`，生成访问令牌，下载镜像，为 vLLM 镜像加上它缺少的音频解码组件，然后启动服务。第一次启动时 vLLM 下载模型。
 4. 等待模型就绪，经 HTTPS 发送一段测试录音，然后显示在 Voltip 中填写的内容。
 
-在 AWS 首尔区域的 g6.xlarge（NVIDIA L4 24 GB）上，从只装有驱动的 Ubuntu 24.04 开始，整个过程用时 12 分 34 秒，其中 vLLM 第一次启动（下载模型、编译和预热）用时 160 秒（2026-10-24 实测）。
+在 AWS 首尔区域实测（2026-10-24）：g6.xlarge（NVIDIA L4 24 GB）上从只装有驱动的 Ubuntu 24.04 开始，包括安装 Docker 等软件，用时 12 分 34 秒；g4dn.xlarge（NVIDIA T4 16 GB）上已有 Docker 时用时 12 分 20 秒。大部分时间用于下载和解压 vLLM 镜像；vLLM 第一次启动（下载模型、编译和预热）分别用时 160 秒和 197 秒。
 
 没有域名时，改用 `--port`，服务以 HTTP 在这个端口上运行：
 
@@ -148,7 +148,7 @@ sudo docker compose restart             # 重启
 sudo docker compose down                # 停止
 ```
 
-服务器重启后，服务会自动启动。卸载时，先在该目录中执行 `sudo docker compose down --volumes --rmi all`，删除容器、下载的模型和构建的镜像，再删除 `/opt/voltip-asr`。
+服务器重启后，服务会自动启动。卸载时，先在该目录中执行 `sudo docker compose down --volumes --rmi all`，删除容器、镜像、下载的模型和证书，再删除 `/opt/voltip-asr`。
 
 ## 问题排查
 
