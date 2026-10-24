@@ -97,15 +97,20 @@ vLLM's and Hugging Face's usage statistics are turned off.
 
 ## Performance and tuning
 
-On an AWS g6.xlarge (NVIDIA L4, 24 GB) and a g4dn.xlarge (NVIDIA T4, 16 GB) in the Seoul region, with the default settings (measured 2026-10-24, sent on the server itself):
+On an AWS g6.xlarge (NVIDIA L4, 24 GB) and a g4dn.xlarge (NVIDIA T4, 16 GB) in the Seoul region, with the default settings, recognising one recording took, in seconds (measured 2026-10-24, sent on the server itself):
 
 | Recording | L4 · 1.7B | L4 · 0.6B | T4 · 1.7B |
 | --- | --- | --- | --- |
-| 5.3 s | 0.37 s | 0.15 s | 0.41 s |
-| 7.3 s | 0.50 s | 0.20 s | 0.53 s |
-| 14.3 s | 0.73 s | 0.30 s | 0.79 s |
-| 8 recordings of 14.3 s sent at once, all done | 0.85 s | 0.38 s | 1.16 s |
-| 16 recordings of 14.3 s sent at once, all done | 1.63 s | 0.71 s | 2.28 s |
+| 5.3 s | 0.37 | 0.15 | 0.41 |
+| 7.3 s | 0.50 | 0.20 | 0.53 |
+| 14.3 s | 0.73 | 0.30 | 0.79 |
+
+Recordings of 14.3 s sent at once were all done after, in seconds:
+
+| Sent at once | L4 · 1.7B | L4 · 0.6B | T4 · 1.7B |
+| --- | --- | --- | --- |
+| 8 | 0.85 | 0.38 | 1.16 |
+| 16 | 1.63 | 0.71 | 2.28 |
 
 The recordings sent at once went to vLLM directly, not through the gateway, which allows each address 8 connections. From another computer, add the time it takes to upload the recording. 0.6B is faster, but in these recordings it got more names and English words wrong.
 
@@ -113,7 +118,7 @@ The recordings sent at once went to vLLM directly, not through the gateway, whic
 
 vLLM takes the share of GPU memory set by `--gpu-memory` when it starts; what the model does not need goes to recognising several recordings at once. The memory taken does not change with the number of requests. On an NVIDIA L4 with 24 GB (measured 2026-10-24):
 
-| Model | `--gpu-memory` | Memory taken | Recordings recognised at once, in total |
+| Model | `--gpu-memory` | Memory taken | At once |
 | --- | --- | --- | --- |
 | 1.7B | 0.85 | 18.3 GB | about 120 minutes |
 | 1.7B | 0.40 | 8.1 GB | about 33 minutes |
@@ -122,7 +127,7 @@ vLLM takes the share of GPU memory set by `--gpu-memory` when it starts; what th
 | 0.6B | 0.25 | 4.7 GB | about 24 minutes |
 | 0.6B | 0.20 | 3.6 GB | about 14 minutes |
 
-Every setting started and recognised normally; the lowest recognised a single recording as fast as the default. The total length is estimated from what was measured: a recording of 14.3 seconds and its text took 245 tokens. A card with less than 8 GB uses 0.6B by default.
+**At once** is the total length of the recordings that can be recognised at the same time, estimated from what was measured: a recording of 14.3 seconds and its text took 245 tokens. Every setting started and recognised normally; the lowest recognised a single recording as fast as the default. A card with less than 8 GB uses 0.6B by default.
 
 ### Settings
 
