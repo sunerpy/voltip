@@ -10,7 +10,9 @@ description: Voltip 接下来要开发的功能、计划中的功能，以及刻
 
 ### Google Play 上架 <StatusTag status="building" />
 
-Android 应用已在发布页面提供，见[手机端](/zh/phone/)。Google Play 上架正在准备中，按 Google 的要求，应用公开发布前需要先完成封闭测试。
+Android 应用已在发布页面提供，见[手机端](/zh/phone/)。Google Play 上架正在准备中：按 Google 对个人开发者的要求，应用公开发布前，需要至少 12 名测试者连续 14 天参加封闭测试，之后才能申请正式上架。
+
+欢迎参加封闭测试，帮助 Voltip 更快上架。加入[交流群](/zh/reference/community)即可报名，参加方式在群里说明。参加需要一台能使用 Google Play 的 Android 手机和一个 Google 账号；测试期间请不要退出，中途退出的测试者不计入人数。
 
 ## 计划中
 
