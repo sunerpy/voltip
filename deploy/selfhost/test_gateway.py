@@ -176,7 +176,8 @@ def request(gateway: Gateway, method: str, path: str, token: str | None = None, 
         with urllib.request.urlopen(req, timeout=30) as response:
             status, headers, data = response.status, dict(response.headers), response.read()
     except urllib.error.HTTPError as error:
-        status, headers, data = error.code, dict(error.headers), error.read()
+        with error:
+            status, headers, data = error.code, dict(error.headers), error.read()
     return status, headers, (json.loads(data) if data.strip() else {})
 
 
@@ -202,6 +203,7 @@ class GatewayTest(unittest.TestCase):
         cls.tokens.chmod(0o600)
         cls.gateway = Gateway(cls.tokens, cls.vllm.server_address[1])
         cls.addClassCleanup(cls.gateway.stop)
+        cls.addClassCleanup(cls.vllm.server_close)
         cls.addClassCleanup(cls.vllm.shutdown)
         cls.addClassCleanup(shutil.rmtree, cls.dir, True)
         cls.gateway.wait(200)
