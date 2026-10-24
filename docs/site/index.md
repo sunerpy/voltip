@@ -134,13 +134,16 @@ home:
         - name: Coding
           preset: Proofread
           apps:
+            - { name: VS Code, mark: vscode }
             - { name: Cursor, mark: cursor }
             - { name: Kiro, mark: kiro }
             - { name: JetBrains, mark: jetbrains }
             - { name: iTerm2, mark: iterm2 }
             - { name: Warp, mark: warp }
             - { name: Ghostty, mark: ghostty }
-          more: And VS Code, Windows Terminal, PowerShell, Alacritty, WezTerm and each system's own terminal.
+            - { name: Alacritty, mark: alacritty }
+            - { name: WezTerm, mark: wezterm }
+          more: And Windows Terminal, PowerShell and each system's own terminal.
           body: Keeps code, commands, paths, identifiers and Markdown as they are.
         - name: Office writing
           preset: Formal
@@ -148,7 +151,8 @@ home:
             - { name: Notion, mark: notion }
             - { name: Obsidian, mark: obsidian }
             - { name: Thunderbird, mark: thunderbird }
-          more: And Outlook, Word, WPS, OneNote, Typora, LibreOffice Writer, and Mail and Pages on a Mac.
+            - { name: LibreOffice Writer, mark: libreoffice-writer }
+          more: And Outlook, Word, WPS, OneNote, Typora, and Mail and Pages on a Mac.
           body: Complete sentences and natural paragraphs for mail and documents, with no invented greetings or facts.
         - name: Chat
           preset: Casual chat

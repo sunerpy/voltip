@@ -103,8 +103,10 @@ missing field or an unknown one, and on a dead link anywhere in `hero:` or `home
 An image is `src`, `dark` (the same screen in the dark theme, optional), `width`, `height` and
 `alt`. `icon` and `mark` take the names listed in `home-schema.ts` (`ICONS`, `MARKS` for the
 providers, `APP_MARKS` for the scenes' apps). A mark is the vendor's or the app's logo in its own
-colours, from Lobe Icons or Simple Icons; an app no open icon set carries a mark for is named in
-`more`, never drawn. Status is one of `available`, `building` or
+colours, from Lobe Icons or Simple Icons, or the owner's own icon file shown as it is (`vscode`,
+which links to the VS Code website as its terms ask, and `libreoffice-writer`); an app no open
+icon set carries a mark for, or whose owner's terms forbid it (Apple's apps, Microsoft's other
+products, for example), is named in `more`, never drawn. Status is one of `available`, `building` or
 `planned`.
 
 A few fields take marks; every other character is shown as written:

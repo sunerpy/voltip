@@ -134,13 +134,16 @@ home:
         - name: 编程开发
           preset: 校对
           apps:
+            - { name: VS Code, mark: vscode }
             - { name: Cursor, mark: cursor }
             - { name: Kiro, mark: kiro }
             - { name: JetBrains, mark: jetbrains }
             - { name: iTerm2, mark: iterm2 }
             - { name: Warp, mark: warp }
             - { name: Ghostty, mark: ghostty }
-          more: 以及 VS Code、Windows Terminal、PowerShell、Alacritty、WezTerm 和各系统自带的终端。
+            - { name: Alacritty, mark: alacritty }
+            - { name: WezTerm, mark: wezterm }
+          more: 以及 Windows Terminal、PowerShell 和各系统自带的终端。
           instruction: 保留代码、命令、路径、英文标识符和 Markdown，不把技术词翻译成中文。
         - name: 办公写作
           preset: 书面语
@@ -148,7 +151,8 @@ home:
             - { name: Notion, mark: notion }
             - { name: Obsidian, mark: obsidian }
             - { name: Thunderbird, mark: thunderbird }
-          more: 以及 Outlook、Word、WPS、OneNote、Typora、LibreOffice Writer，和 Mac 上的「邮件」与 Pages。
+            - { name: LibreOffice Writer, mark: libreoffice-writer }
+          more: 以及 Outlook、Word、WPS、OneNote、Typora，和 Mac 上的「邮件」与 Pages。
           instruction: 邮件和文档：句子完整，自然分段，不编造称呼和事实。
         - name: 即时聊天
           preset: 口语聊天
