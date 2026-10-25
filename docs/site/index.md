@@ -144,6 +144,13 @@ home:
             - { name: Alacritty, mark: alacritty }
             - { name: WezTerm, mark: wezterm }
           more: And Windows Terminal, PowerShell and each system's own terminal.
+          tools:
+            label: Coding agents in the terminal
+            apps:
+              - { name: Codex, mark: codex }
+              - { name: OpenCode, mark: opencode }
+              - { name: Pi Agent, mark: pi }
+            more: And Claude Code and other coding agents that run in a terminal.
           body: Keeps code, commands, paths, identifiers and Markdown as they are.
         - name: Office writing
           preset: Formal
