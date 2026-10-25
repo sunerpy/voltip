@@ -144,6 +144,13 @@ home:
             - { name: Alacritty, mark: alacritty }
             - { name: WezTerm, mark: wezterm }
           more: 以及 Windows Terminal、PowerShell 和各系统自带的终端。
+          tools:
+            label: 终端中的编程助手
+            apps:
+              - { name: Codex, mark: codex }
+              - { name: OpenCode, mark: opencode }
+              - { name: Pi Agent, mark: pi }
+            more: 以及 Claude Code 等其他在终端中运行的编程助手。
           instruction: 保留代码、命令、路径、英文标识符和 Markdown，不把技术词翻译成中文。
         - name: 办公写作
           preset: 书面语
