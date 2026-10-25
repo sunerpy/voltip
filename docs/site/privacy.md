@@ -36,7 +36,7 @@ With Google AI Studio and a key on its free tier, Google may use the text it rec
 
 ## The built-in service
 
-The built-in service's server keeps a record of each request: the time, your IP address, whether it was recognition or AI polish, whether it succeeded, how large it was and how long it took, and the app name and version the app sends with it. It does not keep the recording or the text.
+The built-in service's server keeps a record of each request: the time, your IP address, whether it was recognition or AI polish (for AI polish, which of its models the text was sent to), whether it succeeded, how large it was and how long it took, and the app name and version the app sends with it. It does not keep the recording or the text.
 
 The records are kept for 30 days. They are used to limit how many requests one address can make, so that no single address uses up the shared service, and to count how much the service is used; after that only daily totals without IP addresses are kept. Over the limit, the built-in service answers that it is busy, and AI polish then suggests your own provider. People who share one internet connection, for example in an office, share the limit.
 

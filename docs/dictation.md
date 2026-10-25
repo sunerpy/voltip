@@ -216,7 +216,7 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 
 ### 3.6 润色未生效的原因与内置服务繁忙提示（2026-10-05）
 
-用户需求（2026-10-05）：内置润色服务限流时，界面要有提示，并引导用户改用自己的服务商（例如免费的 Groq 密钥）。此前润色失败只是少了「· 已润色」，原因只以英文字符串存在 `refine_error` 里，界面不显示。内置润色服务用 Groq 免费层，限额按组织计算（`qwen/qwen3.8-27b` 每天 20 万 token），所有用户共用。
+用户需求（2026-10-05）：内置润色服务限流时，界面要有提示，并引导用户改用自己的服务商（例如免费的 Groq 密钥）。此前润色失败只是少了「· 已润色」，原因只以英文字符串存在 `refine_error` 里，界面不显示。内置润色服务用 Groq 免费层，限额按组织计算（`qwen/qwen3.8-27b` 每天 20 万 token），所有用户共用。2026-10-25 起网关在 Groq 拒绝一个内置模型时改用内置列表中的下一个模型（三个模型的额度各自计算），三个都被拒时应用才收到 429；回答里的 `model` 是实际回答的模型，历史记录据此显示（`docs/runbook.md`「自建内置服务」）。这与客户端的候补模型（§3.5，只在额度用完时切换）无关，客户端不需要改动。
 
 - **原因分类**：`voltip_core::RefineFailure { rate_limited, quota, unconfigured, too_long, empty, failed }`，是 `refine_error` 的类别，`refine_error` 仍保留详细说明。`DictationError::RateLimited { service, detail }` 表示服务暂时拒绝（HTTP 429），由 `voltip_cloud::refine_error` 从 `RefineError::RateLimited` 转换而来（识别的 429 不变，仍为 `Asr`）。`DictationError::Overloaded`（「服务繁忙：…」）表示服务暂时处理不过来（HTTP 503，`RefineError::Overloaded`），类别同为 `rate_limited`。两者都不是额度用完，候补模型列表不会因它们切换（§3.5）。失败码对应 `asr` / `refine`。`steps::run_refine` 按错误给出类别，`RefinePlan::Skip` 携带 `unconfigured` / `too_long`，空结果为 `empty`。
 - **记录**：`DictationPhase::Done.refine_failure`、`HistoryEntry.refine_failure`、本机服务的 `ServeOutcome.refine_failure`（`verbose_json` 的 `voltip` 对象），均可省略；旧记录没有这一项。请求失败时（`rate_limited`、`quota`、`failed`），`HistoryEntry.refine_error` 保存客户端报告的原因；没有发出请求（`unconfigured`、`too_long`）和空结果只有类别，不保存。
