@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.9](https://github.com/sunerpy/voltip/compare/v0.1.8...v0.1.9) (2026-10-26)
+
+
+### Features
+
+* 本机模型可以更改保存位置，已下载的模型会一起移到新位置 ([#192](https://github.com/sunerpy/voltip/issues/192)) ([98e12c8](https://github.com/sunerpy/voltip/commit/98e12c89e545e44171897ab1d7d09b297e55572b))
+* 电脑端在本机保留录音，识别或润色失败后可以重新识别，无需重新录音 ([#194](https://github.com/sunerpy/voltip/issues/194)) ([98e12c8](https://github.com/sunerpy/voltip/commit/98e12c89e545e44171897ab1d7d09b297e55572b))
+* 超过 2 分钟的长录音分段压缩保存，Voltip 意外退出后，下次启动可以找回已录下的部分 ([98e12c8](https://github.com/sunerpy/voltip/commit/98e12c89e545e44171897ab1d7d09b297e55572b))
+* 重新识别时可以临时换用其他语音模型和 AI 润色，首页列出未识别的录音并可一键清理 ([98e12c8](https://github.com/sunerpy/voltip/commit/98e12c89e545e44171897ab1d7d09b297e55572b))
+
+
+### Bug Fixes
+
+* 历史记录默认每页 10 条，列表和详情占满窗口高度 ([98e12c8](https://github.com/sunerpy/voltip/commit/98e12c89e545e44171897ab1d7d09b297e55572b))
+* 额度池的「添加」按钮与服务商、模型在同一行，每一项都显示「移除」 ([98e12c8](https://github.com/sunerpy/voltip/commit/98e12c89e545e44171897ab1d7d09b297e55572b))
+
 ## [0.1.8](https://github.com/sunerpy/voltip/compare/v0.1.7...v0.1.8) (2026-10-24)
 
 
