@@ -19,6 +19,7 @@ import {
   outcomeLabel,
   prefillFor,
   presetRefLabel,
+  recordingOfEntry,
   refineModelText,
   sceneLabel,
   takePolishPairs,
@@ -40,6 +41,8 @@ import { inTextField, usePageShortcuts, withCommand } from "../../app/page-short
 import { useRouter } from "../../app/router";
 import { useShell } from "../../app/shell-context";
 import { ClipboardNote } from "../../features/history/ClipboardNote";
+import { useRetake } from "../../features/history/Recordings";
+import { RetakeModelPickers, useRetakeModels } from "../../features/history/RetakeModels";
 import { RefineNote } from "../../features/history/RefineNote";
 import {
   LongEntryTools,
@@ -146,6 +149,33 @@ export function HistoryDetail({
   const shown: View = view === "processed" && processed === undefined ? "polished" : view;
   const scope = fixScope(entry, "desktop");
   const fixing = scope.kind === "fix";
+  // docs/dictation.md §26: the recording this entry was made from, while the cache keeps it.
+  const kept = recordingOfEntry(state.audio_cache, entry.id);
+  const retakes = useRetake();
+  const retakeModels = useRetakeModels();
+  // 重新润色 (§26): 用 AI 预设处理 with the preset the take would have used — its scene's, else the
+  // engines' — kept as the processed text, which the detail then shows.
+  const scenePreset = state.scenes.find((s) => s.id === entry.scene?.id)?.overrides.refine_preset;
+  const retryPreset = scenePreset ?? state.settings.engines.refine_preset;
+  const refineRetry = useRef(false);
+  const processView = process.view;
+  useEffect(() => {
+    if (!refineRetry.current) return;
+    if (processView.state === "done") {
+      refineRetry.current = false;
+      onView("processed");
+      shell.toast({ message: t("history.refineNote.retried"), duration: 4000 });
+    } else if (processView.state === "failed") {
+      refineRetry.current = false;
+      shell.toast({
+        message: t("history.long.failed", { reason: processView.reason }),
+        duration: 6000,
+        tone: "danger",
+      });
+    } else if (processView.state === "cancelled") {
+      refineRetry.current = false;
+    }
+  }, [processView, onView, shell, t]);
 
   // The replacements the AI polish made: none when the take was not polished, and none that its
   // own corrections and rules account for (§16.9 3.1).
@@ -568,8 +598,47 @@ export function HistoryDetail({
       )}
       {!entry.refined && entry.refine_error !== undefined && (
         // §3.6: the clean-up's request failed; why, in words, and the service's own explanation
-        // under the technical details.
-        <RefineNote entry={entry} />
+        // under the technical details. §26: 重新润色 when an AI service is set up.
+        <RefineNote
+          entry={entry}
+          retrying={processView.state === "running"}
+          onRetry={
+            state.engines.refine_ready && !isLongEntry(entry)
+              ? () => {
+                  refineRetry.current = true;
+                  process.start(retryPreset);
+                }
+              : undefined
+          }
+        />
+      )}
+      {kept !== undefined && (
+        // docs/dictation.md §26: the recording is still kept: 重新识别 makes a new entry from it.
+        <div
+          className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-10 hairline px-3 py-2"
+          data-testid="history-kept-recording">
+          <div className="min-w-0 flex-1">
+            <p className="text-[12px] text-fg">{t("history.recordings.detail")}</p>
+            <p className="text-[11px] leading-4 text-fg-subtle">
+              {t("history.recordings.detailHelp")}
+            </p>
+          </div>
+          <div className="flex w-full flex-wrap items-center justify-between gap-2">
+            <RetakeModelPickers choice={retakeModels} disabled={retakes.busy} />
+            <Button
+              size="sm"
+              icon="refresh"
+              disabled={retakes.busy}
+              data-testid="history-detail-retake"
+              onClick={() => {
+                retakes.retake(kept.id, retakeModels.models);
+              }}>
+              {retakes.running === kept.id
+                ? t("history.recordings.retaking")
+                : t("history.recordings.retake")}
+            </Button>
+          </div>
+        </div>
       )}
       {entry.live_error !== undefined && (
         // §12: a streaming mode was asked for but the take (or part of it) fell back to the

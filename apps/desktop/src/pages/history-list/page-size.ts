@@ -1,13 +1,13 @@
 import { useCallback, useState } from "react";
 
-/** The page sizes the history page offers (user request 2026-10-13). Each is at most
+/** The page sizes the history page offers (user requests 2026-10-13, 2026-10-26). Each is at most
  *  `HISTORY_QUERY_LIMIT` (200), so a page is one `history_query`. */
-export const HISTORY_PAGE_SIZES = [20, 50, 100, 200] as const;
+export const HISTORY_PAGE_SIZES = [10, 20, 50, 100, 200] as const;
 export type HistoryPageSize = (typeof HISTORY_PAGE_SIZES)[number];
 
-/** 50 a page: half of the 100 the list used to load at a time, so the page buttons are a few
- *  screens down rather than nine, and at most 400 pages for the largest history (20 000). */
-export const DEFAULT_HISTORY_PAGE_SIZE: HistoryPageSize = 50;
+/** 10 a page (user request 2026-10-26): about what the log shows in a window's height, so the
+ *  page buttons sit under the rows without scrolling. A size chosen before stays chosen. */
+export const DEFAULT_HISTORY_PAGE_SIZE: HistoryPageSize = 10;
 
 /** Where this window keeps the choice, beside the sidebar's and the appearance knobs
  *  (`voltip.sidebar`, `voltip.appearance`): a way of viewing the list, not a setting of the

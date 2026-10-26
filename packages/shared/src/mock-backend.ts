@@ -26,9 +26,17 @@ import {
 } from "./providers";
 import { checkProxySettings, proxyPasswordProblem, proxyProblemCoreText } from "./proxy";
 import { isMcpWrite, mcpAddress } from "./mcp";
+import { type RetakeModels, applyRetakeModels } from "./audio-cache";
 import {
   type AppRef,
   type ArgsOf,
+  AUDIO_CACHE_MAX_KEEP,
+  AUDIO_CACHE_MAX_MB,
+  AUDIO_CACHE_MB,
+  AUDIO_CACHE_MIN_KEEP,
+  AUDIO_CACHE_MIN_MB,
+  type KeptRecording,
+  type KeptStatus,
   type CommandArgs,
   type ConsolePage,
   type SiteId,
@@ -61,6 +69,7 @@ import {
   type LiveText,
   type ModelInstallState,
   type ModelState,
+  type ModelsLocationView,
   type MutationCommand,
   type OutputMode,
   type Permission,
@@ -100,6 +109,7 @@ import {
   defaultSettings,
   emptyEngineStatus,
   emptyHotkeyStatus,
+  emptyModelsLocation,
   HISTORY_LIMIT,
   HISTORY_MIN_KEEP,
   MIN_SERVE_PORT,
@@ -236,6 +246,11 @@ export interface MockBackendOptions {
   relay?: RelayStatus;
   /** Initial history rows; defaults to the sample rows placed relative to `now`. */
   history?: HistoryEntry[];
+  /** The kept recordings at start (docs/dictation.md §26), newest first; defaults to none. */
+  audioCache?: KeptRecording[];
+  /** Where the model library is at start (docs/dictation.md §10.9); defaults to
+   *  {@link MOCK_MODELS_ROOT}. */
+  modelsLocation?: Partial<ModelsLocationView>;
   /** Overrides for the resolved engine status (tests that need a status the settings cannot
    *  produce). */
   engines?: Partial<EngineStatus>;
@@ -427,6 +442,8 @@ export const MOCK_STREAMING_MODEL_ID = "zipformer-stream-zh-en";
 
 /** Where the preview pretends the model files land (`<app data dir>/models/<id>`). */
 export const MOCK_MODELS_ROOT = "~/.local/share/voltip/models";
+/** The folder the preview's folder dialog answers with (docs/dictation.md §10.9). */
+export const MOCK_CHOSEN_MODELS_DIR = "/data/Voltip/models";
 
 /** The real catalogue's files, name and size (`voltip_asr_local::catalogue`). */
 const MOCK_MODEL_FILES: Record<string, readonly (readonly [string, number])[]> = {
@@ -657,6 +674,19 @@ export const MOCK_SCENE_MODE_NOT_READY =
 
 /** The core's text for a take with nothing left to insert (`FailureCode::NoSpeech`). */
 export const MOCK_NO_SPEECH = "没有听到声音";
+/** `DictationError::Busy`: a take is running. */
+export const MOCK_DICTATION_BUSY = "已有听写正在进行";
+/** `voltip_core::audio_cache::RECORDING_GONE` (docs/dictation.md §26). */
+export const MOCK_RECORDING_GONE = "这段录音已不在录音缓存中";
+/** A 重新识别 on models that cannot run (no key, not installed): the core names the issue. */
+export const MOCK_RETAKE_NOT_READY = "服务商缺少 API 密钥（在「语音模型」或「AI 模型」页填写）";
+/** A kept recording's size per second: the core's 16 kHz mono 16-bit WAV. */
+export const MOCK_WAV_BYTES_PER_SECOND = 32_000;
+/** A kept long take's size per second: the core's Ogg Opus parts, about 21.5 kbit/s
+ *  (docs/dictation.md §26.2). */
+export const MOCK_OPUS_BYTES_PER_SECOND = 2_700;
+/** A take longer than this is a long take (`voltip_core::dictation::long::IN_MEMORY`, §22). */
+export const MOCK_IN_MEMORY_MS = 120_000;
 
 /** What every simulated dictation "hears" (raw ASR) and what the LLM pass turns it into. */
 export const MOCK_DICTATION_RAW = "把这段逻辑抽成一个 helper 然后在 session assembly 里复用";
@@ -967,6 +997,10 @@ export class MockBackend implements Backend {
   private takePreset: PresetRef | undefined;
   /** `live_error` of a scene's streaming mode the take cannot serve. */
   private takeModeError: string | undefined;
+  /** The take's kept recording (docs/dictation.md §26), and whether the take recognises one
+   *  again; the status carries both until it is idle. */
+  private takeRecording: string | undefined;
+  private takeRetake = false;
   private meters = new Set<ReturnType<typeof setInterval>>();
   private permissions: PermissionReport | (() => PermissionReport);
   private readonly preflight: InjectPreflight;
@@ -1111,9 +1145,23 @@ export class MockBackend implements Backend {
       sent_texts: [],
       history_recent: this.history.slice(0, HISTORY_RECENT),
       history_total: this.history.length,
+      // The phone keeps no recordings (docs/dictation.md §26).
+      audio_cache: cacheView(this.role !== "phone", structuredClone(options.audioCache ?? [])),
       engines: emptyEngineStatus(),
       update: options.update ?? idleUpdate(),
       models,
+      models_location:
+        this.role === "phone"
+          ? emptyModelsLocation()
+          : {
+              available: true,
+              dir: MOCK_MODELS_ROOT,
+              custom: false,
+              default_dir: MOCK_MODELS_ROOT,
+              moving: null,
+              last: null,
+              ...options.modelsLocation,
+            },
       dictionary: [...(options.dictionary ?? [])],
       rules: [...(options.rules ?? [])],
       // The desktop's list always holds the built-in scenes, appended off after the user's (§18.10).
@@ -1986,6 +2034,12 @@ export class MockBackend implements Backend {
     model_import: (args) => {
       this.importModel(required(args).id);
     },
+    models_location_reset: () => {
+      this.relocateModels(this.state.models_location.default_dir);
+    },
+    models_location_cancel: () => {
+      this.cancelModelsMove();
+    },
     provider_key_set: (args) => {
       const { provider, kind, value } = required(args);
       const entry = keyEntry(provider, kind);
@@ -2025,9 +2079,52 @@ export class MockBackend implements Backend {
     history_delete: (args) => {
       const { id } = required(args);
       this.setHistory(this.history.filter((e) => e.id !== id));
+      // docs/dictation.md §26: the entry's recording goes with it.
+      this.followHistory();
     },
     history_clear: () => {
       this.setHistory([]);
+      this.setRecordings([]);
+    },
+    settings_set_audio_cache: (args) => {
+      const { enabled, keep, maxMb } = required(args);
+      // Mirrors `SetAudioCache`: out of range is refused; off deletes the recordings, tighter
+      // limits drop the oldest at once.
+      if (!Number.isInteger(keep) || keep < AUDIO_CACHE_MIN_KEEP || keep > AUDIO_CACHE_MAX_KEEP) {
+        this.emit({
+          type: "error",
+          message: `audio_cache.keep: ${AUDIO_CACHE_MIN_KEEP}–${AUDIO_CACHE_MAX_KEEP}`,
+        });
+        return;
+      }
+      if (!Number.isInteger(maxMb) || maxMb < AUDIO_CACHE_MIN_MB || maxMb > AUDIO_CACHE_MAX_MB) {
+        this.emit({
+          type: "error",
+          message: `audio_cache.max_mb: ${AUDIO_CACHE_MIN_MB}–${AUDIO_CACHE_MAX_MB}`,
+        });
+        return;
+      }
+      this.emit({
+        type: "settings",
+        ...this.state.settings,
+        audio_cache: { enabled, keep, max_mb: maxMb },
+      });
+      const recordings = this.state.audio_cache.recordings;
+      this.setRecordings(enabled ? this.withinLimits(recordings) : []);
+    },
+    audio_cache_clear: () => {
+      this.setRecordings([]);
+    },
+    audio_cache_delete: (args) => {
+      const { id } = required(args);
+      this.setRecordings(this.state.audio_cache.recordings.filter((r) => r.id !== id));
+    },
+    audio_retake: (args) => {
+      const { id, asr, refine } = required(args);
+      this.retake(id, {
+        ...(asr === undefined ? {} : { asr }),
+        ...(refine === undefined ? {} : { refine }),
+      });
     },
     history_star: (args) => {
       const { id, starred } = required(args);
@@ -2077,7 +2174,10 @@ export class MockBackend implements Backend {
         ...this.state.settings,
         history: { enabled, keep },
       });
-      if (this.history.length > keep) this.setHistory(this.history.slice(0, keep));
+      if (this.history.length > keep) {
+        this.setHistory(this.history.slice(0, keep));
+        this.followHistory();
+      }
     },
     settings_set_overlay: (args) => {
       const { placement } = required(args);
@@ -3065,6 +3165,7 @@ export class MockBackend implements Backend {
     this.clearUpdateTimers();
     for (const t of this.modelTimers.values()) clearTimeout(t);
     this.modelTimers.clear();
+    this.stopModelsMove();
     this.listeners.clear();
   }
 
@@ -3112,6 +3213,7 @@ export class MockBackend implements Backend {
   }
 
   private downloadModel(id: string) {
+    if (this.refuseWhileMoving()) return;
     const row = this.catalogueRow(id);
     const current = this.modelState(id);
     if (!row || !current) {
@@ -3172,6 +3274,7 @@ export class MockBackend implements Backend {
   }
 
   private removeModel(id: string) {
+    if (this.refuseWhileMoving()) return;
     const current = this.modelState(id);
     if (current === undefined || current.kind === "not_installed") return;
     this.stopModelTimer(id);
@@ -3181,6 +3284,7 @@ export class MockBackend implements Backend {
   /** `model_import` (docs/dictation.md §10): a verifying beat, then installed, or what
    *  {@link simulateImportProblems} said the directory lacks. */
   private importModel(id: string) {
+    if (this.refuseWhileMoving()) return;
     const current = this.modelState(id);
     if (!this.catalogueRow(id) || current === undefined) {
       this.emit({
@@ -3235,6 +3339,117 @@ export class MockBackend implements Backend {
     const handle = this.modelTimers.get(id);
     if (handle !== undefined) clearTimeout(handle);
     this.modelTimers.delete(id);
+  }
+
+  // ---- moving the model library (docs/dictation.md §10.9) -------------------------------------
+
+  private modelsMoveTimer: ReturnType<typeof setTimeout> | undefined;
+  /** What the next folder dialog answers: a folder, or `null` for closed. */
+  private nextModelsFolder: string | null = MOCK_CHOSEN_MODELS_DIR;
+  /** The next move fails with this message instead of finishing (tests). */
+  private modelsMoveFailure: string | undefined;
+
+  /** What the next 更改位置 dialog answers (tests): a folder, or `null` (closed). */
+  simulateModelsFolder(next: string | null) {
+    this.nextModelsFolder = next;
+  }
+
+  /** The next move fails with `message`, the library where it was (tests). */
+  simulateModelsMoveFails(message: string | undefined) {
+    this.modelsMoveFailure = message;
+  }
+
+  /** `models_location_choose`: the folder dialog, then the move; `false` when it was closed. */
+  modelsLocationChoose(_title: string): Promise<boolean> {
+    if (this.role === "phone") return Promise.reject(new Error("models: 手机端不支持本地模型"));
+    const folder = this.nextModelsFolder;
+    if (folder === null) return Promise.resolve(false);
+    this.relocateModels(folder);
+    return Promise.resolve(true);
+  }
+
+  private refuseWhileMoving(): boolean {
+    if (this.state.models_location.moving === null) return false;
+    this.emit({ type: "error", message: "models: 正在移动模型，请稍后再试" });
+    return true;
+  }
+
+  private emitModelsLocation(change: Partial<ModelsLocationView>) {
+    this.emit({ type: "models_location", ...this.state.models_location, ...change });
+  }
+
+  /** As the core moves it: refused while a model downloads or a move runs; nothing to do when
+   *  the library is there already; otherwise `MOCK_MODEL_TICKS` progress beats over the installed
+   *  models' size, then every card names the new folder. */
+  private relocateModels(to: string) {
+    const location = this.state.models_location;
+    if (!location.available) {
+      this.emit({ type: "error", message: "models: 手机端不支持本地模型" });
+      return;
+    }
+    if (location.moving !== null) {
+      this.emit({ type: "error", message: "models: 正在移动模型" });
+      return;
+    }
+    const busy = this.state.models.some(
+      (m) => m.state.kind === "downloading" || m.state.kind === "verifying",
+    );
+    if (busy) {
+      this.emit({ type: "error", message: "models: 正在下载模型，请等下载完成或取消后再移动" });
+      return;
+    }
+    if (to === location.dir) {
+      this.emitModelsLocation({ last: null });
+      return;
+    }
+    const total = this.state.models
+      .filter((m) => m.state.kind === "installed")
+      .reduce((sum, m) => sum + m.size_bytes, 0);
+    this.emitModelsLocation({ moving: { to, moved_bytes: 0, total_bytes: total }, last: null });
+    const beat = (tick: number) => {
+      this.modelsMoveTimer = setTimeout(() => {
+        this.modelsMoveTimer = undefined;
+        if (tick < MOCK_MODEL_TICKS) {
+          const moved = Math.round((total * tick) / MOCK_MODEL_TICKS);
+          this.emitModelsLocation({ moving: { to, moved_bytes: moved, total_bytes: total } });
+          beat(tick + 1);
+          return;
+        }
+        const failure = this.modelsMoveFailure;
+        this.modelsMoveFailure = undefined;
+        if (failure !== undefined) {
+          this.emitModelsLocation({ moving: null, last: { kind: "failed", message: failure } });
+          return;
+        }
+        const models = this.state.models.map((m) => ({
+          ...m,
+          dir: `${to}/${m.id}`,
+          state: m.state.kind === "installed" ? { ...m.state, path: `${to}/${m.id}` } : m.state,
+        }));
+        this.emit({ type: "models", models });
+        this.emitModelsLocation({
+          dir: to,
+          custom: to !== this.state.models_location.default_dir,
+          moving: null,
+          last: { kind: "moved", dir: to, deferred: 0 },
+        });
+      }, MOCK_MODEL_TICK_MS);
+    };
+    beat(1);
+  }
+
+  private cancelModelsMove() {
+    if (this.state.models_location.moving === null) {
+      this.emit({ type: "error", message: "models: 没有在移动模型" });
+      return;
+    }
+    this.stopModelsMove();
+    this.emitModelsLocation({ moving: null, last: { kind: "cancelled" } });
+  }
+
+  private stopModelsMove() {
+    if (this.modelsMoveTimer !== undefined) clearTimeout(this.modelsMoveTimer);
+    this.modelsMoveTimer = undefined;
   }
 
   // ---- update simulation -------------------------------------------------------------------------
@@ -3320,11 +3535,13 @@ export class MockBackend implements Backend {
     this.updateTimers.clear();
   }
 
-  /** `Effect::Record`: nothing when history is off, the newest `keep` otherwise. */
+  /** `Effect::Record`: nothing when history is off, the newest `keep` otherwise; a recording of
+   *  an entry that dropped out goes too (§26). */
   private recordHistory(entry: HistoryEntry) {
     const { enabled, keep } = this.state.settings.history;
     if (!enabled) return;
     this.setHistory([entry, ...this.history].slice(0, keep));
+    this.followHistory();
   }
 
   // ---- providers (docs/dictation.md §3.3) ----------------------------------------------------------
@@ -3616,6 +3833,8 @@ export class MockBackend implements Backend {
       this.takeRemote = undefined;
       this.takePreset = undefined;
       this.takeSource = undefined;
+      this.takeRecording = undefined;
+      this.takeRetake = false;
     }
     if (phase.phase !== "listening" && phase.phase !== "processing") this.takeSegments = undefined;
     const context = this.takeContext === undefined ? {} : { context: this.takeContext };
@@ -3623,6 +3842,8 @@ export class MockBackend implements Backend {
     const preset = this.takePreset === undefined ? {} : { preset: this.takePreset };
     const source = this.takeSource === undefined ? {} : { source: this.takeSource };
     const segments = this.takeSegments === undefined ? {} : { segments: this.takeSegments };
+    const recording = this.takeRecording === undefined ? {} : { recording: this.takeRecording };
+    const retake = this.takeRetake ? { retake: true } : {};
     this.emit({
       type: "dictation",
       session,
@@ -3633,6 +3854,220 @@ export class MockBackend implements Backend {
       ...preset,
       ...source,
       ...segments,
+      ...recording,
+      ...retake,
+    });
+  }
+
+  // ---- audio cache (docs/dictation.md §26) -----------------------------------------------------
+
+  /** Whether a take keeps its recording: the desktop, the cache on, and the history too. */
+  private keepsAudio(): boolean {
+    const { audio_cache, history } = this.state.settings;
+    return this.state.audio_cache.available && audio_cache.enabled && history.enabled;
+  }
+
+  /** Replace the kept recordings (newest first) and tell the UI, as `CoreEvent::AudioCache`. */
+  private setRecordings(recordings: KeptRecording[]) {
+    const current = this.state.audio_cache.recordings;
+    if (JSON.stringify(current) === JSON.stringify(recordings)) return;
+    const { available } = this.state.audio_cache;
+    this.emit({ type: "audio_cache", ...cacheView(available, recordings) });
+  }
+
+  /** The newest recordings within the settings' count and size, as `AudioCache::enforce`. */
+  private withinLimits(recordings: KeptRecording[]): KeptRecording[] {
+    const { keep, max_mb } = this.state.settings.audio_cache;
+    const kept = recordings.slice(0, keep);
+    let total = kept.reduce((sum, r) => sum + r.bytes, 0);
+    while (kept.length > 0 && total > max_mb * AUDIO_CACHE_MB) {
+      total -= kept.pop()?.bytes ?? 0;
+    }
+    return kept;
+  }
+
+  /** `Effect::Keep`: a take about to be recognised keeps its recording, the status names it; a
+   *  long take its compressed copy (§26.2). */
+  private keepTakeRecording(durationMs: number) {
+    if (!this.keepsAudio()) return;
+    const id = this.uuid();
+    this.takeRecording = id;
+    const app = this.takeContext?.app;
+    const long = durationMs > MOCK_IN_MEMORY_MS;
+    const perSecond = long ? MOCK_OPUS_BYTES_PER_SECOND : MOCK_WAV_BYTES_PER_SECOND;
+    const recording: KeptRecording = {
+      id,
+      at_ms: this.now(),
+      duration_ms: durationMs,
+      bytes: Math.max(44, Math.round((durationMs / 1000) * perSecond)),
+      ...(long ? { format: "opus" as const } : {}),
+      ...(app === undefined ? {} : { app }),
+      status: { kind: "pending" },
+    };
+    this.setRecordings(this.withinLimits([recording, ...this.state.audio_cache.recordings]));
+  }
+
+  /** `Effect::Kept`: what became of the take's recording. A failure never replaces an entry;
+   *  an entry the history did not keep takes the recording away. */
+  private settleRecording(status: KeptStatus) {
+    const id = this.takeRecording;
+    if (id === undefined) return;
+    const recordings = this.state.audio_cache.recordings;
+    if (status.kind === "recognized" && !this.history.some((e) => e.id === status.entry)) {
+      this.setRecordings(recordings.filter((r) => r.id !== id));
+      return;
+    }
+    this.setRecordings(
+      recordings.map((r) =>
+        r.id !== id || (r.status.kind === "recognized" && status.kind !== "recognized")
+          ? r
+          : { ...r, status },
+      ),
+    );
+  }
+
+  /** The recordings whose entry the history no longer has go too. */
+  private followHistory() {
+    const ids = new Set(this.history.map((e) => e.id));
+    this.setRecordings(
+      this.state.audio_cache.recordings.filter(
+        (r) => r.status.kind !== "recognized" || ids.has(r.status.entry),
+      ),
+    );
+  }
+
+  /** `audio_retake`: a take without a capture that starts in processing; its text goes to the
+   *  clipboard and into the history (a new entry the recording then points at). `models` are
+   *  other models than the settings' for this take only (§26.4); one that cannot run refuses it. */
+  private retake(id: string, models: RetakeModels = {}) {
+    const recording = this.state.audio_cache.recordings.find((r) => r.id === id);
+    if (recording === undefined) {
+      this.emit({ type: "error", message: MOCK_RECORDING_GONE });
+      return;
+    }
+    const current = this.state.dictation.phase.phase;
+    if (current === "listening" || current === "processing") {
+      this.emit({ type: "error", message: MOCK_DICTATION_BUSY });
+      return;
+    }
+    const chosen = models.asr !== undefined || models.refine !== undefined;
+    const engines = chosen
+      ? this.resolveEngines(applyRetakeModels(this.state.settings.engines, models))
+      : this.state.engines;
+    if (
+      chosen &&
+      (!engines.asr_ready || (models.refine?.kind === "remote" && !engines.refine_ready))
+    ) {
+      this.emit({ type: "error", message: MOCK_RETAKE_NOT_READY });
+      return;
+    }
+    this.clearDictationTimers();
+    this.clearLiveTimers();
+    this.clearExtraStop();
+    const session = this.state.dictation.session + 1;
+    this.takeKind = "dictation";
+    this.takeMode = "whole_take";
+    this.injectedChars = 0;
+    this.takeModeError = undefined;
+    this.takePresetId = this.state.settings.engines.refine_preset;
+    this.takePresets = this.state.presets;
+    this.takePreset = undefined;
+    this.takeSource = undefined;
+    this.takeSegments = undefined;
+    this.takeRemote = undefined;
+    this.takeRecording = id;
+    this.takeRetake = true;
+    const scene =
+      recording.app === undefined ? undefined : matchScene(this.state.scenes, recording.app);
+    this.takeScene = scene;
+    this.takeContext =
+      recording.app === undefined
+        ? undefined
+        : { app: recording.app, ...(scene === undefined ? {} : { scene: sceneRefOf(scene) }) };
+    // A chosen clean-up (or none) wins over the scene's, as a chosen model does (§26.4).
+    const refine =
+      models.refine === undefined
+        ? (scene?.overrides.refine_enabled ?? engines.refine_enabled)
+        : models.refine.kind === "remote";
+    const refineFailure = refine ? this.refineFailure : undefined;
+    const polished = refine && refineFailure === undefined;
+    const startedAt = this.now();
+    this.emitPhase(
+      {
+        phase: "processing",
+        stage: "transcribing",
+        started_at: startedAt,
+        stage_started_at: startedAt,
+      },
+      session,
+    );
+    const finish = () => {
+      if (this.state.dictation.session !== session) return;
+      const vocabulary = Vocabulary.compile(this.state.dictionary, this.state.rules);
+      const corrected = vocabulary.correct(MOCK_DICTATION_RAW);
+      const refined = polished ? vocabulary.correct(MOCK_DICTATION_TEXT).text : corrected.text;
+      const ruled = vocabulary.applyRules(refined);
+      const text = ruled.text;
+      const preset = polished ? this.resolveTakePreset() : undefined;
+      const hits = { corrections: corrected.hits, rules: ruled.hits };
+      const entry: HistoryEntry = {
+        id: this.uuid(),
+        at_ms: this.now(),
+        raw_text: MOCK_DICTATION_RAW,
+        text,
+        refined: polished,
+        asr_model: engines.asr_model,
+        ...(polished ? { refine_model: engines.refine_model, refine_ms: MOCK_REFINE_MS } : {}),
+        ...(refineFailure === undefined ? {} : { refine_failure: refineFailure }),
+        ...(refineFailure === "rate_limited" ||
+        refineFailure === "quota" ||
+        refineFailure === "failed"
+          ? { refine_error: MOCK_REFINE_FAILED }
+          : {}),
+        duration_ms: recording.duration_ms,
+        asr_ms: MOCK_ASR_MS,
+        outcome: { kind: "inserted", via: "clipboard" },
+        starred: false,
+        mode: "whole_take",
+        ...(hits.corrections.length + hits.rules.length > 0 ? { vocabulary: hits } : {}),
+        ...(this.takeContext === undefined ? {} : { app: this.takeContext.app }),
+        ...(scene === undefined ? {} : { scene: this.takeContext?.scene ?? sceneRefOf(scene) }),
+        ...(preset === undefined ? {} : { preset }),
+        kind: "dictation",
+      };
+      this.recordHistory(entry);
+      this.settleRecording({ kind: "recognized", entry: entry.id });
+      this.emitPhase({
+        phase: "done",
+        text,
+        raw_text: MOCK_DICTATION_RAW,
+        chars: Array.from(text).length,
+        via: "clipboard",
+        refined: polished,
+        duration_ms: recording.duration_ms,
+        asr_ms: MOCK_ASR_MS,
+        mode: "whole_take",
+        ...(polished ? { refine_ms: MOCK_REFINE_MS } : {}),
+        ...(refineFailure === undefined
+          ? {}
+          : { refine_failure: refineFailure, refine_error: MOCK_REFINE_FAILED }),
+      });
+      this.dwell(MOCK_DICTATION_DWELL_MS, session);
+    };
+    this.laterDictation(MOCK_ASR_MS, () => {
+      if (this.state.dictation.session !== session) return;
+      if (!refine) {
+        finish();
+        return;
+      }
+      this.takePreset = this.resolveTakePreset();
+      this.emitPhase({
+        phase: "processing",
+        stage: "refining",
+        started_at: startedAt,
+        stage_started_at: this.now(),
+      });
+      this.laterDictation(MOCK_REFINE_MS, finish);
     });
   }
 
@@ -3742,6 +4177,8 @@ export class MockBackend implements Backend {
     // §22: a voice edit's instruction is spoken into the microphone.
     this.takeSource = kind === "edit" ? "microphone" : this.state.settings.recording.source;
     this.takeSegments = undefined;
+    this.takeRecording = undefined;
+    this.takeRetake = false;
     if (kind === "edit" && !this.state.engines.refine_ready) {
       // §19.4: no LLM, no edit — refused at the press, the microphone never opens.
       this.emitPhase(
@@ -4015,6 +4452,8 @@ export class MockBackend implements Backend {
     // The status names the clean-up's preset from the start of processing (§21).
     const preset = refine ? this.resolveTakePreset() : undefined;
     this.takePreset = preset;
+    // docs/dictation.md §26: the recording is kept before it is recognised.
+    this.keepTakeRecording(durationMs);
     this.emitPhase({
       phase: "processing",
       stage: streaming ? "finalizing" : "transcribing",
@@ -4040,6 +4479,7 @@ export class MockBackend implements Backend {
           message: MOCK_NO_SPEECH,
           code: "no_speech",
         });
+        this.settleRecording({ kind: "failed", code: "no_speech", message: MOCK_NO_SPEECH });
         this.dwell(MOCK_DICTATION_DWELL_MS, session);
         return;
       }
@@ -4093,6 +4533,7 @@ export class MockBackend implements Backend {
         kind: "dictation",
       };
       this.recordHistory(entry);
+      this.settleRecording({ kind: "recognized", entry: entry.id });
       if (this.role === "phone") this.phoneClipboard = text;
       this.emitPhase(done);
       this.dwell(MOCK_DICTATION_DWELL_MS, session);
@@ -4222,19 +4663,34 @@ export class MockBackend implements Backend {
     this.clearDictationTimers();
     this.clearLiveTimers();
     this.clearExtraStop();
+    // §26.3: a dictation take cancelled while it records keeps its copy once it is long.
+    const phase = this.state.dictation.phase;
+    const listenedMs = phase.phase === "listening" ? this.now() - phase.started_at : 0;
+    if (this.takeKind === "dictation" && listenedMs > MOCK_IN_MEMORY_MS) {
+      this.keepTakeRecording(listenedMs);
+    }
     // `live_inject` does not take back what it pasted (§12); every other mode reports 0.
     this.emitPhase({ phase: "cancelled", injected_chars: this.injectedChars });
+    // §26: a recording kept for the take reads cancelled.
+    this.settleRecording({ kind: "cancelled" });
     this.dwell(MOCK_DICTATION_DWELL_MS, this.state.dictation.session);
   }
 
-  /** The core's test hook: a failed run (ASR error, or injection failure with the text kept). */
-  simulateDictationFailed(message: string, text?: string) {
+  /** The core's test hook: a failed run (ASR error, or injection failure with the text kept);
+   *  `code` is the stage that stopped it, as the core reports it. A kept recording reads failed
+   *  when no text came (§26). */
+  simulateDictationFailed(message: string, text?: string, code?: DictationFailureCode) {
     this.clearDictationTimers();
     this.clearLiveTimers();
     const session = this.state.dictation.session;
+    const coded = code === undefined ? {} : { code };
     this.emitPhase(
-      text === undefined ? { phase: "failed", message } : { phase: "failed", message, text },
+      text === undefined
+        ? { phase: "failed", message, ...coded }
+        : { phase: "failed", message, text, ...coded },
     );
+    if (text === undefined)
+      this.settleRecording({ kind: "failed", code: code ?? "unknown", message });
     this.dwell(
       text === undefined ? MOCK_DICTATION_DWELL_MS : MOCK_DICTATION_FAILED_DWELL_MS,
       session,
@@ -4515,6 +4971,11 @@ export class MockBackend implements Backend {
     this.log.push(event);
     for (const listener of this.listeners) listener(event);
   }
+}
+
+/** `AudioCache::view`: the recordings and their size in all (docs/dictation.md §26). */
+function cacheView(available: boolean, recordings: KeptRecording[]) {
+  return { available, recordings, bytes: recordings.reduce((sum, r) => sum + r.bytes, 0) };
 }
 
 /** A paste that neither pasted nor copied (`paste_text`'s `failed { reason }`). */

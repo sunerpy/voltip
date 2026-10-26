@@ -634,6 +634,57 @@ export const en: Messages = {
       reason: "Reason: ",
       /** The phone's fact row of the same reason. */
       reasonLabel: "Why polish failed",
+      /** docs/dictation.md §26: the clean-up again, with the entry's preset; the result is kept as
+       *  the processed text. */
+      retry: "Polish again",
+      retrying: "Polishing…",
+      retried: "Polished again; see Processed",
+    },
+    /** The audio cache on the history page (docs/dictation.md §26): the recordings no text came
+     *  from, and 重新识别 from a kept recording. */
+    recordings: {
+      title: "Recordings not recognised",
+      lede: "No text was recognised from these recordings. Recognise them again, on other models if you like, without recording again.",
+      count: "{n}",
+      when: "{time} · {length}",
+      app: "Recorded in {app}",
+      status: {
+        pending: "Waiting to be recognised",
+        failed: "Recognition failed: {reason}",
+        cancelled: "Cancelled while it was recorded or recognised",
+        interrupted: "Voltip closed while it was recorded or processed",
+      },
+      retake: "Recognise again",
+      retaking: "Recognising…",
+      delete: "Delete recording",
+      deleted: "Recording deleted",
+      done: "Recognised again; the text is on the clipboard",
+      failed: "Recognising again failed: {reason}",
+      /** The models a 重新识别 runs on (docs/dictation.md §26.4): for that take only. */
+      models: {
+        using: "Recognise again with",
+        hint: "Only for recognising these again; the settings stay as they are",
+        speech: "Speech model",
+        speechTrigger: "Speech model for recognising again: {name}",
+        polish: "AI polish",
+        polishTrigger: "AI polish for recognising again: {name}",
+        noPolish: "No polish",
+      },
+      /** The home page's short list (user request 2026-10-26). */
+      viewAll: "View all {n}",
+      clear: "Clear",
+      clearTitle: "Clear the recordings not recognised?",
+      clearBody: {
+        one: "{n} recording not recognised will be deleted; it can no longer be recognised again.",
+        other:
+          "{n} recordings not recognised will be deleted; they can no longer be recognised again.",
+      },
+      clearConfirm: "Clear",
+      cleared: { one: "{n} recording cleared", other: "{n} recordings cleared" },
+      /** In an entry's detail whose recording is kept. */
+      detail: "This dictation's recording is still kept on this computer",
+      detailHelp:
+        "Recognise it again, on other models if you like; the result is saved as a new entry and copied to the clipboard. The settings stay as they are.",
     },
     liveError: "Live transcription stopped; the whole recording was transcribed instead: {reason}",
     /** Voice edit rows (docs/dictation.md §19.5): instruction → result, the original expandable. */
@@ -1259,6 +1310,8 @@ export const en: Messages = {
       moveUp: "Move {model} up",
       moveDown: "Move {model} down",
       remove: "Remove {model}",
+      /** The remove button's own word; `remove` names the model for a screen reader. */
+      removeShort: "Remove",
       problem: {
         full: "At most {n} fallback models",
         blank: "Choose or enter a model",
@@ -1370,6 +1423,33 @@ export const en: Messages = {
       missing: "Missing: {files}",
       mismatched:
         "Did not verify: {files}. The file is incomplete or not this model's; download it again.",
+    },
+    location: {
+      title: "Location",
+      help: "Models download into this folder. When you change it, the downloaded models move along.",
+      default: "Default",
+      custom: "Custom",
+      copy: "Copy path",
+      copied: "Path copied",
+      change: "Change…",
+      chooseTitle: "Choose where to save the models",
+      reset: "Restore default",
+      resetTitle: "Move the models back to the default folder?",
+      resetBody: "The downloaded models move back to {dir}.",
+      resetConfirm: "Move back",
+      moving: "Moving to {dir}",
+      progress: "{moved} of {total}",
+      cancel: "Cancel move",
+      busyDownloading: "The location can change once the download is done",
+      busyMoving: "Moving the models; downloads and deletions wait until it is done",
+      moved: "The models moved to the new folder",
+      movedDeferred: {
+        one: "The models moved. {n} old folder is still in use and is deleted the next time Voltip starts.",
+        other:
+          "The models moved. {n} old folders are still in use and are deleted the next time Voltip starts.",
+      },
+      cancelled: "Move cancelled; the models stay where they were",
+      failed: "The models did not move and stay where they were: {reason}",
     },
     action: {
       download: "Download",
@@ -1807,6 +1887,10 @@ export const en: Messages = {
       failed: "Not inserted · {reason}",
       cancelled: "Cancelled · recording discarded",
       cancelledKept: "Cancelled · the {n} characters already typed stay",
+      /** docs/dictation.md §26: a take cancelled while it was recognised keeps its recording. */
+      cancelledRecording: "Cancelled · recording kept",
+      /** Under a take that gave no text but whose recording the audio cache keeps. */
+      keptNote: "Recording kept to try again",
       cloud: "Cloud",
       local: "Local",
       editTag: "Edit",
@@ -2410,12 +2494,35 @@ export const en: Messages = {
           "Older entries are deleted past this; a smaller number deletes the extra ones at once.",
         keepOption: "{n} entries",
         clear: "Clear history",
-        clearHelp: "Deletes every dictation entry on this computer; cannot be undone.",
+        clearHelp:
+          "Deletes every dictation entry and kept recording on this computer; cannot be undone.",
         clearConfirmTitle: "Clear all dictation history?",
         clearConfirmBody:
-          "The {n} entries on this computer will be deleted. This cannot be undone.",
+          "The {n} entries and the kept recordings on this computer will be deleted. This cannot be undone.",
         clearConfirm: "Clear",
         cleared: "Dictation history cleared",
+        /** 录音缓存 (docs/dictation.md §26). */
+        recordings: {
+          title: "Recording cache",
+          count: "{n} · {size}",
+          keep: "Keep recordings on this computer",
+          keepHelp:
+            "Keeps the recordings of your latest dictations. When recognition or polish fails, recognise them again from the history without recording again. Turning this off deletes the kept recordings.",
+          historyOff: "Turn on Keep dictation history first.",
+          limit: "Keep at most",
+          limitHelp: "The oldest recordings are deleted past this.",
+          limitOption: "{n} recordings",
+          size: "Use at most",
+          sizeHelp: "When the recordings together grow past this size, the oldest are deleted.",
+          clear: "Delete recordings",
+          clearHelp: "Deletes every recording kept on this computer; the history's text stays.",
+          clearConfirmTitle: "Delete all kept recordings?",
+          clearConfirmBody:
+            "{n} recordings ({size}) will be deleted and can no longer be recognised again. The history's text stays.",
+          clearConfirm: "Delete",
+          cleared: "Kept recordings deleted",
+          note: "Recordings stay on this computer: they are not synced to phones and not included in backups. Recordings longer than 2 minutes are kept compressed, about 10 MB an hour.",
+        },
         /** Backup and migration (docs/dictation.md §4.6). */
         backup: {
           title: "Backup and migration",

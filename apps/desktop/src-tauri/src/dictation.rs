@@ -470,14 +470,16 @@ pub fn production_ports(models_root: PathBuf, network: &Arc<voltip_net::Network>
 /// (§22); the first long take without the model fetches it.
 pub fn ports_with_backend(backend: Arc<dyn Backend + Send + Sync>, hub: Arc<AudioHub>, models_root: PathBuf, network: &Arc<voltip_net::Network>) -> ShellPorts {
     let mode = Arc::new(Mutex::new(InjectMode::default()));
-    let store = ModelStore::new(models_root.clone()).with_network(network);
+    let store = ModelStore::new(models_root).with_network(network);
+    // One folder for every part of the library: a move switches them all (docs/dictation.md §10.9).
+    let root = store.shared_root();
     let dictation = DictationPorts {
         audio: Arc::new(RecorderAudioSource::with_backend(backend, hub.clone())),
         injector: Arc::new(NativeInjector::system(mode.clone())),
-        factory: engine_factory(mode, LocalTranscriber::new(models_root.clone()), Some(store.clone()), Arc::clone(network)),
-        segmenter: Some(Arc::new(VadSegmenterFactory::new(models_root.clone(), Some(store.clone())))),
+        factory: engine_factory(mode, LocalTranscriber::new(root.clone()), Some(store.clone()), Arc::clone(network)),
+        segmenter: Some(Arc::new(VadSegmenterFactory::new(root.clone(), Some(store.clone())))),
         models: Some(Arc::new(store)),
-        streaming: Some(Arc::new(LocalStreamingTranscriber::new(models_root))),
+        streaming: Some(Arc::new(LocalStreamingTranscriber::new(root))),
         probe: Some(Arc::new(crate::platform::PlatformProbe::new())),
         service_probe: Some(Arc::new(HttpServiceProbe::new(network))),
     };

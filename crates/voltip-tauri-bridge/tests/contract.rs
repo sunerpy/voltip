@@ -14,11 +14,13 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use voltip_core::audio_cache::{AudioCacheView, KeptFormat, KeptRecording, KeptStatus};
 use voltip_core::connectivity::{ConnectivityReport, ConnectivityStatus, PeerCheck, ProbeResult, RelayCheck};
 use voltip_core::dictation::{ClipboardCode, FailureCode, ProcessingStage, Via};
 use voltip_core::history::ProcessedText;
 use voltip_core::history::process::ProcessState;
 use voltip_core::mcp::{HistoryRange, McpAction, McpActivity, McpClient, McpRead, McpSettings, McpStatus, McpWrite};
+use voltip_core::models_location::{ModelsLocationView, ModelsMove, ModelsMoveOutcome};
 use voltip_core::paste::{CopyReason, PasteFailure, PasteOutcome};
 use voltip_core::phone::{PhoneTakeFailure, PhoneTakeState, PhoneTakeView};
 use voltip_core::phone::{PhoneTextSource, SentText, SentTextFailure, SentTextState};
@@ -74,6 +76,11 @@ const REMAINING_SECS: u64 = 87;
 const RELAY_ATTEMPTS: u32 = 2;
 const HISTORY_ID: &str = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
 const HISTORY_ID_2: &str = "1c2d3e4f-5a6b-4c8e-9f7a-0f3f1a1e8d4b";
+/// Kept recordings (docs/dictation.md §26).
+const RECORDING_ID: &str = "4a7c2e10-6b1d-4f3a-9c8e-5d2b7a1f0e93";
+const RECORDING_ID_2: &str = "8e3f1b2a-0c4d-4e5f-a6b7-c8d9e0f1a2b3";
+const RECORDING_ID_3: &str = "d1e2f3a4-b5c6-4d7e-8f9a-0b1c2d3e4f5a";
+const RECORDING_ID_4: &str = "2f4e6d8c-0a1b-4c3d-9e5f-7a8b9c0d1e2f";
 const AT_MS: u64 = 1_758_700_600_000;
 const RAW_TEXT: &str = "把 fetchUser 改成 async 然后加上错误处理";
 const REFINED_TEXT: &str = "把 fetchUser 改成 async，然后加上错误处理。";
@@ -351,6 +358,8 @@ fn settings() -> Settings {
         mcp: McpSettings { enabled: true, port: 47841, read: McpRead::Full, history_range: HistoryRange::Last7Days, write: McpWrite::Dictionary },
         // docs/dictation.md §20.11: the phone's talk button tapped, away from holding.
         phone_talk: voltip_core::PhoneTalkMode::Tap,
+        // docs/dictation.md §26: the recording cache keeps more, in more space, than by default.
+        audio_cache: voltip_core::AudioCacheSettings { enabled: true, keep: 50, max_mb: 500 },
         ..Settings::default()
     }
 }
@@ -943,6 +952,49 @@ fn devices() -> Vec<DeviceView> {
     ]
 }
 
+/// The audio cache (docs/dictation.md §26) with a recording of every status, and a long one kept as
+/// its compressed parts (§26.2).
+fn audio_cache() -> AudioCacheView {
+    let app = Some(AppRef { id: "code".into(), name: "Visual Studio Code".into() });
+    let recording = |id: &str, ago: u64, status: KeptStatus| KeptRecording {
+        id: uuid(id),
+        at_ms: AT_MS - ago,
+        duration_ms: 6_800,
+        bytes: 217_644,
+        app: app.clone(),
+        status,
+        format: KeptFormat::Wav,
+    };
+    let recordings = vec![
+        recording(RECORDING_ID, 0, KeptStatus::Pending),
+        recording(RECORDING_ID_2, 60_000, KeptStatus::Failed { code: FailureCode::Asr, message: "asr: 请求超时".into() }),
+        recording(RECORDING_ID_3, 120_000, KeptStatus::Recognized { entry: uuid(HISTORY_ID) }),
+        recording(RECORDING_ID_4, 180_000, KeptStatus::Cancelled),
+        KeptRecording {
+            app: None,
+            duration_ms: 3_725_000,
+            bytes: 10_057_500,
+            format: KeptFormat::Opus,
+            ..recording(HISTORY_ID_2, 240_000, KeptStatus::Interrupted)
+        },
+    ];
+    let bytes = recordings.iter().map(|r| r.bytes).sum();
+    AudioCacheView { available: true, recordings, bytes }
+}
+
+/// Where the model library is (docs/dictation.md §10.9): a chosen folder, a move to another one
+/// halfway, and how the move before it ended.
+fn models_location() -> ModelsLocationView {
+    ModelsLocationView {
+        available: true,
+        dir: "D:\\Voltip\\models".into(),
+        custom: true,
+        default_dir: "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models".into(),
+        moving: Some(ModelsMove { to: "E:\\Models".into(), moved_bytes: 268_435_456, total_bytes: 930_170_389 }),
+        last: Some(ModelsMoveOutcome::Moved { dir: "D:\\Voltip\\models".into(), deferred: 1 }),
+    }
+}
+
 /// A fully populated state: every `Option` is `Some`, so the TypeScript schema sees each key.
 fn full_state() -> UiState {
     UiState {
@@ -976,8 +1028,12 @@ fn full_state() -> UiState {
             preset: None,
             source: None,
             segments: None,
+            // docs/dictation.md §26: a take recognising a kept recording again.
+            recording: Some(uuid(RECORDING_ID)),
+            retake: true,
         },
         history_recent: history_entries(),
+        audio_cache: audio_cache(),
         // More entries than the recent ones: the rest are read through the queries.
         history_total: 312,
         engines: engine_status(),
@@ -988,6 +1044,7 @@ fn full_state() -> UiState {
             date: Some("2026-09-25T08:00:00Z".into()),
         },
         models: models_installed_and_downloading(),
+        models_location: models_location(),
         dictionary: dictionary(),
         rules: rules(),
         scenes: scenes(),
@@ -1045,6 +1102,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::History { .. } => "history",
         UiEvent::Engines(_) => "engines",
         UiEvent::Models { .. } => "models",
+        UiEvent::ModelsLocation(_) => "models_location",
         UiEvent::Update(_) => "update",
         UiEvent::Dictionary { .. } => "dictionary",
         UiEvent::Rules { .. } => "rules",
@@ -1052,6 +1110,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::Presets { .. } => "presets",
         UiEvent::PresetTry { .. } => "preset_try",
         UiEvent::HistoryProcess { .. } => "history_process",
+        UiEvent::AudioCache(_) => "audio_cache",
         UiEvent::ProviderProbe(_) => "provider_probe",
         UiEvent::PhoneTake { .. } => "phone_take",
         UiEvent::SentTexts { .. } => "sent_texts",
@@ -1293,6 +1352,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Listening { started_at: AT_MS, ready: false, live: None, locked: false },
@@ -1303,6 +1364,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         // docs/dictation.md §22: a long take from the microphone and the computer's sound, past its
         // first two minutes, with segments recognised as it goes.
@@ -1315,6 +1378,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: Some(voltip_core::RecordingSource::Mixed),
             segments: Some(voltip_core::dictation::SegmentProgress { done: 5, total: 6 }),
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Listening {
@@ -1330,6 +1395,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         // `hold_or_toggle` locked by a short press (docs/dictation.md §13): the pill shows a lock.
         UiEvent::Dictation(DictationStatus {
@@ -1341,6 +1408,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         // `live_inject` (docs/dictation.md §12): the first committed sentence is already pasted.
         UiEvent::Dictation(DictationStatus {
@@ -1352,6 +1421,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         // The streaming modes wait for the flush first (§12 `finalizing`).
         UiEvent::Dictation(DictationStatus {
@@ -1368,6 +1439,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing {
@@ -1383,6 +1456,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
@@ -1393,6 +1468,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing {
@@ -1409,6 +1486,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: Some(PresetRef { id: PresetId::Custom(uuid(PRESET_ID)), name: "周报".into() }),
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing { stage: ProcessingStage::Inserting, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
@@ -1419,6 +1498,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: done_phase(),
@@ -1429,6 +1510,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Done {
@@ -1453,6 +1536,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         // `streaming_final`: the stream's sentences are the text; a streaming mode that fell back to
         // the whole take says why in `live_error` (docs/dictation.md §12).
@@ -1465,6 +1550,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: fallen_back_done_phase(),
@@ -1475,6 +1562,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::NoSpeech, message: "没有听到声音".into(), text: None },
@@ -1485,6 +1574,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::Inject, message: "inject: 前台窗口拒绝了粘贴".into(), text: Some(REFINED_TEXT.into()) },
@@ -1495,6 +1586,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::Asr, message: "asr: 401 unauthorized".into(), text: None },
@@ -1505,6 +1598,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::Audio, message: "audio: no input device".into(), text: None },
@@ -1515,6 +1610,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::CANCELLED,
@@ -1525,6 +1622,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         // `live_inject` cancelled after one sentence was pasted: it stays pasted (§12).
         UiEvent::Dictation(DictationStatus {
@@ -1536,6 +1635,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         // docs/dictation.md §18.6: the probe named the app and a scene matched (the pill shows it);
         // an app no scene names carries no `scene`.
@@ -1548,6 +1649,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing { stage: ProcessingStage::Transcribing, started_at: AT_MS + 3200, stage_started_at: AT_MS + 3200, preview: None },
@@ -1558,6 +1661,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         history_event(history_entries()),
         history_event(vec![live_inject_history_entry()]),
@@ -1706,6 +1811,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Processing {
@@ -1721,6 +1828,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Done {
@@ -1745,6 +1854,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed { code: FailureCode::NoSelection, message: "没有选中文本".into(), text: None },
@@ -1755,6 +1866,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed {
@@ -1767,6 +1880,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed {
@@ -1779,6 +1894,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         UiEvent::Dictation(DictationStatus {
             phase: DictationPhase::Failed {
@@ -1793,6 +1910,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         // §19.2: a terminal in front — refused before the copy chord and the microphone.
         UiEvent::Dictation(DictationStatus {
@@ -1806,6 +1925,8 @@ fn all_events() -> Vec<UiEvent> {
             preset: None,
             source: None,
             segments: None,
+            recording: None,
+            retake: false,
         }),
         // The scenes (docs/dictation.md §18.6), full and empty.
         scenes_event(scenes()),
@@ -1827,6 +1948,20 @@ fn all_events() -> Vec<UiEvent> {
             state: ProcessState::Failed { reason: voltip_core::history::process::PROCESS_UNCONFIGURED.into() },
         },
         UiEvent::HistoryProcess { request_id: 7, id: uuid(HISTORY_ID), state: ProcessState::Cancelled },
+        // docs/dictation.md §26: the kept recordings, and the phone's (none kept there).
+        UiEvent::AudioCache(audio_cache()),
+        UiEvent::AudioCache(AudioCacheView::default()),
+        // docs/dictation.md §10.9: a move halfway, every way one ends, and the phone (no library).
+        UiEvent::ModelsLocation(models_location()),
+        UiEvent::ModelsLocation(ModelsLocationView { moving: None, last: Some(ModelsMoveOutcome::Cancelled), ..models_location() }),
+        UiEvent::ModelsLocation(ModelsLocationView {
+            moving: None,
+            last: Some(ModelsMoveOutcome::Failed {
+                message: "所选位置空间不足：移动模型需要 1031 MB 空闲空间，当前可用 512 MB".into()
+            }),
+            ..models_location()
+        }),
+        UiEvent::ModelsLocation(ModelsLocationView::default()),
     ]);
     events.extend(paste_results());
     events
@@ -1871,6 +2006,10 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::SettingsSetLocale { .. } => "SettingsSetLocale",
         UiCommand::SettingsSetAutoUpdate { .. } => "SettingsSetAutoUpdate",
         UiCommand::SettingsSetHistory { .. } => "SettingsSetHistory",
+        UiCommand::SettingsSetAudioCache { .. } => "SettingsSetAudioCache",
+        UiCommand::AudioCacheClear => "AudioCacheClear",
+        UiCommand::AudioCacheDelete { .. } => "AudioCacheDelete",
+        UiCommand::AudioRetake { .. } => "AudioRetake",
         UiCommand::SettingsSetOverlay { .. } => "SettingsSetOverlay",
         UiCommand::PhoneTakeStart { .. } => "PhoneTakeStart",
         UiCommand::PhoneTakeStop => "PhoneTakeStop",
@@ -1900,6 +2039,8 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::ModelCancel { .. } => "ModelCancel",
         UiCommand::ModelRemove { .. } => "ModelRemove",
         UiCommand::ModelImport { .. } => "ModelImport",
+        UiCommand::ModelsLocationReset => "ModelsLocationReset",
+        UiCommand::ModelsLocationCancel => "ModelsLocationCancel",
         UiCommand::DictionaryAdd { .. } => "DictionaryAdd",
         UiCommand::DictionaryUpdate { .. } => "DictionaryUpdate",
         UiCommand::DictionaryRemove { .. } => "DictionaryRemove",
@@ -1968,6 +2109,16 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("settings_set_locale", json!({ "locale": "en" }), "SettingsSetLocale"),
         ("settings_set_auto_update", json!({ "enabled": true }), "SettingsSetAutoUpdate"),
         ("settings_set_history", json!({ "enabled": false, "keep": 100 }), "SettingsSetHistory"),
+        // docs/dictation.md §26: the audio cache.
+        ("settings_set_audio_cache", json!({ "enabled": true, "keep": 50, "maxMb": 500 }), "SettingsSetAudioCache"),
+        ("audio_cache_clear", Value::Null, "AudioCacheClear"),
+        ("audio_cache_delete", json!({ "id": RECORDING_ID_2 }), "AudioCacheDelete"),
+        // §26.4: on other models than the settings', for that take only.
+        (
+            "audio_retake",
+            json!({ "id": RECORDING_ID_2, "asr": { "kind": "remote", "provider": "custom", "model": "whisper-2" }, "refine": { "kind": "off" } }),
+            "AudioRetake",
+        ),
         ("settings_set_overlay", json!({ "placement": "top" }), "SettingsSetOverlay"),
         ("phone_take_start", json!({ "publicKey": DESKTOP_KEY.to_hex() }), "PhoneTakeStart"),
         ("phone_take_stop", Value::Null, "PhoneTakeStop"),
@@ -2008,6 +2159,9 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("model_cancel", json!({ "id": SENSE_VOICE_ID }), "ModelCancel"),
         ("model_remove", json!({ "id": PARAFORMER_ID }), "ModelRemove"),
         ("model_import", json!({ "id": SENSE_VOICE_ID }), "ModelImport"),
+        // docs/dictation.md §10.9: back to the default folder, and stopping a move.
+        ("models_location_reset", Value::Null, "ModelsLocationReset"),
+        ("models_location_cancel", Value::Null, "ModelsLocationCancel"),
         // The vocabulary (docs/dictation.md §16.4): the add from a history entry carries every key.
         (
             "dictionary_add",

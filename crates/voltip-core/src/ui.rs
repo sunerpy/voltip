@@ -79,6 +79,8 @@ pub enum UiEvent {
         /// Every catalogue entry with its install state.
         models: Vec<ModelState>,
     },
+    /// Where the model library is and a move of it (docs/dictation.md §10.9), full replacement.
+    ModelsLocation(crate::models_location::ModelsLocationView),
     /// Personal dictionary, full replacement (docs/dictation.md §16).
     Dictionary {
         /// Entries in order.
@@ -116,6 +118,8 @@ pub enum UiEvent {
         /// Running, done, failed or cancelled.
         state: crate::history::process::ProcessState,
     },
+    /// The recordings the audio cache holds (docs/dictation.md §26), full replacement.
+    AudioCache(crate::audio_cache::AudioCacheView),
     /// Updater progress. Produced by the desktop shell (which owns the updater plugin) and folded
     /// into the same state as core events, like [`UiEvent::Hotkey`].
     Update(UpdateStatus),
@@ -451,6 +455,10 @@ pub struct UiState {
     /// Entries in the history.
     #[serde(default)]
     pub history_total: u32,
+    /// The recordings kept for recognising a take again (docs/dictation.md §26); `available` is
+    /// false where the app keeps none (the phone).
+    #[serde(default)]
+    pub audio_cache: crate::audio_cache::AudioCacheView,
     /// Resolved ASR / refine / inject configuration.
     #[serde(default)]
     pub engines: EngineStatus,
@@ -460,6 +468,9 @@ pub struct UiState {
     /// Local model library (empty on shells without local models).
     #[serde(default)]
     pub models: Vec<ModelState>,
+    /// Where that library is (docs/dictation.md §10.9); `available` is false without one.
+    #[serde(default)]
+    pub models_location: crate::models_location::ModelsLocationView,
     /// Personal dictionary (docs/dictation.md §16).
     #[serde(default)]
     pub dictionary: Vec<DictionaryEntry>,
@@ -535,9 +546,11 @@ impl Default for UiState {
             dictation: DictationStatus::default(),
             history_recent: Vec::new(),
             history_total: 0,
+            audio_cache: crate::audio_cache::AudioCacheView::default(),
             engines: EngineStatus::default(),
             update: UpdateStatus::default(),
             models: Vec::new(),
+            models_location: crate::models_location::ModelsLocationView::default(),
             dictionary: Vec::new(),
             rules: Vec::new(),
             scenes: Vec::new(),
@@ -631,6 +644,10 @@ impl UiState {
                 self.models = models.clone();
                 UiEvent::Models { models }
             }
+            CoreEvent::ModelsLocation(view) => {
+                self.models_location = view.clone();
+                UiEvent::ModelsLocation(view)
+            }
             CoreEvent::Dictionary(entries) => {
                 self.dictionary = entries.clone();
                 UiEvent::Dictionary { entries }
@@ -649,6 +666,10 @@ impl UiState {
             }
             CoreEvent::PresetTry { id, outcome } => UiEvent::PresetTry { id, outcome },
             CoreEvent::HistoryProcess { request_id, id, state } => UiEvent::HistoryProcess { request_id, id, state },
+            CoreEvent::AudioCache(view) => {
+                self.audio_cache = view.clone();
+                UiEvent::AudioCache(view)
+            }
             CoreEvent::ProviderProbe(report) => UiEvent::ProviderProbe(report),
             CoreEvent::Connectivity(status) => {
                 self.connectivity = status.clone();

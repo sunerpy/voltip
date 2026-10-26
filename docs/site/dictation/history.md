@@ -1,12 +1,12 @@
 ---
-description: The dictation history on your computer, what each entry shows, how much is kept, the statistics on the home page, and backing up and moving to another computer.
+description: The dictation history on your computer, what each entry shows, recognising or polishing again, how much is kept, the statistics on the home page, and backing up and moving to another computer.
 ---
 
 # History
 
 Every dictation, voice edit and text sent from a paired phone, and every copy a phone uploads of what it transcribed on its own, is listed on the **History** page. The history is stored on your computer; paired phones can read it, see [The computer's history and settings](/phone/#the-computer-s-history-and-settings).
 
-The latest results are also listed on the home page: four, or more when the window is taller, up to 30.
+The latest results are also listed on the home page: four, or more when the window is taller, up to 30. While there are recordings not recognised, the newest three are listed above the latest results, to recognise again or clear from there, see [Recognise or polish again](#recognise-or-polish-again).
 
 ## What an entry shows
 
@@ -21,11 +21,12 @@ From an entry you can:
 - copy it, or paste it into the window you used before (see [Where the text goes](/dictation/output#copy-or-paste-a-result-again));
 - star it, so that it is easy to find;
 - select a misheard word in the original text and add it to the [dictionary](/recognition/dictionary) or create a rule, see [Correct from the history](/recognition/dictionary#correct-from-the-history);
+- recognise it again while its recording is still kept, or polish it again when AI polish failed, see [Recognise or polish again](#recognise-or-polish-again);
 - delete it.
 
 The search box finds text, apps, scenes and models, and works together with the filters, which narrow the list to today, this week or this month, to starred entries, or to entries whose text was not inserted. After a search or a filter the list starts again at its first page, and the foot of the list shows how many entries were found.
 
-On the computer the list is shown in pages. Choose 20, 50, 100 or 200 entries per page at the foot of the list (50 at first; the page remembers your choice) and move between pages with the buttons beside it. A new dictation does not change the page you are on. While you scroll through a page, the details of the selected entry stay in view beside it; when they are longer than the window, they scroll on their own. On a phone the list shows 100 entries at a time; scroll to the end, or tap **Load more**, to see the next ones.
+On the computer the list is shown in pages. Choose 10, 20, 50, 100 or 200 entries per page at the foot of the list (10 at first; the page remembers your choice) and move between pages with the buttons beside it. A new dictation does not change the page you are on. The list and the details of the selected entry fill the window's height side by side, and each scrolls on its own when it holds more; another page starts at the top of the list. On a phone the list shows 100 entries at a time; scroll to the end, or tap **Load more**, to see the next ones.
 
 ## Long recordings
 
@@ -34,6 +35,17 @@ An entry recorded for longer than 2 minutes, or with more than 2,000 characters,
 - **Process with an AI preset**: choose a preset and select **Process**. The text is processed in parts of up to 1,500 characters, cut at sentence ends; the progress is shown and you can cancel. The result is saved as a processed text beside the original, which stays as it is, and appears under **Processed**. With Key points, the points of all parts are summarised once more when they fit one request; with Chinese ⇄ English, you get a translation. The built-in AI service runs on a free quota, so long texts take a while.
 - **Export subtitles (SRT)** and **Export text (TXT)**: choose where to save the file. Subtitles follow the segments of the recording, with at most 20 Chinese or 42 Latin characters per line. The text export uses the processed text when there is one.
 
+## Recognise or polish again
+
+When recognition or AI polish fails, there is no need to record again. By default Voltip keeps the recordings of your latest 20 dictations on this computer, including those recorded on a phone used as a microphone; the recordings of voice edits are not kept. A recording longer than 2 minutes, such as a meeting, is saved compressed while you record, and kept when you cancel it as well. If Voltip closes unexpectedly during a recording, the next start recovers what was recorded, missing at most the last few seconds.
+
+- **Recordings not recognised**: recordings whose recognition failed or that were cancelled, and those Voltip closed on while recording or processing them, are listed under **Recordings not recognised** on the **History** page, with when and for how long they were recorded, the app they were recorded in and the reason; the newest three are also listed above the latest results on the home page, with **View all** when there are more. Select **Recognise again** and Voltip recognises the recording again with the [scene](/recognition/scenes) of the app it was recorded in, a recording longer than 2 minutes in segments as well; the text is saved as a new entry and copied to the clipboard, and it is not inserted into the current window. Select **Delete recording** for a recording you no longer need; **Clear** deletes all the recordings not recognised, after asking.
+- **Other models**: **Recognise again with**, above the list, chooses the speech model (a model of a provider that is set up, or a local model you have downloaded) and the AI polish model the recordings are recognised again with, or **No polish**. The models you choose are used only for recognising again; the settings stay as they are, and with nothing chosen the current settings are used.
+- **Recognise again from an entry's details**: while an entry's recording is still kept, its details show **This dictation's recording is still kept on this computer** and **Recognise again**, with the same choice of models. For example, when the result was not what you said, choose another speech model and recognise it again.
+- **Polish again**: when the AI polish request fails, the dictation inserts the recognised text and the details say why. With an AI service set up, **Polish again** appears next to the reason: it polishes the text again with the preset of the entry's scene (the current preset when there is no scene) and saves the result as a processed text, under **Processed**; the original stays as it is.
+
+The overlay says so as well: when no text was recognised and the recording was kept, it shows **Recording kept to try again**; when the recording is kept after you cancel, it shows **Cancelled · recording kept**.
+
 ## How much is kept
 
 Under **Settings → Privacy and history**:
@@ -41,7 +53,14 @@ Under **Settings → Privacy and history**:
 - **Keep the latest** sets how many entries are kept: 500, 2,000, 5,000, 10,000 or 20,000. A new installation keeps 20,000, which is also the maximum. Older entries are removed.
 - Updating does not change this setting: if it was 500, it stays 500 until you choose a larger number.
 - History can be turned off. Nothing new is recorded; what is already there stays until you clear it.
-- **Clear history** deletes all entries, after a confirmation.
+- **Clear history** deletes all entries and the kept recordings, after a confirmation.
+
+**Recording cache**, on the same page, sets how many recordings are kept for [recognising again](#recognise-or-polish-again):
+
+- **Keep recordings on this computer** is on by default and needs **Keep dictation history** on as well. Turning it off deletes the kept recordings.
+- **Keep at most**: 5, 10, 20, 50, 100 or 200 recordings, 20 by default. **Use at most**: 50 MB to 10 GB, 200 MB by default. Past either limit, the oldest recordings are deleted. A recording of up to 2 minutes takes about 1.9 MB a minute; a longer one is compressed to about 10 MB an hour.
+- **Delete recordings** deletes every kept recording after a confirmation; the text in the history stays.
+- Deleting an entry deletes its recording too. Recordings are not synced to phones and not included in backups.
 
 ## Statistics
 

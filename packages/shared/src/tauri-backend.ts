@@ -241,6 +241,11 @@ export class TauriBackend implements Backend {
     await this.transport.invoke("model_link_open", { id, file, source });
   }
 
+  async modelsLocationChoose(title: string): Promise<boolean> {
+    const raw = await this.transport.invoke("models_location_choose", { title });
+    return z.boolean().parse(raw);
+  }
+
   async feedbackDiagnostics(locale: string) {
     const raw = await this.transport.invoke("feedback_diagnostics", { locale });
     return feedbackInfoSchema.parse(raw);

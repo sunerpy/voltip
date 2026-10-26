@@ -140,6 +140,10 @@ export interface Backend {
   /** `model_link_open`: `files[file].urls[source]` of the model in the browser; the shell takes
    *  the address from the core's catalogue. */
   modelLinkOpen(id: string, file: string, source: number): Promise<void>;
+  /** 更改位置 (`models_location_choose`, docs/dictation.md §10.9): the shell's folder dialog,
+   *  titled `title`, then the move of the model library into the folder chosen; `false` when the
+   *  dialog was closed. The move reports through `models_location` events. */
+  modelsLocationChoose(title: string): Promise<boolean>;
   /** What a 反馈 report would carry and whether this build can send it (`feedback_diagnostics`,
    *  docs/feedback.md); `locale` is the language the webview resolved. */
   feedbackDiagnostics(locale: string): Promise<FeedbackInfo>;

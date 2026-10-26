@@ -169,6 +169,36 @@ pub enum UiCommand {
         /// Newest entries kept (10–500).
         keep: u32,
     },
+    /// The recordings kept for recognising a take again (docs/dictation.md §26): on / off (off
+    /// deletes them), how many and how much space at most.
+    SettingsSetAudioCache {
+        /// Keep recordings.
+        enabled: bool,
+        /// Recordings kept (1–200).
+        keep: u32,
+        /// MB at most (50–10000).
+        max_mb: u32,
+    },
+    /// Delete every kept recording.
+    AudioCacheClear,
+    /// Delete one kept recording.
+    AudioCacheDelete {
+        /// The recording's UUID.
+        id: String,
+    },
+    /// Recognise a kept recording again: the take's status follows as `dictation` events, the text
+    /// goes to the clipboard and into the history. `asr` / `refine` are other models than the
+    /// settings', for this take only (docs/dictation.md §26.4).
+    AudioRetake {
+        /// The recording's UUID.
+        id: String,
+        /// The recognition, when not the settings'.
+        #[serde(default)]
+        asr: Option<voltip_core::audio_cache::RecognitionChoice>,
+        /// The clean-up, when not the settings'.
+        #[serde(default)]
+        refine: Option<voltip_core::audio_cache::PolishChoice>,
+    },
     /// Where the dictation pill appears; persisted, the desktop shell follows `settings`.
     SettingsSetOverlay {
         /// `bottom` / `top` / `off`.
@@ -302,6 +332,12 @@ pub enum UiCommand {
         /// Catalogue id.
         id: String,
     },
+    /// Move the model library back to `<data_dir>/models` (docs/dictation.md §10.9). A chosen
+    /// folder comes from the shell's folder dialog ([`Bridge::models_relocate`]), never from the
+    /// webview.
+    ModelsLocationReset,
+    /// Stop a move of the library before it switches.
+    ModelsLocationCancel,
     /// Append a personal dictionary entry (docs/dictation.md §16.4).
     DictionaryAdd {
         /// Term, mis-hearings, flag (snake_case inside).
@@ -540,6 +576,12 @@ impl UiCommand {
             Self::SettingsSetLocale { locale } => CoreCommand::SetLocale(locale),
             Self::SettingsSetAutoUpdate { enabled } => CoreCommand::SetAutoUpdate(enabled),
             Self::SettingsSetHistory { enabled, keep } => CoreCommand::SetHistory(voltip_core::HistorySettings { enabled, keep }),
+            Self::SettingsSetAudioCache { enabled, keep, max_mb } => CoreCommand::SetAudioCache(voltip_core::AudioCacheSettings { enabled, keep, max_mb }),
+            Self::AudioCacheClear => CoreCommand::AudioCacheClear,
+            Self::AudioCacheDelete { id } => CoreCommand::AudioCacheDelete(parse_id(&id)?),
+            Self::AudioRetake { id, asr, refine } => {
+                CoreCommand::AudioRetake { id: parse_id(&id)?, models: voltip_core::audio_cache::RetakeModels { asr, refine } }
+            }
             Self::SettingsSetOverlay { placement } => CoreCommand::SetOverlay(placement),
             Self::DevicesRefresh => CoreCommand::RefreshDevices,
             Self::ConnectivityCheck => CoreCommand::CheckConnectivity,
@@ -568,6 +610,8 @@ impl UiCommand {
             Self::ModelCancel { id } => CoreCommand::ModelCancel(id),
             Self::ModelRemove { id } => CoreCommand::ModelRemove(id),
             Self::ModelImport { id } => CoreCommand::ModelImport(id),
+            Self::ModelsLocationReset => CoreCommand::ModelsRelocate(None),
+            Self::ModelsLocationCancel => CoreCommand::ModelsRelocateCancel,
             // The drafts are validated here as well as in the core: a draft that is wrong on its own
             // (empty, too long, a regex that does not compile, a TOML file that does not parse) comes
             // back as the command's error; list-level refusals arrive as `error` events.
@@ -806,6 +850,18 @@ impl Bridge {
         let dir = std::path::PathBuf::from(dir.ok_or_else(|| BridgeError::BadArgument(format!("model_folder_open: no model {id}")))?);
         std::fs::create_dir_all(&dir).map_err(|e| BridgeError::BadArgument(format!("model_folder_open: {e}")))?;
         Ok(dir)
+    }
+
+    /// `models_location_choose` (docs/dictation.md §10.9): move the library into `dir`, the folder
+    /// the shell's dialog returned; progress and the end arrive as `models_location` events.
+    pub fn models_relocate(&self, dir: std::path::PathBuf) -> Result<(), BridgeError> {
+        self.handle.try_send(CoreCommand::ModelsRelocate(Some(dir)))?;
+        Ok(())
+    }
+
+    /// Where the model library is (docs/dictation.md §10.9), as the core last said.
+    pub fn models_location(&self) -> voltip_core::models_location::ModelsLocationView {
+        self.state.lock().models_location.clone()
     }
 
     /// `model_link_open`: where `file` of model `id` downloads from its `source`-th public source.
@@ -1140,6 +1196,15 @@ mod tests {
         assert!(matches!(c.into_core().unwrap(), CoreCommand::ModelRemove(id) if id == "paraformer-zh"));
         let c: UiCommand = serde_json::from_str(r#"{"command":"model_import","id":"paraformer-zh"}"#).unwrap();
         assert!(matches!(c.into_core().unwrap(), CoreCommand::ModelImport(id) if id == "paraformer-zh"));
+        let c: UiCommand = serde_json::from_str(r#"{"command":"models_location_reset"}"#).unwrap();
+        assert!(matches!(c.into_core().unwrap(), CoreCommand::ModelsRelocate(None)));
+        let c: UiCommand = serde_json::from_str(r#"{"command":"models_location_cancel"}"#).unwrap();
+        assert!(matches!(c.into_core().unwrap(), CoreCommand::ModelsRelocateCancel));
+        assert!(
+            serde_json::from_str::<UiCommand>(r#"{"command":"models_location_reset","dir":"/elsewhere"}"#)
+                .is_ok_and(|c| matches!(c.into_core(), Ok(CoreCommand::ModelsRelocate(None)))),
+            "the webview never names the folder"
+        );
         assert!(serde_json::from_str::<UiCommand>(r#"{"command":"model_download"}"#).is_err(), "the id is required");
         // Vocabulary (docs/dictation.md §16.4): drafts are snake_case inside, validated synchronously.
         let hid = "0f3f1a1e-8d4b-4c8e-9f7a-1c2d3e4f5a6b";

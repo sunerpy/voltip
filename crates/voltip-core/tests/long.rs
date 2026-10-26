@@ -4,21 +4,25 @@
 //! segmenter cuts it about every 30 s, the segments are recognised in order while the take goes
 //! on, and the text is put together at the stop. What was not recognised is marked with its time,
 //! the AI clean-up and the paste depend on the text's length, and the file is removed whatever the
-//! outcome.
+//! outcome. With the audio cache on (as by default), a take past two minutes leaves its compressed
+//! copy there (§26.2): done, failed or cancelled, and a take an earlier run left behind is put
+//! together from its parts and its file (§26.3).
 
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
+use voltip_core::audio_cache::{AUDIO_CACHE_DIR, AudioCacheView, KeptFormat, KeptStatus, RetakeModels};
+use voltip_core::dictation::archive::{self, ArchiveWriter};
 use voltip_core::dictation::fakes::{
     FAKE_STREAMING_MODEL_ID, FakeAudio, FakeInjector, FakeModels, FakeRefiner, FakeStreaming, FakeTranscriber, factory_by_model, fake_engines, ports_with,
 };
 use voltip_core::dictation::long::{self, REFINE_SKIPPED, TOO_LONG_TO_PASTE};
 use voltip_core::dictation::{ClipboardCode, SegmentProgress, Via};
 use voltip_core::{
-    AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DictationPhase, DictationStatus, EngineSettings, FailureCode, FallbackModel, FallbackSettings,
-    HistoryEntry, Outcome, OutputMode, ProviderId, RecordingSettings, RecordingSource, Segment, Settings, SettingsStore,
+    AppCore, AudioCacheSettings, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DictationPhase, DictationStatus, EngineSettings, FailureCode, FallbackModel,
+    FallbackSettings, HistoryEntry, Outcome, OutputMode, ProviderId, RecordingSettings, RecordingSource, Segment, Settings, SettingsStore,
 };
 use voltip_identity::MemorySecretStore;
 
@@ -132,12 +136,17 @@ fn recordings(dir: &Path) -> Vec<std::path::PathBuf> {
     std::fs::read_dir(long::recordings_dir(dir)).map(|entries| entries.flatten().map(|e| e.path()).collect()).unwrap_or_default()
 }
 
+/// The takes' raw recording files in `dir` right now; a kept copy's parts sit beside them.
+fn pcm_files(dir: &Path) -> Vec<std::path::PathBuf> {
+    recordings(dir).into_iter().filter(|p| p.extension().is_some_and(|e| e == "pcm")).collect()
+}
+
 /// Wait until the take's recording file holds `seconds`: the device is open and the fake's stream
 /// has been read (a stop before that is a stop while the device opens — a take of nothing).
 async fn wait_recorded(dir: &Path, seconds: u64) {
     let deadline = Instant::now() + STEP;
     loop {
-        let files = recordings(dir);
+        let files = pcm_files(dir);
         if files.len() == 1 && std::fs::metadata(&files[0]).is_ok_and(|m| m.len() == file_bytes(seconds)) {
             return;
         }
@@ -146,13 +155,26 @@ async fn wait_recorded(dir: &Path, seconds: u64) {
     }
 }
 
-/// The recording thread reports its end after the take's: wait for the file to go.
+/// The recording thread reports its end after the take's: wait for the file to go, and the copy's
+/// parts (removed, or moved into the audio cache).
 async fn wait_no_recordings(dir: &Path) {
     let deadline = Instant::now() + STEP;
     while !recordings(dir).is_empty() {
         assert!(Instant::now() < deadline, "the recording file stayed: {:?}", recordings(dir));
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+}
+
+/// The recordings the audio cache holds on disk in `dir`: its files and directories but the index.
+fn kept_files(dir: &Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(dir.join(AUDIO_CACHE_DIR))
+        .map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_none_or(|e| e != "json")).collect())
+        .unwrap_or_default()
+}
+
+/// The audio cache once `done` holds for it (docs/dictation.md §26).
+async fn cache_until(node: &mut Node, mut done: impl FnMut(&AudioCacheView) -> bool) -> AudioCacheView {
+    wait(node, |e| if let CoreEvent::AudioCache(v) = e { done(v).then(|| v.clone()) } else { None }).await
 }
 
 /// 「第1段。」 … 「第n段。」, as the numbered fake answers calls `from..=to`.
@@ -163,7 +185,8 @@ fn numbered(from: usize, to: usize) -> String {
 /// Ten minutes: the segments past the first two are recognised while the take goes on and the
 /// status counts them; every one is read back from the file (none longer than 30 s); at the stop
 /// the text is the segments in order, cleaned up (it is short), pasted, and kept with its segments
-/// in the history; the recording file goes.
+/// in the history; the recording file goes, and the take's compressed copy stays in the audio
+/// cache, linked to the entry.
 #[tokio::test]
 async fn a_long_take_is_recognised_in_segments_while_it_records() {
     let mut node = start(FakeAudio::speech().long(600), FakeTranscriber::numbered(0, &[], Duration::ZERO), FakeInjector::paste(), 10);
@@ -179,10 +202,11 @@ async fn a_long_take_is_recognised_in_segments_while_it_records() {
     let durations = node.transcriber.durations_ms();
     assert_eq!(durations[0], 29_900);
     assert!(durations[1..].iter().all(|&d| d == 30_000), "{durations:?}");
-    let files = recordings(node.dir.path());
+    let files = pcm_files(node.dir.path());
     assert_eq!(files.len(), 1, "{files:?}");
     assert!(files[0].file_name().unwrap().to_string_lossy().starts_with("take-"));
     assert_eq!(std::fs::metadata(&files[0]).unwrap().len(), file_bytes(600));
+    assert!(archive::parts_dir(&files[0]).is_dir(), "its copy is written beside it");
 
     let (done, seen) = stop(&mut node).await;
     let expected = numbered(1, 20);
@@ -212,13 +236,23 @@ async fn a_long_take_is_recognised_in_segments_while_it_records() {
     assert_eq!(segments.len(), 20, "the silent piece is left out");
     assert_eq!(segments[0], Segment { text: "第1段。".into(), start_ms: 0, end_ms: 29_900 });
     assert_eq!(segments[19], Segment { text: "第20段。".into(), start_ms: 569_900, end_ms: 599_900 });
+    let cache = cache_until(&mut node, |v| v.recordings.first().is_some_and(|r| r.status == KeptStatus::Recognized { entry: entry.id })).await;
+    let [kept] = cache.recordings.as_slice() else { panic!("{cache:?}") };
+    assert_eq!((kept.format, kept.duration_ms), (KeptFormat::Opus, 600_000));
+    // At most 61 bytes a 20 ms packet and the pages' headers: under 3200 bytes a second.
+    assert!(kept.bytes > 0 && kept.bytes < 600 * 3_200, "{} bytes", kept.bytes);
+    let manifest = archive::read_manifest(&node.dir.path().join(AUDIO_CACHE_DIR).join(kept.id.to_string())).unwrap();
+    assert_eq!((manifest.total, manifest.parts), (600 * long::RATE, 20));
+    assert_eq!(manifest.cuts.len(), 21, "the recording thread's cuts, the last silent piece's too");
+    assert!(manifest.gaps.is_empty());
     wait_no_recordings(node.dir.path()).await;
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 
 /// A take of two minutes or less is a whole take as before (docs/dictation.md §22): its file is
-/// dropped, the in-memory recording goes to the transcriber once, and no count is ever shown. One
-/// second more and the text comes from the file's five segments.
+/// dropped, the in-memory recording goes to the transcriber once, and no count is ever shown; the
+/// cache keeps that recording as a WAV and drops the copy its file started. One second more and
+/// the text comes from the file's five segments, and the copy is what the cache keeps.
 #[tokio::test]
 async fn the_two_minute_boundary_keeps_short_takes_as_they_were() {
     let mut node = start(FakeAudio::speech().long(120), FakeTranscriber::numbered(0, &[], Duration::ZERO), FakeInjector::paste(), 10);
@@ -231,7 +265,10 @@ async fn the_two_minute_boundary_keeps_short_takes_as_they_were() {
     assert!(seen.iter().all(|s| s.segments.is_none()), "{seen:?}");
     assert!(matches!(&done, DictationPhase::Done { raw_text, segments: None, .. } if raw_text == "第1段。"), "{done:?}");
     assert_eq!(node.transcriber.durations_ms(), vec![1_500], "the fake's in-memory take, once");
-    assert_eq!(newest_entry(&mut node).await.segments, None);
+    let entry = newest_entry(&mut node).await;
+    assert_eq!(entry.segments, None);
+    let cache = cache_until(&mut node, |v| v.recordings.first().is_some_and(|r| r.status.entry() == Some(entry.id))).await;
+    assert_eq!(cache.recordings.iter().map(|r| (r.format, r.duration_ms)).collect::<Vec<_>>(), vec![(KeptFormat::Wav, 1_500)]);
     wait_no_recordings(node.dir.path()).await;
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 
@@ -246,12 +283,22 @@ async fn the_two_minute_boundary_keeps_short_takes_as_they_were() {
     assert_eq!(node.transcriber.durations_ms(), vec![29_900, 30_000, 30_000, 30_000, 1_100]);
     let entry = newest_entry(&mut node).await;
     assert_eq!(entry.segments.map(|s| s.len()), Some(5));
+    let cache = cache_until(&mut node, |v| v.recordings.first().is_some_and(|r| r.status.entry() == Some(entry.id))).await;
+    assert_eq!(cache.recordings.iter().map(|r| (r.format, r.duration_ms)).collect::<Vec<_>>(), vec![(KeptFormat::Opus, 121_000)]);
     wait_no_recordings(node.dir.path()).await;
+    // 重新识别 reads the copy back along the cuts its recording thread made, onto the clipboard.
+    node.handle.send(CoreCommand::AudioRetake { id: cache.recordings[0].id, models: RetakeModels::default() }).await.unwrap();
+    let seen = statuses_until(&mut node, |s| s.phase.is_terminal()).await;
+    let done = &seen.last().unwrap().phase;
+    assert!(matches!(done, DictationPhase::Done { raw_text, via: Via::Clipboard, duration_ms: 121_000, .. } if *raw_text == numbered(6, 10)), "{done:?}");
+    assert_eq!(node.transcriber.durations_ms()[5..], [29_900, 30_000, 30_000, 30_000, 1_100]);
+    assert_eq!(node.injector.injected().len(), 1, "the retake is not pasted");
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 
 /// A segment that fails twice is marked with its time and the take goes on; so are the samples the
-/// shell's buffer lost. A take nobody could recognise fails like a whole take and keeps nothing.
+/// shell's buffer lost. A take nobody could recognise fails like a whole take and keeps no text;
+/// its copy stays in the audio cache as failed, to be recognised again.
 #[tokio::test]
 async fn what_was_not_recognised_is_marked_and_the_rest_goes_on() {
     // Segment 2 fails on calls 2 and 3; 3 s go missing at 1:40, inside segment 4.
@@ -279,28 +326,46 @@ async fn what_was_not_recognised_is_marked_and_the_rest_goes_on() {
     assert!(matches!(&done, DictationPhase::Failed { code: FailureCode::Asr, message, text: None } if message.contains("503")), "{done:?}");
     assert_eq!(node.transcriber.calls(), 10, "each of the five segments with speech was tried twice");
     assert!(node.injector.injected().is_empty(), "placeholders alone are never pasted");
+    let cache = cache_until(&mut node, |v| v.recordings.first().is_some_and(|r| matches!(r.status, KeptStatus::Failed { code: FailureCode::Asr, .. }))).await;
+    assert_eq!(cache.recordings.iter().map(|r| (r.format, r.duration_ms)).collect::<Vec<_>>(), vec![(KeptFormat::Opus, 150_000)]);
     wait_no_recordings(node.dir.path()).await;
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 
-/// Cancelling a long take stops its recognition and removes its file; a file an earlier run left
-/// behind (it ended while recording) is removed when the core starts.
+/// Cancelling a long take stops its recognition and removes its file; past two minutes its copy
+/// stays in the audio cache as cancelled (docs/dictation.md §26.3), within them it goes too. A file
+/// an earlier run left behind without a copy (it ended while recording) is removed when the core
+/// starts.
 #[tokio::test]
-async fn cancelled_and_leftover_recordings_are_removed() {
+async fn a_cancelled_long_take_keeps_its_copy_and_a_bare_leftover_is_removed() {
     let slow = FakeTranscriber::numbered(0, &[], Duration::from_millis(200));
     let mut node = start(FakeAudio::speech().long(300), slow, FakeInjector::paste(), 10);
     ready(&mut node).await;
     node.handle.send(CoreCommand::DictationStart).await.unwrap();
     statuses_until(&mut node, |s| matches!(s.phase, DictationPhase::Listening { .. }) && s.segments.is_some()).await;
-    assert_eq!(recordings(node.dir.path()).len(), 1);
+    assert_eq!(pcm_files(node.dir.path()).len(), 1);
     node.handle.send(CoreCommand::DictationCancel).await.unwrap();
     let seen = statuses_until(&mut node, |s| s.phase.is_terminal()).await;
     assert_eq!(seen.last().unwrap().phase, DictationPhase::CANCELLED);
+    let cache = cache_until(&mut node, |v| v.recordings.first().is_some_and(|r| r.status == KeptStatus::Cancelled)).await;
+    // The fake's stream gives its five minutes whatever the stop; a microphone ends at the cancel.
+    assert_eq!(cache.recordings.iter().map(|r| (r.format, r.duration_ms)).collect::<Vec<_>>(), vec![(KeptFormat::Opus, 300_000)]);
     wait_no_recordings(node.dir.path()).await;
     let calls = node.transcriber.calls();
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(node.transcriber.calls(), calls, "no segment is recognised after the cancel");
     assert!(node.injector.injected().is_empty());
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+
+    let mut node = start(FakeAudio::speech().long(60), FakeTranscriber::ok("x"), FakeInjector::paste(), 10);
+    ready(&mut node).await;
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    statuses_until(&mut node, |s| matches!(s.phase, DictationPhase::Listening { .. })).await;
+    wait_recorded(node.dir.path(), 60).await;
+    node.handle.send(CoreCommand::DictationCancel).await.unwrap();
+    statuses_until(&mut node, |s| s.phase.is_terminal()).await;
+    wait_no_recordings(node.dir.path()).await;
+    assert!(kept_files(node.dir.path()).is_empty(), "a minute cancelled keeps nothing: {:?}", kept_files(node.dir.path()));
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
@@ -311,6 +376,108 @@ async fn cancelled_and_leftover_recordings_are_removed() {
     let mut node = start_in(dir, FakeAudio::speech(), FakeTranscriber::ok("x"), FakeInjector::paste(), 10);
     ready(&mut node).await;
     assert_eq!(recordings(node.dir.path()), vec![left.join("notes.txt")], "only recordings are removed");
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// The core with the audio cache off (docs/dictation.md §26.1), in `dir`, on `audio`.
+fn start_without_cache(dir: tempfile::TempDir, audio: FakeAudio) -> Node {
+    let recording = RecordingSettings { max_minutes: 10, ..RecordingSettings::default() };
+    let audio_cache = AudioCacheSettings { enabled: false, ..AudioCacheSettings::default() };
+    SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, engines: fake_engines(), recording, audio_cache, ..Settings::default() }).unwrap();
+    let transcriber = Arc::new(FakeTranscriber::numbered(0, &[], Duration::ZERO));
+    let (refiner, injector) = (Arc::new(FakeRefiner::ok("润色后的全文。")), Arc::new(FakeInjector::paste()));
+    let ports = ports_with(Arc::new(audio), transcriber.clone(), Some(refiner.clone()), injector.clone());
+    let mut config = CoreConfig::new(dir.path().to_path_buf());
+    config.default_device_name = "Long Test".into();
+    let (handle, events) = AppCore::start_with(config, Arc::new(MemorySecretStore::new()), ports).unwrap();
+    Node { handle, events, transcriber, refiner, injector, dir }
+}
+
+/// With the audio cache off, a long take writes no copy and keeps nothing; what a run with it on
+/// left behind goes when the core starts, its parts too (docs/dictation.md §26.3).
+#[tokio::test]
+async fn without_the_audio_cache_a_long_take_keeps_no_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let left = long::recordings_dir(dir.path());
+    std::fs::create_dir_all(&left).unwrap();
+    let pcm = left.join("take-1700000000000-3.pcm");
+    std::fs::write(&pcm, [0u8; 64]).unwrap();
+    let mut writer = ArchiveWriter::create(&archive::parts_dir(&pcm)).unwrap();
+    writer.push(&vec![0i16; usize::try_from(archive::PART_SAMPLES).unwrap()]);
+    drop(writer);
+    let mut node = start_without_cache(dir, FakeAudio::speech().long(150));
+    ready(&mut node).await;
+    assert!(recordings(node.dir.path()).is_empty(), "{:?}", recordings(node.dir.path()));
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    statuses_until(&mut node, |s| listening_with(s, SegmentProgress { done: 5, total: 5 })).await;
+    let files = recordings(node.dir.path());
+    assert!(files.len() == 1 && files[0].extension().is_some_and(|e| e == "pcm"), "the file and no copy: {files:?}");
+    let (done, _) = stop(&mut node).await;
+    assert!(matches!(&done, DictationPhase::Done { raw_text, .. } if *raw_text == numbered(1, 5)), "{done:?}");
+    wait_no_recordings(node.dir.path()).await;
+    assert!(kept_files(node.dir.path()).is_empty(), "nothing is kept: {:?}", kept_files(node.dir.path()));
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// A tone, quiet for 300 ms before every 30 s mark, where the fake stream's signal pauses too.
+fn tone(i: u64) -> i16 {
+    let period = 30 * long::RATE;
+    if i % period >= period - 3 * long::RATE / 10 {
+        return 0;
+    }
+    let t = i as f32 / long::RATE as f32;
+    ((t * 220.0 * std::f32::consts::TAU).sin() * 9_830.0) as i16
+}
+
+/// A take an earlier run left behind mid-take (docs/dictation.md §26.3): its part on disk stays,
+/// the rest of its raw file is encoded, and it joins the audio cache as interrupted, with the time
+/// its file's name gives. 重新识别 cuts it into segments again where it pauses, recognises them in
+/// order and puts the text on the clipboard; the recording then points at the new entry.
+#[tokio::test]
+async fn a_take_left_behind_is_put_together_and_recognised_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let left = long::recordings_dir(dir.path());
+    std::fs::create_dir_all(&left).unwrap();
+    let samples: Vec<i16> = (0..70 * long::RATE).map(tone).collect();
+    let pcm = left.join("take-1700000000000-3.pcm");
+    std::fs::write(&pcm, samples.iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
+    // The run stopped after the first part was written, before the manifest.
+    let mut writer = ArchiveWriter::create(&archive::parts_dir(&pcm)).unwrap();
+    writer.push(&samples[..usize::try_from(archive::PART_SAMPLES).unwrap()]);
+    drop(writer);
+    assert!(archive::part_path(&archive::parts_dir(&pcm), 0).is_file());
+
+    let mut node = start_in(dir, FakeAudio::speech(), FakeTranscriber::numbered(0, &[], Duration::ZERO), FakeInjector::paste(), 10);
+    ready(&mut node).await;
+    let cache = cache_until(&mut node, |v| !v.recordings.is_empty()).await;
+    let [kept] = cache.recordings.as_slice() else { panic!("{cache:?}") };
+    assert_eq!((kept.format, kept.duration_ms, kept.at_ms), (KeptFormat::Opus, 70_000, 1_700_000_000_000));
+    assert_eq!(kept.status, KeptStatus::Interrupted);
+    assert!(recordings(node.dir.path()).is_empty(), "the raw file went, the parts moved into the cache");
+    let manifest = archive::read_manifest(&node.dir.path().join(AUDIO_CACHE_DIR).join(kept.id.to_string())).unwrap();
+    assert_eq!((manifest.total, manifest.parts), (70 * long::RATE, 3));
+    assert!(manifest.cuts.is_empty() && manifest.gaps.is_empty(), "{manifest:?}");
+
+    let id = kept.id;
+    node.handle.send(CoreCommand::AudioRetake { id, models: RetakeModels::default() }).await.unwrap();
+    let seen = statuses_until(&mut node, |s| s.phase.is_terminal()).await;
+    match &seen.last().unwrap().phase {
+        DictationPhase::Done { raw_text, text, via, segments, duration_ms, .. } => {
+            assert_eq!(raw_text, &numbered(1, 3));
+            assert_eq!(text, "润色后的全文。");
+            assert_eq!(*via, Via::Clipboard);
+            assert_eq!(segments.as_ref().map(Vec::len), Some(3));
+            assert_eq!(*duration_ms, 70_000);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(node.transcriber.durations_ms(), vec![29_900, 30_000, 10_100], "cut again where it pauses");
+    assert!(node.injector.injected().is_empty(), "never pasted");
+    assert_eq!(node.injector.clipboard_copies(), vec!["润色后的全文。".to_owned()]);
+    let entry = newest_entry(&mut node).await;
+    assert_eq!(entry.segments.map(|s| s.len()), Some(3));
+    let cache = cache_until(&mut node, |v| v.recordings.first().is_some_and(|r| r.status == KeptStatus::Recognized { entry: entry.id })).await;
+    assert_eq!(cache.recordings.len(), 1, "the same recording, now linked to the entry");
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 
@@ -334,21 +501,31 @@ async fn a_stop_while_segments_are_recognised_waits_for_all_of_them() {
 }
 
 /// Two hours of the fake signal, as fast as it can be read (docs/dictation.md §22): 240 segments
-/// of at most 30 s, read back one at a time — the take never sits in memory — and one text.
+/// of at most 30 s, read back one at a time — the take never sits in memory — and one text; its
+/// copy is kept in 240 parts (§26.2).
 #[tokio::test]
 async fn two_hours_make_240_segments() {
     let mut node = start(FakeAudio::speech().long(7_200), FakeTranscriber::numbered(0, &[], Duration::ZERO), FakeInjector::paste(), 120);
     ready(&mut node).await;
     node.handle.send(CoreCommand::DictationStart).await.unwrap();
     statuses_until(&mut node, |s| listening_with(s, SegmentProgress { done: 240, total: 240 })).await;
-    let files = recordings(node.dir.path());
+    let files = pcm_files(node.dir.path());
+    assert_eq!(files.len(), 1, "{files:?}");
     assert_eq!(std::fs::metadata(&files[0]).unwrap().len(), file_bytes(7_200));
     let (done, _) = stop(&mut node).await;
     assert!(matches!(&done, DictationPhase::Done { raw_text, duration_ms: 7_200_000, .. } if *raw_text == numbered(1, 240)), "{done:?}");
     let durations = node.transcriber.durations_ms();
     assert_eq!(durations.len(), 240);
     assert!(durations.iter().all(|&d| d <= 30_000), "{:?}", durations.iter().max());
-    assert_eq!(newest_entry(&mut node).await.segments.map(|s| s.len()), Some(240));
+    let entry = newest_entry(&mut node).await;
+    assert_eq!(entry.segments.map(|s| s.len()), Some(240));
+    // The longest take the settings allow is kept whole: 240 parts, well within the cache's limits.
+    let cache = cache_until(&mut node, |v| v.recordings.first().is_some_and(|r| r.status == KeptStatus::Recognized { entry: entry.id })).await;
+    let kept = &cache.recordings[0];
+    assert_eq!((kept.format, kept.duration_ms), (KeptFormat::Opus, 7_200_000));
+    assert!(kept.bytes < 7_200 * 3_200, "{} bytes", kept.bytes);
+    let manifest = archive::read_manifest(&node.dir.path().join(AUDIO_CACHE_DIR).join(kept.id.to_string())).unwrap();
+    assert_eq!(manifest.parts, 240);
     wait_no_recordings(node.dir.path()).await;
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }

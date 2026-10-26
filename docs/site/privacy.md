@@ -48,7 +48,9 @@ The [try page](/guide/try) on this website sends what you record or upload to th
 
 The microphone is open only while you record, or for the 15 seconds of a microphone test. Computer audio is recorded only during a dictation with it chosen as the source. Voltip does not listen in the background.
 
-While a recording longer than 2 minutes runs, its audio is written to a file in Voltip's data folder so that it can be recognised in segments. The file is deleted when the recording ends, and at the next start if Voltip was closed during a recording.
+While a recording longer than 2 minutes runs, its audio is written to a file in Voltip's data folder so that it can be recognised in segments; the file is deleted when the recording ends. With **Keep recordings on this computer** on, a compressed copy is written as well and moves into the recording cache when the recording ends; if Voltip was closed during the recording, the next start completes the copy from what was recorded and moves it into the recording cache. With it off, the files a closed recording left are deleted at the next start.
+
+With **Keep recordings on this computer** on (the default), the recordings of dictations are kept in Voltip's data folder, those longer than 2 minutes compressed, so that they can be [recognised again](/dictation/history#recognise-or-polish-again) when recognition or polish fails. Voltip keeps as many as the settings allow (20 recordings and 200 MB by default) and deletes the oldest past that. They stay on this computer: they are not synced to phones, not included in backups, and [AI tools](/recognition/mcp) cannot read them. Turn them off or delete them under **Settings → Privacy and history**, in **Recording cache**; turning them off deletes the kept recordings, and deleting an entry or clearing the history deletes its recordings too.
 
 ## The local service
 
@@ -61,6 +63,7 @@ With [AI tools](/recognition/mcp) turned on, AI tools on this computer that hold
 ## What stays on your computer
 
 - **History**: every dictation, stored in Voltip's data folder. It can be limited, turned off or cleared under **Settings → Privacy and history**.
+- **Recordings**: with **Keep recordings on this computer** on, the recordings of your latest dictations, in the same folder; see [The microphone and computer audio](#the-microphone-and-computer-audio).
 - **Dictionary, rules, scenes and settings**: in the same folder.
 - **Backup files**: a backup exported under **Settings → Privacy and history** is saved where you choose. It holds the history, the dictionary, the rules, the scenes and your own AI presets, but no settings or keys, and it is not encrypted; see [Backup and moving to another computer](/dictation/history#backup-and-moving-to-another-computer).
 - **Keys and the device identity**: in the system keychain — Windows Credential Manager, the macOS keychain, or the Secret Service on Linux. Keys are never shown again after you save them, and each key is sent only to its provider. Voltip does not fall back to storing keys in a file.

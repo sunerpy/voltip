@@ -57,6 +57,8 @@ pub fn phone_config(data_dir: PathBuf, app_version: &str) -> CoreConfig {
     config.app_version = app_version.to_owned();
     // The phone is the microphone; a desktop records its takes, never the other way round.
     config.accepts_phone_takes = false;
+    // The phone keeps no recordings: its interface offers no 重新识别 (docs/dictation.md §26).
+    config.keeps_audio = false;
     // The phone shows no live preview: the built-in service sends none (docs/dictation.md §11.8).
     config.shows_live_preview = false;
     // The user picks a take's scene on the talk card (no foreground probe on a phone).

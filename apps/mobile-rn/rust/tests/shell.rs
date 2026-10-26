@@ -20,9 +20,22 @@ use voltip_rn::update::{InstallSource, NOTHING_TO_INSTALL, PACKAGE, UpdateConfig
 
 const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL: Duration = Duration::from_millis(20);
-/// Commands of the shared contract that only the desktop registers (docs/dictation.md §23.6, §25).
-const DESKTOP_ONLY: &[&str] =
-    &["settings_set_serve", "serve_copy_token", "serve_rotate_token", "settings_set_mcp", "mcp_copy_token", "mcp_rotate_token", "mcp_copy_setup", "mcp_undo"];
+/// Commands of the shared contract that only the desktop registers (docs/dictation.md §23.6, §25,
+/// §26).
+const DESKTOP_ONLY: &[&str] = &[
+    "settings_set_serve",
+    "serve_copy_token",
+    "serve_rotate_token",
+    "settings_set_mcp",
+    "mcp_copy_token",
+    "mcp_rotate_token",
+    "mcp_copy_setup",
+    "mcp_undo",
+    "settings_set_audio_cache",
+    "audio_cache_clear",
+    "audio_cache_delete",
+    "audio_retake",
+];
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
@@ -182,7 +195,7 @@ fn every_fixture_command_is_answered() {
             "update_check" => assert_eq!(answer, Ok(Value::Null), "{name}"),
             "update_install" => assert_eq!(answer, Err(NOTHING_TO_INSTALL.to_owned()), "{name}"),
             "hotkey_edge" => assert_eq!(answer, Err(HOTKEY_UNAVAILABLE.to_owned())),
-            n if n.starts_with("model_") => assert_eq!(answer, Err(MODELS_UNAVAILABLE.to_owned()), "{name}"),
+            n if n.starts_with("model_") || n.starts_with("models_location_") => assert_eq!(answer, Err(MODELS_UNAVAILABLE.to_owned()), "{name}"),
             _ => {
                 if let Err(e) = &answer {
                     assert!(!e.starts_with("unknown command") && !e.starts_with("invalid args"), "{name}({args}): {e}");

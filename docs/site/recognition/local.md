@@ -7,7 +7,7 @@ description: The speech models that run on your computer, how to download them, 
 With a local model, your recordings are recognised on your computer and no audio leaves it. Open **Speech models** in the sidebar, choose **This computer**, and download a model. Once it is downloaded, you can also switch to it from the speech model name on the home page or under the page title.
 
 <ScreenFigure src="/screens/local-en-light.webp" width="1440" height="900"
-  alt="The This computer settings on the Speech models page: four local models, one of them installed and in use, and the compute device settings below."
+  alt="The This computer settings on the Speech models page: where the models are saved at the top, four local models below it, one of them installed and in use, and the compute device settings further down."
   caption="Speech models › This computer, with Qwen3-ASR 0.6B installed." />
 
 ## The models
@@ -31,7 +31,19 @@ When **Silence trimming** is on, a 1.8 MB silence detection model is downloaded 
 - Every file is checked against a SHA-256 hash before it is used.
 - Before a download starts, Voltip checks that there is enough free disk space.
 
-The models are stored in the `models` folder of Voltip's data folder ([where that is](/guide/updates#where-your-data-is-kept)). Deleting a model on the Speech models page removes its files.
+By default the models are stored in the `models` folder of Voltip's data folder ([where that is](/guide/updates#where-your-data-is-kept)); they can live in another folder too, see [Where the models are saved](#where-the-models-are-saved). Deleting a model on the Speech models page removes its files.
+
+### Where the models are saved
+
+When the system drive runs short of space, keep the models on another drive: under **This computer**, in **Location**, choose **Change…** and pick a folder. The downloaded models move along.
+
+- Within one drive the move is instant. To another drive, Voltip first copies and checks every file, then switches to the new folder, and only then deletes the files in the old one. The page shows the progress, and **Cancel move** stops the copy.
+- A move that does not finish (cancelled, not enough space, or another error) leaves the models where they were, ready to use.
+- While the models move, they cannot be downloaded or deleted; while a model downloads, the location cannot change until the download finishes or you cancel it.
+- An old file that is still in use and cannot be deleted yet is deleted the next time Voltip starts.
+- When the chosen folder already holds a complete copy of a model, for example after reinstalling the system and choosing the old folder again, Voltip uses it as it is instead of copying.
+
+**Restore default** moves the models back to the data folder. Models downloaded later are saved in the current location.
 
 ### Downloading by hand
 

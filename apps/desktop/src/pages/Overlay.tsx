@@ -129,6 +129,11 @@ export function Overlay({ state }: OverlayProps) {
   const label = takePhaseLabel(dictation, now, locale);
   // docs/dictation.md §19: a voice edit says so, and says what it replaced.
   const edit = dictation.kind === "edit";
+  // docs/dictation.md §26: a take that gave no text whose recording the cache holds can be
+  // recognised again from the history.
+  const kept =
+    dictation.recording !== undefined &&
+    uiState.audio_cache.recordings.some((r) => r.id === dictation.recording);
   const copyLive = () => {
     // Only wired when the failed phase kept text (see the Pill's `onCopy` below).
     const text = phase.phase === "failed" ? phase.text : undefined;
@@ -192,7 +197,9 @@ export function Overlay({ state }: OverlayProps) {
                   ? phase.injected_chars > 0
                     ? // §12: live_inject does not take back what it already pasted.
                       t("overlay.live.cancelledKept", { n: phase.injected_chars })
-                    : t("overlay.live.cancelled")
+                    : kept
+                      ? t("overlay.live.cancelledRecording")
+                      : t("overlay.live.cancelled")
                   : undefined
         }
         // The tag names where the audio goes; while refining it is the preset the clean-up runs
@@ -237,10 +244,13 @@ export function Overlay({ state }: OverlayProps) {
             : undefined
         }
         // docs/dictation.md §3.6: a take whose polish was asked for and not used says why.
+        // §26: a failed take whose recording is kept says where to recognise it again.
         note={
           phase.phase === "done" && !phase.refined && phase.refine_failure !== undefined
             ? notRefinedText(phase.refine_failure, locale)
-            : undefined
+            : phase.phase === "failed" && phase.text === undefined && kept
+              ? t("overlay.live.keptNote")
+              : undefined
         }
         onCopy={phase.phase === "failed" && phase.text !== undefined ? copyLive : undefined}
       />

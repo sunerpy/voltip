@@ -53,7 +53,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 126] = [
+pub const COMMANDS: [&str; 133] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -112,6 +112,9 @@ pub const COMMANDS: [&str; 126] = [
     "history_star",
     "history_process",
     "history_process_cancel",
+    "audio_cache_clear",
+    "audio_cache_delete",
+    "audio_retake",
     "history_export",
     "backup_export",
     "backup_open",
@@ -120,6 +123,7 @@ pub const COMMANDS: [&str; 126] = [
     "settings_set_locale",
     "settings_set_auto_update",
     "settings_set_history",
+    "settings_set_audio_cache",
     "settings_set_overlay",
     "update_check",
     "update_install",
@@ -130,6 +134,9 @@ pub const COMMANDS: [&str; 126] = [
     "model_import",
     "model_folder_open",
     "model_link_open",
+    "models_location_choose",
+    "models_location_reset",
+    "models_location_cancel",
     "dictionary_add",
     "dictionary_update",
     "dictionary_remove",
@@ -634,6 +641,30 @@ fn history_process_cancel(bridge: tauri::State<'_, Bridge>, request_id: u64) -> 
     Ok(bridge.dispatch(UiCommand::HistoryProcessCancel { request_id })?)
 }
 
+/// 清理录音 (docs/dictation.md §26): every kept recording is deleted.
+#[tauri::command]
+fn audio_cache_clear(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::AudioCacheClear)?)
+}
+
+/// Delete one kept recording.
+#[tauri::command]
+fn audio_cache_delete(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::AudioCacheDelete { id })?)
+}
+
+/// 重新识别 (docs/dictation.md §26): the take follows as `dictation` events, its text lands on
+/// the clipboard and in the history.
+#[tauri::command]
+fn audio_retake(
+    bridge: tauri::State<'_, Bridge>,
+    id: String,
+    asr: Option<voltip_core::audio_cache::RecognitionChoice>,
+    refine: Option<voltip_core::audio_cache::PolishChoice>,
+) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::AudioRetake { id, asr, refine })?)
+}
+
 /// 导出字幕 / 导出文本 (docs/dictation.md §22): the save dialog offers `file_name`, and the file is
 /// written here.
 #[tauri::command]
@@ -708,6 +739,12 @@ fn settings_set_history(bridge: tauri::State<'_, Bridge>, enabled: bool, keep: u
     Ok(bridge.dispatch(UiCommand::SettingsSetHistory { enabled, keep })?)
 }
 
+/// 录音缓存 (docs/dictation.md §26): on / off, how many, how much space.
+#[tauri::command]
+fn settings_set_audio_cache(bridge: tauri::State<'_, Bridge>, enabled: bool, keep: u32, max_mb: u32) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetAudioCache { enabled, keep, max_mb })?)
+}
+
 #[tauri::command]
 fn settings_set_overlay(bridge: tauri::State<'_, Bridge>, placement: OverlayPlacement) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::SettingsSetOverlay { placement })?)
@@ -775,6 +812,39 @@ fn model_folder_open(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(),
 fn model_link_open(bridge: tauri::State<'_, Bridge>, id: String, file: String, source: usize) -> Result<(), String> {
     let url = bridge.model_link(&id, &file, source)?;
     tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// 更改位置 (docs/dictation.md §10.9): the folder dialog, titled `title` and opening where the
+/// library is, then the move into the folder chosen; `false` when the dialog was closed. Progress
+/// and the end arrive as `models_location` events. The webview never names the folder.
+#[tauri::command]
+async fn models_location_choose<R: Runtime>(app: tauri::AppHandle<R>, bridge: tauri::State<'_, Bridge>, title: String) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt as _;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app.dialog().file().set_title(title);
+    let current = std::path::PathBuf::from(bridge.models_location().dir);
+    if current.is_dir() {
+        dialog = dialog.set_directory(current);
+    }
+    dialog.pick_folder(move |folder| {
+        let _ = tx.send(folder);
+    });
+    let Ok(Some(folder)) = rx.await else { return Ok(false) };
+    let folder = folder.into_path().map_err(|e| e.to_string())?;
+    bridge.models_relocate(folder)?;
+    Ok(true)
+}
+
+/// 恢复默认位置: the library moves back to `<data_dir>/models`.
+#[tauri::command]
+fn models_location_reset(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ModelsLocationReset)?)
+}
+
+/// Stop a move of the library before it switches; everything stays where it was.
+#[tauri::command]
+fn models_location_cancel(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ModelsLocationCancel)?)
 }
 
 /// Append a personal dictionary entry (docs/dictation.md §16.4); `history_id` marks one added from
@@ -1452,6 +1522,9 @@ pub fn build_app<R: Runtime>(
             history_star,
             history_process,
             history_process_cancel,
+            audio_cache_clear,
+            audio_cache_delete,
+            audio_retake,
             history_export,
             backup_export,
             backup_open,
@@ -1460,6 +1533,7 @@ pub fn build_app<R: Runtime>(
             settings_set_locale,
             settings_set_auto_update,
             settings_set_history,
+            settings_set_audio_cache,
             settings_set_overlay,
             update_check,
             update_install,
@@ -1470,6 +1544,9 @@ pub fn build_app<R: Runtime>(
             model_import,
             model_folder_open,
             model_link_open,
+            models_location_choose,
+            models_location_reset,
+            models_location_cancel,
             dictionary_add,
             dictionary_update,
             dictionary_remove,

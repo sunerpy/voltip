@@ -20,16 +20,19 @@ use std::collections::BTreeMap;
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncWriteExt as _;
-use voltip_core::{CancelToken, ModelFileView, ModelImportError, ModelInstallState, ModelManager, ModelState, ProgressSink};
+use voltip_core::{
+    CancelToken, ModelFileView, ModelImportError, ModelInstallState, ModelManager, ModelState, ProgressSink, RelocateCommit, RelocateProgress, Relocated,
+};
 
 use crate::catalogue::{CATALOGUE, ModelEntry, ModelFile};
+use crate::root::ModelsRoot;
 
 /// Name of the per-model manifest.
 pub const MANIFEST_FILE: &str = "manifest.json";
@@ -65,6 +68,13 @@ impl Default for SlowSourcePolicy {
 
 /// Free space a download leaves on the disk: a model never fills the file system to the last byte.
 pub const DISK_HEADROOM: u64 = 100_000_000;
+
+/// [`ModelStore`]'s background work: nothing.
+pub(crate) const IDLE: u8 = 0;
+/// [`ModelStore`]'s background work: fetching the auxiliary models.
+pub(crate) const FETCHING: u8 = 1;
+/// [`ModelStore`]'s background work: moving the library (docs/dictation.md §10.9).
+pub(crate) const MOVING: u8 = 2;
 
 /// Reads the free bytes under a path.
 type FreeSpaceProbe = dyn Fn(&Path) -> std::io::Result<u64> + Send + Sync;
@@ -195,6 +205,22 @@ pub enum StoreError {
         /// Free bytes on the library's file system.
         available: u64,
     },
+    /// The models a move copies, plus [`DISK_HEADROOM`], do not fit where they go; nothing moved
+    /// (docs/dictation.md §10.9).
+    #[error("所选位置空间不足：移动模型需要 {} MB 空闲空间，当前可用 {} MB", megabytes_up(.needed), megabytes(.available))]
+    MoveNoSpace {
+        /// Bytes to copy plus the headroom.
+        needed: u64,
+        /// Free bytes where the library goes.
+        available: u64,
+    },
+    /// The library cannot go to the chosen folder, or a move failed and was undone; the reason
+    /// is in words.
+    #[error("{0}")]
+    Move(String),
+    /// The library is busy with something that cannot run alongside (a download and a move).
+    #[error("{0}")]
+    Busy(&'static str),
 }
 
 /// Whole decimal megabytes, rounded down (what is free).
@@ -222,40 +248,50 @@ impl From<std::io::Error> for StoreError {
 /// The model library rooted at one directory.
 #[derive(Clone, Debug)]
 pub struct ModelStore {
-    root: PathBuf,
-    catalogue: &'static [ModelEntry],
+    pub(crate) root: ModelsRoot,
+    pub(crate) catalogue: &'static [ModelEntry],
     sources: Vec<Source>,
     /// Install the auxiliary entries along with every recognition model (docs/dictation.md §12
     /// `vad_trim`); shared with whoever tracks the setting.
     auxiliary: Arc<AtomicBool>,
-    /// A background auxiliary download is running.
-    auxiliary_in_flight: Arc<AtomicBool>,
+    /// What runs on the library in the background ([`IDLE`], [`FETCHING`] the auxiliary models,
+    /// [`MOVING`] it to another folder): one of them at a time.
+    pub(crate) busy: Arc<AtomicU8>,
     /// When to give up on a slow source for the next one.
     slow: SlowSourcePolicy,
     /// Where the free-space check before a download reads the disk.
-    free_space: FreeSpace,
+    pub(crate) free_space: FreeSpace,
     /// The proxy plan downloads follow (docs/dictation.md §24).
     network: voltip_net::NetworkRef,
+    /// A move renames folders when it can (tests turn it off to copy on one file system).
+    pub(crate) renames: bool,
 }
 
 impl ModelStore {
     /// The real catalogue and the documented sources under `root` (`<app data dir>/models`).
-    pub fn new(root: impl Into<PathBuf>) -> Self {
+    pub fn new(root: impl Into<ModelsRoot>) -> Self {
         Self::with_sources(root, CATALOGUE, Source::defaults())
     }
 
     /// Any catalogue and sources (tests point at a local server with tiny files).
-    pub fn with_sources(root: impl Into<PathBuf>, catalogue: &'static [ModelEntry], sources: Vec<Source>) -> Self {
+    pub fn with_sources(root: impl Into<ModelsRoot>, catalogue: &'static [ModelEntry], sources: Vec<Source>) -> Self {
         Self {
             root: root.into(),
             catalogue,
             sources,
             auxiliary: Arc::new(AtomicBool::new(false)),
-            auxiliary_in_flight: Arc::new(AtomicBool::new(false)),
+            busy: Arc::new(AtomicU8::new(IDLE)),
             slow: SlowSourcePolicy::default(),
             free_space: FreeSpace::system(),
             network: voltip_net::NetworkRef::default(),
+            renames: true,
         }
+    }
+
+    /// Moves copy every folder, as between two disks (tests: their folders share one file system).
+    #[doc(hidden)]
+    pub fn copying_moves(self) -> Self {
+        Self { renames: false, ..self }
     }
 
     /// Download through `network`'s proxy plan.
@@ -290,8 +326,13 @@ impl ModelStore {
     }
 
     /// The library directory.
-    pub fn root(&self) -> &Path {
-        &self.root
+    pub fn root(&self) -> PathBuf {
+        self.root.get()
+    }
+
+    /// The shared root itself, for the recognisers and the VAD that read the same library.
+    pub fn shared_root(&self) -> ModelsRoot {
+        self.root.clone()
     }
 
     /// The catalogue this store serves.
@@ -374,7 +415,8 @@ impl ModelStore {
             tracing::debug!("no Tokio runtime here; the auxiliary models wait for the next model download");
             return false;
         };
-        if self.auxiliary_in_flight.swap(true, Ordering::SeqCst) {
+        // Not twice, and not into a library that is moving (it is fetched after the move).
+        if self.busy.compare_exchange(IDLE, FETCHING, Ordering::SeqCst, Ordering::SeqCst).is_err() {
             return false;
         }
         let store = self.clone();
@@ -383,9 +425,15 @@ impl ModelStore {
                 Ok(n) => tracing::info!(installed = n, "auxiliary models installed"),
                 Err(e) => tracing::warn!(error = %e, "auxiliary model download failed; what needs it stays off until the next try"),
             }
-            store.auxiliary_in_flight.store(false, Ordering::SeqCst);
+            store.busy.store(IDLE, Ordering::SeqCst);
         });
         true
+    }
+
+    /// Refuse to write into a library that is moving (docs/dictation.md §10.9): the core never
+    /// asks for it, and a model fetched meanwhile would land in the folder being left.
+    fn refuse_while_moving(&self) -> Result<(), StoreError> {
+        if self.busy.load(Ordering::SeqCst) == MOVING { Err(StoreError::Busy("正在移动模型，请稍后再试")) } else { Ok(()) }
     }
 
     /// Install state of one entry.
@@ -399,6 +447,7 @@ impl ModelStore {
     /// `Verifying`, and nothing after the returned `Installed`.
     pub async fn download(&self, id: &str, progress: ProgressSink, cancel: CancelToken) -> Result<ModelInstallState, StoreError> {
         let entry = self.entry(id)?;
+        self.refuse_while_moving()?;
         let state = self.install(entry, &progress, &cancel).await?;
         // A recognition model brings its dependencies along when they are wanted (§12); their
         // failure is logged, never propagated — the model itself is installed and usable.
@@ -417,6 +466,7 @@ impl ModelStore {
     /// What is missing or not the catalogue's file comes back by name.
     pub async fn import(&self, id: &str, progress: ProgressSink) -> Result<ModelInstallState, ImportError> {
         let entry = self.entry(id).map_err(ImportError::Store)?;
+        self.refuse_while_moving().map_err(ImportError::Store)?;
         let dir = self.dir(id);
         progress(ModelInstallState::Verifying);
         let check_dir = dir.clone();
@@ -679,6 +729,7 @@ impl ModelStore {
     /// Delete the model directory: files, `.part`s and manifest.
     pub fn remove(&self, id: &str) -> Result<(), StoreError> {
         self.entry(id)?;
+        self.refuse_while_moving()?;
         let dir = self.dir(id);
         match std::fs::remove_dir_all(&dir) {
             Ok(()) => {
@@ -710,6 +761,21 @@ impl ModelManager for ModelStore {
             ImportError::Incomplete { missing, mismatched } => ModelImportError::Incomplete { missing, mismatched },
             ImportError::Store(e) => ModelImportError::Failed(String::from(e)),
         })
+    }
+
+    fn root(&self) -> PathBuf {
+        Self::root(self)
+    }
+
+    async fn relocate(&self, to: &Path, progress: RelocateProgress, cancel: CancelToken, commit: RelocateCommit) -> Result<Relocated, String> {
+        let store = self.clone();
+        let to = to.to_path_buf();
+        // Gigabytes of copying: off the async workers.
+        tokio::task::spawn_blocking(move || store.move_to(&to, &*progress, &cancel, &*commit))
+            .await
+            .map_err(|e| e.to_string())?
+            .map(|leftovers| Relocated { leftovers })
+            .map_err(String::from)
     }
 }
 
@@ -769,7 +835,7 @@ async fn write_manifest(dir: &Path, manifest: &Manifest) -> Result<(), StoreErro
 
 /// Give `from` its final name durably: flush its blocks to the disk, rename it over `to`, then flush
 /// the directory entry. Blocking.
-fn publish(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn publish(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::OpenOptions::new().write(true).open(from)?.sync_all()?;
     std::fs::rename(from, to)?;
     sync_dir(to.parent());
@@ -778,7 +844,7 @@ fn publish(from: &Path, to: &Path) -> std::io::Result<()> {
 
 /// Flush a directory's entries (Unix). Best effort: some file systems refuse it, and the file's own
 /// blocks are already on the disk. Windows has no directory handle to flush; NTFS journals the rename.
-fn sync_dir(dir: Option<&Path>) {
+pub(crate) fn sync_dir(dir: Option<&Path>) {
     #[cfg(unix)]
     if let Some(dir) = dir
         && let Err(e) = std::fs::File::open(dir).and_then(|d| d.sync_all())

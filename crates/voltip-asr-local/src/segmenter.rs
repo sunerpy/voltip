@@ -15,6 +15,7 @@ use voltip_core::dictation::long::{EnergySegmenter, RATE};
 use voltip_core::dictation::{Segmenter, SegmenterFactory};
 
 use crate::catalogue::{ModelEntry, vad_entry};
+use crate::root::ModelsRoot;
 use crate::sherpa::SherpaVadLoader;
 use crate::store::{self, ModelStore};
 use crate::vad::{VAD_SAMPLE_RATE_HZ, VadLoader, VoiceActivity, samples_at};
@@ -31,7 +32,7 @@ pub const PAUSE_MARGIN: Duration = Duration::from_millis(50);
 /// Makes a [`VadSegmenter`] for each long take.
 #[derive(Clone)]
 pub struct VadSegmenterFactory {
-    root: PathBuf,
+    root: ModelsRoot,
     entry: &'static ModelEntry,
     loader: Arc<dyn VadLoader>,
     store: Option<ModelStore>,
@@ -46,12 +47,12 @@ impl std::fmt::Debug for VadSegmenterFactory {
 impl VadSegmenterFactory {
     /// sherpa-onnx over the real catalogue's VAD entry under `root` (`<app data dir>/models`);
     /// `store` fetches the model when a take finds it missing.
-    pub fn new(root: impl Into<PathBuf>, store: Option<ModelStore>) -> Self {
+    pub fn new(root: impl Into<ModelsRoot>, store: Option<ModelStore>) -> Self {
         Self::with_loader(root, vad_entry(), Arc::new(SherpaVadLoader), store)
     }
 
     /// Any entry and loader (tests).
-    pub fn with_loader(root: impl Into<PathBuf>, entry: &'static ModelEntry, loader: Arc<dyn VadLoader>, store: Option<ModelStore>) -> Self {
+    pub fn with_loader(root: impl Into<ModelsRoot>, entry: &'static ModelEntry, loader: Arc<dyn VadLoader>, store: Option<ModelStore>) -> Self {
         Self { root: root.into(), entry, loader, store }
     }
 }

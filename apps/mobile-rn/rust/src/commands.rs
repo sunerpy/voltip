@@ -17,7 +17,7 @@ use crate::shell::Shell;
 
 /// Every command the app may invoke: the Tauri phone shell's `COMMANDS`, in its order (a test reads
 /// that list and compares).
-pub const COMMANDS: [&str; 118] = [
+pub const COMMANDS: [&str; 121] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -94,6 +94,9 @@ pub const COMMANDS: [&str; 118] = [
     "model_import",
     "model_folder_open",
     "model_link_open",
+    "models_location_choose",
+    "models_location_reset",
+    "models_location_cancel",
     "dictionary_add",
     "dictionary_update",
     "dictionary_remove",
@@ -252,7 +255,15 @@ pub async fn run(shell: &Shell, command: &str, args: Value) -> Result<Value, Str
             open(shell, url).await
         }
         "update_status" => to_json(&shell.inner.updater.status()),
-        "model_download" | "model_cancel" | "model_remove" | "model_import" | "model_folder_open" | "model_link_open" => Err(MODELS_UNAVAILABLE.to_owned()),
+        "model_download"
+        | "model_cancel"
+        | "model_remove"
+        | "model_import"
+        | "model_folder_open"
+        | "model_link_open"
+        | "models_location_choose"
+        | "models_location_reset"
+        | "models_location_cancel" => Err(MODELS_UNAVAILABLE.to_owned()),
         "rules_export" => to_json(&bridge.rules_export().map_err(String::from)?),
         "vocabulary_preview" => {
             let text: String = arg(command, &args, "text")?;

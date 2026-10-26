@@ -449,6 +449,31 @@ export const historySettingsSchema = z.object({
 });
 export type HistorySettings = z.infer<typeof historySettingsSchema>;
 
+/** `voltip_core::audio_cache::{MIN_KEEP, MAX_KEEP}`: how many recordings may be kept. */
+export const AUDIO_CACHE_MIN_KEEP = 1;
+export const AUDIO_CACHE_MAX_KEEP = 200;
+/** `voltip_core::audio_cache::{MIN_MB, MAX_MB}`: how much space they may take, in MB. */
+export const AUDIO_CACHE_MIN_MB = 50;
+export const AUDIO_CACHE_MAX_MB = 10_000;
+/** `voltip_core::audio_cache::MB`: a megabyte as the settings count it. */
+export const AUDIO_CACHE_MB = 1_000_000;
+/** The recordings kept for recognising a take again (`voltip_core::AudioCacheSettings`,
+ *  docs/dictation.md §26). An older core or `settings.json` reads as on, 20, 200 MB. */
+export const audioCacheSettingsSchema = z.object({
+  /** Keep the newest takes' recordings; off deletes the kept ones. */
+  enabled: z.boolean().default(true),
+  /** Recordings kept (1–200). */
+  keep: z.number().int().min(AUDIO_CACHE_MIN_KEEP).max(AUDIO_CACHE_MAX_KEEP).default(20),
+  /** The most space they take, in MB of 1 000 000 bytes (50–10 000). */
+  max_mb: z.number().int().min(AUDIO_CACHE_MIN_MB).max(AUDIO_CACHE_MAX_MB).default(200),
+});
+export type AudioCacheSettings = z.infer<typeof audioCacheSettingsSchema>;
+export const defaultAudioCacheSettings = (): AudioCacheSettings => ({
+  enabled: true,
+  keep: 20,
+  max_mb: 200,
+});
+
 /** Where a dictation take's audio comes from (`voltip_core::RecordingSource`, docs/dictation.md
  *  §22): the microphone, what the computer plays, or both mixed. */
 export const RECORDING_SOURCES = ["microphone", "system", "mixed"] as const;
@@ -720,6 +745,8 @@ export const settingsSchema = z.object({
     enabled: true,
     keep: 20_000,
   })),
+  /** docs/dictation.md §26; an older `settings.json` or core reads as on, 20, 200 MB. */
+  audio_cache: audioCacheSettingsSchema.default(defaultAudioCacheSettings),
   overlay: overlayPlacementSchema.default("bottom"),
   /** The microphone takes record from: an `audio_devices` id, or `null` for the system default.
    *  Always serialised; an older `settings.json` or core reads as the default. */
@@ -1019,8 +1046,80 @@ export const dictationStatusSchema = z.object({
   /** A long take's recognition (docs/dictation.md §22), once the take is past its first two
    *  minutes: segments done out of those cut so far. */
   segments: segmentProgressSchema.optional(),
+  /** The take's recording in the audio cache (docs/dictation.md §26), once it is kept, and from
+   *  the start of a take that recognises it again: the pill says a failed take's recording can be
+   *  recognised again. */
+  recording: z.string().optional(),
+  /** The take recognises a kept recording again (§26): no capture, the text goes to the
+   *  clipboard. Always sent by the core; an older one reads as `false`. */
+  retake: z.boolean().optional(),
 });
 export type DictationStatus = z.infer<typeof dictationStatusSchema>;
+
+/** What became of a kept recording (`voltip_core::audio_cache::KeptStatus`, docs/dictation.md
+ *  §26): its take is being processed, an entry holds its text, or why there is none. */
+export const keptStatusSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("pending") }),
+  z.object({ kind: z.literal("recognized"), entry: z.string() }),
+  z.object({
+    kind: z.literal("failed"),
+    code: dictationFailureCodeSchema,
+    /** The pipeline's words (Chinese); the interface explains `code`. */
+    message: z.string(),
+  }),
+  z.object({ kind: z.literal("cancelled") }),
+  z.object({ kind: z.literal("interrupted") }),
+]);
+export type KeptStatus = z.infer<typeof keptStatusSchema>;
+
+/** How a kept recording is stored (`voltip_core::audio_cache::KeptFormat`): a take of up to two
+ *  minutes as its WAV, a longer one as Ogg Opus parts (docs/dictation.md §26.2). */
+export const keptFormatSchema = z.enum(["wav", "opus"]);
+export type KeptFormat = z.infer<typeof keptFormatSchema>;
+
+/** One kept recording (`voltip_core::audio_cache::KeptRecording`). */
+export const keptRecordingSchema = z.object({
+  id: z.string(),
+  at_ms: z.number().nonnegative(),
+  duration_ms: z.number().nonnegative(),
+  bytes: z.number().nonnegative(),
+  /** The application in front when it was recorded; recognising it again matches the scenes. */
+  app: appRefSchema.optional(),
+  status: keptStatusSchema,
+  /** Absent for a WAV, as the core writes it. */
+  format: keptFormatSchema.optional(),
+});
+export type KeptRecording = z.infer<typeof keptRecordingSchema>;
+
+/** The recognition a 重新识别 runs with instead of the settings' (`RecognitionChoice`,
+ *  docs/dictation.md §26.4): a provider's model, or an installed local model. */
+export const recognitionChoiceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("remote"), provider: providerIdSchema, model: z.string().min(1) }),
+  z.object({ kind: z.literal("local"), id: z.string().min(1) }),
+]);
+export type RecognitionChoice = z.infer<typeof recognitionChoiceSchema>;
+
+/** The clean-up a 重新识别 runs with instead of the settings' (`PolishChoice`): none, or a
+ *  provider's model whatever the recording's scene says. */
+export const polishChoiceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("off") }),
+  z.object({ kind: z.literal("remote"), provider: providerIdSchema, model: z.string().min(1) }),
+]);
+export type PolishChoice = z.infer<typeof polishChoiceSchema>;
+
+/** `UiState.audio_cache` (`voltip_core::audio_cache::AudioCacheView`): the recordings, newest
+ *  first; `available` is false where the app keeps none (the phone). */
+export const audioCacheViewSchema = z.object({
+  available: z.boolean(),
+  recordings: z.array(keptRecordingSchema),
+  bytes: z.number().nonnegative(),
+});
+export type AudioCacheView = z.infer<typeof audioCacheViewSchema>;
+export const emptyAudioCache = (): AudioCacheView => ({
+  available: false,
+  recordings: [],
+  bytes: 0,
+});
 
 /** The core's resting dictation state (also what a state without the field parses to). */
 export function idleDictation(): DictationStatus {
@@ -1808,6 +1907,49 @@ export const modelStateSchema = z.object({
 });
 export type ModelState = z.infer<typeof modelStateSchema>;
 
+/** A move of the model library in progress (`voltip_core::models_location::ModelsMove`,
+ *  docs/dictation.md §10.9). `total_bytes` is 0 while the move only renames (one disk). */
+export const modelsMoveSchema = z.object({
+  to: z.string(),
+  moved_bytes: z.number().nonnegative(),
+  total_bytes: z.number().nonnegative(),
+});
+export type ModelsMove = z.infer<typeof modelsMoveSchema>;
+
+/** How the last move ended (`ModelsMoveOutcome`): moved (`deferred` old folders still in use are
+ *  deleted at the next start), cancelled or failed, the library where it was in both. */
+export const modelsMoveOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("moved"),
+    dir: z.string(),
+    deferred: z.number().int().nonnegative(),
+  }),
+  z.object({ kind: z.literal("cancelled") }),
+  z.object({ kind: z.literal("failed"), message: z.string() }),
+]);
+export type ModelsMoveOutcome = z.infer<typeof modelsMoveOutcomeSchema>;
+
+/** `UiState.models_location` (`voltip_core::models_location::ModelsLocationView`): where the
+ *  model library is, a move in progress and how the last one ended; `available` is false without
+ *  a library (the phone). */
+export const modelsLocationViewSchema = z.object({
+  available: z.boolean(),
+  dir: z.string(),
+  custom: z.boolean(),
+  default_dir: z.string(),
+  moving: modelsMoveSchema.nullable().default(null),
+  last: modelsMoveOutcomeSchema.nullable().default(null),
+});
+export type ModelsLocationView = z.infer<typeof modelsLocationViewSchema>;
+export const emptyModelsLocation = (): ModelsLocationView => ({
+  available: false,
+  dir: "",
+  custom: false,
+  default_dir: "",
+  moving: null,
+  last: null,
+});
+
 /** A model the user can pick for recognition (the streaming preview model is not one). */
 export function isRecognitionModel(model: Pick<ModelState, "capabilities">): boolean {
   return model.capabilities.includes("offline");
@@ -2391,10 +2533,14 @@ export const uiStateSchema = z.object({
   history_recent: z.array(historyEntrySchema).default(() => []),
   /** Entries in the history. */
   history_total: z.number().int().nonnegative().default(0),
+  /** The kept recordings (docs/dictation.md §26); not available on the phone. */
+  audio_cache: audioCacheViewSchema.default(emptyAudioCache),
   engines: engineStatusSchema.default(emptyEngineStatus),
   update: updateStatusSchema.default(idleUpdate),
   /** The local model catalogue with install states; `[]` on the phone (no local models there). */
   models: z.array(modelStateSchema).default(() => []),
+  /** Where that library is (§10.9); not available on the phone. */
+  models_location: modelsLocationViewSchema.default(emptyModelsLocation),
   /** The personal dictionary and the replacement rules (§16), in order; `[]` on the phone. */
   dictionary: z.array(dictionaryEntrySchema).default(() => []),
   rules: z.array(replacementRuleSchema).default(() => []),
@@ -2466,6 +2612,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   updateEventSchema,
   /** Full catalogue push; download progress arrives folded into the list (≥ 250 ms / 1 MiB apart). */
   z.object({ type: z.literal("models"), models: z.array(modelStateSchema) }),
+  /** Where the model library is, and a move of it, whole (§10.9). */
+  modelsLocationViewSchema.extend({ type: z.literal("models_location") }),
   /** The whole dictionary / rule list after every change (§16). */
   z.object({
     type: z.literal("dictionary"),
@@ -2492,6 +2640,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
     id: z.string(),
     state: processStateSchema,
   }),
+  /** The kept recordings, whole, after every change (§26). */
+  audioCacheViewSchema.extend({ type: z.literal("audio_cache") }),
   /** The phone's take to a desktop moved (§20); `null` before the first. */
   z.object({
     type: z.literal("phone_take"),
@@ -2763,6 +2913,17 @@ export interface CommandArgs {
   settings_set_auto_update: { enabled: boolean };
   /** History recording and retention; a smaller `keep` trims the list at once. */
   settings_set_history: { enabled: boolean; keep: number };
+  /** The audio cache (§26): off deletes the kept recordings, tighter limits drop the oldest at
+   *  once; the core re-emits `settings` and `audio_cache`. */
+  settings_set_audio_cache: { enabled: boolean; keep: number; maxMb: number };
+  /** 清理录音 (§26): every kept recording is deleted. */
+  audio_cache_clear: undefined;
+  /** Delete one kept recording. */
+  audio_cache_delete: { id: string };
+  /** 重新识别 (§26): the take follows as `dictation` events (`retake`, `recording`); its text goes
+   *  to the clipboard and into the history. Refused (an `error` event) while a take runs. */
+  /** §26.4: `asr` / `refine` other models than the settings', for this take only. */
+  audio_retake: { id: string; asr?: RecognitionChoice; refine?: PolishChoice };
   /** Where the dictation pill appears; the core persists it, the desktop shell follows. */
   settings_set_overlay: { placement: OverlayPlacement };
   /** One press / release edge into the activation machine (docs/dictation.md §13). The UI sends
@@ -2788,6 +2949,14 @@ export interface CommandArgs {
   model_folder_open: { id: string };
   /** Open `files[file].urls[source]` in the browser; the shell takes the address from the core. */
   model_link_open: { id: string; file: string; source: number };
+  /** 更改位置 (docs/dictation.md §10.9): the shell's folder dialog, titled `title`, then the move
+   *  into the folder chosen; `false` when the dialog was closed. Progress and the end arrive as
+   *  `models_location` events; the webview never names the folder. */
+  models_location_choose: { title: string };
+  /** 恢复默认: the library moves back to `<data dir>/models`. */
+  models_location_reset: undefined;
+  /** Stop a move before it switches; everything stays where it was. */
+  models_location_cancel: undefined;
   /** Personal dictionary (docs/dictation.md §16.4): append, replace, delete, reorder (every id in
    *  the new order). A draft that is wrong on its own rejects the call with the core's message;
    *  a clash with another entry comes back as an `error` event and the list stays as it was. */
@@ -2935,6 +3104,7 @@ export type QueryCommand =
   | "guide_open"
   | "model_folder_open"
   | "model_link_open"
+  | "models_location_choose"
   | "feedback_diagnostics"
   | "feedback_submit"
   | "feedback_attachment_add"
@@ -2976,6 +3146,7 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "guide_open",
   "model_folder_open",
   "model_link_open",
+  "models_location_choose",
   "feedback_diagnostics",
   "feedback_submit",
   "feedback_attachment_add",
@@ -3021,6 +3192,7 @@ export function defaultSettings(): Settings {
     pairing_always_on: false,
     phone_talk: "hold",
     history: { enabled: true, keep: 20_000 },
+    audio_cache: defaultAudioCacheSettings(),
     overlay: "bottom",
     microphone: null,
     recording: defaultRecordingSettings(),
@@ -3069,6 +3241,10 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
         history_recent: event.recent,
         history_total: event.total,
       };
+    case "audio_cache": {
+      const { type: _type, ...audio_cache } = event;
+      return { ...state, audio_cache };
+    }
     case "engines": {
       const { type: _type, ...engines } = event;
       return { ...state, engines };
@@ -3079,6 +3255,10 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
     }
     case "models":
       return { ...state, models: event.models };
+    case "models_location": {
+      const { type: _type, ...models_location } = event;
+      return { ...state, models_location };
+    }
     case "dictionary":
       return { ...state, dictionary: event.entries };
     case "rules":

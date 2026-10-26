@@ -37,6 +37,11 @@
         "enabled": true,
         "keep": 20000
       },
+      "audio_cache": {
+        "enabled": true,
+        "keep": 20,
+        "max_mb": 200
+      },
       "overlay": "bottom",
       "microphone": null,
       "recording": {
@@ -101,6 +106,11 @@
     },
     "history_recent": [],
     "history_total": 0,
+    "audio_cache": {
+      "available": false,
+      "recordings": [],
+      "bytes": 0
+    },
     "engines": {
       "asr_provider": "builtin",
       "asr_ready": false,
@@ -128,6 +138,14 @@
       "state": "idle"
     },
     "models": [],
+    "models_location": {
+      "available": false,
+      "dir": "",
+      "custom": false,
+      "default_dir": "",
+      "moving": null,
+      "last": null
+    },
     "dictionary": [],
     "rules": [],
     "scenes": [],
@@ -340,6 +358,11 @@
     "history": {
       "enabled": true,
       "keep": 200
+    },
+    "audio_cache": {
+      "enabled": true,
+      "keep": 50,
+      "max_mb": 500
     },
     "overlay": "top",
     "microphone": "wasapi:{0.0.1.00000000}.{c2}",
@@ -4596,6 +4619,11 @@
       "enabled": true,
       "keep": 200
     },
+    "audio_cache": {
+      "enabled": true,
+      "keep": 50,
+      "max_mb": 500
+    },
     "overlay": "top",
     "microphone": "wasapi:{0.0.1.00000000}.{c2}",
     "recording": {
@@ -4859,6 +4887,133 @@
     "state": {
       "state": "cancelled"
     }
+  },
+  {
+    "type": "audio_cache",
+    "available": true,
+    "recordings": [
+      {
+        "id": "4a7c2e10-6b1d-4f3a-9c8e-5d2b7a1f0e93",
+        "at_ms": 1758700600000,
+        "duration_ms": 6800,
+        "bytes": 217644,
+        "app": {
+          "id": "code",
+          "name": "Visual Studio Code"
+        },
+        "status": {
+          "kind": "pending"
+        }
+      },
+      {
+        "id": "8e3f1b2a-0c4d-4e5f-a6b7-c8d9e0f1a2b3",
+        "at_ms": 1758700540000,
+        "duration_ms": 6800,
+        "bytes": 217644,
+        "app": {
+          "id": "code",
+          "name": "Visual Studio Code"
+        },
+        "status": {
+          "kind": "failed",
+          "code": "asr",
+          "message": "asr: 请求超时"
+        }
+      },
+      {
+        "id": "d1e2f3a4-b5c6-4d7e-8f9a-0b1c2d3e4f5a",
+        "at_ms": 1758700480000,
+        "duration_ms": 6800,
+        "bytes": 217644,
+        "app": {
+          "id": "code",
+          "name": "Visual Studio Code"
+        },
+        "status": {
+          "kind": "recognized",
+          "entry": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        }
+      },
+      {
+        "id": "2f4e6d8c-0a1b-4c3d-9e5f-7a8b9c0d1e2f",
+        "at_ms": 1758700420000,
+        "duration_ms": 6800,
+        "bytes": 217644,
+        "app": {
+          "id": "code",
+          "name": "Visual Studio Code"
+        },
+        "status": {
+          "kind": "cancelled"
+        }
+      },
+      {
+        "id": "1c2d3e4f-5a6b-4c8e-9f7a-0f3f1a1e8d4b",
+        "format": "opus",
+        "at_ms": 1758700360000,
+        "duration_ms": 3725000,
+        "bytes": 10057500,
+        "status": {
+          "kind": "interrupted"
+        }
+      }
+    ],
+    "bytes": 10928076
+  },
+  {
+    "type": "audio_cache",
+    "available": false,
+    "recordings": [],
+    "bytes": 0
+  },
+  {
+    "type": "models_location",
+    "available": true,
+    "dir": "D:\\Voltip\\models",
+    "custom": true,
+    "default_dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models",
+    "moving": {
+      "to": "E:\\Models",
+      "moved_bytes": 268435456,
+      "total_bytes": 930170389
+    },
+    "last": {
+      "kind": "moved",
+      "dir": "D:\\Voltip\\models",
+      "deferred": 1
+    }
+  },
+  {
+    "type": "models_location",
+    "available": true,
+    "dir": "D:\\Voltip\\models",
+    "custom": true,
+    "default_dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models",
+    "moving": null,
+    "last": {
+      "kind": "cancelled"
+    }
+  },
+  {
+    "type": "models_location",
+    "available": true,
+    "dir": "D:\\Voltip\\models",
+    "custom": true,
+    "default_dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models",
+    "moving": null,
+    "last": {
+      "kind": "failed",
+      "message": "所选位置空间不足：移动模型需要 1031 MB 空闲空间，当前可用 512 MB"
+    }
+  },
+  {
+    "type": "models_location",
+    "available": false,
+    "dir": "",
+    "custom": false,
+    "default_dir": "",
+    "moving": null,
+    "last": null
   },
   {
     "type": "paste_result",

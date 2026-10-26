@@ -4,6 +4,7 @@
 //! plugs in `voltip_asr_local::ModelStore`; shells without local models (the phone) plug in
 //! nothing and the library is empty.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -190,6 +191,24 @@ impl CancelToken {
 /// `Verifying`, then the final `Installed` / `Failed`).
 pub type ProgressSink = Arc<dyn Fn(ModelInstallState) + Send + Sync>;
 
+/// Receives the bytes a move of the library has copied so far and the bytes it copies in all
+/// (docs/dictation.md §10.9); a folder that moves by a rename copies nothing.
+pub type RelocateProgress = Arc<dyn Fn(u64, u64) + Send + Sync>;
+
+/// Called once every model is complete in the new folder and before anything reads it there or
+/// anything is deleted from the old one: it makes the new folder the one the next start uses
+/// (`models-location.json`). The second argument lists the old folders the move deletes next, so
+/// a crash before they are gone still gets them deleted. An error undoes the move.
+pub type RelocateCommit = Arc<dyn Fn(&Path, &[PathBuf]) -> Result<(), String> + Send + Sync>;
+
+/// What a finished move left behind.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Relocated {
+    /// Old model folders that could not be deleted yet (a file still in use): the next start
+    /// deletes them.
+    pub leftovers: Vec<PathBuf>,
+}
+
 /// The model library as the core drives it. Implemented by `voltip_asr_local::ModelStore`.
 #[async_trait]
 pub trait ModelManager: Send + Sync {
@@ -208,6 +227,15 @@ pub trait ModelManager: Send + Sync {
     /// check every catalogue file's size and sha256 there and write the manifest. `progress`
     /// receives `Verifying`.
     async fn import(&self, id: &str, progress: ProgressSink) -> Result<ModelInstallState, ModelImportError>;
+
+    /// The folder the library is in now (`<models root>`).
+    fn root(&self) -> PathBuf;
+
+    /// Move the library into `to` (docs/dictation.md §10.9, issue #192): every model folder goes to
+    /// `<to>/<id>`, by a rename on the same file system and by a copy otherwise, checked before
+    /// anything switches. Then `commit` runs, the library reads from `to`, and the old copies are
+    /// deleted. Any failure before the switch, `cancel` included, leaves everything as it was.
+    async fn relocate(&self, to: &Path, progress: RelocateProgress, cancel: CancelToken, commit: RelocateCommit) -> Result<Relocated, String>;
 }
 
 #[cfg(test)]

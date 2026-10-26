@@ -479,6 +479,75 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
     expect(screen.getByRole("status")).toHaveTextContent("已取消 · 录音已丢弃");
   });
 
+  it("says the recording is kept when a take that gave no text, or was cancelled while processing, can be recognised again", async () => {
+    // docs/dictation.md §26.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const backend = new MockBackend({ now: () => Date.now() });
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      const stop = async () => {
+        await act(async () => {
+          await backend.invoke("dictation_start");
+          await vi.advanceTimersByTimeAsync(1000);
+          await backend.invoke("dictation_stop");
+          await vi.advanceTimersByTimeAsync(backend.peek().settings.extra_recording_ms);
+        });
+        expect(screen.getByRole("status")).toHaveAttribute("data-state", "processing");
+      };
+      await stop();
+      act(() => {
+        backend.simulateDictationFailed("asr: 503 Service Unavailable", undefined, "asr");
+      });
+      expect(screen.getByRole("status")).toHaveAttribute("data-state", "error");
+      expect(screen.getByRole("status")).toHaveTextContent("录音已保留，可重新识别");
+      // A take that kept its text has 复制文本 instead, and says nothing about the recording.
+      await stop();
+      act(() => {
+        backend.simulateDictationFailed("粘贴超时", "kept text");
+      });
+      expect(screen.getByRole("status")).not.toHaveTextContent("录音已保留");
+      await stop();
+      await act(async () => {
+        await backend.invoke("dictation_cancel");
+      });
+      expect(screen.getByRole("status")).toHaveAttribute("data-state", "cancel-armed");
+      expect(screen.getByRole("status")).toHaveTextContent("已取消 · 录音已保留");
+      // Newest first: the cancelled take, then the one whose recognition failed.
+      const kinds = backend.peek().audio_cache.recordings.map((r) => r.status.kind);
+      expect(kinds[0]).toBe("cancelled");
+      expect(kinds.at(-1)).toBe("failed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("with the recording cache off a failed take says nothing about a recording", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const backend = new MockBackend({
+        now: () => Date.now(),
+        settings: { audio_cache: { enabled: false, keep: 20, max_mb: 200 } },
+      });
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      await act(async () => {
+        await backend.invoke("dictation_start");
+        await vi.advanceTimersByTimeAsync(1000);
+        await backend.invoke("dictation_stop");
+        await vi.advanceTimersByTimeAsync(backend.peek().settings.extra_recording_ms);
+      });
+      act(() => {
+        backend.simulateDictationFailed("asr: 503 Service Unavailable", undefined, "asr");
+      });
+      expect(screen.getByRole("status")).toHaveAttribute("data-state", "error");
+      expect(screen.getByRole("status")).not.toHaveTextContent("录音已保留");
+      expect(backend.peek().audio_cache.recordings).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("regression: with live preview ready the pill shows the two-tone caption and the 预览 chip while listening, the preview in place of 转写中… while processing, and nothing extra when degraded", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

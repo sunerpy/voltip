@@ -133,6 +133,31 @@ voltip_smoke_speak() {
   VOLTIP_SMOKE_PLAY_PID=$!
 }
 
+# The newest recording the audio cache kept (docs/dictation.md §26), read from its index once it
+# no longer says the take is being processed (10 s at most): its status, the entry it names and
+# whether its WAV is on disk with the size the index gives. voltip_smoke_kept_recording <data dir>
+voltip_smoke_kept_recording() {
+  python3 - "$1" <<'PY'
+import json, pathlib, sys, time
+cache = pathlib.Path(sys.argv[1]) / "audio-cache"
+deadline = time.monotonic() + 10
+while True:
+    try:
+        recordings = json.loads((cache / "index.json").read_text()).get("recordings") or []
+    except (OSError, ValueError):
+        recordings = []
+    newest = recordings[0] if recordings else None
+    if (newest and newest.get("status", {}).get("kind") != "pending") or time.monotonic() > deadline:
+        break
+    time.sleep(0.1)
+if newest:
+    status = newest.get("status") or {}
+    wav = cache / f"{newest.get('id')}.wav"
+    on_disk = wav.is_file() and wav.stat().st_size == newest.get("bytes")
+    print(f"{status.get('kind', '')}\t{status.get('entry', '')}\t{'wav' if on_disk else 'no-wav'}")
+PY
+}
+
 # The newest history entry as `outcome<TAB>via<TAB>text` (empty when none), read from the app's
 # database without writing to it (docs/dictation.md §4.3): voltip_smoke_last_history <history.sqlite3>
 voltip_smoke_last_history() {
@@ -150,6 +175,23 @@ if row:
     e = json.loads(row[0])
     o = e.get("outcome") or {}
     print(f"{o.get('kind', '')}\t{o.get('via', '')}\t{e.get('text', '')}")
+PY
+}
+
+# The newest entry's id, read the same way: voltip_smoke_last_entry_id <history.sqlite3>
+voltip_smoke_last_entry_id() {
+  python3 - "$1" <<'PY'
+import json, pathlib, sqlite3, sys
+path = pathlib.Path(sys.argv[1])
+if not path.is_file():
+    sys.exit(0)
+try:
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    row = conn.execute("SELECT json FROM entries ORDER BY at_ms DESC, rowid DESC LIMIT 1").fetchone()
+except sqlite3.Error:
+    sys.exit(0)
+if row:
+    print(json.loads(row[0]).get("id", ""))
 PY
 }
 

@@ -15,7 +15,7 @@
 | `voltip-refine` | `RefineClient::refine_with(text, PromptHints) -> Refined`：OpenAI 兼容 `POST {base}/chat/completions`，系统提示词 = 这一次的预设（§21，默认「校对」）+ 语言 + 应用上下文 + 场景要求 + 术语表；`temperature 0.2`；结果去掉包裹引号/代码块 | reqwest | wiremock |
 | `voltip-inject` | `inject(text) -> Injection`：备份剪贴板 → 写入文本 → 发 `Ctrl+V`（macOS `Cmd+V`）→ 600 ms 后恢复剪贴板；任何一步失败都把文本留在剪贴板并返回 `Via::Clipboard` + 原因；`Injector` trait + `FakeInjector` | arboard 3.6、enigo 0.6（x11rb / SendInput / CGEvent） | trait 假实现；真实实现只在有显示器时冒烟 |
 | `voltip-asr-local` | 本地引擎（§10）：`catalogue`（6 条目录，含隐藏的 `silero-vad`）、`store`（下载 / 校验 / 安装，§12 辅助条目随首个模型下载）、`transcriber`（`LocalTranscriber`，按条目引擎分派：`gguf.rs` transcribe.cpp、`sherpa.rs` sherpa-onnx；`vad_trim` 时先经 `vad.rs` 裁剪）、`streaming`（`LocalStreamingTranscriber`，§11 实时预览）、`vad`（`VadTrimmer`，§12 Silero VAD 首尾裁剪）、`segmenter`（`VadSegmenterFactory`，§22 长录音在停顿处切段） | transcribe-cpp 0.2.3（静态，CPU）、sherpa-onnx 1.13.8（动态）、rubato | 假加载器 / 假 VAD 单测；`tests/real.rs` 四条 `#[ignore]` 真模型测试 |
-| `voltip-core` | `dictation` 模块：状态机 + 编排（含 §11 的解码线程 `run_live` 与 `Listening.live` / `Processing.preview`，§22 长录音 `long.rs`）；`history` 模块：`history.sqlite3`（§4.3，上限 2 万条）、用 AI 预设处理与导出（§22）；`engines` 模块：默认值解析（`option_env!`）与 `EngineSettings`；`models` 模块：模型库端口；秘密经 `SecretStore` | 只依赖 trait（`AudioSource` / `Capture` / `LivePcm` / `Transcriber` / `StreamingTranscriber` / `Refiner` / `Injector` / `ModelManager`），不依赖 cpal / rtrb / reqwest / enigo / sherpa | 假实现驱动完整状态机（`fakes.rs`：`FakeAudio` 带假 tap、`FakeStreaming` 脚本会话、`FakeModels`） |
+| `voltip-core` | `dictation` 模块：状态机 + 编排（含 §11 的解码线程 `run_live` 与 `Listening.live` / `Processing.preview`，§22 长录音 `long.rs`）；`history` 模块：`history.sqlite3`（§4.3，上限 2 万条）、用 AI 预设处理与导出（§22）；`audio_cache` 模块：录音缓存（§26）；`engines` 模块：默认值解析（`option_env!`）与 `EngineSettings`；`models` 模块：模型库端口；秘密经 `SecretStore` | 只依赖 trait（`AudioSource` / `Capture` / `LivePcm` / `Transcriber` / `StreamingTranscriber` / `Refiner` / `Injector` / `ModelManager`），不依赖 cpal / rtrb / reqwest / enigo / sherpa | 假实现驱动完整状态机（`fakes.rs`：`FakeAudio` 带假 tap、`FakeStreaming` 脚本会话、`FakeModels`） |
 | `voltip-reply` | 服务拒绝请求时说了什么（§3.12）：`error_fields`（各服务商错误体的 `code` 与 `message`）、`summary`（要显示的话：消息与代码、HTML 页的标题或正文）、`clean`（合并空白、遮住密钥令牌与账号、截到 200 字） | regex、serde_json | 各服务商的错误体样本、遮盖与截断 |
 | `voltip-net` | 网络代理（§24）：`Network`（进程内的代理计划：跟随系统 / 不使用 / 手动）、`apply`（给 reqwest 客户端加一个每个请求都问计划的代理）、`connect`（为 WebSocket 打开直连、HTTP CONNECT 或 SOCKS5 的 TCP 流） | reqwest、hyper-util（`client-proxy-system`：系统代理读取，CONNECT 与 SOCKS5 连接器） | 记录请求的假 HTTP / SOCKS5 代理 |
 | `voltip-serve` | 本机语音服务的 HTTP 层（§23）：`ServeHandle`（路由、令牌、准入、边收边解码的 WAV 上传、OpenAI 的返回与错误格式）与 `HttpHost`（核心 `ServeHost` 端口的实现，桌面 App 用）；处理本身在 `voltip_core::serve` | axum 0.8（`multipart`）、hound、rubato、subtle | `tower::ServiceExt::oneshot` 加假 `SpeechService`；真实 socket |
@@ -211,7 +211,7 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 - **收尾**：沿用现有规则。整段识别、语音编辑的指令、一段都没识别出来的长录音以新的失败码 `quota`（「模型额度已用完」）结束；开关关闭时额度用完同样报 `quota`。已有部分文字时保留部分结果：`live_inject` 已插入句子后补齐失败，照旧以已插入的内容结束，原因写进 `live_error`；长录音某段两次都失败，照旧留下占位、交付其余文字。润色失败照旧插入原文。旧版手机把 `quota` 当普通失败解析（`take_state_for` 的 `_ => TakeFailure::Failed`）。
 - **实时识别**：边说边识别仍只在当前选择是实时模型时启用（`asr_streams` 不变，不影响「当前选择非实时 + 本机实时预览」）。录音开始用第一个仍有额度的项：实时模型就推流，否则整段识别。实时模型在录音中报额度用完时预览降级，录音结束后整段走候补链（第一次多一次被拒请求，之后跳过它）。当前选择不是实时模型时，排在后面的实时模型只做整段识别。界面看到的状态按同一顺序计算（`status_with(ledger)` 经 `open_order` 取第一个仍有额度的项，与引擎的链一致）：顶替实时模型的是整段识别模型时，`live_preview_ready` 为 `false`、`live_source` 仍是 `stream`、`effective_output_mode` 为整段输出，「实时预览」显示「暂不可用 · 候补模型不支持实时识别」，不提示下载模型（goal 评审 2026-10-04：此前状态仍显示边说边识别生效，而实际按整段运行，回归测试 `regression_the_status_shows_the_mode_the_next_take_runs_with`）。
 - **历史里的模型**：记这次听写最后一段文字实际来自的模型，由实际执行识别的客户端报告：`Transcript.model`（HTTP、百炼、本机客户端都报告，候补链在为空时补上所用项的模型）、`StreamingSession::model()`（流降级时读）、`StreamFinal.model`（flush 完成后由会话填写：内置服务的边说边识别在 `finish()` 里还会发出最后几次请求）。`Take.served_asr_model` 只被带来非空文字的结果覆盖；没有回执时（fake、本机实时预览模型）沿用配置的模型。客户端仍在每一步取引擎当前的那个，录音中改了设置时记新客户端报告的模型。
-- **界面**（`packages/ui` `FallbackSection`，桌面「语音模型」「AI 模型」两页与手机两页）：开关、模型顺序（当前选择在第一行）、每行的状态（使用中 / 可用 / 额度已用完 · 何时再试 / 缺少密钥等 / 与当前选择相同 / 已在列表中）、上移下移移除、添加、「重新检查」；有百炼时说明「免费额度用完即停」。「查看额度」打开百炼控制台的免费额度页（`provider_console_open { page: quota }`），百炼的服务商设置里也有这个入口和说明。「当前：服务商 · 模型」在候补顶替时注明「（候补）」；隐私说明在候补链运行时（`in_use`：开关打开且当前选择可用）列出额度用完时会收到音频或文字的其他服务商，开关关闭或当前选择不可用时不列。两者是 `packages/ui` 的 `CurrentService` / `ServicePrivacy`：桌面在服务商区块的标题旁与列表下方，手机在服务商卡片下方。
+- **界面**（`packages/ui` `FallbackSection`，桌面「语音模型」「AI 模型」两页与手机两页）：开关、模型顺序（当前选择在第一行）、每行的状态（使用中 / 可用 / 额度已用完 · 何时再试 / 缺少密钥等 / 与当前选择相同 / 已在列表中）、上移下移和红色文字的「移除」（读屏时为「移除 {模型}」）、与服务商和模型在同一行的「添加」（窄时换行）、「重新检查」（2026-10-26 用户要求：「添加按钮应与provider和model位于一行，且有数据时，额度池列表中的各个项自动出展示删除按钮」，原来的移除是灰色小图标）；有百炼时说明「免费额度用完即停」。「查看额度」打开百炼控制台的免费额度页（`provider_console_open { page: quota }`），百炼的服务商设置里也有这个入口和说明。「当前：服务商 · 模型」在候补顶替时注明「（候补）」；隐私说明在候补链运行时（`in_use`：开关打开且当前选择可用）列出额度用完时会收到音频或文字的其他服务商，开关关闭或当前选择不可用时不列。两者是 `packages/ui` 的 `CurrentService` / `ServicePrivacy`：桌面在服务商区块的标题旁与列表下方，手机在服务商卡片下方。
 - **不做**：读取剩余额度、替用户改控制台开关；把本机模型作为候补；欠费（`Arrearage`）、限流、网络错误时切换；账本持久化与同步到手机；一次听写记多个识别模型。
 
 ### 3.6 润色未生效的原因与内置服务繁忙提示（2026-10-05）
@@ -430,7 +430,7 @@ pub struct HistoryEntry {
 - **筛选**：`sinceMs`（页面按本地时间算好的零点）、收藏、失败（留在剪贴板或失败，即 `outcome` 不是 `inserted`）都用 SQL 过滤。
 - **搜索**：关键词去掉首尾空白、转小写后，在 `search` 列里做子串匹配。`search` 列在写入时拼成：内置场景的中英文名、`text`、`raw_text`、两个模型、应用名和 id、场景名、编辑指令、选区、处理后文本（§22.4，保存结果时重算），各自 `to_lowercase` 后以 U+001F 分隔，所以一次匹配不会跨两个字段。
 - **状态与事件**：`UiState.history_recent`（最新 `RECENT_ENTRIES = 30` 条，2026-10-01 之前为 20 条）与 `history_total` 取代原来的 `UiState.history`；`UiEvent::History { recent, total }`。复制上一条、侧栏计数、规则与词典页的「用最近一次听写」读 `history_recent`。首页「最近的结果」至少显示 6 行，窗口更高时按页面下方的空白增加行数，直到页面底部不再留空，最多显示 `history_recent` 的全部条目（`useRowsThatFit`，2026-10-01 用户要求：高分辨率下表格下方空白一大片）。
-- **历史页**（桌面，2026-10-13 用户要求起分页显示，`apps/desktop/src/pages/history-list/`）：每页 20 / 50 / 100 / 200 条（`HISTORY_PAGE_SIZES`），默认 50 条：比原来一次加载的 100 条少一半，翻页按钮不用往下滚很多屏，最大的历史（2 万条）也只有 400 页。每页条数是这个窗口的浏览方式，与侧栏、外观的本地选项一样存在 webview 的 `localStorage`（`voltip.historyPage`），不进 `Settings`，所以不随手机镜像的设置与备份走。一页就是一次 `history_query`（`offset` = (页码 − 1) × 每页条数，`limit` = 每页条数，都不超过 `HISTORY_QUERY_LIMIT`）。日志底部写「第 X / Y 页 · 共 N 条」，有搜索时写「找到 N 条」，旁边是每页条数；多于一页时还有第一页、上一页、页码、下一页、最后一页（`@voltip/ui` 的 `Pagination`：首末页与当前页前后各一页，其余为省略号，超过 7 页时始终 7 个位置，按钮不随翻页移动；当前页 `aria-current="page"`；到头的按钮用 `aria-disabled` 变暗、留在 Tab 顺序里，按着回车翻到最后一页时焦点不丢；日志窄于 19rem 时收起第一页与最后一页按钮）。换筛选、搜索或每页条数都回到第 1 页（清除搜索也是）；从长页面底部翻页或换每页条数时，日志顶端回到视野里。收到历史事件时重新取当前这一页，停在原来的页码：新听写只把各页的行往后推一条，第 1 页最前面是最新的一条；当前页的条目全部删除后改为显示最后一页，中间不出现空页。搜索在停止输入 200 ms 后发出，与筛选（时间范围、已收藏、未插入）一起在核心里执行；新结果回来之前保留原来的行，第一次结果回来之前不显示空状态；在某个筛选里搜索不到时，空状态写明在哪个筛选里找过，可以清除搜索或改为在全部记录中查找。选中的条目在当前页上时保持选中；翻到别的页、换筛选、搜索或每页条数之后，它不在新的一页上时，详情改为这一页的第一条；新听写不改变选中。首页表格点开的条目不在当前页时，详情用 `history_entry` 取，直到列表换页。宽度达到 `lg` 时，详情栏粘在页面滚动容器（外壳的 `<main>`）顶部下方 1.5rem 处，与页面内边距相同；高度不超过滚动区域减去上下内边距（页面把 `<main>` 的高度写在 `--scroll-area-h` 上，随窗口大小更新），原来 552 px 的最小高度在矮窗口里随之降低，内容更高时只在详情卡片里滚动，换一条记录时从卡片顶端开始；日志随页面滚动并撑满这一行。窄于 `lg` 时两栏上下排列，与之前相同。
+- **历史页**（桌面，2026-10-13 用户要求起分页显示，`apps/desktop/src/pages/history-list/`）：每页 10 / 20 / 50 / 100 / 200 条（`HISTORY_PAGE_SIZES`），默认 10 条（2026-10-26 用户要求「默认听写记录页面占用视窗高度，也就是比如默认10条」；之前默认 50 条，已经选过的条数照旧）：一页大约是窗口高度能显示的行数，翻页按钮就在行的下面。每页条数是这个窗口的浏览方式，与侧栏、外观的本地选项一样存在 webview 的 `localStorage`（`voltip.historyPage`），不进 `Settings`，所以不随手机镜像的设置与备份走。一页就是一次 `history_query`（`offset` = (页码 − 1) × 每页条数，`limit` = 每页条数，都不超过 `HISTORY_QUERY_LIMIT`）。日志底部写「第 X / Y 页 · 共 N 条」，有搜索时写「找到 N 条」，旁边是每页条数；多于一页时还有第一页、上一页、页码、下一页、最后一页（`@voltip/ui` 的 `Pagination`：首末页与当前页前后各一页，其余为省略号，超过 7 页时始终 7 个位置，按钮不随翻页移动；当前页 `aria-current="page"`；到头的按钮用 `aria-disabled` 变暗、留在 Tab 顺序里，按着回车翻到最后一页时焦点不丢；日志窄于 19rem 时收起第一页与最后一页按钮）。换筛选、搜索或每页条数都回到第 1 页（清除搜索也是）；从长页面底部翻页或换每页条数时，日志顶端回到视野里。收到历史事件时重新取当前这一页，停在原来的页码：新听写只把各页的行往后推一条，第 1 页最前面是最新的一条；当前页的条目全部删除后改为显示最后一页，中间不出现空页。搜索在停止输入 200 ms 后发出，与筛选（时间范围、已收藏、未插入）一起在核心里执行；新结果回来之前保留原来的行，第一次结果回来之前不显示空状态；在某个筛选里搜索不到时，空状态写明在哪个筛选里找过，可以清除搜索或改为在全部记录中查找。选中的条目在当前页上时保持选中；翻到别的页、换筛选、搜索或每页条数之后，它不在新的一页上时，详情改为这一页的第一条；新听写不改变选中。首页表格点开的条目不在当前页时，详情用 `history_entry` 取，直到列表换页。宽度达到 `lg` 时，日志和详情并排占满窗口在它们上方内容以下的高度（2026-10-26 用户要求「右侧的记录详情也要占据视窗高度而不是仅仅一部分」）：两栏网格的高度 = 滚动区域（外壳的 `<main>`）的高度 − 网格在页面里的位置 − 页面下内边距 1.5rem，至少 480 px（页面把两者写在 `--scroll-area-h`、`--split-top` 上，随窗口大小和上方内容的高度更新；位置向上取整，页面不会多出零点几像素的滚动条），更矮的窗口改为整页滚动。日志的行在日志里滚动，页码和每页条数留在行的下面；换页、换筛选、搜索或每页条数时行从顶端开始。详情整体在卡片里滚动，换一条记录时从顶端开始。窄于 `lg` 时两栏上下排列，各自随内容变高。（2026-10-13 至 0.1.8：详情栏粘在 `<main>` 顶部下方，日志随页面滚动。）
 - **手机的「记录」页**：仍按 `HISTORY_PAGE = 100` 条一次加载，列表到底时加载下一页（也可以点「加载更多」；`@voltip/ui` 的 `useHistoryList`，React Native 版用它的副本）；收到历史事件时重新加载已加载的条数。
 
 ### 4.5 统计（2026-09-30）
@@ -572,7 +572,7 @@ pub struct HistoryEntry {
 | `sense-voice-small` | SenseVoice（`sense_voice`） | zh / en / ja / ko / yue | 239.5 MB | `sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17`：`model.int8.onnx`（sha256 `c71f0ce0…2cd51`，239 233 841 B）、`tokens.txt`（`f449eb28…9a1dc`，315 894 B） | 自带标点与 ITN |
 | `paraformer-zh` | Paraformer（`paraformer`） | zh（含方言）/ en 混读 | 227.4 MB | `sherpa-onnx-paraformer-zh-2024-03-09`：`model.int8.onnx`（`90bc0303…d584c`，227 330 205 B）、`tokens.txt`（`6c0e3b35…7a2e2`，75 354 B） | 中文更准，**无标点**（开启 AI 润色可补） |
 
-下载源按顺序尝试：① `option_env!("VOLTIP_MODEL_BASE_URL")`（可选，自有镜像，路径 `<base>/<repo>/<file>`；GitHub secret，占位规则同其他主机名）② `https://huggingface.co/<repo>/resolve/main/<file>` ③ `https://hf-mirror.com/<repo>/resolve/main/<file>`。每个文件写到 `<models_root>/<id>/<file>.part`（`Range` 续传），完成后 sha256 校验，通过才落盘（`sync_all`）、重命名、再刷新目录项（Unix），断电后不会出现名字已就位而数据块没写进磁盘的文件；全部文件就位后同样经临时文件写 `<models_root>/<id>/manifest.json`（id、文件 sha、下载时间、目录版本）。「已安装」= manifest 与目录一致且每个文件大小相符（sha256 只在下载时算）。`models_root = <app data dir>/models`。删除 = 整目录删除。
+下载源按顺序尝试：① `option_env!("VOLTIP_MODEL_BASE_URL")`（可选，自有镜像，路径 `<base>/<repo>/<file>`；GitHub secret，占位规则同其他主机名）② `https://huggingface.co/<repo>/resolve/main/<file>` ③ `https://hf-mirror.com/<repo>/resolve/main/<file>`。每个文件写到 `<models_root>/<id>/<file>.part`（`Range` 续传），完成后 sha256 校验，通过才落盘（`sync_all`）、重命名、再刷新目录项（Unix），断电后不会出现名字已就位而数据块没写进磁盘的文件；全部文件就位后同样经临时文件写 `<models_root>/<id>/manifest.json`（id、文件 sha、下载时间、目录版本）。「已安装」= manifest 与目录一致且每个文件大小相符（sha256 只在下载时算）。`models_root` 默认 `<app data dir>/models`，用户可以把它换到别的文件夹（§10.9）。删除 = 整目录删除。
 
 **磁盘空间**：下载开始前，尚缺的字节（已就位的文件不算，`.part` 已有的部分扣除）加 100 MB 余量（`DISK_HEADROOM`）放不下时直接失败，一个字节都不下载：`StoreError::NoSpace`，卡片显示「磁盘空间不足：此模型还需 X MB 空闲空间，当前可用 Y MB」。可用空间由 `fs4::available_space` 读（`statvfs` / `GetDiskFreeSpaceExW`，当前用户可用的部分）；读不到时照常下载，写满时由写入本身报错。
 
@@ -656,6 +656,26 @@ pub enum ModelInstallState {
 - **导入**：`model_import { id }`（`CoreCommand::ModelImport`）在后台任务里逐个检查目录中的文件：没有、或大小不是目录里的大小，记为缺少；大小对但 sha256 不对，记为校验不通过。全部正确时像下载一样写入 `manifest.json`，模型变为 `installed`，需要时一并安装辅助模型（§12，失败不影响模型）。否则状态为 `import_incomplete { missing, mismatched }`，卡片列出这些文件名；重新扫描时保留，直到再次导入、下载或删除。导入期间状态为 `verifying`，与下载一样不能同时开始别的操作。
 - **下载不再信任已有文件**：此前文件只有在校验通过后才会改成正式文件名，所以下载时看到正式文件名、大小也对，就当作已校验。手动放入的文件打破了这个前提：大小对、内容错的文件会被写进清单。现在下载未安装的模型时，已有的正式文件也先算 sha256，不对就删除重下（`regression_a_file_put_under_its_final_name_is_checked_before_the_download_trusts_it`）；已安装的模型（清单完整）再次下载什么都不做，不下载也不计算哈希。
 - **界面**：每张未安装的模型卡片（设置里的本地模型、实时预览、首次使用的引导页）有「手动下载」展开区：文件夹路径（复制、打开文件夹）、每个文件的大小和两个地址（点击在浏览器中打开；旁边的按钮复制地址，供能访问下载源的其他设备使用），以及「检查并导入」。上次导入未完成时，展开区默认打开，并列出缺少和校验不通过的文件。
+
+### 10.9 模型的保存位置（2026-10-26，issue #192）
+
+issue #192「模型下载，不能设置保存路径？C 盘满了」。用户决定（2026-10-26）：更改位置时**移动**已下载的模型——后台复制并显示进度，全部复制、检查完成后才切换到新位置，再删除旧位置；失败时一切保持原样；同一块磁盘上用重命名。
+
+- **位置文件**：`<data_dir>/models-location.json`（`voltip_core::models_location`），`{ "schema": 1, "dir"?: <绝对路径>, "leftovers"?: [<路径>…] }`。选择属于这台电脑，不进设置（手机镜像设置，备份也带设置），所以单独成文件。`CoreConfig::new` 读它得到 `models_root`：没有文件、读不出、schema 不对或 `dir` 不是绝对路径，都按默认 `<data_dir>/models`。桌面应用、它的命令行和本机语音服务因此看到同一个位置。默认位置且没有遗留目录时删除这个文件；写入经临时文件 `sync_all` 后改名。
+- **共享根目录**：`voltip_asr_local::ModelsRoot`（`Arc<RwLock<PathBuf>>`）。`ModelStore`、`LocalTranscriber`（含它的 `VadTrimmer`）、`LocalStreamingTranscriber`、`VadSegmenterFactory` 共用 `store.shared_root()`，每次拼路径时读取；移动完成时一次切换，不用重启。已经加载进内存的识别器照常使用。
+- **端口**：`ModelManager::root()` 与 `ModelManager::relocate(to, progress, cancel, commit)`。`ModelStore::move_to`（`relocate.rs`，阻塞，在 `spawn_blocking` 上运行）：
+  1. 检查：`to` 必须是绝对路径；与当前位置是同一个文件夹（`canonicalize` 后比较）时只提交、不移动；`to` 在某个模型文件夹里面，或当前位置在 `to/<id>` 里面，拒绝。检查通过后才创建 `to`，并写一个探测文件确认能写入。
+  2. 计划：只处理目录里的模型 id，两边别的内容都不动（用户选的文件夹里可能有别的东西）。旧位置的空文件夹记为待删除；`to/<id>` 已是完整安装（manifest 与大小相符）时保留它、旧的记为待删除（重装系统后再选回原来的文件夹）；空的 `to/<id>` 删掉；`to/<id>` 里有别的内容（可能是手动下载的文件）时整个移动拒绝，什么都不改，提示里给出这个文件夹；`to/<id>.moving` 是上次中断的复制留下的，删除。
+  3. 同一文件系统：把探测文件从 `to` 改名到旧位置，成功就是同一文件系统。是则逐个 `rename`；某个目录改名失败（Windows 上有文件正在使用）时改为复制它。不是则先检查空间：要复制的字节加 100 MB 余量（`DISK_HEADROOM`）放不下时拒绝，`StoreError::MoveNoSpace`（「所选位置空间不足：移动模型需要 X MB 空闲空间，当前可用 Y MB」）。
+  4. 复制：每个模型复制到 `to/<id>.moving`，1 MiB 一块，块之间看取消；每个文件 `sync_all` 并核对大小，整个目录核对总字节数，原来是完整安装的复制后也必须是；然后改名为 `to/<id>`。
+  5. 提交：`commit(to, 待删除目录)` 由核心写位置文件（`dir`，并把待删除目录先记进 `leftovers`，移动后若进程崩溃，下次启动照样删除）。提交前的任何失败（取消、空间、读写错误、提交本身失败）都撤销：已改名的改回去，已复制的删除，位置不变。
+  6. 切换：`ModelsRoot::set(to)`，然后删除待删除目录，删不掉的作为 `Relocated.leftovers` 返回。
+  - 移动期间 `ModelStore` 的后台槽位（`busy`：空闲 / 下载辅助模型 / 移动）被占用：后台的 VAD 下载不会开始，`download` / `import` / `remove` 返回「正在移动模型，请稍后再试」；VAD 正在后台下载时移动返回「正在下载模型，请等下载结束后再移动」。
+- **核心**（`runtime/models_move.rs`）：`CoreCommand::ModelsRelocate(Option<PathBuf>)`（`None` = 默认位置）与 `ModelsRelocateCancel`。有下载或导入在进行时拒绝（「正在下载模型，请等下载完成或取消后再移动」），移动进行中拒绝第二次移动以及 `ModelDownload` / `ModelImport` / `ModelRemove`。目标就是当前位置时什么都不做。位置文件的遗留目录里有在 `to` 下的（马上移回去的情况），先在后台再删一次，以免挡住这次移动；提交时这些目录从列表中去掉，因为它们现在就是模型库。进度节流：250 ms 或 16 MiB 一次。结束后：从 `leftovers` 中去掉已经不存在的目录；从默认位置移走且它已为空时删除默认的 `models` 目录；重新扫描（卡片的 `dir` 和路径都变了，引擎重新解析）。启动时，`AppCore` 在读模型库之前删除位置文件里的遗留目录，删不掉的留到下次。
+- **状态**：`UiState.models_location: ModelsLocationView { available, dir, custom, default_dir, moving?: { to, moved_bytes, total_bytes }, last?: moved { dir, deferred } | cancelled | failed { message } }`，`UiEvent::ModelsLocation` 全量推送；手机 `available = false`。`total_bytes = 0` 表示只改名（同一磁盘）。
+- **命令**：`models_location_choose { title }`（壳的选择文件夹对话框，打开在当前位置；选了文件夹返回 `true` 并开始移动，关闭对话框返回 `false`）、`models_location_reset`、`models_location_cancel`。webview 从不传路径：文件夹来自壳的对话框（`Bridge::models_relocate`），默认位置由核心决定。三条命令只在桌面壳注册。
+- **界面**：设置 › 语音模型 › 本机 › 模型库顶部的「保存位置」：路径（默认 / 自定义），「复制路径」、「更改位置…」、「恢复默认」（先确认），移动时的进度条（只改名时为不确定进度）与「取消移动」，以及上次移动的结果（已移到新位置；有遗留目录时说明下次启动删除；已取消；失败原因，模型仍在原位置）。移动期间模型卡片上的下载、重试、删除、检查并导入都禁用；有模型在下载时「更改位置…」禁用。
+- **门禁**：`voltip-asr-local/tests/relocate.rs`（同一文件系统改名、跨盘复制检查提交切换删除的顺序与进度、取消与提交失败的撤销、空间不足、目标文件夹已有内容、已有完整副本、在自己文件夹里、遗留目录、与后台 VAD 下载互斥）；`voltip-core/tests/models.rs`（移到选定文件夹再移回、与下载互斥、失败与无法保存、遗留目录在下次启动删除、手机没有位置）；`models_location.rs` 单测（文件读写与容错）；IPC 夹具；`ModelsLocation.test.tsx`。
 
 ## 11. 流式识别（边说边出字，2026-09-25 契约）
 
@@ -1754,7 +1774,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
   - 更长：识别完剩下的段（`Processing` 显示「已识别 N/M 段」）→ 按句子拼接（中文之间不加空格，英文加一个）→ 词典与规则 → AI 润色，只在全文不超过 2000 字时做（否则 `Done.refine_error` 写明原因）→ 送出：不超过 5000 字按设置粘贴，更长的放进剪贴板（`ClipboardCode::TooLong`，历史里写明原因）→ 连同分段写入历史 → 删除录音文件。
   - 一段都没识别出来：像整段识别失败一样结束（识别服务的错误，或没有听到声音），不粘贴占位文字。
 - **流式模式**：`streaming_final` 与 `live_inject` 的文字仍来自流式识别，不参与分段识别；它们退回整段时（§12），长录音的文字从文件来：`streaming_final` 从头识别，`live_inject` 从最后一句粘贴出去的句子结束处开始，补在后面。`streaming_final` 的全文同样受 2000 / 5000 字的限制。
-- **清理**：取消和失败都删除录音文件；核心启动时删掉 `recordings/` 里上次异常退出留下的 `.pcm` 文件。
+- **清理**：录音文件随这次听写结束删除，取消和失败也一样。录音缓存开着时，录音的同时在旁边写一份压缩副本，超过 2 分钟的听写把它留在录音缓存里（§26.2、§26.3）。核心启动时处理 `recordings/` 里上次异常退出留下的文件：录音缓存开着时，有副本的听写补全后放进缓存，其余删除；关着时全部删除（`.pcm` 与 `.parts` 目录）。
 - **状态**：`DictationStatus.source`（本机听写的录音来源；手机的录音没有）与 `segments: { done, total }`（录音超过 2 分钟后出现，结束时清空）。悬浮胶囊：来源标签在模式标签前（麦克风 / 电脑声音 / 混合），计时超过 1 小时显示 `h:mm:ss`，录音中在计时后显示「已识别 N 段」，处理中的说明是「已识别 N/M 段」。录音失败时按来源说明（「电脑声音录制失败」「录音失败」）。
 
 ### 22.4 用 AI 预设处理（`voltip_core::history::process`、`runtime/processing.rs`）
@@ -2143,3 +2163,83 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 - 监听网卡地址（需要 TLS 或明确的明文风险提示、Host 白名单与单独确认）；在那之前跨机器使用请用 `ssh -L 47841:127.0.0.1:47841`。
 - 2026-07-28 版协议的无状态握手；删除工具；「最近活动」的清空；手机与 `voltip-server` 上的 MCP 服务。
+
+## 26. 录音缓存（2026-10-25）
+
+**目标**：识别或润色失败后不用再说一遍。在本机保留最近几次听写的录音，条数和占用空间可设、可以清理；没有得到文字的录音可以在历史记录里重新识别，润色请求失败的条目可以重新润色。超过 2 分钟的长录音（例如会议）压缩后分片保存，App 中途退出、崩溃或断电时最多丢失最后几秒。只在桌面提供。
+
+### 26.1 起因与决定
+
+- 用户要求（2026-10-25）：本地缓存一份语音文件，识别或润色失败后不用重新说一遍；可以设置保留多少条、最多占用多少空间，设置中要有清理功能。
+- 实现时定下的缺省（没有经过计划评审）：默认开启，保留 20 条（1–200），最多占用 200 MB（50–10 000 MB）；关闭就删除已保留的录音；录音只在本机，不同步到手机、不进备份（§4.6）、MCP 工具读不到（§25）；保留桌面上的听写，手机作为麦克风（§20）的听写也在内；语音编辑（§19）不保留。
+- 用户要求（2026-10-26）：「长录音比如会议模式也是个场景 此时由于会议较长更应该保有本地备份防止出现异常 时长统计就按照现在即可无需额外修改」，以及「应该分片或者追加写入避免整个文件损坏」。用户选定（2026-10-26）：长录音压缩为 Opus 保存（约 10 MB/小时）；录音中取消的长录音也保留。首页的时长统计不变（§26.8）。
+
+### 26.2 存储（`voltip_core::audio_cache`）
+
+- `<数据目录>/audio-cache/<id>.wav`：不超过 2 分钟的听写，识别服务收到的那段 WAV（16 kHz 单声道 16 位）；`index.json`（`schema` 1）记录每段录音的 `KeptRecording { id, at_ms, duration_ms, bytes, app?, status, format? }`，新的在前。`format` 缺省为 `wav`，长录音为 `opus`。
+- `<数据目录>/audio-cache/<id>/`：超过 2 分钟的听写（`dictation/archive.rs`、`ogg.rs`）。
+  - `part-00000.opus` …：每 30 s 一个 Ogg Opus 文件（RFC 7845；16 kHz 单声道，VoIP，20 ms 一帧，每帧最多 61 字节；实测约 21.5 kbit/s，每小时约 10 MB，编码速度约为实时的 57 倍）。每个分片有自己的编码器，能单独解码；每个 Ogg 页带 CRC-32，读的时候校验，坏的分片读作静音并作为空缺标出，不影响其他分片。
+  - `manifest.json`（`schema` 1）：总样本数 `total`、分片长度 `part_samples`、分片数 `parts`、录音线程切段的位置 `cuts`、没有声音的区间 `gaps`（环形缓冲丢的样本、没写成的分片）。
+  - 写入在录音线程上，与 `.pcm` 同时进行：先放在 `recordings/take-<毫秒>-<会话>.parts/`，分片满 30 s 就写；每个分片先写 `part-….opus.tmp`，`sync_data` 后改名，再刷新目录（Unix），所以磁盘上的分片要么完整，要么不存在。目录 0700，文件 0600。听写结束时用同样的方式写 `manifest.json`。保留副本时，原始录音文件每 5 s 刷一次盘。分片写不进去时不再写后面的分片，`manifest` 记下从哪里开始没有音频。
+  - 交给缓存：把整个目录改名为 `audio-cache/<id>/`（同一磁盘，不复制）并刷新目录，之后写索引；索引写不进去时改名回去，由运行时删除。
+- 写入：WAV 先写到临时文件再改名，之后才写索引（同样先写临时文件再改名）；Unix 上文件权限 0600。缓存为空时删除索引。
+- 上限：条数超过 `keep`，或总字节超过 `max_mb × 1 000 000` 时，删除最早的录音（长录音按它的分片总大小计，整个目录删除）；改小上限立即生效。`settings.json` 里手工改出的越界值按边界计（`Limits::from`），不会清空缓存。最长的一次录音（120 分钟）不超过约 23 MB，小于最小上限 50 MB。
+- 启动：还在处理（`pending`）的录音读作 `interrupted`；文件已不在、或长录音缺少 `manifest.json` 的条目忘掉；索引没有提到的 `.wav`、`.tmp` 和目录删除；索引读不出来时删除全部录音，从空缓存开始（它只是缓存）。缓存关着时删除全部录音；链接的历史条目已经不在的录音删除。
+- `KeptStatus`（`kind`）：`pending`（这次听写还在处理）· `recognized { entry }`（历史里最新一条由它识别出的条目）· `failed { code, message }`（`code` 即 `FailureCode`）· `cancelled`（处理中取消；长录音也包括录音中取消）· `interrupted`（录制或处理时 App 关闭）。失败和取消不覆盖 `recognized`。
+
+### 26.3 何时保留（`dictation/engine.rs`）
+
+- 运行时决定是否保留（`DictationEngine::set_keep_audio`）：`CoreConfig.keeps_audio`（桌面为真，两个手机壳为假）、`audio_cache.enabled` 和历史（`history.enabled`）都开着。
+- 录音停止后，排除静音和过短的录音（它们直接以「没有听到声音」结束），在送去识别之前，引擎发出 `Effect::Keep`（新 id），`DictationStatus.recording` 指向它。这次听写结束时发出 `Effect::Kept`：得到文字（包括粘贴失败、文字记进了历史）→ `recognized { entry }`，排在 `Record` 之后；没有文字 → `failed`；处理中取消 → `cancelled`。听写中取消时还没有录音，不保留。
+- 运行时收到 `Keep` 就写入缓存并发出 `audio_cache` 事件；写不进去只记日志，听写照常。`Kept` 链接的条目历史里找不到（历史关着或写入失败）时删除这段录音；暂时查不了历史时保留链接，下次启动再清理。
+- 长录音（§22.3）：要保留录音时，录音线程开始录音就写副本（§26.2）。
+  - 停下后不超过 2 分钟：删除副本，照旧保留内存里的那段 WAV。
+  - 超过 2 分钟：录音线程写完 `manifest.json` 后、拼文字之前发出 `Effect::Keep`（`KeptAudio::Parts`），`duration_ms` 是副本的长度；结束时照常发 `Effect::Kept`。
+  - 录音中取消或失败（用户决定 2026-10-26）：等录音线程结束，副本超过 2 分钟时以 `cancelled` / `failed` 留下，否则删除。`DictationStatus.recording` 在取消时就指向它；悬浮胶囊只在缓存里确实有这段录音时注明「录音已保留」。
+- 中断（App 退出、崩溃、断电）：核心启动时 `archive::leftovers` 按文件名找出 `recordings/` 里留下的听写，在后台线程上逐个补全（`archive::recover`）：
+  - 有 `manifest.json`（听写已结束，只是没交给缓存）：直接交给缓存。
+  - 没有：保留校验通过的分片，其余部分从原始录音文件重新编码，原始文件不够的坏分片记为空缺；写 `manifest.json`（没有切段），删除原始文件。
+  - 补全后以 `interrupted` 放进缓存（时间取文件名里的开始时间，没有应用），并发出 `audio_cache`。核心停止时中止，没做完的下次启动接着做；分片总是完整或不存在，重复做不会出错。只有原始文件、没有副本的听写（当时没开录音缓存）删除。
+  - 能找回的部分：最近一次刷盘之前的原始录音（每 5 s 一次），以及已经写完的分片。
+
+### 26.4 重新识别（`audio_retake { id, asr?, refine? }`）
+
+- 先读出录音：缓存里已经没有它时报「这段录音已不在录音缓存中」并重发 `audio_cache`；这台设备不保留录音时报「这台设备不保留录音」；正在听写时拒绝（`Busy`）。
+- 重新识别是一次新的听写：不打开麦克风，直接从「识别中」开始；按录音当时的应用匹配场景（§18），按整段识别（不走流式模式）；得到的文字用 `Injector::copy` 放进剪贴板，从不粘贴到当前的前台窗口；记为一条新的历史（`outcome` 为 `inserted`，`via: clipboard`），录音改为链接这条新条目。处理中和结束时 `DictationStatus.retake` 为真，`recording` 指向这段录音；回到空闲时两者都清空。
+- 重新识别失败或被取消时，录音的状态随之更新；已经链接到条目的录音保持原来的链接。
+- 换用其他模型（用户要求 2026-10-26：「应支持更换已配置的语音识别模型厂商/模型，AI润色模型厂商/模型 进行重新识别」；用户选定：只用于这一次，设置不变）：`asr` 为 `RecognitionChoice`（`{ kind: "remote", provider, model }` 或已下载的本地模型 `{ kind: "local", id }`），`refine` 为 `PolishChoice`（`{ kind: "off" }` 不润色，或 `{ kind: "remote", provider, model }`），都可以省略。运行时把选择套在当前设置的一份副本上（`RetakeModels::apply`，与在设置里切换到这些模型相同，服务商的接口地址照旧），像保存设置一样检查（`check_engines`）并解析，再为这一次听写建识别和润色的客户端（`TakeClients`：仍按 §3.5 接上候补模型），交给 `Retake.clients`。选的识别模型不能用（缺密钥、本地模型未下载）或选的润色模型不能用时拒绝，说明原因，不开始听写。选了润色模型就润色、选「不润色」就不润色，与场景的设置无关；没有选润色时照旧按场景和设置。条目记下实际用的模型。`settings.json` 与之后的听写不受影响。
+- 长录音按 §22.3 分段识别：切段用 `manifest.cuts`（录音线程当时的切法）；中断后补全的录音没有切段，先在后台线程上用切段器重新切（桌面为 VAD，缺模型时为核心的兜底）。每段从分片解码后交给识别服务；坏的分片读作静音并作为空缺标出。文字照常拼接，2000 字以内才润色，结果放进剪贴板。
+
+### 26.5 录音跟随历史
+
+- 删除条目时删除它的录音；清空历史时删除全部录音，包括没有识别出文字的。
+- 历史满了丢掉最早的条目、改小历史的保留条数、手机同步写入（§20.8）、从备份恢复历史（§4.6）之后，链接到已不存在的条目的录音一并删除。
+- 关闭历史后不再保留新的录音；已保留的录音随条目留着。
+
+### 26.6 命令、设置与状态
+
+- `Settings.audio_cache: AudioCacheSettings { enabled（缺省 true）, keep（20）, max_mb（200） }`，`#[serde(default)]`，旧设置文件读作缺省。
+- 命令（只在桌面注册）：`settings_set_audio_cache { enabled, keep, maxMb }`（越界时报 `audio_cache.keep: 1–200`、`audio_cache.max_mb: 50–10000`）、`audio_cache_clear`、`audio_cache_delete { id }`、`audio_retake { id, asr?, refine? }`（§26.4）。
+- `UiState.audio_cache: AudioCacheView { available, recordings, bytes }`，变化时发 `audio_cache` 事件；手机上 `available` 为假，界面不显示录音缓存。
+- 界面：
+  - 设置 › 隐私与历史 › 录音缓存：「在本机保留录音」开关（历史关着时不可用，并说明要先开启「保存听写历史」）、最多保留（5 / 10 / 20 / 50 / 100 / 200 条）、最多占用（50 MB–10 GB）、「清理录音」（确认后删除全部录音，历史的文字不受影响），以及录音只在本机、长录音压缩保存（每小时约 10 MB）的说明；标题旁显示条数和占用空间。清空历史的确认框说明保留的录音也会删除。
+  - 历史页「未识别的录音」：失败、取消、中断的录音，新的在前，写明时间、时长、录制时的应用和原因（取消为「录制或识别时已取消」，中断为「录制或处理时 Voltip 已关闭」），每条有「重新识别」和「删除录音」；重新识别完成时提示「已重新识别，文字已复制到剪贴板」，失败时提示原因。列表最多约 3 行高，其余在列表里滚动，下面的日志和详情仍占满窗口（§4.4）。
+  - 首页「未识别的录音」（用户要求 2026-10-26：「在首页 最近的结果 上方也增加一个高度较小的区域进行展示，并且支持清理」）：有未识别的录音时显示在「最近的结果」上方，最多 3 条，每条一行（时间按最近的结果的写法、时长、应用、原因，完整内容在悬停提示里），每条有「重新识别」和「删除录音」；超过 3 条时有「查看全部 N 条」，打开历史页。「最近的结果」按剩下的高度减少行数（`useRowsThatFit`）。
+  - 两处的标题行都有「重新识别使用」的两个菜单和「清理」：
+    - 「语音模型」菜单列出已配置好的服务商的识别模型和已下载的本地模型，「AI 润色」菜单先是「不润色」，再是已配置好的服务商的润色模型；末尾的「管理…」打开对应的页面。没有选时勾选当前设置的模型，选了只勾选所选的那个。选择留在这个页面，只用于接下来的重新识别（`audio_retake` 带上 `asr` / `refine`），不改设置；所选模型的服务商后来不能用时，按当前设置。正在听写时菜单不可用。
+    - 「清理」在确认后（「{n} 条未识别的录音会被删除，删除后不能再重新识别。」）删除全部未识别的录音（正在重新识别的那条除外，逐条 `audio_cache_delete`），提示「已清理 {n} 条录音」；识别出文字的录音随条目保留。
+  - 历史详情：录音还保留着时显示「这条听写的录音仍保留在本机」、同样的两个模型菜单和「重新识别」；润色请求失败（§3.6）的条目在原因旁有「重新润色」，按条目所在场景的预设（没有就用当前的预设）走 §22.4 的处理，结果存为处理后文本，并切换到「处理后」视图。长条目用 §22.4 的工具，不显示这个按钮。
+  - 悬浮胶囊：没有得到文字、录音已保留的失败注明「录音已保留，可重新识别」；处理中取消时显示「已取消 · 录音已保留」。
+
+### 26.7 门禁
+
+- Rust：`audio_cache` 的单元测试（写入、读回与重启，0600，按条数和大小淘汰，状态规则，删除与清空，丢失的文件与多余的文件，坏索引，不可用的缓存，设置的边界与 `Limits` 的夹取，线格式；长录音的目录移入、读回、淘汰与移入失败）；`ogg`（读回、坏页与截断、CRC 校验值）；`dictation::archive`（分片按原样读回、各自的时长、0700 / 0600、坏分片读作静音并记为空缺、补全中断的录音（含截断的写入与 `.tmp`）、再次补全时直接交出、没有副本或没有声音的删除、原始文件不够时坏分片记为空缺、中止时不写 `manifest`、不认识的 `manifest`、分片写不进去时的 `manifest`）；`dictation::long` 的 `clear_leftovers` 也删分片目录；`dictation::engine` 的 `a_kept_take_keeps_its_recording_and_links_it_to_its_entry`、`a_failed_take_reports_its_kept_recording_with_why`、`a_take_cancelled_while_processing_keeps_its_recording_as_cancelled`、`only_the_takes_the_runtime_asks_for_keep_a_recording`、`a_retake_recognises_a_kept_recording_onto_the_clipboard`、`a_retake_that_gives_no_text_reports_its_recording_again`；`tests/audio_cache.rs`（真实核心任务）：`a_take_keeps_its_recording_which_goes_with_its_entry`、`a_failed_take_is_recognised_again_onto_the_clipboard`、`the_settings_and_clearing_decide_what_stays`、`without_the_history_no_recording_is_kept`、`a_core_without_the_cache_keeps_nothing_and_refuses_a_retake`；`tests/long.rs`（真实核心任务）：十分钟的听写留下 20 个分片并链接到条目、2 分钟以内的听写只留 WAV、2 分 1 秒的听写留下副本并按原来的切段重新识别、识别失败与录音中取消的长录音以 `failed` / `cancelled` 留下、`a_take_left_behind_is_put_together_and_recognised_again`（上次留下的听写补全为 `interrupted`，重新切段识别到剪贴板）、`without_the_audio_cache_a_long_take_keeps_no_copy`；契约的命令、事件与状态夹具（含一条 `format: "opus"` 的录音）。
+- 换用其他模型（§26.4）：`audio_cache` 的 `retake_models_pick_their_models_in_a_copy_of_the_settings`；`dictation::engine` 的 `a_retake_runs_on_the_clients_it_was_given`；`tests/audio_cache.rs` 的 `a_recording_is_recognised_again_on_other_models_for_that_take_only`（换用自定义接口的另一个识别模型与另一个润色模型、条目记下它们、缺密钥的服务商与未下载的本地模型被拒、`settings.json` 不变、下一次听写回到设置的模型）；契约夹具里带 `asr` / `refine` 的 `audio_retake`。
+- TS：`audio-cache.test.ts`；`MockBackend` 录音缓存 6 条（含超过 2 分钟的听写与录音中取消、换用其他模型）；桌面 `PrivacyPane.test.tsx`（录音缓存 6 条与清空历史）、`pages/history/Recordings.test.tsx` 18 条（含换用模型、清理、首页的列表）、`features/history/RetakeModels.test.ts` 4 条、`Overlay.test.tsx` 2 条。
+- 真实 App：`scripts/smoke-desktop-linux.sh` 的快捷键听写之后检查录音缓存：最新的录音为 `recognized`、链接的条目是刚粘贴的那条、WAV 在磁盘上且大小与索引一致（2026-10-26 本机 Xvfb 通过）。长录音在本机 Xvfb 上用一次性脚本跑过一次真实 App（2026-10-26）：129.5 s 的听写留下 5 个分片（385 KB）和 `manifest.json` 并识别出文字；录到约 68 s 时 `kill -9`，下次启动补全为 67.7 s、3 个分片、`interrupted`。没有真的断电；重新识别与换用模型只经单元、组件和核心集成测试。
+
+### 26.8 未做
+
+- 语音编辑的录音缓存；手机 App 上的录音缓存与重新识别；试听、导出录音。
+- 重新识别一条已有条目的录音时，新条目的时长也计入首页统计（说话时长、节省时间），与原条目重复；没有区分重新识别得到的条目。用户决定（2026-10-26）：时长统计按现在即可，长录音也一样。
+- 原始录音文件损坏（而不只是截断）时，补全只能发现分片的损坏：原始文件里的坏数据会被当作声音编码。

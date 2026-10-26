@@ -30,6 +30,13 @@ function rows(kind: ServiceKind = "asr") {
     .map((li) => [li.textContent ?? "", li.dataset.state]);
 }
 
+/** The `i`th 移除 button of the asr list. */
+function nthRemove(i: number): HTMLElement {
+  const button = screen.getAllByTestId("fallback-asr-remove")[i];
+  if (button === undefined) throw new Error(`no 移除 ${String(i)}`);
+  return button;
+}
+
 async function settingsFallback(backend: MockBackend, kind: ServiceKind) {
   const state = await backend.getState();
   return kind === "asr" ? state.settings.engines.asr_fallback : state.settings.engines.llm_fallback;
@@ -235,6 +242,42 @@ describe("FallbackSection (docs/dictation.md §3.5)", () => {
       ]);
     });
     unmount();
+  });
+
+  it("regression: 添加 sits on the provider and model row, and every listed model shows 移除 in words (user request 2026-10-26)", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({ providerKeys: [{ provider: "aliyun", kind: "asr" }] });
+    renderSection(backend);
+    const add = await screen.findByTestId("fallback-asr-add");
+    // One row: the provider, the model, then the button, in that order.
+    const button = screen.getByTestId("fallback-asr-add-button");
+    const provider = within(add).getByRole("combobox", { name: t("engines.fallback.provider") });
+    const row = button.parentElement;
+    if (row === null) throw new Error("row");
+    expect(row).toContainElement(provider);
+    expect(row).toHaveClass("flex", "flex-wrap", "items-end");
+    expect(
+      provider.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // Nothing listed: no 移除.
+    expect(screen.queryAllByTestId("fallback-asr-remove")).toEqual([]);
+    await user.selectOptions(provider, "aliyun");
+    await user.click(button);
+    await waitFor(() => {
+      expect(screen.getAllByTestId("fallback-asr-remove")).toHaveLength(1);
+    });
+    const remove = nthRemove(0);
+    // The word on the button, in the danger colour; its name says which model.
+    expect(remove).toHaveTextContent(t("engines.fallback.removeShort"));
+    expect(remove).toHaveClass("text-danger");
+    expect(remove).toHaveAccessibleName(
+      t("engines.fallback.remove", { model: "qwen-audio-3.1-asr-flash-streaming" }),
+    );
+    await user.click(remove);
+    await waitFor(async () => {
+      expect((await settingsFallback(backend, "asr"))?.models ?? []).toEqual([]);
+    });
+    expect(screen.queryAllByTestId("fallback-asr-remove")).toEqual([]);
   });
 
   it("names the built-in service's model when its build has only one", async () => {

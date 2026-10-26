@@ -91,6 +91,26 @@ impl Default for HistorySettings {
     }
 }
 
+/// The recordings kept so a take can be recognised again (docs/dictation.md §26).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AudioCacheSettings {
+    /// Keep the newest takes' recordings; off deletes the kept ones. Nothing is kept while the
+    /// history is off either.
+    pub enabled: bool,
+    /// Recordings kept, [`crate::audio_cache::MIN_KEEP`]..=[`crate::audio_cache::MAX_KEEP`].
+    pub keep: u32,
+    /// The most space they take, in MB of 1 000 000 bytes,
+    /// [`crate::audio_cache::MIN_MB`]..=[`crate::audio_cache::MAX_MB`].
+    pub max_mb: u32,
+}
+
+impl Default for AudioCacheSettings {
+    fn default() -> Self {
+        Self { enabled: true, keep: crate::audio_cache::DEFAULT_KEEP, max_mb: crate::audio_cache::DEFAULT_MAX_MB }
+    }
+}
+
 /// Where a dictation take's audio comes from (docs/dictation.md §22).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -231,6 +251,10 @@ pub struct Settings {
     /// History recording and retention.
     #[serde(default)]
     pub history: HistorySettings,
+    /// The recordings kept for recognising a take again (docs/dictation.md §26); absent in files
+    /// written before it (on, the newest 20, at most 200 MB).
+    #[serde(default)]
+    pub audio_cache: AudioCacheSettings,
     /// Where the dictation pill appears.
     #[serde(default)]
     pub overlay: OverlayPlacement,
@@ -451,6 +475,7 @@ impl Default for Settings {
             pinned_scene: None,
             phone_talk: PhoneTalkMode::Hold,
             history: HistorySettings::default(),
+            audio_cache: AudioCacheSettings::default(),
             overlay: OverlayPlacement::Bottom,
             microphone: None,
             recording: RecordingSettings::default(),

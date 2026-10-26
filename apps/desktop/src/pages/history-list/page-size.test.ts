@@ -30,11 +30,17 @@ function memory(): Storage {
   };
 }
 
-describe("the history page size (user request 2026-10-13)", () => {
-  it("offers 20, 50, 100 and 200 entries a page, each page one history query, 50 by default", () => {
-    expect(HISTORY_PAGE_SIZES).toEqual([20, 50, 100, 200]);
-    expect(DEFAULT_HISTORY_PAGE_SIZE).toBe(50);
+describe("the history page size (user requests 2026-10-13, 2026-10-26)", () => {
+  it("offers 10, 20, 50, 100 and 200 entries a page, each page one history query, 10 by default", () => {
+    expect(HISTORY_PAGE_SIZES).toEqual([10, 20, 50, 100, 200]);
+    expect(DEFAULT_HISTORY_PAGE_SIZE).toBe(10);
     for (const size of HISTORY_PAGE_SIZES) expect(size).toBeLessThanOrEqual(HISTORY_QUERY_LIMIT);
+  });
+
+  it("a size chosen before the default became 10 stays chosen", () => {
+    const storage = memory();
+    storage.setItem(HISTORY_PAGE_STORAGE_KEY, '{"size":50}');
+    expect(readHistoryPageSize(storage)).toBe(50);
   });
 
   it("is kept in this window's storage, and anything else stored there reads as the default", () => {

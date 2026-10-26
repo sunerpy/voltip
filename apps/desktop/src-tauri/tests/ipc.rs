@@ -1593,6 +1593,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "guide_open",
             "model_folder_open",
             "model_link_open",
+            "models_location_choose",
             "feedback_diagnostics",
             "feedback_submit",
             "feedback_attachment_add",

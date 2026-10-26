@@ -3,6 +3,8 @@ import {
   ALWAYS_ON_DESKTOP_ONLY,
   MOCK_ALWAYS_ON_PAUSE_MS,
   MOCK_ASR_MS,
+  MOCK_IN_MEMORY_MS,
+  MOCK_OPUS_BYTES_PER_SECOND,
   MOCK_AUDIO_OUTPUTS,
   MOCK_EXPORT_DIR,
   MOCK_PROCESS_ENTRY_GONE,
@@ -47,6 +49,7 @@ import {
   MOCK_PUBLIC_KEYS,
   MOCK_REFINE_FAILED,
   MOCK_REFINE_MS,
+  MOCK_RETAKE_NOT_READY,
   MOCK_NO_SPEECH,
   MOCK_SCENE_MODE_NOT_READY,
   MOCK_STREAMING_MODEL_ID,
@@ -3734,5 +3737,176 @@ describe("MockBackend local service (docs/dictation.md section 23.6)", () => {
     });
     expect(phases().at(-1)).toBe("off");
     backend.destroy();
+  });
+});
+
+describe("MockBackend audio cache (docs/dictation.md §26)", () => {
+  const T0 = 1_758_700_000_000;
+  let clock = T0;
+  beforeEach(() => {
+    clock = T0;
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const tick = (ms: number) => {
+    clock += ms;
+    vi.advanceTimersByTime(ms);
+  };
+  const take = async (backend: MockBackend) => {
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + 2000);
+    await backend.invoke("dictation_stop");
+    tick(backend.peek().settings.extra_recording_ms);
+  };
+
+  it("keeps a take's recording before it is recognised and links it to the entry", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    await take(backend);
+    const [kept] = backend.peek().audio_cache.recordings;
+    expect(kept?.status).toEqual({ kind: "pending" });
+    expect(backend.peek().dictation.recording).toBe(kept?.id);
+    tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+    const entry = backend.peek().history_recent[0];
+    expect(backend.peek().audio_cache.recordings[0]?.status).toEqual({
+      kind: "recognized",
+      entry: entry?.id,
+    });
+    expect(backend.peek().audio_cache.bytes).toBe(kept?.bytes);
+    tick(MOCK_DICTATION_DWELL_MS);
+    expect(backend.peek().dictation.recording).toBeUndefined();
+  });
+
+  it("keeps a take past two minutes compressed, also one cancelled while it records (§26.3)", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    // `tick` moves the clock before the timers: the device's ready mark gets its own step.
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS);
+    tick(MOCK_IN_MEMORY_MS + 60_000);
+    await backend.invoke("dictation_stop");
+    tick(backend.peek().settings.extra_recording_ms);
+    const [long] = backend.peek().audio_cache.recordings;
+    expect(long?.format).toBe("opus");
+    const seconds = (long?.duration_ms ?? 0) / 1000;
+    expect(seconds).toBeGreaterThan(MOCK_IN_MEMORY_MS / 1000);
+    expect(long?.bytes).toBe(Math.round(seconds * MOCK_OPUS_BYTES_PER_SECOND));
+    tick(MOCK_ASR_MS + MOCK_REFINE_MS + MOCK_DICTATION_DWELL_MS);
+    expect(backend.peek().audio_cache.recordings[0]?.status.kind).toBe("recognized");
+    // Cancelled while it records: nothing within two minutes, the copy past them.
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS);
+    tick(30_000);
+    await backend.invoke("dictation_cancel");
+    tick(MOCK_DICTATION_DWELL_MS);
+    expect(backend.peek().audio_cache.recordings).toHaveLength(1);
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS);
+    tick(MOCK_IN_MEMORY_MS + 1000);
+    await backend.invoke("dictation_cancel");
+    const [cancelled] = backend.peek().audio_cache.recordings;
+    expect(cancelled?.status).toEqual({ kind: "cancelled" });
+    expect(cancelled?.format).toBe("opus");
+    expect(backend.peek().dictation.recording).toBe(cancelled?.id);
+    expect(backend.peek().audio_cache.recordings).toHaveLength(2);
+  });
+
+  it("validates the settings like the core, and tighter limits drop the oldest", async () => {
+    const recordings = Array.from({ length: 4 }, (_, i) => ({
+      id: `r${i}`,
+      at_ms: T0 - i,
+      duration_ms: 3000,
+      bytes: 40_000_000,
+      status: { kind: "cancelled" as const },
+    }));
+    const backend = new MockBackend({ now: () => clock, audioCache: recordings });
+    const events = collect(backend);
+    await backend.invoke("settings_set_audio_cache", { enabled: true, keep: 0, maxMb: 200 });
+    await backend.invoke("settings_set_audio_cache", { enabled: true, keep: 20, maxMb: 20 });
+    expect(events).toEqual([
+      { type: "error", message: "audio_cache.keep: 1–200" },
+      { type: "error", message: "audio_cache.max_mb: 50–10000" },
+    ]);
+    expect(backend.peek().settings.audio_cache).toEqual({ enabled: true, keep: 20, max_mb: 200 });
+    await backend.invoke("settings_set_audio_cache", { enabled: true, keep: 3, maxMb: 100 });
+    // Three fit the count, two fit 100 MB.
+    expect(backend.peek().audio_cache.recordings.map((r) => r.id)).toEqual(["r0", "r1"]);
+    await backend.invoke("audio_cache_delete", { id: "r1" });
+    expect(backend.peek().audio_cache.recordings.map((r) => r.id)).toEqual(["r0"]);
+    await backend.invoke("audio_cache_clear");
+    expect(backend.peek().audio_cache).toEqual({ available: true, recordings: [], bytes: 0 });
+  });
+
+  it("重新识别 refuses a recording the cache no longer holds and a second take", async () => {
+    const backend = new MockBackend({
+      now: () => clock,
+      history: [],
+      audioCache: [
+        { id: "r1", at_ms: T0, duration_ms: 3000, bytes: 96_044, status: { kind: "cancelled" } },
+      ],
+    });
+    const events = collect(backend);
+    await backend.invoke("audio_retake", { id: "gone" });
+    expect(events).toContainEqual({ type: "error", message: "这段录音已不在录音缓存中" });
+    await backend.invoke("audio_retake", { id: "r1" });
+    expect(backend.peek().dictation).toMatchObject({
+      recording: "r1",
+      retake: true,
+      phase: { phase: "processing" },
+    });
+    await backend.invoke("audio_retake", { id: "r1" });
+    expect(events).toContainEqual({ type: "error", message: "已有听写正在进行" });
+    tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+    expect(backend.peek().dictation.phase).toMatchObject({ phase: "done", via: "clipboard" });
+    expect(backend.peek().history_recent[0]?.outcome).toEqual({
+      kind: "inserted",
+      via: "clipboard",
+    });
+  });
+
+  it("重新识别 on chosen models runs that take on them and leaves the settings (§26.4)", async () => {
+    const engines = {
+      ...defaultEngineSettings(),
+      providers: { custom: { asr_url: "https://asr.example.test", asr_model: "whisper-1" } },
+    };
+    const backend = new MockBackend({
+      now: () => clock,
+      history: [],
+      settings: { engines },
+      audioCache: [
+        { id: "r1", at_ms: T0, duration_ms: 3000, bytes: 96_044, status: { kind: "cancelled" } },
+      ],
+    });
+    const events = collect(backend);
+    // Groq without a key cannot run: refused, nothing starts.
+    await backend.invoke("audio_retake", {
+      id: "r1",
+      asr: { kind: "remote", provider: "groq", model: "whisper-large-v3" },
+    });
+    expect(events).toContainEqual({ type: "error", message: MOCK_RETAKE_NOT_READY });
+    expect(backend.peek().dictation.phase.phase).toBe("idle");
+    await backend.invoke("audio_retake", {
+      id: "r1",
+      asr: { kind: "remote", provider: "custom", model: "whisper-2" },
+      refine: { kind: "off" },
+    });
+    tick(MOCK_ASR_MS);
+    const [entry] = backend.peek().history_recent;
+    expect(entry).toMatchObject({ asr_model: "whisper-2", refined: false });
+    expect(entry?.refine_model).toBeUndefined();
+    expect(backend.peek().settings.engines).toEqual(engines);
+    expect(backend.peek().engines.asr_provider).toBe("builtin");
+  });
+
+  it("keeps nothing with the history off or on a phone", async () => {
+    const off = new MockBackend({
+      now: () => clock,
+      history: [],
+      settings: { history: { enabled: false, keep: 200 } },
+    });
+    await take(off);
+    expect(off.peek().audio_cache.recordings).toEqual([]);
+    const phone = new MockBackend({ now: () => clock, role: "phone" });
+    expect(phone.peek().audio_cache.available).toBe(false);
   });
 });

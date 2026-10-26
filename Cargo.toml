@@ -214,6 +214,10 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.sonora-simd]
 opt-level = 3
+# Opus (docs/dictation.md §20.1, §26.2): the long recordings' kept copies are encoded in dev
+# builds too, and the tests encode minutes of audio.
+[profile.dev.package.opus-rs]
+opt-level = 3
 
 [profile.release]
 lto = "thin"

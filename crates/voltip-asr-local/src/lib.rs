@@ -6,6 +6,8 @@
 //! * [`store`] — [`ModelStore`]: the on-disk library under `<app data dir>/models`: scan, resumable
 //!   download with sha256 verification and `manifest.json`, removal. Implements
 //!   [`voltip_core::ModelManager`] so the core can drive it.
+//! * [`relocate`] — moving that library to a folder the user chose ([`ModelStore::move_to`],
+//!   docs/dictation.md §10.9); [`ModelsRoot`] is the folder every part of the library shares.
 //! * [`transcriber`] — [`LocalTranscriber`]: [`voltip_core::dictation::Transcriber`] over a local
 //!   recogniser, loaded once and kept, inference on a blocking thread. The engines sit behind
 //!   [`transcriber::RecognizerLoader`]: transcribe.cpp for the GGUF tiers (`gguf.rs`), sherpa-onnx
@@ -29,6 +31,8 @@ pub mod catalogue;
 pub mod cli;
 pub mod compute;
 mod gguf;
+pub mod relocate;
+pub mod root;
 pub mod segmenter;
 mod sherpa;
 pub mod store;
@@ -40,6 +44,8 @@ pub use catalogue::{
     CATALOGUE, Capability, DEFAULT_MODEL_ID, Engine, ModelEntry, ModelFile, STREAMING_MODEL_ID, Tier, VAD_MODEL_ID, entry, streaming_entry, vad_entry,
 };
 pub use compute::{Compute, GpuInfo, HardwareInfo, LocalDevice, hardware};
+pub use relocate::STAGING_SUFFIX;
+pub use root::ModelsRoot;
 pub use segmenter::{VadSegmenter, VadSegmenterFactory};
 pub use store::{
     CATALOGUE_VERSION, DISK_HEADROOM, FreeSpace, ImportError, MANIFEST_FILE, Manifest, ModelStore, SlowSourcePolicy, Source, StoreError, bytes_to_fetch,

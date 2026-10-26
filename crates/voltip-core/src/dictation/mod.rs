@@ -5,6 +5,7 @@
 //! [`ports`], real ones from the desktop shell, [`fakes`] in tests.
 
 pub mod activation;
+pub mod archive;
 pub mod engine;
 pub mod fakes;
 pub mod fallback;
@@ -19,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::engines::OutputMode;
 pub use crate::scenes::TakeContext;
-pub use engine::{DictationEngine, DictationPorts, EngineFactory, engine_clients};
+pub use engine::{DictationEngine, DictationPorts, EngineFactory, Retake, RetakeAudio, TakeClients, engine_clients};
 pub use fallback::{FallbackRefiner, FallbackTranscriber, Link, QUOTA_RETRY_AFTER, QuotaKey, QuotaLedger, first_with_quota, open_order};
 pub use ports::{
     AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection,
@@ -370,12 +371,32 @@ pub struct DictationStatus {
     /// first two minutes, and while its last segments are recognised; cleared by `Idle`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub segments: Option<SegmentProgress>,
+    /// The take's recording in the audio cache (docs/dictation.md §26): set once it is kept, and
+    /// from the start of a take that recognises it again; cleared by the next start and by `Idle`.
+    /// The pill says a failed take's recording can be recognised again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recording: Option<uuid::Uuid>,
+    /// The take recognises a kept recording again (docs/dictation.md §26): no capture, and the
+    /// text goes to the clipboard; cleared by the next start and by `Idle`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub retake: bool,
 }
 
 impl DictationStatus {
     /// A dictation take's status without a context (the pre-§18 / §19 shape).
     pub fn dictation(phase: DictationPhase, session: u64) -> Self {
-        Self { phase, session, context: None, kind: TakeKind::Dictation, remote: None, preset: None, source: None, segments: None }
+        Self {
+            phase,
+            session,
+            context: None,
+            kind: TakeKind::Dictation,
+            remote: None,
+            preset: None,
+            source: None,
+            segments: None,
+            recording: None,
+            retake: false,
+        }
     }
 }
 

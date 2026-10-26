@@ -25,13 +25,15 @@ import {
   modelStateCell,
   offlineModelsByTier,
 } from "./helpers";
+import { ModelsLocation } from "./ModelsLocation";
 
-/** The local model manager (docs/dictation.md §10): one card per recognition model of
- *  `state.models`, in product-tier order (均衡 → 高精度 → 轻量 → 轻量 · 中文), every button a real
- *  core command — `model_download` / `model_cancel` / `model_remove` — and activation =
- *  `settings_set_engines { asr_provider: "local", local_model }`. Download progress, the failure
- *  message and the installed path all come from the core's `models` events. The streaming preview
- *  model is not a recognition choice: it lives in the 实时预览 block (`LivePreview`). */
+/** The local model manager (docs/dictation.md §10): where the library is (`ModelsLocation`,
+ *  §10.9), then one card per recognition model of `state.models`, in product-tier order (均衡 →
+ *  高精度 → 轻量 → 轻量 · 中文), every button a real core command — `model_download` /
+ *  `model_cancel` / `model_remove` — and activation = `settings_set_engines { asr_provider:
+ *  "local", local_model }`. Download progress, the failure message and the installed path all come
+ *  from the core's `models` events. The streaming preview model is not a recognition choice: it
+ *  lives in the 实时预览 block (`LivePreview`). */
 export function LocalModels() {
   const { t } = useI18n();
   const state = useUiState();
@@ -47,7 +49,8 @@ export function LocalModels() {
           {t("engines.installedCount", { installed, total: models.length })}
         </span>
       }>
-      <CardGrid min={260} role="list" aria-label={t("engines.modelLibrary")}>
+      <ModelsLocation />
+      <CardGrid min={260} role="list" aria-label={t("engines.modelLibrary")} className="mt-3">
         {models.map((m) => (
           <div key={m.id} role="listitem" data-tier={m.tier} className="flex min-w-0">
             <ModelCard model={m} />
@@ -79,6 +82,9 @@ export function ModelCard({ model }: ModelCardProps) {
   const engineLabel = modelEngineLabel(model.engine, t);
   const languages = languageSummary(model.languages, t);
   const name = modelDisplayName(model.id, model.name, locale);
+  // docs/dictation.md §10.9: nothing writes into the library while it moves.
+  const moving = uiState.models_location.moving !== null;
+  const movingTitle = moving ? t("model.location.busyMoving") : undefined;
 
   const download = () => {
     void backend.invoke("model_download", { id: model.id });
@@ -110,7 +116,13 @@ export function ModelCard({ model }: ModelCardProps) {
     switch (action) {
       case "download":
         return (
-          <Button size="sm" variant="primary" icon="download" onClick={download}>
+          <Button
+            size="sm"
+            variant="primary"
+            icon="download"
+            disabled={moving}
+            title={movingTitle}
+            onClick={download}>
             {t("model.action.download")}
           </Button>
         );
@@ -122,7 +134,13 @@ export function ModelCard({ model }: ModelCardProps) {
         );
       case "retry":
         return (
-          <Button size="sm" variant="primary" icon="refresh" onClick={download}>
+          <Button
+            size="sm"
+            variant="primary"
+            icon="refresh"
+            disabled={moving}
+            title={movingTitle}
+            onClick={download}>
             {t("model.action.retry")}
           </Button>
         );
@@ -167,7 +185,13 @@ export function ModelCard({ model }: ModelCardProps) {
         <>
           {primary}
           {model.state.kind === "installed" && (
-            <Button size="sm" variant="text-danger" icon="trash" onClick={remove}>
+            <Button
+              size="sm"
+              variant="text-danger"
+              icon="trash"
+              disabled={moving}
+              title={movingTitle}
+              onClick={remove}>
               {t("model.action.remove")}
             </Button>
           )}
@@ -251,7 +275,8 @@ function ManualDownload({ model }: { model: ModelState }) {
   const { t } = useI18n();
   const incomplete = model.state.kind === "import_incomplete" ? model.state : undefined;
   const [open, setOpen] = useState(incomplete !== undefined);
-  const busy = model.state.kind === "downloading" || model.state.kind === "verifying";
+  const moving = useUiState().models_location.moving !== null;
+  const busy = model.state.kind === "downloading" || model.state.kind === "verifying" || moving;
   const fail = (e: unknown) => {
     shell.toast({
       message: String(e instanceof Error ? e.message : e),

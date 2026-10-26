@@ -112,8 +112,9 @@ export interface PillProps {
   keys?: string;
   /** Target app shown after `→` in the inserted state. */
   via?: string;
-  /** `inserted` only: why the text went in without AI polish (docs/dictation.md §3.6), a tag with a
-   *  warning lamp after the label; absent when the polish ran or none was asked for. */
+  /** A tag with a warning lamp after the label. `inserted`: why the text went in without AI polish
+   *  (docs/dictation.md §3.6), absent when the polish ran or none was asked for. `error`: the
+   *  take's recording is kept and can be recognised again (§26). */
   note?: string;
   onCopy?: () => void;
   onStop?: () => void;
@@ -448,6 +449,8 @@ export function Pill({
             data-testid="pill-error-text">
             {text}
           </span>
+          {/* docs/dictation.md §26: the recording is kept, so the take can be recognised again. */}
+          <NoteTag text={note} />
           {/* Only when there is something to copy: a silent take has no text to offer. */}
           {onCopy && (
             <Button size="sm" variant="primary" onClick={onCopy} className="h-6">
