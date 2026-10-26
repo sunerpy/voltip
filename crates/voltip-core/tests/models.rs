@@ -1,14 +1,16 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! The local model library through the real core task (docs/dictation.md §10): `Models` on
 //! `Ready`, `ModelDownload` → progress → `Installed` → `local_ready`, cancel, failure, removal,
-//! the `active` flag following `SetEngines`, and the refusals (unknown id, installed, no library).
+//! the `active` flag following `SetEngines`, and the refusals (unknown id, installed, no library);
+//! moving the library to another folder and back (§10.9).
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
 use voltip_core::dictation::DictationPorts;
-use voltip_core::dictation::fakes::{FakeAudio, FakeInjector, FakeModels, FakeTranscriber, ports_with};
+use voltip_core::dictation::fakes::{FakeAudio, FakeInjector, FakeModels, FakeRelocation, FakeTranscriber, ports_with};
+use voltip_core::models_location::{self, LOCATION_FILE, ModelsLocation, ModelsLocationView, ModelsMoveOutcome};
 use voltip_core::{
     AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DEFAULT_LOCAL_MODEL_ID, DictationPhase, EngineSettings, EngineStatus, ModelInstallState,
     ModelState, ProviderId, ProviderSettings, ResolvedEngines, Settings, SettingsStore,
@@ -85,6 +87,19 @@ async fn wait_error(node: &mut Node, needle: &str) -> String {
         _ => None,
     })
     .await
+}
+
+async fn wait_location(node: &mut Node, mut pred: impl FnMut(&ModelsLocationView) -> bool) -> ModelsLocationView {
+    wait(node, |e| match e {
+        CoreEvent::ModelsLocation(view) if pred(view) => Some(view.clone()),
+        _ => None,
+    })
+    .await
+}
+
+/// A library under `<dir>/models` with the default model installed.
+fn library(dir: &std::path::Path) -> FakeModels {
+    FakeModels::new(1).with_installed(DEFAULT_LOCAL_MODEL_ID).with_root(dir.join("models"))
 }
 
 fn state_of<'a>(models: &'a [ModelState], id: &str) -> &'a ModelInstallState {
@@ -321,4 +336,167 @@ async fn a_manual_import_names_what_is_missing_until_the_files_are_right() {
     node.handle.send(CoreCommand::ModelImport("nope".into())).await.unwrap();
     wait_error(&mut node, "目录中没有 nope").await;
     assert_eq!(fake.imports(), 2);
+}
+
+#[tokio::test]
+async fn the_library_moves_to_a_chosen_folder_and_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let chosen = tempfile::tempdir().unwrap();
+    let fake = Arc::new(library(dir.path()));
+    let mut node = start(dir.path(), Some(fake.clone()));
+    let default = dir.path().join("models");
+    let view = wait_location(&mut node, |_| true).await;
+    assert_eq!(
+        view,
+        ModelsLocationView {
+            available: true,
+            dir: default.to_string_lossy().into_owned(),
+            custom: false,
+            default_dir: default.to_string_lossy().into_owned(),
+            moving: None,
+            last: None,
+        }
+    );
+
+    let to = chosen.path().join("Voltip models");
+    node.handle.send(CoreCommand::ModelsRelocate(Some(to.clone()))).await.unwrap();
+    let moving = wait_location(&mut node, |v| v.moving.is_some()).await;
+    assert_eq!(moving.moving.as_ref().unwrap().to, to.to_string_lossy());
+    assert_eq!(moving.dir, default.to_string_lossy(), "still the old folder until the move is done");
+    // The cards are read again from the new folder before the move is reported done.
+    let (mut cards, mut done) = (None, None);
+    wait(&mut node, |e| {
+        match e {
+            CoreEvent::Models(m) if m.iter().all(|m| std::path::Path::new(&m.dir).starts_with(&to)) => cards = Some(m.clone()),
+            CoreEvent::ModelsLocation(v) if v.last.is_some() => done = Some(v.clone()),
+            _ => {}
+        }
+        (cards.is_some() && done.is_some()).then_some(())
+    })
+    .await;
+    let done = done.unwrap();
+    assert_eq!(done.last, Some(ModelsMoveOutcome::Moved { dir: to.to_string_lossy().into_owned(), deferred: 0 }));
+    assert!(done.custom && done.moving.is_none());
+    assert_eq!(done.dir, to.to_string_lossy());
+    assert_eq!(fake.relocations(), 1);
+    assert!(state_of(&cards.unwrap(), DEFAULT_LOCAL_MODEL_ID).is_installed());
+    // The next start looks there.
+    assert_eq!(models_location::read(dir.path()), ModelsLocation { dir: Some(to.clone()), leftovers: Vec::new() });
+    assert_eq!(CoreConfig::new(dir.path().to_path_buf()).models_root, to);
+
+    // Asking for the folder it is in already changes nothing.
+    node.handle.send(CoreCommand::ModelsRelocate(Some(to.clone()))).await.unwrap();
+    let same = wait_location(&mut node, |v| v.last.is_none()).await;
+    assert_eq!(same.dir, to.to_string_lossy());
+    assert_eq!(fake.relocations(), 1);
+
+    // Back to the default: the location file goes.
+    node.handle.send(CoreCommand::ModelsRelocate(None)).await.unwrap();
+    let back = wait_location(&mut node, |v| v.last.is_some()).await;
+    assert_eq!(back.last, Some(ModelsMoveOutcome::Moved { dir: default.to_string_lossy().into_owned(), deferred: 0 }));
+    assert!(!back.custom);
+    assert!(!dir.path().join(LOCATION_FILE).exists());
+    assert_eq!(CoreConfig::new(dir.path().to_path_buf()).models_root, default);
+}
+
+#[tokio::test]
+async fn a_move_waits_for_downloads_and_the_library_waits_for_a_move() {
+    let dir = tempfile::tempdir().unwrap();
+    let chosen = tempfile::tempdir().unwrap();
+    let fake =
+        Arc::new(FakeModels::hanging().with_root(dir.path().join("models")).with_relocation(FakeRelocation { steps: None, ..FakeRelocation::default() }));
+    let mut node = start(dir.path(), Some(fake.clone()));
+    wait_location(&mut node, |_| true).await;
+
+    node.handle.send(CoreCommand::ModelDownload("paraformer-zh".into())).await.unwrap();
+    wait_models(&mut node, |m| matches!(state_of(m, "paraformer-zh"), ModelInstallState::Downloading { .. })).await;
+    node.handle.send(CoreCommand::ModelsRelocate(Some(chosen.path().to_path_buf()))).await.unwrap();
+    wait_error(&mut node, "正在下载模型，请等下载完成或取消后再移动").await;
+    node.handle.send(CoreCommand::ModelCancel("paraformer-zh".into())).await.unwrap();
+    wait_models(&mut node, |m| *state_of(m, "paraformer-zh") == ModelInstallState::NotInstalled).await;
+
+    node.handle.send(CoreCommand::ModelsRelocate(Some(chosen.path().to_path_buf()))).await.unwrap();
+    wait_location(&mut node, |v| v.moving.is_some()).await;
+    for command in
+        [CoreCommand::ModelDownload("paraformer-zh".into()), CoreCommand::ModelImport("paraformer-zh".into()), CoreCommand::ModelRemove("paraformer-zh".into())]
+    {
+        node.handle.send(command).await.unwrap();
+        wait_error(&mut node, "正在移动模型，请稍后再试").await;
+    }
+    node.handle.send(CoreCommand::ModelsRelocate(None)).await.unwrap();
+    wait_error(&mut node, "models: 正在移动模型").await;
+    assert_eq!(fake.downloads(), 1, "nothing started while the library moved");
+
+    node.handle.send(CoreCommand::ModelsRelocateCancel).await.unwrap();
+    let cancelled = wait_location(&mut node, |v| v.last.is_some()).await;
+    assert_eq!(cancelled.last, Some(ModelsMoveOutcome::Cancelled));
+    assert!(!cancelled.custom && cancelled.moving.is_none());
+    assert!(!dir.path().join(LOCATION_FILE).exists());
+    node.handle.send(CoreCommand::ModelsRelocateCancel).await.unwrap();
+    wait_error(&mut node, "没有在移动模型").await;
+}
+
+#[tokio::test]
+async fn a_move_that_fails_or_cannot_be_saved_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let chosen = tempfile::tempdir().unwrap();
+    let fake = Arc::new(library(dir.path()).with_relocation(FakeRelocation { fail_with: Some("复制 x 失败：磁盘已满".into()), ..FakeRelocation::default() }));
+    let mut node = start(dir.path(), Some(fake.clone()));
+    wait_location(&mut node, |_| true).await;
+    node.handle.send(CoreCommand::ModelsRelocate(Some(chosen.path().to_path_buf()))).await.unwrap();
+    let failed = wait_location(&mut node, |v| v.last.is_some()).await;
+    assert_eq!(failed.last, Some(ModelsMoveOutcome::Failed { message: "复制 x 失败：磁盘已满".into() }));
+    assert!(!failed.custom);
+
+    // The location file cannot be written (its temporary name is taken by a folder): the move is
+    // undone by the port and reported.
+    fake.set_relocation(FakeRelocation::default());
+    std::fs::create_dir_all(dir.path().join(format!("{LOCATION_FILE}.tmp"))).unwrap();
+    node.handle.send(CoreCommand::ModelsRelocate(Some(chosen.path().to_path_buf()))).await.unwrap();
+    let unsaved = wait_location(&mut node, |v| v.last.is_some()).await;
+    let Some(ModelsMoveOutcome::Failed { message }) = unsaved.last else { panic!("{unsaved:?}") };
+    assert!(message.starts_with("无法保存模型的新位置："), "{message}");
+    assert_eq!(unsaved.dir, dir.path().join("models").to_string_lossy());
+    assert!(!dir.path().join(LOCATION_FILE).exists());
+
+    node.handle.send(CoreCommand::ModelsRelocate(Some("relative/models".into()))).await.unwrap();
+    wait_error(&mut node, "不是完整的路径").await;
+    assert_eq!(fake.relocations(), 2);
+}
+
+#[tokio::test]
+async fn old_folders_still_in_use_are_deleted_at_the_next_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let chosen = tempfile::tempdir().unwrap();
+    // The old copy of the installed model "could not be deleted" (the fake leaves it in place).
+    let old = dir.path().join("models").join(DEFAULT_LOCAL_MODEL_ID);
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::write(old.join("model.gguf"), b"x").unwrap();
+    let fake = Arc::new(library(dir.path()).with_relocation(FakeRelocation { leftovers: vec![old.clone()], ..FakeRelocation::default() }));
+    let mut node = start(dir.path(), Some(fake.clone()));
+    wait_location(&mut node, |_| true).await;
+    node.handle.send(CoreCommand::ModelsRelocate(Some(chosen.path().to_path_buf()))).await.unwrap();
+    let done = wait_location(&mut node, |v| v.last.is_some()).await;
+    assert_eq!(done.last, Some(ModelsMoveOutcome::Moved { dir: chosen.path().to_string_lossy().into_owned(), deferred: 1 }));
+    assert_eq!(models_location::read(dir.path()), ModelsLocation { dir: Some(chosen.path().to_path_buf()), leftovers: vec![old.clone()] });
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+    drop(node);
+
+    // The next start deletes it before the library is read.
+    let mut node = start(dir.path(), Some(Arc::new(library(dir.path()).with_root(chosen.path()))));
+    wait_location(&mut node, |_| true).await;
+    assert!(!old.exists());
+    assert_eq!(models_location::read(dir.path()), ModelsLocation { dir: Some(chosen.path().to_path_buf()), leftovers: Vec::new() });
+}
+
+#[tokio::test]
+async fn without_a_library_there_is_no_location_to_move() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut node = start(dir.path(), None);
+    let view = wait_location(&mut node, |_| true).await;
+    assert_eq!(view, ModelsLocationView::default());
+    node.handle.send(CoreCommand::ModelsRelocate(None)).await.unwrap();
+    wait_error(&mut node, "本地模型不可用").await;
+    node.handle.send(CoreCommand::ModelsRelocateCancel).await.unwrap();
+    wait_error(&mut node, "没有在移动模型").await;
 }

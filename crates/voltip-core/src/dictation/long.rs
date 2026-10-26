@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
+use super::archive::ArchiveWriter;
 use super::engine::Internal;
 use super::inject_separator;
 use super::ports::{DictationError, PCM_SAMPLE_RATE_HZ, PcmStream, Segmenter, Transcriber, Transcript};
@@ -43,6 +44,10 @@ pub const TOO_LONG_TO_PASTE: &str = "全文超过 5000 字，已复制到剪贴�
 /// What the recording thread waits between reads when nothing arrived: the stream holds a minute,
 /// so waiting loses nothing (a pause, not a wait for an event).
 const WRITER_IDLE: Duration = Duration::from_millis(20);
+/// A take whose copy is kept (docs/dictation.md §26.2) flushes its recording file to the disk
+/// this often (5 s of audio): a power cut then costs at most that much of what follows the last
+/// complete part.
+const SYNC_EVERY: u64 = 5 * RATE;
 
 /// The core's own cutter (docs/dictation.md §22), used when the shell has none or it cannot run
 /// (its model is missing): once a segment reaches 30 s it is cut in the middle of the quietest
@@ -136,18 +141,22 @@ pub struct WriterJob {
     pub path: PathBuf,
     /// Cuts the take into segments.
     pub segmenter: Box<dyn Segmenter>,
+    /// The take's kept copy (docs/dictation.md §26.2), when the audio cache keeps it.
+    pub archive: Option<ArchiveWriter>,
     /// Back to the engine.
     pub tx: mpsc::Sender<Internal>,
 }
 
 /// The recording thread (docs/dictation.md §22), on a blocking thread: read the take's stream,
 /// write it to the recording file as 16-bit samples, fill a gap with silence and note it, hand every
-/// chunk to the segmenter and report each segment it cuts ([`Internal::LongSegment`]). When the
-/// stream closes: the last segment, then [`Internal::LongClosed`] with the length, the gaps and a
-/// write error if there was one (the file is incomplete from then on).
+/// chunk to the segmenter and report each segment it cuts ([`Internal::LongSegment`]), and to the
+/// take's kept copy when there is one (§26.2). When the stream closes: the last segment, the
+/// copy's last part and manifest, then [`Internal::LongClosed`] with the length, the gaps, a write
+/// error if there was one (the file is incomplete from then on) and what the copy holds.
 pub fn run_writer(job: WriterJob) {
-    let WriterJob { session, mut stream, file, path, segmenter, tx } = job;
-    let mut out = TakeFile { session, file, path, segmenter, tx, bytes: Vec::new(), total: 0, error: None };
+    let WriterJob { session, mut stream, file, path, segmenter, archive, tx } = job;
+    let mut out =
+        TakeFile { session, file, path, segmenter, archive, tx, pcm: Vec::new(), bytes: Vec::new(), cuts: Vec::new(), since_sync: 0, total: 0, error: None };
     let mut samples = vec![0.0f32; 4096];
     let mut gaps = Vec::new();
     loop {
@@ -177,48 +186,70 @@ pub fn run_writer(job: WriterJob) {
     out.finish(merge_spans(gaps));
 }
 
-/// The recording thread's side of a take: its file, its segmenter, how far it got.
+/// The recording thread's side of a take: its file, its segmenter, its kept copy, how far it got.
 struct TakeFile {
     session: u64,
     file: File,
     path: PathBuf,
     segmenter: Box<dyn Segmenter>,
+    archive: Option<ArchiveWriter>,
     tx: mpsc::Sender<Internal>,
+    /// The block being written, as 16-bit samples.
+    pcm: Vec<i16>,
     bytes: Vec<u8>,
+    /// Where the segments end, for the copy's manifest.
+    cuts: Vec<u64>,
+    /// Samples written since the file was last flushed to the disk.
+    since_sync: u64,
     total: u64,
     error: Option<String>,
 }
 
 impl TakeFile {
-    /// Write `samples`, cut, and report every segment they end.
+    /// Write `samples` (to the file, and to the kept copy), cut, and report every segment they end.
     fn take(&mut self, samples: &[f32]) {
+        self.pcm.clear();
+        self.pcm.extend(samples.iter().map(|&s| (s.clamp(-1.0, 1.0) * 32_767.0).round() as i16));
         if self.error.is_none()
-            && let Err(e) = write_samples(&mut self.file, samples, &mut self.bytes)
+            && let Err(e) = write_samples(&mut self.file, &self.pcm, &mut self.bytes)
         {
             tracing::warn!(session = self.session, error = %e, "the recording file could not be written");
             self.error = Some(e.to_string());
         }
+        if let Some(archive) = &mut self.archive {
+            archive.push(&self.pcm);
+            self.since_sync += samples.len() as u64;
+            if self.since_sync >= SYNC_EVERY && self.error.is_none() {
+                self.since_sync = 0;
+                if let Err(e) = self.file.sync_data() {
+                    tracing::debug!(session = self.session, error = %e, "the recording file could not be flushed to the disk");
+                }
+            }
+        }
         self.total += samples.len() as u64;
         for end in self.segmenter.push(samples) {
+            self.cuts.push(end);
             let _ = self.tx.blocking_send(Internal::LongSegment { session: self.session, end });
         }
     }
 
-    /// The last segment, then the take's length, gaps and write error.
+    /// The last segment, the kept copy's last part and manifest, then the take's length, gaps and
+    /// write error.
     fn finish(mut self, gaps: Vec<(u64, u64)>) {
         if let Some(end) = self.segmenter.finish() {
+            self.cuts.push(end);
             let _ = self.tx.blocking_send(Internal::LongSegment { session: self.session, end });
         }
-        tracing::info!(session = self.session, seconds = self.total / RATE, gaps = gaps.len(), "long take recorded");
-        let _ = self.tx.blocking_send(Internal::LongClosed { session: self.session, path: self.path, total: self.total, gaps, error: self.error });
+        let archive = self.archive.take().map(|a| a.finish(std::mem::take(&mut self.cuts), gaps.clone()));
+        tracing::info!(session = self.session, seconds = self.total / RATE, gaps = gaps.len(), kept = archive.is_some(), "long take recorded");
+        let _ = self.tx.blocking_send(Internal::LongClosed { session: self.session, path: self.path, total: self.total, gaps, error: self.error, archive });
     }
 }
 
 /// `samples` as 16-bit little-endian PCM, appended to `file` in one write.
-fn write_samples(file: &mut File, samples: &[f32], bytes: &mut Vec<u8>) -> std::io::Result<()> {
+fn write_samples(file: &mut File, samples: &[i16], bytes: &mut Vec<u8>) -> std::io::Result<()> {
     bytes.clear();
-    for &s in samples {
-        let v = (s.clamp(-1.0, 1.0) * 32_767.0).round() as i16;
+    for &v in samples {
         bytes.extend_from_slice(&v.to_le_bytes());
     }
     file.write_all(bytes)
@@ -323,14 +354,20 @@ pub fn create_file(dir: &Path, session: u64, now_ms: u64) -> std::io::Result<(Fi
     Ok((options.open(&path)?, path))
 }
 
-/// Remove the recording files an earlier run left behind (it ended while recording); returns how
-/// many. A missing directory is nothing to clear.
+/// Remove the recording files an earlier run left behind (it ended while recording), and the kept
+/// copies they started (docs/dictation.md §26.2): what the audio cache does not keep. Returns how
+/// many takes' files went. A missing directory is nothing to clear.
 pub fn clear_leftovers(dir: &Path) -> usize {
     let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
     let mut removed = 0;
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().is_some_and(|e| e == "pcm") && std::fs::remove_file(&path).is_ok() {
+        let gone = match path.extension().and_then(|e| e.to_str()) {
+            Some("pcm") => std::fs::remove_file(&path).is_ok(),
+            Some(super::archive::PARTS_SUFFIX) if path.is_dir() => std::fs::remove_dir_all(&path).is_ok(),
+            _ => false,
+        };
+        if gone {
             removed += 1;
         }
     }
@@ -444,7 +481,7 @@ mod tests {
     fn segments_read_back_from_the_file() {
         let dir = tempfile::tempdir().unwrap();
         let (mut file, path) = create_file(dir.path(), 7, 1).unwrap();
-        let samples: Vec<f32> = (0..1000).map(|i| i as f32 / 1000.0).collect();
+        let samples: Vec<i16> = (0..1000).map(|i| (i as f32 / 1000.0 * 32_767.0).round() as i16).collect();
         write_samples(&mut file, &samples, &mut Vec::new()).unwrap();
         let wav_bytes = read_segment(&path, 100, 200).unwrap();
         let pcm = wav::pcm_data(&wav_bytes).unwrap();
@@ -458,8 +495,11 @@ mod tests {
         }
         assert!(create_file(dir.path(), 7, 1).is_err(), "never overwrites");
         std::fs::write(dir.path().join("keep.txt"), "x").unwrap();
-        assert_eq!(clear_leftovers(dir.path()), 1);
-        assert!(dir.path().join("keep.txt").exists(), "only recordings go");
+        let parts = super::super::archive::parts_dir(&path);
+        std::fs::create_dir_all(&parts).unwrap();
+        std::fs::write(parts.join("part-00000.opus"), "x").unwrap();
+        assert_eq!(clear_leftovers(dir.path()), 2, "the file and its copy's parts");
+        assert!(dir.path().join("keep.txt").exists() && !parts.exists(), "only recordings go");
         assert_eq!(clear_leftovers(&dir.path().join("none")), 0);
         remove(&path);
     }

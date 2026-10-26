@@ -1291,6 +1291,30 @@ pub struct FakeModels {
     imports: AtomicUsize,
     /// What an import finds wrong (missing, mismatched); `None`: the files are right.
     import_problems: Mutex<Option<(Vec<String>, Vec<String>)>>,
+    /// Where the library is (docs/dictation.md §10.9).
+    root: Mutex<std::path::PathBuf>,
+    /// How a move goes.
+    relocation: Mutex<FakeRelocation>,
+    relocations: AtomicUsize,
+}
+
+/// How [`FakeModels`] moves its library.
+#[derive(Clone, Debug)]
+pub struct FakeRelocation {
+    /// Progress reports before the move is done; `None` = it waits for the cancel token.
+    pub steps: Option<u32>,
+    /// Bytes the move copies.
+    pub bytes: u64,
+    /// Fail after the copy with this message, before the commit.
+    pub fail_with: Option<String>,
+    /// Old folders it reports it could not delete.
+    pub leftovers: Vec<std::path::PathBuf>,
+}
+
+impl Default for FakeRelocation {
+    fn default() -> Self {
+        Self { steps: Some(2), bytes: 8192, fail_with: None, leftovers: Vec::new() }
+    }
 }
 
 impl FakeModels {
@@ -1304,7 +1328,36 @@ impl FakeModels {
             removals: AtomicUsize::new(0),
             imports: AtomicUsize::new(0),
             import_problems: Mutex::new(None),
+            root: Mutex::new(std::path::PathBuf::from("/fake/models")),
+            relocation: Mutex::new(FakeRelocation::default()),
+            relocations: AtomicUsize::new(0),
         }
+    }
+
+    /// Moves of the library go as `relocation` says.
+    pub fn with_relocation(self, relocation: FakeRelocation) -> Self {
+        *self.relocation.lock() = relocation;
+        self
+    }
+
+    /// The next moves go as `relocation` says.
+    pub fn set_relocation(&self, relocation: FakeRelocation) {
+        *self.relocation.lock() = relocation;
+    }
+
+    /// The library starts in `root`.
+    pub fn with_root(self, root: impl Into<std::path::PathBuf>) -> Self {
+        let root = root.into();
+        for m in self.entries.lock().iter_mut() {
+            m.dir = root.join(&m.id).to_string_lossy().into_owned();
+        }
+        *self.root.lock() = root;
+        self
+    }
+
+    /// `relocate` calls so far.
+    pub fn relocations(&self) -> usize {
+        self.relocations.load(Ordering::SeqCst)
     }
 
     /// Downloads fail verification with `message` (the `.part` would stay).
@@ -1483,6 +1536,51 @@ impl crate::models::ModelManager for FakeModels {
         let Some(m) = entries.iter_mut().find(|m| m.id == id) else { return Err(format!("unknown model {id}")) };
         m.state = crate::models::ModelInstallState::NotInstalled;
         Ok(())
+    }
+
+    fn root(&self) -> std::path::PathBuf {
+        self.root.lock().clone()
+    }
+
+    /// Reports the copy in `steps`, fails or waits as [`FakeRelocation`] says, then commits with
+    /// the installed models' old folders and points every entry at `to`.
+    async fn relocate(
+        &self,
+        to: &std::path::Path,
+        progress: crate::models::RelocateProgress,
+        cancel: crate::models::CancelToken,
+        commit: crate::models::RelocateCommit,
+    ) -> Result<crate::models::Relocated, String> {
+        use crate::models::ModelInstallState;
+        self.relocations.fetch_add(1, Ordering::SeqCst);
+        let plan = self.relocation.lock().clone();
+        progress(0, plan.bytes);
+        let Some(steps) = plan.steps else {
+            cancel.cancelled().await;
+            return Err("已取消".into());
+        };
+        for step in 1..=steps {
+            tokio::task::yield_now().await;
+            if cancel.is_cancelled() {
+                return Err("已取消".into());
+            }
+            progress(plan.bytes * u64::from(step) / u64::from(steps.max(1)), plan.bytes);
+        }
+        if let Some(message) = plan.fail_with {
+            return Err(message);
+        }
+        let from = self.root();
+        let doomed: Vec<std::path::PathBuf> = self.entries.lock().iter().filter(|m| m.state.is_installed()).map(|m| from.join(&m.id)).collect();
+        commit(to, &doomed).map_err(|e| format!("无法保存模型的新位置：{e}"))?;
+        *self.root.lock() = to.to_path_buf();
+        for m in self.entries.lock().iter_mut() {
+            let dir = to.join(&m.id).to_string_lossy().into_owned();
+            if let ModelInstallState::Installed { path, .. } = &mut m.state {
+                path.clone_from(&dir);
+            }
+            m.dir = dir;
+        }
+        Ok(crate::models::Relocated { leftovers: plan.leftovers })
     }
 }
 

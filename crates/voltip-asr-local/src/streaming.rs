@@ -19,6 +19,7 @@ use parking_lot::Mutex;
 use voltip_core::dictation::{DictationError, StreamingSession, StreamingTranscriber};
 
 use crate::catalogue::{CATALOGUE, ModelEntry};
+use crate::root::ModelsRoot;
 use crate::sherpa::SherpaStreamingLoader;
 use crate::store;
 
@@ -42,7 +43,7 @@ pub trait StreamingLoader: Send + Sync {
 /// The live-preview recogniser over the model library.
 #[derive(Clone)]
 pub struct LocalStreamingTranscriber {
-    root: PathBuf,
+    root: ModelsRoot,
     entry: &'static ModelEntry,
     loader: Arc<dyn StreamingLoader>,
     cache: Arc<Mutex<Option<Arc<dyn StreamingRecognizer>>>>,
@@ -65,12 +66,12 @@ impl std::fmt::Debug for LocalStreamingTranscriber {
 
 impl LocalStreamingTranscriber {
     /// sherpa-onnx over the real catalogue's streaming entry under `root` (`<app data dir>/models`).
-    pub fn new(root: impl Into<PathBuf>) -> Self {
+    pub fn new(root: impl Into<ModelsRoot>) -> Self {
         Self::with_loader(root, crate::catalogue::streaming_entry(), Arc::new(SherpaStreamingLoader))
     }
 
     /// Any entry and loader (tests). `entry` should be one of `CATALOGUE`'s streaming entries.
-    pub fn with_loader(root: impl Into<PathBuf>, entry: &'static ModelEntry, loader: Arc<dyn StreamingLoader>) -> Self {
+    pub fn with_loader(root: impl Into<ModelsRoot>, entry: &'static ModelEntry, loader: Arc<dyn StreamingLoader>) -> Self {
         debug_assert!(CATALOGUE.iter().any(|e| e.id == entry.id) || cfg!(test));
         Self { root: root.into(), entry, loader, cache: Arc::new(Mutex::new(None)), warming: Arc::new(AtomicBool::new(false)), threads: STREAMING_THREADS }
     }
@@ -86,8 +87,8 @@ impl LocalStreamingTranscriber {
     }
 
     /// The library root.
-    pub fn root(&self) -> &Path {
-        &self.root
+    pub fn root(&self) -> PathBuf {
+        self.root.get()
     }
 
     /// Whether the model files are on disk and verified.

@@ -43,15 +43,17 @@ import {
   useDebounced,
   useHistoryEntry,
 } from "../features/history/useHistoryList";
+import { UnrecognisedRecordings } from "../features/history/Recordings";
 import { ResultActions } from "../features/history/ResultActions";
 import { shortModel } from "../shell/page-meta";
 import { HistoryDetail, type View } from "./history/HistoryDetail";
 import { HistoryPager } from "./history-list/HistoryPager";
 import {
-  DETAIL_STICKS,
+  SPLIT_FILLS,
   revealTop,
   useDetailStartsAtTop,
-  useScrollAreaHeight,
+  useRowsStartAtTop,
+  useSplitHeight,
 } from "./history-list/layout";
 import { useHistoryPageSize } from "./history-list/page-size";
 import { useHistoryPages } from "./history-list/useHistoryPages";
@@ -68,9 +70,9 @@ function sentAsText(entry: HistoryEntry): boolean {
 
 /** History: the core's database (docs/dictation.md §4.4, up to 20 000 entries), read one page at a
  *  time through `history_query` — the filters and the search run in the core, the page buttons and
- *  the page size (20 / 50 / 100 / 200, this window remembers it) are at the foot of the log, the
- *  detail comes from the list or `history_entry` and stays in view beside a long page (user request
- *  2026-10-13). Star, delete, clear, copy and the raw-vs-refined diff are all real;
+ *  the page size (10 / 20 / 50 / 100 / 200, this window remembers it) are at the foot of the log,
+ *  the detail comes from the list or `history_entry`; the log and the detail fill the window's
+ *  height side by side, each scrolling inside itself (user requests 2026-10-13, 2026-10-26). Star, delete, clear, copy and the raw-vs-refined diff are all real;
  *  the detail names the dictionary corrections and rules that fired (`HistoryEntry.vocabulary`)
  *  and 加入词典 sends `dictionary_add` with the row's id (docs/dictation.md §16). A take with a
  *  context shows its app and scene in the row and the detail (§18.6); search matches them too. A
@@ -120,12 +122,13 @@ export function History({ initialFilter }: HistoryProps) {
   // never stale and, on page 1, a fresh dictation shows up on the right as soon as the core
   // appends it.
   const selected = useHistoryEntry(selectedId, visible) ?? visible[0];
-  // The page scrolls in the shell's <main>; the detail column reads its height, and starts at its
-  // top for each entry.
+  // The page scrolls in the shell's <main>; the two columns take its height under what is above
+  // them, and the detail starts at its top for each entry.
   const pageRef = useRef<HTMLDivElement>(null);
-  useScrollAreaHeight(pageRef);
   const splitRef = useDetailStartsAtTop(selected?.id);
+  useSplitHeight(pageRef, splitRef);
   const logId = useId();
+  const rowsRef = useRowsStartAtTop(list.view);
   // Another page or page size from the foot of a long page starts reading at the top of the log.
   const showPage = (page: number) => {
     list.goTo(page);
@@ -244,21 +247,24 @@ export function History({ initialFilter }: HistoryProps) {
         </Button>
       </Card>
 
+      {/* docs/dictation.md §26: the kept recordings no text came from, for 重新识别. */}
+      <UnrecognisedRecordings />
+
       {/* session log left, entry detail right, two parts to three: at 1440 px the log is wide
           enough for a row's model, time and result on one line (user feedback 2026-09-29, plan
-          1.6), and never narrower than 280 px; below `lg` they stack. The log stretches to the
-          row and scrolls with the page; the detail, the second column, sticks beside it
-          (`DETAIL_STICKS`, user request 2026-10-13). */}
+          1.6), and never narrower than 280 px; below `lg` they stack. From `lg` on both fill the
+          window's height and scroll inside themselves (`SPLIT_FILLS`, user requests 2026-10-13
+          and 2026-10-26). */}
       <div
         ref={splitRef}
-        className={`grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,2fr)_minmax(0,3fr)] ${DETAIL_STICKS}`}>
+        className={`grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,2fr)_minmax(0,3fr)] ${SPLIT_FILLS}`}>
         <Panel
           id={logId}
           data-testid="history-log"
           eyebrow={t("history.eyebrow.log")}
           title={formatCount(list.matching)}
-          className="min-h-[552px] scroll-mt-6"
-          bodyClassName="flex flex-col gap-3">
+          className="min-h-[552px] scroll-mt-6 lg:min-h-0"
+          bodyClassName="flex flex-col gap-3 lg:min-h-0">
           <Input
             id={searchId}
             icon="search"
@@ -335,7 +341,11 @@ export function History({ initialFilter }: HistoryProps) {
                   : t("history.empty.rangeHint")}
             </EmptyState>
           )}
-          <ul className="flex flex-col" aria-label={t("history.log")}>
+          <ul
+            ref={rowsRef}
+            className="flex flex-col lg:min-h-0 lg:flex-1 lg:overflow-y-auto"
+            data-testid="history-rows"
+            aria-label={t("history.log")}>
             {groups.map((g) => (
               <li key={g.day}>
                 <div className="flex items-center justify-between py-1 text-[12px] text-fg-muted">
@@ -495,7 +505,7 @@ export function History({ initialFilter }: HistoryProps) {
               ? `${dayLabel(selected.at_ms, now, locale)} · ${clockLabel(selected.at_ms)}`
               : undefined
           }
-          className="min-h-[552px]"
+          className="min-h-[552px] lg:min-h-0 lg:overflow-y-auto"
           right={
             selected && (
               <span className="flex items-center gap-2">

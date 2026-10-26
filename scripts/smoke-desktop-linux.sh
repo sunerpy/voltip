@@ -127,6 +127,12 @@ if [ "$outcome" != "$(printf 'inserted\tpaste\t%s' "$spoken")" ]; then
   echo "smoke-desktop-linux: the take was not pasted (mock ASR requests: $(wc -l <"$data/asr.log" 2>/dev/null || echo 0))"
   voltip_smoke_plain "$data/app.log" | grep -E "inject|delivered|phase=\"failed|capture|asr" | tail -8; exit 1
 fi
+# docs/dictation.md §26: the take's recording is kept, linked to the entry the paste recorded.
+kept=$(voltip_smoke_kept_recording "$data/data/voltip")
+echo "smoke-desktop-linux: recording cache → ${kept:-<none>}"
+if [ "$(printf '%s' "$kept" | cut -f1,3)" != "$(printf 'recognized\twav')" ] || [ "$(printf '%s' "$kept" | cut -f2)" != "$(voltip_smoke_last_entry_id "$data/data/voltip/history.sqlite3")" ]; then
+  echo "smoke-desktop-linux: the take's recording was not kept with its entry"; voltip_smoke_plain "$data/app.log" | grep -iE "record|cache" | tail -6; exit 1
+fi
 if ! timeout 5 sh -c 'until [ "$(DISPLAY=$2 xclip -o -selection clipboard 2>/dev/null)" = "$1" ]; do sleep 0.1; done' _ "$sentinel" "$display"; then
   echo "smoke-desktop-linux: clipboard not restored after the paste: $(DISPLAY=$display xclip -o -selection clipboard 2>/dev/null | head -c 80)"; exit 1
 fi

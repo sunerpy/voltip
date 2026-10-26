@@ -459,6 +459,10 @@ impl Runtime {
         }
         if wrote {
             self.emit_history();
+            // A full history dropped its oldest entries for them (docs/dictation.md §26).
+            if self.history.total() >= self.settings.history.keep as usize {
+                self.audio_follow_history();
+            }
         }
         if let Err(e) = self.send_app(key, &AppMessage::PhoneRecordsAck { version: ProtocolVersion::CURRENT, ids }).await {
             tracing::debug!(error = %e, "records confirmation not sent; the phone sends them again");

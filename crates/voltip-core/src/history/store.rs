@@ -279,6 +279,24 @@ impl HistoryStore {
         Ok(true)
     }
 
+    /// Which of `ids` are entries in the history (the audio cache asks which recordings still have
+    /// theirs, docs/dictation.md §26).
+    pub fn existing(&self, ids: &[Uuid]) -> Result<std::collections::HashSet<Uuid>, CoreError> {
+        let mut found = std::collections::HashSet::new();
+        if ids.is_empty() {
+            return Ok(found);
+        }
+        let Some(conn) = &self.conn else { return Err(CoreError::History(format!("{} cannot be opened", self.path.display()))) };
+        let conn = conn.lock();
+        let mut stmt = conn.prepare_cached("SELECT 1 FROM entries WHERE id = ?1").map_err(err)?;
+        for id in ids {
+            if stmt.exists([id.to_string()]).map_err(err)? {
+                found.insert(*id);
+            }
+        }
+        Ok(found)
+    }
+
     /// One entry by id.
     pub fn get(&self, id: Uuid) -> Result<Option<HistoryEntry>, CoreError> {
         let Some(conn) = &self.conn else { return Err(CoreError::History(format!("{} cannot be opened", self.path.display()))) };

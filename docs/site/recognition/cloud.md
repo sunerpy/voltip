@@ -104,8 +104,8 @@ Model Studio gives newly activated models a free quota, one for each model. **Vi
 Recognition and AI polish can each list fallback models: when the selected model's quota is used up, Voltip moves on to the next model in the list, and the dictation still goes through. Each of Model Studio's models has its own free quota, so you can list several models with a free quota one after another.
 
 1. On the Speech models or AI models page, turn on **When a model's quota runs out**.
-2. Below it, choose a provider and a model, and choose **Add**. A provider can be added with several of its models, up to 8 in all; each uses the address and the key set on the provider's card.
-3. Use the move up and move down buttons to change the order. The first row is the selected model.
+2. Below it, choose a provider and a model, and choose **Add** on the same row. A provider can be added with several of its models, up to 8 in all; each uses the address and the key set on the provider's card.
+3. Use the move up and move down buttons to change the order, and **Remove** beside a model to take it off the list. The first row is the selected model.
 
 - Voltip moves on only when the provider answers that the quota is used up. Other errors, such as a network failure, a wrong key or too many requests, are reported as before and do not switch models.
 - A model whose quota is used up is skipped for 24 hours and then tried again; the list shows when. **Check again** starts over with the selected model at once, and so does restarting Voltip or changing the provider's key.

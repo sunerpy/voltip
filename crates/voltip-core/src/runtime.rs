@@ -41,10 +41,13 @@ use crate::vocabulary::{DictionaryDraft, DictionaryEntry, DictionaryStore, Entry
 use crate::{CoreError, is_initiator, rendezvous_channel};
 
 mod always_on;
+mod audio;
+use audio::{Recovery, audio_at_start, keeps_audio, leftovers_at_start};
 mod backup;
 mod check;
 mod listing;
 mod mcp;
+mod models_move;
 mod network;
 mod notice;
 mod processing;
@@ -108,12 +111,16 @@ pub struct CoreConfig {
     /// A trusted-peer re-handshake that has not finished within this long is abandoned
     /// (the peer shows as offline again instead of "connecting" forever).
     pub peer_handshake_timeout: Duration,
-    /// Where local ASR models are installed (`<data_dir>/models`, docs/dictation.md §10). The shell
-    /// builds its `ModelStore` from this so the core and the store agree on one place.
+    /// Where local ASR models are installed (docs/dictation.md §10): `<data_dir>/models`, or the
+    /// folder `models-location.json` names (§10.9). The shell builds its `ModelStore` from this so
+    /// the core and the store agree on one place.
     pub models_root: PathBuf,
     /// Run takes whose audio a trusted phone streams (docs/dictation.md §20): the desktop yes,
     /// the phone no (it answers `unavailable`).
     pub accepts_phone_takes: bool,
+    /// Keep the newest takes' recordings so they can be recognised again (docs/dictation.md §26):
+    /// the desktop yes, the phone no (its interface offers none of it).
+    pub keeps_audio: bool,
     /// The shell shows the live preview (the desktop's pill). The phone does not, so the built-in
     /// service sends no previews there (docs/dictation.md §11.8): each would be a request for
     /// nothing.
@@ -201,7 +208,7 @@ impl CoreConfig {
     pub fn new(data_dir: PathBuf) -> Self {
         let data_dir_for_mirrors = data_dir.clone();
         Self {
-            models_root: data_dir.join(MODELS_DIR_NAME),
+            models_root: crate::models_location::root(&data_dir),
             data_dir,
             default_device_name: default_device_name(),
             client_version: format!("voltip/{}", env!("CARGO_PKG_VERSION")),
@@ -215,6 +222,7 @@ impl CoreConfig {
             tick: Duration::from_secs(1),
             peer_handshake_timeout: Duration::from_secs(15),
             accepts_phone_takes: true,
+            keeps_audio: true,
             shows_live_preview: true,
             builtin_scenes: true,
             manual_scenes: false,
@@ -445,6 +453,23 @@ pub enum CoreCommand {
         /// The request to stop.
         request_id: u64,
     },
+    /// Replace `Settings.audio_cache` (docs/dictation.md §26): off deletes the kept recordings,
+    /// tighter limits drop the oldest at once.
+    SetAudioCache(crate::settings::AudioCacheSettings),
+    /// Delete every kept recording.
+    AudioCacheClear,
+    /// Delete one kept recording.
+    AudioCacheDelete(Uuid),
+    /// Recognise a kept recording again (docs/dictation.md §26): a take through the pipeline whose
+    /// text goes to the clipboard and into the history as a new entry; it runs like any take, so
+    /// it is refused while another one runs. `models` it runs on instead of the settings' (§26.4),
+    /// for this take only.
+    AudioRetake {
+        /// The recording.
+        id: Uuid,
+        /// Other models than the settings', if any.
+        models: crate::audio_cache::RetakeModels,
+    },
     /// Fetch and verify a local model (catalogue id); progress arrives as `Models` events.
     ModelDownload(String),
     /// Stop a running download (`.part` files stay for a resume).
@@ -455,6 +480,12 @@ pub enum CoreCommand {
     /// §10): the result arrives as `Models` events (`installed`, or `import_incomplete` naming
     /// the files).
     ModelImport(String),
+    /// Move the model library into this folder, or back to `<data_dir>/models` with `None`
+    /// (docs/dictation.md §10.9): progress and the end arrive as `ModelsLocation` events. Refused
+    /// while a model downloads or the library already moves.
+    ModelsRelocate(Option<PathBuf>),
+    /// Stop a move before it switches; everything stays where it was.
+    ModelsRelocateCancel,
     /// Append a personal dictionary entry (docs/dictation.md §16).
     DictionaryAdd {
         /// Term, mis-hearings, flag.
@@ -600,6 +631,7 @@ struct Inbox {
     process_rx: mpsc::Receiver<processing::Processed>,
     listed_rx: mpsc::Receiver<listing::Listed>,
     mcp_rx: mpsc::Receiver<crate::mcp::McpInbound>,
+    recover_rx: mpsc::Receiver<audio::Recovered>,
 }
 
 /// Events to the UI.
@@ -670,6 +702,9 @@ pub enum CoreEvent {
         /// Running, done (stored), failed or cancelled.
         state: crate::history::process::ProcessState,
     },
+    /// The recordings the audio cache holds (docs/dictation.md §26); on `Ready` and after every
+    /// change.
+    AudioCache(crate::audio_cache::AudioCacheView),
     /// Resolved engine configuration (providers, models, user-entered hosts, key presence); on
     /// `Ready` and after changes.
     Engines(EngineStatus),
@@ -678,6 +713,9 @@ pub enum CoreEvent {
     /// Local model library (full replacement, download progress folded in); on `Ready` and after
     /// every change.
     Models(Vec<ModelState>),
+    /// Where the model library is, a move in progress and how the last one ended
+    /// (docs/dictation.md §10.9); on `Ready` and after every change.
+    ModelsLocation(crate::models_location::ModelsLocationView),
     /// Personal dictionary (full replacement); on `Ready` and after every change.
     Dictionary(Vec<DictionaryEntry>),
     /// Replacement rules in execution order (full replacement); on `Ready` and after every change.
@@ -809,6 +847,8 @@ impl AppCore {
         config.network.set(plan);
         let models = ports.models.clone();
         let service_probe = ports.service_probe.clone();
+        // docs/dictation.md §10.9: the old copies a move could not delete go before anything loads.
+        crate::models_location::remove_leftovers(&config.data_dir);
         let library = models.as_ref().map(|m| m.scan()).unwrap_or_default();
         let resolved = ResolvedEngines::resolve_with_models(&settings.engines, &user_secrets, &built_in, &library);
         let (levels_tx, _) = broadcast::channel(LEVELS_QUEUE);
@@ -820,14 +860,18 @@ impl AppCore {
         dictation.set_pinned_scene(settings.pinned_scene);
         dictation.set_microphone(settings.microphone.clone());
         dictation.set_recording(settings.recording.clone());
-        // docs/dictation.md §22: a recording file left behind means the last run ended mid-take;
-        // nothing reads it, so it goes before the first take.
-        let recordings = crate::dictation::long::recordings_dir(&config.data_dir);
-        let cleared = crate::dictation::long::clear_leftovers(&recordings);
-        if cleared > 0 {
-            tracing::info!(cleared, "removed the recording files an earlier run left behind");
+        // docs/dictation.md §22, §26.3: a recording file left behind means the last run ended
+        // mid-take; with the audio cache on its copy is put together once the core runs, without
+        // it the files go before the first take.
+        let leftovers = leftovers_at_start(&config, &settings);
+        dictation.set_recordings_dir(crate::dictation::long::recordings_dir(&config.data_dir));
+        // docs/dictation.md §26: the kept recordings, reconciled with their files, then held to
+        // the settings and the history as they are now.
+        let mut audio = if config.keeps_audio { crate::audio_cache::AudioCache::open(&config.data_dir) } else { crate::audio_cache::AudioCache::unavailable() };
+        if let Err(e) = audio_at_start(&mut audio, &settings.audio_cache, &history) {
+            tracing::warn!(error = %e, "the audio cache could not be brought in line with the settings");
         }
-        dictation.set_recordings_dir(recordings);
+        dictation.set_keep_audio(keeps_audio(&config, &settings));
         let (cmd_tx, cmd_rx) = mpsc::channel(64);
         let (evt_tx, evt_rx) = mpsc::channel(512);
         let (link_tx, link_rx) = mpsc::channel(1024);
@@ -838,6 +882,7 @@ impl AppCore {
         let (process_tx, process_rx) = mpsc::channel(8);
         let (listed_tx, listed_rx) = mpsc::channel(16);
         let (mcp_tx, mcp_rx) = mpsc::channel(64);
+        let (recover_tx, recover_rx) = mpsc::channel(4);
         let activation = ActivationState::new(ActivationConfig::from(&settings));
         let serve_host = config.serve_host.clone();
         let (mcp, mcp_notice) = mcp::McpRuntime::new(config.mcp_host.clone(), &config.data_dir, mcp_tx);
@@ -854,6 +899,8 @@ impl AppCore {
             service_probe,
             dictation,
             history,
+            audio,
+            recovery: Recovery { leftovers, stop: Arc::new(std::sync::atomic::AtomicBool::new(false)), tx: recover_tx },
             dictionary,
             rules,
             scenes,
@@ -862,6 +909,7 @@ impl AppCore {
             models,
             library,
             downloads: HashMap::new(),
+            moves: models_move::Moves::default(),
             model_tx,
             activation,
             act_tx,
@@ -907,7 +955,7 @@ impl AppCore {
         };
         rt.system_fingerprint = rt.config.network.system_fingerprint();
         rt.connect_relay()?;
-        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx, mcp_rx };
+        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx, mcp_rx, recover_rx };
         Ok((rt, inbox, CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
 }
@@ -976,6 +1024,10 @@ enum ModelProgress {
     Finished { id: String, result: Result<ModelInstallState, String>, cancelled: bool },
     /// A manual import is over.
     Imported { id: String, result: Result<ModelInstallState, crate::models::ModelImportError> },
+    /// A move of the library copied this much (docs/dictation.md §10.9), already throttled.
+    Moving { moved: u64, total: u64 },
+    /// A move of the library is over.
+    Moved { result: Result<crate::models::Relocated, String>, cancelled: bool },
 }
 
 impl From<&Settings> for ActivationConfig {
@@ -1066,6 +1118,10 @@ struct Runtime {
     service_probe: Option<Arc<dyn crate::dictation::ServiceProbe>>,
     dictation: DictationEngine,
     history: HistoryStore,
+    /// The kept recordings (docs/dictation.md §26); keeps nothing where `config.keeps_audio` is off.
+    audio: crate::audio_cache::AudioCache,
+    /// The long takes an earlier run left behind, being put together (§26.3).
+    recovery: Recovery,
     /// `dictionary.json` (docs/dictation.md §16).
     dictionary: DictionaryStore,
     /// `rules.json` (docs/dictation.md §16).
@@ -1081,6 +1137,8 @@ struct Runtime {
     library: Vec<ModelState>,
     /// Running downloads by catalogue id.
     downloads: HashMap<String, Download>,
+    /// A move of the library and how the last one ended (docs/dictation.md §10.9).
+    moves: models_move::Moves,
     /// Download tasks report here.
     model_tx: mpsc::Sender<ModelProgress>,
     /// Hotkey activation (docs/dictation.md §13).
@@ -1264,8 +1322,19 @@ impl Runtime {
     // ---------------- main loop ----------------
 
     async fn run(mut self, inbox: Inbox) {
-        let Inbox { mut cmd_rx, mut link_rx, mut dict_rx, mut model_rx, mut act_rx, mut phone_rx, mut check_rx, mut process_rx, mut listed_rx, mut mcp_rx } =
-            inbox;
+        let Inbox {
+            mut cmd_rx,
+            mut link_rx,
+            mut dict_rx,
+            mut model_rx,
+            mut act_rx,
+            mut phone_rx,
+            mut check_rx,
+            mut process_rx,
+            mut listed_rx,
+            mut mcp_rx,
+            mut recover_rx,
+        } = inbox;
         self.emit(CoreEvent::Ready {
             identity: self.identity.public(),
             settings: self.settings.clone(),
@@ -1274,7 +1343,10 @@ impl Runtime {
         });
         self.emit(CoreEvent::Engines(self.engine_status()));
         self.emit_models();
+        self.emit_models_location();
         self.emit_history();
+        self.emit_audio_cache();
+        self.start_recovery();
         self.emit(CoreEvent::Dictionary(self.dictionary.entries().to_vec()));
         self.emit(CoreEvent::Rules(self.rules.rules().to_vec()));
         self.emit(CoreEvent::Scenes(self.scenes.scenes().to_vec()));
@@ -1312,6 +1384,7 @@ impl Runtime {
                 Some(processed) = process_rx.recv() => self.on_processed(processed),
                 Some(listed) = listed_rx.recv() => self.on_listed(listed),
                 Some(inbound) = mcp_rx.recv() => self.on_mcp(inbound),
+                Some(recovered) = recover_rx.recv() => self.on_recovered(recovered),
                 Ok(()) = quota_rx.changed() => self.emit(CoreEvent::Engines(self.engine_status())),
                 _ = ticker.tick() => self.tick().await,
             }
@@ -1327,6 +1400,9 @@ impl Runtime {
             d.cancel.cancel();
             d.task.abort();
         }
+        self.moves.stop();
+        // A take still being put together is left for the next start.
+        self.recovery.stop.store(true, std::sync::atomic::Ordering::SeqCst);
         self.activation.take_deferred();
         self.activation.disarm_capture();
         if let Some(t) = self.activation.grace.take() {
@@ -1414,9 +1490,20 @@ impl Runtime {
             }
             CoreCommand::ProbeProvider { provider, kind, base_url, key } => self.probe_provider(provider, kind, base_url, key),
             CoreCommand::RefreshProviderModels { provider, kind } => self.refresh_provider_models(provider, kind),
-            CoreCommand::HistoryDelete(id) => self.history.delete(id).map(|_| self.emit_history()),
-            CoreCommand::HistoryClear => self.history.clear().map(|()| self.emit_history()),
+            CoreCommand::HistoryDelete(id) => self.history.delete(id).map(|_| {
+                self.emit_history();
+                // docs/dictation.md §26: the entry's recording goes with it.
+                self.audio_entry_deleted(id);
+            }),
+            CoreCommand::HistoryClear => self.history.clear().map(|()| {
+                self.emit_history();
+                self.audio_history_cleared();
+            }),
             CoreCommand::HistoryStar(id, starred) => self.history.star(id, starred).map(|_| self.emit_history()),
+            CoreCommand::SetAudioCache(settings) => self.set_audio_cache(settings),
+            CoreCommand::AudioCacheClear => self.audio_cache_clear(),
+            CoreCommand::AudioCacheDelete(id) => self.audio_cache_delete(id),
+            CoreCommand::AudioRetake { id, models } => self.audio_retake(id, models),
             CoreCommand::HistoryProcess { request_id, id, preset } => {
                 self.process_entry(request_id, id, preset);
                 Ok(())
@@ -1429,6 +1516,8 @@ impl Runtime {
             CoreCommand::ModelCancel(id) => self.model_cancel(&id),
             CoreCommand::ModelRemove(id) => self.model_remove(&id),
             CoreCommand::ModelImport(id) => self.model_import(&id),
+            CoreCommand::ModelsRelocate(to) => self.models_relocate(to),
+            CoreCommand::ModelsRelocateCancel => self.models_relocate_cancel(),
             CoreCommand::DictionaryAdd { draft, source } => {
                 let result = self.dictionary.add(&draft, source, now_ms()).map(drop);
                 self.dictionary_changed(result)
@@ -1573,6 +1662,20 @@ impl Runtime {
     }
 
     fn set_engines(&mut self, engines: EngineSettings) -> Result<(), CoreError> {
+        self.check_engines(&engines)?;
+        self.settings.engines = engines;
+        self.settings_store.save(&self.settings)?;
+        self.emit(CoreEvent::Settings(self.settings.clone()));
+        self.reconfigure_engines();
+        // `active` follows the selection.
+        self.emit_models();
+        Ok(())
+    }
+
+    /// What `SetEngines` refuses before anything is saved: a provider that does not offer its
+    /// service, an endpoint that is not HTTP(S), an interface choice off the custom provider, a
+    /// thread count or fallback list out of bounds, a local model the catalogue does not have.
+    fn check_engines(&self, engines: &EngineSettings) -> Result<(), CoreError> {
         if !engines.asr_provider.spec().offers(ServiceKind::Asr) {
             return Err(CoreError::Invalid(format!("asr_provider: {} 不提供语音识别", engines.asr_provider.as_str())));
         }
@@ -1601,7 +1704,7 @@ impl Runtime {
         if engines.asr_provider == ProviderId::Local {
             // The model has to exist in the catalogue; it need not be installed yet (the UI then
             // shows "模型未下载" and the download button).
-            let id = Self::selected_local_model(&engines);
+            let id = Self::selected_local_model(engines);
             if self.models.is_none() {
                 return Err(CoreError::Invalid("local_model: 本地模型不可用".into()));
             }
@@ -1609,12 +1712,6 @@ impl Runtime {
                 return Err(CoreError::Invalid(format!("local_model: 目录中没有 {id}")));
             }
         }
-        self.settings.engines = engines;
-        self.settings_store.save(&self.settings)?;
-        self.emit(CoreEvent::Settings(self.settings.clone()));
-        self.reconfigure_engines();
-        // `active` follows the selection.
-        self.emit_models();
         Ok(())
     }
 
@@ -1628,11 +1725,15 @@ impl Runtime {
     /// The local-model refusal of [`Runtime::dictation_start`], shared by the edit take (its
     /// instruction is recognised by the same engine).
     fn check_recogniser(&self) -> Result<(), CoreError> {
-        let resolved = self.resolved_engines();
+        Self::check_recognition(&self.resolved_engines())
+    }
+
+    /// Why `resolved` cannot recognise, as the refusal of a take that needs it.
+    fn check_recognition(resolved: &ResolvedEngines) -> Result<(), CoreError> {
         match resolved.asr_issue {
             None => Ok(()),
             Some(crate::engines::EngineIssue::ModelNotInstalled) => {
-                let name = resolved.local_model.map(|m| m.name).unwrap_or_default();
+                let name = resolved.local_model.as_ref().map(|m| m.name.clone()).unwrap_or_default();
                 Err(CoreError::Dictation(DictationError::Asr(format!("本地模型未下载：{name}"))))
             }
             Some(issue) => Err(CoreError::Dictation(DictationError::Asr(issue.message(ServiceKind::Asr).to_owned()))),
@@ -1945,6 +2046,9 @@ impl Runtime {
 
     fn model_download(&mut self, id: &str) -> Result<(), CoreError> {
         let entry = self.model_entry(id)?;
+        if self.moves.is_running() {
+            return Err(CoreError::Invalid(models_move::MOVING.into()));
+        }
         if entry.state.is_installed() {
             return Err(CoreError::Invalid(format!("models: {id} 已安装")));
         }
@@ -1996,6 +2100,9 @@ impl Runtime {
     /// download runs (nothing else may start on the model meanwhile).
     fn model_import(&mut self, id: &str) -> Result<(), CoreError> {
         let entry = self.model_entry(id)?;
+        if self.moves.is_running() {
+            return Err(CoreError::Invalid(models_move::MOVING.into()));
+        }
         if entry.state.is_installed() {
             return Err(CoreError::Invalid(format!("models: {id} 已安装")));
         }
@@ -2022,6 +2129,9 @@ impl Runtime {
 
     fn model_remove(&mut self, id: &str) -> Result<(), CoreError> {
         self.model_entry(id)?;
+        if self.moves.is_running() {
+            return Err(CoreError::Invalid(models_move::MOVING.into()));
+        }
         if self.downloads.contains_key(id) {
             return Err(CoreError::Invalid(format!("models: {id} 正在下载，先取消")));
         }
@@ -2089,6 +2199,8 @@ impl Runtime {
                 }
                 self.rescan_models();
             }
+            ModelProgress::Moving { moved, total } => self.on_models_moving(moved, total),
+            ModelProgress::Moved { result, cancelled } => self.on_models_moved(result, cancelled),
         }
     }
 
@@ -2301,6 +2413,8 @@ impl Runtime {
                     }
                     self.record_history(entry);
                 }
+                Effect::Keep(new) => self.keep_recording(*new),
+                Effect::Kept { recording, status } => self.kept_status(recording, status),
             }
         }
     }
@@ -2310,8 +2424,15 @@ impl Runtime {
         if !self.settings.history.enabled {
             return;
         }
-        match self.history.push(entry, self.settings.history.keep as usize) {
-            Ok(()) => self.emit_history(),
+        let keep = self.settings.history.keep as usize;
+        match self.history.push(entry, keep) {
+            Ok(()) => {
+                self.emit_history();
+                // A full history dropped its oldest entry: a recording of it goes too (§26).
+                if self.history.total() >= keep {
+                    self.audio_follow_history();
+                }
+            }
             Err(e) => {
                 tracing::warn!(error = %e, "history append failed");
                 self.emit(CoreEvent::Error(e.to_string()));
@@ -2668,8 +2789,12 @@ impl Runtime {
         }
         self.settings.history = history;
         self.save_settings()?;
+        // docs/dictation.md §26: no history, no new recordings (the kept ones stay with their
+        // entries, as the entries do).
+        self.dictation.set_keep_audio(keeps_audio(&self.config, &self.settings));
         if self.history.retain_newest(keep)? {
             self.emit_history();
+            self.audio_follow_history();
         }
         Ok(())
     }

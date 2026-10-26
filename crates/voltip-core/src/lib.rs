@@ -6,6 +6,7 @@
 #![warn(missing_docs)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod audio_cache;
 pub mod backup;
 mod channel;
 pub mod connectivity;
@@ -16,6 +17,8 @@ pub mod hotkey;
 mod list_file;
 pub mod mcp;
 pub mod models;
+pub mod models_location;
+pub(crate) mod ogg;
 pub mod paste;
 mod peer;
 pub mod phone;
@@ -49,7 +52,7 @@ pub use history::{
 pub use hotkey::{DEFAULT_EDIT_HOTKEY, DEFAULT_HOTKEY, Hotkey, HotkeyError, Modifier, SoloKey};
 pub use models::{
     CAPABILITY_OFFLINE, CAPABILITY_STREAMING, CAPABILITY_VAD, CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelFileView, ModelImportError, ModelInstallState,
-    ModelManager, ModelState, ProgressSink,
+    ModelManager, ModelState, ProgressSink, RelocateCommit, RelocateProgress, Relocated,
 };
 pub use presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetError, PresetId, PresetRef, PresetTrial, PresetTryOutcome, TakePreset};
 pub use providers::{
@@ -62,9 +65,9 @@ pub use runtime::{
 };
 pub use scenes::{AppRef, BuiltinScene, ContextSharing, Scene, SceneDraft, SceneError, SceneMatch, SceneOverrides, SceneRef, TakeContext};
 pub use settings::{
-    DEFAULT_MAX_MINUTES, HistorySettings, Locale, MAX_MINUTES_CHOICES, MIN_SERVE_PORT, OverlayPlacement, PROXY_PASSWORD_ENTRY, PhoneTalkMode, ProxyMode,
-    ProxySettings, RecordingSettings, RecordingSource, SETTINGS_FILE_NAME, ServeSettings, Settings, SettingsStore, ThemeId, load_proxy_password,
-    peek_proxy_password, proxy_error, proxy_error_text,
+    AudioCacheSettings, DEFAULT_MAX_MINUTES, HistorySettings, Locale, MAX_MINUTES_CHOICES, MIN_SERVE_PORT, OverlayPlacement, PROXY_PASSWORD_ENTRY,
+    PhoneTalkMode, ProxyMode, ProxySettings, RecordingSettings, RecordingSource, SETTINGS_FILE_NAME, ServeSettings, Settings, SettingsStore, ThemeId,
+    load_proxy_password, peek_proxy_password, proxy_error, proxy_error_text,
 };
 pub use view::{DeviceConnection, DeviceView, RelaySource, RelayStatus};
 pub use vocabulary::{

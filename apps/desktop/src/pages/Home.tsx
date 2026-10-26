@@ -42,6 +42,7 @@ import { serviceTarget } from "./settings/engines/helpers";
 import { levelFraction, useAudioMeter } from "../features/audio/useAudioMeter";
 import { useChosenMicrophone, useMicrophoneTest } from "../features/audio/useMicrophoneTest";
 import { useDictation, useTickingNow } from "../features/dictation/useDictation";
+import { HomeRecordings } from "../features/history/Recordings";
 import { ResultActions } from "../features/history/ResultActions";
 import { PermissionNotice } from "../features/permissions/PermissionNotice";
 import { PresetMenu } from "../features/presets/PresetMenu";
@@ -134,8 +135,8 @@ function OutcomeChip({ outcome }: { outcome: HistoryOutcome }) {
 }
 
 /** Home (Penpot 「澄空 Glass · Voltip」 board 01): the 听写 card (readiness, the chord, start), the
- *  识别与润色 card (the speech model, AI 润色, the microphone), the four stat tiles and the recent
- *  results. Every number comes from the core: `state.dictation` drives the start / stop button and
+ *  识别与润色 card (the speech model, AI 润色, the microphone), the four stat tiles, the recordings
+ *  no text came from (while there are any) and the recent results. Every number comes from the core: `state.dictation` drives the start / stop button and
  *  the live phase line, `state.engines` the cards, `state.history_recent` the list and
  *  `history_stats` (docs/dictation.md §4.5) the tiles. */
 export function Home() {
@@ -653,6 +654,9 @@ export function Home() {
           </div>
         ))}
       </div>
+
+      {/* docs/dictation.md §26: the recordings no text came from, for 重新识别 in place. */}
+      <HomeRecordings />
 
       <Card padding="none" className="px-2 pt-4 pb-2" data-testid="home-recent">
         <div className="flex items-center justify-between px-4">

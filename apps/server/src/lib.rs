@@ -134,17 +134,18 @@ pub fn with_env_keys(mut secrets: UserSecrets, env: impl Fn(&str) -> Option<Stri
 pub fn production_wiring(data_dir: &Path) -> Wiring {
     let models_root = CoreConfig::new(data_dir.to_path_buf()).models_root;
     let network = voltip_net::Network::new();
-    let store = ModelStore::new(models_root.clone()).with_network(&network);
+    let store = ModelStore::new(models_root).with_network(&network);
+    let root = store.shared_root();
     let keychain = secret_store();
     let (secrets, secrets_notice) = read_secrets(keychain.as_ref());
     // The proxy's password, when the keychain can be read at all (docs/dictation.md §24).
     let proxy_password = if secrets_notice.is_none() { voltip_core::peek_proxy_password(keychain.as_ref()) } else { None };
     let (secrets, secrets_from_env) = with_env_keys(secrets, |name| std::env::var(name).ok());
     Wiring {
-        factory: engine_factory(LocalTranscriber::new(models_root.clone()), Arc::clone(&network)),
+        factory: engine_factory(LocalTranscriber::new(root.clone()), Arc::clone(&network)),
         models: Some(Arc::new(store)),
         // No store: a missing VAD model is never downloaded; the core's own cutter runs instead.
-        segmenter: Some(Arc::new(VadSegmenterFactory::new(models_root, None))),
+        segmenter: Some(Arc::new(VadSegmenterFactory::new(root, None))),
         secrets,
         secrets_notice,
         secrets_from_env,

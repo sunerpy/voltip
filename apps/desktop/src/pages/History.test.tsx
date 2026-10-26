@@ -15,6 +15,7 @@ import {
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
+import { writeHistoryPageSize } from "./history-list/page-size";
 
 /** Fixed pixel panel sizes and two-fixed-column grids broke the 1440 / 1920 px windows (Windows
  *  test 2026-09-24); `max-w-[…]` / `min-w-[…]` caps stay allowed (the root is `max-w-[1440px]`). */
@@ -894,18 +895,24 @@ describe("History page with a long history (docs/dictation.md section 4.4)", () 
   const pager = () => screen.getByRole("navigation", { name: "分页" });
   const pageButton = (name: string) => within(pager()).getByRole("button", { name });
   const pageCount = () => screen.getByTestId("history-page-count");
+  /** 50 entries a page, as chosen before (the page size this window remembers; the default is
+   *  10): for the tests of how paging behaves rather than of the default. */
+  const fiftyAPage = () => {
+    writeHistoryPageSize(50);
+  };
 
-  it("regression: shows the history a page at a time, 50 entries by default, with first, previous, numbered, next and last pages and where the page is (user request 2026-10-13)", async () => {
-    // Until 0.1.4 the list loaded 100 more entries each time its end came into view.
+  it("regression: shows the history a page at a time, 10 entries by default, with first, previous, numbered, next and last pages and where the page is (user requests 2026-10-13, 2026-10-26)", async () => {
+    // Until 0.1.4 the list loaded 100 more entries each time its end came into view; until 0.1.9
+    // a page held 50.
     const user = userEvent.setup();
-    const backend = new MockBackend({ history: rows(250) });
+    const backend = new MockBackend({ history: rows(50) });
     renderApp({ path: "/history", backend });
     const log = await screen.findByRole("list", { name: "听写记录" });
     await waitFor(() => {
-      expect(rowIds(log)).toEqual(ids(0, 50));
+      expect(rowIds(log)).toEqual(ids(0, 10));
     });
     const count = pageCount();
-    expect(count).toHaveTextContent("第 1 / 5 页 · 共 250 条");
+    expect(count).toHaveTextContent("第 1 / 5 页 · 共 50 条");
     expect(
       within(pager())
         .getAllByRole("button")
@@ -926,24 +933,24 @@ describe("History page with a long history (docs/dictation.md section 4.4)", () 
     expect(screen.queryByRole("button", { name: "加载更多" })).toBeNull();
     expect(screen.queryByTestId("history-loaded")).toBeNull();
     for (const [name, from, page] of [
-      ["下一页", 50, 2],
-      ["最后一页", 200, 5],
-      ["第 3 页", 100, 3],
-      ["上一页", 50, 2],
+      ["下一页", 10, 2],
+      ["最后一页", 40, 5],
+      ["第 3 页", 20, 3],
+      ["上一页", 10, 2],
       ["第一页", 0, 1],
     ] as const) {
       await user.click(pageButton(name));
       await waitFor(() => {
-        expect(rowIds(log)).toEqual(ids(from, from + 50));
+        expect(rowIds(log)).toEqual(ids(from, from + 10));
       });
-      expect(count).toHaveTextContent(`第 ${page} / 5 页 · 共 250 条`);
+      expect(count).toHaveTextContent(`第 ${page} / 5 页 · 共 50 条`);
       expect(pageButton(`第 ${page} 页`)).toHaveAttribute("aria-current", "page");
     }
     // The keyboard: the pages are buttons in the tab order, Enter turns them, the focus stays.
     pageButton("下一页").focus();
     await user.keyboard("{Enter}");
     await waitFor(() => {
-      expect(rowIds(log)).toEqual(ids(50, 100));
+      expect(rowIds(log)).toEqual(ids(10, 20));
     });
     expect(pageButton("下一页")).toHaveFocus();
     backend.destroy();
@@ -955,18 +962,18 @@ describe("History page with a long history (docs/dictation.md section 4.4)", () 
     const view = renderApp({ path: "/history", backend });
     const log = await screen.findByRole("list", { name: "听写记录" });
     await waitFor(() => {
-      expect(rowIds(log)).toHaveLength(50);
+      expect(rowIds(log)).toHaveLength(10);
     });
     const size = screen.getByRole("combobox", { name: "每页显示条数" });
-    expect(size).toHaveValue("50");
+    expect(size).toHaveValue("10");
     expect(
       within(size)
         .getAllByRole("option")
         .map((o) => o.textContent),
-    ).toEqual(["20 条", "50 条", "100 条", "200 条"]);
+    ).toEqual(["10 条", "20 条", "50 条", "100 条", "200 条"]);
     await user.click(pageButton("第 3 页"));
     await waitFor(() => {
-      expect(rowIds(log)).toEqual(ids(100, 150));
+      expect(rowIds(log)).toEqual(ids(20, 30));
     });
     await user.selectOptions(size, "100");
     await waitFor(() => {
@@ -992,6 +999,7 @@ describe("History page with a long history (docs/dictation.md section 4.4)", () 
   });
 
   it("regression: a search goes back to page 1 and counts what it found, the filters narrow it, and nothing found has its own empty state (user request 2026-10-13)", async () => {
+    fiftyAPage();
     const user = userEvent.setup();
     const backend = new MockBackend({ history: rows(250, 10) });
     renderApp({ path: "/history", backend });
@@ -1035,6 +1043,7 @@ describe("History page with a long history (docs/dictation.md section 4.4)", () 
   });
 
   it("regression: a new dictation keeps the page the user is on, and page 1 starts with it", async () => {
+    fiftyAPage();
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     try {
@@ -1073,6 +1082,7 @@ describe("History page with a long history (docs/dictation.md section 4.4)", () 
   });
 
   it("regression: deleting the only entry on the last page moves to the page before it", async () => {
+    fiftyAPage();
     const user = userEvent.setup();
     const backend = new MockBackend({ history: rows(101) });
     renderApp({ path: "/history", backend });
@@ -1098,6 +1108,7 @@ describe("History page with a long history (docs/dictation.md section 4.4)", () 
   });
 
   it("the detail keeps a chosen entry while it is on the page; after another page or a search that leaves it out, it shows the first row there", async () => {
+    fiftyAPage();
     const user = userEvent.setup();
     const backend = new MockBackend({ history: rows(120) });
     renderApp({ path: "/history", backend });
@@ -1131,10 +1142,13 @@ describe("History page with a long history (docs/dictation.md section 4.4)", () 
     backend.destroy();
   });
 
-  it("regression: the detail stays in view while the log scrolls the page: sticky under the page's padding, at most as tall as the scroll area, scrolling inside itself (user request 2026-10-13)", async () => {
-    // jsdom lays nothing out: the scroll area (the shell's <main>) gets a height, and a smaller
-    // window is played through ResizeObserver.
+  it("regression: the log and the detail fill the window under what is above them, side by side and equally tall, each scrolling inside itself (user requests 2026-10-13, 2026-10-26)", async () => {
+    // jsdom lays nothing out: the scroll area (the shell's <main>) gets a height and the grid a
+    // place on the page, and a smaller window or a taller banner is played through
+    // ResizeObserver. Until 0.1.9 the detail stuck beside a log that ran down the page, a card
+    // shorter than the window.
     let height = 640;
+    let gridTop = 180;
     const observers = new Set<() => void>();
     vi.stubGlobal(
       "ResizeObserver",
@@ -1152,53 +1166,95 @@ describe("History page with a long history (docs/dictation.md section 4.4)", () 
     vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (this: Element) {
       return this.querySelector(':scope > [data-testid="page-history"]') === null ? 0 : height;
     });
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const top =
+        this.classList.contains("grid") && this.parentElement?.dataset.testid === "page-history"
+          ? gridTop
+          : 0;
+      return new DOMRect(0, top, 800, 400);
+    });
     try {
       const backend = new MockBackend({ history: rows(120) });
       renderApp({ path: "/history", backend });
       const page = await screen.findByTestId("page-history");
-      // The page scrolls in the shell's <main>; the page's padding (p-6) is the sticky offset.
       const area = page.parentElement;
       expect(area?.tagName).toBe("MAIN");
       expect(area).toHaveClass("overflow-auto");
       expect(page).toHaveClass("p-6");
       expect(page.style.getPropertyValue("--scroll-area-h")).toBe("640px");
-      // The grid's second child is the detail; from lg on it sticks, at the top of its row, and
-      // is never taller than the area less the padding above and below (its 552 px floor lowered
-      // to fit). Only what does not fit scrolls, inside the detail's card.
-      const split = page.querySelector(".grid");
+      expect(page.style.getPropertyValue("--split-top")).toBe("180px");
+      // From lg on the grid is the area's height less its top and the page's bottom padding,
+      // never under 480 px, in one row the two columns fill.
+      const split = page.querySelector(":scope > .grid");
       if (!(split instanceof HTMLElement)) throw new Error("grid");
       const [logPanel, detail, ...rest] = [...split.children];
       expect(rest).toEqual([]);
       expect(logPanel).toBe(screen.getByTestId("history-log"));
       expect(detail).toContainElement(screen.getByTestId("entry-text"));
       expect(split).toHaveClass(
-        "lg:[&>:nth-child(2)]:sticky",
-        "lg:[&>:nth-child(2)]:top-6",
-        "lg:[&>:nth-child(2)]:self-start",
-        "lg:[&>:nth-child(2)]:max-h-[calc(var(--scroll-area-h,100vh)_-_3rem)]",
-        "lg:[&>:nth-child(2)]:min-h-[min(552px,calc(var(--scroll-area-h,100vh)_-_3rem))]",
-        "lg:[&>:nth-child(2)]:overflow-y-auto",
+        "lg:h-[max(480px,calc(var(--scroll-area-h,100vh)_-_var(--split-top,0px)_-_1.5rem))]",
+        "lg:grid-rows-[minmax(0,1fr)]",
       );
-      // Below lg the two stack and nothing sticks: every rule for the detail is an lg rule.
+      expect(split.className).not.toMatch(/sticky|self-start|(?:^|\s)(?:lg:)?items-/);
+      // The log's rows scroll inside it, its page buttons under them; the detail scrolls as a
+      // whole. Both may shrink to the row.
+      expect(logPanel).toHaveClass("lg:min-h-0");
+      const list = screen.getByTestId("history-rows");
+      expect(list).toHaveClass("lg:min-h-0", "lg:flex-1", "lg:overflow-y-auto");
+      const pagerBox = screen.getByTestId("history-pager");
       expect(
-        split.className.split(/\s+/).filter((c) => c.includes("nth-child") && !c.startsWith("lg:")),
+        list.compareDocumentPosition(pagerBox) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(logPanel).toContainElement(pagerBox);
+      expect(detail).toHaveClass("lg:min-h-0", "lg:overflow-y-auto");
+      // Below lg the two stack and grow with what they hold: every height rule is an lg rule.
+      expect(
+        split.className
+          .split(/\s+/)
+          .filter((c) => /(?:^|:)h-|grid-rows/.test(c) && !c.startsWith("lg:")),
       ).toEqual([]);
-      // The log scrolls with the page and stretches to the row: no blank under it either.
-      expect(logPanel?.className).not.toMatch(/sticky|self-/);
-      expect(split.className).not.toMatch(/(?:^|\s)(?:lg:)?items-/);
-      // A smaller window: the height follows.
+      // A smaller window, and more above the grid: both follow.
       height = 480;
+      gridTop = 260;
       act(() => {
         for (const measure of observers) measure();
       });
       expect(page.style.getPropertyValue("--scroll-area-h")).toBe("480px");
+      expect(page.style.getPropertyValue("--split-top")).toBe("260px");
       backend.destroy();
     } finally {
       vi.unstubAllGlobals();
+      vi.restoreAllMocks();
     }
   });
 
+  it("another page, filter or search starts the log's rows at their top", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({ history: rows(120) });
+    renderApp({ path: "/history", backend });
+    const log = await screen.findByRole("list", { name: "听写记录" });
+    await waitFor(() => {
+      expect(rowIds(log)).toHaveLength(10);
+    });
+    const list = screen.getByTestId("history-rows");
+    list.scrollTop = 300;
+    await user.click(pageButton("下一页"));
+    await waitFor(() => {
+      expect(rowIds(log)).toEqual(ids(10, 20));
+    });
+    expect(list.scrollTop).toBe(0);
+    list.scrollTop = 200;
+    await user.click(screen.getByRole("radio", { name: "已收藏" }));
+    await waitFor(() => {
+      expect(list.scrollTop).toBe(0);
+    });
+    backend.destroy();
+  });
+
   it("the detail starts at its top for each entry it shows, wherever the last one was scrolled to", async () => {
+    fiftyAPage();
     const user = userEvent.setup();
     const backend = new MockBackend({ history: rows(120) });
     renderApp({ path: "/history", backend });
@@ -1221,6 +1277,7 @@ describe("History page with a long history (docs/dictation.md section 4.4)", () 
   });
 
   it("another page brings the top of the log into view when the page was scrolled past it", async () => {
+    fiftyAPage();
     const user = userEvent.setup();
     const scrollIntoView = vi.fn();
     Object.defineProperty(Element.prototype, "scrollIntoView", {

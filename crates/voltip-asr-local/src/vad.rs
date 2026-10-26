@@ -12,7 +12,7 @@
 //! all hands the original audio to the recogniser unchanged — trimming is an optimisation, never
 //! a gate.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,6 +20,7 @@ use parking_lot::Mutex;
 
 use crate::catalogue::{ModelEntry, vad_entry};
 use crate::gguf::resample_to_model_rate;
+use crate::root::ModelsRoot;
 use crate::sherpa::SherpaVadLoader;
 use crate::store;
 
@@ -98,7 +99,7 @@ impl Trim {
 /// The trimmer over the model library: knows where the VAD model lives, loads it once, cuts.
 #[derive(Clone)]
 pub struct VadTrimmer {
-    root: PathBuf,
+    root: ModelsRoot,
     entry: &'static ModelEntry,
     loader: Arc<dyn VadLoader>,
     cache: Arc<Mutex<Option<Box<dyn VoiceActivity>>>>,
@@ -112,12 +113,12 @@ impl std::fmt::Debug for VadTrimmer {
 
 impl VadTrimmer {
     /// sherpa-onnx over the real catalogue's VAD entry under `root` (`<app data dir>/models`).
-    pub fn new(root: impl Into<PathBuf>) -> Self {
+    pub fn new(root: impl Into<ModelsRoot>) -> Self {
         Self::with_loader(root, vad_entry(), Arc::new(SherpaVadLoader))
     }
 
     /// Any entry and loader (tests).
-    pub fn with_loader(root: impl Into<PathBuf>, entry: &'static ModelEntry, loader: Arc<dyn VadLoader>) -> Self {
+    pub fn with_loader(root: impl Into<ModelsRoot>, entry: &'static ModelEntry, loader: Arc<dyn VadLoader>) -> Self {
         Self { root: root.into(), entry, loader, cache: Arc::new(Mutex::new(None)) }
     }
 

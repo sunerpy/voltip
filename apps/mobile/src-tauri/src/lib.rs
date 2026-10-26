@@ -36,7 +36,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`, less the
 /// desktop-only commands (the local speech service's and the MCP service's, docs/dictation.md
 /// §23.6, §25) that `tests/ipc.rs` lists as `DESKTOP_ONLY`.
-pub const COMMANDS: [&str; 118] = [
+pub const COMMANDS: [&str; 121] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -113,6 +113,9 @@ pub const COMMANDS: [&str; 118] = [
     "model_import",
     "model_folder_open",
     "model_link_open",
+    "models_location_choose",
+    "models_location_reset",
+    "models_location_cancel",
     "dictionary_add",
     "dictionary_update",
     "dictionary_remove",
@@ -171,6 +174,8 @@ pub fn production_config<R: Runtime>(app: &AppHandle<R>) -> CoreConfig {
     config.app_version = app.package_info().version.to_string();
     // The phone is the microphone; a desktop records its takes, never the other way round.
     config.accepts_phone_takes = false;
+    // The phone keeps no recordings: its interface offers no 重新识别 (docs/dictation.md §26).
+    config.keeps_audio = false;
     // The phone shows no live preview: the built-in service sends none (docs/dictation.md §11.8).
     config.shows_live_preview = false;
     // The user picks a take's scene on the talk card (no foreground probe on a phone).
@@ -738,6 +743,22 @@ fn model_link_open(_id: String, _file: String, _source: usize) -> Result<(), Str
     Err(MODELS_UNAVAILABLE.to_owned())
 }
 
+// The model library's folder (docs/dictation.md §10.9): the phone has no library to move.
+#[tauri::command]
+fn models_location_choose(_title: String) -> Result<bool, String> {
+    Err(MODELS_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn models_location_reset() -> Result<(), String> {
+    Err(MODELS_UNAVAILABLE.to_owned())
+}
+
+#[tauri::command]
+fn models_location_cancel() -> Result<(), String> {
+    Err(MODELS_UNAVAILABLE.to_owned())
+}
+
 // The phone's own dictionary, rules and scenes (user decision 2026-10-01: the phone has every
 // setting but the local models), handed to the core like the desktop's (docs/dictation.md §16, §18).
 // A phone has no foreground probe: the user picks a take's scene (`settings_set_pinned_scene`).
@@ -1256,6 +1277,9 @@ pub fn build_app<R: Runtime>(
             model_import,
             model_folder_open,
             model_link_open,
+            models_location_choose,
+            models_location_reset,
+            models_location_cancel,
             dictionary_add,
             dictionary_update,
             dictionary_remove,

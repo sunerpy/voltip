@@ -185,17 +185,22 @@ export function FallbackSection({ kind, toggleClassName }: FallbackSectionProps)
                       });
                     }}
                   />
-                  <IconButton
+                  {/* Its own word in red, not a grey icon (user request 2026-10-26). */}
+                  <Button
+                    size="sm"
+                    variant="text-danger"
                     icon="trash"
-                    tone="danger"
-                    label={t("engines.fallback.remove", { model })}
+                    className="ml-1"
+                    aria-label={t("engines.fallback.remove", { model })}
+                    data-testid={`fallback-${kind}-remove`}
                     onClick={() => {
                       save({
                         ...config,
                         models: config.models.filter((_, j) => j !== i),
                       });
-                    }}
-                  />
+                    }}>
+                    {t("engines.fallback.removeShort")}
+                  </Button>
                 </>
               }
             />
@@ -293,7 +298,8 @@ function Row({
 }
 
 /** The add row: a provider offering the service (not the on-device one), one of its models — the
- *  card's presets or any id — and 添加, refused with the reason when the list cannot take it. */
+ *  card's presets or any id — and 添加 beside them on the same line (user request 2026-10-26),
+ *  refused with the reason when the list cannot take it. A narrow pane wraps it. */
 function AddFallback({
   kind,
   list,
@@ -345,12 +351,14 @@ function AddFallback({
     setTyped("");
     onAdd(entry);
   };
+  const field = "min-w-[180px] flex-1";
   return (
     <div className="flex flex-col gap-2" data-testid={`fallback-${kind}-add`}>
-      <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(200px,1fr))]">
+      <div className="flex flex-wrap items-end gap-3">
         <Select
           label={t("engines.fallback.provider")}
           size="sm"
+          className={field}
           value={provider.id}
           onChange={(id) => {
             setProviderId(id);
@@ -368,6 +376,7 @@ function AddFallback({
             label={t("engines.fallback.model")}
             size="sm"
             mono
+            className={field}
             value={selectValue}
             onChange={(value) => {
               setPicked(value);
@@ -380,6 +389,7 @@ function AddFallback({
             label={t("engines.fallback.model")}
             size="sm"
             mono
+            className={field}
             value={service.model}
             readOnly
           />
@@ -390,6 +400,7 @@ function AddFallback({
                 label={t("engines.fallback.model")}
                 size="sm"
                 mono
+                className={field}
                 value={selectValue}
                 onChange={(value) => {
                   setPicked(value);
@@ -405,6 +416,7 @@ function AddFallback({
                 label={t("engines.field.modelCustom")}
                 size="sm"
                 mono
+                className={field}
                 value={typed}
                 onChange={(e) => {
                   setTyped(e.target.value);
@@ -414,21 +426,21 @@ function AddFallback({
             )}
           </>
         )}
-      </div>
-      <div className="flex items-center gap-3">
         <Button
           size="sm"
           variant="outline"
+          icon="plus"
+          className="shrink-0"
           onClick={add}
           data-testid={`fallback-${kind}-add-button`}>
           {t("engines.fallback.add")}
         </Button>
-        {problem !== undefined && (
-          <span role="alert" className="text-[12px] text-danger">
-            {problem}
-          </span>
-        )}
       </div>
+      {problem !== undefined && (
+        <span role="alert" className="text-[12px] text-danger">
+          {problem}
+        </span>
+      )}
     </div>
   );
 }

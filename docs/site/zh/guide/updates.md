@@ -40,7 +40,7 @@ Voltip 先在本站检查更新并从本站下载。本站提供的文件与 Git
 
 ## 数据保存位置
 
-设置、历史记录、词典、规则、场景和已下载的模型，都保存在每个用户各自的一个目录中：
+设置、历史记录、词典、规则、场景、保留的录音和已下载的模型，都保存在每个用户各自的一个目录中：
 
 | 平台 | 目录 |
 | --- | --- |
@@ -48,7 +48,7 @@ Voltip 先在本站检查更新并从本站下载。本站提供的文件与 Git
 | macOS | `~/Library/Application Support/dev.voltip.Voltip` |
 | Linux | `~/.local/share/voltip` |
 
-模型位于其中的 `models` 目录，占用了几乎全部空间。在「语音模型」页删除模型会同时删除它的文件。
+模型默认位于其中的 `models` 目录，通常占用大部分空间，也可以移到其他磁盘，见[保存位置](/zh/recognition/local#保存位置)。在「语音模型」页删除模型会同时删除它的文件。保留的录音位于 `audio-cache` 目录，默认最多占用 200 MB，可以在「设置 → 隐私与历史」的「录音缓存」中清理，见[重新识别与重新润色](/zh/dictation/history#重新识别与重新润色)。
 
 云端服务商的密钥和这台电脑的设备身份保存在系统钥匙串中（Windows 凭据管理器、macOS 钥匙串或 Linux 的 Secret Service），条目名称以 `dev.voltip.desktop` 开头。
 
@@ -60,4 +60,4 @@ Voltip 先在本站检查更新并从本站下载。本站提供的文件与 Git
    - **macOS**：把「应用程序」中的 Voltip 移到废纸篓。
    - **Linux，.deb**：执行 `sudo apt remove voltip`。
    - **Linux，AppImage**：删除 `~/.local/bin/Voltip.AppImage` 和 `~/.local/share/applications/voltip.desktop`。
-3. 如果也要删除数据，删除上面列出的目录，以及钥匙串中名称以 `dev.voltip.desktop` 开头的条目。
+3. 如果也要删除数据，删除上面列出的目录，以及钥匙串中名称以 `dev.voltip.desktop` 开头的条目。模型保存在其他位置时，也删除那个文件夹。

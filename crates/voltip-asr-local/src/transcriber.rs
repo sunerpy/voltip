@@ -27,6 +27,7 @@ use voltip_core::dictation::{DictationError, Transcriber, Transcript};
 use crate::catalogue::{CATALOGUE, Engine, ModelEntry};
 use crate::compute::Compute;
 use crate::gguf::GgufLoader;
+use crate::root::ModelsRoot;
 use crate::sherpa::SherpaLoader;
 use crate::store;
 use crate::vad::VadTrimmer;
@@ -113,7 +114,7 @@ fn load_into<'a>(
 /// Offline speech-to-text over the model library.
 #[derive(Clone)]
 pub struct LocalTranscriber {
-    root: PathBuf,
+    root: ModelsRoot,
     catalogue: &'static [ModelEntry],
     loader: Arc<dyn RecognizerLoader>,
     cache: Arc<Mutex<Option<Loaded>>>,
@@ -150,13 +151,13 @@ pub fn default_threads() -> usize {
 impl LocalTranscriber {
     /// The real engines ([`DefaultLoader`]) over the real catalogue under `root`
     /// (`<app data dir>/models`); the default model is selected until [`LocalTranscriber::select`].
-    pub fn new(root: impl Into<PathBuf>) -> Self {
+    pub fn new(root: impl Into<ModelsRoot>) -> Self {
         Self::with_loader(root, CATALOGUE, Arc::new(DefaultLoader))
     }
 
     /// Any catalogue and loader (tests); the VAD is the real one over the same root until
     /// [`LocalTranscriber::with_vad`].
-    pub fn with_loader(root: impl Into<PathBuf>, catalogue: &'static [ModelEntry], loader: Arc<dyn RecognizerLoader>) -> Self {
+    pub fn with_loader(root: impl Into<ModelsRoot>, catalogue: &'static [ModelEntry], loader: Arc<dyn RecognizerLoader>) -> Self {
         let root = root.into();
         Self {
             vad: VadTrimmer::new(root.clone()),
@@ -221,8 +222,8 @@ impl LocalTranscriber {
     }
 
     /// The library root.
-    pub fn root(&self) -> &Path {
-        &self.root
+    pub fn root(&self) -> PathBuf {
+        self.root.get()
     }
 
     /// Id of the recogniser currently in memory, if any.

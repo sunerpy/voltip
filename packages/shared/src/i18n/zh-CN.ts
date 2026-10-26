@@ -642,6 +642,56 @@ export const zhCN = {
       reason: "原因：",
       /** The phone's fact row of the same reason. */
       reasonLabel: "润色失败原因",
+      /** docs/dictation.md §26: the clean-up again, with the entry's preset; the result is kept as
+       *  the processed text. */
+      retry: "重新润色",
+      retrying: "正在润色…",
+      retried: "已重新润色，可在「处理后」查看",
+    },
+    /** The audio cache on the history page (docs/dictation.md §26): the recordings no text came
+     *  from, and 重新识别 from a kept recording. */
+    recordings: {
+      title: "未识别的录音",
+      lede: "这些录音未能识别出文字。可以直接重新识别，也可以换用其他模型，无需重新录音。",
+      count: "{n} 条",
+      when: "{time} · {length}",
+      app: "在 {app} 中录制",
+      status: {
+        pending: "等待识别",
+        failed: "识别失败：{reason}",
+        cancelled: "录制或识别时已取消",
+        interrupted: "录制或处理时 Voltip 已关闭",
+      },
+      retake: "重新识别",
+      retaking: "正在识别…",
+      delete: "删除录音",
+      deleted: "已删除录音",
+      done: "已重新识别，文字已复制到剪贴板",
+      failed: "重新识别失败：{reason}",
+      /** The models a 重新识别 runs on (docs/dictation.md §26.4): for that take only. */
+      models: {
+        using: "重新识别使用",
+        hint: "只用于这次重新识别，不会修改设置",
+        speech: "语音模型",
+        speechTrigger: "重新识别使用的语音模型：{name}",
+        polish: "AI 润色",
+        polishTrigger: "重新识别使用的 AI 润色：{name}",
+        noPolish: "不润色",
+      },
+      /** The home page's short list (user request 2026-10-26). */
+      viewAll: "查看全部 {n} 条",
+      clear: "清理",
+      clearTitle: "清理未识别的录音？",
+      clearBody: {
+        one: "{n} 条未识别的录音会被删除，删除后不能再重新识别。",
+        other: "{n} 条未识别的录音会被删除，删除后不能再重新识别。",
+      },
+      clearConfirm: "清理",
+      cleared: { one: "已清理 {n} 条录音", other: "已清理 {n} 条录音" },
+      /** In an entry's detail whose recording is kept. */
+      detail: "这条听写的录音仍保留在本机",
+      detailHelp:
+        "可以换用其他模型重新识别，结果作为一条新记录保存，并复制到剪贴板。设置不受影响。",
     },
     liveError: "实时识别中断，已改为整段识别：{reason}",
     /** Voice edit rows (docs/dictation.md §19.5): instruction → result, the original expandable. */
@@ -1255,6 +1305,8 @@ export const zhCN = {
       moveUp: "上移 {model}",
       moveDown: "下移 {model}",
       remove: "移除 {model}",
+      /** The remove button's own word; `remove` names the model for a screen reader. */
+      removeShort: "移除",
       problem: {
         full: "最多添加 {n} 个候补模型",
         blank: "请选择或填写模型",
@@ -1363,6 +1415,33 @@ export const zhCN = {
       import: "检查并导入",
       missing: "缺少文件：{files}",
       mismatched: "校验不通过：{files}。文件不完整，或不是这个模型的文件，请重新下载。",
+    },
+    /** Where the downloaded models are, and moving them (docs/dictation.md §10.9, issue #192). */
+    location: {
+      title: "保存位置",
+      help: "模型下载到这个文件夹。更改位置时，已下载的模型会一起移过去。",
+      default: "默认",
+      custom: "自定义",
+      copy: "复制路径",
+      copied: "已复制路径",
+      change: "更改位置…",
+      chooseTitle: "选择模型的保存位置",
+      reset: "恢复默认",
+      resetTitle: "把模型移回默认位置？",
+      resetBody: "已下载的模型会移回 {dir}。",
+      resetConfirm: "移回默认位置",
+      moving: "正在移动到 {dir}",
+      progress: "{moved} / {total}",
+      cancel: "取消移动",
+      busyDownloading: "模型下载期间不能更改位置",
+      busyMoving: "正在移动模型，完成后才能下载或删除模型",
+      moved: "模型已移到新位置",
+      movedDeferred: {
+        one: "模型已移到新位置。旧位置有 {n} 个文件夹正在使用，下次启动 Voltip 时删除。",
+        other: "模型已移到新位置。旧位置有 {n} 个文件夹正在使用，下次启动 Voltip 时删除。",
+      },
+      cancelled: "已取消移动，模型仍在原来的位置",
+      failed: "模型没有移动，仍在原来的位置：{reason}",
     },
     action: {
       download: "下载",
@@ -1785,6 +1864,10 @@ export const zhCN = {
       failed: "未插入 · {reason}",
       cancelled: "已取消 · 录音已丢弃",
       cancelledKept: "已取消，之前打进去的 {n} 字保留",
+      /** docs/dictation.md §26: a take cancelled while it was recognised keeps its recording. */
+      cancelledRecording: "已取消 · 录音已保留",
+      /** Under a take that gave no text but whose recording the audio cache keeps. */
+      keptNote: "录音已保留，可重新识别",
       cloud: "云端",
       local: "本地",
       editTag: "编辑",
@@ -2352,11 +2435,33 @@ export const zhCN = {
         keepHelp: "超过后自动删除最旧的记录；调小会立即删除多出的部分。",
         keepOption: "{n} 条",
         clear: "清空历史",
-        clearHelp: "删除这台电脑上的全部听写记录，不能撤销。",
+        clearHelp: "删除这台电脑上的全部听写记录和保留的录音，不能撤销。",
         clearConfirmTitle: "清空全部听写历史？",
-        clearConfirmBody: "这台电脑上的 {n} 条记录会被删除，不能撤销。",
+        clearConfirmBody: "这台电脑上的 {n} 条记录和保留的录音会被删除，不能撤销。",
         clearConfirm: "清空",
         cleared: "已清空听写历史",
+        /** 录音缓存 (docs/dictation.md §26). */
+        recordings: {
+          title: "录音缓存",
+          count: "{n} 条 · {size}",
+          keep: "在本机保留录音",
+          keepHelp:
+            "保留最近几次听写的录音。识别或润色失败时，可以在历史记录中重新识别，无需重新录音。关闭后会删除已保留的录音。",
+          historyOff: "需要先开启「保存听写历史」。",
+          limit: "最多保留",
+          limitHelp: "超过后自动删除最早的录音。",
+          limitOption: "{n} 条",
+          size: "最多占用",
+          sizeHelp: "所有录音加起来超过这个大小时，自动删除最早的录音。",
+          clear: "清理录音",
+          clearHelp: "删除这台电脑上保留的全部录音，听写历史的文字不受影响。",
+          clearConfirmTitle: "删除全部保留的录音？",
+          clearConfirmBody:
+            "{n} 条录音（{size}）会被删除，之后不能再重新识别它们。听写历史的文字不受影响。",
+          clearConfirm: "删除",
+          cleared: "已删除保留的录音",
+          note: "录音只保存在这台电脑上，不同步到手机，也不包含在备份中。超过 2 分钟的长录音会压缩保存，每小时约 10 MB。",
+        },
         /** 备份与迁移 (docs/dictation.md §4.6). */
         backup: {
           title: "备份与迁移",

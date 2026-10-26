@@ -127,6 +127,38 @@
   },
   {
     "args": {
+      "enabled": true,
+      "keep": 50,
+      "maxMb": 500
+    },
+    "name": "settings_set_audio_cache"
+  },
+  {
+    "args": null,
+    "name": "audio_cache_clear"
+  },
+  {
+    "args": {
+      "id": "8e3f1b2a-0c4d-4e5f-a6b7-c8d9e0f1a2b3"
+    },
+    "name": "audio_cache_delete"
+  },
+  {
+    "args": {
+      "asr": {
+        "kind": "remote",
+        "model": "whisper-2",
+        "provider": "custom"
+      },
+      "id": "8e3f1b2a-0c4d-4e5f-a6b7-c8d9e0f1a2b3",
+      "refine": {
+        "kind": "off"
+      }
+    },
+    "name": "audio_retake"
+  },
+  {
+    "args": {
       "placement": "top"
     },
     "name": "settings_set_overlay"
@@ -344,6 +376,14 @@
       "id": "sense-voice-small"
     },
     "name": "model_import"
+  },
+  {
+    "args": null,
+    "name": "models_location_reset"
+  },
+  {
+    "args": null,
+    "name": "models_location_cancel"
   },
   {
     "args": {

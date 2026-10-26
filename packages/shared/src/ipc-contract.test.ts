@@ -35,9 +35,11 @@ import {
   mcpSetupClientSchema,
   mcpWriteSchema,
   overlayPlacementSchema,
+  polishChoiceSchema,
   presetDraftSchema,
   presetIdSchema,
   proxyModeSchema,
+  recognitionChoiceSchema,
   sceneDraftSchema,
   providerIdSchema,
   serviceKindSchema,
@@ -86,12 +88,14 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   engines: null,
   update: null,
   models: null,
+  models_location: null,
   dictionary: null,
   rules: null,
   scenes: null,
   presets: null,
   preset_try: null,
   history_process: null,
+  audio_cache: null,
   provider_probe: null,
   phone_take: null,
   sent_texts: null,
@@ -145,6 +149,10 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   history_star: null,
   history_process: null,
   history_process_cancel: null,
+  settings_set_audio_cache: null,
+  audio_cache_clear: null,
+  audio_cache_delete: null,
+  audio_retake: null,
   settings_set_locale: null,
   settings_set_auto_update: null,
   settings_set_history: null,
@@ -157,6 +165,8 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   model_cancel: null,
   model_remove: null,
   model_import: null,
+  models_location_reset: null,
+  models_location_cancel: null,
   dictionary_add: null,
   dictionary_update: null,
   dictionary_remove: null,
@@ -267,6 +277,17 @@ const argSchemas = {
   settings_set_locale: z.object({ locale: localeSettingSchema }),
   settings_set_auto_update: z.object({ enabled: z.boolean() }),
   settings_set_history: z.object({ enabled: z.boolean(), keep: z.number().int() }).strict(),
+  settings_set_audio_cache: z
+    .object({ enabled: z.boolean(), keep: z.number().int(), maxMb: z.number().int() })
+    .strict(),
+  audio_cache_delete: z.object({ id: z.string() }).strict(),
+  audio_retake: z
+    .object({
+      id: z.string(),
+      asr: recognitionChoiceSchema.optional(),
+      refine: polishChoiceSchema.optional(),
+    })
+    .strict(),
   settings_set_overlay: z.object({ placement: overlayPlacementSchema }).strict(),
   hotkey_edge: z.object({
     pressed: z.boolean(),
@@ -365,6 +386,9 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
     case "dictation_stop":
     case "dictation_cancel":
     case "history_clear":
+    case "audio_cache_clear":
+    case "models_location_reset":
+    case "models_location_cancel":
     case "update_check":
     case "update_install":
     case "serve_copy_token":
@@ -437,6 +461,12 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.settings_set_auto_update.parse(args));
     case "settings_set_history":
       return backend.invoke(name, argSchemas.settings_set_history.parse(args));
+    case "settings_set_audio_cache":
+      return backend.invoke(name, argSchemas.settings_set_audio_cache.parse(args));
+    case "audio_cache_delete":
+      return backend.invoke(name, argSchemas.audio_cache_delete.parse(args));
+    case "audio_retake":
+      return backend.invoke(name, argSchemas.audio_retake.parse(args));
     case "settings_set_overlay":
       return backend.invoke(name, argSchemas.settings_set_overlay.parse(args));
     case "hotkey_edge":
@@ -585,6 +615,8 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       },
       // docs/dictation.md §20.11: the phone's talk button tapped, away from holding.
       phone_talk: "tap",
+      // docs/dictation.md §26: the recording cache keeps more, in more space, than by default.
+      audio_cache: { enabled: true, keep: 50, max_mb: 500 },
     });
     expect(parsed.app_version).toBe("0.3.0");
     // docs/dictation.md §23.6: the app's local speech service, running.

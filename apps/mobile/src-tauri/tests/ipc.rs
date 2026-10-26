@@ -513,7 +513,13 @@ fn hotkeys_are_refused_but_engines_secrets_and_history_work() {
             invoke(webview, "model_link_open", json!({ "id": "sense-voice-small", "file": "tokens.txt", "source": 0 })),
             Err(Value::String(MODELS_UNAVAILABLE.into()))
         );
+        // …and there is no library folder to move (docs/dictation.md §10.9).
+        assert_eq!(invoke(webview, "models_location_choose", json!({ "title": "x" })), Err(Value::String(MODELS_UNAVAILABLE.into())));
+        for cmd in ["models_location_reset", "models_location_cancel"] {
+            assert_eq!(invoke(webview, cmd, json!({})), Err(Value::String(MODELS_UNAVAILABLE.into())), "{cmd}");
+        }
         assert!(wait_state(webview, |_| true).models.is_empty());
+        assert!(!wait_state(webview, |_| true).models_location.available);
         // The phone's own dictionary, rules and scenes (user decision 2026-10-01: the phone has every
         // setting but the local models; every one of these was refused before).
         assert_eq!(invoke(webview, "dictionary_add", json!({ "entry": { "term": "Voltip", "heard_as": ["沃尔提普"] }, "historyId": null })), Ok(Value::Null));
@@ -768,10 +774,23 @@ fn sorted(mut names: Vec<String>) -> Vec<String> {
 const PENDING_TYPESCRIPT: &[&str] = &[];
 
 /// Commands of the shared contract (schema.ts, the fixtures) that only the desktop shell registers:
-/// the local speech service and the MCP service run on a computer only (docs/dictation.md §23.6,
-/// §25), so the phone offers no command for them and an invoke is "not found".
-const DESKTOP_ONLY: &[&str] =
-    &["settings_set_serve", "serve_copy_token", "serve_rotate_token", "settings_set_mcp", "mcp_copy_token", "mcp_rotate_token", "mcp_copy_setup", "mcp_undo"];
+/// the local speech service, the MCP service and the recording cache run on a computer only
+/// (docs/dictation.md §23.6, §25, §26), so the phone offers no command for them and an invoke is
+/// "not found".
+const DESKTOP_ONLY: &[&str] = &[
+    "settings_set_serve",
+    "serve_copy_token",
+    "serve_rotate_token",
+    "settings_set_mcp",
+    "mcp_copy_token",
+    "mcp_rotate_token",
+    "mcp_copy_setup",
+    "mcp_undo",
+    "settings_set_audio_cache",
+    "audio_cache_clear",
+    "audio_cache_delete",
+    "audio_retake",
+];
 
 #[test]
 fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() {
@@ -829,6 +848,7 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "guide_open",
             "model_folder_open",
             "model_link_open",
+            "models_location_choose",
             "feedback_diagnostics",
             "feedback_submit",
             "feedback_attachment_add",

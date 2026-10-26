@@ -22,6 +22,7 @@ import {
 import { useRouter } from "../../app/router";
 import { useShell } from "../../app/shell-context";
 import { BackupSection } from "./BackupSection";
+import { RecordingsSection } from "./RecordingsSection";
 import { serviceTarget } from "./engines/helpers";
 
 /** The retention choices the select offers (moved to `@voltip/shared`, shared with the phone). */
@@ -203,6 +204,8 @@ export function PrivacyPane() {
           </StatusRow>
         </SettingsRows>
       </SettingsSection>
+
+      <RecordingsSection />
 
       <BackupSection />
 

@@ -97,6 +97,8 @@ impl Runtime {
                 part.removed = count(done.removed);
                 if mode == ImportMode::Replace || done.written > 0 || done.removed > 0 {
                     self.emit_history();
+                    // The entries a replace or the limit removed take their recordings along (§26).
+                    self.audio_follow_history();
                 }
                 part
             }
