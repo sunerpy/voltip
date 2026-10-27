@@ -226,20 +226,29 @@ export function PairingPanel({
             ) : (
               t("pairing.peerDoneAnon")
             )}{" "}
-            {t("pairing.verifyNote")}
+            {/* A phone that proved it scanned the QR code needs no click here (docs/pairing.md
+                「扫码配对只在手机上确认」): the core confirmed for this computer. */}
+            {pairing.scanned ? t("pairing.scanned") : t("pairing.verifyNote")}
           </div>
           <SafetyCodeView code={pairing.safety_code} />
           <div className="flex items-center gap-2">
-            <Button
-              variant="primary"
-              onClick={onConfirm}
-              disabled={pairing.local_confirmed}
-              icon="check">
-              {pairing.local_confirmed ? t("pairing.waitingPeer") : t("pairing.confirm")}
-            </Button>
+            {!pairing.scanned && (
+              <Button
+                variant="primary"
+                onClick={onConfirm}
+                disabled={pairing.local_confirmed}
+                icon="check">
+                {pairing.local_confirmed ? t("pairing.waitingPeer") : t("pairing.confirm")}
+              </Button>
+            )}
             <Button variant="ghost" onClick={onReject} className="text-danger">
               {t("pairing.reject")}
             </Button>
+            {pairing.scanned && !pairing.peer_confirmed && (
+              <LampText tone="accent" pulse>
+                {t("pairing.waitingPhone")}
+              </LampText>
+            )}
             {pairing.peer_confirmed && <LampText tone="ok">{t("pairing.peerConfirmed")}</LampText>}
           </div>
         </div>

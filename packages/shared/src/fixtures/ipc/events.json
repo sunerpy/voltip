@@ -80,7 +80,8 @@
         "state": "idle"
       },
       "local_confirmed": false,
-      "peer_confirmed": false
+      "peer_confirmed": false,
+      "scanned": false
     },
     "devices": [],
     "hotkey": {
@@ -397,7 +398,12 @@
     "endpoint": "wss://relay.example.test/ws",
     "source": "user",
     "state": "reconnecting",
-    "attempts": 2
+    "attempts": 2,
+    "last_failure": {
+      "kind": "timeout",
+      "detail": "connect timed out after 8s",
+      "at": 1758700600000
+    }
   },
   {
     "type": "relay",
@@ -425,7 +431,8 @@
       "platform": "android"
     },
     "local_confirmed": true,
-    "peer_confirmed": false
+    "peer_confirmed": false,
+    "scanned": true
   },
   {
     "type": "pairing",
@@ -437,7 +444,8 @@
       }
     },
     "local_confirmed": false,
-    "peer_confirmed": false
+    "peer_confirmed": false,
+    "scanned": false
   },
   {
     "type": "pairing",
@@ -448,7 +456,8 @@
       }
     },
     "local_confirmed": false,
-    "peer_confirmed": false
+    "peer_confirmed": false,
+    "scanned": false
   },
   {
     "type": "devices",
@@ -3771,7 +3780,8 @@
         "configured": true,
         "result": {
           "result": "failed",
-          "reason": "tls handshake eof"
+          "reason": "tls handshake eof",
+          "kind": "tls"
         }
       },
       "peers": []

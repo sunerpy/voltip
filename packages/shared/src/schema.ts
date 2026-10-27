@@ -1973,12 +1973,39 @@ export type DeviceIdentityPublic = z.infer<typeof deviceIdentityPublicSchema>;
 export const relaySourceSchema = z.enum(["none", "builtin", "user"]);
 export type RelaySource = z.infer<typeof relaySourceSchema>;
 
+/** What kind of failure a connection to the relay met (`voltip_transport::FailureKind`). */
+export const relayFailureKindSchema = z.enum([
+  "timeout",
+  "dns",
+  "refused",
+  "unreachable",
+  "tls",
+  "not_relay",
+  "proxy",
+  "version",
+  "lost",
+  "other",
+]);
+export type RelayFailureKind = z.infer<typeof relayFailureKindSchema>;
+
+/** Why the relay connection last failed (`voltip_core::RelayFailure`, issue #193). */
+export const relayFailureSchema = z.object({
+  kind: relayFailureKindSchema,
+  /** The transport's words: for a relay the user entered only (the build's own is never named). */
+  detail: z.string().optional(),
+  /** Unix milliseconds. */
+  at: z.number(),
+});
+export type RelayFailure = z.infer<typeof relayFailureSchema>;
+
 export const relayStatusSchema = z.object({
   /** The relay the user entered; absent for the build's own relay (never named) and for none. */
   endpoint: z.string().optional(),
   source: relaySourceSchema.default("none"),
   state: connectionStateSchema,
   attempts: z.number().int().nonnegative(),
+  /** Why the last attempt failed or the connection went down; absent once connected. */
+  last_failure: relayFailureSchema.optional(),
 });
 export type RelayStatus = z.infer<typeof relayStatusSchema>;
 
@@ -2039,6 +2066,9 @@ export const snapshotSchema = z.object({
   peer: deviceInfoSchema.optional(),
   local_confirmed: z.boolean(),
   peer_confirmed: z.boolean(),
+  /** The phone proved it scanned the QR code (docs/pairing.md 「扫码配对只在手机上确认」): the
+   *  computer confirmed by itself, and only the phone's user confirms. */
+  scanned: z.boolean().default(false),
 });
 export type Snapshot = z.infer<typeof snapshotSchema>;
 
@@ -2435,7 +2465,12 @@ export const probeResultSchema = z.discriminatedUnion("result", [
   z.object({ result: z.literal("ok"), ms: z.number().int().nonnegative() }),
   z.object({ result: z.literal("timeout") }),
   z.object({ result: z.literal("refused") }),
-  z.object({ result: z.literal("failed"), reason: z.string() }),
+  z.object({
+    result: z.literal("failed"),
+    /** The transport's words; empty for the build's own relay. */
+    reason: z.string(),
+    kind: relayFailureKindSchema.default("other"),
+  }),
 ]);
 export type ProbeResult = z.infer<typeof probeResultSchema>;
 
@@ -3169,6 +3204,7 @@ export function idleSnapshot(): Snapshot {
     state: { state: "idle" },
     local_confirmed: false,
     peer_confirmed: false,
+    scanned: false,
   };
 }
 

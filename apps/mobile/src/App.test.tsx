@@ -57,7 +57,7 @@ describe("Mobile app flow", () => {
     expect(screen.getByText("Surface-Laptop")).toBeInTheDocument();
     expect(screen.getByRole("list", { name: "安全码" }).children).toHaveLength(4);
     await user.click(screen.getByRole("button", { name: "确认并信任" }));
-    expect(screen.getByText("已确认 · 等待电脑确认…")).toBeInTheDocument();
+    expect(screen.getByText("已确认 · 请在电脑上也点「确认配对」")).toBeInTheDocument();
     act(() => {
       backend.simulatePeerConfirmed();
     });

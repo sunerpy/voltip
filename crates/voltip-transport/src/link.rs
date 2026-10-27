@@ -80,6 +80,103 @@ enum OpenError {
     Handshake(tokio_tungstenite::tungstenite::Error),
 }
 
+/// What kind of failure a connection to the relay met: what the apps tell the user while it is not
+/// connected (docs/pairing.md 「重连」; issue #193: the phone said only 「尚未连上中继」).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureKind {
+    /// Nothing answered in time: connecting, or the relay's `hello_ack`.
+    Timeout,
+    /// The relay's name did not resolve (often: no network at all).
+    Dns,
+    /// The address refused the connection.
+    Refused,
+    /// This device has no route to the relay.
+    Unreachable,
+    /// The TLS handshake failed or was cut short.
+    Tls,
+    /// The address answered, but not as a Voltip relay (a refused WebSocket upgrade).
+    NotRelay,
+    /// The proxy could not reach the relay.
+    Proxy,
+    /// The relay does not speak this app's protocol version.
+    Version,
+    /// The connection was up and went down.
+    Lost,
+    /// Anything else.
+    #[default]
+    Other,
+}
+
+/// A failed attempt or a lost connection: its kind, and the transport's own words. The words can
+/// quote the endpoint, so whoever shows them decides whether they may (the build's own relay is a
+/// build secret).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkFailure {
+    /// What kind of failure.
+    pub kind: FailureKind,
+    /// The error as the transport has it.
+    pub detail: String,
+}
+
+impl LinkFailure {
+    fn new(kind: FailureKind, detail: impl Into<String>) -> Self {
+        Self { kind, detail: detail.into() }
+    }
+
+    /// Opening the socket failed (`connect: …`).
+    fn opening(error: &OpenError) -> Self {
+        Self::new(error.kind(), format!("connect: {error}"))
+    }
+}
+
+impl std::fmt::Display for LinkFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+impl OpenError {
+    /// The kind of failure, from the error's own type: the proxy's, the connection's, then the
+    /// TLS and WebSocket handshakes'. tokio-tungstenite hands rustls' errors over as I/O errors.
+    fn kind(&self) -> FailureKind {
+        use tokio_tungstenite::tungstenite::Error as Ws;
+        use voltip_net::ConnectError;
+        match self {
+            Self::Connect(error) => match error {
+                ConnectError::Timeout(_) => FailureKind::Timeout,
+                ConnectError::Resolve(_) => FailureKind::Dns,
+                ConnectError::Direct(io) => io_kind(io),
+                ConnectError::Proxy(_) | ConnectError::Unsupported(_) => FailureKind::Proxy,
+                ConnectError::NoHost => FailureKind::Other,
+            },
+            Self::Handshake(Ws::Io(io)) if io.kind() == std::io::ErrorKind::TimedOut => FailureKind::Timeout,
+            Self::Handshake(Ws::Io(_) | Ws::Tls(_)) => FailureKind::Tls,
+            Self::Handshake(Ws::Http(_) | Ws::HttpFormat(_) | Ws::Protocol(_)) => FailureKind::NotRelay,
+            Self::Handshake(_) => FailureKind::Other,
+        }
+    }
+}
+
+/// The kind of a failed TCP connection.
+fn io_kind(io: &std::io::Error) -> FailureKind {
+    use std::io::ErrorKind;
+    match io.kind() {
+        ErrorKind::ConnectionRefused => FailureKind::Refused,
+        ErrorKind::NetworkUnreachable | ErrorKind::HostUnreachable | ErrorKind::NetworkDown | ErrorKind::AddrNotAvailable => FailureKind::Unreachable,
+        ErrorKind::TimedOut => FailureKind::Timeout,
+        _ => FailureKind::Other,
+    }
+}
+
+/// The kind of the relay refusing `hello`.
+fn refusal_kind(code: voltip_protocol::relay::RelayErrorCode) -> FailureKind {
+    match code {
+        voltip_protocol::relay::RelayErrorCode::UnsupportedVersion => FailureKind::Version,
+        _ => FailureKind::Other,
+    }
+}
+
 /// What the owner of a link observes.
 #[derive(Debug)]
 pub enum LinkEvent {
@@ -87,7 +184,10 @@ pub enum LinkEvent {
     State(StateChange),
     /// A frame from the relay.
     Frame(RelayFrame),
-    /// A non-fatal problem worth surfacing (connect failure text, decode failure).
+    /// An attempt failed or the connection went down; the link tries again (a `Reconnecting`
+    /// transition follows).
+    Failed(LinkFailure),
+    /// A non-fatal problem worth surfacing (a frame that does not decode).
     Warning(String),
 }
 
@@ -180,8 +280,8 @@ async fn run(config: LinkConfig, mut cmd_rx: mpsc::Receiver<Cmd>, evt: mpsc::Sen
                 emit_state(change, &evt);
                 return;
             }
-            Outcome::Lost(reason) => {
-                let _ = evt.try_send(LinkEvent::Warning(reason));
+            Outcome::Lost(failure) => {
+                let _ = evt.try_send(LinkEvent::Failed(failure));
                 let (change, attempts) = {
                     let mut m = state.lock();
                     let c = m.reconnecting();
@@ -225,7 +325,7 @@ async fn run(config: LinkConfig, mut cmd_rx: mpsc::Receiver<Cmd>, evt: mpsc::Sen
 
 enum Outcome {
     Closed,
-    Lost(String),
+    Lost(LinkFailure),
 }
 
 /// Why a [`probe`] did not reach a Voltip relay.
@@ -238,7 +338,7 @@ pub enum ProbeFailure {
     /// firewall that rejects).
     Refused,
     /// Anything else: DNS, TLS, an HTTP answer that is not a WebSocket, a refused `hello`.
-    Failed(String),
+    Failed(LinkFailure),
 }
 
 /// Open a fresh connection to `config.endpoint`, exchange `hello` / `hello_ack` and close it:
@@ -247,26 +347,28 @@ pub enum ProbeFailure {
 pub async fn probe(config: &LinkConfig) -> Result<Duration, ProbeFailure> {
     let started = tokio::time::Instant::now();
     let exchange = async {
-        let ws = open_socket(config).await.map_err(|e| match &e {
-            OpenError::Connect(voltip_net::ConnectError::Direct(io)) if io.kind() == std::io::ErrorKind::ConnectionRefused => ProbeFailure::Refused,
-            _ => ProbeFailure::Failed(e.to_string()),
+        let ws = open_socket(config).await.map_err(|e| match e.kind() {
+            FailureKind::Refused => ProbeFailure::Refused,
+            FailureKind::Timeout => ProbeFailure::Timeout,
+            _ => ProbeFailure::Failed(LinkFailure::opening(&e)),
         })?;
+        let failed = |kind: FailureKind, detail: String| ProbeFailure::Failed(LinkFailure::new(kind, detail));
         let (mut sink, mut stream) = ws.split();
         let hello = RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: config.client_version.clone() };
-        let text = hello.encode().map_err(|e| ProbeFailure::Failed(e.to_string()))?;
-        sink.send(Message::Text(text.into())).await.map_err(|e| ProbeFailure::Failed(e.to_string()))?;
+        let text = hello.encode().map_err(|e| failed(FailureKind::Other, e.to_string()))?;
+        sink.send(Message::Text(text.into())).await.map_err(|e| failed(FailureKind::Lost, e.to_string()))?;
         loop {
             match stream.next().await {
                 Some(Ok(Message::Text(t))) => match RelayFrame::decode(&t) {
                     Ok(RelayFrame::HelloAck { .. }) => break,
-                    Ok(RelayFrame::Error { code, .. }) => return Err(ProbeFailure::Failed(format!("hello refused: {code:?}"))),
-                    Ok(_) => return Err(ProbeFailure::Failed("unexpected frame before hello_ack".into())),
-                    Err(e) => return Err(ProbeFailure::Failed(e.to_string())),
+                    Ok(RelayFrame::Error { code, .. }) => return Err(failed(refusal_kind(code), format!("hello refused: {code:?}"))),
+                    Ok(_) => return Err(failed(FailureKind::NotRelay, "unexpected frame before hello_ack".into())),
+                    Err(e) => return Err(failed(FailureKind::NotRelay, e.to_string())),
                 },
                 Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
-                Some(Ok(_)) => return Err(ProbeFailure::Failed("unexpected message before hello_ack".into())),
-                Some(Err(e)) => return Err(ProbeFailure::Failed(e.to_string())),
-                None => return Err(ProbeFailure::Failed("closed before hello_ack".into())),
+                Some(Ok(_)) => return Err(failed(FailureKind::NotRelay, "unexpected message before hello_ack".into())),
+                Some(Err(e)) => return Err(failed(FailureKind::Lost, e.to_string())),
+                None => return Err(failed(FailureKind::Lost, "closed before hello_ack".into())),
             }
         }
         let elapsed = started.elapsed();
@@ -285,8 +387,8 @@ async fn connect_and_run(
     let connected = tokio::time::timeout(config.connect_timeout, open_socket(config)).await;
     let ws = match connected {
         Ok(Ok(ws)) => ws,
-        Ok(Err(e)) => return Outcome::Lost(format!("connect: {e}")),
-        Err(_) => return Outcome::Lost(format!("connect timed out after {:?}", config.connect_timeout)),
+        Ok(Err(e)) => return Outcome::Lost(LinkFailure::opening(&e)),
+        Err(_) => return Outcome::Lost(LinkFailure::new(FailureKind::Timeout, format!("connect timed out after {:?}", config.connect_timeout))),
     };
     let (mut sink, mut stream) = ws.split();
     let change = state.lock().authenticating();
@@ -294,28 +396,30 @@ async fn connect_and_run(
         let _ = evt.try_send(LinkEvent::State(c));
     }
     let hello = RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: config.client_version.clone() };
-    let Ok(text) = hello.encode() else { return Outcome::Lost("encode hello".into()) };
+    let Ok(text) = hello.encode() else { return Outcome::Lost(LinkFailure::new(FailureKind::Other, "encode hello")) };
     if let Err(e) = sink.send(Message::Text(text.into())).await {
-        return Outcome::Lost(format!("send hello: {e}"));
+        return Outcome::Lost(LinkFailure::new(FailureKind::Lost, format!("send hello: {e}")));
     }
     let ack = tokio::time::timeout(config.hello_timeout, async {
         loop {
             match stream.next().await {
-                Some(Ok(Message::Text(t))) => return RelayFrame::decode(&t).map_err(|e| e.to_string()),
+                Some(Ok(Message::Text(t))) => return RelayFrame::decode(&t).map_err(|e| LinkFailure::new(FailureKind::NotRelay, e.to_string())),
                 Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
-                Some(Ok(other)) => return Err(format!("unexpected frame before hello_ack: {other:?}")),
-                Some(Err(e)) => return Err(e.to_string()),
-                None => return Err("closed before hello_ack".into()),
+                Some(Ok(other)) => return Err(LinkFailure::new(FailureKind::NotRelay, format!("unexpected frame before hello_ack: {other:?}"))),
+                Some(Err(e)) => return Err(LinkFailure::new(FailureKind::Lost, e.to_string())),
+                None => return Err(LinkFailure::new(FailureKind::Lost, "closed before hello_ack")),
             }
         }
     })
     .await;
     match ack {
         Ok(Ok(RelayFrame::HelloAck { .. })) => {}
-        Ok(Ok(RelayFrame::Error { code, .. })) => return Outcome::Lost(format!("relay refused hello: {code:?}")),
-        Ok(Ok(other)) => return Outcome::Lost(format!("expected hello_ack, got {}", other.encode().unwrap_or_default())),
+        Ok(Ok(RelayFrame::Error { code, .. })) => return Outcome::Lost(LinkFailure::new(refusal_kind(code), format!("relay refused hello: {code:?}"))),
+        Ok(Ok(other)) => {
+            return Outcome::Lost(LinkFailure::new(FailureKind::NotRelay, format!("expected hello_ack, got {}", other.encode().unwrap_or_default())));
+        }
         Ok(Err(e)) => return Outcome::Lost(e),
-        Err(_) => return Outcome::Lost("hello_ack timed out".into()),
+        Err(_) => return Outcome::Lost(LinkFailure::new(FailureKind::Timeout, "hello_ack timed out")),
     }
     let change = state.lock().connected();
     if let Some(c) = change {
@@ -338,7 +442,7 @@ async fn connect_and_run(
                         None => None,
                     };
                     if let Err(e) = sink.send(Message::Text(text.into())).await {
-                        return Outcome::Lost(format!("send: {e}"));
+                        return Outcome::Lost(LinkFailure::new(FailureKind::Lost, format!("send: {e}")));
                     }
                 }
                 Some(Cmd::Close) | None => {
@@ -354,7 +458,7 @@ async fn connect_and_run(
                     pong_deadline = Some(pong_deadline.map_or(due, |d| d.min(due)));
                     tracing::debug!(timeout = ?config.probe_timeout, "checking the socket");
                     if let Err(e) = sink.send(Message::Ping(pings.to_be_bytes().to_vec().into())).await {
-                        return Outcome::Lost(format!("ping: {e}"));
+                        return Outcome::Lost(LinkFailure::new(FailureKind::Lost, format!("ping: {e}")));
                     }
                 }
             },
@@ -373,22 +477,102 @@ async fn connect_and_run(
                     }
                 }
                 Some(Ok(Message::Ping(p))) => { let _ = sink.send(Message::Pong(p)).await; }
-                Some(Ok(Message::Close(_))) | None => return Outcome::Lost("socket closed by peer".into()),
+                Some(Ok(Message::Close(_))) | None => return Outcome::Lost(LinkFailure::new(FailureKind::Lost, "socket closed by peer")),
                 Some(Ok(_)) => {}
-                Some(Err(e)) => return Outcome::Lost(format!("read: {e}")),
+                Some(Err(e)) => return Outcome::Lost(LinkFailure::new(FailureKind::Lost, format!("read: {e}"))),
             },
             _ = ping.tick() => {
                 if pong_deadline.is_none() {
                     pings += 1;
                     pong_deadline = Some(tokio::time::Instant::now() + config.pong_timeout);
                     if let Err(e) = sink.send(Message::Ping(pings.to_be_bytes().to_vec().into())).await {
-                        return Outcome::Lost(format!("ping: {e}"));
+                        return Outcome::Lost(LinkFailure::new(FailureKind::Lost, format!("ping: {e}")));
                     }
                 }
             },
             _ = async { match pong_deadline { Some(d) => tokio::time::sleep_until(d).await, None => std::future::pending().await } } => {
-                return Outcome::Lost("pong timeout".into());
+                return Outcome::Lost(LinkFailure::new(FailureKind::Lost, "pong timeout"));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Error, ErrorKind};
+
+    use tokio_tungstenite::tungstenite::Error as Ws;
+    use voltip_net::ConnectError;
+    use voltip_protocol::relay::RelayErrorCode;
+
+    use super::*;
+
+    /// Each way of failing to open the socket has its kind, from the error's type, never from
+    /// its words.
+    #[test]
+    fn each_way_of_failing_to_open_has_its_kind() {
+        let cases = [
+            (OpenError::Connect(ConnectError::Timeout(Duration::from_secs(8))), FailureKind::Timeout),
+            (OpenError::Connect(ConnectError::Resolve(Error::other("no such name"))), FailureKind::Dns),
+            (OpenError::Connect(ConnectError::Direct(Error::from(ErrorKind::ConnectionRefused))), FailureKind::Refused),
+            (OpenError::Connect(ConnectError::Direct(Error::from(ErrorKind::NetworkUnreachable))), FailureKind::Unreachable),
+            (OpenError::Connect(ConnectError::Direct(Error::from(ErrorKind::HostUnreachable))), FailureKind::Unreachable),
+            (OpenError::Connect(ConnectError::Direct(Error::from(ErrorKind::TimedOut))), FailureKind::Timeout),
+            (OpenError::Connect(ConnectError::Direct(Error::from(ErrorKind::PermissionDenied))), FailureKind::Other),
+            (OpenError::Connect(ConnectError::Proxy("tunnel refused".into())), FailureKind::Proxy),
+            (OpenError::Connect(ConnectError::Unsupported("https".into())), FailureKind::Proxy),
+            (OpenError::Connect(ConnectError::NoHost), FailureKind::Other),
+            (OpenError::Handshake(Ws::Io(Error::new(ErrorKind::UnexpectedEof, "tls handshake eof"))), FailureKind::Tls),
+            (OpenError::Handshake(Ws::Io(Error::new(ErrorKind::InvalidData, "invalid peer certificate"))), FailureKind::Tls),
+            (OpenError::Handshake(Ws::Io(Error::from(ErrorKind::TimedOut))), FailureKind::Timeout),
+            (
+                OpenError::Handshake(Ws::Http(Box::new(tokio_tungstenite::tungstenite::http::Response::builder().status(404).body(None).unwrap()))),
+                FailureKind::NotRelay,
+            ),
+            (OpenError::Handshake(Ws::ConnectionClosed), FailureKind::Other),
+        ];
+        for (error, kind) in cases {
+            assert_eq!(error.kind(), kind, "{error}");
+            let failure = LinkFailure::opening(&error);
+            assert_eq!((failure.kind, failure.detail), (kind, format!("connect: {error}")));
+        }
+        assert_eq!(refusal_kind(RelayErrorCode::UnsupportedVersion), FailureKind::Version);
+        assert_eq!(refusal_kind(RelayErrorCode::RateLimited), FailureKind::Other);
+    }
+
+    /// The kinds go on the wire under their own names (the apps word them).
+    #[test]
+    fn the_kinds_serialise_in_snake_case() {
+        let names: Vec<String> = [
+            FailureKind::Timeout,
+            FailureKind::Dns,
+            FailureKind::Refused,
+            FailureKind::Unreachable,
+            FailureKind::Tls,
+            FailureKind::NotRelay,
+            FailureKind::Proxy,
+            FailureKind::Version,
+            FailureKind::Lost,
+            FailureKind::Other,
+        ]
+        .iter()
+        .map(|kind| serde_json::to_string(kind).unwrap())
+        .collect();
+        assert_eq!(
+            names,
+            [
+                r#""timeout""#,
+                r#""dns""#,
+                r#""refused""#,
+                r#""unreachable""#,
+                r#""tls""#,
+                r#""not_relay""#,
+                r#""proxy""#,
+                r#""version""#,
+                r#""lost""#,
+                r#""other""#
+            ]
+        );
+        assert_eq!(FailureKind::default(), FailureKind::Other);
     }
 }

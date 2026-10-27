@@ -6,7 +6,8 @@
 |---|---|---|
 | Relay 读取用户数据 | 应用层 Noise XX E2EE；Relay 只见 `forward.payload` 密文 | `relay_never_sees_plaintext` 集成测试：中继端截获全部帧，断言不含明文与静态公钥 |
 | Relay 伪造已信任设备 | 静态身份公钥在握手内加密传输并由 Noise 认证；TrustedDevice 记录公钥；重连比对 | `identity_change_is_flagged` 回归测试 |
-| MITM（含 Relay 替换握手） | XX 模式双向认证 + 用户核对 Safety Code（来自 handshake_hash，攻击者无法让两端一致） | `mitm_yields_different_safety_codes` |
+| MITM（含 Relay 替换握手） | XX 模式双向认证；扫码时票据钉住电脑的临时公钥（替换第一条握手消息即失败），用验证码时用户核对 Safety Code（来自 handshake_hash，攻击者无法让两端一致） | `mitm_yields_different_safety_codes`、`crates/voltip-pairing/tests/flow.rs@regression_ticket_bound_to_wrong_ephemeral_fails_handshake` |
+| Relay 或看到验证码的人冒充手机配对（扫码配对电脑不需确认，`docs/pairing.md`「扫码配对只在手机上确认」） | 电脑只在手机证明读过二维码时自行确认：证明是二维码里 32 字节 `secret` 对 handshake_hash 的 HMAC，`secret` 从不经过 Relay；证明不对、重放或不该出现时配对失败；用验证码加入时电脑仍要它的用户确认 | `crates/voltip-pairing/tests/flow.rs@a_proof_under_another_secret_fails_the_pairing`、`a_replayed_proof_fails_the_pairing`、`without_a_proof_both_users_confirm`、`crates/voltip-crypto/src/proof.rs@the_proof_is_hmac_sha256_over_the_label_and_the_hash` |
 | 短码暴力枚举 | Relay 限流：连接 5 次 / IP 20 次·分钟 / 会话 10 次；TTL 120 s | `brute_force_locks_session`、`ip_rate_limit` |
 | 重放票据 / 短码 / 会话 | 一次性 `session_id`；`join` 成功即删除短码；票据 `nonce` 记录；过期即销毁 | `replayed_ticket_rejected`、`expired_session_rejected` |
 | 长期私钥泄露 | 只存平台安全存储（keyring / Keystore）；不写配置、不写 DB、不出设备；日志脱敏 | `secret_store_never_serialises_private_key`、代码审计：`grep -r private` 无明文序列化 |
@@ -21,6 +22,8 @@
 | AI 工具接入（本机 MCP 服务，`docs/dictation.md` §25）被其他程序、网页或历史里的提示注入滥用 | 默认关闭，只监听 127.0.0.1，没有监听其他地址的选项；除 `/healthz` 外每个请求都要 32 字节随机令牌（0600 文件，与本机语音服务的令牌分开，常量时间比较，可随时更换，换后立即生效）；`Host` 只认 `127.0.0.1:{port}` / `localhost:{port}`（防 DNS rebinding），带 `Origin` 的请求一律拒绝，不返回 CORS 头，网页读不到响应；读取分三级（仅词典和规则 / 替换汇总（缺省）/ 完整历史），完整历史要用户在确认框里显式允许并限定时间范围，权限在每次调用时检查、收回立即生效；修改缺省只能写词典，外部工具新建的规则在用户启用前不执行（历史文本是不可信数据，可能带提示注入，规则会改写插入到任何应用里的文字），没有删除工具，每次写入都记在活动记录里并可撤销；最多 16 个会话、每会话每秒 10 次调用、单次结果 256 KiB；日志不记请求和结果里的文字；令牌与接入命令由核心放进剪贴板，不经过 webview | `crates/voltip-mcp/tests/http.rs@requests_without_the_token_or_from_a_web_page_are_refused`、`crates/voltip-mcp/tests/http.rs@the_levels_of_the_moment_decide_each_call`、`crates/voltip-mcp/tests/http.rs@a_clients_rule_waits_and_its_writes_can_be_undone`、`crates/voltip-mcp/tests/http.rs@sessions_and_calls_are_limited`、`crates/voltip-mcp/tests/http.rs@a_new_token_and_switching_off_take_effect_at_once`、`crates/voltip-mcp/tests/http.rs@the_logs_hold_no_text`；`crates/voltip-core/tests/mcp.rs@reads_follow_the_read_level_of_the_moment`、`crates/voltip-core/tests/mcp.rs@a_tools_rule_waits_for_approval_and_runs_once_approved` |
 
 ## 已知缺口
+
+- 扫码配对时二维码就是凭据：有效期内（120 秒，常开配对时每个会话都是）看得到它的人（截图、拍照、共享屏幕）不经电脑确认就能配对，之后能在电脑的光标处输入文字。电脑的配对卡片写明这一点并提醒不要截图或共享；配对后设备出现在列表里，可以随时忘记（用户 2026-10-27 接受的取舍）。
 
 - `forward` 洪泛：Relay 对已加入会话 / 频道的转发不限速；应加每连接字节 / 帧速率上限。
 - 频道标签可被知道两把公钥的人计算出来（公钥不是秘密），攻击者可占位造成 `channel_full`；缓解：attach 需要对频道所有者的签名挑战（下一版协议）。

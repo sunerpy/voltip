@@ -134,9 +134,12 @@ export function probeText(result: ProbeResult, t: TFunction): string {
     case "refused":
       return t("connectivity.result.refused");
     case "failed":
-      return result.reason.length > 0
-        ? t("connectivity.result.failed", { reason: result.reason })
-        : t("connectivity.result.failedBare");
+      // The build's own relay's failure has no words (they could name its host): its kind speaks.
+      if (result.reason.length > 0)
+        return t("connectivity.result.failed", { reason: result.reason });
+      return result.kind === "other"
+        ? t("connectivity.result.failedBare")
+        : t("connectivity.result.failed", { reason: t(`relay.why.${result.kind}`) });
   }
 }
 

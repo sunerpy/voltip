@@ -5,7 +5,7 @@
 use proptest::prelude::*;
 use voltip_protocol::app::AppMessage;
 use voltip_protocol::relay::RelayFrame;
-use voltip_protocol::ticket::{NONCE_LEN, PUBLIC_KEY_LEN, PairingTicket};
+use voltip_protocol::ticket::{NONCE_LEN, PUBLIC_KEY_LEN, PairingTicket, SECRET_LEN};
 use voltip_protocol::{PairCode, ProtocolVersion, SessionId};
 
 proptest! {
@@ -18,10 +18,16 @@ proptest! {
     }
 
     #[test]
-    fn tickets_roundtrip(e in proptest::array::uniform32(any::<u8>()), nonce in proptest::array::uniform16(any::<u8>()), exp in any::<u64>()) {
+    fn tickets_roundtrip(
+        e in proptest::array::uniform32(any::<u8>()),
+        nonce in proptest::array::uniform16(any::<u8>()),
+        exp in any::<u64>(),
+        secret in proptest::option::of(proptest::array::uniform32(any::<u8>())),
+    ) {
         let _: [u8; PUBLIC_KEY_LEN] = e;
         let _: [u8; NONCE_LEN] = nonce;
-        let t = PairingTicket { version: ProtocolVersion::CURRENT, session_id: SessionId::random(), ephemeral_pub: e, nonce, expires_at: exp, relay_hint: None };
+        let _: Option<[u8; SECRET_LEN]> = secret;
+        let t = PairingTicket { version: ProtocolVersion::CURRENT, session_id: SessionId::random(), ephemeral_pub: e, nonce, expires_at: exp, relay_hint: None, secret };
         let uri = t.to_uri().unwrap();
         prop_assert_eq!(PairingTicket::from_uri(&uri).unwrap(), t);
     }

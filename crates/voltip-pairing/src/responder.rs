@@ -6,7 +6,7 @@ use voltip_protocol::relay::RelayFrame;
 use voltip_protocol::{ProtocolVersion, SessionId};
 
 use crate::common::{Action, Event, FailureReason, JoinMethod, Now, PairingState, Snapshot, Timeouts};
-use crate::engine::{Engine, Step};
+use crate::engine::{Engine, Proof, Step};
 use crate::{NonceLedger, PairingError};
 
 enum Phase {
@@ -70,6 +70,7 @@ impl Responder {
             peer: None,
             local_confirmed: false,
             peer_confirmed: false,
+            scanned: false,
         };
         if let JoinMethod::Ticket(t) = &self.method {
             snap.expires_at = Some(t.expires_at);
@@ -79,13 +80,20 @@ impl Responder {
             snap.peer = e.peer_info();
             snap.local_confirmed = e.local_confirmed();
             snap.peer_confirmed = e.peer_confirmed();
+            snap.scanned = e.scanned();
         }
         snap
     }
 
-    /// Feed one event.
+    /// What the screen shows: the state and, once engaged, who confirmed.
+    fn visible(&self) -> (PairingState, Option<[bool; 4]>) {
+        (self.state(), if let Phase::Engaged(e) = &self.phase { Some(e.flags()) } else { None })
+    }
+
+    /// Feed one event. The last action is an `Emit` whenever what the screen shows changed.
     pub fn step(&mut self, event: Event, now: Now) -> Result<Vec<Action>, PairingError> {
         let before = self.state();
+        let shown = self.visible();
         let mut actions = match (&mut self.phase, event) {
             (_, Event::Reset) => {
                 self.phase = Phase::Idle;
@@ -110,11 +118,17 @@ impl Responder {
                 let mismatch = matches!(&self.method, JoinMethod::Ticket(t) if t.session_id != session_id);
                 if mismatch {
                     let actions = self.fail(FailureReason::Protocol);
-                    return Ok(self.finish_with(actions, before, now));
+                    return Ok(self.finish_with(actions, shown, now));
                 }
                 self.session_id = Some(session_id);
                 let Some(hs) = self.handshake.take() else { return Err(PairingError::InvalidTransition { event: "relay", state: before }) };
-                let mut engine = Engine::new(session_id, self.identity.clone(), hs, self.timeouts, now);
+                // A ticket with a secret is proved right after the handshake; a typed code (the
+                // relay knows it) or an older computer's ticket leaves both users to confirm.
+                let proof = match &self.method {
+                    JoinMethod::Ticket(t) => t.secret.map_or(Proof::None, Proof::Give),
+                    JoinMethod::Code(_) => Proof::None,
+                };
+                let mut engine = Engine::new(session_id, self.identity.clone(), hs, self.timeouts, now, proof);
                 let step = engine.pump(); // responder has nothing to send yet
                 self.phase = Phase::Engaged(Box::new(engine));
                 self.apply(step)
@@ -150,14 +164,14 @@ impl Responder {
             (Phase::Terminal(_), Event::Tick | Event::Peer(_)) => Vec::new(),
             (_, other) => return Err(PairingError::InvalidTransition { event: other.name(), state: before }),
         };
-        if self.state() != before {
+        if self.visible() != shown {
             actions.push(Action::Emit(Box::new(self.snapshot(now))));
         }
         Ok(actions)
     }
 
-    fn finish_with(&mut self, mut actions: Vec<Action>, before: PairingState, now: Now) -> Vec<Action> {
-        if self.state() != before {
+    fn finish_with(&mut self, mut actions: Vec<Action>, shown: (PairingState, Option<[bool; 4]>), now: Now) -> Vec<Action> {
+        if self.visible() != shown {
             actions.push(Action::Emit(Box::new(self.snapshot(now))));
         }
         actions

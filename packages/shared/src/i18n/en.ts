@@ -155,6 +155,19 @@ export const en: Messages = {
     closed: "Closed",
     attempt: "{base} · attempt {n}",
     unconfigured: "Not configured",
+    why: {
+      timeout: "Timed out: the relay did not answer",
+      dns: "The relay's address could not be looked up; check the network",
+      refused: "The connection was refused",
+      unreachable: "No route to the relay; check the network connection",
+      tls: "The secure connection failed",
+      not_relay: "The address is not a Voltip relay",
+      proxy: "The proxy could not reach the relay; check the proxy settings",
+      version: "The relay does not support this version; update Voltip",
+      lost: "The connection dropped",
+      other: "The connection failed",
+    },
+    lastFailure: "Last failure: {reason}",
   },
   failure: {
     timeout: "Timed out",
@@ -1643,7 +1656,7 @@ export const en: Messages = {
     title: "Pair a new device",
     windowOpen: "{remaining} left",
     intro:
-      "Generates a one-time QR code and a 6-digit code. After the phone scans or enters it, both sides compare the same safety code and trust each other only if it matches. The pairing expires after {ttl} seconds.",
+      "Generates a one-time QR code and a 6-digit code. After a scan, you confirm on the phone only; with the 6-digit code, both sides compare the same safety code and confirm. The pairing expires after {ttl} seconds.",
     start: "Start pairing",
     generating: "Generating QR code",
     creating: "Preparing to pair…",
@@ -1656,12 +1669,13 @@ export const en: Messages = {
     scanNote: "Scanning gives the phone the pairing info; nothing to type.",
     alwaysOn: "Always-on pairing",
     alwaysOnHelp:
-      "While on, this computer keeps waiting for a phone: the QR code renews before it expires and the next pairing opens after each one, until you turn it off. Every pairing still needs the safety code checked and confirmed here.",
+      "While on, this computer keeps waiting for a phone: the QR code renews before it expires and the next pairing opens after each one, until you turn it off. After a scan you confirm on the phone only; with the code, the safety code is still checked and confirmed here.",
     alwaysOnOpen: "Always on · this code {remaining}",
     alwaysOnIdle: "Always-on pairing is on; it starts once the relay is connected.",
     alwaysOnNext: "Always-on pairing: the next pairing opens in a moment.",
     validity: "Valid for",
-    warning: "Do not screenshot this QR code or show it on a shared screen.",
+    warning:
+      "A phone that scans this QR code pairs without a confirmation here: do not screenshot it or show it on a shared screen.",
     regenerate: "Regenerate",
     regenerateQr: "Regenerate QR code",
     copyLink: "Copy link",
@@ -1675,6 +1689,9 @@ export const en: Messages = {
     verifyNote:
       "Both devices show the same safety code. If it matches, press “Confirm pairing” on both; if not, reject.",
     waitingPeer: "Waiting for the other device to confirm…",
+    scanned:
+      "Scanned. Press “Confirm and trust” on the phone to finish; nothing to confirm on this computer. If it is not your phone, reject.",
+    waitingPhone: "Waiting for the phone to confirm…",
     confirm: "Confirm pairing",
     reject: "Reject",
     peerConfirmed: "The other device confirmed",
@@ -3169,9 +3186,9 @@ export const en: Messages = {
       e2ee: "End-to-end encrypted",
       e2eeBody:
         "Only the two paired devices can decrypt the content; the relay sees ciphertext only.",
-      safety: "Safety code on both ends",
+      safety: "Checked by the QR code",
       safetyBody:
-        "Both devices show the same four words; both must confirm before they trust each other.",
+        "When you scan, the QR code checks both devices and you confirm on the phone only; with the 6-digit code, both sides compare the same four words and confirm.",
       identity: "Identity changes raise an alert",
       identityBody:
         "A trusted computer with a new key is marked red and not trusted automatically.",
@@ -3195,7 +3212,7 @@ export const en: Messages = {
     },
     pair: {
       intro:
-        "Open the Phone page on the computer and start pairing, then scan its QR code or enter the 6-digit code it shows. Either way, establishing the encrypted connection and checking the safety code are the same afterwards.",
+        "Open the Phone page on the computer and start pairing, then scan its QR code or enter the 6-digit code it shows. After scanning, you confirm on the phone only; with the code, both devices check the safety code and confirm.",
       method: "Pairing method",
       scan: "Scan",
       code: "Enter 6-digit code",
@@ -3215,6 +3232,10 @@ export const en: Messages = {
       scanCancelled: "Scan cancelled or camera permission not granted",
       retry: "Retry",
       clearRetry: "Clear and retry",
+      relay: "Relay · {state}",
+      relayHelp:
+        "Pairing needs a connection to the relay. When it cannot connect, run the connection check below to see why.",
+      relayDetail: "{reason} ({detail})",
     },
     verify: {
       rejected: "Pairing was rejected and cancelled.",
@@ -3227,8 +3248,12 @@ export const en: Messages = {
       handshake: "{platform} · encrypted connection established",
       note: "The computer screen should show the same four words and fingerprint. If they match, press “Confirm and trust”; if anything differs, reject — someone is in the middle.",
       peerConfirmed: "The other device confirmed",
-      waiting: "Confirmed · waiting for the computer…",
+      waiting: "Confirmed · now press “Confirm pairing” on the computer too",
       waitingButton: "Waiting for the computer…",
+      scannedNote:
+        "Scanning checked this computer's identity. Press “Confirm and trust” to finish; nothing to do on the computer.",
+      finishing: "Confirmed · finishing the pairing…",
+      finishingButton: "Finishing…",
       confirm: "Confirm and trust",
       reject: "Reject",
     },

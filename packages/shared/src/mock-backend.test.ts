@@ -281,6 +281,37 @@ describe("MockBackend pairing (phone role)", () => {
     vi.advanceTimersByTime(300 + 400 + 100);
     expect(backend.peek().pairing.peer_confirmed).toBe(true);
   });
+
+  it("a scanned ticket has the computer confirm by itself; a typed code leaves both to confirm", async () => {
+    const phone = new MockBackend({ role: "phone" });
+    await phone.invoke("pairing_join_ticket", { uri: "voltip://pair?v=1&s=abcd&t=ef01" });
+    vi.advanceTimersByTime(300 + 400);
+    expect(phone.peek().pairing).toMatchObject({
+      scanned: true,
+      peer_confirmed: true,
+      local_confirmed: false,
+    });
+    await phone.invoke("pairing_confirm");
+    expect(phone.peek().pairing.state).toEqual({ state: "trusted" });
+
+    const typed = new MockBackend({ role: "phone" });
+    await typed.invoke("pairing_join_code", { code: "483921" });
+    vi.advanceTimersByTime(300 + 400);
+    expect(typed.peek().pairing).toMatchObject({ scanned: false, peer_confirmed: false });
+
+    const desktop = new MockBackend();
+    await desktop.invoke("pairing_start");
+    vi.advanceTimersByTime(300);
+    desktop.simulatePeerJoined(undefined, true);
+    vi.advanceTimersByTime(400);
+    expect(desktop.peek().pairing).toMatchObject({
+      scanned: true,
+      local_confirmed: true,
+      peer_confirmed: false,
+    });
+    desktop.simulatePeerConfirmed();
+    expect(desktop.peek().pairing.state).toEqual({ state: "trusted" });
+  });
 });
 
 describe("MockBackend devices, relay, identity and messages", () => {

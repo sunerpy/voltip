@@ -1,9 +1,11 @@
 //! Post-join engine shared by initiator and responder: drives the Noise handshake, then the
-//! safety-code verification exchange, and hands out an [`Established`] session.
+//! safety-code verification exchange, and hands out an [`Established`] session. When the phone
+//! scanned a ticket with a secret, it proves so right after the handshake and the computer
+//! confirms by itself (docs/pairing.md 「扫码配对只在手机上确认」).
 
 use std::time::Instant;
 
-use voltip_crypto::{Handshake, HandshakeOutcome, HandshakeStep};
+use voltip_crypto::{Handshake, HandshakeOutcome, HandshakeStep, PROOF_LEN};
 use voltip_identity::DeviceIdentity;
 use voltip_protocol::app::{AppMessage, RejectReason};
 use voltip_protocol::{DeviceInfo, ProtocolVersion, SessionId};
@@ -18,14 +20,27 @@ pub(crate) enum Step {
     Terminal(PairingState, Vec<Action>),
 }
 
+/// What the engine does with the ticket's secret.
+pub(crate) enum Proof {
+    /// No secret: both users confirm (a typed code, or a ticket from a build up to 0.1.9).
+    None,
+    /// Responder that scanned a ticket with this secret: proves it once the handshake is done.
+    Give([u8; PROOF_LEN]),
+    /// Initiator whose ticket carried this secret: a proof under it confirms for its user.
+    Expect([u8; PROOF_LEN]),
+}
+
 pub(crate) struct Engine {
     pub(crate) session_id: SessionId,
     identity: DeviceIdentity,
     timeouts: Timeouts,
     phase: Phase,
     deadline: Instant,
+    proof: Proof,
     local_confirmed: bool,
     peer_confirmed: bool,
+    /// Responder: it sent the proof. Initiator: a valid proof arrived.
+    scanned: bool,
     peer_info: Option<DeviceInfo>,
 }
 
@@ -36,15 +51,17 @@ enum Phase {
 }
 
 impl Engine {
-    pub(crate) fn new(session_id: SessionId, identity: DeviceIdentity, handshake: Handshake, timeouts: Timeouts, now: Now) -> Self {
+    pub(crate) fn new(session_id: SessionId, identity: DeviceIdentity, handshake: Handshake, timeouts: Timeouts, now: Now, proof: Proof) -> Self {
         Self {
             session_id,
             identity,
             timeouts,
             phase: Phase::Handshaking(Box::new(handshake)),
             deadline: now.instant + timeouts.handshake,
+            proof,
             local_confirmed: false,
             peer_confirmed: false,
+            scanned: false,
             peer_info: None,
         }
     }
@@ -76,6 +93,15 @@ impl Engine {
         self.peer_confirmed
     }
 
+    pub(crate) fn scanned(&self) -> bool {
+        self.scanned
+    }
+
+    /// What the user sees change without the state changing.
+    pub(crate) fn flags(&self) -> [bool; 4] {
+        [self.local_confirmed, self.peer_confirmed, self.scanned, self.peer_info.is_some()]
+    }
+
     /// Kick the handshake: returns the first message to send, if it is our turn.
     pub(crate) fn pump(&mut self) -> Step {
         let Phase::Handshaking(hs) = &mut self.phase else { return Step::Continue(Vec::new()) };
@@ -94,8 +120,16 @@ impl Engine {
     fn finish_handshake(&mut self, mut actions: Vec<Action>) -> Step {
         let Phase::Handshaking(hs) = std::mem::replace(&mut self.phase, Phase::Done) else { return Step::Continue(actions) };
         match (*hs).finish() {
-            Ok(outcome) => {
+            Ok(mut outcome) => {
                 tracing::info!(session = %self.session_id, peer = ?outcome.remote_static, "handshake complete");
+                if let Proof::Give(secret) = &self.proof {
+                    let Some(proof) = self.prove(secret, &mut outcome) else {
+                        actions.push(Action::Close);
+                        return Step::Terminal(PairingState::Failed { reason: FailureReason::Handshake }, actions);
+                    };
+                    actions.push(Action::SendPeer(proof));
+                    self.scanned = true;
+                }
                 self.phase = Phase::Verifying(Box::new(outcome));
                 // Deadline for the humans is measured from here.
                 self.deadline = self.deadline_after_handshake();
@@ -106,6 +140,32 @@ impl Engine {
                 Step::Terminal(PairingState::Failed { reason: FailureReason::Handshake }, actions)
             }
         }
+    }
+
+    /// The encrypted `pair_proof` for this handshake.
+    fn prove(&self, secret: &[u8; PROOF_LEN], outcome: &mut HandshakeOutcome) -> Option<Vec<u8>> {
+        let proof = voltip_crypto::pairing_proof(secret, &outcome.handshake_hash).ok()?;
+        let plain = AppMessage::PairProof { version: ProtocolVersion::CURRENT, proof, device: self.identity.info() }.encode().ok()?;
+        outcome.cipher.encrypt(&plain).ok()
+    }
+
+    /// Initiator: a valid proof means the phone read the QR code shown here, and this side
+    /// confirms for its user; anything else fails the pairing.
+    fn on_proof(&mut self, proof: &[u8; PROOF_LEN], device: DeviceInfo) -> Step {
+        let (Proof::Expect(secret), Phase::Verifying(outcome)) = (&self.proof, &self.phase) else {
+            return Step::Terminal(PairingState::Failed { reason: FailureReason::Protocol }, vec![Action::Close]);
+        };
+        if self.scanned {
+            return Step::Terminal(PairingState::Failed { reason: FailureReason::Protocol }, vec![Action::Close]);
+        }
+        if !voltip_crypto::verify_pairing_proof(secret, &outcome.handshake_hash, proof) {
+            tracing::warn!(session = %self.session_id, "pairing proof rejected");
+            return Step::Terminal(PairingState::Failed { reason: FailureReason::Handshake }, vec![Action::Close]);
+        }
+        tracing::info!(session = %self.session_id, "the phone read the QR code; confirming");
+        self.scanned = true;
+        self.peer_info = Some(device);
+        self.confirm().unwrap_or_else(|()| Step::Terminal(PairingState::Failed { reason: FailureReason::Handshake }, vec![Action::Close]))
     }
 
     fn deadline_after_handshake(&self) -> Instant {
@@ -141,6 +201,7 @@ impl Engine {
                         self.peer_info = Some(device);
                         self.maybe_complete()
                     }
+                    AppMessage::PairProof { proof, device, .. } => self.on_proof(&proof, device),
                     AppMessage::PairReject { .. } => Step::Terminal(PairingState::Rejected, vec![Action::Close]),
                     _ => Step::Terminal(PairingState::Failed { reason: FailureReason::Protocol }, vec![Action::Close]),
                 }
@@ -150,6 +211,11 @@ impl Engine {
     }
 
     pub(crate) fn on_user_confirm(&mut self) -> Result<Step, ()> {
+        self.confirm()
+    }
+
+    /// Send this side's `pair_confirm` (once), for its user or, after a valid proof, by itself.
+    fn confirm(&mut self) -> Result<Step, ()> {
         let Phase::Verifying(outcome) = &mut self.phase else { return Err(()) };
         if self.local_confirmed {
             return Ok(Step::Continue(Vec::new()));

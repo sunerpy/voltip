@@ -7481,6 +7481,7 @@ version = "0.0.0"
 dependencies = [
  "ciborium",
  "hex",
+ "hmac 0.13.0",
  "proptest",
  "rand 0.10.2",
  "serde",

@@ -58,7 +58,7 @@ describe("Verify screen (docs/pairing.md)", () => {
         local_confirmed: true,
       });
     });
-    expect(screen.getByText("已确认 · 等待电脑确认…")).toBeInTheDocument();
+    expect(screen.getByText("已确认 · 请在电脑上也点「确认配对」")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "等待电脑确认…" })).toBeDisabled();
     act(() => {
       backend.publish({
@@ -70,6 +70,38 @@ describe("Verify screen (docs/pairing.md)", () => {
       });
     });
     expect(screen.getByText("对方已确认")).toBeInTheDocument();
-    expect(screen.queryByText("已确认 · 等待电脑确认…")).toBeNull();
+    expect(screen.queryByText("已确认 · 请在电脑上也点「确认配对」")).toBeNull();
+  });
+
+  it("regression: after a scan the computer has confirmed, and the phone's confirmation finishes (issue #193)", async () => {
+    const backend = new MockBackend({ role: "phone" });
+    await verifyScreen(backend);
+    act(() => {
+      backend.publish({
+        type: "pairing",
+        ...idleSnapshot(),
+        state: { state: "awaiting_verification" },
+        safety_code: { ...CODE, words: [...CODE.words] },
+        scanned: true,
+        peer_confirmed: true,
+      });
+    });
+    expect(
+      screen.getByText("扫码已核对这台电脑的身份，点「确认并信任」即完成配对，电脑上无需再操作。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("对方已确认")).toBeNull();
+    expect(screen.getByRole("button", { name: "确认并信任" })).toBeEnabled();
+    act(() => {
+      backend.publish({
+        type: "pairing",
+        ...idleSnapshot(),
+        state: { state: "awaiting_verification" },
+        safety_code: { ...CODE, words: [...CODE.words] },
+        scanned: true,
+        local_confirmed: true,
+      });
+    });
+    expect(screen.getByText("已确认 · 正在完成配对…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "正在完成…" })).toBeDisabled();
   });
 });

@@ -138,7 +138,8 @@
       "platform": "android"
     },
     "local_confirmed": true,
-    "peer_confirmed": false
+    "peer_confirmed": false,
+    "scanned": true
   },
   "devices": [
     {

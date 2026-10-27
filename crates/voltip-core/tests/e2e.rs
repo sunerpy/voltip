@@ -268,6 +268,79 @@ async fn pair_by_ticket_then_reject_and_replay() {
     wait(&mut desk, |e| matches!(e, CoreEvent::Pairing(s) if matches!(s.state, PairingState::Failed { .. })).then_some(())).await;
 }
 
+/// regression (issue #193): the phone scanned the QR code and its user confirmed, nobody clicked
+/// on the computer, and the pairing ran out. A scanned ticket's proof now confirms for the
+/// computer, and the phone's confirmation alone finishes the pairing (docs/pairing.md
+/// 「扫码配对只在手机上确认」).
+#[tokio::test]
+async fn regression_a_phone_that_scanned_pairs_with_only_its_own_confirmation() {
+    let (url, _stop, _relay) = relay().await;
+    let mut desk = node("Mac Studio", Some(&url));
+    let mut phone = node("Pixel 10", Some(&url));
+    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    desk.handle.send(CoreCommand::StartPairing).await.unwrap();
+    let uri = wait_pairing(&mut desk, PairingState::WaitingForPeer).await.ticket_uri.unwrap();
+    phone.handle.send(CoreCommand::JoinWithTicket(uri)).await.unwrap();
+    let shown = wait(&mut desk, |e| match e {
+        CoreEvent::Pairing(s) if s.state == PairingState::AwaitingVerification && s.scanned => Some(s.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(shown.local_confirmed && !shown.peer_confirmed, "the computer confirmed by itself: {shown:?}");
+    assert_eq!(shown.peer.as_ref().map(|p| p.name.as_str()), Some("Pixel 10"), "and names the phone");
+    let asked = wait(&mut phone, |e| match e {
+        CoreEvent::Pairing(s) if s.state == PairingState::AwaitingVerification && s.peer_confirmed => Some(s.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(asked.scanned && !asked.local_confirmed, "{asked:?}");
+    assert_eq!(asked.peer.as_ref().map(|p| p.name.as_str()), Some("Mac Studio"));
+    // Only the phone's user confirms.
+    phone.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
+    let on_desk = wait(&mut desk, |e| if let CoreEvent::Trusted(d) = e { Some(d.clone()) } else { None }).await;
+    let on_phone = wait(&mut phone, |e| if let CoreEvent::Trusted(d) = e { Some(d.clone()) } else { None }).await;
+    assert_eq!((on_desk.name.as_str(), on_phone.name.as_str()), ("Pixel 10", "Mac Studio"));
+    wait_online(&mut desk).await;
+    wait_online(&mut phone).await;
+}
+
+/// regression (issue #193): a confirmation changes no pairing state, and the cores used to emit
+/// a snapshot only on a state change, so neither screen ever showed who had confirmed: the
+/// phone's 确认 stayed enabled and nothing told its user to confirm on the computer too. With a
+/// typed code (which proves nothing) both users still confirm, and each sees it happen.
+#[tokio::test]
+async fn regression_each_confirmation_reaches_both_screens() {
+    let (url, _stop, _relay) = relay().await;
+    let mut desk = node("Desk", Some(&url));
+    let mut phone = node("Phone", Some(&url));
+    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    desk.handle.send(CoreCommand::StartPairing).await.unwrap();
+    let code = wait_pairing(&mut desk, PairingState::WaitingForPeer).await.code.unwrap();
+    phone.handle.send(CoreCommand::JoinWithCode(code)).await.unwrap();
+    let first = wait_pairing(&mut desk, PairingState::AwaitingVerification).await;
+    assert!(!first.scanned && !first.local_confirmed, "a typed code leaves the computer to its user: {first:?}");
+    wait_pairing(&mut phone, PairingState::AwaitingVerification).await;
+    phone.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
+    let mine = wait(&mut phone, |e| match e {
+        CoreEvent::Pairing(s) if s.local_confirmed => Some(s.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(mine.state, PairingState::AwaitingVerification);
+    assert!(!mine.scanned && !mine.peer_confirmed, "{mine:?}");
+    let theirs = wait(&mut desk, |e| match e {
+        CoreEvent::Pairing(s) if s.peer_confirmed => Some(s.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(!theirs.local_confirmed, "{theirs:?}");
+    desk.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
+    wait(&mut desk, |e| matches!(e, CoreEvent::Trusted(_)).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Trusted(_)).then_some(())).await;
+}
+
 #[tokio::test]
 async fn regression_relay_compromise_impostor_on_channel_is_flagged_not_trusted() {
     use futures_util::{SinkExt as _, StreamExt as _};

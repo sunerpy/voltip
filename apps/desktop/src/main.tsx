@@ -13,7 +13,7 @@ async function createBackend(): Promise<Backend> {
   if (import.meta.env.DEV && !isTauri()) {
     const { MOCK_ENGINE_BUILTIN, MockBackend, sampleDevices } = await import("@voltip/shared/mock");
     return new MockBackend({
-      autoPeer: { joinAfterMs: 20_000, confirmAfterMs: 6000 },
+      autoPeer: { joinAfterMs: 20_000, confirmAfterMs: 6000, scanned: true },
       devices: sampleDevices(),
       // As in a release build: phones meet this computer on the built-in relay (docs/pairing.md
       // 「只走中继」).

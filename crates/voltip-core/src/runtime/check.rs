@@ -1,7 +1,7 @@
 //! The connectivity self-check (`CoreCommand::CheckConnectivity`, [`crate::connectivity`]): the
 //! relay is probed on a task (a fresh connection and `hello`); every online device gets an
-//! encrypted ping on its channel. The report goes out when both are in, or at [`CHECK_DEADLINE`]
-//! with what arrived.
+//! encrypted ping on its channel. The report goes out when both are in; with the probe in, at
+//! [`CHECK_DEADLINE`] with the pongs that arrived; without it, at [`PROBE_DEADLINE`].
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -12,7 +12,9 @@ use voltip_transport::LinkConfig;
 
 use super::{CoreEvent, Runtime, now_ms, summarize};
 use crate::CoreError;
-use crate::connectivity::{CHECK_DEADLINE, ConnectivityReport, ConnectivityStatus, PROBE_TIMEOUT, PeerCheck, ProbeResult, RelayCheck, shown_relay_result};
+use crate::connectivity::{
+    CHECK_DEADLINE, ConnectivityReport, ConnectivityStatus, PROBE_DEADLINE, PROBE_TIMEOUT, PeerCheck, ProbeResult, RelayCheck, shown_relay_result,
+};
 use crate::view::DeviceConnection;
 
 /// What the probe task found.
@@ -26,7 +28,10 @@ pub(super) struct Probed {
 /// A check in flight.
 pub(super) struct Pending {
     id: u64,
+    /// For the pongs, once the probe is in.
     deadline: Instant,
+    /// For the probe.
+    probe_deadline: Instant,
     /// Encrypted pings awaiting their pong, by sequence number.
     pings: HashMap<u64, (PublicKey, Instant)>,
     rtts: HashMap<PublicKey, u32>,
@@ -63,8 +68,16 @@ impl Runtime {
         if let Some((link, _)) = &self.relay {
             link.reconnect_now();
         }
-        let mut pending =
-            Pending { id, deadline: Instant::now() + CHECK_DEADLINE, pings: HashMap::new(), rtts: HashMap::new(), probed: None, relay_configured };
+        let started = Instant::now();
+        let mut pending = Pending {
+            id,
+            deadline: started + CHECK_DEADLINE,
+            probe_deadline: started + PROBE_DEADLINE,
+            pings: HashMap::new(),
+            rtts: HashMap::new(),
+            probed: None,
+            relay_configured,
+        };
         let online: Vec<PublicKey> = self.peers.keys().copied().filter(|key| self.trusted.get_by_key(key).is_some()).collect();
         for (i, key) in online.into_iter().enumerate() {
             let seq = (id << 16) | (i as u64 & 0xffff);
@@ -95,9 +108,11 @@ impl Runtime {
         self.finish_check_if_complete();
     }
 
-    /// Once per tick: a check past its deadline reports what it has.
+    /// Once per tick: a check past its deadline reports what it has. The pongs' deadline counts
+    /// once the probe is in; the probe has a longer one of its own.
     pub(super) fn check_deadline(&mut self) {
-        if self.check.as_ref().is_some_and(|p| Instant::now() >= p.deadline) {
+        let now = Instant::now();
+        if self.check.as_ref().is_some_and(|p| now >= p.probe_deadline || (p.probed.is_some() && now >= p.deadline)) {
             self.finish_check();
         }
     }

@@ -5,7 +5,7 @@ import { ConnectivityCheck, peerText, probeText } from "./ConnectivityCheck";
 
 const REPORT: ConnectivityReport = {
   checked_at: 1_758_700_600_000,
-  relay: { configured: true, result: { result: "failed", reason: "" } },
+  relay: { configured: true, result: { result: "failed", reason: "", kind: "other" } },
   peers: [
     { public_key: "1".repeat(64), name: "Surface-Laptop", online: true },
     { public_key: "2".repeat(64), name: "iPad", online: false },
@@ -18,8 +18,15 @@ describe("ConnectivityCheck", () => {
     expect(probeText({ result: "ok", ms: 12 }, t)).toBe("可连接 · 12 ms");
     expect(probeText({ result: "timeout" }, t)).toBe("没有响应");
     expect(probeText({ result: "refused" }, t)).toBe("拒绝连接");
-    expect(probeText({ result: "failed", reason: "tls" }, t)).toBe("连接失败 · tls");
-    expect(probeText({ result: "failed", reason: "" }, t)).toBe("连接失败");
+    expect(probeText({ result: "failed", reason: "tls", kind: "tls" }, t)).toBe("连接失败 · tls");
+    expect(probeText({ result: "failed", reason: "", kind: "other" }, t)).toBe("连接失败");
+    // The build's own relay's failure has no words (issue #193): its kind says what happened.
+    expect(probeText({ result: "failed", reason: "", kind: "dns" }, t)).toBe(
+      "连接失败 · 无法解析中继地址，请检查网络",
+    );
+    expect(probeText({ result: "failed", reason: "", kind: "not_relay" }, zhT.t)).toBe(
+      "连接失败 · 该地址不是 Voltip 中继",
+    );
     const peer = { public_key: "1".repeat(64), name: "Pixel 8", online: false };
     expect(peerText(peer, t)).toBe("Pixel 8 · 离线");
     expect(peerText({ ...peer, online: true, rtt_ms: 9 }, t)).toBe(

@@ -1,7 +1,8 @@
 // 配对电脑 (docs/pairing.md), apps/mobile's PairDevice on native views: the QR code the computer
 // shows (the camera page), or its six-digit code; both meet the computer on the relay (docs/
-// pairing.md 「只走中继」). The safety code is compared on the next page.
-import { failureLabel } from "@voltip/shared";
+// pairing.md 「只走中继」). The safety code is compared on the next page. The relay link the pairing
+// needs is shown below it: its state, why it is not connected, and the self-check (issue #193).
+import { type Tone as LabelTone, failureLabel, relayLabel } from "@voltip/shared";
 import { useCameraPermissions } from "expo-camera";
 import { useState } from "react";
 import { View } from "react-native";
@@ -9,15 +10,73 @@ import { ProgressBar, SegmentedButtons, Text, TextInput } from "react-native-pap
 
 import { useBackend, useUiState } from "../backend/BackendProvider";
 import { useI18n } from "../backend/i18n";
+import { ConnectivityCheck } from "../features/Devices";
 import { useRootNavigation } from "../routes";
 import { Button } from "../ui/Button";
 import { CodeInput } from "../ui/CodeInput";
-import { Lede, Notice, Page, Section, StateLine, useAppTheme } from "../ui/kit";
+import { Lede, Notice, Page, Section, StateLine, type Tone, useAppTheme } from "../ui/kit";
 
 type Method = "scan" | "code";
 
 export function isPairingLink(value: string): boolean {
   return value.trim().startsWith("voltip://pair?");
+}
+
+/** A label's tone as the kit's lamps have it. */
+function lampTone(tone: LabelTone): Tone {
+  switch (tone) {
+    case "warn":
+      return "warning";
+    case "neutral":
+      return "idle";
+    default:
+      return tone;
+  }
+}
+
+/** The relay the pairing needs (docs/pairing.md 「只走中继」): its state, and while it is not
+ *  connected why the last attempt failed and the self-check. Issue #193: the page said only
+ *  「尚未连上中继」, and only once a code was entered. */
+function RelayLink() {
+  const theme = useAppTheme();
+  const { relay, connectivity } = useUiState();
+  const { t, locale } = useI18n();
+  const label = relayLabel(relay, locale);
+  const connected = relay.state === "connected";
+  const failure = relay.last_failure;
+  let why: string | undefined;
+  if (!connected && failure !== undefined) {
+    const reason = t(`relay.why.${failure.kind}`);
+    why = t("relay.lastFailure", {
+      reason:
+        failure.detail === undefined
+          ? reason
+          : t("mobile.pair.relayDetail", { reason, detail: failure.detail }),
+    });
+  }
+  return (
+    <>
+      <Section padded testID="pair-relay">
+        <StateLine tone={lampTone(label.tone)} testID="pair-relay-state">
+          {t("mobile.pair.relay", { state: label.text })}
+        </StateLine>
+        {why !== undefined && (
+          <Text
+            variant="bodySmall"
+            testID="pair-relay-failure"
+            style={{ color: theme.colors.error }}>
+            {why}
+          </Text>
+        )}
+        {!connected && (
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            {t("mobile.pair.relayHelp")}
+          </Text>
+        )}
+      </Section>
+      {!connected && <ConnectivityCheck status={connectivity} />}
+    </>
+  );
 }
 
 export function Pair() {
@@ -171,6 +230,7 @@ export function Pair() {
           {failed}
         </Notice>
       )}
+      <RelayLink />
     </Page>
   );
 }

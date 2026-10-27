@@ -36,7 +36,7 @@ use voltip_core::{
     RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef, Segment,
     ServiceKind, Settings, SoloKey, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
 };
-use voltip_core::{EntryOrigin, OriginKind};
+use voltip_core::{EntryOrigin, FailureKind, OriginKind, RelayFailure};
 use voltip_crypto::{PublicKey, SafetyCode};
 use voltip_identity::{DeviceIdentityPublic, TrustedDevice};
 use voltip_pairing::{FailureReason, PairingState, Snapshot};
@@ -141,7 +141,7 @@ fn connectivity_report() -> ConnectivityReport {
 
 /// A self-check whose relay probe did not get through, one way after the other.
 fn failed_connectivity_reports() -> Vec<ConnectivityReport> {
-    [ProbeResult::Timeout, ProbeResult::Refused, ProbeResult::Failed { reason: "tls handshake eof".into() }]
+    [ProbeResult::Timeout, ProbeResult::Refused, ProbeResult::Failed { reason: "tls handshake eof".into(), kind: FailureKind::Tls }]
         .into_iter()
         .map(|result| ConnectivityReport { checked_at: AT_MS, relay: RelayCheck { configured: true, result: Some(result) }, peers: Vec::new() })
         .chain([ConnectivityReport { checked_at: AT_MS, relay: RelayCheck { configured: false, result: None }, peers: Vec::new() }])
@@ -227,9 +227,12 @@ fn idle_snapshot() -> Snapshot {
         peer: None,
         local_confirmed: false,
         peer_confirmed: false,
+        scanned: false,
     }
 }
 
+/// The computer after the phone proved it scanned the QR code: it confirmed by itself and waits
+/// for the phone's user (docs/pairing.md 「扫码配对只在手机上确认」).
 fn verification_snapshot() -> Snapshot {
     Snapshot {
         state: PairingState::AwaitingVerification,
@@ -242,6 +245,7 @@ fn verification_snapshot() -> Snapshot {
         peer: Some(DeviceInfo { device_id: uuid::<DeviceId>(PHONE_DEVICE_ID), name: "Pixel 10".into(), platform: Platform::Android }),
         local_confirmed: true,
         peer_confirmed: false,
+        scanned: true,
     }
 }
 
@@ -1002,7 +1006,13 @@ fn full_state() -> UiState {
         identity: Some(desktop_identity()),
         settings: settings(),
         secret_backend: "memory".into(),
-        relay: RelayStatus { endpoint: Some(RELAY_URL.into()), source: RelaySource::User, state: ConnectionState::Connected, attempts: RELAY_ATTEMPTS },
+        relay: RelayStatus {
+            endpoint: Some(RELAY_URL.into()),
+            source: RelaySource::User,
+            state: ConnectionState::Connected,
+            attempts: RELAY_ATTEMPTS,
+            last_failure: None,
+        },
         pairing: verification_snapshot(),
         devices: devices(),
         hotkey: HotkeyStatus {
@@ -1283,9 +1293,11 @@ fn all_events() -> Vec<UiEvent> {
             source: RelaySource::User,
             state: ConnectionState::Reconnecting,
             attempts: RELAY_ATTEMPTS,
+            // A relay the user typed in keeps the transport's words; the build's own only its kind.
+            last_failure: Some(RelayFailure { kind: FailureKind::Timeout, detail: Some("connect timed out after 8s".into()), at: AT_MS }),
         }),
         // The build's own relay: connected, and never named.
-        UiEvent::Relay(RelayStatus { endpoint: None, source: RelaySource::Builtin, state: ConnectionState::Connected, attempts: 0 }),
+        UiEvent::Relay(RelayStatus { endpoint: None, source: RelaySource::Builtin, state: ConnectionState::Connected, attempts: 0, last_failure: None }),
         UiEvent::Pairing(verification_snapshot()),
         UiEvent::Pairing(Snapshot { state: PairingState::Failed { reason: FailureReason::Relay { code: RelayErrorCode::SessionExpired } }, ..idle_snapshot() }),
         UiEvent::Pairing(Snapshot { state: PairingState::Failed { reason: FailureReason::Timeout }, ..idle_snapshot() }),
@@ -2879,6 +2891,7 @@ fn regression_no_fixture_names_the_builtin_host() {
         }
     }
     let builtin_relay: Value =
-        serde_json::to_value(RelayStatus { endpoint: None, source: RelaySource::Builtin, state: ConnectionState::Connected, attempts: 0 }).unwrap();
+        serde_json::to_value(RelayStatus { endpoint: None, source: RelaySource::Builtin, state: ConnectionState::Connected, attempts: 0, last_failure: None })
+            .unwrap();
     assert!(builtin_relay.get("endpoint").is_none());
 }

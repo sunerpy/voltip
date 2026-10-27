@@ -292,6 +292,35 @@ describe("Devices page", () => {
     expect(screen.getByTestId("pairing-panel")).toHaveAttribute("data-phase", "idle");
   });
 
+  it("regression: a phone that scanned the QR code needs no click here, and the panel says so (issue #193)", async () => {
+    // The phone's user confirmed, nobody clicked on the computer, and the pairing ran out.
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    const { backend } = mount({ devices: [] });
+    await user.click(await screen.findByRole("button", { name: /^开始配对/ }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(screen.getByText(/扫到这个二维码的手机无需在这里确认即可配对/)).toBeInTheDocument();
+    act(() => {
+      backend.simulatePeerJoined(undefined, true);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    const panel = screen.getByTestId("pairing-panel");
+    expect(panel).toHaveAttribute("data-phase", "awaiting_verification");
+    expect(
+      within(panel).getByText(/已扫码。在手机上点「确认并信任」即完成配对/),
+    ).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "确认配对" })).toBeNull();
+    expect(within(panel).getByText("等待手机确认…")).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "拒绝" })).toBeEnabled();
+    act(() => {
+      backend.simulatePeerConfirmed();
+    });
+    expect(panel).toHaveAttribute("data-phase", "trusted");
+  });
+
   it("regression: countdown reaching zero shows the expired state with a 重新生成 action that restarts", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     mount({ devices: [] });

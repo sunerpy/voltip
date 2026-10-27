@@ -359,6 +359,119 @@ describe("the phone app on React Native", () => {
     });
   });
 
+  it("regression: the pairing page says why the relay is not connected and runs the self-check (issue #193)", async () => {
+    // The phone used to say only 「尚未连上中继」, and only once a code was entered.
+    const backend = new MockBackend({
+      role: "phone",
+      relay: {
+        state: "reconnecting",
+        attempts: 3,
+        source: "builtin",
+        last_failure: { kind: "timeout", at: 1 },
+      },
+    });
+    const invoke = jest.spyOn(backend, "invoke");
+    await renderApp({ backend });
+    await fireEvent.press(await screen.findByTestId("welcome-start"));
+    await fireEvent.press(await screen.findByText("配对电脑"));
+    expect(await screen.findByTestId("pair-relay-state")).toHaveTextContent(
+      "中继 · 重连中 · 第 3 次",
+    );
+    expect(screen.getByTestId("pair-relay-failure")).toHaveTextContent(
+      "上次失败：连接超时，中继没有回应",
+    );
+    await fireEvent.press(within(screen.getByTestId("connectivity")).getByText("开始自检"));
+    expect(invoke).toHaveBeenCalledWith("connectivity_check");
+    expect(await screen.findByText("中继 · 没有响应")).toBeOnTheScreen();
+
+    // The build's own relay's failure keeps its kind only: the check words it.
+    await act(async () => {
+      backend.simulateRelay({ last_failure: { kind: "dns", at: 2 } });
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("上次失败：无法解析中继地址，请检查网络")).toBeOnTheScreen();
+    await fireEvent.press(within(screen.getByTestId("connectivity")).getByText("重新自检"));
+    expect(
+      await screen.findByText("中继 · 连接失败 · 无法解析中继地址，请检查网络"),
+    ).toBeOnTheScreen();
+
+    // Connected: the state alone, nothing to diagnose.
+    await act(async () => {
+      backend.simulateRelay({ state: "connected", attempts: 0, last_failure: undefined });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("pair-relay-state")).toHaveTextContent("中继 · 已连接");
+    });
+    expect(screen.queryByTestId("pair-relay-failure")).toBeNull();
+    expect(screen.queryByTestId("connectivity")).toBeNull();
+  });
+
+  it("regression: after a scan only the phone confirms, and each step says what is left (issue #193)", async () => {
+    // The phone's user confirmed, nothing on the screen changed, and nobody clicked on the
+    // computer: the pairing ran out. A scanned QR code now confirms for the computer.
+    const backend = new MockBackend({ role: "phone" });
+    const invoke = jest.spyOn(backend, "invoke");
+    await renderApp({ backend });
+    const verifying = {
+      type: "pairing" as const,
+      state: { state: "awaiting_verification" as const },
+      safety_code: {
+        words: ["amber", "canyon", "lantern", "orbit"] as [string, string, string, string],
+        fingerprint: "5B:0F",
+      },
+      peer: {
+        device_id: "00000000-0000-4000-8000-000000000001",
+        name: "Surface-Laptop",
+        platform: "windows" as const,
+      },
+    };
+    await act(async () => {
+      backend.publish({
+        ...verifying,
+        local_confirmed: false,
+        peer_confirmed: true,
+        scanned: true,
+      });
+      await Promise.resolve();
+    });
+    expect(await screen.findByTestId("phone-verify")).toBeOnTheScreen();
+    expect(
+      screen.getByText("扫码已核对这台电脑的身份，点「确认并信任」即完成配对，电脑上无需再操作。"),
+    ).toBeOnTheScreen();
+    expect(screen.queryByText("对方已确认")).toBeNull();
+    await fireEvent.press(screen.getByTestId("verify-confirm"));
+    expect(invoke).toHaveBeenCalledWith("pairing_confirm");
+    await act(async () => {
+      backend.publish({
+        ...verifying,
+        local_confirmed: true,
+        peer_confirmed: false,
+        scanned: true,
+      });
+      await Promise.resolve();
+    });
+    expect(await screen.findByTestId("verify-waiting")).toHaveTextContent("已确认 · 正在完成配对…");
+    expect(screen.getByText("正在完成…")).toBeOnTheScreen();
+
+    // A typed code (or an older computer) still needs the computer's confirmation: the phone
+    // says so once its own is in, and its button stays off.
+    await act(async () => {
+      backend.publish({
+        ...verifying,
+        local_confirmed: true,
+        peer_confirmed: false,
+        scanned: false,
+      });
+      await Promise.resolve();
+    });
+    expect(await screen.findByTestId("verify-waiting")).toHaveTextContent(
+      "已确认 · 请在电脑上也点「确认配对」",
+    );
+    expect(screen.getByText("等待电脑确认…")).toBeOnTheScreen();
+    expect(screen.getByTestId("verify-confirm")).toBeDisabled();
+  });
+
   it("记录 shows the phone's history and opens an entry", async () => {
     const history = historyEntrySchema.array().parse(state.history_recent);
     const backend = new MockBackend({ role: "phone", history });

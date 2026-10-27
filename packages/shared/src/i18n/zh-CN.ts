@@ -161,6 +161,20 @@ export const zhCN = {
     closed: "已关闭",
     attempt: "{base} · 第 {n} 次",
     unconfigured: "未配置",
+    /** Why the relay connection last failed (`voltip_transport::FailureKind`, issue #193). */
+    why: {
+      timeout: "连接超时，中继没有回应",
+      dns: "无法解析中继地址，请检查网络",
+      refused: "连接被拒绝",
+      unreachable: "网络不通，请检查网络连接",
+      tls: "加密连接失败",
+      not_relay: "该地址不是 Voltip 中继",
+      proxy: "代理无法连接中继，请检查代理设置",
+      version: "中继不支持此版本，请更新 Voltip",
+      lost: "连接中断",
+      other: "连接失败",
+    },
+    lastFailure: "上次失败：{reason}",
   },
   failure: {
     timeout: "超时",
@@ -1629,7 +1643,7 @@ export const zhCN = {
     title: "配对新设备",
     windowOpen: "剩余 {remaining}",
     intro:
-      "生成一次性二维码和 6 位验证码。手机扫码或输入验证码后，两边核对同一组安全码，确认一致才会互相信任。配对 {ttl} 秒后失效。",
+      "生成一次性二维码和 6 位验证码。手机扫码后只需在手机上确认；输入验证码时，两边核对同一组安全码并确认。配对 {ttl} 秒后失效。",
     start: "开始配对",
     generating: "正在生成二维码",
     creating: "正在准备配对…",
@@ -1642,12 +1656,12 @@ export const zhCN = {
     scanNote: "手机扫码后会直接获取配对信息，无需手动输入。",
     alwaysOn: "常开配对",
     alwaysOnHelp:
-      "开启后，这台电脑会持续等待手机配对：二维码到期前自动更新，完成一台后继续等待下一台，直到关闭。每次配对仍需在这里核对安全码并确认。",
+      "开启后，这台电脑会持续等待手机配对：二维码到期前自动更新，完成一台后继续等待下一台，直到关闭。扫码的手机只需在手机上确认，输入验证码的仍需在这里核对安全码并确认。",
     alwaysOnOpen: "常开 · 本码剩余 {remaining}",
     alwaysOnIdle: "常开配对已打开，连上中继后自动开始。",
     alwaysOnNext: "常开配对：稍后自动开始下一次配对。",
     validity: "有效期",
-    warning: "不要截图或在共享屏幕上展示此二维码。",
+    warning: "扫到这个二维码的手机无需在这里确认即可配对：不要截图，也不要在共享屏幕上展示。",
     regenerate: "重新生成",
     regenerateQr: "重新生成二维码",
     copyLink: "复制链接",
@@ -1660,6 +1674,11 @@ export const zhCN = {
     peerDoneAnon: "对方设备已建立加密连接。",
     verifyNote: "两台设备会显示同一组安全码。核对一致后，在两边都点「确认配对」；不一致就拒绝。",
     waitingPeer: "等待对方确认…",
+    /** The phone proved it scanned the QR code (docs/pairing.md 「扫码配对只在手机上确认」): this
+     *  computer confirmed by itself. */
+    scanned:
+      "已扫码。在手机上点「确认并信任」即完成配对，这台电脑无需再确认；不是你的手机就点「拒绝」。",
+    waitingPhone: "等待手机确认…",
     confirm: "确认配对",
     reject: "拒绝",
     peerConfirmed: "对方已确认",
@@ -3089,8 +3108,9 @@ export const zhCN = {
         "配对后可以把这部手机用作电脑的麦克风和键盘。音频端到端加密后经中继传输，密钥只在两台设备之间。",
       e2ee: "端到端加密",
       e2eeBody: "只有配对的两台设备能解密内容，中继只能看到密文。",
-      safety: "双端核对安全码",
-      safetyBody: "两台设备显示同一组四个词，两边都确认才互相信任。",
+      safety: "扫码即核对",
+      safetyBody:
+        "扫码时由二维码核对两台设备，只需在手机上确认；输入验证码时，两边核对同一组四个词并确认。",
       identity: "身份变化即告警",
       identityBody: "已信任的电脑更换密钥时会标红提示，不会自动信任。",
       start: "连接电脑",
@@ -3114,7 +3134,7 @@ export const zhCN = {
     },
     pair: {
       intro:
-        "在电脑上打开「手机」页并开始配对，然后扫描它的二维码，或输入它显示的 6 位验证码。两种方式之后建立加密连接和核对安全码的步骤相同。",
+        "在电脑上打开「手机」页并开始配对，然后扫描它的二维码，或输入它显示的 6 位验证码。扫码后只需在手机上确认；输入验证码时，两台设备都要核对安全码并确认。",
       method: "配对方式",
       scan: "扫码",
       code: "输入 6 位验证码",
@@ -3134,6 +3154,11 @@ export const zhCN = {
       scanCancelled: "已取消扫码或未授予相机权限",
       retry: "重试",
       clearRetry: "清除并重试",
+      /** The relay link on the pairing page (issue #193): pairing needs it, so its state, why it
+       *  is not connected, and the self-check are there before anything is scanned. */
+      relay: "中继 · {state}",
+      relayHelp: "配对需要先连上中继。连不上时，可以运行下面的连接自检查看原因。",
+      relayDetail: "{reason}（{detail}）",
     },
     verify: {
       rejected: "配对已被拒绝，本次配对已取消。",
@@ -3146,8 +3171,13 @@ export const zhCN = {
       handshake: "{platform} · 已建立加密连接",
       note: "电脑屏幕上应显示同样的四个词和指纹。一致就点「确认并信任」；有任何不同就拒绝——那说明中间有人。",
       peerConfirmed: "对方已确认",
-      waiting: "已确认 · 等待电脑确认…",
+      waiting: "已确认 · 请在电脑上也点「确认配对」",
       waitingButton: "等待电脑确认…",
+      /** A scanned QR code (docs/pairing.md 「扫码配对只在手机上确认」): the computer confirms by
+       *  itself, so this phone's confirmation finishes the pairing. */
+      scannedNote: "扫码已核对这台电脑的身份，点「确认并信任」即完成配对，电脑上无需再操作。",
+      finishing: "已确认 · 正在完成配对…",
+      finishingButton: "正在完成…",
       confirm: "确认并信任",
       reject: "拒绝",
     },

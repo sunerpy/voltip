@@ -97,6 +97,7 @@ import {
   type UiState,
   type UpdateStatus,
   type ConnectivityReport,
+  type ProbeResult,
   type HotkeyCapabilities,
   type HotkeyStatus,
   SOLO_KEYS,
@@ -231,6 +232,9 @@ export interface MockPeer {
   /** Milliseconds after joining until the simulated phone confirms the safety code. */
   confirmAfterMs: number;
   info?: DeviceInfo;
+  /** The simulated phone scanned the QR code: the computer confirms by itself
+   *  (docs/pairing.md 「扫码配对只在手机上确认」). */
+  scanned?: boolean;
 }
 
 export interface MockBackendOptions {
@@ -3069,17 +3073,26 @@ export class MockBackend implements Backend {
 
   // ---- remote-side simulation ------------------------------------------------------------------
 
-  /** The other device joined the session: Noise XX runs, then both sides see the safety code. */
-  simulatePeerJoined(peer: DeviceInfo = this.role === "phone" ? desktopPeer() : phonePeer()) {
+  /** The other device joined the session: Noise XX runs, then both sides see the safety code.
+   *  `scanned`: the phone read the computer's QR code and proved it, so the computer confirms by
+   *  itself (docs/pairing.md 「扫码配对只在手机上确认」); otherwise both users confirm. */
+  simulatePeerJoined(
+    peer: DeviceInfo = this.role === "phone" ? desktopPeer() : phonePeer(),
+    scanned = false,
+  ) {
     const phase = this.state.pairing.state.state;
     if (phase !== "waiting_for_peer" && phase !== "creating_session") return;
     this.stopCountdown();
     this.emitPairing({ state: { state: "key_exchange" } });
     this.later(KEY_EXCHANGE_MS, () => {
+      // The computer's side is the one that confirms by itself.
+      const computer = this.role === "phone" ? { peer_confirmed: true } : { local_confirmed: true };
       this.emitPairing({
         state: { state: "awaiting_verification" },
         safety_code: this.safetyCode(),
         peer,
+        scanned,
+        ...(scanned ? computer : {}),
       });
       if (this.autoPeer) {
         this.later(this.autoPeer.confirmAfterMs, () => {
@@ -4120,7 +4133,18 @@ export class MockBackend implements Backend {
     };
   }
 
-  /** A self-check against the mock's own state: the relay answers when its link is up, and an
+  /** The probe of a relay that is not connected: how its last attempt failed, the build's own
+   *  relay without the words (as the core reports it). */
+  private mockProbeFailure(): ProbeResult {
+    const failure = this.state.relay.last_failure;
+    if (failure === undefined || failure.kind === "timeout") return { result: "timeout" };
+    if (failure.kind === "refused") return { result: "refused" };
+    const reason = this.state.relay.source === "user" ? (failure.detail ?? "") : "";
+    return { result: "failed", reason, kind: failure.kind };
+  }
+
+  /** A self-check against the mock's own state: the relay answers when its link is up, fails
+   *  the way its last attempt did when it is not (`simulateRelay` with a `last_failure`), and an
    *  online device has a round trip. */
   private connectivityReport(): ConnectivityReport {
     const relayUp = this.state.relay.state === "connected";
@@ -4131,7 +4155,7 @@ export class MockBackend implements Backend {
         ...(this.state.relay.source === "none"
           ? {}
           : {
-              result: relayUp ? { result: "ok" as const, ms: 48 } : { result: "timeout" as const },
+              result: relayUp ? { result: "ok" as const, ms: 48 } : this.mockProbeFailure(),
             }),
       },
       peers: this.state.devices.map((d) => {
@@ -4760,7 +4784,7 @@ export class MockBackend implements Backend {
       if (this.autoPeer) {
         const peer = this.autoPeer;
         this.later(peer.joinAfterMs, () => {
-          this.simulatePeerJoined(peer.info);
+          this.simulatePeerJoined(peer.info, peer.scanned ?? false);
         });
       }
     });
@@ -4782,7 +4806,8 @@ export class MockBackend implements Backend {
       });
       return;
     }
-    this.joinSession();
+    // The relay hands out the six digits, so they prove nothing: both users confirm.
+    this.joinSession(false);
   }
 
   private joinWithTicket(uri: string) {
@@ -4796,17 +4821,17 @@ export class MockBackend implements Backend {
       this.finish({ state: "failed", reason: { kind: "protocol" } });
       return;
     }
-    this.joinSession();
+    this.joinSession(true);
   }
 
-  private joinSession() {
+  private joinSession(scanned: boolean) {
     this.clearTimers();
     this.emitPairing({
       ...idleSnapshot(),
       state: { state: "creating_session" },
     });
     this.later(CREATE_SESSION_MS, () => {
-      this.simulatePeerJoined();
+      this.simulatePeerJoined(undefined, scanned);
       if (this.autoPeer) {
         const peer = this.autoPeer;
         this.later(KEY_EXCHANGE_MS + peer.confirmAfterMs, () => {

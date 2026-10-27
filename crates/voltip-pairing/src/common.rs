@@ -93,7 +93,7 @@ pub enum PairingState {
     KeyExchange,
     /// Handshake done; users compare safety codes.
     AwaitingVerification,
-    /// Both confirmed. Terminal (success).
+    /// Both confirmed (the computer by itself after a scanned ticket's proof). Terminal (success).
     Trusted,
     /// Session lifetime ran out before a peer joined / confirmed.
     Expired,
@@ -189,6 +189,11 @@ pub struct Snapshot {
     pub local_confirmed: bool,
     /// Whether the peer already confirmed.
     pub peer_confirmed: bool,
+    /// The phone proved it scanned the QR code (docs/pairing.md 「扫码配对只在手机上确认」): on
+    /// the computer, it confirmed by itself and the phone's user decides; on the phone, the
+    /// computer needs no click.
+    #[serde(default)]
+    pub scanned: bool,
 }
 
 /// A pairing that completed: everything the transport layer needs to keep talking.

@@ -8,7 +8,7 @@ use voltip_protocol::{PairCode, ProtocolVersion, SessionId};
 
 use crate::PairingError;
 use crate::common::{Action, Event, FailureReason, Now, PairingState, Snapshot, Timeouts};
-use crate::engine::{Engine, Step};
+use crate::engine::{Engine, Proof, Step};
 
 /// Where the initiator can be reached, embedded in the ticket.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -88,6 +88,7 @@ impl Initiator {
             peer: None,
             local_confirmed: false,
             peer_confirmed: false,
+            scanned: false,
         };
         match &self.phase {
             Phase::WaitingForPeer(w) => {
@@ -103,16 +104,23 @@ impl Initiator {
                 snap.peer = e.peer_info();
                 snap.local_confirmed = e.local_confirmed();
                 snap.peer_confirmed = e.peer_confirmed();
+                snap.scanned = e.scanned();
             }
             _ => {}
         }
         snap
     }
 
+    /// What the screen shows: the state and, once engaged, who confirmed.
+    fn visible(&self) -> (PairingState, Option<[bool; 4]>) {
+        (self.state(), if let Phase::Engaged(e) = &self.phase { Some(e.flags()) } else { None })
+    }
+
     /// Feed one event. Returns the actions to perform, in order. The last action is an
-    /// `Emit` whenever the visible state changed.
+    /// `Emit` whenever what the screen shows changed: the state, or a confirmation within it.
     pub fn step(&mut self, event: Event, now: Now) -> Result<Vec<Action>, PairingError> {
         let before = self.state();
+        let shown = self.visible();
         let mut actions = match (&mut self.phase, event) {
             (_, Event::Reset) => {
                 self.phase = Phase::Idle;
@@ -139,6 +147,7 @@ impl Initiator {
                     nonce,
                     expires_at,
                     relay_hint: self.reach.relay_hint.clone(),
+                    secret: Some(voltip_crypto::random_nonce()),
                 };
                 let ticket_uri = ticket.to_uri()?;
                 self.last_expires_at = Some(expires_at);
@@ -154,6 +163,7 @@ impl Initiator {
             }
             (Phase::WaitingForPeer(w), Event::Relay(RelayFrame::PeerJoined { session_id: joined, .. })) => {
                 let session_id = w.session_id;
+                let proof = w.ticket.secret.map_or(Proof::None, Proof::Expect);
                 if joined != session_id {
                     self.fail(FailureReason::Protocol)
                 } else if self.joined_once {
@@ -161,7 +171,7 @@ impl Initiator {
                 } else {
                     self.joined_once = true;
                     let Some(hs) = self.handshake.take() else { return Err(PairingError::InvalidTransition { event: "relay", state: before }) };
-                    let mut engine = Engine::new(session_id, self.identity.clone(), hs, self.timeouts, now);
+                    let mut engine = Engine::new(session_id, self.identity.clone(), hs, self.timeouts, now, proof);
                     let step = engine.pump();
                     self.phase = Phase::Engaged(Box::new(engine));
                     self.apply(step)
@@ -200,7 +210,7 @@ impl Initiator {
             (Phase::Terminal(_), Event::Tick | Event::Peer(_)) => Vec::new(),
             (_, other) => return Err(PairingError::InvalidTransition { event: other.name(), state: before }),
         };
-        if self.state() != before {
+        if self.visible() != shown {
             actions.push(Action::Emit(Box::new(self.snapshot(now))));
         }
         Ok(actions)

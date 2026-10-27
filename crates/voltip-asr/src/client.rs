@@ -15,8 +15,10 @@ use crate::ogg_opus;
 /// the system's own store (rustls-platform-verifier); on Android that verifier needs a JNI context
 /// the app never hands it and panics on the first request, so the requests there trust Mozilla's
 /// root store, as the relay connection does (`voltip-transport`). voltip-refine does the same.
+/// The connect timeout is shared among a name's addresses ([`voltip_net::CONNECT_TIMEOUT`]), so
+/// one that never answers does not hold the request to its own deadline (issue #193).
 pub(crate) fn client_builder() -> reqwest::ClientBuilder {
-    let builder = Client::builder();
+    let builder = Client::builder().connect_timeout(voltip_net::CONNECT_TIMEOUT);
     #[cfg(target_os = "android")]
     let builder = builder.tls_certs_only(mozilla_roots());
     builder
@@ -364,6 +366,50 @@ mod tests {
         assert_eq!(resolver.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
         drop(refusing);
+    }
+
+    /// An address whose connection attempts go unanswered, as a network that blackholes it leaves
+    /// them: a listener with no room left in its queue (backlog 0, one connection already waiting)
+    /// drops the SYN of every further attempt on Linux and macOS; Windows resets them, one more
+    /// failed attempt to the client. Keep the returned pair alive while the address must be silent.
+    async fn silent_address() -> (std::net::SocketAddr, (tokio::net::TcpListener, tokio::net::TcpStream)) {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = socket.local_addr().unwrap();
+        let listener = socket.listen(0).unwrap();
+        let waiting = tokio::net::TcpStream::connect(addr).await.unwrap();
+        (addr, (listener, waiting))
+    }
+
+    /// A resolver that answers every name with the same addresses, in order.
+    struct Fixed(Vec<std::net::SocketAddr>);
+
+    impl reqwest::dns::Resolve for Fixed {
+        fn resolve(&self, _name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+            let addrs = self.0.clone();
+            Box::pin(async move { Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs) })
+        }
+    }
+
+    /// The silent address first, then `server` four times: hyper gives each address a fifth of
+    /// the connect timeout, so the silent one costs 2 s.
+    fn silent_then(silent: std::net::SocketAddr, server: std::net::SocketAddr) -> std::sync::Arc<Fixed> {
+        std::sync::Arc::new(Fixed(std::iter::once(silent).chain(std::iter::repeat_n(server, 4)).collect()))
+    }
+
+    /// Regression (issue #193): the built-in service's name had an address unreachable from
+    /// mainland China. Without a connect timeout a new connection that tried it first waited for
+    /// the system to give up on it (minutes) or for the request's own deadline; the connect timeout
+    /// is now shared among the addresses, so the next one is tried and the take goes through.
+    #[tokio::test]
+    async fn regression_an_address_that_never_answers_gives_way_to_the_next() {
+        let server = MockServer::start().await;
+        mount(&server, ResponseTemplate::new(200).set_body_json(json!({ "text": "好" }))).await;
+        let (silent, _hold) = silent_address().await;
+        let http = client_builder().no_proxy().dns_resolver(silent_then(silent, *server.address())).build().unwrap();
+        let client = AsrClient::with_http(AsrConfig::new("http://asr.test", "m"), "http://asr.test/v1", http);
+        let take = tokio::time::timeout(Duration::from_secs(30), client.transcribe(WAV, None)).await.expect("the silent address held the request");
+        assert_eq!(take.unwrap().text, "好");
     }
 
     /// A timeout is not tried again: the request may have reached the service, and the time the

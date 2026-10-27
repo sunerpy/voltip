@@ -916,7 +916,7 @@ impl AppCore {
             evt: evt_tx,
             link_tx,
             relay: None,
-            relay_status: RelayStatus { endpoint: None, source: RelaySource::None, state: ConnectionState::Disconnected, attempts: 0 },
+            relay_status: RelayStatus { endpoint: None, source: RelaySource::None, state: ConnectionState::Disconnected, attempts: 0, last_failure: None },
             pairing: Pairing::None,
             pairing_link: None,
             pairing_session: None,
@@ -1279,13 +1279,15 @@ impl Runtime {
         }
         self.drop_link_state(LinkId::Relay);
         if !self.settings.relay_enabled {
-            self.relay_status = RelayStatus { endpoint: None, source: RelaySource::None, state: ConnectionState::Disconnected, attempts: 0 };
+            self.relay_status =
+                RelayStatus { endpoint: None, source: RelaySource::None, state: ConnectionState::Disconnected, attempts: 0, last_failure: None };
             self.emit(CoreEvent::Relay(self.relay_status.clone()));
             return Ok(());
         }
         let endpoint = RelayEndpoint::resolve(self.settings.relay_url.as_deref())?;
         let Some(endpoint) = endpoint else {
-            self.relay_status = RelayStatus { endpoint: None, source: RelaySource::None, state: ConnectionState::Disconnected, attempts: 0 };
+            self.relay_status =
+                RelayStatus { endpoint: None, source: RelaySource::None, state: ConnectionState::Disconnected, attempts: 0, last_failure: None };
             self.emit(CoreEvent::Relay(self.relay_status.clone()));
             return Ok(());
         };
@@ -1301,7 +1303,7 @@ impl Runtime {
         cfg.write_gate = self.config.test_hooks.relay_write_gate.clone();
         cfg.network = voltip_net::NetworkRef::new(&self.config.network);
         let link = self.spawn_link(LinkId::Relay, cfg);
-        self.relay_status = RelayStatus { endpoint: shown, source, state: ConnectionState::Connecting, attempts: 0 };
+        self.relay_status = RelayStatus { endpoint: shown, source, state: ConnectionState::Connecting, attempts: 0, last_failure: None };
         self.emit(CoreEvent::Relay(self.relay_status.clone()));
         self.relay = Some((link, endpoint));
         Ok(())
@@ -2540,6 +2542,7 @@ impl Runtime {
                     peer: None,
                     local_confirmed: false,
                     peer_confirmed: false,
+                    scanned: false,
                 };
                 self.emit(CoreEvent::Pairing(snap));
                 Ok(())
@@ -2587,6 +2590,7 @@ impl Runtime {
             peer: None,
             local_confirmed: false,
             peer_confirmed: false,
+            scanned: false,
         };
         self.emit(CoreEvent::Pairing(snap));
         Ok(())
@@ -2852,8 +2856,18 @@ impl Runtime {
         }
         match ev {
             LinkEvent::Warning(w) => tracing::warn!(warning = %w, link = ?id, "link"),
+            LinkEvent::Failed(failure) => self.on_link_failed(id, failure),
             LinkEvent::State(change) => self.on_state(id, change).await,
             LinkEvent::Frame(frame) => self.on_frame(id, frame).await,
+        }
+    }
+
+    /// An attempt failed or the connection went down: why, for the status the link's next report
+    /// carries (`Reconnecting` follows at once). The build's own relay keeps only the kind of it.
+    fn on_link_failed(&mut self, id: LinkId, failure: voltip_transport::LinkFailure) {
+        tracing::warn!(kind = ?failure.kind, failure = %failure.detail, link = ?id, "link");
+        match id {
+            LinkId::Relay => self.relay_status.last_failure = Some(crate::RelayFailure::of(failure, self.relay_status.source, now_ms())),
         }
     }
 
@@ -2873,6 +2887,9 @@ impl Runtime {
                 };
                 self.relay_status.state = to;
                 self.relay_status.attempts = attempts;
+                if to.is_connected() {
+                    self.relay_status.last_failure = None;
+                }
                 self.emit(CoreEvent::Relay(self.relay_status.clone()));
                 if to.is_connected() {
                     self.attach_all(LinkId::Relay).await;
@@ -3442,6 +3459,7 @@ mod tests {
             nonce: [9; 16],
             expires_at: u64::MAX,
             relay_hint: None,
+            secret: None,
         };
         assert!(refused(rt.join(JoinSpec::Ticket(lan_only.to_uri().unwrap())).await).contains("旧版本的局域网配对"));
         assert!(matches!(rt.pairing, Pairing::None));

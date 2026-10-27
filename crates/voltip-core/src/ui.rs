@@ -539,7 +539,13 @@ impl Default for UiState {
             settings: Settings::default(),
             secret_backend: String::new(),
             app_version: String::new(),
-            relay: RelayStatus { endpoint: None, source: crate::RelaySource::None, state: voltip_transport::ConnectionState::Disconnected, attempts: 0 },
+            relay: RelayStatus {
+                endpoint: None,
+                source: crate::RelaySource::None,
+                state: voltip_transport::ConnectionState::Disconnected,
+                attempts: 0,
+                last_failure: None,
+            },
             pairing: idle_snapshot(),
             devices: Vec::new(),
             hotkey: HotkeyStatus::default(),
@@ -581,6 +587,7 @@ fn idle_snapshot() -> Snapshot {
         peer: None,
         local_confirmed: false,
         peer_confirmed: false,
+        scanned: false,
     }
 }
 
@@ -769,6 +776,7 @@ mod tests {
             source: crate::RelaySource::User,
             state: voltip_transport::ConnectionState::Connected,
             attempts: 0,
+            last_failure: None,
         }));
         assert_eq!(st.relay.state, voltip_transport::ConnectionState::Connected);
         let renamed = DeviceIdentityPublic { name: "Studio".into(), ..id };

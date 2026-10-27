@@ -9,6 +9,10 @@
 //!   gives a reqwest client a proxy that asks the plan on every request, so a change applies from
 //!   the next request on without rebuilding the client; [`Network::connect`] opens a TCP stream to
 //!   a host, through the proxy when the plan says so, for a WebSocket handshake to run on.
+//! * A name with several addresses: a direct WebSocket connection tries them RFC 8305's way (the
+//!   next one after [`ATTEMPT_DELAY`] without an answer); the HTTP clients set [`CONNECT_TIMEOUT`],
+//!   which hyper shares out among them. An address that never answers costs a moment, not the
+//!   deadline (issue #193).
 //! * The system's proxy is the environment (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`),
 //!   then macOS's network settings or Windows' Internet Options, read for each request
 //!   (hyper-util's reader). On Android nothing here can read it: the shell hands in the network's
@@ -23,6 +27,7 @@
 mod connect;
 mod plan;
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -32,10 +37,22 @@ use parking_lot::RwLock;
 use tokio::net::TcpStream;
 use url::{Host, Url};
 
-pub use connect::ConnectError;
+pub use connect::{ATTEMPT_DELAY, ConnectError};
 pub use plan::{
     MAX_NO_PROXY_BYTES, MAX_PASSWORD_BYTES, MAX_USERNAME_BYTES, ManualProxy, PROXY_SCHEMES, PlatformProxy, ProxyError, ProxyPlan, parse_no_proxy, parse_server,
 };
+
+/// The connect timeout Voltip's HTTP clients set (`reqwest::ClientBuilder::connect_timeout`):
+/// hyper divides it evenly among the addresses a name resolves to and tries the next address when
+/// an attempt's share runs out, so an address that never answers costs a share of it, where the
+/// request without one waited for the system to give up on that address (minutes) or for the
+/// request's own deadline. The share must still fit a slow path's lost SYN and its retry (issue
+/// #193: about 3 s per address for the built-in services' three).
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Resolves a name for a direct connection in tests ([`Network::set_resolver`]); a proxy resolves
+/// the names it is given itself.
+pub(crate) type Resolver = Arc<dyn Fn(&str, u16) -> std::io::Result<Vec<SocketAddr>> + Send + Sync>;
 
 /// Reads the system's proxy settings: hyper-util's reader unless a test hands in its own.
 type SystemSource = Box<dyn Fn() -> Matcher + Send + Sync>;
@@ -82,6 +99,8 @@ pub struct Network {
     state: RwLock<State>,
     system: SystemSource,
     system_raw: SystemRaw,
+    /// `None`: the system's resolver.
+    resolver: RwLock<Option<Resolver>>,
 }
 
 #[derive(Default)]
@@ -158,7 +177,14 @@ impl Network {
     }
 
     fn with_system(system: SystemSource, system_raw: SystemRaw) -> Self {
-        Self { state: RwLock::new(State::default()), system, system_raw }
+        Self { state: RwLock::new(State::default()), system, system_raw, resolver: RwLock::new(None) }
+    }
+
+    /// Tests: names this network's direct connections go to resolve to what `resolver` answers
+    /// (every address it gives, its own ports), instead of through the system's resolver.
+    #[doc(hidden)]
+    pub fn set_resolver(&self, resolver: impl Fn(&str, u16) -> std::io::Result<Vec<SocketAddr>> + Send + Sync + 'static) {
+        *self.resolver.write() = Some(Arc::new(resolver));
     }
 
     /// Put `plan` in force: the next request and the next connection follow it.
@@ -269,12 +295,14 @@ impl Network {
 
     /// A TCP stream to the host and port of `url` (`ws://`, `wss://` and the like), direct or
     /// through the proxy [`Network::proxy_for`] picks: HTTP `CONNECT`, or SOCKS5. A WebSocket
-    /// handshake runs on it, with TLS first for `wss`. `timeout` bounds the whole of it.
+    /// handshake runs on it, with TLS first for `wss`. `timeout` bounds the whole of it; directly,
+    /// a name's addresses take turns as RFC 8305 has them ([`ATTEMPT_DELAY`]).
     pub async fn connect(&self, url: &Url, timeout: Duration) -> Result<TcpStream, ConnectError> {
         let host = url.host().ok_or(ConnectError::NoHost)?;
         let port = url.port_or_known_default().ok_or(ConnectError::NoHost)?;
         let route = self.route_for(url);
-        tokio::time::timeout(timeout, connect::open(route, host, port)).await.map_err(|_| ConnectError::Timeout(timeout))?
+        let resolver = self.resolver.read().clone();
+        tokio::time::timeout(timeout, connect::open(route, host, port, resolver)).await.map_err(|_| ConnectError::Timeout(timeout))?
     }
 }
 

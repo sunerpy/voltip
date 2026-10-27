@@ -45,11 +45,15 @@ Pairing connects one phone and one computer, once:
 
 1. On the computer, open the **Phone** page and start pairing. It shows a QR code and a 6-digit code, valid for 120 seconds.
 2. On the phone, scan the QR code or enter the 6-digit code.
-3. Both screens show the same safety code. Check that they match, then confirm on both devices. If they do not match, reject the pairing.
+3. When you scan, the QR code has already checked both devices: press **Confirm and trust** on the phone, and there is nothing to do on the computer. When you enter the code, both screens show the same safety code. Check that they match, then confirm on both devices. If they do not match, reject the pairing.
 
-**Always-on pairing** on the computer keeps a pairing open for the next phone, renewing the QR code before it expires, until you turn it off. Every pairing still needs the safety code confirmed on the computer.
+A phone that scans the QR code pairs without a confirmation on the computer, so do not screenshot the pairing QR code or show it on a shared screen. A paired phone appears in the computer's device list, and you can forget a device you do not recognise at any time.
+
+**Always-on pairing** on the computer keeps a pairing open for the next phone, renewing the QR code before it expires, until you turn it off. A phone that scans still needs only its own confirmation; one that enters the code needs the safety code confirmed on the computer as well.
 
 The phone and the computer meet through a relay, the built-in one unless the computer is set to another, so pairing and the connection work on any network. Turning the relay off on the computer disconnects its phones. After a network drop, or a switch between Wi-Fi and mobile data, the two reconnect on their own, usually within seconds.
+
+The pairing page on the phone shows the phone's connection to the relay, which pairing needs first. When it cannot connect, the page says why the last attempt failed (for example, it timed out, or the relay's address could not be looked up) and offers the **Connection check**, so you know whether to look at the network or the proxy settings.
 
 ## Talking on the phone
 
@@ -81,7 +85,7 @@ A paired computer syncs its history and settings to the phone, where you can rea
 
 ## How the connection is protected
 
-- Pairing creates an encrypted connection and asks you to compare the safety code, so that nobody in between can pretend to be one of the devices.
+- Pairing creates an encrypted connection. When you scan, the QR code checks both devices: the phone knows it reached the computer on the screen, and the computer knows the phone read its QR code, so neither the relay nor someone who only knows the 6-digit code can pretend to be one of them. When you enter the code, you compare the safety code on both screens.
 - Afterwards, the devices connect through the relay, which forwards their traffic. Everything is encrypted end to end, so the relay cannot read audio or text.
 - Audio is compressed with Opus before it is sent.
 - **Forget device** removes a pairing on both sides when the other device is online. The two can be paired again straight away.

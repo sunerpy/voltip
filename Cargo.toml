@@ -81,6 +81,9 @@ ferrous-opencc = "=0.4.0"
 fs4 = { version = "=1.1.0", default-features = false }
 futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
 hex = "=0.4.3"
+# The pairing proof (crates/voltip-crypto, docs/pairing.md): HMAC-SHA256 over the handshake hash;
+# already in the graph, with the same `digest` as `sha2`.
+hmac = "=0.13.0"
 # The proxy of every connection Voltip makes (crates/voltip-net, docs/dictation.md §24): the URI type of
 # hyper-util's connectors; already in the graph through reqwest.
 http = "=1.5.0"
