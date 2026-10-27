@@ -15,6 +15,7 @@ import { type TFunction, formatCount, pendingRules, relayLabel, relayTooOld } fr
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { AI_ROUTE, type Route, SPEECH_ROUTE, isDialogRoute } from "../app/router";
 import { useUpdateAction } from "../features/update/useUpdateAction";
+import { SidebarUsage } from "../features/usage/SidebarUsage";
 import type { SidebarLayoutControls } from "./sidebar-layout";
 
 /** A sidebar count, shown once there is something to count, grouped like every other count
@@ -263,6 +264,18 @@ export function ShellSidebar({
         </>
       }
       status={status}
+      // docs/dictation.md §27: today's use of the built-in service, over the footer.
+      usage={
+        <SidebarUsage
+          collapsed={collapsed}
+          active={route.name === "usage"}
+          disabled={onboarding}
+          onOpen={() => {
+            navigate({ name: "usage" });
+            setPreview(false);
+          }}
+        />
+      }
       footer={
         <>
           <SidebarButton

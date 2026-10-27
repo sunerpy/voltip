@@ -134,6 +134,18 @@ export function Overlay({ state }: OverlayProps) {
   const kept =
     dictation.recording !== undefined &&
     uiState.audio_cache.recordings.some((r) => r.id === dictation.recording);
+  // docs/dictation.md §27: the built-in service's day ran out — the pill says so in those words.
+  const builtinAsrOut =
+    phase.phase === "failed" &&
+    phase.code === "quota" &&
+    uiState.engines.asr_provider === "builtin" &&
+    uiState.usage.builtin;
+  const builtinRefineOut =
+    phase.phase === "done" &&
+    !phase.refined &&
+    phase.refine_failure === "quota" &&
+    uiState.engines.llm_provider === "builtin" &&
+    uiState.usage.builtin;
   const copyLive = () => {
     // Only wired when the failed phase kept text (see the Pill's `onCopy` below).
     const text = phase.phase === "failed" ? phase.text : undefined;
@@ -186,21 +198,23 @@ export function Overlay({ state }: OverlayProps) {
                     n: phase.chars,
                   },
                 )
-              : phase.phase === "failed"
-                ? t("overlay.live.failed", {
-                    reason: takeFailureText(
-                      { phase, kind: dictation.kind, source: dictation.source },
-                      locale,
-                    ),
-                  })
-                : phase.phase === "cancelled"
-                  ? phase.injected_chars > 0
-                    ? // §12: live_inject does not take back what it already pasted.
-                      t("overlay.live.cancelledKept", { n: phase.injected_chars })
-                    : kept
-                      ? t("overlay.live.cancelledRecording")
-                      : t("overlay.live.cancelled")
-                  : undefined
+              : builtinAsrOut
+                ? t("usage.pill.asrOut")
+                : phase.phase === "failed"
+                  ? t("overlay.live.failed", {
+                      reason: takeFailureText(
+                        { phase, kind: dictation.kind, source: dictation.source },
+                        locale,
+                      ),
+                    })
+                  : phase.phase === "cancelled"
+                    ? phase.injected_chars > 0
+                      ? // §12: live_inject does not take back what it already pasted.
+                        t("overlay.live.cancelledKept", { n: phase.injected_chars })
+                      : kept
+                        ? t("overlay.live.cancelledRecording")
+                        : t("overlay.live.cancelled")
+                    : undefined
         }
         // The tag names where the audio goes; while refining it is the preset the clean-up runs
         // with (§21; AI 润色 when the status names none), while a streaming mode waits for its
@@ -246,11 +260,15 @@ export function Overlay({ state }: OverlayProps) {
         // docs/dictation.md §3.6: a take whose polish was asked for and not used says why.
         // §26: a failed take whose recording is kept says where to recognise it again.
         note={
-          phase.phase === "done" && !phase.refined && phase.refine_failure !== undefined
-            ? notRefinedText(phase.refine_failure, locale)
-            : phase.phase === "failed" && phase.text === undefined && kept
-              ? t("overlay.live.keptNote")
-              : undefined
+          builtinRefineOut
+            ? t("usage.pill.refineOut")
+            : phase.phase === "done" && !phase.refined && phase.refine_failure !== undefined
+              ? notRefinedText(phase.refine_failure, locale)
+              : phase.phase === "failed" && phase.text === undefined && kept
+                ? builtinAsrOut
+                  ? t("usage.pill.kept")
+                  : t("overlay.live.keptNote")
+                : undefined
         }
         onCopy={phase.phase === "failed" && phase.text !== undefined ? copyLive : undefined}
       />

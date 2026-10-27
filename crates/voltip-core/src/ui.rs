@@ -280,6 +280,9 @@ pub enum GuidePage {
     Privacy,
     /// AI 工具接入 (docs/site/recognition/mcp.md; docs/dictation.md §25).
     Mcp,
+    /// The built-in service's usage and daily limits (docs/site/recognition/cloud.md, its
+    /// `built-in-usage` section; docs/dictation.md §27).
+    Usage,
 }
 
 impl GuidePage {
@@ -290,6 +293,7 @@ impl GuidePage {
             Self::Service => "recognition/service",
             Self::Privacy => "privacy",
             Self::Mcp => "recognition/mcp",
+            Self::Usage => "recognition/cloud#built-in-usage",
         };
         let zh = locale.trim().to_ascii_lowercase().starts_with("zh");
         format!("{GUIDE_SITE}/{}{path}", if zh { "zh/" } else { "" })
@@ -757,6 +761,9 @@ mod tests {
         assert_eq!(GuidePage::Mcp.url("zh-CN"), "https://voltip.firlab.app/zh/recognition/mcp");
         assert_eq!(GuidePage::Mcp.url("en"), "https://voltip.firlab.app/recognition/mcp");
         assert_eq!(serde_json::to_string(&GuidePage::Mcp).unwrap(), r#""mcp""#);
+        assert_eq!(GuidePage::Usage.url("zh-CN"), "https://voltip.firlab.app/zh/recognition/cloud#built-in-usage");
+        assert_eq!(GuidePage::Usage.url("en"), "https://voltip.firlab.app/recognition/cloud#built-in-usage");
+        assert_eq!(serde_json::to_string(&GuidePage::Usage).unwrap(), r#""usage""#);
         assert_eq!(serde_json::to_string(&ProjectLink::Feedback).unwrap(), r#""feedback""#);
         assert_eq!(serde_json::from_str::<ProjectLink>(r#""source""#).unwrap(), ProjectLink::Source);
     }

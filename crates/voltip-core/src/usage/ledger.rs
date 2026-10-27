@@ -121,6 +121,9 @@ pub struct LedgerView {
     pub refine_purposes: Vec<PurposeUse>,
     /// This month's other providers, most first within each service.
     pub others: Vec<ProviderUse>,
+    /// Today's other providers, most first within each service (the usage card when the built-in
+    /// service is not in use).
+    pub others_today: Vec<ProviderUse>,
     /// The notices closed today.
     pub dismissed: Vec<UsageNotice>,
 }
@@ -228,18 +231,9 @@ impl UsageLedger {
         }
         refine_purposes.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.purpose.cmp(&b.purpose)));
         let month = &today_name[..7];
-        let mut others: Vec<ProviderUse> = Vec::new();
-        for row in self.days.iter().filter(|d| d.day.starts_with(month)).flat_map(|d| d.rows.iter()).filter(|r| r.provider != ProviderId::Builtin) {
-            match others.iter_mut().find(|o| o.provider == row.provider && o.service == row.service && o.model == row.model) {
-                Some(o) => o.amount += row.amount,
-                None => others.push(ProviderUse { provider: row.provider, service: row.service, model: row.model.clone(), amount: row.amount }),
-            }
-        }
-        for o in others.iter_mut().filter(|o| o.service == ServiceKind::Asr) {
-            o.amount = seconds(o.amount);
-        }
-        others.sort_by(|a, b| a.service.cmp(&b.service).then_with(|| b.amount.cmp(&a.amount)).then_with(|| a.provider.cmp(&b.provider)));
-        LedgerView { days, asr_origins, refine_purposes, others, dismissed: today_rows.map(|d| d.dismissed.clone()).unwrap_or_default() }
+        let others = other_providers(self.days.iter().filter(|d| d.day.starts_with(month)));
+        let others_today = other_providers(today_rows.into_iter());
+        LedgerView { days, asr_origins, refine_purposes, others, others_today, dismissed: today_rows.map(|d| d.dismissed.clone()).unwrap_or_default() }
     }
 
     fn day_mut(&mut self, index: i64) -> &mut Day {
@@ -275,6 +269,23 @@ impl UsageLedger {
             tracing::warn!(error = %e, "usage.json could not be saved");
         }
     }
+}
+
+/// The use of every provider but the built-in service over `days`: by provider, service and
+/// model, recognition in seconds, most first within each service.
+fn other_providers<'a>(days: impl Iterator<Item = &'a Day>) -> Vec<ProviderUse> {
+    let mut others: Vec<ProviderUse> = Vec::new();
+    for row in days.flat_map(|d| d.rows.iter()).filter(|r| r.provider != ProviderId::Builtin) {
+        match others.iter_mut().find(|o| o.provider == row.provider && o.service == row.service && o.model == row.model) {
+            Some(o) => o.amount += row.amount,
+            None => others.push(ProviderUse { provider: row.provider, service: row.service, model: row.model.clone(), amount: row.amount }),
+        }
+    }
+    for o in others.iter_mut().filter(|o| o.service == ServiceKind::Asr) {
+        o.amount = seconds(o.amount);
+    }
+    others.sort_by(|a, b| a.service.cmp(&b.service).then_with(|| b.amount.cmp(&a.amount)).then_with(|| a.provider.cmp(&b.provider)));
+    others
 }
 
 /// Milliseconds as whole seconds, rounded.
@@ -338,6 +349,15 @@ mod tests {
                 ProviderUse { provider: ProviderId::Openai, service: ServiceKind::Llm, model: Some("m".into()), amount: 1 },
             ],
             "this month only: the 27th of September is last month"
+        );
+        ledger.record(&event(NOON - DAY, ProviderId::Openai, ServiceKind::Llm, UsagePurpose::Refine, 1, UsageOrigin::ThisDevice));
+        assert_eq!(
+            ledger.view(NOON).others_today,
+            [
+                ProviderUse { provider: ProviderId::Aliyun, service: ServiceKind::Asr, model: Some("m".into()), amount: 125 },
+                ProviderUse { provider: ProviderId::Openai, service: ServiceKind::Llm, model: Some("m".into()), amount: 1 },
+            ],
+            "today only: yesterday's clean-up is not in it"
         );
     }
 

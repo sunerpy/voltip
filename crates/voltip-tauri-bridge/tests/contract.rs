@@ -1119,6 +1119,7 @@ fn usage_view() -> voltip_core::usage::UsageView {
                 ProviderUse { provider: ProviderId::Local, service: ServiceKind::Asr, model: Some("qwen3-asr-0.6b".into()), amount: 7_800 },
                 ProviderUse { provider: ProviderId::Openai, service: ServiceKind::Llm, model: None, amount: 3 },
             ],
+            others_today: vec![ProviderUse { provider: ProviderId::Local, service: ServiceKind::Asr, model: Some("qwen3-asr-0.6b".into()), amount: 420 }],
             dismissed: vec![UsageNotice::AsrNear],
         },
     }

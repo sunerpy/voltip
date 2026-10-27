@@ -327,7 +327,7 @@ export const projectLinkSchema = z.enum(PROJECT_LINKS);
 export type ProjectLink = z.infer<typeof projectLinkSchema>;
 /** Pages of the user guide the shell opens (`voltip_core::ui::GuidePage`), in the language the
  *  webview names. */
-export const GUIDE_PAGES = ["service", "privacy", "mcp"] as const;
+export const GUIDE_PAGES = ["service", "privacy", "mcp", "usage"] as const;
 export const guidePageSchema = z.enum(GUIDE_PAGES);
 export type GuidePage = z.infer<typeof guidePageSchema>;
 
@@ -859,6 +859,15 @@ export type UsageOrigin = z.infer<typeof usageOriginSchema>;
 export const usageNoticeSchema = z.enum(["asr_near", "asr_out", "refine_near", "refine_out"]);
 export type UsageNotice = z.infer<typeof usageNoticeSchema>;
 
+/** One provider's use of one model on this device (`ProviderUse`): seconds of audio, or requests. */
+export const providerUseSchema = z.object({
+  provider: providerIdSchema,
+  service: serviceKindSchema,
+  model: z.string().optional(),
+  amount: z.number().nonnegative(),
+});
+export type ProviderUse = z.infer<typeof providerUseSchema>;
+
 /** `UiState.usage`: the service's report of today and this device's record. */
 export const usageViewSchema = z.object({
   /** The build carries the built-in service: the usage card and page are there. */
@@ -887,16 +896,9 @@ export const usageViewSchema = z.object({
     .array(z.object({ purpose: usagePurposeSchema, count: z.number().nonnegative() }))
     .default(() => []),
   /** This month's other providers on this device: seconds of audio, or requests. */
-  others: z
-    .array(
-      z.object({
-        provider: providerIdSchema,
-        service: serviceKindSchema,
-        model: z.string().optional(),
-        amount: z.number().nonnegative(),
-      }),
-    )
-    .default(() => []),
+  others: z.array(providerUseSchema).default(() => []),
+  /** Today's other providers on this device (the usage card without the built-in service). */
+  others_today: z.array(providerUseSchema).default(() => []),
   /** The notices closed today. */
   dismissed: z.array(usageNoticeSchema).default(() => []),
 });

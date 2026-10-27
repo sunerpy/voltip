@@ -36,6 +36,7 @@ import { CardGrid } from "../../components/SettingsLayout";
 import { cx } from "../../cx";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useFeatureShell } from "../shell";
+import { BuiltinUsage, UsageInline, useServiceUsage } from "../usage/Usage";
 import { ProviderMark, hasProviderMark } from "./ProviderMark";
 import { useModelRefresh } from "./useModelRefresh";
 import { useProviderProbe } from "./useProviderProbe";
@@ -79,6 +80,8 @@ export interface ProviderCardsProps {
   /** The on-device provider's settings (the desktop's model library); a shell without local
    *  models never lists that provider. */
   localBody?: ReactNode;
+  /** The provider whose drawer is open at first (a usage notice's 下载本机模型). */
+  initialOpen?: ProviderId;
 }
 
 /** The providers of one service (docs/dictation.md §3) as a grid of cards (user decision
@@ -88,8 +91,14 @@ export interface ProviderCardsProps {
  *  provider holds the shell's `localBody`, every other one is the form for its model, endpoint and
  *  key, one field per row, with 测试连接. The desktop's two model pages and the phone's webview
  *  settings both use it. */
-export function ProviderCards({ kind, providers, label, localBody }: ProviderCardsProps) {
-  const [openId, setOpenId] = useState<ProviderId | undefined>(undefined);
+export function ProviderCards({
+  kind,
+  providers,
+  label,
+  localBody,
+  initialOpen,
+}: ProviderCardsProps) {
+  const [openId, setOpenId] = useState<ProviderId | undefined>(initialOpen);
   const open = providers.find((p) => p.id === openId);
   return (
     <>
@@ -237,6 +246,7 @@ function ProviderTile({
             {model.length > 0 ? model : "—"}
           </span>
         </div>
+        {provider.id === "builtin" && state.usage.builtin && <TileUsage kind={kind} />}
         {service.active ? (
           <span className="shrink-0 text-[12px] leading-7 font-medium text-accent-text">
             {t("engines.isCurrent")}
@@ -256,6 +266,20 @@ function ProviderTile({
         )}
       </div>
     </article>
+  );
+}
+
+/** The built-in service's card: today's use on one line (board 12), once the service reported. */
+function TileUsage({ kind }: { kind: ServiceKind }) {
+  const usage = useServiceUsage(kind);
+  if (usage.tone === "pending") return null;
+  return (
+    <UsageInline
+      usage={usage}
+      barWidth={40}
+      className="mb-1 max-w-[55%] shrink"
+      data-testid={`provider-${kind}-usage`}
+    />
   );
 }
 
@@ -377,6 +401,7 @@ function BuiltinDetail({
   return (
     <>
       <DrawerBody>
+        <BuiltinUsage kind={kind} />
         <Group title={t(`engines.service.${kind}`)}>
           <Help>{t("engines.builtinBody")}</Help>
           {service.presets.length > 1 ? (

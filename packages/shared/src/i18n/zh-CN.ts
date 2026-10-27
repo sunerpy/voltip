@@ -317,6 +317,150 @@ export const zhCN = {
     body: "最近一次听写未经 AI 润色，插入的是识别结果。可以在「AI 模型」中改用自己的服务商，例如申请一个免费的 Groq 密钥。",
     open: "打开 AI 模型",
   },
+  /** The built-in service's daily usage (docs/dictation.md §27; Penpot 「用量与额度」 boards 11–18):
+   *  the sidebar card, the 用量 page, the home lines and notices, the drawers and the phone. */
+  usage: {
+    title: "今日用量",
+    page: "用量",
+    service: { asr: "内置语音识别", llm: "内置 AI 润色" },
+    short: { asr: "识别", llm: "润色" },
+    unit: { asr: "分钟", llm: "次" },
+    amount: {
+      asr: { one: "{n} 分钟", other: "{n} 分钟" },
+      llm: { one: "{n} 次", other: "{n} 次" },
+    },
+    of: "{used} / {limit}",
+    used: "已用 {of}",
+    left: "剩余 {amount}",
+    leftUnderOne: "剩余不到 1 分钟",
+    underOneMinute: "不到 1 分钟",
+    usedUp: "已用完",
+    usedUpToday: "今日已用完",
+    unlimited: "暂不限量",
+    unlimitedNote: "统计期间不设上限，每天 {time} 重新计数",
+    unlimitedShort: "统计期间不设上限",
+    todayUsed: "今日已用 {amount}",
+    unavailable: "无法获取",
+    unavailableBody: "用量暂时无法获取",
+    unavailableHint: "联网后自动更新",
+    pending: "正在获取用量…",
+    reset: {
+      today: "今天 {time} 重置",
+      tomorrow: "明天 {time} 重置",
+      later: "{n} 天后 {time} 重置",
+    },
+    resetShort: "{time} 重置",
+    countdown: "还有 {duration}",
+    countdownUnderOne: "不到 1 分钟",
+    resetDaily: "内置服务每天 00:00（北京时间）重置",
+    resetDailyLocal: "内置服务每天北京时间 00:00（本机时间 {time}）重置",
+    /** One line under a model: home, the provider cards, the phone's talk page. */
+    inline: {
+      of: "今日 {used} / {limit}",
+      left: "今日剩余 {amount}",
+      underOne: "今日剩余不到 1 分钟",
+      out: "今日额度已用完 · {reset}",
+      unlimited: "今日已用 {amount} · 暂不限量",
+    },
+    builtinLine: "内置服务 · {usage}",
+    /** The sidebar card (board 14). */
+    card: {
+      open: "打开「用量」页",
+      own: "本机统计",
+      ownNote: "未使用内置服务，不限量",
+      ownValue: "{amount} · {provider}",
+      compact: "今日用量 · {value}",
+      compactValue: "{service}{value}",
+      compactNumbers: "{service} {value}",
+      rail: "今日用量：识别 {asr}，润色 {llm} · {reset}",
+    },
+    /** Where today's recognition came from, and what each origin is. */
+    origin: { this_device: "这台电脑", retake: "重新识别", serve: "本机语音服务" },
+    originNote: {
+      this_device: "直接听写",
+      phone: "手机发来的录音",
+      retake: "保留的录音再次识别",
+      serve: "其他应用通过本机语音服务",
+    },
+    purpose: { refine: "AI 润色", edit: "语音编辑" },
+    purposeNote: { refine: "听写后整理文字", edit: "用语音修改选中的文字" },
+    /** The 用量 page (board 14). */
+    view: {
+      intro: "这台电脑的用量 · {reset}",
+      basis: { asr: "按音频时长", llm: "润色与语音编辑" },
+      week: "近 7 天",
+      weekUnit: { asr: "分钟 · 虚线为每日上限", llm: "次 · 虚线为每日上限" },
+      weekUnitNoLimit: { asr: "分钟", llm: "次" },
+      detail: "今日明细",
+      origins: "识别 · 来源",
+      purposes: "润色 · 用途",
+      total: "共 {amount}",
+      nothing: "今天尚未使用",
+      notInUse: "{service}现在使用的是{provider}，不计入内置服务的额度",
+      others: "其他服务商 · 本月",
+      othersNote: "按这台电脑的记录统计，可能与服务商的账单不同。",
+      othersHead: { provider: "服务商与模型", used: "本月用量", quota: "额度" },
+      othersUse: { asr: "识别 {amount}", llm: "润色 {amount}" },
+      othersQuota: {
+        local: "不限量 · 在这台电脑上运行",
+        aliyun: "剩余额度请在百炼控制台查看",
+        other: "剩余额度请在服务商处查看",
+      },
+      othersQuotaLink: "查看额度",
+      othersEmpty: "本月尚未使用其他服务商",
+      phoneNote: "发送到电脑识别的录音计入电脑的用量",
+    },
+    /** The built-in service's drawer on the model pages (board 12). */
+    drawer: {
+      title: "今日用量",
+      body: {
+        asr: "按这台电脑计算，{reset}。已配对手机发到这台电脑识别的录音也计入这里；同一段录音的实时预览不重复计算。",
+        llm: "按这台电脑计算，{reset}。每次 AI 润色和语音编辑计 1 次；换模型重试不重复计算。",
+      },
+      origins: "今日来源",
+      purposes: "今日用途",
+      rules: "了解内置服务的用量规则",
+    },
+    /** The notices under the home page's 听写 card; closed, they stay away for the day. */
+    notice: {
+      asr_near: {
+        title: "内置语音识别今日剩余 {amount}",
+        body: "{reset}。用完后可以改用本机模型，或在「语音模型」中选择其他服务商。",
+      },
+      asr_out: {
+        title: "内置语音识别今日额度已用完",
+        body: "{reset}（{countdown}）。录音保留在本机，改用本机模型或其他服务商后可以重新识别。",
+        fallback: "{reset}（{countdown}）。在此之前由候补模型 {model} 识别。",
+      },
+      refine_near: {
+        title: "内置 AI 润色今日剩余 {amount}",
+        body: "{reset}。用完后识别结果将直接插入，不经润色；也可以在「AI 模型」中选择其他服务商。",
+      },
+      refine_out: {
+        title: "内置 AI 润色今日额度已用完",
+        body: "识别结果将直接插入，不经润色。{reset}；也可以在「AI 模型」中选择其他服务商。",
+        fallback: "{reset}。在此之前由候补模型 {model} 润色。",
+      },
+      useLocal: "改用本机模型",
+      downloadLocal: "下载本机模型",
+      openSpeech: "打开语音模型",
+      openAi: "打开 AI 模型",
+    },
+    /** The 听写 card while the built-in recognition is used up and nothing else can recognise. */
+    hero: {
+      title: "内置语音识别今日额度已用完",
+      body: "{reset}；现在可以改用本机模型或其他服务商。",
+      note: "快捷键仍然可用；识别失败的录音保留在本机，换模型后可以重新识别。",
+      mic: "内置识别不可用",
+    },
+    /** The pill (board 11). */
+    pill: {
+      asrOut: "今日内置识别额度已用完",
+      kept: "录音已保留",
+      switch: "换模型",
+      refineOut: "未润色 · 今日 AI 润色额度已用完",
+    },
+  },
   outputMode: {
     name: {
       whole_take: "整段输出",
@@ -435,6 +579,7 @@ export const zhCN = {
       feedback: "反馈",
       onboarding: "设置向导 / 第 {n} 步",
       overlay: "悬浮窗",
+      usage: "用量",
       notfound: "未找到",
     },
     readout: {
@@ -2915,6 +3060,7 @@ export const zhCN = {
     openAi: "打开 AI 模型",
     openFeedback: "打开反馈",
     openDevices: "打开手机",
+    openUsage: "打开用量",
   },
   app: {
     error: "出错了 · {message}",

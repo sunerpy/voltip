@@ -17,7 +17,9 @@ import {
   modelDisplayName,
   outcomeLabel,
   presetLabel,
+  resetLabel,
   takePhaseLabel,
+  usableFallback,
 } from "@voltip/shared";
 import {
   Button,
@@ -31,12 +33,20 @@ import {
   RefineNotice,
   splitKeys,
   Toggle,
+  UsageInline,
   useBackend,
   useI18n,
+  useServiceUsage,
   useUiState,
+  useUsageNow,
 } from "@voltip/ui";
 import { useRef } from "react";
 import { AI_ROUTE, SPEECH_ROUTE, useRouter } from "../app/router";
+import {
+  UsageNotices,
+  installedLocalModel,
+  useSwitchToLocal,
+} from "../features/usage/UsageNotices";
 import { useShell } from "../app/shell-context";
 import { serviceTarget } from "./settings/engines/helpers";
 import { levelFraction, useAudioMeter } from "../features/audio/useAudioMeter";
@@ -200,6 +210,32 @@ export function Home() {
   const openEngines = () => {
     navigate(SPEECH_ROUTE);
   };
+  // docs/dictation.md §27: the built-in service's day, under each model while it is the one in use.
+  const usageNow = useUsageNow();
+  const asrUsage = useServiceUsage("asr");
+  const llmUsage = useServiceUsage("llm");
+  const builtinAsr = state.usage.builtin && engines.asr_provider === "builtin";
+  const builtinLlm = state.usage.builtin && engines.llm_provider === "builtin";
+  // Used up with nothing to stand in for it: the 听写 card says so and offers the way out; the
+  // shortcut and the button still record, and the recording is kept to recognise again.
+  const asrOut =
+    builtinAsr &&
+    asrUsage.tone === "out" &&
+    usableFallback(engines.asr_fallback, usageNow) === undefined;
+  const localModel = installedLocalModel(state.models, state.settings.engines);
+  const switchToLocal = useSwitchToLocal();
+  const openLocalModels = () => {
+    navigate({ name: "speech", section: "local" });
+  };
+  const usedUp = asrOut && ready && idle;
+  // The usage notice (or, once closed, the usage line) says the built-in clean-up's day is used
+  // up; the core's quota notice would say it again.
+  const refineOut = builtinLlm && llmUsage.tone === "out";
+  const heroText = usedUp
+    ? t("usage.hero.body", {
+        reset: resetLabel(asrUsage.resetAtMs ?? usageNow, usageNow, locale),
+      })
+    : phaseText;
 
   const stats = useHomeStats(now);
   const pageRef = useRef<HTMLDivElement>(null);
@@ -242,11 +278,13 @@ export function Home() {
       : 0;
   const lampTone = !ready
     ? "danger"
-    : idle
-      ? "ok"
-      : phaseLabel.tone === "neutral"
+    : asrOut && idle
+      ? "danger"
+      : idle
         ? "ok"
-        : phaseLabel.tone;
+        : phaseLabel.tone === "neutral"
+          ? "ok"
+          : phaseLabel.tone;
 
   const tiles: {
     eyebrow: string;
@@ -299,11 +337,13 @@ export function Home() {
   });
   const micState = meter.error
     ? t("home.mic.unavailable")
-    : dictation.listening
-      ? t("home.mic.recording")
-      : micTest.testing
-        ? t("home.mic.testing", { n: micTest.remaining })
-        : t("home.mic.idle");
+    : usedUp && !micTest.testing
+      ? t("usage.hero.mic")
+      : dictation.listening
+        ? t("home.mic.recording")
+        : micTest.testing
+          ? t("home.mic.testing", { n: micTest.remaining })
+          : t("home.mic.idle");
   const micDevice = meter.device;
 
   return (
@@ -312,11 +352,14 @@ export function Home() {
       className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 p-6"
       data-testid="page-home">
       <PermissionNotice />
-      <RefineNotice
-        onOpen={() => {
-          navigate(AI_ROUTE);
-        }}
-      />
+      {/* The usage notice says it when the built-in clean-up's day is used up. */}
+      {!(refineOut && state.refine_notice?.failure === "quota") && (
+        <RefineNotice
+          onOpen={() => {
+            navigate(AI_ROUTE);
+          }}
+        />
+      )}
 
       {/* The board's 600 : 360 split, fluid (no fixed column: regression test below). */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,3fr)]">
@@ -333,7 +376,9 @@ export function Home() {
                     ? t("home.status.listening")
                     : dictation.processing
                       ? t("home.status.processing")
-                      : t("home.status.ready")}
+                      : usedUp
+                        ? t("usage.hero.title")
+                        : t("home.status.ready")}
               </span>
             </div>
             <span
@@ -341,33 +386,56 @@ export function Home() {
                 "mt-0.5 truncate pl-4 text-[13px]",
                 phaseLabel.tone === "danger" || !ready ? "text-danger" : "text-fg-muted",
               )}
-              title={phaseText}
+              title={heroText}
               data-testid="home-phase">
-              {phaseText}
+              {heroText}
             </span>
-            <div
-              className="mt-auto flex flex-wrap items-center gap-2 pt-4"
-              data-testid="home-hotkey"
-              aria-label={keys.join(" ")}>
-              {keys.map((key, i) => (
-                <kbd
-                  key={`${key}-${i}`}
-                  className="mono inline-flex h-11 min-w-[56px] items-center justify-center rounded-row border border-keycap-border bg-keycap-bg px-3.5 text-[18px] font-semibold text-fg shadow-field">
-                  {key}
-                </kbd>
-              ))}
-              <button
-                type="button"
-                className="ml-2 rounded-control px-1 text-[15px] font-medium text-fg-muted transition-colors hover:text-fg"
-                data-testid="home-activation"
-                onClick={() => {
-                  navigate({ name: "settings", section: "hotkey" });
-                }}>
-                {activationChip(activation, locale)}
-              </button>
-            </div>
+            {usedUp ? (
+              // docs/dictation.md §27: the ways on while the built-in recognition's day is used up.
+              <div
+                className="mt-auto flex flex-wrap items-center gap-2 pt-4"
+                data-testid="home-usage-out">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  data-testid="home-use-local"
+                  onClick={() => {
+                    if (localModel === undefined) openLocalModels();
+                    else switchToLocal(localModel);
+                  }}>
+                  {localModel === undefined
+                    ? t("usage.notice.downloadLocal")
+                    : t("usage.notice.useLocal")}
+                </Button>
+                <Button size="sm" variant="outline" onClick={openEngines}>
+                  {t("usage.notice.openSpeech")}
+                </Button>
+              </div>
+            ) : (
+              <div
+                className="mt-auto flex flex-wrap items-center gap-2 pt-4"
+                data-testid="home-hotkey"
+                aria-label={keys.join(" ")}>
+                {keys.map((key, i) => (
+                  <kbd
+                    key={`${key}-${i}`}
+                    className="mono inline-flex h-11 min-w-[56px] items-center justify-center rounded-row border border-keycap-border bg-keycap-bg px-3.5 text-[18px] font-semibold text-fg shadow-field">
+                    {key}
+                  </kbd>
+                ))}
+                <button
+                  type="button"
+                  className="ml-2 rounded-control px-1 text-[15px] font-medium text-fg-muted transition-colors hover:text-fg"
+                  data-testid="home-activation"
+                  onClick={() => {
+                    navigate({ name: "settings", section: "hotkey" });
+                  }}>
+                  {activationChip(activation, locale)}
+                </button>
+              </div>
+            )}
             <span className="mt-2.5 text-[12px] text-fg-subtle" data-testid="home-hint">
-              {hint}
+              {usedUp ? t("usage.hero.note") : hint}
             </span>
           </div>
           <div className="flex w-34 shrink-0 flex-col items-center justify-center">
@@ -482,21 +550,31 @@ export function Home() {
                   </span>
                 )}
               </div>
-              <div className="truncate text-[12px] text-fg-muted" data-testid="home-engine-detail">
-                {reported
-                  ? local
-                    ? t("home.engine.detailLocal", {
-                        state: engineReady
-                          ? t("home.engine.localReady")
-                          : t("home.engine.localMissing"),
-                        language: engines.language ?? t("home.engine.auto"),
-                      })
-                    : t("home.engine.detail", {
-                        provider: providerName,
-                        language: engines.language ?? t("home.engine.auto"),
-                      })
-                  : "—"}
-              </div>
+              {builtinAsr && asrUsage.tone !== "pending" ? (
+                <UsageInline
+                  usage={asrUsage}
+                  prefix={`${providerName} · `}
+                  data-testid="home-engine-usage"
+                />
+              ) : (
+                <div
+                  className="truncate text-[12px] text-fg-muted"
+                  data-testid="home-engine-detail">
+                  {reported
+                    ? local
+                      ? t("home.engine.detailLocal", {
+                          state: engineReady
+                            ? t("home.engine.localReady")
+                            : t("home.engine.localMissing"),
+                          language: engines.language ?? t("home.engine.auto"),
+                        })
+                      : t("home.engine.detail", {
+                          provider: providerName,
+                          language: engines.language ?? t("home.engine.auto"),
+                        })
+                    : "—"}
+                </div>
+              )}
               {liveDegraded !== undefined && (
                 <div
                   className="truncate text-[11px] text-warning"
@@ -531,10 +609,20 @@ export function Home() {
               </div>
               <div className="flex min-w-0 items-center gap-0.5 text-[12px] text-fg-muted">
                 <PolishModelMenu data-testid="home-refine-model" triggerClassName={DETAIL_MENU} />
-                {engines.refine_enabled && textTarget !== undefined && (
-                  <span className="truncate" data-testid="home-privacy">
-                    {t("home.engine.privacyText", { target: textTarget })}
-                  </span>
+                {engines.refine_enabled && builtinLlm && llmUsage.tone !== "pending" ? (
+                  <UsageInline
+                    usage={llmUsage}
+                    prefix="· "
+                    className="ml-0.5"
+                    data-testid="home-refine-usage"
+                  />
+                ) : (
+                  engines.refine_enabled &&
+                  textTarget !== undefined && (
+                    <span className="truncate" data-testid="home-privacy">
+                      {t("home.engine.privacyText", { target: textTarget })}
+                    </span>
+                  )
                 )}
               </div>
             </div>
@@ -589,6 +677,14 @@ export function Home() {
           </div>
         </Card>
       </div>
+
+      <UsageNotices
+        openSpeech={openEngines}
+        openLocalModels={openLocalModels}
+        openAi={() => {
+          navigate(AI_ROUTE);
+        }}
+      />
 
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-4" data-testid="home-tiles">
         {tiles.map((tile) => (

@@ -1515,6 +1515,14 @@
         "amount": 3
       }
     ],
+    "others_today": [
+      {
+        "provider": "local",
+        "service": "asr",
+        "model": "qwen3-asr-0.6b",
+        "amount": 420
+      }
+    ],
     "dismissed": ["asr_near"]
   }
 }

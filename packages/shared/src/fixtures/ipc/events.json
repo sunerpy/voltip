@@ -178,6 +178,7 @@
       "asr_origins": [],
       "refine_purposes": [],
       "others": [],
+      "others_today": [],
       "dismissed": []
     }
   },
@@ -369,6 +370,14 @@
         "amount": 3
       }
     ],
+    "others_today": [
+      {
+        "provider": "local",
+        "service": "asr",
+        "model": "qwen3-asr-0.6b",
+        "amount": 420
+      }
+    ],
     "dismissed": ["asr_near"]
   },
   {
@@ -379,6 +388,7 @@
     "asr_origins": [],
     "refine_purposes": [],
     "others": [],
+    "others_today": [],
     "dismissed": []
   },
   {

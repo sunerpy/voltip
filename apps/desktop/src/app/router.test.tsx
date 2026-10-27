@@ -51,6 +51,11 @@ describe("parseRoute / routePath", () => {
     // regression (2026-09-25): the Bridge & MCP page was removed; its old URL is a 404, not a page.
     expect(parseRoute("/bridge")).toEqual({ name: "notfound", path: "/bridge" });
     expect(parseRoute("/devices")).toEqual({ name: "devices" });
+    // docs/dictation.md §27: the usage page, and 下载本机模型's way to the on-device models.
+    expect(parseRoute("/usage")).toEqual({ name: "usage" });
+    expect(isBackgroundRoute({ name: "usage" })).toBe(true);
+    expect(parseRoute("/speech/local")).toEqual({ name: "speech", section: "local" });
+    expect(parseRoute("/speech/other")).toEqual(SPEECH_ROUTE);
     expect(parseRoute("/settings")).toEqual({ name: "settings", section: "appearance" });
     expect(parseRoute("/settings/hotkey")).toEqual({ name: "settings", section: "hotkey" });
     expect(parseRoute("/settings/bogus")).toEqual({ name: "settings", section: "appearance" });
@@ -76,6 +81,8 @@ describe("parseRoute / routePath", () => {
       "/devices",
       "/settings/hotkey",
       "/speech",
+      "/speech/local",
+      "/usage",
       "/ai",
       "/ai/presets",
       "/feedback",

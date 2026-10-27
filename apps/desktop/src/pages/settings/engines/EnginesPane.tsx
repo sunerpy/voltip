@@ -1,4 +1,4 @@
-import { type ServiceKind } from "@voltip/shared";
+import { type ProviderId, type ServiceKind } from "@voltip/shared";
 import {
   CurrentService,
   FallbackSection,
@@ -30,7 +30,7 @@ import { ProviderCards } from "./ProviderCard";
  *  silence trimming; how the text is inserted moved to 设置 › 听写 on 2026-09-29). Everything writes
  *  `settings_set_engines` / `provider_key_set`;
  *  everything shown comes from `state.engines`. */
-export function SpeechModelsPane() {
+export function SpeechModelsPane({ openLocal = false }: { openLocal?: boolean }) {
   const { t } = useI18n();
   const [tab, setTab] = useState<SpeechTab>("asr");
   return (
@@ -45,7 +45,9 @@ export function SpeechModelsPane() {
         }))}
         className="self-start"
       />
-      {tab === "asr" && <ProviderList kind="asr" />}
+      {tab === "asr" && (
+        <ProviderList kind="asr" {...(openLocal ? { initialOpen: "local" } : {})} />
+      )}
       {tab === "options" && <RecognitionOptions />}
     </SettingsPane>
   );
@@ -62,7 +64,7 @@ export function AiModelsPane() {
   );
 }
 
-function ProviderList({ kind }: { kind: ServiceKind }) {
+function ProviderList({ kind, initialOpen }: { kind: ServiceKind; initialOpen?: ProviderId }) {
   const { backend } = useBackend();
   const { t } = useI18n();
   const state = useUiState();
@@ -112,7 +114,12 @@ function ProviderList({ kind }: { kind: ServiceKind }) {
         {providers.length === 0 ? (
           <p className="text-[12px] text-fg-muted">{t("engines.waiting")}</p>
         ) : (
-          <ProviderCards kind={kind} providers={providers} label={title} />
+          <ProviderCards
+            kind={kind}
+            providers={providers}
+            label={title}
+            {...(initialOpen === undefined ? {} : { initialOpen })}
+          />
         )}
         <ServicePrivacy kind={kind} />
       </SettingsSection>

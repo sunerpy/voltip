@@ -13,6 +13,7 @@ export * from "./quick-fix";
 export * from "./scene-drafts";
 export * from "./history-stats";
 export * from "./audio-cache";
+export * from "./usage";
 export * from "./feedback-drafts";
 export * from "./proxy";
 export * from "./mcp";

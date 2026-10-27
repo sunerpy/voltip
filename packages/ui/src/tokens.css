@@ -42,6 +42,9 @@
   --danger-soft: #fde8e7;
   --warning: #b45309;
   --warning-soft: #fdf0d9;
+  /* A bar or a ring filled near its limit (the usage card, docs/dictation.md §27): brighter than
+   * the text colour on the light themes. */
+  --warning-fill: #f59e0b;
   --info: #0062b8;
   --info-soft: #e4f0ff;
   --nav: #f4f7fd;
@@ -131,6 +134,9 @@
   --danger-soft: #3f2633;
   --warning: #fbbf24;
   --warning-soft: #3d3228;
+  /* A bar or a ring filled near its limit (the usage card, docs/dictation.md §27): brighter than
+   * the text colour on the light themes. */
+  --warning-fill: #fbbf24;
   --info: #6cb6ff;
   --info-soft: #1e324f;
   --nav: #141a2b;
@@ -218,6 +224,9 @@
   --danger-soft: #f9e7e5;
   --warning: #b7791f;
   --warning-soft: #fbf1dc;
+  /* A bar or a ring filled near its limit (the usage card, docs/dictation.md §27): brighter than
+   * the text colour on the light themes. */
+  --warning-fill: #f59e0b;
   --info: #0968c8;
   --info-soft: #e1edf9;
   --nav: #f2f3f6;
@@ -305,6 +314,9 @@
   --danger-soft: #3a1f1d;
   --warning: #ffb224;
   --warning-soft: #2e2716;
+  /* A bar or a ring filled near its limit (the usage card, docs/dictation.md §27): brighter than
+   * the text colour on the light themes. */
+  --warning-fill: #ffb224;
   --info: #48a3fd;
   --info-soft: #1b3652;
   --nav: #14161b;
@@ -391,6 +403,9 @@
   --danger-soft: #f6e3df;
   --warning: #a8701a;
   --warning-soft: #f6ebd3;
+  /* A bar or a ring filled near its limit (the usage card, docs/dictation.md §27): brighter than
+   * the text colour on the light themes. */
+  --warning-fill: #e0a33a;
   --info: #0165c4;
   --info-soft: #dfe9ef;
   --nav: #f5efe4;
@@ -476,6 +491,9 @@
   --danger-soft: #3f2b2a;
   --warning: #f2c14e;
   --warning-soft: #3d3826;
+  /* A bar or a ring filled near its limit (the usage card, docs/dictation.md §27): brighter than
+   * the text colour on the light themes. */
+  --warning-fill: #f2c14e;
   --info: #7bbafe;
   --info-soft: #2c4865;
   --nav: #22252b;
@@ -946,6 +964,7 @@
   --color-danger-soft: var(--danger-soft);
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
+  --color-warning-fill: var(--warning-fill);
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
   --color-nav: var(--nav);

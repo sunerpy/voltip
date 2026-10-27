@@ -5156,6 +5156,67 @@ export function sampleDevices(now = Math.floor(Date.now() / 1000)): DeviceView[]
   ];
 }
 
+/** The built-in service's states the previews show (docs/dictation.md §27; Penpot 「用量与额度」
+ *  board 11): under 80 %, from 80 % on, at the limit, the counting period, unknown. */
+export type SampleUsageState = "ok" | "near" | "out" | "count" | "unknown";
+
+/** A week of built-in use on this computer and today's report in `state`, for demos and screenshots:
+ *  recognition in minutes and clean-ups, against 60 minutes and 100 a day. */
+export function sampleUsage(
+  state: SampleUsageState = "ok",
+  nowMs = Date.now(),
+): Partial<UsageView> {
+  const dayMs = 86_400_000;
+  const beijing = 8 * 3_600_000;
+  const todayIndex = Math.floor((nowMs + beijing) / dayMs);
+  const resetAt = ((todayIndex + 1) * dayMs - beijing) / 1000;
+  const used = { ok: [23, 41], near: [52, 86], out: [60, 100], count: [23, 41], unknown: [23, 41] }[
+    state
+  ];
+  const [asrMin = 0, refine = 0] = used;
+  const week = [
+    [6, 18],
+    [19, 47],
+    [14, 33],
+    [60, 100],
+    [27, 61],
+    [3, 9],
+  ];
+  const days = [...week, [asrMin, refine]].map(([m = 0, r = 0], i) => {
+    const date = new Date((todayIndex - 6 + i) * dayMs);
+    return { day: date.toISOString().slice(0, 10), asr_seconds: m * 60, refine: r };
+  });
+  return {
+    builtin: true,
+    quota: {
+      mode: state === "count" ? "count" : "limit",
+      basis: "device",
+      day: days[6]?.day ?? "",
+      reset_at: resetAt,
+      asr: { used_seconds: asrMin * 60, limit_seconds: state === "count" ? null : 3600 },
+      refine: { used: refine, limit: state === "count" ? null : 100 },
+    },
+    reported_at: nowMs - 60_000,
+    unavailable: state === "unknown",
+    days,
+    asr_origins: [
+      { origin: { kind: "this_device" }, seconds: Math.max(0, asrMin - 5) * 60 },
+      { origin: { kind: "phone", name: "Pixel 8" }, seconds: Math.min(asrMin, 5) * 60 },
+    ],
+    refine_purposes: [
+      { purpose: "refine", count: Math.round(refine * 0.88) },
+      { purpose: "edit", count: refine - Math.round(refine * 0.88) },
+    ],
+    others: [
+      { provider: "local", service: "asr", model: "qwen3-asr-0.6b", amount: 7800 },
+      { provider: "aliyun", service: "asr", model: "paraformer-realtime-v2", amount: 2280 },
+      { provider: "groq", service: "llm", model: "qwen/qwen3.8-27b", amount: 312 },
+    ],
+    others_today: [{ provider: "local", service: "asr", model: "qwen3-asr-0.6b", amount: 420 }],
+    dismissed: [],
+  };
+}
+
 /** Local midnight of the day containing `ms`. */
 export function startOfLocalDay(ms: number): number {
   const d = new Date(ms);
