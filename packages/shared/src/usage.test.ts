@@ -225,7 +225,10 @@ describe("usageSummary", () => {
   it("says both services in one line for the phone's settings row", () => {
     expect(usageSummary(view(), NOW)).toBe("识别 23 / 60 分钟 · 润色 41 / 100 次");
     const near = view({
-      quota: report({ asr: { used_seconds: 52 * 60, limit_seconds: 3600 }, refine: { used: 100, limit: 100 } }),
+      quota: report({
+        asr: { used_seconds: 52 * 60, limit_seconds: 3600 },
+        refine: { used: 100, limit: 100 },
+      }),
     });
     expect(usageSummary(near, NOW)).toBe("识别剩余 8 分钟 · 润色已用完");
     expect(usageSummary(view({ quota: report({ mode: "count" }) }), NOW)).toBe(
@@ -323,7 +326,9 @@ describe("sampleUsage (the previews' days)", () => {
       expect(v.days).toHaveLength(7);
       expect(v.days.at(-1)?.day).toBe("2026-10-27");
       expect(v.quota?.reset_at).toBe(RESET);
-      expect(v.asr_origins.reduce((sum, o) => sum + o.seconds, 0)).toBe((v.quota?.asr.used_seconds ?? 0));
+      expect(v.asr_origins.reduce((sum, o) => sum + o.seconds, 0)).toBe(
+        v.quota?.asr.used_seconds ?? 0,
+      );
       expect(v.refine_purposes.reduce((sum, p) => sum + p.count, 0)).toBe(v.quota?.refine.used);
       return [serviceUsage(v, "asr", NOW).tone, serviceUsage(v, "llm", NOW).tone];
     });
