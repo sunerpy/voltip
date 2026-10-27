@@ -37,6 +37,7 @@ tracing-subscriber.workspace = true
 voltip-protocol.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite.workspace = true
 futures-util.workspace = true

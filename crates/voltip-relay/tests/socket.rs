@@ -12,7 +12,7 @@ use voltip_protocol::relay::{RelayErrorCode, RelayFrame};
 use voltip_protocol::{ProtocolVersion, SessionId};
 use voltip_relay::forwarded::parse_trusted_proxy;
 use voltip_relay::server::RelayHandle;
-use voltip_relay::{RateWindow, RelayConfig};
+use voltip_relay::{PolicyFiles, RateWindow, RelayConfig};
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -63,7 +63,7 @@ async fn recv(ws: &mut Ws) -> RelayFrame {
 }
 
 async fn hello(ws: &mut Ws) {
-    send(ws, RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: "test".into() }).await;
+    send(ws, RelayFrame::hello("test")).await;
     assert!(matches!(recv(ws).await, RelayFrame::HelloAck { .. }));
 }
 
@@ -268,5 +268,56 @@ async fn a_forwarded_address_counts_only_from_a_trusted_proxy() {
     // No proxy is trusted, so the header is the client's own claim and changes nothing.
     let mut other = connect_forwarded(&url, "203.0.113.2").await;
     assert!(matches!(create_session(&mut other).await, RelayFrame::Error { code: RelayErrorCode::RateLimited, .. }));
+    let _ = stop.send(());
+}
+
+/// Wait until `ws` is closed by the relay.
+async fn closed(ws: &mut Ws) -> bool {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break true,
+                Some(Ok(_)) => continue,
+            }
+        }
+    })
+    .await
+    .unwrap_or(false)
+}
+
+/// docs/pairing.md 「最低版本」 over real sockets: the policy file is read when the relay starts
+/// watching it, a client below its minimum is refused at `hello`, and a raised minimum read again
+/// turns a connected client away; `/stats` counts both.
+#[tokio::test]
+async fn the_policy_file_turns_old_clients_away_and_stats_count_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let policy = dir.path().join("relay-policy.json");
+    std::fs::write(&policy, r#"{"schema":1,"min_version":"0.1.10"}"#).unwrap();
+    let (handle, url, stop) = start().await;
+    handle.watch_policy(PolicyFiles::new(&policy, None));
+
+    let mut old = connect(&url).await;
+    send(&mut old, RelayFrame::hello("voltip/0.1.9")).await;
+    assert_eq!(recv(&mut old).await, RelayFrame::client_too_old("0.1.10"));
+    assert!(closed(&mut old).await);
+
+    let mut current = connect(&url).await;
+    send(&mut current, RelayFrame::hello("voltip/0.1.10")).await;
+    assert!(matches!(recv(&mut current).await, RelayFrame::HelloAck { .. }));
+    std::fs::write(&policy, r#"{"schema":1,"min_version":"0.2.0"}"#).unwrap();
+    // A newer modification time whatever the file system's resolution.
+    let file = std::fs::File::options().write(true).open(&policy).unwrap();
+    file.set_modified(std::time::SystemTime::now() + Duration::from_secs(5)).unwrap();
+    handle.reload_policy();
+    assert_eq!(recv(&mut current).await, RelayFrame::client_too_old("0.2.0"));
+    assert!(closed(&mut current).await);
+
+    let req = axum::http::Request::builder().uri("/stats").body(axum::body::Body::empty()).unwrap();
+    let resp = tower::ServiceExt::oneshot(handle.router(), req).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let v: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(resp.into_body(), 64 * 1024).await.unwrap()).unwrap();
+    assert_eq!(v["schema"], 1);
+    assert_eq!(v["hours"][0]["too_old"], 2);
+    assert_eq!(v["hours"][0]["hellos"], 2);
     let _ = stop.send(());
 }

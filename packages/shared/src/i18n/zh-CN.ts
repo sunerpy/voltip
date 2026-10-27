@@ -171,6 +171,7 @@ export const zhCN = {
       not_relay: "该地址不是 Voltip 中继",
       proxy: "代理无法连接中继，请检查代理设置",
       version: "中继不支持此版本，请更新 Voltip",
+      too_old: "此版本过低，请更新 Voltip",
       lost: "连接中断",
       other: "连接失败",
     },

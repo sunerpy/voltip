@@ -8,6 +8,10 @@
 //! away without closing its socket (another network, a frozen app, a broken path) is noticed,
 //! its peers are told it is offline, and its place on the rendezvous channels is free for the
 //! connection it opens next.
+//!
+//! With [`RelayHandle::watch_policy`] the policy files are read at once and every
+//! [`POLICY_CHECK`] after (docs/pairing.md 「最低版本」); `GET /stats` answers the admin console's
+//! counts. The listener is on loopback behind nginx, which forwards `/ws` only.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -27,12 +31,16 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use voltip_protocol::relay::RelayFrame;
 
+use crate::policy::PolicyFiles;
+use crate::stats::StatsReport;
 use crate::{ConnId, Delivery, RelayConfig, RelayCore, RelayStats, forwarded};
 
 /// Outbound queue depth per connection before we consider the client stuck.
 const OUTBOUND_QUEUE: usize = 64;
 /// Housekeeping cadence.
 const TICK: Duration = Duration::from_secs(1);
+/// How often the policy files are looked at.
+pub const POLICY_CHECK: Duration = Duration::from_secs(30);
 /// Longest we wait for a client's first frame.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 /// Where a reverse proxy names the client (read only from `RelayConfig::trusted_proxies`).
@@ -46,6 +54,8 @@ pub struct RelayHandle {
 
 struct Shared {
     core: Mutex<RelayCore>,
+    /// The policy files, once [`RelayHandle::watch_policy`] named them.
+    policy: Mutex<Option<PolicyFiles>>,
     /// `RelayConfig::trusted_proxies`, read on every upgrade without taking the core's lock.
     trusted_proxies: Vec<IpNet>,
     outbound: Mutex<std::collections::HashMap<ConnId, mpsc::Sender<Outbound>>>,
@@ -66,6 +76,7 @@ impl RelayHandle {
         Self {
             inner: Arc::new(Shared {
                 core: Mutex::new(RelayCore::new(config)),
+                policy: Mutex::new(None),
                 trusted_proxies,
                 outbound: Mutex::new(Default::default()),
                 next_id: AtomicU64::new(1),
@@ -79,9 +90,31 @@ impl RelayHandle {
         RelayStats { dropped: self.inner.dropped.load(Ordering::Relaxed), ..self.inner.core.lock().stats() }
     }
 
-    /// The axum router: `GET /ws` upgrades, `GET /healthz` reports stats.
+    /// The admin console's counts (`GET /stats`).
+    pub fn stats_report(&self) -> StatsReport {
+        self.inner.core.lock().stats_report()
+    }
+
+    /// Follow the policy in `files`: read now, and every [`POLICY_CHECK`] while serving.
+    pub fn watch_policy(&self, files: PolicyFiles) {
+        *self.inner.policy.lock() = Some(files);
+        self.reload_policy();
+    }
+
+    /// Look at the policy files now; a changed policy is put in force (the connections it turns
+    /// away are told and closed).
+    pub fn reload_policy(&self) {
+        let changed = self.inner.policy.lock().as_mut().and_then(PolicyFiles::poll);
+        if let Some(policy) = changed {
+            let deliveries = self.inner.core.lock().set_policy(policy);
+            self.dispatch(deliveries);
+        }
+    }
+
+    /// The axum router: `GET /ws` upgrades, `GET /healthz` reports stats, `GET /stats` the
+    /// admin console's counts.
     pub fn router(&self) -> Router {
-        Router::new().route("/ws", get(ws_upgrade)).route("/healthz", get(healthz)).with_state(self.clone())
+        Router::new().route("/ws", get(ws_upgrade)).route("/healthz", get(healthz)).route("/stats", get(stats)).with_state(self.clone())
     }
 
     /// Bind and serve until `shutdown` resolves. Returns the bound address once listening.
@@ -95,10 +128,15 @@ impl RelayHandle {
         let handle = self.clone();
         let ticker = tokio::spawn(async move {
             let mut interval = tokio::time::interval(TICK);
+            let mut policy_due = Instant::now() + POLICY_CHECK;
             loop {
                 interval.tick().await;
                 let deliveries = handle.inner.core.lock().tick(Instant::now());
                 handle.dispatch(deliveries);
+                if Instant::now() >= policy_due {
+                    policy_due = Instant::now() + POLICY_CHECK;
+                    handle.reload_policy();
+                }
             }
         });
         let app = self.router();
@@ -145,6 +183,10 @@ impl RelayHandle {
 async fn healthz(State(h): State<RelayHandle>) -> impl IntoResponse {
     let s = h.stats();
     axum::Json(serde_json::json!({ "connections": s.connections, "sessions": s.sessions, "channels": s.channels, "forwarded": s.forwarded }))
+}
+
+async fn stats(State(h): State<RelayHandle>) -> impl IntoResponse {
+    axum::Json(h.stats_report())
 }
 
 async fn ws_upgrade(ws: WebSocketUpgrade, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, State(h): State<RelayHandle>) -> impl IntoResponse {

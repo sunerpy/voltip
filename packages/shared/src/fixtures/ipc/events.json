@@ -412,6 +412,17 @@
     "attempts": 0
   },
   {
+    "type": "relay",
+    "source": "builtin",
+    "state": "reconnecting",
+    "attempts": 1,
+    "last_failure": {
+      "kind": "too_old",
+      "min_version": "0.2.0",
+      "at": 1758700600000
+    }
+  },
+  {
     "type": "pairing",
     "state": {
       "state": "awaiting_verification"

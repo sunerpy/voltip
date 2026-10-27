@@ -375,7 +375,11 @@ async fn regression_relay_compromise_impostor_on_channel_is_flagged_not_trusted(
     let desk_initiates = voltip_core::is_initiator(&desk_id.public_key, &phone_record.public_key);
     let channel = voltip_core::rendezvous_channel(&desk_id.public_key, &phone_record.public_key);
     let (mut ws, _) = tokio_tungstenite::connect_async(url.clone()).await.unwrap();
-    ws.send(Message::Text(RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: "evil".into() }.encode().unwrap().into())).await.unwrap();
+    ws.send(Message::Text(
+        RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: "evil".into(), features: Vec::new() }.encode().unwrap().into(),
+    ))
+    .await
+    .unwrap();
     let _ack = ws.next().await;
     ws.send(Message::Text(RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel }.encode().unwrap().into())).await.unwrap();
     let mut hs = Handshake::new(if desk_initiates { Role::Responder } else { Role::Initiator }, &impostor, None).unwrap();
@@ -709,7 +713,11 @@ async fn regression_stalled_peer_handshake_times_out() {
     // A silent party attaches to the channel and never sends a byte.
     let channel = voltip_core::rendezvous_channel(&desk_id.public_key, &phone_record.public_key);
     let (mut ws, _) = tokio_tungstenite::connect_async(url.clone()).await.unwrap();
-    ws.send(Message::Text(RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: "silent".into() }.encode().unwrap().into())).await.unwrap();
+    ws.send(Message::Text(
+        RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: "silent".into(), features: Vec::new() }.encode().unwrap().into(),
+    ))
+    .await
+    .unwrap();
     let _ack = ws.next().await;
     ws.send(Message::Text(RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel }.encode().unwrap().into())).await.unwrap();
     // If the desk initiates we see "connecting"; either way it must settle back to offline.
@@ -1332,4 +1340,50 @@ async fn reconnect_relay_checks_the_socket_at_once_after_the_network_changed() {
     tokio::time::timeout(Duration::from_secs(10), noticed).await.expect("the probe found the socket dead");
     both_back(&mut desk, &mut phone, &phone_on_desk, &desk_on_phone).await;
     texts_both_ways(&mut desk, &phone_on_desk, &mut phone, &desk_on_phone).await;
+}
+
+/// Write a relay policy file with a newer modification time than it had, whatever the file
+/// system's resolution.
+fn write_policy(path: &std::path::Path, text: &str) {
+    let before = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+    std::fs::write(path, text).unwrap();
+    let file = std::fs::File::options().write(true).open(path).unwrap();
+    file.set_modified(before.map_or_else(std::time::SystemTime::now, |b| b + Duration::from_secs(1))).unwrap();
+}
+
+/// docs/pairing.md 「最低版本」: the relay raises its minimum while this device is connected. The
+/// relay status says `too_old` with the version to update to; once the minimum is lowered again,
+/// checking the relay (the app back in front) connects at once instead of after the long wait.
+#[tokio::test]
+async fn a_minimum_raised_on_the_relay_shows_in_the_status_with_the_version() {
+    let (url, _stop, handle) = relay().await;
+    let policy_dir = tempfile::tempdir().unwrap();
+    let policy = policy_dir.path().join("relay-policy.json");
+    handle.watch_policy(voltip_relay::PolicyFiles::new(&policy, None));
+    let settings = Settings { relay_url: Some(url), relay_enabled: true, ..Settings::default() };
+    let mut desk =
+        node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "desk", &settings, |cfg| cfg.client_version = "voltip/0.1.10".into());
+    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+
+    write_policy(&policy, r#"{"schema":1,"min_version":"0.2.0"}"#);
+    handle.reload_policy();
+    let failure = wait(&mut desk, |e| match e {
+        CoreEvent::Relay(r) if r.state == ConnectionState::Reconnecting => r.last_failure.clone(),
+        _ => None,
+    })
+    .await;
+    assert_eq!((failure.kind, failure.min_version.as_deref()), (voltip_core::FailureKind::TooOld, Some("0.2.0")), "{failure:?}");
+    assert_eq!(handle.stats_report().hours.iter().map(|h| h.too_old).sum::<u64>(), 1);
+    desk.handle.send(CoreCommand::StartPairing).await.unwrap();
+    wait(&mut desk, |e| matches!(e, CoreEvent::Error(m) if m.contains("版本过低")).then_some(())).await;
+
+    write_policy(&policy, r#"{"schema":1,"min_version":null}"#);
+    handle.reload_policy();
+    desk.handle.send(CoreCommand::ReconnectRelay).await.unwrap();
+    let cleared = wait(&mut desk, |e| match e {
+        CoreEvent::Relay(r) if r.state == ConnectionState::Connected => Some(r.last_failure.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(cleared, None);
 }

@@ -1,10 +1,11 @@
 //! `voltip-relay` binary: `voltip-relay --bind 0.0.0.0:47830`.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use clap::Parser;
-use voltip_relay::RelayConfig;
 use voltip_relay::server::RelayHandle;
+use voltip_relay::{PolicyFiles, RelayConfig};
 
 #[derive(Parser, Debug)]
 #[command(name = "voltip-relay", version, about = "Voltip relay: forwards ciphertext between paired devices; never sees plaintext.")]
@@ -22,6 +23,13 @@ struct Args {
     /// or a network; repeat it or separate with commas. Behind nginx on this host: 127.0.0.1.
     #[arg(long = "trust-proxy", env = "VOLTIP_RELAY_TRUST_PROXY", value_delimiter = ',', value_parser = voltip_relay::forwarded::parse_trusted_proxy)]
     trust_proxy: Vec<ipnet::IpNet>,
+    /// The policy file the admin console's sync writes (docs/pairing.md 「最低版本」), read again
+    /// every 30 s; without it every client version is served.
+    #[arg(long, env = "VOLTIP_RELAY_POLICY")]
+    policy: Option<PathBuf>,
+    /// A policy file written by hand that wins over `--policy` while it exists and is valid.
+    #[arg(long = "policy-override", env = "VOLTIP_RELAY_POLICY_OVERRIDE", requires = "policy")]
+    policy_override: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -35,6 +43,9 @@ async fn main() -> std::io::Result<()> {
     }
     let config = RelayConfig { session_ttl: std::time::Duration::from_secs(args.session_ttl), trusted_proxies: args.trust_proxy, ..RelayConfig::default() };
     let handle = RelayHandle::new(config);
+    if let Some(policy) = args.policy {
+        handle.watch_policy(PolicyFiles::new(policy, args.policy_override));
+    }
     let shutdown = async {
         let _ = tokio::signal::ctrl_c().await;
         tracing::info!("shutdown requested");

@@ -1983,6 +1983,7 @@ export const relayFailureKindSchema = z.enum([
   "not_relay",
   "proxy",
   "version",
+  "too_old",
   "lost",
   "other",
 ]);
@@ -1993,6 +1994,8 @@ export const relayFailureSchema = z.object({
   kind: relayFailureKindSchema,
   /** The transport's words: for a relay the user entered only (the build's own is never named). */
   detail: z.string().optional(),
+  /** The lowest version the relay serves, with `too_old` (docs/pairing.md 「最低版本」). */
+  min_version: z.string().optional(),
   /** Unix milliseconds. */
   at: z.number(),
 });

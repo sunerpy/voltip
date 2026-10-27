@@ -1294,10 +1294,18 @@ fn all_events() -> Vec<UiEvent> {
             state: ConnectionState::Reconnecting,
             attempts: RELAY_ATTEMPTS,
             // A relay the user typed in keeps the transport's words; the build's own only its kind.
-            last_failure: Some(RelayFailure { kind: FailureKind::Timeout, detail: Some("connect timed out after 8s".into()), at: AT_MS }),
+            last_failure: Some(RelayFailure { kind: FailureKind::Timeout, detail: Some("connect timed out after 8s".into()), min_version: None, at: AT_MS }),
         }),
         // The build's own relay: connected, and never named.
         UiEvent::Relay(RelayStatus { endpoint: None, source: RelaySource::Builtin, state: ConnectionState::Connected, attempts: 0, last_failure: None }),
+        // Below the build's own relay's minimum: the version to update to, still without the host.
+        UiEvent::Relay(RelayStatus {
+            endpoint: None,
+            source: RelaySource::Builtin,
+            state: ConnectionState::Reconnecting,
+            attempts: 1,
+            last_failure: Some(RelayFailure { kind: FailureKind::TooOld, detail: None, min_version: Some("0.2.0".into()), at: AT_MS }),
+        }),
         UiEvent::Pairing(verification_snapshot()),
         UiEvent::Pairing(Snapshot { state: PairingState::Failed { reason: FailureReason::Relay { code: RelayErrorCode::SessionExpired } }, ..idle_snapshot() }),
         UiEvent::Pairing(Snapshot { state: PairingState::Failed { reason: FailureReason::Timeout }, ..idle_snapshot() }),

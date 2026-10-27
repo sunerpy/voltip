@@ -2483,8 +2483,11 @@ impl Runtime {
         if self.relay_connected() {
             return Ok(());
         }
+        let too_old = self.relay_status.last_failure.as_ref().is_some_and(|f| f.kind == voltip_transport::FailureKind::TooOld);
         let why = match self.relay_status.source {
             RelaySource::None => "pairing: 配对需要中继，请先在设置中开启中继",
+            // docs/pairing.md 「最低版本」: only an update helps.
+            RelaySource::Builtin | RelaySource::User if too_old => "pairing: 此版本过低，请更新 Voltip 后再配对",
             RelaySource::Builtin | RelaySource::User => "pairing: 尚未连上中继，请检查网络后再试",
         };
         Err(CoreError::Invalid(why.into()))

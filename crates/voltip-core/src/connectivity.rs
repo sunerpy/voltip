@@ -113,7 +113,7 @@ mod tests {
         assert_eq!(ProbeResult::from_probe(Ok(std::time::Duration::from_millis(12))), ProbeResult::Ok { ms: 12 });
         assert_eq!(ProbeResult::from_probe(Err(voltip_transport::ProbeFailure::Timeout)), ProbeResult::Timeout);
         assert_eq!(ProbeResult::from_probe(Err(voltip_transport::ProbeFailure::Refused)), ProbeResult::Refused);
-        let tls = voltip_transport::LinkFailure { kind: voltip_transport::FailureKind::Tls, detail: "tls".into() };
+        let tls = voltip_transport::LinkFailure { kind: voltip_transport::FailureKind::Tls, detail: "tls".into(), min_version: None };
         assert_eq!(
             ProbeResult::from_probe(Err(voltip_transport::ProbeFailure::Failed(tls))),
             ProbeResult::Failed { reason: "tls".into(), kind: voltip_transport::FailureKind::Tls }

@@ -29,5 +29,6 @@ voltip-net.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+tempfile.workspace = true
 voltip-relay = { workspace = true, features = ["server"] }
 tokio = { workspace = true, features = ["test-util"] }

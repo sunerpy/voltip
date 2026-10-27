@@ -164,6 +164,7 @@ export const en: Messages = {
       not_relay: "The address is not a Voltip relay",
       proxy: "The proxy could not reach the relay; check the proxy settings",
       version: "The relay does not support this version; update Voltip",
+      too_old: "This version is too old; update Voltip",
       lost: "The connection dropped",
       other: "The connection failed",
     },

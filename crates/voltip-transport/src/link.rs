@@ -33,6 +33,10 @@ pub struct LinkConfig {
     pub pong_timeout: Duration,
     /// After [`RelayLink::reconnect_now`]: time allowed for the pong of the ping it sends at once.
     pub probe_timeout: Duration,
+    /// The wait before trying again once the relay said this version is below its minimum
+    /// ([`FailureKind::TooOld`], docs/pairing.md 「最低版本」): only an update helps, so the link does
+    /// not knock every few seconds. [`RelayLink::reconnect_now`] still tries at once.
+    pub too_old_retry: Duration,
     /// Tests only: the writer takes this shared before it writes a frame, so a test that holds it
     /// exclusively keeps the queued frames waiting (docs/dictation.md §20.8, frames of an ended
     /// session left in the queue).
@@ -54,6 +58,7 @@ impl LinkConfig {
             ping_interval: Duration::from_secs(15),
             pong_timeout: Duration::from_secs(10),
             probe_timeout: Duration::from_secs(5),
+            too_old_retry: Duration::from_secs(30 * 60),
             write_gate: None,
             network: voltip_net::NetworkRef::default(),
         }
@@ -101,6 +106,9 @@ pub enum FailureKind {
     Proxy,
     /// The relay does not speak this app's protocol version.
     Version,
+    /// This app's version is below the relay's minimum (`LinkFailure::min_version` names it): it
+    /// may not pair or reconnect until it is updated (docs/pairing.md 「最低版本」).
+    TooOld,
     /// The connection was up and went down.
     Lost,
     /// Anything else.
@@ -117,11 +125,21 @@ pub struct LinkFailure {
     pub kind: FailureKind,
     /// The error as the transport has it.
     pub detail: String,
+    /// The lowest version the relay serves, with [`FailureKind::TooOld`].
+    pub min_version: Option<String>,
 }
 
 impl LinkFailure {
     fn new(kind: FailureKind, detail: impl Into<String>) -> Self {
-        Self { kind, detail: detail.into() }
+        Self { kind, detail: detail.into(), min_version: None }
+    }
+
+    /// The relay's refusal `code` (`min_version` with `client_too_old`). The version reaches the UI,
+    /// so only a plain `x.y.z` is kept: a relay the user typed in could send anything.
+    fn refused(code: voltip_protocol::relay::RelayErrorCode, min_version: Option<String>, detail: String) -> Self {
+        let kind = refusal_kind(code);
+        let min_version = min_version.filter(|v| kind == FailureKind::TooOld && is_plain_version(v));
+        Self { kind, detail, min_version }
     }
 
     /// Opening the socket failed (`connect: …`).
@@ -169,10 +187,17 @@ fn io_kind(io: &std::io::Error) -> FailureKind {
     }
 }
 
+/// `x.y.z`, each part 1 to 9 digits.
+fn is_plain_version(text: &str) -> bool {
+    let parts: Vec<&str> = text.split('.').collect();
+    parts.len() == 3 && parts.iter().all(|p| (1..=9).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// The kind of the relay refusing `hello`.
 fn refusal_kind(code: voltip_protocol::relay::RelayErrorCode) -> FailureKind {
     match code {
         voltip_protocol::relay::RelayErrorCode::UnsupportedVersion => FailureKind::Version,
+        voltip_protocol::relay::RelayErrorCode::ClientTooOld => FailureKind::TooOld,
         _ => FailureKind::Other,
     }
 }
@@ -281,6 +306,7 @@ async fn run(config: LinkConfig, mut cmd_rx: mpsc::Receiver<Cmd>, evt: mpsc::Sen
                 return;
             }
             Outcome::Lost(failure) => {
+                let too_old = failure.kind == FailureKind::TooOld;
                 let _ = evt.try_send(LinkEvent::Failed(failure));
                 let (change, attempts) = {
                     let mut m = state.lock();
@@ -288,7 +314,12 @@ async fn run(config: LinkConfig, mut cmd_rx: mpsc::Receiver<Cmd>, evt: mpsc::Sen
                     (c, m.attempts())
                 };
                 emit_state(change, &evt);
-                match config.reconnect.delay_for(attempts) {
+                // Below the relay's minimum only an update helps (docs/pairing.md 「最低版本」).
+                let delay = match config.reconnect.delay_for(attempts) {
+                    Some(_) if too_old => Some(config.too_old_retry),
+                    delay => delay,
+                };
+                match delay {
                     Some(delay) => {
                         tracing::info!(attempt = attempts, ?delay, "reconnecting");
                         let until = tokio::time::Instant::now() + delay;
@@ -354,14 +385,16 @@ pub async fn probe(config: &LinkConfig) -> Result<Duration, ProbeFailure> {
         })?;
         let failed = |kind: FailureKind, detail: String| ProbeFailure::Failed(LinkFailure::new(kind, detail));
         let (mut sink, mut stream) = ws.split();
-        let hello = RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: config.client_version.clone() };
+        let hello = RelayFrame::hello(config.client_version.clone());
         let text = hello.encode().map_err(|e| failed(FailureKind::Other, e.to_string()))?;
         sink.send(Message::Text(text.into())).await.map_err(|e| failed(FailureKind::Lost, e.to_string()))?;
         loop {
             match stream.next().await {
                 Some(Ok(Message::Text(t))) => match RelayFrame::decode(&t) {
                     Ok(RelayFrame::HelloAck { .. }) => break,
-                    Ok(RelayFrame::Error { code, .. }) => return Err(failed(refusal_kind(code), format!("hello refused: {code:?}"))),
+                    Ok(RelayFrame::Error { code, min_version, .. }) => {
+                        return Err(ProbeFailure::Failed(LinkFailure::refused(code, min_version, format!("hello refused: {code:?}"))));
+                    }
                     Ok(_) => return Err(failed(FailureKind::NotRelay, "unexpected frame before hello_ack".into())),
                     Err(e) => return Err(failed(FailureKind::NotRelay, e.to_string())),
                 },
@@ -395,7 +428,7 @@ async fn connect_and_run(
     if let Some(c) = change {
         let _ = evt.try_send(LinkEvent::State(c));
     }
-    let hello = RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: config.client_version.clone() };
+    let hello = RelayFrame::hello(config.client_version.clone());
     let Ok(text) = hello.encode() else { return Outcome::Lost(LinkFailure::new(FailureKind::Other, "encode hello")) };
     if let Err(e) = sink.send(Message::Text(text.into())).await {
         return Outcome::Lost(LinkFailure::new(FailureKind::Lost, format!("send hello: {e}")));
@@ -414,7 +447,9 @@ async fn connect_and_run(
     .await;
     match ack {
         Ok(Ok(RelayFrame::HelloAck { .. })) => {}
-        Ok(Ok(RelayFrame::Error { code, .. })) => return Outcome::Lost(LinkFailure::new(refusal_kind(code), format!("relay refused hello: {code:?}"))),
+        Ok(Ok(RelayFrame::Error { code, min_version, .. })) => {
+            return Outcome::Lost(LinkFailure::refused(code, min_version, format!("relay refused hello: {code:?}")));
+        }
         Ok(Ok(other)) => {
             return Outcome::Lost(LinkFailure::new(FailureKind::NotRelay, format!("expected hello_ack, got {}", other.encode().unwrap_or_default())));
         }
@@ -464,6 +499,11 @@ async fn connect_and_run(
             },
             msg = stream.next() => match msg {
                 Some(Ok(Message::Text(t))) => match RelayFrame::decode(&t) {
+                    // The relay raised its minimum while this link was up: it closes the socket
+                    // next, and the link waits as it does after a refused `hello`.
+                    Ok(RelayFrame::Error { code: code @ voltip_protocol::relay::RelayErrorCode::ClientTooOld, min_version, .. }) => {
+                        return Outcome::Lost(LinkFailure::refused(code, min_version, format!("relay refused the connection: {code:?}")));
+                    }
                     Ok(frame) => {
                         if evt.send(LinkEvent::Frame(frame)).await.is_err() {
                             return Outcome::Closed;
