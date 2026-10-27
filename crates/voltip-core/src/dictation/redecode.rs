@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use super::ports::{DictationError, LIVE_SAMPLE_RATE_HZ, Segment, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript};
 use super::wav;
+use crate::usage::{AsrCall, UsageOrigin};
 
 /// Samples in the 20 ms frame the pause detector looks at.
 const FRAME: usize = LIVE_SAMPLE_RATE_HZ as usize / 50;
@@ -71,6 +72,7 @@ pub struct RedecodeStreaming {
     glossary: Arc<Vec<String>>,
     params: RedecodeParams,
     flush: bool,
+    origin: Option<UsageOrigin>,
 }
 
 impl std::fmt::Debug for RedecodeStreaming {
@@ -91,7 +93,13 @@ impl RedecodeStreaming {
 
     /// [`RedecodeStreaming::new`] with other timings (tests).
     pub fn with_params(transcriber: Arc<dyn Transcriber>, glossary: Vec<String>, params: RedecodeParams) -> Self {
-        Self { transcriber, glossary: Arc::new(glossary), params, flush: true }
+        Self { transcriber, glossary: Arc::new(glossary), params, flush: true, origin: None }
+    }
+
+    /// Where the take comes from, for the usage record (docs/dictation.md §27).
+    pub fn with_origin(mut self, origin: UsageOrigin) -> Self {
+        self.origin = Some(origin);
+        self
     }
 
     /// Whether [`StreamingSession::finish`] decodes what is left. The streaming output modes take
@@ -110,6 +118,7 @@ impl RedecodeStreaming {
             language: language.map(str::to_owned),
             params: self.params,
             flush: self.flush,
+            origin: self.origin.clone(),
             fed: 0,
             frame_energy: 0.0,
             frame_len: 0,
@@ -178,6 +187,7 @@ struct RedecodeSession {
     language: Option<String>,
     params: RedecodeParams,
     flush: bool,
+    origin: Option<UsageOrigin>,
     /// Stream samples so far.
     fed: usize,
     frame_energy: f32,
@@ -258,8 +268,14 @@ impl RedecodeSession {
     fn send(&mut self, job: Job, wav: Vec<u8>) {
         let (tx, answer) = mpsc::channel();
         let (transcriber, glossary, language) = (self.transcriber.clone(), self.glossary.clone(), self.language.clone());
+        // A closed sentence is the take's text when the session flushes (the streaming modes);
+        // anything else only shows while recording (docs/dictation.md §27).
+        let call = match job {
+            Job::Close { .. } if self.flush => AsrCall::take(self.origin.clone()),
+            _ => AsrCall::preview(self.origin.clone()),
+        };
         self.rt.spawn(async move {
-            let result = transcriber.transcribe(&wav, language.as_deref(), &glossary).await;
+            let result = transcriber.transcribe_as(&wav, language.as_deref(), &glossary, &call).await;
             let _ = tx.send(result);
         });
         self.running = Some(Running { job, answer });
@@ -275,6 +291,9 @@ impl RedecodeSession {
                     self.events.push_back(StreamEvent::Partial { current: text.to_owned() });
                 }
             }
+            // A used-up quota ends the preview: asking every second would only be refused again
+            // (docs/dictation.md §27). The take itself still goes to the fallback models.
+            (Job::Preview { .. }, Err(e)) if e.is_quota_exhausted() => self.fail(e),
             // A preview is only a preview: the next step asks again.
             (Job::Preview { .. }, Err(e)) => tracing::debug!(error = %e, "live preview request failed"),
             (Job::Close { last: true, .. }, Ok(t)) => {
@@ -427,6 +446,51 @@ mod tests {
     /// Run `body` on a blocking thread of a runtime, as the core's decode thread is.
     async fn on_decode_thread<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static) -> T {
         tokio::task::spawn_blocking(body).await.unwrap()
+    }
+
+    /// docs/dictation.md §27: what each request is for. A preview is always `preview`; a closed
+    /// sentence is the take's text (`take`) only when the session flushes (the streaming modes);
+    /// for a whole take, whose recogniser decodes the recording anyway, it is a preview too. Every
+    /// call names the take's origin.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn previews_and_closed_sentences_say_what_they_are_for() {
+        use crate::usage::{AsrCall, UsageOrigin};
+        let phone = UsageOrigin::Phone { name: "Pixel 8".into() };
+        for flush in [true, false] {
+            let transcriber = Arc::new(FakeTranscriber::numbered(0, &[], Duration::ZERO));
+            let (t, origin) = (transcriber.clone(), phone.clone());
+            on_decode_thread(move || {
+                let streaming = RedecodeStreaming::with_params(t, Vec::new(), RedecodeParams::default()).flushing(flush).with_origin(origin);
+                let mut s = streaming.session(tokio::runtime::Handle::current(), None);
+                let mut events = Vec::new();
+                drive(&mut s, &tone(2.5), &mut events);
+                drive(&mut s, &quiet(1.0), &mut events);
+            })
+            .await;
+            let close = if flush { AsrCall::take(Some(phone.clone())) } else { AsrCall::preview(Some(phone.clone())) };
+            assert_eq!(
+                transcriber.usage_calls(),
+                [AsrCall::preview(Some(phone.clone())), AsrCall::preview(Some(phone.clone())), close],
+                "flush {flush}: two previews, then the closed sentence"
+            );
+        }
+    }
+
+    /// docs/dictation.md §27: the built-in service's day is used up. The preview stops asking (a
+    /// refusal a second, for nothing); the take itself is the fallback chain's to recognise.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_used_up_quota_ends_the_preview_instead_of_asking_every_second() {
+        let transcriber = Arc::new(FakeTranscriber::quota_until(9));
+        let t = transcriber.clone();
+        let events = on_decode_thread(move || {
+            let mut s = session(&t, RedecodeParams::default());
+            let mut events = Vec::new();
+            drive(&mut s, &tone(4.0), &mut events);
+            events
+        })
+        .await;
+        assert_eq!(transcriber.calls(), 1, "asked once: {events:?}");
+        assert!(matches!(&events[..], [StreamEvent::Error(e)] if e.contains("额度已用完")), "{events:?}");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

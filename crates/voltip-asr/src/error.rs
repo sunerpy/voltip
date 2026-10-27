@@ -60,6 +60,9 @@ pub enum AsrError {
         code: String,
         /// Its message, cut to [`crate::MAX_ERROR_BODY_CHARS`] characters.
         message: String,
+        /// When the quota is back (milliseconds since the epoch), when the service said: the
+        /// built-in service's report ([`crate::QUOTA_HEADER`], docs/dictation.md §27).
+        retry_at_ms: Option<u64>,
     },
     /// The recording is not audio the protocol can send (not a 16-bit PCM WAV).
     #[error("ASR audio: {0}")]
@@ -98,7 +101,7 @@ pub(crate) fn error_fields(body: &str) -> (String, String) {
 /// [`AsrError::QuotaExhausted`] when the error body says so, whatever the HTTP status.
 pub(crate) fn quota_error(body: &str) -> Option<AsrError> {
     let (code, message) = error_fields(body);
-    is_quota_exhausted(&code, &message).then(|| AsrError::QuotaExhausted { code, message: voltip_reply::clean(&message) })
+    is_quota_exhausted(&code, &message).then(|| AsrError::QuotaExhausted { code, message: voltip_reply::clean(&message), retry_at_ms: None })
 }
 
 fn retry_suffix(retry_after_ms: &Option<u64>) -> String {
@@ -137,8 +140,12 @@ mod tests {
             "ASR service error InvalidParameter: Model not exist."
         );
         assert_eq!(
-            AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "The free tier of the model has been exhausted.".into() }
-                .to_string(),
+            AsrError::QuotaExhausted {
+                code: "AllocationQuota.FreeTierOnly".into(),
+                message: "The free tier of the model has been exhausted.".into(),
+                retry_at_ms: None
+            }
+            .to_string(),
             "ASR quota used up (AllocationQuota.FreeTierOnly): The free tier of the model has been exhausted."
         );
         assert_eq!(AsrError::Audio("not a WAV file".into()).to_string(), "ASR audio: not a WAV file");
@@ -157,7 +164,7 @@ mod tests {
         assert!(!AsrError::InvalidConfig(String::new()).is_retryable());
         assert!(!AsrError::BadResponse(String::new()).is_retryable());
         assert!(!AsrError::Service { code: String::new(), message: String::new() }.is_retryable());
-        assert!(!AsrError::QuotaExhausted { code: String::new(), message: String::new() }.is_retryable());
+        assert!(!AsrError::QuotaExhausted { code: String::new(), message: String::new(), retry_at_ms: None }.is_retryable());
         assert!(!AsrError::Audio(String::new()).is_retryable());
     }
 
@@ -182,7 +189,7 @@ mod tests {
         assert_eq!(error_fields("bad gateway"), (String::new(), String::new()));
         assert_eq!(
             quota_error(r#"{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}"#),
-            Some(AsrError::QuotaExhausted { code: "insufficient_quota".into(), message: "You exceeded your current quota".into() })
+            Some(AsrError::QuotaExhausted { code: "insufficient_quota".into(), message: "You exceeded your current quota".into(), retry_at_ms: None })
         );
         assert_eq!(quota_error(r#"{"error":{"code":"rate_limit_exceeded","message":"slow"}}"#), None);
     }

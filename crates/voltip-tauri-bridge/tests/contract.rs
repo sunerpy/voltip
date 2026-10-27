@@ -1079,6 +1079,48 @@ fn full_state() -> UiState {
         mcp: mcp_status(),
         // docs/dictation.md §3.6: the built-in clean-up service turned a take down.
         refine_notice: Some(RefineNotice { failure: RefineFailure::RateLimited, at_ms: 1_727_400_000_000 }),
+        // docs/dictation.md §27: the built-in service's day and this device's record.
+        usage: usage_view(),
+    }
+}
+
+/// The built-in service in its limit phase, this device's last days, and every part of today's
+/// record (docs/dictation.md §27).
+fn usage_view() -> voltip_core::usage::UsageView {
+    use voltip_core::usage::{
+        AsrQuota, LedgerView, OriginUse, ProviderUse, PurposeUse, QuotaBasis, QuotaMode, QuotaReport, RefineQuota, UsageDayView, UsageNotice, UsageOrigin,
+        UsagePurpose, UsageView,
+    };
+    UsageView {
+        builtin: true,
+        quota: Some(QuotaReport {
+            mode: QuotaMode::Limit,
+            basis: QuotaBasis::Device,
+            day: "2026-10-27".into(),
+            reset_at: 1_793_116_800,
+            asr: AsrQuota { used_seconds: 1_380, limit_seconds: Some(3_600) },
+            refine: RefineQuota { used: 72, limit: Some(100) },
+        }),
+        reported_at: Some(1_793_080_000_000),
+        unavailable: false,
+        record: LedgerView {
+            days: vec![
+                UsageDayView { day: "2026-10-26".into(), asr_seconds: 2_400, refine: 88 },
+                UsageDayView { day: "2026-10-27".into(), asr_seconds: 1_380, refine: 72 },
+            ],
+            asr_origins: vec![
+                OriginUse { origin: UsageOrigin::ThisDevice, seconds: 1_080 },
+                OriginUse { origin: UsageOrigin::Phone { name: "Pixel 8".into() }, seconds: 300 },
+                OriginUse { origin: UsageOrigin::Retake, seconds: 0 },
+                OriginUse { origin: UsageOrigin::Serve, seconds: 0 },
+            ],
+            refine_purposes: vec![PurposeUse { purpose: UsagePurpose::Refine, count: 60 }, PurposeUse { purpose: UsagePurpose::Edit, count: 12 }],
+            others: vec![
+                ProviderUse { provider: ProviderId::Local, service: ServiceKind::Asr, model: Some("qwen3-asr-0.6b".into()), amount: 7_800 },
+                ProviderUse { provider: ProviderId::Openai, service: ServiceKind::Llm, model: None, amount: 3 },
+            ],
+            dismissed: vec![UsageNotice::AsrNear],
+        },
     }
 }
 
@@ -1133,10 +1175,11 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::Mirrors { .. } => "mirrors",
         UiEvent::PhoneOutbox { .. } => "phone_outbox",
         UiEvent::RefineNotice { .. } => "refine_notice",
+        UiEvent::Usage(_) => "usage",
     }
 }
 
-const ALL_EVENT_TAGS: [&str; 30] = [
+const ALL_EVENT_TAGS: [&str; 31] = [
     "state",
     "identity",
     "settings",
@@ -1167,6 +1210,7 @@ const ALL_EVENT_TAGS: [&str; 30] = [
     "refine_notice",
     "network",
     "mcp",
+    "usage",
 ];
 
 /// The computer's settings as a phone shows them (docs/dictation.md §20.8): every `Option` set.
@@ -1286,6 +1330,9 @@ fn all_events() -> Vec<UiEvent> {
         UiEvent::PhoneOutbox { too_large: vec![uuid(HISTORY_ID)] },
         UiEvent::RefineNotice { notice: Some(RefineNotice { failure: RefineFailure::Quota, at_ms: 1_727_400_000_000 }) },
         UiEvent::RefineNotice { notice: None },
+        UiEvent::Usage(usage_view()),
+        // A build without the built-in service: nothing reported, nothing recorded.
+        UiEvent::Usage(voltip_core::usage::UsageView::default()),
         UiEvent::Identity(desktop_identity()),
         UiEvent::Settings(settings()),
         UiEvent::Relay(RelayStatus {
@@ -2093,6 +2140,8 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::SettingsSetProxy { .. } => "SettingsSetProxy",
         UiCommand::NetworkRefresh => "NetworkRefresh",
         UiCommand::RefineNoticeClose => "RefineNoticeClose",
+        UiCommand::UsageRefresh => "UsageRefresh",
+        UiCommand::UsageNoticeDismiss { .. } => "UsageNoticeDismiss",
     }
 }
 
@@ -2264,6 +2313,9 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("network_refresh", Value::Null, "NetworkRefresh"),
         // docs/dictation.md §3.6.
         ("refine_notice_close", Value::Null, "RefineNoticeClose"),
+        // docs/dictation.md §27.
+        ("usage_refresh", Value::Null, "UsageRefresh"),
+        ("usage_notice_dismiss", json!({ "notice": "asr_near" }), "UsageNoticeDismiss"),
     ]
 }
 

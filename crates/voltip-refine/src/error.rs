@@ -68,6 +68,9 @@ pub enum RefineError {
         code: String,
         /// Its message, cut to [`crate::MAX_ERROR_BODY_CHARS`] characters.
         message: String,
+        /// When the quota is back (milliseconds since the epoch), when the service said: the
+        /// built-in service's report ([`crate::QUOTA_HEADER`], docs/dictation.md §27).
+        retry_at_ms: Option<u64>,
     },
 }
 
@@ -134,7 +137,7 @@ mod tests {
         assert_eq!(RefineError::EmptyAnswer.to_string(), "refine service returned an empty answer");
         assert_eq!(RefineError::Truncated.to_string(), "refine answer was cut off at the output limit");
         assert_eq!(
-            RefineError::QuotaExhausted { code: "insufficient_quota".into(), message: "You exceeded your current quota".into() }.to_string(),
+            RefineError::QuotaExhausted { code: "insufficient_quota".into(), message: "You exceeded your current quota".into(), retry_at_ms: None }.to_string(),
             "refine quota used up (insufficient_quota): You exceeded your current quota"
         );
     }
@@ -152,7 +155,7 @@ mod tests {
         assert!(!RefineError::BadResponse(String::new()).is_retryable());
         assert!(!RefineError::EmptyAnswer.is_retryable());
         assert!(!RefineError::Truncated.is_retryable(), "the same request would be cut off again");
-        assert!(!RefineError::QuotaExhausted { code: String::new(), message: String::new() }.is_retryable());
+        assert!(!RefineError::QuotaExhausted { code: String::new(), message: String::new(), retry_at_ms: None }.is_retryable());
     }
 
     #[test]

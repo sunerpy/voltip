@@ -47,6 +47,32 @@ pub fn pcm_data(wav: &[u8]) -> Option<&[u8]> {
     None
 }
 
+/// How long the audio of a WAV file is, in milliseconds: its `data` chunk at the `fmt ` chunk's
+/// byte rate. `None` when the file is not RIFF/WAVE or says no rate.
+pub fn duration_ms(wav: &[u8]) -> Option<u64> {
+    if wav.len() < 12 || &wav[0..4] != b"RIFF" || &wav[8..12] != b"WAVE" {
+        return None;
+    }
+    let mut byte_rate = None;
+    let mut pos = 12;
+    while pos + 8 <= wav.len() {
+        let id = &wav[pos..pos + 4];
+        let len = u32::from_le_bytes([wav[pos + 4], wav[pos + 5], wav[pos + 6], wav[pos + 7]]) as usize;
+        let start = pos + 8;
+        if id == b"fmt " && start + 12 <= wav.len() {
+            byte_rate = Some(u64::from(u32::from_le_bytes([wav[start + 8], wav[start + 9], wav[start + 10], wav[start + 11]])));
+        }
+        if id == b"data" {
+            let data = wav.len().min(start.saturating_add(len)) - start;
+            let rate = byte_rate.filter(|&r| r > 0)?;
+            return Some(u64::try_from(data).unwrap_or(u64::MAX).saturating_mul(1000) / rate);
+        }
+        // Chunks are word-aligned.
+        pos = start.saturating_add(len).saturating_add(len & 1);
+    }
+    None
+}
+
 /// Peak amplitude of the PCM 16-bit payload, linear `0.0..=1.0`. Unparseable input is `0.0`.
 pub fn peak(wav: &[u8]) -> f32 {
     let Some(data) = pcm_data(wav) else { return 0.0 };
@@ -62,6 +88,18 @@ pub fn is_silent(wav: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_length_of_a_wav_is_its_data_at_its_byte_rate() {
+        assert_eq!(duration_ms(&encode_pcm16(&[0; 16_000], 16_000)), Some(1000));
+        assert_eq!(duration_ms(&encode_pcm16(&[0; 2_400], 48_000)), Some(50));
+        assert_eq!(duration_ms(&encode_pcm16(&[], 16_000)), Some(0));
+        assert_eq!(duration_ms(b"not a wav"), None);
+        // A data chunk that claims more than the file holds counts what is there.
+        let mut cut = encode_pcm16(&[0; 1_600], 16_000);
+        cut.truncate(44 + 800);
+        assert_eq!(duration_ms(&cut), Some(25));
+    }
 
     #[test]
     fn encode_then_inspect() {

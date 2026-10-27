@@ -52,6 +52,7 @@ import {
   uiEventSchema,
   uiStateSchema,
   vocabularyBacktestSchema,
+  usageNoticeSchema,
 } from "./schema";
 import { translate } from "./i18n";
 import { PROVIDER_CATALOGUE, resolveEngineStatus } from "./providers";
@@ -72,6 +73,7 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   mirrors: null,
   phone_outbox: null,
   refine_notice: null,
+  usage: null,
   identity: null,
   settings: null,
   relay: null,
@@ -199,6 +201,8 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   settings_set_proxy: null,
   network_refresh: null,
   refine_notice_close: null,
+  usage_refresh: null,
+  usage_notice_dismiss: null,
 };
 const MUTATION_COMMANDS = Object.keys(MUTATION_COMMAND_SET);
 
@@ -368,6 +372,7 @@ const argSchemas = {
     .strict(),
   mcp_copy_setup: z.object({ client: mcpSetupClientSchema }).strict(),
   mcp_undo: z.object({ id: z.string() }).strict(),
+  usage_notice_dismiss: z.object({ notice: usageNoticeSchema }).strict(),
 } satisfies {
   [C in MutationCommand as CommandArgs[C] extends undefined ? never : C]: z.ZodType<CommandArgs[C]>;
 };
@@ -397,6 +402,7 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
     case "mcp_rotate_token":
     case "network_refresh":
     case "refine_notice_close":
+    case "usage_refresh":
       if (args !== null)
         throw new Error(`${name} takes no args, fixture has ${JSON.stringify(args)}`);
       return backend.invoke(name);
@@ -537,6 +543,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.mcp_copy_setup.parse(args));
     case "mcp_undo":
       return backend.invoke(name, argSchemas.mcp_undo.parse(args));
+    case "usage_notice_dismiss":
+      return backend.invoke(name, argSchemas.usage_notice_dismiss.parse(args));
   }
 }
 

@@ -236,9 +236,10 @@ impl Runtime {
             return;
         }
         let feed = RemoteFeed::new();
-        match self.dictation.start_from(feed.source()) {
+        let name = self.trusted.get_by_key(&peer).map_or_else(|| peer.fingerprint(), |d| d.name);
+        // docs/dictation.md §27: the usage record names the phone the take came from.
+        match self.dictation.start_from_origin(feed.source(), crate::usage::UsageOrigin::Phone { name: name.clone() }) {
             Ok(effects) => {
-                let name = self.trusted.get_by_key(&peer).map_or_else(|| peer.fingerprint(), |d| d.name);
                 tracing::info!(phone = %name, take, "phone take started");
                 self.remote_take = Some(RemoteTake { peer, take, session: self.dictation.status().session, feed, name, reported: None, opus: None });
                 self.apply_dictation(effects);

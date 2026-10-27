@@ -293,6 +293,8 @@ pub fn resolve_recipe(defaults: &Defaults, profile: &Profile, request_language: 
             window_title: None,
             instruction: overrides.and_then(|o| o.prompt.clone()),
         },
+        // The usage record names the local speech service (docs/dictation.md §27).
+        origin: Some(crate::usage::UsageOrigin::Serve),
     };
     Ok(Recipe { language, script, refine, preset, scene: scene.map(Scene::to_ref), vocabulary, hints })
 }

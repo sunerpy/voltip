@@ -31,6 +31,7 @@ pub mod serve;
 mod settings;
 pub mod sync;
 pub mod ui;
+pub mod usage;
 mod view;
 pub mod vocabulary;
 

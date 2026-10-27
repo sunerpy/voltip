@@ -597,6 +597,10 @@ pub struct ResolvedEngines {
     pub asr_fallback: FallbackPlan,
     /// The clean-up fallback models.
     pub refine_fallback: FallbackPlan,
+    /// Who this device is to the built-in service (docs/dictation.md §27): set by
+    /// `engine_clients` for the client factory, whose built-in clients send its headers; `None`
+    /// when nothing is metered. Equal meterings name the same device and client.
+    pub metering: Option<crate::usage::Metering>,
     providers: Vec<ProviderStatus>,
 }
 
@@ -802,6 +806,7 @@ impl ResolvedEngines {
             inject: settings.inject,
             asr_fallback,
             refine_fallback,
+            metering: None,
             providers,
         }
     }

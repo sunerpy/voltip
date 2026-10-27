@@ -9,6 +9,7 @@ import {
   emptyEngineStatus,
   emptyHotkeyStatus,
   emptyMcpStatus,
+  emptyUsageView,
   idleDictation,
   idleUpdate,
 } from "@voltip/shared";
@@ -104,6 +105,7 @@ const EMPTY: UiState = {
   serve: { available: false, phase: "off" },
   network: { proxy_password: false },
   mcp: emptyMcpStatus(),
+  usage: emptyUsageView(),
 };
 
 export function useBackend(): BackendContextValue {

@@ -17,7 +17,7 @@ use crate::shell::Shell;
 
 /// Every command the app may invoke: the Tauri phone shell's `COMMANDS`, in its order (a test reads
 /// that list and compares).
-pub const COMMANDS: [&str; 121] = [
+pub const COMMANDS: [&str; 123] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -126,6 +126,8 @@ pub const COMMANDS: [&str; 121] = [
     "settings_set_proxy",
     "network_refresh",
     "refine_notice_close",
+    "usage_refresh",
+    "usage_notice_dismiss",
     "recent_apps",
     "history_query",
     "history_entry",

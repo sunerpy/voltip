@@ -299,11 +299,12 @@ pub async fn recognize_segment(
     language: Option<&str>,
     glossary: &[String],
     script: ChineseScript,
+    call: &crate::usage::AsrCall,
 ) -> Result<Transcript, DictationError> {
     if wav::is_silent(wav) {
         return Ok(Transcript { text: String::new(), latency_ms: 0, model: None });
     }
-    transcriber.transcribe(wav, language, glossary).await.map(|t| Transcript { text: normalized(script, t.text.trim()), ..t })
+    transcriber.transcribe_as(wav, language, glossary, call).await.map(|t| Transcript { text: normalized(script, t.text.trim()), ..t })
 }
 
 /// The placeholder for a span nothing was recognised in (docs/dictation.md §22).

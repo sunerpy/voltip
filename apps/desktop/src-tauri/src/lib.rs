@@ -53,7 +53,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 133] = [
+pub const COMMANDS: [&str; 135] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -174,6 +174,8 @@ pub const COMMANDS: [&str; 133] = [
     "settings_set_proxy",
     "network_refresh",
     "refine_notice_close",
+    "usage_refresh",
+    "usage_notice_dismiss",
     "recent_apps",
     "history_query",
     "history_entry",
@@ -1114,6 +1116,18 @@ fn refine_notice_close(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::RefineNoticeClose)?)
 }
 
+/// Ask the built-in service for this device's usage now (docs/dictation.md §27).
+#[tauri::command]
+fn usage_refresh(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::UsageRefresh)?)
+}
+
+/// Close a usage notice for the rest of the day (docs/dictation.md §27).
+#[tauri::command]
+fn usage_notice_dismiss(bridge: tauri::State<'_, Bridge>, notice: voltip_core::usage::UsageNotice) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::UsageNoticeDismiss { notice })?)
+}
+
 /// Query: the applications the history saw, newest first (the scene editor's picker, §18.6).
 /// Run a history read off the main thread: SQLite blocks (docs/dictation.md §4.4).
 async fn history_read<T: Send + 'static>(
@@ -1584,6 +1598,8 @@ pub fn build_app<R: Runtime>(
             settings_set_proxy,
             network_refresh,
             refine_notice_close,
+            usage_refresh,
+            usage_notice_dismiss,
             recent_apps,
             history_query,
             history_entry,
@@ -1651,6 +1667,8 @@ pub fn run() {
     let mut config = CoreConfig::new(data_dir());
     config.client_version = format!("voltip/{APP_VERSION}");
     config.app_version = APP_VERSION.to_owned();
+    // docs/dictation.md §27: the usage card asks the built-in service for this device's day.
+    config.usage_probe = Some(Arc::new(voltip_cloud::HttpUsageProbe::new(&config.network)));
     // The phones get this computer's history and settings and upload their own records
     // (docs/dictation.md §20.8).
     config.sync_role = voltip_core::sync::SyncRole::Computer;

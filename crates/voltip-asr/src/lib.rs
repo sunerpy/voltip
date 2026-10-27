@@ -25,6 +25,6 @@ mod error;
 mod ogg_opus;
 
 pub use client::{AsrClient, Transcript};
-pub use config::{AsrConfig, AudioUpload, DEFAULT_TIMEOUT, MAX_ERROR_BODY_CHARS, normalize_base_url};
+pub use config::{AsrConfig, AudioUpload, DEFAULT_TIMEOUT, MAX_ERROR_BODY_CHARS, Metering, QUOTA_HEADER, normalize_base_url};
 pub use dashscope::{DashscopeClient, DashscopeMode, HOTWORD_WEIGHT, MAX_DATA_URI_BYTES, MAX_HOTWORDS, compatible_base, origin_of};
 pub use error::{AsrError, is_quota_exhausted};

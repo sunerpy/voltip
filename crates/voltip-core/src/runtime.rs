@@ -57,6 +57,7 @@ mod sync;
 mod take_codec;
 mod takes;
 mod texts;
+mod usage;
 
 /// Directory under the app data dir that holds the local model library.
 pub const MODELS_DIR_NAME: &str = "models";
@@ -162,6 +163,9 @@ pub struct CoreConfig {
     /// force on it, and the relay link uses it; the shell hands the same value to every client it
     /// builds (the engines, model downloads, feedback, update checks).
     pub network: Arc<voltip_net::Network>,
+    /// Asks the built-in service for this device's day (docs/dictation.md §27); `None`: the usage
+    /// shows what the service's answers report, and nothing is asked.
+    pub usage_probe: Option<Arc<dyn crate::usage::UsageProbe>>,
     /// Tests only.
     #[doc(hidden)]
     pub test_hooks: TestHooks,
@@ -237,6 +241,7 @@ impl CoreConfig {
             mirror_files: Arc::new(crate::sync::MirrorFiles::new(&data_dir_for_mirrors)),
             sync_stats: Arc::default(),
             network: voltip_net::Network::new(),
+            usage_probe: None,
             test_hooks: TestHooks::default(),
         }
     }
@@ -612,6 +617,10 @@ pub enum CoreCommand {
     RefreshNetwork,
     /// Close the built-in clean-up service's notice (docs/dictation.md §3.6); it stays away a day.
     RefineNoticeClose,
+    /// Ask the built-in service for this device's day now (docs/dictation.md §27).
+    UsageRefresh,
+    /// Close a usage notice for the rest of the day (docs/dictation.md §27).
+    UsageNoticeDismiss(crate::usage::UsageNotice),
     /// Stop the core.
     Shutdown,
 }
@@ -632,6 +641,7 @@ struct Inbox {
     listed_rx: mpsc::Receiver<listing::Listed>,
     mcp_rx: mpsc::Receiver<crate::mcp::McpInbound>,
     recover_rx: mpsc::Receiver<audio::Recovered>,
+    usage_rx: mpsc::Receiver<usage::UsageInbound>,
 }
 
 /// Events to the UI.
@@ -755,6 +765,9 @@ pub enum CoreEvent {
     Network(crate::ui::NetworkStatus),
     /// The built-in clean-up service's notice came (`Some`) or went (docs/dictation.md §3.6).
     RefineNotice(Option<crate::ui::RefineNotice>),
+    /// The built-in service's usage and this device's record (docs/dictation.md §27); on `Ready`
+    /// and after every change.
+    Usage(crate::usage::UsageView),
     /// Non-fatal error for the UI.
     Error(String),
 }
@@ -852,7 +865,9 @@ impl AppCore {
         let library = models.as_ref().map(|m| m.scan()).unwrap_or_default();
         let resolved = ResolvedEngines::resolve_with_models(&settings.engines, &user_secrets, &built_in, &library);
         let (levels_tx, _) = broadcast::channel(LEVELS_QUEUE);
-        let (mut dictation, dict_rx) = DictationEngine::new(ports, &resolved, levels_tx.clone());
+        // docs/dictation.md §27: every client is metered from the first take on.
+        let (usage, usage_rx) = usage::UsageRuntime::new(&config.data_dir, format!("{} ({})", config.client_version, std::env::consts::OS));
+        let (mut dictation, dict_rx) = DictationEngine::metered(ports, &resolved, levels_tx.clone(), Some(usage.metering.clone()));
         dictation.set_vocabulary(Arc::new(Vocabulary::compile(dictionary.entries(), rules.rules())));
         dictation.set_scenes(Arc::new(scenes.scenes().to_vec()));
         dictation.set_presets(Arc::new(presets.presets().to_vec()));
@@ -952,10 +967,11 @@ impl AppCore {
             proxy_password,
             network_status: crate::ui::NetworkStatus::default(),
             system_fingerprint: 0,
+            usage,
         };
         rt.system_fingerprint = rt.config.network.system_fingerprint();
         rt.connect_relay()?;
-        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx, mcp_rx, recover_rx };
+        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx, mcp_rx, recover_rx, usage_rx };
         Ok((rt, inbox, CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
 }
@@ -1216,6 +1232,8 @@ struct Runtime {
     /// What following the system meant when the routes were last decided
     /// (`voltip_net::Network::system_fingerprint`).
     system_fingerprint: u64,
+    /// The built-in service's usage (docs/dictation.md §27).
+    usage: usage::UsageRuntime,
 }
 
 impl Runtime {
@@ -1336,6 +1354,7 @@ impl Runtime {
             mut listed_rx,
             mut mcp_rx,
             mut recover_rx,
+            mut usage_rx,
         } = inbox;
         self.emit(CoreEvent::Ready {
             identity: self.identity.public(),
@@ -1361,6 +1380,7 @@ impl Runtime {
         self.emit(CoreEvent::Serve(self.serve.status()));
         self.emit(CoreEvent::Mcp(self.mcp.status()));
         self.emit_network();
+        self.emit_usage();
         self.apply_serve().await;
         self.apply_mcp().await;
         let mut ticker = tokio::time::interval(self.config.tick);
@@ -1387,6 +1407,7 @@ impl Runtime {
                 Some(listed) = listed_rx.recv() => self.on_listed(listed),
                 Some(inbound) = mcp_rx.recv() => self.on_mcp(inbound),
                 Some(recovered) = recover_rx.recv() => self.on_recovered(recovered),
+                Some(inbound) = usage_rx.recv() => self.on_usage(inbound),
                 Ok(()) = quota_rx.changed() => self.emit(CoreEvent::Engines(self.engine_status())),
                 _ = ticker.tick() => self.tick().await,
             }
@@ -1468,6 +1489,8 @@ impl Runtime {
             CoreCommand::SetPairingAlwaysOn(enabled) => self.set_pairing_always_on(enabled).await,
             CoreCommand::ReconnectRelay => {
                 self.reconnect_relay("asked");
+                // Asked when the network changed or the app came back: the day may have moved on.
+                self.usage.probe_soon();
                 Ok(())
             }
             CoreCommand::PhoneTakeStop => self.phone_take_stop(),
@@ -1622,6 +1645,15 @@ impl Runtime {
             CoreCommand::RefreshNetwork => self.refresh_network(),
             CoreCommand::RefineNoticeClose => {
                 self.close_refine_notice();
+                Ok(())
+            }
+            CoreCommand::UsageRefresh => {
+                self.usage.probe_soon();
+                self.usage_tick();
+                Ok(())
+            }
+            CoreCommand::UsageNoticeDismiss(notice) => {
+                self.dismiss_usage_notice(notice);
                 Ok(())
             }
             CoreCommand::Shutdown => Ok(()),
@@ -3319,6 +3351,7 @@ impl Runtime {
         }
         self.retry_attaches(now).await;
         self.sync_tick().await;
+        self.usage_tick();
         self.check_takes();
         self.check_texts();
         self.check_deadline();

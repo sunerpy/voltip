@@ -6,7 +6,7 @@ use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{MAX_ERROR_BODY_CHARS, RefineApi, RefineConfig, normalize_base_url};
+use crate::config::{MAX_ERROR_BODY_CHARS, PURPOSE_HEADER, QUOTA_HEADER, RefineApi, RefineConfig, normalize_base_url, report_reset_ms};
 use crate::error::{RefineError, error_fields, is_quota_exhausted};
 use crate::presets::{BUILTIN_OUTPUT_CAP, output_token_budget};
 use crate::prompt::{PromptHints, TEMPERATURE, edit_nonce, edit_system_prompt, edit_user_message, system_prompt};
@@ -344,6 +344,24 @@ struct ChoiceMessage {
     content: Option<String>,
 }
 
+/// What a request is for, as a metered request tells the built-in service ([`PURPOSE_HEADER`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Purpose {
+    /// The clean-up of a take.
+    Refine,
+    /// A voice edit's rewrite.
+    Edit,
+}
+
+impl Purpose {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Refine => "refine",
+            Self::Edit => "edit",
+        }
+    }
+}
+
 /// One connection pool to one clean-up service. Cheap to clone; share it.
 #[derive(Clone, Debug)]
 pub struct RefineClient {
@@ -411,7 +429,7 @@ impl RefineClient {
         let prompt = system_prompt(hints);
         let chars = input.chars().count();
         tracing::debug!(path = log_path(&self.endpoint), model = %self.config.model, chars, preset = hints.preset.name(), context = ?hints.context, "refining");
-        let answer = self.complete(&prompt, input, output_token_budget(&hints.preset, chars, self.config.output_cap)).await?;
+        let answer = self.complete(Purpose::Refine, &prompt, input, output_token_budget(&hints.preset, chars, self.config.output_cap)).await?;
         // Cut off at `max_tokens`, the text would lose the end of the take: it keeps its own text
         // instead, as an edit refuses a cut-off answer.
         if answer.finish_reason.as_deref() == Some("length") {
@@ -449,7 +467,8 @@ impl RefineClient {
             context = ?hints.context,
             "editing"
         );
-        let answer = self.complete(&edit_system_prompt(hints), &edit_user_message(core, instruction, &nonce), edit_token_budget(input_chars)).await?;
+        let answer =
+            self.complete(Purpose::Edit, &edit_system_prompt(hints), &edit_user_message(core, instruction, &nonce), edit_token_budget(input_chars)).await?;
         if answer.finish_reason.as_deref() == Some("length") {
             return Err(RefineError::Truncated);
         }
@@ -464,17 +483,25 @@ impl RefineClient {
 
     /// One request (`system` + `user`) on the configured interface: status mapping, body parsing,
     /// the answer's text and whether it was cut off (`finish_reason: length`).
-    async fn complete(&self, system: &str, user: &str, max_tokens: u32) -> Result<Completion, RefineError> {
+    async fn complete(&self, purpose: Purpose, system: &str, user: &str, max_tokens: u32) -> Result<Completion, RefineError> {
         match self.config.api {
-            RefineApi::ChatCompletions => self.complete_chat(system, user, max_tokens).await,
-            RefineApi::Responses => self.complete_responses(system, user).await,
+            RefineApi::ChatCompletions => self.complete_chat(purpose, system, user, max_tokens).await,
+            RefineApi::Responses => self.complete_responses(purpose, system, user).await,
         }
     }
 
-    /// POST `body` with the key; the body of a 2xx answer, or the refusal sorted.
-    async fn post(&self, body: &impl Serialize) -> Result<String, RefineError> {
+    /// POST `body` with the key; the body of a 2xx answer, or the refusal sorted. A metered request
+    /// (docs/dictation.md §27) also carries the metering's headers and its `purpose`, and the
+    /// answer's usage report goes to the metering; a used-up quota names when it is reset.
+    async fn post(&self, purpose: Purpose, body: &impl Serialize) -> Result<String, RefineError> {
         let request = || {
-            let request = self.http.post(&self.endpoint).json(body);
+            let mut request = self.http.post(&self.endpoint).json(body);
+            if let Some(metering) = &self.config.metering {
+                for (name, value) in &metering.headers {
+                    request = request.header(name.as_str(), value.as_str());
+                }
+                request = request.header(PURPOSE_HEADER, purpose.as_str());
+            }
             match &self.config.api_key {
                 Some(key) => request.bearer_auth(key),
                 None => request,
@@ -482,20 +509,35 @@ impl RefineClient {
         };
         let response = send(request).await?;
         let status = response.status();
+        let report = self.report(response.headers());
         if !status.is_success() {
             let retry_after_ms = retry_after_ms(response.headers());
             // The body of a refusal is only read to sort it: one that cannot be read sorts by status.
             let body = response.text().await.unwrap_or_default();
-            return Err(refusal(status, retry_after_ms, &body));
+            return Err(match refusal(status, retry_after_ms, &body) {
+                RefineError::QuotaExhausted { code, message, .. } => {
+                    RefineError::QuotaExhausted { code, message, retry_at_ms: report.as_deref().and_then(report_reset_ms) }
+                }
+                other => other,
+            });
         }
         response.text().await.map_err(map_reqwest)
+    }
+
+    /// The usage report of an answer ([`QUOTA_HEADER`]), handed to the metering; `None` without
+    /// metering or without a report.
+    fn report(&self, headers: &HeaderMap) -> Option<String> {
+        let metering = self.config.metering.as_ref()?;
+        let report = headers.get(QUOTA_HEADER)?.to_str().ok()?.trim().to_owned();
+        (metering.on_report)(&report);
+        Some(report)
     }
 
     /// One chat completion ([`TEMPERATURE`], `max_tokens`): the first choice's content and finish
     /// reason. A model that reasons first is asked not to, or to reason little, and gets room for
     /// it ([`chat_controls`]), up to the configured ceiling (the built-in service's free tier
     /// refuses more, [`BUILTIN_OUTPUT_CAP`]).
-    async fn complete_chat(&self, system: &str, user: &str, max_tokens: u32) -> Result<Completion, RefineError> {
+    async fn complete_chat(&self, purpose: Purpose, system: &str, user: &str, max_tokens: u32) -> Result<Completion, RefineError> {
         let started = Instant::now();
         let controls = chat_controls(&self.config.base_url, &self.config.model);
         let max_tokens = match controls.room {
@@ -512,7 +554,7 @@ impl RefineClient {
             thinking: controls.no_thinking.then_some(Thinking { kind: "disabled" }),
             reasoning: controls.openrouter_effort.map(|effort| Reasoning { effort }),
         };
-        let body = self.post(&payload).await?;
+        let body = self.post(purpose, &payload).await?;
         let parsed: ChatResponse =
             serde_json::from_str(&body).map_err(|e| RefineError::BadResponse(format!("{e}: {}", truncate_chars(&body, MAX_ERROR_BODY_CHARS))))?;
         let choice = parsed.choices.into_iter().next().ok_or_else(|| RefineError::BadResponse("no choices in response".into()))?;
@@ -523,7 +565,7 @@ impl RefineClient {
 
     /// One Responses request (docs/dictation.md §3.7): the message items' `output_text` parts, in
     /// order; `status: incomplete` reads as a cut-off answer, a 2xx `failed` as a bad response.
-    async fn complete_responses(&self, system: &str, user: &str) -> Result<Completion, RefineError> {
+    async fn complete_responses(&self, purpose: Purpose, system: &str, user: &str) -> Result<Completion, RefineError> {
         let started = Instant::now();
         let payload = ResponsesRequest {
             model: &self.config.model,
@@ -532,7 +574,7 @@ impl RefineClient {
             store: false,
             reasoning: self.config.reasoning_effort.map(|e| Reasoning { effort: e.as_str() }),
         };
-        let body = self.post(&payload).await?;
+        let body = self.post(purpose, &payload).await?;
         let parsed: ResponsesAnswer =
             serde_json::from_str(&body).map_err(|e| RefineError::BadResponse(format!("{e}: {}", truncate_chars(&body, MAX_ERROR_BODY_CHARS))))?;
         if parsed.status.as_deref() == Some("failed") {
@@ -560,7 +602,7 @@ impl RefineClient {
 fn refusal(status: StatusCode, retry_after_ms: Option<u64>, body: &str) -> RefineError {
     let (code, message) = error_fields(body);
     if is_quota_exhausted(&code, &message) {
-        return RefineError::QuotaExhausted { code, message: voltip_reply::clean(&message) };
+        return RefineError::QuotaExhausted { code, message: voltip_reply::clean(&message), retry_at_ms: None };
     }
     let message = voltip_reply::summary(body);
     if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
@@ -1079,6 +1121,49 @@ mod tests {
         assert_eq!(client(&server, None).refine("x", None).await.unwrap_err(), RefineError::Server { status: 400, body: "bad request".into() });
     }
 
+    /// The built-in service's metering (docs/dictation.md §27): what it collected.
+    fn metering(reports: &std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> crate::Metering {
+        let reports = reports.clone();
+        crate::Metering {
+            headers: vec![("x-voltip-device".into(), "6f1c2d3e-0000-4000-8000-000000000001".into())],
+            on_report: std::sync::Arc::new(move |report| reports.lock().unwrap().push(report.to_owned())),
+        }
+    }
+
+    /// docs/dictation.md §27: a metered clean-up and a metered edit say which they are and who
+    /// asks; the answer's report goes to the metering, and a used-up day says when it is reset.
+    #[tokio::test]
+    async fn a_metered_request_names_its_purpose_and_a_used_up_day_its_reset() {
+        let server = MockServer::start().await;
+        let report = "mode=count; basis=device; day=2026-10-27; reset=1793116800; asr=95/-; refine=4/-";
+        mount(&server, answer("好的。").insert_header(QUOTA_HEADER, report)).await;
+        let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let metered = RefineClient::new(RefineConfig::new(server.uri(), "m").with_metering(Some(metering(&reports)))).unwrap();
+        metered.refine("好的", None).await.unwrap();
+        metered.edit("你好", "改成英文", &PromptHints::default()).await.unwrap();
+        client(&server, None).refine("好的", None).await.unwrap();
+        assert_eq!(reports.lock().unwrap().len(), 2, "the unmetered client reads no report");
+        let requests = server.received_requests().await.unwrap();
+        let header = |i: usize, name: &str| requests[i].headers.get(name).map(|v| v.to_str().unwrap().to_owned());
+        assert_eq!(header(0, PURPOSE_HEADER).as_deref(), Some("refine"));
+        assert_eq!(header(1, PURPOSE_HEADER).as_deref(), Some("edit"));
+        assert_eq!(header(0, "x-voltip-device").as_deref(), Some("6f1c2d3e-0000-4000-8000-000000000001"));
+        assert_eq!((header(2, PURPOSE_HEADER), header(2, "x-voltip-device")), (None, None));
+
+        let server = MockServer::start().await;
+        let used_up = "mode=limit; basis=device; day=2026-10-27; reset=1793116800; asr=95/3600; refine=100/100";
+        let body = json!({ "error": { "code": "insufficient_quota", "message": "今日内置润色额度已用完" } });
+        mount(&server, ResponseTemplate::new(429).insert_header(QUOTA_HEADER, used_up).set_body_json(body)).await;
+        let metered = RefineClient::new(RefineConfig::new(server.uri(), "m").with_metering(Some(metering(&reports)))).unwrap();
+        assert_eq!(
+            metered.refine("好的", None).await.unwrap_err(),
+            RefineError::QuotaExhausted {
+                code: "insufficient_quota".into(), message: "今日内置润色额度已用完".into(), retry_at_ms: Some(1_793_116_800_000)
+            }
+        );
+        assert_eq!(reports.lock().unwrap().last().map(String::as_str), Some(used_up));
+    }
+
     /// Regression (2026-10-04, docs/dictation.md §3.5): Model Studio answers 免费额度用完即停 with a
     /// 403 whose body names `AllocationQuota.FreeTierOnly`; the status was sorted first and the
     /// polish reported a wrong key. The body decides on every refusal, for an edit too; a refusal
@@ -1089,8 +1174,11 @@ mod tests {
             "error": { "code": "AllocationQuota.FreeTierOnly", "message": "The free tier of the model has been exhausted.", "type": "AllocationQuota.FreeTierOnly" },
             "request_id": "r",
         });
-        let used_up =
-            RefineError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "The free tier of the model has been exhausted.".into() };
+        let used_up = RefineError::QuotaExhausted {
+            code: "AllocationQuota.FreeTierOnly".into(),
+            message: "The free tier of the model has been exhausted.".into(),
+            retry_at_ms: None,
+        };
         let server = MockServer::start().await;
         mount(&server, ResponseTemplate::new(403).set_body_json(free_tier)).await;
         assert_eq!(client(&server, Some("sk-x")).refine("x", None).await.unwrap_err(), used_up);
@@ -1101,7 +1189,11 @@ mod tests {
             let server = MockServer::start().await;
             mount(&server, ResponseTemplate::new(status).set_body_json(insufficient.clone())).await;
             let err = client(&server, Some("k")).refine("x", None).await.unwrap_err();
-            assert_eq!(err, RefineError::QuotaExhausted { code: "insufficient_quota".into(), message: "You exceeded your current quota.".into() }, "{status}");
+            assert_eq!(
+                err,
+                RefineError::QuotaExhausted { code: "insufficient_quota".into(), message: "You exceeded your current quota.".into(), retry_at_ms: None },
+                "{status}"
+            );
             assert!(!err.is_retryable());
         }
         let server = MockServer::start().await;

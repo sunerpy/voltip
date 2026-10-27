@@ -613,12 +613,16 @@ pub(crate) mod tests {
             (
                 403,
                 json!({ "code": "AllocationQuota.FreeTierOnly", "message": "The free tier of the model has been exhausted." }),
-                AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "The free tier of the model has been exhausted.".into() },
+                AsrError::QuotaExhausted {
+                    code: "AllocationQuota.FreeTierOnly".into(),
+                    message: "The free tier of the model has been exhausted.".into(),
+                    retry_at_ms: None,
+                },
             ),
             (
                 403,
                 json!({ "error": { "code": "AllocationQuota.FreeTierOnly", "message": "free tier exhausted", "type": "AllocationQuota.FreeTierOnly" } }),
-                AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "free tier exhausted".into() },
+                AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "free tier exhausted".into(), retry_at_ms: None },
             ),
             (
                 400,

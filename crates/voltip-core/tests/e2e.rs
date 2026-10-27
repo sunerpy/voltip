@@ -1387,3 +1387,133 @@ async fn a_minimum_raised_on_the_relay_shows_in_the_status_with_the_version() {
     .await;
     assert_eq!(cleared, None);
 }
+
+/// The usage record's rows of `service` from `node`'s `usage.json` (docs/dictation.md §27), as
+/// `(origin as JSON, purpose, amount)`, summed over the days.
+fn usage_rows(node: &Node, service: &str) -> Vec<(serde_json::Value, String, u64)> {
+    let text = std::fs::read_to_string(node.dir_path.join(voltip_core::usage::LEDGER_FILE_NAME)).unwrap();
+    let file: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let mut rows: Vec<(serde_json::Value, String, u64)> = Vec::new();
+    for row in file["days"].as_array().unwrap().iter().flat_map(|d| d["rows"].as_array().unwrap()) {
+        if row["service"] != service {
+            continue;
+        }
+        let (origin, purpose, amount) = (row["origin"].clone(), row["purpose"].as_str().unwrap().to_owned(), row["amount"].as_u64().unwrap());
+        match rows.iter_mut().find(|(o, p, _)| *o == origin && *p == purpose) {
+            Some(r) => r.2 += amount,
+            None => rows.push((origin, purpose, amount)),
+        }
+    }
+    rows.sort_by(|a, b| a.0.to_string().cmp(&b.0.to_string()).then(a.1.cmp(&b.1)));
+    rows
+}
+
+/// Wait until `n` calls of `refiner` are held at its gate.
+async fn held(refiner: &voltip_core::dictation::fakes::FakeRefiner, n: usize) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while refiner.waiting() < n {
+        assert!(tokio::time::Instant::now() < deadline, "{} of {n} clean-ups held after 15 s", refiner.waiting());
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// Regression guard (plan review 2026-10-27): the usage record names where each request came
+/// from per call, never from a shared "current take". While a phone's take on the computer is
+/// being cleaned up (a held clean-up keeps it there), the history's AI processing and a preset's
+/// 试一试 start alongside it, the three held at once; the phone's clean-up is recorded as the
+/// phone's, the other two as this computer's own.
+#[tokio::test]
+async fn regression_clean_ups_running_together_are_each_recorded_with_their_own_origin() {
+    use voltip_core::dictation::DictationPhase;
+    use voltip_core::dictation::fakes::{FakeAudio, FakeInjector, FakeRefiner, FakeTranscriber, ports_with};
+    let (url, _stop, _relay) = relay().await;
+    let mut settings = Settings { relay_url: Some(url.clone()), relay_enabled: true, ..Settings::default() };
+    settings.engines.asr_provider = voltip_core::ProviderId::Custom;
+    settings.engines.llm_provider = voltip_core::ProviderId::Custom;
+    settings.engines.refine_enabled = true;
+    settings.engines.providers.insert(
+        voltip_core::ProviderId::Custom,
+        voltip_core::ProviderSettings {
+            asr_url: Some("http://127.0.0.1:9/v1".into()),
+            asr_model: Some("fake".into()),
+            llm_url: Some("http://127.0.0.1:9/v1".into()),
+            llm_model: Some("fake-llm".into()),
+            ..Default::default()
+        },
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let dir_path = dir.path().to_path_buf();
+    SettingsStore::new(&dir_path).save(&settings).unwrap();
+    let mut cfg = CoreConfig::new(dir_path.clone());
+    cfg.default_device_name = "Studio".into();
+    cfg.tick = Duration::from_millis(50);
+    let refiner = Arc::new(FakeRefiner::held("润色后的文字。"));
+    let ports = ports_with(Arc::new(FakeAudio::speech()), Arc::new(FakeTranscriber::ok("原文")), Some(refiner.clone()), Arc::new(FakeInjector::paste()));
+    let store = Arc::new(MemorySecretStore::new());
+    let (handle, events) = AppCore::start_with(cfg, store.clone(), ports).unwrap();
+    let mut desk = Node { handle, events, _dir: dir, store, dir_path };
+    let mut phone = node_with(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 8", Some(&url));
+    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    let (_, desktop) = pair_by_code(&mut desk, &mut phone).await;
+    wait_online(&mut desk).await;
+    wait_online(&mut phone).await;
+
+    // A take of the computer's own: a history entry to process later.
+    refiner.release(1);
+    desk.handle.send(CoreCommand::DictationStart).await.unwrap();
+    wait(&mut desk, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { ready: true, .. })).then_some(())).await;
+    desk.handle.send(CoreCommand::DictationStop).await.unwrap();
+    wait(&mut desk, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Done { .. })).then_some(())).await;
+    let entry = wait(&mut desk, |e| match e {
+        CoreEvent::History { recent, .. } => recent.first().map(|h| h.id),
+        _ => None,
+    })
+    .await;
+    wait(&mut desk, |e| matches!(e, CoreEvent::Dictation(s) if s.phase == DictationPhase::Idle).then_some(())).await;
+
+    // The phone's take, held in its clean-up while the other two start.
+    phone.handle.send(CoreCommand::PhoneTakeStart { to: desktop.public_key }).await.unwrap();
+    wait(&mut desk, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { ready: true, .. })).then_some(())).await;
+    phone.handle.send(CoreCommand::PhoneTakeStop).await.unwrap();
+    wait(&mut desk, |e| {
+        matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Processing { stage: voltip_core::dictation::ProcessingStage::Refining, .. }))
+            .then_some(())
+    })
+    .await;
+    held(&refiner, 1).await;
+    desk.handle.send(CoreCommand::HistoryProcess { request_id: 1, id: entry, preset: voltip_core::presets::PresetId::default() }).await.unwrap();
+    desk.handle
+        .send(CoreCommand::PresetTry {
+            id: 2,
+            trial: voltip_core::presets::PresetTrial::Preset(voltip_core::presets::PresetId::default()),
+            text: "试一试这段文字".into(),
+        })
+        .await
+        .unwrap();
+    // The three clean-ups are out at once; then all three are answered.
+    held(&refiner, 3).await;
+    refiner.release(3);
+    let (mut take_done, mut processed, mut tried) = (false, false, false);
+    while !(take_done && processed && tried) {
+        let ev = tokio::time::timeout(Duration::from_secs(15), desk.events.recv()).await.expect("every request answered within 15 s").expect("core alive");
+        match ev {
+            CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Done { .. }) => take_done = true,
+            CoreEvent::HistoryProcess { request_id: 1, state: voltip_core::history::process::ProcessState::Done { .. }, .. } => processed = true,
+            CoreEvent::PresetTry { id: 2, .. } => tried = true,
+            _ => {}
+        }
+    }
+    assert_eq!(refiner.calls(), 4);
+
+    let this = serde_json::json!({ "kind": "this_device" });
+    let pixel = serde_json::json!({ "kind": "phone", "name": "Pixel 8" });
+    assert_eq!(usage_rows(&desk, "llm"), [(pixel.clone(), "refine".to_owned(), 1), (this.clone(), "refine".to_owned(), 3)]);
+    let asr = usage_rows(&desk, "asr");
+    assert_eq!(asr.iter().map(|(o, p, _)| (o.clone(), p.clone())).collect::<Vec<_>>(), [(pixel, "take".to_owned()), (this, "take".to_owned())]);
+    assert!(asr.iter().all(|(_, _, ms)| *ms > 0), "each take's length: {asr:?}");
+    assert!(desk.dir_path.join(voltip_core::usage::DEVICE_ID_FILE_NAME).exists(), "the usage id was made");
+
+    phone.handle.send(CoreCommand::Shutdown).await.unwrap();
+    desk.handle.send(CoreCommand::Shutdown).await.unwrap();
+}

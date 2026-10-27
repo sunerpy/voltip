@@ -7,7 +7,7 @@ use reqwest::multipart::{Form, Part};
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 
-use crate::config::{AsrConfig, AudioUpload, MAX_ERROR_BODY_CHARS, normalize_base_url};
+use crate::config::{AsrConfig, AudioUpload, MAX_ERROR_BODY_CHARS, QUOTA_HEADER, normalize_base_url, report_reset_ms};
 use crate::error::{AsrError, quota_error};
 use crate::ogg_opus;
 
@@ -132,6 +132,20 @@ impl AsrClient {
     /// the user's dictionary terms), sent only when non-blank. vLLM's Qwen3-ASR puts it into the
     /// system turn as recognition context; Whisper-style endpoints read it as preceding text.
     pub async fn transcribe_with_prompt(&self, wav: &[u8], language: Option<&str>, prompt: Option<&str>) -> Result<Transcript, AsrError> {
+        self.transcribe_with_headers(wav, language, prompt, &[]).await
+    }
+
+    /// [`AsrClient::transcribe_with_prompt`] with `headers` on this request alone: with
+    /// [`AsrConfig::metering`] the built-in service's purpose and length of the take
+    /// (docs/dictation.md §27), sent after the metering's own headers. The usage report of the
+    /// answer goes to the metering, a refusal's included; a used-up quota names when it is reset.
+    pub async fn transcribe_with_headers(
+        &self,
+        wav: &[u8],
+        language: Option<&str>,
+        prompt: Option<&str>,
+        headers: &[(&str, String)],
+    ) -> Result<Transcript, AsrError> {
         let started = Instant::now();
         let language = language.map(str::trim).filter(|l| !l.is_empty());
         let prompt = prompt.map(str::trim).filter(|p| !p.is_empty());
@@ -146,7 +160,15 @@ impl AsrClient {
             if let Some(prompt) = prompt {
                 form = form.text("prompt", prompt.to_string());
             }
-            let request = self.http.post(&self.endpoint).multipart(form);
+            let mut request = self.http.post(&self.endpoint).multipart(form);
+            if let Some(metering) = &self.config.metering {
+                for (name, value) in &metering.headers {
+                    request = request.header(name.as_str(), value.as_str());
+                }
+            }
+            for (name, value) in headers {
+                request = request.header(*name, value.as_str());
+            }
             Ok(match &self.config.token {
                 Some(token) => request.bearer_auth(token),
                 None => request,
@@ -165,11 +187,17 @@ impl AsrClient {
         );
         let response = send(request).await?;
         let status = response.status();
+        let report = self.report(response.headers());
         if !status.is_success() {
             let retry_after_ms = retry_after_ms(response.headers());
             // The body of a refusal is only read to sort it: one that cannot be read sorts by status.
             let body = response.text().await.unwrap_or_default();
-            return Err(http_error(status, retry_after_ms, &body));
+            return Err(match http_error(status, retry_after_ms, &body) {
+                AsrError::QuotaExhausted { code, message, .. } => {
+                    AsrError::QuotaExhausted { code, message, retry_at_ms: report.as_deref().and_then(report_reset_ms) }
+                }
+                other => other,
+            });
         }
         let body = response.text().await.map_err(map_reqwest)?;
         let parsed: TranscriptionResponse =
@@ -178,6 +206,15 @@ impl AsrClient {
         let text = parsed.text.trim().to_string();
         tracing::debug!(latency_ms, chars = text.chars().count(), "transcribed");
         Ok(Transcript { text, latency_ms, model: self.config.model.clone() })
+    }
+
+    /// The usage report of an answer ([`QUOTA_HEADER`]), handed to the metering; `None` without
+    /// metering or without a report.
+    fn report(&self, headers: &HeaderMap) -> Option<String> {
+        let metering = self.config.metering.as_ref()?;
+        let report = headers.get(QUOTA_HEADER)?.to_str().ok()?.trim().to_owned();
+        (metering.on_report)(&report);
+        Some(report)
     }
 
     /// The multipart `file` for `wav` ([`AsrConfig::upload`]): the WAV, or its Ogg Opus. The encoder
@@ -537,6 +574,64 @@ mod tests {
             assert_eq!(err, AsrError::Unauthorized { message: "nope".into() }, "status {status}");
             assert!(!err.is_retryable());
         }
+    }
+
+    /// The built-in service's metering (docs/dictation.md §27): what it collected.
+    fn metering(reports: &std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> crate::Metering {
+        let reports = reports.clone();
+        crate::Metering {
+            headers: vec![
+                ("x-voltip-device".into(), "6f1c2d3e-0000-4000-8000-000000000001".into()),
+                ("x-voltip-client".into(), "voltip/0.1.10 (linux)".into()),
+            ],
+            on_report: std::sync::Arc::new(move |report| reports.lock().unwrap().push(report.to_owned())),
+        }
+    }
+
+    /// docs/dictation.md §27: a metered request carries the device and client headers and this
+    /// request's own, and the answer's usage report goes to the metering; without metering no
+    /// such header goes out and a report is not read.
+    #[tokio::test]
+    async fn a_metered_request_says_who_asks_and_hands_the_report_on() {
+        let server = MockServer::start().await;
+        let report = "mode=count; basis=device; day=2026-10-27; reset=1793116800; asr=95/-; refine=3/-";
+        mount(&server, ResponseTemplate::new(200).insert_header(QUOTA_HEADER, report).set_body_json(json!({ "text": "好" }))).await;
+        let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let client = AsrClient::new(AsrConfig::new(server.uri(), "m").with_metering(Some(metering(&reports)))).unwrap();
+        let headers = [("x-voltip-purpose", "take".to_owned()), ("x-voltip-audio-ms", "4200".to_owned())];
+        assert_eq!(client.transcribe_with_headers(WAV, None, None, &headers).await.unwrap().text, "好");
+        assert_eq!(*reports.lock().unwrap(), [report]);
+        let plain = AsrClient::new(AsrConfig::new(server.uri(), "m")).unwrap();
+        plain.transcribe(WAV, None).await.unwrap();
+        assert_eq!(reports.lock().unwrap().len(), 1, "an unmetered client reads no report");
+
+        let requests = server.received_requests().await.unwrap();
+        let header = |i: usize, name: &str| requests[i].headers.get(name).map(|v| v.to_str().unwrap().to_owned());
+        assert_eq!(header(0, "x-voltip-device").as_deref(), Some("6f1c2d3e-0000-4000-8000-000000000001"));
+        assert_eq!(header(0, "x-voltip-client").as_deref(), Some("voltip/0.1.10 (linux)"));
+        assert_eq!((header(0, "x-voltip-purpose").as_deref(), header(0, "x-voltip-audio-ms").as_deref()), (Some("take"), Some("4200")));
+        assert_eq!((header(1, "x-voltip-device"), header(1, "x-voltip-purpose")), (None, None));
+    }
+
+    /// docs/dictation.md §27: the built-in service's day is used up. The refusal is a used-up
+    /// quota, which a fallback list moves on for, and says when it is reset; its report is handed
+    /// on as a success's is.
+    #[tokio::test]
+    async fn a_used_up_daily_quota_says_when_it_is_reset() {
+        let server = MockServer::start().await;
+        let report = "mode=limit; basis=device; day=2026-10-27; reset=1793116800; asr=3600/3600; refine=12/100";
+        let body = r#"{"error":{"code":"insufficient_quota","message":"今日内置识别额度已用完"}}"#;
+        mount(&server, ResponseTemplate::new(429).insert_header(QUOTA_HEADER, report).set_body_string(body)).await;
+        let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let client = AsrClient::new(AsrConfig::new(server.uri(), "m").with_metering(Some(metering(&reports)))).unwrap();
+        let err = client.transcribe(WAV, None).await.unwrap_err();
+        assert_eq!(
+            err,
+            AsrError::QuotaExhausted {
+                code: "insufficient_quota".into(), message: "今日内置识别额度已用完".into(), retry_at_ms: Some(1_793_116_800_000)
+            }
+        );
+        assert_eq!(*reports.lock().unwrap(), [report]);
     }
 
     /// docs/dictation.md §3.5: a used-up quota is told by the body, whatever the status, so a

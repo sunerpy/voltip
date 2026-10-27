@@ -392,6 +392,10 @@ pub struct FakeTranscriber {
     model: Option<String>,
     /// Calls past this many fail as a used-up quota ([`FakeTranscriber::quota_after`]).
     quota_after: Option<usize>,
+    /// What every call was for and where its take came from (docs/dictation.md §27).
+    usage_calls: Mutex<Vec<crate::usage::AsrCall>>,
+    /// A used-up quota says when it is back ([`FakeTranscriber::quota_until`]).
+    quota_retry_at: Option<u64>,
 }
 
 impl FakeTranscriber {
@@ -412,7 +416,24 @@ impl FakeTranscriber {
 
     /// Always fails as a model whose quota is used up (docs/dictation.md §3.5).
     pub fn quota() -> Self {
-        Self::with_reply(Reply::Err(DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Asr, detail: FAKE_QUOTA_DETAIL.into() }))
+        Self::with_reply(Reply::Err(DictationError::QuotaExhausted {
+            service: crate::providers::ServiceKind::Asr,
+            detail: FAKE_QUOTA_DETAIL.into(),
+            retry_at_ms: None,
+        }))
+    }
+
+    /// Always fails as the built-in service's used-up day, back at `retry_at_ms` (docs/dictation.md
+    /// §27).
+    pub fn quota_until(retry_at_ms: u64) -> Self {
+        Self {
+            quota_retry_at: Some(retry_at_ms),
+            ..Self::with_reply(Reply::Err(DictationError::QuotaExhausted {
+                service: crate::providers::ServiceKind::Asr,
+                detail: FAKE_QUOTA_DETAIL.into(),
+                retry_at_ms: Some(retry_at_ms),
+            }))
+        }
     }
 
     /// Its transcripts report `model` as the model that recognised them (docs/dictation.md §3.5).
@@ -444,7 +465,15 @@ impl FakeTranscriber {
             stream_glossaries: Mutex::new(Vec::new()),
             model: None,
             quota_after: None,
+            usage_calls: Mutex::new(Vec::new()),
+            quota_retry_at: None,
         }
+    }
+
+    /// What every call was for and where its take came from, in order (docs/dictation.md §27);
+    /// a plain `transcribe` counts as [`crate::usage::AsrCall::default`].
+    pub fn usage_calls(&self) -> Vec<crate::usage::AsrCall> {
+        self.usage_calls.lock().clone()
     }
 
     /// The same service also streams: a realtime model, whose sessions `stream` scripts.
@@ -486,6 +515,11 @@ impl FakeTranscriber {
 #[async_trait]
 impl Transcriber for FakeTranscriber {
     async fn transcribe(&self, wav: &[u8], language: Option<&str>, glossary: &[String]) -> Result<Transcript, DictationError> {
+        self.transcribe_as(wav, language, glossary, &crate::usage::AsrCall::default()).await
+    }
+
+    async fn transcribe_as(&self, wav: &[u8], language: Option<&str>, glossary: &[String], call: &crate::usage::AsrCall) -> Result<Transcript, DictationError> {
+        self.usage_calls.lock().push(call.clone());
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.languages.lock().push(language.map(str::to_owned));
         self.glossaries.lock().push(glossary.to_vec());
@@ -494,7 +528,11 @@ impl Transcriber for FakeTranscriber {
             return Err(DictationError::Asr("not a wav file".into()));
         }
         if self.quota_after.is_some_and(|n| self.calls.load(Ordering::SeqCst) > n) {
-            return Err(DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Asr, detail: FAKE_QUOTA_DETAIL.into() });
+            return Err(DictationError::QuotaExhausted {
+                service: crate::providers::ServiceKind::Asr,
+                detail: FAKE_QUOTA_DETAIL.into(),
+                retry_at_ms: self.quota_retry_at,
+            });
         }
         match &self.reply {
             Reply::Ok(text) => Ok(Transcript { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone() }),
@@ -536,6 +574,32 @@ pub struct FakeRefiner {
     edits: Mutex<Vec<(String, String, RefineHints)>>,
     /// The model its answers report ([`FAKE_REFINE_MODEL`] unless [`FakeRefiner::with_model`]).
     model: String,
+    /// Holds every call until released ([`FakeRefiner::held`]).
+    gate: Option<AsyncGate>,
+}
+
+/// A gate a fake's asynchronous calls wait at until a permit is released, for at most
+/// [`HOLD_LIMIT`]. Under a paused clock the limit passes as soon as the runtime idles: use it with
+/// real time.
+struct AsyncGate {
+    permits: tokio::sync::Semaphore,
+    waiting: AtomicUsize,
+}
+
+impl AsyncGate {
+    fn new() -> Self {
+        Self { permits: tokio::sync::Semaphore::new(0), waiting: AtomicUsize::new(0) }
+    }
+
+    async fn pass(&self) {
+        self.waiting.fetch_add(1, Ordering::SeqCst);
+        let permit = tokio::time::timeout(HOLD_LIMIT, self.permits.acquire()).await;
+        self.waiting.fetch_sub(1, Ordering::SeqCst);
+        match permit {
+            Ok(Ok(permit)) => permit.forget(),
+            _ => panic!("a held fake call was not released within {HOLD_LIMIT:?}"),
+        }
+    }
 }
 
 /// Model name the fake refiner reports.
@@ -552,12 +616,41 @@ pub const FAKE_OVERLOADED_DETAIL: &str = "fake: more demand than the model can s
 
 impl FakeRefiner {
     fn with_reply(reply: Reply) -> Self {
-        Self { reply, calls: AtomicUsize::new(0), inputs: Mutex::new(Vec::new()), edits: Mutex::new(Vec::new()), model: FAKE_REFINE_MODEL.to_owned() }
+        Self {
+            reply,
+            calls: AtomicUsize::new(0),
+            inputs: Mutex::new(Vec::new()),
+            edits: Mutex::new(Vec::new()),
+            model: FAKE_REFINE_MODEL.to_owned(),
+            gate: None,
+        }
+    }
+
+    /// Returns `text`, each call once a permit is [`FakeRefiner::release`]d: a test can hold
+    /// several calls at once and see that they overlap ([`FakeRefiner::waiting`]).
+    pub fn held(text: &str) -> Self {
+        Self { gate: Some(AsyncGate::new()), ..Self::ok(text) }
+    }
+
+    /// Let `n` held calls through (those waiting first, then the next ones).
+    pub fn release(&self, n: usize) {
+        if let Some(gate) = &self.gate {
+            gate.permits.add_permits(n);
+        }
+    }
+
+    /// Calls waiting at the gate now.
+    pub fn waiting(&self) -> usize {
+        self.gate.as_ref().map_or(0, |g| g.waiting.load(Ordering::SeqCst))
     }
 
     /// Always fails as a model whose quota is used up (docs/dictation.md §3.5).
     pub fn quota() -> Self {
-        Self::with_reply(Reply::Err(DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Llm, detail: FAKE_QUOTA_DETAIL.into() }))
+        Self::with_reply(Reply::Err(DictationError::QuotaExhausted {
+            service: crate::providers::ServiceKind::Llm,
+            detail: FAKE_QUOTA_DETAIL.into(),
+            retry_at_ms: None,
+        }))
     }
 
     /// Always fails as a service that has too many requests for now (docs/dictation.md §3.6).
@@ -637,11 +730,17 @@ impl Refiner for FakeRefiner {
     async fn refine(&self, text: &str, hints: &RefineHints) -> Result<Refined, DictationError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.inputs.lock().push((text.to_owned(), hints.clone()));
+        if let Some(gate) = &self.gate {
+            gate.pass().await;
+        }
         self.answer().await
     }
 
     async fn edit(&self, selection: &str, instruction: &str, hints: &RefineHints) -> Result<Refined, DictationError> {
         self.edits.lock().push((selection.to_owned(), instruction.to_owned(), hints.clone()));
+        if let Some(gate) = &self.gate {
+            gate.pass().await;
+        }
         self.answer().await
     }
 }

@@ -43,14 +43,15 @@ impl std::fmt::Debug for QuotaKey {
     }
 }
 
-/// Which models ran out of quota, and when (milliseconds since the epoch). Cheap to clone: every
-/// clone is the same ledger. Kept in memory only: after a restart every model is tried again.
+/// Which models ran out of quota, and until when (milliseconds since the epoch). Cheap to clone:
+/// every clone is the same ledger. Kept in memory only: after a restart every model is tried again.
 #[derive(Clone)]
 pub struct QuotaLedger {
     inner: Arc<LedgerInner>,
 }
 
 struct LedgerInner {
+    /// Each used-up model and when it is tried again.
     marks: Mutex<BTreeMap<QuotaKey, u64>>,
     /// Bumped on every change; the runtime re-sends the engines' status on it.
     changes: watch::Sender<u64>,
@@ -90,17 +91,21 @@ impl QuotaLedger {
     }
 
     /// When `key` is tried again, while it is skipped; `None` when it has quota as far as the
-    /// ledger knows (never ran out, or [`QUOTA_RETRY_AFTER`] has passed).
+    /// ledger knows (never ran out, or its time has come).
     pub fn retry_at(&self, key: &QuotaKey) -> Option<u64> {
-        let at = *self.inner.marks.lock().get(key)?;
-        let retry = at.saturating_add(retry_after_ms());
+        let retry = *self.inner.marks.lock().get(key)?;
         (retry > self.now_ms()).then_some(retry)
     }
 
-    /// `key` ran out of quota now.
+    /// `key` ran out of quota now: it is skipped for [`QUOTA_RETRY_AFTER`].
     pub fn mark(&self, key: &QuotaKey) {
-        let now = self.now_ms();
-        self.inner.marks.lock().insert(key.clone(), now);
+        self.mark_until(key, self.now_ms().saturating_add(retry_after_ms()));
+    }
+
+    /// `key` ran out of quota now and is back at `retry_at_ms` (milliseconds since the epoch): the
+    /// built-in service's day starts again at Beijing midnight (docs/dictation.md §27).
+    pub fn mark_until(&self, key: &QuotaKey, retry_at_ms: u64) {
+        self.inner.marks.lock().insert(key.clone(), retry_at_ms);
         self.notify();
     }
 
@@ -195,7 +200,13 @@ where
             }
             Err(e) if e.is_quota_exhausted() => {
                 tracing::info!(kind = ?link.key.kind, provider = link.key.provider.as_str(), model = %link.key.model, "the model's quota is used up; trying the next model");
-                ledger.mark(&link.key);
+                // The built-in service's quota is a day's (docs/dictation.md §27): back when it
+                // says, else at Beijing midnight; any other is tried again a day later.
+                let builtin_day = (link.key.provider == ProviderId::Builtin).then(|| crate::usage::next_beijing_midnight_ms(ledger.now_ms()));
+                match e.quota_retry_at().or(builtin_day) {
+                    Some(at) => ledger.mark_until(&link.key, at),
+                    None => ledger.mark(&link.key),
+                }
                 refused = Some(e);
             }
             Err(e) => return Err(e),
@@ -225,7 +236,11 @@ impl FallbackTranscriber {
 #[async_trait]
 impl Transcriber for FallbackTranscriber {
     async fn transcribe(&self, wav: &[u8], language: Option<&str>, glossary: &[String]) -> Result<Transcript, DictationError> {
-        let (mut transcript, i) = first_with_quota(&self.links, &self.ledger, |port| port.transcribe(wav, language, glossary)).await?;
+        self.transcribe_as(wav, language, glossary, &crate::usage::AsrCall::default()).await
+    }
+
+    async fn transcribe_as(&self, wav: &[u8], language: Option<&str>, glossary: &[String], call: &crate::usage::AsrCall) -> Result<Transcript, DictationError> {
+        let (mut transcript, i) = first_with_quota(&self.links, &self.ledger, |port| port.transcribe_as(wav, language, glossary, call)).await?;
         if transcript.model.is_none() {
             transcript.model = Some(self.links[i].key.model.clone());
         }
@@ -432,6 +447,36 @@ mod tests {
         ledger.mark(&asr("a"));
         assert!(ledger.retry_at(&elsewhere).is_none());
         assert!(ledger.now_ms() > 0 && QuotaLedger::default().now_ms() > 1_600_000_000_000, "the default clock is the wall clock");
+    }
+
+    /// docs/dictation.md §27: the built-in service's day is skipped until it says the quota is back
+    /// (its report's reset), or else until Beijing midnight; any other service is tried again a
+    /// day later, as before. The chain hands each model the call it was given.
+    #[tokio::test]
+    async fn a_used_up_built_in_day_is_skipped_until_its_reset() {
+        let (ledger, _) = ledger();
+        let builtin = |model: &str| key(ServiceKind::Asr, ProviderId::Builtin, model);
+        let reset = 1_000_000 + 3 * 60 * 60 * 1000;
+        let (said, unsaid) = (Arc::new(FakeTranscriber::quota_until(reset)), Arc::new(FakeTranscriber::quota()));
+        let other = Arc::new(FakeTranscriber::quota());
+        let next = Arc::new(FakeTranscriber::ok("候补"));
+        let links: Vec<Link<dyn Transcriber>> = vec![
+            Link { key: builtin("said"), port: said.clone() as Arc<dyn Transcriber> },
+            Link { key: builtin("unsaid"), port: unsaid.clone() as Arc<dyn Transcriber> },
+            link("other", &other),
+            link("next", &next),
+        ];
+        let t = FallbackTranscriber::new(links, ledger.clone());
+        let call = crate::usage::AsrCall::take(Some(crate::usage::UsageOrigin::Phone { name: "Pixel 8".into() }));
+        t.transcribe_as(&wav(), None, &[], &call).await.unwrap();
+        assert_eq!(ledger.retry_at(&builtin("said")), Some(reset), "back when the service said");
+        assert_eq!(ledger.retry_at(&builtin("unsaid")), Some(crate::usage::next_beijing_midnight_ms(1_000_000)), "else at Beijing midnight");
+        assert_eq!(ledger.retry_at(&asr("other")), Some(1_000_000 + DAY_MS), "any other service: a day");
+        assert_eq!(next.usage_calls(), std::slice::from_ref(&call), "the call reached the model that answered");
+        assert_eq!(said.usage_calls(), [call]);
+        let manual = asr("manual");
+        ledger.mark_until(&manual, 1_000_000);
+        assert_eq!(ledger.retry_at(&manual), None, "a time already reached is no skip");
     }
 
     #[tokio::test]

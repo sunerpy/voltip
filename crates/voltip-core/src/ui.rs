@@ -161,6 +161,9 @@ pub enum UiEvent {
         /// The notice; `None` once it is gone.
         notice: Option<RefineNotice>,
     },
+    /// The built-in service's usage and this device's record (docs/dictation.md §27), full
+    /// replacement.
+    Usage(crate::usage::UsageView),
     /// The answer to a paste from the history (`crate::paste`): the desktop shell waits for it; the
     /// webview reads the `paste_text` command's answer instead and ignores the event.
     PasteResult {
@@ -519,6 +522,9 @@ pub struct UiState {
     /// §3.6); `None` when there is nothing to say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refine_notice: Option<RefineNotice>,
+    /// The built-in service's usage today and this device's record (docs/dictation.md §27).
+    #[serde(default)]
+    pub usage: crate::usage::UsageView,
 }
 
 /// The built-in clean-up service turned a take's clean-up down for want of capacity
@@ -571,6 +577,7 @@ impl Default for UiState {
             network: NetworkStatus::default(),
             mcp: crate::mcp::McpStatus::default(),
             refine_notice: None,
+            usage: crate::usage::UsageView::default(),
         }
     }
 }
@@ -685,6 +692,10 @@ impl UiState {
             CoreEvent::RefineNotice(notice) => {
                 self.refine_notice = notice;
                 UiEvent::RefineNotice { notice }
+            }
+            CoreEvent::Usage(usage) => {
+                self.usage = usage.clone();
+                UiEvent::Usage(usage)
             }
             CoreEvent::Serve(status) => {
                 self.serve = status.clone();

@@ -96,6 +96,7 @@ import {
   type UiEvent,
   type UiState,
   type UpdateStatus,
+  type UsageView,
   type ConnectivityReport,
   type ProbeResult,
   type HotkeyCapabilities,
@@ -111,6 +112,7 @@ import {
   emptyEngineStatus,
   emptyHotkeyStatus,
   emptyModelsLocation,
+  emptyUsageView,
   HISTORY_LIMIT,
   HISTORY_MIN_KEEP,
   MIN_SERVE_PORT,
@@ -276,6 +278,9 @@ export interface MockBackendOptions {
   probeModels?: Partial<Record<ProviderId, readonly string[]>> | false;
   /** Initial updater status (`disabled` for a build without an update source, `failed`, …). */
   update?: UpdateStatus;
+  /** The built-in service's usage and this device's record (docs/dictation.md §27); nothing
+   *  reported yet unless given. */
+  usage?: Partial<UsageView>;
   /** Install state per catalogue id (`{ "sense-voice-small": { kind: "installed", … } }`); every
    *  model starts `not_installed` otherwise. */
   models?: Partial<Record<string, ModelInstallState>>;
@@ -1182,6 +1187,11 @@ export class MockBackend implements Backend {
       serve: options.serve ?? this.serveStatusFor(settings.serve),
       network: { ...(options.network ?? { proxy_password: false }) },
       mcp: options.mcp ?? this.mcpStatusFor(settings.mcp),
+      usage: {
+        ...emptyUsageView(),
+        builtin: this.builtIn.asr !== undefined || this.builtIn.llm !== undefined,
+        ...structuredClone(options.usage ?? {}),
+      },
     };
     this.proxyPassword = options.network?.proxy_password === true ? "saved" : undefined;
     for (const m of options.mirrors ?? []) this.mirrors.set(m.view.desktop, structuredClone(m));
@@ -2590,6 +2600,17 @@ export class MockBackend implements Backend {
       if (this.state.refine_notice !== undefined)
         this.emit({ type: "refine_notice", notice: null });
     },
+    // docs/dictation.md §27: the preview's service answers at once with what it has.
+    usage_refresh: () => {
+      this.emit({ type: "usage", ...this.state.usage });
+    },
+    usage_notice_dismiss: (args) => {
+      const { notice } = required(args);
+      const dismissed = this.state.usage.dismissed.includes(notice)
+        ? this.state.usage.dismissed
+        : [...this.state.usage.dismissed, notice];
+      this.emit({ type: "usage", ...this.state.usage, dismissed });
+    },
     settings_set_proxy: (args) => {
       const { mode, server, username, noProxy, password } = required(args);
       const checked = checkProxySettings({ mode, server, username, no_proxy: noProxy });
@@ -3127,6 +3148,11 @@ export class MockBackend implements Backend {
   simulateQuotaExhausted(kind: ServiceKind, retryAtMs: number) {
     this.quotaOut.set(kind, retryAtMs);
     this.emit({ type: "engines", ...this.resolveEngines(this.state.settings.engines) });
+  }
+
+  /** The built-in service reports another day (docs/dictation.md §27). */
+  simulateUsage(patch: Partial<UsageView>) {
+    this.emit({ type: "usage", ...this.state.usage, ...structuredClone(patch) });
   }
 
   simulateRelay(patch: Partial<RelayStatus>) {
