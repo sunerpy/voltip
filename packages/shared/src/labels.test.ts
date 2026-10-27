@@ -44,6 +44,7 @@ import {
   recordingSourceLabel,
   relativeTime,
   relayLabel,
+  relayTooOld,
   secretStateLabel,
   segmentsDoneLabel,
   systemAudioNote,
@@ -226,6 +227,23 @@ describe("labels", () => {
       "未连接",
     );
     expect(relayLabel({ state: "closed", attempts: 0, source: "builtin" }).tone).toBe("danger");
+  });
+
+  it("says an update is needed below the relay's minimum version (docs/pairing.md 「最低版本」)", () => {
+    const tooOld = {
+      state: "reconnecting" as const,
+      attempts: 2,
+      source: "builtin" as const,
+      last_failure: { kind: "too_old" as const, min_version: "0.2.0", at: 1 },
+    };
+    expect(relayLabel(tooOld)).toEqual({ text: "需要更新", tone: "warn" });
+    expect(relayLabel(tooOld, "en").text).toBe("Update needed");
+    expect(relayTooOld(tooOld)).toEqual({ min_version: "0.2.0" });
+    const { min_version: _unnamed, ...unnamed } = tooOld.last_failure;
+    expect(relayTooOld({ ...tooOld, last_failure: unnamed })).toEqual({});
+    // Connected again (the minimum was lowered): nothing left to update for.
+    expect(relayTooOld({ ...tooOld, state: "connected" })).toBeUndefined();
+    expect(relayTooOld({ ...tooOld, last_failure: { kind: "timeout", at: 1 } })).toBeUndefined();
   });
 
   it("labels pairing states and failure reasons", () => {

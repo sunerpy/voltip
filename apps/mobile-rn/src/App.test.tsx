@@ -407,6 +407,50 @@ describe("the phone app on React Native", () => {
     expect(screen.queryByTestId("connectivity")).toBeNull();
   });
 
+  it("below the relay's minimum version the pairing page leads to the update (docs/pairing.md 「最低版本」)", async () => {
+    const tooOld = {
+      state: "reconnecting" as const,
+      attempts: 1,
+      source: "builtin" as const,
+      last_failure: { kind: "too_old" as const, min_version: "0.2.0", at: 1 },
+    };
+    // Installed from Google Play: the listing updates it.
+    const backend = new MockBackend({
+      role: "phone",
+      relay: tooOld,
+      update: { state: "store", version: "0.2.3" },
+    });
+    const invoke = jest.spyOn(backend, "invoke");
+    await renderApp({ backend });
+    await fireEvent.press(await screen.findByTestId("welcome-start"));
+    await fireEvent.press(await screen.findByText("配对电脑"));
+    const card = await screen.findByTestId("pair-too-old");
+    expect(card).toHaveTextContent(/需要更新 Voltip/);
+    expect(card).toHaveTextContent(/中继要求 0\.2\.0 或更高版本，这部手机是 0\.0\.1。/);
+    expect(screen.queryByTestId("pair-method-scan")).toBeNull();
+    await fireEvent.press(within(card).getByText("前往 Google Play 更新"));
+    expect(invoke).toHaveBeenCalledWith("update_install");
+  });
+
+  it("below the relay's minimum version an install not from Google Play checks for the update on 关于", async () => {
+    const direct = new MockBackend({
+      role: "phone",
+      relay: {
+        state: "reconnecting",
+        attempts: 1,
+        source: "builtin",
+        last_failure: { kind: "too_old", min_version: "0.2.0", at: 1 },
+      },
+    });
+    const check = jest.spyOn(direct, "invoke");
+    await renderApp({ backend: direct });
+    await fireEvent.press(await screen.findByTestId("welcome-start"));
+    await fireEvent.press(await screen.findByText("配对电脑"));
+    await fireEvent.press(within(await screen.findByTestId("pair-too-old")).getByText("检查更新"));
+    expect(check).toHaveBeenCalledWith("update_check");
+    expect(await screen.findByTestId("phone-update")).toBeOnTheScreen();
+  });
+
   it("regression: after a scan only the phone confirms, and each step says what is left (issue #193)", async () => {
     // The phone's user confirmed, nothing on the screen changed, and nobody clicked on the
     // computer: the pairing ran out. A scanned QR code now confirms for the computer.
@@ -550,6 +594,22 @@ describe("the phone app on React Native", () => {
     const card = await screen.findByTestId("device-card");
     expect(within(card).getAllByText("Studio").length).toBeGreaterThan(0);
     expect(screen.getByTestId("pair-new")).toBeOnTheScreen();
+  });
+
+  it("an offline computer says this phone needs the update below the relay's minimum version", async () => {
+    const { backend } = await renderApp({ mock: { devices: [computer(false)] } });
+    const card = await screen.findByTestId("device-card");
+    expect(within(card).queryByText("无法连接 · 需要更新这部手机")).toBeNull();
+    await act(async () => {
+      backend.simulateRelay({
+        state: "reconnecting",
+        attempts: 1,
+        last_failure: { kind: "too_old", min_version: "0.2.0", at: 1 },
+      });
+      await Promise.resolve();
+    });
+    // The state line and the 在线状态 cell.
+    expect(await within(card).findAllByText("无法连接 · 需要更新这部手机")).toHaveLength(2);
   });
 });
 

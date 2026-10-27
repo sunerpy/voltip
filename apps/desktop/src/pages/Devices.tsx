@@ -12,6 +12,7 @@ import {
   isPhone,
   platformLabel,
   relativeTime,
+  relayTooOld,
   shortFingerprint,
   takeFailureText,
 } from "@voltip/shared";
@@ -40,6 +41,7 @@ import { levelFraction, useAudioMeter } from "../features/audio/useAudioMeter";
 import { useTickingNow } from "../features/dictation/useDictation";
 import { usePageShortcuts, withCommand } from "../app/page-shortcuts";
 import { useShell } from "../app/shell-context";
+import { useUpdateAction } from "../features/update/useUpdateAction";
 
 const PAIRING_TTL_SECS = 120;
 
@@ -279,6 +281,9 @@ export function Devices() {
       ? undefined
       : online.find((d) => d.device.name === dictation.remote)) ?? online[0];
   const live = phoneTakeText(dictation, phone?.device.name, tick, t, locale);
+  // Below the relay's minimum version (docs/pairing.md 「最低版本」, board 20).
+  const tooOld = relayTooOld(state.relay);
+  const update = useUpdateAction();
 
   return (
     // pairing + device table left, LIVE / SYNC / LIMITS right. The right column follows
@@ -287,6 +292,28 @@ export function Devices() {
       className="mx-auto grid w-full max-w-[1440px] grid-cols-1 gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_minmax(300px,380px)]"
       data-testid="page-devices">
       <div className="flex min-w-0 flex-col gap-4">
+        {tooOld && (
+          <div data-testid="devices-too-old">
+            <Banner
+              tone="warn"
+              marker="bar"
+              title={t("devices.tooOld.title")}
+              actions={
+                <>
+                  <Button size="sm" variant="primary" icon="download" onClick={update.install}>
+                    {t("devices.tooOld.update")}
+                  </Button>
+                  <Button size="sm" onClick={update.open}>
+                    {t("devices.tooOld.notes")}
+                  </Button>
+                </>
+              }>
+              {tooOld.min_version === undefined
+                ? t("devices.tooOld.bodyAny", { current: state.app_version })
+                : t("devices.tooOld.body", { min: tooOld.min_version, current: state.app_version })}
+            </Banner>
+          </div>
+        )}
         <PairingPanel
           pairing={state.pairing}
           identity={state.identity}
@@ -301,6 +328,7 @@ export function Devices() {
             invoke("pairing_cancel");
           }}
           onRegenerate={regeneratePairing}
+          onUpdate={update.install}
           onDone={() => {
             invoke("pairing_reset");
           }}

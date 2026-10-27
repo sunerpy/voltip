@@ -104,8 +104,19 @@ function connectionStateText(state: ConnectionState, locale: Locale): string {
 }
 
 /** Toolbar readout for the relay link, e.g. `Relay ● 已连接` or `重连中 · 第 3 次`. */
+/** This build is below the relay's minimum version (docs/pairing.md 「最低版本」): the version the
+ *  relay names (absent when it named none), or `undefined` while that is not the case. Only an
+ *  update helps, so the apps say so instead of 「重连中」. */
+export function relayTooOld(relay: RelayStatus): { min_version?: string } | undefined {
+  const failure = relay.last_failure;
+  if (relay.state === "connected" || failure?.kind !== "too_old") return undefined;
+  return failure.min_version === undefined ? {} : { min_version: failure.min_version };
+}
+
 export function relayLabel(relay: RelayStatus, locale: Locale = DEFAULT_LOCALE): Labelled {
   const base = connectionStateText(relay.state, locale);
+  if (relayTooOld(relay) !== undefined)
+    return { text: translate(locale, "relay.tooOld"), tone: "warn" };
   switch (relay.state) {
     case "connected":
       return { text: base, tone: "ok" };

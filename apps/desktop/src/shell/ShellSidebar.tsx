@@ -1,4 +1,5 @@
 import {
+  Button,
   Icon,
   IconButton,
   Lamp,
@@ -10,9 +11,10 @@ import {
   useI18n,
   useUiState,
 } from "@voltip/ui";
-import { type TFunction, formatCount, pendingRules, relayLabel } from "@voltip/shared";
+import { type TFunction, formatCount, pendingRules, relayLabel, relayTooOld } from "@voltip/shared";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { AI_ROUTE, type Route, SPEECH_ROUTE, isDialogRoute } from "../app/router";
+import { useUpdateAction } from "../features/update/useUpdateAction";
 import type { SidebarLayoutControls } from "./sidebar-layout";
 
 /** A sidebar count, shown once there is something to count, grouped like every other count
@@ -154,7 +156,41 @@ export function ShellSidebar({
   // The status card over the footer (board 01): the relay and the phones, a way to 手机.
   const relay = relayLabel(state.relay, i18n.locale);
   const online = state.devices.filter((d) => d.connection.state === "online").length;
-  const status = (
+  const tooOld = relayTooOld(state.relay);
+  const update = useUpdateAction();
+  // Below the relay's minimum version (board 20): what is wrong, and the update, in place of the
+  // phones; a card with a button in it is no longer a button itself.
+  const status = tooOld ? (
+    <div
+      data-testid="sidebar-status-card"
+      data-state="too_old"
+      className="flex w-full flex-col gap-1.5 rounded-row border border-field-edge bg-field px-3.5 py-3 text-left">
+      <span className="flex items-center gap-2 text-[13px] font-medium text-fg">
+        <Lamp tone="warn" size={8} />
+        <span className="truncate">{t("shell.status.relay", { state: relay.text })}</span>
+      </span>
+      <span className="text-[12px] leading-4 text-fg-muted">
+        {tooOld.min_version === undefined
+          ? t("shell.status.tooOldAny")
+          : t("shell.status.tooOld", { version: tooOld.min_version })}
+      </span>
+      <Button
+        size="sm"
+        variant="primary"
+        icon="download"
+        className="mt-1 self-start"
+        disabled={onboarding}
+        data-testid="sidebar-update"
+        onClick={() => {
+          update.open();
+          setPreview(false);
+        }}>
+        {update.version === undefined
+          ? t("shell.status.checkUpdate")
+          : t("shell.status.updateTo", { version: update.version })}
+      </Button>
+    </div>
+  ) : (
     <button
       type="button"
       data-testid="sidebar-status-card"

@@ -161,6 +161,8 @@ export const zhCN = {
     closed: "已关闭",
     attempt: "{base} · 第 {n} 次",
     unconfigured: "未配置",
+    /** Below the relay's minimum version (docs/pairing.md 「最低版本」). */
+    tooOld: "需要更新",
     /** Why the relay connection last failed (`voltip_transport::FailureKind`, issue #193). */
     why: {
       timeout: "连接超时，中继没有回应",
@@ -395,6 +397,11 @@ export const zhCN = {
       none: "尚未配对手机 · 去配对",
       e2ee: "与手机之间端到端加密",
       open: "打开「手机」页",
+      /** Below the relay's minimum version (Penpot 「用量与额度」 board 20). */
+      tooOld: "这个版本低于中继要求的 {version}",
+      tooOldAny: "这个版本低于中继要求的版本",
+      updateTo: "更新到 {version}",
+      checkUpdate: "检查更新",
     },
     /** The home page's line under its title: today and the whole history. */
     subtitle: { home: "今天听写 {n} 次 · 节省 {saved} · 历史记录 {total} 条" },
@@ -1576,6 +1583,15 @@ export const zhCN = {
       forget: "忘记",
     },
     copied: "已复制{what}",
+    /** Below the relay's minimum version (docs/pairing.md 「最低版本」, board 20). */
+    tooOld: {
+      title: "需要更新才能连接手机",
+      body: "中继现在要求 Voltip {min} 或更高版本，这台电脑是 {current}。更新后配对和重新连接恢复；听写不受影响。",
+      bodyAny:
+        "中继要求更新版本的 Voltip，这台电脑是 {current}。更新后配对和重新连接恢复；听写不受影响。",
+      update: "立即更新",
+      notes: "查看更新内容",
+    },
     identityBanner: {
       title: "「{name}」出示了不同的身份密钥",
       forget: "忘记设备",
@@ -1642,6 +1658,15 @@ export const zhCN = {
   },
   pairing: {
     title: "配对新设备",
+    /** Below the relay's minimum version: no pairing until the update (board 20). */
+    tooOld: {
+      title: "无法创建配对",
+      body: "中继要求 {min} 或更高版本。更新后重新打开此页即可配对。",
+      bodyAny: "中继要求更新版本的 Voltip。更新后重新打开此页即可配对。",
+      update: "立即更新",
+      code: "错误代码：client_too_old · 最低 {min}",
+      codeAny: "错误代码：client_too_old",
+    },
     windowOpen: "剩余 {remaining}",
     intro:
       "生成一次性二维码和 6 位验证码。手机扫码后只需在手机上确认；输入验证码时，两边核对同一组安全码并确认。配对 {ttl} 秒后失效。",
@@ -3160,6 +3185,15 @@ export const zhCN = {
       relay: "中继 · {state}",
       relayHelp: "配对需要先连上中继。连不上时，可以运行下面的连接自检查看原因。",
       relayDetail: "{reason}（{detail}）",
+      /** Below the relay's minimum version (board 20a). */
+      tooOld: {
+        title: "需要更新 Voltip",
+        body: "中继要求 {min} 或更高版本，这部手机是 {current}。更新后才能配对，以及与已配对的电脑重新连接。",
+        bodyAny:
+          "中继要求更新版本的 Voltip，这部手机是 {current}。更新后才能配对，以及与已配对的电脑重新连接。",
+        store: "前往 Google Play 更新",
+        check: "检查更新",
+      },
     },
     verify: {
       rejected: "配对已被拒绝，本次配对已取消。",
@@ -3296,6 +3330,8 @@ export const zhCN = {
       },
       identityChanged:
         "这台电脑出示了不同的身份密钥（{fingerprint}），未自动信任；如果重装了系统，请忘记后重新配对。",
+      /** This phone is below the relay's minimum version (board 20a). */
+      tooOld: "无法连接 · 需要更新这部手机",
       testBody: "来自手机的测试消息",
       sendTest: "发测试消息",
       forget: "忘记 {name}",

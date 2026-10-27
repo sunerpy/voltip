@@ -155,6 +155,7 @@ export const en: Messages = {
     closed: "Closed",
     attempt: "{base} · attempt {n}",
     unconfigured: "Not configured",
+    tooOld: "Update needed",
     why: {
       timeout: "Timed out: the relay did not answer",
       dns: "The relay's address could not be looked up; check the network",
@@ -386,6 +387,10 @@ export const en: Messages = {
       none: "No phone paired yet · pair one",
       e2ee: "End-to-end encrypted",
       open: "Open the Phone page",
+      tooOld: "This version is older than the relay's {version}",
+      tooOldAny: "This version is older than the relay requires",
+      updateTo: "Update to {version}",
+      checkUpdate: "Check for updates",
     },
     /** The home page's line under its title: today and the whole history. */
     subtitle: { home: "Today {n} takes · {saved} saved · {total} in history" },
@@ -1587,6 +1592,14 @@ export const en: Messages = {
       forget: "Forget",
     },
     copied: "Copied {what}",
+    tooOld: {
+      title: "Update Voltip to connect your phones",
+      body: "The relay now requires Voltip {min} or later, and this computer has {current}. Pairing and reconnecting resume after the update; dictation is not affected.",
+      bodyAny:
+        "The relay requires a newer Voltip, and this computer has {current}. Pairing and reconnecting resume after the update; dictation is not affected.",
+      update: "Update now",
+      notes: "See what's new",
+    },
     identityBanner: {
       title: "“{name}” presented a different identity key",
       forget: "Forget device",
@@ -1655,6 +1668,14 @@ export const en: Messages = {
   },
   pairing: {
     title: "Pair a new device",
+    tooOld: {
+      title: "Cannot start pairing",
+      body: "The relay requires {min} or later. Update, then open this page again to pair.",
+      bodyAny: "The relay requires a newer Voltip. Update, then open this page again to pair.",
+      update: "Update now",
+      code: "Error code: client_too_old · minimum {min}",
+      codeAny: "Error code: client_too_old",
+    },
     windowOpen: "{remaining} left",
     intro:
       "Generates a one-time QR code and a 6-digit code. After a scan, you confirm on the phone only; with the 6-digit code, both sides compare the same safety code and confirm. The pairing expires after {ttl} seconds.",
@@ -3237,6 +3258,14 @@ export const en: Messages = {
       relayHelp:
         "Pairing needs a connection to the relay. When it cannot connect, run the connection check below to see why.",
       relayDetail: "{reason} ({detail})",
+      tooOld: {
+        title: "Update Voltip",
+        body: "The relay requires {min} or later, and this phone has {current}. Update to pair, and to reconnect to the computers you paired.",
+        bodyAny:
+          "The relay requires a newer Voltip, and this phone has {current}. Update to pair, and to reconnect to the computers you paired.",
+        store: "Update on Google Play",
+        check: "Check for updates",
+      },
     },
     verify: {
       rejected: "Pairing was rejected and cancelled.",
@@ -3368,6 +3397,7 @@ export const en: Messages = {
       },
       identityChanged:
         "This computer presented a different identity key ({fingerprint}). Not trusted automatically; if you reinstalled the system, forget it and pair again.",
+      tooOld: "Cannot connect · update this phone",
       testBody: "Test message from the phone",
       sendTest: "Send test message",
       forget: "Forget {name}",

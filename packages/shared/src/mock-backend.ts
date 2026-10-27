@@ -16,7 +16,7 @@ import type { Backend, EventListener, FrameListener, Unsubscribe } from "./backe
 import { type SampleHistoryRow, historyEntries } from "./fixtures/history";
 import builtinPresetTexts from "./fixtures/ipc/presets-builtin.json";
 import builtinSceneRows from "./fixtures/ipc/scenes-builtin.json";
-import { joinLiveText, livePreviewText } from "./labels";
+import { joinLiveText, livePreviewText, relayTooOld } from "./labels";
 import {
   type BuiltInService,
   type ListedModels,
@@ -659,6 +659,8 @@ export const MOCK_ALWAYS_ON_RENEW_SECS = 10;
 export const MOCK_ALWAYS_ON_PAUSE_MS = 4000;
 /** The core's refusal on a phone. */
 export const ALWAYS_ON_DESKTOP_ONLY = "pairing: 常开配对只在电脑上可用";
+/** The core's refusal below the relay's minimum version (`runtime.rs` `require_relay`). */
+export const PAIRING_TOO_OLD = "pairing: 此版本过低，请更新 Voltip 后再配对";
 
 /** How long the preview's desktop takes to insert a phone's text (docs/dictation.md §20.6). */
 export const MOCK_TEXT_MS = 200;
@@ -1601,12 +1603,15 @@ export class MockBackend implements Backend {
     [K in MutationCommand]: (args: CommandArgs[K] | undefined) => void;
   } = {
     pairing_start: () => {
+      if (this.refuseTooOld()) return;
       this.startPairing();
     },
     pairing_join_code: (args) => {
+      if (this.refuseTooOld()) return;
       this.joinWithCode(required(args).code);
     },
     pairing_join_ticket: (args) => {
+      if (this.refuseTooOld()) return;
       this.joinWithTicket(required(args).uri);
     },
     settings_set_pairing_always_on: (args) => {
@@ -4760,6 +4765,13 @@ export class MockBackend implements Backend {
   }
 
   // ---- internals ---------------------------------------------------------------------------------
+
+  /** Below the relay's minimum version the core refuses any pairing (docs/pairing.md 「最低版本」). */
+  private refuseTooOld(): boolean {
+    if (relayTooOld(this.state.relay) === undefined) return false;
+    this.emit({ type: "error", message: PAIRING_TOO_OLD });
+    return true;
+  }
 
   private startPairing() {
     this.clearTimers();

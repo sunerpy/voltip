@@ -12,6 +12,7 @@ import {
   mirrorStateText,
   platformLabel,
   relativeTime,
+  relayTooOld,
 } from "@voltip/shared";
 import { View } from "react-native";
 import { IconButton, Text } from "react-native-paper";
@@ -41,8 +42,14 @@ export function DeviceCard({ view }: { view: DeviceView }) {
   const shell = useShell();
   const { t, locale } = useI18n();
   const now = useNow();
-  const copy = useUiState().mirrors.find((m) => m.desktop === view.device.public_key);
-  const online = connectionLabel(view.connection, locale);
+  const { mirrors, relay } = useUiState();
+  const copy = mirrors.find((m) => m.desktop === view.device.public_key);
+  // Below the relay's minimum version an offline computer stays so until this phone is updated
+  // (docs/pairing.md 「最低版本」, board 20a).
+  const online =
+    view.connection.state === "offline" && relayTooOld(relay) !== undefined
+      ? { text: t("mobile.devices.tooOld"), tone: "warning" }
+      : connectionLabel(view.connection, locale);
   const cells: Record<(typeof COLUMNS)[number], string> = {
     device: view.device.name,
     platform: platformLabel(view.device.platform, locale),
