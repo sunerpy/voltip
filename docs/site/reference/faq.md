@@ -24,6 +24,10 @@ Another app may hold the same key combination; **Settings → Shortcuts** shows 
 
 Yes, with a [local model](/recognition/local). Download it once; recognition then works offline. AI polish needs a service, unless you run Ollama on your computer.
 
+### It says built-in speech recognition is used up for today
+
+The built-in service has a daily limit per device: 60 minutes of speech recognition and 100 AI polishes, counted again every day at 00:00 Beijing time. Once it is used up, switch to an [on-device model](/recognition/local) or another provider; on a computer, recordings that were not recognised can be recognised again on another model. The **Usage** card in the sidebar shows the use and the time of the reset; see [Built-in usage](/recognition/cloud#built-in-usage).
+
 ### My network needs a proxy
 
 Choose how Voltip connects under **Settings → Network**: it follows the system's proxy settings by default, or uses a proxy server you enter, with a user name, a password and the addresses that go direct. Recognition, polish, model downloads, updates and the connection to your phone all follow this setting; see [Network proxy](/recognition/cloud#network-proxy).
@@ -73,6 +77,10 @@ See [Updates, uninstall and your data](/guide/updates).
 ### How do I install the phone app?
 
 On the phone, download `Voltip_<version>_android_arm64.apk` from the [releases page](https://github.com/sunerpy/voltip/releases) and open it. See [Install](/guide/install#android).
+
+### The floating bubble disappears after a while
+
+Some phones close apps that run in the background. Allow Voltip to start automatically or run in the background in the system settings, and turn off battery restrictions for Voltip; see [Floating bubble](/phone/#floating-bubble).
 
 ## Something else
 

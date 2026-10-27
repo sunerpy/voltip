@@ -24,7 +24,7 @@ you hold the hotkey, recognises the speech in the cloud or on your own machine, 
 the text up with an LLM, and pastes it into whatever app has the focus. The Android app works on
 its own, or as the computer's microphone and keyboard; an iOS app is planned for a later release.
 
-![Voltip's home page: the dictation card with the shortcut, recognition and polish with the microphone, time saved and the recent results; the relay and the paired phones in the sidebar](./docs/site/public/screens/home-en-light.webp)
+![Voltip's home page: the dictation card with the shortcut, recognition and polish with the microphone, time saved and the recent results; the relay, the paired phones and today's use of the built-in service in the sidebar](./docs/site/public/screens/home-en-light.webp)
 
 ## Video
 

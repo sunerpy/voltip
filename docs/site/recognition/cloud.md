@@ -18,6 +18,25 @@ The built-in service is shared by everyone who uses it. When it has too many req
 
 When a connection to a recognition or polish service drops before the request is sent (for example `tls handshake eof`, which happens now and then on the network path from mainland China to the built-in service), Voltip tries again twice within about a second and a half. Only when every attempt fails does the dictation report the error, with the number of attempts at the end, for example `(3 attempts)`. This applies to the built-in service and to your own providers.
 
+## Built-in usage
+
+The built-in service counts each device's use by day. Every device can use 60 minutes of speech recognition and 100 AI polishes a day. The count starts again every day at 00:00 Beijing time, and the app shows the reset in this device's time zone, for example 01:00 in Tokyo.
+
+- Speech recognition counts the length of the audio sent; a request that fails or is refused does not count, and the live preview of a recording is not counted twice.
+- Each AI polish and each voice edit counts once; a retry on another built-in model is not counted again.
+- Recordings a phone sends to a computer count toward that computer; recordings a phone recognises itself count toward the phone.
+- For a while after this feature arrives, the built-in service only counts, without a limit, and the app shows **No limit yet**.
+
+On a computer, the **Usage** card in the sidebar shows both services and the time of the reset; click it to open the **Usage** page: the last 7 days, where today's use came from, and other providers' use this month as this computer recorded it. The home page, under each model, and the built-in service's cards on the Speech models and AI models pages show today's use too. On a phone, the **Talk** page shows today's use while the phone recognises, and **Settings › Usage** has the details.
+
+From 80 % of a limit, the home page (on a phone, the **Talk** page) says how much is left. Once a limit is used up:
+
+- Speech recognition: switch to an on-device model or another provider. On a computer, recordings that were not recognised stay on the computer and can be [recognised again](/dictation/history#recognise-or-polish-again) on another model; on a phone, you can send recordings to a computer instead.
+- AI polish: the text is inserted without polish; you can also switch to another provider.
+- With [fallback models](#when-a-model-s-quota-runs-out) turned on, a fallback model carries on.
+
+Other providers and on-device models are not limited by it. Each device has a device number generated at random when it first uses the service, used only to count its usage; see [Privacy](/privacy#the-built-in-service). Versions 0.1.9 and earlier send no device number and are counted by IP address, so older versions sharing one internet connection share one allowance; after an update, usage is counted by device.
+
 ## Providers
 
 | Provider | Recognition | AI polish | Key |

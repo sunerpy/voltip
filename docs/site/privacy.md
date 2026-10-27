@@ -40,6 +40,8 @@ The built-in service's server keeps a record of each request: the time, your IP 
 
 The records are kept for 30 days. They are used to limit how many requests one address can make, so that no single address uses up the shared service, and to count how much the service is used; after that only daily totals without IP addresses are kept. Over the limit, the built-in service answers that it is busy, and AI polish then suggests your own provider. People who share one internet connection, for example in an office, share the limit.
 
+The built-in service also counts each device's use by day (see [Built-in usage](/recognition/cloud#built-in-usage)). For that, Voltip generates a device number at random when a device first uses the service and sends it with its requests to the built-in service, never to other providers. The device number has nothing to do with the device identity used for pairing; it is not included in backups and not synced to other devices. The built-in service keeps, by device number and day, how long the device's recognition ran and how many AI polishes it made that day, for the daily limits and for counting usage; its statistics use one number per device, without the device number or the IP address. Versions 0.1.9 and earlier send no device number and are counted by IP address. Voltip keeps its own record of the last 35 days on the device (how long each provider recognised and how many polishes it made, without recordings or text) for the **Usage** page.
+
 ## Try it online
 
 The [try page](/guide/try) on this website sends what you record or upload to the built-in service for recognition, and the text you polish to the built-in service for AI polish. The built-in service keeps the same record of these requests as of the app's, with your IP address, and does not keep the recording or the text. To keep the page's limits, the website counts your requests under a one-way hash of your IP address; the counts are removed after the hour they cover. Before you start, Cloudflare Turnstile checks that a person is using the page, under Cloudflare's privacy policy. After the check, your browser keeps a cookie for 30 minutes so that the check is not repeated; the page keeps nothing else.
@@ -47,6 +49,8 @@ The [try page](/guide/try) on this website sends what you record or upload to th
 ## The microphone and computer audio
 
 The microphone is open only while you record, or for the 15 seconds of a microphone test. Computer audio is recorded only during a dictation with it chosen as the source. Voltip does not listen in the background.
+
+With the [floating bubble](/phone/#floating-bubble) on, Voltip shows a talk button over other apps as a foreground service, with a notification that closes it always in the shade. The microphone opens only while you hold or tap the bubble to record; the result is copied to the phone's clipboard, and the bubble neither reads the clipboard nor reads or writes other apps' text fields.
 
 While a recording longer than 2 minutes runs, its audio is written to a file in Voltip's data folder so that it can be recognised in segments; the file is deleted when the recording ends. With **Keep recordings on this computer** on, a compressed copy is written as well and moves into the recording cache when the recording ends; if Voltip was closed during the recording, the next start completes the copy from what was recorded and moves it into the recording cache. With it off, the files a closed recording left are deleted at the next start.
 

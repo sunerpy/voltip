@@ -93,6 +93,31 @@ Idle → Joining(code|ticket) → KeyExchange → AwaitingVerification → Trust
 - 会话 TTL 默认 120 s，最大 300 s；成功 `join` 后短码立即从索引删除。
 - 所有计数与 TTL 都在 `voltip-relay::RelayState` 里，单测可直接推进时钟。
 
+## 最低版本（2026-10-27）
+
+用户 2026-10-27 要求在管理台设置最低客户端版本，过低的版本连接失败时提示升级；决定：认识新错误码的版本被直接告知，0.1.9 及以前的版本「拦配对和重连」（软拦截）。
+
+- **策略文件**（`voltip_relay::policy`）：`--policy /etc/voltip/relay-policy.json`（管理台的同步程序写，`docs/runbook.md`「中继部署」）和 `--policy-override /etc/voltip/relay-policy.override.json`（运维手写），内容 `{"schema":1,"min_version":"x.y.z"|null,"known_versions":["0.1.9",…]}`（`known_versions` 最多 64 个，统计用）。读取规则与内置服务网关的额度配置相同：覆盖文件存在且有效时整份使用；存在但无效时告警并忽略它；主文件有效就使用并记为「上一份有效配置」；主文件无效或缺失时沿用上一份有效配置；从来没有有效配置时不设最低版本。中继每 30 秒（`POLICY_CHECK`）比较两个文件的修改时间与存在与否，变了就重读；管理台保存后最多约 5.5 分钟生效（同步程序 5 分钟一轮）。
+- **版本**：`hello.client_version` 里的 `voltip/x.y.z`（或不带前缀的 `x.y.z`）；读不出版本的客户端照常服务。
+- **认识新错误码的版本**（0.1.10 起，`hello.features` 带 `client_too_old`，`docs/protocol.md`）低于最低版本时，中继回 `error{code: client_too_old, min_version}` 后关闭连接。
+- **旧版本**（0.1.9 及以前，不带 `features`）低于最低版本时照常收到 `hello_ack`，但 `create_session`、`join_by_code`、`join_by_session` 和 `attach` 一律回 `unsupported_version`（`attach` 的答复带上 `channel`）。旧界面配对时显示它已有的「版本不兼容，请更新 Voltip」；0.1.9 收到 attach 被拒后不再重试这个频道。
+- **策略提高时**：中继重新判断每条连接。认识新错误码、版本过低的连接收到 `client_too_old` 并被关闭，它的会话和频道随断开结束；旧版本连接已有的配对会话和 attach 保留到断开为止，新的一律拒绝。
+- **客户端**（`voltip_transport::link`）：hello 阶段或已连接后收到 `client_too_old` 都是一次失败，类别为 `too_old`（`FailureKind::TooOld`），带上最低版本；之后不按退避重连，而是等 30 分钟（`LinkConfig::too_old_retry`），`reconnect_now`（回到前台、网络变化、连接自检）可以提前重试。核心把它记进 `RelayStatus.last_failure`（`kind: too_old`、`min_version`）；这时开始配对被核心拒绝：「此版本过低，请更新 Voltip 后再配对」。
+- **界面**（Penpot「用量与额度」画板 20 / 20a）：电脑侧栏的状态卡片黄灯「中继 · 需要更新」，写明最低版本，按钮为「更新到 x」（有可用更新时，打开更新对话框）或「检查更新」；「手机」页顶部横幅，配对面板显示「无法创建配对」和错误代码。手机的配对页显示「需要更新 Voltip」卡片（Google Play 安装的写「前往 Google Play 更新」，否则走应用内更新），已配对设备行写「无法连接 · 需要更新这部手机」。
+
+回归测试：`crates/voltip-relay/src/core.rs@a_client_below_the_minimum_that_knows_the_error_is_told_and_closed`、`regression_an_older_client_below_the_minimum_may_stay_but_not_pair_or_reconnect`；`crates/voltip-relay/src/policy.rs@a_policy_parses_and_only_a_known_older_version_is_too_old`、`the_override_wins_while_valid_and_a_broken_main_file_keeps_the_last_valid_policy`；`crates/voltip-relay/tests/socket.rs@the_policy_file_turns_old_clients_away_and_stats_count_them`；`crates/voltip-transport/tests/link.rs@a_relay_that_requires_a_newer_version_makes_the_link_wait`、`a_minimum_raised_while_connected_turns_the_link_too_old`；`crates/voltip-core/tests/e2e.rs@a_minimum_raised_on_the_relay_shows_in_the_status_with_the_version`。
+
+## 中继统计（2026-10-27）
+
+管理台只看汇总的计数，不碰端到端加密的内容。
+
+- `GET /stats`（`voltip_relay::stats`）只在中继自己的监听地址上（`127.0.0.1:47830`），前面的 nginx 只转发 `/ws`，外面访问不到；管理台的同步程序在中继主机上读取。
+- 内容（`schema` 1）：此刻的连接数、配对会话数、有设备的频道数、两端都在的频道数；最近 48 小时按小时的计数：同时连接数的峰值、`hello` 数及各版本的数目、创建的配对会话、两端会合的会话、过期的会话、被按地址限流的请求、收到 `client_too_old` 的连接、被软拦截的旧版本请求、成功的 `attach`、转发的帧数。
+- 不含 IP、频道、会话号和验证码。版本只按策略里 `known_versions` 列出的已发布版本分别计数，其余记为 `other`；策略没有列出版本时，每小时最多分别记 32 个版本（`UNLISTED_VERSION_SLOTS`），内存有上限。
+- 统计按连接计数，不按设备：中继没有设备标识，也不该有。中继看不到用户是否确认了安全码（之后只转发密文），所以只统计「两端会合」（两端都加入了会话），不叫「配对成功」。
+
+回归测试：`crates/voltip-relay/src/stats.rs@counts_go_to_their_hour_and_48_hours_are_kept`、`regression_versions_are_named_only_from_the_policy_or_up_to_the_hours_slots`；`crates/voltip-relay/src/core.rs@the_statistics_count_what_happened_and_name_no_device`。
+
 ## 解除配对
 
 - 任何一边「忘记」对方时，如果对方此刻在线，先经加密通道发一条 `unpair`（`docs/protocol.md`），再删掉记录、断开会话。对方收到后同样忘记发送方（不回发），发出 `Unpaired` 事件，界面提示「「名字」解除了与这台设备的配对」，设备列表随之更新。

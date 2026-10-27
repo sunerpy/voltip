@@ -23,7 +23,7 @@ import kotlinx.coroutines.cancel
 import org.json.JSONObject
 
 /**
- * The floating bubble's foreground service (docs/dictation.md §20.12, docs/mobile-rn.md §8): it
+ * The floating bubble's foreground service (docs/dictation.md §20.12, docs/mobile-rn.md §11): it
  * keeps [BubbleOverlay] on the screen over other apps and a notification with 关闭 in the shade,
  * and holds the process with the microphone type, which lets the bubble record while another app
  * is in front. Android allows that type only to a service started while the app is in front, so

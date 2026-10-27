@@ -6,7 +6,7 @@
 
 | type | 方向 | 字段 | 说明 |
 |---|---|---|---|
-| `hello` | C→R | `client_version` | 连接后第一帧；不携带任何设备身份 |
+| `hello` | C→R | `client_version`, `features?` | 连接后第一帧；不携带任何设备身份。`features` 是客户端认识的新行为（0.1.10 起 `["client_too_old"]`），旧客户端不带，中继据此决定怎样拒绝过低的版本（`docs/pairing.md`「最低版本」） |
 | `hello_ack` | R→C | `relay_version`, `limits{code_attempts, session_ttl_secs}` | |
 | `create_session` | C→R | `ttl_secs?` | 电脑端创建配对会话 |
 | `session_created` | R→C | `session_id`, `code`, `expires_at` | `code` 为 6 位数字，只发给创建者 |
@@ -19,10 +19,12 @@
 | `attach` | C→R | `channel` (64 hex) | 已配对设备重逢：`channel = hex(SHA-256("voltip rendezvous v1" ‖ min(pubA,pubB) ‖ max(pubA,pubB)))`；一条连接可 attach 多个频道（每个可信设备一个） |
 | `attached` | R→C | `session_id`, `peer_online` | 频道绑定的会话 id（`forward` 用它）与对端是否在线 |
 | `peer_presence` | R→C | `session_id`, `online` | 频道对端上线 / 下线 |
-| `error` | R→C | `code`, `retry_after_secs?` | `invalid_code` / `session_expired` / `session_full` / `rate_limited` / `unsupported_version` / `not_joined` / `hello_required` / `session_already_active` / `invalid_channel` / `channel_full` / `malformed` |
+| `error` | R→C | `code`, `retry_after_secs?`, `channel?`, `min_version?` | `invalid_code` / `session_expired` / `session_full` / `rate_limited` / `unsupported_version` / `not_joined` / `hello_required` / `session_already_active` / `invalid_channel` / `channel_full` / `malformed` / `client_too_old`。`client_too_old` 只发给 `hello.features` 带它的客户端，带上 `min_version`（`x.y.z`），之后中继关闭连接；版本过低的旧客户端改收 `unsupported_version`（`docs/pairing.md`「最低版本」） |
 | `bye` | 双向 | | 优雅关闭 |
 
 Relay 永远看不到：Noise 握手之后的明文、静态公钥以外的身份信息、Safety Code。
+
+未知字段一律忽略：旧客户端读到 `error.min_version`、旧中继读到 `hello.features` 都照常解码（`the_minimum_version_fields_are_optional_both_ways`）。
 
 ## 2. 配对票据（二维码内容）
 

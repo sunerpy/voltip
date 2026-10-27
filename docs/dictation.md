@@ -1687,6 +1687,30 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
 - **未能插入**：Windows 的 `SendInput` 没有全部发出时（enigo 一律报「blocked by UIPI」：电脑已锁屏，或前台窗口的权限更高；锁屏时预检读不到前台窗口、也打不开输入桌面，所以照常去粘贴），`voltip-inject` 把它当作剪贴板兜底（`DeliveryError::Unavailable`，`FallbackCode::Other`）而不是失败：文字留在剪贴板，历史记录为「已复制到剪贴板」，胶囊按完成显示 2.5 秒，不再以错误停留 6 秒；手机显示「已放到电脑剪贴板：…」。其他原因未能插入、但已有文字时，电脑回报 `failed{code: failed, text}`，手机以提醒色显示「未能插入电脑当前的窗口，文字已保存在电脑的历史记录中：…」，不再显示电脑的技术原因。
 - **门禁**：Rust `voltip-inject` `regression_a_uipi_refusal_leaves_the_text_on_the_clipboard`；`voltip-protocol` `take_messages_roundtrip_and_are_validated`（`failed.text` 的往返、上限与截断）、`a_failure_with_text_reads_on_both_sides_of_an_upgrade`；`phone::desktop_phases_become_the_phones_take_states`（插入失败带文字、只有空白时照旧）；IPC 夹具（`settings_set_phone_talk`、`phone_take` 带文字的 `failed`、`Settings.phone_talk`）。TS：`apps/mobile-rn/src/features/PhoneMic.test.tsx`（滑动不取消、远离后取消，按住时不交出手势，点按开始 / 结束 / 取消与设置保存，拒绝开始后再点按，未能插入的提示）。
 
+### 20.12 悬浮球（2026-10-27 用户要求）
+
+用户 2026-10-27 提出、讨论后选定「悬浮球 + 剪贴板」：在其他应用上方显示一个说话按钮，识别结果放进剪贴板，用户在输入框中长按粘贴。不做输入法，不用无障碍服务。设计稿：Penpot「用量与额度」画板 17a–17d（悬浮球）与 18a–18b（设置页）。只在 Android 上。
+
+- **服务**（`modules/voltip-native` 的 `BubbleService.kt`）：前台服务，类型为麦克风（`foregroundServiceType="microphone"`），在其他应用上方放一个窗口（`TYPE_APPLICATION_OVERLAY`，`BubbleOverlay.kt`），通知栏保留一条通知，带「关闭」。Android 只允许应用在前台时启动麦克风类型的前台服务，所以只有应用自己启动它：设置页的开关，以及应用启动时（之前开着的话，`useBubbleSync`）。系统不会重启它（`START_NOT_STICKY`）；通知里的「关闭」把开关一并关掉。服务启动后，关掉应用的界面，悬浮球照常工作。
+- **进程里只有一个外壳**（`VoltipRuntime.kt`，docs/mobile-rn.md §11）：它持有进程唯一的 `VoltipShell` 和 `VoltipHost`，谁先需要谁启动；事件和电平帧分发给每个监听者（应用的 JavaScript、悬浮球）。中继的网络回调也在这里，与进程同生命周期。
+- **权限**：麦克风、「显示在其他应用上层」（`SYSTEM_ALERT_WINDOW`，在系统设置页里允许）、通知（Android 13 起的 `POST_NOTIFICATIONS`；之前的版本看通知是否被关掉）。三项都允许后开关才可用；清单另外声明 `FOREGROUND_SERVICE` 和 `FOREGROUND_SERVICE_MICROPHONE`，`app.json` 不再屏蔽 `SYSTEM_ALERT_WINDOW`。被永久拒绝的权限打开应用的系统设置页。
+- **说话**：
+  - 按住（缺省）：按下 180 ms 不动就开始录音，松开结束；手指离按下的位置超过 88 dp 再松开则取消（悬浮球变红，卡片写「松开取消」）。按下后先移动就是拖动悬浮球，松开时贴到较近的一边，位置记在 SharedPreferences，下次照原样显示。按住模式下轻点一下，卡片提示「按住悬浮球说话」。
+  - 轻点：点一次开始，再点一次结束，卡片上的「取消」丢弃这次录音。
+  - 录音、识别和润色与说话页的「在手机上识别」相同（`dictation_start` / `dictation_stop` / `dictation_cancel`，§20.7）：用手机自己的设置，结果由外壳的剪贴板注入器写进剪贴板。悬浮球只跟随自己开始的听写；应用里的说话页正在录音时，悬浮球变淡、不响应。
+  - 卡片：录音时显示电平（`audio_meter_start`，电平流 id 为 2^40，与 JavaScript 的流 id 不重叠）、计时和提示；处理中写「正在识别…」或「正在润色…」；完成后写「已复制 · 长按输入框粘贴」、识别出的文字和「再说一次」「不复制」，5 秒后收起；关掉「显示识别结果」时只在悬浮球上显示对勾 1.2 秒。失败时显示 3 秒：「没有听到声音」、「今日内置识别额度已用完」或「未完成：原因」。没有麦克风权限时提示到 Voltip 中允许。
+  - 「不复制」清空剪贴板：API 28 起 `clearPrimaryClip()`，API 26–27 写入空文本。「再说一次」开始一次点一下结束的录音（两种说话方式都一样）。
+- **文字**：悬浮球和通知上的文字都在 i18n 字典里（`mobile.bubble.native`）。应用每次开启悬浮球或修改它的设置时，把当前语言的文字一并交给原生端（`BubbleConfig.strings`，存进 SharedPreferences），所以语言跟随应用。
+- **设置页**（设置 › 悬浮球，`screens/Bubble.tsx`）：开关和完成了几项权限；三项权限各自的状态和入口；全部允许后是说话方式、AI 润色（与说话页和「AI 模型」共用 `refine_enabled`）、显示识别结果，以及今日的内置识别用量（§27）。页面回到前台时重新读取状态（权限是在系统设置里给的）。下方说明部分手机（小米、OPPO、vivo 等）还要允许 Voltip 后台运行，「查看设置方法」打开文档站（`GuidePage::Bubble`，docs/site/phone 的「悬浮球」一节）。
+- **用量**：悬浮球的听写就是这部手机的听写，用内置服务时计入这部手机的用量（§27），来源记为这台设备。
+- **未做**：
+  - 设计稿上的「1 分钟后清空剪贴板」：Android 10 起后台应用读不到剪贴板，无法确认里面仍是这次的文字，清空可能删掉用户之后复制的内容。
+  - 开始录音前不检查内置识别的额度：额度用完时这次录音以「今日内置识别额度已用完」结束，手机不保留录音（§26.8）。说话页在额度用完时不让开始录音（§27.7）。
+  - 设置里「用量」一行的「新」标记。
+  - 真机验证：本机没有模拟器，没有用 Device Farm；交给用户在真机上验收。厂商系统可能在后台关掉前台服务。
+  - Google Play：麦克风类型的前台服务要在 Play 管理中心声明用途并附演示视频（docs/runbook.md「发布」），由用户提交。
+- **门禁**：TS `apps/mobile-rn/src/features/Usage.test.tsx` 的「设置 › 悬浮球」5 条（逐项允许权限后才能开启；开启时交出字典里的文字并保存选项；系统没让它启动时提示；应用启动时恢复已开启的悬浮球并跟随应用的语言；没有原生端时设置里不显示）、`src/backend/bubble.test.ts` 2 条（交出的文字齐全、读回原生端的状态并拒绝读不懂的状态）。Kotlin 由 `scripts/build-android-rn.sh` 编译；APK 的清单（`aapt2 dump xmltree`）含上面四项权限和 `BubbleService`（`foregroundServiceType` 0x80）。
+
 ## 21. AI 预设（2026-09-29）
 
 **目标**：AI 润色按「预设」处理识别出的文字。内置八个预设，默认「校对」；用户可以复制内置预设或自己写，最多 30 个自定义预设；首页、标题栏、托盘都能切换，场景可以指定自己的预设。
@@ -2244,3 +2268,70 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - 语音编辑的录音缓存；手机 App 上的录音缓存与重新识别；试听、导出录音。
 - 重新识别一条已有条目的录音时，新条目的时长也计入首页统计（说话时长、节省时间），与原条目重复；没有区分重新识别得到的条目。用户决定（2026-10-26）：时长统计按现在即可，长录音也一样。
 - 原始录音文件损坏（而不只是截断）时，补全只能发现分片的损坏：原始文件里的坏数据会被当作声音编码。
+
+## 27. 内置服务的用量与每日额度（2026-10-27）
+
+**目标**：内置服务（§3）按设备每天限量，所有客户端显示今天用了多少、还剩多少、什么时候重置。内置服务的请求带上设备号和用途，服务端按设备计数，在每个答复里回报这台设备的今天；客户端另记一份本机记录（近 7 天、今日来源与用途、其他服务商），用于用量页。设计稿：Penpot「用量与额度」画板 11–16，统计规则见画板 19。
+
+### 27.1 起因与决定
+
+- 用户 2026-10-27 提出「所有端统计内置服务用量，显示当前用量和重置时间」。讨论后决定：按设备每天限量；每日上限为内置识别 **60 分钟**、内置润色 **100 次**（「识别60分钟 润色100次吧」）；0.1.9 及以前的请求不带设备号，按来源 IP 限量，数值相同（「暂时先按照IP限量」）；先上线只计数的「统计期」观察一两周，再在管理台切到限量；额度用完后仍可改用其他服务商或本机模型；每天北京时间 00:00 重置，界面按本机时区显示重置时刻。
+- 计数与限量在内置服务的网关上（私有仓库 `sunerpy/voltip-admin` 的 `gateway/`），上限由管理台（同一私有仓库的 `site/`，独立站点，只用 Cloudflare Access）设置，同步到网关（docs/runbook.md「内置服务的额度与管理台」）。这一节是客户端的部分和双方的约定。
+
+### 27.2 请求头与计量（`voltip_core::usage`）
+
+- **设备号**：`<数据目录>/usage-id`，首次使用时生成的随机 UUID v4，只由这个应用进程写；与配对密钥无关，不进备份（§4.6），不同步到手机。`voltip-server`（§23.5）只读不写 App 的数据目录：App 的 `usage-id` 存在时照用（同一台机器算一台设备），否则用它自己目录（`ProjectDirs` dev / voltip / voltip-server）里的。
+- **请求头**（只发给 `ProviderId::Builtin`，其他服务商收不到）：`X-Voltip-Device`、`X-Voltip-Client: voltip/<版本> (<平台>)`；识别另加 `X-Voltip-Purpose: take|preview` 和 `X-Voltip-Audio-Ms`（由 WAV 头算出的音频毫秒数）；润色加 `X-Voltip-Purpose: refine|edit`。
+- **统一入口**：每个识别和润色客户端都经 `dictation::engine_clients(factory, engines, quota, meter)` 构造（引擎启动、设置变化后重建、指定模型重新识别、本机语音服务）。它把 `Metering` 放进 `ResolvedEngines.metering`，`voltip-cloud` 据此只给内置服务加请求头、读回报；再把每条链路（主链路和每个候补模型，§3.5）的客户端包进 `MeteredTranscriber` / `MeteredRefiner`，答复成功时按这条链路实际的服务商记一条用量（`UsageEvent { at_ms, provider, model, service, purpose, amount, origin }`；识别为毫秒数，润色为 1）。
+- **来源**随每次调用传递（`AsrCall`、`RefineHints.origin`），没有共享的可变状态：手机发到这台电脑的录音为该手机（`start_from_origin`），指定模型重新识别为 `retake`，本机语音服务的请求为 `serve`，其余（这台设备上的听写、历史记录的 AI 处理、预设「试一试」）为 `this_device`。
+- **实时预览不重复计数**：流式模式下预览的解码标为 `preview`（§11），服务端不计；句子关闭时为 `take`。本机记录也不记预览。预览收到额度用完时停止这次预览，不再每秒重试。手机不发预览。
+
+### 27.3 服务端的回报
+
+- 内置服务的成功答复和额度用完的 429 都带 `X-Voltip-Quota: mode=count; basis=device; day=2026-10-27; reset=<unix 秒>; asr=<已用秒>/<上限秒或 ->; refine=<已用>/<上限或 ->`（`QuotaReport::parse_header`）。`mode` 为 `count`（统计期，只计数）或 `limit`（限量）；`basis` 为 `device` 或 `ip`（不带设备号的旧版本）。读不懂的回报丢弃，只记一条 debug 日志。
+- 额度查询：`GET {识别或润色的接口地址}/voltip/quota`（带应用令牌和上面两个请求头），答复 `{schema: 1, mode, basis, day, reset_at, asr: {used_seconds, limit_seconds}, refine: {used, limit}}`，读成同一个 `QuotaReport`（`voltip_cloud::HttpUsageProbe`）。
+- 额度用完：网关回 429，`code` 为 `insufficient_quota`（0.1.9 也认得，`voltip-asr` 的 `is_quota_exhausted`）。`AsrError` / `RefineError` / `DictationError::QuotaExhausted` 带上 `retry_at_ms`（取自回报的 `reset`）；`QuotaLedger::mark_until` 把内置模型记为用完直到北京时间 0 点，候补模型照常顺延（§3.5）。
+
+### 27.4 本机记录（`usage.json`）
+
+- `<数据目录>/usage.json`，按北京日期记每天每个服务商、服务、模型、用途和来源的用量，保留 35 天（`LEDGER_DAYS`）；读不出来时改名为 `usage.json.corrupt-<时间>`，从空记录开始。当天关闭过的提醒（`asr_near`、`asr_out`、`refine_near`、`refine_out`）也记在这里，第二天失效。
+- 视图（`LedgerView`）：近 7 天的内置识别秒数和润色次数（`days`）、今日内置识别的来源（`asr_origins`）与润色的用途（`refine_purposes`）、本月其他服务商的用量（`others`）、今天其他服务商的用量（`others_today`）。今天的数字以服务端的回报为准，往日与明细来自本机记录。
+
+### 27.5 刷新（`runtime/usage.rs`）
+
+- 核心在启动后、每 10 分钟（`USAGE_PROBE_INTERVAL`）、收到 `usage_refresh`、过了重置时刻 5 秒，以及重新检查中继连接时（`ReconnectRelay`：网络变化、应用回到前台，docs/pairing.md「重连」）查询额度（`UsageProbe`）；计时按墙上时钟，电脑睡醒后的第一个 tick 就会补上错过的查询；问的是正在使用的内置识别的地址，识别没用内置服务时问内置润色的地址，两者都没用时不问。每个答复里的回报也会更新数字。
+- 查询失败 60 秒后重试（`USAGE_RETRY`）；连续 60 秒没有回答（`USAGE_UNAVAILABLE_AFTER`）就把数字标为「无法获取」，保留上次的数字。用量从不阻止听写。
+- 过了重置时刻、服务端还没有新的回报时，视图把今天读作已用 0（核心和前端的 `currentQuota` 做法相同）。
+
+### 27.6 状态、命令与事件
+
+- `UiState.usage: UsageView { builtin, quota?, reported_at?, unavailable, days, asr_origins, refine_purposes, others, others_today, dismissed }`；变化时发 `usage` 事件。`builtin` 为假（构建里没有内置服务）时界面不显示用量。
+- 命令：`usage_refresh`（马上查询）、`usage_notice_dismiss { notice }`（当天不再显示这条提醒）。桌面与两个手机壳的命令表、IPC 契约与夹具同步。
+- `GuidePage::Usage` 打开文档站 recognition/cloud 的「内置服务的用量」一节（英文页为 Built-in usage）。站点不支持自定义锚点，链接用各语言标题自己的锚点。
+
+### 27.7 界面
+
+数字的写法与阈值在 `packages/shared/src/usage.ts`，两端共用：低于 80% 为常规色，80% 起变黄并显示剩余量，用完变红；统计期显示已用量和「暂不限量」；无法获取时显示「用量暂时无法获取」并提供「重试」；第一次回报之前显示「正在获取用量…」。识别以整分钟计（剩余不到 1 分钟时写「剩余不到 1 分钟」），润色以次计。
+
+- **电脑**（`apps/desktop`、`packages/ui/src/features/usage`）：
+  - 侧栏的用量卡片（画板 14）：两行进度条，写明已用和上限、重置时刻；点击打开「用量」页。统计期写「暂不限量」，两个服务都没用内置服务时显示本机统计并写「未使用内置服务，不限量」。侧栏不够高时收成一行（显示较紧张的服务），侧栏收起时是两个圆环，数字在悬停提示和无障碍名称里。构建里没有内置服务时没有卡片。
+  - 「用量」页：两张服务卡片（今日数字、剩余量、重置时刻与倒计时、近 7 天柱状图和上限虚线）、今日明细（识别的来源、润色的用途）、其他服务商本月的用量（按本机记录，并说明剩余额度到服务商处查看）。打开时查询一次。命令面板有「打开用量」。
+  - 首页：识别与润色的模型下面一行用量；从 80% 起出现提醒，用完时变红并说明重置时刻（关闭后当天不再出现）；识别用完、没有候补模型时，听写卡片写「内置语音识别今日额度已用完」，提供「改用本机模型」（没有下载本机模型时为「下载本机模型」，打开语音模型页的本机模型抽屉）和「打开语音模型」，开始按钮仍可用：录音保留在本机（§26），换模型后可以重新识别。候补模型顶替时提醒写明由哪个候补模型识别，卡片照常可用。
+  - 语音模型和 AI 模型页：内置服务卡片上一行用量，抽屉里有今日用量、计数规则、近 7 天和今日来源 / 用途，以及「了解内置服务的用量规则」。
+  - 悬浮胶囊：识别额度用完时写「今日内置识别额度已用完」，录音保留时注明；润色额度用完时写「未润色 · 今日 AI 润色额度已用完」。
+- **手机**（`apps/mobile-rn`）：
+  - 说话页在手机上识别、且用内置服务时，录音卡片最下面一行用量和进度条（画板 15a）；从 80% 起卡片下方有提醒（15b），有在线电脑时建议发送到电脑识别，否则建议在「语音模型」中换服务商；识别用完、没有候补模型时按钮置灰，不能开始录音（手机不保留录音），卡片写明重置时刻，提供「改为发送到 <电脑>」（有在线电脑时）和「换模型」（15c）。
+  - 设置 › 识别与润色多一行「用量」，副标题是两个服务的数字（16a）；「用量」页有两张服务卡片（含近 7 天）、其他服务商本月和「发送到电脑的录音计入电脑的用量」（16b）。
+  - 设置 › 悬浮球显示今日的内置识别用量（§20.12）。
+
+### 27.8 门禁
+
+- Rust：`usage` 模块（`a_header_reads_into_a_report`、`the_quota_answer_reads_into_the_same_report`、`a_report_reaches_the_owner_and_an_unreadable_one_is_dropped`、`a_metered_recogniser_tells_its_takes_with_their_length_and_origin_but_not_previews`、`a_metered_refiner_tells_clean_ups_and_edits_with_the_hints_origin`、`a_failed_request_uses_nothing`、`the_device_id_is_made_once_and_read_without_writing`）；`usage::ledger`（`the_record_keeps_35_days_and_survives_a_restart`、`the_record_charts_seven_days_and_breaks_today_down`）；`runtime::usage`（`the_first_tick_asks_and_no_second_question_goes_out_while_one_is_out`、`the_next_question_is_in_ten_minutes_or_just_after_the_reset`、`a_minute_of_failed_questions_shows_the_last_numbers_as_unavailable`、`a_day_that_ended_shows_as_todays_with_nothing_used`）；`dictation::engine`（`the_engines_clients_are_metered_from_the_start_and_after_every_rebuild`、`every_link_of_a_chain_is_metered_as_its_own_provider`、`every_take_is_recorded_with_its_origin`）；`dictation::redecode`（`previews_and_closed_sentences_say_what_they_are_for`、`a_used_up_quota_ends_the_preview_instead_of_asking_every_second`）；`dictation::fallback`（`a_used_up_built_in_day_is_skipped_until_its_reset`）；`voltip-asr` / `voltip-refine`（`metering_compares_its_headers_and_debug_names_them_only`、`the_reset_of_a_report_is_read_in_milliseconds`，以及 wiremock 的 `a_metered_request_says_who_asks_and_hands_the_report_on`、`a_metered_request_names_its_purpose_and_a_used_up_day_its_reset`、`a_used_up_daily_quota_says_when_it_is_reset`）；`voltip-cloud` 的 `only_the_built_in_service_is_told_who_asks`、`the_usage_probe_asks_the_built_in_service_for_the_day`；`tests/e2e.rs@regression_clean_ups_running_together_are_each_recorded_with_their_own_origin`（手机录音进行中，历史记录的 AI 处理和预设试一试同时运行，各自记为自己的来源）；本机语音服务的 `the_servers_takes_are_metered_as_the_servers`；`voltip-server` 的 `the_server_meters_as_the_apps_device_or_as_itself_and_never_writes_the_apps_directory`；IPC 契约夹具（`usage` 事件与状态、两条命令）。依赖时间和线程的测试在满载下各跑 200 次。
+- TS：`packages/shared/src/usage.test.ts`（数字、阈值、单行与汇总文字、重置时刻、提醒、近 7 天、候补模型）；`packages/ui/src/features/usage/Usage.test.tsx`；`apps/desktop/src/features/usage/usage.test.tsx`（侧栏卡片的各种状态与一行、两个圆环，用量页，命令面板，首页的单行、提醒与用完，悬浮胶囊，内置服务抽屉）；`apps/mobile-rn/src/features/Usage.test.tsx`（说话页的一行、提醒、用完时不能开始、改为发送到电脑、候补模型、其他服务商时不显示；设置 › 用量的各状态）。
+
+### 27.9 未做与偏离
+
+- 网关把计数放在 njs 共享内存里，网关容器重启后当天的计数清零（njs 0.8.10 没有持久化）；runbook 与隐私页写明。
+- 设备号随机、可重置（重装或伪造请求头可以拿到新的额度）：这是没有账号时的公平使用额度，不是安全边界，按 IP 的限流仍在（docs/threat-model.md）。旧版本按 IP 计数时，实时预览会重复计数，同一出口 IP 的旧版本用户共用一份额度。
+- 「其他服务商 · 本月」只显示本机记录的用量，不读服务商回报的剩余额度。
+- 与设计稿的差异：悬浮胶囊没有「换模型」按钮；识别用完时电脑的开始按钮仍可用（录音保留，换模型后重新识别）；用量页沿用标题栏的副标题，说明行放在页面里；侧栏「无法获取」的卡片没有「重试」（用量页有）；默认 720 px 高的窗口里侧栏卡片显示为一行；设计稿示例的润色上限 200 次按决定改为 100 次；手机设置里的「用量」一行没有「新」标记。

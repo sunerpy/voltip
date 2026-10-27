@@ -39,7 +39,7 @@ async function askFromSettings(
   return result === PermissionsAndroid.RESULTS.GRANTED;
 }
 
-/** The floating bubble through the native module (`BubbleService`, docs/mobile-rn.md §8). */
+/** The floating bubble through the native module (`BubbleService`, docs/mobile-rn.md §11). */
 function bubbleControl(native: VoltipNativeModule): BubbleControl {
   return {
     status: async () => parseBubbleStatus(await native.bubbleStatus()),

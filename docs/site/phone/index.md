@@ -31,6 +31,8 @@ The phone cannot tell which app you are typing in, so scenes are not matched by 
 
 These settings apply to recordings the phone recognises itself. A recording sent to a computer follows the computer's settings.
 
+With the built-in service, the bottom of the **Hold to talk** card shows today's use, and **Settings** › **Usage** has both services in detail. The built-in service counts each device's use by day: recordings the phone recognises itself count toward the phone, recordings sent to a computer toward the computer; see [Built-in usage](/recognition/cloud#built-in-usage). Once today's built-in recognition is used up, **Hold to talk** is unavailable for the day: send the recording to a computer that is online instead, or choose another provider under **Speech models**.
+
 **Recent results** shows the newest three of what the phone transcribed and the takes it sent to a computer, each with its time and where it went: inserted on a computer, or transcribed on the phone. Open one to see its details and share it, or copy it with the button at its end. **History** at the bottom lists everything: search it, filter it by time or by star, and see how many takes you made today, this week, this month and in total, and the time they saved, takes sent to a computer included. Open an entry to read the polished text and the transcript, and to copy, share, star or delete it; a long recording can also be processed again with an AI preset, and its subtitles (SRT) or text (TXT) shared to another app as a file. **Settings** › **History** turns saving off, sets how many entries are kept, or clears them all. These results are kept on the phone; while it syncs with a paired computer, a copy of what the phone recognised itself goes to the computer, see [The computer's history and settings](#the-computer-s-history-and-settings).
 
 **Settings** › **Feedback** reports a problem or suggests an idea, with screenshots or screen recordings from the gallery; before anything is sent, the page lists everything that goes along. See [Privacy](/privacy).
@@ -38,6 +40,25 @@ These settings apply to recordings the phone recognises itself. A recording sent
 **Settings** › **About Voltip** shows the version and the license, and opens the source code, the releases and the [privacy policy](/privacy) in the browser.
 
 When a paired computer is online, **Where to transcribe** at the top of **Talk** is set to **Send to** and the computer's name, and the recording goes to the computer as described below; choose **Transcribe on the phone** to have the phone transcribe it instead. A recording keeps its route until it ends, even if a computer comes online or goes offline in the meantime.
+
+## Floating bubble
+
+The floating bubble is a talk button over other apps: in a chat or a notes app, hold it and speak, and the result is copied to the phone's clipboard; touch and hold the text field to paste it. The phone recognises the recording itself, as **Transcribe on the phone** on the **Talk** page does, with the phone's own speech model, AI polish and dictionary.
+
+To turn it on:
+
+1. Open **Settings** › **Floating bubble**.
+2. Allow the three permissions in turn: the microphone; **Display over other apps** (choose **Open settings** and turn it on for Voltip in the system settings); and notifications (while the bubble shows, a notification stays in the shade, from which you can close the bubble at any time).
+3. Turn on **Show floating bubble**.
+
+To use it:
+
+- **Hold to talk** (the default): hold the bubble and speak, release to finish; to cancel, move the finger well away from where it pressed before releasing, and the bubble turns red. Drag the bubble right away to move it; when released, it moves to the nearer side of the screen and keeps that place.
+- **Tap to start, tap to finish**: tap once to start recording and once more to finish; while recording, **Cancel** on the card discards it.
+- When the text is ready, the bubble shows *Copied · touch and hold a text field to paste* and the text for 5 seconds: **Talk again** records again, **Don't copy** clears the clipboard. With **Show the result** off, the bubble only shows a check mark for a moment.
+- **AI polish** is the same setting as on the **Talk** and AI models pages. With the built-in service, the bubble's recordings count toward this phone's [usage](/recognition/cloud#built-in-usage).
+
+The bubble keeps working after you close Voltip's screens; choose **Close** in its notification, or turn it off under **Settings** › **Floating bubble**, to stop it. Some phones (such as Xiaomi, OPPO and vivo) need Voltip allowed to start automatically or run in the background in the system settings, or the system may close the bubble; where that is depends on the phone, usually under the app management or battery settings.
 
 ## Pairing
 

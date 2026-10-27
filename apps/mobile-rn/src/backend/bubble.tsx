@@ -1,4 +1,4 @@
-// The floating bubble's native side as the screens reach it (docs/mobile-rn.md §8; the Kotlin
+// The floating bubble's native side as the screens reach it (docs/mobile-rn.md §11; the Kotlin
 // `BubbleService` of modules/voltip-native): its permissions and state, switching it on and off,
 // and its options. The app hands in the real one (Root.tsx), tests a fake; without one 设置 shows no
 // 悬浮球. The bubble's own texts come from the dictionaries like every other (AGENTS.md): the app

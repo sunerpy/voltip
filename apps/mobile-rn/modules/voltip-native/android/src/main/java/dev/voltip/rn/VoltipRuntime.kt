@@ -19,7 +19,7 @@ import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * The process's one Rust shell and its one host (docs/mobile-rn.md §8). The app's JavaScript
+ * The process's one Rust shell and its one host (docs/mobile-rn.md §11). The app's JavaScript
  * (through [VoltipNativeModule]) and the floating bubble ([BubbleService]) both reach the shell
  * here, so it starts once, whichever of them comes first, and keeps running while either needs
  * it; the host hands every event and stream frame to each [Listener] (the module while the
