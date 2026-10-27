@@ -6,8 +6,19 @@
     <!-- The relay link checks its socket when the network changes (docs/pairing.md 「重连」):
          VoltipNativeModule's network callback. A normal permission, no prompt. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- The floating bubble (docs/dictation.md §20.12): a talk button over other apps, recording
+         while another app is in front from a foreground service of the microphone type, with a
+         notification that closes it (BubbleService). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application>
+        <service
+            android:name="dev.voltip.rn.BubbleService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
         <!-- History exports go to the share sheet as files (VoltipHost.shareFile). -->
         <provider
             android:name="dev.voltip.rn.VoltipFileProvider"

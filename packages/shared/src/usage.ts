@@ -194,6 +194,30 @@ export function usageInline(
   }
 }
 
+/** Both services in one line, as the phone's 设置 › 用量 row says it (Penpot 「用量与额度」 board
+ *  16a): `识别 23 / 60 分钟 · 润色 41 / 100 次`, what is left from 80 % on, 已用完 at the limit, the
+ *  amounts with 暂不限量 in the counting period; one line for the day when it cannot be told. */
+export function usageSummary(
+  view: UsageView,
+  nowMs: number,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  const asr = serviceUsage(view, "asr", nowMs);
+  if (asr.tone === "unknown") return translate(locale, "usage.unavailableBody");
+  if (asr.tone === "pending") return translate(locale, "usage.pending");
+  const llm = serviceUsage(view, "llm", nowMs);
+  const part = (usage: ServiceUsage) =>
+    translate(
+      locale,
+      usage.tone === "ok" || usage.tone === "unlimited"
+        ? "usage.card.compactNumbers"
+        : "usage.card.compactValue",
+      { service: translate(locale, `usage.short.${usage.kind}`), value: usageValue(usage, locale) },
+    );
+  const line = `${part(asr)} · ${part(llm)}`;
+  return asr.tone === "unlimited" ? `${line} · ${translate(locale, "usage.unlimited")}` : line;
+}
+
 /** `00:00` or `16:00`: the local clock time of a reset. */
 export function resetClock(resetAtMs: number): string {
   return shortClockLabel(resetAtMs);

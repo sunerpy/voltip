@@ -32,6 +32,8 @@ export type RootParams = {
   HistorySettings: undefined;
   Network: undefined;
   Feedback: undefined;
+  Usage: undefined;
+  Bubble: undefined;
   ComputerSettings: { desktop: string };
   Entry: { id: string };
   MirrorEntry: { desktop: string; id: string };

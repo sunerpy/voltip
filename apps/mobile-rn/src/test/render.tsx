@@ -4,6 +4,7 @@ import { fireEvent, render, screen } from "@testing-library/react-native";
 import { MockBackend, type MockBackendOptions } from "@voltip/shared/mock";
 
 import { App } from "../App";
+import type { BubbleControl } from "../backend/bubble";
 
 export const METRICS = {
   frame: { x: 0, y: 0, width: 412, height: 915 },
@@ -22,17 +23,20 @@ export async function renderApp({
   mock,
   language = "zh-CN",
   accent = null,
+  bubble,
 }: {
   backend?: MockBackend;
   mock?: MockBackendOptions;
   language?: string;
   /** The wallpaper's colour the system would hand over (Android 12+). */
   accent?: string | null;
+  /** The floating bubble's native side; none by default, as on a build without it. */
+  bubble?: BubbleControl;
 } = {}) {
   const core = backend ?? new MockBackend({ role: "phone", ...mock });
   backends.add(core);
   const view = await render(
-    <App backend={core} language={language} metrics={METRICS} accent={accent} />,
+    <App backend={core} language={language} metrics={METRICS} accent={accent} bubble={bubble} />,
   );
   return { ...view, backend: core };
 }

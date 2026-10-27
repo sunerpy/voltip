@@ -3149,6 +3149,8 @@ export const zhCN = {
       historySettings: "历史记录",
       feedback: "反馈",
       network: "网络",
+      usage: "用量",
+      bubble: "悬浮球",
     },
     tab: { label: "主导航", talk: "说话", history: "记录", settings: "设置" },
     settings: {
@@ -3173,6 +3175,8 @@ export const zhCN = {
       networkSystem: "跟随系统",
       networkOff: "不使用代理",
       networkManual: "代理 {server}",
+      bubbleOn: "已开启",
+      bubbleOff: "在其他应用上方显示说话按钮",
     },
     /** docs/dictation.md §24: what the phone's network page says differently. */
     network: {
@@ -3418,6 +3422,99 @@ export const zhCN = {
         failed: "未插入：{message}",
         microphone: "麦克风打不开：{message}",
         offline: "电脑已离线",
+      },
+    },
+    /** The built-in service's usage on the phone (docs/dictation.md §27; Penpot 「用量与额度」
+     *  boards 15–16): the talk card's line and notices while the phone recognises, and 设置 › 用量. */
+    usage: {
+      intro: "这部手机 · {reset}",
+      computerNote: "发送到电脑的录音计入电脑的用量。",
+      othersNote: "按这部手机的记录统计，可能与服务商的账单不同。",
+      notice: {
+        asr_near: {
+          title: "内置识别今日剩余 {amount}",
+          body: "{reset}；也可以发送到电脑识别。",
+          alone: "{reset}；也可以在「语音模型」中选择其他服务商。",
+        },
+        asr_out: {
+          title: "内置识别今日额度已用完",
+          body: "{countdown}重置，可改为发送到电脑识别。",
+          alone: "{countdown}重置，可以在「语音模型」中选择其他服务商。",
+          fallback: "{reset}。在此之前由候补模型 {model} 识别。",
+        },
+        refine_near: {
+          title: "内置 AI 润色今日剩余 {amount}",
+          body: "{reset}。用完后识别结果直接复制，不经润色。",
+        },
+        refine_out: {
+          title: "内置 AI 润色今日额度已用完",
+          body: "识别结果将直接复制，不经润色。{reset}；也可以在「AI 模型」中选择其他服务商。",
+          fallback: "{reset}。在此之前由候补模型 {model} 润色。",
+        },
+      },
+      /** The talk card while the built-in recognition is used up and nothing stands in (board 15c). */
+      out: {
+        title: "今日内置识别额度已用完",
+        body: "{reset} · 可以改为发送到电脑，由电脑识别",
+        alone: "{reset} · 可以在「语音模型」中换用其他服务商",
+        toDesktop: "改为发送到 {name}",
+        switch: "换模型",
+      },
+    },
+    /** 设置 › 悬浮球 (docs/dictation.md §20.12; Penpot 「用量与额度」 boards 17–18): a talk button over
+     *  other apps, the result on the clipboard. */
+    bubble: {
+      lede: "在其他应用上方显示一个说话按钮。识别结果复制到剪贴板，在输入框中长按即可粘贴。",
+      show: "显示悬浮球",
+      needs: "需要先完成下面的权限设置",
+      on: "已开启 · 通知栏中可随时关闭",
+      progress: "已完成 {done} / {total} 项",
+      permissions: "需要的权限",
+      microphone: "麦克风",
+      microphoneBody: "用于录音",
+      overlay: "显示在其他应用上层",
+      overlayBody: "在系统设置中允许，用于显示悬浮球",
+      notifications: "通知",
+      notificationsBody: "悬浮球显示时，通知栏保留一条可关闭的通知",
+      granted: "已允许",
+      allow: "允许",
+      openSettings: "去设置",
+      vendor:
+        "部分手机（如小米、OPPO、vivo）还需要在系统设置中允许 Voltip 后台运行，否则悬浮球可能被系统关闭。",
+      vendorLink: "查看设置方法",
+      mode: "说话方式",
+      modeHold: "按住说话",
+      modeTap: "轻点开始，再点结束",
+      result: "识别结果",
+      refine: "AI 润色",
+      refineBody: "按「AI 模型」中的预设处理后再复制",
+      showResult: "显示识别结果",
+      showResultBody: "复制后在悬浮球旁显示 5 秒",
+      usage: "使用内置服务时计入这部手机的用量 · {usage}",
+      failed: "悬浮球未能开启：{message}",
+      notStarted: "悬浮球未能开启，请稍后重试",
+      /** What the bubble itself shows (its Kotlin service reads these from the app). */
+      native: {
+        channel: "悬浮球",
+        title: "悬浮球已开启",
+        bodyHold: "按住悬浮球说话，识别结果复制到剪贴板",
+        bodyTap: "轻点悬浮球说话，识别结果复制到剪贴板",
+        close: "关闭",
+        label: "Voltip 悬浮球",
+        recordingHold: "松开结束 · 上滑取消",
+        recordingTap: "轻点悬浮球结束",
+        releaseCancel: "松开取消",
+        cancel: "取消",
+        processing: "正在识别…",
+        refining: "正在润色…",
+        copied: "已复制 · 长按输入框粘贴",
+        again: "再说一次",
+        discard: "不复制",
+        noSpeech: "没有听到声音",
+        failed: "未完成：{message}",
+        quota: "今日内置识别额度已用完",
+        holdHint: "按住悬浮球说话",
+        microphone: "需要麦克风权限，请在 Voltip 中允许",
       },
     },
     recent: {

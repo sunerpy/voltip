@@ -23,6 +23,7 @@ import {
   usageOriginNote,
   usagePurposeName,
   usagePurposeNote,
+  usageSummary,
   usageValue,
   usageWeek,
   usableFallback,
@@ -217,6 +218,22 @@ describe("texts", () => {
     expect(providerUseAmount({ provider: "local", service: "asr", amount: 7800 })).toBe(
       "2 小时 10 分",
     );
+  });
+});
+
+describe("usageSummary", () => {
+  it("says both services in one line for the phone's settings row", () => {
+    expect(usageSummary(view(), NOW)).toBe("识别 23 / 60 分钟 · 润色 41 / 100 次");
+    const near = view({
+      quota: report({ asr: { used_seconds: 52 * 60, limit_seconds: 3600 }, refine: { used: 100, limit: 100 } }),
+    });
+    expect(usageSummary(near, NOW)).toBe("识别剩余 8 分钟 · 润色已用完");
+    expect(usageSummary(view({ quota: report({ mode: "count" }) }), NOW)).toBe(
+      "识别 23 分钟 · 润色 41 次 · 暂不限量",
+    );
+    expect(usageSummary(view({ unavailable: true }), NOW)).toBe("用量暂时无法获取");
+    expect(usageSummary(view({ quota: undefined }), NOW)).toBe("正在获取用量…");
+    expect(usageSummary(view(), NOW, "en")).toBe("Speech 23 / 60 min · Polish 41 / 100 uses");
   });
 });
 

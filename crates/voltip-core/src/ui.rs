@@ -283,6 +283,9 @@ pub enum GuidePage {
     /// The built-in service's usage and daily limits (docs/site/recognition/cloud.md, its
     /// `built-in-usage` section; docs/dictation.md §27).
     Usage,
+    /// The phone's floating bubble and the background settings some phones need for it
+    /// (docs/site/phone/index.md, its `floating-bubble` section; docs/dictation.md §20.12).
+    Bubble,
 }
 
 impl GuidePage {
@@ -294,6 +297,7 @@ impl GuidePage {
             Self::Privacy => "privacy",
             Self::Mcp => "recognition/mcp",
             Self::Usage => "recognition/cloud#built-in-usage",
+            Self::Bubble => "phone/#floating-bubble",
         };
         let zh = locale.trim().to_ascii_lowercase().starts_with("zh");
         format!("{GUIDE_SITE}/{}{path}", if zh { "zh/" } else { "" })
@@ -764,6 +768,9 @@ mod tests {
         assert_eq!(GuidePage::Usage.url("zh-CN"), "https://voltip.firlab.app/zh/recognition/cloud#built-in-usage");
         assert_eq!(GuidePage::Usage.url("en"), "https://voltip.firlab.app/recognition/cloud#built-in-usage");
         assert_eq!(serde_json::to_string(&GuidePage::Usage).unwrap(), r#""usage""#);
+        assert_eq!(GuidePage::Bubble.url("zh-CN"), "https://voltip.firlab.app/zh/phone/#floating-bubble");
+        assert_eq!(GuidePage::Bubble.url("en"), "https://voltip.firlab.app/phone/#floating-bubble");
+        assert_eq!(serde_json::to_string(&GuidePage::Bubble).unwrap(), r#""bubble""#);
         assert_eq!(serde_json::to_string(&ProjectLink::Feedback).unwrap(), r#""feedback""#);
         assert_eq!(serde_json::from_str::<ProjectLink>(r#""source""#).unwrap(), ProjectLink::Source);
     }
