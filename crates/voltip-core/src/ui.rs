@@ -281,27 +281,38 @@ pub enum GuidePage {
     /// AI 工具接入 (docs/site/recognition/mcp.md; docs/dictation.md §25).
     Mcp,
     /// The built-in service's usage and daily limits (docs/site/recognition/cloud.md, its
-    /// `built-in-usage` section; docs/dictation.md §27).
+    /// 「内置服务的用量」 / "Built-in usage" section; docs/dictation.md §27).
     Usage,
     /// The phone's floating bubble and the background settings some phones need for it
-    /// (docs/site/phone/index.md, its `floating-bubble` section; docs/dictation.md §20.12).
+    /// (docs/site/phone/index.md, its 「悬浮球」 / "Floating bubble" section; docs/dictation.md §20.12).
     Bubble,
 }
 
 impl GuidePage {
     /// The page in the language of `locale` (a BCP 47 tag such as `zh-CN` or `en`): Chinese for
-    /// `zh…`, English otherwise.
+    /// `zh…`, English otherwise. A section is the anchor the site gives its heading, which is the
+    /// heading's own words in each language; it is percent-encoded, since a URL with raw Chinese
+    /// characters is not one every opener takes (macOS before 14 refuses it).
     pub fn url(self, locale: &str) -> String {
-        let path = match self {
-            Self::Service => "recognition/service",
-            Self::Privacy => "privacy",
-            Self::Mcp => "recognition/mcp",
-            Self::Usage => "recognition/cloud#built-in-usage",
-            Self::Bubble => "phone/#floating-bubble",
+        let (en, zh) = match self {
+            Self::Service => ("recognition/service", "recognition/service"),
+            Self::Privacy => ("privacy", "privacy"),
+            Self::Mcp => ("recognition/mcp", "recognition/mcp"),
+            Self::Usage => ("recognition/cloud#built-in-usage", "recognition/cloud#内置服务的用量"),
+            Self::Bubble => ("phone/#floating-bubble", "phone/#悬浮球"),
         };
-        let zh = locale.trim().to_ascii_lowercase().starts_with("zh");
-        format!("{GUIDE_SITE}/{}{path}", if zh { "zh/" } else { "" })
+        let (prefix, path) = if locale.trim().to_ascii_lowercase().starts_with("zh") { ("zh/", zh) } else { ("", en) };
+        let page = match path.split_once('#') {
+            Some((page, section)) => format!("{page}#{}", percent_encode(section)),
+            None => path.to_owned(),
+        };
+        format!("{GUIDE_SITE}/{prefix}{page}")
     }
+}
+
+/// `s` with every byte outside RFC 3986's unreserved set as `%XX`.
+fn percent_encode(s: &str) -> String {
+    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { char::from(b).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
 /// A GPU the local engines can run on (docs/dictation.md §10.6).
@@ -765,10 +776,15 @@ mod tests {
         assert_eq!(GuidePage::Mcp.url("zh-CN"), "https://voltip.firlab.app/zh/recognition/mcp");
         assert_eq!(GuidePage::Mcp.url("en"), "https://voltip.firlab.app/recognition/mcp");
         assert_eq!(serde_json::to_string(&GuidePage::Mcp).unwrap(), r#""mcp""#);
-        assert_eq!(GuidePage::Usage.url("zh-CN"), "https://voltip.firlab.app/zh/recognition/cloud#built-in-usage");
+        // The anchor is the Chinese heading 内置服务的用量, percent-encoded.
+        assert_eq!(
+            GuidePage::Usage.url("zh-CN"),
+            "https://voltip.firlab.app/zh/recognition/cloud#%E5%86%85%E7%BD%AE%E6%9C%8D%E5%8A%A1%E7%9A%84%E7%94%A8%E9%87%8F"
+        );
         assert_eq!(GuidePage::Usage.url("en"), "https://voltip.firlab.app/recognition/cloud#built-in-usage");
         assert_eq!(serde_json::to_string(&GuidePage::Usage).unwrap(), r#""usage""#);
-        assert_eq!(GuidePage::Bubble.url("zh-CN"), "https://voltip.firlab.app/zh/phone/#floating-bubble");
+        // 悬浮球, percent-encoded.
+        assert_eq!(GuidePage::Bubble.url("zh-CN"), "https://voltip.firlab.app/zh/phone/#%E6%82%AC%E6%B5%AE%E7%90%83");
         assert_eq!(GuidePage::Bubble.url("en"), "https://voltip.firlab.app/phone/#floating-bubble");
         assert_eq!(serde_json::to_string(&GuidePage::Bubble).unwrap(), r#""bubble""#);
         assert_eq!(serde_json::to_string(&ProjectLink::Feedback).unwrap(), r#""feedback""#);

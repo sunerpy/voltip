@@ -53,6 +53,16 @@ describe("usage of the built-in service (docs/dictation.md section 27)", () => {
       expect(spy).toHaveBeenCalledWith("usage_refresh");
     });
 
+    it("regression: the English heading stays on one line beside the reset time", async () => {
+      // "Today's usage" wrapped onto two lines next to "Resets 00:00" in the sidebar's width.
+      renderApp({ mock: { builtIn: BUILT_IN, usage: sampleUsage("ok") }, systemLanguage: "en-US" });
+      const card = await screen.findByTestId("sidebar-usage-card");
+      const title = within(card).getByTestId("sidebar-usage-title");
+      expect(title).toHaveTextContent(/^Usage$/);
+      expect(title).toHaveClass("shrink-0", "whitespace-nowrap");
+      expect(card).toHaveTextContent(/Resets \d\d:\d\d/);
+    });
+
     it("turns amber from 80 % and red at the limit, the one line saying what is left", async () => {
       withUsage("near");
       const card = await screen.findByTestId("sidebar-usage-card");

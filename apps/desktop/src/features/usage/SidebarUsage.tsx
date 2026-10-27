@@ -171,8 +171,12 @@ function FullUsage({ card, active, disabled, onOpen }: PartProps) {
       className={cx(CARD_CLASS, edge(active), FULL_ONLY, "mt-3 flex-col gap-2 px-3.5 py-3")}>
       <span className="flex items-center gap-1.5">
         <Icon name="gauge" size={14} className={cx("shrink-0", gaugeTone(card))} />
-        <span className="text-[12px] font-medium text-fg">{t("usage.title")}</span>
-        <span className="ml-auto truncate text-[11px] text-fg-subtle">{card.right}</span>
+        <span
+          className="shrink-0 whitespace-nowrap text-[12px] font-medium text-fg"
+          data-testid="sidebar-usage-title">
+          {t("usage.card.title")}
+        </span>
+        <span className="ml-auto min-w-0 truncate text-[11px] text-fg-subtle">{card.right}</span>
         <Icon name="chevronRight" size={12} className="shrink-0 text-fg-subtle" />
       </span>
       {card.unknown ? (

@@ -346,6 +346,9 @@ export const en: Messages = {
     },
     builtinLine: "Built-in service · {usage}",
     card: {
+      // "Today's usage" and "Resets 00:00" do not fit side by side in the sidebar; the card
+      // opens the Usage page, and the reset time says it is today's.
+      title: "Usage",
       open: "Open Usage",
       own: "This device",
       ownNote: "Not using the built-in service; no limit",

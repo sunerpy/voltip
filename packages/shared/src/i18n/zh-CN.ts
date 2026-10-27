@@ -365,6 +365,8 @@ export const zhCN = {
     builtinLine: "内置服务 · {usage}",
     /** The sidebar card (board 14). */
     card: {
+      /** The full card's heading, on one line beside the reset time. */
+      title: "今日用量",
       open: "打开「用量」页",
       own: "本机统计",
       ownNote: "未使用内置服务，不限量",
