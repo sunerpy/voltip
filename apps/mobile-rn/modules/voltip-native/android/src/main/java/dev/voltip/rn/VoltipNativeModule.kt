@@ -113,6 +113,13 @@ class VoltipNativeModule : Module() {
             if (front != null) front.startActivity(intent) else context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
 
+        AsyncFunction("bubbleOpenAccessibilitySettings") {
+            val context = appContext.reactContext?.applicationContext ?: throw Exceptions.ReactContextLost()
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            val front = appContext.currentActivity
+            if (front != null) front.startActivity(intent) else context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+
         /** The system's notification settings for this app (a permission refused for good). */
         AsyncFunction("bubbleOpenNotificationSettings") {
             val context = appContext.reactContext?.applicationContext ?: throw Exceptions.ReactContextLost()
