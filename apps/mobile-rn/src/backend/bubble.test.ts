@@ -13,6 +13,8 @@ describe("the bubble's bridge", () => {
     expect(zh.copied).toBe("已复制 · 长按输入框粘贴");
     // The handle of a bubble tucked into the edge, and the screen reader's way to tuck it there.
     expect([zh.expand, zh.stow]).toEqual(["展开悬浮球", "收起到屏幕边缘"]);
+    expect(zh.releasePaste).toBe("松开粘贴 · 识别后自动插入");
+    expect(zh.pasteFallback).toBe("未能粘贴 · 已复制到剪贴板");
     expect(bubbleStrings(createTranslator("en").t).close).toBe("Close");
   });
 
@@ -25,6 +27,9 @@ describe("the bubble's bridge", () => {
         mode: "tap",
         showResult: false,
         showDiscard: true,
+        pasteEnabled: true,
+        accessibilityEnabled: false,
+        autoStowSeconds: 5,
       }),
     );
     expect(status).toEqual({
@@ -34,6 +39,9 @@ describe("the bubble's bridge", () => {
       mode: "tap",
       showResult: false,
       showDiscard: true,
+      pasteEnabled: true,
+      accessibilityEnabled: false,
+      autoStowSeconds: 5,
     });
     expect(grantedCount(status.permissions)).toBe(2);
     expect(() => parseBubbleStatus("[]")).toThrow("not an object");
