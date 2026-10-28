@@ -8,7 +8,7 @@
 import { useFocusEffect } from "@react-navigation/native";
 import { usageInline } from "@voltip/shared";
 import { useCallback, useEffect, useState } from "react";
-import { AppState, StyleSheet, View } from "react-native";
+import { Alert, AppState, StyleSheet, View } from "react-native";
 import { Icon, Text } from "react-native-paper";
 
 import { useBackend, useUiState } from "../backend/BackendProvider";
@@ -129,12 +129,14 @@ function BubblePage({ control }: { control: BubbleControl }) {
   const done = grantedCount(status.permissions);
   const ready = done === 3;
   const save = (change: Partial<Omit<BubbleConfig, "strings">>) => {
-    control
+    return control
       .configure({
         enabled: status.enabled,
         mode: status.mode,
         showResult: status.showResult,
         showDiscard: status.showDiscard,
+        pasteEnabled: status.pasteEnabled,
+        autoStowSeconds: status.autoStowSeconds,
         ...change,
         strings: bubbleStrings(t),
       })
@@ -144,6 +146,7 @@ function BubblePage({ control }: { control: BubbleControl }) {
             shell.toast(t("mobile.bubble.notStarted"), "danger");
           }
           read();
+          return true;
         },
         (e: unknown) => {
           shell.toast(
@@ -151,6 +154,7 @@ function BubblePage({ control }: { control: BubbleControl }) {
             "danger",
           );
           read();
+          return false;
         },
       );
   };
@@ -224,6 +228,55 @@ function BubblePage({ control }: { control: BubbleControl }) {
               options={[
                 { value: "hold", label: t("mobile.bubble.modeHold"), testID: "bubble-mode-hold" },
                 { value: "tap", label: t("mobile.bubble.modeTap"), testID: "bubble-mode-tap" },
+              ]}
+            />
+          </Section>
+          <Section title={t("mobile.bubble.gestures")}>
+            <Rows>
+              <SwitchRow
+                title={t("mobile.bubble.pasteEnabled")}
+                description={t("mobile.bubble.pasteEnabledBody")}
+                value={status.pasteEnabled}
+                onValueChange={(enabled) => {
+                  if (!enabled) {
+                    void save({ pasteEnabled: false });
+                    return;
+                  }
+                  Alert.alert(t("mobile.bubble.pasteDisclosureTitle"), t("mobile.bubble.pasteDisclosure"), [
+                    { text: t("mobile.bubble.pasteDecline"), style: "cancel" },
+                    {
+                      text: t("mobile.bubble.pasteAgree"),
+                      onPress: () => {
+                        void save({ pasteEnabled: true }).then((saved) => {
+                          if (saved && !status.accessibilityEnabled) return control.openAccessibilitySettings();
+                        }).catch(() => undefined);
+                      },
+                    },
+                  ]);
+                }}
+                testID="bubble-paste-enabled"
+              />
+            </Rows>
+            {status.pasteEnabled && !status.accessibilityEnabled && (
+              <View style={{ paddingHorizontal: 16, paddingBottom: 12, gap: 8 }}>
+                <Hint testID="bubble-paste-needs-accessibility">{t("mobile.bubble.pasteNeedsService")}</Hint>
+                <Button compact testID="bubble-paste-open-settings" onPress={() => { void control.openAccessibilitySettings(); }}>
+                  {t("mobile.bubble.openSettings")}
+                </Button>
+              </View>
+            )}
+          </Section>
+          <Section title={t("mobile.bubble.autoStow")} padded>
+            <Segmented<"0" | "5" | "10" | "30">
+              label={t("mobile.bubble.autoStow")}
+              testID="bubble-auto-stow"
+              value={String(status.autoStowSeconds) as "0" | "5" | "10" | "30"}
+              onChange={(seconds) => { void save({ autoStowSeconds: Number(seconds) as 0 | 5 | 10 | 30 }); }}
+              options={[
+                { value: "0", label: t("mobile.bubble.autoStowOff"), testID: "bubble-auto-stow-off" },
+                { value: "5", label: "5s", testID: "bubble-auto-stow-5" },
+                { value: "10", label: "10s", testID: "bubble-auto-stow-10" },
+                { value: "30", label: "30s", testID: "bubble-auto-stow-30" },
               ]}
             />
           </Section>
