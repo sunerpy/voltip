@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/sunerpy/voltip/compare/v0.1.9...v0.2.0) (2026-10-28)
+
+
+### Features
+
+* 手机新增悬浮球，在其他应用中按住说话，文字自动复制到剪贴板 ([#196](https://github.com/sunerpy/voltip/issues/196)) ([11e384f](https://github.com/sunerpy/voltip/commit/11e384f34022b48da8e09175986d30cab8c945f1))
+* 扫码配对只需在手机上确认 ([11e384f](https://github.com/sunerpy/voltip/commit/11e384f34022b48da8e09175986d30cab8c945f1))
+* 版本过低时，电脑和手机会提示更新并给出更新入口 ([11e384f](https://github.com/sunerpy/voltip/commit/11e384f34022b48da8e09175986d30cab8c945f1))
+
+
+### Bug Fixes
+
+* 保存内置场景后，提示中显示场景名称，而不是内部分类名 ([11e384f](https://github.com/sunerpy/voltip/commit/11e384f34022b48da8e09175986d30cab8c945f1))
+* 修复部分网络下手机配对电脑失败的问题，连接失败时会显示原因 ([#193](https://github.com/sunerpy/voltip/issues/193)) ([11e384f](https://github.com/sunerpy/voltip/commit/11e384f34022b48da8e09175986d30cab8c945f1))
+* 手机记录详情中「已复制到剪贴板」的状态灯不再显示为灰色 ([11e384f](https://github.com/sunerpy/voltip/commit/11e384f34022b48da8e09175986d30cab8c945f1))
+
 ## [0.1.9](https://github.com/sunerpy/voltip/compare/v0.1.8...v0.1.9) (2026-10-26)
 
 
