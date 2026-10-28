@@ -58,10 +58,12 @@ PY
 
 screen_h=2400
 screen_w=1080
+density=420
+dp() { echo $(($1 * density / 160)); }
 
 # The centre of the first node whose text, content-desc or resource-id (the app's testID) matches
-# the regular expression $1 and that lies on the screen (between the status bar and the
-# navigation bar) and, unless it is one of the tabs, above the tab dock that floats over the
+# the regular expression $1 and that lies on the screen (between the status bar, 56 dp at most, and
+# the navigation bar) and, unless it is one of the tabs, above the tab dock that floats over the
 # page: a tap there lands on the dock (2026-10-13: 历史记录 under the dock opened the 记录 tab).
 # The tabs themselves only need to be on the screen: the dock keeps clear of the navigation bar
 # itself, and in landscape it sits lower than the 140 px kept free below a page's own controls
@@ -69,13 +71,16 @@ screen_w=1080
 # a rail at the left (docs/mobile-rn.md §5), and only a node on the rail is under it.
 # Each field is matched on its own, so `^…$` anchors a whole label.
 find_node() {
-  python3 - "$out/ui.xml" "$1" "$screen_h" "$screen_w" <<'PY'
+  python3 - "$out/ui.xml" "$1" "$screen_h" "$screen_w" "$(dp 56)" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
 try:
     nodes = list(ET.parse(sys.argv[1]).getroot().iter("node"))
 except Exception:
     sys.exit(1)
 pattern, height, width = re.compile(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+# Below the status bar: a tap above 56 dp may land on it (2026-10-28, a Pixel 9: 悬浮球's row at
+# 126 px, under the status bar, did not open).
+top = max(80, int(sys.argv[5]))
 # The bottom 140 px of a portrait screen belong to the navigation bar; on its side a phone has the
 # bar at the side or only the gesture handle below (a page's button there is 965 of 1080 px).
 margin = 140 if height > width else 60
@@ -101,7 +106,7 @@ for n in nodes:
             continue
         if not rail and y >= dock[1]:
             continue
-    if 80 < y < height - (16 if tab else margin) and x2 > x1 and y2 > y1:
+    if top < y < height - (16 if tab else margin) and x2 > x1 and y2 > y1:
         print(x, y)
         sys.exit(0)
 sys.exit(1)
@@ -149,6 +154,21 @@ tap_text() {
       scroll "$way"
     fi
     if dump && xy=$(find_node "$1"); then
+      # A page still moving after a scroll takes a tap as the end of its fling, not as a press
+      # (2026-10-28, a Pixel Tablet: 外观与语言 tapped mid-fling did not open): tap once the
+      # node stays where it was.
+      if [ "$way" != here ]; then
+        local again _
+        for _ in 1 2 3; do
+          sleep 1 # the fling runs out
+          again=
+          if dump; then again=$(find_node "$1") || again=; fi
+          [ "$again" = "$xy" ] && break
+          xy=$again
+          [ -n "$xy" ] || break
+        done
+        [ -n "$xy" ] || continue
+      fi
       # shellcheck disable=SC2086
       adb shell input tap $xy
       sleep 1 # the transition to the next page
@@ -222,6 +242,9 @@ size=$(adb shell wm size | tr -d '\r' | tail -1 | sed 's/.*: //')
 measure size "$size"
 screen_w=${size%x*}
 screen_h=${size#*x}
+density=$(adb shell wm density | tr -d '\r' | sed -n 's/.*: *\([0-9][0-9]*\).*/\1/p' | tail -1)
+measure density "${density:-unknown}"
+density=${density:-420}
 
 step "INSTALLED"
 if adb shell pm list packages | grep -q "package:$PKG\$"; then
@@ -325,10 +348,6 @@ take_outcome() {
   done
   echo "$outcome"
 }
-density=$(adb shell wm density | tr -d '\r' | sed -n 's/.*: *\([0-9][0-9]*\).*/\1/p' | tail -1)
-measure density "${density:-unknown}"
-density=${density:-420}
-dp() { echo $(($1 * density / 160)); }
 settle || echo "acceptance: the first take did not go idle"
 if dump && xy=$(find_node '^phone-mic-hold$'); then
   read -r x y <<<"$xy"
