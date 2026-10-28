@@ -104,6 +104,20 @@ internal class BubbleOverlay(
     private var holding = false
     /** The held finger is [cancelDistance] away from where it pressed: letting go cancels. */
     private var slidAway = false
+    private var pasteArmed = false
+    private var pasteRequested = false
+    private var pasteTarget: BubblePasteService.Target? = null
+    private var resultLabel = ""
+    private val autoStow = Runnable {
+        if (shown && !stowed && phase == Phase.IDLE && !own && !elsewhere && !dragging && !holding) stow(dockRight)
+    }
+    private fun scheduleAutoStow() {
+        main.removeCallbacks(autoStow)
+        val seconds = prefs.autoStowSeconds
+        if (seconds > 0 && phase == Phase.IDLE && !stowed && !own && !elsewhere && !holding && !dragging) {
+            main.postDelayed(autoStow, seconds * 1_000L)
+        }
+    }
     private var startedAt = 0L
     private var stage = ""
     private var resultText = ""
@@ -172,6 +186,7 @@ internal class BubbleOverlay(
         }
         VoltipRuntime.addListener(this)
         render()
+        scheduleAutoStow()
     }
 
     /** The options or texts changed. */
@@ -183,6 +198,7 @@ internal class BubbleOverlay(
             // Another screen size: the window stays on the screen.
             params.y = params.y.coerceIn(0, max(0, screenHeight() - dp(if (stowed) HANDLE_H_DP else BUBBLE_DP)))
             render()
+            scheduleAutoStow()
         }
     }
 
@@ -255,6 +271,15 @@ internal class BubbleOverlay(
                 stopMeter()
                 own = false
                 resultText = state.optString("text")
+                val pasted = pasteRequested && BubblePasteService.pasteText(resultText, pasteTarget)
+                resultLabel = when {
+                    pasted -> prefs.string("pasted", "")
+                    pasteRequested -> prefs.string("pasteFallback", "")
+                    else -> prefs.string("copied", "")
+                }
+                pasteRequested = false
+                pasteTarget = null
+                pasteArmed = false
                 haptic(confirm = true)
                 if (prefs.showResult) {
                     phase = Phase.RESULT
@@ -268,6 +293,9 @@ internal class BubbleOverlay(
             "failed" -> {
                 stopMeter()
                 own = false
+                pasteRequested = false
+                pasteTarget = null
+                pasteArmed = false
                 showMessage(
                     when (state.optString("code")) {
                         "no_speech" -> prefs.string("noSpeech", "")
@@ -280,6 +308,9 @@ internal class BubbleOverlay(
             "cancelled" -> {
                 stopMeter()
                 own = false
+                pasteRequested = false
+                pasteTarget = null
+                pasteArmed = false
                 toIdle()
                 return
             }
@@ -297,6 +328,11 @@ internal class BubbleOverlay(
             return
         }
         main.removeCallbacks(settle)
+        main.removeCallbacks(autoStow)
+        pasteTarget = if (held && prefs.pasteEnabled) BubblePasteService.captureTarget() else null
+        pasteArmed = false
+        pasteRequested = false
+        resultLabel = ""
         own = true
         tapTake = tap
         holding = held
@@ -326,6 +362,9 @@ internal class BubbleOverlay(
     private fun refuse(reason: String) {
         own = false
         holding = false
+        pasteRequested = false
+        pasteTarget = null
+        pasteArmed = false
         showMessage(failed(reason))
     }
 
@@ -394,7 +433,9 @@ internal class BubbleOverlay(
         phase = Phase.IDLE
         holding = false
         slidAway = false
+        pasteArmed = false
         render()
+        scheduleAutoStow()
     }
 
     /** 不复制: the result leaves the clipboard (API 28 clears it; before that it is replaced by
@@ -421,6 +462,7 @@ internal class BubbleOverlay(
     private val touch = View.OnTouchListener { _, e ->
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                main.removeCallbacks(autoStow)
                 downX = e.rawX
                 downY = e.rawY
                 dragging = false
@@ -433,8 +475,12 @@ internal class BubbleOverlay(
                 val dx = e.rawX - downX
                 val dy = e.rawY - downY
                 if (holding) {
-                    val away = hypot(dx, dy) > cancelDistance
-                    if (away != slidAway) {
+                    val choice = BubbleSwipeDecision.decide(dx, dy, dockRight, prefs.pasteEnabled, density, cancelDistance)
+                    val armed = choice == BubbleSwipeDecision.PASTE
+                    val away = choice == BubbleSwipeDecision.CANCEL
+                    if (armed != pasteArmed || away != slidAway) {
+                        if (armed && !pasteArmed) haptic(confirm = true)
+                        pasteArmed = armed
                         slidAway = away
                         render()
                     }
@@ -451,16 +497,26 @@ internal class BubbleOverlay(
                 main.removeCallbacks(press)
                 when {
                     dragging -> if (stowArmed) stow(stowRight) else dock()
-                    holding -> if (slidAway) cancelTake() else stopTake()
+                    holding -> when {
+                        pasteArmed -> {
+                            pasteRequested = true
+                            stopTake()
+                        }
+                        slidAway -> cancelTake()
+                        else -> stopTake()
+                    }
                     else -> tapped()
                 }
                 dragging = false
+                scheduleAutoStow()
             }
             MotionEvent.ACTION_CANCEL -> {
                 main.removeCallbacks(press)
                 if (dragging) dock()
                 if (holding) cancelTake()
+                pasteArmed = false
                 dragging = false
+                scheduleAutoStow()
             }
         }
         true
@@ -505,7 +561,10 @@ internal class BubbleOverlay(
         params.x = dp(EDGE_MARGIN_DP)
         update()
         prefs.dock = Pair(right, params.y.toFloat() / max(1, screenHeight()))
-        main.post { render() }
+        main.post {
+            render()
+            scheduleAutoStow()
+        }
     }
 
     /** While dragged: with the finger within [EDGE_ZONE_DP] of an edge the bubble sinks half into
@@ -542,6 +601,7 @@ internal class BubbleOverlay(
     /** Into the edge `right` says: the handle where the bubble was, its middle level with the
      *  bubble's (also across starts). The window changes once this touch is over. */
     private fun stow(right: Boolean) {
+        main.removeCallbacks(autoStow)
         disarmStow()
         val top = params.y.coerceIn(0, max(0, screenHeight() - dp(BUBBLE_DP)))
         stowed = true
@@ -571,6 +631,7 @@ internal class BubbleOverlay(
         render()
         bubble.translationX = if (dockRight) tuckOffset() else -tuckOffset()
         bubble.animate().translationX(0f).setDuration(SLIDE_MS).start()
+        scheduleAutoStow()
     }
 
     /** The handle: a tap, or a pull inward past [PULL_DP], brings the bubble back; dragged up or
@@ -743,7 +804,7 @@ internal class BubbleOverlay(
         bubble.visibility = View.VISIBLE
         val showCard = phase != Phase.IDLE && !dragging && !(phase == Phase.RESULT && !prefs.showResult)
         if (showCard) {
-            val key = listOf(phase, slidAway, tapTake, stage, message, resultText, prefs.showDiscard, screenWidth()).joinToString("|")
+            val key = listOf(phase, slidAway, pasteArmed, pasteRequested, tapTake, stage, message, resultText, resultLabel, prefs.showDiscard, screenWidth()).joinToString("|")
             if (key != cardKey) {
                 fillCard()
                 cardKey = key
@@ -797,6 +858,7 @@ internal class BubbleOverlay(
                 row.addView(time)
                 card.addView(row)
                 val hint = when {
+                    pasteArmed -> prefs.string("releasePaste", "")
                     slidAway -> prefs.string("releaseCancel", "")
                     tapTake -> prefs.string("recordingTap", "")
                     else -> prefs.string("recordingHold", "")
@@ -830,7 +892,7 @@ internal class BubbleOverlay(
                     gravity = Gravity.CENTER_VERTICAL
                 }
                 row.addView(checkBadge())
-                row.addView(text(prefs.string("copied", ""), 13f, Color.WHITE, bold = true).apply { setPadding(dp(8), 0, 0, 0) })
+                row.addView(text(resultLabel.ifEmpty { prefs.string("copied", "") }, 13f, Color.WHITE, bold = true).apply { setPadding(dp(8), 0, 0, 0) })
                 card.addView(row)
                 card.addView(
                     text(resultText, 14f, Color.WHITE).apply {
