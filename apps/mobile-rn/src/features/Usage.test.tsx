@@ -230,6 +230,9 @@ function fakeBubble(initial: Partial<BubbleStatus> = {}) {
     mode: "hold",
     showResult: true,
     showDiscard: false,
+    pasteEnabled: false,
+    accessibilityEnabled: false,
+    autoStowSeconds: 0,
     ...initial,
   };
   const ready = () =>
@@ -246,6 +249,8 @@ function fakeBubble(initial: Partial<BubbleStatus> = {}) {
         mode: config.mode,
         showResult: config.showResult,
         showDiscard: config.showDiscard,
+        pasteEnabled: config.pasteEnabled,
+        autoStowSeconds: config.autoStowSeconds,
         running: config.enabled && ready(),
       };
       return Promise.resolve(status);
@@ -262,6 +267,7 @@ function fakeBubble(initial: Partial<BubbleStatus> = {}) {
       grant("overlay");
       return Promise.resolve();
     }),
+    openAccessibilitySettings: jest.fn(() => Promise.resolve()),
   } satisfies BubbleControl;
   return control;
 }
@@ -393,6 +399,9 @@ describe("设置 › 悬浮球 (boards 18a/18b)", () => {
         mode: config.mode,
         showResult: config.showResult,
         showDiscard: config.showDiscard,
+        pasteEnabled: config.pasteEnabled,
+        accessibilityEnabled: false,
+        autoStowSeconds: config.autoStowSeconds,
       }),
     );
     await renderApp({ bubble });
