@@ -9,7 +9,6 @@ import { configure } from "@testing-library/react-native";
 // (AGENTS.md "Tests on CI's machines").
 configure({ asyncUtilTimeout: 10_000 });
 
-jest.mock("expo-navigation-bar", () => ({ NavigationBar: () => null, setStyle: jest.fn() }));
 jest.mock("expo-status-bar", () => ({ StatusBar: () => null }));
 jest.mock("expo-localization", () => ({ getLocales: () => [{ languageTag: "zh-CN" }] }));
 jest.mock("expo-haptics", () => ({

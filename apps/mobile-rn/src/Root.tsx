@@ -55,12 +55,19 @@ function bubbleControl(native: VoltipNativeModule): BubbleControl {
           )
         : native.bubbleOpenNotificationSettings().then(() => false),
     openOverlaySettings: () => native.bubbleOpenOverlaySettings(),
+    openAccessibilitySettings: () => native.bubbleOpenAccessibilitySettings(),
+    openAppSettings: () => native.bubbleOpenAppSettings(),
   };
 }
 
 type Boot =
   | { phase: "starting" }
-  | { phase: "ready"; backend: TauriBackend; bubble: BubbleControl }
+  | {
+      phase: "ready";
+      backend: TauriBackend;
+      bubble: BubbleControl;
+      navigationBar: (lightButtons: boolean) => void;
+    }
   | { phase: "failed"; reason: string };
 
 export function Root() {
@@ -95,6 +102,9 @@ export function Root() {
           phase: "ready",
           backend: new TauriBackend(transport),
           bubble: bubbleControl(native),
+          navigationBar: (light) => {
+            native.setNavigationBarButtons(light).catch(() => undefined);
+          },
         });
       })
       .catch((e: unknown) => {
@@ -106,7 +116,14 @@ export function Root() {
     };
   }, []);
   if (boot.phase === "ready")
-    return <App backend={boot.backend} accent={accent} bubble={boot.bubble} />;
+    return (
+      <App
+        backend={boot.backend}
+        accent={accent}
+        bubble={boot.bubble}
+        navigationBar={boot.navigationBar}
+      />
+    );
   // Before the translator exists (the locale is a core setting): the splash shows no text, a failure
   // the shell's own reason.
   return (

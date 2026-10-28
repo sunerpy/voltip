@@ -21,6 +21,11 @@ export interface ConfirmSpec {
   title: string;
   body: ReactNode;
   confirmLabel: string;
+  /** The button that declines; 取消 unless a confirmation names its own (手势粘贴's 暂不开启). */
+  cancelLabel?: string;
+  /** The confirming button's colour: the error colour for what cannot be undone (the default),
+   *  the primary colour for an agreement. */
+  tone?: "danger" | "primary";
   onConfirm: () => void;
 }
 
@@ -108,10 +113,10 @@ export function ShellProvider({
               onPress={() => {
                 setPending(undefined);
               }}>
-              {t("mobile.cancel")}
+              {pending?.cancelLabel ?? t("mobile.cancel")}
             </Button>
             <Button
-              textColor={theme.colors.error}
+              textColor={pending?.tone === "primary" ? theme.colors.primary : theme.colors.error}
               testID="shell-confirm"
               onPress={() => {
                 pending?.onConfirm();

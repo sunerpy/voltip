@@ -24,6 +24,8 @@ export async function renderApp({
   language = "zh-CN",
   accent = null,
   bubble,
+  navigationBar,
+  metrics = METRICS,
 }: {
   backend?: MockBackend;
   mock?: MockBackendOptions;
@@ -32,11 +34,22 @@ export async function renderApp({
   accent?: string | null;
   /** The floating bubble's native side; none by default, as on a build without it. */
   bubble?: BubbleControl;
+  /** What the native module's navigation bar call would be handed. */
+  navigationBar?: (lightButtons: boolean) => void;
+  /** The window and its insets: a portrait phone unless a test turns it on its side. */
+  metrics?: typeof METRICS;
 } = {}) {
   const core = backend ?? new MockBackend({ role: "phone", ...mock });
   backends.add(core);
   const view = await render(
-    <App backend={core} language={language} metrics={METRICS} accent={accent} bubble={bubble} />,
+    <App
+      backend={core}
+      language={language}
+      metrics={metrics}
+      accent={accent}
+      bubble={bubble}
+      navigationBar={navigationBar}
+    />,
   );
   return { ...view, backend: core };
 }

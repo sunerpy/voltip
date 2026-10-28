@@ -5,13 +5,20 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.view.Window
+import androidx.core.view.WindowCompat
+import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.interfaces.ExtraWindowEventListener
 import dev.voltip.rn.uniffi.ShellException
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.functions.Coroutine
+import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import org.json.JSONObject
+import java.util.Collections
+import java.util.WeakHashMap
 
 /**
  * `VoltipNative` in JavaScript (`modules/voltip-native/src`): `start()` brings the Rust shell up
@@ -20,8 +27,11 @@ import org.json.JSONObject
  * JavaScript runs. The shell is the UniFFI object [dev.voltip.rn.uniffi.VoltipShell]
  * (`apps/mobile-rn/rust/src/ffi.rs`); [VoltipHost] is its platform. `systemAccent()` is the
  * wallpaper's colour the system themes itself with (Android 12+), which the app's colours follow
- * while its appearance follows the system (docs/mobile-rn.md §5). `bubble…` are the floating
- * bubble's state and options ([BubbleService], docs/dictation.md §20.12).
+ * while its appearance follows the system (docs/mobile-rn.md §5). `setNavigationBarButtons(light)`
+ * gives the navigation bar's buttons the theme's contrast, in the activity's window and in every
+ * window React Native opens over it (a `Modal`'s dialog); the window itself runs edge to edge, as
+ * React Native set it up, and no bar colour is set (Android 15 deprecates them). `bubble…` are the
+ * floating bubble's state and options ([BubbleService], docs/dictation.md §20.12).
  *
  * When the app comes to the front the shell checks its relay socket at once
  * ([dev.voltip.rn.uniffi.VoltipShell.reconnectRelay]) instead of waiting for the heartbeat
@@ -30,6 +40,24 @@ import org.json.JSONObject
 class VoltipNativeModule : Module() {
     /** The activity in front while this module's JavaScript runs. */
     private val front: () -> Activity? = { appContext.currentActivity }
+
+    /** The navigation bar's buttons the theme asks for: dark on a light theme. */
+    private var lightButtons: Boolean? = null
+
+    /** The windows React Native opened over the activity (a `Modal`'s dialog), which start with
+     *  the system's own button contrast. */
+    private val extraWindows = Collections.newSetFromMap(WeakHashMap<Window, Boolean>())
+
+    private val windowListener = object : ExtraWindowEventListener {
+        override fun onExtraWindowCreate(window: Window) {
+            extraWindows.add(window)
+            lightButtons?.let { window.navigationButtons(it) }
+        }
+
+        override fun onExtraWindowDestroy(window: Window) {
+            extraWindows.remove(window)
+        }
+    }
 
     private val listener = object : VoltipRuntime.Listener {
         override fun onEvent(json: String) {
@@ -63,10 +91,22 @@ class VoltipNativeModule : Module() {
 
         OnActivityEntersForeground { VoltipRuntime.shell?.reconnectRelay() }
 
+        OnCreate {
+            (appContext.reactContext as? ReactApplicationContext)?.addExtraWindowEventListener(windowListener)
+        }
+
         OnDestroy {
             VoltipRuntime.removeListener(listener)
             if (VoltipRuntime.activity === front) VoltipRuntime.activity = null
+            (appContext.reactContext as? ReactApplicationContext)?.removeExtraWindowEventListener(windowListener)
         }
+
+        /** Dark navigation bar buttons for a light theme (`light`), light ones for a dark theme. */
+        AsyncFunction("setNavigationBarButtons") { light: Boolean ->
+            lightButtons = light
+            appContext.currentActivity?.window?.navigationButtons(light)
+            extraWindows.forEach { it.navigationButtons(light) }
+        }.runOnQueue(Queues.MAIN)
 
         /** `#rrggbb` of the system's accent (Material You), or `null` before Android 12. */
         Function("systemAccent") {
@@ -113,6 +153,23 @@ class VoltipNativeModule : Module() {
             if (front != null) front.startActivity(intent) else context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
 
+        /** The system's Accessibility settings, where 手势粘贴's service is enabled. */
+        AsyncFunction("bubbleOpenAccessibilitySettings") {
+            val context = appContext.reactContext?.applicationContext ?: throw Exceptions.ReactContextLost()
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            val front = appContext.currentActivity
+            if (front != null) front.startActivity(intent) else context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+
+        /** This app's App info page: on Android 13+ its menu allows the restricted settings of an
+         *  app installed from outside an app store (手势粘贴's accessibility switch). */
+        AsyncFunction("bubbleOpenAppSettings") {
+            val context = appContext.reactContext?.applicationContext ?: throw Exceptions.ReactContextLost()
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+            val front = appContext.currentActivity
+            if (front != null) front.startActivity(intent) else context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+
         /** The system's notification settings for this app (a permission refused for good). */
         AsyncFunction("bubbleOpenNotificationSettings") {
             val context = appContext.reactContext?.applicationContext ?: throw Exceptions.ReactContextLost()
@@ -124,5 +181,16 @@ class VoltipNativeModule : Module() {
 
     private companion object {
         const val ERROR_CODE = "ERR_VOLTIP"
+
+        /**
+         * The navigation bar's buttons for a `light` (or dark) theme. From Android 10 the system keeps
+         * them readable itself (its contrast scrim follows this setting). Below 10 React Native's
+         * edge-to-edge set-up gave the bar a translucent background for the system's dark mode, and
+         * the buttons stay as it set them for that background.
+         */
+        fun Window.navigationButtons(light: Boolean) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+            WindowCompat.getInsetsController(this, decorView).isAppearanceLightNavigationBars = light
+        }
     }
 }

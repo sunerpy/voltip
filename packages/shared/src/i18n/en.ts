@@ -3548,6 +3548,25 @@ export const en: Messages = {
       modeTap: "Tap to start, tap to finish",
       stowHint:
         "Drag the bubble off the side of the screen and let go to tuck it into a small handle; tap the handle or pull it inward to bring the bubble back.",
+      gestures: "One-gesture paste",
+      pasteEnabled: "Swipe and release to paste",
+      pasteEnabledBody:
+        "While holding to record, swipe toward the middle of the screen and release: when recognition finishes, the result is pasted into the field that had focus when you swiped. Releasing without the swipe only copies it.",
+      pasteDisclosureTitle: "Turn on one-gesture paste",
+      pasteDisclosure:
+        "With this on, when you hold the floating bubble to record and swipe toward the middle of the screen, Voltip uses an accessibility service to check which app and window the focused text field belongs to. When recognition finishes and the same field still has focus, Voltip asks it to paste the result once. Voltip does not read the text already in the field, and it does not store or upload this information. The feature needs Voltip one-gesture paste turned on in the system's Accessibility settings, where you can turn it off at any time.",
+      pasteAgree: "Agree and turn on",
+      pasteDecline: "Not now",
+      pasteNeedsService:
+        "Turn on Voltip one-gesture paste in the system's Accessibility settings. Until then, results are only copied.",
+      pasteRestricted:
+        "If you installed Voltip from GitHub, Android 13 and later restrict its accessibility switch: first choose Allow restricted settings from the menu at the top right of App info. Installs from Google Play are not restricted.",
+      openAppInfo: "App info",
+      autoStow: "Tuck away when idle",
+      autoStowHint:
+        "The bubble tucks into the side of the screen after sitting idle for the chosen time; never while recording, recognizing or showing a result.",
+      autoStowOff: "Off",
+      autoStowSeconds: "{n} s",
       result: "Result",
       refine: "AI polish",
       refineBody: "Processed with the preset under AI models before it is copied",
@@ -3582,6 +3601,10 @@ export const en: Messages = {
         microphone: "Voltip needs the microphone; allow it in the app",
         expand: "Bring back the floating bubble",
         stow: "Tuck in at the side of the screen",
+        recordingHoldPaste: "Release to copy · swipe in to paste · up or down to cancel",
+        releasePaste: "Release to paste into the field",
+        pasted: "Paste requested",
+        pasteFallback: "Not pasted · copied to the clipboard",
       },
     },
     recent: {

@@ -34,6 +34,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import dev.voltip.rn.uniffi.ShellException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import kotlin.math.abs
@@ -59,7 +61,14 @@ import kotlin.math.roundToInt
  * Tucked away (2026-10-28): a drag let go with the finger within [EDGE_ZONE_DP] of an edge tucks
  * the bubble into that edge, where only a small handle shows; on the way the bubble sinks half into
  * the edge, faded, so the release is announced. A tap on the handle, or a pull inward, brings the
- * bubble back; dragged up or down, the handle moves along its edge.
+ * bubble back; dragged up or down, the handle moves along its edge. With 空闲时自动收起 chosen
+ * ([BubbleAutoStow]) the bubble tucks itself in after sitting idle that long.
+ *
+ * 手势粘贴 (optional, [BubblePasteService]): while the take is held, a swipe toward the middle of the
+ * screen ([BubbleSwipeDecision.PASTE]) arms a paste; the focused text field is looked up the first
+ * time the paste position is reached, and letting go there pastes the result into that field if it
+ * still has focus when the result arrives ([BubblePasteDecision]); otherwise the result stays on the
+ * clipboard as always. Without the service connected the gesture is not offered at all.
  */
 @SuppressLint("ClickableViewAccessibility", "SetTextI18n")
 internal class BubbleOverlay(
@@ -90,7 +99,11 @@ internal class BubbleOverlay(
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
         PixelFormat.TRANSLUCENT,
-    )
+    ).apply {
+        // The window's name in `dumpsys window`, where the device acceptance reads its frame
+        // (apps/mobile-rn/devicefarm/acceptance.sh); users never see it.
+        title = WINDOW_TITLE
+    }
     private var shown = false
 
     private var phase = Phase.IDLE
@@ -104,6 +117,31 @@ internal class BubbleOverlay(
     private var holding = false
     /** The held finger is [cancelDistance] away from where it pressed: letting go cancels. */
     private var slidAway = false
+    /** 手势粘贴: the held finger is in the paste position ([BubbleSwipeDecision.PASTE]). */
+    private var pasteArmed = false
+    /** The take was let go in the paste position: its result goes to [pasteTarget]. */
+    private var pasteRequested = false
+    /** The text field focused when this take's paste position was first reached, looked up off
+     *  the main thread (the query goes to that field's app). */
+    private var pasteTarget: Deferred<BubblePasteService.Target?>? = null
+    /** The result card's first line: copied, paste requested, or not pasted. */
+    private var resultLabel = ""
+    /** A finger is on the bubble, from its press to its release. */
+    private var pressed = false
+    private val autoStow = BubbleAutoStow(
+        object : BubbleAutoStow.Scheduler {
+            override fun postDelayed(task: Runnable, delayMs: Long) {
+                main.postDelayed(task, delayMs)
+            }
+
+            override fun remove(task: Runnable) {
+                main.removeCallbacks(task)
+            }
+        },
+        seconds = { prefs.autoStowSeconds },
+        state = { BubbleAutoStow.State(shown, stowed, phase == Phase.IDLE, own, elsewhere, pressed, dragging) },
+        stow = { stow(dockRight) },
+    )
     private var startedAt = 0L
     private var stage = ""
     private var resultText = ""
@@ -172,6 +210,7 @@ internal class BubbleOverlay(
         }
         VoltipRuntime.addListener(this)
         render()
+        autoStow.restart()
     }
 
     /** The options or texts changed. */
@@ -183,6 +222,7 @@ internal class BubbleOverlay(
             // Another screen size: the window stays on the screen.
             params.y = params.y.coerceIn(0, max(0, screenHeight() - dp(if (stowed) HANDLE_H_DP else BUBBLE_DP)))
             render()
+            autoStow.restart()
         }
     }
 
@@ -234,8 +274,11 @@ internal class BubbleOverlay(
     private fun onPhase(state: JSONObject) {
         val name = state.optString("phase")
         if (!own) {
+            val before = elsewhere
             elsewhere = name == "listening" || name == "processing"
             render()
+            // The take started elsewhere ended: the idle time counts from now.
+            if (before && !elsewhere) autoStow.restart()
             return
         }
         when (name) {
@@ -254,20 +297,30 @@ internal class BubbleOverlay(
             "done" -> {
                 stopMeter()
                 own = false
-                resultText = state.optString("text")
-                haptic(confirm = true)
-                if (prefs.showResult) {
-                    phase = Phase.RESULT
-                    settleIn(RESULT_MS)
-                } else {
-                    // The bubble's check alone, a moment.
-                    phase = Phase.RESULT
-                    settleIn(CHECK_MS)
+                val text = state.optString("text")
+                val requested = pasteRequested
+                val target = pasteTarget.takeIf { requested }
+                // Handed over to the paste below; otherwise the lookup is no longer needed.
+                if (requested) pasteTarget = null
+                clearPaste()
+                if (!requested) {
+                    showResult(text, prefs.string("copied", ""))
+                    return
                 }
+                // 手势粘贴: the field is asked off the main thread (the request goes to its app); the
+                // card keeps 正在识别… for the few milliseconds that takes. No take starts meanwhile.
+                scope.launch {
+                    val pasted = runCatching { BubblePasteService.pasteText(text, target?.await()) }.getOrDefault(false)
+                    // What happened, not what was said: the text is never logged.
+                    Log.i(TAG, if (pasted) "paste requested in the field the gesture was armed over" else "not pasted; the result stays on the clipboard")
+                    main.post { showResult(text, prefs.string(if (pasted) "pasted" else "pasteFallback", "")) }
+                }
+                return
             }
             "failed" -> {
                 stopMeter()
                 own = false
+                clearPaste()
                 showMessage(
                     when (state.optString("code")) {
                         "no_speech" -> prefs.string("noSpeech", "")
@@ -280,12 +333,31 @@ internal class BubbleOverlay(
             "cancelled" -> {
                 stopMeter()
                 own = false
+                clearPaste()
                 toIdle()
                 return
             }
             else -> return
         }
         render()
+    }
+
+    /** The take's result on its card (or the check alone, a moment), under [label]. */
+    private fun showResult(text: String, label: String) {
+        resultText = text
+        resultLabel = label
+        haptic(confirm = true)
+        phase = Phase.RESULT
+        settleIn(if (prefs.showResult) RESULT_MS else CHECK_MS)
+        render()
+    }
+
+    /** No paste for this take: a failure, a cancel, a refusal, or the paste was handed over. */
+    private fun clearPaste() {
+        pasteTarget?.cancel()
+        pasteTarget = null
+        pasteRequested = false
+        pasteArmed = false
     }
 
     // ---- takes ----
@@ -297,6 +369,9 @@ internal class BubbleOverlay(
             return
         }
         main.removeCallbacks(settle)
+        autoStow.cancel()
+        clearPaste()
+        resultLabel = ""
         own = true
         tapTake = tap
         holding = held
@@ -326,6 +401,7 @@ internal class BubbleOverlay(
     private fun refuse(reason: String) {
         own = false
         holding = false
+        clearPaste()
         showMessage(failed(reason))
     }
 
@@ -394,7 +470,9 @@ internal class BubbleOverlay(
         phase = Phase.IDLE
         holding = false
         slidAway = false
+        pasteArmed = false
         render()
+        autoStow.restart()
     }
 
     /** 不复制: the result leaves the clipboard (API 28 clears it; before that it is replaced by
@@ -421,6 +499,8 @@ internal class BubbleOverlay(
     private val touch = View.OnTouchListener { _, e ->
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                pressed = true
+                autoStow.cancel()
                 downX = e.rawX
                 downY = e.rawY
                 dragging = false
@@ -433,8 +513,19 @@ internal class BubbleOverlay(
                 val dx = e.rawX - downX
                 val dy = e.rawY - downY
                 if (holding) {
-                    val away = hypot(dx, dy) > cancelDistance
-                    if (away != slidAway) {
+                    // 手势粘贴 only with its service connected: without it the swipe copies or cancels.
+                    val pasteAvailable = prefs.pasteEnabled && BubblePasteService.connected
+                    val choice = BubbleSwipeDecision.decide(dx, dy, dockRight, pasteAvailable, density, cancelDistance.toFloat())
+                    val armed = choice == BubbleSwipeDecision.PASTE
+                    val away = choice == BubbleSwipeDecision.CANCEL
+                    if (armed != pasteArmed || away != slidAway) {
+                        if (armed && !pasteArmed) {
+                            haptic(confirm = true)
+                            // The focused field, looked up once per take: when the paste position is
+                            // first reached, never before (docs/dictation.md §20.12).
+                            if (pasteTarget == null) pasteTarget = scope.async { BubblePasteService.captureTarget() }
+                        }
+                        pasteArmed = armed
                         slidAway = away
                         render()
                     }
@@ -448,19 +539,31 @@ internal class BubbleOverlay(
                 }
             }
             MotionEvent.ACTION_UP -> {
+                pressed = false
                 main.removeCallbacks(press)
                 when {
                     dragging -> if (stowArmed) stow(stowRight) else dock()
-                    holding -> if (slidAway) cancelTake() else stopTake()
+                    holding -> when {
+                        pasteArmed -> {
+                            pasteRequested = true
+                            stopTake()
+                        }
+                        slidAway -> cancelTake()
+                        else -> stopTake()
+                    }
                     else -> tapped()
                 }
                 dragging = false
+                autoStow.restart()
             }
             MotionEvent.ACTION_CANCEL -> {
+                pressed = false
                 main.removeCallbacks(press)
                 if (dragging) dock()
                 if (holding) cancelTake()
+                pasteArmed = false
                 dragging = false
+                autoStow.restart()
             }
         }
         true
@@ -505,7 +608,10 @@ internal class BubbleOverlay(
         params.x = dp(EDGE_MARGIN_DP)
         update()
         prefs.dock = Pair(right, params.y.toFloat() / max(1, screenHeight()))
-        main.post { render() }
+        main.post {
+            render()
+            autoStow.restart()
+        }
     }
 
     /** While dragged: with the finger within [EDGE_ZONE_DP] of an edge the bubble sinks half into
@@ -542,6 +648,7 @@ internal class BubbleOverlay(
     /** Into the edge `right` says: the handle where the bubble was, its middle level with the
      *  bubble's (also across starts). The window changes once this touch is over. */
     private fun stow(right: Boolean) {
+        autoStow.cancel()
         disarmStow()
         val top = params.y.coerceIn(0, max(0, screenHeight() - dp(BUBBLE_DP)))
         stowed = true
@@ -571,6 +678,7 @@ internal class BubbleOverlay(
         render()
         bubble.translationX = if (dockRight) tuckOffset() else -tuckOffset()
         bubble.animate().translationX(0f).setDuration(SLIDE_MS).start()
+        autoStow.restart()
     }
 
     /** The handle: a tap, or a pull inward past [PULL_DP], brings the bubble back; dragged up or
@@ -743,7 +851,7 @@ internal class BubbleOverlay(
         bubble.visibility = View.VISIBLE
         val showCard = phase != Phase.IDLE && !dragging && !(phase == Phase.RESULT && !prefs.showResult)
         if (showCard) {
-            val key = listOf(phase, slidAway, tapTake, stage, message, resultText, prefs.showDiscard, screenWidth()).joinToString("|")
+            val key = listOf(phase, slidAway, pasteArmed, pasteRequested, tapTake, stage, message, resultText, resultLabel, prefs.showDiscard, screenWidth()).joinToString("|")
             if (key != cardKey) {
                 fillCard()
                 cardKey = key
@@ -797,8 +905,12 @@ internal class BubbleOverlay(
                 row.addView(time)
                 card.addView(row)
                 val hint = when {
+                    pasteArmed -> prefs.string("releasePaste", "")
                     slidAway -> prefs.string("releaseCancel", "")
                     tapTake -> prefs.string("recordingTap", "")
+                    // 手势粘贴 can be armed: the hint names the inward swipe as well.
+                    prefs.pasteEnabled && BubblePasteService.connected ->
+                        prefs.string("recordingHoldPaste", prefs.string("recordingHold", ""))
                     else -> prefs.string("recordingHold", "")
                 }
                 card.addView(text(hint, 12f, if (slidAway) DANGER_LIGHT else MUTED).apply { setPadding(0, dp(4), 0, 0) })
@@ -830,7 +942,7 @@ internal class BubbleOverlay(
                     gravity = Gravity.CENTER_VERTICAL
                 }
                 row.addView(checkBadge())
-                row.addView(text(prefs.string("copied", ""), 13f, Color.WHITE, bold = true).apply { setPadding(dp(8), 0, 0, 0) })
+                row.addView(text(resultLabel.ifEmpty { prefs.string("copied", "") }, 13f, Color.WHITE, bold = true).apply { setPadding(dp(8), 0, 0, 0) })
                 card.addView(row)
                 card.addView(
                     text(resultText, 14f, Color.WHITE).apply {
@@ -995,6 +1107,7 @@ internal class BubbleOverlay(
         /** A core message's machine prefix (`asr: `), as `coreMessageText` drops it. */
         private val MACHINE_PREFIX = Regex("^[a-z][a-z_]*(?:\\.[a-z_]+)*(?: [a-z]+)?: ")
         private const val TAG = "VoltipBubble"
+        private const val WINDOW_TITLE = "VoltipBubble"
 
         /** `00:04`. */
         fun elapsed(ms: Long): String {

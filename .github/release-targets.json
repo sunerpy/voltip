@@ -47,7 +47,7 @@
       "updater_platform": "darwin-x86_64"
     },
     {
-      "bundles": ["apk", "aab"],
+      "bundles": ["apk", "aab", "mapping"],
       "cross": true,
       "platform": "android",
       "runner": "ubuntu-24.04",

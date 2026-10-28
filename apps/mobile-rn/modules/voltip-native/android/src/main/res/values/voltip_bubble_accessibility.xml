@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What the system's Accessibility settings show for 手势粘贴's service (BubblePasteService). -->
+<resources>
+    <string name="voltip_bubble_accessibility_label">Voltip one-gesture paste</string>
+    <string name="voltip_bubble_accessibility_description">While you hold Voltip\'s floating bubble to record, swipe toward the middle of the screen and let go: when recognition finishes, Voltip pastes the result into the text field that had focus when you swiped. Only during that gesture does Voltip check which app and window the field belongs to; it does not read the text in the field, and it does not store or upload anything about it.</string>
+</resources>

@@ -11,6 +11,10 @@ import { useI18n } from "./i18n";
 /** Hold to talk, or tap to start and tap again to finish. */
 export type BubbleMode = "hold" | "tap";
 
+/** 空闲时自动收起 after this many seconds; 0 is off (the default). */
+export type AutoStowSeconds = 0 | 5 | 10 | 30;
+export const AUTO_STOW_CHOICES: readonly AutoStowSeconds[] = [0, 5, 10, 30];
+
 /** What the bubble needs from Android, each granted or not. */
 export interface BubblePermissions {
   microphone: boolean;
@@ -31,6 +35,11 @@ export interface BubbleStatus {
   showResult: boolean;
   /** The result's card has 不复制 too (off unless asked for, 2026-10-28). */
   showDiscard: boolean;
+  /** 手势粘贴: the user agreed and switched it on (docs/dictation.md §20.12). */
+  pasteEnabled: boolean;
+  /** 手势粘贴's accessibility service is enabled in the system and connected. */
+  accessibilityEnabled: boolean;
+  autoStowSeconds: AutoStowSeconds;
 }
 
 /** The texts the bubble and its notification show (`mobile.bubble.native`). */
@@ -44,6 +53,7 @@ export const BUBBLE_STRING_KEYS = [
   "close",
   "label",
   "recordingHold",
+  "recordingHoldPaste",
   "recordingTap",
   "releaseCancel",
   "cancel",
@@ -59,6 +69,9 @@ export const BUBBLE_STRING_KEYS = [
   "microphone",
   "expand",
   "stow",
+  "releasePaste",
+  "pasted",
+  "pasteFallback",
 ] as const;
 export type BubbleStringKey = (typeof BUBBLE_STRING_KEYS)[number];
 
@@ -67,6 +80,8 @@ export interface BubbleConfig {
   mode: BubbleMode;
   showResult: boolean;
   showDiscard: boolean;
+  pasteEnabled: boolean;
+  autoStowSeconds: AutoStowSeconds;
   strings: BubbleStrings;
 }
 
@@ -82,6 +97,11 @@ export interface BubbleControl {
   requestNotifications(): Promise<boolean>;
   /** Open the system's 显示在其他应用上层 page for Voltip. */
   openOverlaySettings(): Promise<void>;
+  /** Open the system's Accessibility settings (手势粘贴's service). */
+  openAccessibilitySettings(): Promise<void>;
+  /** Open Voltip's App info page, where Android 13+ allows the restricted settings of an app
+   *  installed from outside an app store. */
+  openAppSettings(): Promise<void>;
 }
 
 /** The bubble's texts in the app's language; `{message}` stays for the bubble to fill in. */
@@ -95,6 +115,7 @@ export function bubbleStrings(t: TFunction): BubbleStrings {
     close: s("close"),
     label: s("label"),
     recordingHold: s("recordingHold"),
+    recordingHoldPaste: s("recordingHoldPaste"),
     recordingTap: s("recordingTap"),
     releaseCancel: s("releaseCancel"),
     cancel: s("cancel"),
@@ -110,6 +131,9 @@ export function bubbleStrings(t: TFunction): BubbleStrings {
     microphone: s("microphone"),
     expand: s("expand"),
     stow: s("stow"),
+    releasePaste: s("releasePaste"),
+    pasted: s("pasted"),
+    pasteFallback: s("pasteFallback"),
   };
 }
 
@@ -121,6 +145,12 @@ function flag(record: Record<string, unknown>, key: string): boolean {
   const v = record[key];
   if (typeof v !== "boolean") throw new Error(`bubble status: ${key} is not a boolean`);
   return v;
+}
+
+/** 空闲时自动收起's seconds; a value the settings page does not offer reads as off, as the native
+ *  side reads it (BubblePrefs.autoStowSeconds). */
+function autoStowSeconds(value: unknown): AutoStowSeconds {
+  return AUTO_STOW_CHOICES.find((choice) => choice === value) ?? 0;
 }
 
 /** `BubbleStatus` from the native module's JSON; a malformed answer is an error, not a guess. */
@@ -139,6 +169,9 @@ export function parseBubbleStatus(json: string): BubbleStatus {
     mode: value["mode"] === "tap" ? "tap" : "hold",
     showResult: flag(value, "showResult"),
     showDiscard: flag(value, "showDiscard"),
+    pasteEnabled: flag(value, "pasteEnabled"),
+    accessibilityEnabled: flag(value, "accessibilityEnabled"),
+    autoStowSeconds: autoStowSeconds(value["autoStowSeconds"]),
   };
 }
 
@@ -182,6 +215,8 @@ export function useBubbleSync() {
           mode: status.mode,
           showResult: status.showResult,
           showDiscard: status.showDiscard,
+          pasteEnabled: status.pasteEnabled,
+          autoStowSeconds: status.autoStowSeconds,
           strings: bubbleStrings(t),
         });
       })

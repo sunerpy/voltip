@@ -109,5 +109,138 @@ class DeviceSmoke(unittest.TestCase):
         self.assertEqual(self.adb_calls(), [])
 
 
+# A device that runs the app: it installs, starts, shows the first screen and stays up. The display
+# settings live in files beside it, so the test reads what the script left behind. FAKE_QEMU is the
+# emulator flag; FAKE_CLOSE_ON_LARGE=1 closes the app as the display turns into a tablet.
+RUNNING_ADB = r"""#!/usr/bin/env bash
+state=$FAKE_STATE
+echo "$*" >>"$state/calls"
+get() { cat "$state/$1" 2>/dev/null || echo "$2"; }
+case "$1" in
+  get-state) echo device ;;
+  install) echo Success ;;
+  pull) printf '<hierarchy><node text="按住说话" resource-id="" bounds="[0,0][1,1]"/></hierarchy>' >"$3" ;;
+  exec-out|logcat|uninstall|wait-for-device) ;;
+  shell)
+    shift
+    case "$1 ${2:-}" in
+      "getprop ro.kernel.qemu") echo "${FAKE_QEMU:-0}" ;;
+      "pidof dev.voltip.mobile") [ -f "$state/closed" ] || echo 4242 ;;
+      "wm size"|"wm density")
+        kind=$2
+        echo "Physical $kind: ${FAKE_PHYSICAL:-1080x2400}"
+        [ -f "$state/$kind" ] && echo "Override $kind: $(cat "$state/$kind")"
+        if [ "$#" -ge 3 ]; then
+          if [ "$3" = reset ]; then rm -f "$state/$kind"; else echo "$3" >"$state/$kind"; fi
+          if [ "$kind" = size ] && [ "$3" = 2560x1600 ] && [ "${FAKE_CLOSE_ON_LARGE:-0}" = 1 ]; then : >"$state/closed"; fi
+        fi ;;
+      "settings get") get "setting-$4" null ;;
+      "settings put") echo "$5" >"$state/setting-$4" ;;
+      "settings delete") rm -f "$state/setting-$4" ;;
+    esac ;;
+esac
+exit 0
+"""
+
+
+class LargeScreen(unittest.TestCase):
+    """The large-screen part (docs/mobile-rn.md §5): on an emulator only, and every display setting
+    it changes put back on every way out."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        self.state = self.root / "state"
+        self.state.mkdir()
+        for name, text in (("adb", RUNNING_ADB), ("sleep", "#!/usr/bin/env bash\nexit 0\n")):
+            path = bin_dir / name
+            path.write_text(text, encoding="utf-8")
+            path.chmod(path.stat().st_mode | stat.S_IXUSR)
+        self.apk = self.root / "Voltip_0.2.1_android_arm64.apk"
+        self.apk.write_bytes(b"package")
+        self.env = {
+            **os.environ,
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "LC_ALL": "C.UTF-8",
+            "FAKE_STATE": str(self.state),
+        }
+
+    def smoke(self, **env: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(SCRIPT), str(self.apk), str(self.root / "out")],
+            env={**self.env, **env},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def calls(self) -> list[str]:
+        return (self.state / "calls").read_text(encoding="utf-8").splitlines()
+
+    def setting(self, name: str) -> str | None:
+        path = self.state / name
+        return path.read_text(encoding="utf-8").strip() if path.exists() else None
+
+    def test_a_phone_is_left_as_it_is(self) -> None:
+        result = self.smoke(FAKE_QEMU="0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("changes no device's display", result.stdout)
+        changes = [call for call in self.calls() if call.startswith(("shell wm", "shell settings put", "shell settings delete"))]
+        self.assertEqual(changes, [])
+
+    def test_an_emulator_becomes_a_tablet_and_is_put_back(self) -> None:
+        result = self.smoke(FAKE_QEMU="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("stayed up on a large screen, in landscape and in portrait", result.stdout)
+        calls = self.calls()
+        for change in (
+            "shell settings put system accelerometer_rotation 0",
+            "shell wm size 2560x1600",
+            "shell wm density 320",
+            "shell settings put system user_rotation 0",
+            "shell settings put system user_rotation 1",
+        ):
+            self.assertIn(change, calls)
+        # Read before the first change, put back after the last one.
+        first = calls.index("shell settings put system accelerometer_rotation 0")
+        self.assertLess(calls.index("shell wm size"), first)
+        self.assertLess(calls.index("shell settings get system user_rotation"), first)
+        restored = calls.index("shell wm size reset")
+        self.assertGreater(restored, calls.index("shell settings put system user_rotation 1"))
+        self.assertIn("shell wm density reset", calls[restored:])
+        # Nothing was set before the run: no override and no rotation setting is left behind.
+        for name in ("size", "density", "setting-accelerometer_rotation", "setting-user_rotation"):
+            self.assertIsNone(self.setting(name), name)
+
+    def test_an_emulators_own_settings_come_back(self) -> None:
+        (self.state / "size").write_text("1440x3120\n", encoding="utf-8")
+        (self.state / "density").write_text("560\n", encoding="utf-8")
+        (self.state / "setting-accelerometer_rotation").write_text("1\n", encoding="utf-8")
+        (self.state / "setting-user_rotation").write_text("3\n", encoding="utf-8")
+        result = self.smoke(FAKE_QEMU="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.setting("size"), "1440x3120")
+        self.assertEqual(self.setting("density"), "560")
+        self.assertEqual(self.setting("setting-accelerometer_rotation"), "1")
+        self.assertEqual(self.setting("setting-user_rotation"), "3")
+
+    def test_a_failure_on_the_tablet_still_puts_the_display_back(self) -> None:
+        result = self.smoke(FAKE_QEMU="1", FAKE_CLOSE_ON_LARGE="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("the app closed on a tablet in landscape", result.stderr)
+        self.assertIn("display size, density and rotation put back", result.stderr)
+        for name in ("size", "density", "setting-accelerometer_rotation", "setting-user_rotation"):
+            self.assertIsNone(self.setting(name), name)
+
+    def test_the_large_screen_can_be_asked_for_on_a_device_that_is_no_emulator(self) -> None:
+        result = self.smoke(FAKE_QEMU="0", VOLTIP_SMOKE_LARGE_SCREEN="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("shell wm size 2560x1600", self.calls())
+        self.assertIsNone(self.setting("size"))
+
+
 if __name__ == "__main__":
     unittest.main()

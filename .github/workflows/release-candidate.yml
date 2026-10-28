@@ -1047,7 +1047,8 @@ jobs:
         run: .release-tooling/.github/scripts/macos-signing-keychain.sh remove
 
   # Android, arm64 (docs/runbook.md 发布 · Android): Voltip_<version>_android_arm64.apk to install
-  # from the Release and Voltip_<version>_android_arm64.aab for Google Play, the React Native app
+  # from the Release, Voltip_<version>_android_arm64.aab for Google Play and R8's map of both
+  # (Voltip_<version>_android_arm64-mapping.txt), the React Native app
   # since 0.0.50 (docs/mobile-rn.md §6; the Tauri phone app is no longer built, user decision
   # 2026-10-09). Gradle builds both unsigned; a step of its own then signs them with the project's
   # one key (Play's app signing holds the same one), so the key never sits in the step that runs the
@@ -1191,6 +1192,17 @@ jobs:
             "android-bundle/apk/Voltip_${VERSION}_android_arm64.apk" \
             "android-bundle/aab/Voltip_${VERSION}_android_arm64.aab" "$certificate" "$VERSION"
 
+      # R8's map of this build (scripts/build-android-rn.sh checked it is the one the AAB carries for
+      # Google Play): the release ships it to deobfuscate the app's stack traces. Not signed, as
+      # nothing installs it.
+      - name: Put R8's map beside the packages
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p android-bundle/mapping
+          cp "dist/android-rn/Voltip_${VERSION}_android_arm64-mapping.txt" android-bundle/mapping/
+
       - name: Collect bundles and evidence
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -1198,7 +1210,7 @@ jobs:
           python3 .release-tooling/scripts/release/updater-json.py collect
           --target "$ANDROID_TARGET"
           --bundle-dir android-bundle
-          --bundles apk,aab
+          --bundles apk,aab,mapping
           --updater-bundle none
           --updater false
           --out candidate-leg/dist

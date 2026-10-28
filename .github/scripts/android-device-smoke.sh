@@ -9,12 +9,20 @@
 # navigation is React Navigation's own, which App.test.tsx and the Device Farm acceptance
 # (apps/mobile-rn/devicefarm) walk.
 #
+# Then, on an emulator only (ro.kernel.qemu is 1) or with VOLTIP_SMOKE_LARGE_SCREEN=1, a large
+# screen (Google Play's Android 16 notice, docs/mobile-rn.md §5): the display becomes a 2560 × 1600
+# tablet at density 320 (1280 × 800 dp, its smallest width beyond the 600 dp Android 16 counts as
+# large), with auto-rotation off in landscape and then in portrait; each time the first screen is
+# still there and the app stays up without a fatal line. The display size, density and both
+# rotation settings are read first and put back on every way out (an EXIT trap set before the
+# first change). On a phone this part does not run at all, so the script changes no phone's display.
+#
 # Usage: android-device-smoke.sh <apk or directory holding one> <out dir>
 # A directory is searched for the app's release name (Voltip_*.apk): the release candidate's
 # Android leg holds the APK and the AAB. Needs `adb` on PATH with one device online.
 # Writes into <out>: install.txt, start.txt, logcat.txt, crash.txt, events.txt, exit-info.txt,
-# ui.xml and screen.png, whatever the outcome, and app-logcat.txt (the app's process alone) when it
-# came up.
+# ui.xml and screen.png, whatever the outcome, app-logcat.txt (the app's process alone) when it
+# came up, and app-logcat-large-screen.txt after the large screen.
 set -euo pipefail
 
 package=dev.voltip.mobile name='Voltip_*.apk'
@@ -133,5 +141,66 @@ pid=$(adb shell pidof "$package" | tr -d '\r')
 adb logcat -d --pid="$pid" >"$out/app-logcat.txt" 2>&1 || true
 if grep -qE "FATAL EXCEPTION|panicked at|Fatal signal" "$out/app-logcat.txt" || grep -q "$package" "$out/crash.txt"; then
   fail "the app logged a fatal error although it is still running"
+fi
+
+# ---- large screen (emulator only) ----
+
+# `wm size` / `wm density` print the physical value and, when one is set, the override: what to put
+# back is the override, or a reset.
+override() {
+  sed -n 's/^Override [a-z]*: *//p' <<<"$1" | tr -d '\r' | head -1
+}
+# `settings get` prints `null` for a setting nobody wrote: put back means deleting it again.
+restore_setting() {
+  if [ "$2" = null ] || [ -z "$2" ]; then
+    adb shell settings delete system "$1" >/dev/null 2>&1 || true
+  else
+    adb shell settings put system "$1" "$2" >/dev/null 2>&1 || true
+  fi
+}
+restore_display() {
+  if [ -n "$size_before" ]; then adb shell wm size "$size_before" >/dev/null 2>&1 || true; else adb shell wm size reset >/dev/null 2>&1 || true; fi
+  if [ -n "$density_before" ]; then adb shell wm density "$density_before" >/dev/null 2>&1 || true; else adb shell wm density reset >/dev/null 2>&1 || true; fi
+  restore_setting accelerometer_rotation "$auto_rotate_before"
+  restore_setting user_rotation "$rotation_before"
+  echo "android-device-smoke: display size, density and rotation put back" >&2
+}
+# The first screen up again on the changed display, and the app still up 10 s later.
+still_up() {
+  local deadline=$((SECONDS + 60))
+  until dump && grep -qE '按住说话|Hold to talk' "$out/ui.xml"; do
+    running || fail "the app closed on $1"
+    [ "$SECONDS" -lt "$deadline" ] || fail "the first screen was not there on $1 within 60 s"
+    sleep 3
+  done
+  for _ in $(seq 1 5); do
+    sleep 2
+    running || fail "the app closed on $1"
+  done
+}
+qemu=$(adb shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')
+if [ "$qemu" = 1 ] || [ "${VOLTIP_SMOKE_LARGE_SCREEN:-0}" = 1 ]; then
+  size_before=$(override "$(adb shell wm size)")
+  density_before=$(override "$(adb shell wm density)")
+  auto_rotate_before=$(adb shell settings get system accelerometer_rotation | tr -d '\r')
+  rotation_before=$(adb shell settings get system user_rotation | tr -d '\r')
+  trap restore_display EXIT
+  adb logcat -c
+  adb shell settings put system accelerometer_rotation 0
+  adb shell wm size 2560x1600
+  adb shell wm density 320
+  adb shell settings put system user_rotation 0
+  still_up "a tablet in landscape (2560 × 1600, density 320)"
+  adb shell settings put system user_rotation 1
+  still_up "a tablet in portrait"
+  collect
+  pid=$(adb shell pidof "$package" | tr -d '\r')
+  adb logcat -d --pid="$pid" >"$out/app-logcat-large-screen.txt" 2>&1 || true
+  if grep -qE "FATAL EXCEPTION|panicked at|Fatal signal" "$out/app-logcat-large-screen.txt" || grep -q "$package" "$out/crash.txt"; then
+    fail "the app logged a fatal error on a large screen"
+  fi
+  echo "android-device-smoke: $package stayed up on a large screen, in landscape and in portrait"
+else
+  echo "android-device-smoke: not an emulator (ro.kernel.qemu '$qemu'): the large-screen part changes no device's display"
 fi
 echo "android-device-smoke: $package came up and stayed up ($(basename "$apk"))"

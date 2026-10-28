@@ -287,7 +287,18 @@ class CandidateBuild(unittest.TestCase):
         )
         gather = body[collected:]
         self.assertIn("--bundle-dir android-bundle", gather)
-        self.assertIn("--bundles apk,aab", gather)
+        self.assertIn("--bundles apk,aab,mapping\n", gather)
+        # R8's map (docs/mobile-rn.md §6) goes into the bundle directory after the checks, unsigned.
+        mapped = body.index("- name: Put R8's map beside the packages")
+        self.assertLess(checked, mapped)
+        self.assertLess(mapped, collected)
+        self.assertIn(
+            'cp "dist/android-rn/Voltip_${VERSION}_android_arm64-mapping.txt" android-bundle/mapping/',
+            body[mapped:collected],
+        )
+        targets = json.loads((ROOT / ".github/release-targets.json").read_text(encoding="utf-8"))
+        android = next(entry for entry in targets["targets"] if entry["platform"] == "android")
+        self.assertEqual(android["bundles"], ["apk", "aab", "mapping"])
         # The app takes its version from the repository, which release-please writes, and the
         # package the Tauri app had.
         config = (ROOT / "apps/mobile-rn/app.config.js").read_text(encoding="utf-8")

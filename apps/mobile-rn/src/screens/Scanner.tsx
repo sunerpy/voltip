@@ -84,7 +84,7 @@ export function Scanner() {
         containerColor="rgba(0,0,0,0.4)"
         size={28}
         accessibilityLabel={t("mobile.back")}
-        style={{ position: "absolute", top: insets.top + 8, left: 8 }}
+        style={{ position: "absolute", top: insets.top + 8, left: insets.left + 8 }}
         onPress={close}
         testID="scanner-close"
       />

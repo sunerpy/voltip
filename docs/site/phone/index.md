@@ -10,9 +10,11 @@ With the Voltip app for Android, a phone becomes a microphone and a keyboard for
 
 ## Install the app
 
-Every [release](https://github.com/sunerpy/voltip/releases) carries the app as `Voltip_<version>_android_arm64.apk`, for phones with Android 8.0 or later and a 64-bit Arm processor. Open the file on the phone to install it. [Install](/guide/install#android) describes the steps and how to check the download, and [Updates](/guide/updates#on-an-android-phone) how to update it later.
+Every [release](https://github.com/sunerpy/voltip/releases) carries the app as `Voltip_<version>_android_arm64.apk`, for phones and tablets with Android 8.0 or later and a 64-bit Arm processor. Open the file on the phone to install it. [Install](/guide/install#android) describes the steps and how to check the download, and [Updates](/guide/updates#on-an-android-phone) how to update it later.
 
 From 0.0.50 the app's screens use Android's own controls. Install it over an earlier version to update; the pairing, settings and history stay. See [Install](/guide/install#android).
+
+The app turns with the device, in portrait and in landscape. On a phone in landscape, the tabs move to the left side of the screen. On a tablet or an unfolded foldable phone, its pages keep a comfortable reading width in the middle of the screen.
 
 In the app, the system back gesture or back button goes up one level. From **History** and **Settings** it goes to **Talk**, and two backs in a row on **Talk** leave the app. An open dialog closes first.
 
@@ -56,10 +58,29 @@ To use it:
 - **Hold to talk** (the default): hold the bubble and speak, release to finish; to cancel, move the finger well away from where it pressed before releasing, and the bubble turns red. Drag the bubble right away to move it; when released, it moves to the nearer side of the screen and keeps that place.
 - **Tap to start, tap to finish**: tap once to start recording and once more to finish; while recording, **Cancel** on the card discards it.
 - To keep the bubble out of the way, tuck it in at the side of the screen: drag it until your finger reaches the left or right side, and let go when half of the bubble slides off the screen; only a small handle stays. Tap the handle or pull it inward to bring the bubble back; drag the handle up or down to move it.
+- **Tuck away when idle** (off unless you choose a time) tucks the bubble in by itself after 5, 10 or 30 seconds without use. It never tucks while you touch it, while it records or recognises, or while it shows a result, and touching it starts the time again.
 - When the text is ready, the bubble shows *Copied · touch and hold a text field to paste* and the text for 5 seconds; **Talk again** records again. Turn on **Show “Don't copy”** to also get **Don't copy**, which clears the clipboard. With **Show the result** off, the bubble only shows a check mark for a moment.
 - **AI polish** is the same setting as on the **Talk** and AI models pages. With the built-in service, the bubble's recordings count toward this phone's [usage](/recognition/cloud#built-in-usage).
 
 The bubble keeps working after you close Voltip's screens; choose **Close** in its notification, or turn it off under **Settings** › **Floating bubble**, to stop it. Some phones (such as Xiaomi, OPPO and vivo) need Voltip allowed to start automatically or run in the background in the system settings, or the system may close the bubble; where that is depends on the phone, usually under the app management or battery settings.
+
+### One-gesture paste
+
+With one-gesture paste, the bubble pastes the result into the text field you are typing in, so you do not need to touch and hold the field. It uses an Android accessibility service, which you turn on yourself:
+
+1. Under **Settings** › **Floating bubble**, turn on **Swipe and release to paste**, read the explanation and choose **Agree and turn on**.
+2. Android's **Accessibility** settings open. Open **Voltip one-gesture paste** and turn it on.
+
+If that switch is greyed out, Android 13 or later is restricting an app installed from a downloaded file, such as the APK from GitHub: open Voltip's **App info** (the **App info** button on the bubble's settings page), choose the menu at the top right, then **Allow restricted settings**, and turn the service on again. An app installed from Google Play is not restricted.
+
+To paste, first tap the text field in the other app so that it has focus. Hold the bubble and speak, and while you hold, slide your finger toward the middle of the screen (to the left when the bubble is on the right side, to the right when it is on the left) until the card says **Release to paste into the field**, then release. When the text is ready it is copied, and if the same field still has focus, Voltip asks the field to paste it once; the card says **Paste requested**. Most apps paste at once, but an app can decline the request.
+
+- Release without sliding, and the text is only copied, as before.
+- To cancel, slide up, down or toward the side of the screen, away from where you pressed, and release; the bubble turns red.
+- Nothing is pasted when you switched to another app or another field while the text was recognised, or when the field is a password field: the text stays on the clipboard, and the card says **Not pasted · copied to the clipboard**. A recording that failed or heard nothing pastes nothing either.
+- Until the service is on, the bubble only copies, and sliding far in any direction cancels.
+
+The service does not read the text in fields, does not follow what you do in other apps and keeps nothing; see [Privacy](/privacy). To stop it, turn it off in Android's **Accessibility** settings, or turn off **Swipe and release to paste**.
 
 ## Pairing
 

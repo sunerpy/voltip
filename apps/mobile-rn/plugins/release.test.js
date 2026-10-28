@@ -1,7 +1,8 @@
 // The release side of the Expo config (plugins/release.js, app.config.js, docs/mobile-rn.md §6):
-// the version is the repository's with the version code of Tauri's phone app, and the release
-// build type loses its debug key only when the build asks for an unsigned APK.
-const { unsignedReleaseGradle, versionCode } = require("./release");
+// the version is the repository's with the version code of Tauri's phone app, the release build
+// type runs R8 with Android's optimizing defaults, and it loses its debug key only when the build
+// asks for an unsigned APK.
+const { optimizedReleaseGradle, unsignedReleaseGradle, versionCode } = require("./release");
 
 // The signing parts of app/build.gradle as Expo SDK 57's template writes them.
 const TEMPLATE = `android {
@@ -52,22 +53,81 @@ describe("the release config", () => {
     expect(() => unsignedReleaseGradle("android {\n}\n")).toThrow("no release build type");
   });
 
-  it("takes the repository's version and stays signed unless asked", () => {
+  it("optimizes with R8 in the release build type and nowhere else", () => {
+    const gradle = optimizedReleaseGradle(TEMPLATE);
+    expect(gradle).toContain(
+      'proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"',
+    );
+    expect(gradle).not.toContain('"proguard-android.txt"');
+    expect(gradle).toContain("minifyEnabled enableMinifyInReleaseBuilds");
+    // The signing stays as it was: this edit only names the optimizing rules.
+    expect(gradle.slice(gradle.indexOf("release {"))).toContain(
+      "signingConfig signingConfigs.debug",
+    );
+    expect(gradle.split("\n")).toHaveLength(TEMPLATE.split("\n").length);
+  });
+
+  it("refuses a template whose release build type names no default R8 rules", () => {
+    expect(() => optimizedReleaseGradle(optimizedReleaseGradle(TEMPLATE))).toThrow(
+      "the template changed",
+    );
+    expect(() => optimizedReleaseGradle("android {\n}\n")).toThrow("no release build type");
+    // The debug build type's rules are not the release build's.
+    const debugOnly = TEMPLATE.replace(
+      'proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"',
+      "",
+    ).replace(
+      "debug {\n",
+      'debug {\n            proguardFiles getDefaultProguardFile("proguard-android.txt")\n',
+    );
+    expect(() => optimizedReleaseGradle(debugOnly)).toThrow("the template changed");
+  });
+
+  /** app/build.gradle as app.config.js's mods leave it, built with `env`. */
+  async function builtGradle(env) {
+    const appJson = require("../app.json").expo;
+    const appConfig = require("../app.config");
+    const before = { ...process.env };
+    Object.assign(process.env, env);
+    try {
+      const config = appConfig({ config: structuredClone(appJson) });
+      const result = await config.mods.android.appBuildGradle({
+        ...config,
+        modRequest: { platform: "android", modName: "appBuildGradle" },
+        modResults: { language: "groovy", contents: TEMPLATE },
+      });
+      return result.modResults.contents;
+    } finally {
+      for (const key of Object.keys(env)) {
+        if (before[key] === undefined) delete process.env[key];
+        else process.env[key] = before[key];
+      }
+    }
+  }
+
+  it("takes the repository's version, optimizes every release build and stays signed unless asked", async () => {
     const appJson = require("../app.json").expo;
     const { version } = require("../../../package.json");
     const appConfig = require("../app.config");
-    const signed = appConfig({ config: appJson });
+    const signed = appConfig({ config: structuredClone(appJson) });
     expect(signed.version).toBe(version);
     expect(signed.android.versionCode).toBe(versionCode(version));
     expect(signed.android.package).toBe("dev.voltip.mobile");
-    expect(signed.mods).toBeUndefined();
-    process.env.VOLTIP_RN_UNSIGNED = "1";
-    try {
-      expect(appConfig({ config: appJson }).mods.android.appBuildGradle).toEqual(
-        expect.any(Function),
-      );
-    } finally {
-      delete process.env.VOLTIP_RN_UNSIGNED;
-    }
+    const plain = await builtGradle({});
+    expect(plain).toContain('getDefaultProguardFile("proguard-android-optimize.txt")');
+    expect(plain.slice(plain.indexOf("release {"))).toContain("signingConfig signingConfigs.debug");
+    const unsigned = await builtGradle({ VOLTIP_RN_UNSIGNED: "1" });
+    expect(unsigned).toContain('getDefaultProguardFile("proguard-android-optimize.txt")');
+    expect(unsigned.slice(unsigned.indexOf("release {"))).not.toContain("signingConfig");
+  });
+
+  it("switches R8 on for release builds in app.json, without shrinking resources", () => {
+    const appJson = require("../app.json").expo;
+    const properties = appJson.plugins.find(
+      (plugin) => Array.isArray(plugin) && plugin[0] === "expo-build-properties",
+    )[1].android;
+    expect(properties.enableMinifyInReleaseBuilds).toBe(true);
+    // React Native looks resources up by name: shrinking them gains nothing Play measures.
+    expect(properties.enableShrinkResourcesInReleaseBuilds).toBeUndefined();
   });
 });

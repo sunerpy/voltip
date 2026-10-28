@@ -11,10 +11,9 @@ import {
 } from "@react-navigation/native";
 import { type Backend, type UiEvent, coreMessageText, resolveLocale } from "@voltip/shared";
 import { getLocales } from "expo-localization";
-import { NavigationBar } from "expo-navigation-bar";
 import { StatusBar } from "expo-status-bar";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
-import { ActivityIndicator, View, useColorScheme } from "react-native";
+import { ActivityIndicator, View, useColorScheme, useWindowDimensions } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { PaperProvider, Text } from "react-native-paper";
 import {
@@ -27,11 +26,12 @@ import {
 import { BackendProvider, useBackend, useUiState } from "./backend/BackendProvider";
 import { type BubbleControl, BubbleProvider, useBubbleSync } from "./backend/bubble";
 import { I18nProvider, useT } from "./backend/i18n";
-import { RootNavigator, aboveDock } from "./navigation";
+import { DOCK_GAP, RootNavigator, aboveDock } from "./navigation";
 import type { RootParams } from "./routes";
 import { ShellProvider, useShell } from "./shell";
 import { type AppTheme, appTheme, themeId, themeSeed } from "./theme/themes";
 import { Logo } from "./ui/Logo";
+import { isRailWindow } from "./ui/rail";
 
 export const navigation = createNavigationContainerRef<RootParams>();
 
@@ -63,9 +63,11 @@ function navigationTheme(theme: AppTheme): NavigationTheme {
 
 function Themed({
   accent,
+  navigationBar,
   children,
 }: {
   accent: string | null;
+  navigationBar: ((lightButtons: boolean) => void) | undefined;
   children: (theme: AppTheme) => ReactNode;
 }) {
   const { settings } = useUiState();
@@ -74,6 +76,11 @@ function Themed({
     () => appTheme(themeId(settings, dark), themeSeed(settings, accent)),
     [settings, dark, accent],
   );
+  // The navigation bar's buttons with the theme's contrast: dark on a light theme. The window runs
+  // edge to edge and the bars take no colour of their own (docs/mobile-rn.md §5).
+  useEffect(() => {
+    navigationBar?.(!theme.dark);
+  }, [navigationBar, theme.dark]);
   return (
     // The icons from the app's own copy of the set: under pnpm, Paper's optional lookup of
     // `@expo/vector-icons` from its own directory finds nothing.
@@ -81,7 +88,6 @@ function Themed({
       theme={theme}
       settings={{ icon: (props) => <MaterialCommunityIcons {...props} /> }}>
       <StatusBar style={theme.dark ? "light" : "dark"} />
-      <NavigationBar style={theme.dark ? "light" : "dark"} />
       {children(theme)}
     </PaperProvider>
   );
@@ -158,8 +164,13 @@ function Shell({
   theme: AppTheme;
 }) {
   const insets = useSafeAreaInsets();
+  const window = useWindowDimensions();
+  // The snackbar clears the tab dock; beside the rail of a phone on its side, the bottom inset.
+  const bottomInset = isRailWindow(window.width, window.height)
+    ? insets.bottom + DOCK_GAP
+    : aboveDock(insets.bottom);
   return (
-    <ShellProvider bottomInset={aboveDock(insets.bottom)}>
+    <ShellProvider bottomInset={bottomInset}>
       <BubbleSync />
       <NavigationContainer ref={navigation} theme={navigationTheme(theme)}>
         <Gate register={register} />
@@ -174,6 +185,7 @@ export function App({
   metrics = initialWindowMetrics,
   accent = null,
   bubble,
+  navigationBar,
 }: {
   backend: Backend;
   /** What `settings.locale = "system"` follows (tests pass one; the app reads the phone's). */
@@ -185,6 +197,9 @@ export function App({
   metrics?: Metrics | null;
   /** The floating bubble's native side (Root.tsx hands in the module's; tests a fake). */
   bubble?: BubbleControl | undefined;
+  /** Sets the navigation bar's buttons dark (`true`, for a light theme) or light: the native
+   *  module's (Root.tsx); tests watch a fake. */
+  navigationBar?: ((lightButtons: boolean) => void) | undefined;
 }) {
   const handler = useRef<((e: UiEvent) => void) | undefined>(undefined);
   const onEvent = useCallback((e: UiEvent) => {
@@ -198,7 +213,7 @@ export function App({
       <BackendProvider backend={backend} onEvent={onEvent}>
         <BubbleProvider control={bubble}>
           <Localized language={language}>
-            <Themed accent={accent}>
+            <Themed accent={accent} navigationBar={navigationBar}>
               {(theme) => <Shell register={register} theme={theme} />}
             </Themed>
           </Localized>

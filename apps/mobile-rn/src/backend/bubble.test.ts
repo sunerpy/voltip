@@ -13,7 +13,13 @@ describe("the bubble's bridge", () => {
     expect(zh.copied).toBe("已复制 · 长按输入框粘贴");
     // The handle of a bubble tucked into the edge, and the screen reader's way to tuck it there.
     expect([zh.expand, zh.stow]).toEqual(["展开悬浮球", "收起到屏幕边缘"]);
-    expect(bubbleStrings(createTranslator("en").t).close).toBe("Close");
+    // 手势粘贴: the card while the finger can swipe to paste, in the paste position, and after.
+    expect(zh.recordingHoldPaste).toBe("松开复制 · 内滑粘贴 · 上下滑开取消");
+    expect(zh.releasePaste).toBe("松开后粘贴到输入框");
+    expect([zh.pasted, zh.pasteFallback]).toEqual(["已发出粘贴请求", "未能粘贴 · 已复制到剪贴板"]);
+    const en = bubbleStrings(createTranslator("en").t);
+    expect(en.close).toBe("Close");
+    expect(en.pasted).toBe("Paste requested");
   });
 
   it("reads the native side's state, and refuses one it cannot read", () => {
@@ -25,6 +31,9 @@ describe("the bubble's bridge", () => {
         mode: "tap",
         showResult: false,
         showDiscard: true,
+        pasteEnabled: true,
+        accessibilityEnabled: false,
+        autoStowSeconds: 5,
       }),
     );
     expect(status).toEqual({
@@ -34,8 +43,19 @@ describe("the bubble's bridge", () => {
       mode: "tap",
       showResult: false,
       showDiscard: true,
+      pasteEnabled: true,
+      accessibilityEnabled: false,
+      autoStowSeconds: 5,
     });
     expect(grantedCount(status.permissions)).toBe(2);
+    // 空闲时自动收起: a value the settings page does not offer reads as off, as the native side
+    // reads it.
+    expect(
+      parseBubbleStatus(JSON.stringify({ ...status, autoStowSeconds: 7 })).autoStowSeconds,
+    ).toBe(0);
+    expect(
+      parseBubbleStatus(JSON.stringify({ ...status, autoStowSeconds: 30 })).autoStowSeconds,
+    ).toBe(30);
     expect(() => parseBubbleStatus("[]")).toThrow("not an object");
     expect(() =>
       parseBubbleStatus(

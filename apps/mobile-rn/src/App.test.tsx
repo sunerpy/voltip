@@ -328,6 +328,38 @@ describe("the phone app on React Native", () => {
     expect(appTheme("light").colors.primary).not.toBe(appTheme("light", wallpaper).colors.primary);
   });
 
+  it("gives the navigation bar's buttons the theme's contrast, with no bar colour of its own", async () => {
+    // Android 15 deprecates the bar colours (docs/mobile-rn.md §5): the app only says whether the
+    // buttons are dark (a light theme) or light.
+    const navigationBar = jest.fn();
+    const { backend } = await renderApp({
+      navigationBar,
+      mock: { settings: { follow_system_theme: false, theme: "light" } },
+    });
+    await waitFor(() => {
+      expect(navigationBar).toHaveBeenLastCalledWith(true);
+    });
+    await act(async () => {
+      await backend.invoke("settings_set_theme", { theme: "dark", followSystem: false });
+    });
+    await waitFor(() => {
+      expect(navigationBar).toHaveBeenLastCalledWith(false);
+    });
+    await act(async () => {
+      await backend.invoke("settings_set_theme", { theme: "graphite", followSystem: false });
+    });
+    // Another dark theme: the buttons were light already.
+    expect(navigationBar).toHaveBeenLastCalledWith(false);
+    const calls = navigationBar.mock.calls.length;
+    await act(async () => {
+      await backend.invoke("settings_set_theme", { theme: "warm", followSystem: false });
+    });
+    await waitFor(() => {
+      expect(navigationBar).toHaveBeenLastCalledWith(true);
+    });
+    expect(navigationBar.mock.calls.length).toBe(calls + 1);
+  });
+
   it("Android back on 设置 goes to 说话, and the first back there says a second one leaves", async () => {
     await renderApp();
     await openTab("settings");

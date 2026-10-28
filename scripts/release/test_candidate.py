@@ -88,13 +88,15 @@ LEGS = {
         "rename": ["Voltip.app.tar.gz=Voltip_0.0.4_x64.app.tar.gz"],
         "extra": [],
     },
-    # The updater serves no Android target (docs/runbook.md 发布 · Android).
+    # The updater serves no Android target (docs/runbook.md 发布 · Android); R8's map ships beside
+    # the packages, unsigned (docs/mobile-rn.md §6).
     "aarch64-linux-android": {
-        "bundles": "apk,aab",
+        "bundles": "apk,aab,mapping",
         "updater": "none",
         "files": {
             "apk/Voltip_0.0.4_android_arm64.apk": b"apk",
             "aab/Voltip_0.0.4_android_arm64.aab": b"aab",
+            "mapping/Voltip_0.0.4_android_arm64-mapping.txt": b"# compiler: R8\n",
         },
         "rename": [],
         "extra": [],
@@ -239,6 +241,7 @@ class Candidate(unittest.TestCase):
                 "Voltip_0.0.4_amd64.AppImage",
                 "Voltip_0.0.4_amd64.AppImage.sig",
                 "Voltip_0.0.4_amd64.deb",
+                "Voltip_0.0.4_android_arm64-mapping.txt",
                 "Voltip_0.0.4_android_arm64.aab",
                 "Voltip_0.0.4_android_arm64.apk",
                 "Voltip_0.0.4_x64-portable.zip",
@@ -256,6 +259,16 @@ class Candidate(unittest.TestCase):
         for line in subjects:
             digest, name = line.split("  ", 1)
             self.assertEqual(digest, candidate.sha256(self.root / "dist" / name))
+
+    def test_the_android_leg_without_r8s_map_is_refused(self) -> None:
+        # docs/mobile-rn.md §6: the release ships R8's map beside the APK and the AAB, so that a stack
+        # trace from an obfuscated build can be read; a leg that lost it does not seal.
+        evidence = self.root / "evidence" / "aarch64-linux-android.json"
+        data = json.loads(evidence.read_text(encoding="utf-8"))
+        data["files"] = [item for item in data["files"] if item["kind"] != "mapping"]
+        evidence.write_text(json.dumps(data), encoding="utf-8")
+        (self.root / "dist" / "Voltip_0.0.4_android_arm64-mapping.txt").unlink()
+        self.assertFails("aarch64-linux-android: no mapping bundle in the evidence", self.seal)
 
     def test_a_missing_leg_is_refused(self) -> None:
         evidence = self.root / "evidence" / "x86_64-apple-darwin.json"

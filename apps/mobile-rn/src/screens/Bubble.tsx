@@ -1,10 +1,11 @@
 // 设置 › 悬浮球 (docs/dictation.md §20.12; Penpot 「用量与额度」 boards 18a/18b): a talk button over
 // other apps whose result goes onto the clipboard. Until the microphone, 显示在其他应用上层 and the
 // notification are granted, the page lists them with the way to each; then how to talk (and how to
-// tuck the bubble into the edge), whether the take is polished (the same switch as 说话 and AI 模型),
-// whether the result shows beside the bubble and whether 不复制 shows with it. The page reads the
-// state again whenever it comes back into view: a permission is granted in the system's settings,
-// outside the app.
+// tuck the bubble into the edge), 手势粘贴 (behind a disclosure the user agrees to, with the way to
+// its accessibility service), 空闲时自动收起, whether the take is polished (the same switch as 说话
+// and AI 模型), whether the result shows beside the bubble and whether 不复制 shows with it. The page
+// reads the state again whenever it comes back into view: a permission or the accessibility
+// service is granted in the system's settings, outside the app.
 import { useFocusEffect } from "@react-navigation/native";
 import { usageInline } from "@voltip/shared";
 import { useCallback, useEffect, useState } from "react";
@@ -13,6 +14,8 @@ import { Icon, Text } from "react-native-paper";
 
 import { useBackend, useUiState } from "../backend/BackendProvider";
 import {
+  AUTO_STOW_CHOICES,
+  type AutoStowSeconds,
   type BubbleConfig,
   type BubbleControl,
   type BubbleMode,
@@ -129,12 +132,14 @@ function BubblePage({ control }: { control: BubbleControl }) {
   const done = grantedCount(status.permissions);
   const ready = done === 3;
   const save = (change: Partial<Omit<BubbleConfig, "strings">>) => {
-    control
+    return control
       .configure({
         enabled: status.enabled,
         mode: status.mode,
         showResult: status.showResult,
         showDiscard: status.showDiscard,
+        pasteEnabled: status.pasteEnabled,
+        autoStowSeconds: status.autoStowSeconds,
         ...change,
         strings: bubbleStrings(t),
       })
@@ -144,6 +149,7 @@ function BubblePage({ control }: { control: BubbleControl }) {
             shell.toast(t("mobile.bubble.notStarted"), "danger");
           }
           read();
+          return true;
         },
         (e: unknown) => {
           shell.toast(
@@ -151,6 +157,7 @@ function BubblePage({ control }: { control: BubbleControl }) {
             "danger",
           );
           read();
+          return false;
         },
       );
   };
@@ -173,7 +180,7 @@ function BubblePage({ control }: { control: BubbleControl }) {
           value={status.running}
           disabled={!ready}
           onValueChange={(on) => {
-            save({ enabled: on });
+            void save({ enabled: on });
           }}
           testID="bubble-toggle"
         />
@@ -219,12 +226,92 @@ function BubblePage({ control }: { control: BubbleControl }) {
               label={t("mobile.bubble.mode")}
               value={status.mode}
               onChange={(mode) => {
-                save({ mode });
+                void save({ mode });
               }}
               options={[
                 { value: "hold", label: t("mobile.bubble.modeHold"), testID: "bubble-mode-hold" },
                 { value: "tap", label: t("mobile.bubble.modeTap"), testID: "bubble-mode-tap" },
               ]}
+            />
+          </Section>
+          <Section title={t("mobile.bubble.gestures")}>
+            <Rows>
+              <SwitchRow
+                title={t("mobile.bubble.pasteEnabled")}
+                description={t("mobile.bubble.pasteEnabledBody")}
+                value={status.pasteEnabled}
+                onValueChange={(enabled) => {
+                  if (!enabled) {
+                    void save({ pasteEnabled: false });
+                    return;
+                  }
+                  // Google Play's prominent disclosure: what the service looks at and when, before
+                  // the user turns it on (docs/dictation.md §20.12).
+                  shell.confirm({
+                    title: t("mobile.bubble.pasteDisclosureTitle"),
+                    body: t("mobile.bubble.pasteDisclosure"),
+                    confirmLabel: t("mobile.bubble.pasteAgree"),
+                    cancelLabel: t("mobile.bubble.pasteDecline"),
+                    tone: "primary",
+                    onConfirm: () => {
+                      void save({ pasteEnabled: true }).then((saved) => {
+                        if (saved && !status.accessibilityEnabled)
+                          control.openAccessibilitySettings().catch(() => undefined);
+                      });
+                    },
+                  });
+                }}
+                testID="bubble-paste-enabled"
+              />
+            </Rows>
+            {status.pasteEnabled && !status.accessibilityEnabled && (
+              <View style={styles.pasteService} testID="bubble-paste-needs-service">
+                <Hint>{t("mobile.bubble.pasteNeedsService")}</Hint>
+                <Hint testID="bubble-paste-restricted">{t("mobile.bubble.pasteRestricted")}</Hint>
+                <View style={styles.pasteButtons}>
+                  <Button
+                    compact
+                    mode="contained"
+                    testID="bubble-paste-open-settings"
+                    onPress={() => {
+                      control.openAccessibilitySettings().catch(() => undefined);
+                    }}>
+                    {t("mobile.bubble.openSettings")}
+                  </Button>
+                  <Button
+                    compact
+                    mode="outlined"
+                    testID="bubble-paste-app-info"
+                    onPress={() => {
+                      control.openAppSettings().catch(() => undefined);
+                    }}>
+                    {t("mobile.bubble.openAppInfo")}
+                  </Button>
+                </View>
+              </View>
+            )}
+          </Section>
+          <Section
+            title={t("mobile.bubble.autoStow")}
+            padded
+            footer={<Hint testID="bubble-auto-stow-hint">{t("mobile.bubble.autoStowHint")}</Hint>}>
+            <Segmented<`${AutoStowSeconds}`>
+              label={t("mobile.bubble.autoStow")}
+              testID="bubble-auto-stow"
+              value={`${status.autoStowSeconds}`}
+              onChange={(seconds) => {
+                void save({
+                  autoStowSeconds: AUTO_STOW_CHOICES.find((choice) => `${choice}` === seconds) ?? 0,
+                });
+              }}
+              options={AUTO_STOW_CHOICES.map((seconds) => ({
+                value: `${seconds}`,
+                label:
+                  seconds === 0
+                    ? t("mobile.bubble.autoStowOff")
+                    : t("mobile.bubble.autoStowSeconds", { n: seconds }),
+                testID: `bubble-auto-stow-${seconds === 0 ? "off" : seconds}`,
+              }))}
             />
           </Section>
           <Section title={t("mobile.bubble.result")}>
@@ -245,7 +332,7 @@ function BubblePage({ control }: { control: BubbleControl }) {
                 description={t("mobile.bubble.showResultBody")}
                 value={status.showResult}
                 onValueChange={(showResult) => {
-                  save({ showResult });
+                  void save({ showResult });
                 }}
                 testID="bubble-show-result"
               />
@@ -259,7 +346,7 @@ function BubblePage({ control }: { control: BubbleControl }) {
                 value={status.showDiscard}
                 disabled={!status.showResult}
                 onValueChange={(showDiscard) => {
-                  save({ showDiscard });
+                  void save({ showDiscard });
                 }}
                 testID="bubble-show-discard"
               />
@@ -316,4 +403,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   granted: { fontSize: 13, lineHeight: 18, fontWeight: "500" },
+  pasteService: { paddingHorizontal: 16, paddingBottom: 14, gap: 8 },
+  pasteButtons: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
 });

@@ -145,7 +145,7 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
   种子：外观选「跟随系统」时用壁纸取色（Android 12+ 由 Kotlin 的 `systemAccent()` 读系统的
   `system_accent1_500`，回到前台时重新读），Android 12 以下或手动选了主题时用 Voltip 的墨蓝 `#339cff`，暖纸用它的
   赭石色。六套主题（澄空、夜空、明亮、暗黑、暖纸、石墨，0.1.1 起新安装默认澄空），「跟随系统」时浅色用澄空、
-  深色用夜空；状态栏、导航栏随主题着色，窗口铺满到屏幕边缘并处理安全区。当时比较过的另外两种是标准 MD3
+  深色用夜空；窗口铺满到屏幕边缘并处理安全区，状态栏和导航栏透明，图标的深浅随主题（见下文「无边框」）。当时比较过的另外两种是标准 MD3
   （TonalSpot）和 Material 3 Expressive。
 - **澄空与夜空（0.1.1，Penpot「澄空 Glass · Voltip」画板 03 / 04 / 07 / 08）**：三个标签页背后是固定的四色极光
   （`ui/kit.tsx` 的 `Aurora`，react-native-svg 的径向渐变，`themes.ts` 的 `auroraOf`），比画板淡（与桌面相同的
@@ -171,6 +171,39 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
   录音时按钮下方有「取消录音」（docs/dictation.md §20.11）。最近结果是独立的卡片（最多 3 条，文字一行，
   下面是时间与去向：已插入 {电脑} / 已发送到 {电脑} / 在手机上识别），右侧复制按钮复制后变成「✓ 已复制」两秒；
   分享在记录详情里。
+- **无边框（2026-10-28，Google Play 关于 Android 15 无边框显示的提示）**：
+  - 窗口一直铺满到屏幕边缘：targetSdk 36 下 React Native 在 activity 创建时对所有系统版本调用自己的
+    `enableEdgeToEdge`，状态栏透明；API 29 起导航栏也透明（三键导航时系统画半透明底），API 26–28 是随系统深色模式的半透明底。
+  - 去掉 `expo-navigation-bar`（它设置导航栏颜色和按钮用的是 Android 15 弃用的 `Window` 接口）。导航栏按钮的深浅改由本地模块的
+    `setNavigationBarButtons(light)` 设置（`WindowCompat.getInsetsController(...).isAppearanceLightNavigationBars`，
+    API 29 起；26–28 保留 React Native 的半透明底和与之配套的按钮，单独改按钮会在浅底上画浅按钮）。`App` 的 `navigationBar`
+    属性在主题切换时调用它（`Root.tsx` 接线，`App.test.tsx` 断言浅色主题要深色按钮）。React Native 的模态对话框是单独的窗口，
+    原生模块登记 `ExtraWindowEventListener`，对每个新窗口套用当前的按钮深浅（原先 `expo-navigation-bar` 也这样做）。
+    状态栏仍由 `expo-status-bar` 的 `style` 设置，不设颜色。
+  - `AppTheme` 不带 `android:statusBarColor` 与 `android:navigationBarColor`：`plugins/display.js` 去掉 Expo 模板写进 `styles.xml`
+    的这两项（`display.test.js`），`build-android-rn.sh` 在 prebuild 后检查生成的 `styles.xml` 里没有它们。API 29–34 不需要
+    回退：上面的 `enableEdgeToEdge` 在这些版本上同样把两条栏设为透明。
+  - `pnpm lint` 运行 `scripts/window-apis.js`：本项目的代码（`src`、`modules/voltip-native/src`、
+    `modules/voltip-native/android/src`）不得调用这些弃用接口（`setStatusBarColor`、`setNavigationBarColor`、
+    `setNavigationBarDividerColor`、`layoutInDisplayCutoutMode`，以及 RN `StatusBar` 的 `backgroundColor` / `translucent`），
+    `window-apis.test.js` 3 条。库里剩下的调用点见 §6「R8」。
+- **横屏与大屏（2026-10-28 用户决定「完全放开方向，界面自适应」；Google Play 关于 Android 16 大屏的提示）**：
+  - `app.json` 的 `orientation` 为 `default`，`MainActivity` 不再锁竖屏；ML Kit 扫码的
+    `GmsBarcodeScanningDelegateActivity` 在它的库清单里锁了竖屏，`plugins/display.js` 用 `tools:remove="android:screenOrientation"`
+    去掉。清单里也没有 `resizeableActivity="false"` 与 `min/maxAspectRatio`（`check-android-package.sh` 检查，§6）。
+  - 页面（`ui/kit.tsx` 的 `Page`）左右加上安全区（横屏时的刘海与导航栏），内容放在最宽 720 dp 的居中一列里（`PAGE_MAX_WIDTH`）；
+    浮动底栏最宽 480 dp、居中（`DOCK_MAX_WIDTH`）；手机横屏（窗口宽大于高且高不足 480 dp，`ui/rail.ts` 的 `isRailWindow`）时
+    标签栏改为屏幕左侧的竖向导航栏（宽 72 dp，距左侧安全区 16 dp，在状态栏与底部安全区之间居中），页面从它右侧开始
+    （`besideRail`），提示条贴近底部：底栏占去横屏手机约四分之一的高度，2026-10-28 在 Device Farm 的 Pixel 9 横屏上
+    挡住了说话页的按住说话按钮；平板与展开的折叠屏横屏高于 480 dp，仍用底栏。底部面板最宽 640 dp、居中，左右让出安全区，高度不超过屏幕高减去顶部安全区和 8 dp，横屏时
+    标题不会顶进状态栏；扫码页的关闭按钮让出左侧安全区。`src/ui/wide.test.tsx` 4 条用 `Dimensions.set` 模拟平板与横屏。
+  - 悬浮球按左右停靠（窗口的 `gravity` 是 `START` 或 `END`），旋转或换尺寸时 `BubbleService.onConfigurationChanged` 让
+    `BubbleOverlay.refresh` 把纵向位置收回屏幕内，所以转屏后仍贴在原来那一边。
+  - 逐页检查靠 Device Farm 的平板与手机横屏一轮（§7），截图逐张查看。
+  - 冒烟：`.github/scripts/android-device-smoke.sh` 只在模拟器上（`ro.kernel.qemu` 为 1，或显式 `VOLTIP_SMOKE_LARGE_SCREEN=1`）
+    把显示改成 2560 × 1600、density 320，横竖各检查一次首屏仍在、10 秒内不退出、没有致命日志。改动前读出 `wm size`、
+    `wm density` 的覆盖值和两项旋转设置，在第一次修改前装好 `EXIT` trap 恢复；`scripts/release/test_android_device_smoke.py`
+    用 adb 替身断言真机上不发任何 `wm` 或 `settings put`，模拟器上成功和失败都恢复原值。
 - **页面**：与 `apps/mobile/src/screens` 一一对应——说话（未配对时的欢迎页 / 已配对的设备页，含按住说话、
   发送文字、最近结果、连接自检）、配对（扫码 / 6 位码）与核对安全码、本机、记录（搜索、筛选、
   统计）、记录详情、电脑记录的副本与详情、设置首页、语音模型、AI 模型（服务商卡片、候补模型、预设）、外观、
@@ -203,7 +236,7 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
    `RECORD_AUDIO` / `CAMERA`，所以不传这两项。第三方许可证文本由
    `scripts/release/third-party-notices.py --app mobile-rn`（Rust 外壳的 crate 与 `apps/mobile-rn` 的 npm 包）生成到
    `assets/THIRD-PARTY-NOTICES.txt`，与 Tauri 手机端一样随 APK 附带（关于页提到这个文件），打包后脚本核对它的首行版本。
-3. `gradlew assembleRelease bundleRelease`：一次构建出 APK 和上架 Google Play 用的 AAB（Hermes 字节码、只打
+3. `gradlew assembleRelease bundleRelease :voltip-native:testReleaseUnitTest`：一次构建出 APK 和上架 Google Play 用的 AAB，并运行本地模块的 Kotlin JVM 测试（`modules/voltip-native/android/src/test`，§11）（Hermes 字节码、只打
    arm64-v8a，原生库在 APK 里压缩存放、安装时解压），默认用 Android 调试密钥签名。解压是 `app.json` 里 `expo-build-properties` 的 `useLegacyPackaging`：库不解压时，React
    Native 的 SoLoader 按设备的首选 ABI 在 APK 里找库，x86_64 模拟器经 ARM 翻译运行这个 arm64 应用时它去找
    `lib/x86_64`，加载不到 `libreactnative.so`，应用打开即退出（2026-10-08 CI 的模拟器冒烟）；代价是安装后多占一份
@@ -211,6 +244,24 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
    `app.config.js` 的配置插件（`plugins/release.js`）去掉模板给 release 构建类型配的调试签名，模板变了就报错，
    不会悄悄出一个调试签名的包。React Native 的 Gradle 插件要 JDK 17 工具链：`JAVA_TOOLCHAINS` 指向一个 JDK 17
    （Gradle 自动下载会去 GitHub，本机不可用）。
+   **R8**（2026-10-28，Google Play 关于混淆与优化的提示）：
+   - `app.json` 的 `expo-build-properties` 设 `android.enableMinifyInReleaseBuilds: true`；`plugins/release.js` 的
+     `withOptimizedRelease` 把模板 release 构建类型的 `getDefaultProguardFile("proguard-android.txt")` 换成
+     `proguard-android-optimize.txt`，模板变了就报错（`plugins/release.test.js`）。不开 `shrinkResources`。
+   - keep 规则只写在本地模块的 `consumer-rules.pro`，随模块交给应用：UniFFI 与 JNA 按名字查找的类，以及
+     `-keepattributes SourceFile,LineNumberTable` 和 `-renamesourcefileattribute SourceFile`（堆栈保留行号，用 mapping 还原）。
+   - 2026-10-28 的构建：AAB 的 `BUNDLE-METADATA/com.android.tools/r8.json` 中混淆、优化、缩减分别覆盖 80.8 %、80.4 %、81.0 %
+     （`stats.noObfuscationPercentage` 等为 19.2、19.6、19.0）；APK 由约 33 MB 降到 30.3 MB；R8 没有报缺少的类。
+   - mapping：脚本把 `app/build/outputs/mapping/release/mapping.txt` 复制为
+     `dist/android-rn/Voltip_<版本>_android_arm64-mapping.txt`，并与 AAB 里的
+     `BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map` 逐字节比较；发布时随 Release 发布（第 5 步），
+     用 R8 的 `retrace` 还原用户报告里的堆栈。
+   - R8 之后的 dex 里仍调用 Android 15 弃用的 `Window` 接口的位置（2026-10-28 用 `dexdump` 扫描，按 mapping 还原到类名），
+     都在库里，不在本项目的代码中：React Native 的 `WindowUtilKt.enableEdgeToEdge`（`setStatusBarColor`、`setNavigationBarColor`，
+     以及 R8 外提到合成类里的 `layoutInDisplayCutoutMode`）和 `StatusBarModule.setColor`；androidx `SplashScreen` 在
+     Android 12 起的退出动画监听；Material Components 的 `MaterialDatePicker.onStart`、`BottomSheetDialog.onCreate`
+     （react-native-screens 的表单面板用它）和 `DropdownMenuEndIconDelegate`；`expo-image-picker` 的
+     `ExpoCropImageActivity.onCreate`。这些库改用新接口后随升级消失。
 4. 发布前扫描：APK 和 AAB 的每个条目都过 `voltip_scan_provider_keys`；JS 包是 Hermes 字节码，字符串表首尾相接，图标名
    （`task-outline` 等）会被误认成 `sk-…`，所以它改为扫描 Metro 打包前的源码（packager source map 的
    `sourcesContent`），并检查构建环境里的密钥值不在字节码中。`.env.build` 以外的生产主机名不得出现在源码树里
@@ -218,8 +269,10 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
 5. 发布（`docs/runbook.md` 发布 · Android；0.0.50 起是这条腿唯一的应用）：发布候选的 `bundle-android` 腿在签名之前
    运行 `build-android-rn.sh --unsigned`（注入内置服务的值），签名一步用发布密钥签 APK 和 AAB
    （`.github/scripts/sign-android-package.sh`），`check-android-package.sh` 检查证书、16 KB 对齐、包名
-   `dev.voltip.mobile`、版本、targetSdk、安装时解压原生库、许可声明和原生库里的密钥，`updater-json.py collect` 把两者
-   作为这条腿的 apk 与 aab 封存；`device-android` 在模拟器上启动它（`android-device-smoke.sh`）。CI 的 `android` 与
+   `dev.voltip.mobile`、版本、targetSdk、安装时解压原生库、许可声明和原生库里的密钥，以及 AAB 的 `r8.json` 三项覆盖都不低于
+   25 %、AAB 带非空的 R8 map、清单里没有方向锁（`screenOrientation` 只能是不限方向的取值 -1、2、3、4、10、13）、
+   `resizeableActivity="false"` 或 `min/maxAspectRatio`；`updater-json.py collect --bundles apk,aab,mapping` 把三者作为这条腿的
+   apk、aab 与 mapping 封存，mapping 以 `Voltip_<版本>_android_arm64-mapping.txt` 随 Release 发布；`device-android` 在模拟器上启动它（`android-device-smoke.sh`）。CI 的 `android` 与
    `android-device` 对每个改了代码的 PR 走同一条路，用当次生成的临时密钥签名，不注入内置服务。2026-10-08 至 0.0.49
    它以 `--app mobile-rn` 作为附加文件 `Voltip-RN_<版本>_android_arm64.apk` 与 Tauri 的包一起发布。
 
@@ -240,6 +293,13 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
   AI 模型 / 外观（切到暗黑）/ 录音
   （下拉菜单，返回键先关菜单）/ 词典（全屏编辑器）、本机与配对页、返回逐级、说话页两次返回退出、内存与掉帧；
   `summary.txt` 逐项记录，截图与界面树回传后逐张查看。
+  2026-10-28 起（R8、无边框、大屏与悬浮球）另外检查：设置页检查更新、扫码页打开相机、规则导出打开系统分享面板；
+  横屏一轮（说话页按住说话录一次、本机与配对页、扫码页的相机预览、6 位验证码、记录、设置、语音模型的服务商面板、录音页的下拉面板、
+  词典编辑器，回到说话页仍在运行）；手机上把显示改成折叠屏展开后的内屏
+  （1840 × 2208、420 dpi）再改回（Device Farm 没有折叠屏，平板跳过这一步）；悬浮球（`docs/dictation.md` §20.12 的门禁）；
+  整次运行里应用自己的日志中没有 `ClassNotFoundException`、`NoClassDefFoundError`、`NoSuchMethodError`、
+  `NoSuchFieldError`、`UnsatisfiedLinkError`（R8 删掉或改名了按名字查找的东西时会出现）。改过的旋转、显示尺寸和无障碍设置
+  在退出时（`EXIT` trap）恢复。
 - 结果（2026-10-07，换成「简约中性」配色后的 `rn-style-c2`，同一个 APK 在三台手机上全部通过）：
 
   | 设备 | 冷启动 | 首屏 | 内存（TOTAL PSS） | 跟随系统时的强调色 |
@@ -260,6 +320,14 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
   在三台上都由核心日志确认。第一轮发现「说话方式」分段居中时没有宽度、在真机上缩成一条（改为固定宽度并加说明），
   以及脚本会点到被悬浮标签栏挡住的设置行（`find_node` 现在跳过它们）；录音时界面一直在动，uiautomator 读不到新的界面树，
   脚本先删旧文件，点按改为按事先读到的位置。修好后 Pixel 8 上全部检查通过。
+- 2026-10-28（PR #199：R8、无边框、横屏与大屏、悬浮球与手势粘贴；发布密钥签名的 R8 包，SHA-256 `d004eefd…`）：
+  Pixel 9 · Android 16、Galaxy A54 · Android 13、Pixel Tablet · Android 16 全部通过（第 5、6 轮）。冷启动 538 / 783 / 610 ms，
+  首屏 3 s，TOTAL PSS 395,114 / 342,732 / 320,158 KB。横屏一轮、两台手机上模拟的折叠屏内屏、悬浮球（手势粘贴开与关时各录一次、
+  5 秒空闲收成把手、按住 8 秒不收起、旋转后仍在屏幕内）都通过；整次运行里没有类缺失、方法缺失或原生库加载失败的日志。
+  Android 13 上状态栏与导航栏透明、图标深浅正确，API 29–34 不需要保留 `AppTheme` 的栏颜色。发现并修正的应用问题：手机横屏时
+  底栏挡住了按住说话按钮（改为左侧的竖向标签栏，§5）。前几轮的失败都在脚本：横屏时找不到底栏里的标签、设置页保留了上次的
+  滚动位置、5 秒自动收起在录音之前打开（把手上的滑动是拉出悬浮球）、启动器不随旋转转向、状态栏下的点击、滚动未停时的点击、
+  系统通知横幅盖住页面；都已修正（`acceptance.sh`）。
 - 跑通之前修掉的问题：相机插件删掉了 `RECORD_AUDIO`（§6）；返回键关菜单时页面也跟着返回（Paper 的返回监听
   不拦截，`Select` 自己拦）；上面 §5 的菜单竞态；以及脚本自身的几处（Pixel 8 的标签文字离导航栏太近，改按
   testID 点；欢迎页的「连接电脑」既是标题又是按钮；慢手机上返回提示在读取界面树之前就消失了）。
@@ -309,9 +377,18 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
   （`SupervisorJob() + Dispatchers.IO`）里调用挂起的 `invoke`，`onDestroy` 时取消；悬浮窗是 `BubbleOverlay`，
   界面在主线程更新。选项、位置、是否收进了边缘和文字存在 SharedPreferences（`BubblePrefs`）。
 - **原生模块的新函数**：`bubbleStatus()`、`bubbleConfigure(configJson)`（都返回 `BubbleStatus` 的 JSON）、
-  `bubbleOpenOverlaySettings()`、`bubbleOpenNotificationSettings()`。JavaScript 侧是 `src/backend/bubble.tsx` 的
+  `bubbleOpenOverlaySettings()`、`bubbleOpenNotificationSettings()`、`bubbleOpenAccessibilitySettings()`、
+  `bubbleOpenAppSettings()`（应用信息页，放开受限设置用），以及 `setNavigationBarButtons(light)`（§5「无边框」）。JavaScript 侧是 `src/backend/bubble.tsx` 的
   `BubbleControl`，由 `Root.tsx` 交给 `<App bubble>`；测试换成假的实现，没有它时设置里不显示悬浮球。
 - **清单**：`SYSTEM_ALERT_WINDOW`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_MICROPHONE`、`POST_NOTIFICATIONS` 与
   `BubbleService` 的声明在模块的 `AndroidManifest.xml`；`app.json` 列出这些权限，不再屏蔽 `SYSTEM_ALERT_WINDOW`。
+- **手势粘贴的服务**（`BubblePasteService`，`docs/dictation.md` §20.12）：`AccessibilityService`，在模块清单里声明
+  （`BIND_ACCESSIBILITY_SERVICE` 权限保护，`android.accessibilityservice` 元数据指向
+  `res/xml/voltip_bubble_accessibility.xml`，名称与说明在 `values` / `values-zh-rCN` 的 `voltip_bubble_accessibility.xml`）。
+  它不订阅事件，只在悬浮球要抓目标和粘贴时，由 `BubbleOverlay` 在协程里调用 `captureTarget()` 与 `pasteText()`
+  （不在主线程）。是否已连接是进程里的 `connected`，`BubbleService` 把它报成 `BubbleStatus.accessibilityEnabled`。
+  判定逻辑是不依赖 Android 的纯 Kotlin（`BubbleSwipeDecision`、`BubblePasteDecision`、`BubbleAutoStow`），由模块的
+  JVM 测试覆盖（`build.gradle` 的 `testImplementation 'junit:junit:4.13.2'`）。
 - **真机验证**：本机没有模拟器（没有 KVM）。用户 2026-10-28 在真机上试过最初的版本，没有问题；之后加的收进边缘和
-  「不复制」开关交给用户再验。厂商系统的后台限制见 `docs/dictation.md` §20.12。
+  「不复制」开关交给用户再验。悬浮球与手势粘贴在 Device Farm 上的检查见 §7；实际粘贴进其他应用只能在用户的手机上验。
+  厂商系统的后台限制见 `docs/dictation.md` §20.12。

@@ -45,7 +45,9 @@ SAFE_ATOM = re.compile(r"^[A-Za-z0-9_.+-]+$")
 SAFE_ASSET_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 
 # Bundle kind -> directory under <bundle-dir> -> file suffixes (tauri-bundler layout). `app` is
-# the macOS updater archive (`macos/Voltip.app.tar.gz`), not the .app directory beside it.
+# the macOS updater archive (`macos/Voltip.app.tar.gz`), not the .app directory beside it;
+# `mapping` is R8's map of the Android build (`mapping/Voltip_<v>_android_arm64-mapping.txt`),
+# which deobfuscates the app's stack traces (docs/mobile-rn.md §6).
 KIND_DIRS = {
     "deb": "deb",
     "rpm": "rpm",
@@ -56,6 +58,7 @@ KIND_DIRS = {
     "app": "macos",
     "apk": "apk",
     "aab": "aab",
+    "mapping": "mapping",
 }
 KIND_SUFFIXES = {
     "deb": (".deb",),
@@ -67,6 +70,7 @@ KIND_SUFFIXES = {
     "app": (".app.tar.gz",),
     "apk": (".apk",),
     "aab": (".aab",),
+    "mapping": ("-mapping.txt",),
 }
 UPDATER_BUNDLES = {"appimage", "nsis", "msi", "app"}
 # Written only with bundle.createUpdaterArtifacts, so absent (and not shipped) without the updater.
