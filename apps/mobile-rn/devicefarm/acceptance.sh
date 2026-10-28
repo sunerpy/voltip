@@ -264,6 +264,19 @@ measure density "${density:-unknown}"
 density=${density:-420}
 top_px=$(status_bottom)
 measure status_bar_px "$top_px"
+# A system notification's banner over the app takes the UI tree and the taps meant for the page
+# (2026-10-28, a Pixel Tablet: Google's 「在各设备上同步忽略通知」 over 设置 left 外观与语言 untapped):
+# no banners for the run, put back on every way out.
+heads_up=$(adb shell settings get global heads_up_notifications_enabled | tr -d '\r')
+restore_heads_up() {
+  if [ "$heads_up" = null ] || [ -z "$heads_up" ]; then
+    adb shell settings delete global heads_up_notifications_enabled >/dev/null 2>&1 || true
+  else
+    adb shell settings put global heads_up_notifications_enabled "$heads_up" >/dev/null 2>&1 || true
+  fi
+}
+trap restore_heads_up EXIT
+adb shell settings put global heads_up_notifications_enabled 0
 
 step "INSTALLED"
 if adb shell pm list packages | grep -q "package:$PKG\$"; then
@@ -582,6 +595,7 @@ restore_display() {
   if [ -n "$density_override" ]; then adb shell wm density "$density_override" >/dev/null 2>&1; else adb shell wm density reset >/dev/null 2>&1; fi
 }
 restore_device() {
+  restore_heads_up
   put_back system accelerometer_rotation "$rotation_auto"
   put_back system user_rotation "$rotation_user"
   put_back secure enabled_accessibility_services "$a11y_services"
