@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voltip_bubble_accessibility_label">Voltip paste</string>
+    <string name="voltip_bubble_accessibility_description">When requested, Voltip pastes finished speech text into the previously focused text field. It does not collect the text in other apps.</string>
+</resources>

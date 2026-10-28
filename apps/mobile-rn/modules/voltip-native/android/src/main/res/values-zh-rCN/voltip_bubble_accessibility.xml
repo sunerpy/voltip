@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voltip_bubble_accessibility_label">Voltip 粘贴</string>
+    <string name="voltip_bubble_accessibility_description">仅在你通过悬浮球滑动要求粘贴时，把最终语音文字插入此前获得焦点的输入框；不收集其他应用中的文字。</string>
+</resources>
