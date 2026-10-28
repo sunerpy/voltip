@@ -5,7 +5,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-
 import { type DictationPhase, type PhoneTakeState, idleDictation, zhT } from "@voltip/shared";
 import type { MockBackend } from "@voltip/shared/mock";
 
-import { openTab, renderApp } from "../test/render";
+import { hold, openTab, renderApp } from "../test/render";
 import { CANCEL_DISTANCE, levelFraction, localTakeLine, phoneTakeLine } from "./PhoneMic";
 
 /** A press at a point on the page; `at` is where the finger is over the child it touches. */
@@ -206,18 +206,6 @@ async function take(backend: MockBackend, state: PhoneTakeState, opus?: boolean)
 
 const stateLine = () => screen.getByTestId("phone-mic-state");
 
-/** The core takes `dictation_*` without running a take of its own: the test reports the phases. */
-function quiet(backend: MockBackend) {
-  const real = backend.invoke.bind(backend);
-  return jest
-    .spyOn(backend, "invoke")
-    .mockImplementation((name: string, ...rest: unknown[]) =>
-      name.startsWith("dictation_")
-        ? Promise.resolve()
-        : (real as (n: string, ...r: unknown[]) => Promise<void>)(name, ...rest),
-    );
-}
-
 describe("the talk card's lines", () => {
   const t = zhT.t;
 
@@ -283,7 +271,7 @@ describe("the talk card's lines", () => {
 describe("the talk card on the page", () => {
   it("follows a take the phone recognises: its time and wave while it records, then each outcome", async () => {
     const { backend } = await renderApp();
-    const invoke = quiet(backend);
+    const invoke = hold(backend, "dictation_start", "dictation_stop", "dictation_cancel");
     const button = await screen.findByTestId("phone-mic-hold");
     await fireEvent(button, "responderGrant", touch({ x: 200, y: 500 }));
     await phase(backend, {
@@ -314,7 +302,7 @@ describe("the talk card on the page", () => {
 
   it("records without a wave when the meter cannot start", async () => {
     const { backend } = await renderApp();
-    quiet(backend);
+    hold(backend, "dictation_start", "dictation_stop", "dictation_cancel");
     jest.spyOn(backend, "meter").mockRejectedValueOnce(new Error("no meter"));
     const button = await screen.findByTestId("phone-mic-hold");
     await fireEvent(button, "responderGrant", touch({ x: 200, y: 500 }));
@@ -335,6 +323,7 @@ describe("the talk card on the page", () => {
     await waitFor(() => {
       expect(backend.peek().settings.phone_talk).toBe("tap");
     });
+    hold(backend, "dictation_start", "dictation_stop", "dictation_cancel");
     const button = screen.getByTestId("phone-mic-hold");
     await fireEvent(button, "responderGrant", touch({ x: 200, y: 500 }));
     await phase(backend, {

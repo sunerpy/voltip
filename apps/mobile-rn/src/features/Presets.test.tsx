@@ -3,7 +3,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
 import { MockBackend } from "@voltip/shared/mock";
 
-import { openTab, renderApp } from "../test/render";
+import { hold, openTab, renderApp } from "../test/render";
 
 async function openPresets() {
   await openTab("settings");
@@ -94,8 +94,25 @@ describe("预设 on the AI 模型 page", () => {
       within(trial).getByText("用当前的 AI 服务处理一段示例文字，结果不会保存。"),
     ).toBeOnTheScreen();
     await fireEvent.changeText(within(editor).getByTestId("preset-prompt"), "只加标点。");
+    // The core's answer is held, so the wait is on the screen however slow the machine is.
+    const invoke = hold(backend, "presets_try");
     await fireEvent.press(within(editor).getByTestId("preset-try"));
     expect(within(editor).getByText("正在处理…")).toBeOnTheScreen();
+    const [, asked] = invoke.mock.calls.find(([name]) => name === "presets_try") ?? [];
+    invoke.mockRestore();
+    await act(async () => {
+      backend.publish({
+        type: "preset_try",
+        id: (asked as { id: number }).id,
+        outcome: {
+          status: "ok",
+          text: "今天天气不错。",
+          latency_ms: 300,
+          model: "qwen/qwen3.8-27b",
+        },
+      });
+      await Promise.resolve();
+    });
     expect(await within(editor).findByTestId("preset-trial-result")).toHaveTextContent(/结果 · /);
     // A sample cleared away cannot be tried; a new one clears the old answer.
     await fireEvent.changeText(within(editor).getByTestId("preset-sample"), "   ");

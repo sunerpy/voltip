@@ -5,7 +5,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 import { type Snapshot, idleSnapshot } from "@voltip/shared";
 import { MockBackend } from "@voltip/shared/mock";
 
-import { nth, renderApp } from "../test/render";
+import { hold, nth, renderApp } from "../test/render";
 
 interface MockCamera {
   permission: { granted: boolean; canAskAgain: boolean } | null;
@@ -53,7 +53,9 @@ async function publish(backend: MockBackend, snapshot: Partial<Snapshot>) {
 
 describe("扫码", () => {
   it("joins with the first Voltip link the camera sees, ignoring anything else, and goes back", async () => {
-    const { invoke } = await openPair();
+    const { backend } = await openPair();
+    // The core takes the link and pairs nothing here: the page it goes back to stays put.
+    const invoke = hold(backend, "pairing_join_ticket");
     await fireEvent.press(screen.getByTestId("pair-open-camera"));
     expect(await screen.findByText("对准电脑屏幕上的二维码")).toBeOnTheScreen();
     expect(mockCamera.scanned).toBeDefined();

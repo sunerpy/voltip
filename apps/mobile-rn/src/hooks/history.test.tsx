@@ -6,6 +6,7 @@ import { MockBackend, type MockMirror, mockMirrorProfile } from "@voltip/shared/
 import type { ReactNode } from "react";
 
 import { BackendProvider } from "../backend/BackendProvider";
+import { hold, requestIdOf } from "../test/render";
 import { HISTORY_PAGE, useHistoryEntry, useHistoryList } from "./useHistoryList";
 import { exportName, isLongEntry, useHistoryProcess } from "./useHistoryProcess";
 
@@ -46,7 +47,7 @@ function on(backend: MockBackend) {
 
 /** `backend`'s queries, each held until it is answered with what the core says, or failed. The
  *  spy goes in before the hook renders: the hook binds the query once. */
-function hold(backend: MockBackend) {
+function holdQueries(backend: MockBackend) {
   const real = backend.historyQuery.bind(backend);
   const waiting: { args: HistoryQueryArgs; resolve: (page: HistoryPage) => void }[] = [];
   let mode: "hold" | "pass" | "fail" = "pass";
@@ -110,7 +111,7 @@ describe("useHistoryList", () => {
 
   it("keeps the previous rows until a new search answers, and drops a page asked for the old one", async () => {
     const backend = new MockBackend({ role: "phone", history: many(HISTORY_PAGE + 5) });
-    const slow = hold(backend);
+    const slow = holdQueries(backend);
     const { result, rerender } = await renderHook(
       ({ search }: { search: string }) => useHistoryList("all", search, NOW),
       { wrapper: on(backend), initialProps: { search: "" } },
@@ -151,7 +152,7 @@ describe("useHistoryList", () => {
 
   it("stays unsettled while the core does not answer, and keeps its rows when a further page fails", async () => {
     const backend = new MockBackend({ role: "phone", history: many(HISTORY_PAGE + 1) });
-    const slow = hold(backend);
+    const slow = holdQueries(backend);
     slow.set("fail");
     const { result, rerender } = await renderHook(
       ({ filter }: { filter: "all" | "today" }) => useHistoryList(filter, "", NOW),
@@ -246,6 +247,8 @@ describe("useHistoryProcess", () => {
     const { result } = await renderHook(() => useHistoryProcess(long.id), {
       wrapper: on(backend),
     });
+    // The core's answers are the test's, so the run cannot finish before it is looked at.
+    const held = hold(backend, "history_process");
     expect(result.current.view).toEqual({ state: "idle" });
     // Cancelling with nothing running asks nothing.
     const invoke = jest.spyOn(backend, "invoke");
@@ -266,8 +269,28 @@ describe("useHistoryProcess", () => {
       await Promise.resolve();
     });
     expect(result.current.view.state).toBe("running");
-    await waitFor(() => {
-      expect(result.current.view.state).toBe("done");
+    const requestId = requestIdOf(held, "history_process");
+    await act(async () => {
+      backend.publish({
+        type: "history_process",
+        request_id: requestId,
+        id: long.id,
+        state: { state: "running", done: 1, total: 2 },
+      });
+      await Promise.resolve();
+    });
+    expect(result.current.view).toEqual({ state: "running", done: 1, total: 2 });
+    await act(async () => {
+      backend.publish({
+        type: "history_process",
+        request_id: requestId,
+        id: long.id,
+        state: {
+          state: "done",
+          processed: { text: "第 1 条。", preset: { id: "proofread", name: "校对" }, at_ms: NOW },
+        },
+      });
+      await Promise.resolve();
     });
     const view = result.current.view;
     expect(view.state === "done" && view.processed.preset.id).toBe("proofread");
@@ -279,6 +302,8 @@ describe("useHistoryProcess", () => {
       ({ id }: { id: string }) => useHistoryProcess(id),
       { wrapper: on(backend), initialProps: { id: long.id } },
     );
+    // The run is held, so the cancel always finds it running.
+    const held = hold(backend, "history_process", "history_process_cancel");
     await act(async () => {
       result.current.start("proofread");
       await Promise.resolve();
@@ -287,8 +312,19 @@ describe("useHistoryProcess", () => {
       result.current.cancel();
       await Promise.resolve();
     });
+    const cancelled = requestIdOf(held, "history_process_cancel");
+    await act(async () => {
+      backend.publish({
+        type: "history_process",
+        request_id: cancelled,
+        id: long.id,
+        state: { state: "cancelled" },
+      });
+      await Promise.resolve();
+    });
     expect(result.current.view).toEqual({ state: "cancelled" });
-    // Another entry shows nothing of this one's request.
+    held.mockRestore();
+    // Another entry shows nothing of this one's request; the core says it is gone.
     await rerender({ id: entry(2).id });
     expect(result.current.view).toEqual({ state: "idle" });
     await act(async () => {
@@ -296,14 +332,15 @@ describe("useHistoryProcess", () => {
       await Promise.resolve();
     });
     expect(result.current.view).toEqual({ state: "failed", reason: "这条记录已删除" });
+    // Leaving the page while a run is under way cancels it.
     await rerender({ id: long.id });
+    const leaving = hold(backend, "history_process");
     await act(async () => {
       result.current.start("proofread");
       await Promise.resolve();
     });
-    const invoke = jest.spyOn(backend, "invoke");
     await unmount();
-    expect(invoke).toHaveBeenCalledWith("history_process_cancel", {
+    expect(leaving).toHaveBeenCalledWith("history_process_cancel", {
       requestId: expect.any(Number),
     });
   });

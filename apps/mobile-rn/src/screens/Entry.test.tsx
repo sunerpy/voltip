@@ -9,13 +9,14 @@ import { DeviceEventEmitter } from "react-native";
 import {
   type DictionaryEntry,
   type HistoryEntry,
+  type ProcessState,
   type ReplacementRule,
   wordPieces,
 } from "@voltip/shared";
 import { MockBackend } from "@voltip/shared/mock";
 
 import { wordUnits } from "../features/QuickFix";
-import { openTab, renderApp } from "../test/render";
+import { hold, openTab, renderApp, requestIdOf } from "../test/render";
 
 /** The board's sample take (Penpot 「快速纠错」 12): two wordings the polish fixed, one it kept. */
 const RAW =
@@ -657,18 +658,45 @@ describe("the entry page", () => {
       segments: [{ text: "下午用维他命测了千问三的流式识别。", start_ms: 0, end_ms: 4000 }],
     });
     const { backend } = await openEntry({ history: [long] });
+    // The core's answers are the test's: each step stays on the screen until the next one.
+    const invoke = hold(backend, "history_process", "history_process_cancel");
+    const answer = async (state: ProcessState) => {
+      const requestId = requestIdOf(invoke, "history_process");
+      await act(async () => {
+        backend.publish({
+          type: "history_process",
+          request_id: requestId,
+          id: long.id,
+          state,
+        });
+        await Promise.resolve();
+      });
+    };
     const tools = within(screen.getByTestId("phone-entry-long"));
     expect(tools.queryByText("导出文本时使用处理后文本。")).toBeNull();
     await fireEvent.press(tools.getByLabelText("预设"));
     await fireEvent.press(await screen.findByRole("radio", { name: "要点纪要" }));
     await fireEvent.press(tools.getByText("开始处理"));
-    expect(await tools.findByText(/^已处理 \d+\/\d+ 部分$/)).toBeOnTheScreen();
+    expect(invoke).toHaveBeenCalledWith("history_process", {
+      requestId: expect.any(Number),
+      id: long.id,
+      preset: "notes",
+    });
+    await answer({ state: "running", done: 1, total: 2 });
+    expect(tools.getByText("已处理 1/2 部分")).toBeOnTheScreen();
+    await answer({
+      state: "done",
+      processed: { text: "要点：流式识别。", preset: { id: "notes", name: "要点纪要" }, at_ms: T },
+    });
     expect(await tools.findByText("重新处理")).toBeOnTheScreen();
     expect(tools.getByText("导出文本时使用处理后文本。")).toBeOnTheScreen();
-    expect((await backend.historyEntry(long.id))?.processed?.preset.id).toBe("notes");
 
     await fireEvent.press(tools.getByText("重新处理"));
     await fireEvent.press(await tools.findByText("取消"));
+    expect(invoke).toHaveBeenCalledWith("history_process_cancel", {
+      requestId: expect.any(Number),
+    });
+    await answer({ state: "cancelled" });
     expect(await tools.findByText("已取消，未保存结果。")).toBeOnTheScreen();
 
     await fireEvent.press(tools.getByText("分享字幕（SRT）"));
