@@ -229,7 +229,9 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
   `packages/shared/src/fixtures/ipc/commands.json`）、查询返回能被 zod schema 接受的形状、外壳命令的固定
   回答、平台回调的参数。
 - JS：jest-expo + @testing-library/react-native，用 `@voltip/shared/mock` 的内存后端渲染各页面，覆盖导航、
-  按住说话的状态、配对流程、下拉选择、返回键。
+  按住说话的状态、配对流程、下拉选择、返回键。`pnpm --filter @voltip/mobile-rn run test:coverage`（`make verify`
+  的 web-coverage 一步和 CI 都跑它）要求行、分支、函数、语句覆盖率都不低于 90%，与其他前端包相同；只排除
+  `src/Root.tsx`（启动 Rust 外壳的原生胶水，测试环境里没有原生模块）。
 - 真机：AWS Device Farm（us-west-2），`scripts/devicefarm-rn.sh <apk> <设备池> <输出目录>`。自定义测试环境
   （`apps/mobile-rn/devicefarm/testspec.yml`）+ adb 驱动的 `acceptance.sh`（与 `.github/scripts/android-device-smoke.sh`
   同一思路），设备语言设为 zh_CN：安装、冷启动计时、首屏出现「按住说话」、授予麦克风后按住说话录 4 秒（设备

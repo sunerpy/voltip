@@ -104,6 +104,7 @@ export function ShellProvider({
           </Dialog.Content>
           <Dialog.Actions>
             <Button
+              testID="shell-confirm-cancel"
               onPress={() => {
                 setPending(undefined);
               }}>
@@ -111,6 +112,7 @@ export function ShellProvider({
             </Button>
             <Button
               textColor={theme.colors.error}
+              testID="shell-confirm"
               onPress={() => {
                 pending?.onConfirm();
                 setPending(undefined);

@@ -170,7 +170,11 @@ export function Feedback() {
           onValueChange={(value) => {
             setKind(value);
           }}
-          buttons={FEEDBACK_KINDS.map((k) => ({ value: k, label: t(`feedback.kind.${k}`) }))}
+          buttons={FEEDBACK_KINDS.map((k) => ({
+            value: k,
+            label: t(`feedback.kind.${k}`),
+            testID: `feedback-kind-${k}`,
+          }))}
         />
         <View style={{ gap: 4 }}>
           <TextInput
@@ -198,6 +202,7 @@ export function Feedback() {
           maxLength={FEEDBACK_CONTACT_MAX}
           autoCapitalize="none"
           onChangeText={setContact}
+          testID="feedback-contact"
         />
       </Section>
       {configured && (
@@ -210,14 +215,15 @@ export function Feedback() {
               icon="plus"
               loading={adding}
               disabled={adding || sending || files.length >= FEEDBACK_MAX_ATTACHMENTS}
-              onPress={() => void pick()}>
+              onPress={() => void pick()}
+              testID="feedback-attach">
               {adding ? t("feedback.attachAdding") : t("feedback.attachAdd")}
             </Button>
           }
           footer={
             <View style={{ gap: 4 }}>
               {refusal !== undefined && (
-                <Hint tone="danger">
+                <Hint tone="danger" testID="feedback-refusal">
                   {t(`feedback.attachError.${refusal.reason}`, {
                     ...FEEDBACK_LIMITS,
                     name: refusal.name,
@@ -271,7 +277,9 @@ export function Feedback() {
       )}
       {!configured && <Hint>{t("feedback.notConfigured")}</Hint>}
       {error !== undefined && (
-        <Hint tone="danger">{t(`feedback.error.${error}`, { max: FEEDBACK_MESSAGE_MAX })}</Hint>
+        <Hint tone="danger" testID="feedback-error">
+          {t(`feedback.error.${error}`, { max: FEEDBACK_MESSAGE_MAX })}
+        </Hint>
       )}
       {configured ? (
         <Button
@@ -287,6 +295,7 @@ export function Feedback() {
         <Button
           mode="contained"
           icon="open-in-new"
+          testID="feedback-open-issue"
           onPress={() => {
             backend.projectLinkOpen("feedback").catch((e: unknown) => {
               shell.toast(

@@ -679,6 +679,7 @@ function ProviderForm({
                 { value: "", label: t("engines.field.reasoningNone") },
                 ...REASONING_EFFORTS.map((e) => ({ value: e, label: e })),
               ]}
+              testID="provider-reasoning"
             />
           )}
           <Hint>

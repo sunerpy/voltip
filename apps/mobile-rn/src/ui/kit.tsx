@@ -26,6 +26,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
+import type { Tone as LabelTone } from "@voltip/shared";
 import {
   AnimatedFAB,
   Icon,
@@ -597,6 +598,18 @@ export function FactRow({
 }
 
 export type Tone = "ok" | "accent" | "danger" | "idle" | "warning";
+
+/** A label's tone (`@voltip/shared`'s labels) as the kit's lamps have it. */
+export function labelTone(tone: LabelTone): Tone {
+  switch (tone) {
+    case "warn":
+      return "warning";
+    case "neutral":
+      return "idle";
+    default:
+      return tone;
+  }
+}
 
 export function toneColor(theme: AppTheme, tone: Tone): string {
   switch (tone) {

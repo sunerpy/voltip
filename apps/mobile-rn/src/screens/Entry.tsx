@@ -62,7 +62,7 @@ import {
   Section,
   SectionTitle,
   StateLine,
-  type Tone,
+  labelTone,
   useAppTheme,
 } from "../ui/kit";
 import { SelectField } from "../ui/Select";
@@ -96,12 +96,6 @@ function useEntry(id: string): HistoryEntryData | null | undefined {
   return answer?.id === id ? answer.entry : undefined;
 }
 
-function outcomeTone(tone: string): Tone {
-  return tone === "ok" || tone === "accent" || tone === "danger" || tone === "warning"
-    ? tone
-    : "idle";
-}
-
 /** The day, the time and how the take ended, above its text. */
 export function EntryHeader({
   when,
@@ -113,7 +107,7 @@ export function EntryHeader({
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 4 }}>
       <SectionTitle style={{ flex: 1 }}>{when}</SectionTitle>
-      <StateLine tone={outcomeTone(outcome.tone)} small>
+      <StateLine tone={labelTone(outcome.tone)} small testID="entry-outcome">
         {outcome.text}
       </StateLine>
     </View>

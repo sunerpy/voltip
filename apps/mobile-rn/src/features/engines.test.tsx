@@ -1,7 +1,7 @@
 // The phone's provider sheets (docs/dictation.md §3.3, §3.5): with a saved key the model list has
 // every model the provider lists, headed with 测试连接's count and asked for again as it opens;
 // Model Studio's sheet and its fallback note link the console page of free quota and usage.
-import { fireEvent, screen, waitFor, within } from "@testing-library/react-native";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
 import { MOCK_PROBE_MS, MockBackend } from "@voltip/shared/mock";
 
 import { openTab, renderApp } from "../test/render";
@@ -122,5 +122,152 @@ describe("the phone's provider sheets", () => {
     expect(backend.consoleSites).toEqual(["intl"]);
     await fireEvent.press(within(sheet).getByTestId("provider-site-cn"));
     expect(within(sheet).getByTestId("provider-url")).toHaveProp("value", "");
+  });
+});
+
+/** 设置 › `page`, then `provider`'s sheet for `kind`. */
+async function openSheet(
+  page: "settings-speech" | "settings-ai",
+  kind: "asr" | "llm",
+  provider: string,
+  name: string,
+) {
+  await openTab("settings");
+  await fireEvent.press(await screen.findByTestId(page));
+  const card = await screen.findByTestId(`provider-${kind}-${provider}`);
+  await fireEvent.press(within(card).getByRole("button", { name }));
+  return within(await screen.findByTestId("provider-sheet-sheet"));
+}
+
+async function pick(testID: string, option: string) {
+  await fireEvent.press(screen.getByTestId(testID));
+  await fireEvent.press(await screen.findByTestId(`${testID}-option-${option}`));
+}
+
+describe("a provider's sheet", () => {
+  it("the custom clean-up chooses its interface and, for Responses, the reasoning effort", async () => {
+    const { backend } = await renderApp();
+    const sheet = await openSheet("settings-ai", "llm", "custom", "自定义接口");
+    expect(sheet.queryByTestId("provider-reasoning")).toBeNull();
+    await fireEvent.press(sheet.getByText("Responses"));
+    expect(sheet.getByText(/只随 Responses 请求发送/)).toBeOnTheScreen();
+    await pick("provider-reasoning", "high");
+    await fireEvent.changeText(sheet.getByTestId("provider-model-id"), "gpt-6-luna");
+    await fireEvent.changeText(sheet.getByTestId("provider-url"), "http://192.168.1.20:8000/v1");
+    await fireEvent.press(sheet.getByTestId("provider-save"));
+    await waitFor(() => {
+      expect(backend.peek().settings.engines.providers?.custom).toMatchObject({
+        llm_api: "responses",
+        llm_reasoning: "high",
+      });
+    });
+    // No effort: none is sent; Chat Completions again drops both.
+    await pick("provider-reasoning", "");
+    await fireEvent.press(sheet.getByTestId("provider-save"));
+    await waitFor(() => {
+      expect(backend.peek().settings.engines.providers?.custom?.llm_reasoning).toBeUndefined();
+    });
+    await fireEvent.press(sheet.getByText("Chat Completions"));
+    expect(sheet.queryByTestId("provider-reasoning")).toBeNull();
+    await fireEvent.press(sheet.getByTestId("provider-save"));
+    await waitFor(() => {
+      expect(backend.peek().settings.engines.providers?.custom?.llm_api).toBeUndefined();
+    });
+  });
+
+  it("shows or hides a key, saves it with a note, deletes it, and 恢复默认 forgets the draft", async () => {
+    await renderApp();
+    const sheet = await openSheet("settings-speech", "asr", "groq", "Groq");
+    const key = sheet.getByTestId("provider-key");
+    expect(key).toHaveProp("secureTextEntry", true);
+    await fireEvent.press(sheet.getByLabelText("显示密钥"));
+    expect(sheet.getByTestId("provider-key")).toHaveProp("secureTextEntry", false);
+    await fireEvent.press(sheet.getByLabelText("隐藏密钥"));
+    expect(sheet.getByTestId("provider-key")).toHaveProp("secureTextEntry", true);
+    await fireEvent.changeText(sheet.getByTestId("provider-key"), "gsk_saved");
+    await fireEvent.press(sheet.getByTestId("provider-save"));
+    expect(await screen.findByText("已保存 · Groq · 密钥已写入系统钥匙串")).toBeOnTheScreen();
+    expect(sheet.getByTestId("provider-key")).toHaveDisplayValue("");
+    await fireEvent.press(await sheet.findByTestId("provider-delete-key"));
+    expect(await screen.findByText("已删除Groq的密钥")).toBeOnTheScreen();
+    // A model by id the list does not have.
+    await pick("provider-model", "__other__");
+    await fireEvent.changeText(sheet.getByTestId("provider-model-id"), "whisper-x");
+    await fireEvent.press(sheet.getByTestId("provider-reset"));
+    expect(await screen.findByText("已恢复Groq的默认设置")).toBeOnTheScreen();
+    expect(sheet.queryByTestId("provider-model-id")).toBeNull();
+  });
+
+  it("says when the core refuses to test a connection", async () => {
+    const { backend } = await renderApp();
+    const sheet = await openSheet("settings-speech", "asr", "groq", "Groq");
+    jest.spyOn(backend, "invoke").mockRejectedValueOnce(new Error("unsupported"));
+    await fireEvent.press(sheet.getByTestId("provider-probe"));
+    expect(await sheet.findByText("这个服务不能测试连接")).toBeOnTheScreen();
+  });
+
+  it("switches back to the built-in service from its sheet", async () => {
+    const backend = new MockBackend({ role: "phone" });
+    await backend.invoke("provider_key_set", { provider: "groq", kind: "asr", value: "gsk_saved" });
+    const state = await backend.getState();
+    await backend.invoke("settings_set_engines", {
+      engines: { ...state.settings.engines, asr_provider: "groq" },
+    });
+    await renderApp({ backend });
+    const sheet = await openSheet("settings-speech", "asr", "builtin", "内置服务");
+    expect(
+      sheet.getByText("内置服务的地址和密钥已包含在应用中，此处不显示，也无需填写。"),
+    ).toBeOnTheScreen();
+    expect(sheet.getByText("模型 Qwen/Qwen3-ASR-1.7B")).toBeOnTheScreen();
+    await fireEvent.press(sheet.getByTestId("provider-use"));
+    expect(await screen.findByText("已切换到内置服务")).toBeOnTheScreen();
+    await waitFor(() => {
+      expect(backend.peek().settings.engines.asr_provider).toBe("builtin");
+    });
+  });
+});
+
+describe("the service in use", () => {
+  it("names the fallback model standing in, and who else may get the audio", async () => {
+    const backend = new MockBackend({
+      role: "phone",
+      providerKeys: [{ provider: "groq", kind: "asr" }],
+    });
+    const state = await backend.getState();
+    await backend.invoke("settings_set_engines", {
+      engines: {
+        ...state.settings.engines,
+        asr_fallback: { enabled: true, models: [{ provider: "groq", model: "whisper-large-v3" }] },
+      },
+    });
+    await renderApp({ backend });
+    await openTab("settings");
+    await fireEvent.press(await screen.findByTestId("settings-speech"));
+    const current = await screen.findByTestId("current-asr");
+    expect(current).toHaveTextContent(/^当前：内置服务 · /);
+    expect(screen.getByText(/；额度用完时改发给Groq$/)).toBeOnTheScreen();
+    await act(async () => {
+      backend.simulateQuotaExhausted("asr", Date.now() + 3_600_000);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("current-asr")).toHaveTextContent(
+        "当前：Groq · whisper-large-v3（候补）",
+      );
+    });
+  });
+
+  it("changes the Chinese script, and asks nothing for the one already chosen", async () => {
+    const { backend } = await renderApp();
+    await openTab("settings");
+    await fireEvent.press(await screen.findByTestId("settings-speech"));
+    const script = within(await screen.findByTestId("chinese-script"));
+    const invoke = jest.spyOn(backend, "invoke");
+    await fireEvent.press(script.getByText("简体"));
+    expect(invoke).not.toHaveBeenCalled();
+    await fireEvent.press(script.getByText("繁体"));
+    await waitFor(() => {
+      expect(backend.peek().settings.engines.chinese_script).toBe("traditional");
+    });
   });
 });

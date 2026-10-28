@@ -13,4 +13,14 @@ module.exports = {
     "node_modules/(?!(?:.pnpm/[^/]+/node_modules/)?(?:(?:jest-)?react-native|@react-native(?:-community)?|expo(?:nent)?|@expo(?:nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-paper|@callstack/.*|@voltip/.*|@material/material-color-utilities))",
   ],
   testPathIgnorePatterns: ["/node_modules/", "/android/"],
+  // The same floor as the web packages (`make web-coverage-gate`). `Root.tsx` is the native glue:
+  // it starts the Rust shell through the native module, which no test environment has.
+  collectCoverageFrom: [
+    "src/**/*.{ts,tsx}",
+    "!src/**/*.test.{ts,tsx}",
+    "!src/test/**",
+    "!src/Root.tsx",
+  ],
+  coverageReporters: ["text", "text-summary", "lcovonly"],
+  coverageThreshold: { global: { lines: 90, branches: 90, functions: 90, statements: 90 } },
 };

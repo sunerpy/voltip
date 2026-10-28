@@ -167,6 +167,7 @@ function PresetEditor({
           placeholder={t("presets.editor.namePlaceholder")}
           error={nameProblem !== undefined}
           autoFocus
+          testID="preset-name"
           onChangeText={(name) => {
             update({ name });
           }}
@@ -181,12 +182,15 @@ function PresetEditor({
           multiline
           numberOfLines={8}
           error={promptProblem !== undefined}
+          testID="preset-prompt"
           onChangeText={(prompt) => {
             update({ prompt });
           }}
         />
         <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
-          <Hint {...(promptProblem === undefined ? {} : { tone: "danger" as const })}>
+          <Hint
+            {...(promptProblem === undefined ? {} : { tone: "danger" as const })}
+            testID="preset-prompt-help">
             {promptProblem ?? t("presets.editor.promptHelp")}
           </Hint>
           <Mono
@@ -205,6 +209,7 @@ function PresetEditor({
           mode="outlined"
           label={t("presets.editor.trial.sample")}
           value={sample}
+          testID="preset-sample"
           multiline
           numberOfLines={3}
           onChangeText={(text) => {
@@ -221,6 +226,7 @@ function PresetEditor({
           disabled={!canTry}
           loading={trial.pending}
           style={{ alignSelf: "flex-start" }}
+          testID="preset-try"
           onPress={() => {
             trial.run({ prompt: draft.prompt }, sample.trim());
           }}>
@@ -247,10 +253,16 @@ function PresetEditor({
           </View>
         )}
         {outcome?.status === "failed" && (
-          <Hint tone="danger">{t("presets.editor.trial.failed", { reason: outcome.reason })}</Hint>
+          <Hint tone="danger" testID="preset-trial-failed">
+            {t("presets.editor.trial.failed", { reason: outcome.reason })}
+          </Hint>
         )}
       </Section>
-      {saveError !== undefined && <Hint tone="danger">{saveError}</Hint>}
+      {saveError !== undefined && (
+        <Hint tone="danger" testID="preset-save-error">
+          {saveError}
+        </Hint>
+      )}
     </FullScreenDialog>
   );
 }
@@ -404,6 +416,7 @@ export function PresetsSection() {
             compact
             icon="plus"
             disabled={custom.length >= MAX_PRESETS}
+            testID="presets-add"
             onPress={() => {
               setEditing({});
             }}>
@@ -453,7 +466,11 @@ export function PresetsSection() {
           ))
         )}
       </Section>
-      {missing && <Hint tone="danger">{t("presets.missing")}</Hint>}
+      {missing && (
+        <Hint tone="danger" testID="presets-missing">
+          {t("presets.missing")}
+        </Hint>
+      )}
       {editing !== undefined && (
         <PresetEditor
           {...("preset" in editing ? { preset: editing.preset } : { initial: editing.initial })}

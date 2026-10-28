@@ -45,3 +45,10 @@ export async function renderApp({
 export async function openTab(tab: "talk" | "history" | "settings") {
   await fireEvent.press(await screen.findByTestId(`tab-${tab}`));
 }
+
+/** The `i`th of `list`: a test fails here, naming the item, rather than on `undefined` later. */
+export function nth<T>(list: readonly T[], i: number): T {
+  const item = list[i];
+  if (item === undefined) throw new Error(`no item ${String(i)} of ${String(list.length)}`);
+  return item;
+}

@@ -187,7 +187,7 @@
 | Rust 覆盖率 ≥ 90%（`apps/**` 已纳入，只排除 `src/main.rs`） | `make coverage-gate`、`./scripts/check-coverage-parity.sh` |
 | 供应链 | `cargo deny check bans licenses sources` |
 | Web lint（oxlint `--type-aware`）/ typecheck / 格式（oxfmt） | `pnpm -r run lint`、`pnpm -r run typecheck`、`pnpm -r run format:check` |
-| Web 测试 + 覆盖率 ≥ 90%（每包 vitest 阈值） | `pnpm -r run test:coverage` |
+| Web 测试 + 覆盖率 ≥ 90%（每包 vitest 阈值；React Native 手机端为 jest 阈值） | `pnpm -r run test:coverage` |
 | Web 构建，发行版 bundle 不带 mock | `pnpm -r run build`、`./scripts/check-web-bundle.sh` |
 | TS ↔ Rust 端到端（真实核心进程 + 本地 relay） | `make e2e-ipc` |
 | 验收台账：每条测试引用指向真实测试，每个仓库路径存在 | `./scripts/check-acceptance-ledger.sh` |

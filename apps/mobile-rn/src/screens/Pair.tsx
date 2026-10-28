@@ -4,7 +4,7 @@
 // needs is shown below it: its state, why it is not connected, and the self-check (issue #193).
 // Below the relay's minimum version the page leads to the update instead (docs/pairing.md
 // 「最低版本」).
-import { type Tone as LabelTone, failureLabel, relayLabel, relayTooOld } from "@voltip/shared";
+import { failureLabel, relayLabel, relayTooOld } from "@voltip/shared";
 import { useCameraPermissions } from "expo-camera";
 import { useState } from "react";
 import { View } from "react-native";
@@ -16,24 +16,12 @@ import { ConnectivityCheck } from "../features/Devices";
 import { useRootNavigation } from "../routes";
 import { Button } from "../ui/Button";
 import { CodeInput } from "../ui/CodeInput";
-import { Lede, Notice, Page, Section, StateLine, type Tone, useAppTheme } from "../ui/kit";
+import { Lede, Notice, Page, Section, StateLine, labelTone, useAppTheme } from "../ui/kit";
 
 type Method = "scan" | "code";
 
 export function isPairingLink(value: string): boolean {
   return value.trim().startsWith("voltip://pair?");
-}
-
-/** A label's tone as the kit's lamps have it. */
-function lampTone(tone: LabelTone): Tone {
-  switch (tone) {
-    case "warn":
-      return "warning";
-    case "neutral":
-      return "idle";
-    default:
-      return tone;
-  }
 }
 
 /** The relay the pairing needs (docs/pairing.md 「只走中继」): its state, and while it is not
@@ -59,7 +47,7 @@ function RelayLink() {
   return (
     <>
       <Section padded testID="pair-relay">
-        <StateLine tone={lampTone(label.tone)} testID="pair-relay-state">
+        <StateLine tone={labelTone(label.tone)} testID="pair-relay-state">
           {t("mobile.pair.relay", { state: label.text })}
         </StateLine>
         {why !== undefined && (
@@ -216,6 +204,7 @@ export function Pair() {
               autoCapitalize="none"
               autoCorrect={false}
               error={link.length > 0 && !isPairingLink(link)}
+              testID="pair-link"
             />
             {link.length > 0 && !isPairingLink(link) && (
               <Text variant="bodySmall" style={{ color: theme.colors.error }}>

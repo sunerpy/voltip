@@ -89,3 +89,54 @@ describe("updates on the phone", () => {
     expect(backend.peek().update).toEqual({ state: "store", version: MOCK_CURRENT_VERSION });
   });
 });
+
+describe("关于", () => {
+  it("says a newer version during the download steps, and shows no update card in a build without updates", async () => {
+    const { backend } = await renderApp();
+    const card = await openAbout();
+    for (const update of [
+      { state: "downloading" as const, version: "9.9.9", received: 1 },
+      { state: "ready" as const, version: "9.9.9" },
+      { state: "installing" as const, version: "9.9.9" },
+    ]) {
+      await act(async () => {
+        backend.simulateUpdate(update);
+        await Promise.resolve();
+      });
+      expect(within(card).getByTestId("phone-update-status")).toHaveTextContent(
+        `有新版本 9.9.9 · 当前 ${MOCK_CURRENT_VERSION}`,
+      );
+    }
+    await act(async () => {
+      backend.simulateUpdate({ state: "disabled" });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("phone-update")).toBeNull();
+    });
+  });
+
+  it("opens the source and the releases", async () => {
+    const { backend } = await renderApp();
+    await openAbout();
+    const page = within(screen.getByTestId("phone-about"));
+    await fireEvent.press(page.getByText("源代码"));
+    await fireEvent.press(page.getByText("发布版本"));
+    await waitFor(() => {
+      expect(backend.linksOpened).toEqual(["source", "releases"]);
+    });
+  });
+
+  // One failure a test: each says so in a toast, and toasts wait their turn.
+  it.each([
+    ["opening the source", "源代码", "projectLinkOpen", new Error("没有浏览器"), /没有浏览器/],
+    ["opening the privacy policy", "隐私政策", "guideOpen", "打不开", /打不开/],
+    ["the update check", "检查更新", "invoke", new Error("检查失败"), /检查失败/],
+  ] as const)("says why %s did not go through", async (_what, button, method, error, shown) => {
+    const { backend } = await renderApp();
+    await openAbout();
+    jest.spyOn(backend, method).mockRejectedValueOnce(error);
+    await fireEvent.press(within(screen.getByTestId("phone-about")).getByText(button));
+    expect(await screen.findByText(shown)).toBeOnTheScreen();
+  });
+});

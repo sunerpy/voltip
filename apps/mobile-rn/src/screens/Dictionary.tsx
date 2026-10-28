@@ -137,6 +137,7 @@ function EntryEditor({
             mode="outlined"
             accessibilityLabel={t("dictionary.row.up", { term: entry.term })}
             disabled={index <= 0}
+            testID="dictionary-up"
             onPress={() => {
               move(-1);
             }}
@@ -146,6 +147,7 @@ function EntryEditor({
             mode="outlined"
             accessibilityLabel={t("dictionary.row.down", { term: entry.term })}
             disabled={index === entries.length - 1}
+            testID="dictionary-down"
             onPress={() => {
               move(1);
             }}
@@ -155,12 +157,17 @@ function EntryEditor({
           </Text>
         </View>
       )}
-      {saveError !== undefined && <Hint tone="danger">{saveError}</Hint>}
+      {saveError !== undefined && (
+        <Hint tone="danger" testID="dictionary-save-error">
+          {saveError}
+        </Hint>
+      )}
       {entry !== undefined && (
         <Button
           icon="trash-can-outline"
           textColor={theme.colors.error}
           style={{ alignSelf: "flex-start" }}
+          testID="dictionary-delete"
           onPress={() => {
             shell.confirm({
               title: t("dictionary.row.deleteAsk", { term: entry.term }),
@@ -215,6 +222,7 @@ export function Dictionary() {
           accessibilityLabel={t("dictionary.searchLabel")}
           value={query}
           onChangeText={setQuery}
+          testID="dictionary-search"
         />
         {entries.length === 0 ? (
           <Section>
