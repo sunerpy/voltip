@@ -20,6 +20,8 @@ class BubblePrefs(context: Context) {
     val mode: String
         get() = prefs.getString(KEY_MODE, MODE_HOLD).takeIf { it == MODE_TAP } ?: MODE_HOLD
 
+    val pasteEnabled: Boolean get() = prefs.getBoolean(KEY_PASTE_ENABLED, false)
+    val autoStowSeconds: Int get() = prefs.getInt(KEY_AUTO_STOW_SECONDS, 0).takeIf { it in listOf(0, 5, 10, 30) } ?: 0
     val showResult: Boolean
         get() = prefs.getBoolean(KEY_SHOW_RESULT, true)
 
@@ -54,6 +56,8 @@ class BubblePrefs(context: Context) {
         if (!enabled) edit.putBoolean(KEY_STOWED, false)
         edit.putString(KEY_MODE, if (config.optString("mode") == MODE_TAP) MODE_TAP else MODE_HOLD)
         edit.putBoolean(KEY_SHOW_RESULT, config.optBoolean("showResult", true))
+        edit.putBoolean(KEY_PASTE_ENABLED, config.optBoolean("pasteEnabled", false))
+        edit.putInt(KEY_AUTO_STOW_SECONDS, config.optInt("autoStowSeconds", 0).takeIf { it in listOf(0, 5, 10, 30) } ?: 0)
         edit.putBoolean(KEY_SHOW_DISCARD, config.optBoolean("showDiscard", false))
         config.optJSONObject("strings")?.let { strings ->
             for (key in strings.keys()) edit.putString(STRING_PREFIX + key, strings.optString(key))
@@ -73,6 +77,8 @@ class BubblePrefs(context: Context) {
         private const val KEY_ENABLED = "enabled"
         private const val KEY_MODE = "mode"
         private const val KEY_SHOW_RESULT = "show_result"
+        private const val KEY_PASTE_ENABLED = "paste_enabled"
+        private const val KEY_AUTO_STOW_SECONDS = "auto_stow_seconds"
         private const val KEY_SHOW_DISCARD = "show_discard"
         private const val KEY_STOWED = "stowed"
         private const val KEY_DOCK_RIGHT = "dock_right"
