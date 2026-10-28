@@ -31,6 +31,9 @@ export interface BubbleStatus {
   showResult: boolean;
   /** The result's card has 不复制 too (off unless asked for, 2026-10-28). */
   showDiscard: boolean;
+  pasteEnabled: boolean;
+  accessibilityEnabled: boolean;
+  autoStowSeconds: 0 | 5 | 10 | 30;
 }
 
 /** The texts the bubble and its notification show (`mobile.bubble.native`). */
@@ -59,6 +62,9 @@ export const BUBBLE_STRING_KEYS = [
   "microphone",
   "expand",
   "stow",
+  "releasePaste",
+  "pasted",
+  "pasteFallback",
 ] as const;
 export type BubbleStringKey = (typeof BUBBLE_STRING_KEYS)[number];
 
@@ -67,6 +73,8 @@ export interface BubbleConfig {
   mode: BubbleMode;
   showResult: boolean;
   showDiscard: boolean;
+  pasteEnabled: boolean;
+  autoStowSeconds: 0 | 5 | 10 | 30;
   strings: BubbleStrings;
 }
 
@@ -82,6 +90,7 @@ export interface BubbleControl {
   requestNotifications(): Promise<boolean>;
   /** Open the system's 显示在其他应用上层 page for Voltip. */
   openOverlaySettings(): Promise<void>;
+  openAccessibilitySettings(): Promise<void>;
 }
 
 /** The bubble's texts in the app's language; `{message}` stays for the bubble to fill in. */
@@ -110,6 +119,9 @@ export function bubbleStrings(t: TFunction): BubbleStrings {
     microphone: s("microphone"),
     expand: s("expand"),
     stow: s("stow"),
+    releasePaste: s("releasePaste"),
+    pasted: s("pasted"),
+    pasteFallback: s("pasteFallback"),
   };
 }
 
@@ -139,6 +151,9 @@ export function parseBubbleStatus(json: string): BubbleStatus {
     mode: value["mode"] === "tap" ? "tap" : "hold",
     showResult: flag(value, "showResult"),
     showDiscard: flag(value, "showDiscard"),
+    pasteEnabled: flag(value, "pasteEnabled"),
+    accessibilityEnabled: flag(value, "accessibilityEnabled"),
+    autoStowSeconds: [0, 5, 10, 30].includes(value["autoStowSeconds"] as number) ? (value["autoStowSeconds"] as 0 | 5 | 10 | 30) : 0,
   };
 }
 
@@ -182,6 +197,8 @@ export function useBubbleSync() {
           mode: status.mode,
           showResult: status.showResult,
           showDiscard: status.showDiscard,
+          pasteEnabled: status.pasteEnabled,
+          autoStowSeconds: status.autoStowSeconds,
           strings: bubbleStrings(t),
         });
       })
