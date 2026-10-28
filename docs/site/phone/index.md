@@ -51,6 +51,8 @@ To turn it on:
 2. Allow the three permissions in turn: the microphone; **Display over other apps** (choose **Open settings** and turn it on for Voltip in the system settings); and notifications (while the bubble shows, a notification stays in the shade, from which you can close the bubble at any time).
 3. Turn on **Show floating bubble**.
 
+Optional **one-gesture paste**: under Settings › Floating bubble, enable swipe-to-paste, read and accept the disclosure, and enable Voltip's paste service under Android Accessibility. While holding to record, move your finger **toward the middle of the screen** (right from the left edge; left from the right edge) and release. The phone recognizes and polishes the speech, copies it, then requests paste into the **same text field** that had focus when the recording started. A normal release still copies only; an upward swipe cancels. If the service is off, the target has changed, or paste cannot be performed, the text remains in the clipboard. A paste request being accepted does not prove insertion. This service does not read other apps' text. Optional auto-tuck can be set to Off/5/10/30 seconds; it will not tuck during recording or processing.
+
 To use it:
 
 - **Hold to talk** (the default): hold the bubble and speak, release to finish; to cancel, move the finger well away from where it pressed before releasing, and the bubble turns red. Drag the bubble right away to move it; when released, it moves to the nearer side of the screen and keeps that place.
