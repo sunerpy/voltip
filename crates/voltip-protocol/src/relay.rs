@@ -27,7 +27,7 @@ pub struct RelayLimits {
 pub const CHANNEL_HEX_LEN: usize = 64;
 
 /// A `hello.features` entry: the client shows [`RelayErrorCode::ClientTooOld`] with its
-/// `min_version` as a request to update (clients from 0.1.10 on). A relay refuses an older client
+/// `min_version` as a request to update (clients from 0.2.0 on). A relay refuses an older client
 /// in another way it already understands (docs/pairing.md 「最低版本」).
 pub const FEATURE_CLIENT_TOO_OLD: &str = "client_too_old";
 
@@ -80,7 +80,7 @@ pub enum RelayFrame {
         /// read it.
         client_version: String,
         /// What the client understands beyond the frames ([`FEATURE_CLIENT_TOO_OLD`]); clients
-        /// before 0.1.10 send none.
+        /// before 0.2.0 send none.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         features: Vec<String>,
     },
@@ -384,7 +384,7 @@ mod tests {
         assert_eq!(bye.clone().for_channel(&ch), bye);
     }
 
-    /// docs/pairing.md 「最低版本」: a client before 0.1.10 sends no `features` and reads a relay's
+    /// docs/pairing.md 「最低版本」: a client before 0.2.0 sends no `features` and reads a relay's
     /// answers without the fields it does not know; a relay reads either `hello`; only a client
     /// that lists the feature is ever sent `client_too_old`, which names the version it needs.
     #[test]

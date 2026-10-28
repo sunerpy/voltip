@@ -99,7 +99,7 @@ Idle → Joining(code|ticket) → KeyExchange → AwaitingVerification → Trust
 
 - **策略文件**（`voltip_relay::policy`）：`--policy /etc/voltip/relay-policy.json`（管理台的同步程序写，`docs/runbook.md`「中继部署」）和 `--policy-override /etc/voltip/relay-policy.override.json`（运维手写），内容 `{"schema":1,"min_version":"x.y.z"|null,"known_versions":["0.1.9",…]}`（`known_versions` 最多 64 个，统计用）。读取规则与内置服务网关的额度配置相同：覆盖文件存在且有效时整份使用；存在但无效时告警并忽略它；主文件有效就使用并记为「上一份有效配置」；主文件无效或缺失时沿用上一份有效配置；从来没有有效配置时不设最低版本。中继每 30 秒（`POLICY_CHECK`）比较两个文件的修改时间与存在与否，变了就重读；管理台保存后最多约 5.5 分钟生效（同步程序 5 分钟一轮）。
 - **版本**：`hello.client_version` 里的 `voltip/x.y.z`（或不带前缀的 `x.y.z`）；读不出版本的客户端照常服务。
-- **认识新错误码的版本**（0.1.10 起，`hello.features` 带 `client_too_old`，`docs/protocol.md`）低于最低版本时，中继回 `error{code: client_too_old, min_version}` 后关闭连接。
+- **认识新错误码的版本**（0.2.0 起，`hello.features` 带 `client_too_old`，`docs/protocol.md`）低于最低版本时，中继回 `error{code: client_too_old, min_version}` 后关闭连接。
 - **旧版本**（0.1.9 及以前，不带 `features`）低于最低版本时照常收到 `hello_ack`，但 `create_session`、`join_by_code`、`join_by_session` 和 `attach` 一律回 `unsupported_version`（`attach` 的答复带上 `channel`）。旧界面配对时显示它已有的「版本不兼容，请更新 Voltip」；0.1.9 收到 attach 被拒后不再重试这个频道。
 - **策略提高时**：中继重新判断每条连接。认识新错误码、版本过低的连接收到 `client_too_old` 并被关闭，它的会话和频道随断开结束；旧版本连接已有的配对会话和 attach 保留到断开为止，新的一律拒绝。
 - **客户端**（`voltip_transport::link`）：hello 阶段或已连接后收到 `client_too_old` 都是一次失败，类别为 `too_old`（`FailureKind::TooOld`），带上最低版本；之后不按退避重连，而是等 30 分钟（`LinkConfig::too_old_retry`），`reconnect_now`（回到前台、网络变化、连接自检）可以提前重试。核心把它记进 `RelayStatus.last_failure`（`kind: too_old`、`min_version`）；这时开始配对被核心拒绝：「此版本过低，请更新 Voltip 后再配对」。

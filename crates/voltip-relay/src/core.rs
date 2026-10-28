@@ -1067,7 +1067,7 @@ mod tests {
         assert_eq!(r.policy(), &min("0.1.10"));
     }
 
-    /// Regression guard (user decision 2026-10-27, 「拦配对和重连」): a client before 0.1.10 cannot
+    /// Regression guard (user decision 2026-10-27, 「拦配对和重连」): a client before 0.2.0 cannot
     /// read `client_too_old`. Below the minimum it stays connected, and every pairing request and
     /// `attach` is refused with the `unsupported_version` its pairing screen already explains.
     #[test]

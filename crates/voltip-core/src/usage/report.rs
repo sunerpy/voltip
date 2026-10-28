@@ -22,7 +22,7 @@ pub enum QuotaBasis {
     /// This device (its `X-Voltip-Device`).
     #[default]
     Device,
-    /// The address the requests came from (a request without a device: versions before 0.1.10).
+    /// The address the requests came from (a request without a device: versions before 0.2.0).
     Ip,
 }
 

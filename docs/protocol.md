@@ -6,7 +6,7 @@
 
 | type | 方向 | 字段 | 说明 |
 |---|---|---|---|
-| `hello` | C→R | `client_version`, `features?` | 连接后第一帧；不携带任何设备身份。`features` 是客户端认识的新行为（0.1.10 起 `["client_too_old"]`），旧客户端不带，中继据此决定怎样拒绝过低的版本（`docs/pairing.md`「最低版本」） |
+| `hello` | C→R | `client_version`, `features?` | 连接后第一帧；不携带任何设备身份。`features` 是客户端认识的新行为（0.2.0 起 `["client_too_old"]`），旧客户端不带，中继据此决定怎样拒绝过低的版本（`docs/pairing.md`「最低版本」） |
 | `hello_ack` | R→C | `relay_version`, `limits{code_attempts, session_ttl_secs}` | |
 | `create_session` | C→R | `ttl_secs?` | 电脑端创建配对会话 |
 | `session_created` | R→C | `session_id`, `code`, `expires_at` | `code` 为 6 位数字，只发给创建者 |
