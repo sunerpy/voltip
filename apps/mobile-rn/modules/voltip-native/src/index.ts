@@ -24,6 +24,7 @@ export interface VoltipNativeModule {
   bubbleConfigure(config: string): Promise<string>;
   /** Open the system's 显示在其他应用上层 page for the app. */
   bubbleOpenOverlaySettings(): Promise<void>;
+  bubbleOpenAccessibilitySettings(): Promise<void>;
   /** Open the system's notification settings for the app (a permission refused for good, or
    *  notifications switched off before Android 13). */
   bubbleOpenNotificationSettings(): Promise<void>;
