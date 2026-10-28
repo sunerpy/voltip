@@ -55,6 +55,7 @@ function bubbleControl(native: VoltipNativeModule): BubbleControl {
           )
         : native.bubbleOpenNotificationSettings().then(() => false),
     openOverlaySettings: () => native.bubbleOpenOverlaySettings(),
+    openAccessibilitySettings: () => native.bubbleOpenAccessibilitySettings(),
   };
 }
 
