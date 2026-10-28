@@ -184,6 +184,9 @@ class BubbleService : Service() {
                 .put("permissions", permissions)
                 .put("mode", prefs.mode)
                 .put("showResult", prefs.showResult)
+                .put("pasteEnabled", prefs.pasteEnabled)
+                .put("accessibilityEnabled", BubblePasteService.enabled)
+                .put("autoStowSeconds", prefs.autoStowSeconds)
                 .put("showDiscard", prefs.showDiscard)
         }
     }
