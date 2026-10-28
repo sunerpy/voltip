@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 系统「无障碍」设置中显示的手势粘贴服务名称与说明（BubblePasteService）。 -->
+<resources>
+    <string name="voltip_bubble_accessibility_label">Voltip 手势粘贴</string>
+    <string name="voltip_bubble_accessibility_description">在 Voltip 悬浮球上按住录音，向屏幕内侧滑动后松开：识别完成后，Voltip 把结果粘贴到滑动时获得焦点的输入框。Voltip 只在这一手势期间查询输入框所属的应用和窗口，不读取输入框中的文字，也不保存或上传与它有关的任何信息。</string>
+</resources>

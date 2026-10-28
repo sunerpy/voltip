@@ -8,6 +8,7 @@ Run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import subprocess
@@ -50,8 +51,15 @@ cp "${@: -2:1}" "${@: -1}"
 AAPT2 = """#!/usr/bin/env bash
 if [ "$1 $2" = "dump xmltree" ]; then
   # A manifest as long as a real one prints, the attribute early: a reader that stops at the first
-  # match must not fail the check.
+  # match must not fail the check. The app's activity follows the device (-1 = unspecified);
+  # FAKE_ACTIVITY adds the attributes of another one.
   echo "        A: http://schemas.android.com/apk/res/android:extractNativeLibs(0x010104ea)=$FAKE_EXTRACT"
+  echo "          E: activity (line=85)"
+  echo "            A: http://schemas.android.com/apk/res/android:screenOrientation(0x0101001e)=-1"
+  if [ -n "${FAKE_ACTIVITY:-}" ]; then
+    echo "          E: activity (line=99)"
+    echo "            A: http://schemas.android.com/apk/res/android:$FAKE_ACTIVITY"
+  fi
   for i in $(seq 1 100000); do echo "        E: meta-data (line=$i)"; done
   exit 0
 fi
@@ -111,12 +119,31 @@ class AndroidPackages(unittest.TestCase):
             "FAKE_EXTRACT": "true",
         }
 
-    def package(self, name: str, prefix: str, library: str) -> Path:
-        """An unsigned package: the native library and this version's licence texts."""
+    def package(
+        self,
+        name: str,
+        prefix: str,
+        library: str,
+        r8: dict | None = None,
+        mapping: bytes | None = b"# compiler: R8\n",
+    ) -> Path:
+        """An unsigned package: the native library and this version's licence texts; an AAB
+        (prefix `base/`) also R8's report (`r8`, or the shares a real build of 0.2.0 left) and its
+        map, as AGP writes them into BUNDLE-METADATA."""
         path = self.root / name
         with zipfile.ZipFile(path, "w") as z:
             z.writestr(f"{prefix}lib/arm64-v8a/{library}", b"\x7fELF native code")
             z.writestr(f"{prefix}assets/THIRD-PARTY-NOTICES.txt", f"Voltip {VERSION} — third-party notices\n")
+            if prefix == "base/":
+                stats = r8 if r8 is not None else {
+                    "noObfuscationPercentage": 19.22,
+                    "noOptimizationPercentage": 19.57,
+                    "noShrinkingPercentage": 19.01,
+                }
+                if stats:
+                    z.writestr("BUNDLE-METADATA/com.android.tools/r8.json", json.dumps({"stats": stats, "version": "8.12.14"}))
+                if mapping is not None:
+                    z.writestr("BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map", mapping)
         return path
 
     def run_script(self, script: Path, *args: str, package: str = "dev.voltip.mobile") -> subprocess.CompletedProcess[str]:
@@ -128,11 +155,19 @@ class AndroidPackages(unittest.TestCase):
             timeout=60,
         )
 
-    def signed(self, library: str = "libvoltip_rn.so") -> tuple[Path, Path]:
-        """The app's APK and AAB with `library`, signed into android-bundle/."""
-        apk = self.package("unsigned.apk", "", library)
-        aab = self.package("unsigned.aab", "base/", library)
-        out = self.root / "android-bundle"
+    def signed(
+        self,
+        library: str = "libvoltip_rn.so",
+        r8: dict | None = None,
+        mapping: bytes | None = b"# compiler: R8\n",
+        out: str = "android-bundle",
+    ) -> tuple[Path, Path]:
+        """The app's APK and AAB with `library` (and the AAB's R8 report and map), signed into
+        `out`/."""
+        apk = self.package(f"{out}-unsigned.apk", "", library)
+        aab = self.package(f"{out}-unsigned.aab", "base/", library, r8=r8, mapping=mapping)
+        out_dir = self.root / out
+        out = out_dir
         result = self.run_script(SIGN, apk, aab, out, VERSION)
         self.assertEqual(result.returncode, 0, result.stderr)
         return out / f"apk/Voltip_{VERSION}_android_arm64.apk", out / f"aab/Voltip_{VERSION}_android_arm64.aab"
@@ -146,6 +181,70 @@ class AndroidPackages(unittest.TestCase):
         checked = self.run_script(CHECK, apk, aab, DIGEST, VERSION)
         self.assertEqual(checked.returncode, 0, checked.stderr)
         self.assertIn("dev.voltip.mobile 0.0.46 (code 46, target SDK 36); APK and AAB signed by", checked.stdout)
+        self.assertIn("R8 obfuscation 80.78 %, optimization 80.43 %, shrinking 80.99 %, its map in the AAB", checked.stdout)
+        self.assertIn("no orientation or size limit", checked.stdout)
+
+    def test_r8_must_have_run_and_covered_a_quarter_of_the_code_each_way(self) -> None:
+        # Google Play's floor from 2027-02 (help answer 17492799): obfuscation, optimization and
+        # shrinking each at least 25 %. 0.1.8 had 1 % (R8 never ran: enableMinifyInReleaseBuilds was
+        # off), and only shrinking with the template's proguard-android.txt (-dontoptimize).
+        for what, stats, message in (
+            ("no report", {}, "has no BUNDLE-METADATA/com.android.tools/r8.json"),
+            (
+                "unoptimized",
+                {"noObfuscationPercentage": 20, "noOptimizationPercentage": 99, "noShrinkingPercentage": 20},
+                "R8's optimization covers 1.00 % of the code, below the 25 %",
+            ),
+            (
+                "just below",
+                {"noObfuscationPercentage": 75.01, "noOptimizationPercentage": 20, "noShrinkingPercentage": 20},
+                "R8's obfuscation covers 24.99 % of the code",
+            ),
+        ):
+            with self.subTest(what=what):
+                apk, aab = self.signed(r8=stats, out=what.replace(" ", "-"))
+                result = self.run_script(CHECK, apk, aab, DIGEST, VERSION)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn(message, result.stderr)
+        apk, aab = self.signed(
+            r8={"noObfuscationPercentage": 75, "noOptimizationPercentage": 75, "noShrinkingPercentage": 75},
+            out="at-the-floor",
+        )
+        floor = self.run_script(CHECK, apk, aab, DIGEST, VERSION)
+        self.assertEqual(floor.returncode, 0, floor.stderr)
+        self.assertIn("R8 obfuscation 25.00 %, optimization 25.00 %, shrinking 25.00 %", floor.stdout)
+
+    def test_the_aab_must_carry_r8s_map(self) -> None:
+        for what, mapping in (("none", None), ("empty", b"")):
+            with self.subTest(what=what):
+                apk, aab = self.signed(mapping=mapping, out=f"map-{what}")
+                result = self.run_script(CHECK, apk, aab, DIGEST, VERSION)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("the AAB has no R8 map", result.stderr)
+
+    def test_no_activity_may_hold_an_orientation_or_limit_its_size(self) -> None:
+        # Play's Android 16 notice (2026-10-28): the app's own activity was portrait (app.json) and
+        # ML Kit's scanner activity declared portrait too; on large screens Android 16 ignores both.
+        apk, aab = self.signed()
+        for attribute, message in (
+            ("screenOrientation(0x0101001e)=1", "held to one orientation (screenOrientation 1 )"),
+            ("screenOrientation(0x0101001e)=7", "held to one orientation (screenOrientation 7 )"),
+            ("screenOrientation(0x0101001e)=12", "held to one orientation (screenOrientation 12 )"),
+            ("resizeableActivity(0x010104f6)=false", "is not resizable"),
+            ("maxAspectRatio(0x01010530)=2.1", "limits its aspect ratio"),
+            ("minAspectRatio(0x01010591)=1.33", "limits its aspect ratio"),
+        ):
+            with self.subTest(attribute=attribute):
+                self.env["FAKE_ACTIVITY"] = attribute
+                result = self.run_script(CHECK, apk, aab, DIGEST, VERSION)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn(message, result.stderr)
+        # Following the device is fine: user, behind, sensor, fullSensor, fullUser.
+        for value in (2, 3, 4, 10, 13):
+            with self.subTest(value=value):
+                self.env["FAKE_ACTIVITY"] = f"screenOrientation(0x0101001e)={value}"
+                result = self.run_script(CHECK, apk, aab, DIGEST, VERSION)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_regression_the_package_is_the_one_the_tauri_app_had_and_carries_the_apps_library(self) -> None:
         # Since 0.0.50 the React Native app is the Android app under dev.voltip.mobile (user decision

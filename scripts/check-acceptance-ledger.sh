@@ -18,7 +18,7 @@ while IFS= read -r ref; do
   count=$((count + 1))
   if [ ! -f "$file" ]; then echo "missing file: $file (for $name)"; fail=1; continue; fi
   if ! grep -qF -- "$name" "$file"; then echo "missing test: $name in $file"; fail=1; fi
-done < <(grep -oE '`[A-Za-z0-9_./-]+\.(rs|ts|tsx|sh|py|ps1)@[^`]+`' "$ledger" | tr -d '`' | sort -u)
+done < <(grep -oE '`[A-Za-z0-9_./-]+\.(rs|ts|tsx|js|kt|sh|py|ps1)@[^`]+`' "$ledger" | tr -d '`' | sort -u)
 
 # `a/{b,c}/d` → a/b/d, a/c/d (one group at a time, so several groups multiply).
 expand() {

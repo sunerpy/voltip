@@ -17,7 +17,9 @@
 # Gradle plugin compiles against a JDK 17 toolchain: JAVA_TOOLCHAINS (comma-separated JDK homes)
 # names one when JAVA_HOME is another version, since Gradle's own download of it comes from GitHub.
 # Writes dist/android-rn/Voltip_<version>_android_arm64.apk and .aab (with --unsigned
-# Voltip_<version>_android_arm64-unsigned.apk and .aab) and build-info.txt beside them.
+# Voltip_<version>_android_arm64-unsigned.apk and .aab), R8's map of the release build
+# (Voltip_<version>_android_arm64-mapping.txt, shipped with the release to read obfuscated stack
+# traces) and build-info.txt beside them.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 unsigned=0
@@ -39,7 +41,7 @@ app=apps/mobile-rn
 version=$(node -p "require('./package.json').version")
 out=dist/android-rn
 mkdir -p "$out"
-rm -f "$out"/Voltip*_android_arm64*.apk "$out"/Voltip*_android_arm64*.aab
+rm -f "$out"/Voltip*_android_arm64*.apk "$out"/Voltip*_android_arm64*.aab "$out"/Voltip*_android_arm64-mapping.txt
 
 # 1. The Rust shell and its bindings. cargo-ndk names the NDK's clang for the cc crate and strips
 # nothing; the release profile leaves this crate's symbols in too (the root Cargo.toml).
@@ -69,13 +71,23 @@ voltip_scan_provider_keys "$lib" build-android-rn
 # licence texts in its assets, as the Tauri phone app carries them (the About page names the file).
 (cd "$app" && CI=1 VOLTIP_RN_UNSIGNED=$unsigned npx expo prebuild --platform android --clean --no-install)
 python3 scripts/release/third-party-notices.py --app mobile-rn --version "$version" --out "$app/android/app/src/main/assets/THIRD-PARTY-NOTICES.txt"
+# AppTheme names no system bar colour (plugins/display.js): Android 15 draws the app edge to edge
+# whatever it says, React Native makes both bars transparent at start below 15, and Google Play
+# lists the attributes among the deprecated edge-to-edge parameters.
+styles=$app/android/app/src/main/res/values/styles.xml
+if grep -qE 'android:(statusBarColor|navigationBarColor)' "$styles"; then
+  echo "build-android-rn: $styles names a system bar colour (plugins/display.js no longer removes it)" >&2
+  exit 1
+fi
 
-# 3. Gradle: the APK to install from the release and the AAB for Google Play, from one build. Four
-# workers and a 4 GB heap: the Kotlin and C++ compiles of the RN libraries are heavy.
+# 3. Gradle: the APK to install from the release and the AAB for Google Play, from one build, R8
+# shrinking, optimizing and obfuscating both (plugins/release.js), and the native module's JVM unit
+# tests (the floating bubble's gesture, paste and auto-tuck decisions). Four workers and a 4 GB
+# heap: the Kotlin and C++ compiles of the RN libraries are heavy.
 (cd "$app/android" && ./gradlew --no-daemon --max-workers=4 -Dorg.gradle.jvmargs=-Xmx4g \
   -Porg.gradle.java.installations.paths="$JAVA_HOME${JAVA_TOOLCHAINS:+,$JAVA_TOOLCHAINS}" \
   -Porg.gradle.java.installations.auto-download=false \
-  -PreactNativeArchitectures=arm64-v8a assembleRelease bundleRelease)
+  -PreactNativeArchitectures=arm64-v8a assembleRelease bundleRelease :voltip-native:testReleaseUnitTest)
 outputs=$app/android/app/build/outputs
 if [ "$unsigned" = 1 ]; then
   apk=$out/Voltip_${version}_android_arm64-unsigned.apk aab=$out/Voltip_${version}_android_arm64-unsigned.aab
@@ -85,6 +97,22 @@ else
   cp "$outputs/apk/release/app-release.apk" "$apk"
 fi
 cp "$outputs/bundle/release/app-release.aab" "$aab"
+# R8's map, for the release beside the packages: the AAB carries the same one for Google Play, and
+# R8's report of how much of the code it shrank, optimized and obfuscated.
+mapping=$out/Voltip_${version}_android_arm64-mapping.txt
+cp "$outputs/mapping/release/mapping.txt" "$mapping"
+unzip -p "$aab" BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map | cmp -s - "$mapping" ||
+  { echo "build-android-rn: the AAB's R8 map is not $outputs/mapping/release/mapping.txt" >&2; exit 1; }
+# The shares Google Play reads (docs/mobile-rn.md §6); check-android-package.sh holds them to 25 %.
+r8_coverage=$(unzip -p "$aab" BUNDLE-METADATA/com.android.tools/r8.json | python3 -c '
+import json, sys
+stats = json.load(sys.stdin)["stats"]
+print(", ".join(f"{name} {100 - stats[key]:.1f} %" for name, key in (
+    ("obfuscation", "noObfuscationPercentage"),
+    ("optimization", "noOptimizationPercentage"),
+    ("shrinking", "noShrinkingPercentage"),
+)))
+') || { echo "build-android-rn: the AAB has no readable R8 report (BUNDLE-METADATA/com.android.tools/r8.json)" >&2; exit 1; }
 for package in "$apk:assets" "$aab:base/assets"; do
   notices=$(unzip -p "${package%%:*}" "${package#*:}/THIRD-PARTY-NOTICES.txt" | head -1) || true
   [ "$notices" = "Voltip $version — third-party notices" ] || { echo "build-android-rn: ${package%%:*} has no ${package#*:}/THIRD-PARTY-NOTICES.txt of this version: $notices" >&2; exit 1; }
@@ -134,6 +162,7 @@ aapt2=$(printf '%s\n' "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
   echo "size: $(stat -c %s "$apk") bytes  sha256: $(sha256sum "$apk" | cut -d' ' -f1)"
   echo "aab: $aab"
   echo "size: $(stat -c %s "$aab") bytes  sha256: $(sha256sum "$aab" | cut -d' ' -f1)"
+  echo "r8: $r8_coverage; map: $(basename "$mapping") sha256: $(sha256sum "$mapping" | cut -d' ' -f1)"
   "$aapt2" dump badging "$apk" | grep -E "^package:|^sdkVersion|^targetSdkVersion|^native-code|^application-label:"
   echo "native libs:"; unzip -l "$apk" | awk '/lib\//{print "  " $4 " (" $1 " bytes)"}'
 } | tee "$out/build-info.txt"

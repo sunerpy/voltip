@@ -2,7 +2,8 @@
 // scrim and down again when it closes; a tap on the scrim, a swipe down on its handle or Android's
 // back closes it, and back closes nothing else. The pickers' choices (`Select`) and a provider's
 // settings (`features/engines`) open in one. The keyboard lifts it, so a field near its bottom
-// stays in view.
+// stays in view. On a wide window it keeps 640 dp and stays clear of the system's side insets; on
+// a phone on its side it leaves the status bar's height free above it.
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Animated,
@@ -28,6 +29,8 @@ const DISMISS_DISTANCE = 80;
 const DISMISS_VELOCITY = 0.8;
 const OPEN_MS = 240;
 const CLOSE_MS = 180;
+/** The least room above an open sheet, under the status bar. */
+const SHEET_TOP_GAP = 8;
 
 /** The sheet's own colour. A field on it takes it too: Paper's outlined field fills itself with
  *  the page's background by default, a grey box on the sheet (Device Farm 2026-10-11). */
@@ -143,7 +146,9 @@ export function BottomSheet({
       statusBarTranslucent
       navigationBarTranslucent
       onRequestClose={close}>
-      <KeyboardAvoidingView behavior="padding" style={styles.frame}>
+      <KeyboardAvoidingView
+        behavior="padding"
+        style={[styles.frame, { paddingLeft: insets.left, paddingRight: insets.right }]}>
         <Animated.View
           style={[
             StyleSheet.absoluteFill,
@@ -165,7 +170,7 @@ export function BottomSheet({
             {
               backgroundColor: sheetColor(theme),
               paddingBottom: insets.bottom + 12,
-              maxHeight: height * maxHeight,
+              maxHeight: Math.min(height * maxHeight, height - insets.top - SHEET_TOP_GAP),
               transform: [{ translateY }],
             },
           ]}>

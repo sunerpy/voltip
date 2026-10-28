@@ -54,7 +54,7 @@ MODES = ("automatic", "dry-run", "backfill")
 PROMOTABLE_MODES = {"automatic", "backfill"}
 SOURCE_GATE_CHECK = "CI Success"
 # File kinds updater-json.py collect records.
-BUNDLE_KINDS = {"deb", "rpm", "appimage", "nsis", "msi", "dmg", "app", "apk", "aab"}
+BUNDLE_KINDS = {"deb", "rpm", "appimage", "nsis", "msi", "dmg", "app", "apk", "aab", "mapping"}
 FILE_KINDS = BUNDLE_KINDS | {"signature", "extra"}
 # Written only with bundle.createUpdaterArtifacts (updater-json.py UPDATER_ONLY).
 UPDATER_ONLY = {"app"}

@@ -363,17 +363,22 @@ class CollectMacos(Workspace):
 
 class CollectAndroid(Workspace):
     """The Android leg (docs/runbook.md 发布 · Android 签名): the APK and the AAB
-    sign-android-package.sh writes in this layout. The in-app updater does not serve it."""
+    sign-android-package.sh writes in this layout, and R8's map beside them (docs/mobile-rn.md §6).
+    The in-app updater does not serve it."""
 
     BUNDLE = "android-bundle"
     APK = "Voltip_2.0.0-alpha.2_android_arm64.apk"
     AAB = "Voltip_2.0.0-alpha.2_android_arm64.aab"
+    MAPPING = "Voltip_2.0.0-alpha.2_android_arm64-mapping.txt"
 
     def make(self) -> None:
         self.write(f"{self.BUNDLE}/apk/{self.APK}", b"apk-bytes")
         self.write(f"{self.BUNDLE}/aab/{self.AAB}", b"aab-bytes")
+        self.write(f"{self.BUNDLE}/mapping/{self.MAPPING}", b"# compiler: R8\n")
 
-    def args(self, updater_bundle: str = "none", updater: str = "false") -> tuple[str, ...]:
+    def args(
+        self, updater_bundle: str = "none", updater: str = "false", bundles: str = "apk,aab,mapping"
+    ) -> tuple[str, ...]:
         return (
             "collect",
             "--target",
@@ -381,7 +386,7 @@ class CollectAndroid(Workspace):
             "--bundle-dir",
             str(self.root / self.BUNDLE),
             "--bundles",
-            "apk,aab",
+            bundles,
             "--updater-bundle",
             updater_bundle,
             "--updater",
@@ -392,16 +397,31 @@ class CollectAndroid(Workspace):
             str(self.root / "evidence/aarch64-linux-android.json"),
         )
 
-    def test_collects_the_apk_and_the_aab_with_no_updater(self) -> None:
+    def test_collects_the_apk_the_aab_and_r8s_map_with_no_updater(self) -> None:
         self.make()
         run(*self.args())
-        self.assertEqual(sorted(p.name for p in (self.root / "dist").iterdir()), [self.AAB, self.APK])
+        self.assertEqual(
+            sorted(p.name for p in (self.root / "dist").iterdir()), [self.MAPPING, self.AAB, self.APK]
+        )
         evidence = json.loads((self.root / "evidence/aarch64-linux-android.json").read_text())
         self.assertEqual(evidence["platform"], "android")
         self.assertIsNone(evidence["updater_platform"])
         self.assertIsNone(evidence["updater"])
         self.assertFalse(evidence["updater_enabled"])
-        self.assertEqual({item["name"]: item["kind"] for item in evidence["files"]}, {self.APK: "apk", self.AAB: "aab"})
+        self.assertEqual(
+            {item["name"]: item["kind"] for item in evidence["files"]},
+            {self.APK: "apk", self.AAB: "aab", self.MAPPING: "mapping"},
+        )
+        # The map is not signed: nothing installs it.
+        self.assertFalse(next(item for item in evidence["files"] if item["kind"] == "mapping")["signature"])
+
+    def test_a_leg_without_r8s_map_is_refused(self) -> None:
+        self.make()
+        (self.root / self.BUNDLE / "mapping" / self.MAPPING).unlink()
+        self.assertFails("no mapping bundle under", *self.args())
+        # Only files named as R8's map count: another text file in the directory is not one.
+        self.write(f"{self.BUNDLE}/mapping/notes.txt", b"not a map")
+        self.assertFails("no mapping bundle under", *self.args())
 
     def test_the_updater_is_refused_for_android(self) -> None:
         self.make()

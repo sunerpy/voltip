@@ -3488,6 +3488,24 @@ export const zhCN = {
       modeHold: "按住说话",
       modeTap: "轻点开始，再点结束",
       stowHint: "将悬浮球拖出屏幕边缘后松开，可收起为一个小把手；轻点把手或将它向内拉即可恢复。",
+      gestures: "手势粘贴",
+      pasteEnabled: "滑动松手自动粘贴",
+      pasteEnabledBody:
+        "按住录音时向屏幕内侧滑动再松开，识别完成后粘贴到滑动时获得焦点的输入框；直接松开仍只复制。",
+      pasteDisclosureTitle: "开启手势粘贴",
+      pasteDisclosure:
+        "开启后，在悬浮球上按住录音并向屏幕内侧滑动时，Voltip 通过无障碍服务查询当前获得焦点的输入框属于哪个应用和窗口；识别完成后，如果仍是同一个输入框，就请求它粘贴一次识别结果。Voltip 不读取输入框中已有的文字，也不保存或上传这些信息。此功能需要在系统「无障碍」设置中启用「Voltip 手势粘贴」，之后可随时在那里关闭。",
+      pasteAgree: "同意并开启",
+      pasteDecline: "暂不开启",
+      pasteNeedsService:
+        "还需在系统「无障碍」设置中启用「Voltip 手势粘贴」。启用之前，识别结果只会复制。",
+      pasteRestricted:
+        "从 GitHub 下载安装的 Voltip 在 Android 13 及以上版本中，无障碍开关默认受限：请先在「应用信息」右上角的菜单中选择「允许受限制的设置」。从 Google Play 安装不受此限制。",
+      openAppInfo: "应用信息",
+      autoStow: "空闲时自动收起",
+      autoStowHint: "悬浮球空闲达到所选时间后收进屏幕边缘；录音、识别和显示结果时不会收起。",
+      autoStowOff: "关闭",
+      autoStowSeconds: "{n} 秒",
       result: "识别结果",
       refine: "AI 润色",
       refineBody: "按「AI 模型」中的预设处理后再复制",
@@ -3523,6 +3541,10 @@ export const zhCN = {
         microphone: "需要麦克风权限，请在 Voltip 中允许",
         expand: "展开悬浮球",
         stow: "收起到屏幕边缘",
+        recordingHoldPaste: "松开复制 · 内滑粘贴 · 上下滑开取消",
+        releasePaste: "松开后粘贴到输入框",
+        pasted: "已发出粘贴请求",
+        pasteFallback: "未能粘贴 · 已复制到剪贴板",
       },
     },
     recent: {

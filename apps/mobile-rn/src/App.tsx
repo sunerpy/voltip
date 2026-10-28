@@ -11,7 +11,6 @@ import {
 } from "@react-navigation/native";
 import { type Backend, type UiEvent, coreMessageText, resolveLocale } from "@voltip/shared";
 import { getLocales } from "expo-localization";
-import { NavigationBar } from "expo-navigation-bar";
 import { StatusBar } from "expo-status-bar";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
 import { ActivityIndicator, View, useColorScheme } from "react-native";
@@ -63,9 +62,11 @@ function navigationTheme(theme: AppTheme): NavigationTheme {
 
 function Themed({
   accent,
+  navigationBar,
   children,
 }: {
   accent: string | null;
+  navigationBar: ((lightButtons: boolean) => void) | undefined;
   children: (theme: AppTheme) => ReactNode;
 }) {
   const { settings } = useUiState();
@@ -74,6 +75,11 @@ function Themed({
     () => appTheme(themeId(settings, dark), themeSeed(settings, accent)),
     [settings, dark, accent],
   );
+  // The navigation bar's buttons with the theme's contrast: dark on a light theme. The window runs
+  // edge to edge and the bars take no colour of their own (docs/mobile-rn.md §5).
+  useEffect(() => {
+    navigationBar?.(!theme.dark);
+  }, [navigationBar, theme.dark]);
   return (
     // The icons from the app's own copy of the set: under pnpm, Paper's optional lookup of
     // `@expo/vector-icons` from its own directory finds nothing.
@@ -81,7 +87,6 @@ function Themed({
       theme={theme}
       settings={{ icon: (props) => <MaterialCommunityIcons {...props} /> }}>
       <StatusBar style={theme.dark ? "light" : "dark"} />
-      <NavigationBar style={theme.dark ? "light" : "dark"} />
       {children(theme)}
     </PaperProvider>
   );
@@ -174,6 +179,7 @@ export function App({
   metrics = initialWindowMetrics,
   accent = null,
   bubble,
+  navigationBar,
 }: {
   backend: Backend;
   /** What `settings.locale = "system"` follows (tests pass one; the app reads the phone's). */
@@ -185,6 +191,9 @@ export function App({
   metrics?: Metrics | null;
   /** The floating bubble's native side (Root.tsx hands in the module's; tests a fake). */
   bubble?: BubbleControl | undefined;
+  /** Sets the navigation bar's buttons dark (`true`, for a light theme) or light: the native
+   *  module's (Root.tsx); tests watch a fake. */
+  navigationBar?: ((lightButtons: boolean) => void) | undefined;
 }) {
   const handler = useRef<((e: UiEvent) => void) | undefined>(undefined);
   const onEvent = useCallback((e: UiEvent) => {
@@ -198,7 +207,7 @@ export function App({
       <BackendProvider backend={backend} onEvent={onEvent}>
         <BubbleProvider control={bubble}>
           <Localized language={language}>
-            <Themed accent={accent}>
+            <Themed accent={accent} navigationBar={navigationBar}>
               {(theme) => <Shell register={register} theme={theme} />}
             </Themed>
           </Localized>

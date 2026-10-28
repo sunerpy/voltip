@@ -80,6 +80,8 @@ function StackHeader({ navigation, options, back }: NativeStackHeaderProps) {
 /** The dock's height and its gap to the bottom inset and to a snackbar above it (board 03). */
 export const DOCK_HEIGHT = 64;
 export const DOCK_GAP = 8;
+/** The dock keeps a phone's width on a wide window (a tablet, a phone on its side). */
+export const DOCK_MAX_WIDTH = 480;
 
 /** How far the dock's bottom edge sits above the screen's: clear of the system's inset, and of
  *  the edge itself where there is none. */
@@ -92,9 +94,10 @@ export function aboveDock(inset: number): number {
   return dockBottom(inset) + DOCK_HEIGHT + DOCK_GAP;
 }
 
-/** The tabs' dock (board 03): a pill floating over the page, 24 dp from the sides and clear of the
- *  system's bottom inset, the chosen tab on a pill of the accent's soft tone. It tells the pages
- *  how tall it is, so their ends scroll clear of it. */
+/** The tabs' dock (board 03): a pill floating over the page, 24 dp from the sides (and their
+ *  insets) and clear of the system's bottom inset, at most [DOCK_MAX_WIDTH] wide and centred, the
+ *  chosen tab on a pill of the accent's soft tone. It tells the pages how tall it is, so their ends
+ *  scroll clear of it. */
 function TabDock({ state, descriptors, navigation, insets }: BottomTabBarProps) {
   const theme = useAppTheme();
   const t = useT();
@@ -105,7 +108,15 @@ function TabDock({ state, descriptors, navigation, insets }: BottomTabBarProps) 
       onLayout={(e) => {
         reportHeight?.(e.nativeEvent.layout.height);
       }}
-      style={[styles.dockWrap, { paddingBottom: dockBottom(insets.bottom), paddingTop: DOCK_GAP }]}>
+      style={[
+        styles.dockWrap,
+        {
+          paddingBottom: dockBottom(insets.bottom),
+          paddingTop: DOCK_GAP,
+          paddingLeft: 24 + insets.left,
+          paddingRight: 24 + insets.right,
+        },
+      ]}>
       <View
         testID="tab-dock"
         accessibilityRole="tablist"
@@ -193,8 +204,11 @@ function Tabs() {
 }
 
 const styles = StyleSheet.create({
-  dockWrap: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: 24 },
+  dockWrap: { position: "absolute", left: 0, right: 0, bottom: 0 },
   dock: {
+    width: "100%",
+    maxWidth: DOCK_MAX_WIDTH,
+    alignSelf: "center",
     height: DOCK_HEIGHT,
     borderRadius: DOCK_HEIGHT / 2,
     borderWidth: 1,

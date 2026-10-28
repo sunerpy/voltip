@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 手势粘贴's accessibility service (BubblePasteService, docs/dictation.md §20.12). No event types:
+     the service is told of nothing and only answers the bubble's two queries per take, through the
+     interactive windows (flagRetrieveInteractiveWindows) and their content. Not an accessibility
+     tool: it does not help with a disability, it pastes the user's own dictation. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/voltip_bubble_accessibility_description"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows"
+    android:canRetrieveWindowContent="true"
+    android:isAccessibilityTool="false" />

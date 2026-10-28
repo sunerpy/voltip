@@ -16,7 +16,15 @@
 #      assets by scripts/build-android-rn.sh);
 #   8. the native libraries are extracted at install: React Native's SoLoader looks for them inside
 #      the APK under the device's first ABI, which on an x86_64 device that runs Arm code (the
-#      emulator the release candidate starts it on) is not where they are.
+#      emulator the release candidate starts it on) is not where they are;
+#   9. R8 shrank, optimized and obfuscated the code: the AAB carries R8's report
+#      (BUNDLE-METADATA/com.android.tools/r8.json, which Google Play reads from AGP 8.10 on) and
+#      each of the three covers at least 25 % of it, Play's floor from 2027-02 (help answer 17492799);
+#  10. the AAB carries R8's map (BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map),
+#      which deobfuscates the stack traces Play reports;
+#  11. no activity is held to one orientation, none is made non-resizable and none limits its aspect
+#      ratio: Android 16 ignores all of these on large screens for an app that targets it, and Play
+#      warns about them (docs/mobile-rn.md §5).
 #
 # Usage: check-android-package.sh <apk> <aab> <certificate SHA-256, hex, colons optional> <version>
 # Needs ANDROID_BUILD_TOOLS (a build-tools directory: apksigner, zipalign, aapt2; default the newest
@@ -100,6 +108,35 @@ manifest=$("$tools/aapt2" dump xmltree --file AndroidManifest.xml "$apk") || fai
 grep -q 'android:extractNativeLibs([^)]*)=true' <<<"$manifest" ||
   fail "the APK does not extract its native libraries at install (useLegacyPackaging in app.json)"
 
+# 11. Large screens: no orientation lock (only unspecified, user, behind, sensor, fullSensor and
+# fullUser follow the device), no resizeableActivity=false, no minimum or maximum aspect ratio.
+locks=$(sed -n 's/.*android:screenOrientation([^)]*)=\(-\{0,1\}[0-9][0-9]*\).*/\1/p' <<<"$manifest" | grep -vxE -- '-1|2|3|4|10|13' || true)
+[ -z "$locks" ] || fail "an activity is held to one orientation (screenOrientation $(tr '\n' ' ' <<<"$locks")); app.json's orientation is default and plugins/display.js frees ML Kit's"
+if grep -q 'android:resizeableActivity([^)]*)=false' <<<"$manifest"; then fail "an activity is not resizable (resizeableActivity=false)"; fi
+if grep -qE 'android:(min|max)AspectRatio\(' <<<"$manifest"; then fail "an activity limits its aspect ratio (minAspectRatio / maxAspectRatio)"; fi
+
+# 9. R8's report: the share of the code it left unobfuscated, unoptimized and unshrunk, each turned
+# into the share it did cover.
+unzip -p "$aab" BUNDLE-METADATA/com.android.tools/r8.json >"$scratch/r8.json" 2>/dev/null ||
+  fail "the AAB has no BUNDLE-METADATA/com.android.tools/r8.json: R8 did not run (enableMinifyInReleaseBuilds in app.json)"
+r8=$(python3 - "$scratch/r8.json" <<'PY'
+import json, sys
+stats = json.load(open(sys.argv[1], encoding="utf-8"))["stats"]
+for name in ("obfuscation", "optimization", "shrinking"):
+    print(name, f"{100 - float(stats['no' + name.capitalize() + 'Percentage']):.2f}")
+PY
+) || fail "the AAB's r8.json has no stats"
+r8_summary=""
+while read -r what share; do
+  awk -v share="$share" 'BEGIN { exit !(share >= 25) }' || fail "R8's $what covers $share % of the code, below the 25 % Google Play requires (plugins/release.js names proguard-android-optimize.txt)"
+  r8_summary+="${r8_summary:+, }$what $share %"
+done <<<"$r8"
+
+# 10. R8's map in the AAB (its size from the listing: a reader stopped early fails under pipefail).
+map_entry=BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map
+map_size=$(unzip -l "$aab" "$map_entry" 2>/dev/null | awk -v entry="$map_entry" '$4 == entry { print $1 }' || true)
+[ "${map_size:-0}" -gt 0 ] || fail "the AAB has no R8 map ($map_entry)"
+
 # 6. No provider key inside the native library.
 # shellcheck source=scripts/lib/artefact-checks.sh
 . "$here/../../scripts/lib/artefact-checks.sh"
@@ -112,4 +149,4 @@ for notices in "$scratch/apk-notices.txt" "$scratch/aab-notices.txt"; do
   [ "$(head -1 "$notices")" = "Voltip $version — third-party notices" ] || fail "the licence texts in the packages are not this release's: $(head -1 "$notices")"
 done
 
-echo "check-android-package: $package $version_name (code $version_code, target SDK $target_sdk); APK and AAB signed by $expected; $libraries native libraries 16 KB aligned and extracted at install; no provider key; licence texts present"
+echo "check-android-package: $package $version_name (code $version_code, target SDK $target_sdk); APK and AAB signed by $expected; $libraries native libraries 16 KB aligned and extracted at install; R8 $r8_summary, its map in the AAB; no orientation or size limit; no provider key; licence texts present"

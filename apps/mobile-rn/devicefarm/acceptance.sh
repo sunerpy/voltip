@@ -2,7 +2,12 @@
 # The React Native phone app on a Device Farm phone (docs/mobile-rn.md §7), driven over adb from
 # the test host: cold start, a take on the phone (held, slipped, cancelled, tapped), every tab and the main settings pages, a
 # dropdown menu, a full-screen editor, the pairing pages, Android's back through the stack and the
-# second back that leaves. Every step runs whatever the one before it did, and writes what it saw:
+# second back that leaves; then the update check, the camera page, the same tabs and sheets with
+# the device turned the other way (docs/mobile-rn.md §5), and the floating bubble (docs/dictation.md
+# §20.12): takes with 手势粘贴 on (its accessibility service enabled over adb) and off, tucking
+# itself away after 5 s idle, staying out while held for 8 s, and keeping to the screen when it
+# turns. Rotation and the accessibility settings are put back on the way out. The app's log must
+# show no class, method, field or library that R8 lost. Every step runs whatever the one before it did, and writes what it saw:
 # the screenshots, the UI trees, the app's own logcat and summary.txt (key=value lines) go into
 # <out>. The verdict is the build host's (scripts/devicefarm-rn.sh reads summary.txt); this side
 # only measures. The run is scheduled with the device in zh_CN, so the labels below are Chinese,
@@ -427,6 +432,20 @@ shot 12-editor
 back
 back
 page 12b-rules '^替换规则$|^Replacement rules$' '导入 TOML|Import TOML|新建规则|New rule'
+# The share sheet (2026-10-28, R8): the exported TOML goes out the way a history entry's text does
+# (phone_share_text), so the system's chooser comes to the front while the app keeps running.
+share_sheet=missing
+if tap_text '^rules-export-open$' && wait_text '^rules-export-share$' 10 && tap_text '^rules-export-share$'; then
+  for _ in 1 2 3 4 5; do
+    sleep 1 # the chooser opens
+    if ! in_front && running; then share_sheet=ok; break; fi
+  done
+  shot 12b2-share-sheet
+  back
+  wait_text '^rules-export-share$' 10 || true
+  back
+fi
+measure share_sheet "$share_sheet"
 back
 page 12c-scenes '^场景$|^Scenes$' '新建场景|New scene|内置|Built-in'
 back
@@ -478,6 +497,262 @@ adb shell dumpsys meminfo "$PKG" | tee "$out/meminfo.txt" | grep -E "TOTAL PSS|T
 measure total_pss_kb "$(sed -n 's/^ *TOTAL PSS: *\([0-9]*\).*/\1/p; s/^ *TOTAL: *\([0-9]*\).*/\1/p' "$out/meminfo.txt" | head -1)"
 adb shell dumpsys gfxinfo "$PKG" | grep -E "Total frames rendered|Janky frames" | tee "$out/gfxinfo.txt"
 
+# ---- the release build's other surfaces (2026-10-28: R8, edge to edge, large screens, the bubble) ----
+
+# Put back on every way out: the rotation and the accessibility services this script changes.
+rotation_auto=$(adb shell settings get system accelerometer_rotation | tr -d '\r')
+rotation_user=$(adb shell settings get system user_rotation | tr -d '\r')
+a11y_services=$(adb shell settings get secure enabled_accessibility_services | tr -d '\r')
+a11y_enabled=$(adb shell settings get secure accessibility_enabled | tr -d '\r')
+put_back() {
+  local namespace=$1 name=$2 value=$3
+  if [ "$value" = null ] || [ -z "$value" ]; then
+    adb shell settings delete "$namespace" "$name" >/dev/null 2>&1 || true
+  else
+    adb shell settings put "$namespace" "$name" "$value" >/dev/null 2>&1 || true
+  fi
+}
+size_override=$(adb shell wm size | tr -d '\r' | sed -n 's/^Override size: *//p')
+density_override=$(adb shell wm density | tr -d '\r' | sed -n 's/^Override density: *//p')
+# The display as it was: its override, or none.
+restore_display() {
+  if [ -n "$size_override" ]; then adb shell wm size "$size_override" >/dev/null 2>&1; else adb shell wm size reset >/dev/null 2>&1; fi
+  if [ -n "$density_override" ]; then adb shell wm density "$density_override" >/dev/null 2>&1; else adb shell wm density reset >/dev/null 2>&1; fi
+}
+restore_device() {
+  put_back system accelerometer_rotation "$rotation_auto"
+  put_back system user_rotation "$rotation_user"
+  put_back secure enabled_accessibility_services "$a11y_services"
+  put_back secure accessibility_enabled "$a11y_enabled"
+  restore_display
+}
+trap restore_device EXIT
+phys_w=$screen_w phys_h=$screen_h
+# Turn the device: rotation 0 is its natural orientation (portrait on a phone, landscape on most
+# tablets), 1 the other one. Taps and the on-screen check follow the turned size.
+turn() {
+  adb shell settings put system accelerometer_rotation 0
+  adb shell settings put system user_rotation "$1"
+  if [ "$1" = 1 ] || [ "$1" = 3 ]; then screen_w=$phys_h screen_h=$phys_w; else screen_w=$phys_w screen_h=$phys_h; fi
+  sleep 2 # the rotation's animation and the app's new layout
+}
+
+step "UPDATE AND CAMERA"
+page 30-settings '^tab-settings$' '语音模型|Speech models'
+page 31-about '^关于 Voltip$|^About Voltip$' 'AGPL-3.0'
+if tap_text '^phone-update-check$' && wait_text '^已是最新|^有新版本|^更新失败|^此版本未配置更新源|^Up to date|^New version|^Update failed|^This build has no update source' 30; then
+  measure update_check ok
+else
+  measure update_check missing
+fi
+shot 32-update-check
+back
+back
+if wait_text "$TALK" 10 && tap_text "$TALK" && tap_text '^配对电脑$|^Pair a computer$' && tap_text '^pair-open-camera$' && wait_text '^scanner-close$' 15; then
+  sleep 2 # the camera preview starts
+  shot 33-scanner
+  if running; then measure scanner ok; else measure scanner closed; fi
+else
+  measure scanner missing
+  shot 33-scanner
+fi
+back_until "$TALK" 4 || true
+
+step "TURNED"
+turn 1
+if wait_text '按住说话|Hold to talk' 20; then measure turned_talk ok; else measure turned_talk missing; fi
+shot 40-turned-talk
+page 41-turned-history '^tab-history$' '^今天$|^Today$'
+page 42-turned-settings '^tab-settings$' '语音模型|Speech models'
+page 43-turned-speech '^语音模型$|^Speech models$' '内置服务|Built-in service'
+if tap_text '^provider-asr-groq$' && wait_text '^provider-form$' 10; then
+  measure turned_sheet ok
+else
+  measure turned_sheet missing
+fi
+shot 44-turned-sheet
+back
+back
+page 45-turned-recording '^录音$|^Recording$' '最长录音时长|Longest recording'
+if tap_text '最长录音时长|Longest' && wait_text '^30 分钟$|^30 minutes$' 10; then
+  measure turned_dropdown ok
+else
+  measure turned_dropdown missing
+fi
+shot 46-turned-dropdown
+back
+back
+if tap_text '^tab-talk$' && wait_text "$TALK" 10; then measure turned_back_to_talk ok; else measure turned_back_to_talk missing; fi
+if running; then measure turned_stays_up yes; else measure turned_stays_up no; fi
+turn 0
+
+step "UNFOLDED"
+# Device Farm has no foldable phone (2026-10-28): on a phone the display takes a foldable's inner
+# size and density, 1840 × 2208 at 420 dpi (701 dp smallest width, a large screen for Android 16),
+# while the app runs, as unfolding does, and then the phone's own again (folding). A tablet is large
+# already and skips this. The restore is the EXIT trap's as well.
+smallest_dp=$(( (phys_w < phys_h ? phys_w : phys_h) * 160 / density ))
+measure smallest_width_dp "$smallest_dp"
+if [ "$smallest_dp" -lt 600 ]; then
+  adb shell wm size 1840x2208
+  adb shell wm density 420
+  screen_w=1840 screen_h=2208 density_before=$density density=420
+  sleep 3 # the new configuration reaches the app
+  if wait_text '按住说话|Hold to talk' 20; then measure unfolded_talk ok; else measure unfolded_talk missing; fi
+  shot 47-unfolded-talk
+  page 48-unfolded-settings '^tab-settings$' '语音模型|Speech models'
+  if tap_text '^tab-talk$' && wait_text "$TALK" 10; then measure unfolded_back_to_talk ok; else measure unfolded_back_to_talk missing; fi
+  restore_display
+  screen_w=$phys_w screen_h=$phys_h density=$density_before
+  sleep 3
+  if wait_text '按住说话|Hold to talk' 20 && running; then measure folded_again ok; else measure folded_again missing; fi
+  shot 49-folded-again
+else
+  measure unfolded_talk tablet
+  measure unfolded_back_to_talk tablet
+  measure folded_again tablet
+fi
+
+step "FLOATING BUBBLE"
+# The bubble's own window (BubbleOverlay titles it VoltipBubble): "x1 y1 x2 y2", or nothing.
+bubble_frame() {
+  adb shell dumpsys window windows 2>/dev/null | tr -d '\r' | python3 -c '
+import re, sys
+for block in re.split(r"\n(?=  Window #)", sys.stdin.read()):
+    if "VoltipBubble" not in block.split("\n", 1)[0]:
+        continue
+    m = re.search(r"\b(?:mFrame|frame)=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", block)
+    if m:
+        print(*m.groups())
+        break
+'
+}
+bubble_width() {
+  local frame
+  frame=$(bubble_frame)
+  [ -n "$frame" ] || return 1
+  # shellcheck disable=SC2086
+  set -- $frame
+  echo $(($3 - $1))
+}
+handle_px=$(dp 32)
+# The bubble's take from its centre: $1 = how far toward the middle of the screen the finger moves
+# (0 = stays put; the bubble starts docked at the right), $2 = for how many milliseconds.
+bubble_take() {
+  local frame n
+  frame=$(bubble_frame) || return 1
+  [ -n "$frame" ] || return 1
+  # shellcheck disable=SC2086
+  set -- $frame "$1" "$2"
+  local x=$((($1 + $3) / 2)) y=$((($2 + $4) / 2))
+  n=$(phases | wc -l)
+  adb shell input swipe "$x" "$y" $((x - $(dp "$5"))) "$y" "$6"
+  take_outcome "bubble-$5" "$n"
+}
+adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true
+adb shell appops set "$PKG" SYSTEM_ALERT_WINDOW allow
+page 50-bubble-page '^tab-settings$' '语音模型|Speech models'
+if tap_text '^settings-bubble$' && wait_text '^bubble-toggle$' 10; then
+  tap_text '^bubble-toggle$'
+  if wait_text '^bubble-mode$' 10 && dump && checked '^bubble-toggle$'; then measure bubble_on ok; else measure bubble_on missing; fi
+  tap_text '^bubble-auto-stow-5$' || true
+  if dump && checked '^bubble-auto-stow-5$'; then measure auto_stow_option ok; else measure auto_stow_option missing; fi
+else
+  measure bubble_on missing
+fi
+shot 51-bubble-settings
+# 手势粘贴's service, enabled as the system's Accessibility settings would; the page reads it again
+# when it comes back into view.
+adb shell settings put secure enabled_accessibility_services "$PKG/dev.voltip.rn.BubblePasteService"
+adb shell settings put secure accessibility_enabled 1
+sleep 3 # the system binds the service
+back
+tap_text '^settings-bubble$' || true
+if tap_text '^bubble-paste-enabled$' && wait_text '^shell-confirm$' 10; then
+  shot 52-paste-disclosure
+  tap_text '^shell-confirm$'
+fi
+sleep 2 # saved, the page read again
+if dump && checked '^bubble-paste-enabled$' && ! find_node '^bubble-paste-needs-service$' >/dev/null; then
+  measure paste_service connected
+else
+  measure paste_service missing
+fi
+shot 53-paste-on
+adb shell input keyevent KEYCODE_HOME
+sleep 2 # the launcher, the bubble over it
+shot 54-bubble-home
+if [ -n "$(bubble_frame)" ]; then measure bubble_shown ok; else measure bubble_shown missing; fi
+# With 手势粘贴 on: a swipe toward the middle while held. No text field has focus on the launcher,
+# so the result stays on the clipboard; the take must still run its course.
+outcome=$(bubble_take 90 4000 || echo missing)
+measure bubble_take_paste_on "$outcome"
+grep -hE "paste requested|not pasted" <(adb logcat -d -s VoltipBubble 2>/dev/null) | tail -2
+shot 55-bubble-paste-on
+# 手势粘贴 off again, the same take held in place.
+adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1
+wait_text '^bubble-paste-enabled$' 15 || tap_text '^settings-bubble$' || true
+tap_text '^bubble-paste-enabled$' || true
+sleep 2 # saved
+if dump && ! checked '^bubble-paste-enabled$'; then measure paste_off ok; else measure paste_off missing; fi
+adb shell input keyevent KEYCODE_HOME
+sleep 2
+outcome=$(bubble_take 0 4000 || echo missing)
+measure bubble_take_paste_off "$outcome"
+shot 56-bubble-paste-off
+# 空闲时自动收起 at 5 s: the result's card shows for 5 s, then 5 s idle, then only the handle.
+# Three seconds after the take the bubble is still out; within 25 s its window is the handle's width.
+sleep 3
+early=$(bubble_width || echo 0)
+stowed=no
+deadline=$((SECONDS + 25))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  width=$(bubble_width || echo 0)
+  if [ "$width" -ge $((handle_px - 2)) ] && [ "$width" -le $((handle_px + 2)) ]; then stowed=yes; break; fi
+  sleep 1
+done
+measure bubble_width_early_px "$early"
+measure bubble_width_handle_px "${width:-0}"
+if [ "$stowed" = yes ] && [ "$early" -gt $((handle_px + 2)) ]; then measure auto_stow ok; else measure auto_stow no; fi
+shot 57-bubble-stowed
+# The handle brings the bubble back; held for 8 s it stays out the whole time.
+if frame=$(bubble_frame) && [ -n "$frame" ]; then
+  # shellcheck disable=SC2086
+  set -- $frame
+  adb shell input tap $((($1 + $3) / 2)) $((($2 + $4) / 2))
+  sleep 1 # the bubble slides out
+fi
+if frame=$(bubble_frame) && [ -n "$frame" ]; then
+  # shellcheck disable=SC2086
+  set -- $frame
+  n=$(phases | wc -l)
+  adb shell input swipe $((($1 + $3) / 2)) $((($2 + $4) / 2)) $((($1 + $3) / 2)) $((($2 + $4) / 2)) 8000 &
+  holder=$!
+  sleep 6
+  during=$(bubble_width || echo 0)
+  wait "$holder"
+  measure bubble_width_held_px "$during"
+  if [ "$during" -gt $((handle_px + 2)) ]; then measure hold_keeps_bubble ok; else measure hold_keeps_bubble no; fi
+  measure bubble_take_held "$(take_outcome bubble-held "$n")"
+else
+  measure hold_keeps_bubble missing
+fi
+# Turned with the bubble out: its window stays on the turned screen.
+turn 1
+frame=$(bubble_frame)
+measure bubble_frame_turned "${frame:-none}"
+if [ -n "$frame" ]; then
+  # shellcheck disable=SC2086
+  set -- $frame
+  if [ "$1" -ge 0 ] && [ "$2" -ge 0 ] && [ "$3" -le "$screen_w" ] && [ "$4" -le "$screen_h" ]; then measure bubble_turns ok; else measure bubble_turns off_screen; fi
+else
+  measure bubble_turns missing
+fi
+shot 58-bubble-turned
+turn 0
+if running; then measure bubble_stays_up yes; else measure bubble_stays_up no; fi
+restore_device
+
 step "LOGS"
 pid=$(adb shell pidof "$PKG" | tr -d '\r')
 [ -n "$pid" ] && adb logcat -d --pid="$pid" >"$out/app-logcat.txt" 2>&1
@@ -490,6 +765,17 @@ elif grep -q "$PKG" "$out/crash.txt"; then
   measure fatal found
 else
   measure fatal none
+fi
+# What R8 could have removed or renamed that something still looks up by name: the app's own lines
+# (its uid's), over the whole run.
+uid=$(adb shell cmd package list packages -U "$PKG" 2>/dev/null | tr -d '\r' | sed -n "s/^package:$PKG uid://p" | head -1)
+if [ -n "$uid" ] && adb logcat -d --uid="$uid" >"$out/app-uid-logcat.txt" 2>/dev/null; then :; else cp "$out/logcat-run.txt" "$out/app-uid-logcat.txt"; fi
+lost='ClassNotFoundException|NoClassDefFoundError|NoSuchMethodError|NoSuchFieldError|UnsatisfiedLinkError'
+if grep -qE "$lost" "$out/app-uid-logcat.txt"; then
+  measure r8_errors found
+  grep -E "$lost" "$out/app-uid-logcat.txt" | head -20
+else
+  measure r8_errors none
 fi
 grep -E "voltip|ReactNativeJS" "$out/logcat-run.txt" 2>/dev/null | grep -vE "nativeloader" | tail -60
 echo "summary:"

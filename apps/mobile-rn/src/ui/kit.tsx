@@ -93,9 +93,15 @@ export function rgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/** A screen's scrolling body: 16 dp from the edges, its blocks 16 dp apart, scrolled clear of the
- *  keyboard. A tab's page (board 03) starts under the status bar with its own title, runs under
- *  the floating tab dock, and on the glass pair shows the aurora behind it. */
+/** The widest a page's column gets: on a tablet, an unfolded phone or a phone on its side the
+ *  page's blocks keep a phone's reading width, centred (docs/mobile-rn.md §5). */
+export const PAGE_MAX_WIDTH = 720;
+
+/** A screen's scrolling body: 16 dp from the edges and from the system's side insets (a phone on
+ *  its side has its navigation bar and camera cutout there), its blocks 16 dp apart in a column at
+ *  most [PAGE_MAX_WIDTH] wide, scrolled clear of the keyboard. A tab's page (board 03) starts under
+ *  the status bar with its own title, runs under the floating tab dock, and on the glass pair shows
+ *  the aurora behind it. */
 export function Page({
   children,
   testID,
@@ -128,7 +134,11 @@ export function Page({
         style={{ flex: 1 }}
         contentContainerStyle={[
           styles.page,
-          { gap, paddingBottom: 32 + bottom },
+          {
+            paddingBottom: 32 + bottom,
+            paddingLeft: 16 + insets.left,
+            paddingRight: 16 + insets.right,
+          },
           inTabs && { paddingTop: insets.top + 8 },
         ]}
         keyboardShouldPersistTaps="handled"
@@ -141,8 +151,12 @@ export function Page({
                   onEndReached();
               }
         }>
-        {title}
-        {children}
+        <View
+          style={[styles.column, { gap }]}
+          testID={testID === undefined ? undefined : `${testID}-column`}>
+          {title}
+          {children}
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -883,6 +897,7 @@ export function widthOf(e: LayoutChangeEvent): number {
 
 export const styles = StyleSheet.create({
   page: { padding: 16, paddingBottom: 32 },
+  column: { width: "100%", maxWidth: PAGE_MAX_WIDTH, alignSelf: "center" },
   tabTitle: { flexDirection: "row", alignItems: "flex-start", gap: 12, paddingHorizontal: 4 },
   round: {
     width: 44,

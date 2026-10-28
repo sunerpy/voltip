@@ -230,6 +230,9 @@ function fakeBubble(initial: Partial<BubbleStatus> = {}) {
     mode: "hold",
     showResult: true,
     showDiscard: false,
+    pasteEnabled: false,
+    accessibilityEnabled: false,
+    autoStowSeconds: 0,
     ...initial,
   };
   const ready = () =>
@@ -246,6 +249,8 @@ function fakeBubble(initial: Partial<BubbleStatus> = {}) {
         mode: config.mode,
         showResult: config.showResult,
         showDiscard: config.showDiscard,
+        pasteEnabled: config.pasteEnabled,
+        autoStowSeconds: config.autoStowSeconds,
         running: config.enabled && ready(),
       };
       return Promise.resolve(status);
@@ -262,6 +267,8 @@ function fakeBubble(initial: Partial<BubbleStatus> = {}) {
       grant("overlay");
       return Promise.resolve();
     }),
+    openAccessibilitySettings: jest.fn(() => Promise.resolve()),
+    openAppSettings: jest.fn(() => Promise.resolve()),
   } satisfies BubbleControl;
   return control;
 }
@@ -393,6 +400,9 @@ describe("设置 › 悬浮球 (boards 18a/18b)", () => {
         mode: config.mode,
         showResult: config.showResult,
         showDiscard: config.showDiscard,
+        pasteEnabled: config.pasteEnabled,
+        accessibilityEnabled: false,
+        autoStowSeconds: config.autoStowSeconds,
       }),
     );
     await renderApp({ bubble });
@@ -436,5 +446,124 @@ describe("设置 › 悬浮球 (boards 18a/18b)", () => {
     await openTab("settings");
     await screen.findByTestId("settings-speech");
     expect(screen.queryByTestId("settings-bubble")).toBeNull();
+  });
+});
+
+describe("设置 › 悬浮球 › 手势粘贴 and 空闲时自动收起 (docs/dictation.md §20.12)", () => {
+  const granted = { microphone: true, overlay: true, notifications: true };
+
+  it("asks before turning paste on, and 暂不开启 leaves it off", async () => {
+    const bubble = fakeBubble({ enabled: true, running: true, permissions: granted });
+    await renderApp({ bubble });
+    await openBubble();
+    const paste = await screen.findByTestId("bubble-paste-enabled");
+    expect(paste).not.toBeChecked();
+    expect(paste).toHaveTextContent(/滑动松手自动粘贴/);
+    await fireEvent.press(paste);
+    // Google Play's prominent disclosure: what the service looks at, when, and what it never does.
+    expect(await screen.findByText("开启手势粘贴")).toBeOnTheScreen();
+    expect(screen.getByText(/查询当前获得焦点的输入框属于哪个应用和窗口/)).toBeOnTheScreen();
+    expect(screen.getByText(/不读取输入框中已有的文字，也不保存或上传这些信息/)).toBeOnTheScreen();
+    expect(screen.getByTestId("shell-confirm")).toHaveTextContent("同意并开启");
+    await fireEvent.press(screen.getByTestId("shell-confirm-cancel"));
+    await waitFor(() => {
+      expect(screen.queryByText("开启手势粘贴")).toBeNull();
+    });
+    // The app's start handed the bubble its options once (useBubbleSync); paste was never saved.
+    expect(bubble.configure).not.toHaveBeenCalledWith(
+      expect.objectContaining({ pasteEnabled: true }),
+    );
+    expect(bubble.openAccessibilitySettings).not.toHaveBeenCalled();
+    expect(screen.getByTestId("bubble-paste-enabled")).not.toBeChecked();
+  });
+
+  it("agreeing saves paste and opens Accessibility while its service is off, then shows the way there", async () => {
+    const bubble = fakeBubble({ enabled: true, running: true, permissions: granted });
+    await renderApp({ bubble });
+    await openBubble();
+    await fireEvent.press(await screen.findByTestId("bubble-paste-enabled"));
+    expect(await screen.findByTestId("shell-confirm-cancel")).toHaveTextContent("暂不开启");
+    await fireEvent.press(screen.getByTestId("shell-confirm"));
+    await waitFor(() => {
+      expect(bubble.openAccessibilitySettings).toHaveBeenCalledTimes(1);
+    });
+    expect(bubble.configure).toHaveBeenLastCalledWith(
+      expect.objectContaining({ enabled: true, pasteEnabled: true, autoStowSeconds: 0 }),
+    );
+    expect(await screen.findByTestId("bubble-paste-needs-service")).toHaveTextContent(
+      /还需在系统「无障碍」设置中启用「Voltip 手势粘贴」。启用之前，识别结果只会复制。/,
+    );
+    // An APK from GitHub: Android 13+ restricts its accessibility switch until App info allows it.
+    expect(screen.getByTestId("bubble-paste-restricted")).toHaveTextContent(
+      /从 GitHub 下载安装.*允许受限制的设置.*从 Google Play 安装不受此限制/,
+    );
+    await fireEvent.press(screen.getByTestId("bubble-paste-open-settings"));
+    expect(bubble.openAccessibilitySettings).toHaveBeenCalledTimes(2);
+    await fireEvent.press(screen.getByTestId("bubble-paste-app-info"));
+    expect(bubble.openAppSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("with its service connected, agreeing only saves, and switching it off asks nothing", async () => {
+    const bubble = fakeBubble({
+      enabled: true,
+      running: true,
+      permissions: granted,
+      accessibilityEnabled: true,
+    });
+    await renderApp({ bubble });
+    await openBubble();
+    await fireEvent.press(await screen.findByTestId("bubble-paste-enabled"));
+    await fireEvent.press(await screen.findByTestId("shell-confirm"));
+    await waitFor(() => {
+      expect(screen.getByTestId("bubble-paste-enabled")).toBeChecked();
+    });
+    expect(bubble.openAccessibilitySettings).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("bubble-paste-needs-service")).toBeNull();
+    await fireEvent.press(screen.getByTestId("bubble-paste-enabled"));
+    await waitFor(() => {
+      expect(bubble.configure).toHaveBeenLastCalledWith(
+        expect.objectContaining({ pasteEnabled: false }),
+      );
+    });
+    expect(screen.queryByText("开启手势粘贴")).toBeNull();
+  });
+
+  it("tucks away when idle only when asked, after the time chosen", async () => {
+    const bubble = fakeBubble({ enabled: true, running: true, permissions: granted });
+    await renderApp({ bubble });
+    await openBubble();
+    expect(await screen.findByTestId("bubble-auto-stow-off")).toBeChecked();
+    expect(screen.getByTestId("bubble-auto-stow-5")).toHaveTextContent("5 秒");
+    expect(screen.getByTestId("bubble-auto-stow-hint")).toHaveTextContent(
+      "悬浮球空闲达到所选时间后收进屏幕边缘；录音、识别和显示结果时不会收起。",
+    );
+    for (const seconds of [5, 10, 30] as const) {
+      await fireEvent.press(screen.getByTestId(`bubble-auto-stow-${seconds}`));
+      await waitFor(() => {
+        expect(screen.getByTestId(`bubble-auto-stow-${seconds}`)).toBeChecked();
+      });
+      expect(bubble.configure).toHaveBeenLastCalledWith(
+        expect.objectContaining({ enabled: true, autoStowSeconds: seconds }),
+      );
+    }
+    await fireEvent.press(screen.getByTestId("bubble-auto-stow-off"));
+    await waitFor(() => {
+      expect(bubble.configure).toHaveBeenLastCalledWith(
+        expect.objectContaining({ autoStowSeconds: 0 }),
+      );
+    });
+  });
+
+  it("names them in English too", async () => {
+    const bubble = fakeBubble({ enabled: true, running: true, permissions: granted });
+    await renderApp({ bubble, language: "en", mock: { settings: { locale: "system" } } });
+    await openBubble();
+    expect(await screen.findByTestId("bubble-paste-enabled")).toHaveTextContent(
+      /Swipe and release to paste/,
+    );
+    expect(screen.getByTestId("bubble-auto-stow-30")).toHaveTextContent("30 s");
+    await fireEvent.press(screen.getByTestId("bubble-paste-enabled"));
+    expect(await screen.findByText("Turn on one-gesture paste")).toBeOnTheScreen();
+    expect(screen.getByTestId("shell-confirm-cancel")).toHaveTextContent("Not now");
   });
 });

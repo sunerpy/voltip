@@ -42,8 +42,20 @@ fetch() {
       05-speech=ok provider_sheet=ok back_closes_sheet_first=ok 06-ai=ok 07-appearance=ok theme_dark=ok 09-recording=ok dropdown=ok back_closes_menu_first=ok \
       11-dictionary=ok editor=ok 12b-rules=ok 12c-scenes=ok 12d-history-settings=ok \
       12e-feedback=ok 12f-about=ok follow_system=ok back_to_talk=ok 13-device=ok 14-pair=ok pair_code=ok talk_again=ok back_once_stays=ok \
-      back_twice_leaves=ok fatal=none; do
+      back_twice_leaves=ok share_sheet=ok update_check=ok scanner=ok turned_talk=ok 41-turned-history=ok 42-turned-settings=ok \
+      43-turned-speech=ok turned_sheet=ok 45-turned-recording=ok turned_dropdown=ok turned_back_to_talk=ok \
+      turned_stays_up=yes bubble_on=ok auto_stow_option=ok paste_service=connected bubble_shown=ok paste_off=ok \
+      auto_stow=ok hold_keeps_bubble=ok bubble_turns=ok bubble_stays_up=yes r8_errors=none fatal=none; do
       grep -qx "$want" "$summary" || { echo "devicefarm-rn: $device: expected $want" >&2; verdict=1; }
+    done
+    # A phone takes a foldable's inner display and back (Device Farm has no foldable); a tablet is
+    # large already.
+    for unfolded in unfolded_talk unfolded_back_to_talk folded_again; do
+      grep -qE "^$unfolded=(ok|tablet)$" "$summary" || { echo "devicefarm-rn: $device: expected $unfolded=ok" >&2; verdict=1; }
+    done
+    # The bubble's takes ran their course: a result, or a reason (the room may be silent).
+    for take in bubble_take_paste_on bubble_take_paste_off bubble_take_held; do
+      grep -qE "^$take=(done|failed:.+)$" "$summary" || { echo "devicefarm-rn: $device: $take did not finish" >&2; verdict=1; }
     done
   done < <(df list-jobs --arn "$run_arn" --query 'jobs[].[arn,device.name]' --output text)
   return "$verdict"
@@ -91,7 +103,7 @@ spec_arn=$(upload apps/mobile-rn/devicefarm/testspec.yml APPIUM_NODE_TEST_SPEC)
 run_arn=$(df schedule-run --project-arn "$project" --app-arn "$app_arn" --device-pool-arn "$pool" --name "$name" \
   --test "{\"type\":\"APPIUM_NODE\",\"testPackageArn\":\"$pkg_arn\",\"testSpecArn\":\"$spec_arn\"}" \
   --configuration '{"locale":"zh_CN","billingMethod":"METERED"}' \
-  --execution-configuration '{"jobTimeoutMinutes":20}' --query run.arn --output text)
+  --execution-configuration '{"jobTimeoutMinutes":30}' --query run.arn --output text)
 echo "devicefarm-rn: run $run_arn"
 
 # A run takes minutes (device setup, install, the script); the wait ends when it completes, or
