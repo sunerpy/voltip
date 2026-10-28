@@ -588,6 +588,17 @@ shot 40c-turned-take
 for ((i = 0; i < scrolled; i++)); do side_scroll up; done
 page 40d-turned-device "$TALK" '^指纹$|^Fingerprint$'
 page 40e-turned-pair '^配对电脑$|^Pair a computer$' '扫码|Scan'
+# The camera's preview in landscape (CameraView follows the window), then back to the pairing page.
+if tap_text '^pair-open-camera$' && wait_text '^scanner-close$' 15; then
+  sleep 2 # the camera preview starts
+  shot 40e2-turned-scanner
+  if running; then measure turned_scanner ok; else measure turned_scanner closed; fi
+  back
+  wait_text '扫码|Scan' 10 || true
+else
+  measure turned_scanner missing
+  shot 40e2-turned-scanner
+fi
 if tap_text '^输入 6 位验证码$|^Enter 6-digit code$' && wait_text '电脑上显示的 6 位验证码|shown on the computer' 10; then
   measure turned_pair_code ok
 else
