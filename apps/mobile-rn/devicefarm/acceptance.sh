@@ -63,6 +63,9 @@ screen_w=1080
 # the regular expression $1 and that lies on the screen (between the status bar and the
 # navigation bar) and, unless it is one of the tabs, above the tab dock that floats over the
 # page: a tap there lands on the dock (2026-10-13: 历史记录 under the dock opened the 记录 tab).
+# The tabs themselves only need to be on the screen: the dock keeps clear of the navigation bar
+# itself, and in landscape it sits lower than the 140 px kept free below a page's own controls
+# (2026-10-28, a Pixel 9: the dock's middle at 960 of 1080 px).
 # Each field is matched on its own, so `^…$` anchors a whole label.
 find_node() {
   python3 - "$out/ui.xml" "$1" "$screen_h" <<'PY'
@@ -88,7 +91,7 @@ for n in nodes:
     tab = (n.get("resource-id") or "").startswith("tab-")
     if dock is not None and not tab and y >= dock[1]:
         continue
-    if 80 < y < height - 140 and x2 > x1 and y2 > y1:
+    if 80 < y < height - (16 if tab else 140) and x2 > x1 and y2 > y1:
         print(x, y)
         sys.exit(0)
 sys.exit(1)
@@ -176,6 +179,18 @@ shot() {
 }
 
 running() { [ -n "$(adb shell pidof "$PKG" 2>/dev/null | tr -d '\r')" ]; }
+# The app in front again, on the page it was on, after a step that may have left it (a back past
+# the first tab when a page did not open): one failure stays one failure.
+front() {
+  in_front && return 0
+  adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1
+  local _
+  for _ in 1 2 3 4 5; do
+    sleep 1 # the activity comes back
+    in_front && return 0
+  done
+  return 1
+}
 in_front() { adb shell dumpsys activity activities 2>/dev/null | grep -E "mResumedActivity|topResumedActivity" | grep -q "$PKG"; }
 
 # A page: tap $2, wait for $3 on the new page, screenshot $1; records $1=ok|missing.
@@ -537,7 +552,7 @@ turn() {
 }
 
 step "UPDATE AND CAMERA"
-page 30-settings '^tab-settings$' '语音模型|Speech models'
+page 30-settings '^tab-settings$' '^phone-settings$'
 page 31-about '^关于 Voltip$|^About Voltip$' 'AGPL-3.0'
 if tap_text '^phone-update-check$' && wait_text '^已是最新|^有新版本|^更新失败|^此版本未配置更新源|^Up to date|^New version|^Update failed|^This build has no update source' 30; then
   measure update_check ok
@@ -558,6 +573,7 @@ fi
 back_until "$TALK" 4 || true
 
 step "TURNED"
+front || true
 turn 1
 if wait_text '按住说话|Hold to talk' 20; then measure turned_talk ok; else measure turned_talk missing; fi
 shot 40-turned-talk
@@ -606,8 +622,9 @@ else
 fi
 shot 40f-turned-pair-code
 back_until "$TALK" 4 || true
+front || true
 page 41-turned-history '^tab-history$' '^今天$|^Today$'
-page 42-turned-settings '^tab-settings$' '语音模型|Speech models'
+page 42-turned-settings '^tab-settings$' '^phone-settings$'
 page 43-turned-speech '^语音模型$|^Speech models$' '内置服务|Built-in service'
 if tap_text '^provider-asr-groq$' && wait_text '^provider-form$' 10; then
   measure turned_sheet ok
@@ -618,7 +635,8 @@ shot 44-turned-sheet
 back
 back
 page 45-turned-recording '^录音$|^Recording$' '最长录音时长|Longest recording'
-if tap_text '最长录音时长|Longest' && wait_text '^30 分钟$|^30 minutes$' 10; then
+# A landscape sheet shows its first options and scrolls the rest (30 分钟 is below them).
+if tap_text '最长录音时长|Longest' && wait_text '^recording-max-minutes-option-[0-9]+$' 10; then
   measure turned_dropdown ok
 else
   measure turned_dropdown missing
@@ -640,6 +658,7 @@ if running; then measure turned_stays_up yes; else measure turned_stays_up no; f
 turn 0
 
 step "UNFOLDED"
+front || true
 # Device Farm has no foldable phone (2026-10-28): on a phone the display takes a foldable's inner
 # size and density, 1840 × 2208 at 420 dpi (701 dp smallest width, a large screen for Android 16),
 # while the app runs, as unfolding does, and then the phone's own again (folding). A tablet is large
@@ -653,7 +672,7 @@ if [ "$smallest_dp" -lt 600 ]; then
   sleep 3 # the new configuration reaches the app
   if wait_text '按住说话|Hold to talk' 20; then measure unfolded_talk ok; else measure unfolded_talk missing; fi
   shot 47-unfolded-talk
-  page 48-unfolded-settings '^tab-settings$' '语音模型|Speech models'
+  page 48-unfolded-settings '^tab-settings$' '^phone-settings$'
   if tap_text '^tab-talk$' && wait_text "$TALK" 10; then measure unfolded_back_to_talk ok; else measure unfolded_back_to_talk missing; fi
   restore_display
   screen_w=$phys_w screen_h=$phys_h density=$density_before
@@ -667,6 +686,7 @@ else
 fi
 
 step "FLOATING BUBBLE"
+front || true
 # The bubble's own window (BubbleOverlay titles it VoltipBubble): "x1 y1 x2 y2", or nothing.
 bubble_frame() {
   adb shell dumpsys window windows 2>/dev/null | tr -d '\r' | python3 -c '
@@ -704,12 +724,10 @@ bubble_take() {
 }
 adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true
 adb shell appops set "$PKG" SYSTEM_ALERT_WINDOW allow
-page 50-bubble-page '^tab-settings$' '语音模型|Speech models'
+page 50-bubble-page '^tab-settings$' '^phone-settings$'
 if tap_text '^settings-bubble$' && wait_text '^bubble-toggle$' 10; then
   tap_text '^bubble-toggle$'
   if wait_text '^bubble-mode$' 10 && dump && checked '^bubble-toggle$'; then measure bubble_on ok; else measure bubble_on missing; fi
-  tap_text '^bubble-auto-stow-5$' || true
-  if dump && checked '^bubble-auto-stow-5$'; then measure auto_stow_option ok; else measure auto_stow_option missing; fi
 else
   measure bubble_on missing
 fi
@@ -753,28 +771,45 @@ sleep 2
 outcome=$(bubble_take 0 4000 || echo missing)
 measure bubble_take_paste_off "$outcome"
 shot 56-bubble-paste-off
-# 空闲时自动收起 at 5 s: the result's card shows for 5 s, then 5 s idle, then only the handle.
-# Three seconds after the take the bubble is still out; within 25 s its window is the handle's width.
-sleep 3
-early=$(bubble_width || echo 0)
-stowed=no
-deadline=$((SECONDS + 25))
-while [ "$SECONDS" -lt "$deadline" ]; do
-  width=$(bubble_width || echo 0)
-  if [ "$width" -ge $((handle_px - 2)) ] && [ "$width" -le $((handle_px + 2)) ]; then stowed=yes; break; fi
-  sleep 1
-done
-measure bubble_width_early_px "$early"
-measure bubble_width_handle_px "${width:-0}"
-if [ "$stowed" = yes ] && [ "$early" -gt $((handle_px + 2)) ]; then measure auto_stow ok; else measure auto_stow no; fi
-shot 57-bubble-stowed
-# The handle brings the bubble back; held for 8 s it stays out the whole time.
-if frame=$(bubble_frame) && [ -n "$frame" ]; then
+# 空闲时自动收起 at 5 s, chosen only now: the takes above ran with it off (a tucked-in bubble is a
+# handle, and a swipe from a handle pulls the bubble out instead of recording).
+adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1
+wait_text '^bubble-paste-enabled$' 15 || tap_text '^settings-bubble$' || true
+tap_text '^bubble-auto-stow-5$' || true
+if dump && checked '^bubble-auto-stow-5$'; then measure auto_stow_option ok; else measure auto_stow_option missing; fi
+adb shell input keyevent KEYCODE_HOME
+# Within 25 s (5 s idle, and a busy device's slack) the bubble's window is the handle's width.
+until_handle() {
+  local deadline=$((SECONDS + 25)) width=0
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    width=$(bubble_width || echo 0)
+    if [ "$width" -ge $((handle_px - 2)) ] && [ "$width" -le $((handle_px + 2)) ]; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+# A tap in the middle of the bubble's window: on the handle it brings the bubble out.
+tap_bubble() {
+  local frame
+  frame=$(bubble_frame)
+  [ -n "$frame" ] || return 1
   # shellcheck disable=SC2086
   set -- $frame
   adb shell input tap $((($1 + $3) / 2)) $((($2 + $4) / 2))
   sleep 1 # the bubble slides out
-fi
+}
+stowed_idle=no stowed_again=no
+until_handle && stowed_idle=yes
+shot 57-bubble-stowed
+# Out again by a tap on the handle, then idle once more: in again.
+tap_bubble || true
+out=$(bubble_width || echo 0)
+until_handle && stowed_again=yes
+measure bubble_width_out_px "$out"
+measure bubble_width_handle_px "$(bubble_width || echo 0)"
+if [ "$stowed_idle" = yes ] && [ "$out" -gt $((handle_px + 2)) ] && [ "$stowed_again" = yes ]; then measure auto_stow ok; else measure auto_stow "no:$stowed_idle/$out/$stowed_again"; fi
+# The handle brings the bubble back; held for 8 s it stays out the whole time.
+tap_bubble || true
 if frame=$(bubble_frame) && [ -n "$frame" ]; then
   # shellcheck disable=SC2086
   set -- $frame
@@ -790,14 +825,27 @@ if frame=$(bubble_frame) && [ -n "$frame" ]; then
 else
   measure hold_keeps_bubble missing
 fi
-# Turned with the bubble out: its window stays on the turned screen.
+# Turned with Voltip in front (the app turns; a launcher may stay upright): the bubble's window
+# stays on the screen as it is now, read from the display's current size.
+display_now() {
+  adb shell dumpsys window displays 2>/dev/null | tr -d '\r' | sed -n 's/.* cur=\([0-9]*\)x\([0-9]*\).*/\1 \2/p' | head -1
+}
+adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1
 turn 1
 frame=$(bubble_frame)
+now=$(display_now)
 measure bubble_frame_turned "${frame:-none}"
-if [ -n "$frame" ]; then
+measure display_turned "${now:-unknown}"
+if [ -n "$frame" ] && [ -n "$now" ]; then
   # shellcheck disable=SC2086
-  set -- $frame
-  if [ "$1" -ge 0 ] && [ "$2" -ge 0 ] && [ "$3" -le "$screen_w" ] && [ "$4" -le "$screen_h" ]; then measure bubble_turns ok; else measure bubble_turns off_screen; fi
+  set -- $frame $now
+  if [ "$1" -ge 0 ] && [ "$2" -ge 0 ] && [ "$3" -le "$5" ] && [ "$4" -le "$6" ] && [ "$5" -gt "$6" ]; then
+    measure bubble_turns ok
+  elif [ "$5" -le "$6" ]; then
+    measure bubble_turns not_turned
+  else
+    measure bubble_turns off_screen
+  fi
 else
   measure bubble_turns missing
 fi
